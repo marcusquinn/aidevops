@@ -72,7 +72,14 @@ source "${REPO_DIR}/.agents/scripts/full-loop-helper-state-lifecycle.sh"
 _FULL_LOOP_BOOL_TRUE=true
 is_headless() { return 1; }
 print_error() { printf '%s\n' "$*" >&2; return 0; }
-_linked_issue_trust_blocks_start() { return 1; }
+_linked_issue_trust_blocks_start() {
+	local raw_issue="$3"
+	if printf '%s\n' "$raw_issue" | jq -e '.state == "open"' >/dev/null 2>&1; then
+		return 1
+	fi
+	_FULL_LOOP_LINKED_TRUST_BLOCKER_REASON="fixture received invalid issue JSON"
+	return 0
+}
 _linked_issue_structural_blocker_reasons() { return 1; }
 gh() {
 	printf 'fixture shim diagnostic\n' >&2
