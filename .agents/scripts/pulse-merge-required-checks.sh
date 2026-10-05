@@ -535,7 +535,8 @@ _pmrc_normalize_snapshot_checks_json() {
 				status: (if $state == $pending then $in_progress else $completed end),
 				conclusion: (if $state == $success then $success elif ($state == $failure or $state == $error) then $failure else "" end),
 				link: (.target_url // ""),
-				observed_at: (.updated_at // .created_at // "")
+				observed_at: (.updated_at // .created_at // ""),
+				description: (.description // "")
 			}
 		]
 		| map(select(.name != ""))
@@ -798,6 +799,30 @@ _pmrc_is_explicit_advisory_failure() {
 	return $?
 }
 
+# Some providers fail a non-required commit status without analysing the code
+# when the account has spent its quota (for example Qlty's "qlty check" with
+# "Qlty did not run because you are out of minutes."). That result says nothing
+# about the PR and clears once minutes are available again, so it is advisory:
+# the check stays useful whenever it can run, and never wedges merges or routes
+# a code-repair worker while it cannot. Only these exact contexts qualify, as a
+# commit status whose description reports the spent quota; any other failure of
+# the same context, and every required context, keeps normal handling.
+PMRC_QUOTA_EXHAUSTED_STATUS_CONTEXTS_JSON='["qlty check"]'
+PMRC_QUOTA_EXHAUSTED_DESCRIPTION_RE='out of (analysis )?minutes'
+
+_pmrc_is_quota_exhausted_status_failure() {
+	local check_name="$1"
+	local checks_json="$2"
+
+	jq -e --arg name "$check_name" --arg re "$PMRC_QUOTA_EXHAUSTED_DESCRIPTION_RE" \
+		--argjson contexts "$PMRC_QUOTA_EXHAUSTED_STATUS_CONTEXTS_JSON" '
+		($contexts | index($name)) != null
+		and ([.[]? | select(.name == $name and .source == "commit_status"
+			and ((.description // "") | test($re; "i")))] | length > 0)
+	' <<<"$checks_json" >/dev/null 2>&1
+	return $?
+}
+
 # Some providers publish a non-required commit status as a quota/usage notice
 # and leave it pending forever (for example Qlty's "qlty usage" at 90%+ of
 # analysis minutes). It reports no code result, so waiting for it can never
@@ -1023,6 +1048,10 @@ _pmrc_snapshot_checks_acceptable() {
 			advisory=$((advisory + 1))
 		elif _pmrc_is_explicit_advisory_failure "$name" "$checks_json"; then
 			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required baseline advisory failure '${name}' because its regression companion passed for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
+			advisory=$((advisory + 1))
+		elif [[ "$members" == "${name}@commit_status" ]] &&
+			_pmrc_is_quota_exhausted_status_failure "$name" "$checks_json"; then
+			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required provider status '${name}' that did not run because the provider quota is spent for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
 			advisory=$((advisory + 1))
 		elif _pmrc_is_configured_advisory_failure "$name" "$configured_contexts_json" "$evidence_json" "$repo_slug" "$pr_number" "$head_sha"; then
 			echo "[pulse-merge] pre-merge snapshot: IGNORED configured non-required review-provider failure '${name}' with typed current-head review evidence for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
