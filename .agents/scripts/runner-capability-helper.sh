@@ -20,6 +20,7 @@ runner_capability_check_fresh() {
 _runner_capability_check_fresh_logged() {
 	local repo_path="$1" issue_number="$2" repo_slug="$3"
 	local capability_meta_json=""
+	local reason=""
 	capability_meta_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{number, state, body, labels}' 2>/dev/null) || capability_meta_json=""
 	if ! printf '%s' "$capability_meta_json" | jq -e --argjson number "$issue_number" \
@@ -27,8 +28,8 @@ _runner_capability_check_fresh_logged() {
 		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet source=fresh metadata_unreadable\n' "$issue_number" >&3
 		return 1
 	fi
-	if ! runner_capability_check "$repo_path" "$capability_meta_json" fresh >/dev/null 2>&3; then
-		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet\n' "$issue_number" >&3
+	if ! reason=$(runner_capability_check "$repo_path" "$capability_meta_json" fresh 2>&3); then
+		printf '[dispatch_with_dedup] #%s deferred: %s\n' "$issue_number" "$reason" >&3
 		return 1
 	fi
 	return 0
@@ -38,33 +39,119 @@ runner_capability_check() {
 	local repo_path="$1"
 	local issue_meta_json="$2"
 	local source="${3:-}"
-	python3 - "$repo_path" "$issue_meta_json" "$source" <<'PY'
+	local cycle="${_PULSE_CYCLE_ID:-}"
+	# Assemble only trusted literal code; issue metadata stays in argv as data.
+	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" < <(
+		_runner_capability_python_runtime
+		_runner_capability_python_cycle
+		_runner_capability_python_requirements
+	)
+	local rc=$?
+	[[ "$rc" -eq 0 ]] || return 1
+	return 0
+}
+
+_runner_capability_python_runtime() {
+	cat <<'PY'
+import contextlib
+import fcntl
+import hashlib
 import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-def unmet():
-    print('runner_capability_unmet')
+def unmet(reason=''):
+    print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
-def run_check(argv, cwd=None):
+def run_check(argv, target, secret=False, cwd=None):
     # Bound descendants too: a locked pinentry or probe child must not survive.
-    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               start_new_session=True)
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+    except OSError:
+        return f'check_failed {target}' if secret else f'probe_failed {target}'
     try:
         status = process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
-        unmet()
-    if status:
-        unmet()
+        return f'check_timeout {target}'
+    if not status:
+        return ''
+    if secret:
+        if status == 3:
+            return f'secret_unreadable {target} store=gopass fallback=disabled'
+        return f'{"secret_missing" if status == 1 else "check_failed"} {target}'
+    return f'probe_failed {target}'
 
+PY
+	return 0
+}
+
+_runner_capability_python_cycle() {
+	cat <<'PY'
+@contextlib.contextmanager
+def cycle_state(cycle):
+    # Pulse watchdogs isolate candidates in subshells. Share metadata, not values,
+    # under an exclusive lock so concurrent candidates cannot decrypt twice.
+    if not cycle:
+        yield None, {}
+        return
+    base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
+                str(Path.home() / '.aidevops/.agent-workspace/tmp'))
+    directory = base / 'runner-capability'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = directory.lstat()
+    if directory.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        unmet('cycle_state_unreadable')
+    # Expired cycle files contain only names/counts; retain a day for diagnostics.
+    for old in directory.glob('*.json'):
+        try:
+            if not old.is_symlink() and old.stat().st_mtime < time.time() - 86400:
+                old.unlink()
+        except FileNotFoundError:
+            pass
+    path = directory / (hashlib.sha256(cycle.encode()).hexdigest() + '.json')
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'r+') as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            unmet('cycle_state_unreadable')
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        data = handle.read()
+        state = json.loads(data) if data else {}
+        yield handle, state
+
+def unreadable(name, handle, state, cached=False):
+    count = state.get('deferred', 0) + 1
+    if handle is not None:
+        handle.seek(0)
+        json.dump({'name': name, 'deferred': count}, handle)
+        handle.truncate()
+        handle.flush()
+    if sys.argv[3] == 'fresh' and not cached:
+        print('runner_health: gpg store locked or entry unreadable; '
+              'secret-gated candidates deferred>=1; gopass authoritative '
+              '(no plaintext fallback); see reference/secret-handling.md', file=sys.stderr)
+    if sys.argv[3] == 'fresh':
+        print(f'runner_capability_health secret_gated_deferred={count}', file=sys.stderr)
+    unmet(f'secret_unreadable name={name} store=gopass fallback=disabled' +
+          (' source=cycle_cache' if cached else ''))
+
+PY
+	return 0
+}
+
+_runner_capability_python_requirements() {
+	cat <<'PY'
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
     issue = json.loads(sys.argv[2])
@@ -107,23 +194,36 @@ try:
             path = Path(probe)
             if path.is_absolute() or '..' in path.parts:
                 unmet()
-            executable = (root / path).resolve(strict=True)
+            try:
+                executable = (root / path).resolve(strict=True)
+            except OSError:
+                unmet(f'probe_failed path={probe}')
             if root not in executable.parents or not executable.is_file() or not os.access(executable, os.X_OK):
-                unmet()
-            probes.append(str(executable))
+                unmet(f'probe_failed path={probe}')
+            probes.append((str(executable), probe))
     if len(secrets) > 32 or len(probes) > 8:
         unmet()
     if sys.argv[3] == 'fresh':
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes)}',
               file=sys.stderr)
-    for name in sorted(secrets):
-        run_check(['aidevops', 'secret', 'check', name])
-    for probe in probes:
-        run_check([probe], cwd=root)
+    if secrets:
+        cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''
+        with cycle_state(cycle) as (handle, state):
+            cached_name = state.get('name', '')
+            if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', cached_name):
+                unreadable(cached_name, handle, state, cached=True)
+            for name in sorted(secrets):
+                reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', secret=True)
+                if reason.startswith('secret_unreadable '):
+                    unreadable(name, handle, state)
+                if reason:
+                    unmet(reason)
+    for executable, probe in probes:
+        reason = run_check([executable], f'path={probe}', cwd=root)
+        if reason:
+            unmet(reason)
 except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
     unmet()
 PY
-	local rc=$?
-	[[ "$rc" -eq 0 ]] || return 1
 	return 0
 }

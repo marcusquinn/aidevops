@@ -83,13 +83,24 @@ _compose_consolidation_worker_instructions() {
    - \`## How\` — approach with explicit file paths and line references
    - \`## Acceptance Criteria\` — testable checkboxes
    - \`### Files Scope\` — the successor's write surface, one repo-relative path per line and nothing else on the line (\`- EDIT: path/to/file\` or \`- NEW: path/to/file\`). Carry over the parent's scope when present. Read-only references belong in \`## How\`, not here. The pulse holds \`auto-dispatch\` briefs whose scope fails \`pre-dispatch-validator-helper.sh scope-check\`, so prose after a path makes the successor undispatchable.
+     Preserve every wildcard scope entry verbatim from every superseded issue, including tool-generated paths such as \`- NEW: todo/<area>/log/*/*/<slug>-*.jsonl\`. Never invent a concrete machine, date, timestamp or filename in place of a pattern. Never change an existing \`EDIT:\` entry to \`NEW:\`.
      Check each path against the current default branch before copying its scope marker: use \`git ls-files\` in an up-to-date default-branch checkout or \`gh api\` for that branch's contents. Use \`EDIT:\` when the path already exists on the default branch; use \`NEW:\` only after confirming it is absent. A stale checkout or failed API lookup is not proof of absence.
+   - **Runner prerequisites** — copy verbatim every line matching \`^requires-secrets:\` and its runner-prerequisite paragraph from every superseded issue. Keep all source lines (do not replace them with a summary): the runner capability gate unions comma/space-separated names across these lines. Never drop a prerequisite because this consolidation runner lacks the named secret; consolidation itself does not need those credentials.
    - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
    Start the merged body with: \`_Supersedes #${parent_num} — this issue is the consolidated spec._\`
 
-3. **File the new consolidated issue:**
+3. **Validate before filing the new consolidated issue.** Save the inlined parent body verbatim to a local file, plus a separate body file for each additional superseded issue. Validate the merged body against ALL sources; a failed check stops publication and parent closure until the merged body is repaired:
+
+\`\`\`bash
+python3 ~/.aidevops/agents/scripts/consolidation-contract-validator.py \\
+  --source "<file containing the verbatim parent body>" \\
+  --successor "<file containing the merged body from step 2>"
+# Repeat --source for each additional superseded issue body.
+\`\`\`
+
+The validator must pass before running the signed creation command below. It checks verbatim secret lines and prerequisite paragraphs, wildcard scope preservation, and EDIT-to-NEW regressions. Also run \`pre-dispatch-validator-helper.sh scope-check\` on the merged body for ordinary scope syntax validation.
 
 \`\`\`bash
 ~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
@@ -130,6 +141,7 @@ gh issue close \$THIS_ISSUE --repo "${repo_slug}" --reason "completed"
 - **No PR is required.** This is an operational task. The completion signal is the new issue number + parent closure + self-close.
 - **Contributors to @-mention** on the new issue: ${authors_line}
 EOF
+	return 0
 }
 
 #######################################

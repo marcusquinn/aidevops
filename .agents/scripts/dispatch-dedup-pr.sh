@@ -493,13 +493,16 @@ _has_open_pr_check_healthy_sibling() {
 		return 0
 	fi
 
-	local issue_ref_pattern healthy_state_pattern blocked_state_pattern
-	issue_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+	local title_ref_pattern body_ref_pattern healthy_state_pattern blocked_state_pattern
+	# Bare issue mentions in prose are context, not ownership of a sibling PR.
+	title_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+	body_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number})([^[:alnum:]_]|$)"
 	healthy_state_pattern="^(CLEAN|HAS_HOOKS|UNSTABLE|BEHIND)$"
 	blocked_state_pattern="^(DIRTY|BLOCKED|CONFLICTING)$"
 
 	draft_pr=$(printf '%s' "$pr_json" | jq -r \
-		--arg issue_pattern "$issue_ref_pattern" '
+		--arg title_pattern "$title_ref_pattern" \
+		--arg body_pattern "$body_ref_pattern" '
 		def names: [.labels[]?.name];
 		def protected: names | any(
 			. == "origin:interactive" or . == "hold-for-review" or
@@ -509,7 +512,7 @@ _has_open_pr_check_healthy_sibling() {
 		[
 			.[] | select(
 				(.isDraft == true) and
-				([.title?, .body?] | map(strings) | any(test($issue_pattern; "i")))
+				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i")))
 			)
 		] | .[0] |
 		if . then "\(.number)|\(if worker_owned and (protected | not) then "worker" else "protected" end)"
@@ -528,7 +531,8 @@ _has_open_pr_check_healthy_sibling() {
 	fi
 
 	match_pr=$(printf '%s' "$pr_json" | jq -r \
-		--arg issue_pattern "$issue_ref_pattern" \
+		--arg title_pattern "$title_ref_pattern" \
+		--arg body_pattern "$body_ref_pattern" \
 		--arg healthy_pattern "$healthy_state_pattern" \
 		--arg blocked_pattern "$blocked_state_pattern" \
 		'def complete_planning_only_scope:
@@ -546,7 +550,7 @@ _has_open_pr_check_healthy_sibling() {
 					((.mergeStateStatus // "") | test($healthy_pattern)) or
 					((.mergeable // "") == "MERGEABLE")
 				) and
-				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i"))) and
+				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i"))) and
 				(complete_planning_only_scope | not)
 			)
 		] | .[0].number // empty' 2>/dev/null) || match_pr=""
