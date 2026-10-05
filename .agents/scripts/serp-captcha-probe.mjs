@@ -47,6 +47,7 @@ function usage() {
   --gl <cc> --hl <lang>     Country and interface language (default: us, en)
   --headless                Run headless (default: headed)
   --on-captcha stop|wait    stop (default) or wait for a human solve (headed only)
+  --consent manual|reject   Cookie-consent prompt: wait for you (default) or click "Reject all"
   --fresh-profile           Use a new temporary profile instead of the persistent probe profile
   --no-evidence             Do not keep result HTML
   --shuffle                 Randomize keyword order
@@ -70,6 +71,7 @@ function parseOptions(argv) {
       timezone: { type: 'string' },
       headless: { type: 'boolean', default: false },
       'on-captcha': { type: 'string', default: 'stop' },
+      consent: { type: 'string', default: 'manual' },
       'fresh-profile': { type: 'boolean', default: false },
       'no-evidence': { type: 'boolean', default: false },
       shuffle: { type: 'boolean', default: false },
@@ -90,6 +92,7 @@ function parseOptions(argv) {
   if (!Object.hasOwn(ENGINES, values.engine)) fail('--engine must be google or bing');
   if (!['stop', 'wait'].includes(values['on-captcha'])) fail('--on-captcha must be stop or wait');
   if (values['on-captcha'] === 'wait' && values.headless) fail('--on-captcha wait requires a headed browser');
+  if (!['manual', 'reject'].includes(values.consent)) fail('--consent must be manual or reject');
   if (!/^[a-z]{2}$/i.test(values.gl) || !/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i.test(values.hl)) fail('--gl/--hl must be short codes such as us / en');
 
   let keywords = values.keyword ? [...values.keyword] : [];
@@ -119,6 +122,7 @@ function parseOptions(argv) {
     timezone: values.timezone,
     headless: values.headless,
     onCaptcha: values['on-captcha'],
+    consent: values.consent,
     freshProfile: values['fresh-profile'],
     keepEvidence: !values['no-evidence'],
     dryRun: values['dry-run'],
@@ -243,15 +247,26 @@ async function run(options) {
     locale: options.locale,
     timezoneId: options.timezone,
     viewport: null,
+    // Present as an ordinary browser: without these, navigator.webdriver is true
+    // and Google serves /sorry/ on the first query (observed 2026-10-05).
     ignoreDefaultArgs: ['--enable-automation'],
+    args: ['--disable-blink-features=AutomationControlled'],
   });
   const startedMs = Date.now();
   try {
     const page = context.pages()[0] || await context.newPage();
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
     await page.goto(engine.home(options), { waitUntil: 'domcontentloaded' });
+    report.browser = executablePath?.includes('Brave') ? 'brave' : 'chromium';
+    report.automation_signals = await page.evaluate(() => ({ webdriver: navigator.webdriver === true })).catch(() => null);
     await sleep(randomBetween(2000, 5000));
 
+    if (await detectConsent(page) && options.consent === 'reject') {
+      await sleep(randomBetween(1500, 3500));
+      await page.getByRole('button', { name: /^reject all$/i }).first().click({ timeout: 10_000 }).catch(() => {});
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
+      await sleep(randomBetween(1500, 3000));
+    }
     if (await detectConsent(page)) {
       if (options.headless) {
         report.stop_reason = 'consent_required';
@@ -288,6 +303,11 @@ async function run(options) {
         report.blocks.push(event);
         report.first_block ??= event;
         entry.blocked = block;
+        if (options.keepEvidence) {
+          const file = `q${String(n).padStart(3, '0')}-block.html`;
+          writeFileSync(join(runDir, file), await page.content().catch(() => ''), { mode: 0o600 });
+          entry.evidence = file;
+        }
         log(`Query ${n}: ${block} after ${report.succeeded} successful searches`);
         if (options.onCaptcha === 'stop') { report.stop_reason = 'captcha'; break; }
         log('Waiting for a human to solve the challenge in the browser window (up to 10 minutes)');

@@ -171,7 +171,7 @@ September 2025 Google no longer honours `num=100`, which changed depth and
 pagination for every vendor.
 
 1. Run `keyword-research-helper.sh serp-compare "<keyword>" --locale <code>` (add `--json` to keep the result). It lists URLs that only some providers return.
-2. Spot-check disputed keywords in a real browser on a matching location, under `aidevops/reach-capture.md` "Public Search-result Collection". Keep the evidence with `reach-helper.sh observation record`.
+2. Spot-check disputed keywords in a real browser on a matching location, under `aidevops/reach-capture.md` "Public Search-result Collection". `serp-probe-helper.sh run --keywords-file <file> [--egress-profile <name>]` does this with paced, typed searches, keeps the result HTML, and stops at the first CAPTCHA. Keep the evidence with `reach-helper.sh observation record`.
 3. For owned sites, Google Search Console positions are the reference.
 
 Each provider call in `serp-compare` is billed by that provider.
