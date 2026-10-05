@@ -428,6 +428,13 @@ build_ranked_dispatch_candidates_json() {
 
 		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
 			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
+		# GH#33647: the first wave needs launchable work, not a global census.
+		# Leave later repositories unpolled for the normal refill. Do not claim
+		# complete product discovery from this intentionally partial snapshot.
+		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" && -s "$tmp_candidates" ]]; then
+			product_complete=false
+			break
+		fi
 	done < <(jq -r '
 		def pulse_hour_start:
 			if (.pulse_hours | type) == "array" then .pulse_hours[0]
@@ -710,7 +717,11 @@ dispatch_max() {
 	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, candidates=${candidate_count}" >>"$LOGFILE"
 
 	local triage_attempted=0 triage_infrastructure_failed=0
-	_dispatch_prepare_prepasses "$available_slots"
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != "1" ]]; then
+		_dispatch_prepare_prepasses "$available_slots"
+	else
+		echo "[pulse-wrapper] First dispatch wave: ancillary triage/enrichment deferred to normal refill (GH#33647)" >>"$LOGFILE"
+	fi
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_post_prepasses"; then
 		echo "[pulse-wrapper] Dispatch_max stopped after prepasses: REST-core launch headroom is unavailable" >>"$LOGFILE"
 		echo 0
@@ -1665,10 +1676,11 @@ _run_preflight_stages() {
 	# dispatch. It runs asynchronously while cleanup/capacity stages proceed;
 	# dispatch never waits for merge, CI, review, or GitHub latency.
 	_preflight_start_merge_first || true
-	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
-		_preflight_cleanup_and_ledger || true
-	run_stage_with_timeout "preflight_capacity" "$_pflt_timeout" \
-		_preflight_capacity || true
+	# GH#33647: host capacity is local. Cross-repository allocations and
+	# cleanup/reaping can be paced for minutes; neither belongs ahead of the
+	# first implementation wave. Launch still performs all live safety gates.
+	run_stage_with_timeout "preflight_initial_capacity" "$_pflt_timeout" \
+		calculate_max_workers || true
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each
@@ -1683,6 +1695,10 @@ _run_preflight_stages() {
 	_pulse_run_budget_priority_stage "preflight_early_dispatch" _preflight_early_dispatch || _pflt_ed_rc=$?
 	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] && _pflt_ed_outcome="skipped"
 	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc" "$_pflt_ed_outcome"
+	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
+		_preflight_cleanup_and_ledger || true
+	run_stage_with_timeout "preflight_capacity" "$_pflt_timeout" \
+		_preflight_capacity || true
 	# GH#28880: cross-repository label maintenance can take 3-5 minutes. Run it
 	# after the initial fill so already-eligible workers boot in parallel. Then
 	# normalize trusted-author NMR residue and refill once so every newly unblocked

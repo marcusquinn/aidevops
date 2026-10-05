@@ -274,8 +274,9 @@ _preflight_cleanup_and_ledger() {
 }
 
 #######################################
-# Capacity calculation + session count warning. Must run before the first
-# dispatch pass so max workers and priority allocations are current.
+# Full capacity allocation + session count warning after the first wave.
+# The first wave calculates local host capacity and uses existing allocations;
+# the normal refill sees refreshed cross-repository priority allocations.
 #######################################
 _preflight_capacity() {
 	# GH#21470: per-substage timing so slow callers are identifiable in
@@ -286,8 +287,12 @@ _preflight_capacity() {
 	_log_substage_timing "substage:capacity/calculate_max_workers" "$_ss0" 0
 
 	local _ss1=$SECONDS
-	calculate_priority_allocations
-	_log_substage_timing "substage:capacity/calculate_priority_allocations" "$_ss1" 0
+	if _preflight_rest_core_allows_next "calculate_priority_allocations"; then
+		calculate_priority_allocations
+		_log_substage_timing "substage:capacity/calculate_priority_allocations" "$_ss1" 0
+	else
+		_log_substage_timing "substage:capacity/calculate_priority_allocations" "$_ss1" 0 skipped
+	fi
 
 	local _ss2=$SECONDS
 	local _session_ct
@@ -454,6 +459,9 @@ _preflight_trusted_nmr_reconcile() {
 # housekeeping. Without this, workers sit idle for ~7 minutes of cleanup.
 #######################################
 _preflight_early_dispatch() {
+	# Internal, dynamically scoped only to this fill. Never export to workers
+	# or use it to bypass dispatch admission, trust, claim or ledger checks.
+	local _PULSE_FIRST_DISPATCH_WAVE=1
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping early dispatch_max" >>"$LOGFILE"
 	else
