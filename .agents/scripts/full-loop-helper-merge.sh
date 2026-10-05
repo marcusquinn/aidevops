@@ -2454,6 +2454,47 @@ _merge_report_pre_merge_gate_failure() {
 	return 0
 }
 
+# Run the pre-merge gate, waiting out LOCAL read-admission pacing (GH#33641).
+# Only `deferred_by=local_admission` is retried, within a bounded budget
+# (FULL_LOOP_MERGE_ADMISSION_BUDGET_SECONDS, default 60; _MAX_RETRIES, default 3).
+# Real GitHub cooldown/rate-limit/HTTP errors and other gate failures fail closed.
+_merge_pre_merge_gate_with_admission_wait() {
+	local pr_number="$1"
+	local repo="$2"
+	local budget="${FULL_LOOP_MERGE_ADMISSION_BUDGET_SECONDS:-60}"
+	local max_retries="${FULL_LOOP_MERGE_ADMISSION_MAX_RETRIES:-3}"
+	local retries=0
+	local spent=0
+	local wait_s=0
+	local retry_at=""
+	local now=0
+	[[ "$budget" =~ ^[0-9]+$ ]] || budget=60
+	[[ "$max_retries" =~ ^[0-9]+$ ]] || max_retries=3
+
+	while true; do
+		cmd_pre_merge_gate "$pr_number" "$repo" && return 0
+		[[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == "github-api-read-deferred" &&
+			"${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL:-}" == *"deferred_by=local_admission"* ]] || return 1
+		[[ "$retries" -lt "$max_retries" ]] || return 1
+		retry_at="${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-}"
+		if [[ "$retry_at" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+			now=$(date +%s)
+			# Ceiling of (retry_at - now) plus 1s margin; minimum 1s.
+			wait_s=$(awk -v r="$retry_at" -v n="$now" 'BEGIN { d = r - n; if (d < 0) d = 0; w = int(d); if (w < d) w++; print w + 1 }')
+		else
+			wait_s=$((2 ** retries * 2))
+		fi
+		[[ "$wait_s" =~ ^[0-9]+$ ]] || wait_s=2
+		if [[ $((spent + wait_s)) -gt "$budget" ]]; then
+			return 1
+		fi
+		retries=$((retries + 1))
+		print_info "GitHub read admission paced locally; waiting ${wait_s}s (retry ${retries}/${max_retries}, retry_at=${retry_at:-unknown})"
+		sleep "$wait_s"
+		spent=$((spent + wait_s))
+	done
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -2486,7 +2527,7 @@ cmd_merge() {
 	repo=$(_merge_resolve_repo "$repo") || return 1
 
 	# Gate: enforce review-bot-gate before merge.
-	cmd_pre_merge_gate "$pr_number" "$repo" || {
+	_merge_pre_merge_gate_with_admission_wait "$pr_number" "$repo" || {
 		_merge_report_pre_merge_gate_failure
 		return 1
 	}

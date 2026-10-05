@@ -1928,6 +1928,55 @@ test_exact_check_deferral_preserves_retry_deadline() {
 	return 0
 }
 
+test_local_admission_wait_retries_within_budget() {
+	local result=0 output=""
+	output=$(
+		(
+			local scripts_dir="${SCRIPT_DIR}/.." rc=0 calls=0
+			SCRIPT_DIR="$scripts_dir"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/shared-constants.sh"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/full-loop-helper-merge.sh"
+			sleep() { return 0; }
+			# Window opens on the 2nd call: success.
+			cmd_pre_merge_gate() {
+				calls=$((calls + 1))
+				[[ "$calls" -ge 2 ]] && return 0
+				FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-read-deferred
+				FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="$(($(date +%s) + 2))"
+				FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL='[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission'
+				return 1
+			}
+			_merge_pre_merge_gate_with_admission_wait 1 o/r || return 1
+			[[ "$calls" -eq 2 ]] || return 1
+			# Window beyond the budget: fails closed without retry.
+			calls=0
+			cmd_pre_merge_gate() {
+				calls=$((calls + 1))
+				FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-read-deferred
+				FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1893456000
+				FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL='deferred_by=local_admission'
+				return 1
+			}
+			_merge_pre_merge_gate_with_admission_wait 1 o/r && return 1
+			[[ "$calls" -eq 1 ]] || return 1
+			# Non-local deferral is never retried.
+			calls=0
+			cmd_pre_merge_gate() {
+				calls=$((calls + 1))
+				FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-cooldown
+				FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1
+				return 1
+			}
+			_merge_pre_merge_gate_with_admission_wait 1 o/r && return 1
+			[[ "$calls" -eq 1 ]] || return 1
+		) 2>&1
+	) || result=1
+	print_result "local admission deferral is waited out within budget and fails closed otherwise" "$result" "output=$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1950,6 +1999,7 @@ main() {
 	test_cooldown_gate_failure_reports_cooldown
 	test_local_admission_gate_failure_reports_retry_deadline
 	test_local_deferral_survives_context_resolution
+	test_local_admission_wait_retries_within_budget
 	test_exact_check_deferral_preserves_retry_deadline
 	test_auto_review_required_interactive_admin_fallback
 	test_auto_review_required_admin_rejection_handoff
