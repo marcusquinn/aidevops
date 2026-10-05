@@ -370,9 +370,19 @@ _is_app_process() {
 	# Strip leading dot (e.g., ".opencode" → "opencode") — some binaries
 	# are installed with a dot-prefixed wrapper name
 	cmd_name="${cmd_name#.}"
-	# Case-insensitive fixed-string match against the app process list
-	# Single grep invocation avoids per-item tr subshells in a loop
-	printf '%s\n' "${APP_PROCESS_NAMES[@]}" | grep -qixF -- "$cmd_name"
+	# Bash 3.2 supports nocasematch; restore the caller's setting on both
+	# paths, avoiding a grep fork for every monitored process.
+	local had_nocasematch=false app_name
+	shopt -q nocasematch && had_nocasematch=true
+	shopt -s nocasematch
+	for app_name in "${APP_PROCESS_NAMES[@]}"; do
+		if [[ "$cmd_name" == "$app_name" ]]; then
+			[[ "$had_nocasematch" == true ]] || shopt -u nocasematch
+			return 0
+		fi
+	done
+	[[ "$had_nocasematch" == true ]] || shopt -u nocasematch
+	return 1
 }
 
 # Batch-fetch process ages for a list of PIDs.
@@ -395,8 +405,15 @@ _batch_get_process_ages() {
 
 		local pid
 		for pid in "${pids[@]}"; do
-			local start_time
-			start_time=$(awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null || echo "")
+			local start_time="" stat_line=""
+			local -a stat_fields=()
+			# comm (field 2) can contain spaces and parentheses. Strip through
+			# its final closing parenthesis before indexing field 22 (offset 19).
+			# Builtin reads avoid a subprocess for every matched PID.
+			if { IFS= read -r stat_line <"/proc/${pid}/stat"; } 2>/dev/null; then
+				read -r -a stat_fields <<<"${stat_line##*) }"
+				start_time="${stat_fields[19]:-}"
+			fi
 			if [[ -n "$start_time" && "$start_time" =~ ^[0-9]+$ ]]; then
 				local start_secs=$((start_time / clk_tck))
 				echo "$pid $((uptime_secs - start_secs))"
@@ -436,17 +453,15 @@ _batch_get_process_ages() {
 			continue
 		fi
 		# Parse etime: [[DD-]HH:]MM:SS
-		etime=$(printf '%s' "$etime" | tr -d ' ')
+		etime="${etime// /}"
 		local days=0 hours=0 minutes=0 seconds=0
 		if [[ "$etime" == *-* ]]; then
 			days="${etime%%-*}"
 			etime="${etime#*-}"
 		fi
-		local colon_count
-		colon_count=$(printf '%s' "$etime" | tr -cd ':' | wc -c | tr -d ' ')
-		if [[ "$colon_count" -eq 2 ]]; then
+		if [[ "$etime" == *:*:* ]]; then
 			IFS=':' read -r hours minutes seconds <<<"$etime"
-		elif [[ "$colon_count" -eq 1 ]]; then
+		elif [[ "$etime" == *:* ]]; then
 			IFS=':' read -r minutes seconds <<<"$etime"
 		else
 			seconds="$etime"
@@ -462,74 +477,6 @@ _batch_get_process_ages() {
 		echo "$pid $((days * 86400 + hours * 3600 + minutes * 60 + seconds))"
 	done
 	return 0
-}
-
-# Check if a process command matches a monitoring pattern.
-# Simple patterns match against the command basename only (case-insensitive).
-# Regex patterns (containing ".*") match against the full command line.
-# Arguments: $1=pattern, $2=cmd_name (basename), $3=full_cmd
-# Returns: 0 if match, 1 if no match
-_memory_pressure_lower() {
-	local value="$1"
-	# Bash 3.2 compatible lowercasing. This script is usually launched with a
-	# modern Homebrew bash, but direct/manual invocations and stale launchd plists
-	# can still execute under macOS /bin/bash. Avoiding Bash 4 lowercase expansion
-	# keeps the monitor self-healing instead of failing before it can report.
-	printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
-	return 0
-}
-
-_matches_monitor_pattern() {
-	local pattern="$1"
-	local cmd_name="$2"
-	local full_cmd="$3"
-
-	if [[ "$pattern" == *".*"* ]]; then
-		# Regex pattern — match against full command line
-		# Use here-string to avoid issues with values starting with '-' or containing backslashes
-		if grep -iqE "$pattern" <<<"$full_cmd"; then
-			return 0
-		fi
-	else
-		# Simple pattern — match against basename only
-		local cmd_lower pattern_lower
-		if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
-			cmd_lower="${cmd_name,,}"
-			pattern_lower="${pattern,,}"
-		else
-			cmd_lower=$(_memory_pressure_lower "$cmd_name")
-			pattern_lower=$(_memory_pressure_lower "$pattern")
-		fi
-		if [[ "$cmd_lower" == *"$pattern_lower"* ]]; then
-			return 0
-		fi
-	fi
-	return 1
-}
-
-# Check if a process should be excluded from monitoring results.
-# Excludes grep processes, this script itself, and already-seen PIDs.
-# Arguments: $1=pid, $2=cmd_name, $3=full_cmd
-# Uses caller-scope: seen_pids[] (read-only check)
-# Returns: 0 if should be skipped, 1 if should be included
-_should_skip_process() {
-	local pid="$1"
-	local cmd_name="$2"
-	local full_cmd="$3"
-
-	# Skip grep and this script
-	if [[ "$cmd_name" == "grep" ]] || [[ "$full_cmd" == *"${SCRIPT_NAME}"* ]]; then
-		return 0
-	fi
-
-	# Skip already-seen PIDs (dedup across overlapping patterns)
-	local seen_pid
-	for seen_pid in "${seen_pids[@]+"${seen_pids[@]}"}"; do
-		if [[ "$seen_pid" == "$pid" ]]; then
-			return 0
-		fi
-	done
-	return 1
 }
 
 # Batch-fetch process ages and emit final pipe-delimited rows sorted by RSS.
@@ -571,16 +518,15 @@ _resolve_ages_and_emit() {
 # Collect all monitored processes with their RSS and runtime
 # Output: one line per process: PID|RSS_MB|RUNTIME_SECS|COMMAND_NAME|FULL_COMMAND
 #
-# Pattern matching: MONITORED_PATTERNS are matched against the COMMAND BASENAME
-# only (not the full command line with arguments). This prevents false positives
-# like zsh processes whose arguments contain "opencode" (e.g., `zsh -l -c opencode`).
+# Simple patterns match the command basename, avoiding argument-only false
+# positives (e.g., `zsh -l -c opencode`). Regex patterns match the full command.
 _collect_monitored_processes() {
 	# Do not combine -U with ax: procps treats those selectors additively and
 	# would include other users again. Keep ww for untruncated worker commands.
 	local process_user="$EUID"
-	if [[ "$(uname)" == "Darwin" ]]; then
-		process_user="${USER:-$EUID}"
-	fi
+	case "$(uname)" in
+	Darwin) process_user="${USER:-$EUID}" ;;
+	esac
 	local patterns
 	printf -v patterns '%s\n' "${MONITORED_PATTERNS[@]}"
 
@@ -628,20 +574,17 @@ _collect_monitored_processes() {
 
 # Count interactive sessions (opencode/claude with a TTY)
 _count_interactive_sessions() {
-	local count=0
-	local ps_output
-	# t2190: ps axwwo to avoid Linux procps truncating the command column.
-	ps_output=$(ps axwwo pid=,tty=,command= 2>/dev/null | grep -iE "(opencode|claude)" | grep -v "grep" | grep -v "run " || true)
-
-	while read -r _ tty _; do
-		# Parse with read builtin — avoids spawning echo/awk subshells per line
-		# Interactive sessions have a TTY (not "??" on macOS or "?" on Linux)
-		if [[ "$tty" != "??" && "$tty" != "?" ]]; then
-			count=$((count + 1))
-		fi
-	done <<<"$ps_output"
-
-	echo "$count"
+	local process_user="$EUID"
+	case "$(uname)" in
+	Darwin) process_user="${USER:-$EUID}" ;;
+	esac
+	# Count only this user's sessions, with untruncated command lines.
+	ps -U "$process_user" -ww -o pid=,tty=,command= 2>/dev/null | awk -v excluded_name=grep '
+		tolower($0) ~ /(opencode|claude)/ && !index($0, excluded_name) && !index($0, "run ") {
+			if ($(2) != "??" && $(2) != "?") count++
+		}
+		END { print count + 0 }
+	'
 	return 0
 }
 
@@ -775,7 +718,7 @@ _check_process_rss_and_runtime() {
 
 # Phase 2+3: Aggregate RSS, session count, and swap file checks.
 # Appends findings to _check_findings[]; sets _check_has_warning.
-# Arguments: $1=total_rss_mb $2=process_count
+# Arguments: $1=total_rss_mb $2=process_count $3=session_count (optional)
 _check_aggregate_and_os() {
 	local total_rss_mb="$1"
 	local process_count="$2"
@@ -787,8 +730,10 @@ _check_aggregate_and_os() {
 	fi
 
 	# Session count
-	local session_count
-	session_count=$(_count_interactive_sessions)
+	local session_count="${3:-}"
+	if [[ -z "$session_count" ]]; then
+		session_count=$(_count_interactive_sessions)
+	fi
 	if [[ "$session_count" -ge "$SESSION_COUNT_WARN" ]]; then
 		_check_findings+=("WARNING|sessions|0|${session_count} interactive sessions open (limit: ${SESSION_COUNT_WARN})")
 		_check_has_warning=true
@@ -891,12 +836,12 @@ do_check() {
 	# Phase 1: Per-process checks
 	_do_check_per_process
 
-	# Phases 2+3: Aggregate and OS checks
-	_check_aggregate_and_os "$total_rss_mb" "$process_count"
-
-	# Resolve session count for the all-clear log message
+	# Resolve sessions once for both aggregate checks and the all-clear log.
 	local session_count
 	session_count=$(_count_interactive_sessions)
+
+	# Phases 2+3: Aggregate and OS checks
+	_check_aggregate_and_os "$total_rss_mb" "$process_count" "$session_count"
 
 	# Phase 4: Act on findings — capture exit code explicitly so set -e
 	# does not abort when _act_on_findings returns 1 (warning) or 2 (critical).
