@@ -116,15 +116,17 @@ DNS leak prevention: Playwright handles automatically; Camoufox uses `network.pr
 | Strategy | Use Case |
 |----------|----------|
 | **Fixed** | Persistent accounts |
-| **Rotating** | Authorized public location sampling only |
+| **Rotating** | Public location sampling; paced public SERP collection |
 | **Sticky session** | Login flows (same IP for N minutes) |
 | **Round-robin** | Load distribution across proxy list |
 | **Geo-targeted** | Match profile's target region |
-| **Failover** | Switch on error/block |
+| **Failover** | Switch on transient network/proxy error |
 
 Authenticated accounts require fixed/sticky egress for the entire session.
-Rotation and failover never authorize bypassing blocks, authentication,
-authorization, robots, terms, or rate limits.
+Rotation and failover never authorize bypassing authentication, authorization,
+or an active block, CAPTCHA, or rate limit. Paced public search-result
+collection follows `aidevops/reach-capture.md` "Public Search-result
+Collection".
 
 ## Browser Engine Integration
 

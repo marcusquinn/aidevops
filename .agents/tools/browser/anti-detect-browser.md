@@ -111,6 +111,6 @@ High stealth requires Camoufox with Playwright API (not playwright-cli) for fing
 
 ## Ethical Guidelines
 
-Only use for legitimate automation (your own accounts, authorized testing). Respect ToS. Rate limit requests (2-5s minimum). Do not create fake accounts or impersonate others.
+Only use for legitimate automation (your own accounts, authorized testing, paced public data collection). Rate limit requests (2-5s minimum; 45-120s for search engines). Do not create fake accounts or impersonate others. Public search-result collection, including CAPTCHA handling: `aidevops/reach-capture.md` "Public Search-result Collection".
 
 <!-- AI-CONTEXT-END -->
