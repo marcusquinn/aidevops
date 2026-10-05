@@ -270,7 +270,8 @@ async function run() {
       let status = 0;
 
       try {
-        const response = await page.goto(url, { waitUntil: 'networkidle', timeout });
+        const response = await page.goto(url, { waitUntil: 'load', timeout });
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
         status = response ? response.status() : 0;
         await waitForNetworkQuiescence(page);
       } catch (err) {

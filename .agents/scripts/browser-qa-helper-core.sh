@@ -390,7 +390,8 @@ async function run() {
       const filepath = \`\${outputDir}/\${filename}\`;
 
       try {
-        await page.goto(url, { waitUntil: 'networkidle', timeout });
+        await page.goto(url, { waitUntil: 'load', timeout });
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
         await page.screenshot({ path: filepath, fullPage });
         results.push({ page: pagePath, viewport: vp.name, file: filepath, status: 'ok' });
       } catch (err) {
