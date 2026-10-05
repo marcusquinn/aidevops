@@ -393,8 +393,8 @@ _gh_collaborator_permission_resolve_failure() {
 	if [[ "$auth_route" == "$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE" && "$same_route_retry_used" == "0" ]]; then
 		retry_rc=0
 		_gh_collaborator_permission_retry_with_gh "$repo_slug" "$user" "$out_var" || retry_rc=$?
-		[[ "$retry_rc" -ne 75 ]] || return 75
-		[[ "$retry_rc" -eq 0 || "$retry_rc" -eq 2 ]] && return "$retry_rc"
+		# 75 = admission deferred: propagate without a permission verdict.
+		[[ "$retry_rc" -eq 0 || "$retry_rc" -eq 2 || "$retry_rc" -eq 75 ]] && return "$retry_rc"
 		if [[ "$retry_rc" -eq 3 && ( "$failure_reason" == "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" || "$failure_reason" == "unexpected-http" ) ]]; then
 			#aidevops:trust-boundary -- retry uncertainty only, never a parsed verdict.
 			sleep 1
