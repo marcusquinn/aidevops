@@ -853,7 +853,7 @@ test_local_admission_gate_failure_reports_retry_deadline() {
 test_bounded_local_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	for scenario in short fractional boundary expired moving long malformed cooldown review; do
+	for scenario in short fractional integral boundary expired moving overshoot long malformed cooldown review changed-review; do
 		result=0
 		bash -c '
 			source "$1/shared-constants.sh"
@@ -862,6 +862,7 @@ test_bounded_local_admission_recovery() {
 			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
 			sleep() {
 				local duration="$1"
+				[[ "$scenario" != overshoot ]] || duration=31
 				waits=$((waits + 1))
 				elapsed=$((elapsed + duration))
 				SECONDS=$((SECONDS + duration))
@@ -870,31 +871,39 @@ test_bounded_local_admission_recovery() {
 			cmd_pre_merge_gate() {
 				calls=$((calls + 1))
 				[[ "$1" == 42 && "$2" == testorg/testrepo ]] || return 1
-				if [[ "$calls" -eq 2 && "$scenario" != moving ]]; then
+				if [[ "$calls" -eq 2 && "$scenario" != moving && "$scenario" != changed-review ]]; then
 					return 0
 				fi
 				FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-read-deferred
 				case "$scenario" in
 				short) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002 ;;
 				fractional) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1001.25 ;;
-				boundary) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1030 ;;
+				integral) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002.000 ;;
+				boundary) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1030.000 ;;
 				expired) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=999 ;;
 				moving) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=$((1001 + elapsed)) ;;
+				overshoot) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002 ;;
 				long) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1031 ;;
 				malformed) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=retry-when-capacity-returns ;;
 				cooldown) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-cooldown ;;
 				review) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=review-bot ;;
+				changed-review)
+					FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002
+					[[ "$calls" -eq 1 ]] || FULL_LOOP_PRE_MERGE_BLOCKER_KIND=review-bot
+					;;
 				esac
 				return 1
 			}
 			rc=0
 			_merge_pre_merge_gate_with_admission_retry 42 testorg/testrepo || rc=$?
 			case "$scenario" in
-			short) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
+			short|integral) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
 			fractional) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
 			boundary) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 30 ]] ;;
 			expired) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 1 ]] ;;
 			moving) [[ "$rc" -eq 1 && "$waits" -gt 1 && "$elapsed" -le 30 ]] ;;
+			overshoot) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waits" -eq 1 ]] ;;
+			changed-review) [[ "$rc" -eq 1 && "$calls" -eq 2 && "$waits" -eq 1 ]] ;;
 			*) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waits" -eq 0 ]] ;;
 			esac
 		' _ "$scripts_dir" "$scenario" || result=$?

@@ -2455,6 +2455,7 @@ _merge_report_pre_merge_gate_failure() {
 }
 
 # Retry only local admission, never CI/review gates or server cooldowns.
+# Bound recovery waiting; the safety gate retains its own read timeouts.
 _merge_pre_merge_gate_with_admission_retry() {
 	local pr_number="$1"
 	local repo="$2"
@@ -2467,13 +2468,14 @@ _merge_pre_merge_gate_with_admission_retry() {
 		now=$(date +%s) || return 1
 		# Round up fractional epochs so admission is not retried before its slot.
 		round_up=0
-		[[ "$retry_at" != *.* ]] || round_up=1
+		[[ ! "$retry_at" =~ [.][0-9]*[1-9] ]] || round_up=1
 		retry_at="${retry_at%%.*}"
 		wait_seconds=$((10#$retry_at + round_up - now))
 		[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
 		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 30 ]] || return 1
 		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (30s recovery budget)"
 		sleep "$wait_seconds" || return 1
+		[[ "$SECONDS" -le "$deadline" ]] || return 1
 		attempts=$((attempts + 1))
 	done
 	return 0
