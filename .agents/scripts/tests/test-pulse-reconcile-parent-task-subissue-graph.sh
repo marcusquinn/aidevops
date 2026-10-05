@@ -1091,6 +1091,23 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Numbered-list phase plan with child refs is a complete contract and closes.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1610 "t1610: numbered phase plan" $'## Phases (one PR each)\n\n1. **Navigation.** Move menu #1611\n2. **Search.** Add search #1612\n\n## Children\n\n- #1611\n- #1612\n\n<!-- parent-close-contract: phase-plan -->'
+set_subissues "1611:CLOSED" "1612:CLOSED"
+set_child_states "1611:closed:phase-one" "1612:closed:phase-two"
+
+reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1610" "$GH_CALLS"; then
+	print_result "numbered phase plan: complete contract closes parent" 0
+else
+	print_result "numbered phase plan: complete contract closes parent" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 echo

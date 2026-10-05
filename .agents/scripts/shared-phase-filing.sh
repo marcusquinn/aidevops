@@ -230,6 +230,40 @@ _parse_phase_line_bold_form() {
 }
 
 #######################################
+# Parse a single numbered-list phase line:
+#   1. **Name.** description [#<child>]
+#   2. description [requires-decision] [#<child>]
+# Mirrors parent-status-helper.sh::_parse_phase_lines so both parsers accept
+# the same forms.
+#
+# Args: $1=line
+# Output: tab-separated <phase_num>\t<desc>\t<marker>\t<child_ref> on stdout
+#         (empty output if line doesn't match numbered form)
+# Returns: 0 always
+#######################################
+_parse_phase_line_numbered_form() {
+	local line="$1"
+	printf '%s' "$line" | grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+' || return 0
+
+	local phase_num description marker child_ref
+	phase_num=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*([0-9]+)\..*/\1/')
+
+	description=$(printf '%s' "$line" | sed -E \
+		-e 's/^[[:space:]]*[0-9]+\.[[:space:]]+//' \
+		-e 's/[[:space:]]*#[0-9]+[[:space:]]*$//' \
+		-e 's/[[:space:]]*\[(auto-fire|requires-decision)[^]]*\][[:space:]]*$//')
+
+	marker=$(_phase_marker_for_line "$line" "$_PHASE_MARKER_NONE")
+
+	child_ref=$(printf '%s' "$line" |
+		sed -E 's/\]\([^)]*\)[[:space:]]*$/]/' |
+		sed -nE 's/.*#([0-9]+)\]?[[:space:]]*$/\1/p')
+
+	printf '%s\t%s\t%s\t%s\n' "$phase_num" "$description" "$marker" "$child_ref"
+	return 0
+}
+
+#######################################
 # Parse the ## Phases section from a parent issue body.
 # Outputs one line per phase in tab-separated format:
 #   phase_num\tdescription\tmarker\tchild_issue
@@ -237,6 +271,7 @@ _parse_phase_line_bold_form() {
 # Supported phase-line forms (mixable within a single body):
 #   List form:  - Phase <N> - <description> [marker] [#<child>]
 #   Bold form:  **Phase <N> — <description> [marker]** [#<child>]
+#   Numbered:   <N>. <description> [marker] [#<child>]
 #
 # marker is one of: auto-fire, requires-decision, none
 # child_issue is the issue number (digits only) or empty
@@ -277,6 +312,7 @@ _parse_phases_section() {
 		[[ -n "$line" ]] || continue
 		_parse_phase_line_list_form "$line"
 		_parse_phase_line_bold_form "$line" "$global_auto_fire"
+		_parse_phase_line_numbered_form "$line"
 	done
 	return 0
 }

@@ -275,6 +275,18 @@ assert_eq "A5: ## Phases at EOF extracts both phases" "2" "$count"
 result=$(_parse_phases_section "")
 assert_empty "A6: empty body → empty result" "$result"
 
+# --- A7: Numbered-list phases parsed by the canonical shared parser ---
+BODY_A7=$'## Phases (one PR each)\n\n1. **Navigation.** Move menu #12\n2. **Search.** Add search\n\n## Notes\n\n1. unrelated'
+result=$( (
+	# shellcheck source=/dev/null
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/shared-phase-filing.sh"
+	_parse_phases_section "$BODY_A7"
+) 2>/dev/null)
+rows=$(printf '%s\n' "$result" | grep -c . || true)
+assert_eq "A7a: numbered list emits one row per phase" "2" "$rows"
+assert_contains "A7b: numbered phase child ref parsed" $'1\t**Navigation.** Move menu\tnone\t12' "$result"
+assert_contains "A7c: unfiled numbered phase has empty child ref" $'2\t**Search.** Add search\tnone\t' "$result"
+
 # ============================================================
 echo ""
 echo "${TEST_BLUE}=== Part B: structural wiring tests ===${TEST_NC}"
