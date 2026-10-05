@@ -259,6 +259,142 @@ run_blocked_completion_tests() {
 	test_manual_dispatch_blocked_completion_records_blocked_label
 	test_quoted_blocked_mention_continues
 	test_anchored_blocked_shapes_are_terminal
+	test_clean_exit_terminal_state_reconciliation
+	test_pr_less_terminal_proof_survives_finalization
+	return 0
+}
+
+# GH#33672: exercise the real success-output classifier and shared PR-less
+# verifier. Stub only external state and cleanliness; no network or resume calls.
+test_clean_exit_terminal_state_reconciliation() {
+	local shape="" result=0
+	for shape in blocked delivered consolidation silent open untrusted unrelated cross_repo dirty api_failure partial; do
+		if ! (
+			local WORKER_ISSUE_NUMBER="456" DISPATCH_REPO_SLUG="owner/repo"
+			local output_file="${TEST_ROOT}/terminal-${shape}.jsonl"
+			local work_dir="${TEST_ROOT}" rc=0 expected_rc=77 expected_label="premature_exit"
+			local issue_state="closed" association="COLLABORATOR" closing_number=456
+			local closing_owner="owner"
+			case "$shape" in
+			blocked)
+				printf '%s\n' '{"type":"text","text":"BLOCKED: prerequisite #123 remains open. Checkpoint preserved."}' >"$output_file"
+				expected_rc=83 expected_label="blocked"
+				;;
+			consolidation)
+				printf '%s\n' '{"type":"text","text":"Closed the parent and opened the consolidated successor spec. No code PR needed."}' >"$output_file"
+				expected_rc=0 expected_label="success"
+				;;
+			delivered)
+				printf '%s\n' '{"type":"text","text":"Already satisfied by an earlier merged PR. Nothing to push."}' >"$output_file"
+				expected_rc=0 expected_label="success"
+				;;
+			*)
+				printf '%s\n' '{"type":"text","text":"Investigation done; remainder needs a new run."}' >"$output_file"
+				case "$shape" in
+				silent | open | partial) issue_state="open" ;;
+				untrusted) association="NONE" ;;
+				unrelated) closing_number=789 ;;
+				cross_repo) closing_owner="other" ;;
+				esac
+				;;
+			esac
+			_hrw_pr_less_worktree_clean() {
+				[[ "$shape" != "dirty" ]] || return 1
+				return 0
+			}
+			gh() {
+				local resource="$1" action="$2" target="${3:-}"
+				[[ "$shape" != "api_failure" ]] || return 1
+				if [[ "$resource" == "api" && "$action" == "--paginate" ]]; then
+					action="$target"
+				fi
+				case "${resource}:${action}" in
+				api:repos/owner/repo/issues/456)
+					if [[ "$shape" == "consolidation" ]]; then
+						printf '%s\n' '{"state":"closed","state_reason":"completed","author_association":"COLLABORATOR","labels":[{"name":"consolidation-task"}],"body":"## Consolidation target: #123"}'
+					else
+						printf '{"state":"%s","state_reason":"completed","author_association":"%s"}\n' "$issue_state" "$association"
+					fi
+					;;
+				api:repos/owner/repo/issues/456/comments?per_page=100)
+					printf '%s\n' '[{"author_association":"COLLABORATOR","body":"Consolidation complete. Parent: #123 -> New: #789"}]'
+					;;
+				api:repos/owner/repo/issues/123)
+					printf '%s\n' '{"state":"closed","labels":[{"name":"consolidated"}]}'
+					;;
+				api:repos/owner/repo/issues/789)
+					printf '%s\n' '{"author_association":"COLLABORATOR","body":"Supersedes #123"}'
+					;;
+				pr:list)
+					[[ "$shape" != "consolidation" ]] || return 1
+					printf '%s\n' '42'
+					;;
+				pr:view)
+					[[ "$target" == "42" ]] || return 1
+					printf '{"state":"MERGED","mergedAt":"2026-10-05T00:00:00Z","closingIssuesReferences":[{"number":%s,"repository":{"name":"repo","owner":{"login":"%s"}}}]}\n' "$closing_number" "$closing_owner"
+					;;
+				*) return 1 ;;
+				esac
+				return 0
+			}
+			_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" "$work_dir" || rc=$?
+			[[ "$rc" -eq "$expected_rc" && "${_run_result_label:-}" == "$expected_label" ]] || exit 1
+		); then
+			result=1
+		fi
+		print_result "clean worker exit reconciles ${shape} without false continuation" "$result"
+		result=0
+	done
+	return 0
+}
+
+test_pr_less_terminal_proof_survives_finalization() {
+	local result=0
+	if ! (
+		local WORKER_ISSUE_NUMBER="456" DISPATCH_REPO_SLUG="owner/repo"
+		local work_dir="${TEST_ROOT}/terminal-proof-repo"
+		local output_file="${TEST_ROOT}/terminal-proof.jsonl" api_available=1
+		_setup_test_git_repo "$work_dir" 0
+		_hrw_pr_less_worktree_clean() { return 0; }
+		_hrw_release_dispatch_claim() { return 0; }
+		_hrw_permission_pending_path() { return 1; }
+		gh() {
+			local resource="$1" action="$2"
+			[[ "$api_available" == 1 ]] || return 1
+			case "${resource}:${action}" in
+			api:repos/owner/repo/issues/456)
+				printf '%s\n' '{"state":"closed","state_reason":"completed","author_association":"COLLABORATOR"}'
+				;;
+			pr:list) printf '%s\n' '42' ;;
+			pr:view)
+				printf '%s\n' '{"state":"MERGED","mergedAt":"2026-10-05T00:00:00Z","closingIssuesReferences":[{"number":456,"repository":{"name":"repo","owner":{"login":"owner"}}}]}'
+				;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		printf '%s\n' '{"type":"text","text":"Already delivered by an earlier merged PR."}' >"$output_file"
+		_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" "$work_dir" || exit 1
+		api_available=0
+		_hrw_finish_success_run "issue-456" "$work_dir" || exit 1
+		[[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]] || exit 1
+		# Cached proof must never waive new unpublished work or leak to a new run.
+		touch "${work_dir}/unpublished.txt"
+		if _hrw_pr_less_terminal_complete "issue-456" "$work_dir" 456 "owner/repo"; then
+			exit 1
+		fi
+		rm "${work_dir}/unpublished.txt"
+		local exit_code=0
+		printf '%s\n' '{"type":"text","text":"New attempt."}' >"$output_file"
+		_initialize_run_result
+		if _hrw_pr_less_terminal_complete "issue-456" "$work_dir" 456 "owner/repo"; then
+			exit 1
+		fi
+	); then
+		result=1
+	fi
+	print_result "PR-less proof survives later API failure but rejects edits and new attempts" "$result"
+	return 0
 }
 
 test_capability_escalation_ladder_is_bounded_and_exact() {

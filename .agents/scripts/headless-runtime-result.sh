@@ -46,6 +46,7 @@ _initialize_run_result() {
 	_run_runtime_error_type=""
 	_run_classification_source=""
 	_run_classification_pattern=""
+	_HRW_PR_LESS_VERIFIED_CONTEXT=""
 	return 0
 }
 
