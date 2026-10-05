@@ -111,18 +111,22 @@ _validator_workspace_matches() {
 _validator_all_workspace_scopes() {
 	local workspace_patterns="$1"
 	local manifest="" scope="" scopes=""
+	# Root checks own shared changes and may already fan out across workspaces.
+	# Do not repeat them per package or reject scriptless grouping packages.
+	if _validator_package_has_check package.json; then
+		printf '.\n'
+		return 0
+	fi
 	while IFS= read -r manifest; do
 		[[ "$manifest" == "package.json" ]] && continue
 		scope=${manifest%/package.json}
 		_validator_workspace_matches "$scope" "$workspace_patterns" || continue
+		_validator_package_has_check "$manifest" || continue
 		case $'\n'"$scopes"$'\n' in
 		*$'\n'"$scope"$'\n'*) ;;
 		*) scopes="${scopes}${scopes:+$'\n'}${scope}" ;;
 		esac
 	done < <(git ls-files '*package.json')
-	if _validator_package_has_check package.json; then
-		scopes=".${scopes:+$'\n'}${scopes}"
-	fi
 	if [[ -z "$scopes" ]]; then
 		print_error "[validators] root/shared change requires broader checks, but no check-only workspace scripts are available"
 		return 1
@@ -132,7 +136,7 @@ _validator_all_workspace_scopes() {
 }
 
 # Print the package roots that own Node-related files in the complete PR range.
-# A root/shared change intentionally selects the root package and broader checks.
+# A root/shared change selects root checks, or check-capable workspaces as fallback.
 _validator_scopes() {
 	local changed_files="" workspace_patterns="" changed_file=""
 	local scope=""
