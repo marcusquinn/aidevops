@@ -1545,6 +1545,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18589 Surface OpenCode provider errors in ai-research-helper.sh failures #bug #interactive tier:standard ref:GH#33637 logged:2026-10-05 -> [todo/tasks/t18589-brief.md]
 
+- [ ] t18590 Transport governor keeps stale low core quota across a new rate-limit window, pacing REST reads ~7.5s #auto-dispatch #bug #framework ref:GH#33651
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
