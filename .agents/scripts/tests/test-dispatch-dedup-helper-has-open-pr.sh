@@ -547,6 +547,33 @@ marcusquinn/aidevops|open|#18779 in:body|[{"number":18906,"body":"Resolves #1877
 	return 0
 }
 
+test_has_open_pr_distinguishes_body_mentions_from_references() {
+	local is_draft body title output rc expected
+	for is_draft in true false; do
+		for body in 'The results phase (#33653) stays open.' 'For #33653.' 'Refs: owner/repo#33653.' 'GH#33653'; do
+			title="Implement another issue"
+			expected=0
+			[[ "$body" == 'The results phase (#33653) stays open.' ]] && expected=1
+			set_gh_fixtures "marcusquinn/aidevops|open|#33653|[{\"number\":33654,\"title\":\"${title}\",\"body\":\"${body}\",\"isDraft\":${is_draft},\"reviewDecision\":\"APPROVED\",\"mergeStateStatus\":\"CLEAN\",\"labels\":[{\"name\":\"origin:worker\"}]}]"
+			rc=0
+			output=$("$HELPER_SCRIPT" has-open-pr 33653 marcusquinn/aidevops 'body reference regression') || rc=$?
+			if [[ "$rc" -eq "$expected" ]]; then
+				print_result "has-open-pr body reference (draft=${is_draft}): ${body}" 0
+			else
+				print_result "has-open-pr body reference (draft=${is_draft}): ${body}" 1 "Expected rc=${expected}, got rc=${rc}: ${output}"
+			fi
+		done
+		# Bare title references remain valid even when the body is only prose.
+		set_gh_fixtures "marcusquinn/aidevops|open|#33653|[{\"number\":33654,\"title\":\"Implement #33653\",\"body\":\"The results phase (#33653) stays open.\",\"isDraft\":${is_draft},\"reviewDecision\":\"APPROVED\",\"mergeStateStatus\":\"CLEAN\"}]"
+		if "$HELPER_SCRIPT" has-open-pr 33653 marcusquinn/aidevops 'bare title regression' >/dev/null; then
+			print_result "has-open-pr preserves bare title reference (draft=${is_draft})" 0
+		else
+			print_result "has-open-pr preserves bare title reference (draft=${is_draft})" 1
+		fi
+	done
+	return 0
+}
+
 test_has_open_pr_marks_worker_draft_for_stale_routing() {
 	set_gh_fixtures 'marcusquinn/aidevops|open|#18780|[{"number":18907,"title":"Worker checkpoint for #18780","body":"Resolves #18780. Incomplete worker checkpoint.","isDraft":true,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"UNKNOWN","labels":[{"name":"origin:worker"}]}]'
 
@@ -1200,6 +1227,7 @@ main() {
 	test_has_open_pr_fails_closed_when_reopen_lookup_fails
 	test_has_open_pr_detects_open_body_closing_keyword
 	test_has_open_pr_blocks_draft_body_closing_keyword
+	test_has_open_pr_distinguishes_body_mentions_from_references
 	test_has_open_pr_marks_worker_draft_for_stale_routing
 	test_has_open_pr_keeps_protected_draft_unroutable
 	test_has_open_pr_fails_closed_when_sibling_lookup_fails
