@@ -31,29 +31,42 @@ def scope_entries(body: str) -> list[tuple[str, str, str]]:
     return entries
 
 
-def validate(sources: list[str], successor: str) -> list[str]:
-    """Fail closed when a preserved dispatch contract is missing or narrowed."""
+def prerequisite_errors(source: str, successor: str) -> list[str]:
+    """Require exact source prerequisite lines and paragraphs."""
     errors = []
     successor_lines = set(successor.splitlines())
     successor_paragraphs = set(re.split(r"\n\s*\n", successor.strip()))
+    for line in source.splitlines():
+        if line.startswith("requires-secrets:") and line not in successor_lines:
+            errors.append("missing verbatim requires-secrets line")
+    for paragraph in re.split(r"\n\s*\n", source.strip()):
+        is_prerequisite = (re.search(r"^requires-secrets:", paragraph, re.MULTILINE)
+                           or re.search(r"runner[- ]prerequisite", paragraph, re.IGNORECASE))
+        if is_prerequisite and paragraph not in successor_paragraphs:
+            errors.append("missing verbatim runner-prerequisite paragraph")
+    return errors
+
+
+def scope_errors(source: str, successor: str) -> list[str]:
+    """Reject generated-path narrowing and existing-path reclassification."""
+    errors = []
     successor_scope = scope_entries(successor)
     scope_lines = {line for _, _, line in successor_scope}
     new_paths = {path for marker, path, _ in successor_scope if marker == "NEW"}
+    for marker, path, line in scope_entries(source):
+        if any(char in path for char in "*?[") and line not in scope_lines:
+            errors.append("missing verbatim wildcard Files Scope entry")
+        if marker == "EDIT" and path in new_paths:
+            errors.append("EDIT scope entry changed to NEW")
+    return errors
+
+
+def validate(sources: list[str], successor: str) -> list[str]:
+    """Fail closed when a preserved dispatch contract is missing or narrowed."""
+    errors = []
     for index, source in enumerate(sources, start=1):
-        prefix = f"source {index}"
-        for line in source.splitlines():
-            if line.startswith("requires-secrets:") and line not in successor_lines:
-                errors.append(f"{prefix}: missing verbatim requires-secrets line")
-        for paragraph in re.split(r"\n\s*\n", source.strip()):
-            if (re.search(r"^requires-secrets:", paragraph, re.MULTILINE)
-                    or re.search(r"runner[- ]prerequisite", paragraph, re.IGNORECASE)):
-                if paragraph not in successor_paragraphs:
-                    errors.append(f"{prefix}: missing verbatim runner-prerequisite paragraph")
-        for marker, path, line in scope_entries(source):
-            if any(char in path for char in "*?[") and line not in scope_lines:
-                errors.append(f"{prefix}: missing verbatim wildcard Files Scope entry")
-            if marker == "EDIT" and path in new_paths:
-                errors.append(f"{prefix}: EDIT scope entry changed to NEW")
+        findings = prerequisite_errors(source, successor) + scope_errors(source, successor)
+        errors.extend(f"source {index}: {finding}" for finding in findings)
     return list(dict.fromkeys(errors))
 
 
