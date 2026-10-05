@@ -29,6 +29,14 @@ Historical zero-padded IDs remain migration input for counter seeding and
 collision detection, but they are not canonical aliases. Migrations must reject
 an ambiguous rewrite when both a padded token and its unpadded form exist.
 
+Run `bash ~/.aidevops/agents/scripts/task-id-normalize-helper.sh --dry-run`
+from the project worktree (or pass `--repo PATH`). Review the proposed rewrites,
+then use `--apply` to normalize TODO task lines, dependency and TOON references,
+`todo/PLANS.md` references and Git-tracked `todo/tasks/` brief filenames. The
+helper refuses ambiguous IDs and filename collisions before writing, preserves
+archived sections, and verifies that the counter seed does not decrease and
+`.task-counter` is unchanged. It never modifies branches, history or GitHub titles.
+
 The dependency cache currently validates at most 500 fetched issues through the
 shared shell codec. The pulse-performance owner should restore batched cache
 construction only when the batch transports broad candidates back through this

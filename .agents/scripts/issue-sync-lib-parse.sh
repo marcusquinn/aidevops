@@ -153,6 +153,25 @@ _escape_ere() {
 }
 
 # Extract and validate the task ID in the canonical TODO checkbox position.
+# One diagnostic covers all padded tokens on a rejected line, including deps.
+_warn_padded_task_line() {
+	local line="$1"
+	local remaining="$line" matched="" token="" canonical="" replacements=""
+	local padded_ere='(^|[^[:alnum:].])(t0+[0-9]+(\.[0-9]+)*)($|[^[:alnum:].]|\.($|[^[:alnum:].]))'
+	while [[ "$remaining" =~ $padded_ere ]]; do
+		matched="${BASH_REMATCH[0]}"
+		token="${BASH_REMATCH[2]}"
+		if canonical=$(task_identity_unpad_legacy "$token"); then
+			replacements="${replacements:+${replacements}, }${token} -> ${canonical}"
+		fi
+		remaining="${remaining#*"$matched"}"
+	done
+	if [[ -n "$replacements" ]]; then
+		printf 'warning: padded legacy task IDs (%s); line rejected; run: bash ~/.aidevops/agents/scripts/task-id-normalize-helper.sh --dry-run\n' "$replacements" >&2
+	fi
+	return 0
+}
+
 _task_id_from_todo_line() {
 	local line="$1"
 	local candidate=""
@@ -160,7 +179,10 @@ _task_id_from_todo_line() {
 	if [[ "$line" =~ $todo_line_re ]]; then
 		candidate="${BASH_REMATCH[1]}"
 	fi
-	task_identity_validate "$candidate" || return 1
+	if ! task_identity_validate "$candidate"; then
+		_warn_padded_task_line "$line"
+		return 1
+	fi
 	printf '%s\n' "$candidate"
 	return 0
 }
@@ -267,7 +289,10 @@ _task_dependency_value() {
 			printf '%s\n' "warning: ${key}:${dependency} has no task ID; ignoring native relationship metadata" >&2
 			continue
 		fi
-		task_identity_validate "$dependency" || return 1
+		if ! task_identity_validate "$dependency"; then
+			_warn_padded_task_line "$line"
+			return 1
+		fi
 		task_dependencies="${task_dependencies:+${task_dependencies},}${dependency}"
 	done < <(printf '%s\n' "$value" | tr ',' '\n')
 	[[ -n "$task_dependencies" ]] || return 0
@@ -294,7 +319,10 @@ _task_parent_value() {
 		printf '%s\n' "warning: parent:${value} has no task ID; ignoring parent hierarchy metadata" >&2
 		return 0
 	fi
-	task_identity_validate "$value" || return 1
+	if ! task_identity_validate "$value"; then
+		_warn_padded_task_line "$line"
+		return 1
+	fi
 	printf '%s\n' "$value"
 	return 0
 }
@@ -483,7 +511,7 @@ extract_subtasks() {
 	local line=""
 	echo "$block" | tail -n +2 | while IFS= read -r line; do
 		[[ "$line" =~ ^[[:space:]]+-[[:space:]]\[.\][[:space:]] ]] || continue
-		task_identity_extract_first "$line" >/dev/null 2>&1 && printf '%s\n' "$line"
+		_task_id_from_todo_line "$line" >/dev/null && printf '%s\n' "$line"
 	done
 	return 0
 }

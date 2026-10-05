@@ -93,6 +93,30 @@ task_identity_validate() {
 	return 1
 }
 
+# Migration/diagnostic only: never accept padded IDs as canonical aliases.
+task_identity_unpad_legacy() {
+	local input="${1:-}"
+	local padded_ere='^t0+[0-9]+(\.[0-9]+)*$'
+	local component="" canonical="" remainder="${input#t}"
+	[[ "$input" =~ $padded_ere ]] || return 1
+	while [[ -n "$remainder" ]]; do
+		component="${remainder%%.*}"
+		if [[ "$remainder" == *.* ]]; then
+			remainder="${remainder#*.}"
+		else
+			remainder=""
+		fi
+		while [[ "$component" == 0* && "${#component}" -gt 1 ]]; do
+			component="${component#0}"
+		done
+		canonical="${canonical:+${canonical}.}${component}"
+	done
+	canonical="t${canonical}"
+	task_identity_validate "$canonical" || return 1
+	printf '%s\n' "$canonical"
+	return 0
+}
+
 task_identity_format() {
 	local kind="${1:-}"
 	local origin_id="${2:-}"

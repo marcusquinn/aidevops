@@ -134,6 +134,9 @@ _update_sync_projects() {
 	local repos_needing_upgrade=()
 	while IFS= read -r repo_path; do
 		[[ -z "$repo_path" ]] && continue
+		if [[ -d "$repo_path" && -f "$AGENTS_DIR/scripts/task-id-normalize-helper.sh" ]]; then
+			bash "$AGENTS_DIR/scripts/task-id-normalize-helper.sh" --repo "$repo_path" --advisory || true
+		fi
 		[[ -d "$repo_path" ]] && check_repo_needs_upgrade "$repo_path" && repos_needing_upgrade+=("$repo_path")
 	done < <(get_registered_repos)
 	_update_sync_agent_source_repos "$current_ver" || true
