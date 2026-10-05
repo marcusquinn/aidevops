@@ -695,6 +695,9 @@ _dispatch_rest_core_requires_serial() {
 # cheap cached snapshots must not erase the reserve needed for a fresh scan.
 _dispatch_enumeration_expected_seconds() {
 	local timing_file="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds" expected=300
+	# A first-wave scan stops at the first nonempty repository. Its estimate
+	# must not inherit a paced all-repository census that exceeds a whole cycle.
+	[[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != "1" ]] || timing_file="${timing_file}-first-wave"
 	if [[ -f "$timing_file" && ! -L "$timing_file" ]]; then
 		read -r expected <"$timing_file" || expected=300
 	fi
@@ -707,6 +710,8 @@ _dispatch_enumeration_expected_seconds() {
 
 _dispatch_record_enumeration_seconds() {
 	local started_ms="$1" ended_ms="" elapsed=0 expected=0 timing_dir="${HOME}/.aidevops/cache" temporary=""
+	local timing_file="${timing_dir}/pulse-dispatch-enumeration-seconds"
+	[[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != "1" ]] || timing_file="${timing_file}-first-wave"
 	ended_ms=$(_dispatch_now_ms) || return 0
 	[[ "$started_ms" =~ ^[0-9]{1,16}$ && "$ended_ms" =~ ^[0-9]{1,16}$ ]] || return 0
 	((ended_ms >= started_ms)) || return 0
@@ -718,7 +723,7 @@ _dispatch_record_enumeration_seconds() {
 	mkdir -p "$timing_dir" 2>/dev/null || return 0
 	temporary=$(mktemp "${timing_dir}/pulse-dispatch-enumeration.XXXXXX") || return 0
 	printf '%s\n' "$expected" >"$temporary"
-	mv -f "$temporary" "${timing_dir}/pulse-dispatch-enumeration-seconds" 2>/dev/null || rm -f "$temporary"
+	mv -f "$temporary" "$timing_file" 2>/dev/null || rm -f "$temporary"
 	return 0
 }
 

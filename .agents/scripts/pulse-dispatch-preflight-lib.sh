@@ -462,6 +462,8 @@ _preflight_early_dispatch() {
 	# Internal, dynamically scoped only to this fill. Never export to workers
 	# or use it to bypass dispatch admission, trust, claim or ledger checks.
 	local _PULSE_FIRST_DISPATCH_WAVE=1
+	# A partial first-wave census must not populate the full-scan snapshot key.
+	local PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping early dispatch_max" >>"$LOGFILE"
 	else

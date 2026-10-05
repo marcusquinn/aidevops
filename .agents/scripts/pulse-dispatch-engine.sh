@@ -375,6 +375,15 @@ _append_ranked_repo_candidates() {
 #   $2 - dependency normalization mode (optional: normalize or skip)
 # Returns: JSON array sorted by score desc, createdAt asc, updatedAt asc
 #######################################
+_dispatch_first_wave_advance_cursor() {
+	local slug="$1" cursor_dir="${HOME}/.aidevops/cache" temporary=""
+	mkdir -p "$cursor_dir" 2>/dev/null || return 0
+	temporary=$(mktemp "${cursor_dir}/pulse-first-wave-cursor.XXXXXX") || return 0
+	printf '%s\n' "$slug" >"$temporary"
+	mv -f "$temporary" "${cursor_dir}/pulse-first-wave-cursor" 2>/dev/null || rm -f "$temporary"
+	return 0
+}
+
 build_ranked_dispatch_candidates_json() {
 	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
 	local dependency_normalization_mode="${2:-normalize}"
@@ -393,6 +402,10 @@ build_ranked_dispatch_candidates_json() {
 	fi
 
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
+	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" && -f "$cursor_file" && ! -L "$cursor_file" ]]; then
+		IFS= read -r cursor <"$cursor_file" || cursor=""
+	fi
 	tmp_candidates=$(mktemp) || return 1
 	completeness_file=$(mktemp) || {
 		rm -f "$tmp_candidates"
@@ -433,9 +446,12 @@ build_ranked_dispatch_candidates_json() {
 		# complete product discovery from this intentionally partial snapshot.
 		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" && -s "$tmp_candidates" ]]; then
 			product_complete=false
+			# Rotate even if these candidates later fail live dispatch gates, so
+			# one repository's backlog cannot monopolize every first wave.
+			_dispatch_first_wave_advance_cursor "$repo_slug"
 			break
 		fi
-	done < <(jq -r '
+	done < <(jq -r --arg cursor "$cursor" '
 		def pulse_hour_start:
 			if (.pulse_hours | type) == "array" then .pulse_hours[0]
 			else .pulse_hours.start
@@ -444,8 +460,10 @@ build_ranked_dispatch_candidates_json() {
 			if (.pulse_hours | type) == "array" then .pulse_hours[1]
 			else .pulse_hours.end
 			end;
-		.initialized_repos[] |
-		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") |
+		[.initialized_repos[] |
+		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "")] as $repos |
+		($repos | map(.slug) | index($cursor)) as $index |
+		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end)[] |
 		[
 			.slug,
 			.path,
