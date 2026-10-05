@@ -853,8 +853,11 @@ _merge_prefetch_prospective_blobs() {
 	done
 	awk '!/^0+$/ && NF && !seen[$0]++' "$candidates" >"$wanted" || return 1
 	[[ -s "$wanted" ]] || return 0
+	# Commit/tree fetches retain blob:none; this request contains only enumerated
+	# blob OIDs. Override both the flag and promisor filter to send those blobs
+	# without walking unrelated history.
 	_merge_fetch_partial_objects "$real_git" "$object_repo" "$wanted" \
-		--no-write-fetch-head --stdin -- "$_MERGE_PROSPECTIVE_REMOTE" || return 1
+		--no-filter --no-write-fetch-head --stdin -- "$_MERGE_PROSPECTIVE_REMOTE" || return 1
 	_merge_verify_prospective_blobs "$real_git" "$object_repo" "$wanted" || return 1
 	return 0
 }
@@ -907,7 +910,12 @@ _merge_run_bounded_isolated_git() (
 	shift 2
 	_merge_unset_repository_git_env
 	if [[ -n "$stdin_file" ]]; then
-		timeout_sec "$timeout_secs" "$@" <"$stdin_file"
+		# The macOS timeout fallback backgrounds its child; in command
+		# substitutions Bash replaces inherited stdin with /dev/null. Open the
+		# enumerated-object input inside that child, after timeout starts it.
+		# shellcheck disable=SC2016 # The child expands its positional arguments.
+		timeout_sec "$timeout_secs" bash -c \
+			'stdin_file="$1"; shift; exec "$@" <"$stdin_file"' bash "$stdin_file" "$@"
 		return $?
 	fi
 	timeout_sec "$timeout_secs" "$@" </dev/null

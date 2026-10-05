@@ -1606,6 +1606,13 @@ if [[ "$subcommand" == "fetch" && -n "${AIDEVOPS_TEST_SKIP_BLOB_FETCH:-}" && " $
 	cat >/dev/null
 	exit 0
 fi
+if [[ "$subcommand" == "fetch" ]]; then
+	if [[ " $* " == *" --stdin "* ]]; then
+		[[ " $* " == *" --no-filter "* ]] || exit 1
+	else
+		[[ " $* " != *" --no-filter "* ]] || exit 1
+	fi
+fi
 if [[ "$subcommand" == "merge-tree" && -n "${AIDEVOPS_TEST_TRANSFER_LOG:-}" ]]; then
 	printf 'checked\n' >>"$AIDEVOPS_TEST_TRANSFER_LOG"
 	while IFS= read -r oid; do
