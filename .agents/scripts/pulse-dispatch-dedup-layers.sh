@@ -18,6 +18,7 @@
 #   - _dedup_layer4_pr_evidence
 #   - _dedup_layer5_dispatch_comment
 #   - _dispatch_blocked_checkpoint_attention
+#   - _dispatch_stalled_checkpoint_continuation
 #   - _dispatch_interactive_hold_gate
 #   - _dedup_layer6_assignee_and_stale
 #   - _dedup_layer7_claim_lock
@@ -305,6 +306,10 @@ _dedup_layer4_pr_evidence() {
 				echo "[pulse-wrapper] Dedup: PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
 			if [[ "$dedup_helper_output" == WORKER_DRAFT_CHECKPOINT:* ]]; then
+				if _dispatch_stalled_checkpoint_continuation "$issue_number" "$repo_slug" \
+					"$dedup_helper_output" "${self_login:-}"; then
+					return 0
+				fi
 				_dispatch_blocked_checkpoint_attention "$issue_number" "$repo_slug" "$dedup_helper_output"
 				return 2
 			fi
@@ -432,6 +437,39 @@ _dispatch_blocked_checkpoint_attention() {
 	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" blocked-attention \
 		"$repo_slug" "$issue_number" "$pr_number" >>"$LOGFILE" 2>&1 || true
 	return 0
+}
+
+#######################################
+# GH#33654: a worker killed by a stall/timeout after opening its draft releases
+# the issue unassigned, so stale-assignment recovery never emits
+# STALE_PR_CONTINUATION and the blocked-release attention path skips it. Ask
+# the continuation helper to verify the stall release and launch the bounded
+# exact-head continuation (or record attention once a continuation of the same
+# head also stalled). The draft stays a hard duplicate-dispatch block.
+# Arguments: issue_number, repo_slug, WORKER_DRAFT_CHECKPOINT output, login
+# Exit: 0 when routed/deduplicated/attention recorded, 1 when not applicable
+#######################################
+_dispatch_stalled_checkpoint_continuation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local checkpoint_output="$3"
+	local self_login="$4"
+	local pr_number="" repo_path=""
+	[[ -n "$self_login" ]] || return 1
+	[[ "$checkpoint_output" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]] || return 1
+	pr_number="${BASH_REMATCH[1]}"
+	if declare -F has_worker_for_repo_issue >/dev/null 2>&1 && has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
+		return 1
+	fi
+	declare -F _pulse_merge_repo_path_for_slug >/dev/null 2>&1 || return 1
+	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || return 1
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 1
+	if "${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" dispatch-stalled \
+		"$repo_slug" "$repo_path" "$issue_number" "$pr_number" "$self_login" >>"$LOGFILE" 2>&1; then
+		echo "[pulse-wrapper] Dedup: routed stall-released worker draft PR #${pr_number} for issue #${issue_number} in ${repo_slug} (GH#33654)" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
 }
 
 _dispatch_interactive_worker_checkpoint_continuation() {

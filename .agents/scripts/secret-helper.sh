@@ -679,12 +679,17 @@ cmd_get() {
 	return 0
 }
 
-# Status-only resolution for dispatch. Unlike inventory, this detects a locked
-# store or an empty secret. Values stay inside the existing resolver and never
-# reach the caller, logs or an intermediate file.
+# Status-only resolution for dispatch: 0 readable, 1 missing/empty plaintext,
+# 3 gopass-owned but unreadable/empty. Decrypt once; never emit values/errors.
 cmd_check() {
 	local name="${1:-}"
 	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
+	if has_gopass && gopass_owns_secret "$name"; then
+		local value=""
+		value=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" </dev/null 2>/dev/null) || return 3
+		[[ -n "$value" ]] || return 3
+		return 0
+	fi
 	cmd_get "$name" >/dev/null 2>&1 || return 1
 	return 0
 }

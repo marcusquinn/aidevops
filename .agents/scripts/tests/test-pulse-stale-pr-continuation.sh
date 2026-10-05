@@ -76,6 +76,12 @@ cat >"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" <<ROUTE_STUB
 if [[ "\$1" == dispatch-approved && "\${STUB_APPROVED_RESULT:-1}" != 0 ]]; then
 	exit 1
 fi
+if [[ "\$1" == dispatch-stalled ]]; then
+	printf '%s\n' "\$*" >"${ROUTE_ARGS_FILE}.stalled"
+	[[ "\${STUB_STALLED_RESULT:-0}" == 0 ]] || exit 1
+	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=stalled-runner\n' "\$4" "\$2" "\$5"
+	exit 0
+fi
 printf '%s\n' "\$*" >"${ROUTE_ARGS_FILE}"
 exit 0
 ROUTE_STUB
@@ -283,6 +289,34 @@ if ! _dispatch_negative_cache_reason "${candidate/12:01:00/12:02:00}" >/dev/null
 else
 	print_result "edited issue invalidates the checkpoint" 1
 fi
+
+# GH#33654: a stall-released (unassigned, status:available) issue whose worker
+# draft has no live worker routes to the exact-head continuation helper instead
+# of holding silently; a declined stall route keeps the GH#33132 behaviour.
+STUB_ACTIVE_WORKER=0
+self_login="runner"
+rm -f "$ROUTE_ARGS_FILE" "${ROUTE_ARGS_FILE}.stalled"
+: >"$LOGFILE"
+LAYER4_RC=0
+_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 0 && ! -f "$ROUTE_ARGS_FILE" &&
+	"$(<"${ROUTE_ARGS_FILE}.stalled")" == "dispatch-stalled owner/repo ${TEST_ROOT}/repo 29507 29519 runner" ]] &&
+	grep -q 'STALE_PR_CONTINUATION: issue #29507 in owner/repo — PR #29519' "$LOGFILE" &&
+	grep -q 'routed stall-released worker draft PR #29519 for issue #29507' "$LOGFILE"; then
+	print_result "GH#33654 stall-released unassigned worker draft routes exact-head continuation" 0
+else
+	print_result "GH#33654 stall-released unassigned worker draft routes exact-head continuation" 1
+fi
+export STUB_STALLED_RESULT=1
+rm -f "$ROUTE_ARGS_FILE"
+LAYER4_RC=0
+_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 2 && "$(<"$ROUTE_ARGS_FILE")" == "blocked-attention owner/repo 29507 29519" ]]; then
+	print_result "declined stall route falls back to blocked attention and still blocks" 0
+else
+	print_result "declined stall route falls back to blocked attention and still blocks" 1
+fi
+unset STUB_STALLED_RESULT self_login
 
 rm -f "$cache_file"
 _dispatch_negative_cache_record "$candidate" dedup_active_claim

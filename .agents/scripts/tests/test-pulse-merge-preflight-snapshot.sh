@@ -99,6 +99,7 @@ _required_contexts_for_default_branch() {
 	[[ "$SNAPSHOT_MODE" == "required_contexts_error" ]] && return 1
 	printf 'required-a\n'
 	[[ "$SNAPSHOT_MODE" == "qlty_usage_pending_required" ]] && printf 'qlty usage\n'
+	[[ "$SNAPSHOT_MODE" == "qlty_quota_exhausted_required" ]] && printf 'qlty check\n'
 	[[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" || "$SNAPSHOT_MODE" == "maintainer_infra_fail" ]] && printf 'Maintainer Review & Assignee Gate\n'
 	return 0
 }
@@ -168,6 +169,8 @@ stub_commit_status() {
 		printf '{"statuses":[{"context":"review-bot-gate","state":"failure","updated_at":"%s"}]}\n' "$gate_at"
 	elif [[ "$SNAPSHOT_MODE" == qlty_external_fail* ]]; then
 		printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"},{"context":"qlty check","state":"failure","updated_at":"2026-01-01T00:01:05Z"}]}\n' "$gate_at"
+	elif [[ "$SNAPSHOT_MODE" == qlty_quota_exhausted* ]]; then
+		printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"},{"context":"qlty check","state":"error","description":"Qlty did not run because you are out of minutes.","updated_at":"2026-01-01T00:01:05Z"}]}\n' "$gate_at"
 	elif [[ "$SNAPSHOT_MODE" == qlty_usage_pending* ]]; then
 		printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"},{"context":"qlty usage","state":"pending","updated_at":"2026-01-01T00:01:05Z"}]}\n' "$gate_at"
 	elif [[ "$SNAPSHOT_MODE" == "same_name_source_conflict" ]]; then
@@ -703,6 +706,8 @@ main() {
 	assert_gate "external qlty failure blocks without a successful regression gate" qlty_external_fail_without_companion 1
 	assert_gate "non-required never-terminal qlty usage status does not block merge" qlty_usage_pending 0
 	assert_gate "required qlty usage status still blocks while pending" qlty_usage_pending_required 1
+	assert_gate "non-required qlty check that ran out of minutes does not block merge" qlty_quota_exhausted 0
+	assert_gate "required qlty check that ran out of minutes still blocks" qlty_quota_exhausted_required 1
 	assert_gate "infrastructure-failed required check requests rerun and stays blocked" required_infra_fail 1
 	if [[ "$RERUN_CALLS" -eq 1 ]] && grep -q "requested infrastructure rerun.*run=303" "$LOGFILE"; then
 		printf 'PASS infrastructure-failed required check requests one audited rerun\n'

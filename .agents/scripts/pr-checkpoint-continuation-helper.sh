@@ -29,7 +29,29 @@ PCC_ORIGINAL_STATUS=""
 PCC_OWNERSHIP_TRANSFERRED=0
 PCC_REVISION_APPROVAL=0
 PCC_PREVIOUS_ASSIGNEE=""
+# GH#33654: true only for dispatch-stalled, where a stall release already
+# unassigned the issue (status:available) and the successor claims it.
+PCC_ALLOW_RELEASED="false"
 _PCC_ATTENTION_MARKER="aidevops:blocked-checkpoint-attention"
+_PCC_STALL_ATTENTION_MARKER="aidevops:stalled-checkpoint-attention"
+# Stall/timeout release reasons (worker-activity-failure-families.jq
+# "watchdog-stall" plus kill-site timeout classes) eligible for one automatic
+# exact-head continuation. `blocked` and every other reason are excluded.
+_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+# Shared jq definitions for trusted coordination-event evidence in issue
+# comments (blocked and stall release lookups).
+# shellcheck disable=SC2016 # jq program text, not shell expansion.
+_PCC_JQ_RELEASE_DEFS='
+	def trusted: (.author_association // "") as $a |
+		($a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR");
+	def login: .user.login // .author // "";
+	def body_lines: (.body // "") | split("\n")[];
+	def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
+	def is_release: startswith("CLAIM_RELEASED ");
+	def coordination: any(body_lines; startswith("DISPATCH_CLAIM ") or
+		startswith("DISPATCH_LEASE ") or is_release or
+		startswith("Dispatching worker") or startswith("Interactive session claimed"));
+'
 
 _prrts_checkpoint_lease() {
 	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
@@ -138,7 +160,7 @@ _prrts_prelaunch_target_fence() {
 		_pcc_claim_revised_checkpoint "$repo_slug" "$pr_number" "$head_ref" "$head_oid"
 		return $?
 	fi
-	if [[ "$expected_assignee" != "$authenticated_login" ]]; then
+	if [[ "$expected_assignee" != "$authenticated_login" || "$PCC_ALLOW_RELEASED" == true ]]; then
 		_pcc_transfer_issue_ownership "$PCC_LINKED_ISSUE" "$repo_slug" \
 			"$expected_assignee" "$authenticated_login" || {
 			PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_assignee_transfer_failed"
@@ -170,6 +192,7 @@ _pcc_usage() {
 	printf '       %s dispatch-approved <repo_slug> <repo_path> <linked_issue> <authenticated_login>\n' "$name"
 	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id>\n' "$name"
 	printf '       %s blocked-attention <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
+	printf '       %s dispatch-stalled <repo_slug> <repo_path> <linked_issue> <draft_pr_number> <authenticated_login>\n' "$name"
 	return 0
 }
 
@@ -279,7 +302,7 @@ _pcc_issue_metadata_is_eligible() {
 	comments_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 1
 	_pr_checkpoint_issue_metadata_is_eligible "$issue_json" "$linked_issue" \
-		"$expected_assignee" "$comments_json" "$checkpoint_assignee"
+		"$expected_assignee" "$comments_json" "$checkpoint_assignee" "$PCC_ALLOW_RELEASED"
 	return $?
 }
 
@@ -330,6 +353,13 @@ _pcc_transfer_issue_ownership() {
 	local replacement_assignee="$4"
 	[[ "$linked_issue" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
 	[[ -n "$previous_assignee" && -n "$replacement_assignee" ]] || return 1
+	if [[ "$PCC_ALLOW_RELEASED" == true ]]; then
+		# GH#33654: the stall release already unassigned the issue. Claim it
+		# for the successor (even the same runner) so peers see a live owner.
+		set_issue_status "$linked_issue" "$repo_slug" "in-progress" \
+			--add-assignee "$replacement_assignee" >/dev/null 2>&1 || return 1
+		return 0
+	fi
 	[[ "$previous_assignee" != "$replacement_assignee" ]] || return 0
 	set_issue_status "$linked_issue" "$repo_slug" "in-progress" \
 		--add-assignee "$replacement_assignee" \
@@ -350,12 +380,14 @@ _pcc_restore_issue_ownership() {
 	local replacement_assignee="$4"
 	local previous_status="$5"
 	local issue_json=""
+	local -a restore_args=(--add-assignee "$previous_assignee" --remove-assignee "$replacement_assignee")
+	# A released (unassigned) issue is restored to unassigned, not to the runner.
+	[[ "$PCC_ALLOW_RELEASED" != true ]] || restore_args=(--remove-assignee "$replacement_assignee")
 	issue_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || return 1
 	_pcc_issue_metadata_is_eligible "$repo_slug" "$issue_json" "$linked_issue" \
 		"$replacement_assignee" "$PCC_CHECKPOINT_ASSIGNEE" || return 1
 	set_issue_status "$linked_issue" "$repo_slug" "$previous_status" \
-		--add-assignee "$previous_assignee" \
-		--remove-assignee "$replacement_assignee" >/dev/null 2>&1 || return 1
+		"${restore_args[@]}" >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -454,12 +486,20 @@ _pcc_dispatch() {
 	return 0
 }
 
+# Paginated issue comments (slurped pages) for coordination-event evidence.
+# Args: $1=repo slug, $2=issue number
+_pcc_issue_comments() {
+	local repo="$1" issue="$2"
+	gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp
+	return $?
+}
+
 _pcc_dispatch_approved() {
 	local repo="$1" path="$2" issue="$3" login="$4" candidate="" pr="" runner=""
 	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
 	# Discovery is not authorization: _pcc_dispatch freshly verifies the complete
 	# envelope and the claim helper rereads it again across distributed consensus.
-	candidate=$(gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp |
+	candidate=$(_pcc_issue_comments "$repo" "$issue" |
 		jq -er --arg repo "$repo" --argjson issue "$issue" '
 		[.[][] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") |
 		.body | split("\n")[] | select(startswith("CHECKPOINT_CONTINUATION_APPROVED ")) |
@@ -495,20 +535,12 @@ _pcc_approval_template() {
 #######################################
 _pcc_blocked_release_evidence() {
 	local comments="$1" runner="$2" key="$3"
-	jq -er --arg runner "$runner" --arg key "$key" '
-		def trusted: (.author_association // "") as $a |
-			($a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR");
-		def login: .user.login // .author // "";
-		def body_lines: (.body // "") | split("\n")[];
-		def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
-		def coordination: any(body_lines; startswith("DISPATCH_CLAIM ") or
-			startswith("DISPATCH_LEASE ") or startswith("CLAIM_RELEASED ") or
-			startswith("Dispatching worker") or startswith("Interactive session claimed"));
+	jq -er --arg runner "$runner" --arg key "$key" "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
 		| sort_by(.id) as $c
-		| ([$c[] | select(any(body_lines; startswith("CLAIM_RELEASED ")))] | last) as $release
+		| ([$c[] | select(any(body_lines; is_release))] | last) as $release
 		| select($release != null)
-		| ([$release | body_lines | select(startswith("CLAIM_RELEASED "))] | first) as $line
+		| ([$release | body_lines | select(is_release)] | first) as $line
 		| select(($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner and
 			($release | login) == $runner)
 		| select([$c[] | select(.id > $release.id and coordination)] | length == 0)
@@ -549,7 +581,7 @@ _pcc_blocked_attention() {
 		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
 	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
 	_pcc_login_is_safe "$runner" || return 1
-	comments=$(gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp) || return 1
+	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
 	key="${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}"
 	evidence=$(_pcc_blocked_release_evidence "$comments" "$runner" "$key") || {
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_SKIPPED: PR #%s in %s has no current blocked release\n' "$pr" "$repo"
@@ -584,6 +616,125 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 	return 0
 }
 
+#######################################
+# Find the stall/timeout release that left an open worker draft (GH#33654).
+# The newest trusted coordination event (claim, lease, dispatch, release or
+# interactive claim) must be a CLAIM_RELEASED whose reason matches
+# _PCC_STALL_RELEASE_PATTERN. Watchdog releases name the local user as runner,
+# so the poster is not bound to the PR author; trust comes from association.
+# The count of stall releases newer than the head commit bounds retries: the
+# original stall is 1; a continuation that stalled without pushing makes it 2.
+# Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
+#       $3=attention dedup key
+# Output: release_id<TAB>reason<TAB>stalls_since_head<TAB>attention_posted
+# Returns: 0 when a stall release owns the draft, 1 otherwise
+#######################################
+_pcc_stall_release_evidence() {
+	local comments="$1" head_date="$2" key="$3"
+	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" "${_PCC_JQ_RELEASE_DEFS}"'
+		def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+		def release_reason: ([body_lines | select(is_release)] | first // "") | field("reason");
+		def stall_release: release_reason | (length > 0 and test($pattern));
+		($head_date | epoch) as $head_epoch
+		| [flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
+		| sort_by(.id) as $c
+		| ([$c[] | select(coordination)] | last) as $release
+		| select($release != null and ($release | stall_release))
+		| [$c[] | select(stall_release and ((.created_at // "") | (try epoch catch 0)) > $head_epoch)] as $stalls
+		| [($release.id | tostring), ($release | release_reason), ($stalls | length | tostring),
+			(any($c[]; (.body // "") | contains($key)) | tostring)]
+		| @tsv
+	' <<<"$comments"
+	return $?
+}
+
+#######################################
+# Post one attention record when an exact-head continuation of a stall-released
+# draft also stalled (GH#33654). Same shape as the GH#33132 blocked record:
+# never a coordination-event line, grants nothing, never dispatches.
+# Args: repo, issue, pr, head, release_id, reason, stalls, dedup key
+#######################################
+_pcc_post_stall_attention() {
+	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" reason="$6" stalls="$7" key="$8"
+	local body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${key} release=${release_id} -->
+STALLED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} reason=${reason} stalls=${stalls}
+
+Workers released this issue ${stalls} times (latest reason \`${reason}\`) after draft PR #${pr} reached head \`${head}\`, including one automatic exact-head continuation. Pulse will not continue the same head again, and ordinary redispatch stays held while the draft exists.
+
+Next action for the brief owner (write access required), one of:
+
+1. Review draft PR #${pr}. If the work is complete, mark it ready for review so the normal merge flow takes over.
+2. Push a corrected commit to the PR branch; a new head re-arms one automatic continuation.
+3. Close draft PR #${pr} to discard the checkpoint; ordinary dispatch then restarts from the current brief.
+
+See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head.
+<!-- ops:end -->"
+	gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$body" >/dev/null || return 1
+	return 0
+}
+
+#######################################
+# Continue an unassigned worker draft left by a stall/timeout release
+# (GH#33654). Stall releases unassign the issue, so neither stale-assignment
+# recovery nor the blocked-release attention path sees it, and the draft held
+# the objective indefinitely. This verifies the release evidence, emits the
+# STALE_PR_CONTINUATION signal and reuses _pcc_dispatch with released-issue
+# eligibility, which re-verifies the exact worker draft, claims the issue for
+# the authenticated runner before launch and restores it on failure.
+# Retries are bounded per head: once a continuation of this head also stalled,
+# post one attention record instead of looping.
+# Args: $1=repo slug, $2=repo path, $3=linked issue, $4=draft PR, $5=login
+# Returns: 0 dispatched, deduplicated or attention recorded; 1 not applicable
+#          or failed; 2 invalid arguments
+#######################################
+_pcc_dispatch_stalled() {
+	local repo="$1" path="$2" issue="$3" pr="$4" login="$5"
+	local runner=""
+	local pr_json="" head="" head_date="" assignees="" comments="" evidence="" key=""
+	local release_id="" reason="" stalls="" posted=""
+	if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$issue" =~ ^[1-9][0-9]*$ ||
+		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
+		return 2
+	fi
+	pr_json=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,headRefOid,author,commits) || return 1
+	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
+		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
+	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
+	_pcc_login_is_safe "$runner" || return 1
+	head_date=$(jq -er --arg head "$head" '[.commits[]? | select(.oid == $head) | .committedDate] |
+		last | strings | select(length > 0)' <<<"$pr_json") || return 1
+	assignees=$(gh api "repos/${repo}/issues/${issue}" --jq '(.assignees // []) | length') || return 1
+	if [[ "$assignees" != 0 ]]; then
+		# Assigned drafts belong to stale-assignment recovery (Layer 6).
+		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: issue #%s in %s is assigned\n' "$issue" "$repo"
+		return 1
+	fi
+	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
+	key="${_PCC_STALL_ATTENTION_MARKER} pr=${pr} head=${head}"
+	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key") || {
+		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release\n' "$pr" "$repo"
+		return 1
+	}
+	IFS=$'\t' read -r release_id reason stalls posted <<<"$evidence"
+	[[ "$release_id" =~ ^[1-9][0-9]*$ && "$stalls" =~ ^[0-9]+$ ]] || return 1
+	if [[ "$stalls" -ge 2 ]]; then
+		if [[ "$posted" == true ]]; then
+			printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
+			return 0
+		fi
+		_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" || return 1
+		printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s\n' \
+			"$pr" "$repo" "$head" "$release_id" "$stalls"
+		return 0
+	fi
+	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=%s reason=%s\n' \
+		"$issue" "$repo" "$pr" "$runner" "$release_id" "$reason"
+	PCC_ALLOW_RELEASED=true
+	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login"
+	return $?
+}
+
 main() {
 	local command="${1:-}"
 	case "$command" in
@@ -601,6 +752,10 @@ main() {
 		;;
 	blocked-attention)
 		_pcc_blocked_attention "${2:-}" "${3:-}" "${4:-}"
+		return $?
+		;;
+	dispatch-stalled)
+		_pcc_dispatch_stalled "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
 		return $?
 		;;
 	-h | --help | help)
