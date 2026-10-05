@@ -73,6 +73,10 @@ write_fixture() {
 #!/usr/bin/env bash
 pid_file="$1"
 mode="$2"
+if [[ "$mode" == "sigkill" ]]; then
+	printf '%s\n' "$$" >"$pid_file"
+	exec sleep 30
+fi
 setsid bash --norc --noprofile -c '
 	printf "%s\n" "$$" >"$1"
 	trap "" TERM
@@ -85,6 +89,112 @@ else
 fi
 FIXTURE
 	chmod +x "$fixture_path"
+	return 0
+}
+
+test_dead_target_identity() {
+	local dead_pid=""
+	local dead_token=""
+	local ps_marker="${TEST_ROOT}/dead-target-ps"
+	command sleep 0.01 &
+	dead_pid=$!
+	wait "$dead_pid"
+	ps() {
+		printf 'called\n' >"$ps_marker"
+		return 1
+	}
+	dead_token="$(_sandbox_get_proc_starttime "$dead_pid")"
+	unset -f ps
+	if [[ -z "$dead_token" && ! -e "$ps_marker" ]]; then
+		record_result "dead Linux PID returns empty identity without ps fallback" 0
+	else
+		record_result "dead Linux PID returns empty identity without ps fallback" 1 "unexpected token or ps call"
+	fi
+	return 0
+}
+
+test_primary_poll_disappearance_race() {
+	local target_pid=""
+	local poll_pid=""
+	command sleep 30 &
+	target_pid=$!
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${target_pid}"
+	# Reproduce a target disappearing between kill -0 and ps.
+	ps() { return 1; }
+	_sandbox_poll_child 10800 "$target_pid" "${TEST_ROOT}/race.tsv" &
+	poll_pid=$!
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${poll_pid}"
+	unset -f ps
+	if wait_for_process_exit "$poll_pid" && wait "$poll_pid"; then
+		record_result "primary poll exits on empty process state" 0
+	else
+		record_result "primary poll exits on empty process state" 1 "poll survived missing state"
+	fi
+	return 0
+}
+
+test_secondary_watchdog_exit() {
+	local target_pid=""
+	local watchdog_pid=""
+	local target_token=""
+	local token_case=""
+	local marker="${TEST_ROOT}/secondary-timeout"
+	command sleep 30 &
+	target_pid=$!
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${target_pid}"
+	target_token="$(_sandbox_get_proc_starttime "$target_pid")"
+	for token_case in "" "recycled-identity"; do
+		_sandbox_spawn_watchdog_bg 10800 "$target_pid" "" "$token_case" "$marker"
+		watchdog_pid=$!
+		SURVIVOR_PIDS="${SURVIVOR_PIDS} ${watchdog_pid}"
+		if wait_for_process_exit "$watchdog_pid" && wait "$watchdog_pid" && process_is_alive "$target_pid" && [[ ! -e "$marker" ]]; then
+			record_result "secondary watchdog exits without signalling for token '${token_case}'" 0
+		else
+			record_result "secondary watchdog exits without signalling for token '${token_case}'" 1 "watchdog survived or signalled target"
+		fi
+	done
+	_sandbox_spawn_watchdog_bg 10800 "$target_pid" "" "$target_token" "$marker"
+	watchdog_pid=$!
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${watchdog_pid}"
+	# Allow the independent watcher to enter its sleep before killing only
+	# the target. No parent cleanup signals this watchdog.
+	sleep 0.2
+	kill -KILL "$target_pid"
+	wait "$target_pid" 2>/dev/null || true
+	if wait_for_process_exit "$watchdog_pid" && wait "$watchdog_pid" && [[ ! -e "$marker" ]]; then
+		record_result "orphan-capable secondary watchdog exits after target SIGKILL" 0
+	else
+		record_result "orphan-capable secondary watchdog exits after target SIGKILL" 1 "watchdog survived dead target"
+	fi
+	return 0
+}
+
+test_child_sigkill_helper_exit() {
+	local pid_file="${TEST_ROOT}/sigkill.pid"
+	local fixture_path="${TEST_ROOT}/nested-fixture.sh"
+	local helper_pid=""
+	local target_pid=""
+	local helper_status=0
+	"$HELPER" run --timeout 10800 -- "$fixture_path" "$pid_file" sigkill >/dev/null 2>&1 &
+	helper_pid=$!
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${helper_pid}"
+	if ! wait_for_pid_file "$pid_file"; then
+		record_result "SIGKILL child exits helper promptly" 1 "child PID file missing"
+		return 0
+	fi
+	target_pid="$(tr -d '[:space:]' <"$pid_file")"
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${target_pid}"
+	kill -KILL "$target_pid"
+	if wait_for_process_exit "$helper_pid"; then
+		wait "$helper_pid" || helper_status=$?
+		if [[ "$helper_status" -eq 137 ]]; then
+			record_result "SIGKILL child exits helper promptly" 0
+		else
+			record_result "SIGKILL child exits helper promptly" 1 "unexpected exit ${helper_status}"
+		fi
+	else
+		record_result "SIGKILL child exits helper promptly" 1 "helper survived 3s with timeout 10800s"
+	fi
 	return 0
 }
 
@@ -249,6 +359,12 @@ main() {
 	test_start_token_mismatch
 	test_snapshot_removed_before_grace_period
 	test_missing_self_pgid_avoids_group_signal
+	if [[ -d /proc/self ]]; then
+		test_dead_target_identity
+	fi
+	test_primary_poll_disappearance_race
+	test_secondary_watchdog_exit
+	test_child_sigkill_helper_exit
 	printf 'Tests run: %d\nFailures: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 }

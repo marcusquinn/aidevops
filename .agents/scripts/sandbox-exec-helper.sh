@@ -599,11 +599,12 @@ _sandbox_poll_child() {
 	local poll_state=""
 
 	while kill -0 "$poll_child_pid" 2>/dev/null; do
-		_sandbox_snapshot_descendants "$poll_child_pid" "$poll_snapshot_file"
 		poll_state="$(ps -o stat= -p "$poll_child_pid" 2>/dev/null | tr -d '[:space:]')" || true
-		if [[ "$poll_state" == *Z* ]]; then
+		# The child can disappear between kill -0 and ps (GH#33671).
+		if [[ -z "$poll_state" || "$poll_state" == *Z* ]]; then
 			return 0
 		fi
+		_sandbox_snapshot_descendants "$poll_child_pid" "$poll_snapshot_file"
 		if ((half_secs_remaining <= 0)); then
 			return 124
 		fi
@@ -722,31 +723,39 @@ _sandbox_exec_with_pgkill() {
 # boot) — this is the most reliable identity token: monotonic, kernel-sourced,
 # and avoids forking ps. On macOS/other, uses ps -o lstart= which returns the
 # process start date/time string. Returns empty string if the process doesn't
-# exist or the start time can't be determined (non-fatal — the watchdog
-# proceeds without the recycling guard in that case).
+# exist, is a zombie, or the start time can't be determined. Watchdogs stop
+# monitoring when identity is unavailable rather than waiting out the timeout.
 # Arguments: $1 - PID
 _sandbox_get_proc_starttime() {
 	local gps_pid="$1"
 	local gps_starttime=""
 
-	if [[ -f "/proc/${gps_pid}/stat" ]]; then
+	if [[ -d /proc/self ]]; then
 		# Linux: field 22 of /proc/<pid>/stat is starttime (clock ticks since boot).
 		# Fields are space-separated but field 2 (comm) can contain spaces and
 		# parentheses, so we strip it first: remove everything from the first
 		# '(' to the last ')' to get clean space-separated fields, then pick
 		# field 20 (which is original field 22 after removing the 2-field comm).
 		local gps_stat_content=""
-		gps_stat_content="$(cat "/proc/${gps_pid}/stat" 2>/dev/null)" || true
+		# A missing Linux stat file means a dead target, not another platform.
+		# Builtin read also avoids forking for every identity lookup.
+		{ IFS= read -r gps_stat_content <"/proc/${gps_pid}/stat"; } 2>/dev/null || return 0
 		if [[ -n "$gps_stat_content" ]]; then
 			# Remove comm field: everything from first '(' to last ')'
 			local gps_after_comm=""
 			gps_after_comm="${gps_stat_content##*) }"
 			# Field 20 in the remaining string = original field 22 (starttime)
-			gps_starttime="$(printf '%s' "$gps_after_comm" | awk '{print $20}')" || true
+			local -a gps_fields=()
+			read -r -a gps_fields <<<"$gps_after_comm"
+			[[ "${gps_fields[0]:-}" == "Z" ]] && return 0
+			gps_starttime="${gps_fields[19]:-}"
 		fi
 	else
 		# macOS / other: use ps -o lstart= for process start time string.
 		# Example output: "Wed Mar 25 14:30:00 2026"
+		local gps_state=""
+		gps_state="$(ps -o stat= -p "$gps_pid" 2>/dev/null | tr -d '[:space:]')" || true
+		[[ -z "$gps_state" || "$gps_state" == *Z* ]] && return 0
 		gps_starttime="$(ps -o lstart= -p "$gps_pid" 2>/dev/null | tr -s ' ')" || true
 		# Trim leading/trailing whitespace
 		gps_starttime="${gps_starttime#"${gps_starttime%%[![:space:]]*}"}"
@@ -810,11 +819,22 @@ _sandbox_spawn_watchdog() {
 	fi
 	local wd_deadline=$((wd_timeout + wd_grace))
 
-	# Sleep in chunks (30s) so we can exit promptly if the child finishes
-	# and our parent kills us. A single long sleep would delay cleanup.
+	# Check identity before every sleep, including the first one (GH#33671).
+	# An orphaned watchdog must stop for dead/zombie/recycled targets even
+	# when kill -0 succeeds for a zombie or an already-reused PID.
 	local wd_slept=0
+	local wd_current_token=""
 	while ((wd_slept < wd_deadline)); do
-		local wd_chunk=30
+		if ! kill -0 "$wd_pid" 2>/dev/null; then
+			return 0
+		fi
+		wd_current_token="$(_sandbox_get_proc_starttime "$wd_pid")"
+		if [[ -z "$wd_current_token" || -z "$wd_start_token" || "$wd_current_token" != "$wd_start_token" ]]; then
+			return 0
+		fi
+		# Match the primary poll interval so parent death cannot leave a
+		# secondary watchdog sleeping for another 30 seconds.
+		local wd_chunk=1
 		if ((wd_slept + wd_chunk > wd_deadline)); then
 			wd_chunk=$((wd_deadline - wd_slept))
 		fi
@@ -843,7 +863,6 @@ _sandbox_spawn_watchdog() {
 		# platform-aware helper used at spawn. If the PID has been recycled
 		# (new process with the same PID), the start times will differ.
 		if [[ -n "$wd_start_token" ]]; then
-			local wd_current_token=""
 			wd_current_token="$(_sandbox_get_proc_starttime "$wd_pid")"
 			if [[ -z "$wd_current_token" ]]; then
 				# Lookup returned nothing — process already exited between kill -0 and now
