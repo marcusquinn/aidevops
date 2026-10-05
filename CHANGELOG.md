@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.11] - 2026-10-05
+
+### Changed
+
+- Performance: reduce serialized dispatch ceremony startup (#33617)
+
+### Fixed
+
+- surface OpenCode provider errors in ai-research-helper failures
+- preserve stdin in timeout_sec macOS fallback
+- preserve structured candidate rejection reasons
+- retire verified finalized legacy markers (#33628)
+- skip TODO sync when planning is not enabled and TODO.md is absent (GH#33622) (#33626)
+- avoid false-zero reports from oversized evidence
+- accept numbered phase lists and warn on unparseable ## Phases (GH#33614) (#33615)
+- finish padded legacy task ID cleanup (#33613)
+
 ## [3.38.10] - 2026-10-05
 
 ### Added
