@@ -37,12 +37,12 @@ def primary_wait(budget, resource, row, reserved, now):
     # window. With more than half the observed quota usable, admit reads under
     # the atomic primary and secondary ceilings instead of pacing that burst.
     # Clear old pacing too: a saved deadline must not outlive healthy capacity.
-    if available > row[4] / 2:
+    healthy = available > row[4] / 2
+    if healthy:
         budget.db.execute("DELETE FROM pacing WHERE scope=? AND resource=?", (budget.scope, resource))
-        return "", now
     # Do not turn pacing into a final-point reserve. Atomic admission still
     # prevents overspend and secondary limits still apply above this boundary.
-    if available == 1:
+    if healthy or available == 1:
         return "", now
     saved = budget.db.execute(
         "SELECT reset,retry_at,remaining FROM pacing WHERE scope=? AND resource=?",
