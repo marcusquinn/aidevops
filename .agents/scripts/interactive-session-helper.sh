@@ -133,7 +133,8 @@ _isc_current_user() {
 # issue-state routines in this repo. External upstream repos do not run our
 # pulse, so posting claim/status/lockdown lifecycle markers there is noise.
 #
-# Returns 0 for maintainer-equivalent access, 1 otherwise. Lookup failures are
+# Returns 0 for maintainer-equivalent access, 1 otherwise, 75 for deferred reads.
+# Lookup failures are
 # treated as NOT authorized: skipping a claim is safer than publicly applying
 # internal aidevops workflow state to an upstream project we cannot verify.
 _isc_can_manage_issue_state() {
@@ -153,7 +154,10 @@ _isc_can_manage_issue_state() {
 	# #aidevops:trust-boundary — managed-repo claim/state writes require a
 	# confirmed collaborator permission; lookup failures fail closed without
 	# being treated as confirmed non-collaborators.
-	_gh_collaborator_permission_lookup "$slug" "$user" permission || return 1
+	local permission_rc=0
+	_gh_collaborator_permission_lookup "$slug" "$user" permission || permission_rc=$?
+	[[ "$permission_rc" -ne 75 ]] || return 75
+	[[ "$permission_rc" -eq 0 ]] || return 1
 	case "$permission" in
 		admin | maintain | write)
 			return 0

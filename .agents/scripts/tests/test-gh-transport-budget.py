@@ -546,6 +546,29 @@ class AdmissionTests(unittest.TestCase):
         ])
         self.budget.acquire("core", now=1012)
 
+    def test_high_quota_burst_admits_even_with_long_reset_and_saved_pacing(self):
+        self.seed(4999, reset=80000)
+        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
+            ("owner-one", "core", 1001 + i) for i in range(11)
+        ])
+        self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
+                               ("owner-one", "core", 80000, 1100, 4999))
+        other = Budget(self.directory, "owner-one")
+        try:
+            other.acquire("core", now=1012)
+            self.assertEqual(other.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+        finally:
+            other.close()
+
+    def test_high_observed_quota_with_reserved_capacity_still_paces(self):
+        self.seed(2501, reset=80000)
+        self.budget.acquire("core", now=1002)
+        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
+            ("owner-one", "core", 1001 + i) for i in range(11)
+        ])
+        with self.assertRaisesRegex(Deferred, "observed demand"):
+            self.budget.acquire("core", now=1012)
+
     def test_long_pacing_deadline_survives_history_expiry_and_process_reopen(self):
         self.seed(3)
         self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
