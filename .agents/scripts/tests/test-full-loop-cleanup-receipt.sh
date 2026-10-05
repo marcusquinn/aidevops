@@ -472,4 +472,137 @@ cmp -s "$gap_cleanup_receipt" "${TEST_ROOT}/gap-cleanup-original.json"
 [[ ! -f "${AIDEVOPS_FULL_LOOP_RECEIPT_DIR}/example_repo-29010.status" ]]
 printf 'PASS authorization-gap evidence remains detached from terminal cleanup receipts\n'
 
+# GH#33627: finalization removes only a verified legacy marker; native manual
+# removal still owns all dirty-state, lock, activity and archive safeguards.
+(
+	export HOME="${TEST_ROOT}/marker-home"
+	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/marker-receipts"
+	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/marker-release-receipts"
+	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/marker-cleanup.log"
+	export AIDEVOPS_SESSION_ID="marker-session"
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/marker-registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	marker_repo="${TEST_ROOT}/marker-repo"
+	marker_worktree="${TEST_ROOT}/marker-linked"
+	mkdir -p "$HOME" "$marker_repo"
+	/usr/bin/git -C "$marker_repo" init -q -b main
+	/usr/bin/git -C "$marker_repo" config user.name Test
+	/usr/bin/git -C "$marker_repo" config user.email test@example.invalid
+	/usr/bin/git -C "$marker_repo" config commit.gpgsign false
+	printf 'seed\n' >"${marker_repo}/README.md"
+	/usr/bin/git -C "$marker_repo" add README.md
+	/usr/bin/git -C "$marker_repo" commit -q -m seed
+	/usr/bin/git -C "$marker_repo" remote add origin git@github.com:example/repo.git
+	/usr/bin/git -C "$marker_repo" worktree add -q -b feature/marker "$marker_worktree"
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/shared-constants.sh"
+	# shellcheck source=../full-loop-helper-merge.sh
+	source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+	marker_head=$(/usr/bin/git -C "$marker_worktree" rev-parse HEAD)
+	# Supply only GitHub's exact merged PR metadata; local identity resolution,
+	# receipt finalization and targeted removal use the production code paths.
+	gh() {
+		jq -n --arg head "$marker_head" '{state:"MERGED", mergedAt:"2026-10-05T00:00:00Z",
+			mergeCommit:{oid:$head}, headRefName:"feature/marker", headRefOid:$head,
+			headRepository:{nameWithOwner:"example/repo"}, isCrossRepository:false}'
+		return 0
+	}
+	# Keep nested Bash cleanup helpers offline too.
+	export marker_head
+	export -f gh
+	marker_receipt=$(full_loop_write_cleanup_deferred example/repo 106 "$marker_worktree" feature/marker \
+		"$$" marker-session not-requested FINALIZATION_PENDING)
+	_full_loop_write_release_receipt example/repo 106 not-requested
+	mkdir -p "${marker_worktree}/.agents"
+	marker_path="${marker_worktree}/.agents/.full-loop-cleanup-deferred"
+	printf '%s\n' "$$" >"$marker_path"
+	cd "$marker_worktree"
+	if /usr/bin/git -C "$marker_repo" worktree remove "$marker_worktree" >/dev/null 2>&1; then
+		printf 'FAIL native Git accepted marker-only dirty state before finalization\n'
+		exit 1
+	fi
+	cp "$marker_receipt" "${TEST_ROOT}/marker-pending.json"
+	if _full_loop_retire_finalized_cleanup_marker example/repo 106 not-requested; then
+		printf 'FAIL pending receipt retired the marker\n'
+		exit 1
+	fi
+	[[ -f "$marker_path" ]]
+	full_loop_finalize_cleanup_receipt example/repo 106 not-requested
+	cp "$marker_receipt" "${TEST_ROOT}/marker-complete.json"
+	for marker_conflict in \
+		'.schema_version = 99' '.repository = "wrong/repo"' '.pr_number = 999' \
+		'.worktree = "/wrong/worktree"' '.branch = "feature/wrong"' \
+		'.owner.pid = 99999999' '.owner.session = "wrong-session"' \
+		'.owner.process_identity = "wrong-generation"' '.release_status = "pending"' \
+		'.resource_cleanup_state = "CLEANUP_LEASED"' '.cleanup_lease.state = "acquired"'; do
+		jq "$marker_conflict" "${TEST_ROOT}/marker-complete.json" >"$marker_receipt"
+		if _full_loop_retire_finalized_cleanup_marker example/repo 106 not-requested; then
+			printf 'FAIL conflicting marker evidence was retired: %s\n' "$marker_conflict"
+			exit 1
+		fi
+		[[ -f "$marker_path" ]]
+	done
+	printf '{invalid-json\n' >"$marker_receipt"
+	if _full_loop_retire_finalized_cleanup_marker example/repo 106 not-requested; then exit 1; fi
+	rm "$marker_receipt"
+	if _full_loop_retire_finalized_cleanup_marker example/repo 106 not-requested; then exit 1; fi
+	cp "${TEST_ROOT}/marker-complete.json" "$marker_receipt"
+	printf '%s\nextra\n' "$$" >"$marker_path"
+	if _full_loop_retire_finalized_cleanup_marker example/repo 106 not-requested; then exit 1; fi
+	rm "$marker_path"
+	printf '%s\n' "$$" >"${TEST_ROOT}/marker-symlink-target"
+	ln -s "${TEST_ROOT}/marker-symlink-target" "$marker_path"
+	if _full_loop_retire_finalized_cleanup_marker example/repo 106 not-requested; then exit 1; fi
+	[[ -L "$marker_path" && -f "${TEST_ROOT}/marker-symlink-target" ]]
+	rm "$marker_path"
+	printf '%s\n' "$$" >"$marker_path"
+	marker_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	if _full_loop_retire_finalized_cleanup_marker example/repo 106 not-requested; then exit 1; fi
+	marker_head=$(/usr/bin/git rev-parse HEAD)
+	printf 'PASS pending, missing, malformed, mismatched and symlink marker evidence remains protected\n'
+	cp "${TEST_ROOT}/marker-pending.json" "$marker_receipt"
+	cmd_finalize_receipt 106 example/repo
+	[[ ! -e "$marker_path" && -z "$(/usr/bin/git status --porcelain)" ]]
+	cmd_finalize_receipt 106 example/repo
+	jq -e '.executor_completion_state == "COMPLETE" and .resource_cleanup_state == "CLEANUP_DEFERRED"' \
+		"$marker_receipt" >/dev/null
+	# Finalization is not permission to delete unrelated data or locked worktrees.
+	cd "$marker_repo"
+	# Reuse the existing offline process-inventory seam. Host /proc visibility is
+	# not deterministic in restricted runners; the real guard consumes this list.
+	# shellcheck source=../worktree-helper.sh
+	source "${SCRIPT_DIR}/worktree-helper.sh" help >/dev/null
+	fixture_cwd="$marker_worktree"
+	capture_worktree_process_cwds() {
+		printf '%s\n' "$fixture_cwd"
+		return 0
+	}
+	if cmd_remove "$marker_worktree" >/dev/null 2>&1; then exit 1; fi
+	[[ -d "$marker_worktree" ]]
+	fixture_cwd="$marker_repo"
+	printf 'modified\n' >"${marker_worktree}/README.md"
+	export AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_ROOT}/marker-modified-archive"
+	if cmd_remove "$marker_worktree" >/dev/null 2>&1; then exit 1; fi
+	[[ "$(/usr/bin/git -C "$marker_worktree" diff --name-only)" == "README.md" ]]
+	/usr/bin/git -C "$marker_worktree" restore -- README.md
+	printf 'keep\n' >"${marker_worktree}/unrelated.txt"
+	export AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_ROOT}/marker-untracked-archive"
+	if cmd_remove "$marker_worktree" >/dev/null 2>&1; then exit 1; fi
+	[[ -f "${marker_worktree}/unrelated.txt" ]]
+	rm "${marker_worktree}/unrelated.txt"
+	/usr/bin/git -C "$marker_repo" worktree lock "$marker_worktree"
+	if cmd_remove "$marker_worktree" >/dev/null 2>&1; then exit 1; fi
+	[[ -d "$marker_worktree" ]]
+	/usr/bin/git -C "$marker_repo" worktree unlock "$marker_worktree"
+	export AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_ROOT}/marker-clean-archive"
+	if ! cmd_remove "$marker_worktree"; then
+		/usr/bin/git -C "$marker_worktree" status --short
+		printf 'FAIL finalized marker-only manual removal\n'
+		exit 1
+	fi
+	[[ ! -e "$marker_worktree" ]]
+	jq -e '.resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released"' "$marker_receipt" >/dev/null
+	printf 'PASS finalized marker-only worktree removes without force and records durable cleanup\n'
+)
+
 exit 0
