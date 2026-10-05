@@ -1547,7 +1547,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18590 Transport governor keeps stale low core quota across a new rate-limit window, pacing REST reads ~7.5s #auto-dispatch #bug #framework ref:GH#33651 logged:2026-10-05 -> [todo/tasks/t18590-brief.md]
 
-- [ ] t18591 Bounded operations lose the SIGTERM signal when a timed-out supervisor exits cleanly #auto-dispatch #bug #framework ref:GH#33665 logged:2026-10-05 -> [todo/tasks/t18591-brief.md]
+- [x] t18591 Bounded operations lose the SIGTERM signal when a timed-out supervisor exits cleanly #auto-dispatch #bug #framework ref:GH#33665 pr:#33666 logged:2026-10-05 -> [todo/tasks/t18591-brief.md] completed:2026-10-05
 
 ## In Progress
 
