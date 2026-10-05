@@ -673,6 +673,36 @@ _pulse_todo_sync_exact_default_snapshot() {
 }
 
 #######################################
+# _pulse_todo_sync_planning_intent
+#
+# Resolve whether the registered repository adopted TODO-based planning from
+# trusted registration metadata only (repos.json `features`), never from pulse
+# enablement or workspace contents. Prints one of: enabled, disabled, unknown,
+# contradictory. Unknown/contradictory must stay visible to the caller.
+#######################################
+_pulse_todo_sync_planning_intent() {
+	local repo_slug="$1"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local intent=""
+	[[ -f "$repos_json" ]] || {
+		printf 'unknown\n'
+		return 0
+	}
+	intent=$(jq -r --arg slug "$repo_slug" '
+		[.initialized_repos[]? | select(.slug == $slug)
+			| if (.features | type) == "array" then
+				(if (.features | index("planning")) != null then "enabled" else "disabled" end)
+			  else "unknown" end] | unique
+		| if length == 0 then "unknown" elif length == 1 then .[0] else "contradictory" end
+	' "$repos_json" 2>/dev/null) || intent=""
+	case "$intent" in
+	enabled | disabled | unknown | contradictory) printf '%s\n' "$intent" ;;
+	*) printf 'unknown\n' ;;
+	esac
+	return 0
+}
+
+#######################################
 # sync_todo_refs_for_repo
 #
 # Pull issue→TODO refs, close completed entries, and reopen entries whose
@@ -687,7 +717,7 @@ sync_todo_refs_for_repo() (
 	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
 	local workspace="" base_sha="" branch_name="" changed_paths=""
 	local stage="" sync_failed=0 publication_rc=0 snapshot_rc=0 retry_action="none"
-	local lifecycle_stage="workspace"
+	local lifecycle_stage="workspace" planning_intent=""
 	local _pulse_todo_sync_exit_rc=0
 	_PULSE_TODO_SYNC_WORKSPACE=""
 	_PULSE_TODO_SYNC_WORKSPACE_ROOT=""
@@ -712,6 +742,28 @@ sync_todo_refs_for_repo() (
 	branch_name=$(git -C "$workspace" symbolic-ref --short HEAD 2>/dev/null) || {
 		return 1
 	}
+
+	# A confirmed absent root TODO.md in a freshly prepared workspace is
+	# non-applicable only when registration metadata says planning is not
+	# enabled. A present TODO always keeps the legacy synchronization path.
+	if [[ ! -e "${workspace}/TODO.md" ]]; then
+		lifecycle_stage="planning_intent"
+		planning_intent=$(_pulse_todo_sync_planning_intent "$repo_slug")
+		case "$planning_intent" in
+		disabled)
+			printf '[pulse-wrapper] TODO ref sync status=skipped reason=planning_not_enabled repo=%s\n' \
+				"$repo_slug" >>"$WRAPPER_LOGFILE"
+			return 0 ;;
+		enabled)
+			printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=planning_file reason=missing_planning_file repo=%s\n' \
+				"$repo_slug" >>"$WRAPPER_LOGFILE"
+			return 1 ;;
+		*)
+			printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=planning_file reason=planning_intent_%s repo=%s\n' \
+				"$planning_intent" "$repo_slug" >>"$WRAPPER_LOGFILE"
+			return 1 ;;
+		esac
+	fi
 
 	printf '[pulse-wrapper] Syncing TODO refs: repo=%s root=automation base=%s\n' \
 		"$repo_slug" "${base_sha:0:12}" >>"$WRAPPER_LOGFILE"
