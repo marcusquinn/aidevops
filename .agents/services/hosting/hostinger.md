@@ -49,6 +49,16 @@ aidevops secret HOSTINGER_SSH_PASSWORD_ACCOUNT_1 -- \
 
 Only request another SSH credential when API inventory, the hosting panel, or a failed authenticated probe shows a genuinely different account/server.
 
+### PHP runtime
+
+Read-only observations from one managed-hosting account on **2026-10-05**, not universal plan defaults: LiteSpeed Enterprise with persistent `lsphp` workers (some alive for over a day), `LSPHP_ProcessGroup=on`, `LSAPI_CHILDREN=180`, `LSAPI_MAX_IDLE_CHILDREN=90`, `LSAPI_MAX_IDLE=600`, and `LSAPI_MAX_PROCESS_TIME=300`; CloudLinux LVE cgroup membership. Web SAPI and effective account limits still require per-site verification.
+
+The observed OPcache configuration was 1024M memory, 130,987 maximum accelerated files, and 64M interned strings; JIT was off and preload unset. PHP 8.5 **CLI** reported `memory_limit=12288M`: this is not evidence of the web limit or available account RAM. Verify web settings in the application's status page and hPanel → PHP Configuration. Worker counts and OPcache size are host-controlled on managed hosting; do not replace working LSAPI with FPM or attempt pool edits.
+
+Supported per-site overrides can use `.htaccess` `php_value` inside `<IfModule lsapi_module>`; confirm the directive is allowed before proposing a change. Really Simple Security was observed writing `auto_prepend_file` into both that block and `.user.ini`; a migrated site retained a stale `.user.ini` path from its previous account. Inspect only authorized site files and preserve security-plugin ownership when proposing a backed-up repair.
+
+Dated uploads directories returned 403 in this observation. Verify directory-listing protection per site rather than assuming it applies to every account. For the read-only baseline, worker/memory sizing, OPcache assessment, host boundaries, and safe directory-listing remediation, read `tools/runtime/php-server-admin.md`.
+
 ### WordPress multisite cron and update readiness
 
 During a WordPress multisite migration, setup, or health check, audit cron coverage

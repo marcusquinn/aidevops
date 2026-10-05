@@ -61,6 +61,7 @@ subagents:
   - socket
   # Runtime operations
   - node-server-admin
+  - php-server-admin
   # Architecture review
   - architecture
   - build-agent
@@ -158,6 +159,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 | Backblaze B2 / B2 cloud storage | `services/hosting/backblaze-b2.md` |
 | Wasabi / Wasabi object storage / Wasabi MCP | `services/hosting/wasabi.md` |
 | Node.js/Next server runtime, package-manager maintenance, LTS updates, CPU/RAM/heap or process operations | `tools/runtime/node-server-admin.md` |
+| PHP runtime: PHP-FPM/LSAPI/mod_php, PHP workers, memory_limit, OPcache sizing, php.ini per host | `tools/runtime/php-server-admin.md` |
 
 ## Planning File Access
 

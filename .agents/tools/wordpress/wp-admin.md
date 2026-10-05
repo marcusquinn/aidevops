@@ -147,3 +147,4 @@ Before bulk operations:
 2. **Staging test** — test on staging before production
 3. **Security scan** — run `@mainwp` security scan after changes
 4. **Audit log** — document significant changes
+5. **Directory listing** — check an existing dated `wp-content/uploads/<year>/` folder returns 403/404, not an `Index of` page; assess server-level protection with `tools/runtime/php-server-admin.md` (empty `index.php` files protect only their own folder).
