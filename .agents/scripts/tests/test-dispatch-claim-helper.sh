@@ -2047,11 +2047,46 @@ test_claim_winner_persisted_expiry() {
 #######################################
 # Main
 #######################################
+test_check_and_claim_ceremony() {
+	local tmp_dir="" mock_path="" old_created_at="" new_created_at="" output="" rc=0
+	tmp_dir=$(mktemp -d)
+	mock_path=$(create_mock_gh "$tmp_dir")
+	old_created_at=$(iso_seconds_ago 600)
+	new_created_at=$(iso_seconds_ago 1)
+	output=$(PATH="${mock_path}:$PATH" MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
+		MOCK_OLD_CLAIM_RUNNER=other-runner DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_MAX_AGE=300 \
+		AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="${tmp_dir}/timing.log" \
+		"$CLAIM_HELPER" check-and-claim 42 owner/repo mockrunner 2>&1) || rc=$?
+	if [[ "$rc" == 0 && "$output" == *CLAIM_WON* ]] &&
+		[[ $(grep -c 'stage=startup ' "${tmp_dir}/timing.log") == 1 ]] &&
+		grep -q 'stage=claim_precheck ' "${tmp_dir}/timing.log" &&
+		grep -q 'stage=consensus_window ' "${tmp_dir}/timing.log"; then
+		print_result "combined ceremony wins with one startup and attributed stages" 0
+	else
+		print_result "combined ceremony wins with one startup and attributed stages" 1 "$output"
+	fi
+	# A second attempt sees the just-posted active lease and must not POST again.
+	rc=0
+	output=$(PATH="${mock_path}:$PATH" MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
+		MOCK_OLD_CLAIM_RUNNER=other-runner DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_MAX_AGE=300 \
+		"$CLAIM_HELPER" check-and-claim 42 owner/repo mockrunner 2>&1) || rc=$?
+	if [[ "$rc" == 1 && "$output" == *ACTIVE_CLAIM* && $(<"${tmp_dir}/post_attempts.txt") == 1 ]]; then
+		print_result "combined ceremony rejects active lease without another POST" 0
+	else
+		print_result "combined ceremony rejects active lease without another POST" 1 "$output"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
 main() {
 	echo "=== dispatch-claim-helper.sh tests (t1686) ==="
 	echo ""
 
 	test_help_exits_zero
+	test_check_and_claim_ceremony
 	test_claim_winner_persisted_expiry
 	test_claim_missing_args
 	test_claim_non_numeric_issue
