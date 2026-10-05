@@ -289,6 +289,51 @@ queued longer than the project threshold (for example, 10-15 minutes during an
 active work session). A full-pool offline state plus growing queued runs is a CI
 capacity incident, not ordinary job latency.
 
+### Stale queued run watchdog
+
+GitHub can leave workflow runs `queued` for months while runners sit idle. These
+ghosts inflate the `?status=queued` counts used by the pulse Actions queue
+saturation check (`pulse-rate-limit-circuit-breaker.sh check-actions-queue`) and
+`github-runner-broker-health-helper.sh`, so idle capacity looks like backlog.
+
+The pulse stage `stale_queued_runs` (`.agents/scripts/pulse-stale-queued-runs.sh`)
+cleans them up in pulse-managed repos (`pulse: true`, not local-only or
+contributor) where the runner has write access:
+
+1. At most once per repo per `AIDEVOPS_STALE_QUEUED_RUN_INTERVAL_SECONDS`
+   (default 3600), list runs with `status=queued` created before the max age.
+   Runs younger than the max age are never touched; the age is re-checked
+   locally from `created_at`.
+2. `POST .../actions/runs/<id>/cancel`. If that returns HTTP 409, or an accepted
+   cancel left the run queued at the next interval, use `force-cancel`. Each
+   cancel is logged with run ID, workflow name and age.
+3. HTTP 409 on both endpoints ("has not been queued yet") marks an unkillable
+   ghost. It is logged once per run ID and left alone unless
+   `AIDEVOPS_STALE_QUEUED_RUN_DELETE=1`, which deletes it with
+   `DELETE .../actions/runs/<id>`.
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Queued age that counts as stale; `0` disables the stage. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | `1` deletes 409 ghosts instead of only reporting them. |
+| `AIDEVOPS_STALE_QUEUED_RUN_INTERVAL_SECONDS` | `3600` | Minimum seconds between scans of one repo. |
+| `AIDEVOPS_STALE_QUEUED_RUN_MAX_RUNS` | `20` | Cancel/delete actions per repo per scan. |
+| `AIDEVOPS_STALE_QUEUED_RUN_MAX_REPOS` | `50` | Repos scanned per pulse cycle. |
+
+The stage skips during a shared GitHub cooldown or recovery ramp, when the
+REST-core budget defers optional work, and stops its fanout on a rate-limit
+response. State (last scan, pending cancels, logged ghosts) lives under
+`~/.aidevops/.agent-workspace/supervisor/stale-queued-runs/`. Log lines carry
+the `[pulse-stale-queued-runs]` prefix in the pulse log.
+
+Spot-check or clean one repo by hand:
+
+```bash
+~/.aidevops/agents/scripts/pulse-stale-queued-runs.sh scan --dry-run --repo <OWNER>/<REPO>
+~/.aidevops/agents/scripts/pulse-stale-queued-runs.sh scan --force --repo <OWNER>/<REPO>
+gh api "repos/<OWNER>/<REPO>/actions/runs?status=queued" --jq '.workflow_runs[] | {id, name, created_at}'
+```
+
 ## Security notes
 
 - Treat this pool as trusted CI infrastructure for the target repository only.
