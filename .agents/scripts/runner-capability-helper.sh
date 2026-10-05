@@ -40,7 +40,19 @@ runner_capability_check() {
 	local issue_meta_json="$2"
 	local source="${3:-}"
 	local cycle="${_PULSE_CYCLE_ID:-}"
-	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" <<'PY'
+	# Assemble only trusted literal code; issue metadata stays in argv as data.
+	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" < <(
+		_runner_capability_python_runtime
+		_runner_capability_python_cycle
+		_runner_capability_python_requirements
+	)
+	local rc=$?
+	[[ "$rc" -eq 0 ]] || return 1
+	return 0
+}
+
+_runner_capability_python_runtime() {
+	cat <<'PY'
 import contextlib
 import fcntl
 import hashlib
@@ -80,6 +92,12 @@ def run_check(argv, target, secret=False, cwd=None):
         return f'{"secret_missing" if status == 1 else "check_failed"} {target}'
     return f'probe_failed {target}'
 
+PY
+	return 0
+}
+
+_runner_capability_python_cycle() {
+	cat <<'PY'
 @contextlib.contextmanager
 def cycle_state(cycle):
     # Pulse watchdogs isolate candidates in subshells. Share metadata, not values,
@@ -128,6 +146,12 @@ def unreadable(name, handle, state, cached=False):
     unmet(f'secret_unreadable name={name} store=gopass fallback=disabled' +
           (' source=cycle_cache' if cached else ''))
 
+PY
+	return 0
+}
+
+_runner_capability_python_requirements() {
+	cat <<'PY'
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
     issue = json.loads(sys.argv[2])
@@ -201,7 +225,5 @@ try:
 except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
     unmet()
 PY
-	local rc=$?
-	[[ "$rc" -eq 0 ]] || return 1
 	return 0
 }
