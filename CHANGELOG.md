@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.10] - 2026-10-05
+
+### Added
+
+- bounded maintainer-local post-sync commands (#33606)
+
+### Changed
+
+- Performance: filter memory monitor processes in a single current-user pass (#33610)
+- Maintenance: sync verified TODO refs
+- Maintenance: mark t18588 complete (pr:#33598 completed:2026-10-04) (#33600)
+
+### Fixed
+
+- secret check falls back to credentials.sh for names absent from gopass
+
 ## [3.38.9] - 2026-10-04
 
 ### Fixed
