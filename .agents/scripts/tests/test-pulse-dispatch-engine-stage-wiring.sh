@@ -648,9 +648,19 @@ assert_grep \
 	'^_preflight_trusted_nmr_reconcile\(\)' \
 	"$PREFLIGHT_LIB"
 assert_order \
-	"9e: capacity completes before the initial fill" \
-	'^[[:space:]]*run_stage_with_timeout "preflight_capacity"' \
+	"9e: local host capacity completes before the initial fill" \
+	'^[[:space:]]*run_stage_with_timeout "preflight_initial_capacity"' \
 	'^[[:space:]]*_pulse_run_budget_priority_stage "preflight_early_dispatch"' \
+	"$ENGINE"
+assert_order \
+	"9e2: initial fill precedes remote cleanup/reaping" \
+	'^[[:space:]]*_pulse_run_budget_priority_stage "preflight_early_dispatch"' \
+	'^[[:space:]]*run_stage_with_timeout "preflight_cleanup_and_ledger"' \
+	"$ENGINE"
+assert_order \
+	"9e3: full allocation completes after the initial fill" \
+	'^[[:space:]]*_pulse_run_budget_priority_stage "preflight_early_dispatch"' \
+	'^[[:space:]]*run_stage_with_timeout "preflight_capacity"' \
 	"$ENGINE"
 assert_order \
 	"9f: initial fill precedes label maintenance" \

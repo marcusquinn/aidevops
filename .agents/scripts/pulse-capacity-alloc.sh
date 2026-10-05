@@ -336,9 +336,58 @@ _count_priority_repos() {
 }
 
 #######################################
+# GH#33647: the daily count lists at most this many PRs, so it can never
+# observe a DAILY_PR_CAP above it (the default cap is 1000).
+#######################################
+_PULSE_DAILY_PR_LIST_LIMIT=200
+
+#######################################
+# Print "<count>\t<epoch>" for a cached same-day PR count.
+# Arguments: $1=cache file $2=UTC date $3=repo slug
+# Returns: 0 when found, 1 otherwise
+#######################################
+_daily_pr_count_cache_lookup() {
+	local cache_file="$1" today="$2" slug="$3"
+	[[ -f "$cache_file" && ! -L "$cache_file" ]] || return 1
+	awk -F'\t' -v d="$today" -v s="$slug" '
+		$1 == d && $2 == s { print $3 "\t" $4; found = 1; exit }
+		END { exit (found ? 0 : 1) }
+	' "$cache_file" 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# Fetch one repository's count of PRs created today (one REST listing).
+# Arguments: $1=repo slug $2=UTC date
+#######################################
+_daily_pr_count_fetch() {
+	local slug="$1" today_utc="$2"
+	local pr_json="" daily_pr_count="" pr_alloc_err=""
+	# GH#4412: use --state all to count merged/closed PRs too
+	pr_alloc_err=$(mktemp)
+	pr_json=$(pulse_pr_list_get --repo "$slug" --state all --json createdAt --limit "$_PULSE_DAILY_PR_LIST_LIMIT" 2>"$pr_alloc_err") || pr_json="[]"
+	if [[ -z "$pr_json" ]]; then
+		local _pr_alloc_err_msg
+		_pr_alloc_err_msg=$(cat "$pr_alloc_err" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] calculate_priority_allocations: gh_pr_list FAILED for ${slug}: ${_pr_alloc_err_msg}" >>"$LOGFILE"
+		pr_json="[]"
+	fi
+	rm -f "$pr_alloc_err"
+	daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select((.createdAt // "") | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
+	[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
+	echo "$daily_pr_count"
+	return 0
+}
+
+#######################################
 # Count product repos that can dispatch (not blocked by daily PR cap) (t2006)
 #
 # Iterates product repos from repos.json, checks each against DAILY_PR_CAP.
+# GH#33647: the cap is a soft, advisory limit, so this must never consume the
+# dispatch reserve. It skips listing when the cap is unobservable, reuses
+# same-day counts (capped repos stay capped until UTC midnight; others refresh
+# after PULSE_DAILY_PR_COUNT_TTL_SECONDS), and treats repos left unchecked
+# after PULSE_DAILY_PR_COUNT_BUDGET_SECONDS as dispatchable.
 # Prints: "<dispatchable_count>" to stdout.
 #
 # Arguments:
@@ -348,32 +397,51 @@ _count_priority_repos() {
 _count_dispatchable_product_repos() {
 	local repos_json="$1"
 	local product_repos="$2"
-	local dispatchable=0
-	local today_utc
+	local dispatchable=0 unchecked=0 fetched=0 started_epoch=0 now_epoch=0
+	local budget="${PULSE_DAILY_PR_COUNT_BUDGET_SECONDS:-60}" ttl="${PULSE_DAILY_PR_COUNT_TTL_SECONDS:-900}"
+	local cache_file="${HOME}/.aidevops/cache/pulse-daily-pr-counts" new_cache="" today_utc
+	[[ "$budget" =~ ^[0-9]+$ ]] || budget=60
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=900
 	today_utc=$(date -u +%Y-%m-%d)
 
-	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 ]]; then
-		while IFS= read -r slug; do
-			[[ -n "$slug" ]] || continue
-			local pr_json="" daily_pr_count="" pr_alloc_err=""
-			# GH#4412: use --state all to count merged/closed PRs too
-			pr_alloc_err=$(mktemp)
-			pr_json=$(pulse_pr_list_get --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
-			if [[ -z "$pr_json" ]]; then
-				local _pr_alloc_err_msg
-				_pr_alloc_err_msg=$(cat "$pr_alloc_err" 2>/dev/null || echo "unknown error")
-				echo "[pulse-wrapper] calculate_priority_allocations: gh_pr_list FAILED for ${slug}: ${_pr_alloc_err_msg}" >>"$LOGFILE"
-				pr_json="[]"
+	if [[ "$product_repos" -le 0 || "$DAILY_PR_CAP" -le 0 || "$DAILY_PR_CAP" -gt "$_PULSE_DAILY_PR_LIST_LIMIT" ]]; then
+		echo "$product_repos"
+		return 0
+	fi
+
+	mkdir -p "${cache_file%/*}" 2>/dev/null || true
+	new_cache=$(mktemp "${cache_file}.XXXXXX" 2>/dev/null) || new_cache=""
+	started_epoch=$(date +%s)
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		local cached="" daily_pr_count="" cached_epoch=0
+		now_epoch=$(date +%s)
+		if cached=$(_daily_pr_count_cache_lookup "$cache_file" "$today_utc" "$slug"); then
+			daily_pr_count="${cached%%$'\t'*}"
+			cached_epoch="${cached##*$'\t'}"
+			[[ "$daily_pr_count" =~ ^[0-9]+$ && "$cached_epoch" =~ ^[0-9]+$ ]] || daily_pr_count=""
+		fi
+		if [[ -z "$daily_pr_count" ]] || { [[ "$daily_pr_count" -lt "$DAILY_PR_CAP" ]] && ((now_epoch - cached_epoch >= ttl)); }; then
+			if ((now_epoch - started_epoch < budget)); then
+				daily_pr_count=$(_daily_pr_count_fetch "$slug" "$today_utc")
+				cached_epoch="$now_epoch"
+				fetched=$((fetched + 1))
+			elif [[ -z "$daily_pr_count" ]]; then
+				unchecked=$((unchecked + 1))
 			fi
-			rm -f "$pr_alloc_err"
-			daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select((.createdAt // "") | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
-			[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
-			if [[ "$daily_pr_count" -lt "$DAILY_PR_CAP" ]]; then
-				dispatchable=$((dispatchable + 1))
-			fi
-		done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .priority == "product") | .slug' "$repos_json" 2>/dev/null)
-	else
-		dispatchable="$product_repos"
+		fi
+		if [[ -n "$daily_pr_count" && -n "$new_cache" ]]; then
+			printf '%s\t%s\t%s\t%s\n' "$today_utc" "$slug" "$daily_pr_count" "$cached_epoch" >>"$new_cache"
+		fi
+		if [[ -z "$daily_pr_count" || "$daily_pr_count" -lt "$DAILY_PR_CAP" ]]; then
+			dispatchable=$((dispatchable + 1))
+		fi
+	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .priority == "product") | .slug' "$repos_json" 2>/dev/null)
+	if [[ -n "$new_cache" ]]; then
+		mv -f "$new_cache" "$cache_file" 2>/dev/null || rm -f "$new_cache"
+	fi
+	if [[ "$unchecked" -gt 0 ]]; then
+		echo "[pulse-wrapper] calculate_priority_allocations: daily PR count budget ${budget}s exhausted; ${unchecked} repo(s) treated as dispatchable (fetched=${fetched}) (GH#33647)" >>"$LOGFILE"
 	fi
 	[[ "$dispatchable" =~ ^[0-9]+$ ]] || dispatchable="$product_repos"
 

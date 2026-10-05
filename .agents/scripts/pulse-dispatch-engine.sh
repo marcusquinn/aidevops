@@ -375,6 +375,44 @@ _append_ranked_repo_candidates() {
 #   $2 - dependency normalization mode (optional: normalize or skip)
 # Returns: JSON array sorted by score desc, createdAt asc, updatedAt asc
 #######################################
+_dispatch_first_wave_advance_cursor() {
+	local slug="$1" cursor_dir="${HOME}/.aidevops/cache" temporary=""
+	mkdir -p "$cursor_dir" 2>/dev/null || return 0
+	temporary=$(mktemp "${cursor_dir}/pulse-first-wave-cursor.XXXXXX") || return 0
+	printf '%s\n' "$slug" >"$temporary"
+	mv -f "$temporary" "${cursor_dir}/pulse-first-wave-cursor" 2>/dev/null || rm -f "$temporary"
+	return 0
+}
+
+# Emit managed repository rows, optionally rotated after a first-wave cursor.
+_dispatch_repository_rows() {
+	local cursor="$1"
+	jq -r --arg cursor "$cursor" '
+		def pulse_hour_start:
+			if (.pulse_hours | type) == "array" then .pulse_hours[0]
+			else .pulse_hours.start
+			end;
+		def pulse_hour_end:
+			if (.pulse_hours | type) == "array" then .pulse_hours[1]
+			else .pulse_hours.end
+			end;
+		[.initialized_repos[] |
+		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "")] as $repos |
+		($repos | map(.slug) | index($cursor)) as $index |
+		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end)[] |
+		[
+			.slug,
+			.path,
+			(.priority // "tooling"),
+			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
+			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
+			(.pulse_expires // ""),
+			(.pulse_interval // "")
+		] | join("|")
+	' "$REPOS_JSON" 2>/dev/null || return 1
+	return 0
+}
+
 build_ranked_dispatch_candidates_json() {
 	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
 	local dependency_normalization_mode="${2:-normalize}"
@@ -393,6 +431,10 @@ build_ranked_dispatch_candidates_json() {
 	fi
 
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
+	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" && -f "$cursor_file" && ! -L "$cursor_file" ]]; then
+		IFS= read -r cursor <"$cursor_file" || cursor=""
+	fi
 	tmp_candidates=$(mktemp) || return 1
 	completeness_file=$(mktemp) || {
 		rm -f "$tmp_candidates"
@@ -428,27 +470,17 @@ build_ranked_dispatch_candidates_json() {
 
 		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
 			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
-	done < <(jq -r '
-		def pulse_hour_start:
-			if (.pulse_hours | type) == "array" then .pulse_hours[0]
-			else .pulse_hours.start
-			end;
-		def pulse_hour_end:
-			if (.pulse_hours | type) == "array" then .pulse_hours[1]
-			else .pulse_hours.end
-			end;
-		.initialized_repos[] |
-		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") |
-		[
-			.slug,
-			.path,
-			(.priority // "tooling"),
-			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
-			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
-			(.pulse_expires // ""),
-			(.pulse_interval // "")
-		] | join("|")
-	' "$REPOS_JSON" 2>/dev/null)
+		# GH#33647: the first wave needs launchable work, not a global census.
+		# Leave later repositories unpolled for the normal refill. Do not claim
+		# complete product discovery from this intentionally partial snapshot.
+		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" && -s "$tmp_candidates" ]]; then
+			product_complete=false
+			# Rotate even if these candidates later fail live dispatch gates, so
+			# one repository's backlog cannot monopolize every first wave.
+			_dispatch_first_wave_advance_cursor "$repo_slug"
+			break
+		fi
+	done < <(_dispatch_repository_rows "$cursor")
 
 	if [[ ! -s "$tmp_candidates" ]]; then
 		rm -f "$tmp_candidates" "$completeness_file"
@@ -562,6 +594,10 @@ _dispatch_record_zero_worker_active_claim_hold() {
 _dispatch_prepare_prepasses() {
 	local prepass_line=""
 	local initial_slots="$1"
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] First dispatch wave: ancillary triage/enrichment deferred to normal refill (GH#33647)" >>"$LOGFILE"
+		return 0
+	fi
 	if ! prepass_line=$(_dispatch_run_prepasses "$initial_slots" 2>>"$LOGFILE"); then
 		echo "[pulse-wrapper] Dispatch_max: _dispatch_run_prepasses returned non-zero — assuming 0 triage/enrichment, full slot budget" >>"$LOGFILE"
 		prepass_line="${initial_slots} 0 1"
@@ -1665,10 +1701,11 @@ _run_preflight_stages() {
 	# dispatch. It runs asynchronously while cleanup/capacity stages proceed;
 	# dispatch never waits for merge, CI, review, or GitHub latency.
 	_preflight_start_merge_first || true
-	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
-		_preflight_cleanup_and_ledger || true
-	run_stage_with_timeout "preflight_capacity" "$_pflt_timeout" \
-		_preflight_capacity || true
+	# GH#33647: host capacity is local. Cross-repository allocations and
+	# cleanup/reaping can be paced for minutes; neither belongs ahead of the
+	# first implementation wave. Launch still performs all live safety gates.
+	run_stage_with_timeout "preflight_initial_capacity" "$_pflt_timeout" \
+		calculate_max_workers || true
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each
@@ -1678,11 +1715,14 @@ _run_preflight_stages() {
 	# 8.5% failure rate). The group timeout is redundant — per-candidate timeouts
 	# provide the safety net. Timing is still logged for observability.
 	local _pflt_ed_start=$SECONDS
-	local _pflt_ed_rc=0
-	local _pflt_ed_outcome=""
+	local _pflt_ed_rc=0 _pflt_ed_outcome=""
 	_pulse_run_budget_priority_stage "preflight_early_dispatch" _preflight_early_dispatch || _pflt_ed_rc=$?
 	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] && _pflt_ed_outcome="skipped"
 	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc" "$_pflt_ed_outcome"
+	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
+		_preflight_cleanup_and_ledger || true
+	run_stage_with_timeout "preflight_capacity" "$_pflt_timeout" \
+		_preflight_capacity || true
 	# GH#28880: cross-repository label maintenance can take 3-5 minutes. Run it
 	# after the initial fill so already-eligible workers boot in parallel. Then
 	# normalize trusted-author NMR residue and refill once so every newly unblocked
