@@ -20,6 +20,14 @@ runner_capability_check_fresh() {
 _runner_capability_check_fresh_logged() {
 	local repo_path="$1" issue_number="$2" repo_slug="$3"
 	local capability_meta_json=""
+	# Sourcing this helper at both gates must not reset cycle-local health state.
+	local cycle="${_PULSE_CYCLE_ID:-}" cached_name="" reason=""
+	if [[ "${_RUNNER_CAPABILITY_CYCLE:-}" != "$cycle" ]]; then
+		_RUNNER_CAPABILITY_CYCLE="$cycle"
+		_RUNNER_CAPABILITY_LOCKED_NAME=""
+		_RUNNER_CAPABILITY_DEFERRED=0
+	fi
+	[[ -z "$cycle" ]] || cached_name="${_RUNNER_CAPABILITY_LOCKED_NAME:-}"
 	capability_meta_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{number, state, body, labels}' 2>/dev/null) || capability_meta_json=""
 	if ! printf '%s' "$capability_meta_json" | jq -e --argjson number "$issue_number" \
@@ -27,8 +35,17 @@ _runner_capability_check_fresh_logged() {
 		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet source=fresh metadata_unreadable\n' "$issue_number" >&3
 		return 1
 	fi
-	if ! runner_capability_check "$repo_path" "$capability_meta_json" fresh >/dev/null 2>&3; then
-		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet\n' "$issue_number" >&3
+	if ! reason=$(runner_capability_check "$repo_path" "$capability_meta_json" fresh "$cached_name" 2>&3); then
+		printf '[dispatch_with_dedup] #%s deferred: %s\n' "$issue_number" "$reason" >&3
+		if [[ "$reason" == 'runner_capability_unmet reason=secret_unreadable name='* ]]; then
+			_RUNNER_CAPABILITY_DEFERRED=$((${_RUNNER_CAPABILITY_DEFERRED:-0} + 1))
+			if [[ -z "$cached_name" ]]; then
+				_RUNNER_CAPABILITY_LOCKED_NAME="${reason#* name=}"
+				_RUNNER_CAPABILITY_LOCKED_NAME="${_RUNNER_CAPABILITY_LOCKED_NAME%% *}"
+				printf 'runner_health: gpg store locked or entry unreadable; secret-gated candidates deferred>=1; gopass authoritative (no plaintext fallback); see reference/secret-handling.md\n' >&3
+			fi
+			printf 'runner_capability_health secret_gated_deferred=%s cycle=%s\n' "$_RUNNER_CAPABILITY_DEFERRED" "$cycle" >&3
+		fi
 		return 1
 	fi
 	return 0
@@ -38,7 +55,8 @@ runner_capability_check() {
 	local repo_path="$1"
 	local issue_meta_json="$2"
 	local source="${3:-}"
-	python3 - "$repo_path" "$issue_meta_json" "$source" <<'PY'
+	local cached_name="${4:-}"
+	python3 - "$repo_path" "$issue_meta_json" "$source" "$cached_name" <<'PY'
 import json
 import os
 import re
@@ -47,23 +65,31 @@ import subprocess
 import sys
 from pathlib import Path
 
-def unmet():
-    print('runner_capability_unmet')
+def unmet(reason=''):
+    print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
-def run_check(argv, cwd=None):
+def run_check(argv, target, secret=False, cwd=None):
     # Bound descendants too: a locked pinentry or probe child must not survive.
-    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               start_new_session=True)
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+    except OSError:
+        return f'check_failed {target}' if secret else f'probe_failed {target}'
     try:
         status = process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
-        unmet()
-    if status:
-        unmet()
+        return f'check_timeout {target}'
+    if not status:
+        return ''
+    if secret:
+        if status == 3:
+            return f'secret_unreadable {target} store=gopass fallback=disabled'
+        return f'{"secret_missing" if status == 1 else "check_failed"} {target}'
+    return f'probe_failed {target}'
 
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
@@ -107,19 +133,28 @@ try:
             path = Path(probe)
             if path.is_absolute() or '..' in path.parts:
                 unmet()
-            executable = (root / path).resolve(strict=True)
+            try:
+                executable = (root / path).resolve(strict=True)
+            except OSError:
+                unmet(f'probe_failed path={probe}')
             if root not in executable.parents or not executable.is_file() or not os.access(executable, os.X_OK):
-                unmet()
-            probes.append(str(executable))
+                unmet(f'probe_failed path={probe}')
+            probes.append((str(executable), probe))
     if len(secrets) > 32 or len(probes) > 8:
         unmet()
     if sys.argv[3] == 'fresh':
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes)}',
               file=sys.stderr)
+    if secrets and re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', sys.argv[4]):
+        unmet(f'secret_unreadable name={sys.argv[4]} store=gopass fallback=disabled source=cycle_cache')
     for name in sorted(secrets):
-        run_check(['aidevops', 'secret', 'check', name])
-    for probe in probes:
-        run_check([probe], cwd=root)
+        reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', secret=True)
+        if reason:
+            unmet(reason)
+    for executable, probe in probes:
+        reason = run_check([executable], f'path={probe}', cwd=root)
+        if reason:
+            unmet(reason)
 except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
     unmet()
 PY

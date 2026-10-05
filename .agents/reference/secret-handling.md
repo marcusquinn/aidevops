@@ -9,6 +9,41 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `A
 
 ---
 
+## Headless runner GPG availability
+
+`aidevops secret check NAME` is status-only: exit 0 means readable, 1 means
+missing (or empty plaintext), and 3 means a gopass-owned entry is unreadable
+or empty. It never prints values or decryption errors. The runner capability
+log reports `reason=secret_missing name=NAME`, `secret_unreadable`,
+`check_timeout`, or `probe_failed path=...` without secret material.
+
+Gopass is authoritative for names it owns: failed decryption **does not** fall
+back to `credentials.sh`. Deferrals state `store=gopass fallback=disabled`.
+An unreadable listing also fails closed. A locked agent is the common cause,
+but an unreadable entry can also mean corruption or missing decryption keys.
+Pulse emits one `runner_health: gpg store locked or entry unreadable` line
+per cycle and skips subsequent secret-gated checks for that cycle; ungated
+candidates can still run. `runner_capability_health secret_gated_deferred=N`
+records the running count of rejected gate calls, not a final candidate total.
+The next cycle retries, so unlocking does not require restarting pulse.
+
+For unattended runners, provision the agent unlock outside AI chat. Set both
+`default-cache-ttl` and `max-cache-ttl` in the operator's `gpg-agent.conf` long
+enough for the intended unattended window, reload with `gpg-connect-agent
+reloadagent /bye`, then perform one interactive unlock after every agent
+restart. Reloading or connecting alone does **not** unlock a key. Finite cache
+TTLs expire: renew the unlock before expiry rather than assuming an unlimited
+cache. Longer TTLs increase the period a compromised runner can decrypt data;
+choose them according to the runner's security policy, not automatically.
+
+Alternatively, use a securely stored `credentials.sh` entry (mode 600) and
+remove the corresponding gopass entry through the operator's normal secret
+management process. Adding plaintext while retaining the gopass entry cannot
+repair a locked-store deferral. Never put passphrases or secret values in
+logs, issue bodies, command arguments, or transcripts.
+
+---
+
 ## 8.1 Session Transcript Exposure (t1457)
 
 **Threat:** AI tool inputs and outputs are captured in session transcripts and may be sent to a remote model provider.
