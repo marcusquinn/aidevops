@@ -515,8 +515,7 @@ _pmrc_normalize_snapshot_checks_json() {
 		then error("invalid check-runs or commit-status response")
 		else . end |
 		.[0] as $pages | .[1] as $statuses |
-		"pending" as $pending | "in_progress" as $in_progress |
-		"error" as $error |
+		"pending" as $pending | "in_progress" as $in_progress | "error" as $error |
 		[
 			$pages[]?.check_runs[]? | {
 				source: "check_run",
