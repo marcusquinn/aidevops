@@ -66,7 +66,12 @@ pulse_campaign_shadow_candidates_json() {
 	return 0
 }
 _dispatch_compute_capacity() { printf '20 1 19\n'; return 0; }
-_dispatch_rest_core_progress_allows_next() { return 0; }
+_dispatch_rest_core_progress_allows_next() {
+	if _cb_rest_core_priority_decision_allows progress 'reserve 540 5000 750 750 100 9999999999'; then
+		return 0
+	fi
+	return 1
+}
 _dispatch_stats_increment() { return 0; }
 _dispatch_prepare_prepasses() {
 	printf 'ancillary\n' >>"$EVENTS"
@@ -94,9 +99,11 @@ apply_dispatch_max() {
 }
 pulse_rest_core_priority_allows_next() {
 	local priority="$1"
-	# Existing policy classifies housekeeping as deferrable under reserve.
-	[[ "$priority" != deferrable ]] || return 1
-	return 0
+	# Exercise the real priority decision with observed quota supplied locally.
+	if _cb_rest_core_priority_decision_allows "$priority" 'reserve 540 5000 750 750 100 9999999999'; then
+		return 0
+	fi
+	return 1
 }
 _preflight_start_merge_first() { return 0; }
 calculate_max_workers() { printf 'host-capacity\n' >>"$EVENTS"; return 0; }
