@@ -128,13 +128,6 @@ _handle_run_result_success_output() {
 		_store_headless_session_if_allowed "$provider" "$session_key" "$discovered_session" "$selected_model" "$role"
 	fi
 	if _run_result_is_issue_worker; then
-		if ! output_has_completion_signal "$output_file"; then
-			_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
-			_run_result_label="premature_exit"
-			rm -f "$output_file"
-			print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
-			return 77
-		fi
 		if output_has_post_pr_handoff_signal "$output_file"; then
 			_run_result_label="post_pr_handoff"
 			rm -f "$output_file"
@@ -190,6 +183,17 @@ _handle_run_result_success_output() {
 			rm -f "$output_file"
 			print_warning "$selected_model worker reported a terminal BLOCKED state"
 			return 83
+		fi
+		# GH#33672: reconcile verified PR-less terminal objectives before the
+		# continuation gate. Prose alone ("already delivered") is not evidence.
+		if ! output_has_completion_signal "$output_file" &&
+			! _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
+			"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+			_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
+			_run_result_label="premature_exit"
+			rm -f "$output_file"
+			print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
+			return 77
 		fi
 	fi
 	_run_result_label="success"

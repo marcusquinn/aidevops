@@ -1367,8 +1367,9 @@ _worker_external_terminal_complete() {
 	return 1
 }
 
-# PR-less objectives with a trusted terminal contract: explicit data-only work
-# (GH#32826) and pulse consolidation children (GH#32984). The issue is fetched
+# PR-less objectives with a trusted terminal contract: explicit data-only work,
+# pulse consolidation children, or work already delivered by a closing merged
+# PR (GH#33672). The issue is fetched
 # once and shared so ordinary open-issue finishes cost a single API read.
 _hrw_pr_less_terminal_complete() {
 	local session_key="$1"
@@ -1383,6 +1384,37 @@ _hrw_pr_less_terminal_complete() {
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
 	_hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" && return 0
 	_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" && return 0
+	_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" && return 0
+	return 1
+}
+
+# A different worker may have delivered the issue before this run. Require an
+# exact closing reference on a merged PR and no unpublished work, not a prose
+# verdict, issue-number search match, or arbitrary closed issue.
+_hrw_already_delivered_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+	local issue_json="$5"
+	jq -e '.state == "closed" and .state_reason == "completed"
+		and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	local candidates="" pr_number="" pr_json=""
+	candidates=$(gh pr list --repo "$repo_slug" --state merged --search "$issue_number" \
+		--limit 20 --json number --jq '.[].number' 2>/dev/null) || return 1
+	while IFS= read -r pr_number; do
+		[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || continue
+		pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json state,mergedAt,closingIssuesReferences 2>/dev/null) || continue
+		jq -e --argjson issue "$issue_number" \
+			'.state == "MERGED" and .mergedAt != null
+			and any(.closingIssuesReferences[]?; .number == $issue)' \
+			<<<"$pr_json" >/dev/null 2>&1 || continue
+		_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+		print_info "[lifecycle] worker_already_delivered complete session=${session_key} issue=${issue_number} pr=${pr_number}"
+		return 0
+	done <<<"$candidates"
 	return 1
 }
 
