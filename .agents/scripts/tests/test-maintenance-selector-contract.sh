@@ -44,7 +44,7 @@ required_functions = {
     ".agents/scripts/pulse-dep-graph.sh": ["build_dependency_graph_cache"],
     ".agents/scripts/pulse-dispatch-engine.sh": [
         "_should_run_llm_supervisor",
-        "build_ranked_dispatch_candidates_json",
+        "_dispatch_repository_rows",
     ],
     ".agents/scripts/pulse-fix-the-fixer-detector.sh": ["cmd_run"],
     ".agents/scripts/pulse-issue-reconcile-normalize.sh": ["_normalize_label_invariants"],
