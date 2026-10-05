@@ -10,6 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.12] - 2026-10-06
+
+### Added
+
+- public SERP collection policy, SerpApi provider, CAPTCHA threshold probe
+
+### Changed
+
+- Maintenance: mark t18590 complete (pr:#33688 completed:2026-10-05) (#33678)
+- Maintenance: mark t18589 complete (pr:#33643 completed:2026-10-05) (#33656)
+- Refactor: split full-loop merge regression suite
+
+### Fixed
+
+- explain zero-result queries (GH#33691) (#33692)
+- recover bound REST quota on newer reset windows (#33688)
+- explain unsupported Git in prospective TODO guard (#33690)
+- admit healthy GitHub reads and preserve permission deferrals (#33683)
+- exit sandbox helpers when watched targets die (#33675)
+- preserve requested SIGTERM in bounded operation receipts (GH#33665) (#33669)
+- refresh stale paced quota before merge reads
+- split consolidation contract validation by concern (#33662)
+- distinguish sibling body mentions from issue references (#33661)
+- continue stall-released worker draft checkpoints (GH#33654) (#33663)
+- explain runner secret capability deferrals (#33648)
+- retry short local merge admission deferrals (#33646)
+- treat non-required Qlty out-of-minutes status as advisory
+
 ## [3.38.11] - 2026-10-05
 
 ### Changed
