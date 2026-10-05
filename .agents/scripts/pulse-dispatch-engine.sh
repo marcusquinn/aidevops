@@ -384,6 +384,35 @@ _dispatch_first_wave_advance_cursor() {
 	return 0
 }
 
+# Emit managed repository rows, optionally rotated after a first-wave cursor.
+_dispatch_repository_rows() {
+	local cursor="$1"
+	jq -r --arg cursor "$cursor" '
+		def pulse_hour_start:
+			if (.pulse_hours | type) == "array" then .pulse_hours[0]
+			else .pulse_hours.start
+			end;
+		def pulse_hour_end:
+			if (.pulse_hours | type) == "array" then .pulse_hours[1]
+			else .pulse_hours.end
+			end;
+		[.initialized_repos[] |
+		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "")] as $repos |
+		($repos | map(.slug) | index($cursor)) as $index |
+		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end)[] |
+		[
+			.slug,
+			.path,
+			(.priority // "tooling"),
+			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
+			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
+			(.pulse_expires // ""),
+			(.pulse_interval // "")
+		] | join("|")
+	' "$REPOS_JSON" 2>/dev/null || return 1
+	return 0
+}
+
 build_ranked_dispatch_candidates_json() {
 	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
 	local dependency_normalization_mode="${2:-normalize}"
@@ -451,29 +480,7 @@ build_ranked_dispatch_candidates_json() {
 			_dispatch_first_wave_advance_cursor "$repo_slug"
 			break
 		fi
-	done < <(jq -r --arg cursor "$cursor" '
-		def pulse_hour_start:
-			if (.pulse_hours | type) == "array" then .pulse_hours[0]
-			else .pulse_hours.start
-			end;
-		def pulse_hour_end:
-			if (.pulse_hours | type) == "array" then .pulse_hours[1]
-			else .pulse_hours.end
-			end;
-		[.initialized_repos[] |
-		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "")] as $repos |
-		($repos | map(.slug) | index($cursor)) as $index |
-		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end)[] |
-		[
-			.slug,
-			.path,
-			(.priority // "tooling"),
-			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
-			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
-			(.pulse_expires // ""),
-			(.pulse_interval // "")
-		] | join("|")
-	' "$REPOS_JSON" 2>/dev/null)
+	done < <(_dispatch_repository_rows "$cursor")
 
 	if [[ ! -s "$tmp_candidates" ]]; then
 		rm -f "$tmp_candidates" "$completeness_file"
@@ -587,6 +594,10 @@ _dispatch_record_zero_worker_active_claim_hold() {
 _dispatch_prepare_prepasses() {
 	local prepass_line=""
 	local initial_slots="$1"
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] First dispatch wave: ancillary triage/enrichment deferred to normal refill (GH#33647)" >>"$LOGFILE"
+		return 0
+	fi
 	if ! prepass_line=$(_dispatch_run_prepasses "$initial_slots" 2>>"$LOGFILE"); then
 		echo "[pulse-wrapper] Dispatch_max: _dispatch_run_prepasses returned non-zero — assuming 0 triage/enrichment, full slot budget" >>"$LOGFILE"
 		prepass_line="${initial_slots} 0 1"
@@ -735,11 +746,7 @@ dispatch_max() {
 	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, candidates=${candidate_count}" >>"$LOGFILE"
 
 	local triage_attempted=0 triage_infrastructure_failed=0
-	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != "1" ]]; then
-		_dispatch_prepare_prepasses "$available_slots"
-	else
-		echo "[pulse-wrapper] First dispatch wave: ancillary triage/enrichment deferred to normal refill (GH#33647)" >>"$LOGFILE"
-	fi
+	_dispatch_prepare_prepasses "$available_slots"
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_post_prepasses"; then
 		echo "[pulse-wrapper] Dispatch_max stopped after prepasses: REST-core launch headroom is unavailable" >>"$LOGFILE"
 		echo 0
@@ -1708,8 +1715,7 @@ _run_preflight_stages() {
 	# 8.5% failure rate). The group timeout is redundant — per-candidate timeouts
 	# provide the safety net. Timing is still logged for observability.
 	local _pflt_ed_start=$SECONDS
-	local _pflt_ed_rc=0
-	local _pflt_ed_outcome=""
+	local _pflt_ed_rc=0 _pflt_ed_outcome=""
 	_pulse_run_budget_priority_stage "preflight_early_dispatch" _preflight_early_dispatch || _pflt_ed_rc=$?
 	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] && _pflt_ed_outcome="skipped"
 	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc" "$_pflt_ed_outcome"

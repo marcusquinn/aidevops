@@ -73,9 +73,11 @@ _dispatch_rest_core_progress_allows_next() {
 	return 1
 }
 _dispatch_stats_increment() { return 0; }
-_dispatch_prepare_prepasses() {
+_dispatch_run_prepasses() {
+	local slots="$1"
 	printf 'ancillary\n' >>"$EVENTS"
 	advance_clock 900
+	printf '%s 0 0\n' "$slots"
 	return 0
 }
 gh() { printf 'fixture-login\n'; return 0; }
