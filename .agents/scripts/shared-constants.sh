@@ -740,7 +740,11 @@ timeout_sec() {
 		local monitor_was_enabled=false
 		[[ $- == *m* ]] && monitor_was_enabled=true
 		set -m
-		"$@" &
+		# GH#33619: the explicit <&0 keeps the caller's stdin, matching GNU
+		# timeout/gtimeout. Without it, Bash gives an async command /dev/null
+		# whenever job control is unavailable (any subshell), so callers such as
+		# `timeout_sec N git fetch --stdin <file` silently received no input.
+		"$@" <&0 &
 		local cmd_pid=$!
 		# Restore monitor mode to its original state (set -m or set +m as appropriate)
 		$monitor_was_enabled && set -m || set +m
