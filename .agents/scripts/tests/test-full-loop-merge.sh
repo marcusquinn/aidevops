@@ -850,6 +850,59 @@ test_local_admission_gate_failure_reports_retry_deadline() {
 	return 0
 }
 
+test_bounded_local_admission_recovery() {
+	local scripts_dir="" scenario="" result=0
+	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	for scenario in short fractional boundary expired moving long malformed cooldown review; do
+		result=0
+		bash -c '
+			source "$1/shared-constants.sh"
+			source "$1/full-loop-helper-merge.sh"
+			scenario="$2" calls=0 waits=0 elapsed=0
+			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
+			sleep() {
+				local duration="$1"
+				waits=$((waits + 1))
+				elapsed=$((elapsed + duration))
+				SECONDS=$((SECONDS + duration))
+				return 0
+			}
+			cmd_pre_merge_gate() {
+				calls=$((calls + 1))
+				[[ "$1" == 42 && "$2" == testorg/testrepo ]] || return 1
+				if [[ "$calls" -eq 2 && "$scenario" != moving ]]; then
+					return 0
+				fi
+				FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-read-deferred
+				case "$scenario" in
+				short) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002 ;;
+				fractional) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1001.25 ;;
+				boundary) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1030 ;;
+				expired) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=999 ;;
+				moving) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=$((1001 + elapsed)) ;;
+				long) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1031 ;;
+				malformed) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=retry-when-capacity-returns ;;
+				cooldown) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-cooldown ;;
+				review) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=review-bot ;;
+				esac
+				return 1
+			}
+			rc=0
+			_merge_pre_merge_gate_with_admission_retry 42 testorg/testrepo || rc=$?
+			case "$scenario" in
+			short) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
+			fractional) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
+			boundary) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 30 ]] ;;
+			expired) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 1 ]] ;;
+			moving) [[ "$rc" -eq 1 && "$waits" -gt 1 && "$elapsed" -le 30 ]] ;;
+			*) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waits" -eq 0 ]] ;;
+			esac
+		' _ "$scripts_dir" "$scenario" || result=$?
+		print_result "bounded local admission recovery: $scenario" "$result"
+	done
+	return 0
+}
+
 # Test 7b: Interactive --auto review-required block uses admin fallback when safe.
 test_auto_review_required_interactive_admin_fallback() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
@@ -1949,6 +2002,7 @@ main() {
 	test_review_gate_failure_blocks_rest_fallback
 	test_cooldown_gate_failure_reports_cooldown
 	test_local_admission_gate_failure_reports_retry_deadline
+	test_bounded_local_admission_recovery
 	test_local_deferral_survives_context_resolution
 	test_exact_check_deferral_preserves_retry_deadline
 	test_auto_review_required_interactive_admin_fallback

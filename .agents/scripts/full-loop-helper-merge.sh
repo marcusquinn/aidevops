@@ -2454,6 +2454,31 @@ _merge_report_pre_merge_gate_failure() {
 	return 0
 }
 
+# Retry only local admission, never CI/review gates or server cooldowns.
+_merge_pre_merge_gate_with_admission_retry() {
+	local pr_number="$1"
+	local repo="$2"
+	local deadline=$((SECONDS + 30))
+	local attempts=0 retry_at="" now="" wait_seconds=0 round_up=0
+	while ! cmd_pre_merge_gate "$pr_number" "$repo"; do
+		[[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == github-api-read-deferred ]] || return 1
+		retry_at="${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-}"
+		[[ "$retry_at" =~ ^[0-9]{1,10}([.][0-9]+)?$ ]] || return 1
+		now=$(date +%s) || return 1
+		# Round up fractional epochs so admission is not retried before its slot.
+		round_up=0
+		[[ "$retry_at" != *.* ]] || round_up=1
+		retry_at="${retry_at%%.*}"
+		wait_seconds=$((10#$retry_at + round_up - now))
+		[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
+		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 30 ]] || return 1
+		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (30s recovery budget)"
+		sleep "$wait_seconds" || return 1
+		attempts=$((attempts + 1))
+	done
+	return 0
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -2486,7 +2511,7 @@ cmd_merge() {
 	repo=$(_merge_resolve_repo "$repo") || return 1
 
 	# Gate: enforce review-bot-gate before merge.
-	cmd_pre_merge_gate "$pr_number" "$repo" || {
+	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {
 		_merge_report_pre_merge_gate_failure
 		return 1
 	}
