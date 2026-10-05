@@ -575,54 +575,51 @@ _resolve_ages_and_emit() {
 # only (not the full command line with arguments). This prevents false positives
 # like zsh processes whose arguments contain "opencode" (e.g., `zsh -l -c opencode`).
 _collect_monitored_processes() {
-	# Collect all processes once, then filter by pattern against basename
-	local ps_output
-	# t2190: ps axwwo to avoid Linux procps truncating the command column, which
-	# otherwise strips the pattern-matching substring from worker commands.
-	ps_output=$(ps axwwo pid=,rss=,command= 2>/dev/null || true)
+	# Do not combine -U with ax: procps treats those selectors additively and
+	# would include other users again. Keep ww for untruncated worker commands.
+	local process_user="$EUID"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		process_user="${USER:-$EUID}"
+	fi
+	local patterns
+	printf -v patterns '%s\n' "${MONITORED_PATTERNS[@]}"
 
-	# Track PIDs we've already emitted to avoid duplicates from overlapping patterns
+	# Only matching rows cross into Bash; awk handles all patterns in one pass.
+	# Breaking on the first match emits each PID once, including overlapping
+	# basename/regex matches, without a linear seen-PID lookup in Bash.
 	local -a seen_pids=()
-
-	# Accumulate matched process data before fetching ages (avoids per-PID ps forks)
-	# Format: PID<SOH>RSS_MB<SOH>CMD_NAME<SOH>FULL_CMD (SOH=\x01, safe delimiter — never appears in cmd)
 	local -a matched_rows=()
-
-	local pattern
-	for pattern in "${MONITORED_PATTERNS[@]}"; do
-		while IFS= read -r line; do
-			[[ -z "$line" ]] && continue
-			# Parse with read builtin — avoids spawning echo/awk/cut subshells per line
-			local pid rss_kb cmd
-			read -r pid rss_kb cmd <<<"$line"
-
-			# Validate PID and RSS are numeric
-			[[ "$pid" =~ ^[0-9]+$ ]] || continue
-			[[ "$rss_kb" =~ ^[0-9]+$ ]] || rss_kb=0
-
-			# Extract short command name (basename of the executable path)
-			# Use parameter expansion — avoids a subprocess fork per process per pattern
-			local cmd_path="${cmd%% *}"
-			local cmd_name="${cmd_path##*/}"
-			[[ -z "$cmd_name" ]] && cmd_name="unknown"
-
-			# Check pattern match
-			if ! _matches_monitor_pattern "$pattern" "$cmd_name" "$cmd"; then
-				continue
-			fi
-
-			# Check exclusions and dedup
-			if _should_skip_process "$pid" "$cmd_name" "$cmd"; then
-				continue
-			fi
-			seen_pids+=("$pid")
-
-			local rss_mb=$((rss_kb / 1024))
-			# Accumulate row — age fetched in batch below
-			# Use SOH (\x01) as delimiter — safe because it never appears in process names or args
-			matched_rows+=("${pid}"$'\1'"${rss_mb}"$'\1'"${cmd_name}"$'\1'"${cmd}")
-		done <<<"$ps_output"
-	done
+	local pid rss_mb cmd_name cmd
+	while IFS=$'\1' read -r pid rss_mb cmd_name cmd; do
+		seen_pids+=("$pid")
+		matched_rows+=("${pid}"$'\1'"${rss_mb}"$'\1'"${cmd_name}"$'\1'"${cmd}")
+	done < <(ps -U "$process_user" -ww -o pid=,rss=,command= 2>/dev/null | awk -v patterns="$patterns" -v script_name="$SCRIPT_NAME" -v excluded_name=grep '
+		BEGIN {
+			count = split(tolower(patterns), pattern, "\n")
+			for (i = 1; i <= count; i++)
+				regex[i] = index(pattern[i], ".*") > 0
+		}
+		$(1) ~ /^[0-9]+$/ {
+			pid = $(1)
+			rss = ($(2) ~ /^[0-9]+$/) ? int($(2) / 1024) : 0
+			cmd = $0
+			sub(/^[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]*/, "", cmd)
+			name = cmd
+			sub(/ .*/, "", name)
+			sub(/^.*\//, "", name)
+			if (name == "") name = "unknown"
+			if (name == excluded_name || index(cmd, script_name)) next
+			lower_name = tolower(name)
+			lower_cmd = tolower(cmd)
+			for (i = 1; i <= count; i++) {
+				if (pattern[i] == "") continue
+				if ((regex[i] && lower_cmd ~ pattern[i]) ||
+				    (!regex[i] && index(lower_name, pattern[i]))) {
+					printf "%s%c%d%c%s%c%s\n", pid, 1, rss, 1, name, 1, cmd
+					break
+				}
+			}
+		}')
 
 	# Resolve ages and emit sorted output
 	_resolve_ages_and_emit
