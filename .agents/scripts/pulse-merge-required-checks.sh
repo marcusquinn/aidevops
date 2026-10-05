@@ -984,6 +984,45 @@ _pmrc_is_configured_advisory_failure() {
 	return $?
 }
 
+#######################################
+# Classify one terminal non-required failure. Logs the reason when advisory.
+# Args: $1=name $2=members $3=link $4=checks_json $5=configured_contexts_json
+#       $6=evidence_json $7=repo_slug $8=pr_number $9=head_sha
+# Returns: 0=advisory (does not block merge), 1=blocking
+#######################################
+_pmrc_nonrequired_failure_is_advisory() {
+	local name="$1"
+	local members="$2"
+	local link="$3"
+	local checks_json="$4"
+	local configured_contexts_json="$5"
+	local evidence_json="$6"
+	local repo_slug="$7"
+	local pr_number="$8"
+	local head_sha="$9"
+	local subject="for PR #${pr_number} in ${repo_slug}"
+
+	if declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
+		_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required infrastructure failure '${name}' ${subject} after failed-log classification (GH#27600)" >>"$LOGFILE"
+		return 0
+	fi
+	if _pmrc_is_explicit_advisory_failure "$name" "$checks_json"; then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required baseline advisory failure '${name}' because its regression companion passed ${subject} (GH#27137)" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$members" == "${name}@commit_status" ]] &&
+		_pmrc_is_quota_exhausted_status_failure "$name" "$checks_json"; then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required provider status '${name}' that did not run because the provider quota is spent ${subject} (GH#33640)" >>"$LOGFILE"
+		return 0
+	fi
+	if _pmrc_is_configured_advisory_failure "$name" "$configured_contexts_json" "$evidence_json" "$repo_slug" "$pr_number" "$head_sha"; then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED configured non-required review-provider failure '${name}' with typed current-head review evidence ${subject}" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
 _pmrc_snapshot_checks_acceptable() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1042,19 +1081,8 @@ _pmrc_snapshot_checks_acceptable() {
 			echo "[pulse-merge] pre-merge snapshot: required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 			blocking_names="${blocking_names}${name}"$'\n'
 			blockers=$((blockers + 1))
-		elif declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
-			_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
-			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required infrastructure failure '${name}' for PR #${pr_number} in ${repo_slug} after failed-log classification (GH#27600)" >>"$LOGFILE"
-			advisory=$((advisory + 1))
-		elif _pmrc_is_explicit_advisory_failure "$name" "$checks_json"; then
-			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required baseline advisory failure '${name}' because its regression companion passed for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
-			advisory=$((advisory + 1))
-		elif [[ "$members" == "${name}@commit_status" ]] &&
-			_pmrc_is_quota_exhausted_status_failure "$name" "$checks_json"; then
-			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required provider status '${name}' that did not run because the provider quota is spent for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
-			advisory=$((advisory + 1))
-		elif _pmrc_is_configured_advisory_failure "$name" "$configured_contexts_json" "$evidence_json" "$repo_slug" "$pr_number" "$head_sha"; then
-			echo "[pulse-merge] pre-merge snapshot: IGNORED configured non-required review-provider failure '${name}' with typed current-head review evidence for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		elif _pmrc_nonrequired_failure_is_advisory "$name" "$members" "$link" "$checks_json" \
+			"$configured_contexts_json" "$evidence_json" "$repo_slug" "$pr_number" "$head_sha"; then
 			advisory=$((advisory + 1))
 		else
 			echo "[pulse-merge] pre-merge snapshot: unclassified non-required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} — merge blocked (GH#27137)" >>"$LOGFILE"
