@@ -859,6 +859,36 @@ test_local_admission_gate_failure_reports_retry_deadline() {
 	return 0
 }
 
+test_post_verification_read_admission_window() {
+	local scripts_dir="" result=0
+	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	bash -c '
+		source "$1/shared-constants.sh"
+		source "$1/full-loop-helper-merge.sh"
+		unset AIDEVOPS_GH_READ_TIMEOUT
+		_gh_with_timeout() {
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 && "$1" == read ]] || return 1
+			printf "base\tbase-sha\thead-sha\ttestorg/testrepo\tclone-url\n"
+			return 0
+		}
+		_merge_fetch_pr_refs_rest 42 testorg/testrepo >/dev/null || exit 1
+		[[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] || exit 1
+		_gh_collaborator_permission_lookup() {
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 ]] || return 2
+			printf -v "$3" "%s" write
+			return 0
+		}
+		_merge_author_has_write_authority owner testorg/testrepo || exit 1
+		_gh_with_timeout() {
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 7 ]] || return 1
+			return 0
+		}
+		AIDEVOPS_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo
+	' _ "$scripts_dir" || result=$?
+	print_result "post-verification reads: bounded admission window and caller override" "$result"
+	return 0
+}
+
 test_bounded_local_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"

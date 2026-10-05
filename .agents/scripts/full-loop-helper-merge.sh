@@ -34,6 +34,10 @@ FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 
 _flm_gh_read() {
 	local rc=0
+	# Let the transport wait to retry_at within one bounded read, including
+	# post-verification reads. Explicit caller deadlines remain authoritative.
+	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
+	export AIDEVOPS_GH_READ_TIMEOUT
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
 		_gh_with_timeout read "$@" || rc=$?
 	else
@@ -434,6 +438,8 @@ _merge_author_has_write_authority() {
 	local author="$1"
 	local repo="$2"
 	local permission=""
+	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
+	export AIDEVOPS_GH_READ_TIMEOUT
 
 	# shared-constants.sh loads the App-aware helper in normal full-loop use. It
 	# distinguishes a confirmed 404 non-collaborator (permission=none) from API
@@ -441,7 +447,7 @@ _merge_author_has_write_authority() {
 	if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 		_gh_collaborator_permission_lookup "$repo" "$author" permission || return 2
 	else
-		permission=$(gh api "repos/${repo}/collaborators/${author}/permission" \
+		permission=$(_flm_gh_read gh api "repos/${repo}/collaborators/${author}/permission" \
 			--jq '.permission // "none"' 2>/dev/null) || return 2
 	fi
 	case "$permission" in
@@ -625,7 +631,7 @@ _merge_fetch_head_sha_rest() {
 	local pr_number="$1"
 	local repo="$2"
 	local head_sha=""
-	head_sha=$(gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>/dev/null || true)
+	head_sha=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>/dev/null || true)
 	if [[ -z "$head_sha" ]]; then
 		return 1
 	fi
@@ -641,7 +647,7 @@ _merge_fetch_pr_refs_rest() {
 	local pr_number="$1"
 	local repo="$2"
 	local refs=""
-	refs=$(gh api "repos/${repo}/pulls/${pr_number}" \
+	refs=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" \
 		--jq '[.base.ref // empty, .base.sha // empty, .head.sha // empty, .base.repo.full_name // empty, .base.repo.clone_url // empty] | @tsv' 2>/dev/null) || return 1
 	[[ "$refs" == *$'\t'*$'\t'*$'\t'*$'\t'* ]] || return 1
 	printf '%s\n' "$refs"

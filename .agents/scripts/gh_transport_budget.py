@@ -225,17 +225,22 @@ class Budget:
             fresh = row and 0 <= now - row[2] <= 20 and row[1] > now
             if not fresh and active:
                 raise Deferred("waiting for an authoritative quota observation", retryable=True)
-            reason, retry_at = capacity_wait(self, resource, row, total, now)
+            probe = self.db.execute(
+                "SELECT started FROM revalidation WHERE scope=? AND resource=?",
+                (self.scope, resource),
+            ).fetchone()
+            refresh = bool(row and row[1] > now and
+                           reserve_probe_allowed(row, active, total, probe, now))
+            # A paced stale balance must not starve its own serialized refresh.
+            # Omit only primary pacing evidence: capacity_wait still enforces
+            # concurrency/secondary ceilings, and cooldown/exhaustion ran above.
+            reason, retry_at = capacity_wait(self, resource, None if refresh else row, total, now)
             if reason:
                 raise Deferred(reason, retryable=True, retry_at=retry_at)
             if row and row[1] > now:
                 # A stale positive balance may be refreshed by one causally newer
                 # request. This is ordinary admitted work, never a reserve bypass.
-                probe = self.db.execute(
-                    "SELECT started FROM revalidation WHERE scope=? AND resource=?",
-                    (self.scope, resource),
-                ).fetchone()
-                if reserve_probe_allowed(row, active, total, probe, now):
+                if refresh:
                     self.db.execute("INSERT OR REPLACE INTO revalidation VALUES(?,?,?,?)",
                                     (self.scope, resource, now, reservation))
             self.db.execute(

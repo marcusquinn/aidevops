@@ -556,9 +556,12 @@ class AdmissionTests(unittest.TestCase):
         retry_at = first.exception.retry_at
         other = Budget(self.directory, "owner-one")
         try:
+            # A recent refresh attempt retains the pacing deadline on reopen.
+            other.db.execute("UPDATE revalidation SET started=1090")
             with self.assertRaises(Deferred) as later:
                 other.acquire("core", now=1100)
             self.assertEqual(later.exception.retry_at, retry_at)
+            other.db.execute("UPDATE revalidation SET started=?", (retry_at - 10,))
             request = other.acquire("core", now=retry_at)
             other.finish(request, "core", headers(2), started=retry_at, now=retry_at + 0.1)
             with self.assertRaises(Deferred):
@@ -568,6 +571,30 @@ class AdmissionTests(unittest.TestCase):
             other.acquire("core", now=retry_at + 2)
         finally:
             other.close()
+
+    def test_stale_pacing_allows_serialized_header_refresh_before_deadline(self):
+        self.seed(3)
+        self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
+                               ("owner-one", "core", 2000, 1900, 3))
+        request = self.budget.acquire("core", now=1061)
+        with self.assertRaisesRegex(Deferred, "serialized quota revalidation"):
+            self.budget.acquire("core", now=1061)
+        self.budget.finish(request, "core", headers(5000), started=1061, now=1062)
+        self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 5000)
+        self.budget.acquire("core", now=1063)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+
+    def test_stale_pacing_refresh_keeps_secondary_and_server_limits(self):
+        self.seed(3)
+        self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
+                               ("owner-one", "core", 2000, 1900, 3))
+        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)",
+                                  [("owner-one", "core", 1060)] * 900)
+        with self.assertRaisesRegex(Deferred, "secondary ceiling"):
+            self.budget.acquire("core", now=1061)
+        self.budget.db.execute("UPDATE quota SET blocked_until=1200")
+        with self.assertRaisesRegex(Deferred, "server resource cooldown"):
+            self.budget.acquire("core", now=1061)
 
     def test_pacing_cannot_withhold_the_last_primary_point(self):
         self.seed(1)
