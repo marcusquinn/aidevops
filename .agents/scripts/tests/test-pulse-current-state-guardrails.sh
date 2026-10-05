@@ -412,6 +412,7 @@ test_candidate_reason_uses_current_attempt_only() {
 test_candidate_reason_preserves_current_typed_blocker() {
 	reset_guardrail_env
 	printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #4772 (exampleorg/examplerepo)' \
+		'[pulse-wrapper] has active dispatch comment for #4772 (exampleorg/examplerepo)' \
 		'[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=publication_pending issue=#4772 repo=exampleorg/examplerepo' >>"$LOGFILE"
 	_dispatch_record_nonzero_dispatch_result 4772 exampleorg/examplerepo 3
 	if grep -q 'blocked:publication_pending benign dispatch block' "$LOGFILE" &&
@@ -427,6 +428,13 @@ test_typed_candidate_reasons_survive_accounting() {
 	reset_guardrail_env
 	local reason=""
 	for reason in dedup_active_claim_unverified publication_pending rest_core_circuit_breaker dirty_worktree_evidence_unavailable; do
+		local classified_reason=""
+		classified_reason=$(_dispatch_candidate_failure_reason 4772 exampleorg/examplerepo 3 \
+			"active claim evidence: DISPATCH_BLOCK_REASON reason=${reason} issue=#4772 repo=exampleorg/examplerepo")
+		if [[ "$classified_reason" != "$reason" ]]; then
+			print_result "guardrail: structured reason overrides generic claim text" 1 "expected=${reason} actual=${classified_reason}"
+			return 0
+		fi
 		_dispatch_stats_increment_candidate_failed "$reason"
 		if ! grep -q "^dispatch_candidate_failed_reason_${reason}$" "$STATS_COUNTER_FILE"; then
 			print_result "guardrail: typed candidate reasons survive accounting" 1 "reason=${reason}"

@@ -301,11 +301,9 @@ _dispatch_candidate_failure_reason() {
 		recent_lines=$(_dispatch_candidate_recent_lines "$issue_number" "$repo_slug") || recent_lines=""
 	fi
 
-	if [[ "$recent_lines" == *"has active dispatch comment"* || "$recent_lines" == *"active claim"* ]]; then
-		printf 'dedup_active_claim\n'
-		return 0
-	fi
-
+	# Structured candidate-local evidence is authoritative. Generic claim prose
+	# can accompany unverified ownership or an unrelated final gate; treating it
+	# as a benign active claim hides the actionable prerequisite (GH#33623).
 	if [[ "$recent_lines" == *"DISPATCH_BLOCK_REASON reason="* ]]; then
 		reason=$(printf '%s\n' "$recent_lines" | awk '
 			match($0, /DISPATCH_BLOCK_REASON reason=[a-z_]+/) {
@@ -316,6 +314,11 @@ _dispatch_candidate_failure_reason() {
 		') || reason="$_DISPATCH_UNCLASSIFIED_SIGNAL"
 		[[ -n "$reason" ]] || reason="$_DISPATCH_UNCLASSIFIED_SIGNAL"
 		printf '%s\n' "$reason"
+		return 0
+	fi
+
+	if [[ "$recent_lines" == *"has active dispatch comment"* || "$recent_lines" == *"active claim"* ]]; then
+		printf 'dedup_active_claim\n'
 		return 0
 	fi
 
