@@ -208,7 +208,8 @@ async function run() {
   for (const pagePath of pages) {
     const url = baseUrl + pagePath;
     try {
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+      await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
       const a11yData = await page.evaluate(() => {
 ${evaluate_body}
