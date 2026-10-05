@@ -22,10 +22,19 @@ from gh_transport_capacity import capacity_wait
 from gh_transport_identity import quota_owner
 from gh_transport_reconcile import reconcile_scope as _reconcile_scope
 from gh_transport_recovery import (
-    admission_status, mark_dead_reservations, probe_recovers,
-    record_budget_transition, reserve_probe_allowed, revalidation_wait,
+    admission_status,
+    mark_dead_reservations,
+    probe_recovers,
+    record_budget_transition,
+    reserve_probe_allowed,
+    revalidation_wait,
 )
 from gh_transport_schema import SCHEMA_VERSION, ensure_schema
+
+__all__ = [
+    "Budget", "Deferred", "admission_status", "credential_identity", "private_directory",
+    "process_birth", "quota_owner", "reconcile_scope", "scope_key",
+]
 
 
 class Deferred(Exception):
@@ -237,12 +246,11 @@ class Budget:
             reason, retry_at = capacity_wait(self, resource, None if refresh else row, total, now)
             if reason:
                 raise Deferred(reason, retryable=True, retry_at=retry_at)
-            if row and row[1] > now:
+            if refresh:
                 # A stale positive balance may be refreshed by one causally newer
                 # request. This is ordinary admitted work, never a reserve bypass.
-                if refresh:
-                    self.db.execute("INSERT OR REPLACE INTO revalidation VALUES(?,?,?,?)",
-                                    (self.scope, resource, now, reservation))
+                self.db.execute("INSERT OR REPLACE INTO revalidation VALUES(?,?,?,?)",
+                                (self.scope, resource, now, reservation))
             self.db.execute(
                 "INSERT INTO reservation(id,scope,resource,started,pid,birth,credential) VALUES(?,?,?,?,?,?,?)",
                 (reservation, self.scope, resource, now, os.getpid(), self.birth, self.credential),
@@ -268,9 +276,10 @@ class Budget:
                 ).fetchone()
                 available, reset_at = int(remaining), int(reset)
                 blocked_until = 0.0
-                # A serialized reserve probe may repair stale evidence only for
-                # one bound credential. Shared/ambiguous owners and late replies
-                # retain conservative accounting. /rate_limit is never a grant.
+                # A bound credential's newer window or a serialized reserve
+                # probe may repair stale evidence. Shared/ambiguous owners and
+                # same-window late replies retain conservative accounting.
+                # /rate_limit is never a grant.
                 recovered = probe_recovers(self, reservation, resource, row, reset_at)
                 if row and row[1] > now and not recovered:
                     # Late responses and unresolved owners with different reset
