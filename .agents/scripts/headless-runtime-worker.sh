@@ -1367,8 +1367,9 @@ _worker_external_terminal_complete() {
 	return 1
 }
 
-# PR-less objectives with a trusted terminal contract: explicit data-only work
-# (GH#32826) and pulse consolidation children (GH#32984). The issue is fetched
+# PR-less objectives with a trusted terminal contract: explicit data-only work,
+# pulse consolidation children, or work already delivered by a closing merged
+# PR (GH#33672). The issue is fetched
 # once and shared so ordinary open-issue finishes cost a single API read.
 _hrw_pr_less_terminal_complete() {
 	local session_key="$1"
@@ -1378,11 +1379,59 @@ _hrw_pr_less_terminal_complete() {
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
 	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
 	[[ -d "$work_dir" ]] || return 1
+	# Keep proven terminal state through finalization if a later API read fails.
+	# Bind it to this attempt's exact local context and recheck for new edits.
+	local head="" branch="" context="" task_status=""
+	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || head=""
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || branch=""
+	if [[ -n "$head" && -n "$branch" ]]; then
+		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}"
+		if [[ "$context" == "${_HRW_PR_LESS_VERIFIED_CONTEXT:-}" ]]; then
+			task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+			[[ -z "$task_status" ]] && return 0
+			return 1
+		fi
+	fi
 	local issue_json=""
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
-	_hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" && return 0
-	_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" && return 0
+	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
+		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
+		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
+		_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
+		return 0
+	fi
+	return 1
+}
+
+# A different worker may have delivered the issue before this run. Require an
+# exact closing reference on a merged PR and no unpublished work, not a prose
+# verdict, issue-number search match, or arbitrary closed issue.
+_hrw_already_delivered_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+	local issue_json="$5"
+	jq -e '.state == "closed" and .state_reason == "completed"
+		and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	local candidates="" pr_number="" pr_json=""
+	candidates=$(gh pr list --repo "$repo_slug" --state merged --search "$issue_number" \
+		--limit 20 --json number --jq '.[].number' 2>/dev/null) || return 1
+	while IFS= read -r pr_number; do
+		[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || continue
+		pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json state,mergedAt,closingIssuesReferences 2>/dev/null) || continue
+		jq -e --argjson issue "$issue_number" --arg repo "$repo_slug" \
+			'.state == "MERGED" and .mergedAt != null
+			and any(.closingIssuesReferences[]?; .number == $issue
+				and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))' \
+			<<<"$pr_json" >/dev/null 2>&1 || continue
+		_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+		print_info "[lifecycle] worker_already_delivered complete session=${session_key} issue=${issue_number} pr=${pr_number}"
+		return 0
+	done <<<"$candidates"
 	return 1
 }
 
