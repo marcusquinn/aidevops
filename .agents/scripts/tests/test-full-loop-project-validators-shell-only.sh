@@ -456,25 +456,34 @@ else
 	print_result "pnpm-only workspace selects affected package and preserves index" 1 "rc=${case11_rc}, cached=${case11_cached}"
 fi
 
-# Case 12: shared root changes broaden across declared packages, not just root.
+# Case 12: lockfile-only changes run root checks once, skipping scriptless groups
+# and avoiding duplicate checks in their nested packages.
 PNPM_ROOT_REPO="${TEST_ROOT}/pnpm-root"
 make_workspace_repo "$PNPM_ROOT_REPO" pnpm
 NPM_CALL_LOG="${TEST_ROOT}/pnpm-root.log"
 export NPM_CALL_LOG NPM_FAKE_RC=0
 (
 	cd "$PNPM_ROOT_REPO" || exit 1
-	printf '%s\n' '{"private":true,"engines":{"node":">=20"},"scripts":{"lint":"eslint ."}}' >package.json
-	git add package.json
-	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change root contract'
+	mkdir -p packages/analytics/web
+	printf '%s\n' '{"name":"analytics","private":true}' >packages/analytics/package.json
+	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >packages/analytics/web/package.json
+	printf '%s\n' '{"private":true,"scripts":{"lint":"turbo run lint","test":"turbo run test"}}' >package.json
+	printf '%s\n' "  - 'packages/analytics/*'" >>pnpm-workspace.yaml
+	git add package.json pnpm-workspace.yaml packages/analytics
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'add grouping workspace and root checks'
+	git update-ref refs/remotes/origin/develop HEAD
+	printf '%s\n' '# lockfile change' >>pnpm-lock.yaml
+	git add pnpm-lock.yaml
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change lockfile only'
 	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
 )
 case12_rc=$?
-if [[ "$case12_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 4 ]] &&
-	grep -q '/packages/a|run lint' "$NPM_CALL_LOG" && grep -q '/packages/b|run lint' "$NPM_CALL_LOG" &&
-	grep -q '/pnpm-root|run lint' "$NPM_CALL_LOG"; then
-	print_result "pnpm root contract broadens check-only validation" 0
+if [[ "$case12_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 2 ]] &&
+	grep -q '/pnpm-root|run lint' "$NPM_CALL_LOG" && grep -q '/pnpm-root|run test' "$NPM_CALL_LOG" &&
+	! grep -q '/packages/' "$NPM_CALL_LOG"; then
+	print_result "pnpm lockfile change runs root checks once despite scriptless groups" 0
 else
-	print_result "pnpm root contract broadens check-only validation" 1 "rc=${case12_rc}"
+	print_result "pnpm lockfile change runs root checks once despite scriptless groups" 1 "rc=${case12_rc}"
 fi
 
 # Case 13: a pnpm workspace validator failure remains a hard failure.
@@ -518,8 +527,12 @@ NPM_CALL_LOG="${TEST_ROOT}/pnpm-manifest.log"
 export NPM_CALL_LOG NPM_FAKE_RC=0
 (
 	cd "$PNPM_MANIFEST_REPO" || exit 1
+	mkdir -p packages/analytics/web
+	printf '%s\n' '{"name":"analytics","private":true}' >packages/analytics/package.json
+	printf '%s\n' '{"scripts":{"test":"node --test"}}' >packages/analytics/web/package.json
+	printf '%s\n' "  - 'packages/analytics/*'" >>pnpm-workspace.yaml
 	printf '%s\n' '{"private":true}' >package.json
-	git add package.json
+	git add package.json pnpm-workspace.yaml packages/analytics
 	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'remove root check'
 	git update-ref refs/remotes/origin/develop HEAD
 	printf '%s\n' '# shared workspace change' >>pnpm-workspace.yaml
@@ -528,12 +541,33 @@ export NPM_CALL_LOG NPM_FAKE_RC=0
 	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
 )
 case15_rc=$?
-if [[ "$case15_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 3 ]] &&
+if [[ "$case15_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 4 ]] &&
 	grep -q '/packages/a|run lint' "$NPM_CALL_LOG" && grep -q '/packages/b|run lint' "$NPM_CALL_LOG" &&
+	grep -q '/packages/analytics/web|run test' "$NPM_CALL_LOG" &&
+	! grep -q '/packages/analytics|run' "$NPM_CALL_LOG" &&
 	! grep -q '/pnpm-manifest|run' "$NPM_CALL_LOG"; then
 	print_result "pnpm manifest alone triggers shared package checks" 0
 else
 	print_result "pnpm manifest alone triggers shared package checks" 1 "rc=${case15_rc}"
+fi
+
+# Shared changes still fail closed if neither root nor any workspace has checks.
+NPM_CALL_LOG="${TEST_ROOT}/pnpm-no-checks.log"
+export NPM_CALL_LOG
+(
+	cd "$PNPM_MANIFEST_REPO" || exit 1
+	for manifest in packages/a/package.json packages/b/package.json packages/analytics/web/package.json; do
+		printf '%s\n' '{"private":true}' >"$manifest"
+	done
+	git add packages
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'remove workspace checks'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+no_checks_rc=$?
+if [[ "$no_checks_rc" -ne 0 && ! -s "$NPM_CALL_LOG" ]]; then
+	print_result "shared changes without check-capable scopes fail closed" 0
+else
+	print_result "shared changes without check-capable scopes fail closed" 1 "rc=${no_checks_rc}"
 fi
 
 # A locked workspace in a fresh worktree installs once, then reuses its
