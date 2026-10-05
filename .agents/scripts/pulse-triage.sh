@@ -142,6 +142,26 @@ _issue_needs_consolidation() {
 	if [[ ",$issue_labels," == *",consolidated,"* ]]; then
 		return 1
 	fi
+	# Labeled issues always retain the ownership-aware cleanup path.
+	local was_already_labeled=false
+	if [[ ",$issue_labels," == *",needs-consolidation,"* ]]; then
+		was_already_labeled=true
+	fi
+
+	# An ordinary issue cannot need consolidation below the substantive-comment
+	# threshold. Read its live timeline first, before the per-candidate child,
+	# ownership and PR lookups. Those gates still run before any consolidation
+	# action, and labeled issues retain the existing cleanup/ownership path.
+	local comments_json="" substantive_json="[]" substantive_count=0
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '.' 2>/dev/null) || comments_json="[]"
+	substantive_json=$(_consolidation_filter_substantive_comments "$comments_json") || substantive_json="[]"
+	substantive_count=$(printf '%s' "$substantive_json" | jq -r 'length' 2>/dev/null) || substantive_count=0
+	if [[ "$was_already_labeled" == "false" &&
+		"$substantive_count" -lt "$ISSUE_CONSOLIDATION_COMMENT_THRESHOLD" ]]; then
+		return 1
+	fi
+
 	# t1982: Skip if an open consolidation-task child already references this
 	# parent. Prevents double-dispatch during the race window between the
 	# child being created and _reevaluate_consolidation_labels re-checking.
@@ -152,10 +172,6 @@ _issue_needs_consolidation() {
 	# If the issue no longer triggers, auto-clear the label so it becomes
 	# dispatchable without manual intervention. This handles the case where
 	# a filter improvement makes previously-flagged issues pass.
-	local was_already_labeled=false
-	if [[ ",$issue_labels," == *",needs-consolidation,"* ]]; then
-		was_already_labeled=true
-	fi
 	# Active headless lifecycle ownership and fresh interactive claims both
 	# override the comment-count heuristic; ambiguous reads fail closed.
 	if _consolidation_classification_defers_for_ownership \
@@ -181,16 +197,9 @@ _issue_needs_consolidation() {
 	# comments (dispatch claims, kill notices, crash reports, stale recovery,
 	# triage reviews, provenance metadata) are noise — workers generate dozens
 	# of these on issues that fail repeatedly, falsely triggering consolidation.
-	local comments_json
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--paginate --jq '.' 2>/dev/null) || comments_json="[]"
-
-	local substantive_json="[]" substantive_count=0
 	# Classification and child composition must use one predicate. A duplicated
 	# filter previously let new operational comment shapes count here while a
 	# different set was inlined into the child.
-	substantive_json=$(_consolidation_filter_substantive_comments "$comments_json") || substantive_json="[]"
-	substantive_count=$(printf '%s' "$substantive_json" | jq -r 'length' 2>/dev/null) || substantive_count=0
 
 	if [[ "$substantive_count" -ge "$ISSUE_CONSOLIDATION_COMMENT_THRESHOLD" ]]; then
 		return 0

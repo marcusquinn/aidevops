@@ -1602,7 +1602,25 @@ test_hold_after_lock_prevents_successor() {
 	return 0
 }
 
+test_non_consolidating_comment_call_budget() {
+	setup_gh_stub
+	GH_API_COMMENTS_JSON='[]'
+	export GH_API_COMMENTS_JSON
+	local rc=0 calls=0
+	_issue_needs_consolidation 123 owner/repo '{"labels":[]}' || rc=$?
+	calls=$(wc -l <"$GH_LOG")
+	if [[ "$rc" == 1 && "$calls" == 1 ]] &&
+		grep -q '^api repos/owner/repo/issues/123/comments ' "$GH_LOG"; then
+		print_result "ordinary empty thread uses one live comment read, no child/ownership/PR ceremony" 0
+	else
+		print_result "ordinary empty thread uses one live comment read, no child/ownership/PR ceremony" 1 "rc=$rc calls=$calls"
+	fi
+	teardown_gh_stub
+	return 0
+}
+
 main() {
+	test_non_consolidating_comment_call_budget
 	test_dispatch_creates_child_issue
 	test_child_body_contains_parent_content_and_authors
 	test_dedup_skips_when_child_exists

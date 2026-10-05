@@ -522,7 +522,9 @@ _dispatch_dedup_scope_gates() {
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "footprint" "$_dss_t0" _ds_stage_attempt_id
 	local _footprint_signal=""
-	_footprint_signal=$(_footprint_check_overlap "$issue_number" "$repo_slug" "$_dispatch_issue_body" 2>/dev/null) || true
+	# Retain the bounded repo cache in this shell; a command substitution loses
+	# both the outer check's and the inner inflight reader's cache updates.
+	_footprint_check_overlap "$issue_number" "$repo_slug" "$_dispatch_issue_body" _footprint_signal 2>/dev/null || true
 	if [[ -n "$_footprint_signal" ]]; then
 		echo "[dispatch_with_dedup] (t2117) Dispatch deferred for #${issue_number} in ${repo_slug}: ${_footprint_signal}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.footprint" "$_dss_t0"

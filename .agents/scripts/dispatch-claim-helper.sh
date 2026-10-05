@@ -36,6 +36,7 @@
 
 set -euo pipefail
 
+_DCH_STARTUP_SECONDS="$SECONDS"
 _DCH_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_DCH_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _DCH_SCRIPT_DIR="."
 # shellcheck source=pr-checkpoint-target-lib.sh
@@ -1281,7 +1282,7 @@ cmd_claim() {
 	# Step 1: Post claim
 	local comment_id
 	local claim_reason
-	claim_reason=$(_detect_stale_worker_takeover_reason "$issue_number" "$repo_slug")
+	claim_reason=$(_dch_timed takeover_reason _detect_stale_worker_takeover_reason "$issue_number" "$repo_slug")
 
 	comment_id=$(_post_claim "$issue_number" "$repo_slug" "$runner" "$nonce" "$ts" "$claim_reason") || {
 		echo "CLAIM_ERROR: failed to post claim — blocking dispatch (fail-closed)" >&2
@@ -1289,7 +1290,7 @@ cmd_claim() {
 	}
 
 	# Step 2: Wait consensus window
-	sleep "$DISPATCH_CLAIM_WINDOW"
+	_dch_timed consensus_window sleep "$DISPATCH_CLAIM_WINDOW"
 
 	# Step 3: Fetch all claims
 	local claims
@@ -1686,6 +1687,24 @@ cmd_check() {
 }
 
 #######################################
+# Run the read-only precheck and claim in one helper process. Retain the
+# assignment guard and a fresh post-consensus timeline; the precheck snapshot
+# is only takeover evidence, never authorization for the winning lease.
+#######################################
+cmd_check_and_claim() {
+	local issue_number="${1:-}" repo_slug="${2:-}" runner="${3:-}"
+	local check_rc=0
+	_dch_timed claim_precheck cmd_check "$issue_number" "$repo_slug" || check_rc=$?
+	case "$check_rc" in
+	0) return 1 ;;
+	1) ;;
+	*) return 2 ;;
+	esac
+	_dch_timed claim_consensus cmd_claim "$issue_number" "$repo_slug" "$runner"
+	return $?
+}
+
+#######################################
 # Show help
 #######################################
 show_help() {
@@ -1697,6 +1716,9 @@ workers for the same issue. Uses plain-text comments as a distributed lock
 mechanism via GitHub's append-only comment timeline.
 
 Usage:
+  dispatch-claim-helper.sh check-and-claim <issue-number> <repo-slug> [runner-login]
+    Precheck and claim with one startup. Same exit codes as claim.
+
   dispatch-claim-helper.sh claim <issue-number> <repo-slug> [runner-login]
     Attempt to claim an issue for dispatch.
     Exit 0 = claim won (safe to dispatch)
@@ -1770,6 +1792,9 @@ main() {
 	shift || true
 
 	case "$command" in
+	check-and-claim)
+		cmd_check_and_claim "$@"
+		;;
 	claim)
 		cmd_claim "$@"
 		;;
@@ -1805,4 +1830,10 @@ main() {
 	esac
 }
 
+# Include all library/config sourcing in startup attribution without spawning
+# another timer process under host load.
+if [[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]]; then
+	printf '[dispatch-claim] stage=startup elapsed_s=%s rc=0\n' \
+		"$((SECONDS - _DCH_STARTUP_SECONDS))" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
+fi
 main "$@"
