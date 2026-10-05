@@ -1543,7 +1543,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18588 fix(ci): markdownlint changed-line gate never lints changed lines (quoted pathspec) #auto-dispatch #bug ref:GH#33595 pr:#33598 completed:2026-10-04
 
-- [ ] t18589 Surface OpenCode provider errors in ai-research-helper.sh failures #bug #interactive tier:standard ref:GH#33637 logged:2026-10-05 -> [todo/tasks/t18589-brief.md]
+- [x] t18589 Surface OpenCode provider errors in ai-research-helper.sh failures #bug #interactive tier:standard ref:GH#33637 logged:2026-10-05 -> [todo/tasks/t18589-brief.md] pr:#33643 completed:2026-10-05
 
 - [ ] t18590 Transport governor keeps stale low core quota across a new rate-limit window, pacing REST reads ~7.5s #auto-dispatch #bug #framework ref:GH#33651 logged:2026-10-05 -> [todo/tasks/t18590-brief.md]
 
