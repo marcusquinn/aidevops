@@ -34,6 +34,38 @@ existing container is a state conflict and should fail the start instead of bein
 removed implicitly. Completed ephemeral jobs are replaced after the
 `RestartSec=5` delay.
 
+## Stale queued workflow watchdog
+
+Pulse runs `scripts/pulse-stale-queued-runs.sh` as a bounded optional stage for
+managed repositories (`pulse: true`, maintenance enabled, not local-only).
+Repository write permission is checked first; GitHub also enforces the token's
+Actions write permission on cancellation. REST budget reserves, rate-limit
+pauses, stop flags, and pulse dry-run mode prevent mutations.
+
+- `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS`: default `8`; `0` disables the stage.
+  Runs younger than this threshold are never touched. Invalid values fail closed.
+- Cancellation is attempted first, then force-cancellation on HTTP 409 or if a
+  successful cancellation request leaves the run queued. Status and creation
+  time are rechecked before escalation. Logs include run ID, workflow, and age;
+  cancellation requests are asynchronous, not proof of completion.
+- Runs returning HTTP 409 from both endpoints are logged once and preserved.
+  `AIDEVOPS_STALE_QUEUED_RUN_DELETE=1` explicitly permits deletion of these ghosts
+  after another queued/age check. Deletion removes workflow history; leave this
+  unset unless that loss is intended.
+- Per-repository hourly timestamps and ghost IDs live under
+  `~/.aidevops/.agent-workspace/pulse/stale-queued-runs` (override with
+  `AIDEVOPS_STALE_QUEUED_RUN_STATE_DIR`). Each pass examines one page of up to 100
+  stale queued runs, processes at most 20 unreported candidates per repo, and
+  bounds each API request to 15 seconds (`timeout` or `gtimeout` required).
+  The outer pulse stage has its own deadline. Termination cleans up request
+  files and locks; a forcibly killed pass can leave a
+  repository `lock` directory: remove only after verifying no watchdog is active.
+
+For standalone diagnosis, run `bash scripts/pulse-stale-queued-runs.sh` from the
+agents directory with the registered repos configuration. Use
+`PULSE_DRY_RUN=1` to verify the no-mutation path. After real cancellation, verify
+the run's status through Actions; pending cancellation is not a completed result.
+
 ## Runner capacity and labels
 
 The launch script supports the enabled service instance numbers only:

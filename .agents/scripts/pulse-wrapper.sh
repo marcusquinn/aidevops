@@ -1232,6 +1232,14 @@ _pulse_run_deterministic_pipeline() {
 	# Dependency-alert monitor: create grouped worker-ready issues for open
 	# Dependabot alerts across managed pulse repos. The helper dedupes by
 	# package/ecosystem/patched-version and uses neutral issue wording.
+	# GH#33602: hourly stale Actions queue watchdog, bounded and budget-gated.
+	if [[ ! -f "$STOP_FLAG" && -f "${SCRIPT_DIR}/pulse-stale-queued-runs.sh" ]]; then
+		# shellcheck source=./pulse-stale-queued-runs.sh
+		source "${SCRIPT_DIR}/pulse-stale-queued-runs.sh"
+		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
+			pulse_stale_queued_runs || true
+	fi
+
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping Dependabot alert monitor" >>"$LOGFILE"
 	else
