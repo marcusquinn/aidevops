@@ -4,12 +4,16 @@
 # Opt-in repository migration; Python provides portable, non-octal integers.
 set -euo pipefail
 
-main() {
+require_python() {
 	if ! command -v python3 >/dev/null 2>&1; then
 		printf 'task-id-normalize: python3 is required\n' >&2
 		return 1
 	fi
-	python3 - "$@" <<'PY'
+	return 0
+}
+
+require_python
+python3 - "$@" <<'PY'
 import argparse
 from pathlib import Path
 import re
@@ -165,7 +169,3 @@ if args.apply:
 else:
     print(f"Dry-run only; counter seed {before} -> {after}; rerun with --apply to write")
 PY
-	return 0
-}
-
-main "$@"
