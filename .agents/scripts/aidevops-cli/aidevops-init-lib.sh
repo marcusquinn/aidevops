@@ -1275,6 +1275,9 @@ EOF
 			fi
 		else
 			print_warning "TODO.md already exists, skipping"
+			if [[ -f "$AGENTS_DIR/scripts/task-id-normalize-helper.sh" ]]; then
+				bash "$AGENTS_DIR/scripts/task-id-normalize-helper.sh" --repo "$project_root" --advisory || true
+			fi
 		fi
 
 		# Create todo/ directory and PLANS.md

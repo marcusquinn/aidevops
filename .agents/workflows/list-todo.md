@@ -33,7 +33,7 @@ If unavailable, parse manually: read `TODO.md` and `todo/PLANS.md`, group by sta
 
 ## Follow-up
 
-1. **Task ID or row number** — start that task (`t014`, `5`)
+1. **Task ID or row number** — start that task (`t14`, `5`)
 2. **Filter command** — rerun with new filters (`-t seo`)
 3. **"done"** — end browsing
 

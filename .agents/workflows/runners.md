@@ -23,7 +23,7 @@ Arguments: $ARGUMENTS
 | Pattern | Type | Example |
 |---------|------|---------|
 | `GH#\d+` | GitHub issue/PR numbers | `/runners GH#267 GH#268` |
-| `t\d+` | Task IDs from TODO.md | `/runners t083 t084 t085` |
+| `t\d+` | Task IDs from TODO.md | `/runners t83 t84 t85` |
 | `#\d+` or PR URL | PR numbers | `/runners #382 #383` |
 | Issue URL | GitHub issue | `/runners https://github.com/user/repo/issues/42` |
 | Free text | Description | `/runners "Fix the login bug"` |
@@ -35,7 +35,7 @@ Resolve each input to a description:
 ```bash
 gh issue view 267 --repo <slug> --json number,title,url
 gh pr view 268 --repo <slug> --json number,title,headRefName,url
-grep -E "^- \[ \] t083 " TODO.md
+grep -E "^- \[ \] t83 " TODO.md
 gh issue view 42 --repo user/repo --json number,title,url
 ```
 
@@ -51,10 +51,10 @@ HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 $HELPER run \
   --detach \
   --role worker \
-  --session-key "task-t083" \
+  --session-key "task-t83" \
   --dir ~/Git/<repo> \
-  --title "t083: <description>" \
-  --prompt "/full-loop t083 -- <description>"
+  --title "t83: <description>" \
+  --prompt "/full-loop t83 -- <description>"
 # Returns immediately with: "Dispatched PID: 12345"
 ```
 

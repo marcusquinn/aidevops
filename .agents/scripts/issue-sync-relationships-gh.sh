@@ -307,6 +307,7 @@ _relationship_active_ids_and_refs() {
 _relationship_skip_completed_legacy_row() {
 	local task_line="$1" task_id="$2"
 	local ref value
+	_warn_padded_task_line "$task_line"
 	[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[x\] ]] || return 1
 	[[ "$task_id" =~ ^t[0-9]{1,18}(\.[0-9]{1,18}){0,8}$ ]] || return 1
 	[[ "$_RELATIONSHIP_ACTIVE_REFS" != *"|${task_id}|"* ]] || {

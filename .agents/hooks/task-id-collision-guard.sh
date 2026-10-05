@@ -349,6 +349,18 @@ _extract_tids() {
 	# a malformed canonical ID when check-pr scans the claim commit itself.
 	scan_text=$(printf '%s' "$text" | sed -E 's/chore: claim t[0-9]+\.\.t[0-9]+//g')
 	if task_identity_has_malformed_candidate "$scan_text"; then
+		# Preserve padded tokens for actionable diagnostics, without weakening
+		# the generic malformed sentinel for other invalid identities.
+		local padded_ere='(^|[^[:alnum:].])(t0+[0-9]+(\.[0-9]+)*)($|[^[:alnum:].]|\.($|[^[:alnum:].]))'
+		local remaining="$scan_text" matched="" padded=""
+		while [[ "$remaining" =~ $padded_ere ]]; do
+			matched="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+			padded="${BASH_REMATCH[2]}"
+			if task_identity_unpad_legacy "$padded" >/dev/null; then
+				printf '%s\n' "$padded"
+			fi
+			remaining="${remaining#*"$matched"}"
+		done
 		printf '%s\n' '__malformed__'
 		return 0
 	fi
@@ -467,6 +479,10 @@ _check_tid() {
 
 	if ! num=$(_legacy_sequence_for_collision_check "$tid"); then
 		CHECK_MESSAGE_VIOLATION="  ${tid} — malformed task identity\n"
+		local canonical=""
+		if canonical=$(task_identity_unpad_legacy "$tid"); then
+			CHECK_MESSAGE_VIOLATION="  ${tid} is a padded legacy ID; use ${canonical}\n"
+		fi
 		return 1
 	fi
 	if [[ -z "$num" ]]; then
