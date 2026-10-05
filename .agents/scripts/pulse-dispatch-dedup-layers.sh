@@ -607,6 +607,7 @@ _dedup_layer7_claim_lock() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	local claim_helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
 	# GH#15317: reset the dynamically-scoped _claim_comment_id unconditionally
 	# so the dispatch_with_dedup caller always sees a fresh value. Do NOT
 	# declare local here — see function header.
@@ -614,6 +615,10 @@ _dedup_layer7_claim_lock() {
 	_claim_lease_token=""
 	_claim_lease_device=""
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		if [[ ! -x "$claim_helper" ]]; then
+			echo "[pulse-wrapper] Dedup: claim helper unavailable — blocking dispatch (fail-closed)" >>"$LOGFILE"
+			return 0
+		fi
 		# GH#17590: Pre-check for existing claims BEFORE posting our own.
 		# Without this, two runners both post claims within seconds, then
 		# the consensus window resolves the race — but the losing claim
@@ -628,25 +633,12 @@ _dedup_layer7_claim_lock() {
 		claim_snapshot=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim.XXXXXX") || claim_snapshot=""
 		local _claim_started_ns=""
 		_claim_started_ns=$(_ds_now_ns)
-		local _precheck_output="" _precheck_exit=0
-		_precheck_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
-		_ds_record "$issue_number" "$repo_slug" "claim_precheck" "$_claim_started_ns"
-		if [[ "$_precheck_exit" -eq 0 ]]; then
-			[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
-			# Active claim exists from another runner — skip claim entirely
-			echo "[pulse-wrapper] Dedup: pre-check found active claim on #${issue_number} in ${repo_slug} — skipping (${_precheck_output})" >>"$LOGFILE"
-			return 0
-		fi
-		if [[ "$_precheck_exit" -eq 2 ]]; then
-			[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
-			echo "[pulse-wrapper] Dedup: claim pre-check error for #${issue_number} in ${repo_slug} — blocking dispatch for this cycle (fail-closed)" >>"$LOGFILE"
-			return 0
-		fi
-		# No active claim found (exit 1) — proceed to claim.
+		# Bypass the CLI forwarding wrapper, not its assignment guard: cmd_claim
+		# runs the same recovery-enabled guard before publishing the claim.
+		# One process retains the precheck snapshot and sources libraries once.
 		local claim_exit=0 claim_output=""
-		_claim_started_ns=$(_ds_now_ns)
 		# shellcheck disable=SC2094 # LOGFILE is an output-only diagnostic sink, not an input.
-		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$claim_helper" check-and-claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
 		[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
 		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
