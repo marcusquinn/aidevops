@@ -700,12 +700,12 @@ _serp_compare_providers() {
 _serp_provider_ready() {
 	local provider="$1"
 	case "$provider" in
-	"dataforseo")
+	dataforseo)
 		# shellcheck source=dataforseo-credentials.sh
 		source "$SCRIPT_DIR/dataforseo-credentials.sh"
 		dataforseo_load_credentials >/dev/null 2>&1 || return 1
 		;;
-	"serpapi")
+	serpapi)
 		serpapi_load_key || return 1
 		;;
 	*)

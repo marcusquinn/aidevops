@@ -111,7 +111,7 @@ cmd_probe() {
 	shift
 	local egress_profile="" proxy_secret=""
 	local -a probe_args=()
-	local has_gl="false" has_hl="false"
+	local has_gl=0 has_hl=0
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		case "$option" in
@@ -124,8 +124,8 @@ cmd_probe() {
 			shift 2
 			;;
 		--gl | --hl)
-			[[ "$option" == "--gl" ]] && has_gl="true"
-			[[ "$option" == "--hl" ]] && has_hl="true"
+			[[ "$option" == "--gl" ]] && has_gl=1
+			[[ "$option" == "--hl" ]] && has_hl=1
 			probe_args+=("$option" "${2:-}")
 			shift 2
 			;;
@@ -143,10 +143,10 @@ cmd_probe() {
 		[[ -z "$proxy_secret" ]] && proxy_secret="$credential_ref"
 		[[ -n "$locale" ]] && probe_args+=(--locale "$locale")
 		[[ -n "$timezone" ]] && probe_args+=(--timezone "$timezone")
-		if [[ -n "$country" && "$has_gl" == "false" ]]; then
+		if [[ -n "$country" && $has_gl -eq 0 ]]; then
 			probe_args+=(--gl "$(printf '%s' "$country" | tr '[:upper:]' '[:lower:]')")
 		fi
-		if [[ -n "$locale" && "$has_hl" == "false" ]]; then
+		if [[ -n "$locale" && $has_hl -eq 0 ]]; then
 			probe_args+=(--hl "${locale%%-*}")
 		fi
 	fi
@@ -163,7 +163,7 @@ cmd_probe() {
 		fi
 	fi
 
-	if [[ "$dry_run" == "true" ]]; then
+	if [[ $dry_run -eq 1 ]]; then
 		probe_args+=(--dry-run)
 	else
 		check_runtime || return 1
@@ -192,8 +192,8 @@ main() {
 	local command="${1:-help}"
 	shift || true
 	case "$command" in
-	run) cmd_probe "false" "$@" ;;
-	plan) cmd_probe "true" "$@" ;;
+	run) cmd_probe 0 "$@" ;;
+	plan) cmd_probe 1 "$@" ;;
 	last) cmd_last ;;
 	help | --help | -h) show_help ;;
 	*)
