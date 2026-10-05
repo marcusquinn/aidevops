@@ -732,11 +732,20 @@ _check_linked_issue_gate() {
 
 	# Fetch issue data. Every mode fails closed because the prompt has already
 	# supplied both an issue reference and repository context.
-	local raw_issue
-	raw_issue=$(gh api "repos/${repo}/issues/${issue_num}" 2>/dev/null) || {
-		print_error "Maintainer gate pre-check: could not fetch linked issue #${issue_num} — refusing start"
+	# Keep stderr separate: successful shim diagnostics must not corrupt JSON.
+	local raw_issue issue_error_file issue_error=""
+	issue_error_file=$(mktemp) || {
+		print_error "Maintainer gate pre-check: cannot capture linked issue #${issue_num} lookup errors — refusing start"
 		return 1
 	}
+	raw_issue=$(gh api "repos/${repo}/issues/${issue_num}" 2>"$issue_error_file") || {
+		issue_error=$(<"$issue_error_file")
+		rm -f "$issue_error_file"
+		print_error "Maintainer gate pre-check: could not fetch linked issue #${issue_num} — refusing start"
+		[[ -z "$issue_error" ]] || printf 'gh lookup error: %s\n' "$issue_error" >&2
+		return 1
+	}
+	rm -f "$issue_error_file"
 
 	local state labels assignees issue_author_association
 	state=$(echo "$raw_issue" | jq -r '.state' 2>/dev/null || echo "unknown")
