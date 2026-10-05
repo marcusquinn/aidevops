@@ -94,6 +94,7 @@ VAULT_DEVICE_DISPATCH_PREFLIGHT="${VAULT_DEVICE_DISPATCH_PREFLIGHT:-0}"         
 VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED="${VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED:-0}"                          # 1=Vault-sensitive work requires a fresh unlocked heartbeat before local dispatch
 export VAULT_DEVICE_HELPER VAULT_DEVICE_DISPATCH_PREFLIGHT VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED
 DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                                                    # Max PRs created per repo per day (GH#3821)
+DAILY_PR_CAP_COUNT_WINDOW=200                                                                           # PRs listed per repo to count today's PRs; a larger cap is unreachable, so counting is skipped (GH#33647)
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
 QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share
 _pulse_legacy_model_config_files() {

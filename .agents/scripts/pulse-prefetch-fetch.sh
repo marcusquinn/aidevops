@@ -384,13 +384,24 @@ _prefetch_repo_prs() {
 #######################################
 _prefetch_repo_daily_cap() {
 	local slug="$1"
+	local count_window="${DAILY_PR_CAP_COUNT_WINDOW:-200}"
+	[[ "$count_window" =~ ^[0-9]+$ ]] || count_window=200
+
+	# GH#33647: at most count_window PRs are listed, so a larger cap can never
+	# be reached; skip the per-repo REST listing during preflight.
+	if [[ "$DAILY_PR_CAP" -gt "$count_window" ]]; then
+		echo "### Daily PR Cap"
+		echo "- Daily PR cap ${DAILY_PR_CAP} exceeds the ${count_window}-PR count window; not counted"
+		echo ""
+		return 0
+	fi
 
 	local today_utc
 	today_utc=$(date -u +%Y-%m-%d)
 	local daily_cap_json daily_cap_err
 	daily_cap_err=$(mktemp)
 	daily_cap_json=$(gh_pr_list --repo "$slug" --state all \
-		--json createdAt --limit 200 2>"$daily_cap_err") || daily_cap_json="[]"
+		--json createdAt --limit "$count_window" 2>"$daily_cap_err") || daily_cap_json="[]"
 	if [[ -z "$daily_cap_json" || "$daily_cap_json" == "$_PREFETCH_JSON_NULL" ]]; then
 		local _daily_cap_err_msg
 		_daily_cap_err_msg=$(cat "$daily_cap_err" 2>/dev/null || echo "$_PREFETCH_UNKNOWN_ERROR")

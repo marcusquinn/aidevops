@@ -351,14 +351,19 @@ _count_dispatchable_product_repos() {
 	local dispatchable=0
 	local today_utc
 	today_utc=$(date -u +%Y-%m-%d)
+	local count_window="${DAILY_PR_CAP_COUNT_WINDOW:-200}"
+	[[ "$count_window" =~ ^[0-9]+$ ]] || count_window=200
 
-	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 ]]; then
+	# GH#33647: the count lists at most count_window PRs, so a larger cap can
+	# never be reached. Skip the per-repo listing instead of spending the
+	# cycle's REST/wall-clock budget before dispatch.
+	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 && "$DAILY_PR_CAP" -le "$count_window" ]]; then
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] || continue
 			local pr_json="" daily_pr_count="" pr_alloc_err=""
 			# GH#4412: use --state all to count merged/closed PRs too
 			pr_alloc_err=$(mktemp)
-			pr_json=$(pulse_pr_list_get --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
+			pr_json=$(pulse_pr_list_get --repo "$slug" --state all --json createdAt --limit "$count_window" 2>"$pr_alloc_err") || pr_json="[]"
 			if [[ -z "$pr_json" ]]; then
 				local _pr_alloc_err_msg
 				_pr_alloc_err_msg=$(cat "$pr_alloc_err" 2>/dev/null || echo "unknown error")
