@@ -892,7 +892,7 @@ test_post_verification_read_admission_window() {
 test_bounded_local_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	for scenario in short fractional integral boundary expired moving overshoot long malformed cooldown review changed-review; do
+	for scenario in short fractional integral boundary expired moving overshoot long malformed cooldown quota http nonlocal review changed-review; do
 		result=0
 		bash -c '
 			source "$1/shared-constants.sh"
@@ -901,7 +901,7 @@ test_bounded_local_admission_recovery() {
 			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
 			sleep() {
 				local duration="$1"
-				[[ "$scenario" != overshoot ]] || duration=31
+				[[ "$scenario" != overshoot ]] || duration=61
 				waits=$((waits + 1))
 				elapsed=$((elapsed + duration))
 				SECONDS=$((SECONDS + duration))
@@ -914,17 +914,21 @@ test_bounded_local_admission_recovery() {
 					return 0
 				fi
 				FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-read-deferred
+				FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="deferred_by=local_admission"
 				case "$scenario" in
 				short) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002 ;;
 				fractional) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1001.25 ;;
 				integral) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002.000 ;;
-				boundary) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1030.000 ;;
+				boundary) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1060.000 ;;
 				expired) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=999 ;;
 				moving) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=$((1001 + elapsed)) ;;
 				overshoot) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002 ;;
-				long) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1031 ;;
+				long) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1061 ;;
 				malformed) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=retry-when-capacity-returns ;;
 				cooldown) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-cooldown ;;
+				quota) FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="deferred_by=quota retry_at=1002" ;;
+				http) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-http-error ;;
+				nonlocal) FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="unknown read deferral" ;;
 				review) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=review-bot ;;
 				changed-review)
 					FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002
@@ -938,9 +942,10 @@ test_bounded_local_admission_recovery() {
 			case "$scenario" in
 			short|integral) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
 			fractional) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
-			boundary) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 30 ]] ;;
+			boundary) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 60 ]] ;;
 			expired) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 1 ]] ;;
-			moving) [[ "$rc" -eq 1 && "$waits" -gt 1 && "$elapsed" -le 30 ]] ;;
+			moving) [[ "$rc" -eq 1 && "$calls" -eq 4 && "$waits" -eq 3 && "$elapsed" -eq 3 ]] ;;
+			malformed) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
 			overshoot) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waits" -eq 1 ]] ;;
 			changed-review) [[ "$rc" -eq 1 && "$calls" -eq 2 && "$waits" -eq 1 ]] ;;
 			*) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waits" -eq 0 ]] ;;

@@ -2465,21 +2465,27 @@ _merge_report_pre_merge_gate_failure() {
 _merge_pre_merge_gate_with_admission_retry() {
 	local pr_number="$1"
 	local repo="$2"
-	local deadline=$((SECONDS + 30))
+	local deadline=$((SECONDS + 60))
 	local attempts=0 retry_at="" now="" wait_seconds=0 round_up=0
 	while ! cmd_pre_merge_gate "$pr_number" "$repo"; do
 		[[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == github-api-read-deferred ]] || return 1
+		[[ "${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL:-}" == *"deferred_by=local_admission"* ]] || return 1
+		[[ "$attempts" -lt 3 ]] || return 1
 		retry_at="${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-}"
-		[[ "$retry_at" =~ ^[0-9]{1,10}([.][0-9]+)?$ ]] || return 1
-		now=$(date +%s) || return 1
-		# Round up fractional epochs so admission is not retried before its slot.
-		round_up=0
-		[[ ! "$retry_at" =~ [.][0-9]*[1-9] ]] || round_up=1
-		retry_at="${retry_at%%.*}"
-		wait_seconds=$((10#$retry_at + round_up - now))
-		[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
-		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 30 ]] || return 1
-		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (30s recovery budget)"
+		if [[ "$retry_at" =~ ^[0-9]{1,10}([.][0-9]+)?$ ]]; then
+			now=$(date +%s) || return 1
+			# Round up fractional epochs so admission is not retried before its slot.
+			round_up=0
+			[[ ! "$retry_at" =~ [.][0-9]*[1-9] ]] || round_up=1
+			retry_at="${retry_at%%.*}"
+			wait_seconds=$((10#$retry_at + round_up - now))
+			[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
+		else
+			# Salvage GH#33641's bounded backoff when no usable slot is supplied.
+			wait_seconds=$((2 ** attempts * 2))
+		fi
+		[[ "$wait_seconds" -le $((deadline - SECONDS)) ]] || return 1
+		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (retry $((attempts + 1))/3, 60s recovery budget)"
 		sleep "$wait_seconds" || return 1
 		[[ "$SECONDS" -le "$deadline" ]] || return 1
 		attempts=$((attempts + 1))
