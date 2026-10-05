@@ -316,6 +316,9 @@ source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 source "${SCRIPT_DIR}/pulse-routines.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dependabot-alert-monitor.sh"
+# GH#33602: stale queued Actions run watchdog (stage `stale_queued_runs`).
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-stale-queued-runs.sh"
 # GH#23604: semantics-preserving exact-output PR-list provider cache used by
 # pulse hot paths that need GraphQL-only fields such as reviewDecision.
 # shellcheck source=/dev/null
@@ -835,6 +838,7 @@ _pulse_execute_self_check() {
 		_ff_key
 		build_dependency_graph_cache
 		dependabot_alert_monitor_scan_repos
+		stale_queued_runs_scan_repos
 		dispatch_max
 		merge_ready_prs_all_repos
 		rotate_pulse_log
@@ -1237,6 +1241,11 @@ _pulse_run_deterministic_pipeline() {
 	else
 		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
 			dependabot_alert_monitor_scan_repos || true
+		# GH#33602: cancel Actions runs queued past
+		# AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS (default 8h, 0 disables) so
+		# ghosts stop inflating queue-saturation counts. Hourly per repo.
+		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
+			stale_queued_runs_scan_repos || true
 	fi
 
 	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
