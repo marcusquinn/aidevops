@@ -260,16 +260,21 @@ _update_check_planning() {
 		local repo_name
 		repo_name=$(basename "$repo")
 		local todo_ver
-		todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+		# Legacy TODO files (or plans-only projects) may have no metadata.
+		# This advisory must not abort the update under set -euo pipefail.
+		todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1 || true)
 		echo "  - $repo_name (v${todo_ver:-none})"
 	done
 	local template_ver
-	template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+	template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1 || true)
 	echo ""
-	echo "  Latest template: v${template_ver} (adds risk field, active session time estimates)"
+	echo "  Latest template: v${template_ver:-none} (adds risk field, active session time estimates)"
 	echo ""
-	read -r -p "Upgrade planning templates in these projects? [y/N] " response
-	if [[ "$response" =~ ^[Yy]$ ]]; then
+	local response=""
+	# Never consume automation stdin or treat EOF as a failed update.
+	if [[ -t 0 && "${NON_INTERACTIVE:-false}" != "true" && -z "${AIDEVOPS_AUTO_UPDATE:-}" ]] &&
+		read -r -p "Upgrade planning templates in these projects? [y/N] " response &&
+		[[ "$response" =~ ^[Yy]$ ]]; then
 		for repo in "${repos_needing_planning[@]}"; do
 			print_info "Upgrading $(basename "$repo")..."
 			(cd "$repo" && cmd_upgrade_planning --force) || print_warning "Failed to upgrade $(basename "$repo")"
