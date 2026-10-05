@@ -49,6 +49,7 @@ Probe options (passed through):
   --engine google|bing  --max N (20)  --min-delay S (45)  --max-delay S (120)
   --gl CC (us)  --hl LANG (en)  --headless  --on-captcha stop|wait  --fresh-profile
   --consent manual|reject (cookie prompt: wait for you, or click "Reject all")
+  --hidden (macOS: headed but hidden; shown only when you must act)
   --no-evidence  --shuffle
 
 Reports and result HTML: ~/.aidevops/.agent-workspace/serp-probe/runs/<run-id>/ (mode 600).
@@ -184,7 +185,7 @@ cmd_last() {
 		print_info "No probe runs yet"
 		return 0
 	fi
-	jq '{run_id, engine, browser, automation_signals, egress, profile, pacing_seconds, started_at, ended_at, planned, attempted, succeeded, first_block, stop_reason, run_dir}' "$latest"
+	jq '{run_id, engine, browser, window, automation_signals, egress, profile, pacing_seconds, started_at, ended_at, planned, attempted, succeeded, first_block, stop_reason, run_dir}' "$latest"
 	return 0
 }
 

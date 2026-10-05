@@ -7,6 +7,7 @@
 // It never solves CAPTCHAs: it stops, or waits for a human in headed mode.
 // Policy: .agents/aidevops/reach-capture.md "Public Search-result Collection".
 
+import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -73,6 +74,7 @@ function usage() {
   --max-delay <s>           Maximum gap between searches (default: 120)
   --gl <cc> --hl <lang>     Country and interface language (default: us, en)
   --headless                Run headless (default: headed)
+  --hidden                  macOS: run headed but hidden (Cmd-H style); shown only when you must act
   --on-captcha stop|wait    stop (default) or wait for a human solve (headed only)
   --consent manual|reject   Cookie-consent prompt: wait for you (default) or click "Reject all"
   --fresh-profile           Use a new temporary profile instead of the persistent probe profile
@@ -97,6 +99,7 @@ function parseOptions(argv) {
       locale: { type: 'string' },
       timezone: { type: 'string' },
       headless: { type: 'boolean', default: false },
+      hidden: { type: 'boolean', default: false },
       'on-captcha': { type: 'string', default: 'stop' },
       consent: { type: 'string', default: 'manual' },
       'fresh-profile': { type: 'boolean', default: false },
@@ -120,6 +123,8 @@ function parseOptions(argv) {
   if (!['stop', 'wait'].includes(values['on-captcha'])) fail('--on-captcha must be stop or wait');
   if (values['on-captcha'] === 'wait' && values.headless) fail('--on-captcha wait requires a headed browser');
   if (!['manual', 'reject'].includes(values.consent)) fail('--consent must be manual or reject');
+  if (values.hidden && values.headless) fail('--hidden and --headless are mutually exclusive');
+  if (values.hidden && process.platform !== 'darwin') fail('--hidden is macOS-only');
   if (!/^[a-z]{2}$/i.test(values.gl) || !/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i.test(values.hl)) fail('--gl/--hl must be short codes such as us / en');
 
   let keywords = values.keyword ? [...values.keyword] : [];
@@ -148,6 +153,7 @@ function parseOptions(argv) {
     locale: values.locale || `${values.hl}-${values.gl.toUpperCase()}`,
     timezone: values.timezone,
     headless: values.headless,
+    hidden: values.hidden,
     onCaptcha: values['on-captcha'],
     consent: values.consent,
     freshProfile: values['fresh-profile'],
@@ -159,6 +165,39 @@ function parseOptions(argv) {
 const log = (message) => process.stderr.write(`[serp-probe] ${message}\n`);
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 const tildePath = (path) => path.replace(homedir(), '~');
+
+// macOS window control for --hidden. Hiding the app (like Cmd-H) returns focus
+// to the previous app, and pages still report visibilityState "visible" with
+// animation frames running (verified 2026-10-05), so behaviour matches headed.
+function macApp(pid, action) {
+  const call = { hide: 'a.hide', show: '(a.unhide, a.activateWithOptions(0))', hidden: 'a.hidden' }[action];
+  try {
+    return execFileSync('osascript', ['-l', 'JavaScript', '-e',
+      `ObjC.import('AppKit'); var a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${Number(pid)}); a.isNil() ? 'none' : String(${call})`],
+    { encoding: 'utf8', timeout: 10_000 }).trim();
+  } catch {
+    return 'error';
+  }
+}
+
+function findBrowserPid() {
+  let children = [];
+  try {
+    children = execFileSync('pgrep', ['-P', String(process.pid)], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  } catch {
+    return null;
+  }
+  return children.find((pid) => !['none', 'error'].includes(macApp(pid, 'hidden'))) || null;
+}
+
+async function hideBrowser(pid) {
+  for (let i = 0; i < 40; i += 1) {
+    if (macApp(pid, 'hidden') === 'true') return true;
+    macApp(pid, 'hide');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
 
 let stopRequested = false;
 async function sleep(ms) {
@@ -280,12 +319,24 @@ async function run(options) {
     args: ['--disable-blink-features=AutomationControlled'],
   });
   const startedMs = Date.now();
+  const browserPid = options.hidden ? findBrowserPid() : null;
+  report.window = options.headless ? 'headless' : 'visible';
+  if (options.hidden) {
+    report.window = browserPid && await hideBrowser(browserPid) ? 'hidden' : 'visible';
+    if (report.window !== 'hidden') log('Could not hide the browser window; continuing visible');
+  }
+  const showForHuman = () => { if (report.window === 'hidden') macApp(browserPid, 'show'); };
+  const rehide = async () => { if (report.window === 'hidden') await hideBrowser(browserPid); };
   try {
     const page = context.pages()[0] || await context.newPage();
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
     await page.goto(engine.home(options), { waitUntil: 'domcontentloaded' });
+    await rehide();
     report.browser = executablePath?.includes('Brave') ? 'brave' : 'chromium';
-    report.automation_signals = await page.evaluate(() => ({ webdriver: navigator.webdriver === true })).catch(() => null);
+    report.automation_signals = await page.evaluate(() => ({
+      webdriver: navigator.webdriver === true,
+      visibility: document.visibilityState,
+    })).catch(() => null);
     await sleep(randomBetween(2000, 5000));
 
     if (await detectConsent(page) && options.consent === 'reject') {
@@ -300,10 +351,12 @@ async function run(options) {
         return report;
       }
       log('Consent prompt shown: choose an option in the browser window (waiting up to 3 minutes)');
+      showForHuman();
       if (!await waitUntil(async () => !(await detectConsent(page)), CONSENT_WAIT_MS)) {
         report.stop_reason = 'consent_required';
         return report;
       }
+      await rehide();
     }
 
     for (const [index, keyword] of options.keywords.entries()) {
@@ -338,11 +391,13 @@ async function run(options) {
         log(`Query ${n}: ${block} after ${report.succeeded} successful searches`);
         if (options.onCaptcha === 'stop') { report.stop_reason = 'captcha'; break; }
         log('Waiting for a human to solve the challenge in the browser window (up to 10 minutes)');
+        showForHuman();
         if (!await waitUntil(async () => !(await detectBlock(page)), HUMAN_SOLVE_WAIT_MS)) {
           report.stop_reason = 'captcha_unsolved';
           break;
         }
         event.human_solved = true;
+        await rehide();
         // Engines usually return to the pending results after a solve.
         await page.waitForSelector(engine.results, { timeout: NAV_TIMEOUT_MS }).catch(() => {});
       }
@@ -389,6 +444,8 @@ function printPlan(options) {
     pacing_seconds: { min: options.minDelay, max: options.maxDelay },
     estimated_minutes: { min: Math.round((gaps * options.minDelay) / 60), max: Math.round((gaps * options.maxDelay) / 60) },
     headless: options.headless,
+    hidden: options.hidden,
+    gl: options.gl,
     on_captcha: options.onCaptcha,
     egress: process.env.SERP_PROBE_PROXY ? 'proxy' : 'direct',
     contacted_targets: false,
