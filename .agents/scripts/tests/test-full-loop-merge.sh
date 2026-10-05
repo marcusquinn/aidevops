@@ -37,6 +37,7 @@ main() {
 	test_review_gate_failure_blocks_rest_fallback
 	test_cooldown_gate_failure_reports_cooldown
 	test_local_admission_gate_failure_reports_retry_deadline
+	test_post_verification_read_admission_window
 	test_bounded_local_admission_recovery
 	test_local_deferral_survives_context_resolution
 	test_exact_check_deferral_preserves_retry_deadline
