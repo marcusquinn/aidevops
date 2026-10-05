@@ -686,7 +686,7 @@ cmd_check() {
 	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
 	if has_gopass && gopass_owns_secret "$name"; then
 		local value=""
-		value=$(gopass show -o "${GOPASS_PREFIX}/${name}" 2>/dev/null) || return 3
+		value=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" </dev/null 2>/dev/null) || return 3
 		[[ -n "$value" ]] || return 3
 		return 0
 	fi

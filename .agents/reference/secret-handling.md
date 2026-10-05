@@ -19,12 +19,18 @@ log reports `reason=secret_missing name=NAME`, `secret_unreadable`,
 
 Gopass is authoritative for names it owns: failed decryption **does not** fall
 back to `credentials.sh`. Deferrals state `store=gopass fallback=disabled`.
-An unreadable listing also fails closed. A locked agent is the common cause,
-but an unreadable entry can also mean corruption or missing decryption keys.
+A locked agent is the common cause, but an unreadable entry can also mean
+corruption or missing decryption keys. Status-only decryption is bounded using
+the existing four-second headless resolver; an owned entry that times out
+returns 3. The outer capability watchdog reports `check_timeout` if the whole
+command (including store listing) exceeds five seconds.
 Pulse emits one `runner_health: gpg store locked or entry unreadable` line
 per cycle and skips subsequent secret-gated checks for that cycle; ungated
 candidates can still run. `runner_capability_health secret_gated_deferred=N`
 records the running count of rejected gate calls, not a final candidate total.
+Cycle state contains only names/counts in a mode-600 file under the runner's
+workspace temp directory, with an exclusive lock shared across watchdog
+subshells and concurrent candidates. Old cycle metadata expires after a day.
 The next cycle retries, so unlocking does not require restarting pulse.
 
 For unattended runners, provision the agent unlock outside AI chat. Set both

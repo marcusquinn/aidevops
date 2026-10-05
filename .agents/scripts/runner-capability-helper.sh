@@ -20,14 +20,7 @@ runner_capability_check_fresh() {
 _runner_capability_check_fresh_logged() {
 	local repo_path="$1" issue_number="$2" repo_slug="$3"
 	local capability_meta_json=""
-	# Sourcing this helper at both gates must not reset cycle-local health state.
-	local cycle="${_PULSE_CYCLE_ID:-}" cached_name="" reason=""
-	if [[ "${_RUNNER_CAPABILITY_CYCLE:-}" != "$cycle" ]]; then
-		_RUNNER_CAPABILITY_CYCLE="$cycle"
-		_RUNNER_CAPABILITY_LOCKED_NAME=""
-		_RUNNER_CAPABILITY_DEFERRED=0
-	fi
-	[[ -z "$cycle" ]] || cached_name="${_RUNNER_CAPABILITY_LOCKED_NAME:-}"
+	local reason=""
 	capability_meta_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{number, state, body, labels}' 2>/dev/null) || capability_meta_json=""
 	if ! printf '%s' "$capability_meta_json" | jq -e --argjson number "$issue_number" \
@@ -35,17 +28,8 @@ _runner_capability_check_fresh_logged() {
 		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet source=fresh metadata_unreadable\n' "$issue_number" >&3
 		return 1
 	fi
-	if ! reason=$(runner_capability_check "$repo_path" "$capability_meta_json" fresh "$cached_name" 2>&3); then
+	if ! reason=$(runner_capability_check "$repo_path" "$capability_meta_json" fresh 2>&3); then
 		printf '[dispatch_with_dedup] #%s deferred: %s\n' "$issue_number" "$reason" >&3
-		if [[ "$reason" == 'runner_capability_unmet reason=secret_unreadable name='* ]]; then
-			_RUNNER_CAPABILITY_DEFERRED=$((${_RUNNER_CAPABILITY_DEFERRED:-0} + 1))
-			if [[ -z "$cached_name" ]]; then
-				_RUNNER_CAPABILITY_LOCKED_NAME="${reason#* name=}"
-				_RUNNER_CAPABILITY_LOCKED_NAME="${_RUNNER_CAPABILITY_LOCKED_NAME%% *}"
-				printf 'runner_health: gpg store locked or entry unreadable; secret-gated candidates deferred>=1; gopass authoritative (no plaintext fallback); see reference/secret-handling.md\n' >&3
-			fi
-			printf 'runner_capability_health secret_gated_deferred=%s cycle=%s\n' "$_RUNNER_CAPABILITY_DEFERRED" "$cycle" >&3
-		fi
 		return 1
 	fi
 	return 0
@@ -55,14 +39,19 @@ runner_capability_check() {
 	local repo_path="$1"
 	local issue_meta_json="$2"
 	local source="${3:-}"
-	local cached_name="${4:-}"
-	python3 - "$repo_path" "$issue_meta_json" "$source" "$cached_name" <<'PY'
+	local cycle="${_PULSE_CYCLE_ID:-}"
+	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" <<'PY'
+import contextlib
+import fcntl
+import hashlib
 import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 def unmet(reason=''):
@@ -90,6 +79,54 @@ def run_check(argv, target, secret=False, cwd=None):
             return f'secret_unreadable {target} store=gopass fallback=disabled'
         return f'{"secret_missing" if status == 1 else "check_failed"} {target}'
     return f'probe_failed {target}'
+
+@contextlib.contextmanager
+def cycle_state(cycle):
+    # Pulse watchdogs isolate candidates in subshells. Share metadata, not values,
+    # under an exclusive lock so concurrent candidates cannot decrypt twice.
+    if not cycle:
+        yield None, {}
+        return
+    base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
+                str(Path.home() / '.aidevops/.agent-workspace/tmp'))
+    directory = base / 'runner-capability'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = directory.lstat()
+    if directory.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        unmet('cycle_state_unreadable')
+    # Expired cycle files contain only names/counts; retain a day for diagnostics.
+    for old in directory.glob('*.json'):
+        try:
+            if not old.is_symlink() and old.stat().st_mtime < time.time() - 86400:
+                old.unlink()
+        except FileNotFoundError:
+            pass
+    path = directory / (hashlib.sha256(cycle.encode()).hexdigest() + '.json')
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'r+') as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            unmet('cycle_state_unreadable')
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        data = handle.read()
+        state = json.loads(data) if data else {}
+        yield handle, state
+
+def unreadable(name, handle, state, cached=False):
+    count = state.get('deferred', 0) + 1
+    if handle is not None:
+        handle.seek(0)
+        json.dump({'name': name, 'deferred': count}, handle)
+        handle.truncate()
+        handle.flush()
+    if sys.argv[3] == 'fresh' and not cached:
+        print('runner_health: gpg store locked or entry unreadable; '
+              'secret-gated candidates deferred>=1; gopass authoritative '
+              '(no plaintext fallback); see reference/secret-handling.md', file=sys.stderr)
+    if sys.argv[3] == 'fresh':
+        print(f'runner_capability_health secret_gated_deferred={count}', file=sys.stderr)
+    unmet(f'secret_unreadable name={name} store=gopass fallback=disabled' +
+          (' source=cycle_cache' if cached else ''))
 
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
@@ -145,12 +182,18 @@ try:
     if sys.argv[3] == 'fresh':
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes)}',
               file=sys.stderr)
-    if secrets and re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', sys.argv[4]):
-        unmet(f'secret_unreadable name={sys.argv[4]} store=gopass fallback=disabled source=cycle_cache')
-    for name in sorted(secrets):
-        reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', secret=True)
-        if reason:
-            unmet(reason)
+    if secrets:
+        cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''
+        with cycle_state(cycle) as (handle, state):
+            cached_name = state.get('name', '')
+            if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', cached_name):
+                unreadable(cached_name, handle, state, cached=True)
+            for name in sorted(secrets):
+                reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', secret=True)
+                if reason.startswith('secret_unreadable '):
+                    unreadable(name, handle, state)
+                if reason:
+                    unmet(reason)
     for executable, probe in probes:
         reason = run_check([executable], f'path={probe}', cwd=root)
         if reason:
