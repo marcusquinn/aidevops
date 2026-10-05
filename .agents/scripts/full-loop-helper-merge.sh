@@ -1023,6 +1023,22 @@ _merge_guard_prospective_todo() (
 		print_error "Merge blocked: native Git executable is unavailable"
 		return 1
 	}
+	local git_version_output=""
+	local git_version=""
+	local git_major=""
+	local git_minor=""
+	git_version_output=$("$real_git" --version 2>/dev/null) || git_version_output=""
+	if [[ "$git_version_output" =~ ^git\ version\ ([0-9]+)\.([0-9]+)(\.[0-9]+)?([[:space:]]|$) ]]; then
+		git_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+		git_major="${BASH_REMATCH[1]}"
+		git_minor="${BASH_REMATCH[2]}"
+	else
+		git_version="unknown (unparseable version: ${git_version_output:-no output})"
+	fi
+	if [[ -z "$git_major" ]] || ((git_major < 2 || (git_major == 2 && git_minor < 44))); then
+		print_error "Merge blocked: native Git ${git_version} at ${real_git} predates GIT_NO_LAZY_FETCH (Git 2.44+ required for prospective TODO validation); set AIDEVOPS_REAL_GIT_BIN to a newer Git (for example Homebrew git)"
+		return 1
+	fi
 	mkdir -p "$temp_root" || {
 		print_error "Merge blocked: unable to prepare approved temporary root"
 		return 1
