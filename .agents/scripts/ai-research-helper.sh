@@ -265,6 +265,63 @@ elif filtered:
 	return $?
 }
 
+# Print the provider error from `opencode run --format json` output on one line.
+# Precedence: last JSON error event message, last plain line mentioning an
+# error, then the last plain line.
+extract_opencode_error() {
+	local raw_output="$1"
+	printf '%s' "$raw_output" | strip_ansi | python3 -c '
+import json, sys
+error_key = "error"
+error_detail = ""
+plain_error = ""
+plain_detail = ""
+for line in sys.stdin.read().splitlines():
+    line = line.strip()
+    if not line or line.startswith("> "):
+        continue
+    try:
+        event = json.loads(line)
+    except Exception:
+        event = None
+    if isinstance(event, dict):
+        if event.get("type") == error_key:
+            error = event.get(error_key)
+            detail = ""
+            if isinstance(error, dict):
+                data = error.get("data") if isinstance(error.get("data"), dict) else {}
+                detail = data.get("message") or error.get("message") or error.get("name") or ""
+            elif error:
+                detail = error
+            if detail:
+                error_detail = str(detail)
+        continue
+    plain_detail = line
+    if error_key in line.lower():
+        plain_error = line
+print(" ".join((error_detail or plain_error or plain_detail).split()))
+'
+	return $?
+}
+
+# Log an OpenCode failure with the resolved model and a bounded,
+# credential-scrubbed provider error so stderr consumers can attribute it.
+_log_opencode_failure() {
+	local summary="$1"
+	local model_id="$2"
+	local raw_output="$3"
+	local detail=""
+	detail=$(extract_opencode_error "$raw_output" 2>/dev/null) || detail=""
+	detail=$(scrub_credentials "$detail")
+	detail="${detail:0:120}"
+	if [[ -n "$detail" ]]; then
+		log_error "${summary} (model=${model_id}): ${detail}"
+	else
+		log_error "${summary} (model=${model_id})"
+	fi
+	return 0
+}
+
 call_anthropic() {
 	local prompt="$1"
 	local model_name="${2:-simple}"
@@ -350,19 +407,19 @@ call_opencode() {
 
 	if [[ -n "$timeout_cmd" ]]; then
 		raw=$(cd "$run_dir" && AIDEVOPS_HEADLESS=1 $timeout_cmd opencode run --format json -m "$model_id" "${variant_args[@]}" "$wrapped_prompt" 2>&1) || {
-			log_error "OpenCode AI research call failed"
+			_log_opencode_failure "OpenCode AI research call failed" "$model_id" "$raw"
 			return 1
 		}
 	else
 		raw=$(cd "$run_dir" && AIDEVOPS_HEADLESS=1 opencode run --format json -m "$model_id" "${variant_args[@]}" "$wrapped_prompt" 2>&1) || {
-			log_error "OpenCode AI research call failed"
+			_log_opencode_failure "OpenCode AI research call failed" "$model_id" "$raw"
 			return 1
 		}
 	fi
 
 	text=$(extract_opencode_text "$raw") || text=""
 	if [[ -z "$text" ]]; then
-		log_error "Empty response from OpenCode AI research provider"
+		_log_opencode_failure "Empty response from OpenCode AI research provider" "$model_id" "$raw"
 		return 1
 	fi
 
