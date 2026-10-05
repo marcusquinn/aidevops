@@ -485,7 +485,20 @@ _gh_ci_prepare_parent_close_contract() {
 
 	local marker='<!-- parent-close-contract: needs-decomposition -->'
 	if printf '%s\n' "$body" | grep -qE '^##[[:space:]]+Phases([[:space:]]|$)'; then
-		marker='<!-- parent-close-contract: phase-plan -->'
+		local phase_rows="" phase_lib=""
+		phase_lib="$(dirname "${BASH_SOURCE[0]}")/shared-phase-filing.sh"
+		if [[ -r "$phase_lib" ]]; then
+			phase_rows=$( (
+				# shellcheck source=/dev/null
+				source "$phase_lib" >/dev/null 2>&1 || exit 0
+				_parse_phases_section "$body"
+			) 2>/dev/null || true)
+		fi
+		if [[ -r "$phase_lib" && -z "$phase_rows" ]]; then
+			printf '%s\n' "[WARN] ## Phases section has no parseable phase lines; not adding phase-plan close contract. Accepted forms: '- Phase N: desc #child', '**Phase N — desc** #child', 'N. desc #child'." >&2
+		else
+			marker='<!-- parent-close-contract: phase-plan -->'
+		fi
 	else
 		local children_count=0
 		children_count=$(printf '%s\n' "$body" | awk '
