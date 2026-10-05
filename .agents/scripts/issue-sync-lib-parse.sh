@@ -156,13 +156,13 @@ _escape_ere() {
 # One diagnostic covers all padded tokens on a rejected line, including deps.
 _warn_padded_task_line() {
 	local line="$1"
-	local remaining="$line" matched="" token="" canonical="" replacements=""
-	local padded_ere='(^|[^[:alnum:].])(t0+[0-9]+(\.[0-9]+)*)($|[^[:alnum:].]|\.($|[^[:alnum:].]))'
+	local remaining="$line" matched="" candidate="" canonical="" replacements=""
+	local padded_ere='(^|[^[:alnum:]./_-])(t0+[0-9]+(\.[0-9]+)*)($|[^[:alnum:]./_-]|\.($|[^[:alnum:]./_-]))'
 	while [[ "$remaining" =~ $padded_ere ]]; do
 		matched="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
-		token="${BASH_REMATCH[2]}"
-		if canonical=$(task_identity_unpad_legacy "$token"); then
-			replacements="${replacements:+${replacements}, }${token} -> ${canonical}"
+		candidate="${BASH_REMATCH[2]}"
+		if canonical=$(task_identity_unpad_legacy "$candidate"); then
+			replacements="${replacements:+${replacements}, }${candidate} -> ${canonical}"
 		fi
 		remaining="${remaining#*"$matched"}"
 	done

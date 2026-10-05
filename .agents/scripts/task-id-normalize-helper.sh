@@ -27,8 +27,8 @@ parser.add_argument("--repo", default=".", help="Repository root (default: curre
 args = parser.parse_args()
 root = Path(subprocess.check_output(["git", "-C", args.repo, "rev-parse", "--show-toplevel"], text=True).strip())
 # Whole tokens only: exclude branch names, URLs, namespaced IDs and malformed suffixes.
-token = re.compile(r"(?<![\w./-])t[0-9]+(?:\.[0-9]+)*(?![\w.-])")
-brief_ref = re.compile(r"(?<![\w/])todo/tasks/(t[0-9]+(?:\.[0-9]+)*)-brief\.md\b")
+task_pattern = re.compile(r"(?<![\w./-])t[0-9]+(?:\.[0-9]+)*(?![\w./-])")
+brief_ref = re.compile(r"(?<![\w/])todo/tasks/(t[0-9]+(?:\.[0-9]+)*)-brief\.md(?![\w./-])")
 canonical = re.compile(r"t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17}){0,8}\Z")
 task_line = re.compile(r"^\s*-\s+\[[ x>\-]\]\s+t[0-9]")
 
@@ -43,7 +43,19 @@ def active_lines(text, plans=False):
     paired_toon = False
     archived = False
     archive_level = 0
+    fence = ""
     for line in text.splitlines(keepends=True):
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            if not fence:
+                fence = marker[1]
+            elif marker[1][0] == fence[0] and len(marker[1]) >= len(fence):
+                fence = ""
+            yield line, False
+            continue
+        if fence:
+            yield line, False
+            continue
         heading = re.match(r"^(#{1,6})\s+(.+)", line)
         if heading:
             level = len(heading[1])
@@ -60,7 +72,7 @@ def active_lines(text, plans=False):
             paired_toon = False
 
 def ids(line):
-    return [m[0] for m in token.finditer(line)] + [m[1] for m in brief_ref.finditer(line)]
+    return [m[0] for m in task_pattern.finditer(line)] + [m[1] for m in brief_ref.finditer(line)]
 
 todo = root / "TODO.md"
 if args.advisory:
@@ -84,7 +96,7 @@ for relative in ("TODO.md", "todo/PLANS.md"):
     for line, active in active_lines(text, relative == "todo/PLANS.md"):
         if active:
             seen.update(ids(line))
-            new = token.sub(lambda m: unpad(m[0]), line)
+            new = task_pattern.sub(lambda m: unpad(m[0]), line)
             new = brief_ref.sub(lambda m: "todo/tasks/" + unpad(m[1]) + brief_suffix, new)
             if new != line:
                 print(relative + ": " + line.rstrip() + " -> " + new.rstrip())
@@ -118,7 +130,7 @@ for value in sorted(seen):
             conflicts.append(value + " and " + destinations[replacement] + " normalize to " + replacement)
         destinations[replacement] = value
 for source, target in renames:
-    if source.is_symlink() or target.exists() or target.is_symlink():
+    if not source.is_file() or source.is_symlink() or target.exists() or target.is_symlink():
         conflicts.append("unsafe rename: " + str(source.relative_to(root)))
     tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", str(source.relative_to(root))], capture_output=True)
     if tracked.returncode:
@@ -130,7 +142,7 @@ if conflicts:
 
 def seed(text):
     # Same decimal high-water semantics as _compute_counter_seed, including padded input.
-    return max([0] + [int(m[0][1:].split(".")[0]) for m in token.finditer(text)]) + 1
+    return max([0] + [int(m[0][1:].split(".")[0]) for m in task_pattern.finditer(text)]) + 1
 
 counter = root / ".task-counter"
 counter_before = counter.read_bytes() if counter.exists() else None
