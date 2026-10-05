@@ -270,13 +270,15 @@ Stop conditions:
 
 Automated CAPTCHA solving (CapSolver or similar) against search-engine
 protections is off by default and is not wired into aidevops SERP tooling. It
-needs an explicit operator decision recorded in the task. Legal context, as of
-2026-10-05: in *Google LLC v. SerpApi, LLC* (N.D. Cal. 4:25-cv-10826-YGR), the
-court dismissed Google's DMCA §1201 anti-circumvention claims on 2026-07-20.
-Claims over results with no copyrighted content were dismissed without leave to
-amend. The case remains pending on an amended complaint. Collecting public
-results is well supported. Automated circumvention of access controls is still
-contested. Re-check the docket before relying on that distinction.
+needs an explicit operator decision recorded in the task. Treat automated
+circumvention of anti-bot access controls as legally contested; Google has
+litigated against SERP scraping (*Google LLC v. SerpApi, LLC*, N.D. Cal.). This
+repository has not verified that case's current status: check the court docket
+before relying on any ruling.
+
+Present the browser as an ordinary browser. Automation flags such as
+`navigator.webdriver` trigger a challenge on the first query (observed
+2026-10-05), which is a tooling fault, not a volume signal.
 
 Measure how much paced collection an identity tolerates with
 `serp-probe-helper.sh run` (headed, stops at the first CAPTCHA, never solves).
