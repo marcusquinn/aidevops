@@ -49,7 +49,7 @@ seo/,seo subagents,ahrefs|ai-agent-discovery|ai-hallucination-defense|ai-search-
 seo/seo-audit-skill/,seo/seo-audit-skill subagents,aeo-geo-patterns
 seo/seo-audit-skill/aeo-geo-patterns/,seo/seo-audit-skill/aeo-geo-patterns subagents,01-aeo-patterns|02-geo-patterns|03-authority-signals-and-attribution|04-page-type-tactic-matrix
 seo/seo-audit-skill/,seo/seo-audit-skill subagents,ai-writing-detection
-seo/,seo subagents,seo-audit|seo-export|seo-fanout|seo-geo-experiment-design|seo-geo|seo-hallucination-defense|seo-opportunities|seo-optimize|seo-optimizer|seo-regex|seo-sro|seo-write|serper|site-crawler|sro-grounding|tech-stack|transcript-seo|upscale|video-schema
+seo/,seo subagents,seo-audit|seo-export|seo-fanout|seo-geo-experiment-design|seo-geo|seo-hallucination-defense|seo-opportunities|seo-optimize|seo-optimizer|seo-regex|seo-sro|seo-write|serpapi|serper|site-crawler|sro-grounding|tech-stack|transcript-seo|upscale|video-schema
 seo/video-schema/,seo/video-schema subagents,clip-key-moments|faqpage-video|howto-video|property-reference|speakable|validation|videoobject
 seo/,seo subagents,video-seo|youtube-description-link-acquisition
 services/accounting/,services/accounting subagents,quickfile
