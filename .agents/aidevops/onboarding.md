@@ -81,6 +81,7 @@ The two workflows compose: `/onboarding` first (you need `gh` to be authenticate
 | Quality | Snyk | `SNYK_TOKEN` | https://app.snyk.io/account |
 | SEO | DataForSEO | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` | https://app.dataforseo.com/api-access |
 | SEO | Serper | `SERPER_API_KEY` | https://serper.dev/api-key |
+| SEO | SerpApi | `SERPAPI_API_KEY` | https://serpapi.com/ (account → API key) |
 | SEO | Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard |
 | Data | GetAnyAPI | `ANYAPI_API_KEY` | https://getanyapi.com/dashboard |
 | SEO | Google Search Console | OAuth via MCP | https://search.google.com/search-console |

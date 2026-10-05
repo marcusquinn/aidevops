@@ -306,6 +306,12 @@ check_seo() {
 		print_service "Serper" "optional" "SERPER_API_KEY not set"
 	fi
 
+	if is_configured "SERPAPI_API_KEY"; then
+		print_service "SerpApi" "ready" "API key configured"
+	else
+		print_service "SerpApi" "optional" "SERPAPI_API_KEY not set"
+	fi
+
 	if is_configured "OUTSCRAPER_API_KEY"; then
 		print_service "Outscraper" "ready" "API key configured"
 	else
@@ -1143,11 +1149,12 @@ _json_code_quality() {
 }
 
 _json_seo() {
-	local dfs serper
+	local dfs serper serpapi
 	{ is_configured "DATAFORSEO_USERNAME" && is_configured "DATAFORSEO_PASSWORD"; } && dfs=true || dfs=false
 	is_configured "SERPER_API_KEY" && serper=true || serper=false
-	jq -n --argjson df "$dfs" --argjson se "$serper" \
-		'{"seo":{"dataforseo":{"configured":$df},"serper":{"configured":$se}}}'
+	is_configured "SERPAPI_API_KEY" && serpapi=true || serpapi=false
+	jq -n --argjson df "$dfs" --argjson se "$serper" --argjson sa "$serpapi" \
+		'{"seo":{"dataforseo":{"configured":$df},"serper":{"configured":$se},"serpapi":{"configured":$sa}}}'
 	return 0
 }
 
