@@ -86,8 +86,10 @@ reuse a prior route decision within the TTL when objective, auth, and scope stil
 match.
 
 Headed/headless selection is conservative. Public static fetches and public
-crawls are headless. Login, MFA, manual consent, CAPTCHA, payment, posting,
-form-submit, and destructive actions are headed/manual-gated. Stable recurring
+crawls are headless. Public search-result collection may run headed or
+headless under "Public Search-result Collection" below. Login, MFA, manual
+consent, CAPTCHA, payment, posting, form-submit, and destructive actions are
+headed/manual-gated. Stable recurring
 public captures can graduate to a headless worker/routine after the route is
 sanitized and repeated success is recorded.
 
@@ -180,9 +182,10 @@ require a credential reference. Direct profiles reject one. VPN profiles may
 omit one when the tunnel is managed outside Reach.
 
 Use `--scope account` only with `--session-mode stable`; the broker rejects
-rotating account profiles. Public observations may declare rotating egress, but
-only to sample an authorized location pool—not to evade blocks, access controls,
-robots, terms, or rate limits. Region and city are stored privately but status
+rotating account profiles. Public observations may declare rotating egress to
+sample a location pool or spread paced public search-result collection (see
+"Public Search-result Collection"), but not to keep going after an active
+block, CAPTCHA, or rate limit, nor to bypass access controls. Region and city are stored privately but status
 output exposes only whether they are configured. Runtime adapters must resolve
 credential references through approved secret storage and must verify actual
 egress separately before claiming a location.
@@ -236,6 +239,52 @@ LLM-derived answers; the recorder rejects alternate evidence classes. Replay is
 idempotent, and promotion into `_knowledge` requires the normal reviewed staging
 path rather than treating the Reach record as authoritative account history.
 
+## Public Search-result Collection
+
+Logged-out search-engine result pages are public information. Use direct
+collection to check or supplement SERP API vendors (DataForSEO, Serper,
+SerpApi) when their data is questionable, or when you need location-specific
+evidence.
+
+Allowed by default:
+
+- Low-volume, paced collection from the operator's own machine, in a headed or
+  headless browser. Use human-like timing: randomized gaps (default 45–120 s),
+  typed queries, and no parallel tabs against one engine.
+- Using a registered residential, ISP, or mobile egress profile for location
+  accuracy or to spread paced load. Match the profile's locale and timezone to
+  the browser.
+- Keeping evidence with `observation record` and
+  `authorization_basis: public_data`.
+
+Stop conditions:
+
+- **CAPTCHA, "unusual traffic", or a challenge interstitial:** stop that
+  identity. In a headed session the operator may solve it by hand and continue.
+  Otherwise back off for at least the `classify-failure` `retry_after_seconds`
+  value before trying again.
+- **Repeated blocks on a healthy identity:** treat the pace as too high. Lower
+  volume rather than rotating to more identities.
+- **Signed-in search:** follows the account rules above (stable egress,
+  `owned_account` or `client_approved`), never rotation.
+
+Automated CAPTCHA solving (CapSolver or similar) against search-engine
+protections is off by default and is not wired into aidevops SERP tooling. It
+needs an explicit operator decision recorded in the task. Treat automated
+circumvention of anti-bot access controls as legally contested; Google has
+litigated against SERP scraping (*Google LLC v. SerpApi, LLC*, N.D. Cal.). This
+repository has not verified that case's current status: check the court docket
+before relying on any ruling.
+
+Present the browser as an ordinary browser. Automation flags such as
+`navigator.webdriver` trigger a challenge on the first query (observed
+2026-10-05), which is a tooling fault, not a volume signal.
+
+Measure how much paced collection an identity tolerates with
+`serp-probe-helper.sh run` (headed, stops at the first CAPTCHA, never solves).
+Use `serp-probe-helper.sh help` for options. Treat the result as a per-machine,
+per-network observation, not a guarantee.
+
 ## Health Doctors
 
 `reach-helper.sh network doctor --format json` reports sanitized proxy/VPN
@@ -283,7 +332,11 @@ authorization for that scope.
 - Keep account exports, search-result observations, and LLM-derived answers in
   separate evidence classes; none may masquerade as another.
 - Do not use proxy, VPN, fingerprint, profile, or cookie changes to bypass
-  authentication, authorization, robots, rate-limit, or terms boundaries.
+  authentication, authorization, or an active rate-limit, CAPTCHA, or block.
+  Paced, logged-out public search-result collection under "Public Search-result
+  Collection" is permitted even where an engine's terms discourage automated
+  queries. For other sites, respect robots and terms unless the operator records
+  a public-data basis for that target.
 - Treat proxy, inbox, knowledge, performance, and feedback mutation as follow-up
   work with separate task briefs and verification. Profile and cookie broker
   mutation is limited to private metadata leases and registrations.

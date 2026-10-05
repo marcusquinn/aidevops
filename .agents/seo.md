@@ -11,6 +11,7 @@ subagents:
   - gsc-sitemaps
   - dataforseo
   - serper
+  - serpapi
   - ahrefs
   - semrush
   - site-crawler
@@ -53,7 +54,7 @@ subagents:
 
 ## Quick Reference
 
-- **Tools**: Google Search Console, Ahrefs, Semrush, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
+- **Tools**: Google Search Console, Ahrefs, Semrush, DataForSEO, Serper, SerpApi, PageSpeed Insights, Google Analytics, Context7
 - **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7
 - **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`, `/seo-write`, `/seo-optimize`, `/seo-analyze-content`, `/seo-fanout`, `/seo-geo`, `/seo-sro`, `/seo-hallucination-defense`, `/seo-agent-discovery`, `/seo-ai-readiness`, `/seo-ai-baseline`
 
@@ -62,7 +63,7 @@ subagents:
 **Subagents** (`seo/` and `services/analytics/`):
 
 - **Research**: `conversational-search-intent` (user jobs, query forms, provenance, trends) | `keyword-research` (SERP weakness, 17 types, KeywordScore 0-100) | `ranking-opportunities` (quick wins, striking distance, cannibalization) | `query-fanout-research` (thematic fan-out) | `keyword-mapper` (placement/density) | `domain-research` | `domain-opportunities` (ranked local auction evidence)
-- **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `serper` (Google Search API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
+- **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `serper` (Google Search API) | `serpapi` (multi-engine SERP API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
 - **Analytics**: `google-analytics` (GA4 reporting) | `analytics-tracking` (GA4 setup, events, UTM, attribution)
 - **Technical**: `site-crawler` (links, meta, redirects) | `screaming-frog` (SEO Spider CLI) | `contentking` (real-time monitoring) | `pagespeed`
 - **Content**: `content-analyzer` (readability, keywords, quality) | `seo-optimizer` (on-page audit) | `eeat-score` (7 criteria, 1-10) | `programmatic-seo` (pages at scale)
@@ -89,7 +90,7 @@ subagents:
 
 **Evidence decisions**: Use `/marketing-decisions` for an imported, evidence-backed batch when intent mapping, internal-link review, content disposition, or AI visibility needs a reportable proposal. Keep unsupported sources explicit, collect first-party conversion evidence before broad citation polling, and route any proposed local edit through `workflows/marketing-actions.md`.
 
-**SERP/backlinks/technical**: SERP via DataForSEO (comprehensive) or Serper (quick) | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
+**SERP/backlinks/technical**: SERP via DataForSEO (comprehensive), Serper (quick) or SerpApi (multi-engine). Cross-check disputed vendor data with `keyword-research-helper.sh serp-compare` and paced direct collection (`aidevops/reach-capture.md` "Public Search-result Collection") | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
 
 **YouTube description-link acquisition**: When testing paid contextual links in existing videos that already rank for a target query, use `seo/youtube-description-link-acquisition.md`. Treat discovery, referral, rankings, and AI citations as separate outcomes; never buy unqualified ranking credit.
 

@@ -26,6 +26,7 @@ tools:
 - Crawl: `./.agents/scripts/crawl4ai-helper.sh captcha-crawl URL captcha_type site_key`
 - Python: `import capsolver; capsolver.api_key = "KEY"; solution = capsolver.solve({...})`
 - Config: `configs/capsolver-config.json`, `configs/capsolver-example.py`
+- Search engines: off by default for SERP collection. Stop or solve by hand in a headed session unless the operator records an explicit decision; see `aidevops/reach-capture.md` "Public Search-result Collection"
 
 <!-- AI-CONTEXT-END -->
 

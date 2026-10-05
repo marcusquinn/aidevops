@@ -660,6 +660,7 @@ semver.org
 sendersupport.olc.protection.outlook.com
 sentry.io
 seranking.com
+serpapi.com
 serper.dev
 server.smartlead.ai
 service.com

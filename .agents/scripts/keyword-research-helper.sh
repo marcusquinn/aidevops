@@ -5,7 +5,7 @@
 
 # Keyword Research Helper Script -- Orchestrator
 # Comprehensive keyword research with SERP weakness detection and opportunity scoring
-# Providers: DataForSEO (primary), Serper (alternative), Ahrefs (optional)
+# Providers: DataForSEO (primary), Serper and SerpApi (alternatives), Ahrefs (optional)
 # Webmaster Tools: Google Search Console, Bing Webmaster Tools (for owned sites)
 #
 # Sub-libraries:
@@ -165,6 +165,17 @@ check_credentials() {
 			return 1
 		fi
 		;;
+	"serpapi")
+		if ! serpapi_load_key; then
+			print_error "SerpApi API key not found."
+			echo "  Set via: aidevops secret set SERPAPI_API_KEY"
+			echo "  Or add to ~/.config/aidevops/credentials.sh"
+			return 1
+		fi
+		;;
+	"all")
+		# serp-compare checks each provider individually and skips missing ones
+		;;
 	"ahrefs")
 		if [[ -z "${AHREFS_API_KEY:-}" ]]; then
 			print_error "Ahrefs API key not found."
@@ -242,6 +253,7 @@ show_help() {
 	echo "  research <keywords>       Basic keyword expansion"
 	echo "  autocomplete <keyword>    Google autocomplete suggestions"
 	echo "  extended <keywords>       Full SERP analysis with weakness detection"
+	echo "  serp-compare <keyword>    Compare top Google organic results across SERP providers"
 	echo "  webmaster <site-url>      Keywords from GSC + Bing for your verified sites"
 	echo "  sites                     List verified sites in GSC and Bing"
 	echo "  config                    Show current configuration"
@@ -249,7 +261,10 @@ show_help() {
 	echo "  help                      Show this help"
 	echo ""
 	echo "Options:"
-	echo "  --provider <name>         dataforseo, serper, or both (default: dataforseo)"
+	echo "  --provider <name>         dataforseo, serper, serpapi, or both (default: dataforseo)"
+	echo "                            serp-compare also accepts all or a comma list (default: all)"
+	echo "  --depth <n>               Organic results per provider for serp-compare (default: 10)"
+	echo "  --json                    JSON output (serp-compare)"
 	echo "  --locale <code>           us-en, uk-en, ca-en, au-en, de-de, fr-fr, es-es"
 	echo "  --limit <n>               Number of results (default: 100, max: 10000)"
 	echo "  --days <n>                Days of data for webmaster tools (default: 30)"
@@ -277,6 +292,8 @@ show_help() {
 	echo "  $0 extended --competitor petco.com --limit 500"
 	echo "  $0 extended --gap mysite.com,competitor.com"
 	echo "  $0 research \"seo\" --min-volume 1000 --max-difficulty 40 --csv"
+	echo "  $0 autocomplete \"crm software\" --provider serpapi"
+	echo "  $0 serp-compare \"crm software\" --locale uk-en --depth 10"
 	echo ""
 	echo "Webmaster Tools (for your verified sites):"
 	echo "  $0 sites                                    # List verified sites"
@@ -343,12 +360,28 @@ _parse_options() {
 	_OPT_MODE=""
 	_OPT_TARGET=""
 	_OPT_FILTERS=""
+	_OPT_PROVIDER_SET="false"
+	_OPT_DEPTH="10"
+	_OPT_JSON="false"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--provider)
 			_OPT_PROVIDER="$2"
+			_OPT_PROVIDER_SET="true"
 			shift 2
+			;;
+		--depth)
+			if [[ ! "${2:-}" =~ ^[0-9]+$ ]] || [[ "$2" -lt 1 ]] || [[ "$2" -gt 100 ]]; then
+				print_error "--depth must be an integer from 1 to 100"
+				return 1
+			fi
+			_OPT_DEPTH="$2"
+			shift 2
+			;;
+		--json)
+			_OPT_JSON="true"
+			shift
 			;;
 		--locale)
 			_OPT_LOCALE="$2"
@@ -441,6 +474,16 @@ _dispatch_command() {
 		fi
 		do_extended_research "$_OPT_KEYWORDS" "$_OPT_PROVIDER" "$_OPT_LOCALE" "$_OPT_LIMIT" "$_OPT_CSV" "$_OPT_QUICK" "$_OPT_AHREFS" "$_OPT_MODE" "$_OPT_TARGET"
 		;;
+	"serp-compare")
+		if [[ -z "$_OPT_KEYWORDS" ]]; then
+			print_error "Keyword required"
+			show_help
+			return 1
+		fi
+		local compare_provider="all"
+		[[ "$_OPT_PROVIDER_SET" == "true" ]] && compare_provider="$_OPT_PROVIDER"
+		do_serp_compare "$_OPT_KEYWORDS" "$compare_provider" "$_OPT_LOCALE" "$_OPT_DEPTH" "$_OPT_JSON" || return 1
+		;;
 	"webmaster")
 		if [[ -z "$_OPT_KEYWORDS" ]]; then
 			print_error "Site URL required (e.g., https://example.com)"
@@ -459,7 +502,7 @@ _dispatch_command() {
 		local new_locale
 		new_locale=$(prompt_locale)
 		local new_provider new_limit
-		read -p "Default provider [dataforseo/serper/both] ($DEFAULT_PROVIDER): " new_provider
+		read -p "Default provider [dataforseo/serper/serpapi/both] ($DEFAULT_PROVIDER): " new_provider
 		new_provider="${new_provider:-$DEFAULT_PROVIDER}"
 		read -p "Default limit ($DEFAULT_LIMIT): " new_limit
 		new_limit="${new_limit:-$DEFAULT_LIMIT}"

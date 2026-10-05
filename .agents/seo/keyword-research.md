@@ -10,7 +10,8 @@ mode: subagent
 
 ## Quick Reference
 
-- **Providers**: DataForSEO (primary), Serper (alternative), Ahrefs (optional DR/UR)
+- **Providers**: DataForSEO (primary), Serper and SerpApi (alternatives), Ahrefs (optional DR/UR)
+- **Check SERP data**: `keyword-research-helper.sh serp-compare "<keyword>"` compares the top organic URLs from each configured provider; for a direct browser cross-check, see `aidevops/reach-capture.md` "Public Search-result Collection"
 - **Webmaster Tools**: Google Search Console, Bing Webmaster Tools (owned sites)
 - **Config**: `~/.config/aidevops/keyword-research.json`
 - **Intent framing**: `conversational-search-intent.md` for user jobs, query
@@ -24,6 +25,7 @@ mode: subagent
 | Competitor Research | `--competitor` | Keywords a competitor ranks for |
 | Keyword Gap | `--gap` | Competitor keywords you don't rank for |
 | Webmaster Tools | `webmaster <url>` | Keywords from GSC + Bing |
+| SERP Compare | `serp-compare <keyword>` | Provider disagreement on top organic URLs |
 
 | Level | Flag | Data |
 |-------|------|------|
@@ -54,7 +56,7 @@ first-party evidence corroborate them.
 /keyword-research "best * for dogs"   # wildcard support
 ```
 
-**Options**: `--limit N` (default: 100, max: 10,000) · `--provider dataforseo|serper|both` · `--csv` · `--min-volume N` · `--max-difficulty N` · `--intent informational|commercial|transactional|navigational` · `--contains "term"` · `--excludes "term"`
+**Options**: `--limit N` (default: 100, max: 10,000) · `--provider dataforseo|serper|serpapi|both` · `--csv` · `--min-volume N` · `--max-difficulty N` · `--intent informational|commercial|transactional|navigational` · `--contains "term"` · `--excludes "term"`
 
 ### /autocomplete-research
 
@@ -159,7 +161,20 @@ Config (`~/.config/aidevops/keyword-research.json`): `default_locale`, `default_
 |----------|------|-------------|-----------|
 | **DataForSEO** | Primary | `DATAFORSEO_USERNAME` + `DATAFORSEO_PASSWORD` | `keyword_suggestions/live`, `ranked_keywords/live`, `domain_intersection/live`, `backlinks/summary/live`, `serp/google/organic/live`, `onpage/instant_pages` |
 | **Serper** | Alternative (faster) | `SERPER_API_KEY` | `search`, `autocomplete` |
+| **SerpApi** | Alternative (cross-check) | `SERPAPI_API_KEY` | `engine=google`, `engine=google_autocomplete` (`seo/serpapi.md`) |
 | **Ahrefs** | Optional DR/UR | `AHREFS_API_KEY` | `domain-rating`, `url-rating` |
+
+### Questionable SERP data
+
+Vendors scrape Google independently, so their results can differ. Since
+September 2025 Google no longer honours `num=100`, which changed depth and
+pagination for every vendor.
+
+1. Run `keyword-research-helper.sh serp-compare "<keyword>" --locale <code>` (add `--json` to keep the result). It lists URLs that only some providers return.
+2. Spot-check disputed keywords in a real browser on a matching location, under `aidevops/reach-capture.md` "Public Search-result Collection". `serp-probe-helper.sh run --keywords-file <file> [--egress-profile <name>]` does this with paced, typed searches, keeps the result HTML, and stops at the first CAPTCHA. Keep the evidence with `reach-helper.sh observation record`.
+3. For owned sites, Google Search Console positions are the reference.
+
+Each provider call in `serp-compare` is billed by that provider.
 
 ## Recommended Workflow
 
@@ -219,4 +234,4 @@ keyword-research-helper.sh webmaster https://example.com --csv
 | "No results found" | Try broader seeds or different locale |
 | "Timeout" | Reduce `--limit` or use `--quick` |
 
-Check availability: `/list-keys --service dataforseo|serper|ahrefs`
+Check availability: `/list-keys --service dataforseo|serper|serpapi|ahrefs`
