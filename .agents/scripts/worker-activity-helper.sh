@@ -76,7 +76,7 @@ WAH_SESSION_OUTCOME_JQ='
 		type == "string" and length > 0;
 	def _wah_reconcile_outcome:
 		. as $row
-		| ([$objective_outcomes[] | select(
+		| ([$objective_outcomes[0][] | select(
 			(.attempt_id | _wah_nonempty_string) and .attempt_id == ($row.attempt_id // null) and
 			((($row.repo_slug // null) | _wah_nonempty_string | not) or (.repo // null) == $row.repo_slug) and
 			(($row.issue_number // null) == null or ((.issue_number // 0) | tostring) == (($row.issue_number // "") | tostring))
@@ -241,6 +241,20 @@ _wah_objective_outcomes_json() {
 	return 0
 }
 
+# Pass bounded evidence through a file, not --argjson: even valid retained
+# evidence can exceed Linux's per-argument limit and silently zero reports.
+_wah_jq_with_objective_outcomes() {
+	local evidence_file=""
+	evidence_file=$(mktemp -t wah-objective-outcomes.XXXXXX) || return 1
+	if _wah_objective_outcomes_json >"$evidence_file" &&
+		jq --slurpfile objective_outcomes "$evidence_file" "$@"; then
+		rm -f "$evidence_file"
+		return 0
+	fi
+	rm -f "$evidence_file"
+	return 1
+}
+
 #######################################
 # Aggregate worker outcomes from headless-runtime-metrics.jsonl.
 # Single jq streaming pass: filter by ts cutoff, bucket by result + exit_code.
@@ -278,11 +292,10 @@ _wah_aggregate_metrics() {
 	#          heartbeats even when their exit_code
 	#          is nonzero)
 	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
-	local result service_result watchdog_killed_result rate_limit_result objective_outcomes
+	local result service_result watchdog_killed_result rate_limit_result
 	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
 	watchdog_killed_result="$WAH_RESULT_WATCHDOG_STALL_KILLED"
 	rate_limit_result="$WAH_RESULT_RATE_LIMIT"
-	objective_outcomes=$(_wah_objective_outcomes_json)
 	local jq_program
 	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
 	jq_program=$WAH_SESSION_OUTCOME_JQ'
@@ -309,7 +322,7 @@ _wah_aggregate_metrics() {
 			)] | length)
 		} | "\(.total) \(.terminal) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
 	'
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$objective_outcomes" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" --arg rate_limit_result "$rate_limit_result" --arg repo_slug "$repo_slug" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
+	result=$(_wah_jq_with_objective_outcomes -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" --arg rate_limit_result "$rate_limit_result" --arg repo_slug "$repo_slug" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
 
 	[[ -n "$result" ]] || result="0 0 0 0 0 0 0 0"
 	printf '%s\n' "$result"
@@ -336,9 +349,7 @@ _wah_metric_details_json() {
 	fi
 	now_epoch="${2:-$(date +%s)}"
 
-	local objective_outcomes
-	objective_outcomes=$(_wah_objective_outcomes_json)
-	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$objective_outcomes" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" --arg repo_slug "$repo_slug" "$WAH_METRIC_DETAILS_JQ" <"$metrics" 2>/dev/null ||
+	_wah_jq_with_objective_outcomes -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" --arg repo_slug "$repo_slug" "$WAH_METRIC_DETAILS_JQ" <"$metrics" 2>/dev/null ||
 		printf '{"event_total":0,"unscoped_event_total":0,"excluded_event_total":0,"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
 	return 0
 }
@@ -481,7 +492,8 @@ _wah_provider_usage_json() {
 	((account_multiplier < 1)) && account_multiplier=1
 
 	if [[ -f "$pool" ]]; then
-		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$(_wah_objective_outcomes_json)" --arg outcome_failed "$WAH_DELIVERY_FAILED" --argjson account_multiplier "$account_multiplier" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' --arg status_active 'active' --arg status_idle 'idle' "$WAH_SESSION_OUTCOME_JQ$WAH_PROVIDER_MODEL_USAGE_JQ"'
+		# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
+		_wah_jq_with_objective_outcomes -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg outcome_failed "$WAH_DELIVERY_FAILED" --argjson account_multiplier "$account_multiplier" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' --arg status_active 'active' --arg status_idle 'idle' "$WAH_SESSION_OUTCOME_JQ$WAH_PROVIDER_MODEL_USAGE_JQ"'
 			def account_status: .status // $status_empty;
 			def available_account:
 				(account_status) as $status
@@ -517,7 +529,8 @@ _wah_provider_usage_json() {
 				)
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
 	else
-		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$(_wah_objective_outcomes_json)" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" "$WAH_SESSION_OUTCOME_JQ$WAH_PROVIDER_MODEL_USAGE_JQ"'
+		# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
+		_wah_jq_with_objective_outcomes -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" "$WAH_SESSION_OUTCOME_JQ$WAH_PROVIDER_MODEL_USAGE_JQ"'
 			[inputs | select(.role == $worker_role and (.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $raw
 			| ($raw | map(_wah_reconcile_outcome)) as $w
 			| {

@@ -815,6 +815,37 @@ assert_eq "9c: per-model premature-exit rate and continuation rescues" "3/4 75 1
 	"$(printf '%s' "$JSON" | jq -r '[.provider_diagnostics.provider_model_usage | sort_by(.model)[] | "\(.premature_exit)/\(.count) \(.premature_exit_rate_pct) \(.continuation_rescued)"] | join("|")')"
 
 # ---------------------------------------------------------------------------
+# Section 10: retained objective evidence must not exceed exec argument limits.
+# ---------------------------------------------------------------------------
+echo
+echo "--- Section 10: large objective evidence ---"
+
+LARGE_EVIDENCE="$FIXTURE_DIR/large-objective-evidence.jsonl"
+jq -nc 'range(0;1500) | {record_type:"attempt_outcome", repo:"other/repo", issue_number:999,
+	attempt_id:("unrelated-attempt-" + tostring), effective_outcome:"failed", evidence_timestamp:1}' >"$LARGE_EVIDENCE"
+cat "$OBJECTIVE_EVIDENCE" >>"$LARGE_EVIDENCE"
+# Preserve torn-append resilience while testing a valid payload above 128 KiB.
+printf '{"record_type":\n' >>"$LARGE_EVIDENCE"
+assert_eq "10a: fixture exceeds Linux per-argument limit" "true" \
+	"$(jq -Rsc '[split("\n")[] | fromjson?] | tojson | utf8bytelength > 131072' "$LARGE_EVIDENCE")"
+LARGE_ENV=("${RUN_ENV[@]}" "WAH_METRICS_FILE=$RECON_METRICS"
+	"WAH_OBJECTIVE_EVIDENCE_FILE=$LARGE_EVIDENCE" "TMPDIR=$FIXTURE_DIR")
+JSON=$(env "${LARGE_ENV[@]}" "$HELPER" summary --since 24h --json --no-pr-check 2>&1)
+assert_eq "10b: large evidence preserves scalar and rich metric counts" "8 8 2 6" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics | "\(.total) \(.terminal_session_total) \(.runtime_handoffs) \(.other_failure)"')"
+assert_eq "10c: large evidence still reconciles matching attempts" "success" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.issue_number == 601) | .effective_outcome')"
+JSON=$(env "${LARGE_ENV[@]}" "$HELPER" providers --since 24h --json 2>&1)
+assert_eq "10d: provider usage and account pool survive large evidence" "8 2 4" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics | "\([.provider_model_usage[].count] | add) \([.provider_model_usage[].runtime_handoffs] | add) \(.account_pool[] | select(.provider == "openai") | .total)"')"
+JSON=$(env "${LARGE_ENV[@]}" "WAH_OAUTH_POOL_FILE=$FIXTURE_DIR/missing-pool.json" \
+	"$HELPER" providers --since 24h --json 2>&1)
+assert_eq "10e: provider usage without a pool survives large evidence" "8" \
+	"$(printf '%s' "$JSON" | jq -r '[.provider_diagnostics.provider_model_usage[].count] | add')"
+assert_eq "10f: objective evidence temporary files are cleaned" "" \
+	"$(compgen -G "$FIXTURE_DIR/wah-objective-outcomes.*" || true)"
+
+# ---------------------------------------------------------------------------
 # Summary.
 # ---------------------------------------------------------------------------
 echo
