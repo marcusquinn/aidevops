@@ -156,6 +156,11 @@ setup_subject() {
 	_merge_pr_ready_for_interactive_admin_bypass() {
 		return 0
 	}
+	# This suite isolates body transport; required-check failures are exercised
+	# by test-full-loop-merge.sh, not a live API read for the fixture repository.
+	_merge_admin_fallback_required_checks_clear() {
+		return 0
+	}
 	gh_merge_remediate_stale_auth_cache() {
 		local merge_output="$1"
 		local context="$2"

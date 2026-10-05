@@ -15,6 +15,8 @@
 #      the irreversible merge mutation
 #   8. Squash merges use the validated PR title as an explicit subject and
 #      reject invalid titles before any merge mutation
+#   9. timeout_sec's no-coreutils fallback passes stdin through, so the
+#      prospective TODO guard materializes blobs without timeout/gtimeout
 #
 # Strategy: stub gh, audit-log-helper.sh, and gh-signature-helper.sh in a temp
 # directory prepended to PATH, then source the merge sub-library.
@@ -1380,6 +1382,7 @@ run_prospective_todo_guard() {
 	local hostile_objects="${fixture_dir}/hostile-objects"
 	local hostile_alternates="${fixture_dir}/hostile-alternates"
 	local hostile_index="${fixture_dir}/hostile-index"
+	local guard_path="${AIDEVOPS_TEST_GUARD_PATH:-${TEST_ROOT}/bin:${scripts_dir}:/usr/bin:/bin:${PATH}}"
 	local fetch_override=""
 	local validation_override=""
 	if [[ "$fetch_mode" == "stub" ]]; then
@@ -1409,7 +1412,7 @@ ${validation_override}
 RUNNER_EOF
 	chmod +x "$tmp_runner"
 	local rc=0
-	env PATH="${TEST_ROOT}/bin:${scripts_dir}:/usr/bin:/bin:${PATH}" \
+	env PATH="$guard_path" \
 		HOME="$attacker_home" AIDEVOPS_TEMP_DIR="$verification_tmp" \
 		AIDEVOPS_REAL_GIT_BIN="$real_git_bin" AIDEVOPS_TEST_MERGE_DRIVER_MARKER="$driver_marker" \
 		GIT_ALTERNATE_OBJECT_DIRECTORIES="$hostile_alternates" \
@@ -1621,6 +1624,55 @@ PROBE_EOF
 	return 0
 }
 
+# System tool directory without timeout/gtimeout, forcing timeout_sec onto its
+# job-control fallback the way coreutils-less macOS hosts run it (GH#33619).
+create_no_timeout_path_dir() {
+	local path_dir="${TEST_ROOT}/no-timeout-bin"
+	local entry="" name=""
+	if [[ ! -d "$path_dir" ]]; then
+		mkdir -p "$path_dir" || return 1
+		for entry in /usr/bin/* /bin/*; do
+			name="${entry##*/}"
+			[[ "$name" == "timeout" || "$name" == "gtimeout" ]] && continue
+			[[ -e "${path_dir}/${name}" ]] || ln -s "$entry" "${path_dir}/${name}" || return 1
+		done
+	fi
+	printf '%s\n' "$path_dir"
+	return 0
+}
+
+test_timeout_sec_fallback_preserves_stdin() {
+	local scripts_dir="${SCRIPT_DIR}/.."
+	local path_dir="" sample="${TEST_ROOT}/timeout-stdin-sample" output="" rc=0
+	path_dir=$(create_no_timeout_path_dir) || {
+		print_result "timeout_sec fallback: no-timeout PATH fixture" 1
+		return 0
+	}
+	printf 'abcdefghijklm\n' >"$sample"
+	# The redirect sits inside a subshell, where Bash has no job control: this
+	# is the shape that previously handed the command /dev/null.
+	# shellcheck disable=SC2016  # Positional parameters expand in the child shell.
+	output=$(env PATH="$path_dir" bash -c '
+		source "$1/shared-constants.sh" >/dev/null 2>&1 || exit 90
+		command -v timeout >/dev/null 2>&1 && exit 91
+		command -v gtimeout >/dev/null 2>&1 && exit 91
+		( timeout_sec 5 cat <"$2" )
+	' _ "$scripts_dir" "$sample") || rc=$?
+	print_result "timeout_sec fallback: subshell caller stdin reaches the command" \
+		"$([[ "$rc" -eq 0 && "$output" == "abcdefghijklm" ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+
+	rc=0
+	# shellcheck disable=SC2016  # Positional parameters expand in the child shell.
+	env PATH="$path_dir" bash -c '
+		source "$1/shared-constants.sh" >/dev/null 2>&1 || exit 90
+		( timeout_sec 1 sleep 5 </dev/null )
+	' _ "$scripts_dir" 2>/dev/null || rc=$?
+	print_result "timeout_sec fallback: deadline still returns 124" \
+		"$([[ "$rc" -eq 124 ]] && printf '0' || printf '1')" "rc=$rc"
+	return 0
+}
+
 test_todo_duplicate_report_large_baseline() {
 	local baseline="${TEST_ROOT}/large-baseline.todo"
 	local candidate="${TEST_ROOT}/large-candidate.todo"
@@ -1773,6 +1825,7 @@ test_prospective_todo_live_fetch_guard() {
 
 test_prospective_todo_crisscross_fetch_guard() {
 	local fixture_dir="" fixture_root="" base_sha="" head_sha="" remote_url="" git_probe="" output="" rc=0
+	local no_timeout_dir=""
 	fixture_dir=$(create_prospective_crisscross_fixture) || return 0
 	fixture_root="${fixture_dir%/caller}"
 	base_sha=$(<"${fixture_root}/base.sha")
@@ -1780,6 +1833,12 @@ test_prospective_todo_crisscross_fetch_guard() {
 	remote_url=$(<"${fixture_root}/remote.url")
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url") || rc=$?
 	print_result "prospective TODO: criss-cross virtual merge base blobs are materialized" "$rc" "output=$output"
+
+	rc=0
+	no_timeout_dir=$(create_no_timeout_path_dir) || return 0
+	output=$(AIDEVOPS_TEST_GUARD_PATH="${TEST_ROOT}/bin:${SCRIPT_DIR}/..:${no_timeout_dir}" \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url") || rc=$?
+	print_result "prospective TODO: blobs are materialized without timeout/gtimeout (GH#33619)" "$rc" "output=$output"
 
 	rc=0
 	git_probe=$(create_prospective_git_probe) || return 0
@@ -1910,6 +1969,7 @@ main() {
 	test_non_squash_skips_subject_override
 	test_checkout_free_publication_readiness_handoff
 	test_todo_duplicate_report_large_baseline
+	test_timeout_sec_fallback_preserves_stdin
 	test_prospective_todo_merge_guard
 	test_prospective_todo_live_fetch_guard
 	test_prospective_todo_crisscross_fetch_guard

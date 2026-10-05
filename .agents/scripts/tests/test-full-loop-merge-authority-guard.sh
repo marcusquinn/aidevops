@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MERGE_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge.sh"
-COMMIT_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-commit.sh"
+READINESS_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-readiness.sh"
 TEST_ROOT="$(mktemp -d -t full-loop-merge-authority.XXXXXX)"
 EXTRACTED="${TEST_ROOT}/functions.sh"
 CRYPTO_CALLS="${TEST_ROOT}/crypto-calls.log"
@@ -64,13 +64,13 @@ extract_function() {
 	return 0
 }
 
-extract_commit_function() {
+extract_readiness_function() {
 	local function_name="$1"
 	awk -v fn="$function_name" '
       index($0, fn "() {") == 1 { capture = 1 }
       capture { print }
       capture && $0 == "}" { exit }
-    ' "$COMMIT_SCRIPT" >>"$EXTRACTED"
+    ' "$READINESS_SCRIPT" >>"$EXTRACTED"
 	return 0
 }
 
@@ -91,7 +91,7 @@ load_functions() {
 	extract_function _merge_rest_fallback
 	extract_function _merge_revalidate_transport_authority
 	extract_function _merge_execute
-	extract_commit_function cmd_pre_merge_gate
+	extract_readiness_function cmd_pre_merge_gate
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
 	return 0
