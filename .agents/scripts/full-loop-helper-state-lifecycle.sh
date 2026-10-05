@@ -1905,6 +1905,68 @@ _full_loop_terminal_release_status() {
 	return 0
 }
 
+# Retire only the rollout marker for this exact, finalized merged worktree.
+# The external receipt remains authoritative for live-owner cleanup protection.
+_full_loop_retire_finalized_cleanup_marker() {
+	local repo="$1"
+	local pr_number="$2"
+	local release_status="$3"
+	local worktree=""
+	local branch=""
+	local cleanup_target=""
+	local receipt_path=""
+	local marker_path=""
+	local owner_pid=""
+	local owner_identity=""
+	local tracked_marker=""
+	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$_FULL_LOOP_OWNER_SESSION_FALLBACK}}}"
+	worktree=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+	marker_path="${worktree}/.agents/.full-loop-cleanup-deferred"
+	[[ -e "$marker_path" || -L "$marker_path" ]] || return 0
+	[[ -f "$marker_path" && ! -L "$marker_path" && ! -L "${worktree}/.agents" ]] || return 1
+	# Never remove a tracked file, or a marker from another PR/head/worktree.
+	tracked_marker=$(git -C "$worktree" ls-files -- .agents/.full-loop-cleanup-deferred) || return 1
+	[[ -z "$tracked_marker" ]] || return 1
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" || "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] || return 1
+	cleanup_target=$(_merge_fresh_adopted_worktree_cleanup_target "$pr_number" "$repo") || return 1
+	IFS=$'\t' read -r worktree branch _ <<<"$cleanup_target"
+	[[ "$marker_path" == "${worktree}/.agents/.full-loop-cleanup-deferred" ]] || return 1
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || return 1
+	[[ -f "$receipt_path" && ! -L "$receipt_path" ]] || return 1
+	_full_loop_receipt_lock_acquire || return 1
+	if ! jq -e --arg repo "$repo" --argjson pr "$pr_number" \
+		--arg worktree "$worktree" --arg branch "$branch" --arg session "$owner_session" \
+		--arg release "$release_status" '
+		.schema_version == 1 and .repository == $repo and .pr_number == $pr
+		and .worktree == $worktree and .branch == $branch
+		and .executor_completion_state == "COMPLETE" and .release_status == $release
+		and .resource_cleanup_state == "CLEANUP_DEFERRED"
+		and .cleanup_lease == {state:"pending",pid:null,acquired_at:null}
+		and (.receipt_disposition // null) == null
+		and (.owner.pid | type == "number" and . > 0 and floor == .)
+		and (.owner.process_identity | strings | length > 0)
+		and .owner.session == $session
+	' "$receipt_path" >/dev/null 2>&1; then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	owner_pid=$(jq -r '.owner.pid' "$receipt_path")
+	owner_identity=$(jq -r '.owner.process_identity' "$receipt_path")
+	# Match the entire legacy format, not just its first line. A reused live PID
+	# cannot inherit a receipt written by a different process generation.
+	if ! cmp -s "$marker_path" <(printf '%s\n' "$owner_pid") ||
+		{ kill -0 "$owner_pid" 2>/dev/null && [[ "$owner_identity" != "$(_full_loop_process_identity "$owner_pid")" ]]; }; then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	if ! rm -- "$marker_path"; then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	_full_loop_receipt_lock_release
+	return 0
+}
+
 cmd_finalize_receipt() {
 	local pr_number="${1:-}"
 	local repo=""
@@ -1924,6 +1986,10 @@ cmd_finalize_receipt() {
 	}
 	full_loop_finalize_cleanup_receipt "$repo" "$pr_number" "$release_status" || {
 		print_error "Finalization blocked: cleanup receipt is missing or conflicts with terminal evidence"
+		return 1
+	}
+	_full_loop_retire_finalized_cleanup_marker "$repo" "$pr_number" "$release_status" || {
+		print_error "Finalization blocked: legacy cleanup marker does not match the exact finalized owner contract"
 		return 1
 	}
 	print_success "Cleanup receipt finalized for merged PR #${pr_number} (release:${release_status})"
