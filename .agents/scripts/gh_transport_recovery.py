@@ -8,7 +8,6 @@ import sqlite3
 import time
 from pathlib import Path
 
-
 MAX_RESERVATION_AGE = 180  # 90s native timeout, bounded cleanup and admission margin.
 
 
@@ -73,7 +72,8 @@ def record_budget_transition(budget, previous, incoming, accepted, recovered, or
         "event": event, "previous": previous, "observed_at": time.time(),
         "incoming": incoming, "accepted": accepted, "probe_recovered": recovered,
         "causally_newer": ordered,
-        "reason": "serialized_probe" if recovered else "conservative_observation",
+        "reason": ("newer_window" if recovered and previous and incoming["reset"] > previous["reset"]
+                   else "serialized_probe" if recovered else "conservative_observation"),
     }, sort_keys=True)
     try:
         fd = os.open(budget.path.parent / "budget-transitions.jsonl",
@@ -89,7 +89,7 @@ def record_budget_transition(budget, previous, incoming, accepted, recovered, or
 
 
 def probe_recovers(budget, reservation, resource, row, reset_at):
-    """Called inside the existing transaction; never changes quota or ownership."""
+    """Accept bound rollover or serialized probe evidence without changing ownership."""
     if not row:
         return False
     probe = budget.db.execute(
@@ -100,15 +100,18 @@ def probe_recovers(budget, reservation, resource, row, reset_at):
         "SELECT started,credential FROM reservation WHERE id=? AND scope=? AND resource=?",
         (reservation, budget.scope, resource),
     ).fetchone()
-    if not probe or not own:
-        return False
-    if own[1] != budget.credential or reservation != probe[0]:
+    if not own or own[1] != budget.credential:
         return False
     owners = sum(budget._root(binding[0]) == budget.scope for binding in
                  budget.db.execute("SELECT scope FROM binding").fetchall())
-    if owners != 1 and not budget.attributed:
+    # A later reset identifies a new window for one bound credential, even
+    # before the stale local reset expires. Shared owners still need a probe.
+    if owners == 1 and reset_at > row[1]:
+        return True
+    if not probe or reservation != probe[0]:
         return False
-    return own[0] >= row[2] and reset_at >= row[1]
+    attributed_owner = owners == 1 or budget.attributed
+    return attributed_owner and own[0] >= row[2] and reset_at >= row[1]
 
 
 def admission_status(directory: Path, scope: str, *, attributed: bool = False) -> dict:
@@ -119,15 +122,12 @@ def admission_status(directory: Path, scope: str, *, attributed: bool = False) -
     db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)
     try:
         requested_scope = scope
-        for _ in range(256):
-            alias = db.execute("SELECT target FROM alias WHERE scope=?", (scope,)).fetchone()
-            if not alias:
-                break
-            scope = alias[0]
-        else:
+        try:
+            scope = _read_root(db, scope)
+        except ValueError:
             return {"state": "unknown"}
-        bindings = sum(1 for binding in db.execute("SELECT scope FROM binding").fetchall()
-                       if _read_root(db, binding[0]) == scope)
+        bindings = sum(_read_root(db, binding[0]) == scope for binding in
+                       db.execute("SELECT scope FROM binding").fetchall())
         ambiguity = None
         if attributed and requested_scope != scope:
             ambiguity = "configured_owner_requires_reconciliation"
