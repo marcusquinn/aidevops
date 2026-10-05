@@ -6,206 +6,23 @@
 // searches one browser identity completes before a CAPTCHA/challenge.
 // It never solves CAPTCHAs: it stops, or waits for a human in headed mode.
 // Policy: .agents/aidevops/reach-capture.md "Public Search-result Collection".
+// Modules in serp-probe/: engines.mjs (engines, detectors), options.mjs (CLI),
+// session.mjs (proxy, run report, browser launch), window.mjs (macOS --hidden).
 
-import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseArgs } from 'node:util';
 
-import { loadPlaywright, resolvePlaywrightBrowserExecutable } from './playwright-runtime.mjs';
+import { detectBlock, detectConsent, ENGINES } from './serp-probe/engines.mjs';
+import { parseOptions, printPlan, usage } from './serp-probe/options.mjs';
+import { createRun, launchBrowser, proxyFromEnv } from './serp-probe/session.mjs';
+import { setupWindow } from './serp-probe/window.mjs';
 
-const SCHEMA = 'aidevops.serp-probe/v1';
-const WORKSPACE = process.env.AIDEVOPS_SERP_PROBE_DIR?.trim()
-  || join(homedir(), '.aidevops', '.agent-workspace', 'serp-probe');
 const NAV_TIMEOUT_MS = 30_000;
 const CONSENT_WAIT_MS = 180_000;
 const HUMAN_SOLVE_WAIT_MS = 600_000;
 
-const ENGINES = {
-  google: {
-    home: ({ gl, hl }) => `https://www.google.com/?hl=${encodeURIComponent(hl)}&gl=${encodeURIComponent(gl)}`,
-    input: 'textarea[name="q"], input[name="q"]',
-    results: '#search, #rso',
-    // Organic links may be direct, /url?q=<dest>, or opaque /goto?url=<token>
-    // (seen 2026-10-05). For opaque links, fall back to the displayed <cite>
-    // (domain + breadcrumb path), which is what a person sees.
-    organic: () => [...document.querySelectorAll('#search a h3')]
-      .map((h3) => {
-        const a = h3.closest('a');
-        if (!a?.href) return null;
-        const url = new URL(a.href, location.href);
-        if (!/(^|\.)google\./.test(url.hostname)) return url.href;
-        const q = url.searchParams.get('q') || url.searchParams.get('url');
-        if (q && /^https?:\/\//.test(q)) return q;
-        const cite = a.closest('.MjjYud, [data-hveid]')?.querySelector('cite') || a.querySelector('cite');
-        return cite?.textContent?.split(' · ')[0].trim().replace(/\s*›\s*/g, '/') || null;
-      })
-      .filter(Boolean),
-  },
-  bing: {
-    home: ({ gl, hl }) => `https://www.bing.com/?cc=${encodeURIComponent(gl)}&setlang=${encodeURIComponent(hl)}`,
-    input: 'textarea[name="q"], input[name="q"]',
-    results: '#b_results',
-    // Bing wraps links as /ck/a?...&u=a1<base64url destination>.
-    organic: () => [...document.querySelectorAll('#b_results li.b_algo h2 a')]
-      .map((a) => {
-        if (!a.href) return null;
-        const url = new URL(a.href, location.href);
-        const u = url.searchParams.get('u');
-        if (!/(^|\.)bing\.com$/.test(url.hostname) || !u?.startsWith('a1')) return url.href;
-        try {
-          const b64 = u.slice(2).replace(/-/g, '+').replace(/_/g, '/');
-          const dest = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
-          return /^https?:\/\//.test(dest) ? dest : url.href;
-        } catch {
-          return url.href;
-        }
-      })
-      .filter(Boolean),
-  },
-};
-
-function usage() {
-  return `Usage: serp-captcha-probe.mjs --keywords-file <file> | --keyword <kw> [--keyword <kw> ...]
-  --engine google|bing      Search engine (default: google)
-  --max <n>                 Maximum searches (default: 20, max: 200)
-  --min-delay <s>           Minimum gap between searches (default: 45, min: 10)
-  --max-delay <s>           Maximum gap between searches (default: 120)
-  --gl <cc> --hl <lang>     Country and interface language (default: us, en)
-  --headless                Run headless (default: headed)
-  --hidden                  macOS: run headed but hidden (Cmd-H style); shown only when you must act
-  --on-captcha stop|wait    stop (default) or wait for a human solve (headed only)
-  --consent manual|reject   Cookie-consent prompt: wait for you (default) or click "Reject all"
-  --fresh-profile           Use a new temporary profile instead of the persistent probe profile
-  --no-evidence             Do not keep result HTML
-  --shuffle                 Randomize keyword order
-  --dry-run                 Validate and print the plan without opening a browser
-Proxy: set SERP_PROBE_PROXY in the environment (the wrapper resolves it from aidevops secrets).`;
-}
-
-const CLI_OPTIONS = {
-  'keywords-file': { type: 'string' },
-  keyword: { type: 'string', multiple: true },
-  engine: { type: 'string', default: 'google' },
-  max: { type: 'string', default: '20' },
-  'min-delay': { type: 'string', default: '45' },
-  'max-delay': { type: 'string', default: '120' },
-  gl: { type: 'string', default: 'us' },
-  hl: { type: 'string', default: 'en' },
-  locale: { type: 'string' },
-  timezone: { type: 'string' },
-  headless: { type: 'boolean', default: false },
-  hidden: { type: 'boolean', default: false },
-  'on-captcha': { type: 'string', default: 'stop' },
-  consent: { type: 'string', default: 'manual' },
-  'fresh-profile': { type: 'boolean', default: false },
-  'no-evidence': { type: 'boolean', default: false },
-  shuffle: { type: 'boolean', default: false },
-  'dry-run': { type: 'boolean', default: false },
-  help: { type: 'boolean', default: false },
-};
-
-const fail = (message) => { throw new Error(message); };
-
-function validateChoices(values) {
-  const rules = [
-    [!Object.hasOwn(ENGINES, values.engine), '--engine must be google or bing'],
-    [!['stop', 'wait'].includes(values['on-captcha']), '--on-captcha must be stop or wait'],
-    [values['on-captcha'] === 'wait' && values.headless, '--on-captcha wait requires a headed browser'],
-    [!['manual', 'reject'].includes(values.consent), '--consent must be manual or reject'],
-    [values.hidden && values.headless, '--hidden and --headless are mutually exclusive'],
-    [values.hidden && process.platform !== 'darwin', '--hidden is macOS-only'],
-    [!/^[a-z]{2}$/i.test(values.gl), '--gl must be a two-letter country code such as us'],
-    [!/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i.test(values.hl), '--hl must be a language code such as en'],
-  ];
-  const broken = rules.find(([failed]) => failed);
-  if (broken) fail(broken[1]);
-}
-
-function loadKeywords(values) {
-  const raw = [...(values.keyword || [])];
-  if (values['keywords-file']) raw.push(...readFileSync(values['keywords-file'], 'utf8').split('\n'));
-  const keywords = raw.map((kw) => kw.trim()).filter((kw) => kw && !kw.startsWith('#'));
-  if (keywords.length === 0) fail('Provide --keyword or --keywords-file with at least one keyword');
-  if (values.shuffle) {
-    for (let i = keywords.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [keywords[i], keywords[j]] = [keywords[j], keywords[i]];
-    }
-  }
-  return keywords;
-}
-
-function parseOptions(argv) {
-  const { values } = parseArgs({ args: argv, options: CLI_OPTIONS, strict: true });
-  if (values.help) return { help: true };
-  const int = (name, min, max) => {
-    const value = Number(values[name]);
-    if (!Number.isInteger(value) || value < min || value > max) fail(`--${name} must be an integer from ${min} to ${max}`);
-    return value;
-  };
-  validateChoices(values);
-  const keywords = loadKeywords(values);
-
-  const minDelay = int('min-delay', 10, 3600);
-  const maxDelay = int('max-delay', minDelay, 7200);
-  const max = int('max', 1, 200);
-  return {
-    engine: values.engine,
-    keywords: keywords.slice(0, max),
-    minDelay,
-    maxDelay,
-    gl: values.gl.toLowerCase(),
-    hl: values.hl,
-    locale: values.locale || `${values.hl}-${values.gl.toUpperCase()}`,
-    timezone: values.timezone,
-    headless: values.headless,
-    hidden: values.hidden,
-    onCaptcha: values['on-captcha'],
-    consent: values.consent,
-    freshProfile: values['fresh-profile'],
-    keepEvidence: !values['no-evidence'],
-    dryRun: values['dry-run'],
-  };
-}
-
 const log = (message) => process.stderr.write(`[serp-probe] ${message}\n`);
 const randomBetween = (min, max) => min + Math.random() * (max - min);
-const tildePath = (path) => path.replace(homedir(), '~');
-
-// macOS window control for --hidden. Hiding the app (like Cmd-H) returns focus
-// to the previous app, and pages still report visibilityState "visible" with
-// animation frames running (verified 2026-10-05), so behaviour matches headed.
-function macApp(pid, action) {
-  const call = { hide: 'a.hide', show: '(a.unhide, a.activateWithOptions(0))', hidden: 'a.hidden' }[action];
-  try {
-    return execFileSync('osascript', ['-l', 'JavaScript', '-e',
-      `ObjC.import('AppKit'); var a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${Number(pid)}); a.isNil() ? 'none' : String(${call})`],
-    { encoding: 'utf8', timeout: 10_000 }).trim();
-  } catch {
-    return 'error';
-  }
-}
-
-function findBrowserPid() {
-  let children = [];
-  try {
-    children = execFileSync('pgrep', ['-P', String(process.pid)], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-  } catch {
-    return null;
-  }
-  return children.find((pid) => !['none', 'error'].includes(macApp(pid, 'hidden'))) || null;
-}
-
-async function hideBrowser(pid) {
-  for (let i = 0; i < 40; i += 1) {
-    if (macApp(pid, 'hidden') === 'true') return true;
-    macApp(pid, 'hide');
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  return false;
-}
 
 let stopRequested = false;
 async function sleep(ms) {
@@ -213,35 +30,6 @@ async function sleep(ms) {
   while (!stopRequested && Date.now() < end) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(1000, end - Date.now())));
   }
-}
-
-function proxyFromEnv() {
-  const raw = process.env.SERP_PROBE_PROXY?.trim();
-  if (!raw) return undefined;
-  const url = new URL(raw);
-  return {
-    server: `${url.protocol}//${url.host}`,
-    username: url.username ? decodeURIComponent(url.username) : undefined,
-    password: url.password ? decodeURIComponent(url.password) : undefined,
-  };
-}
-
-async function detectBlock(page) {
-  return page.evaluate(() => {
-    const text = (document.body?.innerText || '').slice(0, 6000).toLowerCase();
-    if (location.pathname.startsWith('/sorry') || document.querySelector('#captcha-form, form[action*="sorry"]')) return 'google_sorry';
-    if (document.querySelector('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]')) return 'recaptcha';
-    if (document.querySelector('iframe[src*="challenges.cloudflare.com"]')) return 'turnstile';
-    if (text.includes('unusual traffic from your computer network')) return 'unusual_traffic';
-    if (text.includes('verify you are human') || text.includes('solve the challenge')) return 'challenge';
-    return null;
-  }).catch(() => null);
-}
-
-async function detectConsent(page) {
-  if (page.url().includes('consent.')) return true;
-  return page.evaluate(() => [...document.querySelectorAll('button, [role="button"]')]
-    .some((el) => /^(reject all|accept all|i agree)$/i.test((el.textContent || '').trim()))).catch(() => false);
 }
 
 async function waitUntil(predicate, timeoutMs) {
@@ -273,76 +61,6 @@ async function dwell(page) {
     await page.mouse.wheel(0, randomBetween(250, 700)).catch(() => {});
     await sleep(randomBetween(1200, 3500));
   }
-}
-
-function createRun(options, proxy) {
-  const runId = new Date().toISOString().replace(/[:.]/g, '-');
-  const runDir = join(WORKSPACE, 'runs', runId);
-  mkdirSync(runDir, { recursive: true, mode: 0o700 });
-  for (const dir of [WORKSPACE, join(WORKSPACE, 'runs'), runDir]) chmodSync(dir, 0o700);
-  const report = {
-    schema: SCHEMA,
-    run_id: runId,
-    engine: options.engine,
-    gl: options.gl,
-    hl: options.hl,
-    headless: options.headless,
-    egress: proxy ? 'proxy' : 'direct',
-    profile: options.freshProfile ? 'fresh' : 'persistent',
-    pacing_seconds: { min: options.minDelay, max: options.maxDelay },
-    on_captcha: options.onCaptcha,
-    started_at: new Date().toISOString(),
-    ended_at: null,
-    planned: options.keywords.length,
-    attempted: 0,
-    succeeded: 0,
-    first_block: null,
-    blocks: [],
-    stop_reason: 'completed',
-    queries: [],
-    run_dir: tildePath(runDir),
-  };
-  const save = () => {
-    report.ended_at = new Date().toISOString();
-    writeFileSync(join(runDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-  };
-  return { runDir, report, save };
-}
-
-async function launchBrowser(options, runDir, proxy) {
-  const runtime = await loadPlaywright();
-  const executablePath = resolvePlaywrightBrowserExecutable(runtime) || undefined;
-  const profileDir = options.freshProfile ? join(runDir, 'profile') : join(WORKSPACE, `profile-${options.engine}`);
-  mkdirSync(profileDir, { recursive: true, mode: 0o700 });
-  chmodSync(profileDir, 0o700);
-  const context = await runtime.chromium.launchPersistentContext(profileDir, {
-    headless: options.headless,
-    executablePath,
-    proxy,
-    locale: options.locale,
-    timezoneId: options.timezone,
-    viewport: null,
-    // Present as an ordinary browser: without these, navigator.webdriver is true
-    // and Google serves /sorry/ on the first query (observed 2026-10-05).
-    ignoreDefaultArgs: ['--enable-automation'],
-    args: ['--disable-blink-features=AutomationControlled'],
-  });
-  return { context, browser: executablePath?.includes('Brave') ? 'brave' : 'chromium' };
-}
-
-// Returns window controls; showForHuman/rehide are no-ops unless --hidden worked.
-async function setupWindow(options, report) {
-  report.window = options.headless ? 'headless' : 'visible';
-  const browserPid = options.hidden ? findBrowserPid() : null;
-  if (options.hidden) {
-    report.window = browserPid && await hideBrowser(browserPid) ? 'hidden' : 'visible';
-    if (report.window !== 'hidden') log('Could not hide the browser window; continuing visible');
-  }
-  const hidden = report.window === 'hidden';
-  return {
-    showForHuman: () => { if (hidden) macApp(browserPid, 'show'); },
-    rehide: async () => { if (hidden) await hideBrowser(browserPid); },
-  };
 }
 
 // Returns null when searching can proceed, or a stop reason.
@@ -444,7 +162,7 @@ async function run(options) {
   const { context, browser } = await launchBrowser(options, runDir, proxy);
   const ctx = { options, engine, report, runDir, save, startedMs: Date.now() };
   try {
-    ctx.win = await setupWindow(options, report);
+    ctx.win = await setupWindow(options, report, log);
     const page = context.pages()[0] || await context.newPage();
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
     await page.goto(engine.home(options), { waitUntil: 'domcontentloaded' });
@@ -464,24 +182,6 @@ async function run(options) {
     await context.close().catch(() => {});
   }
   return report;
-}
-
-function printPlan(options) {
-  const gaps = Math.max(0, options.keywords.length - 1);
-  process.stdout.write(`${JSON.stringify({
-    schema: SCHEMA,
-    dry_run: true,
-    engine: options.engine,
-    planned: options.keywords.length,
-    pacing_seconds: { min: options.minDelay, max: options.maxDelay },
-    estimated_minutes: { min: Math.round((gaps * options.minDelay) / 60), max: Math.round((gaps * options.maxDelay) / 60) },
-    headless: options.headless,
-    hidden: options.hidden,
-    gl: options.gl,
-    on_captcha: options.onCaptcha,
-    egress: process.env.SERP_PROBE_PROXY ? 'proxy' : 'direct',
-    contacted_targets: false,
-  })}\n`);
 }
 
 async function main() {
