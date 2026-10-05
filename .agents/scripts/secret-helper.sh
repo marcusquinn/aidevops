@@ -79,27 +79,42 @@ resolve_credential_files() {
 	return 0
 }
 
-# Get the scalar password value from gopass.
+# Whether gopass should own NAME. A listed entry stays gopass-only, so a locked
+# store fails closed instead of reading a stale plaintext value. An unreadable
+# listing also counts as owned, preserving the historical gopass-first result.
+gopass_owns_secret() {
+	local name="$1"
+	local listing=""
+	listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null) || return 0
+	if printf '%s\n' "$listing" | grep -Fxq -- "${GOPASS_PREFIX}/${name}"; then
+		return 0
+	fi
+	return 1
+}
+
+# Get the scalar value from gopass, or from credential files for names absent
+# from gopass. Matches build_secret_env so `secret check` (the dispatch
+# capability gate) agrees with runtime injection (GH#33608).
 # Used only by cmd_get, which preserves the historical first-line contract.
 get_secret_value() {
 	local name="$1"
-	if has_gopass; then
+	if has_gopass && gopass_owns_secret "$name"; then
 		gopass show -o "${GOPASS_PREFIX}/${name}" 2>/dev/null || true
-	else
-		# Fallback to credential files (handles multi-tenant)
-		local cred_file
-		while IFS= read -r cred_file; do
-			[[ -z "$cred_file" ]] && continue
-			local value
-			# Strip 'export NAME=', strip surrounding double quotes, then unescape
-			# \" -> " and \\ -> \ (order matters: unescape \" before \\)
-			value=$(grep "^export ${name}=" "$cred_file" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
-			if [[ -n "$value" ]]; then
-				echo "$value"
-				return 0
-			fi
-		done < <(resolve_credential_files)
+		return 0
 	fi
+	# Fallback to credential files (handles multi-tenant)
+	local cred_file
+	while IFS= read -r cred_file; do
+		[[ -z "$cred_file" ]] && continue
+		local value
+		# Strip 'export NAME=', strip surrounding double quotes, then unescape
+		# \" -> " and \\ -> \ (order matters: unescape \" before \\)
+		value=$(grep "^export ${name}=" "$cred_file" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+		if [[ -n "$value" ]]; then
+			echo "$value"
+			return 0
+		fi
+	done < <(resolve_credential_files)
 	return 0
 }
 
