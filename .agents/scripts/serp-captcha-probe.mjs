@@ -12,7 +12,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { detectBlock, detectConsent, ENGINES } from './serp-probe/engines.mjs';
+import { describeZeroResults, detectBlock, detectConsent, ENGINES } from './serp-probe/engines.mjs';
 import { parseOptions, printPlan, usage } from './serp-probe/options.mjs';
 import { createRun, launchBrowser, proxyFromEnv } from './serp-probe/session.mjs';
 import { setupWindow } from './serp-probe/window.mjs';
@@ -120,16 +120,21 @@ async function handleBlock(ctx, page, entry, block) {
 
 async function recordResults(ctx, page, entry) {
   const { options, report } = ctx;
-  const organic = [...new Set(await page.evaluate(ctx.engine.organic).catch(() => []))];
+  const organic = [...new Set(await page.evaluate(ctx.engine.organic).catch(() => {
+    entry.note = 'organic_parse_error';
+    return [];
+  }))];
   entry.organic = organic.length;
   entry.top = organic.slice(0, 10);
   entry.ok = organic.length > 0;
   if (entry.ok) report.succeeded += 1;
+  else entry.note ??= entry.error ? 'search_error' : await describeZeroResults(page, ctx.engine);
   if (options.keepEvidence) {
     entry.evidence = evidenceName(entry.n);
     writeFileSync(join(ctx.runDir, entry.evidence), await page.content(), { mode: 0o600 });
   }
-  log(`Query ${entry.n}/${options.keywords.length}: ${entry.ok ? `${organic.length} organic results` : 'no organic results parsed'}`);
+  const outcome = entry.ok ? `${organic.length} organic results` : `no organic results parsed (${entry.note})`;
+  log(`Query ${entry.n}/${options.keywords.length}: ${outcome}`);
   ctx.save();
 }
 

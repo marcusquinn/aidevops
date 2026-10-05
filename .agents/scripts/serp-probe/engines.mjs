@@ -66,3 +66,14 @@ export async function detectConsent(page) {
   return page.evaluate(() => [...document.querySelectorAll('button, [role="button"]')]
     .some((el) => /^(reject all|accept all|i agree)$/i.test((el.textContent || '').trim()))).catch(() => false);
 }
+
+// A zero is not evidence of an empty SERP: first-visit pages may be consent
+// interstitials or layouts we cannot parse. Keep this diagnostic out of blocks.
+export async function describeZeroResults(page, engine) {
+  if (await detectConsent(page)) return 'consent_required';
+  return page.evaluate((selector) => {
+    const results = document.querySelector(selector);
+    if (!results) return 'no_results_container';
+    return results.textContent?.trim() ? 'unrecognized_or_empty_results' : 'empty_results_container';
+  }, engine.results).catch(() => 'page_inspection_error');
+}
