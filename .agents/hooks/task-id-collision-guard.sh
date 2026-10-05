@@ -354,7 +354,7 @@ _extract_tids() {
 		local padded_ere='(^|[^[:alnum:].])(t0+[0-9]+(\.[0-9]+)*)($|[^[:alnum:].]|\.($|[^[:alnum:].]))'
 		local remaining="$scan_text" matched="" padded=""
 		while [[ "$remaining" =~ $padded_ere ]]; do
-			matched="${BASH_REMATCH[0]}"
+			matched="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
 			padded="${BASH_REMATCH[2]}"
 			if task_identity_unpad_legacy "$padded" >/dev/null; then
 				printf '%s\n' "$padded"

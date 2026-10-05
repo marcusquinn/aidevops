@@ -33,7 +33,7 @@ publication leaves the issue blocked and safe to retry.
 7. Never skip verification. Run applicable existing required tests, but do not add tests by default or create test infrastructure without explicit authority; see `reference/ci-gate-policy.md`.
 8. **Performance/optimization issues require evidence** (GH#17832-17835): actual measurements (timing, profiling), verified line references, and data scale assessment. "May cause O(n^2)" without data is not actionable — use the "Performance Optimization" issue template. See "Framework Rules > AI-Generated Issue Quality" above.
 
-Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
+Format: `- [ ] t1 Description @owner #tag ~4h started:ISO blocked-by:t2`
 
 Dependency rule: when a TODO/issue declares ordered work with `blocked-by:*`
 or `blocks:*`, preserve the text marker for human/reconciliation context and

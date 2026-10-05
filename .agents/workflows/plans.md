@@ -29,9 +29,9 @@ tools:
 | `todo/tasks/prd-{name}.md` | Product requirement documents |
 | `todo/tasks/tasks-{name}.md` | Implementation task lists |
 
-**Task ID Format**: `tNNN` (top-level), `tNNN.N` (subtask), `tNNN.N.N` (sub-subtask)
+**Task ID Format**: `tN` (top-level), `tN.N` (subtask), `tN.N.N` (sub-subtask); positive decimal components without leading zeros
 
-**Dependency Syntax**: `blocked-by:t001,t002` | `blocks:t003` | 2-space indentation = parent-child
+**Dependency Syntax**: `blocked-by:t1,t2` | `blocks:t3` | 2-space indentation = parent-child
 
 ## Auto-Detection Logic
 
@@ -80,7 +80,7 @@ Extract from conversation: title, description, estimate (`~Xh (ai:Xh test:Xh rea
 1. Create brief at `todo/tasks/{task_id}-brief.md`
 2. Add to TODO.md Backlog: `- [ ] t{NNN} {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}`
 
-Format elements (all optional except id and description): `@owner`, `#tag`, `~estimate`, `logged:YYYY-MM-DD`, `blocked-by:t001,t002`, `blocks:t003`.
+Format elements (all optional except id and description): `@owner`, `#tag`, `~estimate`, `logged:YYYY-MM-DD`, `blocked-by:t1,t2`, `blocks:t3`.
 
 **Auto-dispatch gate**: Add `#auto-dispatch` for worker-ready implementation tasks once the brief has:
 
@@ -139,13 +139,13 @@ Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed
 ## Dependencies and Blocking
 
 ```markdown
-- [ ] t001 Parent task ~4h
-  - [ ] t001.1 Subtask ~2h blocked-by:t002
-    - [ ] t001.1.1 Sub-subtask ~1h
-  - [ ] t001.2 Another subtask ~1h blocks:t003
+- [ ] t1 Parent task ~4h
+  - [ ] t1.1 Subtask ~2h blocked-by:t2
+    - [ ] t1.1.1 Sub-subtask ~1h
+  - [ ] t1.2 Another subtask ~1h blocks:t3
 ```
 
-**TOON machine-readable format**: `<!--TOON:dependencies[N]{from_id,to_id,type}: t019.2,t019.1,blocked-by -->`
+**TOON machine-readable format**: `<!--TOON:dependencies[N]{from_id,to_id,type}: t19.2,t19.1,blocked-by -->`
 
 ## Time Tracking Configuration
 

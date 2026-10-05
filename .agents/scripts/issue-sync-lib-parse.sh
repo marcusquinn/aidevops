@@ -159,7 +159,7 @@ _warn_padded_task_line() {
 	local remaining="$line" matched="" token="" canonical="" replacements=""
 	local padded_ere='(^|[^[:alnum:].])(t0+[0-9]+(\.[0-9]+)*)($|[^[:alnum:].]|\.($|[^[:alnum:].]))'
 	while [[ "$remaining" =~ $padded_ere ]]; do
-		matched="${BASH_REMATCH[0]}"
+		matched="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
 		token="${BASH_REMATCH[2]}"
 		if canonical=$(task_identity_unpad_legacy "$token"); then
 			replacements="${replacements:+${replacements}, }${token} -> ${canonical}"

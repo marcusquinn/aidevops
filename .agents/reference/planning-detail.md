@@ -16,9 +16,9 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 ## Task Format
 
-`- [ ] t001 Description @owner #tag ~1h started:ISO blocked-by:t002`
+`- [ ] t1 Description @owner #tag ~1h started:ISO blocked-by:t2`
 
-Dependencies: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask).
+Dependencies: `blocked-by:t1`, `blocks:t2`, `t1.1` (subtask).
 
 ## Auto-Dispatch
 

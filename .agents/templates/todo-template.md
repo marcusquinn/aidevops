@@ -18,26 +18,26 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md),
 
 <!-- GH#17804: Format examples wrapped in HTML comment to prevent parsers
      from extracting them as real tasks during upgrade-planning migrations.
-- [ ] t001 Task description @owner #tag ~30m risk:low logged:2025-01-15
-- [ ] t002 Dependent task blocked-by:t001 ~15m risk:med
-- [ ] t001.1 Subtask of t001 ~10m
-- [x] t003 Completed task ~30m actual:25m logged:2025-01-10 completed:2025-01-15
+- [ ] t1 Task description @owner #tag ~30m risk:low logged:2025-01-15
+- [ ] t2 Dependent task blocked-by:t1 ~15m risk:med
+- [ ] t1.1 Subtask of t1 ~10m
+- [x] t3 Completed task ~30m actual:25m logged:2025-01-10 completed:2025-01-15
 - [-] Declined task
 -->
 
-Format: `- [ ] tNNN Description @owner #tag ~estimate risk:level logged:date`
+Format: `- [ ] tN Description @owner #tag ~estimate risk:level logged:date`
 
 **Task IDs:**
 
-- `t001` - Top-level task
-- `t001.1` - Subtask of t001
-- `t001.1.1` - Sub-subtask
+- `t1` - Top-level task (positive decimal, no leading zeros)
+- `t1.1` - Subtask of t1
+- `t1.1.1` - Sub-subtask
 
 **Dependencies:**
 
-- `blocked-by:t001` - This task waits for t001
-- `blocked-by:t001,t002` - Waits for multiple tasks
-- `blocks:t003` - This task blocks t003
+- `blocked-by:t1` - This task waits for t1
+- `blocked-by:t1,t2` - Waits for multiple tasks
+- `blocks:t3` - This task blocks t3
 
 **Time fields:**
 

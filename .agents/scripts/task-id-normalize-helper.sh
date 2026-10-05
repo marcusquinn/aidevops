@@ -40,6 +40,7 @@ def unpad(value):
 
 def active_lines(text, plans=False):
     toon = False
+    paired_toon = False
     archived = False
     archive_level = 0
     for line in text.splitlines(keepends=True):
@@ -52,9 +53,11 @@ def active_lines(text, plans=False):
                 archived, archive_level = True, level
         if "<!--TOON:" in line:
             toon = True
+            paired_toon = bool(re.search(r"<!--TOON:[\w-]+-->", line))
         yield line, not archived and (plans or toon or bool(task_line.match(line)))
-        if "-->" in line or "<!--/TOON:" in line:
+        if "<!--/TOON:" in line or ("-->" in line and not paired_toon):
             toon = False
+            paired_toon = False
 
 def ids(line):
     return [m[0] for m in token.finditer(line)] + [m[1] for m in brief_ref.finditer(line)]

@@ -92,7 +92,7 @@ Context compaction in 1h+ sessions can lose task state. Checkpoint to disk after
 
 ```bash
 session-checkpoint-helper.sh save \
-  --task "t135.9" --next "t135.11,t014,t025" \
+  --task "t135.9" --next "t135.11,t14,t25" \
   --worktree "/path/to/worktree" --batch "batch2-quality" \
   --note "Completed trap cleanup for 29 scripts" \
   --elapsed "90" --target "240"
