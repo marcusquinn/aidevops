@@ -433,23 +433,26 @@ _merge_is_trusted_issue_sync_pr() {
 }
 
 # Returns 0 for live admin/maintain/write authority, 1 for a confirmed external
-# author, and 2 when GitHub cannot provide a trustworthy verdict.
+# author, 2 when GitHub cannot provide a trustworthy verdict, or 75 on deferral.
 _merge_author_has_write_authority() {
 	local author="$1"
 	local repo="$2"
 	local permission=""
 	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
 	export AIDEVOPS_GH_READ_TIMEOUT
+	local permission_rc=0
 
 	# shared-constants.sh loads the App-aware helper in normal full-loop use. It
 	# distinguishes a confirmed 404 non-collaborator (permission=none) from API
 	# uncertainty; the direct gh fallback keeps this library sourceable in tests.
 	if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
-		_gh_collaborator_permission_lookup "$repo" "$author" permission || return 2
+		_gh_collaborator_permission_lookup "$repo" "$author" permission || permission_rc=$?
 	else
 		permission=$(_flm_gh_read gh api "repos/${repo}/collaborators/${author}/permission" \
-			--jq '.permission // "none"' 2>/dev/null) || return 2
+			--jq '.permission // "none"' 2>/dev/null) || permission_rc=$?
 	fi
+	[[ "$permission_rc" -ne 75 ]] || return 75
+	[[ "$permission_rc" -eq 0 ]] || return 2
 	case "$permission" in
 	admin | maintain | write) return 0 ;;
 	none | read | triage) return 1 ;;
@@ -554,6 +557,10 @@ _merge_collect_external_authority_gaps() {
 		trusted_dependabot=1
 	else
 		_merge_author_has_write_authority "$pr_author" "$repo" || author_rc=$?
+		if [[ "$author_rc" -eq 75 ]]; then
+			print_warning "Merge deferred: GitHub permission read admission deferred for PR author ${pr_author}; retry when capacity returns"
+			return 1
+		fi
 		if [[ "$author_rc" -eq 2 ]]; then
 			print_error "Merge blocked: unable to verify live repository permission for PR author ${pr_author}"
 			return 1
