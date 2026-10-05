@@ -811,24 +811,16 @@ _footprint_claimed_coordinator_has_evidence() {
 # Output: "file_path|issue_number" pairs, one per line
 # Exit: always 0
 #######################################
-_footprint_get_inflight() {
+_footprint_refresh_inflight_cache() {
 	local repo_slug="$1"
-	local exclude_issue="${2:-}"
 
 	local now_epoch
 	now_epoch=$(date +%s)
 
 	# Check cache validity
 	if [[ "$_FOOTPRINT_CACHE_REPO" == "$repo_slug" ]] &&
-		[[ -n "$_FOOTPRINT_CACHE_DATA" ]] &&
+		[[ "$_FOOTPRINT_CACHE_EPOCH" -gt 0 ]] &&
 		[[ $((now_epoch - _FOOTPRINT_CACHE_EPOCH)) -lt $_FOOTPRINT_CACHE_TTL ]]; then
-		# Cache hit — filter out excluded issue and return
-		# Use printf '%b' to expand \n sequences stored in cache
-		if [[ -n "$exclude_issue" ]]; then
-			printf '%b' "$_FOOTPRINT_CACHE_DATA" | grep -v "|${exclude_issue}$" | grep -v '^$' || true
-		else
-			printf '%b' "$_FOOTPRINT_CACHE_DATA" | grep -v '^$' || true
-		fi
 		return 0
 	fi
 
@@ -880,12 +872,36 @@ _footprint_get_inflight() {
 	_FOOTPRINT_CACHE_REPO="$repo_slug"
 	_FOOTPRINT_CACHE_DATA="$cache_data"
 	_FOOTPRINT_CACHE_EPOCH="$now_epoch"
+	return 0
+}
 
-	# Return filtered result
+# Optional output variable lets dispatch retain the repo cache in its shell.
+# Legacy stdout callers remain supported, but command substitution cannot
+# preserve cache writes, even when nested inside another helper.
+_footprint_get_inflight() {
+	local repo_slug="$1" exclude_issue="${2:-}" result_var="${3:-}"
+	_footprint_refresh_inflight_cache "$repo_slug"
+	local filtered_data=""
 	if [[ -n "$exclude_issue" ]]; then
-		printf '%b' "$cache_data" | grep -v "|${exclude_issue}$" | grep -v '^$' || true
+		filtered_data=$(printf '%b' "$_FOOTPRINT_CACHE_DATA" | grep -v "|${exclude_issue}$" | grep -v '^$' || true)
 	else
-		printf '%b' "$cache_data" | grep -v '^$' || true
+		filtered_data=$(printf '%b' "$_FOOTPRINT_CACHE_DATA" | grep -v '^$' || true)
+	fi
+	if [[ -n "$result_var" ]]; then
+		printf -v "$result_var" '%s' "$filtered_data"
+	else
+		printf '%s\n' "$filtered_data"
+	fi
+	return 0
+}
+
+# Keep the stdout interface for existing callers and offer an in-process result.
+_footprint_emit_overlap() {
+	local signal="$1" result_var="${2:-}"
+	if [[ -n "$result_var" ]]; then
+		printf -v "$result_var" '%s' "$signal"
+	else
+		printf '%s\n' "$signal"
 	fi
 	return 0
 }
@@ -911,6 +927,8 @@ _footprint_check_overlap() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_body="$3"
+	local overlap_result_var="${4:-}"
+	[[ -z "$overlap_result_var" ]] || printf -v "$overlap_result_var" '%s' ''
 
 	[[ -n "$issue_body" ]] || return 1
 
@@ -923,11 +941,11 @@ _footprint_check_overlap() {
 	# reservation lock; reservations are written before the launch labels, so
 	# anything this read misses is visible as a reservation under the lock.
 	local inflight_data="" repo_key="" lock_dir="" live_issues="" reserved_data=""
-	inflight_data=$(_footprint_get_inflight "$repo_slug" "$issue_number")
+	_footprint_get_inflight "$repo_slug" "$issue_number" inflight_data
 	if repo_key=$(_footprint_reservation_repo_key "$repo_slug") && _footprint_reservation_prepare_dir; then
 		if ! lock_dir=$(_footprint_reservation_lock "$repo_key"); then
 			_footprint_reservation_log "event=lock_busy issue=#${issue_number} repo=${repo_slug}"
-			printf 'FOOTPRINT_OVERLAP (reservation_lock_busy; retry next cycle)\n'
+			_footprint_emit_overlap 'FOOTPRINT_OVERLAP (reservation_lock_busy; retry next cycle)' "$overlap_result_var"
 			return 0
 		fi
 		live_issues=$(printf '%s\n' "$inflight_data" | awk -F '|' 'NF > 1 { print $NF }' | sort -u)
@@ -947,7 +965,7 @@ _footprint_check_overlap() {
 		overlapping_files="${overlap#*$'\t'}"
 		_footprint_defer_record_overlap "$issue_number" "$repo_slug" "$candidate_files" \
 			"$inflight_data" "$blocking_issue" "$overlapping_files"
-		printf 'FOOTPRINT_OVERLAP (issue=#%s files=%s)\n' "$blocking_issue" "$overlapping_files"
+		_footprint_emit_overlap "FOOTPRINT_OVERLAP (issue=#${blocking_issue} files=${overlapping_files})" "$overlap_result_var"
 		return 0
 	fi
 
