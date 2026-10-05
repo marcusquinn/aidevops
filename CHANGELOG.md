@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.13] - 2026-10-06
+
+### Fixed
+
+- dispatch first wave before paced housekeeping; bound daily PR-cap count
+- accept plan-type planning PR titles as squash subjects (#33697)
+- browser-qa-helper navigate with load + capped networkidle wait (GH#33693) (#33696)
+
 ## [3.38.12] - 2026-10-06
 
 ### Added
