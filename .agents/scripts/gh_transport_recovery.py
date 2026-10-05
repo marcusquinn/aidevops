@@ -100,9 +100,7 @@ def probe_recovers(budget, reservation, resource, row, reset_at):
         "SELECT started,credential FROM reservation WHERE id=? AND scope=? AND resource=?",
         (reservation, budget.scope, resource),
     ).fetchone()
-    if not own:
-        return False
-    if own[1] != budget.credential:
+    if not own or own[1] != budget.credential:
         return False
     owners = sum(budget._root(binding[0]) == budget.scope for binding in
                  budget.db.execute("SELECT scope FROM binding").fetchall())
@@ -112,9 +110,8 @@ def probe_recovers(budget, reservation, resource, row, reset_at):
         return True
     if not probe or reservation != probe[0]:
         return False
-    if owners != 1 and not budget.attributed:
-        return False
-    return own[0] >= row[2] and reset_at >= row[1]
+    attributed_owner = owners == 1 or budget.attributed
+    return attributed_owner and own[0] >= row[2] and reset_at >= row[1]
 
 
 def admission_status(directory: Path, scope: str, *, attributed: bool = False) -> dict:
@@ -125,15 +122,12 @@ def admission_status(directory: Path, scope: str, *, attributed: bool = False) -
     db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)
     try:
         requested_scope = scope
-        for _ in range(256):
-            alias = db.execute("SELECT target FROM alias WHERE scope=?", (scope,)).fetchone()
-            if not alias:
-                break
-            scope = alias[0]
-        else:
+        try:
+            scope = _read_root(db, scope)
+        except ValueError:
             return {"state": "unknown"}
-        bindings = sum(1 for binding in db.execute("SELECT scope FROM binding").fetchall()
-                       if _read_root(db, binding[0]) == scope)
+        bindings = sum(_read_root(db, binding[0]) == scope for binding in
+                       db.execute("SELECT scope FROM binding").fetchall())
         ambiguity = None
         if attributed and requested_scope != scope:
             ambiguity = "configured_owner_requires_reconciliation"
