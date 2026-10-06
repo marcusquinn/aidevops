@@ -1565,9 +1565,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18599 fix(issue-sync): concurrent planning-publication reconcile reports silent failure for issues another reconciler already published #bug ref:GH#33821 pr:#33822 completed:2026-10-06
 
-- [ ] t18601 Human-only asks give numbered steps with direct links and navigation paths #feat ref:GH#33834
+- [x] t18601 Human-only asks give numbered steps with direct links and navigation paths #feat ref:GH#33834 pr:#33836 completed:2026-10-06
 
-- [ ] t18602 fix(pulse): released attempt's own terminal lease blocks worker draft checkpoint recovery (blocked attention, stall continuation, approval) #bug tier:standard ref:GH#33839
+- [x] t18602 fix(pulse): released attempt's own terminal lease blocks worker draft checkpoint recovery (blocked attention, stall continuation, approval) #bug tier:standard ref:GH#33839 pr:#33841 completed:2026-10-06
 
 ## In Progress
 
