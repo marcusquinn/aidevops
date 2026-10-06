@@ -446,8 +446,29 @@ record.unlink()
 record.symlink_to(child)
 assert run('gate')[0] == 1 and child.read_text() == 'preserved'
 record.unlink()
+print('ledger ownership, reporting, reset, concurrency and fail-closed cases passed')
+PY
+	print_result "orphan retry ledger runtime cases" "$rc"
+	return 0
+}
 
-# State persistence failure denies the attempt before any trash call.
+test_orphan_state_write_failure() {
+	local rc=0
+	python3 - "$AGENTS_SCRIPTS_DIR/orphan-cleanup-state.py" "$TEST_ROOT" <<'PY' || rc=1
+import importlib.util
+import os
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+helper, root = sys.argv[1], Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location('orphan_state', helper)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+os.environ['PULSE_STATE_DIR'] = str(root / 'write-failure-state')
+candidate = root / 'write-failure-candidate'
+candidate.mkdir()
+# Persistence failure must deny the attempt before any trash call.
 with patch.object(sys, 'argv', [helper, 'gate', str(candidate)]), patch.object(module, 'save', side_effect=OSError('disk full')):
     try:
         module.main()
@@ -455,9 +476,8 @@ with patch.object(sys, 'argv', [helper, 'gate', str(candidate)]), patch.object(m
         pass
     else:
         raise AssertionError('unpersisted attempt permitted')
-print('ledger ownership, reporting, reset, concurrency and fail-closed cases passed')
 PY
-	print_result "orphan retry ledger runtime cases" "$rc"
+	print_result "state persistence failure denies trash attempt" "$rc"
 	return 0
 }
 
@@ -493,6 +513,7 @@ main() {
 	test_standalone_clean_check_requires_successful_status
 	test_abandoned_central_fixtures
 	test_orphan_retry_ledger
+	test_orphan_state_write_failure
 	test_trash_failure_exhaustion
 	printf '\n%d/%d tests passed\n' "$TESTS_PASSED" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

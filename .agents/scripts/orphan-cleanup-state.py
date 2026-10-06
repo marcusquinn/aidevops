@@ -44,20 +44,34 @@ def foreign_owner(path):
     return False
 
 
+def require_record_field(valid):
+    if not valid:
+        raise ValueError("invalid ledger record")
+
+
+def validate_record(data):
+    """Validate field shapes before using values in subsequent checks."""
+    require_record_field(isinstance(data, dict))
+    require_record_field(data.get("schema") == 1)
+    require_record_field(isinstance(data.get("path"), str))
+    require_record_field(os.path.isabs(data['path']))
+    require_record_field(isinstance(data.get("identity"), list))
+    require_record_field(len(data['identity']) == 2)
+    require_record_field(all(type(value) is int for value in data['identity']))
+    require_record_field(type(data.get("attempts")) is int)
+    require_record_field(0 <= data['attempts'] <= 3)
+    require_record_field(type(data.get("terminal")) is bool)
+    require_record_field(data.get("reason") in (
+        "attempt-reserved", "foreign-owner", "trash-failed", "trash-failed-retry-exhausted"))
+
+
 def load(record):
     if record.is_symlink():
         raise ValueError("symlink ledger record")
     if not record.exists():
         return {}
     data = json.loads(record.read_text())
-    if (not isinstance(data, dict) or data.get("schema") != 1
-            or not isinstance(data.get("path"), str) or not os.path.isabs(data['path'])
-            or not isinstance(data.get("identity"), list) or len(data['identity']) != 2
-            or any(type(value) is not int for value in data['identity'])
-            or type(data.get("attempts")) is not int or not 0 <= data['attempts'] <= 3
-            or type(data.get("terminal")) is not bool
-            or data.get("reason") not in ("attempt-reserved", "foreign-owner", "trash-failed", "trash-failed-retry-exhausted")):
-        raise ValueError("invalid ledger record")
+    validate_record(data)
     return data
 
 
@@ -74,37 +88,44 @@ def save(record, data):
             os.unlink(temporary)
 
 
+def print_recovery(record, data):
+    path = data['path']
+    print(f"{data['reason']}: {shlex.quote(path)} (attempts={data['attempts']})")
+    if data['reason'] == 'foreign-owner':
+        print("  After inspecting the preserved directory, repair ownership (operator only):")
+        print(f"  sudo find -P {shlex.quote(path)} -xdev ! -uid {os.getuid()} "
+              f"-exec chown -h {os.getuid()}:{os.getgid()} -- '{{}}' +")
+    else:
+        print("  Inspect permissions, mounts and trash availability; resolve before retrying")
+    print(f"  Then reset this record: rm -- {shlex.quote(str(record))}")
+
+
+def report_record(record):
+    try:
+        data = load(record)
+        path = data['path']
+    except (OSError, ValueError, KeyError, TypeError):
+        print(f"Unreadable orphan cleanup record: {shlex.quote(str(record))}")
+        return 1
+    try:
+        if not data.get("terminal") or identity(path) != data.get("identity"):
+            return 0
+    except (FileNotFoundError, ValueError):
+        return 0
+    except OSError:
+        print(f"Unable to inspect orphan cleanup candidate: {shlex.quote(path)}")
+        return 1
+    print_recovery(record, data)
+    return 0
+
+
 def report(directory):
     if not directory.exists():
         return 0
     validate_directory(directory)
-    errors = 0
-    for record in sorted(directory.glob("*.json")):
-        try:
-            data = load(record)
-            path = data['path']
-        except (OSError, ValueError, KeyError, TypeError):
-            print(f"Unreadable orphan cleanup record: {shlex.quote(str(record))}")
-            errors = 1
-            continue
-        try:
-            if not data.get("terminal") or identity(path) != data.get("identity"):
-                continue
-        except (FileNotFoundError, ValueError):
-            continue
-        except OSError:
-            print(f"Unable to inspect orphan cleanup candidate: {shlex.quote(path)}")
-            errors = 1
-            continue
-        print(f"{data['reason']}: {shlex.quote(path)} (attempts={data['attempts']})")
-        if data['reason'] == 'foreign-owner':
-            print("  After inspecting the preserved directory, repair ownership (operator only):")
-            print(f"  sudo find -P {shlex.quote(path)} -xdev ! -uid {os.getuid()} "
-                  f"-exec chown -h {os.getuid()}:{os.getgid()} -- '{{}}' +")
-        else:
-            print("  Inspect permissions, mounts and trash availability; resolve before retrying")
-        print(f"  Then reset this record: rm -- {shlex.quote(str(record))}")
-    return errors
+    # Evaluate every record, including records after a malformed one.
+    errors = sum(report_record(record) for record in sorted(directory.glob("*.json")))
+    return int(errors > 0)
 
 
 def validate_directory(directory):
