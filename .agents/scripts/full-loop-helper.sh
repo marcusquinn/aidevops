@@ -20,8 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # In a linked worktree, an inherited runtime-bundle shim can otherwise win
 # before the worktree's sibling shim and mutate merge metadata differently.
 if [[ -x "${SCRIPT_DIR}/gh" ]]; then
-	case ":${PATH:-}:" in
-	*":${SCRIPT_DIR}:"*) ;;
+	case "${PATH:-}" in
+	"${SCRIPT_DIR}" | "${SCRIPT_DIR}:"*) ;;
 	*) PATH="${SCRIPT_DIR}${PATH:+:${PATH}}" ;;
 	esac
 	export PATH
