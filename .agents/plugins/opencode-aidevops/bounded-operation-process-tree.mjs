@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { spawnSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 
 // Helpers such as timeout_sec move commands into their own process group
 // (GNU timeout calls setpgid; the bash fallback uses `set -m`), outside the
@@ -72,7 +73,7 @@ export function signalEach(pids, signal) {
 
 // Tracks descendants of rootPid (whose own process group is rootPid) and the
 // nested process groups they moved into.
-export function createProcessTreeTracker(rootPid, snapshotProcesses = processSnapshot) {
+export function createProcessTreeTracker(rootPid, snapshotProcesses = processSnapshot, operationID = "") {
   const owned = new Map();
   const nestedGroups = new Set();
   let attributionComplete = true;
@@ -83,6 +84,16 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
     if (!snapshot) {
       attributionComplete = false;
       return null;
+    }
+    // Recover children which double-forked/setsid before the first parent-chain
+    // snapshot. Never retain or log unrelated environment values (GH#33747).
+    if (operationID) {
+      for (const entry of snapshot.entries) {
+        if (entry.pid === rootPid || entry.pid === snapshot.psPid) continue;
+        if (hasOperationMarker(entry.pid, operationID)) {
+          owned.set(entry.pid, { pgid: entry.pgid, started: entry.started });
+        }
+      }
     }
     recordOwnedDescendants(snapshot.entries, rootPid, owned, snapshot.psPid);
     for (const entry of snapshot.entries) {
@@ -97,4 +108,23 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
     ownGroupMembers: (snapshot) => snapshot.entries.filter((entry) => entry.pgid === rootPid).length,
     containment: () => ({ nestedProcessGroups: nestedGroups.size, attributionComplete }),
   };
+}
+
+function hasOperationMarker(pid, operationID) {
+  try {
+    const marker = `AIDEVOPS_OPERATION_ID=${operationID}`;
+    if (process.platform === "linux") {
+      if (statSync(`/proc/${pid}`).uid !== process.getuid()) return false;
+      return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").includes(marker);
+    }
+    if (process.platform === "darwin") {
+      const result = spawnSync("ps", ["eww", "-p", String(pid), "-o", "command="], {
+        encoding: "utf8", timeout: 1000,
+      });
+      return result.status === 0 && result.stdout.split(/\s+/).includes(marker);
+    }
+  } catch {
+    // Exited or inaccessible: parent-chain attribution remains available.
+  }
+  return false;
 }
