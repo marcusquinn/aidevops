@@ -52,6 +52,7 @@ def require_record_field(valid):
 def validate_record(data):
     """Validate field shapes before using values in subsequent checks."""
     require_record_field(isinstance(data, dict))
+    require_record_field(type(data.get("schema")) is int)
     require_record_field(data.get("schema") == 1)
     require_record_field(isinstance(data.get("path"), str))
     require_record_field(os.path.isabs(data['path']))

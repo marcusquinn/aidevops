@@ -432,16 +432,18 @@ assert run('gate') == (0, '')
 ledger = root / 'ledger-state/orphan-trash-failures'
 record = next(ledger.glob('*.json'))
 data = json.loads(record.read_text())
-data['attempts'] = -1
-record.write_text(json.dumps(data))
-assert run('gate')[0] == 1
 other = root / 'other-candidate'
 other.mkdir()
 for _ in range(3):
     assert run('gate', other) == (0, '')
     run('failure', other)
-code, report = run('report')
-assert code == 1 and 'Unreadable orphan cleanup record' in report and str(other) in report
+for field, value in (('attempts', -1), ('schema', True), ('schema', 1.0)):
+    invalid = dict(data)
+    invalid[field] = value
+    record.write_text(json.dumps(invalid))
+    assert run('gate')[0] == 1
+    code, report = run('report')
+    assert code == 1 and 'Unreadable orphan cleanup record' in report and str(other) in report
 record.unlink()
 record.symlink_to(child)
 assert run('gate')[0] == 1 and child.read_text() == 'preserved'
