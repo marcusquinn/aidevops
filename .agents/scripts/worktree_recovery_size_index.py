@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import stat
 import subprocess
-import sys
 import tempfile
 import time
 
@@ -76,31 +75,52 @@ def snapshot(root, budget):
     directory = index_directory(root)
     buckets = sorted(path for path in root.iterdir() if path.name.startswith(PREFIX))
     hints = {path: read_hint(path, directory) for path in buckets}
-    # Backfill misses first; refresh old hints without repeatedly walking the store.
+    # Rotate attempts, including timeouts, so a slow miss cannot starve later ones.
     deadline = time.monotonic() + budget
-    pending = sorted(buckets, key=lambda path: (
-        hints[path]["measured_at"] if hints[path] else 0, path.name))
-    for bucket in pending:
+    cursor_path = directory / ".backfill-cursor"
+    try:
+        if not stat.S_ISREG(cursor_path.lstat().st_mode):
+            raise ValueError("invalid cursor")
+        offset = int(cursor_path.read_text()) % max(1, len(buckets))
+    except (OSError, ValueError):
+        offset = 0
+    pending = buckets[offset:] + buckets[:offset]
+    attempted = 0
+    for position, bucket in enumerate(pending):
         hint = hints[bucket]
         if hint and time.time() - hint["measured_at"] < 86400:
             continue
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
+        attempted = (offset + position + 1) % max(1, len(buckets))
         try:
             record_size(bucket, directory, min(remaining, 2))
             hints[bucket] = read_hint(bucket, directory)
         except (OSError, ValueError, subprocess.SubprocessError):
             continue
+    if budget > 0:
+        descriptor, temporary = tempfile.mkstemp(prefix=".cursor-", dir=directory)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(str(attempted % max(1, len(buckets))))
+            os.replace(temporary, cursor_path)
+        finally:
+            if os.path.lexists(temporary):
+                os.unlink(temporary)
     known = [hint["bytes"] for hint in hints.values() if hint]
-    return {"store_bytes": sum(known) if len(known) == len(buckets) else None,
+    # Interrupted transactions are still on disk but outside the bucket census.
+    trash = root / ".retention-trash"
+    staged = os.path.lexists(trash) and (
+        trash.is_symlink() or not trash.is_dir() or any(trash.iterdir()))
+    return {"store_bytes": sum(known) if len(known) == len(buckets) and not staged else None,
             "indexed_bytes": sum(known), "indexed_count": len(known),
             "bucket_count": len(buckets), "confidence": "indexed-estimate"}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("record", "snapshot", "order"))
+    parser.add_argument("operation", choices=("record", "snapshot", "order", "invalidate-plan"))
     parser.add_argument("path", type=Path)
     parser.add_argument("--budget", type=float, default=2)
     parser.add_argument("--bytes", type=int)
@@ -114,16 +134,31 @@ def main():
         record_size(args.path, index_directory(args.path.parent), args.budget, args.bytes)
     elif args.operation == "snapshot":
         print(json.dumps(snapshot(args.path, args.budget)))
+    elif args.operation == "invalidate-plan":
+        plan = json.loads(args.path.read_text())
+        for entry in plan.get("entries", []):
+            recovery_identity = entry.get("identity") or entry.get("recovery_identity") or {}
+            bucket = Path(entry.get("bucket_path") or recovery_identity.get("bucket_path")
+                          or entry.get("path", ""))
+            if not bucket.is_absolute() or not bucket.name.startswith(PREFIX):
+                continue
+            record = index_directory(bucket.parent) / (bucket.name + ".json")
+            # Removing telemetry cannot remove archive data. No recursive deletes.
+            record.unlink(missing_ok=True)
     else:
         # Sort scheduling hints only. The shell keeps its rotating coverage cursor.
         paths = [Path(line) for line in args.path.read_text().splitlines()]
         if not paths:
             return 0
         root = paths[0].parent
-        directory = index_directory(root)
         if any(path.parent != root for path in paths) or args.offset < 0:
             raise ValueError("inventory outside root")
-        sizes = {path: read_hint(path, directory) for path in paths}
+        try:
+            directory = index_directory(root)
+            sizes = {path: read_hint(path, directory) for path in paths}
+        except (OSError, ValueError):
+            # Advisory-index failure must not stop the guarded maintenance path.
+            sizes = dict.fromkeys(paths)
         paths.sort(key=lambda path: (
             -(sizes[path]["bytes"] if sizes[path] else -1), str(path)))
         offset = args.offset % len(paths)
