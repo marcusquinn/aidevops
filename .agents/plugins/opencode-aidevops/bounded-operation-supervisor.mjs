@@ -106,7 +106,7 @@ export async function runSupervisor() {
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 30 * 1000);
   const result = { finished: false, exit: 1, started: Promise.resolve() };
-  const tracker = createProcessTreeTracker(process.pid);
+  const tracker = createProcessTreeTracker(process.pid, undefined, operationID);
   const reportContainment = () => sendMessage({ event: "containment", operationID, ...tracker.containment() });
   const terminator = createTerminator(tracker, killGraceMs, reportContainment);
 
@@ -119,7 +119,7 @@ export async function runSupervisor() {
 
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
-    env: { ...process.env, AIDEVOPS_OPERATION_ID: operationID },
+    env: { ...process.env, AIDEVOPS_OPERATION_ID: operationID, AIDEVOPS_OPERATION_OWNER_PID: String(process.pid) },
     stdio: ["ignore", "inherit", "inherit"],
   });
 
@@ -135,6 +135,12 @@ export async function runSupervisor() {
   child.once("exit", (code) => {
     result.finished = true;
     result.exit = Number.isInteger(code) ? code : 1;
+    // Command completion also owns cleanup of servers with detached stdio.
+    // Preserve its exit status while draining any surviving owned descendants.
+    const snapshot = tracker.track();
+    if (snapshot && (tracker.nestedTargets(snapshot).length || tracker.ownGroupMembers(snapshot) > 1)) {
+      terminator.terminate();
+    }
   });
 
   return new Promise((resolve) => {
