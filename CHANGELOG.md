@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.18] - 2026-10-06
+
+### Changed
+
+- Performance: detect Tabby worktrees from filesystem, not guarded git calls (GH#33750)
+
+### Fixed
+
+- reap escaped bounded-operation test servers (#33753)
+
 ## [3.38.17] - 2026-10-06
 
 ### Fixed
