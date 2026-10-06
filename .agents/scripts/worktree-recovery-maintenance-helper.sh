@@ -1599,8 +1599,7 @@ worktree_recovery_maintenance_main() {
 
 worktree_recovery_maintenance_run() {
 	local platform="" state_dir="" recovery_root="" limits_json="" policy_json=""
-	local plan_json="" pending_dir="" pending_init_dir="" plan_path="" receipt_path=""
-	local completed_dir="" reclaimed_bytes="" diagnostics_json="" operation="archive-remove"
+	local diagnostics_json=""
 	local resume_status=0 run_status=0 stage="store-root"
 	command -v jq >/dev/null 2>&1 || { _worktree_recovery_maintenance_failed dependency jq-unavailable; return 1; }
 	if [[ "${AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_ENABLED:-1}" != "1" ]]; then
@@ -1682,6 +1681,18 @@ worktree_recovery_maintenance_run() {
 		_worktree_recovery_maintenance_release_lock || { _worktree_recovery_maintenance_failed lock-release owner-lock-release-failed; return 1; }
 		return "$run_status"
 	fi
+	_worktree_recovery_maintenance_apply_selection "$state_dir" "$diagnostics_json" || return 1
+	return 0
+}
+
+# Apply the already selected bounded plan while retaining the maintenance lock.
+_worktree_recovery_maintenance_apply_selection() {
+	local state_dir="$1"
+	local diagnostics_json="$2"
+	local plan_json="" pending_dir="" pending_init_dir="" plan_path="" receipt_path=""
+	local completed_dir="" reclaimed_bytes="" operation="archive-remove"
+	local run_status=0 stage="pending-init"
+
 	if [[ "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED" -gt 0 ]]; then
 		operation="$WORKTREE_RECOVERY_MAINTENANCE_OPERATION_CACHE_PRUNE"
 		plan_json="$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON"
