@@ -446,8 +446,23 @@ extract_process_stage_functions() {
 	return 0
 }
 
+define_ci_drift_helpers() {
+	DRIFT_NAMES="Lint"
+	DRIFT_NAMES_RC=0
+	DRIFT_PENDING_RC=1
+	# shellcheck source=../pulse-merge-ci-drift-ledger.sh
+	source "${SCRIPT_DIR}/../pulse-merge-ci-drift-ledger.sh"
+	_required_checks_terminal_failure_names() {
+		printf '%s\n' "$DRIFT_NAMES"
+		return "$DRIFT_NAMES_RC"
+	}
+	_check_required_checks_have_pending_or_in_progress() { return "$DRIFT_PENDING_RC"; }
+	return 0
+}
+
 define_process_helper() {
 	local fn_src="" process_stage_src="" repair_helper_src="" review_gate_src=""
+	define_ci_drift_helpers
 	review_gate_src=$(extract_function _handle_changes_requested_review_gate "$MERGE_SCRIPT")
 	repair_helper_src=$(extract_function _handle_review_blocked_ci_repair "$PROCESS_SCRIPT")
 	process_stage_src=$(extract_process_stage_functions "$MERGE_SCRIPT")
@@ -712,6 +727,85 @@ test_rebase_success_defers_ci_repair_route() {
 		print_result "successful CI-drift rebase defers CI repair routing" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
 	else
 		print_result "successful CI-drift rebase defers CI repair routing" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_drift_ledger_routing() {
+	local scenario="" signature="" expected_rebases=0 expected_routes=0
+	for scenario in absent different repeat same_head pending dry unknown expired corrupt; do
+		setup_test_env
+		define_process_helper || return 1
+		local pr_number=100 repo_slug="owner/repo" pr_labels="origin:worker"
+		local timing_prefix="" pr_head_ref_oid="new-head" pr_base_ref_name="main"
+		local linked_issue=42 pr_updated_at="" pr_author="worker-bot" pr_obj="{}"
+		REBASE_RETRY_RC=0
+		signature=$(printf 'Lint\n' | shasum -a 256 | cut -d ' ' -f 1)
+		if [[ "$scenario" != absent ]]; then
+			_ci_drift_ledger_record "$repo_slug" "$pr_number" "old-head" "$signature"
+		fi
+		expected_rebases=1 expected_routes=0
+		case "$scenario" in
+		different) DRIFT_NAMES="Unit" ;;
+		repeat) expected_rebases=0 expected_routes=1 ;;
+		same_head) pr_head_ref_oid="old-head" ;;
+		pending)
+			DRIFT_PENDING_RC=0
+			expected_rebases=0
+			;;
+		dry)
+			DRY_RUN=1
+			expected_rebases=0
+			;;
+		unknown) DRIFT_NAMES_RC=1 ;;
+		expired) printf '%s\t%s\told-head\t1\n' "${repo_slug}#${pr_number}" "$signature" >"${AIDEVOPS_HEADLESS_RUNTIME_DIR}/ci-drift-ledger.tsv" ;;
+		corrupt) printf 'invalid\n' >"${AIDEVOPS_HEADLESS_RUNTIME_DIR}/ci-drift-ledger.tsv" ;;
+		esac
+		_pmp_stage_required_checks || true
+		if [[ "$REBASE_RETRY_CALLS" != "$expected_rebases" || "$ROUTE_CALLS" != "$expected_routes" ]]; then
+			print_result "CI-drift ledger: ${scenario}" 1 "rebase=${REBASE_RETRY_CALLS}, route=${ROUTE_CALLS}"
+		elif [[ "$expected_rebases" == 1 && "$scenario" != unknown ]] && ! _ci_drift_ledger_should_skip "$repo_slug" "$pr_number" "next-head" "$(printf '%s\n' "$DRIFT_NAMES" | shasum -a 256 | cut -d ' ' -f 1)"; then
+			print_result "CI-drift ledger: ${scenario}" 1 "successful rebase not recorded"
+		elif [[ "$scenario" == repeat ]] && ! grep -q 'same failing required contexts (Lint)' "$LOGFILE"; then
+			print_result "CI-drift ledger: ${scenario}" 1 "missing context diagnostic"
+		elif [[ "$scenario" == unknown ]] && ! grep -q 'classification unavailable' "$LOGFILE"; then
+			print_result "CI-drift ledger: ${scenario}" 1 "missing fail-open diagnostic"
+		else
+			print_result "CI-drift ledger: ${scenario}" 0
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
+test_ci_drift_context_names() {
+	setup_test_env
+	local fn_src="" names=""
+	fn_src=$(extract_function _required_checks_terminal_failure_names "${SCRIPT_DIR}/../pulse-merge-required-checks.sh")
+	eval "$fn_src"
+	_required_contexts_for_default_branch() {
+		printf 'Unit\nLint\nPending\nMissing\n'
+		return 0
+	}
+	gh_pr_check_runs_rest() {
+		printf '%s\n' '[{"name":"Lint","conclusion":"success"},{"name":"Unit","conclusion":"timed_out"},{"name":"Lint","conclusion":"failure"},{"name":"Pending","status":"in_progress","conclusion":null},{"name":"Advisory","conclusion":"failure"}]'
+		return 0
+	}
+	names=$(_required_checks_terminal_failure_names "owner/repo" 100 "head")
+	if [[ "$names" == $'Lint\nUnit' ]]; then
+		print_result "CI-drift names sorted, required-only, terminal-only, latest result" 0
+	else
+		print_result "CI-drift names sorted, required-only, terminal-only, latest result" 1 "$names"
+	fi
+	gh_pr_check_runs_rest() {
+		printf 'null\n'
+		return 0
+	}
+	if _required_checks_terminal_failure_names "owner/repo" 100 "head" 2>/dev/null; then
+		print_result "CI-drift invalid rollup is unclassifiable" 1
+	else
+		print_result "CI-drift invalid rollup is unclassifiable" 0
 	fi
 	teardown_test_env
 	return 0
@@ -1676,6 +1770,8 @@ test_ci_feedback_includes_required_and_advisory_failures_together() {
 main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_rebase_success_defers_ci_repair_route
+	test_ci_drift_ledger_routing
+	test_ci_drift_context_names
 	test_converged_changes_requested_prefers_strict_rebase_before_ci_repair
 	test_converged_changes_requested_routes_terminal_ci_after_rebase_noop
 	test_converged_changes_requested_never_falls_through_to_merge

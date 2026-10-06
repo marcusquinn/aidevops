@@ -1767,6 +1767,30 @@ _check_ruleset_required_reviews_passing() {
 }
 
 #######################################
+# Print sorted terminal-failed required contexts; unknown state returns nonzero.
+# Uses the same exact-head REST rollup and terminal states as the predicate below.
+_required_checks_terminal_failure_names() {
+	local repo_slug="$1" pr_number="$2" pr_sha="${3:-}"
+	local required_contexts="" rollup_json="" req_json=""
+	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 1
+	if [[ -z "$pr_sha" ]]; then
+		pr_sha=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json headRefOid --jq '.headRefOid // ""') || return 1
+	fi
+	[[ -n "$pr_sha" ]] || return 1
+	rollup_json=$(gh_pr_check_runs_rest "$repo_slug" "$pr_sha" 2>/dev/null) || return 1
+	req_json=$(printf '%s' "$required_contexts" | jq -Rsc '[split("\n")[] | select(length > 0)]') || return 1
+	jq -nr --argjson req "$req_json" --argjson checks "$rollup_json" '
+		if ($checks | type) != "array" then error("invalid rollup") else
+		$req | map(. as $ctx |
+			($checks | map(select((.name // "") == $ctx)) | last) as $c |
+			select(($c.conclusion // "" | ascii_downcase) |
+				test("^(failure|cancelled|timed_out)$"))) |
+		unique | sort | .[] end' || return 1
+	return 0
+}
+
+#######################################
 # Return whether any branch-protection-required check on a PR is in a terminal
 # failed state. Pending states are explicitly non-terminal: queued, pending,
 # in_progress, waiting, skipped-by-dependency, expected, absent-from-rollup,
