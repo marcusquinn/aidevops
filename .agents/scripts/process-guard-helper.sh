@@ -397,6 +397,7 @@ cmd_scan() {
 	echo "=== Process Guard Scan ==="
 	echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	echo ""
+	_report_orphan_test_servers report
 
 	# Find all opencode/node processes related to aidevops
 	local total_rss_kb=0
@@ -500,6 +501,7 @@ cmd_scan() {
 cmd_kill_runaways() {
 	local killed=0
 	local total_freed_mb=0
+	_report_orphan_test_servers reap
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
@@ -580,11 +582,7 @@ cmd_kill_runaways() {
 			echo "Killing PID $pid ($cmd_base) — $violation"
 			printf '[process-guard] %s action=kill pid=%s ppid=%s class=%s cmd=%s rss_mb=%s age_seconds=%s runtime_limit_seconds=%s cgroup=%s reason=%s\n' \
 				"$killed_at" "$pid" "$ppid" "$process_class" "$cmd_base" "$rss_mb" "$age_seconds" "$runtime_limit" "$cgroup_path" "$violation" >>"$LOGFILE"
-			kill "$pid" 2>/dev/null || true
-			sleep 1
-			if kill -0 "$pid" 2>/dev/null; then
-				kill -9 "$pid" 2>/dev/null || true
-			fi
+			_terminate_runaway_pid "$pid"
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
@@ -595,6 +593,34 @@ cmd_kill_runaways() {
 		printf '[process-guard] %s Killed %s process(es), freed ~%sMB\n' "$(_process_guard_timestamp)" "$killed" "$total_freed_mb" >>"$LOGFILE"
 	else
 		echo "No runaway processes found"
+	fi
+	return 0
+}
+
+# Preserve the existing generic runaway termination policy independently of
+# historical test-server attribution and whole-group cleanup.
+_terminate_runaway_pid() {
+	local pid="$1"
+	kill "$pid" 2>/dev/null || true
+	sleep 1
+	if kill -0 "$pid" 2>/dev/null; then
+		kill -9 "$pid" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Historical orphan servers are report-only by default. Opt in to same-user
+# Linux reaping with ORPHAN_TEST_SERVER_REAP=1; scan never sends signals.
+_report_orphan_test_servers() {
+	local mode="${1:-report}"
+	local age_limit="${ORPHAN_TEST_SERVER_AGE_LIMIT:-7200}"
+	local guard_path="${BASH_SOURCE[0]%/*}/orphan-test-server-guard.py"
+	local -a options=(--age-limit "$age_limit")
+	if [[ "$mode" == "reap" && "${ORPHAN_TEST_SERVER_REAP:-0}" == "1" ]]; then
+		options+=(--reap)
+	fi
+	if command -v python3 >/dev/null 2>&1 && [[ -f "$guard_path" ]]; then
+		python3 "$guard_path" "${options[@]}" | tee -a "$LOGFILE"
 	fi
 	return 0
 }
@@ -749,6 +775,8 @@ cmd_help() {
 	echo "  SHELLCHECK_RSS_LIMIT_KB=${SHELLCHECK_RSS_LIMIT_KB} ($((SHELLCHECK_RSS_LIMIT_KB / 1024))MB)"
 	echo "  SHELLCHECK_RUNTIME_LIMIT=${SHELLCHECK_RUNTIME_LIMIT}s"
 	echo "  STALE_PLAYWRIGHT_LIST_AGE_LIMIT=${STALE_PLAYWRIGHT_LIST_AGE_LIMIT}s"
+	echo "  ORPHAN_TEST_SERVER_AGE_LIMIT=${ORPHAN_TEST_SERVER_AGE_LIMIT:-7200}s (Linux orphan servers)"
+	echo "  ORPHAN_TEST_SERVER_REAP=${ORPHAN_TEST_SERVER_REAP:-0} (1 enables TERM/KILL in kill-runaways; scan is report-only)"
 	echo "  SESSION_COUNT_WARN=${SESSION_COUNT_WARN}"
 	return 0
 }

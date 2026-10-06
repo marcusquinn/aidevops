@@ -1,25 +1,12 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { spawnSync } from "node:child_process";
+import { linuxStartIdentity, markedProcesses, processSnapshot } from "./bounded-operation-process-snapshot.mjs";
+export { parseProcessSnapshot } from "./bounded-operation-process-snapshot.mjs";
 
-// Helpers such as timeout_sec move commands into their own process group
-// (GNU timeout calls setpgid; the bash fallback uses `set -m`), outside the
-// supervisor's group-wide signals (GH#33514). Track descendants by parent chain
-// while they are attributable, keyed by PID plus start time so a reparented
-// subtree stays owned and a reused PID is never signalled. Darwin `ps` reports
-// no session IDs, so session membership cannot replace this attribution.
-
-export function parseProcessSnapshot(text) {
-  const entries = [];
-  for (const line of String(text).split(/\r?\n/)) {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S.*)$/);
-    if (!match) continue;
-    entries.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[4] });
-  }
-  return entries;
-}
-
+// Track parent-chain descendants before reparenting (GH#33514); recover escaped
+// children using exact same-user operation markers (GH#33747). Retain PID/start
+// identity so a reparented subtree remains owned without adopting reused PIDs.
 function isOwned(owned, entry) {
   return owned.get(entry.pid)?.started === entry.started;
 }
@@ -44,53 +31,49 @@ export function recordOwnedDescendants(snapshot, rootPid, owned, excludePid = 0)
 }
 
 export function verifiedNestedTargets(snapshot, owned, ownGroup) {
-  return snapshot
-    .filter((entry) => entry.pgid !== ownGroup && isOwned(owned, entry))
-    .map((entry) => entry.pid);
+  return snapshot.filter((entry) => entry.pgid !== ownGroup && isOwned(owned, entry)).map((entry) => entry.pid);
 }
 
-function processSnapshot() {
-  const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,lstart="], {
-    detached: true,
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-    timeout: 1000,
-  });
-  if (result.status !== 0) return null;
-  return { entries: parseProcessSnapshot(result.stdout), psPid: result.pid };
-}
-
-export function signalEach(pids, signal) {
+export function signalEach(pids, signal, entries = []) {
   for (const pid of pids) {
     try {
+      const expected = entries.find((entry) => entry.pid === pid);
+      if (!expected) continue;
+      if (process.platform === "linux" && linuxStartIdentity(pid) !== expected.started) continue;
       process.kill(pid, signal);
-    } catch {
-      // Already exited between the snapshot and the signal.
-    }
+    } catch { /* exited between the snapshot and signal */ }
   }
 }
 
-// Tracks descendants of rootPid (whose own process group is rootPid) and the
-// nested process groups they moved into.
-export function createProcessTreeTracker(rootPid, snapshotProcesses = processSnapshot) {
+function recoverMarked(snapshot, rootPid, owned, operationID) {
+  const candidates = snapshot.entries.filter((entry) => entry.pid !== rootPid && entry.pid !== snapshot.psPid && !isOwned(owned, entry));
+  for (const entry of markedProcesses(candidates, operationID)) {
+    owned.set(entry.pid, { pgid: entry.pgid, started: entry.started });
+  }
+}
+
+function recordSnapshot(snapshot, rootPid, owned, operationID, nestedGroups) {
+  recordOwnedDescendants(snapshot.entries, rootPid, owned, snapshot.psPid);
+  recoverMarked(snapshot, rootPid, owned, operationID);
+  recordOwnedDescendants(snapshot.entries, rootPid, owned, snapshot.psPid);
+  for (const entry of snapshot.entries) {
+    if (entry.pgid !== rootPid && isOwned(owned, entry)) nestedGroups.add(entry.pgid);
+  }
+}
+
+export function createProcessTreeTracker(rootPid, snapshotProcesses = processSnapshot, operationID = "") {
   const owned = new Map();
   const nestedGroups = new Set();
   let attributionComplete = true;
-
-  // Returns the current snapshot after recording newly attributable descendants.
   const track = () => {
     const snapshot = snapshotProcesses();
     if (!snapshot) {
       attributionComplete = false;
       return null;
     }
-    recordOwnedDescendants(snapshot.entries, rootPid, owned, snapshot.psPid);
-    for (const entry of snapshot.entries) {
-      if (entry.pgid !== rootPid && isOwned(owned, entry)) nestedGroups.add(entry.pgid);
-    }
+    recordSnapshot(snapshot, rootPid, owned, operationID, nestedGroups);
     return snapshot;
   };
-
   return {
     track,
     nestedTargets: (snapshot) => (snapshot ? verifiedNestedTargets(snapshot.entries, owned, rootPid) : []),
