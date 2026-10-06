@@ -89,6 +89,7 @@ case "$MAX_WORKERS_CAP" in
 "" | 0 | auto) MAX_WORKERS_CAP="$_default_cap" ;;
 esac
 MAX_LOAD_PER_CORE="${MAX_LOAD_PER_CORE:-$(config_get "orchestration.max_load_per_core" "4.0")}" # Positive load/core threshold (1.0 = 100% busy); validated by _pulse_cpu_pressure
+MIN_CPU_IDLE_PCT="${MIN_CPU_IDLE_PCT:-$(config_get "orchestration.min_cpu_idle_pct" "10")}" # Close CPU gate only if measured idle is below this percent
 VAULT_DEVICE_HELPER="${VAULT_DEVICE_HELPER:-${SCRIPT_DIR}/vault-device-helper.sh}"                         # Non-secret Vault fleet status helper; schedulers may call can-dispatch for Vault-sensitive work
 VAULT_DEVICE_DISPATCH_PREFLIGHT="${VAULT_DEVICE_DISPATCH_PREFLIGHT:-0}"                                    # 0=disabled until task metadata requires Vault routing; 1=consult local heartbeat/trust state
 VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED="${VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED:-0}"                          # 1=Vault-sensitive work requires a fresh unlocked heartbeat before local dispatch

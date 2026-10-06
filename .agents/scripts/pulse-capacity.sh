@@ -275,7 +275,48 @@ _pulse_cpu_core_count() {
 	return 0
 }
 
+# Measured CPU idle percent over ~1s (stdout; empty when unavailable). Darwin's
+# load average counts I/O-blocked threads, so idle corroborates run-queue load.
+# Linux counts iowait as idle for the same reason.
+_pulse_cpu_idle_pct() {
+	local idle=""
+	if [[ "$(uname)" == Darwin ]]; then
+		idle=$(top -l 2 -s 1 -n 0 2>/dev/null | LC_ALL=C awk '/^CPU usage:/ {line=$0} END {
+			if (match(line, /[0-9.]+% idle/)) {print substr(line, RSTART, RLENGTH - 6)}}') || idle=""
+	else
+		local first="" second=""
+		first=$(LC_ALL=C awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8, $5+$6; exit}' /proc/stat 2>/dev/null) || first=""
+		if [[ -n "$first" ]]; then
+			sleep 1
+			second=$(LC_ALL=C awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8, $5+$6; exit}' /proc/stat 2>/dev/null) || second=""
+			idle=$(LC_ALL=C awk -v a="$first" -v b="$second" 'BEGIN {
+				split(a, x, " "); split(b, y, " ")
+				total = y[1] - x[1]
+				if (total > 0) printf "%.1f", (y[2] - x[2]) * 100 / total}') || idle=""
+		fi
+	fi
+	[[ "$idle" =~ ^[0-9]+([.][0-9]+)?$ ]] && printf '%s\n' "$idle"
+	return 0
+}
+
+# Idle percent recorded by the latest _pulse_cpu_pressure call ("unknown" if
+# not sampled). File-based because callers run it in a command substitution.
+_pulse_cpu_idle_file() {
+	printf '%s\n' "${HOME}/.aidevops/logs/pulse-cpu-idle"
+	return 0
+}
+
+_pulse_cpu_last_idle() {
+	local idle=""
+	idle=$(<"$(_pulse_cpu_idle_file)") 2>/dev/null || idle=""
+	[[ "$idle" =~ ^[0-9]+([.][0-9]+)?$ ]] || idle=unknown
+	printf '%s\n' "$idle"
+	return 0
+}
+
 # Stdout: "<one-minute-load> <cores> <open|closed|unknown> <threshold>".
+# When load/core exceeds the threshold, the gate closes only if measured idle is
+# below MIN_CPU_IDLE_PCT (default 10); unavailable idle keeps load-only behaviour.
 _pulse_cpu_pressure() {
 	# Default 4.0: load/core 1.0 is 100% busy, so full CPU use stays admitted;
 	# only severe run-queue thrash closes the gate.
@@ -286,10 +327,20 @@ _pulse_cpu_pressure() {
 		! LC_ALL=C awk -v value="$threshold" 'BEGIN {exit !(value > 0)}'; then
 		threshold=4.0
 	fi
+	printf 'unknown\n' >"$(_pulse_cpu_idle_file)" 2>/dev/null || true
 	if [[ "$load" =~ ^[0-9]+([.][0-9]+)?$ && "$cores" =~ ^[1-9][0-9]*$ ]]; then
 		gate="open"
 		if LC_ALL=C awk -v one_minute="$load" -v cores="$cores" -v threshold="$threshold" 'BEGIN {exit !(one_minute / cores > threshold)}'; then
 			gate="closed"
+			local min_idle="${MIN_CPU_IDLE_PCT:-10}" idle=""
+			[[ "$min_idle" =~ ^[0-9]+([.][0-9]+)?$ ]] || min_idle=10
+			idle=$(_pulse_cpu_idle_pct) || idle=""
+			if [[ -n "$idle" ]]; then
+				printf '%s\n' "$idle" >"$(_pulse_cpu_idle_file)" 2>/dev/null || true
+				if LC_ALL=C awk -v idle="$idle" -v min="$min_idle" 'BEGIN {exit !(idle >= min)}'; then
+					gate="open"
+				fi
+			fi
 		fi
 	else
 		load="unknown"
@@ -320,8 +371,8 @@ pulse_apply_provider_load_capacity_cap() {
 	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold=""
 	read -r cpu_load cpu_cores cpu_gate cpu_threshold <<<"$(_pulse_cpu_pressure)"
 	if [[ "$cpu_gate" == "closed" ]] || ((raw_max_workers == 0)); then
-		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=%s active_workers=%s admission=closed\n' \
-			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_gate" "$active_workers" >>"${LOGFILE:-/dev/null}"
+		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=%s cpu_idle_pct=%s active_workers=%s admission=closed\n' \
+			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_gate" "$(_pulse_cpu_last_idle)" "$active_workers" >>"${LOGFILE:-/dev/null}"
 		printf '0 0\n'
 		return 0
 	fi

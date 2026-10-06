@@ -76,6 +76,13 @@ awk() {
 	return 0
 }
 
+# Idle sampling is stubbed: empty output means telemetry unavailable (load-only).
+MOCK_IDLE=""
+_pulse_cpu_idle_pct() {
+	[[ -z "$MOCK_IDLE" ]] || printf '%s\n' "$MOCK_IDLE"
+	return 0
+}
+
 RAM_RESERVE_MB=6144 RAM_PER_WORKER_MB=512 MAX_WORKERS_CAP=20 MAX_LOAD_PER_CORE=1.5
 for os in Darwin Linux; do
 	MOCK_LOAD=41.2
@@ -115,6 +122,16 @@ assert_equal "$(_pulse_cpu_pressure)" 'unknown unknown unknown 1.5' 'malformed l
 MOCK_LOAD=41.2 MOCK_CORES=0
 assert_equal "$(_pulse_cpu_pressure)" 'unknown unknown unknown 1.5' 'zero cores avoids division'
 MOCK_CORES=16
+MOCK_LOAD=131.49 MAX_LOAD_PER_CORE=4 MIN_CPU_IDLE_PCT=10
+MOCK_IDLE=41.6
+assert_equal "$(_pulse_cpu_pressure)" '131.49 16 open 4' 'high load with idle headroom stays open'
+assert_equal "$(_pulse_cpu_last_idle)" 41.6 'idle value recorded for logs'
+MOCK_IDLE=5.0
+assert_equal "$(_pulse_cpu_pressure)" '131.49 16 closed 4' 'high load with low idle closes'
+MOCK_IDLE=""
+assert_equal "$(_pulse_cpu_pressure)" '131.49 16 closed 4' 'unavailable idle keeps load-only closure'
+assert_equal "$(_pulse_cpu_last_idle)" unknown 'unsampled idle reported unknown'
+MOCK_LOAD=41.2 MAX_LOAD_PER_CORE=1.5
 
 # Exercise the real dispatch-capacity coordinator (same cap helper as refill).
 # Stub unrelated external provider/REST/state counters, preserving slot arithmetic.
