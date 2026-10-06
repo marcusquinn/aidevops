@@ -398,6 +398,20 @@ _quality_checks() {
 	return 0
 }
 
+# Template generation is asynchronous: do not clone an empty repository.
+# This is a bounded provisioning gate, not a CI/review polling loop.
+_wait_template() {
+	local parent="$1" repo="$2" attempt head
+	for ((attempt = 1; attempt <= 12; attempt++)); do
+		head="$(git -C "$parent" ls-remote "https://github.com/${repo}.git" HEAD)" || return 1
+		[[ -z "$head" ]] || return 0
+		print_info "Waiting for template HEAD ($attempt/12)"
+		[[ "$attempt" -eq 12 ]] || sleep 2
+	done
+	print_error "template generation is not ready; preserve $repo and resume cloning once HEAD exists"
+	return 1
+}
+
 # Clone from the destination's parent; never initialize or commit in the
 # primary checkout. GitHub templates provide fresh history server-side;
 # local-only plugins retain the release history. Preserve failures for recovery.
@@ -412,6 +426,7 @@ _copy_starter() {
 		[[ "$P_PLUGIN_URI" == "https://github.com/$source_repo" ]] || homepage=(--homepage "$P_PLUGIN_URI")
 		gh repo create "$source_repo" "--${P_VISIBILITY}" --template "$STARTER_REPO" \
 			--description "$P_DESCRIPTION" ${homepage[@]+"${homepage[@]}"} || return 1
+		_wait_template "$parent" "$source_repo" || return 1
 	fi
 	git -C "$parent" -c advice.detachedHead=false clone --quiet ${clone_args[@]+"${clone_args[@]}"} \
 		"https://github.com/${source_repo}.git" "$P_DEST" || return 1
