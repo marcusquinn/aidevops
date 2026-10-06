@@ -568,6 +568,28 @@ _merge_report_author_lookup_failure() {
 	return 0
 }
 
+# Live PR labels that hold every merge transport before any trust exception or
+# approval target is evaluated. Returns 1 when a hold is present.
+_merge_pr_label_holds_clear() {
+	local pr_number="$1"
+	local labels_padded="$2"
+	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
+	# explicit hold. Marker text is never merge authority at this boundary.
+	if [[ "$labels_padded" == *",needs-maintainer-review,"* ]]; then
+		print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
+		return 1
+	fi
+	#aidevops:trust-boundary GH#33775 -- a live PR hold-for-review label is an
+	# explicit primary-review hold, matching pulse merge (t2411/t2449). It is
+	# never resolved by signed approval, so callers must stop before collecting
+	# approval targets.
+	if [[ "$labels_padded" == *",hold-for-review,"* ]]; then
+		print_error "Merge blocked: PR #${pr_number} carries \`hold-for-review\` (maintainer review hold). Remove the label when the hold is resolved."
+		return 1
+	fi
+	return 0
+}
+
 _merge_collect_external_authority_gaps() {
 	local pr_number="$1"
 	local repo="$2"
@@ -619,20 +641,7 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	fi
 
-	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
-	# explicit hold. Marker text is never merge authority at this boundary.
-	if [[ "$labels_padded" == *",needs-maintainer-review,"* ]]; then
-		print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
-		return 1
-	fi
-	#aidevops:trust-boundary GH#33775 -- a live PR hold-for-review label is an
-	# explicit primary-review hold, matching pulse merge (t2411/t2449). It blocks
-	# every transport through this shared guard and is never resolved by signed
-	# approval, so return before any approval target is collected.
-	if [[ "$labels_padded" == *",hold-for-review,"* ]]; then
-		print_error "Merge blocked: PR #${pr_number} carries \`hold-for-review\` (maintainer review hold). Remove the label when the hold is resolved."
-		return 1
-	fi
+	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" || return 1
 
 	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot
 	# PRs may lack collaborator permission. Both narrow predicates bind immutable

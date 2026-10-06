@@ -82,6 +82,7 @@ load_functions() {
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
 	extract_function _merge_report_author_lookup_failure
+	extract_function _merge_pr_label_holds_clear
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -410,22 +411,6 @@ test_authority_guard() {
 	expect_guard_result "live PR NMR blocks before external authority" 1
 
 	reset_fixture
-	set_pr_fixture maintainer '[{"name":"hold-for-review"}]' false '[]' ''
-	expect_guard_result "live PR hold-for-review blocks internal maintainer PR" 1
-
-	reset_fixture
-	set_pr_fixture 'dependabot[bot]' '[{"name":"hold-for-review"}]' false '[]' ''
-	FIXTURE_PERMISSION="none"
-	FIXTURE_TRUSTED_DEPENDABOT=1
-	expect_guard_result "live PR hold-for-review blocks trusted Dependabot" 1
-	if [[ ! -s "$TRUSTED_CALLS" && ! -s "$CRYPTO_CALLS" ]]; then
-		print_result "hold-for-review is evaluated before trust exceptions and crypto" 0
-	else
-		print_result "hold-for-review is evaluated before trust exceptions and crypto" 1 \
-			"trusted=$(<"$TRUSTED_CALLS") crypto=$(<"$CRYPTO_CALLS")"
-	fi
-
-	reset_fixture
 	FIXTURE_PERMISSION_FAIL=1
 	expect_guard_result "author permission lookup failure blocks" 1
 
@@ -506,6 +491,26 @@ test_authority_guard() {
 		print_result "internal PR does not require external crypto" 0
 	else
 		print_result "internal PR does not require external crypto" 1 "unexpected crypto verification"
+	fi
+	return 0
+}
+
+# GH#33775: a live PR hold-for-review label holds every merge transport.
+test_hold_for_review_guard() {
+	reset_fixture
+	set_pr_fixture maintainer '[{"name":"hold-for-review"}]' false '[]' ''
+	expect_guard_result "live PR hold-for-review blocks internal maintainer PR" 1
+
+	reset_fixture
+	set_pr_fixture 'dependabot[bot]' '[{"name":"hold-for-review"}]' false '[]' ''
+	FIXTURE_PERMISSION="none"
+	FIXTURE_TRUSTED_DEPENDABOT=1
+	expect_guard_result "live PR hold-for-review blocks trusted Dependabot" 1
+	if [[ ! -s "$TRUSTED_CALLS" && ! -s "$CRYPTO_CALLS" ]]; then
+		print_result "hold-for-review is evaluated before trust exceptions and crypto" 0
+	else
+		print_result "hold-for-review is evaluated before trust exceptions and crypto" 1 \
+			"trusted=$(<"$TRUSTED_CALLS") crypto=$(<"$CRYPTO_CALLS")"
 	fi
 	return 0
 }
@@ -734,6 +739,7 @@ main() {
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
 	test_authority_guard
+	test_hold_for_review_guard
 	test_pre_merge_authority_preflight
 	test_all_merge_modes_use_guard
 	test_secondary_merge_transports_refresh_authority
