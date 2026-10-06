@@ -505,7 +505,54 @@ else
 	print_result "ready PR is not treated as a blocked draft checkpoint" 1 "posts=$(post_count)"
 fi
 STUB_PR_JSON="$(valid_pr_json)"
+
+# GH#33839: production launchers close the released attempt's lease with a
+# terminal DISPATCH_LEASE after CLAIM_RELEASED. That is not new ownership.
+closing_lease_comments() {
+	local terminal_login="$1" terminal_lease="$2"
+	blocked_comments ",
+  {\"id\":19,\"created_at\":\"2026-09-30T00:59:00Z\",\"author_association\":\"COLLABORATOR\",\"user\":{\"login\":\"worker-bot\"},\"body\":\"DISPATCH_LEASE phase=prelaunch lease_token=closing-lease session=s1\"},
+  {\"id\":24,\"created_at\":\"2026-09-30T01:10:40Z\",\"author_association\":\"COLLABORATOR\",\"user\":{\"login\":\"${terminal_login}\"},\"body\":\"<!-- ops:start -->\\nDISPATCH_LEASE phase=terminal lease_token=${terminal_lease} session=s1 expires_at=0\\n<!-- ops:end -->\"}"
+	return 0
+}
+STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease)"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*release=21 && "$(post_count)" == 2 ]]; then
+	print_result "released attempt's own terminal lease does not suppress blocked attention" 0
+else
+	print_result "released attempt's own terminal lease does not suppress blocked attention" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+for foreign_case in "worker-bot unseen-lease" "other-runner closing-lease"; do
+	read -r foreign_login foreign_lease <<<"$foreign_case"
+	STUB_COMMENTS_JSON="$(closing_lease_comments "$foreign_login" "$foreign_lease")"
+	if ! _pcc_blocked_attention owner/repo 123 42 >/dev/null && [[ "$(post_count)" == 2 ]]; then
+		print_result "terminal lease from ${foreign_login}/${foreign_lease} still counts as ownership" 0
+	else
+		print_result "terminal lease from ${foreign_login}/${foreign_lease} still counts as ownership" 1 "posts=$(post_count)"
+	fi
+done
 unset STUB_POST_DIR
+
+stall_comments() {
+	local terminal_lease="$1"
+	printf '[[
+  {"id":30,"created_at":"2026-09-30T01:00:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=ready lease_token=stall-lease session=s1"},
+  {"id":31,"created_at":"2026-09-30T01:30:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=no_activity runner=pulse-runner ts=2026-09-30T01:30:00Z"},
+  {"id":32,"created_at":"2026-09-30T01:30:40Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=terminal lease_token=%s session=s1 expires_at=0"}
+]]\n' "$terminal_lease"
+	return 0
+}
+if output=$(_pcc_stall_release_evidence "$(stall_comments stall-lease)" "2026-09-30T00:30:00Z" key) &&
+	[[ "$output" == $'31\tno_activity\t1\tfalse' ]]; then
+	print_result "released attempt's own terminal lease keeps stall release evidence" 0
+else
+	print_result "released attempt's own terminal lease keeps stall release evidence" 1 "output=${output:-missing}"
+fi
+if ! _pcc_stall_release_evidence "$(stall_comments other-lease)" "2026-09-30T00:30:00Z" key >/dev/null 2>&1; then
+	print_result "unrelated terminal lease after a stall release still counts as ownership" 0
+else
+	print_result "unrelated terminal lease after a stall release still counts as ownership" 1
+fi
 
 if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-revision.py"; then
 	print_result "revised checkpoint claims, worker lease lifecycle and durable progress" 0
