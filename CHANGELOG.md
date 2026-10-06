@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.16] - 2026-10-06
+
+### Added
+
+- add wp-plugin-parity-helper for sibling-site plugin parity (#33746)
+
+### Changed
+
+- Maintenance: mark t18594 complete (pr:#33746 completed:2026-10-06) (#33738)
+
+### Fixed
+
+- keep CPU admission open for idle-core headroom when load average is I/O-inflated
+- classify and cool down runner_capability_unmet deferrals (#33749)
+- record one pulse cycle-index entry per cycle with outcome, blocker and wall time (#33748)
+- auto owner attribution and stale_multi_credential_scope diagnostic for GH transport quota (#33733)
+- pin source-map-js 1.2.2 for GHSA-68fv-2mgg-jv7q
+
 ## [3.38.15] - 2026-10-06
 
 ### Changed
