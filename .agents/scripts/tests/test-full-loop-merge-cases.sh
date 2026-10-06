@@ -867,7 +867,8 @@ test_post_verification_read_admission_window() {
 		source "$1/full-loop-helper-merge.sh"
 		unset AIDEVOPS_GH_READ_TIMEOUT
 		_gh_with_timeout() {
-			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 && "$1" == read ]] || return 1
+			# Temporary-file setup consumes part of the shared wall-clock budget.
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" -gt 0 && "$AIDEVOPS_GH_READ_TIMEOUT" -le 60 && "$1" == read ]] || return 1
 			printf "base\tbase-sha\thead-sha\ttestorg/testrepo\tclone-url\n"
 			return 0
 		}
@@ -897,12 +898,12 @@ test_bounded_local_admission_recovery() {
 		bash -c '
 			source "$1/shared-constants.sh"
 			source "$1/full-loop-helper-merge.sh"
-			export AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=30
+			unset AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS
 			scenario="$2" calls=0 waits=0 elapsed=0
 			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
 			sleep() {
 				local duration="$1"
-				[[ "$scenario" != overshoot ]] || duration=31
+				[[ "$scenario" != overshoot ]] || duration=61
 				waits=$((waits + 1))
 				elapsed=$((elapsed + duration))
 				SECONDS=$((SECONDS + duration))
@@ -919,11 +920,11 @@ test_bounded_local_admission_recovery() {
 				short) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002 ;;
 				fractional) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1001.25 ;;
 				integral) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002.000 ;;
-				boundary) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1030.000 ;;
+				boundary) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1060.000 ;;
 				expired) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=999 ;;
 				moving) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=$((1001 + elapsed)) ;;
 				overshoot) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1002 ;;
-				long) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1031 ;;
+				long) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=1061 ;;
 				malformed) FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=retry-when-capacity-returns ;;
 				cooldown) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=github-api-cooldown ;;
 				review) FULL_LOOP_PRE_MERGE_BLOCKER_KIND=review-bot ;;
@@ -939,15 +940,84 @@ test_bounded_local_admission_recovery() {
 			case "$scenario" in
 			short|integral) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
 			fractional) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 2 ]] ;;
-			boundary) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 30 ]] ;;
+			boundary) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$elapsed" -eq 60 && "$FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL" == 1060.000 ]] ;;
 			expired) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$elapsed" -eq 1 ]] ;;
-			moving) [[ "$rc" -eq 1 && "$waits" -gt 1 && "$elapsed" -le 30 ]] ;;
+			moving) [[ "$rc" -eq 1 && "$calls" -eq 4 && "$waits" -eq 3 && "$elapsed" -eq 3 ]] ;;
 			overshoot) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waits" -eq 1 ]] ;;
 			changed-review) [[ "$rc" -eq 1 && "$calls" -eq 2 && "$waits" -eq 1 ]] ;;
 			*) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waits" -eq 0 ]] ;;
 			esac
 		' _ "$scripts_dir" "$scenario" || result=$?
 		print_result "bounded local admission recovery: $scenario" "$result"
+	done
+	return 0
+}
+
+# Exercise the production refs and release-lane reads, not just a mocked gate.
+# State files preserve call counts across the production command substitutions.
+test_shared_merge_read_admission_recovery() {
+	local scripts_dir="" scenario="" result=0
+	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	for scenario in refs release persists long fractional quota http nested; do
+		result=0
+		bash -c '
+			source "$1/shared-constants.sh"
+			source "$1/full-loop-helper-merge.sh"
+			unset AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS AIDEVOPS_GH_READ_TIMEOUT
+			scenario="$2" elapsed=0 out="" rc=0
+			calls_file="$(mktemp)" waits_file="$(mktemp)"
+			printf "0" >"$calls_file"
+			printf "0" >"$waits_file"
+			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
+			sleep() {
+				local duration="$1"
+				elapsed=$((elapsed + duration))
+				SECONDS=$((SECONDS + duration))
+				printf "%s" "$elapsed" >"$waits_file"
+				return 0
+			}
+			_gh_with_timeout() {
+				local calls=$(( $(<"$calls_file") + 1 )) retry_at=1002
+				printf "%s" "$calls" >"$calls_file"
+				case "$scenario" in
+				quota) printf "HTTP 403: API rate limit exceeded\n" >&2; return 1 ;;
+				http) printf "HTTP 502: Bad Gateway\n" >&2; return 1 ;;
+				long) retry_at=1061 ;;
+				fractional) retry_at=1001.25 ;;
+				persists|nested) retry_at=$((1001 + elapsed)) ;;
+				esac
+				if [[ "$calls" -eq 1 || "$scenario" == persists || "$scenario" == nested ]]; then
+					printf "[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=%s reason=pacing\n" "$retry_at" >&2
+					return 75
+				fi
+				if [[ "$scenario" == release ]]; then
+					printf "main\tbase-sha\n"
+				else
+					printf "main\tbase-sha\thead-sha\ttestorg/testrepo\tclone-url\n"
+				fi
+				return 0
+			}
+			if [[ "$scenario" == release ]]; then
+				export AIDEVOPS_RELEASE_LANE_COORDINATED_REPO=testorg/testrepo
+				_merge_pre_merge_gate_with_admission_retry() { return 0; }
+				release_lane_merge_guard() { [[ "$3" == main && "$4" == base-sha ]] || exit 2; return 1; }
+				out=$(cmd_merge 42 testorg/testrepo 2>&1) || rc=$?
+			elif [[ "$scenario" == nested ]]; then
+				out=$(_merge_with_admission_retry _merge_fetch_pr_refs_rest 42 testorg/testrepo 2>&1) || rc=$?
+			else
+				out=$(_merge_fetch_pr_refs_rest 42 testorg/testrepo 2>&1) || rc=$?
+			fi
+			calls=$(<"$calls_file") waited=$(<"$waits_file")
+			rm -f "$calls_file" "$waits_file"
+			case "$scenario" in
+			refs|fractional) [[ "$rc" -eq 0 && "$calls" -eq 2 && "$waited" -eq 2 && "$out" == *head-sha* ]] ;;
+			release) [[ "$rc" -eq 1 && "$calls" -eq 2 && "$waited" -eq 2 && "$out" == *"active exact-tip release lane"* && "$out" != *"cannot verify"* ]] ;;
+			persists|nested) [[ "$rc" -eq 1 && "$calls" -eq 4 && "$waited" -eq 3 && "$out" == *"error_kind=github-api-read-deferred"* && "$out" == *"retry_at=1004"* ]] ;;
+			long) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waited" -eq 0 && "$out" == *"retry_at=1061"* ]] ;;
+			quota|http) [[ "$rc" -eq 1 && "$calls" -eq 1 && "$waited" -eq 0 && "$out" == *HTTP* ]] ;;
+			esac
+		' _ "$scripts_dir" "$scenario" || result=$?
+		print_result "shared merge read admission recovery: $scenario" "$result"
 	done
 	return 0
 }
