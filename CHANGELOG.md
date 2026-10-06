@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.21] - 2026-10-06
+
+### Changed
+
+- Maintenance: mark t18602 complete (pr:#33841 completed:2026-10-06) (#33840)
+
+### Fixed
+
+- classify operational consolidation packets before scope validation (GH#33838) (#33842)
+- released attempt's terminal lease no longer blocks draft checkpoint recovery
+
 ## [3.38.20] - 2026-10-06
 
 ### Changed
