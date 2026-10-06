@@ -1084,9 +1084,8 @@ PY
 	return 0
 }
 
-test_exact_ssh_bindings() {
-	local status=0
-	python3 - "$SCRIPT_DIR" "$TEST_ROOT" <<'PY' || status=$?
+_ssh_binding_fixture_setup() {
+	cat <<'PY'
 import json
 import os
 import subprocess
@@ -1158,8 +1157,13 @@ def preflight(command, class_map=False):
         config.unlink(missing_ok=True)
     return subprocess.run(['bash', '-c', 'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3"',
                            'fixture', str(scripts), str(repo), json.dumps(issue)],
-                          env=env, capture_output=True, text=True)
+                           env=env, capture_output=True, text=True)
+PY
+	return 0
+}
 
+_ssh_binding_fixture_cases() {
+	cat <<'PY'
 with patch('socket.socket', side_effect=AssertionError('network access forbidden')):
     check('unknown alias remains unclassified', bool(network(['ssh', 'ci-alias', 'id'])['unclassified']))
     check('unsigned pinned command denied', bool(network(argv)['unclassified']))
@@ -1231,6 +1235,15 @@ with patch('socket.socket', side_effect=AssertionError('network access forbidden
         check('unknown alias needs no credential/config reads', bool(network(['ssh', 'ci-alias', 'id'])['unclassified']))
 print(f'{count} offline SSH binding fixtures passed')
 PY
+	return 0
+}
+
+test_exact_ssh_bindings() {
+	local status=0
+	python3 - "$SCRIPT_DIR" "$TEST_ROOT" < <(
+		_ssh_binding_fixture_setup
+		_ssh_binding_fixture_cases
+	) || status=$?
 	if [[ "$status" -eq 0 ]]; then
 		pass "exact SSH binding offline security and preclaim fixtures"
 	else

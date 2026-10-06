@@ -73,11 +73,11 @@ runner_capability_check() {
 	local source="${3:-}"
 	local cycle="${_PULSE_CYCLE_ID:-}"
 	# Assemble only trusted literal code; issue metadata stays in argv as data.
-	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" < <(
+	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" "${BASH_SOURCE[0]%/*}/network-tier-helper.sh" < <(
 		_runner_capability_python_runtime
 		_runner_capability_python_cycle
 		_runner_capability_python_requirements
-	) "${BASH_SOURCE[0]%/*}/network-tier-helper.sh"
+	)
 	local rc=$?
 	[[ "$rc" -eq 0 ]] || return 1
 	return 0
