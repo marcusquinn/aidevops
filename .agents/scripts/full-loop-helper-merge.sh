@@ -744,9 +744,9 @@ _merge_fetch_pinned_commit_objects() {
 	return 0
 }
 
-# Dedicated promisor remote for the isolated object store. A named remote is
-# required for partial fetch from path and URL remotes alike; the name is
-# unusual so caller-level remote configuration cannot shadow the pinned URL.
+# Dedicated remote for the isolated object store. A named remote is required
+# for partial fetch from path and URL remotes alike; the name is unusual so
+# caller-level remote configuration cannot shadow the pinned URL.
 _MERGE_PROSPECTIVE_REMOTE="aidevops-prospective-target"
 
 _merge_configure_prospective_remote() {
@@ -758,17 +758,76 @@ _merge_configure_prospective_remote() {
 	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
 		config --local core.repositoryformatversion 1 || return 1
 	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local extensions.partialClone "$_MERGE_PROSPECTIVE_REMOTE" || return 1
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
 		config --local "${remote_key}.url" "$remote_url" || return 1
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local "${remote_key}.promisor" true || return 1
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local "${remote_key}.partialclonefilter" blob:none || return 1
 	# Fail closed if any other config scope adds or overrides the pinned URL.
 	configured_urls=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
 		config --get-all "${remote_key}.url") || return 1
 	[[ "$configured_urls" == "$remote_url" ]] || return 1
+	_merge_prospective_store_is_lazy_fetch_free "$real_git" "$object_repo" || {
+		print_error "Merge blocked: Git configuration marks a remote as a promisor (remote.<name>.promisor); prospective TODO validation refuses implicit object transfer"
+		return 1
+	}
+	return 0
+}
+
+# Git lazily fetches a missing object only when a promisor remote is
+# configured. GIT_NO_LAZY_FETCH (Git 2.44+) also disables that, but older Git
+# ignores it (GH#33752), so the store is a partial clone only while an explicit,
+# bounded fetch runs. Every other command sees a plain repository in which a
+# missing object is an error on every Git version.
+_merge_enable_prospective_promisor() {
+	local real_git="$1"
+	local object_repo="$2"
+	local remote_key="remote.${_MERGE_PROSPECTIVE_REMOTE}"
+	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+		config --local extensions.partialClone "$_MERGE_PROSPECTIVE_REMOTE" || return 1
+	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+		config --local "${remote_key}.promisor" true || return 1
+	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+		config --local "${remote_key}.partialclonefilter" blob:none || return 1
+	return 0
+}
+
+_merge_disable_prospective_promisor() {
+	local real_git="$1"
+	local object_repo="$2"
+	local remote_key="remote.${_MERGE_PROSPECTIVE_REMOTE}"
+	local key=""
+	local rc=0
+	# Fetch may register partial-clone keys itself; remove every local copy.
+	for key in extensions.partialClone "${remote_key}.promisor" "${remote_key}.partialclonefilter"; do
+		rc=0
+		_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+			config --local --unset-all "$key" || rc=$?
+		# Exit 5 means the key was not set, which is the desired state.
+		[[ "$rc" -eq 0 || "$rc" -eq 5 ]] || return 1
+	done
+	_merge_prospective_store_is_lazy_fetch_free "$real_git" "$object_repo" || return 1
+	return 0
+}
+
+# Succeeds only when no config scope makes any remote a promisor for the store.
+_merge_prospective_store_is_lazy_fetch_free() {
+	local real_git="$1"
+	local object_repo="$2"
+	local promisor_entries=""
+	local rc=0
+	# extensions.partialClone is honoured only in repository-local config.
+	if _merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+		config --local --get extensions.partialClone >/dev/null 2>&1; then
+		return 1
+	fi
+	promisor_entries=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+		config --get-regexp '^remote\..*\.promisor$' 2>/dev/null) || rc=$?
+	# Exit 1 means no promisor key exists in any scope.
+	[[ "$rc" -eq 1 ]] && return 0
+	[[ "$rc" -eq 0 ]] || return 1
+	# A valueless boolean key means true; only explicit false values are safe.
+	printf '%s\n' "$promisor_entries" | awk '
+		{ value = tolower($2) }
+		value != "false" && value != "no" && value != "off" && value != "0" { unsafe = 1 }
+		END { exit unsafe }
+	' || return 1
 	return 0
 }
 
@@ -777,6 +836,7 @@ _merge_configure_prospective_remote() {
 # requested explicitly afterwards, so unrelated history never crosses the
 # network (GH#32641). Every transfer is time-bounded and a server that ignores
 # the filter fails closed instead of starting an unbounded full transfer.
+# The promisor configuration exists only for the duration of this fetch.
 _merge_fetch_partial_objects() {
 	local real_git="$1"
 	local object_repo="$2"
@@ -786,9 +846,17 @@ _merge_fetch_partial_objects() {
 	local timeout_secs="${AIDEVOPS_PROSPECTIVE_FETCH_TIMEOUT:-300}"
 	local rc=0
 	[[ "$timeout_secs" =~ ^[1-9][0-9]*$ ]] || timeout_secs=300
+	_merge_enable_prospective_promisor "$real_git" "$object_repo" || {
+		print_error "Merge blocked: unable to configure the bounded prospective fetch"
+		return 1
+	}
 	_merge_run_bounded_isolated_git "$timeout_secs" "$stdin_file" "$real_git" -C "$object_repo" \
 		fetch --quiet --no-tags --recurse-submodules=no --filter=blob:none "$@" \
 		2>"$stderr_file" || rc=$?
+	_merge_disable_prospective_promisor "$real_git" "$object_repo" || {
+		print_error "Merge blocked: unable to disable implicit object transfer after the bounded prospective fetch"
+		return 1
+	}
 	if [[ "$rc" -eq 124 || "$rc" -eq 137 || "$rc" -eq 143 ]]; then
 		print_error "Merge blocked: prospective object transfer exceeded ${timeout_secs}s (AIDEVOPS_PROSPECTIVE_FETCH_TIMEOUT)"
 		return 1
@@ -813,9 +881,9 @@ _MERGE_PROSPECTIVE_PAIR_LIMIT=32
 # paths resolve by object ID without content. With several merge bases,
 # merge-ort first merges those bases into a virtual base, which reads blobs
 # changed between the bases and their own merge bases (GH#33513), so pairs of
-# merge bases are enumerated recursively. Lazy fetch stays disabled and every
-# wanted blob is verified present, so a missed object fails closed with a
-# count instead of transferring more data.
+# merge bases are enumerated recursively. Outside the explicit fetch the store
+# has no promisor remote, and every wanted blob is verified present, so a
+# missed object fails closed with a count instead of transferring more data.
 _merge_prefetch_prospective_blobs() {
 	local real_git="$1"
 	local object_repo="$2"
@@ -890,7 +958,8 @@ _merge_prefetch_prospective_blobs() {
 }
 
 # A zero fetch exit status does not prove every wanted object arrived. Check
-# presence locally (lazy fetch disabled) and report only counts, never paths.
+# presence locally (no promisor remote, so no lazy fetch) and report only
+# counts, never paths.
 _merge_verify_prospective_blobs() {
 	local real_git="$1"
 	local object_repo="$2"
@@ -918,7 +987,9 @@ _merge_unset_repository_git_env() {
 	unset GIT_OBJECT_DIRECTORY GIT_QUARANTINE_PATH GIT_REPLACE_REF_BASE
 	unset GIT_SHALLOW_FILE GIT_WORK_TREE
 	# Partial object stores must never contact a remote implicitly; every
-	# transfer goes through the explicit, bounded fetches above.
+	# transfer goes through the explicit, bounded fetches above. Removing the
+	# promisor configuration outside those fetches enforces this on every Git
+	# version; GIT_NO_LAZY_FETCH (Git 2.44+) is defence in depth.
 	export GIT_NO_LAZY_FETCH=1
 	return 0
 }
@@ -951,8 +1022,8 @@ _merge_run_config_isolated_git() (
 	unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
 	export HOME="${config_root}/home" XDG_CONFIG_HOME="${config_root}/xdg"
 	export GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1
-	# Config-isolated commands never transfer objects. Git releases that predate
-	# GIT_NO_LAZY_FETCH must still fail instead of waiting on a credential prompt.
+	# Config-isolated commands never transfer objects: they run while the store
+	# has no promisor remote. Never wait on a credential prompt regardless.
 	export GIT_TERMINAL_PROMPT=0
 	_merge_run_repository_isolated_git "$real_git" "$@"
 	return $?
@@ -1043,8 +1114,10 @@ _merge_guard_prospective_todo() (
 	else
 		git_version="unknown (unparseable version: ${git_version_output:-no output})"
 	fi
-	if [[ -z "$git_major" ]] || ((git_major < 2 || (git_major == 2 && git_minor < 44))); then
-		print_error "Merge blocked: native Git ${git_version} at ${real_git} predates GIT_NO_LAZY_FETCH (Git 2.44+ required for prospective TODO validation); set AIDEVOPS_REAL_GIT_BIN to a newer Git (for example Homebrew git)"
+	# merge-tree --write-tree needs Git 2.38; fetch --stdin needs 2.29. Lazy
+	# fetch is prevented by store configuration, not by Git version (GH#33752).
+	if [[ -z "$git_major" ]] || ((git_major < 2 || (git_major == 2 && git_minor < 38))); then
+		print_error "Merge blocked: native Git ${git_version} at ${real_git} is too old (Git 2.38+ required for prospective TODO validation: git merge-tree --write-tree); set AIDEVOPS_REAL_GIT_BIN to a newer Git"
 		return 1
 	fi
 	mkdir -p "$temp_root" || {
