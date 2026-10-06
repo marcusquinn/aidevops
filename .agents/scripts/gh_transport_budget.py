@@ -24,6 +24,7 @@ from gh_transport_reconcile import reconcile_scope as _reconcile_scope
 from gh_transport_recovery import (
     admission_status,
     mark_dead_reservations,
+    note_live_window,
     probe_recovers,
     record_budget_transition,
     reserve_probe_allowed,
@@ -90,6 +91,22 @@ def process_birth(pid: int) -> str:
         return hashlib.sha256(value).hexdigest() if value else ""
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def _valid_observation(headers: dict[str, str], resource: str, now: float):
+    """Return (remaining, reset, limit) from authoritative headers, else None."""
+    remaining = headers.get("x-ratelimit-remaining", "")
+    reset = headers.get("x-ratelimit-reset", "")
+    limit = headers.get("x-ratelimit-limit", "")
+    if headers.get("x-ratelimit-resource", "") != resource:
+        return None
+    if not (remaining.isdecimal() and limit.isdecimal() and reset.isdecimal()):
+        return None
+    if not 0 <= int(remaining) <= int(limit) <= 1000000:
+        return None
+    if not now < int(reset) <= now + 86400:
+        return None
+    return int(remaining), int(reset), int(limit)
 
 
 class Budget:
@@ -258,70 +275,72 @@ class Budget:
             self.db.execute("INSERT INTO admission_history VALUES(?,?,?)", (self.scope, resource, now))
             return reservation
 
+    def _accepted_balance(self, reservation: str, resource: str, row, observed: tuple[int, int],
+                          headers: dict[str, str], now: float) -> tuple[int, int, float, bool]:
+        """Return (available, reset_at, blocked_until, recovered) for a valid response."""
+        available, reset_at = observed
+        blocked_until = 0.0
+        # A bound credential's newer window or a serialized reserve
+        # probe may repair stale evidence. Shared/ambiguous owners and
+        # same-window late replies retain conservative accounting.
+        # /rate_limit is never a grant.
+        recovered = probe_recovers(self, reservation, resource, row, reset_at)
+        if row and row[1] > now and not recovered:
+            # Late responses and unresolved owners with different reset
+            # epochs cannot restore quota observed to have been spent.
+            # Keep the lower balance paired with its own reset epoch:
+            # extending it to another credential's later (sliding)
+            # reset would re-stamp stale debt indefinitely (GH#33701).
+            if reset_at > row[1]:
+                note_live_window(self, resource, reset_at, now)
+            if available >= row[0]:
+                available, reset_at = row[0], int(row[1])
+            blocked_until = row[3]
+        retry_after = headers.get("retry-after", "")
+        if retry_after.isdecimal():
+            blocked_until = max(blocked_until, now + int(retry_after))
+        if available == 0:
+            blocked_until = max(blocked_until, reset_at)
+        return available, reset_at, blocked_until, recovered
+
     def finish(self, reservation: str, resource: str, headers: dict[str, str],
                *, started: float, now: float | None = None) -> None:
         now = time.time() if now is None else now
-        remaining = headers.get("x-ratelimit-remaining", "")
-        reset = headers.get("x-ratelimit-reset", "")
-        limit = headers.get("x-ratelimit-limit", "")
-        actual_resource = headers.get("x-ratelimit-resource", "")
-        valid = (actual_resource == resource and remaining.isdecimal() and limit.isdecimal()
-                 and 0 <= int(remaining) <= int(limit) <= 1000000
-                 and reset.isdecimal() and now < int(reset) <= now + 86400)
+        observed = _valid_observation(headers, resource, now)
         with self.transaction():
-            if valid:
-                row = self.db.execute(
-                    "SELECT remaining,reset,observed,blocked_until FROM quota "
-                    "WHERE scope=? AND resource=?", (self.scope, resource)
-                ).fetchone()
-                available, reset_at = int(remaining), int(reset)
-                blocked_until = 0.0
-                # A bound credential's newer window or a serialized reserve
-                # probe may repair stale evidence. Shared/ambiguous owners and
-                # same-window late replies retain conservative accounting.
-                # /rate_limit is never a grant.
-                recovered = probe_recovers(self, reservation, resource, row, reset_at)
-                if row and row[1] > now and not recovered:
-                    # Late responses and unresolved owners with different reset
-                    # epochs cannot restore quota observed to have been spent.
-                    # Keep the lower balance paired with its own reset epoch:
-                    # extending it to another credential's later (sliding)
-                    # reset would re-stamp stale debt indefinitely (GH#33701).
-                    if available >= row[0]:
-                        available, reset_at = row[0], int(row[1])
-                    blocked_until = row[3]
-                retry_after = headers.get("retry-after", "")
-                if retry_after.isdecimal():
-                    blocked_until = max(blocked_until, now + int(retry_after))
-                if available == 0:
-                    blocked_until = max(blocked_until, reset_at)
-                self.db.execute(
-                    "INSERT OR REPLACE INTO quota VALUES(?,?,?,?,?,?,?)",
-                    (self.scope, resource, available, reset_at, now, blocked_until, int(limit)),
-                )
-                # This response includes charges for completed unknown requests
-                # which ended before it started. Never clear concurrent work.
-                self.db.execute(
-                    "DELETE FROM reservation WHERE scope=? AND resource=? "
-                    "AND uncertain=1 AND credential=? AND started<?",
-                    (self.scope, resource, self.credential, started)
-                )
-                self.db.execute("DELETE FROM reservation WHERE id=?", (reservation,))
-            else:
+            if not observed:
                 # Uncertain execution may have spent a point. Keep its debt;
                 # it is covered only by a later authoritative observation.
                 self.db.execute(
                     "UPDATE reservation SET uncertain=1,started=? WHERE id=?",
                     (now, reservation),
                 )
-        if valid:
-            record_budget_transition(
-                self,
-                {"remaining": row[0], "reset": row[1]} if row else None,
-                {"remaining": int(remaining), "reset": int(reset)},
-                {"remaining": available, "reset": reset_at},
-                recovered, bool(row and started >= row[2]),
+                return
+            row = self.db.execute(
+                "SELECT remaining,reset,observed,blocked_until FROM quota "
+                "WHERE scope=? AND resource=?", (self.scope, resource)
+            ).fetchone()
+            available, reset_at, blocked_until, recovered = self._accepted_balance(
+                reservation, resource, row, observed[:2], headers, now)
+            self.db.execute(
+                "INSERT OR REPLACE INTO quota VALUES(?,?,?,?,?,?,?)",
+                (self.scope, resource, available, reset_at, now, blocked_until, observed[2]),
             )
+            # This response includes charges for completed unknown requests
+            # which ended before it started. Never clear concurrent work.
+            self.db.execute(
+                "DELETE FROM reservation WHERE scope=? AND resource=? "
+                "AND uncertain=1 AND credential=? AND started<?",
+                (self.scope, resource, self.credential, started)
+            )
+            self.db.execute("DELETE FROM reservation WHERE id=?", (reservation,))
+        record_budget_transition(
+            self,
+            {"remaining": row[0], "reset": row[1]} if row else None,
+            {"remaining": observed[0], "reset": observed[1]},
+            {"remaining": available, "reset": reset_at},
+            recovered, bool(row and started >= row[2]),
+        )
 
     def close(self) -> None:
         self.db.close()

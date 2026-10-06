@@ -143,6 +143,20 @@ child environment; credentials are never exported to a long-lived parent.
   single serialized source of fresh quota. It is idempotent and cannot be used
   repeatedly or with a different owner to discard attributed pacing evidence.
   Do not use it to combine credentials belonging to different GitHub users or installations.
+- Automatic owner attribution (GH#33725): without a configured owner, the first
+  governed read per PAT/OAuth credential resolves the authenticated login once
+  (`gh api user`) and caches only a one-way digest in `quota-owners.json` (mode
+  600, 5 minute retry after failure). The login is never stored or logged. Scope
+  keys do not change. When every credential bound to a scope has the same digest,
+  or a configured owner is set, a newer reset window with its balance replaces a
+  stale low pair at once. Unproven or different owners remain conservative and
+  never inherit each other's balance. `ghs_` installation tokens are never
+  attributed to a login.
+- Status adds `stale_multi_credential_scope` when more than one credential is bound
+  and a later reset was observed (numbers only, `live-windows.json`) than the
+  stored one. Resolution: owner proof accrues automatically; otherwise reconcile.
+- Rollout caveat: processes started from older runtime bundles keep the old
+  `finish()` and may re-stamp a stale reset until they restart.
 
 Mutations, streamed inputs, inherited file descriptors, anonymous requests,
 GraphQL, interactive terminals and unsupported CLI shapes retain native
