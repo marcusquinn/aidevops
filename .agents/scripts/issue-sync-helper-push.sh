@@ -297,7 +297,10 @@ _push_verify_publication_pending() {
 _push_warn_if_task_id_collides() {
 	local repo="$1" task_id="$2"
 	local collision_pr
-	collision_pr=$(gh_find_merged_pr "$repo" "$task_id")
+	# Planning PRs publish the task, not its implementation. Filter before
+	# selecting evidence so a planning PR cannot hide a real ID collision.
+	collision_pr=$(gh pr list --repo "$repo" --state merged --search "$task_id in:title" \
+		--limit 100 --json number,url,title --jq "[.[] | select(.title | test(\"^${task_id}: plan([[:space:]]|$)\") | not)][0] | if . == null then empty else \"\(.number)|\(.url)\" end" 2>/dev/null) || collision_pr=""
 	if [[ -n "$collision_pr" ]]; then
 		local collision_num="${collision_pr%%|*}"
 		local collision_url="${collision_pr#*|}"

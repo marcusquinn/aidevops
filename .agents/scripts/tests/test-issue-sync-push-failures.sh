@@ -38,6 +38,39 @@ _push_process_task() {
 TMPDIR_TEST=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
+# Exercise the production jq filter, including mixed planning/implementation
+# evidence so the planning exemption cannot suppress a real collision.
+MERGED_PRS='[]'
+gh() {
+	local group="$1" action="$2" filter=""
+	shift 2
+	[[ "$group $action" == "pr list" ]] || return 1
+	while [[ $# -gt 0 ]]; do
+		if [[ "$1" == "--jq" ]]; then
+			filter="$2"
+			break
+		fi
+		shift
+	done
+	printf '%s\n' "$MERGED_PRS" | jq -r "$filter"
+	return 0
+}
+MERGED_PRS='[{"number":10,"url":"https://github.com/example/repo/pull/10","title":"t999: plan saved task"}]'
+collision_output=$(_push_warn_if_task_id_collides example/repo t999 2>&1)
+[[ -z "$collision_output" ]] || fail "planning-only PR triggered collision warning"
+pass "task's own planning PR does not trigger collision warning"
+
+MERGED_PRS='[{"number":11,"url":"https://github.com/example/repo/pull/11","title":"t999: fix implementation"}]'
+collision_output=$(_push_warn_if_task_id_collides example/repo t999 2>&1)
+[[ "$collision_output" == *"TASK ID COLLISION: t999 already used by merged PR #11"* ]] || fail "implementation PR lost collision warning"
+pass "merged implementation PR still triggers collision warning"
+
+MERGED_PRS='[{"number":10,"url":"https://github.com/example/repo/pull/10","title":"t999: plan saved task"},{"number":11,"url":"https://github.com/example/repo/pull/11","title":"t999: fix implementation"}]'
+collision_output=$(_push_warn_if_task_id_collides example/repo t999 2>&1)
+[[ "$collision_output" == *"merged PR #11"* ]] || fail "planning PR hid implementation collision"
+pass "planning PR cannot hide a merged implementation collision"
+unset -f gh
+
 GITHUB_ACTIONS=true
 FORCE_PUSH=false
 if cmd_push "" >"$TMPDIR_TEST/push.out" 2>"$TMPDIR_TEST/push.err"; then
