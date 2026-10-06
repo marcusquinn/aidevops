@@ -1233,6 +1233,11 @@ _classify_runtime_dispatch_blocker_reason() {
 			printf 'terminal_blocker_backoff\n'
 			return 0
 			;;
+		*runner_capability_unmet*)
+			# GH#33743: runner-local capability deferral, retried after cooldown.
+			printf 'runner_capability_unmet\n'
+			return 0
+			;;
 		*dispatch_block_reason*ever_nmr_without_approval* | *blocked*ever*nmr*lacks*approval* | *requires*cryptographic*approval*)
 			printf 'ever_nmr_without_approval\n'
 			return 0

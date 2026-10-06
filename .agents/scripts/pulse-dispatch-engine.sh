@@ -464,6 +464,12 @@ build_ranked_dispatch_candidates_json() {
 		if [[ "$repo_priority" == product && "$(<"$completeness_file")" != 1 ]]; then
 			product_complete=false
 		fi
+		# GH#33743: drop unchanged runner_capability_unmet candidates before
+		# the first-wave "first nonempty repository" decision below.
+		if declare -F _dispatch_filter_capability_cooled_candidates >/dev/null 2>&1 &&
+			[[ -n "$repo_candidates_json" && "$repo_candidates_json" != "[]" ]]; then
+			repo_candidates_json=$(_dispatch_filter_capability_cooled_candidates "$repo_slug" "$repo_path" "$repo_candidates_json")
+		fi
 		if [[ -z "$repo_candidates_json" || "$repo_candidates_json" == "[]" ]]; then
 			continue
 		fi

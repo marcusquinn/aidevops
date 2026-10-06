@@ -363,7 +363,7 @@ _dispatch_cache_confirmed_block() {
 
 _dispatch_record_and_cache_block() {
 	local candidate="$1" issue="$2" repo="$3" rc="$4"
-	_dispatch_record_nonzero_dispatch_result "$issue" "$repo" "$rc"
+	_dispatch_record_nonzero_dispatch_result "$issue" "$repo" "$rc" "$candidate"
 	_dispatch_cache_confirmed_block "$candidate" "$issue" "$repo"
 	return 0
 }
@@ -539,6 +539,8 @@ _dispatch_process_candidate() {
 		return 1
 	fi
 	_dispatch_prefilter_owned_candidate "$candidate_json" "$issue_number" "$repo_slug" && return 1
+	# GH#33743: unchanged runner_capability_unmet candidates from a pre-record snapshot.
+	_dispatch_skip_for_capability_cooldown "$candidate_json" "$issue_number" "$repo_slug" "$repo_path" && return 1
 
 	pulse_dispatch_debug_log "processing #${issue_number} (${repo_slug}) labels=[${labels_csv}]"
 
