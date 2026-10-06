@@ -30,6 +30,34 @@ assert_equal() {
 	return 0
 }
 
+# Replace only process telemetry; production UID de-duplication stays intact.
+MOCK_PROCESSES='' ps_missing=0
+id() {
+	local flag="$1"
+	[[ "$flag" == '-u' ]] || return 1
+	printf '1001\n'
+	return 0
+}
+ps() {
+	local flag="$1" fields="$2"
+	[[ "$ps_missing" == 0 ]] || return 1
+	if [[ "$flag" == '-C' ]]; then
+		[[ "$fields" == *'pulse-wrapper.s'* && "${3:-}" == '-o' && "${4:-}" == 'uid=,stat=,args=' ]] || return 1
+	else
+		[[ "$flag" == '-axo' && "$fields" == 'uid=,stat=,args=' ]] || return 1
+	fi
+	printf '%s\n' "$MOCK_PROCESSES"
+	return 0
+}
+assert_equal "$(_pulse_colocated_runner_count)" 1 'current user counts without visible wrapper'
+MOCK_PROCESSES=$'1001 S /bin/bash /opt/pulse-wrapper.sh\n1001 S bash /opt/headless-runtime-helper.sh run\n1002 S bash -e /opt/pulse-wrapper.sh\n1002 S /opt/headless-runtime-helper.sh run\n1003 Z bash /opt/pulse-wrapper.sh\n1004 S bash /opt/not-pulse-wrapper.sh\n1005 S rg pulse-wrapper.sh\n1006 S bash other.sh /opt/pulse-wrapper.sh'
+assert_equal "$(_pulse_colocated_runner_count)" 2 'distinct runner users ignore duplicates zombies and unrelated scripts'
+MOCK_PROCESSES=$'1002 S /bin/bash /opt/headless-runtime-helper.sh run'
+assert_equal "$(_pulse_colocated_runner_count)" 2 'another user worker counts between its Pulse cycles'
+ps_missing=1
+assert_equal "$(_pulse_colocated_runner_count)" 1 'unavailable process telemetry falls back to current user'
+ps_missing=0 MOCK_PROCESSES=''
+
 # Stub OS telemetry, not the CPU-pressure implementation.
 os=Darwin MOCK_LOAD=41.2 MOCK_CORES=16 memory_mb=131072 logicalcpu_missing=0 telemetry_missing=0
 uname() {
@@ -196,6 +224,30 @@ assert_equal "$(pulse_apply_provider_load_capacity_cap 20 0 6)" '6 1' 'open_idle
 MOCK_IDLE=5
 MOCK_LOAD=8.0
 assert_equal "$(_dispatch_compute_capacity)" '20 7 13' 'admission resumes with headroom'
+
+# GH#33770: share the auto ceiling, never divide an already-shared cached target.
+MAX_WORKERS_CAP=12 MAX_WORKERS_CAP_AUTO=1
+calculate_max_workers
+assert_equal "$(get_max_workers_target)" 12 'solo automatic ceiling unchanged'
+MOCK_PROCESSES=$'1001 S bash /opt/pulse-wrapper.sh\n1002 S bash /opt/headless-runtime-helper.sh run'
+for os in Darwin Linux; do
+	calculate_max_workers
+	assert_equal "$(get_max_workers_target)" 6 "$os two users split automatic ceiling"
+	assert_equal "$(pulse_apply_provider_load_capacity_cap 6 0 6)" '6 1' "$os refill does not divide shared target again"
+done
+[[ "$(<"$LOGFILE")" == *'colocated_runners=2 shared_host_worker_cap=6 worker_cap_auto=1'* ]]
+assert_equal "$(pulse_apply_provider_load_capacity_cap 12 7 6)" '6 0' 'refill caps stale target without terminating existing workers'
+MAX_WORKERS_CAP=4
+assert_equal "$(pulse_apply_provider_load_capacity_cap 4 0 6)" '2 0' 'minimum floor cannot undo host sharing'
+MAX_WORKERS_CAP=2
+MOCK_PROCESSES+=$'\n1003 S bash /opt/pulse-wrapper.sh'
+calculate_max_workers
+assert_equal "$(get_max_workers_target)" 1 'many users retain at least one slot'
+MAX_WORKERS_CAP=12 MAX_WORKERS_CAP_AUTO=0
+calculate_max_workers
+assert_equal "$(get_max_workers_target)" 12 'explicit per-runner ceiling is not divided'
+assert_equal "$(pulse_apply_provider_load_capacity_cap 12 0 6)" '12 1' 'refill preserves explicit per-runner ceiling'
+MOCK_PROCESSES='' MAX_WORKERS_CAP=20
 printf '0\n' >"${HOME}/.aidevops/logs/pulse-max-workers"
 active=0
 assert_equal "$(_dispatch_compute_capacity)" '0 0 0' 'closed preflight file is not reopened by floor'

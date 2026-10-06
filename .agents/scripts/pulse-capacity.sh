@@ -281,15 +281,24 @@ _pulse_cpu_core_count() {
 # One process-table snapshot, no shared writable registry or per-worker probing.
 _pulse_colocated_runner_count() {
 	local current_uid="" count=""
+	local ps_args=(-axo 'uid=,stat=,args=')
+	if [[ -r /proc/self/stat ]]; then
+		# GNU ps can select shell/script comm names before fetching expensive
+		# command lines for thousands of unrelated host processes. Include Linux
+		# TASK_COMM_LEN-truncated shebang names as well as shell interpreters.
+		ps_args=(-C 'bash,sh,zsh,ksh,dash,pulse-wrapper.sh,pulse-wrapper.s,headless-runtime-helper.sh,headless-runtim' -o 'uid=,stat=,args=')
+	fi
 	current_uid=$(id -u) || current_uid="self"
-	count=$(LC_ALL=C ps -axo uid=,stat=,args= 2>/dev/null | LC_ALL=C awk -v self="$current_uid" '
+	count=$(LC_ALL=C ps "${ps_args[@]}" 2>/dev/null | LC_ALL=C awk -v self="$current_uid" '
 		BEGIN { users[self] = 1; uid_column = 1; stat_column = 2 }
 		$(stat_column) !~ /^Z/ {
-			for (i = 3; i <= NF; i++) {
-				if ($i ~ /(^|\/)(pulse-wrapper|headless-runtime-helper)[.]sh$/) {
-					users[$(uid_column)] = 1
-					break
-				}
+			script = 3
+			if ($script ~ /(^|\/)(ba|da|z|k)?sh$/) {
+				script++
+				while (script <= NF && $script ~ /^-/) script++
+			}
+			if ($script ~ /(^|\/)(pulse-wrapper|headless-runtime-helper)[.]sh$/) {
+				users[$(uid_column)] = 1
 			}
 		}
 		END { for (user in users) count++; print count }
@@ -530,10 +539,8 @@ pulse_apply_provider_load_capacity_cap() {
 	_pulse_capacity_emit_gauges "$account_available" "$failures" "$final_max"
 	local health_window_seconds="${PULSE_DISPATCH_CAPACITY_HEALTH_WINDOW_SECONDS:-900}"
 	[[ "$health_window_seconds" =~ ^[0-9]+$ ]] || health_window_seconds=900
-	printf '[pulse-wrapper] Dispatch_capacity: colocated_runners=%s shared_host_worker_cap=%s worker_cap_auto=%s\n' \
-		"$colocated_runners" "$host_worker_cap" "${MAX_WORKERS_CAP_AUTO:-0}" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
-	printf '[pulse-wrapper] Dispatch_capacity: capacity_unit=simultaneous_workers simultaneous_target_raw=%s simultaneous_target_final=%s active_workers=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s worker_terminal_failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s worker_progress_heartbeats=%s failure_observation_window_seconds=%s task_duration_limit=none min_floor=%s floor_allowed=%s floor_active=%s auth_error_only_cycles=%s\n' \
-		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_multiplier" "$account_multiplier_source" "$account_limited" "$account_auth_errors" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$health_window_seconds" "$min_worker_floor" "$floor_allowed" "$floor_active" "$auth_error_only_cycles" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	printf '[pulse-wrapper] Dispatch_capacity: capacity_unit=simultaneous_workers simultaneous_target_raw=%s simultaneous_target_final=%s active_workers=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s worker_terminal_failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s worker_progress_heartbeats=%s failure_observation_window_seconds=%s task_duration_limit=none min_floor=%s floor_allowed=%s floor_active=%s auth_error_only_cycles=%s colocated_runners=%s shared_host_worker_cap=%s worker_cap_auto=%s\n' \
+		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_multiplier" "$account_multiplier_source" "$account_limited" "$account_auth_errors" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$health_window_seconds" "$min_worker_floor" "$floor_allowed" "$floor_active" "$auth_error_only_cycles" "$colocated_runners" "$host_worker_cap" "${MAX_WORKERS_CAP_AUTO:-0}" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 	printf '%s %s\n' "$final_max" "$floor_active"
 	return 0
 }

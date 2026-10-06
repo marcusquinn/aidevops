@@ -107,11 +107,44 @@ Supervisor, dispatch, and autonomous operation settings.
 |-----|------|---------|-------------|-------------|
 | `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
 | `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos in `repos.json`. |
-| `orchestration.max_workers_cap` | integer | RAM-derived, capped at `64` | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. |
+| `orchestration.max_workers_cap` | integer | `0` (auto: half logical cores, RAM-bounded, clamped to 2–64 before host sharing) | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. Auto divides this ceiling among detected co-located runner users (minimum 1 per user); a positive explicit cap is a per-runner override and is not divided. |
 | `orchestration.max_load_per_core` | positive number | `4.0` | `AIDEVOPS_MAX_LOAD_PER_CORE` | Close new-worker admission above this one-minute load/logical-core ratio, including refill and minimum-worker floor. Existing workers continue. Load/core `1.0` is 100% CPU busy; the default allows full use and closes only on severe run-queue thrash. Lower it to keep CPU headroom. Invalid values fall back to `4.0`; unavailable telemetry leaves RAM/provider limits in force (`cpu_gate=unknown`). |
 | `orchestration.cpu_idle_admit_percent` | integer 0-100 | `25` | `AIDEVOPS_CPU_IDLE_ADMIT_PERCENT` | Above `max_load_per_core`, keep admission open while measured CPU idle is at least this percent (`cpu_gate=open_idle`), admitting at most `cores × idle%` new workers per pass. Load average also counts threads blocked on I/O, so it can exceed the threshold while cores are idle. Linux measures idle without iowait, so I/O-bound hosts stay closed. `0` disables the override. |
 | `orchestration.min_worker_concurrency` | integer | `6` | `AIDEVOPS_MIN_WORKER_CONCURRENCY` | Minimum active implementation-worker floor while provider/account health and host load permit. Set to `0` to disable. |
 | `orchestration.provider_account_slot_multiplier` | integer | `24` | `PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER` | Worker slots allowed per available provider OAuth account. One healthy OpenAI/Anthropic account can use the configured max worker cap by default; lower this if the provider plan/account cannot sustain that concurrency. RAM, load, recent failures/rate limits/service interruptions/provider 5xx, auth errors, and explicit overrides still reduce capacity. |
+
+#### Shared-host runners
+
+Pulse counts distinct OS user IDs with live `pulse-wrapper.sh` or
+`headless-runtime-helper.sh` processes using one portable process-table snapshot.
+Multiple workers or Pulses under the same user count once; zombie processes do
+not count. The current user always counts, including when no wrapper is visible.
+On a 24-core host whose solo automatic ceiling is 12, two active runner users
+receive a ceiling of 6 each. Preflight and refill both apply it, and the minimum
+worker floor cannot raise capacity above the shared-host ceiling. Running workers
+are not terminated when another runner appears. Dispatch logs include
+`colocated_runners`, `shared_host_worker_cap`, and `worker_cap_auto` alongside
+the raw/final simultaneous worker targets.
+
+An explicit positive `orchestration.max_workers_cap` (or `MAX_WORKERS_CAP` for
+the wrapper) is already a per-runner budget and opts out of automatic division.
+Set it for each user when unequal budgets are desired. Process visibility must
+include the other users: containers, PID namespaces, or restricted `/proc`
+visibility can hide co-location; use explicit per-user caps in that case.
+Detection is a live snapshot, not a host-wide launch reservation, so simultaneous
+runner startup can briefly precede discovery by the next preflight/refill.
+
+Settings live in `~/.config/aidevops/config.jsonc`, **not** `settings.json`.
+Use the CLI under each runner user, for example:
+
+```bash
+aidevops config set orchestration.max_workers_cap 0  # automatic shared-host sizing
+aidevops config set orchestration.max_load_per_core 2  # optional extra CPU headroom
+```
+
+The load gate still defaults to `4.0`, and GH#33754's idle-core corroboration
+still applies. Shared-host sizing does not change the single-runner full-CPU
+policy or turn a closed CPU gate back on.
 
 ### safety
 
