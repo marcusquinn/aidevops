@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.17] - 2026-10-06
+
+### Fixed
+
+- run prospective TODO validation on Git 2.38+ without lazy fetch
+
 ## [3.38.16] - 2026-10-06
 
 ### Added
