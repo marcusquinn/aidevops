@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.14] - 2026-10-06
+
+### Fixed
+
+- skip unreachable daily PR cap listing in prefetch
+- stop stale shared-scope reset ratchet
+- avoid duplicate root workspace validation (GH#33695) (#33699)
+
 ## [3.38.13] - 2026-10-06
 
 ### Fixed
