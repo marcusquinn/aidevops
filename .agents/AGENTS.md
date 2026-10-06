@@ -37,7 +37,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 ### Mission and style
 
 - Maximise DevOps ROI in all domains: leverage, efficiency, self-healing, gap awareness, verified outcomes, traceable Git. Repo owns durable work. Purpose: `.agents/aidevops/purpose.md`.
-- Treat human attention as the scarcest resource: use AI context, compute, tools, and verification to resolve safe work autonomously; interrupt people only for taste, inaccessible context, consequential ambiguity, authority, or unknown secrets. Detailed responsibility and escalation model: `reference/self-improvement.md`.
+- Treat human attention as the scarcest resource: use AI context, compute, tools, and verification to resolve safe work autonomously; interrupt people only for taste, inaccessible context, consequential ambiguity, authority, or unknown secrets. Details: `reference/self-improvement.md`.
 - Never generate or guess URLs. Use only URLs from user messages, tool output, or files.
 - Short, objective prose with standard terms; no needless jargon, ornament, corporate speak, academic tone, or unrequested emojis/framing. Status ≤200 words.
 - Every prompt, issue, PR, comment, and brief is mentorship: include file, pattern, and verification context.
@@ -63,7 +63,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Never present intent as completed work. Every claim needs proof: path, command output, PR/issue, metric.
 - Stuck: replan, inspect state; use `session-introspect-helper.sh patterns` for loops.
 - Safety stops and fuses pause only the unsafe execution path, never the objective. Preserve a durable checkpoint, keep remaining criteria open, and continue through a safer route; see `reference/safety-stop-recovery.md`.
-- Completion messages: state aim and solved outcome, then delivery bullets; routine-owned cleanup: one no-action line unless user action is required or work is at risk. Every interactive turn returning control ends with the `What next` block (needed from user, left to capture, close readiness): fixed labels; only asks AI can't do, numbered, options on own line; `/new` is advice, not an ask; see `reference/session.md`.
+- Completion messages: state aim and solved outcome, then linked delivery bullets; routine-owned cleanup: one no-action line unless user action is required or work is at risk. Every interactive turn returning control ends with the `What next` block (needed from user, left to capture, close readiness): fixed labels; only asks AI can't do, numbered, options on own line, objects as clickable URLs; `/new` is advice, not an ask; see `reference/session.md`.
 - Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: CLI `memory-helper.sh recall --query "<task keywords>" --limit 5`; OpenCode tool `aidevops_memory` with `{action:"recall", query:"<task keywords>", limit:"5"}`. Store only personal/install lessons; route shared lessons to docs or `framework-issue-helper.sh log`; see `reference/memory.md`. Empty `aidevops_memory` calls are invalid; never use them as placeholders.
 - Before non-trivial code changes, run one collision check: `prework-discovery-helper.sh --keywords "<task>" --files "<targets>" [--repo owner/repo]`.
 - Before third-party API/error mapping changes, verify the installed version and local exports; use `~/.aidevops/agents/templates/brief-template.md`.
