@@ -48,9 +48,24 @@ _PCC_JQ_RELEASE_DEFS='
 	def body_lines: (.body // "") | split("\n")[];
 	def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
 	def is_release: startswith("CLAIM_RELEASED ");
-	def coordination: any(body_lines; startswith("DISPATCH_CLAIM ") or
+	def coordination_line: startswith("DISPATCH_CLAIM ") or
 		startswith("DISPATCH_LEASE ") or is_release or
-		startswith("Dispatching worker") or startswith("Interactive session claimed"));
+		startswith("Dispatching worker") or startswith("Interactive session claimed");
+	def coordination: any(body_lines; coordination_line);
+	def is_terminal_lease: startswith("DISPATCH_LEASE ") and field("phase") == "terminal";
+	# GH#33839: a released attempt closes its own lease with a terminal
+	# DISPATCH_LEASE shortly after CLAIM_RELEASED. A terminal lease whose token
+	# the same login used in an earlier non-terminal lease ends that attempt;
+	# it is not new ownership. Every other coordination event still counts.
+	def closes_earlier_lease($c):
+		. as $cm
+		| [body_lines | select(coordination_line)] as $lines
+		| ($lines | length) > 0 and all($lines[];
+			is_terminal_lease and (field("lease_token") as $t | $t != "" and
+				any($c[]; .id < $cm.id and login == ($cm | login) and
+					any(body_lines; startswith("DISPATCH_LEASE ") and
+						field("phase") != "terminal" and field("lease_token") == $t))));
+	def ownership($c): coordination and (closes_earlier_lease($c) | not);
 '
 
 _prrts_checkpoint_lease() {
@@ -528,7 +543,8 @@ _pcc_approval_template() {
 # Find the blocked release that owns an open worker draft (GH#33132).
 # The newest trusted CLAIM_RELEASED must be reason=blocked, posted by the PR
 # author, with no later coordination event (claim, lease, dispatch, release or
-# interactive claim) that would mean someone already owns the objective.
+# interactive claim) that would mean someone already owns the objective. The
+# released attempt's own closing terminal lease is not ownership (GH#33839).
 # Args: $1=comments JSON (paginated or flat), $2=runner login, $3=dedup key
 # Output: release_id<TAB>attempt<TAB>already_posted(true|false)
 # Returns: 0 when a blocked checkpoint release owns the draft, 1 otherwise
@@ -543,7 +559,7 @@ _pcc_blocked_release_evidence() {
 		| ([$release | body_lines | select(is_release)] | first) as $line
 		| select(($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner and
 			($release | login) == $runner)
-		| select([$c[] | select(.id > $release.id and coordination)] | length == 0)
+		| select([$c[] | select(.id > $release.id and ownership($c))] | length == 0)
 		| ([$c[] | select(.id < $release.id and login == $runner) | body_lines
 			| select(startswith("DISPATCH_LEASE ") and (field("phase") == "ready"))
 			| field("attempt_id") | select(startswith("attempt:"))] | last // "") as $attempt
@@ -620,7 +636,8 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 # Find the stall/timeout release that left an open worker draft (GH#33654).
 # The newest trusted coordination event (claim, lease, dispatch, release or
 # interactive claim) must be a CLAIM_RELEASED whose reason matches
-# _PCC_STALL_RELEASE_PATTERN. Watchdog releases name the local user as runner,
+# _PCC_STALL_RELEASE_PATTERN; the released attempt's own closing terminal
+# lease is ignored (GH#33839). Watchdog releases name the local user as runner,
 # so the poster is not bound to the PR author; trust comes from association.
 # The count of stall releases newer than the head commit bounds retries: the
 # original stall is 1; a continuation that stalled without pushing makes it 2.
@@ -638,7 +655,7 @@ _pcc_stall_release_evidence() {
 		($head_date | epoch) as $head_epoch
 		| [flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
 		| sort_by(.id) as $c
-		| ([$c[] | select(coordination)] | last) as $release
+		| ([$c[] | select(ownership($c))] | last) as $release
 		| select($release != null and ($release | stall_release))
 		| [$c[] | select(stall_release and ((.created_at // "") | (try epoch catch 0)) > $head_epoch)] as $stalls
 		| [($release.id | tostring), ($release | release_reason), ($stalls | length | tostring),

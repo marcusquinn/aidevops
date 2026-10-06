@@ -13,7 +13,8 @@ import hashlib
 import json
 import sys
 
-from pr_checkpoint_events import release_for, successors_valid, timestamp, trusted
+from pr_checkpoint_events import (release_for, released_attempt_token, successors_valid,
+                                  timestamp, trusted)
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -48,7 +49,11 @@ def candidate(data, comments, comment, now):
     if approval is None:
         return None
     release = release_for(comments, approval, comment)
-    if release is None or not successors_valid(data, comments, release["id"], comment["id"], now):
+    if release is None:
+        return None
+    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    if not successors_valid({**data, "released_lease": closing}, comments, release["id"],
+                            comment["id"], now):
         return None
     owners = [a["login"] for a in data["issue"].get("assignees", [])]
     allowed_owners = [[data["assignee"]]]

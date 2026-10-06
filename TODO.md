@@ -1567,6 +1567,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18601 Human-only asks give numbered steps with direct links and navigation paths #feat ref:GH#33834
 
+- [ ] t18602 fix(pulse): released attempt's own terminal lease blocks worker draft checkpoint recovery (blocked attention, stall continuation, approval) #bug tier:standard ref:GH#33839
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
