@@ -771,6 +771,7 @@ _storage_inventory_records() {
 	local home_label="~"
 	local framework_owner="$STORAGE_OWNER_FRAMEWORK"
 	local active_class="active"
+	local archive_class="archive"
 	local active_writer_reason="active concurrent writer"
 	local protected_disposition="$STORAGE_DISPOSITION_PROTECTED"
 	local pulse_producer="$STORAGE_PRODUCER_PULSE"
@@ -782,7 +783,11 @@ _storage_inventory_records() {
 	_storage_emit_record "pulse-hot-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse.log" "${HOME:+$HOME/.aidevops/logs/pulse.log}" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
 	_storage_emit_record "pulse-wrapper-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-wrapper.log" "${HOME:+$HOME/.aidevops/logs/pulse-wrapper.log}" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
 	_storage_emit_record "pulse-stage-timings" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-stage-timings.log" "${HOME:+$HOME/.aidevops/logs/pulse-stage-timings.log}" "$framework_owner" "$active_class" "1 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
-	_storage_emit_record "pulse-log-archive" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-archive" "${HOME:+$HOME/.aidevops/logs/pulse-archive}" "$framework_owner" "archive" "1 GiB combined cold archive cap; oldest archives first" "$protected_disposition" "archive already converged by producer" "Use pulse-owned rotate_pulse_log for archive pruning"
+	_storage_emit_record "pulse-log-archive" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-archive" "${HOME:+$HOME/.aidevops/logs/pulse-archive}" "$framework_owner" "$archive_class" "1 GiB combined cold archive cap; oldest archives first" "$protected_disposition" "archive already converged by producer" "Use pulse-owned rotate_pulse_log for archive pruning"
+	_storage_emit_record "headless-runtime-metrics" "$pulse_producer" "${home_label}/.aidevops/logs/headless-runtime-metrics.jsonl" "${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME:+$HOME/.aidevops/logs/headless-runtime-metrics.jsonl}}" "$framework_owner" "$active_class" "25 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "resource-metrics" "$pulse_producer" "${home_label}/.aidevops/logs/resource-metrics.jsonl" "${AIDEVOPS_RESOURCE_METRICS_FILE:-${HOME:+$HOME/.aidevops/logs/resource-metrics.jsonl}}" "$framework_owner" "$active_class" "25 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "pulse-cycle-index" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-cycle-index.jsonl" "${PULSE_CYCLE_INDEX_FILE:-${HOME:+$HOME/.aidevops/logs/pulse-cycle-index.jsonl}}" "$framework_owner" "$active_class" "10,000-line hot cap plus 500-line hysteresis; pruned head archived" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "metrics-archive" "$pulse_producer" "${home_label}/.aidevops/logs/metrics-archive" "${PULSE_METRICS_ARCHIVE_DIR:-${HOME:+$HOME/.aidevops/logs/metrics-archive}}" "$framework_owner" "$archive_class" "500 MiB combined cap; oldest archives first by timestamp" "$protected_disposition" "archive already converged by producer" "Use pulse-owned rotate_pulse_log for archive pruning"
 	_storage_opencode_records
 	_storage_npm_cache_record
 	return 0

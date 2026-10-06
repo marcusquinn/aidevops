@@ -469,12 +469,15 @@ DEP_GRAPH_CACHE_TTL_SECS="${DEP_GRAPH_CACHE_TTL_SECS:-300}"                     
 #   per cycle with timestamp, duration, dispatch/merge/kill counters, and
 #   worker utilisation. Enables fast cycle-level analytics without parsing
 #   the full log. Capped at PULSE_CYCLE_INDEX_MAX_LINES lines; oldest lines
-#   are pruned when the cap is exceeded.
+#   are archived before pruning, with 500 lines of hysteresis.
 PULSE_LOG_HOT_MAX_BYTES="${PULSE_LOG_HOT_MAX_BYTES:-52428800}"     # 50 MB hot log cap
 PULSE_LOG_COLD_MAX_BYTES="${PULSE_LOG_COLD_MAX_BYTES:-1073741824}" # 1 GB cold archive cap
 PULSE_LOG_ARCHIVE_DIR="${PULSE_LOG_ARCHIVE_DIR:-${HOME}/.aidevops/logs/pulse-archive}"
 PULSE_CYCLE_INDEX_FILE="${PULSE_CYCLE_INDEX_FILE:-${HOME}/.aidevops/logs/pulse-cycle-index.jsonl}"
 PULSE_CYCLE_INDEX_MAX_LINES="${PULSE_CYCLE_INDEX_MAX_LINES:-10000}" # ~10k cycles ≈ ~14 days at 2-min intervals
+PULSE_METRICS_ARCHIVE_DIR="${PULSE_METRICS_ARCHIVE_DIR:-${HOME}/.aidevops/logs/metrics-archive}"
+PULSE_METRICS_HOT_MAX_BYTES="${PULSE_METRICS_HOT_MAX_BYTES:-26214400}"   # 25 MiB per ledger
+PULSE_METRICS_COLD_MAX_BYTES="${PULSE_METRICS_COLD_MAX_BYTES:-524288000}" # 500 MiB combined
 
 # Per-cycle health counters — incremented by merge/cleanup/dispatch functions
 # and flushed to PULSE_HEALTH_FILE by write_pulse_health_file() at cycle end.
