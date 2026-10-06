@@ -6,11 +6,25 @@
 from __future__ import annotations
 
 from typing import Any
+import subprocess
 
 from command_policy_network import _add_destination, _normalize_host
 
 
-def _analyze_ssh(argv: list[str], result: dict[str, Any]) -> None:
+def _analyze_ssh(argv: list[str], result: dict[str, Any], cwd: str = ".") -> None:
+    # A config-disabled alias command is accepted only with its exact owner grant.
+    # No unsigned HostName option can convert an unclassified alias into a host.
+    if "-F" in argv and "HostName=" in " ".join(argv):
+        from ssh_binding_helper import authorized_binding
+
+        try:
+            binding = authorized_binding(argv, cwd)
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+            result["unclassified"].append("ssh-binding-authorization-required")
+        else:
+            _add_destination(result, binding["endpoint"], "ssh-owner-binding",
+                             {"port": binding["port"], "via": binding["alias"]})
+        return
     value_options = set(
         "-b -c -D -E -e -F -I -i -L -l -m -O -o -p -Q -R -S -W -w -J".split()
     )
