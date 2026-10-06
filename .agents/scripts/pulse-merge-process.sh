@@ -706,6 +706,35 @@ _pmp_prepare_enriched_pr_backlog_timed() {
 	return "$enrichment_rc"
 }
 
+# Set the caller's dynamically scoped deadline, preserving an earlier bound.
+_pmp_apply_merge_api_deadline() {
+	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]]; then
+		if [[ ! "${AIDEVOPS_GH_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] ||
+			[[ "$_PMP_MERGE_PASS_DEADLINE_EPOCH" -lt "$AIDEVOPS_GH_DEADLINE_EPOCH" ]]; then
+			AIDEVOPS_GH_DEADLINE_EPOCH="$_PMP_MERGE_PASS_DEADLINE_EPOCH"
+		fi
+	fi
+	export AIDEVOPS_GH_DEADLINE_EPOCH
+	return 0
+}
+
+# All safety gates remain in the evaluator. Bound raw API calls and sleeps too;
+# status 124 leaves the caller responsible for retaining the current PR cursor.
+_pmp_evaluate_pr_with_deadline() {
+	local repo_slug="$1" pr_obj="$2" timing_prefix="$3"
+	local result=0 remaining=0
+	_pmu_should_skip_pr "$repo_slug" "$pr_obj" && return 4
+	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]] && declare -F _gh_run_bounded_function >/dev/null 2>&1; then
+		remaining=$((AIDEVOPS_GH_DEADLINE_EPOCH - $(_pmp_now_epoch)))
+		[[ "$remaining" -gt 0 ]] || return 124
+		_gh_run_bounded_function "$remaining" _process_single_ready_pr "$repo_slug" "$pr_obj" "$timing_prefix" || result=$?
+	else
+		_process_single_ready_pr "$repo_slug" "$pr_obj" "$timing_prefix" || result=$?
+	fi
+	[[ "$result" -eq 124 ]] || _pmu_record_pr_evaluation "$repo_slug" "$pr_obj" "$result"
+	return "$result"
+}
+
 #######################################
 # Merge ready PRs for a single repo.
 #
@@ -735,13 +764,7 @@ _merge_ready_prs_for_repo() {
 	# Propagate the graceful deadline into every nested bounded GitHub read
 	# and write, including the multi-call per-PR safety/eligibility evaluator.
 	local AIDEVOPS_GH_DEADLINE_EPOCH="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
-	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]]; then
-		if [[ ! "$AIDEVOPS_GH_DEADLINE_EPOCH" =~ ^[0-9]+$ ]] ||
-			[[ "$_PMP_MERGE_PASS_DEADLINE_EPOCH" -lt "$AIDEVOPS_GH_DEADLINE_EPOCH" ]]; then
-			AIDEVOPS_GH_DEADLINE_EPOCH="$_PMP_MERGE_PASS_DEADLINE_EPOCH"
-		fi
-	fi
-	export AIDEVOPS_GH_DEADLINE_EPOCH
+	_pmp_apply_merge_api_deadline
 	local pr_json="" pr_merge_err="" _list_start="" pr_count="" pr_list_timeout="" pr_list_rc=0
 	local pr_list_complete=1 outcomes_complete=1
 	_list_start=$(_pmp_now_epoch)
@@ -814,26 +837,11 @@ _merge_ready_prs_for_repo() {
 		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
 		[[ -n "$pr_obj" ]] || continue
 
-		local _pr_rc=4 _pr_remaining=0
-		if ! _pmu_should_skip_pr "$repo_slug" "$pr_obj"; then
-			_pr_rc=0
-			if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]] && declare -F _gh_run_bounded_function >/dev/null 2>&1; then
-				_pr_remaining=$((AIDEVOPS_GH_DEADLINE_EPOCH - $(_pmp_now_epoch)))
-				if [[ "$_pr_remaining" -gt 0 ]]; then
-					# Bound raw API calls and sleeps too. Durable queue leases and
-					# progress receipts survive a timeout; never advance its cursor.
-					_gh_run_bounded_function "$_pr_remaining" _process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
-				else
-					_pr_rc=124
-				fi
-			else
-				_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
-			fi
-			if [[ "$_pr_rc" -eq 124 ]]; then
-				_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" budget "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
-				return $?
-			fi
-			_pmu_record_pr_evaluation "$repo_slug" "$pr_obj" "$_pr_rc"
+		local _pr_rc=0
+		_pmp_evaluate_pr_with_deadline "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
+		if [[ "$_pr_rc" -eq 124 ]]; then
+			_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" budget "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+			return $?
 		fi
 		i=$((i + 1))
 		_cursor_next_pr=$(_pmp_pr_number_at_index "$pr_json" "$i") || _cursor_next_pr=""
