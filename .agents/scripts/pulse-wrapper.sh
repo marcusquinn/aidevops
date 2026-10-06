@@ -1501,7 +1501,9 @@ main() {
 	# Register EXIT trap BEFORE acquiring the lock so the lock is always
 	# released on exit — including set -e aborts, SIGTERM, and return paths.
 	# SIGKILL cannot be trapped; stale-lock detection handles that case.
-	trap '_dispatch_cleanup_benign_blocks_cycle; _dispatch_cleanup_cycle_cache; _pulse_release_llm_lock; _pulse_cycle_state_finish_interrupted; _pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
+	# GH#33739: _pulse_cycle_index_record_once runs after the interrupted
+	# finaliser so killed/aborted cycles still append one partial index record.
+	trap '_dispatch_cleanup_benign_blocks_cycle; _dispatch_cleanup_cycle_cache; _pulse_release_llm_lock; _pulse_cycle_state_finish_interrupted; _pulse_cycle_index_record_once; _pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
 
 	if ! acquire_instance_lock; then
 		return 0
@@ -1546,6 +1548,7 @@ main() {
 		push_cleanup 'aidevops_runtime_bundle_lease_release'
 		push_cleanup 'release_instance_lock'
 		push_cleanup '_pulse_efficiency_cycle_finish'
+		push_cleanup '_pulse_cycle_index_record_once'
 		push_cleanup '_pulse_cycle_state_finish_interrupted'
 		push_cleanup '_pulse_release_llm_lock'
 		push_cleanup '_dispatch_cleanup_benign_blocks_cycle'
@@ -1569,6 +1572,7 @@ main() {
 			push_cleanup 'aidevops_runtime_bundle_lease_release'
 			push_cleanup 'release_instance_lock'
 			push_cleanup '_pulse_efficiency_cycle_finish'
+			push_cleanup '_pulse_cycle_index_record_once'
 			push_cleanup '_pulse_cycle_state_finish_interrupted'
 			push_cleanup '_pulse_release_llm_lock'
 			push_cleanup '_dispatch_cleanup_benign_blocks_cycle'
@@ -1617,12 +1621,14 @@ main() {
 	if ! check_session_gate; then
 		_pulse_cycle_state_note_blocker session-gate pulse-wrapper session-gate || true
 		_pulse_cycle_state_finish_if_needed blocked
+		_pulse_cycle_index_record_once
 		return 0
 	fi
 
 	if ! check_dedup; then
 		_pulse_cycle_state_note_blocker dedup pulse-wrapper dedup || true
 		_pulse_cycle_state_finish_if_needed blocked
+		_pulse_cycle_index_record_once
 		return 0
 	fi
 
@@ -1701,9 +1707,9 @@ main() {
 	# Run before any log writes so the new cycle starts with a fresh hot log.
 	rotate_pulse_log || true
 
-	# Record cycle start for append_cycle_index duration tracking (t1886)
-	local _cycle_start_epoch
-	_cycle_start_epoch=$(date +%s)
+	# Record the legacy duration_s start for the cycle index (t1886). The
+	# index also records wall_s from PULSE_START_EPOCH (GH#33739).
+	_pulse_cycle_index_mark_start
 
 	# t2749: Defence-in-depth — clean up any stale Phase 2 consolidation
 	# sentinels from a previous cycle before preflight stages run. With
@@ -1757,6 +1763,7 @@ main() {
 		_pulse_cycle_state_note_blocker preflight-failed pulse-wrapper preflight || true
 		_pulse_record_cycle_outcome "$_cycle_dispatch_before"
 		_pulse_cycle_state_write_terminal_if_current || true
+		_pulse_cycle_index_record_once
 		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
@@ -1768,6 +1775,7 @@ main() {
 		_pulse_cycle_state_note_blocker stop-requested pulse-wrapper stop-flag || true
 		_pulse_record_cycle_outcome "$_cycle_dispatch_before"
 		_pulse_cycle_state_write_terminal_if_current || true
+		_pulse_cycle_index_record_once
 		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
@@ -1788,10 +1796,6 @@ main() {
 	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
 	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
 	_pulse_cycle_state_publish supervising || true
-	local _cycle_index_epoch
-	_cycle_index_epoch=$(date +%s)
-	local _cycle_index_duration=$((_cycle_index_epoch - _cycle_start_epoch))
-	append_cycle_index "$_cycle_index_duration" || true
 	# Release the instance lock BEFORE the LLM session so the next 2-min cycle
 	# can run deterministic ops concurrently. Terminal publication briefly
 	# reacquires this lock and writes only when health still names this cycle,
@@ -1805,6 +1809,9 @@ main() {
 	# different worker completes during the same cycle.
 	_pulse_record_cycle_outcome "$_cycle_dispatch_before"
 	_pulse_cycle_state_write_terminal_if_current || true
+	# GH#33739: record the cycle index from the terminal path (after the LLM
+	# supervisor) and before any t3033 exec, which skips EXIT traps.
+	_pulse_cycle_index_record_once
 
 	# t3033: self-respawn when source file was modified during this cycle.
 	#
