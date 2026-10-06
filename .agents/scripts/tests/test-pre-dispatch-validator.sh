@@ -812,6 +812,16 @@ Implement the repair.
 	else
 		print_result "planning briefs and both canonical scope formats remain eligible" 1
 	fi
+	local consol=$'## Consolidation target: #1\n\n- **No PR is required.** This is an operational task.\n\n<!-- aidevops:generator=function-complexity-sweep cited_file=src/a.sh -->\nrequires-secrets: FOO\n'
+	local crc=0 nrc=0 lrc=0
+	"$HELPER_SCRIPT" scope-check 33838 "$consol" 1 "consolidation-task,auto-dispatch" >/dev/null 2>&1 || crc=$?
+	"$HELPER_SCRIPT" scope-check 33838 "$consol" 1 "auto-dispatch" >/dev/null 2>&1 || lrc=$?
+	"$HELPER_SCRIPT" scope-check 33838 $'## What\nimplement' 1 "consolidation-task" >/dev/null 2>&1 || nrc=$?
+	if [[ "$crc" -eq 0 && "$lrc" -eq 40 && "$nrc" -eq 40 ]]; then
+		print_result "operational consolidation packets bypass scope only when authenticated and shaped" 0
+	else
+		print_result "operational consolidation packets bypass scope only when authenticated and shaped" 1 "crc=${crc} lrc=${lrc} nrc=${nrc}"
+	fi
 	return 0
 }
 

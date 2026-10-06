@@ -21,7 +21,7 @@
 #
 # Usage:
 #   pre-dispatch-validator-helper.sh validate <issue-number> <slug>
-#   pre-dispatch-validator-helper.sh scope-check <issue-number> <body> <auto-dispatch:0|1>
+#   pre-dispatch-validator-helper.sh scope-check <issue-number> <body> <auto-dispatch:0|1> [labels-csv]
 #   pre-dispatch-validator-helper.sh help
 #
 # Emergency bypass:
@@ -136,8 +136,11 @@ _load_validated_issue_context() {
 		return 20
 	}
 
+	local issue_labels=""
+	issue_labels=$(gh api "$_PDV_ISSUE_API_PATH" --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+
 	local scope_rc=0
-	_validate_implementation_brief_scope "$issue_number" "$_PDV_ISSUE_BODY" || scope_rc=$?
+	_validate_implementation_brief_scope "$issue_number" "$_PDV_ISSUE_BODY" 0 "$issue_labels" || scope_rc=$?
 	return "$scope_rc"
 }
 
@@ -1973,7 +1976,7 @@ EOF
 
 case "${1:-help}" in
 validate) cmd_validate "${2:-}" "${3:-}" ;;
-scope-check) _validate_implementation_brief_scope "${2:-}" "${3:-}" "${4:-0}" ;;
+scope-check) _validate_implementation_brief_scope "${2:-}" "${3:-}" "${4:-0}" "${5:-}" ;;
 check-review-supersession) cmd_check_review_supersession "${2:-}" "${3:-}" ;;
 help | --help | -h) _usage ;;
 *)

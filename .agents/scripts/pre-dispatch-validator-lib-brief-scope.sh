@@ -16,6 +16,20 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Operational consolidation packets (pulse-generated, label-authenticated) merge
+# issue threads into a successor; they never edit source. Inlined parent bodies
+# may carry generator markers, which are evidence, not execution authority.
+# Both the consolidation-task label and the generated packet shape are required.
+_brief_is_operational_consolidation() {
+	local issue_body="$1"
+	local labels_csv="${2:-}"
+
+	[[ ",${labels_csv}," == *",consolidation-task,"* ]] || return 1
+	printf '%s\n' "$issue_body" | grep -Eq '^## Consolidation target: #[0-9]+[[:space:]]*$' || return 1
+	printf '%s\n' "$issue_body" | grep -Fq '**No PR is required.** This is an operational task.' || return 1
+	return 0
+}
+
 _brief_requires_files_scope() {
 	local issue_body="$1"
 	local auto_dispatch="${2:-0}"
@@ -57,7 +71,11 @@ _validate_implementation_brief_scope() {
 	local issue_number="$1"
 	local issue_body="$2"
 	local auto_dispatch="${3:-0}"
+	local issue_labels="${4:-}"
 
+	if _brief_is_operational_consolidation "$issue_body" "$issue_labels"; then
+		return 0
+	fi
 	_brief_requires_files_scope "$issue_body" "$auto_dispatch" || return 0
 	if _brief_files_scope_has_path "$issue_body"; then
 		return 0
