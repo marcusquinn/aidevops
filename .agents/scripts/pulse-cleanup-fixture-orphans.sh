@@ -97,14 +97,19 @@ _pc_cleanup_central_fixture_orphans() {
 			printf '[pulse-cleanup] fixture-candidate path=%s bytes=%s\n' "$candidate" "$bytes" >>"$LOGFILE"
 			continue
 		fi
+		_pc_orphan_trash_allowed "$candidate" || continue
 		# Revalidate the filesystem after the ownership/process checks.
 		if _pc_central_fixture_bytes "$candidate" "$base" "$now_epoch" >/dev/null &&
-			! _worktree_owner_alive "$candidate" "" && _pc_fixture_process_clear "$candidate" &&
-			_pc_trash_orphan_dir "$candidate"; then
+			! _worktree_owner_alive "$candidate" "" && _pc_fixture_process_clear "$candidate"; then
+			if ! _pc_trash_orphan_dir "$candidate"; then
+				_pc_orphan_trash_failed "$candidate"
+				continue
+			fi
+			_pc_orphan_trash_succeeded "$candidate"
 			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$candidate" "abandoned-central-test-fixture" "trash"
 			moved=$((moved + 1))
 		else
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate" "fixture-recheck-or-trash-failed" "skipped"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate" "fixture-recheck-failed" "skipped"
 		fi
 	done
 	printf '[pulse-cleanup] central-fixtures mode=%s eligible=%s candidate_bytes=%s moved=%s skipped=%s\n' "$mode" "$eligible" "$total_bytes" "$moved" "$skipped" >>"$LOGFILE"
