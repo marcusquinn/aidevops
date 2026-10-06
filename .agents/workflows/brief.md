@@ -179,8 +179,10 @@ Rendered GitHub content serves people and workers from the same source:
 For maintained repositories, publishing a worker-ready implementation issue is
 the decision to implement it. Add `auto-dispatch` at creation and do not ask for
 a second dispatch approval. If the user explicitly chose later/manual handling,
-keep the work as a local TODO/plan instead; reserve `no-auto-dispatch` for a
-durable hold whose reason is recorded on the issue.
+saved `tNNN` TODO rows publish through issue-sync as non-dispatched tracking issues
+without `auto-dispatch`; ID-less plan lines stay local. Do not ask to dispatch
+saved work. Reserve `no-auto-dispatch` for a durable hold whose reason is recorded
+on the issue.
 
 ## Ordered Work / Dependencies
 
