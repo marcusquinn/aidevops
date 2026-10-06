@@ -346,6 +346,127 @@ assert_health "owner finalization records successful post-label dispatch" '
 	and .cycle_state.progress.kinds == ["worker-dispatched"]
 '
 
+# Retention uses production functions in the sandbox HOME, never live ledgers.
+# shellcheck source=../portable-stat.sh
+source "${SOURCE_DIR}/portable-stat.sh"
+PULSE_METRICS_ARCHIVE_DIR="${HOME}/.aidevops/logs/metrics-archive"
+PULSE_LOG_ARCHIVE_DIR="${HOME}/.aidevops/logs/pulse-archive"
+PULSE_METRICS_HOT_MAX_BYTES=1024
+PULSE_METRICS_COLD_MAX_BYTES=524288000
+PULSE_LOG_HOT_MAX_BYTES=52428800
+PULSE_LOG_COLD_MAX_BYTES=1073741824
+AIDEVOPS_HEADLESS_METRICS_FILE="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
+AIDEVOPS_RESOURCE_METRICS_FILE="${HOME}/.aidevops/logs/resource-metrics.jsonl"
+for ((row = 1; row <= 200; row++)); do
+	printf '{"row":%s}\n' "$row"
+done >"${TMP_DIR}/expected-metrics.jsonl"
+cp "${TMP_DIR}/expected-metrics.jsonl" "$AIDEVOPS_HEADLESS_METRICS_FILE"
+cp "${TMP_DIR}/expected-metrics.jsonl" "$AIDEVOPS_RESOURCE_METRICS_FILE"
+rotate_pulse_log
+if [[ ! -e "$AIDEVOPS_HEADLESS_METRICS_FILE" && ! -e "$AIDEVOPS_RESOURCE_METRICS_FILE" ]] &&
+	gzip -dc "${PULSE_METRICS_ARCHIVE_DIR}"/headless-runtime-metrics-*.jsonl.gz | cmp -s - "${TMP_DIR}/expected-metrics.jsonl" &&
+	gzip -dc "${PULSE_METRICS_ARCHIVE_DIR}"/resource-metrics-*.jsonl.gz | cmp -s - "${TMP_DIR}/expected-metrics.jsonl"; then
+	pass "rotate_pulse_log preserves every byte in both oversized metrics ledgers"
+else
+	fail "rotate_pulse_log preserves every byte in both oversized metrics ledgers"
+fi
+printf '{"row":"new-hot"}\n' >>"$AIDEVOPS_HEADLESS_METRICS_FILE"
+staged_metric="${HOME}/.aidevops/logs/.headless-runtime-metrics-rotating-20260101-000000-123"
+cp "${TMP_DIR}/expected-metrics.jsonl" "$staged_metric"
+_rotate_metrics_jsonl "$AIDEVOPS_HEADLESS_METRICS_FILE" "headless-runtime-metrics"
+if [[ ! -e "$staged_metric" ]] &&
+	gzip -dc "${PULSE_METRICS_ARCHIVE_DIR}/headless-runtime-metrics-20260101-000000.jsonl.gz" | cmp -s - "${TMP_DIR}/expected-metrics.jsonl" &&
+	jq -e '.row == "new-hot"' "$AIDEVOPS_HEADLESS_METRICS_FILE" >/dev/null; then
+	pass "crash-left staged segment is recovered without rotating a small hot file"
+else
+	fail "crash-left staged segment is recovered without rotating a small hot file"
+fi
+# Repeat the same timestamp: the first archive must not be overwritten.
+cp "${TMP_DIR}/expected-metrics.jsonl" "$staged_metric"
+_rotate_metrics_jsonl "$AIDEVOPS_HEADLESS_METRICS_FILE" "headless-runtime-metrics"
+collision_archives=("${PULSE_METRICS_ARCHIVE_DIR}"/headless-runtime-metrics-20260101-000000*.jsonl.gz)
+if [[ "${#collision_archives[@]}" -eq 2 ]]; then
+	pass "same-timestamp archives retain separate segments"
+else
+	fail "same-timestamp archives retain separate segments"
+fi
+
+for ((row = 1; row <= 600; row++)); do
+	printf '{"row":%s}\n' "$row"
+done >"$PULSE_CYCLE_INDEX_FILE"
+_prune_cycle_index
+if [[ "$(wc -l <"$PULSE_CYCLE_INDEX_FILE")" -eq 600 ]]; then
+	pass "cycle-index hysteresis avoids tiny per-cycle archives"
+else
+	fail "cycle-index hysteresis avoids tiny per-cycle archives"
+fi
+printf '{"row":601}\n' >>"$PULSE_CYCLE_INDEX_FILE"
+cp "$PULSE_CYCLE_INDEX_FILE" "${TMP_DIR}/expected-cycle.jsonl"
+_prune_cycle_index
+gzip -dc "${PULSE_METRICS_ARCHIVE_DIR}"/pulse-cycle-index-*.jsonl.gz >"${TMP_DIR}/reassembled-cycle.jsonl"
+cat "$PULSE_CYCLE_INDEX_FILE" >>"${TMP_DIR}/reassembled-cycle.jsonl"
+if [[ "$(wc -l <"$PULSE_CYCLE_INDEX_FILE")" -eq 100 ]] &&
+	cmp -s "${TMP_DIR}/reassembled-cycle.jsonl" "${TMP_DIR}/expected-cycle.jsonl"; then
+	pass "cycle-index archived head and hot tail reconstruct all original rows"
+else
+	fail "cycle-index archived head and hot tail reconstruct all original rows"
+fi
+
+# Inject a compression failure only in a subshell; production failure paths
+# must keep the full index and preserve a rotated metric as raw evidence.
+cp "${TMP_DIR}/expected-cycle.jsonl" "$PULSE_CYCLE_INDEX_FILE"
+cp "${TMP_DIR}/expected-metrics.jsonl" "$AIDEVOPS_RESOURCE_METRICS_FILE"
+(
+	gzip() { return 1; }
+	_prune_cycle_index
+	_rotate_metrics_jsonl "$AIDEVOPS_RESOURCE_METRICS_FILE" "resource-metrics"
+)
+raw_archives=("${PULSE_METRICS_ARCHIVE_DIR}"/resource-metrics-*.jsonl)
+if cmp -s "$PULSE_CYCLE_INDEX_FILE" "${TMP_DIR}/expected-cycle.jsonl" &&
+	[[ "${#raw_archives[@]}" -eq 1 ]] && cmp -s "${raw_archives[0]}" "${TMP_DIR}/expected-metrics.jsonl"; then
+	pass "compression failure skips index pruning and retains raw metric evidence"
+else
+	fail "compression failure skips index pruning and retains raw metric evidence"
+fi
+
+(
+	PULSE_METRICS_COLD_MAX_BYTES=0
+	tail() { return 1; }
+	_prune_cycle_index
+)
+if cmp -s "$PULSE_CYCLE_INDEX_FILE" "${TMP_DIR}/expected-cycle.jsonl" &&
+	cmp -s "${raw_archives[0]}" "${TMP_DIR}/expected-metrics.jsonl"; then
+	pass "failed index swap preserves hot rows and skips cold pruning"
+else
+	fail "failed index swap preserves hot rows and skips cold pruning"
+fi
+printf 'incomplete' >"${PULSE_METRICS_ARCHIVE_DIR}/.metrics-archive-orphan"
+printf 'incomplete' >"${PULSE_METRICS_ARCHIVE_DIR}/.cycle-archive-orphan"
+_cleanup_metrics_archive_temps
+if [[ ! -e "${PULSE_METRICS_ARCHIVE_DIR}/.metrics-archive-orphan" &&
+! -e "${PULSE_METRICS_ARCHIVE_DIR}/.cycle-archive-orphan" ]] &&
+	cmp -s "${raw_archives[0]}" "${TMP_DIR}/expected-metrics.jsonl"; then
+	pass "restart cleanup removes partial temporary archives, not published evidence"
+else
+	fail "restart cleanup removes partial temporary archives, not published evidence"
+fi
+
+# A separate archive sandbox proves timestamp ordering across basenames and
+# counting of uncompressed fallbacks, without deleting the evidence above.
+PULSE_METRICS_ARCHIVE_DIR="${TMP_DIR}/prune-archive"
+mkdir -p "$PULSE_METRICS_ARCHIVE_DIR"
+printf 'old' >"${PULSE_METRICS_ARCHIVE_DIR}/resource-metrics-20260101-000000.jsonl"
+printf 'mid' >"${PULSE_METRICS_ARCHIVE_DIR}/pulse-cycle-index-20260201-000000.jsonl.gz"
+printf 'new' >"${PULSE_METRICS_ARCHIVE_DIR}/headless-runtime-metrics-20260301-000000.jsonl.gz"
+PULSE_METRICS_COLD_MAX_BYTES=3
+_prune_metrics_archive
+remaining_archives=("${PULSE_METRICS_ARCHIVE_DIR}"/*.jsonl*)
+if [[ "${#remaining_archives[@]}" -eq 1 && "${remaining_archives[0]##*/}" == "headless-runtime-metrics-20260301-000000.jsonl.gz" ]]; then
+	pass "combined archive cap prunes by timestamp rather than basename"
+else
+	fail "combined archive cap prunes by timestamp rather than basename"
+fi
+
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0
