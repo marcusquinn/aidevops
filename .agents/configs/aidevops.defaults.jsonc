@@ -138,6 +138,13 @@
     // Lower it to keep CPU headroom. Env: AIDEVOPS_MAX_LOAD_PER_CORE
     "max_load_per_core": 4.0,
 
+    // When load exceeds max_load_per_core, keep admission open while measured
+    // CPU idle is at least this percent, limited per pass to idle-core headroom
+    // (cpu_gate=open_idle). Load average also counts threads blocked on I/O, so
+    // it can exceed the threshold while cores sit idle. 0 disables the override.
+    // Env: AIDEVOPS_CPU_IDLE_ADMIT_PERCENT
+    "cpu_idle_admit_percent": 25,
+
     // Minimum active implementation-worker floor. Pulse will try to refill to
     // this target while provider/account health and host load are acceptable.
     // Never exceeds the resolved max_workers_cap.

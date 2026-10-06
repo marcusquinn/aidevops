@@ -275,11 +275,62 @@ _pulse_cpu_core_count() {
 	return 0
 }
 
-# Stdout: "<one-minute-load> <cores> <open|closed|unknown> <threshold>".
+# Read one Linux aggregate CPU sample as "<total-jiffies> <idle-jiffies>".
+_pulse_cpu_proc_stat_sample() {
+	LC_ALL=C awk '/^cpu / {total = 0; for (i = 2; i <= NF; i++) total += $i; print total, $5; exit}' /proc/stat 2>/dev/null
+	return 0
+}
+
+#######################################
+# Measure current whole-host CPU idle percent (GH#33754). Load average also
+# counts threads blocked on I/O or locks (notably on macOS), so it can exceed
+# the gate while cores sit idle. Costs ~1s wall and negligible CPU; callers
+# sample only when load would otherwise close admission. Linux counts idle
+# only, not iowait, so I/O-bound hosts stay closed.
+# Stdout: integer 0-100. Returns 1 when telemetry is unavailable.
+#######################################
+_pulse_cpu_idle_percent() {
+	local idle=""
+	if [[ "$(uname)" == "Darwin" ]]; then
+		# Columns with -n 0: "us sy id 1m 5m 15m"; the last row is the 1s interval.
+		idle=$(iostat -n 0 -c 2 -w 1 2>/dev/null |
+			LC_ALL=C awk 'NF >= 3 && $1 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {value = $3} END {print value}') || idle=""
+	else
+		local first="" second=""
+		first=$(_pulse_cpu_proc_stat_sample) || first=""
+		sleep 1
+		second=$(_pulse_cpu_proc_stat_sample) || second=""
+		idle=$(LC_ALL=C awk -v first="$first" -v second="$second" 'BEGIN {
+			if (split(first, a, " ") != 2 || split(second, b, " ") != 2) exit 1
+			elapsed = b[1] - a[1]
+			if (elapsed <= 0) exit 1
+			printf "%d\n", (b[2] - a[2]) * 100 / elapsed
+		}') || idle=""
+	fi
+	[[ "$idle" =~ ^[0-9]+$ ]] || return 1
+	((idle > 100)) && idle=100
+	printf '%s\n' "$idle"
+	return 0
+}
+
+# Minimum idle percent that keeps admission open above the load threshold.
+# 0 disables the override (load alone decides). Invalid values fall back to 25.
+_pulse_cpu_idle_admit_percent() {
+	local value="${CPU_IDLE_ADMIT_PERCENT:-25}"
+	if ! [[ "$value" =~ ^[0-9]+$ ]] || ((value > 100)); then
+		value=25
+	fi
+	printf '%s\n' "$value"
+	return 0
+}
+
+# Stdout: "<one-minute-load> <cores> <open|open_idle|closed|unknown> <threshold> <idle-percent|na>".
 _pulse_cpu_pressure() {
 	# Default 4.0: load/core 1.0 is 100% busy, so full CPU use stays admitted;
-	# only severe run-queue thrash closes the gate.
+	# only severe run-queue thrash closes the gate, and only while CPU idle is
+	# below orchestration.cpu_idle_admit_percent (GH#33754).
 	local load="" cores="" gate="unknown" threshold="${MAX_LOAD_PER_CORE:-4.0}"
+	local idle="na" idle_admit=""
 	load=$(_pulse_cpu_load_average) || load=""
 	cores=$(_pulse_cpu_core_count) || cores=""
 	if ! [[ "$threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
@@ -290,12 +341,19 @@ _pulse_cpu_pressure() {
 		gate="open"
 		if LC_ALL=C awk -v one_minute="$load" -v cores="$cores" -v threshold="$threshold" 'BEGIN {exit !(one_minute / cores > threshold)}'; then
 			gate="closed"
+			idle_admit=$(_pulse_cpu_idle_admit_percent)
+			if ((idle_admit > 0)); then
+				idle=$(_pulse_cpu_idle_percent) || idle="na"
+				if [[ "$idle" =~ ^[0-9]+$ ]] && ((idle >= idle_admit)); then
+					gate="open_idle"
+				fi
+			fi
 		fi
 	else
 		load="unknown"
 		cores="unknown"
 	fi
-	printf '%s %s %s %s\n' "$load" "$cores" "$gate" "$threshold"
+	printf '%s %s %s %s %s\n' "$load" "$cores" "$gate" "$threshold" "$idle"
 	return 0
 }
 
@@ -317,11 +375,11 @@ pulse_apply_provider_load_capacity_cap() {
 
 	# Re-sample on refill: preflight's capacity file may be stale. The floor
 	# must not reopen a closed gate. This limits launches, not running workers.
-	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold=""
-	read -r cpu_load cpu_cores cpu_gate cpu_threshold <<<"$(_pulse_cpu_pressure)"
+	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold="" cpu_idle=""
+	read -r cpu_load cpu_cores cpu_gate cpu_threshold cpu_idle <<<"$(_pulse_cpu_pressure)"
 	if [[ "$cpu_gate" == "closed" ]] || ((raw_max_workers == 0)); then
-		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=%s active_workers=%s admission=closed\n' \
-			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_gate" "$active_workers" >>"${LOGFILE:-/dev/null}"
+		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=%s cpu_idle_pct=%s active_workers=%s admission=closed\n' \
+			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_gate" "${cpu_idle:-na}" "$active_workers" >>"${LOGFILE:-/dev/null}"
 		printf '0 0\n'
 		return 0
 	fi
@@ -383,6 +441,17 @@ pulse_apply_provider_load_capacity_cap() {
 				final_max="$active_workers"
 			fi
 		fi
+	fi
+	# Load is above threshold but cores are idle: admit only what idle cores can
+	# absorb this pass (>=1 new worker); the next pass re-samples (GH#33754).
+	if [[ "$cpu_gate" == "open_idle" && "$cpu_cores" =~ ^[0-9]+$ && "$cpu_idle" =~ ^[0-9]+$ ]]; then
+		local idle_slots=$((cpu_cores * cpu_idle / 100))
+		((idle_slots < 1)) && idle_slots=1
+		if ((final_max > active_workers + idle_slots)); then
+			final_max=$((active_workers + idle_slots))
+		fi
+		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=open_idle cpu_idle_pct=%s idle_slots=%s active_workers=%s admission=idle_headroom\n' \
+			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_idle" "$idle_slots" "$active_workers" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 	fi
 	if ((final_max < 0)); then
 		final_max=0
