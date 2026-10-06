@@ -38,6 +38,18 @@ continuation; it never completes unfinished delivery.
 
 **Dual-mode executor contract:** Interactive and headless runs share persisted lifecycle transitions and terminal evidence. Foreground is the interactive default. Explicit `start --background` stays local to the authorizing session and reports `FULL_LOOP_START_RESULT=running` only for a live executor, otherwise `FULL_LOOP_START_RESULT=initialized-only`; it is not permission for remote/headless dispatch. Headless runs never prompt and resume within their brief and budgets. Custom adapters receive `AIDEVOPS_FULL_LOOP_RUN_ID` and `AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE`; `status --json` is authoritative.
 
+### Repository capability: Actions unavailable
+
+Read the registered `actions` capability before development. With
+`actions: "unavailable"`, follow [CI gate policy](../reference/ci-gate-policy.md#github-actions-unavailable):
+run all configured/documented local checks, record trusted results for the final
+pushed head in the PR, and use the helper's single remote observation rather than
+polling Actions. `REMOTE_VERIFIED` then means trusted exact-head local evidence
+plus no non-billing terminal failures, not a claim that remote CI ran. Missing or
+stale receipts block completion. Native protection, review and author trust gates
+remain binding; do not bypass required checks or approvals. Worker dispatch
+includes this capability so local verification starts before the first push.
+
 ### Repository Authority Profiles (MANDATORY)
 
 Classify the **target/upstream repository**, not the push remote or fork owner. On GitHub, query the authenticated account's permission after the PR target is known and re-check before merge: `admin`, `maintain`, or `write` is maintainer-equivalent; `read`, `triage`, `none`, or an unavailable/ambiguous result is external. Use equivalent merge authority on other hosts. Fail closed to external.

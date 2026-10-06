@@ -7,6 +7,42 @@ Use CI as a throughput control, not a progress trap. Required merge gates should
 match the risk of the target branch; slower integration checks should create
 feedback loops when they find defects.
 
+## GitHub Actions unavailable
+
+Before implementation, check the registered repository's `actions` capability
+in `repos.json` (see [field reference](repos-json-fields.md)). When explicitly
+`"unavailable"`, run **all configured/documented local checks** from the start:
+the repository's lint, typecheck and unit scripts, or documented equivalents
+such as `scripts/lint.sh` and `scripts/smoke-test.sh`. Do not invent a lighter
+check set, skip applicable checks, or introduce test infrastructure to substitute
+for existing scripts. Preserve command results and diagnostics.
+
+After the final commit, record its full head SHA and each command/result in the
+PR body or a comment from a currently write-authorized collaborator. Use this
+marker followed immediately by one JSON line (replace the placeholder SHA):
+
+```text
+<!-- aidevops:local-verification:v1 -->
+{"head":"FULL_40_CHARACTER_HEAD_SHA","status":"passed","checks_complete":true,"checks":[{"command":"bash scripts/lint.sh","exit_code":0,"result":"Lint passed"},{"command":"bash scripts/smoke-test.sh","exit_code":0,"result":"Smoke checks passed"}]}
+```
+
+`checks_complete: true` attests the complete configured/documented local check
+set. A prose "tested" claim, an empty check list, failed commands, stale SHA or
+external-author receipt is insufficient. New commits invalidate prior evidence;
+rerun applicable checks and publish a new receipt for the pushed exact head.
+Never record `passed` before checks actually pass.
+
+`full-loop-helper.sh merge` and `wait-checks` make one exact-head observation,
+without polling unavailable Actions. Only terminal failures from GitHub Actions
+whose annotations match `CI_BILLING_OUTAGE_PATTERN` are non-blocking with the
+trusted receipt. Non-billing terminal failures, including optional checks and
+commit statuses, still block; API/parse failures fail closed. Review-bot,
+external-author/cryptographic approval and native protection gates are unchanged.
+If native protection requires unavailable checks, defer to the repository owner;
+local evidence cannot bypass it. Admin fallback reads native required-check
+evidence, not this local exception. No remote checks at all can be acceptable
+with trusted local evidence; absence alone is never verification.
+
 ## Evidence-guided verification
 
 Tests and checks are evidence-gathering methods, not independent objectives.

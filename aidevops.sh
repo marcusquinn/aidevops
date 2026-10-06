@@ -911,6 +911,24 @@ _repos_maintenance() {
 	return 0
 }
 
+_repos_actions() {
+	local state="${1:-}" selector="${2:-}" reason="${3:-}"
+	case "$state" in
+	on) state="available" ;;
+	off) state="unavailable" ;;
+	*)
+		print_error "Usage: aidevops repos actions <on|off> [slug-or-path] [reason]"
+		return 1
+		;;
+	esac
+	if [[ -z "$selector" ]]; then
+		selector=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+	fi
+	set_repo_actions "$selector" "$state" "$reason" || return 1
+	print_success "GitHub Actions capability: $state for $selector"
+	return 0
+}
+
 # Repos management command
 cmd_repos() {
 	local action="${1:-list}"
@@ -941,6 +959,10 @@ cmd_repos() {
 		shift
 		_repos_maintenance "$@"
 		;;
+	actions)
+		shift
+		_repos_actions "$@"
+		;;
 	*)
 		echo "Usage: aidevops repos <command>"
 		echo ""
@@ -953,6 +975,8 @@ cmd_repos() {
 		echo "           Guarded owner-layout migration with durable receipts"
 		echo "  maintenance <on|off> [repo]"
 		echo "           Include/exclude a registered repo from recurring automation"
+		echo "  actions <on|off> [repo] [reason]"
+		echo "           Record GitHub Actions availability; off requires exact-head local checks"
 		;;
 	esac
 }

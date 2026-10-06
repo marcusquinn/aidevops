@@ -563,6 +563,11 @@ _dlw_prepare_prompt_for_launch() {
 	local precomputed_zero_count=""
 	local prior_attempt_context=""
 
+	# shellcheck source=repo-actions-capability-lib.sh
+	source "${BASH_SOURCE[0]%/*}/repo-actions-capability-lib.sh"
+	if repo_actions_unavailable "$repo_slug"; then
+		printf '\nRepository capability: actions="unavailable". Run all configured/documented local checks before pushing. Record trusted exact-head evidence using reference/ci-gate-policy.md "GitHub Actions unavailable". Do not poll remote checks. Non-billing failures, author/review gates and native branch protection still block.\n'
+	fi
 	prior_attempt_context=$(_dlw_prior_attempt_context "$issue_number" "$repo_slug" || true)
 
 	comment_metrics="$precomputed_comment_metrics"
