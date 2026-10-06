@@ -27,12 +27,8 @@ _SAFE_OPTIONS = {
 }
 
 
-def binding_command(argv: list[str]) -> dict[str, Any]:
-    """Accept only a config-free, non-forwarding command with explicit identity."""
-    if not isinstance(argv, list) or not all(isinstance(arg, str) for arg in argv):
-        raise ValueError("invalid SSH argv")
-    if not argv or argv[0] not in {"ssh", "/usr/bin/ssh"}:
-        raise ValueError("unsupported SSH executable")
+def _binding_options(argv: list[str]) -> tuple[dict[str, str], set[str], int]:
+    """Parse the restricted option vocabulary, rejecting duplicate settings."""
     options: dict[str, str] = {}
     extended: set[str] = set()
     index = 1
@@ -50,24 +46,52 @@ def binding_command(argv: list[str]) -> dict[str, Any]:
         else:
             options[option] = value
         index += 2
+    return options, extended, index
+
+
+def _binding_endpoint(extended: set[str]) -> str:
+    """Require exactly the protective options and one normalized endpoint."""
     hosts = [value[len("HostName="):] for value in extended if value.startswith("HostName=")]
     if len(hosts) != 1 or extended != _SAFE_OPTIONS | {"HostName=" + hosts[0]}:
         raise ValueError("explicit safe SSH options and HostName are required")
     endpoint = hosts[0]
     if _normalize_host(endpoint) != endpoint or not re.fullmatch(r"[a-z0-9.:-]+", endpoint):
         raise ValueError("endpoint must be an exact normalized FQDN or IP")
+    return endpoint
+
+
+def _binding_identity(options: dict[str, str]) -> tuple[str, int]:
+    """Require configuration isolation, explicit account and numeric port."""
     if options.get("-F") != "/dev/null" or not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*", options.get("-l", "")):
         raise ValueError("-F /dev/null and an explicit account are required")
     port_text = options.get("-p", "")
     if not port_text.isascii() or not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
         raise ValueError("explicit valid SSH port is required")
+    return options["-l"], int(port_text)
+
+
+def _binding_target(argv: list[str], index: int) -> str:
+    """Accept one alias followed by exactly one non-option remote command."""
     if index >= len(argv) - 1 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", argv[index]):
         raise ValueError("single-label alias and explicit remote command are required")
     if len(argv) != index + 2 or argv[index + 1].startswith("-"):
         raise ValueError("remote command must be one non-option string")
+    return argv[index]
+
+
+def binding_command(argv: list[str]) -> dict[str, Any]:
+    """Accept only a config-free, non-forwarding command with explicit identity."""
+    if not isinstance(argv, list) or not all(isinstance(arg, str) for arg in argv):
+        raise ValueError("invalid SSH argv")
+    if not argv or argv[0] not in {"ssh", "/usr/bin/ssh"}:
+        raise ValueError("unsupported SSH executable")
     if any(not arg or any(char in arg for char in "\x00\n\r") for arg in argv):
         raise ValueError("invalid SSH argument")
-    return {"alias": argv[index], "endpoint": endpoint, "account": options["-l"], "port": int(port_text)}
+    options, extended, index = _binding_options(argv)
+    endpoint = _binding_endpoint(extended)
+    account, port = _binding_identity(options)
+    alias = _binding_target(argv, index)
+    return {"alias": alias, "endpoint": endpoint, "account": account, "port": port}
 
 
 def repository_at(cwd: str) -> str:
