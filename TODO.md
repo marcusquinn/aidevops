@@ -1557,6 +1557,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18595 fix(pulse): CI-drift update-branch loops on same failing required checks and never routes to CI fix-worker #auto-dispatch #bug ref:GH#33794
 
+- [ ] t18596 fix(pulse): malformed .aidevops.json silently blocks every candidate in a repo via runner-capability invalid_requirements cooldown #auto-dispatch #bug ref:GH#33799
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
