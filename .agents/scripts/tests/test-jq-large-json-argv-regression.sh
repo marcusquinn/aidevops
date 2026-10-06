@@ -50,7 +50,7 @@ build_large_json() {
 import json
 payload = "x" * 300
 print(json.dumps([
-    {"number": i, "state": "open", "labels": [{"name": "bug"}], "assignees": [{"login": "dev"}], "updatedAt": "2026-06-26T00:00:00Z", "title": payload}
+    {"number": i, "state": "open", "labels": [{"name": "bug"}], "assignees": [{"login": "dev"}], "updatedAt": "2026-06-26T00:00:00Z", "title": payload, "body": payload, "authorAssociation": "MEMBER"}
     for i in range(600)
 ]))
 PY
