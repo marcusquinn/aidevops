@@ -1268,6 +1268,170 @@ _pir_lookup_oimp_pr_for_issue() {
 	return 0
 }
 
+#######################################
+# Lookup every merged PR number for an issue in the OIMP lookup string.
+# Args: $1 = issue number, $2 = oimp lookup string
+# Stdout: matching PR numbers, one per line, lookup order, deduplicated
+#######################################
+_pir_lookup_oimp_prs_for_issue() {
+	local issue_num="$1"
+	local oimp_lookup="$2"
+	[[ "$issue_num" =~ ^[0-9]+$ && -n "$oimp_lookup" ]] || return 0
+
+	printf '%s' "$oimp_lookup" |
+		grep -oE "\|${issue_num}=[0-9]+" 2>/dev/null |
+		cut -d= -f2 |
+		awk '!seen[$0]++'
+	return 0
+}
+
+_PIR_ISO_UTC_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+
+#######################################
+# Latest `reopened` event time for an issue (GH#33687). Same evidence as
+# dispatch-dedup-pr.sh _ddpr_latest_reopen_at (GH#33071), but close authority
+# needs complete evidence: an API failure or any malformed/missing reopen
+# timestamp fails the read instead of being dropped.
+# Args: $1=slug, $2=issue_num
+# Stdout: ISO-8601 UTC timestamp, or empty when the issue was never reopened
+# Returns: 0 on complete evidence, 1 when evidence is unavailable
+#######################################
+_pir_latest_reopen_at() {
+	local slug="$1" issue_num="$2"
+	local events="" event_at="" latest=""
+	events=$(gh api --paginate "repos/${slug}/issues/${issue_num}/events?per_page=100" \
+		--jq '.[] | select(.event == "reopened") | (.created_at // "missing")' \
+		2>/dev/null) || return 1
+	while IFS= read -r event_at; do
+		[[ -n "$event_at" ]] || continue
+		[[ "$event_at" =~ $_PIR_ISO_UTC_RE ]] || return 1
+		if [[ -z "$latest" || "$event_at" > "$latest" ]]; then
+			latest="$event_at"
+		fi
+	done <<<"$events"
+	printf '%s\n' "$latest"
+	return 0
+}
+
+#######################################
+# From candidate merged PRs, print the first whose authoritative merge time is
+# at or after the issue's latest reopen (GH#33687). A merge that predates the
+# reopen belongs to an earlier lifecycle and cannot justify closing again.
+# Args: $1=slug, $2=reopen_at (ISO-8601 UTC, non-empty), $3=newline PR list
+# Stdout: qualifying PR number, or empty when every candidate predates reopen
+# Returns: 0 on a complete decision, 1 when any merge time is unavailable
+#######################################
+_pir_select_pr_merged_after() {
+	local slug="$1" reopen_at="$2" candidates="$3"
+	local pr_num="" merged_at=""
+	[[ "$reopen_at" =~ $_PIR_ISO_UTC_RE ]] || return 1
+	while IFS= read -r pr_num; do
+		[[ "$pr_num" =~ ^[0-9]+$ ]] || continue
+		merged_at=$(gh api "repos/${slug}/pulls/${pr_num}" --jq '.merged_at // ""' 2>/dev/null) || return 1
+		[[ "$merged_at" =~ $_PIR_ISO_UTC_RE ]] || return 1
+		if [[ "$merged_at" == "$reopen_at" || "$merged_at" > "$reopen_at" ]]; then
+			printf '%s\n' "$pr_num"
+			return 0
+		fi
+	done <<<"$candidates"
+	return 0
+}
+
+#######################################
+# Restrict OIMP close evidence to merges from the reopened issue's current
+# lifecycle (GH#33687). Direct evidence considers every merged PR linked to the
+# issue; successor evidence requires each superseded source to have such a PR.
+# Args: $1=slug, $2=issue_num, $3=oimp_lookup, $4=reopen_at, $5=direct (0|1),
+#       $6=superseded coverage lines (source=pr)
+# Sets: _PIR_OIMP_FENCED_PR, _PIR_OIMP_FENCED_COVERAGE
+# Returns: 0 when current-lifecycle evidence exists, 1 to skip/defer
+#######################################
+_pir_oimp_fence_to_current_lifecycle() {
+	local slug="$1" issue_num="$2" oimp_lookup="$3" reopen_at="$4"
+	local direct="$5" coverage="$6"
+	local candidates="" selected="" line="" source_num="" fenced=""
+	_PIR_OIMP_FENCED_PR=""
+	_PIR_OIMP_FENCED_COVERAGE=""
+
+	if [[ "$direct" -eq 1 ]]; then
+		candidates=$(_pir_lookup_oimp_prs_for_issue "$issue_num" "$oimp_lookup")
+		selected=$(_pir_select_pr_merged_after "$slug" "$reopen_at" "$candidates") || {
+			echo "[pulse-wrapper] Reconcile merged-PR: deferred close #${issue_num} in ${slug} — merge time unavailable (GH#33687)" >>"$LOGFILE"
+			return 1
+		}
+		if [[ -z "$selected" ]]; then
+			echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — every linked merge predates reopen at ${reopen_at} (GH#33687)" >>"$LOGFILE"
+			return 1
+		fi
+		_PIR_OIMP_FENCED_PR="$selected"
+		return 0
+	fi
+
+	while IFS= read -r line; do
+		[[ "$line" == *=* ]] || continue
+		source_num="${line%%=*}"
+		candidates=$(_pir_lookup_oimp_prs_for_issue "$source_num" "$oimp_lookup")
+		selected=$(_pir_select_pr_merged_after "$slug" "$reopen_at" "$candidates") || {
+			echo "[pulse-wrapper] Reconcile merged-PR: deferred close #${issue_num} in ${slug} — merge time unavailable for superseded #${source_num} (GH#33687)" >>"$LOGFILE"
+			return 1
+		}
+		if [[ -z "$selected" ]]; then
+			echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — superseded #${source_num} merge predates reopen at ${reopen_at} (GH#33687)" >>"$LOGFILE"
+			return 1
+		fi
+		[[ -n "$_PIR_OIMP_FENCED_PR" ]] || _PIR_OIMP_FENCED_PR="$selected"
+		fenced="${fenced}${source_num}=${selected}"$'\n'
+	done <<<"$coverage"
+	[[ -n "$_PIR_OIMP_FENCED_PR" ]] || return 1
+	_PIR_OIMP_FENCED_COVERAGE="$fenced"
+	return 0
+}
+
+#######################################
+# Build the OIMP close comment from the final (fenced) evidence.
+# Args: $1=direct (0|1), $2=merged_pr_num, $3=coverage_count, $4=coverage lines
+#######################################
+_pir_oimp_close_comment() {
+	local direct="$1" merged_pr_num="$2" coverage_count="$3" coverage="$4"
+	if [[ "$direct" -eq 1 ]]; then
+		printf 'Closing: linked PR #%s was already merged. Detected by reconcile pass.\n' "$merged_pr_num"
+	elif [[ "$coverage_count" -eq 1 ]]; then
+		printf 'Closing: this consolidated issue supersedes #%s, and merged PR #%s already fixed that superseded issue. Detected by reconcile pass.\n' \
+			"${coverage%%=*}" "$merged_pr_num"
+	else
+		printf 'Closing: merged PR evidence completely covers all %s superseded sources for this scope-inheriting consolidated issue. Detected by reconcile pass.\n' \
+			"$coverage_count"
+	fi
+	return 0
+}
+
+#######################################
+# Final pre-close fence (GH#33687): the latest reopen must be unchanged since
+# evidence selection. Fails closed when the re-read is unavailable.
+# Args: $1=slug, $2=issue_num, $3=reopen_at observed earlier (may be empty)
+#######################################
+_pir_reopen_evidence_unchanged() {
+	local slug="$1" issue_num="$2" expected="$3" current=""
+	current=$(_pir_latest_reopen_at "$slug" "$issue_num") || return 1
+	[[ "$current" == "$expected" ]] || return 1
+	return 0
+}
+
+#######################################
+# Stage-1 close fence (GH#33687): with no reopen any merge is current; after a
+# reopen the merge time must be known and at or after the latest reopen.
+# Args: $1=slug, $2=issue_num, $3=merged_at (may be empty when unknown)
+# Returns: 0 when closing is lifecycle-safe, 1 to skip/defer
+#######################################
+_pir_merge_is_current_lifecycle() {
+	local slug="$1" issue_num="$2" merged_at="$3" reopen_at=""
+	reopen_at=$(_pir_latest_reopen_at "$slug" "$issue_num") || return 1
+	[[ -n "$reopen_at" ]] || return 0
+	[[ "$merged_at" =~ $_PIR_ISO_UTC_RE ]] || return 1
+	[[ "$merged_at" == "$reopen_at" || "$merged_at" > "$reopen_at" ]] || return 1
+	return 0
+}
+
 ##############################################
 # t2776: Per-issue action helpers for reconcile_issues_single_pass.
 # Each helper encapsulates the action logic for one reconcile sub-stage.
@@ -1329,6 +1493,13 @@ _action_ciw_single() {
 			return 1
 		fi
 	fi
+
+	# GH#33687: complete-evidence lifecycle fence immediately before close.
+	# The dedup lookup drops malformed reopen times and can race a reopen.
+	_pir_merge_is_current_lifecycle "$slug" "$issue_num" "$merged_at" || {
+		echo "[pulse-wrapper] Deferred auto-close #${issue_num} in ${slug} — merge not proven after latest reopen (GH#33687)" >>"$LOGFILE"
+		return 1
+	}
 
 	gh issue close "$issue_num" --repo "$slug" \
 		--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"} (merged at ${merged_at:-unknown}). Issue was open but dedup guard was blocking re-dispatch." \
@@ -1470,11 +1641,10 @@ _action_oimp_single() {
 	# t2985: lookup PR number locally instead of `gh pr list --search`.
 	# Empty lookup → no merged PR found → return 1 (next-cycle retry).
 	local merged_pr_num="" close_comment="" direct_issue_evidence=0
-	local superseded_coverage="" coverage_count=0
+	local superseded_coverage="" coverage_count=0 reopen_at=""
 	merged_pr_num=$(_pir_lookup_oimp_pr_for_issue "$issue_num" "$oimp_lookup") || merged_pr_num=""
 	if [[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]]; then
 		direct_issue_evidence=1
-		close_comment="Closing: linked PR #${merged_pr_num} was already merged. Detected by reconcile pass."
 	else
 		_pir_successor_scope_is_fully_inherited "$issue_body" || return 1
 		local superseded_refs="" superseded_num="" component_pr=""
@@ -1490,15 +1660,24 @@ _action_oimp_single() {
 			superseded_coverage="${superseded_coverage}${superseded_num}=${component_pr}"$'\n'
 		done <<<"$superseded_refs"
 		[[ "$coverage_count" -gt 0 ]] || return 1
-		if [[ "$coverage_count" -eq 1 ]]; then
-			local only_source=""
-			only_source="${superseded_coverage%%=*}"
-			close_comment="Closing: this consolidated issue supersedes #${only_source}, and merged PR #${merged_pr_num} already fixed that superseded issue. Detected by reconcile pass."
-		else
-			close_comment="Closing: merged PR evidence completely covers all ${coverage_count} superseded sources for this scope-inheriting consolidated issue. Detected by reconcile pass."
-		fi
 	fi
 	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
+
+	# GH#33687: merged-PR evidence must belong to the issue's current lifecycle.
+	# A merge that predates the latest reopen cannot close the issue again;
+	# unavailable lifecycle evidence defers every mutation to a later cycle.
+	reopen_at=$(_pir_latest_reopen_at "$slug" "$issue_num") || {
+		echo "[pulse-wrapper] Reconcile merged-PR: deferred close #${issue_num} in ${slug} — reopen lifecycle evidence unavailable (GH#33687)" >>"$LOGFILE"
+		return 1
+	}
+	if [[ -n "$reopen_at" ]]; then
+		_pir_oimp_fence_to_current_lifecycle "$slug" "$issue_num" "$oimp_lookup" \
+			"$reopen_at" "$direct_issue_evidence" "$superseded_coverage" || return 1
+		merged_pr_num="$_PIR_OIMP_FENCED_PR"
+		superseded_coverage="$_PIR_OIMP_FENCED_COVERAGE"
+	fi
+	close_comment=$(_pir_oimp_close_comment "$direct_issue_evidence" "$merged_pr_num" \
+		"$coverage_count" "$superseded_coverage")
 
 	_pir_file_size_debt_close_gate "$slug" "$issue_num" "$issue_body" "Reconcile merged-PR" || return 1
 
@@ -1526,6 +1705,12 @@ _action_oimp_single() {
 			done <<<"$superseded_coverage"
 		fi
 	fi
+
+	# GH#33687: fence a reopen that raced cached discovery or the checks above.
+	_pir_reopen_evidence_unchanged "$slug" "$issue_num" "$reopen_at" || {
+		echo "[pulse-wrapper] Reconcile merged-PR: deferred close #${issue_num} in ${slug} — reopen lifecycle changed or unavailable before close (GH#33687)" >>"$LOGFILE"
+		return 1
+	}
 
 	gh issue close "$issue_num" --repo "$slug" \
 		--comment "$close_comment" \
