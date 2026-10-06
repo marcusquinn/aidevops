@@ -531,6 +531,70 @@ for foreign_case in "worker-bot unseen-lease" "other-runner closing-lease"; do
 		print_result "terminal lease from ${foreign_login}/${foreign_lease} still counts as ownership" 1 "posts=$(post_count)"
 	fi
 done
+
+# GH#33850: clean/completed releases by another trusted runner must reach an
+# attention outcome through the existing Pulse entrypoint, without dispatching.
+for completed_reason in clean worker_complete; do
+	STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease | jq --arg reason "$completed_reason" '
+		map(map(if .id == 21 then .body = ("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner") |
+			.user.login = "pulse-runner" else . end))')"
+	before_posts="$(post_count)"
+	if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+		[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*reason="${completed_reason}" &&
+			"$(post_count)" == "$((before_posts + 1))" ]]; then
+		print_result "${completed_reason} release from another runner gets attention despite closing terminal lease" 0
+	else
+		print_result "${completed_reason} release gets attention" 1 "output=${output:-missing}"
+	fi
+	completed_body="$(<"${STUB_POST_DIR}/post-$((before_posts + 1))")"
+	if [[ "$completed_body" == *"verified merged replacement"* ]] &&
+		! grep -Eq '^(DISPATCH_CLAIM |DISPATCH_LEASE |CLAIM_RELEASED |Dispatching worker|Interactive session claimed|CHECKPOINT_CONTINUATION_APPROVED |terminal-blocker-circuit:retry)' \
+			"${STUB_POST_DIR}/post-$((before_posts + 1))"; then
+		print_result "${completed_reason} attention is actionable without forging approval or ownership" 0
+	else
+		print_result "${completed_reason} attention is actionable without forging approval or ownership" 1
+	fi
+	STUB_COMMENTS_JSON="$(jq --arg body "$completed_body" '. + [[
+		{id:25,author_association:"OWNER",user:{login:"pulse-runner"},body:$body},
+		{id:26,author_association:"OWNER",user:{login:"pulse-runner"},body:"CLAIM_RELEASED reason=clean runner=pulse-runner"}
+	]]' <<<"$STUB_COMMENTS_JSON")"
+	if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+		[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == "$((before_posts + 1))" ]]; then
+		print_result "${completed_reason} attention deduplicates later releases at the same head" 0
+	else
+		print_result "${completed_reason} attention deduplicates later releases at the same head" 1
+	fi
+	new_head="2222222222222222222222222222222222222222"
+	if evidence=$(_pcc_completed_release_evidence "$STUB_COMMENTS_JSON" "aidevops:blocked-checkpoint-attention pr=42 head=${new_head}") &&
+		[[ "$evidence" == $'26\tclean\tfalse' ]]; then
+		print_result "new head re-arms ${completed_reason} attention" 0
+	else
+		print_result "new head re-arms ${completed_reason} attention" 1
+	fi
+	for ownership_body in 'DISPATCH_CLAIM runner=pulse-runner' 'DISPATCH_LEASE phase=terminal lease_token=foreign'; do
+		owned_comments="$(jq --arg body "$ownership_body" '. + [[
+			{id:27,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}
+		]]' <<<"$STUB_COMMENTS_JSON")"
+		if ! _pcc_completed_release_evidence "$owned_comments" key >/dev/null; then
+			print_result "new ownership suppresses ${completed_reason} attention: ${ownership_body}" 0
+		else
+			print_result "new ownership suppresses ${completed_reason} attention" 1
+		fi
+	done
+done
+for invalid_release in untrusted mismatched_runner unsupported_reason; do
+	invalid_comments="$(blocked_comments | jq --arg invalid "$invalid_release" '
+		map(map(if .id == 21 then .body = "CLAIM_RELEASED reason=clean runner=worker-bot" |
+			if $invalid == "untrusted" then .author_association = "NONE"
+			elif $invalid == "mismatched_runner" then .user.login = "other-runner"
+			else .body = "CLAIM_RELEASED reason=worker_noop runner=worker-bot" end
+		else . end))')"
+	if ! _pcc_completed_release_evidence "$invalid_comments" key >/dev/null; then
+		print_result "completed attention rejects ${invalid_release}" 0
+	else
+		print_result "completed attention rejects ${invalid_release}" 1
+	fi
+done
 unset STUB_POST_DIR
 
 stall_comments() {

@@ -570,6 +570,57 @@ _pcc_blocked_release_evidence() {
 	return $?
 }
 
+# GH#33850: clean/worker_complete are exit classifications, not proof that a
+# preserved draft landed. Other runners may release while the draft author is
+# offline, so bind trust to association and current ownership, not PR authorship.
+# Output: release_id<TAB>reason<TAB>already_posted (deduplicated per head).
+_pcc_completed_release_evidence() {
+	local comments="$1" key="$2"
+	jq -er --arg key "$key" "${_PCC_JQ_RELEASE_DEFS}"'
+		[flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
+		| sort_by(.id) as $c
+		| ([$c[] | select(ownership($c))] | last) as $release
+		| select($release != null)
+		| ([$release | body_lines | select(is_release)] | first // "") as $line
+		| ($line | field("reason")) as $reason
+		| select($reason == "clean" or $reason == "worker_complete")
+		| select(($line | field("runner")) == ($release | login))
+		| [($release.id | tostring), $reason,
+			(any($c[]; (.body // "") | contains($key + " release=")) | tostring)]
+		| @tsv
+	' <<<"$comments"
+	return $?
+}
+
+# A conservative attention outcome: neither unique remaining work nor a landed
+# replacement can be inferred from an exit reason. Do not grant continuation or
+# discard a checkpoint on that evidence alone. Reuse Pulse's existing entrypoint.
+_pcc_completed_attention() {
+	local repo="$1" issue="$2" pr="$3" head="$4" comments="$5" key="$6"
+	local evidence="" release_id="" reason="" posted="" body=""
+	evidence=$(_pcc_completed_release_evidence "$comments" "$key") || return 1
+	IFS=$'\t' read -r release_id reason posted <<<"$evidence"
+	if [[ "$posted" == true ]]; then
+		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s\n' \
+			"$pr" "$repo" "$head" "$release_id"
+		return 0
+	fi
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${key} release=${release_id} -->
+BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} reason=${reason}
+
+A trusted worker released this issue as \`${reason}\` while draft PR #${pr} remains open at head \`${head}\`. This exit classification does not prove the checkpoint is complete or that its changes landed elsewhere. Ordinary redispatch remains held; this record grants no continuation or approval.
+
+Next action for the brief owner (write access required): inspect the exact draft head and the default branch or replacement PR. If unique work remains, recover the exact checkpoint through the guarded continuation workflow, preserving all existing claim, approval and security gates. If complete, mark the draft ready for normal review. If its work already landed, close the draft with a pointer to the verified merged replacement. Do not discard unique work or infer completion from the release reason alone.
+
+See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head, even if later workers release again.
+<!-- ops:end -->"
+	gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$body" >/dev/null || return 1
+	printf 'BLOCKED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s reason=%s\n' \
+		"$pr" "$repo" "$head" "$release_id" "$reason"
+	return 0
+}
+
 #######################################
 # Replace a silent WORKER_DRAFT_CHECKPOINT stall with one durable, actionable
 # record when the draft's worker released as `blocked` (GH#33132).
@@ -600,6 +651,9 @@ _pcc_blocked_attention() {
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
 	key="${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}"
 	evidence=$(_pcc_blocked_release_evidence "$comments" "$runner" "$key") || {
+		if _pcc_completed_attention "$repo" "$issue" "$pr" "$head" "$comments" "$key"; then
+			return 0
+		fi
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_SKIPPED: PR #%s in %s has no current blocked release\n' "$pr" "$repo"
 		return 1
 	}
