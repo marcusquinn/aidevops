@@ -1397,12 +1397,14 @@ _hrff_finalize_exit_trap() {
 	local force_nonzero_exit="$5"
 	local checkpoint_reason="${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}"
 	local claim_release_handled=0
-	local last_stage=""
-	local last_completed_stage=""
+	local last_stage="${_WORKER_PRELAUNCH_LAST_STAGE:-}"
+	local last_completed_stage="${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}"
 
 	if declare -F worker_attempt_observability_last_stage >/dev/null 2>&1; then
-		last_stage=$(worker_attempt_observability_last_stage)
-		last_completed_stage=$(worker_attempt_observability_last_completed_stage)
+		last_stage=$(worker_attempt_observability_last_stage) || last_stage=""
+		last_completed_stage=$(worker_attempt_observability_last_completed_stage) || last_completed_stage=""
+		last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
+		last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 	fi
 	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 	_push_wip_commits_on_exit
@@ -1478,9 +1480,9 @@ _hrff_durable_exit_code_file() {
 # _WORKER_WORKTREE_PATH, _WORKER_EXIT_CODE_FILE, _WORKER_RUNTIME_LAUNCH_STARTED
 #######################################
 _exit_trap_handler() {
-	local session_key="$1"
 	# Capture exit status immediately — any subsequent command will overwrite $?
 	local exit_status=$?
+	local session_key="$1"
 
 	# t3050: prefer the worker's actual wait_status (persisted by _invoke_opencode
 	# at ${exit_code_file}.wait_status) over $?. By the time EXIT fires, the
@@ -1510,8 +1512,8 @@ _exit_trap_handler() {
 	local session_count=0
 	local ledger_terminal_reason=""
 	local force_nonzero_exit=0
-	local last_stage=""
-	local last_completed_stage=""
+	local last_stage="${_WORKER_PRELAUNCH_LAST_STAGE:-}"
+	local last_completed_stage="${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}"
 	if [[ -x "${DISPATCH_LEDGER_HELPER:-}" && -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]]; then
 		ledger_terminal_reason=$("$DISPATCH_LEDGER_HELPER" terminal-reason --session-key "$session_key" \
 			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null) || ledger_terminal_reason=""
@@ -1519,8 +1521,10 @@ _exit_trap_handler() {
 	if [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != "1" ]]; then
 		reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-$_HRFF_PRELAUNCH_NOT_INVOKED}"
 		if declare -F worker_attempt_observability_last_stage >/dev/null 2>&1; then
-			last_stage=$(worker_attempt_observability_last_stage)
-			last_completed_stage=$(worker_attempt_observability_last_completed_stage)
+			last_stage=$(worker_attempt_observability_last_stage) || last_stage=""
+			last_completed_stage=$(worker_attempt_observability_last_completed_stage) || last_completed_stage=""
+			last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
+			last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 		fi
 		print_warning "[exit-trap] runtime invocation never started after worker preparation; reason=${reason} last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 		if [[ ! "$exit_status" =~ ^[1-9][0-9]*$ ]]; then
