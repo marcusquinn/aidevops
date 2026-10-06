@@ -66,6 +66,18 @@ mkdir -p "$STUB_DIR"
 FIXTURE_ISSUE_JSON="${TEST_ROOT}/fixture-issue.json"
 FIXTURE_COMMENTS_JSON="${TEST_ROOT}/fixture-comments.json"
 FIXTURE_TIMELINE_JSON="${TEST_ROOT}/fixture-timeline.json"
+FIXTURE_STATUS_JSON="${TEST_ROOT}/fixture-status.json"
+cat >"$FIXTURE_STATUS_JSON" <<'STATUS'
+{"data":{"repository":{
+  "label0":{"name":"status:available","color":"0e8a16","description":"Task is available for claiming"},
+  "label1":{"name":"status:queued","color":"fbca04","description":"Worker dispatched, not yet started"},
+  "label2":{"name":"status:claimed","color":"f9d0c4","description":"Interactive implementation is actively claimed"},
+  "label3":{"name":"status:in-progress","color":"1d76db","description":"Worker actively running"},
+  "label4":{"name":"status:in-review","color":"5319e7","description":"Non-draft PR ready for review/merge"},
+  "label5":{"name":"status:done","color":"6f42c1","description":"Task is complete"},
+  "label6":{"name":"status:blocked","color":"d93f0b","description":"Partial work blocked; inspect reason and next action"}
+}}}
+STATUS
 
 write_stub_gh() {
 	cat >"${STUB_DIR}/gh" <<STUB
@@ -84,15 +96,7 @@ fi
 if [[ "\$1" == "api" ]]; then
 	# Exact batched status-label snapshot used by ensure_status_labels_exist.
 	if [[ "\$2" == "graphql" ]]; then
-		printf '%s\n' '{"data":{"repository":{
-			"label0":{"name":"status:available","color":"0e8a16","description":"Task is available for claiming"},
-			"label1":{"name":"status:queued","color":"fbca04","description":"Worker dispatched, not yet started"},
-			"label2":{"name":"status:claimed","color":"f9d0c4","description":"Interactive implementation is actively claimed"},
-			"label3":{"name":"status:in-progress","color":"1d76db","description":"Worker actively running"},
-			"label4":{"name":"status:in-review","color":"5319e7","description":"Non-draft PR ready for review/merge"},
-			"label5":{"name":"status:done","color":"6f42c1","description":"Task is complete"},
-			"label6":{"name":"status:blocked","color":"d93f0b","description":"Partial work blocked; inspect reason and next action"}
-		}}}'
+		cat "${FIXTURE_STATUS_JSON}"
 		exit 0
 	fi
 	if [[ "\$2" == "repos/owner/repo" ]]; then
@@ -163,6 +167,7 @@ fi
 exit 0
 STUB
 	chmod +x "${STUB_DIR}/gh"
+	return 0
 }
 
 write_fixture_issue() {
