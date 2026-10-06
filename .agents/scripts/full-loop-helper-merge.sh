@@ -625,6 +625,14 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
 		return 1
 	fi
+	#aidevops:trust-boundary GH#33775 -- a live PR hold-for-review label is an
+	# explicit primary-review hold, matching pulse merge (t2411/t2449). It blocks
+	# every transport through this shared guard and is never resolved by signed
+	# approval, so return before any approval target is collected.
+	if [[ "$labels_padded" == *",hold-for-review,"* ]]; then
+		print_error "Merge blocked: PR #${pr_number} carries \`hold-for-review\` (maintainer review hold). Remove the label when the hold is resolved."
+		return 1
+	fi
 
 	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot
 	# PRs may lack collaborator permission. Both narrow predicates bind immutable
