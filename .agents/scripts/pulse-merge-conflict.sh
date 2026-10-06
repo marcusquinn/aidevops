@@ -1102,15 +1102,29 @@ _close_conflicting_pr_comment_not_landed() {
 	# re-deriving from scratch (t2118). Fail-open: any failure is
 	# logged and the close still proceeds.
 	local linked_issue_for_diff
-	linked_issue_for_diff=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_diff=""
+	local issue_labels="" recovery_message="Automatic re-attempt depends on the linked issue remaining open and eligible for dispatch."
+	_CFPD_PRESERVED=0
+	linked_issue_for_diff=$(_extract_pr_work_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_diff=""
 	if [[ -n "$linked_issue_for_diff" && "$linked_issue_for_diff" =~ ^[0-9]+$ ]]; then
 		_carry_forward_pr_diff "$pr_number" "$repo_slug" "$linked_issue_for_diff" || true
+		if [[ "$_CFPD_PRESERVED" -eq 1 ]]; then
+			recovery_message="The diff was carried forward to issue #${linked_issue_for_diff}. Automatic re-attempt depends on that issue remaining open and eligible for dispatch."
+		fi
+		issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue_for_diff}" \
+			--jq '[.labels[]?.name] | join(",")' 2>/dev/null) || issue_labels=""
+		if [[ ",${issue_labels}," == *",status:blocked,"* ]]; then
+			if [[ "$_CFPD_PRESERVED" -eq 1 ]]; then
+				recovery_message="The diff was carried forward to issue #${linked_issue_for_diff}. That issue is status:blocked; no automatic redispatch will happen while it remains blocked."
+			else
+				recovery_message="Issue #${linked_issue_for_diff} is status:blocked; no automatic redispatch will happen while it remains blocked. The diff could not be carried forward; recover it from this PR."
+			fi
+		fi
 	fi
 
 	# Use standard message but without the misleading
 	# "remains open for re-attempt" phrasing (GH#17574).
 	if gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "Closing — this PR has merge conflicts with the base branch. If the linked issue is still open, a worker will be dispatched to re-attempt with a fresh branch.
+		--comment "Closing — this PR has merge conflicts with the base branch. ${recovery_message}
 
 _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null; then
 		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
@@ -1180,9 +1194,7 @@ _close_conflicting_pr() {
 	# verified. Route to a conflict-fix worker when a linked issue is
 	# available; otherwise leave the PR open with the nudge.
 	if [[ $classify_rc -eq 2 ]]; then
-		if [[ -n "$linked_issue_for_supersession" ]]; then
-			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue_for_supersession" "conflict" "" "$pr_title" || true
-		fi
+		_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue_for_supersession" "conflict" "" "$pr_title" || true
 		return 0
 	fi
 
@@ -1225,6 +1237,8 @@ _carry_forward_pr_diff() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
+	# Preserve fail-open return semantics while allowing truthful close comments.
+	_CFPD_PRESERVED=0
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
@@ -1263,6 +1277,7 @@ _carry_forward_pr_diff() {
 	local marker="<!-- t2118:prior-worker-diff:PR${pr_number} -->"
 	if printf '%s' "$current_body" | grep -qF "$marker"; then
 		echo "[pulse-wrapper] _carry_forward_pr_diff: issue #${linked_issue} already has diff marker for PR #${pr_number} — skipping (t2118)" >>"$LOGFILE"
+		_CFPD_PRESERVED=1
 		return 0
 	fi
 
@@ -1312,6 +1327,7 @@ ${new_section}"
 	if gh_issue_edit_safe "$linked_issue" --repo "$repo_slug" \
 		--body "$new_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] _carry_forward_pr_diff: appended diff from PR #${pr_number} to issue #${linked_issue} in ${repo_slug} (t2118)" >>"$LOGFILE"
+		_CFPD_PRESERVED=1
 	else
 		echo "[pulse-wrapper] _carry_forward_pr_diff: failed to update issue #${linked_issue} body in ${repo_slug} — continuing with close (t2118)" >>"$LOGFILE"
 	fi

@@ -1461,6 +1461,12 @@ _route_pr_to_fix_worker() {
 	local takeover_pattern="$_PMP_ORIGIN_TAKEOVER_PATTERN"
 	local has_routed_label=0
 
+	# Conflict checkpoints intentionally use For/Ref, not closing keywords.
+	# Resolve independently of the caller's closing-only target, retaining all
+	# subsequent ownership, hold and dispatch guards (GH#33763).
+	if [[ "$kind" == "conflict" ]]; then
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	fi
 	_route_pr_has_linked_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || return 1
 
 	# Fetch labels if not provided by caller
