@@ -323,6 +323,10 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-process.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
 source "${_PULSE_MERGE_DIR}/pulse-merge-required-checks.sh"
 
+# shellcheck source=./pulse-merge-ci-drift-ledger.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-merge-ci-drift-ledger.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
@@ -1569,6 +1573,7 @@ _pmp_stage_review_and_gates() {
 
 _pmp_stage_required_checks() {
 	local required_labels="$pr_labels" ci_route_rc=0
+	local drift_names="" drift_signature="" drift_skip=0
 	[[ -n "$timing_prefix" ]] && _branch_protection_start=$(_pmp_now_epoch)
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author" "$pr_head_ref_oid" \
@@ -1582,7 +1587,23 @@ _pmp_stage_required_checks() {
 				echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} has non-passing required checks; would evaluate CI-drift rebase or repair routing" >>"$LOGFILE"
 				return 1
 			fi
-			if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid"; then
+			# Never use old ledger evidence while current required checks are active.
+			_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$pr_head_ref_oid" && return 1
+			if drift_names=$(_required_checks_terminal_failure_names "$repo_slug" "$pr_number" "$pr_head_ref_oid"); then
+				if [[ -n "$drift_names" ]]; then
+					drift_signature=$(printf '%s\n' "$drift_names" | shasum -a 256 | cut -d ' ' -f 1) || drift_signature=""
+				fi
+			else
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift context classification unavailable (required-context/head/REST parse failure); allowing one rebase" >>"$LOGFILE"
+			fi
+			if [[ -n "$drift_signature" ]] && _ci_drift_ledger_should_skip "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature"; then
+				drift_skip=1
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase already tried for the same failing required contexts (${drift_names//$'\n'/, }); routing to CI fix-worker" >>"$LOGFILE"
+			fi
+			if [[ "$drift_skip" -eq 0 ]] && _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid"; then
+				if [[ -n "$drift_signature" ]]; then
+					_ci_drift_ledger_record "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature" || echo "[pulse-merge] CI-drift ledger write failed for PR #${pr_number}" >>"$LOGFILE"
+				fi
 				[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}branch_protection_s" "$_branch_protection_start"
 				return 1
 			fi
