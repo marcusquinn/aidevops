@@ -290,6 +290,12 @@ calculate_max_workers() {
 	elif [[ "$max_workers" -gt "$MAX_WORKERS_CAP" ]]; then
 		max_workers="$MAX_WORKERS_CAP"
 	fi
+	local colocated_runners="" host_worker_cap=""
+	colocated_runners=$(_pulse_colocated_runner_count)
+	host_worker_cap=$(_pulse_shared_host_worker_cap "$colocated_runners")
+	if ((host_worker_cap > 0 && max_workers > host_worker_cap)); then
+		max_workers="$host_worker_cap"
+	fi
 
 	# open_idle keeps the RAM target; per-pass idle headroom is applied by
 	# pulse_apply_provider_load_capacity_cap, which knows active workers.
@@ -303,7 +309,7 @@ calculate_max_workers() {
 	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
 	echo "$max_workers" >"$max_workers_file"
 
-	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}, load=${cpu_load}/${cpu_cores} max_load_per_core=${cpu_threshold} cpu_gate=${cpu_gate} cpu_idle_pct=${cpu_idle:-na}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}, load=${cpu_load}/${cpu_cores} max_load_per_core=${cpu_threshold} cpu_gate=${cpu_gate} cpu_idle_pct=${cpu_idle:-na} colocated_runners=${colocated_runners}" >>"$LOGFILE"
 	return 0
 }
 

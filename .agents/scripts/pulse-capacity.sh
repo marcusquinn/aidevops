@@ -275,6 +275,66 @@ _pulse_cpu_core_count() {
 	return 0
 }
 
+# Count distinct live runner UIDs, not workers. Include this Pulse's user even
+# when ps cannot see its wrapper. Numeric UIDs avoid truncated user names on BSD
+# ps; exact argument tokens avoid matching scripts merely mentioned in commands.
+# One process-table snapshot, no shared writable registry or per-worker probing.
+_pulse_colocated_runner_count() {
+	local current_uid="" count=""
+	local ps_args=(-axo 'uid=,stat=,args=')
+	if [[ -r /proc/self/stat ]]; then
+		# GNU ps can select shell/script comm names before fetching expensive
+		# command lines for thousands of unrelated host processes. Include Linux
+		# TASK_COMM_LEN-truncated shebang names as well as shell interpreters.
+		ps_args=(-C 'bash,sh,zsh,ksh,dash,pulse-wrapper.sh,pulse-wrapper.s,headless-runtime-helper.sh,headless-runtim' -o 'uid=,stat=,args=')
+	fi
+	current_uid=$(id -u) || current_uid="self"
+	count=$(LC_ALL=C ps "${ps_args[@]}" 2>/dev/null | LC_ALL=C awk -v self="$current_uid" '
+		BEGIN { users[self] = 1; uid_column = 1; stat_column = 2 }
+		$(stat_column) !~ /^Z/ {
+			script = 3
+			if ($script ~ /(^|\/)(ba|da|z|k)?sh$/) {
+				script++
+				while (script <= NF && $script ~ /^-/) script++
+			}
+			if ($script ~ /(^|\/)(pulse-wrapper|headless-runtime-helper)[.]sh$/) {
+				users[$(uid_column)] = 1
+			}
+		}
+		END { for (user in users) count++; print count }
+	') || count=1
+	[[ "$count" =~ ^[1-9][0-9]*$ ]] || count=1
+	printf '%s\n' "$count"
+	return 0
+}
+
+# Divide only the automatic core/RAM-derived ceiling. Explicit caps already
+# represent the operator's per-runner budget. A shared host always gets >=1 slot.
+# Arguments: $1 detected runner count. Stdout: per-runner ceiling, or 0 if unset.
+_pulse_shared_host_worker_cap() {
+	local runners="$1" cap="${MAX_WORKERS_CAP:-0}"
+	[[ "$runners" =~ ^[1-9][0-9]*$ ]] || runners=1
+	[[ "$cap" =~ ^[1-9][0-9]*$ ]] || cap=0
+	if [[ "${MAX_WORKERS_CAP_AUTO:-0}" == "1" ]] && ((cap > 0 && runners > 1)); then
+		cap=$((cap / runners))
+		((cap < 1)) && cap=1
+	fi
+	printf '%s\n' "$cap"
+	return 0
+}
+
+# Bind the minimum floor and stale refill target to the current shared ceiling.
+# Do not divide cached targets again or terminate already-running workers.
+# Arguments: $1 final target, $2 detected runners, $3 shared ceiling.
+_pulse_cap_shared_host_target() {
+	local final_max="$1" runners="$2" host_worker_cap="$3"
+	if [[ "${MAX_WORKERS_CAP_AUTO:-0}" == "1" ]] && ((runners > 1 && host_worker_cap > 0 && final_max > host_worker_cap)); then
+		final_max="$host_worker_cap"
+	fi
+	printf '%s\n' "$final_max"
+	return 0
+}
+
 # Read one Linux aggregate CPU sample as "<total-jiffies> <idle-jiffies>".
 _pulse_cpu_proc_stat_sample() {
 	LC_ALL=C awk '/^cpu / {total = 0; for (i = 2; i <= NF; i++) total += $i; print total, $5; exit}' /proc/stat 2>/dev/null
@@ -405,9 +465,12 @@ pulse_apply_provider_load_capacity_cap() {
 	# must not reopen a closed gate. This limits launches, not running workers.
 	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold="" cpu_idle=""
 	read -r cpu_load cpu_cores cpu_gate cpu_threshold cpu_idle <<<"$(_pulse_cpu_pressure)"
+	local colocated_runners="" host_worker_cap=""
+	colocated_runners=$(_pulse_colocated_runner_count)
+	host_worker_cap=$(_pulse_shared_host_worker_cap "$colocated_runners")
 	if [[ "$cpu_gate" == "closed" ]] || ((raw_max_workers == 0)); then
-		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=%s cpu_idle_pct=%s active_workers=%s admission=closed\n' \
-			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_gate" "${cpu_idle:-na}" "$active_workers" >>"${LOGFILE:-/dev/null}"
+		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=%s cpu_idle_pct=%s active_workers=%s admission=closed colocated_runners=%s\n' \
+			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_gate" "${cpu_idle:-na}" "$active_workers" "$colocated_runners" >>"${LOGFILE:-/dev/null}"
 		printf '0 0\n'
 		return 0
 	fi
@@ -458,6 +521,7 @@ pulse_apply_provider_load_capacity_cap() {
 	if ((account_cap >= 0 && final_max > account_cap)); then
 		final_max="$account_cap"
 	fi
+	final_max=$(_pulse_cap_shared_host_target "$final_max" "$colocated_runners" "$host_worker_cap")
 	if ((rate_limits > 0 || service_interruptions > 0 || provider_5xx > 0 || failures >= 3)); then
 		if ((final_max > 1)); then
 			final_max=$(((final_max + 1) / 2))
@@ -483,8 +547,8 @@ pulse_apply_provider_load_capacity_cap() {
 	_pulse_capacity_emit_gauges "$account_available" "$failures" "$final_max"
 	local health_window_seconds="${PULSE_DISPATCH_CAPACITY_HEALTH_WINDOW_SECONDS:-900}"
 	[[ "$health_window_seconds" =~ ^[0-9]+$ ]] || health_window_seconds=900
-	printf '[pulse-wrapper] Dispatch_capacity: capacity_unit=simultaneous_workers simultaneous_target_raw=%s simultaneous_target_final=%s active_workers=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s worker_terminal_failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s worker_progress_heartbeats=%s failure_observation_window_seconds=%s task_duration_limit=none min_floor=%s floor_allowed=%s floor_active=%s auth_error_only_cycles=%s\n' \
-		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_multiplier" "$account_multiplier_source" "$account_limited" "$account_auth_errors" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$health_window_seconds" "$min_worker_floor" "$floor_allowed" "$floor_active" "$auth_error_only_cycles" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	printf '[pulse-wrapper] Dispatch_capacity: capacity_unit=simultaneous_workers simultaneous_target_raw=%s simultaneous_target_final=%s active_workers=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s worker_terminal_failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s worker_progress_heartbeats=%s failure_observation_window_seconds=%s task_duration_limit=none min_floor=%s floor_allowed=%s floor_active=%s auth_error_only_cycles=%s colocated_runners=%s shared_host_worker_cap=%s worker_cap_auto=%s\n' \
+		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_multiplier" "$account_multiplier_source" "$account_limited" "$account_auth_errors" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$health_window_seconds" "$min_worker_floor" "$floor_allowed" "$floor_active" "$auth_error_only_cycles" "$colocated_runners" "$host_worker_cap" "${MAX_WORKERS_CAP_AUTO:-0}" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 	printf '%s %s\n' "$final_max" "$floor_active"
 	return 0
 }
