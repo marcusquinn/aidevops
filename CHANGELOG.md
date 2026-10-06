@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.15] - 2026-10-06
+
+### Changed
+
+- Documentation: capture Hostinger site retirement, mysqldump backups, MainWP removal and GPLVault update lessons
+- Documentation: fail-fast terminal outcomes for bounded browser checks
+- Maintenance: trust fsspec/mako/multidict pip updates and bump lock (supersedes #33704) (#33721)
+
+### Fixed
+
+- stop cache prime and stale enumeration estimate starving pulse dispatch
+- count only ready worker PRs in pulse PR backlog guardrail (GH#33727) (#33732)
+- suppress pr-salvage findings after a verified merged replacement
+- planning-commit-helper must not report direct without publishing on detached HEAD (#33724)
+- merged-PR reconciliation must not re-close issues reopened after the merge
+- recover final merge head-SHA read from local admission deferral (GH#33715) (#33726)
+- scale full-loop merge admission recovery budget (GH#33706) (#33722)
+- add body/authorAssociation to jq argv test issue fixture (#33723)
+- scope-guard resolves task scope from the pushed destination ref
+
 ## [3.38.14] - 2026-10-06
 
 ### Fixed
