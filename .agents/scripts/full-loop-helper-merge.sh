@@ -1760,7 +1760,7 @@ _merge_admin_fallback_required_checks_clear() {
 	local pr_number="$1"
 	local repo="$2"
 	local checks_rc=0
-	_merge_with_admission_retry "${SCRIPT_DIR}/gh-checks-wait-helper.sh" wait "$pr_number" --repo "$repo" --timeout 0 --initial-interval 1 --max-interval 1 || checks_rc=$?
+	AIDEVOPS_ACTIONS_NATIVE_CHECKS_ONLY=1 _merge_with_admission_retry "${SCRIPT_DIR}/gh-checks-wait-helper.sh" wait "$pr_number" --repo "$repo" --timeout 0 --initial-interval 1 --max-interval 1 || checks_rc=$?
 	case "$checks_rc" in
 	0) return 0 ;;
 	8)
@@ -1803,10 +1803,25 @@ _merge_try_review_only_admin_fallback() {
 	return 1
 }
 
+_merge_check_admin_capability() {
+	local pr_number="$1" repo="$2" has_admin="$3"
+	if [[ "$has_admin" -eq 1 ]]; then
+		# shellcheck source=repo-actions-capability-lib.sh
+		source "${BASH_SOURCE[0]%/*}/repo-actions-capability-lib.sh"
+		#aidevops:trust-boundary -- local evidence never authorizes an explicit
+		# admin bypass of unavailable native required checks.
+		if repo_actions_unavailable "$repo"; then
+			_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return 1
+		fi
+	fi
+	return 0
+}
+
 _merge_execute() {
 	local pr_number="$1" repo="$2" merge_method="$3"
 	local has_admin="$4" has_auto="$5" squash_subject=""
 	local merge_body_file="${6:-}"
+	_merge_check_admin_capability "$pr_number" "$repo" "$has_admin" || return 1
 	squash_subject=$(_merge_resolve_subject_for_method "$pr_number" "$repo" "$merge_method") || return 1
 	local merge_flags=()
 	[[ "$has_admin" -eq 1 ]] && merge_flags+=("--admin")

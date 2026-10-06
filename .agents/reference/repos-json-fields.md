@@ -11,6 +11,8 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `slug` | string | `owner/repo` — ALWAYS use this for `gh` commands, never guess org names |
 | `pulse` | bool | `true` = active development, tasks, issues. `false` = no task management |
 | `maintenance` | bool | Missing/`true` = include in recurring cross-repo maintenance. `false` = keep registered but omit from routine API scans, workflow/badge rollout, and Pulse. |
+| `actions` | string | Missing/`"available"` = normal remote CI. `"unavailable"` = run configured local checks from the start; full-loop requires trusted exact-head local evidence instead of polling Actions. |
+| `actions_reason` | string | Optional operator explanation for unavailable Actions, for example billing or spending blocked. Not a classifier or authority grant. |
 | `local_only` | bool | No remote; skip all `gh` operations |
 | `priority` | string | `"tooling"` (infrastructure), `"product"` (user-facing), `"profile"` (docs-only) |
 | `maintainer` | string | GitHub username. Auto-detected from `gh api user`; falls back to slug owner |
@@ -19,6 +21,20 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `has_interface` | bool | Explicit GUI/interface flag. `true` forces DESIGN.md scaffolding/backfill; `false` suppresses heuristic interface detection. |
 | `agent_source` | bool | `true` = repo is a managed private agent source pack; `aidevops init` seeds core-style agent structure and `aidevops update` refreshes framework-owned organization templates |
 | `features` | array | Enabled registration capabilities. `"code-quality"` activates lint policy migration and repo-verify hook rollout unless `.aidevops.json` explicitly opts out. |
+
+### GitHub Actions availability
+
+Set `aidevops repos actions off owner/repo "billing blocked"` to record
+unavailability, or `aidevops repos actions on owner/repo` to restore the default
+(removes both fields). Omit the repository to select the registered current
+checkout, including linked worktrees. This changes neither maintenance nor Pulse.
+
+The field is explicit operator configuration, never inferred or automatically
+set from check failures. Unknown values, missing registrations and ambiguous
+duplicate slugs do not activate the exception. See
+[CI gate policy](ci-gate-policy.md#github-actions-unavailable) for the trusted
+local-verification receipt. Native branch protection remains enforced: this
+capability does not grant an admin bypass or make a required failed check green.
 
 ### `role` detail
 

@@ -592,6 +592,16 @@ cmd_wait() {
 		log_error "Cannot resolve repository; pass --repo OWNER/REPO"
 		return 2
 	}
+	# shellcheck source=repo-actions-capability-lib.sh
+	source "${SCRIPT_DIR}/repo-actions-capability-lib.sh"
+	if repo_actions_unavailable "$repo"; then
+		# An admin fallback must still use GitHub's required checks. Local
+		# evidence is never permission to bypass native branch protection.
+		if [[ "${AIDEVOPS_ACTIONS_NATIVE_CHECKS_ONLY:-0}" != "1" ]]; then
+			repo_actions_verify_local "$repo" "$pr_number"
+			return $?
+		fi
+	fi
 	wait_for_checks "$pr_number" "$repo" "$required_only" "$timeout" "$initial_interval" "$max_interval" "$heartbeat_interval"
 	return $?
 }

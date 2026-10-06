@@ -321,6 +321,24 @@ _full_loop_record_check_read_failure() {
 	return 0
 }
 
+_full_loop_query_capability_checks() {
+	local pr_number="$1" repo="$2" pr_head_ref="$3" verified_head="$4"
+	# shellcheck source=repo-actions-capability-lib.sh
+	source "${_FULL_LOOP_COMMIT_DIR}/repo-actions-capability-lib.sh"
+	if repo_actions_unavailable "$repo"; then
+		repo_actions_verify_local "$repo" "$pr_number" "$verified_head" || return 1
+		FULL_LOOP_REQUIRED_CHECKS_JSON='[]'
+		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="trusted-local-verification"
+		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="trusted local checks passed; Actions unavailable"
+	else
+		_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" || {
+			_full_loop_record_check_read_failure "$pr_number" "$verified_head"
+			return 1
+		}
+	fi
+	return 0
+}
+
 _full_loop_verify_pr_readiness() {
 	local pr_number="$1"
 	local repo="$2"
@@ -357,10 +375,7 @@ _full_loop_verify_pr_readiness() {
 	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
 
 	local required_checks=""
-	_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" || {
-		_full_loop_record_check_read_failure "$pr_number" "$verified_head"
-		return 1
-	}
+	_full_loop_query_capability_checks "$pr_number" "$repo" "$pr_head_ref" "$verified_head" || return 1
 	required_checks="$FULL_LOOP_REQUIRED_CHECKS_JSON"
 	local post_checks_head=""
 	post_checks_head=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo" \
