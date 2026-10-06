@@ -89,6 +89,28 @@ _status_recommended_tools() {
 	return 0
 }
 
+_status_pulse_schedulers() {
+	[[ "$(uname -s)" == "Linux" ]] || return 0
+	command -v crontab >/dev/null 2>&1 || return 0
+	command -v systemctl >/dev/null 2>&1 || return 0
+	local current_cron=""
+	local routine=""
+	local cron_pattern=""
+	current_cron=$(crontab -l 2>/dev/null) || return 0
+	for routine in supervisor-pulse pulse-merge; do
+		cron_pattern="#[[:space:]]*aidevops: ${routine}([[:space:]]|$)"
+		if [[ "$routine" == "pulse-merge" ]]; then
+			cron_pattern='#[[:space:]]*aidevops: pulse-merge(-routine)?([[:space:]]|$)'
+		fi
+		if printf '%s\n' "$current_cron" | grep -qE "$cron_pattern" &&
+			{ systemctl --user is-enabled "aidevops-${routine}.timer" >/dev/null 2>&1 ||
+				systemctl --user is-active "aidevops-${routine}.timer" >/dev/null 2>&1; }; then
+			print_warning "Dual scheduler detected for ${routine}: cron and systemd timer; run: aidevops update"
+		fi
+	done
+	return 0
+}
+
 _status_ai_tools() {
 	print_header "AI Tools & MCPs"
 	check_cmd opencode && print_success "OpenCode CLI" || print_warning "OpenCode CLI - not installed"
@@ -305,6 +327,7 @@ cmd_status() {
 	_status_ai_configs
 	_status_runtime_config_parity
 	_status_headless_runtime_config
+	_status_pulse_schedulers
 	_status_capability_readiness
 	_status_storage_inventory
 	print_header "SSH Configuration"

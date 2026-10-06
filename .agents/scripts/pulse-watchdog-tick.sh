@@ -45,6 +45,8 @@ _LIFECYCLE_HELPER="${_AGENTS_DIR}/scripts/pulse-lifecycle-helper.sh"
 _LOG_DIR="${HOME}/.aidevops/logs"
 _WATCHDOG_LOG="${_LOG_DIR}/pulse-watchdog.log"
 _LAST_RUN_FILE="${_LOG_DIR}/pulse-wrapper-last-run.ts"
+_LOCK_PID_FILE="${_LOG_DIR}/pulse-wrapper.lockdir/pid"
+_REVIVAL_STAMP_FILE="${_LOG_DIR}/pulse-watchdog-revival.ts"
 _SETTINGS_FILE="${HOME}/.config/aidevops/settings.json"
 _SYSTEMD_PULSE_UNIT="aidevops-supervisor-pulse.service"
 
@@ -96,7 +98,48 @@ _systemd_pulse_alive() {
 	[[ "$_active_state" == "active" || "$_active_state" == "activating" ]]
 }
 
+# The cycle-start stamp is not a heartbeat. A live lock owner is authoritative
+# even for cron/manual cycles longer than interval + grace. Reject reused PIDs
+# and shell -c launchers that merely mention the wrapper in their command text.
+_lock_owner_alive() {
+	local _pid="" _cmd=""
+	[[ -f "$_LOCK_PID_FILE" ]] || return 1
+	read -r _pid <"$_LOCK_PID_FILE" || return 1
+	[[ "$_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	kill -0 "$_pid" 2>/dev/null || return 1
+	_cmd=$(ps -p "$_pid" -o command= 2>/dev/null) || return 1
+	[[ "$_cmd" =~ ^[^[:space:]]*([[:space:]]+--?[[:alnum:]-]+)*[[:space:]]+-[[:alnum:]]*c[[:alnum:]]*([[:space:]]|$) ]] && return 1
+	[[ "$_cmd" =~ (^|[[:space:]])([^[:space:]]*/)?pulse-wrapper\.sh([[:space:]]|$) ]] || return 1
+	return 0
+}
+
+_clear_revival_episode() {
+	rm -f "$_REVIVAL_STAMP_FILE" 2>/dev/null || true
+	return 0
+}
+
+# Keep retrying failed revival, but report a stale episode only once. A new
+# cycle-start stamp or observed liveness/grace window re-arms the diagnostic.
+_log_revival_once() {
+	local _msg="$1" _previous=""
+	if [[ -f "$_REVIVAL_STAMP_FILE" ]]; then
+		read -r _previous <"$_REVIVAL_STAMP_FILE" || _previous=""
+	fi
+	[[ "$_previous" == "$_LAST_RUN" ]] && return 0
+	_wd_log "$_msg"
+	printf '%s\n' "$_LAST_RUN" >"$_REVIVAL_STAMP_FILE" 2>/dev/null || true
+	return 0
+}
+
 _revive_pulse() {
+	local _msg="$1"
+	# Recheck immediately before launch: a scheduled cycle may have acquired
+	# the lock since the initial liveness probe. Never disturb its ownership.
+	if _lock_owner_alive; then
+		_clear_revival_episode
+		return 0
+	fi
+	_log_revival_once "$_msg"
 	if _systemd_owns_pulse; then
 		systemctl --user start "$_SYSTEMD_PULSE_UNIT" >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "systemd revival exit=$?"
 		return 0
@@ -104,6 +147,12 @@ _revive_pulse() {
 	"$_LIFECYCLE_HELPER" start >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "revival exit=$?"
 	return 0
 }
+
+# Check ownership before requiring a helper or inspecting scheduler/stamp age.
+if _lock_owner_alive; then
+	_clear_revival_episode
+	exit 0
+fi
 
 # A systemd-owned pulse does not need the generic lifecycle helper. Other
 # backends still require it for process discovery and revival.
@@ -118,12 +167,15 @@ fi
 # that scheduler-owned Pulse dead and repeatedly trying to revive it.
 if _systemd_owns_pulse; then
 	if _systemd_pulse_alive; then
+		_clear_revival_episode
 		exit 0
 	fi
 	if [[ -x "$_LIFECYCLE_HELPER" ]] && "$_LIFECYCLE_HELPER" is-running >/dev/null 2>&1; then
+		_clear_revival_episode
 		exit 0
 	fi
 elif "$_LIFECYCLE_HELPER" is-running >/dev/null 2>&1; then
+	_clear_revival_episode
 	exit 0
 fi
 
@@ -151,17 +203,16 @@ _AGE=$((_NOW - _LAST_RUN))
 # This catches first-boot and post-clean-install scenarios where the watchdog
 # fires before the pulse has ever recorded a timestamp.
 if [[ "$_LAST_RUN" -eq 0 ]]; then
-	_wd_log "no last-run timestamp — reviving pulse"
-	_revive_pulse
+	_revive_pulse "no last-run timestamp — reviving pulse"
 	exit 0
 fi
 
 # Within grace window — let the owning scheduler fire on its schedule.
 if [[ "$_AGE" -lt "$_THRESHOLD" ]]; then
+	_clear_revival_episode
 	exit 0
 fi
 
 # Past grace window — revive.
-_wd_log "pulse dead for ${_AGE}s (threshold ${_THRESHOLD}s = interval ${_INTERVAL} + grace ${_GRACE}) — reviving"
-_revive_pulse
+_revive_pulse "pulse dead for ${_AGE}s (threshold ${_THRESHOLD}s = interval ${_INTERVAL} + grace ${_GRACE}) — reviving"
 exit 0

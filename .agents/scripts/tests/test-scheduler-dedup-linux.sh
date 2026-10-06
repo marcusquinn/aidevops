@@ -48,6 +48,7 @@ setup_fixture() {
 	printf '0\n' >"$CRON_LIST_COUNT_FILE"
 	printf '0\n' >"$CRON_WRITE_COUNT_FILE"
 	: >"$SYSTEMD_ENABLED_FILE"
+	export SYSTEMD_DISABLE_FAIL=0
 
 	cat >"${fake_bin}/crontab" <<'CRONTAB_FAKE'
 #!/usr/bin/env bash
@@ -90,6 +91,12 @@ if [[ "${1:-}" == "--user" && ( "${2:-}" == "is-enabled" || "${2:-}" == "is-acti
 	exit $?
 fi
 if [[ "${1:-}" == "--user" && "${2:-}" == "status" ]]; then
+	exit 0
+fi
+if [[ "${1:-}" == "--user" && "${2:-}" == "disable" ]]; then
+	[[ "$SYSTEMD_DISABLE_FAIL" == "0" ]] || exit 1
+	grep -vxF "${4:-}" "$SYSTEMD_ENABLED_FILE" >"${SYSTEMD_ENABLED_FILE}.new" || true
+	mv "${SYSTEMD_ENABLED_FILE}.new" "$SYSTEMD_ENABLED_FILE"
 	exit 0
 fi
 exit 0
@@ -271,6 +278,74 @@ test_cron_only_scheduler_preserved() {
 	return 0
 }
 
+test_current_pulse_tags_and_status() {
+	setup_fixture
+	printf '%s\n' \
+		'*/2 * * * * pulse-wrapper.sh # aidevops: supervisor-pulse' \
+		'* * * * * pulse-wrapper.sh --merge-only # aidevops: pulse-merge (--merge-only)' \
+		'* * * * * pulse-merge-routine.sh run # aidevops: pulse-merge-routine' \
+		'0 6 * * * true # aidevops: pulse-merge-other' \
+		'0 7 * * * true # aidevops: supervisor-pulse-other' >"$CRON_FILE"
+	printf '%s\n' 'aidevops-supervisor-pulse.timer' 'aidevops-pulse-merge.timer' >"$SYSTEMD_ENABLED_FILE"
+	load_scheduler_functions
+	# Exercise the same diagnostic called by aidevops status, without host changes.
+	# shellcheck source=../aidevops-cli/aidevops-status-lib.sh
+	source "${REPO_ROOT}/.agents/scripts/aidevops-cli/aidevops-status-lib.sh"
+	local output=""
+	output="$(_status_pulse_schedulers 2>&1)"
+	if [[ "$output" == *'Dual scheduler detected for supervisor-pulse'* && "$output" == *'Dual scheduler detected for pulse-merge'* ]]; then
+		print_result "status diagnoses both duplicate pulse schedulers" 0
+	else
+		print_result "status diagnoses both duplicate pulse schedulers" 1 "$output"
+	fi
+	_reconcile_linux_scheduler_duplicates >/dev/null
+	local cron_after=""
+	cron_after="$(cat "$CRON_FILE")"
+	output="$(_status_pulse_schedulers 2>&1)"
+	if [[ "$cron_after" == $'0 6 * * * true # aidevops: pulse-merge-other\n0 7 * * * true # aidevops: supervisor-pulse-other' && -z "$output" ]]; then
+		print_result "current and legacy pulse tags heal without removing similarly named jobs" 0
+	else
+		print_result "current and legacy pulse tags heal without removing similarly named jobs" 1 "$cron_after $output"
+	fi
+	cleanup_fixture
+	return 0
+}
+
+test_disabled_timer_file_preserves_cron() {
+	setup_fixture
+	printf '%s\n' '* * * * * pulse-wrapper.sh # aidevops: supervisor-pulse' >"$CRON_FILE"
+	: >"$HOME/.config/systemd/user/aidevops-supervisor-pulse.timer"
+	load_scheduler_functions
+	_reconcile_linux_scheduler_duplicates >/dev/null
+	if [[ -s "$CRON_FILE" ]]; then
+		print_result "disabled timer file does not remove the only working scheduler" 0
+	else
+		print_result "disabled timer file does not remove the only working scheduler" 1
+	fi
+	cleanup_fixture
+	return 0
+}
+
+test_cron_fallback_stops_timer_or_refuses() {
+	setup_fixture
+	load_scheduler_functions
+	printf '%s\n' 'aidevops-supervisor-pulse.timer' >"$SYSTEMD_ENABLED_FILE"
+	export SYSTEMD_DISABLE_FAIL=1
+	if _scheduler_prepare_cron_fallback 'aidevops-supervisor-pulse' 2>/dev/null; then
+		print_result "cron fallback refuses an unstoppable timer" 1
+	else
+		print_result "cron fallback refuses an unstoppable timer" 0
+	fi
+	export SYSTEMD_DISABLE_FAIL=0
+	if _scheduler_prepare_cron_fallback 'aidevops-supervisor-pulse' && [[ ! -s "$SYSTEMD_ENABLED_FILE" ]]; then
+		print_result "cron fallback disables and stops the old timer first" 0
+	else
+		print_result "cron fallback disables and stops the old timer first" 1
+	fi
+	cleanup_fixture
+	return 0
+}
+
 main() {
 	test_duplicate_auto_update_cron_removed
 	test_duplicate_pulse_merge_cron_removed
@@ -278,6 +353,9 @@ main() {
 	test_remove_cron_tag_uses_provided_crontab_without_extra_io
 	test_systemd_only_stats_wrapper_preserved
 	test_cron_only_scheduler_preserved
+	test_current_pulse_tags_and_status
+	test_disabled_timer_file_preserves_cron
+	test_cron_fallback_stops_timer_or_refuses
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
