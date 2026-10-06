@@ -11,6 +11,8 @@
 #   4. Missing brief → fail-open (exit 0)
 #   5. Brief without ## Files Scope section → fail-closed (exit 1) — config error
 #   6. Branch with no task ID → fail-open (exit 0)
+#   9. Counter push to a non-task branch from a task worktree → allowed
+#  10. Destination task scope applies even from a no-task checkout
 #
 # Root cause being guarded: GH#19808 / t2264 — rebasing introduced
 # changes to 3 unrelated files that were pushed silently. The scope
@@ -472,6 +474,66 @@ printf '\n[8] New-branch push with out-of-scope change from stale branch → blo
 	else
 		_fail "out-of-scope change blocked without reporting upstream-merged files" \
 			"rc=$rc stderr=${stderr_out}"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: counter push from a task worktree → allowed (GH#33689).
+# HEAD is a scoped task branch, but the pushed ref is a non-task counter branch
+# carrying only `.task-counter`; the worktree's scope must not apply.
+# ---------------------------------------------------------------------------
+printf '\n[9] Counter push from a task worktree → allowed (GH#33689)\n'
+{
+	read -r repo base_sha <<< "$(repo_setup t9999)"
+	write_brief "$repo" "t9999" ".agents/hooks/scope-guard-pre-push.sh"
+	counter_base=$(git -C "$repo" rev-parse HEAD)
+	# Build the counter commit without touching the task checkout: base tree
+	# plus `.task-counter`, mirroring the CAS commit shape.
+	counter_commit=$(
+		cd "$repo" || exit 1
+		export GIT_INDEX_FILE="${TEST_TMP}/counter-index"
+		git read-tree "$counter_base"
+		blob=$(printf '42\n' | git hash-object -w --stdin)
+		git update-index --add --cacheinfo "100644,${blob},.task-counter"
+		tree=$(git write-tree)
+		git commit-tree "$tree" -p "$counter_base" -m 'chore: claim t42'
+	)
+	rc=0
+	for counter_ref in refs/heads/main refs/heads/aidevops-task-counter; do
+		stdin_line="${counter_commit} ${counter_commit} ${counter_ref} ${counter_base}"
+		(cd "$repo" && bash "$HOOK" origin 'git@github.com:test/repo.git' \
+			<<<"$stdin_line" 2>/dev/null) || rc=$?
+	done
+	if [[ "$rc" -eq 0 ]]; then
+		_pass "counter push to a non-task branch ignores the worktree scope"
+	else
+		_fail "counter push to a non-task branch ignores the worktree scope" "hook blocked with rc=$rc"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 10: the destination task governs scope, not the checked-out branch.
+# Pushing out-of-scope work to another task's branch from a no-task checkout
+# is still blocked under that destination task's brief.
+# ---------------------------------------------------------------------------
+printf '\n[10] Destination task scope applies from a no-task checkout (GH#33689)\n'
+{
+	read -r repo base_sha <<< "$(repo_setup t9999)"
+	write_brief "$repo" "t9999" ".agents/hooks/scope-guard-pre-push.sh"
+	git -C "$repo" branch -m "no-task-id-branch" 2>/dev/null
+	mkdir -p "${repo}/unrelated"
+	printf 'creep\n' > "${repo}/unrelated/creep.sh"
+	git -C "$repo" add "${repo}/unrelated/creep.sh"
+	git -C "$repo" commit -q -m 'out-of-scope change'
+	head_sha=$(git -C "$repo" rev-parse HEAD)
+	stdin_line="refs/heads/no-task-id-branch ${head_sha} refs/heads/feature/t9999-test-branch ${base_sha}"
+	rc=0
+	(cd "$repo" && bash "$HOOK" origin 'git@github.com:test/repo.git' \
+		<<<"$stdin_line" 2>/dev/null) || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_pass "destination task's scope blocks out-of-scope files"
+	else
+		_fail "destination task's scope blocks out-of-scope files" "hook allowed the push"
 	fi
 }
 
