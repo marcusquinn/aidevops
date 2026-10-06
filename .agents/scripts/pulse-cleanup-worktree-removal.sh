@@ -1601,6 +1601,35 @@ _pc_classify_orphan_sibling_dir() {
 	return 0
 }
 
+# Shared preflight for fixture and sibling trash; holds never bypass safety checks.
+_pc_orphan_trash_allowed() {
+	local candidate="$1"
+	local reason=""
+	if reason=$(python3 "$_PULSE_CLEANUP_SCRIPT_DIR/orphan-cleanup-state.py" gate "$candidate"); then
+		return 0
+	fi
+	if [[ -n "$reason" ]]; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate" "$reason" "$_PC_REMOVAL_SKIPPED"
+	fi
+	return 1
+}
+
+_pc_orphan_trash_failed() {
+	local candidate="$1"
+	local reason=""
+	reason=$(python3 "$_PULSE_CLEANUP_SCRIPT_DIR/orphan-cleanup-state.py" failure "$candidate") || true
+	if [[ -n "$reason" ]]; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate" "$reason" "$_PC_REMOVAL_SKIPPED"
+	fi
+	return 0
+}
+
+_pc_orphan_trash_succeeded() {
+	local candidate="$1"
+	python3 "$_PULSE_CLEANUP_SCRIPT_DIR/orphan-cleanup-state.py" clear "$candidate" >>"$LOGFILE" || true
+	return 0
+}
+
 #######################################
 # Trash stale sibling directories left behind after git worktree metadata loss.
 #
@@ -1637,12 +1666,14 @@ _pc_cleanup_orphan_sibling_dirs() {
 			_pc_orphan_sibling_name_allowed "$repo_name" "$candidate_name" || continue
 			_pc_orphan_sibling_pr_state_allowed "$repo_slug_orphan" "$repo_name" "$candidate_name" || continue
 			if reason=$(_pc_classify_orphan_sibling_dir "$rp_orphan" "$candidate_path" "$now_epoch"); then
+				_pc_orphan_trash_allowed "$candidate_path" || continue
 				echo "[pulse-wrapper] Orphan dir cleanup ($repo_name): moving $candidate_path to trash — $reason" >>"$LOGFILE"
 				if _pc_trash_orphan_dir "$candidate_path"; then
+					_pc_orphan_trash_succeeded "$candidate_path"
 					log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$candidate_path" "$reason" "trash"
 					moved_count=$((moved_count + 1))
 				else
-					log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate_path" "trash-failed" "$_PC_REMOVAL_SKIPPED"
+					_pc_orphan_trash_failed "$candidate_path"
 				fi
 			fi
 		done
@@ -1653,12 +1684,14 @@ _pc_cleanup_orphan_sibling_dirs() {
 				_pc_orphan_sibling_name_allowed "$repo_name" "$candidate_name" || continue
 				_pc_orphan_sibling_pr_state_allowed "$repo_slug_orphan" "$repo_name" "$candidate_name" || continue
 				if reason=$(_pc_classify_orphan_sibling_dir "$rp_orphan" "$candidate_path" "$now_epoch"); then
+					_pc_orphan_trash_allowed "$candidate_path" || continue
 					echo "[pulse-wrapper] Orphan dir cleanup ($repo_name): moving $candidate_path to trash — $reason" >>"$LOGFILE"
 					if _pc_trash_orphan_dir "$candidate_path"; then
+						_pc_orphan_trash_succeeded "$candidate_path"
 						log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$candidate_path" "$reason" "trash"
 						moved_count=$((moved_count + 1))
 					else
-						log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate_path" "trash-failed" "$_PC_REMOVAL_SKIPPED"
+						_pc_orphan_trash_failed "$candidate_path"
 					fi
 				fi
 			done
