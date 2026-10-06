@@ -22,8 +22,13 @@
 #   SCOPE_GUARD_DISABLE=1  — bypass for this invocation (same as --no-verify)
 #   SCOPE_GUARD_DEBUG=1    — verbose stderr trace
 #
+# Task selection (GH#33689): each pushed ref is judged by the task ID encoded
+# in its destination branch (refs/heads/<branch>); non-branch destinations
+# such as tags fall back to the checked-out branch.
+#
 # Fail-open cases (exit 0 with warning):
-#   - branch name does not encode a task ID
+#   - destination branch (or checked-out branch for non-branch refs) does not
+#     encode a task ID — e.g. the claim-task-id counter push from a task worktree
 #   - brief file not found for this task
 #
 # Fail-closed cases (exit 1 with error):
@@ -71,16 +76,15 @@ if [[ -z "$REPO_ROOT" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Extract the task ID from the current branch name.
+# Extract the task ID from a branch name.
 # Recognised patterns:
 #   feature/t2445-some-description  → t2445
 #   bugfix/t2445-some-description   → t2445
 #   t2445-some-description          → t2445
 #   (any branch component matching tNNNN)
 # ---------------------------------------------------------------------------
-_extract_task_id() {
-	local _branch
-	_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+_extract_task_id_from_branch() {
+	local _branch="$1"
 	if [[ -z "$_branch" ]]; then
 		return 1
 	fi
@@ -99,26 +103,26 @@ _extract_task_id() {
 	return 1
 }
 
-TASK_ID=""
-if ! TASK_ID=$(_extract_task_id) || [[ -z "$TASK_ID" ]]; then
-	_dbg "branch has no task ID — fail-open"
-	exit 0
-fi
-
-_dbg "task ID: $TASK_ID"
-
 # ---------------------------------------------------------------------------
-# Locate the brief file.  Prefer the repo-local brief; fall back to a brief
-# in the deployed agent workspace (rare, but present for some tasks).
+# Resolve the task whose scope governs one pushed ref (GH#33689).
+#
+# Scope belongs to the destination, not to whatever is checked out: a branch
+# push is judged by the task ID in its destination branch name, so a
+# claim-task-id counter push (or any push to a non-task branch) from inside a
+# task worktree no longer inherits that worktree's Files Scope. Non-branch
+# destinations (for example tags) keep the historical checked-out-branch rule.
 # ---------------------------------------------------------------------------
-BRIEF_FILE="${REPO_ROOT}/todo/tasks/${TASK_ID}-brief.md"
-
-if [[ ! -f "$BRIEF_FILE" ]]; then
-	_log WARN "brief not found: $BRIEF_FILE — fail-open"
-	exit 0
-fi
-
-_dbg "brief: $BRIEF_FILE"
+_task_id_for_ref() {
+	local _remote_ref="$1"
+	local _branch=""
+	if [[ "$_remote_ref" == refs/heads/* ]]; then
+		_branch="${_remote_ref#refs/heads/}"
+	else
+		_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || _branch=""
+	fi
+	_extract_task_id_from_branch "$_branch"
+	return $?
+}
 
 # ---------------------------------------------------------------------------
 # Parse the Files Scope section from the brief.
@@ -172,36 +176,72 @@ _parse_files_scope() {
 	return $?
 }
 
-# Collect scope patterns into an array (Bash 3.2-compatible; no mapfile)
-_raw_scope=$(_parse_files_scope "$BRIEF_FILE")
-parse_rc=$?
+# ---------------------------------------------------------------------------
+# Load BRIEF_FILE and SCOPE_PATTERNS for one task ID. The result is cached for
+# the last task so multi-ref pushes for the same task parse the brief once
+# (Bash 3.2-compatible; no associative arrays or mapfile).
+#
+# Returns: 0 = scope loaded, 2 = no brief (fail-open for this ref),
+#          1 = brief misconfigured (fail-closed; diagnostics already logged)
+# ---------------------------------------------------------------------------
+BRIEF_FILE=""
 SCOPE_PATTERNS=()
-if [[ $parse_rc -eq 0 ]] && [[ -n "$_raw_scope" ]]; then
-	while IFS= read -r _line; do
-		SCOPE_PATTERNS+=("$_line")
-	done <<< "$_raw_scope"
-fi
+_LOADED_TASK_ID=""
+_LOADED_RC=0
 
-if ! grep -qE "^##[#]? Files Scope" "$BRIEF_FILE" 2>/dev/null; then
-	_log ERROR "brief exists but has no 'Files Scope' section — fail-closed"
-	_log ERROR "  add a '## Files Scope' or '### Files Scope' section to $BRIEF_FILE listing the files this task may modify"
-	_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
-	exit 1
-fi
+_load_scope_for_task() {
+	local _task_id="$1"
+	local _raw_scope=""
+	local _parse_rc=0
+	local _line=""
+	local _p=""
 
-if [[ "${#SCOPE_PATTERNS[@]}" -eq 0 ]]; then
-	_log ERROR "'Files Scope' section exists but has no entries — fail-closed"
-	_log ERROR "  add file paths (one per '- ' line) to the 'Files Scope' section of $BRIEF_FILE"
-	_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
-	exit 1
-fi
+	if [[ -n "$_LOADED_TASK_ID" && "$_LOADED_TASK_ID" == "$_task_id" ]]; then
+		return "$_LOADED_RC"
+	fi
+	_LOADED_TASK_ID="$_task_id"
+	SCOPE_PATTERNS=()
+	BRIEF_FILE="${REPO_ROOT}/todo/tasks/${_task_id}-brief.md"
 
-if [[ "${SCOPE_GUARD_DEBUG:-0}" == "1" ]]; then
-	_dbg "scope patterns (${#SCOPE_PATTERNS[@]}):"
-	for _p in "${SCOPE_PATTERNS[@]}"; do
-		_dbg "  pattern: $_p"
-	done
-fi
+	if [[ ! -f "$BRIEF_FILE" ]]; then
+		_log WARN "brief not found: $BRIEF_FILE — fail-open"
+		_LOADED_RC=2
+		return 2
+	fi
+	_dbg "task ID: $_task_id brief: $BRIEF_FILE"
+
+	_raw_scope=$(_parse_files_scope "$BRIEF_FILE") || _parse_rc=$?
+	if [[ $_parse_rc -eq 0 ]] && [[ -n "$_raw_scope" ]]; then
+		while IFS= read -r _line; do
+			SCOPE_PATTERNS+=("$_line")
+		done <<< "$_raw_scope"
+	fi
+
+	if ! grep -qE "^##[#]? Files Scope" "$BRIEF_FILE" 2>/dev/null; then
+		_log ERROR "brief exists but has no 'Files Scope' section — fail-closed"
+		_log ERROR "  add a '## Files Scope' or '### Files Scope' section to $BRIEF_FILE listing the files this task may modify"
+		_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
+		_LOADED_RC=1
+		return 1
+	fi
+
+	if [[ "${#SCOPE_PATTERNS[@]}" -eq 0 ]]; then
+		_log ERROR "'Files Scope' section exists but has no entries — fail-closed"
+		_log ERROR "  add file paths (one per '- ' line) to the 'Files Scope' section of $BRIEF_FILE"
+		_log ERROR "  or bypass with: SCOPE_GUARD_DISABLE=1 git push ..."
+		_LOADED_RC=1
+		return 1
+	fi
+
+	if [[ "${SCOPE_GUARD_DEBUG:-0}" == "1" ]]; then
+		_dbg "scope patterns (${#SCOPE_PATTERNS[@]}):"
+		for _p in "${SCOPE_PATTERNS[@]}"; do
+			_dbg "  pattern: $_p"
+		done
+	fi
+	_LOADED_RC=0
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # Check whether a given file path matches any declared scope pattern.
@@ -316,6 +356,22 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 		fi
 	fi
 
+	# GH#33689: the destination ref selects the governing task scope.
+	ref_task_id=""
+	if ! ref_task_id=$(_task_id_for_ref "$remote_ref") || [[ -z "$ref_task_id" ]]; then
+		_dbg "${remote_ref:-$local_ref} encodes no task ID — fail-open for this ref"
+		continue
+	fi
+	load_rc=0
+	_load_scope_for_task "$ref_task_id" || load_rc=$?
+	if [[ "$load_rc" -eq 2 ]]; then
+		continue
+	fi
+	if [[ "$load_rc" -ne 0 ]]; then
+		exit_code=1
+		continue
+	fi
+
 	# Determine the base for diffing: use remote sha when known, else merge-base
 	base_sha=""
 	if [[ -n "$remote_sha" ]] && ! [[ "$remote_sha" =~ ^0+$ ]]; then
@@ -359,7 +415,7 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 	if [[ "${#out_of_scope[@]}" -gt 0 ]]; then
 		out_of_scope_found=1
 		printf '\n[%s][BLOCK] Push to %s modifies files outside the declared scope for %s:\n\n' \
-			"$GUARD_NAME" "${remote_name:-remote}" "$TASK_ID" >&2
+			"$GUARD_NAME" "${remote_name:-remote}" "$ref_task_id" >&2
 		for _f in "${out_of_scope[@]}"; do
 			printf '  %s\n' "$_f" >&2
 		done
