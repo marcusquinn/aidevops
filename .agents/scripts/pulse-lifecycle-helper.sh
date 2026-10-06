@@ -590,7 +590,8 @@ _pulse_restore_pipe_trap() {
 #     (launchd on macOS, systemd/init on Linux).
 #   Layer 2 (subshell guard, fallback): for manually-started instances
 #     (PPID != 1), skip PIDs whose parent command itself contains
-#     pulse-wrapper.sh — the process is a subshell of a running pulse.
+#     pulse-wrapper.sh, unless it is a shell -c launcher (cron/bash -lc).
+#     A launcher mentions the script but is not itself a running wrapper.
 #   Layer 3 (sidecar guard, GH#21903): skip PIDs whose argv contains any
 #     sidecar role flag. Sidecars are categorically different from main
 #     pulse cycles and reported separately by _pulse_pids_sidecar.
@@ -598,6 +599,15 @@ _pulse_restore_pipe_trap() {
 # Empty output = no main pulse running.
 # _stop_all uses _pulse_pids_raw (not this function) so it still SIGTERMs
 # all pulse processes including subshells AND sidecars on `stop`.
+_pulse_parent_is_wrapper() {
+	local _parent_cmd="$1"
+	[[ "$_parent_cmd" =~ pulse-wrapper\.sh ]] || return 1
+	# Shell -c/-lc/-lc... command strings can contain the child's script path.
+	# Actual Bash wrapper subshells retain the script argv, not a -c string.
+	[[ "$_parent_cmd" =~ ^[^[:space:]]*[[:space:]]+-[[:alnum:]]*c([[:space:]]|$) ]] && return 1
+	return 0
+}
+
 _pulse_pids() {
 	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap=""
 	_pids=$(_pulse_pids_raw)
@@ -620,7 +630,7 @@ _pulse_pids() {
 		# Layer 2 (fallback for manually-started instances): skip PIDs whose
 		# parent command contains pulse-wrapper.sh (= direct subshell of pulse).
 		_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
-		[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+		_pulse_parent_is_wrapper "$_ppid_cmd" && continue
 		# Layer 3 (sidecar guard): also skip non-launchd-started sidecars
 		# (manual --merge-only invocations during testing or debugging).
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
@@ -648,7 +658,7 @@ _pulse_pids_sidecar() {
 		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
 		if [[ "$_ppid" != "1" ]]; then
 			_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
-			[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+			_pulse_parent_is_wrapper "$_ppid_cmd" && continue
 		fi
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 		if [[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]]; then
