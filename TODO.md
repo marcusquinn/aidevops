@@ -1549,7 +1549,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18591 Bounded operations lose the SIGTERM signal when a timed-out supervisor exits cleanly #auto-dispatch #bug #framework ref:GH#33665 logged:2026-10-05 -> [todo/tasks/t18591-brief.md] pr:#33669 completed:2026-10-05
 
-- [ ] t18592 GH transport: stale low core quota persists for multi-credential unresolved scope, pacing all REST reads #auto-dispatch #bug ref:GH#33701
+- [-] t18592 GH transport: stale low core quota persists for multi-credential unresolved scope, pacing all REST reads #auto-dispatch #bug ref:GH#33701 declined:2026-10-06
 
 ## In Progress
 
