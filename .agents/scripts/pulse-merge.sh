@@ -1926,6 +1926,40 @@ _extract_linked_issue() {
 }
 
 #######################################
+# Resolve a work target for conflict repair/carry-forward, never issue closing.
+# A native closing target wins; ambiguous or unavailable closing metadata must
+# not fall back. Otherwise require one distinct local For/Ref or title identity.
+# Args: $1=PR number, $2=repo slug
+#######################################
+_extract_pr_work_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local closing_issue="" pr_body="" pr_title=""
+	closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	if [[ -n "$closing_issue" ]]; then
+		printf '%s' "$closing_issue"
+		return 0
+	fi
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || return 1
+
+	local body_issues="" title_issue="" work_issues=""
+	body_issues=$(printf '%s' "$pr_body" \
+		| grep -ioE '(^|[^[:alnum:]_])(For|Ref)[[:space:]]+#[0-9]+' \
+		| grep -oE '[0-9]+' | sort -u) || body_issues=""
+	title_issue=$(printf '%s' "$pr_title" \
+		| grep -oE '^(t[0-9]+|GH#[0-9]+)([^[:alnum:]_]|$)' \
+		| grep -oE '[0-9]+') || title_issue=""
+	work_issues=$(printf '%s\n%s\n' "$body_issues" "$title_issue" | grep -E '^[0-9]+$' | sort -u) || work_issues=""
+	if [[ "$work_issues" == *$'\n'* ]]; then
+		echo "[pulse-wrapper] _extract_pr_work_issue: PR #${pr_number} in ${repo_slug} has ambiguous work issue identities — no routing target" >>"$LOGFILE"
+		return 1
+	fi
+	printf '%s' "$work_issues"
+	return 0
+}
+
+#######################################
 # Extract the worker's merge summary from PR comments.
 #
 # Workers post a structured comment tagged with <!-- MERGE_SUMMARY -->
