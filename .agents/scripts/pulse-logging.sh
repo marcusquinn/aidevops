@@ -700,11 +700,11 @@ append_cycle_index() {
 	local duration_s="${1:-0}"
 	[[ "$duration_s" =~ ^[0-9]+$ ]] || duration_s=0
 
-	local ts now_epoch
+	local ts="" now_epoch=""
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	now_epoch=$(date +%s)
 
-	local outcome blocker_json wall_s budget_skips
+	local outcome="" blocker_json="null" wall_s=0 budget_skips=0
 	outcome=$(_pulse_cycle_index_outcome)
 	blocker_json=$(_pulse_cycle_index_blocker_json)
 	wall_s=$(_pulse_cycle_index_wall_seconds "$now_epoch")
