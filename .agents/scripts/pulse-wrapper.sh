@@ -1027,6 +1027,26 @@ _pulse_dispatch_reserved_finalise_seconds() {
 	return 0
 }
 
+# GH#33737: optional stages that run before the early (first-wave) dispatch
+# must leave that fill its admission reserve. Cache prime ran unbounded here
+# (822-1624s) and left early dispatch with too little budget every cycle.
+# Stdout: finalisation reserve + dispatch floor + first-wave enumeration estimate.
+_pulse_first_wave_dispatch_reserve_seconds() {
+	local _PULSE_FIRST_DISPATCH_WAVE=1 finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"
+	local enumeration_seconds=300
+	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
+	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" != "1" ]]; then
+		printf '%s\n' "$finalise_seconds"
+		return 0
+	fi
+	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
+		enumeration_seconds=$(_dispatch_enumeration_expected_seconds) || enumeration_seconds=300
+	fi
+	[[ "$enumeration_seconds" =~ ^[0-9]+$ ]] || enumeration_seconds=300
+	printf '%s\n' "$((finalise_seconds + $(_pulse_dispatch_floor_seconds) + enumeration_seconds))"
+	return 0
+}
+
 # Returns 0 when one dispatch candidate can still be admitted this cycle (or
 # the cycle clock is unavailable), 1 after logging a skip.
 # Args: $1=dispatch context for the log line
@@ -1645,7 +1665,14 @@ main() {
 	# launchd respawns skip via the staleness gate; first-cycle-after-deploy
 	# (or after a long quiet period) primes once. See helper comment for
 	# the launchd-bypass rationale.
-	_pulse_run_optional_stage "cache_prime" _pulse_prime_caches_if_stale || true
+	# GH#33737: bound the prime and clamp it (plus the detector below) so the
+	# early dispatch keeps its first-wave admission reserve. A clamped or
+	# deferred prime is non-fatal: prefetch_state refreshes the same caches.
+	local _pulse_pre_dispatch_reserve_s=""
+	_pulse_pre_dispatch_reserve_s=$(_pulse_first_wave_dispatch_reserve_seconds)
+	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
+		_pulse_run_optional_stage_with_timeout "cache_prime" "${PULSE_CACHE_PRIME_TIMEOUT:-300}" \
+		_pulse_prime_caches_if_stale || true
 
 	# GH#21756: Runaway-log self-healing detector. Catches pulse-wrapper.log
 	# growing at MB/s from tight error loops (the GH#21729 failure mode).
@@ -1666,7 +1693,8 @@ main() {
 	# repository lookup or model call cannot hold the Pulse cycle indefinitely.
 	# Fail-open: timeout/failure is recorded by the stage wrapper, then the next
 	# Pulse stage continues.
-	_pulse_run_optional_stage_with_timeout "fix_the_fixer_detector" "$PRE_RUN_STAGE_TIMEOUT" \
+	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
+		_pulse_run_optional_stage_with_timeout "fix_the_fixer_detector" "$PRE_RUN_STAGE_TIMEOUT" \
 		_pulse_run_fix_the_fixer_detector_if_stale || true
 
 	# Rotate hot log to cold archive if over cap (t1886)

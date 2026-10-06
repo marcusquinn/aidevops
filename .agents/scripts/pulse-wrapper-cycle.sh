@@ -442,11 +442,14 @@ _pulse_maybe_run_llm_supervisor() {
 
 # t2994: cache priming with staleness gate. Called from main() once per
 # launchd invocation, but only fires if the sentinel is missing or older
-# than $_prime_max_age seconds (default 1800 = 30 min, override via
+# than $_prime_max_age seconds (default 7200 = 2h, override via
 # AIDEVOPS_PULSE_PRIME_MAX_AGE). Steady-state launchd respawns (every 120s)
 # hit a fresh sentinel and skip — prefetch_state inside the cycle keeps
-# caches warm naturally. Post-deploy first invocations and long quiet
-# periods trigger an actual prime. Non-fatal — a prime failure must not
+# caches warm naturally and refreshes the sentinel on a successful batch
+# refresh (GH#33737: with a 30-min max age and ~65-min paced cycles, the
+# prime re-ran for 800-1600s every cycle and starved dispatch). Post-deploy
+# first invocations and long quiet periods trigger an actual prime, bounded
+# by PULSE_CACHE_PRIME_TIMEOUT and the early-dispatch reserve. Non-fatal — a prime failure must not
 # abort the cycle. Honours AIDEVOPS_SKIP_CACHE_PRIME=1 for debug.
 #
 # Moved here from pulse-lifecycle-helper.sh::_start (t2992) because
@@ -462,8 +465,8 @@ _pulse_prime_caches_if_stale() {
 	local _prime_max_age=""
 	_prime_helper="${SCRIPT_DIR}/pulse-cache-prime.sh"
 	_prime_sentinel="${HOME}/.aidevops/cache/pulse-cache-prime-last-run"
-	_prime_max_age="${AIDEVOPS_PULSE_PRIME_MAX_AGE:-1800}"
-	[[ "$_prime_max_age" =~ ^[0-9]+$ ]] || _prime_max_age=1800
+	_prime_max_age="${AIDEVOPS_PULSE_PRIME_MAX_AGE:-7200}"
+	[[ "$_prime_max_age" =~ ^[0-9]+$ ]] || _prime_max_age=7200
 
 	mkdir -p "$(dirname "$_prime_sentinel")"
 	[[ ! -x "$_prime_helper" ]] && return 0

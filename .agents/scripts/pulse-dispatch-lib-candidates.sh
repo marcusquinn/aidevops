@@ -693,13 +693,27 @@ _dispatch_rest_core_requires_serial() {
 # GH#33560: persisted enumeration EWMA (seconds), shared by wrapper admission
 # and direct/refill dispatch entrypoints. Keep a conservative cold-cache minimum:
 # cheap cached snapshots must not erase the reserve needed for a fresh scan.
+# GH#33737: the EWMA is only refreshed after an enumeration runs, but admission
+# skips enumeration when the EWMA is too large to fit the cycle. A stale high
+# value therefore blocked dispatch indefinitely (886s held for 9h+, 0 workers).
+# Expire measurements older than AIDEVOPS_PULSE_ENUMERATION_ESTIMATE_MAX_AGE_S
+# back to the cold-cache minimum so admission probes again; the post-
+# enumeration floor check still prevents a launch without budget.
 _dispatch_enumeration_expected_seconds() {
 	local timing_file="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds" expected=300
+	local max_age="${AIDEVOPS_PULSE_ENUMERATION_ESTIMATE_MAX_AGE_S:-7200}" mtime="" now=""
 	# A first-wave scan stops at the first nonempty repository. Its estimate
 	# must not inherit a paced all-repository census that exceeds a whole cycle.
 	[[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != "1" ]] || timing_file="${timing_file}-first-wave"
 	if [[ -f "$timing_file" && ! -L "$timing_file" ]]; then
 		read -r expected <"$timing_file" || expected=300
+		if [[ "$max_age" =~ ^[1-9][0-9]*$ ]] && declare -F _file_mtime_epoch >/dev/null 2>&1; then
+			mtime=$(_file_mtime_epoch "$timing_file" 2>/dev/null) || mtime=""
+			now=$(date +%s 2>/dev/null) || now=""
+			if [[ "$mtime" =~ ^[1-9][0-9]*$ && "$now" =~ ^[0-9]+$ ]] && ((now - mtime > max_age)); then
+				expected=300
+			fi
+		fi
 	fi
 	[[ "$expected" =~ ^[0-9]{1,5}$ ]] || expected=300
 	expected=$((10#$expected))
