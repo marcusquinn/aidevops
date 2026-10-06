@@ -646,11 +646,19 @@ _merge_guard_admin_merge_maintainer_review() {
 _merge_fetch_head_sha_rest() {
 	local pr_number="$1"
 	local repo="$2"
-	local head_sha=""
-	head_sha=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>/dev/null || true)
-	if [[ -z "$head_sha" ]]; then
+	local head_sha="" err_file="" rc=0
+	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-sha.XXXXXX") || err_file="/dev/null"
+	head_sha=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>"$err_file") || rc=$?
+	if [[ "$rc" -ne 0 || -z "$head_sha" ]]; then
+		# Surface transport diagnostics (e.g. local-admission deferral) on stderr
+		# so the caller can distinguish pacing from a real failure.
+		if [[ "$err_file" != /dev/null ]]; then
+			cat "$err_file" >&2
+			rm -f "$err_file"
+		fi
 		return 1
 	fi
+	[[ "$err_file" == /dev/null ]] || rm -f "$err_file"
 	printf '%s\n' "$head_sha"
 	return 0
 }
@@ -1169,6 +1177,49 @@ _merge_rest_fallback() {
 	return 1
 }
 
+# Final head-SHA read with bounded recovery from local admission deferral only.
+# Sets FULL_LOOP_MERGE_READ_HEAD_SHA on success. On failure, when pacing caused
+# it, FULL_LOOP_PRE_MERGE_BLOCKER_KIND/DETAIL carry the deferral kind + retry_at.
+_merge_read_head_sha_with_admission_retry() {
+	local pr_number="$1"
+	local repo="$2"
+	local deadline=$((SECONDS + 30))
+	local attempts=0 retry_at="" now="" wait_seconds=0 round_up=0
+	local diagnostics="" err_file=""
+	FULL_LOOP_MERGE_READ_HEAD_SHA=""
+	FULL_LOOP_PRE_MERGE_BLOCKER_KIND=""
+	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=""
+	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-retry.XXXXXX") || return 1
+	while :; do
+		if FULL_LOOP_MERGE_READ_HEAD_SHA=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" 2>"$err_file") && [[ -n "$FULL_LOOP_MERGE_READ_HEAD_SHA" ]]; then
+			rm -f "$err_file"
+			return 0
+		fi
+		FULL_LOOP_MERGE_READ_HEAD_SHA=""
+		diagnostics=$(<"$err_file")
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND=""
+		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=""
+		declare -F _full_loop_local_admission_evidence >/dev/null 2>&1 || break
+		_full_loop_local_admission_evidence "$diagnostics" || break
+		retry_at="${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-}"
+		[[ "$retry_at" =~ ^[0-9]{1,10}([.][0-9]+)?$ ]] || break
+		now=$(date +%s) || break
+		# Round up fractional epochs so admission is not retried before its slot.
+		round_up=0
+		[[ ! "$retry_at" =~ [.][0-9]*[1-9] ]] || round_up=1
+		retry_at="${retry_at%%.*}"
+		wait_seconds=$((10#$retry_at + round_up - now))
+		[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
+		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 30 ]] || break
+		print_info "Local GitHub read admission: waiting ${wait_seconds}s before re-reading PR #${pr_number} head SHA (30s recovery budget)"
+		sleep "$wait_seconds" || break
+		[[ "$SECONDS" -le "$deadline" ]] || break
+		attempts=$((attempts + 1))
+	done
+	rm -f "$err_file"
+	return 1
+}
+
 # _merge_execute — attempt `gh pr merge` with optional --admin fallback on branch-protection errors.
 #
 # GH#18538: branch protection that requires an approving review rejects plain
@@ -1188,10 +1239,16 @@ _merge_resolve_match_head() {
 	local pr_number="$1"
 	local repo="$2"
 	local pre_merge_head_sha=""
-	pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
+	# Called directly (not in a subshell) so deferral evidence globals survive.
+	_merge_read_head_sha_with_admission_retry "$pr_number" "$repo" || true
+	pre_merge_head_sha="${FULL_LOOP_MERGE_READ_HEAD_SHA:-}"
 	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" ]]; then
 		if [[ -z "$pre_merge_head_sha" ]]; then
-			print_error "Could not retrieve PR #${pr_number} head SHA for verification; refusing merge"
+			if [[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == github-api-read-deferred ]]; then
+				print_error "PR #${pr_number} head SHA read deferred by local admission (retry_at=${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-unknown}); recovery budget exhausted, refusing merge"
+			else
+				print_error "Could not retrieve PR #${pr_number} head SHA for verification; refusing merge"
+			fi
 			return 1
 		fi
 		if [[ "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
