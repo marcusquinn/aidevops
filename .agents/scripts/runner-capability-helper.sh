@@ -25,13 +25,45 @@ _runner_capability_check_fresh_logged() {
 		--jq '{number, state, body, labels}' 2>/dev/null) || capability_meta_json=""
 	if ! printf '%s' "$capability_meta_json" | jq -e --argjson number "$issue_number" \
 		'.number == $number and .state == "open" and (.body | type == "string") and (.labels | type == "array")' >/dev/null 2>&1; then
-		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet source=fresh metadata_unreadable\n' "$issue_number" >&3
+		_runner_capability_log_deferral "$issue_number" "$repo_slug" \
+			'runner_capability_unmet source=fresh metadata_unreadable' metadata_unreadable
 		return 1
 	fi
 	if ! reason=$(runner_capability_check "$repo_path" "$capability_meta_json" fresh 2>&3); then
-		printf '[dispatch_with_dedup] #%s deferred: %s\n' "$issue_number" "$reason" >&3
+		_runner_capability_log_deferral "$issue_number" "$repo_slug" "$reason" ""
 		return 1
 	fi
+	return 0
+}
+
+# GH#33743: keep the operator-facing "deferred:" text, and append a structured
+# reason with the repo slug so candidate-scoped log matching classifies it as
+# runner_capability_unmet instead of no_recent_log_evidence. cooldown=eligible
+# marks deterministic runner-local gaps (missing secret, failing probe, invalid
+# requirement map); transient store/API/timeout signals are always re-checked.
+_runner_capability_log_deferral() {
+	local issue_number="$1" repo_slug="$2" reason="$3" signal="$4"
+	local cooldown="none"
+	reason="${reason//$'\n'/ }"
+	if [[ -z "$reason" ]]; then
+		# No checker verdict (interpreter failure): never cool down on it.
+		reason="runner_capability_unmet"
+		[[ -n "$signal" ]] || signal="check_error"
+	fi
+	if [[ -z "$signal" ]]; then
+		if [[ "$reason" =~ reason=([a-z_]+) ]]; then
+			signal="${BASH_REMATCH[1]}"
+		elif [[ "$reason" == runner_capability_unmet ]]; then
+			signal="invalid_requirements"
+		else
+			signal="check_error"
+		fi
+	fi
+	case "$signal" in
+	secret_missing | probe_failed | invalid_requirements) cooldown="eligible" ;;
+	esac
+	printf '[dispatch_with_dedup] #%s deferred: %s — DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=%s cooldown=%s issue=#%s repo=%s\n' \
+		"$issue_number" "$reason" "$signal" "$cooldown" "$issue_number" "$repo_slug" >&3
 	return 0
 }
 

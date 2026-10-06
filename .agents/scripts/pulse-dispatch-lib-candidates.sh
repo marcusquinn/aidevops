@@ -919,18 +919,181 @@ _dispatch_check_model_concurrency_cap() {
 }
 
 #######################################
+# GH#33743: runner-local cooldown for deterministic runner_capability_unmet
+# deferrals (missing secret, failing probe, invalid requirement map). Without
+# it, a runner that can never satisfy a requirement re-probes every pass and
+# the candidate can consume the whole first-wave fill. The record is keyed on
+# repo/issue plus a fingerprint of the requirement inputs: dispatch-class
+# labels, the issue updatedAt (any body edit, including requires-secrets:,
+# changes it) and the runner's .aidevops.json requirement map. A changed
+# fingerprint or the bounded TTL re-arms the probe. Skips are advisory only:
+# the fresh final capability gate before the claim is unchanged (GH#33399).
+#######################################
+_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS="${AIDEVOPS_DISPATCH_CAPABILITY_COOLDOWN_SECONDS:-21600}"
+[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS=21600
+((_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS <= 86400)) || _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS=86400
+# jq: number, updatedAt and sorted dispatch-class labels (last: may be empty).
+_DISPATCH_CAPABILITY_FIELDS_JQ='[(.number // "" | tostring), (.updatedAt // ""), ([.labels[]? | (.name? // .) | select(type == "string" and startswith("dispatch-class:"))] | sort | join(","))] | @tsv'
+
+_dispatch_capability_cooldown_dir() {
+	printf '%s/.aidevops/logs/dispatch-capability-cooldown\n' "$HOME"
+	return 0
+}
+
+_dispatch_capability_cooldown_path() {
+	local issue="$1" repo="$2"
+	[[ "$issue" =~ ^[0-9]+$ && "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	printf '%s/%s--%s--%s\n' "$(_dispatch_capability_cooldown_dir)" "${repo%%/*}" "${repo##*/}" "$issue"
+	return 0
+}
+
+# Checksum of the runner-local requirement map; "none" when absent.
+_dispatch_capability_config_fingerprint() {
+	local repo_path="$1" config="" crc="" size=""
+	config="${repo_path%/}/.aidevops.json"
+	if [[ -n "$repo_path" && -f "$config" && ! -L "$config" ]]; then
+		read -r crc size < <(cksum <"$config" 2>/dev/null) || crc=""
+	fi
+	if [[ "$crc" =~ ^[0-9]+$ && "$size" =~ ^[0-9]+$ ]]; then
+		printf '%s-%s\n' "$crc" "$size"
+	else
+		printf 'none\n'
+	fi
+	return 0
+}
+
+_dispatch_capability_fingerprint() {
+	local updated="$1" classes="$2" config_fp="$3" crc="" size=""
+	read -r crc size < <(printf '%s\t%s\t%s' "$updated" "$classes" "$config_fp" | cksum) || return 1
+	[[ "$crc" =~ ^[0-9]+$ ]] || return 1
+	printf '%s-%s\n' "$crc" "$size"
+	return 0
+}
+
+# Returns 0 while an unexpired record matches the fingerprint. Stale or
+# mismatched records are removed so the next probe starts clean.
+_dispatch_capability_cooldown_active() {
+	local issue="$1" repo="$2" fingerprint="$3"
+	local file="" stamp="" cached="" signal="" now=""
+	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 ]] || return 1
+	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 1
+	[[ -f "$file" && ! -L "$file" ]] || return 1
+	IFS=$'\t' read -r stamp cached signal <"$file" || return 1
+	now=$(date +%s)
+	if [[ ! "$stamp" =~ ^[0-9]+$ || "$cached" != "$fingerprint" ]] ||
+		((now < stamp || now - stamp >= _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS)); then
+		rm -f "$file" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
+# Record an eligible deferral from this attempt's structured log line.
+# Arguments: candidate JSON (ranked: number, repo_slug, repo_path, updatedAt,
+#            labels), this attempt's candidate-scoped log lines
+_dispatch_capability_cooldown_record() {
+	local candidate="$1" recent_lines="$2"
+	local fields="" issue="" repo="" repo_path="" signal="" file="" tmp=""
+	local updated='' classes='' fingerprint=''
+	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 && -n "$candidate" ]] || return 0
+	[[ "$recent_lines" =~ DISPATCH_BLOCK_REASON\ reason=runner_capability_unmet\ signal=([a-z_]+)\ cooldown=eligible ]] || return 0
+	signal="${BASH_REMATCH[1]}"
+	fields=$(jq -r "$_DISPATCH_CAPABILITY_FIELDS_JQ" <<<"$candidate" 2>/dev/null) || return 0
+	IFS=$'\t' read -r issue updated classes <<<"$fields"
+	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
+	repo=$(jq -r '.repo_slug // ""' <<<"$candidate" 2>/dev/null) || return 0
+	repo_path=$(jq -r '.repo_path // ""' <<<"$candidate" 2>/dev/null) || return 0
+	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 0
+	fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" \
+		"$(_dispatch_capability_config_fingerprint "$repo_path")") || return 0
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	tmp=$(mktemp "${file}.XXXXXX") || return 0
+	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+	if printf '%s\t%s\t%s\n' "$(date +%s)" "$fingerprint" "$signal" >"$tmp" && mv -f "$tmp" "$file"; then
+		echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) runner_capability_unmet cooldown recorded signal=${signal} ttl=${_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS}s" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_capability_cooldown_recorded"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+# Dispatch-time check for candidates taken from a short-lived ranked snapshot
+# captured before the record was written. Returns 0 to skip.
+_dispatch_skip_for_capability_cooldown() {
+	local candidate="$1" issue="$2" repo="$3" repo_path="$4"
+	local fields="" number="" file=""
+	local updated='' classes='' fingerprint=''
+	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 ]] || return 1
+	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 1
+	[[ -f "$file" ]] || return 1
+	fields=$(jq -r "$_DISPATCH_CAPABILITY_FIELDS_JQ" <<<"$candidate" 2>/dev/null) || return 1
+	IFS=$'\t' read -r number updated classes <<<"$fields"
+	[[ "$number" == "$issue" && "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
+	fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" \
+		"$(_dispatch_capability_config_fingerprint "$repo_path")") || return 1
+	_dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" || return 1
+	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+	echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — runner_capability_unmet cooldown active (requirements unchanged)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_candidate_skipped_capability_cooldown"
+	return 0
+}
+
+#######################################
+# Enumeration filter: drop this repository's cooled-down candidates before
+# ranking, so a repository whose candidates are all cooled down is not the
+# first wave's "first nonempty" repository (GH#33647). Fails open: any
+# parse or state error returns the input unchanged.
+#
+# Arguments: repo slug, repo path, candidates JSON array
+# Stdout: filtered JSON array
+#######################################
+_dispatch_filter_capability_cooled_candidates() {
+	local repo_slug="$1" repo_path="$2" candidates_json="$3"
+	local dir="" config_fp="" rows="" issue="" skipped="" filtered=""
+	local updated='' classes='' fingerprint=''
+	dir=$(_dispatch_capability_cooldown_dir)
+	if [[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -eq 0 || ! -d "$dir" ||
+		! "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
+		! compgen -G "${dir}/${repo_slug%%/*}--${repo_slug##*/}--*" >/dev/null 2>&1; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	config_fp=$(_dispatch_capability_config_fingerprint "$repo_path")
+	rows=$(jq -r ".[] | ${_DISPATCH_CAPABILITY_FIELDS_JQ}" <<<"$candidates_json" 2>/dev/null) || rows=""
+	while IFS=$'\t' read -r issue updated classes; do
+		[[ "$issue" =~ ^[0-9]+$ && "$updated" =~ ^[0-9TZ:.-]+$ ]] || continue
+		fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" "$config_fp") || continue
+		_dispatch_capability_cooldown_active "$issue" "$repo_slug" "$fingerprint" || continue
+		skipped="${skipped:+${skipped},}${issue}"
+	done <<<"$rows"
+	if [[ -z "$skipped" ]] || ! filtered=$(jq -c --arg skipped "$skipped" \
+		'($skipped | split(",") | map(tonumber)) as $cooled | map(select((.number as $n | $cooled | index($n)) == null))' \
+		<<<"$candidates_json" 2>/dev/null); then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	echo "[pulse-wrapper] Dispatch enumeration: ${repo_slug} runner_capability_unmet cooldown skipped #${skipped//,/ #} (requirements unchanged; ttl=${_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS}s)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_candidate_capability_cooldown_filtered"
+	printf '%s\n' "$filtered"
+	return 0
+}
+
+#######################################
 # Record a non-zero dispatch_with_dedup outcome for one candidate.
 #
 # Arguments:
 #   $1 - issue number
 #   $2 - repo slug
 #   $3 - dispatch_with_dedup return code
+#   $4 - optional ranked candidate JSON (enables the GH#33743 cooldown record)
 # Returns: 0 always (caller handles the skip/continue decision).
 #######################################
 _dispatch_record_nonzero_dispatch_result() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local dispatch_rc="$3"
+	local candidate_json="${4:-}"
 	local recent_lines=""
 
 	recent_lines=$(_dispatch_candidate_recent_lines "$issue_number" "$repo_slug") || recent_lines=""
@@ -969,6 +1132,9 @@ _dispatch_record_nonzero_dispatch_result() {
 
 	echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure stage=dispatch_with_dedup rc=${dispatch_rc} reason=${failure_reason}" >>"$LOGFILE"
 	_dispatch_stats_increment_candidate_failed "$failure_reason"
+	if [[ "$failure_reason" == runner_capability_unmet ]]; then
+		_dispatch_capability_cooldown_record "$candidate_json" "$recent_lines"
+	fi
 	return 0
 }
 
