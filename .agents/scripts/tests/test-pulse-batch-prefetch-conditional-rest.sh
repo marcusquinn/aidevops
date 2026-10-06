@@ -74,14 +74,22 @@ if [[ "\$1" == "api" ]]; then
   fi
   if [[ "\$*" == *'/users/owner/events?per_page=1'* ]]; then
     case "\${STUB_EVENTS_STATUS:-200}" in
-    304) printf 'HTTP/2 304\\r\\netag: "events"\\r\\n\\r\\n'; exit 1 ;;
+    304) printf 'gh: HTTP 304\\n' >&2; exit 1 ;;
     403) printf 'HTTP/2 403\\r\\nretry-after: 60\\r\\nx-ratelimit-remaining: 0\\r\\n\\r\\n{"message":"rate limit exceeded"}'; exit 1 ;;
     esac
     printf 'HTTP/2 200\\r\\netag: "events"\\r\\n\\r\\n[]'
     exit 0
   fi
   if [[ "$mode" == "not_modified" ]]; then
+    printf 'gh: HTTP 304\\n' >&2
+    exit 1
+  fi
+  if [[ "$mode" == "legacy_not_modified" ]]; then
     printf 'HTTP/2 304\\r\\netag: "etag-v1"\\r\\n\\r\\n'
+    exit 1
+  fi
+  if [[ "$mode" == "stderr_failure" ]]; then
+    printf 'gh: HTTP 500\\n' >&2
     exit 1
   fi
   if [[ "$mode" == "mixed" && "\$*" == *'repos/owner/failing/'* ]]; then
@@ -178,9 +186,10 @@ test_prefetch_raw_gh_read_detector_rejects_missing_file() {
 }
 
 test_unchanged_repo_uses_304_cache() {
+	local mode="${1:-not_modified}"
 	setup_env
 	seed_cache
-	write_gh_stub not_modified
+	write_gh_stub "$mode"
 	local output
 	output=$("$HELPER" refresh)
 	local issues_snapshot="" prs_snapshot=""
@@ -188,6 +197,8 @@ test_unchanged_repo_uses_304_cache() {
 	prs_snapshot=$("$HELPER" read-snapshot --kind prs --slug owner/repo 2>/dev/null) || prs_snapshot="{}"
 	if grep -q 'conditional_304=2' <<<"$output" \
 		&& ! grep -q 'search issues' "$TEST_ROOT/gh-calls.log" \
+		&& grep -q '304 cache hit' "$LOGFILE" \
+		&& [[ "$(printf '%s' "$issues_snapshot" | jq -r '.etag')" == '"etag-v1"' ]] \
 		&& [[ "$(printf '%s' "$issues_snapshot" | jq -r '.complete')" == "true" ]] \
 		&& [[ "$(printf '%s' "$issues_snapshot" | jq -r '.generation')" == "$(printf '%s' "$prs_snapshot" | jq -r '.generation')" ]]; then
 		print_result "unchanged repo returns conditional 304 and skips search" 0
@@ -195,6 +206,26 @@ test_unchanged_repo_uses_304_cache() {
 		print_result "unchanged repo returns conditional 304 and skips search" 1
 	fi
 	teardown_env
+	return 0
+}
+
+test_stderr_failure_and_unconditional_304_fall_back() {
+	local mode=""
+	for mode in stderr_failure not_modified; do
+		setup_env
+		# No usable cached ETag: a stderr-only 304 must not count as a hit.
+		[[ "$mode" == "stderr_failure" ]] && seed_cache
+		write_gh_stub "$mode"
+		local output=""
+		output=$("$HELPER" refresh)
+		if grep -q 'conditional_304=0' <<<"$output" &&
+			grep -q 'failed for owner/repo; falling back' "$LOGFILE"; then
+			print_result "$mode preserves conditional REST fallback" 0
+		else
+			print_result "$mode preserves conditional REST fallback" 1
+		fi
+		teardown_env
+	done
 	return 0
 }
 
@@ -889,6 +920,8 @@ test_tickle_304_refreshes_stale_owner_snapshots
 test_tickle_304_skips_recent_owner_snapshots
 test_tickle_cooldown_skips_even_stale_owner_snapshots
 test_unchanged_repo_uses_304_cache
+test_unchanged_repo_uses_304_cache legacy_not_modified
+test_stderr_failure_and_unconditional_304_fall_back
 test_changed_repo_refreshes_cache
 test_bodyless_transport_rows_are_rejected
 test_bodyless_cached_rows_are_rejected

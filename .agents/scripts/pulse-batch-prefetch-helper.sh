@@ -692,6 +692,12 @@ _conditional_rest_refresh_slug_leader() {
 	else
 		_prefetch_gh_read gh api -i -H "Accept: application/vnd.github+json" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
 	fi
+	# gh 2.102 emits only stderr for 304, exiting 1 with empty stdout.
+	# Adapt only a conditional request; preserve all other failure paths.
+	if [[ "$rc" -ne 0 && -n "$etag" && ! -s "$response_file" ]] &&
+		grep -qE '^gh: HTTP 304([[:space:]]|$)' "$err_file"; then
+		printf 'HTTP/2 304\r\netag: %s\r\n\r\n' "$etag" >"$response_file"
+	fi
 	local status=""
 	if [[ -n "$request_key" && -n "$generation" ]] && ! gh_request_state_singleflight_is_owner "$request_key" "$generation"; then
 		rm -f "$response_file" "$err_file"
