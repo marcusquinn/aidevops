@@ -358,6 +358,34 @@ _pulse_cpu_pressure() {
 }
 
 #######################################
+# Cap an open_idle pass to the headroom idle cores can absorb (>=1 new worker);
+# the next pass re-samples idle, so admission tracks real headroom (GH#33754).
+# Arguments: $1 final max, $2 active workers, $3 cores, $4 idle %, $5 load, $6 threshold
+# Outputs: capped final max
+#######################################
+_pulse_cap_idle_headroom() {
+	local final_max="$1"
+	local active_workers="$2"
+	local cpu_cores="$3"
+	local cpu_idle="$4"
+	local cpu_load="$5"
+	local cpu_threshold="$6"
+	if [[ ! "$cpu_cores" =~ ^[0-9]+$ || ! "$cpu_idle" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$final_max"
+		return 0
+	fi
+	local idle_slots=$((cpu_cores * cpu_idle / 100))
+	((idle_slots < 1)) && idle_slots=1
+	if ((final_max > active_workers + idle_slots)); then
+		final_max=$((active_workers + idle_slots))
+	fi
+	printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=open_idle cpu_idle_pct=%s idle_slots=%s active_workers=%s admission=idle_headroom\n' \
+		"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_idle" "$idle_slots" "$active_workers" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	printf '%s\n' "$final_max"
+	return 0
+}
+
+#######################################
 # Apply CPU admission and provider/account/terminal-health caps to the raw target.
 # Arguments:
 #   $1 - raw max workers
@@ -442,16 +470,8 @@ pulse_apply_provider_load_capacity_cap() {
 			fi
 		fi
 	fi
-	# Load is above threshold but cores are idle: admit only what idle cores can
-	# absorb this pass (>=1 new worker); the next pass re-samples (GH#33754).
-	if [[ "$cpu_gate" == "open_idle" && "$cpu_cores" =~ ^[0-9]+$ && "$cpu_idle" =~ ^[0-9]+$ ]]; then
-		local idle_slots=$((cpu_cores * cpu_idle / 100))
-		((idle_slots < 1)) && idle_slots=1
-		if ((final_max > active_workers + idle_slots)); then
-			final_max=$((active_workers + idle_slots))
-		fi
-		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=open_idle cpu_idle_pct=%s idle_slots=%s active_workers=%s admission=idle_headroom\n' \
-			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_idle" "$idle_slots" "$active_workers" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	if [[ "$cpu_gate" == "open_idle" ]]; then
+		final_max=$(_pulse_cap_idle_headroom "$final_max" "$active_workers" "$cpu_cores" "$cpu_idle" "$cpu_load" "$cpu_threshold")
 	fi
 	if ((final_max < 0)); then
 		final_max=0
