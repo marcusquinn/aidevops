@@ -186,19 +186,20 @@ aidevops_ensure_symlink_target() {
 # promoted 1.18.18 after making that comparison self-contained; GH#30695
 # promoted 1.18.23 after the isolated baseline and candidate probes passed;
 # GH#30957 promoted 1.18.25, GH#31588 promoted 1.18.29, GH#31909 promoted
-# 1.18.31, GH#32210 promoted 1.18.32, and GH#32761 promoted 1.18.33 after the
-# same isolated comparison passed. Keep the complete compatibility decision visible and machine-readable;
+# 1.18.31, GH#32210 promoted 1.18.32, GH#32761 promoted 1.18.33, and GH#33788
+# promoted 1.18.34 after the same isolated comparison passed with required plugin
+# tools and an empty native-tool diff. Keep the compatibility decision machine-readable;
 # general installs track latest because the observed failure scope is Linux
 # headless.
-readonly OPENCODE_PINNED_VERSION="1.18.33"
+readonly OPENCODE_PINNED_VERSION="1.18.34"
 readonly OPENCODE_PIN_REASON="GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME"
 readonly OPENCODE_PIN_PLATFORM="Linux"
 readonly OPENCODE_PIN_RUNTIME_MODE="headless"
 readonly OPENCODE_PIN_INTRODUCED_DATE="2026-07-30"
-readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-09-29"
-readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.33"
-readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-10-06"
-readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.33"
+readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-10-06"
+readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.34"
+readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-10-13"
+readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.34"
 # GH#32993: V2 promoted 2.0.20 after canary run 36752410645 passed the isolated
 # Linux-headless baseline (2.0.3) and candidate comparison with an empty native
 # tool diff; @opencode/plugin stays at the tested 2.0.3 package.
