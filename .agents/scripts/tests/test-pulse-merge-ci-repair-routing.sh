@@ -446,8 +446,23 @@ extract_process_stage_functions() {
 	return 0
 }
 
+define_ci_drift_helpers() {
+	DRIFT_NAMES="Lint"
+	DRIFT_NAMES_RC=0
+	DRIFT_PENDING_RC=1
+	# shellcheck source=../pulse-merge-ci-drift-ledger.sh
+	source "${SCRIPT_DIR}/../pulse-merge-ci-drift-ledger.sh"
+	_required_checks_terminal_failure_names() {
+		printf '%s\n' "$DRIFT_NAMES"
+		return "$DRIFT_NAMES_RC"
+	}
+	_check_required_checks_have_pending_or_in_progress() { return "$DRIFT_PENDING_RC"; }
+	return 0
+}
+
 define_process_helper() {
 	local fn_src="" process_stage_src="" repair_helper_src="" review_gate_src=""
+	define_ci_drift_helpers
 	review_gate_src=$(extract_function _handle_changes_requested_review_gate "$MERGE_SCRIPT")
 	repair_helper_src=$(extract_function _handle_review_blocked_ci_repair "$PROCESS_SCRIPT")
 	process_stage_src=$(extract_process_stage_functions "$MERGE_SCRIPT")
@@ -474,11 +489,6 @@ define_process_helper() {
 	REBASE_RETRY_RC=1
 	REBASE_RETRY_CALLS=0
 	REBASE_RETRY_POLICY=""
-	DRIFT_NAMES="Lint"
-	DRIFT_NAMES_RC=0
-	DRIFT_PENDING_RC=1
-	# shellcheck source=../pulse-merge-ci-drift-ledger.sh
-	source "${SCRIPT_DIR}/../pulse-merge-ci-drift-ledger.sh"
 	DUPLICATE_CLOSE_RC=1
 	DUPLICATE_CLOSE_CALLS=0
 	PREFLIGHT_RC=0
@@ -500,11 +510,6 @@ define_process_helper() {
 	_is_trusted_dependabot_update_pr() { local pr_number="$1" repo_slug="$2" pr_author="$3"; [[ -n "$pr_number$repo_slug$pr_author" ]]; return 1; }
 	_trusted_dependabot_non_review_checks_green() { local pr_number="$1" repo_slug="$2" pr_obj="$3"; [[ -n "$pr_number$repo_slug$pr_obj" ]]; return 1; }
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2" rebase_policy="${5:-standard}"; [[ -n "$pr_number$repo_slug" ]]; REBASE_RETRY_CALLS=$((REBASE_RETRY_CALLS + 1)); REBASE_RETRY_POLICY="$rebase_policy"; return "$REBASE_RETRY_RC"; }
-	_required_checks_terminal_failure_names() {
-		printf '%s\n' "$DRIFT_NAMES"
-		return "$DRIFT_NAMES_RC"
-	}
-	_check_required_checks_have_pending_or_in_progress() { return "$DRIFT_PENDING_RC"; }
 	_pm_close_superseded_duplicate_pr_if_issue_solved() { local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_labels="$4"; [[ -n "$pr_number$repo_slug$linked_issue$pr_labels" ]]; DUPLICATE_CLOSE_CALLS=$((DUPLICATE_CLOSE_CALLS + 1)); return "$DUPLICATE_CLOSE_RC"; }
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}" checks_json="${9:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; ROUTE_EVIDENCE="$checks_json"; return 0; }
 	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
