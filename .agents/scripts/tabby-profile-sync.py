@@ -20,7 +20,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -79,6 +78,10 @@ class ProfileReconciliation(NamedTuple):
         return self.stale + self.duplicates
 
 
+# First line of a linked worktree's ``.git`` file; the target must be non-empty.
+_GITDIR_LINE = re.compile(r"gitdir:\s*(\S.*?)\s*$")
+
+
 def is_linked_worktree(repo_path: str) -> bool:
     """Return True iff ``repo_path`` is a linked git worktree (not the main one).
 
@@ -88,45 +91,27 @@ def is_linked_worktree(repo_path: str) -> bool:
     as ``wpallstars.com`` / ``example.io``) or when a worktree branch did not
     start with one of the six hard-coded prefixes.
 
-    Detection rule: a linked worktree's ``git rev-parse --git-common-dir``
-    resolves to the *main* repo's ``.git`` directory, while the worktree's own
-    ``git rev-parse --git-dir`` resolves to ``<main>/.git/worktrees/<name>``.
-    For the main checkout (or any non-worktree clone) those two paths collapse
-    to the same ``.git`` directory. Comparing absolute paths gives a
-    heuristic-free answer that works for any repo name, branch name, or future
+    Detection rule (no subprocess; spawning ``git`` resolves to the slow
+    canonical-git guard shim): a main checkout has a ``.git`` directory; a
+    linked worktree has a ``.git`` file whose ``gitdir:`` target is
+    ``<main>/.git/worktrees/<name>``. Submodules point into ``.git/modules/``
+    and are not worktrees. Works for any repo name, branch name, or future
     worktree convention.
 
-    Returns False on non-git paths or on any git invocation error — the caller
+    Returns False on non-git paths or an unreadable ``.git`` — the caller
     treats those as "not a worktree" so normal repos are never excluded.
     """
-    git_dir = _run_git(repo_path, "rev-parse", "--git-dir")
-    common_dir = _run_git(repo_path, "rev-parse", "--git-common-dir")
-    if not all((git_dir, common_dir)):
-        return False
-
-    def _absolute(path: str) -> str:
-        # git may return a relative path (e.g. ``.git``) — resolve against
-        # ``repo_path`` so we always compare absolute paths.
-        if not os.path.isabs(path):
-            path = os.path.join(repo_path, path)
-        return os.path.realpath(path)
-
-    return _absolute(git_dir) != _absolute(common_dir)
-
-
-def _run_git(cwd: str, *args: str) -> str:
-    """Run ``git -C <cwd> <args...>`` and return stripped stdout, or ``""``."""
     try:
-        result = subprocess.run(
-            ["git", "-C", cwd, *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return (result.stdout.strip(), "")[result.returncode != 0]
+        # A main checkout's ``.git`` is a directory: open() raises OSError.
+        with open(os.path.join(repo_path, ".git"), encoding="utf-8") as handle:
+            match = _GITDIR_LINE.match(handle.readline())
+    except OSError:
+        return False
+    if not match:
+        return False
+    # os.path.join keeps an absolute target and anchors a relative one.
+    parts = os.path.normpath(os.path.join(repo_path, match.group(1))).split(os.sep)
+    return parts[-2:-1] == ["worktrees"] and "modules" not in parts
 
 
 def profile_name_from_path(repo_path: str) -> str:
