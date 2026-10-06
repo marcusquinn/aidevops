@@ -54,6 +54,16 @@ Use this when the vendor channel is broken or never covers the plugin (for examp
 5. **Health check**: after each active-plugin swap, request a URL that returns 200 on that site (use `/wp-login.php` when the homepage redirects) and fail on fatal-error text. Restore the stashed folder automatically on failure.
 6. **Verify**: active-plugin set unchanged, no new PHP `error_log` entries, admin and REST endpoints respond, rerun the inventory to confirm no gaps, then flush caches.
 
+Steps 1, 2, 4 and 5 are automated by `scripts/wp-plugin-parity-helper.sh`, which runs on the hosting account (`scp` it, or stream it with `ssh <alias> bash -s -- ...`). Run the step 3 backup first; the helper takes none.
+
+```bash
+ssh <alias> bash -s -- inventory --target <target-domain> < wp-plugin-parity-helper.sh
+ssh <alias> bash -s -- sync --target <target-domain> --stash <stash-dir> \
+  --check-path /wp-login.php --dry-run <slug>:<source-domain> < wp-plugin-parity-helper.sh
+```
+
+Drop `--dry-run` to apply. Each pair prints `OK|SKIP|FAIL|REVERTED slug old -> new (status)`; the stash is never deleted.
+
 Inactive plugins carry no runtime risk, but still back them up; activation later runs their upgrade routines.
 
 ## Related
