@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Marcus Quinn
+"""Advisory allocated-byte index; never evidence authorizing archive deletion."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+PREFIX = "aidevops-worktree-cleanup-"
+SCHEMA = "aidevops.worktree-recovery-size/v1"
+
+
+def identity(path):
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError("not an ordinary directory")
+    return [info.st_dev, info.st_ino]
+
+
+def index_directory(root):
+    identity(root)
+    directory = root / ".size-index"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    identity(directory)
+    return directory
+
+
+def read_hint(bucket, directory):
+    try:
+        record = directory / (bucket.name + ".json")
+        if not stat.S_ISREG(record.lstat().st_mode):
+            return None
+        data = json.loads(record.read_text(encoding="utf-8"))
+        if (data.get("schema") == SCHEMA
+                and data.get("identity") == identity(bucket)
+                and type(data.get("bytes")) is int and data["bytes"] >= 0
+                and type(data.get("measured_at")) in (int, float)):
+            return data
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def record_size(bucket, directory, timeout, measured_bytes=None):
+    before = identity(bucket)
+    size = measured_bytes
+    if size is None:
+        result = subprocess.run(
+            ["du", "-sk", str(bucket)], capture_output=True, text=True,
+            timeout=max(0.01, timeout), check=True,
+        )
+        size = int(result.stdout.split()[0]) * 1024
+    if identity(bucket) != before or size < 0:
+        raise ValueError("bucket changed during sizing")
+    descriptor, temporary = tempfile.mkstemp(prefix=".size-", dir=directory)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump({"schema": SCHEMA, "identity": before, "bytes": size,
+                       "measured_at": time.time()}, output)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, directory / (bucket.name + ".json"))
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
+def snapshot(root, budget):
+    directory = index_directory(root)
+    buckets = sorted(path for path in root.iterdir() if path.name.startswith(PREFIX))
+    hints = {path: read_hint(path, directory) for path in buckets}
+    # Backfill misses first; refresh old hints without repeatedly walking the store.
+    deadline = time.monotonic() + budget
+    pending = sorted(buckets, key=lambda path: (
+        hints[path]["measured_at"] if hints[path] else 0, path.name))
+    for bucket in pending:
+        hint = hints[bucket]
+        if hint and time.time() - hint["measured_at"] < 86400:
+            continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            record_size(bucket, directory, min(remaining, 2))
+            hints[bucket] = read_hint(bucket, directory)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+    known = [hint["bytes"] for hint in hints.values() if hint]
+    return {"store_bytes": sum(known) if len(known) == len(buckets) else None,
+            "indexed_bytes": sum(known), "indexed_count": len(known),
+            "bucket_count": len(buckets), "confidence": "indexed-estimate"}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("record", "snapshot", "order"))
+    parser.add_argument("path", type=Path)
+    parser.add_argument("--budget", type=float, default=2)
+    parser.add_argument("--bytes", type=int)
+    parser.add_argument("--offset", type=int, default=0)
+    args = parser.parse_args()
+    if not args.path.is_absolute() or not 0 <= args.budget <= 3600:
+        raise ValueError("invalid index arguments")
+    if args.operation == "record":
+        if not args.path.name.startswith(PREFIX):
+            raise ValueError("not a recovery bucket")
+        record_size(args.path, index_directory(args.path.parent), args.budget, args.bytes)
+    elif args.operation == "snapshot":
+        print(json.dumps(snapshot(args.path, args.budget)))
+    else:
+        # Sort scheduling hints only. The shell keeps its rotating coverage cursor.
+        paths = [Path(line) for line in args.path.read_text().splitlines()]
+        if not paths:
+            return 0
+        root = paths[0].parent
+        directory = index_directory(root)
+        if any(path.parent != root for path in paths) or args.offset < 0:
+            raise ValueError("inventory outside root")
+        sizes = {path: read_hint(path, directory) for path in paths}
+        paths.sort(key=lambda path: (
+            -(sizes[path]["bytes"] if sizes[path] else -1), str(path)))
+        offset = args.offset % len(paths)
+        for path in paths[offset:] + paths[:offset]:
+            print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        raise SystemExit(1)

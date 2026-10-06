@@ -195,6 +195,8 @@ _worktree_recovery_maintenance_pressure_json() {
 	local ignored=""
 	local pressure=false
 	local reason="none"
+	local indexed=""
+	local size_source="unavailable"
 
 	aidevops_disk_capacity_snapshot "$recovery_root" || return 1
 	if [[ "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB" -lt "$minimum_free_kb" ]]; then
@@ -204,28 +206,38 @@ _worktree_recovery_maintenance_pressure_json() {
 		pressure=true
 		reason="filesystem-free-percent-soft-limit"
 	fi
-	if [[ "$pressure" == "true" ]]; then
-		store_bytes="$WORKTREE_RECOVERY_PLAN_JSON_NULL"
+	# Report bytes even under filesystem pressure. Cached hints do not replace
+	# exact candidate sizing, and an incomplete index never claims a full total.
+	indexed=$(python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+		snapshot "$recovery_root" --budget "$((aggregate_timeout_tenths / 10))") || indexed='{}'
+	store_bytes=$(printf '%s\n' "$indexed" | jq -r '.store_bytes // "null"') || return 1
+	if [[ "$store_bytes" =~ ^[0-9]+$ ]]; then
+		size_source="indexed-estimate"
 	else
 		measured=$(_worktree_recovery_maintenance_measure_store "$recovery_root" \
 			"$aggregate_timeout_tenths") || return 1
 		IFS='|' read -r store_bytes confidence ignored <<<"$measured"
 		if [[ "$confidence" == "$WORKTREE_RECOVERY_PLAN_CONFIDENCE_EXACT" && "$store_bytes" =~ ^[0-9]+$ ]]; then
-			if [[ "$store_bytes" -gt "$max_store_bytes" ]]; then
-				pressure=true
-				reason="store-soft-limit"
-			fi
+			size_source="exact"
 		else
 			store_bytes="$WORKTREE_RECOVERY_PLAN_JSON_NULL"
+		fi
+	fi
+	if [[ "$pressure" != "true" ]]; then
+		if [[ "$store_bytes" == "$WORKTREE_RECOVERY_PLAN_JSON_NULL" ]]; then
 			pressure=true
 			reason="aggregate-size-unavailable"
+		elif [[ "$store_bytes" -gt "$max_store_bytes" ]]; then
+			pressure=true
+			reason="store-soft-limit"
 		fi
 	fi
 	jq -cn --argjson active "$pressure" --arg reason "$reason" \
+		--arg size_source "$size_source" \
 		--argjson store_bytes "$store_bytes" \
 		--argjson available_kb "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB" \
 		--argjson available_percent "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT" \
-		'{active:$active,reason:$reason,store_bytes:$store_bytes,
+		'{active:$active,reason:$reason,store_bytes:$store_bytes,size_source:$size_source,
 		available_kb:$available_kb,available_percent:$available_percent}'
 	return $?
 }
@@ -256,20 +268,10 @@ _worktree_recovery_maintenance_order_inventory() {
 	local inventory_path="$1"
 	local ordered_path="$2"
 	local offset="$3"
-	local index=0
-	local raw_record=""
 
-	: >"$ordered_path" || return 1
-	while IFS= read -r raw_record; do
-		[[ "$index" -lt "$offset" ]] || printf '%s\n' "$raw_record" >>"$ordered_path" || return 1
-		index=$((index + 1))
-	done <"$inventory_path"
-	index=0
-	while IFS= read -r raw_record; do
-		[[ "$index" -ge "$offset" ]] || printf '%s\n' "$raw_record" >>"$ordered_path" || return 1
-		index=$((index + 1))
-	done <"$inventory_path"
-	return 0
+	python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+		order "$inventory_path" --offset "$offset" >"$ordered_path"
+	return $?
 }
 
 _worktree_recovery_maintenance_zero_reason_counts_json() {
@@ -839,6 +841,8 @@ _worktree_recovery_maintenance_scan() {
 			_worktree_recovery_maintenance_mark_unknown_sizing "$reasons_path" || return 1
 			continue
 		fi
+		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+			record "$bucket_path" --bytes "$bytes" >/dev/null 2>&1 || true
 		entry_status=0
 		entry_json=$(_worktree_recovery_maintenance_attributed_entry_before_epoch \
 			"$deadline_epoch" "$bucket_path" "$bytes") || entry_status=$?
@@ -890,7 +894,7 @@ _worktree_recovery_maintenance_plan_json() {
 	local plan_json=""
 	local authorization=""
 
-	entries_json=$(jq -sc 'sort_by(.maintenance.age_seconds) | reverse' "$selected_path") || return 1
+	entries_json=$(jq -sc 'sort_by(.expected_allocated_bytes, .maintenance.age_seconds) | reverse' "$selected_path") || return 1
 	plan_material=$(jq -cn --arg schema "$WORKTREE_RECOVERY_PLAN_SCHEMA" \
 		--argjson entries "$entries_json" --argjson automatic_policy "$policy_json" \
 		'{schema:$schema,inventory_complete:true,inventory_error:null,entries:$entries,
@@ -1052,7 +1056,7 @@ _worktree_recovery_maintenance_build_selection_plan() {
 		max_candidates:.max_candidates,max_bytes:.max_bytes,max_store_bytes:.max_store_bytes,
 		pressure_min_free_kb:.minimum_free_kb,pressure_min_free_percent:.minimum_free_percent,
 		pressure_active:.pressure.active,pressure_reason:.pressure.reason,
-		store_bytes:.pressure.store_bytes,available_kb:.pressure.available_kb,
+		store_bytes:.pressure.store_bytes,store_size_source:.pressure.size_source,available_kb:.pressure.available_kb,
 		available_percent:.pressure.available_percent,scanned_count:$scanned,
 		protected_count:$protected,unknown_count:$unknown}') || return 1
 	WORKTREE_RECOVERY_MAINTENANCE_POLICY_JSON="$policy_json"
