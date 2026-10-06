@@ -73,7 +73,7 @@ runner_capability_check() {
 	local source="${3:-}"
 	local cycle="${_PULSE_CYCLE_ID:-}"
 	# Assemble only trusted literal code; issue metadata stays in argv as data.
-	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" < <(
+	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" "${BASH_SOURCE[0]%/*}/network-tier-helper.sh" < <(
 		_runner_capability_python_runtime
 		_runner_capability_python_cycle
 		_runner_capability_python_requirements
@@ -102,7 +102,7 @@ def unmet(reason=''):
     print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
-def run_check(argv, target, secret=False, cwd=None):
+def run_check(argv, target, secret=False, cwd=None, timeout=5):
     # Bound descendants too: a locked pinentry or probe child must not survive.
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
@@ -111,7 +111,7 @@ def run_check(argv, target, secret=False, cwd=None):
     except OSError:
         return f'check_failed {target}' if secret else f'probe_failed {target}'
     try:
-        status = process.wait(timeout=5)
+        status = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
@@ -209,8 +209,19 @@ try:
             if not names or not all(names):
                 unmet()
             requirements.append({'secrets': names})
-    secrets, probes = set(), []
+        elif line.startswith('requires-ssh:'):
+            requirements.append({'ssh_commands': [json.loads(line.partition(':')[2])]})
+    secrets, probes, ssh_commands = set(), [], []
     for requirement in requirements:
+        commands = requirement.get('ssh_commands', [])
+        if not isinstance(commands, list) or len(commands) > 8:
+            unmet('invalid_requirements')
+        for command in commands:
+            if (not isinstance(command, list) or not command or len(command) > 128
+                    or not all(isinstance(arg, str) and len(arg) <= 4096 for arg in command)
+                    or command[0] not in ('ssh', '/usr/bin/ssh')):
+                unmet('invalid_requirements')
+            ssh_commands.append(command)
         names = requirement.get('secrets', [])
         if not isinstance(names, list) or len(names) > 32:
             unmet()
@@ -233,10 +244,21 @@ try:
             if root not in executable.parents or not executable.is_file() or not os.access(executable, os.X_OK):
                 unmet(f'probe_failed path={probe}')
             probes.append((str(executable), probe))
-    if len(secrets) > 32 or len(probes) > 8:
+    if len(secrets) > 32 or len(probes) > 8 or len(ssh_commands) > 8:
         unmet()
+    # Only analyze exact argv; never execute SSH or issue-provided shell text.
+    # The same tier gate used inside the worker is authoritative before claim.
+    network_timeout = int(os.environ.get('AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS', '30'))
+    if ssh_commands and network_timeout <= 0:
+        unmet('invalid_requirements')
+    for command in ssh_commands:
+        reason = run_check(['bash', str(Path(sys.argv[5]).resolve()), 'check-argv',
+                            json.dumps(command), '--cwd', str(root)],
+                           'ssh', cwd=root, timeout=network_timeout)
+        if reason:
+            unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
     if sys.argv[3] == 'fresh':
-        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes)}',
+        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',
               file=sys.stderr)
     if secrets:
         cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''

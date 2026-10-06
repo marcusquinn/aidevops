@@ -737,6 +737,9 @@ check_argv() {
 	unclassified="$(printf '%s' "$analysis" | jq -r '.unclassified[]?')"
 	if [[ -n "$unclassified" ]]; then
 		log_error "${NET_TIER_BLOCKED_PREFIX} unclassified worker network destination (${unclassified//$'\n'/, })"
+		if [[ "$unclassified" == *ssh-* ]]; then
+			log_error "Exact SSH authorization: run ssh_binding_helper.py prepare for a config-disabled command, then owner-sign it (reference/ssh-bindings.md); endpoint tier denials still apply"
+		fi
 		return 1
 	fi
 	destinations="$(printf '%s' "$analysis" | jq -r '.destinations[]?')"

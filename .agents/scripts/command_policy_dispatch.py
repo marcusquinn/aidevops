@@ -46,7 +46,10 @@ def analyze_network_argv(argv: list[str], cwd: str) -> dict[str, Any]:
         "ssh": _analyze_ssh,
         "scp": _analyze_scp,
     }
-    if executable in analyzers:
+    if executable == "ssh":
+        result["recognized"] = True
+        _analyze_ssh(exact, result, cwd)
+    elif executable in analyzers:
         result["recognized"] = True
         analyzers[executable](exact, result)
     elif executable == "git":
