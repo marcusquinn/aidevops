@@ -22,6 +22,9 @@ write_default_repos_json
 PULSE_MERGE_QUIET_PERIOD_SECONDS=30
 PULSE_MERGE_NOW_EPOCH="$(_pmrc_iso_to_epoch '2026-01-01T00:10:00Z')"
 PULSE_MERGE_INFRA_RERUN_STATE_DIR="${TEST_ROOT}/infra-reruns"
+PULSE_MERGE_CANCELLED_RERUN_STATE_DIR="${TEST_ROOT}/cancelled-reruns"
+CANCELLED_RUN_SHA="sha-reviewed"
+CANCELLED_RUN_ATTEMPT=1
 SNAPSHOT_MODE="happy_advisory"
 RERUN_CALLS=0
 TESTS_RUN=0
@@ -193,6 +196,17 @@ stub_advisory_companion_check() {
 	return 0
 }
 
+stub_pull_head() {
+	if [[ "$SNAPSHOT_MODE" == "new_head" ]]; then
+		printf '%s\n' '{"head":{"sha":"sha-new"},"base":{"ref":"main"}}'
+	elif [[ "$SNAPSHOT_MODE" == "human_required_slash" ]]; then
+		printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"release/1.x"}}'
+	else
+		printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"main"}}'
+	fi
+	return 0
+}
+
 gh() {
 	local command="$1"
 	local endpoint="${2:-}"
@@ -208,14 +222,12 @@ gh() {
 	fi
 
 	case "$endpoint" in
+	repos/owner/repo/actions/runs/707)
+		printf '{"head_sha":"%s","status":"completed","conclusion":"%s","run_attempt":%s}\n' "$CANCELLED_RUN_SHA" "${CANCELLED_RUN_CONCLUSION:-cancelled}" "$CANCELLED_RUN_ATTEMPT"
+		;;
 	repos/owner/repo/pulls/7)
-		if [[ "$SNAPSHOT_MODE" == "new_head" ]]; then
-			printf '%s\n' '{"head":{"sha":"sha-new"},"base":{"ref":"main"}}'
-		elif [[ "$SNAPSHOT_MODE" == "human_required_slash" ]]; then
-			printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"release/1.x"}}'
-		else
-			printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"main"}}'
-		fi
+		stub_pull_head
+		return $?
 		;;
 	repos/owner/repo/rules/branches/*)
 		printf '%s|%s|%s\n' "${AIDEVOPS_GH_QUOTA_COST:-}" \
@@ -248,6 +260,8 @@ gh() {
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/runs/99","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "infra_fail" ]]; then
 			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "cancelled_workflow" ]]; then
+			extra_check=',{"name":"Cancelled scan","status":"completed","conclusion":"cancelled","details_url":"https://github.com/owner/repo/actions/runs/707/job/808","completed_at":"2026-01-01T00:01:00Z"},{"name":"Cancelled lint","status":"completed","conclusion":"cancelled","details_url":"https://github.com/owner/repo/actions/runs/707/job/809","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "configured_fail" ]]; then
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "review_alias_cancelled" ]]; then
@@ -311,6 +325,77 @@ assert_gate() {
 	fi
 	printf 'FAIL %s (expected rc=%s, actual rc=%s)\n' "$description" "$expected_rc" "$rc"
 	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+assert_cancelled_workflow_recovery() {
+	local before="$RERUN_CALLS" rc=0
+	local url="https://github.com/owner/repo/actions/runs/707/job/808"
+	assert_gate "cancelled jobs keep merge blocked and rerun their shared workflow once" cancelled_workflow 1
+	assert_gate "unchanged cancelled snapshot cannot rerun again" cancelled_workflow 1
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$RERUN_CALLS" -eq $((before + 1)) && "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" ]]; then
+		printf 'PASS cancelled jobs deduplicate workflow reruns without code repair\n'
+	else
+		printf 'FAIL cancelled workflow rerun deduplication or repair evidence\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	CANCELLED_RUN_ATTEMPT=2
+	assert_gate "cancelled rerun remains blocking" cancelled_workflow 1
+	_pmrc_rerun_cancelled_check owner/repo 7 sha-reviewed "$url"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$RERUN_CALLS" -eq $((before + 1)) ]] &&
+		[[ "$(grep -c 'cancelled workflow recovery escalated' "$LOGFILE")" -eq 1 ]]; then
+		printf 'PASS repeated cancellation escalates once without rerun amplification\n'
+	else
+		printf 'FAIL repeated cancellation escalation\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	# Old URLs, dry-run and foreign URLs cannot start another run.
+	_pmrc_rerun_cancelled_check owner/repo 7 sha-new "$url" || rc=$?
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 1 ]]; then
+		printf 'PASS stale run SHA cannot trigger recovery\n'
+	else
+		printf 'FAIL stale run SHA triggered recovery\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	CANCELLED_RUN_SHA=sha-new
+	DRY_RUN=1
+	_pmrc_rerun_cancelled_check owner/repo 7 sha-new "$url" || true
+	DRY_RUN=0
+	_pmrc_rerun_cancelled_check owner/repo 7 sha-new "https://github.com/other/repo/actions/runs/707" || true
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$RERUN_CALLS" -eq $((before + 1)) ]]; then
+		printf 'PASS dry-run and foreign URL suppress writes\n'
+	else
+		printf 'FAIL dry-run or foreign URL allowed writes\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	CANCELLED_RUN_CONCLUSION=failure
+	_pmrc_rerun_cancelled_check owner/repo 7 sha-new "$url"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$RERUN_CALLS" -eq $((before + 2)) ]]; then
+		printf 'PASS changed head permits bounded recovery for a mixed failed/cancelled workflow\n'
+	else
+		printf 'FAIL changed head did not permit recovery\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	# Simulate a crash after reserving an attempt, before a submission receipt.
+	CANCELLED_RUN_SHA=sha-interrupted
+	mkdir "$PULSE_MERGE_CANCELLED_RERUN_STATE_DIR/owner-repo-7-sha-interrupted-707"
+	: >"$LOGFILE"
+	_pmrc_rerun_cancelled_check owner/repo 7 sha-interrupted "$url" || true
+	_pmrc_rerun_cancelled_check owner/repo 7 sha-interrupted "$url" || true
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$RERUN_CALLS" -eq $((before + 2)) ]] &&
+		[[ "$(grep -c 'incomplete submission receipt' "$LOGFILE")" -eq 1 ]]; then
+		printf 'PASS interrupted recovery escalates once without replaying an ambiguous request\n'
+	else
+		printf 'FAIL interrupted recovery was replayed or not escalated once\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	assert_gate "fresh successful snapshot clears cancelled blockers" happy_advisory 0
 	return 0
 }
 
@@ -750,6 +835,7 @@ main() {
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_review_and_head_snapshot_cases
+	assert_cancelled_workflow_recovery
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

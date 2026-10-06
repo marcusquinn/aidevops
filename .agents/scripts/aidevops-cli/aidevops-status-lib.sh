@@ -330,6 +330,12 @@ cmd_status() {
 	_status_pulse_schedulers
 	_status_capability_readiness
 	_status_storage_inventory
+	local orphan_state_helper="${SCRIPT_DIR%/aidevops-cli}/orphan-cleanup-state.py"
+	if [[ -f "$orphan_state_helper" ]] && check_cmd python3; then
+		print_header "Orphan Cleanup Holds"
+		python3 "$orphan_state_helper" report || print_warning "Orphan cleanup ledger unavailable"
+		echo ""
+	fi
 	print_header "SSH Configuration"
 	check_file "$HOME/.ssh/id_ed25519" && print_success "Ed25519 SSH key" || print_warning "Ed25519 SSH key - not found"
 	echo ""
