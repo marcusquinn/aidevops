@@ -928,7 +928,7 @@ _refresh_owner_issues() {
 	local issue_err
 	issue_err=$(mktemp)
 	local issue_json=""
-	issue_json=$(_prefetch_gh_read gh search issues --owner "$owner" --state open \
+	issue_json=$(_prefetch_gh_read gh search issues --repo "$slugs" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
 		--json number,title,state,labels,updatedAt,assignees,body,authorAssociation,author,repository 2>"$issue_err") || issue_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
@@ -994,7 +994,7 @@ _refresh_owner_prs() {
 	local pr_err
 	pr_err=$(mktemp)
 	local pr_json=""
-	pr_json=$(_prefetch_gh_read gh search prs --owner "$owner" --state open \
+	pr_json=$(_prefetch_gh_read gh search prs --repo "$slugs" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
 		--json number,title,labels,updatedAt,assignees,repository,createdAt,author 2>"$pr_err") || pr_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
@@ -1133,6 +1133,22 @@ _cmd_refresh() {
 	local owner="" slugs=""
 	while IFS='|' read -r owner slugs; do
 		[[ -n "$owner" ]] || continue
+		# Filter only enabled slugs already selected by _group_repos_by_owner.
+		# Do not gate PR merge/repair/recovery stages with this scheduling state.
+		local awake_slugs="" slug="" force_refresh=0
+		# shellcheck source=./pulse-repo-dormancy.sh
+		source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+		local repo_slugs=()
+		IFS=',' read -r -a repo_slugs <<<"$slugs"
+		for slug in "${repo_slugs[@]}"; do
+			pulse_repo_scan_allowed "$slug" || continue
+			awake_slugs="${awake_slugs:+$awake_slugs,}$slug"
+			if pulse_repo_wake_pending "$slug"; then
+				force_refresh=1
+			fi
+		done
+		slugs="$awake_slugs"
+		[[ -n "$slugs" ]] || continue
 
 		# L1 events ETag tickle (t2830, GH#20868): cheap conditional GET
 		# via REST core bucket. On 304 (ETag unchanged), skip the 2 Search
@@ -1140,7 +1156,7 @@ _cmd_refresh() {
 		# and let the normal batch search proceed.
 		local _tickle_rc=0
 		events_tickle "$owner" || _tickle_rc=$?
-		if [[ "$_tickle_rc" -eq 0 ]]; then
+		if [[ "$_tickle_rc" -eq 0 && "$force_refresh" == 0 ]]; then
 			if _events_tickle_skip_is_safe "$slugs"; then
 				_log "events tickle fresh for owner=${owner} — skipping search calls"
 				continue

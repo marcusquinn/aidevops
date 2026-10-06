@@ -384,6 +384,11 @@ cmd_push() {
 		[[ "$result" == *"RELATIONSHIPS_PENDING"* ]] && relationships_pending=$((relationships_pending + 1))
 	done
 	print_info "Push complete: $created created, $skipped skipped, $failed failed, $relationships_pending relationships pending"
+	if [[ "$created" -gt 0 ]]; then
+		# shellcheck source=./pulse-repo-dormancy.sh
+		source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+		pulse_repo_wake "$repo" planning_publication || true
+	fi
 	if [[ $failed -gt 0 ]]; then
 		print_error "Issue creation failed for $failed task(s); TODO.md still contains active task(s) without GitHub refs"
 		return 1

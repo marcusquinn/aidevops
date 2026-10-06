@@ -36,6 +36,9 @@ _PULSE_REPO_ROLE_CONTRIBUTOR="contributor"
 # shellcheck disable=SC1091  # sibling library resolved by the orchestrator
 source "${SCRIPT_DIR}/infrastructure-advisory-lib.sh"
 
+# shellcheck source=./pulse-repo-dormancy.sh
+source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+
 #######################################
 # Resolve managed repo path from slug
 # Arguments:
@@ -431,6 +434,14 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
+	if ! pulse_repo_scan_allowed "$repo_slug"; then
+		[[ -z "$raw_snapshot_file" ]] || printf '[]\n' >"$raw_snapshot_file"
+		[[ -z "$snapshot_status_file" ]] || printf '0\n' >"$snapshot_status_file"
+		printf '[]\n'
+		return 0
+	fi
+	pulse_repo_dormancy_prepare "$repo_slug"
+
 	local issue_json="" issue_dispatch_err="" snapshot_source_file=""
 	issue_dispatch_err=$(mktemp) || {
 		printf '[]\n'
@@ -499,6 +510,12 @@ list_dispatchable_issue_candidates_json() {
 	_pulse_persist_candidate_snapshot_evidence "$repo_slug" "$issue_json" \
 		"$snapshot_succeeded" "$limit" "$raw_snapshot_file" \
 		"$snapshot_status_file" "$completeness_file"
+
+	local dormancy_complete=0
+	if [[ "$snapshot_succeeded" == 1 ]] && jq -e --argjson limit "$limit" 'length < $limit' <<<"$issue_json" >/dev/null 2>&1; then
+		dormancy_complete=1
+	fi
+	pulse_repo_dormancy_observe "$repo_slug" "$issue_json" "$candidates_json" "$dormancy_complete"
 
 	printf '%s\n' "$candidates_json"
 	[[ "$snapshot_available" -eq 1 ]]

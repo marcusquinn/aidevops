@@ -246,6 +246,11 @@ PULSE_TIER_WARM_INTERVAL="${PULSE_TIER_WARM_INTERVAL:-180}"                     
 PULSE_TIER_COLD_INTERVAL="${PULSE_TIER_COLD_INTERVAL:-600}"                                               # t2831: cold repos: skip if last check < 600s ago (~10 cycles at 60s base)
 export PULSE_TIER_CLASSIFICATION_ENABLED PULSE_TIER_HOT_INTERVAL PULSE_TIER_WARM_INTERVAL PULSE_TIER_COLD_INTERVAL
 
+# t18604: idle-repo scheduling; independent of activity tiers and repos.json flags.
+PULSE_REPO_DORMANCY_ENABLED="${PULSE_REPO_DORMANCY_ENABLED:-1}"
+PULSE_DORMANCY_BACKSTOP_SECONDS="${PULSE_DORMANCY_BACKSTOP_SECONDS:-21600}"
+export PULSE_REPO_DORMANCY_ENABLED PULSE_DORMANCY_BACKSTOP_SECONDS
+
 # Per-issue retry state (t1888, GH#2076, GH#17384)
 #
 # Cause-aware retry backoff per issue. Different failure types get
