@@ -28,6 +28,7 @@ TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
 TEST_DIR=""
+MOCK_PIDS=()
 
 print_result() {
 	local test_name="$1"
@@ -48,6 +49,11 @@ print_result() {
 }
 
 teardown() {
+	local pid=""
+	for pid in "${MOCK_PIDS[@]}"; do
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	done
 	if [[ -n "$TEST_DIR" ]] && [[ -d "$TEST_DIR" ]]; then
 		rm -rf "$TEST_DIR"
 	fi
@@ -57,6 +63,11 @@ teardown() {
 setup() {
 	TEST_DIR=$(mktemp -d)
 	trap teardown EXIT
+	# Never query or start the host's real systemd Pulse unit in isolated tests.
+	mkdir -p "$TEST_DIR/bin"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"$TEST_DIR/bin/systemctl"
+	chmod +x "$TEST_DIR/bin/systemctl"
+	export PATH="$TEST_DIR/bin:$PATH"
 	return 0
 }
 
@@ -386,13 +397,106 @@ test_tick_systemd_dead_states_revive_via_systemctl() {
 			bash "$TICK_SH" || rc=$?
 		invocations=$(cat "$stub_home/.aidevops/logs/systemctl-invocations.log" 2>/dev/null || echo "")
 		helper_invocations=$(cat "$stub_home/.aidevops/logs/stub-helper-invocations.log" 2>/dev/null || echo "")
-		if [[ "$rc" -eq 0 ]] && [[ "$invocations" == *"start aidevops-supervisor-pulse.service"* ]] && [[ -z "$helper_invocations" ]]; then
+		if [[ "$rc" -eq 0 ]] && [[ "$invocations" == *"start aidevops-supervisor-pulse.service"* ]] && [[ "$helper_invocations" == "stub:is-running" ]]; then
 			print_result "test_tick_systemd_${active_state}_revives_via_systemctl" 0
 			continue
 		fi
 		print_result "test_tick_systemd_${active_state}_revives_via_systemctl" 1 \
-			"expected systemctl start only; rc=$rc systemctl='$invocations' helper='$helper_invocations'"
+			"expected liveness probe then systemctl start; rc=$rc systemctl='$invocations' helper='$helper_invocations'"
 	done
+	return 0
+}
+
+# GH#33777: exercise actual process discovery under a cron-shaped launcher,
+# including a Bash subshell with inherited wrapper argv. Only test-owned PIDs
+# are spawned/terminated; the real pulse is never touched.
+test_cron_wrapper_liveness() {
+	local stub_home="$TEST_DIR/cron-lock" wrapper="" launcher="" pid="" child="" attempt=0 rc=0 pids=""
+	_setup_tick_env "$stub_home" "dead"
+	wrapper="$stub_home/.aidevops/agents/scripts/pulse-wrapper.sh"
+	mkdir -p "$stub_home/.aidevops/logs/pulse-wrapper.lockdir"
+	cat >"$wrapper" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$$" >"$HOME/.aidevops/logs/pulse-wrapper.lockdir/pid"
+(
+ printf '%s\n' "$BASHPID" >"$HOME/.aidevops/logs/subshell.pid"
+ while true; do sleep 0.1; done
+) &
+child=$!
+trap 'kill "$child" 2>/dev/null || true' EXIT
+wait "$child"
+STUB
+	# Keep the -c launcher alive rather than allowing the shell to exec Bash.
+	HOME="$stub_home" sh -c 'bash "$1" & wait' cron-launcher "$wrapper" &
+	launcher=$!
+	MOCK_PIDS+=("$launcher")
+	for ((attempt = 0; attempt < 30; attempt++)); do
+		[[ -s "$stub_home/.aidevops/logs/subshell.pid" ]] && break
+		sleep 0.1
+	done
+	read -r pid <"$stub_home/.aidevops/logs/pulse-wrapper.lockdir/pid"
+	read -r child <"$stub_home/.aidevops/logs/subshell.pid"
+	MOCK_PIDS+=("$pid" "$child")
+	# The real helper must emit only the top-level wrapper, not its parent or
+	# inherited-argv subshell. Override the pattern to exclude the host Pulse.
+	pids=$(HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
+		AIDEVOPS_PULSE_PROCESS_PATTERN="${wrapper//./\\.}" bash -c '
+		# shellcheck source=.agents/scripts/pulse-lifecycle-helper.sh
+		source "$1"
+		_pulse_pids
+	' test "$REPO_ROOT/.agents/scripts/pulse-lifecycle-helper.sh")
+	[[ "$pids" == "$pid" ]] || rc=1
+	HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
+		AIDEVOPS_PULSE_PROCESS_PATTERN="${wrapper//./\\.}" \
+		bash "$REPO_ROOT/.agents/scripts/pulse-lifecycle-helper.sh" is-running || rc=1
+	print_result "test_cron_discovery_excludes_launcher_and_subshell" "$rc" "expected PID=$pid, got '$pids'"
+	# An age of 1900s reproduces the reported long-cycle false-death condition.
+	printf '%s\n' "$(($(date +%s) - 1900))" >"$stub_home/.aidevops/logs/pulse-wrapper-last-run.ts"
+	local mock_bin="" tick=0
+	mock_bin=$(_setup_systemctl_stub "$stub_home" inactive)
+	for ((tick = 0; tick < 3; tick++)); do
+		PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
+			bash "$TICK_SH" || rc=1
+	done
+	[[ ! -s "$stub_home/.aidevops/logs/systemctl-invocations.log" && \
+		! -s "$stub_home/.aidevops/logs/stub-helper-invocations.log" && \
+		! -s "$stub_home/.aidevops/logs/pulse-watchdog.log" ]] || rc=1
+	print_result "test_live_lock_old_stamp_no_revival_or_log" "$rc"
+	# Reused PID belongs to this test runner, not a wrapper: must still revive.
+	printf '%s\n' "$$" >"$stub_home/.aidevops/logs/pulse-wrapper.lockdir/pid"
+	PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
+		bash "$TICK_SH"
+	if grep -q 'start aidevops-supervisor-pulse.service' "$stub_home/.aidevops/logs/systemctl-invocations.log"; then
+		print_result "test_reused_lock_pid_does_not_block_revival" 0
+	else
+		print_result "test_reused_lock_pid_does_not_block_revival" 1
+	fi
+	return 0
+}
+
+test_revival_episode_logging() {
+	local stub_home="$TEST_DIR/episode" rc=0 count=0 tick=0 lock_pid=""
+	_setup_tick_env "$stub_home" "dead"
+	mkdir -p "$stub_home/.aidevops/logs/pulse-wrapper.lockdir"
+	for lock_pid in 999999999 malformed 0; do
+		printf '%s\n' "$lock_pid" >"$stub_home/.aidevops/logs/pulse-wrapper.lockdir/pid"
+		HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" bash "$TICK_SH" || rc=1
+	done
+	count=$(grep -c 'reviving' "$stub_home/.aidevops/logs/pulse-watchdog.log")
+	[[ "$count" -eq 1 ]] || rc=1
+	count=$(grep -c 'stub:start' "$stub_home/.aidevops/logs/stub-helper-invocations.log")
+	[[ "$count" -eq 3 ]] || rc=1
+	print_result "test_stale_invalid_locks_retry_with_one_episode_log" "$rc"
+	# Observed healthy state must re-arm even without a changed start stamp.
+	_setup_tick_env "$stub_home" "alive"
+	HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" bash "$TICK_SH"
+	_setup_tick_env "$stub_home" "dead"
+	for ((tick = 0; tick < 2; tick++)); do
+		HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" bash "$TICK_SH"
+	done
+	count=$(grep -c 'reviving' "$stub_home/.aidevops/logs/pulse-watchdog.log")
+	[[ "$count" -eq 2 ]] || rc=1
+	print_result "test_healthy_observation_rearms_episode_log" "$rc"
 	return 0
 }
 
@@ -423,6 +527,8 @@ main() {
 	test_tick_disable_flag
 	test_tick_systemd_active_states_no_revive
 	test_tick_systemd_dead_states_revive_via_systemctl
+	test_cron_wrapper_liveness
+	test_revival_episode_logging
 
 	echo
 	echo "Tests run:    $TESTS_RUN"

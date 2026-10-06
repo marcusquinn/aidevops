@@ -599,12 +599,18 @@ _pulse_restore_pipe_trap() {
 # Empty output = no main pulse running.
 # _stop_all uses _pulse_pids_raw (not this function) so it still SIGTERMs
 # all pulse processes including subshells AND sidecars on `stop`.
+_pulse_command_is_launcher() {
+	local _command="$1"
+	[[ "$_command" =~ ^[^[:space:]]*[[:space:]]+-[[:alnum:]]*c([[:space:]]|$) ]] || return 1
+	return 0
+}
+
 _pulse_parent_is_wrapper() {
 	local _parent_cmd="$1"
 	[[ "$_parent_cmd" =~ pulse-wrapper\.sh ]] || return 1
 	# Shell -c/-lc/-lc... command strings can contain the child's script path.
 	# Actual Bash wrapper subshells retain the script argv, not a -c string.
-	[[ "$_parent_cmd" =~ ^[^[:space:]]*[[:space:]]+-[[:alnum:]]*c([[:space:]]|$) ]] && return 1
+	_pulse_command_is_launcher "$_parent_cmd" && return 1
 	return 0
 }
 
@@ -615,6 +621,9 @@ _pulse_pids() {
 	_pipe_trap=$(trap -p PIPE || true)
 	trap '' PIPE
 	while read -r _pid; do
+		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+		# pgrep can also match the launcher itself; it is not a pulse cycle.
+		_pulse_command_is_launcher "$_cmd" && continue
 		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
 		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
 		# Layer 1 (fast path): process started by init/launchd (PPID=1) is the
@@ -622,7 +631,6 @@ _pulse_pids() {
 		# pulse PID itself (> 1), never 1.
 		if [[ "$_ppid" == "1" ]]; then
 			# Layer 3 (sidecar guard): skip if argv contains a sidecar flag.
-			_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 			[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
 			_pulse_emit_pid "$_pid" || break
 			continue
@@ -633,7 +641,6 @@ _pulse_pids() {
 		_pulse_parent_is_wrapper "$_ppid_cmd" && continue
 		# Layer 3 (sidecar guard): also skip non-launchd-started sidecars
 		# (manual --merge-only invocations during testing or debugging).
-		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
 		_pulse_emit_pid "$_pid" || break
 	done <<<"$_pids"
@@ -654,13 +661,14 @@ _pulse_pids_sidecar() {
 	_pipe_trap=$(trap -p PIPE || true)
 	trap '' PIPE
 	while read -r _pid; do
+		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+		_pulse_command_is_launcher "$_cmd" && continue
 		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
 		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
 		if [[ "$_ppid" != "1" ]]; then
 			_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
 			_pulse_parent_is_wrapper "$_ppid_cmd" && continue
 		fi
-		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 		if [[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]]; then
 			_pulse_emit_pid "$_pid" || break
 		fi
