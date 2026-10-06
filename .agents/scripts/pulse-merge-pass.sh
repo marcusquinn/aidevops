@@ -363,6 +363,12 @@ _pmp_prepare_enriched_pr_backlog() {
 	local pr_count=0 cursor_index=0 pr_obj="" cached_obj="" enriched_obj="" enrichment_rc=0
 
 	[[ "$output_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	# The reserve-limited fallback needs no expensive advisory snapshot. Each
+	# cursor item still receives authoritative enrichment before any action.
+	if [[ "${PULSE_MERGE_BACKLOG_ENRICHMENT:-1}" == 0 ]]; then
+		printf -v "$output_var" '%s' "$fresh_json"
+		return 0
+	fi
 	cache_file=$(_pmp_merge_enrichment_cache_file)
 	cursor_file=$(_pmp_merge_enrichment_cursor_file)
 	if [[ -f "$cache_file" ]]; then
@@ -818,6 +824,10 @@ _pmp_process_merge_repo_for_pass() {
 	local completed_all_var="$8"
 	_PMP_LAST_REPO_TIMING_ROW=""
 
+	if _pmp_merge_pass_budget_exhausted; then
+		printf -v "$completed_all_var" '%s' '0'
+		return 0
+	fi
 	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 		|| ! repo_allows_pulse_write_actions "$repo_slug"; then
 		echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$logfile"
