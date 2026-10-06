@@ -269,13 +269,32 @@ def _finish_budget(budget, reservation: str, resource: str, headers: dict[str, s
     budget.close()
 
 
-def run(metadata: Path, executable: str, args: list[str]) -> int:
-    phase_timer = _PhaseTimer()
-    phase = phase_timer.phase
-    shape = request_shape(args)
-    if shape is None or sys.stdout.isatty():
-        return 125
-    host, resource, include, silent = shape
+def _report_deferred(metadata: Path, exc: Deferred) -> int:
+    metadata.write_text(json.dumps({"attempted": False, "deferred_by": "local_admission",
+                                   "reason": str(exc), "retry_at": exc.retry_at}), encoding="utf-8")
+    retry = f" retry_at={exc.retry_at:.3f}" if exc.retry_at else ""
+    print(f"[gh-transport] deferred: {exc}{retry}", file=sys.stderr)
+    return 75
+
+
+def _report_state_failure(metadata: Path, exc: Exception, rc: int | None) -> int:
+    # Metadata failure after execution is not permission to retry a
+    # successful mutation. Keep the observed native status when available.
+    sqlite_name = getattr(exc, "sqlite_errorname", "") or None
+    failure = {"attempted": False, "deferred_by": "local_state", "reason": type(exc).__name__,
+               "sqlite_error": sqlite_name}
+    if rc is None:
+        try:
+            metadata.write_text(json.dumps(failure), encoding="utf-8")
+        except OSError:
+            pass
+    detail = f"/{sqlite_name}" if sqlite_name else ""
+    print(f"[gh-transport] safe REST transport state unavailable: {type(exc).__name__}{detail}",
+          file=sys.stderr)
+    return _exit_status(rc) if rc is not None else 75
+
+
+def _state_directories() -> tuple[Path, Path]:
     directory = Path(os.environ.get(
         "AIDEVOPS_GH_TRANSPORT_STATE_DIR",
         str(Path.home() / ".aidevops/state/gh-transport"),
@@ -283,6 +302,17 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
     temp_dir = Path(os.environ.get(
         "AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")
     ))
+    return directory, temp_dir
+
+
+def run(metadata: Path, executable: str, args: list[str]) -> int:
+    phase_timer = _PhaseTimer()
+    phase = phase_timer.phase
+    shape = request_shape(args)
+    if shape is None or sys.stdout.isatty():
+        return 125
+    host, resource, include, silent = shape
+    directory, temp_dir = _state_directories()
     budget = None
     reservation = ""
     started = time.time()
@@ -303,7 +333,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
             # Digest-only login proof lets one user's PATs share recovery
             # without merging scopes across users or installations.
             private_directory(directory)
-            resolve_owner_proof(executable, host, credential, environment, directory)
+            resolve_owner_proof((executable, host), credential, environment, directory)
         budget = Budget(directory, scope_key(host, owner), credential, attributed=attributed)
         phase("sqlite_open")
         reservation = phase_timer.admit(budget, resource)
@@ -314,33 +344,15 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
             rc = execute(executable, native_args, output, environment)
             phase("native_gh")
             status, headers, body_offset = included_headers(output)
-            framing_rc = _copy_response(output, include, silent, status, body_offset)
-            rc = rc or framing_rc
-            result = _response_metadata(status, headers, authenticated)
-            metadata.write_text(json.dumps(result), encoding="utf-8")
+            rc = rc or _copy_response(output, include, silent, status, body_offset)
+            metadata.write_text(json.dumps(_response_metadata(status, headers, authenticated)),
+                                encoding="utf-8")
             phase("response_framing")
             return _exit_status(rc)
     except Deferred as exc:
-        metadata.write_text(json.dumps({"attempted": False, "deferred_by": "local_admission",
-                                       "reason": str(exc), "retry_at": exc.retry_at}), encoding="utf-8")
-        retry = f" retry_at={exc.retry_at:.3f}" if exc.retry_at else ""
-        print(f"[gh-transport] deferred: {exc}{retry}", file=sys.stderr)
-        return 75
+        return _report_deferred(metadata, exc)
     except (OSError, ValueError, sqlite3.Error) as exc:
-        # Metadata failure after execution is not permission to retry a
-        # successful mutation. Keep the observed native status when available.
-        sqlite_name = getattr(exc, "sqlite_errorname", "") or None
-        failure = {"attempted": False, "deferred_by": "local_state", "reason": type(exc).__name__,
-                   "sqlite_error": sqlite_name}
-        if rc is None:
-            try:
-                metadata.write_text(json.dumps(failure), encoding="utf-8")
-            except OSError:
-                pass
-        detail = f"/{sqlite_name}" if sqlite_name else ""
-        print(f"[gh-transport] safe REST transport state unavailable: {type(exc).__name__}{detail}",
-              file=sys.stderr)
-        return _exit_status(rc) if rc is not None else 75
+        return _report_state_failure(metadata, exc, rc)
     finally:
         _finish_budget(budget, reservation, resource, headers, started)
         phase("sqlite_finish")

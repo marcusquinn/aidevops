@@ -47,17 +47,18 @@ def _store_owner_cache(directory: Path, cache: dict) -> None:
         return
 
 
-def resolve_owner_proof(executable: str, host: str, credential: str, environment: dict,
-                        directory: Path, *, now: float | None = None) -> str | None:
+def resolve_owner_proof(target: tuple[str, str], credential: str, environment: dict,
+                        directory: Path) -> str | None:
     """Cache a one-way digest of the authenticated login for one credential.
 
     The login is never stored or logged. GitHub App installation tokens (ghs_)
     are never attributed to a user: they remain separate, unresolved owners.
     """
     token = environment.get("GH_TOKEN", "")
+    executable, host = target
     if not token or token.startswith("ghs_"):
         return None
-    now = time.time() if now is None else now
+    now = time.time()
     cache = _load_owner_cache(directory)
     entry = cache.get(credential)
     if isinstance(entry, dict):
