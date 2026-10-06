@@ -1036,7 +1036,9 @@ _dispatch_preclaim_brief_scope_verdict() {
 	fi
 	_brief_scope_block="body_unreadable"
 	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""') || return 1
-	"${SCRIPT_DIR}/pre-dispatch-validator-helper.sh" scope-check "$issue_number" "$issue_body" 1 >/dev/null 2>&1 || scope_rc=$?
+	local issue_labels_csv=""
+	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || issue_labels_csv=""
+	"${SCRIPT_DIR}/pre-dispatch-validator-helper.sh" scope-check "$issue_number" "$issue_body" 1 "$issue_labels_csv" >/dev/null 2>&1 || scope_rc=$?
 	[[ "$scope_rc" -eq 0 ]] && return 0
 	_brief_scope_block="validator_error"
 	[[ "$scope_rc" -eq 40 ]] || return 1
