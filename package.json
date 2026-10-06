@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "3.38.18",
+  "version": "3.38.19",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "packageManager": "bun@1.3.11",
@@ -58,7 +58,7 @@
     "@vitejs/plugin-react": "6.1.1",
     "elysia": "1.4.30",
     "file-type": "21.3.4",
-    "hono": "4.13.8",
+    "hono": "4.13.11",
     "vite": "8.3.0"
   },
   "devDependencies": {
@@ -69,7 +69,7 @@
     "ajv": "8.20.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "secretlint": "13.0.5",
+    "secretlint": "13.0.6",
     "typescript": "7.0.2"
   },
   "overrides": {
