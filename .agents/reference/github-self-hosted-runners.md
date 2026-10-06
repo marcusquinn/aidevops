@@ -289,6 +289,50 @@ queued longer than the project threshold (for example, 10-15 minutes during an
 active work session). A full-pool offline state plus growing queued runs is a CI
 capacity incident, not ordinary job latency.
 
+## Stale queued run watchdog
+
+GitHub can keep workflow runs in `queued` for months. These ghosts inflate
+`?status=queued` counts used by the pulse Actions queue saturation check and
+`github-runner-broker-health-helper.sh`, so idle runners look backlogged. The
+pulse stage `stale_queued_runs_watchdog` (`pulse-stale-queued-runs.sh`) cleans
+them up in pulse-managed repos:
+
+1. At most once per repo per hour it lists queued runs created before the
+   cutoff. A run's queued age is measured from the later of `created_at` and
+   `run_started_at`, so a fresh re-run of an old run is never touched.
+2. Runs younger than the max age are never touched. Stale runs get
+   `POST .../cancel`; on HTTP 409, or when an accepted cancel had no effect by
+   the next pass, it sends `POST .../force-cancel`. The log line includes repo,
+   run ID, workflow name and age in hours.
+3. A run that returns 409 on both calls ("has not been queued yet") is logged
+   once per run ID as an unkillable ghost and left alone. Set
+   `AIDEVOPS_STALE_QUEUED_RUN_DELETE=1` to `DELETE` such runs instead.
+
+The stage needs Actions write access (push, maintain or admin); repos without it
+are skipped for 24 hours. It skips itself when the pulse REST core budget class
+is `reserve`/`emergency`, when the rate-limit circuit breaker tripped within the
+last hour, or when REST core remaining is below the reserve. API errors are
+logged by class only.
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Queued age before action; `0` disables the stage |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | `1` deletes runs GitHub refuses to cancel |
+| `AIDEVOPS_STALE_QUEUED_RUN_INTERVAL_SECONDS` | `3600` | Minimum time between scans of one repo |
+| `AIDEVOPS_STALE_QUEUED_RUN_MAX_PER_REPO` | `20` | Runs acted on per repo per pass |
+| `AIDEVOPS_STALE_QUEUED_RUN_CORE_RESERVE` | `500` | REST core calls left untouched |
+
+Opt a repo out with `"stale_queued_run_watchdog": false` in `repos.json`. State
+(per-run outcomes, last scan time) lives in
+`~/.aidevops/.agent-workspace/supervisor/stale-queued-runs/`. Preview or run it
+on one repo:
+
+```bash
+pulse-stale-queued-runs.sh scan --repo <OWNER>/<REPO> --dry-run
+pulse-stale-queued-runs.sh scan --repo <OWNER>/<REPO> --force
+gh api 'repos/<OWNER>/<REPO>/actions/runs?status=queued' --jq '.workflow_runs[] | {id, name, created_at}'
+```
+
 ## Security notes
 
 - Treat this pool as trusted CI infrastructure for the target repository only.

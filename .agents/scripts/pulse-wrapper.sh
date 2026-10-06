@@ -1266,6 +1266,12 @@ _pulse_run_deterministic_pipeline() {
 		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
 			dependabot_alert_monitor_scan_repos || true
 	fi
+	# GH#33602: cancel Actions runs queued > AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS (hourly per repo).
+	local _sqr_script="${SCRIPT_DIR}/pulse-stale-queued-runs.sh"
+	if [[ ! -f "$STOP_FLAG" && -f "$_sqr_script" ]]; then
+		_pulse_run_optional_stage_with_timeout "stale_queued_runs_watchdog" "$PRE_RUN_STAGE_TIMEOUT" \
+			env LOGFILE="$LOGFILE" PULSE_DIR="${PULSE_DIR:-}" bash "$_sqr_script" scan || true
+	fi
 
 	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
 	# Cadence-gated (~30 min) — the function's internal cadence check skips
