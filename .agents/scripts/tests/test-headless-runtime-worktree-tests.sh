@@ -1691,36 +1691,60 @@ test_runtime_launch_marker_precedes_invocation() {
 }
 
 test_clean_prelaunch_exit_is_precise_nonzero_failure() {
-	local output="" status=0
-	set +e
-	output=$(
-		(
-			print_info() { printf '%s\n' "$*"; return 0; }
-			print_warning() { printf '%s\n' "$*"; return 0; }
+	local output="" status=0 original_status=0 expected_status=0
+	for original_status in 0 29 85; do
+		status=0
+		expected_status="$original_status"
+		[[ "$expected_status" -ne 0 ]] || expected_status=1
+		set +e
+		output=$(
+			local session_key="issue-28060"
+			print_info() {
+				printf '%s\n' "$*"
+				return 0
+			}
+			print_warning() {
+				printf '%s\n' "$*"
+				return 0
+			}
+			worker_attempt_observability_last_stage() { return 1; }
+			worker_attempt_observability_last_completed_stage() { return 0; }
 			_push_wip_commits_on_exit() { return 0; }
+			_hrff_write_external_outcome() { return 0; }
 			_emit_worker_runtime_event() { return 0; }
 			_hrw_record_terminal_outcome() { return 0; }
 			_cleanup_headless_runtime_temp_paths() { return 0; }
-			_release_dispatch_claim() { return 0; }
+			_release_dispatch_claim() {
+				local release_status="$3"
+				printf 'release_status=%s\n' "$release_status"
+				return 0
+			}
 			_release_session_lock() { return 0; }
 			_update_dispatch_ledger() { return 0; }
 			_WORKER_RUNTIME_LAUNCH_STARTED=0
 			_WORKER_START_EPOCH_MS=0
+			_WORKER_PRELAUNCH_FAILURE_REASON=""
+			_WORKER_EXIT_CODE_FILE=""
+			_WORKER_LAST_EXIT_CODE_FILE=""
+			_record_run_attempt_stage post_attempt_context_configure
+			_record_run_attempt_stage pre_attempt_ownership_verify
 			AIDEVOPS_DISPATCH_LEASE_TOKEN=""
 			trap "_exit_trap_handler 'issue-28060'" EXIT
-			exit 0
-		)
-	) || status=$?
-	set -e
+			exit "$original_status"
+		) || status=$?
+		set -e
 
-	if [[ "$status" -eq 1 && "$output" == *"reason=worker_runtime_not_invoked"* &&
-		"$output" != *"worker_noop_zero_output"* ]] &&
-		_worker_failure_reason_is_launch_preflight "worker_runtime_not_invoked"; then
-		print_result "clean exit before runtime invocation is a precise non-zero prelaunch failure" 0
-		return 0
-	fi
-	print_result "clean exit before runtime invocation is a precise non-zero prelaunch failure" 1 \
-		"status=$status output=$output"
+		if [[ "$status" -eq "$expected_status" && "$output" == *"reason=worker_runtime_not_invoked"* &&
+			"$output" == *"exit=$expected_status "* && "$output" == *"release_status=$expected_status"* &&
+			"$output" == *"last_stage=pre_attempt_ownership_verify last_completed_stage=post_attempt_context_configure"* &&
+			"$output" != *"worker_noop_zero_output"* ]] &&
+			_worker_failure_reason_is_launch_preflight "worker_runtime_not_invoked"; then
+			print_result "prelaunch exit $original_status retains precise status, stages and release" 0
+		else
+			print_result "prelaunch exit $original_status retains precise status, stages and release" 1 \
+				"status=$status output=$output"
+		fi
+	done
 	return 0
 }
 
