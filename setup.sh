@@ -1393,6 +1393,10 @@ _setup_run_ai_session_incremental() {
 	local current_sha=""
 	local changed_files=""
 
+	# Updates must heal scheduler drift even when no deploy stage changed.
+	if [[ "$os" != "Darwin" ]]; then
+		_reconcile_linux_scheduler_duplicates
+	fi
 	print_info "AI-session setup mode: applying changed deploy stages only"
 	if ! _setup_git_checkout_available "$INSTALL_DIR" || [[ ! -f "$stamp_file" ]]; then
 		print_warning "AI-session incremental setup needs a git checkout and deployed SHA stamp"
