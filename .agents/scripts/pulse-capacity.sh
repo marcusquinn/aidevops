@@ -323,6 +323,18 @@ _pulse_shared_host_worker_cap() {
 	return 0
 }
 
+# Bind the minimum floor and stale refill target to the current shared ceiling.
+# Do not divide cached targets again or terminate already-running workers.
+# Arguments: $1 final target, $2 detected runners, $3 shared ceiling.
+_pulse_cap_shared_host_target() {
+	local final_max="$1" runners="$2" host_worker_cap="$3"
+	if [[ "${MAX_WORKERS_CAP_AUTO:-0}" == "1" ]] && ((runners > 1 && host_worker_cap > 0 && final_max > host_worker_cap)); then
+		final_max="$host_worker_cap"
+	fi
+	printf '%s\n' "$final_max"
+	return 0
+}
+
 # Read one Linux aggregate CPU sample as "<total-jiffies> <idle-jiffies>".
 _pulse_cpu_proc_stat_sample() {
 	LC_ALL=C awk '/^cpu / {total = 0; for (i = 2; i <= NF; i++) total += $i; print total, $5; exit}' /proc/stat 2>/dev/null
@@ -509,11 +521,7 @@ pulse_apply_provider_load_capacity_cap() {
 	if ((account_cap >= 0 && final_max > account_cap)); then
 		final_max="$account_cap"
 	fi
-	# Re-sample sharing on refill and bind the floor too. Do not divide the cached
-	# preflight target a second time or terminate already-running workers.
-	if [[ "${MAX_WORKERS_CAP_AUTO:-0}" == "1" ]] && ((colocated_runners > 1 && host_worker_cap > 0 && final_max > host_worker_cap)); then
-		final_max="$host_worker_cap"
-	fi
+	final_max=$(_pulse_cap_shared_host_target "$final_max" "$colocated_runners" "$host_worker_cap")
 	if ((rate_limits > 0 || service_interruptions > 0 || provider_5xx > 0 || failures >= 3)); then
 		if ((final_max > 1)); then
 			final_max=$(((final_max + 1) / 2))
