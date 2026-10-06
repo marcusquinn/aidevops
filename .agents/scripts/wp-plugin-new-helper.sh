@@ -62,7 +62,9 @@ P_NO_GITHUB=0
 P_DEST=""
 P_DRY_RUN=0
 P_TAG=""
-CREATED_DEST=""
+P_WORKTREE=""
+P_BRANCH=""
+P_DEFAULT_BRANCH=""
 
 _usage() {
 	sed -n '5,35p' "$0" | sed 's/^# \{0,1\}//'
@@ -258,6 +260,20 @@ _check_targets() {
 		print_error "cannot read the latest release of $STARTER_REPO"
 		return 1
 	fi
+	if [[ "$P_NO_GITHUB" -eq 0 ]]; then
+		local template comparison
+		template="$(gh api "repos/${STARTER_REPO}" --jq '[.is_template, .default_branch] | @tsv')" || return 1
+		[[ "$template" == true$'\t'* ]] || {
+			print_error "$STARTER_REPO is not a GitHub template repository"
+			return 1
+		}
+		P_DEFAULT_BRANCH="${template#*$'\t'}"
+		comparison="$(gh api "repos/${STARTER_REPO}/compare/${P_TAG}...${P_DEFAULT_BRANCH}" --jq .status)" || return 1
+		[[ "$comparison" == identical ]] || {
+			print_error "starter default branch differs from release $P_TAG; wait for a matching release"
+			return 1
+		}
+	fi
 	return 0
 }
 
@@ -382,34 +398,36 @@ _quality_checks() {
 	return 0
 }
 
-# Remove a folder this run made, after a failed step.
-_cleanup_failed() {
-	local status=$?
-	if [[ "$status" -ne 0 && -n "$CREATED_DEST" && -d "$CREATED_DEST" ]]; then
-		print_warning "Removing the unfinished $CREATED_DEST"
-		rm -rf -- "$CREATED_DEST"
-	fi
-	return "$status"
-}
-
-# Copy the release tag's files with a fresh history of their own. Clone from
-# the destination's parent, not the caller's directory: the canonical Git
-# guard blocks a clone started inside a canonical checkout.
+# Clone from the destination's parent; never initialize or commit in the
+# primary checkout. GitHub templates provide fresh history server-side;
+# local-only plugins retain the release history. Preserve failures for recovery.
 _copy_starter() {
-	local parent
+	local parent source_repo="$STARTER_REPO" clone_args=() homepage=()
 	parent="$(dirname "$P_DEST")"
 	mkdir -p "$parent" || return 1
-	CREATED_DEST="$P_DEST"
-	git -C "$parent" -c advice.detachedHead=false clone --quiet --depth 1 --branch "$P_TAG" \
-		"https://github.com/${STARTER_REPO}.git" "$P_DEST" || return 1
-	rm -rf -- "${P_DEST:?}/.git" || return 1
-	if ! "$P_DEST/scripts/rename-plugin.sh" --help | grep -q -- '--author-uri'; then
+	if [[ "$P_NO_GITHUB" -eq 1 ]]; then
+		clone_args=(--branch "$P_TAG")
+	else
+		source_repo="${P_OWNER}/${P_SLUG}"
+		[[ "$P_PLUGIN_URI" == "https://github.com/$source_repo" ]] || homepage=(--homepage "$P_PLUGIN_URI")
+		gh repo create "$source_repo" "--${P_VISIBILITY}" --template "$STARTER_REPO" \
+			--description "$P_DESCRIPTION" ${homepage[@]+"${homepage[@]}"} || return 1
+	fi
+	git -C "$parent" -c advice.detachedHead=false clone --quiet ${clone_args[@]+"${clone_args[@]}"} \
+		"https://github.com/${source_repo}.git" "$P_DEST" || return 1
+	P_BRANCH="chore/${P_SLUG}-identity"
+	local worktree_parent="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
+	mkdir -p "$worktree_parent" || return 1
+	P_WORKTREE="${worktree_parent}/${P_OWNER}-${P_SLUG}-identity"
+	[[ ! -e "$P_WORKTREE" ]] || {
+		print_error "$P_WORKTREE already exists; preserve it and choose another slug"
+		return 1
+	}
+	git -C "$P_DEST" worktree add -b "$P_BRANCH" "$P_WORKTREE" HEAD || return 1
+	if ! "$P_WORKTREE/scripts/rename-plugin.sh" --help | grep -q -- '--author-uri'; then
 		print_error "starter $P_TAG has no maker flags in scripts/rename-plugin.sh; release a newer starter first"
 		return 1
 	fi
-	git -C "$P_DEST" init --quiet --initial-branch=main || return 1
-	git -C "$P_DEST" add -A || return 1
-	git -C "$P_DEST" commit --quiet -m "Start from WP Plugin Starter ${P_TAG}" || return 1
 	return 0
 }
 
@@ -418,42 +436,45 @@ _rename() {
 		--repo "${P_OWNER}/${P_SLUG}" --description "$P_DESCRIPTION" --author "$P_AUTHOR"
 		--author-uri "$P_AUTHOR_URI" --plugin-uri "$P_PLUGIN_URI"
 		--contributors "$P_CONTRIBUTORS" --donate "$P_DONATE")
-	(cd "$P_DEST" && scripts/rename-plugin.sh "${args[@]}") || return 1
+	(cd "$P_WORKTREE" && scripts/rename-plugin.sh "${args[@]}") || return 1
 	# No hosted analysis or release exists yet. Keep the marker block, but do
 	# not ship badges that refer to unavailable services or starter results.
-	python3 "${SCRIPT_DIR}/wp_plugin_quality.py" strip-badges "$P_DEST/README.md" || return 1
+	python3 "${SCRIPT_DIR}/wp_plugin_quality.py" strip-badges "$P_WORKTREE/README.md" || return 1
 	if command -v composer >/dev/null 2>&1; then
-		(cd "$P_DEST" && composer update --lock --quiet --no-interaction 2>/dev/null) ||
-			print_warning "composer update --lock failed; run it in $P_DEST before linting"
+		(cd "$P_WORKTREE" && composer update --lock --quiet --no-interaction) || return 1
 	else
-		print_warning "composer not found; run composer update --lock in $P_DEST"
+		print_warning "composer not found; run composer update --lock in $P_WORKTREE before linting"
 	fi
-	git -C "$P_DEST" add -A || return 1
-	git -C "$P_DEST" commit --quiet -m "${P_NAME}: names and maker details" || return 1
+	git -C "$P_WORKTREE" add -A || return 1
+	git -C "$P_WORKTREE" commit --quiet -m "${P_NAME}: names and maker details" || return 1
 	return 0
 }
 
 _publish() {
 	[[ "$P_NO_GITHUB" -eq 0 ]] || return 0
-	local homepage=()
-	[[ "$P_PLUGIN_URI" == "https://github.com/${P_OWNER}/${P_SLUG}" ]] || homepage=(--homepage "$P_PLUGIN_URI")
-	gh repo create "${P_OWNER}/${P_SLUG}" "--${P_VISIBILITY}" --description "$P_DESCRIPTION" \
-		${homepage[@]+"${homepage[@]}"} --source "$P_DEST" --remote origin --push >/dev/null || return 1
-	if command -v aidevops >/dev/null 2>&1; then
-		(cd "$P_DEST" && aidevops repos add --slug "${P_OWNER}/${P_SLUG}" \
-			--confirm REGISTER_CANONICAL_REPOSITORY >/dev/null) ||
-			print_warning "could not register with aidevops; run: aidevops repos add in $P_DEST"
-		_register_quality || print_warning "code-quality registration failed; run aidevops init code-quality before the daily sweep"
-	else
-		print_warning "aidevops missing: daily quality sweep registration skipped; install it and run aidevops init code-quality"
-	fi
+	git -C "$P_WORKTREE" push --set-upstream origin "$P_BRANCH" || return 1
+	printf 'Customize the plugin identity from WP Plugin Starter %s.\n\nVerification: run composer install and scripts/lint.sh in the identity worktree before merge.\n' "$P_TAG" |
+		"${SCRIPT_DIR}/gh-write-helper.sh" pr create --repo "${P_OWNER}/${P_SLUG}" \
+			--base "$P_DEFAULT_BRANCH" --head "$P_BRANCH" --title "${P_NAME}: names and maker details" --body-file - || return 1
 	return 0
 }
 
 _register_quality() {
-	# Use the normal init/registration writer rather than a competing registry
-	# read-modify-write implementation. Its features list uses code-quality.
-	(cd "$P_DEST" && aidevops init code-quality) || return 1
+	[[ "$P_NO_GITHUB" -eq 0 ]] || return 0
+	command -v aidevops >/dev/null 2>&1 || {
+		print_error "aidevops missing: registration incomplete; repositories and worktree are preserved"
+		return 1
+	}
+	# The starter already has metadata: --slug is only for metadata-free clones.
+	if [[ -f "$P_DEST/.aidevops.json" ]]; then
+		(cd "$P_DEST" && aidevops repos add) || return 1
+	else
+		(cd "$P_DEST" && aidevops repos add --slug "${P_OWNER}/${P_SLUG}" \
+			--confirm REGISTER_CANONICAL_REPOSITORY) || return 1
+	fi
+	# Init may commit staged files. Run it on the clean linked worktree BEFORE
+	# rename-plugin stages renames, so identity changes form one coherent commit.
+	(cd "$P_WORKTREE" && aidevops init code-quality) || return 1
 	return 0
 }
 
@@ -467,19 +488,17 @@ cmd_create() {
 		print_info "Dry run: nothing changed"
 		return 0
 	fi
-	trap _cleanup_failed EXIT
 	_copy_starter || return 1
+	_register_quality || return 1
 	_rename || return 1
-	# Once the repository exists on GitHub, keep the local copy whatever happens.
 	_publish || {
-		CREATED_DEST=""
-		print_error "GitHub step failed; the plugin is in $P_DEST without a remote"
+		print_error "GitHub step failed; preserve $P_DEST and $P_WORKTREE to resume publication"
 		return 1
 	}
-	CREATED_DEST=""
-	trap - EXIT
-	print_success "Created ${P_NAME} in ${P_DEST}"
-	printf 'PLUGIN_PATH=%s\n' "$P_DEST"
+	print_success "Created ${P_NAME} in ${P_WORKTREE} (identity branch; merge the first PR after verification)"
+	printf 'PLUGIN_PATH=%s\n' "$P_WORKTREE"
+	printf 'PLUGIN_CANONICAL_PATH=%s\n' "$P_DEST"
+	printf 'PLUGIN_BRANCH=%s\n' "$P_BRANCH"
 	[[ "$P_NO_GITHUB" -eq 1 ]] || printf 'PLUGIN_REPO=%s/%s\n' "$P_OWNER" "$P_SLUG"
 	printf 'STARTER_TAG=%s\n' "$P_TAG"
 	return 0
