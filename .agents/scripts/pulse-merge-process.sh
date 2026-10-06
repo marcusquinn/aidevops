@@ -425,6 +425,7 @@ _pmp_enrich_single_pr_for_processing() {
 	local enriched_json=""
 
 	[[ -n "$repo_slug" && -n "$pr_obj" ]] || return 1
+	_pmp_merge_pass_budget_exhausted && return 5
 	enriched_json=$(jq -cn --argjson pr "$pr_obj" '[$pr]' 2>/dev/null) || return 1
 	enriched_json=$(_pmp_enrich_prs_with_mergeability "$repo_slug" "$enriched_json") || return 1
 	_pmp_merge_pass_budget_exhausted && return 5
@@ -705,6 +706,49 @@ _pmp_prepare_enriched_pr_backlog_timed() {
 	return "$enrichment_rc"
 }
 
+# Set the caller's dynamically scoped deadline, preserving an earlier bound.
+_pmp_apply_merge_api_deadline() {
+	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]]; then
+		if [[ ! "${AIDEVOPS_GH_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] ||
+			[[ "$_PMP_MERGE_PASS_DEADLINE_EPOCH" -lt "$AIDEVOPS_GH_DEADLINE_EPOCH" ]]; then
+			AIDEVOPS_GH_DEADLINE_EPOCH="$_PMP_MERGE_PASS_DEADLINE_EPOCH"
+		fi
+	fi
+	export AIDEVOPS_GH_DEADLINE_EPOCH
+	return 0
+}
+
+# All safety gates remain in the evaluator. Bound raw API calls and sleeps too;
+# status 124 leaves the caller responsible for retaining the current PR cursor.
+_pmp_evaluate_pr_with_deadline() {
+	local repo_slug="$1" pr_obj="$2" timing_prefix="$3"
+	local result=0 remaining=0
+	_pmu_should_skip_pr "$repo_slug" "$pr_obj" && return 4
+	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]] && declare -F _gh_run_bounded_function >/dev/null 2>&1; then
+		remaining=$((AIDEVOPS_GH_DEADLINE_EPOCH - $(_pmp_now_epoch)))
+		[[ "$remaining" -gt 0 ]] || return 124
+		_gh_run_bounded_function "$remaining" _process_single_ready_pr "$repo_slug" "$pr_obj" "$timing_prefix" || result=$?
+	else
+		_process_single_ready_pr "$repo_slug" "$pr_obj" "$timing_prefix" || result=$?
+	fi
+	[[ "$result" -eq 124 ]] || _pmu_record_pr_evaluation "$repo_slug" "$pr_obj" "$result"
+	return "$result"
+}
+
+# Prepare the caller's dynamically scoped pr_json/pr_count and completeness
+# flag. Advisory sorting never replaces the cursor's authoritative enrichment.
+_pmp_prepare_repo_processing_backlog() {
+	local repo_slug="$1" timing_prefix="$2" prepared_pr_json=""
+	_pmp_prepare_enriched_pr_backlog_timed "$repo_slug" "$pr_json" prepared_pr_json "$timing_prefix" || return $?
+	pr_json="$prepared_pr_json"
+	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
+	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
+	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; outcomes_complete=0; }
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	return 0
+}
+
 #######################################
 # Merge ready PRs for a single repo.
 #
@@ -731,6 +775,10 @@ _merge_ready_prs_for_repo() {
 	local _timing_prefix="${6:-}"
 
 	local merged=0 closed=0 failed=0
+	# Propagate the graceful deadline into every nested bounded GitHub read
+	# and write, including the multi-call per-PR safety/eligibility evaluator.
+	local AIDEVOPS_GH_DEADLINE_EPOCH="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
+	_pmp_apply_merge_api_deadline
 	local pr_json="" pr_merge_err="" _list_start="" pr_count="" pr_list_timeout="" pr_list_rc=0
 	local pr_list_complete=1 outcomes_complete=1
 	_list_start=$(_pmp_now_epoch)
@@ -772,19 +820,13 @@ _merge_ready_prs_for_repo() {
 	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="" AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
 	_pmp_setup_merge_repo_caches "$repo_slug"
 
-	local prepared_pr_json="" preparation_rc=0
-	_pmp_prepare_enriched_pr_backlog_timed "$repo_slug" "$pr_json" prepared_pr_json "$_timing_prefix" || preparation_rc=$?
+	local preparation_rc=0
+	_pmp_prepare_repo_processing_backlog "$repo_slug" "$_timing_prefix" || preparation_rc=$?
 	if [[ "$preparation_rc" -ne 0 ]]; then
 		_pmp_cleanup_merge_repo_caches
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		return "$preparation_rc"
 	fi
-	pr_json="$prepared_pr_json"
-	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
-	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
-	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; outcomes_complete=0; }
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
 	local i=0
 	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" i || i=0
@@ -801,12 +843,15 @@ _merge_ready_prs_for_repo() {
 		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha=""
 		_cursor_last_pr=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || _cursor_last_pr=""
 		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
+
+		local _pr_rc=0
+		_pmp_evaluate_pr_with_deadline "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
+		if [[ "$_pr_rc" -eq 124 ]]; then
+			_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" budget "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+			return $?
+		fi
 		i=$((i + 1))
 		_cursor_next_pr=$(_pmp_pr_number_at_index "$pr_json" "$i") || _cursor_next_pr=""
-		[[ -n "$pr_obj" ]] || continue
-
-		_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix"
-		local _pr_rc=$?
 		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr"
 		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
 		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"

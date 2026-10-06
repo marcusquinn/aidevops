@@ -1110,7 +1110,13 @@ _pulse_run_deterministic_pipeline() {
 	fi
 	if [[ "$_pmr_skip" -eq 0 && -f "$_pulse_merge_routine_last_run" ]]; then
 		local _pmr_last="" _pmr_now="" _pmr_elapsed=""
-		local _pmr_recent_window="${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS:-600}"
+		# Allow the routine's 120s scheduling interval after its maximum run.
+		# A recent marker is evidence it is installed; an expired marker falls
+		# back to the bounded in-cycle pass, never a permanent disable switch.
+		local _pmr_recent_window="${PULSE_MERGE_ROUTINE_HEALTH_WINDOW_SECONDS:-}"
+		local _pmr_run_timeout="${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS:-600}"
+		[[ "$_pmr_run_timeout" =~ ^[1-9][0-9]*$ ]] || _pmr_run_timeout=600
+		[[ "$_pmr_recent_window" =~ ^[1-9][0-9]*$ ]] || _pmr_recent_window=$((_pmr_run_timeout + 240))
 		[[ "$_pmr_recent_window" =~ ^[0-9]+$ ]] || _pmr_recent_window=600
 		[[ "$_pmr_recent_window" -lt 1 ]] && _pmr_recent_window=600
 		_pmr_last=$(cat "$_pulse_merge_routine_last_run" 2>/dev/null || echo "0")
@@ -1118,7 +1124,7 @@ _pulse_run_deterministic_pipeline() {
 		[[ "$_pmr_last" =~ ^[0-9]+$ ]] || _pmr_last=0
 		[[ "$_pmr_now" =~ ^[0-9]+$ ]] || _pmr_now=0
 		_pmr_elapsed=$((_pmr_now - _pmr_last))
-		if [[ "$_pmr_elapsed" -lt "$_pmr_recent_window" ]]; then
+		if [[ "$_pmr_last" -gt 0 && "$_pmr_elapsed" -ge 0 && "$_pmr_elapsed" -lt "$_pmr_recent_window" ]]; then
 			echo "[pulse-wrapper] deterministic_merge_pass: skipping (pulse-merge-routine ran ${_pmr_elapsed}s ago, window=${_pmr_recent_window}s)" >>"$LOGFILE"
 			_pmr_skip=1
 		fi
@@ -1133,13 +1139,15 @@ _pulse_run_deterministic_pipeline() {
 	# routine. Give it a fixed graceful share (cursor resumes next cycle) and
 	# skip repos whose PR set is unchanged since a recent no-op evaluation, so
 	# a loaded runner no longer spends ~560s per cycle merging nothing.
-	local _pulse_merge_in_cycle_budget_s="${PULSE_MERGE_IN_CYCLE_BUDGET_SECONDS:-300}"
-	[[ "$_pulse_merge_in_cycle_budget_s" =~ ^[1-9][0-9]*$ ]] || _pulse_merge_in_cycle_budget_s=300
+	local _pulse_merge_in_cycle_budget_s="${PULSE_MERGE_IN_CYCLE_BUDGET_SECONDS:-90}"
+	[[ "$_pulse_merge_in_cycle_budget_s" =~ ^[1-9][0-9]*$ ]] || _pulse_merge_in_cycle_budget_s=90
 	if [[ "$_pmr_skip" -eq 0 ]]; then
 		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
-			PULSE_MERGE_GRACEFUL_BUDGET_SECONDS="${PULSE_MERGE_GRACEFUL_BUDGET_SECONDS:-$_pulse_merge_in_cycle_budget_s}" \
+			PULSE_MERGE_GRACEFUL_BUDGET_SECONDS="$_pulse_merge_in_cycle_budget_s" \
+			PULSE_MERGE_BACKLOG_ENRICHMENT=0 \
+			PULSE_MERGE_UNCHANGED_PR_SKIP=1 \
 			PULSE_MERGE_UNCHANGED_SKIP="${PULSE_MERGE_UNCHANGED_SKIP:-1}" \
-			_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
+			_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass" "$_pulse_merge_in_cycle_budget_s" \
 			merge_ready_prs_all_repos || true
 	fi
 
@@ -1699,8 +1707,12 @@ main() {
 	# repository lookup or model call cannot hold the Pulse cycle indefinitely.
 	# Fail-open: timeout/failure is recorded by the stage wrapper, then the next
 	# Pulse stage continues.
+	# The hourly cold path classifies up to ten issues via LLM; warm sentinel
+	# checks are cheap. Do not give that cold path the full pre-run stage budget.
+	local _pulse_detector_timeout="${PULSE_FIX_THE_FIXER_TIMEOUT_SECONDS:-60}"
+	[[ "$_pulse_detector_timeout" =~ ^[1-9][0-9]*$ ]] || _pulse_detector_timeout=60
 	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
-		_pulse_run_optional_stage_with_timeout "fix_the_fixer_detector" "$PRE_RUN_STAGE_TIMEOUT" \
+		_pulse_run_optional_stage_with_timeout "fix_the_fixer_detector" "$_pulse_detector_timeout" \
 		_pulse_run_fix_the_fixer_detector_if_stale || true
 
 	# Rotate hot log to cold archive if over cap (t1886)

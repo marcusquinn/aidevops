@@ -58,6 +58,8 @@ _pmu_fingerprint() {
 		else
 			sort_by(.number) | map({
 				number, state, isDraft, headRefOid, baseRefName, updatedAt,
+				mergeable, reviewDecision,
+				checks: ([.statusCheckRollup[]? | {name, status, conclusion, state}] | sort_by(.name, .status, .conclusion, .state)),
 				labels: ([.labels[]? | (.name? // .)] | sort)
 			})
 		end' 2>/dev/null) || return 1
@@ -72,6 +74,51 @@ _pmu_fingerprint() {
 	digest="${digest%% *}"
 	[[ "$digest" =~ ^[A-Za-z0-9]+$ ]] || return 1
 	printf '%s' "$digest"
+	return 0
+}
+
+# Individual evidence is recorded after authoritative enrichment, even on a
+# cursor-resumed pass. Retain updatedAt conservatively for comments/reviews;
+# check state changes invalidate a no-op even without a list timestamp change.
+# Unknown state and due queue retries are never reusable evidence.
+_pmu_pr_evidence_key() {
+	local repo_slug="$1" pr_obj="$2" pr_number=""
+	pr_number=$(printf '%s' "$pr_obj" | jq -er '
+		select((._pulseDeferredRetry // false) == false)
+		| select(.mergeable == "MERGEABLE" or .mergeable == "CONFLICTING")
+		| select(.reviewDecision == "NONE" or .reviewDecision == "APPROVED" or .reviewDecision == "REVIEW_REQUIRED" or .reviewDecision == "CHANGES_REQUESTED")
+		| select((.statusCheckRollup | length) > 0)
+		| .number' 2>/dev/null) || return 1
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	printf '%s--pr-%s' "$repo_slug" "$pr_number"
+	return 0
+}
+
+_pmu_should_skip_pr() {
+	local repo_slug="$1" pr_obj="$2" evidence_key="" pr_array=""
+	[[ "${PULSE_MERGE_UNCHANGED_PR_SKIP:-0}" == 1 ]] || return 1
+	evidence_key=$(_pmu_pr_evidence_key "$repo_slug" "$pr_obj") || return 1
+	pr_array=$(jq -cn --argjson pr "$pr_obj" '[$pr]') || return 1
+	local PULSE_MERGE_UNCHANGED_SKIP=1
+	local PULSE_MERGE_UNCHANGED_SKIP_MAX_AGE_SECONDS="${PULSE_MERGE_UNCHANGED_PR_MAX_AGE_SECONDS:-120}"
+	_pmu_should_skip_repo "$evidence_key" "$pr_array" || return 1
+	return 0
+}
+
+_pmu_record_pr_evaluation() {
+	local repo_slug="$1" pr_obj="$2" result_code="$3" evidence_key="" pr_number=""
+	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty') || return 0
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	evidence_key="${repo_slug}--pr-${pr_number}"
+	local _PMU_LISTED_PR_JSON="" _PMU_EVALUATION_DEGRADED="${_PMU_EVALUATION_DEGRADED:-0}"
+	# Status 4 can mean another executor owns the queue claim, not an
+	# evaluated no-op. Never let repeated lock contention create skip evidence.
+	if [[ "$result_code" == 1 ]] && _pmu_pr_evidence_key "$repo_slug" "$pr_obj" >/dev/null; then
+		_PMU_LISTED_PR_JSON=$(jq -cn --argjson pr "$pr_obj" '[$pr]') || return 0
+		_pmu_record_repo_evaluation "$evidence_key" 0 0 0 1
+	else
+		_pmu_record_repo_evaluation "$evidence_key" 0 0 0 0
+	fi
 	return 0
 }
 
