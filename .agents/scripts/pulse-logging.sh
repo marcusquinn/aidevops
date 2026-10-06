@@ -510,6 +510,98 @@ _prune_cold_archive() {
 	return 0
 }
 
+# Archive a renamed metrics segment. Failed compression retains raw evidence;
+# failed publication leaves the staged file for recovery on the next cycle.
+_archive_metrics_segment() {
+	local staged="$1" base="$2" ts="$3"
+	local tmp_archive="" archive_path=""
+	tmp_archive=$(mktemp "${PULSE_METRICS_ARCHIVE_DIR}/.metrics-archive-XXXXXX") || {
+		echo "[pulse-wrapper] metrics: mktemp failed; retaining ${staged}" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+	archive_path="${PULSE_METRICS_ARCHIVE_DIR}/${base}-${ts}.jsonl.gz"
+	if [[ -e "$archive_path" || -e "${archive_path%.gz}" ]]; then
+		archive_path="${PULSE_METRICS_ARCHIVE_DIR}/${base}-${ts}-$$-${tmp_archive##*-}.jsonl.gz"
+	fi
+	if gzip -c "$staged" >"$tmp_archive" 2>/dev/null; then
+		if mv "$tmp_archive" "$archive_path" 2>/dev/null; then
+			rm -f "$staged" || true
+			echo "[pulse-wrapper] metrics: archived ${staged} to ${archive_path}" >>"$WRAPPER_LOGFILE"
+		else
+			rm -f "$tmp_archive"
+			echo "[pulse-wrapper] metrics: publication failed; retaining ${staged}" >>"$WRAPPER_LOGFILE"
+		fi
+	else
+		rm -f "$tmp_archive"
+		if mv "$staged" "${archive_path%.gz}" 2>/dev/null; then
+			echo "[pulse-wrapper] metrics: gzip failed; retained raw archive ${archive_path%.gz}" >>"$WRAPPER_LOGFILE"
+		else
+			echo "[pulse-wrapper] metrics: gzip/raw move failed; retaining ${staged}" >>"$WRAPPER_LOGFILE"
+		fi
+	fi
+	return 0
+}
+
+# Pulse is the single rotator; append-per-record writers recreate the hot path.
+# Recover crash-left staged files before considering another rotation.
+_rotate_metrics_jsonl() {
+	local source_file="$1" base="$2"
+	local source_dir="${source_file%/*}" staged="" ts=""
+	mkdir -p "$PULSE_METRICS_ARCHIVE_DIR" 2>/dev/null || {
+		echo "[pulse-wrapper] metrics: cannot create ${PULSE_METRICS_ARCHIVE_DIR}" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+	for staged in "${source_dir}/.${base}-rotating-"*; do
+		[[ -f "$staged" ]] || continue
+		ts="${staged##*-rotating-}"
+		ts="${ts%-*}"
+		_archive_metrics_segment "$staged" "$base" "$ts"
+	done
+	[[ -f "$source_file" ]] || return 0
+	[[ "$(_file_size_bytes "$source_file")" -gt "$PULSE_METRICS_HOT_MAX_BYTES" ]] || return 0
+	ts=$(date -u +%Y%m%d-%H%M%S)
+	staged="${source_dir}/.${base}-rotating-${ts}-$$"
+	# Never overwrite an unrecovered staged segment from this process.
+	[[ ! -e "$staged" ]] || return 0
+	if mv "$source_file" "$staged" 2>/dev/null; then
+		echo "[pulse-wrapper] metrics: staged ${source_file} as ${staged}" >>"$WRAPPER_LOGFILE"
+		_archive_metrics_segment "$staged" "$base" "$ts"
+	else
+		echo "[pulse-wrapper] metrics: rename failed for ${source_file}" >>"$WRAPPER_LOGFILE"
+	fi
+	return 0
+}
+
+# Sort by embedded UTC timestamp, not ledger basename. Include raw fallbacks.
+_prune_metrics_archive() {
+	local archive_file="" name="" archive_size=0 total_cold=0
+	local -a archive_files=()
+	while IFS= read -r archive_file; do
+		archive_files+=("$archive_file")
+	done < <(
+		for archive_file in "${PULSE_METRICS_ARCHIVE_DIR}"/*.jsonl*; do
+			[[ -f "$archive_file" ]] || continue
+			name="${archive_file##*/}"
+			if [[ "$name" =~ -([0-9]{8}-[0-9]{6}) ]]; then
+				printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$archive_file"
+			fi
+		done | sort | cut -f2-
+	)
+	for archive_file in "${archive_files[@]}"; do
+		archive_size=$(_file_size_bytes "$archive_file")
+		total_cold=$((total_cold + archive_size))
+	done
+	for archive_file in "${archive_files[@]}"; do
+		[[ "$total_cold" -gt "$PULSE_METRICS_COLD_MAX_BYTES" ]] || break
+		archive_size=$(_file_size_bytes "$archive_file")
+		if rm -f "$archive_file"; then
+			total_cold=$((total_cold - archive_size))
+			echo "[pulse-wrapper] metrics: pruned ${archive_file} (${archive_size}B)" >>"$WRAPPER_LOGFILE"
+		fi
+	done
+	return 0
+}
+
 #######################################
 # rotate_pulse_log — hot/cold log sharding (t1886)
 #
@@ -565,6 +657,10 @@ rotate_pulse_log() {
 			_rotate_single_log "$WRAPPER_LOGFILE" "pulse-wrapper-${ts}.log.gz" "wrapper"
 		fi
 	fi
+
+	_rotate_metrics_jsonl "${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}" "headless-runtime-metrics"
+	_rotate_metrics_jsonl "${AIDEVOPS_RESOURCE_METRICS_FILE:-${HOME}/.aidevops/logs/resource-metrics.jsonl}" "resource-metrics"
+	_prune_metrics_archive
 
 	return 0
 }
@@ -666,8 +762,8 @@ _pulse_cycle_index_record_once() {
 #
 # Normally invoked through _pulse_cycle_index_record_once() at cycle end
 # (GH#33739). The index is append-only and capped at
-# PULSE_CYCLE_INDEX_MAX_LINES lines; oldest lines are pruned in-place
-# using a tmp-file swap when the cap is exceeded.
+# PULSE_CYCLE_INDEX_MAX_LINES lines plus 500 lines of hysteresis; oldest lines
+# are archived before a tmp-file swap trims the hot index back to the cap.
 #
 # Fields written per cycle (sampled when the cycle reaches a terminal path,
 # after the LLM supervisor step when it ran):
@@ -762,28 +858,48 @@ append_cycle_index() {
 		return 0
 	}
 
-	# Prune index to PULSE_CYCLE_INDEX_MAX_LINES lines when exceeded
-	local line_count
-	line_count=$(wc -l <"$PULSE_CYCLE_INDEX_FILE" 2>/dev/null || echo "0")
+	_prune_cycle_index
+	return 0
+}
+
+# This index has a single Pulse writer. Archive the removed head first, and
+# never swap the hot file if either reading or compression fails.
+_prune_cycle_index() {
+	local line_count=0 excess=0 tmp_index="" tmp_archive="" archive_path="" ts=""
+	line_count=$(wc -l <"$PULSE_CYCLE_INDEX_FILE" 2>/dev/null) || return 0
 	line_count="${line_count//[[:space:]]/}"
-	[[ "$line_count" =~ ^[0-9]+$ ]] || line_count=0
-
-	if [[ "$line_count" -gt "$PULSE_CYCLE_INDEX_MAX_LINES" ]]; then
-		local excess=$((line_count - PULSE_CYCLE_INDEX_MAX_LINES))
-		local tmp_index
-		# t2997: drop .jsonl — XXXXXX must be at end for BSD mktemp.
-		tmp_index=$(mktemp "${HOME}/.aidevops/logs/.pulse-cycle-index-XXXXXX") || {
-			echo "[pulse-wrapper] append_cycle_index: mktemp failed for index prune" >>"$WRAPPER_LOGFILE"
-			return 0
-		}
-		# Keep only the last PULSE_CYCLE_INDEX_MAX_LINES lines
-		tail -n "$PULSE_CYCLE_INDEX_MAX_LINES" "$PULSE_CYCLE_INDEX_FILE" >"$tmp_index" 2>/dev/null &&
-			mv "$tmp_index" "$PULSE_CYCLE_INDEX_FILE" 2>/dev/null || {
-			rm -f "$tmp_index"
-			echo "[pulse-wrapper] append_cycle_index: prune failed (excess=${excess})" >>"$WRAPPER_LOGFILE"
-		}
+	[[ "$line_count" =~ ^[0-9]+$ ]] || return 0
+	[[ "$line_count" -gt "$((PULSE_CYCLE_INDEX_MAX_LINES + 500))" ]] || return 0
+	excess=$((line_count - PULSE_CYCLE_INDEX_MAX_LINES))
+	if ! mkdir -p "$PULSE_METRICS_ARCHIVE_DIR" 2>/dev/null; then
+		echo "[pulse-wrapper] cycle index: archive directory unavailable; skipping prune" >>"$WRAPPER_LOGFILE"
+		return 0
 	fi
-
+	tmp_archive=$(mktemp "${PULSE_METRICS_ARCHIVE_DIR}/.cycle-archive-XXXXXX") || {
+		echo "[pulse-wrapper] cycle index: archive mktemp failed; skipping prune" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+	ts=$(date -u +%Y%m%d-%H%M%S)
+	archive_path="${PULSE_METRICS_ARCHIVE_DIR}/pulse-cycle-index-${ts}.jsonl.gz"
+	[[ ! -e "$archive_path" ]] || archive_path="${PULSE_METRICS_ARCHIVE_DIR}/pulse-cycle-index-${ts}-$$-${tmp_archive##*-}.jsonl.gz"
+	if ! (set -o pipefail; head -n "$excess" "$PULSE_CYCLE_INDEX_FILE" | gzip -c >"$tmp_archive") ||
+		! mv "$tmp_archive" "$archive_path" 2>/dev/null; then
+		rm -f "$tmp_archive"
+		echo "[pulse-wrapper] cycle index: archiving failed; skipping prune" >>"$WRAPPER_LOGFILE"
+		return 0
+	fi
+	tmp_index=$(mktemp "${PULSE_CYCLE_INDEX_FILE%/*}/.pulse-cycle-index-XXXXXX") || {
+		echo "[pulse-wrapper] cycle index: index mktemp failed; retaining hot rows and archive" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+	if tail -n "$PULSE_CYCLE_INDEX_MAX_LINES" "$PULSE_CYCLE_INDEX_FILE" >"$tmp_index" 2>/dev/null &&
+		mv "$tmp_index" "$PULSE_CYCLE_INDEX_FILE" 2>/dev/null; then
+		echo "[pulse-wrapper] cycle index: archived ${excess} rows to ${archive_path}" >>"$WRAPPER_LOGFILE"
+	else
+		rm -f "$tmp_index"
+		echo "[pulse-wrapper] cycle index: swap failed; retaining hot rows and archive" >>"$WRAPPER_LOGFILE"
+	fi
+	_prune_metrics_archive
 	return 0
 }
 
