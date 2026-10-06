@@ -577,7 +577,12 @@ cmd_switch() {
 
 # --- cmd_registry ---
 
-# Manage the worktree ownership registry (list or prune stale entries).
+# Verify the caller's live session owns a linked worktree. Read-only: never
+# re-claims or adopts. Prints VERIFIED (0); prints STALE_OWNER_SAME_SESSION and
+# returns 3 when the row names this session but its owner process exited or its
+# PID was recycled (for example after a host reboot, GH#33853), so callers can
+# recommend pre-edit re-claim instead of adopt. Every other failure returns 1
+# without output. Exit 3 is part of the verify-owner CLI contract.
 _registry_verify_owner() {
 	local wt_path="${1:-}"
 	local session_id="${2:-}"
@@ -592,9 +597,22 @@ _registry_verify_owner() {
 	snapshot=$(check_worktree_owner_snapshot "$registry_path" 2>/dev/null) || return 1
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created owner_process_start <<<"$snapshot"
 	[[ "$owner_session" == "$session_id" && "$owner_pid" =~ ^[0-9]+$ ]] || return 1
-	kill -0 "$owner_pid" 2>/dev/null || return 1
+	if ! kill -0 "$owner_pid" 2>/dev/null; then
+		# kill -0 also fails for a live process owned by another user; only a
+		# process that ps cannot find is reported as exited.
+		if ps -p "$owner_pid" >/dev/null 2>&1; then
+			return 1
+		fi
+		printf 'STALE_OWNER_SAME_SESSION\n'
+		return 3
+	fi
 	current_process_start=$(_wt_process_start_token_for_pid "$owner_pid") || return 1
-	[[ -n "$owner_process_start" && "$current_process_start" == "$owner_process_start" ]] || return 1
+	[[ -n "$owner_process_start" ]] || return 1
+	if [[ "$current_process_start" != "$owner_process_start" ]]; then
+		# The recorded owner exited and its PID now names a different process.
+		printf 'STALE_OWNER_SAME_SESSION\n'
+		return 3
+	fi
 	printf 'VERIFIED\n'
 	return 0
 }

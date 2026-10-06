@@ -320,6 +320,71 @@ describe("bounded interactive operations", () => {
     }
   });
 
+  test("same-session worktree with an exited owner recommends pre-edit re-claim, not adopt (GH#33853)", async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-stale-owner-")));
+    const repo = join(fixture, "repo");
+    const linked = join(fixture, "linked");
+    const scriptsDir = fileURLToPath(new URL("../../../scripts/", import.meta.url));
+    const helper = join(scriptsDir, "worktree-helper.sh");
+    const env = { ...process.env, WORKTREE_REGISTRY_DIR: fixture,
+      WORKTREE_REGISTRY_DB: join(fixture, "registry.db"), AUDIT_LOG_FILE: join(fixture, "audit.jsonl"),
+      OPENCODE_SESSION_ID: owner.sessionID, OPENCODE_PID: String(process.pid) };
+    const environmentKeys = ["WORKTREE_REGISTRY_DIR", "WORKTREE_REGISTRY_DB"];
+    const priorEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
+    const previousOwner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    try {
+      execFileSync("git", ["init", "-q", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "feature/stale", linked]);
+      // Registered by this session without a task, as an interactive pre-edit claim does.
+      execFileSync("bash", ["-c", 'source "$1"; register_worktree "$2" feature/stale --owner-pid "$3" --session "$4"',
+        "fixture", join(scriptsDir, "shared-constants.sh"), linked, String(previousOwner.pid), owner.sessionID], { env });
+      const exited = once(previousOwner, "exit");
+      previousOwner.kill();
+      await exited;
+
+      const verify = (sessionID) => {
+        try {
+          return { code: 0, stdout: execFileSync(helper, ["registry", "verify-owner", linked, sessionID], { env, encoding: "utf8" }) };
+        } catch (error) {
+          return { code: error.status, stdout: String(error.stdout || "") };
+        }
+      };
+      assert.deepEqual(verify(owner.sessionID), { code: 3, stdout: "STALE_OWNER_SAME_SESSION\n" });
+      assert.deepEqual(verify("ses_other"), { code: 1, stdout: "" }, "another session's stale row keeps the generic failure");
+
+      process.env.WORKTREE_REGISTRY_DIR = env.WORKTREE_REGISTRY_DIR;
+      process.env.WORKTREE_REGISTRY_DB = env.WORKTREE_REGISTRY_DB;
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(linked, fixture, owner, { scriptsDir, subject: "Operation" }),
+        (error) => /aidevops_pre_edit_check/.test(error.message) && !/worktree-helper\.sh adopt/.test(error.message));
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(linked, fixture, { sessionID: "ses_other" }, { scriptsDir, subject: "Operation" }),
+        /worktree-helper\.sh adopt/);
+
+      let adoptError;
+      try {
+        execFileSync(helper, ["adopt", linked, owner.sessionID, "33853"], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      } catch (error) {
+        adoptError = error;
+      }
+      assert.equal(adoptError?.status, 1);
+      assert.match(String(adoptError?.stderr), /^adopt refused: registry task_id is empty/m);
+
+      // The recommended route: the same trusted session re-claims through the pre-edit claim path.
+      execFileSync("bash", ["-c", 'source "$1"; claim_worktree_ownership "$2" feature/stale --owner-pid "$3" --session "$4"',
+        "fixture", join(scriptsDir, "shared-constants.sh"), linked, String(process.pid), owner.sessionID], { env });
+      assert.deepEqual(verify(owner.sessionID), { code: 0, stdout: "VERIFIED\n" });
+      const resolved = await resolveSessionOwnedWorktreeRoot(linked, fixture, owner, { scriptsDir, subject: "Operation" });
+      assert.equal(resolved.root, linked);
+    } finally {
+      for (const key of environmentKeys) {
+        if (priorEnvironment[key] === undefined) delete process.env[key];
+        else process.env[key] = priorEnvironment[key];
+      }
+      previousOwner.kill();
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   test("failure, timeout, and scoped cancellation cannot appear as success", async () => {
     const instance = manager();
     const failed = await instance.start({
