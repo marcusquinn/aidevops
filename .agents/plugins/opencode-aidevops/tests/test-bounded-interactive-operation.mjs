@@ -77,7 +77,12 @@ function launcher({ started = false } = {}) {
   };
 }
 
-async function terminal(instance, operationID, context = owner, timeoutMs = 2000) {
+// Success-path budgets must absorb node startup on a loaded host (`node --test`
+// runs files in parallel); timeout and latency semantics use their own bounds.
+const SUCCESS_BUDGET_MS = 10_000;
+
+// Upper bound only: polling returns as soon as the operation is terminal.
+async function terminal(instance, operationID, context = owner, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   let receipt;
   do {
@@ -95,7 +100,7 @@ describe("bounded interactive operations", () => {
     const started = await instance.start({
       command: [process.execPath, "-e", "console.log('AIDEVOPS_PROGRESS: phase-one'); setTimeout(() => process.exit(0), 80)"],
       cwd: root,
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
       progressIntervalMs: 30,
     }, owner);
 
@@ -182,7 +187,7 @@ describe("bounded interactive operations", () => {
     const started = await instance.start({
       command: [process.execPath, "-e", "process.exit(0)"],
       cwd: linked,
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
     assert.equal(realpathSync(resolution.requested), realpathSync(linked));
@@ -232,7 +237,7 @@ describe("bounded interactive operations", () => {
       await assert.rejects(resolveSessionOwnedWorktreeRoot(alias, parent, owner, options), /unsafe/);
       const instance = manager({ projectRoot: parent, resolveWorktreeRoot: (cwd, project, context) =>
         resolveSessionOwnedWorktreeRoot(cwd, project, context, options) });
-      const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 1000 }, owner);
+      const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: SUCCESS_BUDGET_MS }, owner);
       assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
       await assert.rejects(instance.start({ command: [process.execPath], cwd: alias }, owner), /unsafe/);
       await assert.rejects(instance.start({ command: [process.execPath], cwd: repo }, owner), /linked Git worktree/);
