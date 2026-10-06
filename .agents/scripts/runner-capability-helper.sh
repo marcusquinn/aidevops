@@ -77,7 +77,7 @@ runner_capability_check() {
 		_runner_capability_python_runtime
 		_runner_capability_python_cycle
 		_runner_capability_python_requirements
-	)
+	) "${BASH_SOURCE[0]%/*}/network-tier-helper.sh"
 	local rc=$?
 	[[ "$rc" -eq 0 ]] || return 1
 	return 0
@@ -209,8 +209,19 @@ try:
             if not names or not all(names):
                 unmet()
             requirements.append({'secrets': names})
-    secrets, probes = set(), []
+        elif line.startswith('requires-ssh:'):
+            requirements.append({'ssh_commands': [json.loads(line.partition(':')[2])]})
+    secrets, probes, ssh_commands = set(), [], []
     for requirement in requirements:
+        commands = requirement.get('ssh_commands', [])
+        if not isinstance(commands, list) or len(commands) > 8:
+            unmet('invalid_requirements')
+        for command in commands:
+            if (not isinstance(command, list) or not command or len(command) > 128
+                    or not all(isinstance(arg, str) and len(arg) <= 4096 for arg in command)
+                    or command[0] not in ('ssh', '/usr/bin/ssh')):
+                unmet('invalid_requirements')
+            ssh_commands.append(command)
         names = requirement.get('secrets', [])
         if not isinstance(names, list) or len(names) > 32:
             unmet()
@@ -233,10 +244,22 @@ try:
             if root not in executable.parents or not executable.is_file() or not os.access(executable, os.X_OK):
                 unmet(f'probe_failed path={probe}')
             probes.append((str(executable), probe))
-    if len(secrets) > 32 or len(probes) > 8:
+    if len(secrets) > 32 or len(probes) > 8 or len(ssh_commands) > 8:
         unmet()
+    # Only analyze exact argv; never execute SSH or issue-provided shell text.
+    # The same tier gate used inside the worker is authoritative before claim.
+    for command in ssh_commands:
+        try:
+            checked = subprocess.run(['bash', str(Path(sys.argv[5]).resolve()), 'check-argv',
+                                      json.dumps(command), '--cwd', str(root)],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
+            unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
+        if checked.returncode:
+            unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
     if sys.argv[3] == 'fresh':
-        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes)}',
+        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',
               file=sys.stderr)
     if secrets:
         cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''

@@ -1084,7 +1084,163 @@ PY
 	return 0
 }
 
+test_exact_ssh_bindings() {
+	local status=0
+	python3 - "$SCRIPT_DIR" "$TEST_ROOT" <<'PY' || status=$?
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
+
+scripts, root = map(Path, sys.argv[1:])
+sys.path.insert(0, str(scripts))
+from command_policy_dispatch import analyze_network_argv
+from ssh_binding_helper import NAMESPACE, binding_command, grant_path, repository_common_dir
+
+home = root / 'ssh-home'
+home.mkdir()
+os.environ['HOME'] = str(home)
+os.environ['AIDEVOPS_TEMP_DIR'] = str(root / 'ssh-tmp')
+env = dict(os.environ)
+repo = root / 'ssh-repo'
+repo.mkdir()
+subprocess.run(['/usr/bin/git', 'init', '-q', str(repo)], check=True)
+subprocess.run(['/usr/bin/git', '-C', str(repo), 'remote', 'add', 'origin',
+                'https://github.com/owner/operations.git'], check=True)
+keys = home / '.aidevops/approval-keys'
+keys.mkdir(parents=True)
+key = root / 'fixture-ssh-signing-key'
+subprocess.run(['/usr/bin/ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-f', str(key)], check=True)
+(keys / 'approval.pub').write_bytes(Path(str(key) + '.pub').read_bytes())
+argv = ['ssh', '-F', '/dev/null', '-o', 'HostName=ci.example.com', '-o', 'ProxyCommand=none',
+        '-o', 'ProxyJump=none', '-o', 'ClearAllForwardings=yes', '-o', 'PermitLocalCommand=no',
+        '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-l', 'deploy', '-p', '22', 'ci-alias', 'id']
+count = 0
+
+def check(name, condition):
+    global count
+    assert condition, name
+    count += 1
+    print('PASS SSH', name)
+
+def sign(command, **changes):
+    path = grant_path('owner/operations', command)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    grant = {'schema': NAMESPACE, 'repository': 'owner/operations', 'common_dir': repository_common_dir(str(repo)), 'argv': command,
+             'binding': binding_command(command), 'issued_at': now.isoformat(),
+             'expires_at': (now + timedelta(hours=4)).isoformat()}
+    grant.update(changes)
+    path.write_text(json.dumps(grant))
+    Path(str(path) + '.sig').unlink(missing_ok=True)
+    subprocess.run(['/usr/bin/ssh-keygen', '-Y', 'sign', '-f', str(key), '-n', NAMESPACE, str(path)],
+                   check=True, capture_output=True)
+    return path
+
+def network(command):
+    return analyze_network_argv(command, str(repo))
+
+def worker(command):
+    return subprocess.run(['python3', str(scripts / 'command-policy-helper.py'), 'check-command',
+                           '--worker', '--cwd', str(repo), '--argv-json', json.dumps(command)],
+                          env=env, capture_output=True, text=True)
+
+def preflight(command, class_map=False):
+    issue = {'body': 'requires-ssh: ' + json.dumps(command), 'labels': []}
+    config = repo / '.aidevops.json'
+    if class_map:
+        config.write_text(json.dumps({'dispatch_class_requirements': {'operations': {'ssh_commands': [command]}}}))
+        issue = {'labels': ['dispatch-class:operations'], 'body': ''}
+    else:
+        config.unlink(missing_ok=True)
+    return subprocess.run(['bash', '-c', 'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3"',
+                           'fixture', str(scripts), str(repo), json.dumps(issue)],
+                          env=env, capture_output=True, text=True)
+
+with patch('socket.socket', side_effect=AssertionError('network access forbidden')):
+    check('unknown alias remains unclassified', bool(network(['ssh', 'ci-alias', 'id'])['unclassified']))
+    check('unsigned pinned command denied', bool(network(argv)['unclassified']))
+    denied = preflight(argv)
+    check('preflight missing authorization names recovery', denied.returncode != 0 and
+          'ssh_network_requirement_unmet recovery=reference/ssh-bindings.md' in denied.stdout)
+    cli = subprocess.run(['python3', str(scripts / 'ssh_binding_helper.py'), 'prepare', '--cwd', str(repo),
+                          '--argv-json', json.dumps(argv)], env=env, capture_output=True, text=True)
+    check('preparation writes unsigned request only', cli.returncode == 0 and bool(network(argv)['unclassified']))
+    cli = subprocess.run(['python3', str(scripts / 'ssh_binding_helper.py'), 'prepare', '--cwd', str(repo),
+                          '--argv-json', json.dumps(argv)], env=env, capture_output=True, text=True)
+    check('preparation never overwrites', cli.returncode != 0)
+    path = sign(argv)
+    result = network(argv)
+    check('exact owner binding resolves endpoint and port', result['destinations'] == ['ci.example.com'] and
+          result['endpoints'][0]['port'] == 22 and not result['unclassified'])
+    accepted = worker(argv)
+    check('normal worker policy accepts signed command', accepted.returncode == 0)
+    check('declared preflight authorizes without executing SSH', preflight(argv).returncode == 0)
+    check('dispatch class preflight authorizes', preflight(argv, True).returncode == 0)
+    for suffix in [['-J', 'jump.example.com', 'id'], ['-L', '8080:ci.example.com:22', 'id'], ['-N']]:
+        check('post-target options denied ' + suffix[0], bool(network(argv[:-1] + suffix)['unclassified']))
+    for label, position, replacement in [('command', -1, 'uname'), ('alias', -2, 'other-alias'),
+                                          ('port', -3, '2222'), ('account', -5, 'root'),
+                                          ('endpoint', 4, 'HostName=other.example.com')]:
+        changed = argv.copy()
+        changed[position] = replacement
+        check(label + ' mismatch denied', bool(network(changed)['unclassified']))
+    for option in [['-J', 'jump.example.com'], ['-D', '8080'], ['-L', '8080:ci.example.com:22'],
+                   ['-R', '8080:ci.example.com:22'], ['-W', 'ci.example.com:22'],
+                   ['-F', '/etc/ssh/ssh_config'], ['-o', 'ProxyCommand=arbitrary'],
+                   ['-o', 'LocalCommand=id'], ['-o', 'HostName=ci.example.com'], ['-p', '22']]:
+        check('ambiguous option denied ' + option[0] + ' ' + option[1],
+              bool(network(argv[:1] + option + argv[1:])['unclassified']))
+    path = sign(argv, expires_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat())
+    check('expired signed grant denied', bool(network(argv)['unclassified']) and preflight(argv).returncode != 0)
+    sign(argv, repository='owner/other')
+    check('wrong repository in signed payload denied', bool(network(argv)['unclassified']))
+    sign(argv, common_dir=str(root / 'other-repo/.git'))
+    check('spoofed repository origin cannot reuse grant', bool(network(argv)['unclassified']))
+    sign(argv, issued_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+    check('future approval denied', bool(network(argv)['unclassified']))
+    path = sign(argv)
+    raw = path.read_text()
+    path.write_text(raw + ' ')
+    check('tampered grant denied', bool(network(argv)['unclassified']))
+    path.write_text(raw)
+    signature = Path(str(path) + '.sig')
+    saved = signature.read_bytes()
+    signature.write_text('not a signature')
+    check('forged signature denied', bool(network(argv)['unclassified']))
+    signature.write_bytes(saved)
+    # Tier deny wins even with a valid owner signature; no blanket network grant.
+    blocked = argv.copy()
+    blocked[4] = 'HostName=requestbin.com'
+    sign(blocked)
+    check('tier5 denial wins in worker', worker(blocked).returncode != 0)
+    check('tier5 denial wins in preflight', preflight(blocked).returncode != 0)
+    # A different repository cannot reuse the same signed command.
+    subprocess.run(['/usr/bin/git', '-C', str(repo), 'remote', 'set-url', 'origin',
+                    'https://github.com/owner/other.git'], check=True)
+    check('different repository cannot reuse grant', bool(network(argv)['unclassified']))
+    # Prove no SSH config/credential file is even opened in the analyzer.
+    original_open = Path.open
+    def guarded_open(path, *args, **kwargs):
+        assert '.ssh' not in path.parts and path != key, path
+        return original_open(path, *args, **kwargs)
+    with patch.object(Path, 'open', guarded_open):
+        check('unknown alias needs no credential/config reads', bool(network(['ssh', 'ci-alias', 'id'])['unclassified']))
+print(f'{count} offline SSH binding fixtures passed')
+PY
+	if [[ "$status" -eq 0 ]]; then
+		pass "exact SSH binding offline security and preclaim fixtures"
+	else
+		fail "exact SSH binding offline security and preclaim fixtures" "status=${status}"
+	fi
+	return 0
+}
+
 main() {
+	test_exact_ssh_bindings
 	test_validation
 	test_evaluate_invocations_compatibility
 	test_worker_protocol_bash_examples

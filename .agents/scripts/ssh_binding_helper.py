@@ -62,6 +62,8 @@ def binding_command(argv: list[str]) -> dict[str, Any]:
         raise ValueError("explicit valid SSH port is required")
     if index >= len(argv) - 1 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", argv[index]):
         raise ValueError("single-label alias and explicit remote command are required")
+    if len(argv) != index + 2 or argv[index + 1].startswith("-"):
+        raise ValueError("remote command must be one non-option string")
     if any(not arg or any(char in arg for char in "\x00\n\r") for arg in argv):
         raise ValueError("invalid SSH argument")
     return {"alias": argv[index], "endpoint": endpoint, "account": options["-l"], "port": int(port_text)}
@@ -75,6 +77,14 @@ def repository_at(cwd: str) -> str:
     if not match:
         raise ValueError("repository origin is unsupported")
     return match.group(1)
+
+
+def repository_common_dir(cwd: str) -> str:
+    """Bind the installed repository, not a worker-editable origin string alone."""
+    paths = _run_git_query(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) or []
+    if len(paths) != 1 or not Path(paths[0]).is_dir():
+        raise ValueError("repository common directory is unavailable")
+    return str(Path(paths[0]).resolve())
 
 
 def grant_path(repository: str, argv: list[str]) -> Path:
@@ -98,7 +108,8 @@ def authorized_binding(argv: list[str], cwd: str) -> dict[str, Any]:
     grant = json.loads(raw)
     if not isinstance(grant, dict) or grant.get("schema") != NAMESPACE:
         raise ValueError("invalid SSH grant schema")
-    if grant.get("repository") != repository or grant.get("argv") != argv or grant.get("binding") != binding:
+    if (grant.get("repository") != repository or grant.get("argv") != argv
+            or grant.get("binding") != binding or grant.get("common_dir") != repository_common_dir(cwd)):
         raise ValueError("SSH grant command or endpoint mismatch")
     now = datetime.now(timezone.utc)
     issued = datetime.fromisoformat(grant["issued_at"])
@@ -141,7 +152,8 @@ def main() -> int:
             binding = binding_command(argv)
             repository = repository_at(args.cwd)
             now = datetime.now(timezone.utc)
-            grant = {"schema": NAMESPACE, "repository": repository, "argv": argv, "binding": binding,
+            grant = {"schema": NAMESPACE, "repository": repository, "common_dir": repository_common_dir(args.cwd),
+                     "argv": argv, "binding": binding,
                      "issued_at": now.isoformat(), "expires_at": (now + timedelta(hours=4)).isoformat()}
             path = grant_path(repository, argv)
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
