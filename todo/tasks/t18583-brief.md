@@ -41,8 +41,9 @@ paths and credentials out of shared examples and public diagnostics.
 1. Provide a non-mutating inventory/plan mode with explicit account, owner and
    site scope. Separate hosting-panel entries, WordPress networks, blogs and
    aliases. Associate shared code with its primary network repository.
-2. Default organization clones to `~/Git/<owner>/<repo>` and personal clones to
-   `~/Git/<repo>`, respecting explicit exceptions and collisions. Support a
+2. Default organization clones to `<git-root>/<owner>/<repo>` and personal clones
+   to `<git-root>/<repo>` (`<git-root>` = the home `Git` directory; see
+   `reference/repo-organization.md`), respecting explicit exceptions and collisions. Support a
    caller-specified personal-owner exception. Never include unrelated repos in
    an approved fleet transaction.
 3. Use existing authenticated interfaces and secure credential storage. Do not
