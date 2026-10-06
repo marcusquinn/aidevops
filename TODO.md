@@ -1561,7 +1561,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18597 fix(issue-sync): one failed task issue creation skips planning publication and ref sync for all tasks #bug ref:GH#33809 pr:#33815 completed:2026-10-06
 
-- [ ] t18598 fix(issue-sync): align save-for-later doctrine with issue-sync tracking issues and stop false planning-PR task ID collision warnings #auto-dispatch #bug tier:standard ref:GH#33810
+- [x] t18598 fix(issue-sync): align save-for-later doctrine with issue-sync tracking issues and stop false planning-PR task ID collision warnings #auto-dispatch #bug tier:standard ref:GH#33810 pr:#33823 completed:2026-10-06
 
 - [x] t18599 fix(issue-sync): concurrent planning-publication reconcile reports silent failure for issues another reconciler already published #bug ref:GH#33821 pr:#33822 completed:2026-10-06
 
