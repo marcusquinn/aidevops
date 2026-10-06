@@ -1699,8 +1699,14 @@ test_clean_prelaunch_exit_is_precise_nonzero_failure() {
 		set +e
 		output=$(
 			local session_key="issue-28060"
-			print_info() { printf '%s\n' "$*"; return 0; }
-			print_warning() { printf '%s\n' "$*"; return 0; }
+			print_info() {
+				printf '%s\n' "$*"
+				return 0
+			}
+			print_warning() {
+				printf '%s\n' "$*"
+				return 0
+			}
 			worker_attempt_observability_last_stage() { return 1; }
 			worker_attempt_observability_last_completed_stage() { return 0; }
 			_push_wip_commits_on_exit() { return 0; }
