@@ -123,7 +123,7 @@ tools/performance/,tools/performance subagents,performance|webpagetest
 tools/productivity/,tools/productivity subagents,apple-reminders|calendar|contacts|notes
 tools/research/providers/,tools/research/providers subagents,crft-lookup|openexplorer|unbuilt|wappalyzer
 tools/research/,tools/research subagents,tech-stack-lookup
-tools/runtime/,tools/runtime subagents,node-server-admin
+tools/runtime/,tools/runtime subagents,node-server-admin|php-server-admin
 tools/security/,tools/security subagents,cdn-origin-ip|content-provenance|ip-reputation|local-permissions-check|opsec|privacy-filter|prompt-injection-defender|security-analysis|security-audit|security-deps|security-history|security-review|security-scan|shannon|tamper-evident-audit|tirith
 tools/terminal/,tools/terminal subagents,optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|terminal-optimization|terminal-title
 tools/,tools subagents,testing-setup

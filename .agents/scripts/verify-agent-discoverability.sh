@@ -40,6 +40,7 @@ PROMPT_HOOK_REGISTRY="configs/prompt-hook-candidates.conf"
 readonly FRAMEWORK_RULES_FILE="AGENTS.md"
 readonly AGENT_ROUTING_FILE="reference/agent-routing.md"
 readonly BUILD_PLUS_FILE="build-plus.md"
+readonly SUBAGENT_INDEX_FILE="subagent-index.toon"
 PASS=0
 FAIL=0
 WARNINGS=0
@@ -265,7 +266,17 @@ check_string_in_file "tools/runtime/node-server-admin.md" "mode: subagent" "Node
 check_regex_in_file "$BUILD_PLUS_FILE" '^[[:space:]]*-[[:space:]]*node-server-admin[[:space:]]*$' "Build+: node-server-admin allowlist"
 check_string_in_file "$BUILD_PLUS_FILE" "tools/runtime/node-server-admin.md" "Build+: Node runtime domain route"
 check_string_in_file "reference/domain-index.md" "tools/runtime/node-server-admin.md" "Domain index: Node server admin route"
-check_string_in_file "subagent-index.toon" "node-server-admin" "Subagent index: node-server-admin entry"
+check_string_in_file "$SUBAGENT_INDEX_FILE" "node-server-admin" "Subagent index: node-server-admin entry"
+
+# ─── Test 4c: PHP server admin specialist is routed and indexed ───────────────
+echo ""
+echo "=== 4c. PHP Server Admin Discoverability ==="
+check_file_nonempty "tools/runtime/php-server-admin.md" 2000 "PHP server admin agent"
+check_string_in_file "tools/runtime/php-server-admin.md" "mode: subagent" "PHP server admin: subagent mode"
+check_regex_in_file "$BUILD_PLUS_FILE" '^[[:space:]]*-[[:space:]]*php-server-admin[[:space:]]*$' "Build+: php-server-admin allowlist"
+check_string_in_file "$BUILD_PLUS_FILE" "tools/runtime/php-server-admin.md" "Build+: PHP runtime domain route"
+check_string_in_file "reference/domain-index.md" "tools/runtime/php-server-admin.md" "Domain index: PHP server admin route"
+check_string_in_file "$SUBAGENT_INDEX_FILE" "php-server-admin" "Subagent index: php-server-admin entry"
 
 # ─── Test 5: Primary agent @mention files ─────────────────────────────────────
 echo ""
@@ -288,7 +299,7 @@ AGENT_FILES=(
 for af in "${AGENT_FILES[@]}"; do
 	check_file_nonempty "$af" 100 "Primary agent file"
 done
-check_string_in_file "subagent-index.toon" "PR,pr.md" "subagent-index: PR display name is uppercase"
+check_string_in_file "$SUBAGENT_INDEX_FILE" "PR,pr.md" "subagent-index: PR display name is uppercase"
 check_frontmatter_description_quoting "services/communications/privacy-comparison.md" "OpenCode subagent YAML safety"
 
 # ─── Test 6: Capabilities section retains key entries ─────────────────────────
@@ -368,7 +379,7 @@ else
 		log_fail "subagent-index.toon: could not parse subagents block count"
 	fi
 
-	check_string_in_file "subagent-index.toon" "triggers" "subagent-index.toon: primary agent triggers documented"
+	check_string_in_file "$SUBAGENT_INDEX_FILE" "triggers" "subagent-index.toon: primary agent triggers documented"
 fi
 
 # ─── Test 10: Critical scripts for self-improvement workflow ──────────────────
