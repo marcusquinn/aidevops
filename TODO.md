@@ -1571,9 +1571,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18603 fix(pulse): recognise gh 2.102 empty-stdout HTTP 304 in conditional REST and events tickle #auto-dispatch #bug tier:standard ref:GH#33844 -> [todo/tasks/t18603-brief.md]
 
-- [ ] t18604 feat(pulse): dormant repos skip candidate scans until woken by new work or an interactive session #auto-dispatch #feat tier:thinking blocked-by:t18603 ref:GH#33847 -> [todo/tasks/t18604-brief.md]
+- [x] t18604 feat(pulse): dormant repos skip candidate scans until woken by new work or an interactive session #auto-dispatch #feat tier:thinking blocked-by:t18603 ref:GH#33847 -> [todo/tasks/t18604-brief.md] pr:#33856 completed:2026-10-06
 
-- [ ] t18605 fix(pulse): worker draft checkpoints released as clean or worker_complete get no continuation or attention #auto-dispatch #bug tier:thinking ref:GH#33850 -> [todo/tasks/t18605-brief.md]
+- [x] t18605 fix(pulse): worker draft checkpoints released as clean or worker_complete get no continuation or attention #auto-dispatch #bug tier:thinking ref:GH#33850 -> [todo/tasks/t18605-brief.md] pr:#33854 completed:2026-10-06
 
 ## In Progress
 
