@@ -1551,9 +1551,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18592 GH transport: stale low core quota persists for multi-credential unresolved scope, pacing all REST reads #auto-dispatch #bug ref:GH#33701
 
-- [ ] t18593 docs: capture Hostinger site retirement, mysqldump backups, MainWP removal and GPLVault update lessons #documentation ref:GH#33734
+- [x] t18593 docs: capture Hostinger site retirement, mysqldump backups, MainWP removal and GPLVault update lessons #documentation ref:GH#33734 pr:#33735 completed:2026-10-06
 
-- [ ] t18594 wp-plugin-parity-helper: inventory plugin version gaps across sibling sites and sync with health-checked swaps #auto-dispatch #feat ref:GH#33736
+- [x] t18594 wp-plugin-parity-helper: inventory plugin version gaps across sibling sites and sync with health-checked swaps #auto-dispatch #feat ref:GH#33736 pr:#33746 completed:2026-10-06
 
 ## In Progress
 
