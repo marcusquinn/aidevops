@@ -535,7 +535,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t18583 Reusable Hostinger fleet onboarding and drift sync — deferred capability brief only; no implementation issue or automatic dispatch. #enhancement #hosting #deferred #interactive tier:standard ref:GH#33811 logged:2026-10-03 -> [todo/tasks/t18583-brief.md]
+- [ ] t18583 Reusable Hostinger fleet onboarding and drift sync — deferred capability brief only; tracking issue without automatic dispatch. #enhancement #hosting #deferred #interactive tier:standard ref:GH#33811 logged:2026-10-03 -> [todo/tasks/t18583-brief.md]
 
 - [x] t18480 fix(setup): stop duplicate aidevops plugin registration in OpenCode V2 #bug #framework #setup #interactive tier:standard ref:GH#32422 logged:2026-09-26 -> [todo/tasks/t18480-brief.md] pr:#32424 completed:2026-09-26
 - [x] t18475 Fail closed on public routine comments before Pulse worker launch #bug #security #prompt-injection #interactive #auto-dispatch #priority:high tier:thinking ref:GH#32337 logged:2026-09-24 -> [todo/tasks/t18475-brief.md] pr:#32348 completed:2026-09-25
@@ -1558,6 +1558,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18595 fix(pulse): CI-drift update-branch loops on same failing required checks and never routes to CI fix-worker #auto-dispatch #bug ref:GH#33794 pr:#33807 completed:2026-10-06
 
 - [ ] t18596 fix(pulse): malformed .aidevops.json silently blocks every candidate in a repo via runner-capability invalid_requirements cooldown #auto-dispatch #bug ref:GH#33799
+
+- [ ] t18597 fix(issue-sync): one failed task issue creation skips planning publication and ref sync for all tasks #bug ref:GH#33809
+
+- [ ] t18598 fix(issue-sync): align save-for-later doctrine with issue-sync tracking issues and stop false planning-PR task ID collision warnings #auto-dispatch #bug tier:standard ref:GH#33810
 
 ## In Progress
 
