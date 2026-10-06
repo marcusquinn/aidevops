@@ -82,6 +82,18 @@ Hostinger shared hosting can reject `wp plugin uninstall` with “Cannot do 'lau
 
 Record discovery, deactivation, deletion consent/outcome, and backup location only in private site inventory notes (`~/.config/aidevops/site-inventory.json`), never public content. No site-plugin recommendation is required for this procedure.
 
+### Retiring a website
+
+`DELETE /api/hosting/v1/websites/{domain}` permanently removes a main or addon website with its files, databases and configuration; the plan stays. It rejects parked domains and subdomains, and it runs asynchronously (returns "Request accepted").
+
+1. **Confirm the target**: `GET /api/hosting/v1/websites?domain=<domain>` must return `vhost_type` `main` or `addon`. Check that no other site's `wp-config.php` uses its database.
+2. **Back up** files (`tar` of `~/domains/<domain>`) and the database (see "Database backups without WP-CLI"), then verify the archive file count and dump table count.
+3. **Detach managers first**: remove the site from MainWP (`tools/wordpress/mainwp.md` "Removing a child site over SSH") while the child plugin can still respond.
+4. **Delete**, wait about a minute, then verify: the website list returns no entry, `~/domains/<domain>` is gone, and `GET /api/hosting/v1/accounts/{username}/databases` no longer lists its database.
+5. **Clean up leftovers the delete does not touch**: account cron jobs pointing at the old docroot (`GET`/`DELETE /api/hosting/v1/accounts/{username}/cron-jobs[/{uid}]`) and external DNS records (for example Cloudflare).
+
+Take `{username}` from the website list response inside the same command; tool output may redact it, and a copied placeholder silently produces an empty response.
+
 ### Legacy Hostinger helper
 
 Copy template and edit with server details:
@@ -188,6 +200,22 @@ This bypasses uninstall hooks, preserving saved data rather than asking the plug
 - **Account paths and logs**: One account SSH login covers its sites at `~/domains/<domain>/public_html`; inspect each site's `error_log` there.
 - **Release ZIP updates**: `scp` the ZIP once to the account, run `wp --path="$WP" plugin install ~/plugin.zip --force` per intended site, verify the update, then remove the uploaded ZIP.
 - **PHAR autoloader warnings**: `include(...vendor/composer/../psr/container/...): Failed to open stream` can be WP-CLI autoloader noise with plugins shipping prefixed vendors (observed with Kadence Pro 1.2.5), not proof of a broken install. Check the plugin's `vendor/vendor-prefixed/` files and the site's `error_log`, and verify site behavior before attempting a repair.
+- **SQL queries**: `wp db query` fails with `Cannot do 'Process::run'`; use `global $wpdb;` inside `wp eval` instead. `wp db size` still works.
+
+### Database backups without WP-CLI
+
+`wp db export` also fails with `Cannot do 'Process::run'`. Call `mysqldump` directly with the site's own credentials, passed through the environment so the password never appears in output or the process list:
+
+```bash
+cd "$HOME/domains/<domain>/public_html"
+export MYSQL_PWD="$(wp eval 'echo DB_PASSWORD;')"
+mysqldump -h "$(wp eval 'echo DB_HOST;')" -u "$(wp eval 'echo DB_USER;')" \
+  --single-transaction --no-tablespaces "$(wp eval 'echo DB_NAME;')" |
+  gzip -c >"$HOME/backups/<domain>-db-<date>.sql.gz"
+unset MYSQL_PWD
+chmod 600 "$HOME/backups/<domain>-db-<date>.sql.gz"
+zcat "$HOME/backups/<domain>-db-<date>.sql.gz" | grep -c 'CREATE TABLE'   # verify
+```
 
 **Connection refused**: Verify SSH is enabled on your plan, check hostname and port 65002, confirm password.
 

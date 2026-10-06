@@ -95,6 +95,17 @@ Setup: install MainWP Dashboard → REST API Extension → generate credentials 
 ./.agents/scripts/mainwp-helper.sh bulk-update-plugins production 123 124 125
 ```
 
+### Removing a child site over SSH
+
+MainWP 6.x WP-CLI (`wp mainwp sites|site|sync|...`) has no remove command. Find the ID with `wp mainwp sites`, then call the same routine as the dashboard's Remove button as an administrator. It deactivates MainWP Child on the live site, deletes the cached favicon, removes the record, and fires `mainwp_delete_site`:
+
+```bash
+# On the dashboard host; replace <admin-id> and <site-id>.
+wp --user=<admin-id> eval 'var_export(\MainWP\Dashboard\MainWP_Manage_Sites_Handler::remove_website(<site-id>));'
+```
+
+Expect `removed_site => true` (plus `deactivated => true` when the child responded). Confirm with `wp mainwp sites`. When retiring the whole site, remove it from MainWP before deleting hosting so the child plugin can be deactivated.
+
 ## Troubleshooting
 
 ```bash

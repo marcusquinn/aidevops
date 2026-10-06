@@ -118,7 +118,7 @@ Also see: `network-plugin-auditor` (Admin).
 
 ## Premium Plugin Sources
 
-Slugs marked \* above. Free plugins: `https://wordpress.org/plugins/{slug}/`.
+Slugs marked \* above. Free plugins: `https://wordpress.org/plugins/{slug}/`. Stale premium updates: `premium-plugin-updates.md`.
 
 | Slug | Vendor URL |
 |------|-----------|
