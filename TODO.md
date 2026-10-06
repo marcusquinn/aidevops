@@ -1565,6 +1565,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18599 fix(issue-sync): concurrent planning-publication reconcile reports silent failure for issues another reconciler already published #bug ref:GH#33821 pr:#33822 completed:2026-10-06
 
+- [ ] t18601 Human-only asks give numbered steps with direct links and navigation paths #feat ref:GH#33834
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
@@ -5122,4 +5124,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18586 New WordPress plugin capability: create from WP Plugin Starter with saved maker defaults #enhancement ref:GH#33504 pr:#33515 completed:2026-10-04
 
-- [ ] t18600 Decision asks and completion summaries include clickable links to evidence #enhancement ref:GH#33829
+- [x] t18600 Decision asks and completion summaries include clickable links to evidence #enhancement ref:GH#33829 pr:#33831 completed:2026-10-06
