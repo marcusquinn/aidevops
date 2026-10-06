@@ -486,6 +486,12 @@ main() {
 	case "$cmd" in
 	claim)
 		_isc_cmd_claim "$@" || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			# Includes idempotent claims; start-helper uses this same entrypoint.
+			# shellcheck source=./pulse-repo-dormancy.sh
+			source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+			pulse_repo_wake "${2:-}" interactive_claim || true
+		fi
 		;;
 	lockdown)
 		_isc_cmd_lockdown "$@" || rc=$?

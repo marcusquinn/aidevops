@@ -928,7 +928,7 @@ _refresh_owner_issues() {
 	local issue_err
 	issue_err=$(mktemp)
 	local issue_json=""
-	issue_json=$(_prefetch_gh_read gh search issues --owner "$owner" --state open \
+	issue_json=$(_prefetch_gh_read gh search issues --repo "$slugs" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
 		--json number,title,state,labels,updatedAt,assignees,body,authorAssociation,author,repository 2>"$issue_err") || issue_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
@@ -994,7 +994,7 @@ _refresh_owner_prs() {
 	local pr_err
 	pr_err=$(mktemp)
 	local pr_json=""
-	pr_json=$(_prefetch_gh_read gh search prs --owner "$owner" --state open \
+	pr_json=$(_prefetch_gh_read gh search prs --repo "$slugs" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
 		--json number,title,labels,updatedAt,assignees,repository,createdAt,author 2>"$pr_err") || pr_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
@@ -1078,6 +1078,41 @@ _events_tickle_skip_is_safe() {
 # =============================================================================
 # Subcommand: refresh
 # =============================================================================
+_refresh_awake_owner() {
+	local owner="$1" slugs="$2" graphql_remaining="$3"
+	# Filter only enabled slugs selected by _group_repos_by_owner. Never use
+	# this scheduling state for PR merge/repair/checkpoint recovery stages.
+	local awake_slugs="" slug="" force_refresh=0 repo_slugs=()
+	# shellcheck source=./pulse-repo-dormancy.sh
+	source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+	IFS=',' read -r -a repo_slugs <<<"$slugs"
+	for slug in "${repo_slugs[@]}"; do
+		pulse_repo_scan_allowed "$slug" || continue
+		awake_slugs="${awake_slugs:+$awake_slugs,}$slug"
+		if pulse_repo_wake_pending "$slug"; then
+			force_refresh=1
+		fi
+	done
+	slugs="$awake_slugs"
+	[[ -n "$slugs" ]] || return 0
+
+	# Owner tickle can suppress a refresh only when no per-repo wake is pending.
+	local tickle_rc=0
+	events_tickle "$owner" || tickle_rc=$?
+	if [[ "$tickle_rc" -eq 0 && "$force_refresh" == 0 ]]; then
+		if _events_tickle_skip_is_safe "$slugs"; then
+			_log "events tickle fresh for owner=${owner} — skipping search calls"
+			return 0
+		fi
+		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH - 1))
+		_PULSE_EVENTS_TICKLE_STALE=$((_PULSE_EVENTS_TICKLE_STALE + 1))
+		_log "events tickle fresh for owner=${owner} but snapshots older than ${PULSE_EVENTS_TICKLE_MAX_CACHE_AGE}s — refreshing"
+	fi
+	_refresh_owner_issues "$owner" "$slugs" "$graphql_remaining" || true
+	_refresh_owner_prs "$owner" "$slugs" "$graphql_remaining" || true
+	return 0
+}
+
 _cmd_refresh() {
 	_check_enabled || {
 		_log "batch prefetch disabled (PULSE_BATCH_PREFETCH_ENABLED=0)"
@@ -1133,26 +1168,7 @@ _cmd_refresh() {
 	local owner="" slugs=""
 	while IFS='|' read -r owner slugs; do
 		[[ -n "$owner" ]] || continue
-
-		# L1 events ETag tickle (t2830, GH#20868): cheap conditional GET
-		# via REST core bucket. On 304 (ETag unchanged), skip the 2 Search
-		# API calls for this owner entirely. On error (exit 2), fail-open
-		# and let the normal batch search proceed.
-		local _tickle_rc=0
-		events_tickle "$owner" || _tickle_rc=$?
-		if [[ "$_tickle_rc" -eq 0 ]]; then
-			if _events_tickle_skip_is_safe "$slugs"; then
-				_log "events tickle fresh for owner=${owner} — skipping search calls"
-				continue
-			fi
-			# GH#33074: the owner was not skipped, so count it as stale.
-			_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH - 1))
-			_PULSE_EVENTS_TICKLE_STALE=$((_PULSE_EVENTS_TICKLE_STALE + 1))
-			_log "events tickle fresh for owner=${owner} but snapshots older than ${PULSE_EVENTS_TICKLE_MAX_CACHE_AGE}s — refreshing"
-		fi
-
-		_refresh_owner_issues "$owner" "$slugs" "$_graphql_remaining" || true
-		_refresh_owner_prs "$owner" "$slugs" "$_graphql_remaining" || true
+		_refresh_awake_owner "$owner" "$slugs" "$_graphql_remaining"
 	done <<<"$owner_groups"
 
 	_log "refresh complete: search_calls=${_OWNER_SEARCH_CALLS} cache_writes=${_OWNER_CACHE_WRITES} errors=${_OWNER_ERRORS} tickle_fresh=${_PULSE_EVENTS_TICKLE_FRESH} tickle_stale=${_PULSE_EVENTS_TICKLE_STALE} conditional_304=${_OWNER_CONDITIONAL_304} conditional_refreshes=${_OWNER_CONDITIONAL_REFRESHES} conditional_misses=${_OWNER_CONDITIONAL_MISSES}"

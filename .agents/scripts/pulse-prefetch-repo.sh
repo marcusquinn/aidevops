@@ -18,6 +18,9 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# shellcheck source=./pulse-repo-dormancy.sh
+source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+
 _PREFETCH_BOOL_TRUE=true
 _PREFETCH_JSON_NULL=null
 _PREFETCH_NONE_LINE="- None"
@@ -389,6 +392,11 @@ _prefetch_single_repo() {
 	local slug="$1"
 	local path="$2"
 	local outfile="$3"
+
+	if ! pulse_repo_scan_allowed "$slug"; then
+		printf '## %s (%s)\n\n> Dormant: no candidates, PRs or claims; change detection and backstop remain active.\n' "$slug" "$path" >"$outfile"
+		return 0
+	fi
 
 	# t2831 Tier-based skip (before ANY gh API calls):
 	# Hot repos proceed every cycle; warm/cold repos skip when last check

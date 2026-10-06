@@ -53,11 +53,27 @@ Further candidate-discovery files are not yet knowable; verify-first step 1 dete
 - `.agents/scripts/interactive-session-helper.sh`
 - `.agents/scripts/interactive-start-helper.sh`
 - `.agents/scripts/tests/test-pulse-repo-tier.sh`
+- `.agents/scripts/pulse-repo-dormancy.sh`
+- `.agents/scripts/pulse-repo-meta.sh`
+- `.agents/scripts/pulse-batch-prefetch-helper.sh`
+- `.agents/scripts/interactive-session-helper-commands.sh`
+- `.agents/scripts/issue-sync-helper-push.sh`
+- `.agents/scripts/tests/test-pulse-repo-dormancy.sh`
+- `todo/tasks/t18604-brief.md`
+
+Integration findings: gate batch/per-repo prefetch and candidate discovery only.
+PR merge, CI repair, stale-PR/checkpoint continuation and sweeps stay ungated.
+Reuse the candidate filter; any open PR, assignee or active/recovery issue status
+prevents dormancy. Per-repo issue and default-branch commit ETags detect changes
+(all pushes conservatively wake, including planning pushes); local claim and
+issue-publication markers bypass both dormancy and tier cadence. Reads fail open,
+bounded/truncated snapshots never prove absence, and the six-hour backstop remains.
 
 ### Verification
 
 ```bash
 bash .agents/scripts/tests/test-pulse-repo-tier.sh
+bash .agents/scripts/tests/test-pulse-repo-dormancy.sh
 shellcheck .agents/scripts/pulse-prefetch-orchestration.sh .agents/scripts/pulse-repo-tier.sh
 ```
 
