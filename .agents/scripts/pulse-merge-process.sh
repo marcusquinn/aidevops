@@ -1323,6 +1323,22 @@ _route_pr_has_linked_issue() {
 	return 1
 }
 
+# Conflict checkpoints intentionally use For/Ref, not closing keywords.
+# Resolve independently of the caller's closing-only target, retaining the
+# existing linked-issue validation and all later routing guards (GH#33763).
+_route_pr_resolve_work_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local kind="$4"
+	if [[ "$kind" == "conflict" ]]; then
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	fi
+	_route_pr_has_linked_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || return 1
+	printf '%s' "$linked_issue"
+	return 0
+}
+
 _route_pr_issue_labels_for_dispatch() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -1461,13 +1477,7 @@ _route_pr_to_fix_worker() {
 	local takeover_pattern="$_PMP_ORIGIN_TAKEOVER_PATTERN"
 	local has_routed_label=0
 
-	# Conflict checkpoints intentionally use For/Ref, not closing keywords.
-	# Resolve independently of the caller's closing-only target, retaining all
-	# subsequent ownership, hold and dispatch guards (GH#33763).
-	if [[ "$kind" == "conflict" ]]; then
-		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
-	fi
-	_route_pr_has_linked_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || return 1
+	linked_issue=$(_route_pr_resolve_work_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind") || return 1
 
 	# Fetch labels if not provided by caller
 	if [[ -z "$pr_labels" ]]; then
