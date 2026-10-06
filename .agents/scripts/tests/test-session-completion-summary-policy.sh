@@ -94,6 +94,13 @@ main() {
 		"$SESSION_DOC" 'capture check accepts stale Git status' || return 1
 	require_literal 'no session-owned repository changes remain uncommitted' \
 		"$SESSION_DOC" 'Ready to close permits uncommitted session-owned changes' || return 1
+	# GH#33829: asks and delivery reports must link what the user has to inspect.
+	require_literal 'objects as clickable URLs' \
+		"$AGENTS_DOC" 'always-loaded What next guidance omits clickable object links' || return 1
+	require_literal '**Link everything the user must look at.**' \
+		"$SESSION_DOC" 'What next rules do not require clickable links' || return 1
+	require_literal "Take URLs from tool output; never guess or hand-build them." \
+		"$SESSION_DOC" 'clickable-link guidance permits guessed URLs' || return 1
 
 	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
 		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2

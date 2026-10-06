@@ -59,10 +59,10 @@
     "elysia": "1.4.30",
     "file-type": "21.3.4",
     "hono": "4.13.11",
-    "vite": "8.3.0"
+    "vite": "8.3.1"
   },
   "devDependencies": {
-    "@secretlint/secretlint-rule-preset-recommend": "13.0.5",
+    "@secretlint/secretlint-rule-preset-recommend": "13.0.6",
     "@types/bun": "1.4.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.2.7",
