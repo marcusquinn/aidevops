@@ -10,6 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.19] - 2026-10-06
+
+### Added
+
+- per-repo Actions availability and local verification
+- bounded metrics ledger retention (#33772)
+- authorize exact owner-signed SSH alias commands (#33766)
+
+### Changed
+
+- Maintenance: mark t18599 complete (pr:#33822 completed:2026-10-06) (#33820)
+- Maintenance: adopt reviewed actions group updates (supersedes #33808) (#33819)
+- Maintenance: mark t18595 complete (pr:#33807 completed:2026-10-06) (#33814)
+- Documentation: add read-only PHP server administration agent (#33686)
+
+### Fixed
+
+- concurrent planning-publication reconcile no longer fails silently (GH#33821)
+- ignore unused malformed runner class config (#33803)
+- one failed task issue creation no longer skips publication and ref sync (GH#33809)
+- bound repeated CI-drift rebases (GH#33794) (#33807)
+- include LAUNCH.md in new plugin customization (#33801)
+- promote OpenCode 1.18.34 compatibility
+- re-run cancelled workflow checks once, escalate once (GH#33780) (#33792)
+- reconcile exclusive Linux pulse schedulers (#33782)
+- bound merge GitHub read admission recovery (#33774)
+- share automatic capacity across co-located runners (GH#33770) (#33771)
+
 ## [3.38.18] - 2026-10-06
 
 ### Changed
