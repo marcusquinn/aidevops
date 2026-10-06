@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -94,9 +95,17 @@ def grant_path(repository: str, argv: list[str]) -> Path:
 
 
 def _read_public_file(path: Path) -> bytes:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
-        raise ValueError("SSH approval file is missing or unsafe")
-    return path.read_bytes()
+    # Open once without following leaf symlinks, then inspect that same descriptor.
+    # NONBLOCK prevents a replaced FIFO from hanging the offline verifier.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+            raise ValueError("SSH approval file is missing or unsafe")
+        raw = source.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("SSH approval file grew beyond its size limit")
+    return raw
 
 
 def authorized_binding(argv: list[str], cwd: str) -> dict[str, Any]:
