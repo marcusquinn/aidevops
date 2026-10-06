@@ -196,6 +196,17 @@ stub_advisory_companion_check() {
 	return 0
 }
 
+stub_pull_head() {
+	if [[ "$SNAPSHOT_MODE" == "new_head" ]]; then
+		printf '%s\n' '{"head":{"sha":"sha-new"},"base":{"ref":"main"}}'
+	elif [[ "$SNAPSHOT_MODE" == "human_required_slash" ]]; then
+		printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"release/1.x"}}'
+	else
+		printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"main"}}'
+	fi
+	return 0
+}
+
 gh() {
 	local command="$1"
 	local endpoint="${2:-}"
@@ -215,13 +226,8 @@ gh() {
 		printf '{"head_sha":"%s","status":"completed","conclusion":"%s","run_attempt":%s}\n' "$CANCELLED_RUN_SHA" "${CANCELLED_RUN_CONCLUSION:-cancelled}" "$CANCELLED_RUN_ATTEMPT"
 		;;
 	repos/owner/repo/pulls/7)
-		if [[ "$SNAPSHOT_MODE" == "new_head" ]]; then
-			printf '%s\n' '{"head":{"sha":"sha-new"},"base":{"ref":"main"}}'
-		elif [[ "$SNAPSHOT_MODE" == "human_required_slash" ]]; then
-			printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"release/1.x"}}'
-		else
-			printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"main"}}'
-		fi
+		stub_pull_head
+		return $?
 		;;
 	repos/owner/repo/rules/branches/*)
 		printf '%s|%s|%s\n' "${AIDEVOPS_GH_QUOTA_COST:-}" \
