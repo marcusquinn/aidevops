@@ -38,6 +38,12 @@ _prefetch_batch_refresh() {
 	if [[ "$_batch_rc" -eq 124 ]]; then
 		printf '[pulse-wrapper] prefetch_batch_refresh timed out after %ss (non-fatal)\n' \
 			"$_batch_timeout" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	elif [[ "$_batch_rc" -eq 0 ]]; then
+		# GH#33737: this is the same refresh pulse-cache-prime.sh runs. Mark the
+		# caches warm so the next cycle's stale-gated prime skips; otherwise
+		# cycles longer than the prime max age re-prime (800s+) every cycle.
+		mkdir -p "${HOME}/.aidevops/cache" 2>/dev/null &&
+			date -u +'%Y-%m-%dT%H:%M:%SZ' >"${HOME}/.aidevops/cache/pulse-cache-prime-last-run" 2>/dev/null || true
 	fi
 	# Parse counters for health instrumentation (t2830: also parses tickle counters)
 	local _batch_search_calls=0 _batch_cache_writes=0
