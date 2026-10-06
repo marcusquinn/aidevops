@@ -525,7 +525,7 @@ _archive_metrics_segment() {
 	fi
 	if gzip -c "$staged" >"$tmp_archive" 2>/dev/null; then
 		if mv "$tmp_archive" "$archive_path" 2>/dev/null; then
-			rm -f "$staged" || true
+			rm -f "$staged" || echo "[pulse-wrapper] metrics: staged cleanup failed; retry may duplicate ${staged}" >>"$WRAPPER_LOGFILE"
 			echo "[pulse-wrapper] metrics: archived ${staged} to ${archive_path}" >>"$WRAPPER_LOGFILE"
 		else
 			rm -f "$tmp_archive"
@@ -602,6 +602,21 @@ _prune_metrics_archive() {
 	return 0
 }
 
+# Only Pulse owns these temporary outputs. Their original staged/hot inputs
+# survive until publication, so crash-left partial gzip files can be removed.
+_cleanup_metrics_archive_temps() {
+	local tmp_archive=""
+	for tmp_archive in "${PULSE_METRICS_ARCHIVE_DIR}"/.metrics-archive-* "${PULSE_METRICS_ARCHIVE_DIR}"/.cycle-archive-*; do
+		[[ -f "$tmp_archive" ]] || continue
+		if rm -f "$tmp_archive"; then
+			echo "[pulse-wrapper] metrics: removed interrupted temporary archive ${tmp_archive}" >>"$WRAPPER_LOGFILE"
+		else
+			echo "[pulse-wrapper] metrics: temporary archive cleanup failed for ${tmp_archive}" >>"$WRAPPER_LOGFILE"
+		fi
+	done
+	return 0
+}
+
 #######################################
 # rotate_pulse_log — hot/cold log sharding (t1886)
 #
@@ -658,6 +673,7 @@ rotate_pulse_log() {
 		fi
 	fi
 
+	_cleanup_metrics_archive_temps
 	_rotate_metrics_jsonl "${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}" "headless-runtime-metrics"
 	_rotate_metrics_jsonl "${AIDEVOPS_RESOURCE_METRICS_FILE:-${HOME}/.aidevops/logs/resource-metrics.jsonl}" "resource-metrics"
 	_prune_metrics_archive
@@ -875,6 +891,7 @@ _prune_cycle_index() {
 		echo "[pulse-wrapper] cycle index: archive directory unavailable; skipping prune" >>"$WRAPPER_LOGFILE"
 		return 0
 	fi
+	_cleanup_metrics_archive_temps
 	tmp_archive=$(mktemp "${PULSE_METRICS_ARCHIVE_DIR}/.cycle-archive-XXXXXX") || {
 		echo "[pulse-wrapper] cycle index: archive mktemp failed; skipping prune" >>"$WRAPPER_LOGFILE"
 		return 0
@@ -882,7 +899,10 @@ _prune_cycle_index() {
 	ts=$(date -u +%Y%m%d-%H%M%S)
 	archive_path="${PULSE_METRICS_ARCHIVE_DIR}/pulse-cycle-index-${ts}.jsonl.gz"
 	[[ ! -e "$archive_path" ]] || archive_path="${PULSE_METRICS_ARCHIVE_DIR}/pulse-cycle-index-${ts}-$$-${tmp_archive##*-}.jsonl.gz"
-	if ! (set -o pipefail; head -n "$excess" "$PULSE_CYCLE_INDEX_FILE" | gzip -c >"$tmp_archive") ||
+	if ! (
+		set -o pipefail
+		head -n "$excess" "$PULSE_CYCLE_INDEX_FILE" | gzip -c >"$tmp_archive"
+	) ||
 		! mv "$tmp_archive" "$archive_path" 2>/dev/null; then
 		rm -f "$tmp_archive"
 		echo "[pulse-wrapper] cycle index: archiving failed; skipping prune" >>"$WRAPPER_LOGFILE"
@@ -898,6 +918,7 @@ _prune_cycle_index() {
 	else
 		rm -f "$tmp_index"
 		echo "[pulse-wrapper] cycle index: swap failed; retaining hot rows and archive" >>"$WRAPPER_LOGFILE"
+		return 0
 	fi
 	_prune_metrics_archive
 	return 0

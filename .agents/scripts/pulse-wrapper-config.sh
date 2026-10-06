@@ -476,7 +476,7 @@ PULSE_LOG_ARCHIVE_DIR="${PULSE_LOG_ARCHIVE_DIR:-${HOME}/.aidevops/logs/pulse-arc
 PULSE_CYCLE_INDEX_FILE="${PULSE_CYCLE_INDEX_FILE:-${HOME}/.aidevops/logs/pulse-cycle-index.jsonl}"
 PULSE_CYCLE_INDEX_MAX_LINES="${PULSE_CYCLE_INDEX_MAX_LINES:-10000}" # ~10k cycles ≈ ~14 days at 2-min intervals
 PULSE_METRICS_ARCHIVE_DIR="${PULSE_METRICS_ARCHIVE_DIR:-${HOME}/.aidevops/logs/metrics-archive}"
-PULSE_METRICS_HOT_MAX_BYTES="${PULSE_METRICS_HOT_MAX_BYTES:-26214400}"   # 25 MiB per ledger
+PULSE_METRICS_HOT_MAX_BYTES="${PULSE_METRICS_HOT_MAX_BYTES:-26214400}"    # 25 MiB per ledger
 PULSE_METRICS_COLD_MAX_BYTES="${PULSE_METRICS_COLD_MAX_BYTES:-524288000}" # 500 MiB combined
 
 # Per-cycle health counters — incremented by merge/cleanup/dispatch functions
