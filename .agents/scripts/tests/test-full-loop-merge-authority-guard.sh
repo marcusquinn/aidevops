@@ -82,6 +82,7 @@ load_functions() {
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
 	extract_function _merge_report_author_lookup_failure
+	extract_function _merge_pr_label_holds_clear
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -113,6 +114,8 @@ export FIXTURE_TRUSTED_ISSUE_SYNC
 AUTHORITY_GUARD_PASS=1
 AUTHORITY_GUARD_FAIL_ON_CALL=0
 FULL_LOOP_MERGE_SUBJECT_FLAG="--subject"
+# cmd_pre_merge_gate resolves its verifier directory from the commit library.
+_FULL_LOOP_COMMIT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 print_error() {
 	local message="$1"
@@ -141,6 +144,23 @@ print_success() {
 _flm_gh_write() {
 	"$@"
 	return $?
+}
+
+# Production reads add bounded admission retry; the stubbed gh is local.
+_merge_with_admission_retry() {
+	"$@"
+	return $?
+}
+
+_flm_gh_read() {
+	"$@"
+	return $?
+}
+
+# Actions-unavailable admin capability has separate coverage; these fixtures
+# exercise the authority guard that follows it.
+_merge_check_admin_capability() {
+	return 0
 }
 
 _merge_run_bounded_write() {
@@ -475,6 +495,26 @@ test_authority_guard() {
 	return 0
 }
 
+# GH#33775: a live PR hold-for-review label holds every merge transport.
+test_hold_for_review_guard() {
+	reset_fixture
+	set_pr_fixture maintainer '[{"name":"hold-for-review"}]' false '[]' ''
+	expect_guard_result "live PR hold-for-review blocks internal maintainer PR" 1
+
+	reset_fixture
+	set_pr_fixture 'dependabot[bot]' '[{"name":"hold-for-review"}]' false '[]' ''
+	FIXTURE_PERMISSION="none"
+	FIXTURE_TRUSTED_DEPENDABOT=1
+	expect_guard_result "live PR hold-for-review blocks trusted Dependabot" 1
+	if [[ ! -s "$TRUSTED_CALLS" && ! -s "$CRYPTO_CALLS" ]]; then
+		print_result "hold-for-review is evaluated before trust exceptions and crypto" 0
+	else
+		print_result "hold-for-review is evaluated before trust exceptions and crypto" 1 \
+			"trusted=$(<"$TRUSTED_CALLS") crypto=$(<"$CRYPTO_CALLS")"
+	fi
+	return 0
+}
+
 test_pre_merge_authority_preflight() {
 	local output=""
 	local actual_rc=0
@@ -515,6 +555,19 @@ test_pre_merge_authority_preflight() {
 		print_result "preflight distinguishes absent external authority targets" 0
 	else
 		print_result "preflight distinguishes absent external authority targets" 1 \
+			"rc=$actual_rc output=$output"
+	fi
+
+	reset_fixture
+	set_pr_fixture external '[{"name":"hold-for-review"}]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_PERMISSION="none"
+	actual_rc=0
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 1 ]] && grep -qF 'hold-for-review' <<<"$output" &&
+		! grep -qF 'aidevops approve' <<<"$output"; then
+		print_result "held PR preflight blocks without offering an approval command" 0
+	else
+		print_result "held PR preflight blocks without offering an approval command" 1 \
 			"rc=$actual_rc output=$output"
 	fi
 
@@ -686,6 +739,7 @@ main() {
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
 	test_authority_guard
+	test_hold_for_review_guard
 	test_pre_merge_authority_preflight
 	test_all_merge_modes_use_guard
 	test_secondary_merge_transports_refresh_authority
