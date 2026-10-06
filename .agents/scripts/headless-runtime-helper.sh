@@ -762,13 +762,7 @@ _execute_run_attempt() {
 	fi
 	_record_run_attempt_stage post_attempt_ownership_verify
 	_record_run_attempt_stage pre_attempt_observers_start
-	prepare_status=0
-	_start_run_attempt_observers || prepare_status=$?
-	if [[ "$prepare_status" -ne 0 ]]; then
-		_report_run_attempt_prelaunch_failure "_start_run_attempt_observers" "$prepare_status" \
-			"worker_observers_start_failed"
-		return "$prepare_status"
-	fi
+	_start_run_attempt_observers
 	_record_run_attempt_stage post_attempt_observers_start
 	_hrw_mark_runtime_launch_started "$session_key" "$runtime"
 	_emit_verbose_checkpoint worker_started \
