@@ -601,14 +601,14 @@ _pulse_restore_pipe_trap() {
 # all pulse processes including subshells AND sidecars on `stop`.
 _pulse_command_is_launcher() {
 	local _command="$1"
-	[[ "$_command" =~ ^[^[:space:]]*[[:space:]]+-[[:alnum:]]*c([[:space:]]|$) ]] || return 1
+	[[ "$_command" =~ ^[^[:space:]]*([[:space:]]+--?[[:alnum:]-]+)*[[:space:]]+-[[:alnum:]]*c[[:alnum:]]*([[:space:]]|$) ]] || return 1
 	return 0
 }
 
 _pulse_parent_is_wrapper() {
 	local _parent_cmd="$1"
 	[[ "$_parent_cmd" =~ pulse-wrapper\.sh ]] || return 1
-	# Shell -c/-lc/-lc... command strings can contain the child's script path.
+	# Shell -c/-lc/-cl or separate -l -c options can mention the child's path.
 	# Actual Bash wrapper subshells retain the script argv, not a -c string.
 	_pulse_command_is_launcher "$_parent_cmd" && return 1
 	return 0

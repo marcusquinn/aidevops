@@ -411,7 +411,15 @@ test_tick_systemd_dead_states_revive_via_systemctl() {
 # including a Bash subshell with inherited wrapper argv. Only test-owned PIDs
 # are spawned/terminated; the real pulse is never touched.
 test_cron_wrapper_liveness() {
-	local stub_home="$TEST_DIR/cron-lock" wrapper="" launcher="" pid="" child="" attempt=0 rc=0 pids=""
+	local mode="$1"
+	local stub_home="$TEST_DIR/cron-lock-$mode" wrapper="" launcher="" pid="" child="" attempt=0 rc=0 pids=""
+	local launcher_args=()
+	case "$mode" in
+	sh-c) launcher_args=(sh -c) ;;
+	bash-lc) launcher_args=(bash --noprofile -lc) ;;
+	bash-cl) launcher_args=(bash --noprofile -cl) ;;
+	bash-split) launcher_args=(bash --noprofile -l -c) ;;
+	esac
 	_setup_tick_env "$stub_home" "dead"
 	wrapper="$stub_home/.aidevops/agents/scripts/pulse-wrapper.sh"
 	mkdir -p "$stub_home/.aidevops/logs/pulse-wrapper.lockdir"
@@ -427,7 +435,7 @@ trap 'kill "$child" 2>/dev/null || true' EXIT
 wait "$child"
 STUB
 	# Keep the -c launcher alive rather than allowing the shell to exec Bash.
-	HOME="$stub_home" sh -c 'bash "$1" & wait' cron-launcher "$wrapper" &
+	HOME="$stub_home" "${launcher_args[@]}" "bash \"\$1\" & wait" cron-launcher "$wrapper" &
 	launcher=$!
 	MOCK_PIDS+=("$launcher")
 	for ((attempt = 0; attempt < 30; attempt++)); do
@@ -449,7 +457,7 @@ STUB
 	HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
 		AIDEVOPS_PULSE_PROCESS_PATTERN="${wrapper//./\\.}" \
 		bash "$REPO_ROOT/.agents/scripts/pulse-lifecycle-helper.sh" is-running || rc=1
-	print_result "test_cron_discovery_excludes_launcher_and_subshell" "$rc" "expected PID=$pid, got '$pids'"
+	print_result "test_${mode}_discovery_excludes_launcher_and_subshell" "$rc" "expected PID=$pid, got '$pids'"
 	# An age of 1900s reproduces the reported long-cycle false-death condition.
 	printf '%s\n' "$(($(date +%s) - 1900))" >"$stub_home/.aidevops/logs/pulse-wrapper-last-run.ts"
 	local mock_bin="" tick=0
@@ -461,8 +469,18 @@ STUB
 	[[ ! -s "$stub_home/.aidevops/logs/systemctl-invocations.log" && \
 		! -s "$stub_home/.aidevops/logs/stub-helper-invocations.log" && \
 		! -s "$stub_home/.aidevops/logs/pulse-watchdog.log" ]] || rc=1
-	print_result "test_live_lock_old_stamp_no_revival_or_log" "$rc"
+	print_result "test_${mode}_live_lock_old_stamp_no_revival_or_log" "$rc"
+	# A launcher mentioning the wrapper is not a valid lock owner either.
+	printf '%s\n' "$launcher" >"$stub_home/.aidevops/logs/pulse-wrapper.lockdir/pid"
+	PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
+		bash "$TICK_SH"
+	if grep -q 'start aidevops-supervisor-pulse.service' "$stub_home/.aidevops/logs/systemctl-invocations.log"; then
+		print_result "test_${mode}_launcher_lock_pid_does_not_block_revival" 0
+	else
+		print_result "test_${mode}_launcher_lock_pid_does_not_block_revival" 1
+	fi
 	# Reused PID belongs to this test runner, not a wrapper: must still revive.
+	: >"$stub_home/.aidevops/logs/systemctl-invocations.log"
 	printf '%s\n' "$$" >"$stub_home/.aidevops/logs/pulse-wrapper.lockdir/pid"
 	PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
 		bash "$TICK_SH"
@@ -527,7 +545,10 @@ main() {
 	test_tick_disable_flag
 	test_tick_systemd_active_states_no_revive
 	test_tick_systemd_dead_states_revive_via_systemctl
-	test_cron_wrapper_liveness
+	test_cron_wrapper_liveness sh-c
+	test_cron_wrapper_liveness bash-lc
+	test_cron_wrapper_liveness bash-cl
+	test_cron_wrapper_liveness bash-split
 	test_revival_episode_logging
 
 	echo
