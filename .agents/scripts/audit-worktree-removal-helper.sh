@@ -1463,7 +1463,8 @@ _archive_worktree_path_recoverably_under_lock() {
 	mv "$completion_marker_tmp" "${recovery_dir}/${_WT_RECOVERY_COMPLETE_MARKER}" || return 1
 	# Scheduling telemetry is best-effort and never weakens archive validation.
 	if [[ "$recovery_root_real" == "${HOME}/.aidevops/recovery/worktrees" ]]; then
-		python3 "$(dirname "${BASH_SOURCE[0]}")/worktree_recovery_size_index.py" \
+		_worktree_recovery_run_before_epoch "$(($(date +%s) + 2))" \
+			python3 "$(dirname "${BASH_SOURCE[0]}")/worktree_recovery_size_index.py" \
 			record "$recovery_bucket" --budget 2 >/dev/null 2>&1 || true
 	fi
 	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||

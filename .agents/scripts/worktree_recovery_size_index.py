@@ -159,8 +159,8 @@ def main():
         except (OSError, ValueError):
             # Advisory-index failure must not stop the guarded maintenance path.
             sizes = dict.fromkeys(paths)
-        paths.sort(key=lambda path: (
-            -(sizes[path]["bytes"] if sizes[path] else -1), str(path)))
+        # Stable ties retain the producer inventory order, including no-index fallback.
+        paths.sort(key=lambda path: -(sizes[path]["bytes"] if sizes[path] else -1))
         offset = args.offset % len(paths)
         for path in paths[offset:] + paths[:offset]:
             print(path)

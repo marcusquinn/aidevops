@@ -2538,7 +2538,7 @@ test_automatic_maintenance_preserves_bucket_when_exact_size_is_unavailable() {
 		.diagnostics.cursor_before == 0 and .diagnostics.cursor_after == 0 and
 		.diagnostics.coverage_complete == true and
 		.diagnostics.reason_counts.unknown_sizing == 1 and
-		.diagnostics.classification_reason_counts.sizing_unavailable == 1
+		.diagnostics.classification_reason_counts.sizing_timeout == 1
 	' >/dev/null || rc=1
 	[[ -d "$bucket_path" ]] || rc=1
 	print_result "automatic_maintenance_preserves_bucket_when_exact_size_is_unavailable" "$rc" \

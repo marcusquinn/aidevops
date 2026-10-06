@@ -197,6 +197,7 @@ _worktree_recovery_maintenance_pressure_json() {
 	local reason="none"
 	local indexed=""
 	local size_source="unavailable"
+	local index_deadline=0
 
 	aidevops_disk_capacity_snapshot "$recovery_root" || return 1
 	if [[ "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB" -lt "$minimum_free_kb" ]]; then
@@ -208,7 +209,9 @@ _worktree_recovery_maintenance_pressure_json() {
 	fi
 	# Report bytes even under filesystem pressure. Cached hints do not replace
 	# exact candidate sizing, and an incomplete index never claims a full total.
-	indexed=$(python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+	index_deadline=$(($(date +%s) + (aggregate_timeout_tenths + 9) / 10)) || return 1
+	indexed=$(_worktree_recovery_run_before_epoch "$index_deadline" \
+		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
 		snapshot "$recovery_root" --budget "$((aggregate_timeout_tenths / 10))") || indexed='{}'
 	store_bytes=$(printf '%s\n' "$indexed" | jq -r '.store_bytes // "null"') || return 1
 	if [[ "$store_bytes" =~ ^[0-9]+$ ]]; then
@@ -269,9 +272,33 @@ _worktree_recovery_maintenance_order_inventory() {
 	local ordered_path="$2"
 	local offset="$3"
 
-	python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
-		order "$inventory_path" --offset "$offset" >"$ordered_path"
-	return $?
+	if ! _worktree_recovery_run_before_epoch "$WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_EPOCH" \
+		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+		order "$inventory_path" --offset "$offset" >"$ordered_path"; then
+		# Hints are optional; discard partial output and preserve inventory coverage.
+		cp "$inventory_path" "$ordered_path" || return 1
+	fi
+	return 0
+}
+
+_worktree_recovery_maintenance_rotate_inventory() {
+	local inventory_path="$1"
+	local ordered_path="$2"
+	local offset="$3"
+	local index=0
+	local raw_record=""
+
+	: >"$ordered_path" || return 1
+	while IFS= read -r raw_record; do
+		[[ "$index" -lt "$offset" ]] || printf '%s\n' "$raw_record" >>"$ordered_path" || return 1
+		index=$((index + 1))
+	done <"$inventory_path"
+	index=0
+	while IFS= read -r raw_record; do
+		[[ "$index" -ge "$offset" ]] || printf '%s\n' "$raw_record" >>"$ordered_path" || return 1
+		index=$((index + 1))
+	done <"$inventory_path"
+	return 0
 }
 
 _worktree_recovery_maintenance_zero_reason_counts_json() {
@@ -872,7 +899,8 @@ _worktree_recovery_maintenance_scan() {
 		fi
 		bytes=$(printf '%s\n' "$entry_json" | jq -r '.expected_allocated_bytes') || return 1
 		[[ "$bytes" =~ ^[0-9]+$ ]] || return 1
-		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+		_worktree_recovery_run_before_epoch "$deadline_epoch" \
+			python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
 			record "$bucket_path" --bytes "$bytes" >/dev/null 2>&1 || true
 		_worktree_recovery_maintenance_select_candidate "$entry_json" "$bytes" "$selected_path" \
 			"$max_candidates" "$max_bytes" "$retention_seconds" "$pressure_active" "$reasons_path" || return 1
@@ -1142,8 +1170,9 @@ _worktree_recovery_maintenance_prepare_selection() {
 		cycle_remaining=$((bucket_count - WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_SCANNED))
 		[[ "$scan_limit" -le "$cycle_remaining" ]] || scan_limit="$cycle_remaining"
 	fi
-	if ! _worktree_recovery_maintenance_order_inventory "$inventory_path" "$ordered_path" "$offset" ||
-		! _worktree_recovery_maintenance_scan "$ordered_path" "$selected_path" "$scan_limit" \
+	# Rotate the exact sorted snapshot whose digest was recorded, not fresh hints.
+	if ! _worktree_recovery_maintenance_rotate_inventory "$ordered_path" "$inventory_path" "$offset" ||
+		! _worktree_recovery_maintenance_scan "$inventory_path" "$selected_path" "$scan_limit" \
 			"$max_candidates" "$max_bytes" "$retention_seconds" "$pressure_active" "$reasons_path" \
 			"$deadline_seconds" "$WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_EPOCH"; then
 		_worktree_recovery_maintenance_cleanup_selection_temp_files || true
@@ -1262,7 +1291,8 @@ _worktree_recovery_maintenance_finalize_pending() {
 	jq -e '.complete == true' "$receipt_path" >/dev/null 2>&1 || return 1
 	# Covers both new and resumed cache/archive transactions. Rebuild hints on
 	# the next census instead of retaining pre-prune sizes for another day.
-	python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+	_worktree_recovery_run_before_epoch "$(($(date +%s) + 2))" \
+		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
 		invalidate-plan "$plan_path" >/dev/null 2>&1 || true
 	plan_id=$(jq -r '.plan_id' "$plan_path") || return 1
 	[[ "$plan_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
