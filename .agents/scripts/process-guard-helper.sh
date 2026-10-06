@@ -582,11 +582,7 @@ cmd_kill_runaways() {
 			echo "Killing PID $pid ($cmd_base) — $violation"
 			printf '[process-guard] %s action=kill pid=%s ppid=%s class=%s cmd=%s rss_mb=%s age_seconds=%s runtime_limit_seconds=%s cgroup=%s reason=%s\n' \
 				"$killed_at" "$pid" "$ppid" "$process_class" "$cmd_base" "$rss_mb" "$age_seconds" "$runtime_limit" "$cgroup_path" "$violation" >>"$LOGFILE"
-			kill "$pid" 2>/dev/null || true
-			sleep 1
-			if kill -0 "$pid" 2>/dev/null; then
-				kill -9 "$pid" 2>/dev/null || true
-			fi
+			_terminate_runaway_pid "$pid"
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
@@ -597,6 +593,18 @@ cmd_kill_runaways() {
 		printf '[process-guard] %s Killed %s process(es), freed ~%sMB\n' "$(_process_guard_timestamp)" "$killed" "$total_freed_mb" >>"$LOGFILE"
 	else
 		echo "No runaway processes found"
+	fi
+	return 0
+}
+
+# Preserve the existing generic runaway termination policy independently of
+# historical test-server attribution and whole-group cleanup.
+_terminate_runaway_pid() {
+	local pid="$1"
+	kill "$pid" 2>/dev/null || true
+	sleep 1
+	if kill -0 "$pid" 2>/dev/null; then
+		kill -9 "$pid" 2>/dev/null || true
 	fi
 	return 0
 }
