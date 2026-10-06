@@ -1293,18 +1293,28 @@ _worktree_recovery_maintenance_pending_failed() {
 	local pending_dir="${state_dir}/pending"
 	local retry_path="${pending_dir}/resume-failures.json"
 	local attempts=0
+	local preserve_retry=false
 	local payload="" destination="" temp_path=""
 
 	[[ -d "$pending_dir" && ! -L "$pending_dir" && ! -L "$retry_path" ]] || return 1
 	if [[ -e "$retry_path" ]]; then
-		attempts=$(jq -er '.attempts | select(type == "number" and . >= 0 and . <= 3 and floor == .)' "$retry_path") || return 1
+		[[ -f "$retry_path" ]] || return 1
+		if ! attempts=$(jq -er --arg number_type "$WORKTREE_RECOVERY_MAINTENANCE_JSON_NUMBER_TYPE" \
+			'.attempts | select(type == $number_type and . >= 0 and . <= 3 and floor == .)' "$retry_path"); then
+			# Corrupt auxiliary metadata must not become another permanent blocker.
+			attempts=3
+			preserve_retry=true
+			reason="invalid-resume-retry-metadata"
+		fi
 	fi
 	[[ "$attempts" -ge 3 ]] || attempts=$((attempts + 1))
 	payload=$(jq -cn --arg reason "$reason" --argjson attempts "$attempts" \
 		--arg outcome "$WORKTREE_RECOVERY_MAINTENANCE_FAILED_OUTCOME" \
 		'{schema:"aidevops.worktree-recovery-resume-failures/v1",outcome:$outcome,stage:"resume-pending",reason:$reason,attempts:$attempts}') || return 1
-	temp_path=$(mktemp "${pending_dir}/.resume-failures.XXXXXX") || return 1
-	printf '%s\n' "$payload" >"$temp_path" && mv -f "$temp_path" "$retry_path" || return 1
+	if [[ "$preserve_retry" == false ]]; then
+		temp_path=$(mktemp "${pending_dir}/.resume-failures.XXXXXX") || return 1
+		printf '%s\n' "$payload" >"$temp_path" && mv -f "$temp_path" "$retry_path" || return 1
+	fi
 	[[ "$attempts" -ge 3 ]] || return 1
 	[[ ! -L "${state_dir}/quarantined" ]] || return 1
 	mkdir -p "${state_dir}/quarantined" || return 1
@@ -1314,7 +1324,7 @@ _worktree_recovery_maintenance_pending_failed() {
 	mv "$pending_dir" "${destination}/transaction" || return 1
 	jq -cn --arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
 		--arg receipt "${destination}/receipt.json" --arg reason "$reason" \
-		'{schema:$schema,outcome:"pending-quarantined",stage:"resume-pending",reason:$reason,attempts:3,receipt:$receipt,reclaimed_bytes:0}'
+		'{schema:$schema,outcome:"pending-quarantined",stage:"resume-pending",reason:$reason,attempts:3,receipt:$receipt,reclaimed_bytes:0}' || return 1
 	return 0
 }
 
@@ -1349,13 +1359,15 @@ _worktree_recovery_maintenance_resume_pending() {
 	*) WORKTREE_RECOVERY_MAINTENANCE_RESUME_REASON="unsupported-pending-schema"; return 1 ;;
 	esac
 	WORKTREE_RECOVERY_MAINTENANCE_RESUME_REASON="pending-receipt-invalid"
-	reclaimed_bytes=$(jq -r '.observed_allocated_bytes' "$receipt_path") || return 1
+	reclaimed_bytes=$(jq -er --arg number_type "$WORKTREE_RECOVERY_MAINTENANCE_JSON_NUMBER_TYPE" \
+		'.observed_allocated_bytes | select(type == $number_type and . >= 0)' "$receipt_path") || return 1
 	WORKTREE_RECOVERY_MAINTENANCE_RESUME_REASON="pending-finalize-failed"
 	completed_dir=$(_worktree_recovery_maintenance_finalize_pending "$state_dir") || return 1
+	WORKTREE_RECOVERY_MAINTENANCE_RESUME_REASON="pending-result-failed"
 	jq -cn --arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
 		--arg outcome "$outcome" --arg receipt "${completed_dir}/receipt.json" \
 		--argjson reclaimed_bytes "$reclaimed_bytes" \
-		'{schema:$schema,outcome:$outcome,reclaimed_bytes:$reclaimed_bytes,receipt:$receipt}'
+		'{schema:$schema,outcome:$outcome,reclaimed_bytes:$reclaimed_bytes,receipt:$receipt}' || return 1
 	return 0
 }
 
@@ -1593,19 +1605,28 @@ worktree_recovery_maintenance_run() {
 	command -v jq >/dev/null 2>&1 || { _worktree_recovery_maintenance_failed dependency jq-unavailable; return 1; }
 	if [[ "${AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_ENABLED:-1}" != "1" ]]; then
 		jq -cn --arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
-			'{schema:$schema,outcome:"disabled",reclaimed_bytes:0}'
+			'{schema:$schema,outcome:"disabled",reclaimed_bytes:0}' || {
+			_worktree_recovery_maintenance_failed result disabled-result-failed
+			return 1
+		}
 		return 0
 	fi
 	platform=$(uname -s 2>/dev/null) || { _worktree_recovery_maintenance_failed platform uname-failed; return 1; }
 	if [[ "$platform" == "$_WT_PLATFORM_DARWIN" || -n "${AIDEVOPS_WORKTREE_TRASH_ROOT:-${AIDEVOPS_ORPHAN_TRASH_ROOT:-}}" ]]; then
 		jq -cn --arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
-			'{schema:$schema,outcome:"joint-store-skipped",reclaimed_bytes:0}'
+			'{schema:$schema,outcome:"joint-store-skipped",reclaimed_bytes:0}' || {
+			_worktree_recovery_maintenance_failed result skipped-result-failed
+			return 1
+		}
 		return 0
 	fi
 	state_dir=$(_worktree_recovery_maintenance_state_dir) || { _worktree_recovery_maintenance_failed state-dir invalid-state-directory; return 1; }
 	_worktree_recovery_maintenance_acquire_lock "$state_dir" || {
 		jq -cn --arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
-			'{schema:$schema,outcome:"maintenance-lock-held",reclaimed_bytes:0}'
+			'{schema:$schema,outcome:"maintenance-lock-held",reclaimed_bytes:0}' || {
+			_worktree_recovery_maintenance_failed result lock-result-failed
+			return 1
+		}
 		return 0
 	}
 	if _worktree_recovery_maintenance_resume_pending "$state_dir"; then
@@ -1623,7 +1644,10 @@ worktree_recovery_maintenance_run() {
 	recovery_root=$(_worktree_recovery_store_root "$platform") || run_status=1
 	if [[ "$run_status" -eq 0 && ! -d "$recovery_root" ]]; then
 		jq -cn --arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
-			'{schema:$schema,outcome:"store-absent",reclaimed_bytes:0}'
+			'{schema:$schema,outcome:"store-absent",reclaimed_bytes:0}' || {
+			_worktree_recovery_maintenance_failed result absent-store-result-failed
+			return 1
+		}
 		_worktree_recovery_maintenance_release_lock || { _worktree_recovery_maintenance_failed lock-release owner-lock-release-failed; return 1; }
 		return 0
 	fi

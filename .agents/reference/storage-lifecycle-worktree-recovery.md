@@ -19,8 +19,9 @@ mode-0600 receipt recording the reason and attempt count, then continues fresh
 selection. Quarantine never deletes archives, reservations, completion files,
 or retention-trash journals, and does not grant new apply authority. Existing
 identity, journal, and lock checks still protect unfinished archive operations.
-Symlinked pending directories or retry metadata and unreadable/invalid retry
-records fail closed rather than being followed or overwritten. Inspect retained
+Symlinked pending directories or retry metadata and non-regular retry files
+fail closed rather than being followed or overwritten. Invalid regular retry
+records exhaust the budget and are preserved unchanged in quarantine. Inspect retained
 quarantine receipts locally; repair requires the original plan and evidence.
 
 Recoverable worktree archives are coupled safety snapshots rather than generic
