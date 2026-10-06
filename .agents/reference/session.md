@@ -30,12 +30,13 @@ screen alone. Headless workers skip it.
 **What next**
 - **Session:** <aim in plain words, ≤15> — <Active | Blocked | Done>
 - **Needed from you:** <None | numbered asks below>
-  1. <yes/no question about a named object>? — <URL of that object>
+  1. **<yes/no question about a named object>?** — <URL of that object>
      - **y** = <effect> · n = <effect>
-  2. <choice question>? — <URL of what to review>
+  2. **<choice question>?** — <URL of what to review>
      - **a)** <option> · b) <option> · c) <option>
-  3. <value only you know> (explicit)
-     - reply `3: <value>`
+  3. **<human-only action or value only you know>** (explicit)
+     - **Steps:** numbered sub-list per Human Action Steps below
+     - reply `3 done` or `3: <value>`
 - **Left to capture:** <None | uncaptured work, its exact location (linked), and why it remains>
 - **Close:** <Ready to close — start `/new` for your next task | Not yet: <reason> | Blocked on #N <URL>; resume via #R <URL>>
 - **Reply:** e.g. `1y 2b 3: <value>` · `ok` = all bold defaults · or plain text
@@ -112,7 +113,7 @@ Example (work merged; only a publication decision remains):
 **What next**
 - **Session:** add CSV export to reports — Done
 - **Needed from you:**
-  1. Publish a patch release containing PR #123? (explicit, optional) — https://github.com/<owner>/<repo>/pull/123
+  1. **Publish a patch release containing PR #123?** (explicit, optional) — https://github.com/<owner>/<repo>/pull/123
      - y = release now · no reply = ships with the next release
 - **Left to capture:** None
 - **Close:** Ready to close — start `/new` for your next task
@@ -127,10 +128,13 @@ Example (work merged; only a publication decision remains):
   (at most 4 mutually exclusive, self-contained options of ≤10 words; add a
   lettered "both"/"neither" option instead of expecting prose); value
   `N: <value>` with a concrete placeholder.
-- Put the question on the numbered line and the answer options on their own
-  nested bullet directly below it, never inline at the end of a long sentence.
-  Pair each option with its effect (`**y** = merge now · n = close PR #123`);
-  keep the question to one short sentence.
+- Put the question on the numbered line in **bold** and the answer options on
+  their own nested bullet directly below it, never inline at the end of a long
+  sentence. Pair each option with its effect (`**y** = merge now · n = close
+  PR #123`); keep the question to one short sentence. Never bury an ask in a
+  paragraph: the rendered TUI transcript must show it as its own list item.
+- An ask the user must carry out (account, billing, permission, secret,
+  external-platform setting, physical action) includes Human Action Steps.
 - Name the concrete object (`PR #123`, `issue #45`, file path), never "this" or
   "the above", link it, and state the effect of each answer when it is not
   obvious. When the decision depends on a specific diff, line, comment or
@@ -172,6 +176,40 @@ click, so they never spend a turn asking for links or searching.
   identifier plus the command that resolves it; never fabricate a link.
 - Private repository URLs are fine in local chat; keep them out of public
   GitHub content per `reference/pre-push-guards.md`.
+
+### Human Action Steps
+
+When only the user can act, especially on another site or platform, never
+describe the task in prose. Nest short numbered steps under the ask so the user
+can follow them without knowing where the setting lives:
+
+```markdown
+  2. **Add the `DEPLOY_TOKEN` secret for <owner>/<repo>?** (explicit)
+     - **Steps:**
+       1. Open <deepest verified URL>
+       2. Go to **Settings › Secrets and variables › Actions**
+       3. Click **New repository secret**; name `DEPLOY_TOKEN`; paste the token
+       4. Click **Add secret**
+     - **Done when:** reply `2 done`; I verify with `gh secret list --repo <owner>/<repo>`
+```
+
+- **One action per step**, imperative, ≤15 words, in the order performed.
+- **Direct link first.** Start with the deepest URL that lands on the right
+  page, taken from tool output, repo files, or provider docs read in this
+  session. If no deep link is verified, use the verified entry URL and
+  rely on the navigation path; never guess a deep link.
+- **Navigation path** in bold with `›` separators, using the platform's exact
+  menu, tab and button labels (**Settings › Billing › Payment methods**).
+  Name the account, org, project or environment when there is more than one.
+- **Markdown that stands out in the TUI:** bold for UI labels and buttons,
+  code spans for values to type or paste, commands, names and file paths;
+  nested numbered lists for steps. No tables or headings inside the What next
+  block; they break the list.
+- **Never put secrets in steps.** Name where to obtain the value and where to
+  store it (`aidevops secret set NAME` in a separate terminal); never ask the
+  user to paste it into chat. See `reference/secret-handling.md`.
+- **Done when** states the reply that completes the ask and how the agent
+  verifies it; run that verification before reporting the step complete.
 
 ### Capture Check (after a full loop or before `Ready to close`)
 
@@ -230,7 +268,7 @@ the recorded next safe action. Do not substitute a progress explanation for that
 execution solely because context is low.
 
 For a human-only gate, leave one durable handoff that states the exact action, where
-to take it, what it unblocks, and how delivery will be verified. Say that no user
+to take it (as Human Action Steps), what it unblocks, and how delivery will be verified. Say that no user
 action is required only when a named live executor owns continuation; never imply
 background progress without that executor. Do not repeat short-lived approval or
 recovery commands after they expire.

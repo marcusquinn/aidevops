@@ -101,6 +101,15 @@ main() {
 		"$SESSION_DOC" 'What next rules do not require clickable links' || return 1
 	require_literal "Take URLs from tool output; never guess or hand-build them." \
 		"$SESSION_DOC" 'clickable-link guidance permits guessed URLs' || return 1
+	# GH#33834: human-only asks need linked, navigable, rendered steps.
+	require_literal 'human actions as linked steps' \
+		"$AGENTS_DOC" 'always-loaded What next guidance omits human action steps' || return 1
+	for step_rule in '### Human Action Steps' '**Direct link first.**' \
+		'**Navigation path** in bold' '**Markdown that stands out in the TUI:**' \
+		'**Never put secrets in steps.**'; do
+		require_literal "$step_rule" "$SESSION_DOC" \
+			"human action steps omit: $step_rule" || return 1
+	done
 
 	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
 		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2
