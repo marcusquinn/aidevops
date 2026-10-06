@@ -62,6 +62,7 @@ main() {
 	test_local_admission_gate_failure_reports_retry_deadline
 	test_post_verification_read_admission_window
 	test_bounded_local_admission_recovery
+	test_final_head_sha_read_admission_recovery
 	test_local_deferral_survives_context_resolution
 	test_exact_check_deferral_preserves_retry_deadline
 	test_auto_review_required_interactive_admin_fallback
