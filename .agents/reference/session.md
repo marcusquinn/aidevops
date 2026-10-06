@@ -13,7 +13,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers). Long-r
 
 - Run `/session-review` before ending.
 - Suggest a new session after PR merge, domain switch, or 3+ hours.
-- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets, and finish with the What Next block below.
+- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets, and finish with the What Next block below. Each delivery bullet links its evidence (PR, issue, commit, file, preview) per Clickable Evidence Links below.
 - Leave linked-worktree removal and other deferred cleanup to the guarded post-exit routines. Do not attempt that cleanup, and never turn it into a user task: a guarded-removal refusal or a command-policy block on deletion is not a reason to ask the user to clean up.
 - If cleanup is worth mentioning, use one closing line that explains what happens and makes clear nothing is needed, for example: `Cleanup: the worktree is removed automatically by a routine after this session closes; no action needed.` Omit lifecycle tokens, marker files, and retention details.
 - Present cleanup as a user action only for failures that require it or that put unpublished work at risk; then state the evidence and the exact action.
@@ -30,14 +30,14 @@ screen alone. Headless workers skip it.
 **What next**
 - **Session:** <aim in plain words, ≤15> — <Active | Blocked | Done>
 - **Needed from you:** <None | numbered asks below>
-  1. <yes/no question about a named object>?
+  1. <yes/no question about a named object>? — <URL of that object>
      - **y** = <effect> · n = <effect>
-  2. <choice question>?
+  2. <choice question>? — <URL of what to review>
      - **a)** <option> · b) <option> · c) <option>
   3. <value only you know> (explicit)
      - reply `3: <value>`
-- **Left to capture:** <None | uncaptured work, its exact location, and why it remains>
-- **Close:** <Ready to close — start `/new` for your next task | Not yet: <reason> | Blocked on #N; resume via #R>
+- **Left to capture:** <None | uncaptured work, its exact location (linked), and why it remains>
+- **Close:** <Ready to close — start `/new` for your next task | Not yet: <reason> | Blocked on #N <URL>; resume via #R <URL>>
 - **Reply:** e.g. `1y 2b 3: <value>` · `ok` = all bold defaults · or plain text
 ```
 
@@ -56,6 +56,10 @@ Rules:
   executor (pulse, worker, routine) is not a user action; say which executor
   owns it on the Session line if relevant. Omit the **Reply** line when there
   are no asks.
+- **Link everything the user must look at.** Every ask, and every PR, issue,
+  commit, file, preview or dashboard cited as done, blocked or uncaptured,
+  carries a clickable link so the user can inspect and answer without asking
+  for links, recalling the session or searching. See Clickable Evidence Links.
 - **Check live Git state before writing `None`** under Left to capture or
   Close; see Capture Check step 2.
 - **Close is a recommendation, never an ask.** Starting `/new` is the user's
@@ -108,7 +112,7 @@ Example (work merged; only a publication decision remains):
 **What next**
 - **Session:** add CSV export to reports — Done
 - **Needed from you:**
-  1. Publish a patch release containing PR #123? (explicit, optional)
+  1. Publish a patch release containing PR #123? (explicit, optional) — https://github.com/<owner>/<repo>/pull/123
      - y = release now · no reply = ships with the next release
 - **Left to capture:** None
 - **Close:** Ready to close — start `/new` for your next task
@@ -128,7 +132,9 @@ Example (work merged; only a publication decision remains):
   Pair each option with its effect (`**y** = merge now · n = close PR #123`);
   keep the question to one short sentence.
 - Name the concrete object (`PR #123`, `issue #45`, file path), never "this" or
-  "the above", and state the effect of each answer when it is not obvious.
+  "the above", link it, and state the effect of each answer when it is not
+  obvious. When the decision depends on a specific diff, line, comment or
+  check, link that exact location rather than only its parent PR or issue.
 - **Bold** the recommended option so `ok` accepts every bold default. Mark asks
   that publish, release, delete, spend, change security/permissions or need a
   secret `(explicit)`: they have no default and `ok` never answers them.
@@ -139,6 +145,33 @@ Example (work merged; only a publication decision remains):
   Unanswered or unclear asks stay open and are re-asked with the same wording in
   the next block; never infer consent from silence, from an answer to another
   ask, or from a guess.
+
+### Clickable Evidence Links
+
+Asks and delivery reports must let the user open what they need to judge in one
+click, so they never spend a turn asking for links or searching.
+
+- **Visible full URLs in terminals.** Terminal runtimes do not autolink `#123`
+  or repo-relative paths and may not render Markdown links. Print the label,
+  then the full URL as visible text:
+  `PR #123 — https://github.com/<owner>/<repo>/pull/123`. Use Markdown link
+  syntax only where it renders (GitHub comments, web UIs).
+- **Take URLs from tool output; never guess or hand-build them.** Reuse URLs
+  already in context (wrapper or `gh pr create` output); otherwise fetch them:
+  `gh pr view <N> --repo <owner>/<repo> --json url -q .url`, `gh issue view`
+  likewise, `gh run view <id> --json url -q .url` for CI, and
+  `gh browse --no-browser --repo <owner>/<repo> --commit=<sha> <path>:<line>`
+  for a pushed file at the reviewed version (`--commit` needs the `=` form).
+- **Local work.** Uncommitted or unpushed files: absolute `path:line` (terminals
+  and editors open it on click), never a repo-relative path alone. Local
+  previews: the `localhost`/`.local` URL printed by the dev server or helper.
+- **Link the exact thing.** Put each link on the ask or bullet that needs it,
+  pointing at the specific diff, line, comment, check run or preview the
+  decision depends on; no separate link dump at the end.
+- **No URL available** (offline, no access): say so and give the exact
+  identifier plus the command that resolves it; never fabricate a link.
+- Private repository URLs are fine in local chat; keep them out of public
+  GitHub content per `reference/pre-push-guards.md`.
 
 ### Capture Check (after a full loop or before `Ready to close`)
 
