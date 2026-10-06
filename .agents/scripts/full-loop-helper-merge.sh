@@ -2497,7 +2497,13 @@ _merge_report_pre_merge_gate_failure() {
 _merge_pre_merge_gate_with_admission_retry() {
 	local pr_number="$1"
 	local repo="$2"
-	local deadline=$((SECONDS + 30))
+	# The gate needs several sequential reads; primary pacing spaces each by
+	# (reset - now) / available seconds, so the budget must cover reads x pacing.
+	# Default 300s (cap 600s) keeps interactive merges from starving while quota remains.
+	local budget="${AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS:-300}"
+	[[ "$budget" =~ ^[0-9]{1,4}$ && "$budget" -gt 0 ]] || budget=300
+	[[ "$budget" -le 600 ]] || budget=600
+	local deadline=$((SECONDS + budget))
 	local attempts=0 retry_at="" now="" wait_seconds=0 round_up=0
 	while ! cmd_pre_merge_gate "$pr_number" "$repo"; do
 		[[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == github-api-read-deferred ]] || return 1
@@ -2510,8 +2516,8 @@ _merge_pre_merge_gate_with_admission_retry() {
 		retry_at="${retry_at%%.*}"
 		wait_seconds=$((10#$retry_at + round_up - now))
 		[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
-		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 30 ]] || return 1
-		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (30s recovery budget)"
+		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 120 ]] || return 1
+		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (${budget}s recovery budget)"
 		sleep "$wait_seconds" || return 1
 		[[ "$SECONDS" -le "$deadline" ]] || return 1
 		attempts=$((attempts + 1))

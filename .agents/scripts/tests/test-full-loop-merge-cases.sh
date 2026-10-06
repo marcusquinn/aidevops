@@ -897,6 +897,7 @@ test_bounded_local_admission_recovery() {
 		bash -c '
 			source "$1/shared-constants.sh"
 			source "$1/full-loop-helper-merge.sh"
+			export AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=30
 			scenario="$2" calls=0 waits=0 elapsed=0
 			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
 			sleep() {
