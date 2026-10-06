@@ -18,7 +18,7 @@ test_prospective_todo_requires_supported_native_git() {
 	cat >"$wrapper" <<'WRAPPER_EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--version" ]]; then
-	printf '%s\n' 'git version 2.39.5 (Apple Git-154)'
+	printf '%s\n' 'git version 2.37.0'
 	exit 0
 fi
 exec /usr/bin/git "$@"
@@ -26,9 +26,54 @@ WRAPPER_EOF
 	chmod +x "$wrapper"
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" stub \
 		'https://github.com/testorg/testrepo.git' 'testorg/testrepo' "$fixture_dir" "$wrapper") || rc=$?
-	print_result "prospective TODO: old native Git fails with actionable version guidance" \
-		"$([[ "$rc" -ne 0 && "$output" == *"2.39.5"* && "$output" == *"Git 2.44+ required"* ]] && printf '0' || printf '1')" \
+	print_result "prospective TODO: Git without merge-tree --write-tree fails with actionable version guidance" \
+		"$([[ "$rc" -ne 0 && "$output" == *"2.37.0"* && "$output" == *"Git 2.38+ required"* ]] && printf '0' || printf '1')" \
 		"rc=$rc output=$output"
+	return 0
+}
+
+# Git before 2.44 ignores GIT_NO_LAZY_FETCH. Simulate it with a 2.43 banner and
+# the variable removed: validation must still pass, and a missed blob must fail
+# closed instead of being lazily fetched (GH#33752).
+test_prospective_todo_pre_lazy_fetch_env_git() {
+	local fixture_dir="" fixture_root="${TEST_ROOT}/prospective-crisscross"
+	local base_sha="" head_sha="" remote_url="" git_probe="" wrapper="" output="" rc=0
+	if [[ -f "${fixture_root}/base.sha" ]]; then
+		fixture_dir="${fixture_root}/caller"
+	else
+		fixture_dir=$(create_prospective_crisscross_fixture) || {
+			print_result "prospective TODO: Git 2.43 fixture" 1
+			return 0
+		}
+	fi
+	base_sha=$(<"${fixture_root}/base.sha")
+	head_sha=$(<"${fixture_root}/head.sha")
+	remote_url=$(<"${fixture_root}/remote.url")
+	git_probe=$(create_prospective_git_probe) || return 0
+	wrapper="${fixture_root}/git-2.43-wrapper"
+	cat >"$wrapper" <<WRAPPER_EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "--version" ]]; then
+	printf '%s\n' 'git version 2.43.0'
+	exit 0
+fi
+exec env -u GIT_NO_LAZY_FETCH '${git_probe}' "\$@"
+WRAPPER_EOF
+	chmod +x "$wrapper"
+	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" \
+		'testorg/testrepo' "$fixture_dir" "$wrapper") || rc=$?
+	print_result "prospective TODO: Git 2.43 without GIT_NO_LAZY_FETCH validates (GH#33752)" "$rc" "output=$output"
+
+	rc=0
+	output=$(AIDEVOPS_TEST_SKIP_BLOB_FETCH=1 \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" \
+		'testorg/testrepo' "$fixture_dir" "$wrapper") || rc=$?
+	print_result "prospective TODO: Git 2.43 missed blob fails closed without lazy fetch (GH#33752)" \
+		"$([[ "$rc" -ne 0 && "$output" == *"required prospective blobs were not materialized"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+	rc=0
+	prospective_contexts_clean "$fixture_dir" || rc=$?
+	print_result "prospective TODO: Git 2.43 checks clean isolated contexts" "$rc"
 	return 0
 }
 
@@ -88,6 +133,7 @@ main() {
 	test_prospective_todo_requires_supported_native_git
 	test_prospective_todo_live_fetch_guard
 	test_prospective_todo_crisscross_fetch_guard
+	test_prospective_todo_pre_lazy_fetch_env_git
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
