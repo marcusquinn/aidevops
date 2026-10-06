@@ -145,6 +145,15 @@ pulse_repo_scan_allowed() {
 	return 0
 }
 
+pulse_repo_dormancy_observe_candidates() {
+	local slug="$1" issues="$2" candidates="$3" succeeded="$4" limit="$5" complete=0
+	if [[ "$succeeded" == 1 ]] && jq -e --argjson limit "$limit" 'length < $limit' <<<"$issues" >/dev/null 2>&1; then
+		complete=1
+	fi
+	pulse_repo_dormancy_observe "$slug" "$issues" "$candidates" "$complete"
+	return 0
+}
+
 pulse_repo_dormancy_observe() {
 	local slug="$1" issues="$2" candidates="$3" complete="$4" prefix="" prs="" tmp=""
 	[[ "${PULSE_REPO_DORMANCY_ENABLED:-1}" == 1 && "$complete" == 1 ]] || return 0

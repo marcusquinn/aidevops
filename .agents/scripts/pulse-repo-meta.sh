@@ -511,11 +511,7 @@ list_dispatchable_issue_candidates_json() {
 		"$snapshot_succeeded" "$limit" "$raw_snapshot_file" \
 		"$snapshot_status_file" "$completeness_file"
 
-	local dormancy_complete=0
-	if [[ "$snapshot_succeeded" == 1 ]] && jq -e --argjson limit "$limit" 'length < $limit' <<<"$issue_json" >/dev/null 2>&1; then
-		dormancy_complete=1
-	fi
-	pulse_repo_dormancy_observe "$repo_slug" "$issue_json" "$candidates_json" "$dormancy_complete"
+	pulse_repo_dormancy_observe_candidates "$repo_slug" "$issue_json" "$candidates_json" "$snapshot_succeeded" "$limit"
 
 	printf '%s\n' "$candidates_json"
 	[[ "$snapshot_available" -eq 1 ]]
