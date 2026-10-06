@@ -593,6 +593,14 @@ commit_planning_files() {
 	if _todo_branch_requires_planning_pr "$repo_root" "$default_branch"; then
 		todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"
 		local publication_rc=$?
+		if [[ "$publication_rc" -eq 0 && "${TODO_COMMIT_PUSH_RESULT:-}" == "direct" ]]; then
+			# GH#33707: never report direct unless the remote default branch has the commit.
+			git -C "$repo_root" fetch origin "$default_branch" >/dev/null 2>&1 || true
+			if ! git -C "$repo_root" merge-base --is-ancestor HEAD "origin/${default_branch}" 2>/dev/null; then
+				log_error "Planning commit is not on origin/${default_branch}; refusing to report direct publication"
+				return 1
+			fi
+		fi
 		[[ "$publication_rc" -eq 0 ]] &&
 			printf 'AIDEVOPS_PLANNING_COMMIT_RESULT=%s\n' "${TODO_COMMIT_PUSH_RESULT:-unknown}"
 		return "$publication_rc"
