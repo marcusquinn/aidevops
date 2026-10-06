@@ -127,6 +127,8 @@ setup-local-api-keys.sh set mainwp-consumer-secret-production YOUR_SECRET
 3. `wp plugin update --all`
 4. Test site, then `wp cache flush`
 
+Premium plugins stuck on old versions (GPLVault, inactive plugins, vendor channel faults): `premium-plugin-updates.md`.
+
 ### Content Migration
 
 1. `wp export --post_type=post`
