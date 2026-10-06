@@ -38,9 +38,15 @@ _ci_drift_ledger_record() {
 		awk -F '\t' -v key="${repo_slug}#${pr_number}" -v now="$now" -v ttl="$ttl" '
 			BEGIN { key_col=1; sig_col=2; head_col=3; time_col=4 }
 			NF == 4 && $key_col != key && $sig_col ~ /^[[:xdigit:]]+$/ && $head_col != "" && $time_col ~ /^[0-9]+$/ && $time_col <= now && now - $time_col <= ttl { print }' \
-			"${state_dir}/ci-drift-ledger.tsv" >"$temp" || { rm -f "$temp"; return 1; }
+			"${state_dir}/ci-drift-ledger.tsv" >"$temp" || {
+			rm -f "$temp"
+			return 1
+		}
 	fi
 	printf '%s\t%s\t%s\t%s\n' "${repo_slug}#${pr_number}" "$signature" "$prior_head" "$now" >>"$temp" &&
-		mv "$temp" "${state_dir}/ci-drift-ledger.tsv" || { rm -f "$temp"; return 1; }
+		mv "$temp" "${state_dir}/ci-drift-ledger.tsv" || {
+		rm -f "$temp"
+		return 1
+	}
 	return 0
 }

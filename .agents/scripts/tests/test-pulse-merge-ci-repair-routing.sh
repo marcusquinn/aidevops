@@ -500,7 +500,10 @@ define_process_helper() {
 	_is_trusted_dependabot_update_pr() { local pr_number="$1" repo_slug="$2" pr_author="$3"; [[ -n "$pr_number$repo_slug$pr_author" ]]; return 1; }
 	_trusted_dependabot_non_review_checks_green() { local pr_number="$1" repo_slug="$2" pr_obj="$3"; [[ -n "$pr_number$repo_slug$pr_obj" ]]; return 1; }
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2" rebase_policy="${5:-standard}"; [[ -n "$pr_number$repo_slug" ]]; REBASE_RETRY_CALLS=$((REBASE_RETRY_CALLS + 1)); REBASE_RETRY_POLICY="$rebase_policy"; return "$REBASE_RETRY_RC"; }
-	_required_checks_terminal_failure_names() { printf '%s\n' "$DRIFT_NAMES"; return "$DRIFT_NAMES_RC"; }
+	_required_checks_terminal_failure_names() {
+		printf '%s\n' "$DRIFT_NAMES"
+		return "$DRIFT_NAMES_RC"
+	}
 	_check_required_checks_have_pending_or_in_progress() { return "$DRIFT_PENDING_RC"; }
 	_pm_close_superseded_duplicate_pr_if_issue_solved() { local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_labels="$4"; [[ -n "$pr_number$repo_slug$linked_issue$pr_labels" ]]; DUPLICATE_CLOSE_CALLS=$((DUPLICATE_CLOSE_CALLS + 1)); return "$DUPLICATE_CLOSE_RC"; }
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}" checks_json="${9:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; ROUTE_EVIDENCE="$checks_json"; return 0; }
@@ -742,8 +745,14 @@ test_ci_drift_ledger_routing() {
 		different) DRIFT_NAMES="Unit" ;;
 		repeat) expected_rebases=0 expected_routes=1 ;;
 		same_head) pr_head_ref_oid="old-head" ;;
-		pending) DRIFT_PENDING_RC=0; expected_rebases=0 ;;
-		dry) DRY_RUN=1; expected_rebases=0 ;;
+		pending)
+			DRIFT_PENDING_RC=0
+			expected_rebases=0
+			;;
+		dry)
+			DRY_RUN=1
+			expected_rebases=0
+			;;
 		unknown) DRIFT_NAMES_RC=1 ;;
 		expired) printf '%s\t%s\told-head\t1\n' "${repo_slug}#${pr_number}" "$signature" >"${AIDEVOPS_HEADLESS_RUNTIME_DIR}/ci-drift-ledger.tsv" ;;
 		corrupt) printf 'invalid\n' >"${AIDEVOPS_HEADLESS_RUNTIME_DIR}/ci-drift-ledger.tsv" ;;
@@ -770,15 +779,24 @@ test_ci_drift_context_names() {
 	local fn_src="" names=""
 	fn_src=$(extract_function _required_checks_terminal_failure_names "${SCRIPT_DIR}/../pulse-merge-required-checks.sh")
 	eval "$fn_src"
-	_required_contexts_for_default_branch() { printf 'Unit\nLint\nPending\nMissing\n'; return 0; }
-	gh_pr_check_runs_rest() { printf '%s\n' '[{"name":"Lint","conclusion":"success"},{"name":"Unit","conclusion":"timed_out"},{"name":"Lint","conclusion":"failure"},{"name":"Pending","status":"in_progress","conclusion":null},{"name":"Advisory","conclusion":"failure"}]'; return 0; }
+	_required_contexts_for_default_branch() {
+		printf 'Unit\nLint\nPending\nMissing\n'
+		return 0
+	}
+	gh_pr_check_runs_rest() {
+		printf '%s\n' '[{"name":"Lint","conclusion":"success"},{"name":"Unit","conclusion":"timed_out"},{"name":"Lint","conclusion":"failure"},{"name":"Pending","status":"in_progress","conclusion":null},{"name":"Advisory","conclusion":"failure"}]'
+		return 0
+	}
 	names=$(_required_checks_terminal_failure_names "owner/repo" 100 "head")
 	if [[ "$names" == $'Lint\nUnit' ]]; then
 		print_result "CI-drift names sorted, required-only, terminal-only, latest result" 0
 	else
 		print_result "CI-drift names sorted, required-only, terminal-only, latest result" 1 "$names"
 	fi
-	gh_pr_check_runs_rest() { printf 'null\n'; return 0; }
+	gh_pr_check_runs_rest() {
+		printf 'null\n'
+		return 0
+	}
 	if _required_checks_terminal_failure_names "owner/repo" 100 "head" 2>/dev/null; then
 		print_result "CI-drift invalid rollup is unclassifiable" 1
 	else
