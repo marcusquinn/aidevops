@@ -7,6 +7,22 @@ description: Recovery archive evidence, planning, apply, and automatic maintenan
 
 # Recoverable Worktree Archives
 
+Maintenance failures emit JSON with `outcome: failed`, a stage, and a stable
+reason code, including when jq is unavailable. Async cleanup logs stdout on both
+success and failure together with the actual exit code; stderr remains in the
+same local log. No archive paths or raw errors are copied into reason codes.
+
+Pending transactions receive one resume attempt per maintenance pass. After
+three failed attempts, maintenance moves the exact pending transaction into a
+unique `quarantined/pending.*` directory under its state directory, with a
+mode-0600 receipt recording the reason and attempt count, then continues fresh
+selection. Quarantine never deletes archives, reservations, completion files,
+or retention-trash journals, and does not grant new apply authority. Existing
+identity, journal, and lock checks still protect unfinished archive operations.
+Symlinked pending directories or retry metadata and unreadable/invalid retry
+records fail closed rather than being followed or overwritten. Inspect retained
+quarantine receipts locally; repair requires the original plan and evidence.
+
 Recoverable worktree archives are coupled safety snapshots rather than generic
 discarded files. On macOS their default root remains `$HOME/.Trash`, where that
 path has OS Trash semantics. On Linux and other platforms the default is the

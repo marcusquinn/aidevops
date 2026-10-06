@@ -209,16 +209,18 @@ _prune_dirty_worktree_backups() {
 _maintain_worktree_recovery() {
 	local helper_path="${SCRIPT_DIR}/worktree-recovery-maintenance-helper.sh"
 	local result=""
+	local result_status=0
 
 	if [[ ! -x "$helper_path" ]]; then
 		echo "[cleanup-worktrees-async] recovery maintenance helper unavailable; skipping" >>"$LOGFILE"
 		return 0
 	fi
 	if result=$("$helper_path" 2>>"$LOGFILE"); then
-		printf '%s\t%s\n' "[cleanup-worktrees-async] recovery-maintenance" "$result" >>"$LOGFILE"
+		result_status=0
 	else
-		echo "[cleanup-worktrees-async] recovery maintenance failed closed; continuing" >>"$LOGFILE"
+		result_status=$?
 	fi
+	printf '%s\trc=%s\t%s\n' "[cleanup-worktrees-async] recovery-maintenance" "$result_status" "$result" >>"$LOGFILE"
 	return 0
 }
 
