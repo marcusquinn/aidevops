@@ -92,7 +92,37 @@ _dispatch_review_repair_candidate_is_verified() {
 }
 
 #######################################
+# Resolve the open-PR backlog threshold for one repository.
+# Precedence: repos.json `dispatch_open_pr_threshold` for the slug, then
+# PULSE_DISPATCH_GUARDRAIL_OPEN_PR_THRESHOLD, then 12. 0 disables the guardrail.
+#
+# Args:
+#   $1 - repository slug
+# Stdout: non-negative integer threshold.
+#######################################
+_dispatch_repo_pr_backlog_threshold() {
+	local repo_slug="$1"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local threshold=""
+	if [[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		threshold=$(jq -r --arg slug "$repo_slug" '
+			first(.initialized_repos[]? | select(.slug == $slug)
+				| .dispatch_open_pr_threshold // empty) // empty
+		' "$repos_json" 2>/dev/null) || threshold=""
+	fi
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold="${PULSE_DISPATCH_GUARDRAIL_OPEN_PR_THRESHOLD:-12}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=12
+	printf '%s\n' "$threshold"
+	return 0
+}
+
+#######################################
 # Filter ordinary candidates when their repository has reached its open-PR cap.
+# Only merge backlog that workers create and pulse can move counts toward the
+# cap: non-draft PRs labelled origin:worker/origin:worker-takeover without a
+# hold-for-review/needs-maintainer-review hold. Interactive PRs and drafts
+# cannot be reduced by dispatching fewer workers, so they never starve dispatch
+# (GH#33727).
 #
 # Args:
 #   $1 - repository slug
@@ -102,21 +132,43 @@ _dispatch_review_repair_candidate_is_verified() {
 _dispatch_filter_repo_pr_backlog_candidates() {
 	local repo_slug="$1"
 	local candidates_json="$2"
-	local pr_threshold="${PULSE_DISPATCH_GUARDRAIL_OPEN_PR_THRESHOLD:-12}"
+	local pr_threshold=""
+	pr_threshold=$(_dispatch_repo_pr_backlog_threshold "$repo_slug") || pr_threshold=12
 	[[ "$pr_threshold" =~ ^[0-9]+$ ]] || pr_threshold=12
 	if [[ "$pr_threshold" -eq 0 ]] || ! command -v jq >/dev/null 2>&1 || ! declare -F pulse_pr_list_get >/dev/null 2>&1; then
 		printf '%s\n' "$candidates_json"
 		return 0
 	fi
 
-	local pr_json="" open_prs=0 filtered_json="" candidate_count=0 filtered_count=0
-	pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open --json number --limit "$pr_threshold" 2>/dev/null) || {
+	local fetch_limit="${PULSE_DISPATCH_GUARDRAIL_OPEN_PR_FETCH_LIMIT:-200}"
+	[[ "$fetch_limit" =~ ^[1-9][0-9]*$ ]] || fetch_limit=200
+	((fetch_limit >= pr_threshold)) || fetch_limit="$pr_threshold"
+
+	local pr_json="" open_prs_total=0 open_prs=0 filtered_json="" candidate_count=0 filtered_count=0
+	pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open --json number,isDraft,labels --limit "$fetch_limit" 2>/dev/null) || {
 		printf '%s\n' "$candidates_json"
 		return 0
 	}
-	open_prs=$(jq 'if type == "array" then length else 0 end' <<<"$pr_json" 2>/dev/null) || open_prs=0
+	open_prs_total=$(jq 'if type == "array" then length else 0 end' <<<"$pr_json" 2>/dev/null) || open_prs_total=0
+	[[ "$open_prs_total" =~ ^[0-9]+$ ]] || open_prs_total=0
+	open_prs=$(jq '
+		if type == "array" then
+			[.[] | select((.isDraft // false) != true)
+				| ((.labels // []) | map(.name? // .)) as $labels
+				| select(($labels | index("origin:worker")) != null
+					or ($labels | index("origin:worker-takeover")) != null)
+				| select(($labels | index("hold-for-review")) == null
+					and ($labels | index("needs-maintainer-review")) == null)
+			] | length
+		else 0 end
+	' <<<"$pr_json" 2>/dev/null) || open_prs=0
 	[[ "$open_prs" =~ ^[0-9]+$ ]] || open_prs=0
 	if ((open_prs < pr_threshold)); then
+		if ((open_prs_total >= pr_threshold)); then
+			# Make the excluded draft/interactive/held backlog visible: these PRs
+			# would have tripped the pre-GH#33727 all-PR count.
+			echo "[pulse-wrapper] Repository PR backlog guardrail not applied: repo=${repo_slug} open_prs_total=${open_prs_total} open_prs_counted=${open_prs} threshold=${pr_threshold} reason=draft_interactive_or_held_prs_excluded" >>"${LOGFILE:-/dev/null}"
+		fi
 		printf '%s\n' "$candidates_json"
 		return 0
 	fi
@@ -151,7 +203,7 @@ _dispatch_filter_repo_pr_backlog_candidates() {
 	done <<<"$repair_candidates"
 	candidate_count=$(jq 'length' <<<"$candidates_json" 2>/dev/null) || candidate_count=0
 	filtered_count=$(jq 'length' <<<"$filtered_json" 2>/dev/null) || filtered_count="$candidate_count"
-	echo "[pulse-wrapper] Repository PR backlog guardrail: repo=${repo_slug} open_prs=${open_prs} threshold=${pr_threshold} ordinary_candidates_suppressed=$((candidate_count - filtered_count)) exempt_candidates=${filtered_count}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Repository PR backlog guardrail: repo=${repo_slug} open_prs_total=${open_prs_total} open_prs_counted=${open_prs} threshold=${pr_threshold} ordinary_candidates_suppressed=$((candidate_count - filtered_count)) exempt_candidates=${filtered_count}" >>"$LOGFILE"
 	_dispatch_stats_increment "pulse_dispatch_repo_pr_backlog_guardrail_applied"
 	printf '%s\n' "$filtered_json"
 	return 0
