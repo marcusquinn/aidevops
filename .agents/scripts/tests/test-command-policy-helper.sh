@@ -1208,6 +1208,12 @@ with patch('socket.socket', side_effect=AssertionError('network access forbidden
     check('spoofed repository origin cannot reuse grant', bool(network(argv)['unclassified']))
     sign(argv, issued_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
     check('future approval denied', bool(network(argv)['unclassified']))
+    port_one = argv.copy()
+    port_one[-3] = '1'
+    sign(port_one, binding=dict(binding_command(port_one), port=True))
+    check('boolean port cannot equal integer one', bool(network(port_one)['unclassified']))
+    sign(argv, binding=dict(binding_command(argv), port=22.0))
+    check('float port cannot equal integer port', bool(network(argv)['unclassified']))
     path = sign(argv)
     raw = path.read_text()
     path.write_text(raw + ' ')

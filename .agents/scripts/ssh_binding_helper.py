@@ -117,6 +117,8 @@ def authorized_binding(argv: list[str], cwd: str) -> dict[str, Any]:
     grant = json.loads(raw)
     if not isinstance(grant, dict) or grant.get("schema") != NAMESPACE:
         raise ValueError("invalid SSH grant schema")
+    if not isinstance(grant.get("binding"), dict) or type(grant["binding"].get("port")) is not int:
+        raise ValueError("SSH grant port must be an integer, not a boolean or float")
     if (grant.get("repository") != repository or grant.get("argv") != argv
             or grant.get("binding") != binding or grant.get("common_dir") != repository_common_dir(cwd)):
         raise ValueError("SSH grant command or endpoint mismatch")
