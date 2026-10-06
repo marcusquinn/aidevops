@@ -291,8 +291,10 @@ calculate_max_workers() {
 		max_workers="$MAX_WORKERS_CAP"
 	fi
 
-	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold=""
-	read -r cpu_load cpu_cores cpu_gate cpu_threshold <<<"$(_pulse_cpu_pressure)"
+	# open_idle keeps the RAM target; per-pass idle headroom is applied by
+	# pulse_apply_provider_load_capacity_cap, which knows active workers.
+	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold="" cpu_idle=""
+	read -r cpu_load cpu_cores cpu_gate cpu_threshold cpu_idle <<<"$(_pulse_cpu_pressure)"
 	if [[ "$cpu_gate" == "closed" ]]; then
 		max_workers=0
 	fi
@@ -301,7 +303,7 @@ calculate_max_workers() {
 	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
 	echo "$max_workers" >"$max_workers_file"
 
-	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}, load=${cpu_load}/${cpu_cores} max_load_per_core=${cpu_threshold} cpu_gate=${cpu_gate}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}, load=${cpu_load}/${cpu_cores} max_load_per_core=${cpu_threshold} cpu_gate=${cpu_gate} cpu_idle_pct=${cpu_idle:-na}" >>"$LOGFILE"
 	return 0
 }
 
