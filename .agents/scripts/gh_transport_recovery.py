@@ -8,6 +8,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from gh_transport_identity import credentials_share_proven_owner
+
 MAX_RESERVATION_AGE = 180  # 90s native timeout, bounded cleanup and admission margin.
 
 
@@ -102,16 +104,57 @@ def probe_recovers(budget, reservation, resource, row, reset_at):
     ).fetchone()
     if not own or own[1] != budget.credential:
         return False
-    owners = sum(budget._root(binding[0]) == budget.scope for binding in
-                 budget.db.execute("SELECT scope FROM binding").fetchall())
-    # A later reset identifies a new window for one bound credential, even
+    bound = bound_credentials(budget)
+    owners = len(bound)
+    # One allowance: a single bound credential, a configured owner, or every
+    # bound credential proven to belong to one login (digest only). Different
+    # or unproven owners never inherit each other's balance.
+    one_allowance = (owners == 1 or budget.attributed
+                     or credentials_share_proven_owner(budget.path.parent, bound))
+    # A later reset identifies a new window for the one allowance, even
     # before the stale local reset expires. Shared owners still need a probe.
-    if owners == 1 and reset_at > row[1]:
+    if one_allowance and reset_at > row[1]:
         return True
     if not probe or reservation != probe[0]:
         return False
-    attributed_owner = owners == 1 or budget.attributed
-    return attributed_owner and own[0] >= row[2] and reset_at >= row[1]
+    return one_allowance and own[0] >= row[2] and reset_at >= row[1]
+
+
+LIVE_WINDOWS = "live-windows.json"
+
+
+def note_live_window(budget, resource, reset_at, now):
+    """Remember a later reset which was observed but not accepted (numbers only)."""
+    path = budget.path.parent / LIVE_WINDOWS
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        if not isinstance(data, dict):
+            data = {}
+        key = f"{budget.scope}:{resource}"
+        if int(data.get(key, {}).get("reset", 0)) >= reset_at:
+            return
+        data[key] = {"reset": reset_at, "observed": now}
+        temporary = path.with_name(f"{LIVE_WINDOWS}.{os.getpid()}.tmp")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, sort_keys=True)
+        os.replace(temporary, path)
+    except (OSError, ValueError, AttributeError):
+        return
+
+
+def _live_window_is_newer(directory: Path, scope: str, stored_reset: float) -> bool:
+    try:
+        data = json.loads((directory / LIVE_WINDOWS).read_text(encoding="utf-8"))
+        return int(data[f"{scope}:core"]["reset"]) > stored_reset
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def bound_credentials(budget) -> list:
+    return [credential for credential, scope in
+            budget.db.execute("SELECT credential,scope FROM binding").fetchall()
+            if budget._root(scope) == budget.scope]
 
 
 def admission_status(directory: Path, scope: str, *, attributed: bool = False) -> dict:
@@ -145,6 +188,11 @@ def admission_status(directory: Path, scope: str, *, attributed: bool = False) -
         ).fetchone()
         if not row:
             return {"state": "unknown", **diagnostics}
+        if bindings > 1 and _live_window_is_newer(directory, scope, row[1]):
+            diagnostics["stale_multi_credential_scope"] = True
+            diagnostics["stale_scope_note"] = (
+                "stored reset is older than a live observation from another bound credential"
+            )
         reserved = db.execute(
             "SELECT COUNT(*) FROM reservation WHERE scope=? AND resource='core'", (scope,),
         ).fetchone()[0]

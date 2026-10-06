@@ -24,6 +24,7 @@ from gh_transport_reconcile import reconcile_scope as _reconcile_scope
 from gh_transport_recovery import (
     admission_status,
     mark_dead_reservations,
+    note_live_window,
     probe_recovers,
     record_budget_transition,
     reserve_probe_allowed,
@@ -287,6 +288,8 @@ class Budget:
                     # Keep the lower balance paired with its own reset epoch:
                     # extending it to another credential's later (sliding)
                     # reset would re-stamp stale debt indefinitely (GH#33701).
+                    if reset_at > row[1]:
+                        note_live_window(self, resource, reset_at, now)
                     if available >= row[0]:
                         available, reset_at = row[0], int(row[1])
                     blocked_until = row[3]

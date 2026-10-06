@@ -23,6 +23,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from gh_transport_identity import resolve_owner_proof
 from gh_transport_budget import Budget, Deferred, credential_identity, private_directory, quota_owner, scope_key
 
 
@@ -298,6 +299,11 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
             # trust an identity which could change before native execution.
             return 125
         owner, attributed = quota_owner()
+        if not attributed:
+            # Digest-only login proof lets one user's PATs share recovery
+            # without merging scopes across users or installations.
+            private_directory(directory)
+            resolve_owner_proof(executable, host, credential, environment, directory)
         budget = Budget(directory, scope_key(host, owner), credential, attributed=attributed)
         phase("sqlite_open")
         reservation = phase_timer.admit(budget, resource)

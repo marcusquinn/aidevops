@@ -22,10 +22,12 @@ sys.path.insert(0, str(SCRIPTS))
 from gh_transport_budget import (
     Budget,
     Deferred,
+    admission_status,
     quota_owner,
     reconcile_scope,
     scope_key,
 )
+from gh_transport_identity import resolve_owner_proof
 
 SPEC = importlib.util.spec_from_file_location("governor", SCRIPTS / "gh-transport-governor.py")
 governor = importlib.util.module_from_spec(SPEC)
@@ -162,17 +164,72 @@ class AdmissionTests(unittest.TestCase):
         self.seed(150)
         other = Budget(self.directory, "owner-one", "different-credential")
         try:
-            for attributed, reset in ((False, 2100), (True, 2200)):
-                with self.subTest(attributed=attributed):
-                    other.attributed = attributed
-                    request = other.acquire("core", now=1002)
-                    other.finish(request, "core", headers(4999, reset), started=1002, now=1003)
-                    # The lower balance keeps its own reset epoch (GH#33701).
-                    self.assertEqual(other.db.execute(
-                        "SELECT remaining,reset FROM quota"
-                    ).fetchone(), (150, 2000))
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2100), started=1002, now=1003)
+            # The lower balance keeps its own reset epoch (GH#33701).
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (150, 2000))
+            # The rejected newer window is remembered for diagnostics.
+            self.assertEqual(admission_status(self.directory, "owner-one")
+                             .get("stale_multi_credential_scope"), True)
         finally:
             other.close()
+
+    def test_attributed_owner_accepts_newer_window_across_credentials(self):
+        self.seed(540, 2000)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            other.attributed = True
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (4999, 2200))
+        finally:
+            other.close()
+
+    def test_proven_same_login_credentials_accept_newer_window(self):
+        self.seed(540, 2000)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            proof = {"GH_TOKEN": "ghp_example"}
+            with patch("gh_transport_identity.subprocess.run") as run:
+                run.return_value = Mock(stdout=b"same-user\n")
+                for credential in ("owner-one", "different-credential"):
+                    self.assertTrue(resolve_owner_proof(
+                        "gh", "github.com", credential, proof, self.directory))
+            self.assertNotIn("same-user", (self.directory / "quota-owners.json").read_text())
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (4999, 2200))
+        finally:
+            other.close()
+
+    def test_different_login_credentials_stay_isolated(self):
+        self.seed(540, 2000)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            for credential, login in (("owner-one", b"user-a\n"), ("different-credential", b"user-b\n")):
+                with patch("gh_transport_identity.subprocess.run") as run:
+                    run.return_value = Mock(stdout=login)
+                    resolve_owner_proof("gh", "github.com", credential,
+                                        {"GH_TOKEN": "ghp_example"}, self.directory)
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (540, 2000))
+        finally:
+            other.close()
+
+    def test_installation_tokens_are_never_attributed_to_a_login(self):
+        with patch("gh_transport_identity.subprocess.run") as run:
+            self.assertIsNone(resolve_owner_proof(
+                "gh", "github.com", "cred", {"GH_TOKEN": "ghs_example"}, self.directory))
+            run.assert_not_called()
 
     def test_shared_scope_stale_balance_expires_at_its_own_reset(self):
         # GH#33701: a sliding later reset from another unresolved credential
