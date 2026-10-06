@@ -23,7 +23,7 @@ tools:
 - **Use for**: "make/create/start a new WordPress plugin". Command: `/new-wp-plugin`.
 - **Source**: the latest release of the public starter `wpallstars/wp-plugin-starter-template-for-ai-coding` (settings screen, Read Me tab, GitHub updater, release/check scripts, CI). Not `wp scaffold plugin`, unless the user asks for a bare plugin.
 - **Helper**: `~/.aidevops/agents/scripts/wp-plugin-new-helper.sh` — `defaults`, `save-defaults`, `create [--dry-run]`.
-- **Result**: a private GitHub repo `<owner>/<slug>`, cloned to the standard path (`reference/repo-organization.md`), registered with aidevops, with a fresh history of two commits. The plugin starts at version 0.1.0 with a changelog of its own (starter v1.0.4+).
+- **Result**: a private GitHub template repo `<owner>/<slug>`, cloned to the standard path (`reference/repo-organization.md`), registered with aidevops, with identity changes committed in a linked worktree and pushed through the first PR. The template default branch must match the latest release. Local-only creation retains starter release history and commits identity changes on a linked branch without publishing. The plugin starts at version 0.1.0 with a changelog of its own (starter v1.0.4+).
 - **Maker defaults**: `wordpress.plugin_defaults` in `~/.config/aidevops/settings.json` (`reference/settings.md`). They belong to this user only.
 
 <!-- AI-CONTEXT-END -->
@@ -39,14 +39,14 @@ tools:
    - When every maker detail is saved, show them in one line and ask only for name and description; the user can say what to change.
 3. **Save new maker details** the user gave, unless they say this plugin is a one-off: `wp-plugin-new-helper.sh save-defaults --author "…" --author-uri "…" --contributors "…" --donate none --github-owner "…"`.
 4. **Dry run**: `wp-plugin-new-helper.sh create --name "…" --description "…" [--slug …] --dry-run`. Show the plan; it fails closed if the folder or repo exists.
-5. **Create**: same command without `--dry-run`. Add `--public` only if asked. Output ends with `PLUGIN_PATH=`, `PLUGIN_REPO=` and `STARTER_TAG=`.
+5. **Create**: same command without `--dry-run`. Add `--public` only if asked. Output includes `PLUGIN_PATH=` (the editable identity worktree), `PLUGIN_CANONICAL_PATH=` (the read-only clone), `PLUGIN_BRANCH=`, `PLUGIN_REPO=` and `STARTER_TAG=`. Creation opens the first identity PR; verify and merge it through the normal full-loop gates, never write identity changes directly to canonical `main`. Failures preserve both paths for recovery; do not rerun creation over an existing repo.
 6. **Make it the plugin's own** in a linked worktree of the new repo, through a PR (README "Start a plugin" step 3): rewrite `README.md` **preserving its `<!-- aidevops:badges:start -->` / `<!-- aidevops:badges:end -->` block and markers**, `readme.txt` (description, tags, FAQ), `changelog.txt` and `AGENTS.md`; the banner (`.wordpress-org/banner.svg`, then `scripts/build-banner.sh`); keep the **Built with AI** credit. Then build the features the user described (`includes/features/`, `STANDARDS.md`).
 7. **Verify**: `composer install`, `scripts/lint.sh`, `scripts/smoke-test.sh` (Docker).
 8. **Onboard quality in that first PR**: follow the checklist below; do not call a repo finished with missing app access or starter metrics.
 
 ## Code Quality Onboarding
 
-Creation runs `aidevops init code-quality` through the existing registration path, recording `features: ["code-quality"]` in `repos.json` and generating the normal quality configuration. Include those generated files in the first customization PR. Verify the registration; a missing `aidevops` command or failed initialization is reported, not silently accepted. The daily sweep additionally requires existing `maintenance != false` and `pulse: true` registration (`reference/repos-json-fields.md`); verify this automation opt-in rather than assume features alone enable dispatch. Creation removes unavailable Codacy, SonarCloud, CodeFactor and latest-release badges, not the markers or working CI/license/metrics badges.
+Creation registers the canonical clone with plain `aidevops repos add` when starter metadata exists, then runs `aidevops init code-quality` in the clean linked worktree **before** staging identity renames. This records `features: ["code-quality"]` in `repos.json` and generates the normal quality configuration without accidentally committing staged renames separately from their content edits. Include those generated files in the first customization PR. Verify the registration; a missing `aidevops` command or failed initialization stops creation with recoverable paths. The daily sweep additionally requires existing `maintenance != false` and `pulse: true` registration (`reference/repos-json-fields.md`); verify this automation opt-in rather than assume features alone enable dispatch. Creation removes unavailable Codacy, SonarCloud, CodeFactor and latest-release badges, not the markers or working CI/license/metrics badges.
 
 In the **linked worktree**, after customization and before finishing the first PR:
 
