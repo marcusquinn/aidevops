@@ -106,6 +106,48 @@ const context = await chromium.launchPersistentContext('/tmp/brave-profile', {
 
 Managed Playwright and Browser QA honour `AIDEVOPS_PLAYWRIGHT_EXECUTABLE=/path/to/browser`; set `AIDEVOPS_PLAYWRIGHT_BROWSER=chromium` when bundled Chromium is required exactly.
 
+## Bounded Completion Checks
+
+This implements the outcome contract in `browser-automation.md` "Completion Outcomes" and the failure handoff in "OpenCode Activation" above. One locator union waits for whichever terminal state appears first, so a visible error ends the check immediately. A non-terminal loading screen still runs to the deadline. Locators must match the target's real states; arbitrary `body.innerText` substrings are weak evidence.
+
+```javascript
+import { chromium } from 'playwright';
+
+const TIMEOUT_MS = 60_000;
+const redactUrl = (u) => { const x = new URL(u); x.search = ''; x.hash = ''; return x.href; };
+const actions = [];
+const result = { outcome: 'failed', evidence: null };
+const browser = await chromium.launch();
+try {
+  const page = await browser.newPage();
+  await page.goto(process.env.TARGET_URL); actions.push('open');
+  // ...perform the single state-changing action once, then actions.push('submit')
+  const states = [ // priority order; first visible match wins
+    ['success', page.getByRole('heading', { name: 'Detected structured data' })],
+    ['blocked', page.getByRole('alertdialog').filter({ hasText: /log in|sign in|access denied/i })],
+    ['failed', page.getByRole('alert').or(page.getByRole('alertdialog'))],
+  ];
+  try {
+    await states.map(([, l]) => l).reduce((a, b) => a.or(b)).first()
+      .waitFor({ state: 'visible', timeout: TIMEOUT_MS });
+    for (const [outcome, locator] of states) {
+      if (await locator.first().isVisible()) { result.outcome = outcome; break; }
+    }
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    result.outcome = 'timed-out';
+  }
+  const text = await page.locator('[role=alert],[role=alertdialog],h1,h2').allInnerTexts();
+  result.evidence = { url: redactUrl(page.url()), actions, text: text.slice(0, 5).map((t) => t.slice(0, 200)) };
+} finally {
+  await browser.close();
+}
+console.log(JSON.stringify(result));
+process.exitCode = result.outcome === 'success' ? 0 : 2;
+```
+
+When success also depends on navigation, check the URL before reporting success, for example a new result ID. Do not loop this check around a submission. On `blocked` or `failed`, return the evidence; the parent checks side effects before trying again.
+
 ## Testing Patterns
 
 For device emulation (presets, viewport/HiDPI, geolocation, locale/timezone, permissions, color scheme, offline, responsive breakpoints), see `playwright-emulation.md`.
