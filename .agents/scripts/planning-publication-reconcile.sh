@@ -240,6 +240,15 @@ _publication_dispatch_ready() {
 	return 0
 }
 
+# GH#33821: removing publication:pending is a reconciler's final mutation, so an
+# issue listed as pending that has since lost the label was fully published by a
+# concurrent reconciler (CI vs. full-loop-helper merge). Count it as reconciled.
+_publication_note_concurrent() {
+	local task_id="$1" issue_num="$2"
+	print_info "${task_id}/#${issue_num}: already reconciled concurrently; ${PUBLICATION_PENDING_LABEL} removed by another reconciler"
+	return 0
+}
+
 _publication_reconcile_one() {
 	local repo="$1" task_id="$2" issue_num="$3"
 	# 1 = issue title must start with "<task_id>:" (title-derived mapping);
@@ -268,7 +277,9 @@ _publication_reconcile_one() {
 	jq -e --arg task_prefix "${task_id}:" --arg bound "$require_title_prefix" \
 		'.state == "OPEN" and ($bound == "0" or (.title | startswith($task_prefix)))' \
 		<<<"$issue_json" >/dev/null || return 1
-	_publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL" || return 1
+	if ! _publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL"; then
+		_publication_note_concurrent "$task_id" "$issue_num"; return 0
+	fi
 	status_label=$(_publication_status_label "$desired_labels" "$has_dependency" "$issue_json")
 	projected_labels="$desired_labels"
 	[[ -n "$status_label" ]] && projected_labels="${projected_labels:+${projected_labels},}${status_label}"
@@ -295,7 +306,9 @@ _publication_reconcile_one() {
 		issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
 	fi
 	_publication_issue_has_labels "$issue_json" "$desired_labels" || return 1
-	_publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL" || return 1
+	if ! _publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL"; then
+		_publication_note_concurrent "$task_id" "$issue_num"; return 0
+	fi
 	if [[ "$has_dependency" -eq 1 ]]; then
 		! _publication_issue_has_labels "$issue_json" "$PUBLICATION_AVAILABLE_LABEL" || return 1
 		_publication_issue_has_active_status "$issue_json" || \
