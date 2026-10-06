@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 
 // Helpers such as timeout_sec move commands into their own process group
 // (GNU timeout calls setpgid; the bash fallback uses `set -m`), outside the
@@ -51,6 +51,24 @@ export function verifiedNestedTargets(snapshot, owned, ownGroup) {
 }
 
 function processSnapshot() {
+  if (process.platform === "linux") {
+    try {
+      const entries = [];
+      for (const name of readdirSync("/proc")) {
+        if (!/^\d+$/.test(name)) continue;
+        try {
+          const stat = readFileSync(`/proc/${name}/stat`, "utf8");
+          const fields = stat.slice(stat.lastIndexOf(")") + 2).split(/\s+/);
+          // Zombies cannot consume resources and may persist under a subreaper.
+          if (fields[0] === "Z") continue;
+          entries.push({ pid: Number(name), ppid: Number(fields[1]), pgid: Number(fields[2]), started: fields[19] });
+        } catch { /* process exited or is inaccessible */ }
+      }
+      return { entries, psPid: 0 };
+    } catch {
+      return null;
+    }
+  }
   const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,lstart="], {
     detached: true,
     encoding: "utf8",
@@ -61,9 +79,21 @@ function processSnapshot() {
   return { entries: parseProcessSnapshot(result.stdout), psPid: result.pid };
 }
 
-export function signalEach(pids, signal) {
+function linuxStartIdentity(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(/\s+/)[19];
+  } catch {
+    return null;
+  }
+}
+
+export function signalEach(pids, signal, entries = []) {
   for (const pid of pids) {
     try {
+      const expected = entries.find((entry) => entry.pid === pid);
+      if (!expected) continue;
+      if (process.platform === "linux" && linuxStartIdentity(pid) !== expected.started) continue;
       process.kill(pid, signal);
     } catch {
       // Already exited between the snapshot and the signal.
@@ -85,12 +115,14 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
       attributionComplete = false;
       return null;
     }
+    recordOwnedDescendants(snapshot.entries, rootPid, owned, snapshot.psPid);
     // Recover children which double-forked/setsid before the first parent-chain
     // snapshot. Never retain or log unrelated environment values (GH#33747).
     if (operationID) {
+      const darwinPids = process.platform === "darwin" ? darwinOperationPids(operationID) : null;
       for (const entry of snapshot.entries) {
-        if (entry.pid === rootPid || entry.pid === snapshot.psPid) continue;
-        if (hasOperationMarker(entry.pid, operationID)) {
+        if (entry.pid === rootPid || entry.pid === snapshot.psPid || isOwned(owned, entry)) continue;
+        if (darwinPids ? darwinPids.has(entry.pid) : hasOperationMarker(entry.pid, operationID)) {
           owned.set(entry.pid, { pgid: entry.pgid, started: entry.started });
         }
       }
@@ -117,14 +149,21 @@ function hasOperationMarker(pid, operationID) {
       if (statSync(`/proc/${pid}`).uid !== process.getuid()) return false;
       return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").includes(marker);
     }
-    if (process.platform === "darwin") {
-      const result = spawnSync("ps", ["eww", "-p", String(pid), "-o", "command="], {
-        encoding: "utf8", timeout: 1000,
-      });
-      return result.status === 0 && result.stdout.split(/\s+/).includes(marker);
-    }
   } catch {
     // Exited or inaccessible: parent-chain attribution remains available.
   }
   return false;
+}
+
+function darwinOperationPids(operationID) {
+  const pids = new Set();
+  const result = spawnSync("ps", ["axeww", "-o", "uid=,pid=,command="], {
+    encoding: "utf8", timeout: 1000, maxBuffer: 8 * 1024 * 1024,
+  });
+  if (result.status !== 0) return pids;
+  for (const line of result.stdout.split("\n")) {
+    const [uid, pid, ...tokens] = line.trim().split(/\s+/);
+    if (Number(uid) === process.getuid() && tokens.includes(`AIDEVOPS_OPERATION_ID=${operationID}`)) pids.add(Number(pid));
+  }
+  return pids;
 }

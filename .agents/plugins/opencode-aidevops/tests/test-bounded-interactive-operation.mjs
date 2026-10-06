@@ -421,6 +421,37 @@ describe("bounded interactive operations", () => {
     }
   });
 
+  test("detached test servers are drained on completion, cancellation and expiry (GH#33747)", async () => {
+    const instance = manager({ killGraceMs: 50 });
+    for (const mode of ["completion", "cancel", "expiry"]) {
+      const pidFile = join(root, `escaped-${mode}.json`);
+      const server = `const net=require('node:net'); process.on('SIGTERM',()=>{}); net.createServer().listen(0,'127.0.0.1',()=>require('node:fs').writeFileSync(${JSON.stringify(pidFile)},JSON.stringify({pid:process.pid})))`;
+      const script = `const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e',${JSON.stringify(server)}],{detached:true,stdio:'ignore'}); c.unref(); ${mode === "completion" ? `const t=setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(pidFile)})){clearInterval(t);process.exit(0)}},10)` : "setInterval(()=>{},1000)"}`;
+      const started = await instance.start({ command: [process.execPath, "-e", script], budgetMs: mode === "expiry" ? 1000 : 5000 }, owner);
+      let pid;
+      try {
+        const deadline = Date.now() + 3000;
+        while (Date.now() < deadline) {
+          try { pid = JSON.parse(readFileSync(pidFile, "utf8")).pid; break; } catch { /* wait for listener */ }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.ok(pid, "escaped server never listened");
+        if (mode === "cancel") instance.cancel(started.operation_id, owner);
+        const result = await terminal(instance, started.operation_id, owner, 5000);
+        assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
+        let running = false;
+        try {
+          process.kill(pid, 0);
+          // PID 1 may retain a dead zombie on Linux containers.
+          running = process.platform !== "linux" || !readFileSync(`/proc/${pid}/stat`, "utf8").includes(") Z ");
+        } catch { /* process is gone */ }
+        assert.equal(running, false, `${mode}: detached server survived cleanup`);
+      } finally {
+        if (pid) { try { process.kill(pid, "SIGKILL"); } catch { /* already drained */ } }
+      }
+    }
+  });
+
   test("descendant attribution requires a matching process start identity", () => {
     const snapshot = parseProcessSnapshot([
       "100 1 100 Sun Oct  4 03:00:00 2026",

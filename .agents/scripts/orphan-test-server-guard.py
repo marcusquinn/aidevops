@@ -52,17 +52,22 @@ def live_owner(info, entries):
     owner = env.get(b"AIDEVOPS_OPERATION_OWNER_PID", b"")
     # Older operations lack the owner marker. Any live supervisor conservatively
     # protects them rather than inferring expiry from missing ledger data.
-    candidates = [int(owner)] if owner.isdigit() else entries.keys()
+    candidates = [int(owner)] if owner.isdigit() else (int(root.name) for root in Path("/proc").iterdir() if root.name.isdigit())
     for pid in candidates:
         try:
-            if pid in entries and b"bounded-operation-supervisor.mjs" in Path(f"/proc/{pid}/cmdline").read_bytes():
+            root = Path(f"/proc/{pid}")
+            if root.stat().st_uid != os.getuid():
+                continue
+            if b"bounded-operation-supervisor.mjs" in (root / "cmdline").read_bytes():
                 return True
+        except FileNotFoundError:
+            continue
         except OSError:
             return True
     return False
 
 
-def listening_ports(group):
+def socket_status(group):
     inodes = set()
     for info in group:
         for fd in Path(f"/proc/{info['pid']}/fd").iterdir():
@@ -71,6 +76,7 @@ def listening_ports(group):
                 inodes.add(target[8:-1])
     ports = set()
     established = set()
+    owned_connection = False
     # Use the server's network namespace, not the guard's.
     for protocol in ("tcp", "tcp6"):
         rows = Path(f"/proc/{group[0]['pid']}/net/{protocol}").read_text().splitlines()[1:]
@@ -81,7 +87,14 @@ def listening_ports(group):
                 ports.add(port)
             if fields[3] == "01":
                 established.add(port)
-    return ports if not ports.intersection(established) else set()
+                if fields[9] in inodes:
+                    owned_connection = True
+    return ports, established, owned_connection
+
+
+def listening_ports(group):
+    ports, established, owned_connection = socket_status(group)
+    return ports if not owned_connection and not ports.intersection(established) else set()
 
 
 def classify(info, entries, age_limit):
@@ -137,18 +150,29 @@ def scan(age_limit, reap=False):
                 # immediately before each destructive signal.
                 fresh = inventory()
                 current = fresh.get(info["pid"])
-                if not current or current["started"] != info["started"] or not classify(current, fresh, age_limit):
+                if not current or current["started"] != info["started"] or current["pgid"] != info["pgid"] or not classify(current, fresh, age_limit):
                     continue
                 os.killpg(info["pgid"], signal.SIGTERM)
                 time.sleep(1)
                 fresh = inventory()
                 survivors = [entry for entry in fresh.values() if entry["pgid"] == info["pgid"] and entry["state"] != "Z"]
                 original = {entry["pid"]: entry["started"] for entry in entries.values() if entry["pgid"] == info["pgid"]}
+                if survivors:
+                    _, established, owned_connection = socket_status(survivors)
+                    if owned_connection or established.intersection(candidate["ports"]):
+                        print(json.dumps({"action": "term-only-connected", **candidate}), flush=True)
+                        continue
                 # After TERM the listener may close; only signal individually
                 # identity-verified survivors, never a reused/new process group.
                 for survivor in survivors:
                     if original.get(survivor["pid"]) == survivor["started"] and not live_owner(survivor, fresh):
-                        os.kill(survivor["pid"], signal.SIGKILL)
+                        pidfd = os.pidfd_open(survivor["pid"])
+                        try:
+                            verified = process_info(survivor["pid"])
+                            if verified["started"] == survivor["started"] and verified["pgid"] == info["pgid"]:
+                                signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                        finally:
+                            os.close(pidfd)
             print(json.dumps({"action": "reap" if reap else "report", "class": "orphan-test-server", **candidate}), flush=True)
         except (OSError, ValueError, IndexError):
             continue

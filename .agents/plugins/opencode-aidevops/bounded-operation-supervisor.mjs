@@ -69,13 +69,17 @@ function validCommand(command) {
 // supervisor's own group. Containment is reported before the final SIGKILL.
 function createTerminator(tracker, killGraceMs, reportContainment) {
   const state = { terminating: false };
+  const signalNested = (signal) => {
+    const snapshot = tracker.track();
+    signalEach(tracker.nestedTargets(snapshot), signal, snapshot?.entries);
+  };
   state.terminate = () => {
     if (state.terminating) return;
     state.terminating = true;
-    signalEach(tracker.nestedTargets(tracker.track()), "SIGTERM");
+    signalNested("SIGTERM");
     signalOwnGroup("SIGTERM");
     setTimeout(() => {
-      signalEach(tracker.nestedTargets(tracker.track()), "SIGKILL");
+      signalNested("SIGKILL");
       reportContainment().finally(() => {
         if (!signalOwnGroup("SIGKILL")) process.exit(1);
       });
@@ -90,10 +94,12 @@ function createTerminator(tracker, killGraceMs, reportContainment) {
 // once termination has begun they are escalated instead of awaiting the grace.
 function ownedTreeDrained(tracker, terminator) {
   const snapshot = tracker.track();
-  if (!snapshot || tracker.ownGroupMembers(snapshot) !== 1) return false;
+  if (!snapshot) return false;
   const nested = tracker.nestedTargets(snapshot);
+  if (nested.length || tracker.ownGroupMembers(snapshot) > 1) terminator.terminate();
+  if (tracker.ownGroupMembers(snapshot) !== 1) return false;
   if (nested.length === 0) return true;
-  if (terminator.terminating) signalEach(nested, "SIGKILL");
+  if (terminator.terminating) signalEach(nested, "SIGKILL", snapshot.entries);
   return false;
 }
 
