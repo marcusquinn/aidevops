@@ -193,7 +193,7 @@ class AdmissionTests(unittest.TestCase):
         self.seed(540, 2000)
         other = Budget(self.directory, "owner-one", "different-credential")
         try:
-            proof = {"GH_TOKEN": "ghp_example"}
+            proof = {"GH_TOKEN": "ghp_example"}  # nosec B105
             with patch("gh_transport_identity.subprocess.run") as run:
                 run.return_value = Mock(stdout=b"same-user\n")
                 for credential in ("owner-one", "different-credential"):
@@ -216,7 +216,7 @@ class AdmissionTests(unittest.TestCase):
                 with patch("gh_transport_identity.subprocess.run") as run:
                     run.return_value = Mock(stdout=login)
                     resolve_owner_proof(("gh", "github.com"), credential,
-                                        {"GH_TOKEN": "ghp_example"}, self.directory)
+                                        {"GH_TOKEN": "ghp_example"}, self.directory)  # nosec B105
             request = other.acquire("core", now=1002)
             other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
             self.assertEqual(other.db.execute(
@@ -228,7 +228,7 @@ class AdmissionTests(unittest.TestCase):
     def test_installation_tokens_are_never_attributed_to_a_login(self):
         with patch("gh_transport_identity.subprocess.run") as run:
             self.assertIsNone(resolve_owner_proof(
-                ("gh", "github.com"), "cred", {"GH_TOKEN": "ghs_example"}, self.directory))
+                ("gh", "github.com"), "cred", {"GH_TOKEN": "ghs_example"}, self.directory))  # nosec B105
             run.assert_not_called()
 
     def test_shared_scope_stale_balance_expires_at_its_own_reset(self):

@@ -67,7 +67,7 @@ def resolve_owner_proof(target: tuple[str, str], credential: str, environment: d
         if now - float(entry.get("failed_at", 0) or 0) < OWNER_RETRY_SECONDS:
             return None
     try:
-        login = subprocess.run(
+        login = subprocess.run(  # nosec B603
             [executable, "api", "--hostname", host, "user", "--jq", ".login"],
             env=environment, capture_output=True, timeout=5, check=True,
         ).stdout.decode().strip()
