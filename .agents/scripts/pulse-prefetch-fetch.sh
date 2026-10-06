@@ -384,13 +384,24 @@ _prefetch_repo_prs() {
 #######################################
 _prefetch_repo_daily_cap() {
 	local slug="$1"
+	# GH#33647: the listing is bounded, so a larger cap (default 1000) can never
+	# be observed. Skip the per-repo REST listing instead of paying for it on
+	# every prefetch; calculate_priority_allocations applies the same rule.
+	local list_limit="${_PULSE_DAILY_PR_LIST_LIMIT:-200}"
+
+	echo "### Daily PR Cap"
+	if [[ "$DAILY_PR_CAP" -gt "$list_limit" ]]; then
+		echo "- Daily PR cap ${DAILY_PR_CAP} exceeds the ${list_limit}-PR count window; not counted"
+		echo ""
+		return 0
+	fi
 
 	local today_utc
 	today_utc=$(date -u +%Y-%m-%d)
 	local daily_cap_json daily_cap_err
 	daily_cap_err=$(mktemp)
 	daily_cap_json=$(gh_pr_list --repo "$slug" --state all \
-		--json createdAt --limit 200 2>"$daily_cap_err") || daily_cap_json="[]"
+		--json createdAt --limit "$list_limit" 2>"$daily_cap_err") || daily_cap_json="[]"
 	if [[ -z "$daily_cap_json" || "$daily_cap_json" == "$_PREFETCH_JSON_NULL" ]]; then
 		local _daily_cap_err_msg
 		_daily_cap_err_msg=$(cat "$daily_cap_err" 2>/dev/null || echo "$_PREFETCH_UNKNOWN_ERROR")
@@ -411,7 +422,6 @@ _prefetch_repo_daily_cap() {
 		daily_pr_remaining=0
 	fi
 
-	echo "### Daily PR Cap"
 	if [[ "$daily_pr_count" -ge "$DAILY_PR_CAP" ]]; then
 		echo "- **DAILY PR CAP REACHED** — ${daily_pr_count}/${DAILY_PR_CAP} PRs created today (UTC)"
 		echo "- **DO NOT dispatch new workers for this repo.** Wait for the next UTC day."
