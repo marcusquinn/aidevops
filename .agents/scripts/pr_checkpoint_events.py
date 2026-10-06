@@ -118,19 +118,20 @@ def released_attempt_token(comments, approval, release):
     return next(iter(tokens)) if len(tokens) == 1 else None
 
 
-def closes_released_attempt(runner, token, comment, line, f):
+def closes_released_attempt(released_lease, comment, line, f):
     # GH#33839: the released attempt closes its own lease after CLAIM_RELEASED;
     # that terminal lease ends the old attempt and is not a successor owner.
+    runner, token = released_lease or (None, None)
     return all((bool(token), line.startswith("DISPATCH_LEASE "), f.get("phase") == "terminal",
                 f.get("lease_token") == token, comment["user"]["login"] == runner))
 
 
-def successors_valid(data, comments, release_id, approval_id, now, runner=None, token=None):
+def successors_valid(data, comments, release_id, approval_id, now):
     claim = None
     for comment, line, f in events(comments, release_id, float("inf")):
         if not trusted(comment):
             return False
-        if closes_released_attempt(runner, token, comment, line, f):
+        if closes_released_attempt(data.get("released_lease"), comment, line, f):
             continue
         if claim is None and own_claim_matches(data, approval_id, comment, line, f):
             claim = f

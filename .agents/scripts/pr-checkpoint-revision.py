@@ -51,9 +51,9 @@ def candidate(data, comments, comment, now):
     release = release_for(comments, approval, comment)
     if release is None:
         return None
-    closing = released_attempt_token(comments, approval, release)
-    if not successors_valid(data, comments, release["id"], comment["id"], now,
-                            approval["runner"], closing):
+    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    if not successors_valid({**data, "released_lease": closing}, comments, release["id"],
+                            comment["id"], now):
         return None
     owners = [a["login"] for a in data["issue"].get("assignees", [])]
     allowed_owners = [[data["assignee"]]]
