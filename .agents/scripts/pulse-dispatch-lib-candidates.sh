@@ -994,7 +994,7 @@ _dispatch_capability_cooldown_active() {
 _dispatch_capability_cooldown_record() {
 	local candidate="$1" recent_lines="$2"
 	local fields="" issue="" repo="" repo_path="" signal="" file="" tmp=""
-	local updated classes fingerprint
+	local updated='' classes='' fingerprint=''
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 && -n "$candidate" ]] || return 0
 	[[ "$recent_lines" =~ DISPATCH_BLOCK_REASON\ reason=runner_capability_unmet\ signal=([a-z_]+)\ cooldown=eligible ]] || return 0
 	signal="${BASH_REMATCH[1]}"
@@ -1023,7 +1023,7 @@ _dispatch_capability_cooldown_record() {
 _dispatch_skip_for_capability_cooldown() {
 	local candidate="$1" issue="$2" repo="$3" repo_path="$4"
 	local fields="" number="" file=""
-	local updated classes fingerprint
+	local updated='' classes='' fingerprint=''
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 ]] || return 1
 	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 1
 	[[ -f "$file" ]] || return 1
@@ -1051,7 +1051,7 @@ _dispatch_skip_for_capability_cooldown() {
 _dispatch_filter_capability_cooled_candidates() {
 	local repo_slug="$1" repo_path="$2" candidates_json="$3"
 	local dir="" config_fp="" rows="" issue="" skipped="" filtered=""
-	local updated classes fingerprint
+	local updated='' classes='' fingerprint=''
 	dir=$(_dispatch_capability_cooldown_dir)
 	if [[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -eq 0 || ! -d "$dir" ||
 		! "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
