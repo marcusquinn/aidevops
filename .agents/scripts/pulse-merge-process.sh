@@ -735,6 +735,20 @@ _pmp_evaluate_pr_with_deadline() {
 	return "$result"
 }
 
+# Prepare the caller's dynamically scoped pr_json/pr_count and completeness
+# flag. Advisory sorting never replaces the cursor's authoritative enrichment.
+_pmp_prepare_repo_processing_backlog() {
+	local repo_slug="$1" timing_prefix="$2" prepared_pr_json=""
+	_pmp_prepare_enriched_pr_backlog_timed "$repo_slug" "$pr_json" prepared_pr_json "$timing_prefix" || return $?
+	pr_json="$prepared_pr_json"
+	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
+	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
+	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; outcomes_complete=0; }
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	return 0
+}
+
 #######################################
 # Merge ready PRs for a single repo.
 #
@@ -806,19 +820,13 @@ _merge_ready_prs_for_repo() {
 	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="" AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
 	_pmp_setup_merge_repo_caches "$repo_slug"
 
-	local prepared_pr_json="" preparation_rc=0
-	_pmp_prepare_enriched_pr_backlog_timed "$repo_slug" "$pr_json" prepared_pr_json "$_timing_prefix" || preparation_rc=$?
+	local preparation_rc=0
+	_pmp_prepare_repo_processing_backlog "$repo_slug" "$_timing_prefix" || preparation_rc=$?
 	if [[ "$preparation_rc" -ne 0 ]]; then
 		_pmp_cleanup_merge_repo_caches
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		return "$preparation_rc"
 	fi
-	pr_json="$prepared_pr_json"
-	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
-	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
-	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; outcomes_complete=0; }
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
 	local i=0
 	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" i || i=0
@@ -835,7 +843,6 @@ _merge_ready_prs_for_repo() {
 		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha=""
 		_cursor_last_pr=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || _cursor_last_pr=""
 		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
-		[[ -n "$pr_obj" ]] || continue
 
 		local _pr_rc=0
 		_pmp_evaluate_pr_with_deadline "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
