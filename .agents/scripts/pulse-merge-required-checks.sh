@@ -928,6 +928,67 @@ _pmrc_rerun_infrastructure_check() {
 	return 0
 }
 
+# Recover cancelled Actions runs without turning infrastructure evidence into
+# code-repair feedback. One reservation per PR/head/run survives restarts and
+# deduplicates multiple cancelled jobs in the same workflow (GH#33780).
+_pmrc_rerun_cancelled_check() {
+	local repo_slug="$1" pr_number="$2" head_sha="$3" check_url="$4"
+	local state_root="${AIDEVOPS_TEMP_DIR:-${HOME:+$HOME/.aidevops/.agent-workspace/tmp}}"
+	local state_dir="${PULSE_MERGE_CANCELLED_RERUN_STATE_DIR:-${state_root:+$state_root/pulse-cancelled-check-reruns}}"
+	local run_id="" run_json="" attempt="" previous_attempt="" reservation=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	[[ "$head_sha" =~ ^[A-Za-z0-9_-]+$ && "${DRY_RUN:-0}" != 1 ]] || return 1
+	[[ -n "$state_dir" ]] || return 1
+	[[ "$check_url" == "https://github.com/${repo_slug}/actions/runs/"* ]] || return 1
+	run_id="${check_url#*/actions/runs/}"
+	run_id="${run_id%%[/?#]*}"
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
+		! repo_allows_pulse_write_actions "$repo_slug"; then
+		return 1
+	fi
+	_pmrc_actions_incident_blocks_rerun && return 1
+	# A stale check URL must never rerun a different commit or an active run.
+	run_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/actions/runs/${run_id}" 2>/dev/null) || return 1
+	attempt=$(jq -er --arg head "$head_sha" --arg number "$PMRC_JSON_NUMBER" \
+		--arg cancelled cancelled --arg failure "$PMRC_CHECK_FAILURE" '
+		select(.head_sha == $head and .status == "completed"
+			and (.conclusion == $cancelled or .conclusion == $failure))
+		| .run_attempt | select(type == $number and . >= 1)' <<<"$run_json") || return 1
+	[[ "$attempt" =~ ^[1-9][0-9]*$ ]] || return 1
+	mkdir -p "$state_dir" || return 1
+	reservation="${state_dir}/${repo_slug//\//-}-${pr_number}-${head_sha}-${run_id}"
+	if mkdir "$reservation" 2>/dev/null; then
+		# Reserve before the write: concurrent passes and crashes cannot amplify it.
+		printf '%s\n' "$attempt" >"$reservation/attempt" || return 1
+		#aidevops:trust-boundary — repository write policy and the API run SHA
+		# are checked above; gh is the pulse wrapper, not a direct CLI bypass.
+		if gh run rerun "$run_id" --repo "$repo_slug" >/dev/null 2>&1; then
+			: >"$reservation/submitted" || return 1
+			aidevops_log_line "[pulse-merge] requested cancelled workflow rerun for PR #${pr_number} head ${head_sha} run=${run_id}; merge remains blocked pending fresh success (GH#33780)"
+			return 0
+		fi
+		if mkdir "$reservation/escalated" 2>/dev/null; then
+			aidevops_log_line "[pulse-merge] cancelled workflow recovery escalated for PR #${pr_number} head ${head_sha} run=${run_id}: rerun request failed; no further automatic reruns (GH#33780)"
+		fi
+		return 1
+	fi
+	# A reservation with no submission receipt is ambiguous after interruption.
+	# Escalate conservatively, never replay a possibly accepted request.
+	if [[ ! -f "$reservation/submitted" || ! -f "$reservation/attempt" ]]; then
+		if mkdir "$reservation/escalated" 2>/dev/null; then
+			aidevops_log_line "[pulse-merge] cancelled workflow recovery escalated for PR #${pr_number} head ${head_sha} run=${run_id}: incomplete submission receipt; no further automatic reruns (GH#33780)"
+		fi
+		return 1
+	fi
+	IFS= read -r previous_attempt <"$reservation/attempt" || previous_attempt=0
+	[[ "$previous_attempt" =~ ^[1-9][0-9]*$ ]] || previous_attempt=0
+	if [[ "$attempt" -gt "$previous_attempt" ]] && mkdir "$reservation/escalated" 2>/dev/null; then
+		aidevops_log_line "[pulse-merge] cancelled workflow recovery escalated for PR #${pr_number} head ${head_sha} run=${run_id}: attempt ${attempt} cancelled again; no further automatic reruns (GH#33780)"
+	fi
+	return 0
+}
+
 _pmrc_configured_advisory_contexts_json() {
 	local repo_slug="$1"
 	local repos_json="${AIDEVOPS_REPOS_JSON:-$HOME/.config/aidevops/repos.json}"
@@ -1067,6 +1128,13 @@ _pmrc_snapshot_checks_acceptable() {
 		case "$conclusion" in
 		success | neutral | skipped) continue ;;
 		esac
+		if [[ "$conclusion" == cancelled ]]; then
+			_pmrc_rerun_cancelled_check "$repo_slug" "$pr_number" "$head_sha" "$link" || true
+			# Never classify cancellation as advisory or dispatch code repair.
+			# Only a later authoritative successful snapshot can clear this gate.
+			blockers=$((blockers + 1))
+			continue
+		fi
 		if [[ "$family" == "$PMRC_MAINTAINER_GATE" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-${conclusion} for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required} — merge blocked" >>"$LOGFILE"
 			blockers=$((blockers + 1))
