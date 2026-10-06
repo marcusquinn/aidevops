@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Focused admission invariants; no network or production state access."""
@@ -20,7 +19,13 @@ from unittest.mock import Mock, patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
-from gh_transport_budget import Budget, Deferred, quota_owner, reconcile_scope, scope_key  # noqa: E402
+from gh_transport_budget import (
+    Budget,
+    Deferred,
+    quota_owner,
+    reconcile_scope,
+    scope_key,
+)
 
 SPEC = importlib.util.spec_from_file_location("governor", SCRIPTS / "gh-transport-governor.py")
 governor = importlib.util.module_from_spec(SPEC)
@@ -86,9 +91,8 @@ class AdmissionTests(unittest.TestCase):
         connection = sqlite3.connect(self.directory / "admission.sqlite3")
         connection.execute("PRAGMA user_version=3")
         connection.close()
-        with self.assertRaisesRegex(ValueError, "schema changed"):
-            with self.budget.transaction():
-                pass
+        with self.assertRaisesRegex(ValueError, "schema changed"), self.budget.transaction():
+            pass
         self.budget.db.execute("PRAGMA user_version=2")
 
     def test_legacy_schema_migrates_to_wal_once(self):
@@ -139,6 +143,75 @@ class AdmissionTests(unittest.TestCase):
         self.seed(150)
         token = self.budget.acquire("core", now=1002)
         self.budget.finish(token, "core", headers(4000), started=1002, now=1003)
+        self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 150)
+
+    def test_newer_window_recovers_bound_credential_without_reserve_probe(self):
+        self.seed(540, 4600)
+        self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
+                               ("owner-one", "core", 4600, 1020, 540))
+        request = self.budget.acquire("core", now=1020)
+        self.budget.finish(request, "core", headers(4999, 4700), started=1020, now=1021)
+        self.assertEqual(self.budget.db.execute(
+            "SELECT remaining,reset FROM quota"
+        ).fetchone(), (4999, 4700))
+        # A changed window invalidates saved pacing without waiting for its timer.
+        self.budget.acquire("core", now=1021.1)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+
+    def test_newer_window_does_not_recover_shared_owner_without_probe(self):
+        self.seed(150)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            for attributed, reset in ((False, 2100), (True, 2200)):
+                with self.subTest(attributed=attributed):
+                    other.attributed = attributed
+                    request = other.acquire("core", now=1002)
+                    other.finish(request, "core", headers(4999, reset), started=1002, now=1003)
+                    # The lower balance keeps its own reset epoch (GH#33701).
+                    self.assertEqual(other.db.execute(
+                        "SELECT remaining,reset FROM quota"
+                    ).fetchone(), (150, 2000))
+        finally:
+            other.close()
+
+    def test_shared_scope_stale_balance_expires_at_its_own_reset(self):
+        # GH#33701: a sliding later reset from another unresolved credential
+        # must not extend a stale low balance past its own window.
+        self.seed(540, 2000)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            for now, reset in ((1002, 4600), (1500, 5100), (1990, 5590)):
+                request = other.acquire("core", now=now)
+                other.finish(request, "core", headers(4999, reset), started=now, now=now + 1)
+                self.assertEqual(other.db.execute(
+                    "SELECT remaining,reset FROM quota"
+                ).fetchone(), (540, 2000))
+            # After the stale window resets, one fresh observation is authoritative.
+            request = other.acquire("core", now=2001)
+            other.finish(request, "core", headers(4998, 5601), started=2001, now=2002)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (4998, 5601))
+        finally:
+            other.close()
+
+    def test_shared_scope_lower_incoming_balance_keeps_its_own_reset(self):
+        self.seed(4000, 4600)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(300, 3000), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (300, 3000))
+        finally:
+            other.close()
+
+    def test_newer_window_requires_matching_reservation_credential(self):
+        self.seed(150)
+        request = self.budget.acquire("core", now=1002)
+        self.budget.db.execute("UPDATE reservation SET credential='other' WHERE id=?", (request,))
+        self.budget.finish(request, "core", headers(4999, 2100), started=1002, now=1003)
         self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 150)
 
     def test_reset_requires_a_new_response_not_a_new_allowance(self):
@@ -453,9 +526,9 @@ class AdmissionTests(unittest.TestCase):
             self.assertEqual(quota_owner(), ("unresolved", False))
         with patch.dict(os.environ, {"AIDEVOPS_GH_QUOTA_OWNER": "account-one"}):
             self.assertEqual(quota_owner(), ("account-one", True))
-        with patch.dict(os.environ, {"AIDEVOPS_GH_QUOTA_OWNER": "x" * 257}):
-            with self.assertRaisesRegex(ValueError, "invalid GitHub quota owner"):
-                quota_owner()
+        with (patch.dict(os.environ, {"AIDEVOPS_GH_QUOTA_OWNER": "x" * 257}),
+              self.assertRaisesRegex(ValueError, "invalid GitHub quota owner")):
+            quota_owner()
 
     def test_reconcile_cli_bootstraps_configured_owner(self):
         root = Path(os.environ.get(
@@ -546,6 +619,29 @@ class AdmissionTests(unittest.TestCase):
         ])
         self.budget.acquire("core", now=1012)
 
+    def test_high_quota_burst_admits_even_with_long_reset_and_saved_pacing(self):
+        self.seed(4999, reset=80000)
+        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
+            ("owner-one", "core", 1001 + i) for i in range(11)
+        ])
+        self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
+                               ("owner-one", "core", 80000, 1100, 4999))
+        other = Budget(self.directory, "owner-one")
+        try:
+            other.acquire("core", now=1012)
+            self.assertEqual(other.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+        finally:
+            other.close()
+
+    def test_high_observed_quota_with_reserved_capacity_still_paces(self):
+        self.seed(2501, reset=80000)
+        self.budget.acquire("core", now=1002)
+        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
+            ("owner-one", "core", 1001 + i) for i in range(11)
+        ])
+        with self.assertRaisesRegex(Deferred, "observed demand"):
+            self.budget.acquire("core", now=1012)
+
     def test_long_pacing_deadline_survives_history_expiry_and_process_reopen(self):
         self.seed(3)
         self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
@@ -556,9 +652,12 @@ class AdmissionTests(unittest.TestCase):
         retry_at = first.exception.retry_at
         other = Budget(self.directory, "owner-one")
         try:
+            # A recent refresh attempt retains the pacing deadline on reopen.
+            other.db.execute("UPDATE revalidation SET started=1090")
             with self.assertRaises(Deferred) as later:
                 other.acquire("core", now=1100)
             self.assertEqual(later.exception.retry_at, retry_at)
+            other.db.execute("UPDATE revalidation SET started=?", (retry_at - 10,))
             request = other.acquire("core", now=retry_at)
             other.finish(request, "core", headers(2), started=retry_at, now=retry_at + 0.1)
             with self.assertRaises(Deferred):
@@ -568,6 +667,30 @@ class AdmissionTests(unittest.TestCase):
             other.acquire("core", now=retry_at + 2)
         finally:
             other.close()
+
+    def test_stale_pacing_allows_serialized_header_refresh_before_deadline(self):
+        self.seed(3)
+        self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
+                               ("owner-one", "core", 2000, 1900, 3))
+        request = self.budget.acquire("core", now=1061)
+        with self.assertRaisesRegex(Deferred, "serialized quota revalidation"):
+            self.budget.acquire("core", now=1061)
+        self.budget.finish(request, "core", headers(5000), started=1061, now=1062)
+        self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 5000)
+        self.budget.acquire("core", now=1063)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM pacing").fetchone()[0], 0)
+
+    def test_stale_pacing_refresh_keeps_secondary_and_server_limits(self):
+        self.seed(3)
+        self.budget.db.execute("INSERT INTO pacing VALUES(?,?,?,?,?)",
+                               ("owner-one", "core", 2000, 1900, 3))
+        self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)",
+                                  [("owner-one", "core", 1060)] * 900)
+        with self.assertRaisesRegex(Deferred, "secondary ceiling"):
+            self.budget.acquire("core", now=1061)
+        self.budget.db.execute("UPDATE quota SET blocked_until=1200")
+        with self.assertRaisesRegex(Deferred, "server resource cooldown"):
+            self.budget.acquire("core", now=1061)
 
     def test_pacing_cannot_withhold_the_last_primary_point(self):
         self.seed(1)

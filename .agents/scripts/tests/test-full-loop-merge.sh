@@ -9,6 +9,29 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 
+test_prospective_todo_requires_supported_native_git() {
+	local fixture_dir="" base_sha="" head_sha="" wrapper="" output="" rc=0
+	fixture_dir=$(create_prospective_fixture unique)
+	base_sha=$(<"${fixture_dir}/base.sha")
+	head_sha=$(<"${fixture_dir}/head.sha")
+	wrapper="${fixture_dir}/old-git-wrapper"
+	cat >"$wrapper" <<'WRAPPER_EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+	printf '%s\n' 'git version 2.39.5 (Apple Git-154)'
+	exit 0
+fi
+exec /usr/bin/git "$@"
+WRAPPER_EOF
+	chmod +x "$wrapper"
+	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" stub \
+		'https://github.com/testorg/testrepo.git' 'testorg/testrepo' "$fixture_dir" "$wrapper") || rc=$?
+	print_result "prospective TODO: old native Git fails with actionable version guidance" \
+		"$([[ "$rc" -ne 0 && "$output" == *"2.39.5"* && "$output" == *"Git 2.44+ required"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+	return 0
+}
+
 # shellcheck source=./test-full-loop-merge-cases.sh
 # shellcheck disable=SC1091  # Sibling test module resolved at runtime.
 source "${SCRIPT_DIR}/test-full-loop-merge-cases.sh"
@@ -37,7 +60,9 @@ main() {
 	test_review_gate_failure_blocks_rest_fallback
 	test_cooldown_gate_failure_reports_cooldown
 	test_local_admission_gate_failure_reports_retry_deadline
+	test_post_verification_read_admission_window
 	test_bounded_local_admission_recovery
+	test_final_head_sha_read_admission_recovery
 	test_local_deferral_survives_context_resolution
 	test_exact_check_deferral_preserves_retry_deadline
 	test_auto_review_required_interactive_admin_fallback
@@ -60,6 +85,7 @@ main() {
 	test_todo_duplicate_report_large_baseline
 	test_timeout_sec_fallback_preserves_stdin
 	test_prospective_todo_merge_guard
+	test_prospective_todo_requires_supported_native_git
 	test_prospective_todo_live_fetch_guard
 	test_prospective_todo_crisscross_fetch_guard
 

@@ -81,6 +81,7 @@ load_functions() {
 	extract_function _merge_author_has_write_authority
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
+	extract_function _merge_report_author_lookup_failure
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -116,6 +117,12 @@ FULL_LOOP_MERGE_SUBJECT_FLAG="--subject"
 print_error() {
 	local message="$1"
 	printf 'ERROR %s\n' "$message" >&2
+	return 0
+}
+
+print_warning() {
+	local message="$1"
+	printf 'WARNING %s\n' "$message" >&2
 	return 0
 }
 
@@ -185,6 +192,7 @@ _gh_collaborator_permission_lookup() {
 	local author="$2"
 	local out_var="${3:-}"
 	[[ -n "$repo" && -n "$author" ]] || return 2
+	[[ "$FIXTURE_PERMISSION_FAIL" -ne 75 ]] || return 75
 	[[ "$FIXTURE_PERMISSION_FAIL" -eq 0 ]] || return 2
 	if [[ -n "$out_var" ]]; then
 		printf -v "$out_var" '%s' "$FIXTURE_PERMISSION"
@@ -385,6 +393,17 @@ test_authority_guard() {
 	reset_fixture
 	FIXTURE_PERMISSION_FAIL=1
 	expect_guard_result "author permission lookup failure blocks" 1
+
+	reset_fixture
+	FIXTURE_PERMISSION_FAIL=75
+	local deferred_output="" deferred_rc=0
+	deferred_output=$(_merge_collect_external_authority_gaps 900 owner/repo head-current 2>&1) || deferred_rc=$?
+	if [[ "$deferred_rc" -eq 1 && "$deferred_output" == *"Merge deferred:"* &&
+		"$deferred_output" != *"unable to verify live repository permission"* && ! -s "$CRYPTO_CALLS" ]]; then
+		print_result "deferred author permission read fails closed without permission failure" 0
+	else
+		print_result "deferred author permission read fails closed without permission failure" 1 "$deferred_output"
+	fi
 
 	reset_fixture
 	set_pr_fixture external '[]' false '[]' ''

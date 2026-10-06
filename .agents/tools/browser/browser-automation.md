@@ -151,6 +151,17 @@ agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser
 
 **NEVER use curl to verify frontend fixes** — server returns 200 even when React crashes client-side. Diagnose: screenshot → errors/console → snapshot/URL → analyze → retry → ask user if stuck.
 
+## Completion Outcomes (any engine)
+
+A browser check reports what the target did, not that the script ended. Exit 0 proves the observation command finished; it does not prove the application accepted the operation.
+
+- **Wait for terminal states, not only success.** While waiting for success, also watch for visible, target-specific auth or permission prompts, error alerts, and challenges. Stop at the first one; never wait out the full budget once a terminal state has appeared.
+- **Return one outcome.** `success` means the real expected result is visible. `blocked` means login, permission, CAPTCHA/MFA, or another external gate. `failed` means a visible error state. `timed-out` means nothing terminal appeared before the deadline. Loading or progress screens are not terminal; they become `timed-out` only at the deadline. Login, error, and progress pages never count as `success`.
+- **Stop the unsafe route.** For `blocked` or `failed`, do not retry submissions, acquire credentials, bypass CAPTCHA/MFA, or switch to the user's profile automatically.
+- **Hand off bounded evidence.** Return the outcome, the last URL with the query string and fragment removed, short visible state text, and the actions already taken. Redact tokens, cookies, and private content. Close owned browsers and contexts in `finally`. Verification scripts must exit non-zero unless the outcome is `success`.
+
+The same contract applies to Stagehand's adaptive actions; it changes neither routing nor auth handling. Playwright recipe: `playwright.md` "Bounded Completion Checks".
+
 > **Screenshot limit**: Never `fullPage: true` for AI vision — can exceed 8000px (hard-rejected). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `reference/screenshot-limits.md`.
 
 <!-- AI-CONTEXT-END -->

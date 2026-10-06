@@ -859,6 +859,36 @@ test_local_admission_gate_failure_reports_retry_deadline() {
 	return 0
 }
 
+test_post_verification_read_admission_window() {
+	local scripts_dir="" result=0
+	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	bash -c '
+		source "$1/shared-constants.sh"
+		source "$1/full-loop-helper-merge.sh"
+		unset AIDEVOPS_GH_READ_TIMEOUT
+		_gh_with_timeout() {
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 && "$1" == read ]] || return 1
+			printf "base\tbase-sha\thead-sha\ttestorg/testrepo\tclone-url\n"
+			return 0
+		}
+		_merge_fetch_pr_refs_rest 42 testorg/testrepo >/dev/null || exit 1
+		[[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] || exit 1
+		_gh_collaborator_permission_lookup() {
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 ]] || return 2
+			printf -v "$3" "%s" write
+			return 0
+		}
+		_merge_author_has_write_authority owner testorg/testrepo || exit 1
+		_gh_with_timeout() {
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 7 ]] || return 1
+			return 0
+		}
+		AIDEVOPS_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo
+	' _ "$scripts_dir" || result=$?
+	print_result "post-verification reads: bounded admission window and caller override" "$result"
+	return 0
+}
+
 test_bounded_local_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -867,6 +897,7 @@ test_bounded_local_admission_recovery() {
 		bash -c '
 			source "$1/shared-constants.sh"
 			source "$1/full-loop-helper-merge.sh"
+			export AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=30
 			scenario="$2" calls=0 waits=0 elapsed=0
 			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
 			sleep() {
@@ -917,6 +948,45 @@ test_bounded_local_admission_recovery() {
 			esac
 		' _ "$scripts_dir" "$scenario" || result=$?
 		print_result "bounded local admission recovery: $scenario" "$result"
+	done
+	return 0
+}
+
+test_final_head_sha_read_admission_recovery() {
+	local scripts_dir="" scenario="" result=0
+	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	for scenario in recovers persists drift; do
+		result=0
+		bash -c '
+			source "$1/shared-constants.sh"
+			source "$1/full-loop-helper-merge.sh"
+			source "$1/full-loop-helper-readiness.sh"
+			scenario="$2" elapsed=0 out="" rc=0
+			calls_file="$(mktemp)"
+			printf "0" >"$calls_file"
+			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
+			sleep() { elapsed=$((elapsed + $1)); SECONDS=$((SECONDS + $1)); return 0; }
+			_merge_fetch_head_sha_rest() {
+				# Runs in a command substitution; persist the call count in a file.
+				local calls=$(( $(<"$calls_file") + 1 ))
+				printf "%s" "$calls" >"$calls_file"
+				if [[ "$scenario" == persists || "$calls" -eq 1 ]]; then
+					printf "%s\n" "[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=1002 reason=pacing" >&2
+					return 1
+				fi
+				[[ "$scenario" == drift ]] && printf "%s\n" other456 || printf "%s\n" verified123
+				return 0
+			}
+			export FULL_LOOP_VERIFIED_PR_HEAD_SHA=verified123
+			out=$(_merge_resolve_match_head 42 testorg/testrepo 2>&1) || rc=$?
+			rm -f "$calls_file"
+			case "$scenario" in
+			recovers) [[ "$rc" -eq 0 && "$out" == *verified123 && "$out" == *"waiting 2s"* ]] ;;
+			persists) [[ "$rc" -eq 1 && "$out" == *"retry_at=1002"* && "$out" != *"Could not retrieve"* ]] ;;
+			drift) [[ "$rc" -eq 1 && "$out" == *"head changed after remote verification"* ]] ;;
+			esac
+		' _ "$scripts_dir" "$scenario" || result=$?
+		print_result "final head SHA read admission recovery: $scenario" "$result"
 	done
 	return 0
 }

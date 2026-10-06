@@ -219,7 +219,8 @@ async function run() {
 
     const url = baseUrl + pagePath;
     try {
-      const response = await page.goto(url, { waitUntil: 'networkidle', timeout });
+      const response = await page.goto(url, { waitUntil: 'load', timeout });
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
       const status = response ? response.status() : 0;
 
       // Check basic rendering

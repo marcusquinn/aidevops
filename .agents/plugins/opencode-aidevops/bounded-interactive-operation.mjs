@@ -202,7 +202,7 @@ export class BoundedInteractiveOperationManager {
     if (operation.killTimer) this.clearTimer(operation.killTimer);
     operation.child = null;
     operation.processExit = Number.isInteger(code) ? code : null;
-    operation.processSignal = scalar(signal);
+    operation.processSignal = scalar(signal) || operation.processSignal;
     if (operation.disposition === "running") {
       operation.disposition = code === 0 && operation.commandStarted ? "succeeded" : "failed";
     }

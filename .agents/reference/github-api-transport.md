@@ -113,6 +113,9 @@ child environment; credentials are never exported to a long-lived parent.
   a single bound credential or an explicitly configured canonical owner;
   unresolved shared scopes stay conservative. This is
   bounded recovery, not an alternative transport or a status-endpoint grant.
+  Conservative clamping keeps the lower balance paired with its own reset epoch;
+  a higher balance with a later, sliding reset from another credential never
+  extends it, so stale shared-scope debt expires with its window (GH#33701).
 - Set `AIDEVOPS_GH_BUDGET_DIAGNOSTICS=1` for numeric response and scope-binding
   transition evidence in `budget-transitions.jsonl` beside `admission.sqlite3`.
   The mode-600 log records previous/incoming/accepted balances and reset times,

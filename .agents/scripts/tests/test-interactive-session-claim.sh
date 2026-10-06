@@ -152,6 +152,9 @@ auth)
 			exit 1
 		fi
 		if [[ "$2" == "-i" && "${3:-}" == */collaborators/*/permission ]]; then
+			if [[ "${STUB_PERMISSION_FAIL:-0}" == "75" ]]; then
+				exit 75
+			fi
 			if [[ "${STUB_PERMISSION_FAIL:-0}" == "1" ]]; then
 				printf 'HTTP/2.0 403 Forbidden\n\n{"message":"Forbidden"}\n'
 				exit 1
@@ -1211,6 +1214,22 @@ else
 	lookup_fail_log=$(tr '\n' '|' <"$STUB_LOG")
 	print_result "permission lookup failure skips public claim lifecycle" 1 \
 		"(rc=$lookup_fail_rc, stamp=$([[ -f "$lookup_fail_stamp" ]] && echo yes || echo no), log=${lookup_fail_log}, out=${lookup_fail_out:0:200})"
+fi
+
+# A deferred permission read is not a non-collaborator verdict. Exercise the
+# shared REST lookup through the public claim path and assert no lifecycle write.
+deferred_stamp=$(_isc_stamp_path 61003 external/deferred)
+rm -f "$deferred_stamp" >/dev/null 2>&1 || true
+: >"$STUB_LOG"
+deferred_out=$(STUB_PERMISSION_FAIL=75 STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61003 external/deferred --worktree /tmp/external-wt 2>&1)
+deferred_rc=$?
+if [[ "$deferred_rc" -eq 0 && ! -f "$deferred_stamp" && "$deferred_out" == *"deferred"* &&
+	"$deferred_out" != *"not a maintainer-equivalent collaborator"* ]] &&
+	! grep -q 'issue edit 61003\|issue comment 61003' "$STUB_LOG"; then
+	print_result "deferred permission claim reports deferral without lifecycle writes" 0
+else
+	print_result "deferred permission claim reports deferral without lifecycle writes" 1 "$deferred_out"
 fi
 
 # =============================================================================

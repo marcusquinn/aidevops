@@ -55,7 +55,13 @@ _isc_resolve_manageable_user() {
 		return 1
 	fi
 
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+	local permission_rc=0
+	_isc_can_manage_issue_state "$slug" "$user" || permission_rc=$?
+	if [[ "$permission_rc" -eq 75 ]]; then
+		_isc_warn "$action: #$issue in $slug deferred — GitHub permission read admission deferred; retry when capacity returns"
+		return 1
+	fi
+	if [[ "$permission_rc" -ne 0 ]]; then
 		_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
 		[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
 		return 1

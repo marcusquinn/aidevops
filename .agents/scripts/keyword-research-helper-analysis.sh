@@ -294,9 +294,9 @@ do_keyword_research() {
 			results=$(echo "$results $parsed" | jq -s 'add')
 		fi
 
-		if [[ "$provider" == "serper" ]] || [[ "$provider" == "both" ]]; then
-			# Serper doesn't have keyword suggestions, use search instead
-			print_warning "Serper doesn't support keyword suggestions. Use DataForSEO for this feature."
+		if [[ "$provider" == "serper" ]] || [[ "$provider" == "both" ]] || [[ "$provider" == "serpapi" ]]; then
+			# Serper/SerpApi have no keyword suggestions with volume data
+			print_warning "$provider doesn't support keyword suggestions. Use DataForSEO, or 'autocomplete' for suggestions without volume."
 		fi
 	done
 
@@ -380,6 +380,24 @@ do_autocomplete_research() {
 
 		local parsed
 		# Serper returns suggestions[].value
+		parsed=$(echo "$response" | jq '[.suggestions[]? | {
+            keyword: .value,
+            volume: 0,
+            cpc: 0,
+            difficulty: 0,
+            intent: "unknown"
+        }]' 2>/dev/null || echo "[]")
+
+		results=$(echo "$results $parsed" | jq -s 'add | unique_by(.keyword)')
+	fi
+
+	if [[ "$provider" == "serpapi" ]]; then
+		local gl_code="${locale%-*}"
+		local response
+		response=$(serpapi_autocomplete "$keyword" "$gl_code" "$language_code") || return 1
+
+		local parsed
+		# SerpApi google_autocomplete returns suggestions[].value
 		parsed=$(echo "$response" | jq '[.suggestions[]? | {
             keyword: .value,
             volume: 0,
@@ -664,6 +682,120 @@ do_extended_research() {
 		fi
 	fi
 
+	return 0
+}
+
+# Resolve a serp-compare provider selector into a space-separated list.
+_serp_compare_providers() {
+	local selector="$1"
+	case "$selector" in
+	"all") echo "dataforseo serper serpapi" ;;
+	"both") echo "dataforseo serper" ;;
+	*) echo "${selector//,/ }" ;;
+	esac
+	return 0
+}
+
+# Return 0 when a provider's credentials resolve (env, credentials.sh, or gopass).
+_serp_provider_ready() {
+	local provider="$1"
+	case "$provider" in
+	dataforseo)
+		# shellcheck source=dataforseo-credentials.sh
+		source "$SCRIPT_DIR/dataforseo-credentials.sh"
+		dataforseo_load_credentials >/dev/null 2>&1 || return 1
+		;;
+	serpapi)
+		serpapi_load_key || return 1
+		;;
+	*)
+		check_credentials "$provider" >/dev/null 2>&1 || return 1
+		;;
+	esac
+	return 0
+}
+
+# Compare top-N Google organic results for one keyword across SERP providers.
+# Flags URLs that providers disagree on, to sanity-check vendor data quality.
+# Args: $1=keyword $2=provider selector (all|both|dataforseo|serper|serpapi|csv)
+#       $3=locale $4=depth $5=json output (true|false)
+do_serp_compare() {
+	local keyword="$1"
+	local selector="$2"
+	local locale="$3"
+	local depth="$4"
+	local json_output="$5"
+
+	local location_code language_code gl_code
+	location_code=$(get_location_code "$locale")
+	language_code=$(get_language_code "$locale")
+	gl_code="${locale%-*}"
+
+	local combined="[]"
+	local provider normalized
+	local -a used=()
+	for provider in $(_serp_compare_providers "$selector"); do
+		if ! _serp_provider_ready "$provider"; then
+			print_warning "Skipping $provider: credentials not configured" >&2
+			continue
+		fi
+		if ! normalized=$(serp_organic_normalized "$provider" "$keyword" "$location_code" "$language_code" "$gl_code" "$depth"); then
+			print_warning "Skipping $provider: request failed" >&2
+			continue
+		fi
+		[[ -z "$normalized" ]] && normalized="[]"
+		if [[ "$(jq 'length' <<<"$normalized")" == "0" ]]; then
+			print_warning "$provider returned no organic results" >&2
+		fi
+		normalized=$(jq 'to_entries | map(.value + {rank: (.key + 1),
+			url_key: (.value.url // "" | ascii_downcase | sub("#.*$"; "") | sub("/$"; ""))})' <<<"$normalized")
+		combined=$(jq -s 'add' <<<"$combined $normalized")
+		used+=("$provider")
+	done
+
+	if [[ ${#used[@]} -eq 0 ]]; then
+		print_error "No SERP provider available. Configure DATAFORSEO_*, SERPER_API_KEY, or SERPAPI_API_KEY."
+		return 1
+	fi
+
+	local report
+	report=$(jq --arg kw "$keyword" --arg locale "$locale" --argjson n "$depth" '
+		(map(.provider) | unique) as $ps
+		| (group_by(.url_key) | map({
+			url: .[0].url,
+			providers: (map(.provider) | unique),
+			ranks: (map({(.provider): .rank}) | add)
+		})) as $urls
+		| {
+			keyword: $kw, locale: $locale, depth: $n, providers: $ps,
+			observed_at: (now | todate),
+			agreement: {
+				urls_total: ($urls | length),
+				urls_in_all_providers: ($urls | map(select((.providers | length) == ($ps | length))) | length)
+			},
+			disputed: ($urls | map(select((.providers | length) < ($ps | length)))),
+			results: .
+		}' <<<"$combined")
+
+	if [[ "$json_output" == "true" ]]; then
+		echo "$report"
+		return 0
+	fi
+
+	print_header "SERP Compare: $keyword ($locale, top $depth)"
+	jq -r '
+		.providers as $ps
+		| (["#"] + $ps | join("\t")),
+		  (range(1; .depth + 1) as $i
+		   | ([$i | tostring] + [$ps[] as $p
+		       | ((.results | map(select(.provider == $p and .rank == $i)) | .[0].url) // "-")
+		       | sub("^https?://(www\\.)?"; "") | .[:55]]
+		     | join("\t")))' <<<"$report" | column -t -s $'\t'
+	echo ""
+	jq -r '"Agreement: \(.agreement.urls_in_all_providers) of \(.agreement.urls_total) distinct URLs appear in every provider (\(.providers | join(", ")))"' <<<"$report"
+	if [[ ${#used[@]} -gt 1 ]]; then
+		jq -r '.disputed[] | "  only \(.providers | join("+")): \(.url) \(.ranks | to_entries | map("\(.key)#\(.value)") | join(" "))"' <<<"$report"
+	fi
 	return 0
 }
 

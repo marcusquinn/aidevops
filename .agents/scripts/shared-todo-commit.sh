@@ -767,15 +767,19 @@ _todo_commit_push_inner() {
 
 	current_branch=$(_todo_current_branch "$repo_path")
 	default_branch=$(_todo_default_branch "$repo_path")
-	if [[ -n "$current_branch" && -n "$default_branch" ]] &&
+	if [[ -n "$default_branch" ]] &&
 		_todo_branch_requires_planning_pr "$repo_path" "$default_branch"; then
 		printf '%s\n' "[todo_commit_push] Default branch ${default_branch} requires PR publication for planning files" >>"$log_target"
-		_todo_create_planning_pr "$repo_path" "$commit_msg" "$files" "$current_branch" "$default_branch" "$log_target"
+		_todo_create_planning_pr "$repo_path" "$commit_msg" "$files" "${current_branch:-detached HEAD}" "$default_branch" "$log_target"
 		return $?
 	fi
 
-	current_branch=$(_todo_current_branch "$repo_path")
-	[[ -n "$current_branch" ]] || current_branch="main"
+	# Detached HEAD cannot be pushed as a named branch; committing locally and
+	# pushing a stale local ref would falsely report "direct" (GH#33707).
+	if [[ -z "$current_branch" ]]; then
+		printf '%s\n' "[todo_commit_push] Detached HEAD: refusing local-only commit; publication unavailable" >>"$log_target"
+		return 1
+	fi
 
 	# Stage and commit before pull/rebase. Pulling first fails when the caller has
 	# unstaged planning edits; after a local planning commit, rebase can safely

@@ -34,6 +34,10 @@ FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 
 _flm_gh_read() {
 	local rc=0
+	# Let the transport wait to retry_at within one bounded read, including
+	# post-verification reads. Explicit caller deadlines remain authoritative.
+	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
+	export AIDEVOPS_GH_READ_TIMEOUT
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
 		_gh_with_timeout read "$@" || rc=$?
 	else
@@ -429,21 +433,26 @@ _merge_is_trusted_issue_sync_pr() {
 }
 
 # Returns 0 for live admin/maintain/write authority, 1 for a confirmed external
-# author, and 2 when GitHub cannot provide a trustworthy verdict.
+# author, 2 when GitHub cannot provide a trustworthy verdict, or 75 on deferral.
 _merge_author_has_write_authority() {
 	local author="$1"
 	local repo="$2"
 	local permission=""
+	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
+	export AIDEVOPS_GH_READ_TIMEOUT
+	local permission_rc=0
 
 	# shared-constants.sh loads the App-aware helper in normal full-loop use. It
 	# distinguishes a confirmed 404 non-collaborator (permission=none) from API
 	# uncertainty; the direct gh fallback keeps this library sourceable in tests.
 	if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
-		_gh_collaborator_permission_lookup "$repo" "$author" permission || return 2
+		_gh_collaborator_permission_lookup "$repo" "$author" permission || permission_rc=$?
 	else
-		permission=$(gh api "repos/${repo}/collaborators/${author}/permission" \
-			--jq '.permission // "none"' 2>/dev/null) || return 2
+		permission=$(_flm_gh_read gh api "repos/${repo}/collaborators/${author}/permission" \
+			--jq '.permission // "none"' 2>/dev/null) || permission_rc=$?
 	fi
+	[[ "$permission_rc" -ne 75 ]] || return 75
+	[[ "$permission_rc" -eq 0 ]] || return 2
 	case "$permission" in
 	admin | maintain | write) return 0 ;;
 	none | read | triage) return 1 ;;
@@ -476,6 +485,19 @@ _merge_collect_linked_issue_authority_gaps() {
 			fi
 		fi
 	done <<<"$issue_numbers"
+	return 0
+}
+
+# Report a non-verdict author permission lookup: 75 is a deferral, not a denial.
+_merge_report_author_lookup_failure() {
+	local author_rc="$1"
+	local pr_author="$2"
+
+	if [[ "$author_rc" -eq 75 ]]; then
+		print_warning "Merge deferred: GitHub permission read admission deferred for PR author ${pr_author}; retry when capacity returns"
+	else
+		print_error "Merge blocked: unable to verify live repository permission for PR author ${pr_author}"
+	fi
 	return 0
 }
 
@@ -548,8 +570,8 @@ _merge_collect_external_authority_gaps() {
 		trusted_dependabot=1
 	else
 		_merge_author_has_write_authority "$pr_author" "$repo" || author_rc=$?
-		if [[ "$author_rc" -eq 2 ]]; then
-			print_error "Merge blocked: unable to verify live repository permission for PR author ${pr_author}"
+		if [[ "$author_rc" -eq 75 || "$author_rc" -eq 2 ]]; then
+			_merge_report_author_lookup_failure "$author_rc" "$pr_author"
 			return 1
 		fi
 		if [[ "$labels_padded" == *",external-contributor,"* ]] ||
@@ -624,11 +646,19 @@ _merge_guard_admin_merge_maintainer_review() {
 _merge_fetch_head_sha_rest() {
 	local pr_number="$1"
 	local repo="$2"
-	local head_sha=""
-	head_sha=$(gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>/dev/null || true)
-	if [[ -z "$head_sha" ]]; then
+	local head_sha="" err_file="" rc=0
+	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-sha.XXXXXX") || err_file="/dev/null"
+	head_sha=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>"$err_file") || rc=$?
+	if [[ "$rc" -ne 0 || -z "$head_sha" ]]; then
+		# Surface transport diagnostics (e.g. local-admission deferral) on stderr
+		# so the caller can distinguish pacing from a real failure.
+		if [[ "$err_file" != /dev/null ]]; then
+			cat "$err_file" >&2
+			rm -f "$err_file"
+		fi
 		return 1
 	fi
+	[[ "$err_file" == /dev/null ]] || rm -f "$err_file"
 	printf '%s\n' "$head_sha"
 	return 0
 }
@@ -641,7 +671,7 @@ _merge_fetch_pr_refs_rest() {
 	local pr_number="$1"
 	local repo="$2"
 	local refs=""
-	refs=$(gh api "repos/${repo}/pulls/${pr_number}" \
+	refs=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" \
 		--jq '[.base.ref // empty, .base.sha // empty, .head.sha // empty, .base.repo.full_name // empty, .base.repo.clone_url // empty] | @tsv' 2>/dev/null) || return 1
 	[[ "$refs" == *$'\t'*$'\t'*$'\t'*$'\t'* ]] || return 1
 	printf '%s\n' "$refs"
@@ -1001,6 +1031,22 @@ _merge_guard_prospective_todo() (
 		print_error "Merge blocked: native Git executable is unavailable"
 		return 1
 	}
+	local git_version_output=""
+	local git_version=""
+	local git_major=""
+	local git_minor=""
+	git_version_output=$("$real_git" --version 2>/dev/null) || git_version_output=""
+	if [[ "$git_version_output" =~ ^git\ version\ ([0-9]+)\.([0-9]+)(\.[0-9]+)?([[:space:]]|$) ]]; then
+		git_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+		git_major="${BASH_REMATCH[1]}"
+		git_minor="${BASH_REMATCH[2]}"
+	else
+		git_version="unknown (unparseable version: ${git_version_output:-no output})"
+	fi
+	if [[ -z "$git_major" ]] || ((git_major < 2 || (git_major == 2 && git_minor < 44))); then
+		print_error "Merge blocked: native Git ${git_version} at ${real_git} predates GIT_NO_LAZY_FETCH (Git 2.44+ required for prospective TODO validation); set AIDEVOPS_REAL_GIT_BIN to a newer Git (for example Homebrew git)"
+		return 1
+	fi
 	mkdir -p "$temp_root" || {
 		print_error "Merge blocked: unable to prepare approved temporary root"
 		return 1
@@ -1131,6 +1177,49 @@ _merge_rest_fallback() {
 	return 1
 }
 
+# Final head-SHA read with bounded recovery from local admission deferral only.
+# Sets FULL_LOOP_MERGE_READ_HEAD_SHA on success. On failure, when pacing caused
+# it, FULL_LOOP_PRE_MERGE_BLOCKER_KIND/DETAIL carry the deferral kind + retry_at.
+_merge_read_head_sha_with_admission_retry() {
+	local pr_number="$1"
+	local repo="$2"
+	local deadline=$((SECONDS + 30))
+	local attempts=0 retry_at="" now="" wait_seconds=0 round_up=0
+	local diagnostics="" err_file=""
+	FULL_LOOP_MERGE_READ_HEAD_SHA=""
+	FULL_LOOP_PRE_MERGE_BLOCKER_KIND=""
+	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=""
+	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-retry.XXXXXX") || return 1
+	while :; do
+		if FULL_LOOP_MERGE_READ_HEAD_SHA=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" 2>"$err_file") && [[ -n "$FULL_LOOP_MERGE_READ_HEAD_SHA" ]]; then
+			rm -f "$err_file"
+			return 0
+		fi
+		FULL_LOOP_MERGE_READ_HEAD_SHA=""
+		diagnostics=$(<"$err_file")
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND=""
+		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=""
+		declare -F _full_loop_local_admission_evidence >/dev/null 2>&1 || break
+		_full_loop_local_admission_evidence "$diagnostics" || break
+		retry_at="${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-}"
+		[[ "$retry_at" =~ ^[0-9]{1,10}([.][0-9]+)?$ ]] || break
+		now=$(date +%s) || break
+		# Round up fractional epochs so admission is not retried before its slot.
+		round_up=0
+		[[ ! "$retry_at" =~ [.][0-9]*[1-9] ]] || round_up=1
+		retry_at="${retry_at%%.*}"
+		wait_seconds=$((10#$retry_at + round_up - now))
+		[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
+		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 30 ]] || break
+		print_info "Local GitHub read admission: waiting ${wait_seconds}s before re-reading PR #${pr_number} head SHA (30s recovery budget)"
+		sleep "$wait_seconds" || break
+		[[ "$SECONDS" -le "$deadline" ]] || break
+		attempts=$((attempts + 1))
+	done
+	rm -f "$err_file"
+	return 1
+}
+
 # _merge_execute — attempt `gh pr merge` with optional --admin fallback on branch-protection errors.
 #
 # GH#18538: branch protection that requires an approving review rejects plain
@@ -1150,10 +1239,16 @@ _merge_resolve_match_head() {
 	local pr_number="$1"
 	local repo="$2"
 	local pre_merge_head_sha=""
-	pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
+	# Called directly (not in a subshell) so deferral evidence globals survive.
+	_merge_read_head_sha_with_admission_retry "$pr_number" "$repo" || true
+	pre_merge_head_sha="${FULL_LOOP_MERGE_READ_HEAD_SHA:-}"
 	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" ]]; then
 		if [[ -z "$pre_merge_head_sha" ]]; then
-			print_error "Could not retrieve PR #${pr_number} head SHA for verification; refusing merge"
+			if [[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == github-api-read-deferred ]]; then
+				print_error "PR #${pr_number} head SHA read deferred by local admission (retry_at=${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-unknown}); recovery budget exhausted, refusing merge"
+			else
+				print_error "Could not retrieve PR #${pr_number} head SHA for verification; refusing merge"
+			fi
 			return 1
 		fi
 		if [[ "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
@@ -1332,7 +1427,7 @@ _merge_resolve_squash_subject() {
 	local subject=""
 	local task_body=""
 	local conventional_type=""
-	local conventional_ere='^(feat|fix|docs|refactor|perf|test|chore|style|build|ci|security)(\([^()[:cntrl:]]+\))?!?:[[:space:]]+[^[:space:]].*$'
+	local conventional_ere='^(feat|fix|docs|refactor|perf|test|chore|style|build|ci|security|plan)(\([^()[:cntrl:]]+\))?!?:[[:space:]]+[^[:space:]].*$'
 	local task_ere='^(t[0-9]+|GH#[0-9]+):[[:space:]]+[^[:space:]].*$'
 
 	pr_json=$(gh pr view "$pr_number" --repo "$repo" --json title,commits 2>/dev/null) || {
@@ -2459,7 +2554,13 @@ _merge_report_pre_merge_gate_failure() {
 _merge_pre_merge_gate_with_admission_retry() {
 	local pr_number="$1"
 	local repo="$2"
-	local deadline=$((SECONDS + 30))
+	# The gate needs several sequential reads; primary pacing spaces each by
+	# (reset - now) / available seconds, so the budget must cover reads x pacing.
+	# Default 300s (cap 600s) keeps interactive merges from starving while quota remains.
+	local budget="${AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS:-300}"
+	[[ "$budget" =~ ^[0-9]{1,4}$ && "$budget" -gt 0 ]] || budget=300
+	[[ "$budget" -le 600 ]] || budget=600
+	local deadline=$((SECONDS + budget))
 	local attempts=0 retry_at="" now="" wait_seconds=0 round_up=0
 	while ! cmd_pre_merge_gate "$pr_number" "$repo"; do
 		[[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == github-api-read-deferred ]] || return 1
@@ -2472,8 +2573,8 @@ _merge_pre_merge_gate_with_admission_retry() {
 		retry_at="${retry_at%%.*}"
 		wait_seconds=$((10#$retry_at + round_up - now))
 		[[ "$wait_seconds" -gt 0 ]] || wait_seconds=1
-		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 30 ]] || return 1
-		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (30s recovery budget)"
+		[[ "$wait_seconds" -le $((deadline - SECONDS)) && "$attempts" -lt 120 ]] || return 1
+		print_info "Local GitHub read admission: waiting ${wait_seconds}s before rechecking PR #${pr_number} (${budget}s recovery budget)"
 		sleep "$wait_seconds" || return 1
 		[[ "$SECONDS" -le "$deadline" ]] || return 1
 		attempts=$((attempts + 1))

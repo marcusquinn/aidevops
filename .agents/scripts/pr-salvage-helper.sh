@@ -24,6 +24,7 @@
 #   3. The branch has commits ahead of the default branch (actual code)
 #   4. No replacement PR exists (open PR targeting the same issue)
 #   5. No closed recovery issue already documents completed salvage for the PR
+#   6. No trusted (OWNER/MEMBER) closeout comment names a merged replacement PR
 #
 # Author: AI DevOps Framework
 # Version: 1.0.0
@@ -177,6 +178,48 @@ has_completed_recovery_issue() {
 	else
 		echo "false"
 	fi
+	return 0
+}
+
+#######################################
+# Check whether a trusted closeout comment on a closed PR names a replacement
+# PR that GitHub reports as merged (GH#33680). Only OWNER/MEMBER comments are
+# authority; external comments, unreadable comments, and open, closed-unmerged
+# or missing replacements never suppress salvage. Comment text is not logged.
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - closed source PR number
+# Output: "true" or "false" to stdout
+#######################################
+has_merged_replacement_closeout() {
+	local slug="$1"
+	local pr_number="$2"
+	local trusted_text="" refs="" ref="" merged_at=""
+	local max_refs="${PR_SALVAGE_MAX_REPLACEMENT_REFS:-5}"
+	[[ "$max_refs" =~ ^[1-9][0-9]*$ ]] || max_refs=5
+
+	trusted_text=$(gh api --paginate "repos/${slug}/issues/${pr_number}/comments?per_page=100" \
+		--jq '.[] | select(.author_association == "OWNER" or .author_association == "MEMBER") | .body' \
+		2>/dev/null) || trusted_text=""
+	[[ -n "$trusted_text" ]] || {
+		echo "false"
+		return 0
+	}
+
+	refs=$(printf '%s\n' "$trusted_text" |
+		grep -oiE '(replac[a-z]*|supersed[a-z]*|landed|merged|contained|preserved|carried)[^#]{0,80}#[0-9]+' |
+		grep -oE '[0-9]+$' | awk -v self="$pr_number" '$0 != self && !seen[$0]++' |
+		head -n "$max_refs") || refs=""
+
+	while IFS= read -r ref; do
+		[[ "$ref" =~ ^[0-9]+$ ]] || continue
+		merged_at=$(gh api "repos/${slug}/pulls/${ref}" --jq '.merged_at // ""' 2>/dev/null) || merged_at=""
+		if [[ "$merged_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+			echo "true"
+			return 0
+		fi
+	done <<<"$refs"
+	echo "false"
 	return 0
 }
 
@@ -363,6 +406,11 @@ build_salvage_entries() {
 
 		# Skip PRs that already have a replacement open
 		if [[ "$(has_replacement_pr "$slug" "$branch")" == "true" ]]; then
+			continue
+		fi
+
+		# GH#33680: skip PRs a trusted closeout preserved via a merged replacement.
+		if [[ "$(has_merged_replacement_closeout "$slug" "$pr_number")" == "true" ]]; then
 			continue
 		fi
 
