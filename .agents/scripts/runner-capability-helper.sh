@@ -102,7 +102,7 @@ def unmet(reason=''):
     print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
-def run_check(argv, target, secret=False, cwd=None):
+def run_check(argv, target, secret=False, cwd=None, timeout=5):
     # Bound descendants too: a locked pinentry or probe child must not survive.
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
@@ -111,7 +111,7 @@ def run_check(argv, target, secret=False, cwd=None):
     except OSError:
         return f'check_failed {target}' if secret else f'probe_failed {target}'
     try:
-        status = process.wait(timeout=5)
+        status = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
@@ -248,15 +248,14 @@ try:
         unmet()
     # Only analyze exact argv; never execute SSH or issue-provided shell text.
     # The same tier gate used inside the worker is authoritative before claim.
+    network_timeout = int(os.environ.get('AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS', '30'))
+    if ssh_commands and network_timeout <= 0:
+        unmet('invalid_requirements')
     for command in ssh_commands:
-        try:
-            checked = subprocess.run(['bash', str(Path(sys.argv[5]).resolve()), 'check-argv',
-                                      json.dumps(command), '--cwd', str(root)],
-                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL, timeout=10, check=False)
-        except (OSError, subprocess.SubprocessError):
-            unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
-        if checked.returncode:
+        reason = run_check(['bash', str(Path(sys.argv[5]).resolve()), 'check-argv',
+                            json.dumps(command), '--cwd', str(root)],
+                           'ssh', cwd=root, timeout=network_timeout)
+        if reason:
             unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
     if sys.argv[3] == 'fresh':
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',

@@ -1241,6 +1241,11 @@ PY
 
 main() {
 	test_exact_ssh_bindings
+	# Focused inner loop; the default invocation still runs every existing case.
+	if [[ "${1:-}" == "--ssh-bindings-only" ]]; then
+		[[ "$FAILURES" -eq 0 ]] || return 1
+		return 0
+	fi
 	test_validation
 	test_evaluate_invocations_compatibility
 	test_worker_protocol_bash_examples
