@@ -40,7 +40,8 @@ def read_hint(bucket, directory):
         if (data.get("schema") == SCHEMA
                 and data.get("identity") == identity(bucket)
                 and type(data.get("bytes")) is int and data["bytes"] >= 0
-                and type(data.get("measured_at")) in (int, float)):
+                and type(data.get("measured_at")) in (int, float)
+                and 0 <= time.time() - data["measured_at"] < 86400):
             return data
     except (OSError, ValueError, TypeError, AttributeError):
         pass
@@ -85,7 +86,6 @@ def snapshot(root, budget):
     except (OSError, ValueError):
         offset = 0
     pending = buckets[offset:] + buckets[:offset]
-    attempted = 0
     for position, bucket in enumerate(pending):
         hint = hints[bucket]
         if hint and time.time() - hint["measured_at"] < 86400:
@@ -93,21 +93,22 @@ def snapshot(root, budget):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        attempted = (offset + position + 1) % max(1, len(buckets))
+        # Reserve progress before du: the outer deadline may kill this process,
+        # so an end-of-pass-only cursor would retry the same slow bucket forever.
+        next_offset = (offset + position + 1) % max(1, len(buckets))
+        descriptor, temporary = tempfile.mkstemp(prefix=".cursor-", dir=directory)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(str(next_offset))
+            os.replace(temporary, cursor_path)
+        finally:
+            if os.path.lexists(temporary):
+                os.unlink(temporary)
         try:
             record_size(bucket, directory, min(remaining, 2))
             hints[bucket] = read_hint(bucket, directory)
         except (OSError, ValueError, subprocess.SubprocessError):
             continue
-    if budget > 0:
-        descriptor, temporary = tempfile.mkstemp(prefix=".cursor-", dir=directory)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-                output.write(str(attempted % max(1, len(buckets))))
-            os.replace(temporary, cursor_path)
-        finally:
-            if os.path.lexists(temporary):
-                os.unlink(temporary)
     known = [hint["bytes"] for hint in hints.values() if hint]
     # Interrupted transactions are still on disk but outside the bucket census.
     trash = root / ".retention-trash"

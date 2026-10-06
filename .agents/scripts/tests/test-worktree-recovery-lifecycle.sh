@@ -2656,7 +2656,8 @@ test_automatic_maintenance_escalates_completed_zero_candidate_cycle() {
 	second_output=$(run_zero_candidate_cycle_fixture "$home_path" "$recovery_root" "$state_dir") || rc=1
 	printf '%s\n' "$first_output" | jq -e '
 		.outcome == "no-candidates" and .policy.pressure_active == true and
-		.policy.store_bytes == null and .diagnostics.scanned_count == 2 and
+		.policy.store_bytes == 0 and .policy.store_size_source == "indexed-estimate" and
+		.diagnostics.scanned_count == 2 and
 		.diagnostics.cursor_before == 0 and .diagnostics.cursor_after == 2 and
 		.diagnostics.classification_reason_counts.unknown_archive == 1 and
 		.diagnostics.classification_reason_counts.source_removal_not_complete == 1 and
@@ -3081,6 +3082,11 @@ trash.mkdir()
 assert index.snapshot(root, 0)["store_bytes"] is None
 directory = index.index_directory(root)
 record = directory / (large.name + ".json")
+expired = json.loads(record.read_text())
+expired["measured_at"] = 0
+record.write_text(json.dumps(expired))
+assert index.read_hint(large, directory) is None
+index.record_size(large, directory, 2)
 plan = root / "plan"
 plan.write_text(json.dumps({"entries": [{"bucket_path": str(large)}]}))
 subprocess.run([sys.executable, str(helper), "invalidate-plan", str(plan)], check=True)
@@ -3091,6 +3097,18 @@ record.unlink()
 small.rename(root / "old-bucket")
 small.mkdir()
 assert index.read_hint(small, directory) is None
+original_record = index.record_size
+def interrupted(*args):
+    raise SystemExit(99)
+index.record_size = interrupted
+try:
+    index.snapshot(root, 2)
+    raise AssertionError("expected interrupted sizing")
+except SystemExit as error:
+    assert error.code == 99
+finally:
+    index.record_size = original_record
+assert (directory / ".backfill-cursor").read_text() == "1"
 PY
 	print_result "recovery_size_index_is_advisory" "$rc" \
 		"Expected indexed ordering, incomplete/staged totals, invalidation and replaced/symlink hints to remain non-authoritative"
