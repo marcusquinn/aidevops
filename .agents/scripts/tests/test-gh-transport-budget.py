@@ -167,9 +167,43 @@ class AdmissionTests(unittest.TestCase):
                     other.attributed = attributed
                     request = other.acquire("core", now=1002)
                     other.finish(request, "core", headers(4999, reset), started=1002, now=1003)
+                    # The lower balance keeps its own reset epoch (GH#33701).
                     self.assertEqual(other.db.execute(
                         "SELECT remaining,reset FROM quota"
-                    ).fetchone(), (150, reset))
+                    ).fetchone(), (150, 2000))
+        finally:
+            other.close()
+
+    def test_shared_scope_stale_balance_expires_at_its_own_reset(self):
+        # GH#33701: a sliding later reset from another unresolved credential
+        # must not extend a stale low balance past its own window.
+        self.seed(540, 2000)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            for now, reset in ((1002, 4600), (1500, 5100), (1990, 5590)):
+                request = other.acquire("core", now=now)
+                other.finish(request, "core", headers(4999, reset), started=now, now=now + 1)
+                self.assertEqual(other.db.execute(
+                    "SELECT remaining,reset FROM quota"
+                ).fetchone(), (540, 2000))
+            # After the stale window resets, one fresh observation is authoritative.
+            request = other.acquire("core", now=2001)
+            other.finish(request, "core", headers(4998, 5601), started=2001, now=2002)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (4998, 5601))
+        finally:
+            other.close()
+
+    def test_shared_scope_lower_incoming_balance_keeps_its_own_reset(self):
+        self.seed(4000, 4600)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(300, 3000), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota"
+            ).fetchone(), (300, 3000))
         finally:
             other.close()
 

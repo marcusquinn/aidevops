@@ -284,8 +284,11 @@ class Budget:
                 if row and row[1] > now and not recovered:
                     # Late responses and unresolved owners with different reset
                     # epochs cannot restore quota observed to have been spent.
-                    available = min(available, row[0])
-                    reset_at = max(reset_at, row[1])
+                    # Keep the lower balance paired with its own reset epoch:
+                    # extending it to another credential's later (sliding)
+                    # reset would re-stamp stale debt indefinitely (GH#33701).
+                    if available >= row[0]:
+                        available, reset_at = row[0], int(row[1])
                     blocked_until = row[3]
                 retry_after = headers.get("retry-after", "")
                 if retry_after.isdecimal():
