@@ -78,6 +78,10 @@ class ProfileReconciliation(NamedTuple):
         return self.stale + self.duplicates
 
 
+# First line of a linked worktree's ``.git`` file; the target must be non-empty.
+_GITDIR_LINE = re.compile(r"gitdir:\s*(\S.*?)\s*$")
+
+
 def is_linked_worktree(repo_path: str) -> bool:
     """Return True iff ``repo_path`` is a linked git worktree (not the main one).
 
@@ -97,23 +101,17 @@ def is_linked_worktree(repo_path: str) -> bool:
     Returns False on non-git paths or an unreadable ``.git`` — the caller
     treats those as "not a worktree" so normal repos are never excluded.
     """
-    dot_git = os.path.join(repo_path, ".git")
-    if os.path.isdir(dot_git):
-        return False
     try:
-        with open(dot_git, encoding="utf-8") as handle:
-            first_line = handle.readline().strip()
+        # A main checkout's ``.git`` is a directory: open() raises OSError.
+        with open(os.path.join(repo_path, ".git"), encoding="utf-8") as handle:
+            match = _GITDIR_LINE.match(handle.readline())
     except OSError:
         return False
-    if not first_line.startswith("gitdir:"):
+    if not match:
         return False
-    target = first_line[len("gitdir:"):].strip()
-    if not target:
-        return False
-    if not os.path.isabs(target):
-        target = os.path.join(repo_path, target)
-    parts = os.path.normpath(target).split(os.sep)
-    return len(parts) >= 3 and parts[-2] == "worktrees" and "modules" not in parts
+    # os.path.join keeps an absolute target and anchors a relative one.
+    parts = os.path.normpath(os.path.join(repo_path, match.group(1))).split(os.sep)
+    return parts[-2:-1] == ["worktrees"] and "modules" not in parts
 
 
 def profile_name_from_path(repo_path: str) -> str:
