@@ -489,6 +489,21 @@ If aidevops attributes are missing in a mode where they should work:
   `metrics.result_counts`, `progress_blockers.active_blockers`,
   `metrics.timing_ms`, and `metrics.recent_examples` with load context from
   `headless-runtime-metrics.jsonl`.
+- `~/.aidevops/logs/pulse-cycle-index.jsonl` — historical per-cycle pulse
+  throughput (`PULSE_CYCLE_INDEX_FILE`). Every admitted cycle appends exactly
+  one record from its terminal path, including session-gate, dedup,
+  preflight-failed, stop-flag and SIGTERM/`set -e` exits; canary, dry-run and
+  lock-contention runs are not cycles, and SIGKILL cannot be recorded. Fields:
+  `ts`, `outcome` (`progressed`/`idle`/`blocked`/`partial`), `blocker`
+  (cycle-state blocker kind or `null`), `wall_s` (since `PULSE_START_EPOCH`,
+  including cache prime and other pre-dispatch stages), `duration_s` (legacy:
+  from the end of pre-dispatch stages, `0` if the cycle ended earlier),
+  `dispatched` (registrations this cycle, including LLM-supervisor launches),
+  `dispatch_budget_skips` (`pulse_dispatch_cycle_budget_skipped` events this
+  cycle), `inflight`, `workers` (`active/max`), `merged`, `closed`, `killed`
+  and `prefetch_errors`. Retention keeps the newest 10,000 lines
+  (`PULSE_CYCLE_INDEX_MAX_LINES`, minimum 100). Zero-dispatch triage:
+  `jq -c 'select(.dispatched == 0) | {ts, outcome, blocker, dispatch_budget_skips, wall_s}' ~/.aidevops/logs/pulse-cycle-index.jsonl | tail -n 20`.
 - `session-miner` routine — post-hoc mining of successful/failed sessions
   into the shared memory (SQLite FTS5). Different layer: session-miner
   extracts *lessons* across sessions; OTEL captures per-call *traces*

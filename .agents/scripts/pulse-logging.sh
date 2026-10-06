@@ -16,6 +16,8 @@
 # Functions in this module (in source order):
 #   - cycle-state lifecycle and projection helpers
 #   - rotate_pulse_log
+#   - cycle-index field helpers, _pulse_cycle_index_mark_start,
+#     _pulse_cycle_index_record_once (GH#33739)
 #   - append_cycle_index
 #   - write_pulse_health_file
 #
@@ -50,6 +52,11 @@ _PULSE_CYCLE_PRIOR_NO_PROGRESS_CYCLES=0
 _PULSE_CYCLE_PRIOR_BLOCKER_KIND="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 _PULSE_CYCLE_PRIOR_BLOCKER_FINGERPRINT=""
 _PULSE_CYCLE_PRIOR_SAME_BLOCKER_CYCLES=0
+# GH#33739: one cycle-index record per admitted cycle, written from the
+# terminal path (including EXIT cleanup) and guarded against double writes.
+_PULSE_CYCLE_INDEX_WRITTEN=0
+_PULSE_CYCLE_INDEX_START_EPOCH=""
+PULSE_CYCLE_INDEX_BUDGET_SKIP_COUNTER="pulse_dispatch_cycle_budget_skipped"
 
 _pulse_cycle_state_now() {
 	date -u +%Y-%m-%dT%H:%M:%SZ
@@ -177,6 +184,8 @@ _pulse_cycle_state_start() {
 
 	_PULSE_CYCLE_STATE_INITIALIZED=1
 	_PULSE_CYCLE_STATE_TERMINAL=0
+	_PULSE_CYCLE_INDEX_WRITTEN=0
+	_PULSE_CYCLE_INDEX_START_EPOCH=""
 	_PULSE_CYCLE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 	_PULSE_CYCLE_OWNER_EXECUTOR_PID="$owner_pid"
 	_PULSE_CYCLE_PHASE="admitted"
@@ -561,27 +570,125 @@ rotate_pulse_log() {
 }
 
 #######################################
+# Cycle-index field helpers (GH#33739). Each prints one JSON-safe value.
+#######################################
+
+# Terminal outcome: the typed cycle-state outcome, with interrupted or
+# never-finalised cycles reported as "partial".
+_pulse_cycle_index_outcome() {
+	case "${_PULSE_CYCLE_OUTCOME:-}" in
+	progressed | idle | blocked) printf '%s\n' "$_PULSE_CYCLE_OUTCOME" ;;
+	*) printf 'partial\n' ;;
+	esac
+	return 0
+}
+
+# Blocker kind from cycle state as a JSON string, or null when none.
+_pulse_cycle_index_blocker_json() {
+	local kind="${_PULSE_CYCLE_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}"
+	if [[ "$kind" == "$PULSE_CYCLE_STATE_BLOCKER_NONE" || ! "$kind" =~ ^[a-z0-9-]+$ ]]; then
+		printf 'null\n'
+		return 0
+	fi
+	printf '"%s"\n' "$kind"
+	return 0
+}
+
+# Seconds since PULSE_START_EPOCH (process/cycle start, before lock, cache
+# prime and pre-dispatch stages); 0 when unknown.
+_pulse_cycle_index_wall_seconds() {
+	local now_epoch="${1:-}"
+	local start_epoch="${PULSE_START_EPOCH:-}"
+	if [[ "$now_epoch" =~ ^[0-9]+$ && "$start_epoch" =~ ^[0-9]+$ \
+		&& "$start_epoch" -gt 0 && "$now_epoch" -ge "$start_epoch" ]]; then
+		printf '%s\n' "$((now_epoch - start_epoch))"
+		return 0
+	fi
+	printf '0\n'
+	return 0
+}
+
+# Dispatch candidates skipped this cycle because the cycle budget was spent:
+# events of the pulse_dispatch_cycle_budget_skipped stats counter stamped at
+# or after PULSE_START_EPOCH. 0 when the stats file or start epoch is unknown.
+_pulse_cycle_index_budget_skips() {
+	local start_epoch="${PULSE_START_EPOCH:-}"
+	local stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
+	local count=0
+	if [[ "$start_epoch" =~ ^[0-9]+$ && "$start_epoch" -gt 0 && -n "$stats_file" && -f "$stats_file" ]]; then
+		count=$(jq -r --arg name "$PULSE_CYCLE_INDEX_BUDGET_SKIP_COUNTER" --argjson since "$start_epoch" \
+			'[(.counters[$name] // [])[] | numbers | select(. >= $since)] | length' \
+			"$stats_file" 2>/dev/null) || count=0
+	fi
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s\n' "$count"
+	return 0
+}
+
+#######################################
+# _pulse_cycle_index_mark_start — record the post-pre-dispatch start used by
+# the legacy duration_s field (t1886). wall_s covers the full cycle.
+#######################################
+_pulse_cycle_index_mark_start() {
+	_PULSE_CYCLE_INDEX_START_EPOCH=$(date +%s)
+	return 0
+}
+
+#######################################
+# _pulse_cycle_index_record_once — write exactly one cycle-index record for
+# the admitted cycle owned by this executor (GH#33739).
+#
+# Called from every terminal path in pulse-wrapper.sh main() (normal,
+# preflight-failed, stop-flag, session-gate, dedup) and from the EXIT cleanup
+# after _pulse_cycle_state_finish_interrupted, so early-return, failing and
+# SIGTERM-killed cycles are recorded too. The guard flag prevents the EXIT
+# cleanup from double-counting a cycle that already wrote its record. Cycles
+# that never acquired the instance lock (or canary/dry-run runs) never start
+# cycle state and are intentionally not recorded. SIGKILL cannot be trapped.
+#######################################
+_pulse_cycle_index_record_once() {
+	local now_epoch="" duration_s=0
+	[[ "${_PULSE_CYCLE_INDEX_WRITTEN:-0}" != "1" ]] || return 0
+	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 0
+	_pulse_cycle_state_executor_is_owner || return 0
+	_PULSE_CYCLE_INDEX_WRITTEN=1
+	now_epoch=$(date +%s)
+	if [[ "${_PULSE_CYCLE_INDEX_START_EPOCH:-}" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ \
+		&& "$now_epoch" -ge "$_PULSE_CYCLE_INDEX_START_EPOCH" ]]; then
+		duration_s=$((now_epoch - _PULSE_CYCLE_INDEX_START_EPOCH))
+	fi
+	append_cycle_index "$duration_s" || true
+	return 0
+}
+
+#######################################
 # append_cycle_index — write one JSONL record to the cycle index (t1886)
 #
-# Called once per cycle after write_pulse_health_file(). Captures the
-# per-cycle counters already computed by the health file writer plus
-# timing and utilisation data. The index is append-only and capped at
+# Normally invoked through _pulse_cycle_index_record_once() at cycle end
+# (GH#33739). The index is append-only and capped at
 # PULSE_CYCLE_INDEX_MAX_LINES lines; oldest lines are pruned in-place
 # using a tmp-file swap when the cap is exceeded.
 #
-# Fields written per cycle (sampled when the deterministic pipeline and the
-# cycle-final refill have finished, before the LLM supervisor runs):
+# Fields written per cycle (sampled when the cycle reaches a terminal path,
+# after the LLM supervisor step when it ran):
 #   ts          — ISO-8601 UTC timestamp
-#   duration_s  — cycle wall-clock duration in seconds (0 if unknown)
+#   duration_s  — seconds from the end of pre-dispatch stages (cache prime,
+#                 fix-the-fixer, log rotation) to the record (0 when the
+#                 cycle ended before that point); kept for compatibility
+#   wall_s      — seconds since PULSE_START_EPOCH, the real cycle start
+#   outcome     — progressed | idle | blocked | partial (interrupted or
+#                 never finalised)
+#   blocker     — cycle-state blocker kind (e.g. session-gate, dedup,
+#                 preflight-failed, stop-requested), null when none
 #   workers     — "active/max"; active = max(worker processes, live ledger
 #                 entries), matching write_pulse_health_file (t3032), so a
 #                 just-launched worker not yet visible in ps still counts
-#   dispatched  — worker registrations created during this cycle by any
-#                 deterministic path (dispatch, early dispatch, refill): the
-#                 delta of the monotonic _pulse_capture_dispatch_total since
-#                 cycle start (GH#28361/GH#33320). Workers that already
-#                 exited still count. LLM-supervisor launches happen after
-#                 this record and are not included.
+#   dispatched  — worker registrations created during this cycle (dispatch,
+#                 early dispatch, refill, LLM supervisor): the delta of the
+#                 monotonic _pulse_capture_dispatch_total since cycle start
+#                 (GH#28361/GH#33320). Workers that already exited still count.
+#   dispatch_budget_skips — pulse_dispatch_cycle_budget_skipped events since
+#                 PULSE_START_EPOCH
 #   inflight    — live in-flight ledger entries at write time (the gauge the
 #                 old `dispatched` field reported before GH#33320)
 #   merged      — PRs merged this cycle
@@ -591,9 +698,24 @@ rotate_pulse_log() {
 #######################################
 append_cycle_index() {
 	local duration_s="${1:-0}"
+	[[ "$duration_s" =~ ^[0-9]+$ ]] || duration_s=0
 
-	local ts
+	local ts now_epoch
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	now_epoch=$(date +%s)
+
+	local outcome blocker_json wall_s budget_skips
+	outcome=$(_pulse_cycle_index_outcome)
+	blocker_json=$(_pulse_cycle_index_blocker_json)
+	wall_s=$(_pulse_cycle_index_wall_seconds "$now_epoch")
+	budget_skips=$(_pulse_cycle_index_budget_skips)
+
+	local merged="${_PULSE_HEALTH_PRS_MERGED:-0}" closed="${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING:-0}"
+	local killed="${_PULSE_HEALTH_STALLED_KILLED:-0}" prefetch_errors="${_PULSE_HEALTH_PREFETCH_ERRORS:-0}"
+	[[ "$merged" =~ ^[0-9]+$ ]] || merged=0
+	[[ "$closed" =~ ^[0-9]+$ ]] || closed=0
+	[[ "$killed" =~ ^[0-9]+$ ]] || killed=0
+	[[ "$prefetch_errors" =~ ^[0-9]+$ ]] || prefetch_errors=0
 
 	local workers_active=0 workers_max=0
 	workers_active=$(count_active_workers 2>/dev/null || echo "0")
@@ -620,17 +742,21 @@ append_cycle_index() {
 	fi
 
 	# Append record — use printf for portability (no echo -e needed)
-	printf '{"ts":"%s","duration_s":%s,"workers":"%s/%s","dispatched":%s,"inflight":%s,"merged":%s,"closed":%s,"killed":%s,"prefetch_errors":%s}\n' \
+	printf '{"ts":"%s","duration_s":%s,"workers":"%s/%s","dispatched":%s,"inflight":%s,"merged":%s,"closed":%s,"killed":%s,"prefetch_errors":%s,"wall_s":%s,"outcome":"%s","blocker":%s,"dispatch_budget_skips":%s}\n' \
 		"$ts" \
 		"$duration_s" \
 		"$workers_active" \
 		"$workers_max" \
 		"$issues_dispatched" \
 		"$inflight" \
-		"$_PULSE_HEALTH_PRS_MERGED" \
-		"$_PULSE_HEALTH_PRS_CLOSED_CONFLICTING" \
-		"$_PULSE_HEALTH_STALLED_KILLED" \
-		"$_PULSE_HEALTH_PREFETCH_ERRORS" \
+		"$merged" \
+		"$closed" \
+		"$killed" \
+		"$prefetch_errors" \
+		"$wall_s" \
+		"$outcome" \
+		"$blocker_json" \
+		"$budget_skips" \
 		>>"$PULSE_CYCLE_INDEX_FILE" 2>/dev/null || {
 		echo "[pulse-wrapper] append_cycle_index: write failed to ${PULSE_CYCLE_INDEX_FILE}" >>"$WRAPPER_LOGFILE"
 		return 0
