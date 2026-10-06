@@ -1143,6 +1143,100 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Test 15c2 (GH#33687): merged-PR closes respect the latest reopen lifecycle
+# ---------------------------------------------------------------------------
+test_gh33687_reconcile_close_respects_reopen_lifecycle() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local tmp_dir fix out_file stub dedup result
+	tmp_dir=$(mktemp -d)
+	fix="${tmp_dir}/fix"
+	out_file="${tmp_dir}/gh.out"
+	stub="${tmp_dir}/stub.sh"
+	dedup="${tmp_dir}/dedup"
+	mkdir -p "$fix"
+	cat >"$stub" <<'EOF'
+gh() {
+	printf '%s\n' "$*" >>"$GH_TEST_OUT"
+	local args="$*" n="" calls=0
+	case "$args" in
+	*/events*)
+		n="${args#*issues/}"; n="${n%%/*}"
+		[[ ! -e "${FIX}/events-${n}.fail" ]] || return 1
+		[[ ! -f "${FIX}/events-${n}.calls" ]] || calls=$(<"${FIX}/events-${n}.calls")
+		calls=$((calls + 1)); printf '%s' "$calls" >"${FIX}/events-${n}.calls"
+		if [[ -f "${FIX}/events-${n}.${calls}" ]]; then cat "${FIX}/events-${n}.${calls}"
+		elif [[ -f "${FIX}/events-${n}" ]]; then cat "${FIX}/events-${n}"; fi
+		return 0 ;;
+	*pulls/*) n="${args#*pulls/}"; n="${n%% *}"; cat "${FIX}/pull-${n}" 2>/dev/null; return 0 ;;
+	"pr view "*) n="${args#pr view }"; n="${n%% *}"; cat "${FIX}/pull-${n}" 2>/dev/null; return 0 ;;
+	esac
+	return 0
+}
+fast_fail_reset() { printf 'reset %s\n' "$1" >>"$GH_TEST_OUT"; return 0; }
+unlock_issue_after_worker() { printf 'unlock %s\n' "$1" >>"$GH_TEST_OUT"; return 0; }
+set_solved_label_from_merged_pr() { printf 'solved %s\n' "$1" >>"$GH_TEST_OUT"; return 0; }
+EOF
+	cat >"$dedup" <<'EOF'
+#!/usr/bin/env bash
+printf 'merged PR #500 references issue #%s via keyword\n' "$2"
+EOF
+	chmod +x "$dedup"
+	printf '2026-10-05T19:27:42Z\n' >"${fix}/pull-500"
+	printf '2026-10-05T20:00:00Z\n' >"${fix}/pull-510"
+	local reopen='2026-10-05T19:31:00Z'
+	printf '%s\n' "$reopen" >"${fix}/events-33701"
+	printf '%s\n' "$reopen" >"${fix}/events-33702"
+	: >"${fix}/events-33703.fail"
+	printf '2026-10-05 19:31\n' >"${fix}/events-33704"
+	: >"${fix}/events-33705.1"
+	printf '%s\n' "$reopen" >"${fix}/events-33705.2"
+	printf '%s\n' "$reopen" >"${fix}/events-33706"
+	printf '%s\n' "$reopen" >"${fix}/events-33708"
+
+	result=$(bash -c '
+		LOGFILE="$3"; GH_TEST_OUT="$4"; FIX="$5"; dedup="$6"
+		export LOGFILE GH_TEST_OUT FIX
+		source "$1"
+		source "$2"
+		_action_oimp_single "test/repo" 33701 /bin/true "|33701=500|" "plain"; printf "old=%s\n" "$?"
+		_action_oimp_single "test/repo" 33702 /bin/true "|33702=500|33702=510|" "plain"; printf "newer=%s\n" "$?"
+		_action_oimp_single "test/repo" 33703 /bin/true "|33703=500|" "plain"; printf "apifail=%s\n" "$?"
+		_action_oimp_single "test/repo" 33704 /bin/true "|33704=500|" "plain"; printf "malformed=%s\n" "$?"
+		_action_oimp_single "test/repo" 33705 /bin/true "|33705=500|" "plain"; printf "race=%s\n" "$?"
+		_action_oimp_single "test/repo" 33706 /bin/true "|33600=500|" "_Supersedes #33600 — this issue is the consolidated spec._"; printf "successor=%s\n" "$?"
+		_action_oimp_single "test/repo" 33707 /bin/true "|33707=500|" "plain"; printf "noreopen=%s\n" "$?"
+		_action_ciw_single "test/repo" 33708 "t1 title" "$dedup" /nonexistent ""; printf "ciw_old=%s\n" "$?"
+		_action_ciw_single "test/repo" 33709 "t1 title" "$dedup" /nonexistent ""; printf "ciw_noreopen=%s\n" "$?"
+	' -- "$actions_sh" "$stub" "${tmp_dir}/pulse.log" "$out_file" "$fix" "$dedup" 2>&1)
+
+	local all_ok=1 case_name="" issue="" expected=""
+	for case_name in old:33701:1 newer:33702:0 apifail:33703:1 malformed:33704:1 race:33705:1 \
+		successor:33706:1 noreopen:33707:0 ciw_old:33708:1 ciw_noreopen:33709:0; do
+		issue="${case_name#*:}"; expected="${issue#*:}"; issue="${issue%%:*}"; case_name="${case_name%%:*}"
+		if [[ "$result" != *"${case_name}=${expected}"* ]]; then
+			_fail "GH#33687: ${case_name} expected rc=${expected}: ${result}"
+			all_ok=0
+		fi
+		if [[ "$expected" == "1" ]] && grep -qE "^(issue close|unlock|reset|solved) ${issue}( |$)" "$out_file"; then
+			_fail "GH#33687: ${case_name} mutated #${issue} despite stale or unavailable lifecycle evidence"
+			all_ok=0
+		fi
+		if [[ "$expected" == "0" ]] && ! grep -q "^issue close ${issue} --repo test/repo" "$out_file"; then
+			_fail "GH#33687: ${case_name} did not close #${issue}"
+			all_ok=0
+		fi
+	done
+	if ! grep -q 'linked PR #510 was already merged' "$out_file"; then
+		_fail "GH#33687: current-lifecycle close did not cite the post-reopen merge #510"
+		all_ok=0
+	fi
+
+	rm -rf "$tmp_dir"
+	[[ "$all_ok" == "1" ]] && _pass "GH#33687: merged-PR closes ignore pre-reopen merges and defer on unavailable or racing lifecycle evidence"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Test 15d (GH#27444): recurrent file-size debt uses current outcome
 # ---------------------------------------------------------------------------
 test_gh27444_recurrent_file_size_debt_current_outcome() {
@@ -1236,6 +1330,7 @@ _gh32640_run() {
 			local command="$1"
 			if [[ "$command" == api ]]; then
 				if [[ "$*" == *comments* ]]; then printf "[[]]\n";
+				elif [[ "$*" == */events* ]]; then :; # GH#33687: --jq projection, never reopened
 				else printf "%s\n" "{\"state\":\"open\",\"labels\":[{\"name\":\"status:done\"}]}"; fi
 			else printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; fi
 			return 0
@@ -1572,6 +1667,7 @@ test_t2985_oimp_lookup_no_prefix_collision
 test_t2985_action_oimp_single_signature
 test_gh25896_oimp_closes_consolidated_successor
 test_gh32213_oimp_requires_complete_inherited_coverage
+test_gh33687_reconcile_close_respects_reopen_lifecycle
 test_gh27444_recurrent_file_size_debt_current_outcome
 test_gh32640_ciw_rsd_recurrent_file_size_debt_gate
 test_available_feedback_worker_issue_not_assigned
