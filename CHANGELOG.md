@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.20] - 2026-10-06
+
+### Changed
+
+- Maintenance: sync ref:GH#33829 to TODO.md (#33830)
+- Maintenance: bump vite from 8.3.0 to 8.3.1 (#33832)
+- Maintenance: bump @secretlint/secretlint-rule-preset-recommend (#33828)
+- Maintenance: mark t18598 complete (pr:#33823 completed:2026-10-06) (#33824)
+- Maintenance: bump secretlint from 13.0.5 to 13.0.6 (#33827)
+- Maintenance: bump hono from 4.13.8 to 4.13.11 (#33825)
+
+### Fixed
+
+- promote OpenCode V2 2.0.24 compatibility
+- saved-task tracking and planning PR collision warnings (GH#33810)
+
 ## [3.38.19] - 2026-10-06
 
 ### Added
