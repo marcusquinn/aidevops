@@ -233,7 +233,8 @@ JSON
 			previous_arg="$arg"
 		done
 		case "$repo_slug" in
-			owner/repo-a) jq -n '[range(0; 12) | {number: .}]' ;;
+			owner/repo-a) jq -n '[range(0; 12) | {number: ., isDraft: false, labels: [{name: "origin:worker"}]}]' ;;
+			owner/repo-b) jq -n '[range(0; 12) | {number: ., isDraft: true, labels: [{name: "origin:worker"}]}]' ;;
 			*) printf '[]\n' ;;
 		esac
 		return 0
@@ -294,6 +295,60 @@ JSON
 		print_result "guardrail: repo backlog admits only trusted review-repair provenance" 0
 	else
 		print_result "guardrail: repo backlog admits only trusted review-repair provenance" 1 "repo_a=${repo_a_numbers} repo_b=${repo_b_numbers}"
+	fi
+	return 0
+}
+
+test_open_pr_backlog_counts_only_ready_worker_prs() {
+	reset_guardrail_env
+	local repos_file="${TEST_ROOT}/repos-pr-backlog-threshold.json"
+	cat >"$repos_file" <<'JSON'
+{"initialized_repos":[
+  {"slug":"owner/mixed","path":"/tmp/mixed","pulse":true},
+  {"slug":"owner/worker","path":"/tmp/worker","pulse":true},
+  {"slug":"owner/low-cap","path":"/tmp/low-cap","pulse":true,"dispatch_open_pr_threshold":2},
+  {"slug":"owner/disabled","path":"/tmp/disabled","pulse":true,"dispatch_open_pr_threshold":0}
+]}
+JSON
+	export REPOS_JSON="$repos_file"
+	pulse_pr_list_get() {
+		local repo_slug="" previous_arg="" arg=""
+		for arg in "$@"; do
+			if [[ "$previous_arg" == "--repo" ]]; then
+				repo_slug="$arg"
+				break
+			fi
+			previous_arg="$arg"
+		done
+		case "$repo_slug" in
+			# 13 PRs: interactive, worker drafts, held worker PRs, and only two
+			# ready worker PRs (the GH#33727 field observation).
+			owner/mixed | owner/low-cap) jq -n '
+				[range(0; 6) | {number: ., isDraft: false, labels: [{name: "origin:interactive"}]}]
+				+ [range(6; 9) | {number: ., isDraft: true, labels: [{name: "origin:worker"}]}]
+				+ [{number: 9, isDraft: false, labels: [{name: "origin:worker"}, {name: "hold-for-review"}]}]
+				+ [{number: 10, isDraft: false, labels: [{name: "origin:worker"}, {name: "needs-maintainer-review"}]}]
+				+ [{number: 11, isDraft: false, labels: [{name: "origin:worker"}]}]
+				+ [{number: 12, isDraft: false, labels: [{name: "origin:worker-takeover"}]}]' ;;
+			owner/worker | owner/disabled) jq -n '[range(0; 12) | {number: ., isDraft: false, labels: [{name: "origin:worker"}]}]' ;;
+			*) printf '[]\n' ;;
+		esac
+		return 0
+	}
+	local candidates='[{"number":1,"labels":[{"name":"bug"}]}]'
+	local mixed="" worker="" low_cap="" disabled=""
+	mixed=$(_dispatch_filter_repo_pr_backlog_candidates owner/mixed "$candidates" | jq 'length')
+	worker=$(_dispatch_filter_repo_pr_backlog_candidates owner/worker "$candidates" | jq 'length')
+	low_cap=$(_dispatch_filter_repo_pr_backlog_candidates owner/low-cap "$candidates" | jq 'length')
+	disabled=$(_dispatch_filter_repo_pr_backlog_candidates owner/disabled "$candidates" | jq 'length')
+	if [[ "$mixed" == "1" && "$worker" == "0" && "$low_cap" == "0" && "$disabled" == "1" ]] &&
+		grep -q 'not applied: repo=owner/mixed open_prs_total=13 open_prs_counted=2 threshold=12' "$LOGFILE" &&
+		grep -q 'repo=owner/worker open_prs_total=12 open_prs_counted=12 threshold=12 ordinary_candidates_suppressed=1' "$LOGFILE" &&
+		grep -q 'repo=owner/low-cap open_prs_total=13 open_prs_counted=2 threshold=2 ordinary_candidates_suppressed=1' "$LOGFILE"; then
+		print_result "guardrail: PR backlog counts only ready worker PRs and honours per-repo threshold" 0
+	else
+		print_result "guardrail: PR backlog counts only ready worker PRs and honours per-repo threshold" 1 \
+			"mixed=${mixed} worker=${worker} low_cap=${low_cap} disabled=${disabled}"
 	fi
 	return 0
 }
@@ -821,6 +876,7 @@ test_repeated_failures_pause_without_success
 test_mixed_runtime_roles_do_not_reduce_worker_capacity
 test_reconciled_outcomes_shape_all_worker_pressure_consumers
 test_open_pr_backlog_is_repo_scoped_with_debt_exemption
+test_open_pr_backlog_counts_only_ready_worker_prs
 test_historical_pr_events_cannot_throttle
 test_no_dispatchable_evidence_keeps_probe_slot
 test_no_dispatchable_evidence_preserves_min_floor_slots

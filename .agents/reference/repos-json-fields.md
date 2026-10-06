@@ -161,6 +161,8 @@ the receipt-owned before-state only when no later config drift is present.
 | `pr_base_branch` | string | GitHub default branch | Branch workers should target when creating or recovering PRs. Use for repos whose integration branch differs from the GitHub default branch, e.g. `"develop"`. Aliases accepted by orphan recovery: `pr_target_branch`, `base_branch`, `default_branch`. |
 | `interactive_pr_auto_merge` | bool | unset → global config/default | Per-repo preference for `origin:interactive` PR merge throughput. `true` allows pulse to merge maintainer-authored interactive PRs after normal gates pass and the PR is ready/non-draft. `false` keeps this repo manual even if global config is true. PR-specific `allow-auto-merge` still opts in one PR; `hold-for-review` or draft state still blocks. |
 
+| `dispatch_open_pr_threshold` | integer | unset → `PULSE_DISPATCH_GUARDRAIL_OPEN_PR_THRESHOLD` → `12` | Repository PR backlog guardrail. When this many open PRs are ready worker merge backlog, pulse suppresses ordinary dispatch for the repo (review/CI/conflict repair candidates stay exempt). Only non-draft PRs labelled `origin:worker`/`origin:worker-takeover` without `hold-for-review`/`needs-maintainer-review` count; interactive PRs and drafts never block dispatch. `0` disables the guardrail for this repo. Logs report `open_prs_total` and `open_prs_counted`. |
+
 Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidevops/config.jsonc`. Env override for the current pulse/session: `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE`.
 
 ### Dispatch footprint overlap
