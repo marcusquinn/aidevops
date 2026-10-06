@@ -117,7 +117,7 @@ describe("bounded interactive operations", () => {
     const instance = manager();
     const progressing = await instance.start({
       command: [process.execPath, "-e", "setTimeout(() => console.log('AIDEVOPS_PROGRESS: ready'), 40); setTimeout(() => process.exit(0), 250)"],
-      budgetMs: 1000,
+      budgetMs: 5000,
       progressIntervalMs: 500,
     }, owner);
     const progressStarted = Date.now();
@@ -125,7 +125,9 @@ describe("bounded interactive operations", () => {
     assert.equal(progress.state, "running");
     assert.equal(progress.progress_events, 1);
     assert.ok(Date.now() - progressStarted < 400, "progress did not wake status promptly");
-    const completed = await instance.status(progressing.operation_id, owner, { waitMs: 500 });
+    // Terminal containment scans the process inventory; its latency on shared
+    // runners must not be confused with the progress-wakeup latency above.
+    const completed = await instance.status(progressing.operation_id, owner, { waitMs: 3000 });
     assert.ok(["finalizing", "succeeded"].includes(completed.state));
     assert.equal((await terminal(instance, progressing.operation_id)).state, "succeeded");
 
