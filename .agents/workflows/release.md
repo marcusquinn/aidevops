@@ -347,6 +347,8 @@ gates, publication, and deployment health. It does not rerun source lint/securit
 scans already owned by development, CI, and release preflight. See
 `workflows/postflight.md`.
 
+Verify deployed helpers by absolute path (`~/.aidevops/agents/scripts/<helper>.sh`); the current session's `PATH` stays pinned to its start-time runtime bundle until a new session starts. Never verify a side-effect fix through `PATH`.
+
 **Postflight quota deferral**: the queue step tries `SYNC_PAT` first, then the job
 token. `SYNC_PAT` must be a fine-grained token with repository **Actions: Read and
 write** on this repository (it is also used for issue-sync); a `Resource not
