@@ -5,6 +5,57 @@
 # Sourced by release provenance. No mutable branch reads or writes: callers
 # capture a canonical head once and pass immutable range endpoints here.
 
+# Read-only GitHub read with bounded retry of transport failures only (empty
+# body, HTTP 5xx, truncated/invalid JSON). Auth, 404 and permission failures and
+# wrong response shapes fail on the first attempt. Fail closed after 3 attempts.
+# Usage: _release_snapshot_gh_read <purpose> <jq-shape-test> -- gh-args...
+_release_snapshot_gh_read() {
+	local purpose="$1"
+	local shape="$2"
+	shift 3
+	local attempt=1
+	local response=""
+	local status=0
+	local error_file=""
+	local error_text=""
+	local cause=""
+	error_file=$(mktemp) || return 1
+	while [[ "$attempt" -le 3 ]]; do
+		status=0
+		response=$(gh "$@" 2>"$error_file") || status=$?
+		error_text=$(<"$error_file")
+		if [[ "$status" -eq 0 && "$response" =~ [^[:space:]] ]]; then
+			if jq -e "$shape" <<<"$response" >/dev/null 2>&1; then
+				rm -f "$error_file"
+				printf '%s\n' "$response"
+				return 0
+			elif jq -e . <<<"$response" >/dev/null 2>&1; then
+				rm -f "$error_file"
+				printf 'release-snapshot: %s: unexpected response shape\n' "$purpose" >&2
+				return 1
+			fi
+			cause="invalid JSON response"
+		elif [[ "$error_text" =~ HTTP[[:space:]]5[0-9][0-9] ]]; then
+			cause="HTTP 5xx"
+		elif [[ "$error_text" =~ (unexpected\ end\ of\ JSON\ input|invalid\ character) ]]; then
+			cause="JSON decode error"
+		elif [[ "$status" -eq 0 && -z "$error_text" ]]; then
+			cause="empty response"
+		else
+			rm -f "$error_file"
+			printf 'release-snapshot: %s: GitHub read failed (exit %s, attempt %s; not retryable)\n' "$purpose" "$status" "$attempt" >&2
+			return 1
+		fi
+		[[ "$attempt" -eq 3 ]] && break
+		printf 'release-snapshot: %s: %s; retrying after attempt %s/3\n' "$purpose" "$cause" "$attempt" >&2
+		sleep $((attempt * ${RELEASE_SNAPSHOT_RETRY_UNIT:-1}))
+		attempt=$((attempt + 1))
+	done
+	rm -f "$error_file"
+	printf 'release-snapshot: %s: %s after 3 attempts\n' "$purpose" "$cause" >&2
+	return 1
+}
+
 release_snapshot_sources() {
 	local repo="$1"
 	local branch="$2"
@@ -27,7 +78,8 @@ release_snapshot_sources() {
 		# For commits on the default branch GitHub returns the introducing PR.
 		# A rebase merge introduces several commits with one final merge tip;
 		# verify that tip independently and bind every introduced commit to it.
-		records=$(gh api --paginate --slurp "repos/${repo}/commits/${commit}/pulls?per_page=100") || return 1
+		records=$(_release_snapshot_gh_read "pull requests for commit ${commit} in ${repo}" 'type == "array"' -- \
+			api --paginate --slurp "repos/${repo}/commits/${commit}/pulls?per_page=100") || return 1
 		#aidevops:trust-boundary
 		record=$(jq -ce --arg repo "$repo" --arg branch "$branch" '
 			flatten | [.[] | select(.merged_at != null and .state == "closed"
@@ -44,7 +96,8 @@ release_snapshot_sources() {
 		if git merge-base --is-ancestor "$merge_sha" "$base"; then
 			return 1
 		fi
-		pr_json=$(gh pr view "$pr_number" --repo "$repo" --json state,mergedAt,mergeCommit,baseRefName) || return 1
+		pr_json=$(_release_snapshot_gh_read "source PR #${pr_number} in ${repo}" 'type == "object"' -- \
+			pr view "$pr_number" --repo "$repo" --json state,mergedAt,mergeCommit,baseRefName) || return 1
 		jq -e --arg sha "$merge_sha" --arg branch "$branch" '
 			.state == "MERGED" and .mergedAt != null and .baseRefName == $branch
 			and .mergeCommit.oid == $sha' <<<"$pr_json" >/dev/null || return 1
