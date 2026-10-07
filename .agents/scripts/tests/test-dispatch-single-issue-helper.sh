@@ -1828,7 +1828,12 @@ sys.exit(0 if sys.argv[3] in os.environ['AVAILABLE'].split(',') else 1)
             else:
                 assert not effects, (evidence, effects)
                 assert 'runner_capability_unmet' in result.stderr, evidence
-            assert not any(name in result.stdout + result.stderr for name in names), evidence
+            # Requirement names are public diagnostics only as the missing-secret
+            # reason (name=NAME), matching test-runner-capability.sh.
+            output = result.stdout + result.stderr
+            for name in names:
+                output = output.replace('reason=secret_missing name=' + name, '')
+            assert not any(name in output for name in names), evidence
     # A missing registered repository must not silently check the caller's cwd.
     events.write_text('')
     result = subprocess.run(['bash', '-c', invocation, 'fixture', 'cmd_dispatch', '123', 'owner/repo'],
