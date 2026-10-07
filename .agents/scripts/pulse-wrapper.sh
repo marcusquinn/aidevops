@@ -1257,6 +1257,15 @@ _pulse_run_deterministic_pipeline() {
 		fi
 	fi
 
+	# GH#33602: bounded, hourly stale Actions queue cleanup. Optional work uses
+	# the existing quota admission gate; the helper also gates every API call.
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
+			env REPOS_JSON="$REPOS_JSON" STOP_FLAG="$STOP_FLAG" LOGFILE="$LOGFILE" \
+			PULSE_RATE_LIMIT_FLAG="$PULSE_RATE_LIMIT_FLAG" \
+			bash "${SCRIPT_DIR}/pulse-stale-queued-runs.sh" || true
+	fi
+
 	# Dependency-alert monitor: create grouped worker-ready issues for open
 	# Dependabot alerts across managed pulse repos. The helper dedupes by
 	# package/ecosystem/patched-version and uses neutral issue wording.
