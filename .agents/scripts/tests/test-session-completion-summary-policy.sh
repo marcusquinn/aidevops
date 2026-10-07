@@ -94,13 +94,32 @@ main() {
 		"$SESSION_DOC" 'capture check accepts stale Git status' || return 1
 	require_literal 'no session-owned repository changes remain uncommitted' \
 		"$SESSION_DOC" 'Ready to close permits uncommitted session-owned changes' || return 1
+	check_link_and_step_rules || return 1
+
+	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
+		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2
+		return 1
+	fi
+
+	printf 'PASS: completion summaries prioritize delivered outcomes over routine cleanup\n'
+	return 0
+}
+
+check_link_and_step_rules() {
 	# GH#33829: asks and delivery reports must link what the user has to inspect.
-	require_literal 'objects as clickable URLs' \
-		"$AGENTS_DOC" 'always-loaded What next guidance omits clickable object links' || return 1
+	# GH#33867: each link is a bare full URL on its own line, never inline.
+	require_literal 'object URLs on own line' \
+		"$AGENTS_DOC" 'always-loaded What next guidance omits own-line object links' || return 1
 	require_literal '**Link everything the user must look at.**' \
 		"$SESSION_DOC" 'What next rules do not require clickable links' || return 1
+	require_literal '**One link per line, always.**' \
+		"$SESSION_DOC" 'clickable-link guidance permits inline links' || return 1
 	require_literal "Take URLs from tool output; never guess or hand-build them." \
 		"$SESSION_DOC" 'clickable-link guidance permits guessed URLs' || return 1
+	if grep -Eq -- ' — (https?://|<(full )?URL)' "$SESSION_DOC"; then
+		printf 'FAIL: session guidance still shows a URL inline after a label\n' >&2
+		return 1
+	fi
 	# GH#33834: human-only asks need linked, navigable, rendered steps.
 	require_literal 'human actions as linked steps' \
 		"$AGENTS_DOC" 'always-loaded What next guidance omits human action steps' || return 1
@@ -110,13 +129,6 @@ main() {
 		require_literal "$step_rule" "$SESSION_DOC" \
 			"human action steps omit: $step_rule" || return 1
 	done
-
-	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
-		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2
-		return 1
-	fi
-
-	printf 'PASS: completion summaries prioritize delivered outcomes over routine cleanup\n'
 	return 0
 }
 
