@@ -1286,6 +1286,8 @@ _dsi_launch_and_report() {
 # including a PID liveness check via kill -0 (same as dispatch-ledger-helper.sh
 # cmd_check_issue). This ensures `status` and the pulse agree on whether a
 # worker is actually running — not just recorded in the ledger.
+# A live ledger PID whose identity cannot be observed is reported as
+# unresolved rather than as a confident "No active dispatch" (GH#33916).
 #######################################
 cmd_status() {
 	local issue_number="${1:-}"
@@ -1296,16 +1298,24 @@ cmd_status() {
 		return 2
 	fi
 
-	local record=""
-	if record=$(_dsi_find_ledger_dispatch "$issue_number" "$repo_slug") &&
-		_dsi_ledger_record_has_live_identity "$issue_number" "$repo_slug" "$record"; then
-		_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}):"
-		_dsi_print_dispatch_details "$record"
-		return 0
+	local record="" identity_rc=0 unresolved_record=""
+	if record=$(_dsi_find_ledger_dispatch "$issue_number" "$repo_slug"); then
+		_dsi_ledger_record_has_live_identity "$issue_number" "$repo_slug" "$record" || identity_rc=$?
+		if [[ "$identity_rc" -eq 0 ]]; then
+			_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}):"
+			_dsi_print_dispatch_details "$record"
+			return 0
+		fi
+		[[ "$identity_rc" -eq 2 ]] && unresolved_record="$record"
 	fi
 	if record=$(_dsi_find_live_dispatch "$issue_number" "$repo_slug" ""); then
 		_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}) from live process evidence:"
 		_dsi_print_dispatch_details "$record"
+		return 0
+	fi
+	if [[ -n "$unresolved_record" ]]; then
+		_dsi_warn "Unresolved dispatch for #${issue_number} (${repo_slug}): ledger PID is live but its worker identity could not be observed"
+		_dsi_print_dispatch_details "$unresolved_record"
 		return 0
 	fi
 

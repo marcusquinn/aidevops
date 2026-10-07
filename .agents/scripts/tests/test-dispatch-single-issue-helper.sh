@@ -1686,6 +1686,43 @@ test_status_accepts_live_identity_matched_ledger_pid() {
 	return 0
 }
 
+# GH#33916: real `ps` right-aligns PIDs and pads STAT; PIDs below 10000 on
+# macOS carry leading spaces and must not be dropped by either evidence path.
+# A live but unobservable ledger PID is unresolved, never confidently inactive.
+test_status_handles_padded_ps_rows_and_unresolved_identity() {
+	local worker='bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key manual-cli-12345-1 --dir /tmp/aidevops-existing --title Issue #12345'
+	local out="" rc=0
+
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-1'
+	MOCK_LIVE_PIDS="888"
+	MOCK_PS_LINES="  888 Ss   ${worker}"
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local ledger_ok=1
+	[[ "$rc" -eq 0 && "$out" == *"Active dispatch for #12345 (owner/repo):"* && "$out" == *"888"* ]] && ledger_ok=0
+	print_result "status verifies a padded ledger PID row" "$ledger_ok" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=""
+	MOCK_PS_LINES="  703 S+   ${worker}"
+	rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local process_ok=1
+	[[ "$rc" -eq 0 && "$out" == *"live process evidence"* && "$out" == *"703"* ]] && process_ok=0
+	print_result "status detects a padded live worker row without ledger evidence" "$process_ok" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-1'
+	MOCK_PS_LINES=""
+	rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local unresolved_ok=1
+	[[ "$rc" -eq 0 && "$out" == *"Unresolved dispatch"* && "$out" != *"No active dispatch"* ]] && unresolved_ok=0
+	print_result "status reports a live unobservable ledger PID as unresolved" "$unresolved_ok" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=""
+	MOCK_LIVE_PIDS=""
+	MOCK_PS_LINES=""
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
@@ -1868,6 +1905,7 @@ _run_tests() {
 	test_status_reports_live_process_without_ledger
 	test_status_rejects_dead_or_reused_ledger_pid
 	test_status_accepts_live_identity_matched_ledger_pid
+	test_status_handles_padded_ps_rows_and_unresolved_identity
 
 	echo
 	echo "======================================"
