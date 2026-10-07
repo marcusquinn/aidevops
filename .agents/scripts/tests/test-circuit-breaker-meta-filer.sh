@@ -64,6 +64,18 @@ FIXTURE_META_BODY="${TEST_ROOT}/fixture-meta-body"
 FIXTURE_HAS_FRAMEWORK_SOURCE="${TEST_ROOT}/fixture-has-framework-source"
 FIXTURE_REPO_PRIVATE="${TEST_ROOT}/fixture-repo-private"
 FIXTURE_BLOCKED_BY_COUNT="${TEST_ROOT}/fixture-blocked-by-count"
+FIXTURE_STATUS_JSON="${TEST_ROOT}/fixture-status.json"
+cat >"$FIXTURE_STATUS_JSON" <<'STATUS'
+{"data":{"repository":{
+  "label0":{"name":"status:available","color":"0e8a16","description":"Task is available for claiming"},
+  "label1":{"name":"status:queued","color":"fbca04","description":"Worker dispatched, not yet started"},
+  "label2":{"name":"status:claimed","color":"f9d0c4","description":"Interactive implementation is actively claimed"},
+  "label3":{"name":"status:in-progress","color":"1d76db","description":"Worker actively running"},
+  "label4":{"name":"status:in-review","color":"5319e7","description":"Non-draft PR ready for review/merge"},
+  "label5":{"name":"status:done","color":"6f42c1","description":"Task is complete"},
+  "label6":{"name":"status:blocked","color":"d93f0b","description":"Partial work blocked; inspect reason and next action"}
+}}}
+STATUS
 echo '[]' >"$FIXTURE_COMMENTS_JSON"
 echo '' >"$FIXTURE_META_BODY"
 printf '1' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
@@ -97,6 +109,10 @@ fi
 # gh api repos/SLUG/issues/N/comments --paginate
 if [[ "\$1" == "api" ]]; then
 	case "\$2" in
+		graphql)
+			# Exact batched status-label snapshot, not an empty successful response.
+			cat "${FIXTURE_STATUS_JSON}"
+			exit 0 ;;
 		/repos/*/labels*)
 			printf 'status:available\t0e8a16\tTask is available for claiming\n'
 			printf 'status:queued\tfbca04\tWorker dispatched, not yet started\n'
