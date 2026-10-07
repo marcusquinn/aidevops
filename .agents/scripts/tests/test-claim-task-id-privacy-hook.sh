@@ -67,8 +67,6 @@ grep -q 'private-entity scan failed.*no verified findings' "$ROOT/error"
 if grep -q '\[BLOCK\].*contains private references' "$ROOT/error"; then exit 1; fi
 printf 'PASS: unavailable objects produce an explicit fail-closed scan error\n'
 
-# Defined by the sourced library; the later override tests propagation only.
-# shellcheck disable=SC2218
 _cas_run_pre_push_hook "$head" "$parent"
 printf 'PASS: isolated numeric counter diff passes the real privacy hook\n'
 
@@ -82,7 +80,8 @@ grep -q 'Pre-push hook privacy-guard-pre-push.sh failed' "$ROOT/error"
 printf 'PASS: true private finding names its path and hook\n'
 
 # Failure must escape both the CAS and online layers with the setup-error code.
-_cas_run_pre_push_hook() {
+# Substitute execution, not the hook runner, so its diagnostics are tested too.
+timeout_sec() {
 	return 1
 }
 rc=0
