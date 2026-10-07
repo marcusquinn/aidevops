@@ -809,6 +809,7 @@ _setup_opencode_node_path_for_binary() {
 		path_value="${bin_dir}:"
 	fi
 	path_value="${path_value}${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:/usr/local/bin:/usr/bin:/bin"
+	path_value="${path_value}:${HOME}/.nix-profile/bin:${HOME}/.local/state/nix/profile/bin:/etc/profiles/per-user/${USER:-$(id -un)}/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin"
 	printf '%s\n' "$path_value"
 	return 0
 }
@@ -843,16 +844,66 @@ _setup_clear_canary_negative_cache() {
 _setup_opencode_managed_shim_target() {
 	local shim_path="${1:-}"
 	local exec_line=""
+	local encoded="" decoded="" char=""
 
 	[[ -f "$shim_path" ]] || return 1
 	grep -Fq '# aidevops:terminal-title-owner' "$shim_path" 2>/dev/null || return 1
 	exec_line=$(grep '^exec "' "$shim_path" 2>/dev/null || true)
-	if [[ "$exec_line" =~ ^exec[[:space:]]+\"([^\"]+)\" ]]; then
-		printf '%s\n' "${BASH_REMATCH[1]}"
+	local pattern='^exec[[:space:]]+"(([^"\\]|\\.)*)"[[:space:]]+"\$@"$'
+	if [[ "$exec_line" =~ $pattern ]]; then
+		encoded="${BASH_REMATCH[1]}"
+		while [[ -n "$encoded" ]]; do
+			char="${encoded:0:1}"
+			encoded="${encoded:1}"
+			if [[ "$char" == "\\" ]]; then
+				[[ -n "$encoded" ]] || return 1
+				char="${encoded:0:1}"
+				encoded="${encoded:1}"
+			fi
+			decoded+="$char"
+		done
+		printf '%s\n' "$decoded"
 		return 0
 	fi
 
 	return 1
+}
+
+# Check managed exec chains without running them. -ef catches symlink and
+# hard-link aliases; the depth cap also bounds non-cyclic wrapper chains.
+_setup_opencode_target_is_safe() {
+	local bin="$1"
+	local forbidden="${2:-}"
+	local target="" seen_bin=""
+	local seen=()
+	local depth=0
+	while [[ "$depth" -lt 16 ]]; do
+		[[ -f "$bin" && -x "$bin" ]] || return 1
+		[[ -z "$forbidden" || ! "$bin" -ef "$forbidden" ]] || return 1
+		for seen_bin in "${seen[@]}"; do
+			[[ ! "$bin" -ef "$seen_bin" ]] || return 1
+		done
+		seen+=("$bin")
+		if ! grep -Fq '# aidevops:terminal-title-owner' "$bin" 2>/dev/null; then
+			return 0
+		fi
+		target=$(_setup_opencode_managed_shim_target "$bin") || return 1
+		[[ "$target" == /* ]] || return 1
+		bin="$target"
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
+# Escape literal values embedded inside the generated shell's double quotes.
+_setup_opencode_quote_value() {
+	local value="$1"
+	value="${value//\\/\\\\}"
+	value="${value//\$/\\\$}"
+	value="${value//\`/\\\`}"
+	value="${value//\"/\\\"}"
+	printf '%s' "$value"
+	return 0
 }
 
 # Bump when the generated V2 shim changes so existing shims regenerate.
@@ -1070,7 +1121,7 @@ _setup_ensure_opencode_stable_shim() {
 	local shim_path="${shim_dir}/${binary_name}"
 	local resolved_bin=""
 	local wrapper_path=""
-	local wrapper_dir=""
+	local physical_dir=""
 	local wrapper_path_value=""
 	local temp_shim=""
 	local isolation_ready=1
@@ -1078,7 +1129,7 @@ _setup_ensure_opencode_stable_shim() {
 
 	[[ -n "$real_bin" ]] || return 1
 	resolved_bin=$(command -v "$real_bin" 2>/dev/null || printf '%s' "$real_bin")
-	if [[ "$resolved_bin" == "$shim_path" ]]; then
+	if [[ "$resolved_bin" == "$shim_path" || "$resolved_bin" -ef "$shim_path" ]]; then
 		existing_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
 		if [[ -n "$existing_target" ]] && _setup_validate_opencode_binary "$existing_target"; then
 			resolved_bin="$existing_target"
@@ -1086,6 +1137,10 @@ _setup_ensure_opencode_stable_shim() {
 			resolved_bin=$(_setup_find_valid_opencode_binary) || return 1
 		fi
 	fi
+	_setup_opencode_target_is_safe "$resolved_bin" "$shim_path" || {
+		printf 'OpenCode shim target is missing or self-referential: %s\n' "$resolved_bin" >&2
+		return 1
+	}
 	_setup_validate_opencode_binary "$resolved_bin" || return 1
 	if _setup_opencode_binary_is_ephemeral "$resolved_bin" &&
 		! _setup_opencode_binary_is_ephemeral "${HOME}/.aidevops-home"; then
@@ -1093,9 +1148,14 @@ _setup_ensure_opencode_stable_shim() {
 	fi
 
 	mkdir -p "$shim_dir" 2>/dev/null || return 1
-	wrapper_dir=$(cd "$(dirname "$resolved_bin")" 2>/dev/null && pwd -P) || return 1
-	wrapper_path="${wrapper_dir}/$(basename "$resolved_bin")"
-	if _setup_opencode_binary_is_ephemeral "$wrapper_path" &&
+	# Keep profile symlinks logical: pinning a Nix store generation breaks
+	# upgrades and can leave a garbage-collected executable in the launcher.
+	[[ "$resolved_bin" == /* ]] || return 1
+	wrapper_path="$resolved_bin"
+	# Retain the physical-directory persistence guard without using that
+	# physical path as the execution target (profiles must remain upgradeable).
+	physical_dir=$(cd "$(dirname "$resolved_bin")" 2>/dev/null && pwd -P) || return 1
+	if _setup_opencode_binary_is_ephemeral "$physical_dir/$(basename "$resolved_bin")" &&
 		! _setup_opencode_binary_is_ephemeral "${HOME}/.aidevops-home"; then
 		return 1
 	fi
@@ -1103,14 +1163,17 @@ _setup_ensure_opencode_stable_shim() {
 		! grep -Fxq "$(_setup_opencode_v2_shim_version_marker)" "$shim_path" 2>/dev/null; then
 		isolation_ready=0
 	fi
+	wrapper_path_value=$(_setup_opencode_node_path_for_binary "$wrapper_path")
+	wrapper_path_value=$(_setup_opencode_quote_value "$wrapper_path_value")
 	if [[ "$resolved_bin" != "$shim_path" ]] &&
 		_setup_validate_opencode_binary "$shim_path" &&
 		[[ "$isolation_ready" -eq 1 ]] &&
+		grep -Fxq "export PATH=\"$wrapper_path_value\${PATH:+:\$PATH}\"" "$shim_path" 2>/dev/null &&
 		[[ "$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)" == "$wrapper_path" ]]; then
 		printf '%s\n' "$shim_path"
 		return 0
 	fi
-	wrapper_path_value=$(_setup_opencode_node_path_for_binary "$wrapper_path")
+	wrapper_path=$(_setup_opencode_quote_value "$wrapper_path")
 
 	temp_shim="${shim_path}.tmp.$$"
 	if [[ "$binary_name" == "opencode2" ]]; then
@@ -1119,6 +1182,12 @@ _setup_ensure_opencode_stable_shim() {
 		_setup_write_opencode_v1_shim "$temp_shim" "$wrapper_path" "$wrapper_path_value" || return 1
 	fi
 	chmod +x "$temp_shim" 2>/dev/null || {
+		rm -f "$temp_shim" 2>/dev/null || true
+		return 1
+	}
+	_setup_opencode_target_is_safe "$temp_shim" "$shim_path" &&
+		_setup_validate_opencode_binary "$temp_shim" || {
+		printf 'OpenCode generated launcher validation failed; keeping existing launcher\n' >&2
 		rm -f "$temp_shim" 2>/dev/null || true
 		return 1
 	}
@@ -1154,26 +1223,42 @@ _setup_find_valid_opencode_binary() {
 	local shim_path="${HOME}/.local/bin/${binary_name}"
 	local managed_shim_target=""
 	local isolated_install_bin=""
+	local path_dir=""
+	local path_dirs=() path_candidates=()
 
 	managed_shim_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
 	if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
 		isolated_install_bin=$(_setup_opencode_v2_install_binary 2>/dev/null || true)
 	fi
+	# command -v only sees the first launcher. Inspect later absolute PATH
+	# entries too (including explicit Nix store paths), never cwd/empty entries.
+	IFS=: read -r -a path_dirs <<<"${PATH:-}"
+	for path_dir in "${path_dirs[@]}"; do
+		[[ "$path_dir" == /* ]] || continue
+		path_candidates+=("${path_dir}/${binary_name}")
+	done
 
 	for candidate in \
 		"$preferred_bin" \
 		"$isolated_install_bin" \
+		"${HOME}/.nix-profile/bin/${binary_name}" \
+		"${HOME}/.local/state/nix/profile/bin/${binary_name}" \
+		"/etc/profiles/per-user/${USER:-$(id -un)}/bin/${binary_name}" \
+		"/run/current-system/sw/bin/${binary_name}" \
+		"/nix/var/nix/profiles/default/bin/${binary_name}" \
 		"/opt/homebrew/bin/${binary_name}" \
 		"/usr/local/bin/${binary_name}" \
 		"/home/linuxbrew/.linuxbrew/bin/${binary_name}" \
 		"${HOME}/.npm-global/bin/${binary_name}" \
 		"${HOME}/.bun/bin/${binary_name}" \
 		"$managed_shim_target" \
+		"${path_candidates[@]}" \
 		"$binary_name"; do
 		[[ -n "$candidate" ]] || continue
 		[[ "$candidate" == "$shim_path" ]] && continue
 		candidate_path=$(command -v "$candidate" 2>/dev/null || printf '%s' "$candidate")
 		[[ "$candidate_path" == "$shim_path" ]] && continue
+		_setup_opencode_target_is_safe "$candidate_path" "$shim_path" || continue
 		if _setup_opencode_binary_is_ephemeral "$candidate_path" &&
 			! _setup_opencode_binary_is_ephemeral "${HOME}/.aidevops-home"; then
 			continue
@@ -1273,6 +1358,8 @@ _setup_validate_opencode_binary() {
 	profile=$(_setup_opencode_profile_id)
 	[[ -n "$bin" ]] || return 2
 	command -v "$bin" >/dev/null 2>&1 || return 2
+	bin=$(command -v "$bin") || return 2
+	_setup_opencode_target_is_safe "$bin" || return 2
 
 	local v
 	v=$(_setup_opencode_version_output "$bin" 2>/dev/null || printf '')
