@@ -176,6 +176,8 @@ _isc_claim_ownership_class() {
 				| $created != null and ($now - $created) >= 0 and ($now - $created) < 7200)
 		] | sort_by(.createdAt) | reverse | first as $live_claim |
 		if $state != "open" then "invalid-state"
+		elif ($active | not) and $live_claim != null and $live_claim.author.login != $user
+		then "foreign-interactive:" + $live_claim.author.login
 		elif ($active | not) then "unclaimed"
 		elif ($assignees | length) == 1 and $assignees[0] == $user then "own"
 		elif $live_claim != null then "foreign-interactive:" + $live_claim.author.login
@@ -447,9 +449,13 @@ _isc_cmd_claim() {
 		return 0
 	fi
 
-	# Transition to in-review with atomic self-assign. The helper preserves the
-	# deferred-comment contract for canonical-rooted issue starts.
-	_isc_apply_new_claim "$issue" "$slug" "$worktree_path" "$user" "$defer_comment"
+	# Inactive issues can retain stale assignees. Replace them in the same
+	# status:claimed transition, after the live-interactive and dispatch guards.
+	# The shared transition still verifies sole ownership before writing a stamp.
+	local stale_assignees=""
+	stale_assignees=$(printf '%s' "$claim_metadata" | jq -r \
+		'[.assignees[]?.login] | join(",")' 2>/dev/null) || return 1
+	_isc_take_over_worker_claim "$issue" "$slug" "$worktree_path" "$user" "$defer_comment" "$stale_assignees"
 	return $?
 }
 
