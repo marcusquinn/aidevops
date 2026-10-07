@@ -722,6 +722,10 @@ cmd_list() {
 			print_error "Credentials listing source must be a regular non-symlink file" >&2
 			return 1
 		fi
+		if [[ ! -r "$credential_file" ]]; then
+			print_error "Unable to read credentials listing source" >&2
+			return 1
+		fi
 		local permissions=""
 		permissions=$(_file_perms "$credential_file" 2>/dev/null || true)
 		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
