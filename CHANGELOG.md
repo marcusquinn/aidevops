@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.30] - 2026-10-08
+
+### Changed
+
+- Maintenance: add t18615 t18616 planning-publication friction fixes
+- Maintenance: mark t18613 complete (pr:#33977 completed:2026-10-07) (#33972)
+- Refactor: split full-loop lifecycle state library (#33971)
+
+### Fixed
+
+- count logical opus workers, not processes, in opus concurrency cap
+- list tenant-backed credential names safely (#33962)
+
 ## [3.38.29] - 2026-10-07
 
 ### Changed
