@@ -464,6 +464,19 @@ next_interval() {
 	return 0
 }
 
+emit_recovered_state() {
+	local state_summary="$1"
+	if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
+		printf 'GitHub check observation recovered: %s\n' "$state_summary"
+		_GCW_ACTIVE_DEFERRAL=""
+	fi
+	if [[ "$_GCW_API_ERROR_VISIBLE" -eq 1 ]]; then
+		printf 'API state recovered: %s\n' "$state_summary"
+		_GCW_API_ERROR_VISIBLE=0
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -504,14 +517,7 @@ wait_for_checks() {
 		fi
 		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
 		state_summary=$(state_counts "$current" "$missing_contexts")
-		if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
-			printf 'GitHub check observation recovered: %s\n' "$state_summary"
-			_GCW_ACTIVE_DEFERRAL=""
-		fi
-		if [[ "$_GCW_API_ERROR_VISIBLE" -eq 1 ]]; then
-			printf 'API state recovered: %s\n' "$state_summary"
-			_GCW_API_ERROR_VISIBLE=0
-		fi
+		emit_recovered_state "$state_summary"
 		valid_state_seen=1
 		if [[ -z "$previous" ]]; then
 			emit_initial_state "$current" "$missing_contexts"
