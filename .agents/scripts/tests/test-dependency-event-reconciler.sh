@@ -304,6 +304,13 @@ EXPLICIT_LABEL=true
 namespaced="to01j2abc3def4gh5jkm6npq7rst-42.3"
 assert_eq "$namespaced" "$(_der_task_refs "Blocked by: ${namespaced}")" "namespaced hierarchical task ID uses canonical codec"
 
+# GH#33881: the shared value grammar drops negation-led values and trailing prose.
+assert_eq "" "$(_der_issue_refs '- **Blocked by:** none (#10 merged).')" "negation-led blocker value declares no issue refs"
+assert_eq "" "$(_der_task_refs '- **Blocked by:** nothing. The tasks (t139–t149) are independent.')" "negation-led blocker value declares no task refs"
+assert_eq $'10\n11' "$(_der_issue_refs 'Blocked by #10 and #11 (see #99 for context)')" "blocker list stops before trailing prose"
+assert_eq "10" "$(_der_issue_refs 'Blocked by owner/repo #10')" "spaced repository reference remains one blocker"
+assert_eq $'31685\nt18418' "$(_der_issue_refs 'Blocked by: native relationship to t18418 / #31685')"$'\n'"$(_der_task_refs 'Blocked by: native relationship to t18418 / #31685')" "prose-led blocker value fails closed"
+
 NATIVE_DIRECT=true CLOSED_TITLE="${namespaced}: blocker" BODY20="blocked-by:${namespaced}" EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 1 "$(run_reconcile)" "namespaced task declaration resolves through exact title lookup"
 

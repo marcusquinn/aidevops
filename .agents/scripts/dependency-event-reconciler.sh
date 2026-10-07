@@ -12,6 +12,7 @@ _DER_NATIVE_BLOCKERS_PRESENT=false
 _der_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_der_dir" == "${BASH_SOURCE[0]}" ]] && _der_dir="."
 : "${DER_WORKER_BLOCKER_LOGGER:=${_der_dir}/worker-blocker-log.mjs}"
+DER_BLOCKED_BY_VALUE_AWK="${_der_dir}/blocked-by-value.awk"
 # shellcheck source=./task-identity-lib.sh
 source "${_der_dir}/task-identity-lib.sh"
 unset _der_dir
@@ -37,9 +38,20 @@ _der_reconcile_terminal_worker_blockers() {
 	return 1
 }
 
+# Emit each blocked-by declaration from its label to end of line, with the value
+# reduced by the shared grammar (GH#33881). "none (t136 merged)" yields no refs,
+# and a leading list stops before trailing prose. Prose-led values stay whole
+# (fail closed). Without the grammar file, whole-line extraction is kept.
 _der_dependency_text() {
 	local body="$1"
-	printf '%s' "$body" | grep -ioE 'blocked[- ][Bb]y[^[:cntrl:]]*' || true
+	local matches=""
+	matches=$(printf '%s' "$body" | grep -ioE 'blocked[- ][Bb]y[^[:cntrl:]]*' || true)
+	[[ -n "$matches" ]] || return 0
+	if [[ -r "$DER_BLOCKED_BY_VALUE_AWK" ]]; then
+		awk -f "$DER_BLOCKED_BY_VALUE_AWK" <<<"$matches" || printf '%s\n' "$matches"
+	else
+		printf '%s\n' "$matches"
+	fi
 	return 0
 }
 
