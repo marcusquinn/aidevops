@@ -35,11 +35,13 @@ function McpView(props: { api: TuiPluginApi }) {
   );
 
   const dot = (status: string) => {
-    if (status === "connected") return theme().success;
-    if (status === "failed") return theme().error;
-    if (status === "needs_auth") return theme().warning;
-    if (status === "needs_client_registration") return theme().error;
-    return theme().textMuted;
+    const colors: Record<string, ReturnType<typeof theme>["success"]> = {
+      connected: theme().success,
+      failed: theme().error,
+      needs_auth: theme().warning,
+      needs_client_registration: theme().error,
+    };
+    return colors[status] ?? theme().textMuted;
   };
 
   return (
