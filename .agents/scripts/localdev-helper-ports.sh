@@ -113,6 +113,76 @@ read_ports_registry() {
 	return 0
 }
 
+# Serialise ports.json read-modify-write (GH#33970). Concurrent worker
+# worktree creation previously read the same snapshot, assigned the same
+# port, and the last writer won. mkdir is atomic; the lock mirrors the
+# serve launch lock in localdev-helper-serve.sh.
+LOCALDEV_REGISTRY_LOCK_WAIT_SECS="${LOCALDEV_REGISTRY_LOCK_WAIT_SECS:-30}"
+LOCALDEV_REGISTRY_LOCK_HELD=""
+
+# Reclaim a lock whose recorded holder is dead. A just-created lock without a
+# PID is left alone until its owner had time to record itself.
+_localdev_registry_remove_stale_lock() {
+	local lock_dir="$1"
+	local holder_pid=""
+	local recheck_pid=""
+	local modified_at=""
+	[[ -f "$lock_dir/pid" ]] && IFS= read -r holder_pid <"$lock_dir/pid" || true
+	if [[ "$holder_pid" =~ ^[0-9]+$ ]] && kill -0 "$holder_pid" 2>/dev/null; then
+		return 1
+	fi
+	modified_at="$(_file_mtime_epoch "$lock_dir")" || return 1
+	[[ "$modified_at" =~ ^[0-9]+$ ]] || return 1
+	[[ $(($(date +%s) - modified_at)) -ge 5 ]] || return 1
+	# Re-read so a lock re-created by another waiter is never removed.
+	[[ -f "$lock_dir/pid" ]] && IFS= read -r recheck_pid <"$lock_dir/pid" || true
+	[[ "$recheck_pid" == "$holder_pid" ]] || return 1
+	rm -f -- "$lock_dir/pid"
+	rmdir "$lock_dir" 2>/dev/null || return 1
+	return 0
+}
+
+# Acquire the registry lock (re-entrant within one process).
+localdev_registry_lock() {
+	local lock_dir="${PORTS_FILE}.lock"
+	local attempts=$((LOCALDEV_REGISTRY_LOCK_WAIT_SECS * 4))
+	local attempt=0
+	[[ -n "$LOCALDEV_REGISTRY_LOCK_HELD" ]] && return 0
+	ensure_ports_file
+	while [[ "$attempt" -lt "$attempts" ]]; do
+		if mkdir "$lock_dir" 2>/dev/null; then
+			if ! printf '%s\n' "$$" >"$lock_dir/pid"; then
+				rmdir "$lock_dir" 2>/dev/null || true
+				print_error "Unable to record port registry lock owner: $lock_dir"
+				return 1
+			fi
+			LOCALDEV_REGISTRY_LOCK_HELD="$lock_dir"
+			trap 'localdev_registry_unlock' EXIT
+			return 0
+		fi
+		if [[ -L "$lock_dir" || (-e "$lock_dir" && ! -d "$lock_dir") ]]; then
+			print_error "Refusing invalid port registry lock path: $lock_dir"
+			return 1
+		fi
+		_localdev_registry_remove_stale_lock "$lock_dir" || true
+		sleep 0.25
+		attempt=$((attempt + 1))
+	done
+	print_error "Timed out waiting for port registry lock: $lock_dir"
+	return 1
+}
+
+# Release the registry lock if this process holds it.
+localdev_registry_unlock() {
+	local lock_dir="$LOCALDEV_REGISTRY_LOCK_HELD"
+	[[ -n "$lock_dir" ]] || return 0
+	LOCALDEV_REGISTRY_LOCK_HELD=""
+	trap - EXIT
+	rm -f -- "$lock_dir/pid"
+	rmdir "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
 # Check if an app name is already registered
 is_app_registered() {
 	local name="$1"
@@ -204,6 +274,8 @@ assign_port() {
 		port=$((port + 1))
 	done
 	print_error "No available ports in range $PORT_RANGE_START-$PORT_RANGE_END"
+	print_info "  Stale branch registrations from removed worktrees hold ports. Reclaim them:"
+	print_info "  localdev-helper.sh branch prune --repo <canonical-repo-path> [--dry-run]"
 	return 1
 }
 

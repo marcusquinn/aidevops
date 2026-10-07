@@ -1865,6 +1865,39 @@ _pc_cleanup_fixture_passes() {
 	return 0
 }
 
+#######################################
+# Reclaim localdev branch registrations whose worktrees no longer exist
+# (GH#33970). Pulse removes worktrees through several guarded paths, none of
+# which deregister localdev routes; one liveness-based prune per repository
+# covers all of them, plus registrations left by earlier releases. API-free,
+# non-fatal, and a no-op when no localdev branch is registered.
+# Args: $1 = repos.json path
+#######################################
+_pc_prune_localdev_registrations() {
+	local repos_json="$1"
+	local ports_file="${HOME}/.local-dev-proxy/ports.json"
+	local helper="${_PULSE_CLEANUP_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/localdev-helper.sh"
+	local repo="" output="" line=""
+	[[ -f "$ports_file" && -f "$helper" && -f "$repos_json" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -e '[.apps[]? | (.branches // {}) | length] | add // 0 | . > 0' "$ports_file" >/dev/null 2>&1 || return 0
+	while IFS= read -r repo; do
+		[[ -n "$repo" && -d "$repo" ]] || continue
+		git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || continue
+		if ! output=$(bash "$helper" branch prune --repo "$repo" 2>&1); then
+			printf '[pulse-cleanup] localdev-prune repo=%s failed\n' "$repo" >>"${LOGFILE:-/dev/null}"
+			continue
+		fi
+		while IFS= read -r line; do
+			case "$line" in
+			"PRUNE_RESULT "*" branches=0 routes=0") ;;
+			"PRUNE_RESULT "*) printf '[pulse-cleanup] localdev-prune repo=%s %s\n' "$repo" "${line#PRUNE_RESULT }" >>"${LOGFILE:-/dev/null}" ;;
+			esac
+		done <<<"$output"
+	done < <(jq -r '.initialized_repos[]? | .path // empty' "$repos_json" 2>/dev/null)
+	return 0
+}
+
 _pc_cleanup_merged_passes() {
 	local registered=0 central=0
 	registered=$(_cleanup_merged_prs_for_all_repos)
@@ -1966,6 +1999,9 @@ cleanup_worktrees() {
 	local orphan_dirs_moved
 	orphan_dirs_moved=$(_pc_cleanup_orphan_sibling_dirs "$repos_json" "$now_epoch")
 	total_removed=$((total_removed + orphan_dirs_moved))
+
+	# Pass 5: drop localdev branch registrations for removed worktrees.
+	_pc_prune_localdev_registrations "$repos_json" || true
 
 	if [[ "$total_removed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Worktree cleanup total: $total_removed worktree(s) removed across all repos" >>"$LOGFILE"

@@ -352,6 +352,13 @@ cmd_branch() {
 	local branch_raw="${3:-}"
 	local port_arg="${4:-}"
 
+	# branch prune takes options, so it bypasses the fixed-arity router.
+	if [[ "$subcmd" == "prune" ]]; then
+		shift
+		cmd_branch_prune "$@"
+		return $?
+	fi
+
 	# Handle subcommands: branch rm, branch list, branch help
 	_BRANCH_SUBCMD_EXIT=0
 	if _cmd_branch_route_subcmd "$subcmd" "$app" "$branch_raw"; then
@@ -398,6 +405,10 @@ cmd_branch() {
 	print_info "localdev branch $app $branch ($subdomain)"
 	echo ""
 
+	# Hold the registry lock from validation through registration so
+	# concurrent worktree creation cannot assign the same port (GH#33970).
+	localdev_registry_lock || exit 1
+
 	# Steps 1–3: Validate prerequisites
 	_cmd_branch_validate "$app" "$branch" "$subdomain"
 
@@ -419,6 +430,7 @@ cmd_branch() {
 
 	# Step 7: Register branch in port registry
 	register_branch "$app" "$branch" "$port" "$subdomain" || exit 1
+	localdev_registry_unlock
 
 	# Step 8: Traefik auto-reload
 	if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^local-traefik$'; then
@@ -453,6 +465,7 @@ cmd_branch_rm() {
 	print_info "localdev branch rm $app $branch"
 	echo ""
 
+	localdev_registry_lock || exit 1
 	if ! is_branch_registered "$app" "$branch"; then
 		print_warning "Branch '$branch' is not registered for app '$app'"
 		print_info "  Attempting cleanup of any leftover files..."
@@ -463,10 +476,227 @@ cmd_branch_rm() {
 
 	# Deregister from port registry
 	deregister_branch "$app" "$branch"
+	localdev_registry_unlock
 	print_success "Removed branch '$branch' from $app registry"
 
 	echo ""
 	print_success "localdev branch rm complete: $branch.$app"
+	return 0
+}
+
+# =============================================================================
+# Branch prune — reclaim registrations whose worktrees no longer exist
+# =============================================================================
+# The registry stores sanitised branch names but no worktree paths, so
+# liveness is the repository's own `git worktree list`. Any failure to read
+# that inventory fails closed: an empty inventory must never mean "all dead".
+
+# Print sanitised branch names of live worktrees (one per line).
+_branch_prune_live_branches() {
+	local repo="$1"
+	local inventory=""
+	local line=""
+	local path=""
+	local branch=""
+	local prunable=0
+	inventory="$(git -C "$repo" worktree list --porcelain 2>/dev/null)" || return 1
+	[[ -n "$inventory" ]] || return 1
+	while IFS= read -r line; do
+		case "$line" in
+		"worktree "*)
+			path="${line#worktree }"
+			branch=""
+			prunable=0
+			;;
+		"branch refs/heads/"*) branch="${line#branch refs/heads/}" ;;
+		prunable*) prunable=1 ;;
+		"")
+			if [[ -n "$path" && -n "$branch" && "$prunable" -eq 0 && -d "$path" ]]; then
+				sanitise_branch_name "$branch"
+			fi
+			path=""
+			;;
+		esac
+	done <<<"${inventory}"$'\n'
+	return 0
+}
+
+# Print registered app names that belong to the repository's main worktree:
+# its package.json name and its directory basename (the same identity the
+# worker loopback policy uses in command_policy_localdev.py).
+_branch_prune_repo_apps() {
+	local main_worktree="$1"
+	local inferred=""
+	local base=""
+	inferred="$(infer_project_name "$main_worktree" 2>/dev/null)" || inferred=""
+	base="$(basename "$main_worktree" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')"
+	if [[ -n "$inferred" ]] && is_app_registered "$inferred"; then
+		echo "$inferred"
+	fi
+	if [[ -n "$base" && "$base" != "$inferred" ]] && is_app_registered "$base"; then
+		echo "$base"
+	fi
+	return 0
+}
+
+_branch_prune_in_list() {
+	local needle="$1"
+	local list="$2"
+	case $'\n'"$list"$'\n' in
+	*$'\n'"$needle"$'\n'*) return 0 ;;
+	esac
+	return 1
+}
+
+# Prune one app. Caller holds the registry lock.
+# Args: app live_branches dry_run
+_branch_prune_app() {
+	local app="$1"
+	local live="$2"
+	local dry_run="$3"
+	local registered=""
+	local branch=""
+	local route=""
+	local name=""
+	local dead=()
+	local orphan_routes=()
+	registered="$(jq -r --arg a "$app" '.apps[$a].branches // {} | keys[]' "$PORTS_FILE")" || return 1
+	while IFS= read -r branch; do
+		[[ -z "$branch" ]] && continue
+		_branch_prune_in_list "$branch" "$live" && continue
+		dead+=("$branch")
+	done <<<"$registered"
+	for route in "$CONFD_DIR/${app}--"*.yml; do
+		[[ -f "$route" ]] || continue
+		name="${route##*/}"
+		name="${name%.yml}"
+		branch="${name#"${app}--"}"
+		_branch_prune_in_list "$branch" "$registered" && continue
+		_branch_prune_in_list "$branch" "$live" && continue
+		is_app_registered "$name" && continue
+		orphan_routes+=("$route")
+	done
+	for branch in "${dead[@]+"${dead[@]}"}"; do
+		print_info "  ${dry_run:+[dry-run] }stale: $branch.$app (port $(get_branch_port "$app" "$branch"))"
+	done
+	for route in "${orphan_routes[@]+"${orphan_routes[@]}"}"; do
+		print_info "  ${dry_run:+[dry-run] }orphan route: $route"
+	done
+	if [[ -z "$dry_run" ]]; then
+		for branch in "${dead[@]+"${dead[@]}"}"; do
+			remove_branch_traefik_route "$app" "$branch" >/dev/null
+		done
+		for route in "${orphan_routes[@]+"${orphan_routes[@]}"}"; do
+			rm -f -- "$route"
+		done
+		if [[ "${#dead[@]}" -gt 0 ]]; then
+			local tmp=""
+			tmp="$(mktemp "${PORTS_FILE}.XXXXXX")" || return 1
+			if ! jq --arg a "$app" 'reduce $ARGS.positional[] as $b (.; del(.apps[$a].branches[$b]))' \
+				"$PORTS_FILE" --args "${dead[@]}" >"$tmp" || ! mv -f "$tmp" "$PORTS_FILE"; then
+				rm -f -- "$tmp"
+				return 1
+			fi
+		fi
+	fi
+	echo "PRUNE_RESULT app=$app branches=${#dead[@]} routes=${#orphan_routes[@]}${dry_run:+ dry_run=1}"
+	return 0
+}
+
+# Parse prune arguments into _PRUNE_APP, _PRUNE_REPO, _PRUNE_DRY_RUN.
+_branch_prune_parse_args() {
+	local arg=""
+	_PRUNE_APP=""
+	_PRUNE_REPO=""
+	_PRUNE_DRY_RUN=""
+	while [[ $# -gt 0 ]]; do
+		arg="$1"
+		case "$arg" in
+		--repo)
+			[[ $# -ge 2 && -n "$2" ]] || { print_error "--repo requires a path"; return 1; }
+			_PRUNE_REPO="$2"
+			shift 2
+			;;
+		--dry-run)
+			_PRUNE_DRY_RUN=1
+			shift
+			;;
+		-h | --help)
+			cmd_branch_help
+			return 2
+			;;
+		-*)
+			print_error "Unknown prune option: $arg"
+			return 1
+			;;
+		*)
+			[[ -z "$_PRUNE_APP" ]] || { print_error "Unexpected argument: $arg"; return 1; }
+			_PRUNE_APP="$arg"
+			shift
+			;;
+		esac
+	done
+	return 0
+}
+
+cmd_branch_prune() {
+	local parse_rc=0
+	local main_worktree=""
+	local apps=""
+	local live=""
+	local app=""
+	_branch_prune_parse_args "$@" || parse_rc=$?
+	[[ "$parse_rc" -eq 2 ]] && return 0
+	[[ "$parse_rc" -eq 0 ]] || return 1
+	if ! command -v jq >/dev/null 2>&1; then
+		print_error "branch prune requires jq"
+		return 1
+	fi
+	[[ -n "$_PRUNE_REPO" ]] || _PRUNE_REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || _PRUNE_REPO=""
+	if [[ -z "$_PRUNE_REPO" ]] || ! git -C "$_PRUNE_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+		print_error "Not a git repository: ${_PRUNE_REPO:-<cwd>} (use --repo <canonical-repo-path>)"
+		return 1
+	fi
+	main_worktree="$(git -C "$_PRUNE_REPO" worktree list --porcelain 2>/dev/null | head -1)"
+	main_worktree="${main_worktree#worktree }"
+	[[ -d "$main_worktree" ]] || { print_error "Cannot resolve main worktree for $_PRUNE_REPO"; return 1; }
+	ensure_ports_file
+	apps="$(_branch_prune_repo_apps "$main_worktree")"
+	if [[ -n "$_PRUNE_APP" ]]; then
+		if ! _branch_prune_in_list "$_PRUNE_APP" "$apps"; then
+			print_error "App '$_PRUNE_APP' is not registered for repository $main_worktree"
+			print_info "  Pruning compares registrations with this repository's worktrees only."
+			return 1
+		fi
+		apps="$_PRUNE_APP"
+	fi
+	if [[ -z "$apps" ]]; then
+		print_info "No registered localdev app for $main_worktree"
+		return 0
+	fi
+	live="$(_branch_prune_live_branches "$_PRUNE_REPO")" || {
+		print_error "Cannot read worktree inventory for $_PRUNE_REPO — refusing to prune"
+		return 1
+	}
+	localdev_registry_lock || return 1
+	if [[ -z "$_PRUNE_DRY_RUN" ]]; then
+		mkdir -p "$BACKUP_DIR"
+		cp "$PORTS_FILE" "$BACKUP_DIR/ports.json.prune-$(date -u +%Y%m%dT%H%M%SZ)-$$" || {
+			localdev_registry_unlock
+			print_error "Cannot back up $PORTS_FILE — refusing to prune"
+			return 1
+		}
+	fi
+	while IFS= read -r app; do
+		[[ -z "$app" ]] && continue
+		print_info "localdev branch prune $app (${main_worktree})"
+		_branch_prune_app "$app" "$live" "$_PRUNE_DRY_RUN" || {
+			localdev_registry_unlock
+			print_error "Prune failed for $app; registry backup is in $BACKUP_DIR"
+			return 1
+		}
+	done <<<"$apps"
+	localdev_registry_unlock
 	return 0
 }
 
@@ -556,6 +786,7 @@ cmd_branch_help() {
 	echo "Usage: localdev-helper.sh branch <app> <branch> [port]"
 	echo "       localdev-helper.sh branch rm <app> <branch>"
 	echo "       localdev-helper.sh branch list [app]"
+	echo "       localdev-helper.sh branch prune [app] [--repo <path>] [--dry-run]"
 	echo ""
 	echo "Creates branch-specific subdomain routes:"
 	echo "  localdev branch myapp feature-xyz       → feature-xyz.myapp.local"
@@ -575,6 +806,10 @@ cmd_branch_help() {
 	echo "Subcommands:"
 	echo "  branch rm <app> <branch>   Remove branch route and registry entry"
 	echo "  branch list [app]          List branches (all apps or specific app)"
+	echo "  branch prune [app] [--repo <path>] [--dry-run]"
+	echo "                             Remove registrations and route files for branches"
+	echo "                             with no live worktree in the repository (default:"
+	echo "                             current repo). Backs up ports.json first."
 	echo "  branch help                Show this help"
 	return 0
 }

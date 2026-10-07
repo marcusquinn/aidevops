@@ -190,8 +190,15 @@ localdev-helper.sh rm <name>           # removes all resources
 localdev-helper.sh branch <app> <branch> [port]   # add branch subdomain
 localdev-helper.sh branch rm <app> <branch>        # remove
 localdev-helper.sh branch list [app]               # list
+localdev-helper.sh branch prune [app] [--repo <path>] [--dry-run]  # reclaim ports of removed worktrees
 # Branch names sanitised (slashes→hyphens, lowercase). Wildcard cert covers *.myapp.local.
 ```
+
+Worktree removal (`worktree-helper.sh remove`) deregisters its branch. `branch prune`
+compares registrations with the repository's live `git worktree list`, backs up
+`ports.json`, and removes dead registrations plus orphan `{app}--{branch}.yml` routes;
+Pulse worktree cleanup runs it per registered repository. Registry writes are
+serialised by `ports.json.lock`. If the 3100-3999 pool is exhausted, run `branch prune`.
 
 **db** — Shared Postgres via `local-postgres` Docker container.
 
