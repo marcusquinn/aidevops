@@ -11,6 +11,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/shared-constants.sh"
 readonly TRANSCRIPT_KEY="transcript"
+readonly DURATION_KEY="duration"
+readonly SHEET_MAX_SIDE_DEFAULT="1568"
+readonly SWS_ACCURATE="accurate_rnd+full_chroma_int"
 
 usage() {
 	cat <<'EOF'
@@ -19,10 +22,21 @@ Usage: media-qa-helper.sh <command> [options] <media>
 Commands:
   probe <media>
   loudness <media>
-  contact-sheet (--frames s,s,s | --scenes threshold) --out image.png [--scale width] <media>
+  contact-sheet (--frames s,s,s | --every seconds | --scenes threshold) --out image.png
+                [--scale width] [--grid CxR] [--max-side px] <media>
+  strip --at seconds --out image.png [--count 12] [--scale 240] [--max-side px] <media>
+  scan [--freeze-seconds 1] [--black-seconds 0.1] [--silence-seconds 1] [--silence-db -50] <media>
+  loopcheck <media>
+  compare <media-a> <media-b>
   sample-colour --at seconds --crop width:height:x:y [--expect '#RRGGBB'] <media>
   intelligibility --reference text-file [--model ggml-model.bin] <media>
   music-vocals [--model ggml-model.bin] <media>
+
+Sheets print JSON {sheets, grid, times}: tile i (row-major, across pages) shows times[i].
+They fit --max-side (default 1568, 0 disables) and split into -01, -02 pages when needed.
+scan reports freeze/black/silence spans as review pointers, not verdicts.
+loopcheck exits 1 when the last-to-first seam jumps more than the film's own last step.
+compare exits 1 when decoded frame hashes differ (determinism check).
 EOF
 	return 0
 }
@@ -66,13 +80,18 @@ try:
     fps = float(numerator) / float(denominator)
 except (ValueError, ZeroDivisionError):
     fps = 0
+length_key = sys.argv[1]
+try:
+    length = float(values.get(length_key, 0) or 0)
+except ValueError:
+    length = 0.0
 print(json.dumps({
     "codec": values.get("codec_name", ""), "width": int(values.get("width", 0) or 0),
     "height": int(values.get("height", 0) or 0), "fps": fps,
     "pix_fmt": values.get("pix_fmt", ""), "color_range": values.get("color_range", ""),
-    "color_space": values.get("color_space", ""), "duration": float(values.get("duration", 0) or 0),
+    "color_space": values.get("color_space", ""), length_key: length,
 }, separators=(",", chr(58))))
-' <<<"$fields"
+' "$DURATION_KEY" <<<"$fields"
 	return 0
 }
 
@@ -104,11 +123,120 @@ print(json.dumps(dict((key, value(pattern)) for key, pattern in metrics), separa
 	return 0
 }
 
+# Prints "width height fps duration" for the first video stream.
+video_geometry() {
+	local media="$1"
+	local fields
+	# CSV rows: stream "w,h,num/den" then format "seconds" (N/A for stills).
+	fields=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate:format=duration -of csv=p=0 "$media")
+	python3 -c '
+import sys
+rows = [line.split(",") for line in sys.stdin.read().splitlines() if line.strip()]
+stream = (rows[0] if rows else []) + ["0", "0", "0/1"]
+def number(text):
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+try:
+    numerator, denominator = stream[2].split("/", 1)
+    fps = float(numerator) / float(denominator)
+except (ValueError, ZeroDivisionError):
+    fps = 0.0
+seconds = number(rows[1][0]) if len(rows) > 1 else 0.0
+print(int(number(stream[0])), int(number(stream[1])), fps, seconds)
+' <<<"$fields"
+	return 0
+}
+
+require_positive_integer() {
+	local name="$1"
+	local value="$2"
+	if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+		printf '%s must be a non-negative integer: %s\n' "$name" "$value" >&2
+		return 2
+	fi
+	return 0
+}
+
+# Prints "cols rows pages" so every page fits max_side (0 = unlimited, six columns).
+sheet_layout() {
+	local width="$1"
+	local height="$2"
+	local scale="$3"
+	local count="$4"
+	local max_side="$5"
+	local grid="$6"
+	python3 -c '
+import math, sys
+width, height, scale, count, max_side = (int(float(x)) for x in sys.argv[1:6])
+grid = sys.argv[6]
+count = max(1, count)
+if grid:
+    cols, rows = (max(1, int(x)) for x in grid.lower().split("x", 1))
+else:
+    tile_height = max(1, round(scale * height / width)) if width else scale
+    cols = min(count, max(1, max_side // scale)) if max_side > 0 else min(count, 6)
+    rows_cap = max(1, max_side // tile_height) if max_side > 0 else count
+    rows = max(1, min(math.ceil(count / cols), rows_cap))
+print(cols, rows, math.ceil(count / (cols * rows)))
+' "$width" "$height" "$scale" "$count" "$max_side" "$grid"
+	return 0
+}
+
+# Tiles pre-filtered frames into one or more sheets and prints {sheets, grid, times}.
+render_sheet() {
+	local media="$1"
+	local output="$2"
+	local pre_filter="$3"
+	local seek="$4"
+	local count="$5"
+	local scale="$6"
+	local grid="$7"
+	local max_side="$8"
+	local times="$9"
+	local geometry
+	local width
+	local height
+	local layout
+	local cols
+	local rows
+	local pages
+	geometry=$(video_geometry "$media")
+	read -r width height _ _ <<<"$geometry"
+	layout=$(sheet_layout "$width" "$height" "$scale" "$count" "$max_side" "$grid")
+	read -r cols rows pages <<<"$layout"
+	local filter="${pre_filter},scale=${scale}:-1:flags=lanczos,tile=${cols}x${rows}"
+	if [[ "$max_side" -gt 0 ]]; then
+		filter="${filter},scale='min(${max_side},iw)':'min(${max_side},ih)':force_original_aspect_ratio=decrease"
+	fi
+	local target="$output"
+	if [[ "$pages" -gt 1 ]]; then
+		target="${output%.*}-%02d.${output##*.}"
+	fi
+	local seek_args=()
+	if [[ -n "$seek" ]]; then
+		seek_args=(-ss "$seek")
+	fi
+	ffmpeg -v error -y ${seek_args[@]+"${seek_args[@]}"} -i "$media" -vf "$filter" -fps_mode vfr -frames:v "$pages" "$target"
+	python3 -c '
+import json, os, sys
+target, pages, grid, times = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+sheets = [target % page for page in range(1, pages + 1)] if pages > 1 else [target]
+print(json.dumps({"sheets": [path for path in sheets if os.path.isfile(path)], "grid": grid,
+    "times": [float(x) for x in times.split(",") if x]}, separators=(",", chr(58))))
+' "$target" "$pages" "${cols}x${rows}" "$times"
+	return 0
+}
+
 contact_sheet() {
 	local frames=""
 	local scenes=""
+	local every=""
 	local output=""
 	local scale="320"
+	local grid=""
+	local max_side="$SHEET_MAX_SIDE_DEFAULT"
 	local media=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -120,12 +248,24 @@ contact_sheet() {
 			scenes="$2"
 			shift 2
 			;;
+		--every)
+			every="$2"
+			shift 2
+			;;
 		--out)
 			output="$2"
 			shift 2
 			;;
 		--scale)
 			scale="$2"
+			shift 2
+			;;
+		--grid)
+			grid="$2"
+			shift 2
+			;;
+		--max-side)
+			max_side="$2"
 			shift 2
 			;;
 		-*)
@@ -138,22 +278,298 @@ contact_sheet() {
 			;;
 		esac
 	done
-	if [[ -z "$media" || -z "$output" || (-z "$frames" && -z "$scenes") || (-n "$frames" && -n "$scenes") ]]; then
-		printf 'contact-sheet requires one of --frames or --scenes, --out, and a media file.\n' >&2
+	local modes=0
+	if [[ -n "$frames" ]]; then modes=$((modes + 1)); fi
+	if [[ -n "$scenes" ]]; then modes=$((modes + 1)); fi
+	if [[ -n "$every" ]]; then modes=$((modes + 1)); fi
+	if [[ -z "$media" || -z "$output" || "$modes" -ne 1 ]]; then
+		printf 'contact-sheet requires exactly one of --frames, --every or --scenes, --out, and a media file.\n' >&2
+		return 2
+	fi
+	if [[ -n "$grid" && ! "$grid" =~ ^[1-9][0-9]*x[1-9][0-9]*$ ]]; then
+		printf 'contact-sheet --grid must be COLSxROWS, for example 4x3.\n' >&2
+		return 2
+	fi
+	require_positive_integer --scale "$scale" || return 2
+	require_positive_integer --max-side "$max_side" || return 2
+	require_command ffmpeg
+	require_command ffprobe
+	require_command python3
+	require_media_file "$media"
+	contact_sheet_render "$media" "$output" "$frames" "$every" "$scenes" "$scale" "$grid" "$max_side"
+	return $?
+}
+
+# Turns one validated sampling mode into a pre-filter, frame count and tile times.
+contact_sheet_render() {
+	local media="$1"
+	local output="$2"
+	local frames="$3"
+	local every="$4"
+	local scenes="$5"
+	local scale="$6"
+	local grid="$7"
+	local max_side="$8"
+	local geometry
+	local fps
+	local duration
+	local pre_filter
+	local count
+	local times=""
+	geometry=$(video_geometry "$media")
+	read -r _ _ fps duration <<<"$geometry"
+	if [[ -n "$frames" ]]; then
+		# One frame per requested time: the window is one frame interval wide.
+		pre_filter=$(python3 -c 'import sys; w = 1 / float(sys.argv[2]) if float(sys.argv[2]) > 0 else 0.04; print("+".join("gte(t\\," + x + ")*lt(t\\," + x + "+" + format(w, ".6f") + ")" for x in sys.argv[1].split(",")))' "$frames" "$fps")
+		pre_filter="select='${pre_filter}'"
+		count=$(python3 -c 'import sys; print(len(sys.argv[1].split(",")))' "$frames")
+		times="$frames"
+	elif [[ -n "$every" ]]; then
+		local plan
+		plan=$(python3 -c '
+import math, sys
+every, duration = float(sys.argv[1]), float(sys.argv[2])
+if every <= 0:
+    raise SystemExit("--every must be greater than 0")
+count = max(1, math.ceil(duration / every))
+print(format(1 / every, ".6f"), count, ",".join(format(i * every, "g") for i in range(count)))
+' "$every" "$duration") || return 2
+		local rate
+		read -r rate count times <<<"$plan"
+		pre_filter="fps=${rate}"
+	else
+		pre_filter="select='gt(scene,${scenes})'"
+		if [[ -z "$grid" ]]; then grid="3x1"; fi
+		count=$((${grid%x*} * ${grid#*x}))
+	fi
+	render_sheet "$media" "$output" "$pre_filter" "" "$count" "$scale" "$grid" "$max_side" "$times"
+	return 0
+}
+
+strip_frames() {
+	local at=""
+	local output=""
+	local count="12"
+	local scale="240"
+	local max_side="$SHEET_MAX_SIDE_DEFAULT"
+	local media=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--at)
+			at="$2"
+			shift 2
+			;;
+		--out)
+			output="$2"
+			shift 2
+			;;
+		--count)
+			count="$2"
+			shift 2
+			;;
+		--scale)
+			scale="$2"
+			shift 2
+			;;
+		--max-side)
+			max_side="$2"
+			shift 2
+			;;
+		-*)
+			printf 'Unknown strip option: %s\n' "$1" >&2
+			return 2
+			;;
+		*)
+			media="$1"
+			shift
+			;;
+		esac
+	done
+	if [[ -z "$at" || -z "$output" || -z "$media" ]]; then
+		printf 'strip requires --at, --out, and a media file.\n' >&2
+		return 2
+	fi
+	require_positive_integer --count "$count" || return 2
+	require_positive_integer --scale "$scale" || return 2
+	require_positive_integer --max-side "$max_side" || return 2
+	require_command ffmpeg
+	require_command ffprobe
+	require_command python3
+	require_media_file "$media"
+	local geometry
+	local fps
+	local times
+	geometry=$(video_geometry "$media")
+	read -r _ _ fps _ <<<"$geometry"
+	times=$(python3 -c 'import sys; at, fps = float(sys.argv[1]), float(sys.argv[2]) or 25.0; print(",".join(format(round(at + i / fps, 4), "g") for i in range(int(sys.argv[3]))))' "$at" "$fps" "$count")
+	render_sheet "$media" "$output" "trim=end_frame=${count}" "$at" "$count" "$scale" "" "$max_side" "$times"
+	return 0
+}
+
+scan_media() {
+	local freeze_seconds="1"
+	local black_seconds="0.1"
+	local silence_seconds="1"
+	local silence_db="-50"
+	local media=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--freeze-seconds)
+			freeze_seconds="$2"
+			shift 2
+			;;
+		--black-seconds)
+			black_seconds="$2"
+			shift 2
+			;;
+		--silence-seconds)
+			silence_seconds="$2"
+			shift 2
+			;;
+		--silence-db)
+			silence_db="$2"
+			shift 2
+			;;
+		-*)
+			printf 'Unknown scan option: %s\n' "$1" >&2
+			return 2
+			;;
+		*)
+			media="$1"
+			shift
+			;;
+		esac
+	done
+	if [[ -z "$media" ]]; then
+		printf 'scan requires a media file.\n' >&2
+		return 2
+	fi
+	require_command ffmpeg
+	require_command ffprobe
+	require_command python3
+	require_media_file "$media"
+	local has_audio
+	local geometry
+	local duration
+	local log_file
+	local result
+	has_audio=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$media")
+	geometry=$(video_geometry "$media")
+	read -r _ _ _ duration <<<"$geometry"
+	local args=(-hide_banner -nostats -i "$media" -map 0:v:0 -vf "freezedetect=n=-60dB:d=${freeze_seconds},blackdetect=d=${black_seconds}:pix_th=0.10")
+	if [[ -n "$has_audio" ]]; then
+		args+=(-map 0:a:0 -af "silencedetect=n=${silence_db}dB:d=${silence_seconds}")
+	fi
+	args+=(-f null -)
+	log_file=$(mktemp "${TMPDIR:-/tmp}/media-qa-scan.XXXXXX")
+	if ! ffmpeg "${args[@]}" >/dev/null 2>"$log_file"; then
+		printf 'Unable to scan: %s\n' "$media" >&2
+		rm -f "$log_file"
+		return 1
+	fi
+	result=$(python3 -c '
+import json, re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+length, has_audio, length_key = float(sys.argv[2] or 0), bool(sys.argv[3]), sys.argv[4]
+def times(label):
+    return [float(x) for x in re.findall(label + r":\s*([-+0-9.]+)", text)]
+def spans(kind):
+    starts, ends = times(kind + "_start"), times(kind + "_end")
+    out = []
+    for index, start in enumerate(starts):
+        end = ends[index] if index < len(ends) else length
+        out.append({"start": round(start, 3), "end": round(end, 3), length_key: round(end - start, 3)})
+    return out
+report = {length_key: length, "has_audio": has_audio, "freeze": spans("freeze"), "black": spans("black")}
+report["silence"] = spans("silence") if has_audio else []
+print(json.dumps(report, separators=(",", chr(58))))
+' "$log_file" "$duration" "$has_audio" "$DURATION_KEY")
+	rm -f "$log_file"
+	printf '%s\n' "$result"
+	return 0
+}
+
+# Compares the last decoded frame with the first, against the film's own last step.
+loopcheck() {
+	local media="${1:-}"
+	if [[ -z "$media" ]]; then
+		printf 'loopcheck requires a media file.\n' >&2
+		return 2
+	fi
+	require_command ffmpeg
+	require_command ffprobe
+	require_command python3
+	require_media_file "$media"
+	local geometry
+	local width
+	local height
+	local temporary_dir
+	local result
+	geometry=$(video_geometry "$media")
+	read -r width height _ _ <<<"$geometry"
+	temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/media-qa-loop.XXXXXX")
+	ffmpeg -v error -y -i "$media" -map 0:v:0 -frames:v 1 -sws_flags "$SWS_ACCURATE" -pix_fmt rgb24 -f rawvideo "${temporary_dir}/first.rgb"
+	ffmpeg -v error -y -sseof -0.5 -i "$media" -map 0:v:0 -sws_flags "$SWS_ACCURATE" -pix_fmt rgb24 -f rawvideo "${temporary_dir}/tail.rgb"
+	if ! result=$(python3 -c '
+import json, operator, sys
+size = int(sys.argv[3]) * int(sys.argv[4]) * 3
+first = open(sys.argv[1], "rb").read()[:size]
+tail = open(sys.argv[2], "rb").read()
+if size == 0 or len(first) < size or len(tail) < 2 * size:
+    raise SystemExit("loopcheck needs at least two decodable frames")
+last, previous = tail[len(tail) - size:], tail[len(tail) - 2 * size:len(tail) - size]
+def diff(a, b):
+    values = list(map(abs, map(operator.sub, a, b)))
+    return round(sum(values) / len(values), 3), max(values)
+seam_mean, seam_max = diff(last, first)
+step_mean, step_max = diff(last, previous)
+verdict = "smooth" if seam_mean <= max(step_mean * 1.5, 1.0) else "jump"
+print(json.dumps({"seam_mean": seam_mean, "seam_max": seam_max, "step_mean": step_mean,
+    "step_max": step_max, "verdict": verdict}, separators=(",", chr(58))))
+' "${temporary_dir}/first.rgb" "${temporary_dir}/tail.rgb" "$width" "$height"); then
+		rm -rf "$temporary_dir"
+		return 1
+	fi
+	rm -rf "$temporary_dir"
+	printf '%s\n' "$result"
+	if [[ "$result" == *'"verdict":"jump"'* ]]; then
+		return 1
+	fi
+	return 0
+}
+
+# Determinism: decoded per-frame hashes of two renders (or two stills) must match.
+compare_media() {
+	local first="${1:-}"
+	local second="${2:-}"
+	if [[ -z "$first" || -z "$second" ]]; then
+		printf 'compare requires two media files.\n' >&2
 		return 2
 	fi
 	require_command ffmpeg
 	require_command python3
-	require_media_file "$media"
-	local filter
-	if [[ -n "$frames" ]]; then
-		filter=$(python3 -c 'import sys; print("+".join("gte(t\\," + x + ")*lt(t\\," + x + "+0.04)" for x in sys.argv[1].split(",")))' "$frames")
-		filter="select='${filter}',scale=${scale}:-1,tile=3x1"
-	else
-		filter="select='gt(scene,${scenes})',scale=${scale}:-1,tile=3x1"
+	require_media_file "$first"
+	require_media_file "$second"
+	local temporary_dir
+	local result
+	temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/media-qa-compare.XXXXXX")
+	ffmpeg -v error -y -i "$first" -map 0:v:0 -f framemd5 "${temporary_dir}/a.md5"
+	ffmpeg -v error -y -i "$second" -map 0:v:0 -f framemd5 "${temporary_dir}/b.md5"
+	result=$(python3 -c '
+import json, sys
+def hashes(path):
+    return [line.rsplit(",", 1)[-1].strip() for line in open(path, encoding="utf-8") if line.strip() and not line.startswith("#")]
+a, b = hashes(sys.argv[1]), hashes(sys.argv[2])
+mismatched = [index for index, pair in enumerate(zip(a, b)) if pair[0] != pair[1]]
+identical = len(a) == len(b) and not mismatched
+print(json.dumps({"frames_a": len(a), "frames_b": len(b), "mismatched": len(mismatched),
+    "first_mismatch": mismatched[0] if mismatched else None, "identical": identical}, separators=(",", chr(58))))
+' "${temporary_dir}/a.md5" "${temporary_dir}/b.md5")
+	rm -rf "$temporary_dir"
+	printf '%s\n' "$result"
+	if [[ "$result" != *'"identical":true'* ]]; then
+		return 1
 	fi
-	ffmpeg -v error -y -i "$media" -vf "$filter" -fps_mode vfr -frames:v 1 "$output"
-	printf '%s\n' "$output"
 	return 0
 }
 
@@ -363,6 +779,10 @@ main() {
 	probe) probe_media "$@" ;;
 	loudness) loudness "$@" ;;
 	contact-sheet) contact_sheet "$@" ;;
+	strip) strip_frames "$@" ;;
+	scan) scan_media "$@" ;;
+	loopcheck) loopcheck "$@" ;;
+	compare) compare_media "$@" ;;
 	sample-colour) sample_colour "$@" ;;
 	intelligibility) intelligibility "$@" ;;
 	music-vocals) music_vocals "$@" ;;
