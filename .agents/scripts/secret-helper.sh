@@ -715,7 +715,7 @@ cmd_list() {
 	fi
 
 	local credential_file=""
-	local -a credential_names=()
+	local credential_names=""
 	while IFS= read -r credential_file; do
 		[[ -z "$credential_file" ]] && continue
 		if [[ -L "$credential_file" ]] || [[ ! -f "$credential_file" ]]; then
@@ -731,14 +731,14 @@ cmd_list() {
 		local line=""
 		while IFS= read -r line || [[ -n "$line" ]]; do
 			if [[ "$line" =~ ^export[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)= ]]; then
-				credential_names+=("${BASH_REMATCH[1]}")
+				credential_names+="${BASH_REMATCH[1]}"$'\n'
 			fi
 		done <"$credential_file"
 	done < <(resolve_credential_files)
 
-	if [[ ${#credential_names[@]} -gt 0 ]]; then
+	if [[ -n "$credential_names" ]]; then
 		local cred_keys=""
-		cred_keys=$(printf '%s\n' "${credential_names[@]}" | sort -u)
+		cred_keys=$(printf '%s' "$credential_names" | sort -u)
 		if [[ -n "$cred_keys" ]]; then
 			print_info "Secrets in credentials.sh:"
 			echo ""

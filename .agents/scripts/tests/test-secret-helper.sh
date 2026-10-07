@@ -47,6 +47,7 @@ setup() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+printf '%s\n' "${1:-}" >>"${AIDEVOPS_TEST_DIR}/gopass_calls"
 cmd="${1:-}"
 shift || true
 
@@ -136,7 +137,8 @@ EOF
 		"$output" == *"ALPHA_KEY"* && "$output" == *"ZETA_KEY"* &&
 		"$output" != *"placeholder-value"* && "$output" != *"$TEST_DIR"* &&
 		"$output" != *"AIDEVOPS_ACTIVE_TENANT"* && "$output" != *"INVALID-NAME"* &&
-		"$output" != *"NOT_AN_ASSIGNMENT"* && ! -e "$TEST_DIR/loader-sourced" && ! -e "$TEST_DIR/tenant-sourced" ]]; then
+		"$output" != *"NOT_AN_ASSIGNMENT"* && ! -e "$TEST_DIR/loader-sourced" && ! -e "$TEST_DIR/tenant-sourced" ]] &&
+		! grep -q '^show$' "$TEST_DIR/gopass_calls"; then
 		print_result "list resolves tenant names without sourcing, decrypting, or exposing values" 0
 	else
 		print_result "list resolves tenant names without sourcing, decrypting, or exposing values" 1 "Names-only listing or silent check assertion failed"
