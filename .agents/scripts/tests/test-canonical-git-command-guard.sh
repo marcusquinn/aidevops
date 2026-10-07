@@ -247,6 +247,10 @@ assert_allowed "allows canonical branch listing" "$REPO" "git branch -vv --no-ab
 assert_allowed "allows canonical branch pattern listing" "$REPO" "git branch --list 'feature/*'"
 assert_allowed "allows canonical branch containment query" "$REPO" "git branch --contains main"
 assert_allowed "allows canonical ref format validation" "$REPO" "git check-ref-format --branch feature/valid-ref"
+assert_allowed "allows canonical no-index ignore query" "$REPO" "git check-ignore --no-index -v -- node_modules/x"
+assert_allowed "allows canonical quiet ignore query" "$REPO" "git check-ignore --quiet -- README.md"
+assert_allowed "allows canonical attribute query" "$REPO" "git check-attr -a -- README.md"
+assert_allowed "allows canonical mailmap query" "$REPO" "git check-mailmap 'Test <test@example.invalid>'"
 assert_allowed "allows canonical ls-remote query" "$REPO" "git ls-remote origin refs/heads/main"
 assert_allowed "allows canonical rev-list tag query" "$REPO" "git rev-list -n 1 HEAD"
 assert_allowed "allows canonical rev-list count query" "$REPO" "git rev-list --count HEAD"
@@ -318,6 +322,19 @@ if [[ "$VALID_REF_RC" -eq 0 && "$NATIVE_INVALID_REF_RC" -ne 0 && "$INVALID_REF_R
 	pass "PATH shim preserves native ref format validation"
 else
 	fail "PATH shim preserves native ref format validation (valid_rc=${VALID_REF_RC}, invalid_rc=${INVALID_REF_RC}, native_invalid_rc=${NATIVE_INVALID_REF_RC})"
+fi
+
+# GH#33858: child build tools probe ignore rules from canonical checkouts and
+# must see native check-ignore results, not the guard's block code.
+printf 'node_modules/\n' >>"${REPO}/.git/info/exclude"
+IGNORED_RC=0
+TRACKED_RC=0
+IGNORED_OUTPUT=$(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ignore --no-index -v -- node_modules/x 2>&1) || IGNORED_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ignore --quiet -- README.md >/dev/null 2>&1) || TRACKED_RC=$?
+if [[ "$IGNORED_RC" -eq 0 && "$IGNORED_OUTPUT" == *"node_modules/"* && "$TRACKED_RC" -eq 1 ]]; then
+	pass "PATH shim preserves native check-ignore results"
+else
+	fail "PATH shim preserves native check-ignore results (ignored_rc=${IGNORED_RC}, tracked_rc=${TRACKED_RC}, output=${IGNORED_OUTPUT})"
 fi
 
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:$PATH" "$SHIM" switch --detach main >/dev/null 2>&1); then
