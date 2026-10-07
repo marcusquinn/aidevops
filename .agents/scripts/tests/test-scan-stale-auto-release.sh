@@ -179,6 +179,17 @@ _isc_has_label() {
 }
 export -f _isc_has_label
 
+ISC_STATE_MODE="open"
+export ISC_STATE_MODE
+_isc_issue_is_closed() {
+	local issue="$1"
+	local slug="$2"
+	: "$issue" "$slug"
+	[[ "$ISC_STATE_MODE" == "closed" ]]
+	return $?
+}
+export -f _isc_issue_is_closed
+
 # Record auto-release calls and simulate stamp deletion.
 _isc_release_claim_by_stamp_path() {
 	local stamp_path="$1"
@@ -616,6 +627,52 @@ else
 	fail "direct pulse reaper preserves dead claim with dirty worktree progress"
 fi
 rm -f "${STAMP_DIR}/outside-repos-127.json"
+
+# =============================================================================
+# Tests 22-25 — closed lockdown issues lose only their dead stamp (GH#33873)
+# =============================================================================
+: >"$RELEASE_LOG"
+ISC_LABEL_MODE="present"
+ISC_STATE_MODE="closed"
+write_stamp "owner-repo-128.json" "99999" "/nonexistent/path/128" "128" "owner/repo"
+REAP_OUTPUT=$(_isc_cmd_reap_dead_stamps 2>/dev/null || true)
+if [[ ! -f "${STAMP_DIR}/owner-repo-128.json" ]] && [[ ! -s "$RELEASE_LOG" ]] &&
+	[[ "$REAP_OUTPUT" == *"removed 1 dead stamp(s) for closed lockdown issues"* ]]; then
+	pass "reaper removes a dead stamp on a closed lockdown issue without label release"
+else
+	fail "reaper removes a dead stamp on a closed lockdown issue without label release" "$REAP_OUTPUT"
+fi
+
+: >"$RELEASE_LOG"
+ISC_STATE_MODE="open"
+write_stamp "owner-repo-129.json" "99999" "/nonexistent/path/129" "129" "owner/repo"
+REAP_OUTPUT=$(_isc_cmd_reap_dead_stamps 2>/dev/null || true)
+if [[ -f "${STAMP_DIR}/owner-repo-129.json" ]] && [[ ! -s "$RELEASE_LOG" ]] &&
+	[[ "$REAP_OUTPUT" == *"skipped: no-auto-dispatch=1, progress=0, lookup-failed=0"* ]]; then
+	pass "reaper preserves an open lockdown and reports the skip"
+else
+	fail "reaper preserves an open lockdown and reports the skip" "$REAP_OUTPUT"
+fi
+rm -f "${STAMP_DIR}/owner-repo-129.json"
+
+ISC_STATE_MODE="closed"
+write_stamp "owner-repo-130.json" "99999" "$EXISTING_WORKTREE" "130" "owner/repo"
+if _isc_cmd_release_if_dead "130" "owner/repo" >/dev/null 2>&1 && [[ ! -f "${STAMP_DIR}/owner-repo-130.json" ]] &&
+	[[ ! -s "$RELEASE_LOG" ]]; then
+	pass "release-if-dead removes a dead stamp on a closed lockdown issue without label release"
+else
+	fail "release-if-dead removes a dead stamp on a closed lockdown issue without label release"
+fi
+
+write_stamp "owner-repo-131.json" "$LIVE_PID" "$EXISTING_WORKTREE" "131" "owner/repo"
+if ! _isc_cmd_release_if_dead "131" "owner/repo" >/dev/null 2>&1 && [[ -f "${STAMP_DIR}/owner-repo-131.json" ]]; then
+	pass "release-if-dead preserves a live owner on a closed lockdown issue"
+else
+	fail "release-if-dead preserves a live owner on a closed lockdown issue"
+fi
+rm -f "${STAMP_DIR}/owner-repo-131.json"
+ISC_LABEL_MODE="absent"
+ISC_STATE_MODE="open"
 
 # =============================================================================
 # Summary
