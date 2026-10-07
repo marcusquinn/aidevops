@@ -35,7 +35,7 @@ CB_PLUGIN_SOURCE="$CB_SOURCE_DEPLOYED"
 CB_LABEL=""
 CB_HEADLESS=0
 CB_TURNS=1
-CB_MODEL="anthropic/claude-haiku-4-5"
+CB_MODEL="anthropic/claude-haiku-5-5"
 CB_AGENT="Build+"
 CB_OUT="$CB_WORKSPACE/context-budget"
 CB_WORKDIR="$PWD"
@@ -65,7 +65,7 @@ Usage:
       --headless                    run as headless (AIDEVOPS_HEADLESS=1)
       --turns 1|2                   1 = reply OK; 2 = one Glob call, then OK (cache evidence)
       --prompt <text>               custom probe prompt (overrides --turns prompt)
-      --model <provider/model>      default: anthropic/claude-haiku-4-5
+      --model <provider/model>      default: anthropic/claude-haiku-5-5
       --agent <name>                default: Build+
       --dir <path>                  project directory for the probe (default: current)
       --out <dir>                   capture directory (default: $AIDEVOPS_TEMP_DIR/context-budget)

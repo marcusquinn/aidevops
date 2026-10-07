@@ -171,9 +171,9 @@ Prefer at least two independent model families in the judge panel when available
 
 ```text
 author: openai/gpt-5.6-terra
-critic: anthropic/claude-haiku-4-5
+critic: anthropic/claude-haiku-5-5
 synthesizer: openai/gpt-5.6-terra
-judges: anthropic/claude-haiku-4-5,google/gemini-pro,openai/gpt-5.6-terra
+judges: anthropic/claude-haiku-5-5,google/gemini-pro,openai/gpt-5.6-terra
 ```
 
 If only one provider is configured, proceed with same-provider fresh contexts and state the limitation in `summary.md`.

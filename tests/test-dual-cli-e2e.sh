@@ -568,10 +568,10 @@ else
 	fail "Model resolution: sonnet -> expected anthropic/claude-sonnet-5-5" "Got: $sonnet_model"
 fi
 
-if [[ "$haiku_model" == "anthropic/claude-haiku-4-5" ]]; then
-	pass "Model resolution: haiku -> anthropic/claude-haiku-4-5"
+if [[ "$haiku_model" == "anthropic/claude-haiku-5-5" ]]; then
+	pass "Model resolution: haiku -> anthropic/claude-haiku-5-5"
 else
-	fail "Model resolution: haiku -> expected anthropic/claude-haiku-4-5" "Got: $haiku_model"
+	fail "Model resolution: haiku -> expected anthropic/claude-haiku-5-5" "Got: $haiku_model"
 fi
 
 if [[ "$coding_model" == "anthropic/claude-opus-4-6" ]]; then
