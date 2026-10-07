@@ -159,6 +159,38 @@ The scanner skips any file with that directive.
 - Parent issue #20581 (t2762) — systemic sweep and prevention
 - Canonical reference implementation: `.agents/scripts/progressive-load-check.sh:80-97` (pre-existing correct counter usage)
 
+## Early-Exit Pipe Readers (SIGPIPE)
+
+Under `set -o pipefail`, an early-exit reader (`grep -q`, `grep -m1`, `head`) closes the pipe after its first match. A writer still producing output receives SIGPIPE (exit 141), and `pipefail` reports 141 instead of the reader's 0. The result is a false "no match" that depends on input size and pipe buffer timing (a 256 KB body gave 100/100 false negatives on macOS in #33882).
+
+**Banned** (in scripts that enable `pipefail`):
+
+```bash
+printf '%s\n' "$body" | grep -qF "$marker"
+list_things | grep -m1 "$name"
+list_things | head -n 1
+```
+
+**Allowed:**
+
+```bash
+grep -qF -- "$marker" <<<"$body"            # here-string, no pipe
+out=$(list_things) || return 1              # capture first, then test
+[[ "$out" == *"$marker"* ]]
+{ writer || true; } | grep -q "$marker"     # only if the writer status is irrelevant
+```
+
+### Enforcement
+
+- CI gate: `.github/workflows/pipe-early-exit-check.yml` (diff-scoped — fails only on lines the PR adds; legacy matches and files without `pipefail` are ignored).
+- Local check: `.agents/scripts/pipe-early-exit-check.sh --scan-files [--diff-base <ref>] <files>`.
+- Remediation snippets: `.agents/scripts/pipe-early-exit-check.sh --fix-hint`.
+- Fixtures that must contain the pattern add `# pipe-early-exit-check:disable` in the first 20 lines.
+
+### Originating incidents
+
+#27981 (worktree branch lookup), #30824 (issue-sync first-match pipelines), #33882 (brief readiness on large briefs).
+
 ## Stat portability (t3046)
 
 BSD/macOS and GNU `stat` use incompatible flags. `stat -f %m` is BSD/macOS-only; GNU `stat` uses `stat -c %Y`. Do not use `stat -f` in `.agents/scripts/**` unless it is inside a platform-guarded branch such as `case "$(uname)" in Darwin*|FreeBSD*)`.
