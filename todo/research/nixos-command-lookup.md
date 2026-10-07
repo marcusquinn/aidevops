@@ -72,3 +72,19 @@ Do not infer support for every downloaded binary from successful PATH lookup.
 
 No real NixOS end-to-end validation or installed-runtime deployment was performed
 in this source worktree. Do not describe this as complete NixOS platform support.
+
+## PR-loop repair and delivery
+
+Framework Validation caught a missing mandatory sibling in isolated profile
+fixtures: the new direct `BASH_SOURCE` load was invisible to existing dependency
+discovery. Switching that load to the established `_SC_SELF` convention fixed
+the production/fixture contract without changing assertions or gates.
+Profile boundary tests then passed 27/27, test-helper metadata checks 24/24,
+shared-source retry checks 2/2, and minimal-PATH and ShellCheck checks passed.
+
+All six required CI checks passed on `bc805b0e6a5f3626e5838baca616ef8f05fb7ac8`.
+PR #33893 merged as `fc30e91afd25ab9c57ea8d8a78d559e335bc9a92`; issue #33891
+closed and canonical main synchronized through the audited helper. No release
+publication was requested or performed.
+
+https://github.com/marcusquinn/aidevops/pull/33893
