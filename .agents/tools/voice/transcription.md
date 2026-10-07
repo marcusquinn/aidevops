@@ -15,7 +15,8 @@ tools:
 
 ## Quick Reference
 
-- **Helper**: `transcription-helper.sh [transcribe|models|configure|install|status] [options]`
+- **Helper**: `transcription-helper.sh [transcribe|models|configure|install|status] [options]`; `<command> --help` is side-effect free
+- **Install**: `transcription-helper.sh install` creates/reuses `~/.aidevops/.agent-workspace/work/transcription/.venv` (faster-whisper with PyAV `<19`); never create ad-hoc transcription venvs
 - **Default model**: Whisper Large v3 Turbo (best speed/accuracy tradeoff)
 
 ```bash
@@ -87,7 +88,7 @@ whisper foreign.mp3 --task translate --model medium              # translate to 
 | Parakeet V2 | 474MB | 9.4/10 | English-only (NVIDIA) |
 | Apple Speech | Built-in | 9.0/10 | macOS 26+, on-device |
 
-**faster-whisper** (`pip install faster-whisper`): `WhisperModel("medium", device="cpu", compute_type="int8")` → `model.transcribe("audio.mp3", language="en")` → iterate `seg.start`, `seg.text`.
+**faster-whisper** (installed by `transcription-helper.sh install`): `WhisperModel("medium", device="cpu", compute_type="int8")` → `model.transcribe("audio.mp3", language="en")` → iterate `seg.start`, `seg.text`.
 
 **whisper.cpp** (Apple Silicon optimised): `git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp && make && ./models/download-ggml-model.sh medium` → `./build/bin/whisper-cli -m models/ggml-medium.bin -f audio.wav -otxt -osrt`
 
