@@ -46,8 +46,11 @@ _log() {
 _is_infrastructure_failure() {
 	local output="$1"
 
-	if printf '%s\n' "$output" | grep -qiE \
-		'gh CLI cannot authenticate an API request|not logged into any GitHub hosts|gh: Bad credentials|GraphQL: Bad credentials|Resource not accessible by integration|could not resolve host|temporary failure in name resolution|network is unreachable'; then
+	# Here-string, not a pipe: under pipefail a large output makes the writer
+	# take SIGPIPE when grep -q exits early, turning a match into a miss
+	# (GH#33882).
+	if grep -qiE \
+		'gh CLI cannot authenticate an API request|not logged into any GitHub hosts|gh: Bad credentials|GraphQL: Bad credentials|Resource not accessible by integration|could not resolve host|temporary failure in name resolution|network is unreachable' <<<"$output"; then
 		return 0
 	fi
 
@@ -95,7 +98,7 @@ _parse_verify_blocks() {
 			in_yaml_block=0
 
 			# Check if block contains verify:
-			if echo "$block_content" | grep -q 'verify:'; then
+			if grep -q 'verify:' <<<"$block_content"; then
 				block_index=$((block_index + 1))
 
 				# Extract method (|| true guards against set -e in process substitution)
@@ -106,7 +109,7 @@ _parse_verify_blocks() {
 				# Handles inline strings and YAML block scalars (| or >)
 				local run_value=""
 				local run_line=""
-				run_line=$(echo "$block_content" | { grep '^[[:space:]]*run:' || true; } | head -1)
+				run_line=$(grep -m 1 '^[[:space:]]*run:' <<<"$block_content" || true)
 				if [[ -n "$run_line" ]]; then
 					local raw_value=""
 					raw_value=$(echo "$run_line" | sed 's/^[[:space:]]*run:[[:space:]]*//')
@@ -146,7 +149,7 @@ _parse_verify_blocks() {
 
 				# Extract prompt: value (for manual blocks)
 				local prompt_value=""
-				prompt_value=$(echo "$block_content" | { grep '^[[:space:]]*prompt:' || true; } | head -1 | sed 's/^[[:space:]]*prompt:[[:space:]]*//' | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\(.*\)'$/\1/")
+				prompt_value=$({ grep -m 1 '^[[:space:]]*prompt:' <<<"$block_content" || true; } | sed 's/^[[:space:]]*prompt:[[:space:]]*//' | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\(.*\)'$/\1/")
 
 				local value="$run_value"
 				if [[ -z "$value" ]]; then
