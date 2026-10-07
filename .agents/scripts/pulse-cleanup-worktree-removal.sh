@@ -1898,6 +1898,23 @@ _pc_prune_localdev_registrations() {
 	return 0
 }
 
+#######################################
+# Pass 4: filesystem outliers that are no longer present in git worktree
+# metadata are moved to a recoverable trash bucket only; standalone git repos
+# and valid gitfile worktrees are skipped. Pass 5: drop localdev branch
+# registrations for removed worktrees (logs only, no stdout).
+# Args: $1 = repos.json path, $2 = now epoch
+# Stdout: number of outlier directories moved
+#######################################
+_pc_cleanup_outlier_passes() {
+	local repos_json="$1"
+	local now_epoch="$2"
+	local rc=0
+	_pc_cleanup_orphan_sibling_dirs "$repos_json" "$now_epoch" || rc=$?
+	_pc_prune_localdev_registrations "$repos_json" >/dev/null 2>&1 || true
+	return "$rc"
+}
+
 _pc_cleanup_merged_passes() {
 	local registered=0 central=0
 	registered=$(_cleanup_merged_prs_for_all_repos)
@@ -1993,15 +2010,10 @@ cleanup_worktrees() {
 		echo "[pulse-wrapper] Worktree relocation total: $registered_moved worktree(s) moved to central base" >>"$LOGFILE"
 	fi
 
-	# Pass 4: filesystem outliers that are no longer present in git worktree
-	# metadata. These are moved to a recoverable trash bucket only; standalone
-	# git repos and valid gitfile worktrees are skipped.
+	# Passes 4-5: filesystem outliers, then localdev registration reclaim.
 	local orphan_dirs_moved
-	orphan_dirs_moved=$(_pc_cleanup_orphan_sibling_dirs "$repos_json" "$now_epoch")
+	orphan_dirs_moved=$(_pc_cleanup_outlier_passes "$repos_json" "$now_epoch")
 	total_removed=$((total_removed + orphan_dirs_moved))
-
-	# Pass 5: drop localdev branch registrations for removed worktrees.
-	_pc_prune_localdev_registrations "$repos_json" || true
 
 	if [[ "$total_removed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Worktree cleanup total: $total_removed worktree(s) removed across all repos" >>"$LOGFILE"

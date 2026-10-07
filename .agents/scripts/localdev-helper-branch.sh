@@ -262,16 +262,23 @@ remove_all_branches() {
 	return 0
 }
 
-# Route cmd_branch subcommands (rm, list, help).
+# Route cmd_branch subcommands (rm, list, prune, help). Receives cmd_branch's
+# full argument list because prune takes options.
 # Returns 0 if a subcommand was matched (caller should return immediately),
 # returns 1 if no subcommand matched (caller should continue with add logic).
 # Sets _BRANCH_SUBCMD_EXIT to the exit code of the dispatched subcommand.
 _cmd_branch_route_subcmd() {
-	local subcmd="$1"
-	local app="$2"
-	local branch_raw="$3"
+	local subcmd="${1:-}"
+	local app="${2:-}"
+	local branch_raw="${3:-}"
 	_BRANCH_SUBCMD_EXIT=0
 	case "$subcmd" in
+	prune)
+		shift
+		cmd_branch_prune "$@"
+		_BRANCH_SUBCMD_EXIT=$?
+		return 0
+		;;
 	rm | remove)
 		cmd_branch_rm "$app" "$branch_raw"
 		_BRANCH_SUBCMD_EXIT=$?
@@ -352,16 +359,9 @@ cmd_branch() {
 	local branch_raw="${3:-}"
 	local port_arg="${4:-}"
 
-	# branch prune takes options, so it bypasses the fixed-arity router.
-	if [[ "$subcmd" == "prune" ]]; then
-		shift
-		cmd_branch_prune "$@"
-		return $?
-	fi
-
-	# Handle subcommands: branch rm, branch list, branch help
+	# Handle subcommands: branch rm, branch list, branch prune, branch help
 	_BRANCH_SUBCMD_EXIT=0
-	if _cmd_branch_route_subcmd "$subcmd" "$app" "$branch_raw"; then
+	if _cmd_branch_route_subcmd "$@"; then
 		return "$_BRANCH_SUBCMD_EXIT"
 	fi
 
