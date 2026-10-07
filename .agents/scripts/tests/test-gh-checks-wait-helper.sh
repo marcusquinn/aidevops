@@ -101,6 +101,22 @@ configured_missing_rc=$?
 set -e
 [[ "$configured_missing_rc" -eq 8 ]] && pass "configured but unreported required checks remain pending" || fail "configured but unreported required checks remain pending" "got ${configured_missing_rc}"
 assert_contains "configured but unreported required checks time out as pending" "TIMEOUT: required checks remain non-terminal" "$configured_missing_output"
+assert_contains "initial state names every unreported context" "CI wait started: none=0 missing=Format, Lint" "$configured_missing_output"
+assert_contains "timeout names every unreported context" "(none=0 missing=Format, Lint)" "$configured_missing_output"
+
+partial_dir="${TMPDIR_TEST}/partial"
+write_fixture "$partial_dir" 1 '[{"name":"Format","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+partial_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nQlty Regression Gate\nLint' run_fixture_wait "$partial_dir" --timeout 3 --heartbeat 1 2>&1)
+partial_rc=$?
+set -e
+assert_eq "passing reported checks cannot satisfy missing contexts" "8" "$partial_rc"
+assert_contains "initial state names only missing contexts" "CI wait started: pass=1 missing=Qlty Regression Gate, Lint" "$partial_output"
+heartbeat_line=$(printf '%s\n' "$partial_output" | grep '^heartbeat:' || true)
+assert_contains "heartbeat names missing contexts" "(pass=1 missing=Qlty Regression Gate, Lint)" "$heartbeat_line"
+timeout_line=$(printf '%s\n' "$partial_output" | grep '^TIMEOUT:' || true)
+assert_contains "timeout names missing contexts with passing checks" "(pass=1 missing=Qlty Regression Gate, Lint)" "$timeout_line"
+[[ "$partial_output" != *'missing=Format'* ]] && pass "reported context is excluded from missing names" || fail "reported context is excluded from missing names"
 
 all_checks_dir="${TMPDIR_TEST}/all-checks"
 write_fixture "$all_checks_dir" 1 '[{"name":"Preview","workflow":"Deploy","state":"PENDING","bucket":"pending","link":""}]'

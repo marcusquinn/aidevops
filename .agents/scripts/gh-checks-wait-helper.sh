@@ -243,17 +243,20 @@ canonicalize_checks() {
 
 state_counts() {
 	local checks="$1"
-	printf '%s' "$checks" | jq -r '
+	local missing_contexts="${2:-}"
+	printf '%s' "$checks" | jq -r --arg missing "$missing_contexts" '
 		group_by(.bucket)
 		| map("\(.[0].bucket)=\(length)")
 		| if length == 0 then "none=0" else join(" ") end
+		| . + (if $missing == "" then "" else " missing=" + $missing end)
 	'
 	return 0
 }
 
 emit_initial_state() {
 	local checks="$1"
-	printf 'CI wait started: %s\n' "$(state_counts "$checks")"
+	local missing_contexts="${2:-}"
+	printf 'CI wait started: %s\n' "$(state_counts "$checks" "$missing_contexts")"
 	printf '%s' "$checks" | jq -r '.[] | "  \(.name): \(.bucket)"'
 	return 0
 }
@@ -305,11 +308,19 @@ configured_required_contexts() {
 configured_context_missing_from_checks() {
 	local configured_contexts="$1"
 	local checks="$2"
-	local context=""
+	local context="" separator=""
+	local missing_contexts=""
 	while IFS= read -r context; do
 		[[ -z "$context" ]] && continue
-		printf '%s' "$checks" | jq -e --arg context "$context" 'any(.[]; .name == $context)' >/dev/null || return 0
+		if ! printf '%s' "$checks" | jq -e --arg context "$context" 'any(.[]; .name == $context)' >/dev/null; then
+			missing_contexts+="${separator}${context}"
+			separator=", "
+		fi
 	done <<<"$configured_contexts"
+	if [[ -n "$missing_contexts" ]]; then
+		printf '%s\n' "$missing_contexts"
+		return 0
+	fi
 	return 1
 }
 
@@ -323,10 +334,11 @@ classify_state() {
 	count=$(printf '%s' "$checks" | jq 'length')
 	if [[ "$required_only" -eq 1 ]]; then
 		local configured_contexts="" configured_rc=0
+		local missing_contexts=""
 		configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
 		if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
-			configured_context_missing_from_checks "$configured_contexts" "$checks"; then
-			printf 'pending\n'
+			missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
+			printf 'pending\t%s\n' "$missing_contexts"
 			return 0
 		fi
 		if [[ "$count" -eq 0 && "$configured_rc" -ne 0 && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
@@ -452,6 +464,19 @@ next_interval() {
 	return 0
 }
 
+emit_recovered_state() {
+	local state_summary="$1"
+	if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
+		printf 'GitHub check observation recovered: %s\n' "$state_summary"
+		_GCW_ACTIVE_DEFERRAL=""
+	fi
+	if [[ "$_GCW_API_ERROR_VISIBLE" -eq 1 ]]; then
+		printf 'API state recovered: %s\n' "$state_summary"
+		_GCW_API_ERROR_VISIBLE=0
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -471,7 +496,8 @@ wait_for_checks() {
 	while true; do
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
-		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head=""
+		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head="" state_summary=""
+		local missing_contexts=""
 		fetch_diagnostic_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-checks-wait-fetch.XXXXXX") || return 2
 		raw=$(fetch_checks "$pr_number" "$repo" "$required_only" "$poll_number" "$initial_head" 2>"$fetch_diagnostic_file") || fetch_rc=$?
 		fetch_diagnostic=$(<"$fetch_diagnostic_file")
@@ -489,30 +515,24 @@ wait_for_checks() {
 			interval="$_GCW_NEXT_INTERVAL"
 			continue
 		fi
-		if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
-			printf 'GitHub check observation recovered: %s\n' "$(state_counts "$current")"
-			_GCW_ACTIVE_DEFERRAL=""
-		fi
-		if [[ "$_GCW_API_ERROR_VISIBLE" -eq 1 ]]; then
-			printf 'API state recovered: %s\n' "$(state_counts "$current")"
-			_GCW_API_ERROR_VISIBLE=0
-		fi
+		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
+		state_summary=$(state_counts "$current" "$missing_contexts")
+		emit_recovered_state "$state_summary"
 		valid_state_seen=1
 		if [[ -z "$previous" ]]; then
-			emit_initial_state "$current"
+			emit_initial_state "$current" "$missing_contexts"
 			changed=1
 		elif [[ "$current" != "$previous" ]]; then
 			emit_transitions "$previous" "$current"
 			changed=1
 		elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
-			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$(state_counts "$current")"
+			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
 			next_heartbeat=$((now_epoch + heartbeat_interval))
 		fi
 		if [[ "$changed" -eq 1 ]]; then
 			next_heartbeat=$((now_epoch + heartbeat_interval))
 		fi
 
-		classification=$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")
 		case "$classification" in
 		failure)
 			emit_failure_details "$current"
@@ -539,7 +559,7 @@ wait_for_checks() {
 		esac
 		if [[ "$elapsed" -ge "$timeout" ]]; then
 			if [[ "$valid_state_seen" -eq 1 ]]; then
-				printf 'TIMEOUT: required checks remain non-terminal after %ss (%s)\n' "$elapsed" "$(state_counts "$current")" >&2
+				printf 'TIMEOUT: required checks remain non-terminal after %ss (%s)\n' "$elapsed" "$state_summary" >&2
 				return 8
 			fi
 			return 2
