@@ -73,7 +73,7 @@ _added_lines() {
 	local _file="$2"
 	git diff -U0 --no-color "$_base" -- "$_file" 2>/dev/null | awk '
 		/^@@ / {
-			plus = $(NF - 1); sub(/^\+/, "", plus)
+			plus = $(2 + 1); sub(/^\+/, "", plus)
 			n = split(plus, a, ",")
 			start = a[1] + 0
 			cnt = (n > 1) ? a[2] + 0 : 1
