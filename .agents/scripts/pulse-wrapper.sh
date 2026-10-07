@@ -122,13 +122,14 @@ _pulse_wrapper_resolve_script_dir() {
 # PATH normalisation
 # The MCP shell environment may have a minimal PATH that excludes /bin
 # and other standard directories, causing `env bash` to fail. Ensure
-# essential directories are always present.
+# essential directories are always present without overriding the operator's
+# working toolchain (including Nix profiles and platform package managers).
 #######################################
 _aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/bin:/usr/bin"
 if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" && -d "/home/linuxbrew/.linuxbrew/bin" ]]; then
 	_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin"
 fi
-export PATH="${_aidevops_path_prefix}:${PATH}"
+export PATH="${PATH:+${PATH}:}${_aidevops_path_prefix}"
 unset _aidevops_path_prefix
 
 #######################################
