@@ -1577,6 +1577,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18606 Links in chat go on their own line, bare URL, no Markdown link syntax #feat ref:GH#33867 pr:#33868 release:v3.38.23 completed:2026-10-07
 
+- [ ] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877
+
+- [ ] t18608 fix(fast-fail): worker-side failures never flag enrichment_needed #auto-dispatch #bug #pulse ref:GH#33878
+
+- [ ] t18609 fix(pulse): enrichment success check is a false positive when the brief already has Worker Guidance #auto-dispatch #bug #pulse ref:GH#33879
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
