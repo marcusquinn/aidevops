@@ -75,6 +75,8 @@ extract_functions() {
 		/^_setup_opencode_binary_is_ephemeral\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_managed_shim_target\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_target_is_safe\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_quote_value\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_v2_shim_version_marker\(\)/, /^}$/ { print; next }
 		/^_setup_append_opencode_v2_session_guard\(\)/, /^}$/ { print; next }
 		/^_setup_write_opencode_v2_shim\(\)/, /^}$/ { print; next }
@@ -152,6 +154,103 @@ INNER_EOF
 	source "$SANDBOX/extract.sh"
 	return 0
 }
+
+echo "Nix regression: logical profiles, aliases, quoting, and safe replacement"
+(
+	source_extracted
+	export HOME="$SANDBOX/nix home"
+	store="$HOME/store generation \$literal \"quoted\""
+	profile="$HOME/.nix-profile/bin/opencode"
+	shim="$HOME/.local/bin/opencode"
+	mkdir -p "$store/bin" "$HOME/.local/bin"
+	cat >"$store/bin/opencode" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+--version) printf '1.14.25\n' ;;
+--help) printf 'opencode run [message..]\n' ;;
+args) shift; printf '<%s>\n' "$@"; exit 23 ;;
+path) printf '%s\n' "$PATH" ;;
+esac
+exit 0
+EOF
+	chmod +x "$store/bin/opencode"
+	ln -s "$store" "$HOME/.nix-profile"
+	_setup_write_opencode_v1_shim "$shim" "/missing/opencode" ""
+	chmod +x "$shim"
+	export PATH="$HOME/.local/bin:/usr/bin:/bin"
+	printf 'discovered=%s\n' "$(_setup_find_valid_opencode_binary)"
+	rm "$HOME/.nix-profile"
+	mkdir -p "$HOME/.local/state/nix"
+	ln -s "$store" "$HOME/.local/state/nix/profile"
+	printf 'modern=%s\n' "$(_setup_find_valid_opencode_binary)"
+	rm "$HOME/.local/state/nix/profile"
+	export PATH="$HOME/.local/bin:$store/bin:/usr/bin:/bin"
+	printf 'store-path=%s\n' "$(_setup_find_valid_opencode_binary)"
+	export PATH="$HOME/.local/bin:/usr/bin:/bin"
+	ln -s "$store" "$HOME/.nix-profile"
+	_setup_ensure_opencode_stable_shim "$profile" >/dev/null
+	printf 'target=%s\n' "$(_setup_opencode_managed_shim_target "$shim")"
+	printf 'daemon=%s\n' "$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$shim" --version)"
+	checksum=$(cksum "$shim")
+	_setup_ensure_opencode_stable_shim "$profile" >/dev/null
+	[[ "$checksum" == "$(cksum "$shim")" ]] && printf 'idempotent=yes\n'
+	ln -s "$shim" "$HOME/alias"
+	printf 'alias-discovery=%s\n' "$(_setup_find_valid_opencode_binary "$HOME/alias")"
+	_setup_ensure_opencode_stable_shim "$HOME/alias" >/dev/null
+	printf 'alias-target=%s\n' "$(_setup_opencode_managed_shim_target "$shim")"
+	# The launcher follows an upgraded profile rather than pinning its store.
+	mkdir -p "$HOME/next/bin"
+	cp "$store/bin/opencode" "$HOME/next/bin/opencode"
+	rm "$HOME/.nix-profile"
+	ln -s "$HOME/next" "$HOME/.nix-profile"
+	rm -rf "$store"
+	printf 'upgraded=%s\n' "$("$shim" --version)"
+	# Exercise shell-special target paths too, not only spaces in HOME.
+	special="$HOME/next/bin/opencode \$literal \"quoted\" \`tick\` \\slash"
+	cp "$HOME/next/bin/opencode" "$special"
+	_setup_ensure_opencode_stable_shim "$special" >/dev/null
+	[[ "$(_setup_opencode_managed_shim_target "$shim")" == "$special" ]] && printf 'quoted-target=yes\n'
+	rc=0
+	# shellcheck disable=SC2016 # Deliberately forward literal shell syntax.
+	"$shim" args 'a b' '\$not-expanded' '"quoted"' >"$SANDBOX/nix-args" || rc=$?
+	printf 'exit=%s\n' "$rc"
+	checksum=$(cksum "$shim")
+	_setup_ensure_opencode_stable_shim "$HOME/missing" >/dev/null 2>&1 && exit 1
+	[[ "$checksum" == "$(cksum "$shim")" ]] && printf 'missing-preserved=yes\n'
+	# Reject a managed chain that reaches its own symlink alias before probing.
+	_setup_write_opencode_v1_shim "$HOME/cycle" "$HOME/cycle-alias" ""
+	chmod +x "$HOME/cycle"
+	ln -s "$HOME/cycle" "$HOME/cycle-alias"
+	SECONDS=0
+	rc=0
+	_setup_validate_opencode_binary "$HOME/cycle" || rc=$?
+	printf 'cycle=%s\n' "$rc"
+	[[ "$SECONDS" -lt 3 ]] && printf 'cycle-bounded=yes\n'
+	# A generated-launcher failure must not replace a functioning launcher.
+	_setup_validate_opencode_binary() {
+		local bin="$1"
+		[[ "$bin" == *.tmp.* ]] && return 1
+		return 0
+	}
+	_setup_ensure_opencode_stable_shim "$profile" >/dev/null 2>&1 && exit 1
+	[[ "$checksum" == "$(cksum "$shim")" ]] && printf 'failed-generation-preserved=yes\n'
+) >"$SANDBOX/nix-results"
+assert_eq "Nix profile discovered behind local shim" "discovered=$SANDBOX/nix home/.nix-profile/bin/opencode" "$(grep '^discovered=' "$SANDBOX/nix-results")"
+assert_eq "modern Nix profile discovered" "modern=$SANDBOX/nix home/.local/state/nix/profile/bin/opencode" "$(grep '^modern=' "$SANDBOX/nix-results")"
+assert_eq "later store PATH candidate discovered" "store-path=$SANDBOX/nix home/store generation \$literal \"quoted\"/bin/opencode" "$(grep '^store-path=' "$SANDBOX/nix-results")"
+assert_eq "profile path remains logical" "target=$SANDBOX/nix home/.nix-profile/bin/opencode" "$(grep '^target=' "$SANDBOX/nix-results")"
+assert_eq "clean daemon executes generated shim" "daemon=1.14.25" "$(grep '^daemon=' "$SANDBOX/nix-results")"
+assert_eq "repeated setup is idempotent" "idempotent=yes" "$(grep '^idempotent=' "$SANDBOX/nix-results")"
+assert_eq "discovery rejects shim symlink alias" "alias-discovery=$SANDBOX/nix home/.nix-profile/bin/opencode" "$(grep '^alias-discovery=' "$SANDBOX/nix-results")"
+assert_eq "alias input unwraps to real target" "alias-target=$SANDBOX/nix home/.nix-profile/bin/opencode" "$(grep '^alias-target=' "$SANDBOX/nix-results")"
+assert_eq "profile upgrade survives old store removal" "upgraded=1.14.25" "$(grep '^upgraded=' "$SANDBOX/nix-results")"
+assert_eq "shell-special target round trips" "quoted-target=yes" "$(grep '^quoted-target=' "$SANDBOX/nix-results")"
+assert_eq "argument boundaries and literal text preserved" $'<a b>\n<\\$not-expanded>\n<"quoted">' "$(<"$SANDBOX/nix-args")"
+assert_eq "underlying exit status preserved" "exit=23" "$(grep '^exit=' "$SANDBOX/nix-results")"
+assert_eq "missing target preserves launcher" "missing-preserved=yes" "$(grep '^missing-preserved=' "$SANDBOX/nix-results")"
+assert_eq "recursive alias rejected" "cycle=2" "$(grep '^cycle=' "$SANDBOX/nix-results")"
+assert_eq "recursive alias rejected without execution" "cycle-bounded=yes" "$(grep '^cycle-bounded=' "$SANDBOX/nix-results")"
+assert_eq "failed generated launcher preserves original" "failed-generation-preserved=yes" "$(grep '^failed-generation-preserved=' "$SANDBOX/nix-results")"
 
 # --- Test 1: validator on real opencode ------------------------------------
 echo "Test 1: _setup_validate_opencode_binary on real opencode shim"
