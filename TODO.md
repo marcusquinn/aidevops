@@ -1577,7 +1577,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18606 Links in chat go on their own line, bare URL, no Markdown link syntax #feat ref:GH#33867 pr:#33868 release:v3.38.23 completed:2026-10-07
 
-- [ ] t18610 Add code-native motion design route and motion QA to the Video agent #feat ref:GH#33902 started:2026-10-07
+- [x] t18610 Add code-native motion design route and motion QA to the Video agent #feat ref:GH#33902 started:2026-10-07 pr:#33906 completed:2026-10-07
 
 - [ ] t18611 Add shell-style rule and diff-scoped gate for early-exit pipe readers under pipefail #auto-dispatch #feat ref:GH#33914
 
