@@ -1580,6 +1580,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18610 Add code-native motion design route and motion QA to the Video agent #feat ref:GH#33902 started:2026-10-07 pr:#33906 completed:2026-10-07
 
 - [ ] t18611 Add shell-style rule and diff-scoped gate for early-exit pipe readers under pipefail #auto-dispatch #feat ref:GH#33914
+- [ ] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877
+
+- [ ] t18608 fix(fast-fail): worker-side failures never flag enrichment_needed #auto-dispatch #bug #pulse ref:GH#33878
+
+- [ ] t18609 fix(pulse): enrichment success check is a false positive when the brief already has Worker Guidance #auto-dispatch #bug #pulse ref:GH#33879
 
 ## In Progress
 
