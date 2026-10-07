@@ -17,8 +17,10 @@
 _SHARED_CONSTANTS_LOADED=1
 
 # Normalize non-login environments before any tool lookup or runtime re-exec.
+# Use the shared sibling-source convention so isolated fixtures discover it.
+_SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck source=runtime-env.sh
-source "${BASH_SOURCE[0]%/*}/runtime-env.sh"
+source "${_SC_SELF%/*}/runtime-env.sh"
 
 # =============================================================================
 # GH#18950 (t2087): Bash 3.2 → bash 4+ runtime re-exec self-heal guard.
