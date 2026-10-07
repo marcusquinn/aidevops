@@ -532,12 +532,34 @@ _pulse_check_runaway_log() {
 	return 0
 }
 
+# GH#33957: deadline for the whole stale-blocked sweep. Prefer the enclosing
+# stage deadline exported by run_stage_with_timeout (already clamped to the
+# cycle budget); otherwise fall back to the configured stage timeout. A margin
+# lets the sweep finish and log before the watchdog kill.
+_pulse_stale_blocked_sweep_deadline() {
+	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
+	local timeout="${PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS:-60}"
+	local margin="${PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS:-15}"
+	local now_epoch=""
+	[[ "$timeout" =~ ^[1-9][0-9]*$ ]] || timeout=60
+	[[ "$margin" =~ ^[0-9]+$ ]] || margin=15
+	if ! [[ "$deadline" =~ ^[1-9][0-9]*$ ]]; then
+		now_epoch=$(date +%s 2>/dev/null) || return 1
+		deadline=$((now_epoch + timeout))
+	fi
+	printf '%s\n' "$((deadline - margin))"
+	return 0
+}
+
 _pulse_reconcile_stale_blocked_if_due() {
 	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
 	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
 	local interval="${PULSE_STALE_BLOCKED_RECONCILE_INTERVAL:-1800}"
 	local now_epoch="" stamp_epoch="" age_s="" repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local repo_slug="" failures=0
+	local repo_slug="" failures=0 partial=0 rc=0 index=0 repo_count=0 sweep_deadline="" repo_deadline="" start_offset=0 position=0
+	local partial_rc="${DER_SWEEP_PARTIAL:-3}"
+	local next_repo_file="${HOME}/.aidevops/cache/pulse-stale-blocked-next-repo"
+	local repos=()
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
 	if [[ -f "$sentinel" ]]; then
@@ -548,11 +570,44 @@ _pulse_reconcile_stale_blocked_if_due() {
 	fi
 	mkdir -p "${sentinel%/*}" 2>/dev/null || return 0
 	while IFS= read -r repo_slug; do
-		[[ -n "$repo_slug" ]] || continue
-		reconcile_stale_blocked_issues "$repo_slug" 2>>"$LOGFILE" || failures=$((failures + 1))
+		[[ -n "$repo_slug" ]] && repos+=("$repo_slug")
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null || true)
-	touch "$sentinel" 2>/dev/null || true
-	echo "[pulse-wrapper] stale-blocked reconciliation completed failures=${failures} cadence=${interval}s" >>"$LOGFILE"
+	repo_count="${#repos[@]}"
+	sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
+	# Each remaining repo gets a fair share of the remaining budget; unused
+	# time rolls forward, and each repo's cursor resumes partial passes. Once
+	# the sweep deadline passes, remaining repos are deferred as partial rather
+	# than started. The persisted next-repo position advances before each
+	# start, so a deferred or killed sweep begins with the next repo in line.
+	if [[ -f "$next_repo_file" ]]; then
+		IFS= read -r start_offset <"$next_repo_file" 2>/dev/null || true
+	fi
+	[[ "$start_offset" =~ ^[0-9]+$ ]] || start_offset=0
+	[[ "$repo_count" -gt 0 ]] && start_offset=$((start_offset % repo_count))
+	for ((index = 0; index < repo_count; index++)); do
+		now_epoch=$(date +%s 2>/dev/null) || now_epoch="$sweep_deadline"
+		if [[ "$now_epoch" -ge "$sweep_deadline" ]]; then
+			partial=$((partial + repo_count - index))
+			break
+		fi
+		position=$(((start_offset + index) % repo_count))
+		printf '%s\n' "$(((position + 1) % repo_count))" >"$next_repo_file" 2>/dev/null || true
+		repo_deadline=$((now_epoch + (sweep_deadline - now_epoch) / (repo_count - index)))
+		rc=0
+		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
+			reconcile_stale_blocked_issues "${repos[position]}" 2>>"$LOGFILE" || rc=$?
+		if [[ "$rc" -eq "$partial_rc" ]]; then
+			partial=$((partial + 1))
+		elif [[ "$rc" -ne 0 ]]; then
+			failures=$((failures + 1))
+		fi
+	done
+	# The cadence sentinel marks a complete traversal; partial passes resume
+	# on the next cycle instead of waiting a full interval.
+	if [[ "$partial" -eq 0 ]]; then
+		touch "$sentinel" 2>/dev/null || true
+	fi
+	echo "[pulse-wrapper] stale-blocked reconciliation completed failures=${failures} partial_repos=${partial} repos=${repo_count} cadence=${interval}s" >>"$LOGFILE"
 	return 0
 }
 

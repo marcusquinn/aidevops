@@ -31,7 +31,8 @@ CONTEXT_HAS_NEXT_PAGE=false
 CLOSED_LIVE_STATE="CLOSED"
 BLOCKER_RECONCILE_FAIL=false
 BLOCKER_RECONCILE_LOG=$(mktemp)
-trap 'rm -f "$BLOCKER_RECONCILE_LOG"' EXIT
+DER_STALE_BLOCKED_CURSOR_DIR=$(mktemp -d)
+trap 'rm -f "$BLOCKER_RECONCILE_LOG"; rm -rf "$DER_STALE_BLOCKED_CURSOR_DIR"' EXIT
 
 pass() {
 	printf 'PASS: %s\n' "$1"
@@ -393,6 +394,64 @@ EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='no
 stale_sweep_status=0
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || stale_sweep_status=$?
 assert_eq 1 "$stale_sweep_status" "periodic stale sweep still reports API ambiguity"
+COMMENTS='[[]]'
+
+# GH#33957: bounded passes resume from a per-repo cursor in ascending issue
+# order until the whole blocked set is traversed. Unblock decisions are stubbed;
+# only traversal is under test here.
+_run_stale_cursor_pass() (
+	local visited_log="$1"
+	shift
+	gh() {
+		[[ "$1 $2" == "api --paginate" ]] || return 1
+		jq -cn '[[{number:9},{number:3},{number:7},{number:5}] | map(. + {state:"open",title:"t",body:"",labels:[{name:"status:blocked"}]})]'
+		return 0
+	}
+	_der_try_unblock() {
+		printf '%s\n' "$2" >>"$visited_log"
+		return 0
+	}
+	local rc=0 assignment=""
+	for assignment in "$@"; do
+		export "${assignment?}"
+	done
+	reconcile_stale_blocked_issues owner/cursor >/dev/null 2>&1 || rc=$?
+	return "$rc"
+)
+cursor_file="${DER_STALE_BLOCKED_CURSOR_DIR}/owner__cursor.cursor"
+visited_log=$(mktemp)
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 || pass_rc=$?
+assert_eq "3 5" "$(paste -sd' ' "$visited_log")" "stale sweep visits blocked issues in ascending order up to the batch limit"
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "stale sweep reports a batch-limited pass as partial"
+assert_eq 5 "$(cat "$cursor_file")" "stale sweep persists the last visited issue"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 || pass_rc=$?
+assert_eq "7 9" "$(paste -sd' ' "$visited_log")" "next stale sweep resumes after the cursor"
+assert_eq 0 "$pass_rc" "stale sweep reports a finished traversal as complete"
+assert_eq 0 "$(cat "$cursor_file")" "finished traversal resets the cursor"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || pass_rc=$?
+assert_eq "3" "$(paste -sd' ' "$visited_log")" "expired deadline still makes one visit of progress"
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "deadline-stopped stale sweep reports partial"
+assert_eq 3 "$(cat "$cursor_file")" "deadline-stopped stale sweep keeps its cursor"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_STOP_EPOCH=1 || pass_rc=$?
+assert_eq "" "$(paste -sd' ' "$visited_log")" "expired sweep stop makes no further visits"
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "stop-deadline stale sweep reports partial"
+assert_eq 3 "$(cat "$cursor_file")" "stop-deadline stale sweep keeps its cursor"
+: >"$visited_log"
+_run_stale_cursor_pass "$visited_log" || true
+assert_eq "5 7 9" "$(paste -sd' ' "$visited_log")" "unbounded pass completes the remaining traversal"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 \
+	"DER_STALE_BLOCKED_CURSOR_DIR=${cursor_file}/unwritable" || pass_rc=$?
+assert_eq 1 "$pass_rc" "unpersistable cursor reports failure instead of partial progress"
+rm -f "$visited_log"
 
 if grep -q 'issues(first:100,states:' "${SCRIPTS_DIR}/dependency-event-reconciler.sh"; then
 	fail "reconciler must not enumerate latest repository issues"

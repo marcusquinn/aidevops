@@ -256,6 +256,9 @@ run_stage_with_timeout() {
 		# Background stages inherit the parent's shell state but must never run
 		# process-owner EXIT cleanup such as terminal Pulse cycle publication.
 		trap - EXIT
+		# GH#33957: expose the effective (cycle-clamped) kill deadline so
+		# resumable stages can stop cleanly before the watchdog fires.
+		export PULSE_STAGE_DEADLINE_EPOCH="$((stage_start + timeout_seconds))"
 		"$@"
 	) &
 	local stage_pid=$!

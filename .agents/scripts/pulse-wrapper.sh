@@ -1708,6 +1708,8 @@ main() {
 	# Cadence limits frequency, not duration: a cold sweep can visit hundreds of
 	# blocked issues before early dispatch. Bound it like cache priming while
 	# preserving the first-wave reserve and the reconciler's fail-closed checks.
+	# The sweep stops before this deadline and resumes from a per-repo cursor
+	# on the next cycle (GH#33957).
 	local _pulse_stale_blocked_timeout="${PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS:-60}"
 	[[ "$_pulse_stale_blocked_timeout" =~ ^[1-9][0-9]*$ ]] || _pulse_stale_blocked_timeout=60
 	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \

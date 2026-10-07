@@ -203,13 +203,48 @@ _relationship_task_line() {
 	return 0
 }
 
+# GH#33957: positive proof that a dependency edge no longer blocks. Succeeds
+# only when the native blockedBy page is complete and non-empty, contains the
+# declared blocker (issue number in this repo, or node ID), and every native
+# blocker is CLOSED. Any read failure, truncation or open blocker fails closed.
+_dependency_native_blockers_closed_for() {
+	local issue_num="$1"
+	local repo="$2"
+	local blocker_ref="$3"
+	local owner="${repo%%/*}" name="${repo#*/}" result=""
+	[[ "$issue_num" =~ ^[0-9]+$ && "$repo" == */* && -n "$blocker_ref" ]] || return 1
+	# shellcheck disable=SC2016
+	result=$(_relationship_run_timed status _gh_with_timeout read gh api graphql -f query='
+query($o:String!,$r:String!,$n:Int!) {
+  repository(owner:$o,name:$r) {
+    issue(number:$n) {
+      blockedBy(first:100) { nodes { id number state repository { nameWithOwner } } pageInfo { hasNextPage } }
+    }
+  }
+}' -F o="$owner" -F r="$name" -F n="$issue_num" 2>/dev/null) || return 1
+	printf '%s' "$result" | jq -e --arg ref "$blocker_ref" --arg repo "$repo" '
+      .data.repository.issue.blockedBy as $b
+      | ($b | type) == "object"
+        and $b.pageInfo.hasNextPage == false
+        and ($b.nodes | type) == "array"
+        and ($b.nodes | length) > 0
+        and all($b.nodes[]; .state == "CLOSED")
+        and any($b.nodes[]; .id == $ref
+          or ((.number | tostring) == $ref and .repository.nameWithOwner == $repo))' >/dev/null 2>&1
+	return $?
+}
+
 # Move an inactive dependency-bearing issue out of the available queue. This is
 # intentionally label-only: auto-dispatch remains attached so Pulse can promote
-# the issue after every native blocker closes.
+# the issue after every native blocker closes. Callers that have just observed
+# or created a native edge pass its blocker ($4); a verified closed edge then
+# leaves the issue available so enrich cannot revert Pulse's unblock (GH#33957).
+# Retry holds pass no blocker and still fail closed.
 _ensure_dependency_status_blocked() {
 	local issue_num="$1"
 	local repo="$2"
 	local reason="$3"
+	local blocker_ref="${4:-}"
 	local current_labels=""
 
 	[[ "$issue_num" =~ ^[0-9]+$ && "$repo" == */* ]] || return 1
@@ -222,6 +257,13 @@ _ensure_dependency_status_blocked() {
 	if [[ ",${current_labels}," != *",status:available,"* ]] || \
 		_dependency_sync_has_active_status "$current_labels"; then
 		_relationship_mark_status_synced "$issue_num"
+		return 0
+	fi
+	# Not marked synced: a later edge or retry hold for this issue must still
+	# be able to block it in the same pass.
+	if [[ -n "$blocker_ref" ]] && \
+		_dependency_native_blockers_closed_for "$issue_num" "$repo" "$blocker_ref"; then
+		log_verbose "$issue_num: dependency_status_unchanged reason=${reason}_native_blockers_closed"
 		return 0
 	fi
 	if ! _relationship_run_timed status _gh_with_timeout write gh issue edit "$issue_num" --repo "$repo" \
