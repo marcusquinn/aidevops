@@ -48,6 +48,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 REST_STATE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-rest-state.sh"
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# _pmp_record_processed_pr_result moved here from pulse-merge-process.sh (GH#27171).
+BACKLOG_SCRIPT="${SCRIPT_DIR}/../pulse-merge-backlog.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -714,7 +716,7 @@ test_native_auto_defer_not_counted_as_completed_merge() {
 	local process_src merge_src
 	process_src=$(awk '
 		/^_pmp_record_processed_pr_result\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
-	' "$PROCESS_SCRIPT")
+	' "$BACKLOG_SCRIPT")
 	merge_src=$(awk '
 		/^_pmp_stage_pre_merge\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$MERGE_SCRIPT")

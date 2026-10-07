@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-MERGE_PROCESS="${SCRIPT_DIR}/../pulse-merge-process.sh"
+MERGE_PROCESS="${SCRIPT_DIR}/../pulse-merge-backlog.sh" # moved from pulse-merge-process.sh (GH#27171)
 REST_STATE_MODULE="${SCRIPT_DIR}/../pulse-merge-rest-state.sh"
 
 # shellcheck source=/dev/null
