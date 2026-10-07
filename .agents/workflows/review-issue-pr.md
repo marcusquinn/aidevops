@@ -66,9 +66,7 @@ git rev-parse HEAD
 git ls-remote --symref origin HEAD
 ```
 
-The symbolic ref identifies the remote default branch; compare its advertised HEAD SHA with the local HEAD SHA. These commands do not update local refs, so `origin/<default-branch>` may still be stale. A SHA mismatch means freshness is unverified, not necessarily that the checkout is behind.
-
-If the checkout is behind, inspect the cited file at `origin/<default-branch>` only after verifying that ref matches the advertised remote SHA, or create a fresh linked worktree from the current remote default branch. For an explicitly authorized clean canonical sync, use `canonical-recovery-helper.sh fast-forward-current` rather than direct Git mutation. Never reject or approve an issue from stale local code. Preserve dirty canonical work; do not reset, clean, or switch it.
+The symbolic ref identifies the remote default branch; compare its advertised HEAD SHA with the local HEAD SHA. These commands do not update local refs, so `origin/<default-branch>` may still be stale. A SHA mismatch means freshness is unverified, not necessarily that the checkout is behind. If the checkout is behind, inspect the cited file at `origin/<default-branch>` only after verifying that ref matches the advertised remote SHA, or create a fresh linked worktree from the current remote default branch. For an explicitly authorized clean canonical sync, use `canonical-recovery-helper.sh fast-forward-current` rather than direct Git mutation. Never reject or approve an issue from stale local code. Preserve dirty canonical work; do not reset, clean, or switch it.
 
 Establish what triggered the report before drawing a verdict: correlate the issue creation time and reported version with recent commits, merged PRs, releases, and the exact causal lines. A mismatch between local code and the report is a prompt to investigate provenance, not evidence that the report is stale.
 
