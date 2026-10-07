@@ -58,13 +58,15 @@ work. Task and agent authors request a workload tier, never this provider family
 |-------|-------|
 | Provider | Anthropic |
 | Model | claude-sonnet-5-5 (released 2026-09-28) |
-| Context | 1M tokens (Sonnet 5 catalog value; confirm when models.dev lists 5.5) |
-| Max output | 128K tokens (Sonnet 5 catalog value) |
+| Context | 1M tokens |
+| Max output | 128K tokens |
 | Input cost | $2.00/1M tokens |
 | Output cost | $10.00/1M tokens |
-| Cache read / write | $0.20 / $2.50 per 1M tokens |
+| Cache read / write | $0.10 / $2.50 per 1M tokens (cache read is 0.05x input) |
 | Effort defaults | Medium in Claude Code/apps, High on the Claude Platform |
 | Workload tier | Candidate for `standard` |
 
-Source: Anthropic launch announcement (`anthropic.com/claude-sonnet-5-5`).
+Source: Anthropic launch announcement (`anthropic.com/claude-sonnet-5-5`);
+context, output and cache read re-checked against Anthropic's pricing page and
+Haiku 5.5 model comparison on 2026-10-07.
 Same price as Sonnet 5, 30%+ faster output, and up to 30% lower cost per task.
