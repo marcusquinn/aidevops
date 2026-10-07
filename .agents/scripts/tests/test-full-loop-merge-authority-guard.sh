@@ -709,7 +709,10 @@ test_slow_gate_admission_reads() {
 			local calls=0 reads=0 waits=0 elapsed=0 rc=0
 			unset AIDEVOPS_GH_READ_TIMEOUT
 			AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=60
-			date() { printf '%s\n' "$((1000 + elapsed))"; return 0; }
+			date() {
+				printf '%s\n' "$((1000 + elapsed))"
+				return 0
+			}
 			sleep() {
 				local duration="$1"
 				waits=$((waits + 1))
@@ -724,7 +727,7 @@ test_slow_gate_admission_reads() {
 					printf 'HTTP 502: Bad Gateway\n' >&2
 					return 1
 				fi
-				if [[ "$scenario" != healthy && ( "$calls" -eq 1 || "$scenario" == exhausted ) ]]; then
+				if [[ "$scenario" != healthy && ("$calls" -eq 1 || "$scenario" == exhausted) ]]; then
 					printf '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=%s\n' "$((1002 + elapsed))" >&2
 					return 75
 				fi
