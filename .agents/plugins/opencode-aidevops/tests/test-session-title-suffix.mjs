@@ -18,6 +18,9 @@ import {
   isDefaultSessionTitle,
 } from "../session-title-fallback.mjs";
 
+// The suffix is paused by default (t18612); these tests cover the opt-in path.
+process.env.AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX = "true";
+
 async function withTempAgentsDir(fn) {
   const root = mkdtempSync(join(tmpdir(), "aidevops-title-suffix-"));
   const dir = join(root, "agents");

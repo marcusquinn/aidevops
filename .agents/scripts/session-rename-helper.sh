@@ -115,13 +115,17 @@ _get_aidevops_version() {
 }
 
 # Append the aidevops version to titles, replacing any older suffix.
+# Paused (t18612): the OpenCode 1.x sidebar footer shows the version instead,
+# as OpenCode 2 does; AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX=true restores it.
 # Arguments:
 #   $1 - raw title
-# Output: title with idempotent suffix when a version is known
+# Output: title with idempotent suffix when enabled and a version is known
 _with_aidevops_title_suffix() {
 	local raw_title="$1"
-	local version
-	version="$(_get_aidevops_version)"
+	local version=""
+	case "${AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX:-}" in
+	true | TRUE | True | 1) version="$(_get_aidevops_version)" ;;
+	esac
 
 	local base_title
 	base_title="$(printf '%s' "$raw_title" | sed -E "s/${AIDEVOPS_TITLE_SUFFIX_ERE}//")"

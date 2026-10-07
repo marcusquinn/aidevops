@@ -66,6 +66,8 @@ OpenCode V2 (`opencode2`) runs server plugins in a tty-less background service, 
 
 V2 session titles double as tab labels, so the `· AIDevOps <version>` suffix is not written into them. The same TUI entrypoint instead renders muted version labels into V2 UI slots: `AIDevOps <version>` in `prompt.footer.status` (home and session prompts) and `OpenCode <version> · AIDevOps <version>` in `sidebar.footer`. `sidebar.content` and `home.footer.status` are opt-in. The AIDevOps version is a live signal refreshed from the version file (cached for 60s), so `aidevops update` appears in running sessions without a restart. Choose slots with `AIDEVOPS_TUI_VERSION_SLOTS=<comma list>` or disable with `AIDEVOPS_TUI_VERSION_SLOTS=none`.
 
+OpenCode 1.x matches this: setup registers `plugins/opencode-aidevops/v1-tui/tui.tsx` in `~/.config/opencode/tui.json` and disables the built-ins it replaces (`internal:sidebar-mcp`, `internal:sidebar-footer`). The sidebar footer reads `OpenCode <version> · AIDevOps <version>`, and the MCP section starts collapsed. The V1 session-title suffix is paused; set `AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX=true` to restore it. To revert the sidebar, set `aidevops-tui` to `false` and both built-ins to `true` under `plugin_enabled` in `tui.json`.
+
 ## Shell Integration
 
 | Shell | Config file | Hook |

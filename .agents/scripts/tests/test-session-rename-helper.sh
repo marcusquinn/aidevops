@@ -15,6 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../session-rename-helper.sh"
 GIT_BIN="$(command -p -v git)"
 export AIDEVOPS_VERSION="9.8.7"
+# The suffix is paused by default (t18612); these tests cover the opt-in path.
+export AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX="true"
 ROOT_VERSION="$(tr -d '[:space:]' <"${SCRIPT_DIR}/../../../VERSION")"
 
 PASS=0
