@@ -137,26 +137,43 @@ source "${SCRIPT_DIR}/worktree-clean-lib.sh"
 # MAIN
 # =============================================================================
 
+# Print one refusal reason for cmd_adopt (GH#33853) and fail.
+_adopt_refuse() {
+	local reason="$1"
+	printf 'adopt refused: %s\n' "$reason" >&2
+	return 1
+}
+
 # Adoption is explicit, never a side effect of verify-owner. Recheck the complete
 # lease and liveness under a SQLite write transaction; preserve task and batch.
 cmd_adopt() {
 	local requested_path="${1:-}" session_id="${2:-}" task_id="${3:-}"
-	[[ $# -eq 3 && "$session_id" =~ ^ses_[A-Za-z0-9_-]+$ && -n "$task_id" ]] || return 1
-	_wt_is_trusted_opencode_session "$session_id" || return 1
-	[[ -d "$requested_path" && ! -L "$requested_path" ]] || return 1
+	[[ $# -eq 3 ]] || { _adopt_refuse "usage: worktree-helper.sh adopt <path> <session> <task>"; return 1; }
+	[[ "$session_id" =~ ^ses_[A-Za-z0-9_-]+$ ]] || { _adopt_refuse "session must be an OpenCode ses_ identifier"; return 1; }
+	[[ -n "$task_id" ]] || { _adopt_refuse "task is empty; adopt requires the registered task ID"; return 1; }
+	_wt_is_trusted_opencode_session "$session_id" || { _adopt_refuse "session does not match the current OPENCODE_SESSION_ID"; return 1; }
+	[[ -d "$requested_path" && ! -L "$requested_path" ]] || { _adopt_refuse "path is not an existing non-symlink directory"; return 1; }
 	local wt_path="" git_dir="" common_dir="" branch="" snapshot=""
-	wt_path=$(_wt_registry_lookup_path "$requested_path") || return 1
-	[[ "$(git -C "$wt_path" rev-parse --show-toplevel)" == "$wt_path" ]] || return 1
-	git_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir) || return 1
-	common_dir=$(git -C "$wt_path" rev-parse --path-format=absolute --git-common-dir) || return 1
-	[[ "$git_dir" != "$common_dir" ]] || return 1
-	branch=$(git -C "$wt_path" symbolic-ref --quiet --short HEAD) || return 1
-	snapshot=$(check_worktree_owner_snapshot "$wt_path") || return 1
+	wt_path=$(_wt_registry_lookup_path "$requested_path") || { _adopt_refuse "path could not be resolved in the worktree registry"; return 1; }
+	[[ "$(git -C "$wt_path" rev-parse --show-toplevel)" == "$wt_path" ]] || { _adopt_refuse "path is not a Git worktree root"; return 1; }
+	git_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir) || { _adopt_refuse "Git directory is unreadable"; return 1; }
+	common_dir=$(git -C "$wt_path" rev-parse --path-format=absolute --git-common-dir) || { _adopt_refuse "Git common directory is unreadable"; return 1; }
+	[[ "$git_dir" != "$common_dir" ]] || { _adopt_refuse "path is a canonical checkout, not a linked worktree"; return 1; }
+	branch=$(git -C "$wt_path" symbolic-ref --quiet --short HEAD) || { _adopt_refuse "worktree HEAD is detached"; return 1; }
+	snapshot=$(check_worktree_owner_snapshot "$wt_path") || { _adopt_refuse "worktree has no registry owner row"; return 1; }
 	local old_pid="" old_session="" old_batch="" old_task="" old_created="" old_start=""
 	IFS='|' read -r old_pid old_session old_batch old_task old_created old_start <<<"$snapshot"
-	[[ "$old_pid" =~ ^[1-9][0-9]*$ && "$old_task" == "$task_id" ]] || return 1
+	[[ "$old_pid" =~ ^[1-9][0-9]*$ ]] || { _adopt_refuse "registry owner PID is invalid"; return 1; }
+	if [[ "$old_task" != "$task_id" ]]; then
+		if [[ -z "$old_task" ]]; then
+			_adopt_refuse "registry task_id is empty; adopt requires a matching task ID. If this worktree belongs to the current session, run pre-edit-check.sh (or aidevops_pre_edit_check) in it to re-claim"
+		else
+			_adopt_refuse "task does not match the registered task ID"
+		fi
+		return 1
+	fi
 	# Permission errors and PID reuse are conservatively treated as live.
-	python3 - "$old_pid" <<'PY' || return 1
+	python3 - "$old_pid" <<'PY' || { _adopt_refuse "registered owner is live or its liveness is unavailable"; return 1; }
 import os
 import sys
 try:
