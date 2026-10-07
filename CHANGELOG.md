@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.22] - 2026-10-07
+
+### Added
+
+- skip dormant repo candidate scans (#33856)
+
+### Changed
+
+- Maintenance: mark t18604 complete (pr:#33856 completed:2026-10-06) (#33855)
+
+### Fixed
+
+- recommend pre-edit re-claim for same-session stale worktree owners
+- block full-loop merge transports on PR hold-for-review
+- surface clean and completed worker draft checkpoints (#33854)
+- recognise gh stderr-only HTTP 304 (t18603) (#33852)
+- retain precise pre-runtime stages and original exit status (#33845)
+
 ## [3.38.21] - 2026-10-06
 
 ### Changed
