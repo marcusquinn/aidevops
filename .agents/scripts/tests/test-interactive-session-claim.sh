@@ -816,6 +816,25 @@ else
 fi
 
 # An assigned issue still requires explicit takeover and names its owners.
+# A newer caller comment must not hide another assignee's still-live claim.
+: >"$STUB_LOG"
+older_live_time=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
+jq --arg older "$older_live_time" --arg newer "$inactive_claim_time" \
+	'.assignees += [{login:"testuser"}] | .comments[0].createdAt = $older |
+	.comments += [{author:{login:"testuser"},createdAt:$newer,body:"Interactive session claimed by @testuser"}]' \
+	"${STUB_STATE_DIR}/56011.json" >"${STUB_STATE_DIR}/56012.json"
+mixed_live_out=$("$HELPER_PATH" claim 56012 regress/test --implementing 2>&1)
+mixed_live_rc=$?
+if [[ $mixed_live_rc -eq 1 && ! -f "${claim_dir}/regress-test-56012.json" ]] &&
+	! grep -q 'issue edit 56012' "$STUB_LOG" &&
+	printf '%s' "$mixed_live_out" | grep -q 'live interactive owner @other-human'; then
+	print_result "GH#33896: newer caller comment cannot hide live foreign claim" 0
+else
+	print_result "GH#33896: newer caller comment cannot hide live foreign claim" 1 \
+		"(rc=$mixed_live_rc out=${mixed_live_out:0:200})"
+fi
+
+# An assigned active issue still requires explicit takeover and names its owners.
 rm -f "${claim_dir}"/*.json 2>/dev/null || true
 : >"$STUB_LOG"
 printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:in-progress"}],"assignees":[{"login":"worker-runner"},{"login":"other-worker"}],"comments":[]}' \

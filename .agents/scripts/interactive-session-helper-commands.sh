@@ -174,10 +174,12 @@ _isc_claim_ownership_class() {
 				and ((.body // "") | contains("Interactive session claimed by @\($author)")))
 			| select((.createdAt // "" | fromdateiso8601?) as $created
 				| $created != null and ($now - $created) >= 0 and ($now - $created) < 7200)
-		] | sort_by(.createdAt) | reverse | first as $live_claim |
+		] | sort_by(.createdAt) | reverse as $live_claims |
+		($live_claims | first) as $live_claim |
+		($live_claims | map(select(.author.login != $user)) | first) as $live_foreign_claim |
 		if $state != "open" then "invalid-state"
-		elif ($active | not) and $live_claim != null and $live_claim.author.login != $user
-		then "foreign-interactive:" + $live_claim.author.login
+		elif ($active | not) and $live_foreign_claim != null
+		then "foreign-interactive:" + $live_foreign_claim.author.login
 		elif ($active | not) then "unclaimed"
 		elif ($assignees | length) == 1 and $assignees[0] == $user then "own"
 		elif $live_claim != null then "foreign-interactive:" + $live_claim.author.login
