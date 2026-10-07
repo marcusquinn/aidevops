@@ -29,6 +29,8 @@ artifact ownership, permissions and session learning.
   `tools/video/davinci-resolve.md` for an approved Resolve connection,
   `tools/video/remotion/remotion.md` for code-driven video, or
   `content/media-generation-providers.md` for an authorised generation job.
+  Code-rendered motion design (launch films, kinetic type, loops) also loads
+  `tools/video/motion-design.md` for its render contract and frame critique.
 - Resolve is optional. Missing software, licence, scripting capability or approval
   means unavailable, not permission to install it or operate a different project.
 - Preserve originals and work on a project/timeline copy. Keep timebases, handles,
