@@ -120,26 +120,41 @@ read_ports_registry() {
 LOCALDEV_REGISTRY_LOCK_WAIT_SECS="${LOCALDEV_REGISTRY_LOCK_WAIT_SECS:-30}"
 LOCALDEV_REGISTRY_LOCK_HELD=""
 
+# Return 0 when a path's mtime is at least $2 seconds old.
+_localdev_registry_path_older_than() {
+	local path="$1"
+	local min_age="$2"
+	local modified_at=""
+	modified_at="$(_file_mtime_epoch "$path")" || return 1
+	[[ "$modified_at" =~ ^[0-9]+$ ]] || return 1
+	[[ $(($(date +%s) - modified_at)) -ge "$min_age" ]] || return 1
+	return 0
+}
+
 # Reclaim a lock whose recorded holder is dead. A just-created lock without a
-# PID is left alone until its owner had time to record itself.
+# PID is left alone until its owner had time to record itself. Reclaimers
+# serialise on a separate guard: while it is held, a stale lock cannot be
+# replaced (mkdir fails and its dead owner never removes it), so validation
+# and removal cannot hit a lock that a new owner acquired in between.
 _localdev_registry_remove_stale_lock() {
 	local lock_dir="$1"
+	local guard="${lock_dir}.reclaim"
 	local holder_pid=""
-	local recheck_pid=""
-	local modified_at=""
-	[[ -f "$lock_dir/pid" ]] && IFS= read -r holder_pid <"$lock_dir/pid" || true
-	if [[ "$holder_pid" =~ ^[0-9]+$ ]] && kill -0 "$holder_pid" 2>/dev/null; then
+	local rc=1
+	if ! mkdir "$guard" 2>/dev/null; then
+		# A reclaimer that died inside the microsecond critical section.
+		_localdev_registry_path_older_than "$guard" 10 && rmdir "$guard" 2>/dev/null
 		return 1
 	fi
-	modified_at="$(_file_mtime_epoch "$lock_dir")" || return 1
-	[[ "$modified_at" =~ ^[0-9]+$ ]] || return 1
-	[[ $(($(date +%s) - modified_at)) -ge 5 ]] || return 1
-	# Re-read so a lock re-created by another waiter is never removed.
-	[[ -f "$lock_dir/pid" ]] && IFS= read -r recheck_pid <"$lock_dir/pid" || true
-	[[ "$recheck_pid" == "$holder_pid" ]] || return 1
-	rm -f -- "$lock_dir/pid"
-	rmdir "$lock_dir" 2>/dev/null || return 1
-	return 0
+	[[ -f "$lock_dir/pid" ]] && IFS= read -r holder_pid <"$lock_dir/pid" || true
+	if [[ -d "$lock_dir" ]] &&
+		! { [[ "$holder_pid" =~ ^[0-9]+$ ]] && kill -0 "$holder_pid" 2>/dev/null; } &&
+		_localdev_registry_path_older_than "$lock_dir" 5; then
+		rm -f -- "$lock_dir/pid"
+		rmdir "$lock_dir" 2>/dev/null && rc=0
+	fi
+	rmdir "$guard" 2>/dev/null || true
+	return "$rc"
 }
 
 # Acquire the registry lock (re-entrant within one process).

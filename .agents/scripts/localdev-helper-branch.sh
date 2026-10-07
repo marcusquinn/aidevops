@@ -584,6 +584,8 @@ _branch_prune_app() {
 	done
 	if [[ -z "$dry_run" ]]; then
 		for branch in "${dead[@]+"${dead[@]}"}"; do
+			# {app}--{branch}.yml may be the primary route of an app with that name.
+			is_app_registered "${app}--${branch}" && continue
 			remove_branch_traefik_route "$app" "$branch" >/dev/null
 		done
 		for route in "${orphan_routes[@]+"${orphan_routes[@]}"}"; do
@@ -674,11 +676,14 @@ cmd_branch_prune() {
 		print_info "No registered localdev app for $main_worktree"
 		return 0
 	fi
+	# Lock before the liveness snapshot: a worktree registered between an
+	# unlocked snapshot and the lock would otherwise be pruned as dead.
+	localdev_registry_lock || return 1
 	live="$(_branch_prune_live_branches "$_PRUNE_REPO")" || {
+		localdev_registry_unlock
 		print_error "Cannot read worktree inventory for $_PRUNE_REPO — refusing to prune"
 		return 1
 	}
-	localdev_registry_lock || return 1
 	if [[ -z "$_PRUNE_DRY_RUN" ]]; then
 		mkdir -p "$BACKUP_DIR"
 		cp "$PORTS_FILE" "$BACKUP_DIR/ports.json.prune-$(date -u +%Y%m%dT%H%M%SZ)-$$" || {
