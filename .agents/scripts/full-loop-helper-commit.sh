@@ -60,6 +60,10 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-validators.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via the helper directory
 source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-readiness.sh"
 
+# shellcheck source=./full-loop-helper-subject.sh
+# shellcheck disable=SC1091
+source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-subject.sh"
+
 # --- Argument Parsing ---
 
 # Parse commit-and-pr arguments into caller-scoped variables.

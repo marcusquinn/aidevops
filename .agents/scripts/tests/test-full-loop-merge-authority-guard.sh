@@ -9,6 +9,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MERGE_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge.sh"
+# shellcheck source=../full-loop-helper-subject.sh
+source "${SCRIPT_DIR}/../full-loop-helper-subject.sh"
 # Authority gates moved from full-loop-helper-merge.sh to this module (GH#30748).
 MERGE_AUTHORITY_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-authority.sh"
 READINESS_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-readiness.sh"

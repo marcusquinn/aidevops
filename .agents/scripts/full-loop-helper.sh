@@ -102,6 +102,16 @@ cmd_commit_and_pr() {
 
 	_parse_commit_and_pr_args "$@" || return 1
 
+	# Reject the final title before staging, rebasing or publishing anything.
+	if [[ -z "$pr_title" ]]; then
+		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")" || return 1
+	fi
+	if ! _full_loop_valid_squash_subject "$pr_title"; then
+		print_error "PR title is not a valid squash subject; refusing commit-and-pr"
+		print_error "Use GH#N: ..., tNNN: ..., or conventional type(scope): ...; extra issues belong in the body as Resolves #N."
+		return 1
+	fi
+
 	# Validate inputs and detect repo/branch (sets $repo and $branch in this scope)
 	local repo="" branch="" base_branch="" base_ref=""
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1

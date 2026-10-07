@@ -161,6 +161,10 @@ fi
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
 
+# shellcheck source=./full-loop-helper-subject.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/full-loop-helper-subject.sh"
+
 # Canonical TODO task/issue mapping parser shared with issue-sync and pre-push.
 # shellcheck source=./issue-sync-pr-task-resolver.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
@@ -902,6 +906,11 @@ _merge_resolve_squash_subject() {
 		return 1
 	}
 	subject=$(printf '%s\n' "$pr_json" | jq -r '.title // empty') || return 1
+	if ! _full_loop_valid_squash_subject "$subject"; then
+		print_error "PR #${pr_number} title is not a valid squash subject; refusing merge"
+		print_error "Use a task-prefixed or conventional title before retrying."
+		return 1
+	fi
 	if [[ "$subject" =~ $task_ere ]]; then
 		task_body="${subject#*: }"
 		if [[ ! "$task_body" =~ $conventional_ere ]]; then
@@ -912,9 +921,7 @@ _merge_resolve_squash_subject() {
 			fi
 		fi
 	fi
-	if [[ "$subject" == *$'\n'* || "$subject" == *$'\r'* ||
-		"$task_body" =~ ^[Ww][Ii][Pp][[:space:]:\(] ||
-		! "$subject" =~ $conventional_ere && ! "$subject" =~ $task_ere ]]; then
+	if ! _full_loop_valid_squash_subject "$subject"; then
 		print_error "PR #${pr_number} title is not a valid squash subject; refusing merge"
 		print_error "Use a task-prefixed or conventional title before retrying."
 		return 1
