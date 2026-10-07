@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.23] - 2026-10-07
+
+### Fixed
+
+- allow read-only git check-ignore through canonical Git guard
+
 ## [3.38.22] - 2026-10-07
 
 ### Added
