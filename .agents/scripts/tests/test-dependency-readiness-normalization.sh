@@ -259,6 +259,74 @@ assert_true "active dependency lifecycle is left unchanged" \
 	_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_linked"
 assert_eq "active dependency lifecycle receives no status write" "" "$dependency_status_writes"
 
+# GH#33957: enrich must not revert a verified unblock. A declared edge whose
+# complete native blocker set is closed leaves the issue available; open,
+# missing, truncated or unreadable native state still blocks.
+native_blockers_json=""
+native_read_rc=0
+gh() {
+	local command="$1"
+	local target="${2:-}"
+	if [[ "$command $target" == "api graphql" ]]; then
+		[[ "$native_read_rc" -eq 0 ]] || return "$native_read_rc"
+		printf '%s\n' "$native_blockers_json"
+	elif [[ "$command $target" == "issue view" ]]; then
+		printf '%s\n' "$dependency_status"
+	elif [[ "$command $target" == "issue edit" ]]; then
+		dependency_status_writes="${dependency_status_writes}$(_test_render_args "$@")"$'\n'
+		dependency_status="status:blocked,auto-dispatch"
+	fi
+	return 0
+}
+export -f gh
+_native_blockers_fixture() {
+	local nodes="$1" has_next="${2:-false}"
+	printf '{"data":{"repository":{"issue":{"blockedBy":{"nodes":%s,"pageInfo":{"hasNextPage":%s}}}}}}' "$nodes" "$has_next"
+	return 0
+}
+closed_10='{"id":"I_10","number":10,"state":"CLOSED","repository":{"nameWithOwner":"owner/repo"}}'
+closed_11='{"id":"I_11","number":11,"state":"CLOSED","repository":{"nameWithOwner":"owner/repo"}}'
+open_11='{"id":"I_11","number":11,"state":"OPEN","repository":{"nameWithOwner":"owner/repo"}}'
+_run_closed_blocker_case() {
+	local label="$1" expected="$2" blocker_ref="$3" nodes="$4" has_next="${5:-false}" read_rc="${6:-0}"
+	dependency_status="status:available,auto-dispatch"
+	dependency_status_writes=""
+	native_read_rc="$read_rc"
+	native_blockers_json=$(_native_blockers_fixture "$nodes" "$has_next")
+	_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_already_present" "$blocker_ref" || true
+	if [[ -n "$dependency_status_writes" ]]; then
+		assert_eq "$label" "$expected" "blocked"
+	else
+		assert_eq "$label" "$expected" "available"
+	fi
+	return 0
+}
+_run_closed_blocker_case "closed native blocker by number is not re-blocked" available 10 "[${closed_10}]"
+_run_closed_blocker_case "closed native blocker by node ID is not re-blocked" available I_10 "[${closed_10},${closed_11}]"
+_run_closed_blocker_case "another open native blocker still blocks" blocked 10 "[${closed_10},${open_11}]"
+_run_closed_blocker_case "declared blocker missing from native set still blocks" blocked 12 "[${closed_10}]"
+_run_closed_blocker_case "empty native set still blocks" blocked 10 "[]"
+_run_closed_blocker_case "truncated native set still blocks" blocked 10 "[${closed_10}]" true
+_run_closed_blocker_case "native read failure still blocks" blocked 10 "[${closed_10}]" false 1
+dependency_status="status:available,auto-dispatch"
+dependency_status_writes=""
+native_read_rc=0
+native_blockers_json=$(_native_blockers_fixture "[${closed_10}]")
+_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_batch_failed" || true
+assert_true "retry hold without blocker evidence still blocks" \
+	grep -Fq -- "--add-label status:blocked" <<<"$dependency_status_writes"
+# A closed-edge skip must not mark the issue synced: a later failed edge for
+# the same issue in the same pass still holds it blocked.
+_RELATIONSHIP_STATUS_SYNCED_FILE="${TMP_ROOT}/status-synced"
+: >"$_RELATIONSHIP_STATUS_SYNCED_FILE"
+dependency_status="status:available,auto-dispatch"
+dependency_status_writes=""
+_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_already_present" "10" || true
+_hold_dependency_sync_retry "20" "owner/repo" "native_relationship_batch_failed" || true
+assert_true "closed-edge skip leaves later retry hold effective" \
+	grep -Fq -- "--add-label status:blocked" <<<"$dependency_status_writes"
+unset _RELATIONSHIP_STATUS_SYNCED_FILE
+
 _run_relationship_status_sync_cases() (
 	local dependency_status="status:available,auto-dispatch"
 	local dependency_status_writes=""
@@ -565,10 +633,13 @@ _blocked_by_check_issue_num() {
 	return 0
 }
 export -f _blocked_by_check_native_relationships _blocked_by_check_issue_num
+# Contract since 138608aa76: a complete, positively clear native set is
+# authoritative over stale body/TODO edges (mirrors
+# test-pulse-dep-graph-stale-label-cleanup.sh).
 if _refresh_dependency_is_resolved "owner/repo" "20" '{"task_ids":[],"issue_nums":["10"]}' '{}' '[]' '[10,20]'; then
-	assert_eq "partial native repair still checks declared edge" "blocked" "resolved"
+	assert_eq "complete clear native set overrides stale declared edge" "resolved" "resolved"
 else
-	assert_eq "partial native repair still checks declared edge" "blocked" "blocked"
+	assert_eq "complete clear native set overrides stale declared edge" "resolved" "blocked"
 fi
 
 python3 - "$SCRIPTS_DIR/pulse-check-queue-scan.py" <<'PY'

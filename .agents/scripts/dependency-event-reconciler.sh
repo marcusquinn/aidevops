@@ -7,6 +7,7 @@ _DEPENDENCY_EVENT_RECONCILER_LOADED=1
 DER_SEARCH_QUOTE=$(printf '\042')
 DER_STATE_CLOSED="CLOSED"
 DER_NOT_READY=2
+DER_SWEEP_PARTIAL=3
 _DER_NATIVE_BLOCKERS_PRESENT=false
 
 _der_dir="${BASH_SOURCE[0]%/*}"
@@ -558,21 +559,82 @@ reconcile_dependants_after_verified_closure() {
 	return 0
 }
 
+# GH#33957: per-repo resume cursor (last visited issue number) so a bounded
+# stage traverses every blocked issue across cycles instead of restarting.
+_der_stale_cursor_file() {
+	local repo="$1"
+	local dir="${DER_STALE_BLOCKED_CURSOR_DIR:-}"
+	if [[ -z "$dir" ]]; then
+		[[ -n "${HOME:-}" ]] || return 1
+		dir="${HOME}/.aidevops/cache/stale-blocked-cursor"
+	fi
+	printf '%s/%s.cursor\n' "$dir" "${repo//\//__}"
+	return 0
+}
+
+_der_stale_cursor_read() {
+	local file="$1"
+	local value=""
+	if [[ -f "$file" ]]; then
+		IFS= read -r value <"$file" 2>/dev/null || true
+	fi
+	[[ "$value" =~ ^[0-9]+$ ]] || value=0
+	printf '%s\n' "$value"
+	return 0
+}
+
+_der_stale_cursor_write() {
+	local file="$1"
+	local value="$2"
+	local tmp_file="${file}.tmp.$$"
+	mkdir -p "${file%/*}" 2>/dev/null || return 1
+	printf '%s\n' "$value" >"$tmp_file" 2>/dev/null || return 1
+	mv -f "$tmp_file" "$file" 2>/dev/null || return 1
+	return 0
+}
+
+_der_stale_epoch_reached() {
+	local deadline="$1"
+	local now=""
+	[[ "$deadline" =~ ^[1-9][0-9]*$ ]] || return 1
+	now=$(date +%s 2>/dev/null) || return 0
+	[[ "$now" -ge "$deadline" ]]
+	return $?
+}
+
 # Periodically recover status:blocked issues whose close event was missed.
 # REST pagination is consumed in full, then bounded before any mutation.
+# Candidates are visited in ascending issue order after the persisted cursor;
+# the cursor advances after every visit so a killed stage keeps its progress.
+# Optional DER_STALE_BLOCKED_DEADLINE_EPOCH (this repo's fair share) stops
+# cleanly after at least one visit; optional DER_STALE_BLOCKED_STOP_EPOCH (the
+# whole sweep's hard stop) stops before any further visit. Returns
+# DER_SWEEP_PARTIAL when candidates remain for a later pass, or 1 when the
+# cursor cannot be persisted; unblock decisions are unchanged (_der_try_unblock).
 reconcile_stale_blocked_issues() {
 	local repo="$1"
 	local max_candidates="${DER_STALE_BLOCKED_MAX_CANDIDATES:-500}"
-	local pages candidates candidate issue_number
-	local total=0 reconciled=0 failed=0
+	local share_deadline="${DER_STALE_BLOCKED_DEADLINE_EPOCH:-0}"
+	local stop_deadline="${DER_STALE_BLOCKED_STOP_EPOCH:-0}"
+	local pages candidates candidate issue_number cursor_file="" cursor=0
+	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
+	cursor_file=$(_der_stale_cursor_file "$repo") || return 1
+	cursor=$(_der_stale_cursor_read "$cursor_file")
 	pages=$(gh api --paginate --slurp "repos/${repo}/issues?state=open&labels=status%3Ablocked&per_page=100" 2>/dev/null) || return 1
 	_der_json_pages_valid "$pages" || return 1
 	total=$(printf '%s' "$pages" | jq '[.[][] | select(.pull_request == null)] | length') || return 1
-	candidates=$(printf '%s' "$pages" | jq -c --arg repo "$repo" --argjson limit "$max_candidates" '[.[][] | select(.pull_request == null)][: $limit][] | {number,state,title,body,repository:{nameWithOwner:$repo},labels:{nodes:[.labels[] | {name:.name}],pageInfo:{hasNextPage:false}}}') || return 1
+	pending=$(printf '%s' "$pages" | jq --argjson cursor "$cursor" '[.[][] | select(.pull_request == null and .number > $cursor)] | length') || return 1
+	candidates=$(printf '%s' "$pages" | jq -c --arg repo "$repo" --argjson cursor "$cursor" --argjson limit "$max_candidates" '[.[][] | select(.pull_request == null and .number > $cursor)] | sort_by(.number) | .[: $limit][] | {number,state,title,body,repository:{nameWithOwner:$repo},labels:{nodes:[.labels[] | {name:.name}],pageInfo:{hasNextPage:false}}}') || return 1
+	[[ "$pending" -le "$max_candidates" ]] || complete=false
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
+		if _der_stale_epoch_reached "$stop_deadline" ||
+			{ [[ "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; }; then
+			complete=false
+			break
+		fi
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || {
 			failed=$((failed + 1))
 			continue
@@ -584,8 +646,20 @@ reconcile_stale_blocked_issues() {
 		else
 			failed=$((failed + 1))
 		fi
+		visited=$((visited + 1))
+		if [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+		fi
 	done <<<"$candidates"
-	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s checked=%s failed=%s batch_limit=%s remaining=%s\n' "$repo" "$total" "$reconciled" "$failed" "$max_candidates" "$((total > max_candidates ? total - max_candidates : 0))" >&2
+	# A finished traversal restarts from the lowest issue on the next pass.
+	if [[ "$complete" == true ]]; then
+		_der_stale_cursor_write "$cursor_file" 0 || cursor_failed=true
+	fi
+	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$failed" "$max_candidates" "$complete" "$cursor_failed" >&2
+	# Without a durable cursor, later passes cannot resume; report a failure
+	# (not partial progress) so the operator sees it in the cycle summary.
+	[[ "$cursor_failed" == false ]] || return 1
+	[[ "$complete" == true ]] || return "$DER_SWEEP_PARTIAL"
 	[[ "$failed" -eq 0 ]]
 	return $?
 }

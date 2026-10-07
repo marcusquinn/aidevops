@@ -73,7 +73,7 @@ _sync_declared_blocked_by_edges() {
 			if ! _relationship_edge_should_attempt "$this_gh_num" "$dep_gh_num"; then
 				log_verbose "$task_id: skipping duplicate native edge #$this_gh_num blocked-by #$dep_gh_num"
 				if [[ "$DRY_RUN" != "true" ]] && ! _ensure_dependency_status_blocked \
-					"$this_gh_num" "$repo" "native_relationship_already_attempted"; then
+					"$this_gh_num" "$repo" "native_relationship_already_attempted" "$dep_gh_num"; then
 					retryable_errors=$((retryable_errors + 1))
 				fi
 				continue
@@ -149,7 +149,7 @@ _sync_declared_blocks_edges() {
 			if ! _relationship_edge_should_attempt "$dep_gh_num" "$this_gh_num"; then
 				log_verbose "$task_id: skipping duplicate native edge #$dep_gh_num blocked-by #$this_gh_num"
 				if [[ "$DRY_RUN" != "true" ]] && ! _ensure_dependency_status_blocked \
-					"$dep_gh_num" "$repo" "native_relationship_already_attempted"; then
+					"$dep_gh_num" "$repo" "native_relationship_already_attempted" "$this_gh_num"; then
 					retryable_errors=$((retryable_errors + 1))
 				fi
 				continue

@@ -269,7 +269,7 @@ _relationship_apply_batch_chunk() {
 			continue
 		fi
 		rels_set=$((rels_set + 1))
-		if ! _ensure_dependency_status_blocked "$blocked_num" "$repo" "native_relationship_linked"; then
+		if ! _ensure_dependency_status_blocked "$blocked_num" "$repo" "native_relationship_linked" "$blocking_id"; then
 			retryable_errors=$((retryable_errors + 1))
 		fi
 	done
@@ -297,7 +297,7 @@ _relationship_plan_batch_chunk() {
 		0)
 			_relationship_record_outcome "$_REL_OUTCOME_ALREADY_PRESENT"
 			rels_set=$((rels_set + 1))
-			_ensure_dependency_status_blocked "$blocked_num" "$repo" "native_relationship_already_present" || \
+			_ensure_dependency_status_blocked "$blocked_num" "$repo" "native_relationship_already_present" "$blocking_id" || \
 				retryable_errors=$((retryable_errors + 1))
 			;;
 		1) missing_pairs+=("$triple") ;;

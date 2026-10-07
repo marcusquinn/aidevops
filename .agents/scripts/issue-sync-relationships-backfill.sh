@@ -893,7 +893,7 @@ _backfill_cross_phase_pair() {
 	if _gh_add_blocked_by "$child_node" "$blocker_node"; then
 		log_verbose "#$blocked_num blocked-by #$blocker_num ✓"
 		if ! _ensure_dependency_status_blocked \
-			"$blocked_num" "$repo" "cross_phase_native_relationship_linked"; then
+			"$blocked_num" "$repo" "cross_phase_native_relationship_linked" "$blocker_num"; then
 			return 1
 		fi
 		return 0
