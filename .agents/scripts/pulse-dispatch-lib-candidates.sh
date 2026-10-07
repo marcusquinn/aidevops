@@ -837,6 +837,46 @@ _dispatch_now_ms() {
 }
 
 #######################################
+# GH#33976: count logical in-flight opus OpenCode workers.
+#
+# One headless worker appears as a chain of processes whose argv all carry
+# the inner `opencode run ... -m anthropic/claude-opus-<version>` command:
+# the sandbox-exec-helper.sh wrapper (its argv embeds the child command), the
+# opencode launcher and, for npm installs, the native .opencode binary. A
+# per-process count therefore inflates inflight 2-3x. Count only chain
+# roots: matching processes whose parent is not itself a match. This holds
+# for any wrapper depth, setsid/env launches and install layout. Like
+# list_active_worker_processes (GH#31934), only processes owned by the
+# effective UID count, and zombie/stopped processes are excluded.
+#
+# Arguments:
+#   $1 - effective numeric UID
+# Input (stdin): `ps axwwo uid=,pid=,ppid=,stat=,command=` snapshot
+# Output: logical worker count on stdout
+# Returns: 0 always
+#######################################
+_dispatch_count_opus_worker_roots() {
+	local effective_uid="$1"
+	awk -v uid="$effective_uid" '
+		$1 != uid || $4 ~ /^[ZT]/ { next }
+		{
+			cmd = ""
+			for (i = 5; i <= NF; i++) cmd = cmd " " $i
+			if (cmd !~ /[[:space:]\/]\.?opencode[0-9]*[[:space:]]+run([[:space:]]|$)/) next
+			if (cmd !~ /[[:space:]]-m[[:space:]]+anthropic\/claude-opus/) next
+			matched[$2] = 1
+			parent[$2] = $3
+		}
+		END {
+			n = 0
+			for (pid in matched) if (!(parent[pid] in matched)) n++
+			print n
+		}
+	'
+	return 0
+}
+
+#######################################
 # t3022: Per-model concurrency cap guard.
 #
 # Prevents 429 rate-limit cascades when multiple thinking-tier workers are
@@ -845,11 +885,11 @@ _dispatch_now_ms() {
 # 429s that make workers 20-min zombies (observed: 3 opus-4-6 workers
 # killed at the same minute with rate_limit, ts=1777397345-1777397359).
 #
-# Counts in-flight opus workers by probing the process list for opencode's
-# '-m anthropic/claude-opus' flag (the literal flag opencode receives from
-# _build_run_cmd in headless-runtime-model.sh). Returns 1 (deferred) when
-# the candidate's model is opus and inflight >= cap. Sonnet/haiku and
-# auto-routed candidates (empty model_override) always return 0.
+# Counts logical in-flight opus workers with _dispatch_count_opus_worker_roots
+# (one per worker process chain, not one per OS process — GH#33976). Returns
+# 1 (deferred) when the candidate's model is opus and inflight >= cap.
+# Sonnet/haiku and auto-routed candidates (empty model_override) always
+# return 0.
 #
 # Deferred candidates are retried next pulse cycle — they are NOT NMR'd
 # or fast-fail penalised. This is a temporary yield, not a block.
@@ -892,21 +932,17 @@ _dispatch_check_model_concurrency_cap() {
 	# Env var takes highest precedence (overrides both default and conf file).
 	local opus_cap="${AIDEVOPS_OPUS_CONCURRENCY_CAP:-${OPUS_CONCURRENCY_CAP}}"
 
-	# Count in-flight opus workers from the process list.
-	# opencode is launched with '-m anthropic/claude-opus-<version>' by
-	# _build_run_cmd in headless-runtime-model.sh. pgrep -f matches the full
-	# cmdline, so one probe counts every opus version, including opus workers
-	# chosen by auto-routing (only explicitly pinned candidates are deferred).
-	#
-	# pgrep exits 1 with no output when no processes match — perfectly normal.
-	# Assign to a variable first with || true to avoid triggering set -o pipefail.
-	local _opus_pids=""
-	_opus_pids=$(pgrep -f 'opencode.*-m anthropic/claude-opus' 2>/dev/null) || true
-	local opus_inflight=0
-	if [[ -n "$_opus_pids" ]]; then
-		opus_inflight=$(printf '%s\n' "$_opus_pids" | wc -l | tr -d ' ')
-		[[ "$opus_inflight" =~ ^[0-9]+$ ]] || opus_inflight=0
+	# Count logical in-flight opus workers (GH#33976). One probe counts every
+	# opus version, including opus workers chosen by auto-routing (only
+	# explicitly pinned candidates are deferred). A failed probe counts 0,
+	# preserving the fail-open behaviour of the original pgrep probe.
+	local _effective_uid="" opus_inflight=0
+	_effective_uid=$(id -u 2>/dev/null) || _effective_uid=""
+	if [[ "$_effective_uid" =~ ^[0-9]+$ ]]; then
+		opus_inflight=$(ps axwwo uid=,pid=,ppid=,stat=,command= 2>/dev/null |
+			_dispatch_count_opus_worker_roots "$_effective_uid") || opus_inflight=0
 	fi
+	[[ "$opus_inflight" =~ ^[0-9]+$ ]] || opus_inflight=0
 
 	pulse_dispatch_debug_log "#${issue_number}: opus_concurrency_cap check inflight=${opus_inflight} cap=${opus_cap} model=${resolved_model}"
 
