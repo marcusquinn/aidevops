@@ -169,9 +169,19 @@ _merge_fresh_worktree_cleanup_plan() {
 	return 0
 }
 
-_merge_fresh_adopted_worktree_cleanup_target() {
+# Resolve the current linked worktree as the cleanup target of a merged PR from
+# fresh GitHub evidence. Returns 2 when metadata cannot be queried, 3 when it is
+# incomplete, and 1 when the local worktree is not this PR's target.
+#   mode "adopt"  (GH#28915): the local branch must equal the PR head ref.
+#   mode "retire" (GH#33890): also accepts the same-repository alias that merge
+#     cleanup records with delete_remote_branch=0. Alias acceptance is already
+#     proven by the exact head OID, registered worktree record and repository
+#     identity; marker retirement then requires the finalized receipt to
+#     record this exact worktree and branch.
+_merge_fresh_merged_worktree_cleanup_target() {
 	local pr_number="$1"
 	local repo="$2"
+	local mode="$3"
 	local pr_json=""
 	local pr_head_ref=""
 	local pr_head_oid=""
@@ -182,6 +192,7 @@ _merge_fresh_adopted_worktree_cleanup_target() {
 	local delete_remote_branch=""
 	local current_repo=""
 
+	[[ "$mode" == "adopt" || "$mode" == "retire" ]] || return 1
 	pr_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo" \
 		--json state,mergedAt,mergeCommit,headRefName,headRefOid,headRepository,isCrossRepository 2>/dev/null) || return 2
 	printf '%s' "$pr_json" | jq -e '
@@ -198,12 +209,32 @@ _merge_fresh_adopted_worktree_cleanup_target() {
 	)
 	cleanup_target=$(_merge_current_worktree_cleanup_target "$pr_head_ref" "$pr_head_oid" "$pr_head_repo" "$repo") || return 1
 	IFS=$'\t' read -r worktree_path branch_name delete_remote_branch <<<"$cleanup_target"
-	: "$delete_remote_branch"
-	[[ "$branch_name" == "$pr_head_ref" ]] || return 1
+	if [[ "$branch_name" != "$pr_head_ref" ]]; then
+		[[ "$mode" == "retire" && "$delete_remote_branch" == "0" ]] || return 1
+	fi
 	current_repo=$(_merge_current_github_repo_identity "$worktree_path" 2>/dev/null || true)
 	[[ -n "$current_repo" && "$current_repo" == "$repo" ]] || return 1
 	printf '%s\n' "$cleanup_target"
 	return 0
+}
+
+# Strict adoption resolver (GH#28915): renamed local branches are never adopted.
+_merge_fresh_adopted_worktree_cleanup_target() {
+	local pr_number="$1"
+	local repo="$2"
+	local rc=0
+	_merge_fresh_merged_worktree_cleanup_target "$pr_number" "$repo" adopt || rc=$?
+	return "$rc"
+}
+
+# Marker retirement resolver (GH#33890): accepts every target merge cleanup can
+# record, including the same-repository alias.
+_merge_fresh_retirement_worktree_cleanup_target() {
+	local pr_number="$1"
+	local repo="$2"
+	local rc=0
+	_merge_fresh_merged_worktree_cleanup_target "$pr_number" "$repo" retire || rc=$?
+	return "$rc"
 }
 
 _merge_default_branch_for_cleanup() {
