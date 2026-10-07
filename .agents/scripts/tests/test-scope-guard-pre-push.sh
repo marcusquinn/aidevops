@@ -375,6 +375,41 @@ printf '\n[6b] EDIT:/NEW: prefixed scope lines → in-scope push allowed\n'
 }
 
 # ---------------------------------------------------------------------------
+# Test 6c: exact bracketed dynamic-route paths match themselves literally and
+# are not treated as character classes (GH#33876).
+# ---------------------------------------------------------------------------
+printf '\n[6c] Bracketed dynamic-route scope paths → literal match\n'
+{
+	read -r repo base_sha <<< "$(repo_setup t9999)"
+	write_brief "$repo" "t9999" 'apps/site/src/pages/[practice]/[slug].astro' "todo/tasks/t9999-brief.md"
+
+	mkdir -p "${repo}/apps/site/src/pages/[practice]"
+	printf 'route\n' > "${repo}/apps/site/src/pages/[practice]/[slug].astro"
+	git -C "$repo" add "apps/site/src/pages/[practice]/[slug].astro"
+	git -C "$repo" commit -q -m "add dynamic route"
+
+	if invoke_hook "$repo" "$base_sha"; then
+		_pass "exact bracketed path matches itself"
+	else
+		_fail "exact bracketed path matches itself" "hook blocked the declared dynamic route"
+	fi
+
+	read -r repo base_sha <<< "$(repo_setup t9999)"
+	write_brief "$repo" "t9999" 'apps/site/src/pages/[practice]/[slug].astro' "todo/tasks/t9999-brief.md"
+
+	mkdir -p "${repo}/apps/site/src/pages/p"
+	printf 'not declared\n' > "${repo}/apps/site/src/pages/p/s.astro"
+	git -C "$repo" add "apps/site/src/pages/p/s.astro"
+	git -C "$repo" commit -q -m "add single-character sibling"
+
+	if ! invoke_hook "$repo" "$base_sha"; then
+		_pass "bracketed path is not a character class"
+	else
+		_fail "bracketed path is not a character class" "single-character sibling matched [practice]/[slug]"
+	fi
+}
+
+# ---------------------------------------------------------------------------
 # Test 6: Branch with no task ID → fail-open (exit 0)
 # ---------------------------------------------------------------------------
 printf '\n[6] Branch with no task ID → fail-open\n'
