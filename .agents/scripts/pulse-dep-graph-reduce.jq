@@ -44,9 +44,54 @@ def visible_text:
   | gsub("<!--(?<text>.*?)-->"; if (.text | contains("\n")) then "\n" else "" end; "ms")
   | sub("<!--.*$"; ""; "ms");
 
+# Shared blocked-by value grammar (GH#33881); twin of blocked-by-value.awk, so
+# keep the two identical. Negation-led values keep only the label. A leading
+# reference list keeps only its references. Prose-led values stay unchanged
+# (fail closed).
+def blocker_task_like:
+  test("^[tT][0-9][A-Za-z0-9.-]*$") or test("^t[A-Z][A-Za-z0-9.-]*$")
+  or test("^[tT][oO][A-Za-z0-9]{26}-[A-Za-z0-9.-]+$");
+
+def blocker_issue_token: test("^#[0-9]+$");
+
+def blocker_ref_token:
+  blocker_issue_token or test("^[Gg][Hh]#[0-9]+$")
+  or test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$") or blocker_task_like;
+
+def blocker_slug_token: test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+
+def blocker_negation_token:
+  ascii_downcase | IN("none", "nothing", "no", "n/a", "na", "nil", "-", "—", "–");
+
+def blocker_value_tokens:
+  gsub("[`*]"; " ") | [splits("[ \t,;]+")]
+  | map(sub("^[(_]+"; "") | sub("[_.:!?)]+$"; ""))
+  | map(select(. != "" and ascii_downcase != "and" and . != "&" and . != "+" and . != "/"));
+
+def blocker_value_line:
+  . as $line
+  | ((try capture("^(?<label>[ \t]*(\\*\\*)?blocked[- ]by(\\*\\*)?[ \t]*:?(\\*\\*)?)(?<value>.*)$"; "i") catch null) // null) as $m
+  | if $m == null then $line else
+      ($m.label | sub("[ \t]+$"; "")) as $label
+      | ($m.value | blocker_value_tokens) as $toks
+      | if ($toks | length) == 0 or ($toks[0] | blocker_negation_token) then $label
+        else
+          (reduce range(0; $toks | length) as $i ({out: [], done: false, skip: false};
+            if .done then .
+            elif .skip then .skip = false
+            elif ($toks[$i] | blocker_ref_token) then .out += [$toks[$i]]
+            elif ($toks[$i] | blocker_slug_token) and (($toks[$i + 1] // "") | blocker_issue_token) then
+              .out += [$toks[$i] + $toks[$i + 1]] | .skip = true
+            else .done = true end
+          ).out) as $refs
+          | if ($refs | length) == 0 then $line else $label + " " + ($refs | join(", ")) end
+        end
+    end;
+
 def blocker_text:
   visible_text | gsub("\r"; "") | split("\n")
-  | map(select(test("^[[:space:]]*([-*+][[:space:]]+)?(\\*\\*)?blocked[- ]by(\\*\\*)?[[:space:]]*:"; "i")))
+  | map(select(test("^[[:space:]]*([-*+][[:space:]]+)?(\\*\\*)?blocked[- ]by(\\*\\*)?[[:space:]]*:"; "i"))
+    | sub("^[[:space:]]*([-*+][[:space:]]+)?"; "") | blocker_value_line)
   | join("\n");
 
 def defer_marker:

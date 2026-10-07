@@ -66,6 +66,7 @@ def _empty_aggregate() -> dict[str, int]:
     return {
         "repos": 0,
         "repos_scanned": 0,
+        "repos_truncated": 0,
         "dependency_unknown": 0,
         "auto_dispatch_open": 0,
         "available_unassigned": 0,
@@ -281,17 +282,18 @@ def _scan_repo(
         return
     aggregate["repos_scanned"] += 1
     if len(issues) > max_issues:
-        aggregate[GH_ERRORS_KEY] += 1
+        aggregate["repos_truncated"] += 1
         issues = issues[:max_issues]
     for issue in issues:
         inconsistent, scan_error = _dependency_diagnostic(slug, issue)
         issue["dependency_inconsistent"] = inconsistent
-        aggregate[GH_ERRORS_KEY] += int(scan_error)
+        # A deadline-limited lookup is missing evidence, not a GitHub failure.
+        within_budget = (
+            dependency_scan.QUERY_DEADLINE is None
+            or time.monotonic() < dependency_scan.QUERY_DEADLINE
+        )
+        aggregate[GH_ERRORS_KEY] += int(scan_error and within_budget)
         aggregate["dependency_unknown"] += int(scan_error)
-        if dependency_scan.QUERY_DEADLINE is None or time.monotonic() < dependency_scan.QUERY_DEADLINE:
-            _count_durable_progress(aggregate, slug, issue, now)
-        else:
-            aggregate["durable_progress_unknown"] += 1
     repo_available = sum(
         int(_count_issue(aggregate, issue, now, old_minutes))
         for issue in issues
@@ -332,7 +334,18 @@ def main() -> int:
     for repo in repos:
         _scan_repo(aggregate, repo, max_issues, now, old_minutes)
 
+    # Optional history must not consume the dependency inventory's budget.
+    for repo in repos:
+        slug = str(repo.get("slug") or "")
+        for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
+            if time.monotonic() < dependency_scan.QUERY_DEADLINE:
+                _count_durable_progress(aggregate, slug, issue, now)
+            else:
+                aggregate["durable_progress_unknown"] += 1
+
     error = "queue_budget_exhausted" if time.monotonic() >= dependency_scan.QUERY_DEADLINE else ""
+    if not error and aggregate["repos_truncated"]:
+        error = "queue_inventory_truncated"
     _emit(aggregate, error=error, scanned_at=now.isoformat())
     return 0
 

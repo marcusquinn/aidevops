@@ -40,6 +40,7 @@ source "${_pulse_dep_graph_dir}/task-identity-lib.sh"
 source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
 DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
+DEP_GRAPH_BLOCKED_BY_VALUE_AWK="${_pulse_dep_graph_dir}/blocked-by-value.awk"
 unset _pulse_dep_graph_dir
 
 #######################################
@@ -50,7 +51,11 @@ unset _pulse_dep_graph_dir
 #   **Blocked by:** `t123`, #4  (brief-template bold field)
 # Fenced code blocks and HTML comments are removed first with the shared
 # brief parser. Prose or inline-code mentions that do not begin the line are
-# ignored. Each matching line is emitted starting at the field label.
+# ignored. Each matching line is emitted starting at the field label, with its
+# value reduced by the shared blocked-by value grammar (GH#33881): negation-led
+# values such as "none (t136 merged)" yield no references, and a leading
+# reference list stops before trailing prose. The output is itself a field
+# line, so re-parsing it is idempotent.
 #
 # Arguments: $1 - issue body
 #######################################
@@ -58,12 +63,20 @@ _blocked_by_structured_lines() {
 	local body="$1"
 	local field_re='^[[:space:]]*([-*+][[:space:]]+)?(\*\*)?blocked[- ]by(\*\*)?[[:space:]]*:'
 	local cleaned="$body"
+	local lines=""
 	if [[ -r "$DEP_GRAPH_BRIEF_PARSER_AWK" ]]; then
 		cleaned=$(printf '%s\n' "$body" | awk -v mode="unfenced" -f "$DEP_GRAPH_BRIEF_PARSER_AWK" |
 			awk -v mode="visible" -f "$DEP_GRAPH_BRIEF_PARSER_AWK")
 	fi
-	printf '%s\n' "$cleaned" | tr -d '\r' | grep -iE "$field_re" |
-		sed -E 's/^[[:space:]]*([-*+][[:space:]]+)?//' || true
+	lines=$(printf '%s\n' "$cleaned" | tr -d '\r' | grep -iE "$field_re" |
+		sed -E 's/^[[:space:]]*([-*+][[:space:]]+)?//' || true)
+	[[ -n "$lines" ]] || return 0
+	# Without the grammar file, keep whole-line extraction (over-parse, fail closed).
+	if [[ -r "$DEP_GRAPH_BLOCKED_BY_VALUE_AWK" ]]; then
+		awk -f "$DEP_GRAPH_BLOCKED_BY_VALUE_AWK" <<<"$lines" || printf '%s\n' "$lines"
+	else
+		printf '%s\n' "$lines"
+	fi
 	return 0
 }
 
