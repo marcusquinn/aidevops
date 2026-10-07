@@ -714,9 +714,31 @@ cmd_list() {
 		fi
 	fi
 
-	if [[ -f "$CREDENTIALS_FILE" ]]; then
-		local cred_keys
-		cred_keys=$(grep "^export " "$CREDENTIALS_FILE" 2>/dev/null | sed 's/=.*//' | sed 's/export //' | sort || true)
+	local credential_file=""
+	local -a credential_names=()
+	while IFS= read -r credential_file; do
+		[[ -z "$credential_file" ]] && continue
+		if [[ -L "$credential_file" ]] || [[ ! -f "$credential_file" ]]; then
+			print_error "Credentials listing source must be a regular non-symlink file" >&2
+			return 1
+		fi
+		local permissions=""
+		permissions=$(_file_perms "$credential_file" 2>/dev/null || true)
+		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
+			print_error "Credentials listing source must be owner-only" >&2
+			return 1
+		fi
+		local line=""
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			if [[ "$line" =~ ^export[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)= ]]; then
+				credential_names+=("${BASH_REMATCH[1]}")
+			fi
+		done <"$credential_file"
+	done < <(resolve_credential_files)
+
+	if [[ ${#credential_names[@]} -gt 0 ]]; then
+		local cred_keys=""
+		cred_keys=$(printf '%s\n' "${credential_names[@]}" | sort -u)
 		if [[ -n "$cred_keys" ]]; then
 			print_info "Secrets in credentials.sh:"
 			echo ""

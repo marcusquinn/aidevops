@@ -107,6 +107,92 @@ EOF
 	return 0
 }
 
+test_list_resolves_tenants_without_reading_values() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir/tenants/first" "$config_dir/tenants/second"
+	cat >"$config_dir/credentials.sh" <<'EOF'
+export AIDEVOPS_ACTIVE_TENANT="first"
+source "$HOME/.config/aidevops/tenants/$AIDEVOPS_ACTIVE_TENANT/credentials.sh"
+touch "$AIDEVOPS_TEST_DIR/loader-sourced"
+EOF
+	cat >"$config_dir/tenants/first/credentials.sh" <<'EOF'
+export TEST_SECRET="tenant-placeholder-value"
+export SHARED_KEY="first-placeholder-value"
+export INVALID-NAME="invalid-placeholder-value"
+export NOT_AN_ASSIGNMENT
+touch "$AIDEVOPS_TEST_DIR/tenant-sourced"
+EOF
+	printf '%s\n' 'export SHARED_KEY="second-placeholder-value"' >"$config_dir/tenants/second/credentials.sh"
+	printf '%s' 'export SECOND_KEY="second-placeholder-value"' >>"$config_dir/tenants/second/credentials.sh"
+	chmod 600 "$config_dir/credentials.sh" "$config_dir/tenants/first/credentials.sh" "$config_dir/tenants/second/credentials.sh"
+	local output="" check_output="" exit_code=0
+	# A locked store makes any accidental decrypt slow/failing, but metadata is available.
+	output=$(AIDEVOPS_TEST_LOCKED=true HOME="$TEST_DIR/home" bash "$HELPER" list 2>&1) || exit_code=$?
+	check_output=$(HOME="$TEST_DIR/home" bash "$HELPER" check TEST_SECRET 2>&1) || exit_code=$?
+	if [[ "$exit_code" -eq 0 && -z "$check_output" &&
+		"$output" == *$'  SECOND_KEY\n  SHARED_KEY\n  TEST_SECRET'* &&
+		"$output" == *"ALPHA_KEY"* && "$output" == *"ZETA_KEY"* &&
+		"$output" != *"placeholder-value"* && "$output" != *"$TEST_DIR"* &&
+		"$output" != *"AIDEVOPS_ACTIVE_TENANT"* && "$output" != *"INVALID-NAME"* &&
+		"$output" != *"NOT_AN_ASSIGNMENT"* && ! -e "$TEST_DIR/loader-sourced" && ! -e "$TEST_DIR/tenant-sourced" ]]; then
+		print_result "list resolves tenant names without sourcing, decrypting, or exposing values" 0
+	else
+		print_result "list resolves tenant names without sourcing, decrypting, or exposing values" 1 "Names-only listing or silent check assertion failed"
+	fi
+	return 0
+}
+
+test_list_preserves_direct_credentials() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir"
+	printf '%s\n' 'export DIRECT_KEY="direct-placeholder-value"' 'export lower_key="lower-placeholder-value"' >"$config_dir/credentials.sh"
+	chmod 600 "$config_dir/credentials.sh"
+	local output=""
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" list)
+	if [[ "$output" == *"  DIRECT_KEY"* && "$output" == *"  lower_key"* &&
+		"$output" == *"ALPHA_KEY"* && "$output" != *"placeholder-value"* ]]; then
+		print_result "list preserves direct-file and gopass names" 0
+	else
+		print_result "list preserves direct-file and gopass names" 1 "Names-only listing assertion failed"
+	fi
+	return 0
+}
+
+test_list_rejects_unsafe_tenant_files() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir/tenants/first"
+	printf '%s\n' 'export AIDEVOPS_ACTIVE_TENANT="first"' >"$config_dir/credentials.sh"
+	printf '%s\n' 'export TEST_SECRET="unsafe-placeholder-value"' >"$config_dir/tenant-target"
+	chmod 600 "$config_dir/credentials.sh" "$config_dir/tenant-target"
+	ln -s "$config_dir/tenant-target" "$config_dir/tenants/first/credentials.sh"
+	local output="" exit_code=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" list 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 && "$output" == *"regular non-symlink file"* &&
+		"$output" != *"TEST_SECRET"* && "$output" != *"$TEST_DIR"* && "$output" != *"placeholder-value"* ]]; then
+		print_result "list rejects symlink tenant credentials without leaking paths or values" 0
+	else
+		print_result "list rejects symlink tenant credentials without leaking paths or values" 1 "Expected sanitized failure"
+	fi
+	rm "$config_dir/tenants/first/credentials.sh"
+	cp "$config_dir/tenant-target" "$config_dir/tenants/first/credentials.sh"
+	chmod 644 "$config_dir/tenants/first/credentials.sh"
+	exit_code=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" list 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 && "$output" == *"owner-only"* &&
+		"$output" != *"TEST_SECRET"* && "$output" != *"$TEST_DIR"* && "$output" != *"placeholder-value"* ]]; then
+		print_result "list rejects non-owner-only tenant credentials" 0
+	else
+		print_result "list rejects non-owner-only tenant credentials" 1 "Expected sanitized failure"
+	fi
+	return 0
+}
+
 test_inventory_is_names_only_deterministic_json() {
 	setup
 	trap 'teardown' RETURN
@@ -661,6 +747,9 @@ main() {
 	test_specific_injection_fails_closed
 	test_empty_fallback_secret_fails_closed
 	test_locked_injection_exits_bounded
+	test_list_resolves_tenants_without_reading_values
+	test_list_preserves_direct_credentials
+	test_list_rejects_unsafe_tenant_files
 	test_inventory_is_names_only_deterministic_json
 	test_inventory_rejects_malformed_gopass_name
 	test_inventory_cleans_up_after_gopass_listing_failure
