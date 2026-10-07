@@ -94,6 +94,18 @@ main() {
 		"$SESSION_DOC" 'capture check accepts stale Git status' || return 1
 	require_literal 'no session-owned repository changes remain uncommitted' \
 		"$SESSION_DOC" 'Ready to close permits uncommitted session-owned changes' || return 1
+	check_link_and_step_rules || return 1
+
+	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
+		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2
+		return 1
+	fi
+
+	printf 'PASS: completion summaries prioritize delivered outcomes over routine cleanup\n'
+	return 0
+}
+
+check_link_and_step_rules() {
 	# GH#33829: asks and delivery reports must link what the user has to inspect.
 	# GH#33867: each link is a bare full URL on its own line, never inline.
 	require_literal 'object URLs on own line' \
@@ -117,13 +129,6 @@ main() {
 		require_literal "$step_rule" "$SESSION_DOC" \
 			"human action steps omit: $step_rule" || return 1
 	done
-
-	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
-		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2
-		return 1
-	fi
-
-	printf 'PASS: completion summaries prioritize delivered outcomes over routine cleanup\n'
 	return 0
 }
 
