@@ -51,6 +51,30 @@ if [[ "$args" == *" workflow run publish-packages.yml "* ]]; then
 	printf '%s\n' "$args" >"${FAKE_DISPATCH_LOG:?}"
 	exit 0
 fi
+if [[ "$args" == *" workflow run postflight.yml "* ]]; then
+	printf '%s\n' "$args" >"${FAKE_POSTFLIGHT_DISPATCH_LOG:?}"
+	exit 0
+fi
+if [[ "$args" == *"/actions/runs/"*"/jobs "* ]]; then
+	deferred_conclusion='skipped'
+	[[ "${FAKE_POSTFLIGHT_DEFERRED:-0}" == "1" ]] && deferred_conclusion='success'
+	jq -cn --arg deferred "$deferred_conclusion" '{total_count:1,jobs:[{name:"Publish GitHub, npm, and Homebrew",
+		status:"completed",conclusion:"success",steps:[
+		{name:"Queue exact-tag postflight",number:1,status:"completed",conclusion:"success"},
+		{name:"Record deferred postflight",number:2,status:"completed",conclusion:$deferred}]}]}'
+	exit 0
+fi
+if [[ "$args" == *"/workflows/postflight.yml/runs "* ]]; then
+	postflight_title='Postflight Verification v1.2.3'
+	[[ "${FAKE_POSTFLIGHT_TITLE_MODE:-exact}" == "other-tag" ]] && postflight_title='Postflight Verification v9.9.9'
+	case "${FAKE_POSTFLIGHT_MODE:-absent}" in
+	absent) printf '%s\n' '{"workflow_runs":[{"id":300,"event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"success","created_at":"2026-07-27T00:05:00Z","display_title":"Postflight Verification v9.9.9"}]}' ;;
+	pending) printf '{"workflow_runs":[{"id":301,"event":"workflow_dispatch","head_branch":"main","status":"in_progress","conclusion":null,"created_at":"2026-07-27T00:05:00Z","display_title":"%s"}]}\n' "$postflight_title" ;;
+	failed) printf '{"workflow_runs":[{"id":302,"event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"failure","created_at":"2026-07-27T00:05:00Z","display_title":"%s"}]}\n' "$postflight_title" ;;
+	success) printf '{"workflow_runs":[{"id":303,"event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"success","created_at":"2026-07-27T00:05:00Z","display_title":"%s"}]}\n' "$postflight_title" ;;
+	esac
+	exit 0
+fi
 if [[ "$args" == *" -f event=push "* ]]; then
 	if [[ "$args" != *" -f head_sha=3333333333333333333333333333333333333333 "* ]]; then
 		printf '%s\n' '{"workflow_runs":[]}'
@@ -259,6 +283,58 @@ if [[ "$dispatch_rc" -ne 8 ]] ||
 	exit 1
 fi
 printf 'PASS recovery dispatch carries the exact tag while run identity records the workflow commit\n'
+
+# Deferred postflight: only terminal success of the exact-tag run publishes.
+FAKE_POSTFLIGHT_DISPATCH_LOG="${TEST_ROOT}/postflight-dispatch.log"
+export FAKE_POSTFLIGHT_DISPATCH_LOG
+postflight_check() {
+	local expected_rc="$1"
+	local label="$2"
+	local actual_rc=0
+	local out="${TEST_ROOT}/postflight-inspect.txt"
+	_full_loop_release_inspect_remote test/repo v1.2.3 >"$out" || actual_rc=$?
+	if [[ "$actual_rc" -ne "$expected_rc" ]]; then
+		printf 'FAIL postflight gate: %s (rc=%s, expected %s)\n' "$label" "$actual_rc" "$expected_rc"
+		exit 1
+	fi
+	if [[ "$expected_rc" -eq 0 ]] && ! grep -qx 'RELEASE_REMOTE_STATE=published' "$out"; then
+		printf 'FAIL postflight gate: %s did not report published\n' "$label"
+		exit 1
+	fi
+	printf 'PASS postflight gate: %s\n' "$label"
+	return 0
+}
+export FAKE_RECOVERY_RUN_MODE=failed
+export FAKE_POSTFLIGHT_DEFERRED=0
+export FAKE_POSTFLIGHT_MODE=absent
+postflight_check 0 'non-deferred publication ignores postflight evidence'
+export FAKE_POSTFLIGHT_DEFERRED=1
+postflight_check 6 'deferred postflight with no exact-tag run is absent'
+export FAKE_POSTFLIGHT_MODE=pending
+postflight_check 8 'pending exact-tag postflight is not success'
+export FAKE_POSTFLIGHT_MODE=failed
+postflight_check 9 'failed exact-tag postflight is not success'
+export FAKE_POSTFLIGHT_MODE=success
+export FAKE_POSTFLIGHT_TITLE_MODE=other-tag
+postflight_check 6 'successful postflight for another tag is ignored'
+export FAKE_POSTFLIGHT_TITLE_MODE=exact
+postflight_check 0 'terminal-success exact-tag postflight publishes'
+export FAKE_POSTFLIGHT_DEFERRED=0
+export FAKE_POSTFLIGHT_MODE=absent
+export FAKE_RECOVERY_RUN_MODE=pending
+
+saved_script_dir="$SCRIPT_DIR"
+SCRIPT_DIR="${TEST_ROOT}/no-audit-helper"
+postflight_dispatch_rc=0
+_full_loop_release_dispatch_postflight test/repo v1.2.3 >/dev/null || postflight_dispatch_rc=$?
+SCRIPT_DIR="$saved_script_dir"
+if [[ "$postflight_dispatch_rc" -ne 8 ]] ||
+	! grep -qF ' workflow run postflight.yml --repo test/repo --ref main -f tag=v1.2.3 ' \
+		"$FAKE_POSTFLIGHT_DISPATCH_LOG"; then
+	printf 'FAIL postflight dispatch did not target the verified exact tag on main\n'
+	exit 1
+fi
+printf 'PASS postflight dispatch is bound to the verified tag without republishing\n'
 
 for schema_mode in empty object malformed malformed-run api-failure; do
 	export FAKE_RUN_SCHEMA_MODE="$schema_mode"

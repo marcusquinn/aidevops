@@ -347,6 +347,21 @@ gates, publication, and deployment health. It does not rerun source lint/securit
 scans already owned by development, CI, and release preflight. See
 `workflows/postflight.md`.
 
+**Postflight quota deferral**: the queue step tries `SYNC_PAT` first, then the job
+token. `SYNC_PAT` must be a fine-grained token with repository **Actions: Read and
+write** on this repository (it is also used for issue-sync); a `Resource not
+accessible by personal access token` 403 raises an annotation naming that
+permission. If both routes fail and the job-token error is an installation API
+rate limit, the job finishes successfully with `postflight_deferred=true`, a
+step-summary line and a `Record deferred postflight` step; every earlier
+verification must already have passed. Other 403 and 5xx errors stay fatal. Run
+`aidevops release reconcile <PR>` after the quota resets: it queues
+`postflight.yml` for the verified exact tag on `main` without republishing, reports
+`POSTFLIGHT_STATUS`, and records the terminal receipt only once the run titled
+`Postflight Verification <tag>` concludes successfully. Pending runs stay queued;
+failed runs fail reconciliation. `aidevops release status <PR>` is read-only and
+never dispatches.
+
 **Follow-up**: Verify artifacts/download links, update docs site, notify stakeholders, close milestone.
 
 ## Rollback
