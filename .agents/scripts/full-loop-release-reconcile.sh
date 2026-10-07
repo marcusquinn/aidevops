@@ -1591,6 +1591,33 @@ _full_loop_release_not_requested_status() {
 	return 0
 }
 
+# Map a non-success remote inspection result to the read-only or dispatching action.
+_full_loop_release_handle_inspect_rc() {
+	local mode="$1"
+	local repo="$2"
+	local tag_name="$3"
+	local inspect_rc="$4"
+	case "$inspect_rc" in
+	8) return 8 ;;
+	1) return 1 ;;
+	"$_FULL_LOOP_RELEASE_POSTFLIGHT_ABSENT_RC")
+		[[ "$mode" != "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]] && return 8
+		_full_loop_release_dispatch_postflight "$repo" "$tag_name"
+		return $?
+		;;
+	"$_FULL_LOOP_RELEASE_POSTFLIGHT_FAILED_RC")
+		printf 'Postflight for %s did not succeed; inspect the Postflight Verification run before reconciling again.\n' "$tag_name" >&2
+		return 1
+		;;
+	3 | 4 | 5)
+		[[ "$mode" == "status" ]] && return "$inspect_rc"
+		_full_loop_release_dispatch_recovery "$repo" "$tag_name"
+		return $?
+		;;
+	*) return 1 ;;
+	esac
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1680,23 +1707,6 @@ _full_loop_release_existing_command() {
 		fi
 		return 0
 	fi
-	case "$inspect_rc" in
-	8) return 8 ;;
-	1) return 1 ;;
-	"$_FULL_LOOP_RELEASE_POSTFLIGHT_ABSENT_RC")
-		[[ "$mode" != "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]] && return 8
-		_full_loop_release_dispatch_postflight "$repo" "$tag_name"
-		return $?
-		;;
-	"$_FULL_LOOP_RELEASE_POSTFLIGHT_FAILED_RC")
-		printf 'Postflight for %s did not succeed; inspect the Postflight Verification run before reconciling again.\n' "$tag_name" >&2
-		return 1
-		;;
-	3 | 4 | 5)
-		[[ "$mode" == "status" ]] && return "$inspect_rc"
-		_full_loop_release_dispatch_recovery "$repo" "$tag_name"
-		return $?
-		;;
-	*) return 1 ;;
-	esac
+	_full_loop_release_handle_inspect_rc "$mode" "$repo" "$tag_name" "$inspect_rc"
+	return $?
 }
