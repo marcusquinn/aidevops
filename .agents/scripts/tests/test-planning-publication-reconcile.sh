@@ -39,6 +39,20 @@ _publication_task_has_dependency "$blocked_task_line"
 [[ -z "$(_publication_status_label "$desired_labels" 1 '{"labels":[{"name":"status:in-progress"}]}')" ]]
 printf 'PASS production helpers project and verify intended labels\n'
 
+# GH#33921: native blockedBy edges (no TODO marker) block; lookup failure fails closed.
+(
+	plain_line='- [ ] t9004 Native blocker #auto-dispatch ~1h ref:GH#81 logged:2026-08-11'
+	gh() { printf '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"state":"OPEN"}],"pageInfo":{"hasNextPage":false}}}}}}\n'; }
+	_publication_task_has_dependency "$plain_line" '{"labels":[]}' example/repo 81
+	gh() { printf '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"state":"CLOSED"}],"pageInfo":{"hasNextPage":false}}}}}}\n'; }
+	if _publication_task_has_dependency "$plain_line" '{"labels":[]}' example/repo 81; then exit 1; fi
+	gh() { return 1; }
+	_publication_task_has_dependency "$plain_line" '{"labels":[]}' example/repo 81
+	gh() { printf 'garbage\n'; }
+	_publication_task_has_dependency "$plain_line" '{"labels":[]}' example/repo 81
+)
+printf 'PASS native blockedBy projects blocked and fails closed\n'
+
 # GH#32904: readiness gates only auto-dispatch projection, before any mutation.
 (
 	_publication_brief_ready() { return 1; }
