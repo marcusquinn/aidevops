@@ -95,12 +95,19 @@ main() {
 	require_literal 'no session-owned repository changes remain uncommitted' \
 		"$SESSION_DOC" 'Ready to close permits uncommitted session-owned changes' || return 1
 	# GH#33829: asks and delivery reports must link what the user has to inspect.
-	require_literal 'objects as clickable URLs' \
-		"$AGENTS_DOC" 'always-loaded What next guidance omits clickable object links' || return 1
+	# GH#33867: each link is a bare full URL on its own line, never inline.
+	require_literal 'object URLs on own line' \
+		"$AGENTS_DOC" 'always-loaded What next guidance omits own-line object links' || return 1
 	require_literal '**Link everything the user must look at.**' \
 		"$SESSION_DOC" 'What next rules do not require clickable links' || return 1
+	require_literal '**One link per line, always.**' \
+		"$SESSION_DOC" 'clickable-link guidance permits inline links' || return 1
 	require_literal "Take URLs from tool output; never guess or hand-build them." \
 		"$SESSION_DOC" 'clickable-link guidance permits guessed URLs' || return 1
+	if grep -Eq -- ' — (https?://|<(full )?URL)' "$SESSION_DOC"; then
+		printf 'FAIL: session guidance still shows a URL inline after a label\n' >&2
+		return 1
+	fi
 	# GH#33834: human-only asks need linked, navigable, rendered steps.
 	require_literal 'human actions as linked steps' \
 		"$AGENTS_DOC" 'always-loaded What next guidance omits human action steps' || return 1

@@ -1575,6 +1575,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18605 fix(pulse): worker draft checkpoints released as clean or worker_complete get no continuation or attention #auto-dispatch #bug tier:thinking ref:GH#33850 -> [todo/tasks/t18605-brief.md] pr:#33854 completed:2026-10-06
 
+- [ ] t18606 Links in chat go on their own line, bare URL, no Markdown link syntax #feat ref:GH#33867
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]

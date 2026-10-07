@@ -13,7 +13,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers). Long-r
 
 - Run `/session-review` before ending.
 - Suggest a new session after PR merge, domain switch, or 3+ hours.
-- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets, and finish with the What Next block below. Each delivery bullet links its evidence (PR, issue, commit, file, preview) per Clickable Evidence Links below.
+- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets, and finish with the What Next block below. Each delivery bullet links its evidence (PR, issue, commit, file, preview) as a bare URL on its own line per Clickable Evidence Links below.
 - Leave linked-worktree removal and other deferred cleanup to the guarded post-exit routines. Do not attempt that cleanup, and never turn it into a user task: a guarded-removal refusal or a command-policy block on deletion is not a reason to ask the user to clean up.
 - If cleanup is worth mentioning, use one closing line that explains what happens and makes clear nothing is needed, for example: `Cleanup: the worktree is removed automatically by a routine after this session closes; no action needed.` Omit lifecycle tokens, marker files, and retention details.
 - Present cleanup as a user action only for failures that require it or that put unpublished work at risk; then state the evidence and the exact action.
@@ -30,15 +30,20 @@ screen alone. Headless workers skip it.
 **What next**
 - **Session:** <aim in plain words, ≤15> — <Active | Blocked | Done>
 - **Needed from you:** <None | numbered asks below>
-  1. **<yes/no question about a named object>?** — <URL of that object>
+  1. **<yes/no question about a named object>?**
+     - <full URL of that object, alone on its line>
      - **y** = <effect> · n = <effect>
-  2. **<choice question>?** — <URL of what to review>
+  2. **<choice question>?**
+     - <full URL of what to review>
      - **a)** <option> · b) <option> · c) <option>
   3. **<human-only action or value only you know>** (explicit)
      - **Steps:** numbered sub-list per Human Action Steps below
      - reply `3 done` or `3: <value>`
-- **Left to capture:** <None | uncaptured work, its exact location (linked), and why it remains>
-- **Close:** <Ready to close — start `/new` for your next task | Not yet: <reason> | Blocked on #N <URL>; resume via #R <URL>>
+- **Left to capture:** <None | uncaptured work, its exact location, and why it remains>
+  - <full URL or absolute path of that location>
+- **Close:** <Ready to close — start `/new` for your next task | Not yet: <reason> | Blocked on #N; resume via #R>
+  - <full URL of #N>
+  - <full URL of #R>
 - **Reply:** e.g. `1y 2b 3: <value>` · `ok` = all bold defaults · or plain text
 ```
 
@@ -60,7 +65,8 @@ Rules:
 - **Link everything the user must look at.** Every ask, and every PR, issue,
   commit, file, preview or dashboard cited as done, blocked or uncaptured,
   carries a clickable link so the user can inspect and answer without asking
-  for links, recalling the session or searching. See Clickable Evidence Links.
+  for links, recalling the session or searching. Each link is a bare full URL
+  on its own line. See Clickable Evidence Links.
 - **Check live Git state before writing `None`** under Left to capture or
   Close; see Capture Check step 2.
 - **Close is a recommendation, never an ask.** Starting `/new` is the user's
@@ -113,7 +119,8 @@ Example (work merged; only a publication decision remains):
 **What next**
 - **Session:** add CSV export to reports — Done
 - **Needed from you:**
-  1. **Publish a patch release containing PR #123?** (explicit, optional) — https://github.com/<owner>/<repo>/pull/123
+  1. **Publish a patch release containing PR #123?** (explicit, optional)
+     - https://github.com/<owner>/<repo>/pull/123
      - y = release now · no reply = ships with the next release
 - **Left to capture:** None
 - **Close:** Ready to close — start `/new` for your next task
@@ -155,23 +162,34 @@ Example (work merged; only a publication decision remains):
 Asks and delivery reports must let the user open what they need to judge in one
 click, so they never spend a turn asking for links or searching.
 
-- **Visible full URLs in terminals.** Terminal runtimes do not autolink `#123`
-  or repo-relative paths and may not render Markdown links. Print the label,
-  then the full URL as visible text:
-  `PR #123 — https://github.com/<owner>/<repo>/pull/123`. Use Markdown link
-  syntax only where it renders (GitHub comments, web UIs).
+- **One link per line, always.** In chat, every link is a bare full URL alone
+  on its own line, so it stands out in the transcript and copies cleanly.
+  Name the object (`PR #123`) on the line above; inside a list, put the URL in
+  its own nested list item so renderers keep the line break:
+
+  ```markdown
+  - Merged PR #123 (CSV export)
+    - https://github.com/<owner>/<repo>/pull/123
+  ```
+
+  Never use Markdown link syntax (`[label](url)`), code spans, angle brackets,
+  a label or dash before the URL, trailing punctuation after it, or two URLs
+  on one line. Terminals do not autolink `#123` or repo-relative paths, so
+  always print the full URL. GitHub comments and web UIs, where Markdown
+  renders, may use link syntax.
 - **Take URLs from tool output; never guess or hand-build them.** Reuse URLs
   already in context (wrapper or `gh pr create` output); otherwise fetch them:
   `gh pr view <N> --repo <owner>/<repo> --json url -q .url`, `gh issue view`
   likewise, `gh run view <id> --json url -q .url` for CI, and
   `gh browse --no-browser --repo <owner>/<repo> --commit=<sha> <path>:<line>`
   for a pushed file at the reviewed version (`--commit` needs the `=` form).
-- **Local work.** Uncommitted or unpushed files: absolute `path:line` (terminals
-  and editors open it on click), never a repo-relative path alone. Local
-  previews: the `localhost`/`.local` URL printed by the dev server or helper.
-- **Link the exact thing.** Put each link on the ask or bullet that needs it,
-  pointing at the specific diff, line, comment, check run or preview the
-  decision depends on; no separate link dump at the end.
+- **Local work.** Uncommitted or unpushed files: absolute `path:line` on its own
+  line, like a URL (terminals and editors open it on click), never a
+  repo-relative path alone. Local previews: the `localhost`/`.local` URL
+  printed by the dev server or helper.
+- **Link the exact thing.** Put each link directly under the ask or bullet
+  that needs it, pointing at the specific diff, line, comment, check run or
+  preview the decision depends on; no separate link dump at the end.
 - **No URL available** (offline, no access): say so and give the exact
   identifier plus the command that resolves it; never fabricate a link.
 - Private repository URLs are fine in local chat; keep them out of public
@@ -186,7 +204,8 @@ can follow them without knowing where the setting lives:
 ```markdown
   2. **Add the `DEPLOY_TOKEN` secret for <owner>/<repo>?** (explicit)
      - **Steps:**
-       1. Open <deepest verified URL>
+       1. Open the repository:
+          - <deepest verified URL, alone on its line>
        2. Go to **Settings › Secrets and variables › Actions**
        3. Click **New repository secret**; name `DEPLOY_TOKEN`; paste the token
        4. Click **Add secret**
@@ -202,9 +221,10 @@ can follow them without knowing where the setting lives:
   menu, tab and button labels (**Settings › Billing › Payment methods**).
   Name the account, org, project or environment when there is more than one.
 - **Markdown that stands out in the TUI:** bold for UI labels and buttons,
-  code spans for values to type or paste, commands, names and file paths;
-  nested numbered lists for steps. No tables or headings inside the What next
-  block; they break the list.
+  code spans for values to type or paste, commands and names; nested numbered
+  lists for steps; URLs and absolute paths bare on their own line, never in
+  code spans or link syntax. No tables or headings inside the What next block;
+  they break the list.
 - **Never put secrets in steps.** Name where to obtain the value and where to
   store it (`aidevops secret set NAME` in a separate terminal); never ask the
   user to paste it into chat. See `reference/secret-handling.md`.
