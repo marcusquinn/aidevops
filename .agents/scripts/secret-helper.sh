@@ -729,11 +729,17 @@ cmd_list() {
 			return 1
 		fi
 		local line=""
-		while IFS= read -r line || [[ -n "$line" ]]; do
-			if [[ "$line" =~ ^export[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)= ]]; then
-				credential_names+="${BASH_REMATCH[1]}"$'\n'
-			fi
-		done <"$credential_file"
+		# Suppress shell redirection diagnostics: unreadable paths are private too.
+		if ! {
+			while IFS= read -r line || [[ -n "$line" ]]; do
+				if [[ "$line" =~ ^export[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)= ]]; then
+					credential_names+="${BASH_REMATCH[1]}"$'\n'
+				fi
+			done <"$credential_file"
+		} 2>/dev/null; then
+			print_error "Unable to read credentials listing source" >&2
+			return 1
+		fi
 	done < <(resolve_credential_files)
 
 	if [[ -n "$credential_names" ]]; then

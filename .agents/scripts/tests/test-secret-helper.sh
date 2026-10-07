@@ -192,6 +192,18 @@ test_list_rejects_unsafe_tenant_files() {
 	else
 		print_result "list rejects non-owner-only tenant credentials" 1 "Expected sanitized failure"
 	fi
+	# Root can read mode-000 files; exercise the denial only when it is effective.
+	chmod 000 "$config_dir/tenants/first/credentials.sh"
+	if [[ ! -r "$config_dir/tenants/first/credentials.sh" ]]; then
+		exit_code=0
+		output=$(HOME="$TEST_DIR/home" bash "$HELPER" list 2>&1) || exit_code=$?
+		if [[ "$exit_code" -ne 0 && "$output" == *"Unable to read credentials listing source"* &&
+			"$output" != *"TEST_SECRET"* && "$output" != *"$TEST_DIR"* && "$output" != *"placeholder-value"* ]]; then
+			print_result "list sanitizes unreadable tenant credential errors" 0
+		else
+			print_result "list sanitizes unreadable tenant credential errors" 1 "Expected sanitized read failure"
+		fi
+	fi
 	return 0
 }
 
