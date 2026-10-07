@@ -1014,6 +1014,21 @@ cmp -s "$handoff_receipt" "${ROOT}/handoff-receipt-valid.json"
 cmp -s "${ROOT}/handoff-state/full-loop.state" "${ROOT}/handoff-state-valid"
 printf 'PASS repeated terminal status reads are stable and side-effect free\n'
 
+jq '.executor_completion_state = "FINALIZATION_PENDING"' "$handoff_receipt" >"${handoff_receipt}.tmp"
+mv "${handoff_receipt}.tmp" "$handoff_receipt"
+cp "$handoff_receipt" "${ROOT}/handoff-receipt-pending.json"
+pending_status=$(AIDEVOPS_FULL_LOOP_REPO=testorg/repo AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" bash "$status_runner")
+printf '%s' "$pending_status" | jq -e \
+	'.executor_completion_state == "FINALIZATION_PENDING"
+	and .executor_status != "complete"
+	and .resource_cleanup_state == "CLEANUP_DEFERRED"
+	and .next_action == "complete"
+	and .phase_is_historical == false' >/dev/null
+cmp -s "$handoff_receipt" "${ROOT}/handoff-receipt-pending.json"
+cmp -s "${ROOT}/handoff-state/full-loop.state" "${ROOT}/handoff-state-valid"
+cp "${ROOT}/handoff-receipt-valid.json" "$handoff_receipt"
+printf 'PASS pending finalization status directs to complete without mutating receipt or lifecycle state\n'
+
 mkdir -p "${ROOT}/failing-gh"
 cat >"${ROOT}/failing-gh/gh" <<'GH'
 #!/usr/bin/env bash

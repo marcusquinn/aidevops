@@ -504,6 +504,8 @@ cmd_status() {
 			"$_FULL_LOOP_CLEANUP_CLEANED") status_next_action="none" ;;
 			*) status_next_action="await-resource-cleanup" ;;
 			esac
+		elif [[ "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_FINALIZATION_PENDING" ]]; then
+			status_next_action="complete"
 		fi
 	fi
 	if [[ "${1:-}" == "--json" ]]; then

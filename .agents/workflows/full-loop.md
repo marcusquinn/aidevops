@@ -75,7 +75,7 @@ For a maintained non-aidevops repo, resolve the synchronization branch from the 
 | 6 | Maintained non-aidevops only — audited local PR-base fast-forward | `LOCAL_BASE_SYNCED` |
 | 7 | Authorized aidevops release/postflight/deploy only | `release:published` or `release:failed` |
 | 8 | Managed closing comments or external upstream hand-off | |
-| 9 | Persist external cleanup receipt and transfer ownership | `FULL_LOOP_CLEANUP_DEFERRED` |
+| 9 | Finalize with `full-loop-helper.sh complete`, persist external cleanup receipt and transfer ownership | `FULL_LOOP_CLEANUP_DEFERRED` |
 | 10 | Supervisor cleanup after owner exit | `FULL_LOOP_COMPLETE` |
 
 ---
@@ -304,6 +304,11 @@ release-verify.yml`. Inclusion requires the published source receipt, re-verifie
 its exact tag/workflow, and checks feature ancestry before recording linked
 `release:superseded` evidence. This never relaxes the source PR's exact-tag rule.
 See `workflows/release.md` → Manual Release for assets and optional preflight.
+
+Loops with local lifecycle state finalize with `full-loop-helper.sh complete`
+after terminal release evidence (`published`, `superseded`, or recorded
+`not-requested`); while a matching receipt remains `FINALIZATION_PENDING`,
+`status --json` reports `next_action: complete` until executor finalization.
 
 Direct merge-wrapper flows without local lifecycle state use
 `full-loop-helper.sh finalize-receipt <PR> [REPO]` after terminal release evidence
