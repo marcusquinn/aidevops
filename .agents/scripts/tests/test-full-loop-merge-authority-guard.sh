@@ -9,6 +9,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MERGE_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge.sh"
+# shellcheck source=../full-loop-helper-subject.sh
+source "${SCRIPT_DIR}/../full-loop-helper-subject.sh"
 # Authority gates moved from full-loop-helper-merge.sh to this module (GH#30748).
 MERGE_AUTHORITY_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-authority.sh"
 READINESS_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-readiness.sh"
@@ -62,7 +64,7 @@ extract_function() {
       index($0, fn "() {") == 1 { capture = 1 }
       capture { print }
       capture && $0 == "}" { exit }
-    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" >>"$EXTRACTED"
+    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" "${SCRIPT_DIR}/../full-loop-helper.sh" "${SCRIPT_DIR}/../full-loop-helper-commit.sh" >>"$EXTRACTED"
 	return 0
 }
 
@@ -95,6 +97,10 @@ load_functions() {
 	extract_function _merge_rest_fallback
 	extract_function _merge_revalidate_transport_authority
 	extract_function _merge_execute
+	extract_function cmd_commit_and_pr
+	extract_function _parse_commit_and_pr_args
+	extract_function _compose_pr_title
+	extract_function _derive_pr_title_prefix
 	extract_readiness_function cmd_pre_merge_gate
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
@@ -794,8 +800,61 @@ test_all_merge_modes_use_guard() {
 	return 0
 }
 
+# The producer and consumer must reject the same titles (GH#33949).
+test_squash_subject_contract() (
+	local title="" actual_rc=0
+	local reached_input_validation=0
+	_validate_commit_and_pr_inputs() {
+		reached_input_validation=1
+		# Stop the real command before repository/commit/push mutations.
+		return 1
+	}
+	for title in 'GH#1 GH#2: x' 'GH#1: fix: x' ''; do
+		reached_input_validation=0
+		actual_rc=0
+		cmd_commit_and_pr --issue 1 --message 'fix: x' --title "$title" >/dev/null 2>&1 || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 &&
+			( "$title" == 'GH#1 GH#2: x' && "$reached_input_validation" -eq 0 ||
+				"$title" != 'GH#1 GH#2: x' && "$reached_input_validation" -eq 1 ) ]]; then
+			print_result "commit-and-pr validates explicit/default title before mutations" 0
+		else
+			print_result "commit-and-pr validates explicit/default title before mutations" 1
+		fi
+	done
+	for title in 'GH#1: fix: x' 't123: prose title' 'fix: x' 'fix(scope)!: x' 'plan: x'; do
+		actual_rc=0
+		_full_loop_valid_squash_subject "$title" || actual_rc=$?
+		print_result "shared subject accepts ${title}" "$actual_rc"
+	done
+	for title in 'GH#1 GH#2: x' 'GH#1: WIP: x' 'GH#1:   wip(x)' 'wip: x' 'fix: ' $'fix: x\ny' $'fix: x\ry'; do
+		actual_rc=0
+		_full_loop_valid_squash_subject "$title" || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 ]]; then
+			print_result "shared subject rejects invalid title" 0
+		else
+			print_result "shared subject rejects invalid title" 1
+		fi
+	done
+	# Simulate a GitHub retitle after creation, using the real merge resolver.
+	_flm_gh_read() {
+		jq -n --arg title "$title" '{title: $title, commits: []}'
+		return 0
+	}
+	title='GH#1 GH#2: x'
+	actual_rc=0
+	_merge_resolve_squash_subject 900 owner/repo >/dev/null 2>&1 || actual_rc=$?
+	if [[ "$actual_rc" -eq 1 ]]; then
+		print_result "merge rejects invalid live GitHub retitle" 0
+	else
+		print_result "merge rejects invalid live GitHub retitle" 1
+	fi
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
+
 main() {
 	load_functions
+	test_squash_subject_contract || return 1
 	test_slow_gate_admission_reads
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
