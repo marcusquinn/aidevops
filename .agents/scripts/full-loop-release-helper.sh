@@ -598,7 +598,7 @@ _full_loop_release_existing_with_lane() {
 	2) ;;
 	*)
 		printf 'Cannot verify repository release lane\n' >&2
-		return 1
+		return "$lane_read_rc"
 		;;
 	esac
 	if [[ "$release_type" == "$_FULL_LOOP_RELEASE_ACTION_RECONCILE" &&
@@ -673,7 +673,7 @@ _full_loop_release_guard_competing_lane() {
 	case "$lane_read_rc" in
 	2) return 0 ;;
 	0) ;;
-	*) return 1 ;;
+	*) return "$lane_read_rc" ;;
 	esac
 	if jq -e --argjson source_pr "$source_pr" '.active == true and .source_pr != $source_pr' \
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
