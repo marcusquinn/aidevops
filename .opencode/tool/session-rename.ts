@@ -110,7 +110,7 @@ function syncSessionWithBranch(
 // compact without dropping title rules (GH#32592).
 export default tool({
   description:
-    "Set or extend the session title. The first meaningful purpose stays as the stable prefix; later phases append '— Current: ...'. Skip renames for transient state (branch, phase, review, release) when the title already identifies the session. Keep issue/PR identity first. Long titles are fine; the AIDevOps version suffix is automatic.",
+    "Set or extend the session title. The first meaningful purpose stays as the stable prefix; later phases append '— Current: ...'. Skip renames for transient state (branch, phase, review, release) when the title already identifies the session. Keep issue/PR identity first. Long titles are fine.",
   args: {
     title: tool.schema
       .string()

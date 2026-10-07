@@ -522,6 +522,51 @@ _setup_opencode_plugins_register_file_url() {
 	return 0
 }
 
+_setup_opencode_v1_register_tui_plugin() {
+	# OpenCode 1.x loads TUI plugins from tui.json, not opencode.json. Register
+	# the aidevops TUI entry and disable the built-ins it replaces (MCP sidebar
+	# section that starts collapsed; sidebar footer with the AIDevOps version).
+	# Existing plugin_enabled values win so a user override is never reverted.
+	local opencode_config_dir="$1"
+	local tui_entrypoint="$2"
+	local tui_config="${opencode_config_dir}/tui.json"
+	local plugin_url="file://${tui_entrypoint}"
+	local tmp_config=""
+
+	[[ -f "$tui_entrypoint" ]] || return 0
+	if ! command -v jq &>/dev/null; then
+		print_info "jq not installed — cannot register the aidevops OpenCode TUI plugin"
+		return 0
+	fi
+	if [[ ! -e "$tui_config" && -e "${opencode_config_dir}/tui.jsonc" ]]; then
+		print_info "tui.jsonc found — add the aidevops TUI plugin manually: $plugin_url"
+		return 0
+	fi
+	mkdir -p "$opencode_config_dir" || return 0
+	[[ -e "$tui_config" ]] || printf '{}\n' >"$tui_config" || return 0
+
+	tmp_config="${tui_config}.tmp.$$"
+	if ! jq --arg url "$plugin_url" \
+		'.plugin = (((.plugin // [])
+			| map(select((type != "string") or (contains("/plugins/opencode-aidevops/") | not))))
+			+ [$url])
+		| .plugin_enabled = ({"internal:sidebar-mcp": false, "internal:sidebar-footer": false}
+			+ (.plugin_enabled // {}))' \
+		"$tui_config" >"$tmp_config" 2>/dev/null; then
+		rm -f "$tmp_config"
+		print_warning "Failed to register the aidevops TUI plugin (file: $tui_config)"
+		return 0
+	fi
+	if cmp -s "$tmp_config" "$tui_config"; then
+		rm -f "$tmp_config"
+		print_success "aidevops TUI plugin already registered in tui.json"
+		return 0
+	fi
+	mv "$tmp_config" "$tui_config"
+	print_success "aidevops TUI plugin registered in tui.json"
+	return 0
+}
+
 _setup_opencode_plugins_register_symlink() {
 	# Mechanism 2: symlink in ~/.config/opencode/plugins/ (belt-and-suspenders).
 	local plugins_dir="$1"
@@ -798,6 +843,8 @@ setup_opencode_plugins() {
 	# loads the V1 entry; remove it so a redeploy repairs GH#32738 residue.
 	if [[ "$profile" == "v2" ]]; then
 		_setup_opencode_plugins_remove_managed_symlink "$plugins_dir/opencode-aidevops"
+	else
+		_setup_opencode_v1_register_tui_plugin "$opencode_config_dir" "$aidevops_plugin_src/v1-tui/tui.tsx"
 	fi
 
 	setup_track_configured "OpenCode plugins"
