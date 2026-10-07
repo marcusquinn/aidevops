@@ -77,6 +77,104 @@ WRAPPER_EOF
 	return 0
 }
 
+# Fixture remotes are local paths, which never consult credential helpers. The
+# probe replays the HTTPS credential exchange (fill, then approve) with the
+# exact config and environment the guard gives its fetch, then runs the real
+# fetch. A fake global helper stands in for osxkeychain; system config is
+# excluded so a regression fails the test instead of opening a Keychain
+# dialog (GH#33904).
+test_prospective_todo_fetch_credential_routing() {
+	local fixture_dir="" fixture_root="${TEST_ROOT}/prospective-crisscross"
+	local base_sha="" head_sha="" remote_url="" output="" rc=0
+	local auth_root="${TEST_ROOT}/prospective-auth" probe="" inherited_log="" gh_log=""
+	if [[ -f "${fixture_root}/base.sha" ]]; then
+		fixture_dir="${fixture_root}/caller"
+	else
+		fixture_dir=$(create_prospective_crisscross_fixture) || {
+			print_result "prospective TODO: credential routing fixture" 1
+			return 0
+		}
+	fi
+	base_sha=$(<"${fixture_root}/base.sha")
+	head_sha=$(<"${fixture_root}/head.sha")
+	remote_url=$(<"${fixture_root}/remote.url")
+	inherited_log="${auth_root}/inherited.log"
+	gh_log="${auth_root}/gh.log"
+	mkdir -p "${auth_root}/bin" "${fixture_dir}/attacker-home" || return 0
+	cat >"${auth_root}/inherited-helper" <<HELPER_EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>'${inherited_log}'
+printf 'username=inherited\npassword=inherited-synthetic\n'
+HELPER_EOF
+	cat >"${auth_root}/bin/gh" <<GH_EOF
+#!/usr/bin/env bash
+[[ "\${1:-} \${2:-}" == "auth git-credential" ]] || exit 1
+printf '%s\n' "\${3:-}" >>'${gh_log}'
+cat >/dev/null
+[[ "\${3:-}" == "get" && -z "\${AIDEVOPS_TEST_GH_NO_TOKEN:-}" ]] || exit 0
+printf 'username=x-access-token\npassword=managed-synthetic\n'
+GH_EOF
+	probe="${auth_root}/credential-probe-git"
+	cat >"$probe" <<'PROBE_EOF'
+#!/usr/bin/env bash
+config_args=() prev="" arg="" subcommand="" credential=""
+for arg in "$@"; do
+	if [[ "$prev" == "-c" ]]; then
+		config_args+=(-c "$arg")
+	elif [[ -z "$subcommand" && "$prev" != "-C" && "$arg" != -* ]]; then
+		subcommand="$arg"
+	fi
+	prev="$arg"
+done
+if [[ "$subcommand" == "fetch" ]]; then
+	[[ "${GIT_TERMINAL_PROMPT:-}" == "0" && -z "${GIT_ASKPASS:-}" ]] || {
+		printf 'fatal: fetch environment allows interactive prompts\n' >&2
+		exit 128
+	}
+	request=$'protocol=https\nhost=github.com\npath=testorg/testrepo.git\n\n'
+	# Never reach a real OS keyring, even when the code under test regresses:
+	# the fake global helper is the only inherited helper in scope.
+	credential=$(env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
+		/usr/bin/git "${config_args[@]}" credential fill <<<"$request") || exit 128
+	env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
+		/usr/bin/git "${config_args[@]}" credential approve <<<"${credential}"$'\n' || exit 128
+fi
+exec /usr/bin/git "$@"
+PROBE_EOF
+	chmod +x "${auth_root}/inherited-helper" "${auth_root}/bin/gh" "$probe" || return 0
+	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global credential.helper \
+		"${auth_root}/inherited-helper" || return 0
+	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global \
+		credential.https://github.com.helper "${auth_root}/inherited-helper" || return 0
+	: >"$inherited_log"
+	: >"$gh_log"
+	output=$(GIT_ASKPASS=/bin/echo \
+		AIDEVOPS_TEST_GUARD_PATH="${auth_root}/bin:${TEST_ROOT}/bin:${SCRIPT_DIR}/..:/usr/bin:/bin:${PATH}" \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" \
+		'testorg/testrepo' "$fixture_dir" "$probe") || rc=$?
+	print_result "prospective TODO: fetch authenticates through gh, never an inherited helper (GH#33904)" \
+		"$([[ "$rc" -eq 0 && ! -s "$inherited_log" && "$(<"$gh_log")" == *get*store* ]] && printf '0' || printf '1')" \
+		"rc=$rc inherited=$(<"$inherited_log") gh=$(<"$gh_log") output=$output"
+
+	rc=0
+	: >"$inherited_log"
+	output=$(AIDEVOPS_TEST_GH_NO_TOKEN=1 \
+		AIDEVOPS_TEST_GUARD_PATH="${auth_root}/bin:${TEST_ROOT}/bin:${SCRIPT_DIR}/..:/usr/bin:/bin:${PATH}" \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" \
+		'testorg/testrepo' "$fixture_dir" "$probe") || rc=$?
+	print_result "prospective TODO: missing managed credential fails promptly with redacted guidance (GH#33904)" \
+		"$([[ "$rc" -ne 0 && ! -s "$inherited_log" && "$output" == *"gh auth status"* &&
+			"$output" != *synthetic* ]] && printf '0' || printf '1')" \
+		"rc=$rc inherited=$(<"$inherited_log") output=$output"
+	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global --unset-all credential.helper || true
+	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global --unset-all \
+		credential.https://github.com.helper || true
+	rc=0
+	prospective_contexts_clean "$fixture_dir" || rc=$?
+	print_result "prospective TODO: credential routing checks clean isolated contexts" "$rc"
+	return 0
+}
+
 # shellcheck source=./test-full-loop-merge-cases.sh
 # shellcheck disable=SC1091  # Sibling test module resolved at runtime.
 source "${SCRIPT_DIR}/test-full-loop-merge-cases.sh"
@@ -135,6 +233,7 @@ main() {
 	test_prospective_todo_live_fetch_guard
 	test_prospective_todo_crisscross_fetch_guard
 	test_prospective_todo_pre_lazy_fetch_env_git
+	test_prospective_todo_fetch_credential_routing
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
