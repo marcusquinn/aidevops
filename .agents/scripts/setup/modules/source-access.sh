@@ -22,8 +22,41 @@ _SOURCE_ACCESS_RELEASE_SIGNER_KEYS=(
 	"$_SOURCE_ACCESS_HISTORICAL_RELEASE_SIGNER_KEY"
 )
 
+# Self-contained because this setup module is verified as signed release bytes.
+# Never consult caller PATH or native-tool overrides before privileged execution.
+_source_access_system_path() {
+	local tool="$1"
+	local directory=""
+	[[ "$tool" =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
+	for directory in /usr/bin /bin /run/wrappers/bin /run/current-system/sw/bin; do
+		if [[ -f "${directory}/${tool}" && -x "${directory}/${tool}" ]]; then
+			printf '%s' "${directory}/${tool}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+_source_access_system() {
+	local tool="$1"
+	local executable=""
+	shift
+	executable=$(_source_access_system_path "$tool") || return 1
+	"$executable" "$@"
+	return $?
+}
+
+_source_access_privileged_system() {
+	local tool="$1"
+	local executable=""
+	shift
+	executable=$(_source_access_system_path "$tool") || return 1
+	_source_access_privileged "$executable" "$@"
+	return $?
+}
+
 _source_access_git() {
-	GIT_NO_REPLACE_OBJECTS=1 /usr/bin/git "$@"
+	GIT_NO_REPLACE_OBJECTS=1 _source_access_system git "$@"
 	return $?
 }
 
@@ -33,27 +66,29 @@ _source_access_verify_release_tag() {
 	local allowed_signers=""
 	local verification_rc=0
 	local signer_key=""
+	local ssh_keygen=""
 
-	allowed_signers=$(/usr/bin/mktemp "${TMPDIR:-/tmp}/aidevops-source-access-signers.XXXXXX") || return 1
+	ssh_keygen=$(_source_access_system_path ssh-keygen) || return 1
+	allowed_signers=$(_source_access_system mktemp "${TMPDIR:-/tmp}/aidevops-source-access-signers.XXXXXX") || return 1
 	: >"$allowed_signers" || return 1
 	for signer_key in "${_SOURCE_ACCESS_RELEASE_SIGNER_KEYS[@]}"; do
 		if ! printf '%s %s\n' \
 			"$_SOURCE_ACCESS_RELEASE_SIGNER_IDENTITY" \
 			"$signer_key" >>"$allowed_signers"; then
-			/bin/rm -f "$allowed_signers"
+			_source_access_system rm -f "$allowed_signers"
 			return 1
 		fi
 	done
-	/bin/chmod 0600 "$allowed_signers" || {
-		/bin/rm -f "$allowed_signers"
+	_source_access_system chmod 0600 "$allowed_signers" || {
+		_source_access_system rm -f "$allowed_signers"
 		return 1
 	}
 	_source_access_git -C "$repo_root" \
 		-c gpg.format=ssh \
 		-c gpg.ssh.allowedSignersFile="$allowed_signers" \
-		-c gpg.ssh.program=/usr/bin/ssh-keygen \
+		-c "gpg.ssh.program=${ssh_keygen}" \
 		verify-tag "$tag_object" >/dev/null 2>&1 || verification_rc=$?
-	/bin/rm -f "$allowed_signers"
+	_source_access_system rm -f "$allowed_signers"
 	[[ "$verification_rc" -eq 0 ]] || return 1
 	return 0
 }
@@ -64,6 +99,7 @@ _source_access_ensure_release_tag() {
 	local tag_ref=""
 	local current_branch=""
 	local recovery_helper="${repo_root}/.agents/scripts/canonical-recovery-helper.sh"
+	local git_bin=""
 
 	[[ -r "$repo_root/VERSION" ]] || return 1
 	IFS= read -r version <"$repo_root/VERSION" || return 1
@@ -75,7 +111,8 @@ _source_access_ensure_release_tag() {
 	[[ -f "$recovery_helper" ]] || return 1
 	current_branch=$(_source_access_git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
 	[[ -n "$current_branch" ]] || return 1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$recovery_helper" fast-forward-current \
+	git_bin=$(_source_access_system_path git) || return 1
+	AIDEVOPS_REAL_GIT_BIN="$git_bin" _source_access_system bash "$recovery_helper" fast-forward-current \
 		--repo "$repo_root" --branch "$current_branch" --reason aidevops-update \
 		--confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null || return 1
 	_source_access_git -C "$repo_root" show-ref --verify --quiet "$tag_ref"
@@ -121,7 +158,7 @@ _source_access_file_matches() {
 
 	[[ -f "$installed_path" && ! -L "$installed_path" ]] || return 1
 	if _source_access_git -C "$repo_root" show "${tag_commit}:${source_path}" 2>/dev/null |
-		/usr/bin/cmp -s - "$installed_path"; then
+		_source_access_system cmp -s - "$installed_path"; then
 		return 0
 	fi
 	return 1
@@ -140,10 +177,11 @@ _source_access_path_identity() {
 	local path="$1"
 	local identity=""
 
-	identity=$(/usr/bin/stat -f '%u:%Lp' "$path" 2>/dev/null) || identity=""
-	if [[ -z "$identity" ]]; then
-		identity=$(/usr/bin/stat -c '%u:%a' "$path" 2>/dev/null) || return 1
-	fi
+	# Keep this signed module standalone; isolated system Python is already a
+	# broker prerequisite and provides portable metadata without unsigned sources.
+	identity=$(_source_access_system python3 -I -c \
+		'import os,sys; info=os.lstat(sys.argv[1]); print(f"{info.st_uid}:{info.st_mode & 0o7777:o}")' \
+		"$path" 2>/dev/null) || return 1
 	printf '%s\n' "$identity"
 	return 0
 }
@@ -255,21 +293,21 @@ _source_access_install_target_safe() {
 }
 
 _source_access_acquire_privilege() {
-	[[ -x /usr/bin/sudo ]] || return 1
+	_source_access_system_path sudo >/dev/null || return 1
 	[[ "${AIDEVOPS_SOURCE_ACCESS_INTERACTIVE:-false}" == "true" && -t 0 ]] || return 2
 	print_info "Source-access broker provisioning requires one sudo confirmation"
-	/usr/bin/sudo -k
-	/usr/bin/sudo -v || return 1
+	_source_access_system sudo -k
+	_source_access_system sudo -v || return 1
 	return 0
 }
 
 _source_access_privileged() {
-	/usr/bin/sudo -n "$@"
+	_source_access_system sudo -n "$@"
 	return $?
 }
 
 _source_access_release_privilege() {
-	/usr/bin/sudo -k >/dev/null 2>&1 || true
+	_source_access_system sudo -k >/dev/null 2>&1 || true
 	return 0
 }
 
@@ -278,11 +316,11 @@ _source_access_cleanup_staging() {
 	local helper_stage="$2"
 
 	if [[ -n "$core_stage" && -n "$helper_stage" ]]; then
-		_source_access_privileged /bin/rm -f -- "$core_stage" "$helper_stage" >/dev/null 2>&1 || true
+		_source_access_privileged_system rm -f -- "$core_stage" "$helper_stage" >/dev/null 2>&1 || true
 	elif [[ -n "$core_stage" ]]; then
-		_source_access_privileged /bin/rm -f -- "$core_stage" >/dev/null 2>&1 || true
+		_source_access_privileged_system rm -f -- "$core_stage" >/dev/null 2>&1 || true
 	elif [[ -n "$helper_stage" ]]; then
-		_source_access_privileged /bin/rm -f -- "$helper_stage" >/dev/null 2>&1 || true
+		_source_access_privileged_system rm -f -- "$helper_stage" >/dev/null 2>&1 || true
 	fi
 	return 0
 }
@@ -293,7 +331,7 @@ _source_access_fetch_file() {
 	local destination="$3"
 	local source_url="${_SOURCE_ACCESS_RAW_BASE}/${tag_commit}/${source_path}"
 
-	_source_access_privileged /usr/bin/curl --disable --fail --location --silent --show-error \
+	_source_access_privileged_system curl --disable --fail --location --silent --show-error \
 		--proto '=https' --proto-redir '=https' --tlsv1.2 \
 		"$source_url" --output "$destination"
 	return $?
@@ -311,10 +349,10 @@ _source_access_install_broker_files() {
 		print_warning "Source-access install target ownership or permissions are unsafe"
 		return 1
 	}
-	_source_access_privileged /usr/bin/install -d -o 0 -g 0 -m 0755 "$_SOURCE_ACCESS_BROKER_DIR" || return 1
+	_source_access_privileged_system install -d -o 0 -g 0 -m 0755 "$_SOURCE_ACCESS_BROKER_DIR" || return 1
 	_source_access_root_owned_mode "$_SOURCE_ACCESS_BROKER_DIR" 755 directory || return 1
-	core_stage=$(_source_access_privileged /usr/bin/mktemp "${_SOURCE_ACCESS_BROKER_DIR}/.source_access_core.py.XXXXXX") || return 1
-	helper_stage=$(_source_access_privileged /usr/bin/mktemp "${_SOURCE_ACCESS_BROKER_DIR}/.source-access-helper.py.XXXXXX") || {
+	core_stage=$(_source_access_privileged_system mktemp "${_SOURCE_ACCESS_BROKER_DIR}/.source_access_core.py.XXXXXX") || return 1
+	helper_stage=$(_source_access_privileged_system mktemp "${_SOURCE_ACCESS_BROKER_DIR}/.source-access-helper.py.XXXXXX") || {
 		_source_access_cleanup_staging "$core_stage" ""
 		return 1
 	}
@@ -323,7 +361,7 @@ _source_access_install_broker_files() {
 		_source_access_cleanup_staging "$core_stage" "$helper_stage"
 		return 1
 	fi
-	_source_access_privileged /bin/chmod 0644 "$core_stage" "$helper_stage" || {
+	_source_access_privileged_system chmod 0644 "$core_stage" "$helper_stage" || {
 		_source_access_cleanup_staging "$core_stage" "$helper_stage"
 		return 1
 	}
@@ -333,12 +371,12 @@ _source_access_install_broker_files() {
 		_source_access_cleanup_staging "$core_stage" "$helper_stage"
 		return 1
 	fi
-	_source_access_privileged /bin/rm -f -- "$core_path" "$helper_path" || {
+	_source_access_privileged_system rm -f -- "$core_path" "$helper_path" || {
 		_source_access_cleanup_staging "$core_stage" "$helper_stage"
 		return 1
 	}
-	if ! _source_access_privileged /usr/bin/install -o 0 -g 0 -m 0644 "$core_stage" "$core_path" ||
-		! _source_access_privileged /usr/bin/install -o 0 -g 0 -m 0644 "$helper_stage" "$helper_path"; then
+	if ! _source_access_privileged_system install -o 0 -g 0 -m 0644 "$core_stage" "$core_path" ||
+		! _source_access_privileged_system install -o 0 -g 0 -m 0644 "$helper_stage" "$helper_path"; then
 		_source_access_cleanup_staging "$core_stage" "$helper_stage"
 		return 1
 	fi
@@ -351,14 +389,14 @@ _source_access_setup_trust() {
 	local helper_path="${_SOURCE_ACCESS_BROKER_DIR}/source-access-helper.py"
 
 	if _source_access_trust_current &&
-		_source_access_privileged /usr/bin/python3 -I -B "$helper_path" trust-check >/dev/null; then
+		_source_access_privileged_system python3 -I -B "$helper_path" trust-check >/dev/null; then
 		return 0
 	fi
 	[[ "${AIDEVOPS_SOURCE_ACCESS_INTERACTIVE:-false}" == "true" && -t 0 ]] || return 2
 	print_info "Configuring root-only source-access signing trust"
-	_source_access_privileged /usr/bin/python3 -I -B "$helper_path" setup || return 1
+	_source_access_privileged_system python3 -I -B "$helper_path" setup || return 1
 	_source_access_trust_current || return 1
-	_source_access_privileged /usr/bin/python3 -I -B "$helper_path" trust-check >/dev/null
+	_source_access_privileged_system python3 -I -B "$helper_path" trust-check >/dev/null
 	return $?
 }
 
@@ -413,7 +451,7 @@ setup_source_access_broker() {
 		_source_access_release_privilege
 		return 1
 	fi
-	if ! _source_access_privileged /usr/bin/python3 -I -B "$helper_path" trust-check >/dev/null; then
+	if ! _source_access_privileged_system python3 -I -B "$helper_path" trust-check >/dev/null; then
 		_source_access_release_privilege
 		return 1
 	fi

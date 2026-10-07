@@ -97,6 +97,16 @@ class SourceAccessHelperTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_system_tools_use_nixos_roots_not_caller_path(self) -> None:
+        core = HELPER._SOURCE_CORE
+        candidate = "/run/current-system/sw/bin/git"
+        with mock.patch.dict(os.environ, {"PATH": str(self.root), "AIDEVOPS_REAL_GIT_BIN": "/untrusted/git"}), \
+             mock.patch.object(core.Path, "is_file", lambda path: str(path) == candidate), \
+             mock.patch.object(core.os, "access", return_value=True):
+            self.assertEqual(core._system_executable("git"), candidate)
+        with mock.patch.object(core.Path, "is_file", return_value=False):
+            self.assertEqual(core._system_executable("git"), "/usr/bin/git")
+
     def test_bundle_stale_writer_cannot_overwrite_terminal_consent(self) -> None:
         spec = HELPER.ApprovalSpec("a" * 64, self.home, self.uid, 3600, self.now, lambda scope: True)
         reader = HELPER._SOURCE_CORE.GitHubIssueReader("example/repository", 1)

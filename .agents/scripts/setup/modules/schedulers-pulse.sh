@@ -308,6 +308,9 @@ _pulse_daemon_path_for_opencode() {
 		[[ "$_opencode_dir" == /* ]] || _opencode_dir=""
 	fi
 	_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts${_opencode_dir:+:$_opencode_dir}:/usr/local/bin:/usr/bin:/bin"
+	if declare -F aidevops_runtime_path >/dev/null 2>&1; then
+		_path=$(aidevops_runtime_path "$_path")
+	fi
 	printf '%s' "$_path"
 	return 0
 }

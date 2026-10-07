@@ -23,6 +23,19 @@ production_release_signer_identity="$_SOURCE_ACCESS_RELEASE_SIGNER_IDENTITY"
 production_current_release_signer_key="$_SOURCE_ACCESS_CURRENT_RELEASE_SIGNER_KEY"
 production_historical_release_signer_key="$_SOURCE_ACCESS_HISTORICAL_RELEASE_SIGNER_KEY"
 
+# Selection is built-in/fixed-root only, even with no tools on caller PATH.
+mkdir -p "$TEST_DIR/caller-bin"
+ln -s /bin/false "$TEST_DIR/caller-bin/git"
+trusted_git=$(PATH="$TEST_DIR/caller-bin" _source_access_system_path git)
+case "$trusted_git" in
+/usr/bin/git | /bin/git | /run/current-system/sw/bin/git) ;;
+*) printf 'FAIL: broker selected Git outside trusted system roots\n' >&2; exit 1 ;;
+esac
+if _source_access_system_path ../git >/dev/null; then
+	printf 'FAIL: system lookup accepted a path instead of a command name\n' >&2
+	exit 1
+fi
+
 fixture_repo="$TEST_DIR/repo"
 mkdir -p "$fixture_repo/.agents/scripts/setup/modules"
 git -C "$fixture_repo" init -q

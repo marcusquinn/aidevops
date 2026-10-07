@@ -16,6 +16,10 @@
 [[ -n "${_SHARED_CONSTANTS_LOADED:-}" ]] && return 0
 _SHARED_CONSTANTS_LOADED=1
 
+# Normalize non-login environments before any tool lookup or runtime re-exec.
+# shellcheck source=runtime-env.sh
+source "${BASH_SOURCE[0]%/*}/runtime-env.sh"
+
 # =============================================================================
 # GH#18950 (t2087): Bash 3.2 → bash 4+ runtime re-exec self-heal guard.
 # =============================================================================
