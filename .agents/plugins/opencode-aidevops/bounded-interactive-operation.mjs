@@ -30,7 +30,7 @@ import {
   operationStatusVersion,
 } from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
-import { processStartIdentity } from "./process-start-identity.mjs";
+import { liveSupervisorRoots, processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 
 const MAX_OPERATIONS = 24;
@@ -65,25 +65,9 @@ export class BoundedInteractiveOperationManager {
     this.operations = new Map();
   }
 
-  /**
-   * GH#33969: live supervisors owned by a session, as worker-policy evidence
-   * that a loopback listener was started by this worker.
-   * #aidevops:trust-boundary — PIDs and start identities come from this host's
-   * own spawn records, never from tool arguments.
-   * @param {string} owner - runtime session ID
-   * @returns {{pid: number, identity: string}[]}
-   */
+  /** GH#33969: live same-session supervisor roots; see liveSupervisorRoots. */
   ownedListenerRoots(owner) {
-    const session = scalar(owner);
-    if (!session) return [];
-    const roots = [];
-    for (const operation of this.operations.values()) {
-      const child = operation.child;
-      if (operation.owner !== session || !child || operation.childExited) continue;
-      if (!Number.isInteger(child.pid) || !operation.supervisorIdentity) continue;
-      roots.push({ pid: child.pid, identity: operation.supervisorIdentity });
-    }
-    return roots;
+    return liveSupervisorRoots(this.operations.values(), scalar(owner));
   }
 
   async resolveCwd(requested, context) {

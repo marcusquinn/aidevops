@@ -230,10 +230,15 @@ def _evaluate_worker_network(
             "network.helper-error",
             "AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS must be a positive integer",
         )
+    guard_arguments = [
+        "--cwd",
+        cwd,
+        "--worker-id",
+        worker_id,
+        *(owned_listener_arguments or []),
+    ]
     for argv in invocations:
-        result, error = _run_network_guard(
-            argv, cwd, helper, worker_id, timeout, owned_listener_arguments or []
-        )
+        result, error = _run_network_guard(argv, helper, guard_arguments, timeout)
         if error:
             return error
         if result.returncode != 0:
@@ -248,25 +253,13 @@ def _evaluate_worker_network(
 
 def _run_network_guard(
     argv: list[str],
-    cwd: str,
     helper: Path,
-    worker_id: str,
+    guard_arguments: list[str],
     timeout: int,
-    extra_arguments: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
     try:
         result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
-            [
-                "/bin/bash",
-                str(helper),
-                "check-argv",
-                json.dumps(argv),
-                "--cwd",
-                cwd,
-                "--worker-id",
-                worker_id,
-                *(extra_arguments or []),
-            ],
+            ["/bin/bash", str(helper), "check-argv", json.dumps(argv), *guard_arguments],
             capture_output=True,
             text=True,
             timeout=timeout,

@@ -31,6 +31,27 @@ export function processStartIdentity(pid) {
 }
 
 /**
+ * GH#33969: live supervisors owned by a session, as worker-policy evidence
+ * that a loopback listener was started by this worker.
+ * #aidevops:trust-boundary — PIDs and start identities come from this host's
+ * own spawn records, never from tool arguments.
+ * @param {Iterable<object>} operations - bounded-operation records
+ * @param {string} session - runtime session ID
+ * @returns {{pid: number, identity: string}[]}
+ */
+export function liveSupervisorRoots(operations, session) {
+  if (typeof session !== "string" || !session) return [];
+  const roots = [];
+  for (const operation of operations) {
+    const pid = operation.child?.pid;
+    if (operation.owner !== session || operation.childExited) continue;
+    if (!Number.isInteger(pid) || !operation.supervisorIdentity) continue;
+    roots.push({ pid, identity: operation.supervisorIdentity });
+  }
+  return roots;
+}
+
+/**
  * Detect headless worker context from the plugin host environment.
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {boolean}
