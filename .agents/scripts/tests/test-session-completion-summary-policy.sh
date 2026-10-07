@@ -69,6 +69,7 @@ main() {
 		'A recoverable API call fails' \
 		'A human may not return soon' \
 		'Every accepted criterion has evidence' \
+		'A status check finds held phases awaiting authority or inputs' \
 		'The user explicitly stops work'; do
 		require_literal "$behavior" "$SESSION_DOC" \
 			"session guidance omits behavioral case: $behavior" || return 1
@@ -94,6 +95,13 @@ main() {
 		"$SESSION_DOC" 'capture check accepts stale Git status' || return 1
 	require_literal 'no session-owned repository changes remain uncommitted' \
 		"$SESSION_DOC" 'Ready to close permits uncommitted session-owned changes' || return 1
+	# GH#33927: close readiness covers held objective phases, not only PRs.
+	require_literal 'every unresolved objective phase is' \
+		"$SESSION_DOC" 'Ready to close ignores held objective phases' || return 1
+	require_literal 'Another session holding the plan is not an executor.' \
+		"$SESSION_DOC" 'Ready to close accepts a plan held elsewhere as ownership' || return 1
+	require_literal 'becomes one bounded numbered ask naming' \
+		"$SESSION_DOC" 'missing human-only authority is not surfaced as an ask' || return 1
 	check_link_and_step_rules || return 1
 
 	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then

@@ -95,7 +95,10 @@ Rules:
   failed"), run it before replying.
 - **Session** restates the original aim, not the last step, so a user returning
   after hours can reorient. Keep the runtime title in step with `session-rename`
-  (stable purpose plus current phase).
+  (stable purpose plus current phase). `Done` means the objective is Delivered
+  (see Execution Ownership and Truthful Stops). When only an inspection or
+  report of a larger objective finished, say so and give the objective's real
+  state, for example `status check done; objective Blocked on #N`.
 - **Left to capture** is filled from the capture check below, not from memory of
   intent. Capture owed items yourself (issue, TODO, doc, memory) before
   replying; list only what you could not capture, with the reason and durable
@@ -105,10 +108,22 @@ Rules:
 - **Ready to close** only when: no open question to the user other than asks
   marked `(optional)`; no session-owned repository changes remain uncommitted;
   every PR is merged
-  or handed to a named live executor; deferred and follow-up work has an issue or
+  or handed to a named live executor; every unresolved objective phase is
+  Externally blocked with an owner and resume condition, or Active under a
+  named live executor (see Execution Ownership and Truthful Stops); deferred
+  and follow-up work has an issue or
   TODO number; evidenced lessons are routed per `reference/self-improvement.md`;
   and the commitment scan (unfulfilled promises, unnotified parties, displaced
   requests) is clean. Otherwise say `Not yet` with the concrete reason.
+  Another session holding the plan is not an executor.
+- **Held phases.** For each held or blocked phase, classify what it waits on.
+  Missing human-only authority or input (deployment, customer write,
+  activation, private source evidence) becomes one bounded numbered ask naming
+  scope, exclusions and the linked object. Discovery, coordination and tracking
+  the agent can do stay agent-owned: do them or name their executor and next
+  action. Open issues alone never force an ask; `None` stays valid when no
+  human input is needed. Handoff prose, merged source and dispatch labels never
+  create operational authority or acceptance evidence.
 - Short conversational replies with no asks may use one line with the same
   fields, for example `What next: nothing needed from you; session active (aim: …).`
   Any open ask uses the full block so its options get their own line.
@@ -307,6 +322,7 @@ preserves continuation; it does not make incomplete delivery complete.
 | A recoverable API call fails | Try a distinct safe recovery route; if pausing, checkpoint the next route rather than claim delivery. |
 | A human may not return soon | Preserve the durable handoff and resume condition; do not promise immediate attendance or repeat expired commands. |
 | Every accepted criterion has evidence | Delivered; summarize outcome and evidence without inventing remaining work. |
+| A status check finds held phases awaiting authority or inputs | The inspection is done, not the objective; give each hold a named owner and resume condition, or one bounded human-only ask. |
 | The user explicitly stops work | Stop execution, preserve the requested state, and do not represent the unfinished objective as delivered. |
 
 Review these examples against the task's actual evidence; literal policy checks do
