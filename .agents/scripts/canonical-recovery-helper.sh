@@ -794,6 +794,8 @@ repo_path=$(cd "$repo_path" && pwd -P) || exit 2
 	exit 1
 }
 
+# shellcheck source=runtime-env.sh
+source "${SCRIPT_DIR}/runtime-env.sh"
 REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
 git_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-dir 2>/dev/null)
 common_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)

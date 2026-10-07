@@ -62,8 +62,20 @@ DENIED_NAMES = frozenset(
     "id_ed25519 id_rsa kubeconfig".split()
 )
 DENIED_SUFFIXES = frozenset(".jks .key .keystore .p12 .pem .pfx".split())
-GIT = "/usr/bin/git"
-SSH_KEYGEN = "/usr/bin/ssh-keygen"
+
+
+def _system_executable(name: str) -> str:
+    """Select fixed system tools; privileged approval must never trust PATH."""
+    for directory in ("/usr/bin", "/bin", "/run/current-system/sw/bin"):
+        candidate = str(Path(directory) / name)
+        if Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    # Retain the fixed failure path when a required system package is missing.
+    return f"/usr/bin/{name}"
+
+
+GIT = _system_executable("git")
+SSH_KEYGEN = _system_executable("ssh-keygen")
 GITHUB_API_HOST = "api.github.com"
 GITHUB_RESPONSE_BYTES = 2 * 1024 * 1024
 GITHUB_COLLECTION_BYTES = 8 * 1024 * 1024

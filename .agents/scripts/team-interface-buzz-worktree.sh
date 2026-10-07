@@ -8,6 +8,11 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 WORKTREE_HELPER="${AIDEVOPS_BUZZ_WORKTREE_MANAGER:-${SCRIPT_DIR}/worktree-helper.sh}"
+# Project validation uses fixed system Git, never caller-controlled PATH.
+REAL_GIT="/usr/bin/git"
+if [[ ! -x "$REAL_GIT" ]]; then
+	REAL_GIT="/run/current-system/sw/bin/git"
+fi
 
 fail() {
 	local message="$1"
@@ -18,7 +23,7 @@ fail() {
 canonical_git_path() {
 	local project_root="$1"
 	local selector="$2"
-	/usr/bin/git -C "$project_root" rev-parse --path-format=absolute "$selector" 2>/dev/null
+	"$REAL_GIT" -C "$project_root" rev-parse --path-format=absolute "$selector" 2>/dev/null
 	return $?
 }
 
@@ -52,7 +57,7 @@ validate_resolved_worktree() {
 	[[ -d "$worktree" && ! -L "$worktree" ]] || return 1
 	canonical_common=$(canonical_git_path "$canonical_root" --git-common-dir) || return 1
 	worktree_common=$(canonical_git_path "$worktree" --git-common-dir) || return 1
-	actual_branch=$(/usr/bin/git -C "$worktree" branch --show-current 2>/dev/null) || return 1
+	actual_branch=$("$REAL_GIT" -C "$worktree" branch --show-current 2>/dev/null) || return 1
 	[[ "$canonical_common" == "$worktree_common" && "$actual_branch" == "$expected_branch" ]] || return 1
 	return 0
 }
@@ -71,7 +76,7 @@ resolve_agent_worktree() {
 		fail "project root must be an absolute non-symlink directory"
 		return 1
 	}
-	canonical_root=$(/usr/bin/git -C "$project_root" rev-parse --show-toplevel 2>/dev/null) || {
+	canonical_root=$("$REAL_GIT" -C "$project_root" rev-parse --show-toplevel 2>/dev/null) || {
 		fail "project root is not a Git worktree"
 		return 1
 	}

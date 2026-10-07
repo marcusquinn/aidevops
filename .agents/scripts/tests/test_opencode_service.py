@@ -74,6 +74,27 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn("--pure", definition["ProgramArguments"])
         self.assertEqual(definition["ProgramArguments"][1], str(self.service.runtime / "opencode-service-helper.py"))
 
+    def test_install_retains_stable_nix_profiles(self):
+        data, _ = self.install()
+        paths = data["path"].split(":")
+        self.assertIn(str(self.home / ".nix-profile/bin"), paths)
+        self.assertIn(str(self.home / ".local/state/nix/profile/bin"), paths)
+        self.assertIn("/run/current-system/sw/bin", paths)
+        self.assertTrue(any(path.startswith("/etc/profiles/per-user/") for path in paths))
+
+    def test_run_resolves_bash_from_service_path_without_inherited_environment(self):
+        bash = "/run/current-system/sw/bin/bash"
+        with patch.object(self.service, "recover_dead_lock"), \
+             patch.object(lifecycle_module.shutil, "which", return_value=bash) as which, \
+             patch.object(lifecycle_module.os, "execve") as execute:
+            self.service.run(self.data)
+        which.assert_called_once_with("bash", path=self.data["path"])
+        executable, argv, environment = execute.call_args.args
+        self.assertEqual(executable, bash)
+        self.assertEqual(argv[0], bash)
+        self.assertEqual(environment["PATH"], self.data["path"])
+        self.assertEqual(set(environment), {"HOME", "PATH", "AIDEVOPS_WORK_DIR"})
+
     def desktop_fixture(self, capabilities=None):
         binary = self.home / "Desktop.app/Contents/MacOS/OpenCode"
         binary.parent.mkdir(parents=True)

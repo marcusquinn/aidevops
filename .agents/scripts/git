@@ -42,7 +42,7 @@ resolve_real_git() {
 	for candidate in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do
 		[[ -x "$candidate" ]] && candidates="${candidates}${candidates:+$'\n'}${candidate}"
 	done
-	candidates="${candidates}${candidates:+$'\n'}$(which -a git 2>/dev/null || true)"
+	candidates="${candidates}${candidates:+$'\n'}$(type -a -p git 2>/dev/null || true)"
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
 		[[ -x "$candidate" ]] || continue

@@ -8,6 +8,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, join } from "path";
+import { runtimePath } from "./runtime-path.mjs";
 
 /**
  * Read a file if it exists, or return empty string.
@@ -199,8 +200,7 @@ function prependFrameworkPaths(env, scriptsDir, agentsDir) {
   const preferredPaths = [scriptsDir, binDir, projectNodeBin(env)].filter(
     (path) => path && existsSync(path),
   );
-  if (preferredPaths.length === 0) return;
-  const currentPath = env.PATH || process.env.PATH || "";
+  const currentPath = runtimePath(env.PATH || process.env.PATH || "");
   const pathParts = currentPath
     .split(":")
     .filter((part) => part && !preferredPaths.includes(part));

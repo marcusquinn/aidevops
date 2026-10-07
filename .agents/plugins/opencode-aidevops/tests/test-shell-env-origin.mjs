@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { runtimePath } from "../runtime-path.mjs";
 import {
   createSessionModelStore,
   createShellEnvHook,
@@ -24,6 +25,22 @@ function makeHook() {
     workspaceDir: "/tmp/aidevops-workspace",
   });
 }
+
+test("runtime PATH recovers Nix profiles without changing guard or project precedence", () => {
+  const base = process.env.AIDEVOPS_TEMP_DIR || join(process.env.HOME, ".aidevops/.agent-workspace/tmp");
+  const home = mkdtempSync(join(base, "nix-path-"));
+  try {
+    const legacy = join(home, ".nix-profile/bin");
+    const modern = join(home, ".local/state/nix/profile/bin");
+    mkdirSync(legacy, { recursive: true });
+    mkdirSync(modern, { recursive: true });
+    const path = runtimePath("/guard:/project/bin:/guard::", home);
+    assert.deepEqual(path.split(":").slice(0, 4), ["/guard", "/project/bin", legacy, modern]);
+    assert.equal(runtimePath(path, home), path);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 function withTempAgentsDir(fn) {
   const root = mkdtempSync(join(tmpdir(), "aidevops-shell-env-"));
