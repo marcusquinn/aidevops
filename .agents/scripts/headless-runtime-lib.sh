@@ -1410,8 +1410,19 @@ source "${SCRIPT_DIR}/headless-runtime-database.sh"
 # --- Section 10: Dispatch Ledger / Session Locks ---
 
 # _register_dispatch_ledger: register this dispatch in the in-flight ledger (GH#6696).
-# Extracts issue number from session_key (pattern: "issue-NNN") and registers
-# the dispatch so the pulse can detect in-flight workers before they create PRs.
+# Extracts the issue number from the session key and registers the dispatch so
+# the pulse and `dispatch-single-issue-helper.sh status` can detect in-flight
+# workers before they create PRs.
+#
+# Accepted identities (GH#33916):
+#   issue-N               pulse workers
+#   manual-cli-N-<epoch>  manual workers, only when N equals the launcher's
+#                         WORKER_ISSUE_NUMBER (same binding as
+#                         _run_result_is_issue_worker); timestamps alone are
+#                         never treated as issue numbers.
+# A lease-less manual dispatch registers here first, and the dispatcher's
+# later registration for the same session key is an idempotent no-op, so this
+# entry must carry the full issue + repository identity.
 #
 # Args: $1 = session_key, $2 = work_dir (used to resolve repo slug)
 _register_dispatch_ledger() {
@@ -1423,14 +1434,24 @@ _register_dispatch_ledger() {
 	local ledger_issue=""
 	local ledger_repo=""
 
-	# Extract issue number from session key (e.g., "issue-42" -> "42")
 	if [[ "$ledger_session_key" =~ ^issue-([0-9]+)$ ]]; then
+		ledger_issue="${BASH_REMATCH[1]}"
+	elif [[ "$ledger_session_key" =~ ^manual-cli-([1-9][0-9]*)-[0-9]+$ &&
+		"${WORKER_ISSUE_NUMBER:-}" == "${BASH_REMATCH[1]}" ]]; then
 		ledger_issue="${BASH_REMATCH[1]}"
 	fi
 
-	# Resolve repo slug from work_dir via git remote
+	# Resolve owner/repo from work_dir's origin. Strip a trailing slash and
+	# `.git` first: a greedy capture would otherwise record `owner/repo.git`,
+	# which never matches `check-issue --repo owner/repo` (GH#33916).
 	if [[ -n "$ledger_work_dir" && -d "$ledger_work_dir" ]]; then
-		ledger_repo=$(git -C "$ledger_work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' || true)
+		local ledger_origin=""
+		ledger_origin=$(git -C "$ledger_work_dir" remote get-url origin 2>/dev/null || true)
+		ledger_origin="${ledger_origin%/}"
+		ledger_origin="${ledger_origin%.git}"
+		if [[ "$ledger_origin" =~ [:/]([^/:]+/[^/]+)$ ]]; then
+			ledger_repo="${BASH_REMATCH[1]}"
+		fi
 	fi
 
 	local ledger_args=(register --session-key "$ledger_session_key" --pid "$$")
