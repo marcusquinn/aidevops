@@ -102,6 +102,49 @@ if release_snapshot_sources test/repo main "$LATER" "$SNAPSHOT" 2>/dev/null; the
 fi
 printf 'PASS: API uncertainty, foreign base and rewritten ancestry rejected\n'
 
+# Transient reads retry (bounded); auth failures do not. Count gh calls via file.
+export RELEASE_SNAPSHOT_RETRY_UNIT=0
+_gh_real=$(declare -f gh)
+READ_COUNT="$TEST_ROOT/gh-count"
+gh() {
+	local count=0
+	if [[ "${4:-}" == repos/test/repo/commits/*/pulls* ]]; then
+		[[ ! -f "$READ_COUNT" ]] || read -r count <"$READ_COUNT"
+		count=$((count + 1))
+		printf '%s\n' "$count" >"$READ_COUNT"
+		case "${READ_FAULT:-}" in
+		once) [[ "$count" != 1 ]] || { printf 'unexpected end of JSON input\n' >&2; return 1; } ;;
+		always) printf 'unexpected end of JSON input\n' >&2; return 1 ;;
+		auth) printf 'gh: Forbidden (HTTP 403)\n' >&2; return 1 ;;
+		esac
+	fi
+	_gh_orig "$@"
+	return $?
+}
+eval "${_gh_real/#gh/_gh_orig}"
+assert_reads() {
+	local fault="$1"
+	local want_count="$2"
+	local want_status="$3"
+	local status=0
+	local count=0
+	rm -f "$READ_COUNT"
+	READ_FAULT="$fault" release_snapshot_sources test/repo main "$BASE" "$FIRST" >/dev/null 2>"$TEST_ROOT/read-err" || status=$?
+	read -r count <"$READ_COUNT"
+	[[ "$count" == "$want_count" && "$status" == "$want_status" ]] || {
+		printf 'FAIL: fault=%s count=%s status=%s\n' "$fault" "$count" "$status" >&2
+		exit 1
+	}
+	return 0
+}
+assert_reads once 2 0
+assert_reads always 3 1
+grep -Fq "pull requests for commit ${FIRST} in test/repo: JSON decode error after 3 attempts" "$TEST_ROOT/read-err"
+assert_reads auth 1 1
+unset -f gh
+eval "${_gh_real}"
+printf 'PASS: transient reads retry up to 3 attempts; auth failures fail immediately\n'
+
 # Exercise the actual resolver at a detached snapshot while remote main has
 # already advanced, including the explicit complete-manifest integrity gate.
 export BASE FIRST SNAPSHOT LATER

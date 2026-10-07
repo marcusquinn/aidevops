@@ -91,6 +91,8 @@ _release_provenance_read_json() {
 		fi
 		if [[ "$error_text" =~ HTTP[[:space:]](5[0-9][0-9]) ]]; then
 			cause="HTTP ${BASH_REMATCH[1]}"
+		elif [[ "$error_text" =~ (unexpected\ end\ of\ JSON\ input|invalid\ character) ]]; then
+			cause="JSON decode error"
 		elif [[ ! "$response" =~ [^[:space:]] && ( "$status" -eq 0 || -z "$error_text" ) ]]; then
 			cause="empty response"
 		else

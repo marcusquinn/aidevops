@@ -60,6 +60,7 @@ if [[ "\${PROVENANCE_READ_TARGET:-}" == "\$target" ]]; then
 	whitespace-once) [[ "\$count" != 1 ]] || { printf ' \t\n'; exit 0; } ;;
 	empty-always) exit 0 ;;
 	5xx-once) [[ "\$count" != 1 ]] || { printf 'gh: Bad Gateway (HTTP 502)\n' >&2; exit 1; } ;;
+	decode-once) [[ "\$count" != 1 ]] || { printf 'unexpected end of JSON input\n' >&2; exit 1; } ;;
 	5xx-always) printf 'gh: Service Unavailable (HTTP 503)\n' >&2; exit 1 ;;
 	auth) printf 'gh: Forbidden (HTTP 403)\n' >&2; exit 1 ;;
 	malformed) printf '{broken\n'; exit 0 ;;
@@ -171,6 +172,7 @@ for read_target in pr tag-ref tag-object; do
 	assert_read_transport "$read_target" empty-always 3 1 "$read_purpose: empty response after 3 attempts"
 	assert_read_transport "$read_target" 5xx-once 2 0 "$read_purpose: HTTP 502; retrying"
 done
+assert_read_transport pr decode-once 2 0 'source PR #42 in test/repo: JSON decode error; retrying'
 assert_read_transport pr whitespace-once 2 0 'empty response; retrying'
 assert_read_transport pr 5xx-always 3 1 'source PR #42 in test/repo: HTTP 503 after 3 attempts'
 assert_read_transport pr auth 1 1 'not retryable'
