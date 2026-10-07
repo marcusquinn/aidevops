@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.24] - 2026-10-07
+
+### Added
+
+- GH#33902: code-native motion design route and motion QA for the Video agent
+- cancel stale queued Actions runs (#33874)
+
+### Changed
+
+- Refactor: split full-loop-helper-merge.sh into authority, prospective and cleanup sub-libraries
+- Refactor: split pulse-merge-process.sh backlog helpers into pulse-merge-backlog.sh
+- Refactor: simplify OAuth relay internals
+- Tests: restore checkpoint cost circuit integration fixtures
+- Maintenance: mark t18606 complete (pr:#33868 completed:2026-10-07)
+
+### Fixed
+
+- fix pipefail false negatives from piped grep -q in brief readiness
+- fix finalize-receipt marker retirement for merge-cleanup aliases
+- fix reap-dead-stamps for closed no-auto-dispatch issues and report skips
+- fix scope guard literal match for bracketed Files Scope paths
+- discover Nix profiles and validate OpenCode launchers before replacement (#33892)
+- retry transient GitHub reads in release snapshot provenance verification (#33872)
+
 ## [3.38.23] - 2026-10-07
 
 ### Fixed
