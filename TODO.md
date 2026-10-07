@@ -1583,6 +1583,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18612 OpenCode v1 TUI: collapse MCP sidebar by default, show AIDevOps version in sidebar footer, pause session-title version suffix #feat ref:GH#33963 started:2026-10-07
 
+- [ ] t18613 Document live OpenCode TUI plugin verification (temp tui.json + per-project session DB) #documentation ref:GH#33975 started:2026-10-07
+
 ## In Progress
 
 - [x] GH#33891 Fix NixOS PATH and native tool discovery @vladimirdulov #bug #interactive #auto-dispatch tier:thinking ref:GH#33891 assignee:vladimirdulov logged:2026-10-07 started:2026-10-07 -> [todo/tasks/gh33891-brief.md] pr:#33893 completed:2026-10-07
