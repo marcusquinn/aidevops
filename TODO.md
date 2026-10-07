@@ -1587,6 +1587,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18614 Add opencode-test-helper.sh tui-capture: headless pty render + text assertions for TUI plugin verification #auto-dispatch #feat ref:GH#33978 blocked-by:t18613
 
+- [ ] t18615 claim-task-id/publication reconcile: name the missing brief instead of a generic publication failure #auto-dispatch #bug ref:GH#33981
+
+- [ ] t18616 full-loop commit-and-pr: planning-only diffs must use For #N and keep the issue dispatchable #auto-dispatch #bug ref:GH#33982
+
 ## In Progress
 
 - [x] GH#33891 Fix NixOS PATH and native tool discovery @vladimirdulov #bug #interactive #auto-dispatch tier:thinking ref:GH#33891 assignee:vladimirdulov logged:2026-10-07 started:2026-10-07 -> [todo/tasks/gh33891-brief.md] pr:#33893 completed:2026-10-07
