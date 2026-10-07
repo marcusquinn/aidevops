@@ -189,7 +189,7 @@ out=$(list_things) || return 1              # capture first, then test
 
 ### Originating incidents
 
-#27981 (worktree branch lookup), #30824 (issue-sync first-match pipelines), #33882 (brief readiness on large briefs).
+Issues GH#27981 (worktree branch lookup), GH#30824 (issue-sync first-match pipelines), GH#33882 (brief readiness on large briefs).
 
 ## Stat portability (t3046)
 
