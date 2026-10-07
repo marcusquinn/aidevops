@@ -179,6 +179,7 @@ _release_lane_write() {
 	local state_json="$2"
 	local expected_head="${3:-}"
 	local parent="$expected_head" commit_sha="" payload="" current_head=""
+	local head_rc=0
 	if [[ -z "$parent" ]]; then
 		parent=$(_release_lane_api parent-read true "repos/${repo}/git/ref/heads/main" --jq '.object.sha // empty') || return $?
 	fi
@@ -188,7 +189,12 @@ _release_lane_write() {
 		payload=$(jq -cn --arg ref "refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --arg sha "$commit_sha" '{ref:$ref,sha:$sha}') || return 1
 		_release_lane_api ref-create false "repos/${repo}/git/refs" --method POST --input - <<<"$payload" >/dev/null || return 2
 	else
-		current_head=$(_release_lane_remote_head "$repo") || return 2
+		current_head=$(_release_lane_remote_head "$repo") || head_rc=$?
+		case "$head_rc" in
+		0) ;;
+		75) return 75 ;;
+		*) return 2 ;;
+		esac
 		[[ "$current_head" == "$expected_head" ]] || return 2
 		payload=$(jq -cn --arg sha "$commit_sha" '{sha:$sha,force:false}') || return 1
 		_release_lane_api ref-update false "repos/${repo}/git/refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --method PATCH --input - \
