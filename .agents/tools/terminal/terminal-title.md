@@ -83,6 +83,7 @@ OpenCode 1.x matches this: setup registers `plugins/opencode-aidevops/v1-tui/tui
 - **tmux** (`~/.tmux.conf`): `set -g set-titles on` + `set -g set-titles-string "#T"`
 - **screen** (`~/.screenrc`): `termcapinfo xterm* ti@:te@`
 - **VS Code**: Enable "Terminal > Integrated: Allow Workspace Shell"
+- **Live-verifying TUI plugin changes (OpenCode 1.x)**: never edit `~/.config/opencode/tui.json` for a test; set `OPENCODE_TUI_CONFIG=<temp tui.json>`, which layers over the global file. aidevops launchers keep sessions in a per-project data dir, so `opencode --session <id>` reports `Session not found` unless `XDG_DATA_HOME` points at `~/.aidevops/.agent-workspace/work/opencode-interactive/project-<repo>-<cksum>` (`build_project_session_id` in `scripts/opencode-launcher-helper.sh`). Run it in a pty, answer the `ESC[6n` cursor query, strip ANSI, then search the text for the expected render (e.g. `▶ MCP`, `AIDevOps <version>`).
 
 ## Related
 
