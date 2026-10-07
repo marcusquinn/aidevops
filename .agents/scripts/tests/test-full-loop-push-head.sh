@@ -123,7 +123,7 @@ fi
 # 5. Bare common Git directory → explicit not-applicable state, no mirror-sync
 #    instruction and no working-tree commands against the bare repository.
 # shellcheck disable=SC2312
-eval "$(sed -n '/^_merge_report_canonical_sync_state() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-merge.sh")"
+eval "$(sed -n '/^_merge_report_canonical_sync_state() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-merge-cleanup.sh")"
 print_success() { printf '[OK] %s\n' "$*" >>"$LOG"; return 0; }
 : >"$LOG"
 bare_out=""

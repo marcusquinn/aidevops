@@ -9,6 +9,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MERGE_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge.sh"
+# Authority gates moved from full-loop-helper-merge.sh to this module (GH#30748).
+MERGE_AUTHORITY_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-authority.sh"
 READINESS_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-readiness.sh"
 TEST_ROOT="$(mktemp -d -t full-loop-merge-authority.XXXXXX)"
 EXTRACTED="${TEST_ROOT}/functions.sh"
@@ -60,7 +62,7 @@ extract_function() {
       index($0, fn "() {") == 1 { capture = 1 }
       capture { print }
       capture && $0 == "}" { exit }
-    ' "$MERGE_SCRIPT" >>"$EXTRACTED"
+    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" >>"$EXTRACTED"
 	return 0
 }
 
