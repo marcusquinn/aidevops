@@ -581,6 +581,12 @@ _pm_gate_origin_authority() {
 	if [[ -n "${_OW_LABEL_PAT:-}" && ",${labels_str}," == *"${_OW_LABEL_PAT:-}"* && "$trusted_issue_sync" -eq 0 ]]; then
 		_attempt_worker_briefed_auto_merge "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" "$author_permission" "$pr_author" || return 1
 	elif [[ "$trusted_issue_sync" -eq 1 ]]; then
+		# GH#33955: generated-TODO trust replaces only linked-issue authority.
+		# Maintainer opt-outs that the worker path enforces still apply.
+		if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — trusted generated TODO PR is draft or has hold-for-review" >>"$LOGFILE"
+			return 1
+		fi
 		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — exact-head Issue Sync trust satisfies worker authority without a linked issue" >>"$LOGFILE"
 	fi
 	return 0
