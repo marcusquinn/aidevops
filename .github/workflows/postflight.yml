@@ -1,4 +1,5 @@
 name: Postflight Verification
+run-name: Postflight Verification ${{ github.event.inputs.tag }}
 
 on:
   workflow_dispatch:

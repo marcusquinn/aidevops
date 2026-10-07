@@ -411,25 +411,50 @@ jobs:
           exit 1
 
       - name: Queue exact-tag postflight
+        id: postflight-queue
         if: steps.github-release.outputs.deferred != 'true'
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_PAT }}
           JOB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           #aidevops:trust-boundary
+          PAT_ERR="$RUNNER_TEMP/postflight-pat.err"
+          JOB_ERR="$RUNNER_TEMP/postflight-job.err"
+          : > "$PAT_ERR"
+          : > "$JOB_ERR"
           if [[ -n "$SYNC_TOKEN" ]] && GH_TOKEN="$SYNC_TOKEN" gh workflow run postflight.yml \
               --repo "$GITHUB_REPOSITORY" \
               --ref main \
-              --field "tag=$RELEASE_TAG"; then
-            :
+              --field "tag=$RELEASE_TAG" 2> "$PAT_ERR"; then
+            echo "postflight_deferred=false" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::SYNC_PAT could not dispatch postflight; retrying with the job token"
-            GH_TOKEN="$JOB_TOKEN" gh workflow run postflight.yml \
-              --repo "$GITHUB_REPOSITORY" \
-              --ref main \
-              --field "tag=$RELEASE_TAG"
+            if grep -qiE 'Resource not accessible by personal access token' "$PAT_ERR"; then
+              echo "::warning::SYNC_PAT lacks permission to dispatch postflight; grant the fine-grained token repository permission 'Actions: Read and write' on $GITHUB_REPOSITORY. Retrying with the job token"
+            else
+              echo "::warning::SYNC_PAT could not dispatch postflight; retrying with the job token"
+            fi
+            if GH_TOKEN="$JOB_TOKEN" gh workflow run postflight.yml \
+                --repo "$GITHUB_REPOSITORY" \
+                --ref main \
+                --field "tag=$RELEASE_TAG" 2> "$JOB_ERR"; then
+              echo "postflight_deferred=false" >> "$GITHUB_OUTPUT"
+            elif grep -qiE 'API rate limit exceeded for installation' "$JOB_ERR"; then
+              # Only installation-quota exhaustion defers; earlier verification already succeeded.
+              echo "postflight_deferred=true" >> "$GITHUB_OUTPUT"
+              echo "- Postflight for $RELEASE_TAG deferred by installation API rate limit; run 'aidevops release reconcile <PR>' to queue it without republishing" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            else
+              cat "$JOB_ERR" >&2
+              exit 1
+            fi
           fi
           echo "Queued Postflight Verification for $RELEASE_TAG"
+
+      # A successful step here is the durable jobs-API evidence that reconciliation reads.
+      - name: Record deferred postflight
+        if: steps.postflight-queue.outputs.postflight_deferred == 'true'
+        run: |
+          echo "::warning::Postflight queue for $RELEASE_TAG is deferred until the installation API rate limit resets; run aidevops release reconcile <PR> to queue it without republishing"
 
       - name: Publication summary
         env:
