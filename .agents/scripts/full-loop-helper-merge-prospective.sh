@@ -234,7 +234,14 @@ _merge_fetch_partial_objects() {
 		print_error "Merge blocked: unable to configure the bounded prospective fetch"
 		return 1
 	}
-	_merge_run_bounded_isolated_git "$timeout_secs" "$stdin_file" "$real_git" -C "$object_repo" \
+	# Credential routing (GH#33904): command-line config is read last, so the
+	# empty value resets every inherited helper (system osxkeychain, libsecret,
+	# GCM, URL-scoped entries) before the gh helper -- the principal that pinned
+	# the PR refs; GH_TOKEN wins when set -- is installed. OS helpers therefore
+	# never receive get/store/erase, and no Git configuration is persisted.
+	_merge_run_bounded_isolated_git "$timeout_secs" "$stdin_file" "$real_git" \
+		-c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+		-c core.askPass= -C "$object_repo" \
 		fetch --quiet --no-tags --recurse-submodules=no --filter=blob:none "$@" \
 		2>"$stderr_file" || rc=$?
 	_merge_disable_prospective_promisor "$real_git" "$object_repo" || {
@@ -247,6 +254,10 @@ _merge_fetch_partial_objects() {
 	fi
 	if [[ "$rc" -ne 0 ]]; then
 		cat "$stderr_file" >&2 2>/dev/null || true
+		if grep -qiE 'could not read (username|password)|terminal prompts disabled|authentication failed' \
+			"$stderr_file" 2>/dev/null; then
+			print_error "Merge blocked: prospective fetch could not authenticate to the target host through the gh credential helper; run 'gh auth status' (or provide GH_TOKEN) and retry"
+		fi
 		return 1
 	fi
 	if grep -qi 'filtering not recognized by server' "$stderr_file" 2>/dev/null; then
@@ -391,6 +402,10 @@ _merge_run_bounded_isolated_git() (
 	local stdin_file="$2"
 	shift 2
 	_merge_unset_repository_git_env
+	# Transfers run non-interactively: no terminal, askpass, or GCM prompt may
+	# outlive the bound or open an OS dialog (GH#33904).
+	unset GIT_ASKPASS SSH_ASKPASS
+	export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never
 	if [[ -n "$stdin_file" ]]; then
 		timeout_sec "$timeout_secs" "$@" <"$stdin_file"
 		return $?
