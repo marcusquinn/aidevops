@@ -3,6 +3,11 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Sourced by test-full-loop-release-reconcile.sh; shares its fixtures and state.
 
+# Direct execution must initialize the shared fixtures and preceding fragments.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	exec bash "$(dirname "${BASH_SOURCE[0]}")/test-full-loop-release-reconcile.sh" "$@"
+fi
+
 mkdir -p "${TEST_ROOT}/worktrees" "${TEST_ROOT}/tag-checkout" \
 	"${TEST_ROOT}/runtime" "${TEST_ROOT}/tag-checkout/.agents/scripts"
 export AIDEVOPS_WORKTREE_BASE_DIR="${TEST_ROOT}/worktrees"

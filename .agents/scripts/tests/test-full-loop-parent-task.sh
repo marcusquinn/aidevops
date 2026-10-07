@@ -146,7 +146,9 @@ eval "$(sed -n '/_issue_has_parent_task_label()/,/^}/p' "${TEST_SCRIPTS_DIR}/ful
 # Load the runtime-risk library and extract _build_pr_body from the commit helper.
 # shellcheck source=../full-loop-helper-risk.sh
 source "${TEST_SCRIPTS_DIR}/full-loop-helper-risk.sh"
-eval "$(sed -n '/_build_pr_body()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# The body contains a column-zero brace inside its multiline string. Extract
+# through the next section boundary instead of truncating that string.
+eval "$(sed -n '/^_build_pr_body()/,/^# --- Worker Claim Validation ---/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # =============================================================================
 # Case 1 — parent-task issue → _build_pr_body with "For" keyword

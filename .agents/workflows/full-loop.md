@@ -217,7 +217,7 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
   --message "feat: description of changes" \
   --title "GH#${ISSUE_NUMBER}: description" \
   --summary "What was implemented" \
-  --testing "requested behaviour verified through normal path; shellcheck and applicable existing tests pass" \
+  --testing "requested behavior verified through normal path; shellcheck and applicable existing tests pass" \
   --decisions "any notable trade-offs")
 ```
 
