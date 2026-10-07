@@ -1581,9 +1581,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18611 Add shell-style rule and diff-scoped gate for early-exit pipe readers under pipefail #auto-dispatch #feat ref:GH#33914
 
-- [ ] t18612 OpenCode v1 TUI: collapse MCP sidebar by default, show AIDevOps version in sidebar footer, pause session-title version suffix #feat ref:GH#33963 started:2026-10-07
+- [x] t18612 OpenCode v1 TUI: collapse MCP sidebar by default, show AIDevOps version in sidebar footer, pause session-title version suffix #feat ref:GH#33963 started:2026-10-07 pr:#33965 completed:2026-10-07
 
-- [ ] t18613 Document live OpenCode TUI plugin verification (temp tui.json + per-project session DB) #documentation ref:GH#33975 started:2026-10-07
+- [x] t18613 Document live OpenCode TUI plugin verification (temp tui.json + per-project session DB) #documentation ref:GH#33975 started:2026-10-07 pr:#33977 completed:2026-10-07
 
 - [ ] t18614 Add opencode-test-helper.sh tui-capture: headless pty render + text assertions for TUI plugin verification #auto-dispatch #feat ref:GH#33978 blocked-by:t18613
 
