@@ -145,12 +145,8 @@ _large_file_gate_precheck_labels() {
 		assignee_count=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json assignees --jq '.assignees | length' 2>/dev/null) || assignee_count="0"
 		if [[ "$assignee_count" -gt 0 ]]; then
-			# GH#33883: retain the GH#31678 gate contract during the
-			# assignment/status-label race; no label removal occurred here.
-			if [[ "$force_recheck" == "true" ]] &&
-				[[ "$labels_tokenized" == *"$simplification_label_token"* ]]; then
-				return 2
-			fi
+			# GH#33883: preserve the GH#31678 gate contract before status labeling.
+			[[ "$force_recheck" == "true" && "$labels_tokenized" == *"$simplification_label_token"* ]] && return 2
 			return 1
 		fi
 	fi
