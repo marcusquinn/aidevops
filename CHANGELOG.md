@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.26] - 2026-10-07
+
+### Changed
+
+- Documentation: clarify Playwright screenshot artifact handoff
+
+### Fixed
+
+- What next close readiness names owners for held objective phases
+- surface lane API failures and defer safe 5xx errors
+- bound stale dependency reconciliation before dispatch
+- project status:blocked for native blockedBy in publication reconcile (GH#33921) (#33923)
+
 ## [3.38.25] - 2026-10-07
 
 ### Changed
