@@ -137,9 +137,31 @@ _publication_desired_labels() {
 	return 0
 }
 
+# Native GitHub blockedBy edges (including cross-repo) never appear as TODO
+# markers. Fail closed: lookup errors or truncated pages count as blocked.
+_publication_native_blocker_open() {
+	local repo="$1" issue_num="$2"
+	local owner="${repo%%/*}" name="${repo#*/}" response=""
+	[[ "$repo" == */* && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 0
+	# shellcheck disable=SC2016  # GraphQL variables are expanded by GitHub, not shell.
+	response=$(gh api graphql -f query='
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner, name:$name) {
+    issue(number:$number) {
+      blockedBy(first: 50) { nodes { state } pageInfo { hasNextPage } }
+    }
+  }
+}' -F owner="$owner" -F name="$name" -F number="$issue_num" 2>/dev/null) || return 0
+	jq -e '.data.repository.issue.blockedBy | type == "object"' <<<"$response" >/dev/null 2>&1 || return 0
+	jq -e '.data.repository.issue.blockedBy
+		| (.pageInfo.hasNextPage == true) or any(.nodes[]?; (.state | ascii_downcase) == "open")' \
+		<<<"$response" >/dev/null 2>&1
+}
+
 _publication_task_has_dependency() {
 	local task_line="$1"
 	local issue_json="${2:-null}"
+	local repo="${3:-}" issue_num="${4:-}"
 	local parsed="" blocked_by=""
 	parsed=$(parse_task_line "$task_line") || return 1
 	blocked_by=$(printf '%s\n' "$parsed" | grep '^blocked_by=' | cut -d= -f2-)
@@ -151,8 +173,9 @@ _publication_task_has_dependency() {
 	# Publication must not override them (or an existing blocked status).
 	jq -e 'any(.labels[]?.name;
 		. == "status:blocked" or test("^blocked-by:(GH)?#[1-9][0-9]*$"))' \
-		<<<"$issue_json" >/dev/null || return 1
-	return 0
+		<<<"$issue_json" >/dev/null && return 0
+	[[ -n "$repo" && -n "$issue_num" ]] || return 1
+	_publication_native_blocker_open "$repo" "$issue_num"
 }
 
 _publication_issue_has_active_status() {
@@ -273,7 +296,7 @@ _publication_reconcile_one() {
 		return 1
 	}
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
-	_publication_task_has_dependency "$task_line" "$issue_json" && has_dependency=1
+	_publication_task_has_dependency "$task_line" "$issue_json" "$repo" "$issue_num" && has_dependency=1
 	jq -e --arg task_prefix "${task_id}:" --arg bound "$require_title_prefix" \
 		'.state == "OPEN" and ($bound == "0" or (.title | startswith($task_prefix)))' \
 		<<<"$issue_json" >/dev/null || return 1
