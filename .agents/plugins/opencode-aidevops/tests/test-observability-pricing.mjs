@@ -29,7 +29,7 @@ test("GPT-6 Astra and GPT-5.6 pricing use published Standard short-context API r
   assert.deepEqual(getPricing("openai/gpt-6-luna"), {
     input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125,
   });
-  assert.equal(PRICING_VERSION, "2026-10-01.1");
+  assert.equal(PRICING_VERSION, "2026-10-07.1");
 });
 
 test("specific Anthropic IDs win over generic family keys", () => {
@@ -37,9 +37,12 @@ test("specific Anthropic IDs win over generic family keys", () => {
   assert.equal(getPricing("anthropic/claude-opus-5-5-fast").input, 8.0);
   assert.equal(getPricing("anthropic/claude-opus-4-6").input, 5.0);
   assert.equal(getPricing("anthropic/claude-haiku-4-5").input, 1.0);
+  assert.deepEqual(getPricing("anthropic/claude-haiku-5-5"), {
+    input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125,
+  });
   assert.equal(getPricing("anthropic/claude-sonnet-5").output, 10.0);
   assert.deepEqual(getPricing("anthropic/claude-sonnet-5-5"), {
-    input: 2.0, output: 10.0, cacheRead: 0.20, cacheWrite: 2.50,
+    input: 2.0, output: 10.0, cacheRead: 0.10, cacheWrite: 2.50,
   });
 });
 

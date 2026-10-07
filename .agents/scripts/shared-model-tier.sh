@@ -202,7 +202,7 @@ model_tier_candidates() {
 	fi
 
 	case "$tier" in
-	simple) printf '%s\n' "openai/gpt-6-luna" "anthropic/claude-haiku-4-5" ;;
+	simple) printf '%s\n' "openai/gpt-6-luna" "anthropic/claude-haiku-5-5" ;;
 	standard) printf '%s\n' "openai/gpt-6.1-sol" "openai/gpt-5.6-terra" "zai-coding-plan/glm-5.2" "anthropic/claude-sonnet-5-5" ;;
 	thinking) printf '%s\n' "openai/gpt-6.1-sol" "anthropic/claude-opus-5-5" ;;
 	*) return 1 ;;
@@ -632,6 +632,7 @@ get_model_pricing() {
 	*gpt-5.6-luna*) echo "0.20|1.20|0.02|0.25" ;;
 	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
 	*sonnet-4* | *claude-sonnet*) echo "$fallback_default_pricing" ;;
+	*haiku-5-5*) echo "0.10|0.50|0.01|0.125" ;;
 	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08|1.0" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60|0.10|0.40" ;;
 	*gpt-4.1*) echo "2.0|8.0|0.50|2.0" ;;

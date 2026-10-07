@@ -91,6 +91,7 @@ function buildClaudeModelMap(names) {
 /** Models registered under the claudecli provider (via Claude CLI proxy). */
 const CLAUDECLI_MODELS = buildClaudeModelMap({
   "claude-haiku-4-5":  "Claude Haiku 4.5 (via CLI)",
+  "claude-haiku-5-5":  "Claude Haiku 5.5 (via CLI)",
   "claude-sonnet-4-5": "Claude Sonnet 4.5 (via CLI)",
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via CLI)",
   "claude-sonnet-5-5": "Claude Sonnet 5.5 (via CLI)",
