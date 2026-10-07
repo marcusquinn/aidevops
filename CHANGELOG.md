@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.25] - 2026-10-07
+
+### Changed
+
+- Tests: allow secret requirement names in manual-dispatch capability diagnostics (#33922)
+- Maintenance: mark t18610 complete (pr:#33906 completed:2026-10-07) (#33909)
+
+### Fixed
+
+- route prospective merge HTTPS fetch through gh credential helper
+- make manual worker dispatches visible to status
+- distinguish incomplete queue scans from GitHub failures
+
 ## [3.38.24] - 2026-10-07
 
 ### Added
