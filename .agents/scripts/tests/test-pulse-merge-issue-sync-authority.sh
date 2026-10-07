@@ -84,8 +84,9 @@ _check_interactive_pr_gates() { return 0; }
 gh() { return 0; }
 gh_pr_view() {
 	if [[ "$*" == *"labels,isDraft"* ]]; then
-		if [[ "$FIXTURE_LABELS" == "external-contributor" ]]; then
-			printf '%s\n' '{"labels":[{"name":"external-contributor"}],"isDraft":false}'
+		if [[ -n "$FIXTURE_LABELS" ]]; then
+			jq -nc --arg labels "$FIXTURE_LABELS" \
+				'{labels: ($labels | split(",") | map({name: .})), isDraft: false}'
 		else
 			printf '%s\n' '{"labels":[],"isDraft":false}'
 		fi
@@ -136,6 +137,57 @@ else
 	print_result "exact-head account-authored Issue Sync bypasses worker linked-issue gate" 1 \
 		"rc=${result} trust=$(cat "$TRUST_CALLS") worker_calls=$(cat "$WORKER_BRIEFED_CALLS") log=$(cat "$LOGFILE")"
 fi
+
+# GH#33955: Pulse TODO handoff PRs carry origin:worker and a non-closing Ref,
+# so the linked issue is empty. Exact-head generated-TODO trust must bypass the
+# worker-briefed linked-issue gate; without it the worker gate still applies.
+_OW_LABEL_PAT=",origin:worker,"
+FIXTURE_TRUSTED=1
+FIXTURE_LABELS="origin:worker"
+: >"$TRUST_CALLS"
+: >"$WORKER_BRIEFED_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current pulse-runner)
+if [[ "$result" -eq 0 ]] && [[ ! -s "$WORKER_BRIEFED_CALLS" ]] &&
+	grep -qF "satisfies worker authority without a linked issue" "$LOGFILE"; then
+	print_result "exact-head Pulse TODO handoff with origin:worker bypasses worker linked-issue gate" 0
+else
+	print_result "exact-head Pulse TODO handoff with origin:worker bypasses worker linked-issue gate" 1 \
+		"rc=${result} worker_calls=$(cat "$WORKER_BRIEFED_CALLS") log=$(cat "$LOGFILE")"
+fi
+
+FIXTURE_TRUSTED=1
+FIXTURE_LABELS="origin:worker,hold-for-review"
+: >"$WORKER_BRIEFED_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current pulse-runner)
+if [[ "$result" -eq 1 ]] && [[ ! -s "$WORKER_BRIEFED_CALLS" ]] &&
+	grep -qF "trusted generated TODO PR is draft or has hold-for-review" "$LOGFILE"; then
+	print_result "trusted Pulse TODO handoff still honours hold-for-review" 0
+else
+	print_result "trusted Pulse TODO handoff still honours hold-for-review" 1 \
+		"rc=${result} log=$(cat "$LOGFILE")"
+fi
+
+FIXTURE_TRUSTED=0
+FIXTURE_LABELS="origin:worker"
+: >"$WORKER_BRIEFED_CALLS"
+_is_collaborator_author() {
+	_PULSE_AUTHOR_PERMISSION_VALUE="write"
+	return 0
+}
+result=$(run_gate head-current pulse-runner)
+if [[ "$result" -eq 1 ]] && [[ -s "$WORKER_BRIEFED_CALLS" ]]; then
+	print_result "untrusted origin:worker PR without linked issue still hits worker-briefed gate" 0
+else
+	print_result "untrusted origin:worker PR without linked issue still hits worker-briefed gate" 1 \
+		"rc=${result} worker_calls=$(cat "$WORKER_BRIEFED_CALLS")"
+fi
+_is_collaborator_author() {
+	_PULSE_AUTHOR_PERMISSION_VALUE="none"
+	return 1
+}
+_OW_LABEL_PAT=""
 
 FIXTURE_TRUSTED=0
 FIXTURE_LABELS=""
