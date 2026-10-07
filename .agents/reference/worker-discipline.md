@@ -221,6 +221,18 @@ AI brief owner:
    `dependency_change` or `human_decision`). A decision suppresses
    re-assessment for 24h; unchanged blockers are not retried blindly.
 
+#### Recoverable policy denials (GH#33969)
+
+A `[NET-TIER]` loopback denial is a routing hint, not a terminal blocker. Never
+release with `status:blocked`, `permission_required` or a draft checkpoint
+because of it alone. Follow the route the denial names: keep the server running
+in an `aidevops_bounded_operation` and retry the probe once the port listens,
+run server and client inside one bounded operation, or use the registered
+local-hosting site. Report a blocker only after those routes have been tried and
+failed, or when the denial says a whole-process egress backend is active, with
+the denial text and the attempted route as evidence. Details:
+`services/hosting/local-hosting.md` "Headless worker verification access".
+
 ## PR auto-approval defense-in-depth (GH#17671, t2933)
 
 Helpers in the auto-merge cascade that approve, merge, or otherwise privilege a PR based on author identity (`approve_collaborator_pr`, `_check_pr_merge_gates`, anything new in the same neighbourhood) MUST self-validate the property their name claims — even when upstream gates already do so. Trusting an upstream check is documentation, not enforcement; a future refactor can remove the upstream check silently and re-open a supply-chain hole. Approval-body strings, audit log lines, and success messages must describe the checks actually performed in the current invocation, never the property the function is named for.

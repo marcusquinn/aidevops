@@ -339,6 +339,7 @@ export async function setupAidevopsV2(ctx) {
       repositoryDir: directory,
       continuationGuard,
       resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID),
+      ownedListenerRoots: (sessionID) => boundedOperationManager.ownedListenerRoots(sessionID),
     });
     const shellEnvHook = createShellEnvHook({
       activeAgentsDir: ACTIVE_AGENTS_DIR,

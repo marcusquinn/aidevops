@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
+import { isWorkerContext, processStartIdentity } from "./process-start-identity.mjs";
 import { classifyFullLoopCommitAndPr } from "./quality-hooks-full-loop-trust.mjs";
 import {
   isPolicyHelperTimeout,
@@ -17,34 +17,7 @@ import {
 
 export { bindActiveScriptsDir } from "./quality-hooks-full-loop-trust.mjs";
 
-function processIdentity(pid) {
-  const psBinary = existsSync("/bin/ps") ? "/bin/ps" : "ps";
-  try {
-    return execFileSync(
-      psBinary,
-      ["-p", String(pid), "-o", "lstart="],
-      {
-        encoding: "utf8",
-        env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 5000,
-      },
-    ).trim().replaceAll(/\s+/g, " ");
-  } catch {
-    return "";
-  }
-}
-
-const RUNTIME_PROCESS_IDENTITY = processIdentity(process.pid);
-
-function isWorkerContext(env = process.env) {
-  if (env.AIDEVOPS_WORKER_ID) return true;
-  return [
-    "FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS",
-    "CLAUDE_HEADLESS", "Claude_HEADLESS", "HEADLESS", "GITHUB_ACTIONS",
-  ]
-    .some((key) => ["1", "true", "yes"].includes((env[key] || "").toLowerCase()));
-}
+const RUNTIME_PROCESS_IDENTITY = processStartIdentity(process.pid);
 
 function normaliseToolName(tool) {
   if (typeof tool !== "string") return "";
@@ -216,6 +189,15 @@ export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(),
     ? "git commit --dry-run"
     : command;
   const helperArgs = [helper, "check-command", "--cwd", cwd, "--command", guardedCommand];
+  appendRuntimePolicyArgs(helperArgs, options);
+  const result = executeCommandPolicy(helperArgs);
+  if (result.decision !== "allow") {
+    throw commandPolicyError(result);
+  }
+  return fullLoop.command;
+}
+
+function appendRuntimePolicyArgs(helperArgs, options) {
   // #aidevops:trust-boundary — process.pid and its start identity come from
   // the running OpenCode plugin host, never from the command being checked.
   helperArgs.push(
@@ -227,22 +209,52 @@ export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(),
   if (options.processTableFixture) {
     helperArgs.push("--process-table-fixture", options.processTableFixture);
   }
+  if (options.listenerTableFixture) {
+    helperArgs.push("--listener-table-fixture", options.listenerTableFixture);
+  }
   if (options.approvalHelper) {
     helperArgs.push("--approval-helper", options.approvalHelper);
   }
   const worker = options.worker ?? isWorkerContext();
-  if (worker) {
-    helperArgs.push(
-      "--worker",
-      "--worker-id",
-      options.workerId || process.env.AIDEVOPS_WORKER_ID || "opencode-worker",
-    );
+  if (!worker) return;
+  helperArgs.push(
+    "--worker",
+    "--worker-id",
+    options.workerId || process.env.AIDEVOPS_WORKER_ID || "opencode-worker",
+  );
+  // #aidevops:trust-boundary — owned listener roots come only from this host's
+  // bounded-operation table (supervisor PID + spawn-time start identity) and
+  // are re-verified against the live process table by the policy helper.
+  const roots = Array.isArray(options.ownedListenerRoots) ? options.ownedListenerRoots : [];
+  if (roots.length > 0) helperArgs.push("--owned-listener-roots", JSON.stringify(roots));
+}
+
+/**
+ * GH#33969: apply the shared worker command policy to an exact argv before a
+ * bounded operation spawns it, so recognized clients get the same decision as
+ * in Bash. Shell bodies the strict parser cannot represent (redirection,
+ * background jobs) stay outside argv control, like unrecognized clients; the
+ * worker egress backend owns whole-process enforcement.
+ * @returns {object|null} policy result, or null when not applicable
+ */
+export function checkArgvSafetyGate(argv, scriptsDir, cwd = process.cwd(), options = {}) {
+  const worker = options.worker ?? isWorkerContext();
+  if (!worker || !Array.isArray(argv) || argv.length === 0) return null;
+  const helper = join(scriptsDir, "command-policy-helper.py");
+  if (!existsSync(helper)) {
+    throw new Error("BLOCKED: required command policy helper is missing");
   }
-  const result = executeCommandPolicy(helperArgs);
-  if (result.decision !== "allow") {
-    throw commandPolicyError(result);
+  const helperArgs = [helper, "check-command", "--cwd", cwd, "--argv-json", JSON.stringify(argv)];
+  appendRuntimePolicyArgs(helperArgs, { ...options, worker });
+  let result;
+  try {
+    result = executeCommandPolicy(helperArgs);
+  } catch (error) {
+    if (/\(forbid, command\.parse-error\)/.test(error?.message || "")) return null;
+    throw error;
   }
-  return fullLoop.command;
+  if (result.decision !== "allow") throw commandPolicyError(result);
+  return result;
 }
 
 export const checkCanonicalGitSafetyGate = checkCommandSafetyGate;

@@ -476,6 +476,7 @@ export async function AidevopsPlugin({ directory, client }) {
     continuationGuard,
     sourceAccessRuntime,
     resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId),
+    ownedListenerRoots: (sessionId) => boundedOperationManager.ownedListenerRoots(sessionId),
   });
 
   const shellEnvHook = createShellEnvHook({

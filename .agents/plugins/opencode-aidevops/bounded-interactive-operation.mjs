@@ -30,6 +30,7 @@ import {
   operationStatusVersion,
 } from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
+import { processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 
 const MAX_OPERATIONS = 24;
@@ -60,7 +61,29 @@ export class BoundedInteractiveOperationManager {
     this.setTimer = options.setTimer || setTimeout;
     this.clearTimer = options.clearTimer || clearTimeout;
     this.supervisorRuntime = options.supervisorRuntime || SUPERVISOR_RUNTIME;
+    this.processIdentity = options.processIdentity || processStartIdentity;
     this.operations = new Map();
+  }
+
+  /**
+   * GH#33969: live supervisors owned by a session, as worker-policy evidence
+   * that a loopback listener was started by this worker.
+   * #aidevops:trust-boundary — PIDs and start identities come from this host's
+   * own spawn records, never from tool arguments.
+   * @param {string} owner - runtime session ID
+   * @returns {{pid: number, identity: string}[]}
+   */
+  ownedListenerRoots(owner) {
+    const session = scalar(owner);
+    if (!session) return [];
+    const roots = [];
+    for (const operation of this.operations.values()) {
+      const child = operation.child;
+      if (operation.owner !== session || !child || operation.childExited) continue;
+      if (!Number.isInteger(child.pid) || !operation.supervisorIdentity) continue;
+      roots.push({ pid: child.pid, identity: operation.supervisorIdentity });
+    }
+    return roots;
   }
 
   async resolveCwd(requested, context) {
@@ -151,6 +174,7 @@ export class BoundedInteractiveOperationManager {
       outputTruncated: false,
       outputID: "",
       ownerDeleted: false,
+      supervisorIdentity: "",
       child: null,
       childExited: false,
       restorationChild: null,
@@ -167,6 +191,7 @@ export class BoundedInteractiveOperationManager {
       operation.child = child;
       child.once("exit", () => { operation.childExited = true; });
       child.once("spawn", () => {
+        operation.supervisorIdentity = this.processIdentity(child.pid);
         operation.state = "running";
         this.notifyStatusWaiters(operation);
         operation.budgetTimer = this.setTimer(() => this.requestTermination(operation, "timed_out"), operation.budgetMs);
