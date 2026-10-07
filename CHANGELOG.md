@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.29] - 2026-10-07
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#33728)
+
+### Fixed
+
+- stop enrich re-blocking closed dependants; resumable bounded stale sweep
+
 ## [3.38.28] - 2026-10-07
 
 ### Added
