@@ -433,6 +433,8 @@ assert_eq "slow enrichment retains all repository inventories" "2" "$(printf '%s
 assert_eq "slow enrichment retains observed open issue counts" "6" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.queue.auto_dispatch_open')"
 assert_eq "queue deadline is explicit instead of empty output" "queue_budget_exhausted" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.summary.auto_dispatch_scan_state')"
 assert_eq "unknown dependency evidence is counted" "true" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.queue.dependency_unknown > 0')"
+assert_eq "deadline exhaustion is not reported as a GitHub error" "0" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.queue.gh_errors')"
+assert_not_contains "deadline exhaustion does not imply GitHub scan failures" "pulse-check-gh-scan-errors" "$PARTIAL_JSON"
 HANDOFF_FAMILY_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_HANDOFF_FAILURE_FIXTURE=yes" "$HELPER" json 2>&1)
 assert_eq "post-PR handoff family is absent from remediation candidates" "0" \
 	"$(printf '%s' "$HANDOFF_FAMILY_JSON" | jq -r '.failure_family_remediation | length')"
@@ -756,7 +758,8 @@ assert_not_contains "incomplete dependency scan suppresses unverified finding" "
 TRUNCATED_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_QUEUE_FIXTURE=truncation" \
 	"PULSE_CHECK_MAX_ISSUES_PER_REPO=3" \
 	"PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-shortfall.sh" "$HELPER" json 2>&1)
-assert_contains "saturated scan reports bounded incompleteness" "pulse-check-gh-scan-errors" "$TRUNCATED_OUT"
+assert_eq "saturated scan reports bounded incompleteness" "queue_inventory_truncated" "$(printf '%s' "$TRUNCATED_OUT" | jq -r '.summary.auto_dispatch_scan_state')"
+assert_eq "saturated inventory is not reported as a GitHub error" "0" "$(printf '%s' "$TRUNCATED_OUT" | jq -r '.queue.gh_errors')"
 assert_not_contains "saturated scan suppresses queue shortfall" "pulse-eligible-queue-under-target" "$TRUNCATED_OUT"
 assert_not_contains "saturated scan suppresses NMR inactivity" "pulse-inactive-nmr-holds" "$TRUNCATED_OUT"
 
