@@ -6,7 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TEST_ROOT="$(mktemp -d)"
+# Resolve symlinks (macOS /var -> /private/var) so recorded worktree paths match
+# what `git rev-parse --show-toplevel` reports, as they do in production.
+TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 OWNER_PID=""
 
 teardown() {
@@ -603,6 +605,90 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	[[ ! -e "$marker_worktree" ]]
 	jq -e '.resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released"' "$marker_receipt" >/dev/null
 	printf 'PASS finalized marker-only worktree removes without force and records durable cleanup\n'
+)
+
+# GH#33890: merge cleanup records a same-repository alias (local repair branch
+# at the exact PR head). Finalization must retire that marker, while adoption
+# stays strict and foreign or mismatched evidence still keeps the marker.
+(
+	export HOME="${TEST_ROOT}/alias-home"
+	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/alias-receipts"
+	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/alias-release-receipts"
+	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/alias-cleanup.log"
+	export AIDEVOPS_SESSION_ID="alias-session"
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/alias-registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	alias_repo="${TEST_ROOT}/alias-repo"
+	alias_worktree="${TEST_ROOT}/alias-linked"
+	mkdir -p "$HOME" "$alias_repo"
+	/usr/bin/git -C "$alias_repo" init -q -b main
+	/usr/bin/git -C "$alias_repo" config user.name Test
+	/usr/bin/git -C "$alias_repo" config user.email test@example.invalid
+	/usr/bin/git -C "$alias_repo" config commit.gpgsign false
+	printf 'seed\n' >"${alias_repo}/README.md"
+	/usr/bin/git -C "$alias_repo" add README.md
+	/usr/bin/git -C "$alias_repo" commit -q -m seed
+	/usr/bin/git -C "$alias_repo" remote add origin git@github.com:example/repo.git
+	/usr/bin/git -C "$alias_repo" worktree add -q -b feature/alias-repair "$alias_worktree"
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/shared-constants.sh"
+	# shellcheck source=../full-loop-helper-merge.sh
+	source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+	alias_head=$(/usr/bin/git -C "$alias_worktree" rev-parse HEAD)
+	alias_head_repo="example/repo"
+	# The PR head ref differs from the local branch: this is the alias case.
+	gh() {
+		jq -n --arg head "$alias_head" --arg head_repo "$alias_head_repo" '{state:"MERGED",
+			mergedAt:"2026-10-07T00:00:00Z", mergeCommit:{oid:$head}, headRefName:"feature/alias",
+			headRefOid:$head, headRepository:{nameWithOwner:$head_repo}, isCrossRepository:false}'
+		return 0
+	}
+	export alias_head alias_head_repo
+	export -f gh
+	cd "$alias_worktree"
+	if _merge_fresh_adopted_worktree_cleanup_target 107 example/repo >/dev/null; then
+		printf 'FAIL adoption accepted a renamed local branch\n'
+		exit 1
+	fi
+	alias_target=$(_merge_fresh_retirement_worktree_cleanup_target 107 example/repo)
+	[[ "$alias_target" == "$(/usr/bin/git rev-parse --show-toplevel)"$'\t'"feature/alias-repair"$'\t'"0" ]] || {
+		printf 'FAIL retirement resolver did not return the recorded alias target: %s\n' "$alias_target"
+		exit 1
+	}
+	# Record exactly what merge cleanup records for the alias target.
+	alias_receipt=$(full_loop_write_cleanup_deferred example/repo 107 "$(/usr/bin/git rev-parse --show-toplevel)" \
+		feature/alias-repair "$$" alias-session not-requested FINALIZATION_PENDING)
+	_full_loop_write_release_receipt example/repo 107 not-requested
+	mkdir -p .agents
+	alias_marker="${alias_worktree}/.agents/.full-loop-cleanup-deferred"
+	printf '%s\n' "$$" >"$alias_marker"
+	# Reproduce the pre-fix stuck state: receipt COMPLETE, marker still present.
+	full_loop_finalize_cleanup_receipt example/repo 107 not-requested
+	cp "$alias_receipt" "${TEST_ROOT}/alias-complete.json"
+	jq '.branch = "feature/alias"' "${TEST_ROOT}/alias-complete.json" >"$alias_receipt"
+	if _full_loop_retire_finalized_cleanup_marker example/repo 107 not-requested; then
+		printf 'FAIL alias marker retired against a receipt recording another branch\n'
+		exit 1
+	fi
+	[[ -f "$alias_marker" ]]
+	cp "${TEST_ROOT}/alias-complete.json" "$alias_receipt"
+	alias_head_repo="fork/repo"
+	if _full_loop_retire_finalized_cleanup_marker example/repo 107 not-requested; then
+		printf 'FAIL alias marker retired for a cross-repository PR head\n'
+		exit 1
+	fi
+	[[ -f "$alias_marker" ]]
+	alias_head_repo="example/repo"
+	printf 'PASS alias adoption stays strict; mismatched branch and foreign head keep the marker\n'
+	if ! cmd_finalize_receipt 107 example/repo; then
+		printf 'FAIL finalize-receipt retry did not retire the recorded alias marker\n'
+		exit 1
+	fi
+	[[ ! -e "$alias_marker" && -z "$(/usr/bin/git status --porcelain)" ]]
+	cmd_finalize_receipt 107 example/repo
+	jq -e '.executor_completion_state == "COMPLETE" and .resource_cleanup_state == "CLEANUP_DEFERRED"
+		and .branch == "feature/alias-repair"' "$alias_receipt" >/dev/null
+	printf 'PASS finalize-receipt retires the recorded alias marker and retries idempotently\n'
 )
 
 exit 0
