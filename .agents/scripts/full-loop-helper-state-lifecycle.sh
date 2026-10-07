@@ -1937,7 +1937,10 @@ _full_loop_retire_finalized_cleanup_marker() {
 	tracked_marker=$(git -C "$worktree" ls-files -- .agents/.full-loop-cleanup-deferred) || return 1
 	[[ -z "$tracked_marker" ]] || return 1
 	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" || "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] || return 1
-	cleanup_target=$(_merge_fresh_adopted_worktree_cleanup_target "$pr_number" "$repo") || return 1
+	# Retirement must accept every target merge cleanup records (including a
+	# same-repository alias); the locked receipt check below binds it to the
+	# exact recorded worktree and branch (GH#33890).
+	cleanup_target=$(_merge_fresh_retirement_worktree_cleanup_target "$pr_number" "$repo") || return 1
 	IFS=$'\t' read -r worktree branch _ <<<"$cleanup_target"
 	[[ "$marker_path" == "${worktree}/.agents/.full-loop-cleanup-deferred" ]] || return 1
 	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || return 1
