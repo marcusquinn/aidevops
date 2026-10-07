@@ -29,7 +29,10 @@ ln -s /bin/false "$TEST_DIR/caller-bin/git"
 trusted_git=$(PATH="$TEST_DIR/caller-bin" _source_access_system_path git)
 case "$trusted_git" in
 /usr/bin/git | /bin/git | /run/current-system/sw/bin/git) ;;
-*) printf 'FAIL: broker selected Git outside trusted system roots\n' >&2; exit 1 ;;
+*)
+	printf 'FAIL: broker selected Git outside trusted system roots\n' >&2
+	exit 1
+	;;
 esac
 if _source_access_system_path ../git >/dev/null; then
 	printf 'FAIL: system lookup accepted a path instead of a command name\n' >&2

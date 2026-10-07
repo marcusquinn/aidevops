@@ -39,6 +39,18 @@ Existing running processes and service definitions need activation/regeneration.
   `_launchd_has_agent: command not found` diagnostics.
 - ShellCheck on changed shell files, Node syntax checks, Python AST parsing and
   `git diff --check` pass.
+- Source-access Python suite: 72 cases, one platform-conditional skip; shell
+  entrypoint suites pass. Run with umask 022 and an owner-only temporary root:
+  this host's default workspace ancestor is group-writable, which the broker
+  correctly rejects. No trust check was disabled to run the suite.
+- Signed broker setup and team-interface Buzz worktree/OpenCode overlay suites
+  pass, including caller-PATH shadow rejection and existing ownership bindings.
+- Changed-file `linters-local.sh --changed --base-ref origin/main` passes its
+  required gates. Cached `npx --no-install markdownlint-cli2` reports zero issues
+  for changed documentation; pre-existing formatting/size advisories remain.
+- Independent staged-diff review and metadata portability delta review found no
+  material introduced defects. Deployment copy in `setup/modules/agent-deploy.sh`
+  copies complete scripts/plugins trees, including both new sibling helpers.
 
 The runtime-discovery suite `test-resolve-pulse-runtime-binary.sh` fails the same
 three cases on both the patch and unchanged checkout: most-recent Node selection,

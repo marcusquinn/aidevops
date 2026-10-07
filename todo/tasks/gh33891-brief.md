@@ -122,11 +122,11 @@ bash .agents/scripts/linters-local.sh
 
 ## Acceptance Criteria
 
-- [ ] Shared launch environments recover installed tools from stable Nix profile roots without replacing guards or project-selected versions; repeated initialization does not duplicate roots.
-- [ ] Merge/recovery native Git resolution skips framework wrappers and preserves explicit operator overrides and all Git policy gates.
-- [ ] Source-access tooling works with trusted Nix system binaries and never chooses caller-controlled PATH executables or expands automatic sudo authority.
-- [ ] Team-interface project/worktree validation no longer requires `/usr/bin/git`, retaining repository and host/agent ownership validation.
-- [ ] Focused checks, changed-file quality gates, and independent trust-boundary review pass; baseline-only failures and real-host coverage limits are recorded honestly.
+- [x] Shared launch environments recover installed tools from stable Nix profile roots without replacing guards or project-selected versions; repeated initialization does not duplicate roots.
+- [x] Merge/recovery native Git resolution skips framework wrappers and preserves explicit operator overrides and all Git policy gates.
+- [x] Source-access tooling works with trusted Nix system binaries and never chooses caller-controlled PATH executables or expands automatic sudo authority.
+- [x] Team-interface project/worktree validation no longer requires `/usr/bin/git`, retaining repository and host/agent ownership validation.
+- [x] Focused checks, changed-file quality gates, and independent trust-boundary review pass; baseline-only failures and real-host coverage limits are recorded honestly.
 - [ ] TODO and brief link the issue assigned to vladimirdulov; a verified PR is committed, pushed, reviewed and merged, without release publication.
 
 ## Recoverability
