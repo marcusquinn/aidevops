@@ -101,7 +101,9 @@ git() {
 }
 printf '{"initialized_repos":[{"path":"/canonical","slug":"stale/name"},{"path":"/hidden","local_only":true}]}\n' >"${HOME}/.config/aidevops/repos.json"
 inventory=$(_pc_progress_jobs "${HOME}/.config/aidevops/repos.json")
-jq -es '.[1] == ["orphan","/canonical","owner/live","/linked path","","trunk"] and length == 4' <<<"$inventory" >/dev/null
+jq -es '.[1] == ["orphan","/canonical","owner/live","/linked path","","trunk"]
+	and .[2:] == [["central-unregistered"],["relocate"],["outliers"],["localdev-prune"]]
+	and length == 6' <<<"$inventory" >/dev/null
 aliased_inventory=$(_pc_progress_repo_jobs /alias)
 jq -es '[.[] | select(.[0] == "orphan") | .[3]] == ["/linked path"]' <<<"$aliased_inventory" >/dev/null
 

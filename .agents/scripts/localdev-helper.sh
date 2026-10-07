@@ -300,6 +300,7 @@ cmd_help() {
 	echo "  branch <app> <branch> [port]  Add branch subdomain route"
 	echo "  branch rm <app> <branch>      Remove branch route"
 	echo "  branch list [app]             List branch routes"
+	echo "  branch prune [app] [--repo <path>] [--dry-run]  Drop branches with no live worktree"
 	echo "  db <command>       Shared Postgres management (start, create, list, drop, url)"
 	echo "  list               Dashboard: all projects, URLs, certs, health, LocalWP"
 	echo "  status             Infrastructure health: dnsmasq, Traefik, certs, ports"
