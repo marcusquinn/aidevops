@@ -55,8 +55,8 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 # Extract _derive_pr_title_prefix and _compose_pr_title from the helper
 # (same eval-extract pattern as test-full-loop-title-prefix.sh).
 # Each function ends on a column-0 `}`.
-eval "$(sed -n '/^_derive_pr_title_prefix()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper.sh")"
-eval "$(sed -n '/^_compose_pr_title()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper.sh")"
+eval "$(sed -n '/^_derive_pr_title_prefix()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+eval "$(sed -n '/^_compose_pr_title()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # Shared TODO fixture used by cases that need a TODO match.
 TODO_MAIN="${TEST_ROOT}/TODO-main.md"

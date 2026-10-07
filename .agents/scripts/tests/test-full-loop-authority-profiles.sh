@@ -47,9 +47,9 @@ main() {
 			"$(basename "$doc") does not resolve sync from the PR base" || return 1
 	done
 
-	require_text "$AGENTS_DOC" 'external contributions stop after a verified ready PR/review loop' \
+	require_text "$AGENTS_DOC" 'external contributions stop at a verified ready PR' \
 		'AGENTS.md lacks the concise authority-aware rule' || return 1
-	require_text "$GIT_WORKFLOW_DOC" 'full-loop request for a maintained non-aidevops repository explicitly requests synchronization' \
+	require_text "$GIT_WORKFLOW_DOC" 'full-loop request for a maintained non-aidevops repository authorizes synchronization of the merged PR base' \
 		'git workflow does not authorize guarded post-merge synchronization' || return 1
 	require_text "$PR_LOOP_DOC" 'External loops never merge' \
 		'PR loop does not stop external contributions before merge' || return 1
