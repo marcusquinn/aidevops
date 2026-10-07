@@ -694,6 +694,61 @@ test_secondary_merge_transports_refresh_authority() {
 	return 0
 }
 
+# Load the real shared read path in a subshell so authority fixtures retain their
+# local stubs. Advance SECONDS rather than sleeping through a healthy slow gate.
+test_slow_gate_admission_reads() {
+	local scenario="" result=0
+	for scenario in healthy deferred exhausted http; do
+		result=0
+		(
+			extract_function _flm_gh_read
+			extract_function _flm_gh_read_once
+			extract_function _merge_with_admission_retry
+			# shellcheck source=/dev/null
+			source "$EXTRACTED"
+			local calls=0 reads=0 waits=0 elapsed=0 rc=0
+			unset AIDEVOPS_GH_READ_TIMEOUT
+			AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=60
+			date() { printf '%s\n' "$((1000 + elapsed))"; return 0; }
+			sleep() {
+				local duration="$1"
+				waits=$((waits + 1))
+				elapsed=$((elapsed + duration))
+				SECONDS=$((SECONDS + duration))
+				return 0
+			}
+			_gh_with_timeout() {
+				reads=$((reads + 1))
+				[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 ]] || return 1
+				if [[ "$scenario" == http ]]; then
+					printf 'HTTP 502: Bad Gateway\n' >&2
+					return 1
+				fi
+				if [[ "$scenario" != healthy && ( "$calls" -eq 1 || "$scenario" == exhausted ) ]]; then
+					printf '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=%s\n' "$((1002 + elapsed))" >&2
+					return 75
+				fi
+				return 0
+			}
+			_slow_gate() {
+				calls=$((calls + 1))
+				SECONDS=$((SECONDS + 61))
+				_flm_gh_read gh api repos/owner/repo/pulls/900
+				return $?
+			}
+			_merge_with_admission_retry _slow_gate >/dev/null 2>&1 || rc=$?
+			case "$scenario" in
+			healthy) [[ "$rc" -eq 0 && "$reads" -eq 1 && "$waits" -eq 0 ]] ;;
+			deferred) [[ "$rc" -eq 0 && "$reads" -eq 2 && "$waits" -eq 1 && "$elapsed" -eq 2 ]] ;;
+			exhausted) [[ "$rc" -eq 75 && "$reads" -eq 2 && "$waits" -eq 1 ]] ;;
+			http) [[ "$rc" -eq 1 && "$reads" -eq 1 && "$waits" -eq 0 ]] ;;
+			esac
+		) || result=$?
+		print_result "slow healthy gate admission reads: $scenario" "$result"
+	done
+	return 0
+}
+
 test_all_merge_modes_use_guard() {
 	_merge_guard_admin_merge_maintainer_review() {
 		_merge_guard_admin_merge_maintainer_review_for_mode_test "$@"
@@ -736,6 +791,7 @@ test_all_merge_modes_use_guard() {
 
 main() {
 	load_functions
+	test_slow_gate_admission_reads
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
 	test_authority_guard

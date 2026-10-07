@@ -40,11 +40,8 @@ _flm_gh_read() {
 _flm_gh_read_once() {
 	local rc=0
 	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
-	local remaining=$(( ${_FULL_LOOP_ADMISSION_DEADLINE:-$((SECONDS + 60))} - SECONDS ))
-	[[ "$remaining" -gt 0 ]] || return 1
-	if [[ "$AIDEVOPS_GH_READ_TIMEOUT" =~ ^[0-9]+$ && "$AIDEVOPS_GH_READ_TIMEOUT" -gt "$remaining" ]]; then
-		AIDEVOPS_GH_READ_TIMEOUT="$remaining"
-	fi
+	# A fresh read keeps its transport timeout, even after a slow healthy gate.
+	# The admission deadline bounds recovery waiting, not transport attempts.
 	export AIDEVOPS_GH_READ_TIMEOUT
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
 		_gh_with_timeout read "$@" || rc=$?
@@ -54,8 +51,8 @@ _flm_gh_read_once() {
 	return "$rc"
 }
 
-# One recovery owner per read/gate: nested reads inherit the same deadline and
-# do not start their own retry loops. Only explicit local-admission evidence is
+# One recovery owner per read/gate: the deadline starts at the first deferral;
+# nested reads do not start their own retry loops. Only local-admission evidence is
 # retryable; quota exhaustion, HTTP errors and review/CI failures fail closed.
 _merge_with_admission_retry() {
 	if [[ "${_FULL_LOOP_ADMISSION_ACTIVE:-0}" == 1 ]]; then
@@ -66,7 +63,7 @@ _merge_with_admission_retry() {
 	[[ "$budget" =~ ^[0-9]{1,4}$ && "$budget" -gt 0 ]] || budget=60
 	[[ "$budget" -le 60 ]] || budget=60
 	local _FULL_LOOP_ADMISSION_ACTIVE=1
-	local _FULL_LOOP_ADMISSION_DEADLINE=$((SECONDS + budget))
+	local _FULL_LOOP_ADMISSION_DEADLINE=0
 	local attempts=0 rc=0 diagnostics="" retry_at="" now="" wait_seconds=0 round_up=0
 	local err_file="" out_file=""
 	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-admission-error.XXXXXX") || return 1
@@ -91,6 +88,9 @@ _merge_with_admission_retry() {
 		retry_at="${diagnostics##*deferred_by=local_admission retry_at=}"
 		retry_at="${retry_at%%[[:space:]]*}"
 		[[ "$retry_at" =~ ^[0-9]{1,10}([.][0-9]+)?$ ]] || break
+		if [[ "$_FULL_LOOP_ADMISSION_DEADLINE" -eq 0 ]]; then
+			_FULL_LOOP_ADMISSION_DEADLINE=$((SECONDS + budget))
+		fi
 		now=$(date +%s) || break
 		round_up=0
 		[[ ! "$retry_at" =~ [.][0-9]*[1-9] ]] || round_up=1
