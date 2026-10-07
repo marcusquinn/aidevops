@@ -242,7 +242,7 @@ run_phase2() {
 	if "$HEADLESS_RUNTIME" run \
 		--agent "$ANALYSIS_AGENT" \
 		--task "$task_prompt" \
-		--model "${ANTHROPIC_MODEL:-anthropic/claude-haiku-4-5}" \
+		--model "${ANTHROPIC_MODEL:-anthropic/claude-haiku-5-5}" \
 		--no-session \
 		>>"$analysis_log" 2>&1; then
 		log_info "Phase 2 completed successfully — see ${analysis_log}"

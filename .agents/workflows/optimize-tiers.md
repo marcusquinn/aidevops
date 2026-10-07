@@ -127,7 +127,7 @@ A provider-family arm replaces `model`/`variant` with a route per tier. Omit
 
 ```json
 {"name": "anthropic", "tiers": {
-  "simple": {"model": "anthropic/claude-haiku-4-5", "variant": "high"},
+  "simple": {"model": "anthropic/claude-haiku-5-5", "variant": "medium"},
   "standard": {"model": "anthropic/claude-sonnet-5-5", "variant": "medium"},
   "thinking": {"model": "anthropic/claude-opus-5-5", "variant": "high"}
 }}

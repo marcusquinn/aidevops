@@ -127,6 +127,7 @@ _model_cost_rates() {
 	case "$ms" in
 	*opus-4* | *claude-opus*) echo "$PROFILE_RATE_OPUS" ;;
 	*sonnet-4* | *claude-sonnet*) echo "$PROFILE_RATE_SONNET" ;;
+	*haiku-5-5*) echo "0.10|0.50|0.01" ;;
 	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08" ;;
 	*gpt-5.4*) echo "$PROFILE_RATE_GPT" ;;
 	*gpt-5.3-codex*) echo "$PROFILE_RATE_GPT" ;;

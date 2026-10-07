@@ -200,7 +200,7 @@ without changing the workload-tier interface.
   "models": {
     "tiers": {
       "fast": {
-        "models": ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"],
+        "models": ["openai/gpt-4o-mini", "anthropic/claude-haiku-5-5"],
         "fallback": "haiku"
       }
     }

@@ -126,6 +126,8 @@ export function describeOpus47Override() {
  */
 export const CLAUDE_MODEL_LIMITS = {
   "claude-haiku-4-5":  { context:  200000, output: 32000 },
+  // Haiku 5.5: Anthropic's model overview publishes 1M context / 128K output.
+  "claude-haiku-5-5":  { context: 1000000, output: 128000 },
   "claude-sonnet-4-5": { context:  200000, output: 64000 },
   "claude-sonnet-4-6": { context: 1000000, output: 64000 },
   // Sonnet 5.5: models.dev publishes 1M context / 128K output.
