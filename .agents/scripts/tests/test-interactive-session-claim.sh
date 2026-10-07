@@ -98,6 +98,15 @@ auth)
 			printf '5000\n'
 			exit 0
 		fi
+		# Current status transitions require an exact GraphQL label snapshot.
+		# Reuse the fixture contract below rather than silently returning no data.
+		if [[ "$2" == "graphql" && "$*" == *'label0: label(name:'* ]]; then
+			"$0" api '/repos/fixture/labels?per_page=100' | jq -Rn '
+				[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}]
+				| to_entries | map({key: ("label" + (.key | tostring)), value: .value})
+				| from_entries | {data: {repository: .}}'
+			exit $?
+		fi
 		# gh api user --jq '.login'
 		if [[ "$2" == "user" ]]; then
 			if [[ "${STUB_GH_MODE:-online}" == "noisy-user-failure" ]]; then
@@ -760,7 +769,72 @@ for orphan_status in claimed in-progress in-review; do
 	fi
 done
 
+# GH#33896: inactive status can retain multiple stale assignees, including self.
+# Exercise the normal claim entrypoint without requiring a worker takeover flag.
+for stale_case in foreign mixed expired; do
+	rm -f "${claim_dir}"/*.json 2>/dev/null || true
+	: >"$STUB_LOG"
+	stale_metadata='{"state":"OPEN","labels":[{"name":"status:available"}],"assignees":[{"login":"worker-runner"},{"login":"other-worker"}],"comments":[]}'
+	if [[ "$stale_case" == "mixed" ]]; then
+		stale_metadata=$(printf '%s' "$stale_metadata" | jq '.assignees += [{login:"testuser"}]')
+	elif [[ "$stale_case" == "expired" ]]; then
+		expired_time=$(date -u -v-3H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+		stale_metadata=$(printf '%s' "$stale_metadata" | jq --arg time "$expired_time" \
+			'.comments = [{author:{login:"worker-runner"},createdAt:$time,body:"Interactive session claimed by @worker-runner"}]')
+	fi
+	printf '%s\n' "$stale_metadata" >"${STUB_STATE_DIR}/56010.json"
+	stale_out=$("$HELPER_PATH" claim 56010 regress/test --defer-comment 2>&1)
+	stale_rc=$?
+	if [[ $stale_rc -eq 0 && -f "${claim_dir}/regress-test-56010.json" ]] &&
+		jq -e '([.assignees[].login] == ["testuser"]) and any(.labels[]; .name == "status:claimed") and all(.labels[]; .name != "status:available")' \
+			"${STUB_STATE_DIR}/56010.json" >/dev/null &&
+		grep -q 'remove-assignee worker-runner' "$STUB_LOG" &&
+		grep -q 'remove-assignee other-worker' "$STUB_LOG" &&
+		! grep -q 'remove-assignee testuser' "$STUB_LOG"; then
+		print_result "GH#33896: available $stale_case assignees replaced with sole caller" 0
+	else
+		print_result "GH#33896: available $stale_case assignees replaced with sole caller" 1 \
+			"(rc=$stale_rc out=${stale_out:0:200})"
+	fi
+done
+
+# A missing active status must not bypass the existing two-hour live-owner guard.
+rm -f "${claim_dir}"/*.json 2>/dev/null || true
+: >"$STUB_LOG"
+inactive_claim_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+printf '{"state":"OPEN","labels":[{"name":"status:available"}],"assignees":[{"login":"other-human"}],"comments":[{"author":{"login":"other-human"},"createdAt":"%s","body":"Interactive session claimed by @other-human"}]}\n' \
+	"$inactive_claim_time" >"${STUB_STATE_DIR}/56011.json"
+inactive_foreign_out=$("$HELPER_PATH" claim 56011 regress/test --implementing 2>&1)
+inactive_foreign_rc=$?
+if [[ $inactive_foreign_rc -eq 1 && ! -f "${claim_dir}/regress-test-56011.json" ]] &&
+	! grep -q 'issue edit 56011' "$STUB_LOG" &&
+	printf '%s' "$inactive_foreign_out" | grep -q 'live interactive owner @other-human'; then
+	print_result "GH#33896: available live foreign interactive claim stays write-free" 0
+else
+	print_result "GH#33896: available live foreign interactive claim stays write-free" 1 \
+		"(rc=$inactive_foreign_rc out=${inactive_foreign_out:0:200})"
+fi
+
 # An assigned issue still requires explicit takeover and names its owners.
+# A newer caller comment must not hide another assignee's still-live claim.
+: >"$STUB_LOG"
+older_live_time=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
+jq --arg older "$older_live_time" --arg newer "$inactive_claim_time" \
+	'.assignees += [{login:"testuser"}] | .comments[0].createdAt = $older |
+	.comments += [{author:{login:"testuser"},createdAt:$newer,body:"Interactive session claimed by @testuser"}]' \
+	"${STUB_STATE_DIR}/56011.json" >"${STUB_STATE_DIR}/56012.json"
+mixed_live_out=$("$HELPER_PATH" claim 56012 regress/test --implementing 2>&1)
+mixed_live_rc=$?
+if [[ $mixed_live_rc -eq 1 && ! -f "${claim_dir}/regress-test-56012.json" ]] &&
+	! grep -q 'issue edit 56012' "$STUB_LOG" &&
+	printf '%s' "$mixed_live_out" | grep -q 'live interactive owner @other-human'; then
+	print_result "GH#33896: newer caller comment cannot hide live foreign claim" 0
+else
+	print_result "GH#33896: newer caller comment cannot hide live foreign claim" 1 \
+		"(rc=$mixed_live_rc out=${mixed_live_out:0:200})"
+fi
+
+# An assigned active issue still requires explicit takeover and names its owners.
 rm -f "${claim_dir}"/*.json 2>/dev/null || true
 : >"$STUB_LOG"
 printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:in-progress"}],"assignees":[{"login":"worker-runner"},{"login":"other-worker"}],"comments":[]}' \
