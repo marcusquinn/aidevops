@@ -10,6 +10,7 @@ import {
   capMap,
   classifyToolOutcome,
   isExplicitCompletionClaim,
+  isPathBlockerYield,
   operationFingerprint,
   sessionId,
   toolOutcomeFailed,
@@ -18,6 +19,7 @@ import {
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const DEFAULT_MAX_SCOPES = 32;
 const COMPLETION_CORRECTION_MARKER = "<!-- SESSION_CONTINUATION_GUARD -->";
+const BLOCKER_CORRECTION_MARKER = "<!-- SESSION_CONTINUATION_BLOCKER -->";
 
 function defaultCheckpointAdapter(checkpointHelper, repository, qualityLog) {
   const helperPath = checkpointHelper ? resolve(checkpointHelper) : "";
@@ -174,8 +176,26 @@ function afterTool(state, input, output) {
   return { failed: true, replan: true, count: failure.count, correction };
 }
 
+// GH#33888: a reported blocker pauses only its own path. When another active
+// todo remains, annotate the yield so the next turn continues the unblocked
+// work. Annotation only: no auto-continuation, no todo state changes.
+function correctBlockerYield(state, input, output) {
+  const scope = scopeFor(state, input);
+  const active = state.tasks.get(scope) || [];
+  if (active.length <= 1) return { corrected: false };
+  if (String(output.text).includes(BLOCKER_CORRECTION_MARKER)) return { corrected: true };
+
+  const remaining = active.join("; ");
+  output.text = `${output.text}\n\n${BLOCKER_CORRECTION_MARKER}\nA reported blocker pauses only its own path. ${active.length} active todos remain: ${remaining}. Continue the next unblocked safe todo, or record that todo's own blocker.`;
+  state.qualityLog?.("WARN", `[session-continuation] annotated path-blocker yield with ${active.length} active todos for session ${createHash("sha256").update(sessionId(input)).digest("hex").slice(0, 12)}`);
+  return { corrected: true, remaining, blocker: true };
+}
+
 function completeText(state, input, output) {
-  if (!isExplicitCompletionClaim(output?.text)) return { corrected: false };
+  if (!isExplicitCompletionClaim(output?.text)) {
+    if (isPathBlockerYield(output?.text)) return correctBlockerYield(state, input, output);
+    return { corrected: false };
+  }
   const scope = scopeFor(state, input);
   const recovery = loadRecovery(state, scope);
   const active = state.tasks.get(scope) || [];
@@ -225,9 +245,11 @@ export function createSessionContinuationGuard(options = {}) {
 }
 
 export {
+  BLOCKER_CORRECTION_MARKER,
   COMPLETION_CORRECTION_MARKER,
   classifyToolOutcome,
   isExplicitCompletionClaim,
+  isPathBlockerYield,
   operationFingerprint,
   toolOutcomeFailed,
 };
