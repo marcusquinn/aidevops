@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.27] - 2026-10-07
+
+### Fixed
+
+- transcription-helper helper-owned venv and side-effect-free subcommand --help (+GH#33936)
+- skip consolidation for permission-boundary breakers and worker checkpoints (#33942)
+- preserve configured toolchain PATH precedence
+- fix full-loop regression test drift
+
 ## [3.38.26] - 2026-10-07
 
 ### Changed
