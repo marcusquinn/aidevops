@@ -211,6 +211,11 @@ def decide(payload: dict):
     ):
         return None
     _record_block(session_id, blocks + 1)
+    return _block_reason(open_todos, final_text)
+
+
+def _block_reason(open_todos: list, final_text: str) -> str:
+    """One-sentence nudge; a path blocker (GH#33888) names the remaining todos."""
     if BLOCKER_RE.search(final_text):
         remaining = "; ".join(f'"{todo}"' for todo in open_todos[:5])
         return (
