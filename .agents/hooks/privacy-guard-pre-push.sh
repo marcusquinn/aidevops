@@ -46,6 +46,7 @@ _resolve_self() {
 		[[ "$src" != /* ]] && src="$dir/$src"
 	done
 	cd -P "$(dirname "$src")" && pwd
+	return $?
 }
 
 HOOK_DIR=$(_resolve_self)
@@ -142,7 +143,10 @@ for _ref_entry in "${_all_refs[@]}"; do
 	fi
 	secret_hits=$(privacy_scan_secret_material_diff "$_secret_base" "$_ls")
 	secret_rc=$?
-	if [[ "$secret_rc" -ne 0 ]]; then
+	if [[ "$secret_rc" -ne 0 && ("$secret_rc" -ne 1 || -z "$secret_hits") ]]; then
+		privacy_log ERROR "secret-material scan failed (rc=${secret_rc}, ref=${_rr}) — failing closed; no verified findings"
+		secret_exit_code=1
+	elif [[ "$secret_rc" -eq 1 ]]; then
 		printf '\n[privacy-guard][BLOCK] Push to %s contains secret/private-key material:\n\n' "$remote_name" >&2
 		printf '%s\n\n' "$secret_hits" >&2
 		printf '  Remove the secret material from committed content and amend/rewrite before pushing.\n' >&2
@@ -173,7 +177,10 @@ for _ref_entry in "${_all_refs[@]}"; do
 	fi
 	hits_output=$(privacy_scan_public_diff "$_scan_base" "$local_sha" "$entities_file")
 	scan_rc=$?
-	if [[ "$scan_rc" -ne 0 ]]; then
+	if [[ "$scan_rc" -ne 0 && ("$scan_rc" -ne 1 || -z "$hits_output") ]]; then
+		privacy_log ERROR "private-entity scan failed (rc=${scan_rc}, ref=${remote_ref}) — failing closed; no verified findings"
+		exit_code=1
+	elif [[ "$scan_rc" -eq 1 ]]; then
 		printf '\n[privacy-guard][BLOCK] Push to %s contains private references in public-repo content:\n\n' "$remote_name" >&2
 		printf '%s\n\n' "$hits_output" >&2
 		printf '  Remove the private material from the committed content and amend/rewrite the commit before pushing.\n' >&2
