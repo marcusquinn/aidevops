@@ -76,6 +76,22 @@ export function isExplicitCompletionClaim(text) {
   return /(?:^|[.!?]\s+)(?:FULL_LOOP_COMPLETE\b|(?:the\s+)?(?:task|work|implementation|objective|issue|request)\s+(?:is|has been)\s+(?:now\s+)?(?:done|complete|completed|finished)|(?:all|everything)\s+(?:is|has been)\s+(?:done|complete|completed|finished))/im.test(normalized);
 }
 
+// Ported from .agents/hooks/session_continuation_stop.py; keep both in sync.
+// A path blocker pauses one route; a human dependency or a question hands the
+// whole turn back to the user.
+const HUMAN_DEPENDENCY_RE = /\b(?:need|needs|require|requires|waiting (?:for|on)) (?:your|user|human|maintainer)\b/i;
+const PATH_BLOCKER_RE = /\bBLOCKED\b|\bblocker\b|\bblocked (?:on|by)\b|\b(?:cannot|can't|unable to) (?:continue|proceed)\b/i;
+
+// GH#33888: true when the text reports a blocker without asking the user a
+// question or naming a human dependency, so other active todos may continue.
+export function isPathBlockerYield(text) {
+  const normalized = String(text || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`]*`/g, " ");
+  const lines = normalized.split("\n").map((line) => line.trim().replace(/[*_` ]+$/, "")).filter(Boolean);
+  if (lines.slice(-3).some((line) => line.endsWith("?"))) return false;
+  if (HUMAN_DEPENDENCY_RE.test(normalized)) return false;
+  return PATH_BLOCKER_RE.test(normalized);
+}
+
 export function sessionId(input) {
   return String(input?.sessionID || input?.sessionId || input?.session?.id || "unknown-session");
 }

@@ -16,7 +16,9 @@ Allow the stop (print nothing, exit 0) when any of these hold:
   - AIDEVOPS_STOP_HOOK_DISABLE=1 (user override)
   - the latest user message asks to stop/pause
   - no TodoWrite state, or every todo is completed/cancelled
-  - the final assistant message asks the user a question or reports a blocker
+  - the final assistant message asks the user a question or names a human dependency
+  - the final assistant message reports a blocker and at most one todo is open
+    (with 2+ open todos the blocker pauses only its own path: GH#33888)
   - any input/transcript parse error (fail-open)
 
 Installed by: install-hooks-helper.sh (setup.sh) and update-claude-settings.py
@@ -50,9 +52,13 @@ USER_STOP_RE = re.compile(
     r"|\blet'?s (?:stop|pause)\b",
     re.IGNORECASE,
 )
+# Ported to session-continuation-utils.mjs (isPathBlockerYield); keep in sync.
+HUMAN_DEPENDENCY_RE = re.compile(
+    r"\b(?:need|needs|require|requires|waiting (?:for|on)) (?:your|user|human|maintainer)\b",
+    re.IGNORECASE,
+)
 BLOCKER_RE = re.compile(
     r"\bBLOCKED\b|\bblocker\b|\bblocked (?:on|by)\b"
-    r"|\b(?:need|needs|require|requires|waiting (?:for|on)) (?:your|user|human|maintainer)\b"
     r"|\b(?:cannot|can't|unable to) (?:continue|proceed)\b",
     re.IGNORECASE,
 )
@@ -136,12 +142,19 @@ def _open_todos(todos) -> list:
     ]
 
 
-def _hands_back_to_user(text: str) -> bool:
-    """True when the final message asks a question or reports a blocker."""
+def _hands_back_to_user(text: str, open_count: int) -> bool:
+    """True when the final message asks a question, names a human dependency,
+    or reports a blocker while at most one todo remains open.
+
+    GH#33888: a blocker pauses only its own path, so with 2+ open todos it
+    no longer exempts the stop; the nudge asks to continue the unblocked work.
+    """
     lines = [line.strip().rstrip("*_` ") for line in text.splitlines() if line.strip()]
     if any(line.endswith("?") for line in lines[-3:]):
         return True
-    return bool(BLOCKER_RE.search(text))
+    if HUMAN_DEPENDENCY_RE.search(text):
+        return True
+    return open_count <= 1 and bool(BLOCKER_RE.search(text))
 
 
 def _state_file(session_id: str) -> Path:
@@ -191,9 +204,20 @@ def decide(payload: dict):
     final_text = payload.get("last_assistant_message")
     if not isinstance(final_text, str) or not final_text.strip():
         final_text = state["assistant"]
-    if USER_STOP_RE.search(state["user"]) or not open_todos or _hands_back_to_user(final_text):
+    if (
+        USER_STOP_RE.search(state["user"])
+        or not open_todos
+        or _hands_back_to_user(final_text, len(open_todos))
+    ):
         return None
     _record_block(session_id, blocks + 1)
+    if BLOCKER_RE.search(final_text):
+        remaining = "; ".join(f'"{todo}"' for todo in open_todos[:5])
+        return (
+            f"{len(open_todos)} todos are still open ({remaining}) and a blocker "
+            "pauses only its own path, so continue the next unblocked todo "
+            "or state each remaining todo's own blocker."
+        )
     return (
         f"{len(open_todos)} todo(s) are still open, so continue with "
         f"\"{open_todos[0]}\", or state the blocker and list the remaining todos."

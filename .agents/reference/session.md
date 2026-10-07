@@ -346,7 +346,7 @@ Omit empty fields rather than inventing state.
 - Continuation prompt: `session-checkpoint-helper.sh continuation`
 - Checkpoint after each task, before large operations, and after PR creation or merge.
 - Runtime delivery: `.agents/plugins/opencode-aidevops/compaction.mjs`. Full workflow: `workflows/session-manager.md` "Compaction Resilience".
-- Keep-going guard: OpenCode uses `session-continuation-guard.mjs`; Claude Code uses the `Stop` hook `hooks/session_continuation_stop.py`, which blocks an interactive stop (max 2 per session) while TodoWrite items are open, unless the final message asks a question or reports a blocker, the user asked to stop, or the session is headless.
+- Keep-going guard: OpenCode uses `session-continuation-guard.mjs`; Claude Code uses the `Stop` hook `hooks/session_continuation_stop.py`, which blocks an interactive stop (max 2 per session) while TodoWrite items are open, unless the final message asks a question, names a human dependency, or reports a blocker with at most one todo open, the user asked to stop, or the session is headless. With 2+ open todos, both runtimes treat a reported blocker as pausing only its own path and steer to the next unblocked todo.
 - Override: set `AIDEVOPS_STOP_HOOK_DISABLE=1` (or `AIDEVOPS_STOP_HOOK_MAX_BLOCKS=0`) before launching Claude Code; any parse error fails open.
 
 ## Git Workflow Detail
