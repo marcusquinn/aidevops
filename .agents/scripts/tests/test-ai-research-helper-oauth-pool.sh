@@ -49,7 +49,7 @@ write_curl_capture_stub() {
 for arg in "$@"; do
 	printf '%s\n' "$arg" >>"${TEST_ROOT}/curl.args"
 done
-printf '{"content":[{"text":"OK"}]}\n'
+printf '{"content":[{"type":"text","text":"OK"}]}\n'
 exit 0
 STUB
 	chmod +x "${TEST_ROOT}/bin/curl"
