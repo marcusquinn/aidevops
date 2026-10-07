@@ -245,15 +245,21 @@ _load_scope_for_task() {
 
 # ---------------------------------------------------------------------------
 # Check whether a given file path matches any declared scope pattern.
-# Uses bash glob expansion semantics ([[ $file == $pattern ]]).
+# Exact paths match literally first. Canonical Files Scope paths may contain
+# literal brackets (Astro/Next.js/SvelteKit dynamic routes such as
+# `[slug].astro`), so glob semantics apply only to patterns containing `*` or
+# `?` (GH#33876).
 # ---------------------------------------------------------------------------
 _file_in_scope() {
 	local _file="$1"
 	local _pattern
 	for _pattern in "${SCOPE_PATTERNS[@]}"; do
+		if [[ "$_file" == "$_pattern" ]]; then
+			return 0
+		fi
 		# Intentional glob matching — patterns from Files Scope section may be globs (e.g. .agents/hooks/*.sh)
 		# shellcheck disable=SC2053
-		if [[ "$_file" == $_pattern ]]; then
+		if [[ "$_pattern" == *[*?]* && "$_file" == $_pattern ]]; then
 			return 0
 		fi
 		# Also allow matching by basename for simple file names (no slash in pattern)
