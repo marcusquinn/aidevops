@@ -98,6 +98,15 @@ auth)
 			printf '5000\n'
 			exit 0
 		fi
+		# Current status transitions require an exact GraphQL label snapshot.
+		# Reuse the fixture contract below rather than silently returning no data.
+		if [[ "$2" == "graphql" && "$*" == *'label0: label(name:'* ]]; then
+			"$0" api '/repos/fixture/labels?per_page=100' | jq -Rn '
+				[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}]
+				| to_entries | map({key: ("label" + (.key | tostring)), value: .value})
+				| from_entries | {data: {repository: .}}'
+			exit $?
+		fi
 		# gh api user --jq '.login'
 		if [[ "$2" == "user" ]]; then
 			if [[ "${STUB_GH_MODE:-online}" == "noisy-user-failure" ]]; then
