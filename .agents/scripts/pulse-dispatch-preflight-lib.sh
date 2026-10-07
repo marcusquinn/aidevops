@@ -474,7 +474,7 @@ _preflight_early_dispatch() {
 		echo "[pulse-wrapper] Early dispatch_max: dispatching workers before housekeeping" >>"$LOGFILE"
 		# GH#28971: the first fill is a latency-sensitive fast path. Keep blocked
 		# children filtered from its fetched snapshot, but defer dependency graph
-		# normalization/refetch to the post-label refill below. Pass the mode as an
+		# normalization/refetch to housekeeping and normal sweeps. Pass the mode as an
 		# internal argument so it cannot leak into launched worker environments.
 		apply_dispatch_max "skip"
 	fi
@@ -535,7 +535,11 @@ _preflight_post_label_refill() {
 			return 0
 		fi
 		echo "[pulse-wrapper] Post-label dispatch_max: refilling after label maintenance" >>"$LOGFILE"
-		apply_dispatch_max
+		# GH#33944: refill already-eligible work before a full blocked-backlog
+		# normalization can consume the candidate admission budget. Existing
+		# housekeeping and normal sweeps retain dependency normalization; live
+		# per-candidate dependency/claim gates still apply to this fast refill.
+		apply_dispatch_max "skip"
 	fi
 	return 0
 }
