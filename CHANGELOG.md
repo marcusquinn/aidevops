@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.28] - 2026-10-07
+
+### Added
+
+- defer quota-limited release postflight and reconcile exact tag (#33951)
+
+### Changed
+
+- Documentation: verify deployed helpers by absolute path (GH#33952) (#33954)
+
+### Fixed
+
+- auto-merge verified pulse TODO handoff PRs
+- validate PR titles before full-loop publication (#33953)
+
 ## [3.38.27] - 2026-10-07
 
 ### Fixed
