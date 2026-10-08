@@ -1599,6 +1599,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
+- [ ] t18625 Actions-unavailable merge gate: classify Qlty out-of-minutes commit statuses #bug #interactive ref:GH#34030 assignee:marcusquinn logged:2026-10-08 started:2026-10-08 -> [todo/tasks/t18625-brief.md]
+
 - [x] GH#33891 Fix NixOS PATH and native tool discovery @vladimirdulov #bug #interactive #auto-dispatch tier:thinking ref:GH#33891 assignee:vladimirdulov logged:2026-10-07 started:2026-10-07 -> [todo/tasks/gh33891-brief.md] pr:#33893 completed:2026-10-07
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]

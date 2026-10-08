@@ -72,6 +72,7 @@ repo_actions_trusted_receipt() {
 repo_actions_verify_local() {
 	local repo="$1" pr="$2" expected_head="${3:-}"
 	local pull="" head="" runs="" statuses="" failed_ids="" id="" final_head="" check_label=""
+	local latest_statuses="" status_entry="" status_label=""
 	repo_actions_unavailable "$repo" || return 1
 	pull=$(gh api "repos/${repo}/pulls/${pr}") || return 1
 	head=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' <<<"$pull") || return 1
@@ -98,11 +99,20 @@ repo_actions_verify_local() {
 			| "\(.name // "unknown") (app: \(.app.slug // "unknown"))"] | join(", ")))
 		else [.[] | select(.status == $completed and .conclusion == "failure") | .id] | @json end
 	') || return 1
-	jq -en --argjson pages "$statuses" --arg array "$REPO_ACTIONS_JSON_ARRAY" '
-		($pages | type == $array and length > 0) and all($pages[]; type == $array)
-		and ($pages | add | sort_by(.context) | group_by(.context)
-			| map(max_by(.id)) | all(.[]; .state == "success" or .state == "pending"))
-	' >/dev/null || return 1
+	# Latest status per context; success and pending pass, failures must be a
+	# classified provider outage.
+	latest_statuses=$(jq -ecn --argjson pages "$statuses" --arg array "$REPO_ACTIONS_JSON_ARRAY" '
+		if ($pages | type == $array and length > 0) and all($pages[]; type == $array)
+		then $pages | add | sort_by(.context) | group_by(.context) | map(max_by(.id))
+		else error("incomplete commit statuses") end') || return 1
+	while IFS= read -r status_entry; do
+		[[ -n "$status_entry" ]] || continue
+		ci_commit_status_indicates_quota_outage "$status_entry" && continue
+		status_label=$(jq -r '"\(.context // "unknown") (\(.state // "unknown"), creator: \(.creator.login // "unknown"))"' \
+			<<<"$status_entry") || return 1
+		printf 'BLOCKED: non-billing terminal status: %s\n' "$status_label" >&2
+		return 1
+	done < <(jq -c '.[] | select(.state != "success" and .state != "pending")' <<<"$latest_statuses")
 	while IFS= read -r id; do
 		[[ -n "$id" ]] || continue
 		if ! ci_check_run_indicates_billing_outage "$repo" "$id"; then
