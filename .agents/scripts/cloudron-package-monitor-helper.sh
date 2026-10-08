@@ -467,7 +467,7 @@ _cloudron_monitor_upstream_entry() {
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
 	manifest_rel=$(jq -r '.cloudron_package.manifest // "CloudronManifest.json"' <<<"$entry")
 	upstream_slug=$(jq -r '.cloudron_package.upstream_slug // empty' <<<"$entry")
-	monitor_enabled=$(jq -r '.cloudron_package.monitor_upstream // ((.cloudron_package.upstream_slug // "") != "")' <<<"$entry")
+	monitor_enabled=$(jq -r 'if (.cloudron_package.monitor_upstream | type) == "boolean" then .cloudron_package.monitor_upstream else ((.cloudron_package.upstream_slug // "") != "") end' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
 	upstream_source=$(jq -r '.cloudron_package.upstream_source // "releases"' <<<"$entry") || return 1
 	[[ "$upstream_source" == releases || "$upstream_source" == "$_CLOUDRON_MONITOR_SOURCE_TAGS" ]] || _cloudron_monitor_error "cloudron_package.upstream_source for $slug must be releases or tags." || return 1
@@ -530,7 +530,7 @@ _cloudron_monitor_compatibility_entry() {
 	slug=$(jq -r '.slug // empty' <<<"$entry")
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
 	manifest_rel=$(jq -r '.cloudron_package.manifest // "CloudronManifest.json"' <<<"$entry")
-	monitor_enabled=$(jq -r '.cloudron_package.monitor_compatibility // true' <<<"$entry")
+	monitor_enabled=$(jq -r 'if (.cloudron_package.monitor_compatibility | type) == "boolean" then .cloudron_package.monitor_compatibility else true end' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
 	[[ "$slug" == */* ]] || _cloudron_monitor_error "Cloudron compatibility monitoring requires a target slug." || return 1
 	[[ "$manifest_rel" != /* && "$manifest_rel" != *..* ]] || _cloudron_monitor_error "Unsafe manifest path configured for $slug." || return 1
