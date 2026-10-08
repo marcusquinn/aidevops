@@ -966,6 +966,7 @@ EOF
 
 test_dispatch_re_resolves_mutated_tier_model() {
 	local original_definitions="" original_logfile="$LOGFILE"
+	local SCRIPT_DIR="$TEST_ROOT"
 	original_definitions=$(capture_function_definitions _dispatch_load_and_validate_metadata _dispatch_preclaim_brief_scope _dispatch_dedup_check_layers _dispatch_post_dedup_gates _dispatch_launch_checked_worker resolve_dispatch_model_for_labels)
 	LOGFILE="${TEST_ROOT}/tier-model-refresh.log"
 	_dispatch_load_and_validate_metadata() {
