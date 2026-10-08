@@ -390,8 +390,11 @@ Options:
                     out local-only, external-upstream, archived, inaccessible,
                     and non-ADMIN/non-MAINTAIN repositories.
   --issue NUMBER    Rollout task number for commit/PR traceability.
-  --force-ref       Overwrite existing @ref pinning with the template's default.
-                    Without this, existing pins (@v3.9.0, @<sha>) are preserved.
+  --force-ref       Overwrite existing @ref pinning with the target ref (--ref,
+                    else the repo's configured/default ref). Also selects
+                    CURRENT callers whose pin differs, e.g. to bump @v3.9.0
+                    after an upgrade. Without this, existing pins (@v3.9.0,
+                    @<sha>) are preserved.
   --ref REF         Explicit @ref for new installs (default: @main).
   --branch NAME     Branch name prefix (default: chore/workflow-sync-YYYYMMDD).
   --json            Emit one JSON object per repo × workflow describing outcome.
@@ -414,6 +417,9 @@ Examples:
 
   # Migrate all drifted/needs-migration repos, pin to v3.9.0:
   sync-workflows-helper.sh --apply --ref @v3.9.0
+
+  # Bump an existing issue-sync pin after an upgrade (dry-run first):
+  sync-workflows-helper.sh --workflow issue-sync --force-ref --ref @v3.38.35
 
 EOF
 	return 0
@@ -601,6 +607,37 @@ _workflow_reusable_ref_for_slug() {
 	_ref=$(_normalise_reusable_ref "$_ref")
 	_validate_reusable_ref "$_ref"
 	printf '%s\n' "$_ref"
+	return 0
+}
+
+# _sync_target_ref_for_slug <slug> — the "@ref" a sync writes for this repo:
+# an explicit --ref wins, otherwise the repos.json/default reusable ref.
+_sync_target_ref_for_slug() {
+	local _slug="$1"
+	local _ref
+	if [[ -n "${_OPT_TARGET_REF:-}" ]]; then
+		_ref="${_OPT_TARGET_REF#@}"
+	else
+		_ref=$(_workflow_reusable_ref_for_slug "$_slug") || return 1
+	fi
+	printf '@%s\n' "$_ref"
+	return 0
+}
+
+# _needs_ref_bump <slug> <workflow_file>
+# check-workflows classifies callers modulo @ref, so a pinned caller whose
+# pin lags the requested ref is CURRENT/CALLER and was never actionable
+# (GH#34095). With explicit --force-ref, a pin that differs from the target
+# ref makes the row actionable; without it, pins stay an operator choice.
+_needs_ref_bump() {
+	local _slug="$1"
+	local _workflow_file="$2"
+	local _pin _target
+	[[ "${_OPT_FORCE_REF:-0}" -eq 1 && -f "$_workflow_file" ]] || return 1
+	_pin=$(_extract_ref_pin "$_workflow_file")
+	[[ -n "$_pin" ]] || return 1
+	_target=$(_sync_target_ref_for_slug "$_slug") || return 1
+	[[ "$_pin" != "$_target" ]] || return 1
 	return 0
 }
 
@@ -836,6 +873,7 @@ _list_actionable_repos() {
 		_wf_file="$_row_path/.github/workflows/${_row_workflow}.yml"
 		_needs_sync=0
 		_needs_runner_sync "$_row_slug" "$_wf_file" && _needs_sync=1
+		_needs_ref_bump "$_row_slug" "$_wf_file" && _needs_sync=1
 		if [[ "$_row_workflow" == "$LINKED_ISSUE_WORKFLOW_NAME" ]]; then
 			_contributing_policy_needs_sync "$_row_path" && _needs_sync=1
 			[[ "$?" -eq 2 ]] && _needs_sync=1
@@ -981,14 +1019,17 @@ _create_pr_body_file() {
 # ─── Per-Repo Operation ─────────────────────────────────────────────────────
 
 # _resolve_effective_ref <status> <workflow_path> <target_ref> <force_ref>
-# Emits the ref to use for the sync (preserves pin for DRIFTED unless forced).
+# Emits the ref to use for the sync. Existing caller pins (DRIFTED, and
+# CURRENT/CALLER runner/policy syncs) are preserved unless --force-ref is set
+# (GH#34095: a runner-only sync must not silently re-pin a tagged caller).
 _resolve_effective_ref() {
 	local _status="$1"
 	local _workflow="$2"
 	local _target_ref="$3"
 	local _force_ref="$4"
 	local _effective_ref="$_target_ref"
-	if [[ "$_status" == "$_CLASS_DRIFTED" && "$_force_ref" -eq 0 ]]; then
+	if [[ "$_status" == "$_CLASS_DRIFTED" || "$_status" == "$_CLASS_CURRENT_CALLER" ]] &&
+		[[ "$_force_ref" -eq 0 ]]; then
 		local _existing_pin
 		_existing_pin=$(_extract_ref_pin "$_workflow")
 		if [[ -n "$_existing_pin" ]]; then
@@ -999,20 +1040,27 @@ _resolve_effective_ref() {
 	return 0
 }
 
-# _sync_dryrun_emit <slug> <status> <effective_ref> <workflow-relpath> <sync-contributing>
+# _sync_dryrun_emit <slug> <status> <effective_ref> <workflow-relpath> <sync-contributing> [workflow-file]
 _sync_dryrun_emit() {
 	local _slug="$1"
 	local _status="$2"
 	local _effective_ref="$3"
 	local _workflow_relpath="${4:-.github/workflows/issue-sync.yml}"
 	local _sync_contributing="${5:-0}"
+	local _workflow_file="${6:-}"
 	local _action
 	if [[ "$_sync_contributing" -eq 1 ]]; then
 		_action="install policy"
 	else
 		case "$_status" in
 		"$_CLASS_DRIFTED") _action="refresh" ;;
-		"$_CLASS_CURRENT_CALLER") _action="update runner" ;;
+		"$_CLASS_CURRENT_CALLER")
+			_action="update runner"
+			if [[ -n "$_workflow_file" ]] && _needs_ref_bump "$_slug" "$_workflow_file"; then
+				_action="bump ref $(_extract_ref_pin "$_workflow_file")"
+				_needs_runner_sync "$_slug" "$_workflow_file" && _action="update runner + ${_action}"
+			fi
+			;;
 		*) _action="install" ;;
 		esac
 	fi
@@ -1314,6 +1362,7 @@ _resolve_refreshed_sync_status() {
 	"$_CLASS_CURRENT_CALLER")
 		local _needs_sync=0
 		_needs_runner_sync "$_slug" "$_workflow" && _needs_sync=1
+		_needs_ref_bump "$_slug" "$_workflow" && _needs_sync=1
 		if [[ "$_sync_contributing" -eq 1 ]]; then
 			_contributing_policy_needs_sync "$_path"
 			local _policy_check_rc=$?
@@ -1367,7 +1416,7 @@ _sync_one_repo() {
 		local _effective_ref
 		_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
 		_sync_dryrun_emit \
-			"$_slug" "$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing"
+			"$_slug" "$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_workflow"
 		return 0
 	fi
 
@@ -1567,16 +1616,11 @@ _process_rows() {
 			_warn "$_slug: cannot resolve template for workflow '${_workflow_name}' — skipping"
 			continue
 		fi
-		local _target_repo _target_ref
+		local _target_repo
 		_target_repo=$(_workflow_reusable_repo_for_slug "$_slug")
-		if [[ -n "$_OPT_TARGET_REF" ]]; then
-			_target_ref="${_OPT_TARGET_REF#@}"
-		else
-			_target_ref=$(_workflow_reusable_ref_for_slug "$_slug")
-		fi
 
 		local _result _effective_ref _target_ref_arg
-		_target_ref_arg="@${_target_ref}"
+		_target_ref_arg=$(_sync_target_ref_for_slug "$_slug")
 		_effective_ref=$(_resolve_effective_ref \
 			"$_status" "$_path/$_workflow_relpath" "$_target_ref_arg" "$_OPT_FORCE_REF")
 		if [[ "$_target_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] && \
