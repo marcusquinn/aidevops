@@ -11,7 +11,7 @@ GH_COOLDOWN="${SCRIPT_DIR}/../shared-gh-secondary-cooldown.sh"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
-PINNED_BASE='cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e'
+PINNED_BASE='cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b'
 
 cleanup() {
 	[[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]] && rm -rf "$TEST_ROOT"
@@ -321,12 +321,14 @@ test_monitor_deduplicates_and_preserves_source() {
 
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
 	assert_equal 1 "$(grep -c '^CALL ' "$log_file")" "clean compatibility check creates no issue"
-	printf 'FROM cloudron/base:5.1.0\n' >"${repo_dir}/Dockerfile"
+	printf 'FROM cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e\n' >"${repo_dir}/Dockerfile"
 	local docker_before=""
 	docker_before=$(cksum "${repo_dir}/Dockerfile")
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
 	assert_equal 2 "$(grep -c '^CALL ' "$log_file")" "compatibility finding is deduplicated"
+	assert_equal 1 "$(grep -c '^- Upgrade base image' "$log_file")" "legacy upgrade creates one actionable finding"
+	grep -Fq 'minBoxVersion' "$log_file" && assert_equal true true "upgrade issue includes platform qualification" || assert_equal true false "upgrade issue includes platform qualification"
 	assert_equal "$docker_before" "$(cksum "${repo_dir}/Dockerfile")" "compatibility monitor does not mutate package source"
 	return 0
 }
