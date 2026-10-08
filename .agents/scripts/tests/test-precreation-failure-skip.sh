@@ -74,6 +74,10 @@ printf '{"counters":{}}\n' >"$PULSE_STATS_FILE"
 FAKE_REPO="${TMP}/fake-repo"
 mkdir -p "$FAKE_REPO"
 
+# The pre-claim gate sources runner-capability-helper.sh from SCRIPT_DIR
+# (GH#33404). Use the real helper so its fresh issue-state read stays covered.
+cp "${SCRIPTS_DIR}/runner-capability-helper.sh" "${TMP}/runner-capability-helper.sh"
+
 # =============================================================================
 # Stub: worktree-helper.sh that emits configurable output
 # =============================================================================
@@ -270,6 +274,13 @@ _dlw_exec_detached() {
 STUB_REFRESH_STATE="OPEN"
 
 gh() {
+	# The fresh runner-capability gate projects the REST issue object.
+	if [[ "${1:-}" == "api" && "${2:-}" == repos/owner/repo/issues/* && "${4:-}" == '{number, state, body, labels}' ]]; then
+		local issue_ref="${2##*/}" state_lower=""
+		state_lower=$(printf '%s' "$STUB_REFRESH_STATE" | tr '[:upper:]' '[:lower:]')
+		printf '{"number":%s,"state":"%s","body":"","labels":[]}\n' "$issue_ref" "$state_lower"
+		return 0
+	fi
 	# The pre-claim refresh reads the REST issue object, not a scalar state.
 	if [[ "${1:-}" == "api" && "${2:-}" == repos/owner/repo/issues/* ]]; then
 		printf '{"state":"%s","body":""}\n' "$STUB_REFRESH_STATE"
@@ -749,7 +760,8 @@ else
 	fail "closed pre-claim refresh does not spawn worker" "setsid was called"
 fi
 
-if grep -q "refreshed issue state before claim is closed" "$LOGFILE" 2>/dev/null; then
+# GH#33404 moved the fresh closed-state read into the runner-capability gate.
+if grep -q "#77778 deferred: runner_capability_unmet source=fresh metadata_unreadable" "$LOGFILE" 2>/dev/null; then
 	pass "closed pre-claim refresh logs blocked state"
 else
 	fail "closed pre-claim refresh logs blocked state" "LOGFILE: $(cat "$LOGFILE")"
@@ -820,6 +832,13 @@ _dlw_assign_and_label() {
 }
 lock_issue_for_worker() {
 	printf 'lock\n' >>"$ORCHESTRATOR_CALLS_FILE"
+	if [[ "${STUB_LOCK_RC:-0}" -ne 0 ]]; then
+		# Exercise the real summary allowlist with one known and one
+		# secret-like attribution value (GH#34057).
+		_PULSE_CONVERSATION_LOCK_FAILURE_REASON="verify_not_propagated"
+		_PULSE_CONVERSATION_LOCK_FAILURE_DETAIL="synthetic-lock-secret-fixture"
+		_PULSE_CONVERSATION_LOCK_MUTATION="accepted"
+	fi
 	return "${STUB_LOCK_RC:-0}"
 }
 _dlw_post_launch_hooks() { return 0; }
@@ -850,14 +869,27 @@ STUB_ASSIGN_RC=0
 : >"$ORCHESTRATOR_CALLS_FILE"
 : >"${TMP}/setsid-calls.txt"
 STUB_LOCK_RC=1
+# Load only the real attribution summary; the lock itself stays stubbed.
+eval "$(awk '/^_PULSE_CONVERSATION_LOCK_UNCLASSIFIED=/ { print } /^(_conversation_lock_allowlisted|conversation_lock_failure_summary)\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-locks.sh")"
+shared_logfile="$LOGFILE"
+LOGFILE="${TMP}/conversation-lock-failure.log"
 lock_failure_rc=0
 _dispatch_launch_worker "77781" "owner/repo" "test-dispatch" "Test Issue" \
 	"testuser" "$FAKE_REPO" "test prompt" "session-key-lock-failure" "" "{}" || lock_failure_rc=$?
+lock_failure_log="$LOGFILE"
+LOGFILE="$shared_logfile"
 actual_calls=$(tr '\n' ' ' <"$ORCHESTRATOR_CALLS_FILE")
 if [[ "$lock_failure_rc" -eq 2 && "$actual_calls" == "hold precreate final-gates prompt lock " && ! -s "${TMP}/setsid-calls.txt" ]]; then
 	pass "conversation-lock failure blocks ownership mutation and worker spawn"
 else
 	fail "conversation-lock failure blocks ownership mutation and worker spawn" "rc=$lock_failure_rc calls='$actual_calls'"
+fi
+if grep -q 'WARN conversation lock failed issue=77781 repo=owner/repo cause=verify_not_propagated detail=unclassified mutation=accepted$' "$lock_failure_log" &&
+	grep -q 'PRE_RUNTIME_FAILURE issue=77781 repo=owner/repo reason=conversation_lock_failed$' "$lock_failure_log" &&
+	! grep -q 'synthetic-lock-secret-fixture' "$lock_failure_log"; then
+	pass "conversation-lock failure logs an allowlisted cause without raw values"
+else
+	fail "conversation-lock failure logs an allowlisted cause without raw values" "log=$(cat "$lock_failure_log")"
 fi
 STUB_LOCK_RC=0
 
@@ -1020,6 +1052,12 @@ test_bounded_prelaunch_handoff() (
 if [[ "$1" == transition ]]; then
 	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" && "$AIDEVOPS_ATTEMPT_ID" != unknown ]] || exit 1
 	printf 'renew %s\n' "$7" >>"$ORCHESTRATOR_CALLS_FILE"
+	if [[ "${STUB_RENEW_RC:-0}" -ne 0 ]]; then
+		# Raw helper output must never reach diagnostics (GH#34057).
+		printf 'stdout lease=%s\n' "$5"
+		printf 'gh: synthetic-lease-secret-fixture lease=%s (HTTP 401)\n' "$5" >&2
+		printf 'DISPATCH_LEASE_TRANSITION_DENIED reason=device_mismatch\n' >&2
+	fi
 	exit "${STUB_RENEW_RC:-0}"
 fi
 printf 'ownership-guard\n' >>"$ORCHESTRATOR_CALLS_FILE"
@@ -1040,6 +1078,7 @@ LEASE_STUB
 		[[ "$scenario" != renewal-failed ]] || STUB_RENEW_RC=1
 		: >"$ORCHESTRATOR_CALLS_FILE"
 		: >"${TMP}/setsid-calls.txt"
+		LOGFILE="${TMP}/prelaunch-lease-${scenario}.log"
 		_dispatch_launch_worker 77782 owner/repo dispatch issue testuser "$FAKE_REPO" prompt issue-77782 "" '{}' || lease_rc=$?
 		IFS= read -r first_line <"$ORCHESTRATOR_CALLS_FILE"
 		[[ "$first_line" == renew\ * ]] || return 1
@@ -1053,6 +1092,12 @@ LEASE_STUB
 		else
 			[[ "$lease_rc" == 2 && ! -s "${TMP}/setsid-calls.txt" ]] || return 1
 			! grep -q '^assign$' "$ORCHESTRATOR_CALLS_FILE" || return 1
+		fi
+		if [[ "$scenario" == renewal-failed ]]; then
+			grep -q 'prelaunch lease renewal failed issue=77782 repo=owner/repo session=issue-77782 helper_rc=1 reason=device_mismatch$' \
+				"$LOGFILE" || return 1
+			grep -q 'PRE_RUNTIME_FAILURE issue=77782 repo=owner/repo reason=prelaunch_lease_failed$' "$LOGFILE" || return 1
+			! grep -qF -e "$_claim_lease_token" -e 'synthetic-lease-secret-fixture' -e 'HTTP 401' "$LOGFILE" || return 1
 		fi
 	done
 	return 0

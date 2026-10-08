@@ -185,6 +185,14 @@ _dlw_lock_prelaunch_issue() {
 	started_ns=$(_ds_now_ns)
 	if ! lock_issue_for_worker "$issue_number" "$repo_slug"; then
 		_ds_record "$issue_number" "$repo_slug" "lock_issue" "$started_ns"
+		# GH#34057: keep the low-cardinality stage reason unchanged and add the
+		# allowlisted cause separately; the deny decision is unaffected.
+		local lock_cause=""
+		if declare -F conversation_lock_failure_summary >/dev/null 2>&1; then
+			lock_cause=$(conversation_lock_failure_summary) || lock_cause=""
+		fi
+		[[ -n "$lock_cause" ]] || lock_cause="cause=unclassified detail=none mutation=unclassified"
+		aidevops_log_line "[dispatch_worker_launch] WARN conversation lock failed issue=${issue_number} repo=${repo_slug} ${lock_cause}"
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "conversation_lock_failed" 2
 		return $?
 	fi
@@ -1051,6 +1059,31 @@ _dlw_prelaunch_budget_available() {
 }
 
 #######################################
+# Extract the allowlisted denial reason emitted by
+# `dispatch-claim-helper.sh transition` (GH#34057). Only the exact marker line
+# is trusted, and only a known reason is returned; anything else, including
+# missing or tampered output, maps to "unclassified". Never echo the input.
+# Arguments: captured helper stderr
+#######################################
+_dlw_lease_transition_reason() {
+	local captured="$1"
+	local line="" reason="unclassified"
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^DISPATCH_LEASE_TRANSITION_DENIED\ reason=([a-z_]+)$ ]]; then
+			reason="${BASH_REMATCH[1]}"
+		fi
+	done <<<"$captured"
+	case "$reason" in
+	invalid_phase | invalid_arguments | identity_unavailable | claims_unavailable | \
+		lease_unmatched | claim_malformed | owner_mismatch | device_mismatch | \
+		session_mismatch | phase_disallowed | mutation_failed) ;;
+	*) reason="unclassified" ;;
+	esac
+	printf '%s\n' "$reason"
+	return 0
+}
+
+#######################################
 # Protect the complete bounded preparation interval before worktree/API work,
 # then recheck before OpenCode warm-up. The worker renews after process start.
 # Remaining preparation time decreases; retries cannot slide that deadline.
@@ -1064,7 +1097,7 @@ _dlw_renew_prelaunch_lease() {
 	local attempt_id="${5:-$_DLW_UNKNOWN_VALUE}"
 	local prewarm_timeout="${OPENCODE_PREWARM_TIMEOUT_SECONDS:-90}"
 	local lease_ttl="${AIDEVOPS_DISPATCH_PREWARM_LEASE_TTL:-}"
-	local claim_rc=0
+	local claim_rc=0 claim_stderr="" claim_reason=""
 
 	if [[ -z "${_claim_lease_token:-}" ]]; then
 		return 0
@@ -1082,17 +1115,22 @@ _dlw_renew_prelaunch_lease() {
 
 	_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \
 		"dispatcher_prelaunch_lease_renew_start session=${session_key} pid=$$"
-	AIDEVOPS_DEVICE_ID="${_claim_lease_device:-${AIDEVOPS_DEVICE_ID:-}}" \
+	# Capture helper stderr in memory only (stdout stays discarded) so the
+	# allowlisted denial reason can be attributed; raw text is never logged.
+	claim_stderr=$(AIDEVOPS_DEVICE_ID="${_claim_lease_device:-${AIDEVOPS_DEVICE_ID:-}}" \
 		AIDEVOPS_ATTEMPT_ID="$attempt_id" \
 		"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$issue_number" \
 		"$repo_slug" "$_claim_lease_token" "$session_key" "$lease_ttl" \
-		>/dev/null 2>&1 || claim_rc=$?
+		2>&1 >/dev/null) || claim_rc=$?
 	if [[ "$claim_rc" -ne 0 ]]; then
+		claim_reason=$(_dlw_lease_transition_reason "$claim_stderr")
+		claim_stderr=""
 		_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \
-			"WARN dispatcher prelaunch lease renewal failed before OpenCode warm-up issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc} pid=$$"
-		aidevops_log_line "[dispatch_worker_launch] WARN prelaunch lease renewal failed issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc}"
+			"WARN dispatcher prelaunch lease renewal failed before OpenCode warm-up issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc} reason=${claim_reason} pid=$$"
+		aidevops_log_line "[dispatch_worker_launch] WARN prelaunch lease renewal failed issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc} reason=${claim_reason}"
 		return 1
 	fi
+	claim_stderr=""
 	_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \
 		"dispatcher_prelaunch_lease_renew_done session=${session_key} pid=$$"
 	return 0
