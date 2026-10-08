@@ -985,6 +985,14 @@ _check_dry_run() {
 }
 
 # ---------------------------------------------------------------------------
+_log_file_size_remediation() {
+	local _metric="$1"
+	if [ "$_metric" = "file-size" ]; then
+		log "Markdown limits: root 1000 / elsewhere 500; README.md exempt. First make the whole document more concise without losing detail; split or bypass only if that is not enough."
+	fi
+	return 0
+}
+
 # _check_regression <base_sha> <head_sha> <output_md> <allow_increase> [<metric>]
 # Scan base+head via worktrees, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
@@ -1086,9 +1094,7 @@ _check_regression() {
 
 	if [ "$_new_count" -gt 0 ] && [ "$_allow_increase" -eq 0 ]; then
 		log "[$_metric] REGRESSION: $_new_count new violation(s)"
-		if [ "$_metric" = "file-size" ]; then
-			log "Markdown limits: root 1000 / elsewhere 500; README.md exempt. First make the whole document more concise without losing detail; split or bypass only if that is not enough."
-		fi
+		_log_file_size_remediation "$_metric"
 		exit 1
 	fi
 
