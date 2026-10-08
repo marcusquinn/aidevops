@@ -73,7 +73,18 @@ gh() {
 			'[{total_count:1,check_runs:[{id:42,head_sha:$head,status:$status,conclusion:(if $conclusion == "" then null else $conclusion end),app:{slug:$app}}]}]'
 		;;
 	'repos/test/repo/commits/'*'/statuses?per_page=100')
-		if [[ "$MODE" == 'status-failure' ]]; then printf '[[{"id":1,"context":"optional","state":"failure"}]]\n'; else printf '[[]]\n'; fi
+		case "$MODE" in
+		status-failure) printf '[[{"id":1,"context":"optional","state":"failure"}]]\n' ;;
+		status-qlty-*)
+			local login='qltysh[bot]' account='Bot' description='Qlty did not run because you are out of minutes.'
+			if [[ "$MODE" == 'status-qlty-impostor' ]]; then login='owner'; account='User'; fi
+			[[ "$MODE" != 'status-qlty-findings' ]] || description='Qlty found 3 code issues.'
+			jq -cn --arg login "$login" --arg account "$account" --arg description "$description" \
+				'[[{id:1,context:"qlty check",state:"error",description:$description,creator:{login:$login,type:$account}},
+				{id:2,context:"CodeRabbit",state:"pending"},{id:3,context:"CodeRabbit",state:"success"}]]'
+			;;
+		*) printf '[[]]\n' ;;
+		esac
 		;;
 	'repos/test/repo/check-runs/42/annotations')
 		if [[ "$MODE" == 'non-billing' ]]; then printf '[{"message":"unit tests failed"}]\n'; else printf '[{"message":"account payments have failed"}]\n'; fi
@@ -126,6 +137,17 @@ for MODE in qlty-findings qlty-quoted qlty-unknown-provider qlty-api-error; do
 	fi
 	[[ "$output" == *'Qlty analysis (app: qlty, id: 43)'* ]] || exit 1
 	printf 'PASS: %s blocks and names the check and app\n' "$MODE"
+done
+MODE='status-qlty-quota'
+repo_actions_verify_local test/repo 1 "$HEAD_SHA"
+printf 'PASS: Qlty out-of-minutes commit status is a provider outage\n'
+for MODE in status-qlty-impostor status-qlty-findings; do
+	if output=$(repo_actions_verify_local test/repo 1 "$HEAD_SHA" 2>&1); then
+		printf 'FAIL: %s was accepted\n' "$MODE" >&2
+		exit 1
+	fi
+	[[ "$output" == *'BLOCKED: non-billing terminal status: qlty check (error, creator: '* ]] || exit 1
+	printf 'PASS: %s blocks and names the status\n' "$MODE"
 done
 for MODE in non-billing other-provider cancelled status-failure api-error drift external malformed; do
 	assert_blocked "$MODE"
