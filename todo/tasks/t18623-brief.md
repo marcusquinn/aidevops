@@ -47,7 +47,7 @@ Evidence (2026-10-08 dry run): `marcusquinn/cloudron-nostr-vpn-app` (`Could not 
 - **Schemas/config:** `.agents/reference/repos-json-fields.md:219` already documents the intended semantics; no change.
 - **Generated/deployed mirrors:** deployed copy under `~/.aidevops/agents/scripts/`, updated by release.
 - **Migrations/backfills:** none. Existing `true` and omitted values behave the same.
-- **Cleanup/rollback paths:** revert the two lines.
+- **Cleanup/rollback paths:** revert the two lines in `.agents/scripts/cloudron-package-monitor-helper.sh`; no state is written by the change.
 
 ### Implementation Steps
 
