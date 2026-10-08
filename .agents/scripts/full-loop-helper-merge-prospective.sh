@@ -90,8 +90,12 @@ _merge_fetch_pinned_commit_objects() {
 	if [[ -z "$object_repo" ]]; then
 		git cat-file -e "${base_sha}^{commit}" 2>/dev/null ||
 			git fetch --quiet --no-tags origin "refs/heads/${base_ref}" || return 1
-		git cat-file -e "${head_sha}^{commit}" 2>/dev/null ||
-			git fetch --quiet --no-tags origin "refs/pull/${pr_number}/head" || return 1
+		if ! git cat-file -e "${head_sha}^{commit}" 2>/dev/null &&
+			! git fetch --quiet --no-tags origin "refs/pull/${pr_number}/head"; then
+			# GH#34079: the pinned SHA is verified as a commit object below.
+			_merge_is_pinned_object_id "$head_sha" || return 1
+			git fetch --quiet --no-tags origin "$head_sha" || return 1
+		fi
 		git cat-file -e "${base_sha}^{commit}" 2>/dev/null || return 1
 		git cat-file -e "${head_sha}^{commit}" 2>/dev/null || return 1
 		return 0
@@ -113,8 +117,18 @@ _merge_fetch_pinned_commit_objects() {
 		fi
 	fi
 	if ! _merge_run_repository_isolated_git "$real_git" -C "$object_repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
-		_merge_fetch_partial_objects "$real_git" "$object_repo" "" \
-			-- "$_MERGE_PROSPECTIVE_REMOTE" "refs/pull/${pr_number}/head" || return 1
+		if ! _merge_fetch_partial_objects "$real_git" "$object_repo" "" \
+			-- "$_MERGE_PROSPECTIVE_REMOTE" "refs/pull/${pr_number}/head"; then
+			# GH#34079: a remote may omit the generated pull ref even though the
+			# REST-pinned head commit is reachable. Retry once by object ID, only
+			# for Git's exact missing-ref diagnostic; auth, timeout and filter
+			# failures stay fail-closed. FETCH_HEAD equality below binds the result.
+			_merge_pull_ref_was_missing "$object_repo" "$pr_number" || return 1
+			_merge_is_pinned_object_id "$head_sha" || return 1
+			print_info "Pull ref refs/pull/${pr_number}/head is absent; fetching the pinned head commit ${head_sha} directly" >&2
+			_merge_fetch_partial_objects "$real_git" "$object_repo" "" \
+				-- "$_MERGE_PROSPECTIVE_REMOTE" "$head_sha" || return 1
+		fi
 		fetched_sha=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
 			rev-parse FETCH_HEAD 2>/dev/null) || return 1
 		[[ "$fetched_sha" == "$head_sha" ]] || return 1
@@ -125,6 +139,26 @@ _merge_fetch_pinned_commit_objects() {
 		cat-file -e "${head_sha}^{commit}" 2>/dev/null || return 1
 	_merge_prefetch_prospective_blobs "$real_git" "$object_repo" \
 		"$base_sha" "$head_sha" || return 1
+	return 0
+}
+
+# A pinned object ID is a full lowercase SHA-1 or SHA-256 hex name; anything
+# else (abbreviated, ref-like, option-like) is never used as a fetch refspec.
+_merge_is_pinned_object_id() {
+	local object_id="$1"
+	[[ "$object_id" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || return 1
+	return 0
+}
+
+# Succeeds only when the last bounded fetch failed with Git's exact diagnostic
+# for the requested generated pull ref being absent on the remote (GH#34079).
+_merge_pull_ref_was_missing() {
+	local object_repo="$1"
+	local pr_number="$2"
+	local stderr_file="${object_repo%/*}/fetch.stderr"
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && -f "$stderr_file" ]] || return 1
+	grep -qxF "fatal: couldn't find remote ref refs/pull/${pr_number}/head" \
+		"$stderr_file" 2>/dev/null || return 1
 	return 0
 }
 
