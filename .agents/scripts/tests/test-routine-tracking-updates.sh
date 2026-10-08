@@ -276,8 +276,6 @@ test_pulse_runner_lock_release_and_reclaim() {
 	local exit_code=0
 	local dead_pid=0
 	local before=""
-	local first_pid=0
-	local second_pid=0
 	# shellcheck disable=SC2016 # Expand the fixture's argument when it runs.
 	printf '#!/usr/bin/env bash\nexit "${1:-0}"\n' >"$script"
 	chmod +x "$script"
@@ -337,6 +335,16 @@ test_pulse_runner_lock_release_and_reclaim() {
 		rm -f -- "$lock_dir/pid-$$"
 		rmdir "$lock_dir"
 	done
+	_test_pulse_runner_lock_concurrency_and_exit "$script" "$lock_dir"
+	return 0
+}
+
+_test_pulse_runner_lock_concurrency_and_exit() {
+	local script="$1"
+	local lock_dir="$2"
+	local first_pid=0
+	local second_pid=0
+	local status=""
 	# Both contenders see an empty legacy directory; only one can replace it
 	# with a populated lock, even before the winning caller resumes.
 	mkdir "$lock_dir"
