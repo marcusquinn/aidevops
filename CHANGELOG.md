@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.37] - 2026-10-09
+
+### Fixed
+
+- runtime bundles link custom/draft to stable user state so absolute package links survive promotion
+- sync-workflows --force-ref bumps lagging CURRENT/CALLER pins; check-workflows reports pin lag
+- repo-verify classifies missing npm lint tooling/plugins separately from source lint failures
+- prospective merge falls back to pinned head SHA when refs/pull/N/head is absent
+
 ## [3.38.36] - 2026-10-08
 
 ### Added
