@@ -886,7 +886,8 @@ test_worker_git_default_remote_query_failures() {
 import subprocess
 
 import command_policy_git as git_policy
-import command_policy_network as network
+import command_policy_git_default_remote as default_remote
+import command_policy_git_query as network
 
 
 def fake(responses):
@@ -896,11 +897,11 @@ def fake(responses):
 
 
 entries = ["branch.feature/a.remote origin", "branch.local.remote .", "branch.feature/b.remote upstream"]
-git_policy._run_git_query_detailed = fake({"config": (entries, ""), "symbolic-ref": (None, "exit-128")})
-assert git_policy._default_git_remote("/x", "push") == (["origin", "upstream"], ""), "branch failure superset"
-git_policy._run_git_query_detailed = fake({"config": (["branch.x.remote -evil"], ""), "symbolic-ref": (None, "timeout")})
-assert git_policy._default_git_remote("/x", "fetch") == ([], "branch-query-timeout"), "unsafe superset"
-git_policy._run_git_query_detailed = fake({"config": (None, "exit-3"), "symbolic-ref": (["refs/heads/a"], "")})
+default_remote._run_git_query_detailed = fake({"config": (entries, ""), "symbolic-ref": (None, "exit-128")})
+assert default_remote._default_git_remote("/x", "push") == (["origin", "upstream"], ""), "branch failure superset"
+default_remote._run_git_query_detailed = fake({"config": (["branch.x.remote -evil"], ""), "symbolic-ref": (None, "timeout")})
+assert default_remote._default_git_remote("/x", "fetch") == ([], "branch-query-timeout"), "unsafe superset"
+default_remote._run_git_query_detailed = fake({"config": (None, "exit-3"), "symbolic-ref": (["refs/heads/a"], "")})
 result = {"destinations": [], "unclassified": []}
 git_policy._analyze_git_remote(["git", "push"], "/x", "push", [], result)
 assert result["unclassified"] == ["git-push-destination-missing(config-query-exit-3)"], result
