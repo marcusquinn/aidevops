@@ -58,10 +58,10 @@ Impact: no script routine runs at all. That includes r916/r917, so Cloudron pack
 - **Callers/readers:** `_routine_dispatch_script` (`pulse-routines.sh:309-342`) spawns `_routine_run_detached_script` via `setsid`/`perl`/`nohup bash -c`; `_routine_execute` (`pulse-routines.sh:348+`) calls the dispatcher. Nothing else reads `*.runner` (search: `rg -n '\.runner' .agents/scripts`).
 - **Writers/mutation paths:** only `_routine_run_detached_script` creates/removes `${ROUTINE_STATE_FILE}.${routine_id}.runner`. `_routine_update_state` and `_routine_record_lifecycle` write state and lifecycle.
 - **Existing verification/tests:** `.agents/scripts/tests/test-routine-tracking-updates.sh` (from #32668).
-- **Schemas/config:** none; the lock directory is internal runtime state.
+- **Schemas/config:** N/A because the lock directory `${ROUTINE_STATE_FILE}.<id>.runner` is internal runtime state with no schema (searched: `rg -n '\.runner' .agents/scripts`).
 - **Generated/deployed mirrors:** deployed copy at `~/.aidevops/agents/scripts/pulse-routines.sh`, updated by `setup.sh`/release.
-- **Migrations/backfills:** existing leaked lock directories hold no owner PID. Reclaim must treat a lock with no PID file, or a dead PID, as stale. That clears the 32 existing locks on the first post-deploy cycle without a manual step.
-- **Cleanup/rollback paths:** reverting the commit restores the old behaviour. The lock remains a plain directory.
+- **Migrations/backfills:** existing leaked lock directories (`~/.aidevops/.agent-workspace/routine-state.json.<id>.runner`) hold no owner PID. Reclaim must treat a lock with no PID file, or a dead PID, as stale. That clears the 32 existing locks on the first post-deploy cycle without a manual step.
+- **Cleanup/rollback paths:** reverting `.agents/scripts/pulse-routines.sh` restores the old behaviour; the lock remains a plain directory, removed only at its exact path.
 
 ### Implementation Steps
 
