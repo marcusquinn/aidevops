@@ -9,7 +9,11 @@ _CLOUDRON_PACKAGE_RELEASE_LIB_LOADED=1
 # shellcheck source=portable-stat.sh
 source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
 
-CLOUDRON_PINNED_BASE_IMAGE="cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e"
+CLOUDRON_PINNED_BASE_IMAGE="cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b"
+CLOUDRON_LEGACY_BASE_IMAGE="cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e"
+CLOUDRON_PINNED_NODE_IMAGE="cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453f327297d7183525cb05424e7b34"
+CLOUDRON_PINNED_PHP85_IMAGE="cloudron/php-base:8.5-20260920@sha256:a59a4334fbf50ebfdf8f6cc5527e099e4586349a1aefc546e85f7401ea366d65"
+CLOUDRON_PINNED_PHP84_IMAGE="cloudron/php-base:8.4-20260920@sha256:e9352b5fba7ad0a231b8a9e454034400a3a34a7fe1800425f634d32ffcae4a52"
 
 _cloudron_release_error() {
 	local message="$1"
@@ -117,9 +121,11 @@ cloudron_package_unavailable_sources() {
 }
 
 # Print actionable compatibility findings and return non-zero when any exist.
+# The release policy permits the exact legacy pin; audits still report its upgrade.
 cloudron_package_compatibility_findings() {
 	local repo_path="${1:-.}"
 	local manifest_rel="${2:-CloudronManifest.json}"
+	local policy="${3:-audit}"
 	local manifest_path="${repo_path}/${manifest_rel}"
 	local findings=0
 
@@ -164,10 +170,19 @@ cloudron_package_compatibility_findings() {
 		local final_image=""
 		final_from=$(awk 'toupper($1) == "FROM" { line = $0 } END { print line }' "$dockerfile")
 		final_image=$(printf '%s\n' "$final_from" | awk '{ i = 2; while (i <= NF && $i ~ /^--/) i++; if (i <= NF) print $i }')
-		if [[ "$final_image" != "$CLOUDRON_PINNED_BASE_IMAGE" ]]; then
-			printf '%s\n' "- Final Docker stage must use ${CLOUDRON_PINNED_BASE_IMAGE}."
+		case "$final_image" in
+		"$CLOUDRON_PINNED_BASE_IMAGE" | "$CLOUDRON_PINNED_NODE_IMAGE" | "$CLOUDRON_PINNED_PHP85_IMAGE" | "$CLOUDRON_PINNED_PHP84_IMAGE") ;;
+		"$CLOUDRON_LEGACY_BASE_IMAGE")
+			if [[ "$policy" != "release" ]]; then
+				printf '%s\n' "- Upgrade base image to ${CLOUDRON_PINNED_BASE_IMAGE} (or the pinned Node/PHP variant); review minBoxVersion against the official packages' 9.1.0 baseline and migrate removed Node, Apache, pip/venv and mongosh dependencies. The exact 5.1.0 pin remains release-compatible during transition."
+				findings=$((findings + 1))
+			fi
+			;;
+		*)
+			printf '%s\n' "- Final Docker stage must use ${CLOUDRON_PINNED_BASE_IMAGE} or a documented current SHA-pinned Cloudron Node/PHP variant."
 			findings=$((findings + 1))
-		fi
+			;;
+		esac
 		local source_findings=""
 		if ! source_findings=$(cloudron_package_unavailable_sources "$dockerfile"); then
 			printf '%s\n' "$source_findings"
@@ -246,7 +261,7 @@ cloudron_package_prepare_release() {
 	local changelog_path="${repo_path}/CHANGELOG.md"
 	[[ -f "$manifest_path" ]] || _cloudron_release_error "CloudronManifest.json not found." || return 1
 	[[ -f "$changelog_path" ]] || _cloudron_release_error "CHANGELOG.md not found." || return 1
-	if ! cloudron_package_compatibility_findings "$repo_path" >/dev/null; then
+	if ! cloudron_package_compatibility_findings "$repo_path" "CloudronManifest.json" release >/dev/null; then
 		_cloudron_release_error "Package compatibility validation failed before release preparation." || return 1
 	fi
 	if _cloudron_release_changelog_has_version "$changelog_path" "$package_version"; then
@@ -314,7 +329,7 @@ cloudron_package_check_release() {
 	if [[ ! "$release_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
 		_cloudron_release_error "Release tag must use vX.Y.Z format." || return 1
 	fi
-	if ! findings=$(cloudron_package_compatibility_findings "$repo_path"); then
+	if ! findings=$(cloudron_package_compatibility_findings "$repo_path" "CloudronManifest.json" release); then
 		printf '%s\n' "$findings" >&2
 		_cloudron_release_error "Cloudron package compatibility validation failed." || return 1
 	fi
