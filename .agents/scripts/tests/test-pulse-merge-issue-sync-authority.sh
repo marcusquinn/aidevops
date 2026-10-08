@@ -44,6 +44,8 @@ print_result() {
 }
 
 gate_src=$(awk '
+	/^_extract_linked_issue\(\) \{/,/^}$/ { print }
+	/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }
 	/^_pm_gate_review_mode\(\) \{/,/^}$/ { print }
 	/^_pm_gate_author_trust\(\) \{/,/^}$/ { print }
 	/^_pm_gate_route_ineligible_author\(\) \{/,/^}$/ { print }

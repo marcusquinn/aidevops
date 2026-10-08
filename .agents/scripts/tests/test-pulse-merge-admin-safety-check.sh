@@ -174,6 +174,7 @@ GHEOF
 	export AGENTS_DIR="${TEST_ROOT}/agents"
 	cat >"${TEST_ROOT}/agents/scripts/approval-helper.sh" <<'AHEOF'
 #!/usr/bin/env bash
+printf '%s\n' "approval-helper $*" >>"${GH_LOG:-/dev/null}"
 if [[ "$*" == *"verify pr"* ]]; then
 	cat "${TEST_ROOT}/pr-approval-result.txt"
 else
@@ -222,6 +223,7 @@ define_helpers_under_test() {
 	}
 	merge_src=$(awk '
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
+		/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	gates_src=$(awk '
 		/^_pmg_gh_read\(\) \{/,/^}$/ { print }
@@ -741,6 +743,100 @@ test_case_f_unlabeled_fork_with_approval_returns_0() {
 	return 0
 }
 
+test_partial_worker_final_nmr_gate() {
+	set_fixture '[{"name":"origin:worker"}]' 'false' \
+		$'## Summary\n\nFor #42 — partial delivery; leave open.\n\n## Remaining work\nRef #43' ''
+	local result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" || result=$?
+	print_result "partial worker reference reaches final gate without closing target" "$result"
+	if grep -qF 'repos/owner/repo/issues/42' "$GH_LOG"; then
+		print_result "final gate reads the primary issue in the PR repository" 0
+	else
+		print_result "final gate reads the primary issue in the PR repository" 1
+	fi
+	printf '%s' 'needs-maintainer-review' >"${TEST_ROOT}/linked-labels.txt"
+	result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" || result=$?
+	if [[ "$result" == "1" ]]; then
+		print_result "partial worker remains blocked by live issue NMR" 0
+	else
+		print_result "partial worker remains blocked by live issue NMR" 1
+	fi
+	set_fixture '[{"name":"origin:worker"},{"name":"external-contributor"}]' 'true' 'For #42' ''
+	result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" || result=$?
+	if [[ "$result" == "1" ]]; then
+		print_result "partial reference never authorizes an unapproved external worker" 0
+	else
+		print_result "partial reference never authorizes an unapproved external worker" 1
+	fi
+	return 0
+}
+
+test_partial_worker_external_approval() {
+	: >"$LOGFILE"
+	: >"$GH_LOG"
+	set_fixture '[{"name":"origin:worker"},{"name":"external-contributor"}]' 'true' 'For #42' 'VERIFIED' 'VERIFIED'
+	local result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 0 ]] &&
+		grep -qF 'approval-helper verify 42 owner/repo' "$GH_LOG" &&
+		grep -qF 'approval-helper verify pr 100 owner/repo --expect-head head-current' "$GH_LOG"; then
+		print_result "external partial worker verifies the resolved issue and exact PR head" 0
+	else
+		print_result "external partial worker verifies the resolved issue and exact PR head" 1
+	fi
+	if [[ -z "$(_extract_linked_issue "100" "owner/repo")" ]]; then
+		print_result "verified external partial delivery still cannot close its associated issue" 0
+	else
+		print_result "verified external partial delivery still cannot close its associated issue" 1
+	fi
+	set_fixture '[{"name":"origin:worker"},{"name":"external-contributor"}]' 'true' 'For #42' 'VERIFIED' 'NO_APPROVAL'
+	result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF 'lacks V2 authority' "$LOGFILE"; then
+		print_result "external partial worker issue approval cannot replace PR authority" 0
+	else
+		print_result "external partial worker issue approval cannot replace PR authority" 1
+	fi
+	: >"$LOGFILE"
+	set_fixture '[{"name":"origin:worker"},{"name":"external-contributor"}]' 'true' 'For #42' 'NOT_VERIFIED' 'VERIFIED'
+	result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF 'linked issue #42 lacks crypto approval' "$LOGFILE"; then
+		print_result "external partial worker PR authority cannot replace issue approval" 0
+	else
+		print_result "external partial worker PR authority cannot replace issue approval" 1
+	fi
+	set_fixture '[{"name":"origin:worker"},{"name":"external-contributor"}]' 'true' 'For #42' 'VERIFIED' 'VERIFIED'
+	printf '%s' 'needs-maintainer-review' >"${TEST_ROOT}/linked-labels.txt"
+	result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]]; then
+		print_result "verified external partial worker remains blocked by live issue NMR" 0
+	else
+		print_result "verified external partial worker remains blocked by live issue NMR" 1
+	fi
+	return 0
+}
+
+test_partial_worker_extraction_failure_is_logged() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"origin:worker"}]' 'false' 'For #42' ''
+	_extract_pr_work_issue() {
+		return 1
+	}
+	local result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" "head-current" || result=$?
+	define_helpers_under_test >/dev/null
+	if [[ "$result" -eq 1 ]] && grep -qF "worker issue association extraction failed for PR #100 in owner/repo — failing closed" "$LOGFILE"; then
+		print_result "partial worker association extraction failure is logged and blocks merge" 0
+		return 0
+	fi
+	print_result "partial worker association extraction failure is logged and blocks merge" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -773,6 +869,9 @@ main() {
 	test_case_q_linked_issue_extraction_failure_is_logged
 	test_case_r_missing_response_cost_fails_closed
 	test_case_s_partial_label_connection_fails_closed
+	test_partial_worker_final_nmr_gate
+	test_partial_worker_external_approval
+	test_partial_worker_extraction_failure_is_logged
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
