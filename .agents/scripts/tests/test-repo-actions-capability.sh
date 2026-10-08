@@ -58,6 +58,12 @@ gh() {
 	'repos/test/repo/commits/'*'/check-runs?per_page=100')
 		if [[ "$MODE" == 'api-error' ]]; then return 1; fi
 		if [[ "$MODE" == 'empty' ]]; then printf '[{"total_count":0,"check_runs":[]}]\n'; return 0; fi
+		if [[ "$MODE" == qlty-* ]]; then
+			jq -cn --arg head "$HEAD_SHA" '[{total_count:2,check_runs:[
+				{id:42,name:"Actions",head_sha:$head,status:"completed",conclusion:"failure",app:{slug:"github-actions"}},
+				{id:43,name:"Qlty analysis",head_sha:$head,status:"completed",conclusion:"failure",app:{slug:"qlty"}}]}]'
+			return 0
+		fi
 		local app='github-actions' status='completed' conclusion='failure'
 		[[ "$MODE" != 'other-provider' ]] || app='external-ci'
 		[[ "$MODE" != 'cancelled' ]] || conclusion='cancelled'
@@ -71,6 +77,19 @@ gh() {
 		;;
 	'repos/test/repo/check-runs/42/annotations')
 		if [[ "$MODE" == 'non-billing' ]]; then printf '[{"message":"unit tests failed"}]\n'; else printf '[{"message":"account payments have failed"}]\n'; fi
+		;;
+	'repos/test/repo/check-runs/42')
+		local provider='github-actions'
+		[[ "$MODE" != 'other-provider' ]] || provider='external-ci'
+		jq -cn --arg provider "$provider" '{app:{slug:$provider}}'
+		;;
+	'repos/test/repo/check-runs/43')
+		if [[ "$MODE" == 'qlty-api-error' ]]; then return 1; fi
+		local summary='Qlty did not run because you are out of minutes.' provider='qlty'
+		[[ "$MODE" != 'qlty-findings' ]] || summary='Qlty found 3 code issues.'
+		[[ "$MODE" != 'qlty-quoted' ]] || summary='Finding: Qlty did not run because you are out of minutes.'
+		[[ "$MODE" != 'qlty-unknown-provider' ]] || provider='external-ci'
+		jq -cn --arg summary "$summary" --arg provider "$provider" '{app:{slug:$provider},output:{summary:$summary}}'
 		;;
 	*) printf 'Unexpected gh call: %s\n' "$*" >&2; return 1 ;;
 	esac
@@ -98,6 +117,16 @@ printf 'PASS: registry defaults, enable/disable, reason and unrelated fields\n'
 
 reset_fixture
 repo_actions_verify_local test/repo 1 "$HEAD_SHA"
+MODE='qlty-quota'
+repo_actions_verify_local test/repo 1 "$HEAD_SHA"
+for MODE in qlty-findings qlty-quoted qlty-unknown-provider qlty-api-error; do
+	if output=$(repo_actions_verify_local test/repo 1 "$HEAD_SHA" 2>&1); then
+		printf 'FAIL: %s was accepted\n' "$MODE" >&2
+		exit 1
+	fi
+	[[ "$output" == *'Qlty analysis (app: qlty, id: 43)'* ]] || exit 1
+	printf 'PASS: %s blocks and names the check and app\n' "$MODE"
+done
 for MODE in non-billing other-provider cancelled status-failure api-error drift external malformed; do
 	assert_blocked "$MODE"
 done
