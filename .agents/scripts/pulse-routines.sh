@@ -267,8 +267,8 @@ _routine_dispatch_agent() {
 
 #######################################
 # Run one validated script routine outside Pulse's process group, then record
-# its terminal lifecycle state. The per-routine mkdir lock protects the small
-# window between recording `running` and a detached child starting.
+# its terminal lifecycle state. Only the child that acquires the per-routine
+# mkdir lock records `running`; duplicate dispatches leave state untouched.
 #######################################
 _routine_run_detached_script() {
 	local routine_id="$1"
@@ -281,12 +281,44 @@ _routine_run_detached_script() {
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local exit_code=0
 	local deferred_until=0
+	local owner_pid=""
+	local owner_file=""
+	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
+	local lock_epoch=0
+	local now_epoch=0
 
 	if ! mkdir "$lock_dir" 2>/dev/null; then
-		echo "[pulse-wrapper] routine ${routine_id}: detached runner already active" >>"$LOGFILE"
-		return 0
+		for owner_file in "$lock_dir"/pid-*; do
+			[[ -f "$owner_file" ]] || continue
+			owner_pid="${owner_file##*/pid-}"
+			if [[ ! "$owner_pid" =~ ^[1-9][0-9]*$ ]] || kill -0 "$owner_pid" 2>/dev/null; then
+				echo "[pulse-wrapper] routine ${routine_id}: detached runner already active" >>"$LOGFILE"
+				return 0
+			fi
+		done
+		lock_epoch=$(stat -c %Y "$lock_dir" 2>/dev/null) ||
+			lock_epoch=$(stat -f %m "$lock_dir" 2>/dev/null) || lock_epoch=0
+		now_epoch=$(date +%s)
+		# Fail closed when age cannot be determined; allow the mkdir-to-PID gap.
+		if [[ ! "$lock_epoch" =~ ^[0-9]+$ || "$lock_epoch" -eq 0 || $((now_epoch - lock_epoch)) -lt 60 ]]; then
+			return 0
+		fi
+		# PID-specific names prevent a losing reclaimer from unlinking a new
+		# owner's marker. rmdir refuses any populated replacement lock.
+		[[ -z "$owner_pid" ]] || rm -f -- "$lock_dir/pid-$owner_pid"
+		if ! rmdir "$lock_dir" 2>/dev/null || ! mkdir "$lock_dir" 2>/dev/null; then
+			return 0
+		fi
+		echo "[pulse-wrapper] routine ${routine_id}: reclaimed stale runner lock" >>"$LOGFILE"
 	fi
-	trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+	# Expand the path now: the function-local variable is gone at shell EXIT.
+	# shellcheck disable=SC2064
+	trap "rm -f -- $(printf '%q' "$pid_file"); rmdir -- $(printf '%q' "$lock_dir") 2>/dev/null || true" EXIT
+	if ! printf '%s\n' "${BASHPID:-$$}" >"$pid_file"; then
+		return 1
+	fi
+	_routine_update_state "$routine_id" "running"
+	_routine_record_lifecycle "$routine_id" "running" 0
 	if [[ "$#" -gt 0 ]]; then
 		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 || exit_code=$?
 	else
@@ -303,6 +335,9 @@ _routine_run_detached_script() {
 		echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
 	fi
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
+	rm -f -- "$pid_file"
+	rmdir -- "$lock_dir" 2>/dev/null || true
+	trap - EXIT
 	return 0
 }
 
@@ -316,8 +351,6 @@ _routine_dispatch_script() {
 	local module_path="${BASH_SOURCE[0]}"
 	local runner_log="${LOGFILE}.routine-${routine_id}.log"
 
-	_routine_update_state "$routine_id" "running"
-	_routine_record_lifecycle "$routine_id" "running" 0
 	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER
 	if command -v setsid >/dev/null 2>&1; then
 		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
