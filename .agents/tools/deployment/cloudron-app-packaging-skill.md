@@ -73,21 +73,25 @@ Use `Dockerfile`, `Dockerfile.cloudron`, or `cloudron/Dockerfile`. See `cloudron
 
 | App type | Image | Notes |
 |----------|-------|-------|
-| Non-PHP | `cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e` | No PHP. Node is at `/usr/local/node-24.19.0` and is not on `PATH`. |
-| PHP 8.5 | `cloudron/php-base:8.5@sha256:6212759b8992bb2c09083c6ef12fa7a2bb75c13c9aa77a3dd94f593a5b63e1dd` | Prefer when the app supports PHP 8.5. |
-| PHP 8.4 | `cloudron/php-base:8.4@sha256:365607342e6b50f4f53d9b524313df4bfe654596baf762ee2e5af58c3498aa4b` | Use when the app is not ready for PHP 8.5. |
+| General | `cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b` | Ubuntu 26.04. No PHP, Node, Apache, pip/venv, or mongosh. |
+| Node 24 | `cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453f327297d7183525cb05424e7b34` | Node at `/usr/local/node/bin`, already on `PATH`. |
+| PHP 8.5 | `cloudron/php-base:8.5-20260920@sha256:a59a4334fbf50ebfdf8f6cc5527e099e4586349a1aefc546e85f7401ea366d65` | Prefer when the app supports PHP 8.5. |
+| PHP 8.4 | `cloudron/php-base:8.4-20260920@sha256:e9352b5fba7ad0a231b8a9e454034400a3a34a7fe1800425f634d32ffcae4a52` | Use when the app is not ready for PHP 8.5. |
 
-For Node apps using `cloudron/base`, set:
+Reviewed 2026-10-08 against the official [base-image source](https://git.cloudron.io/platform/docker-base-image) and Docker Hub. Runtime child images now use immutable series-date tags; do not reuse the stale floating PHP `8.4`/`8.5` tags. Review the tags and verify digests periodically rather than silently floating to a newer image.
+
+Official 6.0.0 packages (RustFS and SeaweedFS) declare `minBoxVersion: "9.1.0"`; qualify migrations on that recommended baseline and check package-specific platform requirements. This observation does not establish a universal technical minimum for every base-image consumer. During transition the exact legacy 5.1.0 digest is release-compatible, but compatibility audits produce one upgrade finding. See the native guide's **Base Image** section.
+
+For Node apps, switch to the pinned Node image and remove the old `/usr/local/node-24.19.0/bin` PATH override:
 
 ```dockerfile
-ENV PATH=/usr/local/node-24.19.0/bin:$PATH
+FROM cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453f327297d7183525cb05424e7b34
 ```
 
 ### Non-PHP structure
 
 ```dockerfile
-FROM cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e
-ENV PATH=/usr/local/node-24.19.0/bin:$PATH
+FROM cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b
 RUN mkdir -p /app/code
 WORKDIR /app/code
 COPY . /app/code/
@@ -99,25 +103,24 @@ CMD [ "/app/code/start.sh" ]
 ### PHP structure
 
 ```dockerfile
-FROM cloudron/php-base:8.5@sha256:6212759b8992bb2c09083c6ef12fa7a2bb75c13c9aa77a3dd94f593a5b63e1dd
+FROM cloudron/php-base:8.5-20260920@sha256:a59a4334fbf50ebfdf8f6cc5527e099e4586349a1aefc546e85f7401ea366d65
 RUN mkdir -p /app/code
 WORKDIR /app/code
 RUN a2enmod rewrite php8.5
 CMD [ "/app/code/start.sh" ]
 ```
 
-**Base image requirement:** the final stage MUST use a SHA-pinned `cloudron/base` image, or `cloudron/php-base` for PHP apps. Platform tooling (file manager, web terminal, log viewer) depends on utilities provided by these images. Current non-PHP SHA is tracked at [hub.docker.com/r/cloudron/base/tags](https://hub.docker.com/r/cloudron/base/tags).
+**Base image requirement:** the final stage MUST use the applicable reviewed SHA-pinned Cloudron base/runtime image. The helper accepts the current base, Node and PHP pins above, plus the exact legacy 5.1.0 pin during transition. Platform tooling (file manager, web terminal, log viewer) depends on their utilities. Other runtime variants require an explicit policy review, not a wildcard digest exemption. Current non-PHP SHA is tracked at [hub.docker.com/r/cloudron/base/tags](https://hub.docker.com/r/cloudron/base/tags).
 
 Multi-stage builds are acceptable for compilation, asset bundling, or other build-time work. Only the final stage must use the applicable pinned Cloudron base image.
 
 ```dockerfile
-FROM node:20 AS build
+FROM cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453f327297d7183525cb05424e7b34 AS build
 WORKDIR /build
 COPY . .
 RUN npm ci && npm run build
 
-FROM cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e
-ENV PATH=/usr/local/node-24.19.0/bin:$PATH
+FROM cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453f327297d7183525cb05424e7b34
 RUN mkdir -p /app/code
 WORKDIR /app/code
 COPY --from=build /build/dist /app/code/dist

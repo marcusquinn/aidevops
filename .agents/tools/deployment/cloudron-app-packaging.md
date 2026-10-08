@@ -114,11 +114,15 @@ Use the subtotals to calibrate the first packaging round (excluding assessment r
 
 ## Base Image
 
-**Always `FROM cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e`.** The final stage MUST use the SHA-pinned `cloudron/base` — platform tooling (file manager, web terminal, log viewer) depends on utilities in this image. Never start from upstream images — monolithic images bundle databases, reverse proxies, and init systems that conflict with Cloudron (e.g., docassemble: 25 symlinks, 15-20 min boot). Read upstream `docker-compose.yml` for dependencies, then install on `cloudron/base` via package manager. Current SHA tracked at [hub.docker.com/r/cloudron/base/tags](https://hub.docker.com/r/cloudron/base/tags) and in [`cloudron-app-packaging-skill.md`](cloudron-app-packaging-skill.md).
+**Recommend `FROM cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b`.** The final stage MUST use the SHA-pinned Cloudron base or the applicable Node/PHP runtime variant in [`cloudron-app-packaging-skill.md`](cloudron-app-packaging-skill.md) — platform tooling (file manager, web terminal, log viewer) depends on utilities in these images. Never use an upstream image as the final stage: monolithic images bundle databases, reverse proxies, and init systems that conflict with Cloudron. Read upstream `docker-compose.yml` for dependencies, then install them on the applicable Cloudron image.
 
 **Multi-stage builds**: Only when build toolchain is exotic. Build in upstream image, `COPY --from` artifacts into final `cloudron/base` stage. **Alpine/musl warning**: musl-compiled binaries won't run on `cloudron/base` (Ubuntu/glibc) — always use glibc builder stage.
 
-**Base image contents (Cloudron 5.1.0, verified 2026-08-07)**: Ubuntu 24.04.4 LTS, Node.js 24.19.0 at `/usr/local/node-24.19.0/bin/node`, Python 3.12.3, Nginx 1.24.0, Apache 2.4.58, Supervisor 4.2.5, gosu 1.19, gcc 13.3.0, ImageMagick 6.9.12, ffmpeg 6.1.1, psql 16.14, mysql 8.0.46, redis-cli 8.10.0, mongosh 2.9.2, yq 4.53.3. Reviewed `cloudron/base:5.1.0` tag digest is `sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e`. **Not included** (install if needed): PHP, Ruby, Go, Java, Rust, pandoc, wkhtmltopdf.
+**6.0.0 migration (verified 2026-10-08)**: Ubuntu 26.04; no PHP, Node, Apache, Python pip/venv, or mongosh. Use the dated PHP/Node images for those runtimes, explicitly install Apache or mongosh when needed, and provision Python tooling (or select Cloudron's Python runtime image and review its pin policy). Node is now at `/usr/local/node/bin` on `cloudron/node-base` and already on `PATH`; remove the old `/usr/local/node-24.19.0` override. A build-stage Node image does not provide Node in a plain-base final stage.
+
+**Platform floor and transition**: official RustFS and SeaweedFS packages using 6.0.0 declare `minBoxVersion: "9.1.0"`. Use that as the recommended qualification baseline, not proof of a universal base-image minimum; verify the package's addons and runtime on its declared platform before migrating. The exact SHA-pinned 5.1.0 image remains accepted by release preparation/check/preflight during transition, so unrelated upstream upgrades are not blocked. `check-compatibility` and the weekly audit report one actionable upgrade finding; unpinned or unknown digests still fail.
+
+**Avoid stale pins**: compare the reviewed pin with [Docker Hub tags](https://hub.docker.com/r/cloudron/base/tags) and the official [base-image source](https://git.cloudron.io/platform/docker-base-image), then verify the candidate with `docker manifest inspect` before updating policy. Check dated PHP/Node tags too; floating PHP tags are stale. This is a maintainer review step rather than an automatic network-dependent release gate. Current official examples: [RustFS](https://git.cloudron.io/packages/rustfs-app) and [SeaweedFS](https://git.cloudron.io/packages/seaweedfs-app).
 
 **Community assessment intake (reviewed at `ad446c4136a7`)**: import packaging lessons from the assessment corpus rather than copying whole assessments. Its live-tool findings now define evidence boundaries, scoring-target selection, compound-axis tie-breakers, and effort calibration above. Good follow-up candidates include Huginn (medium structural, moderate maintenance, viable), while AppFlowy Cloud and ejabberd remain poor fits because of multi-service/auth/storage or network-port constraints. Prosody is the stronger XMPP path when raw TCP/TLS/DNS requirements are acceptable.
 
@@ -151,10 +155,10 @@ workers=$(( workers < 1 ? 1 : workers ))    # floor at 1
 ## Dockerfile Patterns
 
 ```dockerfile
-FROM cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e
+FROM cloudron/php-base:8.5-20260920@sha256:a59a4334fbf50ebfdf8f6cc5527e099e4586349a1aefc546e85f7401ea366d65
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    nginx php8.2-fpm php8.2-mysql \
+    nginx \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/code
@@ -174,8 +178,8 @@ CMD ["/app/code/start.sh"]
 **Runtime-specific patterns:**
 
 - **PHP**: Redirect temp paths to `/run`: `RUN rm -rf /var/lib/php/sessions && ln -s /run/php/sessions /var/lib/php/sessions`. FPM pool: `php_value[session.save_path] = /run/php/sessions`. In start.sh: `mkdir -p /run/php/sessions /run/php/uploads /run/php/tmp`.
-- **Node.js**: `RUN npm ci --production && npm cache clean --force` + `ENV NODE_ENV=production`. Keep `node_modules` in `/app/code`.
-- **Python**: `ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1` + `RUN pip install --no-cache-dir -r requirements.txt`.
+- **Node.js**: use the pinned `cloudron/node-base` from the skill table; `RUN npm ci --omit=dev && npm cache clean --force` + `ENV NODE_ENV=production`. Keep `node_modules` in `/app/code`.
+- **Python**: provision pip/venv explicitly before `RUN pip install --no-cache-dir -r requirements.txt`; plain 6.0.0 no longer supplies them. Set `ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1`.
 
 **nginx** — writable temp paths required (fails to start without):
 
