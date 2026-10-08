@@ -244,8 +244,9 @@ _publication_validate_mapping() {
 	local task_line="" brief_path="todo/tasks/${task_id}-brief.md"
 	task_line=$(_publication_task_line "$task_id") || return 3
 	[[ "$task_line" =~ (^|[[:space:]])ref:GH#${issue_num}($|[[:space:]]) ]] || return 1
-	[[ -f "$brief_path" && ! -L "$brief_path" ]] || return 1
+	[[ -f "$brief_path" && ! -L "$brief_path" ]] || return 4
 	printf '%s\n' "$task_line"
+	return 0
 }
 
 _publication_brief_ready() {
@@ -284,7 +285,11 @@ _publication_reconcile_one() {
 			print_warning "${task_id}/#${issue_num}: task absent from default-branch snapshot; publication deferred"
 			return 3
 		fi
-		print_warning "${task_id}/#${issue_num}: canonical task, ref, or brief validation failed; retaining ${PUBLICATION_PENDING_LABEL}"
+		if [[ "$mapping_rc" -eq 4 ]]; then
+			print_warning "${task_id}/#${issue_num}: brief todo/tasks/${task_id}-brief.md missing on default branch; retaining ${PUBLICATION_PENDING_LABEL}"
+		else
+			print_warning "${task_id}/#${issue_num}: TODO line lacks ref:GH#${issue_num}; retaining ${PUBLICATION_PENDING_LABEL}"
+		fi
 		return 1
 	}
 	desired_labels=$(_publication_desired_labels "$task_line") || {

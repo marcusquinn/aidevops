@@ -834,6 +834,12 @@ _ensure_todo_entry_written() {
 	# linked worktree.
 	if _repo_path_is_canonical_checkout "$repo_path"; then
 		printf 'TODO.md was not changed in canonical checkout; add this line in a linked worktree:\n%s\n' "$todo_line" >&2
+		if [[ -n "${TASK_BRIEF_FILE:-}" ]]; then
+			printf 'copy the brief to todo/tasks/%s-brief.md in the same linked worktree\n' "$task_id" >&2
+		else
+			printf 'a brief at todo/tasks/%s-brief.md is still required for publication (see reference/planning-publication-lifecycle.md)\n' "$task_id" >&2
+		fi
+		printf 'publish both with: planning-commit-helper.sh "plan: add %s ..."\n' "$task_id" >&2
 		return 0
 	fi
 
