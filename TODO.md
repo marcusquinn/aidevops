@@ -1579,17 +1579,17 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18610 Add code-native motion design route and motion QA to the Video agent #feat ref:GH#33902 started:2026-10-07 pr:#33906 completed:2026-10-07
 
-- [ ] t18611 Add shell-style rule and diff-scoped gate for early-exit pipe readers under pipefail #auto-dispatch #feat ref:GH#33914
+- [x] t18611 Add shell-style rule and diff-scoped gate for early-exit pipe readers under pipefail #auto-dispatch #feat ref:GH#33914 pr:#33973 completed:2026-10-07
 
 - [x] t18612 OpenCode v1 TUI: collapse MCP sidebar by default, show AIDevOps version in sidebar footer, pause session-title version suffix #feat ref:GH#33963 started:2026-10-07 pr:#33965 completed:2026-10-07
 
 - [x] t18613 Document live OpenCode TUI plugin verification (temp tui.json + per-project session DB) #documentation ref:GH#33975 started:2026-10-07 pr:#33977 completed:2026-10-07
 
-- [ ] t18614 Add opencode-test-helper.sh tui-capture: headless pty render + text assertions for TUI plugin verification #auto-dispatch #feat ref:GH#33978 blocked-by:t18613
+- [x] t18614 Add opencode-test-helper.sh tui-capture: headless pty render + text assertions for TUI plugin verification #auto-dispatch #feat ref:GH#33978 blocked-by:t18613 pr:#33994 completed:2026-10-08
 
-- [ ] t18615 claim-task-id/publication reconcile: name the missing brief instead of a generic publication failure #auto-dispatch #bug ref:GH#33981
+- [x] t18615 claim-task-id/publication reconcile: name the missing brief instead of a generic publication failure #auto-dispatch #bug ref:GH#33981 pr:#33992 completed:2026-10-08
 
-- [ ] t18616 full-loop commit-and-pr: planning-only diffs must use For #N and keep the issue dispatchable #auto-dispatch #bug ref:GH#33982
+- [x] t18616 full-loop commit-and-pr: planning-only diffs must use For #N and keep the issue dispatchable #auto-dispatch #bug ref:GH#33982 pr:#33990 completed:2026-10-08
 
 ## In Progress
 
