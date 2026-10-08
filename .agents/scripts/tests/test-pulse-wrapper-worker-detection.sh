@@ -40,6 +40,12 @@ print_result() {
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	PS_FIXTURE_FILE="${TEST_ROOT}/ps-fixture.txt"
+	# GH#33985: dispatch fixtures isolate pre-launch gates from runner state.
+	cat >"${TEST_ROOT}/runner-capability-helper.sh" <<'BASH'
+runner_capability_check_fresh() {
+	return 0
+}
+BASH
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
 	mkdir -p "$AIDEVOPS_TEMP_DIR"
