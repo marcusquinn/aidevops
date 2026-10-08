@@ -205,7 +205,9 @@ _count_deployed_agent_files() {
 		# GNU/BSD find do not traverse a command-line symlink unless -L is set,
 		# so the old count returned zero immediately after a successful activation
 		# and rolled the deployment back to the previous bundle.
-		file_count=$(find -L "$target_dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+		# User-owned custom/ and draft/ are not framework files (GH#34088).
+		file_count=$(find -L "$target_dir" \( -path "$target_dir/custom" -o -path "$target_dir/draft" \) -prune \
+			-o -type f -print 2>/dev/null | wc -l | tr -d '[:space:]')
 	fi
 	[[ "$file_count" =~ ^[0-9]+$ ]] || file_count=0
 	printf '%s\n' "$file_count"
@@ -642,17 +644,161 @@ _runtime_bundle_resolve_root() {
 	return 0
 }
 
+# Plugin namespaces are copied per bundle. User-owned custom/ and draft/ are
+# not: they live in the stable user-state root (GH#34088).
 _runtime_bundle_copy_preserved_dirs() {
 	local current_root="$1"
 	local candidate_root="$2"
 	shift 2
 	local preserved_dir=""
-	local -a preserved_dirs=("custom" "draft" "$@")
+	local -a preserved_dirs=("$@")
 
+	[[ "${#preserved_dirs[@]}" -gt 0 ]] || return 0
 	for preserved_dir in "${preserved_dirs[@]}"; do
 		[[ -n "$preserved_dir" && -d "$current_root/$preserved_dir" ]] || continue
 		rm -rf "${candidate_root:?}/$preserved_dir"
 		cp -a "$current_root/$preserved_dir" "$candidate_root/$preserved_dir" || return 1
+	done
+	return 0
+}
+
+# ----- stable user-owned agent state (GH#34088) ---------------------------
+# custom/ and draft/ used to be copied into every immutable bundle, so absolute
+# links (package current/previous pointers, entry points) kept targeting the
+# older bundle and dangled once it was pruned. They now live once, outside
+# runtime-bundles/, and each bundle exposes them through agents/{custom,draft}
+# links, so ~/.aidevops/agents/custom/... remains the documented path.
+_RUNTIME_BUNDLE_USER_STATE_DIRS=("custom" "draft")
+
+_runtime_bundle_user_state_root() {
+	local target_dir="$1"
+	printf '%s/user-agents\n' "${target_dir%/*}"
+	return 0
+}
+
+# _runtime_bundle_rebase_user_link link name stable_dir current_root bundles_dir
+# Rewrite one absolute link whose target lies inside a bundle-scoped copy of
+# custom/ or draft/ to the equivalent stable path. Other links are untouched.
+_runtime_bundle_rebase_user_link() {
+	local link_path="$1"
+	local name="$2"
+	local stable_dir="$3"
+	local current_root="$4"
+	local bundles_dir="$5"
+	local link_target="" suffix="" rest="" bundle_id=""
+
+	link_target=$(readlink "$link_path") || return 1
+	[[ "$link_target" == /* ]] || return 0
+	if [[ "$link_target" == "$current_root/$name" || "$link_target" == "$current_root/$name/"* ]]; then
+		suffix="${link_target#"$current_root/$name"}"
+	elif [[ -n "$bundles_dir" && "$link_target" == "$bundles_dir/"* ]]; then
+		rest="${link_target#"$bundles_dir/"}"
+		bundle_id="${rest%%/*}"
+		rest="${rest#*/}"
+		[[ -n "$bundle_id" && "$bundle_id" != "$rest" ]] || return 0
+		if [[ "$rest" == "agents/$name" ]]; then
+			suffix=""
+		elif [[ "$rest" == "agents/$name/"* ]]; then
+			suffix="${rest#"agents/$name"}"
+		else
+			return 0
+		fi
+	else
+		return 0
+	fi
+	rm -f "$link_path" || return 1
+	ln -s "${stable_dir}${suffix}" "$link_path" || return 1
+	return 0
+}
+
+# Report (never edit) Python environments that still embed a runtime-bundle
+# path; rewriting shebangs or pyvenv.cfg in place produces broken interpreters.
+_runtime_bundle_report_bundle_bound_venvs() {
+	local stable_dir="$1"
+	local cfg_file="" venv_dir="" count=0
+
+	while IFS= read -r cfg_file; do
+		[[ -n "$cfg_file" ]] || continue
+		venv_dir="${cfg_file%/pyvenv.cfg}"
+		if grep -q '/runtime-bundles/' "$cfg_file" 2>/dev/null ||
+			grep -lq '^#!.*/runtime-bundles/' "$venv_dir"/bin/* 2>/dev/null; then
+			count=$((count + 1))
+			print_warning "  Python environment still bound to a runtime bundle: ${venv_dir#"$stable_dir"/} — re-create it under ~/.aidevops/agents/${stable_dir##*/}/"
+		fi
+	done < <(find "$stable_dir" -name pyvenv.cfg -type f 2>/dev/null)
+	[[ "$count" -eq 0 ]] || print_info "  Re-create the reported environments before the old bundle is pruned; they were not modified"
+	return 0
+}
+
+# _runtime_bundle_migrate_user_state current_root user_root bundles_dir
+# Idempotent, no-clobber migration of the active bundle's real custom/ and
+# draft/ into the stable root. The legacy in-bundle copy is left in place until
+# that bundle is pruned, so rollback to a pre-migration bundle still works.
+_runtime_bundle_migrate_user_state() {
+	local current_root="$1"
+	local user_root="$2"
+	local bundles_dir="$3"
+	local name="" legacy_dir="" stable_dir="" stage_dir="" link_path=""
+
+	mkdir -p "$user_root" || return 1
+	for name in "${_RUNTIME_BUNDLE_USER_STATE_DIRS[@]}"; do
+		legacy_dir="$current_root/$name"
+		stable_dir="$user_root/$name"
+		if [[ -e "$stable_dir" || -L "$stable_dir" ]]; then
+			[[ -d "$stable_dir" && ! -L "$stable_dir" ]] || {
+				print_error "Stable user agent state is not a real directory: $stable_dir"
+				return 1
+			}
+			continue
+		fi
+		if [[ -n "$current_root" && -d "$legacy_dir" && ! -L "$legacy_dir" ]]; then
+			stage_dir=$(mktemp -d "$user_root/.${name}.migrate.XXXXXX") || return 1
+			rmdir "$stage_dir" || return 1
+			if ! cp -a "$legacy_dir" "$stage_dir"; then
+				rm -rf "$stage_dir"
+				return 1
+			fi
+			while IFS= read -r link_path; do
+				[[ -n "$link_path" ]] || continue
+				_runtime_bundle_rebase_user_link "$link_path" "$name" "$stable_dir" \
+					"$current_root" "$bundles_dir" || {
+					rm -rf "$stage_dir"
+					return 1
+				}
+			done < <(find "$stage_dir" -type l 2>/dev/null)
+			# No clobber: a setup that migrated first wins. If one appears between
+			# the check and the rename, mv nests this copy inside it; remove that.
+			if [[ -e "$stable_dir" || -L "$stable_dir" ]]; then
+				rm -rf "$stage_dir"
+				continue
+			fi
+			mv "$stage_dir" "$stable_dir" || {
+				rm -rf "$stage_dir"
+				return 1
+			}
+			if [[ -e "$stable_dir/${stage_dir##*/}" ]]; then
+				rm -rf "${stable_dir:?}/${stage_dir##*/}"
+				continue
+			fi
+			print_info "  Migrated agents/$name to stable user state (~/.aidevops/${user_root##*/}/$name)"
+			_runtime_bundle_report_bundle_bound_venvs "$stable_dir"
+		else
+			mkdir -p "$stable_dir" || return 1
+		fi
+	done
+	return 0
+}
+
+# Expose the stable user-state directories inside a staged bundle.
+_runtime_bundle_link_user_state() {
+	local candidate_root="$1"
+	local user_root="$2"
+	local name=""
+
+	for name in "${_RUNTIME_BUNDLE_USER_STATE_DIRS[@]}"; do
+		[[ -d "$user_root/$name" ]] || return 1
+		rm -rf "${candidate_root:?}/$name"
+		ln -s "$user_root/$name" "$candidate_root/$name" || return 1
 	done
 	return 0
 }
@@ -890,6 +1036,15 @@ _runtime_bundle_stage() {
 			rm -rf "$bundle_dir"
 			return 1
 		}
+	fi
+	local user_root="" physical_bundles_dir=""
+	user_root=$(_runtime_bundle_user_state_root "$target_dir")
+	physical_bundles_dir=$(cd "$bundles_dir" && pwd -P) || physical_bundles_dir=""
+	if ! _runtime_bundle_migrate_user_state "$current_root" "$user_root" "$physical_bundles_dir" ||
+		! _runtime_bundle_link_user_state "$bundle_dir/agents" "$user_root"; then
+		print_error "Failed to prepare stable custom/draft agent state at $user_root"
+		rm -rf "$bundle_dir"
+		return 1
 	fi
 	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "after-stage-copy" ]]; then
 		rm -rf "$bundle_dir"
