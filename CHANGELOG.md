@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.34] - 2026-10-08
+
+### Added
+
+- measure held navigation transitions (#34017)
+
+### Changed
+
+- Maintenance: mark t18622 complete (pr:#34025 completed:2026-10-08) (#34032)
+- Maintenance: sync GitHub issue refs to TODO.md (#34029)
+- Maintenance: make t18622/t18623 briefs worker-ready
+- Maintenance: add t18622 routine lock leak, t18623 cloudron monitor opt-out
+- Documentation: update Outscraper API guidance (#34015)
+
+### Fixed
+
+- batch pre-push privacy scans with custom inventories (GH#34035) (#34038)
+- ensure publication:pending label exists before claim-task-id allocates (GH#34033) (#34034)
+- release and reclaim detached routine runner locks (#34025)
+- classify Qlty out-of-minutes commit statuses in the Actions-unavailable merge gate
+- classify Qlty quota outages and name blocking checks (#34023)
+- emit canonical Files Scope in package monitor issues
+- honour package monitor opt-outs (#34024)
+- make forked descendant timeout test deterministic
+
 ## [3.38.33] - 2026-10-08
 
 ### Fixed
