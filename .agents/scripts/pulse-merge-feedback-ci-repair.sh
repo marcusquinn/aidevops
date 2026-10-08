@@ -264,6 +264,26 @@ _ci_repair_checks_for_dispatch() {
 	if [[ -n "$supplied_checks_json" ]]; then
 		checks_json=$(_ci_filter_nonrequired_baseline_evidence "$repo_slug" "$pr_number" "$checks_json")
 	fi
+	checks_json=$(_ci_filter_qlty_quota_evidence "$repo_slug" "$checks_json")
+	printf '%s\n' "$checks_json"
+	return 0
+}
+
+# Exact check reads retain descriptions only for commit statuses (Actions check
+# runs have an empty description). Snapshot evidence additionally carries source.
+# Filter before names, fingerprints, feedback or repair leases are constructed.
+_ci_filter_qlty_quota_evidence() {
+	local repo_slug="$1" checks_json="$2" candidates=""
+	local quota_filter='((.name // "") | ascii_downcase) == "qlty check"
+		and (.source == "commit_status" or (.source == null and (.workflow // "") == ""))
+		and ((.description // "") | test("out of ((analysis )?minutes|credits)"; "i"))'
+	candidates=$(jq -c "[.[]? | select(${quota_filter})]" <<<"$checks_json" 2>/dev/null) || candidates="[]"
+	if [[ "$candidates" != "[]" ]] &&
+		declare -F _pmrc_repo_has_qlty_credit_limit >/dev/null 2>&1 &&
+		_pmrc_repo_has_qlty_credit_limit "$repo_slug"; then
+		jq -c "[.[]? | select((${quota_filter}) | not)]" <<<"$checks_json" 2>/dev/null || printf '%s\n' "$checks_json"
+		return 0
+	fi
 	printf '%s\n' "$checks_json"
 	return 0
 }
