@@ -1593,9 +1593,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18622 fix(pulse): detached script routine lock is never released, stalling every script routine #auto-dispatch #bug #priority:high tier:standard ref:GH#34018 -> [todo/tasks/t18622-brief.md]
 
-- [ ] t18623 fix(cloudron): honour monitor_upstream/monitor_compatibility false in the package monitor #auto-dispatch #bug tier:simple ref:GH#34019 -> [todo/tasks/t18623-brief.md]
+- [x] t18623 fix(cloudron): honour monitor_upstream/monitor_compatibility false in the package monitor #auto-dispatch #bug tier:simple ref:GH#34019 -> [todo/tasks/t18623-brief.md] pr:#34024 completed:2026-10-08
 
-- [ ] t18624 fix(cloudron): monitor issue bodies fail the Files Scope gate, so no update issues are filed #bug #interactive ref:GH#34027 -> [todo/tasks/t18624-brief.md]
+- [x] t18624 fix(cloudron): monitor issue bodies fail the Files Scope gate, so no update issues are filed #bug #interactive ref:GH#34027 -> [todo/tasks/t18624-brief.md] pr:#34028 completed:2026-10-08
 
 ## In Progress
 
