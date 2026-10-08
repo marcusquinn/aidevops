@@ -151,12 +151,19 @@ run those directly too, without `-k` (they do not provide unittest filtering).
    PR branches while CI is active.
 13. Code-quality add-on apps are advisory by default. Missing, pending,
     unavailable, rate-limited, or late add-on results never delay a trusted PR
-    after required project CI passes. On private repositories, a qlty check
-    that fails for lack of credits is skipped too (see "Private
-    repositories and public launch"). Sweep late findings into worker-ready
+    after required project CI passes. Sweep late findings into worker-ready
     follow-up issues. Repositories with exceptional sensitivity may explicitly
     opt into `review_gate.completion_behavior: strict`; never make that the
     framework default.
+14. Qlty has credit limits on private repositories and on every
+    organisation-owned repository, public or private; only public repositories
+    on personal accounts are unlimited. On a limited repository, skip a qlty
+    check that fails because the credits ran out (for example "Qlty did not
+    run because you are out of minutes"). It is billing, not a code result: do
+    not rerun it, change code, file an issue or wait for it. Merge when the
+    other checks pass, and note the skipped check in the PR body. A qlty
+    failure with real findings still counts, and an out-of-credits failure on
+    a public personal-account repository is unexpected: report it.
 
 ## Private repositories and public launch
 
@@ -171,12 +178,8 @@ code-review apps are billed on private repositories and free on public ones.
    - Keep every check advisory: no branch protection, required status checks
      or paid review apps. Fix failures the PR itself causes before merge; file
      a follow-up issue with the run link for any other failure and merge.
-   - Skip a qlty check that fails because the account has no free credits
-     left (for example "Qlty did not run because you are out of minutes").
-     It is billing, not a code result: do not rerun it, change code, file an
-     issue or wait for it. Merge when the other checks pass, and note the
-     skipped check in the PR body. A qlty failure with real findings still
-     counts.
+   - Skip a qlty check that fails because the credits ran out (design
+     rule 14).
    - Control cost: run only lint on draft PRs, cancel superseded runs with
      `concurrency`, cache tool results, and use short artifact retention.
    - Use secure defaults from the start, since they cost nothing: actions
@@ -187,7 +190,8 @@ code-review apps are billed on private repositories and free on public ones.
    publish, in the same step:
    - turn on free whole-codebase reviewers (CodeRabbit full review, Codacy,
      SonarQube Cloud, qlty, Socket), CodeQL, secret scanning with push
-     protection, Dependabot alerts, and OpenSSF Scorecard;
+     protection, Dependabot alerts, and OpenSSF Scorecard. Qlty stays
+     credit-limited on organisation repositories (design rule 14);
    - fix findings in small PRs by area, security first. Fix, justify inline,
      or dismiss each one with a reason in the service;
    - empty static-analysis baselines, then raise strictness one level at a
