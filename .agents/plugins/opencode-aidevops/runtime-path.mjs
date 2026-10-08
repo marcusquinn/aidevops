@@ -12,6 +12,7 @@ export function runtimePath(path = "", home = homedir(), account = userInfo().us
     join("/etc/profiles/per-user", account, "bin"),
     "/run/wrappers/bin",
     "/run/current-system/sw/bin",
+    join(home, ".local/bin"),
   ].filter((directory) => existsSync(directory));
   return [...new Set([...path.split(":"), ...profiles].filter(Boolean))].join(":");
 }

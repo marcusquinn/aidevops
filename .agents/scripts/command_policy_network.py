@@ -115,7 +115,17 @@ def _run_git_query(
     cwd: str, args: list[str], ok_codes: tuple[int, ...] = (0,)
 ) -> list[str] | None:
     """Run a read-only git query; return stdout lines, or None when it fails."""
-    git_binary = "/usr/bin/git" if Path("/usr/bin/git").is_file() else "git"
+    # NixOS uses its system profile, and sandboxes may expose a guard alias at
+    # /usr/bin/git without that alias's adjacent helpers. Use the trusted system
+    # profile for these fixed, local read-only queries; mutations stay guarded.
+    git_binary = next(
+        (
+            candidate
+            for candidate in ("/run/current-system/sw/bin/git", "/usr/bin/git", "/bin/git")
+            if Path(candidate).is_file() and os.access(candidate, os.X_OK)
+        ),
+        "git",
+    )
     try:
         resolved = subprocess.run(  # nosec B603 -- argv is fixed except validated cwd/remote data; shell execution is disabled.
             [git_binary, "-C", cwd, *args],

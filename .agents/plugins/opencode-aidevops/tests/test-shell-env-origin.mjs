@@ -32,10 +32,13 @@ test("runtime PATH recovers Nix profiles without changing guard or project prece
   try {
     const legacy = join(home, ".nix-profile/bin");
     const modern = join(home, ".local/state/nix/profile/bin");
+    const local = join(home, ".local/bin");
     mkdirSync(legacy, { recursive: true });
     mkdirSync(modern, { recursive: true });
+    mkdirSync(local, { recursive: true });
     const path = runtimePath("/guard:/project/bin:/guard::", home);
     assert.deepEqual(path.split(":").slice(0, 4), ["/guard", "/project/bin", legacy, modern]);
+    assert.ok(path.split(":").includes(local), "Recover the locally installed aidevops CLI");
     assert.equal(runtimePath(path, home), path);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -120,7 +123,7 @@ test("shell env moves the Git guard scripts directory to PATH first", async () =
     const hook = createShellEnvHook({ agentsDir: root, scriptsDir, workspaceDir: root });
     const output = { env: { PATH: `/usr/bin:${binDir}:${scriptsDir}:/bin` } };
     await hook({ sessionID: "path-test" }, output);
-    assert.equal(output.env.PATH, `${scriptsDir}:${binDir}:/usr/bin:/bin`);
+    assert.equal(output.env.PATH, runtimePath(`${scriptsDir}:${binDir}:/usr/bin:/bin`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -304,18 +307,18 @@ test("worker shell PATH re-applies the selected project Node bin (GH#33290)", as
     process.env.AIDEVOPS_PROJECT_NODE_BIN = nodeBin;
     const worker = { env: { PATH: `/opt/homebrew/bin:${nodeBin}:/usr/bin`, OPENCODE_HEADLESS: "true" } };
     await makeHook()({ sessionID: "worker-session" }, worker);
-    assert.equal(worker.env.PATH, `${nodeBin}:/opt/homebrew/bin:/usr/bin`);
+    assert.equal(worker.env.PATH, runtimePath(`${nodeBin}:/opt/homebrew/bin:/usr/bin`));
 
     await withCleanHeadlessProcessEnv(async () => {
       const interactive = { env: { PATH: "/opt/homebrew/bin:/usr/bin" } };
       await makeHook()({ sessionID: "interactive-session" }, interactive);
-      assert.equal(interactive.env.PATH, "/opt/homebrew/bin:/usr/bin");
+      assert.equal(interactive.env.PATH, runtimePath("/opt/homebrew/bin:/usr/bin"));
     });
 
     process.env.AIDEVOPS_PROJECT_NODE_BIN = join(root, "missing");
     const invalid = { env: { PATH: "/opt/homebrew/bin:/usr/bin", OPENCODE_HEADLESS: "true" } };
     await makeHook()({ sessionID: "worker-session" }, invalid);
-    assert.equal(invalid.env.PATH, "/opt/homebrew/bin:/usr/bin");
+    assert.equal(invalid.env.PATH, runtimePath("/opt/homebrew/bin:/usr/bin"));
   } finally {
     if (saved === undefined) delete process.env.AIDEVOPS_PROJECT_NODE_BIN;
     else process.env.AIDEVOPS_PROJECT_NODE_BIN = saved;
