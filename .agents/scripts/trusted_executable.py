@@ -53,7 +53,15 @@ def trusted_executable(name: str, search_path: str | None = None) -> str | None:
         candidate = os.path.join(directory, name)
         if not (os.path.isfile(candidate) and os.access(candidate, os.X_OK)):
             continue
-        if _trusted_chain(os.path.realpath(candidate)) and _trusted_chain(os.path.realpath(directory)):
+        real = os.path.realpath(candidate)
+        real_directory = os.path.realpath(directory)
+        # Sticky shared dirs (e.g. /nix/store) are only acceptable as
+        # ancestors: a sticky PATH dir such as /tmp lets any user plant a
+        # symlink to an unrelated root-owned binary.
+        if not (_root_controlled(os.path.dirname(real), directory=False)
+                and _root_controlled(real_directory, directory=False)):
+            continue
+        if _trusted_chain(real) and _trusted_chain(real_directory):
             return candidate
     return None
 

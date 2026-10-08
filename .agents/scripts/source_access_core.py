@@ -103,7 +103,13 @@ def _system_executable(name: str) -> str:
         if not (os.path.isfile(candidate) and os.access(candidate, os.X_OK)):
             continue
         real = os.path.realpath(candidate)
-        if _trusted_chain(real) and _trusted_chain(os.path.realpath(directory)):
+        real_directory = os.path.realpath(directory)
+        # Sticky shared dirs (e.g. /nix/store) are only acceptable as
+        # ancestors, never as the directory holding the tool or PATH entry.
+        if not (_root_controlled(os.path.dirname(real), directory=False)
+                and _root_controlled(real_directory, directory=False)):
+            continue
+        if _trusted_chain(real) and _trusted_chain(real_directory):
             return candidate
     # Fail closed with a non-existent, non-PATH name rather than trusting PATH.
     return f"/nonexistent/aidevops-untrusted-{name}"

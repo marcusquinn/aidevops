@@ -40,7 +40,12 @@ export function resolveTrustedExecutable(name, searchPath = process.env.PATH || 
     try {
       const metadata = statSync(candidate);
       if (!metadata.isFile() || (metadata.mode & 0o111) === 0) continue;
-      if (trustedChain(realpathSync(candidate)) && trustedChain(realpathSync(directory))) {
+      const real = realpathSync(candidate);
+      const realDirectory = realpathSync(directory);
+      // Sticky shared dirs (e.g. /nix/store) only count as ancestors: a sticky
+      // PATH dir such as /tmp lets any user plant a symlink to a root binary.
+      if (!rootControlled(parse(real).dir, false) || !rootControlled(realDirectory, false)) continue;
+      if (trustedChain(real) && trustedChain(realDirectory)) {
         return candidate;
       }
     } catch {

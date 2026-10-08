@@ -93,6 +93,10 @@ aidevops_dir_chain_is_trusted() {
 	local dir="$1"
 	local physical=""
 	physical=$(cd -P -- "$dir" 2>/dev/null && pwd -P) || return 1
+	# A sticky shared dir (e.g. /tmp) never holds trusted tools; it is only
+	# acceptable as an ancestor (e.g. /nix/store). Matters as root, where -O
+	# alone cannot see group/world-writable modes.
+	[[ -k "$physical" ]] && return 1
 	while :; do
 		if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
 			[[ -O "$physical" ]] || return 1
