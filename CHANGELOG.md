@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.32] - 2026-10-08
+
+### Added
+
+- add headless OpenCode TUI capture (GH#33978) (#33994)
+
+### Changed
+
+- Maintenance: mark t18614 complete (pr:#33994 completed:2026-10-08) (#33991)
+
+### Fixed
+
+- refuse checkpoint approval templates that dispatch-approved would reject
+- isolate detached headless workers in a systemd user scope
+- shorten footprint reservation critical section
+- stub runner capability gate in dispatch tests (GH#33985) (#33995)
+- clarify planning publication brief diagnostics (GH#33981) (#33992)
+- keep planning-only issues dispatchable (#33990)
+
 ## [3.38.31] - 2026-10-08
 
 ### Added
