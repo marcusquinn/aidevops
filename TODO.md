@@ -1569,7 +1569,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18602 fix(pulse): released attempt's own terminal lease blocks worker draft checkpoint recovery (blocked attention, stall continuation, approval) #bug tier:standard ref:GH#33839 pr:#33841 completed:2026-10-06
 
-- [ ] t18603 fix(pulse): recognise gh 2.102 empty-stdout HTTP 304 in conditional REST and events tickle #auto-dispatch #bug tier:standard ref:GH#33844 -> [todo/tasks/t18603-brief.md]
+- [x] t18603 fix(pulse): recognise gh 2.102 empty-stdout HTTP 304 in conditional REST and events tickle #auto-dispatch #bug tier:standard ref:GH#33844 -> [todo/tasks/t18603-brief.md] pr:#33846 completed:2026-10-08
 
 - [x] t18604 feat(pulse): dormant repos skip candidate scans until woken by new work or an interactive session #auto-dispatch #feat tier:thinking blocked-by:t18603 ref:GH#33847 -> [todo/tasks/t18604-brief.md] pr:#33856 completed:2026-10-06
 
@@ -1593,7 +1593,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18622 fix(pulse): detached script routine lock is never released, stalling every script routine #auto-dispatch #bug #priority:high tier:standard ref:GH#34018 -> [todo/tasks/t18622-brief.md]
 
-- [ ] t18623 fix(cloudron): honour monitor_upstream/monitor_compatibility false in the package monitor #auto-dispatch #bug tier:simple ref:GH#34019 -> [todo/tasks/t18623-brief.md]
+- [x] t18623 fix(cloudron): honour monitor_upstream/monitor_compatibility false in the package monitor #auto-dispatch #bug tier:simple ref:GH#34019 -> [todo/tasks/t18623-brief.md] pr:#34021 completed:2026-10-08
 
 - [ ] t18624 fix(cloudron): monitor issue bodies fail the Files Scope gate, so no update issues are filed #bug #interactive ref:GH#34027 -> [todo/tasks/t18624-brief.md]
 
