@@ -78,7 +78,7 @@ ssh root@my.cloudron.domain.com
 uptime                                                          # <10 min = apps still starting
 last reboot | head -5
 journalctl -b -1 --no-pager | grep -i -E 'cloudron.*update|cloudron-updater'
-jq -r '.version // "not found"' /home/yellowtent/box/package.json
+cat /home/yellowtent/box/VERSION
 ```
 
 **Step 2: Resources**
@@ -156,8 +156,36 @@ Startup sequence (prevents premature intervention):
 | `Restarting` | Crash loop | Check logs — likely app/db issue |
 | `Exited (0)` | Clean shutdown | Not yet started (normal post-reboot) |
 | `Exited (1)` | Error exit | `docker logs <container>` |
-| `Exited (137)` | OOM/SIGKILL | `dmesg \| grep -i oom`, check memory limits |
+| `Exited (137)` | SIGKILL; possibly OOM | Check kernel logs; distinguish container-limit from host-wide OOM below |
 | `Created` | Never started | Waiting in startup queue |
+
+### OOM Triage
+
+Cloudron's "Out of memory: mysql service" notification identifies the victim, not necessarily the cause. Exit 137 alone does not prove OOM. Before increasing any limit, inspect kernel evidence around the incident (use `-b -1` for the previous boot if needed):
+
+```bash
+journalctl -k --no-pager | grep -E 'oom-kill:constraint|global_oom'
+```
+
+- **Container-limit OOM**: `CONSTRAINT_MEMCG` with `oom_memcg=/docker/<id>` (or the equivalent systemd scope) identifies the cgroup that hit its limit. Consider raising that container's limit only after checking host headroom and abnormal workload growth.
+- **Host-wide OOM**: `CONSTRAINT_NONE` / `global_oom` means the host exhausted available memory; mysqld may simply be the largest victim. Raising MySQL's limit does not add host RAM and can worsen overcommit. Check `free -h` and swap pressure; reduce aggregate demand, stagger heavy tasks, or add host capacity instead.
+
+**Measure demand including swap**: `docker stats` excludes swap. On cgroup v2, read each running container's `memory.current` and `memory.swap.current` (bytes) and add them for its resident-plus-swapped demand. Resolve the actual cgroup from its host PID rather than assuming the Docker cgroup driver:
+
+```bash
+# Replace CONTAINER with a running container name or ID; run on the host.
+pid=$(docker inspect --format '{{.State.Pid}}' CONTAINER)
+cat "/proc/$pid/cgroup"  # cgroup v2 entry: 0::/docker/<id> or a systemd scope
+# Append that entry's path to /sys/fs/cgroup, then read both files there:
+cat /sys/fs/cgroup/docker/CONTAINER_ID/memory.current
+cat /sys/fs/cgroup/docker/CONTAINER_ID/memory.swap.current
+```
+
+Repeat across containers, including shared services, and leave headroom for host processes and backup tasks outside those cgroups. These are current snapshots, not historical peak measurements. If the host uses cgroup v1, these v2 file names do not apply.
+
+**Correlate with tasks and apps**: Using authorised, read-only access to the box database, first verify the installed schema and timestamp units. The Cloudron 10.0.5 audit used `tasks` entries of type `backup_*` with `creationTime` / `ts`, and `eventlog` entries with `action='app.oom'`, to align backup activity with kernel OOM times. Inspect the relevant `backupSites.limitsJson` memory limit without dumping backup credentials. A nightly `tgz` backup's heap and file I/O can push an already overcommitted host into OOM; increasing the victim service's limit will not fix that trigger.
+
+Map container IDs using `docker ps --no-trunc` and the relevant app ID; map app IDs to domains with `apps` joined to `locations` (`type='primary'`). For a MySQL database ID, inspect only the `CLOUDRON_MYSQL_DATABASE` entry in `appAddonConfigs` and its app association. Do not dump full addon configs or container environments: they can contain credentials. Adapt joins and JSON extraction to the verified schema rather than assuming column names across versions.
 
 ### Key Log Files
 
@@ -168,7 +196,7 @@ Startup sequence (prevents premature intervention):
 | App logs | `docker logs <container_name>` | Individual app errors |
 | Previous boot | `journalctl -b -1 --no-pager -n 50 -p warning` | Pre-reboot events |
 | Built-in diag | `cloudron-support --troubleshoot` | Diagnostic checks |
-| Version | `jq -r '.version // "not found"' /home/yellowtent/box/package.json` | Current version |
+| Version | `cat /home/yellowtent/box/VERSION` | Installed box version; `package.json` can be stale |
 
 ### Database Troubleshooting (MySQL)
 
