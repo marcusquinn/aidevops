@@ -20,6 +20,7 @@
 #  11. defaults conf: Cargo.toml triggers RUST_CARGO toolchain (cargo fmt --check)
 #  12. typecheck failure NEVER auto-fixes — exit 1 even with AUTOFIX=1
 #  13. Missing bun-installed tsc is diagnosed as missing dev dependencies
+# 13d. Missing npm lint tooling/plugins vs a real lint violation (GH#34094)
 #  14. Proven task-id counter-only CAS push skips a missing TypeScript install
 #  15. Mixed-file task-id-counter push falls back to repository verification
 #  16. Normal-branch counter-only push falls back to repository verification
@@ -351,6 +352,58 @@ JSON
 	assert_contains '13b. missing tsc → dependency diagnosis' 'missing JavaScript dev dependencies' "$stderr"
 	assert_contains '13c. missing tsc → exact remediation' 'Run: bun install' "$stderr"
 	rm -rf "$repo"
+}
+
+# Test 13d: GH#34094 — npm lint whose eslint binary or flat-config plugin is
+# absent is unavailable tooling, not a source defect; real diagnostics are not.
+{
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "echo 'sh: eslint: command not found' >&2; exit 127", "lint_fix": "touch fixed.txt" } }
+JSON
+	printf '{ "name": "fixture" }\n' >"$repo/package.json"
+	printf '{}\n' >"$repo/package-lock.json"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add npm lint fixture')
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=1)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13d. missing eslint → exit 1 (gate stays blocked)' '1' "$ec"
+	assert_contains '13e. missing eslint → tooling diagnosis' 'lint tooling or plugins are unavailable' "$stderr"
+	assert_contains '13f. missing eslint → lockfile install command' 'npm ci' "$stderr"
+	assert_contains '13g. missing eslint → reuse guidance' 'Linked-worktree lint tooling' "$stderr"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$stderr" | grep -qF 'fix the source' 2>/dev/null || [[ -e "$repo/fixed.txt" ]]; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: 13h. missing eslint → no source-fix advice or autofix\n' "$TEST_RED" "$TEST_NC"
+	else
+		printf '%sPASS%s: 13h. missing eslint → no source-fix advice or autofix\n' "$TEST_GREEN" "$TEST_NC"
+	fi
+	rm -rf "$repo"
+
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "echo \"Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'typescript-eslint' imported from /w/eslint.config.js\" >&2; exit 2" } }
+JSON
+	printf '{ "name": "fixture" }\n' >"$repo/package.json"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add plugin fixture')
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13i. unresolved flat-config plugin → exit 1' '1' "$ec"
+	assert_contains '13j. unresolved flat-config plugin → tooling diagnosis' 'lint tooling or plugins are unavailable' "$stderr"
+
+	repo2=$(_mk_repo)
+	cat >"$repo2/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "printf '/w/src/a.ts\\n  1:7  error  x is unused  no-unused-vars\\n\\n✖ 1 problem (1 error, 0 warnings)\\n'; exit 1" } }
+JSON
+	printf '{ "name": "fixture" }\n' >"$repo2/package.json"
+	(cd "$repo2" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add lint violation fixture')
+	out=$(_run_hook "$repo2" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13k. real lint violation → exit 1' '1' "$ec"
+	assert_contains '13l. real lint violation → source remediation kept' 'fix the source' "$stderr"
+	rm -rf "$repo" "$repo2"
 }
 
 # Test 14: a proven task-id-counter CAS update must not need node_modules/tsc

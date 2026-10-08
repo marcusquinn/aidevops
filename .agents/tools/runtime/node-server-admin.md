@@ -86,6 +86,12 @@ High uptime, RSS, or request duration is evidence to investigate, never a univer
 
 Heap snapshots, CPU profiles, diagnostic reports, and traces can pause a process, increase memory pressure, consume disk, and capture sensitive application data. Require target confirmation, bounded duration, secure output handling, and production approval.
 
+### Linked-worktree lint tooling
+
+A fresh linked worktree has no `node_modules/`, so a declared lint gate can fail to start (`eslint: command not found`, or `Cannot find package '<plugin>' imported from …/eslint.config.js`). `repo-verify-pre-push.sh` reports that as unavailable tooling, not a source defect; the gate stays blocked until the unchanged command runs and passes. A global `eslint` binary is insufficient when the flat config imports plugins.
+
+Default: install with the project package manager and frozen lockfile, with download approval. Interactive sessions may instead reuse an existing install only on explicit user approval, after verifying: approved real paths inside the user's own project boundary; matching linter/plugin versions and byte-identical lint config; no existing worktree `node_modules/`; and `git check-ignore` coverage. Create a real `node_modules/` directory and symlink only the required read-only packages (`.bin`, linter, plugins, `globals`) into it. Never symlink `node_modules` itself, because a directory-only ignore such as `node_modules/` may not ignore a symlink. Never mutate the shared install, auto-link, alter config or lockfiles, bypass the hook, or treat a dirty-worktree skip as verification. Headless workers never cross project boundaries for tooling (GH#31880).
+
 ## Maintenance and Update Actions
 
 When the user authorizes implementation, return to Build+ with exact files, smallest safe change, rollback, and verification:

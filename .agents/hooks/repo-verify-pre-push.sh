@@ -264,6 +264,60 @@ _emit_missing_bun_dev_dependencies() {
 	return 0
 }
 
+# GH#34094: a declared JavaScript lint command that cannot start (linter binary
+# absent, or a flat-config plugin/package unresolvable) is unavailable tooling,
+# not a demonstrated source defect. Log content is only pattern-matched, never
+# executed. Any ESLint problem summary keeps the normal source-failure path.
+_lint_missing_js_tooling() {
+	local log_file="$1"
+	[[ -f "$REPO_ROOT/package.json" && -f "$log_file" ]] || return 1
+	if grep -Eq '^[[:space:]]*(✖|x)?[[:space:]]*[0-9]+ problems? \(' "$log_file" 2>/dev/null; then
+		return 1
+	fi
+	if grep -Eq '(^|[[:space:]:])(eslint|biome|oxlint|next)(: command not found|: not found)' \
+		"$log_file" 2>/dev/null; then
+		return 0
+	fi
+	if grep -Eq "Cannot find (package|module) '[^']+' imported from [^[:space:]]*eslint\.config\.[cm]?[jt]s" \
+		"$log_file" 2>/dev/null; then
+		return 0
+	fi
+	grep -Eq "ESLint couldn't find the (plugin|config)" "$log_file" 2>/dev/null || return 1
+	return 0
+}
+
+# Name the project-declared install command from the tracked lockfile.
+_js_install_command() {
+	if [[ -f "$REPO_ROOT/bun.lock" || -f "$REPO_ROOT/bun.lockb" ]]; then
+		printf 'bun install --frozen-lockfile'
+	elif [[ -f "$REPO_ROOT/pnpm-lock.yaml" ]]; then
+		printf 'pnpm install --frozen-lockfile'
+	elif [[ -f "$REPO_ROOT/yarn.lock" ]]; then
+		printf 'yarn install --frozen-lockfile'
+	elif [[ -f "$REPO_ROOT/package-lock.json" ]]; then
+		printf 'npm ci'
+	else
+		printf 'npm install'
+	fi
+	return 0
+}
+
+_emit_missing_js_lint_tooling() {
+	_log BLOCK "lint could not start: JavaScript lint tooling or plugins are unavailable in this worktree"
+	_log BLOCK "this is not a demonstrated source lint defect; the unchanged lint gate must still run and pass"
+	printf '\n' >&2
+	printf '  Resolution (keep source, config and lockfile unchanged):\n' >&2
+	printf '    1. Provision dev dependencies (downloads need approval): %s\n' "$(_js_install_command)" >&2
+	printf '       Interactive alternative: explicitly approved read-only reuse of an\n' >&2
+	printf '       existing compatible install — see tools/runtime/node-server-admin.md\n' >&2
+	printf '       "Linked-worktree lint tooling". A global eslint binary is not enough\n' >&2
+	printf '       when the flat config imports plugins.\n' >&2
+	printf '    2. Re-run: %s   (must pass)\n' "$VERIFY_LINT" >&2
+	printf '    3. git push (re-runs repo verification)\n' >&2
+	printf '\n' >&2
+	return 0
+}
+
 # ----- task-ID counter-only push validation --------------------------------
 
 # A task-ID CAS allocation creates one plumbing commit directly atop the pinned
@@ -367,7 +421,11 @@ main() {
 
 	if [[ -n "$VERIFY_LINT" ]]; then
 		if ! _run_check 'lint' "$VERIFY_LINT"; then
-			if _run_autofix 'lint' "$VERIFY_LINT_FIX" "$VERIFY_LINT"; then
+			if _lint_missing_js_tooling "${LAST_FAIL_LOG:-}"; then
+				# The fixer shares the unavailable toolchain; skip autofix.
+				_emit_missing_js_lint_tooling
+				overall=1
+			elif _run_autofix 'lint' "$VERIFY_LINT_FIX" "$VERIFY_LINT"; then
 				:
 			else
 				_emit_mentor_fail 'lint' "$VERIFY_LINT_FIX" "$VERIFY_LINT"
