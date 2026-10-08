@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -28,7 +29,10 @@ import { createMcpSessionRuntime, getMcpRegistry, getOnDemandMcpAgents, register
 import { normalizeMcpArtifactPaths } from "../mcp-artifact-paths.mjs";
 
 test("normalizes Playwright artifact links using the MCP cwd, not the worktree", () => {
-  const runtime = createMcpSessionRuntime("/home/example/.aidevops/.agent-workspace", { nonce: "links" });
+  // Symlink-free fixture root: macOS /home and /var are symlinks, which the
+  // normalizer deliberately refuses to traverse.
+  const fixtureRoot = join(realpathSync(tmpdir()), "aidevops-links-fixture-absent");
+  const runtime = createMcpSessionRuntime(join(fixtureRoot, ".aidevops/.agent-workspace"), { nonce: "links" });
   const workspace = runtime.workspaces.playwright;
   const snapshot = join(workspace.outputDirectory, "page.yml");
   const output = { output: `[Snapshot](${relative(workspace.outputDirectory, snapshot)})\n[Screenshot](./shot.png)` };
