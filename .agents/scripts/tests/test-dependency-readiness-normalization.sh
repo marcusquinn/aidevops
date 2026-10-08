@@ -523,19 +523,27 @@ normalize_repo_dependency_readiness_if_due() {
 	return 0
 }
 export -f gh_issue_list normalize_repo_dependency_readiness_if_due
-fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "skip")
+completeness_file="${TMP_ROOT}/candidate-completeness"
+fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "skip" "$completeness_file")
 assert_eq "fast candidate mode fetches once" "1" "$(<"$candidate_fetch_file")"
 assert_eq "fast candidate mode skips dependency normalization" "0" "$(<"$normalization_file")"
 assert_eq "fast candidate mode keeps blocked child out" "0" \
 	"$(printf '%s' "$fast_candidates" | jq 'map(select(.number == 20)) | length')"
+assert_eq "deferred blocked readiness cannot lend reserved product slots" "0" "$(<"$completeness_file")"
+assert_eq "fast candidate mode keeps already-available work" "30" \
+	"$(printf '%s' "$fast_candidates" | jq -r '.[0].number')"
+
+fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "skip" "$completeness_file")
+assert_eq "fast candidate mode with no blocked work retains completeness" "1" "$(<"$completeness_file")"
 
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
-recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100)
+recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "normalize" "$completeness_file")
 assert_eq "default candidate mode fetches again after normalization" "2" "$(<"$candidate_fetch_file")"
 assert_eq "all-blocked roadmap triggers dependency normalization" "1" "$(<"$normalization_file")"
 assert_eq "next dependency-ready child reaches shared candidate stream" "20" \
 	"$(printf '%s' "$recovered_candidates" | jq -r 'map(select(.number == 20))[0].number')"
+assert_eq "successful normal readiness scan retains completeness" "1" "$(<"$completeness_file")"
 
 # A successful command that returns null after dependency normalization is not
 # a complete empty snapshot. Preserve failure provenance so campaign renewal
@@ -626,21 +634,28 @@ _refresh_try_unblock_issue "owner/repo" "20" '{"task_ids":[],"issue_nums":[]}' '
 assert_true "concurrent queued transition wins resolved unblock" \
 	grep -Fq -- "--remove-label status:available" <<<"$status_write"
 
+# Missing native edges use declared fallback; return 2 means positively clear,
+# not an incomplete repair. Keep both admission contracts covered separately.
+fixture_native_clear=false
 _blocked_by_check_native_relationships() {
-	return 2
+	[[ "$fixture_native_clear" != true ]] || return 2
+	return 1
 }
 _blocked_by_check_issue_num() {
 	return 0
 }
 export -f _blocked_by_check_native_relationships _blocked_by_check_issue_num
+if _refresh_dependency_is_resolved "owner/repo" "20" '{"task_ids":[],"issue_nums":["10"]}' '{}' '[]' '[10,20]'; then
+	assert_eq "missing native relationships still check declared edge" "blocked" "resolved"
+else
+	assert_eq "missing native relationships still check declared edge" "blocked" "blocked"
+fi
 # Contract since 138608aa76: a complete, positively clear native set is
 # authoritative over stale body/TODO edges (mirrors
 # test-pulse-dep-graph-stale-label-cleanup.sh).
-if _refresh_dependency_is_resolved "owner/repo" "20" '{"task_ids":[],"issue_nums":["10"]}' '{}' '[]' '[10,20]'; then
-	assert_eq "complete clear native set overrides stale declared edge" "resolved" "resolved"
-else
-	assert_eq "complete clear native set overrides stale declared edge" "resolved" "blocked"
-fi
+fixture_native_clear=true
+assert_true "positively clear native relationships remain authoritative" \
+	_refresh_dependency_is_resolved "owner/repo" "20" '{"task_ids":[],"issue_nums":["10"]}' '{}' '[]' '[10,20]'
 
 python3 - "$SCRIPTS_DIR/pulse-check-queue-scan.py" <<'PY'
 import datetime as dt
