@@ -6,6 +6,9 @@
 [[ -n "${_CLOUDRON_PACKAGE_RELEASE_LIB_LOADED:-}" ]] && return 0
 _CLOUDRON_PACKAGE_RELEASE_LIB_LOADED=1
 
+# shellcheck source=portable-stat.sh
+source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
+
 CLOUDRON_PINNED_BASE_IMAGE="cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e"
 
 _cloudron_release_error() {
@@ -24,7 +27,7 @@ _cloudron_release_preserve_mode() {
 	local source_file="$1"
 	local target_file="$2"
 	local mode=""
-	mode=$(stat -f '%Lp' "$source_file" 2>/dev/null || stat -c '%a' "$source_file" 2>/dev/null || true)
+	mode=$(_file_perms "$source_file" 2>/dev/null || true)
 	if [[ -n "$mode" ]]; then
 		chmod "$mode" "$target_file" || return 1
 	fi
@@ -99,7 +102,7 @@ cloudron_package_compatibility_findings() {
 		local final_from=""
 		local final_image=""
 		final_from=$(awk 'toupper($1) == "FROM" { line = $0 } END { print line }' "$dockerfile")
-		final_image=$(printf '%s\n' "$final_from" | awk '{ print $2 }')
+		final_image=$(printf '%s\n' "$final_from" | awk '{ i = 2; while (i <= NF && $i ~ /^--/) i++; if (i <= NF) print $i }')
 		if [[ "$final_image" != "$CLOUDRON_PINNED_BASE_IMAGE" ]]; then
 			printf '%s\n' "- Final Docker stage must use ${CLOUDRON_PINNED_BASE_IMAGE}."
 			findings=$((findings + 1))
@@ -273,7 +276,7 @@ cloudron_package_preflight_release() {
 	cloudron_package_check_release "$release_tag" "$repo_path" || return 1
 	command -v docker >/dev/null 2>&1 || _cloudron_release_error "Docker is required to validate immutable build sources." || return 1
 	dockerfile=$(_cloudron_release_dockerfile "$repo_path") || _cloudron_release_error "Dockerfile or Dockerfile.cloudron is missing." || return 1
-	images=$(awk 'toupper($1) == "FROM" { print $2 }' "$dockerfile")
+	images=$(awk 'toupper($1) == "FROM" { i = 2; while (i <= NF && $i ~ /^--/) i++; print (i <= NF ? $i : "<missing>") }' "$dockerfile")
 	[[ -n "$images" ]] || _cloudron_release_error "No Docker FROM sources found." || return 1
 	while IFS= read -r image; do
 		[[ "$image" == *@sha256:[0-9a-fA-F][0-9a-fA-F]* ]] || _cloudron_release_error "Docker source must use an immutable tag-and-digest reference: $image" || return 1
