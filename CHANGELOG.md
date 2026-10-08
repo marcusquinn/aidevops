@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.35] - 2026-10-08
+
+### Fixed
+
+- load GitHub cooldown reset in detached routine runners
+
 ## [3.38.34] - 2026-10-08
 
 ### Added
