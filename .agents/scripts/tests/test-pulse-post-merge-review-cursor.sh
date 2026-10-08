@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# A worker launched by Pulse may inherit an already-expired stage deadline.
+# Only the explicit deadline cases below should control this isolated harness.
+unset PULSE_STAGE_DEADLINE_EPOCH
+
 PASS=0
 FAIL=0
 

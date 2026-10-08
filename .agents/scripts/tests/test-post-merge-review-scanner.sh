@@ -18,6 +18,9 @@
 
 set -euo pipefail
 
+# Keep inherited Pulse deadlines out of unrelated scanner fixture cases.
+unset PULSE_STAGE_DEADLINE_EPOCH
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 SCANNER="${SCRIPT_DIR}/../post-merge-review-scanner.sh"
 
