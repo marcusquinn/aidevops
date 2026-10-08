@@ -1828,6 +1828,10 @@ sys.exit(0 if sys.argv[3] in os.environ['AVAILABLE'].split(',') else 1)
             else:
                 assert not effects, (evidence, effects)
                 assert 'runner_capability_unmet' in result.stderr, evidence
+                if label == 'failed fresh read':
+                    # GH#34003: metadata_unreadable belongs only to the fresh read.
+                    assert 'metadata_unreadable' in result.stderr, evidence
+                    assert 'reason=repo_' not in result.stderr, evidence
             # Requirement names are public diagnostics only as the missing-secret
             # reason (name=NAME), matching test-runner-capability.sh.
             output = result.stdout + result.stderr
@@ -1835,11 +1839,31 @@ sys.exit(0 if sys.argv[3] in os.environ['AVAILABLE'].split(',') else 1)
                 output = output.replace('reason=secret_missing name=' + name, '')
             assert not any(name in output for name in names), evidence
     # A missing registered repository must not silently check the caller's cwd.
+    # GH#34003: unregistered and moved checkouts get distinct, actionable reasons
+    # (never metadata_unreadable), and dry-run discloses the same refusal.
+    missing = str(root / 'moved-away')
+    # The stubbed target validation leaves display-only metadata unset.
+    dryrun_env = dict(fixture_env, _DSI_ISSUE_TITLE='fixture', _DSI_TIER='standard',
+                      _DSI_ISSUE_URL='https://github.com/owner/repo/issues/123')
+    for repo_path, reason in (('', 'repo_unregistered'), (missing, 'repo_path_missing')):
+        for extra in ([], ['--dry-run']):
+            events.write_text('')
+            command = ['cmd_dispatch', '123', 'owner/repo', *extra]
+            result = subprocess.run(['bash', '-c', invocation, 'fixture', *command],
+                                    env=dict(dryrun_env, REPO_PATH=repo_path),
+                                    capture_output=True, text=True)
+            evidence = (command, reason, result.returncode, result.stdout, result.stderr)
+            assert result.returncode == 1 and not events.read_text(), evidence
+            assert 'reason=' + reason in result.stderr, evidence
+            assert 'metadata_unreadable' not in result.stderr, evidence
+            assert 'Dry-run complete' not in result.stdout, evidence
+    # A registered path still yields a clean, non-mutating dry-run.
     events.write_text('')
-    result = subprocess.run(['bash', '-c', invocation, 'fixture', 'cmd_dispatch', '123', 'owner/repo'],
-                            env=dict(fixture_env, REPO_PATH=''), capture_output=True, text=True)
-    assert result.returncode != 0 and not events.read_text(), result
-print('PASS 25 isolated normal/no-ceremony/resume capability admission fixtures')
+    result = subprocess.run(['bash', '-c', invocation, 'fixture', 'cmd_dispatch', '123', 'owner/repo', '--dry-run'],
+                            env=dryrun_env, capture_output=True, text=True)
+    assert result.returncode == 0 and not events.read_text(), result
+    assert 'Dry-run complete' in result.stdout and 'reason=repo_' not in result.stderr, result
+print('PASS 29 isolated normal/no-ceremony/resume capability admission fixtures')
 PY
 	print_result "fresh runner capabilities block manual claims and checkpoint resume without secret disclosure" "$result"
 	return 0

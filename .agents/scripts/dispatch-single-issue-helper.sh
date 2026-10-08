@@ -33,7 +33,8 @@
 #
 # Exit codes:
 #   0  Worker dispatched (or skipped: already claimed / clear dry-run)
-#   1  Validation failure (issue not found, parent-task, etc.)
+#   1  Validation failure (issue not found, parent-task, unregistered or
+#      missing canonical repo path — also under --dry-run, etc.)
 #   2  Invalid subcommand or missing required arg
 #   75 Dedup guard is uncertain; recovery checkpoint persisted
 #
@@ -352,6 +353,45 @@ _dsi_repo_path_for_slug() {
 		| select((.slug // "") == $slug and (.local_only // false) == false)
 		| .path
 	' "$repos_file" 2>/dev/null | head -n 1
+	return 0
+}
+
+#######################################
+# Classify the registered canonical path prerequisite (GH#34003). Kept distinct
+# from fresh issue-metadata failures so an unregistered or moved checkout is
+# never reported as metadata_unreadable. Never registers or mutates anything.
+# Args: $1 - resolved repo path (may be empty)
+# Outputs: repo_unregistered | repo_path_missing (only when unmet)
+# Returns: 0 when the path is an existing directory, 1 otherwise
+#######################################
+_dsi_repo_path_prerequisite() {
+	local repo_path="$1"
+	if [[ -z "$repo_path" ]]; then
+		printf 'repo_unregistered\n'
+		return 1
+	fi
+	if [[ ! -d "$repo_path" ]]; then
+		printf 'repo_path_missing\n'
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Print the operator action for an unmet repo path prerequisite (GH#34003).
+# Args: $1 - reason, $2 - repo slug
+#######################################
+_dsi_repo_path_hint() {
+	local reason="$1"
+	local repo_slug="$2"
+	case "$reason" in
+	repo_unregistered)
+		printf 'No dispatchable repos.json entry for %s; run aidevops init in its canonical checkout first (dispatch never registers repositories)\n' "$repo_slug"
+		;;
+	repo_path_missing)
+		printf 'Registered canonical path for %s is not a directory; restore the checkout or correct its repos.json path\n' "$repo_slug"
+		;;
+	esac
 	return 0
 }
 
@@ -745,6 +785,8 @@ _dsi_parse_dispatch_args() {
 # Args:
 #   $1 issue_number, $2 repo_slug, $3 session_key
 #   $4 dedup_state (blocked|clear|recovering|error), $5 dedup_rc, $6 dedup_result
+# Returns: 1 when real dispatch would refuse on an unmet local repo-path
+#   prerequisite (GH#34003), 0 otherwise. Read-only either way.
 #######################################
 _dsi_print_dryrun() {
 	local issue_number="$1"
@@ -753,8 +795,9 @@ _dsi_print_dryrun() {
 	local dedup_state="$4"
 	local dedup_rc="$5"
 	local dedup_result="$6"
-	local repo_path=""
+	local repo_path="" prerequisite=""
 	repo_path=$(_dsi_repo_path_for_slug "$repo_slug" 2>/dev/null || true)
+	prerequisite=$(_dsi_repo_path_prerequisite "$repo_path") || true
 	local base_ref=""
 	base_ref=$(_dsi_dispatch_base_ref "$repo_slug" "$repo_path")
 	_dsi_info "DRY RUN — would dispatch:"
@@ -767,6 +810,12 @@ _dsi_print_dryrun() {
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Base ref:     ${base_ref}"
+	if [[ -n "$prerequisite" ]]; then
+		_dsi_warn "  Repo path:    UNRESOLVED (reason=${prerequisite}) — real dispatch would refuse before claim"
+		_dsi_warn "                $(_dsi_repo_path_hint "$prerequisite" "$repo_slug")"
+	else
+		_dsi_info "  Repo path:    ${repo_path}"
+	fi
 	if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
 		_dsi_info "  Worktree:     reuse ${_DSI_WORKTREE_PATH}"
 	else
@@ -785,6 +834,9 @@ _dsi_print_dryrun() {
 	esac
 	if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" ]]; then
 		_dsi_warn "Dry-run stopped at recoverable safety state (no worker launched)"
+	elif [[ -n "$prerequisite" ]]; then
+		_dsi_warn "Dry-run stopped: runner_capability_unmet reason=${prerequisite} (no worker launched)"
+		return 1
 	else
 		_dsi_ok "Dry-run complete (no worker launched)"
 	fi
@@ -1030,10 +1082,13 @@ _dsi_validate_dispatch_target() {
 _dsi_check_runner_capability() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local repo_path=""
+	local repo_path="" prerequisite=""
 	repo_path=$(_dsi_repo_path_for_slug "$repo_slug") || repo_path=""
-	if [[ -z "$repo_path" || ! -d "$repo_path" ]]; then
-		_dsi_err "runner_capability_unmet source=fresh metadata_unreadable"
+	# GH#34003: report the missing local prerequisite, not a metadata failure;
+	# the fresh metadata read below owns metadata_unreadable.
+	if ! prerequisite=$(_dsi_repo_path_prerequisite "$repo_path"); then
+		_dsi_err "runner_capability_unmet source=fresh reason=${prerequisite} repo=${repo_slug}"
+		_dsi_info "  $(_dsi_repo_path_hint "$prerequisite" "$repo_slug")" >&2
 		return 1
 	fi
 	# Keep the existing secret backend and count-only diagnostics. No log file,
@@ -1092,12 +1147,13 @@ cmd_dispatch() {
 
 	# Step 6: dry-run short-circuit
 	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
-		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result"
+		local dryrun_rc=0
+		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result" || dryrun_rc=$?
 		if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" ]]; then
 			_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" "$dedup_result" "$_DSI_DEDUP_ATTEMPTS" || true
 			return 75
 		fi
-		return 0
+		return "$dryrun_rc"
 	fi
 
 	# Real dispatch: honour dedup block + fail-closed on errors
@@ -1388,7 +1444,8 @@ adaptive cadence, and many other concerns this CLI does NOT cover.
 
 Exit codes:
   0  Success (worker launched, dry-run completed, or skipped: already claimed)
-  1  Validation failure (issue not found, parent-task, etc.)
+  1  Validation failure (issue not found, parent-task, unregistered or
+     missing canonical repo path — also under --dry-run, etc.)
   2  Invalid subcommand or missing required arg
 EOF
 	return 0
