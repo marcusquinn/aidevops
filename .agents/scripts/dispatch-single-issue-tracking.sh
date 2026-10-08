@@ -283,8 +283,9 @@ _dsi_guard_no_existing_dispatch() {
 
 #######################################
 # Resolve the real worker PID from the worker_log file.
-# headless-runtime-helper.sh _detach_worker prints "Dispatched PID: <pid>"
-# right before forking the actual worker subshell (see headless-runtime-helper.sh:1483).
+# _detach_worker (headless-runtime-worker-prepare.sh) prints "Dispatched PID: <pid>"
+# for the detached worker process itself; under systemd it runs in its own
+# user scope outside the caller's cgroup (GH#33993).
 # We poll the log briefly waiting for that line; if it never appears,
 # fall back to the launch wrapper PID (degraded — ledger may show dead PID).
 # Args: $1 - worker_log path, $2 - launch_pid (fallback)
