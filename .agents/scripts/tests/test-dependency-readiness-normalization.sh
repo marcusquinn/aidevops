@@ -500,47 +500,59 @@ SCRIPT_DIR="$SCRIPTS_DIR"
 source "${SCRIPTS_DIR}/pulse-repo-meta.sh"
 candidate_fetch_file="${TMP_ROOT}/candidate-fetch-count"
 normalization_file="${TMP_ROOT}/normalization-count"
+normalization_seconds_file="${TMP_ROOT}/normalization-seconds"
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
-export candidate_fetch_file normalization_file
+printf '0\n' >"$normalization_seconds_file"
+export candidate_fetch_file normalization_file normalization_seconds_file
 gh_issue_list() {
 	local candidate_fetch_count=""
 	candidate_fetch_count=$(<"$candidate_fetch_file")
 	candidate_fetch_count=$((candidate_fetch_count + 1))
 	printf '%s\n' "$candidate_fetch_count" >"$candidate_fetch_file"
 	if [[ "$candidate_fetch_count" -eq 1 ]]; then
-		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:blocked"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
+		# A complete snapshot with 118 blocked issues and one runnable issue.
+		jq -cn '[20, range(100;217)] | map({number:., title:"blocked child",
+			url:"", assignees:[], labels:[{name:"auto-dispatch"},{name:"status:blocked"}]})
+			+ [{number:30,title:"unrelated work",url:"",assignees:[],
+			labels:[{name:"auto-dispatch"},{name:"status:available"}]}]'
 	else
 		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
 	fi
 	return 0
 }
 normalize_repo_dependency_readiness_if_due() {
-	local normalization_count=""
+	local normalization_count="" normalization_seconds=0
 	normalization_count=$(<"$normalization_file")
 	normalization_count=$((normalization_count + 1))
 	printf '%s\n' "$normalization_count" >"$normalization_file"
+	# Simulate the observed 936-second backlog cost without a real sleep.
+	normalization_seconds=$(<"$normalization_seconds_file")
+	printf '%s\n' "$((normalization_seconds + 936))" >"$normalization_seconds_file"
 	return 0
 }
 export -f gh_issue_list normalize_repo_dependency_readiness_if_due
 completeness_file="${TMP_ROOT}/candidate-completeness"
-fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "skip" "$completeness_file")
+fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "skip" "$completeness_file")
 assert_eq "fast candidate mode fetches once" "1" "$(<"$candidate_fetch_file")"
 assert_eq "fast candidate mode skips dependency normalization" "0" "$(<"$normalization_file")"
+assert_eq "slow backlog normalization consumes no fast refill time" "0" "$(<"$normalization_seconds_file")"
+assert_eq "all 118 blocked candidates remain filtered" "1" "$(jq 'length' <<<"$fast_candidates")"
 assert_eq "fast candidate mode keeps blocked child out" "0" \
 	"$(printf '%s' "$fast_candidates" | jq 'map(select(.number == 20)) | length')"
 assert_eq "deferred blocked readiness cannot lend reserved product slots" "0" "$(<"$completeness_file")"
 assert_eq "fast candidate mode keeps already-available work" "30" \
 	"$(printf '%s' "$fast_candidates" | jq -r '.[0].number')"
 
-fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "skip" "$completeness_file")
+fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "skip" "$completeness_file")
 assert_eq "fast candidate mode with no blocked work retains completeness" "1" "$(<"$completeness_file")"
 
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
-recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "normalize" "$completeness_file")
+recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file")
 assert_eq "default candidate mode fetches again after normalization" "2" "$(<"$candidate_fetch_file")"
 assert_eq "all-blocked roadmap triggers dependency normalization" "1" "$(<"$normalization_file")"
+assert_eq "normal sweep retains the simulated slow normalization" "936" "$(<"$normalization_seconds_file")"
 assert_eq "next dependency-ready child reaches shared candidate stream" "20" \
 	"$(printf '%s' "$recovered_candidates" | jq -r 'map(select(.number == 20))[0].number')"
 assert_eq "successful normal readiness scan retains completeness" "1" "$(<"$completeness_file")"
