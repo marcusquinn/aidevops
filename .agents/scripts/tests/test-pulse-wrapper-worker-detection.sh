@@ -40,6 +40,12 @@ print_result() {
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	PS_FIXTURE_FILE="${TEST_ROOT}/ps-fixture.txt"
+	# GH#33985: dispatch fixtures isolate pre-launch gates from runner state.
+	cat >"${TEST_ROOT}/runner-capability-helper.sh" <<'BASH'
+runner_capability_check_fresh() {
+	return 0
+}
+BASH
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
 	mkdir -p "$AIDEVOPS_TEMP_DIR"
@@ -960,6 +966,7 @@ EOF
 
 test_dispatch_re_resolves_mutated_tier_model() {
 	local original_definitions="" original_logfile="$LOGFILE"
+	local SCRIPT_DIR="$TEST_ROOT"
 	original_definitions=$(capture_function_definitions _dispatch_load_and_validate_metadata _dispatch_preclaim_brief_scope _dispatch_dedup_check_layers _dispatch_post_dedup_gates _dispatch_launch_checked_worker resolve_dispatch_model_for_labels)
 	LOGFILE="${TEST_ROOT}/tier-model-refresh.log"
 	_dispatch_load_and_validate_metadata() {
