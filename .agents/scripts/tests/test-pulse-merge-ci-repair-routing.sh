@@ -339,6 +339,10 @@ GHEOF
 # GH#32869: check-run annotations for the Actions billing classifier.
 _append_gh_annotation_mock_routes() {
 	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/check-runs/456" ]]; then
+	printf '%s\n' '{"app":{"slug":"github-actions"}}'
+	exit 0
+fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/check-runs/456/annotations" ]]; then
 	printf 'annotations %s\n' "${2:-}" >>"${TEST_ROOT}/gh-annotations.log"
 	case "${TEST_CHECK_SCENARIO:-terminal_failure}" in

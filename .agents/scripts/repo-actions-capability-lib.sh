@@ -71,7 +71,7 @@ repo_actions_trusted_receipt() {
 # Native branch protection and review/author gates are separate and unchanged.
 repo_actions_verify_local() {
 	local repo="$1" pr="$2" expected_head="${3:-}"
-	local pull="" head="" runs="" statuses="" failed_ids="" id="" final_head=""
+	local pull="" head="" runs="" statuses="" failed_ids="" id="" final_head="" check_label=""
 	repo_actions_unavailable "$repo" || return 1
 	pull=$(gh api "repos/${repo}/pulls/${pr}") || return 1
 	head=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' <<<"$pull") || return 1
@@ -79,8 +79,8 @@ repo_actions_verify_local() {
 	repo_actions_trusted_receipt "$repo" "$pr" "$head" "$pull" || return 1
 	runs=$(gh api "repos/${repo}/commits/${head}/check-runs?per_page=100" --paginate --slurp) || return 1
 	statuses=$(gh api "repos/${repo}/commits/${head}/statuses?per_page=100" --paginate --slurp) || return 1
-	# Reject malformed or incomplete responses, unknown conclusions, and failed
-	# non-Actions checks. Only GitHub Actions billing failures are substitutable.
+	# Reject malformed or incomplete responses and unknown conclusions. Every
+	# failure must pass the provider-specific outage classifier below.
 	failed_ids=$(jq -ern --argjson pages "$runs" --arg head "$head" --arg array "$REPO_ACTIONS_JSON_ARRAY" '
 		if ($pages | type != $array or length == 0)
 			or any($pages[]; (.check_runs | type) != $array)
@@ -92,8 +92,10 @@ repo_actions_verify_local() {
 			or (.status != $completed and .conclusion != null) or
 			(.status == $completed and
 				(.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped") and
-				(.conclusion != "failure" or .app.slug != "github-actions")))
-		then error("non-billing terminal check failure")
+				.conclusion != "failure"))
+		then error("invalid or terminal check: " + ([.[] | select(.status == $completed
+			and .conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped")
+			| "\(.name // "unknown") (app: \(.app.slug // "unknown"))"] | join(", ")))
 		else [.[] | select(.status == $completed and .conclusion == "failure") | .id] | @json end
 	') || return 1
 	jq -en --argjson pages "$statuses" --arg array "$REPO_ACTIONS_JSON_ARRAY" '
@@ -103,7 +105,12 @@ repo_actions_verify_local() {
 	' >/dev/null || return 1
 	while IFS= read -r id; do
 		[[ -n "$id" ]] || continue
-		ci_check_run_indicates_billing_outage "$repo" "$id" || return 1
+		if ! ci_check_run_indicates_billing_outage "$repo" "$id"; then
+			check_label=$(jq -r --argjson id "$id" '.[] | .check_runs[] | select(.id == $id)
+				| "\(.name // "unknown") (app: \(.app.slug // "unknown"), id: \(.id))"' <<<"$runs") || return 1
+			printf 'BLOCKED: non-billing terminal check failure: %s\n' "$check_label" >&2
+			return 1
+		fi
 	done < <(jq -r '.[]' <<<"$failed_ids")
 	final_head=$(gh api "repos/${repo}/pulls/${pr}" --jq '.head.sha') || return 1
 	[[ "$final_head" == "$head" ]] || return 1
