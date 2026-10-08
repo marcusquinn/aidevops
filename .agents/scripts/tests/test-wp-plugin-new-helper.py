@@ -12,6 +12,7 @@ import unittest
 
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+BASH = shutil.which("bash")
 
 
 class PluginCreateTest(unittest.TestCase):
@@ -107,12 +108,16 @@ cat > "$FIXTURE_ROOT/published-body"
         path.chmod(0o755)
 
     def git(self, path, *args):
-        return subprocess.check_output(["/usr/bin/git", "-C", str(path), *args],
-                                       env=self.env, text=True).strip()
+        # Fixed Git executable and exclusively fixture-owned argv; no shell.
+        return subprocess.check_output(  # nosec B603
+            ["/usr/bin/git", "-C", str(path), *args], env=self.env, text=True
+        ).strip()
 
     def create(self, *options):
-        return subprocess.run([
-            "bash", str(self.scripts / "wp-plugin-new-helper.sh"), "create",
+        self.assertIsNotNone(BASH, "bash is required for the helper tests")
+        # Resolved Bash executable, repository helper and fixture-only argv.
+        return subprocess.run([  # nosec B603
+            BASH, str(self.scripts / "wp-plugin-new-helper.sh"), "create",
             "--name", "Example Plugin", "--slug", "example-plugin",
             "--description", "Fixture plugin", "--owner", "fixture",
             "--author", "Fixture", "--author-uri", "https://example.invalid",
