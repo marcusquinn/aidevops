@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.31] - 2026-10-08
+
+### Added
+
+- add diff-scoped pipe early-exit gate and style rule (t18611) (#33973)
+
+### Fixed
+
+- direct pending full-loop finalization to complete (GH#33960) (#33988)
+
 ## [3.38.30] - 2026-10-08
 
 ### Changed
