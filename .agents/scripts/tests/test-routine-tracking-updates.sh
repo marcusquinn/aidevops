@@ -243,12 +243,21 @@ SCRIPT
 	ROUTINE_SCRIPT_RELEASE="$release"
 	export ROUTINE_SCRIPT_DONE ROUTINE_SCRIPT_RELEASE
 	_routine_execute "r779" "slow sample" "scripts/slow-sample.sh" "" "$TEST_DIR"
+	while [[ "$attempts" -lt 100 ]]; do
+		[[ ! -f "$ROUTINE_STATE_FILE" ]] ||
+			[[ "$(jq -r '.r779.last_status' "$ROUTINE_STATE_FILE")" != "running" ]] || break
+		sleep 0.05
+		attempts=$((attempts + 1))
+	done
 	if [[ "$(jq -r '.r779.last_status' "$ROUTINE_STATE_FILE")" != "running" ]] || ! _routine_retry_blocked r779; then
 		print_result "script routine records running before detached completion" 1
 		return 0
 	fi
 	: >"$release"
-	while [[ "$attempts" -lt 100 && ! -f "$marker" ]]; do
+	attempts=0
+	while [[ "$attempts" -lt 100 ]]; do
+		[[ "$(jq -r '.r779.last_status' "$ROUTINE_STATE_FILE")" != "success" ||
+		-d "${ROUTINE_STATE_FILE}.r779.runner" ]] || break
 		sleep 0.05
 		attempts=$((attempts + 1))
 	done
@@ -256,6 +265,119 @@ SCRIPT
 		print_result "script routine records running before detached completion" 0
 	else
 		print_result "script routine records running before detached completion" 1
+	fi
+	return 0
+}
+
+test_pulse_runner_lock_release_and_reclaim() {
+	local script="$TEST_DIR/runner-exit.sh"
+	local lock_dir=""
+	local status=""
+	local exit_code=0
+	local dead_pid=0
+	local before=""
+	# shellcheck disable=SC2016 # Expand the fixture's argument when it runs.
+	printf '#!/usr/bin/env bash\nexit "${1:-0}"\n' >"$script"
+	chmod +x "$script"
+	# Exercise fresh shells so EXIT runs after the function locals are gone.
+	# shellcheck disable=SC2089 # Literal quotes in filenames exercise trap escaping.
+	ROUTINE_STATE_FILE="$TEST_DIR/runner state 'quoted'.json"
+	LOGFILE="$TEST_DIR/runner-pulse.log"
+	ROUTINE_LOG_HELPER="$TEST_DIR/bin/routine-log-helper.sh"
+	# shellcheck disable=SC2090 # Export a literal filename, not a shell command.
+	export ROUTINE_STATE_FILE LOGFILE ROUTINE_LOG_HELPER
+	for exit_code in 0 1 75; do
+		case "$exit_code" in
+		0) status=success ;;
+		1) status=failure ;;
+		75) status=deferred ;;
+		esac
+		bash -c 'source "$1"; _routine_run_detached_script r-lock "$2" "$3" "$(date +%s)" "$4"' \
+			_ "$PULSE_ROUTINES_SH" "$script" "$TEST_DIR" "$exit_code"
+		if [[ -d "${ROUTINE_STATE_FILE}.r-lock.runner" ||
+			"$(jq -r '."r-lock".last_status' "$ROUTINE_STATE_FILE")" != "$status" ]]; then
+			print_result "runner releases lock and records $status" 1
+			return 0
+		fi
+		print_result "runner releases lock and records $status" 0
+	done
+	# A reaped process supplies a demonstrably dead PID, not a guessed PID.
+	bash -c 'exit 0' &
+	dead_pid=$!
+	wait "$dead_pid"
+	lock_dir="${ROUTINE_STATE_FILE}.r-lock.runner"
+	for status in pidless dead; do
+		mkdir "$lock_dir"
+		[[ "$status" != dead ]] || printf '%s\n' "$dead_pid" >"$lock_dir/pid-$dead_pid"
+		touch -t 200001010000 "$lock_dir"
+		bash -c 'source "$1"; _routine_run_detached_script r-lock "$2" "$3" "$(date +%s)"' \
+			_ "$PULSE_ROUTINES_SH" "$script" "$TEST_DIR"
+		if [[ -d "$lock_dir" || "$(jq -r '."r-lock".last_status' "$ROUTINE_STATE_FILE")" != success ]]; then
+			print_result "runner reclaims $status stale lock" 1
+			return 0
+		fi
+		print_result "runner reclaims $status stale lock" 0
+	done
+	before=$(<"$ROUTINE_STATE_FILE")
+	for status in fresh live; do
+		mkdir "$lock_dir"
+		if [[ "$status" == live ]]; then
+			printf '%s\n' "$$" >"$lock_dir/pid-$$"
+			touch -t 200001010000 "$lock_dir"
+		fi
+		bash -c 'source "$1"; _routine_run_detached_script r-lock "$2" "$3" "$(date +%s)"' \
+			_ "$PULSE_ROUTINES_SH" "$script" "$TEST_DIR"
+		if [[ ! -d "$lock_dir" || "$(<"$ROUTINE_STATE_FILE")" != "$before" ]]; then
+			print_result "runner preserves $status lock and skipped dispatch state" 1
+			return 0
+		fi
+		print_result "runner preserves $status lock and skipped dispatch state" 0
+		rm -f -- "$lock_dir/pid-$$"
+		rmdir "$lock_dir"
+	done
+	_test_pulse_runner_lock_concurrency_and_exit "$script" "$lock_dir"
+	return 0
+}
+
+_test_pulse_runner_lock_concurrency_and_exit() {
+	local script="$1"
+	local lock_dir="$2"
+	local first_pid=0
+	local second_pid=0
+	local status=""
+	# Both contenders see an empty legacy directory; only one can replace it
+	# with a populated lock, even before the winning caller resumes.
+	mkdir "$lock_dir"
+	bash -c 'source "$1"; if _routine_acquire_runner_lock "$2"; then printf won; else printf lost; fi' \
+		_ "$PULSE_ROUTINES_SH" "$lock_dir" >"$TEST_DIR/claim-one" &
+	first_pid=$!
+	bash -c 'source "$1"; if _routine_acquire_runner_lock "$2"; then printf won; else printf lost; fi' \
+		_ "$PULSE_ROUTINES_SH" "$lock_dir" >"$TEST_DIR/claim-two" &
+	second_pid=$!
+	wait "$first_pid" "$second_pid"
+	status="$(<"$TEST_DIR/claim-one")$(<"$TEST_DIR/claim-two")"
+	if [[ "$status" == wonlost || "$status" == lostwon ]]; then
+		print_result "concurrent reclaim publication admits exactly one owner" 0
+	else
+		print_result "concurrent reclaim publication admits exactly one owner" 1 "$status"
+	fi
+	# The winning helper has exited without cleanup; cover real dead-owner recovery.
+	touch -t 200001010000 "$lock_dir"
+	bash -c 'source "$1"; _routine_run_detached_script r-lock "$2" "$3" "$(date +%s)"' \
+		_ "$PULSE_ROUTINES_SH" "$script" "$TEST_DIR"
+	if [[ ! -d "$lock_dir" ]]; then
+		print_result "runner recovers abandoned atomic owner lock" 0
+	else
+		print_result "runner recovers abandoned atomic owner lock" 1
+	fi
+	# Force an exit before normal finalization to exercise the fallback trap.
+	if bash -c 'source "$1"; _routine_finalize_terminal() { exit 23; }; _routine_run_detached_script r-lock "$2" "$3" "$(date +%s)"' \
+		_ "$PULSE_ROUTINES_SH" "$script" "$TEST_DIR"; then
+		print_result "EXIT fallback releases owner lock" 1
+	elif [[ "$?" -eq 23 && ! -d "$lock_dir" ]]; then
+		print_result "EXIT fallback releases owner lock" 0
+	else
+		print_result "EXIT fallback releases owner lock" 1
 	fi
 	return 0
 }
@@ -596,6 +718,7 @@ main() {
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration
 	test_pulse_script_routine_marks_running_before_terminal_completion
+	test_pulse_runner_lock_release_and_reclaim
 	test_pulse_routine_scripts_use_registered_repository
 	test_agent_routine_waits_for_terminal_result
 	test_opencode_archive_scheduler_is_daily_and_low_priority
