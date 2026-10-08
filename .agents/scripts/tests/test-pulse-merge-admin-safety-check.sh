@@ -772,6 +772,23 @@ test_partial_worker_final_nmr_gate() {
 	return 0
 }
 
+test_partial_worker_extraction_failure_is_logged() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"origin:worker"}]' 'false' 'For #42' ''
+	_extract_pr_work_issue() {
+		return 1
+	}
+	local result=0
+	_pulse_merge_admin_safety_check "100" "owner/repo" "head-current" || result=$?
+	define_helpers_under_test >/dev/null
+	if [[ "$result" -eq 1 ]] && grep -qF "worker issue association extraction failed for PR #100 in owner/repo — failing closed" "$LOGFILE"; then
+		print_result "partial worker association extraction failure is logged and blocks merge" 0
+		return 0
+	fi
+	print_result "partial worker association extraction failure is logged and blocks merge" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -805,6 +822,7 @@ main() {
 	test_case_r_missing_response_cost_fails_closed
 	test_case_s_partial_label_connection_fails_closed
 	test_partial_worker_final_nmr_gate
+	test_partial_worker_extraction_failure_is_logged
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

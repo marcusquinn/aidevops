@@ -538,7 +538,10 @@ _pulse_merge_admin_safety_check() {
 	# Recheck the same non-closing worker association at the final boundary;
 	# an issue gaining NMR after initial gating must still stop the merge.
 	if [[ -z "$linked" && "$labels_str" =~ (^|,)origin:worker(,|$) ]]; then
-		linked=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit) || return 1
+		if ! linked=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit); then
+			echo "[pulse-merge] _pulse_merge_admin_safety_check: worker issue association extraction failed for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
+			return 1
+		fi
 	fi
 	if [[ -n "$linked" ]]; then
 		linked_labels=$(gh api "repos/${repo_slug}/issues/${linked}" --jq '[.labels[].name] | join(",")' 2>/dev/null) || linked_labels="__API_ERROR__"
