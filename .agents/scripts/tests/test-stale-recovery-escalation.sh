@@ -412,8 +412,8 @@ done
 # GH#34008: the pulse's own orphan-recovery draft links only through `For #N`.
 # Stale recovery must classify it as draft_checkpoint and preserve it.
 run_recover 0 "85|recovery_for" 1
-if echo "$output" | grep -q "STALE_PR_CONTINUATION: issue #99999 in owner/repo — PR #85" &&
-	echo "$output" | grep -q "assignee=stale-runner" && ! grep -q "^issue edit" "$GH_CALLS_FILE"; then
+if grep -q "STALE_PR_CONTINUATION: issue #99999 in owner/repo — PR #85" <<<"$output" &&
+	grep -q "assignee=stale-runner" <<<"$output" && ! grep -q "^issue edit" "$GH_CALLS_FILE"; then
 	print_result "For #N recovery draft requests exact-head continuation without reset" 0
 else
 	print_result "For #N recovery draft requests exact-head continuation without reset" 1 "(got: '$output')"
@@ -428,7 +428,7 @@ fi
 
 for unsafe_kind in recovery_for_worker recovery_for_ready recovery_for_cross recovery_for_protected recovery_bare recovery_for_other_closing; do
 	run_recover 0 "86|${unsafe_kind}" 1
-	if ! echo "$output" | grep -q "STALE_PR_CONTINUATION"; then
+	if ! grep -q "STALE_PR_CONTINUATION" <<<"$output"; then
 		print_result "${unsafe_kind} cannot authorize stale PR continuation" 0
 	else
 		print_result "${unsafe_kind} cannot authorize stale PR continuation" 1 "(got: '$output')"

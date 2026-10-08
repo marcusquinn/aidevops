@@ -259,7 +259,9 @@ _prrts_write_prompt_file() {
    Before marking it ready, replace that exact line with
    \`Resolves #${PCC_LINKED_ISSUE}\` in the PR body (read it with
    \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json body --jq .body\`,
-   edit a local file, then \`gh pr edit \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --body-file <file>\`)
+   edit a local file, then apply it with the safe wrapper from
+   \`~/.aidevops/agents/scripts/shared-constants.sh\`:
+   \`gh_pr_edit_safe \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --body-file <file>\`)
    and confirm \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json closingIssuesReferences\`
    lists #${PCC_LINKED_ISSUE}. Change no other body line."
 	fi
