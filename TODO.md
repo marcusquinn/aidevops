@@ -1591,6 +1591,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18616 full-loop commit-and-pr: planning-only diffs must use For #N and keep the issue dispatchable #auto-dispatch #bug ref:GH#33982 pr:#33990 completed:2026-10-08
 
+- [ ] t18622 fix(pulse): detached script routine lock is never released, stalling every script routine #auto-dispatch #bug #priority:high tier:standard ref:GH#34018 -> [todo/tasks/t18622-brief.md]
+
+- [ ] t18623 fix(cloudron): honour monitor_upstream/monitor_compatibility false in the package monitor #auto-dispatch #bug tier:simple ref:GH#34019 -> [todo/tasks/t18623-brief.md]
+
 ## In Progress
 
 - [x] GH#33891 Fix NixOS PATH and native tool discovery @vladimirdulov #bug #interactive #auto-dispatch tier:thinking ref:GH#33891 assignee:vladimirdulov logged:2026-10-07 started:2026-10-07 -> [todo/tasks/gh33891-brief.md] pr:#33893 completed:2026-10-07
