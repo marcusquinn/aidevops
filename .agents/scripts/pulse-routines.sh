@@ -266,9 +266,33 @@ _routine_dispatch_agent() {
 }
 
 #######################################
+# Publish an already-populated lock atomically. POSIX rename refuses to
+# replace a nonempty directory, closing the mkdir-to-owner-marker race.
+#######################################
+_routine_acquire_runner_lock() {
+	local lock_dir="$1"
+	local owner_pid="${BASHPID:-$$}"
+	local candidate=""
+	candidate=$(mktemp -d "${lock_dir}.XXXXXX") || return 1
+	if printf '%s\n' "$owner_pid" >"$candidate/pid-$owner_pid"; then
+		if command -v perl >/dev/null 2>&1; then
+			if perl -e 'exit(rename($ARGV[0], $ARGV[1]) ? 0 : 1)' "$candidate" "$lock_dir"; then
+				return 0
+			fi
+		elif mv -T -- "$candidate" "$lock_dir" 2>/dev/null; then
+			# GNU mv provides the same no-directory-nesting rename semantics.
+			return 0
+		fi
+	fi
+	rm -f -- "$candidate/pid-$owner_pid"
+	rmdir -- "$candidate" 2>/dev/null || true
+	return 1
+}
+
+#######################################
 # Run one validated script routine outside Pulse's process group, then record
 # its terminal lifecycle state. Only the child that acquires the per-routine
-# mkdir lock records `running`; duplicate dispatches leave state untouched.
+# directory lock records `running`; duplicate dispatches leave state untouched.
 #######################################
 _routine_run_detached_script() {
 	local routine_id="$1"
@@ -287,7 +311,7 @@ _routine_run_detached_script() {
 	local lock_epoch=0
 	local now_epoch=0
 
-	if ! mkdir "$lock_dir" 2>/dev/null; then
+	if [[ -e "$lock_dir" ]] || ! _routine_acquire_runner_lock "$lock_dir"; then
 		for owner_file in "$lock_dir"/pid-*; do
 			[[ -f "$owner_file" ]] || continue
 			owner_pid="${owner_file##*/pid-}"
@@ -306,7 +330,7 @@ _routine_run_detached_script() {
 		# PID-specific names prevent a losing reclaimer from unlinking a new
 		# owner's marker. rmdir refuses any populated replacement lock.
 		[[ -z "$owner_pid" ]] || rm -f -- "$lock_dir/pid-$owner_pid"
-		if ! rmdir "$lock_dir" 2>/dev/null || ! mkdir "$lock_dir" 2>/dev/null; then
+		if ! _routine_acquire_runner_lock "$lock_dir"; then
 			return 0
 		fi
 		echo "[pulse-wrapper] routine ${routine_id}: reclaimed stale runner lock" >>"$LOGFILE"
@@ -314,9 +338,6 @@ _routine_run_detached_script() {
 	# Expand the path now: the function-local variable is gone at shell EXIT.
 	# shellcheck disable=SC2064
 	trap "rm -f -- $(printf '%q' "$pid_file"); rmdir -- $(printf '%q' "$lock_dir") 2>/dev/null || true" EXIT
-	if ! printf '%s\n' "${BASHPID:-$$}" >"$pid_file"; then
-		return 1
-	fi
 	_routine_update_state "$routine_id" "running"
 	_routine_record_lifecycle "$routine_id" "running" 0
 	if [[ "$#" -gt 0 ]]; then

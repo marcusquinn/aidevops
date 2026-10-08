@@ -257,7 +257,7 @@ SCRIPT
 	attempts=0
 	while [[ "$attempts" -lt 100 ]]; do
 		[[ "$(jq -r '.r779.last_status' "$ROUTINE_STATE_FILE")" != "success" ||
-			-d "${ROUTINE_STATE_FILE}.r779.runner" ]] || break
+		-d "${ROUTINE_STATE_FILE}.r779.runner" ]] || break
 		sleep 0.05
 		attempts=$((attempts + 1))
 	done
@@ -276,6 +276,8 @@ test_pulse_runner_lock_release_and_reclaim() {
 	local exit_code=0
 	local dead_pid=0
 	local before=""
+	local first_pid=0
+	local second_pid=0
 	# shellcheck disable=SC2016 # Expand the fixture's argument when it runs.
 	printf '#!/usr/bin/env bash\nexit "${1:-0}"\n' >"$script"
 	chmod +x "$script"
@@ -335,6 +337,40 @@ test_pulse_runner_lock_release_and_reclaim() {
 		rm -f -- "$lock_dir/pid-$$"
 		rmdir "$lock_dir"
 	done
+	# Both contenders see an empty legacy directory; only one can replace it
+	# with a populated lock, even before the winning caller resumes.
+	mkdir "$lock_dir"
+	bash -c 'source "$1"; if _routine_acquire_runner_lock "$2"; then printf won; else printf lost; fi' \
+		_ "$PULSE_ROUTINES_SH" "$lock_dir" >"$TEST_DIR/claim-one" &
+	first_pid=$!
+	bash -c 'source "$1"; if _routine_acquire_runner_lock "$2"; then printf won; else printf lost; fi' \
+		_ "$PULSE_ROUTINES_SH" "$lock_dir" >"$TEST_DIR/claim-two" &
+	second_pid=$!
+	wait "$first_pid" "$second_pid"
+	status="$(<"$TEST_DIR/claim-one")$(<"$TEST_DIR/claim-two")"
+	if [[ "$status" == wonlost || "$status" == lostwon ]]; then
+		print_result "concurrent reclaim publication admits exactly one owner" 0
+	else
+		print_result "concurrent reclaim publication admits exactly one owner" 1 "$status"
+	fi
+	# The winning helper has exited without cleanup; cover real dead-owner recovery.
+	touch -t 200001010000 "$lock_dir"
+	bash -c 'source "$1"; _routine_run_detached_script r-lock "$2" "$3" "$(date +%s)"' \
+		_ "$PULSE_ROUTINES_SH" "$script" "$TEST_DIR"
+	if [[ ! -d "$lock_dir" ]]; then
+		print_result "runner recovers abandoned atomic owner lock" 0
+	else
+		print_result "runner recovers abandoned atomic owner lock" 1
+	fi
+	# Force an exit before normal finalization to exercise the fallback trap.
+	if bash -c 'source "$1"; _routine_finalize_terminal() { exit 23; }; _routine_run_detached_script r-lock "$2" "$3" "$(date +%s)"' \
+		_ "$PULSE_ROUTINES_SH" "$script" "$TEST_DIR"; then
+		print_result "EXIT fallback releases owner lock" 1
+	elif [[ "$?" -eq 23 && ! -d "$lock_dir" ]]; then
+		print_result "EXIT fallback releases owner lock" 0
+	else
+		print_result "EXIT fallback releases owner lock" 1
+	fi
 	return 0
 }
 
