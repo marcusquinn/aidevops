@@ -798,27 +798,31 @@ _pmrc_is_explicit_advisory_failure() {
 	return $?
 }
 
-# Some providers fail a non-required commit status without analysing the code
-# when the account has spent its quota (for example Qlty's "qlty check" with
-# "Qlty did not run because you are out of minutes."). That result says nothing
-# about the PR and clears once minutes are available again, so it is advisory:
-# the check stays useful whenever it can run, and never wedges merges or routes
-# a code-repair worker while it cannot. Only these exact contexts qualify, as a
-# commit status whose description reports the spent quota; any other failure of
-# the same context, and every required context, keeps normal handling.
-PMRC_QUOTA_EXHAUSTED_STATUS_CONTEXTS_JSON='["qlty check"]'
-PMRC_QUOTA_EXHAUSTED_DESCRIPTION_RE='out of (analysis )?minutes'
+# Billing-only commit statuses cannot be repaired by changing code. Only verified
+# credit-limited repositories qualify; native required checks still block merges.
+# Exact context matching excludes Actions jobs such as Qlty Regression Gate.
+PMRC_QUOTA_EXHAUSTED_DESCRIPTION_RE='out of ((analysis )?minutes|credits)'
+
+_pmrc_repo_has_qlty_credit_limit() {
+	local repo_slug="$1" metadata=""
+	metadata=$(gh api "repos/${repo_slug}" 2>/dev/null) || return 1
+	jq -e '(.private | type) == "boolean"
+		and (.owner.type == "User" or .owner.type == "Organization")
+		and (.private or .owner.type == "Organization")' <<<"$metadata" >/dev/null 2>&1
+	return $?
+}
 
 _pmrc_is_quota_exhausted_status_failure() {
 	local check_name="$1"
 	local checks_json="$2"
+	local repo_slug="$3"
 
-	jq -e --arg name "$check_name" --arg re "$PMRC_QUOTA_EXHAUSTED_DESCRIPTION_RE" \
-		--argjson contexts "$PMRC_QUOTA_EXHAUSTED_STATUS_CONTEXTS_JSON" '
-		($contexts | index($name)) != null
+	jq -e --arg name "$check_name" --arg re "$PMRC_QUOTA_EXHAUSTED_DESCRIPTION_RE" '
+		($name | ascii_downcase) == "qlty check"
 		and ([.[]? | select(.name == $name and .source == "commit_status"
 			and ((.description // "") | test($re; "i")))] | length > 0)
-	' <<<"$checks_json" >/dev/null 2>&1
+	' <<<"$checks_json" >/dev/null 2>&1 || return 1
+	_pmrc_repo_has_qlty_credit_limit "$repo_slug"
 	return $?
 }
 
@@ -1072,7 +1076,7 @@ _pmrc_nonrequired_failure_is_advisory() {
 		return 0
 	fi
 	if [[ "$members" == "${name}@commit_status" ]] &&
-		_pmrc_is_quota_exhausted_status_failure "$name" "$checks_json"; then
+		_pmrc_is_quota_exhausted_status_failure "$name" "$checks_json" "$repo_slug"; then
 		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required provider status '${name}' that did not run because the provider quota is spent ${subject} (GH#33640)" >>"$LOGFILE"
 		return 0
 	fi
@@ -1138,6 +1142,10 @@ _pmrc_snapshot_checks_acceptable() {
 		if [[ "$family" == "$PMRC_MAINTAINER_GATE" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-${conclusion} for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required} — merge blocked" >>"$LOGFILE"
 			blockers=$((blockers + 1))
+		elif [[ "$required" == "$PMRC_BOOL_TRUE" && "$members" == "${name}@commit_status" ]] &&
+			_pmrc_is_quota_exhausted_status_failure "$name" "$checks_json" "$repo_slug"; then
+			echo "[pulse-merge] pre-merge snapshot: required provider status '${name}' did not run because the provider quota is spent for PR #${pr_number} in ${repo_slug} — code repair suppressed; native required check remains blocking (GH#34089)" >>"$LOGFILE"
+			blockers=$((blockers + 1))
 		elif [[ "$required" == "$PMRC_BOOL_TRUE" ]] &&
 			declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
 			_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
@@ -1161,7 +1169,7 @@ _pmrc_snapshot_checks_acceptable() {
 		_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON=$(jq -c --arg names "$blocking_names" '
 			($names | split("\n") | map(select(length > 0))) as $blocking_names
 			| [.[]? | select(.name as $name | $blocking_names | index($name))
-				| {name, bucket: "fail", state: (.conclusion | ascii_upcase), conclusion, link}]
+				| {name, bucket: "fail", state: (.conclusion | ascii_upcase), conclusion, link, source, description}]
 		' <<<"$checks_json" 2>/dev/null) || _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 	fi
 	if [[ "$pending" -gt 0 || "$blockers" -gt 0 ]]; then
