@@ -785,6 +785,106 @@ _refresh_try_unblock_issue() {
 	return 0
 }
 
+# GH#34055: use the stale-sweep numeric cursor/atomic replacement pattern, but
+# not its helpers: sourcing dependency-event-reconciler would pull in unrelated
+# reconciliation policy, and sharing its cursor would skip independent work.
+_refresh_graph_cursor_file() {
+	local slug="$1"
+	local dir="${DEP_GRAPH_REFRESH_CURSOR_DIR:-${HOME:-}/.aidevops/cache/dep-graph-refresh}"
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	case "$slug" in
+	./* | ../* | */. | */..) return 1 ;;
+	esac
+	[[ -n "${DEP_GRAPH_REFRESH_CURSOR_DIR:-}${HOME:-}" ]] || return 1
+	printf '%s/%s.cursor\n' "$dir" "$slug"
+	return 0
+}
+
+_refresh_graph_cursor_read() {
+	local file="$1"
+	local value=""
+	if [[ -f "$file" ]]; then
+		IFS= read -r value <"$file" 2>/dev/null || true
+	fi
+	# Canonical decimal, bounded to jq's exact integer range. Corruption restarts
+	# traversal; it cannot manufacture dependency resolution or skip via a hold.
+	[[ "$value" =~ ^(0|[1-9][0-9]{0,14})$ ]] || value=0
+	printf '%s\n' "$value"
+	return 0
+}
+
+_refresh_graph_cursor_write() {
+	local file="$1"
+	local value="$2"
+	local tmp_file=""
+	[[ "$value" =~ ^(0|[1-9][0-9]{0,14})$ ]] || return 1
+	mkdir -p "${file%/*}" 2>/dev/null || return 1
+	tmp_file=$(mktemp "${file}.tmp.XXXXXX" 2>/dev/null) || return 1
+	if ! printf '%s\n' "$value" >"$tmp_file" || ! mv -f "$tmp_file" "$file"; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	return 0
+}
+
+# The elapsed budget is cooperative: finish the current candidate's safety
+# checks, but launch no further candidate after the repository's fair share.
+# Persist after EVERY visit (including holds/unresolved/API failures), so a
+# stage kill only repeats the in-flight candidate. Failures retry next traversal.
+_refresh_graph_repo() {
+	local slug="$1"
+	local repo_data="$2"
+	local max_candidates="$3"
+	local budget_secs="$4"
+	local cursor_file="" cursor=0 candidates="" total=0 pending=0 visited=0
+	local complete=true cursor_failed=false started="$SECONDS"
+	local closed_issues_json="" known_issues_json="" task_to_issue_json="" blocked_by_json="" defer_flags_json=""
+	local issue_num="" entry_json="" unblocked_count=0 blocked_count=0
+	cursor_file=$(_refresh_graph_cursor_file "$slug") || return 1
+	cursor=$(_refresh_graph_cursor_read "$cursor_file")
+	closed_issues_json=$(printf '%s' "$repo_data" | jq -c '.closed_issues // []') || return 1
+	known_issues_json=$(printf '%s' "$repo_data" | jq -c '.known_issues // []') || return 1
+	task_to_issue_json=$(printf '%s' "$repo_data" | jq -c '.task_to_issue // {}') || return 1
+	blocked_by_json=$(printf '%s' "$repo_data" | jq -ce '.blocked_by // {} | objects') || return 1
+	defer_flags_json=$(printf '%s' "$repo_data" | jq -c '.defer_flags // {}') || return 1
+	# Sort numerically, not lexically; reject noncanonical/path-like issue keys.
+	candidates=$(printf '%s' "$blocked_by_json" | jq -c --argjson cursor "$cursor" '
+		keys | map(select(test("^[1-9][0-9]{0,14}$"))) | sort_by(tonumber)
+		| {total:length, pending:map(select(tonumber > $cursor))}') || return 1
+	total=$(printf '%s' "$candidates" | jq '.total') || return 1
+	pending=$(printf '%s' "$candidates" | jq '.pending | length') || return 1
+	candidates=$(printf '%s' "$candidates" | jq -r --argjson limit "$max_candidates" '.pending[:$limit][]') || return 1
+	[[ "$pending" -le "$max_candidates" ]] || complete=false
+	while IFS= read -r issue_num; do
+		[[ -n "$issue_num" ]] || continue
+		if [[ "$visited" -gt 0 && $((SECONDS - started)) -ge "$budget_secs" ]]; then
+			complete=false
+			break
+		fi
+		entry_json=$(printf '%s' "$blocked_by_json" | jq -c --arg n "$issue_num" '.[$n]') || return 1
+		if _refresh_dependency_is_resolved "$slug" "$issue_num" "$entry_json" "$task_to_issue_json" "$closed_issues_json" "$known_issues_json"; then
+			if _refresh_try_unblock_issue "$slug" "$issue_num" "$entry_json" "$defer_flags_json"; then
+				unblocked_count=$((unblocked_count + 1))
+			fi
+		elif _refresh_ensure_unresolved_is_blocked "$slug" "$issue_num"; then
+			blocked_count=$((blocked_count + 1))
+		fi
+		visited=$((visited + 1))
+		if ! _refresh_graph_cursor_write "$cursor_file" "$issue_num"; then
+			cursor_failed=true
+			complete=false
+			break
+		fi
+	done <<<"$candidates"
+	if [[ "$complete" == true ]]; then
+		_refresh_graph_cursor_write "$cursor_file" 0 || cursor_failed=true
+	fi
+	printf '[pulse-wrapper] dep-graph-cache: refresh repo=%s candidates=%s resumed_after=%s pending=%s visited=%s blocked=%s unblocked=%s batch_limit=%s budget_secs=%s complete=%s cursor_write_failed=%s\n' \
+		"$slug" "$total" "$cursor" "$pending" "$visited" "$blocked_count" "$unblocked_count" "$max_candidates" "$budget_secs" "$complete" "$cursor_failed" >>"$LOGFILE"
+	[[ "$cursor_failed" == false ]] || return 1
+	return 0
+}
+
 #######################################
 # Refresh blocked status from dependency graph (t1935, hardened t2031)
 #
@@ -814,46 +914,26 @@ refresh_blocked_status_from_graph() {
 	graph_json=$(cat "$cache_file" 2>/dev/null) || return 0
 	[[ -n "$graph_json" ]] || return 0
 
-	local unblocked_count=0 blocked_count=0
-
-	# Iterate repos in the graph
-	local slugs
+	# Bound each repo independently so the first large repo cannot consume every
+	# cycle. These limits do not alter stage timeouts or interrupt safety checks.
+	local max_candidates="${DEP_GRAPH_REFRESH_MAX_CANDIDATES:-10}"
+	local budget_secs="${DEP_GRAPH_REFRESH_BUDGET_SECS:-30}"
+	[[ "$max_candidates" =~ ^[1-9][0-9]{0,5}$ ]] || max_candidates=10
+	[[ "$budget_secs" =~ ^[1-9][0-9]{0,5}$ ]] || budget_secs=30
+	local slugs="" slug="" repo_data="" repo_count=0 share_secs=1
 	slugs=$(printf '%s' "$graph_json" | jq -r '.repos | keys[]' 2>/dev/null) || slugs=""
 	[[ -n "$slugs" ]] || return 0
+	repo_count=$(printf '%s' "$graph_json" | jq '.repos | length') || return 0
+	share_secs=$((budget_secs / repo_count))
+	[[ "$share_secs" -gt 0 ]] || share_secs=1
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-
-		local repo_data="" closed_issues_json="" known_issues_json="" task_to_issue_json="" blocked_by_json="" defer_flags_json=""
 		repo_data=$(printf '%s' "$graph_json" | jq -c --arg s "$slug" '.repos[$s]' 2>/dev/null) || continue
-		closed_issues_json=$(printf '%s' "$repo_data" | jq -c '.closed_issues // []' 2>/dev/null) || closed_issues_json='[]'
-		known_issues_json=$(printf '%s' "$repo_data" | jq -c '.known_issues // []' 2>/dev/null) || known_issues_json='[]'
-		task_to_issue_json=$(printf '%s' "$repo_data" | jq -c '.task_to_issue // {}' 2>/dev/null) || task_to_issue_json='{}'
-		blocked_by_json=$(printf '%s' "$repo_data" | jq -c '.blocked_by // {}' 2>/dev/null) || blocked_by_json='{}'
-		defer_flags_json=$(printf '%s' "$repo_data" | jq -c '.defer_flags // {}' 2>/dev/null) || defer_flags_json='{}'
-
-		local blocked_issue_nums
-		blocked_issue_nums=$(printf '%s' "$blocked_by_json" | jq -r 'keys[]' 2>/dev/null) || blocked_issue_nums=""
-		[[ -n "$blocked_issue_nums" ]] || continue
-
-		local issue_num="" entry_json=""
-		while IFS= read -r issue_num; do
-			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-			entry_json=$(printf '%s' "$blocked_by_json" | jq -c --arg n "$issue_num" '.[$n]' 2>/dev/null) || continue
-
-			if _refresh_dependency_is_resolved "$slug" "$issue_num" "$entry_json" "$task_to_issue_json" "$closed_issues_json" "$known_issues_json"; then
-				if _refresh_try_unblock_issue "$slug" "$issue_num" "$entry_json" "$defer_flags_json"; then
-					unblocked_count=$((unblocked_count + 1))
-				fi
-			elif _refresh_ensure_unresolved_is_blocked "$slug" "$issue_num"; then
-				blocked_count=$((blocked_count + 1))
-			fi
-		done <<<"$blocked_issue_nums"
+		if ! _refresh_graph_repo "$slug" "$repo_data" "$max_candidates" "$share_secs"; then
+			printf '[pulse-wrapper] dep-graph-cache: refresh failed repo=%s — invalid data or cursor persistence failure\n' "$slug" >>"$LOGFILE"
+		fi
 	done <<<"$slugs"
-
-	if [[ "$unblocked_count" -gt 0 || "$blocked_count" -gt 0 ]]; then
-		echo "[pulse-wrapper] dep-graph-cache: refresh complete — blocked ${blocked_count}, unblocked ${unblocked_count} issue(s) (t1935/t18100)" >>"$LOGFILE"
-	fi
 	return 0
 }
 
