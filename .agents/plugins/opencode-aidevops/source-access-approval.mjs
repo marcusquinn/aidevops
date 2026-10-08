@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { execFileSync } from "node:child_process";
+import { resolveTrustedExecutable } from "../../scripts/trusted-executable.mjs";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -169,8 +170,8 @@ function validatedSingleReceipt(options) {
     trustUid = 0,
     stateDir = DEFAULT_STATE_DIR,
     publicKeyPath = DEFAULT_PUBLIC_KEY,
-    sshKeygen = "/usr/bin/ssh-keygen",
-    git = "/usr/bin/git",
+    sshKeygen = resolveTrustedExecutable("ssh-keygen"),
+    git = resolveTrustedExecutable("git"),
     gitRun = execFileSync,
     run = execFileSync,
     authorizedApprovalId = "",
@@ -352,7 +353,7 @@ export function verifySourceAccessReceipt(options) {
 export function createSourceAccessMutationProvenance({
   repositoryDir = "",
   verify = verifySourceAccessReceipt,
-  git = "/usr/bin/git",
+  git = resolveTrustedExecutable("git"),
   gitRun = execFileSync,
   now = () => Math.floor(Date.now() / 1000),
 } = {}) {

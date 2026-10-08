@@ -1805,19 +1805,17 @@ remove_worktree_path_permanently() {
 # helper is the audited exception for an already-guarded linked worktree's
 # lock-aware removal and missing-metadata prune operations.
 _worktree_cleanup_real_git() {
-	local candidate="${AIDEVOPS_REAL_GIT_BIN:-}"
+	local candidate=""
 
+	if ! declare -F aidevops_resolve_native_git >/dev/null 2>&1; then
+		# shellcheck source=runtime-env.sh
+		source "$(dirname "${BASH_SOURCE[0]}")/runtime-env.sh" || return 1
+	fi
+	candidate=$(aidevops_resolve_native_git) || return 1
 	if [[ -n "$candidate" && -x "$candidate" ]]; then
 		printf '%s\n' "$candidate"
 		return 0
 	fi
-
-	for candidate in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do
-		if [[ -x "$candidate" ]]; then
-			printf '%s\n' "$candidate"
-			return 0
-		fi
-	done
 
 	return 1
 }

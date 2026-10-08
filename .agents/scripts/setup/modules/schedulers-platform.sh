@@ -963,7 +963,7 @@ setup_opencode_db_archive() {
 		_xml_archive_script=$(_xml_escape "$archive_script")
 		_xml_archive_home=$(_xml_escape "$archive_home")
 		_xml_archive_log=$(_xml_escape "${archive_log_dir}/opencode-db-archive.log")
-		_xml_archive_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin${PATH:+:${PATH}}")")
+		_xml_archive_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "${PATH}")")
 
 		local archive_plist_content
 		archive_plist_content=$(cat <<ARCHIVE_PLIST

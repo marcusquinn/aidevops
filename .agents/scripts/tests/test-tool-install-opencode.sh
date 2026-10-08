@@ -72,6 +72,7 @@ extract_functions() {
 		/^_setup_opencode_installer\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_print_missing_installer\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_node_path_for_binary\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_fallback_path_for_binary\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_binary_is_ephemeral\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_managed_shim_target\(\)/, /^}$/ { print; next }
@@ -177,16 +178,20 @@ EOF
 	ln -s "$store" "$HOME/.nix-profile"
 	_setup_write_opencode_v1_shim "$shim" "/missing/opencode" ""
 	chmod +x "$shim"
+	# Profile dirs are found only because they are on PATH: no built-in roots.
 	export PATH="$HOME/.local/bin:/usr/bin:/bin"
+	printf 'no-path-profile=%s\n' "$(_setup_find_valid_opencode_binary 2>/dev/null || true)"
+	export PATH="$HOME/.local/bin:$HOME/.nix-profile/bin:/usr/bin:/bin"
 	printf 'discovered=%s\n' "$(_setup_find_valid_opencode_binary)"
 	rm "$HOME/.nix-profile"
 	mkdir -p "$HOME/.local/state/nix"
 	ln -s "$store" "$HOME/.local/state/nix/profile"
+	export PATH="$HOME/.local/bin:$HOME/.local/state/nix/profile/bin:/usr/bin:/bin"
 	printf 'modern=%s\n' "$(_setup_find_valid_opencode_binary)"
 	rm "$HOME/.local/state/nix/profile"
 	export PATH="$HOME/.local/bin:$store/bin:/usr/bin:/bin"
 	printf 'store-path=%s\n' "$(_setup_find_valid_opencode_binary)"
-	export PATH="$HOME/.local/bin:/usr/bin:/bin"
+	export PATH="$HOME/.local/bin:$HOME/.nix-profile/bin:/usr/bin:/bin"
 	ln -s "$store" "$HOME/.nix-profile"
 	_setup_ensure_opencode_stable_shim "$profile" >/dev/null
 	printf 'target=%s\n' "$(_setup_opencode_managed_shim_target "$shim")"
@@ -235,6 +240,10 @@ EOF
 	_setup_ensure_opencode_stable_shim "$profile" >/dev/null 2>&1 && exit 1
 	[[ "$checksum" == "$(cksum "$shim")" ]] && printf 'failed-generation-preserved=yes\n'
 ) >"$SANDBOX/nix-results"
+case "$(grep '^no-path-profile=' "$SANDBOX/nix-results")" in
+*"/.nix-profile/"* | *"/nix/profile/"*) assert_eq "profile not on PATH is ignored" "ignored" "discovered" ;;
+*) assert_eq "profile not on PATH is ignored" "ignored" "ignored" ;;
+esac
 assert_eq "Nix profile discovered behind local shim" "discovered=$SANDBOX/nix home/.nix-profile/bin/opencode" "$(grep '^discovered=' "$SANDBOX/nix-results")"
 assert_eq "modern Nix profile discovered" "modern=$SANDBOX/nix home/.local/state/nix/profile/bin/opencode" "$(grep '^modern=' "$SANDBOX/nix-results")"
 assert_eq "later store PATH candidate discovered" "store-path=$SANDBOX/nix home/store generation \$literal \"quoted\"/bin/opencode" "$(grep '^store-path=' "$SANDBOX/nix-results")"
@@ -1104,9 +1113,10 @@ assert_eq "V2 install uses npm with a private prefix" \
 	"install --no-audit --no-fund --prefix $v2_install_root @opencode/cli@latest" \
 	"$(<"$v2_install_home/npm-install-args")"
 v2_install_exec=$(grep '^exec "' "$v2_install_home/.local/bin/opencode2")
-v2_install_root_real=$(cd "$v2_install_root" && pwd -P)
+# The shim keeps the logical path by design (see _setup_ensure_opencode_stable_shim);
+# on macOS mktemp returns /var/..., whose physical form is /private/var/...
 assert_eq "V2 stable shim targets the private package binary" \
-	"exec \"$v2_install_root_real/node_modules/.bin/opencode2\" \"\$@\"" "$v2_install_exec"
+	"exec \"$v2_install_root/node_modules/.bin/opencode2\" \"\$@\"" "$v2_install_exec"
 
 echo ""
 echo "===== Results: $PASS passed, $FAIL failed ====="

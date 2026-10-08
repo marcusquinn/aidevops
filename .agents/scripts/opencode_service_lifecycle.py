@@ -4,7 +4,6 @@
 
 import os
 from pathlib import Path
-import pwd
 import shutil
 import time
 
@@ -93,14 +92,16 @@ class Service(ServiceState):
         lock.rmdir()
 
     def install_data(self, args, old):
+        # aidevops dirs, then the installing user's PATH (their toolchain wins),
+        # then resolved binary dirs and generic system roots as a fallback.
+        # No distro-specific roots: plain PATH resolution on every platform.
         binaries = [shutil.which(name) for name in ("opencode", "python3", "node")]
-        paths = [str(Path(binary).parent) for binary in binaries if binary]
-        paths += [str(self.home / ".local/bin"), str(self.home / ".bun/bin"),
-                  "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-        paths += [str(self.home / ".nix-profile/bin"),
-                  str(self.home / ".local/state/nix/profile/bin"),
-                  f"/etc/profiles/per-user/{pwd.getpwuid(os.getuid()).pw_name}/bin",
-                  "/run/wrappers/bin", "/run/current-system/sw/bin"]
+        paths = [str(self.home / ".local/bin"), str(self.home / ".aidevops/agents/scripts")]
+        paths += [entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+                  if os.path.isabs(entry) and "/.aidevops/runtime-bundles/" not in entry
+                  and os.path.isdir(entry)]
+        paths += [str(Path(binary).parent) for binary in binaries if binary]
+        paths += ["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         data = old or {"schema": SCHEMA, "port": args.port if args.port is not None else 49036,
                        "shard": args.shard or "managed-default", "directory": str(self.home),
                        "enabled": True, "route_new": False}

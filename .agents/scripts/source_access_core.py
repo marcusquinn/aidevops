@@ -64,14 +64,55 @@ DENIED_NAMES = frozenset(
 DENIED_SUFFIXES = frozenset(".jks .key .keystore .p12 .pem .pfx".split())
 
 
+def _root_controlled(path: str, *, directory: bool) -> bool:
+    """True when only root can modify ``path`` (sticky dirs may be group/world writable)."""
+    try:
+        status = os.stat(path)
+    except OSError:
+        return False
+    if status.st_uid != 0:
+        return False
+    writable_by_others = status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    if not writable_by_others:
+        return True
+    return directory and bool(status.st_mode & stat.S_ISVTX)
+
+
+def _trusted_chain(path: str) -> bool:
+    """True when ``path`` and every ancestor directory are root-controlled."""
+    current = Path(path)
+    if not _root_controlled(str(current), directory=current.is_dir()):
+        return False
+    for ancestor in current.parents:
+        if not _root_controlled(str(ancestor), directory=True):
+            return False
+    return True
+
+
 def _system_executable(name: str) -> str:
-    """Select fixed system tools; privileged approval must never trust PATH."""
-    for directory in ("/usr/bin", "/bin", "/run/current-system/sw/bin"):
-        candidate = str(Path(directory) / name)
-        if Path(candidate).is_file() and os.access(candidate, os.X_OK):
+    """Resolve a privileged tool through PATH without trusting caller-owned files.
+
+    Accept the first PATH entry whose real executable, real parent chain and
+    PATH directory chain are root-controlled. No distro-specific roots: the same
+    rule covers macOS, FHS Linux and Nix store symlinks.
+    """
+    for directory in (os.environ.get("PATH") or os.defpath).split(os.pathsep):
+        if not os.path.isabs(directory):
+            continue
+        candidate = os.path.join(directory, name)
+        if not (os.path.isfile(candidate) and os.access(candidate, os.X_OK)):
+            continue
+        real = os.path.realpath(candidate)
+        real_directory = os.path.realpath(directory)
+        # Sticky shared dirs (e.g. /nix/store) are only acceptable as
+        # ancestors, never as the directory holding the tool or PATH entry.
+        if not (_root_controlled(os.path.dirname(real), directory=False)
+                and _root_controlled(real_directory, directory=False)):
+            continue
+        if _trusted_chain(real) and _trusted_chain(real_directory):
             return candidate
-    # Retain the fixed failure path when a required system package is missing.
-    return f"/usr/bin/{name}"
+    # Fail closed with a non-existent, non-PATH name rather than trusting PATH.
+    return f"/nonexistent/aidevops-untrusted-{name}"
 
 
 GIT = _system_executable("git")

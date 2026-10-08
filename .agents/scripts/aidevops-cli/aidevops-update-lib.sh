@@ -48,7 +48,14 @@ _update_canonical_has_untracked_only() {
 _update_fetch_main() {
 	local branch="$1"
 	_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED=false
-	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-}"
+	if [[ -z "$real_git" ]]; then
+		# Subshell: resolve native git from PATH (skipping the aidevops shim)
+		# without changing the CLI's own PATH.
+		# shellcheck source=../runtime-env.sh
+		real_git=$(source "${BASH_SOURCE[0]%/*}/../runtime-env.sh" && aidevops_resolve_native_git) ||
+			real_git="aidevops-native-git-not-found"
+	fi
 	local git_dir=""
 	local common_dir=""
 	git_dir=$("$real_git" -C "$INSTALL_DIR" rev-parse --git-dir 2>/dev/null || true)

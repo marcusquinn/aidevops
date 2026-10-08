@@ -479,7 +479,7 @@ _merge_guard_prospective_todo() (
 	local temp_dir=""
 	local object_repo=""
 	local remote_url=""
-	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
 	local report=""
 	local report_rc="0"
 

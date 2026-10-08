@@ -26,20 +26,10 @@ function makeHook() {
   });
 }
 
-test("runtime PATH recovers Nix profiles without changing guard or project precedence", () => {
-  const base = process.env.AIDEVOPS_TEMP_DIR || join(process.env.HOME, ".aidevops/.agent-workspace/tmp");
-  const home = mkdtempSync(join(base, "nix-path-"));
-  try {
-    const legacy = join(home, ".nix-profile/bin");
-    const modern = join(home, ".local/state/nix/profile/bin");
-    mkdirSync(legacy, { recursive: true });
-    mkdirSync(modern, { recursive: true });
-    const path = runtimePath("/guard:/project/bin:/guard::", home);
-    assert.deepEqual(path.split(":").slice(0, 4), ["/guard", "/project/bin", legacy, modern]);
-    assert.equal(runtimePath(path, home), path);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
+test("runtime PATH keeps inherited order, injects no distro roots, drops unsafe entries", () => {
+  const path = runtimePath("/guard:/project/bin:/guard::relative:/opt/toolchain/bin:/usr/bin");
+  assert.deepEqual(path.split(":"), ["/guard", "/project/bin", "/opt/toolchain/bin", "/usr/bin"]);
+  assert.equal(runtimePath(path), path);
 });
 
 function withTempAgentsDir(fn) {

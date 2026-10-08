@@ -27,6 +27,7 @@ from command_policy_process_termination import (
     _evaluate_process_termination,
     _process_termination_guard_path,
 )
+from trusted_executable import require_trusted_executable
 
 DECISION_RANK = {"allow": 0, "forbid": 1}
 
@@ -258,8 +259,8 @@ def _run_network_guard(
     timeout: int,
 ) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
     try:
-        result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
-            ["/bin/bash", str(helper), "check-argv", json.dumps(argv), *guard_arguments],
+        result = subprocess.run(  # nosec B603 -- bash is root-controlled and helper is policy-selected and verified as a file.
+            [require_trusted_executable("bash"), str(helper), "check-argv", json.dumps(argv), *guard_arguments],
             capture_output=True,
             text=True,
             timeout=timeout,

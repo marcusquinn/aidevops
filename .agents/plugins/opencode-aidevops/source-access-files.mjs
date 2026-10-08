@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { execFileSync } from "node:child_process";
+import { resolveTrustedExecutable } from "../../scripts/trusted-executable.mjs";
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
@@ -81,7 +82,7 @@ export function sourceDigestMatches(filePath, expectedDigest) {
   }
 }
 
-export function trustedSourceSnapshot(filePath, git = "/usr/bin/git", run = execFileSync) {
+export function trustedSourceSnapshot(filePath, git = resolveTrustedExecutable("git"), run = execFileSync) {
   let result = false;
   try {
     requireValidFile(isAbsolute(filePath));

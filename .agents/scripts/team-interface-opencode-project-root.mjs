@@ -7,17 +7,10 @@ import {homedir} from "node:os";
 import {isAbsolute, join, parse, relative, resolve, sep} from "node:path";
 
 import {readBoundedJson} from "./team-interface-common.mjs";
+import {resolveTrustedExecutable} from "./trusted-executable.mjs";
 
-// Keep project-root probes on fixed trusted roots, including NixOS. Do not
-// accept PATH or native-tool overrides that could falsify repository metadata.
-const GIT_BINARY = ["/usr/bin/git", "/run/current-system/sw/bin/git"].find((candidate) => {
-  try {
-    const metadata = statSync(candidate);
-    return metadata.isFile() && (metadata.mode & 0o111) !== 0;
-  } catch {
-    return false;
-  }
-}) || "/usr/bin/git";
+// Caller-owned shims or overrides must not falsify repository metadata.
+const GIT_BINARY = resolveTrustedExecutable("git");
 const MAX_REPOSITORY_METADATA_BYTES = 1024 * 1024;
 
 export class ProjectRootValidationError extends Error {

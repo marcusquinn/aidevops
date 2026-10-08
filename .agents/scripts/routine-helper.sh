@@ -382,7 +382,7 @@ cmd_install_launchd() {
 	local home_escaped
 	home_escaped=$(xml_escape "$HOME")
 	local env_path_escaped
-	env_path_escaped=$(xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")")
+	env_path_escaped=$(xml_escape "$(aidevops_launchd_sanitized_path "${PATH}")")
 	local log_path_escaped
 	log_path_escaped=$(xml_escape "${HOME}/.aidevops/logs/routine-${ROUTINE_NAME}.log")
 
@@ -460,9 +460,9 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc $(_systemd_escape "$command")
+ExecStart=/usr/bin/env bash -lc $(_systemd_escape "$command")
 Environment=HOME=${HOME}
-Environment=PATH=${PATH}
+$(aidevops_systemd_path_env)
 StandardOutput=append:${log_file}
 StandardError=append:${log_file}
 EOF

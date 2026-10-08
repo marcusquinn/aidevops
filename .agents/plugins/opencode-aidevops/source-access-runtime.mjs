@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { execFile } from "node:child_process";
+import { resolveTrustedExecutable } from "../../scripts/trusted-executable.mjs";
 import { randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -18,6 +19,7 @@ import {
 
 const run = promisify(execFile);
 const SESSION_ID = /^ses_[A-Za-z0-9._:-]{2,252}$/;
+const GIT_BINARY = resolveTrustedExecutable("git");
 
 function commandEnvironment() {
   // A shell's Git overrides are not the runtime's repository identity.
@@ -27,16 +29,16 @@ function commandEnvironment() {
 
 async function command(program, args, signal) {
   const environment = commandEnvironment();
-  if (program === "/usr/bin/git") args = sourceGitArguments(args);
+  if (program === GIT_BINARY) args = sourceGitArguments(args);
   const { stdout } = await run(program, args, {
     encoding: "utf8", timeout: 3000, maxBuffer: 256 * 1024,
-    env: program === "/usr/bin/git" ? sourceGitEnvironment(environment) : environment, signal,
+    env: program === GIT_BINARY ? sourceGitEnvironment(environment) : environment, signal,
   });
   return stdout;
 }
 
 async function gitPath(root, argument, signal) {
-  const value = (await command("/usr/bin/git", ["-C", root, "rev-parse", argument], signal)).trim();
+  const value = (await command(GIT_BINARY, ["-C", root, "rev-parse", argument], signal)).trim();
   if (!value) throw new Error("source context repository is unavailable");
   return realpath(resolve(root, value));
 }
@@ -48,7 +50,7 @@ async function sameRepository(startupDirectory, sessionDirectory, requestedRoot,
   if (await gitPath(root, "--git-dir", signal) === common) return false;
   if (await gitPath(startupDirectory, "--git-common-dir", signal) !== common
     || await gitPath(sessionDirectory, "--git-common-dir", signal) !== common) return false;
-  const worktrees = await command("/usr/bin/git", ["-C", startupDirectory,
+  const worktrees = await command(GIT_BINARY, ["-C", startupDirectory,
     "worktree", "list", "--porcelain", "-z"], signal);
   return worktrees.split("\0").includes(`worktree ${root}`);
 }

@@ -34,33 +34,9 @@ CRON_EVERY_MINUTE="* * * * *"
 # Direct unit tests source this module without setup.sh's later
 # shared-constants.sh load. Provide a small fallback; the shared helper
 # overwrites this when setup.sh sources shared-constants.sh.
-if ! declare -F aidevops_launchd_sanitized_path >/dev/null 2>&1; then
-	aidevops_launchd_sanitized_path() {
-		local input_path="${1:-${PATH:-}}"
-		local stable_path=""
-		if [[ -n "${HOME:-}" ]]; then
-			stable_path="${HOME}/.bun/bin:${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
-		fi
-		local default_path="${stable_path:+${stable_path}:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-		local result=""
-		local seen=""
-		local dir=""
-		local IFS=':'
-		for dir in $default_path:$input_path; do
-			[[ -n "$dir" ]] || continue
-			case "$dir" in
-			*/.aidevops/runtime-bundles/*) continue ;;
-			esac
-			[[ -d "$dir" ]] || continue
-			case ":$seen:" in
-			*":${dir}:"*) continue ;;
-			esac
-			seen="${seen:+${seen}:}${dir}"
-			result="${result:+${result}:}${dir}"
-		done
-		printf '%s' "$result"
-		return 0
-	}
+if ! declare -F aidevops_service_path >/dev/null 2>&1; then
+	# shellcheck source=../../runtime-env.sh
+	source "${BASH_SOURCE[0]%/*}/../../runtime-env.sh"
 fi
 
 # Shell safety baseline
@@ -221,7 +197,7 @@ setup_failure_miner() {
 		local _xml_miner_script _xml_miner_home _xml_miner_path _xml_miner_log
 		_xml_miner_script=$(_xml_escape "$miner_script")
 		_xml_miner_home=$(_xml_escape "$HOME")
-		_xml_miner_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")")
+		_xml_miner_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "${PATH}")")
 		_xml_miner_log=$(_xml_escape "$miner_log")
 
 		local miner_plist_content

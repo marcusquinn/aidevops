@@ -6,6 +6,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=runtime-env.sh
+source "${SCRIPT_DIR}/runtime-env.sh"
 PYTHON_HELPER="${SCRIPT_DIR}/knowledge_social_import.py"
 X_HELPER="${SCRIPT_DIR}/knowledge_social_x.py"
 REDDIT_HELPER="${SCRIPT_DIR}/knowledge_social_reddit.py"
@@ -463,15 +465,17 @@ resolve_share_python() {
 	local env_dir="${managed_python%/bin/python3}"
 	local marker="${env_dir}/.aidevops-managed-runtime"
 	local marker_value=""
-	if [[ ! -x "$managed_python" || ! -r "$VAULT_RUNTIME_CHECK" || ! -x /usr/bin/python3 ||
+	local system_python=""
+	system_python=$(aidevops_resolve_trusted_tool python3) || system_python=""
+	if [[ ! -x "$managed_python" || ! -r "$VAULT_RUNTIME_CHECK" || -z "$system_python" ||
 		! -f "$marker" || -L "$marker" ]]; then
 		printf 'ERROR: managed Vault crypto runtime is unavailable; run aidevops setup\n' >&2
 		return 1
 	fi
 	marker_value=$(<"$marker")
 	if [[ "$marker_value" != "aidevops-vault-runtime-v1" ]] ||
-		! /usr/bin/python3 "$VAULT_RUNTIME_CHECK" --check-ancestors "$HOME" "$env_dir" >/dev/null 2>&1 ||
-		! /usr/bin/python3 "$VAULT_RUNTIME_CHECK" --check-path "$env_dir" "$marker" >/dev/null 2>&1 ||
+		! "$system_python" "$VAULT_RUNTIME_CHECK" --check-ancestors "$HOME" "$env_dir" >/dev/null 2>&1 ||
+		! "$system_python" "$VAULT_RUNTIME_CHECK" --check-path "$env_dir" "$marker" >/dev/null 2>&1 ||
 		! "$managed_python" "$VAULT_RUNTIME_CHECK" >/dev/null 2>&1; then
 		printf 'ERROR: managed Vault crypto runtime failed verification\n' >&2
 		return 1

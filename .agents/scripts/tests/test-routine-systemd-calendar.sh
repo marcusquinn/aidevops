@@ -113,7 +113,7 @@ test_execstart_uses_systemd_quoting() {
 		--dir "$tmp_home" \
 		--prompt 'test prompt' >/dev/null 2>&1
 	exec_start=$(grep '^ExecStart=' "$service_file")
-	expected="ExecStart=/bin/bash -lc \"'${tmp_home}/.aidevops/agents/scripts/headless-runtime-helper.sh' run --role worker --session-key 'routine-test' --dir '${tmp_home}' --agent 'Build+' --title 'Scheduled routine' --prompt-file '${tmp_home}/.aidevops/.agent-workspace/cron/scheduler-prompts/test.prompt'\""
+	expected="ExecStart=/usr/bin/env bash -lc \"'${tmp_home}/.aidevops/agents/scripts/headless-runtime-helper.sh' run --role worker --session-key 'routine-test' --dir '${tmp_home}' --agent 'Build+' --title 'Scheduled routine' --prompt-file '${tmp_home}/.aidevops/.agent-workspace/cron/scheduler-prompts/test.prompt'\""
 
 	if [[ "$exec_start" == "$expected" && "$exec_start" != *"opencode run"* ]]; then
 		print_result "ExecStart uses the canonical headless wrapper as one systemd argument" 0

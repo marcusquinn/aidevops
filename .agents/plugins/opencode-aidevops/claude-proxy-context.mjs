@@ -151,12 +151,12 @@ const AGENT_MCPS = new Map([
 const MCP_DEFINITIONS = new Map([
   ["context7", { command: "npx", args: ["-y", "@upstash/context7-mcp@latest"], type: "stdio" }],
   ["gsc", {
-    command: "/bin/bash",
+    command: "bash",
     args: ["-c", "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} npx -y mcp-server-gsc"],
     type: "stdio",
   }],
   ["dataforseo", {
-    command: "/bin/bash",
+    command: "bash",
     args: ["-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx -y dataforseo-mcp-server"],
     type: "stdio",
   }],
