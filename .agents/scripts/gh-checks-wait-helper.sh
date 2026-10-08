@@ -453,6 +453,17 @@ read_head_sha() {
 	return $?
 }
 
+verified_head_sha() {
+	local pr_number="$1" repo="$2" phase="$3" head=""
+	head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
+	if [[ -z "$head" ]]; then
+		printf 'INDETERMINATE: PR head could not be verified %s\n' "$phase" >&2
+		return 2
+	fi
+	printf '%s\n' "$head"
+	return 0
+}
+
 read_draft_state() {
 	local pr_number="$1"
 	local repo="$2"
@@ -527,11 +538,7 @@ wait_for_checks() {
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
-	initial_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
-	if [[ -z "$initial_head" ]]; then
-		printf 'INDETERMINATE: PR head could not be verified before required-check observation\n' >&2
-		return 2
-	fi
+	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
 	_GCW_API_ERROR_VISIBLE=0
@@ -589,11 +596,7 @@ wait_for_checks() {
 			return 1
 			;;
 		success | no-required | no-checks)
-			final_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
-			if [[ -z "$final_head" ]]; then
-				printf 'INDETERMINATE: PR head could not be verified after required checks completed\n' >&2
-				return 2
-			fi
+			final_head=$(verified_head_sha "$pr_number" "$repo" 'after required checks completed') || return 2
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
 				initial_head="$final_head"
