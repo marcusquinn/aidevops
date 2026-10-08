@@ -140,7 +140,7 @@ OpenCode access: `@outscraper` subagent only (not enabled for main agents).
 | `cursor` | string | Omit on the first page; pass the previous response's `next_cursor` for the next page |
 | `include_total` | bool | Request the total matching count; default: false; may increase response time |
 | `fields` | list of strings | Select response fields; omit to return all fields |
-| `enrichments` | object/list/string | Optional enrichment names, e.g. `contacts_n_leads`; prefer an object mapping names to parameter objects |
+| `enrichments` | object | Map enrichment names to parameter objects, e.g. `contacts_n_leads`; the Python SDK also accepts a name string or list and normalizes it to this object |
 
 Supported `filters` include `country_code` (string); `states`, `cities`, `types`, and `business_statuses` (lists of strings); `has_website`, `has_phone`, `verified`, and `area_service` (booleans); and `rating` and `reviews` (string expressions). Consult `outscraper/schema/businesses.py` for the full filter schema.
 
