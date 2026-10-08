@@ -894,7 +894,8 @@ _setup_opencode_target_is_safe() {
 	while [[ "$depth" -lt 16 ]]; do
 		[[ -f "$bin" && -x "$bin" ]] || return 1
 		[[ -z "$forbidden" || ! "$bin" -ef "$forbidden" ]] || return 1
-		for seen_bin in "${seen[@]}"; do
+		# Bash 3.2 (macOS /bin/bash) treats an empty "${seen[@]}" as unbound.
+		for seen_bin in ${seen[@]+"${seen[@]}"}; do
 			[[ ! "$bin" -ef "$seen_bin" ]] || return 1
 		done
 		seen+=("$bin")

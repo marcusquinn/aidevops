@@ -186,7 +186,10 @@ class ServiceTests(unittest.TestCase):
             env.pop(key, None)
         command = ["bash", str(Path(SPEC.origin).with_name("opencode-launcher-helper.sh")), "desktop",
                    "--connect-managed", "--dir", args.dir, "--source-binary", args.desktop_binary, "--dry-run"]
-        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=15, check=False)
+        # macOS /bin/bash 3.2 `printf %q` escapes multibyte path bytes one by
+        # one, so the dry-run preview is not always valid UTF-8.
+        result = subprocess.run(command, env=env, capture_output=True, encoding="utf-8",
+                                errors="backslashreplace", timeout=15, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("opencode://connect", result.stdout)
         self.assertIn("%26", result.stdout)

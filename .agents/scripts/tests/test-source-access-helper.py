@@ -99,12 +99,8 @@ class SourceAccessHelperTests(unittest.TestCase):
 
     def test_system_tools_resolve_root_controlled_path_entries_only(self) -> None:
         core = HELPER._SOURCE_CORE
-        system_git = next((candidate for candidate in (
-            os.path.join(directory, "git") for directory in os.environ.get("PATH", "").split(os.pathsep)
-            if os.path.isabs(directory)) if os.path.isfile(candidate) and core._trusted_chain(
-                os.path.realpath(candidate)) and core._trusted_chain(os.path.realpath(os.path.dirname(candidate)))),
-            None)
-        if system_git is None:
+        system_git = core._system_executable("git")
+        if not os.path.exists(system_git):
             self.skipTest("no root-controlled git on PATH")
         caller_bin = self.root / "caller-bin"
         caller_bin.mkdir()

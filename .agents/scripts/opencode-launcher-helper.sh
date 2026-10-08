@@ -1505,10 +1505,11 @@ cmd_tui_launch() {
         print_error "--tabby-shell requires aidevops isolated OpenCode storage"
         return 1
     fi
+    # ${arr[@]+...}: bash 3.2 (macOS /bin/bash) treats an empty array as unbound.
     if ((use_shared_db == 0)); then
-        TABBY_RECOVERY_ARGS=("${opencode_args[@]}")
-        apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir "${opencode_args[@]}" || return 1
-        opencode_args=("${TABBY_RECOVERY_ARGS[@]}")
+        TABBY_RECOVERY_ARGS=(${opencode_args[@]+"${opencode_args[@]}"})
+        apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir ${opencode_args[@]+"${opencode_args[@]}"} || return 1
+        opencode_args=(${TABBY_RECOVERY_ARGS[@]+"${TABBY_RECOVERY_ARGS[@]}"})
     fi
     validate_launch_directory "${launch_dir}" || return 1
     if [[ -z "${session_id}" ]]; then
@@ -1516,7 +1517,7 @@ cmd_tui_launch() {
     fi
 
     if ((use_shared_db == 1)); then
-        run_shared_tui "${launch_dir}" "${dry_run}" "${opencode_args[@]}"
+        run_shared_tui "${launch_dir}" "${dry_run}" ${opencode_args[@]+"${opencode_args[@]}"}
         return $?
     fi
 
@@ -1524,7 +1525,7 @@ cmd_tui_launch() {
         data_dir=$(build_session_data_dir "${session_id}")
     fi
 
-    run_isolated_tui "${launch_dir}" "${data_dir}" "${tabby_shell}" "${dry_run}" "${opencode_args[@]}"
+    run_isolated_tui "${launch_dir}" "${data_dir}" "${tabby_shell}" "${dry_run}" ${opencode_args[@]+"${opencode_args[@]}"}
     return $?
 }
 
