@@ -135,15 +135,13 @@ fi
 [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "base SHA: ${BASE_SHA:0:7}"
 
 # ---------------------------------------------------------------------------
-# Fast-path: doc-only push (no shell or Python files modified) — skip all
-# complexity checks. The metrics (function-complexity, nesting-depth,
-# file-size) only apply to .sh and .py files. Scanning on markdown/TOON/txt-
-# only diffs wastes ~1-3 minutes (3 parallel metric checks) with zero benefit.
+# Fast-path: skip only when no shell, Python or Markdown files changed.
+# Markdown-only pushes still need the file-size ratchet.
 # ---------------------------------------------------------------------------
 _changed_source=$(git diff --name-only "$BASE_SHA" HEAD 2>/dev/null \
-	| grep -E '\.(sh|py)$' || true)
+	| grep -E '\.(sh|py|md)$' || true)
 if [[ -z "$_changed_source" ]]; then
-	_log INFO "doc-only push (no .sh/.py files modified) — complexity checks skipped"
+	_log INFO "no .sh/.py/.md files modified — complexity checks skipped"
 	exit 0
 fi
 [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "source files modified: $(printf '%s\n' "$_changed_source" | wc -l | tr -d ' ') .sh/.py file(s)"
@@ -210,10 +208,14 @@ for _i in "${!METRICS[@]}"; do
 		case "$_metric" in
 		function-complexity) printf '    function-complexity: shell functions must be <= 100 lines\n' >&2 ;;
 		nesting-depth)       printf '    nesting-depth: shell files must have max nesting depth <= 8\n' >&2 ;;
-		file-size)           printf '    file-size: .sh/.py files must be <= 1500 lines\n' >&2 ;;
+		file-size)           printf '    file-size: Markdown must be <= 1000 lines at root / 500 elsewhere; README.md exempt\n' >&2 ;;
 		esac
 		printf '\n' >&2
-		printf '  Remediation: extract logic into smaller functions or separate files.\n' >&2
+		if [[ "$_metric" == "file-size" ]]; then
+			printf '  First make the whole document more concise without losing detail; split or bypass only if that is not enough.\n' >&2
+		else
+			printf '  Remediation: extract logic into smaller functions or separate files.\n' >&2
+		fi
 		printf '  Bypass (with justification): COMPLEXITY_GUARD_DISABLE=1 git push ...\n' >&2
 		printf '  Or:                          git push --no-verify\n' >&2
 		printf '\n' >&2
