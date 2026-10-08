@@ -1532,15 +1532,37 @@ cmd_verify_pr_checkpoint_target() {
 	return 1
 }
 
+#######################################
+# Emit one allowlisted lease-transition denial reason on stderr (GH#34057).
+# Stdout stays reserved for machine-readable output, exit codes are owned by
+# the caller, and no token, nonce, login or API text is ever included.
+# Args: $1 = reason
+#######################################
+_transition_deny() {
+	local reason="$1"
+	case "$reason" in
+	invalid_phase | invalid_arguments | identity_unavailable | claims_unavailable | \
+		lease_unmatched | claim_malformed | owner_mismatch | device_mismatch | \
+		session_mismatch | phase_disallowed | mutation_failed) ;;
+	*) reason="unclassified" ;;
+	esac
+	printf 'DISPATCH_LEASE_TRANSITION_DENIED reason=%s\n' "$reason" >&2
+	return 0
+}
+
 cmd_transition() {
 	local phase="${1:-}" issue_number="${2:-}" repo_slug="${3:-}" lease_token="${4:-}" session_key="${5:-}"
 	local ttl="${6:-}"
 	case "$phase" in "$LEASE_PHASE_PRELAUNCH" | ready | terminal) ;; *)
 		echo "Error: transition phase must be prelaunch, ready, or terminal" >&2
+		_transition_deny invalid_phase
 		return 1
 		;;
 	esac
-	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$lease_token" ]] || return 1
+	if [[ ! "$issue_number" =~ ^[0-9]+$ || -z "$repo_slug" || -z "$lease_token" ]]; then
+		_transition_deny invalid_arguments
+		return 1
+	fi
 	if [[ ! "$ttl" =~ ^[0-9]+$ ]]; then
 		if [[ "$phase" == "$LEASE_PHASE_PRELAUNCH" ]]; then
 			ttl="$DISPATCH_CLAIM_ORPHAN_GRACE"
@@ -1552,20 +1574,55 @@ cmd_transition() {
 	# Runtime overrides quarantine peer claims only. Resolve and pass this runner
 	# before filtering so a stale self-ignore entry cannot hide the lease that
 	# this same authenticated runner is authorized to transition.
-	current_login=$(_resolve_runner "") || return 1
-	active_claims=$(_fetch_claims "$issue_number" "$repo_slug" "$current_login") || return 1
-	claim_record=$(printf '%s' "$active_claims" | jq -c --arg token "$lease_token" '[.[] | select(.lease_token == $token)] | last // empty' 2>/dev/null) || claim_record=""
+	# GH#34057: each deny below emits one allowlisted reason on stderr via
+	# _transition_deny; exit codes and decisions are unchanged.
+	if ! current_login=$(_resolve_runner "") || [[ -z "$current_login" ]]; then
+		_transition_deny identity_unavailable
+		return 1
+	fi
+	if ! active_claims=$(_fetch_claims "$issue_number" "$repo_slug" "$current_login"); then
+		_transition_deny claims_unavailable
+		return 1
+	fi
+	claim_record=$(printf '%s' "$active_claims" | jq -c --arg token "$lease_token" '[.[] | select(.lease_token == $token)] | last // empty' 2>/dev/null) || {
+		_transition_deny claim_malformed
+		return 1
+	}
+	# Active claims exclude expired, released and terminal generations, so an
+	# absent record is only "unmatched"; it is never asserted to be expired.
+	if [[ -z "$claim_record" ]]; then
+		_transition_deny lease_unmatched
+		return 1
+	fi
 	current_phase=$(printf '%s' "$claim_record" | jq -r '.lease_phase // ""' 2>/dev/null) || current_phase=""
-	[[ -n "$current_phase" ]] || return 1
-	current_expires_at=$(printf '%s' "$claim_record" | jq -r '.lease_expires_at // 0' 2>/dev/null) || return 1
-	[[ "$current_expires_at" =~ ^[0-9]+$ ]] || return 1
-	claim_author=$(printf '%s' "$claim_record" | jq -r '.claim_author // ""') || return 1
-	claim_device=$(printf '%s' "$claim_record" | jq -r '.device // ""') || return 1
-	claim_session=$(printf '%s' "$claim_record" | jq -r '.session // ""') || return 1
+	if [[ -z "$current_phase" ]]; then
+		_transition_deny claim_malformed
+		return 1
+	fi
+	local claim_fields_ok=1
+	current_expires_at=$(printf '%s' "$claim_record" | jq -r '.lease_expires_at // 0' 2>/dev/null) || claim_fields_ok=0
+	claim_author=$(printf '%s' "$claim_record" | jq -r '.claim_author // ""' 2>/dev/null) || claim_fields_ok=0
+	claim_device=$(printf '%s' "$claim_record" | jq -r '.device // ""' 2>/dev/null) || claim_fields_ok=0
+	claim_session=$(printf '%s' "$claim_record" | jq -r '.session // ""' 2>/dev/null) || claim_fields_ok=0
+	if [[ "$claim_fields_ok" -ne 1 || ! "$current_expires_at" =~ ^[0-9]+$ || -z "$claim_author" ]]; then
+		_transition_deny claim_malformed
+		return 1
+	fi
 	current_device=$(_resolve_device_id)
-	[[ -n "$claim_author" && "$current_login" == "$claim_author" ]] || return 1
-	[[ "$current_device" == "$claim_device" && "${session_key:-issue-${issue_number}}" == "$claim_session" ]] || return 1
+	if [[ "$current_login" != "$claim_author" ]]; then
+		_transition_deny owner_mismatch
+		return 1
+	fi
+	if [[ "$current_device" != "$claim_device" ]]; then
+		_transition_deny device_mismatch
+		return 1
+	fi
+	if [[ "${session_key:-issue-${issue_number}}" != "$claim_session" ]]; then
+		_transition_deny session_mismatch
+		return 1
+	fi
 	if [[ ("$phase" == "$LEASE_PHASE_PRELAUNCH" || "$phase" == "ready") && "$current_phase" != "$LEASE_PHASE_PRELAUNCH" ]]; then
+		_transition_deny phase_disallowed
 		return 1
 	fi
 	local expires_at="0" now_epoch="" body="" attempt_id="${AIDEVOPS_ATTEMPT_ID:-unknown}"
@@ -1581,7 +1638,11 @@ cmd_transition() {
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_device_id) session=${session_key:-issue-${issue_number}} expires_at=${expires_at} ts=$(_now_utc) attempt_id=${attempt_id}
 <!-- ops:end -->"
-	gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" --method POST --field body="$body" >/dev/null 2>&1 || return 1
+	# The POST outcome is unknown on failure; it is reported, never retried.
+	if ! gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" --method POST --field body="$body" >/dev/null 2>&1; then
+		_transition_deny mutation_failed
+		return 1
+	fi
 	return 0
 }
 
