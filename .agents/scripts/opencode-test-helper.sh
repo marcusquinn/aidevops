@@ -15,6 +15,7 @@
 #   opencode-test-helper.sh serve [port]
 #   opencode-test-helper.sh attach <message> [agent] [port]
 #   opencode-test-helper.sh run <message> [--agent <agent>]
+#   opencode-test-helper.sh tui-capture --session <id> --out <file> [--expect <text>]
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -35,6 +36,11 @@ Commands:
   serve [port]                  Start persistent server (default: 4096)
   attach <message> [agent]      Run against persistent server
   run <message> [--agent name]  Run single command (passthrough to opencode)
+  tui-capture --session ID --out FILE [options]
+                               Capture TUI text; repeat --expect TEXT to assert
+                               Options: --cwd DIR, --data-dir DIR, --seconds 20,
+                               --tui-config FILE, --cols 200, --rows 50,
+                               --binary opencode (opencode2: best effort)
   
 Examples:
   opencode-test-helper.sh test-mcp dataforseo SEO
@@ -160,11 +166,75 @@ run_passthrough() {
     return 0
 }
 
+# Capture an existing session's render without sending interactive input.
+tui_capture() {
+    local cwd=""
+    local data_dir=""
+    local resolved_dir=""
+    local base_name=""
+    local checksum=""
+    local args=("$@")
+    cwd=$(pwd -P) || return 1
+    while [[ $# -gt 0 ]]; do
+        local option="$1"
+        local value="${2:-}"
+        case "$option" in
+            --cwd | --data-dir)
+                if [[ $# -lt 2 || -z "$value" ]]; then
+                    print_error "Missing value for $option"
+                    return 1
+                fi
+                if [[ "$option" == --cwd ]]; then
+                    cwd="$value"
+                else
+                    data_dir="$value"
+                fi
+                shift 2
+                ;;
+            --cwd=*)
+                cwd=${option#*=}
+                shift
+                ;;
+            --data-dir=*)
+                data_dir=${option#*=}
+                shift
+                ;;
+            --session | --out | --seconds | --tui-config | --cols | --rows | --binary | --expect)
+                # Skip values so an expectation such as '--cwd' is not parsed
+                # as a launcher-directory option. Python validates all flags.
+                if [[ $# -lt 2 ]]; then
+                    print_error "Missing value for $option"
+                    return 1
+                fi
+                shift 2
+                ;;
+            *) shift ;;
+        esac
+    done
+    resolved_dir=$(cd "$cwd" && pwd -P) || return 1
+    if [[ -z "$data_dir" ]]; then
+        # Mirror build_project_session_id/sql_escape_label in the launcher;
+        # sourcing that executable helper would invoke its main().
+        base_name=$(basename "$resolved_dir")
+        base_name=${base_name//[^A-Za-z0-9._-]/-}
+        base_name=${base_name#-}
+        base_name=${base_name%-}
+        checksum=$(printf '%s' "$resolved_dir" | cksum)
+        checksum=${checksum%% *}
+        data_dir="${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}/opencode-interactive/project-${base_name:-session}-${checksum}"
+    fi
+    python3 "${SCRIPT_DIR}/opencode-tui-capture.py" --cwd "$resolved_dir" --data-dir "$data_dir" "${args[@]}" || return 1
+    return 0
+}
+
 # Main
 main() {
-    check_opencode
-    
     local command="${1:-help}"
+    # tui-capture validates its selected binary, allowing --binary opencode2.
+    case "$command" in
+        tui-capture | help | --help | -h) ;;
+        *) check_opencode ;;
+    esac
     
     case "$command" in
         test-mcp)
@@ -188,6 +258,10 @@ main() {
         run)
             shift
             run_passthrough "$@"
+            ;;
+        tui-capture)
+            shift
+            tui_capture "$@"
             ;;
         help|--help|-h)
             show_help
