@@ -177,7 +177,8 @@ WAH_METRIC_DETAILS_JQ=$WAH_SESSION_OUTCOME_JQ$WAH_FAILURE_FAMILY_JQ'
 			premature_exit: ($failures | map(select(.result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion")) | length),
 			local_runtime_error: ($failures | map(select(.result != $local_kill_result and .launch_failure_cause != $local_kill_result and (.failure_reason == "local_error" or .launch_failure_cause == "local_runtime_error" or (.runtime_error_type // "") != ""))) | length),
 			local_kill: ($failures | map(select(.result == $local_kill_result or .launch_failure_cause == $local_kill_result or (.kill_reason != null and .kill_reason != "unknown" and .kill_reason != "natural"))) | length),
-			stall_hard_killed: ($failures | map(select(.result == $watchdog_killed_result or .launch_failure_cause == "stall_hard_killed" or .kill_reason == "hard_kill_stall")) | length)
+			stall_hard_killed: ($failures | map(select((.result == $watchdog_killed_result or .launch_failure_cause == "stall_hard_killed" or .kill_reason == "hard_kill_stall") and .kill_reason != "hard_kill_cap_active" and .launch_failure_cause != "elapsed_cap_while_active")) | length),
+			elapsed_cap_while_active: ($failures | map(select(.launch_failure_cause == "elapsed_cap_while_active" or .kill_reason == "hard_kill_cap_active")) | length)
 		},
 		timing_ms: {
 			samples: ($durations | length),

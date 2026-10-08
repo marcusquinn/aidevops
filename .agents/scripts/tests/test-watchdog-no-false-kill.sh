@@ -753,6 +753,65 @@ assert_not_contains "26f. inline watchdog no longer hard-codes no_output_stall" 
 	"$lib_source"
 
 #######################################
+# Test 27: GH#34068 — elapsed cap after recent liveness deferral is classified
+# hard_kill_cap_active; cap timing, sentinel and exit routing are unchanged.
+# (No-deferral cap kills stay hard_kill_stall:
+#  test-watchdog-hard-kill-continuous-output.sh.)
+#######################################
+assert_equals "27a. cap-active reason maps to hard_kill_cap_active" \
+	"hard_kill_cap_active" "$(_worker_kill_reason_class 'hard_kill_cap_active: total elapsed')"
+
+cap_tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t watchdog-cap-active)
+cap_output="${cap_tmp_dir}/worker.out"
+cap_exit="${cap_tmp_dir}/worker.exit"
+cap_log="${cap_tmp_dir}/lifecycle.log"
+printf 'waiting for CI checks to finish before merge\n' >"$cap_output"
+
+bash -c 'while :; do sleep 1; done' >/dev/null 2>&1 &
+cap_worker_pid=$!
+WORKER_LIFECYCLE_LOG="$cap_log" \
+	"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
+	--output-file "$cap_output" \
+	--worker-pid "$cap_worker_pid" \
+	--exit-code-file "$cap_exit" \
+	--stall-timeout 1 \
+	--poll-interval 1 \
+	--hard-kill-seconds 4 >/dev/null 2>&1 &
+cap_watchdog_pid=$!
+wait "$cap_watchdog_pid" 2>/dev/null || true
+
+cap_kill_reason=$(cat "${cap_exit}.kill_reason" 2>/dev/null || true)
+assert_equals "27b. cap kill after CI-wait deferral persists hard_kill_cap_active" \
+	"hard_kill_cap_active" "$cap_kill_reason"
+if [[ -f "${cap_exit}.watchdog_stall_killed" ]]; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 27c. cap-active kill keeps the hard-kill sentinel (exit 79 routing unchanged)"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 27c. cap-active kill did not write the hard-kill sentinel"
+fi
+cap_log_text=$(cat "$cap_log" 2>/dev/null || true)
+assert_contains "27d. lifecycle line reports hard_kill_cap_active" \
+	"reason=hard_kill_cap_active" "$cap_log_text"
+assert_contains "27e. lifecycle line reports the last deferral reason" \
+	"last_deferral_reason=ci_wait" "$cap_log_text"
+
+pkill -P "$cap_worker_pid" 2>/dev/null || true
+kill "$cap_worker_pid" 2>/dev/null || true
+wait "$cap_worker_pid" 2>/dev/null || true
+rm -rf "$cap_tmp_dir"
+
+# Downstream: cap-active kills get their own launch_failure_cause.
+eval "$(sed -n '/^_derive_worker_failure_evidence() {/,/^}/p' "${SCRIPT_DIR}/headless-runtime-helper.sh")"
+assert_equals "27f. cap-active kill maps to elapsed_cap_while_active" \
+	"elapsed_cap_while_active	redispatch_worker" \
+	"$(_derive_worker_failure_evidence watchdog_stall_killed 79 1 hard_kill_cap_active watchdog_stall_killed)"
+assert_equals "27g. stall hard kill still maps to stall_hard_killed" \
+	"stall_hard_killed	redispatch_worker" \
+	"$(_derive_worker_failure_evidence watchdog_stall_killed 79 1 hard_kill_stall watchdog_stall_killed)"
+
+#######################################
 # Summary
 #######################################
 echo ""

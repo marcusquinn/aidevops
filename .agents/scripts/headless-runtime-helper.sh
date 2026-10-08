@@ -528,7 +528,12 @@ _derive_worker_failure_evidence() {
 		next_action="resume_existing_session"
 		;;
 	watchdog_stall_killed)
-		launch_failure_cause="stall_hard_killed"
+		# GH#34068: a cap kill after recent liveness evidence is not a stall.
+		if [[ "$kill_reason" == "hard_kill_cap_active" ]]; then
+			launch_failure_cause="elapsed_cap_while_active"
+		else
+			launch_failure_cause="stall_hard_killed"
+		fi
 		next_action="redispatch_worker"
 		;;
 	rate_limit | rate_limit_fast)
