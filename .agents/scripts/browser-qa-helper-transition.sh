@@ -13,7 +13,8 @@ import { randomUUID } from 'node:crypto';
 const [base, from, selector, hold, holdMsArg, atArg, measureFile, storageState, screencastArg, format, outputDir] = process.argv.slice(2);
 const holdMs = Number(holdMsArg);
 const at = atArg.split(',').map(Number);
-if (!Number.isInteger(holdMs) || holdMs < 1 || holdMs > 60000 ||
+if (!/^\d+$/.test(holdMsArg) || !/^\d+(,\d+)*$/.test(atArg) ||
+    !Number.isInteger(holdMs) || holdMs < 1 || holdMs > 60000 ||
     at.length > 50 || at.some(ms => !Number.isInteger(ms) || ms < 0 || ms >= holdMs) ||
     new Set(at).size !== at.length) throw new Error('Use unique --at-ms integers below --hold-ms (1–60000), at most 50');
 const url = new URL(from, base);
@@ -29,7 +30,7 @@ const report = { url: url.href, hold, holdMs, documentRequests: [], commits: [],
 const prefix = `AIDEVOPS_TRANSITION_${randomUUID()}:`;
 const started = Date.now();
 let clickedAt = null, armed = false, held = false, releaseTimer;
-let holdStarted = null, releasedAt = null, cdp;
+let holdStarted = null, releasedAt = null, cdp, framesDuringHold = 0;
 const writes = [];
 try {
   if (outputDir) await mkdir(outputDir, { recursive: true, mode: 0o700 });
@@ -44,10 +45,11 @@ try {
       const clickTime = performance.now();
       console.log(prefix + JSON.stringify({ kind: 'click', timestamp: Date.now() }));
       for (const requestedMs of at) setTimeout(async () => {
-        const result = { kind: 'measurement', requestedMs, timeMs: performance.now() - clickTime,
+        const result = { kind: 'measurement', requestedMs, elapsedMs: performance.now() - clickTime,
           timestamp: Date.now(), url: location.href };
         try { result.data = await measure(); }
         catch (error) { result.error = String(error.message || error); }
+        result.completedTimestamp = Date.now();
         try { console.log(prefix + JSON.stringify(result)); }
         catch (error) { console.log(prefix + JSON.stringify({ ...result, data: null, error: String(error) })); }
       }, requestedMs);
@@ -93,10 +95,12 @@ try {
     cdp.on('Page.screencastFrame', frame => {
       const timestamp = Date.now();
       void cdp.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => {});
+      if (holdStarted !== null && releasedAt === null) framesDuringHold++;
       if (!armed || releasedAt !== null || report.frames.length >= 500) return;
       const file = path.join(outputDir, `frame-${String(report.frames.length).padStart(4, '0')}.jpg`);
       report.frames.push({ timestamp, cdpTimestamp: frame.metadata.timestamp, file });
-      writes.push(writeFile(file, Buffer.from(frame.data, 'base64'), { mode: 0o600 }));
+      writes.push(writeFile(file, Buffer.from(frame.data, 'base64'), { mode: 0o600 })
+        .catch(error => { report.errors.push(`Frame write failed: ${error.message}`); }));
     });
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: 1568, maxHeight: 1568, everyNthFrame: 1 });
   }
@@ -114,7 +118,7 @@ try {
   for (const ms of at) {
     const measurement = report.measurements.find(item => item.requestedMs === ms);
     if (!measurement) report.errors.push(`Missing source-page measurement at ${ms}ms`);
-    else if (measurement.error || measurement.timestamp < holdStarted || measurement.timestamp >= releasedAt)
+    else if (measurement.error || measurement.timestamp < holdStarted || measurement.completedTimestamp >= releasedAt)
       report.errors.push(`Measurement at ${ms}ms failed or occurred outside the hold`);
   }
   if (!report.commits.some(commit => releasedAt !== null && commit.timestamp >= releasedAt && commit.url !== url.href))
@@ -123,7 +127,7 @@ try {
   for (const collection of [report.documentRequests, report.commits, report.measurements, report.frames])
     for (const event of collection) event.timeMs = event.timestamp - origin;
   for (const event of [report.heldRequest, report.release]) if (event) event.timeMs = event.timestamp - origin;
-  report.framesDuringHold = report.frames.filter(frame => frame.timestamp >= holdStarted && frame.timestamp < releasedAt).length;
+  report.framesDuringHold = framesDuringHold;
   report.frameLimit = 500;
   report.frameLimitReached = report.frames.length === 500;
   report.ok = report.errors.length === 0;
@@ -169,7 +173,10 @@ cmd_transition() {
 		--storage-state) storage_state="$value" ;;
 		--format) format="$value" ;;
 		--output-dir) output_dir="$value" ;;
-		*) log_error "Unknown transition option: ${option}"; return 1 ;;
+		*)
+			log_error "Unknown transition option: ${option}"
+			return 1
+			;;
 		esac
 		shift 2
 	done
