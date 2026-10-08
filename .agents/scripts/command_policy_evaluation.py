@@ -257,9 +257,18 @@ def _run_network_guard(
     guard_arguments: list[str],
     timeout: int,
 ) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
+    # Use only fixed system locations, not worker-controlled PATH entries.
+    bash_binary = next(
+        (
+            candidate
+            for candidate in ("/run/current-system/sw/bin/bash", "/bin/bash", "/usr/bin/bash")
+            if Path(candidate).is_file() and os.access(candidate, os.X_OK)
+        ),
+        "/bin/bash",
+    )
     try:
-        result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
-            ["/bin/bash", str(helper), "check-argv", json.dumps(argv), *guard_arguments],
+        result = subprocess.run(  # nosec B603 -- fixed system Bash path; helper is policy-selected and verified as a file.
+            [bash_binary, str(helper), "check-argv", json.dumps(argv), *guard_arguments],
             capture_output=True,
             text=True,
             timeout=timeout,

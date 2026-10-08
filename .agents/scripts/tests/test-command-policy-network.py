@@ -13,10 +13,50 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from command_policy_evaluation import _run_network_guard
 from command_policy_network import _resolve_git_remote, _run_git_query
 
 
 class GitQueryTests(unittest.TestCase):
+    def test_network_guard_uses_executable_system_bash_across_linux_layouts(self):
+        for binary in ("/run/current-system/sw/bin/bash", "/bin/bash", "/usr/bin/bash"):
+            with self.subTest(binary=binary), patch(
+                "command_policy_evaluation.Path.is_file", return_value=True
+            ), patch(
+                "command_policy_evaluation.os.access",
+                side_effect=lambda candidate, mode: candidate == binary and mode == os.X_OK,
+            ), patch("command_policy_evaluation.subprocess.run") as run:
+                run.return_value = subprocess.CompletedProcess([], 0, "")
+                result, error = _run_network_guard(["git", "fetch", "origin"], Path("/guard"), [], 10)
+                self.assertIsNone(error)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(run.call_args.args[0][0], binary)
+                self.assertEqual(run.call_args.args[0][1:3], ["/guard", "check-argv"])
+                self.assertEqual(run.call_args.kwargs["timeout"], 10)
+
+    def test_network_guard_prefers_nix_system_bash(self):
+        with patch("command_policy_evaluation.Path.is_file", return_value=True), patch(
+            "command_policy_evaluation.os.access", return_value=True
+        ), patch("command_policy_evaluation.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "")
+            _run_network_guard(["git", "fetch", "origin"], Path("/guard"), [], 10)
+            self.assertEqual(run.call_args.args[0][0], "/run/current-system/sw/bin/bash")
+
+    def test_network_guard_missing_bash_and_timeout_fail_closed_without_retry(self):
+        for exception, rule in (
+            (FileNotFoundError("Bash unavailable"), "network.helper-error"),
+            (subprocess.TimeoutExpired("bash", 10), "network.helper-timeout"),
+        ):
+            with self.subTest(rule=rule), patch(
+                "command_policy_evaluation.Path.is_file", return_value=False
+            ), patch("command_policy_evaluation.subprocess.run", side_effect=exception) as run:
+                result, error = _run_network_guard(["git", "fetch", "origin"], Path("/guard"), [], 10)
+                self.assertIsNone(result)
+                self.assertEqual(error["decision"], "forbid")
+                self.assertEqual(error["rule_id"], rule)
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_args.args[0][0], "/bin/bash")
+
     def test_nix_system_profile_precedes_sandbox_usr_alias(self):
         with patch("command_policy_git_query.Path.is_file", return_value=True), patch(
             "command_policy_git_query.os.access", return_value=True
