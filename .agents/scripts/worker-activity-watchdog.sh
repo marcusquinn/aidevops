@@ -417,12 +417,14 @@ _get_output_size() {
 }
 
 #######################################
-# Return whether the output file contains a known rate-limit/provider-failure marker.
-# Returns: 0 if a marker is present, 1 otherwise.
+# Return whether the latest output records a trusted provider failure.
+# GH#34067: delegates to the trusted classifier so tool output, docs or
+# source text mentioning "rate limit" cannot trigger a provider kill.
+# Returns: 0 if a trusted provider failure is present, 1 otherwise.
 #######################################
 _output_has_provider_rate_limit() {
-	[[ -f "$OUTPUT_FILE" ]] || return 1
-	grep -Eqi 'rate[ -]?limit|too many requests|http[[:space:]]*429|status[=: ][[:space:]]*429|quota exceeded|overloaded_error|provider.*(failed|unavailable)' "$OUTPUT_FILE" 2>/dev/null
+	_worker_output_has_fresh_provider_failure "$OUTPUT_FILE"
+	return $?
 }
 
 #######################################
@@ -502,15 +504,10 @@ _kill_worker() {
 	local kill_kind="${2:-}"
 
 	# t3056 / GH#21781: Classify the kill reason for structured telemetry.
-	# Maps the human-readable reason string to a machine-readable class.
-	local reason_class="unknown"
-	case "$reason" in
-	phase1:*) reason_class="phase1_zero_output" ;;
-	hard_kill:*) reason_class="hard_kill_stall" ;;
-	provider_rate_limit:*) reason_class="provider_rate_limit" ;;
-	stall:*) reason_class="no_output_stall" ;;
-	*) reason_class="other" ;;
-	esac
+	# GH#34067: the same class is persisted below, so telemetry and the
+	# .kill_reason sentinel cannot disagree.
+	local reason_class=""
+	reason_class=$(_worker_kill_reason_class "$reason")
 
 	# t3056: Emit structured lifecycle line for kill-reason telemetry.
 	# Format matches the t3056 spec so aggregation scripts can classify kills.
@@ -532,7 +529,7 @@ _kill_worker() {
 	# subshell may overwrite exit_code_file with its own exit code
 	# (race condition). The sentinel is authoritative.
 	touch "${EXIT_CODE_FILE}.watchdog_killed"
-	printf '%s\n' "no_output_stall" >"${EXIT_CODE_FILE}.kill_reason" 2>/dev/null || true
+	printf '%s\n' "$reason_class" >"${EXIT_CODE_FILE}.kill_reason" 2>/dev/null || true
 
 	# t2956 / Issue #21231: Hard-kill sentinel — distinguishes proactive
 	# elapsed-time kills from passive no-output stall kills. The helper

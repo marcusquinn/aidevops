@@ -283,22 +283,29 @@ done
 #######################################
 # Test 9: kill_reason classification covers all call sites
 #######################################
-# Verify that each kill reason class is mapped in _kill_worker
+# Verify that each kill reason class is mapped for _kill_worker. GH#34067
+# moved the mapping into the shared _worker_kill_reason_class helper.
+kill_class_source="${watchdog_source}
+$(< "${SCRIPT_DIR}/worker-lifecycle-common.sh")"
 assert_contains \
 	"9a. kill_reason class: phase1_zero_output mapped" \
 	"phase1_zero_output" \
-	"$watchdog_source"
+	"$kill_class_source"
 assert_contains \
 	"9b. kill_reason class: hard_kill_stall mapped" \
 	"hard_kill_stall" \
-	"$watchdog_source"
+	"$kill_class_source"
 assert_contains \
 	"9c. kill_reason class: no_output_stall mapped" \
 	"no_output_stall" \
-	"$watchdog_source"
+	"$kill_class_source"
 assert_contains \
 	"9d. kill_reason class: provider_rate_limit mapped" \
 	"provider_rate_limit" \
+	"$kill_class_source"
+assert_contains \
+	"9e. _kill_worker uses the shared kill-reason mapper" \
+	"_worker_kill_reason_class" \
 	"$watchdog_source"
 
 #######################################
@@ -662,6 +669,88 @@ else
 	TESTS_RUN=$((TESTS_RUN + 1))
 	echo "${TEST_GREEN}PASS${TEST_NC}: 24. Network-active runtime test skipped — python3 plus lsof/ss required"
 fi
+
+#######################################
+# Test 25: GH#34067 — provider-failure kill requires trusted, fresh evidence
+#######################################
+provider_tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t watchdog-provider)
+provider_output="${provider_tmp_dir}/worker.out"
+
+printf '%s\n' 'grep -n "rate limit" docs/provider.md' \
+	'Tool result: retry when the provider failed or returns too many requests (HTTP 429).' >"$provider_output"
+if _worker_output_has_fresh_provider_failure "$provider_output"; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 25a. Benign tool/doc text about rate limits was treated as a provider failure"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 25a. Benign tool/doc text about rate limits is not provider evidence"
+fi
+
+printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"statusCode":429,"message":"Too Many Requests"}}}' >"$provider_output"
+if _worker_output_has_fresh_provider_failure "$provider_output"; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 25b. Structured APIError 429 is trusted provider evidence"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 25b. Structured APIError 429 was not detected"
+fi
+
+printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"statusCode":503,"message":"Service Unavailable"}}}' >"$provider_output"
+if _worker_output_has_fresh_provider_failure "$provider_output"; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 25c. Structured APIError 5xx is trusted provider evidence"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 25c. Structured APIError 5xx was not detected"
+fi
+
+printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"statusCode":401,"message":"Unauthorized"}}}' >"$provider_output"
+if _worker_output_has_fresh_provider_failure "$provider_output"; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 25d. Auth failure was misclassified as a provider rate-limit kill"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 25d. Auth failure is not a provider rate-limit kill"
+fi
+
+printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"statusCode":429,"message":"Too Many Requests"}}}' >"$provider_output"
+for _recovered_line in $(seq 1 60); do
+	printf '{"type":"text","part":{"text":"recovered work line %s"}}\n' "$_recovered_line" >>"$provider_output"
+done
+if _worker_output_has_fresh_provider_failure "$provider_output"; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 25e. Recovered (stale) provider error still justified a kill"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 25e. Recovered provider error outside the output tail is ignored"
+fi
+rm -rf "$provider_tmp_dir"
+
+#######################################
+# Test 26: GH#34067 — persisted kill_reason matches the kill path
+#######################################
+assert_equals "26a. phase1 kill persists phase1_zero_output" \
+	"phase1_zero_output" "$(_worker_kill_reason_class 'phase1: zero output in 180s')"
+assert_equals "26b. provider kill persists provider_rate_limit" \
+	"provider_rate_limit" "$(_worker_kill_reason_class 'provider_rate_limit: marker visible')"
+assert_equals "26c. hard kill persists hard_kill_stall" \
+	"hard_kill_stall" "$(_worker_kill_reason_class 'hard_kill: total elapsed')"
+assert_equals "26d. stall kill persists no_output_stall" \
+	"no_output_stall" "$(_worker_kill_reason_class 'stall: no output growth')"
+# shellcheck disable=SC2016  # Literal string for grep match
+assert_contains "26e. standalone watchdog persists computed reason_class" \
+	'printf '"'"'%s\n'"'"' "$reason_class" >"${EXIT_CODE_FILE}.kill_reason"' \
+	"$watchdog_source"
+lib_source=$(< "${SCRIPT_DIR}/headless-runtime-lib.sh")
+# shellcheck disable=SC2016  # Literal string for grep match
+assert_not_contains "26f. inline watchdog no longer hard-codes no_output_stall" \
+	'"no_output_stall" >"${exit_code_file}.kill_reason"' \
+	"$lib_source"
 
 #######################################
 # Summary

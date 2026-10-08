@@ -1171,13 +1171,15 @@ append_worker_headless_contract() {
 # --- Section 8: Activity Watchdog (inline fallback) ---
 
 #######################################
-# Return whether output contains a known provider/rate-limit marker.
-# Returns: 0 if a marker is present, 1 otherwise.
+# Return whether the latest output records a trusted provider failure.
+# GH#34067: delegates to the trusted classifier shared with the standalone
+# watchdog; free text mentioning "rate limit" is not provider evidence.
+# Returns: 0 if a trusted provider failure is present, 1 otherwise.
 #######################################
 _activity_output_has_provider_rate_limit() {
 	local output_file="$1"
-	[[ -f "$output_file" ]] || return 1
-	grep -Eqi 'rate[ -]?limit|too many requests|http[[:space:]]*429|status[=: ][[:space:]]*429|quota exceeded|overloaded_error|provider.*(failed|unavailable)' "$output_file" 2>/dev/null
+	_worker_output_has_fresh_provider_failure "$output_file"
+	return $?
 }
 
 #######################################
@@ -1373,7 +1375,8 @@ _watchdog_kill() {
 	# exit_code_file with its own exit code (race condition). The marker
 	# file survives because only the watchdog writes to it.
 	touch "${exit_code_file}.watchdog_killed"
-	printf '%s\n' "no_output_stall" >"${exit_code_file}.kill_reason" 2>/dev/null || true
+	# GH#34067: persist the actual kill path, not a hard-coded stall class.
+	printf '%s\n' "$(_worker_kill_reason_class "$reason")" >"${exit_code_file}.kill_reason" 2>/dev/null || true
 	# t2956 / Issue #21231: Hard-kill sentinel for proactive elapsed-time
 	# kills. Helper reads this and returns 79 instead of 78 — no continuation,
 	# slot freed for re-dispatch. The .watchdog_killed sentinel is still
