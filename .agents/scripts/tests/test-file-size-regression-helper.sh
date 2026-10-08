@@ -171,8 +171,8 @@ test_baseline_equals_head() {
 	mkdir -p "$_base_dir" "$_head_dir"
 
 	# Both base and head have the same large file
-	make_doc_file "$_base_dir/big.md" 501
-	make_doc_file "$_head_dir/big.md" 501
+	make_doc_file "$_base_dir/big.md" 1001
+	make_doc_file "$_head_dir/big.md" 1001
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -201,11 +201,11 @@ test_head_greater_than_base() {
 	mkdir -p "$_base_dir" "$_head_dir"
 
 	# Base: one large file
-	make_doc_file "$_base_dir/existing.md" 501
+	make_doc_file "$_base_dir/existing.md" 1001
 
 	# Head: same file plus a new oversized file
-	make_doc_file "$_head_dir/existing.md" 501
-	make_doc_file "$_head_dir/new_giant.md" 600
+	make_doc_file "$_head_dir/existing.md" 1001
+	make_doc_file "$_head_dir/new_giant.md" 1100
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -227,8 +227,8 @@ test_head_greater_than_base() {
 # ===========================================================================
 # Test 4: new-file-over-limit — net count unchanged but new file added → exit 1
 #
-# Scenario: base has file A (>500 lines). Head removes A but adds file B
-# (>500 lines). Net count: same (1). Still a regression because B is a new
+# Scenario: base has root file A (>1000 lines). Head removes A but adds file B
+# (>1000 lines). Net count: same (1). Still a regression because B is a new
 # oversized file that wasn't in base. The ratchet must catch this to prevent
 # gaming the gate by cycling oversized files.
 # ===========================================================================
@@ -239,10 +239,10 @@ test_new_file_over_limit_net_unchanged() {
 	mkdir -p "$_base_dir" "$_head_dir"
 
 	# Base: one large Markdown file (file_a.md)
-	make_doc_file "$_base_dir/file_a.md" 501
+	make_doc_file "$_base_dir/file_a.md" 1001
 
-	# Head: file_a.md removed, file_b.md added (different path, both >500 lines)
-	make_doc_file "$_head_dir/file_b.md" 501
+	# Head: file_a.md removed, file_b.md added (different path, both >1000 lines)
+	make_doc_file "$_head_dir/file_b.md" 1001
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -276,9 +276,9 @@ test_docs_only_skip() {
 	mkdir -p "$_base_dir" "$_head_dir"
 
 	# Head has more violations than base — would normally fail
-	make_doc_file "$_base_dir/existing.md" 501
-	make_doc_file "$_head_dir/existing.md" 501
-	make_doc_file "$_head_dir/also_big.md" 600
+	make_doc_file "$_base_dir/existing.md" 1001
+	make_doc_file "$_head_dir/existing.md" 1001
+	make_doc_file "$_head_dir/also_big.md" 1100
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"

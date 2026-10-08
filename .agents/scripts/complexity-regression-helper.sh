@@ -589,7 +589,7 @@ metric_unit() {
 	case "$_metric" in
 	function-complexity) printf 'function(s) >100 lines' ;;
 	nesting-depth) printf 'file(s) with nesting depth >8' ;;
-	file-size) printf 'non-README Markdown file(s) >1000 lines at root / >500 elsewhere. First make the whole document more concise without losing detail; split or bypass only if that is not enough' ;;
+	file-size) printf 'non-README Markdown file(s) >1000 lines at root / >500 elsewhere' ;;
 	bash32-compat) printf 'bash 3.2-incompatible construct(s)' ;;
 	*) printf 'violation(s)' ;;
 	esac
@@ -813,6 +813,9 @@ write_report() {
 				printf '\n</details>\n\n'
 			fi
 
+			if [ "$_metric" = "file-size" ]; then
+				printf '> First make the whole document more concise without losing detail; split or bypass only if that is not enough.\n'
+			fi
 			# shellcheck disable=SC2016
 			printf '> To override (with justification), add the `complexity-bump-ok` label to this PR\n'
 			# shellcheck disable=SC2016
@@ -1083,6 +1086,9 @@ _check_regression() {
 
 	if [ "$_new_count" -gt 0 ] && [ "$_allow_increase" -eq 0 ]; then
 		log "[$_metric] REGRESSION: $_new_count new violation(s)"
+		if [ "$_metric" = "file-size" ]; then
+			log "Markdown limits: root 1000 / elsewhere 500; README.md exempt. First make the whole document more concise without losing detail; split or bypass only if that is not enough."
+		fi
 		exit 1
 	fi
 

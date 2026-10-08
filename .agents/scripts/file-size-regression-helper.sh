@@ -12,7 +12,8 @@
 # Subcommands:
 #   scan      <dir>  [--output <file>] [--limit <N>]
 #                    Scan a directory for non-README, non-vendor .md files over
-#                    <limit> lines. Plain directory scans include untracked
+#                    1000 lines at root / 500 elsewhere by default; --limit
+#                    sets a uniform custom limit. Plain scans include untracked
 #                    fixture files; check mode scans git-tracked paths only.
 #                    Outputs TSV: relative-path TAB line-count.
 #   scan-ref  <ref>  [--output <file>] [--limit <N>]
@@ -116,8 +117,8 @@ scan_violations_dir() {
 		_lc=$(wc -l < "$_f") || _lc=0
 		_lc=${_lc//[^0-9]/}
 		_lc=${_lc:-0}
-		local _path_limit="$_limit"
-		if [[ "$_rel" != */* && "$_limit" == "$FILE_SIZE_DEFAULT_LIMIT" ]]; then
+		local _path_limit="${_limit:-$FILE_SIZE_DEFAULT_LIMIT}"
+		if [[ "$_rel" != */* && -z "$_limit" ]]; then
 			_path_limit="$FILE_SIZE_ROOT_LIMIT"
 		fi
 		if [ "$_lc" -gt "$_path_limit" ]; then
@@ -153,8 +154,8 @@ scan_violations_tracked_worktree() {
 		_lc=$(wc -l < "$_file") || _lc=0
 		_lc=${_lc//[^0-9]/}
 		_lc=${_lc:-0}
-		local _path_limit="$_limit"
-		if [[ "$_path" != */* && "$_limit" == "$FILE_SIZE_DEFAULT_LIMIT" ]]; then
+		local _path_limit="${_limit:-$FILE_SIZE_DEFAULT_LIMIT}"
+		if [[ "$_path" != */* && -z "$_limit" ]]; then
 			_path_limit="$FILE_SIZE_ROOT_LIMIT"
 		fi
 		if [ "$_lc" -gt "$_path_limit" ]; then
@@ -379,7 +380,7 @@ cmd_scan() {
 	local _dir="$1"
 	shift
 	local _output=""
-	local _limit="$FILE_SIZE_DEFAULT_LIMIT"
+	local _limit=""
 
 	while [ $# -gt 0 ]; do
 		local _cur_opt="$1"
@@ -423,7 +424,7 @@ cmd_scan_ref() {
 	local _ref="$1"
 	shift
 	local _output=""
-	local _limit="$FILE_SIZE_DEFAULT_LIMIT"
+	local _limit=""
 
 	while [ $# -gt 0 ]; do
 		local _cur_opt="$1"
@@ -536,7 +537,7 @@ cmd_diff() {
 cmd_check_parse_args() {
 	FILE_SIZE_CHECK_BASE_REF=""
 	FILE_SIZE_CHECK_HEAD_REF="$FILE_SIZE_DEFAULT_HEAD_REF"
-	FILE_SIZE_CHECK_LIMIT="$FILE_SIZE_DEFAULT_LIMIT"
+	FILE_SIZE_CHECK_LIMIT=""
 	FILE_SIZE_CHECK_OUTPUT_MD=""
 	FILE_SIZE_CHECK_ALLOW_INCREASE=0
 	FILE_SIZE_CHECK_DRY_RUN=0
