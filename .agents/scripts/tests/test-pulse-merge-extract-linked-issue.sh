@@ -263,6 +263,12 @@ test_explicit_merge_association() {
 	assert_association "" 0 "cross-repository URL cannot become local issue"
 	export TEST_PR_BODY=$'See For #42 for context.\n> Ref #43\n```text\nFor #44\n```\n<!--\nFor #45\n-->\n    For #46\n## Remaining work\nRef #47'
 	assert_association "" 0 "incidental, quoted, code, comment and follow-up references are not primary"
+	export TEST_PR_BODY=$'```text\n~~~\nFor #42\n```'
+	assert_association "" 0 "a different fence marker cannot expose a code example as a task"
+	export TEST_PR_BODY=$'````text\n```\nFor #42\n````\nFor #43'
+	assert_association "43" 0 "a shorter fence cannot close a longer code block"
+	export TEST_PR_BODY=$'~~~text\n~~~example\nRef #42\n~~~\nRef #43'
+	assert_association "43" 0 "fence-like content with trailing text cannot close a code block"
 	export TEST_PR_BODY=$'## Remaining work\n### Portrait recovery\nFor #12643'
 	assert_association "" 0 "nested follow-up headings cannot reset the primary-task boundary"
 	export TEST_PR_BODY='For #42suffix'

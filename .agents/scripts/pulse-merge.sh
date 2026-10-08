@@ -1981,7 +1981,21 @@ _extract_pr_work_issue() {
 	if [[ "$mode" == "explicit" ]]; then
 		local explicit_issues=""
 		explicit_issues=$(printf '%s\n' "$pr_body" | awk '
-			/^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+			/^[[:space:]]*(```|~~~)/ {
+				fence_line = $0
+				sub(/^[[:space:]]*/, "", fence_line)
+				match(fence_line, /^(`+|~+)/)
+				fence_run = substr(fence_line, 1, RLENGTH)
+				if (!fence) {
+					fence = 1
+					fence_marker = substr(fence_run, 1, 1)
+					fence_length = length(fence_run)
+				} else if (substr(fence_run, 1, 1) == fence_marker && length(fence_run) >= fence_length &&
+					substr(fence_line, length(fence_run) + 1) ~ /^[[:space:]]*$/) {
+					fence = 0
+				}
+				next
+			}
 			fence { next }
 			/<!--/ { comment = 1 }
 			comment { if ($0 ~ /-->/) comment = 0; next }
