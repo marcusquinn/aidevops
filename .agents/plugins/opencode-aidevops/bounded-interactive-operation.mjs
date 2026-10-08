@@ -147,6 +147,7 @@ export class BoundedInteractiveOperationManager {
       supervisorRuntime: "",
       nestedProcessGroups: 0,
       attributionComplete: null,
+      postExitDescendantsTerminated: false,
       restorationState: args.restorationCommand ? "pending" : "not_required",
       restorationExit: null,
       restorationCommandStarted: false,

@@ -115,6 +115,7 @@ describe("bounded interactive operations", () => {
     assert.equal(result.restoration_state, "not_required");
     assert.equal(result.command_execution, "observed");
     assert.match(result.supervisor_runtime, /^node v\d+\./);
+    assert.equal(result.post_exit_descendants_terminated, false);
     assert.equal(JSON.stringify(result).includes("phase-one"), false);
   });
 
@@ -528,6 +529,8 @@ describe("bounded interactive operations", () => {
         if (mode === "cancel") instance.cancel(started.operation_id, owner);
         const result = await terminal(instance, started.operation_id, owner, 5000);
         assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
+        // GH#34047: only completion-triggered cleanup is reported; exit 0 is not liveness.
+        assert.equal(result.post_exit_descendants_terminated, mode === "completion", `${mode}: post-exit receipt field`);
         let running = false;
         try {
           process.kill(pid, 0);

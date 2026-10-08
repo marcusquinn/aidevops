@@ -12,7 +12,9 @@ export function createBoundedInteractiveOperationTool(tool, z, manager) {
     description:
       "Start, inspect, retrieve output from, or cancel a bounded long-running command without blocking the interactive session. " +
       "Use start for operations expected to exceed the progress interval; status can wait up to 60 seconds for progress or a lifecycle transition; then use output with the operation ID after it reaches a terminal state. " +
-      "Commands are argv arrays, remain confined to the active project root, and must not daemonize or create a new process session. " +
+      "Commands are argv arrays, remain confined to the active project root, and must not daemonize or create a new process session; " +
+      "known detaching launchers such as pulse-wrapper.sh --command dispatch are rejected before spawn. " +
+      "Owned descendants are drained when the command exits; post_exit_descendants_terminated=true means exit 0 is not liveness evidence for anything it launched. " +
       "Cancellation is session-owned and restoration evidence remains explicit.",
     args: {
       action: z.enum(["start", "status", "output", "cancel"]),
