@@ -23,16 +23,47 @@ _SOURCE_ACCESS_RELEASE_SIGNER_KEYS=(
 )
 
 # Self-contained because this setup module is verified as signed release bytes.
-# Never consult caller PATH or native-tool overrides before privileged execution.
+# Never trust caller-modifiable tools or native-tool overrides before privileged
+# execution: walk PATH, but accept only an executable whose file and physical
+# directory chain the current user cannot modify (root-owned when euid 0).
+# Shell builtins only, so a planted PATH tool cannot influence the check, and
+# no distro-specific roots: the same rule holds on macOS, FHS Linux and Nix.
+_source_access_dir_chain_trusted() {
+	local directory="$1"
+	local physical=""
+	physical=$(cd -P -- "$directory" 2>/dev/null && pwd -P) || return 1
+	while :; do
+		if [[ "$EUID" -eq 0 ]]; then
+			[[ -O "$physical" ]] || return 1
+		else
+			[[ -w "$physical" ]] && return 1
+		fi
+		[[ "$physical" == "/" ]] && break
+		physical="${physical%/*}"
+		[[ -n "$physical" ]] || physical="/"
+	done
+	return 0
+}
+
 _source_access_system_path() {
 	local tool="$1"
 	local directory=""
+	local candidate=""
+	local -a directories=()
 	[[ "$tool" =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
-	for directory in /usr/bin /bin /run/wrappers/bin /run/current-system/sw/bin; do
-		if [[ -f "${directory}/${tool}" && -x "${directory}/${tool}" ]]; then
-			printf '%s' "${directory}/${tool}"
-			return 0
+	IFS=':' read -r -a directories <<<"${PATH:-}"
+	for directory in "${directories[@]}"; do
+		[[ "$directory" == /* ]] || continue
+		candidate="${directory%/}/${tool}"
+		[[ -f "$candidate" && -x "$candidate" ]] || continue
+		if [[ "$EUID" -eq 0 ]]; then
+			[[ -O "$candidate" ]] || continue
+		else
+			[[ -w "$candidate" ]] && continue
 		fi
+		_source_access_dir_chain_trusted "$directory" || continue
+		printf '%s' "$candidate"
+		return 0
 	done
 	return 1
 }

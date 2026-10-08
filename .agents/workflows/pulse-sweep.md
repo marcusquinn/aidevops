@@ -53,7 +53,7 @@ If `AVAILABLE > 0` and `WORKER_COUNT == 0`, attempt admission for available auth
 ### 1. Normalise PATH and check capacity
 
 ```bash
-export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+export PATH="${PATH:+$PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 ~/.aidevops/agents/scripts/circuit-breaker-helper.sh check  # exit 1 = stop
 
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command capacity

@@ -8,11 +8,14 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 WORKTREE_HELPER="${AIDEVOPS_BUZZ_WORKTREE_MANAGER:-${SCRIPT_DIR}/worktree-helper.sh}"
-# Project validation uses fixed system Git, never caller-controlled PATH.
-REAL_GIT="/usr/bin/git"
-if [[ ! -x "$REAL_GIT" ]]; then
-	REAL_GIT="/run/current-system/sw/bin/git"
-fi
+# Project validation uses a PATH Git the caller cannot modify (binary and
+# directory chain not user-writable), never a user-owned or shim Git.
+# shellcheck source=runtime-env.sh
+source "${SCRIPT_DIR}/runtime-env.sh"
+REAL_GIT=$(aidevops_resolve_trusted_tool git) || {
+	printf 'team-interface-buzz-worktree: no trusted git found on PATH\n' >&2
+	exit 1
+}
 
 fail() {
 	local message="$1"

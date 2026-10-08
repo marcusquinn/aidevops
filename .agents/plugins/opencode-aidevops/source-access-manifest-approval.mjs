@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { execFileSync } from "node:child_process";
+import { resolveTrustedExecutable } from "../../scripts/trusted-executable.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -244,8 +245,8 @@ export function validatedManifestReceipt(options, dependencies) {
     trustUid = 0,
     stateDir = DEFAULT_STATE_DIR,
     publicKeyPath = DEFAULT_PUBLIC_KEY,
-    sshKeygen = "/usr/bin/ssh-keygen",
-    git = "/usr/bin/git",
+    sshKeygen = resolveTrustedExecutable("ssh-keygen"),
+    git = resolveTrustedExecutable("git"),
     gitRun = execFileSync,
     run = execFileSync,
     authorizedApprovalId = "",

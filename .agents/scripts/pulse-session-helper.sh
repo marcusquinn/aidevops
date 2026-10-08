@@ -24,7 +24,7 @@ _aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/bin:/usr/bin"
 if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" && -d "/home/linuxbrew/.linuxbrew/bin" ]]; then
 	_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin"
 fi
-export PATH="${_aidevops_path_prefix}:${PATH}"
+export PATH="${PATH:+${PATH}:}${_aidevops_path_prefix}"
 unset _aidevops_path_prefix
 
 # Source config-helper for _jsonc_get (shared JSONC config reader)

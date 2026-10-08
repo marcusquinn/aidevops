@@ -4,8 +4,12 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveTrustedExecutable } from "../../scripts/trusted-executable.mjs";
 
 export const ROOT_BROKER = "/etc/aidevops/source-access/source-access-helper.py";
+// Absolute, root-controlled interpreter: the printed `sudo` command must not
+// depend on the caller's PATH or sudo's secure_path.
+export const BROKER_PYTHON = resolveTrustedExecutable("python3");
 const REQUEST_ID_PATTERN = /^[a-f0-9]{32,64}$/;
 
 function readVersion(path) {
@@ -26,7 +30,7 @@ export function sourceAccessVersionChanged(scriptsDir, loadedVersion = LOADED_VE
 }
 
 function runSourceAccessHelper(helperArgs, run) {
-  return String(run("/usr/bin/python3", ["-I", "-B", ROOT_BROKER, ...helperArgs], {
+  return String(run(BROKER_PYTHON, ["-I", "-B", ROOT_BROKER, ...helperArgs], {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000,
   })).trim();
 }
@@ -88,7 +92,7 @@ export function checkGateWithApprovalInstructions({
     throw new Error(
       `${originalMessage}\n\n${explanation}\n\nCheck current approvals with aidevops source-access status.\n` +
         "To approve only this tracked source path for this session, run in an interactive terminal:\n" +
-        `sudo -k /usr/bin/python3 -I -B ${ROOT_BROKER} approve ${requestId} --ttl 12h\n\n` +
+        `sudo -k ${BROKER_PYTHON} -I -B ${ROOT_BROKER} approve ${requestId} --ttl 12h\n\n` +
         "For one approval covering several exact tracked paths, create one request with " +
         "`aidevops source-access request --session <session> --reason 'secret-bearing basename' " +
         "--path <path-1> --path <path-2> ...`, then approve the returned request ID.",

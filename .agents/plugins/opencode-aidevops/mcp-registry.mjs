@@ -240,7 +240,7 @@ export function getMcpRegistry() {
       name: "outscraper",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server",
       ],
@@ -256,7 +256,7 @@ export function getMcpRegistry() {
       name: "dataforseo",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         `source "$HOME/.aidevops/agents/scripts/dataforseo-credentials.sh" && dataforseo_load_credentials && exec ${pkgRunner} dataforseo-mcp-server`,
       ],
@@ -425,7 +425,7 @@ export function getMcpRegistry() {
       name: "gsc",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         `GOOGLE_APPLICATION_CREDENTIALS=$\{GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} ${pkgRunner} mcp-server-gsc`,
       ],
@@ -441,7 +441,7 @@ export function getMcpRegistry() {
       name: "google-analytics-mcp",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} analytics-mcp",
       ],
@@ -624,7 +624,7 @@ export function getMcpRegistry() {
       name: "amazon-order-history",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         "node ~/Git/mcp/amazon-order-history-csv-download-mcp/dist/index.js",
       ],
@@ -757,7 +757,7 @@ function buildMcpConfigEntry(mcp, runtime) {
   return {
     type: "local",
     command: [
-      "/bin/bash",
+      "bash",
       "-c",
       launcher,
       "aidevops-playwright-mcp",

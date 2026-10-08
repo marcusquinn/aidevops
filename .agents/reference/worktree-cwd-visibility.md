@@ -34,7 +34,11 @@ This is an **opt-in operator installation**, not part of automatic setup:
    `/usr/local/libexec/aidevops-worktree-cwd-inspect` as root, with root
    ownership and mode `0755`. Ensure the executable **and every parent
    directory** cannot be replaced or written by the cleanup user; never grant
-   sudo access to a script inside a writable Git checkout.
+   sudo access to a script inside a writable Git checkout. Line 1 must name an
+   absolute, root-owned `python3 -I` (never `/usr/bin/env`, which would follow
+   the caller's PATH under sudo). If the host has no `/usr/bin/python3`, set it
+   to `realpath "$(command -v python3)"` after confirming that file and its
+   parent directories are root-owned and not group/other writable.
 2. Using `visudo`, allow only the dedicated executable as root with
    `NOPASSWD`, restricted to the intended local user. Example sudoers entry
    (replace `operator` with that user):

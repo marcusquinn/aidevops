@@ -42,7 +42,7 @@ Use the standalone worker activity helper for capacity checks. It is safe in
 interactive command policies and does not require sourcing `pulse-wrapper.sh`.
 
 ```bash
-export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+export PATH="${PATH:+$PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 ~/.aidevops/agents/scripts/circuit-breaker-helper.sh check  # exit 1 = stop
 
 MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)

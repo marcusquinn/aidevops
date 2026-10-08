@@ -5,6 +5,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+# shellcheck source=runtime-env.sh
+source "${SCRIPT_DIR}/runtime-env.sh"
 CRYPTO_HELPER="${SCRIPT_DIR}/vault-crypto-helper.py"
 VAULT_AUDIT_HELPER="${SCRIPT_DIR}/vault-audit-helper.sh"
 VAULT_RUNTIME_CHECK="${SCRIPT_DIR}/vault-runtime-check.py"
@@ -161,8 +163,9 @@ resolve_status_python() {
 		printf '%s\n' "$managed_python"
 		return 0
 	fi
-	if [[ -x "/usr/bin/python3" ]]; then
-		printf '%s\n' "/usr/bin/python3"
+	local system_python=""
+	if system_python=$(aidevops_resolve_trusted_tool python3); then
+		printf '%s\n' "$system_python"
 		return 0
 	fi
 	printf '%s\n' "[ERROR] Vault requires Python 3; run aidevops setup" >&2

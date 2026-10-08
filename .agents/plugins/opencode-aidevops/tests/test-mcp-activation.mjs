@@ -414,7 +414,7 @@ test("migrates browser MCPs to disconnected and globally denied", () => {
   assert.ok(config.mcp.playwriter.command.includes("playwriter@0.5.0"));
   assert.ok(!config.mcp.playwriter.command.includes("playwriter@latest"));
   assert.equal(config.mcp.playwright.enabled, false);
-  assert.equal(config.mcp.playwright.command[0], "/bin/bash");
+  assert.equal(config.mcp.playwright.command[0], "bash");
   assert.ok(config.mcp.playwright.command.includes(runtime.workspaces.playwright.directory));
   assert.ok(config.mcp.playwright.command.includes(
     join(runtime.workspaces.playwright.directory, ".playwright-mcp"),

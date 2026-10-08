@@ -48,6 +48,15 @@ _dj_systemd_quote() {
 	return 0
 }
 
+_dj_service_path() {
+	if declare -F aidevops_service_path >/dev/null 2>&1; then
+		aidevops_service_path "${PATH:-}"
+	else
+		printf '%s' "${PATH:-}"
+	fi
+	return 0
+}
+
 _dj_render_launchd() {
 	local helper_path=""
 	local bash_path="${AIDEVOPS_DEFERRED_BASH_PATH:-/bin/bash}"
@@ -104,10 +113,10 @@ Type=oneshot
 # Intentional exception: manual dispatch can hand a worker off beyond run-due.
 # Killing this cgroup when the scheduler exits would terminate that worker.
 KillMode=process
-ExecStart=$(_dj_systemd_quote "/bin/bash") $(_dj_systemd_quote "$helper_path") run-due
+ExecStart=/usr/bin/env bash $(_dj_systemd_quote "$helper_path") run-due
 TimeoutStartSec=infinity
 Environment=HOME=$(_dj_systemd_quote "$HOME")
-Environment=PATH=$(_dj_systemd_quote "$PATH")
+Environment=PATH=$(_dj_systemd_quote "$(_dj_service_path)")
 StandardOutput=append:${log_path}
 StandardError=append:${log_path}
 EOF
@@ -134,7 +143,8 @@ _dj_render_cron() {
 	local helper_path=""
 	local log_path="${_DJ_LOGS_DIR}/scheduler.log"
 	helper_path=$(_dj_scheduler_helper_path)
-	printf '* * * * * /bin/bash %s run-due >> %s 2>&1 # %s\n' \
+	printf '* * * * * PATH=%s /usr/bin/env bash %s run-due >> %s 2>&1 # %s\n' \
+		"$(_dj_shell_quote "$(_dj_service_path)")" \
 		"$(_dj_shell_quote "$helper_path")" "$(_dj_shell_quote "$log_path")" "$_DJ_CRON_MARKER"
 	return 0
 }

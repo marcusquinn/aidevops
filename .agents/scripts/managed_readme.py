@@ -141,7 +141,7 @@ def generate_chart(chart: Path, slug: str, script_dir: Path) -> bool:
         raise RuntimeError("managed-readme star-history helper is unavailable or unsafe")
     helper = helper.resolve()
     base_command = [
-        "/bin/bash",
+        "bash",
         str(helper),
     ]
     try:

@@ -97,15 +97,24 @@ class SourceAccessHelperTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_system_tools_use_nixos_roots_not_caller_path(self) -> None:
+    def test_system_tools_resolve_root_controlled_path_entries_only(self) -> None:
         core = HELPER._SOURCE_CORE
-        candidate = "/run/current-system/sw/bin/git"
-        with mock.patch.dict(os.environ, {"PATH": str(self.root), "AIDEVOPS_REAL_GIT_BIN": "/untrusted/git"}), \
-             mock.patch.object(core.Path, "is_file", lambda path: str(path) == candidate), \
-             mock.patch.object(core.os, "access", return_value=True):
-            self.assertEqual(core._system_executable("git"), candidate)
-        with mock.patch.object(core.Path, "is_file", return_value=False):
-            self.assertEqual(core._system_executable("git"), "/usr/bin/git")
+        system_git = next((candidate for candidate in (
+            os.path.join(directory, "git") for directory in os.environ.get("PATH", "").split(os.pathsep)
+            if os.path.isabs(directory)) if os.path.isfile(candidate) and core._trusted_chain(
+                os.path.realpath(candidate)) and core._trusted_chain(os.path.realpath(os.path.dirname(candidate)))),
+            None)
+        if system_git is None:
+            self.skipTest("no root-controlled git on PATH")
+        caller_bin = self.root / "caller-bin"
+        caller_bin.mkdir()
+        (caller_bin / "git").symlink_to(system_git)
+        trusted_dir = os.path.dirname(system_git)
+        with mock.patch.dict(os.environ, {"PATH": f"{caller_bin}:{trusted_dir}",
+                                          "AIDEVOPS_REAL_GIT_BIN": "/untrusted/git"}):
+            self.assertEqual(core._system_executable("git"), system_git)
+        with mock.patch.dict(os.environ, {"PATH": str(caller_bin)}):
+            self.assertFalse(os.path.exists(core._system_executable("git")))
 
     def test_bundle_stale_writer_cannot_overwrite_terminal_consent(self) -> None:
         spec = HELPER.ApprovalSpec("a" * 64, self.home, self.uid, 3600, self.now, lambda scope: True)

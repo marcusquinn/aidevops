@@ -330,7 +330,7 @@ _merge_fast_forward_canonical() {
 		print_warning "CANONICAL_SYNC_PENDING=true reason=fast_forward_refused detail=recovery_helper_unavailable"
 		return 1
 	}
-	if helper_output=$(AIDEVOPS_REAL_GIT_BIN="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}" bash "$helper" \
+	if helper_output=$(bash "$helper" \
 		fast-forward-current --repo "$canonical_dir" --branch "$default_branch" \
 		--issue "$issue_number" --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 		print_info "Canonical ${default_branch} fast-forwarded through canonical-recovery-helper.sh"

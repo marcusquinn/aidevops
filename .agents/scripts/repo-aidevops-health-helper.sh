@@ -761,7 +761,8 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc '\"${script_path}\" check'
+ExecStart=/usr/bin/env bash -lc '\"${script_path}\" check'
+$(aidevops_systemd_path_env)
 TimeoutStartSec=300
 Nice=10
 IOSchedulingClass=idle

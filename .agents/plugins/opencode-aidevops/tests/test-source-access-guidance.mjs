@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { checkSecretReadWithApproval, SOURCE_ACCESS_REASON } from "../source-access-approval.mjs";
-import { sourceAccessVersionChanged } from "../source-access-guidance.mjs";
+import { BROKER_PYTHON, sourceAccessVersionChanged } from "../source-access-guidance.mjs";
 
 const requestId = "0123456789abcdef0123456789abcdef";
 const gate = () => { throw new Error("[secret-read-guard] blocked read"); };
@@ -44,7 +44,8 @@ test("approval guidance leads with aidevops CLI and keeps the root broker ceremo
     requestRun: () => requestId,
   }), (error) => {
     const cli = error.message.indexOf("aidevops source-access status");
-    const broker = error.message.indexOf(`sudo -k /usr/bin/python3 -I -B /etc/aidevops/source-access/source-access-helper.py approve ${requestId} --ttl 12h`);
+    assert.match(BROKER_PYTHON, /^\/.*\/python3$/);
+    const broker = error.message.indexOf(`sudo -k ${BROKER_PYTHON} -I -B /etc/aidevops/source-access/source-access-helper.py approve ${requestId} --ttl 12h`);
     assert.ok(cli >= 0 && broker > cli);
     return true;
   });

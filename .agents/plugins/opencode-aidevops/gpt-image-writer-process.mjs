@@ -2,10 +2,11 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { spawn } from "node:child_process";
+import { resolveTrustedExecutable } from "../../scripts/trusted-executable.mjs";
 
 const WRITER_TIMEOUT_MS = 60_000;
 const MAX_DIAGNOSTIC_CHARS = 4_096;
-const PYTHON_BINARY = "/usr/bin/python3";
+const PYTHON_BINARY = resolveTrustedExecutable("python3");
 
 function writerProcess(helper, out, projectRoot, spawnImpl) {
   return spawnImpl(PYTHON_BINARY, ["-I", "-B", helper, "--root", ".", "--out", out], {

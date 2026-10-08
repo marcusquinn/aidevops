@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,8 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 
+# Resolved before any test patches shutil.which; PATH-based (no /bin/bash).
+BASH = shutil.which("bash") or "bash"
 SPEC = importlib.util.spec_from_file_location(
     "opencode_service", Path(__file__).resolve().parents[1] / "opencode-service-helper.py")
 sys.path.insert(0, str(Path(SPEC.origin).parent))
@@ -40,7 +43,8 @@ class ServiceTests(unittest.TestCase):
         self.args = argparse.Namespace(port=None, shard=None, route_new=False, fresh_default=False)
         self.data = {"schema": state_module.SCHEMA, "port": 49036, "shard": "managed-default",
                      "directory": str(self.home), "enabled": True, "route_new": False,
-                     "python": "/usr/bin/python3", "opencode": "/usr/local/bin/opencode", "path": "/usr/bin"}
+                     "python": "/fixture/bin/python3", "opencode": "/fixture/bin/opencode",
+                     "path": str(Path(BASH).parent)}
         helper = self.home / ".aidevops/agents/scripts/opencode-service-helper.py"
         helper.parent.mkdir(parents=True)
         helper.write_text("# helper fixture\n")
@@ -61,7 +65,7 @@ class ServiceTests(unittest.TestCase):
         with patch.object(self.service, "supported"), patch.object(self.service, "pid", return_value=0), \
              patch.object(self.service, "listeners", return_value=set()), \
              patch.object(self.service, "start") as start, \
-             patch.object(lifecycle_module.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
+             patch.object(lifecycle_module.shutil, "which", side_effect=lambda name: f"/fixture/bin/{name}"):
             result = self.service.install(self.args)
         return result, start
 
@@ -74,16 +78,22 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn("--pure", definition["ProgramArguments"])
         self.assertEqual(definition["ProgramArguments"][1], str(self.service.runtime / "opencode-service-helper.py"))
 
-    def test_install_retains_stable_nix_profiles(self):
-        data, _ = self.install()
+    def test_install_puts_inherited_path_before_system_fallback(self):
+        toolchain = self.home / "toolchain/bin"
+        toolchain.mkdir(parents=True)
+        with patch.dict(lifecycle_module.os.environ,
+                        {"PATH": f"{toolchain}:/usr/bin:relative:{self.home}/.aidevops/runtime-bundles/x/bin"}):
+            data, _ = self.install()
         paths = data["path"].split(":")
-        self.assertIn(str(self.home / ".nix-profile/bin"), paths)
-        self.assertIn(str(self.home / ".local/state/nix/profile/bin"), paths)
-        self.assertIn("/run/current-system/sw/bin", paths)
-        self.assertTrue(any(path.startswith("/etc/profiles/per-user/") for path in paths))
+        self.assertEqual(len(paths), len(set(paths)))
+        self.assertLess(paths.index(str(toolchain)), paths.index("/usr/local/bin"))
+        self.assertLess(paths.index(str(toolchain)), paths.index("/bin"))
+        self.assertNotIn("relative", paths)
+        self.assertFalse(any("/runtime-bundles/" in path for path in paths))
+        self.assertFalse(any(path.startswith(("/nix/", "/run/")) for path in paths))
 
     def test_run_resolves_bash_from_service_path_without_inherited_environment(self):
-        bash = "/run/current-system/sw/bin/bash"
+        bash = str(self.home / "toolchain/bin/bash")
         with patch.object(self.service, "recover_dead_lock"), \
              patch.object(lifecycle_module.shutil, "which", return_value=bash) as which, \
              patch.object(lifecycle_module.os, "execve") as execute:
@@ -242,8 +252,8 @@ class ServiceTests(unittest.TestCase):
         self.service.save(dict(self.data, enabled=False, python="/obsolete/python3",
                                opencode="/obsolete/opencode", path="/obsolete"))
         data, start = self.install()
-        self.assertEqual(data["python"], "/usr/bin/python3")
-        self.assertEqual(data["opencode"], "/usr/bin/opencode")
+        self.assertEqual(data["python"], "/fixture/bin/python3")
+        self.assertEqual(data["opencode"], "/fixture/bin/opencode")
         self.assertNotIn("/obsolete", data["path"])
         self.assertEqual(data["shard"], self.data["shard"])
         self.assertEqual(data["port"], self.data["port"])
@@ -335,7 +345,7 @@ class ServiceTests(unittest.TestCase):
     def test_changed_running_definition_is_not_restarted(self):
         self.service.save(self.data)
         with patch.object(self.service, "supported"), patch.object(self.service, "pid", return_value=123), \
-             patch.object(lifecycle_module.shutil, "which", return_value="/usr/bin/tool"):
+             patch.object(lifecycle_module.shutil, "which", return_value="/fixture/bin/tool"):
             with self.assertRaisesRegex(RuntimeError, "stop the idle owner"):
                 self.service.install(self.args)
 
@@ -351,7 +361,7 @@ class ServiceTests(unittest.TestCase):
         launcher = str(Path(SPEC.origin).with_name("opencode-launcher-helper.sh"))
 
         def invoke(*arguments):
-            return subprocess.run(["/bin/bash", launcher, "--dir", str(self.home), "--dry-run", *arguments],
+            return subprocess.run([BASH, launcher, "--dir", str(self.home), "--dry-run", *arguments],
                                   env=environment, text=True, capture_output=True, timeout=15, check=False)
 
         managed = invoke()
@@ -381,7 +391,7 @@ class ServiceTests(unittest.TestCase):
              patch.object(self.service, "listeners", return_value=set()), \
              patch.object(self.service, "start", side_effect=RuntimeError("readiness failed")), \
              patch.object(self.service, "stop") as stop, \
-             patch.object(lifecycle_module.shutil, "which", return_value="/usr/bin/tool"):
+             patch.object(lifecycle_module.shutil, "which", return_value="/fixture/bin/tool"):
             with self.assertRaisesRegex(RuntimeError, "readiness failed"):
                 self.service.install(self.args)
             stop.assert_called_once()

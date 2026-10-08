@@ -1508,7 +1508,7 @@ _test_hook_script_path() {
 _test_hook_create_repo() {
 	local test_root="$1"
 	local managed="${2:-true}"
-	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
 	"$real_git" -C "$test_root" init -b main >/dev/null 2>&1 || {
 		"$real_git" -C "$test_root" init >/dev/null 2>&1
 		"$real_git" -C "$test_root" checkout -b main >/dev/null 2>&1
@@ -1671,7 +1671,7 @@ test_hook() {
 		"$test_root" >"$AIDEVOPS_REPOS_FILE" || return 1
 
 	local linked_worktree="${test_root}/linked-wt"
-	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
 	"$real_git" -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
 	local unmanaged_root="${test_root}/unmanaged-repo"
 	mkdir -p "$unmanaged_root"

@@ -36,12 +36,10 @@ is_aidevops_git_shim() {
 resolve_real_git() {
 	local candidate=""
 	local candidates=""
-	if command -v xcrun >/dev/null 2>&1; then
+	# macOS keeps the Xcode-selected git first; elsewhere PATH order decides.
+	if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]] && command -v xcrun >/dev/null 2>&1; then
 		candidates=$(xcrun --find git 2>/dev/null || true)
 	fi
-	for candidate in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do
-		[[ -x "$candidate" ]] && candidates="${candidates}${candidates:+$'\n'}${candidate}"
-	done
 	candidates="${candidates}${candidates:+$'\n'}$(type -a -p git 2>/dev/null || true)"
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue

@@ -187,7 +187,7 @@ _dlw_exec_systemd_user_service() {
 
 	if ! systemd-run --user --unit="$unit_name" --collect --quiet \
 		--description="aidevops worker ${issue_number:-unknown}" \
-		/bin/bash -lc "$runner_script" _ "$pid_file" "$worker_log" "$@" \
+		/usr/bin/env bash -lc "$runner_script" _ "$pid_file" "$worker_log" "$@" \
 		>/dev/null 2>>"$LOGFILE"; then
 		rm -f "$pid_file" 2>/dev/null || true
 		return 1

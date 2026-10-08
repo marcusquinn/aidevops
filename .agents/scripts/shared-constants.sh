@@ -507,50 +507,8 @@ readonly TEMP_PREFIX="tmp_"
 # =============================================================================
 # launchd PATH hygiene
 # =============================================================================
-# Build a PATH value safe to embed in macOS LaunchAgent EnvironmentVariables.
-# launchd jobs inherit no useful interactive shell setup, but serialising the
-# caller's raw PATH bakes stale manager-specific entries into long-lived plists.
-# Keep stable user and known system/tool roots first, then preserve inherited
-# entries that exist on this host. Never persist immutable runtime-bundle paths:
-# long-lived sessions intentionally retain old bundles after stable activation.
-
-_aidevops_append_launchd_path_dir() {
-	local dir="$1"
-	[[ -n "$dir" ]] || return 0
-	case "$dir" in
-	*/.aidevops/runtime-bundles/*) return 0 ;;
-	esac
-	[[ -d "$dir" ]] || return 0
-	case ":${_aidevops_launchd_path_seen:-}:" in
-	*":${dir}:"*) return 0 ;;
-	esac
-	_aidevops_launchd_path_seen="${_aidevops_launchd_path_seen:+${_aidevops_launchd_path_seen}:}${dir}"
-	_aidevops_launchd_path_result="${_aidevops_launchd_path_result:+${_aidevops_launchd_path_result}:}${dir}"
-	return 0
-}
-
-aidevops_launchd_sanitized_path() {
-	local input_path="${1:-${PATH:-}}"
-	local stable_path=""
-	if [[ -n "${HOME:-}" ]]; then
-		stable_path="${HOME}/.bun/bin:${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
-	fi
-	local default_path="${stable_path:+${stable_path}:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-	local _aidevops_launchd_path_result=""
-	local _aidevops_launchd_path_seen=""
-	local dir=""
-	local IFS=':'
-
-	for dir in $default_path; do
-		_aidevops_append_launchd_path_dir "$dir"
-	done
-	for dir in $input_path; do
-		_aidevops_append_launchd_path_dir "$dir"
-	done
-
-	printf '%s' "$_aidevops_launchd_path_result"
-	return 0
-}
+# aidevops_service_path / aidevops_launchd_sanitized_path live in
+# runtime-env.sh (sourced above) so every generator shares one PATH builder.
 
 # =============================================================================
 # Credentials File Security

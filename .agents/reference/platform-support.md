@@ -20,32 +20,33 @@ here or imply that every derivative, architecture, or provider image was tested.
 | WSL2 (Ubuntu) | Full | systemd / cron | Recommended Windows path |
 | Windows (native) | Limited | — | Experimental `/optimise-windows-indexing-backups` only; use WSL2 for full support |
 
-## NixOS command lookup
+## Command lookup (PATH only)
 
-Framework shell helpers and OpenCode plugin subprocesses append existing stable
-Nix profiles to PATH without replacing inherited tool versions or framework
-guards: `~/.nix-profile/bin`, `~/.local/state/nix/profile/bin`,
-`/etc/profiles/per-user/<account>/bin`, `/run/wrappers/bin`, and
-`/run/current-system/sw/bin`.
-Pulse and persistent OpenCode service definitions include these roots as well.
-Regenerate existing service definitions after deploying a change; already running
-processes retain their original environment.
+Tools are resolved through PATH on every platform; there are no distro-specific
+roots. This lets hosts without `/usr/bin/git` or `/bin/bash` (for example NixOS
+without envfs) work with the same code as macOS and Ubuntu.
 
-`scripts/runtime-env.sh` resolves native Git from PATH while skipping framework
-shims, and exports `AIDEVOPS_REAL_GIT_BIN` for merge/recovery helpers. An explicit
-operator override still wins. It does not bypass Git lifecycle guards or require
-compatibility symlinks in `/usr/bin`. Service launchers similarly resolve Bash
-from their configured PATH instead of assuming `/bin/bash`.
+- **PATH order**: aidevops directories first, then the inherited PATH, then
+  `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` (plus `/opt/homebrew/bin` for
+  services) only as a de-duplicated fallback. Builder: `scripts/runtime-env.sh`.
+- **Services**: generated systemd units and cron lines bake the installing
+  user's sanitised PATH and start via `/usr/bin/env bash`. Launchd plists keep
+  `/bin/bash` (macOS only). Re-run setup to regenerate existing units; running
+  processes keep their original environment.
+- **Shebangs**: `#!/usr/bin/env bash|python3` (`-S python3 -I` for isolated
+  mode). `tests/test-portable-shebangs.sh` rejects new absolute interpreters.
+  Exception: root sudo targets such as `worktree-cwd-inspect.py`.
+- **Native Git**: `aidevops_resolve_native_git` walks PATH, skipping the aidevops
+  Git shim, and exports `AIDEVOPS_REAL_GIT_BIN`. An explicit override wins.
+- **Trusted tools** (source access, vault Python, sudo, release-lane `ps`,
+  `ssh-keygen`, team-interface helpers): the first PATH entry whose file and directory chain the current user
+  cannot modify (root-owned when running as root); fails closed otherwise.
+  Implementations: `aidevops_resolve_trusted_tool` (`runtime-env.sh`),
+  `trusted_executable.py`, `trusted-executable.mjs`.
 
-Source-access approval/setup and team-interface project validation keep tools on
-fixed trusted system roots, adding NixOS system paths without accepting caller
-PATH overrides. Privileged setup also supports `/run/wrappers/bin/sudo`; it still
-requires explicit interactive authorization and signed-release verification.
-
-This covers command discovery, not full NixOS packaging compatibility. Tools must
-be installed in a profile (or supplied through inherited PATH); downloaded FHS
-binaries may still require Nix packaging. This does not declare every aidevops
-integration tested on NixOS.
+This covers command discovery, not full packaging compatibility: downloaded FHS
+binaries may still need native packages, and the model-replay `bwrap` sandbox
+still looks for `bwrap` in fixed locations.
 
 ## Native Windows Support Posture
 

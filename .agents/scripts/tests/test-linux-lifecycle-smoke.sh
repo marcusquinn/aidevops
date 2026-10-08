@@ -87,7 +87,18 @@ mkdir -p \
 printf '%s\n' '#!/usr/bin/env bash' 'exit 22' >"${SANDBOX_BIN}/curl"
 chmod 700 "${SANDBOX_BIN}/curl"
 
-TEST_PATH="${SANDBOX_BIN}:/usr/local/bin:/usr/bin:/bin"
+# Isolated PATH: sandbox, then directories of the base tools when they live
+# outside the FHS defaults (hosts without /usr/bin/bash), then FHS defaults.
+fhs_path="/usr/local/bin:/usr/bin:/bin"
+TEST_PATH="${SANDBOX_BIN}"
+for tool in env bash python3; do
+	tool_path=$(type -P "$tool") || continue
+	case ":${fhs_path}:${TEST_PATH}:" in
+	*":${tool_path%/*}:"*) ;;
+	*) TEST_PATH="${TEST_PATH}:${tool_path%/*}" ;;
+	esac
+done
+TEST_PATH="${TEST_PATH}:${fhs_path}"
 
 run_step "setup.sh agents scope in isolated HOME" "$SETUP_LOG" \
 	env -u SUDO_USER \

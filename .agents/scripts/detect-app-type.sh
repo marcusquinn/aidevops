@@ -33,7 +33,7 @@ _aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/bin:/usr/bin"
 if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" && -d "/home/linuxbrew/.linuxbrew/bin" ]]; then
 	_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin"
 fi
-export PATH="${_aidevops_path_prefix}:${PATH}"
+export PATH="${PATH:+${PATH}:}${_aidevops_path_prefix}"
 unset _aidevops_path_prefix
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
@@ -174,8 +174,10 @@ write_cache_to_repos_json() {
 	if jq --arg slug "$slug" --arg app_type "$app_type" \
 		'(.initialized_repos[] | select(.slug == $slug)) |= (. + {"app_type": $app_type})' \
 		"$repos_json" >"$tmp_file" && jq empty "$tmp_file" 2>/dev/null; then
-		mode=$(stat -f '%Lp' "$repos_json" 2>/dev/null || stat -c '%a' "$repos_json" 2>/dev/null || true)
-		[[ -z "$mode" ]] || chmod "$mode" "$tmp_file"
+		if declare -F _file_perms >/dev/null 2>&1; then
+			mode=$(_file_perms "$repos_json" 2>/dev/null || true)
+		fi
+		[[ -z "$mode" || "$mode" == "000" ]] || chmod "$mode" "$tmp_file"
 		mv "$tmp_file" "$repos_json"
 	else
 		echo "ERROR: repos.json write produced invalid JSON — aborting (GH#16746)" >&2

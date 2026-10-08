@@ -14,7 +14,7 @@ fi
 
 BACKUP_ROOT="${AIDEVOPS_DIRTY_BACKUP_ROOT:-${HOME}/.aidevops/.agent-workspace/tmp/dirty-main-backups}"
 DEFAULT_RETENTION_DAYS="${AIDEVOPS_DIRTY_BACKUP_RETENTION_DAYS:-30}"
-REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
 BACKUP_SCHEMA="dirty-worktree-backup-v3"
 LEGACY_BACKUP_SCHEMA="dirty-worktree-backup-v2"
 UNTRACKED_LIST_NAME="untracked-files.nul"

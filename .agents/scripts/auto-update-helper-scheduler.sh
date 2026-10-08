@@ -279,7 +279,8 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc '${script_path} check'
+ExecStart=/usr/bin/env bash -lc '${script_path} check'
+$(aidevops_systemd_path_env)
 WorkingDirectory=${agents_dir}
 TimeoutStartSec=120
 Nice=10
