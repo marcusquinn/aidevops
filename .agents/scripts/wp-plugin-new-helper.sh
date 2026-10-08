@@ -461,7 +461,7 @@ _rename() {
 		print_warning "composer not found; run composer update --lock in $P_WORKTREE before linting"
 	fi
 	git -C "$P_WORKTREE" add -A || return 1
-	git -C "$P_WORKTREE" commit --quiet -m "${P_NAME}: names and maker details" || return 1
+	git -C "$P_WORKTREE" commit --quiet -m "chore: ${P_NAME} names and maker details" || return 1
 	return 0
 }
 
@@ -470,7 +470,7 @@ _publish() {
 	git -C "$P_WORKTREE" push --set-upstream origin "$P_BRANCH" || return 1
 	printf 'Customize the plugin identity from WP Plugin Starter %s.\n\nVerification: run composer install and scripts/lint.sh in the identity worktree before merge.\n' "$P_TAG" |
 		"${SCRIPT_DIR}/gh-write-helper.sh" pr create --repo "${P_OWNER}/${P_SLUG}" \
-			--base "$P_DEFAULT_BRANCH" --head "$P_BRANCH" --title "${P_NAME}: names and maker details" --body-file - || return 1
+			--base "$P_DEFAULT_BRANCH" --head "$P_BRANCH" --title "chore: ${P_NAME} names and maker details" --body-file - || return 1
 	return 0
 }
 
@@ -487,9 +487,15 @@ _register_quality() {
 		(cd "$P_DEST" && aidevops repos add --slug "${P_OWNER}/${P_SLUG}" \
 			--confirm REGISTER_CANONICAL_REPOSITORY) || return 1
 	fi
-	# Init may commit staged files. Run it on the clean linked worktree BEFORE
-	# rename-plugin stages renames, so identity changes form one coherent commit.
+	# Init may only stage files. Commit its output in the linked worktree so
+	# rename-plugin's clean-tree check passes before identity changes are staged.
 	(cd "$P_WORKTREE" && aidevops init code-quality) || return 1
+	local status
+	status="$(git -C "$P_WORKTREE" status --porcelain)" || return 1
+	if [[ -n "$status" ]]; then
+		git -C "$P_WORKTREE" add -A || return 1
+		git -C "$P_WORKTREE" commit --quiet -m "chore: initialize aidevops code-quality" || return 1
+	fi
 	return 0
 }
 
