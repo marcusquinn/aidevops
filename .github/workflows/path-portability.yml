@@ -52,12 +52,14 @@ jobs:
             .agents/scripts/tests/test-runtime-env.sh
             .agents/scripts/tests/test-launchd-sanitized-path.sh
             .agents/scripts/tests/test-pulse-path-precedence.sh
-            .agents/scripts/tests/test-tool-install-opencode.sh
             .agents/scripts/tests/test-setup-source-access-broker.sh
             .agents/scripts/tests/test-portable-shebangs.sh
           )
           if [[ "$RUNNER_OS" == "Linux" ]]; then
+            # Linux only for now: its pre-existing 12s hanging-installer bound
+            # (function fallback without timeout(1)) takes ~18s on macOS runners.
             tests+=(
+              .agents/scripts/tests/test-tool-install-opencode.sh
               .agents/scripts/tests/test-systemd-unit-generation.sh
               .agents/scripts/tests/test-routine-systemd-calendar.sh
             )
