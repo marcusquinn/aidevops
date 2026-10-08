@@ -99,18 +99,19 @@ write_command "release" \
 Release type: $ARGUMENTS (valid: major, minor, patch)
 
 **Steps:**
-1. Run `git log v$(cat VERSION 2>/dev/null || echo "0.0.0")..HEAD --oneline` to see commits since last release
+1. Pick the baseline: if `VERSION` exists use `v$(cat VERSION)`, else the latest tag (`git describe --tags --abbrev=0`), else the root commit. Run `git log <baseline>..HEAD --oneline`
 2. If no release type provided, determine it from commits:
    - Any `feat:` or new feature -> minor
    - Only `fix:`, `docs:`, `chore:`, `perf:`, `refactor:` -> patch
    - Any `BREAKING CHANGE:` or `!` -> major
-3. Run the single release command:
+3. If `.agents/scripts/version-manager.sh` exists (the aidevops repository), run the single release command:
    ```bash
    .agents/scripts/version-manager.sh release [type] --skip-preflight --force
    ```
+   Otherwise (any other managed repository) do NOT run that script or pass `--skip-preflight --force` to project scripts. Follow the repository'"'"'s documented release process (`RELEASING.md`, `CONTRIBUTING.md` Releasing section, or `package.json` release scripts): bump versions in a linked worktree and PR, merge with `full-loop-helper.sh merge`, then tag. See `workflows/release.md` "Manual Release (Non-aidevops Repos)"
 4. Report the result with the GitHub release URL
 
-**CRITICAL**: Use only the single command above - it handles everything atomically.'
+**CRITICAL**: In the aidevops repository use only the single command above - it handles everything atomically.'
 
 # --- Version Bump ---
 write_command "version-bump" \
