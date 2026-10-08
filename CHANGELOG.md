@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.33] - 2026-10-08
+
+### Fixed
+
+- distinguish unregistered-repo dispatch refusals and provision derived status labels
+
 ## [3.38.32] - 2026-10-08
 
 ### Added
