@@ -825,12 +825,14 @@ privacy_scan_secret_material_text() {
 #######################################
 # Stream a conservative candidate diff in one process. Synthetic one-line hunk
 # headers retain original line numbers for the authoritative scanners below.
-# Public mode is only used with empty entity and custom-path inventories.
+# Optional $3 lists ordinals (nth added line) selected by custom inventories.
 #######################################
 _privacy_builtin_candidate_diff() {
 	local diff_text="$1"
 	local mode="$2"
-	printf '%s\n' "$diff_text" | awk -v credentials="$PRIVACY_CREDENTIAL_PREFIX_ERE" -v mode="$mode" -v debug="${PRIVACY_GUARD_DEBUG:-0}" '
+	local extras_file="${3:-}"
+	printf '%s\n' "$diff_text" | awk -v credentials="$PRIVACY_CREDENTIAL_PREFIX_ERE" -v mode="$mode" -v debug="${PRIVACY_GUARD_DEBUG:-0}" -v extras="$extras_file" '
+		BEGIN { if (extras != "") while ((getline n < extras) > 0) extra[n + 0] = 1 }
 		/^\+\+\+ b\// { pem = 0; print; next }
 		/^\+\+\+ / { next }
 		/^@@ / {
@@ -842,8 +844,9 @@ _privacy_builtin_candidate_diff() {
 		}
 		/^\+/ {
 			text = substr($0, 2)
+			ordinal++
 			if (text ~ /-----BEGIN[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY-----/) pem = 1
-			candidate = pem || text ~ credentials || index(text, "PRIVATE")
+			candidate = pem || text ~ credentials || index(text, "PRIVATE") || (ordinal in extra)
 			if (mode == "public" && (index(text, "/" "Users/") || index(text, "/" "home/") || index(text, "~/") || index(text, "file://"))) candidate = 1
 			if (candidate) {
 				candidates++
@@ -858,6 +861,65 @@ _privacy_builtin_candidate_diff() {
 		END { if (debug == 1) printf "[privacy-guard][INFO] %s filter: %d diff lines, %d candidate lines\n", mode, NR, candidates > "/dev/stderr" }
 	'
 	return $?
+}
+
+#######################################
+# Select added-line ordinals matching custom inventories in two batched grep
+# passes (literal entity values, configured path regexes) instead of per-line
+# subprocesses. The authoritative per-line scanner still runs on candidates.
+# Arguments: $1=diff text $2=entity file $3=path-pattern file $4=output file
+# Returns: 0 ok, 1 unsupported rules (caller must fall back to full scan),
+#          2 error
+#######################################
+_privacy_custom_candidate_ordinals() {
+	local diff_text="$1"
+	local entities_file="$2"
+	local patterns_file="$3"
+	local out_file="$4"
+	local work texts values patterns class value pattern rc
+
+	work=$(mktemp -d) || return 2
+	texts="${work}/texts"
+	values="${work}/values"
+	patterns="${work}/patterns"
+	: >"$values"
+	: >"$patterns"
+	if ! : >"$out_file"; then
+		rm -rf "$work"
+		return 2
+	fi
+	if ! printf '%s\n' "$diff_text" | awk '/^\+\+\+ / { next } /^\+/ { print substr($0, 2) }' >"$texts"; then
+		rm -rf "$work"
+		return 2
+	fi
+	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
+		[[ -z "$class" || -z "$value" ]] && continue
+		printf '%s\n' "$value" >>"$values"
+	done <"$entities_file"
+	if [[ -f "$patterns_file" ]]; then
+		while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+			[[ -z "$pattern" || "$pattern" == \#* ]] && continue
+			printf '%s\n' "$pattern" >>"$patterns"
+		done <"$patterns_file"
+	fi
+	if [[ -s "$values" ]]; then
+		grep -anF -f "$values" "$texts" 2>/dev/null | cut -d: -f1 >>"$out_file"
+		rc=${PIPESTATUS[0]}
+		if [[ "$rc" -gt 1 ]]; then
+			rm -rf "$work"
+			return 1
+		fi
+	fi
+	if [[ -s "$patterns" ]]; then
+		grep -anE -f "$patterns" "$texts" 2>/dev/null | cut -d: -f1 >>"$out_file"
+		rc=${PIPESTATUS[0]}
+		if [[ "$rc" -gt 1 ]]; then
+			rm -rf "$work"
+			return 1
+		fi
+	fi
+	rm -rf "$work"
+	return 0
 }
 
 #######################################
@@ -1084,7 +1146,7 @@ privacy_scan_public_diff() {
 	local current_file="" line_num=0 hits=0 line added matching_hits scan_rc hit
 	local aidevops_script_basenames
 	local configured_paths="$HOME/.aidevops/configs/privacy-guard-private-path-patterns.txt"
-	local filtered=0
+	local filtered=0 snap_dir="" extras_file="" ordinals_rc
 
 	[[ -f "$entities_file" ]] || return 2
 	if [[ "$base_sha" =~ ^0+$ ]]; then
@@ -1097,6 +1159,31 @@ privacy_scan_public_diff() {
 	if [[ ! -s "$entities_file" && ! -s "$configured_paths" ]]; then
 		diff_output=$(_privacy_builtin_candidate_diff "$diff_output" public) || return 2
 		filtered=1
+	else
+		# Custom inventories: batch candidate selection against a snapshot;
+		# unsupported rules (e.g. an invalid regex) fall back to the full scan.
+		snap_dir=$(mktemp -d) || return 2
+		extras_file="${snap_dir}/ordinals"
+		if ! cp "$entities_file" "${snap_dir}/entities" 2>/dev/null; then
+			rm -rf "$snap_dir"
+			return 2
+		fi
+		if [[ -f "$configured_paths" ]] && ! cp "$configured_paths" "${snap_dir}/paths" 2>/dev/null; then
+			rm -rf "$snap_dir"
+			return 2
+		fi
+		_privacy_custom_candidate_ordinals "$diff_output" "${snap_dir}/entities" "${snap_dir}/paths" "$extras_file"
+		ordinals_rc=$?
+		if [[ "$ordinals_rc" -eq 0 ]]; then
+			if ! diff_output=$(_privacy_builtin_candidate_diff "$diff_output" public "$extras_file"); then
+				rm -rf "$snap_dir"
+				return 2
+			fi
+			filtered=2
+		elif [[ "$ordinals_rc" -ne 1 ]]; then
+			rm -rf "$snap_dir"
+			return 2
+		fi
 	fi
 	aidevops_script_basenames=$(_privacy_aidevops_script_reference_basenames)
 	while IFS= read -r line; do
@@ -1121,6 +1208,7 @@ privacy_scan_public_diff() {
 				done <<<"$matching_hits"
 				hits=$((hits + 1))
 			elif [[ "$scan_rc" -ne 0 ]]; then
+				[[ -n "$snap_dir" ]] && rm -rf "$snap_dir"
 				return 2
 			fi
 			line_num=$((line_num + 1))
@@ -1128,11 +1216,24 @@ privacy_scan_public_diff() {
 		" "*) line_num=$((line_num + 1)) ;;
 		esac
 	done <<<"$diff_output"
-	# Do not approve a filtered scan if custom rules appeared during the scan.
-	[[ -f "$entities_file" ]] || return 2
+	# Do not approve a filtered scan if custom rules appeared or changed during it.
+	if [[ ! -f "$entities_file" ]]; then
+		[[ -n "$snap_dir" ]] && rm -rf "$snap_dir"
+		return 2
+	fi
 	if [[ "$filtered" -eq 1 && (-s "$entities_file" || -s "$configured_paths") ]]; then
 		return 2
 	fi
+	if [[ "$filtered" -eq 2 ]]; then
+		local current_paths="$configured_paths" snap_paths="${snap_dir}/paths"
+		[[ -f "$current_paths" ]] || current_paths=/dev/null
+		[[ -f "$snap_paths" ]] || snap_paths=/dev/null
+		if ! cmp -s "$entities_file" "${snap_dir}/entities" || ! cmp -s "$current_paths" "$snap_paths"; then
+			rm -rf "$snap_dir"
+			return 2
+		fi
+	fi
+	[[ -n "$snap_dir" ]] && rm -rf "$snap_dir"
 	[[ "$hits" -gt 0 ]] && return 1
 	return 0
 }
