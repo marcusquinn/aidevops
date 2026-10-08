@@ -100,8 +100,7 @@ class SourceAccessHelperTests(unittest.TestCase):
     def test_system_tools_resolve_root_controlled_path_entries_only(self) -> None:
         core = HELPER._SOURCE_CORE
         system_git = core._system_executable("git")
-        if not os.path.exists(system_git):
-            self.skipTest("no root-controlled git on PATH")
+        self.assertTrue(os.path.exists(system_git), "no root-controlled git on PATH")
         caller_bin = self.root / "caller-bin"
         caller_bin.mkdir()
         (caller_bin / "git").symlink_to(system_git)
