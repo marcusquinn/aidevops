@@ -109,9 +109,67 @@ STUB
 	return 0
 }
 
+test_deadline_budget() {
+	local name="$1" deadline="$2" budget="$3" expected_budget="$4" yield_child="$5"
+	local stub_scripts_dir="${TEST_ROOT}/${name}-scripts"
+	local cursor_dir="${TEST_ROOT}/${name}-cursor"
+	mkdir -p "$stub_scripts_dir" "$cursor_dir"
+	cat >"${stub_scripts_dir}/post-merge-review-scanner.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'STUB budget=%s\n' "$SCANNER_BUDGET_SECONDS"
+if [[ "${YIELD_CHILD:-0}" == 1 ]]; then
+	printf 'cursor\n' >"${SCANNER_CURSOR_DIR}/enabled_repo.cursor"
+fi
+STUB
+	chmod +x "${stub_scripts_dir}/post-merge-review-scanner.sh"
+	local SCRIPT_DIR="$stub_scripts_dir" LOGFILE="${TEST_ROOT}/${name}.log"
+	local POST_MERGE_SCANNER_LAST_RUN="${TEST_ROOT}/${name}.last" POST_MERGE_SCANNER_INTERVAL=0
+	local REPOS_JSON="${TEST_ROOT}/repos.json"
+	local AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR="$cursor_dir"
+	local AIDEVOPS_POST_MERGE_SCANNER_STAGE_BUDGET_SECONDS="$budget"
+	local AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS=30
+	local PULSE_STAGE_DEADLINE_EPOCH="$deadline"
+	export PULSE_STAGE_DEADLINE_EPOCH
+	local YIELD_CHILD="$yield_child"
+	export YIELD_CHILD
+	# Fixed clock: no sleeps or real GitHub calls are needed for this regression.
+	date() {
+		printf '1000\n'
+		return 0
+	}
+	_run_post_merge_review_scanner
+	unset -f date
+	local output="" state=""
+	output=$(<"$LOGFILE")
+	if [[ "$expected_budget" == none ]]; then
+		assert_contains "$name yields before child invocation" "yielding before enabled/repo" "$output"
+		[[ "$output" != *"STUB"* ]] && state="not-invoked"
+		assert_contains "$name never invokes child" "not-invoked" "$state"
+	else
+		assert_contains "$name passes bounded child budget" "STUB budget=${expected_budget}" "$output"
+	fi
+	if [[ "$expected_budget" == none || "$yield_child" == 1 ]]; then
+		state=""
+		[[ -f "${cursor_dir}/repo.cursor" && ! -f "$POST_MERGE_SCANNER_LAST_RUN" ]] && state="preserved"
+		assert_contains "$name preserves cursor without marking complete" "preserved" "$state"
+	else
+		state=""
+		[[ ! -f "${cursor_dir}/repo.cursor" && -f "$POST_MERGE_SCANNER_LAST_RUN" ]] && state="complete"
+		assert_contains "$name completes and clears cursor" "complete" "$state"
+	fi
+	return 0
+}
+
 test_home_unset_does_not_abort
 test_interval_unset_does_not_abort
 test_stale_repo_cursor_resets_to_enabled_repos
+test_deadline_budget shortened 1100 600 70 1
+test_deadline_budget lower-configured 1600 60 30 0
+test_deadline_budget reserve-only 1030 600 none 0
+test_deadline_budget expired 999 600 none 0
+test_deadline_budget absent "" 600 570 0
+test_deadline_budget invalid invalid 600 570 0
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -ne 0 ]]; then

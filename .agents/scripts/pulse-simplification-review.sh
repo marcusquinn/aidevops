@@ -154,6 +154,15 @@ _post_merge_scanner_scan_repo() {
 	now_for_budget=$(date +%s)
 	elapsed_for_budget=$((now_for_budget - stage_start_epoch))
 	remaining_budget=$((stage_budget - elapsed_for_budget))
+	# The watchdog may shorten this stage to fit the remaining Pulse cycle.
+	# Recompute at each repo so setup and earlier scans consume that deadline.
+	local stage_deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}" deadline_remaining=""
+	if [[ "$stage_deadline" =~ ^[0-9]+$ ]]; then
+		deadline_remaining=$((stage_deadline - now_for_budget))
+		if [[ "$deadline_remaining" -lt "$remaining_budget" ]]; then
+			remaining_budget="$deadline_remaining"
+		fi
+	fi
 	if [[ "$remaining_budget" -le "$stage_reserve" ]]; then
 		echo "[pulse-wrapper] Post-merge scanner: yielding before $slug (remaining=${remaining_budget}s reserve=${stage_reserve}s)" >>"${LOGFILE:-/dev/null}"
 		return 2

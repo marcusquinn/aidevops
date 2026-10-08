@@ -796,6 +796,29 @@ else
 	echo "  FAIL: budgeted scan did not write expected cursor"
 	FAIL=$((FAIL + 1))
 fi
+
+echo "Test: absolute stage deadline yields before a larger scanner budget"
+out=$(PULSE_STAGE_DEADLINE_EPOCH="$(date +%s)" SCANNER_BUDGET_SECONDS=600 \
+SCANNER_CURSOR_DIR="${TMP_DIR}/cursor-deadline" do_scan "stub/repo" "true" 2>&1)
+assert_contains "deadline scan logs cooperative yield" "run_yield" "$out"
+assert_not_contains "deadline scan does not report completion" "status=complete" "$out"
+assert_equals "deadline yield preserves next PR" "101" "$(jq -r '.next_pr' "${TMP_DIR}/cursor-deadline/stub_repo.cursor")"
+
+echo "Test: deadline budget checks respect reserve and lower configured budget"
+check_epoch=$(date +%s)
+rc=0
+PULSE_STAGE_DEADLINE_EPOCH=$((check_epoch + 20)) SCANNER_BUDGET_SECONDS=600 \
+	AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS=30 \
+	scanner_budget_exhausted "$check_epoch" || rc=$?
+assert_rc "deadline reserve yields before watchdog timeout" 0 "$rc"
+rc=0
+PULSE_STAGE_DEADLINE_EPOCH=$((check_epoch + 600)) SCANNER_BUDGET_SECONDS=0 \
+	scanner_budget_exhausted "$check_epoch" || rc=$?
+assert_rc "lower configured child budget still yields" 0 "$rc"
+rc=0
+PULSE_STAGE_DEADLINE_EPOCH=$((check_epoch + 600)) SCANNER_BUDGET_SECONDS=600 \
+	scanner_budget_exhausted "$check_epoch" || rc=$?
+assert_rc "available safe budget continues normally" 1 "$rc"
 install_ok_gh
 
 # -----------------------------------------------------------------------------
