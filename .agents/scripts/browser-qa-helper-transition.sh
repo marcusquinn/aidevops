@@ -5,6 +5,14 @@
 
 _generate_transition_script() {
 	local script_file="$1"
+	_generate_transition_setup "$script_file"
+	_generate_transition_capture "$script_file"
+	return 0
+}
+
+# Keep setup and capture generation separate without changing the emitted module.
+_generate_transition_setup() {
+	local script_file="$1"
 	cat >"$script_file" <<'SCRIPT'
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -89,6 +97,13 @@ try {
     }
     await route.continue();
   });
+SCRIPT
+	return 0
+}
+
+_generate_transition_capture() {
+	local script_file="$1"
+	cat >>"$script_file" <<'SCRIPT'
   await page.goto(url.href, { waitUntil: 'load', timeout: 30000 });
   if (screencastArg === 'true') {
     cdp = await context.newCDPSession(page);
