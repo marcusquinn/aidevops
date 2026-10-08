@@ -1174,6 +1174,14 @@ _push_wip_commits_on_exit() {
 	else
 		print_warning "[lifecycle] worker_exit_push_failed branch=${branch_name} ahead=${ahead_count}"
 		_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
+		# GH#34040: committed work has no diff to archive; bundle it instead.
+		local bundle_file=""
+		if bundle_file=$(_worker_write_recovery_bundle "$work_dir" "$branch_name"); then
+			_WORKER_DIRTY_WORK_PRESERVED=1
+			print_warning "[lifecycle] worker_dirty_work_preserved bundle=${bundle_file}"
+		else
+			print_warning "[lifecycle] work_lost branch=${branch_name} ahead=${ahead_count} — push and recovery bundle both failed"
+		fi
 	fi
 	return 0
 }
@@ -1352,6 +1360,80 @@ _worker_archive_dirty_worktree_patch() {
 		return 0
 	fi
 	return 0
+}
+
+#######################################
+# GH#34040: Write a verified git bundle of commits not reachable from any
+# origin remote-tracking ref, beside the dirty-worktree archives.
+# Args: $1=worktree path, $2=branch name (may be empty when detached)
+# Outputs: bundle path on stdout
+# Returns: 0 only when the bundle exists and `git bundle verify` passes
+#######################################
+_worker_write_recovery_bundle() {
+	local work_dir="$1"
+	local branch_name="$2"
+	local archive_root="${AIDEVOPS_WORKER_DIRTY_ARCHIVE_DIR:-${HOME}/.aidevops/.agent-workspace/work/dirty-worktrees}"
+	local safe_branch="${branch_name//[^A-Za-z0-9._-]/_}"
+	local stamp=""
+	stamp=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || printf '%s' "unknown-time")
+	local archive_dir="${archive_root}/${safe_branch:-detached}-${stamp}"
+	local bundle_file="${archive_dir}/commits.bundle"
+	local bundle_ref="HEAD"
+	case "$branch_name" in
+	"" | HEAD) ;;
+	*) bundle_ref="refs/heads/${branch_name}" ;;
+	esac
+
+	mkdir -p "$archive_dir" 2>/dev/null || return 1
+	git -C "$work_dir" bundle create "$bundle_file" "$bundle_ref" --not --remotes=origin \
+		>/dev/null 2>&1 || return 1
+	git -C "$work_dir" bundle verify "$bundle_file" >/dev/null 2>&1 || return 1
+	git -C "$work_dir" rev-parse HEAD >"${archive_dir}/head.txt" 2>/dev/null || true
+	printf '%s\n' "$bundle_file"
+	return 0
+}
+
+#######################################
+# GH#34040: Prove committed worker work is durable before a blocked handoff
+# claims preservation. Push the branch; on failure write a verified recovery
+# bundle. Never reports preservation without one of those proofs.
+# Args: $1=worktree path
+# Globals updated:
+#   _WORKER_COMMIT_DURABILITY — none | pushed:<branch> | bundle:<path> | work_lost
+# Returns: 0 when commits are absent or durable, 1 when work is lost
+#######################################
+_worker_secure_branch_commits() {
+	local work_dir="$1"
+	local branch_name="" unpushed="" bundle_file=""
+	_WORKER_COMMIT_DURABILITY="work_lost"
+	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
+		_WORKER_COMMIT_DURABILITY="none"
+		return 0
+	fi
+	branch_name=$(git -C "$work_dir" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch_name=""
+	unpushed=$(git -C "$work_dir" rev-list --count HEAD --not --remotes=origin 2>/dev/null) || unpushed=""
+	if [[ "$unpushed" == "0" ]]; then
+		_WORKER_COMMIT_DURABILITY="none"
+		return 0
+	fi
+	case "$branch_name" in
+	"" | main | master) ;;
+	*)
+		if git -C "$work_dir" push -u origin "$branch_name" >/dev/null 2>&1; then
+			_WORKER_COMMIT_DURABILITY="pushed:${branch_name}"
+			print_info "[lifecycle] worker_commits_pushed branch=${branch_name} unpushed=${unpushed:-unknown}"
+			return 0
+		fi
+		print_warning "[lifecycle] worker_commits_push_failed branch=${branch_name} unpushed=${unpushed:-unknown}"
+		;;
+	esac
+	if bundle_file=$(_worker_write_recovery_bundle "$work_dir" "$branch_name"); then
+		_WORKER_COMMIT_DURABILITY="bundle:${bundle_file}"
+		print_warning "[lifecycle] worker_commits_bundled branch=${branch_name:-detached} bundle=${bundle_file}"
+		return 0
+	fi
+	print_warning "[lifecycle] work_lost branch=${branch_name:-detached} unpushed=${unpushed:-unknown} — push and recovery bundle both failed"
+	return 1
 }
 
 #######################################
