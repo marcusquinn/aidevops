@@ -34,6 +34,13 @@ if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
 	# shellcheck source=./portable-stat.sh
 	source "${BASH_SOURCE[0]%/*}/portable-stat.sh" || return 1
 fi
+if ! declare -F _gh_secondary_cooldown_expires_at >/dev/null 2>&1; then
+	# Detached runners also need the shared cooldown reset so deferred routines
+	# honour GitHub's reset instead of the fixed fallback. Non-fatal: the
+	# deferral path already falls back when the reset is unavailable.
+	# shellcheck source=./shared-gh-secondary-cooldown.sh
+	source "${BASH_SOURCE[0]%/*}/shared-gh-secondary-cooldown.sh" || true
+fi
 _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"

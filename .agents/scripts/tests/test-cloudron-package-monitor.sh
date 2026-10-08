@@ -562,6 +562,8 @@ test_monitor_scheduler_cooldown_integration() {
 	local blocked_rc=0
 	local eligible_count=0
 	local iteration=0
+	local attempts=0
+	local terminal_status=""
 	write_fake_commands "$bin_dir"
 	write_two_package_fixture "$home_dir" "$repo_dir"
 	mkdir -p "${home_dir}/.aidevops/agents/scripts"
@@ -591,11 +593,21 @@ WRAPPER
 	source "$PULSE_ROUTINES"
 
 	_routine_execute r916 "Cloudron packages" scripts/rate-monitor.sh "" "$case_root"
+	# Script routines run in a detached child that alone writes state; wait
+	# (bounded) for its terminal status instead of racing the dispatcher.
+	while [[ "$attempts" -lt 400 ]]; do
+		if [[ -f "$state_file" ]]; then
+			terminal_status=$(jq -r '.r916.last_status // ""' "$state_file" 2>/dev/null) || terminal_status=""
+			[[ -z "$terminal_status" || "$terminal_status" == "running" ]] || break
+		fi
+		sleep 0.05
+		attempts=$((attempts + 1))
+	done
 	deferred_until=$(jq -r '.r916.deferred_until' "$state_file")
 	assert_equal deferred "$(jq -r '.r916.last_status' "$state_file")" "rate-limited monitor is classified as deferred"
 	[[ "$deferred_until" -ge 9999999999 && "$deferred_until" -le 10000000006 ]] &&
 		assert_equal true true "scheduler persists reset plus bounded jitter" ||
-		assert_equal true false "scheduler persists reset plus bounded jitter"
+		assert_equal true false "scheduler persists reset plus bounded jitter (deferred_until=${deferred_until})"
 	assert_equal 1 "$(grep -c '^API ' "$api_log")" "integrated monitor touches only the first registration"
 
 	AIDEVOPS_ROUTINE_NOW_EPOCH=$((deferred_until - 1))
