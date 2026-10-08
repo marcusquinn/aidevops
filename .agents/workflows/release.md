@@ -275,6 +275,14 @@ or publication authority.
 
 ## Manual Release (Non-aidevops Repos)
 
+Applies whenever `.agents/scripts/version-manager.sh` is absent (also the `/release`
+command fallback; "Manual Release (Non-aidevops Repos)"). Never run that script, or pass
+`--skip-preflight --force` to a project's own scripts. Look for the documented
+process in `RELEASING.md`, `CONTRIBUTING.md` (Releasing) or `package.json` release
+scripts, and follow it: bump versions in a linked worktree and PR, merge with
+`full-loop-helper.sh merge`, then tag. With no `VERSION` file, the latest tag
+(`git describe --tags --abbrev=0`) is the baseline for the commit range and bump type.
+
 Publication still requires explicit release authority and follows the repository's
 own process. For GitHub repos with Actions enabled, opt into read-only evidence
 before publishing: `aidevops sync-workflows --repo OWNER/REPO --workflow
