@@ -235,10 +235,53 @@ canonicalize_checks() {
 	local raw="$1"
 	printf '%s' "$raw" | jq -c '
 		if type != "array" then error("checks result is not an array") else . end
-		| map({name:(.name // "unnamed"), workflow:(.workflow // ""), state:(.state // "unknown"), bucket:(.bucket // "unknown"), link:(.link // "")})
+		| map({name:(.name // "unnamed"), workflow:(.workflow // ""), state:(.state // "unknown"), bucket:(.bucket // "unknown"), link:(.link // ""), description:(.description // "")})
 		| sort_by(.workflow, .name, .link)
 	' 2>/dev/null
 	return $?
+}
+
+# Keep this separate from Actions billing-annotation signatures: qlty reports a
+# commit status description. Exact naming excludes the Qlty Regression Gate job.
+apply_qlty_billing_policy() {
+	local checks="$1" policy="$2"
+	printf '%s' "$checks" | jq -c --arg policy "$policy" '
+		map(if (.name | test("^qlty check$"; "i")) and .bucket == "fail"
+			and (.description | test("out of minutes|out of credits"; "i"))
+		then . + {qlty_billing: true}
+			| if $policy == "limited" then .bucket = "skipping" else . end
+		else . end)
+	'
+	return $?
+}
+
+read_qlty_credit_policy() {
+	local repo="$1" metadata="" policy=""
+	metadata=$(gh api "repos/${repo}" 2>/dev/null) || {
+		printf 'unknown\n'
+		return 0
+	}
+	policy=$(printf '%s' "$metadata" | jq -er '
+		if (.private | type) != "boolean" or (.owner.type != "User" and .owner.type != "Organization") then
+			error("invalid repository billing metadata")
+		elif .private or .owner.type == "Organization" then "limited"
+		else "public-personal" end
+	' 2>/dev/null) || policy="unknown"
+	printf '%s\n' "$policy"
+	return 0
+}
+
+emit_qlty_billing_notes() {
+	local checks="$1" previous="$2" policy="$3"
+	printf '%s' "$checks" | jq -r --argjson previous "${previous:-[]}" --arg policy "$policy" '
+		.[] | select(.qlty_billing == true) | . as $check
+		| select(any($previous[]; .qlty_billing == true and .name == $check.name
+			and .workflow == $check.workflow and .link == $check.link and .bucket == $check.bucket) | not)
+		| if .bucket == "skipping" then "SKIPPED (qlty out of credits): \(.name)\(if .link == "" then "" else " " + .link end)"
+		elif $policy == "public-personal" then "NOTE: unexpected qlty out-of-credits failure on a public personal-account repository: \(.name)"
+		else "NOTE: repository credit policy unavailable; retaining qlty billing failure: \(.name)" end
+	'
+	return 0
 }
 
 state_counts() {
@@ -483,7 +526,7 @@ wait_for_checks() {
 	local start_epoch="" poll_number=0 valid_state_seen=0
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
-	local interval="$initial_interval" previous="" initial_head=""
+	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
 	initial_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
 	if [[ -z "$initial_head" ]]; then
 		printf 'INDETERMINATE: PR head could not be verified before required-check observation\n' >&2
@@ -515,6 +558,13 @@ wait_for_checks() {
 			interval="$_GCW_NEXT_INTERVAL"
 			continue
 		fi
+		current=$(apply_qlty_billing_policy "$current" "${qlty_credit_policy:-unknown}")
+		if [[ -z "$qlty_credit_policy" ]] && printf '%s' "$current" | jq -e 'any(.[]; .qlty_billing == true)' >/dev/null; then
+			# Read once per wait, including failures; unknown metadata never permits skipping.
+			qlty_credit_policy=$(read_qlty_credit_policy "$repo")
+			current=$(apply_qlty_billing_policy "$current" "$qlty_credit_policy")
+		fi
+		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
 		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
 		state_summary=$(state_counts "$current" "$missing_contexts")
 		emit_recovered_state "$state_summary"
