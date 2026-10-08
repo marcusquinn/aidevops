@@ -365,6 +365,27 @@ _cloudron_monitor_rearm_ready_issue() {
 	return 0
 }
 
+# Print canonical Files Scope lines: one exact repository-relative path per
+# line with nothing after it, as required by the gh_create_issue scope gate
+# (GH#32880/GH#33243). Descriptions belong in the sibling File notes section.
+_cloudron_monitor_files_scope() {
+	local manifest_rel="$1"
+	local repo_path="${2:-}"
+	local dockerfile="Dockerfile"
+	local has_changelog=false
+	local tick='`'
+	[[ -n "$repo_path" && ! -f "${repo_path}/Dockerfile" && -f "${repo_path}/Dockerfile.cloudron" ]] && dockerfile="Dockerfile.cloudron"
+	printf -- "- ${tick}%s${tick}\n" "$manifest_rel" "$dockerfile"
+	if [[ -n "$repo_path" && -f "${repo_path}/CHANGELOG" ]]; then
+		printf -- "- ${tick}%s${tick}\n" "CHANGELOG"
+		has_changelog=true
+	fi
+	if [[ "$has_changelog" == false || -f "${repo_path}/CHANGELOG.md" ]]; then
+		printf -- "- ${tick}%s${tick}\n" "CHANGELOG.md"
+	fi
+	return 0
+}
+
 _cloudron_monitor_create_issue() {
 	local slug="$1"
 	local title="$2"
@@ -373,20 +394,14 @@ _cloudron_monitor_create_issue() {
 	local verification="$5"
 	local manifest_rel="${6:-CloudronManifest.json}"
 	local repo_path="${7:-}"
-	local changelog_scope=""
+	local files_scope=""
 	local body_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local body_file=""
 	local issue_wrapper="${CLOUDRON_PACKAGE_ISSUE_WRAPPER:-gh_create_issue}"
 	command -v "$issue_wrapper" >/dev/null 2>&1 || _cloudron_monitor_error "gh_create_issue wrapper is required for managed issue writes." || return 1
 	mkdir -p "$body_dir"
 	body_file=$(mktemp "${body_dir}/cloudron-package-monitor.XXXXXX") || return 1
-	if [[ -n "$repo_path" && -f "${repo_path}/CHANGELOG" ]]; then
-		changelog_scope="- \`CHANGELOG\` — Cloudron-format package release notes."
-	fi
-	if [[ -n "$repo_path" && -f "${repo_path}/CHANGELOG.md" ]]; then
-		changelog_scope="${changelog_scope}
-- \`CHANGELOG.md\` — package release notes before any version bump."
-	fi
+	files_scope=$(_cloudron_monitor_files_scope "$manifest_rel" "$repo_path")
 	cat >"$body_file" <<EOF
 <!-- aidevops:cloudron-package-monitor ${fingerprint} -->
 <!-- aidevops:brief-schema=v2 -->
@@ -398,9 +413,13 @@ The monitor did not build, publish, tag, deploy, or modify package source.
 
 ## Files Scope
 
-- \`${manifest_rel}\` — package and upstream version metadata.
-- \`Dockerfile\` or \`Dockerfile.cloudron\` — final Cloudron base image and packaged upstream artifacts.
-${changelog_scope:-\`CHANGELOG.md\` — package release notes before any version bump.}
+${files_scope}
+
+## File notes
+
+- \`${manifest_rel}\`: package and upstream version metadata.
+- Dockerfile: final Cloudron base image and packaged upstream artifacts.
+- \`CHANGELOG\` (Cloudron format) and/or \`CHANGELOG.md\`: package release notes before any version bump.
 
 ## Acceptance criteria
 
