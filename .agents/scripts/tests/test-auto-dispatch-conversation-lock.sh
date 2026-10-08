@@ -63,6 +63,7 @@ gh() {
 		api_count=$((api_count + 1))
 		printf '%s\n' "$api_count" >"$GH_API_COUNT_FILE"
 		if [[ "$GH_API_RC" -ne 0 ]]; then
+			[[ -z "${GH_API_STDERR:-}" ]] || printf '%s\n' "$GH_API_STDERR" >&2
 			return "$GH_API_RC"
 		fi
 		if [[ "$GH_LOCKED" == *,* ]]; then
@@ -156,6 +157,76 @@ else
 fi
 unset AIDEVOPS_CONVERSATION_LOCK_VERIFY_ATTEMPTS
 AIDEVOPS_CONVERSATION_LOCK_VERIFY_DELAY=0
+
+# GH#34057: fail-closed outcomes carry an allowlisted cause, never raw output.
+LOCK_SECRET_FIXTURE="synthetic-lock-read-secret-fixture"
+assert_lock_cause() {
+	local issue="$1"
+	local expected="$2"
+	local message="$3"
+	local rc=0 summary=""
+	: >"$LOGFILE"
+	lock_issue_for_worker "$issue" owner/repo || rc=$?
+	summary=$(conversation_lock_failure_summary)
+	if [[ "$rc" -eq 1 && "$summary" == "$expected" ]] &&
+		! grep -qF "$LOCK_SECRET_FIXTURE" "$LOGFILE" &&
+		[[ ! -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-${issue}" ]]; then
+		pass "$message"
+	else
+		fail "$message (rc=${rc} summary='${summary}')"
+	fi
+	return 0
+}
+
+reset_gh_calls
+GH_LOCKED=false
+GH_API_RC=1
+GH_API_STDERR="gh: Not Found (HTTP 404) ${LOCK_SECRET_FIXTURE}"
+assert_lock_cause 71 "cause=read_unavailable detail=not_found mutation=not_attempted" \
+	"unavailable lock read is attributed without raw stderr"
+GH_API_STDERR="HTTP 403: API rate limit exceeded ${LOCK_SECRET_FIXTURE}"
+assert_lock_cause 72 "cause=read_unavailable detail=rate_limited mutation=not_attempted" \
+	"rate-limited lock read is distinguished from a generic forbidden read"
+GH_API_RC=0
+GH_API_STDERR=""
+
+reset_gh_calls
+GH_LOCKED=null
+assert_lock_cause 73 "cause=state_malformed detail=none mutation=not_attempted" \
+	"malformed lock state is attributed before any mutation"
+if ! grep -q -- '^issue lock ' "$GH_CALLS"; then
+	pass "malformed lock state does not mutate the conversation"
+else
+	fail "malformed lock state does not mutate the conversation"
+fi
+
+reset_gh_calls
+GH_LOCKED=false
+assert_lock_cause 74 "cause=verify_not_propagated detail=none mutation=accepted" \
+	"accepted but unverified lock is attributed to propagation"
+if grep -q 'dispatch remains blocked (GH#30180) cause=verify_not_propagated detail=none mutation=accepted$' "$LOGFILE"; then
+	pass "unverified lock log line carries the sanitized cause"
+else
+	fail "unverified lock log line carries the sanitized cause"
+fi
+
+reset_gh_calls
+GH_LOCK_RC=1
+GH_LOCKED=false
+assert_lock_cause 75 "cause=verify_not_propagated detail=none mutation=rejected" \
+	"rejected lock mutation is distinguished from an accepted one"
+if [[ "$(grep -c -- '^issue lock ' "$GH_CALLS")" -eq 1 ]]; then
+	pass "rejected lock mutation is not retried"
+else
+	fail "rejected lock mutation is not retried"
+fi
+GH_LOCK_RC=0
+
+reset_gh_calls
+GH_LOCKED=false,
+assert_lock_cause 76 "cause=verify_read_malformed detail=none mutation=accepted" \
+	"malformed verification read is distinguished from propagation lag"
+GH_LOCKED=true
 
 reset_gh_calls
 GH_API_RC=0

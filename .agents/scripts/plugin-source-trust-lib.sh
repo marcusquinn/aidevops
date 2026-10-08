@@ -67,7 +67,14 @@ plugin_trust_sha256_file() {
 plugin_trust_file_mode() {
 	local path="$1"
 	local mode=""
-	mode=$(stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null || true)
+	# GNU stat treats -f as filesystem status (exit 0, wrong output); use the
+	# capability-detected portable wrapper instead of a raw stat chain.
+	if ! declare -F _file_perms >/dev/null 2>&1; then
+		# shellcheck source=./portable-stat.sh
+		source "${BASH_SOURCE[0]%/*}/portable-stat.sh" || return 1
+	fi
+	[[ -e "$path" ]] || return 1
+	mode=$(_file_perms "$path" 2>/dev/null || true)
 	if [[ ! "$mode" =~ ^[0-7]{3,4}$ ]]; then
 		return 1
 	fi

@@ -219,6 +219,9 @@ fi
 echo ""
 echo "Test 26: dispatch-intent label normalization"
 
+STUB_MANAGED_LABELS=$'auto-dispatch\nno-auto-dispatch'
+export STUB_MANAGED_LABELS
+
 _reset_log
 "$SHIM_RUN" issue create --repo owner/repo --title "Dispatch intent conflict" \
 	--body "Capture the issue." --label "bug,auto-dispatch" --label no-auto-dispatch \
@@ -252,6 +255,18 @@ if _argv_has_pair "--add-label" "auto-dispatch" &&
 else
 	_fail "automatic dispatch-intent issue edit" "argv: $(_read_argv)"
 fi
+
+_reset_log
+STUB_MANAGED_LABELS='auto-dispatch'
+"$SHIM_RUN" issue edit 42 --repo owner/repo --add-label auto-dispatch \
+	2>/dev/null
+if _argv_has_pair "--add-label" "auto-dispatch" &&
+	! _argv_has_pair "--remove-label" "no-auto-dispatch"; then
+	_pass "adding auto-dispatch succeeds when the repository lacks no-auto-dispatch"
+else
+	_fail "missing opposite dispatch label" "argv: $(_read_argv)"
+fi
+STUB_MANAGED_LABELS=$'auto-dispatch\nno-auto-dispatch'
 
 _reset_log
 "$SHIM_RUN" issue edit 42 --repo owner/repo --add-label auto-dispatch \

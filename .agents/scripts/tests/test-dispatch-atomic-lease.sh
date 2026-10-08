@@ -56,6 +56,10 @@ while [[ $# -gt 0 ]]; do
 	*) shift ;;
 	esac
 done
+if [[ "$method" == POST && -n "${MOCK_GH_POST_FAIL:-}" ]]; then
+	printf 'HTTP 502: synthetic-post-secret-fixture\n' >&2
+	exit 1
+fi
 if [[ "$method" == POST ]]; then
 	lock="$state/lock"
 	while ! mkdir "$lock" 2>/dev/null; do sleep 0.01; done
@@ -582,6 +586,55 @@ test_prelaunch_renewal_is_monotonic_and_coalesced() {
 	return 0
 }
 
+expect_transition_denial() {
+	local root="$1" expected="$2" secret="$3"
+	shift 3
+	local rc=0
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$@" >"$root/denial.out" 2>"$root/denial.err" || rc=$?
+	[[ "$rc" -eq 1 ]] || fail "transition ${expected} changed its exit code: rc=${rc}"
+	[[ ! -s "$root/denial.out" ]] || fail "transition ${expected} wrote machine-readable stdout"
+	[[ "$(grep -c '^DISPATCH_LEASE_TRANSITION_DENIED ' "$root/denial.err")" == 1 ]] ||
+		fail "transition ${expected} did not emit exactly one denial reason"
+	grep -qx "DISPATCH_LEASE_TRANSITION_DENIED reason=${expected}" "$root/denial.err" ||
+		fail "transition denial was not attributed to ${expected}"
+	! grep -qF -e "$secret" -e 'synthetic-post-secret-fixture' "$root/denial.err" ||
+		fail "transition ${expected} disclosed a secret-like value"
+	return 0
+}
+
+test_transition_denials_are_attributed() {
+	local root="${TMP_DIR}/transition-denials" token="" unmatched="synthetic-unmatched-lease-fixture"
+	local post_count_before="" post_count_after=""
+	create_mock_gh "$root"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_ORPHAN_GRACE=30 \
+		"$CLAIM" claim 54 owner/repo shared-login >"$root/claim.out" 2>&1
+	token=$(claim_token "$root/claim.out")
+	[[ -n "$token" ]] || fail "attribution claim token missing"
+
+	expect_transition_denial "$root" invalid_arguments "$token" \
+		env AIDEVOPS_DEVICE_ID=device-a "$CLAIM" transition prelaunch 54 owner/repo "" issue-54 60
+	expect_transition_denial "$root" lease_unmatched "$unmatched" \
+		env AIDEVOPS_DEVICE_ID=device-a "$CLAIM" transition prelaunch 54 owner/repo "$unmatched" issue-54 60
+	expect_transition_denial "$root" device_mismatch "$token" \
+		env AIDEVOPS_DEVICE_ID=device-b "$CLAIM" transition prelaunch 54 owner/repo "$token" issue-54 60
+	expect_transition_denial "$root" session_mismatch "$token" \
+		env AIDEVOPS_DEVICE_ID=device-a "$CLAIM" transition prelaunch 54 owner/repo "$token" issue-999 60
+	post_count_before=$(grep -c -- '--method POST' "$root/state/calls.log")
+	expect_transition_denial "$root" mutation_failed "$token" \
+		env AIDEVOPS_DEVICE_ID=device-a MOCK_GH_POST_FAIL=1 "$CLAIM" transition prelaunch 54 owner/repo "$token" issue-54 600
+	post_count_after=$(grep -c -- '--method POST' "$root/state/calls.log")
+	[[ "$post_count_after" -eq $((post_count_before + 1)) ]] || fail "failed lease mutation was retried"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition ready 54 owner/repo "$token" issue-54 30 2>"$root/ready.err" ||
+		fail "attribution fixture ready transition failed"
+	! grep -q '^DISPATCH_LEASE_TRANSITION_DENIED ' "$root/ready.err" || fail "successful transition emitted a denial"
+	expect_transition_denial "$root" phase_disallowed "$token" \
+		env AIDEVOPS_DEVICE_ID=device-a "$CLAIM" transition prelaunch 54 owner/repo "$token" issue-54 60
+	pass "transition denials keep exit codes and emit one allowlisted reason without secrets"
+	return 0
+}
+
 test_takeover_recheck_precedes_mutation() {
 	local root="${TMP_DIR}/takeover"
 	create_mock_gh "$root"
@@ -618,6 +671,7 @@ test_late_terminal_preserves_new_dispatch
 test_large_comment_history_avoids_argv_limits
 test_prelaunch_renewal_covers_slow_startup
 test_prelaunch_renewal_is_monotonic_and_coalesced
+test_transition_denials_are_attributed
 test_invalid_device_not_public
 test_takeover_recheck_precedes_mutation
 printf '\nAtomic lease concurrency tests passed\n'
