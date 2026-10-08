@@ -376,6 +376,17 @@ _pulse_fetch_candidate_issue_snapshot_json() {
 }
 
 #######################################
+# Recognize blocked readiness in both GitHub and normalized label snapshots.
+#######################################
+_pulse_candidate_snapshot_has_blocked_work() {
+	local issue_json="$1"
+	if jq -e 'any(.[]; any(.labels[]?; (.name? // .) == "status:blocked"))' <<<"$issue_json" >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Refresh a snapshot after dependency normalization only when the current
 # snapshot contains blocked work. The source marker file is updated by fetch.
 #######################################
@@ -383,7 +394,7 @@ _pulse_normalize_candidate_issue_snapshot_json() {
 	local repo_slug="$1" limit="$2" mode="$3" issue_json="$4"
 	local error_file="$5" source_file="$6"
 	if [[ "$mode" == "skip" ]] ||
-		! printf '%s' "$issue_json" | jq -e 'any(.[]; any(.labels[]?; .name == "status:blocked"))' >/dev/null 2>&1 ||
+		! _pulse_candidate_snapshot_has_blocked_work "$issue_json" ||
 		! declare -F normalize_repo_dependency_readiness_if_due >/dev/null 2>&1; then
 		printf '%s\n' "$issue_json"
 		return 0
@@ -399,6 +410,7 @@ _pulse_normalize_candidate_issue_snapshot_json() {
 _pulse_persist_candidate_snapshot_evidence() {
 	local repo_slug="$1" issue_json="$2" snapshot_succeeded="$3" limit="$4"
 	local raw_snapshot_file="$5" snapshot_status_file="$6" completeness_file="$7"
+	local normalization_mode="${8:-normalize}"
 	if [[ -n "$raw_snapshot_file" ]]; then
 		(
 			umask 077
@@ -411,6 +423,10 @@ _pulse_persist_candidate_snapshot_evidence() {
 	fi
 	# A successful bounded read is not necessarily complete. Never lend a
 	# reserved class's slots based on a failed, malformed or truncated snapshot.
+	# Deferred blocked readiness cannot prove absence of newly eligible work.
+	if [[ "$normalization_mode" == "skip" ]] && _pulse_candidate_snapshot_has_blocked_work "$issue_json"; then
+		return 0
+	fi
 	if [[ -n "$completeness_file" && "$snapshot_succeeded" == 1 ]] &&
 		jq -e --argjson limit "$limit" 'length < $limit' <<<"$issue_json" >/dev/null 2>&1; then
 		printf '1\n' >"$completeness_file"
@@ -509,7 +525,7 @@ list_dispatchable_issue_candidates_json() {
 
 	_pulse_persist_candidate_snapshot_evidence "$repo_slug" "$issue_json" \
 		"$snapshot_succeeded" "$limit" "$raw_snapshot_file" \
-		"$snapshot_status_file" "$completeness_file"
+		"$snapshot_status_file" "$completeness_file" "$dependency_normalization_mode"
 
 	pulse_repo_dormancy_observe_candidates "$repo_slug" "$issue_json" "$candidates_json" "$snapshot_succeeded" "$limit"
 
