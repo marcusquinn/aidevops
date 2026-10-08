@@ -87,6 +87,10 @@ load_functions() {
 	extract_function _merge_collect_linked_issue_authority_gaps
 	extract_function _merge_report_author_lookup_failure
 	extract_function _merge_pr_label_holds_clear
+	extract_function _issue_json_has_trusted_pr_only_contract
+	extract_function _issue_pr_only_contract_state
+	extract_function _merge_headless_pr_only_scope_clear
+	extract_function _apply_pr_only_hold
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -119,6 +123,13 @@ FIXTURE_GH_MODE="guard"
 FIXTURE_TRUSTED_DEPENDABOT=0
 FIXTURE_TRUSTED_ISSUE_SYNC=0
 export FIXTURE_TRUSTED_ISSUE_SYNC
+FIXTURE_ISSUE_JSON='{"author_association":"OWNER","body":"plain brief"}'
+FIXTURE_ISSUE_API_FAIL=0
+FIXTURE_HOLD_LABELS_CSV=""
+FIXTURE_LABEL_EDIT_FAIL=0
+ISSUE_API_CALLS="${TEST_ROOT}/issue-api-calls.log"
+LABEL_EDIT_CALLS="${TEST_ROOT}/label-edit-calls.log"
+PR_ONLY_MARKER='<!-- aidevops:completion-contract:pr-only/v1 -->'
 AUTHORITY_GUARD_PASS=1
 AUTHORITY_GUARD_FAIL_ON_CALL=0
 FULL_LOOP_MERGE_SUBJECT_FLAG="--subject"
@@ -193,6 +204,10 @@ gh() {
 	fi
 	if [[ "$command" == "pr" && "$subcommand" == "view" ]]; then
 		[[ "$FIXTURE_PR_LOOKUP_FAIL" -eq 0 ]] || return 1
+		if [[ "$*" == *"--json labels --jq"* ]]; then
+			printf '%s\n' "$FIXTURE_HOLD_LABELS_CSV"
+			return 0
+		fi
 		if [[ "$*" == *"--json title"* ]]; then
 			printf '%s\n' '{"title":"GH#28622: preserve exact-head merge authority","commits":[{"messageHeadline":"fix: preserve exact-head merge authority"}]}'
 			return 0
@@ -203,6 +218,12 @@ gh() {
 	if [[ "$command" == "issue" && "$subcommand" == "view" ]]; then
 		[[ "$FIXTURE_ISSUE_LOOKUP_FAIL" -eq 0 ]] || return 1
 		printf '%s\n' "$FIXTURE_ISSUE_LABELS"
+		return 0
+	fi
+	if [[ "$command" == "api" && "$subcommand" =~ ^repos/[^/]+/[^/]+/issues/[0-9]+$ ]]; then
+		printf '%s\n' "$subcommand" >>"$ISSUE_API_CALLS"
+		[[ "$FIXTURE_ISSUE_API_FAIL" -eq 0 ]] || return 1
+		printf '%s\n' "$FIXTURE_ISSUE_JSON"
 		return 0
 	fi
 	if [[ "$command" == "api" && "$subcommand" == *"/collaborators/"*"/permission" ]]; then
@@ -293,9 +314,16 @@ reset_fixture() {
 	FIXTURE_TRUSTED_DEPENDABOT=0
 	FIXTURE_TRUSTED_ISSUE_SYNC=0
 	export FIXTURE_TRUSTED_ISSUE_SYNC
+	FIXTURE_ISSUE_JSON='{"author_association":"OWNER","body":"plain brief"}'
+	FIXTURE_ISSUE_API_FAIL=0
+	FIXTURE_HOLD_LABELS_CSV=""
+	FIXTURE_LABEL_EDIT_FAIL=0
+	unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS WORKER_ISSUE_NUMBER
 	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	AUTHORITY_GUARD_PASS=1
 	AUTHORITY_GUARD_FAIL_ON_CALL=0
+	: >"$ISSUE_API_CALLS"
+	: >"$LABEL_EDIT_CALLS"
 	: >"$CRYPTO_CALLS"
 	: >"$MERGE_CALLS"
 	: >"$GUARD_CALLS"
@@ -520,6 +548,126 @@ test_hold_for_review_guard() {
 		print_result "hold-for-review is evaluated before trust exceptions and crypto" 1 \
 			"trusted=$(<"$TRUSTED_CALLS") crypto=$(<"$CRYPTO_CALLS")"
 	fi
+	return 0
+}
+
+gh_pr_edit_safe() {
+	printf '%s\n' "$*" >>"$LABEL_EDIT_CALLS"
+	[[ "$FIXTURE_LABEL_EDIT_FAIL" -eq 0 ]]
+	return $?
+}
+
+set_pr_only_issue() {
+	local association="$1"
+	local body="$2"
+	FIXTURE_ISSUE_JSON=$(jq -nc --arg a "$association" --arg b "$body" '{author_association:$a,body:$b}')
+	return 0
+}
+
+expect_reader_rc() {
+	local name="$1"
+	local expected_rc="$2"
+	local actual_rc=0
+	_issue_json_has_trusted_pr_only_contract "$FIXTURE_ISSUE_JSON" || actual_rc=$?
+	if [[ "$actual_rc" -eq "$expected_rc" ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "expected rc=$expected_rc, got rc=$actual_rc"
+	fi
+	return 0
+}
+
+# GH#34052: trusted PR-only scope is deterministic merge refusal for headless
+# workers, independent of CI, author ownership or prose consumption.
+test_pr_only_contract_guard() {
+	reset_fixture
+	set_pr_only_issue OWNER "Brief.\n${PR_ONLY_MARKER}"
+	expect_reader_rc "OWNER-authored PR-only marker is trusted" 0
+	set_pr_only_issue MEMBER "$PR_ONLY_MARKER"
+	expect_reader_rc "MEMBER-authored PR-only marker is trusted" 0
+	set_pr_only_issue CONTRIBUTOR "$PR_ONLY_MARKER"
+	expect_reader_rc "CONTRIBUTOR-authored PR-only marker is ignored" 1
+	set_pr_only_issue OWNER "no marker here"
+	expect_reader_rc "OWNER issue without marker has no PR-only scope" 1
+	FIXTURE_ISSUE_JSON='not-json'
+	expect_reader_rc "malformed issue evidence is unknown, not absent" 2
+
+	# Green-CI same-owner maintainer PR in a maintained repo: every other gate passes.
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "headless merge refused for trusted PR-only linked issue" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[]' 'no linkage'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42
+	expect_guard_result "headless merge refused via dispatched issue when PR lacks linkage" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue CONTRIBUTOR "$PR_ONLY_MARKER"
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "untrusted PR-only marker leaves headless merge unchanged" 0
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "no marker leaves headless merge unchanged" 0
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_ISSUE_API_FAIL=1
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "missing PR-only scope evidence fails closed for headless merge" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	expect_guard_result "interactive maintainer merge follows live label after hold removal" 0
+	if [[ ! -s "$ISSUE_API_CALLS" ]]; then
+		print_result "interactive sessions do not read PR-only scope at the merge guard" 0
+	else
+		print_result "interactive sessions do not read PR-only scope at the merge guard" 1 "$(<"$ISSUE_API_CALLS")"
+	fi
+
+	reset_fixture
+	set_pr_fixture maintainer '[{"name":"hold-for-review"}]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	expect_guard_result "PR-only hold blocks interactive merge with green CI" 1
+
+	# commit-and-pr hold application preserves the ready PR and verifies the label.
+	reset_fixture
+	FIXTURE_HOLD_LABELS_CSV="origin:worker,hold-for-review"
+	local apply_rc=0
+	_apply_pr_only_hold 900 owner/repo >/dev/null 2>&1 || apply_rc=$?
+	if [[ "$apply_rc" -eq 0 ]] && grep -q -- '--add-label hold-for-review' "$LABEL_EDIT_CALLS"; then
+		print_result "PR-only hold applied and verified on the created PR" 0
+	else
+		print_result "PR-only hold applied and verified on the created PR" 1 "rc=$apply_rc edits=$(<"$LABEL_EDIT_CALLS")"
+	fi
+
+	reset_fixture
+	FIXTURE_HOLD_LABELS_CSV="origin:worker"
+	apply_rc=0
+	_apply_pr_only_hold 900 owner/repo >/dev/null 2>&1 || apply_rc=$?
+	if [[ "$apply_rc" -eq 1 ]]; then
+		print_result "missing hold postcondition fails commit-and-pr for retry" 0
+	else
+		print_result "missing hold postcondition fails commit-and-pr for retry" 1 "rc=$apply_rc"
+	fi
+
+	reset_fixture
+	FIXTURE_LABEL_EDIT_FAIL=1
+	apply_rc=0
+	_apply_pr_only_hold 900 owner/repo >/dev/null 2>&1 || apply_rc=$?
+	if [[ "$apply_rc" -eq 1 ]]; then
+		print_result "failed hold label write fails commit-and-pr for retry" 0
+	else
+		print_result "failed hold label write fails commit-and-pr for retry" 1 "rc=$apply_rc"
+	fi
+	reset_fixture
 	return 0
 }
 
@@ -860,6 +1008,7 @@ main() {
 	test_trusted_dependabot_authority
 	test_authority_guard
 	test_hold_for_review_guard
+	test_pr_only_contract_guard
 	test_pre_merge_authority_preflight
 	test_all_merge_modes_use_guard
 	test_secondary_merge_transports_refresh_authority

@@ -78,6 +78,74 @@ _merge_target_crypto_approved() {
 	return $?
 }
 
+# GH#34052: classify trusted per-task PR-only scope from issue REST JSON.
+# Only an OWNER/MEMBER-authored issue body establishes scope; comments and
+# contributor-authored bodies never add or remove it, so the original brief
+# stays authoritative. A spoofed marker could only add a hold (fail-safe).
+# Returns: 0 trusted PR-only scope, 1 absent/untrusted, 2 malformed evidence.
+_issue_json_has_trusted_pr_only_contract() {
+	local issue_json="$1"
+	local marker='<!-- aidevops:completion-contract:pr-only/v1 -->'
+	local verdict=""
+	#aidevops:trust-boundary GH#34052 -- author association gates the marker.
+	verdict=$(printf '%s' "$issue_json" | jq -r --arg marker "$marker" '
+		if type != "object" or (.author_association | type) != "string" then "invalid"
+		elif (.author_association == "OWNER" or .author_association == "MEMBER")
+			and ((.body // "") | type == "string" and contains($marker)) then "trusted"
+		else "absent" end' 2>/dev/null) || return 2
+	case "$verdict" in
+	trusted) return 0 ;;
+	absent) return 1 ;;
+	*) return 2 ;;
+	esac
+}
+
+# Returns: 0 trusted PR-only scope, 1 absent/untrusted, 2 lookup failed.
+_issue_pr_only_contract_state() {
+	local issue_number="$1"
+	local repo="$2"
+	local issue_json=""
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo" == */* ]] || return 2
+	issue_json=$(_flm_gh_read gh api "repos/${repo}/issues/${issue_number}") || return 2
+	_issue_json_has_trusted_pr_only_contract "$issue_json"
+	return $?
+}
+
+# GH#34052: headless workers never hold merge authority for a trusted PR-only
+# task, even when the PR lacks its hold label (for example a PR created outside
+# commit-and-pr). Interactive maintainers are governed by the live PR
+# hold-for-review label instead, which they remove to authorise a merge.
+# Checks the dispatched issue plus every linked issue; unknown state fails closed.
+_merge_headless_pr_only_scope_clear() {
+	local issue_numbers="$1"
+	local repo="$2"
+	local issue_number="" state_rc=0 candidates=""
+
+	if declare -F detect_session_origin >/dev/null 2>&1; then
+		[[ "$(detect_session_origin)" == "worker" ]] || return 0
+	elif [[ "${FULL_LOOP_HEADLESS:-}" != "true" && "${AIDEVOPS_HEADLESS:-}" != "true" ]]; then
+		return 0
+	fi
+	candidates=$(printf '%s\n%s\n' "${WORKER_ISSUE_NUMBER:-}" "$issue_numbers" | sort -u)
+	while IFS= read -r issue_number; do
+		[[ -n "$issue_number" ]] || continue
+		state_rc=0
+		_issue_pr_only_contract_state "$issue_number" "$repo" || state_rc=$?
+		case "$state_rc" in
+		0)
+			print_error "Merge blocked: issue #${issue_number} has a trusted PR-only completion contract; stop at the verified ready PR and emit POST_PR_HANDOFF"
+			return 1
+			;;
+		1) ;;
+		*)
+			print_error "Merge blocked: unable to verify PR-only completion scope for issue #${issue_number}"
+			return 1
+			;;
+		esac
+	done <<<"$candidates"
+	return 0
+}
+
 _merge_is_trusted_issue_sync_pr() {
 	local pr_number="$1"
 	local repo="$2"
@@ -263,6 +331,7 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	}
 
+	_merge_headless_pr_only_scope_clear "$issue_numbers" "$repo" || return 1
 	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" || return 1
 	if [[ "$trusted_dependabot" -eq 1 || "$trusted_issue_sync" -eq 1 || "$treat_as_external" -eq 0 ]]; then
 		return 0

@@ -170,6 +170,7 @@ cmd_commit_and_pr() {
 	local planning_only=0
 	local pr_body=""
 	local origin_label=""
+	local pr_only_scope=0
 	_commit_and_pr_prepare_metadata || return 1
 	_commit_and_pr_check_readiness || return 1
 	local pr_number=""
@@ -286,6 +287,44 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 		print_error "Completion bookkeeping requires issue #${issue_number} to be verified closed with a terminal reason"
 		return 1
 	fi
+	# GH#34052: resolve trusted PR-only scope before any remote mutation so an
+	# unknown scope never publishes a PR that lacks its merge hold.
+	local pr_only_rc=0
+	_issue_pr_only_contract_state "$issue_number" "$repo" || pr_only_rc=$?
+	case "$pr_only_rc" in
+	0)
+		pr_only_scope=1
+		print_info "Issue #${issue_number} has a trusted PR-only completion contract; the PR will carry hold-for-review"
+		;;
+	1) ;;
+	*)
+		print_error "Aborting: unable to verify PR-only completion scope for issue #${issue_number}; retry when GitHub reads recover"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+# GH#34052: a trusted PR-only task ends at a verified ready PR. The live
+# hold-for-review label refuses every full-loop, pulse, auto-merge and stuck-PR
+# merge transport until a maintainer removes it. Verify the postcondition so a
+# partial label write cannot leave the PR mergeable; rerunning commit-and-pr
+# continues the same PR and reapplies the hold.
+_apply_pr_only_hold() {
+	local pr_number="$1"
+	local repo="$2"
+	local labels=""
+	if ! gh_pr_edit_safe "$pr_number" --repo "$repo" --add-label "hold-for-review" >/dev/null; then
+		print_error "Could not apply hold-for-review to PR-only PR #${pr_number}; rerun commit-and-pr before any merge"
+		return 1
+	fi
+	labels=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
+		--json labels --jq '[.labels[].name] | join(",")') || labels=""
+	if [[ ",${labels}," != *",hold-for-review,"* ]]; then
+		print_error "PR-only PR #${pr_number} did not reach the hold-for-review postcondition; rerun commit-and-pr before any merge"
+		return 1
+	fi
+	print_info "PR #${pr_number} held for maintainer review (trusted PR-only scope); emit POST_PR_HANDOFF instead of merging"
 	return 0
 }
 
@@ -325,6 +364,9 @@ _commit_and_pr_publish() {
 			"$branch" "$issue_number" "$commit_message" >&2
 		return 1
 	}
+	if [[ "$pr_only_scope" -eq 1 ]]; then
+		_apply_pr_only_hold "$pr_number" "$repo" || return 1
+	fi
 	# Recover from partial GraphQL writes before marking either side in review.
 	if [[ "$origin_label" == "origin:worker" && "$closing_keyword" == "Resolves" ]]; then
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1

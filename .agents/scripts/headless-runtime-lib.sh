@@ -1015,6 +1015,7 @@ Then make one merge attempt: full-loop-helper.sh merge "$PR_NUMBER"
 Exception: if your changes modify full-loop-helper.sh or its sourced helper libraries, commit first and then merge with the committed worktree helper path:
   "$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "${GITHUB_REPOSITORY:-marcusquinn/aidevops}"
 This verifies the code that will ship instead of the deployed helper copy from PATH.
+PR-only scope (GH#34052): when the trusted issue body contains `<!-- aidevops:completion-contract:pr-only/v1 -->`, it overrides every merge step here, in full-loop.md and in any plan: do NOT run full-loop-helper.sh merge or any other merge. commit-and-pr applies hold-for-review and the merge guard refuses headless merges for this task. After the verified non-draft exact-head PR with its MERGE_SUMMARY exists, emit POST_PR_HANDOFF on its own line and exit normally. That is the complete outcome, not a blocker.
 
 Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
