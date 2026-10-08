@@ -514,8 +514,14 @@ _kill_worker() {
 	local _trigger_age=0
 	local lifecycle_event=""
 	_trigger_age=$(( $(date +%s) - _WATCHDOG_START_EPOCH ))
-	printf -v lifecycle_event '[lifecycle] worker_killed pid=%s reason=%s trigger_age=%ss session=%s ts=%s' \
-		"$WORKER_PID" "$reason_class" "$_trigger_age" "${SESSION_KEY:-none}" \
+	# GH#34068: record the most recent liveness deferral so cap kills can be
+	# told apart from proven inactivity in aggregated telemetry.
+	local _deferral_detail=""
+	if [[ "${_MONITOR_LAST_DEFER_EPOCH:-0}" -gt 0 ]]; then
+		_deferral_detail=" last_deferral_reason=${_MONITOR_LAST_DEFER_REASON:-unknown} last_deferral_age=$(( $(date +%s) - _MONITOR_LAST_DEFER_EPOCH ))s"
+	fi
+	printf -v lifecycle_event '[lifecycle] worker_killed pid=%s reason=%s trigger_age=%ss%s session=%s ts=%s' \
+		"$WORKER_PID" "$reason_class" "$_trigger_age" "$_deferral_detail" "${SESSION_KEY:-none}" \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
 	printf '%s\n' "$lifecycle_event" \
@@ -538,9 +544,10 @@ _kill_worker() {
 	# (watchdog_stall_continue), short-circuiting the per-attempt
 	# continuation loop and freeing the slot for re-dispatch. Without this
 	# sentinel, exit 78 still fires (legacy continuation behaviour).
+	# GH#34068: the sentinel and exit routing are unchanged; .kill_reason keeps
+	# the computed class (hard_kill_stall or hard_kill_cap_active).
 	if [[ "$kill_kind" == "stall_killed" ]]; then
 		touch "${EXIT_CODE_FILE}.watchdog_stall_killed"
-		printf '%s\n' "hard_kill_stall" >"${EXIT_CODE_FILE}.kill_reason" 2>/dev/null || true
 	fi
 
 	# Kill child processes first (pipeline members: opencode, tee),
@@ -636,6 +643,8 @@ _monitor_init_state() {
 	_MONITOR_LAST_SIZE=0
 	_MONITOR_STALL_SECONDS=0
 	_MONITOR_DEFERRED_STALL_SECONDS=0
+	_MONITOR_LAST_DEFER_EPOCH=0
+	_MONITOR_LAST_DEFER_REASON=""
 	_MONITOR_START_EPOCH=$(date +%s)
 	_WATCHDOG_START_EPOCH="$_MONITOR_START_EPOCH"
 	return 0
@@ -705,6 +714,8 @@ _monitor_defer_stall() {
 	# deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
 	# Expected labels: reason=ci_wait reason=network_active reason=cpu_active.
 	_MONITOR_DEFERRED_STALL_SECONDS=$((_MONITOR_DEFERRED_STALL_SECONDS + _MONITOR_STALL_SECONDS))
+	_MONITOR_LAST_DEFER_EPOCH=$(date +%s)
+	_MONITOR_LAST_DEFER_REASON="$reason"
 	printf -v lifecycle_event '[lifecycle] worker_stall_deferred pid=%s reason=%s %sstall_seconds=%ss deferred_total=%ss ts=%s' \
 		"$WORKER_PID" "$reason" "$detail" "$_MONITOR_STALL_SECONDS" \
 		"$_MONITOR_DEFERRED_STALL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -735,8 +746,21 @@ _monitor_enforce_hard_kill() {
 		return 0
 	fi
 
+	# GH#34068: cap timing is unchanged. When a liveness deferral (CI wait,
+	# network, CPU) happened within one stall window, the kill is a policy
+	# cap on active work rather than proven inactivity — classify it so.
+	# A deferral resets the stall counter, so the next confirmed stall lands
+	# ceil(STALL_TIMEOUT/POLL_INTERVAL) polls later plus loop overhead; two
+	# poll intervals of margin cover that without reaching an older cycle.
+	local reason_prefix="hard_kill"
+	local deferral_window=$((STALL_TIMEOUT + 2 * POLL_INTERVAL))
+	if [[ "${_MONITOR_LAST_DEFER_EPOCH:-0}" -gt 0 ]] &&
+		(( now_epoch - _MONITOR_LAST_DEFER_EPOCH <= deferral_window )); then
+		reason_prefix="hard_kill_cap_active"
+	fi
+
 	_kill_worker \
-		"hard_kill: total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (current output ${current_size}b, stall=${_MONITOR_STALL_SECONDS}s, deferred=${_MONITOR_DEFERRED_STALL_SECONDS}s) — slot freed for re-dispatch" \
+		"${reason_prefix}: total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (current output ${current_size}b, stall=${_MONITOR_STALL_SECONDS}s, deferred=${_MONITOR_DEFERRED_STALL_SECONDS}s) — slot freed for re-dispatch" \
 		"stall_killed"
 	return 1
 }

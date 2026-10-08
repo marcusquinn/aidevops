@@ -716,6 +716,9 @@ _worker_kill_reason_class() {
 	local reason="$1"
 	case "$reason" in
 	phase1:*) printf '%s' "phase1_zero_output" ;;
+	# GH#34068: elapsed cap reached while liveness deferrals were recent —
+	# policy-cap termination, not proven inactivity.
+	hard_kill_cap_active:*) printf '%s' "hard_kill_cap_active" ;;
 	hard_kill:*) printf '%s' "hard_kill_stall" ;;
 	provider_rate_limit:*) printf '%s' "provider_rate_limit" ;;
 	stall:*) printf '%s' "no_output_stall" ;;
