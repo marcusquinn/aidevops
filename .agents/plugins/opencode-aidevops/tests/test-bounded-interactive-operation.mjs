@@ -115,7 +115,59 @@ describe("bounded interactive operations", () => {
     assert.equal(result.restoration_state, "not_required");
     assert.equal(result.command_execution, "observed");
     assert.match(result.supervisor_runtime, /^node v\d+\./);
+    assert.equal(result.post_exit_descendants_terminated, false);
     assert.equal(JSON.stringify(result).includes("phase-one"), false);
+  });
+
+  test("known detaching dispatch launchers are rejected before spawn (GH#34047)", async () => {
+    let spawns = 0;
+    const fixtureLauncher = launcher({ started: true });
+    const instance = manager({
+      makeID: () => "op_fixture",
+      spawn: (...args) => {
+        spawns += 1;
+        return fixtureLauncher(...args);
+      },
+    });
+    const wrapper = "/installed/scripts/pulse-wrapper.sh";
+    const dispatchArgs = ["--command", "dispatch", "123", "owner/repo", "title", "issue title", "login", "/repo", "prompt"];
+    const rejected = [
+      [wrapper, ...dispatchArgs],
+      ["env", "PATH=/governed/bin:/usr/bin", wrapper, ...dispatchArgs],
+      ["/usr/bin/env", "-i", "-u", "HOME", "PATH=/usr/bin", "--", wrapper, ...dispatchArgs],
+      ["bash", wrapper, "--command", "dispatch-foss", "owner/repo"],
+      ["env", "PATH=/usr/bin", "bash", "pulse-wrapper.sh", "--command", "dispatch"],
+    ];
+    for (const command of rejected) {
+      await assert.rejects(instance.start({ command, budgetMs: 1000 }, owner),
+        /launches a detached worker.*exact-attempt worker status/, JSON.stringify(command));
+    }
+    await assert.rejects(instance.start({
+      command: ["git", "--version"],
+      restorationCommand: ["env", "PATH=/usr/bin", wrapper, ...dispatchArgs],
+      budgetMs: 1000,
+    }, owner), /launches a detached worker/);
+    assert.equal(spawns, 0, "a rejected launcher reached spawn");
+
+    // Foreground capacity/read-only subcommands and lookalike arguments stay allowed.
+    for (const command of [
+      [wrapper, "--command", "list-candidates"],
+      ["env", "PATH=/usr/bin", wrapper, "--command", "capacity"],
+      ["/tmp/other-wrapper.sh", "--command", "dispatch"],
+      ["bash", "-c", "echo pulse-wrapper.sh --command dispatch"],
+    ]) {
+      const started = await instance.start({ command, budgetMs: SUCCESS_BUDGET_MS }, owner);
+      assert.equal((await terminal(instance, started.operation_id)).state, "succeeded", JSON.stringify(command));
+    }
+    assert.equal(spawns, 4);
+
+    const schemaNode = { optional() { return this; } };
+    const z = { enum: () => schemaNode, string: () => schemaNode, number: () => schemaNode, array: () => schemaNode };
+    const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
+    const response = JSON.parse(await tool.execute({ action: "start", command: [wrapper, ...dispatchArgs] }, owner));
+    assert.match(response.error, /normal shell tool/);
+    assert.match(tool.description, /rejected before spawn/);
+    assert.equal(spawns, 4);
   });
 
   test("wait-aware status returns on progress, terminal state, or its bound", async () => {
@@ -528,6 +580,8 @@ describe("bounded interactive operations", () => {
         if (mode === "cancel") instance.cancel(started.operation_id, owner);
         const result = await terminal(instance, started.operation_id, owner, 5000);
         assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
+        // GH#34047: only completion-triggered cleanup is reported; exit 0 is not liveness.
+        assert.equal(result.post_exit_descendants_terminated, mode === "completion", `${mode}: post-exit receipt field`);
         let running = false;
         try {
           process.kill(pid, 0);

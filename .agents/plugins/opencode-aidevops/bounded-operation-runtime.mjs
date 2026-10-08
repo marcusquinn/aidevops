@@ -63,6 +63,7 @@ export function applySupervisorMessage(operation, stage, message) {
   if (message.event === "containment" && stage === "main") {
     operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
     operation.attributionComplete = message.attributionComplete === true;
+    operation.postExitDescendantsTerminated = message.postExitDescendantsTerminated === true;
   } else if (message.event === "command_started" && stage === "main") {
     operation.commandStarted = true;
     operation.supervisorRuntime = scalar(message.runtime);
@@ -88,6 +89,9 @@ export function operationReceipt(operation, now) {
     operation_id: operation.id,
     containment: operationContainment(operation),
     nested_process_groups: operation.nestedProcessGroups || 0,
+    // GH#34047: exit 0 is not liveness evidence for anything the command
+    // launched; true means command exit triggered descendant termination.
+    post_exit_descendants_terminated: operation.postExitDescendantsTerminated === true,
     state: operation.state,
     elapsed_ms: elapsedMs,
     budget_ms: operation.budgetMs,

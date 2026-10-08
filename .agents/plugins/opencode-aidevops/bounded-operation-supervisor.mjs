@@ -92,11 +92,11 @@ function createTerminator(tracker, killGraceMs, reportContainment) {
 // descendant is alive. Nested descendants keep inherited stdio open, so the
 // operation is not drained while they live; the budget still bounds them, and
 // once termination has begun they are escalated instead of awaiting the grace.
-function ownedTreeDrained(tracker, terminator) {
+function ownedTreeDrained(tracker, terminator, terminateSurvivors) {
   const snapshot = tracker.track();
   if (!snapshot) return false;
   const nested = tracker.nestedTargets(snapshot);
-  if (nested.length || tracker.ownGroupMembers(snapshot) > 1) terminator.terminate();
+  if (nested.length || tracker.ownGroupMembers(snapshot) > 1) terminateSurvivors();
   if (tracker.ownGroupMembers(snapshot) !== 1) return false;
   if (nested.length === 0) return true;
   if (terminator.terminating) signalEach(nested, "SIGKILL", snapshot.entries);
@@ -113,8 +113,22 @@ export async function runSupervisor() {
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 30 * 1000);
   const result = { finished: false, exit: 1, started: Promise.resolve() };
   const tracker = createProcessTreeTracker(process.pid, undefined, operationID);
-  const reportContainment = () => sendMessage({ event: "containment", operationID, ...tracker.containment() });
+  // GH#34047: distinguish "exited 0 with nothing left" from "exited 0, then
+  // cleanup terminated surviving descendants" (for example a detached worker).
+  const exitState = { postExitDescendantsTerminated: false };
+  const reportContainment = () => sendMessage({
+    event: "containment",
+    operationID,
+    ...tracker.containment(),
+    postExitDescendantsTerminated: exitState.postExitDescendantsTerminated,
+  });
   const terminator = createTerminator(tracker, killGraceMs, reportContainment);
+  // Only cleanup started by command exit counts; budget and cancellation
+  // terminations are already reported through the operation state.
+  const terminateSurvivors = () => {
+    if (!terminator.terminating) exitState.postExitDescendantsTerminated = true;
+    terminator.terminate();
+  };
 
   process.on("SIGTERM", terminator.terminate);
   process.on("SIGINT", terminator.terminate);
@@ -145,13 +159,13 @@ export async function runSupervisor() {
     // Preserve its exit status while draining any surviving owned descendants.
     const snapshot = tracker.track();
     if (snapshot && (tracker.nestedTargets(snapshot).length || tracker.ownGroupMembers(snapshot) > 1)) {
-      terminator.terminate();
+      terminateSurvivors();
     }
   });
 
   return new Promise((resolve) => {
     const drainTimer = setInterval(() => {
-      if (!result.finished || !ownedTreeDrained(tracker, terminator)) return;
+      if (!result.finished || !ownedTreeDrained(tracker, terminator, terminateSurvivors)) return;
       clearInterval(drainTimer);
       clearInterval(trackTimer);
       clearTimeout(budgetTimer);
