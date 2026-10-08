@@ -40,6 +40,9 @@ source "${SCRIPT_DIR}/browser-qa-helper-a11y.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/browser-qa-helper-tests.sh"
 
+# shellcheck source=./browser-qa-helper-transition.sh
+source "${SCRIPT_DIR}/browser-qa-helper-transition.sh"
+
 # =============================================================================
 # Broken Link Detection
 # =============================================================================
@@ -368,6 +371,7 @@ Commands:
   a11y         Run accessibility checks (contrast, ARIA, structure)
   smoke        Check for console errors and basic rendering
   stability    Reload pages N times and verify DOM/network quiescence
+  transition   Measure the source page during a held document navigation
   journey      Opt-in authenticated read-only journey (--config FILE --environment NAME)
   help         Show this help message
 
@@ -384,6 +388,16 @@ Stability-specific Options:
   --reloads N         Number of reloads per page (default: 3, minimum: 1)
   --poll-interval MS  Quiescence poll interval in milliseconds (default: 500)
   --poll-max-wait MS  Maximum wait for network quiescence per reload (default: 10000)
+
+Transition-specific Options:
+  --from PATH         Starting path relative to --url (default: /)
+  --click SELECTOR    Link/element to click (required)
+  --hold SUBSTRING    Navigation URL substring to hold (required)
+  --hold-ms MS        Hold duration (default: 4000, maximum: 60000)
+  --at-ms MS,MS       Measurement times after click (default: 600,1200; below hold-ms)
+  --measure-file FILE JavaScript function expression returning JSON-able data (required)
+  --storage-state FILE  Optional Playwright storage state (sensitive)
+  --screencast        Save held-state frames (maximum dimension 1568px)
 
 Examples:
   browser-qa-helper.sh run --url http://localhost:3000 --pages "/ /about /dashboard"
@@ -428,6 +442,7 @@ main() {
 	a11y) cmd_a11y "$@" ;;
 	smoke) cmd_smoke "$@" ;;
 	stability) cmd_stability "$@" ;;
+	transition) cmd_transition "$@" ;;
 	journey) cmd_journey "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
