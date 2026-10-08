@@ -38,8 +38,8 @@ ci_annotations_json_indicate_billing_outage() {
 }
 
 #######################################
-# Read one check run's annotations and return whether GitHub refused the job
-# for Actions billing or spending reasons. For Actions jobs the check-run ID
+# Read one check run and classify a provider-specific did-not-run outage.
+# Unknown providers and ordinary code findings remain blocking. For Actions the ID
 # equals the job ID in `/actions/runs/<run>/job/<id>` URLs. API failures
 # return 1 so callers keep their existing behaviour (no silent suppression).
 #
@@ -52,9 +52,22 @@ ci_annotations_json_indicate_billing_outage() {
 ci_check_run_indicates_billing_outage() {
 	local repo_slug="$1"
 	local check_run_id="$2"
-	local annotations_json=""
+	local annotations_json="" check_json="" app=""
 
 	[[ -n "$repo_slug" && "$check_run_id" =~ ^[0-9]+$ ]] || return 1
+	check_json=$(gh api "repos/${repo_slug}/check-runs/${check_run_id}" 2>/dev/null) || return 1
+	app=$(jq -er '.app.slug' <<<"$check_json") || return 1
+	case "$app" in
+	qlty)
+		# Match the provider's complete no-run message, not quota words in findings.
+		jq -e 'any([.output.title, .output.summary, .output.text][];
+			type == "string" and test("^\\s*Qlty did not run because you are out of minutes[.!]?\\s*$"; "i"))' \
+			<<<"$check_json" >/dev/null 2>&1 || return 1
+		return 0
+		;;
+	github-actions) ;;
+	*) return 1 ;;
+	esac
 	annotations_json=$(gh api "repos/${repo_slug}/check-runs/${check_run_id}/annotations" 2>/dev/null) || return 1
 	ci_annotations_json_indicate_billing_outage "$annotations_json"
 	return $?
