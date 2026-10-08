@@ -167,6 +167,7 @@ cmd_commit_and_pr() {
 
 	local files_changed=""
 	local closing_keyword="Resolves"
+	local planning_only=0
 	local pr_body=""
 	local origin_label=""
 	_commit_and_pr_prepare_metadata || return 1
@@ -176,6 +177,21 @@ cmd_commit_and_pr() {
 
 	# Output PR number for caller to pass to `merge`
 	printf '%s\n' "$pr_number"
+	return 0
+}
+
+# Only non-empty diffs confined to planning paths qualify.
+_diff_is_planning_only() {
+	local base_ref="$1"
+	local paths="" path=""
+	paths=$(git diff --name-only "${base_ref}..HEAD") || return 1
+	[[ -n "$paths" ]] || return 1
+	while IFS= read -r path; do
+		case "$path" in
+		TODO.md | todo/*) ;;
+		*) return 1 ;;
+		esac
+	done <<<"$paths"
 	return 0
 }
 
@@ -205,6 +221,11 @@ _commit_and_pr_prepare_metadata() {
 	elif _issue_has_parent_task_label "$issue_number" "$repo"; then
 		closing_keyword="For"
 		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
+	fi
+	if [[ "$allow_parent_close" -eq 0 ]] && _diff_is_planning_only "$base_ref"; then
+		closing_keyword="For"
+		planning_only=1
+		print_info "Planning-only diff — using 'For' keyword; issue stays dispatchable"
 	fi
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then
@@ -309,7 +330,9 @@ _commit_and_pr_publish() {
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1
 	fi
 	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions" || return 1
-	_label_issue_in_review "$issue_number" "$repo"
+	if [[ "$planning_only" -eq 0 ]]; then
+		_label_issue_in_review "$issue_number" "$repo"
+	fi
 	_label_pr_in_review "$pr_number" "$repo"
 	if is_loop_active; then
 		_full_loop_record_phase "pr-review" "$pr_number" || return 1
