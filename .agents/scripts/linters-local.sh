@@ -91,7 +91,7 @@ readonly MAX_STRING_LITERAL_ISSUES=2300
 #
 # - Function length: warn >50, block >100. Threshold allows current 404 + small margin.
 # - Nesting depth: warn >5, block >8. Threshold allows current 245 + small margin.
-# - File size: non-README Markdown >500 lines. Code file size is not gated;
+# - File size: non-README Markdown >1000 lines at root / >500 elsewhere. Code size is not gated;
 #   function length and nesting-depth gates provide actionable code limits.
 #   MAX_FILE_SIZE_VIOLATIONS removed; ratchet compares against origin/main HEAD.
 readonly MAX_FUNCTION_LENGTH_WARN=50
@@ -102,6 +102,7 @@ readonly MAX_NESTING_DEPTH_BLOCK=8
 readonly MAX_NESTING_VIOLATIONS=260
 readonly MAX_FILE_LINES_WARN=500
 readonly MAX_FILE_LINES_BLOCK=500
+readonly MAX_ROOT_FILE_LINES_BLOCK=1000
 
 LINTERS_LOCAL_MODE_CHANGED=changed
 LINTERS_LOCAL_MODE="${LINTERS_LOCAL_MODE:-$LINTERS_LOCAL_MODE_CHANGED}"

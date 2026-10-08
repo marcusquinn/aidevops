@@ -45,10 +45,12 @@ tools:
 |-------|-------------------|---------|----------|------|
 | `function-complexity` | Function length | >50 lines | >100 lines | `function-complexity` |
 | `nesting-depth` | Cyclomatic complexity | >5 levels | >8 levels | `nesting-depth` |
-| `file-size` | Non-README Markdown length | >500 lines | New violations | `file-size` |
+| `file-size` | Non-README Markdown length | >1000 lines at root / >500 elsewhere | New violations | `file-size` |
 | `python-complexity` | Lizard CCN | >8 (advisory) | — | `python-complexity` |
 
 `python-complexity` runs Lizard (same tool Codacy uses) and Pyflakes locally.
+
+Markdown size remediation: first review the whole document for concision without losing any detail (remove repetition/wordiness, consolidate duplicated sections, use tables where clearer). Apply that pass when possible; only then split/index, and use a justified bypass only when that is insufficient. See [large-file guidance](../../reference/large-file-split.md#markdown-size-remediation).
 
 Use the checked-in linter and CI policy as the authority for thresholds. Pay down existing debt through bounded fixes; do not increase allowances to pass a quality campaign.
 

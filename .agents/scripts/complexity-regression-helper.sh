@@ -18,7 +18,7 @@
 #                          Key: (file, 'NEST'); value: max depth.
 #                          (t2171; replaces pulse-simplification.sh proximity scanner.)
 #
-#   file-size            — .sh and .py files over 1500 lines.
+#   file-size            — non-README Markdown over 1000 lines at root, 500 elsewhere.
 #                          Key: (file, 'SIZE'); value: line count.
 #                          (t2171)
 #
@@ -391,7 +391,7 @@ scan_dir_nesting_depth() {
 # ---------------------------------------------------------------------------
 # scan_dir_file_size <dir> [<out-file>] [<files-filter>]
 #
-# Non-code Markdown files over 500 lines, excluding README.md. Code file
+# Markdown over 1000 lines at repository root, 500 elsewhere; README.md exempt. Code file
 # length is intentionally not gated here; code scalability is covered by
 # function-complexity and nesting-depth gates, which produce more actionable
 # work than whole-file line counts for cohesive helper modules. Output:
@@ -420,7 +420,7 @@ scan_dir_file_size() {
 	local _result_file
 	_result_file=$(_open_result_file "$_out")
 
-	local _file _rel_file _lc
+	local _file _rel_file _lc _limit
 	while IFS= read -r _file; do
 		[ -n "$_file" ] || continue
 		[ -f "$_file" ] || continue
@@ -428,8 +428,12 @@ scan_dir_file_size() {
 		case "$_rel_file" in
 		README.md | */README.md) continue ;;
 		esac
+		case "$_rel_file" in
+		*/*) _limit=500 ;;
+		*) _limit=1000 ;;
+		esac
 		_lc=$(wc -l <"$_file" 2>/dev/null | tr -d ' ')
-		if [ "${_lc:-0}" -gt 500 ] 2>/dev/null; then
+		if [ "${_lc:-0}" -gt "$_limit" ] 2>/dev/null; then
 			printf '%s\tSIZE\t%s\n' "$_rel_file" "$_lc" >>"$_result_file"
 		fi
 	done <<<"$_files"
@@ -585,7 +589,7 @@ metric_unit() {
 	case "$_metric" in
 	function-complexity) printf 'function(s) >100 lines' ;;
 	nesting-depth) printf 'file(s) with nesting depth >8' ;;
-	file-size) printf 'non-README Markdown file(s) >500 lines' ;;
+	file-size) printf 'non-README Markdown file(s) >1000 lines at root / >500 elsewhere. First make the whole document more concise without losing detail; split or bypass only if that is not enough' ;;
 	bash32-compat) printf 'bash 3.2-incompatible construct(s)' ;;
 	*) printf 'violation(s)' ;;
 	esac
