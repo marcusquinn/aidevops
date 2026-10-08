@@ -55,6 +55,8 @@ class _EvaluationOptions:
     process_table_fixture: str = ""
     account_mutation_workspace_root: str | None = None
     approval_helper: str = ""
+    owned_listener_roots: str = ""
+    listener_table_fixture: str = ""
 
 
 def _evaluate_static(
@@ -188,8 +190,31 @@ def _network_policy_timeout() -> int:
     return timeout
 
 
+def _owned_listener_arguments(options: _EvaluationOptions) -> list[str]:
+    """Forward plugin-host owned-listener evidence to check-argv, if any."""
+    if not options.owned_listener_roots:
+        return []
+    arguments = [
+        "--owned-listener-roots",
+        options.owned_listener_roots,
+        "--runtime-pid",
+        str(options.runtime_pid),
+        "--runtime-process-identity",
+        options.runtime_process_identity,
+    ]
+    if options.process_table_fixture:
+        arguments += ["--process-table-fixture", options.process_table_fixture]
+    if options.listener_table_fixture:
+        arguments += ["--listener-table-fixture", options.listener_table_fixture]
+    return arguments
+
+
 def _evaluate_worker_network(
-    invocations: list[list[str]], cwd: str, helper: Path, worker_id: str
+    invocations: list[list[str]],
+    cwd: str,
+    helper: Path,
+    worker_id: str,
+    owned_listener_arguments: list[str] | None = None,
 ) -> dict[str, Any]:
     if not helper.is_file():
         return _decision(
@@ -205,8 +230,15 @@ def _evaluate_worker_network(
             "network.helper-error",
             "AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS must be a positive integer",
         )
+    guard_arguments = [
+        "--cwd",
+        cwd,
+        "--worker-id",
+        worker_id,
+        *(owned_listener_arguments or []),
+    ]
     for argv in invocations:
-        result, error = _run_network_guard(argv, cwd, helper, worker_id, timeout)
+        result, error = _run_network_guard(argv, helper, guard_arguments, timeout)
         if error:
             return error
         if result.returncode != 0:
@@ -220,20 +252,14 @@ def _evaluate_worker_network(
 
 
 def _run_network_guard(
-    argv: list[str], cwd: str, helper: Path, worker_id: str, timeout: int
+    argv: list[str],
+    helper: Path,
+    guard_arguments: list[str],
+    timeout: int,
 ) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
     try:
         result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
-            [
-                "/bin/bash",
-                str(helper),
-                "check-argv",
-                json.dumps(argv),
-                "--cwd",
-                cwd,
-                "--worker-id",
-                worker_id,
-            ],
+            ["/bin/bash", str(helper), "check-argv", json.dumps(argv), *guard_arguments],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -303,6 +329,7 @@ def evaluate_invocations(
                 cwd,
                 _network_guard_path(policy, options.network_helper, script_dir),
                 options.worker_id,
+                _owned_listener_arguments(options),
             )
         )
     return max(decisions, key=lambda item: DECISION_RANK[item["decision"]])
@@ -324,6 +351,8 @@ def _evaluation_options(
         "process_table_fixture",
         "account_mutation_workspace_root",
         "approval_helper",
+        "owned_listener_roots",
+        "listener_table_fixture",
     )
     if len(legacy_options) > len(names):
         maximum_arguments = len(names) + 3

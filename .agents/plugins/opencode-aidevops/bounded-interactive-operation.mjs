@@ -30,6 +30,7 @@ import {
   operationStatusVersion,
 } from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
+import { liveSupervisorRoots, processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 
 const MAX_OPERATIONS = 24;
@@ -60,7 +61,13 @@ export class BoundedInteractiveOperationManager {
     this.setTimer = options.setTimer || setTimeout;
     this.clearTimer = options.clearTimer || clearTimeout;
     this.supervisorRuntime = options.supervisorRuntime || SUPERVISOR_RUNTIME;
+    this.processIdentity = options.processIdentity || processStartIdentity;
     this.operations = new Map();
+  }
+
+  /** GH#33969: live same-session supervisor roots; see liveSupervisorRoots. */
+  ownedListenerRoots(owner) {
+    return liveSupervisorRoots(this.operations.values(), scalar(owner));
   }
 
   async resolveCwd(requested, context) {
@@ -151,6 +158,7 @@ export class BoundedInteractiveOperationManager {
       outputTruncated: false,
       outputID: "",
       ownerDeleted: false,
+      supervisorIdentity: "",
       child: null,
       childExited: false,
       restorationChild: null,
@@ -167,6 +175,7 @@ export class BoundedInteractiveOperationManager {
       operation.child = child;
       child.once("exit", () => { operation.childExited = true; });
       child.once("spawn", () => {
+        operation.supervisorIdentity = this.processIdentity(child.pid);
         operation.state = "running";
         this.notifyStatusWaiters(operation);
         operation.budgetTimer = this.setTimer(() => this.requestTermination(operation, "timed_out"), operation.budgetMs);

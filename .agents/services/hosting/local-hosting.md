@@ -102,7 +102,11 @@ Headless workers deny loopback and raw-IP HTTP by default. To let workers verify
 - `https://<name>.local/` and registered branch subdomains (ports 80/443, including `--resolve <name>.local:443:127.0.0.1`).
 - `http://localhost:<port>/`, `127.0.0.1` or `[::1]` on the app's registered port or branch ports.
 
-Worker-started servers on other ports, other repositories' apps, proxies and non-HTTP clients stay denied. Worker sandboxes use a separate `HOME`, so `localdev-helper.sh` inside a worker does not change the operator registry the policy reads (`$REAL_HOME/.local-dev-proxy/ports.json`). A whole-process egress backend still enforces `loopback_action: deny`. Policy notes: `configs/network-tiers.conf`.
+Unregistered repos (GH#33969): start the server with `aidevops_bounded_operation` and keep that operation running. `curl`/`wget` may then reach `localhost`/`127.0.0.1`/`[::1]` on that port from Bash or another bounded operation in the same session. The plugin passes its live supervisor PIDs and start identities to the policy. The policy allows the port only when `lsof` shows that every listener on it descends from one of those supervisors. A port with no listener yet, or any listener outside the worker's operations (OpenCode, MCPs, operator services), stays denied. Retry once the server listens, or run server and client inside one bounded operation. A loopback denial names these routes and is never a terminal blocker on its own.
+
+Bounded-operation starts in worker sessions get the same command policy as Bash. Shell bodies the strict parser cannot represent (redirection, background jobs) and unrecognized clients (Node, Chrome/Lighthouse) are outside argv control. That limit is documented, not an allowance.
+
+Other repositories' apps, proxies and non-HTTP clients stay denied. Worker sandboxes use a separate `HOME`, so `localdev-helper.sh` inside a worker does not change the operator registry the policy reads (`$REAL_HOME/.local-dev-proxy/ports.json`). A whole-process egress backend still enforces `loopback_action: deny`. Policy notes: `configs/network-tiers.conf`.
 
 ## CLI — localdev-helper.sh
 

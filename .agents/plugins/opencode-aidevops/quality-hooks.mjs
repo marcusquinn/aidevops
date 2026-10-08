@@ -40,6 +40,7 @@ import { checkGrepPathScope } from "./grep-path-guard.mjs";
 import { checkRedactedEdit } from "./redacted-edit-guard.mjs";
 import {
   bindActiveScriptsDir,
+  checkArgvSafetyGate,
   checkCanonicalGitSafetyGate,
   checkCanonicalWriteSafetyGate,
   isApplyPatchMutationTool,
@@ -94,6 +95,16 @@ function isWriteOrEditTool(tool) {
  */
 function isBashTool(tool) {
   return tool === "Bash" || tool === "bash";
+}
+
+/**
+ * Check if a tool name is the bounded-operation tool, including MCP-prefixed
+ * names such as `mcp__aidevops__aidevops_bounded_operation`.
+ * @param {string} tool
+ * @returns {boolean}
+ */
+function isBoundedOperationTool(tool) {
+  return typeof tool === "string" && /(?:^|[_.:/])aidevops_bounded_operation$/.test(tool);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,12 +227,24 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
     {
       activeScriptsDir: ctx.activeScriptsDir,
       activeScriptsDirBinding: ctx.activeScriptsDirBinding,
+      ownedListenerRoots: ctx.ownedListenerRoots(sessionId),
     },
   );
   const signatureModel = ctx.resolveSessionModel(sessionId);
   checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output, {
     model: signatureModel,
     useProcessModelFallback: false,
+  });
+}
+
+// GH#33969: bounded-operation starts get the same worker command policy as
+// Bash, including the owned-listener loopback allowance.
+function enforceBoundedOperationSafety(ctx, input, output, sessionId) {
+  if (!isBoundedOperationTool(input.tool)) return;
+  const args = output.args ?? {};
+  if (args.action !== "start") return;
+  checkArgvSafetyGate(args.command, ctx.scriptsDir, args.cwd || ctx.repositoryDir || process.cwd(), {
+    ownedListenerRoots: ctx.ownedListenerRoots(sessionId),
   });
 }
 
@@ -298,6 +321,7 @@ async function handleToolBefore(ctx, log, input, output) {
     sourceContextForPath,
   }, input, output);
   enforceBashToolSafety(ctx, log, input, output, sessionId);
+  enforceBoundedOperationSafety(ctx, input, output, sessionId);
   if (isBashTool(input.tool)) rememberBashOutputPolicy(callID, output.args);
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
 }
@@ -432,6 +456,9 @@ export function createQualityHooks(deps) {
     resolveSessionModel: typeof deps.resolveSessionModel === "function"
       ? deps.resolveSessionModel
       : () => "",
+    ownedListenerRoots: typeof deps.ownedListenerRoots === "function"
+      ? deps.ownedListenerRoots
+      : () => [],
   };
 
   function boundQualityLog(level, message) {
