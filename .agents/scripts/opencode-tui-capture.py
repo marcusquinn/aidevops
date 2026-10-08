@@ -4,7 +4,7 @@
 """Capture OpenCode's terminal render without changing the live session DB."""
 
 import argparse
-from contextlib import closing
+from contextlib import closing, suppress
 import errno
 import fcntl
 import math
@@ -14,6 +14,7 @@ import pty
 import re
 import select
 import signal
+import shutil
 import sqlite3
 import struct
 import sys
@@ -36,72 +37,78 @@ def terminal_size(value):
     return size
 
 
+def exec_renderer(args, env):
+    try:
+        os.chdir(args.cwd)
+        fcntl.ioctl(0, termios.TIOCSWINSZ,
+                    struct.pack("HHHH", args.rows, args.cols, 0, 0))
+        # Same argv-only process contract as runtime-launcher.py; the binary
+        # is resolved before fork and the session is an argument, never shell code.
+        os.execve(args.binary, [args.binary, "--session", args.session], env)  # nosec B606
+    except OSError as error:
+        os.write(2, f"tui-capture: {error}\n".encode())
+        os._exit(127)
+
+
+def read_render(fd, seconds):
+    chunks = []
+    query_tail = b""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        remaining = max(0, deadline - time.monotonic())
+        ready, _, _ = select.select([fd], [], [], min(0.25, remaining))
+        if not ready:
+            continue
+        try:
+            data = os.read(fd, 65536)
+        except OSError as error:
+            if error.errno == errno.EIO:  # Linux PTYs signal child exit with EIO.
+                break
+            raise
+        if not data:
+            break
+        chunks.append(data)
+        queries = query_tail + data
+        for query in re.finditer(rb"\x1b\[(\??)6n", queries):
+            os.write(fd, b"\x1b[" + query.group(1) + b"1;1R")
+        query_tail = re.sub(rb"\x1b\[\??6n", b"", queries)[-4:]
+    return b"".join(chunks)
+
+
+def stop_renderer(pid, reaped):
+    # pty.fork owns a child session: signal its group, including plugins.
+    with suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGTERM)
+    time.sleep(1)
+    with suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGKILL)
+    if not reaped:
+        os.waitpid(pid, 0)
+
+
 def capture(args, data_dir):
     env = dict(os.environ)
     env.update(TERM="xterm-256color", XDG_DATA_HOME=str(data_dir),
                AIDEVOPS_OPENCODE_ISOLATED_DB="1")
     if args.tui_config:
         env["OPENCODE_TUI_CONFIG"] = str(Path(args.tui_config).resolve(strict=True))
+    args.binary = shutil.which(args.binary)
+    if not args.binary:
+        raise ValueError("renderer binary not found")
+    args.binary = str(Path(args.binary).resolve(strict=True))
     pid, fd = pty.fork()
     if pid == 0:
-        try:
-            os.chdir(args.cwd)
-            fcntl.ioctl(0, termios.TIOCSWINSZ,
-                        struct.pack("HHHH", args.rows, args.cols, 0, 0))
-            os.execvpe(args.binary, [args.binary, "--session", args.session], env)
-        except OSError as error:
-            os.write(2, f"tui-capture: {error}\n".encode())
-            os._exit(127)
-    chunks = []
-    query_tail = b""
-    status = None
-    natural_status = None
+        exec_renderer(args, env)
+    waited = 0
     try:
-        deadline = time.monotonic() + args.seconds
-        while time.monotonic() < deadline:
-            remaining = max(0, deadline - time.monotonic())
-            ready, _, _ = select.select([fd], [], [], min(0.25, remaining))
-            if not ready:
-                continue
-            try:
-                data = os.read(fd, 65536)
-            except OSError as error:
-                if error.errno == errno.EIO:  # Linux PTYs signal child exit with EIO.
-                    break
-                raise
-            if not data:
-                break
-            chunks.append(data)
-            queries = query_tail + data
-            for query in re.finditer(rb"\x1b\[(\??)6n", queries):
-                os.write(fd, b"\x1b[" + query.group(1) + b"1;1R")
-            query_tail = re.sub(rb"\x1b\[\??6n", b"", queries)[-4:]
+        raw = read_render(fd, args.seconds)
         waited, status = os.waitpid(pid, os.WNOHANG)
-        if not waited:
-            status = None
-        natural_status = status
+        return raw, status if waited else None
     finally:
-        # pty.fork creates a child session: terminate its group, including any
-        # servers/plugins it started, then reap the child even on exceptions.
         try:
-            os.killpg(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        grace = time.monotonic() + 1
-        while status is None and time.monotonic() < grace:
-            waited, child_status = os.waitpid(pid, os.WNOHANG)
-            if waited:
-                status = child_status
-            else:
-                time.sleep(0.05)
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        if status is None:
-            _, status = os.waitpid(pid, 0)
-        os.close(fd)
-    return b"".join(chunks), natural_status
+            stop_renderer(pid, waited)
+        finally:
+            os.close(fd)
 
 
 def plain_text(raw):
@@ -115,6 +122,39 @@ def plain_text(raw):
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     text = text.replace("\r", "\n")
     return re.sub(r"\n[ \t]*\n+", "\n", text).strip() + "\n"
+
+
+def validate_output(args, source):
+    output = Path(args.out).resolve()
+    config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "opencode"
+    protected = [source, Path(str(source) + "-wal"), Path(str(source) + "-shm"),
+                 config / "tui.json", config / "opencode.json",
+                 config / "opencode.jsonc", Path.home() / ".config/opencode/tui.json",
+                 Path.home() / ".config/opencode/opencode.json"]
+    if args.tui_config:
+        protected.append(Path(args.tui_config))
+    if env_config := os.environ.get("OPENCODE_CONFIG"):
+        protected.extend([Path(env_config), Path(args.cwd) / env_config])
+    for path in protected:
+        if output == path.resolve():
+            raise ValueError("output must not overwrite a session DB or configuration")
+        with suppress(FileNotFoundError):
+            if output.samefile(path):
+                raise ValueError("output must not overwrite a session DB or configuration")
+    return output
+
+
+def check_render(text, expected, status):
+    if not text.strip():
+        raise ValueError("no screen text captured")
+    missing = [item for item in expected if item not in text]
+    if missing:
+        raise ValueError("missing expected text: " + ", ".join(repr(item) for item in missing))
+    if status is None:
+        return
+    exit_code = os.waitstatus_to_exitcode(status)
+    if exit_code != 0:
+        raise ValueError(f"renderer exited with status {exit_code}")
 
 
 def main():
@@ -137,20 +177,7 @@ def main():
             if inherited_tui:
                 args.tui_config = str(Path(args.cwd) / inherited_tui)
         source = Path(args.data_dir).resolve() / "opencode" / "opencode.db"
-        output = Path(args.out).resolve()
-        config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "opencode"
-        protected = [source, Path(str(source) + "-wal"), Path(str(source) + "-shm"),
-                     config / "tui.json", config / "opencode.json",
-                     config / "opencode.jsonc", Path.home() / ".config/opencode/tui.json",
-                     Path.home() / ".config/opencode/opencode.json"]
-        if args.tui_config:
-            protected.append(Path(args.tui_config))
-        if env_config := os.environ.get("OPENCODE_CONFIG"):
-            protected.append(Path(env_config))
-            protected.append(Path(args.cwd) / env_config)
-        if any(output == path.resolve() or (output.exists() and path.exists()
-                                           and output.samefile(path)) for path in protected):
-            raise ValueError("output must not overwrite a session DB or configuration")
+        output = validate_output(args, source)
         if not source.is_file():
             raise ValueError("session database not found; specify the launcher --cwd or --data-dir")
         temp_root = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
@@ -169,16 +196,7 @@ def main():
             raw, status = capture(args, data_dir)
         text = plain_text(raw)
         output.write_text(text, encoding="utf-8")
-        if not raw or not text.strip():
-            raise ValueError("no screen text captured")
-        missing = [expected for expected in args.expect if expected not in text]
-        if missing:
-            raise ValueError("missing expected text: " + ", ".join(repr(item) for item in missing))
-        if status is not None:
-            if os.WIFSIGNALED(status):
-                raise ValueError(f"renderer terminated by signal {os.WTERMSIG(status)}")
-            if os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
-                raise ValueError(f"renderer exited with status {os.WEXITSTATUS(status)}")
+        check_render(text, args.expect, status)
         return 0
     except (OSError, ValueError, sqlite3.Error) as error:
         print(f"tui-capture: {error}", file=sys.stderr)
