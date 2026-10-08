@@ -118,6 +118,8 @@ test_release_preflight_validates_immutable_sources() {
 	else
 		pass "unavailable immutable source blocks preflight"
 	fi
+	printf 'FROM --platform=linux/amd64 %s AS build\nFROM %s\n' "$PINNED_BASE" "$PINNED_BASE" >"${repo_dir}/Dockerfile"
+	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" preflight-release v1.0.0 >/dev/null 2>&1 && pass "FROM platform flag skipped in preflight" || fail "FROM platform flag skipped in preflight"
 	return 0
 }
 
