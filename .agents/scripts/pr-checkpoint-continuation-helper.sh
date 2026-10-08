@@ -29,6 +29,9 @@ PCC_ORIGINAL_STATUS=""
 PCC_OWNERSHIP_TRANSFERRED=0
 PCC_REVISION_APPROVAL=0
 PCC_PREVIOUS_ASSIGNEE=""
+# GH#34008: "for" when the target links its issue only through the
+# orphan-recovery `For #N` line; the worker must add a closing link before ready.
+PCC_LINK_KIND="closing"
 # GH#33654: true only for dispatch-stalled, where a stall release already
 # unassigned the issue (status:available) and the successor claims it.
 PCC_ALLOW_RELEASED="false"
@@ -44,6 +47,7 @@ _PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|watchdog_kill:[A-Za-z
 _PCC_JQ_RELEASE_DEFS='
 	def trusted: (.author_association // "") as $a |
 		($a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR");
+	def trusted_event: type == "object" and trusted and ((.id | type) == "number");
 	def login: .user.login // .author // "";
 	def body_lines: (.body // "") | split("\n")[];
 	def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
@@ -160,7 +164,7 @@ _prrts_prelaunch_target_fence() {
 		PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_eligibility_changed_before_launch"
 		return 1
 	}
-	IFS=$'\t' read -r title live_head_ref live_head_oid author live_issue_status live_issue_assignee approval_id <<<"$target_row"
+	IFS=$'\t' read -r title live_head_ref live_head_oid author live_issue_status live_issue_assignee approval_id _ <<<"$target_row"
 	: "$title" "$author" "$live_issue_status"
 	if [[ "$live_head_ref" != "$head_ref" || "$live_head_oid" != "$head_oid" ]]; then
 		PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_head_changed_before_launch"
@@ -188,7 +192,7 @@ _prrts_prelaunch_target_fence() {
 			PRRTS_WORKTREE_FAILURE_REASON="pr_checkpoint_post_transfer_eligibility_changed"
 			return 1
 		}
-		IFS=$'\t' read -r title live_head_ref live_head_oid author _ live_issue_assignee approval_id <<<"$target_row"
+		IFS=$'\t' read -r title live_head_ref live_head_oid author _ live_issue_assignee approval_id _ <<<"$target_row"
 		if [[ "$live_head_ref" != "$head_ref" || "$live_head_oid" != "$head_oid" ||
 			"$live_issue_assignee" != "$authenticated_login" ]]; then
 			_pcc_restore_transferred_ownership "$repo_slug" "$pr_number" || true
@@ -244,7 +248,21 @@ _prrts_write_prompt_file() {
 	local repo_slug_ref="\$WORKER_REPO_SLUG"
 	local linked_issue_ref="\$AIDEVOPS_PR_REPAIR_LINKED_ISSUE"
 	local issue_assignee_ref="\$AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE"
+	local closing_link_step=""
 	: "$_thread_count" "$_fingerprint" "$_preview"
+	if [[ "$PCC_LINK_KIND" == "for" ]]; then
+		# GH#34008: orphan-recovery drafts link with a non-closing `For #N` line
+		# (GH#32933). Completion must leave a PR whose merge resolves the issue.
+		closing_link_step="
+   This draft is an orphan-recovery checkpoint linked to issue
+   #${PCC_LINKED_ISSUE} only by a non-closing \`For #${PCC_LINKED_ISSUE}\` line.
+   Before marking it ready, replace that exact line with
+   \`Resolves #${PCC_LINKED_ISSUE}\` in the PR body (read it with
+   \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json body --jq .body\`,
+   edit a local file, then \`gh pr edit \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --body-file <file>\`)
+   and confirm \`gh pr view \"${repair_number_ref}\" --repo \"${repo_slug_ref}\" --json closingIssuesReferences\`
+   lists #${PCC_LINKED_ISSUE}. Change no other body line."
+	fi
 
 	_prrts_ensure_dirs
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
@@ -293,7 +311,7 @@ PR title: ${safe_title}
    replacement PR.
 6. If the issue criteria are satisfied and focused verification passes, verify
    the remote PR head equals local HEAD, mark PR #${pr_number} ready, then run
-   \`"${scanner_path}" mark-complete "${repo_slug_ref}" "${repair_number_ref}" continuation_complete\` exactly once.
+   \`"${scanner_path}" mark-complete "${repo_slug_ref}" "${repair_number_ref}" continuation_complete\` exactly once.${closing_link_step}
 7. If a real code, decision, maintainer, or infrastructure blocker prevents a
    ready PR, write a concise local details file and run
    \`"${scanner_path}" mark-blocked "${repo_slug_ref}" "${repair_number_ref}" <code|decision|maintainer|infrastructure> <short_reason> <details_file>\` exactly once.
@@ -332,7 +350,7 @@ _pcc_target_row() {
 	local target_row=""
 	local issue_assignee=""
 	local issue_status=""
-	local approval="" approval_id=0 comments="[]"
+	local approval="" approval_id=0 comments="[]" link_kind=""
 	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json number,state,title,body,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences 2>/dev/null) || return 1
 	issue_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || return 1
@@ -357,7 +375,10 @@ _pcc_target_row() {
 		[.title // "", .headRefName, .headRefOid, .author.login // ""] | @tsv
 	' <<<"$pr_json" 2>/dev/null || true)
 	[[ -n "$target_row" ]] || return 1
-	printf '%s\t%s\t%s\t%s\n' "$target_row" "$issue_status" "$issue_assignee" "$approval_id"
+	# GH#34008: a `For #N` recovery draft must gain a closing link before ready.
+	link_kind="closing"
+	_pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue" || link_kind="for"
+	printf '%s\t%s\t%s\t%s\t%s\n' "$target_row" "$issue_status" "$issue_assignee" "$approval_id" "$link_kind"
 	return 0
 }
 
@@ -468,8 +489,9 @@ _pcc_dispatch() {
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 1
 	}
-	IFS=$'\t' read -r title PCC_HEAD_REF PCC_HEAD_OID author issue_status PCC_ISSUE_ASSIGNEE PCC_REVISION_APPROVAL <<<"$target_row"
+	IFS=$'\t' read -r title PCC_HEAD_REF PCC_HEAD_OID author issue_status PCC_ISSUE_ASSIGNEE PCC_REVISION_APPROVAL PCC_LINK_KIND <<<"$target_row"
 	PCC_REVISION_APPROVAL="${PCC_REVISION_APPROVAL:-0}"
+	PCC_LINK_KIND="${PCC_LINK_KIND:-closing}"
 	PCC_LINKED_ISSUE="$linked_issue"
 	PCC_ORIGINAL_STATUS="$issue_status"
 	PCC_OWNERSHIP_TRANSFERRED=0
@@ -554,7 +576,7 @@ _pcc_approval_template() {
 _pcc_blocked_release_evidence() {
 	local comments="$1" runner="$2" key="$3"
 	jq -er --arg runner "$runner" --arg key "$key" "${_PCC_JQ_RELEASE_DEFS}"'
-		[flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
+		[flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(any(body_lines; is_release))] | last) as $release
 		| select($release != null)
@@ -579,7 +601,7 @@ _pcc_blocked_release_evidence() {
 _pcc_completed_release_evidence() {
 	local comments="$1" key="$2"
 	jq -er --arg key "$key" "${_PCC_JQ_RELEASE_DEFS}"'
-		[flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
+		[flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(ownership($c))] | last) as $release
 		| select($release != null)
@@ -709,7 +731,7 @@ _pcc_stall_release_evidence() {
 		def release_reason: ([body_lines | select(is_release)] | first // "") | field("reason");
 		def stall_release: release_reason | (length > 0 and test($pattern));
 		($head_date | epoch) as $head_epoch
-		| [flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
+		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(ownership($c))] | last) as $release
 		| select($release != null and ($release | stall_release))
@@ -748,6 +770,62 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head.
 }
 
 #######################################
+# Find the expired claim of a killed attempt whose orphan-recovery draft was
+# left behind with no release (GH#34008). A cgroup/OOM kill runs no release
+# path, so the proactive stale sweep resets the issue (unassigned,
+# status:available) without CLAIM_RELEASED. Stall evidence is accepted only
+# when the newest trusted coordination event is that attempt's own
+# DISPATCH_CLAIM or non-terminal DISPATCH_LEASE, posted no later than the
+# draft head commit, whose expires_at has passed. Any newer claim, lease,
+# release or interactive claim (including a continuation launched from this
+# evidence) keeps the hold, so this fires at most once per head.
+# Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
+#       $3=current epoch seconds
+# Output: comment id of the expired claim
+# Returns: 0 when the expired claim is current evidence, 1 otherwise
+#######################################
+_pcc_expired_claim_evidence() {
+	local comments="$1" head_date="$2" now_epoch="$3"
+	[[ "$now_epoch" =~ ^[1-9][0-9]*$ ]] || return 1
+	jq -er --arg head_date "$head_date" --argjson now "$now_epoch" "${_PCC_JQ_RELEASE_DEFS}"'
+		def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+		($head_date | epoch) as $head_epoch
+		| [flatten[] | select(trusted_event)]
+		| sort_by(.id) as $c
+		| ([$c[] | select(ownership($c))] | last) as $claim
+		| select($claim != null)
+		| ([$claim | body_lines | select(coordination_line)] | last) as $line
+		| select(($line | test("^DISPATCH_(CLAIM|LEASE) ")) and (($line | is_terminal_lease) | not))
+		| select(($line | field("expires_at") | tonumber? // 0) as $expires | $expires > 0 and $expires < $now)
+		| select(($claim.created_at // "") | (try epoch catch null) | . != null and . <= $head_epoch)
+		| $claim.id | tostring
+	' <<<"$comments"
+	return $?
+}
+
+#######################################
+# Continue an orphan-recovery `For #N` draft whose killed attempt left only an
+# expired claim (GH#34008). Applies only to drafts matching the shared
+# recovery linkage rule; ordinary worker drafts still require a stall release.
+# Args: repo, repo path, issue, PR, authenticated login, PR author, PR JSON,
+#       comments JSON, head commit ISO date
+# Returns: 0 dispatched/deduplicated, 1 dispatch failed, 3 not applicable
+#######################################
+_pcc_dispatch_expired_recovery_draft() {
+	local repo="$1" path="$2" issue="$3" pr="$4" login="$5" runner="$6"
+	local pr_json="$7" comments="$8" head_date="$9"
+	local claim_id=""
+	_pr_checkpoint_recovery_draft_links_issue "$pr_json" "$issue" || return 3
+	claim_id=$(_pcc_expired_claim_evidence "$comments" "$head_date" "$(date +%s)") || return 3
+	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 3
+	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=none reason=expired_claim claim_comment=%s\n' \
+		"$issue" "$repo" "$pr" "$runner" "$claim_id"
+	PCC_ALLOW_RELEASED=true
+	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login" || return 1
+	return 0
+}
+
+#######################################
 # Continue an unassigned worker draft left by a stall/timeout release
 # (GH#33654). Stall releases unassign the issue, so neither stale-assignment
 # recovery nor the blocked-release attention path sees it, and the draft held
@@ -770,7 +848,8 @@ _pcc_dispatch_stalled() {
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
 	fi
-	pr_json=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,headRefOid,author,commits) || return 1
+	pr_json=$(gh pr view "$pr" --repo "$repo" \
+		--json state,isDraft,isCrossRepository,headRefOid,author,commits,body,labels,closingIssuesReferences) || return 1
 	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
 		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
 	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
@@ -786,6 +865,10 @@ _pcc_dispatch_stalled() {
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
 	key="${_PCC_STALL_ATTENTION_MARKER} pr=${pr} head=${head}"
 	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key") || {
+		local expired_rc=0
+		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
+			"$runner" "$pr_json" "$comments" "$head_date" || expired_rc=$?
+		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
 		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release\n' "$pr" "$repo"
 		return 1
 	}

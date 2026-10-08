@@ -166,6 +166,13 @@ PY
 	draft_checkpoint) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	protected_draft) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"labels":[{"name":"origin:interactive"}],"statusCheckRollup":[]}]' ;;
 	draft_bare) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
+	recovery_for) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":false,"body":"Recovered dirty worktree.\nFor #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
+	recovery_for_worker) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":false,"body":"For #99999","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
+	recovery_for_ready) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":false,"isCrossRepository":false,"body":"For #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
+	recovery_for_cross) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":true,"body":"For #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
+	recovery_for_protected) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":false,"body":"For #99999","labels":[{"name":"origin:worker-takeover"},{"name":"no-takeover"}],"statusCheckRollup":[]}]' ;;
+	recovery_bare) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":false,"body":"Recovered work for #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
+	recovery_for_other_closing) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":123,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"isCrossRepository":false,"body":"For #99999\nResolves #123","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
 	draft_mismatch) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":123,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	draft_ambiguous) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}},{"number":123,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	multiple_linked) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]},{"number":${second_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
@@ -349,7 +356,7 @@ else
 	print_result "Reset path: STALE_ESCALATED NOT emitted" 1 "(got: '$output')"
 fi
 
-if grep -q -- "--json number,closingIssuesReferences,isDraft,labels,statusCheckRollup" "$GH_CALLS_FILE" &&
+if grep -q -- "--json number,closingIssuesReferences,isDraft,isCrossRepository,labels,body,statusCheckRollup" "$GH_CALLS_FILE" &&
 	! grep -q -- "--search" "$GH_CALLS_FILE"; then
 	print_result "Open PR lookup scans authoritative metadata without body-search filtering" 0
 else
@@ -395,6 +402,32 @@ fi
 
 for unsafe_kind in draft_bare draft_mismatch; do
 	run_recover 0 "77|${unsafe_kind}" 1
+	if ! echo "$output" | grep -q "STALE_PR_CONTINUATION"; then
+		print_result "${unsafe_kind} cannot authorize stale PR continuation" 0
+	else
+		print_result "${unsafe_kind} cannot authorize stale PR continuation" 1 "(got: '$output')"
+	fi
+done
+
+# GH#34008: the pulse's own orphan-recovery draft links only through `For #N`.
+# Stale recovery must classify it as draft_checkpoint and preserve it.
+run_recover 0 "85|recovery_for" 1
+if echo "$output" | grep -q "STALE_PR_CONTINUATION: issue #99999 in owner/repo — PR #85" &&
+	echo "$output" | grep -q "assignee=stale-runner" && ! grep -q "^issue edit" "$GH_CALLS_FILE"; then
+	print_result "For #N recovery draft requests exact-head continuation without reset" 0
+else
+	print_result "For #N recovery draft requests exact-head continuation without reset" 1 "(got: '$output')"
+fi
+for_open_pr=$(PATH="${STUB_DIR}:${OLD_PATH}" bash -c 'source "$1"; _stale_recovery_find_open_pr 99999 owner/repo' \
+	bash "${TEST_SCRIPTS_DIR}/dispatch-dedup-stale.sh" 2>/dev/null)
+if [[ "$for_open_pr" == "85|draft_checkpoint" ]]; then
+	print_result "Sweep classifier sees For #N recovery draft and skips reset" 0
+else
+	print_result "Sweep classifier sees For #N recovery draft and skips reset" 1 "(got: '$for_open_pr')"
+fi
+
+for unsafe_kind in recovery_for_worker recovery_for_ready recovery_for_cross recovery_for_protected recovery_bare recovery_for_other_closing; do
+	run_recover 0 "86|${unsafe_kind}" 1
 	if ! echo "$output" | grep -q "STALE_PR_CONTINUATION"; then
 		print_result "${unsafe_kind} cannot authorize stale PR continuation" 0
 	else

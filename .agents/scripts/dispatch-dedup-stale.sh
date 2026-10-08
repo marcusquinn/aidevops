@@ -31,6 +31,14 @@ _DDS_KIND_LINKED_AMBIGUOUS="linked_ambiguous"
 _DDS_CLOSING_REFERENCE_PAGE_SIZE=100
 STALE_RECOVERY_OPEN_PR_SCAN_LIMIT="${STALE_RECOVERY_OPEN_PR_SCAN_LIMIT:-1000}"
 
+# GH#34008: share the exact orphan-recovery `For #N` draft linkage rule with
+# the continuation target predicates instead of re-deriving it here.
+_DDS_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_DDS_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _DDS_SCRIPT_DIR="."
+# shellcheck source=pr-checkpoint-target-lib.sh
+source "${_DDS_SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
+unset _DDS_SCRIPT_DIR
+
 #######################################
 # t2132: Separate threshold for interactive claims.
 # Interactive sessions routinely go 30-60+ minutes between actions on an issue
@@ -222,6 +230,8 @@ _stale_recovery_has_terminal_evidence_since() {
 # Classify every open PR whose authoritative GitHub closing metadata includes
 # this same-repository stale issue. A PR is exact only when that issue is its
 # sole closing identity; all multi-issue linkage remains durable but ambiguous.
+# An orphan-recovery `For #N` draft (_pr_checkpoint_recovery_draft_links_issue)
+# is also exact (GH#34008).
 # Args: $1=issue number, $2=repo slug, $3=open PR list JSON
 # Output: matching "PR number|exact|ambiguous" rows, one per line
 #######################################
@@ -249,16 +259,21 @@ _stale_recovery_linked_pr_rows() {
 				(.repository.name | type) == "string" and
 				(.repository.owner.login | type) == "string"))
 	' >/dev/null 2>&1 || return 1
+	# GH#34008: an orphan-recovery `For #N` draft has no closing identity by
+	# design; the shared exact rule links it so it is preserved, not reset.
 	printf '%s' "$open_pr_json" | jq -r --argjson issue "$issue_number" \
-		--arg owner "$repo_owner" --arg name "$repo_name" '
+		--arg owner "$repo_owner" --arg name "$repo_name" "${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
 		def matches_target:
 			.number == $issue and
 			((.repository.name | ascii_downcase) == ($name | ascii_downcase)) and
 			((.repository.owner.login | ascii_downcase) == ($owner | ascii_downcase));
 		.[] |
 		(.closingIssuesReferences | map(select(matches_target))) as $matches |
-		select(($matches | length) > 0) |
-		"\(.number)|\(if ((.closingIssuesReferences | length) == 1 and ($matches | length) == 1) then "exact" else "ambiguous" end)"
+		if ($matches | length) > 0 then
+			"\(.number)|\(if ((.closingIssuesReferences | length) == 1 and ($matches | length) == 1) then "exact" else "ambiguous" end)"
+		elif recovery_draft_links($issue) then
+			"\(.number)|exact"
+		else empty end
 	' 2>/dev/null || return 1
 	return 0
 }
@@ -277,7 +292,7 @@ _stale_recovery_find_open_pr() {
 	[[ "$_scan_limit" =~ ^[1-9][0-9]*$ ]] || _scan_limit=1000
 	_open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--limit "$_scan_limit" \
-		--json number,closingIssuesReferences,isDraft,labels,statusCheckRollup 2>/dev/null) || return 1
+		--json number,closingIssuesReferences,isDraft,isCrossRepository,labels,body,statusCheckRollup 2>/dev/null) || return 1
 	_open_pr_count=$(printf '%s' "$_open_pr_json" | jq -er 'length' 2>/dev/null) || return 1
 	# Reaching the bound means authoritative linkage may exist outside this page.
 	[[ "$_open_pr_count" -lt "$_scan_limit" ]] || return 1
