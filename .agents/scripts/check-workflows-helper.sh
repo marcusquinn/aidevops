@@ -386,9 +386,15 @@ _version_is_older() {
 _pin_lag_note() {
 	local _wf="$1"
 	local _workflow_name="$2"
-	local _pin _installed
-	_pin=$(sed -nE 's|^[[:space:]]*uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+@v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$|\1|p' \
-		"$_wf" 2>/dev/null | head -n 1)
+	local _pin="" _installed _line=""
+	local _uses_re='^[[:space:]]*uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+@v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$'
+	[[ -r "$_wf" ]] || return 0
+	while IFS= read -r _line || [[ -n "$_line" ]]; do
+		if [[ "$_line" =~ $_uses_re ]]; then
+			_pin="${BASH_REMATCH[1]}"
+			break
+		fi
+	done <"$_wf"
 	[[ -n "$_pin" ]] || return 0
 	_installed=$(_installed_framework_version)
 	[[ -n "$_installed" ]] || return 0
