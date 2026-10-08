@@ -1595,6 +1595,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18623 fix(cloudron): honour monitor_upstream/monitor_compatibility false in the package monitor #auto-dispatch #bug tier:simple ref:GH#34019 -> [todo/tasks/t18623-brief.md]
 
+- [ ] t18624 fix(cloudron): monitor issue bodies fail the Files Scope gate, so no update issues are filed #bug #interactive ref:GH#34027 -> [todo/tasks/t18624-brief.md]
+
 ## In Progress
 
 - [x] GH#33891 Fix NixOS PATH and native tool discovery @vladimirdulov #bug #interactive #auto-dispatch tier:thinking ref:GH#33891 assignee:vladimirdulov logged:2026-10-07 started:2026-10-07 -> [todo/tasks/gh33891-brief.md] pr:#33893 completed:2026-10-07
