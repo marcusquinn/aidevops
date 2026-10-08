@@ -2134,22 +2134,51 @@ _hrw_reconcile_session_permission_blockers() {
 	return 0
 }
 
+#######################################
+# GH#34040: The permission handoff tells the maintainer the work is preserved,
+# but cleanup only unregisters the worktree. Prove commit durability (push or
+# verified bundle) and archive uncommitted edits before that claim is made.
+# Args: $1=session key, $2=worktree path
+# Outputs: durability token (none | pushed:<branch> | bundle:<path> | work_lost)
+#######################################
+_hrw_secure_permission_work() {
+	local session_key="$1"
+	local work_dir="$2"
+	local durability="unverified"
+	if declare -F _worker_secure_branch_commits >/dev/null 2>&1; then
+		if ! _worker_secure_branch_commits "$work_dir" >&2; then
+			_hrw_record_permission_blocker_failure "$session_key" "work_lost"
+		fi
+		durability="${_WORKER_COMMIT_DURABILITY:-unverified}"
+	fi
+	if [[ -n "$work_dir" && -d "$work_dir" ]] && declare -F _worker_archive_dirty_worktree_patch >/dev/null 2>&1; then
+		local branch_name=""
+		branch_name=$(git -C "$work_dir" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch_name="detached"
+		_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name" >&2
+	fi
+	printf '%s\n' "$durability"
+	return 0
+}
+
 _hrw_finish_permission_required_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local helper="${SCRIPT_DIR}/worker-permission-helper.sh"
 	local permission_status="$_HRW_STATUS_PERMISSION_REQUIRED"
+	local durability=""
 	if [[ ! -x "$helper" || -z "${_run_permission_request_file:-}" ]]; then
 		_hrw_record_permission_blocker_failure "$session_key" "permission_capture_or_helper_unavailable"
 		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
 		return 1
 	fi
+	durability=$(_hrw_secure_permission_work "$session_key" "$work_dir")
 	if ! "$helper" request \
 		--file "$_run_permission_request_file" \
 		--issue "${WORKER_ISSUE_NUMBER:-}" \
 		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
 		--session "$session_key" \
-		--work-dir "$work_dir"; then
+		--work-dir "$work_dir" \
+		--durability "$durability"; then
 		_hrw_record_permission_blocker_failure "$session_key" "permission_handoff_failed"
 		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
 		return 1

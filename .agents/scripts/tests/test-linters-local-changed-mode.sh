@@ -323,28 +323,28 @@ test_help_and_invalid_arguments() {
 	outside_repo=$(mktemp -d)
 	local output=""
 	local rc=0
-	output=$(cd "$outside_repo" && PATH="/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --help 2>&1) || rc=$?
+	output=$(cd "$outside_repo" && PATH="/run/current-system/sw/bin:/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --help 2>&1) || rc=$?
 	if [[ "$rc" -eq 0 && "$output" == *"Usage: linters-local.sh"* && "$output" != *"Local Linters - Fast"* ]]; then
 		print_result "--help exits before inventory and gates outside Git" 0
 	else
 		print_result "--help exits before inventory and gates outside Git" 1 "rc=$rc output=$output"
 	fi
 	rc=0
-	output=$(cd "$outside_repo" && PATH="/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --unknown-option 2>&1) || rc=$?
+	output=$(cd "$outside_repo" && PATH="/run/current-system/sw/bin:/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --unknown-option 2>&1) || rc=$?
 	if [[ "$rc" -eq 2 && "$output" == *"unknown option"* && "$output" != *"Local Linters - Fast"* ]]; then
 		print_result "unknown option exits 2 before gates" 0
 	else
 		print_result "unknown option exits 2 before gates" 1 "rc=$rc output=$output"
 	fi
 	rc=0
-	output=$(cd "$outside_repo" && PATH="/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --base-ref 2>&1) || rc=$?
+	output=$(cd "$outside_repo" && PATH="/run/current-system/sw/bin:/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --base-ref 2>&1) || rc=$?
 	if [[ "$rc" -eq 2 && "$output" == *"requires a Git ref"* ]]; then
 		print_result "missing --base-ref argument exits 2" 0
 	else
 		print_result "missing --base-ref argument exits 2" 1 "rc=$rc output=$output"
 	fi
 	rc=0
-	output=$(cd "$outside_repo" && PATH="/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --base-ref refs/heads/missing 2>&1) || rc=$?
+	output=$(cd "$outside_repo" && PATH="/run/current-system/sw/bin:/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --base-ref refs/heads/missing 2>&1) || rc=$?
 	if [[ "$rc" -ne 0 && "$output" == *"not resolvable from HEAD"* && "$output" != *"ALL LOCAL CHECKS"* ]]; then
 		print_result "unresolvable explicit base fails before gates" 0
 	else

@@ -409,7 +409,8 @@ test_file_size_clean_to_new() {
 
 	make_large_file "$_base_dir/small.md" 100
 	cp "$_base_dir/small.md" "$_head_dir/small.md"
-	make_large_file "$_head_dir/huge.md" 501
+	mkdir -p "$_head_dir/docs"
+	make_large_file "$_head_dir/docs/huge.md" 501
 
 	local _base_scan="$TEST_ROOT/base.tsv"
 	local _head_scan="$TEST_ROOT/head.tsv"
@@ -436,8 +437,9 @@ test_file_size_stable() {
 	local _head_dir="$TEST_ROOT/head"
 	mkdir -p "$_base_dir" "$_head_dir"
 
-	make_large_file "$_base_dir/huge.md" 501
-	cp "$_base_dir/huge.md" "$_head_dir/huge.md"
+	mkdir -p "$_base_dir/docs" "$_head_dir/docs"
+	make_large_file "$_base_dir/docs/huge.md" 501
+	cp "$_base_dir/docs/huge.md" "$_head_dir/docs/huge.md"
 
 	local _base_scan="$TEST_ROOT/base.tsv"
 	local _head_scan="$TEST_ROOT/head.tsv"

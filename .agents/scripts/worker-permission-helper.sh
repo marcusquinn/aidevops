@@ -256,13 +256,50 @@ permission_render_capabilities() {
 	return $?
 }
 
+#######################################
+# GH#34040: Render commit durability from runtime evidence. Preservation is
+# claimed only for a pushed branch or a verified recovery bundle.
+# Args: $1=durability token from the headless runtime (may be empty)
+#######################################
+permission_durability_text() {
+	local durability="$1"
+	local value="${durability#*:}"
+	local home_label='~'
+	value="${value//\`/}"
+	value="${value//$'\n'/ }"
+	if [[ -n "${HOME:-}" && "$value" == "${HOME}/"* ]]; then
+		value="${home_label}${value#"${HOME}"}"
+	fi
+	case "$durability" in
+	none)
+		printf '%s\n' "**Commit durability:** no unpushed commits were present."
+		;;
+	pushed:?*)
+		printf '%s\n' "**Commit durability:** committed work is pushed to \`origin/${value}\`."
+		;;
+	bundle:?*)
+		printf '%s\n' "**Commit durability:** the branch push failed; unpushed commits are in a verified recovery bundle at \`${value}\`."
+		;;
+	work_lost)
+		printf '%s\n' "**Commit durability: work_lost** — unpushed commits could not be pushed or bundled and are not durably preserved."
+		;;
+	*)
+		printf '%s\n' "**Commit durability:** not verified by the runtime; do not assume unpushed commits survive worktree cleanup."
+		;;
+	esac
+	return 0
+}
+
 permission_post_request() {
 	local capture_file="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
 	local session_key="$4"
 	local work_dir="$5"
+	local durability="${6:-}"
 	local envelope_file comment_file request_id capability_text changed_text branch resume_json target worker_session
+	local durability_text=""
+	durability_text=$(permission_durability_text "$durability")
 	envelope_file=$(mktemp)
 	comment_file=$(mktemp)
 	resume_json=$(permission_issue_resume_json "$issue_number" "$repo_slug")
@@ -309,7 +346,9 @@ ${capability_text}
 
 ${changed_text}
 
-The worktree and OpenCode session are preserved for continuation. Paths are home/worktree-normalized, credential-like values are redacted, and raw tool metadata is intentionally omitted.
+${durability_text}
+
+Paths are home/worktree-normalized, credential-like values are redacted, and raw tool metadata is intentionally omitted.
 
 ### Approval
 
@@ -375,7 +414,7 @@ permission_apply_block() {
 }
 
 cmd_request() {
-	local capture_file="" issue_number="" repo_slug="" session_key="" work_dir=""
+	local capture_file="" issue_number="" repo_slug="" session_key="" work_dir="" durability=""
 	local request_id="" capability_json="" permission="" tool="" risk_level="" grantable=""
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -398,6 +437,10 @@ cmd_request() {
 			;;
 		--work-dir)
 			work_dir="${2:-}"
+			shift 2
+			;;
+		--durability)
+			durability="${2:-}"
 			shift 2
 			;;
 		*)
@@ -425,7 +468,7 @@ cmd_request() {
 			"$permission" "$tool" "$risk_level" "$grantable"
 		return 1
 	fi
-	if ! request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir"); then
+	if ! request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir" "$durability"); then
 		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
 			"github_request_comment_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
 			"Maintainer permission request comment could not be persisted"
@@ -493,7 +536,7 @@ main() {
 	block) cmd_block "$@" ;;
 	*)
 		printf '%s\n' \
-			'Usage: worker-permission-helper.sh request --file FILE --issue N --repo OWNER/REPO --session KEY --work-dir PATH' \
+			'Usage: worker-permission-helper.sh request --file FILE --issue N --repo OWNER/REPO --session KEY --work-dir PATH [--durability TOKEN]' \
 			'       worker-permission-helper.sh block --issue N --repo OWNER/REPO' >&2
 		return 1
 		;;

@@ -12,7 +12,8 @@
 # Subcommands:
 #   scan      <dir>  [--output <file>] [--limit <N>]
 #                    Scan a directory for non-README, non-vendor .md files over
-#                    <limit> lines. Plain directory scans include untracked
+#                    1000 lines at root / 500 elsewhere by default; --limit
+#                    sets a uniform custom limit. Plain scans include untracked
 #                    fixture files; check mode scans git-tracked paths only.
 #                    Outputs TSV: relative-path TAB line-count.
 #   scan-ref  <ref>  [--output <file>] [--limit <N>]
@@ -51,6 +52,7 @@ set -uo pipefail
 
 SCRIPT_NAME=$(basename "$0")
 readonly FILE_SIZE_DEFAULT_LIMIT=500
+readonly FILE_SIZE_ROOT_LIMIT=1000
 readonly FILE_SIZE_DEFAULT_HEAD_REF="HEAD"
 
 # ---------------------------------------------------------------------------
@@ -115,7 +117,11 @@ scan_violations_dir() {
 		_lc=$(wc -l < "$_f") || _lc=0
 		_lc=${_lc//[^0-9]/}
 		_lc=${_lc:-0}
-		if [ "$_lc" -gt "$_limit" ]; then
+		local _path_limit="${_limit:-$FILE_SIZE_DEFAULT_LIMIT}"
+		if [[ "$_rel" != */* && -z "$_limit" ]]; then
+			_path_limit="$FILE_SIZE_ROOT_LIMIT"
+		fi
+		if [ "$_lc" -gt "$_path_limit" ]; then
 			printf '%s\t%d\n' "$_rel" "$_lc"
 		fi
 	done | sort -k1,1 > "$_tmp"
@@ -148,7 +154,11 @@ scan_violations_tracked_worktree() {
 		_lc=$(wc -l < "$_file") || _lc=0
 		_lc=${_lc//[^0-9]/}
 		_lc=${_lc:-0}
-		if [ "$_lc" -gt "$_limit" ]; then
+		local _path_limit="${_limit:-$FILE_SIZE_DEFAULT_LIMIT}"
+		if [[ "$_path" != */* && -z "$_limit" ]]; then
+			_path_limit="$FILE_SIZE_ROOT_LIMIT"
+		fi
+		if [ "$_lc" -gt "$_path_limit" ]; then
 			printf '%s\t%d\n' "$_path" "$_lc"
 		fi
 	done | sort -k1,1 > "$_tmp"
@@ -268,6 +278,7 @@ cmd_diff_finish() {
 			return 0
 		fi
 		log "REGRESSION: net_delta=${_net_delta}  new_violations=${_new_count}"
+		log "Markdown limits: root 1000 / elsewhere 500; README.md exempt. First make the whole document more concise without losing detail; split or bypass only if that is not enough."
 		log_regression_paths "$_regression_paths"
 		return 1
 	fi
@@ -338,8 +349,8 @@ write_report() {
 		printf '| Metric | Base (`%s`) | Head (`%s`) | Delta |\n' \
 			"${_base_sha:0:7}" "${_head_sha:0:7}"
 		printf '|---|---:|---:|---:|\n'
-		printf '| Non-README Markdown files >%d lines | %d | %d | %+d |\n\n' \
-			"$FILE_SIZE_DEFAULT_LIMIT" "$_base_count" "$_head_count" "$_net_delta"
+		printf '| Non-README Markdown >1000 lines at root / >500 elsewhere | %d | %d | %+d |\n\n' \
+			"$_base_count" "$_head_count" "$_net_delta"
 		if [ "$_is_regression" -eq 1 ] && [ -n "$_new_paths" ]; then
 			printf '### New oversized files\n\n'
 			printf '| File |\n|---|\n'
@@ -348,6 +359,7 @@ write_report() {
 				[ -n "$_p" ] && printf '| `%s` |\n' "$_p"
 			done
 			printf '\n'
+			printf '> First make the whole document more concise without losing detail; split or bypass only if that is not enough.\n'
 			# shellcheck disable=SC2016
 			printf '> Override: apply `complexity-bump-ok` label with a `## Complexity Bump Justification` section.\n'
 			# shellcheck disable=SC2016
@@ -368,7 +380,7 @@ cmd_scan() {
 	local _dir="$1"
 	shift
 	local _output=""
-	local _limit="$FILE_SIZE_DEFAULT_LIMIT"
+	local _limit=""
 
 	while [ $# -gt 0 ]; do
 		local _cur_opt="$1"
@@ -412,7 +424,7 @@ cmd_scan_ref() {
 	local _ref="$1"
 	shift
 	local _output=""
-	local _limit="$FILE_SIZE_DEFAULT_LIMIT"
+	local _limit=""
 
 	while [ $# -gt 0 ]; do
 		local _cur_opt="$1"
@@ -525,7 +537,7 @@ cmd_diff() {
 cmd_check_parse_args() {
 	FILE_SIZE_CHECK_BASE_REF=""
 	FILE_SIZE_CHECK_HEAD_REF="$FILE_SIZE_DEFAULT_HEAD_REF"
-	FILE_SIZE_CHECK_LIMIT="$FILE_SIZE_DEFAULT_LIMIT"
+	FILE_SIZE_CHECK_LIMIT=""
 	FILE_SIZE_CHECK_OUTPUT_MD=""
 	FILE_SIZE_CHECK_ALLOW_INCREASE=0
 	FILE_SIZE_CHECK_DRY_RUN=0

@@ -618,6 +618,33 @@ log_access() {
 	return 0
 }
 
+# Record one worker command-policy denial with its enforcing layer and rule so
+# an origin denial is attributable without replaying the session (GH#34040).
+# Writes only to the denied log; the caller owns the stderr reason.
+# Arguments:
+#   $1 - enforcing layer (command-policy or network-tier)
+#   $2 - rule ID (for example network.unclassified-destination)
+#   $3 - denied destination or analyzer label
+#   $4 - worker ID
+log_policy_denial() {
+	local layer="$1"
+	local rule="$2"
+	local subject="$3"
+	local worker_id="${4:-unknown}"
+	local record=""
+	mkdir -p "$NET_TIER_DIR" 2>/dev/null || return 0
+	record="$(jq -cn \
+		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--arg layer "$layer" \
+		--arg rule "$rule" \
+		--arg subject "${subject:0:500}" \
+		--arg worker "$worker_id" \
+		'{ts:$ts,layer:$layer,rule:$rule,domain:$subject,tier:5,label:"policy-deny",worker:$worker,status:"pre-check-deny"}' \
+		2>/dev/null)" || return 0
+	printf '%s\n' "$record" >>"$NET_TIER_DENIED_LOG" 2>/dev/null || true
+	return 0
+}
+
 # =============================================================================
 # Access Check (for sandbox integration)
 # =============================================================================
@@ -779,7 +806,8 @@ check_argv() {
 	requires_destination="$(printf '%s' "$analysis" | jq -r '.requires_destination // true')"
 	unclassified="$(printf '%s' "$analysis" | jq -r '.unclassified[]?')"
 	if [[ -n "$unclassified" ]]; then
-		log_error "${NET_TIER_BLOCKED_PREFIX} unclassified worker network destination (${unclassified//$'\n'/, })"
+		log_error "${NET_TIER_BLOCKED_PREFIX} unclassified worker network destination (${unclassified//$'\n'/, }) [layer=command-policy rule=network.unclassified-destination]"
+		log_policy_denial "command-policy" "network.unclassified-destination" "${unclassified//$'\n'/, }" "$worker_id"
 		if [[ "$unclassified" == *ssh-* ]]; then
 			log_error "Exact SSH authorization: run ssh_binding_helper.py prepare for a config-disabled command, then owner-sign it (reference/ssh-bindings.md); endpoint tier denials still apply"
 		fi
@@ -789,13 +817,15 @@ check_argv() {
 	local_sites="$(printf '%s' "$analysis" | jq -r '.local_site_hosts[]?')"
 	owned_sites="$(printf '%s' "$analysis" | jq -r '.owned_listener_hosts[]?')"
 	if [[ "$requires_destination" == "$NET_TIER_TRUE" && -z "$destinations" ]]; then
-		log_error "${NET_TIER_BLOCKED_PREFIX} recognized network client has no classifiable destination"
+		log_error "${NET_TIER_BLOCKED_PREFIX} recognized network client has no classifiable destination [layer=command-policy rule=network.destination-missing]"
+		log_policy_denial "command-policy" "network.destination-missing" "no-destination" "$worker_id"
 		return 1
 	fi
 	while IFS= read -r domain; do
 		[[ -z "$domain" ]] && continue
 		tier="$(classify_domain "$domain")" || {
-			log_error "${NET_TIER_BLOCKED_PREFIX} failed to classify domain ${domain}"
+			log_error "${NET_TIER_BLOCKED_PREFIX} failed to classify domain ${domain} [layer=network-tier rule=network.classification-error]"
+			log_policy_denial "network-tier" "network.classification-error" "$domain" "$worker_id"
 			return 1
 		}
 		if _is_registered_local_site "$domain" "$tier" "$local_sites"; then
@@ -803,7 +833,7 @@ check_argv() {
 		elif _is_owned_listener_host "$domain" "$owned_sites"; then
 			log_access "$domain" "$worker_id" "pre-check-owned-listener" "" 3 || true
 		elif [[ "$tier" == "5" ]]; then
-			log_error "${NET_TIER_BLOCKED_PREFIX} ${domain} (Tier 5: DENY)"
+			log_error "${NET_TIER_BLOCKED_PREFIX} ${domain} (Tier 5: DENY) [layer=network-tier rule=network.tier5-domain]"
 			if _is_loopback_host "$domain"; then
 				_log_loopback_denial_routes
 			fi
