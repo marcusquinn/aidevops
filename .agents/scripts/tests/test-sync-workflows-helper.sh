@@ -658,6 +658,35 @@ else
 	((_FAIL++))
 fi
 
+# ─── Test 19: GH#34095 — --force-ref bumps a lagging pin on a CURRENT caller ─
+# check-workflows classifies callers modulo @ref, so a tag-pinned caller is
+# CURRENT/CALLER. Without --force-ref the pin is preserved (no work); with it,
+# a differing pin becomes a planned bump, and an already-matching pin is a no-op.
+TMPDIR_19="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_19"
+mkdir -p "$TMPDIR_19/repo-pinned/.github/workflows"
+PINNED_CONTENT_19=$(printf '%s\n' "$CANONICAL_CALLER_CONTENT" | sed -E \
+	-e 's|(uses:[[:space:]]*marcusquinn/aidevops/\.github/workflows/[^@[:space:]]+)@main|\1@v3.0.0|' \
+	-e 's|^(      aidevops_ref:).*$|\1 v3.0.0|')
+printf '%s\n' "$PINNED_CONTENT_19" >"$TMPDIR_19/repo-pinned/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_19" "{\"initialized_repos\":[{\"path\":\"$TMPDIR_19/repo-pinned\",\"slug\":\"owner/repo-pinned\"}]}"
+OUT_19_CHECK=$(HOME="$TMPDIR_19" bash "$CHECK_HELPER" --json --workflow issue-sync 2>/dev/null)
+_assert_contains "GH#34095 → pinned caller stays CURRENT/CALLER" "$OUT_19_CHECK" '"classification":"CURRENT/CALLER"'
+_assert_contains "GH#34095 → check-workflows reports pin lag" "$OUT_19_CHECK" 'pinned @v3.0.0; installed v'
+OUT_19_KEEP=$(HOME="$TMPDIR_19" bash "$HELPER" --workflow issue-sync --ref @v3.38.35 2>&1)
+_assert_contains "GH#34095 → pin preserved without --force-ref" "$OUT_19_KEEP" "no actionable repos"
+OUT_19_BUMP=$(HOME="$TMPDIR_19" bash "$HELPER" --workflow issue-sync --force-ref --ref @v3.38.35 --json 2>/dev/null)
+_assert_contains "GH#34095 → --force-ref plans a pin bump" "$OUT_19_BUMP" \
+	'"slug":"owner/repo-pinned","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"bump ref @v3.0.0 → .github/workflows/issue-sync.yml at ref @v3.38.35'
+OUT_19_SAME=$(HOME="$TMPDIR_19" bash "$HELPER" --workflow issue-sync --force-ref --ref @v3.0.0 2>&1)
+_assert_contains "GH#34095 → --force-ref with matching pin is a no-op" "$OUT_19_SAME" "no actionable repos"
+# A runner-only sync without --force-ref must keep the existing tag pin.
+_write_repos_json "$TMPDIR_19" "{\"initialized_repos\":[{\"path\":\"$TMPDIR_19/repo-pinned\",\"slug\":\"owner/repo-pinned\",\"runner\":\"ubuntu-new\"}]}"
+OUT_19_RUNNER=$(HOME="$TMPDIR_19" bash "$HELPER" --workflow issue-sync --json 2>/dev/null)
+_assert_contains "GH#34095 → runner-only sync preserves the tag pin" "$OUT_19_RUNNER" \
+	'"outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml at ref @v3.0.0'
+rm -rf "$TMPDIR_19"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'
 if [[ "$_FAIL" -eq 0 ]]; then

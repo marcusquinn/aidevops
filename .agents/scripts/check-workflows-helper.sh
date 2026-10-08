@@ -344,6 +344,60 @@ _caller_helper_provenance_matches() {
 	[[ "$(printf '%s\n' "$_helper_repos" | wc -l | tr -d ' ')" == "$(printf '%s\n' "$_helper_refs" | wc -l | tr -d ' ')" ]]
 }
 
+# _installed_framework_version — X.Y.Z of the running install (deployed
+# agents/VERSION) or of the repository checkout; empty when unavailable.
+_installed_framework_version() {
+	local _candidate="" _version=""
+	for _candidate in "${SELF_DIR:+$SELF_DIR/../VERSION}" "${REPO_ROOT:+$REPO_ROOT/VERSION}"; do
+		[[ -n "$_candidate" && -r "$_candidate" ]] || continue
+		IFS= read -r _version <"$_candidate" || true
+		if [[ "$_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+			printf '%s\n' "$_version"
+			return 0
+		fi
+	done
+	return 0
+}
+
+# _version_is_older <a> <b> — succeeds when X.Y.Z version a sorts before b.
+_version_is_older() {
+	local _a="$1"
+	local _b="$2"
+	local _a_major _a_minor _a_patch _b_major _b_minor _b_patch
+	IFS=. read -r _a_major _a_minor _a_patch <<<"$_a"
+	IFS=. read -r _b_major _b_minor _b_patch <<<"$_b"
+	if ((10#$_a_major != 10#$_b_major)); then
+		if ((10#$_a_major < 10#$_b_major)); then return 0; fi
+		return 1
+	fi
+	if ((10#$_a_minor != 10#$_b_minor)); then
+		if ((10#$_a_minor < 10#$_b_minor)); then return 0; fi
+		return 1
+	fi
+	if ((10#$_a_patch < 10#$_b_patch)); then return 0; fi
+	return 1
+}
+
+# _pin_lag_note <workflow-file> <workflow-name>
+# CURRENT/CALLER ignores @ref variance by design (pins are an operator
+# choice), so a release-tag pin older than the install is reported here
+# rather than reclassified (GH#34095). Classification and exit status are
+# unchanged; the note names the explicit opt-in bump command.
+_pin_lag_note() {
+	local _wf="$1"
+	local _workflow_name="$2"
+	local _pin _installed
+	_pin=$(sed -nE 's|^[[:space:]]*uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+@v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$|\1|p' \
+		"$_wf" 2>/dev/null | head -n 1)
+	[[ -n "$_pin" ]] || return 0
+	_installed=$(_installed_framework_version)
+	[[ -n "$_installed" ]] || return 0
+	_version_is_older "$_pin" "$_installed" || return 0
+	printf 'pinned @v%s; installed v%s; bump: aidevops sync-workflows --workflow %s --force-ref --ref @v%s' \
+		"$_pin" "$_installed" "$_workflow_name" "$_installed"
+	return 0
+}
+
 # ─── Classification ─────────────────────────────────────────────────────────
 
 # _normalize_wf_for_compare <file> <target_escaped>
@@ -888,6 +942,9 @@ _classify_row() {
 	case "$_class" in
 	NEEDS-MIGRATION)
 		_note="legacy full-copy; run: aidevops sync-workflows --apply"
+		;;
+	CURRENT/CALLER)
+		_note=$(_pin_lag_note "$_wf" "${_workflow_file%.yml}")
 		;;
 	esac
 
