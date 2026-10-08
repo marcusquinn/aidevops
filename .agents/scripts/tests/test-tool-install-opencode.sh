@@ -1113,9 +1113,10 @@ assert_eq "V2 install uses npm with a private prefix" \
 	"install --no-audit --no-fund --prefix $v2_install_root @opencode/cli@latest" \
 	"$(<"$v2_install_home/npm-install-args")"
 v2_install_exec=$(grep '^exec "' "$v2_install_home/.local/bin/opencode2")
-v2_install_root_real=$(cd "$v2_install_root" && pwd -P)
+# The shim keeps the logical path by design (see _setup_ensure_opencode_stable_shim);
+# on macOS mktemp returns /var/..., whose physical form is /private/var/...
 assert_eq "V2 stable shim targets the private package binary" \
-	"exec \"$v2_install_root_real/node_modules/.bin/opencode2\" \"\$@\"" "$v2_install_exec"
+	"exec \"$v2_install_root/node_modules/.bin/opencode2\" \"\$@\"" "$v2_install_exec"
 
 echo ""
 echo "===== Results: $PASS passed, $FAIL failed ====="
