@@ -13,6 +13,8 @@
 #   _get_process_age()        Get process age in seconds from ps etime
 #   _get_pid_cpu()            Get integer CPU% for a single PID
 #   _get_process_tree_cpu()   Get CPU% summed across a process tree (BFS)
+#   _worker_output_has_fresh_provider_failure() Trusted provider failure at output tail
+#   _worker_kill_reason_class() Map a watchdog kill reason to its persisted class
 #   _extract_session_title_from_cmd() Extract session title from opencode CLI args
 #   _count_recent_opencode_messages() Count recent OpenCode messages by title match
 #   _collect_worker_stall_evidence()  Summarise recent worker transcript/output tail
@@ -44,6 +46,7 @@
 [[ -n "${_WORKER_LIFECYCLE_COMMON_LOADED:-}" ]] && return 0
 _WORKER_LIFECYCLE_COMMON_LOADED=1
 _WLC_STATUS_BLOCKED="blocked"
+_WLC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _worker_attempt_observability_dir="${BASH_SOURCE[0]%/*}"
 # shellcheck source=worker-attempt-observability.sh
@@ -659,6 +662,65 @@ _get_process_tree_cpu() {
 	done < <(_get_descendant_pids "$pid")
 
 	echo "$total_cpu"
+	return 0
+}
+
+#######################################
+# Return whether the most recent worker output records a trusted provider
+# failure (GH#34067).
+#
+# Only the trusted classifier (headless-runtime-provider-classifier.py, also
+# used by the fast rate-limit monitor) may identify provider failures. It
+# accepts structured APIError events and runtime-tagged lines, never free text
+# from tool results or documentation. Only the output tail is classified, so a
+# provider error the runtime already recovered from cannot justify a later kill.
+#
+# Arguments:
+#   arg1 - worker output file
+#   arg2 - tail lines to classify (optional; default
+#          WORKER_PROVIDER_FAILURE_TAIL_LINES, then 40)
+# Returns: 0 for rate_limit, quota_exceeded or provider server errors; 1 otherwise
+#######################################
+_worker_output_has_fresh_provider_failure() {
+	local output_file="$1"
+	local tail_lines="${2:-${WORKER_PROVIDER_FAILURE_TAIL_LINES:-40}}"
+	local classifier="${_WLC_SCRIPT_DIR}/headless-runtime-provider-classifier.py"
+	local classification="" reason="" provider_type="" _rest=""
+
+	[[ -f "$output_file" && -f "$classifier" ]] || return 1
+	[[ "$tail_lines" =~ ^[1-9][0-9]*$ ]] || tail_lines=40
+	classification=$(tail -n "$tail_lines" "$output_file" 2>/dev/null |
+		python3 "$classifier" /dev/stdin 2>/dev/null) || return 1
+	[[ -n "$classification" ]] || return 1
+	IFS=$'\t' read -r reason provider_type _rest <<<"$classification"
+	case "$reason" in
+	rate_limit | quota_exceeded) return 0 ;;
+	provider_error)
+		[[ "$provider_type" == "server_error" ]] && return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
+# Map a watchdog kill reason string to the class persisted in
+# ${exit_code_file}.kill_reason and emitted in [lifecycle] worker_killed
+# lines (t3056 / GH#34067). One mapping keeps telemetry, the persisted
+# reason and classify_worker_kill_reason in agreement.
+#
+# Arguments:
+#   arg1 - human-readable reason, prefixed with its kill path
+# Returns: class string via stdout; 0 always
+#######################################
+_worker_kill_reason_class() {
+	local reason="$1"
+	case "$reason" in
+	phase1:*) printf '%s' "phase1_zero_output" ;;
+	hard_kill:*) printf '%s' "hard_kill_stall" ;;
+	provider_rate_limit:*) printf '%s' "provider_rate_limit" ;;
+	stall:*) printf '%s' "no_output_stall" ;;
+	*) printf '%s' "other" ;;
+	esac
 	return 0
 }
 
