@@ -408,12 +408,29 @@ describe("bounded interactive operations", () => {
     assert.equal(timedResult.state, "timed_out");
     assert.notEqual(timedResult.process_signal, null);
 
-    const forked = await instance.start({
-      command: [process.execPath, "-e", "const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e','setTimeout(()=>{},1000)'],{stdio:['ignore','inherit','inherit']}); c.unref()"],
-      budgetMs: 60,
+    // Wait for the descendant's SIGTERM handler before exiting the parent.
+    // Parent-exit cleanup starts immediately, but its grace must outlast the
+    // budget: inherited stdio remains live until the deadline, not a startup race.
+    const forkedInstance = manager({ killGraceMs: 5000 });
+    const recordedBeforeFork = recorded.length;
+    const forked = await forkedInstance.start({
+      command: [process.execPath, "-e", `
+        const { spawn } = require('node:child_process');
+        const child = spawn(process.execPath, ['-e',
+          "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); process.send('ready');"],
+          { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+        child.once('message', (message) => {
+          if (message !== 'ready') process.exit(1);
+          console.log('forked-descendant-ready');
+          child.disconnect();
+          child.unref();
+        });
+      `],
+      budgetMs: 3000,
       progressIntervalMs: 20,
     }, owner);
-    assert.equal((await terminal(instance, forked.operation_id)).state, "timed_out");
+    assert.equal((await terminal(forkedInstance, forked.operation_id)).state, "timed_out");
+    assert.match(recorded.slice(recordedBeforeFork).map((entry) => entry.content).join("\n"), /forked-descendant-ready/);
 
     const cancellable = await instance.start({
       command: [process.execPath, "-e", "setTimeout(() => {}, 1000)"],
