@@ -98,6 +98,24 @@ class RevisionTests(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(ValueError):
                 revision.validate(data)
 
+    def test_template_refuses_releases_dispatch_approved_rejects(self):
+        # GH#33997: never print an approval that dispatch-approved cannot accept.
+        data = fixture()
+        data["comments"] = data["comments"][:2]
+        template = {**data, "release_id": 2, "attempt": "attempt:original"}
+        line = revision.template(template)
+        approved = {**fixture(), "comments": template["comments"] + [
+            comment(3, line, "maintainer", "OWNER")]}
+        self.assertEqual(revision.validate(approved)["approval_id"], 3)
+        for reason in ("worker_draft_checkpoint", "crash_during_execution", "worker_failed"):
+            refused = copy.deepcopy(template)
+            refused["comments"][1]["body"] = f"CLAIM_RELEASED reason={reason} runner=worker"
+            with self.subTest(reason=reason), self.assertRaises(ValueError):
+                revision.template(refused)
+        for key, value in (("attempt", "attempt:other"), ("release_id", 99)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                revision.template({**template, key: value})
+
     def test_unassigned_and_newer_coordination(self):
         data = fixture()
         data["issue"]["assignees"] = []
