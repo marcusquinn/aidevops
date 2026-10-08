@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.36] - 2026-10-08
+
+### Added
+
+- add link-building playbook with competitor backlink-gap outreach
+
+### Changed
+
+- Documentation: qlty credit limits cover organisation repos too
+- Maintenance: mark t18626 complete (pr:#34076 completed:2026-10-08) (#34080)
+- Documentation: skip qlty checks that fail for lack of credits on private repos
+- Maintenance: mark t18627 complete (pr:#34061 completed:2026-10-08) (#34066)
+
+### Fixed
+
+- reject detaching dispatch launchers in bounded operations and report post-exit descendant termination
+- enforce trusted PR-only completion contract before headless merges
+- distinguish elapsed-cap kills of active workers from proven stalls
+- watchdog uses trusted provider classifier and persists actual kill reason
+- /release falls back to repo release docs when version-manager.sh is absent (GH#34078) (#34082)
+- update base image policy with safe transition (GH#34064) (#34077)
+- associate non-closing worker issue references
+- preserve post-label refill admission budget (GH#33944) (#34075)
+- tolerate missing opposite dispatch label (#34074)
+- audit pinned Docker sources for withdrawal (GH#34063) (#34072)
+- preserve sanitized cause codes for prelaunch lock and lease aborts (#34069)
+- skip Dockerfile FROM flags in preflight-release (GH#34054) (#34062)
+- make plugin subagent index test pass on Linux (#34065)
+- bound and resume dependency graph status refresh (#34056)
+- repair plugin creation after quality init (GH#34045) (#34050)
+
 ## [3.38.35] - 2026-10-08
 
 ### Fixed
