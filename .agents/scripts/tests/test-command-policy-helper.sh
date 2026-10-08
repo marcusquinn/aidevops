@@ -877,6 +877,58 @@ test_worker_git_default_remote() {
 	return 0
 }
 
+# GH#34040: a failed or slow default-remote query must not anonymously deny the
+# dispatched origin. Query results are injected so the cases are deterministic.
+test_worker_git_default_remote_query_failures() {
+	local output=""
+	local status=0
+	output="$(PYTHONPATH="$SCRIPT_DIR" python3 - <<'PY'
+import subprocess
+
+import command_policy_git as git_policy
+import command_policy_network as network
+
+
+def fake(responses):
+    def run(cwd, args, ok_codes=(0,)):
+        return responses[args[0]]
+    return run
+
+
+entries = ["branch.feature/a.remote origin", "branch.local.remote .", "branch.feature/b.remote upstream"]
+git_policy._run_git_query_detailed = fake({"config": (entries, ""), "symbolic-ref": (None, "exit-128")})
+assert git_policy._default_git_remote("/x", "push") == (["origin", "upstream"], ""), "branch failure superset"
+git_policy._run_git_query_detailed = fake({"config": (["branch.x.remote -evil"], ""), "symbolic-ref": (None, "timeout")})
+assert git_policy._default_git_remote("/x", "fetch") == ([], "branch-query-timeout"), "unsafe superset"
+git_policy._run_git_query_detailed = fake({"config": (None, "exit-3"), "symbolic-ref": (["refs/heads/a"], "")})
+result = {"destinations": [], "unclassified": []}
+git_policy._analyze_git_remote(["git", "push"], "/x", "push", [], result)
+assert result["unclassified"] == ["git-push-destination-missing(config-query-exit-3)"], result
+
+calls = []
+
+
+def flaky(*args, **kwargs):
+    calls.append(kwargs["timeout"])
+    if len(calls) == 1:
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+    return subprocess.CompletedProcess(args[0], 0, "refs/heads/a\n", "")
+
+
+network.subprocess.run = flaky
+assert network._run_git_query_detailed("/x", ["symbolic-ref", "HEAD"]) == (["refs/heads/a"], ""), "retry"
+assert calls == [10, 10], calls
+print("ok")
+PY
+)" || status=$?
+	if [[ "$status" -eq 0 && "$output" == "ok" ]]; then
+		pass "worker default-remote query failures stay attributable and bounded"
+	else
+		fail "worker default-remote query failures stay attributable and bounded" "status=${status} output=${output}"
+	fi
+	return 0
+}
+
 # GH#33065: workers must not disable or redirect commit signing.
 test_worker_signing_overrides() {
 	local denied="git.worker-signing-override"
@@ -1289,6 +1341,7 @@ main() {
 	test_canonical_delegation
 	test_worker_network_policy
 	test_worker_git_default_remote
+	test_worker_git_default_remote_query_failures
 	test_worker_signing_overrides
 	test_policy_fail_closed
 	test_secondary_layers
