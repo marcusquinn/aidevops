@@ -220,6 +220,14 @@ COMMENT
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'INSPECT %s\n' "$*" >>"${MONITOR_API_LOG:-/dev/null}"
+if [[ "${MONITOR_IMAGE_STATE:-}" == withdrawn ]]; then
+    printf "%s\n" "no such manifest: $*" >&2
+    exit 1
+fi
+if [[ "${MONITOR_IMAGE_STATE:-}" == neterror ]]; then
+    printf "%s\n" "dial tcp: connection timed out" >&2
+    exit 1
+fi
 if [[ "${MONITOR_IMAGE_STATE:-missing}" == missing ]]; then
     printf '%s\n' 'not found' >&2
     exit 1
@@ -708,6 +716,23 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	return 0
 }
 
+test_monitor_reports_withdrawn_docker_sources() {
+	local home_dir="${TEST_ROOT}/src-home"
+	local repo_dir="${TEST_ROOT}/src-package"
+	local bin_dir="${TEST_ROOT}/src-bin"
+	local log_file="${TEST_ROOT}/src-issues.log"
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	printf 'FROM --platform=linux/amd64 quay.io/minio/minio:RELEASE.1@sha256:aaaa AS minio\nFROM minio AS stage2\nFROM %s\n' "$PINNED_BASE" >"${repo_dir}/Dockerfile"
+	: >"$log_file"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_IMAGE_STATE=neterror MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null 2>&1
+	assert_equal 0 "$(grep -c '^CALL ' "$log_file" || true)" "network errors create no unavailable-source finding"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_IMAGE_STATE=withdrawn MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null 2>&1
+	assert_equal 1 "$(grep -c '^CALL ' "$log_file")" "withdrawn pinned source creates one finding"
+	grep -Fq 'quay.io/minio/minio:RELEASE.1@sha256:aaaa (Dockerfile line 1)' "$log_file" && assert_equal true true "finding names image and line" || assert_equal true false "finding names image and line"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -723,6 +748,7 @@ main() {
 	test_monitor_scheduler_cooldown_integration
 	test_monitor_rejects_blank_package_title
 	test_monitor_waits_for_release_parent_image_and_rearms_once
+	test_monitor_reports_withdrawn_docker_sources
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0
