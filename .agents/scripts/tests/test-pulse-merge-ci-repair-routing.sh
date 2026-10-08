@@ -626,15 +626,10 @@ EOF
 	_is_process_alive_and_matches() { local process_pid="$1"; local process_pattern="$2"; local stored_hash="$3"; [[ -n "$process_pattern" || -n "$stored_hash" ]]; kill -0 "$process_pid" 2>/dev/null; return $?; }
 	_file_mtime_epoch() { local file_path="$1"; [[ -e "$file_path" ]] || return 1; date +%s; return 0; }
 	gh_pr_checks_exact_json() {
-		local repo_slug="$1"
-		local pr_number="$2"
-		local selection_mode="$3"
+		local repo_slug="$1" pr_number="$2" selection_mode="$3"
 		printf 'exact-checks %s %s %s\n' "$repo_slug" "$pr_number" "$selection_mode" >>"$GH_LOG"
 		case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
-		qlty_quota)
-			printf '%s\n' "$TEST_QLTY_CHECKS"
-			return 1
-			;;
+		qlty_quota) printf '%s\n' "$TEST_QLTY_CHECKS"; return 1 ;;
 		nonrequired_baseline)
 			if [[ "$selection_mode" == "all" ]]; then
 				printf '%s\n' '[{"name":"Qlty Smell Threshold","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/125/job/791"},{"name":"Qlty Smell Regression","bucket":"pass","state":"SUCCESS","conclusion":"success","link":"https://github.com/owner/repo/actions/runs/125/job/792"}]'

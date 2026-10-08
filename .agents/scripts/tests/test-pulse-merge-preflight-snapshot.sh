@@ -211,9 +211,19 @@ stub_pull_head() {
 	return 0
 }
 
+stub_qlty_credit_metadata() {
+	case "$SNAPSHOT_MODE" in
+	qlty_credits_public) printf '%s\n' '{"private":false,"owner":{"type":"User"}}' ;;
+	qlty_credits_org) printf '%s\n' '{"private":false,"owner":{"type":"Organization"}}' ;;
+	qlty_credits_unknown) return 1 ;;
+	qlty_credits_malformed) printf '%s\n' '{"private":"true","owner":{"type":"User"}}' ;;
+	*) printf '%s\n' '{"private":true,"owner":{"type":"User"}}' ;;
+	esac
+	return 0
+}
+
 gh() {
-	local command="$1"
-	local endpoint="${2:-}"
+	local command="$1" endpoint="${2:-}"
 	if [[ "$command" == "run" && "$endpoint" == "rerun" ]]; then
 		RERUN_CALLS=$((RERUN_CALLS + 1))
 		return 0
@@ -226,15 +236,7 @@ gh() {
 	fi
 
 	case "$endpoint" in
-	repos/owner/repo)
-		case "$SNAPSHOT_MODE" in
-		qlty_credits_public) printf '%s\n' '{"private":false,"owner":{"type":"User"}}' ;;
-		qlty_credits_org) printf '%s\n' '{"private":false,"owner":{"type":"Organization"}}' ;;
-		qlty_credits_unknown) return 1 ;;
-		qlty_credits_malformed) printf '%s\n' '{"private":"true","owner":{"type":"User"}}' ;;
-		*) printf '%s\n' '{"private":true,"owner":{"type":"User"}}' ;;
-		esac
-		;;
+	repos/owner/repo) stub_qlty_credit_metadata; return $? ;;
 	repos/owner/repo/actions/runs/707)
 		printf '{"head_sha":"%s","status":"completed","conclusion":"%s","run_attempt":%s}\n' "$CANCELLED_RUN_SHA" "${CANCELLED_RUN_CONCLUSION:-cancelled}" "$CANCELLED_RUN_ATTEMPT"
 		;;
@@ -767,6 +769,24 @@ assert_review_and_head_snapshot_cases() {
 	return 0
 }
 
+test_qlty_credit_snapshot() {
+	assert_gate "private qlty credits failure is advisory" qlty_credits_private 0
+	assert_gate "organisation qlty credits failure is advisory" qlty_credits_org 0
+	assert_gate "case variants of qlty credits failure are advisory" qlty_credits_case 0
+	assert_gate "public personal qlty credits failure remains blocking" qlty_credits_public 1
+	assert_gate "unknown qlty credit metadata remains blocking" qlty_credits_unknown 1
+	assert_gate "malformed qlty credit metadata remains blocking" qlty_credits_malformed 1
+	assert_gate "required qlty credits failure still blocks native merge" qlty_credits_required 1
+	if [[ "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" ]]; then
+		printf 'PASS required credit-only status does not become code repair evidence\n'
+	else
+		printf 'FAIL required credit-only status became code repair evidence\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	return 0
+}
+
 main() {
 	assert_infrastructure_rerun_unset_defaults_safe
 	assert_infrastructure_rerun_unset_logfile_safe
@@ -813,20 +833,7 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
-	assert_gate "private qlty credits failure is advisory" qlty_credits_private 0
-	assert_gate "organisation qlty credits failure is advisory" qlty_credits_org 0
-	assert_gate "case variants of qlty credits failure are advisory" qlty_credits_case 0
-	assert_gate "public personal qlty credits failure remains blocking" qlty_credits_public 1
-	assert_gate "unknown qlty credit metadata remains blocking" qlty_credits_unknown 1
-	assert_gate "malformed qlty credit metadata remains blocking" qlty_credits_malformed 1
-	assert_gate "required qlty credits failure still blocks native merge" qlty_credits_required 1
-	if [[ "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" ]]; then
-		printf 'PASS required credit-only status does not become code repair evidence\n'
-	else
-		printf 'FAIL required credit-only status became code repair evidence\n'
-		TESTS_FAILED=$((TESTS_FAILED + 1))
-	fi
-	TESTS_RUN=$((TESTS_RUN + 1))
+	test_qlty_credit_snapshot
 	assert_gate "infrastructure-failed required check requests rerun and stays blocked" required_infra_fail 1
 	if [[ "$RERUN_CALLS" -eq 1 ]] && grep -q "requested infrastructure rerun.*run=303" "$LOGFILE"; then
 		printf 'PASS infrastructure-failed required check requests one audited rerun\n'

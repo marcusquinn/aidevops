@@ -381,10 +381,8 @@ _dispatch_ci_fix_worker() {
 	# linked issue as stale worker guidance. Likewise, cancelled/timed_out checks
 	# usually reflect CI capacity, superseded runs, or job-budget kills; routing
 	# those as code-fix feedback creates duplicate PR churn instead of retrying or
-	# escalating CI infrastructure. If required checks contain no actionable
-	# failures. Advisory failures do not justify branch ownership or repair work.
-	# Commit statuses use ERROR as well as FAILURE; retained non-billing status
-	# errors must remain actionable after quota filtering.
+	# escalating CI infrastructure. Advisory failures do not justify repair work.
+	# Retained non-billing commit-status ERROR results are actionable like FAILURE.
 	local terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and (((.conclusion // .state // "") | ascii_downcase) | test("^(failure|error|action_required)$")) and ((.link // "") != "")'
 	local checks_json="" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
 	local check_results="" failing_checks_json="" failing_checks="" failing_names="" classification_output=""
