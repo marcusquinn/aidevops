@@ -29,6 +29,11 @@
 # module unconditionally on start, and characterization tests re-source to
 # verify idempotency.
 [[ -n "${_PULSE_ROUTINES_LOADED:-}" ]] && return 0
+if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+	# Detached runners source this module without the orchestrator's helpers.
+	# shellcheck source=./portable-stat.sh
+	source "${BASH_SOURCE[0]%/*}/portable-stat.sh" || return 1
+fi
 _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"
@@ -320,8 +325,7 @@ _routine_run_detached_script() {
 				return 0
 			fi
 		done
-		lock_epoch=$(stat -c %Y "$lock_dir" 2>/dev/null) ||
-			lock_epoch=$(stat -f %m "$lock_dir" 2>/dev/null) || lock_epoch=0
+		lock_epoch=$(_file_mtime_epoch "$lock_dir") || lock_epoch=0
 		now_epoch=$(date +%s)
 		# Fail closed when age cannot be determined; allow the mkdir-to-PID gap.
 		if [[ ! "$lock_epoch" =~ ^[0-9]+$ || "$lock_epoch" -eq 0 || $((now_epoch - lock_epoch)) -lt 60 ]]; then
