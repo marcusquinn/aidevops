@@ -14,6 +14,8 @@ aidevops is an opinionated framework. The deployed directory (`~/.aidevops/agent
 | `~/.aidevops/agents/` (root) | Shared framework agents | No | No |
 | `~/.aidevops/agents/scripts/` | Deployed framework scripts | No | No |
 
+`custom/` and `draft/` are stored once in `~/.aidevops/user-agents/` and linked into every runtime bundle, so absolute links inside them stay valid across updates, rollback and old-bundle pruning. Keep using the `~/.aidevops/agents/custom/` path. Python virtual environments created before this layout may still reference an old bundle; setup reports them, and you should re-create them.
+
 ## Custom Scripts
 
 To add a personal script that survives updates:
