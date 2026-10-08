@@ -47,7 +47,8 @@ setup_test() {
 	LOGFILE="${TEST_ROOT}/pulse.log"
 	DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph.json"
 	DEP_GRAPH_CACHE_TTL_SECS=300
-	export LOGFILE DEP_GRAPH_CACHE_FILE DEP_GRAPH_CACHE_TTL_SECS
+	DEP_GRAPH_REFRESH_CURSOR_DIR="${TEST_ROOT}/refresh-cursors"
+	export LOGFILE DEP_GRAPH_CACHE_FILE DEP_GRAPH_CACHE_TTL_SECS DEP_GRAPH_REFRESH_CURSOR_DIR
 	reset_logs
 	return 0
 }
@@ -69,7 +70,7 @@ gh() {
 			"${AIDEVOPS_GH_ROUTE_DECISION:-}" "$*" >>"$GH_LOG"
 	fi
 	if [[ "$top_command" == "api" && "${1:-}" == "graphql" ]]; then
-		printf '%s\n' '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"number":2,"state":"CLOSED"}],"pageInfo":{"hasNextPage":false}}}},"rateLimit":{"cost":1}}}'
+		printf '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"number":2,"state":"%s"}],"pageInfo":{"hasNextPage":false}}}},"rateLimit":{"cost":1}}}\n' "${GH_NATIVE_STATE:-CLOSED}"
 		return 0
 	fi
 	if [[ "$top_command" == "api" && "${1:-}" == "repos/example/repo" ]]; then
@@ -77,7 +78,7 @@ gh() {
 		return 0
 	fi
 	if [[ "$top_command" == "api" && "${1:-}" == repos/example/repo/issues/*/comments\?per_page=100 ]]; then
-		printf '%s\n' '[[]]'
+		printf '%s\n' "${GH_COMMENTS_JSON:-[[]]}"
 		return 0
 	fi
 	if [[ "$top_command" == "api" && "${1:-}" == repos/example/repo/issues/* ]]; then
@@ -93,6 +94,7 @@ gh() {
 			local issue_num="${1:-}"
 			shift || true
 			if [[ "$*" == *"--json labels"* ]]; then
+				printf 'labels %s\n' "$issue_num" >>"$GH_LOG"
 				printf '%s\n' "$GH_LABELS_CSV"
 				return 0
 			fi
@@ -269,6 +271,149 @@ test_brief_hold_preserves_dependency_labels() {
 	return 0
 }
 
+# GH#34055: traversal fixtures run in subshells so their cheap candidate mocks
+# never replace the real safety guards exercised above and below.
+refresh_fixture() {
+	local entry='{"task_ids":[],"issue_nums":["2"],"has_defer_marker":false}'
+	jq -cn --argjson entry "$entry" '{repos:{"example/repo":{closed_issues:[2],known_issues:[2],blocked_by:{"2":$entry,"10":$entry,"11":$entry}},"example/second":{blocked_by:{"2":$entry,"10":$entry,"11":$entry}}}}' >"$DEP_GRAPH_CACHE_FILE"
+	DEP_GRAPH_REFRESH_CURSOR_DIR="${TEST_ROOT}/cursor-${TESTS_RUN}"
+	DEP_GRAPH_REFRESH_MAX_CANDIDATES=1
+	DEP_GRAPH_REFRESH_BUDGET_SECS=30
+	reset_logs
+	return 0
+}
+
+mock_refresh_candidates() {
+	_refresh_dependency_is_resolved() { return 0; }
+	_refresh_try_unblock_issue() {
+		local slug="$1" issue="$2"
+		printf '%s:%s\n' "$slug" "$issue" >>"$STATUS_LOG"
+		# Simulate an abrupt process exit during a later candidate, not a clean
+		# batch stop. Earlier candidates must already be on disk.
+		[[ "${INTERRUPT_REFRESH:-}" != "$issue" ]] || exit 73
+		SECONDS=$((SECONDS + ${ADVANCE_REFRESH_SECONDS:-0}))
+		return 1
+	}
+	return 0
+}
+
+test_refresh_batches() {
+	if (
+		refresh_fixture
+		mock_refresh_candidates
+		refresh_blocked_status_from_graph
+		[[ "$(_refresh_graph_cursor_read "$DEP_GRAPH_REFRESH_CURSOR_DIR/example/repo.cursor")" == 2 ]] || exit 1
+		[[ "$(_refresh_graph_cursor_read "$DEP_GRAPH_REFRESH_CURSOR_DIR/example/second.cursor")" == 2 ]] || exit 1
+		refresh_blocked_status_from_graph
+		[[ "$(_refresh_graph_cursor_read "$DEP_GRAPH_REFRESH_CURSOR_DIR/example/repo.cursor")" == 10 ]] || exit 1
+		refresh_blocked_status_from_graph
+		[[ "$(_refresh_graph_cursor_read "$DEP_GRAPH_REFRESH_CURSOR_DIR/example/repo.cursor")" == 0 ]] || exit 1
+		[[ "$(tr '\n' ' ' <"$STATUS_LOG")" == 'example/repo:2 example/second:2 example/repo:10 example/second:10 example/repo:11 example/second:11 ' ]] || exit 1
+		reset_logs
+		refresh_blocked_status_from_graph
+		[[ "$(tr '\n' ' ' <"$STATUS_LOG")" == 'example/repo:2 example/second:2 ' ]]
+	); then
+		print_result "bounded numeric traversal reaches later entries in every repo and wraps" 0
+	else
+		print_result "bounded numeric traversal reaches later entries in every repo and wraps" 1
+	fi
+	return 0
+}
+
+test_refresh_interruption() {
+	if (
+		refresh_fixture
+		mock_refresh_candidates
+		DEP_GRAPH_REFRESH_MAX_CANDIDATES=10
+		local rc=0
+		(
+			INTERRUPT_REFRESH=10
+			refresh_blocked_status_from_graph
+		) || rc=$?
+		[[ "$rc" == 73 ]] || exit 1
+		[[ "$(_refresh_graph_cursor_read "$DEP_GRAPH_REFRESH_CURSOR_DIR/example/repo.cursor")" == 2 ]] || exit 1
+		reset_logs
+		refresh_blocked_status_from_graph
+		[[ "$(tr '\n' ' ' <"$STATUS_LOG")" == 'example/repo:10 example/repo:11 example/second:2 example/second:10 example/second:11 ' ]]
+	); then
+		print_result "abrupt interruption resumes after durably completed candidate" 0
+	else
+		print_result "abrupt interruption resumes after durably completed candidate" 1
+	fi
+	return 0
+}
+
+test_refresh_elapsed_budget() {
+	if (
+		refresh_fixture
+		mock_refresh_candidates
+		DEP_GRAPH_REFRESH_MAX_CANDIDATES=10
+		DEP_GRAPH_REFRESH_BUDGET_SECS=2
+		ADVANCE_REFRESH_SECONDS=5
+		refresh_blocked_status_from_graph
+		[[ "$(tr '\n' ' ' <"$STATUS_LOG")" == 'example/repo:2 example/second:2 ' ]] || exit 1
+		[[ "$(tr '\n' ' ' <"$LOGFILE")" == *'visited=1 blocked=0 unblocked=0 batch_limit=10 budget_secs=1 complete=false cursor_write_failed=false'* ]]
+	); then
+		print_result "elapsed budget stops new work but gives later repos a fair share" 0
+	else
+		print_result "elapsed budget stops new work but gives later repos a fair share" 1
+	fi
+	return 0
+}
+
+test_refresh_cursor_validation() {
+	local value="" file="${TEST_ROOT}/invalid.cursor" failed=0
+	for value in '-1' '01' '1e9' '999999999999999999999' '../escape' 'broken'; do
+		printf '%s\n' "$value" >"$file"
+		[[ "$(_refresh_graph_cursor_read "$file")" == 0 ]] || failed=1
+	done
+	_refresh_graph_cursor_file '../escape' >/dev/null && failed=1
+	_refresh_graph_cursor_file 'example/..' >/dev/null && failed=1
+	_refresh_graph_cursor_write "$file" '01' && failed=1
+	print_result "cursor rejects corrupt decimals and unsafe repository paths" "$failed"
+	return 0
+}
+
+test_refresh_cursor_write_failure() {
+	if (
+		refresh_fixture
+		mock_refresh_candidates
+		DEP_GRAPH_REFRESH_MAX_CANDIDATES=10
+		printf 'not a directory\n' >"$DEP_GRAPH_REFRESH_CURSOR_DIR"
+		refresh_blocked_status_from_graph
+		[[ "$(tr '\n' ' ' <"$STATUS_LOG")" == 'example/repo:2 example/second:2 ' ]] || exit 1
+		[[ "$(tr '\n' ' ' <"$LOGFILE")" == *'complete=false cursor_write_failed=true'* ]]
+	); then
+		print_result "cursor persistence failure is reported and stops each batch" 0
+	else
+		print_result "cursor persistence failure is reported and stops each batch" 1
+	fi
+	return 0
+}
+
+test_refresh_preserves_guards() {
+	local entry='{"task_ids":[],"issue_nums":["2"],"has_defer_marker":false}'
+	local data=""
+	data=$(jq -cn --argjson entry "$entry" '{closed_issues:[2],known_issues:[2],blocked_by:{"3":$entry}}')
+	DEP_GRAPH_REFRESH_CURSOR_DIR="${TEST_ROOT}/guard-cursors"
+	GH_LABELS_CSV='status:blocked,status:in-progress,blocked-by:#2'
+	reset_logs
+	_refresh_graph_repo "example/repo" "$data" 10 30
+	assert_log_not_contains "refresh preserves active lifecycle status" "$GH_LOG" '--add-label status:available'
+	GH_LABELS_CSV='status:blocked,blocked-by:#2'
+	GH_COMMENTS_JSON='[[{"author_association":"COLLABORATOR","body":"**BLOCKED** — cannot proceed autonomously. Evidence: permission required"}]]'
+	reset_logs
+	_refresh_graph_repo "example/repo" "$data" 10 30
+	assert_log_not_contains "refresh preserves trusted comment hold" "$GH_LOG" 'issue edit'
+	unset GH_COMMENTS_JSON
+	GH_NATIVE_STATE=OPEN
+	reset_logs
+	_refresh_graph_repo "example/repo" "$data" 10 30
+	assert_log_not_contains "refresh preserves unresolved dependencies" "$GH_LOG" 'issue edit'
+	unset GH_NATIVE_STATE
+	return 0
+}
+
 setup_test
 trap teardown_test EXIT
 
@@ -284,6 +429,12 @@ test_available_issue_stale_label_removed
 test_blocked_issue_label_removed_and_status_available
 test_defer_marker_preserves_label
 test_brief_hold_preserves_dependency_labels
+test_refresh_batches
+test_refresh_interruption
+test_refresh_elapsed_budget
+test_refresh_cursor_validation
+test_refresh_cursor_write_failure
+test_refresh_preserves_guards
 
 printf '\nTests run: %s\n' "$TESTS_RUN"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
