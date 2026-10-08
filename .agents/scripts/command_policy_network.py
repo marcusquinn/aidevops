@@ -8,10 +8,10 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
-import subprocess
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+from command_policy_git_query import _run_git_query_detailed
 
 
 def _normalize_host(value: str) -> str | None:
@@ -115,20 +115,7 @@ def _run_git_query(
     cwd: str, args: list[str], ok_codes: tuple[int, ...] = (0,)
 ) -> list[str] | None:
     """Run a read-only git query; return stdout lines, or None when it fails."""
-    git_binary = "/usr/bin/git" if Path("/usr/bin/git").is_file() else "git"
-    try:
-        resolved = subprocess.run(  # nosec B603 -- argv is fixed except validated cwd/remote data; shell execution is disabled.
-            [git_binary, "-C", cwd, *args],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if resolved.returncode not in ok_codes:
-        return None
-    return [line for line in resolved.stdout.splitlines() if line]
+    return _run_git_query_detailed(cwd, args, ok_codes)[0]
 
 
 def _resolve_git_remote(cwd: str, remote: str, include_push: bool = False) -> list[str]:

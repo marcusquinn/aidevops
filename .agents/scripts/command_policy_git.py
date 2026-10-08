@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from command_policy_git_default_remote import _default_git_remote
 from command_policy_http import _option_value
 from command_policy_matchers import _git_parts
 from command_policy_network import (
@@ -14,10 +15,7 @@ from command_policy_network import (
     _git_effective_cwd,
     _normalize_host,
     _resolve_git_remote,
-    _run_git_query,
 )
-
-_DEFAULT_REMOTE_CONFIG = r"^(remote\.pushdefault|branch\..*\.(remote|pushremote))$"
 
 
 def _analyze_git(argv: list[str], cwd: str, result: dict[str, Any]) -> bool:
@@ -46,10 +44,13 @@ def _analyze_git_remote(
     if candidates is None:
         result["unclassified"].append(f"git-{subcommand}-all-remotes")
         return
+    failure = ""
     if not candidates and subcommand != "clone":
-        candidates = _default_git_remote(git_cwd, subcommand)
+        candidates, failure = _default_git_remote(git_cwd, subcommand)
     if not candidates:
-        result["unclassified"].append(f"git-{subcommand}-destination-missing")
+        # GH#34040: name the failed resolution step so a denial is attributable.
+        detail = f"({failure})" if failure else ""
+        result["unclassified"].append(f"git-{subcommand}-destination-missing{detail}")
     for candidate in candidates:
         _classify_git_destination(git_cwd, subcommand, candidate, result)
 
@@ -64,31 +65,6 @@ def _classify_git_destination(
         result["unclassified"].append(f"git-remote:{candidate}")
     for remote in remotes:
         _add_destination(result, remote, "git-remote")
-
-
-def _default_git_remote(cwd: str, subcommand: str) -> list[str]:
-    """Return the remote git itself contacts when none is named; [] if unknown.
-
-    Push: branch.<b>.pushRemote, remote.pushDefault, branch.<b>.remote, origin.
-    Fetch, pull and ls-remote: branch.<b>.remote, origin.
-    """
-    branch_lines = _run_git_query(cwd, ["branch", "--show-current"])
-    config_lines = _run_git_query(
-        cwd, ["config", "--get-regexp", _DEFAULT_REMOTE_CONFIG], ok_codes=(0, 1)
-    )
-    if branch_lines is None or config_lines is None:
-        return []
-    config: dict[str, str] = {}
-    for line in config_lines:
-        key, _, value = line.partition(" ")
-        config[key] = value.strip()
-    branch = branch_lines[0] if branch_lines else ""
-    keys = [f"branch.{branch}.remote"] if branch else []
-    if subcommand == "push":
-        branch_push = [f"branch.{branch}.pushremote"] if branch else []
-        keys = branch_push + ["remote.pushdefault"] + keys
-    remote = next((config[key] for key in keys if config.get(key)), "origin")
-    return [] if remote.startswith("-") else [remote]
 
 
 def _record_git_config_overrides(argv: list[str], result: dict[str, Any]) -> None:
