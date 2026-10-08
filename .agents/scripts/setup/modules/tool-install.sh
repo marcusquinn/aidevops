@@ -575,16 +575,19 @@ _setup_opencode_timeout_cmd() {
 	"$@" >"$output_file" 2>&1 &
 	pid=$!
 
-	local elapsed=0
+	# Poll in 0.1s ticks: hosts without timeout(1) (stock macOS) would
+	# otherwise pay a full second for every fast `opencode --version`.
+	local ticks=0
+	local tick_limit=$((timeout_seconds * 10))
 	while kill -0 "$pid" 2>/dev/null; do
-		if [[ "$elapsed" -ge "$timeout_seconds" ]]; then
+		if [[ "$ticks" -ge "$tick_limit" ]]; then
 			kill "$pid" 2>/dev/null || true
 			wait "$pid" 2>/dev/null || true
 			rm -f "$output_file" 2>/dev/null || true
 			return 124
 		fi
-		sleep 1
-		elapsed=$((elapsed + 1))
+		sleep 0.1
+		ticks=$((ticks + 1))
 	done
 
 	local rc=0
