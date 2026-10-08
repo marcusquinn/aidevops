@@ -1597,7 +1597,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18624 fix(cloudron): monitor issue bodies fail the Files Scope gate, so no update issues are filed #bug #interactive ref:GH#34027 -> [todo/tasks/t18624-brief.md] pr:#34028 completed:2026-10-08
 
-- [ ] t18626 Resolve tools through PATH for non-FHS hosts (NixOS) without breaking macOS/Ubuntu #bug #framework ref:GH#34053
+- [x] t18626 Resolve tools through PATH for non-FHS hosts (NixOS) without breaking macOS/Ubuntu #bug #framework ref:GH#34053 pr:#34076 completed:2026-10-08
 - [x] t18627 seo: add link-building playbook with competitor backlink-gap outreach strategy #feat ref:GH#34060 pr:#34061 completed:2026-10-08
 
 ## In Progress
