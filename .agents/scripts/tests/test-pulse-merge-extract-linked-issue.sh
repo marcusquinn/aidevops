@@ -128,6 +128,9 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
 	eval "$fn_src"
+	fn_src=$(awk '/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	[[ -n "$fn_src" ]] || return 1
+	eval "$fn_src"
 	return 0
 }
 
@@ -227,6 +230,93 @@ test_ref_body_tnnn_title_returns_empty() {
 	return 0
 }
 
+assert_association() {
+	local expected="$1" expected_rc="$2" label="$3" repo="${4:-owner/repo}"
+	local actual="" rc=0
+	actual=$(_extract_pr_work_issue "1" "$repo" explicit) || rc=$?
+	if [[ "$actual" == "$expected" && "$rc" == "$expected_rc" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected '${expected}' / rc=${expected_rc}, got '${actual}' / rc=${rc}"
+	fi
+	return 0
+}
+
+test_explicit_merge_association() {
+	export TEST_PR_TITLE="t99999: title is not issue identity"
+	export TEST_PR_BODY=$'## Summary\n\nFor #12303 — partial people-phase delivery; leave the issue open.\n\n## Remaining work\n\nFor #12643\n'
+	assert_association "12303" 0 "partial delivery keeps primary task, not Remaining work"
+	assert_returns "" "partial delivery still has no closing target"
+	export TEST_PR_BODY=$'## Summary\n\nRef: #12254\n'
+	assert_association "12254" 0 "non-closing Ref declaration associates a task"
+	export TEST_PR_BODY=$'For #42\nRef #42'
+	assert_association "42" 0 "repeated identical declarations are unambiguous"
+	export TEST_PR_BODY=$'For #42\nRef #43'
+	assert_association "" 1 "distinct explicit declarations fail closed"
+	export TEST_PR_BODY='For #42 and Ref #43'
+	assert_association "" 1 "multiple references on one declaration fail closed"
+	export TEST_PR_BODY='No issue declaration.'
+	assert_association "" 0 "title-only task ID cannot supply merge association"
+	export TEST_PR_BODY='For other/repo#42'
+	assert_association "" 0 "cross-repository For reference cannot become local issue"
+	export TEST_PR_BODY='Ref https://github.com/other/repo/issues/42'
+	assert_association "" 0 "cross-repository URL cannot become local issue"
+	export TEST_PR_BODY=$'See For #42 for context.\n> Ref #43\n```text\nFor #44\n```\n<!--\nFor #45\n-->\n    For #46\n## Remaining work\nRef #47'
+	assert_association "" 0 "incidental, quoted, code, comment and follow-up references are not primary"
+	export TEST_PR_BODY=$'## Remaining work\n### Portrait recovery\nFor #12643'
+	assert_association "" 0 "nested follow-up headings cannot reset the primary-task boundary"
+	export TEST_PR_BODY='For #42suffix'
+	assert_association "" 0 "malformed issue token does not supply identity"
+	export TEST_PR_BODY='Resolves #42'
+	assert_association "42" 0 "existing closing target still associates a task"
+	export TEST_PR_BODY=$'Closes #42\nFixes #43\nFor #44'
+	assert_association "" 1 "ambiguous closing targets cannot fall back to For"
+	export TEST_PR_BODY='For #42'
+	assert_association "" 1 "invalid repository scope fails closed" "owner/repo/extra"
+	export TEST_FAIL_METADATA="body"
+	assert_association "" 1 "unavailable body metadata fails closed"
+	export TEST_FAIL_METADATA="title"
+	assert_association "42" 0 "merge association never needs title metadata"
+	export TEST_FAIL_METADATA=""
+	return 0
+}
+
+test_merge_gate_association_is_not_closure() {
+	local fn_src="" result=0 linked_issue="" gate_issue="" gate_repo="" author_rc=0 review_rc=0
+	fn_src=$(awk '/^_check_pr_merge_gates\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	eval "$fn_src"
+	_interactive_claim_fence_blocks_merge() { return 1; }
+	_pm_gate_review_mode() { return 0; }
+	_pm_gate_author_trust() { return "$author_rc"; }
+	_pm_gate_repository_and_issue() {
+		gate_issue="$3"
+		gate_repo="$2"
+		return 0
+	}
+	_pm_gate_origin_authority() {
+		[[ "$3" == "12303" ]] || return 1
+		return 0
+	}
+	_pm_gate_review_bot() { return "$review_rc"; }
+	export TEST_PR_BODY=$'## Summary\nFor #12303 — partial delivery.\n## Remaining work\nRef #12643'
+	_check_pr_merge_gates "12641" "owner/repo" "trusted" "NONE" "$linked_issue" "origin:worker" "head" || result=$?
+	if [[ "$result" == "0" && "$gate_issue" == "12303" && "$gate_repo" == "owner/repo" && -z "$linked_issue" ]]; then
+		print_result "merge gates receive scoped partial association without leaking closure authority" 0
+	else
+		print_result "merge gates receive scoped partial association without leaking closure authority" 1
+	fi
+	author_rc=1
+	result=0
+	_check_pr_merge_gates "12641" "owner/repo" "untrusted" "NONE" "" "origin:worker" "head" || result=$?
+	print_result "valid partial association still requires author trust" "$((1 - result))"
+	author_rc=0
+	review_rc=1
+	result=0
+	_check_pr_merge_gates "12641" "owner/repo" "trusted" "NONE" "" "origin:worker" "head" || result=$?
+	print_result "valid partial association still requires review gate" "$((1 - result))"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -244,6 +334,8 @@ main() {
 	test_multiple_closing_issues_return_empty
 	test_cross_repo_closing_reference_returns_empty
 	test_metadata_failure_returns_empty
+	test_explicit_merge_association
+	test_merge_gate_association_is_not_closure
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

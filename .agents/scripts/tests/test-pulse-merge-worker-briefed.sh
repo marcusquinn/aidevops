@@ -860,6 +860,63 @@ test_case_v_spoofed_crypto_marker_blocked() {
 	return 0
 }
 
+test_reference_to_pr_is_not_a_worker_brief() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	printf '{"author_association":"OWNER","pull_request":{"url":"mock"}}' >"${TEST_ROOT}/issue.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+	export APPROVAL_VERIFY_RESULT="VERIFIED"
+	local result=0
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || result=$?
+	if [[ "$result" == "1" ]]; then
+		print_result "PR number is not an issue brief even with trusted author and crypto" 0
+	else
+		print_result "PR number is not an issue brief even with trusted author and crypto" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_partial_worker_association_reaches_authority_gate() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local src="" result=0 linked_issue="" review_rc=0
+	src=$(awk '
+		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
+		/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }
+		/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }
+		/^_check_pr_merge_gates\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	eval "$src"
+	gh_pr_view() {
+		if [[ "$*" == *"labels,isDraft"* ]]; then
+			printf '%s' '{"labels":[{"name":"origin:worker"}],"isDraft":false}'
+		else
+			printf '%s' $'## Summary\nFor #12303 — partial people-phase delivery; leave the issue open.\n## Remaining work\nRef #12643'
+		fi
+		return 0
+	}
+	_interactive_claim_fence_blocks_merge() { return 1; }
+	_pm_gate_review_mode() { return 0; }
+	_pm_gate_author_trust() { return 0; }
+	_pm_gate_repository_and_issue() { return 0; }
+	_pm_gate_review_bot() { return "$review_rc"; }
+	_OW_LABEL_PAT=",origin:worker,"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1 APPROVAL_VERIFY_RESULT=""
+	_check_pr_merge_gates "12641" "owner/repo" "worker" "NONE" "$linked_issue" "origin:worker" "head" || result=$?
+	if [[ "$result" == "0" && -z "$linked_issue" ]] && grep -q 'passed all gates (issue #12303' "$LOGFILE" && ! grep -q 'no linked issue' "$LOGFILE"; then
+		print_result "partial worker reaches real authority gate without no-issue skip or closing target" 0
+	else
+		print_result "partial worker reaches real authority gate without no-issue skip or closing target" 1
+	fi
+	review_rc=1
+	result=0
+	_check_pr_merge_gates "12641" "owner/repo" "worker" "NONE" "" "origin:worker" "head" || result=$?
+	print_result "partial worker passing authority still stops at review gate" "$((1 - result))"
+	teardown_test_env
+	return 0
+}
+
 # =============================================================================
 # Run all cases
 # =============================================================================
@@ -891,6 +948,8 @@ main() {
 	test_case_t_worker_gate_ignores_mismatched_precomputed_permission
 	test_case_u_worker_gate_ignores_empty_precomputed_pr_author_login
 	test_case_v_spoofed_crypto_marker_blocked
+	test_reference_to_pr_is_not_a_worker_brief
+	test_partial_worker_association_reaches_authority_gate
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

@@ -1275,7 +1275,10 @@ _attempt_worker_briefed_auto_merge() {
 	# Fetch author_association and user.login in one API call (t3062 needs login).
 	local _issue_meta
 	_issue_meta=$(gh api "${_issue_api}" \
-		--jq '[.author_association // "", .user.login // ""] | @tsv' 2>/dev/null) || _issue_meta="	"
+		--jq 'select(.pull_request == null) | [.author_association // "", .user.login // ""] | @tsv' 2>/dev/null) || return 1
+	# Explicit body references must resolve to an actual local issue, not a PR
+	# sharing the repository number space or unavailable metadata.
+	[[ -n "${_issue_meta//[[:space:]]/}" ]] || return 1
 	local issue_author_assoc=""
 	local issue_author_login=""
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
