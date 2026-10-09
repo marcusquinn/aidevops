@@ -574,14 +574,16 @@ _routine_dedicated_heading_transition() {
 #
 # Arguments: $1 - path to TODO.md
 # Output: active, non-indented lines inside the routine registry
-# Returns: 0 for one supported registry, 1 for missing/duplicate/malformed input
+# Returns: 0 for one supported registry, 1 for duplicate/malformed input or
+#          routine-shaped lines outside any registry, 2 when the file simply
+#          has no registry and no routine-shaped lines (nothing to schedule)
 #######################################
 _routine_extract_section() {
 	local todo_file="$1"
 	[[ -f "$todo_file" ]] || return 1
 	local line="" section_content="" section_style="" heading_transition=""
-	local dedicated_style="dedicated" project_style="project"
-	local in_section=0 section_count=0 structure_error=0 dedicated_phase=0 pre_registry_heading=0
+	local dedicated_style="dedicated" project_style="project" routine_shape_re='^[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]+r[^[:space:]]*[[:space:]].*repeat:'
+	local in_section=0 section_count=0 structure_error=0 dedicated_phase=0 pre_registry_heading=0 stray_routine=0
 	_RML_ACTIVE_LINE="" _RML_TRIMMED_LINE="" _RML_FENCE_CHAR="" _RML_FENCE_LENGTH=0 _RML_IN_COMMENT=0
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
@@ -609,6 +611,7 @@ _routine_extract_section() {
 			pre_registry_heading=1
 			continue
 		fi
+		[[ -z "$section_style" && "$_RML_TRIMMED_LINE" =~ $routine_shape_re ]] && stray_routine=1
 
 		if [[ "$section_style" == "$dedicated_style" ]] &&
 			[[ "$_RML_TRIMMED_LINE" =~ ^#[[:space:]]+ || "$_RML_TRIMMED_LINE" =~ ^##[[:space:]]+ ]]; then
@@ -635,6 +638,12 @@ _routine_extract_section() {
 
 	if [[ "$section_style" == "$dedicated_style" && "$dedicated_phase" -ne 3 ]]; then
 		structure_error=1
+	fi
+	# GH#34169: an absent registry is the normal state for repos without
+	# routines (the default TODO template has none). Only misplaced
+	# routine-shaped lines or ambiguous boundaries warrant a diagnostic.
+	if [[ "$section_count" -eq 0 && "$stray_routine" -eq 0 && -z "$_RML_FENCE_CHAR" && "$_RML_IN_COMMENT" -eq 0 ]]; then
+		return 2
 	fi
 	if [[ "$section_count" -ne 1 || "$structure_error" -ne 0 || -n "$_RML_FENCE_CHAR" || "$_RML_IN_COMMENT" -ne 0 ]]; then
 		return 1
@@ -880,9 +889,13 @@ evaluate_routines() {
 		# Validate and buffer the complete canonical Markdown section before any
 		# routine dispatch. This prevents fenced examples, other TODO sections,
 		# and malformed/duplicate boundaries from becoming scheduler input.
-		local routine_section=""
-		if ! routine_section=$(_routine_extract_section "$todo_file"); then
-			echo "[pulse-wrapper] evaluate_routines: ${_routine_slug} TODO.md has a missing, duplicate, or malformed routines registry — skipping" >>"$LOGFILE"
+		local routine_section="" extract_rc=0
+		routine_section=$(_routine_extract_section "$todo_file") || extract_rc=$?
+		if [[ "$extract_rc" -eq 2 ]]; then
+			# No registry and no routine-shaped lines: nothing to schedule (GH#34169).
+			continue
+		elif [[ "$extract_rc" -ne 0 ]]; then
+			echo "[pulse-wrapper] evaluate_routines: ${_routine_slug} TODO.md has a duplicate or malformed routines registry, or routine lines outside it — skipping" >>"$LOGFILE"
 			continue
 		fi
 
