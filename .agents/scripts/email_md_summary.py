@@ -41,7 +41,8 @@ def _runtime_policy_check(model, destination=''):
         return
     helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vault-data-policy-helper.sh')
     result = subprocess.run(['bash', helper, 'check', '--model', model],
-                            capture_output=True, check=False)
+                            capture_output=True, check=False,
+                            env={**os.environ, 'AIDEVOPS_RUNTIME_POLICY': 'local-only'})
     if result.returncode:
         raise RuntimeError('VAULT_POLICY_DENIED: summary provider blocked before sending')
     host = urllib.parse.urlsplit(destination).hostname

@@ -260,6 +260,10 @@ function projectSessionIdentity(input, env, onSessionIdentity) {
 function projectOtelEnvironment(env) {
   if (activeLocalOnlyPolicy().bound) {
     env.AIDEVOPS_RUNTIME_POLICY = "local-only";
+    env.OTEL_SDK_DISABLED = "true";
+    env.OTEL_TRACES_EXPORTER = "none";
+    env.OTEL_METRICS_EXPORTER = "none";
+    env.OTEL_LOGS_EXPORTER = "none";
     const endpoints = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
       "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"];
     if (endpoints.some((key) => (env[key] || process.env[key])

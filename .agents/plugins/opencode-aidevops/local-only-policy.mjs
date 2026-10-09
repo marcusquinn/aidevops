@@ -10,12 +10,16 @@
 // provider is not local fails closed before any bytes leave the device.
 // Unbound sessions are unaffected.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const RUNTIME_POLICY_ENV = "AIDEVOPS_RUNTIME_POLICY";
 export const VAULT_POLICY_DENIED = "VAULT_POLICY_DENIED";
+// Fixed system locations only; never resolve an executable from model-controlled
+// PATH or a working directory. NixOS does not provide /usr/bin/curl.
+export const LOCAL_ONLY_CURL = existsSync("/usr/bin/curl")
+  ? "/usr/bin/curl" : "/run/current-system/sw/bin/curl";
 
 // Shared with scripts/vault-data-policy-helper.sh; never fork this list.
 export const LOCAL_PROVIDERS_FILE = resolve(
@@ -105,11 +109,11 @@ export function activeLocalOnlyPolicy() {
 // #aidevops:trust-boundary — populated only by host configuration hooks, never
 // by tool arguments. Copy primitive fields so later config mutation cannot turn
 // a previously approved local entry into a remote destination.
-let mcpDestinations = Object.freeze({});
-export function captureLocalOnlyMcpConfig(entries) {
+const mcpConfigurations = new Map();
+export function captureLocalOnlyMcpConfig(entries, directory = process.cwd()) {
   const snapshot = Object.fromEntries(Object.entries(entries || {}).map(([name, entry]) =>
     [name, Object.freeze({ type: entry?.type, url: entry?.url })]));
-  mcpDestinations = Object.freeze(snapshot);
+  mcpConfigurations.set(resolve(directory), Object.freeze(snapshot));
 }
 
 export function assertLocalOnlyToolDestination(allowed, policy = activeLocalOnlyPolicy()) {
@@ -118,8 +122,8 @@ export function assertLocalOnlyToolDestination(allowed, policy = activeLocalOnly
   }
 }
 
-export function assertLocalOnlyMcp(name, policy = activeLocalOnlyPolicy()) {
-  const entry = mcpDestinations[name];
+export function assertLocalOnlyMcp(name, policy = activeLocalOnlyPolicy(), directory = process.cwd()) {
+  const entry = mcpConfigurations.get(resolve(directory))?.[name];
   assertLocalOnlyToolDestination(entry?.type === "local"
     || (entry?.type === "remote" && isLoopbackDestination(entry.url)), policy);
 }
@@ -134,20 +138,20 @@ const LOCAL_NATIVE_TOOLS = new Set([
 // redirects; a URL cannot inject options, shell syntax or another destination.
 export function isLocalOnlyCurlArgv(argv) {
   if (!Array.isArray(argv) || argv.length !== 10) return false;
-  const prefix = ["/usr/bin/curl", "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url"];
+  const prefix = [LOCAL_ONLY_CURL, "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url"];
   if (!prefix.every((part, index) => argv[index] === part)) return false;
   const url = argv[9];
   return typeof url === "string" && /^[a-zA-Z0-9:/?&=._%+\[\]-]+$/.test(url)
     && isLoopbackDestination(url) && !new URL(url).username && !new URL(url).password;
 }
 
-export function assertLocalOnlyToolCall(tool, args = {}, policy = activeLocalOnlyPolicy()) {
+export function assertLocalOnlyToolCall(tool, args = {}, policy = activeLocalOnlyPolicy(), directory = process.cwd()) {
   if (!policy.bound) return;
   const name = String(tool || "").toLowerCase();
   if (name === "bash" || name === "functions_bash") {
-    const match = /^\/usr\/bin\/curl --disable --noproxy '\*' --proxy '' --max-time 30 --url '([^']+)'$/.exec(args.command || "");
+    const match = /^(\/usr\/bin\/curl|\/run\/current-system\/sw\/bin\/curl) --disable --noproxy '\*' --proxy '' --max-time 30 --url '([^']+)'$/.exec(args.command || "");
     assertLocalOnlyToolDestination(Boolean(match) && isLocalOnlyCurlArgv([
-      "/usr/bin/curl", "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url", match[1],
+      match[1], "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url", match[2],
     ]), policy);
     return;
   }
@@ -159,13 +163,13 @@ export function assertLocalOnlyToolCall(tool, args = {}, policy = activeLocalOnl
     return;
   }
   if (name === "aidevops_mcp") {
-    if (args.action === "connect") assertLocalOnlyMcp(args.name, policy);
+    if (args.action === "connect") assertLocalOnlyMcp(args.name, policy, directory);
     return;
   }
   // Longest prefix first avoids ambiguous user server names (foo vs foo_bar).
-  const server = Object.keys(mcpDestinations).sort((a, b) => b.length - a.length)
+  const server = Object.keys(mcpConfigurations.get(resolve(directory)) || {}).sort((a, b) => b.length - a.length)
     .find((key) => name.startsWith(`${key.toLowerCase()}_`) || name.startsWith(`mcp__${key.toLowerCase()}__`));
-  if (server) return assertLocalOnlyMcp(server, policy);
+  if (server) return assertLocalOnlyMcp(server, policy, directory);
   assertLocalOnlyToolDestination(LOCAL_NATIVE_TOOLS.has(name), policy);
 }
 

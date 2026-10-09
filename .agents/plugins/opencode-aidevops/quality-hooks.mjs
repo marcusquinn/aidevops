@@ -292,7 +292,7 @@ async function resolveToolSourceContexts(ctx, input, output, sessionId, after = 
 }
 
 async function handleToolBefore(ctx, log, input, output) {
-  assertLocalOnlyToolCall(input.tool, output.args || {});
+  assertLocalOnlyToolCall(input.tool, output.args || {}, undefined, ctx.repositoryDir);
   assertPrivateProcessingRead({ tool: input.tool, args: output.args || {},
     repositoryDir: ctx.repositoryDir, sessionID: input.sessionID || input.sessionId || "",
     classification: ctx.privateProcessingPolicy });

@@ -44,7 +44,7 @@ export function createV2McpRuntime(ctx, workspaceDir, options = {}) {
           });
         }
       }
-      captureLocalOnlyMcpConfig(resolved);
+      captureLocalOnlyMcpConfig(resolved, options.repositoryDir);
     });
   }
 

@@ -186,7 +186,8 @@ def check_embedding_policy():
     policy = os.environ.get("AIDEVOPS_RUNTIME_POLICY", "").strip().lower()
     if policy not in {"", "provider-ai", "provider-allowed", "provider-ai-approved"}:
         result = subprocess.run(["bash", VAULT_POLICY_HELPER, "check", "--model", "openai/embeddings"],
-                                capture_output=True, check=False)
+                                capture_output=True, check=False,
+                                env={**os.environ, "AIDEVOPS_RUNTIME_POLICY": "local-only"})
         if result.returncode:
             print("VAULT_POLICY_DENIED: remote embeddings blocked before sending", file=sys.stderr)
             sys.exit(64)

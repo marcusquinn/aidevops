@@ -171,6 +171,8 @@ extract_audio() {
 download_youtube_audio() {
 	local url="$1"
 	local output="$2"
+	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+	vault_runtime_policy_check "remote/audio-download" || return 64
 
 	local ytdlp_bin
 	if ! ytdlp_bin=$(find_ytdlp); then
@@ -189,6 +191,8 @@ download_youtube_audio() {
 download_url_audio() {
 	local url="$1"
 	local output="$2"
+	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+	vault_runtime_policy_check "remote/audio-download" || return 64
 
 	print_info "Downloading from URL..."
 	if ! curl -sL -o "${output}.tmp" "$url"; then

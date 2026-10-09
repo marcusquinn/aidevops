@@ -23,6 +23,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+if [[ "${EMAIL_PARSER_NO_LLM:-}" != "true" ]]; then
+	vault_runtime_policy_check "remote/signature-extraction" || exit 64
+fi
 
 # =============================================================================
 # Constants

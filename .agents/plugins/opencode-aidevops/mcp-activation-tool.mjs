@@ -270,7 +270,7 @@ async function executeMcpActivation(args, context, allowed, options) {
   }
 
   const workspace = managedWorkspace(name, options);
-  if (action === "connect") assertLocalOnlyMcp(name);
+  if (action === "connect") assertLocalOnlyMcp(name, undefined, options.directory);
   try {
     if (action === "connect") {
       await connectMcp(name, options, workspace);

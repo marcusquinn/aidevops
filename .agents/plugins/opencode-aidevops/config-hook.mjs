@@ -403,7 +403,7 @@ export function createConfigHook(deps) {
     ensureAgentGuard(config, workspaceDir);
 
     const mcps = registerMcpServers(config, { runtime: mcpRuntime });
-    captureLocalOnlyMcpConfig(config.mcp);
+    captureLocalOnlyMcpConfig(config.mcp, repositoryDir);
     const agentTools = applyAgentMcpTools(config);
     const directories = registerManagedDirectoryPermissions(config);
     const permissionGrants = registerApprovedWorkerPermissions(config, { repositoryDir });
