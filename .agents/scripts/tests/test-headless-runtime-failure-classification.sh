@@ -272,6 +272,26 @@ assert_eq "external outcome rejects destination symlink" "1" "$OUTCOME_WRITE_RC"
 assert_eq "external outcome symlink target remains unchanged" "unchanged" "$(<"$OUTCOME_TARGET")"
 unset _WORKER_EXTERNAL_OUTCOME_FILE _WORKER_EXTERNAL_OUTCOME_ID
 
+# t18608: worker-side first failure flags enrichment_needed (allow-listed reasons only)
+FF_STATE="$HOME/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
+escalate_issue_tier() { return 0; }
+print_info() { return 0; }
+DISPATCH_REPO_SLUG="owner/repo"
+_report_failure_to_fast_fail "issue-owner-repo-901" "worker_noop_zero_output" "" >/dev/null 2>&1
+assert_eq "first noop failure sets enrichment_needed" "true" \
+	"$(jq -r '.["owner/repo/901"].enrichment_needed // "unset"' "$FF_STATE")"
+_report_failure_to_fast_fail "issue-owner-repo-902" "worker_post_pr_handoff_unverified" "" >/dev/null 2>&1
+assert_eq "post-PR handoff failure does not set enrichment_needed" "unset" \
+	"$(jq -r '.["owner/repo/902"].enrichment_needed // "unset"' "$FF_STATE")"
+jq '.["owner/repo/901"] |= (.enrichment_needed = false | .enrichment_done = true)' "$FF_STATE" >"$FF_STATE.new" && mv "$FF_STATE.new" "$FF_STATE"
+_fast_fail_write_state "$FF_STATE" "$(dirname "$FF_STATE")" "owner/repo/901" 1 "$(date +%s)" worker_failed 0 600 "" true
+assert_eq "enrichment_done entry is never re-flagged" "false" \
+	"$(jq -r '.["owner/repo/901"].enrichment_needed' "$FF_STATE")"
+_report_failure_to_fast_fail "issue-owner-repo-902" "worker_failed" "" >/dev/null 2>&1
+assert_eq "second failure (count 2) does not set enrichment_needed" "unset" \
+	"$(jq -r '.["owner/repo/902"].enrichment_needed // "unset"' "$FF_STATE")"
+unset DISPATCH_REPO_SLUG
+
 echo
 echo "${TEST_BLUE}=== Summary ===${TEST_NC}"
 echo "Tests run:    $TESTS_RUN"

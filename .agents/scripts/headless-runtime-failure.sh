@@ -1746,6 +1746,8 @@ _fast_fail_read_state() {
 #   $7  - retry_after (epoch seconds)
 #   $8  - new_backoff (seconds)
 #   $9  - crash_type (may be empty)
+#   $10 - set_enrichment (true|false, default false). When true, flags
+#         enrichment_needed unless enrichment_done is already true.
 #######################################
 _fast_fail_write_state() {
 	local state_file="$1"
@@ -1757,7 +1759,14 @@ _fast_fail_write_state() {
 	local retry_after="$7"
 	local new_backoff="$8"
 	local crash_type="$9"
+	local set_enrichment="${10:-false}"
 	local aidevops_version="${AIDEVOPS_UNKNOWN_VERSION:-unknown}"
+	# shellcheck disable=SC2016 # jq variables, not shell expansion
+	local jq_program='.[$k] = ((.[$k] // {}) + {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type, "aidevops_version": $aidevops_version, "release_reset_policy": $release_reset_policy})'
+	if [[ "$set_enrichment" == "true" ]]; then
+		# shellcheck disable=SC2016 # jq variables, not shell expansion
+		jq_program+=' | if .[$k].enrichment_done != true then .[$k].enrichment_needed = true else . end'
+	fi
 	local release_reset_policy=""
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "${AIDEVOPS_UNKNOWN_VERSION:-unknown}")
@@ -1774,7 +1783,7 @@ _fast_fail_write_state() {
 			--arg crash_type "${crash_type:-}" \
 			--arg aidevops_version "$aidevops_version" \
 			--arg release_reset_policy "$release_reset_policy" \
-			'.[$k] = ((.[$k] // {}) + {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type, "aidevops_version": $aidevops_version, "release_reset_policy": $release_reset_policy})' \
+			"$jq_program" \
 			"$state_file") || {
 			echo "Error: Failed to update $state_file" >&2
 			updated_state=""
@@ -1789,7 +1798,7 @@ _fast_fail_write_state() {
 			--arg crash_type "${crash_type:-}" \
 			--arg aidevops_version "$aidevops_version" \
 			--arg release_reset_policy "$release_reset_policy" \
-			'.[$k] = ((.[$k] // {}) + {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type, "aidevops_version": $aidevops_version, "release_reset_policy": $release_reset_policy})' \
+			"$jq_program" \
 			2>/dev/null) || updated_state=""
 	fi
 	if [[ -z "$updated_state" ]]; then
@@ -1803,6 +1812,24 @@ _fast_fail_write_state() {
 	printf '%s\n' "$updated_state" >"$tmp_file" 2>/dev/null &&
 		mv "$tmp_file" "$state_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
 	return 0
+}
+
+#######################################
+# Decide whether a worker-side failure reason warrants pulse enrichment.
+# PR-exists reasons (post-PR handoff, closed-unmerged) are review/handoff
+# problems, not missing implementation guidance, so they are not flagged.
+#
+# Args: $1 - failure reason
+# Returns: 0=flag for enrichment, 1=do not flag
+#######################################
+_fast_fail_reason_wants_enrichment() {
+	local reason="$1"
+	case "$reason" in
+	worker_noop_zero_output | watchdog_stall_killed | worker_failed | premature_exit | stale_timeout)
+		return 0
+		;;
+	esac
+	return 1
 }
 
 #######################################
@@ -1892,9 +1919,14 @@ _report_failure_to_fast_fail() {
 	[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
 	local retry_after=$((now + new_backoff))
 
+	local set_enrichment="false"
+	if [[ "$new_count" -eq 1 ]] && _fast_fail_reason_wants_enrichment "$reason"; then
+		set_enrichment="true"
+	fi
+
 	# Write updated state atomically (tmp + mv)
 	_fast_fail_write_state "$state_file" "$state_dir" "$key" "$new_count" "$now" \
-		"$reason" "$retry_after" "$new_backoff" "$crash_type"
+		"$reason" "$retry_after" "$new_backoff" "$crash_type" "$set_enrichment"
 
 	# Release lock
 	rmdir "$lock_dir" 2>/dev/null || true
