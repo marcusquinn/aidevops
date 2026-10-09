@@ -336,14 +336,23 @@ _enrichment_prepare_worktree() {
 	local repo_path="$1"
 	local issue_number="$2"
 	local session_key="$3"
-	local branch="feature/${session_key}" worktree_path=""
+	local branch="feature/${session_key}" worktree_path="" prepare_status=0
 	local wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
 	(cd "$repo_path" && AIDEVOPS_SESSION_ORIGIN=worker \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
-		"$wt_helper" add "$branch" --issue "$issue_number") >>"$LOGFILE" 2>&1 || return 1
-	worktree_path=$(git -C "$repo_path" worktree list --porcelain | \
-		awk -v branch="refs/heads/${branch}" '/^worktree / {path = substr($0, 10)} /^branch / && substr($0, 8) == branch {print path; exit}') || return 1
-	[[ -n "$worktree_path" && -d "$worktree_path" && "$worktree_path" != "$repo_path" ]] || return 1
+		"$wt_helper" add "$branch" --issue "$issue_number") >>"$LOGFILE" 2>&1 || prepare_status=$?
+	worktree_path=$(git -C "$repo_path" worktree list --porcelain |
+		awk -v branch="refs/heads/${branch}" '/^worktree / {path = substr($0, 10)} /^branch / && substr($0, 8) == branch {print path; exit}') || worktree_path=""
+	if [[ -z "$worktree_path" || ! -d "$worktree_path" || "$worktree_path" == "$repo_path" ]]; then
+		# The helper also accepts exact branch names for guarded rollback when
+		# creation partly succeeded but porcelain path discovery failed.
+		_enrichment_release_worktree "$repo_path" "$branch"
+		return 1
+	fi
+	if [[ "$prepare_status" -ne 0 ]]; then
+		_enrichment_release_worktree "$repo_path" "$worktree_path"
+		return 1
+	fi
 	if ! register_worktree "$worktree_path" "$branch" --task "$issue_number" \
 		--session "$session_key" --owner-pid "$$"; then
 		_enrichment_release_worktree "$repo_path" "$worktree_path"
@@ -361,6 +370,13 @@ _enrichment_release_worktree() {
 	(cd "$repo_path" && "${SCRIPT_DIR}/worktree-helper.sh" remove "$worktree_path") >>"$LOGFILE" 2>&1 || {
 		echo "[pulse-wrapper] Enrichment: guarded worktree cleanup deferred" >>"$LOGFILE"
 	}
+	return 0
+}
+
+# Bare cleanup callbacks run in the current shell. These two variables are
+# dynamically scoped locals of _enrichment_run_worker, still live in RETURN.
+_enrichment_cleanup_worktree() {
+	_enrichment_release_worktree "$repo_path" "$worktree_path"
 	return 0
 }
 
@@ -405,8 +421,7 @@ _enrichment_run_worker() {
 		echo "[pulse-wrapper] Enrichment: worktree preparation failed for #${issue_number}; retry next cycle" >>"$LOGFILE"
 		return 2
 	}
-	printf -v cleanup '_enrichment_release_worktree %q %q' "$repo_path" "$worktree_path"
-	push_cleanup "$cleanup"
+	push_cleanup _enrichment_cleanup_worktree
 
 	# Snapshot the body before the run so success means this run added guidance.
 	local pre_body="" pre_count=0 post_count=0
