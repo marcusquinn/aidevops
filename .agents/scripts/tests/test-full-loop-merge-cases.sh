@@ -292,6 +292,12 @@ write_gh_stub_api() {
 
 if [[ "\$_gh_cmd" == "api" ]]; then
 	echo "gh api \$*" >> "${TEST_ROOT}/logs/gh-api-calls.txt"
+	# Headless merge authority checks linked issues for trusted PR-only scope.
+	# Ordinary merge fixtures have an OWNER-authored brief without that marker.
+	if [[ "\${2:-}" =~ ^repos/testorg/testrepo/issues/[1-9][0-9]*$ ]]; then
+		echo '{"author_association":"OWNER","body":"Ordinary merge task"}'
+		exit 0
+	fi
 	# The comment wrapper's public-write guard must know target visibility. Keep
 	# this synthetic repository private so the signaling test exercises comment
 	# transport without depending on the host's privacy cache or entity inventory.
@@ -564,11 +570,14 @@ test_admin_fallback_native_review_handoff() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
 	create_gh_stub "fallback-native-review"
 	exit_code=0
-	FULL_LOOP_HEADLESS=true run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || exit_code=$?
+	output=$(FULL_LOOP_HEADLESS=true run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" 2>&1) || exit_code=$?
 	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
 	print_result "native review handoff headless: no merge bypass succeeds" "$((exit_code == 0 ? 1 : 0))"
 	print_result "native review handoff headless: no mutation follows the admin rejection" \
 		"$((merge_calls == 2 ? 0 : 1))" "merge_calls=$merge_calls"
+	print_result "native review handoff headless: reports Pulse handoff" \
+		"$([[ "$output" == *"native approving review is required; hand off to Pulse"* ]] && printf '0' || printf '1')" \
+		"output=$output"
 	return 0
 }
 
