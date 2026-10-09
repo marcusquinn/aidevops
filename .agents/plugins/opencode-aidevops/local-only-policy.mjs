@@ -145,10 +145,23 @@ export function isLocalOnlyCurlArgv(argv) {
     && isLoopbackDestination(url) && !new URL(url).username && !new URL(url).password;
 }
 
+function canonicalLocalCurl(argv) {
+  if (!Array.isArray(argv) || argv.length !== 2 || argv[0] !== "curl") return argv;
+  const canonical = [LOCAL_ONLY_CURL, "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url", argv[1]];
+  return isLocalOnlyCurlArgv(canonical) ? canonical : argv;
+}
+
 export function assertLocalOnlyToolCall(tool, args = {}, policy = activeLocalOnlyPolicy(), directory = process.cwd()) {
   if (!policy.bound) return;
   const name = String(tool || "").toLowerCase();
   if (name === "bash" || name === "functions_bash") {
+    const simple = /^curl (?:'([^']+)'|([a-zA-Z0-9:/?=._%+\[\]-]+))$/.exec(args.command || "");
+    if (simple) {
+      const canonical = canonicalLocalCurl(["curl", simple[1] || simple[2]]);
+      if (isLocalOnlyCurlArgv(canonical)) {
+        args.command = `${LOCAL_ONLY_CURL} --disable --noproxy '*' --proxy '' --max-time 30 --url '${canonical[9]}'`;
+      }
+    }
     const match = /^(\/usr\/bin\/curl|\/run\/current-system\/sw\/bin\/curl) --disable --noproxy '\*' --proxy '' --max-time 30 --url '([^']+)'$/.exec(args.command || "");
     assertLocalOnlyToolDestination(Boolean(match) && isLocalOnlyCurlArgv([
       match[1], "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url", match[2],
@@ -156,6 +169,10 @@ export function assertLocalOnlyToolCall(tool, args = {}, policy = activeLocalOnl
     return;
   }
   if (name.endsWith("aidevops_bounded_operation")) {
+    if (args.action === "start") {
+      args.command = canonicalLocalCurl(args.command);
+      if (args.restoration_command) args.restoration_command = canonicalLocalCurl(args.restoration_command);
+    }
     const safeControl = ["status", "output", "cancel"].includes(args.action);
     const safeStart = args.action === "start" && isLocalOnlyCurlArgv(args.command)
       && (!args.restoration_command || isLocalOnlyCurlArgv(args.restoration_command));

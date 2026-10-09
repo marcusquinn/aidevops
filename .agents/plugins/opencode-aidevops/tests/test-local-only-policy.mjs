@@ -261,7 +261,13 @@ test("real pre-tool hooks: fake external endpoint receives nothing; literal loop
       await hooks.toolExecuteBefore({tool:'local_send'},{args:{content:sentinel}});
       const url = 'http://127.0.0.1:'+port+'/local';
       const command = policy.LOCAL_ONLY_CURL+" --disable --noproxy '*' --proxy '' --max-time 30 --url '"+url+"'";
-      await hooks.toolExecuteBefore({tool:'bash'},{args:{command,workdir:home}});
+      const shell = {args:{command:'curl '+url,workdir:home}};
+      await hooks.toolExecuteBefore({tool:'bash'},shell);
+      assert.equal(shell.args.command,command);
+      const bounded = {args:{action:'start',command:['curl',url],cwd:home}};
+      await hooks.toolExecuteBefore({tool:'aidevops_bounded_operation'},bounded);
+      assert.equal(bounded.args.command[0],policy.LOCAL_ONLY_CURL);
+      assert.equal(bounded.args.command[1],'--disable');
       const result = execFileSync(policy.LOCAL_ONLY_CURL,['--disable','--noproxy','*','--proxy','','--max-time','30','--url',url],{encoding:'utf8'});
       assert.equal(result,'local-ok');
       const {createShellEnvHook} = await import(pluginDir + '/shell-env.mjs');

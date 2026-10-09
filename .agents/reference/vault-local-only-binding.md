@@ -115,6 +115,8 @@ bounded-operation starts accept only one literal, proxy/config-free curl form:
 ```
 
 On NixOS the fixed system executable is `/run/current-system/sw/bin/curl`.
+Plain `curl <literal-loopback-URL>` and its two-element argv are normalized to
+this safe form before execution, so curlrc and proxy inheritance cannot leak.
 The corresponding argv is accepted by bounded operations; restoration commands
 are checked too. No redirects, additional options, shell composition, substitutions
 or environment overrides are accepted. Existing command/workdir safety checks still
