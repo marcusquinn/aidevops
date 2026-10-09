@@ -188,6 +188,8 @@ server.close()
 
 ### Screenshots and PDF
 
+**Artifact location**: In OpenCode, aidevops starts framework-generated Playwriter commands through `scripts/browser-mcp-launcher.sh`, so relative `path` values in `execute` land in a private directory under `${AIDEVOPS_TEMP_DIR:-~/.aidevops/.agent-workspace/tmp}/mcp/playwriter/`, never the project checkout. Custom Playwriter commands keep their own cwd. Use relative filenames only; absolute or `..` paths are not confined. Report the resolved absolute path of any artifact you hand off.
+
 > **Screenshot size limit**: Do NOT use `fullPage: true` for AI vision review. Full-page captures can exceed 8000px, crashing the session. Use viewport-sized screenshots. For human-only full-page: `magick full.png -resize "1568x1568>" full-resized.png`. See `reference/screenshot-limits.md`.
 
 ```javascript

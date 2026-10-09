@@ -275,6 +275,9 @@ test("pins legacy Playwriter commands while preserving custom commands", () => {
     registerMcpServers(config);
 
     assert.strictEqual(config.mcp.playwriter, playwriter);
+    assert.deepEqual(playwriter.command.slice(0, 1), ["bash"]);
+    assert.match(playwriter.command[1], /browser-mcp-launcher\.sh$/);
+    assert.equal(playwriter.command[2], "playwriter");
     assert.equal(playwriter.command.at(-1), "playwriter@0.5.0");
     assert.ok(!playwriter.command.includes("playwriter@latest"));
     assert.equal(playwriter.enabled, false);
@@ -348,8 +351,11 @@ test("opts framework-generated Playwriter commands into the authenticated relay 
   try {
     const generated = { mcp: {}, tools: {} };
     registerMcpServers(generated);
-    assert.match(generated.mcp.playwriter.command[0], /node$/);
-    assert.match(generated.mcp.playwriter.command[1], /playwriter-authenticated-relay\.mjs$/);
+    assert.equal(generated.mcp.playwriter.command[0], "bash");
+    assert.match(generated.mcp.playwriter.command[1], /browser-mcp-launcher\.sh$/);
+    assert.equal(generated.mcp.playwriter.command[2], "playwriter");
+    assert.match(generated.mcp.playwriter.command[3], /node$/);
+    assert.match(generated.mcp.playwriter.command[4], /playwriter-authenticated-relay\.mjs$/);
     assert.equal(generated.mcp.playwriter.command.at(-1), "playwriter@0.5.0");
     assert.ok(!generated.mcp.playwriter.command.some((part) => part.includes("TOKEN")));
 
@@ -364,9 +370,16 @@ test("opts framework-generated Playwriter commands into the authenticated relay 
       tools: {},
     };
     registerMcpServers(previousGenerated);
+    assert.match(previousGenerated.mcp.playwriter.command[1], /browser-mcp-launcher\.sh$/);
     assert.match(
-      previousGenerated.mcp.playwriter.command[1],
+      previousGenerated.mcp.playwriter.command[4],
       /playwriter-authenticated-relay\.mjs$/,
+    );
+    registerMcpServers(previousGenerated);
+    assert.equal(
+      previousGenerated.mcp.playwriter.command.filter((part) => part === "playwriter").length,
+      1,
+      "repeated registration must not re-wrap the confined command",
     );
     assert.equal(previousGenerated.mcp.playwriter.enabled, false);
 

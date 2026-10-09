@@ -12,11 +12,20 @@ import tempfile
 
 from lib.codex_mcp_toml import render, tomllib
 
+PLAYWRIGHT_NPX_ARGS = ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"]
+# GH#34111: launch Playwright from a private artifact cwd so raw relative
+# screenshot paths never resolve into the Codex project checkout. Use the
+# logical deployed path; runtime bundles behind the agents symlink rotate.
+PLAYWRIGHT_LAUNCHER = str(
+    Path.home() / ".aidevops" / "agents" / "scripts" / "browser-mcp-launcher.sh"
+)
+PLAYWRIGHT_LAUNCH_ARGS = [PLAYWRIGHT_LAUNCHER, "playwright", "npx", *PLAYWRIGHT_NPX_ARGS]
 DEFAULTS = {
     "context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp@latest"]},
     "playwright": {
-        "command": "npx",
-        "args": ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"],
+        "command": "bash",
+        "args": list(PLAYWRIGHT_LAUNCH_ARGS),
+        "startup_timeout_sec": 60,
     },
     "shadcn": {"command": "npx", "args": ["-y", "shadcn@latest", "mcp"]},
     "openapi-search": {"url": "https://openapi-mcp.openapisearch.com/mcp"},
@@ -34,6 +43,17 @@ NPX_PACKAGES = {
 def known_package(args, package):
     """Match package names exactly, including an optional version suffix."""
     return any(arg == package or arg.startswith(package + "@") for arg in args)
+
+
+def migrate_playwright_launcher(name, server, messages):
+    """Move only the exact previously generated default behind the launcher."""
+    if name != "playwright" or server.get("command") != "npx":
+        return
+    if server.get("args") != PLAYWRIGHT_NPX_ARGS:
+        return
+    server["command"] = "bash"
+    server["args"] = list(PLAYWRIGHT_LAUNCH_ARGS)
+    messages.append("playwright: launch from a private artifact directory")
 
 
 def migrate_npx(name, server, messages):
@@ -95,6 +115,7 @@ def reconcile(data):
             servers[name] = dict(default, enabled=False)
             messages.append(f"{name}: added disabled; enable explicitly when needed")
     for name, server in servers.items():
+        migrate_playwright_launcher(name, server, messages)
         migrate_npx(name, server, messages)
         migrate_remote(name, server, messages)
         migrate_unavailable(name, server, messages)

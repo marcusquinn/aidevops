@@ -314,8 +314,8 @@ PYEOF
 	# --- context7 (library docs) ---
 	_add_cursor_mcp "context7" '{"command":"npx","args":["-y","@upstash/context7-mcp@latest"]}'
 
-	# --- Playwright MCP ---
-	_add_cursor_mcp "playwright" '{"command":"npx","args":["-y","@playwright/mcp@0.0.79","--headless","--isolated"]}'
+	# --- Playwright MCP (GH#34111: private artifact cwd via launcher) ---
+	_add_cursor_mcp "playwright" "$(printf '{"command":"bash","args":["%s","playwright","npx","-y","@playwright/mcp@0.0.79","--headless","--isolated"]}' "$HOME/.aidevops/agents/scripts/browser-mcp-launcher.sh")"
 
 	# --- shadcn UI ---
 	_add_cursor_mcp "shadcn" '{"command":"npx","args":["shadcn@latest","mcp"]}'
