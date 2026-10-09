@@ -583,11 +583,7 @@ export async function AidevopsPlugin({ directory, client }) {
   // message list. Fail-open — errors in the guard must not block the message.
   const messagesTransformHook = async (input, output) => {
     await ttsrMessagesTransformHook(input, output);
-    try {
-      continuationGuard.injectSteering(input, output);
-    } catch (err) {
-      qualityLog("WARN", `[session-continuation] steering injection failed: ${err?.message ?? err}`);
-    }
+    continuationGuard.injectSteering(input, output);
     try {
       applyImageSizeGuard(output, qualityLog);
     } catch (err) {

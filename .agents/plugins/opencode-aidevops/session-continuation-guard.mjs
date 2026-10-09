@@ -225,8 +225,8 @@ function completeText(state, input, output) {
 }
 
 // Deliver queued steering once, as a synthetic user message appended to the
-// model request (the same channel TTSR corrections use). Fail-open.
-function injectSteering(state, input, output) {
+// model request (the same channel TTSR corrections use).
+function deliverSteering(state, input, output) {
   const messages = output?.messages;
   if (!Array.isArray(messages) || messages.length === 0) return { injected: false };
   const key = String(input?.sessionID || messages.at(-1)?.info?.sessionID || messages[0]?.info?.sessionID || "");
@@ -239,6 +239,16 @@ function injectSteering(state, input, output) {
     parts: [{ id: `${id}-part`, sessionID: key, messageID: id, type: "text", text: pending.text, synthetic: true }],
   });
   return { injected: true, kind: pending.kind, text: pending.text };
+}
+
+// Fail-open: a steering failure must never block the model request.
+function injectSteering(state, input, output) {
+  try {
+    return deliverSteering(state, input, output);
+  } catch (error) {
+    state.qualityLog?.("WARN", `[session-continuation] steering injection failed: ${boundedText(error?.message)}`);
+    return { injected: false };
+  }
 }
 
 function resolveGuard(state, input, evidence) {
