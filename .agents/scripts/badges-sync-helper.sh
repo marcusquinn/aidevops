@@ -261,7 +261,9 @@ _sync_readme() {
 		# Check if badge block already matches
 		local _check_rc=0
 		bash "$_BADGES_HELPER" check "$_readme" "$_slug" >/dev/null 2>&1 || _check_rc=$?
-		if [[ "$_check_rc" -eq 0 ]]; then
+		if bash "$_BADGES_HELPER" starter-owned "$_readme" >/dev/null 2>&1; then
+			printf '%s\t%s\tstarter-owned badge block left alone\n' "$_slug" "$_STATUS_SKIPPED"
+		elif [[ "$_check_rc" -eq 0 ]]; then
 			printf '%s\t%s\tbadge block current\n' "$_slug" "$_STATUS_SKIPPED"
 		else
 			printf '%s\t%s\tinject → README.md at ref @main\n' "$_slug" "$_STATUS_PLANNED"
