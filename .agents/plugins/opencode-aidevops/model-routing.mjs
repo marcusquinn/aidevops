@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { floorReasoning, reasoningFloor, normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
+import { activeLocalOnlyPolicy, isLocalProvider } from "./local-only-policy.mjs";
 
 export const DEFAULT_ESCALATION_ORDER = ["simple", "standard", "thinking"];
 
@@ -109,7 +110,11 @@ export function routingModelIdentity(model) {
   };
 }
 
-export function selectConnectedRoutingCandidate(routing, tier, providerState) {
+// A local-only bound session (GH#34125) never routes to a non-local provider;
+// no local candidate yields "", which callers treat as no route (child
+// routing throws, escalation and browser delegation are skipped). The
+// chat.params egress gate still refuses any non-local current model.
+export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy()) {
   const connected = new Set(Array.isArray(providerState?.connected) ? providerState.connected : []);
   const providers = new Map(
     (Array.isArray(providerState?.all) ? providerState.all : [])
@@ -119,6 +124,7 @@ export function selectConnectedRoutingCandidate(routing, tier, providerState) {
 
   for (const candidate of routingCandidates(routing, tier)) {
     const { providerID, modelID } = routingModelIdentity(candidate);
+    if (policy?.bound && !isLocalProvider(policy, providerID)) continue;
     const provider = providers.get(providerID);
     if (!provider || !connected.has(providerID)) continue;
     const models = provider.models && typeof provider.models === "object" ? provider.models : {};

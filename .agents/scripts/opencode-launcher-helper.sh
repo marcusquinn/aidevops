@@ -24,6 +24,10 @@ print_info() { printf '%b[INFO]%b %s\n' "${YELLOW}" "${NC}" "$*"; return 0; }
 print_success() { printf '%b[OK]%b %s\n' "${GREEN}" "${NC}" "$*"; return 0; }
 print_error() { printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "$*" >&2; return 0; }
 
+# GH#34125: AIDEVOPS_RUNTIME_POLICY binding vocabulary (vault_runtime_policy_bound).
+# shellcheck source=vault-data-policy-helper.sh
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+
 OPT_DESKTOP_SOURCE_BINARY="--source-binary"
 ERR_DIR_REQUIRES_PATH="--dir requires a path"
 ERR_SESSION_ID_REQUIRES_VALUE="--session-id requires a value"
@@ -1377,6 +1381,9 @@ maybe_managed_tui() {
     # Explicit shards and Tabby recovery stay direct; unsupported flags must not
     # silently create a conversation in a different database.
     ((direct == 0 && shared == 0 && tabby == 0)) || return 0
+    # GH#34125: the shared server's plugin never sees this launch's local-only
+    # binding, so a bound launch stays direct (plugin runs in this environment).
+    vault_runtime_policy_bound && return 0
     [[ -z "${shard}" && -f "${HOME}/.config/aidevops/opencode-service.json" ]] || return 0
     route=$(python3 "${SCRIPT_DIR}/opencode-service-helper.py" route) || return 1
     [[ "${route}" == "managed" ]] || return 0
@@ -1800,6 +1807,23 @@ main() {
     TMP="${TMP:-$TMPDIR}"
     TEMP="${TEMP:-$TMPDIR}"
     export TMPDIR TMP TEMP
+    # GH#34125: attach/managed/desktop run the plugin in a server or app process
+    # that does not carry this launch's binding; refuse instead of silently
+    # running unbound.
+    local session_route="${1:-}"
+    if [[ "${session_route}" == "desktop" ]]; then
+        case "${2:-launch}" in
+        status | install | install-app | install-shortcut | help | --help | -h) session_route="" ;;
+        esac
+    fi
+    case "${session_route}" in
+    managed | attach | desktop)
+        if vault_runtime_policy_bound; then
+            print_error "VAULT_POLICY_DENIED: AIDEVOPS_RUNTIME_POLICY binds this launch to local AI, but '${1}' would run in a process without that binding. Launch a direct session instead: AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode --direct"
+            return 64
+        fi
+        ;;
+    esac
     case "${1:-}" in
     service)
         shift
