@@ -429,6 +429,7 @@ grith.ai
 growth.design
 gumroad.com
 gw.dataimpulse.com
+help.seoutils.app
 herbertograca.com
 heygen.com
 higgsfield.ai
@@ -659,6 +660,7 @@ secretlint.github.io
 semver.org
 sendersupport.olc.protection.outlook.com
 sentry.io
+seoutils.app
 seranking.com
 serpapi.com
 serper.dev
