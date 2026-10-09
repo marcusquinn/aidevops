@@ -161,7 +161,15 @@ const MCP_DEFINITIONS = new Map([
     type: "stdio",
   }],
   ["shadcn", { command: "npx", args: ["shadcn@latest", "mcp"], type: "stdio" }],
-  ["playwright", { command: "npx", args: ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"], type: "stdio" }],
+  // GH#34111: launch from a private artifact cwd, never the project checkout.
+  ["playwright", {
+    command: "bash",
+    args: [
+      join(homedir(), ".aidevops", "agents", "scripts", "browser-mcp-launcher.sh"),
+      "playwright", "npx", "-y", "@playwright/mcp@0.0.79", "--headless", "--isolated",
+    ],
+    type: "stdio",
+  }],
 ]);
 
 const MCP_CONFIG_DIR = join(homedir(), ".aidevops", ".agent-workspace", "tmp");

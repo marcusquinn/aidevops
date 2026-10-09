@@ -20,6 +20,9 @@ const SPEND_GUIDANCE = "Calls may consume paid credits or API quota; keep reques
 const PLAYWRITER_AUTHENTICATED_RELAY_LAUNCHER = fileURLToPath(
   new URL("../../scripts/playwriter-authenticated-relay.mjs", import.meta.url),
 );
+const BROWSER_MCP_LAUNCHER = fileURLToPath(
+  new URL("../../scripts/browser-mcp-launcher.sh", import.meta.url),
+);
 
 function envFlagEnabled(name) {
   return ["1", "true", "yes"].includes((process.env[name] || "").toLowerCase());
@@ -731,9 +734,12 @@ function buildMcpConfigEntry(mcp, runtime) {
   }
   const workspace = runtime?.workspaces?.[mcp.name];
   if (!workspace) {
-    const command = mcp.name === "playwriter" && authenticatedPlaywriterRelayEnabled()
-      ? authenticatedPlaywriterRelayCommand(mcp.command)
-      : mcp.command;
+    let command = mcp.command;
+    if (mcp.name === "playwriter") {
+      command = confinePlaywriterCommand(authenticatedPlaywriterRelayEnabled()
+        ? authenticatedPlaywriterRelayCommand(command)
+        : command);
+    }
     return { type: "local", command, enabled: mcp.eager };
   }
 
@@ -817,6 +823,30 @@ function isCurrentGeneratedPlaywriterCommand(command) {
 }
 
 /**
+ * Identify framework-generated Playwriter commands, with or without the
+ * authenticated relay wrapper. Custom user commands are never matched.
+ * @param {unknown} command
+ * @returns {boolean}
+ */
+function isFrameworkPlaywriterCommand(command) {
+  if (!Array.isArray(command)) return false;
+  if (command[1] === PLAYWRITER_AUTHENTICATED_RELAY_LAUNCHER) {
+    return isCurrentGeneratedPlaywriterCommand(command.slice(2));
+  }
+  return isCurrentGeneratedPlaywriterCommand(command);
+}
+
+/**
+ * GH#34111: start Playwriter from a private artifact cwd so raw relative
+ * screenshot paths in execute calls never resolve into the project checkout.
+ * @param {string[]} command
+ * @returns {string[]}
+ */
+function confinePlaywriterCommand(command) {
+  return ["bash", BROWSER_MCP_LAUNCHER, "playwriter", ...command];
+}
+
+/**
  * Register a single MCP server in the config. Returns true if newly registered.
  * @param {object} mcp - MCP registry entry
  * @param {object} config - OpenCode Config object (mutable)
@@ -841,6 +871,10 @@ function registerSingleMcp(mcp, config, runtime) {
     config.mcp[mcp.name].command = authenticatedPlaywriterRelayCommand(
       config.mcp[mcp.name].command,
     );
+  }
+  if (mcp.name === "playwriter"
+    && isFrameworkPlaywriterCommand(config.mcp[mcp.name].command)) {
+    config.mcp[mcp.name].command = confinePlaywriterCommand(config.mcp[mcp.name].command);
   }
 
   // Runtime-activated MCPs must stay disconnected at startup, including when
