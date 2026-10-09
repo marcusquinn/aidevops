@@ -1608,6 +1608,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18635 fix(pulse): silence missing routines registry noise for repos without routines #bug #interactive ref:GH#34169 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18635-brief.md] pr:#34170 completed:2026-10-09
 - [x] t18636 fix(tests): restore test-pulse-routines-selector Case 9/11 after detached script routines #auto-dispatch #bug #interactive ref:GH#34172 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18636-brief.md] pr:#34176 completed:2026-10-09
 - [ ] t18637 fix(pulse): TODO ref sync fails every cycle for SSH remotes and contributor repos #auto-dispatch #bug #pulse #interactive tier:standard ref:GH#34185 logged:2026-10-09 -> [todo/tasks/t18637-brief.md]
+- [ ] t18640 Add SEO Utils MCP support (on-demand @seo-utils) #feat #seo #mcp #interactive tier:standard ref:GH#34205 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18640-brief.md]
 
 ## In Progress
 

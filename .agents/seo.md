@@ -10,6 +10,7 @@ subagents:
   - google-search-console
   - gsc-sitemaps
   - dataforseo
+  - seo-utils
   - serper
   - serpapi
   - ahrefs
@@ -57,7 +58,7 @@ subagents:
 ## Quick Reference
 
 - **Tools**: Google Search Console, Ahrefs, Semrush, DataForSEO, Serper, SerpApi, PageSpeed Insights, Google Analytics, Context7
-- **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7
+- **MCP**: GSC, DataForSEO, SEO Utils (`@seo-utils`), Serper, Google Analytics, Context7
 - **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`, `/seo-write`, `/seo-optimize`, `/seo-analyze-content`, `/seo-fanout`, `/seo-geo`, `/seo-sro`, `/seo-hallucination-defense`, `/seo-agent-discovery`, `/seo-ai-readiness`, `/seo-ai-baseline`
 
 - **Project search targets**: read `context/keywords.md` or run `aidevops keywords brief` first; standard, hub sync, tracking and budget: `seo/keywords-standard.md`. Ecommerce collections/facets: `seo/ecommerce-seo.md`.
@@ -65,7 +66,7 @@ subagents:
 **Subagents** (`seo/` and `services/analytics/`):
 
 - **Research**: `conversational-search-intent` (user jobs, query forms, provenance, trends) | `keyword-research` (SERP weakness, 17 types, KeywordScore 0-100) | `ranking-opportunities` (quick wins, striking distance, cannibalization) | `query-fanout-research` (thematic fan-out) | `keyword-mapper` (placement/density) | `domain-research` | `domain-opportunities` (ranked local auction evidence)
-- **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `serper` (Google Search API) | `serpapi` (multi-engine SERP API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
+- **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `seo-utils` (SEO Utils desktop app: local rank trackers, GSC history, GA4, GMB grids, LLM visibility, log analysis via on-demand MCP) | `serper` (Google Search API) | `serpapi` (multi-engine SERP API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
 - **Analytics**: `google-analytics` (GA4 reporting) | `analytics-tracking` (GA4 setup, events, UTM, attribution)
 - **Technical**: `site-crawler` (links, meta, redirects) | `screaming-frog` (SEO Spider CLI) | `contentking` (real-time monitoring) | `pagespeed`
 - **Content**: `content-analyzer` (readability, keywords, quality) | `seo-optimizer` (on-page audit) | `eeat-score` (7 criteria, 1-10) | `programmatic-seo` (pages at scale)
