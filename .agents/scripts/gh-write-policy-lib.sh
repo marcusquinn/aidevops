@@ -653,8 +653,8 @@ _shim_normalize_dispatch_labels() {
 		_shim_cli_label_action_has "--add-label" "$_SHIM_DISPATCH_MANUAL_LABEL" && has_manual=1
 		if [[ $has_manual -eq 1 ]]; then
 			_shim_filter_cli_label_action "--add-label" "$_SHIM_DISPATCH_AUTO_LABEL"
+			_shim_filter_cli_label_action "--remove-label" "$_SHIM_DISPATCH_MANUAL_LABEL"
 			if _shim_dispatch_label_exists "$_SHIM_DISPATCH_AUTO_LABEL"; then
-				_shim_filter_cli_label_action "--remove-label" "$_SHIM_DISPATCH_MANUAL_LABEL"
 				_shim_cli_label_action_has "--remove-label" "$_SHIM_DISPATCH_AUTO_LABEL" ||
 					_modified_args+=(--remove-label "$_SHIM_DISPATCH_AUTO_LABEL")
 			fi
