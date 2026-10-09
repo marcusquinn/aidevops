@@ -392,6 +392,22 @@ _register_mcp_opencode() {
 	return 0
 }
 
+# Match only defaults generated before GH#34111, including optional empty env
+# and Claude's stdio type. Unknown keys indicate a customised registration.
+_mcp_adapter_is_old_playwright() {
+	local entry="$1"
+	if jq -e '
+		.command == "npx" and
+		.args == ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"] and
+		((has("env") | not) or .env == {}) and
+		((has("type") | not) or .type == "stdio") and
+		((keys - ["command", "args", "env", "type"]) | length == 0)
+	' <<<"$entry" >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
 # Claude Code: CLI command (claude mcp add-json NAME --scope user 'JSON')
 _register_mcp_claude() {
 	local mcp_name="$1"
@@ -415,8 +431,20 @@ _register_mcp_claude() {
 		return 0
 	fi
 	if _mcp_adapter_claude_existing_contains "$mcp_name" "${_MCP_ADAPTER_CLAUDE_EXISTING_CACHE:-}"; then
-		print_info "$mcp_name already registered in Claude Code — skipping"
-		return 0
+		local existing_entry=""
+		# Inspect only user scope: never remove project/local registrations or
+		# infer exact command/args/env from the human-readable health-check list.
+		if [[ "$mcp_name" == "playwright" && -f "$HOME/.claude.json" ]]; then
+			existing_entry=$(jq -c '.mcpServers.playwright // null' "$HOME/.claude.json" 2>/dev/null) || existing_entry=""
+		fi
+		if [[ "$mcp_name" != "playwright" ]] || ! _mcp_adapter_is_old_playwright "$existing_entry"; then
+			print_info "$mcp_name already registered in Claude Code — skipping"
+			return 0
+		fi
+		if ! _mcp_adapter_run_with_timeout "$claude_timeout_seconds" claude mcp remove "$mcp_name" --scope user 2>/dev/null; then
+			print_warning "Failed or timed out removing old $mcp_name in Claude Code"
+			return 0
+		fi
 	fi
 
 	# Detect remote (URL-based) vs local (command-based) MCP
@@ -570,6 +598,15 @@ _register_mcp_mcpservers() {
 		}')
 	fi
 
+	# Existing Playwright entries must remain untouched unless they are the
+	# exact generated default. In particular, do not erase custom env/options.
+	if [[ "$mcp_name" == "playwright" && -f "$config_path" ]]; then
+		local existing_entry
+		existing_entry=$(jq -c '.mcpServers.playwright // null' "$config_path") || return 1
+		if [[ "$existing_entry" != "null" ]] && ! _mcp_adapter_is_old_playwright "$existing_entry"; then
+			return 0
+		fi
+	fi
 	json_set_nested "$config_path" "mcpServers" "$mcp_name" "$entry"
 	return 0
 }

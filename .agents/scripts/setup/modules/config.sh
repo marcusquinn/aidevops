@@ -294,14 +294,19 @@ except (FileNotFoundError, json.JSONDecodeError):
 if "mcpServers" not in cfg or not isinstance(cfg["mcpServers"], dict):
     cfg["mcpServers"] = {}
 
-if name in cfg["mcpServers"]:
+old_playwright = {"command": "npx", "args": ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"]}
+existing = cfg["mcpServers"].get(name)
+migrate = name == "playwright" and (
+    existing == old_playwright or existing == dict(old_playwright, env={})
+)
+if name in cfg["mcpServers"] and not migrate:
     print(f"SKIP  = {name} (already configured)")
 else:
     cfg["mcpServers"][name] = json.loads(value_json)
     with open(file_path, 'w') as f:
         json.dump(cfg, f, indent=2)
         f.write('\n')
-    print(f"ADDED + {name}")
+    print(f"MIGRATED + {name}" if migrate else f"ADDED + {name}")
 PYEOF
 		) || true
 		echo "  ${py_output#* }"
