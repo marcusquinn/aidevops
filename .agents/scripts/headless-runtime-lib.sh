@@ -1025,6 +1025,13 @@ Mandatory behavior:
 7. A draft PR is only a durable checkpoint, never completion. Continue until the implementation and required local verification are complete, every intended commit is pushed, the PR is non-draft, the PR head matches local HEAD, and the required MERGE_SUMMARY exists.
 8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, emit POST_PR_HANDOFF on its own line and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates. Never disable or redirect commit signing (`-c commit.gpgsign=false`, `--no-gpg-sign`, signing-key overrides); if signing fails, stop with the permission blocker so the operator runs `aidevops signing headless-setup`.
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. If the only remaining blocker is the current model's inability to reason through the task safely, emit `BLOCKED: capability limit - <evidence>`; runtime routing will retry at the next configured capability tier. Never use that marker for permission, authentication, provider, rate-limit, secret, policy, trust-boundary, or locality failures. Review-policy metadata and nominal GitHub states are NOT valid blockers. Genuine blockers require evidence: a failing check that cannot be repaired, missing permission, unresolved conflict, or explicit policy gate.
+EOF
+	return 0
+}
+
+# Terminal blocker classes, integration recovery and the activity watchdog.
+_worker_headless_contract_blocker_text() {
+	cat <<'EOF'
 
 Terminal blocker reason protocol (GH#31239):
 When genuinely blocked, put BLOCKED: <evidence> and exactly one standalone
@@ -1056,8 +1063,15 @@ Name the exact trigger and checked evidence in the protected dossier. This class
 re-arms on a brief or linked dependency change or trusted retry, not unrelated
 default-branch commits. Do not use it for generic provider outages, missing
 permissions, uncertain availability or a trigger that is already satisfied.
+A tool absent from PATH is not yet proof it is uninstalled (GH#34110). First
+check only what the repository declares: `.aidevops.json` `.verify` commands and
+a worktree-local `.venv/bin/<tool>`; never scan host directories or install.
+If a required verification tool is still unavailable on this runner, use:
+TERMINAL_BLOCKER_REASON=runner_capability_unmet
+Name the missing tool, interpreter and checked declarations in the dossier.
 For an evidenced unresolved permission boundary, including a continued session
-whose prior protected-source denial has no changed exact-context grant, use:
+whose prior protected-source denial has no changed exact-context grant, use the
+next class; never for missing tooling or forbidden dependency installation:
 TERMINAL_BLOCKER_REASON=permission_required
 Preserve the protected blocker dossier and human-owned recovery action. Do not
 retry the denied read or regenerate a request to produce another permission event.
@@ -1141,6 +1155,7 @@ EOF
 _worker_headless_contract_text() {
 	_worker_headless_contract_setup_text
 	_worker_headless_contract_execution_text
+	_worker_headless_contract_blocker_text
 	_worker_headless_contract_exit_text
 	return 0
 }
