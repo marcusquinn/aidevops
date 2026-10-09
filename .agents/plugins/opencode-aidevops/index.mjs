@@ -445,8 +445,8 @@ export async function AidevopsPlugin({ directory, client }) {
   });
   if (!tool.schemasUnavailable) {
     baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
-  // GH#32592: V1 sends every tool schema on every request, so rarely used
-  // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
+    // GH#32592: V1 sends every tool schema on every request, so rarely used
+    // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
     moveToolsOnDemand(baseTools, tool);
   }
 

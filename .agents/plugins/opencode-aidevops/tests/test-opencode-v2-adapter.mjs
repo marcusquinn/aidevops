@@ -266,6 +266,22 @@ for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycl
     "permission:evaluate",
   ]);
 
+  // Exercise the actual host registration callback, not just setup. Missing
+  // dependencies must produce no custom registrations; installed schemas must
+  // carry real Zod definitions rather than the old empty _zod placeholder.
+  const addedTools = [];
+  const updatedTools = [];
+  registered.find(({ domain, name }) => domain === "tool" && name === "transform").callback({
+    add: (definition) => addedTools.push(definition),
+    update: (name) => updatedTools.push(name),
+  });
+  assert.deepEqual(updatedTools, ["bash", "grep", "apply_patch"]);
+  if (tool.schemasUnavailable) assert.equal(addedTools.length, 0);
+  else {
+    assert.ok(addedTools.length > 0);
+    for (const definition of addedTools) assert.equal(definition.input._zod.def.type, "object");
+  }
+
   const contextHook = registered.find(({ domain, name }) => domain === "session" && name === "context").callback;
   const request = { sessionID: "v2-parity", model: { providerID: "anthropic", id: "test" }, system: [], messages: [] };
   await contextHook(request);
