@@ -272,6 +272,14 @@ aidevops_opencode_pin_applies() {
 # tool updates and the fail-closed headless version guard. The optional
 # AIDEVOPS_OPENCODE_BIN environment variable lets callers preserve an already
 # resolved binary path that is not present on PATH.
+#
+# GH#34181: the aidevops daemon-safe shim (~/.local/bin/opencode) is a regular
+# script, so readlink cannot see the real install owner behind it. The payload
+# follows only recognised managed shims (terminal-title-owner marker) through
+# their literal `exec "<absolute path>" "$@"` line, mirroring
+# _setup_opencode_target_is_safe: never executed or sourced, depth-bounded, and
+# a cyclic/unresolvable chain keeps the original path. The payload stays on one
+# line for the tool-spec reader.
 aidevops_opencode_upgrade_command() {
 	local pkg_version="$1"
 	local profile="${2:-$(aidevops_opencode_profile_id)}"
@@ -282,6 +290,12 @@ aidevops_opencode_upgrade_command() {
 	# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 	printf '%s' \
 		'r="${AIDEVOPS_OPENCODE_BIN:-}"; [[ -n "$r" ]] || r=$(command -v '"${binary}"' 2>/dev/null || printf ""); ' \
+		'r_orig="$r"; r_depth=0; r_pat=' "'" '^exec[[:space:]]+"([^"\\]*)"[[:space:]]+"\$@"$' "'" '; ' \
+		'while [[ -n "$r" && -f "$r" && "$r_depth" -lt 16 ]] && grep -Fq "# aidevops:terminal-title-owner" "$r" 2>/dev/null; do ' \
+		'r_next=""; while IFS= read -r r_line || [[ -n "$r_line" ]]; do [[ "$r_line" =~ $r_pat ]] && r_next="${BASH_REMATCH[1]}"; done <"$r"; ' \
+		'if [[ "$r_next" == /* && -f "$r_next" && -x "$r_next" && ! "$r_next" -ef "$r" ]]; then r="$r_next"; r_depth=$((r_depth + 1)); else r="$r_orig"; break; fi; ' \
+		'done; ' \
+		'if [[ "$r_depth" -ge 16 ]] && grep -Fq "# aidevops:terminal-title-owner" "$r" 2>/dev/null; then r="$r_orig"; fi; ' \
 		'if [[ -n "$r" ]]; then ' \
 		'if [[ '"${profile}"' == v1 ]] && command -v brew >/dev/null 2>&1; then ' \
 		'r_dir=$(cd "$(dirname "$r")" 2>/dev/null && pwd -P || printf ""); ' \
