@@ -130,8 +130,6 @@ SKIP_HELP=(
 	"ampcode-cli.sh"
 	"agno-setup.sh"
 	"sonarscanner-cli.sh"
-	"codacy-cli.sh"
-	"codacy-cli-chunked.sh"
 	"coderabbit-pro-analysis.sh"
 	"snyk-helper.sh"
 	"verify-mirrors.sh"

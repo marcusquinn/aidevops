@@ -17,7 +17,7 @@ set -euo pipefail
 #
 # CLIs:
 #   coderabbit  - CodeRabbit CLI for AI-powered code review
-#   codacy      - Codacy CLI v2 for comprehensive code analysis
+#   codacy      - Codacy Analysis CLI (@codacy/analysis-cli) for local analysis
 #   sonar       - SonarScanner CLI for SonarQube Cloud analysis
 #   snyk        - Snyk CLI for security vulnerability scanning
 #   all         - All quality CLIs (default)
@@ -295,10 +295,11 @@ _analyze_variant_clis() {
 	local target_cli="$1"
 	local args="$2"
 
-	# Auto-fix option for Codacy
+	# Deprecated alias: the Codacy Analysis CLI has no auto-fix mode, so
+	# codacy-fix runs the normal report-only analysis.
 	if [[ "$target_cli" == "codacy-fix" ]]; then
-		print_info "Running Codacy analysis with auto-fix..."
-		if execute_cli_command "codacy" "analyze" "--fix"; then
+		print_warning "codacy-fix is deprecated (no Codacy auto-fix); running Codacy analysis"
+		if execute_cli_command "codacy" "analyze" "$args"; then
 			((++success_count))
 		fi
 		((++total_count))
@@ -433,8 +434,8 @@ show_help() {
 	echo ""
 	echo "CLIs:"
 	echo "  coderabbit           - CodeRabbit CLI for AI-powered code review"
-	echo "  codacy               - Codacy CLI v2 for comprehensive code analysis"
-	echo "  codacy-fix           - Codacy CLI with auto-fix (applies fixes when available)"
+	echo "  codacy               - Codacy Analysis CLI (local analysis with Codacy Cloud rules)"
+	echo "  codacy-fix           - Deprecated alias for codacy (Codacy has no auto-fix)"
 	echo "  sonar                - SonarScanner CLI (SonarQube Cloud analysis)"
 	echo "  snyk                 - Snyk CLI (security vulnerability scanning)"
 	echo "  snyk-sca             - Snyk dependency vulnerability scan only"
@@ -448,7 +449,7 @@ show_help() {
 	echo "  $0 install all"
 	echo "  $0 init codacy"
 	echo "  $0 analyze coderabbit"
-	echo "  $0 analyze codacy-fix      # Auto-fix issues when possible"
+	echo "  $0 analyze codacy          # Codacy analysis (Codacy Cloud rules)"
 	echo "  $0 analyze qlty            # Universal linting and formatting"
 	echo "  $0 analyze snyk            # Full Snyk security scan (SCA + SAST + IaC)"
 	echo "  $0 analyze snyk-code       # Snyk source code scan only"
@@ -462,8 +463,8 @@ show_help() {
 	echo "    CODERABBIT_API_KEY   - CodeRabbit API key"
 	echo ""
 	echo "  Codacy:"
-	echo "    CODACY_API_TOKEN     - Codacy API token"
-	echo "    CODACY_PROJECT_TOKEN - Codacy project token"
+	echo "    CODACY_PROJECT_TOKEN - Codacy repository token (or CODACY_<OWNER>_<REPO>_PROJECT_TOKEN)"
+	echo "    CODACY_API_TOKEN     - Codacy account API token"
 	echo "    CODACY_PROVIDER      - Provider (gh, gl, bb)"
 	echo "    CODACY_ORGANIZATION  - Organization name"
 	echo "    CODACY_REPOSITORY    - Repository name"
