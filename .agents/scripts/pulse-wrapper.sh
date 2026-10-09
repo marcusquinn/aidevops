@@ -1082,6 +1082,20 @@ _pulse_run_deterministic_pipeline() {
 			reap_orphan_workers || true
 	fi
 
+	# GH#33602: bounded, hourly stale Actions queue cleanup, then the grouped
+	# Dependabot alert monitor (dedupes by package/ecosystem/patched version).
+	# GH#34000: both are short and run before the long merge/sync/graph stages
+	# so a cycle that reaches the pipeline late cannot starve them. Optional
+	# work keeps the quota admission gate; the helpers gate every API call.
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
+			env REPOS_JSON="$REPOS_JSON" STOP_FLAG="$STOP_FLAG" LOGFILE="$LOGFILE" \
+			PULSE_RATE_LIMIT_FLAG="$PULSE_RATE_LIMIT_FLAG" \
+			bash "${SCRIPT_DIR}/pulse-stale-queued-runs.sh" || true
+		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
+			dependabot_alert_monitor_scan_repos || true
+	fi
+
 	# Deterministic merge pass: approve and merge all ready PRs across pulse
 	# repos. This runs BEFORE the LLM session because merging is free (no
 	# worker slot) and deterministic (no judgment needed). Previously merging
@@ -1254,25 +1268,6 @@ _pulse_run_deterministic_pipeline() {
 			# A budget-deferred round is retryable, not a set -e cycle abort.
 			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max || true
 		fi
-	fi
-
-	# GH#33602: bounded, hourly stale Actions queue cleanup. Optional work uses
-	# the existing quota admission gate; the helper also gates every API call.
-	if [[ ! -f "$STOP_FLAG" ]]; then
-		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
-			env REPOS_JSON="$REPOS_JSON" STOP_FLAG="$STOP_FLAG" LOGFILE="$LOGFILE" \
-			PULSE_RATE_LIMIT_FLAG="$PULSE_RATE_LIMIT_FLAG" \
-			bash "${SCRIPT_DIR}/pulse-stale-queued-runs.sh" || true
-	fi
-
-	# Dependency-alert monitor: create grouped worker-ready issues for open
-	# Dependabot alerts across managed pulse repos. The helper dedupes by
-	# package/ecosystem/patched-version and uses neutral issue wording.
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared — skipping Dependabot alert monitor" >>"$LOGFILE"
-	else
-		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
-			dependabot_alert_monitor_scan_repos || true
 	fi
 
 	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
@@ -1829,7 +1824,13 @@ main() {
 	# reacquires this lock and writes only when health still names this cycle,
 	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
 	release_instance_lock
-	_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
+	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
+	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle.
+	if [[ "${_PULSE_PREFETCH_DEGRADED:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete this cycle (GH#34000)" >>"$LOGFILE"
+	else
+		_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
+	fi
 
 	# GH#28361: compute one terminal typed outcome after both deterministic and
 	# LLM dispatch paths, then project it through health and idle-backoff
