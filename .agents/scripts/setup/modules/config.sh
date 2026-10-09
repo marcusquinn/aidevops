@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Configuration functions: setup_configs, set_permissions, ssh, aidevops-cli, opencode-config, claude-config, validate, extract-prompts, drift-check
+# Configuration functions: setup_configs, set_permissions, ssh, aidevops-cli, opencode-config, claude-config, safety-hooks, validate, extract-prompts, drift-check
 # Part of aidevops setup.sh modularization (t316.3)
 
 # Shell safety baseline
@@ -154,6 +154,37 @@ update_claude_config() {
 			all --runtime claude-code
 	fi
 
+	return 0
+}
+
+# Install/refresh Claude Code safety hooks in ~/.aidevops/hooks and their
+# settings registrations. Restored after GH#34128: the only real definition
+# lived in tool-beads.sh, which the Beads retirement (#33270) deleted, leaving
+# a no-op placeholder that froze deployed hooks. Prefer the repo helper being
+# installed so hook sources match this setup run; fall back to the deployed copy.
+# Non-critical: failures warn without aborting the rest of setup.
+setup_safety_hooks() {
+	print_info "Setting up Claude Code safety hooks..."
+
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_warning "Python 3 not found - safety hooks require Python 3"
+		return 0
+	fi
+
+	local helper_script="${INSTALL_DIR:-.}/.agents/scripts/install-hooks-helper.sh"
+	if [[ ! -f "$helper_script" ]]; then
+		helper_script="$HOME/.aidevops/agents/scripts/install-hooks-helper.sh"
+	fi
+	if [[ ! -f "$helper_script" ]]; then
+		print_warning "install-hooks-helper.sh not found - skipping safety hooks"
+		return 0
+	fi
+
+	if bash "$helper_script" install; then
+		print_success "Claude Code safety hooks installed"
+	else
+		print_warning "Safety hook installation encountered issues (non-critical); run: install-hooks-helper.sh install"
+	fi
 	return 0
 }
 
