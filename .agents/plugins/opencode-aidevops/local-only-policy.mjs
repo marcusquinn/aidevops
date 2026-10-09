@@ -190,3 +190,19 @@ export function assertLocalOnlyEgress(policy, input, surface) {
     deny(policy, `${surface} request for local provider "${providerID}" to a non-loopback or unknown endpoint`);
   }
 }
+
+const LOCAL_FAILURE_PATTERNS = [
+  [/ECONNREFUSED|connection refused/i, "local_backend_connection_refused"],
+  [/ETIMEDOUT|timeout|timed out/i, "local_backend_timeout"],
+  [/model.identity.mismatch/i, "local_backend_model_identity_mismatch"],
+];
+
+/** Content-free failed-check names; never return raw backend diagnostics. */
+export function localFailureCheck(error) {
+  const message = String(error?.data?.message || error?.message || "");
+  const code = String(error?.code || error?.data?.code || "");
+  if (code === VAULT_POLICY_DENIED || /VAULT_POLICY_DENIED/.test(message)) return "vault_policy_denied";
+  if (Number(error?.data?.statusCode) === 404) return "local_backend_http_404";
+  const match = LOCAL_FAILURE_PATTERNS.find(([pattern]) => pattern.test(`${code} ${message}`));
+  return match?.[1] || null;
+}

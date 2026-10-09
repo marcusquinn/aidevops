@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { activeLocalOnlyPolicy } from "./local-only-policy.mjs";
-import { recordPrivateBlocker } from "./private-processing-policy.mjs";
+import { notifyLocalFailure } from "./private-processing-policy.mjs";
+export { localFailureCheck } from "./local-only-policy.mjs";
 
 const REQUEST_ID_HEADERS = [
   "x-request-id",
@@ -120,55 +121,31 @@ export function createProviderErrorHandler({ client, isHeadless, resolveSessionM
     }
     if (event.type !== "session.error" || !sessionID) return;
     if (policy.bound) {
-      const check = localFailureCheck(properties.error);
-      if (!check) return;
-      const timestamp = now();
-      if (emitted.has(sessionID) && timestamp - emitted.get(sessionID) < 30000) return;
-      emitted.set(sessionID, timestamp);
-      const recorded = recordPrivateBlocker(sessionID, check, "model_request", append);
-      if (!isHeadless()) {
-        try {
-          await client.tui.showToast({ body: { title: "Local-only operation stopped",
-            message: `${check}: model_request blocked. Local-only binding remains active; no remote fallback is allowed.${recorded ? "" : " Blocker receipt unavailable."}`,
-            variant: "error", duration: 15000 } });
-        } catch { /* A missing TUI never clears the stop or its receipt. */ }
-      }
-      return;
+      return notifyLocalFailure({ client, isHeadless, now, append, emitted }, sessionID, properties.error);
     }
     if (isHeadless()) return;
-    const diagnostic = normalizeProviderError(event.properties?.error);
-    if (!diagnostic || !["gateway_denied", "access_denied"].includes(diagnostic.classification)) return;
-    const timestamp = now();
-    const previousTimestamp = emitted.get(sessionID) || 0;
-    if (timestamp - previousTimestamp < 30000) return;
-    emitted.set(sessionID, timestamp);
-    const modelIdentity = resolveSessionModel?.(sessionID) || "";
-    try {
-      await client.tui.showToast({
-        body: {
-          title: "Provider request denied",
-          message: toastMessage(diagnostic, modelIdentity),
-          variant: "warning",
-          duration: 15000,
-        },
-      });
-    } catch (error) {
-      if (emitted.get(sessionID) === timestamp) {
-        if (previousTimestamp) emitted.set(sessionID, previousTimestamp);
-        else emitted.delete(sessionID);
-      }
-      throw error;
-    }
+    return notifyProviderDenial({ client, resolveSessionModel, now, emitted }, sessionID, event.properties?.error);
   };
 }
 
-export function localFailureCheck(error) {
-  const message = String(error?.data?.message || error?.message || "");
-  const code = String(error?.code || error?.data?.code || "");
-  if (code === "VAULT_POLICY_DENIED" || /VAULT_POLICY_DENIED/.test(message)) return "vault_policy_denied";
-  if (statusCode(error) === 404) return "local_backend_http_404";
-  if (/ECONNREFUSED|connection refused/i.test(`${code} ${message}`)) return "local_backend_connection_refused";
-  if (/ETIMEDOUT|timeout|timed out/i.test(`${code} ${message}`)) return "local_backend_timeout";
-  if (/model.identity.mismatch/i.test(`${code} ${message}`)) return "local_backend_model_identity_mismatch";
-  return null;
+async function notifyProviderDenial({ client, resolveSessionModel, now, emitted }, sessionID, error) {
+  const diagnostic = normalizeProviderError(error);
+  if (!diagnostic || !["gateway_denied", "access_denied"].includes(diagnostic.classification)) return;
+  const timestamp = now();
+  const previousTimestamp = emitted.get(sessionID) || 0;
+  if (timestamp - previousTimestamp < 30000) return;
+  emitted.set(sessionID, timestamp);
+  const modelIdentity = resolveSessionModel?.(sessionID) || "";
+  try {
+    await client.tui.showToast({ body: {
+      title: "Provider request denied", message: toastMessage(diagnostic, modelIdentity),
+      variant: "warning", duration: 15000,
+    } });
+  } catch (toastError) {
+    if (emitted.get(sessionID) === timestamp) {
+      if (previousTimestamp) emitted.set(sessionID, previousTimestamp);
+      else emitted.delete(sessionID);
+    }
+    throw toastError;
+  }
 }

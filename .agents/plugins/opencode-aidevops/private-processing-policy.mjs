@@ -3,8 +3,14 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { activeLocalOnlyPolicy, LocalOnlyPolicyError } from "./local-only-policy.mjs";
+import { activeLocalOnlyPolicy, localFailureCheck, LocalOnlyPolicyError } from "./local-only-policy.mjs";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
+
+function assertOperatorConfigStat(stat) {
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error();
+  if ((stat.mode & 0o777) !== 0o600 || stat.size > 65536) throw new Error();
+  if (process.getuid && stat.uid !== process.getuid()) throw new Error();
+}
 
 // #aidevops:trust-boundary: operator configuration only, snapshotted before
 // tools run. Never infer labels from file contents, arguments or model output.
@@ -15,8 +21,7 @@ export function loadPrivateProcessingPolicy(env = process.env) {
   let invalid = false;
   try {
     const stat = lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600
-      || (process.getuid && stat.uid !== process.getuid()) || stat.size > 65536) throw new Error();
+    assertOperatorConfigStat(stat);
     const config = JSON.parse(readFileSync(file, "utf8"));
     if (!Array.isArray(config.roots) || config.roots.length > 256
       || config.roots.some((root) => typeof root !== "string" || !isAbsolute(root))) throw new Error();
@@ -64,6 +69,21 @@ export function recordPrivateBlocker(sessionID, check, tool, append = appendWork
   } catch { return false; }
 }
 
+export async function notifyLocalFailure({ client, isHeadless, now, append, emitted }, sessionID, error) {
+  const check = localFailureCheck(error);
+  if (!check) return;
+  const timestamp = now();
+  if (emitted.has(sessionID) && timestamp - emitted.get(sessionID) < 30000) return;
+  emitted.set(sessionID, timestamp);
+  const recorded = recordPrivateBlocker(sessionID, check, "model_request", append);
+  if (isHeadless()) return;
+  try {
+    await client.tui.showToast({ body: { title: "Local-only operation stopped",
+      message: `${check}: model_request blocked. Local-only binding remains active; no remote fallback is allowed.${recorded ? "" : " Blocker receipt unavailable."}`,
+      variant: "error", duration: 15000 } });
+  } catch { /* A missing TUI never clears the stop or its receipt. */ }
+}
+
 const READ_TOOLS = /^(?:read|grep|glob|list)$/i;
 const SHELL_TOOLS = /(?:^|[._-])(?:bash|bounded_operation)$/i;
 const MUTATION_TOOLS = /(?:write|edit|apply_patch)$/i;
@@ -89,6 +109,33 @@ function literalShellWords(command) {
   return words;
 }
 
+function toolPath(args, cwd) {
+  return [args.filePath, args.file_path, args.path, args.directory].find(Boolean) || cwd;
+}
+
+function assertClassificationMutation(policy, name, args, cwd, deny) {
+  if (!MUTATION_TOOLS.test(name)) return;
+  // Freeze classification across this launch, and prohibit tool edits to its
+  // source. OS ownership is not isolation from code running as the same user.
+  const patch = String(args.patchText || args.patch_text || "");
+  const mutationPaths = [toolPath(args, cwd), ...[...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1])];
+  if (mutationPaths.some((target) =>
+    contains(resolve(cwd, target), policy.file)
+    || contains(canonicalPath(resolve(cwd, target)), canonicalPath(policy.file)))) deny("classification_mutation");
+}
+
+function assertShellRead(policy, command, cwd, binding, deny) {
+  const text = Array.isArray(command) ? command.join(" ") : String(command || "");
+  if (text.includes(policy.file)) deny("classification_mutation");
+  if (binding.bound || !policy.roots.length) return;
+  const words = literalShellWords(command);
+  // No options: even familiar readers have executable/path-bearing options.
+  if (!words?.length || !LITERAL_READERS.has(words[0])
+    || words.slice(1).some((word) => word.startsWith("-"))) deny("unclassifiable_shell_read");
+  if (privatePathOverlap(policy, cwd, cwd, true)
+    || words.slice(1).some((word) => privatePathOverlap(policy, word, cwd, true))) deny("protected_read");
+}
+
 export function assertPrivateProcessingRead({ tool, args = {}, repositoryDir = process.cwd(), sessionID = "",
   classification, binding = activeLocalOnlyPolicy(), append }) {
   const policy = classification || loadPrivateProcessingPolicy();
@@ -98,30 +145,14 @@ export function assertPrivateProcessingRead({ tool, args = {}, repositoryDir = p
     const recorded = recordPrivateBlocker(sessionID, check, READ_TOOLS.test(name) ? name.toLowerCase() : "tool", append);
     throw new LocalOnlyPolicyError(`${check}: protected operation blocked. Relaunch with AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode. No content was read.${recorded ? "" : " Blocker receipt unavailable."}`);
   };
-  // Freeze classification across this launch, and prohibit tool edits to its
-  // source. OS ownership is not isolation from code running as the same user.
-  const path = args.filePath || args.file_path || args.path || args.directory || cwd;
-  const patch = String(args.patchText || args.patch_text || "");
-  const mutationPaths = [path, ...[...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1])];
-  if (MUTATION_TOOLS.test(name) && mutationPaths.some((target) =>
-    contains(resolve(cwd, target), policy.file)
-    || contains(canonicalPath(resolve(cwd, target)), canonicalPath(policy.file)))) deny("classification_mutation");
+  assertClassificationMutation(policy, name, args, cwd, deny);
   const shell = SHELL_TOOLS.test(tool);
   if (!READ_TOOLS.test(name) && !shell) return;
   if (shell && args.action && args.action !== "start") return;
   if (policy.invalid) deny("classification_unavailable");
   if (shell) {
-    const command = args.command;
-    const text = Array.isArray(command) ? command.join(" ") : String(command || "");
-    if (text.includes(policy.file)) deny("classification_mutation");
-    if (binding.bound || !policy.roots.length) return;
-    const words = literalShellWords(command);
-    // No options: even familiar readers have executable/path-bearing options.
-    if (!words?.length || !LITERAL_READERS.has(words[0])
-      || words.slice(1).some((word) => word.startsWith("-"))) deny("unclassifiable_shell_read");
-    if (privatePathOverlap(policy, cwd, cwd, true)
-      || words.slice(1).filter((word) => !word.startsWith("-")).some((word) => privatePathOverlap(policy, word, cwd, true))) deny("protected_read");
+    assertShellRead(policy, args.command, cwd, binding, deny);
     return;
   }
-  if (!binding.bound && privatePathOverlap(policy, path, cwd, true)) deny("protected_read");
+  if (!binding.bound && privatePathOverlap(policy, toolPath(args, cwd), cwd, true)) deny("protected_read");
 }
