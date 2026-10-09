@@ -1599,7 +1599,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18626 Resolve tools through PATH for non-FHS hosts (NixOS) without breaking macOS/Ubuntu #bug #framework ref:GH#34053 pr:#34076 completed:2026-10-08
 - [x] t18627 seo: add link-building playbook with competitor backlink-gap outreach strategy #feat ref:GH#34060 pr:#34061 completed:2026-10-08
-- [ ] t18628 refactor: replace 20 _aidevops_path_prefix blocks with a runtime-env.sh helper #refactor ref:GH#34081 -> [todo/tasks/t18628-brief.md]
+- [x] t18628 refactor: replace 20 _aidevops_path_prefix blocks with a runtime-env.sh helper #refactor ref:GH#34081 -> [todo/tasks/t18628-brief.md] pr:#34093 completed:2026-10-09
 
 ## In Progress
 
