@@ -11,7 +11,10 @@ main() {
 	local offline=0
 	for arg in "$@"; do
 		case "$arg" in
-		--help|-h) python3 "$SCRIPT_DIR/quality_area_briefs.py" --help; return 0 ;;
+		--help | -h)
+			python3 "$SCRIPT_DIR/quality_area_briefs.py" --help
+			return 0
+			;;
 		--offline) offline=1 ;;
 		esac
 	done

@@ -21,9 +21,9 @@ from urllib.request import Request, urlopen
 SCRIPTS = Path(__file__).resolve().parent
 
 
-def run(argv, cwd=None):
+def run(argv, cwd=None, env=None):
     """Never execute service text or area selectors as shell syntax."""
-    result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=False)
+    result = subprocess.run(argv, cwd=cwd, env=env, text=True, capture_output=True, check=False)
     if result.returncode:
         # External stderr can include secrets, service text or private paths.
         raise ValueError(f"Command failed: {Path(argv[0]).name} (exit {result.returncode})")
@@ -177,10 +177,8 @@ def classify(config, findings, root):
         elif path in config.get("hotspots", {}):
             owner = config["hotspots"][path]
         else:
-            owner = next((area["id"] for area in areas if any(matches(area, row) for row in rows)),
-                         config.get("default_area"))
-        if owner not in by_id:
-            raise ValueError("Unmapped finding file or unknown area; refusing partial coverage")
+            owner = None
+        kept = []
         for row in rows:
             disabled = any(entry["source"] == row["source"] and entry["rule"] == row["rule"]
                            and not any(local["file"] == path and local["rule"] == row["rule"]
@@ -189,20 +187,34 @@ def classify(config, findings, root):
             if disabled:
                 dropped.append(row)
             else:
-                grouped[owner].append(row)
+                kept.append(row)
+        if not kept:
+            continue
+        if owner is None:
+            owner = next((area["id"] for area in areas if any(matches(area, row) for row in kept)),
+                         config.get("default_area"))
+        if owner not in by_id:
+            raise ValueError("Unmapped finding file or unknown area; refusing partial coverage")
+        grouped[owner].extend(kept)
     return grouped, dropped
 
 
 def cell(value):
     # Escape both HTML and markdown table/control syntax from untrusted APIs.
-    return html.escape(str(value), quote=True).replace("|", "&#124;").replace("`", "&#96;").replace("\n", " ").replace("\r", " ")
+    text = html.escape(str(value), quote=True)
+    for before, after in (("|", "&#124;"), ("`", "&#96;"), ("{", "&#123;"),
+                          ("}", "&#125;"), ("\n", " "), ("\r", " ")):
+        text = text.replace(before, after)
+    return text
 
 
 def brief(area, rows, scope, dependencies):
     counts = defaultdict(Counter)
     for row in rows:
         counts[row["file"]][row["source"] + ":" + row["rule"]] += 1
-    targets = "\n".join(f"- `EDIT: {path}` — " + cell(dict(counts[path])) for path in scope)
+    targets = "\n".join(f"- `EDIT: {path}` — " + (
+        cell(", ".join(f"{rule}: {count}" for rule, count in sorted(counts[path].items())))
+        or "committed generated output; regenerate from this area's sources") for path in scope)
     scope_lines = "\n".join(f"- `{path}`" for path in scope)
     refs = ", ".join(f"`{path}`" for path in scope)
     commands = area["verification"]
@@ -210,20 +222,27 @@ def brief(area, rows, scope, dependencies):
         raise ValueError("Each area requires repository-specific verification commands")
     verification = "\n".join(commands)
     table = "\n".join("| " + " | ".join(cell(row[key]) for key in ("file", "line", "source", "rule", "message")) + " |" for row in rows)
-    # Template section contract, without invented pre-flight claims or task ids.
-    return f"""<!-- aidevops:brief-schema=v2 -->
+    return BRIEF_TEMPLATE.format(
+        title=cell(area["title"]), created=date.today().isoformat(),
+        dependencies=", ".join(dependencies) or "N/A because this area has no overlapping predecessor",
+        count=len(rows), targets=targets, refs=refs, verification=verification,
+        scope_lines=scope_lines, table=table)
 
-# {cell(area['title'])}
+
+# Template section contract, without invented pre-flight claims or task ids.
+BRIEF_TEMPLATE = """<!-- aidevops:brief-schema=v2 -->
+
+# {title}
 
 ## Origin
 
-- **Created:** {date.today().isoformat()}
+- **Created:** {created}
 - **Conversation context:** Quality sweep from SonarCloud and Codacy open findings.
-- **Blocked by:** {', '.join(dependencies) or 'N/A because this area has no overlapping predecessor'}
+- **Blocked by:** {dependencies}
 
 ## What
 
-Resolve the {len(rows)} captured findings in this area and regenerate the scoped committed outputs.
+Resolve the {count} captured findings in this area and regenerate the scoped committed outputs.
 
 ## Why
 
@@ -290,7 +309,7 @@ Leaf issue: use a closing keyword for this issue only.
 ## Captured Findings
 
 <details>
-<summary>Full findings table ({len(rows)} findings)</summary>
+<summary>Full findings table ({count} findings)</summary>
 
 | File | Line | Source | Rule | Message |
 | --- | --- | --- | --- | --- |
@@ -302,21 +321,29 @@ Leaf issue: use a closing keyword for this issue only.
 
 def plan(config, grouped, output, repo):
     plans = []
+    titles = set()
     for area in config["areas"]:
         rows = grouped.get(area["id"], [])
         if not rows:
             continue
         target = repository(area.get("repo", repo))
+        title_key = (target, area["title"])
+        if title_key in titles:
+            raise ValueError("Area titles must be unique within a repository")
+        titles.add(title_key)
         scope = sorted({row["file"] for row in rows} | {exact(p) for p in area.get("generated", [])})
         dependencies = [item["id"] for item in plans
                         if item["repo"] == target and set(item["scope"]) & set(scope)]
         path = output / (area["id"] + ".md")
-        path.write_text(brief(area, rows, scope, dependencies))
-        result = run(["bash", str(SCRIPTS / "verify-brief-helper.sh"), "check-readiness", str(path)])
-        if "WORKER_READY=true" not in result:
-            raise ValueError("Brief failed worker readiness")
+        contract = json.dumps([target, scope, dependencies, area["verification"]], sort_keys=True)
+        digest = hashlib.sha256(contract.encode()).hexdigest()
+        marker = f"<!-- aidevops:quality-area:{area['id']}:{digest} -->"
+        path.write_text(brief(area, rows, scope, dependencies) + "\n" + marker + "\n")
+        check_ready(path)
         plans.append(dict(id=area["id"], repo=target, title=area["title"], scope=scope,
                           dependencies=dependencies, brief=str(path), count=len(rows),
+                          marker=marker,
+                          status="status:blocked" if dependencies else "status:available",
                           sources=dict(Counter(row["source"] for row in rows))))
     return plans
 
@@ -326,7 +353,11 @@ def gh(*args):
 
 
 def write(*args):
-    return run(["bash", str(SCRIPTS / "gh-write-helper.sh"), *args])
+    # Pending publication deliberately omits auto-dispatch, but still owns the
+    # worker assignment policy. Use the wrapper's existing pending-publication
+    # interface so held new issues are not accidentally assigned to the caller.
+    env = {**os.environ, "AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT": "1"}
+    return run(["bash", str(SCRIPTS / "gh-write-helper.sh"), *args], env=env)
 
 
 def open_issues(repo):
@@ -334,9 +365,29 @@ def open_issues(repo):
     return [issue for page in pages for issue in page if "pull_request" not in issue]
 
 
-def publish(plans):
-    known, numbers = {}, {}
+def check_ready(path):
+    result = run(["bash", str(SCRIPTS / "verify-brief-helper.sh"), "check-readiness", str(path)])
+    if "WORKER_READY=true" not in result.splitlines():
+        raise ValueError("Brief failed worker readiness")
+
+
+def check_unclaimed(issue):
+    if issue.get("state", "open") != "open" or issue["assignees"] or any(
+        label["name"] in ("status:in-progress", "status:claimed", "status:in-review")
+        for label in issue["labels"]
+    ):
+        raise ValueError("Existing area is closed or owned by an active worker")
+
+
+def prepare_publish(plans):
+    known = {}
+    # Check the entire publication before mutating anything, including limits
+    # and immutable contracts. Never remap an existing sweep into new edges.
     for item in plans:
+        item.pop("existing", None)
+        item.pop("released", None)
+        if len(Path(item["brief"]).read_text()) > 60000:
+            raise ValueError("Brief exceeds safe GitHub body limit; split this area before publishing")
         repo = item["repo"]
         if repo not in known:
             known[repo] = open_issues(repo)
@@ -346,12 +397,23 @@ def publish(plans):
         if matches_title:
             issue = matches_title[0]
             # Never hijack an unrelated/claimed issue with an identical title.
-            if "<!-- aidevops:quality-area:" + item["id"] + " -->" not in issue["body"]:
-                raise ValueError("Existing title lacks this area's ownership marker")
-            if issue["assignees"] or any(label["name"] in ("status:in-progress", "status:claimed") for label in issue["labels"]):
-                raise ValueError("Existing area is owned by an active worker")
+            if item["marker"] not in (issue["body"] or ""):
+                raise ValueError("Existing area contract differs; use new sweep titles for changed scope/order")
+            check_unclaimed(issue)
+            item["existing"] = issue
+    by_id = {item["id"]: item for item in plans}
+    for item in plans:
+        if item.get("existing") and any(not by_id[name].get("existing") for name in item["dependencies"]):
+            raise ValueError("Existing successor has a missing/closed predecessor; finish the earlier sweep first")
+    for item in plans:
+        repo = item["repo"]
+        issue = item.get("existing")
+        if issue:
             number = issue["number"]
             print(f"existing_issue={repo}#{number}", flush=True)
+            # Released issues are immutable on retries. Workers may claim them
+            # after our read; reuse without label/body mutations avoids a race.
+            item["released"] = any(label["name"] == "auto-dispatch" for label in issue["labels"])
         else:
             # All new issues start held and without auto-dispatch. A partial
             # failure must never expose overlapping workers to the queue.
@@ -360,12 +422,21 @@ def publish(plans):
             number = int(url.rstrip("/").split("/")[-1])
             print(f"created_issue={repo}#{number}", flush=True)
         item["number"] = number
-        numbers[item["id"]] = number
-        # Hold deduped issues too, before any relationship mutations.
-        write("issue", "edit", str(number), "--repo", repo, "--add-label", "status:blocked",
-              "--remove-label", "status:available", "--remove-label", "auto-dispatch")
+        if not item.get("released"):
+            fresh = json.loads(gh("api", f"repos/{repo}/issues/{number}"))
+            check_unclaimed(fresh)
+            write("issue", "edit", str(number), "--repo", repo, "--add-label", "status:blocked",
+                  "--remove-label", "status:available", "--remove-label", "auto-dispatch")
+
+
+def publish(plans):
+    prepare_publish(plans)
+    numbers = {item["id"]: item["number"] for item in plans}
     for item in plans:
+        if item.get("released"):
+            continue
         repo, number = item["repo"], item["number"]
+        check_unclaimed(json.loads(gh("api", f"repos/{repo}/issues/{number}")))
         endpoint = f"repos/{repo}/issues/{number}/dependencies/blocked_by"
         for predecessor in item["dependencies"]:
             previous = numbers[predecessor]
@@ -376,11 +447,21 @@ def publish(plans):
             edges = json.loads(gh("api", "--paginate", "--slurp", endpoint))
             if not any(edge["number"] == previous for page in edges for edge in page):
                 raise ValueError("Native blockedBy relationship was not verified")
-            write("issue", "edit", str(number), "--repo", repo, "--add-label", f"blocked-by:{previous}")
+        # Persist human/machine-readable issue numbers, not local area ids.
+        path = Path(item["brief"])
+        body = path.read_text()
+        dependency_text = ", ".join(f"blocked-by:#{numbers[name]}" for name in item["dependencies"])
+        body = re.sub(r"^- \*\*Blocked by:\*\* .*$",
+                      "- **Blocked by:** " + (dependency_text or "N/A because this area has no overlapping predecessor"),
+                      body, flags=re.MULTILINE)
+        path.write_text(body)
+        check_ready(path)
+        write("issue", "edit", str(number), "--repo", repo, "--body-file", str(path))
         # Check all native edges, including edges left by a previous run.
         edges = json.loads(gh("api", "--paginate", "--slurp", endpoint))
         blocked = any(edge.get("state", "open") == "open" for page in edges for edge in page)
         status = "status:blocked" if blocked else "status:available"
+        check_unclaimed(json.loads(gh("api", f"repos/{repo}/issues/{number}")))
         write("issue", "edit", str(number), "--repo", repo, "--add-label", status,
               "--remove-label", "status:available" if blocked else "status:blocked", "--add-label", "auto-dispatch")
 
@@ -421,9 +502,6 @@ def main():
     output = Path(tempfile.mkdtemp(prefix="quality-area-briefs-", dir=temporary))
     os.chmod(output, 0o700)
     plans = plan(config, grouped, output, repo)
-    for item in plans:
-        path = Path(item["brief"])
-        path.write_text(path.read_text() + f"\n<!-- aidevops:quality-area:{item['id']} -->\n")
     report = dict(areas=plans, sources=dict(Counter(row["source"] for row in findings)),
                   dropped=dict(Counter(row["source"] + ":" + row["rule"] for row in dropped)))
     (output / "plan.json").write_text(json.dumps(report, indent=2) + "\n")
