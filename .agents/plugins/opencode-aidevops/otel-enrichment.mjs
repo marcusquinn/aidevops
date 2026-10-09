@@ -32,6 +32,8 @@
  * `null` when the load failed (becomes permanent no-op).
  * @type {{ getActiveSpan: () => any } | null | undefined}
  */
+import { activeLocalOnlyPolicy } from "./local-only-policy.mjs";
+
 let _traceApi;
 
 /**
@@ -98,6 +100,7 @@ export function runtimeEventOtelAttributes(event) {
  * @returns {Promise<boolean>} true when an attribute was applied
  */
 export async function enrichActiveSpan(attrs) {
+  if (activeLocalOnlyPolicy().bound) return false;
   try {
     if (!attrs || typeof attrs !== "object") return false;
     const api = await loadTraceApi();

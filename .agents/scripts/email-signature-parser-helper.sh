@@ -667,6 +667,9 @@ resolve_ai_cli() {
 llm_extract_signature() {
 	local sig_block="$1"
 	local result=""
+	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+	# The CLI fallback has no verified local model or destination selection.
+	vault_runtime_policy_check "remote/signature-extraction" || return 64
 
 	# Skip LLM if explicitly disabled
 	if [[ "${EMAIL_PARSER_NO_LLM:-}" == "true" ]]; then

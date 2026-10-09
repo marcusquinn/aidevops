@@ -19,6 +19,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+vault_runtime_policy_check "remote/video-generation" || exit 64
 
 # =============================================================================
 # Configuration

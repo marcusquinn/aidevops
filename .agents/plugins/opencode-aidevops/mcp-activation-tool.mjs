@@ -15,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { assertLocalOnlyMcp } from "./local-only-policy.mjs";
 
 export { enforceManagedMcpArtifactPath } from "./mcp-artifact-path.mjs";
 
@@ -269,6 +270,7 @@ async function executeMcpActivation(args, context, allowed, options) {
   }
 
   const workspace = managedWorkspace(name, options);
+  if (action === "connect") assertLocalOnlyMcp(name);
   try {
     if (action === "connect") {
       await connectMcp(name, options, workspace);

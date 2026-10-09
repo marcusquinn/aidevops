@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, join } from "path";
 import { runtimePath } from "./runtime-path.mjs";
+import { activeLocalOnlyPolicy, isLoopbackDestination } from "./local-only-policy.mjs";
 
 /**
  * Read a file if it exists, or return empty string.
@@ -257,6 +258,17 @@ function projectSessionIdentity(input, env, onSessionIdentity) {
 }
 
 function projectOtelEnvironment(env) {
+  if (activeLocalOnlyPolicy().bound) {
+    env.AIDEVOPS_RUNTIME_POLICY = "local-only";
+    const endpoints = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+      "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"];
+    if (endpoints.some((key) => (env[key] || process.env[key])
+      && !isLoopbackDestination(env[key] || process.env[key]))) {
+      env.OTEL_SDK_DISABLED = "true";
+      for (const key of [...OTEL_ENV_VARS, ...endpoints]) env[key] = "";
+      return;
+    }
+  }
   for (const key of OTEL_ENV_VARS) {
     const value = process.env[key];
     if (value && !env[key]) env[key] = value;

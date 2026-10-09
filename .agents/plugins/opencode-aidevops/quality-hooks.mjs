@@ -21,6 +21,7 @@ import {
 } from "./output-compaction.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
+import { assertLocalOnlyToolCall } from "./local-only-policy.mjs";
 import {
   checkSecretReadGate,
   isReadTool,
@@ -291,6 +292,7 @@ async function resolveToolSourceContexts(ctx, input, output, sessionId, after = 
 }
 
 async function handleToolBefore(ctx, log, input, output) {
+  assertLocalOnlyToolCall(input.tool, output.args || {});
   assertPrivateProcessingRead({ tool: input.tool, args: output.args || {},
     repositoryDir: ctx.repositoryDir, sessionID: input.sessionID || input.sessionId || "",
     classification: ctx.privateProcessingPolicy });

@@ -30,6 +30,29 @@ ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 # Anthropic model for summarisation (cheapest tier)
 ANTHROPIC_MODEL = 'claude-haiku-4-20250414'
 
+_RUNTIME_BOUND = os.environ.get('AIDEVOPS_RUNTIME_POLICY', '').strip().lower() not in {
+    '', 'provider-ai', 'provider-allowed', 'provider-ai-approved'
+}
+
+
+def _runtime_policy_check(model, destination=''):
+    """Run the shared gate without passing email content to the subprocess."""
+    if not _RUNTIME_BOUND:
+        return
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vault-data-policy-helper.sh')
+    result = subprocess.run(['bash', helper, 'check', '--model', model],
+                            capture_output=True, check=False)
+    if result.returncode:
+        raise RuntimeError('VAULT_POLICY_DENIED: summary provider blocked before sending')
+    host = urllib.parse.urlsplit(destination).hostname
+    if host not in {'localhost', '::1'} and not (host and re.fullmatch(r'127\.\d{1,3}\.\d{1,3}\.\d{1,3}', host)):
+        raise RuntimeError('VAULT_POLICY_DENIED: summary destination blocked before sending')
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError('VAULT_POLICY_DENIED: summary redirect blocked before sending')
+
 
 def _validated_ollama_api_url():
     """Return the configured Ollama HTTP(S) URL, or None when it is unsafe."""
@@ -154,6 +177,8 @@ def _summarise_with_ollama(plain_text, subject):
     if not api_url:
         return None
 
+    _runtime_policy_check('ollama/summary', api_url)
+
     req = urllib.request.Request(
         api_url,
         data=payload,
@@ -163,7 +188,8 @@ def _summarise_with_ollama(plain_text, subject):
     try:
         # _validated_ollama_api_url restricts this configurable target to an
         # HTTP(S) URL with an authority before the request is constructed.
-        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310 nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected,python_urlopen_rule-urllib-urlopen
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect()) if _RUNTIME_BOUND else urllib.request
+        with opener.open(req, timeout=30) if _RUNTIME_BOUND else opener.urlopen(req, timeout=30) as resp:  # nosec B310 nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected,python_urlopen_rule-urllib-urlopen
             data = json.loads(resp.read().decode('utf-8'))
             summary = data.get('response', '').strip()
             if summary:
@@ -182,6 +208,7 @@ def _summarise_with_anthropic(plain_text, subject):
 
     Returns summary string or None if API is unavailable.
     """
+    _runtime_policy_check('anthropic/summary')
     api_key = _get_anthropic_api_key()
     if not api_key:
         return None
