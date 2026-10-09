@@ -52,6 +52,7 @@ import {
   scrubToolOutput,
 } from "./quality-hooks-output-scrub.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
+import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -290,6 +291,9 @@ async function resolveToolSourceContexts(ctx, input, output, sessionId, after = 
 }
 
 async function handleToolBefore(ctx, log, input, output) {
+  assertPrivateProcessingRead({ tool: input.tool, args: output.args || {},
+    repositoryDir: ctx.repositoryDir, sessionID: input.sessionID || input.sessionId || "",
+    classification: ctx.privateProcessingPolicy });
   ctx.continuationGuard?.beforeTool(input, output);
   enforceDirectFileMutationSafety(ctx, input, output);
 
@@ -437,6 +441,7 @@ export function createQualityHooks(deps) {
   const detailLogPath = join(logsDir, "quality-hooks-detail.log");
   const detailMaxBytes = 5 * 1024 * 1024; // 5MB before rotation
   const ctx = {
+    privateProcessingPolicy: loadPrivateProcessingPolicy(),
     scriptsDir,
     activeScriptsDir,
     activeScriptsDirBinding,
