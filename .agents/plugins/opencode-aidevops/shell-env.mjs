@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, join } from "path";
 import { runtimePath } from "./runtime-path.mjs";
-import { activeLocalOnlyPolicy, isLoopbackDestination } from "./local-only-policy.mjs";
+import { projectLocalOnlyShellEnvironment } from "./local-only-shell-policy.mjs";
 
 /**
  * Read a file if it exists, or return empty string.
@@ -258,21 +258,6 @@ function projectSessionIdentity(input, env, onSessionIdentity) {
 }
 
 function projectOtelEnvironment(env) {
-  if (activeLocalOnlyPolicy().bound) {
-    env.AIDEVOPS_RUNTIME_POLICY = "local-only";
-    env.OTEL_SDK_DISABLED = "true";
-    env.OTEL_TRACES_EXPORTER = "none";
-    env.OTEL_METRICS_EXPORTER = "none";
-    env.OTEL_LOGS_EXPORTER = "none";
-    const endpoints = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-      "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"];
-    if (endpoints.some((key) => (env[key] || process.env[key])
-      && !isLoopbackDestination(env[key] || process.env[key]))) {
-      env.OTEL_SDK_DISABLED = "true";
-      for (const key of [...OTEL_ENV_VARS, ...endpoints]) env[key] = "";
-      return;
-    }
-  }
   for (const key of OTEL_ENV_VARS) {
     const value = process.env[key];
     if (value && !env[key]) env[key] = value;
@@ -305,6 +290,7 @@ async function shellEnvHook(config, input, output) {
   projectFrameworkEnvironment(output.env, config);
   projectSessionIdentity(input, output.env, config.onSessionIdentity);
   projectOtelEnvironment(output.env);
+  projectLocalOnlyShellEnvironment(output.env);
   if (config.sourceAccessRuntime) {
     Object.assign(output.env, await config.sourceAccessRuntime.environment(getSessionId(input)));
   }

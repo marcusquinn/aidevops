@@ -14,6 +14,9 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from pathlib import Path
+from vault_runtime_policy import RUNTIME_BOUND as _RUNTIME_BOUND
+from vault_runtime_policy import runtime_policy_check as _runtime_policy_check
+from vault_runtime_policy import NoRedirect as _NoRedirect
 
 # Word count threshold: emails with <= this many words use heuristic summary
 SUMMARY_WORD_THRESHOLD = 100
@@ -29,31 +32,6 @@ ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 
 # Anthropic model for summarisation (cheapest tier)
 ANTHROPIC_MODEL = 'claude-haiku-4-20250414'
-
-_RUNTIME_BOUND = os.environ.get('AIDEVOPS_RUNTIME_POLICY', '').strip().lower() not in {
-    '', 'provider-ai', 'provider-allowed', 'provider-ai-approved'
-}
-
-
-def _runtime_policy_check(model, destination=''):
-    """Run the shared gate without passing email content to the subprocess."""
-    if not _RUNTIME_BOUND:
-        return
-    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vault-data-policy-helper.sh')
-    result = subprocess.run(['bash', helper, 'check', '--model', model],
-                            capture_output=True, check=False,
-                            env={**os.environ, 'AIDEVOPS_RUNTIME_POLICY': 'local-only'})
-    if result.returncode:
-        raise RuntimeError('VAULT_POLICY_DENIED: summary provider blocked before sending')
-    host = urllib.parse.urlsplit(destination).hostname
-    if host not in {'localhost', '::1'} and not (host and re.fullmatch(r'127\.\d{1,3}\.\d{1,3}\.\d{1,3}', host)):
-        raise RuntimeError('VAULT_POLICY_DENIED: summary destination blocked before sending')
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise RuntimeError('VAULT_POLICY_DENIED: summary redirect blocked before sending')
-
 
 def _validated_ollama_api_url():
     """Return the configured Ollama HTTP(S) URL, or None when it is unsafe."""

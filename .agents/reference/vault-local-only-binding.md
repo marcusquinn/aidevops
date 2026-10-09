@@ -108,7 +108,7 @@ are refused. V2 snapshots resolved managed entries; unknown user entries deny.
 
 A network-command denylist is not a confinement boundary: interpreters, wrappers,
 custom binaries and cleared environments bypass it. Instead, bound Bash and
-bounded-operation starts accept only one literal, proxy/config-free curl form:
+bounded-operation network starts accept only one literal, proxy/config-free curl form:
 
 ```bash
 /usr/bin/curl --disable --noproxy '*' --proxy '' --max-time 30 --url 'http://127.0.0.1:11434/api/tags'
@@ -124,6 +124,13 @@ run. Already-running owned loopback listeners are reachable, but opaque local
 listener startup and arbitrary local shell workflows remain denied until a verified
 OS sandbox can allow those without external egress. This is a deliberate safety-stop
 fallback, not a claim that the full owned-listener compatibility criterion is met.
+
+Bound Bash also preserves single literal `cat`, `head`, `tail`, `wc`, `ls` and
+`stat` reads through fixed system executables, without options or composition.
+Both the absolute operand and resolved symlink target must pass the existing
+secret-path classifier; lookup failures deny. Credential approval is never granted
+through Bash: use the existing guarded native read path instead. Path checks are
+not atomic with execution and do not protect against concurrent filesystem changes.
 
 ### Helpers and telemetry
 

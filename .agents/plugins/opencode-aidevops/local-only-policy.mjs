@@ -10,16 +10,15 @@
 // provider is not local fails closed before any bytes leave the device.
 // Unbound sessions are unaffected.
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+export { LOCAL_ONLY_CURL, isLocalOnlyCurlArgv } from "./local-only-shell-policy.mjs";
+export { captureLocalOnlyMcpConfig, assertLocalOnlyToolDestination, assertLocalOnlyMcp,
+  assertLocalOnlyToolCall } from "./local-only-tool-policy.mjs";
 
 export const RUNTIME_POLICY_ENV = "AIDEVOPS_RUNTIME_POLICY";
 export const VAULT_POLICY_DENIED = "VAULT_POLICY_DENIED";
-// Fixed system locations only; never resolve an executable from model-controlled
-// PATH or a working directory. NixOS does not provide /usr/bin/curl.
-export const LOCAL_ONLY_CURL = existsSync("/usr/bin/curl")
-  ? "/usr/bin/curl" : "/run/current-system/sw/bin/curl";
 
 // Shared with scripts/vault-data-policy-helper.sh; never fork this list.
 export const LOCAL_PROVIDERS_FILE = resolve(
@@ -104,90 +103,6 @@ export function initLocalOnlyPolicy(env = process.env) {
 /** @returns {ReturnType<typeof loadLocalOnlyPolicy>} */
 export function activeLocalOnlyPolicy() {
   return activePolicy || initLocalOnlyPolicy();
-}
-
-// #aidevops:trust-boundary — populated only by host configuration hooks, never
-// by tool arguments. Copy primitive fields so later config mutation cannot turn
-// a previously approved local entry into a remote destination.
-const mcpConfigurations = new Map();
-export function captureLocalOnlyMcpConfig(entries, directory = process.cwd()) {
-  const snapshot = Object.fromEntries(Object.entries(entries || {}).map(([name, entry]) =>
-    [name, Object.freeze({ type: entry?.type, url: entry?.url })]));
-  mcpConfigurations.set(resolve(directory), Object.freeze(snapshot));
-}
-
-export function assertLocalOnlyToolDestination(allowed, policy = activeLocalOnlyPolicy()) {
-  if (policy.bound && !allowed) {
-    throw new LocalOnlyPolicyError("Tool egress was blocked before execution by the local-only session binding.");
-  }
-}
-
-export function assertLocalOnlyMcp(name, policy = activeLocalOnlyPolicy(), directory = process.cwd()) {
-  const entry = mcpConfigurations.get(resolve(directory))?.[name];
-  assertLocalOnlyToolDestination(entry?.type === "local"
-    || (entry?.type === "remote" && isLoopbackDestination(entry.url)), policy);
-}
-
-const LOCAL_NATIVE_TOOLS = new Set([
-  "read", "grep", "glob", "list", "write", "edit", "apply_patch", "todowrite", "todoread",
-  "task", "aidevops_hook_status", "aidevops_pre_edit_check",
-]);
-
-// No shell denylist: opaque programs can always open sockets or clear their
-// environment. This single literal invocation disables curlrc, proxies and
-// redirects; a URL cannot inject options, shell syntax or another destination.
-export function isLocalOnlyCurlArgv(argv) {
-  if (!Array.isArray(argv) || argv.length !== 10) return false;
-  const prefix = [LOCAL_ONLY_CURL, "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url"];
-  if (!prefix.every((part, index) => argv[index] === part)) return false;
-  const url = argv[9];
-  return typeof url === "string" && /^[a-zA-Z0-9:/?&=._%+\[\]-]+$/.test(url)
-    && isLoopbackDestination(url) && !new URL(url).username && !new URL(url).password;
-}
-
-function canonicalLocalCurl(argv) {
-  if (!Array.isArray(argv) || argv.length !== 2 || argv[0] !== "curl") return argv;
-  const canonical = [LOCAL_ONLY_CURL, "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url", argv[1]];
-  return isLocalOnlyCurlArgv(canonical) ? canonical : argv;
-}
-
-export function assertLocalOnlyToolCall(tool, args = {}, policy = activeLocalOnlyPolicy(), directory = process.cwd()) {
-  if (!policy.bound) return;
-  const name = String(tool || "").toLowerCase();
-  if (name === "bash" || name === "functions_bash") {
-    const simple = /^curl (?:'([^']+)'|([a-zA-Z0-9:/?=._%+\[\]-]+))$/.exec(args.command || "");
-    if (simple) {
-      const canonical = canonicalLocalCurl(["curl", simple[1] || simple[2]]);
-      if (isLocalOnlyCurlArgv(canonical)) {
-        args.command = `${LOCAL_ONLY_CURL} --disable --noproxy '*' --proxy '' --max-time 30 --url '${canonical[9]}'`;
-      }
-    }
-    const match = /^(\/usr\/bin\/curl|\/run\/current-system\/sw\/bin\/curl) --disable --noproxy '\*' --proxy '' --max-time 30 --url '([^']+)'$/.exec(args.command || "");
-    assertLocalOnlyToolDestination(Boolean(match) && isLocalOnlyCurlArgv([
-      match[1], "--disable", "--noproxy", "*", "--proxy", "", "--max-time", "30", "--url", match[2],
-    ]), policy);
-    return;
-  }
-  if (name.endsWith("aidevops_bounded_operation")) {
-    if (args.action === "start") {
-      args.command = canonicalLocalCurl(args.command);
-      if (args.restoration_command) args.restoration_command = canonicalLocalCurl(args.restoration_command);
-    }
-    const safeControl = ["status", "output", "cancel"].includes(args.action);
-    const safeStart = args.action === "start" && isLocalOnlyCurlArgv(args.command)
-      && (!args.restoration_command || isLocalOnlyCurlArgv(args.restoration_command));
-    assertLocalOnlyToolDestination(safeControl || safeStart, policy);
-    return;
-  }
-  if (name === "aidevops_mcp") {
-    if (args.action === "connect") assertLocalOnlyMcp(args.name, policy, directory);
-    return;
-  }
-  // Longest prefix first avoids ambiguous user server names (foo vs foo_bar).
-  const server = Object.keys(mcpConfigurations.get(resolve(directory)) || {}).sort((a, b) => b.length - a.length)
-    .find((key) => name.startsWith(`${key.toLowerCase()}_`) || name.startsWith(`mcp__${key.toLowerCase()}__`));
-  if (server) return assertLocalOnlyMcp(server, policy, directory);
-  assertLocalOnlyToolDestination(LOCAL_NATIVE_TOOLS.has(name), policy);
 }
 
 /**

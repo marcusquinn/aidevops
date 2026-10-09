@@ -100,10 +100,9 @@ export function runtimeEventOtelAttributes(event) {
  * @returns {Promise<boolean>} true when an attribute was applied
  */
 export async function enrichActiveSpan(attrs) {
-  if (activeLocalOnlyPolicy().bound) return false;
   try {
     if (!attrs || typeof attrs !== "object") return false;
-    const api = await loadTraceApi();
+    const api = activeLocalOnlyPolicy().bound ? null : await loadTraceApi();
     const span = api?.getActiveSpan?.();
     if (!span || typeof span.setAttributes !== "function") return false;
     const cleaned = safeOtelAttributes(attrs);

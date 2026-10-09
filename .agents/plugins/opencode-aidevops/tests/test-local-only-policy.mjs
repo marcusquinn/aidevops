@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,6 +27,28 @@ import { selectConnectedRoutingCandidate } from "../model-routing.mjs";
 const PLUGIN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = resolve(PLUGIN_DIR, "../../..");
 const SENTINEL = "SENTINEL-GH34125-must-not-leave-device";
+
+test("literal shell readers deny credential paths and symlink aliases", () => {
+  const root = mkdtempSync(join(tmpdir(), "local-only-reader-"));
+  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  try {
+    writeFileSync(join(root, ".env"), SENTINEL);
+    writeFileSync(join(root, "public.txt"), "public fixture");
+    symlinkSync(join(root, ".env"), join(root, "alias.txt"));
+    for (const reader of ["cat", "head", "tail", "wc", "ls", "stat"]) {
+      for (const path of [".env", "alias.txt"]) {
+        assert.throws(() => assertLocalOnlyToolCall("bash", {
+          command: `${reader} ${path}`, workdir: root,
+        }, policy), /VAULT_POLICY_DENIED/);
+      }
+    }
+    assert.doesNotThrow(() => assertLocalOnlyToolCall("bash", {
+      command: "cat public.txt", workdir: root,
+    }, policy));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("binding: unset and provider-* opt-outs are unbound; local tokens and unknown values bind", () => {
   assert.equal(loadLocalOnlyPolicy({}).bound, false);
@@ -402,8 +424,8 @@ test("MCP approvals cannot cross project configuration boundaries", () => {
   const remoteProject = join(REPO_ROOT, "project-remote");
   captureLocalOnlyMcpConfig({ same: { type: "local" } }, localProject);
   captureLocalOnlyMcpConfig({ same: { type: "remote", url: "https://api.example.com" } }, remoteProject);
-  assert.doesNotThrow(() => assertLocalOnlyToolCall("same_send", {}, policy, localProject));
-  assert.throws(() => assertLocalOnlyToolCall("same_send", { cwd: localProject }, policy, remoteProject), /VAULT_POLICY_DENIED/);
+  assert.doesNotThrow(() => assertLocalOnlyToolCall("same_send", {}, { ...policy, directory: localProject }));
+  assert.throws(() => assertLocalOnlyToolCall("same_send", { cwd: localProject }, { ...policy, directory: remoteProject }), /VAULT_POLICY_DENIED/);
 });
 
 test("conversation env -i preserves binding and telemetry protection at the actual child boundary", () => {
