@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.44] - 2026-10-10
+
+### Added
+
+- add SEO Utils MCP support via on-demand @seo-utils
+- delete job-less, log-less ghost queued runs (GH#34001) (#34192)
+- gate non-closing For/Ref worker PR auto-merge (#34194)
+
+### Changed
+
+- Maintenance: mark t18607 complete (pr:#34207 completed:2026-10-09) (#34211)
+- Documentation: add Google Cloud operations guide (GH#34204) (#34209)
+- Maintenance: sync ref:GH#34205 to TODO.md (#34202)
+
+### Fixed
+
+- launch enrichment in a dispatcher-owned worktree (GH#33877) (#34207)
+- bound replay and review monitoring job hangs (#34188)
+- normalize TODO sync SSH remotes and skip contributor repos (#34198)
+- keep the deterministic pipeline running when preflight prefetch times out (GH#34000) (#34201)
+- report cause of cleanup-receipt RECONCILIATION_FAILED (GH#34002) (#34190)
+
 ## [3.38.43] - 2026-10-09
 
 ### Changed
