@@ -267,7 +267,8 @@ ACTIVE_OUTPUT=$(
 	AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add "$ACTIVE_RECEIPT_BRANCH" "$ACTIVE_RECEIPT_PATH" 2>&1
 ) || ACTIVE_RC=$?
 if [[ "$ACTIVE_RC" -eq 0 || -d "$ACTIVE_RECEIPT_PATH" ||
-	"$ACTIVE_OUTPUT" != *"AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED"* ]]; then
+	"$ACTIVE_OUTPUT" != *"AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED"* ||
+	"$ACTIVE_OUTPUT" != *"Cleanup-receipt reconciliation refused: a receipt for"*"is not CLEANED"* ]]; then
 	printf 'FAIL active cleanup receipt did not roll back path recreation: rc=%s output=%s\n' \
 		"$ACTIVE_RC" "$ACTIVE_OUTPUT"
 	exit 1

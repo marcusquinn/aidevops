@@ -1163,7 +1163,12 @@ _cmd_add_reconcile_cleanup_generation() {
 	local reconcile_status=0
 
 	declare -F full_loop_supersede_cleaned_receipts_for_recreated_worktree >/dev/null 2>&1 || return 0
-	head_sha=$(git -C "$path" rev-parse --verify HEAD 2>/dev/null) || return 1
+	head_sha=$(git -C "$path" rev-parse --verify HEAD 2>/dev/null) || {
+		print_warning "Cleanup-receipt reconciliation refused: could not resolve HEAD of the new worktree at ${path}."
+		printf 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED branch=%s head=unknown reason=head_unresolved\n' \
+			"$branch" >&2
+		return 1
+	}
 	if receipt_path=$(full_loop_supersede_cleaned_receipts_for_recreated_worktree \
 		"$path" "$branch" "$head_sha" "$owner_pid" "$owner_session"); then
 		prior_pr=$(jq -r '.pr_number // empty' "$receipt_path" 2>/dev/null || true)
@@ -1175,9 +1180,9 @@ _cmd_add_reconcile_cleanup_generation() {
 		reconcile_status=$?
 	fi
 	[[ "$reconcile_status" -eq 2 ]] && return 0
-	print_warning "Worktree creation cannot continue because cleanup-receipt generation reconciliation failed."
-	printf 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED branch=%s head=%s\n' \
-		"$branch" "$head_sha" >&2
+	print_warning "Worktree creation cannot continue because cleanup-receipt generation reconciliation failed (status ${reconcile_status}; reason printed above)."
+	printf 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED branch=%s head=%s status=%s\n' \
+		"$branch" "$head_sha" "$reconcile_status" >&2
 	return 1
 }
 
