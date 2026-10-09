@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+import { activeLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { notifyLocalFailure } from "./private-processing-policy.mjs";
+export { localFailureCheck } from "./local-only-policy.mjs";
+
 const REQUEST_ID_HEADERS = [
   "x-request-id",
   "request-id",
@@ -104,39 +108,44 @@ function toastMessage(diagnostic, modelIdentity) {
 }
 
 /** Explain provider 403 failures without exposing response bodies or headers. */
-export function createProviderErrorHandler({ client, isHeadless, resolveSessionModel, now = Date.now }) {
+export function createProviderErrorHandler({ client, isHeadless, resolveSessionModel, now = Date.now,
+  policy = activeLocalOnlyPolicy(), append }) {
   const emitted = new Map();
   return async function providerErrorHandler(input) {
-    if (isHeadless()) return;
     const event = input?.event || input || {};
-    const sessionID = event.properties?.sessionID || event.properties?.info?.id || "";
+    const properties = event.properties || event.data || {};
+    const sessionID = properties.sessionID || properties.info?.id || "";
     if (event.type === "session.deleted") {
       emitted.delete(sessionID);
       return;
     }
     if (event.type !== "session.error" || !sessionID) return;
-    const diagnostic = normalizeProviderError(event.properties?.error);
-    if (!diagnostic || !["gateway_denied", "access_denied"].includes(diagnostic.classification)) return;
-    const timestamp = now();
-    const previousTimestamp = emitted.get(sessionID) || 0;
-    if (timestamp - previousTimestamp < 30000) return;
-    emitted.set(sessionID, timestamp);
-    const modelIdentity = resolveSessionModel?.(sessionID) || "";
-    try {
-      await client.tui.showToast({
-        body: {
-          title: "Provider request denied",
-          message: toastMessage(diagnostic, modelIdentity),
-          variant: "warning",
-          duration: 15000,
-        },
-      });
-    } catch (error) {
-      if (emitted.get(sessionID) === timestamp) {
-        if (previousTimestamp) emitted.set(sessionID, previousTimestamp);
-        else emitted.delete(sessionID);
-      }
-      throw error;
+    if (policy.bound) {
+      return notifyLocalFailure({ client, isHeadless, now, append, emitted }, sessionID, properties.error);
     }
+    if (isHeadless()) return;
+    return notifyProviderDenial({ client, resolveSessionModel, now, emitted }, sessionID, event.properties?.error);
   };
+}
+
+async function notifyProviderDenial({ client, resolveSessionModel, now, emitted }, sessionID, error) {
+  const diagnostic = normalizeProviderError(error);
+  if (!diagnostic || !["gateway_denied", "access_denied"].includes(diagnostic.classification)) return;
+  const timestamp = now();
+  const previousTimestamp = emitted.get(sessionID) || 0;
+  if (timestamp - previousTimestamp < 30000) return;
+  emitted.set(sessionID, timestamp);
+  const modelIdentity = resolveSessionModel?.(sessionID) || "";
+  try {
+    await client.tui.showToast({ body: {
+      title: "Provider request denied", message: toastMessage(diagnostic, modelIdentity),
+      variant: "warning", duration: 15000,
+    } });
+  } catch (toastError) {
+    if (emitted.get(sessionID) === timestamp) {
+      if (previousTimestamp) emitted.set(sessionID, previousTimestamp);
+      else emitted.delete(sessionID);
+    }
+    throw toastError;
+  }
 }

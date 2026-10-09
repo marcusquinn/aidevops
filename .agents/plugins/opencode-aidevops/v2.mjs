@@ -38,6 +38,7 @@ import {
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
 import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
 import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
@@ -458,6 +459,8 @@ export async function setupAidevopsV2(ctx) {
     }));
 
     const normalizeCompletion = createV2CompletionNormalizer();
+    const providerErrorHandler = createProviderErrorHandler({ client, isHeadless,
+      policy: localOnlyPolicy, resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) });
     stopEvents = await startEventLoop(ctx, async (input) => {
       const completed = normalizeCompletion(input.event);
       const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
@@ -466,6 +469,7 @@ export async function setupAidevopsV2(ctx) {
         completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         permissionBroker.handleEvent(input),
+        providerErrorHandler(input),
       ]);
     });
     recordPluginHealthStage("factory_initialized", {
