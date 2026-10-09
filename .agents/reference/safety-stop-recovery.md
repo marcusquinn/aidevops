@@ -96,6 +96,38 @@ Choose the first route that can still satisfy the original acceptance criteria:
 Increasing limits or retrying the same resource-intensive route is allowed only
 after evidence shows the triggering condition changed and the new bound is safe.
 
+## Security and Privacy Blockers
+
+A security, privacy, permission, or data-residency gate is also a safety stop:
+it denies one operation, not the conversation or the objective. Respond in the
+same turn; silence or a generic refusal is a failure.
+
+1. **Name the blocked operation** in plain language: what was denied, by which
+   gate or restriction, and on what evidence. Separate known evidence from
+   unknown cause; never attribute a block to a provider, safety filter, or
+   policy decision without evidence. Do not recast an ordinary authorized
+   request as suspicious or "unintended" activity.
+2. **Continue permitted work.** Proceed with independent, already-authorized
+   safe work, such as source-only repair, synthetic verification, or answering
+   a status question. If nothing can proceed, give the exact owner action and
+   resume condition in a few lines, not an essay.
+3. **Never route around the gate.** Do not retry the denied action, reroute
+   protected data to another model or provider, read raw transcripts, escalate
+   model capability, mint or broaden permissions, resume a blocked write, or
+   clear the blocker to make the session look responsive.
+4. **Keep wait states distinct.** An explicit user cancellation or a pending
+   approval is not a stall; never replay work automatically after either.
+5. **Preserve restrictions.** Model, data-location, and side-effect restrictions
+   survive compaction, reconnect, and resume. Record them under "Preserved user
+   directions" and "Unsafe route not to repeat" in the checkpoint above.
+
+When a turn produces no answer at all, a model cannot diagnose its own missing
+response from prose. In interactive OpenCode sessions the plugin's
+content-free turn diagnostics (`session-turn-diagnostics.mjs`) report whether a
+silent turn was cancelled, failed at the provider, ended without visible text,
+or is waiting on a permission or tool. They never abort, prompt, or retry.
+Absent metadata stays `unknown`; it is not proof that a security filter acted.
+
 ## Mission and Worker Semantics
 
 - A worker time budget stops that worker invocation, not the task. Before exit,
