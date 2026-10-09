@@ -7,169 +7,16 @@ import argparse
 from collections import Counter, defaultdict
 from datetime import date
 import hashlib
-import html
 import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import tempfile
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, quote, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-SCRIPTS = Path(__file__).resolve().parent
-
-
-def run(argv, cwd=None, env=None):
-    """Never execute service text or area selectors as shell syntax."""
-    # argv is internal tooling or trusted operator local_check, never API text.
-    result = subprocess.run(  # nosec B603 - trusted argv, no shell or service commands
-        argv, cwd=cwd, env=env, shell=False, text=True, capture_output=True, check=False)
-    if result.returncode:
-        # External stderr can include secrets, service text or private paths.
-        raise ValueError(f"Command failed: {Path(argv[0]).name} (exit {result.returncode})")
-    return result.stdout
-
-
-def load(path):
-    return json.loads(Path(path).read_text())
-
-
-def exact(path):
-    if not isinstance(path, str) or not re.fullmatch(
-        r"[A-Za-z0-9_.()\[\]-]+(?:/[A-Za-z0-9_.()\[\]-]+)*", path
-    ) or any(part in (".", "..", ".git") for part in path.split("/")):
-        raise ValueError("Expected an exact repository-relative path")
-    return path
-
-
-def repository(value):
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
-        raise ValueError("Expected owner/repository")
-    return value
-
-
-class NoServiceRedirect(HTTPRedirectHandler):
-    """Do not forward authenticated service requests to redirect targets."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise ValueError("Service redirect refused")
-
-
-def request_json(url, headers, payload=None):
-    parsed = urlsplit(url)
-    if parsed.scheme != "https" or parsed.netloc not in ("sonarcloud.io", "api.codacy.com"):
-        raise ValueError("Only the configured HTTPS analysis services are permitted")
-    body = None if payload is None else json.dumps(payload).encode()
-    request = Request(url, data=body, headers={**headers, "Content-Type": "application/json"})
-    try:
-        with build_opener(NoServiceRedirect()).open(request, timeout=60) as response:
-            return json.load(response)
-    except HTTPError as error:
-        raise ValueError(f"Service request failed (HTTP {error.code})") from None
-    except URLError:
-        raise ValueError("Service request failed (network)") from None
-
-
-def fetch_sonar(key):
-    findings = []
-    headers = {}
-    if os.environ.get("SONAR_TOKEN"):
-        headers["Authorization"] = "Bearer " + os.environ["SONAR_TOKEN"]
-    page = 1
-    while True:
-        query = urlencode(dict(componentKeys=key, types="CODE_SMELL", resolved="false", ps=500, p=page))
-        data = request_json("https://sonarcloud.io/api/issues/search?" + query, headers)
-        rows = data["issues"]
-        findings.extend(rows)
-        total = data.get("total", data.get("paging", {}).get("total"))
-        if total is None:
-            raise ValueError("SonarCloud response has no total")
-        if page * 500 >= total:
-            return findings
-        if not rows:
-            raise ValueError("SonarCloud pagination ended before total")
-        page += 1
-
-
-def fetch_codacy(repo):
-    token = os.environ.get("CODACY_API_TOKEN")
-    if not token:
-        raise ValueError("CODACY_API_TOKEN is required for live findings")
-    org, name = repo.split("/")
-    base = ("https://api.codacy.com/api/v3/analysis/organizations/gh/"
-            f"{quote(org, safe='')}/repositories/{quote(name, safe='')}/issues/search")
-    rows, seen, cursor = [], set(), None
-    while True:
-        query = {"limit": 1000}
-        if cursor:
-            query["cursor"] = cursor
-        data = request_json(base + "?" + urlencode(query), {"api-token": token}, {})
-        rows.extend(data["data"])
-        cursor = data.get("pagination", {}).get("cursor")
-        if not cursor:
-            return rows
-        if cursor in seen:
-            raise ValueError("Codacy repeated its pagination cursor")
-        seen.add(cursor)
-
-
-def normalize(rows, source):
-    result = []
-    for row in rows:
-        if source == "sonarcloud":
-            path = row["component"].split(":", 1)[-1]
-            rule, tool = row["rule"], "sonarcloud"
-            line = row.get("line", row.get("textRange", {}).get("startLine", 0))
-        else:
-            path = row["filePath"]
-            pattern = row.get("patternInfo", {})
-            rule = pattern["id"]
-            tool = pattern.get("toolId", pattern.get("tool", "codacy"))
-            if isinstance(tool, dict):
-                tool = tool.get("name", tool.get("id", "codacy"))
-            line = row.get("lineNumber", row.get("line", 0))
-        result.append(dict(file=exact(path), line=int(line or 0), source=source,
-                           rule=str(rule), tool=str(tool), message=str(row.get("message", ""))))
-    return result
-
-
-def noise_checks(config, root):
-    """Require config evidence and an actual same-config local analyzer result."""
-    checks = {}
-    for entry in config.get("disabled_rules", []):
-        path = root / exact(entry["config"])
-        content = path.read_bytes()
-        if entry["config_contains"] not in content.decode():
-            raise ValueError("Disabled rule is not evidenced in repository config")
-        argv = entry["local_check"]
-        if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
-            raise ValueError("local_check must be a trusted argv array")
-        cache_key = tuple(argv)
-        if cache_key not in checks:
-            checks[cache_key] = json.loads(run(argv, root))
-        evidence = checks[cache_key]
-        if evidence["config_sha256"] != hashlib.sha256(content).hexdigest():
-            raise ValueError("Local analyzer result used a different config")
-        yield entry, evidence["findings"]
-
-
-def matches(area, finding):
-    return (any(finding["file"].startswith(prefix) for prefix in area.get("prefixes", []))
-            or finding["rule"] in area.get("rules", [])
-            or finding["tool"] in area.get("tools", []))
-
-
-def core_files(config, root):
-    upstream = config.get("upstream", {})
-    core = set(upstream.get("files", []))
-    if upstream.get("files_file"):
-        core.update(line.strip() for line in (root / exact(upstream["files_file"])).read_text().splitlines()
-                    if line.strip() and not line.lstrip().startswith("#"))
-    for path in core:
-        exact(path)
-    return core
+from quality_area_publish import check_ready, is_noise, load, noise_checks, publish, run
+from quality_area_findings import (
+    cell, core_files, exact, fetch_codacy, fetch_sonar, matches, normalize, repository,
+)
 
 
 def file_owner(config, path, rows, core):
@@ -185,15 +32,6 @@ def file_owner(config, path, rows, core):
         return config["hotspots"][path]
     return next((area["id"] for area in areas if any(matches(area, row) for row in rows)),
                 config.get("default_area"))
-
-
-def is_noise(row, noise):
-    for entry, local_rows in noise:
-        if entry["source"] != row["source"] or entry["rule"] != row["rule"]:
-            continue
-        if not any(local["file"] == row["file"] and local["rule"] == row["rule"] for local in local_rows):
-            return True
-    return False
 
 
 def classify(config, findings, root):
@@ -217,15 +55,6 @@ def classify(config, findings, root):
             raise ValueError("Unmapped finding file or unknown area; refusing partial coverage")
         grouped[owner].extend(kept)
     return grouped, dropped
-
-
-def cell(value):
-    # Escape both HTML and markdown table/control syntax from untrusted APIs.
-    text = html.escape(str(value), quote=True)
-    for before, after in (("|", "&#124;"), ("`", "&#96;"), ("{", "&#123;"),
-                          ("}", "&#125;"), ("\n", " "), ("\r", " ")):
-        text = text.replace(before, after)
-    return text
 
 
 def brief(area, rows, scope, dependencies):
@@ -366,124 +195,6 @@ def plan(config, grouped, output, repo):
                           status="status:blocked" if dependencies else "status:available",
                           sources=dict(Counter(row["source"] for row in rows))))
     return plans
-
-
-def gh(*args):
-    return run(["gh", *args])
-
-
-def write(*args):
-    # Pending publication deliberately omits auto-dispatch, but still owns the
-    # worker assignment policy. Use the wrapper's existing pending-publication
-    # interface so held new issues are not accidentally assigned to the caller.
-    env = {**os.environ, "AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT": "1"}
-    return run(["bash", str(SCRIPTS / "gh-write-helper.sh"), *args], env=env)
-
-
-def open_issues(repo):
-    pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/issues?state=open&per_page=100"))
-    return [issue for page in pages for issue in page if "pull_request" not in issue]
-
-
-def check_ready(path):
-    result = run(["bash", str(SCRIPTS / "verify-brief-helper.sh"), "check-readiness", str(path)])
-    if "WORKER_READY=true" not in result.splitlines():
-        raise ValueError("Brief failed worker readiness")
-
-
-def check_unclaimed(issue):
-    if issue.get("state", "open") != "open" or issue["assignees"] or any(
-        label["name"] in ("status:in-progress", "status:claimed", "status:in-review")
-        for label in issue["labels"]
-    ):
-        raise ValueError("Existing area is closed or owned by an active worker")
-
-
-def prepare_publish(plans):
-    known = {}
-    # Check the entire publication before mutating anything, including limits
-    # and immutable contracts. Never remap an existing sweep into new edges.
-    for item in plans:
-        item.pop("existing", None)
-        item.pop("released", None)
-        if len(Path(item["brief"]).read_text()) > 60000:
-            raise ValueError("Brief exceeds safe GitHub body limit; split this area before publishing")
-        repo = item["repo"]
-        if repo not in known:
-            known[repo] = open_issues(repo)
-        matches_title = [issue for issue in known[repo] if issue["title"] == item["title"]]
-        if len(matches_title) > 1:
-            raise ValueError("Ambiguous duplicate issue titles")
-        if matches_title:
-            issue = matches_title[0]
-            # Never hijack an unrelated/claimed issue with an identical title.
-            if item["marker"] not in (issue["body"] or ""):
-                raise ValueError("Existing area contract differs; use new sweep titles for changed scope/order")
-            check_unclaimed(issue)
-            item["existing"] = issue
-    by_id = {item["id"]: item for item in plans}
-    for item in plans:
-        if item.get("existing") and any(not by_id[name].get("existing") for name in item["dependencies"]):
-            raise ValueError("Existing successor has a missing/closed predecessor; finish the earlier sweep first")
-    for item in plans:
-        repo = item["repo"]
-        issue = item.get("existing")
-        if issue:
-            number = issue["number"]
-            print(f"existing_issue={repo}#{number}", flush=True)
-            # Released issues are immutable on retries. Workers may claim them
-            # after our read; reuse without label/body mutations avoids a race.
-            item["released"] = any(label["name"] == "auto-dispatch" for label in issue["labels"])
-        else:
-            # All new issues start held and without auto-dispatch. A partial
-            # failure must never expose overlapping workers to the queue.
-            url = write("issue", "create", "--repo", repo, "--title", item["title"],
-                        "--body-file", item["brief"], "--label", "status:blocked", "--label", "tier:standard").strip().splitlines()[-1]
-            number = int(url.rstrip("/").split("/")[-1])
-            print(f"created_issue={repo}#{number}", flush=True)
-        item["number"] = number
-        if not item.get("released"):
-            fresh = json.loads(gh("api", f"repos/{repo}/issues/{number}"))
-            check_unclaimed(fresh)
-            write("issue", "edit", str(number), "--repo", repo, "--add-label", "status:blocked",
-                  "--remove-label", "status:available", "--remove-label", "auto-dispatch")
-
-
-def publish(plans):
-    prepare_publish(plans)
-    numbers = {item["id"]: item["number"] for item in plans}
-    for item in plans:
-        if item.get("released"):
-            continue
-        repo, number = item["repo"], item["number"]
-        check_unclaimed(json.loads(gh("api", f"repos/{repo}/issues/{number}")))
-        endpoint = f"repos/{repo}/issues/{number}/dependencies/blocked_by"
-        for predecessor in item["dependencies"]:
-            previous = numbers[predecessor]
-            current = json.loads(gh("api", "--paginate", "--slurp", endpoint))
-            if not any(edge["number"] == previous for page in current for edge in page):
-                database_id = json.loads(gh("api", f"repos/{repo}/issues/{previous}"))["id"]
-                gh("api", "-X", "POST", endpoint, "-F", f"issue_id={database_id}")
-            edges = json.loads(gh("api", "--paginate", "--slurp", endpoint))
-            if not any(edge["number"] == previous for page in edges for edge in page):
-                raise ValueError("Native blockedBy relationship was not verified")
-        # Persist human/machine-readable issue numbers, not local area ids.
-        path = Path(item["brief"])
-        body = path.read_text()
-        dependency_text = ", ".join(f"blocked-by:#{numbers[name]}" for name in item["dependencies"])
-        body = re.sub(r"^- \*\*Blocked by:\*\* .*$",
-                      "- **Blocked by:** " + (dependency_text or "N/A because this area has no overlapping predecessor"),
-                      body, flags=re.MULTILINE)
-        path.write_text(body)
-        check_ready(path)
-        write("issue", "edit", str(number), "--repo", repo, "--body-file", str(path))
-        # Check all native edges, including edges left by a previous run.
-        edges = json.loads(gh("api", "--paginate", "--slurp", endpoint))
-        blocked = any(edge.get("state", "open") == "open" for page in edges for edge in page)
-        status = "status:blocked" if blocked else "status:available"
-        check_unclaimed(json.loads(gh("api", f"repos/{repo}/issues/{number}")))
-        write("issue", "edit", str(number), "--repo", repo, "--add-label", status,
-              "--remove-label", "status:available" if blocked else "status:blocked", "--add-label", "auto-dispatch")
 
 
 def main():
