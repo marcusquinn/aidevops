@@ -37,6 +37,7 @@ import {
   loadTeamInterfaceConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
+import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
 import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
@@ -298,6 +299,8 @@ export async function setupAidevopsV2(ctx) {
     adapterId: "opencode-v2",
   });
 
+  // GH#34125 #aidevops:trust-boundary: bind before any hook registers.
+  const localOnlyPolicy = initLocalOnlyPolicy(process.env);
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
@@ -411,6 +414,7 @@ export async function setupAidevopsV2(ctx) {
     // Released 2.0.3 dispatches these hooks separately on the base transcript.
     // Keep framework transformations identical before adding compaction's tail.
     const transformContext = async (event) => {
+      assertLocalOnlyEgress(localOnlyPolicy, event, "context");
       const input = v1HookInput(event);
       sessionModels.remember(event.sessionID, input.model.modelID);
       const legacy = { system: systemStrings(event.system), messages: event.messages };
@@ -439,7 +443,14 @@ export async function setupAidevopsV2(ctx) {
         content: [{ type: "text", text }],
       })));
     }));
-    await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));
+    await register(registrations, ctx.session.hook("http.request", async (event) => {
+      // GH#34125: check the outgoing Request, and again after our own
+      // provider-auth rewrite so no aidevops mutation can change the endpoint.
+      // Other installed plugins are trusted in-process code (reference/vault.md).
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+      await providerAuth.httpRequest(event);
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+    }));
     await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
     await register(registrations, ctx.session.hook("retry", providerAuth.retry));
     await register(registrations, ctx.permission.hook("evaluate", async (event) => {

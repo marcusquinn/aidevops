@@ -22,6 +22,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=vault-data-policy-helper.sh
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
 
 set -euo pipefail
 
@@ -341,6 +343,8 @@ call_anthropic() {
 	local credential_kind=""
 	local credential_value=""
 	local -a auth_headers=()
+	# GH#34125: direct API egress bypasses the plugin's chat.params gate.
+	vault_runtime_policy_check "anthropic/$(resolve_model_id "$model_name")" || return 1
 	if ! resolve_provider_credential_typed anthropic; then
 		log_error "No Anthropic API key found (env, gopass, credentials.sh, or OAuth pool)"
 		return 2
@@ -403,6 +407,8 @@ call_opencode() {
 	if [[ -z "$model_id" ]]; then
 		model_id=$(resolve_opencode_model_id "$model_name") || return 2
 	fi
+	# GH#34125: deny before spawning; the nested plugin gate is defence in depth.
+	vault_runtime_policy_check "$model_id" || return 1
 	variant_id=$(resolve_opencode_variant "$model_name" "$model_id")
 	if [[ -n "$variant_id" ]]; then
 		variant_args=(--variant "$variant_id")

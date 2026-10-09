@@ -83,6 +83,7 @@ import {
   isRemoteInteractiveConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
+import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 
 // Existing modules
 import { createTools, tool } from "./tools.mjs";
@@ -247,7 +248,7 @@ installPluginConsoleRouter({
   debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
 });
 
-function createConversationHooks({client, conversation, directory}) {
+function createConversationHooks({client, conversation, directory, localOnlyPolicy}) {
   const configHook = createConfigHook({
     agentsDir: AGENTS_DIR,
     workspaceDir: WORKSPACE_DIR,
@@ -263,12 +264,15 @@ function createConversationHooks({client, conversation, directory}) {
     config: configHook,
     "tool.definition": adaptToolDefinition,
     "chat.message": async () => 0,
-    "chat.params": async (input, output) => applyConversationRootVariant(
-      input,
-      output,
-      conversation,
-      {client, resolveVariant: resolveTierReasoning, tierReasoning},
-    ),
+    "chat.params": async (input, output) => {
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      return applyConversationRootVariant(
+        input,
+        output,
+        conversation,
+        {client, resolveVariant: resolveTierReasoning, tierReasoning},
+      );
+    },
     "tool.execute.before": async (input, output) => enforceConversationPathAccess(
       input.tool,
       output.args || {},
@@ -340,13 +344,16 @@ function applyBoundedOperationPermission(config) {
  */
 export async function AidevopsPlugin({ directory, client }) {
   const initializedAtMs = Date.now();
+  // GH#34125 #aidevops:trust-boundary: bind local-only policy from the launch
+  // environment before any hook can run; later env mutation cannot change it.
+  const localOnlyPolicy = initLocalOnlyPolicy(process.env);
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
   });
 
   if (isRestrictedConversation(conversation)) {
-    return createConversationHooks({client, conversation, directory});
+    return createConversationHooks({client, conversation, directory, localOnlyPolicy});
   }
 
   const mcpRuntime = createMcpSessionRuntime(WORKSPACE_DIR, { repositoryDir: directory });
@@ -681,6 +688,9 @@ export async function AidevopsPlugin({ directory, client }) {
     // Record routed request identity and select parent-safe child effort.
     "chat.message": subagentEffortHooks.chatMessage,
     "chat.params": async (input, output) => {
+      // GH#34125: first, so a bound session never reaches the provider stream
+      // (parent turns, subagents, compaction and resumed sessions alike).
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
       contextBudget.apply(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
       sessionModels.remember(sessionId, modelId);

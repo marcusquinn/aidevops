@@ -28,3 +28,9 @@ keep conclusions traceable to evidence.
 Buzz shared compute is not proof of local execution. Treat `relay-mesh` as a
 routing provider unless the active runtime independently verifies a stronger
 privacy boundary.
+
+Local-only work needs an enforced boundary, not intent: launch the session with
+`AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode` so remote model requests
+fail closed before sending. A `VAULT_POLICY_DENIED` stop is the safe outcome;
+report it and never reroute to a remote provider. Details:
+`reference/vault-local-only-binding.md`.
