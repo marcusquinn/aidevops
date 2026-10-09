@@ -317,7 +317,7 @@ export async function setupAidevopsV2(ctx) {
       recordOutput: createOutputSandboxRecorder(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
       readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
     });
-    const baseTools = createTools(SCRIPTS_DIR, run, {
+    const baseTools = tool.schemasUnavailable ? {} : createTools(SCRIPTS_DIR, run, {
       aidevopsRun: runChecked,
       sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
       poolToolFactory: () => createPoolTool(client),
@@ -328,7 +328,9 @@ export async function setupAidevopsV2(ctx) {
       managedMcpWorkspaces: mcpRuntime.workspaces,
       boundedOperationManager,
     });
-    baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+    if (!tool.schemasUnavailable) {
+      baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+    }
 
     const continuationGuard = createSessionContinuationGuard({
       repository: directory,
@@ -389,7 +391,9 @@ export async function setupAidevopsV2(ctx) {
     }));
 
     await register(registrations, ctx.tool.transform((editor) => {
-      addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
+      if (!tool.schemasUnavailable) {
+        addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
+      }
       editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
       editor.update("grep", (definition) => adaptToolDefinition({ toolID: "grep" }, definition));
       editor.update("apply_patch", (definition) => adaptToolDefinition({ toolID: "apply_patch" }, definition));

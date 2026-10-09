@@ -366,7 +366,9 @@ test("versioned runtime profiles keep SDK-specific names outside shared logic", 
   assert.equal(profileForOpenCodeVersion("OpenCode 2.0.3").id, "v2");
 });
 
-test("V1 tool definitions adapt to structured V2 registrations", async () => {
+test("V1 tool definitions adapt to structured V2 registrations", {
+  skip: tool.schemasUnavailable ? "@opencode-ai/plugin unavailable: custom tools are disabled" : false,
+}, async () => {
   const added = [];
   addV1ToolsToV2Editor({ add: (definition) => added.push(definition) }, {
     sample: tool({
@@ -553,7 +555,10 @@ test("V2 provider responses retain request-specific account affinity", async () 
 
 test("V1 tool schemas still resolve across stable package layouts", async () => {
   const helper = (definition) => definition;
-  helper.schema = {};
+  helper.schema = {
+    object: () => ({}),
+    string: () => ({ _zod: { def: { type: "string" } } }),
+  };
   const attempts = [];
   const selected = await loadV1ToolHelper({
     importer: async (specifier) => {
@@ -572,6 +577,22 @@ test("V1 tool schemas still resolve across stable package layouts", async () => 
     },
   });
   assert.equal(fallback, helper);
+});
+
+test("unresolvable or incomplete schemas disable tools, but pinned runtimes fail closed", async () => {
+  const incomplete = (definition) => definition;
+  incomplete.schema = {};
+  const importer = async () => ({ tool: incomplete });
+  const fallback = await loadV1ToolHelper({ importer, requirePinnedRuntime: false });
+  assert.equal(fallback.schemasUnavailable, true);
+  assert.equal(tool.schemasUnavailable === true, typeof tool.schema.object !== "function");
+  await assert.rejects(loadV1ToolHelper({ importer, requirePinnedRuntime: true }),
+    /Pinned remote runtime cannot resolve/);
+  const missing = await loadV1ToolHelper({
+    importer: async () => { throw new Error("package not installed"); },
+    requirePinnedRuntime: false,
+  });
+  assert.equal(missing.schemasUnavailable, true);
 });
 
 test("project custom tools use the host-resolved V1 schema package", () => {

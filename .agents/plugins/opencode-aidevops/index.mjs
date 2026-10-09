@@ -429,7 +429,7 @@ export async function AidevopsPlugin({ directory, client }) {
     readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
   });
   process.once("exit", () => boundedOperationManager.dispose());
-  const baseTools = createTools(SCRIPTS_DIR, run, {
+  const baseTools = tool.schemasUnavailable ? {} : createTools(SCRIPTS_DIR, run, {
     aidevopsRun: runChecked,
     sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
     poolToolFactory: () => createPoolTool(client),
@@ -443,10 +443,12 @@ export async function AidevopsPlugin({ directory, client }) {
     managedMcpWorkspaces: mcpRuntime.workspaces,
     boundedOperationManager,
   });
-  baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+  if (!tool.schemasUnavailable) {
+    baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
   // GH#32592: V1 sends every tool schema on every request, so rarely used
   // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
-  moveToolsOnDemand(baseTools, tool);
+    moveToolsOnDemand(baseTools, tool);
+  }
 
   // Create hooks from extracted modules
   const modelRouting = loadModelRouting([
