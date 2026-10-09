@@ -129,7 +129,7 @@ DISPATCH_LABELS=(
 # --- aidevops System Labels ---
 SYSTEM_LABELS=(
 	"auto-dispatch|0E8A16|Eligible for automated worker dispatch"
-	"publication:pending|FBCA04|Block: planning exists locally but is not yet published on the default branch"
+	"publication:pending|FBCA04|Dispatch hold until TODO+brief land on default branch; auto-clears, Pulse repairs after 6h"
 	"no-auto-dispatch|EDEDED|Opt-out: block all auto-dispatch on this issue"
 	"hold-for-review|${LABEL_COLOR_ATTENTION}|Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review"
 	"needs-credentials|${LABEL_COLOR_ATTENTION}|Opt-out: block auto-dispatch — requires credentials or account access"

@@ -32,6 +32,9 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# shellcheck source=./issue-sync-publication-repair.sh
+source "${BASH_SOURCE[0]%/*}/issue-sync-publication-repair.sh"
+
 # =============================================================================
 # cmd_pull
 # =============================================================================
@@ -39,10 +42,11 @@ fi
 _print_pull_summary() {
 	local synced="$1" assignee_synced="$2" orphan_seeded="$3" orphan_skipped="$4"
 	local orphan_open="$5" orphan_closed="$6" publication_deferred="$7" orphan_list="$8"
+	local publication_repaired="${9:-0}"
 	printf "\n=== Pull Summary ===\nRefs synced: %d | Assignees: %d | Orphans seeded: %d | Orphans skipped: %d\n" \
 		"$synced" "$assignee_synced" "$orphan_seeded" "$orphan_skipped"
-	printf "Orphans open: %d closed: %d | Publication pending deferred: %d\n" \
-		"$orphan_open" "$orphan_closed" "$publication_deferred"
+	printf "Orphans open: %d closed: %d | Publication pending deferred: %d | Publication repaired: %d\n" \
+		"$orphan_open" "$orphan_closed" "$publication_deferred" "$publication_repaired"
 	[[ $orphan_open -gt 0 ]] && print_warning "Open orphans: $orphan_list"
 	[[ $synced -eq 0 && $assignee_synced -eq 0 && $orphan_open -eq 0 ]] && print_success "TODO.md refs up to date"
 	return 0
@@ -52,12 +56,12 @@ cmd_pull() {
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
 	print_info "Pulling issue refs from GitHub ($repo) to TODO.md..."
-	local synced=0 orphan_open=0 orphan_closed=0 assignee_synced=0 orphan_list="" orphan_seeded=0 orphan_skipped=0 publication_deferred=0 state=""
+	local synced=0 orphan_open=0 orphan_closed=0 assignee_synced=0 orphan_list="" orphan_seeded=0 orphan_skipped=0 publication_deferred=0 publication_repaired=0 state=""
 	for state in open closed; do
 		local json
 		json=$(gh_list_issues "$repo" "$state" 200)
 		while IFS= read -r issue_line; do
-			local num title tid login
+			local num title tid
 			num=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
 			title=$(echo "$issue_line" | jq -r '.title' 2>/dev/null || echo "")
 			tid=$(task_identity_parse_title_prefix "$title" || true)
@@ -76,6 +80,12 @@ cmd_pull() {
 						local labels_json
 						labels_json=$(echo "$issue_line" | jq -r '.labels // []' 2>/dev/null || echo "[]")
 						if _issue_labels_include_exact "$labels_json" "publication:pending"; then
+							# GH#34149: stale, trusted, unpublished issues are repaired
+							# instead of deferred forever.
+							if publication_repair_stale_orphan "$repo" "$num" "$tid" "$title" "$issue_line" "$todo_file"; then
+								publication_repaired=$((publication_repaired + 1))
+								continue
+							fi
 							print_info "Publication pending: deferred orphan TODO seeding for #$num ($tid)"
 							publication_deferred=$((publication_deferred + 1))
 							continue
@@ -117,35 +127,40 @@ cmd_pull() {
 			fi
 			# Assignee sync (open issues only).
 			[[ "$state" != "open" ]] && continue
-			login=$(echo "$issue_line" | jq -r '.assignees[0].login // empty' 2>/dev/null || echo "")
-			[[ -z "$login" ]] && continue
-			local tl
-			tl=$(_first_todo_task_line_or_empty "$tid" "$todo_file") || return 1
-			[[ -z "$tl" ]] && continue
-			echo "$tl" | grep -qE 'assignee:[A-Za-z0-9._@-]+' && continue
-			if [[ "$DRY_RUN" == "true" ]]; then
-				print_info "[DRY-RUN] Would add assignee:$login to $tid"
-				assignee_synced=$((assignee_synced + 1))
-				continue
-			fi
-			local ln
-			ln=$(awk -v pat="^[[:space:]]*- \\[.\\] ${tid_ere} " '/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
-			if [[ -n "$ln" ]]; then
-				local cl
-				cl=$(sed -n "${ln}p" "$todo_file")
-				local nl
-				if echo "$cl" | grep -qE 'logged:'; then
-					nl=$(echo "$cl" | sed -E "s/( logged:)/ assignee:${login}\1/")
-				else nl="${cl} assignee:${login}"; fi
-				local nl_escaped
-				nl_escaped=$(printf '%s' "$nl" | sed 's/[|&\\]/\\&/g')
-				sed_inplace "${ln}s|.*|${nl_escaped}|" "$todo_file"
-				assignee_synced=$((assignee_synced + 1))
-			fi
+			local assignee_rc=0
+			_pull_sync_assignee "$issue_line" "$tid" "$tid_ere" "$todo_file" || assignee_rc=$?
+			[[ "$assignee_rc" -eq 2 ]] && return 1
+			[[ "$assignee_rc" -eq 0 ]] && assignee_synced=$((assignee_synced + 1))
 		done < <(echo "$json" | jq -c '.[]' 2>/dev/null || true)
 	done
 	_print_pull_summary "$synced" "$assignee_synced" "$orphan_seeded" "$orphan_skipped" \
-		"$orphan_open" "$orphan_closed" "$publication_deferred" "$orphan_list"
+		"$orphan_open" "$orphan_closed" "$publication_deferred" "$orphan_list" "$publication_repaired"
+	return 0
+}
+
+# Add assignee:<login> to an existing TODO row from the issue's first assignee.
+# Returns 0 when synced (or would be, in dry-run), 1 when nothing to do, 2 on
+# a TODO read failure.
+_pull_sync_assignee() {
+	local issue_line="$1" tid="$2" tid_ere="$3" todo_file="$4"
+	local login="" tl="" ln="" cl="" nl="" nl_escaped=""
+	login=$(echo "$issue_line" | jq -r '.assignees[0].login // empty' 2>/dev/null || echo "")
+	[[ -z "$login" ]] && return 1
+	tl=$(_first_todo_task_line_or_empty "$tid" "$todo_file") || return 2
+	[[ -z "$tl" ]] && return 1
+	echo "$tl" | grep -qE 'assignee:[A-Za-z0-9._@-]+' && return 1
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would add assignee:$login to $tid"
+		return 0
+	fi
+	ln=$(awk -v pat="^[[:space:]]*- \\[.\\] ${tid_ere} " '/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	[[ -n "$ln" ]] || return 1
+	cl=$(sed -n "${ln}p" "$todo_file")
+	if echo "$cl" | grep -qE 'logged:'; then
+		nl=$(echo "$cl" | sed -E "s/( logged:)/ assignee:${login}\1/")
+	else nl="${cl} assignee:${login}"; fi
+	nl_escaped=$(printf '%s' "$nl" | sed 's/[|&\\]/\\&/g')
+	sed_inplace "${ln}s|.*|${nl_escaped}|" "$todo_file"
 	return 0
 }
 

@@ -286,6 +286,95 @@ line_count=$(grep -c '^\- \[ \] t3003 .*ref:GH#20803' "$todo_k" 2>/dev/null || t
 check "$ok" "(k) pending label removed — orphan seeding resumes exactly once" "count=$line_count"
 rm -f "$todo_k"
 
+# ─── (l–q) GH#34149: stale pending publication repair ───────────────────────
+# Repair writes todo/tasks/ beside TODO.md, so each case uses its own root.
+
+READY_BRIEF=$'## Task\nDo it.\n## Why\nBecause.\n## How\nEdit x.sh.\n## Acceptance\n- [ ] done\n'
+REPAIR_AUTHOR_ASSOCIATION="MEMBER"
+REPAIR_BRIEF_BODY="$READY_BRIEF"
+gh() {
+	[[ "$1" == "api" && "$2" == repos/owner/repo/issues/* ]] || return 2
+	printf '%s\n' "$REPAIR_AUTHOR_ASSOCIATION"
+	return 0
+}
+_publication_repair_capture_brief() {
+	local brief_path="$4/todo/tasks/$3-brief.md"
+	mkdir -p "${brief_path%/*}" && printf '%s' "$REPAIR_BRIEF_BODY" >"$brief_path"
+	return 0
+}
+
+make_repair_root() {
+	local root=""
+	root=$(mktemp -d /tmp/test-pubrepair-XXXXXX)
+	printf '# Tasks\n\n- [ ] t0001 existing task #bug ref:GH#100\n' >"${root}/TODO.md"
+	printf '%s\n' "$root"
+	return 0
+}
+
+stale_issue() {
+	local num="$1" tid="$2" created="$3" extra_labels="${4:-}"
+	printf '[{"number":%s,"title":"%s: repair me","assignees":[],"createdAt":"%s","labels":[{"name":"publication:pending"},{"name":"bug"},{"name":"tier:standard"}%s]}]' \
+		"$num" "$tid" "$created" "$extra_labels"
+	return 0
+}
+
+root_l=$(make_repair_root)
+output_l=$(GITHUB_ACTIONS=false run_pull_with_issues "${root_l}/TODO.md" \
+	"$(stale_issue 20900 t3100 2020-01-01T00:00:00Z)" 2>&1)
+line_l=$(grep -E '^\- \[ \] t3100 ' "${root_l}/TODO.md" || true)
+[[ "$line_l" == *'ref:GH#20900'* && "$line_l" == *'#auto-dispatch'* && "$line_l" == *'#bug'* ]] && ok=1 || ok=0
+check "$ok" "(l) stale trusted pending orphan — row seeded with ref and #auto-dispatch" "line: $line_l"
+[[ "$line_l" != *'publication'* && "$line_l" != *'tier:'* ]] && ok=1 || ok=0
+check "$ok" "(l) stale repair — no publication/system label projected into tags" "line: $line_l"
+[[ -f "${root_l}/todo/tasks/t3100-brief.md" ]] && ok=1 || ok=0
+check "$ok" "(l) stale repair — brief captured beside TODO.md"
+printf '%s' "$output_l" | grep -q 'Publication repaired: 1' && ok=1 || ok=0
+check "$ok" "(l) stale repair — summary counts one repair" "output: $output_l"
+rm -rf "$root_l"
+
+root_m=$(make_repair_root)
+before_m=$(<"${root_m}/TODO.md")
+output_m=$(REPAIR_AUTHOR_ASSOCIATION=CONTRIBUTOR GITHUB_ACTIONS=false run_pull_with_issues "${root_m}/TODO.md" \
+	"$(stale_issue 20901 t3101 2020-01-01T00:00:00Z)" 2>&1)
+[[ "$before_m" == "$(<"${root_m}/TODO.md")" && ! -e "${root_m}/todo" ]] && ok=1 || ok=0
+check "$ok" "(m) untrusted author — no row or brief written"
+printf '%s' "$output_m" | grep -q 'Publication pending deferred: 1' && ok=1 || ok=0
+check "$ok" "(m) untrusted author — deferred" "output: $output_m"
+rm -rf "$root_m"
+
+root_n=$(make_repair_root)
+young_n=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+before_n=$(<"${root_n}/TODO.md")
+GITHUB_ACTIONS=false run_pull_with_issues "${root_n}/TODO.md" "$(stale_issue 20902 t3102 "$young_n")" >/dev/null 2>&1
+[[ "$before_n" == "$(<"${root_n}/TODO.md")" && ! -e "${root_n}/todo" ]] && ok=1 || ok=0
+check "$ok" "(n) young pending orphan — still deferred inside the grace window"
+rm -rf "$root_n"
+
+root_o=$(make_repair_root)
+GITHUB_ACTIONS=false run_pull_with_issues "${root_o}/TODO.md" \
+	"$(stale_issue 20903 t3103 2020-01-01T00:00:00Z ',{"name":"status:claimed"}')" >/dev/null 2>&1
+line_o=$(grep -E '^\- \[ \] t3103 ' "${root_o}/TODO.md" || true)
+[[ "$line_o" == *'ref:GH#20903'* && "$line_o" != *'#auto-dispatch'* ]] && ok=1 || ok=0
+check "$ok" "(o) live claim — published without adding #auto-dispatch" "line: $line_o"
+rm -rf "$root_o"
+
+root_p=$(make_repair_root)
+REPAIR_BRIEF_BODY=$'## Task\nThin.\n' GITHUB_ACTIONS=false run_pull_with_issues "${root_p}/TODO.md" \
+	"$(stale_issue 20904 t3104 2020-01-01T00:00:00Z)" >/dev/null 2>&1
+line_p=$(grep -E '^\- \[ \] t3104 ' "${root_p}/TODO.md" || true)
+[[ "$line_p" == *'ref:GH#20904'* && "$line_p" != *'#auto-dispatch'* ]] && ok=1 || ok=0
+check "$ok" "(p) non-worker-ready brief — published without #auto-dispatch" "line: $line_p"
+rm -rf "$root_p"
+
+root_q=$(make_repair_root)
+before_q=$(<"${root_q}/TODO.md")
+GITHUB_ACTIONS=true run_pull_with_issues "${root_q}/TODO.md" \
+	"$(stale_issue 20905 t3105 2020-01-01T00:00:00Z)" >/dev/null 2>&1
+[[ "$before_q" == "$(<"${root_q}/TODO.md")" && ! -e "${root_q}/todo" ]] && ok=1 || ok=0
+check "$ok" "(q) GitHub Actions — repair is Pulse-owned and stays deferred"
+rm -rf "$root_q"
+unset -f gh
+
 # ─── _labels_json_to_tags unit tests ────────────────────────────────────────
 
 # System labels excluded
