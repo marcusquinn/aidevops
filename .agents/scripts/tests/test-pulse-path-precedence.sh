@@ -5,32 +5,38 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WRAPPER="${SCRIPT_DIR}/../pulse-wrapper.sh"
+SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BASH_BIN="$(command -v bash)"
 
-# Exercise the actual bootstrap block without starting Pulse or contacting GitHub.
-PATH_BLOCK="$(awk '
- /^_aidevops_path_prefix=/ { capture = 1 }
- capture { print }
- /^unset _aidevops_path_prefix$/ { exit }
-' "$WRAPPER")"
-[[ -n "$PATH_BLOCK" ]] || {
-	printf 'FAIL: PATH bootstrap block missing\n' >&2
+# Every launchd/cron entrypoint bootstraps PATH through runtime-env.sh with the
+# daemon profile. Exercise each script's actual bootstrap lines (not a copy)
+# without running the script itself.
+entrypoints=()
+while IFS= read -r entry; do
+	entrypoints+=("$entry")
+done < <(cd "$SCRIPTS_DIR" && grep -rl --include='*.sh' '^AIDEVOPS_PATH_PROFILE=daemon' . | sort)
+[[ "${#entrypoints[@]}" -gt 0 ]] || {
+	printf 'FAIL: no daemon PATH bootstrap found\n' >&2
+	exit 1
+}
+grep -rl --include='*.sh' '^_aidevops_path_prefix=' "$SCRIPTS_DIR" && {
+	printf 'FAIL: legacy _aidevops_path_prefix block reintroduced\n' >&2
 	exit 1
 }
 
-for platform in Darwin Linux; do
+for entry in "${entrypoints[@]}"; do
+	script="${SCRIPTS_DIR}/${entry#./}"
+	block="$(awk '
+		/^AIDEVOPS_PATH_PROFILE=daemon/ { capture = 1 }
+		capture { print }
+		capture && /source "/ { exit }
+	' "$script")"
 	for initial in configured empty unset; do
 		# shellcheck disable=SC2016 # Expand test arguments inside the isolated child shell.
 		"$BASH_BIN" -c '
 			set -eu
-			platform="$1"
-			initial="$2"
-			block="$3"
-			uname() {
-				printf "%s\n" "$platform"
-				return 0
-			}
+			initial="$1"
+			block="$2"
 			case "$initial" in
 				configured) export PATH="/operator/toolchain:/operator/tools" ;;
 				empty) export PATH="" ;;
@@ -39,19 +45,29 @@ for platform in Darwin Linux; do
 			eval "$block"
 			if [[ "$initial" == configured ]]; then
 				[[ "$PATH" == /operator/toolchain:/operator/tools:* ]] || exit 1
-			else
-				[[ "$PATH" != :* ]] || exit 1
 			fi
-			[[ ":$PATH:" == *:/opt/homebrew/bin:* ]] || exit 1
-			[[ ":$PATH:" == *:/usr/local/bin:* ]] || exit 1
-			[[ ":$PATH:" == *:/usr/bin:* ]] || exit 1
-			[[ ":$PATH:" == *:/bin:* ]] || exit 1
-			[[ "$PATH" != *::* && "$PATH" != *: ]] || exit 1
-		' pulse-path-test "$platform" "$initial" "$PATH_BLOCK" || {
-			printf 'FAIL: platform=%s initial=%s\n' "$platform" "$initial" >&2
+			[[ "$PATH" != :* && "$PATH" != *::* && "$PATH" != *: ]] || exit 1
+			# Every existing daemon fallback root is present; missing ones are
+			# never added. The list comes from runtime-env.sh, not a copy.
+			[[ -n "${AIDEVOPS_DAEMON_PATH_FALLBACK:-}" ]] || exit 1
+			IFS=: read -r -a fallback_dirs <<<"$AIDEVOPS_DAEMON_PATH_FALLBACK"
+			for dir in "${fallback_dirs[@]}"; do
+				if [[ -d "$dir" ]]; then
+					[[ ":$PATH:" == *":$dir:"* ]] || exit 1
+				else
+					[[ ":$PATH:" != *":$dir:"* ]] || exit 1
+				fi
+			done
+			# Package-manager roots precede system roots (Homebrew bash 5
+			# over /bin/bash 3.2 when launchd starts with an empty PATH).
+			if [[ "$initial" != configured && -d /opt/homebrew/bin ]]; then
+				[[ "$PATH" == /opt/homebrew/bin:* ]] || exit 1
+			fi
+		' "$script" "$initial" "$block" || {
+			printf 'FAIL: %s initial=%s\n' "${entry#./}" "$initial" >&2
 			exit 1
 		}
 	done
 done
 
-printf 'PASS: configured PATH precedence and empty/unset fallbacks on Darwin and Linux\n'
+printf 'PASS: %s daemon entrypoints keep configured PATH precedence and existing fallbacks\n' "${#entrypoints[@]}"

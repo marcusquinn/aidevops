@@ -20,12 +20,10 @@
 
 set -euo pipefail
 
-_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/bin:/usr/bin"
-if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" && -d "/home/linuxbrew/.linuxbrew/bin" ]]; then
-	_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin"
-fi
-export PATH="${PATH:+${PATH}:}${_aidevops_path_prefix}"
-unset _aidevops_path_prefix
+AIDEVOPS_PATH_PROFILE=daemon _aidevops_self="${BASH_SOURCE[0]:-$0}"
+[[ "$_aidevops_self" == */* ]] || _aidevops_self="./${_aidevops_self}"
+# shellcheck source=runtime-env.sh
+[[ ! -f "${_aidevops_self%/*}/runtime-env.sh" ]] || source "${_aidevops_self%/*}/runtime-env.sh"
 
 # Source config-helper for _jsonc_get (shared JSONC config reader)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

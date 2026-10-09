@@ -11,6 +11,13 @@
 # tools; they never shadow inherited entries.
 AIDEVOPS_SYSTEM_PATH_FALLBACK="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# Fallback for launchd/cron entrypoints, which may start with an empty PATH:
+# package-manager roots first so e.g. Homebrew bash 5 wins over /bin/bash 3.2.
+# Selected by setting AIDEVOPS_PATH_PROFILE=daemon before sourcing this file:
+#   AIDEVOPS_PATH_PROFILE=daemon
+#   source "${BASH_SOURCE[0]%/*}/runtime-env.sh"
+AIDEVOPS_DAEMON_PATH_FALLBACK="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:${AIDEVOPS_SYSTEM_PATH_FALLBACK}"
+
 # Compose a PATH from colon-separated segments, in argument order.
 # Drops empty and relative entries, duplicates, missing directories (when
 # AIDEVOPS_PATH_KEEP_MISSING is not 1), and immutable runtime-bundle paths.
@@ -46,10 +53,11 @@ aidevops_compose_path() {
 # de-duplicate, and append generic system roots only as a fallback.
 aidevops_runtime_path() {
 	local input_path="${1:-${PATH:-}}"
-	local _arp_fallback=""
+	local _arp_fallback="$AIDEVOPS_SYSTEM_PATH_FALLBACK"
+	[[ "${AIDEVOPS_PATH_PROFILE:-}" != "daemon" ]] || _arp_fallback="$AIDEVOPS_DAEMON_PATH_FALLBACK"
 	# Inherited entries are kept even if missing (they may appear later, e.g.
 	# a mounted toolchain); fallback roots are only added when present.
-	_arp_fallback=$(aidevops_compose_path "$AIDEVOPS_SYSTEM_PATH_FALLBACK")
+	_arp_fallback=$(aidevops_compose_path "$_arp_fallback")
 	AIDEVOPS_PATH_KEEP_MISSING=1 aidevops_compose_path "$input_path" "$_arp_fallback"
 	return 0
 }
