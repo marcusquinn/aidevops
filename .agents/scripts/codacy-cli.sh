@@ -1,410 +1,558 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# shellcheck disable=SC2015,SC2181,SC2317
 set -euo pipefail
 
-# Codacy CLI v2 Integration Script
-# Comprehensive local code analysis with Codacy CLI v2
+# Codacy Analysis CLI integration (GH#34164)
 #
-# Usage: ./codacy-cli.sh [command] [options]
-# Commands:
-#   install     - Install Codacy CLI v2
-#   init        - Initialize project configuration
-#   analyze     - Run code analysis
-#   upload      - Upload SARIF results to Codacy
-#   status      - Check CLI status and configuration
-#   help        - Show this help message
+# Wraps Codacy's local analyzer: npm package @codacy/analysis-cli, command
+# `codacy-analysis` (Node.js 20+). Docs: https://docs.codacy.com/codacy-analysis-cli/
 #
-# Author: AI DevOps Framework
-# Version: 1.1.1
-# License: MIT
+# Usage: codacy-cli.sh <command> [options]   (see `codacy-cli.sh help`)
+#
+# Exit codes: 0 success / no findings
+#             1 findings reported, or the command failed
+#             2 usage or setup error (CLI missing, bad flags, missing auth),
+#               or analyzer tool errors during `analyze` (results still written)
+#
+# Tokens come from the environment only and are never passed on argv:
+#   CODACY_PROJECT_TOKEN, CODACY_<OWNER>_<REPO>_PROJECT_TOKEN (mapped to
+#   CODACY_PROJECT_TOKEN for this process only), CODACY_API_TOKEN, or the
+#   credentials stored by `codacy-analysis login`.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-# Common constants
-# Configuration
-readonly CODACY_CLI_VERSION="1.0.0-main.361.sha.f961a76"
-readonly CODACY_CONFIG_DIR=".codacy"
-readonly CODACY_CONFIG_FILE="$CODACY_CONFIG_DIR/codacy.yaml"
-readonly CODACY_API_CONFIG="configs/codacy-config.json"
-# API token loaded from environment variable CODACY_API_TOKEN
+readonly CODACY_PACKAGE="@codacy/analysis-cli"
+readonly CODACY_PINNED_VERSION="${CODACY_ANALYSIS_CLI_VERSION:-0.24.0}"
+readonly CODACY_BIN="codacy-analysis"
+readonly CODACY_MIN_NODE_MAJOR=20
+readonly CODACY_CONFIG_FILE=".codacy/codacy.config.json"
+readonly CODACY_DEFAULT_SARIF="codacy-results.sarif"
+readonly CODACY_CREDENTIALS_FILE="${HOME}/.codacy/credentials"
 
-# Print functions
-# Load API configuration
-load_api_config() {
-    # Check environment variable first (set via credentials.sh, sourced by .zshrc)
-    # CODACY_PROJECT_TOKEN is the standard env var name
-    if [[ -z "${CODACY_API_TOKEN:-}" && -n "${CODACY_PROJECT_TOKEN:-}" ]]; then
-        export CODACY_API_TOKEN="$CODACY_PROJECT_TOKEN"
-    fi
+# Populated by resolve_repo_coords
+CODACY_COORD_PROVIDER=""
+CODACY_COORD_ORG=""
+CODACY_COORD_REPO=""
 
-    if [[ -f "$CODACY_API_CONFIG" ]]; then
-        print_info "Loading Codacy API configuration from $CODACY_API_CONFIG"
-
-        # API token should be set in environment variable
-        if [[ -z "${CODACY_API_TOKEN:-}" ]]; then
-            print_error "CODACY_API_TOKEN/CODACY_PROJECT_TOKEN not found in environment"
-            print_info "Add to ~/.config/aidevops/credentials.sh:"
-            print_info "  export CODACY_PROJECT_TOKEN=\"your-token\""
-            return 1
-        fi
-
-        # Set organization and repository from config if available
-        if command -v jq >/dev/null 2>&1; then
-            local org
-            org=$(jq -r '.organization // empty' "$CODACY_API_CONFIG" 2>/dev/null)
-            local repo
-            repo=$(jq -r '.repository // empty' "$CODACY_API_CONFIG" 2>/dev/null)
-
-            if [[ -n "$org" && -n "$repo" ]]; then
-                export CODACY_ORGANIZATION="$org"
-                export CODACY_REPOSITORY="$repo"
-                print_success "Configured for organization: $org, repository: $repo"
-            fi
-        fi
-
-        return 0
-    else
-        print_warning "API configuration file not found: $CODACY_API_CONFIG"
-        print_info "Using default configuration with environment API token"
-        if [[ -z "$CODACY_API_TOKEN" ]]; then
-            print_error "CODACY_API_TOKEN environment variable not set"
-            return 1
-        fi
-        return 1
-    fi
-    return 0
-}
+# Populated by parse_analyze_args
+ANALYZE_ARGS=()
+ANALYZE_INSTALL_DEPS=true
+ANALYZE_CUSTOM_CONFIG=false
 
 print_header() {
-    local message="$1"
-    echo -e "${PURPLE}🔍 $message${NC}"
-    return 0
+	local message="$1"
+	echo -e "${PURPLE}🔍 $message${NC}"
+	return 0
 }
 
-# Check if Codacy CLI is installed
-check_codacy_cli() {
-    if command -v codacy-cli &> /dev/null; then
-        local version
-        version=$(codacy-cli version 2>/dev/null | head -1 || echo "unknown")
-        print_success "Codacy CLI installed: $version"
-        return 0
-    else
-        print_warning "Codacy CLI not found"
-        return 1
-    fi
-    return 0
+has_codacy_cli() {
+	command -v "$CODACY_BIN" >/dev/null 2>&1
+	return $?
 }
 
-# Install Codacy CLI v2
+require_codacy_cli() {
+	if has_codacy_cli; then
+		return 0
+	fi
+	print_error "$CODACY_BIN not found. Install it with: $0 install"
+	return 2
+}
+
+# Run the CLI with the update notifier disabled (keeps CI and agent output clean).
+run_codacy() {
+	local subcommand="$1"
+	shift
+	"$CODACY_BIN" "$subcommand" --no-update-notifier "$@"
+	return $?
+}
+
+check_node_version() {
+	if ! command -v node >/dev/null 2>&1; then
+		print_error "Node.js ${CODACY_MIN_NODE_MAJOR}+ is required (node not found)"
+		return 2
+	fi
+	local major
+	major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+	if [[ "$major" =~ ^[0-9]+$ ]] && ((major >= CODACY_MIN_NODE_MAJOR)); then
+		return 0
+	fi
+	print_error "Node.js ${CODACY_MIN_NODE_MAJOR}+ is required (found: $(node --version 2>/dev/null || echo unknown))"
+	return 2
+}
+
 install_codacy_cli() {
-    print_header "Installing Codacy CLI v2"
-    
-    # Detect platform
-    local platform
-    case "$(uname -s)" in
-        Darwin*)
-            platform="macOS"
-            if command -v brew &> /dev/null; then
-                print_info "Installing via Homebrew..."
-                brew install codacy/codacy-cli-v2/codacy-cli-v2
-            else
-                print_error "Homebrew not found. Please install Homebrew first."
-                return 1
-            fi
-            ;;
-        Linux*)
-            platform="Linux"
-            print_info "Installing via curl script..."
-            # Use --proto =https to enforce HTTPS and prevent protocol downgrade
-            bash <(curl --proto '=https' -Ls https://raw.githubusercontent.com/codacy/codacy-cli-v2/main/codacy-cli.sh)
-            ;;
-        *)
-            print_error "Unsupported platform: $(uname -s)"
-            print_info "For Windows, use WSL and follow Linux instructions"
-            return 1
-            ;;
-    esac
-    
-    # Verify installation
-    if check_codacy_cli; then
-        print_success "Codacy CLI v2 installed successfully on $platform"
-        return 0
-    else
-        print_error "Installation failed"
-        return 1
-    fi
-    return 0
+	local requested="${1:-$CODACY_PINNED_VERSION}"
+	print_header "Installing Codacy Analysis CLI"
+	check_node_version || return $?
+	if ! command -v npm >/dev/null 2>&1; then
+		print_error "npm not found; install Node.js ${CODACY_MIN_NODE_MAJOR}+ with npm first"
+		return 2
+	fi
+	# --ignore-scripts: the bundled analyzers work without lifecycle scripts, and
+	# this skips third-party postinstall hooks (including install telemetry).
+	print_info "npm install -g --ignore-scripts ${CODACY_PACKAGE}@${requested}"
+	if ! npm install -g --ignore-scripts "${CODACY_PACKAGE}@${requested}"; then
+		print_error "npm install failed (global prefix: $(npm prefix -g 2>/dev/null || echo unknown))"
+		return 1
+	fi
+	if ! has_codacy_cli; then
+		print_error "Installed, but $CODACY_BIN is not on PATH; add \"\$(npm prefix -g)/bin\" to PATH"
+		return 1
+	fi
+	print_success "Installed $CODACY_BIN $("$CODACY_BIN" --version 2>/dev/null || echo unknown)"
+	print_info "Next: $0 init   (then: $0 analyze --diff)"
+	return 0
 }
 
-# Initialize Codacy configuration
+# Resolve provider/org/repo from CODACY_PROVIDER/ORGANIZATION/REPOSITORY, or
+# from the origin remote (GitHub, GitLab, Bitbucket).
+resolve_repo_coords() {
+	CODACY_COORD_PROVIDER="${CODACY_PROVIDER:-}"
+	CODACY_COORD_ORG="${CODACY_ORGANIZATION:-}"
+	CODACY_COORD_REPO="${CODACY_REPOSITORY:-}"
+	if [[ -n "$CODACY_COORD_PROVIDER" && -n "$CODACY_COORD_ORG" && -n "$CODACY_COORD_REPO" ]]; then
+		return 0
+	fi
+	local url provider=""
+	url=$(git remote get-url origin 2>/dev/null || true)
+	url="${url%.git}"
+	case "$url" in
+	*github.com[:/]*) provider="gh" ;;
+	*gitlab.com[:/]*) provider="gl" ;;
+	*bitbucket.org[:/]*) provider="bb" ;;
+	*) return 1 ;;
+	esac
+	local re='[:/]([^/:]+)/([^/:]+)$'
+	[[ "$url" =~ $re ]] || return 1
+	CODACY_COORD_PROVIDER="${CODACY_COORD_PROVIDER:-$provider}"
+	CODACY_COORD_ORG="${CODACY_COORD_ORG:-${BASH_REMATCH[1]}}"
+	CODACY_COORD_REPO="${CODACY_COORD_REPO:-${BASH_REMATCH[2]}}"
+	return 0
+}
+
+# Print the repository-scoped token variable name, e.g.
+# CODACY_MARCUSQUINN_AIDEVOPS_PROJECT_TOKEN.
+scoped_token_name() {
+	resolve_repo_coords || return 1
+	local slug
+	slug=$(printf '%s_%s' "$CODACY_COORD_ORG" "$CODACY_COORD_REPO" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')
+	printf 'CODACY_%s_PROJECT_TOKEN\n' "$slug"
+	return 0
+}
+
+# Map a repository-scoped token to CODACY_PROJECT_TOKEN for this process only.
+map_scoped_project_token() {
+	if [[ -n "${CODACY_PROJECT_TOKEN:-}" ]]; then
+		return 0
+	fi
+	local name
+	name=$(scoped_token_name) || return 0
+	if [[ -n "${!name:-}" ]]; then
+		export CODACY_PROJECT_TOKEN="${!name}"
+		print_info "Using repository token from $name (process-scoped)"
+	fi
+	return 0
+}
+
+has_remote_auth() {
+	[[ -n "${CODACY_PROJECT_TOKEN:-}" || -n "${CODACY_API_TOKEN:-}" || -s "$CODACY_CREDENTIALS_FILE" ]]
+	return $?
+}
+
+auth_hint() {
+	local name
+	name=$(scoped_token_name 2>/dev/null) || name="CODACY_<OWNER>_<REPO>_PROJECT_TOKEN"
+	print_info "Provide one of: CODACY_PROJECT_TOKEN, $name, CODACY_API_TOKEN, or run '$CODACY_BIN login'"
+	print_info "Stored secret example: aidevops secret $name -- $0 init"
+	return 0
+}
+
+init_remote_config() {
+	if ! resolve_repo_coords; then
+		print_error "Cannot derive provider/org/repo from the origin remote"
+		print_info "Set CODACY_PROVIDER (gh|gl|bb), CODACY_ORGANIZATION and CODACY_REPOSITORY"
+		return 2
+	fi
+	if ! has_remote_auth; then
+		print_error "Remote init needs a Codacy token"
+		auth_hint
+		return 2
+	fi
+	print_info "Pulling Codacy Cloud configuration: $CODACY_COORD_PROVIDER/$CODACY_COORD_ORG/$CODACY_COORD_REPO"
+	run_codacy init --remote "$CODACY_COORD_PROVIDER" "$CODACY_COORD_ORG" "$CODACY_COORD_REPO" "$@"
+	return $?
+}
+
+# codacy-analysis init refuses to overwrite; --force removes the generated
+# configuration and its baseline first.
+reset_existing_config() {
+	local force="$1"
+	if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
+		return 0
+	fi
+	if [[ "$force" != true ]]; then
+		print_error "$CODACY_CONFIG_FILE already exists"
+		print_info "Use '$0 update-config' to re-sync it, or '$0 init [MODE] --force' to regenerate it"
+		return 2
+	fi
+	rm -f "$CODACY_CONFIG_FILE" ".codacy/codacy.config.baseline.json"
+	print_info "Removed existing $CODACY_CONFIG_FILE (--force)"
+	return 0
+}
+
+# init [remote|auto [filters]|default|local] [--force] [extra init flags]
+# With no mode: remote when a token and repo coordinates are available, else auto.
 init_codacy_config() {
-    print_header "Initializing Codacy Configuration"
-    
-    # Check if API token is provided
-    local api_token="${CODACY_API_TOKEN:-}"
-    local provider="${CODACY_PROVIDER:-}"
-    local organization="${CODACY_ORGANIZATION:-}"
-    local repository="${CODACY_REPOSITORY:-}"
-    
-    if [[ -n "$api_token" && -n "$provider" && -n "$organization" && -n "$repository" ]]; then
-        print_info "Initializing with remote configuration from Codacy..."
-        codacy-cli init --api-token "$api_token" --provider "$provider" --organization "$organization" --repository "$repository"
-    else
-        print_info "Initializing with local configuration..."
-        print_warning "For remote config, set: CODACY_API_TOKEN, CODACY_PROVIDER, CODACY_ORGANIZATION, CODACY_REPOSITORY"
-        codacy-cli init
-    fi
-    
-    if [[ -f "$CODACY_CONFIG_FILE" ]]; then
-        print_success "Codacy configuration initialized: $CODACY_CONFIG_FILE"
-        return 0
-    else
-        print_error "Configuration initialization failed"
-        return 1
-    fi
-    return 0
+	local mode=""
+	local force=false
+	local passthrough=()
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--force) force=true ;;
+		remote | auto | default | local)
+			if [[ -z "$mode" ]]; then
+				mode="$arg"
+			else
+				passthrough+=("$arg")
+			fi
+			;;
+		*) passthrough+=("$arg") ;;
+		esac
+	done
+	set -- ${passthrough[@]+"${passthrough[@]}"}
+	require_codacy_cli || return $?
+	print_header "Initializing Codacy configuration"
+	reset_existing_config "$force" || return $?
+	map_scoped_project_token
+	if [[ -z "$mode" ]]; then
+		mode="auto"
+		if has_remote_auth && resolve_repo_coords; then
+			mode="remote"
+		fi
+	fi
+	local rc=0
+	case "$mode" in
+	remote) init_remote_config "$@" || rc=$? ;;
+	auto)
+		print_info "Detecting the repository stack locally (no token needed)"
+		run_codacy init --auto "$@" || rc=$?
+		;;
+	default) run_codacy init --default "$@" || rc=$? ;;
+	local) run_codacy init "$@" || rc=$? ;;
+	*)
+		print_error "Unknown init mode: $mode (use remote, auto, default or local)"
+		return 2
+		;;
+	esac
+	if [[ "$rc" -ne 0 ]]; then
+		print_error "Configuration initialization failed (exit $rc)"
+		return "$rc"
+	fi
+	print_success "Configuration written: $CODACY_CONFIG_FILE (mode: $mode)"
+	return 0
 }
 
-# Install tools and runtimes
-install_codacy_tools() {
-    print_header "Installing Codacy Tools and Runtimes"
-    
-    if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
-        print_error "Configuration file not found. Run 'init' first."
-        return 1
-    fi
-    
-    print_info "Installing tools specified in $CODACY_CONFIG_FILE..."
-    codacy-cli install
-    
-    if [[ $? -eq 0 ]]; then
-        print_success "Tools and runtimes installed successfully"
-        return 0
-    else
-        print_error "Tool installation failed"
-        return 1
-    fi
-    return 0
+update_codacy_config() {
+	require_codacy_cli || return $?
+	map_scoped_project_token
+	run_codacy update-config "$@"
+	return $?
 }
 
-# Run code analysis
+ensure_codacy_config() {
+	if [[ -f "$CODACY_CONFIG_FILE" ]]; then
+		return 0
+	fi
+	print_info "No $CODACY_CONFIG_FILE yet; initializing first"
+	init_codacy_config
+	return $?
+}
+
+analyze_args_include() {
+	local needle="$1"
+	local item
+	for item in ${ANALYZE_ARGS[@]+"${ANALYZE_ARGS[@]}"}; do
+		if [[ "$item" == "$needle" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Report output shortcuts: --sarif [FILE] / --json [FILE]
+add_report_args() {
+	local fmt="$1"
+	local out="$2"
+	ANALYZE_ARGS+=("--output-format" "$fmt" "--output" "$out")
+	return 0
+}
+
+is_git_ref() {
+	local ref="$1"
+	[[ -n "$ref" && "$ref" != -* ]] && git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1
+	return $?
+}
+
+parse_analyze_args() {
+	ANALYZE_ARGS=()
+	ANALYZE_INSTALL_DEPS=true
+	ANALYZE_CUSTOM_CONFIG=false
+	local files=()
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		shift
+		case "$arg" in
+		"") ;; # tolerate empty legacy arguments
+		--fix) print_warning "Codacy Analysis CLI has no auto-fix mode; running analysis only" ;;
+		--staged | --pr | --no-log) ANALYZE_ARGS+=("$arg") ;;
+		--inspect | --fail-if-missing) ANALYZE_ARGS+=("$arg") && ANALYZE_INSTALL_DEPS=false ;;
+		--no-install) ANALYZE_INSTALL_DEPS=false ;;
+		--diff)
+			ANALYZE_ARGS+=("--diff")
+			if [[ $# -gt 0 ]] && is_git_ref "$1"; then
+				ANALYZE_ARGS+=("$1") && shift
+			fi
+			;;
+		--sarif | --json)
+			local out="codacy-results.${arg#--}"
+			if [[ $# -gt 0 && -n "$1" && "$1" != -* ]]; then
+				out="$1" && shift
+			fi
+			add_report_args "${arg#--}" "$out"
+			;;
+		--tool | -t | --output-format | -f | --output | -o | --parallel-tools | --tool-timeout | --log-level | --config-file)
+			[[ $# -gt 0 ]] || { print_error "$arg requires a value" && return 2; }
+			[[ "$arg" != "--config-file" ]] || ANALYZE_CUSTOM_CONFIG=true
+			ANALYZE_ARGS+=("$arg" "$1") && shift
+			;;
+		--) ANALYZE_ARGS+=("$@") && shift "$#" ;;
+		-*) print_error "Unknown analyze option: $arg (pass raw flags after --)" && return 2 ;;
+		*) files+=("$arg") ;;
+		esac
+	done
+	if [[ ${#files[@]} -gt 0 ]]; then
+		ANALYZE_ARGS+=("--files" "${files[@]}")
+	fi
+	return 0
+}
+
+report_analysis_result() {
+	local rc="$1"
+	case "$rc" in
+	0) print_success "Codacy analysis: no issues found" ;;
+	1) print_warning "Codacy analysis: issues found" ;;
+	2) print_warning "Codacy analysis: tool errors or invalid options (exit 2); see output above" ;;
+	*) print_error "Codacy analysis failed (exit $rc)" ;;
+	esac
+	return 0
+}
+
 run_codacy_analysis() {
-    local tool="$1"
-    local output_format="${2:-sarif}"
-    local output_file="${3:-codacy-results.sarif}"
-    # auto_fix parameter reserved for future use
-    # local auto_fix="$4"
-
-    print_header "Running Codacy Code Analysis"
-
-    # Load API configuration
-    load_api_config
-
-    if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
-        print_error "Configuration file not found. Run 'init' first."
-        return 1
-    fi
-
-    # Build analysis command as array to avoid eval
-    local cmd=("codacy-cli" "analyze")
-
-    # Handle auto-fix flag
-    if [[ "$tool" == "--fix" ]]; then
-        cmd+=("--fix")
-        print_info "Auto-fix enabled: Will apply fixes when available"
-        print_info "Running analysis with all configured tools"
-    elif [[ -n "$tool" ]]; then
-        cmd+=("--tool" "$tool")
-        print_info "Running analysis with tool: $tool"
-    else
-        print_info "Running analysis with all configured tools"
-    fi
-
-    if [[ "$output_format" == "sarif" ]]; then
-        cmd+=("--format" "sarif" "--output" "$output_file")
-        print_info "Output format: SARIF → $output_file"
-    fi
-
-    # Execute analysis
-    print_info "Executing: ${cmd[*]}"
-    if "${cmd[@]}"; then
-        print_success "Code analysis completed successfully"
-        if [[ -f "$output_file" ]]; then
-            print_info "Results saved to: $output_file"
-        fi
-        return 0
-    else
-        print_error "Code analysis failed"
-        return 1
-    fi
-    return 0
+	require_codacy_cli || return $?
+	parse_analyze_args "$@" || return $?
+	print_header "Running Codacy analysis"
+	map_scoped_project_token
+	if [[ "$ANALYZE_CUSTOM_CONFIG" == false ]]; then
+		ensure_codacy_config || return $?
+	fi
+	local cmd=(analyze)
+	if [[ "$ANALYZE_INSTALL_DEPS" == true ]]; then
+		cmd+=(--install-dependencies)
+	fi
+	if ! analyze_args_include --parallel-tools; then
+		cmd+=(--parallel-tools "${CODACY_PARALLEL_TOOLS:-4}")
+	fi
+	if [[ -n "${CI:-}" ]] && ! analyze_args_include --no-log; then
+		cmd+=(--no-log)
+	fi
+	cmd+=(${ANALYZE_ARGS[@]+"${ANALYZE_ARGS[@]}"})
+	local rc=0
+	run_codacy "${cmd[@]}" || rc=$?
+	report_analysis_result "$rc"
+	if [[ "$rc" -gt 2 ]]; then
+		return 1
+	fi
+	return "$rc"
 }
 
-# Upload SARIF results to Codacy
+# upload [REPORT] [COMMIT] — REPORT must come from `analyze --sarif|--json`.
 upload_codacy_results() {
-    local sarif_file="${1:-codacy-results.sarif}"
-    local commit_uuid="${2:-$(git rev-parse HEAD 2>/dev/null)}"
-
-    print_header "Uploading Results to Codacy"
-
-    if [[ ! -f "$sarif_file" ]]; then
-        print_error "SARIF file not found: $sarif_file"
-        return 1
-    fi
-
-    if [[ -z "$commit_uuid" ]]; then
-        print_error "Commit UUID required. Provide as argument or ensure git repository."
-        return 1
-    fi
-
-    # Check for project token or API token
-    local project_token="${CODACY_PROJECT_TOKEN:-}"
-    local api_token="${CODACY_API_TOKEN:-}"
-    local provider="${CODACY_PROVIDER:-}"
-    local organization="${CODACY_ORGANIZATION:-}"
-    local repository="${CODACY_REPOSITORY:-}"
-
-    local cmd=("codacy-cli" "upload" "-s" "$sarif_file" "-c" "$commit_uuid")
-
-    if [[ -n "$project_token" ]]; then
-        cmd+=("-t" "$project_token")
-        print_info "Using project token for upload"
-    elif [[ -n "$api_token" && -n "$provider" && -n "$organization" && -n "$repository" ]]; then
-        cmd+=("-a" "$api_token" "-p" "$provider" "-o" "$organization" "-r" "$repository")
-        print_info "Using API token for upload"
-    else
-        print_error "Upload credentials required:"
-        print_info "  Option 1: Set CODACY_PROJECT_TOKEN"
-        print_info "  Option 2: Set CODACY_API_TOKEN, CODACY_PROVIDER, CODACY_ORGANIZATION, CODACY_REPOSITORY"
-        return 1
-    fi
-
-    print_info "Uploading: $sarif_file (commit: ${commit_uuid:0:8})"
-    if "${cmd[@]}"; then
-        print_success "Results uploaded to Codacy successfully"
-        return 0
-    else
-        print_error "Upload failed"
-        return 1
-    fi
+	local report="${1:-$CODACY_DEFAULT_SARIF}"
+	local commit="${2:-}"
+	require_codacy_cli || return $?
+	print_header "Uploading results to Codacy"
+	if [[ ! -f "$report" ]]; then
+		print_error "Report not found: $report (create it with: $0 analyze --sarif)"
+		return 2
+	fi
+	map_scoped_project_token
+	local cmd=(upload "$report")
+	if [[ -n "$commit" ]]; then
+		cmd+=(--commit "$commit")
+	fi
+	if [[ -z "${CODACY_PROJECT_TOKEN:-}" ]]; then
+		if ! has_remote_auth; then
+			print_error "Upload needs a Codacy token (a repository token is preferred)"
+			auth_hint
+			return 2
+		fi
+		if resolve_repo_coords; then
+			cmd+=(--repository "$CODACY_COORD_PROVIDER" "$CODACY_COORD_ORG" "$CODACY_COORD_REPO")
+		fi
+	fi
+	local rc=0
+	run_codacy "${cmd[@]}" || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		print_error "Upload failed (exit $rc)"
+		return 1
+	fi
+	print_success "Results uploaded to Codacy"
+	return 0
 }
 
-# Show CLI status
+print_var_state() {
+	local name="$1"
+	if [[ -n "${!name:-}" ]]; then
+		print_success "$name: set"
+	else
+		print_info "$name: not set"
+	fi
+	return 0
+}
+
+show_config_status() {
+	if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
+		print_warning "No $CODACY_CONFIG_FILE in this repository. Run: $0 init"
+		return 0
+	fi
+	local summary="present"
+	if command -v jq >/dev/null 2>&1; then
+		summary=$(jq -r '"source: \(.metadata.source // "unknown"), tools: \(.tools | length)"' "$CODACY_CONFIG_FILE" 2>/dev/null || echo "unreadable")
+	fi
+	print_success "Configuration: $CODACY_CONFIG_FILE ($summary)"
+	return 0
+}
+
+# Returns 0 only when the CLI is installed and usable.
 show_codacy_status() {
-    print_header "Codacy CLI Status"
-
-    # Check CLI installation
-    if check_codacy_cli; then
-        print_info "Expected version: $CODACY_CLI_VERSION"
-        echo ""
-    else
-        print_info "Expected version: $CODACY_CLI_VERSION"
-        print_info "Run: $0 install"
-        echo ""
-    fi
-
-    # Check configuration
-    if [[ -f "$CODACY_CONFIG_FILE" ]]; then
-        print_success "Configuration found: $CODACY_CONFIG_FILE"
-
-        # Show basic config info
-        if command -v yq &> /dev/null; then
-            local tools_count
-            tools_count=$(yq eval '.tools | length' "$CODACY_CONFIG_FILE" 2>/dev/null || echo "unknown")
-            print_info "Configured tools: $tools_count"
-        fi
-    else
-        print_warning "Configuration not found"
-        print_info "Run: $0 init"
-    fi
-
-    # Check environment variables
-    echo ""
-    print_info "Environment Configuration:"
-    [[ -n "${CODACY_API_TOKEN:-}" ]] && print_success "CODACY_API_TOKEN: Set" || print_warning "CODACY_API_TOKEN: Not set"
-    [[ -n "${CODACY_PROJECT_TOKEN:-}" ]] && print_success "CODACY_PROJECT_TOKEN: Set" || print_warning "CODACY_PROJECT_TOKEN: Not set"
-    [[ -n "${CODACY_PROVIDER:-}" ]] && print_info "CODACY_PROVIDER: ${CODACY_PROVIDER}" || print_warning "CODACY_PROVIDER: Not set"
-    [[ -n "${CODACY_ORGANIZATION:-}" ]] && print_info "CODACY_ORGANIZATION: ${CODACY_ORGANIZATION}" || print_warning "CODACY_ORGANIZATION: Not set"
-    [[ -n "${CODACY_REPOSITORY:-}" ]] && print_info "CODACY_REPOSITORY: ${CODACY_REPOSITORY}" || print_warning "CODACY_REPOSITORY: Not set"
-
-    return 0
+	print_header "Codacy Analysis CLI status"
+	local ready=0
+	if has_codacy_cli; then
+		print_success "$CODACY_BIN $("$CODACY_BIN" --version 2>/dev/null || echo unknown) (pinned install version: $CODACY_PINNED_VERSION)"
+	else
+		print_warning "$CODACY_BIN not installed. Run: $0 install"
+		ready=1
+	fi
+	if check_node_version; then
+		print_info "Node.js $(node --version)"
+	else
+		ready=1
+	fi
+	show_config_status
+	print_info "Authentication (names only):"
+	print_var_state CODACY_PROJECT_TOKEN
+	local scoped
+	if scoped=$(scoped_token_name 2>/dev/null); then
+		print_var_state "$scoped"
+	fi
+	print_var_state CODACY_API_TOKEN
+	if [[ -s "$CODACY_CREDENTIALS_FILE" ]]; then
+		print_success "$CODACY_BIN login credentials: present"
+	else
+		print_info "$CODACY_BIN login credentials: not present"
+	fi
+	return "$ready"
 }
 
-# Show help message
 show_help() {
-    print_header "Codacy CLI v2 Integration Help"
-    echo ""
-    echo "Usage: $0 [command] [options]"
-    echo ""
-    echo "Commands:"
-    echo "  install              - Install Codacy CLI v2"
-    echo "  init                 - Initialize project configuration"
-    echo "  install-tools        - Install tools and runtimes"
-    echo "  analyze [tool|--fix] - Run code analysis (optionally with specific tool or auto-fix)"
-    echo "  upload [sarif] [commit] - Upload SARIF results to Codacy"
-    echo "  status               - Check CLI status and configuration"
-    echo "  help                 - Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  $0 install"
-    echo "  $0 init"
-    echo "  $0 analyze"
-    echo "  $0 analyze eslint"
-    echo "  $0 analyze --fix          # Auto-fix issues when possible"
-    echo "  $0 upload results.sarif abc123"
-    echo ""
-    echo "Environment Variables:"
-    echo "  CODACY_API_TOKEN     - API token (Codacy)"
-    echo "  CODACY_PROJECT_TOKEN - Project token (uploads)"
-    echo "  CODACY_PROVIDER      - Provider (gh, gl, bb)"
-    echo "  CODACY_ORGANIZATION  - Organization name"
-    echo "  CODACY_REPOSITORY    - Repository name"
-    echo ""
-    echo "This script integrates Codacy CLI v2 into the AI DevOps Framework"
-    echo "providing comprehensive local code analysis and quality assurance."
-    return 0
+	cat <<EOF
+Codacy Analysis CLI integration (${CODACY_PACKAGE}, command: ${CODACY_BIN})
+
+Usage: $0 <command> [options]
+
+Commands:
+  install [VERSION]          Install the CLI with npm (default: ${CODACY_PINNED_VERSION})
+  init [MODE] [FLAGS]        Write ${CODACY_CONFIG_FILE}. MODE:
+                               remote   Codacy Cloud rules for this repo (needs token)
+                               auto     detect stack locally, optional filters (e.g. auto Critical,High,Security)
+                               default  Codacy default patterns (public API, no token)
+                               local    only tools with local config files
+                             No MODE: remote when a token is available, else auto
+  update-config [--reset]    Re-sync the configuration with the stack / Codacy Cloud
+  analyze [OPTIONS] [PATHS]  Run analysis (initializes config when missing)
+  upload [REPORT] [COMMIT]   Upload a report from 'analyze --sarif' (default: ${CODACY_DEFAULT_SARIF})
+  status                     Show CLI, Node.js, configuration and auth status (exit 1 if not ready)
+  info                       Pass through to '${CODACY_BIN} info'
+  help                       Show this help
+
+Analyze options:
+  --staged                   Only files in the git staging area (pre-commit use)
+  --diff [BASE]              Only files changed vs BASE (default: default branch)
+  --pr                       Only files in the current pull request
+  --tool ID                  Restrict to a tool ID (repeatable; IDs: '${CODACY_BIN} info')
+  --sarif [FILE]             Write SARIF (default: ${CODACY_DEFAULT_SARIF})
+  --json [FILE]              Write JSON (default: codacy-results.json)
+  --parallel-tools N         Concurrent tools (default: \${CODACY_PARALLEL_TOOLS:-4})
+  --tool-timeout MS          Per-tool timeout in milliseconds
+  --no-install               Do not auto-install missing analyzers
+  --inspect                  Report analyzer availability only
+  -- FLAGS                   Pass remaining flags to '${CODACY_BIN} analyze' unchanged
+
+Exit codes: 0 no issues, 1 issues found or failure, 2 usage/setup error or
+analyzer tool errors (results are still written).
+
+Authentication (environment only; never pass tokens as arguments):
+  CODACY_PROJECT_TOKEN                 Repository token (preferred for CI and upload)
+  CODACY_<OWNER>_<REPO>_PROJECT_TOKEN  Scoped repository token, mapped per process
+  CODACY_API_TOKEN                     Account token (or '${CODACY_BIN} login')
+  CODACY_PROVIDER / CODACY_ORGANIZATION / CODACY_REPOSITORY
+                                       Override coordinates derived from 'origin'
+
+Examples:
+  $0 install
+  aidevops secret CODACY_MARCUSQUINN_AIDEVOPS_PROJECT_TOKEN -- $0 init
+  $0 analyze --diff
+  $0 analyze --staged
+  $0 analyze --sarif && $0 upload
+EOF
+	return 0
 }
 
-# Main function
+# Run repository-scoped commands from the repository root so the default
+# configuration path and report paths resolve consistently.
+cd_repo_root() {
+	local root
+	root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	if [[ -n "$root" ]]; then
+		cd "$root" || return 2
+	fi
+	return 0
+}
+
 main() {
-    local command="${1:-help}"
-    local _arg2="${2:-}"
-    local _arg3="${3:-}"
-    local _arg4="${4:-}"
-
-    case "$command" in
-        "install")
-            install_codacy_cli
-            ;;
-        "init")
-            init_codacy_config
-            ;;
-        "install-tools")
-            install_codacy_tools
-            ;;
-        "analyze")
-            run_codacy_analysis "$_arg2" "$_arg3" "$_arg4"
-            ;;
-        "upload")
-            upload_codacy_results "$_arg2" "$_arg3"
-            ;;
-        "status")
-            show_codacy_status
-            ;;
-        "help"|"--help"|"-h")
-            show_help
-            ;;
-        *)
-            print_error "$ERROR_UNKNOWN_COMMAND $command"
-            show_help
-            return 1
-            ;;
-    esac
-    return 0
+	local command="${1:-help}"
+	shift || true
+	local rc=0
+	case "$command" in
+	install) install_codacy_cli "$@" || rc=$? ;;
+	init) cd_repo_root && init_codacy_config "$@" || rc=$? ;;
+	update-config) cd_repo_root && update_codacy_config "$@" || rc=$? ;;
+	analyze) cd_repo_root && run_codacy_analysis "$@" || rc=$? ;;
+	upload) upload_codacy_results "$@" || rc=$? ;;
+	status) cd_repo_root && show_codacy_status || rc=$? ;;
+	info) require_codacy_cli && run_codacy info "$@" || rc=$? ;;
+	help | --help | -h) show_help ;;
+	*)
+		print_error "$ERROR_UNKNOWN_COMMAND $command"
+		show_help
+		rc=2
+		;;
+	esac
+	return "$rc"
 }
 
-# Execute main function with all arguments
 main "$@"
