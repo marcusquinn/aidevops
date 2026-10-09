@@ -321,6 +321,24 @@ TODOEOF
 	return 0
 }
 
+# _wait_for_detached_routine_success: script routines run in a detached runner
+# since GH#32637, so evaluate_routines returns before the script finishes.
+# Poll the routine state file (bounded, ~10s) for a terminal success.
+_wait_for_detached_routine_success() {
+	local state_file="$1"
+	local routine_id="$2"
+	local attempt=0
+	while [[ "$attempt" -lt 100 ]]; do
+		if [[ -f "$state_file" ]] &&
+			jq -e --arg id "$routine_id" '.[$id].last_status == "success"' "$state_file" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
 # _test_supervisor_self_recursion_guard: case 9 — production evaluator path.
 _test_supervisor_self_recursion_guard() {
 	local tmpdir="$1"
@@ -377,6 +395,7 @@ SCHEDULE_SCRIPT
 		source "$CORE_ROUTINES"
 		get_core_routine_entries | grep -q '^r901|x|.*|repeat:persistent|.*|scripts/pulse-wrapper.sh|script$' &&
 			evaluate_routines &&
+			_wait_for_detached_routine_success "$state_file" "r-downstream-monitor" &&
 			[[ ! -e "$self_marker" ]] &&
 			[[ -e "$downstream_marker" ]] &&
 			jq -e '."r-downstream-monitor".last_status == "success" and (.r901 | not)' "$state_file" >/dev/null &&
