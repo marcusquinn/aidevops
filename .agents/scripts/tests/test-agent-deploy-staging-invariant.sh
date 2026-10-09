@@ -218,6 +218,8 @@ test_mv_staging_to_live_fails_rolls_back() {
 test_fixed_staging_cleanup_does_not_abort_copy() {
 	local src="${TEST_DIR}/src4"
 	local tgt="${TEST_DIR}/tgt4"
+	local original_copy
+	original_copy=$(declare -f _deploy_agents_copy)
 	_make_source_dir "$src"
 	_make_live_target "$tgt"
 	mkdir -p "${tgt}.staging/scripts"
@@ -238,7 +240,8 @@ test_fixed_staging_cleanup_does_not_abort_copy() {
 	local rc=0
 	_atomic_stage_and_deploy_agents "$src" "$tgt" || rc=$?
 
-	unset -f _deploy_agents_copy
+	# Restore the production copy helper rather than deleting it for later cases.
+	eval "$original_copy"
 
 	if [[ "$rc" -eq 0 && -f "$tgt/scripts/hello.sh" ]]; then
 		print_result "fixed staging cleanup: unique staging deploy succeeds" 0
@@ -249,22 +252,23 @@ test_fixed_staging_cleanup_does_not_abort_copy() {
 }
 
 # Test 5: deploy_aidevops_agents postcondition check — if scripts/ is absent
-# after swap (regression scenario), function returns 1.
-# We wire this up by overriding _atomic_stage_and_deploy_agents to return 0
-# without populating the target so we isolate the postcondition gate.
+# in the staged runtime bundle (regression scenario), function returns 1.
+# Override the current copy entrypoint, not the retired atomic-swap path.
 test_postcondition_fails_when_scripts_absent() {
 	local src="${TEST_DIR}/src5"
-	local tgt="${TEST_DIR}/tgt5"
-	local plugins_file="${TEST_DIR}/plugins5.json"
-	printf '{"plugins":[]}\n' >"$plugins_file"
+	local test_home="${TEST_DIR}/home5"
+	local error_file="${TEST_DIR}/errors5.txt"
+	local original_copy
+	original_copy=$(declare -f _deploy_agents_copy)
 
-	mkdir -p "$src/scripts"  # source has scripts/ but we won't copy it
+	mkdir -p "$src/.agents/scripts" "$test_home"
+	printf '#!/usr/bin/env bash\n' >"$src/aidevops.sh"
 	# Set up the minimum vars deploy_aidevops_agents needs.
 	local INSTALL_DIR="$src"
 
 	# Override the inner function to simulate a silent failure: it returns 0
 	# but leaves $target_dir empty (no scripts/).
-	_atomic_stage_and_deploy_agents() {
+	_deploy_agents_copy() {
 		local _src="$1"
 		local _tgt="$2"
 		# Create an empty target dir — deliberately omit scripts/
@@ -278,15 +282,18 @@ test_postcondition_fails_when_scripts_absent() {
 	create_backup_with_rotation() { return 0; }
 	sanitize_plugin_namespace() { return 0; }
 	_restart_pulse_if_running() { return 0; }
+	print_error() { printf '%s\n' "$*" >>"$error_file"; return 0; }
 
 	local rc=0
-	HOME="${TEST_DIR}" INSTALL_DIR="$src" deploy_aidevops_agents || rc=$?
+	HOME="$test_home" INSTALL_DIR="$src" deploy_aidevops_agents || rc=$?
 
-	unset -f _atomic_stage_and_deploy_agents _deploy_agents_post_copy
+	unset -f _deploy_agents_copy _deploy_agents_post_copy
 	unset -f _warn_deployed_script_drift create_backup_with_rotation
 	unset -f sanitize_plugin_namespace _restart_pulse_if_running
+	print_error() { return 0; }
+	eval "$original_copy"
 
-	if [[ "$rc" -ne 0 ]]; then
+	if [[ "$rc" -ne 0 ]] && grep -q 'scripts.*missing' "$error_file"; then
 		print_result "postcondition: returns non-zero when scripts/ absent after swap" 0
 	else
 		print_result "postcondition: returns non-zero when scripts/ absent after swap" 1 \
@@ -302,7 +309,8 @@ test_no_change_corrupt_live_scripts_reserved_namespace_recovers() {
 	local repo="${TEST_DIR}/repo6"
 	local target="${TEST_DIR}/.aidevops/agents"
 	local plugins_file="${TEST_DIR}/.config/aidevops/plugins.json"
-	local sha="abc123456789"
+	# Runtime activation stamps require the full 40-character Git object ID.
+	local sha="abc123456789abc123456789abc123456789abc1"
 
 	mkdir -p "$repo/.agents/scripts" "$target" "$(dirname "$plugins_file")" "${TEST_DIR}/.aidevops"
 	printf 'canonical script\n' >"$repo/.agents/scripts/hello.sh"
@@ -379,11 +387,15 @@ test_stale_core_plugin_blocks_deployed_sha_stamp() {
 	local target="${TEST_DIR}/.aidevops/agents"
 	local source_plugin="$repo/.agents/plugins/opencode-aidevops/model-limits.mjs"
 	local target_plugin="$target/plugins/opencode-aidevops/model-limits.mjs"
-	local sha="fresh-plugin-sha"
+	local sha="def123456789def123456789def123456789def1"
+	local error_file="${TEST_DIR}/errors8.txt"
+	local original_copy
+	original_copy=$(declare -f _deploy_agents_copy)
 
 	mkdir -p "$repo/.agents/scripts" "$(dirname "$source_plugin")" "$target/scripts" "$(dirname "$target_plugin")"
 	rm -f "${TEST_DIR}/.aidevops/.deployed-sha"
 	printf 'canonical script\n' >"$repo/.agents/scripts/hello.sh"
+	printf '#!/usr/bin/env bash\n' >"$repo/aidevops.sh"
 	printf 'export const MODEL_LIMITS = { fresh: true };\n' >"$source_plugin"
 	printf 'export const MODEL_LIMITS = { fresh: false };\n' >"$target_plugin"
 
@@ -398,7 +410,7 @@ test_stale_core_plugin_blocks_deployed_sha_stamp() {
 		command git "$@"
 		return $?
 	}
-	_atomic_stage_and_deploy_agents() {
+	_deploy_agents_copy() {
 		local _src="$1"
 		local _tgt="$2"
 		mkdir -p "$_tgt/scripts" "$_tgt/plugins/opencode-aidevops"
@@ -410,14 +422,18 @@ test_stale_core_plugin_blocks_deployed_sha_stamp() {
 	_warn_deployed_script_drift() { return 0; }
 	create_backup_with_rotation() { return 0; }
 	_restore_latest_agents_backup() { return 0; }
+	print_error() { printf '%s\n' "$*" >>"$error_file"; return 0; }
 
 	local rc=0
 	HOME="${TEST_DIR}" INSTALL_DIR="$repo" AIDEVOPS_AGENT_DEPLOY_MIN_FILES=1 deploy_aidevops_agents || rc=$?
 
-	unset -f git _atomic_stage_and_deploy_agents _deploy_agents_post_copy
+	unset -f git _deploy_agents_copy _deploy_agents_post_copy
 	unset -f _warn_deployed_script_drift create_backup_with_rotation _restore_latest_agents_backup
+	print_error() { return 0; }
+	eval "$original_copy"
 
-	if [[ "$rc" -ne 0 && ! -f "${TEST_DIR}/.aidevops/.deployed-sha" ]]; then
+	if [[ "$rc" -ne 0 && ! -f "${TEST_DIR}/.aidevops/.deployed-sha" ]] &&
+		grep -q 'model-limits.mjs is stale versus' "$error_file"; then
 		print_result "stale core plugin: deploy fails before deployed-sha stamp" 0
 	else
 		print_result "stale core plugin: deploy fails before deployed-sha stamp" 1 \
