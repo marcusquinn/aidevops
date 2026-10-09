@@ -55,6 +55,7 @@ LINTERS_LOCAL_GATE_FILE_SIZE=file-size
 LINTERS_LOCAL_GATE_FUNCTION_COMPLEXITY=function-complexity
 LINTERS_LOCAL_GATE_NESTING_DEPTH=nesting-depth
 LINTERS_LOCAL_GATE_BASH32=bash32-compat
+LINTERS_LOCAL_GATE_PY39_ANNOTATIONS=python39-annotations
 LINTERS_LOCAL_SKIP_NON_SHELL="non-shell broad repository sweep; use --full"
 
 _record_gate_run() {
@@ -659,6 +660,11 @@ _run_gate_checks_complexity() {
 		echo ""
 	fi
 
+	if ! should_skip_gate "$LINTERS_LOCAL_GATE_PY39_ANNOTATIONS"; then
+		check_python_annotation_compat || exit_code=1
+		echo ""
+	fi
+
 	return $exit_code
 }
 
@@ -750,6 +756,10 @@ _run_gate_checks_changed() {
 	echo ""
 
 	_record_gate_skipped "python-complexity" "$LINTERS_LOCAL_SKIP_NON_SHELL"
+	_record_gate_run "$LINTERS_LOCAL_GATE_PY39_ANNOTATIONS"
+	check_python_annotation_compat "$(linters_local_changed_files_matching '\.py$')" || exit_code=1
+	echo ""
+
 	_record_gate_run "targeted-tests"
 	check_targeted_tests || exit_code=1
 	echo ""

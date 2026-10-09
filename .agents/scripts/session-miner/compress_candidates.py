@@ -3,6 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Instruction-candidate clustering for the session-miner compressor."""
 
+from __future__ import annotations
+
 from collections import defaultdict
 from typing import Callable, Iterable
 

@@ -3,6 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Git-correlation helpers for session-miner extraction."""
 
+from __future__ import annotations
+
 import os
 import re
 import shutil

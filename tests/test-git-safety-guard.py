@@ -3,6 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Regression tests for the shared canonical direct-write policy."""
 
+from __future__ import annotations
+
 import importlib.util
 import json
 import subprocess

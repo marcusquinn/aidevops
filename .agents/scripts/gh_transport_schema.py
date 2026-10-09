@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 
 
 SCHEMA_VERSION = 2
+WAL_SWITCH_TIMEOUT_SECONDS = 10.0
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS quota (
         scope TEXT NOT NULL, resource TEXT NOT NULL,
@@ -38,6 +40,28 @@ SCHEMA_STATEMENTS = (
 )
 
 
+def _enable_wal(db: sqlite3.Connection) -> str:
+    """Switch to WAL, retrying lock contention within a bounded deadline.
+
+    Some SQLite builds (for example macOS system Python 3.9) return
+    "database is locked" for a concurrent rollback-to-WAL switch without
+    consulting the busy handler, so concurrent legacy opens must retry here.
+    """
+    deadline = time.monotonic() + WAL_SWITCH_TIMEOUT_SECONDS
+    delay = 0.005
+    while True:
+        try:
+            return db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        except sqlite3.OperationalError as error:
+            message = str(error).lower()
+            if "locked" not in message and "busy" not in message:
+                raise
+            if time.monotonic() >= deadline:
+                raise
+        time.sleep(delay)
+        delay = min(delay * 2, 0.1)
+
+
 def ensure_schema(db: sqlite3.Connection) -> None:
     """Initialize or migrate schema once under a bounded write lock."""
     version = db.execute("PRAGMA user_version").fetchone()[0]
@@ -47,7 +71,7 @@ def ensure_schema(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA busy_timeout=10000")
     try:
         if version < 2:
-            journal_mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            journal_mode = _enable_wal(db)
             if str(journal_mode).lower() != "wal":
                 raise sqlite3.OperationalError("failed to enable WAL journal mode")
         db.execute("BEGIN IMMEDIATE")
