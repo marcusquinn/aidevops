@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.39] - 2026-10-09
+
+### Fixed
+
+- keep continuation guard steering out of visible end-of-turn text
+- migrate generated Playwright entries behind launcher (#34124)
+
 ## [3.38.38] - 2026-10-09
 
 ### Changed
