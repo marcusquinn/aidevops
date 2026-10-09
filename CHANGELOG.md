@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.40] - 2026-10-09
+
+### Fixed
+
+- restore setup_safety_hooks and remove silent setup stubs
+
 ## [3.38.39] - 2026-10-09
 
 ### Fixed
