@@ -221,6 +221,35 @@ Check `caller_script`, `caller_function`, and `caller_line` to find the code pat
 2. Check if `FORCE_ENRICH` or similar flags in `flags` explain the unexpected change
 3. File a bug report if the root cause is a framework defect
 
+### Worked example: a legitimate review handoff (GH#34135)
+
+The alert for issue #34115 at `2026-10-09T02:01:30Z` reported
+`protected_label_removed:status:in-progress`. Investigation established an
+intentional lifecycle transition, not content loss:
+
+- Both audit snapshots had `capture_status:ok` and `delta.comparable:true`.
+  Title length remained 129 and body length remained 3559; both content deltas
+  were zero. Length equality alone does not prove unchanged text, but this entry
+  supplies no evidence of truncation or wiping.
+- The only label delta was removal of `status:in-progress` and addition of
+  `status:in-review`. The ownership label `origin:interactive` remained present.
+- GitHub issue events independently recorded both label changes at
+  `2026-10-09T02:01:28Z`, by the issue's assigned runner. The two-second offset
+  reflects the audit's post-operation record time.
+- [PR #34118](https://github.com/marcusquinn/aidevops/pull/34118) merged at
+  `2026-10-09T02:16:26Z`; issue #34115 closed one second later and subsequently
+  received `status:done`. No restoration or label repair was needed.
+
+The audit caller was the generic `gh-write-helper.sh` entrypoint (`main`), with
+empty `flags`. This is **not** the verified full-loop provenance that
+`expected_full_loop_review_transition` in `gh-audit-anomaly-filter.jq` requires.
+The scanner therefore correctly retained the event for investigation, even
+though independent evidence later established that the transition was benign.
+Do not suppress all progress-to-review transitions, backfill verification flags
+into historical audit entries, or remove the current-state proof requirement
+just to silence such an alert. Resolve the alert with the snapshot, event and
+delivery evidence; preserve the original audit record and completed issue state.
+
 ## Retention and Rotation Policy
 
 - **Log file:** `~/.aidevops/logs/gh-audit.log`
