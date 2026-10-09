@@ -1,0 +1,31 @@
+{
+  "_comment": "SEO Utils desktop app MCP (local stdio). The launcher runs '<SEO Utils executable> mcp-stdio' after checking the build supports it; no token or Node.js. Requires SEO Utils newer than 2.5.0, MCP access, and Settings > MCP Server > Enable MCP Server.",
+  "_setup": "SEO_UTILS_MCP_LAUNCHER_DRY_RUN=1 ~/.aidevops/agents/scripts/seo-utils-mcp-launcher.sh",
+  "_env": "Off macOS, or for a non-default install, set SEO_UTILS_BIN to the executable shown in SEO Utils > Connect an AI app > Other MCP apps. No secrets in this file.",
+  "_docs": ".agents/seo/seo-utils.md",
+  "opencode": {
+    "_comment": "The aidevops OpenCode plugin registers this automatically; use @seo-utils to connect. Replace /Users/YOU with your home directory.",
+    "seo-utils": {
+      "type": "local",
+      "command": ["/Users/YOU/.aidevops/agents/scripts/seo-utils-mcp-launcher.sh"],
+      "enabled": false,
+      "timeout": 900000
+    }
+  },
+  "claude_code": {
+    "_command": "claude mcp add --scope user seo-utils -- /Users/YOU/.aidevops/agents/scripts/seo-utils-mcp-launcher.sh"
+  },
+  "codex": {
+    "_file": "~/.codex/config.toml",
+    "_toml": "[mcp_servers.seo-utils]\ncommand = \"/Users/YOU/.aidevops/agents/scripts/seo-utils-mcp-launcher.sh\"\ntool_timeout_sec = 900"
+  },
+  "mcp_servers_json": {
+    "_comment": "Claude Desktop, Cursor, Antigravity and other mcpServers-style clients.",
+    "mcpServers": {
+      "seo-utils": {
+        "command": "/Users/YOU/.aidevops/agents/scripts/seo-utils-mcp-launcher.sh",
+        "args": []
+      }
+    }
+  }
+}

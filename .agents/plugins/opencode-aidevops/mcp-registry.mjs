@@ -195,6 +195,7 @@ function getPkgRunner() {
  *   - approvalRequiredTools: allowed tool names mapped to OpenCode "ask"; not a
  *     security boundary, because `opencode --auto` launches approve them silently
  *   - activationGuidance: optional domain-specific lifecycle guidance
+ *   - timeout: optional per-tool timeout in ms for generated local entries
  *   - requiresBinary: optional binary name that must exist for local MCPs
  *   - macOnly: optional flag for macOS-only MCPs
  *   - description: human-readable description for logging
@@ -270,6 +271,28 @@ export function getMcpRegistry() {
       agentSource: ["seo", "dataforseo.md"],
       activationGuidance: [SPEND_GUIDANCE],
       description: "Comprehensive SEO data",
+    },
+    {
+      // User-owned entries (e.g. SEO Utils "Add to OpenCode") are preserved
+      // but kept disconnected until @seo-utils connects them.
+      name: "seo-utils",
+      type: "local",
+      command: [join(homedir(), ".aidevops", "agents", "scripts", "seo-utils-mcp-launcher.sh")],
+      // Upstream: some SEO Utils tools run for minutes; OpenCode defaults to 60s.
+      timeout: 900_000,
+      eager: false,
+      toolPattern: "seo-utils_*",
+      globallyEnabled: false,
+      activationAgent: "seo-utils",
+      agentSource: ["seo", "seo-utils.md"],
+      activationGuidance: [
+        "Answer from local data first: query_database, query_gsc and read_action are free; never substitute lookup_action for data SEO Utils already stores.",
+        "lookup_action spends the user's DataForSEO or other provider credits; state the scope before large or bulk lookups.",
+        "write_action creates, changes, deletes, runs or sends; require explicit approval with the exact target before every call, and confirm names and IDs before destructive or WordPress-applying actions.",
+        UNTRUSTED_OUTPUT_GUIDANCE,
+      ],
+      modelTier: "standard",
+      description: "SEO Utils desktop app data (rank trackers, GSC, GA4, local SEO, backlinks) via local stdio MCP",
     },
     {
       name: "shadcn",
@@ -740,7 +763,12 @@ function buildMcpConfigEntry(mcp, runtime) {
         ? authenticatedPlaywriterRelayCommand(command)
         : command);
     }
-    return { type: "local", command, enabled: mcp.eager };
+    return {
+      type: "local",
+      command,
+      enabled: mcp.eager,
+      ...(mcp.timeout ? { timeout: mcp.timeout } : {}),
+    };
   }
 
   const outputDir = workspace.outputDirectory || join(workspace.directory, ".playwright-mcp");

@@ -1608,6 +1608,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18635 fix(pulse): silence missing routines registry noise for repos without routines #bug #interactive ref:GH#34169 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18635-brief.md] pr:#34170 completed:2026-10-09
 - [x] t18636 fix(tests): restore test-pulse-routines-selector Case 9/11 after detached script routines #auto-dispatch #bug #interactive ref:GH#34172 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18636-brief.md] pr:#34176 completed:2026-10-09
 - [x] t18637 fix(pulse): TODO ref sync fails every cycle for SSH remotes and contributor repos #auto-dispatch #bug #pulse #interactive tier:standard ref:GH#34185 logged:2026-10-09 -> [todo/tasks/t18637-brief.md] pr:#34198 completed:2026-10-09
+- [ ] t18640 Add SEO Utils MCP support (on-demand @seo-utils) #feat #seo #mcp #interactive tier:standard ref:GH#34205 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18640-brief.md]
 
 ## In Progress
 
@@ -5191,5 +5192,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18608 fix(fast-fail): worker-side failures never flag enrichment_needed #auto-dispatch #bug #pulse ref:GH#33878 pr:#34191 completed:2026-10-09
 
 - [x] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877 pr:#34207 completed:2026-10-09
-
-- [ ] t18640 Add SEO Utils MCP support (on-demand @seo-utils) #feature ref:GH#34205

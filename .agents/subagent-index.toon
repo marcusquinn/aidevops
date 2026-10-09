@@ -49,7 +49,7 @@ seo/,seo subagents,ahrefs|ai-agent-discovery|ai-hallucination-defense|ai-search-
 seo/seo-audit-skill/,seo/seo-audit-skill subagents,aeo-geo-patterns
 seo/seo-audit-skill/aeo-geo-patterns/,seo/seo-audit-skill/aeo-geo-patterns subagents,01-aeo-patterns|02-geo-patterns|03-authority-signals-and-attribution|04-page-type-tactic-matrix
 seo/seo-audit-skill/,seo/seo-audit-skill subagents,ai-writing-detection
-seo/,seo subagents,seo-audit|seo-export|seo-fanout|seo-geo-experiment-design|seo-geo|seo-hallucination-defense|seo-opportunities|seo-optimize|seo-optimizer|seo-regex|seo-sro|seo-write|serpapi|serper|site-crawler|sro-grounding|tech-stack|transcript-seo|upscale|video-schema
+seo/,seo subagents,seo-audit|seo-export|seo-fanout|seo-geo-experiment-design|seo-geo|seo-hallucination-defense|seo-opportunities|seo-optimize|seo-optimizer|seo-regex|seo-sro|seo-utils|seo-write|serpapi|serper|site-crawler|sro-grounding|tech-stack|transcript-seo|upscale|video-schema
 seo/video-schema/,seo/video-schema subagents,clip-key-moments|faqpage-video|howto-video|property-reference|speakable|validation|videoobject
 seo/,seo subagents,video-seo|youtube-description-link-acquisition
 services/accounting/,services/accounting subagents,quickfile
@@ -146,7 +146,7 @@ workflows/brief/,workflows/brief subagents,routing|templates|tier-simple|tier-st
 workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|creative-production|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|marketing-actions|marketing-decisions|memory-audit|memory-log|milestone-validation|mission-orchestrator|mission|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pr-loop|pr|pre-edit|preflight|public-launch-checklist|pulse-check|pulse-sweep|pulse|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
 -->
 
-<!--TOON:mcp_servers[17]{name,url,auth,subagent,purpose}:
+<!--TOON:mcp_servers[18]{name,url,auth,subagent,purpose}:
 chrome-devtools,npx chrome-devtools-mcp@latest,none,tools/browser/chrome-devtools.md,Browser automation debugging and performance analysis
 playwright,npx -y @playwright/mcp@0.0.79 --headless --isolated,none,tools/browser/playwright.md,Cross-browser testing and automation
 cloudflare-api,https://mcp.cloudflare.com/mcp,oauth,tools/api/cloudflare-mcp.md,Workers D1 KV R2 Pages AI Gateway via OAuth
@@ -158,6 +158,7 @@ unstract,docker unstract/mcp-server,api-key,services/document-processing/unstrac
 ahrefs,npx @ahrefs/mcp@latest,api-key,seo/dataforseo.md,SEO analysis backlink research keyword data
 perplexity,npx perplexity-mcp@latest,api-key,tools/context/model-routing.md,AI-powered web search and research
 google-search-console,npx mcp-server-gsc@latest,service-account,seo/google-search-console.md,Search performance data and insights
+seo-utils,seo-utils-mcp-launcher.sh (SEO Utils mcp-stdio),local-app,seo/seo-utils.md,SEO Utils desktop app rank trackers GSC GA4 local SEO and backlinks (on-demand)
 mcporter,npx mcporter,none,tools/mcp-toolkit/mcporter.md,Discover call compose and generate CLIs for any MCP server
 quickfile,local-build,api-key,services/accounting/quickfile.md,Guarded multi-account QuickFile UK accounting operations
 blender-lab,operator-provisioned,operator-approval,tools/design/blender.md,Guarded Blender scene and render operations
