@@ -14,6 +14,56 @@ source "${_PCTL_SCRIPT_DIR}/pr-closing-link-lib.sh"
 _PR_CHECKPOINT_REVISION_VALIDATOR="${_PCTL_SCRIPT_DIR}/pr-checkpoint-revision.py"
 unset _PCTL_SCRIPT_DIR
 
+# GH#34008: the pulse's own orphan-recovery drafts (`checkpoint: recover dirty
+# worker worktree for #N`, shared-claim-lifecycle.sh) carry a non-closing
+# `For #N` line by design (GH#32933), so closingIssuesReferences is empty. One
+# shared rule links such a draft to issue N for continuation and stale
+# recovery: no closing identity at all, an exact `For #N` line, an open
+# same-repository draft labelled origin:worker-takeover, and no
+# origin:worker or protective label. Bare mentions, ready PRs and conflicting
+# closing links never match.
+# shellcheck disable=SC2016 # jq program text, not shell expansion.
+_PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
+	def checkpoint_label_names: [.labels[]? | (.name? // .) | strings];
+	def for_issue_line($issue):
+		(.body // "") | test("(?m)^For #" + ($issue | tostring) + "([.]([ \\t]|$)|[ \\t]*$)");
+	def recovery_draft_links($issue):
+		(.closingIssuesReferences == []) and
+		(.isDraft == true) and (.isCrossRepository == false) and
+		(checkpoint_label_names | any(. == "origin:worker-takeover")) and
+		(checkpoint_label_names | any(test(
+			"^(origin:worker|origin:interactive|hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|persistent)$"
+		)) | not) and
+		for_issue_line($issue);
+'
+
+# Args: $1=PR JSON (needs body, labels, isDraft, isCrossRepository and
+#       closingIssuesReferences), $2=linked issue number
+# Returns: 0 when the PR is an orphan-recovery draft for exactly this issue
+_pr_checkpoint_recovery_draft_links_issue() {
+	local pr_json="$1"
+	local linked_issue="$2"
+	[[ "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 1
+	jq -e --argjson issue "$linked_issue" \
+		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS} recovery_draft_links(\$issue)" \
+		<<<"$pr_json" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Exact checkpoint linkage: one same-repository closing identity, or the
+# orphan-recovery `For #N` draft rule above (GH#34008).
+# Args: $1=PR JSON, $2=repo slug, $3=linked issue number
+_pr_checkpoint_pr_links_issue() {
+	local pr_json="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	if _pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue"; then
+		return 0
+	fi
+	_pr_checkpoint_recovery_draft_links_issue "$pr_json" "$linked_issue" || return 1
+	return 0
+}
+
 #aidevops:trust-boundary — only an authenticated exact revision envelope may
 # relax provenance/absent assignment; every protective label remains enforced.
 _pr_checkpoint_revised_target() {
@@ -36,9 +86,9 @@ _pr_checkpoint_revised_target() {
 	if ! _pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue"; then
 		# A signed exact pair can recover a partial For-only checkpoint, never
 		# conflicting closing links or an arbitrary bare mention.
-		normalized_pr=$(jq -e --argjson issue "$linked_issue" --arg repo "$repo_slug" '
+		normalized_pr=$(jq -e --argjson issue "$linked_issue" --arg repo "$repo_slug" "${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
 			select((.closingIssuesReferences | type) == "array" and (.closingIssuesReferences | length) == 0) |
-			select((.body // "") | test("(?m)^For #" + ($issue|tostring) + "([.]([ \\t]|$)|[ \\t]*$)")) |
+			select(for_issue_line($issue)) |
 			($repo | split("/")) as $parts |
 			.closingIssuesReferences = [{number:$issue,repository:{name:$parts[1],owner:{login:$parts[0]}}}]
 		' <<<"$pr_json") || return 1
@@ -67,7 +117,7 @@ _pr_checkpoint_pr_metadata_is_eligible() {
 	local expected_author="${7:-}"
 
 	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 1
-	_pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue" || return 1
+	_pr_checkpoint_pr_links_issue "$pr_json" "$repo_slug" "$linked_issue" || return 1
 
 	printf '%s' "$pr_json" | jq -e --argjson pr "$pr_number" \
 		--arg expected_head_sha "$expected_head_sha" --arg expected_head_ref "$expected_head_ref" \
