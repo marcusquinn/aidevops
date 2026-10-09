@@ -354,7 +354,6 @@ transcribe_whisper_cpp() {
 # Transcribe using Groq cloud API
 transcribe_groq() {
 	local audio_file="$1"
-	# Fail before credentials, payload construction or the first provider request.
 	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
 	vault_runtime_policy_check "groq/transcription" || return 64
 	local language="$3"
