@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.42] - 2026-10-09
+
+### Added
+
+- migrate Codacy local analysis to Codacy Analysis CLI
+
+### Changed
+
+- Maintenance: mark t18634 complete (pr:#34165 completed:2026-10-09) (#34161)
+
+### Fixed
+
+- force merge commit for protected release PRs
+- emit bare blocked-by TODO dependencies (GH#34152) (#34156)
+
 ## [3.38.41] - 2026-10-09
 
 ### Changed
