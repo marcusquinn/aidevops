@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.41] - 2026-10-09
+
+### Changed
+
+- Maintenance: add t18631 t18632 t18633 gh34125 phases 2-3 and tool-schema fallback
+- Maintenance: sync GitHub issue refs to TODO.md (#34144)
+- Documentation: record GH#34135 audit handoff investigation (#34136)
+- Maintenance: mark t18628 complete (pr:#34093 completed:2026-10-09) (#34132)
+- Maintenance: sync GitHub issue refs to TODO.md (#34134)
+- Refactor: replace 20 _aidevops_path_prefix blocks with a runtime-env.sh daemon PATH profile
+
+### Fixed
+
+- repair stale publication:pending issues
+- explain silent turns and preserve safe continuation after security blockers
+- GH#34125 Phase 1 — enforce operator-bound local-only egress gate (GH#34140)
+- stop 2h kills of OpenCode desktop and aidevops OpenCode server on macOS
+
 ## [3.38.40] - 2026-10-09
 
 ### Fixed
