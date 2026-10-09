@@ -209,6 +209,12 @@ define_helpers_under_test() {
 	eval "$src_crypto_approval"
 	# shellcheck disable=SC1090
 	eval "$src_worker_briefed"
+	# Default: the PR has a closing-keyword link (GH#33999 gates only the
+	# non-closing path). Tests set TEST_CLOSING_ISSUE="" for For/Ref-only PRs.
+	_extract_linked_issue() {
+		printf '%s' "${TEST_CLOSING_ISSUE-1}"
+		return 0
+	}
 	return 0
 }
 
@@ -881,6 +887,7 @@ test_partial_worker_association_reaches_authority_gate() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 	local src="" result=0 linked_issue="" review_rc=0
+	printf '{"author_association":"OWNER","state":"open","labels":[]}' >"${TEST_ROOT}/issue.json"
 	src=$(awk '
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
 		/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }
@@ -913,6 +920,32 @@ test_partial_worker_association_reaches_authority_gate() {
 	result=0
 	_check_pr_merge_gates "12641" "owner/repo" "worker" "NONE" "" "origin:worker" "head" || result=$?
 	print_result "partial worker passing authority still stops at review gate" "$((1 - result))"
+	teardown_test_env
+	return 0
+}
+
+# GH#33999: For/Ref-only association — open non-parent passes; closed and
+# parent-task stay ineligible. Closing-keyword links are covered by cases above.
+test_non_closing_reference_gates() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+	TEST_CLOSING_ISSUE=""
+	local r_open=0 r_closed=0 r_parent=0 logged=1
+	printf '{"author_association":"OWNER","state":"open","labels":[{"name":"enhancement"}]}' >"${TEST_ROOT}/issue.json"
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || r_open=$?
+	grep -q 'link=non-closing reference' "$LOGFILE" && logged=0
+	printf '{"author_association":"OWNER","state":"closed","labels":[]}' >"${TEST_ROOT}/issue.json"
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || r_closed=$?
+	printf '{"author_association":"OWNER","state":"open","labels":[{"name":"parent-task"}]}' >"${TEST_ROOT}/issue.json"
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || r_parent=$?
+	unset TEST_CLOSING_ISSUE
+	if [[ "$r_open" == "0" && "$logged" == "0" && "$r_closed" == "1" && "$r_parent" == "1" ]]; then
+		print_result "non-closing reference: open non-parent passes; closed and parent-task skipped (GH#33999)" 0
+	else
+		print_result "non-closing reference: open non-parent passes; closed and parent-task skipped (GH#33999)" 1 \
+			"open=${r_open} logged=${logged} closed=${r_closed} parent=${r_parent}"
+	fi
 	teardown_test_env
 	return 0
 }
@@ -950,6 +983,7 @@ main() {
 	test_case_v_spoofed_crypto_marker_blocked
 	test_reference_to_pr_is_not_a_worker_brief
 	test_partial_worker_association_reaches_authority_gate
+	test_non_closing_reference_gates
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

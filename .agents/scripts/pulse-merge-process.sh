@@ -1282,6 +1282,28 @@ _attempt_worker_briefed_auto_merge() {
 	local issue_author_assoc=""
 	local issue_author_login=""
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
+
+	# GH#33999: a PR with only a non-closing For/Ref reference may be associated
+	# with an issue that stays open for later phases. #aidevops:trust-boundary —
+	# that association is eligible only for an open, non-parent issue; all trust
+	# gates below still apply unchanged. Closing-keyword links are untouched.
+	local _closing_issue="" _link_kind="closing"
+	_closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	if [[ -z "$_closing_issue" ]]; then
+		_link_kind="non-closing reference"
+		local _state_labels="" _issue_state="" _issue_labels=""
+		_state_labels=$(gh api "${_issue_api}" --jq '[.state // "", ([.labels[].name] | join(","))] | @tsv' 2>/dev/null) || return 1
+		_issue_state="${_state_labels%%$'\t'*}"
+		_issue_labels="${_state_labels#*$'\t'}"
+		if [[ "$_issue_state" != "open" ]]; then
+			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
+			return 1
+		fi
+		if [[ ",${_issue_labels}," == *",parent-task,"* ]]; then
+			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to parent-task issue #${linked_issue} (GH#33999)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
 	local issue_author_permission=""
 	#aidevops:trust-boundary — reuse PR-author permission only for the same non-empty issue-author login.
 	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_pr_author_login" && "$precomputed_pr_author_login" == "$issue_author_login" ]]; then
@@ -1317,7 +1339,7 @@ _attempt_worker_briefed_auto_merge() {
 	# Live issue-author authority above is sufficient; external authors still
 	# require verified cryptographic approval and live NMR remains blocked by the
 	# general merge gates.
-	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, author_assoc=${issue_author_assoc}, crypto_approved=${_has_crypto}) (t2449/t3052)" >>"$LOGFILE"
+	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, link=${_link_kind}, author_assoc=${issue_author_assoc}, crypto_approved=${_has_crypto}) (t2449/t3052)" >>"$LOGFILE"
 	return 0
 }
 
