@@ -15,15 +15,17 @@ import re
 import subprocess
 import tempfile
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, quote
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, quote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 SCRIPTS = Path(__file__).resolve().parent
 
 
 def run(argv, cwd=None, env=None):
     """Never execute service text or area selectors as shell syntax."""
-    result = subprocess.run(argv, cwd=cwd, env=env, text=True, capture_output=True, check=False)
+    # argv is internal tooling or trusted operator local_check, never API text.
+    result = subprocess.run(  # nosec B603 - trusted argv, no shell or service commands
+        argv, cwd=cwd, env=env, shell=False, text=True, capture_output=True, check=False)
     if result.returncode:
         # External stderr can include secrets, service text or private paths.
         raise ValueError(f"Command failed: {Path(argv[0]).name} (exit {result.returncode})")
@@ -48,11 +50,21 @@ def repository(value):
     return value
 
 
+class NoServiceRedirect(HTTPRedirectHandler):
+    """Do not forward authenticated service requests to redirect targets."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("Service redirect refused")
+
+
 def request_json(url, headers, payload=None):
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc not in ("sonarcloud.io", "api.codacy.com"):
+        raise ValueError("Only the configured HTTPS analysis services are permitted")
     body = None if payload is None else json.dumps(payload).encode()
     request = Request(url, data=body, headers={**headers, "Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=60) as response:
+        with build_opener(NoServiceRedirect()).open(request, timeout=60) as response:
             return json.load(response)
     except HTTPError as error:
         raise ValueError(f"Service request failed (HTTP {error.code})") from None
@@ -149,12 +161,7 @@ def matches(area, finding):
             or finding["tool"] in area.get("tools", []))
 
 
-def classify(config, findings, root):
-    areas = config["areas"]
-    names = [area["id"] for area in areas]
-    if len(set(names)) != len(names) or any(not re.fullmatch(r"[a-z0-9-]+", name) for name in names):
-        raise ValueError("Area ids must be unique lowercase slugs")
-    by_id = {area["id"]: area for area in areas}
+def core_files(config, root):
     upstream = config.get("upstream", {})
     core = set(upstream.get("files", []))
     if upstream.get("files_file"):
@@ -162,38 +169,51 @@ def classify(config, findings, root):
                     if line.strip() and not line.lstrip().startswith("#"))
     for path in core:
         exact(path)
+    return core
+
+
+def file_owner(config, path, rows, core):
+    areas = config["areas"]
+    upstream = config.get("upstream", {})
+    if path in core:
+        owner = upstream["area"]
+        area = next(area for area in areas if area["id"] == owner)
+        if area["repo"] != upstream["repo"]:
+            raise ValueError("Upstream area must target the source repository")
+        return owner
+    if path in config.get("hotspots", {}):
+        return config["hotspots"][path]
+    return next((area["id"] for area in areas if any(matches(area, row) for row in rows)),
+                config.get("default_area"))
+
+
+def is_noise(row, noise):
+    for entry, local_rows in noise:
+        if entry["source"] != row["source"] or entry["rule"] != row["rule"]:
+            continue
+        if not any(local["file"] == row["file"] and local["rule"] == row["rule"] for local in local_rows):
+            return True
+    return False
+
+
+def classify(config, findings, root):
+    names = [area["id"] for area in config["areas"]]
+    if len(set(names)) != len(names) or any(not re.fullmatch(r"[a-z0-9-]+", name) for name in names):
+        raise ValueError("Area ids must be unique lowercase slugs")
+    core = core_files(config, root)
     noise = list(noise_checks(config, root))
     files = defaultdict(list)
     for finding in findings:
         files[finding["file"]].append(finding)
     grouped, dropped = defaultdict(list), []
     for path, rows in sorted(files.items()):
-        # Ownership is decided before filtering: all rules on a hotspot/core
-        # file stay with that owner, even when other rules match other areas.
-        if path in core:
-            owner = upstream["area"]
-            if by_id[owner]["repo"] != upstream["repo"]:
-                raise ValueError("Upstream area must target the source repository")
-        elif path in config.get("hotspots", {}):
-            owner = config["hotspots"][path]
-        else:
-            owner = None
         kept = []
         for row in rows:
-            disabled = any(entry["source"] == row["source"] and entry["rule"] == row["rule"]
-                           and not any(local["file"] == path and local["rule"] == row["rule"]
-                                       for local in local_rows)
-                           for entry, local_rows in noise)
-            if disabled:
-                dropped.append(row)
-            else:
-                kept.append(row)
+            (dropped if is_noise(row, noise) else kept).append(row)
         if not kept:
             continue
-        if owner is None:
-            owner = next((area["id"] for area in areas if any(matches(area, row) for row in kept)),
-                         config.get("default_area"))
-        if owner not in by_id:
+        owner = file_owner(config, path, kept, core)
+        if owner not in names:
             raise ValueError("Unmapped finding file or unknown area; refusing partial coverage")
         grouped[owner].extend(kept)
     return grouped, dropped
