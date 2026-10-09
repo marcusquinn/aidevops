@@ -5173,3 +5173,21 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18586 New WordPress plugin capability: create from WP Plugin Starter with saved maker defaults #enhancement ref:GH#33504 pr:#33515 completed:2026-10-04
 
 - [x] t18600 Decision asks and completion summaries include clickable links to evidence #enhancement ref:GH#33829 pr:#33831 completed:2026-10-06
+
+- [ ] t18629 refactor: unify runtime-env trust, Git-shim detection and native Git resoluti... #refactor ref:GH#34133
+
+- [ ] t18621 fix(worktree): add on existing remote branch fails with silent RECONCILIATION_FAILED #auto-dispatch #bug ref:GH#34002
+
+- [ ] t18620 feat(pulse): stale queued-run watchdog safely deletes job-less ghost runs #auto-dispatch #enhancement ref:GH#34001
+
+- [ ] t18619 fix(pulse): preflight timeouts starve the deterministic pipeline (merge pass, dispatch_max, stale_queued_runs) #auto-dispatch #bug ref:GH#34000
+
+- [ ] t18618 feat(pulse-merge): auto-merge green worker PRs linked via For #N to open non-parent issues #auto-dispatch #enhancement ref:GH#33999
+
+- [ ] t18617 ci: add timeout-minutes to hung-prone GitHub-hosted jobs (model-replay-linux, code-review-monitoring) #auto-dispatch #bug ref:GH#33986
+
+- [ ] t18609 fix(pulse): enrichment success check is a false positive when the brief already has Worker Guidance #auto-dispatch #bug #pulse ref:GH#33879
+
+- [ ] t18608 fix(fast-fail): worker-side failures never flag enrichment_needed #auto-dispatch #bug #pulse ref:GH#33878
+
+- [ ] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877
