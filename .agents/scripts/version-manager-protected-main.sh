@@ -535,6 +535,30 @@ _version_manager_is_signed_snapshot() {
 	return $?
 }
 
+# Print a bounded, credential-redacted tail of Git push output so operators can
+# tell transient failures from ruleset, hook, or auth rejections.
+_version_manager_print_push_rejection() {
+	local push_output="$1"
+	local tail_text=""
+	local line=""
+
+	print_info "Git rejected the exact tag push"
+	[[ -n "$push_output" ]] || return 0
+	local redacted=""
+	redacted=$(printf '%s\n' "$push_output" |
+		sed -E \
+			-e 's#(https?|ssh)://[^/@[:space:]]+@#\1://[redacted]@#g' \
+			-e 's#(gh[pousr]_|github_pat_)[A-Za-z0-9_]+#[redacted]#g' \
+			-e 's#([Tt]oken|[Pp]assword|[Aa]uthorization)([=:] *)[^[:space:]]+#\1\2[redacted]#g')
+	tail_text=$(printf '%s\n' "$redacted" |
+		grep -E '^(remote:|error:|fatal:|!| ! |hint:)' | tail -n 5) || true
+	[[ -n "$tail_text" ]] || tail_text=$(printf '%s\n' "$redacted" | tail -n 2)
+	while IFS= read -r line; do
+		[[ -z "$line" ]] || print_info "  git: ${line:0:300}"
+	done <<<"$tail_text"
+	return 0
+}
+
 _version_manager_publish_reachable_tag() {
 	local tag_name="$1"
 	local push_output=""
@@ -569,7 +593,7 @@ _version_manager_publish_reachable_tag() {
 	if ! push_output=$(git -C "$REPO_ROOT" push origin \
 		"refs/tags/${tag_name}:refs/tags/${tag_name}" 2>&1); then
 		print_error "Failed to publish preserved ${tag_name} after main became reachable"
-		[[ -z "$push_output" ]] || print_info "Git rejected the exact tag push"
+		_version_manager_print_push_rejection "$push_output"
 		return 1
 	fi
 	_version_manager_classify_remote_tag "$tag_name" || return 1
