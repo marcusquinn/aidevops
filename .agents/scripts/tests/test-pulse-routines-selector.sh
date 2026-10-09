@@ -289,20 +289,34 @@ TODOEOF
 		fail "Case 7b (GH#28808): repository TODO ignores fenced r004 and keeps descriptive IDs" "ids=$repo_ids"
 	fi
 
-	local malformed_count=0
+	local malformed_count=0 rc=0
 	printf '# Tasks\n\n- [x] r-missing Missing heading repeat:daily(@01:00)\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	printf '## Routines\n\n## Ready\n\n## Routines\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	printf '```markdown\n## Routines\n- [x] r-fenced Unclosed repeat:daily(@01:00)\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	printf '## Routines\n<!-- unclosed\n- [x] r-commented Hidden repeat:daily(@01:00)\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	if [[ "$malformed_count" -eq 4 ]]; then
-		pass "Case 8 (GH#28808): missing, duplicate, and malformed boundaries fail closed"
+		pass "Case 8 (GH#28808): misplaced, duplicate, and malformed boundaries fail closed"
 	else
-		fail "Case 8 (GH#28808): missing, duplicate, and malformed boundaries fail closed" \
-			"expected 4 failures, got $malformed_count"
+		fail "Case 8 (GH#28808): misplaced, duplicate, and malformed boundaries fail closed" \
+			"expected 4 rc=1 failures, got $malformed_count"
+	fi
+
+	# GH#34169: the default TODO template has no registry; that is "no routines",
+	# not a malformed file, and must not produce a per-cycle diagnostic.
+	printf '# TODO\n\n## Ready\n\n- [ ] t001 Ordinary task\n\n## Done\n' >"$fixture"
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		pass "Case 8b (GH#34169): absent registry without routine lines returns no-registry"
+	else
+		fail "Case 8b (GH#34169): absent registry without routine lines returns no-registry" "rc=$rc"
 	fi
 	return 0
 }

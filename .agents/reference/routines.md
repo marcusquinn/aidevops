@@ -32,10 +32,12 @@ material, dispatch paths, and logs remain private with restrictive modes.
 
 Pulse reads routine definitions from exactly one top-level `## Routines`
 section in each `TODO.md`. Fenced code, HTML comments, indented Markdown code,
-and all other sections are documentation only. A missing or duplicate canonical
-heading, or an unclosed fence/comment that makes the boundaries ambiguous,
-fails closed: Pulse dispatches no routines from that file and records a local
-diagnostic.
+and all other sections are documentation only. A `TODO.md` with no registry and
+no routine-shaped lines simply has no routines: Pulse skips it silently. A
+duplicate canonical heading, routine-shaped lines (`- [x] rNNN ... repeat:`)
+outside any registry, or an unclosed fence/comment that makes the boundaries
+ambiguous fails closed: Pulse dispatches no routines from that file and records
+a local diagnostic.
 
 ## Fields
 
