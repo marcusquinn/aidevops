@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.43] - 2026-10-09
+
+### Changed
+
+- Maintenance: repair 9 stale publication:pending tasks (GH#34149 repair path)
+- Maintenance: mark t18636 complete (pr:#34176 completed:2026-10-09) (#34177)
+
+### Fixed
+
+- require new Worker Guidance heading for enrichment success (t18609) (#34189)
+- resolve aidevops-managed OpenCode shims before choosing upgrade package manager
+- resolve project .venv for inferred Python verify commands
+- flag enrichment_needed on first worker-side failure (t18608) (#34191)
+- allow exact read-only Git version queries (#34184)
+- restore test-pulse-routines-selector Case 9/11 after detached script routines
+- make test-smoke-help.sh robust under set -e (GH#34166) (#34174)
+- surface Git rejection reason on protected-main tag push failure (#34173)
+- silence missing routines registry noise for repos without routines
+
 ## [3.38.42] - 2026-10-09
 
 ### Added
