@@ -93,6 +93,17 @@ not unrelated code/brief edits or dependency API availability. Resolve the
 human-owned prerequisite before explicitly retrying; scheduling consent never
 grants source access, and the original guard must verify the exact context.
 
+A missing verification tool, or a forbidden dependency install, is not a
+permission boundary (GH#34110). Workers first check repository-declared tools
+(`.aidevops.json` `.verify`, worktree `.venv/bin/<tool>`), then report
+`runner_capability_unmet`, which releases to a capable runner without a global
+hold. `repo-verify-pre-push.sh` labels missing Python tools as tooling, not
+source defects. Terminal-only reports create no progress-blocker events;
+`pulse-diagnose-helper.sh issue` shows a separate "Terminal blocker" section and
+JSON `terminal_blocker`. That section says whether a permission request exists
+and names the newest redacted local excerpt in
+`~/.aidevops/logs/worker-failure-excerpts/`.
+
 Clean-room mode changes prompt content only; it cannot bypass the zero-output
 retry budget. Verify with `test-terminal-blocker-circuit.sh`,
 `test-pulse-dispatch-worker-launch-comment-metrics.sh`, and

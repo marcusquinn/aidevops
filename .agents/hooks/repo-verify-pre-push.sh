@@ -318,6 +318,74 @@ _emit_missing_js_lint_tooling() {
 	return 0
 }
 
+# GH#34110: a Python verification tool that is not on this PATH (or not
+# importable by the selected interpreter) cannot have evaluated the source.
+# Print the missing tool name; return 1 when the log shows the tool actually
+# ran (ruff/black/mypy summaries) or no missing-tool signature is present.
+# Log content is only pattern-matched, never executed.
+_PY_VERIFY_TOOLS='ruff|black|flake8|pytest|mypy|isort|pyright|pylint'
+_missing_python_tooling() {
+	local log_file="$1"
+	local match=""
+	[[ -f "$log_file" ]] || return 1
+	if grep -Eiq '(^Found [0-9]+ errors?|[0-9]+ files? (would be|left) (reformatted|unchanged)|^would reformat)' \
+		"$log_file" 2>/dev/null; then
+		return 1
+	fi
+	# bash/sh/env forms: "line 1: ruff: command not found", "sh: 1: ruff: not
+	# found", "env: 'ruff': No such file or directory"; zsh: "command not
+	# found: ruff"; interpreter: "python: No module named ruff".
+	match=$(grep -Eo "(^|[[:space:]:/])'?(${_PY_VERIFY_TOOLS})'?(: command not found|: not found|: No such file or directory)" \
+		"$log_file" 2>/dev/null | head -n 1) || match=""
+	if [[ -z "$match" ]]; then
+		match=$(grep -Eo "command not found: (${_PY_VERIFY_TOOLS})([[:space:]]|$)" "$log_file" 2>/dev/null | head -n 1) || match=""
+	fi
+	if [[ -z "$match" ]]; then
+		match=$(grep -Eo "No module named '?(${_PY_VERIFY_TOOLS})('|[[:space:]]|$)" "$log_file" 2>/dev/null | head -n 1) || match=""
+	fi
+	[[ -n "$match" ]] || return 1
+	match=$(printf '%s' "$match" | grep -Eo "(${_PY_VERIFY_TOOLS})" | head -n 1)
+	printf '%s\n' "$match"
+	return 0
+}
+
+_emit_missing_python_tooling() {
+	local name="$1"
+	local tool="$2"
+	local check_cmd="$3"
+	_log BLOCK "$name could not start: Python verification tool '$tool' is unavailable to the selected interpreter/PATH"
+	_log BLOCK "this is not a demonstrated source defect; the unchanged $name gate must still run and pass"
+	printf '\n' >&2
+	printf '  Resolution (keep source and configuration unchanged; never bypass this gate):\n' >&2
+	if [[ -x "$REPO_ROOT/.venv/bin/$tool" ]]; then
+		printf '    1. This worktree has %s. Declare it explicitly in .aidevops.json\n' ".venv/bin/$tool" >&2
+		printf '       .verify, for example: "%s": ".venv/bin/%s ..."\n' "$name" "$tool" >&2
+	else
+		printf '    1. Reuse an approved existing environment by declaring its interpreter\n' >&2
+		printf '       explicitly in .aidevops.json .verify, for example:\n' >&2
+		printf '       "%s": "<approved-venv>/bin/python -m %s ..."\n' "$name" "$tool" >&2
+		printf '       Do not scan host directories for environments.\n' >&2
+	fi
+	printf '    2. Otherwise installing %s needs dependency-installation authority.\n' "$tool" >&2
+	printf '       Headless workers: report TERMINAL_BLOCKER_REASON=runner_capability_unmet,\n' >&2
+	printf '       not permission_required, and name the missing tool in the dossier.\n' >&2
+	printf '    3. Re-run: %s   (must pass)\n' "$check_cmd" >&2
+	printf '\n' >&2
+	return 0
+}
+
+# Classify one failed check. Returns 0 (and prints guidance) only for missing
+# Python tooling, in which case callers skip autofix: the fixer shares the
+# unavailable toolchain.
+_check_failed_on_missing_python_tooling() {
+	local name="$1"
+	local check_cmd="$2"
+	local tool=""
+	tool=$(_missing_python_tooling "${LAST_FAIL_LOG:-}") || return 1
+	_emit_missing_python_tooling "$name" "$tool" "$check_cmd"
+	return 0
+}
+
 # ----- task-ID counter-only push validation --------------------------------
 
 # A task-ID CAS allocation creates one plumbing commit directly atop the pinned
@@ -410,7 +478,9 @@ main() {
 
 	if [[ -n "$VERIFY_FORMAT" ]]; then
 		if ! _run_check 'format' "$VERIFY_FORMAT"; then
-			if _run_autofix 'format' "$VERIFY_FORMAT_FIX" "$VERIFY_FORMAT"; then
+			if _check_failed_on_missing_python_tooling 'format' "$VERIFY_FORMAT"; then
+				overall=1
+			elif _run_autofix 'format' "$VERIFY_FORMAT_FIX" "$VERIFY_FORMAT"; then
 				:
 			else
 				_emit_mentor_fail 'format' "$VERIFY_FORMAT_FIX" "$VERIFY_FORMAT"
@@ -424,6 +494,8 @@ main() {
 			if _lint_missing_js_tooling "${LAST_FAIL_LOG:-}"; then
 				# The fixer shares the unavailable toolchain; skip autofix.
 				_emit_missing_js_lint_tooling
+				overall=1
+			elif _check_failed_on_missing_python_tooling 'lint' "$VERIFY_LINT"; then
 				overall=1
 			elif _run_autofix 'lint' "$VERIFY_LINT_FIX" "$VERIFY_LINT"; then
 				:
@@ -439,6 +511,8 @@ main() {
 		if ! _run_check 'typecheck' "$VERIFY_TYPECHECK"; then
 			if _typecheck_missing_bun_dev_dependencies "${LAST_FAIL_LOG:-}"; then
 				_emit_missing_bun_dev_dependencies
+			elif _check_failed_on_missing_python_tooling 'typecheck' "$VERIFY_TYPECHECK"; then
+				:
 			else
 				_emit_mentor_fail 'typecheck' '' "$VERIFY_TYPECHECK"
 			fi

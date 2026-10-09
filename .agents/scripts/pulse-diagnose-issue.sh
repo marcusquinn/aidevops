@@ -270,6 +270,88 @@ _render_issue_permission_hold_text() {
 	return 0
 }
 
+# GH#34110: terminal blockers are reported in the worker's final text and
+# projected into CLAIM_RELEASED/circuit comments; they never create
+# progress-blocker events. Summarise the latest trusted projection so a
+# blocked result is never shown as "no blocker records". Comments travel on
+# stdin (GH#33575 argv caps). Advisory only: holds are evaluated elsewhere.
+# Args: comments_json
+_issue_terminal_blocker_json() {
+	local comments_json="${1:-}"
+	[[ -n "$comments_json" ]] || comments_json='[]'
+	printf '%s\n' "$comments_json" | jq -c '
+		def trusted: (.author_association // "") as $a | ["OWNER", "MEMBER", "COLLABORATOR"] | index($a) != null;
+		def text: .body // "";
+		[.[]? | select(trusted) | select(text | test("(?m)^Terminal blocker: reason=[a-z_]+ owner=[a-z-]+ "))]
+		| sort_by(.created_at // "", .id // 0) as $observations
+		| ([.[]? | select(trusted) | select(text | test("(?m)^TERMINAL_BLOCKER_CIRCUIT active=true "))] | length) as $circuits
+		| ($observations | last) as $latest
+		| if $latest == null then {present: false, observations: 0, circuit_comments: $circuits}
+		else
+			($latest | text | capture("(?m)^Terminal blocker: reason=(?<reason>[a-z_]+) owner=(?<owner>[a-z-]+) ")) as $line
+			| {present: true, reason: $line.reason, owner: $line.owner,
+			   projected_state: (($latest | text | capture("(?m)^Projected state: (?<s>status:[a-z]+)\\.")? | .s) // null),
+			   at: ($latest.created_at // null), observations: ($observations | length),
+			   circuit_comments: $circuits}
+		end' 2>/dev/null || printf '{"present":false,"observations":0,"circuit_comments":0,"evaluation_error":true}\n'
+	return 0
+}
+
+# Name local redacted worker failure excerpts for this issue. Paths stay in
+# local diagnostics output only; excerpt content is never printed.
+# Args: issue_number
+_issue_failure_excerpt_summary() {
+	local issue_number="$1"
+	local excerpt_dir="${AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR:-${HOME:-}/.aidevops/logs/worker-failure-excerpts}"
+	local newest="" count=0 path=""
+	[[ "$issue_number" =~ ^[0-9]+$ && -d "$excerpt_dir" ]] || return 1
+	for path in "$excerpt_dir/issue-${issue_number}-"*.log; do
+		[[ -f "$path" ]] || continue
+		count=$((count + 1))
+		[[ -z "$newest" || "$path" > "$newest" ]] && newest="$path"
+	done
+	[[ "$count" -gt 0 ]] || return 1
+	printf '%s\t%s\n' "$count" "$newest"
+	return 0
+}
+
+# Args: terminal_blocker_json permission_hold_json issue_number
+_render_issue_terminal_blocker_text() {
+	local blocker_json="$1"
+	local hold_json="${2:-}"
+	local issue_number="${3:-}"
+	local present=false
+	local request_id=""
+	local excerpt=""
+	local excerpt_count=0
+	local excerpt_path=""
+	present=$(printf '%s' "$blocker_json" | jq -r '.present // false' 2>/dev/null) || present=false
+	[[ "$present" == true ]] || return 0
+	printf 'Terminal blocker (latest trusted release/circuit projection):\n'
+	printf '%s' "$blocker_json" | jq -r '
+		"  Latest: reason=\(.reason) owner=\(.owner) at \(.at // "unknown")",
+		"  Projected state: \(.projected_state // "unknown")  observations: \(.observations)  circuit comments: \(.circuit_comments)"' \
+		2>/dev/null || true
+	if [[ "$(printf '%s' "$blocker_json" | jq -r '.reason // ""' 2>/dev/null)" == "permission_required" ]]; then
+		request_id=$(printf '%s' "$hold_json" | jq -r '.request_id // empty' 2>/dev/null) || request_id=""
+		if [[ -n "$request_id" ]]; then
+			printf '  Permission request: %s (see Maintainer permission hold above)\n' "$request_id"
+		else
+			printf '  Permission request: none recorded (terminal-only report; there is no scoped grant to approve)\n'
+			printf '  A missing tool or forbidden install is runner_capability_unmet, not permission_required (GH#34110).\n'
+		fi
+	fi
+	if excerpt=$(_issue_failure_excerpt_summary "$issue_number"); then
+		IFS=$'\t' read -r excerpt_count excerpt_path <<<"$excerpt"
+		printf '  Worker evidence (desired operation, checked alternatives): redacted local excerpts (%s on this runner), newest: %s\n' \
+			"$excerpt_count" "$excerpt_path"
+	else
+		printf '  Worker evidence: no local worker excerpt on this runner; check the releasing runner.\n'
+	fi
+	printf '\n'
+	return 0
+}
+
 # =============================================================================
 # Subcommands — cmd_issue (t3258)
 #
@@ -659,7 +741,8 @@ _render_issue_blockers_text() {
 	if [[ -n "$recent_lines" ]]; then
 		printf '  Recent blocker lifecycle:\n%s\n' "$recent_lines"
 	else
-		printf '  (no blocker records found for this issue)\n'
+		# Terminal-only reports never emit these events (GH#34110).
+		printf '  (no progress-blocker events for this issue; terminal blockers are listed separately)\n'
 	fi
 	printf '\n'
 	return 0
@@ -735,8 +818,12 @@ _render_issue_text() {
 	printf '  Created: %s\n\n' "${created_at:-(unknown)}"
 
 	_render_issue_lifecycle_comments "$comments_json"
-	_render_issue_permission_hold_text "$(_issue_permission_hold_json "$issue_number" "$repo_slug" "$issue_json" "$comments_json")"
+	local permission_hold_json=""
+	permission_hold_json=$(_issue_permission_hold_json "$issue_number" "$repo_slug" "$issue_json" "$comments_json")
+	_render_issue_permission_hold_text "$permission_hold_json"
 	_render_issue_blockers_text "$blocker_summary_json"
+	_render_issue_terminal_blocker_text "$(_issue_terminal_blocker_json "$comments_json")" \
+		"$permission_hold_json" "$issue_number"
 	_render_issue_dirty_worktree_hold_text "$(_issue_dirty_worktree_hold_summary_json "$issue_log_lines")"
 	_render_issue_footprint_defer_text "$issue_number" "$repo_slug"
 	_render_issue_attempts_text "$attempt_summary_json" "$issue_log_lines" "$verbose"
@@ -811,6 +898,9 @@ _render_issue_json() {
 	printf ',\n'
 	printf '  "permission_hold": '
 	_issue_permission_hold_json "$issue_number" "$repo_slug" "$issue_json" "$comments_json"
+	printf ',\n'
+	printf '  "terminal_blocker": '
+	_issue_terminal_blocker_json "$comments_json"
 	printf ',\n'
 	printf '  "dirty_worktree_hold": '
 	_issue_dirty_worktree_hold_summary_json "$issue_log_lines"
