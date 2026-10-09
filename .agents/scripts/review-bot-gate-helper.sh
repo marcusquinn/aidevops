@@ -1374,11 +1374,15 @@ _rbg_is_pulse_todo_handoff_pr_metadata() {
 
 # Live evidence shared by account-authored generated TODO PRs: the author must
 # hold maintainer-equivalent permission now, and the complete changed-file set
-# must be exactly TODO.md. Returns 0 trusted, 1 untrusted, 2 API failure.
+# must be exactly TODO.md. With allow_added_briefs=1 (Pulse handoff only), the
+# set may also contain newly added todo/tasks/tNNN-brief.md captures written by
+# stale-publication repair (GH#34149); edits, deletions, renames and any other
+# path stay untrusted. Returns 0 trusted, 1 untrusted, 2 API failure.
 _rbg_account_todo_only_live_evidence() {
 	local pr_number="$1"
 	local repo="$2"
 	local pr_metadata_json="$3"
+	local allow_added_briefs="${4:-0}"
 	local author_login=""
 	local permission=""
 	local changed_files=""
@@ -1393,9 +1397,34 @@ _rbg_account_todo_only_live_evidence() {
 	*) return 1 ;;
 	esac
 
+	if [[ "$allow_added_briefs" == "1" ]]; then
+		#aidevops:trust-boundary -- GH#34149: TODO.md must change, and every
+		# other file must be a newly added brief capture under todo/tasks/.
+		changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files?per_page=100" \
+			--jq '.[] | [.filename, .status] | @tsv') || return 2
+		_rbg_todo_with_added_briefs_only "$changed_files" || return 1
+		return 0
+	fi
 	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files?per_page=100" \
 		--jq '.[].filename') || return 2
 	[[ "$changed_files" == "TODO.md" ]] || return 1
+	return 0
+}
+
+# Input: "<filename>\t<status>" lines. Exactly one TODO.md modification plus
+# zero or more added todo/tasks/tNNN-brief.md files; anything else fails.
+_rbg_todo_with_added_briefs_only() {
+	local changed_files="$1"
+	local filename="" status="" todo_seen=0
+	[[ -n "$changed_files" ]] || return 1
+	while IFS=$'\t' read -r filename status; do
+		if [[ "$filename" == "TODO.md" && "$status" == "modified" && "$todo_seen" -eq 0 ]]; then
+			todo_seen=1
+			continue
+		fi
+		[[ "$status" == "added" && "$filename" =~ ^todo/tasks/t[0-9]+(\.[0-9]+)*-brief\.md$ ]] || return 1
+	done <<<"$changed_files"
+	[[ "$todo_seen" -eq 1 ]] || return 1
 	return 0
 }
 
@@ -1419,7 +1448,7 @@ _rbg_is_trusted_pulse_todo_handoff_pr() {
 	local evidence_rc=0
 
 	_rbg_is_pulse_todo_handoff_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha" || return 1
-	_rbg_account_todo_only_live_evidence "$pr_number" "$repo" "$pr_metadata_json" || evidence_rc=$?
+	_rbg_account_todo_only_live_evidence "$pr_number" "$repo" "$pr_metadata_json" 1 || evidence_rc=$?
 	return "$evidence_rc"
 }
 

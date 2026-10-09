@@ -111,7 +111,7 @@ Pulse-TODO-Handoff-ID: ${handoff_id}" origin "$branch" "$changed_paths" || publi
 	{
 		printf '<!-- aidevops:pulse-todo-handoff id=%s -->\n' "$handoff_id"
 		# shellcheck disable=SC2016 # Backticks in the Markdown body are literal.
-		printf '## Pulse TODO publication\n\nValidated allowlisted planning changes from default-base `%s` are pending review. This PR is not a completed TODO update. Required checks and review gates still apply; Pulse merges it once its exact head is verified as a TODO.md-only handoff from a maintainer-equivalent author.\n\n' "$base_sha"
+		printf '## Pulse TODO publication\n\nValidated allowlisted planning changes from default-base `%s` are pending review. This PR is not a completed TODO update. Required checks and review gates still apply; Pulse merges it once its exact head is verified as a TODO.md handoff (plus only newly added todo/tasks brief captures) from a maintainer-equivalent author.\n\n' "$base_sha"
 		printf '## Related issues\n\n%s\n' "$linkage"
 	} >"$body_file"
 	# The wrapper supplies the signature, origin and policy checks at publication.

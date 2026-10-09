@@ -48,7 +48,7 @@ gh_list_issues() {
 	local repo="$1" state="$2" limit="$3"
 	local -a args=(
 		--repo "$repo" --state "$state" --limit "$limit"
-		--json "number,title,assignees,state,labels"
+		--json "number,title,assignees,state,labels,createdAt"
 	)
 	if declare -F gh_issue_list >/dev/null 2>&1; then
 		gh_issue_list "${args[@]}" 2>/dev/null

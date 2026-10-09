@@ -343,10 +343,12 @@ LIVE_HANDOFF_JSON=$(jq -nc --arg id "$HANDOFF_ID" '{
 	body: ("<!-- aidevops:pulse-todo-handoff id=" + $id + " -->\n## Pulse TODO publication\n\n- Ref #33701\n")
 }')
 
+# Handoff evidence reads "<filename>\t<status>" rows (GH#34149).
+HANDOFF_TODO_ROW=$'TODO.md\tmodified'
 run_handoff() {
 	local payload="$1"
 	local permission="${2:-write}"
-	local files="${3-TODO.md}"
+	local files="${3-$HANDOFF_TODO_ROW}"
 	local expected_head="${4-head-123}"
 	REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$payload" \
 		REVIEW_GATE_ACCOUNT_PERMISSION="$permission" REVIEW_GATE_ACCOUNT_FILES="$files" \
@@ -374,12 +376,23 @@ assert_handoff_rejected() {
 	return 0
 }
 
+HANDOFF_BRIEF_ROW=$'todo/tasks/t18617-brief.md\tadded'
+if ! run_handoff "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'"${HANDOFF_BRIEF_ROW}"$'\n'$'todo/tasks/t18607.2-brief.md\tadded'; then
+	printf 'FAIL: live helper rejected a Pulse TODO handoff with added stale-publication brief captures\n' >&2
+	exit 1
+fi
+printf 'PASS: live helper accepts Pulse TODO handoff with TODO.md plus added brief captures\n'
+
 assert_handoff_rejected 'with read permission' "$LIVE_HANDOFF_JSON" read
-assert_handoff_rejected 'with a todo/ planning file' "$LIVE_HANDOFF_JSON" write $'TODO.md\ntodo/PLANS.md'
-assert_handoff_rejected 'with a non-planning file' "$LIVE_HANDOFF_JSON" write $'TODO.md\n.agents/scripts/pulse-merge.sh'
+assert_handoff_rejected 'with a todo/ planning file' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/PLANS.md\tmodified'
+assert_handoff_rejected 'with a non-planning file' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'.agents/scripts/pulse-merge.sh\tmodified'
+assert_handoff_rejected 'with a modified existing brief' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/tasks/t18617-brief.md\tmodified'
+assert_handoff_rejected 'with a removed brief' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/tasks/t18617-brief.md\tremoved'
+assert_handoff_rejected 'with an added non-brief todo/tasks file' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/tasks/prd-x.md\tadded'
+assert_handoff_rejected 'with a brief but no TODO.md change' "$LIVE_HANDOFF_JSON" write "$HANDOFF_BRIEF_ROW"
 assert_handoff_rejected 'with an empty changed-file set' "$LIVE_HANDOFF_JSON" write ''
-assert_handoff_rejected 'with stale exact-head evidence' "$LIVE_HANDOFF_JSON" write TODO.md stale-head
-assert_handoff_rejected 'without exact-head evidence' "$LIVE_HANDOFF_JSON" write TODO.md ''
+assert_handoff_rejected 'with stale exact-head evidence' "$LIVE_HANDOFF_JSON" write "$HANDOFF_TODO_ROW" stale-head
+assert_handoff_rejected 'without exact-head evidence' "$LIVE_HANDOFF_JSON" write "$HANDOFF_TODO_ROW" ''
 assert_handoff_rejected 'from a fork head' \
 	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.head.repo.full_name = "attacker/aidevops"')"
 assert_handoff_rejected 'from a bot actor' \

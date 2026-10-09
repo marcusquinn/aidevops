@@ -1029,7 +1029,7 @@ _ensure_publication_pending_label() {
 
 	if gh label create "$label" --repo "$repo_slug" \
 		--color "FBCA04" \
-		--description "Task planning not yet published to the default branch" \
+		--description "Dispatch hold until TODO+brief land on default branch; auto-clears, Pulse repairs after 6h" \
 		>/dev/null 2>&1; then
 		printf '%s\n' "$label" >>"$cache_file" 2>/dev/null || true
 		log_info "Auto-created label '${label}' in ${repo_slug}"

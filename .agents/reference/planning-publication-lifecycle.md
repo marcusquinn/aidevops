@@ -89,6 +89,21 @@ PUBLICATION_FAILED
   reconcile: stale and failed counts make the run fail; deferred alone does not
   recovery: retry the same publication/mapping; never allocate a replacement ID
 
+ABANDONED -> REPAIRED (GH#34149)
+  trigger: Pulse TODO sync (`issue-sync-helper.sh pull`, never GitHub Actions)
+    sees an open pending issue with a tNNN: title, no default-branch TODO row,
+    age >= AIDEVOPS_PUBLICATION_REPAIR_HOURS (default 6) and an
+    OWNER/MEMBER/COLLABORATOR author
+  repair: capture the issue body as todo/tasks/tNNN-brief.md
+    (`brief-readiness-helper.sh stub`), seed the TODO row with ref:GH#N, and
+    add #auto-dispatch when the brief is worker-ready and no hold, parent or
+    live-ownership label exists
+  publication: the existing allowlisted planning publisher or Pulse TODO
+    handoff (TODO.md plus added brief captures only); reconciliation then
+    clears the blocker exactly as for a normal publication
+  bounds: AIDEVOPS_PUBLICATION_REPAIR_LIMIT (default 10) per pull;
+    AIDEVOPS_PUBLICATION_REPAIR=0 disables
+
 UNMAPPED (GH#33321)
   issue: publication:pending retained; title has no tNNN prefix and no TODO
     task line carries ref:GH#N (a ref match maps the issue without a prefix)
