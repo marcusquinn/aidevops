@@ -970,6 +970,23 @@ jobs:
           echo "No Pyflakes issues"
         fi
 
+    - name: Python 3.9 annotation compatibility (GH#34098)
+      # Blocking: macOS /usr/bin/python3 is 3.9, which evaluates `X | None`
+      # signature/module/class annotations at import time and crashes unless the
+      # module uses `from __future__ import annotations`. Static AST check.
+      run: |
+        source .agents/scripts/lint-file-discovery.sh
+        lint_python_files
+        if [ -z "$LINT_PY_FILES" ]; then
+          echo "No Python files found"
+          exit 0
+        fi
+        if ! echo "$LINT_PY_FILES" | xargs python3 .agents/scripts/python-annotation-compat-check.py; then
+          echo "::error::Runtime PEP 604 union annotations break Python 3.9 imports; add 'from __future__ import annotations'"
+          exit 1
+        fi
+        echo "Python 3.9 annotations: compatible"
+
   qlty-smells:
     name: Qlty Maintainability Smells
     runs-on: ubuntu-latest

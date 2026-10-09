@@ -24,6 +24,8 @@ Inbox:       _knowledge/inbox/ (output .eml files)
 Output: JSON summary to stdout. Errors to stderr.
 """
 
+from __future__ import annotations
+
 import argparse
 import email as email_lib
 import imaplib

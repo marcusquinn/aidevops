@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Trusted GitHub quota-owner attribution."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os

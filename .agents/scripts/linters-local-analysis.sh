@@ -17,6 +17,7 @@
 #   - Nesting depth (Codacy alignment — GH#4939)
 #   - File size (ratchet gate — t2938)
 #   - Python complexity (Lizard + Pyflakes)
+#   - Python 3.9 annotation compatibility (GH#34098)
 #   - Remote CLI status
 #   - Skill frontmatter validation
 #   - Pulse wrapper canary (GH#18790)
@@ -934,6 +935,45 @@ check_python_complexity() {
 		print_warning "Python complexity: $total issues ($violations complexity, $warnings pyflakes)"
 	fi
 	return 0
+}
+
+# =============================================================================
+# Python 3.9 Annotation Compatibility (GH#34098) — blocking
+# =============================================================================
+# Python 3.9 evaluates `X | None` signature/module/class annotations at import
+# time unless the module postpones annotations. Static AST check; never imports.
+# Args: optional newline-separated .py file list (default: all tracked .py files)
+check_python_annotation_compat() {
+	local file_list="${1-__all__}"
+	local checker="${SCRIPT_DIR}/python-annotation-compat-check.py"
+	local -a py_files=()
+	local file="" output="" status=0
+	echo -e "${BLUE}Checking Python 3.9 annotation compatibility...${NC}"
+
+	if [[ "$file_list" == "__all__" ]]; then
+		lint_python_files
+		file_list="$LINT_PY_FILES"
+	fi
+	while IFS= read -r file; do
+		[[ -n "$file" && -f "$file" ]] && py_files+=("$file")
+	done <<<"$file_list"
+	if [[ ${#py_files[@]} -eq 0 ]]; then
+		print_success "Python 3.9 annotations: no Python files selected"
+		return 0
+	fi
+	if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$checker" ]]; then
+		print_warning "Python 3.9 annotations: python3 or checker unavailable; skipped"
+		return 0
+	fi
+
+	output=$(python3 "$checker" "${py_files[@]}" 2>&1) || status=$?
+	if [[ "$status" -eq 0 ]]; then
+		print_success "Python 3.9 annotations: ${#py_files[@]} files compatible"
+		return 0
+	fi
+	printf '%s\n' "$output"
+	print_error "Python 3.9 annotations: runtime PEP 604 unions found (see above)"
+	return 1
 }
 
 check_remote_cli_status() {
