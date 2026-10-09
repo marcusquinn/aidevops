@@ -272,12 +272,98 @@ test_success_preserves_output_and_status() {
 	return 0
 }
 
+test_playwright_launcher_migrations() {
+	local status=0
+	python3 - "$ADAPTER" "${SCRIPT_DIR}/../setup/modules/config.sh" <<'PYEOF' || status=$?
+import json, os, pathlib, subprocess, sys, tempfile
+
+adapter, setup = sys.argv[1:]
+old = {"command": "npx", "args": ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"]}
+variants = [old, dict(old, env={}), dict(old, command="custom-npx"),
+            dict(old, args=old["args"] + ["--port", "9000"]),
+            dict(old, env={"CUSTOM": "yes"}), dict(old, extra=True)]
+with tempfile.TemporaryDirectory() as tmp:
+    home = pathlib.Path(tmp)
+    stub = home / "claude"
+    stub.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+p = pathlib.Path.home() / ".claude.json"
+cfg = json.loads(p.read_text())
+op = sys.argv[2]
+with (pathlib.Path.home() / "calls").open("a") as f:
+    f.write(op + "\\n")
+if op == "list":
+    print("playwright: npx - status")
+elif op == "remove":
+    del cfg["mcpServers"][sys.argv[3]]
+    p.write_text(json.dumps(cfg))
+elif op == "add-json":
+    cfg["mcpServers"][sys.argv[3]] = json.loads(sys.argv[6])
+    p.write_text(json.dumps(cfg))
+else:
+    sys.exit(1)
+''')
+    stub.chmod(0o755)
+    env = dict(os.environ, HOME=tmp, PATH=tmp + os.pathsep + os.environ["PATH"],
+               AIDEVOPS_MCP_CLAUDE_TIMEOUT_SECONDS="1", AIDEVOPS_MCP_TIMEOUT_KILL_AFTER_SECONDS="0.2")
+    launcher = str(home / ".aidevops/agents/scripts/browser-mcp-launcher.sh")
+    new = {"command": "bash", "args": [launcher, "playwright", "npx", *old["args"]]}
+    paths = {"cursor": ".cursor/mcp.json", "windsurf": ".codeium/windsurf/mcp_config.json",
+             "gemini": ".gemini/settings.json", "kilo": ".kilo/mcp.json",
+             "kiro": ".kiro/settings/mcp.json", "amp": ".amp/settings.json",
+             "claude": ".claude.json", "setup": ".cursor/mcp.json"}
+    for runtime, relative in paths.items():
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for index, entry in enumerate(variants):
+            if runtime == "claude":
+                entry = dict(entry, type="stdio")
+            # Cursor setup registers other defaults too; preseed to isolate writes.
+            cfg = {"keep": {"setting": True}, "mcpServers": {
+                "playwright": entry, "other": {"command": "custom"},
+                **{n: {"custom": True} for n in ["context7", "shadcn", "openapi-search", "cloudflare-api"]}}}
+            path.write_text(json.dumps(cfg, separators=(",", ":")))
+            before = path.read_bytes()
+            calls = home / "calls"
+            calls.unlink(missing_ok=True)
+            if runtime == "setup":
+                script = 'source "$1"; _deploy_cursor_mcps; _deploy_cursor_mcps'
+                args = [setup]
+            elif runtime == "claude":
+                script = 'source "$1"; _register_mcp_claude playwright "$2"; _register_mcp_claude playwright "$2"'
+                args = [adapter, json.dumps(new)]
+            else:
+                script = 'source "$1"; _register_mcp_mcpservers "$2" playwright "$3"; _register_mcp_mcpservers "$2" playwright "$3"'
+                args = [adapter, runtime, json.dumps(new)]
+            subprocess.run(["bash", "-euc", script, "bash", *args], env=env, check=True, stdout=subprocess.DEVNULL)
+            after = path.read_bytes()
+            result = json.loads(after)
+            assert result["keep"] == cfg["keep"] and result["mcpServers"]["other"] == cfg["mcpServers"]["other"]
+            if index < 2:
+                assert result["mcpServers"]["playwright"]["command"] == "bash", runtime
+                assert result["mcpServers"]["playwright"]["args"] == new["args"], runtime
+            else:
+                assert after == before, (runtime, index, "custom entry rewritten")
+            # A fresh registration pass must also leave the migrated bytes intact.
+            subprocess.run(["bash", "-euc", script, "bash", *args], env=env, check=True, stdout=subprocess.DEVNULL)
+            assert path.read_bytes() == after, (runtime, "not idempotent")
+            if runtime == "claude":
+                operations = calls.read_text().splitlines()
+                assert operations.count("list") == 2, operations
+                assert operations.count("remove") == (1 if index < 2 else 0), operations
+                assert operations.count("add-json") == (1 if index < 2 else 0), operations
+PYEOF
+	print_result "Playwright exact-default migration, custom preservation and idempotency across runtimes" "$status"
+	return 0
+}
+
 main() {
 	test_claude_mcp_list_timeout_is_non_blocking
 	test_claude_mcp_add_timeout_is_non_blocking
 	test_claude_mcp_list_is_cached_per_registration_pass
 	test_timeout_terminates_process_group
 	test_success_preserves_output_and_status
+	test_playwright_launcher_migrations
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
