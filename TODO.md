@@ -1606,7 +1606,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18633 fix(opencode): tool-schema fallback lacks object and yields host-incompatible schemas when @opencode-ai/plugin is unresolvable #auto-dispatch #bug #interactive tier:standard ref:GH#34148 logged:2026-10-09 -> [todo/tasks/t18633-brief.md]
 - [x] t18634 Migrate Codacy local analysis to Codacy Analysis CLI (@codacy/analysis-cli) #feat #quality #interactive tier:standard ref:GH#34164 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18634-brief.md] pr:#34165 completed:2026-10-09
 - [x] t18635 fix(pulse): silence missing routines registry noise for repos without routines #bug #interactive ref:GH#34169 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18635-brief.md] pr:#34170 completed:2026-10-09
-- [ ] t18636 fix(tests): restore test-pulse-routines-selector Case 9/11 after detached script routines #auto-dispatch #bug #interactive ref:GH#34172 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18636-brief.md]
+- [x] t18636 fix(tests): restore test-pulse-routines-selector Case 9/11 after detached script routines #auto-dispatch #bug #interactive ref:GH#34172 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18636-brief.md] pr:#34176 completed:2026-10-09
 
 ## In Progress
 
