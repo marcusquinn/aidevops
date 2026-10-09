@@ -344,8 +344,8 @@ ENRICHMENT_PROMPT_EOF
 #   $5 - resolved model identifier
 #
 # Exit codes:
-#   0 - enrichment succeeded (Worker Guidance section found in issue body)
-#   1 - enrichment ran but no Worker Guidance was added
+#   0 - enrichment succeeded (body changed and gained a Worker Guidance heading)
+#   1 - enrichment ran but no new Worker Guidance was added
 #######################################
 _enrichment_run_worker() {
 	local prompt_file="$1"
@@ -361,6 +361,15 @@ _enrichment_run_worker() {
 	enrichment_output=$(mktemp)
 	push_cleanup "rm -f '${enrichment_output}'"
 	push_cleanup "rm -f '${prompt_file}'"
+
+	# Snapshot the body before the run so success means this run added guidance.
+	local pre_body="" pre_count=0 post_count=0
+	pre_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || {
+		pre_body=""
+		echo "[pulse-wrapper] Enrichment: pre-run body fetch failed for #${issue_number} in ${repo_slug}; success check degrades to post-run heading count" >>"$LOGFILE"
+	}
+	pre_count=$(printf '%s\n' "$pre_body" | grep -c '^#\{1,6\} Worker Guidance' || true)
 
 	# shellcheck disable=SC2086
 	"$HEADLESS_RUNTIME_HELPER" run \
@@ -378,11 +387,13 @@ _enrichment_run_worker() {
 	post_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || post_body=""
 
-	if [[ "$post_body" == *"Worker Guidance"* ]]; then
+	post_count=$(printf '%s\n' "$post_body" | grep -c '^#\{1,6\} Worker Guidance' || true)
+
+	if [[ "$post_body" != "$pre_body" && "$post_count" -gt "$pre_count" ]]; then
 		echo "[pulse-wrapper] Enrichment: successfully added Worker Guidance to #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		return 0
 	else
-		echo "[pulse-wrapper] Enrichment: worker ran (exit=${enrichment_exit}) but no Worker Guidance found in #${issue_number} body (${#post_body} chars)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Enrichment: worker ran (exit=${enrichment_exit}) but no new Worker Guidance in #${issue_number} body (${#post_body} chars)" >>"$LOGFILE"
 		return 1
 	fi
 }
