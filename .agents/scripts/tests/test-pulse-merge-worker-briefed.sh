@@ -195,6 +195,9 @@ define_helpers_under_test() {
 	src_worker_briefed=$(awk '
 		/^_attempt_worker_briefed_auto_merge\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
+	src_worker_briefed+=$'\n'$(awk '
+		/^_worker_briefed_link_kind\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
 		return 1

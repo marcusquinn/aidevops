@@ -1205,6 +1205,40 @@ _issue_has_verified_crypto_approval() {
 }
 
 #######################################
+# Classify how a worker PR links its issue (GH#33999). Prints "closing" for a
+# closing-keyword link (unchanged behaviour). For a For/Ref-only association
+# #aidevops:trust-boundary — the issue must be open and not parent-task; prints
+# "non-closing reference". Never writes a closing keyword.
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=issue API path
+# Returns: 0=eligible link kind printed, 1=ineligible or lookup failure
+#######################################
+_worker_briefed_link_kind() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local issue_api="$4"
+	local closing_issue="" state_labels="" issue_state="" issue_labels=""
+	closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	if [[ -n "$closing_issue" ]]; then
+		printf '%s' "closing"
+		return 0
+	fi
+	state_labels=$(gh api "${issue_api}" --jq '[.state // "", ([.labels[].name] | join(","))] | @tsv' 2>/dev/null) || return 1
+	issue_state="${state_labels%%$'\t'*}"
+	issue_labels="${state_labels#*$'\t'}"
+	if [[ "$issue_state" != "open" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$issue_labels" =~ (^|,)parent-task(,|$) ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to parent-task issue #${linked_issue} (GH#33999)" >>"$LOGFILE"
+		return 1
+	fi
+	printf '%s' "non-closing reference"
+	return 0
+}
+
+#######################################
 # Check origin:worker worker-briefed auto-merge gates (t2449).
 #
 # Sibling to _check_interactive_pr_gates — validates that an origin:worker
@@ -1287,23 +1321,8 @@ _attempt_worker_briefed_auto_merge() {
 	# with an issue that stays open for later phases. #aidevops:trust-boundary —
 	# that association is eligible only for an open, non-parent issue; all trust
 	# gates below still apply unchanged. Closing-keyword links are untouched.
-	local _closing_issue="" _link_kind="closing"
-	_closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
-	if [[ -z "$_closing_issue" ]]; then
-		_link_kind="non-closing reference"
-		local _state_labels="" _issue_state="" _issue_labels=""
-		_state_labels=$(gh api "${_issue_api}" --jq '[.state // "", ([.labels[].name] | join(","))] | @tsv' 2>/dev/null) || return 1
-		_issue_state="${_state_labels%%$'\t'*}"
-		_issue_labels="${_state_labels#*$'\t'}"
-		if [[ "$_issue_state" != "open" ]]; then
-			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
-			return 1
-		fi
-		if [[ ",${_issue_labels}," == *",parent-task,"* ]]; then
-			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to parent-task issue #${linked_issue} (GH#33999)" >>"$LOGFILE"
-			return 1
-		fi
-	fi
+	local _link_kind=""
+	_link_kind=$(_worker_briefed_link_kind "$pr_number" "$repo_slug" "$linked_issue" "$_issue_api") || return 1
 	local issue_author_permission=""
 	#aidevops:trust-boundary — reuse PR-author permission only for the same non-empty issue-author login.
 	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_pr_author_login" && "$precomputed_pr_author_login" == "$issue_author_login" ]]; then
