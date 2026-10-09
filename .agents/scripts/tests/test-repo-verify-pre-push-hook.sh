@@ -22,6 +22,7 @@
 #  13. Missing bun-installed tsc is diagnosed as missing dev dependencies
 # 13d. Missing npm lint tooling/plugins vs a real lint violation (GH#34094)
 # 13m. Missing Python tooling (ruff/pytest) vs a real Ruff violation (GH#34110)
+# 13v. Inferred Ruff defaults resolve the project .venv (GH#34163)
 #  14. Proven task-id counter-only CAS push skips a missing TypeScript install
 #  15. Mixed-file task-id-counter push falls back to repository verification
 #  16. Normal-branch counter-only push falls back to repository verification
@@ -452,6 +453,67 @@ JSON
 	stderr=$(printf '%s' "$out" | tail -n +2)
 	assert_contains '13u. pytest plugin import error → not misread as missing pytest' 'fix the source' "$stderr"
 	rm -rf "$repo" "$repo2"
+}
+
+# Test 13v: GH#34163 — inferred Ruff defaults resolve the project's own .venv
+# (worktree first; main worktree for interactive linked worktrees only).
+_mk_ruff_venv() {
+	local _venv="$1"
+	mkdir -p "$_venv/bin"
+	printf 'home = /usr/bin\n' >"$_venv/pyvenv.cfg"
+	printf '#!/bin/sh\nexit 0\n' >"$_venv/bin/ruff"
+	chmod +x "$_venv/bin/ruff"
+	return 0
+}
+{
+	repo=$(_mk_repo)
+	printf '[tool.ruff]\nline-length = 100\n' >"$repo/pyproject.toml"
+	printf '.venv/\n' >"$repo/.gitignore"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add ruff config')
+	_mk_ruff_venv "$repo/.venv"
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13v. defaults ruff + worktree .venv → exit 0' '0' "$ec"
+	assert_contains '13w. defaults ruff → worktree .venv source logged' 'python tool source: worktree .venv' "$stderr"
+
+	wt="${repo}-linked"
+	(cd "$repo" && /usr/bin/git worktree add -q "$wt" -b linked) >/dev/null 2>&1
+	out=$(_run_hook "$wt" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13x. linked worktree → main-worktree .venv used interactively' '0' "$ec"
+	assert_contains '13y. linked worktree → main-worktree source logged' 'python tool source: main-worktree .venv' "$stderr"
+
+	out=$(_run_hook "$wt" AIDEVOPS_HEADLESS=1 AIDEVOPS_PREPUSH_AUTOFIX=0)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$stderr" | grep -qF 'python tool source:' 2>/dev/null; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: 13z. headless linked worktree → main-worktree .venv not consulted\n' "$TEST_RED" "$TEST_NC"
+	else
+		printf '%sPASS%s: 13z. headless linked worktree → main-worktree .venv not consulted\n' "$TEST_GREEN" "$TEST_NC"
+	fi
+	(cd "$repo" && /usr/bin/git worktree remove --force "$wt") >/dev/null 2>&1
+	rm -rf "$repo" "$wt"
+
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "ruff check ." } }
+JSON
+	printf '.venv/\n' >"$repo/.gitignore"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'explicit ruff')
+	_mk_ruff_venv "$repo/.venv"
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$stderr" | grep -qF 'python tool source:' 2>/dev/null; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: 13za. explicit .aidevops.json command → PATH untouched\n' "$TEST_RED" "$TEST_NC"
+	else
+		printf '%sPASS%s: 13za. explicit .aidevops.json command → PATH untouched\n' "$TEST_GREEN" "$TEST_NC"
+	fi
+	rm -rf "$repo"
 }
 
 # Test 14: a proven task-id-counter CAS update must not need node_modules/tsc
