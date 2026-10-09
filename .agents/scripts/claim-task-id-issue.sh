@@ -782,6 +782,7 @@ _ensure_todo_entry_written() {
 	# Build tag suffix from labels (skip reserved-prefix labels applied
 	# server-side by issue-sync / pulse, not authored in TODO).
 	local tags_str=""
+	local predecessor_refs="${_CLAIM_BLOCKED_BY_REFS:-}"
 	if [[ -n "$labels" ]]; then
 		local _saved_ifs="$IFS"
 		IFS=','
@@ -793,6 +794,8 @@ _ensure_todo_entry_written() {
 			case "$label" in
 			status:* | tier:* | origin:* | dispatched:* | implemented:* | aidevops:*)
 				continue ;;
+			blocked-by:*)
+				predecessor_refs="${predecessor_refs:+${predecessor_refs},}${label#blocked-by:}" ;;
 			bug)         tags_str="${tags_str:+${tags_str} }#bug" ;;
 			enhancement) tags_str="${tags_str:+${tags_str} }#feat" ;;
 			*)           tags_str="${tags_str:+${tags_str} }#${label}" ;;
@@ -818,12 +821,13 @@ _ensure_todo_entry_written() {
 	fi
 	local todo_line="- [ ] ${task_id} ${safe_desc}"
 	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
-	# GH#20834: append blocked-by tag when predecessor refs were auto-detected.
+	# GH#34152: resolve label and description predecessors together, emitting
+	# one bare blocked-by token with unique task IDs rather than hashtag labels.
 	# _CLAIM_BLOCKED_BY_REFS is populated by _apply_blocked_by_detection in
 	# claim-task-id.sh before _ensure_todo_entry_written is called.
-	if [[ -n "${_CLAIM_BLOCKED_BY_REFS:-}" ]]; then
+	if [[ -n "$predecessor_refs" ]]; then
 		local todo_predecessors
-		todo_predecessors=$(_todo_predecessor_task_ids "$_CLAIM_BLOCKED_BY_REFS" "$repo_path")
+		todo_predecessors=$(_todo_predecessor_task_ids "$predecessor_refs" "$repo_path")
 		[[ -z "$todo_predecessors" ]] || todo_line="${todo_line} blocked-by:${todo_predecessors}"
 	fi
 	todo_line="${todo_line} ref:GH#${issue_num}"
