@@ -45,6 +45,18 @@ BLOCKS = [
 ]
 FOOTER = re.compile(r'\n---\n.*?aidevops\.sh.*?\Z', re.I | re.S)
 BADGE = re.compile(r'^\s*!\[[^\]]*\]\([^)]*\)\s*$', re.M)
+# Match only the complete informational template, never a security finding or
+# a comment with extra text. Repository/PR-specific overview links may vary.
+CODE_SCANNING_ONBOARDING = re.compile(
+    re.escape('You are seeing this message because GitHub Code Scanning has recently been set up for this repository, or this pull request contains the workflow file for the Code Scanning tool.\n\n'
+              '### What Enabling Code Scanning Means:\n\n'
+              "- The 'Security' tab will display more code scanning analysis results (e.g., for the default branch).\n"
+              '- Depending on your configuration and choice of analysis tool, future pull requests will be annotated with code scanning analysis results.\n'
+              "- You will be able to see the analysis results for the pull request's branch on this [overview](")
+    + r'[^\s()]+'
+    + re.escape(') once the scans have completed and the checks have passed.\n\n'
+                'For more information about GitHub Code Scanning, check out [the documentation](https://docs.github.com/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning).')
+)
 
 
 def clean_body(value):
@@ -112,6 +124,10 @@ for index, item in enumerate(comments, 1):
     if not isinstance(item, dict):
         continue
     author = author_login(item)
+    # Check the original body so generic cleaning cannot erase extra findings
+    # and accidentally turn a mixed security comment into onboarding-only noise.
+    if author == 'github-advanced-security[bot]' and CODE_SCANNING_ONBOARDING.fullmatch(str(item.get('body') or '').strip()):
+        continue
     body = clean_body(item.get('body', ''))
     if not body:
         continue
