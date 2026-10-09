@@ -5192,5 +5192,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18608 fix(fast-fail): worker-side failures never flag enrichment_needed #auto-dispatch #bug #pulse ref:GH#33878 pr:#34191 completed:2026-10-09
 
 - [x] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877 pr:#34207 completed:2026-10-09
-
-- [ ] t18640 Add SEO Utils MCP support (on-demand @seo-utils) #feature ref:GH#34205
