@@ -10,6 +10,9 @@ done
 mkdir -p "${TMP}/governor/tmp"
 export AIDEVOPS_GH_TRANSPORT_STATE_DIR="${TMP}/governor/state"
 export AIDEVOPS_TEMP_DIR="${TMP}/governor/tmp"
+# Quota-owner discovery is separate coverage; keep this response-cost fixture
+# deterministic without an extra authenticated-login probe.
+export AIDEVOPS_GH_QUOTA_OWNER=fixture-owner
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TMP}/governor/cooldown.json"
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE="${TMP}/governor/events.jsonl"
 export AIDEVOPS_GH_API_LOG="${TMP}/governor/api.tsv"
