@@ -89,10 +89,13 @@ operations; successful authentication is not proof of mutation authority.
 Codacy's repository tool endpoint is the authority for effective tool state;
 the legacy `engines.*.enabled` entries in `.codacy.yml` do not enable or disable
 tools. The verified aidevops policy uses the dedicated `aidevops modern
-runtimes` coding standard with these 17 tools enabled: Agentlinter, Bandit,
-Biome, Brakeman, ESLint, Hadolint, Jackson Linter, Lizard, markdownlint,
-Opengrep, Pylint, RuboCop, ShellCheck, SQLint, Stylelint, Trivy, and TSQLLint.
-PMD and Prospector remain disabled. Bandit, Biome, markdownlint, and ShellCheck
+runtimes` coding standard with these 16 tools enabled: Agentlinter, Bandit,
+Biome, Brakeman, ESLint, Hadolint, Jackson Linter, markdownlint, Opengrep,
+Pylint, RuboCop, ShellCheck, SQLint, Stylelint, Trivy, and TSQLLint.
+PMD and Prospector remain disabled. Lizard has been off in every coding
+standard of every organization since 2026-10-09: it repeated the complexity
+findings that PHP Mess Detector and SonarCloud already report. The local
+`python-complexity` gate still runs Lizard, so Python CCN is checked before push. Bandit, Biome, markdownlint, and ShellCheck
 report that they use their checked-in native configuration files.
 
 The language-settings API exposes enabled/detected languages and extensions,
@@ -243,7 +246,20 @@ curl -s -H "api-token: $CODACY_API_TOKEN" \
 ### Changing the organisation coding standard
 
 While a coding standard is applied, repository-level pattern changes return
-`409`; change the standard instead. All paths are under
+`409`; change the standard instead. Tool on/off changes have a command that
+runs steps 1-4 (draft, trap repair, diff, promote only on an exact diff):
+
+```bash
+bash .agents/scripts/codacy-cli.sh standard list [--org ORG] [--tool Lizard]
+bash .agents/scripts/codacy-cli.sh standard set-tool --org ORG --standard ID \
+  --tool Lizard --enabled false            # dry run: deletes the draft
+bash .agents/scripts/codacy-cli.sh standard set-tool ... --promote
+```
+
+It reads `CODACY_API_TOKEN` (injected with `aidevops secret` when unset), is a
+no-op when the tool already has the requested state, and deletes the draft on
+any error. Undo a promotion by running it with the opposite `--enabled`. The
+manual steps below cover pattern-level edits. All paths are under
 `/api/v3/organizations/gh/{org}` (operation IDs from the API schema):
 
 1. **Create a draft copy** (`createCodingStandard`):
