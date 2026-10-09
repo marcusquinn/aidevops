@@ -285,6 +285,19 @@ _run_update_setup_transaction() {
 		return 1
 	fi
 	_update_verify_deployment_state "$expected_sha" || return 1
+	_update_adopt_deployed_version
+	return 0
+}
+
+# GH#34114: VERSION_FILE is pinned at startup to the physical runtime bundle this
+# process loaded from (pwd -P resolves the agents symlink). After a verified
+# deployment flips that symlink, later get_version calls in this process (success
+# line, project sync, Homebrew drift check) must report the deployed version.
+# Only the version pointer moves; already-sourced CLI modules stay coherent.
+_update_adopt_deployed_version() {
+	local deployed_version_file="$_AIDEVOPS_REAL_HOME/.aidevops/agents/VERSION"
+	[[ -f "$deployed_version_file" ]] || return 0
+	VERSION_FILE="$deployed_version_file"
 	return 0
 }
 
@@ -465,7 +478,6 @@ _update_apply_remote() {
 		return 1
 	fi
 	local new_version new_hash
-	new_version=$(get_version)
 	new_hash=$(git rev-parse HEAD)
 	if [[ "$new_hash" != "$remote_hash" ]]; then
 		print_error "Updated HEAD does not match the fetched origin/main commit; refusing to run setup."
@@ -481,6 +493,7 @@ _update_apply_remote() {
 	echo ""
 	print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
 	_run_update_setup_transaction "$update_output_mode" "$new_hash" || return 1
+	new_version=$(get_version)
 	print_success "Updated to version $new_version (agents deployed)"
 	return 0
 }
