@@ -175,13 +175,13 @@ PYEOF
 #######################################
 # Write Python engine: OpenAI embedding and shared embed helpers
 #######################################
-_write_python_embed_functions() {
+_write_python_policy_gate() {
 	# Persist the verified helper path in the generated engine, including direct
 	# invocations that bypass the shell dependency check.
 	printf 'VAULT_POLICY_HELPER = %s\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "${SCRIPT_DIR}/vault-data-policy-helper.sh")" >>"$PYTHON_SCRIPT"
 	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
-def embed_text_openai(text: str) -> list[float]:
+def check_embedding_policy():
     import subprocess
     policy = os.environ.get("AIDEVOPS_RUNTIME_POLICY", "").strip().lower()
     if policy not in {"", "provider-ai", "provider-allowed", "provider-ai-approved"}:
@@ -190,6 +190,16 @@ def embed_text_openai(text: str) -> list[float]:
         if result.returncode:
             print("VAULT_POLICY_DENIED: remote embeddings blocked before sending", file=sys.stderr)
             sys.exit(64)
+PYEOF
+	return 0
+}
+
+_write_python_embed_functions() {
+	_write_python_policy_gate
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
+
+def embed_text_openai(text: str) -> list[float]:
+    check_embedding_policy()
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         print(json.dumps({"error": "OPENAI_API_KEY not set"}), file=sys.stderr)
