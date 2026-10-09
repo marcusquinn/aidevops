@@ -1234,7 +1234,10 @@ _pulse_start_post_dispatch_housekeeping() {
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 
 	if [[ "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:-1}" != "1" ]]; then
-		_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
+		# GH#34000: synchronous housekeeping (the Linux systemd default) shares
+		# the cycle clock, so leave the deterministic pipeline its reserve.
+		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$(_preflight_prefetch_reserved_finalise_seconds)" \
+			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
 		return 0
 	fi
 
@@ -1688,7 +1691,8 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 #######################################
 # Run pre-flight stages: cleanup, calculations, normalization (GH#5627)
 #
-# Returns: 0 if prefetch succeeded, 1 if prefetch failed (abort cycle)
+# Returns: 0 if prefetch succeeded or degraded (timeout/budget, GH#34000),
+#          1 if prefetch failed (abort cycle)
 #######################################
 _run_preflight_stages() {
 	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
@@ -1759,6 +1763,19 @@ _run_preflight_stages() {
 	# AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0 to restore the legacy
 	# synchronous path for debugging.
 	_pulse_start_post_dispatch_housekeeping "$_pflt_timeout"
+	_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
+	return 0
+}
+
+#######################################
+# Run the budget-gated preflight prefetch stage (extracted for GH#34000).
+#
+# Arguments: $1 - preflight stage timeout (seconds)
+# Sets: _PULSE_PREFETCH_DEGRADED (1 when prefetch timed out/was deferred)
+# Returns: 0 to continue the cycle, 1 if prefetch failed (abort cycle)
+#######################################
+_run_preflight_prefetch_stage() {
+	local _pflt_timeout="$1"
 	# t3027/GH#29742: prefetch is a deferrable, high-fanout API stage. Reuse
 	# the shared stage policy so GraphQL reserve mode or REST reserve/emergency
 	# mode preserves quota for merge and dispatch. Existing STATE_FILE state is
@@ -1783,9 +1800,22 @@ _run_preflight_stages() {
 	# If STATE_FILE is missing entirely (cold start + budget gate firing on
 	# first cycle), downstream stages handle it gracefully (LLM session
 	# sees empty state, deterministic merges/cleanup degrade quietly).
+	# GH#34000: a prefetch timeout or cycle-budget deferral (rc 124) no longer
+	# ends the cycle. Prefetch runs with an extra pipeline reserve so the
+	# deterministic pipeline (orphan reaping, hourly watchdogs, merge and
+	# dispatch admission) still starts on cached state; main() skips only the
+	# LLM supervisor, whose prompt reads the incomplete STATE_FILE.
+	_PULSE_PREFETCH_DEGRADED=0
 	if [[ "$_budget_gate_skip" -eq 0 ]]; then
-		if ! run_stage_with_timeout "$_budget_prefetch_stage" "$_pflt_timeout" \
-			_preflight_prefetch_and_scope; then
+		local _prefetch_rc=0
+		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$(_preflight_prefetch_reserved_finalise_seconds)" \
+			run_stage_with_timeout "$_budget_prefetch_stage" "$_pflt_timeout" \
+			_preflight_prefetch_and_scope || _prefetch_rc=$?
+		if [[ "$_prefetch_rc" -eq 124 ]]; then
+			_PULSE_PREFETCH_DEGRADED=1
+			_PULSE_HEALTH_PREFETCH_ERRORS=$((_PULSE_HEALTH_PREFETCH_ERRORS + 1))
+			echo "[pulse-wrapper] Prefetch incomplete (timeout/cycle budget) — continuing into the deterministic pipeline with cached state (GH#34000)" >>"$LOGFILE"
+		elif [[ "$_prefetch_rc" -ne 0 ]]; then
 			return 1
 		fi
 	fi
