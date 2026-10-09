@@ -28,8 +28,27 @@ _sq_api() {
 	# Never relay API response bodies or raw stderr into public logs.
 	if grep -q 'HTTP 409' "${output}.err"; then
 		SQ_HTTP=409
+	elif grep -q 'HTTP 404' "${output}.err"; then
+		SQ_HTTP=404
+	elif grep -q 'HTTP 410' "${output}.err"; then
+		SQ_HTTP=410
 	fi
 	return 1
+}
+
+# Fail closed: true only when the run has zero jobs and no downloadable logs.
+_sq_is_empty_ghost() {
+	local repo="$1"
+	local id="$2"
+	_sq_api GET "repos/${repo}/actions/runs/${id}/jobs?filter=all" "${SQ_WORK}/jobs.json" || return 1
+	jq -e '(.total_count == 0) and ((.jobs // []) | length == 0)' "${SQ_WORK}/jobs.json" >/dev/null 2>&1 || return 1
+	_sq_still_stale "$repo" "$id" || return 1
+	# Success means logs exist; only an explicit 404/410 proves none.
+	if _sq_api GET "repos/${repo}/actions/runs/${id}/logs" "${SQ_WORK}/logs.out"; then
+		return 1
+	fi
+	[[ "$SQ_HTTP" == 404 || "$SQ_HTTP" == 410 ]] || return 1
+	return 0
 }
 
 _sq_still_stale() {
@@ -59,8 +78,9 @@ _sq_handle_run() {
 	local repo="$1"
 	local run="$2"
 	local state="$3"
-	local id cancel_conflict=0 force_conflict=0
+	local id run_ep cancel_conflict=0 force_conflict=0
 	id=$(printf '%s' "$run" | jq -r '.id')
+	run_ep="repos/${repo}/actions/runs/${id}"
 	[[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
 	# Listing is only a candidate set: revalidate immediately before writes.
 	_sq_still_stale "$repo" "$id" || return 0
@@ -93,9 +113,19 @@ _sq_handle_run() {
 			printf '%s\n' "$run" >"${state}/${id}.ghost" || return 1
 			_sq_log unkillable-ghost "$run"
 		fi
+		if [[ "${AIDEVOPS_STALE_QUEUED_RUN_DELETE_EMPTY:-1}" != 0 ]] && _sq_is_empty_ghost "$repo" "$id"; then
+			# Re-check staleness immediately before the destructive call.
+			_sq_still_stale "$repo" "$id" || return 0
+			if _sq_api DELETE "$run_ep" "${SQ_WORK}/delete.json"; then
+				_sq_log deleted-empty-ghost "$run"
+			else
+				_sq_log delete-failed "$run"
+			fi
+			return 0
+		fi
 		if [[ "${AIDEVOPS_STALE_QUEUED_RUN_DELETE:-0}" == 1 ]]; then
 			_sq_still_stale "$repo" "$id" || return 0
-			if _sq_api DELETE "repos/${repo}/actions/runs/${id}" "${SQ_WORK}/delete.json"; then
+			if _sq_api DELETE "$run_ep" "${SQ_WORK}/delete.json"; then
 				_sq_log deleted-ghost "$run"
 			else
 				_sq_log delete-failed "$run"

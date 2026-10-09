@@ -47,7 +47,8 @@ permission; denied API calls are non-fatal and raw responses are never logged.
 | Setting | Default | Behaviour |
 |---------|---------|-----------|
 | `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Minimum queued age in whole hours; `0` disables the stage. |
-| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` allows deletion of stale ghosts that return HTTP 409 from both cancellation endpoints. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE_EMPTY` | `1` | Deletes ghosts (409 from both cancellation endpoints) only when a fresh read shows zero jobs and the logs endpoint returns 404/410; logged as `deleted-empty-ghost`. Any API error keeps the run. `0` disables. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` allows deletion of stale ghosts that return HTTP 409 from both cancellation endpoints and have jobs or logs. |
 
 Each scan requests one page (up to 100 stale queued runs), rechecks status and
 age before writes, requests cancellation, and tries force-cancellation if the
@@ -60,8 +61,9 @@ Reruns (`run_attempt > 1`) are excluded: their original creation timestamp does
 not establish the current attempt's queue age. Age is conservatively based on
 the original run's `created_at`, not runner capacity or job count.
 
-Unkillable ghosts are logged once per repository/run ID and left alone by default.
-Deletion removes run history and logs: enable it only deliberately. Cadence and
+Unkillable ghosts are logged once per repository/run ID and left alone by default,
+except job-less runs with no logs, which hold no work and are deleted.
+Deleting runs with jobs or logs removes history: enable it only deliberately. Cadence and
 ghost records live under `~/.aidevops/.agent-workspace/pulse/stale-queued-runs/`.
 The stage respects Pulse stop/rate-limit flags, the circuit breaker, REST budget
 admission and the wrapper's stage timeout. Standalone execution uses the same
