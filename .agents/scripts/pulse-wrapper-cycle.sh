@@ -615,15 +615,26 @@ _pulse_reconcile_stale_blocked_if_due() {
 # _pulse_create_todo_sync_workspace
 #
 # Clone the current remote default branch into an isolated automation
-# workspace. The registered human checkout is used only to resolve origin.
+# workspace. The registered human checkout is used only to resolve its remote.
 #######################################
 _pulse_create_todo_sync_workspace() {
 	local repo_path="$1"
 	local repo_slug="$2"
 	local remote_url=""
+	local remote_name="origin" configured_remote="" github_path=""
 	: "$repo_slug"
-	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || return 1
+	if [[ -f "${repo_path}/.aidevops.json" ]]; then
+		configured_remote=$(jq -r '.remote // empty' "${repo_path}/.aidevops.json" 2>/dev/null || true)
+		[[ -z "$configured_remote" ]] || remote_name="$configured_remote"
+	fi
+	remote_url=$(git -C "$repo_path" remote get-url "$remote_name" 2>/dev/null) || return 1
 	[[ -n "$remote_url" ]] || return 1
+	# Launchd has no SSH agent; GitHub HTTPS uses the authenticated gh helper.
+	# Match only GitHub's standard SSH forms, preserving all other remotes.
+	if [[ "$remote_url" =~ ^(git@github[.]com:|ssh://git@github[.]com/)([^/[:space:]]+/[^/[:space:]]+)$ ]]; then
+		github_path="${BASH_REMATCH[2]}"
+		remote_url="https://github.com/${github_path%.git}.git"
+	fi
 	declare -F _ptsw_create_workspace >/dev/null 2>&1 || return 1
 	_ptsw_create_workspace "$remote_url"
 	return $?
@@ -1028,7 +1039,7 @@ _pulse_sync_todo_repo_bounded() {
 #######################################
 sync_todo_refs_all_repos() {
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local repo_slug="" repo_path="" pid="" job_rc=0
+	local repo_slug="" repo_path="" repo_role="" pid="" job_rc=0
 	local parallelism="" repo_timeout="" stage_timeout="" aggregate_started="" aggregate_deadline="" scheduled=0 sync_failures=0
 	local -a active_pids=()
 
@@ -1044,8 +1055,13 @@ sync_todo_refs_all_repos() {
 	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
 		[[ "$((aggregate_started + cycle_remaining))" -lt "$aggregate_deadline" ]] && aggregate_deadline=$((aggregate_started + cycle_remaining))
 	fi
-	while IFS='|' read -r repo_slug repo_path; do
+	while IFS='|' read -r repo_slug repo_path repo_role; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		if [[ "$repo_role" == "contributor" ]]; then
+			printf '[pulse-wrapper] TODO ref sync status=skipped reason=contributor_role repo=%s\n' \
+				"$repo_slug" >>"$WRAPPER_LOGFILE"
+			continue
+		fi
 		repo_path="${repo_path/#\~/$HOME}"
 		[[ -d "$repo_path" ]] || continue
 		scheduled=$((scheduled + 1))
@@ -1058,7 +1074,7 @@ sync_todo_refs_all_repos() {
 			[[ "$job_rc" -eq 0 ]] || sync_failures=$((sync_failures + 1))
 			active_pids=("${active_pids[@]:1}")
 		fi
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [.slug, .path] | join("|")' "$repos_json" 2>/dev/null || true)
+	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [.slug, .path, (.role // "")] | join("|")' "$repos_json" 2>/dev/null || true)
 	for pid in "${active_pids[@]}"; do
 		job_rc=0
 		wait "$pid" || job_rc=$?
