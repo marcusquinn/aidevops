@@ -206,12 +206,14 @@ jobs:
     # unsupported host policy still fails closed in production.
     name: Model replay verifier boundary (ubuntu-22.04)
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
 
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Install Bubblewrap
+      timeout-minutes: 8
       run: |
         # Bubblewrap comes from Ubuntu, not the runner's browser/vendor repos.
         # Keep unrelated mirror/signature failures out of boundary verification.
