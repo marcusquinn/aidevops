@@ -142,6 +142,7 @@ Both runtimes use the same `env` block above. Claude Code wraps command as array
 
 - `seo.md`, `marketing-sales.md` — domain agents that invoke this subagent
 - `seo/google-search-console.md` — GSC integration for search data
+- `services/hosting/google-cloud.md` — Google Cloud project access, gcloud, OAuth consent steps
 - [Google Analytics MCP](https://github.com/googleanalytics/google-analytics-mcp)
 - [GA4 Data API](https://developers.google.com/analytics/devguides/reporting/data/v1)
 - [GA4 Admin API](https://developers.google.com/analytics/devguides/config/admin/v1)

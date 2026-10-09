@@ -29,6 +29,8 @@ tools:
 
 ## Setup
 
+Cloud project access, gcloud auth and OAuth consent/verification: `services/hosting/google-cloud.md`.
+
 1. Google Cloud Console → enable **Search Console API** → Service Account → JSON key → `~/.config/aidevops/gsc-credentials.json` (`chmod 600`)
 2. GSC → Property → Settings → Users → add service account email (or bulk-add via Playwright script below)
 3. Verify: `python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credentials.json')); print(d['client_email'])"`
