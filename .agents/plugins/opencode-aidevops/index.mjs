@@ -63,6 +63,7 @@ import { loadModelRouting } from "./model-routing.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
 import { createSessionRecoveryMarkerHandler } from "./session-recovery-marker.mjs";
 import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
+import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 import {
@@ -648,6 +649,14 @@ export async function AidevopsPlugin({ directory, client }) {
     workDir: process.env.AIDEVOPS_WORK_DIR || join(WORKSPACE_DIR, "work"),
     log: qualityLog,
   });
+  // GH#34138: diagnostics-only; never aborts, prompts or retries a session.
+  const sessionTurnDiagnostics = createSessionTurnDiagnostics({
+    client,
+    directory,
+    isHeadless,
+    schedule: !isHeadless(),
+    log: qualityLog,
+  });
 
   const debugEventError = (label, err) => {
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
@@ -761,6 +770,7 @@ export async function AidevopsPlugin({ directory, client }) {
         sessionTitleFallbackHandler(input).catch((err) => debugEventError("title fallback handler", err)),
         sessionRecoveryMarkerHandler(input).catch((err) => debugEventError("session recovery marker", err)),
         Promise.resolve(sessionStallRecovery.handleEvent(input)),
+        sessionTurnDiagnostics.handleEvent(input).catch((err) => debugEventError("turn diagnostics", err)),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },
