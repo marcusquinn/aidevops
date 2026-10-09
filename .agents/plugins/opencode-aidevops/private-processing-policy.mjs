@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { activeLocalOnlyPolicy, LocalOnlyPolicyError } from "./local-only-policy.mjs";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 
@@ -41,7 +41,7 @@ function canonicalPath(path) {
 
 function contains(root, path) {
   const tail = relative(root, path);
-  return tail === "" || (!tail.startsWith("..") && !isAbsolute(tail));
+  return tail === "" || (tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail));
 }
 
 export function privatePathOverlap(policy, path, cwd, recursive = false) {
@@ -52,10 +52,16 @@ export function privatePathOverlap(policy, path, cwd, recursive = false) {
 }
 
 export function recordPrivateBlocker(sessionID, check, tool, append = appendWorkerBlockerEvent) {
-  // Explicit empty metadata prevents worker env fields leaking into receipts.
-  return append({ event: "private_processing_blocked", reason: check,
-    source: "private-processing-policy", session_key: /^ses_[A-Za-z0-9_-]{1,160}$/.test(sessionID) ? sessionID : "",
-    tool, issue_number: null, repo_slug: "", request_id: "", detail: "" });
+  // The shared logger uses || for ambient defaults: nonempty constant values
+  // suppress those defaults without leaking repo names or request identifiers.
+  try {
+    return append({ event: "private_processing_blocked", reason: check,
+      source: "private-processing-policy", session_key: /^ses_[A-Za-z0-9_-]{1,160}$/.test(sessionID) ? sessionID : "ses_unknown",
+      tool, issue_number: null, repo_slug: "none", request_id: "none", detail: "" }, {
+      logPath: resolve(homedir(), ".aidevops/.agent-workspace/private-processing-blockers.jsonl"),
+      maxBytes: 1024 * 1024,
+    }) === true;
+  } catch { return false; }
 }
 
 const READ_TOOLS = /^(?:read|grep|glob|list)$/i;
@@ -64,7 +70,24 @@ const MUTATION_TOOLS = /(?:write|edit|apply_patch)$/i;
 // A shell cannot be safely classified by substring matching. With classified
 // roots, permit only literal, single-command file readers; opaque programs,
 // substitutions, pipes and interpreters fail closed rather than hide reads.
-const LITERAL_READERS = new Set(["cat", "head", "tail", "wc", "ls", "stat", "grep", "rg", "pwd"]);
+const LITERAL_READERS = new Set(["cat", "head", "tail", "wc", "ls", "stat", "pwd"]);
+
+function literalShellWords(command) {
+  if (Array.isArray(command)) return command.every((word) => typeof word === "string") ? command : null;
+  const text = String(command || "");
+  if (/[\r\n\u0000]/.test(text)) return null;
+  const words = [];
+  const literal = /[ \t]*(?:"([^"$`\\]*)"|'([^']*)'|([^\s"'\\$`;|&<>*?{}()~]+))(?:[ \t]+|$)/gy;
+  let offset = 0;
+  while (offset < text.length) {
+    literal.lastIndex = offset;
+    const match = literal.exec(text);
+    if (!match) return null;
+    words.push(match[1] ?? match[2] ?? match[3]);
+    offset = literal.lastIndex;
+  }
+  return words;
+}
 
 export function assertPrivateProcessingRead({ tool, args = {}, repositoryDir = process.cwd(), sessionID = "",
   classification, binding = activeLocalOnlyPolicy(), append }) {
@@ -72,15 +95,17 @@ export function assertPrivateProcessingRead({ tool, args = {}, repositoryDir = p
   const name = String(tool || "").split(".").pop();
   const cwd = args.workdir || args.cwd || repositoryDir;
   const deny = (check) => {
-    recordPrivateBlocker(sessionID, check, READ_TOOLS.test(name) ? name.toLowerCase() : "tool", append);
-    throw new LocalOnlyPolicyError(`${check}: protected operation blocked. Relaunch with AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode. No content was read.`);
+    const recorded = recordPrivateBlocker(sessionID, check, READ_TOOLS.test(name) ? name.toLowerCase() : "tool", append);
+    throw new LocalOnlyPolicyError(`${check}: protected operation blocked. Relaunch with AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode. No content was read.${recorded ? "" : " Blocker receipt unavailable."}`);
   };
   // Freeze classification across this launch, and prohibit tool edits to its
   // source. OS ownership is not isolation from code running as the same user.
   const path = args.filePath || args.file_path || args.path || args.directory || cwd;
-  if (MUTATION_TOOLS.test(name) && (contains(resolve(path), policy.file)
-    || contains(canonicalPath(path), canonicalPath(policy.file))
-    || String(args.patchText || args.patch_text || "").includes(policy.file))) deny("classification_mutation");
+  const patch = String(args.patchText || args.patch_text || "");
+  const mutationPaths = [path, ...[...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1])];
+  if (MUTATION_TOOLS.test(name) && mutationPaths.some((target) =>
+    contains(resolve(cwd, target), policy.file)
+    || contains(canonicalPath(resolve(cwd, target)), canonicalPath(policy.file)))) deny("classification_mutation");
   const shell = SHELL_TOOLS.test(tool);
   if (!READ_TOOLS.test(name) && !shell) return;
   if (shell && args.action && args.action !== "start") return;
@@ -90,10 +115,10 @@ export function assertPrivateProcessingRead({ tool, args = {}, repositoryDir = p
     const text = Array.isArray(command) ? command.join(" ") : String(command || "");
     if (text.includes(policy.file)) deny("classification_mutation");
     if (binding.bound || !policy.roots.length) return;
-    if (/[\n\r$`\\;|&<>*?{}()~]/.test(text)) deny("unclassifiable_shell_read");
-    const tokens = Array.isArray(command) ? command : text.match(/"[^"]*"|'[^']*'|[^\s"']+/g) || [];
-    const words = tokens.map((token) => String(token).replace(/^(["'])(.*)\1$/, "$2"));
-    if (!LITERAL_READERS.has(words[0])) deny("unclassifiable_shell_read");
+    const words = literalShellWords(command);
+    // No options: even familiar readers have executable/path-bearing options.
+    if (!words?.length || !LITERAL_READERS.has(words[0])
+      || words.slice(1).some((word) => word.startsWith("-"))) deny("unclassifiable_shell_read");
     if (privatePathOverlap(policy, cwd, cwd, true)
       || words.slice(1).filter((word) => !word.startsWith("-")).some((word) => privatePathOverlap(policy, word, cwd, true))) deny("protected_read");
     return;

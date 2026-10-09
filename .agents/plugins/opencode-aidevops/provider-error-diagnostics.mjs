@@ -112,23 +112,24 @@ export function createProviderErrorHandler({ client, isHeadless, resolveSessionM
   const emitted = new Map();
   return async function providerErrorHandler(input) {
     const event = input?.event || input || {};
-    const sessionID = event.properties?.sessionID || event.properties?.info?.id || "";
+    const properties = event.properties || event.data || {};
+    const sessionID = properties.sessionID || properties.info?.id || "";
     if (event.type === "session.deleted") {
       emitted.delete(sessionID);
       return;
     }
     if (event.type !== "session.error" || !sessionID) return;
     if (policy.bound) {
-      const check = localFailureCheck(event.properties?.error);
+      const check = localFailureCheck(properties.error);
       if (!check) return;
       const timestamp = now();
       if (emitted.has(sessionID) && timestamp - emitted.get(sessionID) < 30000) return;
       emitted.set(sessionID, timestamp);
-      recordPrivateBlocker(sessionID, check, "model_request", append);
+      const recorded = recordPrivateBlocker(sessionID, check, "model_request", append);
       if (!isHeadless()) {
         try {
           await client.tui.showToast({ body: { title: "Local-only operation stopped",
-            message: `${check}: model_request blocked. Local-only binding remains active; no remote fallback is allowed.`,
+            message: `${check}: model_request blocked. Local-only binding remains active; no remote fallback is allowed.${recorded ? "" : " Blocker receipt unavailable."}`,
             variant: "error", duration: 15000 } });
         } catch { /* A missing TUI never clears the stop or its receipt. */ }
       }
