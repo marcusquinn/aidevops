@@ -10,7 +10,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from canonical_git_invocation import repository_values, split_invocation
+from canonical_git_invocation import is_version_query, repository_values, split_invocation
 from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
@@ -245,14 +245,16 @@ def classify_git_argv(
 ) -> tuple[bool, str]:
     """Classify one Git argv vector against canonical-worktree policy."""
     prefix, effective_cwd, subcommand, args = split_invocation(argv, cwd)
-    if not subcommand:
-        return False, "unable to classify Git subcommand"
     repo_values = repository_values(prefix)
     if check_unresolved and any(
         value.startswith("~") or re.search(r"[$`*?\[\]{}]", value)
         for value in repo_values
     ):
         return False, "unresolved shell syntax in Git repository target"
+    if is_version_query(argv):
+        return True, "read-only Git version query"
+    if not subcommand:
+        return False, "unable to classify Git subcommand"
     try:
         is_canonical = _is_canonical(real_git_path, effective_cwd, prefix)
     except RuntimeError as error:
