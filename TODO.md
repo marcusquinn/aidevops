@@ -1601,6 +1601,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18627 seo: add link-building playbook with competitor backlink-gap outreach strategy #feat ref:GH#34060 pr:#34061 completed:2026-10-08
 - [x] t18628 refactor: replace 20 _aidevops_path_prefix blocks with a runtime-env.sh helper #refactor ref:GH#34081 -> [todo/tasks/t18628-brief.md] pr:#34093 completed:2026-10-09
 
+- [ ] t18631 GH#34125 Phase 2: stop-and-notify on local backend failure and deny protected reads outside a local-only binding #auto-dispatch #feat #security #interactive tier:thinking ref:GH#34146 logged:2026-10-09 -> [todo/tasks/t18631-brief.md]
+- [ ] t18632 GH#34125 Phase 3: block tool-level egress from local-only bound sessions #auto-dispatch #feat #security #interactive tier:thinking blocked-by:t18631 ref:GH#34147 logged:2026-10-09 -> [todo/tasks/t18632-brief.md]
+- [ ] t18633 fix(opencode): tool-schema fallback lacks object and yields host-incompatible schemas when @opencode-ai/plugin is unresolvable #auto-dispatch #bug #interactive tier:standard ref:GH#34148 logged:2026-10-09 -> [todo/tasks/t18633-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
