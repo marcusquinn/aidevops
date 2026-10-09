@@ -379,7 +379,9 @@ function recordViolationEvents(violations, sessionID, source) {
 }
 
 /**
- * text.complete hook: scan output text and append TTSR violation markers.
+ * text.complete hook: log and count TTSR violations in completed text.
+ * GH#34123: output.text is the rendered assistant message, so this hook never
+ * modifies it; ttsrMessagesTransform delivers the model correction instead.
  * @param {object} input
  * @param {object} output
  * @param {object} state
@@ -398,12 +400,6 @@ async function ttsrTextComplete(input, output, state, qualityLog) {
     );
   }
 
-  const markers = violations.map((v) => {
-    const severity = v.rule.severity === "error" ? "ERROR" : "WARN";
-    return `<!-- TTSR:${severity}:${v.rule.id} — ${v.rule.correction} -->`;
-  });
-
-  output.text = output.text + "\n" + markers.join("\n");
   recordViolationEvents(violations, input.sessionID, "text.complete");
 }
 

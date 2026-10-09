@@ -16,7 +16,8 @@ Allow the stop (print nothing, exit 0) when any of these hold:
   - AIDEVOPS_STOP_HOOK_DISABLE=1 (user override)
   - the latest user message asks to stop/pause
   - no TodoWrite state, or every todo is completed/cancelled
-  - the final assistant message asks the user a question or names a human dependency
+  - the final assistant message asks the user a question, names a human
+    dependency, or lists a What next "Needed from you" ask (GH#34123)
   - the final assistant message reports a blocker and at most one todo is open
     (with 2+ open todos the blocker pauses only its own path: GH#33888)
   - any input/transcript parse error (fail-open)
@@ -62,6 +63,16 @@ BLOCKER_RE = re.compile(
     r"|\b(?:cannot|can't|unable to) (?:continue|proceed)\b",
     re.IGNORECASE,
 )
+# GH#34123: "no blocker", "not blocked", "without blockers" state the opposite.
+NEGATED_BLOCKER_RE = re.compile(
+    r"\b(?:no|not|never|without|nothing)\s+(?:\w+\s+){0,2}?(?:blockers?|blocked)\b",
+    re.IGNORECASE,
+)
+# GH#34123: the What next field (reference/session.md) that lists user asks.
+NEEDED_FROM_YOU_RE = re.compile(r"Needed from you:[*_\s]*([^\n]*)", re.IGNORECASE)
+NO_ASK_RE = re.compile(r"^(?:none|nothing|n/a)\b", re.IGNORECASE)
+CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+CODE_SPAN_RE = re.compile(r"`[^`]*`")
 
 
 def _is_headless() -> bool:
@@ -142,19 +153,36 @@ def _open_todos(todos) -> list:
     ]
 
 
+def _without_code(text: str) -> str:
+    return CODE_SPAN_RE.sub(" ", CODE_FENCE_RE.sub(" ", text))
+
+
+def _has_what_next_ask(text: str) -> bool:
+    """GH#34123: a non-None "Needed from you" field lists numbered user asks."""
+    values = [match.strip() for match in NEEDED_FROM_YOU_RE.findall(text)]
+    return bool(values and values[-1]) and not NO_ASK_RE.match(values[-1])
+
+
+def _reports_blocker(text: str) -> bool:
+    """True when the text reports a blocker, ignoring code and negations."""
+    return bool(BLOCKER_RE.search(NEGATED_BLOCKER_RE.sub(" ", _without_code(text))))
+
+
 def _hands_back_to_user(text: str, open_count: int) -> bool:
     """True when the final message asks a question, names a human dependency,
-    or reports a blocker while at most one todo remains open.
+    lists a What next ask, or reports a blocker while at most one todo
+    remains open.
 
     GH#33888: a blocker pauses only its own path, so with 2+ open todos it
     no longer exempts the stop; the nudge asks to continue the unblocked work.
     """
+    text = _without_code(text)
     lines = [line.strip().rstrip("*_` ") for line in text.splitlines() if line.strip()]
     if any(line.endswith("?") for line in lines[-3:]):
         return True
-    if HUMAN_DEPENDENCY_RE.search(text):
+    if HUMAN_DEPENDENCY_RE.search(text) or _has_what_next_ask(text):
         return True
-    return open_count <= 1 and bool(BLOCKER_RE.search(text))
+    return open_count <= 1 and _reports_blocker(text)
 
 
 def _state_file(session_id: str) -> Path:
@@ -216,7 +244,7 @@ def decide(payload: dict):
 
 def _block_reason(open_todos: list, final_text: str) -> str:
     """One-sentence nudge; a path blocker (GH#33888) names the remaining todos."""
-    if BLOCKER_RE.search(final_text):
+    if _reports_blocker(final_text):
         remaining = "; ".join(f'"{todo}"' for todo in open_todos[:5])
         return (
             f"{len(open_todos)} todos are still open ({remaining}) and a blocker "
