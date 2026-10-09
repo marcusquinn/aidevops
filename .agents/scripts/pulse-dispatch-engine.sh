@@ -1691,7 +1691,8 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 #######################################
 # Run pre-flight stages: cleanup, calculations, normalization (GH#5627)
 #
-# Returns: 0 if prefetch succeeded, 1 if prefetch failed (abort cycle)
+# Returns: 0 if prefetch succeeded or degraded (timeout/budget, GH#34000),
+#          1 if prefetch failed (abort cycle)
 #######################################
 _run_preflight_stages() {
 	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
@@ -1762,6 +1763,19 @@ _run_preflight_stages() {
 	# AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0 to restore the legacy
 	# synchronous path for debugging.
 	_pulse_start_post_dispatch_housekeeping "$_pflt_timeout"
+	_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
+	return 0
+}
+
+#######################################
+# Run the budget-gated preflight prefetch stage (extracted for GH#34000).
+#
+# Arguments: $1 - preflight stage timeout (seconds)
+# Sets: _PULSE_PREFETCH_DEGRADED (1 when prefetch timed out/was deferred)
+# Returns: 0 to continue the cycle, 1 if prefetch failed (abort cycle)
+#######################################
+_run_preflight_prefetch_stage() {
+	local _pflt_timeout="$1"
 	# t3027/GH#29742: prefetch is a deferrable, high-fanout API stage. Reuse
 	# the shared stage policy so GraphQL reserve mode or REST reserve/emergency
 	# mode preserves quota for merge and dispatch. Existing STATE_FILE state is
