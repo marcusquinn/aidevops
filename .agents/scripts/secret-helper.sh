@@ -441,9 +441,34 @@ register_redaction_digests() {
 
 # --- Commands ---
 
-# Read and validate a secret value from stdin/tty
-read_secret_input() {
+# Read a private regular file through one descriptor, avoiding check/open races.
+# Values cannot contain NUL bytes because they will be injected into environments.
+read_secret_file() {
+	local path="$1"
+	python3 -c '
+import os, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        metadata = os.fstat(source.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+            raise ValueError()
+        value = source.read()
+        if b"\0" in value:
+            raise ValueError()
+    sys.stdout.buffer.write(value)
+except (OSError, ValueError):
+    sys.stderr.write("Unable to read secret file: require a readable regular non-symlink file, chmod 600, without NUL bytes\n")
+    sys.exit(1)
+' "$path" || return 1
+	return 0
+}
+
+# Read and validate a secret value from file/stdin/tty. The subshell confines
+# terminal restoration traps; stdout is exclusively secret data.
+read_secret_input() (
 	local name="$1"
+	local source_file="${2:-}"
 	local value=""
 
 	# CRITICAL: All user-facing messages MUST go to stderr (>&2), not stdout.
@@ -451,16 +476,45 @@ read_secret_input() {
 	# or echo to stdout gets stored as part of the secret value. This was the
 	# root cause of GH#4939: prompt text was stored in gopass instead of the
 	# actual secret.
-	if [[ -t 0 ]]; then
+	if [[ -n "$source_file" ]]; then
+		value=$(read_secret_file "$source_file") || return 1
+	elif [[ -t 0 ]]; then
 		print_info "Enter secret value for $name (input hidden):" >&2
-		print_info "Paste only the secret value, then press Enter" >&2
-		IFS= read -rs value || true
-		echo "" >&2
-	else
+		print_info "Single line only; for PEM/JSON or multi-line values use --from-file PATH" >&2
+		local tty_settings=""
+		tty_settings=$(stty -g) || return 1
+		trap 'stty "$tty_settings" 2>/dev/null || true' EXIT
+		trap 'exit 129' HUP
+		trap 'exit 130' INT
+		trap 'exit 143' TERM
+		# Keep echo disabled across both the first read and the entire drain.
+		stty -echo || return 1
 		IFS= read -r value || true
+		local extra="" pasted=false
+		# Bash 3.2 (macOS system shell) accepts only integer read timeouts.
+		local drain_timeout=1
+		if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then drain_timeout=0.2; fi
+		while IFS= read -r -n 1 -t "$drain_timeout" extra; do
+			pasted=true
+		done
+		printf '\n' >&2
+		if [[ "$pasted" == true ]]; then
+			print_error "Multi-line paste discarded; nothing stored. Use --from-file PATH" >&2
+			return 1
+		fi
+	else
+		# An empty delimiter reads until EOF, retaining embedded newlines. A
+		# successful read instead means a NUL was encountered: fail closed.
+		if IFS= read -r -d '' value; then
+			print_error "Secret input must not contain NUL bytes" >&2
+			return 1
+		fi
+		# Match command substitution in file input and injection: trim trailing
+		# newlines, not internal newlines (PEM remains valid without its final LF).
+		while [[ "$value" == *$'\n' ]]; do value="${value%$'\n'}"; done
 	fi
 
-	value="${value%$'\r'}"
+	[[ "$value" != *$'\n'* ]] && value="${value%$'\r'}"
 
 	if [[ -z "$value" ]]; then
 		print_error "No secret value received for $name" >&2
@@ -476,7 +530,7 @@ read_secret_input() {
 
 	printf '%s' "$value"
 	return 0
-}
+)
 
 # Acquire an exclusive directory lock for fallback credential mutations.
 # mkdir is atomic on local filesystems and portable across the supported shells.
@@ -587,29 +641,41 @@ cmd_init() {
 	return 0
 }
 
-# Set a secret (interactive hidden input)
+# Set a secret (hidden single-line input, full stdin, or private file)
 cmd_set() {
-	local name="$1"
+	local name="${1:-}"
+	local source_file=""
 
-	if [[ -z "$name" ]]; then
-		print_error "Usage: aidevops secret set SECRET_NAME"
+	if [[ -z "$name" ]] || { [[ $# -ne 1 ]] && [[ $# -ne 3 ]]; }; then
+		print_error "Usage: aidevops secret set SECRET_NAME [--from-file PATH]"
 		return 1
+	fi
+	if [[ $# -eq 3 ]]; then
+		if [[ "$2" != "--from-file" || -z "$3" ]]; then
+			print_error "Usage: aidevops secret set SECRET_NAME [--from-file PATH]"
+			return 1
+		fi
+		source_file="$3"
 	fi
 
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
+	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+		print_error "Secret name must be a valid environment variable name"
+		return 1
+	fi
 
 	print_info "Setting secret: $name"
 	print_warning "WARNING: Never paste secret values into AI chat"
 	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
 	echo ""
-	echo "  1) When prompted, paste ONLY the secret value"
+	echo "  1) When prompted, paste ONLY a single-line secret value"
 	echo "  2) Do NOT paste the command, key name, or an export line"
 	echo "  3) Input is hidden; press Enter when done"
 	echo ""
 
 	local value
-	if ! value=$(read_secret_input "$name"); then
+	if ! value=$(read_secret_input "$name" "$source_file"); then
 		return 1
 	fi
 
@@ -618,19 +684,30 @@ cmd_set() {
 		if ! gopass_output=$(printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" 2>&1); then
 			if [[ "$gopass_output" == *"BLOCKED by canonical Git guard"* ]]; then
 				print_error "Failed to store $name in gopass because the canonical Git guard blocked the password-store update"
-				printf '  %s\n' "$gopass_output" >&2
 			elif [[ "$gopass_output" == *"GPG"* || "$gopass_output" == *"gpg"* ]]; then
 				print_error "Failed to store $name in gopass (GPG error)"
 			elif [[ "$gopass_output" == *"not initialized"* ]]; then
 				print_error "Failed to store $name in gopass (store not initialized)"
 			else
-				print_error "Failed to store $name in gopass. Error from gopass:"
-				echo "${gopass_output}" | sed 's/^/  /'
+				# Backend errors may include the submitted value; never print them.
+				print_error "Failed to store $name in gopass; check store access and configuration"
 			fi
 			return 1
 		fi
 		print_success "Stored $name in gopass"
 	else
+		# All fallback readers are line-oriented; never write a partial or
+		# executable multi-line assignment that they cannot safely round-trip.
+		if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+			print_error "Multi-line secrets require gopass; run aidevops secret init, then retry with --from-file PATH" >&2
+			return 1
+		fi
+		# Line-oriented fallback readers do not decode shell expansions. Refuse
+		# these rather than creating an executable or non-round-tripping value.
+		if [[ "$value" == *'$'* || "$value" == *'`'* ]]; then
+			print_error "Secrets containing dollar signs or backticks require gopass; run aidevops secret init" >&2
+			return 1
+		fi
 		print_warning "gopass not available, falling back to credentials.sh"
 
 		# Escape backslashes then double quotes so the value can be safely embedded
@@ -1095,6 +1172,8 @@ cmd_help() {
 	echo ""
 	echo "  init                              Initialize gopass store"
 	echo "  set <NAME>                        Store a secret (interactive hidden input)"
+	echo "  set <NAME> --from-file PATH       Store a private regular file (chmod 600)"
+	echo "                                    Piped stdin is read in full until EOF"
 	echo "  get <NAME>                        Get a secret value (for scripts/piping)"
 	echo "  check <NAME>                      Resolve by name; exit status only, no output"
 	echo "  list                              List secret names (never values)"
@@ -1112,6 +1191,11 @@ cmd_help() {
 	echo ""
 	echo "  # Store a secret (value entered at terminal, hidden)"
 	echo "  aidevops secret set STRIPE_KEY"
+	echo ""
+	echo "  # Multi-line PEM/JSON requires gopass; never paste it at the prompt"
+	echo "  aidevops secret set APP_KEY --from-file /secure/path/app.pem"
+	echo "  # Delete the source file securely after successful storage/verification"
+	echo "  # Trailing newlines are trimmed; embedded newlines are preserved"
 	echo ""
 	echo "  # Secret set flow"
 	echo "  # 1) Run set command"

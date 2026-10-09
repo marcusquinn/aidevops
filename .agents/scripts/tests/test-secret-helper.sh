@@ -6,6 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../secret-helper.sh"
+# Reuse production stat portability rather than capturing GNU stat -f noise.
+source "${SCRIPT_DIR}/../portable-stat.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -55,6 +57,10 @@ case "$cmd" in
 	ls)
 		if [[ "${1:-}" == "--flat" ]]; then
 			printf '%s\n' 'aidevops/ZETA_KEY' 'aidevops/ALPHA_KEY' 'aidevops/ALPHA_KEY'
+			if [[ "${AIDEVOPS_TEST_STORED:-}" == "true" && -f "${AIDEVOPS_TEST_DIR}/stored_path" ]]; then
+				cat "${AIDEVOPS_TEST_DIR}/stored_path"
+				printf '\n'
+			fi
 			if [[ -n "${AIDEVOPS_TEST_SECRET:-}" ]]; then
 				printf '%s\n' 'aidevops/REDACTION_KEY'
 			fi
@@ -72,6 +78,11 @@ case "$cmd" in
 		mode="${1:-}"
 		if [[ "$mode" == "-o" || "$mode" == "-n" ]]; then
 			shift
+		fi
+		if [[ "${AIDEVOPS_TEST_STORED:-}" == "true" && -f "${AIDEVOPS_TEST_DIR}/stored_path" &&
+			"${1:-}" == "$(<"${AIDEVOPS_TEST_DIR}/stored_path")" ]]; then
+			cat "${AIDEVOPS_TEST_DIR}/stored_value"
+			exit 0
 		fi
 		case "${1:-}" in
 			aidevops/REDACTION_KEY) printf '%s' "${AIDEVOPS_TEST_SECRET:-}" ;;
@@ -424,6 +435,186 @@ test_set_uses_provided_stdin_value() {
 	return 0
 }
 
+test_multiline_set_file_and_stdin() {
+	setup
+	trap 'teardown' RETURN
+	local exit_code=0
+	# Exercise the production CLI and injection path without printing generated
+	# key material. The existing gopass double records stdin and returns it raw.
+	python3 - "$HELPER" "$TEST_DIR" <<'PY' || exit_code=$?
+import os, pathlib, subprocess, sys
+
+helper, directory = sys.argv[1:]
+root = pathlib.Path(directory)
+env = dict(os.environ, HOME=str(root / "home"), AIDEVOPS_TEST_STORED="true")
+stored = root / "stored_value"
+source = root / "input-file"
+
+def run(args, data=None):
+    return subprocess.run(["bash", helper] + args, input=data, env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+
+def reject(args, data=None):
+    before = stored.read_bytes() if stored.exists() else None
+    result = run(args, data)
+    assert result.returncode != 0, "invalid input accepted"
+    assert (stored.read_bytes() if stored.exists() else None) == before, "rejection overwrote secret"
+    return result
+
+try:
+    # Generate an ephemeral key; only OpenSSL validity status reaches output.
+    source.touch(mode=0o600)
+    with source.open("wb") as output:
+        subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
+                        "ec_paramgen_curve:P-256"], stdout=output,
+                       stderr=subprocess.DEVNULL, check=True)
+    source.chmod(0o600)
+    key = source.read_bytes()
+    for args, data in [(["set", "TEST_KEY", "--from-file", str(source)], None),
+                       (["set", "TEST_KEY"], key)]:
+        result = run(args, data)
+        assert result.returncode == 0, "key storage failed"
+        assert stored.read_bytes() == key.rstrip(b"\n"), "key truncated or altered"
+        assert key.rstrip(b"\n") not in result.stdout + result.stderr, "key leaked"
+        result = run(["TEST_KEY", "--", "sh", "-c",
+                      'printf "%s\\n" "$TEST_KEY" | openssl pkey -noout -check'])
+        assert result.returncode == 0 and b"Key is valid" in result.stdout, "injected key invalid"
+    print("PASS generated key stored from file/stdin and validated via injection")
+
+    source.chmod(0o644)
+    reject(["set", "TEST_KEY", "--from-file", str(source)])
+    source.chmod(0o640)
+    reject(["set", "TEST_KEY", "--from-file", str(source)])
+    source.chmod(0o600)
+    link = root / "input-link"
+    link.symlink_to(source)
+    reject(["set", "TEST_KEY", "--from-file", str(link)])
+    reject(["set", "TEST_KEY", "--from-file", str(root)])
+    fifo = root / "input-fifo"
+    os.mkfifo(fifo, 0o600)
+    reject(["set", "TEST_KEY", "--from-file", str(fifo)])
+    reject(["set", "TEST_KEY", "--from-file", str(root / "missing")])
+    reject(["set", "TEST_KEY", "--from-file"])
+    reject(["set", "INVALID/NAME"], b"placeholder")
+    reject(["set", "TEST_KEY"], b"one\0two")
+    source.write_bytes(b"one\0two")
+    reject(["set", "TEST_KEY", "--from-file", str(source)])
+    source.write_bytes(b"")
+    reject(["set", "TEST_KEY", "--from-file", str(source)])
+    print("PASS unsafe files, arguments, empty values and NUL input rejected without mutation")
+
+    # Backend errors may echo the submitted value, including guard failures.
+    backend = root / "bin" / "gopass"
+    for prefix in ("failure", "BLOCKED by canonical Git guard"):
+        backend.write_text('#!/bin/sh\nif [ "$1" = ls ]; then exit 0; fi\n'
+                           'printf "%s\\n" "' + prefix + '" >&2\ncat >&2\nexit 1\n')
+        result = reject(["set", "TEST_KEY"], b"backend-error-placeholder")
+        assert b"backend-error-placeholder" not in result.stdout + result.stderr, "backend error leaked input"
+    print("PASS backend failures do not expose submitted values")
+except Exception:
+    print("FAIL multi-line file/stdin security assertion", file=sys.stderr)
+    sys.exit(1)
+finally:
+    source.unlink(missing_ok=True)
+PY
+	print_result "multi-line file/stdin security paths" "$exit_code"
+	return 0
+}
+
+test_multiline_terminal_and_fallback() {
+	setup
+	trap 'teardown' RETURN
+	local exit_code=0
+	python3 - "$HELPER" "$TEST_DIR" <<'PY' || exit_code=$?
+import os, pathlib, pty, select, subprocess, sys, termios, time
+
+helper, directory = sys.argv[1:]
+root = pathlib.Path(directory)
+env = dict(os.environ, HOME=str(root / "home"))
+stored = root / "stored_value"
+source = root / "input-file"
+
+def run(args, data=None):
+    return subprocess.run(["bash", helper] + args, input=data, env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+
+def reject(args, data=None):
+    before = stored.read_bytes()
+    result = run(args, data)
+    assert result.returncode != 0, "invalid input accepted"
+    assert stored.read_bytes() == before, "rejection overwrote secret"
+    return result
+
+try:
+    assert run(["set", "TEST_KEY"], b"baseline-placeholder").returncode == 0
+    for multiline in (True, False):
+        master, slave = pty.openpty()
+        original = termios.tcgetattr(slave)
+        # A second shell read proves no pending paste bytes reach the caller.
+        process = subprocess.Popen(["bash", "-c",
+            'bash "$1" set TEST_KEY; status=$?; '
+            'if IFS= read -r -t 0.1 leftover; then exit 90; fi; exit "$status"',
+            "test", helper], stdin=slave, stdout=slave, stderr=slave, env=env)
+        transcript = bytearray()
+        try:
+            deadline = time.monotonic() + 5
+            while termios.tcgetattr(slave)[3] & termios.ECHO:
+                assert time.monotonic() < deadline, "hidden prompt not reached"
+                if select.select([master], [], [], 0.02)[0]:
+                    transcript.extend(os.read(master, 65536))
+            before = stored.read_bytes()
+            payload = b"hidden-first-line\nhidden-extra-line\nhidden-final-line\n" if multiline else b"hidden-single-line\n"
+            os.write(master, payload)
+            while process.poll() is None:
+                assert time.monotonic() < deadline, "terminal drain stalled"
+                if select.select([master], [], [], 0.02)[0]:
+                    transcript.extend(os.read(master, 65536))
+            while select.select([master], [], [], 0)[0]:
+                transcript.extend(os.read(master, 65536))
+            assert b"hidden-" not in transcript, "terminal input echoed"
+            assert termios.tcgetattr(slave) == original, "terminal settings not restored"
+            if multiline:
+                assert process.returncode == 1 and b"Multi-line paste discarded" in transcript, "paste not rejected/drained"
+                assert stored.read_bytes() == before, "paste fragment stored"
+            else:
+                assert process.returncode == 0 and stored.read_bytes() == b"hidden-single-line", "single-line terminal regression"
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+            os.close(slave)
+    print("PASS terminal paste silently drained/rejected and single-line input restored")
+
+    # Force the unavailable-store path; an existing plaintext entry stays intact.
+    (root / "bin" / "gopass").write_text("#!/bin/sh\nexit 1\n")
+    credentials = root / "home" / ".config" / "aidevops" / "credentials.sh"
+    credentials.parent.mkdir(parents=True)
+    baseline = b'export EXISTING_KEY="placeholder"\n'
+    credentials.write_bytes(baseline)
+    credentials.chmod(0o600)
+    source.touch(mode=0o600)
+    source.write_bytes(b"first\nsecond\n")
+    for args, data in [(["set", "TEST_KEY"], b"first\nsecond\n"),
+                       (["set", "TEST_KEY", "--from-file", str(source)], None)]:
+        result = reject(args, data)
+        assert b"require gopass" in result.stderr, "missing fallback guidance"
+        assert credentials.read_bytes() == baseline, "fallback changed on rejection"
+    for data in (b"$(untrusted-command)", b"`untrusted-command`", b"one\rtwo"):
+        reject(["set", "TEST_KEY"], data)
+        assert credentials.read_bytes() == baseline, "unsafe shell value stored"
+    print("PASS plaintext fallback refuses multi-line and shell-expansion input")
+except Exception:
+    # Do not expose assertion locals, backend output or generated material.
+    print("FAIL multi-line CLI security assertion", file=sys.stderr)
+    sys.exit(1)
+finally:
+    source.unlink(missing_ok=True)
+PY
+	print_result "multi-line terminal and fallback security paths" "$exit_code"
+	return 0
+}
+
 test_credentials_read_unescapes_special_chars() {
 	local test_name="credentials.sh read path unescapes backslash and double-quote"
 
@@ -487,7 +678,7 @@ EOF
 
 	printf '%s\n' 'first-value' | HOME="$TEST_DIR/home" bash "$HELPER" set FIRST_KEY >/dev/null 2>&1 || exit_code=$?
 	if [[ -f "$credentials_file" ]]; then
-		permissions=$(stat -f '%Lp' "$credentials_file" 2>/dev/null || stat -c '%a' "$credentials_file" 2>/dev/null || true)
+		permissions=$(_file_perms "$credentials_file")
 	fi
 
 	if [[ "$exit_code" -eq 0 && "$permissions" == "600" ]] &&
@@ -556,7 +747,7 @@ EOF
 	done
 
 	local permissions=""
-	permissions=$(stat -f '%Lp' "$credentials_file" 2>/dev/null || stat -c '%a' "$credentials_file" 2>/dev/null || true)
+	permissions=$(_file_perms "$credentials_file")
 	if [[ "$exit_code" -eq 0 && $(grep -c '^export UPDATED_KEY=' "$credentials_file") -eq 1 &&
 	$(grep -c '^export ' "$credentials_file") -eq 25 && "$permissions" == "600" ]] &&
 		grep -qx 'export UPDATED_KEY="after"' "$credentials_file"; then
@@ -650,6 +841,7 @@ import os
 import select
 import subprocess
 import sys
+import time
 
 program = (
     'import os, pathlib, sys, time; '
@@ -672,6 +864,13 @@ process = subprocess.Popen(
     stderr=subprocess.PIPE,
 )
 try:
+    # Measure streaming latency from child start, not variable helper/Python
+    # startup time on a loaded runner. Keep startup itself bounded.
+    deadline = time.monotonic() + 10
+    while not os.path.exists(os.environ["CHILD_STARTED"]):
+        if process.poll() is not None or time.monotonic() >= deadline:
+            raise RuntimeError("child did not start")
+        time.sleep(0.02)
     readable = bool(select.select([process.stdout], [], [], 1.0)[0])
     line = process.stdout.readline() if readable else b""
     child_started = os.path.exists(os.environ["CHILD_STARTED"])
@@ -748,6 +947,8 @@ main() {
 	echo ""
 
 	test_set_uses_provided_stdin_value
+	test_multiline_set_file_and_stdin
+	test_multiline_terminal_and_fallback
 	test_credentials_read_unescapes_special_chars
 	test_set_rejects_command_literal_input
 	test_fallback_set_creates_credentials_store
