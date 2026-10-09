@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.38] - 2026-10-09
+
+### Changed
+
+- Documentation: distinguish Cloudron host-wide OOM and correct version lookup (#34104)
+
+### Fixed
+
+- confine Playwright and Playwriter MCP launch cwd outside project checkouts
+- report deployed version after verified update
+- continue For #N orphan-recovery checkpoint drafts instead of a permanent dispatch hold
+- safely store multiline secrets from files and stdin (#34117)
+- classify missing worker tooling as runner_capability_unmet and surface terminal blockers in diagnostics
+- fix Python 3.9 PEP 604 annotation import failures and add compat gate
+- align staging invariant fixtures with runtime bundle deploy (#34109)
+- align headless merge issue scope fixture (#34108)
+
 ## [3.38.37] - 2026-10-09
 
 ### Fixed
