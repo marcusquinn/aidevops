@@ -584,14 +584,20 @@ export async function AidevopsPlugin({ directory, client }) {
   const messagesTransformHook = async (input, output) => {
     await ttsrMessagesTransformHook(input, output);
     try {
+      continuationGuard.injectSteering(input, output);
+    } catch (err) {
+      qualityLog("WARN", `[session-continuation] steering injection failed: ${err?.message ?? err}`);
+    }
+    try {
       applyImageSizeGuard(output, qualityLog);
     } catch (err) {
       qualityLog("WARN", `[image-size-guard] Unexpected error: ${err?.message ?? err}`);
     }
   };
 
-  // Compose recovery completion validation after TTSR annotations. The guard
-  // only changes explicit terminal claims; ordinary progress remains intact.
+  // Observe completed text for TTSR violations and continuation steering.
+  // GH#34123: neither hook modifies the user-visible text; model corrections
+  // travel through messagesTransformHook as synthetic messages.
   const completionTextHook = async (input, output) => {
     await textCompleteHook(input, output);
     continuationGuard.completeText(input, output);
