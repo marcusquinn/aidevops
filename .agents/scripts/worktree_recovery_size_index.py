@@ -14,6 +14,15 @@ import time
 
 PREFIX = "aidevops-worktree-cleanup-"
 SCHEMA = "aidevops.worktree-recovery-size/v1"
+# Fixed system locations only: PATH must not select the sizing executable.
+DU_CANDIDATES = ("/usr/bin/du", "/bin/du", "/run/current-system/sw/bin/du")
+
+
+def du_executable():
+    for candidate in DU_CANDIDATES:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    raise FileNotFoundError("du not found in trusted system locations")
 
 
 def identity(path):
@@ -56,8 +65,8 @@ def record_size(bucket, directory, timeout, measured_bytes=None):
     before = identity(bucket)
     size = measured_bytes
     if size is None:
-        result = subprocess.run(
-            ["du", "-sk", str(bucket)], capture_output=True, text=True,
+        result = subprocess.run(  # nosec B603 -- absolute executable and fixed argv
+            [du_executable(), "-sk", str(bucket)], capture_output=True, text=True,
             timeout=max(0.01, timeout), check=True,
         )
         size = int(result.stdout.split()[0]) * 1024
