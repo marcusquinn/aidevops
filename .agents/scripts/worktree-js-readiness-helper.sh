@@ -208,7 +208,7 @@ _jsr_config_specifiers() {
 		grep -Eo "(from|import|require)[[:space:]]*\(?[[:space:]]*['\"][^'\"]+['\"]" "$config_file" 2>/dev/null |
 			sed -E "s/.*['\"]([^'\"]+)['\"]\$/\1/" |
 			grep -Ev '^(\.|/|[A-Za-z][A-Za-z0-9+.-]*:)' |
-			sort -u | head -n "$JSR_MAX_SPECIFIERS"
+			sort -u | awk -v max="$JSR_MAX_SPECIFIERS" 'NR <= max'
 	} || true
 	return 0
 }
