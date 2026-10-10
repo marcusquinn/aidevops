@@ -67,6 +67,20 @@ if [[ "$*" == *"/actions/runs?event=release"* || "$*" == *"/actions/workflows/re
 	esac
 	exit 0
 fi
+if [[ "$*" == *"/actions/workflows/release.yml/runs?event=release&"* ]]; then
+	printf '%s\n' '{"workflow_runs":[]}'
+	exit 0
+fi
+if [[ "$*" == *"/actions/workflows/release.yml/runs?head_sha="* ]]; then
+	case "$release_mode" in
+	diagnostic-unavailable) exit 70 ;;
+	diagnostic-wrong-sha) merge_sha="2222222222222222222222222222222222222222" ;;
+	esac
+	jq -cn --arg sha "$merge_sha" --arg mode "$release_mode" '{workflow_runs:[{event:"push",status:"completed",
+		conclusion:(if $mode == "diagnostic-failed" then "failure" else "success" end),
+		head_branch:(if $mode == "diagnostic-main" then "main" else "v3.0.0" end),head_sha:$sha}]}'
+	exit 0
+fi
 if [[ "$*" == *"repos/marcusquinn/aidevops/actions/workflows/release.yml/runs?event=push&status=success&per_page=100"* ]]; then
 	case "$release_mode" in
 	push-failed-workflow)
@@ -262,6 +276,24 @@ AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$c
 	bash "$published_record_runner" 58 v3.0.0 marcusquinn/aidevops >/dev/null
 cmp -s "$published_cleanup_receipt" "${ROOT}/published-release-receipt-before.json"
 printf 'PASS verified manual release records published evidence and reconciles cleanup idempotently\n'
+
+for diagnostic_mode in valid diagnostic-wrong-sha diagnostic-failed diagnostic-main diagnostic-unavailable; do
+	if diagnostic_output=$(COMPLETION_RELEASE_MODE="$diagnostic_mode" AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" \
+		PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+		bash "$published_record_runner" 60 v3.0.0 marcusquinn/aidevops --workflow release.yml 2>&1); then
+		printf 'FAIL diagnostic query recorded publication evidence\n'
+		exit 1
+	fi
+	[[ ! -e "${receipt_dir}/marcusquinn_aidevops-60.status" ]]
+	[[ "$diagnostic_output" == *"No successful release run of workflow release.yml"* ]]
+	if [[ "$diagnostic_mode" == "valid" ]]; then
+		[[ "$diagnostic_output" == *"Successful events of workflow release.yml"*": push"* ]]
+		[[ "$diagnostic_output" == *"--event push"* ]]
+	else
+		[[ "$diagnostic_output" != *"--event push"* ]]
+	fi
+done
+printf 'PASS missing release event suggests matching tag-push evidence without accepting mismatched or unavailable diagnostics\n'
 
 push_published_worktree="${ROOT}/push-published-release-worktree"
 mkdir -p "$push_published_worktree"
