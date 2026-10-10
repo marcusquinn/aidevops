@@ -302,3 +302,165 @@ _expect_state "$INTERACTIVE_WT" "ready" "interactive cmd_add owner contract prov
 [[ -z "$(find "$INTERACTIVE_WT" -maxdepth 1 -name '.aidevops-deps-*' -print -quit)" ]] ||
 	fail "provisioning left a staging directory behind"
 printf 'PASS exact-contract provisioning leaves the canonical checkout unchanged\n'
+
+# --- GH#34200: durable owner-approved frozen install policy ------------------
+POLICY_BIN="${ROOT}/policy-bin"
+POLICY_CANON="${ROOT}/policy-canonical"
+export AIDEVOPS_REPOS_FILE="${ROOT}/repos.json"
+export AIDEVOPS_LOCK_DIR="${ROOT}/locks"
+export NPM_ARGS_LOG="${ROOT}/npm-args.log"
+mkdir -p "$POLICY_BIN" "$POLICY_CANON"
+# Stub npm: records argv, the scripts-disabled env and NODE_OPTIONS, then
+# creates a local eslint. NPM_STUB_MODE=mutate|fail simulates misbehaviour.
+cat >"${POLICY_BIN}/npm" <<'NPM'
+#!/usr/bin/env bash
+printf '%s|%s|%s\n' "$*" "${npm_config_ignore_scripts:-}" "${NODE_OPTIONS:-unset}" >>"$NPM_ARGS_LOG"
+mkdir -p node_modules/.bin node_modules/eslint
+printf '{"name":"eslint"}\n' >node_modules/eslint/package.json
+printf '#!/usr/bin/env bash\nexit 0\n' >node_modules/.bin/eslint
+chmod +x node_modules/.bin/eslint
+[[ "${NPM_STUB_MODE:-}" != mutate ]] || printf 'mutated\n' >>package.json
+[[ "${NPM_STUB_MODE:-}" != fail ]] || exit 1
+exit 0
+NPM
+chmod +x "${POLICY_BIN}/npm"
+export PATH="${POLICY_BIN}:${PATH}"
+
+printf '{"name":"policy-fixture","scripts":{"lint":"eslint .","postinstall":"touch SCRIPT-RAN"}}\n' \
+	>"${POLICY_CANON}/package.json"
+printf '{"lockfileVersion":3}\n' >"${POLICY_CANON}/package-lock.json"
+printf 'node_modules/\n' >"${POLICY_CANON}/.gitignore"
+git -C "$POLICY_CANON" init -q
+git -C "$POLICY_CANON" add .
+git -C "$POLICY_CANON" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm fixture
+POLICY_CANON_REAL=$(cd "$POLICY_CANON" && pwd -P)
+jq -n --arg p "$POLICY_CANON_REAL" '{initialized_repos:[{path:$p,slug:"owner/policy-fixture"}]}' >"$AIDEVOPS_REPOS_FILE"
+chmod 600 "$AIDEVOPS_REPOS_FILE"
+canon_policy_status=$(git -C "$POLICY_CANON" status --porcelain --ignored)
+
+_policy_wt() {
+	local name="$1"
+	local dir="${ROOT}/${name}"
+	git -C "$POLICY_CANON" worktree add -qb "$name" "$dir" >/dev/null 2>&1 || fail "fixture worktree ${name} failed"
+	(cd "$dir" && pwd -P)
+	return 0
+}
+
+_interactive() {
+	env -u AIDEVOPS_HEADLESS -u FULL_LOOP_HEADLESS -u OPENCODE_HEADLESS -u CLAUDE_HEADLESS -u HEADLESS \
+		-u GITHUB_ACTIONS -u WORKER_ISSUE_NUMBER -u WORKER_TASK_NUMBER -u WORKER_WORKTREE_PATH "$@" || return 1
+	return 0
+}
+
+_npm_calls() {
+	if [[ -f "$NPM_ARGS_LOG" ]]; then
+		wc -l <"$NPM_ARGS_LOG" | tr -d ' '
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+# Negative: no policy -> no install, preparation-needed with the approve command.
+NOPOLICY_WT=$(_policy_wt policy-none)
+_bootstrap_worktree_js_deps "$NOPOLICY_WT" 2>/dev/null
+[[ "$(_npm_calls)" == 0 && ! -e "${NOPOLICY_WT}/node_modules" ]] || fail "an unapproved project ran an install"
+_expect_state "$NOPOLICY_WT" "preparation-needed:node-modules-missing" "no policy leaves preparation-needed and installs nothing"
+[[ "$("$READINESS" report "$NOPOLICY_WT")" == *"worktree-js-readiness-helper.sh approve ${NOPOLICY_WT}"* ]] ||
+	fail "the no-policy report does not show the approval command"
+printf 'PASS the no-policy report shows the approval command\n'
+
+# Regression: headless approve is refused and repos.json is unchanged.
+repos_before=$(cat "$AIDEVOPS_REPOS_FILE")
+AIDEVOPS_HEADLESS=true "$READINESS" approve "$NOPOLICY_WT" >/dev/null 2>&1 && fail "headless approve was accepted"
+_interactive WORKER_ISSUE_NUMBER=1 "$READINESS" approve "$NOPOLICY_WT" >/dev/null 2>&1 && fail "worker approve was accepted"
+[[ "$(cat "$AIDEVOPS_REPOS_FILE")" == "$repos_before" ]] || fail "a refused approve changed repos.json"
+printf 'PASS headless and worker approve are refused without writing repos.json\n'
+
+_interactive "$READINESS" approve "$NOPOLICY_WT" >/dev/null || fail "interactive approve failed"
+[[ "$(jq -r '.initialized_repos[0].js_dependency_policy | [.scope, .package_manager, (.lockfile_sha256 | length)] | join(" ")' "$AIDEVOPS_REPOS_FILE")" == "worktree-install npm 64" ]] ||
+	fail "approve did not record the lockfile-bound policy"
+[[ "$(stat -c '%a' "$AIDEVOPS_REPOS_FILE" 2>/dev/null || stat -f '%Lp' "$AIDEVOPS_REPOS_FILE")" == 600 ]] ||
+	fail "approve did not preserve the repos.json file mode"
+[[ "$("$READINESS" status "$NOPOLICY_WT" | head -1)" == "JS_DEPENDENCY_POLICY=current" ]] || fail "status does not report a current policy"
+printf 'PASS interactive approve records a lockfile-bound policy in repos.json (mode preserved)\n'
+
+# Positive: a fresh worktree under a matching policy is prepared, then ready.
+APPROVED_WT=$(_policy_wt policy-approved)
+NODE_OPTIONS="--require=/nonexistent-preload.js" _bootstrap_worktree_js_deps "$APPROVED_WT" >/dev/null 2>&1
+[[ "$(cat "$NPM_ARGS_LOG")" == "ci --ignore-scripts|true|unset" ]] ||
+	fail "approved install was not a frozen, scripts-disabled npm ci without NODE_OPTIONS: $(cat "$NPM_ARGS_LOG")"
+_expect_state "$APPROVED_WT" "ready" "an approved fresh npm worktree is prepared automatically and reports ready"
+[[ -z "$(git -C "$APPROVED_WT" status --porcelain)" && ! -e "${APPROVED_WT}/SCRIPT-RAN" ]] ||
+	fail "the approved install changed Git-visible files or ran a lifecycle script"
+[[ "$(git -C "$POLICY_CANON" status --porcelain --ignored)" == "$canon_policy_status" ]] ||
+	fail "the approved install mutated the canonical checkout"
+printf 'PASS approved install leaves tracked, canonical and lifecycle-script state untouched\n'
+
+# Positive: re-admission with unchanged lockfile/runtime is idempotent.
+_bootstrap_worktree_js_deps "$APPROVED_WT" >/dev/null 2>&1
+[[ "$(_npm_calls)" == 1 ]] || fail "re-admission of a ready worktree installed again"
+_expect_state "$APPROVED_WT" "ready" "re-admission reuses existing worktree dependencies without install or approval"
+
+# Negative: changed lockfile -> blocked:policy-stale, no install.
+STALE_WT=$(_policy_wt policy-stale-lock)
+printf '{"lockfileVersion":3,"changed":true}\n' >"${STALE_WT}/package-lock.json"
+git -C "$STALE_WT" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qam "change lock"
+_bootstrap_worktree_js_deps "$STALE_WT" >/dev/null 2>&1
+[[ "$(_npm_calls)" == 1 && ! -e "${STALE_WT}/node_modules" ]] || fail "a changed lockfile still installed"
+_expect_state "$STALE_WT" "blocked:policy-stale" "a changed lockfile reports blocked:policy-stale"
+[[ "$("$READINESS" status "$STALE_WT" | head -1)" == "JS_DEPENDENCY_POLICY=stale-lockfile" ]] ||
+	fail "status does not name the stale lockfile"
+
+# Negative: changed package manager or Node major -> blocked:policy-stale.
+RUNTIME_WT=$(_policy_wt policy-stale-runtime)
+policy_json=$(jq -c '.initialized_repos[0].js_dependency_policy' "$AIDEVOPS_REPOS_FILE")
+for field in package_manager node_major; do
+	jq --arg f "$field" '.initialized_repos[0].js_dependency_policy[$f] = "changed"' "$AIDEVOPS_REPOS_FILE" >"${AIDEVOPS_REPOS_FILE}.new"
+	mv "${AIDEVOPS_REPOS_FILE}.new" "$AIDEVOPS_REPOS_FILE"
+	_bootstrap_worktree_js_deps "$RUNTIME_WT" >/dev/null 2>&1
+	[[ "$(_npm_calls)" == 1 ]] || fail "a changed ${field} still installed"
+	_expect_state "$RUNTIME_WT" "blocked:policy-stale" "a changed ${field} reports blocked:policy-stale"
+	jq --argjson p "$policy_json" '.initialized_repos[0].js_dependency_policy = $p' "$AIDEVOPS_REPOS_FILE" >"${AIDEVOPS_REPOS_FILE}.new"
+	mv "${AIDEVOPS_REPOS_FILE}.new" "$AIDEVOPS_REPOS_FILE"
+done
+
+# Negative: an ownership snapshot refusal is never routed around by install.
+"$READINESS" record-restore "$RUNTIME_WT" rejected controller-not-owner
+_bootstrap_worktree_js_deps "$RUNTIME_WT" >/dev/null 2>&1
+[[ "$(_npm_calls)" == 1 ]] || fail "an ownership refusal was bypassed by the policy install"
+_expect_state "$RUNTIME_WT" "blocked:snapshot-controller-not-owner" "an ownership snapshot refusal blocks the policy install"
+
+# Regression: an install that mutates Git-visible files is rolled back.
+MUTATE_WT=$(_policy_wt policy-mutate)
+NPM_STUB_MODE=mutate _bootstrap_worktree_js_deps "$MUTATE_WT" >/dev/null 2>&1
+[[ ! -e "${MUTATE_WT}/node_modules" && -z "$(git -C "$MUTATE_WT" status --porcelain)" ]] ||
+	fail "a tree-mutating install was not rolled back"
+_expect_state "$MUTATE_WT" "blocked:install-mutated-tree" "a tree-mutating install is rolled back and reported"
+
+# Partial failure, then retry after an interrupted install.
+FAIL_WT=$(_policy_wt policy-fail)
+NPM_STUB_MODE=fail _bootstrap_worktree_js_deps "$FAIL_WT" >/dev/null 2>&1
+[[ ! -e "${FAIL_WT}/node_modules" ]] || fail "a failed install left partial node_modules"
+_expect_state "$FAIL_WT" "blocked:install-failed" "a failed install removes partial state and reports blocked:install-failed"
+mkdir -p "${FAIL_WT}/node_modules/partial"
+printf 'npm ci --ignore-scripts\n' >"$(git -C "$FAIL_WT" rev-parse --absolute-git-dir)/aidevops/js-install-partial"
+_bootstrap_worktree_js_deps "$FAIL_WT" >/dev/null 2>&1
+[[ ! -e "${FAIL_WT}/node_modules/partial" ]] || fail "interrupted partial node_modules was not removed before retry"
+_expect_state "$FAIL_WT" "ready" "an interrupted install is cleaned and retried"
+
+# Negative: foreign node_modules (no in-progress marker) is never replaced.
+FOREIGN_WT=$(_policy_wt policy-foreign)
+mkdir -p "${FOREIGN_WT}/node_modules/foreign"
+calls_before=$(_npm_calls)
+_bootstrap_worktree_js_deps "$FOREIGN_WT" >/dev/null 2>&1
+[[ "$(_npm_calls)" == "$calls_before" && -d "${FOREIGN_WT}/node_modules/foreign" ]] ||
+	fail "existing foreign node_modules was replaced"
+_expect_state "$FOREIGN_WT" "blocked:existing-node-modules" "existing foreign node_modules fails closed"
+
+# Revoke: refused headless; interactive revoke removes the policy.
+AIDEVOPS_HEADLESS=1 "$READINESS" revoke "$APPROVED_WT" >/dev/null 2>&1 && fail "headless revoke was accepted"
+_interactive "$READINESS" revoke "$APPROVED_WT" >/dev/null || fail "interactive revoke failed"
+[[ "$(jq -r '.initialized_repos[0] | has("js_dependency_policy")' "$AIDEVOPS_REPOS_FILE")" == false ]] ||
+	fail "revoke did not delete js_dependency_policy"
+printf 'PASS revoke is interactive-only and deletes the policy\n'
