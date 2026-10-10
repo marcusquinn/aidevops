@@ -86,6 +86,24 @@ _opencode_upgrade_cmd() {
 
 _oc_upgrade_cmd=$(_opencode_upgrade_cmd "latest")
 
+# GH#34252: the release channel must match the package manager that owns the
+# resolved binary, decided by the same probe that selects the upgrade route.
+# Homebrew-owned OpenCode is compared against its installed formula (which may
+# be tap-qualified, e.g. anomalyco/tap/opencode, and lag the npm registry).
+_opencode_brew_formula_name() {
+	local full_name=""
+	full_name=$(brew list --formula --full-name 2>/dev/null | grep -E '(^|/)opencode$' | head -1 || true)
+	printf '%s\n' "${full_name:-opencode}"
+	return 0
+}
+
+_oc_npm_tool_spec="npm|OpenCode|opencode|--version|opencode-ai|${_oc_upgrade_cmd}"
+_oc_brew_tool_spec=""
+if [[ "$(aidevops_opencode_install_owner 2>/dev/null || true)" == brew ]]; then
+	_oc_brew_tool_spec="brew|OpenCode|opencode|--version|$(_opencode_brew_formula_name)|${_oc_upgrade_cmd}"
+	_oc_npm_tool_spec=""
+fi
+
 # Platform-aware brew package upgrade command.
 # On macOS (or any system with brew), upgrade installed formulas and install
 # selected formulas supplied by another package manager.
@@ -119,7 +137,6 @@ _pip_upgrade_cmd() {
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
 NPM_TOOLS=(
-	"npm|OpenCode|opencode|--version|opencode-ai|${_oc_upgrade_cmd}"
 	"npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
 	"npm|Codex CLI|codex|--version|@openai/codex|npm install -g @openai/codex@latest"
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
@@ -140,6 +157,14 @@ BREW_TOOLS=(
 	"brew|ripgrep|rg|--version|ripgrep|$(_brew_upgrade_cmd ripgrep)"
 	"brew|ShellCheck|shellcheck|--version|shellcheck|$(_brew_upgrade_cmd shellcheck)"
 )
+
+# OpenCode is listed first in whichever category owns it.
+if [[ -n "$_oc_npm_tool_spec" ]]; then
+	NPM_TOOLS=("$_oc_npm_tool_spec" "${NPM_TOOLS[@]}")
+fi
+if [[ -n "$_oc_brew_tool_spec" ]]; then
+	BREW_TOOLS=("$_oc_brew_tool_spec" "${BREW_TOOLS[@]}")
+fi
 
 PIP_TOOLS=(
 	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
