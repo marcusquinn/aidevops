@@ -138,7 +138,8 @@ _dep_graph_process_issue_json() {
 			label_blocker_tids="${label_blocker_tids:+${label_blocker_tids}$'\n'}__malformed__"
 		fi
 	done <<<"$label_names"
-	label_blocker_nums=$(printf '%s' "$label_names" | grep -oE '^blocked-by:#[0-9]+$' | grep -oE '[0-9]+' || true)
+	# claim-task-id.sh emits both blocked-by:#N and blocked-by:GH#N (GH#34264).
+	label_blocker_nums=$(printf '%s' "$label_names" | grep -oE '^blocked-by:(GH)?#[0-9]+$' | grep -oE '[0-9]+' || true)
 	blocker_tids=$(printf '%s\n%s\n' "$body_blocker_tids" "$label_blocker_tids" | sed '/^$/d' | sort -u)
 	blocker_nums=$(printf '%s\n%s\n' "$body_blocker_nums" "$label_blocker_nums" | sed '/^$/d' | sort -u)
 	# A copied roadmap marker can accidentally point back to the issue itself.
@@ -698,12 +699,14 @@ _refresh_cleanup_resolved_blocker_labels() {
 	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]?' 2>/dev/null || true)
 	while IFS= read -r blocker_num; do
 		[[ "$blocker_num" =~ ^[0-9]+$ ]] || continue
-		stale_label="blocked-by:#${blocker_num}"
-		[[ ",${current_labels}," == *",${stale_label},"* ]] || continue
-		if gh issue edit "$issue_num" --repo "$slug" --remove-label "$stale_label" >/dev/null 2>&1; then
-			removed_count=$((removed_count + 1))
-			echo "[pulse-wrapper] dep-graph-cache: removed stale ${stale_label} from #${issue_num} in ${slug} — blocker resolved (GH#25922)" >>"$LOGFILE"
-		fi
+		# Both sanctioned label spellings resolve to the same blocker (GH#34264).
+		for stale_label in "blocked-by:#${blocker_num}" "blocked-by:GH#${blocker_num}"; do
+			[[ ",${current_labels}," == *",${stale_label},"* ]] || continue
+			if gh issue edit "$issue_num" --repo "$slug" --remove-label "$stale_label" >/dev/null 2>&1; then
+				removed_count=$((removed_count + 1))
+				echo "[pulse-wrapper] dep-graph-cache: removed stale ${stale_label} from #${issue_num} in ${slug} — blocker resolved (GH#25922)" >>"$LOGFILE"
+			fi
+		done
 	done <<<"$blocker_nums"
 
 	[[ "$removed_count" -gt 0 ]] && return 0
