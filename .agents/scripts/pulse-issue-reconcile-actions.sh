@@ -801,6 +801,24 @@ _pir_reopen_unstable_parent_close() {
 }
 
 #######################################
+# Budget guard for multi-round-trip mutations (GH#34289). Reads the
+# single-pass locals _t2984_start_ts/_t2984_budget via dynamic scope. A parent
+# close spans several reads, the close, a stability check, an optional reopen
+# and a comment; starting one near the budget risks a mid-action stage kill.
+# Env: RECONCILE_MUTATION_RESERVE_SECS=reserve seconds (default 90)
+# Returns: 0=enough budget (or no budget active), 1=too little remaining
+#######################################
+_pir_budget_allows_mutation() {
+	local reserve="${RECONCILE_MUTATION_RESERVE_SECS:-90}"
+	[[ "$reserve" =~ ^[0-9]+$ ]] || reserve=90
+	local budget="${_t2984_budget:-0}" start="${_t2984_start_ts:-}"
+	[[ "$budget" =~ ^[0-9]+$ && "$start" =~ ^[0-9]+$ ]] || return 0
+	[[ "$budget" -gt 0 ]] || return 0
+	[[ $((budget - (SECONDS - start))) -ge "$reserve" ]] || return 1
+	return 0
+}
+
+#######################################
 # t2138 / t3544: extract per-parent close logic. Keeps
 # reconcile_completed_parent_tasks under the 100-line shell-complexity
 # threshold and makes the close decision independently testable.
@@ -813,6 +831,10 @@ _try_close_parent_tracker() {
 	local live_child_nums="" live_child_source=""
 	local live_parent_revision=""
 
+	if ! _pir_budget_allows_mutation; then
+		echo "[pulse-wrapper] Reconcile parent-task: deferred: insufficient reconcile budget for parent close #${parent_num} in ${slug}" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 	_pir_verify_parent_children_closed "$slug" "$child_nums" || return 1
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
 	child_summary="$_PIR_CPT_VERIFIED_CHILD_SUMMARY"

@@ -1773,6 +1773,46 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# GH#34289: a parent close must not start when the remaining reconcile budget
+# is below the mutation reserve (outer stage kill would land mid-action).
+# ---------------------------------------------------------------------------
+test_gh34289_parent_close_deferred_near_budget() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local logfile=""
+	logfile=$(mktemp)
+	local result=""
+	result=$(ACTIONS_SH="$actions_sh" LOGFILE="$logfile" bash -c '
+		_PIR_SCRIPT_DIR="/nonexistent"
+		source "$ACTIONS_SH"
+		GH_CALLS=0
+		gh() { GH_CALLS=$((GH_CALLS + 1)); return 1; }
+		_t2984_budget=360
+		SECONDS=300
+		_t2984_start_ts=0
+		_try_close_parent_tracker owner/repo 42 43 graph "" && echo "near:ran" || echo "near:deferred"
+		printf "near-gh-calls:%s\n" "$GH_CALLS"
+		_t2984_start_ts=$SECONDS
+		_pir_budget_allows_mutation && echo "fresh:allowed" || echo "fresh:blocked"
+		_t2984_budget=0
+		_pir_budget_allows_mutation && echo "nobudget:allowed" || echo "nobudget:blocked"
+	' 2>/dev/null)
+
+	local all_ok=1
+	printf '%s\n' "$result" | grep -qx 'near:deferred' || all_ok=0
+	printf '%s\n' "$result" | grep -qx 'near-gh-calls:0' || all_ok=0
+	printf '%s\n' "$result" | grep -qx 'fresh:allowed' || all_ok=0
+	printf '%s\n' "$result" | grep -qx 'nobudget:allowed' || all_ok=0
+	grep -q 'deferred: insufficient reconcile budget for parent close #42' "$logfile" 2>/dev/null || all_ok=0
+	rm -f "$logfile"
+	if [[ "$all_ok" -eq 1 ]]; then
+		_pass "parent close deferred (no gh calls, logged) when reconcile budget is nearly exhausted"
+	else
+		_fail "budget-deferral result mismatch: ${result}"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 test_cache_miss_no_file
@@ -1807,6 +1847,7 @@ test_gh32640_ciw_rsd_recurrent_file_size_debt_gate
 test_available_feedback_worker_issue_not_assigned
 test_feedback_backfill_uses_label_constants
 test_pr_lookup_uncertainty_preserves_issue_state
+test_gh34289_parent_close_deferred_near_budget
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"
