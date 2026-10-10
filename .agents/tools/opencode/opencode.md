@@ -252,6 +252,11 @@ V1 `opencode.json` pattern: `"mcp": { "name": { ..., "enabled": false } }` + `"a
 
 V2 uses `"mcp": { "servers": { "name": { ..., "disabled": true } } }`,
 `"agents"`, ordered `"permissions"`, and the V2 plugin's MCP/tool transforms.
+V2 has no global tool switch, so `v2-on-demand-mcp-agents.mjs` appends
+`aidevops_mcp` and on-demand MCP tool denies to every agent, then registers each
+registry activation agent from its source with the source's tool restrictions
+and only its own MCP re-allowed (rules are last-match-wins). Verify with
+`node --test .agents/plugins/opencode-aidevops/tests/test-v2-on-demand-mcp-agents.mjs`.
 
 ## Usage
 

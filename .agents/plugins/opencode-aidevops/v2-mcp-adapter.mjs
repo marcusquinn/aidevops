@@ -21,6 +21,9 @@ export function createV2McpRuntime(ctx, workspaceDir, options = {}) {
   const runtime = createMcpSessionRuntime(workspaceDir, options);
   const registrations = [];
   const definitions = {};
+  // V1 global tool policy (`toolPattern` → enabled). V2 has no global tools
+  // map, so the agent transform turns it into per-agent rules (GH#34219).
+  const toolPolicy = {};
   const disabledOverrides = new Map();
 
   async function addTransform(callback) {
@@ -30,7 +33,7 @@ export function createV2McpRuntime(ctx, workspaceDir, options = {}) {
   }
 
   async function initialize() {
-    const config = { mcp: definitions, tools: {} };
+    const config = { mcp: definitions, tools: toolPolicy };
     registerMcpServers(config, { runtime });
     await addTransform((editor) => {
       for (const [name, definition] of Object.entries(definitions)) {
@@ -65,5 +68,5 @@ export function createV2McpRuntime(ctx, workspaceDir, options = {}) {
     }
   }
 
-  return { ...runtime, client, initialize, dispose };
+  return { ...runtime, client, initialize, dispose, toolPolicy: () => ({ ...toolPolicy }) };
 }
