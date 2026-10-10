@@ -221,3 +221,84 @@ for dir in "$JS_WT" "$CONTENDED_WT" "$REJECTED_WT"; do
 		fail "readiness state leaked into the worktree tree in ${dir}"
 done
 printf 'PASS readiness state stays in the git dir and tracked files are unchanged\n'
+
+# --- GH#34224: interactive cmd_add owner contract ---------------------------
+# Interactive adds register the runtime PID (not this helper's $$) as owner.
+# The exact contract cmd_add just registered must provision; any other must not.
+export WORKTREE_REGISTRY_DIR="${ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+# shellcheck source=../shared-worktree-registry.sh
+source "${SCRIPT_DIR}/shared-worktree-registry.sh"
+umask 022
+CANON="${ROOT}/canonical-npm"
+INTERACTIVE_WT="${ROOT}/interactive-npm-worktree"
+mkdir -p "$CANON"
+pkg_json='{"name":"fixture","version":"1.0.0","scripts":{"lint":"eslint ."},"devDependencies":{"eslint":"1.0.0"}}'
+eslint_meta='{"version":"1.0.0","resolved":"fixture:eslint","dev":true}'
+printf '%s\n' "$pkg_json" >"${CANON}/package.json"
+printf '{"lockfileVersion":3,"packages":{"":%s,"node_modules/eslint":%s}}\n' "$pkg_json" "$eslint_meta" \
+	>"${CANON}/package-lock.json"
+printf 'node_modules/\n' >"${CANON}/.gitignore"
+git -C "$CANON" init -q
+git -C "$CANON" add .
+git -C "$CANON" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm fixture
+git -C "$CANON" worktree add -qb fixture-interactive "$INTERACTIVE_WT"
+mkdir -p "${CANON}/node_modules/eslint" "${CANON}/node_modules/.bin"
+printf '{"name":"eslint","version":"1.0.0"}\n' >"${CANON}/node_modules/eslint/package.json"
+printf '{"packages":{"node_modules/eslint":%s}}\n' "$eslint_meta" >"${CANON}/node_modules/.package-lock.json"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${CANON}/node_modules/.bin/eslint"
+chmod +x "${CANON}/node_modules/.bin/eslint"
+canon_status_before=$(git -C "$CANON" status --porcelain --ignored)
+
+sleep 120 &
+RUNTIME_PID=$!
+trap 'kill "$RUNTIME_PID" 2>/dev/null || true; rm -rf "$ROOT"' EXIT
+
+_interactive_register() {
+	local task="$1"
+	register_worktree "$INTERACTIVE_WT" fixture-interactive --owner-pid "$RUNTIME_PID" \
+		--session ses_fixture --task "$task" || fail "fixture registration failed"
+	return 0
+}
+
+# Interactive add without --issue: empty task ID, owner = runtime PID.
+_interactive_register ""
+contract=$(_cmd_add_created_registration_contract "$INTERACTIVE_WT" "$RUNTIME_PID" ses_fixture "") ||
+	fail "fixture registration contract did not verify"
+
+# Negative: legacy controller path (no contract) still refuses a runtime owner.
+legacy_err=$(_restore_worktree_node_modules "$INTERACTIVE_WT" "$CANON" 2>&1 >/dev/null)
+[[ "$legacy_err" == *"reason=controller-not-owner"* && ! -e "${INTERACTIVE_WT}/node_modules" ]] ||
+	fail "restore without a contract provisioned for a non-controller owner"
+printf 'PASS restore without an exact contract still refuses a runtime-owned worktree\n'
+
+# Negative: the owner row changed after cmd_add registered it; no copy occurs.
+_interactive_register 999
+changed_err=$(_restore_worktree_node_modules "$INTERACTIVE_WT" "$CANON" "$contract" 2>&1 >/dev/null)
+[[ "$changed_err" == *"reason=owner-contract-changed"* && ! -e "${INTERACTIVE_WT}/node_modules" ]] ||
+	fail "a changed owner contract was not refused before copy"
+_expect_state "$INTERACTIVE_WT" "blocked:snapshot-owner-contract-changed" \
+	"a changed owner contract between registration and publish refuses with a named reason"
+
+# Negative: a foreign owner presenting the original contract string is refused.
+register_worktree "$INTERACTIVE_WT" fixture-interactive --owner-pid "$$" --session ses_fixture --task "" ||
+	fail "foreign fixture registration failed"
+foreign_err=$(_restore_worktree_node_modules "$INTERACTIVE_WT" "$CANON" "$contract" 2>&1 >/dev/null)
+[[ "$foreign_err" == *"reason=owner-contract-changed"* && ! -e "${INTERACTIVE_WT}/node_modules" ]] ||
+	fail "a foreign owner was accepted with another generation's contract"
+printf 'PASS a foreign owner cannot reuse another generation contract\n'
+
+# Positive: the exact contract cmd_add just registered provisions the snapshot.
+_interactive_register ""
+contract=$(_cmd_add_created_registration_contract "$INTERACTIVE_WT" "$RUNTIME_PID" ses_fixture "") ||
+	fail "fixture re-registration contract did not verify"
+_restore_worktree_node_modules "$INTERACTIVE_WT" "$CANON" "$contract" >/dev/null 2>&1 ||
+	fail "exact-contract restore changed the exit status"
+[[ -f "${INTERACTIVE_WT}/node_modules/eslint/package.json" && -x "${INTERACTIVE_WT}/node_modules/.bin/eslint" ]] ||
+	fail "the exact cmd_add owner contract did not provision node_modules"
+_expect_state "$INTERACTIVE_WT" "ready" "interactive cmd_add owner contract provisions a ready npm snapshot"
+[[ "$(git -C "$CANON" status --porcelain --ignored)" == "$canon_status_before" &&
+	-x "${CANON}/node_modules/.bin/eslint" ]] || fail "provisioning mutated the canonical checkout"
+[[ -z "$(find "$INTERACTIVE_WT" -maxdepth 1 -name '.aidevops-deps-*' -print -quit)" ]] ||
+	fail "provisioning left a staging directory behind"
+printf 'PASS exact-contract provisioning leaves the canonical checkout unchanged\n'

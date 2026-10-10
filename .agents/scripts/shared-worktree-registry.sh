@@ -1010,6 +1010,45 @@ worktree_has_exact_owner_contract() {
 	return 0
 }
 
+# GH#34224: Return success only when the registry row is the exact generation a
+# caller just registered and verified: PID, live process-start token, session,
+# batch, task and created_at all match. Session/task may be empty (interactive
+# add without --issue) because created_at plus the live process-start token pin
+# the generation; this is never an "any owner" check. Fails closed on missing,
+# replaced, recycled-PID, malformed or unreadable registry evidence.
+# Arguments: $1 path, $2 owner PID, $3 session, $4 batch, $5 task, $6 created_at
+worktree_has_exact_owner_generation() {
+	[[ $# -eq 6 ]] || return 1
+	local wt_path="$1"
+	local expected_owner_pid="$2"
+	local expected_owner_session="$3"
+	local expected_owner_batch="$4"
+	local expected_task_id="$5"
+	local expected_created_at="$6"
+	local expected_process_start=""
+	local exact_match=""
+
+	[[ "$expected_owner_pid" =~ ^[0-9]+$ && -n "$expected_created_at" ]] || return 1
+	expected_process_start=$(_wt_process_start_token_for_pid "$expected_owner_pid") || return 1
+	command -v sqlite3 >/dev/null 2>&1 || return 1
+	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 1
+	wt_path=$(_wt_registry_lookup_path "$wt_path") || return 1
+	exact_match=$(_wt_sqlite3 "$WORKTREE_REGISTRY_DB" "
+		SELECT 1
+		FROM worktree_owners
+		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")'
+		  AND owner_pid = ${expected_owner_pid}
+		  AND COALESCE(owner_session, '') = '$(_wt_sql_escape "$expected_owner_session")'
+		  AND COALESCE(owner_batch, '') = '$(_wt_sql_escape "$expected_owner_batch")'
+		  AND COALESCE(task_id, '') = '$(_wt_sql_escape "$expected_task_id")'
+		  AND COALESCE(created_at, '') = '$(_wt_sql_escape "$expected_created_at")'
+		  AND COALESCE(owner_process_start, '') = '$(_wt_sql_escape "$expected_process_start")'
+		LIMIT 1;
+	" 2>/dev/null) || return 1
+	[[ "$exact_match" == "1" ]] || return 1
+	return 0
+}
+
 # GH#32528: Return success when the same live owner generation (PID, process
 # start and session) registered a different worktree after the given UTC
 # timestamp. Interactive runtimes run full-loops in sequence, so a newer claim
