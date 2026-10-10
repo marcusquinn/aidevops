@@ -5199,3 +5199,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877 pr:#34207 completed:2026-10-09
 
 
+
+- [ ] t18639 GH#34180 Leaf B: durable owner-approved policy for frozen JavaScript worktree installs #auto-dispatch #blocked-by:GH#34199 #enhancement ref:GH#34200
