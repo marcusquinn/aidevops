@@ -10,7 +10,42 @@ The goal is that any maintainer can answer three questions without private chat
 history: what is running, how to prove whether it is healthy, and what to change
 when a runner is offline or mis-sized.
 
-## Current deployment
+## Org-scoped GitHub App runners (recommended)
+
+Model: one GitHub App per org (only the `organization_self_hosted_runners: write`
+permission, webhook inactive, installable only on that org), one org runner group
+restricted to selected private repos with public repositories disallowed, and
+ephemeral JIT-registered runners (one container per job) whose registration
+tokens come from App installation tokens. A key compromise is limited to one org,
+and fork PRs on public repos can never reach the host. Public repos keep free
+GitHub-hosted minutes.
+
+`runs-on` guidance: private repos use `[self-hosted, linux, <POOL_LABEL>]`;
+public repos stay on GitHub-hosted runners.
+
+The server-side pool (systemd, rootless or DinD containers, JIT registration) is
+operator-owned. `github-runner-org-helper.sh` prepares and verifies its inputs.
+
+One-time onboarding per org:
+
+1. In the GitHub web UI, create the App (permission above, webhook inactive,
+   installable only on `<ORG>`), install it on `<ORG>`, and generate a private key.
+2. Store the key: `aidevops secret set <ORG>_RUNNERS_APP_KEY` (never paste it in chat).
+3. Create or reconcile the private-only runner group (needs `admin:org` on `gh`):
+   `github-runner-org-helper.sh group-ensure --org <ORG> --name <GROUP> --repos all-private --dry-run`,
+   then rerun without `--dry-run`. It refuses any public repo.
+4. Verify the key, App owner and installation permissions:
+   `github-runner-org-helper.sh verify-key --org <ORG> --app-id <APP_ID> --secret <ORG>_RUNNERS_APP_KEY`
+5. Deliver the key to the runner host (mode 600, fingerprint compared):
+   `github-runner-org-helper.sh push-key --secret <ORG>_RUNNERS_APP_KEY --host <USER>@<HOST> --dest <KEY_PATH>`
+6. Start the pool for the group, then check it:
+   `github-runner-org-helper.sh status --org <ORG> --group <GROUP>`
+
+The helper reads the key only from an env var injected by
+`aidevops secret NAME -- ...`; it never prints it, puts it in argv or writes it to
+a local file. Only the public-key SHA-256 is displayed.
+
+## Current deployment (legacy repo-scoped pool)
 
 Verified on the server during the 2026-06-20 inspection. Concrete repository,
 image, and environment names are represented with placeholders so this public
