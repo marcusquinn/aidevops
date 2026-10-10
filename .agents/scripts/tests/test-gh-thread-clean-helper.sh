@@ -116,6 +116,46 @@ JSON
 assert_contains "comments.nodes object shape is emitted" "Actionable comment at path/to/file.sh:12" "$output"
 assert_contains "user login fallback is preserved" "Comment 1 (commenter)" "$output"
 
+fixture="$TMPDIR/code-scanning-comments.json"
+output="$TMPDIR/code-scanning-output.txt"
+python3 - "$fixture" <<'PY'
+import json
+import sys
+
+onboarding = """You are seeing this message because GitHub Code Scanning has recently been set up for this repository, or this pull request contains the workflow file for the Code Scanning tool.
+
+### What Enabling Code Scanning Means:
+
+- The 'Security' tab will display more code scanning analysis results (e.g., for the default branch).
+- Depending on your configuration and choice of analysis tool, future pull requests will be annotated with code scanning analysis results.
+- You will be able to see the analysis results for the pull request's branch on this [overview](/marcusquinn/aidevops/security/code-scanning?query=pr%3A34165+is%3Aopen) once the scans have completed and the checks have passed.
+
+For more information about GitHub Code Scanning, check out [the documentation](https://docs.github.com/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning).
+"""
+bot = 'github-advanced-security[bot]'
+comments = [
+    {'author': {'login': bot}, 'body': onboarding},
+    {'user': {'login': bot}, 'body': onboarding},
+    {'author': {'login': 'human'}, 'body': onboarding},
+    {'author': {'login': bot}, 'body': 'Security alert: SQL injection in src/query.py:42'},
+    {'author': {'login': bot}, 'body': onboarding + '\nSecurity alert: vulnerable dependency; upgrade it.'},
+    {'author': {'login': bot}, 'body': 'Unfamiliar Code Scanning notice'},
+    {'author': {'login': bot}, 'body': onboarding + '\n<!-- internal state:start -->Security finding<!-- internal state:end -->'},
+]
+with open(sys.argv[1], 'w', encoding='utf-8') as stream:
+    json.dump({'body': onboarding, 'comments': comments}, stream)
+PY
+
+"$HELPER" clean-file "$fixture" >"$output"
+assert_not_contains "GraphQL author onboarding is skipped" "Comment 1 (github-advanced-security[bot])" "$output"
+assert_not_contains "REST user onboarding is skipped" "Comment 2 (github-advanced-security[bot])" "$output"
+assert_contains "human onboarding is retained" "Comment 3 (human)" "$output"
+assert_contains "file:line security finding is retained" "Security alert: SQL injection in src/query.py:42" "$output"
+assert_contains "mixed onboarding and unlocated remediation are retained" "Security alert: vulnerable dependency; upgrade it." "$output"
+assert_contains "unfamiliar bot output is retained" "Unfamiliar Code Scanning notice" "$output"
+assert_contains "template matching precedes generic cleaning" "Comment 7 (github-advanced-security[bot])" "$output"
+assert_contains "issue body is not suppressed" "## Body" "$output"
+
 echo ""
 echo "========================================================="
 echo "Result: $PASS passed, $FAIL failed"
