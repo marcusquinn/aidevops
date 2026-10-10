@@ -1611,9 +1611,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18640 Add SEO Utils MCP support (on-demand @seo-utils) #feat #seo #mcp #interactive tier:standard ref:GH#34205 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18640-brief.md] pr:#34206 completed:2026-10-09
 - [x] t18641 GH#34180 Leaf C: interactive worktree add never provisions node_modules (controller-not-owner) #auto-dispatch #bug tier:thinking ref:GH#34224 logged:2026-10-10 -> [todo/tasks/t18641-brief.md] pr:#34230 completed:2026-10-10
 
-- [ ] t18642 feat: issue-first dispatch — issues lead, TODO/brief are background backups #feat #framework ref:GH#34232
+- [x] t18642 feat: issue-first dispatch — issues lead, TODO/brief are background backups #feat #framework ref:GH#34232 pr:#34234 completed:2026-10-10
 
-- [ ] t18643 feat: seed draft PRs — companion files for issues without waiting on default-branch merge #feat #framework ref:GH#34233
+- [x] t18643 feat: seed draft PRs — companion files for issues without waiting on default-branch merge #feat #framework ref:GH#34233 pr:#34237 completed:2026-10-10
 
 ## In Progress
 
@@ -5198,6 +5198,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877 pr:#34207 completed:2026-10-09
 
-- [ ] t18643 feat: seed draft PRs — companion files for issues without waiting on default-branch merge #enhancement #framework ref:GH#34233
 
-- [ ] t18642 feat: issue-first dispatch — issues lead, TODO/brief are background backups #enhancement #framework ref:GH#34232
