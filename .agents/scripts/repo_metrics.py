@@ -123,8 +123,25 @@ def outputs_fresh(json_path: Path, badge_dir: Path, legacy_badge_dir: Path | Non
         required.extend([legacy_badge_dir / "loc-total.svg", legacy_badge_dir / "loc-languages.svg"])
     if any(not item.exists() for item in required):
         return False
-    age_seconds = _dt.datetime.now().timestamp() - json_path.stat().st_mtime
-    return age_seconds < max_age_hours * 3600
+    generated_at = recorded_generated_at(json_path)
+    if generated_at is None:
+        return False
+    age_seconds = _dt.datetime.now(tz=_dt.timezone.utc).timestamp() - generated_at.timestamp()
+    return 0 <= age_seconds < max_age_hours * 3600
+
+
+def recorded_generated_at(json_path: Path) -> _dt.datetime | None:
+    """Return the outputs' own generated_at; None (stale) when missing or unparsable.
+
+    File mtime is not usable: a fresh CI checkout stamps every file with the
+    checkout time, which made outputs look fresh forever (GH#34263).
+    """
+    try:
+        value = json.loads(json_path.read_text(encoding="utf-8")).get("generated_at")
+        parsed = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (OSError, ValueError, AttributeError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def dependency_badge_value(deps: dict[str, Any]) -> str:
