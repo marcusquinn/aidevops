@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.0] - 2026-10-10
+
+### Added
+
+- add github-runner-org-helper and org/App/JIT runbook (GH#34235) (#34236)
+
+### Changed
+
+- Tests: guard cost accounting for repeated partial closeouts (#34254)
+- Maintenance: sync GitHub issue refs to TODO.md (#34245)
+- Maintenance: sync GitHub issue refs to TODO.md (#34244)
+- Documentation: release troubleshooting row for no-tag reconcile-required lane (GH#34239) (#34241)
+
+### Fixed
+
+- classify Homebrew-owned OpenCode under the brew release channel
+- run deferred prompt jobs as standalone prompts
+- normalize source_access_blocked and route circuit meta fixes to framework source (#34243)
+- explain record-published/included-release failures (GH#34240) (#34242)
+
 ## [3.38.46] - 2026-10-10
 
 ### Added
