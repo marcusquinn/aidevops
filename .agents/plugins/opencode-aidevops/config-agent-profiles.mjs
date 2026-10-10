@@ -93,41 +93,56 @@ function registerBuiltInRoutedAgents(config, routing, state) {
   return injected;
 }
 
-const MCP_ACTIVATION_TOOL = "aidevops_mcp";
+export const MCP_ACTIVATION_TOOL = "aidevops_mcp";
 
 function agentPromptFromSource(source) {
   const match = source.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/);
   return match?.[1]?.trim() || "";
 }
 
-function onDemandMcpPrompt(mcp, agentsDir) {
+/**
+ * Source-derived parts of an on-demand MCP activation agent, shared by the V1
+ * config hook and the V2 agent transform (GH#34219). `unparsed` is true when an
+ * authored source exists but its frontmatter cannot be read, so callers can
+ * fail closed instead of silently dropping restrictive tool rules.
+ * @param {object} mcp - Entry from getOnDemandMcpAgents()
+ * @param {string} agentsDir
+ * @returns {{description: string, prompt: string, tools: unknown, permission: unknown, unparsed: boolean}}
+ */
+export function onDemandMcpSourceProfile(mcp, agentsDir) {
   const source = mcp.agentSource?.length ? readIfExists(join(agentsDir, ...mcp.agentSource)) : "";
   const parsed = source ? parseAgentFrontmatter(source) : null;
-  const prompt = parsed?.prompt
+  const body = parsed?.prompt
     || agentPromptFromSource(source)
     || `Use the ${mcp.name} MCP for ${mcp.description}.`;
-  return { parsed, prompt };
-}
-
-function createOnDemandMcpProfile(mcp, agentsDir) {
-  const { parsed, prompt } = onDemandMcpPrompt(mcp, agentsDir);
-  const profile = {
+  return {
     description: parsed?.profile.description || mcp.description,
-    mode: "subagent",
     prompt: [
       `Before the first ${mcp.name} operation, call ${MCP_ACTIVATION_TOOL} with action \"connect\" and name \"${mcp.name}\".`,
       `After it succeeds, continue on the next step with ${mcp.allowedTools?.join(", ") || mcp.toolPattern} tools.`,
       `When the requested ${mcp.name} work is complete, call ${MCP_ACTIVATION_TOOL} with action \"disconnect\".`,
       ...(mcp.activationGuidance || []),
       "",
-      prompt,
+      body,
     ].join("\n"),
+    tools: parsed?.profile.tools,
+    permission: parsed?.profile.permission,
+    unparsed: Boolean(source) && !parsed,
+  };
+}
+
+function createOnDemandMcpProfile(mcp, agentsDir) {
+  const source = onDemandMcpSourceProfile(mcp, agentsDir);
+  const profile = {
+    description: source.description,
+    mode: "subagent",
+    prompt: source.prompt,
     tools: {
-      ...(parsed?.profile.tools || {}),
+      ...(source.tools || {}),
       [MCP_ACTIVATION_TOOL]: true,
     },
     permission: {
-      ...parsed?.profile.permission,
+      ...source.permission,
       [MCP_ACTIVATION_TOOL]: "allow",
     },
   };
