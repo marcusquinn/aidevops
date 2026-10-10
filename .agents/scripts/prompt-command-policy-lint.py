@@ -24,12 +24,10 @@ HEADLESS_PROMPTS = (
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
-def bash_commands(text: str) -> Iterator[tuple[int, str]]:
-    """Yield logical commands with the first physical line's 1-based number."""
+def bash_lines(text: str) -> Iterator[tuple[int, str | None]]:
+    """Yield bash fence lines, using None to mark a closing fence."""
     marker = ""
     bash = False
-    parts: list[str] = []
-    start = 0
     for number, line in enumerate(text.splitlines(), 1):
         fence = FENCE.match(line)
         if fence:
@@ -38,13 +36,28 @@ def bash_commands(text: str) -> Iterator[tuple[int, str]]:
                 marker = token
                 bash = info.strip() == "bash"
             elif token[0] == marker[0] and len(token) >= len(marker) and not info.strip():
-                if parts:
-                    raise ValueError(f"line {start}: unfinished bash continuation")
+                if bash:
+                    yield number, None
                 marker = ""
                 bash = False
             continue
+        if bash:
+            yield number, line
+    if bash:
+        raise ValueError("unterminated bash fence")
+
+
+def bash_commands(text: str) -> Iterator[tuple[int, str]]:
+    """Yield logical commands with the first physical line's 1-based number."""
+    parts: list[str] = []
+    start = 0
+    for number, line in bash_lines(text):
+        if line is None:
+            if parts:
+                raise ValueError(f"line {start}: unfinished bash continuation")
+            continue
         command = line.strip()
-        if not bash or not command or command.startswith("#"):
+        if not command or command.startswith("#"):
             continue
         if not parts:
             start = number
@@ -53,8 +66,6 @@ def bash_commands(text: str) -> Iterator[tuple[int, str]]:
         if not continued:
             yield start, " ".join(parts)
             parts = []
-    if bash:
-        raise ValueError("unterminated bash fence")
 
 
 def lint_file(path: Path, policy: Path) -> bool:
