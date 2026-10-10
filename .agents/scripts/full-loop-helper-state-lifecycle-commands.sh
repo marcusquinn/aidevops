@@ -760,6 +760,29 @@ _full_loop_resolve_remote_release_tag_commit() {
 	return 0
 }
 
+_full_loop_report_release_run_events() {
+	local repo="$1"
+	local workflow_file="$2"
+	local merge_commit="$3"
+	local tag_name="$4"
+	local runs_json=""
+	local events=""
+	# Diagnostics only: never substitute these runs for publication evidence.
+	runs_json=$(gh api "repos/${repo}/actions/workflows/${workflow_file}/runs?head_sha=${merge_commit}&status=success&per_page=100" 2>/dev/null) || return 0
+	events=$(jq -r --arg sha "$merge_commit" '
+		[.workflow_runs[]? | select(.head_sha == $sha and .status == "completed" and .conclusion == "success")
+		| .event | select(type == "string")] | unique | join(", ")
+	' <<<"$runs_json" 2>/dev/null) || return 0
+	print_error "Successful events of workflow ${workflow_file} for ${merge_commit}: ${events:-none}"
+	if jq -e --arg sha "$merge_commit" --arg tag "$tag_name" '
+		any(.workflow_runs[]?; .head_sha == $sha and .head_branch == $tag and
+			.event == "push" and .status == "completed" and .conclusion == "success")
+	' <<<"$runs_json" >/dev/null 2>&1; then
+		print_error "A successful tag-push run exists for ${tag_name}; retry with --workflow ${workflow_file} --event push"
+	fi
+	return 0
+}
+
 _full_loop_verify_published_release() {
 	local repo="$1"
 	local tag_name="$2"
@@ -835,6 +858,9 @@ _full_loop_verify_published_release() {
 		)] | length > 0
 	' <<<"$workflow_runs_json" >/dev/null || {
 		print_error "No successful ${workflow_event} run${workflow_file:+ of workflow ${workflow_file}} found for ${merge_commit}"
+		if [[ -n "$workflow_file" && "$workflow_event" == "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" ]]; then
+			_full_loop_report_release_run_events "$repo" "$workflow_file" "$merge_commit" "$tag_name"
+		fi
 		return 1
 	}
 	return 0
