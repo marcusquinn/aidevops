@@ -218,6 +218,30 @@ test_label_only_blocker_enters_graph() {
 	return 0
 }
 
+# GH#34264: claim-task-id.sh also emits the blocked-by:GH#N spelling.
+test_gh_prefixed_label_blocker_enters_graph() {
+	local issue_json acc_json result nums
+	issue_json='{"number":3,"title":"t003: child","body":"No body blockers.","labels":[{"name":"blocked-by:GH#2"},{"name":"status:blocked"}]}'
+	acc_json='{"open_nums":[],"task_to_issue":{},"blocked_by_map":{},"defer_flags_map":{}}'
+	result=$(_dep_graph_process_issue_json "$issue_json" "$acc_json")
+	nums=$(printf '%s' "$result" | jq -r '.blocked_by_map["3"].issue_nums | join(",")')
+	[[ "$nums" == "2" ]] && print_result "GH-prefixed label blocker enters dep graph" 0 || print_result "GH-prefixed label blocker enters dep graph" 1 "$result"
+	nums=$(printf '[%s]' "$issue_json" | jq -c -f "$DEP_GRAPH_REDUCE_FILTER" | jq -r '.blocked_by["3"].issue_nums | join(",")')
+	[[ "$nums" == "2" ]] && print_result "GH-prefixed label blocker enters jq fast path" 0 || print_result "GH-prefixed label blocker enters jq fast path" 1 "$nums"
+	return 0
+}
+
+test_gh_prefixed_label_removed_and_status_available() {
+	local entry_json
+	entry_json='{"task_ids":[],"issue_nums":["2"],"has_defer_marker":false}'
+	GH_LABELS_CSV='status:blocked,auto-dispatch,blocked-by:GH#2'
+	reset_logs
+	_refresh_try_unblock_issue "example/repo" "3" "$entry_json" '{}' >/dev/null
+	assert_log_contains "GH-prefixed stale label removed" "$GH_LOG" "--remove-label blocked-by:GH#2"
+	assert_log_contains "GH-prefixed blocked issue set available" "$GH_LOG" "--remove-label status:blocked --add-label status:available"
+	return 0
+}
+
 test_available_issue_stale_label_removed() {
 	local entry_json
 	entry_json='{"task_ids":[],"issue_nums":["2"],"has_defer_marker":false}'
@@ -421,6 +445,8 @@ trap teardown_test EXIT
 source "$DEP_GRAPH"
 
 test_label_only_blocker_enters_graph
+test_gh_prefixed_label_blocker_enters_graph
+test_gh_prefixed_label_removed_and_status_available
 test_unvalidated_repository_fails_closed
 test_repository_identity_is_cached
 test_native_relationships_use_response_cost
