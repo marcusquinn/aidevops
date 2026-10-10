@@ -9,17 +9,26 @@ VAULT_POLICY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || e
 # shellcheck source=./shared-constants.sh
 source "${VAULT_POLICY_SCRIPT_DIR}/shared-constants.sh"
 
+# Shared with plugins/opencode-aidevops/local-only-policy.mjs (GH#34125).
+# Not overridable from the environment: the list defines what "local" means.
+VAULT_POLICY_LOCAL_PROVIDERS_FILE="${VAULT_POLICY_SCRIPT_DIR}/../configs/local-ai-providers.conf"
+
 _vault_policy_is_local_model() {
 	local model_spec="$1"
 	local provider="${model_spec%%/*}"
-	case "$provider" in
-	local | ollama | llama | llama.cpp | llamacpp)
-		return 0
-		;;
-	*)
-		return 1
-		;;
-	esac
+	[[ -n "$provider" ]] || return 1
+	# Missing list: nothing is local, so local-only work fails closed.
+	[[ -r "$VAULT_POLICY_LOCAL_PROVIDERS_FILE" ]] || return 1
+	local line=""
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line="${line%%#*}"
+		line="${line//[[:space:]]/}"
+		[[ -n "$line" ]] || continue
+		if [[ "$line" == "$provider" ]]; then
+			return 0
+		fi
+	done <"$VAULT_POLICY_LOCAL_PROVIDERS_FILE"
+	return 1
 }
 
 _vault_policy_extract_metadata() {
@@ -65,6 +74,38 @@ _vault_policy_context_has_restricted_metadata() {
 	esac
 }
 
+# Operator launch binding (GH#34125), shared with the OpenCode plugin's
+# local-only-policy.mjs: AIDEVOPS_RUNTIME_POLICY=local-only|local-llm-only|
+# local-ai binds every model call in this process tree to a local provider.
+# Unset/empty and the explicit provider-* opt-outs are unbound; any other
+# value binds fail-closed.
+_vault_runtime_policy_value() {
+	printf '%s' "${AIDEVOPS_RUNTIME_POLICY:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
+	return 0
+}
+
+# Returns 0 when this process tree is bound to local AI.
+vault_runtime_policy_bound() {
+	case "$(_vault_runtime_policy_value)" in
+	"" | provider-ai | provider-allowed | provider-ai-approved)
+		return 1
+		;;
+	esac
+	return 0
+}
+
+vault_runtime_policy_check() {
+	local selected_model="$1"
+	vault_runtime_policy_bound || return 0
+	local bound_policy=""
+	bound_policy=$(_vault_runtime_policy_value)
+	if _vault_policy_is_local_model "$selected_model"; then
+		return 0
+	fi
+	print_error "VAULT_POLICY_DENIED: AIDEVOPS_RUNTIME_POLICY=${bound_policy} binds this run to local AI; request to ${selected_model:-unknown model} was blocked before sending"
+	return 64
+}
+
 vault_data_policy_check() {
 	local selected_model="$1"
 	local title_text="$2"
@@ -72,6 +113,8 @@ vault_data_policy_check() {
 	local context_text="${title_text}
 ${prompt_text}"
 	context_text=$(printf '%s' "$context_text" | tr '[:upper:]' '[:lower:]')
+
+	vault_runtime_policy_check "$selected_model" || return 64
 
 	if ! _vault_policy_context_has_restricted_metadata "$context_text"; then
 		return 0

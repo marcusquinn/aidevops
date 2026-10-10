@@ -10,6 +10,448 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.0] - 2026-10-10
+
+### Added
+
+- add github-runner-org-helper and org/App/JIT runbook (GH#34235) (#34236)
+
+### Changed
+
+- Tests: guard cost accounting for repeated partial closeouts (#34254)
+- Maintenance: sync GitHub issue refs to TODO.md (#34245)
+- Maintenance: sync GitHub issue refs to TODO.md (#34244)
+- Documentation: release troubleshooting row for no-tag reconcile-required lane (GH#34239) (#34241)
+
+### Fixed
+
+- classify Homebrew-owned OpenCode under the brew release channel
+- run deferred prompt jobs as standalone prompts
+- normalize source_access_blocked and route circuit meta fixes to framework source (#34243)
+- explain record-published/included-release failures (GH#34240) (#34242)
+
+## [3.38.46] - 2026-10-10
+
+### Added
+
+- seed draft PRs carry companion files to workers without a default-branch merge
+- issue-first dispatch — issues lead, TODO/brief are background backups
+- register research-only, specialist-advisor and domain subagents on OpenCode V2 (#34229)
+- lint headless pulse prompts against command policy (#34220)
+
+### Changed
+
+- Maintenance: sync ref:GH#34233 to TODO.md (#34231)
+
+### Fixed
+
+- GH#34224 provision node_modules for the exact contract interactive worktree add registered (#34230)
+- register OpenCode V2 on-demand MCP activation agents
+- GH#34199 truthful JavaScript verification-tool readiness at worktree admission
+- skip non-identifier gopass entries during secret run (#34222)
+
+## [3.38.45] - 2026-10-10
+
+### Added
+
+- generate quality sweep briefs by area
+
+### Changed
+
+- Maintenance: mark t18640 complete (pr:#34206 completed:2026-10-09) (#34212)
+
+### Fixed
+
+- provision do-not-close label before sweep comments recommend it
+- make /pulse and /pulse-sweep commands OpenCode-policy compatible
+- validate API URL scheme before urlopen in codacy_standard.py (GH#34183) (#34214)
+
+## [3.38.44] - 2026-10-10
+
+### Added
+
+- add SEO Utils MCP support via on-demand @seo-utils
+- delete job-less, log-less ghost queued runs (GH#34001) (#34192)
+- gate non-closing For/Ref worker PR auto-merge (#34194)
+
+### Changed
+
+- Maintenance: mark t18607 complete (pr:#34207 completed:2026-10-09) (#34211)
+- Documentation: add Google Cloud operations guide (GH#34204) (#34209)
+- Maintenance: sync ref:GH#34205 to TODO.md (#34202)
+
+### Fixed
+
+- launch enrichment in a dispatcher-owned worktree (GH#33877) (#34207)
+- bound replay and review monitoring job hangs (#34188)
+- normalize TODO sync SSH remotes and skip contributor repos (#34198)
+- keep the deterministic pipeline running when preflight prefetch times out (GH#34000) (#34201)
+- report cause of cleanup-receipt RECONCILIATION_FAILED (GH#34002) (#34190)
+
+## [3.38.43] - 2026-10-09
+
+### Changed
+
+- Maintenance: repair 9 stale publication:pending tasks (GH#34149 repair path)
+- Maintenance: mark t18636 complete (pr:#34176 completed:2026-10-09) (#34177)
+
+### Fixed
+
+- require new Worker Guidance heading for enrichment success (t18609) (#34189)
+- resolve aidevops-managed OpenCode shims before choosing upgrade package manager
+- resolve project .venv for inferred Python verify commands
+- flag enrichment_needed on first worker-side failure (t18608) (#34191)
+- allow exact read-only Git version queries (#34184)
+- restore test-pulse-routines-selector Case 9/11 after detached script routines
+- make test-smoke-help.sh robust under set -e (GH#34166) (#34174)
+- surface Git rejection reason on protected-main tag push failure (#34173)
+- silence missing routines registry noise for repos without routines
+
+## [3.38.42] - 2026-10-09
+
+### Added
+
+- migrate Codacy local analysis to Codacy Analysis CLI
+
+### Changed
+
+- Maintenance: mark t18634 complete (pr:#34165 completed:2026-10-09) (#34161)
+
+### Fixed
+
+- force merge commit for protected release PRs
+- emit bare blocked-by TODO dependencies (GH#34152) (#34156)
+
+## [3.38.41] - 2026-10-09
+
+### Changed
+
+- Maintenance: add t18631 t18632 t18633 gh34125 phases 2-3 and tool-schema fallback
+- Maintenance: sync GitHub issue refs to TODO.md (#34144)
+- Documentation: record GH#34135 audit handoff investigation (#34136)
+- Maintenance: mark t18628 complete (pr:#34093 completed:2026-10-09) (#34132)
+- Maintenance: sync GitHub issue refs to TODO.md (#34134)
+- Refactor: replace 20 _aidevops_path_prefix blocks with a runtime-env.sh daemon PATH profile
+
+### Fixed
+
+- repair stale publication:pending issues
+- explain silent turns and preserve safe continuation after security blockers
+- GH#34125 Phase 1 — enforce operator-bound local-only egress gate (GH#34140)
+- stop 2h kills of OpenCode desktop and aidevops OpenCode server on macOS
+
+## [3.38.40] - 2026-10-09
+
+### Fixed
+
+- restore setup_safety_hooks and remove silent setup stubs
+
+## [3.38.39] - 2026-10-09
+
+### Fixed
+
+- keep continuation guard steering out of visible end-of-turn text
+- migrate generated Playwright entries behind launcher (#34124)
+
+## [3.38.38] - 2026-10-09
+
+### Changed
+
+- Documentation: distinguish Cloudron host-wide OOM and correct version lookup (#34104)
+
+### Fixed
+
+- confine Playwright and Playwriter MCP launch cwd outside project checkouts
+- report deployed version after verified update
+- continue For #N orphan-recovery checkpoint drafts instead of a permanent dispatch hold
+- safely store multiline secrets from files and stdin (#34117)
+- classify missing worker tooling as runner_capability_unmet and surface terminal blockers in diagnostics
+- fix Python 3.9 PEP 604 annotation import failures and add compat gate
+- align staging invariant fixtures with runtime bundle deploy (#34109)
+- align headless merge issue scope fixture (#34108)
+
+## [3.38.37] - 2026-10-09
+
+### Fixed
+
+- runtime bundles link custom/draft to stable user state so absolute package links survive promotion
+- sync-workflows --force-ref bumps lagging CURRENT/CALLER pins; check-workflows reports pin lag
+- repo-verify classifies missing npm lint tooling/plugins separately from source lint failures
+- prospective merge falls back to pinned head SHA when refs/pull/N/head is absent
+
+## [3.38.36] - 2026-10-08
+
+### Added
+
+- add link-building playbook with competitor backlink-gap outreach
+
+### Changed
+
+- Documentation: qlty credit limits cover organisation repos too
+- Maintenance: mark t18626 complete (pr:#34076 completed:2026-10-08) (#34080)
+- Documentation: skip qlty checks that fail for lack of credits on private repos
+- Maintenance: mark t18627 complete (pr:#34061 completed:2026-10-08) (#34066)
+
+### Fixed
+
+- reject detaching dispatch launchers in bounded operations and report post-exit descendant termination
+- enforce trusted PR-only completion contract before headless merges
+- distinguish elapsed-cap kills of active workers from proven stalls
+- watchdog uses trusted provider classifier and persists actual kill reason
+- /release falls back to repo release docs when version-manager.sh is absent (GH#34078) (#34082)
+- update base image policy with safe transition (GH#34064) (#34077)
+- associate non-closing worker issue references
+- preserve post-label refill admission budget (GH#33944) (#34075)
+- tolerate missing opposite dispatch label (#34074)
+- audit pinned Docker sources for withdrawal (GH#34063) (#34072)
+- preserve sanitized cause codes for prelaunch lock and lease aborts (#34069)
+- skip Dockerfile FROM flags in preflight-release (GH#34054) (#34062)
+- make plugin subagent index test pass on Linux (#34065)
+- bound and resume dependency graph status refresh (#34056)
+- repair plugin creation after quality init (GH#34045) (#34050)
+
+## [3.38.35] - 2026-10-08
+
+### Fixed
+
+- load GitHub cooldown reset in detached routine runners
+
+## [3.38.34] - 2026-10-08
+
+### Added
+
+- measure held navigation transitions (#34017)
+
+### Changed
+
+- Maintenance: mark t18622 complete (pr:#34025 completed:2026-10-08) (#34032)
+- Maintenance: sync GitHub issue refs to TODO.md (#34029)
+- Maintenance: make t18622/t18623 briefs worker-ready
+- Maintenance: add t18622 routine lock leak, t18623 cloudron monitor opt-out
+- Documentation: update Outscraper API guidance (#34015)
+
+### Fixed
+
+- batch pre-push privacy scans with custom inventories (GH#34035) (#34038)
+- ensure publication:pending label exists before claim-task-id allocates (GH#34033) (#34034)
+- release and reclaim detached routine runner locks (#34025)
+- classify Qlty out-of-minutes commit statuses in the Actions-unavailable merge gate
+- classify Qlty quota outages and name blocking checks (#34023)
+- emit canonical Files Scope in package monitor issues
+- honour package monitor opt-outs (#34024)
+- make forked descendant timeout test deterministic
+
+## [3.38.33] - 2026-10-08
+
+### Fixed
+
+- distinguish unregistered-repo dispatch refusals and provision derived status labels
+
+## [3.38.32] - 2026-10-08
+
+### Added
+
+- add headless OpenCode TUI capture (GH#33978) (#33994)
+
+### Changed
+
+- Maintenance: mark t18614 complete (pr:#33994 completed:2026-10-08) (#33991)
+
+### Fixed
+
+- refuse checkpoint approval templates that dispatch-approved would reject
+- isolate detached headless workers in a systemd user scope
+- shorten footprint reservation critical section
+- stub runner capability gate in dispatch tests (GH#33985) (#33995)
+- clarify planning publication brief diagnostics (GH#33981) (#33992)
+- keep planning-only issues dispatchable (#33990)
+
+## [3.38.31] - 2026-10-08
+
+### Added
+
+- add diff-scoped pipe early-exit gate and style rule (t18611) (#33973)
+
+### Fixed
+
+- direct pending full-loop finalization to complete (GH#33960) (#33988)
+
+## [3.38.30] - 2026-10-08
+
+### Changed
+
+- Maintenance: add t18615 t18616 planning-publication friction fixes
+- Maintenance: mark t18613 complete (pr:#33977 completed:2026-10-07) (#33972)
+- Refactor: split full-loop lifecycle state library (#33971)
+
+### Fixed
+
+- count logical opus workers, not processes, in opus concurrency cap
+- list tenant-backed credential names safely (#33962)
+
+## [3.38.29] - 2026-10-07
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#33728)
+
+### Fixed
+
+- stop enrich re-blocking closed dependants; resumable bounded stale sweep
+
+## [3.38.28] - 2026-10-07
+
+### Added
+
+- defer quota-limited release postflight and reconcile exact tag (#33951)
+
+### Changed
+
+- Documentation: verify deployed helpers by absolute path (GH#33952) (#33954)
+
+### Fixed
+
+- auto-merge verified pulse TODO handoff PRs
+- validate PR titles before full-loop publication (#33953)
+
+## [3.38.27] - 2026-10-07
+
+### Fixed
+
+- transcription-helper helper-owned venv and side-effect-free subcommand --help (+GH#33936)
+- skip consolidation for permission-boundary breakers and worker checkpoints (#33942)
+- preserve configured toolchain PATH precedence
+- fix full-loop regression test drift
+
+## [3.38.26] - 2026-10-07
+
+### Changed
+
+- Documentation: clarify Playwright screenshot artifact handoff
+
+### Fixed
+
+- What next close readiness names owners for held objective phases
+- surface lane API failures and defer safe 5xx errors
+- bound stale dependency reconciliation before dispatch
+- project status:blocked for native blockedBy in publication reconcile (GH#33921) (#33923)
+
+## [3.38.25] - 2026-10-07
+
+### Changed
+
+- Tests: allow secret requirement names in manual-dispatch capability diagnostics (#33922)
+- Maintenance: mark t18610 complete (pr:#33906 completed:2026-10-07) (#33909)
+
+### Fixed
+
+- route prospective merge HTTPS fetch through gh credential helper
+- make manual worker dispatches visible to status
+- distinguish incomplete queue scans from GitHub failures
+
+## [3.38.24] - 2026-10-07
+
+### Added
+
+- GH#33902: code-native motion design route and motion QA for the Video agent
+- cancel stale queued Actions runs (#33874)
+
+### Changed
+
+- Refactor: split full-loop-helper-merge.sh into authority, prospective and cleanup sub-libraries
+- Refactor: split pulse-merge-process.sh backlog helpers into pulse-merge-backlog.sh
+- Refactor: simplify OAuth relay internals
+- Tests: restore checkpoint cost circuit integration fixtures
+- Maintenance: mark t18606 complete (pr:#33868 completed:2026-10-07)
+
+### Fixed
+
+- fix pipefail false negatives from piped grep -q in brief readiness
+- fix finalize-receipt marker retirement for merge-cleanup aliases
+- fix reap-dead-stamps for closed no-auto-dispatch issues and report skips
+- fix scope guard literal match for bracketed Files Scope paths
+- discover Nix profiles and validate OpenCode launchers before replacement (#33892)
+- retry transient GitHub reads in release snapshot provenance verification (#33872)
+
+## [3.38.23] - 2026-10-07
+
+### Fixed
+
+- allow read-only git check-ignore through canonical Git guard
+
+## [3.38.22] - 2026-10-07
+
+### Added
+
+- skip dormant repo candidate scans (#33856)
+
+### Changed
+
+- Maintenance: mark t18604 complete (pr:#33856 completed:2026-10-06) (#33855)
+
+### Fixed
+
+- recommend pre-edit re-claim for same-session stale worktree owners
+- block full-loop merge transports on PR hold-for-review
+- surface clean and completed worker draft checkpoints (#33854)
+- recognise gh stderr-only HTTP 304 (t18603) (#33852)
+- retain precise pre-runtime stages and original exit status (#33845)
+
+## [3.38.21] - 2026-10-06
+
+### Changed
+
+- Maintenance: mark t18602 complete (pr:#33841 completed:2026-10-06) (#33840)
+
+### Fixed
+
+- classify operational consolidation packets before scope validation (GH#33838) (#33842)
+- released attempt's terminal lease no longer blocks draft checkpoint recovery
+
+## [3.38.20] - 2026-10-06
+
+### Changed
+
+- Maintenance: sync ref:GH#33829 to TODO.md (#33830)
+- Maintenance: bump vite from 8.3.0 to 8.3.1 (#33832)
+- Maintenance: bump @secretlint/secretlint-rule-preset-recommend (#33828)
+- Maintenance: mark t18598 complete (pr:#33823 completed:2026-10-06) (#33824)
+- Maintenance: bump secretlint from 13.0.5 to 13.0.6 (#33827)
+- Maintenance: bump hono from 4.13.8 to 4.13.11 (#33825)
+
+### Fixed
+
+- promote OpenCode V2 2.0.24 compatibility
+- saved-task tracking and planning PR collision warnings (GH#33810)
+
+## [3.38.19] - 2026-10-06
+
+### Added
+
+- per-repo Actions availability and local verification
+- bounded metrics ledger retention (#33772)
+- authorize exact owner-signed SSH alias commands (#33766)
+
+### Changed
+
+- Maintenance: mark t18599 complete (pr:#33822 completed:2026-10-06) (#33820)
+- Maintenance: adopt reviewed actions group updates (supersedes #33808) (#33819)
+- Maintenance: mark t18595 complete (pr:#33807 completed:2026-10-06) (#33814)
+- Documentation: add read-only PHP server administration agent (#33686)
+
+### Fixed
+
+- concurrent planning-publication reconcile no longer fails silently (GH#33821)
+- ignore unused malformed runner class config (#33803)
+- one failed task issue creation no longer skips publication and ref sync (GH#33809)
+- bound repeated CI-drift rebases (GH#33794) (#33807)
+- include LAUNCH.md in new plugin customization (#33801)
+- promote OpenCode 1.18.34 compatibility
+- re-run cancelled workflow checks once, escalate once (GH#33780) (#33792)
+- reconcile exclusive Linux pulse schedulers (#33782)
+- bound merge GitHub read admission recovery (#33774)
+- share automatic capacity across co-located runners (GH#33770) (#33771)
+
 ## [3.38.18] - 2026-10-06
 
 ### Changed

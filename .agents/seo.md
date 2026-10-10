@@ -10,6 +10,7 @@ subagents:
   - google-search-console
   - gsc-sitemaps
   - dataforseo
+  - seo-utils
   - serper
   - serpapi
   - ahrefs
@@ -34,6 +35,8 @@ subagents:
   - content-analyzer
   - seo-optimizer
   - youtube-description-link-acquisition
+  - link-building
+  - backlink-checker
   - keyword-mapper
   - geo-strategy
   - sro-grounding
@@ -55,7 +58,7 @@ subagents:
 ## Quick Reference
 
 - **Tools**: Google Search Console, Ahrefs, Semrush, DataForSEO, Serper, SerpApi, PageSpeed Insights, Google Analytics, Context7
-- **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7
+- **MCP**: GSC, DataForSEO, SEO Utils (`@seo-utils`), Serper, Google Analytics, Context7
 - **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`, `/seo-write`, `/seo-optimize`, `/seo-analyze-content`, `/seo-fanout`, `/seo-geo`, `/seo-sro`, `/seo-hallucination-defense`, `/seo-agent-discovery`, `/seo-ai-readiness`, `/seo-ai-baseline`
 
 - **Project search targets**: read `context/keywords.md` or run `aidevops keywords brief` first; standard, hub sync, tracking and budget: `seo/keywords-standard.md`. Ecommerce collections/facets: `seo/ecommerce-seo.md`.
@@ -63,10 +66,11 @@ subagents:
 **Subagents** (`seo/` and `services/analytics/`):
 
 - **Research**: `conversational-search-intent` (user jobs, query forms, provenance, trends) | `keyword-research` (SERP weakness, 17 types, KeywordScore 0-100) | `ranking-opportunities` (quick wins, striking distance, cannibalization) | `query-fanout-research` (thematic fan-out) | `keyword-mapper` (placement/density) | `domain-research` | `domain-opportunities` (ranked local auction evidence)
-- **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `serper` (Google Search API) | `serpapi` (multi-engine SERP API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
+- **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `seo-utils` (SEO Utils desktop app: local rank trackers, GSC history, GA4, GMB grids, LLM visibility, log analysis via on-demand MCP) | `serper` (Google Search API) | `serpapi` (multi-engine SERP API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
 - **Analytics**: `google-analytics` (GA4 reporting) | `analytics-tracking` (GA4 setup, events, UTM, attribution)
 - **Technical**: `site-crawler` (links, meta, redirects) | `screaming-frog` (SEO Spider CLI) | `contentking` (real-time monitoring) | `pagespeed`
 - **Content**: `content-analyzer` (readability, keywords, quality) | `seo-optimizer` (on-page audit) | `eeat-score` (7 criteria, 1-10) | `programmatic-seo` (pages at scale)
+- **Link building**: `link-building` (competitor backlink gap → topical reason per prospect → human approval → agent-sent outreach) | `backlink-checker` (lost links, reclamation)
 - **Off-site experiments**: `youtube-description-link-acquisition` (contextual sponsored placements in already-ranking videos; controlled measurement and link-spam guardrails)
 - **AI search**: `geo-strategy` (criteria extraction, retrieval-first) | `sro-grounding` (snippet selection) | `ai-hallucination-defense` (claim-evidence audits) | `ai-agent-discovery` (discoverability) | `ai-search-readiness` (end-to-end orchestration)
 - **Decision handoff**: `/marketing-decisions` and `workflows/marketing-decisions.md` join imported SEO/GEO evidence to bounded matching, link-review, disposition, visibility, and report proposals. They are offline and non-mutating; provider readiness and action approval remain separate.
@@ -91,6 +95,8 @@ subagents:
 **Evidence decisions**: Use `/marketing-decisions` for an imported, evidence-backed batch when intent mapping, internal-link review, content disposition, or AI visibility needs a reportable proposal. Keep unsupported sources explicit, collect first-party conversion evidence before broad citation polling, and route any proposed local edit through `workflows/marketing-actions.md`.
 
 **SERP/backlinks/technical**: SERP via DataForSEO (comprehensive), Serper (quick) or SerpApi (multi-engine). Cross-check disputed vendor data with `keyword-research-helper.sh serp-compare` and paced direct collection (`aidevops/reach-capture.md` "Public Search-result Collection") | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
+
+**Link building**: Export competitors' best backlinks, find a page-specific topical reason for each linking site to cite us too, get human approval per prospect, then send through `/email-outreach`. Playbook and guardrails: `seo/link-building.md`. Monitor won and lost links with `seo/backlink-checker.md`.
 
 **YouTube description-link acquisition**: When testing paid contextual links in existing videos that already rank for a target query, use `seo/youtube-description-link-acquisition.md`. Treat discovery, referral, rankings, and AI citations as separate outcomes; never buy unqualified ranking credit.
 

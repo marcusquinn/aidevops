@@ -57,8 +57,9 @@ def render_languages_svg(languages: list[dict[str, Any]], top_n: int) -> str:
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{svg_w}" height="{svg_h}" role="img" aria-label="languages by lines of code">',
         "  <title>languages by lines of code</title>",
-        f'  <rect width="{svg_w}" height="{svg_h}" fill="#ffffff"/>',
-        f'  <rect x="20" y="10" width="{bar_w}" height="14" rx="3" fill="#eaecef"/>',
+        "  <style>.bg{fill:#ffffff}.track{fill:#eaecef}.lbl{fill:#24292f}.pct{fill:#57606a}@media (prefers-color-scheme: dark){.bg{fill:#0d1117}.track{fill:#30363d}.lbl{fill:#e6edf3}.pct{fill:#8b949e}}</style>",
+        f'  <rect class="bg" width="{svg_w}" height="{svg_h}"/>',
+        f'  <rect class="track" x="20" y="10" width="{bar_w}" height="14" rx="3"/>',
     ]
     x = 20
     for index, item in enumerate(top):
@@ -78,7 +79,7 @@ def render_languages_svg(languages: list[dict[str, Any]], top_n: int) -> str:
         name = html.escape(str(item["name"]))
         parts.append(f'  <rect x="{base_x}" y="{base_y - 10}" width="10" height="10" rx="2" fill="{item["color"]}"/>')
         parts.append(
-            f'  <text x="{base_x + 14}" y="{base_y}" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11" fill="#24292f">{name} <tspan fill="#57606a">{pct:.1f}%</tspan></text>'
+            f'  <text x="{base_x + 14}" y="{base_y}" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11" class="lbl">{name} <tspan class="pct">{pct:.1f}%</tspan></text>'
         )
     parts.append("</svg>")
     return "\n".join(parts) + "\n"

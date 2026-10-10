@@ -1015,6 +1015,7 @@ Then make one merge attempt: full-loop-helper.sh merge "$PR_NUMBER"
 Exception: if your changes modify full-loop-helper.sh or its sourced helper libraries, commit first and then merge with the committed worktree helper path:
   "$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "${GITHUB_REPOSITORY:-marcusquinn/aidevops}"
 This verifies the code that will ship instead of the deployed helper copy from PATH.
+PR-only scope (GH#34052): when the trusted issue body contains `<!-- aidevops:completion-contract:pr-only/v1 -->`, it overrides every merge step here, in full-loop.md and in any plan: do NOT run full-loop-helper.sh merge or any other merge. commit-and-pr applies hold-for-review and the merge guard refuses headless merges for this task. After the verified non-draft exact-head PR with its MERGE_SUMMARY exists, emit POST_PR_HANDOFF on its own line and exit normally. That is the complete outcome, not a blocker.
 
 Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
@@ -1024,6 +1025,13 @@ Mandatory behavior:
 7. A draft PR is only a durable checkpoint, never completion. Continue until the implementation and required local verification are complete, every intended commit is pushed, the PR is non-draft, the PR head matches local HEAD, and the required MERGE_SUMMARY exists.
 8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, emit POST_PR_HANDOFF on its own line and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates. Never disable or redirect commit signing (`-c commit.gpgsign=false`, `--no-gpg-sign`, signing-key overrides); if signing fails, stop with the permission blocker so the operator runs `aidevops signing headless-setup`.
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. If the only remaining blocker is the current model's inability to reason through the task safely, emit `BLOCKED: capability limit - <evidence>`; runtime routing will retry at the next configured capability tier. Never use that marker for permission, authentication, provider, rate-limit, secret, policy, trust-boundary, or locality failures. Review-policy metadata and nominal GitHub states are NOT valid blockers. Genuine blockers require evidence: a failing check that cannot be repaired, missing permission, unresolved conflict, or explicit policy gate.
+EOF
+	return 0
+}
+
+# Terminal blocker classes, integration recovery and the activity watchdog.
+_worker_headless_contract_blocker_text() {
+	cat <<'EOF'
 
 Terminal blocker reason protocol (GH#31239):
 When genuinely blocked, put BLOCKED: <evidence> and exactly one standalone
@@ -1055,8 +1063,15 @@ Name the exact trigger and checked evidence in the protected dossier. This class
 re-arms on a brief or linked dependency change or trusted retry, not unrelated
 default-branch commits. Do not use it for generic provider outages, missing
 permissions, uncertain availability or a trigger that is already satisfied.
+A tool absent from PATH is not yet proof it is uninstalled (GH#34110). First
+check only what the repository declares: `.aidevops.json` `.verify` commands and
+a worktree-local `.venv/bin/<tool>`; never scan host directories or install.
+If a required verification tool is still unavailable on this runner, use:
+TERMINAL_BLOCKER_REASON=runner_capability_unmet
+Name the missing tool, interpreter and checked declarations in the dossier.
 For an evidenced unresolved permission boundary, including a continued session
-whose prior protected-source denial has no changed exact-context grant, use:
+whose prior protected-source denial has no changed exact-context grant, use the
+next class; never for missing tooling or forbidden dependency installation:
 TERMINAL_BLOCKER_REASON=permission_required
 Preserve the protected blocker dossier and human-owned recovery action. Do not
 retry the denied read or regenerate a request to produce another permission event.
@@ -1140,6 +1155,7 @@ EOF
 _worker_headless_contract_text() {
 	_worker_headless_contract_setup_text
 	_worker_headless_contract_execution_text
+	_worker_headless_contract_blocker_text
 	_worker_headless_contract_exit_text
 	return 0
 }
@@ -1171,13 +1187,15 @@ append_worker_headless_contract() {
 # --- Section 8: Activity Watchdog (inline fallback) ---
 
 #######################################
-# Return whether output contains a known provider/rate-limit marker.
-# Returns: 0 if a marker is present, 1 otherwise.
+# Return whether the latest output records a trusted provider failure.
+# GH#34067: delegates to the trusted classifier shared with the standalone
+# watchdog; free text mentioning "rate limit" is not provider evidence.
+# Returns: 0 if a trusted provider failure is present, 1 otherwise.
 #######################################
 _activity_output_has_provider_rate_limit() {
 	local output_file="$1"
-	[[ -f "$output_file" ]] || return 1
-	grep -Eqi 'rate[ -]?limit|too many requests|http[[:space:]]*429|status[=: ][[:space:]]*429|quota exceeded|overloaded_error|provider.*(failed|unavailable)' "$output_file" 2>/dev/null
+	_worker_output_has_fresh_provider_failure "$output_file"
+	return $?
 }
 
 #######################################
@@ -1373,7 +1391,8 @@ _watchdog_kill() {
 	# exit_code_file with its own exit code (race condition). The marker
 	# file survives because only the watchdog writes to it.
 	touch "${exit_code_file}.watchdog_killed"
-	printf '%s\n' "no_output_stall" >"${exit_code_file}.kill_reason" 2>/dev/null || true
+	# GH#34067: persist the actual kill path, not a hard-coded stall class.
+	printf '%s\n' "$(_worker_kill_reason_class "$reason")" >"${exit_code_file}.kill_reason" 2>/dev/null || true
 	# t2956 / Issue #21231: Hard-kill sentinel for proactive elapsed-time
 	# kills. Helper reads this and returns 79 instead of 78 — no continuation,
 	# slot freed for re-dispatch. The .watchdog_killed sentinel is still
@@ -1410,8 +1429,19 @@ source "${SCRIPT_DIR}/headless-runtime-database.sh"
 # --- Section 10: Dispatch Ledger / Session Locks ---
 
 # _register_dispatch_ledger: register this dispatch in the in-flight ledger (GH#6696).
-# Extracts issue number from session_key (pattern: "issue-NNN") and registers
-# the dispatch so the pulse can detect in-flight workers before they create PRs.
+# Extracts the issue number from the session key and registers the dispatch so
+# the pulse and `dispatch-single-issue-helper.sh status` can detect in-flight
+# workers before they create PRs.
+#
+# Accepted identities (GH#33916):
+#   issue-N               pulse workers
+#   manual-cli-N-<epoch>  manual workers, only when N equals the launcher's
+#                         WORKER_ISSUE_NUMBER (same binding as
+#                         _run_result_is_issue_worker); timestamps alone are
+#                         never treated as issue numbers.
+# A lease-less manual dispatch registers here first, and the dispatcher's
+# later registration for the same session key is an idempotent no-op, so this
+# entry must carry the full issue + repository identity.
 #
 # Args: $1 = session_key, $2 = work_dir (used to resolve repo slug)
 _register_dispatch_ledger() {
@@ -1423,14 +1453,24 @@ _register_dispatch_ledger() {
 	local ledger_issue=""
 	local ledger_repo=""
 
-	# Extract issue number from session key (e.g., "issue-42" -> "42")
 	if [[ "$ledger_session_key" =~ ^issue-([0-9]+)$ ]]; then
+		ledger_issue="${BASH_REMATCH[1]}"
+	elif [[ "$ledger_session_key" =~ ^manual-cli-([1-9][0-9]*)-[0-9]+$ &&
+		"${WORKER_ISSUE_NUMBER:-}" == "${BASH_REMATCH[1]}" ]]; then
 		ledger_issue="${BASH_REMATCH[1]}"
 	fi
 
-	# Resolve repo slug from work_dir via git remote
+	# Resolve owner/repo from work_dir's origin. Strip a trailing slash and
+	# `.git` first: a greedy capture would otherwise record `owner/repo.git`,
+	# which never matches `check-issue --repo owner/repo` (GH#33916).
 	if [[ -n "$ledger_work_dir" && -d "$ledger_work_dir" ]]; then
-		ledger_repo=$(git -C "$ledger_work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' || true)
+		local ledger_origin=""
+		ledger_origin=$(git -C "$ledger_work_dir" remote get-url origin 2>/dev/null || true)
+		ledger_origin="${ledger_origin%/}"
+		ledger_origin="${ledger_origin%.git}"
+		if [[ "$ledger_origin" =~ [:/]([^/:]+/[^/]+)$ ]]; then
+			ledger_repo="${BASH_REMATCH[1]}"
+		fi
 	fi
 
 	local ledger_args=(register --session-key "$ledger_session_key" --pid "$$")

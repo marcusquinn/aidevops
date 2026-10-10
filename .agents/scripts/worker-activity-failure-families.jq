@@ -3,6 +3,8 @@ def _wah_failure_family:
   if ((.result // "") | test("rate_limit"))
     or ((.failure_reason // "") | test("rate_limit"))
     or (.provider_status == "429") then "rate-limit"
+  elif (.launch_failure_cause == "elapsed_cap_while_active")
+    or (.kill_reason == "hard_kill_cap_active") then "elapsed-cap-active"
   elif ((.result // "") | test("watchdog_stall"))
     or (.launch_failure_cause == "stall_hard_killed")
     or (.kill_reason == "hard_kill_stall") then "watchdog-stall"

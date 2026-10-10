@@ -9,6 +9,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MERGE_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge.sh"
+# shellcheck source=../full-loop-helper-subject.sh
+source "${SCRIPT_DIR}/../full-loop-helper-subject.sh"
+# Authority gates moved from full-loop-helper-merge.sh to this module (GH#30748).
+MERGE_AUTHORITY_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-authority.sh"
 READINESS_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-readiness.sh"
 TEST_ROOT="$(mktemp -d -t full-loop-merge-authority.XXXXXX)"
 EXTRACTED="${TEST_ROOT}/functions.sh"
@@ -60,7 +64,7 @@ extract_function() {
       index($0, fn "() {") == 1 { capture = 1 }
       capture { print }
       capture && $0 == "}" { exit }
-    ' "$MERGE_SCRIPT" >>"$EXTRACTED"
+    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" "${SCRIPT_DIR}/../full-loop-helper.sh" "${SCRIPT_DIR}/../full-loop-helper-commit.sh" >>"$EXTRACTED"
 	return 0
 }
 
@@ -82,6 +86,11 @@ load_functions() {
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
 	extract_function _merge_report_author_lookup_failure
+	extract_function _merge_pr_label_holds_clear
+	extract_function _issue_json_has_trusted_pr_only_contract
+	extract_function _issue_pr_only_contract_state
+	extract_function _merge_headless_pr_only_scope_clear
+	extract_function _apply_pr_only_hold
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -92,6 +101,10 @@ load_functions() {
 	extract_function _merge_rest_fallback
 	extract_function _merge_revalidate_transport_authority
 	extract_function _merge_execute
+	extract_function cmd_commit_and_pr
+	extract_function _parse_commit_and_pr_args
+	extract_function _compose_pr_title
+	extract_function _derive_pr_title_prefix
 	extract_readiness_function cmd_pre_merge_gate
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
@@ -110,9 +123,18 @@ FIXTURE_GH_MODE="guard"
 FIXTURE_TRUSTED_DEPENDABOT=0
 FIXTURE_TRUSTED_ISSUE_SYNC=0
 export FIXTURE_TRUSTED_ISSUE_SYNC
+FIXTURE_ISSUE_JSON='{"author_association":"OWNER","body":"plain brief"}'
+FIXTURE_ISSUE_API_FAIL=0
+FIXTURE_HOLD_LABELS_CSV=""
+FIXTURE_LABEL_EDIT_FAIL=0
+ISSUE_API_CALLS="${TEST_ROOT}/issue-api-calls.log"
+LABEL_EDIT_CALLS="${TEST_ROOT}/label-edit-calls.log"
+PR_ONLY_MARKER='<!-- aidevops:completion-contract:pr-only/v1 -->'
 AUTHORITY_GUARD_PASS=1
 AUTHORITY_GUARD_FAIL_ON_CALL=0
 FULL_LOOP_MERGE_SUBJECT_FLAG="--subject"
+# cmd_pre_merge_gate resolves its verifier directory from the commit library.
+_FULL_LOOP_COMMIT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 print_error() {
 	local message="$1"
@@ -143,6 +165,23 @@ _flm_gh_write() {
 	return $?
 }
 
+# Production reads add bounded admission retry; the stubbed gh is local.
+_merge_with_admission_retry() {
+	"$@"
+	return $?
+}
+
+_flm_gh_read() {
+	"$@"
+	return $?
+}
+
+# Actions-unavailable admin capability has separate coverage; these fixtures
+# exercise the authority guard that follows it.
+_merge_check_admin_capability() {
+	return 0
+}
+
 _merge_run_bounded_write() {
 	local pr_number="$1"
 	local repo="$2"
@@ -165,6 +204,10 @@ gh() {
 	fi
 	if [[ "$command" == "pr" && "$subcommand" == "view" ]]; then
 		[[ "$FIXTURE_PR_LOOKUP_FAIL" -eq 0 ]] || return 1
+		if [[ "$*" == *"--json labels --jq"* ]]; then
+			printf '%s\n' "$FIXTURE_HOLD_LABELS_CSV"
+			return 0
+		fi
 		if [[ "$*" == *"--json title"* ]]; then
 			printf '%s\n' '{"title":"GH#28622: preserve exact-head merge authority","commits":[{"messageHeadline":"fix: preserve exact-head merge authority"}]}'
 			return 0
@@ -175,6 +218,12 @@ gh() {
 	if [[ "$command" == "issue" && "$subcommand" == "view" ]]; then
 		[[ "$FIXTURE_ISSUE_LOOKUP_FAIL" -eq 0 ]] || return 1
 		printf '%s\n' "$FIXTURE_ISSUE_LABELS"
+		return 0
+	fi
+	if [[ "$command" == "api" && "$subcommand" =~ ^repos/[^/]+/[^/]+/issues/[0-9]+$ ]]; then
+		printf '%s\n' "$subcommand" >>"$ISSUE_API_CALLS"
+		[[ "$FIXTURE_ISSUE_API_FAIL" -eq 0 ]] || return 1
+		printf '%s\n' "$FIXTURE_ISSUE_JSON"
 		return 0
 	fi
 	if [[ "$command" == "api" && "$subcommand" == *"/collaborators/"*"/permission" ]]; then
@@ -265,9 +314,16 @@ reset_fixture() {
 	FIXTURE_TRUSTED_DEPENDABOT=0
 	FIXTURE_TRUSTED_ISSUE_SYNC=0
 	export FIXTURE_TRUSTED_ISSUE_SYNC
+	FIXTURE_ISSUE_JSON='{"author_association":"OWNER","body":"plain brief"}'
+	FIXTURE_ISSUE_API_FAIL=0
+	FIXTURE_HOLD_LABELS_CSV=""
+	FIXTURE_LABEL_EDIT_FAIL=0
+	unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS WORKER_ISSUE_NUMBER
 	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	AUTHORITY_GUARD_PASS=1
 	AUTHORITY_GUARD_FAIL_ON_CALL=0
+	: >"$ISSUE_API_CALLS"
+	: >"$LABEL_EDIT_CALLS"
 	: >"$CRYPTO_CALLS"
 	: >"$MERGE_CALLS"
 	: >"$GUARD_CALLS"
@@ -475,6 +531,146 @@ test_authority_guard() {
 	return 0
 }
 
+# GH#33775: a live PR hold-for-review label holds every merge transport.
+test_hold_for_review_guard() {
+	reset_fixture
+	set_pr_fixture maintainer '[{"name":"hold-for-review"}]' false '[]' ''
+	expect_guard_result "live PR hold-for-review blocks internal maintainer PR" 1
+
+	reset_fixture
+	set_pr_fixture 'dependabot[bot]' '[{"name":"hold-for-review"}]' false '[]' ''
+	FIXTURE_PERMISSION="none"
+	FIXTURE_TRUSTED_DEPENDABOT=1
+	expect_guard_result "live PR hold-for-review blocks trusted Dependabot" 1
+	if [[ ! -s "$TRUSTED_CALLS" && ! -s "$CRYPTO_CALLS" ]]; then
+		print_result "hold-for-review is evaluated before trust exceptions and crypto" 0
+	else
+		print_result "hold-for-review is evaluated before trust exceptions and crypto" 1 \
+			"trusted=$(<"$TRUSTED_CALLS") crypto=$(<"$CRYPTO_CALLS")"
+	fi
+	return 0
+}
+
+gh_pr_edit_safe() {
+	printf '%s\n' "$*" >>"$LABEL_EDIT_CALLS"
+	[[ "$FIXTURE_LABEL_EDIT_FAIL" -eq 0 ]]
+	return $?
+}
+
+set_pr_only_issue() {
+	local association="$1"
+	local body="$2"
+	FIXTURE_ISSUE_JSON=$(jq -nc --arg a "$association" --arg b "$body" '{author_association:$a,body:$b}')
+	return 0
+}
+
+expect_reader_rc() {
+	local name="$1"
+	local expected_rc="$2"
+	local actual_rc=0
+	_issue_json_has_trusted_pr_only_contract "$FIXTURE_ISSUE_JSON" || actual_rc=$?
+	if [[ "$actual_rc" -eq "$expected_rc" ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "expected rc=$expected_rc, got rc=$actual_rc"
+	fi
+	return 0
+}
+
+# GH#34052: trusted PR-only scope is deterministic merge refusal for headless
+# workers, independent of CI, author ownership or prose consumption.
+test_pr_only_contract_guard() {
+	reset_fixture
+	set_pr_only_issue OWNER "Brief.\n${PR_ONLY_MARKER}"
+	expect_reader_rc "OWNER-authored PR-only marker is trusted" 0
+	set_pr_only_issue MEMBER "$PR_ONLY_MARKER"
+	expect_reader_rc "MEMBER-authored PR-only marker is trusted" 0
+	set_pr_only_issue CONTRIBUTOR "$PR_ONLY_MARKER"
+	expect_reader_rc "CONTRIBUTOR-authored PR-only marker is ignored" 1
+	set_pr_only_issue OWNER "no marker here"
+	expect_reader_rc "OWNER issue without marker has no PR-only scope" 1
+	FIXTURE_ISSUE_JSON='not-json'
+	expect_reader_rc "malformed issue evidence is unknown, not absent" 2
+
+	# Green-CI same-owner maintainer PR in a maintained repo: every other gate passes.
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "headless merge refused for trusted PR-only linked issue" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[]' 'no linkage'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42
+	expect_guard_result "headless merge refused via dispatched issue when PR lacks linkage" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue CONTRIBUTOR "$PR_ONLY_MARKER"
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "untrusted PR-only marker leaves headless merge unchanged" 0
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "no marker leaves headless merge unchanged" 0
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_ISSUE_API_FAIL=1
+	export FULL_LOOP_HEADLESS=true
+	expect_guard_result "missing PR-only scope evidence fails closed for headless merge" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	expect_guard_result "interactive maintainer merge follows live label after hold removal" 0
+	if [[ ! -s "$ISSUE_API_CALLS" ]]; then
+		print_result "interactive sessions do not read PR-only scope at the merge guard" 0
+	else
+		print_result "interactive sessions do not read PR-only scope at the merge guard" 1 "$(<"$ISSUE_API_CALLS")"
+	fi
+
+	reset_fixture
+	set_pr_fixture maintainer '[{"name":"hold-for-review"}]' false '[{"number":42}]' 'Resolves #42'
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	expect_guard_result "PR-only hold blocks interactive merge with green CI" 1
+
+	# commit-and-pr hold application preserves the ready PR and verifies the label.
+	reset_fixture
+	FIXTURE_HOLD_LABELS_CSV="origin:worker,hold-for-review"
+	local apply_rc=0
+	_apply_pr_only_hold 900 owner/repo >/dev/null 2>&1 || apply_rc=$?
+	if [[ "$apply_rc" -eq 0 ]] && grep -q -- '--add-label hold-for-review' "$LABEL_EDIT_CALLS"; then
+		print_result "PR-only hold applied and verified on the created PR" 0
+	else
+		print_result "PR-only hold applied and verified on the created PR" 1 "rc=$apply_rc edits=$(<"$LABEL_EDIT_CALLS")"
+	fi
+
+	reset_fixture
+	FIXTURE_HOLD_LABELS_CSV="origin:worker"
+	apply_rc=0
+	_apply_pr_only_hold 900 owner/repo >/dev/null 2>&1 || apply_rc=$?
+	if [[ "$apply_rc" -eq 1 ]]; then
+		print_result "missing hold postcondition fails commit-and-pr for retry" 0
+	else
+		print_result "missing hold postcondition fails commit-and-pr for retry" 1 "rc=$apply_rc"
+	fi
+
+	reset_fixture
+	FIXTURE_LABEL_EDIT_FAIL=1
+	apply_rc=0
+	_apply_pr_only_hold 900 owner/repo >/dev/null 2>&1 || apply_rc=$?
+	if [[ "$apply_rc" -eq 1 ]]; then
+		print_result "failed hold label write fails commit-and-pr for retry" 0
+	else
+		print_result "failed hold label write fails commit-and-pr for retry" 1 "rc=$apply_rc"
+	fi
+	reset_fixture
+	return 0
+}
+
 test_pre_merge_authority_preflight() {
 	local output=""
 	local actual_rc=0
@@ -515,6 +711,19 @@ test_pre_merge_authority_preflight() {
 		print_result "preflight distinguishes absent external authority targets" 0
 	else
 		print_result "preflight distinguishes absent external authority targets" 1 \
+			"rc=$actual_rc output=$output"
+	fi
+
+	reset_fixture
+	set_pr_fixture external '[{"name":"hold-for-review"}]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_PERMISSION="none"
+	actual_rc=0
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 1 ]] && grep -qF 'hold-for-review' <<<"$output" &&
+		! grep -qF 'aidevops approve' <<<"$output"; then
+		print_result "held PR preflight blocks without offering an approval command" 0
+	else
+		print_result "held PR preflight blocks without offering an approval command" 1 \
 			"rc=$actual_rc output=$output"
 	fi
 
@@ -641,6 +850,64 @@ test_secondary_merge_transports_refresh_authority() {
 	return 0
 }
 
+# Load the real shared read path in a subshell so authority fixtures retain their
+# local stubs. Advance SECONDS rather than sleeping through a healthy slow gate.
+test_slow_gate_admission_reads() {
+	local scenario="" result=0
+	for scenario in healthy deferred exhausted http; do
+		result=0
+		(
+			extract_function _flm_gh_read
+			extract_function _flm_gh_read_once
+			extract_function _merge_with_admission_retry
+			# shellcheck source=/dev/null
+			source "$EXTRACTED"
+			local calls=0 reads=0 waits=0 elapsed=0 rc=0
+			unset AIDEVOPS_GH_READ_TIMEOUT
+			AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=60
+			date() {
+				printf '%s\n' "$((1000 + elapsed))"
+				return 0
+			}
+			sleep() {
+				local duration="$1"
+				waits=$((waits + 1))
+				elapsed=$((elapsed + duration))
+				SECONDS=$((SECONDS + duration))
+				return 0
+			}
+			_gh_with_timeout() {
+				reads=$((reads + 1))
+				[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 ]] || return 1
+				if [[ "$scenario" == http ]]; then
+					printf 'HTTP 502: Bad Gateway\n' >&2
+					return 1
+				fi
+				if [[ "$scenario" != healthy && ("$calls" -eq 1 || "$scenario" == exhausted) ]]; then
+					printf '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=%s\n' "$((1002 + elapsed))" >&2
+					return 75
+				fi
+				return 0
+			}
+			_slow_gate() {
+				calls=$((calls + 1))
+				SECONDS=$((SECONDS + 61))
+				_flm_gh_read gh api repos/owner/repo/pulls/900
+				return $?
+			}
+			_merge_with_admission_retry _slow_gate >/dev/null 2>&1 || rc=$?
+			case "$scenario" in
+			healthy) [[ "$rc" -eq 0 && "$reads" -eq 1 && "$waits" -eq 0 ]] ;;
+			deferred) [[ "$rc" -eq 0 && "$reads" -eq 2 && "$waits" -eq 1 && "$elapsed" -eq 2 ]] ;;
+			exhausted) [[ "$rc" -eq 75 && "$reads" -eq 2 && "$waits" -eq 1 ]] ;;
+			http) [[ "$rc" -eq 1 && "$reads" -eq 1 && "$waits" -eq 0 ]] ;;
+			esac
+		) || result=$?
+		print_result "slow healthy gate admission reads: $scenario" "$result"
+	done
+	return 0
+}
+
 test_all_merge_modes_use_guard() {
 	_merge_guard_admin_merge_maintainer_review() {
 		_merge_guard_admin_merge_maintainer_review_for_mode_test "$@"
@@ -681,11 +948,67 @@ test_all_merge_modes_use_guard() {
 	return 0
 }
 
+# The producer and consumer must reject the same titles (GH#33949).
+test_squash_subject_contract() (
+	local title="" actual_rc=0
+	local reached_input_validation=0
+	_validate_commit_and_pr_inputs() {
+		reached_input_validation=1
+		# Stop the real command before repository/commit/push mutations.
+		return 1
+	}
+	for title in 'GH#1 GH#2: x' 'GH#1: fix: x' ''; do
+		reached_input_validation=0
+		actual_rc=0
+		cmd_commit_and_pr --issue 1 --message 'fix: x' --title "$title" >/dev/null 2>&1 || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 &&
+			( "$title" == 'GH#1 GH#2: x' && "$reached_input_validation" -eq 0 ||
+				"$title" != 'GH#1 GH#2: x' && "$reached_input_validation" -eq 1 ) ]]; then
+			print_result "commit-and-pr validates explicit/default title before mutations" 0
+		else
+			print_result "commit-and-pr validates explicit/default title before mutations" 1
+		fi
+	done
+	for title in 'GH#1: fix: x' 't123: prose title' 'fix: x' 'fix(scope)!: x' 'plan: x'; do
+		actual_rc=0
+		_full_loop_valid_squash_subject "$title" || actual_rc=$?
+		print_result "shared subject accepts ${title}" "$actual_rc"
+	done
+	for title in 'GH#1 GH#2: x' 'GH#1: WIP: x' 'GH#1:   wip(x)' 'wip: x' 'fix: ' $'fix: x\ny' $'fix: x\ry'; do
+		actual_rc=0
+		_full_loop_valid_squash_subject "$title" || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 ]]; then
+			print_result "shared subject rejects invalid title" 0
+		else
+			print_result "shared subject rejects invalid title" 1
+		fi
+	done
+	# Simulate a GitHub retitle after creation, using the real merge resolver.
+	_flm_gh_read() {
+		jq -n --arg title "$title" '{title: $title, commits: []}'
+		return 0
+	}
+	title='GH#1 GH#2: x'
+	actual_rc=0
+	_merge_resolve_squash_subject 900 owner/repo >/dev/null 2>&1 || actual_rc=$?
+	if [[ "$actual_rc" -eq 1 ]]; then
+		print_result "merge rejects invalid live GitHub retitle" 0
+	else
+		print_result "merge rejects invalid live GitHub retitle" 1
+	fi
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
+
 main() {
 	load_functions
+	test_squash_subject_contract || return 1
+	test_slow_gate_admission_reads
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
 	test_authority_guard
+	test_hold_for_review_guard
+	test_pr_only_contract_guard
 	test_pre_merge_authority_preflight
 	test_all_merge_modes_use_guard
 	test_secondary_merge_transports_refresh_authority

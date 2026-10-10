@@ -794,7 +794,9 @@ repo_path=$(cd "$repo_path" && pwd -P) || exit 2
 	exit 1
 }
 
-REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+# shellcheck source=runtime-env.sh
+source "${SCRIPT_DIR}/runtime-env.sh"
+REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
 git_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-dir 2>/dev/null)
 common_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 [[ -n "$git_dir" && "$git_dir" == "$common_dir" ]] || {

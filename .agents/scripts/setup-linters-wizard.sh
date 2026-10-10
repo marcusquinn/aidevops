@@ -296,7 +296,7 @@ install_selected_linters() {
 	echo ""
 	print_info "📚 Available Commands:"
 	print_info "- Run analysis: bash .agents/scripts/quality-cli-manager.sh analyze all"
-	print_info "- Auto-fix issues: bash .agents/scripts/codacy-cli.sh analyze --fix"
+	print_info "- Codacy check of changed files: bash .agents/scripts/codacy-cli.sh analyze --diff"
 	print_info "- Universal formatting: bash .agents/scripts/qlty-cli.sh fmt --all"
 	print_info "- Install additional linters: bash .agents/scripts/linter-manager.sh install LANGUAGE"
 	echo ""

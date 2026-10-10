@@ -460,7 +460,7 @@ _install_launchd() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>$(aidevops_launchd_sanitized_path "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")</string>
+		<string>$(aidevops_launchd_sanitized_path "${PATH}")</string>
 		<key>HOME</key>
 		<string>${home_escaped}</string>
 	</dict>
@@ -497,7 +497,9 @@ EOF
 _install_cron() {
 	local script_path="$1"
 	_require_crontab || return 1
-	local cron_line="*/2 * * * * /bin/bash ${script_path} --check >> ${LOG_FILE} 2>&1 ${CRON_MARKER}"
+	local cron_path=""
+	cron_path=$(aidevops_service_path "${PATH:-}")
+	local cron_line="*/2 * * * * PATH='${cron_path//\'/}' /usr/bin/env bash ${script_path} --check >> ${LOG_FILE} 2>&1 ${CRON_MARKER}"
 
 	# Remove any existing watchdog entry, then add the new one (pipe to crontab -)
 	# Note: || true guards against set -e + pipefail when crontab -l has no entries
@@ -534,7 +536,8 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc '${script_path} --check'
+ExecStart=/usr/bin/env bash -lc '${script_path} --check'
+$(aidevops_systemd_path_env)
 TimeoutStartSec=120
 Nice=10
 IOSchedulingClass=idle

@@ -1269,6 +1269,37 @@ test_terminal_breaker_skips_automation_only_thread() {
 	return 0
 }
 
+test_terminal_breaker_skips_permission_boundary() {
+	setup_gh_stub
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments | jq '[.[0]]')
+	export GH_API_COMMENTS_JSON
+
+	local rc=0
+	_route_terminal_breaker_to_consolidation 123 owner/repo fast-fail-hard-stop "reason=permission_required count=3" || rc=$?
+	if [[ "$rc" -eq 0 ]] && ! grep -q 'issue create\|issue edit\|issue comment' "$GH_LOG" &&
+		grep -q 'human-owned boundary (permission_required)' "$LOGFILE"; then
+		print_result "GH#33940: permission_required breaker never consolidates" 0
+	else
+		print_result "GH#33940: permission_required breaker never consolidates" 1 \
+			"rc=${rc}; unexpected issue write or missing skip log"
+	fi
+	teardown_gh_stub
+	return 0
+}
+
+test_worker_checkpoint_not_substantive() {
+	local checkpoint_body="Implementation checkpoint: updated the helper, pushed a branch and verified the focused cases. Remaining work is the final regression run and PR handoff for this issue. <!-- aidevops:origin:worker -->"
+	local comments count
+	comments=$(jq -n --arg body "$checkpoint_body" '[{user:{login:"maintainer",type:"User"},created_at:"2026-01-01T00:00:00Z",body:$body}]')
+	count=$(_consolidation_filter_substantive_comments "$comments" | jq 'length')
+	if [[ "$count" -eq 0 ]]; then
+		print_result "GH#33940: worker checkpoint comment is not substantive" 0
+	else
+		print_result "GH#33940: worker checkpoint comment is not substantive" 1 "count=${count}"
+	fi
+	return 0
+}
+
 # t2161 A2 regression: _dispatch_issue_consolidation must short-circuit
 # when an in-flight PR resolves the parent — even when no consolidation
 # child exists yet. Covers the path where _backfill_stale_consolidation_labels
@@ -1659,6 +1690,8 @@ main() {
 	test_single_bot_comment_does_not_trigger_consolidation
 	test_terminal_breaker_bridge_delegates_to_dispatcher
 	test_terminal_breaker_skips_automation_only_thread
+	test_terminal_breaker_skips_permission_boundary
+	test_worker_checkpoint_not_substantive
 
 	# t2161 regression suite
 	test_resolving_pr_helper_detects_closing_keyword

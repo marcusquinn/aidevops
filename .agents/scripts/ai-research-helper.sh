@@ -22,19 +22,23 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=vault-data-policy-helper.sh
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
 
 set -euo pipefail
 
 LOG_PREFIX="AI-RESEARCH"
+HAIKU_MODEL_ID="claude-haiku-5-5"
+TEXT_BLOCK_TYPE="text"
 
 resolve_model_id() {
 	local name="${1:-simple}"
 	case "$name" in
-	simple) echo "claude-haiku-4-5-20251001" ;;
+	simple) echo "$HAIKU_MODEL_ID" ;;
 	standard) echo "claude-sonnet-5-5" ;;
 	thinking) echo "claude-opus-4-6" ;;
 	anthropic/*) echo "${name#anthropic/}" ;;
-	*) echo "claude-haiku-4-5-20251001" ;;
+	*) echo "$HAIKU_MODEL_ID" ;;
 	esac
 	return 0
 }
@@ -193,17 +197,26 @@ json_payload() {
 	local prompt="$2"
 	local model_id="$3"
 	local max_tokens="$4"
-	PROVIDER="$provider" PROMPT_TEXT="$prompt" MODEL_ID="$model_id" MAX_TOKENS="$max_tokens" python3 - <<'PY'
+	HAIKU_MODEL_ID="$HAIKU_MODEL_ID" PROVIDER="$provider" PROMPT_TEXT="$prompt" MODEL_ID="$model_id" MAX_TOKENS="$max_tokens" python3 - <<'PY'
 import json, os
 provider = os.environ["PROVIDER"]
 prompt = os.environ["PROMPT_TEXT"]
 model = os.environ["MODEL_ID"]
 max_tokens = int(os.environ["MAX_TOKENS"])
-print(json.dumps({
+payload = {
     "model": model,
     "max_tokens": max_tokens,
     "messages": [{"role": "user", "content": prompt}],
-}))
+}
+# Haiku 5.5 uses adaptive thinking by default and thinking tokens count toward
+# max_tokens. This helper runs short classifications, so use effort "low"
+# (an intentional exception to the "medium" background floor) and keep a
+# 1024 token floor so thinking cannot consume the whole budget.
+# Never send temperature/top_p/top_k or assistant prefill: they return 400.
+if model.startswith(os.environ["HAIKU_MODEL_ID"]):
+    payload["output_config"] = {"effort": "low"}
+    payload["max_tokens"] = max(max_tokens, 1024)
+print(json.dumps(payload))
 PY
 	return $?
 }
@@ -211,10 +224,10 @@ PY
 extract_anthropic_text() {
 	local response="$1"
 	if command -v jq &>/dev/null; then
-		printf '%s' "$response" | jq -r '.content[0].text // empty' 2>/dev/null
+		printf '%s' "$response" | jq -r --arg t "$TEXT_BLOCK_TYPE" '[.content[]? | select(.type == $t) | .text] | first // empty' 2>/dev/null
 		return $?
 	fi
-	printf '%s' "$response" | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data["content"][0]["text"])' 2>/dev/null
+	printf '%s' "$response" | python3 -c 'import sys,json; t=sys.argv[1]; data=json.load(sys.stdin); print(next(b[t] for b in data["content"] if t in b))' "$TEXT_BLOCK_TYPE" 2>/dev/null
 	return $?
 }
 
@@ -330,6 +343,8 @@ call_anthropic() {
 	local credential_kind=""
 	local credential_value=""
 	local -a auth_headers=()
+	# GH#34125: direct API egress bypasses the plugin's chat.params gate.
+	vault_runtime_policy_check "anthropic/$(resolve_model_id "$model_name")" || return 1
 	if ! resolve_provider_credential_typed anthropic; then
 		log_error "No Anthropic API key found (env, gopass, credentials.sh, or OAuth pool)"
 		return 2
@@ -392,6 +407,8 @@ call_opencode() {
 	if [[ -z "$model_id" ]]; then
 		model_id=$(resolve_opencode_model_id "$model_name") || return 2
 	fi
+	# GH#34125: deny before spawning; the nested plugin gate is defence in depth.
+	vault_runtime_policy_check "$model_id" || return 1
 	variant_id=$(resolve_opencode_variant "$model_name" "$model_id")
 	if [[ -n "$variant_id" ]]; then
 		variant_args=(--variant "$variant_id")

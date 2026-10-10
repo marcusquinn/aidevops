@@ -53,6 +53,32 @@ result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:$PATH" bash "
 	exit 1
 }
 
+# GH#34114: the running CLI pins VERSION_FILE to its physical runtime bundle.
+# After a verified update flips the agents symlink, the same process must adopt
+# the newly deployed VERSION instead of reporting the pre-update bundle.
+BUNDLE_HOME="$TEST_HOME/bundle-home"
+OLD_BUNDLE="$BUNDLE_HOME/.aidevops/runtime-bundles/old/agents"
+NEW_BUNDLE="$BUNDLE_HOME/.aidevops/runtime-bundles/new/agents"
+mkdir -p "$OLD_BUNDLE/scripts" "$NEW_BUNDLE"
+sed '$d' "$REPO_DIR/aidevops.sh" >"$OLD_BUNDLE/aidevops.sh"
+cp -R "$REPO_DIR/.agents/scripts/." "$OLD_BUNDLE/scripts/"
+printf '1.0.0\n' >"$OLD_BUNDLE/VERSION"
+printf '2.0.0\n' >"$NEW_BUNDLE/VERSION"
+ln -s "$OLD_BUNDLE" "$BUNDLE_HOME/.aidevops/agents"
+# shellcheck disable=SC2016
+result=$(HOME="$BUNDLE_HOME" bash -c '
+	source "$1"
+	before=$(get_version)
+	ln -sfn "$2" "$HOME/.aidevops/agents"
+	stale=$(get_version)
+	_update_adopt_deployed_version
+	printf "%s %s %s\n" "$before" "$stale" "$(get_version)"
+' _ "$BUNDLE_HOME/.aidevops/agents/aidevops.sh" "$NEW_BUNDLE")
+[[ "$result" == "1.0.0 1.0.0 2.0.0" ]] || {
+	printf 'FAIL: deployed version not adopted after symlink flip: %s\n' "$result" >&2
+	exit 1
+}
+
 # Exercise the Homebrew package layout without relying on post_install to clone
 # a canonical checkout. The formula places the launcher in libexec and exports
 # a separate share/aidevops tree containing .agents and VERSION.

@@ -63,6 +63,7 @@ import { loadModelRouting } from "./model-routing.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
 import { createSessionRecoveryMarkerHandler } from "./session-recovery-marker.mjs";
 import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
+import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 import {
@@ -83,6 +84,7 @@ import {
   isRemoteInteractiveConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
+import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 
 // Existing modules
 import { createTools, tool } from "./tools.mjs";
@@ -247,7 +249,7 @@ installPluginConsoleRouter({
   debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
 });
 
-function createConversationHooks({client, conversation, directory}) {
+function createConversationHooks({client, conversation, directory, localOnlyPolicy}) {
   const configHook = createConfigHook({
     agentsDir: AGENTS_DIR,
     workspaceDir: WORKSPACE_DIR,
@@ -263,12 +265,15 @@ function createConversationHooks({client, conversation, directory}) {
     config: configHook,
     "tool.definition": adaptToolDefinition,
     "chat.message": async () => 0,
-    "chat.params": async (input, output) => applyConversationRootVariant(
-      input,
-      output,
-      conversation,
-      {client, resolveVariant: resolveTierReasoning, tierReasoning},
-    ),
+    "chat.params": async (input, output) => {
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      return applyConversationRootVariant(
+        input,
+        output,
+        conversation,
+        {client, resolveVariant: resolveTierReasoning, tierReasoning},
+      );
+    },
     "tool.execute.before": async (input, output) => enforceConversationPathAccess(
       input.tool,
       output.args || {},
@@ -340,13 +345,16 @@ function applyBoundedOperationPermission(config) {
  */
 export async function AidevopsPlugin({ directory, client }) {
   const initializedAtMs = Date.now();
+  // GH#34125 #aidevops:trust-boundary: bind local-only policy from the launch
+  // environment before any hook can run; later env mutation cannot change it.
+  const localOnlyPolicy = initLocalOnlyPolicy(process.env);
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
   });
 
   if (isRestrictedConversation(conversation)) {
-    return createConversationHooks({client, conversation, directory});
+    return createConversationHooks({client, conversation, directory, localOnlyPolicy});
   }
 
   const mcpRuntime = createMcpSessionRuntime(WORKSPACE_DIR, { repositoryDir: directory });
@@ -476,6 +484,7 @@ export async function AidevopsPlugin({ directory, client }) {
     continuationGuard,
     sourceAccessRuntime,
     resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId),
+    ownedListenerRoots: (sessionId) => boundedOperationManager.ownedListenerRoots(sessionId),
   });
 
   const shellEnvHook = createShellEnvHook({
@@ -582,6 +591,7 @@ export async function AidevopsPlugin({ directory, client }) {
   // message list. Fail-open — errors in the guard must not block the message.
   const messagesTransformHook = async (input, output) => {
     await ttsrMessagesTransformHook(input, output);
+    continuationGuard.injectSteering(input, output);
     try {
       applyImageSizeGuard(output, qualityLog);
     } catch (err) {
@@ -589,8 +599,9 @@ export async function AidevopsPlugin({ directory, client }) {
     }
   };
 
-  // Compose recovery completion validation after TTSR annotations. The guard
-  // only changes explicit terminal claims; ordinary progress remains intact.
+  // Observe completed text for TTSR violations and continuation steering.
+  // GH#34123: neither hook modifies the user-visible text; model corrections
+  // travel through messagesTransformHook as synthetic messages.
   const completionTextHook = async (input, output) => {
     await textCompleteHook(input, output);
     continuationGuard.completeText(input, output);
@@ -638,6 +649,14 @@ export async function AidevopsPlugin({ directory, client }) {
     workDir: process.env.AIDEVOPS_WORK_DIR || join(WORKSPACE_DIR, "work"),
     log: qualityLog,
   });
+  // GH#34138: diagnostics-only; never aborts, prompts or retries a session.
+  const sessionTurnDiagnostics = createSessionTurnDiagnostics({
+    client,
+    directory,
+    isHeadless,
+    schedule: !isHeadless(),
+    log: qualityLog,
+  });
 
   const debugEventError = (label, err) => {
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
@@ -678,6 +697,9 @@ export async function AidevopsPlugin({ directory, client }) {
     // Record routed request identity and select parent-safe child effort.
     "chat.message": subagentEffortHooks.chatMessage,
     "chat.params": async (input, output) => {
+      // GH#34125: first, so a bound session never reaches the provider stream
+      // (parent turns, subagents, compaction and resumed sessions alike).
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
       contextBudget.apply(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
       sessionModels.remember(sessionId, modelId);
@@ -748,6 +770,7 @@ export async function AidevopsPlugin({ directory, client }) {
         sessionTitleFallbackHandler(input).catch((err) => debugEventError("title fallback handler", err)),
         sessionRecoveryMarkerHandler(input).catch((err) => debugEventError("session recovery marker", err)),
         Promise.resolve(sessionStallRecovery.handleEvent(input)),
+        sessionTurnDiagnostics.handleEvent(input).catch((err) => debugEventError("turn diagnostics", err)),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },

@@ -137,9 +137,31 @@ _publication_desired_labels() {
 	return 0
 }
 
+# Native GitHub blockedBy edges (including cross-repo) never appear as TODO
+# markers. Fail closed: lookup errors or truncated pages count as blocked.
+_publication_native_blocker_open() {
+	local repo="$1" issue_num="$2"
+	local owner="${repo%%/*}" name="${repo#*/}" response=""
+	[[ "$repo" == */* && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 0
+	# shellcheck disable=SC2016  # GraphQL variables are expanded by GitHub, not shell.
+	response=$(gh api graphql -f query='
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner, name:$name) {
+    issue(number:$number) {
+      blockedBy(first: 50) { nodes { state } pageInfo { hasNextPage } }
+    }
+  }
+}' -F owner="$owner" -F name="$name" -F number="$issue_num" 2>/dev/null) || return 0
+	jq -e '.data.repository.issue.blockedBy | type == "object"' <<<"$response" >/dev/null 2>&1 || return 0
+	jq -e '.data.repository.issue.blockedBy
+		| (.pageInfo.hasNextPage == true) or any(.nodes[]?; (.state | ascii_downcase) == "open")' \
+		<<<"$response" >/dev/null 2>&1
+}
+
 _publication_task_has_dependency() {
 	local task_line="$1"
 	local issue_json="${2:-null}"
+	local repo="${3:-}" issue_num="${4:-}"
 	local parsed="" blocked_by=""
 	parsed=$(parse_task_line "$task_line") || return 1
 	blocked_by=$(printf '%s\n' "$parsed" | grep '^blocked_by=' | cut -d= -f2-)
@@ -151,8 +173,9 @@ _publication_task_has_dependency() {
 	# Publication must not override them (or an existing blocked status).
 	jq -e 'any(.labels[]?.name;
 		. == "status:blocked" or test("^blocked-by:(GH)?#[1-9][0-9]*$"))' \
-		<<<"$issue_json" >/dev/null || return 1
-	return 0
+		<<<"$issue_json" >/dev/null && return 0
+	[[ -n "$repo" && -n "$issue_num" ]] || return 1
+	_publication_native_blocker_open "$repo" "$issue_num"
 }
 
 _publication_issue_has_active_status() {
@@ -221,8 +244,9 @@ _publication_validate_mapping() {
 	local task_line="" brief_path="todo/tasks/${task_id}-brief.md"
 	task_line=$(_publication_task_line "$task_id") || return 3
 	[[ "$task_line" =~ (^|[[:space:]])ref:GH#${issue_num}($|[[:space:]]) ]] || return 1
-	[[ -f "$brief_path" && ! -L "$brief_path" ]] || return 1
+	[[ -f "$brief_path" && ! -L "$brief_path" ]] || return 4
 	printf '%s\n' "$task_line"
+	return 0
 }
 
 _publication_brief_ready() {
@@ -240,6 +264,15 @@ _publication_dispatch_ready() {
 	return 0
 }
 
+# GH#33821: removing publication:pending is a reconciler's final mutation, so an
+# issue listed as pending that has since lost the label was fully published by a
+# concurrent reconciler (CI vs. full-loop-helper merge). Count it as reconciled.
+_publication_note_concurrent() {
+	local task_id="$1" issue_num="$2"
+	print_info "${task_id}/#${issue_num}: already reconciled concurrently; ${PUBLICATION_PENDING_LABEL} removed by another reconciler"
+	return 0
+}
+
 _publication_reconcile_one() {
 	local repo="$1" task_id="$2" issue_num="$3"
 	# 1 = issue title must start with "<task_id>:" (title-derived mapping);
@@ -252,7 +285,11 @@ _publication_reconcile_one() {
 			print_warning "${task_id}/#${issue_num}: task absent from default-branch snapshot; publication deferred"
 			return 3
 		fi
-		print_warning "${task_id}/#${issue_num}: canonical task, ref, or brief validation failed; retaining ${PUBLICATION_PENDING_LABEL}"
+		if [[ "$mapping_rc" -eq 4 ]]; then
+			print_warning "${task_id}/#${issue_num}: brief todo/tasks/${task_id}-brief.md missing on default branch; retaining ${PUBLICATION_PENDING_LABEL}"
+		else
+			print_warning "${task_id}/#${issue_num}: TODO line lacks ref:GH#${issue_num}; retaining ${PUBLICATION_PENDING_LABEL}"
+		fi
 		return 1
 	}
 	desired_labels=$(_publication_desired_labels "$task_line") || {
@@ -264,11 +301,13 @@ _publication_reconcile_one() {
 		return 1
 	}
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
-	_publication_task_has_dependency "$task_line" "$issue_json" && has_dependency=1
+	_publication_task_has_dependency "$task_line" "$issue_json" "$repo" "$issue_num" && has_dependency=1
 	jq -e --arg task_prefix "${task_id}:" --arg bound "$require_title_prefix" \
 		'.state == "OPEN" and ($bound == "0" or (.title | startswith($task_prefix)))' \
 		<<<"$issue_json" >/dev/null || return 1
-	_publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL" || return 1
+	if ! _publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL"; then
+		_publication_note_concurrent "$task_id" "$issue_num"; return 0
+	fi
 	status_label=$(_publication_status_label "$desired_labels" "$has_dependency" "$issue_json")
 	projected_labels="$desired_labels"
 	[[ -n "$status_label" ]] && projected_labels="${projected_labels:+${projected_labels},}${status_label}"
@@ -295,7 +334,9 @@ _publication_reconcile_one() {
 		issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
 	fi
 	_publication_issue_has_labels "$issue_json" "$desired_labels" || return 1
-	_publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL" || return 1
+	if ! _publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL"; then
+		_publication_note_concurrent "$task_id" "$issue_num"; return 0
+	fi
 	if [[ "$has_dependency" -eq 1 ]]; then
 		! _publication_issue_has_labels "$issue_json" "$PUBLICATION_AVAILABLE_LABEL" || return 1
 		_publication_issue_has_active_status "$issue_json" || \

@@ -38,6 +38,18 @@ continuation; it never completes unfinished delivery.
 
 **Dual-mode executor contract:** Interactive and headless runs share persisted lifecycle transitions and terminal evidence. Foreground is the interactive default. Explicit `start --background` stays local to the authorizing session and reports `FULL_LOOP_START_RESULT=running` only for a live executor, otherwise `FULL_LOOP_START_RESULT=initialized-only`; it is not permission for remote/headless dispatch. Headless runs never prompt and resume within their brief and budgets. Custom adapters receive `AIDEVOPS_FULL_LOOP_RUN_ID` and `AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE`; `status --json` is authoritative.
 
+### Repository capability: Actions unavailable
+
+Read the registered `actions` capability before development. With
+`actions: "unavailable"`, follow [CI gate policy](../reference/ci-gate-policy.md#github-actions-unavailable):
+run all configured/documented local checks, record trusted results for the final
+pushed head in the PR, and use the helper's single remote observation rather than
+polling Actions. `REMOTE_VERIFIED` then means trusted exact-head local evidence
+plus no non-billing terminal failures, not a claim that remote CI ran. Missing or
+stale receipts block completion. Native protection, review and author trust gates
+remain binding; do not bypass required checks or approvals. Worker dispatch
+includes this capability so local verification starts before the first push.
+
 ### Repository Authority Profiles (MANDATORY)
 
 Classify the **target/upstream repository**, not the push remote or fork owner. On GitHub, query the authenticated account's permission after the PR target is known and re-check before merge: `admin`, `maintain`, or `write` is maintainer-equivalent; `read`, `triage`, `none`, or an unavailable/ambiguous result is external. Use equivalent merge authority on other hosts. Fail closed to external.
@@ -63,7 +75,7 @@ For a maintained non-aidevops repo, resolve the synchronization branch from the 
 | 6 | Maintained non-aidevops only — audited local PR-base fast-forward | `LOCAL_BASE_SYNCED` |
 | 7 | Authorized aidevops release/postflight/deploy only | `release:published` or `release:failed` |
 | 8 | Managed closing comments or external upstream hand-off | |
-| 9 | Persist external cleanup receipt and transfer ownership | `FULL_LOOP_CLEANUP_DEFERRED` |
+| 9 | Finalize with `full-loop-helper.sh complete`, persist external cleanup receipt and transfer ownership | `FULL_LOOP_CLEANUP_DEFERRED` |
 | 10 | Supervisor cleanup after owner exit | `FULL_LOOP_COMPLETE` |
 
 ---
@@ -205,7 +217,7 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
   --message "feat: description of changes" \
   --title "GH#${ISSUE_NUMBER}: description" \
   --summary "What was implemented" \
-  --testing "requested behaviour verified through normal path; shellcheck and applicable existing tests pass" \
+  --testing "requested behavior verified through normal path; shellcheck and applicable existing tests pass" \
   --decisions "any notable trade-offs")
 ```
 
@@ -276,6 +288,8 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 **4.5 Authority Gate and Conditional Merge:** Re-check permission on the PR target. Maintainer-equivalent sessions MUST use `full-loop-helper.sh merge`; direct merge bypasses exact-head, check, review-bot, and observed-merge gates. External sessions MUST NOT invoke either merge path: after exact-head remote verification and review-finding resolution, record `CONTRIBUTION_READY` and hand the open PR to upstream maintainers.
 
+**PR-only scope (GH#34052):** An OWNER/MEMBER-authored issue body containing `<!-- aidevops:completion-contract:pr-only/v1 -->` ends at a verified ready PR. `commit-and-pr` applies `hold-for-review`, which every merge transport refuses, and headless merges for that task are refused even without the label. Workers emit `POST_PR_HANDOFF`. A maintainer authorises the merge by removing the label. Comments never add or lift this scope.
+
 Run `full-loop-helper.sh merge` with a tool timeout of at least 600 s (600000 ms), or through the bounded-operation path with a budget of at least 600 s and progress reporting. Normal merges can approach the default 120 s tool timeout. A timed-out or interrupted run is an unknown outcome, not evidence that the PR was not merged: check `gh pr view "$PR_NUMBER" --repo "$REPO" --json state` before retrying or handing off, and require the observed merged evidence above before finalization. Never bypass a gate to recover from a timeout.
 
 **Snapshot publication (GH#31472):** New canonical releases pin an immutable main SHA and baseline under the publisher lane, automatically include the complete merged-PR range, and allow ordinary merges to continue. In step 4.6 below, current-main tree equality and aggregation-on-drift apply only to historical non-snapshot tags. Snapshot publication instead verifies signed source/manifest identity, release ancestry, and exact-tag deployment. See `reference/release-lane-coordination.md` for the authoritative snapshot and legacy-recovery contract.
@@ -292,6 +306,11 @@ release-verify.yml`. Inclusion requires the published source receipt, re-verifie
 its exact tag/workflow, and checks feature ancestry before recording linked
 `release:superseded` evidence. This never relaxes the source PR's exact-tag rule.
 See `workflows/release.md` → Manual Release for assets and optional preflight.
+
+Loops with local lifecycle state finalize with `full-loop-helper.sh complete`
+after terminal release evidence (`published`, `superseded`, or recorded
+`not-requested`); while a matching receipt remains `FINALIZATION_PENDING`,
+`status --json` reports `next_action: complete` until executor finalization.
 
 Direct merge-wrapper flows without local lifecycle state use
 `full-loop-helper.sh finalize-receipt <PR> [REPO]` after terminal release evidence
@@ -338,6 +357,8 @@ merge API and never infers publication intent.
 **4.8 Closing Comments:** Managed repos receive structured issue and PR closing comments with the normal pre-close verification. External sessions do not close the upstream issue; follow upstream conventions and leave at most one concise issue comment linking the PR when useful.
 
 **4.9 Conditional Postflight + Deploy:** only after `release:published`, verify the tag, GitHub release, required checks, and deployed agent version. Reuse `deploy-agents-on-merge.sh`; incremental is default and `--full` is explicit only. `release:not-requested` skips these stages and still completes closing/cleanup. `release:failed` keeps the lifecycle open.
+
+Verify deployed helpers by absolute path (`~/.aidevops/agents/scripts/<helper>.sh`); the current session's `PATH` stays pinned to its start-time runtime bundle until a new session starts. Never verify a side-effect fix through `PATH`.
 
 **4.10 Worktree Cleanup (GH#6740/GH#28440 — MANDATORY):** Immediate merges persist an external `CLEANUP_DEFERRED` receipt before deferring current-worktree removal until the parent runtime exits. Before merge, the helper refreshes the PR head identity and requires local `HEAD` to equal its exact `headRefOid`. Branch equality remains the normal path; a differently named repair branch is accepted only when its linked-worktree metadata is complete and the local repository resolves unambiguously to the current PR head repository. The receipt records the actual local repair branch, while its unrelated same-named remote ref remains untouched. Detached or canonical checkouts, missing worktree metadata, head drift, and same-content branches from a different or ambiguous repository produce no cleanup plan. The receipt records PR/release state, worktree, branch, PID plus process identity, session owner, and pending cleanup lease. `status --json` exposes executor completion separately from resource-cleanup state. The helper emits `<promise>FULL_LOOP_CLEANUP_DEFERRED</promise>` as machine-facing output, after which the interactive executor may terminate; this is an auditable ownership transfer, not a claim that the worktree is gone. Pulse or another guarded supervisor may acquire the lease only after owner identity is no longer live, remove the worktree, preserve removal-audit evidence, and idempotently transition the receipt to `CLEANED`. Never force-remove an actively owned worktree. Emit `<promise>FULL_LOOP_COMPLETE</promise>` only after absent-worktree, removal-audit, merged-PR, release, and durable `CLEANED` evidence are all observed.
 

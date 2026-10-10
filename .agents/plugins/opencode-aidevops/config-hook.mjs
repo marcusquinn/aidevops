@@ -9,6 +9,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { applyAgentMcpTools } from "./agent-loader.mjs";
 import { registerMcpServers } from "./mcp-registry.mjs";
+import { captureLocalOnlyMcpConfig } from "./local-only-policy.mjs";
 import { registerPoolProvider, getAccounts, ensureValidToken } from "./oauth-pool.mjs";
 import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
@@ -91,6 +92,7 @@ function buildClaudeModelMap(names) {
 /** Models registered under the claudecli provider (via Claude CLI proxy). */
 const CLAUDECLI_MODELS = buildClaudeModelMap({
   "claude-haiku-4-5":  "Claude Haiku 4.5 (via CLI)",
+  "claude-haiku-5-5":  "Claude Haiku 5.5 (via CLI)",
   "claude-sonnet-4-5": "Claude Sonnet 4.5 (via CLI)",
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via CLI)",
   "claude-sonnet-5-5": "Claude Sonnet 5.5 (via CLI)",
@@ -401,6 +403,7 @@ export function createConfigHook(deps) {
     ensureAgentGuard(config, workspaceDir);
 
     const mcps = registerMcpServers(config, { runtime: mcpRuntime });
+    captureLocalOnlyMcpConfig(config.mcp, repositoryDir);
     const agentTools = applyAgentMcpTools(config);
     const directories = registerManagedDirectoryPermissions(config);
     const permissionGrants = registerApprovedWorkerPermissions(config, { repositoryDir });

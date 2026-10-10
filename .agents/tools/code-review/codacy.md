@@ -1,5 +1,5 @@
 ---
-description: Codacy auto-fix for code quality issues
+description: Codacy local analysis (Codacy Analysis CLI), quality gates, and API operations
 mode: subagent
 tools:
   read: true
@@ -15,19 +15,20 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Codacy Auto-Fix Integration Guide
+# Codacy Integration Guide
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Auto-fix:** `bash .agents/scripts/codacy-cli.sh analyze --fix`
-- **Via manager:** `bash .agents/scripts/quality-cli-manager.sh analyze codacy-fix`
-- **Fix types:** Code style, best practices, security, performance, maintainability
-- **Safety:** Non-breaking, reversible, conservative (skips ambiguous)
-- **Metrics:** 70-90% time savings, 99%+ accuracy, 60-80% violation coverage
-- **Cannot fix:** Complex logic, architecture, context-dependent, breaking changes
-- **Workflow:** quality-check → analyze --fix → quality-check → commit with metrics
+- **Local analysis:** `codacy-cli.sh` wraps the [Codacy Analysis CLI](https://docs.codacy.com/codacy-analysis-cli/)
+  (npm `@codacy/analysis-cli`, command `codacy-analysis`, Node.js 20+). It replaces Codacy CLI v2.
+- **Install:** `bash .agents/scripts/codacy-cli.sh install` (pinned version, `npm -g --ignore-scripts`).
+- **Configure:** `codacy-cli.sh init` pulls the repository's Codacy Cloud rules when a token is available (`remote`), otherwise detects the stack locally (`auto`). `--force` regenerates.
+- **Analyze:** `codacy-cli.sh analyze --diff` (changed files), `--staged` (pre-commit), `--pr`, or no scope (whole repo). `--sarif [FILE]` writes SARIF.
+- **Exit codes:** `0` no issues, `1` issues found or failure, `2` usage/setup error or analyzer tool errors (results still written; a full aidevops scan currently reports Opengrep/Bandit tool errors).
+- **No auto-fix:** Codacy has no fix mode; `--fix` and `quality-cli-manager.sh analyze codacy-fix` remain only as deprecated aliases that run analysis.
+- **Status:** `codacy-cli.sh status` (exit 1 when the CLI is missing).
 
 ## Quality Gate Settings
 
@@ -45,10 +46,12 @@ tools:
 |-------|-------------------|---------|----------|------|
 | `function-complexity` | Function length | >50 lines | >100 lines | `function-complexity` |
 | `nesting-depth` | Cyclomatic complexity | >5 levels | >8 levels | `nesting-depth` |
-| `file-size` | Non-README Markdown length | >500 lines | New violations | `file-size` |
+| `file-size` | Non-README Markdown length | >1000 lines at root / >500 elsewhere | New violations | `file-size` |
 | `python-complexity` | Lizard CCN | >8 (advisory) | — | `python-complexity` |
 
 `python-complexity` runs Lizard (same tool Codacy uses) and Pyflakes locally.
+
+Markdown size remediation: first review the whole document for concision without losing any detail (remove repetition/wordiness, consolidate duplicated sections, use tables where clearer). Apply that pass when possible; only then split/index, and use a justified bypass only when that is insufficient. See [large-file guidance](../../reference/large-file-split.md#markdown-size-remediation).
 
 Use the checked-in linter and CI policy as the authority for thresholds. Pay down existing debt through bounded fixes; do not increase allowances to pass a quality campaign.
 
@@ -86,10 +89,13 @@ operations; successful authentication is not proof of mutation authority.
 Codacy's repository tool endpoint is the authority for effective tool state;
 the legacy `engines.*.enabled` entries in `.codacy.yml` do not enable or disable
 tools. The verified aidevops policy uses the dedicated `aidevops modern
-runtimes` coding standard with these 17 tools enabled: Agentlinter, Bandit,
-Biome, Brakeman, ESLint, Hadolint, Jackson Linter, Lizard, markdownlint,
-Opengrep, Pylint, RuboCop, ShellCheck, SQLint, Stylelint, Trivy, and TSQLLint.
-PMD and Prospector remain disabled. Bandit, Biome, markdownlint, and ShellCheck
+runtimes` coding standard with these 16 tools enabled: Agentlinter, Bandit,
+Biome, Brakeman, ESLint, Hadolint, Jackson Linter, markdownlint, Opengrep,
+Pylint, RuboCop, ShellCheck, SQLint, Stylelint, Trivy, and TSQLLint.
+PMD and Prospector remain disabled. Lizard has been off in every coding
+standard of every organization since 2026-10-09: it repeated the complexity
+findings that PHP Mess Detector and SonarCloud already report. The local
+`python-complexity` gate still runs Lizard, so Python CCN is checked before push. Bandit, Biome, markdownlint, and ShellCheck
 report that they use their checked-in native configuration files.
 
 The language-settings API exposes enabled/detected languages and extensions,
@@ -240,7 +246,20 @@ curl -s -H "api-token: $CODACY_API_TOKEN" \
 ### Changing the organisation coding standard
 
 While a coding standard is applied, repository-level pattern changes return
-`409`; change the standard instead. All paths are under
+`409`; change the standard instead. Tool on/off changes have a command that
+runs steps 1-4 (draft, trap repair, diff, promote only on an exact diff):
+
+```bash
+bash .agents/scripts/codacy-cli.sh standard list [--org ORG] [--tool Lizard]
+bash .agents/scripts/codacy-cli.sh standard set-tool --org ORG --standard ID \
+  --tool Lizard --enabled false            # dry run: deletes the draft
+bash .agents/scripts/codacy-cli.sh standard set-tool ... --promote
+```
+
+It reads `CODACY_API_TOKEN` (injected with `aidevops secret` when unset), is a
+no-op when the tool already has the requested state, and deletes the draft on
+any error. Undo a promotion by running it with the opposite `--enabled`. The
+manual steps below cover pattern-level edits. All paths are under
 `/api/v3/organizations/gh/{org}` (operation IDs from the API schema):
 
 1. **Create a draft copy** (`createCodingStandard`):
@@ -266,36 +285,49 @@ While a coding standard is applied, repository-level pattern changes return
 
 ## Usage
 
-### Direct CLI
+### Setup
 
 ```bash
-bash .agents/scripts/codacy-cli.sh analyze --fix           # Auto-fix
-bash .agents/scripts/codacy-cli.sh analyze eslint --fix     # Specific tool
-bash .agents/scripts/codacy-cli.sh analyze                  # Dry-run (what would be fixed)
+bash .agents/scripts/codacy-cli.sh install     # npm @codacy/analysis-cli (pinned)
+# Pull Codacy Cloud rules with the repository-scoped token from secure storage:
+aidevops secret CODACY_<OWNER>_<REPO>_PROJECT_TOKEN -- bash .agents/scripts/codacy-cli.sh init
+bash .agents/scripts/codacy-cli.sh status
 ```
 
-### Via Quality CLI Manager
+`init` writes `.codacy/codacy.config.json` (plus a baseline). In aidevops it is
+gitignored because Codacy Cloud is authoritative and `init --remote` re-syncs in
+full; other repositories may commit both files so the team shares one policy.
+Without a token, `init` falls back to `auto` (local stack detection), which does
+not match the Cloud coding standard. Use `init remote --force` to switch.
+
+Token resolution, environment only: `CODACY_PROJECT_TOKEN`, then
+`CODACY_<OWNER>_<REPO>_PROJECT_TOKEN` (mapped for that process), then
+`CODACY_API_TOKEN` or `codacy-analysis login` credentials. Coordinates derive
+from the `origin` remote; override with `CODACY_PROVIDER`,
+`CODACY_ORGANIZATION`, `CODACY_REPOSITORY`.
+
+### Analyze
 
 ```bash
-bash .agents/scripts/quality-cli-manager.sh analyze codacy-fix
-bash .agents/scripts/quality-cli-manager.sh status codacy
+bash .agents/scripts/codacy-cli.sh analyze --diff            # changed vs default branch
+bash .agents/scripts/codacy-cli.sh analyze --diff origin/main
+bash .agents/scripts/codacy-cli.sh analyze --staged          # pre-commit gate
+bash .agents/scripts/codacy-cli.sh analyze --tool shellcheck .agents/scripts/foo.sh
+bash .agents/scripts/codacy-cli.sh analyze --sarif           # whole repo → codacy-results.sarif
+bash .agents/scripts/codacy-cli.sh upload codacy-results.sarif
 ```
 
-### Pre-Commit Workflow
-
-```bash
-bash .agents/scripts/linters-local.sh              # 1. Identify issues
-bash .agents/scripts/codacy-cli.sh analyze --fix    # 2. Auto-fix
-bash .agents/scripts/linters-local.sh              # 3. Verify improvements
-```
+The first run downloads missing analyzers (Python venvs, portable Ruby, Opengrep,
+Hadolint) into `~/.codacy`; later runs reuse them. `--no-install` skips that,
+`--inspect` reports availability only. Tool IDs are case-sensitive
+(`codacy-analysis info`). Uploading only helps when the Codacy repository has
+**Run analysis on your build server** enabled; Codacy Cloud otherwise analyzes
+commits itself.
 
 ### CI/CD Integration
 
-```yaml
-# GitHub Actions example
-- name: Auto-fix code quality issues
-  run: |
-    bash .agents/scripts/codacy-cli.sh analyze --fix
-    git add .
-    git diff --staged --quiet || git commit -m "fix: applied Codacy automated fixes"
-```
+`.github/workflows/code-review-monitoring.yml` installs the CLI and runs
+`monitor-code-review.sh monitor`, which analyzes changed files on pull requests
+(`CODACY_ANALYZE_ARGS=--diff origin/<base>`) and the whole repository on
+push/schedule, then uploads `codacy-results.sarif` to GitHub code scanning. It is
+report-only and fail-open; Codacy Cloud remains the PR quality gate.

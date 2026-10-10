@@ -219,7 +219,9 @@ fi
 echo ""
 echo "Test 26: dispatch-intent label normalization"
 
+# Reset clears both the inventory value and its export attribute.
 _reset_log
+export STUB_MANAGED_LABELS=$'auto-dispatch\nno-auto-dispatch'
 "$SHIM_RUN" issue create --repo owner/repo --title "Dispatch intent conflict" \
 	--body "Capture the issue." --label "bug,auto-dispatch" --label no-auto-dispatch \
 	2>"$TMP/dispatch-create.err"
@@ -232,6 +234,7 @@ else
 fi
 
 _reset_log
+export STUB_MANAGED_LABELS=$'auto-dispatch\nno-auto-dispatch'
 "$SHIM_RUN" issue edit 42 --repo owner/repo --add-label no-auto-dispatch \
 	--remove-label no-auto-dispatch 2>/dev/null
 if _argv_has_pair "--add-label" "no-auto-dispatch" &&
@@ -243,6 +246,7 @@ else
 fi
 
 _reset_log
+export STUB_MANAGED_LABELS=$'auto-dispatch\nno-auto-dispatch'
 "$SHIM_RUN" issue edit 42 --repo owner/repo --add-label auto-dispatch \
 	--remove-label auto-dispatch 2>/dev/null
 if _argv_has_pair "--add-label" "auto-dispatch" &&
@@ -254,6 +258,30 @@ else
 fi
 
 _reset_log
+export STUB_MANAGED_LABELS='auto-dispatch'
+"$SHIM_RUN" issue edit 42 --repo owner/repo --add-label auto-dispatch \
+	2>/dev/null
+if _argv_has_pair "--add-label" "auto-dispatch" &&
+	! _argv_has_pair "--remove-label" "no-auto-dispatch"; then
+	_pass "adding auto-dispatch succeeds when the repository lacks no-auto-dispatch"
+else
+	_fail "missing opposite dispatch label" "argv: $(_read_argv)"
+fi
+
+_reset_log
+export STUB_MANAGED_LABELS='no-auto-dispatch'
+"$SHIM_RUN" issue edit 42 --repo owner/repo --add-label no-auto-dispatch \
+	--remove-label no-auto-dispatch 2>/dev/null
+if _argv_has_pair "--add-label" "no-auto-dispatch" &&
+	! _argv_has_pair "--remove-label" "no-auto-dispatch" &&
+	! _argv_has_pair "--remove-label" "auto-dispatch"; then
+	_pass "manual hold survives conflicting removal when the opposite label is absent"
+else
+	_fail "missing opposite label preserves manual hold" "argv: $(_read_argv)"
+fi
+
+_reset_log
+export STUB_MANAGED_LABELS=$'auto-dispatch\nno-auto-dispatch'
 "$SHIM_RUN" issue edit 42 --repo owner/repo --add-label auto-dispatch \
 	--add-label no-auto-dispatch 2>"$TMP/dispatch-edit.err"
 if _argv_has_pair "--add-label" "no-auto-dispatch" &&

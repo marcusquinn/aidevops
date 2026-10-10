@@ -3,6 +3,11 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Sourced by test-full-loop-release-reconcile.sh; shares its fixtures and state.
 
+# Direct execution must initialize the shared fixtures and preceding fragments.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	exec bash "$(dirname "${BASH_SOURCE[0]}")/test-full-loop-release-reconcile.sh" "$@"
+fi
+
 _full_loop_resolve_repo() {
 	local requested_repo="$1"
 	printf '%s\n' "${requested_repo:-test/repo}"
@@ -339,3 +344,44 @@ if [[ -e "${TEST_ROOT}/stale-finalize.log" ]] ||
 	exit 1
 fi
 printf 'PASS stale release tags cannot downgrade channels and reconcile only through verified supersession\n'
+
+# Deferred postflight: status stays read-only; reconcile queues only the exact tag.
+_full_loop_release_latest_tag() {
+	printf 'v1.2.3\n'
+	return 0
+}
+_full_loop_release_dispatch_postflight() {
+	[[ "$1" == "test/repo" && "$2" == "v1.2.3" ]] || return 1
+	printf '%s %s\n' "$1" "$2" >"${TEST_ROOT}/postflight-dispatch.log"
+	return 8
+}
+rm -f "${TEST_ROOT}/receipts/test_repo-90.status" "${TEST_ROOT}/dispatch.log" \
+	"${TEST_ROOT}/finalize.log" "${TEST_ROOT}/postflight-dispatch.log"
+INSPECT_RC=6
+postflight_status_rc=0
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command status 90 \
+	>/dev/null 2>&1 || postflight_status_rc=$?
+postflight_reconcile_rc=0
+if [[ "$postflight_status_rc" -ne 8 || -e "${TEST_ROOT}/postflight-dispatch.log" ]]; then
+	printf 'FAIL status dispatched or misreported absent postflight\n'
+	exit 1
+fi
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+	>/dev/null 2>&1 || postflight_reconcile_rc=$?
+if [[ "$postflight_reconcile_rc" -ne 8 ]] ||
+	! grep -qx 'test/repo v1.2.3' "${TEST_ROOT}/postflight-dispatch.log" ||
+	[[ -e "${TEST_ROOT}/dispatch.log" || -e "${TEST_ROOT}/finalize.log" ]]; then
+	printf 'FAIL reconcile did not queue only exact-tag postflight without publication or receipt\n'
+	exit 1
+fi
+rm -f "${TEST_ROOT}/postflight-dispatch.log"
+INSPECT_RC=9
+postflight_failed_rc=0
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+	>/dev/null 2>&1 || postflight_failed_rc=$?
+if [[ "$postflight_failed_rc" -ne 1 || -e "${TEST_ROOT}/finalize.log" || -e "${TEST_ROOT}/postflight-dispatch.log" ]]; then
+	printf 'FAIL failed postflight became success or was redispatched\n'
+	exit 1
+fi
+unset INSPECT_RC
+printf 'PASS deferred postflight is queued by reconcile only and failed postflight never finalizes\n'

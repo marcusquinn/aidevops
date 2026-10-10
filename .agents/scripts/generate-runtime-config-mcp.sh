@@ -66,8 +66,11 @@ _generate_mcp_for_runtime() {
 	mcp_count=$((mcp_count + 1))
 
 	# Playwright MCP (correct package: @playwright/mcp, not @anthropic-ai/mcp-server-playwright)
+	# GH#34111: run from a private artifact cwd so raw relative screenshot paths
+	# never resolve into the runtime's project checkout.
+	local playwright_launcher="$HOME/.aidevops/agents/scripts/browser-mcp-launcher.sh"
 	register_mcp_for_runtime "$runtime_id" "playwright" \
-		'{"command":"npx","args":["-y","@playwright/mcp@0.0.79","--headless","--isolated"]}'
+		"$(printf '{"command":"bash","args":["%s","playwright","npx","-y","@playwright/mcp@0.0.79","--headless","--isolated"]}' "$playwright_launcher")"
 	mcp_count=$((mcp_count + 1))
 
 	# shadcn UI

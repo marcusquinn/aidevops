@@ -732,7 +732,8 @@ cache_test_rc=0
 	[[ -z "$cache_signal" && "$_FOOTPRINT_CACHE_REPO" == perf/repo ]] || exit 1
 	# Empty cache still hits, but the first candidate's atomic reservation blocks.
 	_footprint_check_overlap 811 perf/repo "$cache_body" cache_signal || exit 1
-	[[ "$cache_signal" == *issue=#810* && $(wc -l <"$fetch_log") == 1 ]] || exit 1
+	# BSD wc pads counts with spaces, so compare arithmetically.
+	[[ "$cache_signal" == *issue=#810* && $(wc -l <"$fetch_log") -eq 1 ]] || exit 1
 	# Expiration forces a live read and finds a newly active footprint.
 	_FOOTPRINT_CACHE_EPOCH=0
 	# shellcheck disable=SC2016 # Literal Markdown inside JSON.
@@ -740,15 +741,15 @@ cache_test_rc=0
 	# shellcheck disable=SC2016 # Literal Markdown declaration.
 	live_body='- EDIT: `src/live.ts`'
 	_footprint_check_overlap 813 perf/repo "$live_body" cache_signal || exit 1
-	[[ "$cache_signal" == *issue=#812* && $(wc -l <"$fetch_log") == 2 ]] || exit 1
+	[[ "$cache_signal" == *issue=#812* && $(wc -l <"$fetch_log") -eq 2 ]] || exit 1
 	# Excluding self is applied per candidate, not persisted in the repo snapshot.
 	inflight_result=""
 	_footprint_get_inflight perf/repo 812 inflight_result
 	[[ -z "$inflight_result" ]] || exit 1
 	_footprint_get_inflight perf/repo 813 inflight_result
-	[[ "$inflight_result" == 'src/live.ts|812' && $(wc -l <"$fetch_log") == 2 ]] || exit 1
+	[[ "$inflight_result" == 'src/live.ts|812' && $(wc -l <"$fetch_log") -eq 2 ]] || exit 1
 	_footprint_get_inflight other/repo '' inflight_result
-	[[ $(wc -l <"$fetch_log") == 3 ]] || exit 1
+	[[ $(wc -l <"$fetch_log") -eq 3 ]] || exit 1
 ) || cache_test_rc=1
 print_result "in-process cache: empty hits, live reservations, TTL, self exclusion and repo isolation" "$cache_test_rc"
 

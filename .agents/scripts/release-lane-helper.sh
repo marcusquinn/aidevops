@@ -83,6 +83,28 @@ _release_lane_cache_read() {
 	return 0
 }
 
+# Capture errors without ever forwarding GitHub's body or the lane payload.
+# Only failures before a ref mutation are safe to defer automatically.
+_release_lane_api() {
+	local step="$1"
+	local safe_to_retry="$2"
+	shift 2
+	local response="" status_code="unknown" retryable="false"
+	if response=$(gh api "$@" 2>&1); then
+		printf '%s\n' "$response"
+		return 0
+	fi
+	if [[ "$response" =~ HTTP[^[:space:]]*[[:space:]]+([0-9]{3}) ]]; then
+		status_code="${BASH_REMATCH[1]}"
+	fi
+	if [[ "$status_code" == 5[0-9][0-9] && "$safe_to_retry" == "$_AIDEVOPS_RELEASE_LANE_TRUE" ]]; then
+		retryable="$_AIDEVOPS_RELEASE_LANE_TRUE"
+	fi
+	printf 'RELEASE_LANE_WRITE step=%s status=%s retryable=%s\n' "$step" "$status_code" "$retryable" >&2
+	[[ "$retryable" == "$_AIDEVOPS_RELEASE_LANE_TRUE" ]] && return 75
+	return 1
+}
+
 _release_lane_remote_head() {
 	local repo="$1"
 	local endpoint="repos/${repo}/git/ref/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}"
@@ -98,6 +120,12 @@ _release_lane_remote_head() {
 	status_line="${response%%$'\n'*}"
 	status_code=$(printf '%s' "$status_line" | cut -d ' ' -f 2)
 	[[ "$status_code" == "404" ]] && return 2
+	if [[ "$status_code" == 5[0-9][0-9] ]]; then
+		printf 'RELEASE_LANE_WRITE step=lane-head status=%s retryable=true\n' "$status_code" >&2
+		return 75
+	fi
+	[[ "$status_code" =~ ^[0-9]{3}$ ]] || status_code="unknown"
+	printf 'RELEASE_LANE_WRITE step=lane-head status=%s retryable=false\n' "$status_code" >&2
 	return 1
 }
 
@@ -112,11 +140,11 @@ release_lane_read() {
 	case "$head_rc" in
 	0) ;;
 	2) return 2 ;;
-	*) return 1 ;;
+	*) return "$head_rc" ;;
 	esac
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
-	state_json=$(gh api "repos/${repo}/contents/${_AIDEVOPS_RELEASE_LANE_FILE}?ref=${head}" \
-		--jq '.content | @base64d' 2>/dev/null) || return 1
+	state_json=$(_release_lane_api state-read true "repos/${repo}/contents/${_AIDEVOPS_RELEASE_LANE_FILE}?ref=${head}" \
+		--jq '.content | @base64d') || return $?
 	_release_lane_state_valid "$repo" "$state_json" || return 1
 	_AIDEVOPS_RELEASE_LANE_HEAD="$head"
 	_AIDEVOPS_RELEASE_LANE_JSON="$state_json"
@@ -129,18 +157,18 @@ _release_lane_create_commit() {
 	local parent="$2"
 	local state_json="$3"
 	local base_tree="" blob_sha="" tree_sha="" commit_sha="" payload=""
-	base_tree=$(gh api "repos/${repo}/git/commits/${parent}" --jq '.tree.sha // empty' 2>/dev/null) || return 1
+	base_tree=$(_release_lane_api commit-read true "repos/${repo}/git/commits/${parent}" --jq '.tree.sha // empty') || return $?
 	[[ "$base_tree" =~ ^[0-9a-f]{40}$ ]] || return 1
 	payload=$(jq -cn --arg content "$state_json" '{content:$content,encoding:"utf-8"}') || return 1
-	blob_sha=$(gh api "repos/${repo}/git/blobs" --method POST --input - --jq '.sha // empty' <<<"$payload" 2>/dev/null) || return 1
+	blob_sha=$(_release_lane_api blob true "repos/${repo}/git/blobs" --method POST --input - --jq '.sha // empty' <<<"$payload") || return $?
 	[[ "$blob_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
 	payload=$(jq -cn --arg base "$base_tree" --arg path "$_AIDEVOPS_RELEASE_LANE_FILE" --arg sha "$blob_sha" \
 		'{base_tree:$base,tree:[{path:$path,mode:"100644",type:"blob",sha:$sha}]}') || return 1
-	tree_sha=$(gh api "repos/${repo}/git/trees" --method POST --input - --jq '.sha // empty' <<<"$payload" 2>/dev/null) || return 1
+	tree_sha=$(_release_lane_api tree true "repos/${repo}/git/trees" --method POST --input - --jq '.sha // empty' <<<"$payload") || return $?
 	[[ "$tree_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
 	payload=$(jq -cn --arg message "chore(release): update repository release lane" --arg tree "$tree_sha" \
 		--arg parent "$parent" '{message:$message,tree:$tree,parents:[$parent]}') || return 1
-	commit_sha=$(gh api "repos/${repo}/git/commits" --method POST --input - --jq '.sha // empty' <<<"$payload" 2>/dev/null) || return 1
+	commit_sha=$(_release_lane_api commit true "repos/${repo}/git/commits" --method POST --input - --jq '.sha // empty' <<<"$payload") || return $?
 	[[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
 	printf '%s\n' "$commit_sha"
 	return 0
@@ -151,20 +179,26 @@ _release_lane_write() {
 	local state_json="$2"
 	local expected_head="${3:-}"
 	local parent="$expected_head" commit_sha="" payload="" current_head=""
+	local head_rc=0
 	if [[ -z "$parent" ]]; then
-		parent=$(gh api "repos/${repo}/git/ref/heads/main" --jq '.object.sha // empty' 2>/dev/null) || return 1
+		parent=$(_release_lane_api parent-read true "repos/${repo}/git/ref/heads/main" --jq '.object.sha // empty') || return $?
 	fi
 	[[ "$parent" =~ ^[0-9a-f]{40}$ ]] || return 1
-	commit_sha=$(_release_lane_create_commit "$repo" "$parent" "$state_json") || return 1
+	commit_sha=$(_release_lane_create_commit "$repo" "$parent" "$state_json") || return $?
 	if [[ -z "$expected_head" ]]; then
 		payload=$(jq -cn --arg ref "refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --arg sha "$commit_sha" '{ref:$ref,sha:$sha}') || return 1
-		gh api "repos/${repo}/git/refs" --method POST --input - <<<"$payload" >/dev/null 2>&1 || return 2
+		_release_lane_api ref-create false "repos/${repo}/git/refs" --method POST --input - <<<"$payload" >/dev/null || return 2
 	else
-		current_head=$(_release_lane_remote_head "$repo") || return 2
+		current_head=$(_release_lane_remote_head "$repo") || head_rc=$?
+		case "$head_rc" in
+		0) ;;
+		75) return 75 ;;
+		*) return 2 ;;
+		esac
 		[[ "$current_head" == "$expected_head" ]] || return 2
 		payload=$(jq -cn --arg sha "$commit_sha" '{sha:$sha,force:false}') || return 1
-		gh api "repos/${repo}/git/refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --method PATCH --input - \
-			<<<"$payload" >/dev/null 2>&1 || return 2
+		_release_lane_api ref-update false "repos/${repo}/git/refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --method PATCH --input - \
+			<<<"$payload" >/dev/null || return 2
 	fi
 	_AIDEVOPS_RELEASE_LANE_HEAD="$commit_sha"
 	_AIDEVOPS_RELEASE_LANE_JSON="$state_json"
@@ -528,7 +562,7 @@ release_lane_acquire() {
 		fi
 		;;
 	2) _AIDEVOPS_RELEASE_LANE_HEAD="" ;;
-	*) return 1 ;;
+	*) return "$read_rc" ;;
 	esac
 	# The lane serializes publishers, not ordinary main merges. Snapshot
 	# provenance makes queued or concurrently merged PRs independent of it.

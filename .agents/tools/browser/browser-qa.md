@@ -49,6 +49,38 @@ tools:
 
 ## QA Pipeline
 
+### Held Navigation Transitions
+
+`transition` measures the **source page while a matching main-frame document request is held**, using a capture-phase click listener installed before page scripts. Measurements are emitted through the console; the runner never uses `page.evaluate()` during pending navigation. The measurement file is trusted operator JavaScript containing a function expression (not an ES module), returning JSON-able data. Do not use untrusted page-provided code.
+
+For a placeholder alignment check, save this function as `alignment.js`:
+
+```javascript
+() => {
+  const text = document.querySelector('#tab-label');
+  const dots = document.querySelector('#loading-dots');
+  if (!text || !dots) return { missing: true };
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  const label = range.getBoundingClientRect();
+  const placeholder = dots.getBoundingClientRect();
+  const errorPx = Math.abs(label.y + label.height / 2 - placeholder.y - placeholder.height / 2);
+  return { errorPx, aligned: errorPx < 1 };
+}
+```
+
+```bash
+browser-qa-helper.sh transition --url http://localhost:3000 --from /admin \
+  --click '#next-tab' --hold '/admin/next' --hold-ms 4000 --at-ms 600,1200 \
+  --measure-file alignment.js --screencast --output-dir ./transition-evidence
+```
+
+Optional: `--storage-state FILE`, `--format json|markdown`. Measurements must be scheduled below the hold duration; up to 50 unique times are allowed. Hold duration is capped at 60000 ms, with an additional 30000 ms navigation timeout. The report includes document requests (and prefetch/prerender purpose headers even when classified as other resource types), main-frame commits, held request/release times, measurements, and frame paths. Times are milliseconds relative to the captured click; negative request times show activity before the click. Missing measurements, measurement errors, no held document, measurements outside the hold, or no destination commit after release fail the command. Inspect measurement data separately for application-specific assertions such as `aligned`.
+
+`--screencast` uses Chromium CDP frames, not screenshots during pending navigation. Frames are at most 1568px on either dimension. `framesDuringHold` counts frames received between interception and release (receipt time, not an exact compositor-paint timestamp); raw CDP timestamps are retained. Saving is capped at 500 frames and `frameLimitReached` flags truncation. Without this option the frame count is zero, not evidence of no paint. Browser frame delivery is not guaranteed to include every compositor paint.
+
+Routing blocks service workers and disables the HTTP cache; it can change prefetch/speculation behavior. Request logs expose observed prefetches, not proof that unobserved prerenders did not occur. No matching hold fails instead of silently measuring a committed destination. This is an opt-in active click, **not** the authenticated read-only journey guard: only use authorized test navigation. Reports, frames and storage state can contain sensitive URLs/content; keep evidence private. The command uses the shared Playwright runtime and installs nothing.
+
 ### Authenticated Read-only Journeys (Opt-in)
 
 Prefer a repository's existing E2E test when it already covers the authenticated path. Otherwise, `journey` runs a versioned JSON definition (`scripts/browser-qa-journey*.mjs`):

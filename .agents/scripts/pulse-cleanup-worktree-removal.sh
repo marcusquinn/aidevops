@@ -1865,6 +1865,56 @@ _pc_cleanup_fixture_passes() {
 	return 0
 }
 
+#######################################
+# Reclaim localdev branch registrations whose worktrees no longer exist
+# (GH#33970). Pulse removes worktrees through several guarded paths, none of
+# which deregister localdev routes; one liveness-based prune per repository
+# covers all of them, plus registrations left by earlier releases. API-free,
+# non-fatal, and a no-op when no localdev branch is registered.
+# Args: $1 = repos.json path
+#######################################
+_pc_prune_localdev_registrations() {
+	local repos_json="$1"
+	local ports_file="${HOME}/.local-dev-proxy/ports.json"
+	local helper="${_PULSE_CLEANUP_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/localdev-helper.sh"
+	local repo="" output="" line=""
+	[[ -f "$ports_file" && -f "$helper" && -f "$repos_json" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -e '[.apps[]? | (.branches // {}) | length] | add // 0 | . > 0' "$ports_file" >/dev/null 2>&1 || return 0
+	while IFS= read -r repo; do
+		[[ -n "$repo" && -d "$repo" ]] || continue
+		git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || continue
+		if ! output=$(bash "$helper" branch prune --repo "$repo" 2>&1); then
+			printf '[pulse-cleanup] localdev-prune repo=%s failed\n' "$repo" >>"${LOGFILE:-/dev/null}"
+			continue
+		fi
+		while IFS= read -r line; do
+			case "$line" in
+			"PRUNE_RESULT "*" branches=0 routes=0") ;;
+			"PRUNE_RESULT "*) printf '[pulse-cleanup] localdev-prune repo=%s %s\n' "$repo" "${line#PRUNE_RESULT }" >>"${LOGFILE:-/dev/null}" ;;
+			esac
+		done <<<"$output"
+	done < <(jq -r '.initialized_repos[]? | .path // empty' "$repos_json" 2>/dev/null)
+	return 0
+}
+
+#######################################
+# Pass 4: filesystem outliers that are no longer present in git worktree
+# metadata are moved to a recoverable trash bucket only; standalone git repos
+# and valid gitfile worktrees are skipped. Pass 5: drop localdev branch
+# registrations for removed worktrees (logs only, no stdout).
+# Args: $1 = repos.json path, $2 = now epoch
+# Stdout: number of outlier directories moved
+#######################################
+_pc_cleanup_outlier_passes() {
+	local repos_json="$1"
+	local now_epoch="$2"
+	local rc=0
+	_pc_cleanup_orphan_sibling_dirs "$repos_json" "$now_epoch" || rc=$?
+	_pc_prune_localdev_registrations "$repos_json" >/dev/null 2>&1 || true
+	return "$rc"
+}
+
 _pc_cleanup_merged_passes() {
 	local registered=0 central=0
 	registered=$(_cleanup_merged_prs_for_all_repos)
@@ -1960,11 +2010,9 @@ cleanup_worktrees() {
 		echo "[pulse-wrapper] Worktree relocation total: $registered_moved worktree(s) moved to central base" >>"$LOGFILE"
 	fi
 
-	# Pass 4: filesystem outliers that are no longer present in git worktree
-	# metadata. These are moved to a recoverable trash bucket only; standalone
-	# git repos and valid gitfile worktrees are skipped.
+	# Passes 4-5: filesystem outliers, then localdev registration reclaim.
 	local orphan_dirs_moved
-	orphan_dirs_moved=$(_pc_cleanup_orphan_sibling_dirs "$repos_json" "$now_epoch")
+	orphan_dirs_moved=$(_pc_cleanup_outlier_passes "$repos_json" "$now_epoch")
 	total_removed=$((total_removed + orphan_dirs_moved))
 
 	if [[ "$total_removed" -gt 0 ]]; then

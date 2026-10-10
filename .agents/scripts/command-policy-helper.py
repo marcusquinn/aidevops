@@ -38,6 +38,7 @@ from command_policy_runtime import (
     _network_action,
     _report_policy_error,
     _worker_from_environment,
+    owned_listener_options,
 )
 from command_policy_parser import (
     _expand_argv,
@@ -194,6 +195,8 @@ def _check_action(
         args.process_table_fixture,
         args.account_mutation_workspace_root,
         args.approval_helper,
+        args.owned_listener_roots,
+        args.listener_table_fixture,
     )
     print(json.dumps(result, sort_keys=True))
     return 0 if result["decision"] == "allow" else FORBID_EXIT
@@ -209,7 +212,7 @@ def main() -> int:
         print(json.dumps(_parse_error(str(exc)), sort_keys=True))
         return FORBID_EXIT
     if args.action == "network-destinations":
-        return _network_action(invocations, args.cwd)
+        return _network_action(invocations, args.cwd, owned_listener_options(args))
     return _policy_action(args, invocations, authorization_source)
 
 

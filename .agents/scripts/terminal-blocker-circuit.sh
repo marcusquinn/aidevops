@@ -13,6 +13,10 @@ _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
 _TBC_MISSING_SCOPE='missing_files_scope'
 _TBC_UNKNOWN='unknown'
 _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
+# GH#34223: workers report an unchanged external source denial (for example
+# repeated HTTP 401 security verification) with this producer marker. It is a
+# supported class so the denial cannot normalize to unknown and redispatch.
+_TBC_SOURCE_ACCESS='source_access_blocked'
 _TBC_RUNNER_RECOVERY_OWNER='runner-recovery'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
 
@@ -110,7 +114,7 @@ _TBC_INPUT_OWNERS='user contributor maintainer admin'
 _terminal_blocker_reason() {
 	local fingerprint="$1"
 	local reason=""
-	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required push_policy_timeout network_policy_timeout runner_capability_unmet unknown; do
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required "$_TBC_SOURCE_ACCESS" push_policy_timeout network_policy_timeout runner_capability_unmet unknown; do
 		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${reason}")" ]]; then
 			printf '%s\n' "$reason"
 			return 0
@@ -177,10 +181,16 @@ if not marker.search(candidate):
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
-allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
+allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'source_access_blocked', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
-if reason == 'input_required':
+if reason == 'affected_host_reproduction_unavailable':
+    # GH#34259: legacy workers named the missing affected-runner prerequisite
+    # directly. Treat it as maintainer-owned input, not an unknown code blocker
+    # that unrelated merges can re-arm. Use the existing fingerprint so a prior
+    # input_required hold remains effective across both producer spellings.
+    print('input_required:maintainer')
+elif reason == 'input_required':
     # GH#33332: the hold must name exactly one accountable role; otherwise the
     # evidence stays unclassified and retryable.
     owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
@@ -192,7 +202,9 @@ PY
 	[[ -n "$normalized" ]] || return 1
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.
-	if [[ "$normalized" != "permission_required" && "$normalized" != "$_TBC_RUNNER_CAPABILITY" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
+	# Access denials keep their evidenced class; a scope edit cannot grant access.
+	if [[ "$normalized" != "permission_required" && "$normalized" != "$_TBC_RUNNER_CAPABILITY" &&
+		"$normalized" != "$_TBC_SOURCE_ACCESS" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
 		"${DISPATCH_REPO_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		issue_json=$(gh api "repos/${DISPATCH_REPO_SLUG}/issues/${WORKER_ISSUE_NUMBER}" 2>/dev/null) || issue_json=""
 		if printf '%s' "$issue_json" | jq -e '.body | type == "string"' >/dev/null 2>&1 &&
@@ -278,7 +290,10 @@ terminal_blocker_task_revision() {
 	# An external publication or other trigger is not changed by unrelated merges.
 	# Keep dependency changes and brief corrections as independent wake conditions.
 	# Missing input (GH#33332) is likewise supplied through the brief, not code.
-	if [[ "$reason" == "external_trigger_pending" || "$reason" == "input_required" ]]; then
+	# A source denial (GH#34223) re-arms on verified access recorded through a
+	# brief/dependency change or trusted retry, never on unrelated merges.
+	if [[ "$reason" == "external_trigger_pending" || "$reason" == "input_required" ||
+		"$reason" == "$_TBC_SOURCE_ACCESS" ]]; then
 		canonical=$(jq -nc --arg reason "$reason" --argjson task "$task_json" \
 			--argjson dependencies "$dependency_signature" \
 			'{reason: $reason, task: $task, dependencies: $dependencies}') || return 1
@@ -440,6 +455,10 @@ _terminal_blocker_recovery() {
 	permission_required)
 		owner="permission-maintainer"
 		action='Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive. Retry is scheduling consent only: the original permission guard must independently verify the exact context. Do not regenerate requests or bypass the guard.'
+		;;
+	source_access_blocked)
+		owner="access-owner"
+		action='Verify access to the denied source through its approved human-owned flow, or supply the required source evidence in the brief or a linked dependency. A brief or dependency change, or an explicit retry after verified access, re-arms dispatch; unrelated merges do not. Never bypass source verification or source-access guards.'
 		;;
 	input_required)
 		owner=$(_terminal_blocker_input_owner "$fingerprint") || owner="maintainer"

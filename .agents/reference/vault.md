@@ -138,6 +138,11 @@ provider is selected for `local-only`/`local-LLM-only` data, when
 provider approval environment gate, or when any task marks prompt context as
 `secret`.
 
+Interactive sessions (GH#34125) are bound at launch with
+`AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode`: remote providers and
+non-loopback endpoints fail closed before sending. Launch rules, enforcement
+surfaces and trust gaps: `reference/vault-local-only-binding.md`.
+
 ## 4. Threat Environments
 
 ### 4.1 Third-party VPS cloned disks, snapshots, and backups

@@ -318,6 +318,50 @@ test_external_trigger_pending_revision() {
 	return 0
 }
 
+# GH#34223: the source_access_blocked producer marker used to normalize to
+# unknown, restoring availability after every unchanged HTTP 401 denial.
+test_source_access_blocked_revision() {
+	local issue='{"title":"Read official docs","body":"Use the official reference."}'
+	local output="${TEST_ROOT}/source-access.ndjson" fingerprint="" revision="" changed="" status=0
+	local observation="" circuit="" comments="" recovery=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: six official HTTP 401 Security Verification responses\nTERMINAL_BLOCKER_REASON=source_access_blocked"}' >"$output"
+	gh() { printf '%s\n' '{"body":"Use the official reference."}'; return 0; }
+	export WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG="owner/repo"
+	terminal_blocker_capture_output "$output" || status=1
+	unset -f gh
+	unset WORKER_ISSUE_NUMBER DISPATCH_REPO_SLUG
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	# A missing Files Scope heading must not mask the evidenced access denial.
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == source_access_blocked ]] || status=1
+	recovery=$(_terminal_blocker_recovery "$fingerprint" circuit)
+	[[ "$recovery" == *"reason=source_access_blocked owner=access-owner "* ]] || status=1
+	[[ "$recovery" == *"Never bypass source verification"* ]] || status=1
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" source_access_blocked) || status=1
+	observation=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$observation" "$revision" "$fingerprint")" == circuit ]] || status=1
+	terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" "$revision" "$fingerprint" >/dev/null || status=1
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" source_access_blocked) || status=1
+	[[ "$revision" == "$changed" ]] || status=1
+	circuit=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-circuit revision=${changed} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:05:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	terminal_blocker_circuit_active "$circuit" '{"title":"Read official docs","body":"Official reference excerpt attached."}' \
+		owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_DEPENDENCIES='{"nodes":[{"number":9,"state":"CLOSED"}],"truncated":false}'
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
+	comments=$(printf '%s' "$circuit" | jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-08-31T11:00:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	comments=$(printf '%s' "$circuit" | jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-08-31T11:00:00Z",author_association:"COLLABORATOR"}]')
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "source_access_blocked holds across unrelated HEAD changes; brief, dependency and trusted retry re-arm" "$status"
+	return 0
+}
+
 test_input_required_owner_class() {
 	local issue='{"title":"Deploy check","body":"### Files Scope\n- deploy.sh"}'
 	local output="${TEST_ROOT}/input.ndjson" fingerprint="" revision="" changed="" fragment="" observation="" status=0
@@ -784,6 +828,38 @@ test_push_policy_timeout_checkpoint() {
 	return 0
 }
 
+test_affected_host_reproduction_alias() {
+	local output="${TEST_ROOT}/affected-host.ndjson" status=0 fingerprint="" revision="" changed="" comments=""
+	local issue='{"title":"Reproduce before fixing","body":"### Files Scope\n- helper.sh"}'
+	printf '%s\n' '{"type":"text","text":"BLOCKED: missing affected-runner reproduction target\nTERMINAL_BLOCKER_REASON=affected_host_reproduction_unavailable"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$fingerprint" == "$(_terminal_blocker_hash 'v2:input_required:maintainer')" ]] || status=1
+	[[ "$(_terminal_blocker_recovery "$fingerprint")" == *'owner=maintainer'* ]] || status=1
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT") || status=1
+	comments=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$comments" "$revision" "$fingerprint")" == circuit ]] || status=1
+	comments=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-circuit revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:05:00Z",author_association:"MEMBER"}]')
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT") || status=1
+	[[ "$changed" == "$revision" ]] || status=1
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	changed=$(terminal_blocker_task_revision '{"title":"Reproduce before fixing","body":"### Files Scope\n- helper.sh\nAffected-runner target supplied"}' owner/repo 42 "$TEST_ROOT") || status=1
+	[[ "$changed" != "$revision" ]] || status=1
+	# Only the exact legacy marker is an alias; ambiguous/unknown output stays
+	# retryable, and tool evidence cannot override the final assistant dossier.
+	printf '%s\n' '{"type":"tool_result","text":"BLOCKED: old evidence\nTERMINAL_BLOCKER_REASON=affected_host_reproduction_unavailable"}' \
+		'{"type":"text","text":"BLOCKED: unclassified\nTERMINAL_BLOCKER_REASON=not_a_supported_reason"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "affected-host legacy marker shares maintainer-input hold and ignores unrelated merges" "$status"
+	return 0
+}
+
 test_runner_capability_class() {
 	local status=0 output="$TEST_ROOT/capability-output.jsonl" fingerprint="" revision="" fragment="" comments=""
 	printf '%s\n' '{"type":"text","text":"BLOCKED: staging secret cannot resolve\nTERMINAL_BLOCKER_REASON=runner_capability_unmet"}' >"$output"
@@ -803,6 +879,7 @@ $fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_
 }
 
 main() {
+	test_affected_host_reproduction_alias
 	test_runner_capability_class
 	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
@@ -812,6 +889,7 @@ main() {
 	test_dispatch_hold_revalidates_revision
 	test_brief_only_revision
 	test_external_trigger_pending_revision
+	test_source_access_blocked_revision
 	test_input_required_owner_class
 	test_excluded_scope_revision
 	test_unknown_and_redaction

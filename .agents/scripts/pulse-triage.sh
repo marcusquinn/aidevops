@@ -95,6 +95,15 @@ _route_terminal_breaker_to_consolidation() {
 		return 1
 	fi
 
+	# Human-owned boundaries (permission, secret, spend, trust) cannot be
+	# resolved by merging comments into a superseding issue, and consolidation
+	# would drop sub-issue links, blockedBy edges and signed approvals. Wait for
+	# the human decision, then terminal-blocker-circuit:retry.
+	if [[ "$breaker_source $breaker_detail" =~ (permission_required|needs_maintainer_permissions|permission_grant_unverified|secret_required|spend_required|trust_boundary|input_required) ]]; then
+		echo "[pulse-wrapper] terminal breaker consolidation skipped: human-owned boundary (${BASH_REMATCH[1]}) for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
 	# Unlike the comment-count threshold for ordinary triage, a breaker only
 	# needs one real scope comment. An automation-only thread has nothing for
 	# a consolidation child to merge; keep the blocked escalation for review.

@@ -36,6 +36,10 @@ if [[ "$1" == "pr" && "$2" == "view" ]]; then
 	exit 0
 fi
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123" ]]; then
+	if [[ "${3:-}" == "--jq" ]]; then
+		printf '%s\n' "${STUB_ISSUE_JSON:-}" | jq -r "$4"
+		exit $?
+	fi
 	printf '%s\n' "${STUB_ISSUE_JSON:-}"
 	exit 0
 fi
@@ -88,7 +92,7 @@ STUB_ISSUE_JSON="$(valid_issue_json)"
 STUB_COMMENTS_JSON='[]'
 export STUB_PR_JSON STUB_ISSUE_JSON STUB_COMMENTS_JSON
 if row=$(_pcc_target_row "owner/repo" "42" "123") && \
-	[[ "$row" == $'Continue existing work\tworker/issue-123\t1111111111111111111111111111111111111111\tworker-bot\tin-review\tworker-bot\t0' ]]; then
+	[[ "$row" == $'Continue existing work\tworker/issue-123\t1111111111111111111111111111111111111111\tworker-bot\tin-review\tworker-bot\t0\tclosing' ]]; then
 	print_result "accepts exact open worker draft linked to issue" 0
 else
 	print_result "accepts exact open worker draft linked to issue" 1 "row=${row:-missing}"
@@ -186,6 +190,42 @@ if ! _pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" >/dev/nul
 else
 	print_result "rejects foreign-authored worker checkpoint" 1
 fi
+
+# GH#34008: the pulse's own orphan-recovery draft links its issue only through
+# a non-closing `For #N` line. The shared rule accepts exactly that shape.
+TAKEOVER_LABELS='[{"name":"origin:worker-takeover"}]'
+STUB_ISSUE_JSON="$(valid_issue_json)"
+STUB_COMMENTS_JSON='[]'
+STUB_PR_JSON="$(valid_pr_json 'Recovered dirty worktree.\nFor #123' "$TAKEOVER_LABELS" '[]')"
+if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot") &&
+	[[ "$row" == *$'\tworker-bot\t0\tfor' ]]; then
+	print_result "accepts For #N origin:worker-takeover recovery draft" 0
+else
+	print_result "accepts For #N origin:worker-takeover recovery draft" 1 "row=${row:-missing}"
+fi
+
+for_reject_case() {
+	local name="$1" body="$2" labels="$3" closing="$4" mutate="${5:-}"
+	STUB_PR_JSON="$(valid_pr_json "$body" "$labels" "$closing")"
+	case "$mutate" in
+	ready) STUB_PR_JSON="${STUB_PR_JSON/\"isDraft\":true/\"isDraft\":false}" ;;
+	cross) STUB_PR_JSON="${STUB_PR_JSON/\"isCrossRepository\":false/\"isCrossRepository\":true}" ;;
+	esac
+	if ! _pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot" >/dev/null 2>&1; then
+		print_result "rejects For #N draft: ${name}" 0
+	else
+		print_result "rejects For #N draft: ${name}" 1
+	fi
+	return 0
+}
+for_reject_case "origin:worker label" 'For #123' '[{"name":"origin:worker"}]' '[]'
+for_reject_case "ready PR" 'For #123' "$TAKEOVER_LABELS" '[]' ready
+for_reject_case "cross-repository head" 'For #123' "$TAKEOVER_LABELS" '[]' cross
+for_reject_case "protected label" 'For #123' '[{"name":"origin:worker-takeover"},{"name":"hold-for-review"}]' '[]'
+for_reject_case "bare #N mention" 'Recovered work for #123' "$TAKEOVER_LABELS" '[]'
+for_reject_case "issue-number prefix collision" 'For #1234' "$TAKEOVER_LABELS" '[]'
+for_reject_case "closing link to another issue" 'For #123\nResolves #456' "$TAKEOVER_LABELS" \
+	'[{"number":456,"repository":{"name":"repo","owner":{"login":"owner"}}}]'
 
 STUB_PR_JSON="$(valid_pr_json)"
 STUB_ISSUE_JSON="$(valid_issue_json)"
@@ -336,6 +376,21 @@ if [[ -f "$prompt_file" ]] && \
 else
 	print_result "continuation prompt preserves exact-target ownership contract" 1
 fi
+if ! grep -q 'orphan-recovery checkpoint' "$prompt_file"; then
+	print_result "closing-linked continuation prompt has no For-line rewrite step" 0
+else
+	print_result "closing-linked continuation prompt has no For-line rewrite step" 1
+fi
+PCC_LINK_KIND="for"
+prompt_file=$(_prrts_write_prompt_file "owner/repo" "${TEST_ROOT}/repo" "42" "Continue existing work" "0" "fingerprint" "preview")
+if grep -Fq 'replace that exact line with' "$prompt_file" &&
+	grep -Fq "\`Resolves #123\`" "$prompt_file" &&
+	grep -Fq -- '--json closingIssuesReferences' "$prompt_file"; then
+	print_result "For-linked continuation must add a closing link before ready" 0
+else
+	print_result "For-linked continuation must add a closing link before ready" 1
+fi
+PCC_LINK_KIND="closing"
 
 # Exercise the actual producer, transfer fence and worker preparation together.
 # Only worktree/process mechanics are stubbed; GitHub remains the fixture above.
@@ -505,7 +560,210 @@ else
 	print_result "ready PR is not treated as a blocked draft checkpoint" 1 "posts=$(post_count)"
 fi
 STUB_PR_JSON="$(valid_pr_json)"
+
+# GH#33839: production launchers close the released attempt's lease with a
+# terminal DISPATCH_LEASE after CLAIM_RELEASED. That is not new ownership.
+closing_lease_comments() {
+	local terminal_login="$1" terminal_lease="$2"
+	blocked_comments ",
+  {\"id\":19,\"created_at\":\"2026-09-30T00:59:00Z\",\"author_association\":\"COLLABORATOR\",\"user\":{\"login\":\"worker-bot\"},\"body\":\"DISPATCH_LEASE phase=prelaunch lease_token=closing-lease session=s1\"},
+  {\"id\":24,\"created_at\":\"2026-09-30T01:10:40Z\",\"author_association\":\"COLLABORATOR\",\"user\":{\"login\":\"${terminal_login}\"},\"body\":\"<!-- ops:start -->\\nDISPATCH_LEASE phase=terminal lease_token=${terminal_lease} session=s1 expires_at=0\\n<!-- ops:end -->\"}"
+	return 0
+}
+STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease)"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*release=21 && "$(post_count)" == 2 ]]; then
+	print_result "released attempt's own terminal lease does not suppress blocked attention" 0
+else
+	print_result "released attempt's own terminal lease does not suppress blocked attention" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+for foreign_case in "worker-bot unseen-lease" "other-runner closing-lease"; do
+	read -r foreign_login foreign_lease <<<"$foreign_case"
+	STUB_COMMENTS_JSON="$(closing_lease_comments "$foreign_login" "$foreign_lease")"
+	if ! _pcc_blocked_attention owner/repo 123 42 >/dev/null && [[ "$(post_count)" == 2 ]]; then
+		print_result "terminal lease from ${foreign_login}/${foreign_lease} still counts as ownership" 0
+	else
+		print_result "terminal lease from ${foreign_login}/${foreign_lease} still counts as ownership" 1 "posts=$(post_count)"
+	fi
+done
+
+# GH#33850: clean/completed releases by another trusted runner must reach an
+# attention outcome through the existing Pulse entrypoint, without dispatching.
+for completed_reason in clean worker_complete; do
+	STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease | jq --arg reason "$completed_reason" '
+		map(map(if .id == 21 then .body = ("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner") |
+			.user.login = "pulse-runner" else . end))')"
+	before_posts="$(post_count)"
+	if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+		[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*reason="${completed_reason}" &&
+			"$(post_count)" == "$((before_posts + 1))" ]]; then
+		print_result "${completed_reason} release from another runner gets attention despite closing terminal lease" 0
+	else
+		print_result "${completed_reason} release gets attention" 1 "output=${output:-missing}"
+	fi
+	completed_body="$(<"${STUB_POST_DIR}/post-$((before_posts + 1))")"
+	if [[ "$completed_body" == *"verified merged replacement"* ]] &&
+		! grep -Eq '^(DISPATCH_CLAIM |DISPATCH_LEASE |CLAIM_RELEASED |Dispatching worker|Interactive session claimed|CHECKPOINT_CONTINUATION_APPROVED |terminal-blocker-circuit:retry)' \
+			"${STUB_POST_DIR}/post-$((before_posts + 1))"; then
+		print_result "${completed_reason} attention is actionable without forging approval or ownership" 0
+	else
+		print_result "${completed_reason} attention is actionable without forging approval or ownership" 1
+	fi
+	STUB_COMMENTS_JSON="$(jq --arg body "$completed_body" '. + [[
+		{id:25,author_association:"OWNER",user:{login:"pulse-runner"},body:$body},
+		{id:26,author_association:"OWNER",user:{login:"pulse-runner"},body:"CLAIM_RELEASED reason=clean runner=pulse-runner"}
+	]]' <<<"$STUB_COMMENTS_JSON")"
+	if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+		[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == "$((before_posts + 1))" ]]; then
+		print_result "${completed_reason} attention deduplicates later releases at the same head" 0
+	else
+		print_result "${completed_reason} attention deduplicates later releases at the same head" 1
+	fi
+	new_head="2222222222222222222222222222222222222222"
+	if evidence=$(_pcc_completed_release_evidence "$STUB_COMMENTS_JSON" "aidevops:blocked-checkpoint-attention pr=42 head=${new_head}") &&
+		[[ "$evidence" == $'26\tclean\tfalse' ]]; then
+		print_result "new head re-arms ${completed_reason} attention" 0
+	else
+		print_result "new head re-arms ${completed_reason} attention" 1
+	fi
+	for ownership_body in 'DISPATCH_CLAIM runner=pulse-runner' 'DISPATCH_LEASE phase=terminal lease_token=foreign'; do
+		owned_comments="$(jq --arg body "$ownership_body" '. + [[
+			{id:27,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}
+		]]' <<<"$STUB_COMMENTS_JSON")"
+		if ! _pcc_completed_release_evidence "$owned_comments" key >/dev/null; then
+			print_result "new ownership suppresses ${completed_reason} attention: ${ownership_body}" 0
+		else
+			print_result "new ownership suppresses ${completed_reason} attention" 1
+		fi
+	done
+done
+for invalid_release in untrusted mismatched_runner unsupported_reason; do
+	invalid_comments="$(blocked_comments | jq --arg invalid "$invalid_release" '
+		map(map(if .id == 21 then .body = "CLAIM_RELEASED reason=clean runner=worker-bot" |
+			if $invalid == "untrusted" then .author_association = "NONE"
+			elif $invalid == "mismatched_runner" then .user.login = "other-runner"
+			else .body = "CLAIM_RELEASED reason=worker_noop runner=worker-bot" end
+		else . end))')"
+	if ! _pcc_completed_release_evidence "$invalid_comments" key >/dev/null; then
+		print_result "completed attention rejects ${invalid_release}" 0
+	else
+		print_result "completed attention rejects ${invalid_release}" 1
+	fi
+done
 unset STUB_POST_DIR
+
+stall_comments() {
+	local terminal_lease="$1"
+	printf '[[
+  {"id":30,"created_at":"2026-09-30T01:00:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=ready lease_token=stall-lease session=s1"},
+  {"id":31,"created_at":"2026-09-30T01:30:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=no_activity runner=pulse-runner ts=2026-09-30T01:30:00Z"},
+  {"id":32,"created_at":"2026-09-30T01:30:40Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=terminal lease_token=%s session=s1 expires_at=0"}
+]]\n' "$terminal_lease"
+	return 0
+}
+if output=$(_pcc_stall_release_evidence "$(stall_comments stall-lease)" "2026-09-30T00:30:00Z" key) &&
+	[[ "$output" == $'31\tno_activity\t1\tfalse' ]]; then
+	print_result "released attempt's own terminal lease keeps stall release evidence" 0
+else
+	print_result "released attempt's own terminal lease keeps stall release evidence" 1 "output=${output:-missing}"
+fi
+if ! _pcc_stall_release_evidence "$(stall_comments other-lease)" "2026-09-30T00:30:00Z" key >/dev/null 2>&1; then
+	print_result "unrelated terminal lease after a stall release still counts as ownership" 0
+else
+	print_result "unrelated terminal lease after a stall release still counts as ownership" 1
+fi
+
+# GH#34008: a killed attempt runs no release path; the proactive sweep already
+# reset its issue. Its own expired claim, older than the recovery draft head,
+# is the only stall evidence accepted, and only for For #N recovery drafts.
+LEASE_FIELD="lease""_token"
+expired_claim_comments() {
+	local extra="${1:-[]}"
+	jq -nc --arg lf "$LEASE_FIELD" --argjson extra "$extra" '[[
+		{id:40,created_at:"2026-09-30T01:00:00Z",author_association:"COLLABORATOR",user:{login:"worker-bot"},
+			body:("DISPATCH_CLAIM nonce=n1 runner=worker-bot " + $lf + "=t1 session=issue-123 phase=prelaunch expires_at=1790000000")},
+		{id:41,created_at:"2026-09-30T01:01:00Z",author_association:"COLLABORATOR",user:{login:"worker-bot"},
+			body:("<!-- ops:start -->\nDISPATCH_LEASE phase=ready " + $lf + "=t1 session=issue-123 expires_at=1790000000 attempt_id=attempt:a1\n<!-- ops:end -->")}
+	] + $extra]'
+	return 0
+}
+recovery_head_date="2026-09-30T01:20:00Z"
+if output=$(_pcc_expired_claim_evidence "$(expired_claim_comments)" "$recovery_head_date" 1791427000) &&
+	[[ "$output" == 41 ]]; then
+	print_result "expired claim older than the recovery head is stall evidence" 0
+else
+	print_result "expired claim older than the recovery head is stall evidence" 1 "output=${output:-missing}"
+fi
+if ! _pcc_expired_claim_evidence "$(expired_claim_comments)" "$recovery_head_date" 1789999999 >/dev/null 2>&1; then
+	print_result "unexpired claim is not stall evidence" 0
+else
+	print_result "unexpired claim is not stall evidence" 1
+fi
+if ! _pcc_expired_claim_evidence "$(expired_claim_comments)" "2026-09-30T00:59:00Z" 1791427000 >/dev/null 2>&1; then
+	print_result "claim newer than the draft head is not stall evidence" 0
+else
+	print_result "claim newer than the draft head is not stall evidence" 1
+fi
+for newer_event in \
+	'CLAIM_RELEASED reason=blocked runner=worker-bot' \
+	'Interactive session claimed this issue' \
+	"DISPATCH_LEASE phase=terminal ${LEASE_FIELD}=t9 session=issue-123 expires_at=0"; do
+	newer_comments="$(expired_claim_comments "$(jq -nc --arg body "$newer_event" \
+		'[{id:42,created_at:"2026-09-30T01:10:00Z",author_association:"MEMBER",user:{login:"other-runner"},body:$body}]')")"
+	if ! _pcc_expired_claim_evidence "$newer_comments" "$recovery_head_date" 1791427000 >/dev/null 2>&1; then
+		print_result "newer coordination event suppresses expired-claim evidence: ${newer_event%% *}" 0
+	else
+		print_result "newer coordination event suppresses expired-claim evidence: ${newer_event%% *}" 1
+	fi
+done
+untrusted_comments="$(expired_claim_comments | jq -c 'map(map(.author_association = "NONE"))')"
+if ! _pcc_expired_claim_evidence "$untrusted_comments" "$recovery_head_date" 1791427000 >/dev/null 2>&1; then
+	print_result "untrusted claim is not stall evidence" 0
+else
+	print_result "untrusted claim is not stall evidence" 1
+fi
+
+with_head_commit() {
+	jq -c --arg date "$recovery_head_date" \
+		'. + {commits:[{oid:"1111111111111111111111111111111111111111",committedDate:$date}]}'
+	return 0
+}
+RELEASED_ISSUE_JSON="$(jq -nc '{number:123,state:"open",labels:[{name:"status:available"}],assignees:[]}')"
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_COMMENTS_JSON="$(expired_claim_comments)"
+STUB_PR_JSON="$(valid_pr_json 'Recovered dirty worktree.\nFor #123' "$TAKEOVER_LABELS" '[]' | with_head_commit)"
+export STUB_ISSUE_JSON STUB_COMMENTS_JSON STUB_PR_JSON
+DISPATCH_ARGS=""
+DISPATCH_RESULT=0
+STATUS_CALLS=""
+PCC_ALLOW_RELEASED=false
+output_file="${TEST_ROOT}/expired-dispatch-output"
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *"assignee=worker-bot release=none reason=expired_claim claim_comment=41"* &&
+	"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 1111111111111111111111111111111111111111 worker-bot"* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' &&
+	"$PCC_LINK_KIND" == for ]]; then
+	print_result "already-reset For #N recovery draft reaches exact-head continuation" 0
+else
+	print_result "already-reset For #N recovery draft reaches exact-head continuation" 1 \
+		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+fi
+
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | with_head_commit)"
+DISPATCH_ARGS=""
+PCC_ALLOW_RELEASED=false
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *"has no current stall release"* && -z "$DISPATCH_ARGS" ]]; then
+	print_result "ordinary worker draft still requires a stall release" 0
+else
+	print_result "ordinary worker draft still requires a stall release" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+PCC_LINK_KIND="closing"
 
 if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-revision.py"; then
 	print_result "revised checkpoint claims, worker lease lifecycle and durable progress" 0

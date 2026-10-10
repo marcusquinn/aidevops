@@ -9,7 +9,8 @@ HELPER="${SCRIPT_DIR}/../cloudron-package-helper.sh"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
-PINNED_BASE='cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e'
+PINNED_BASE='cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b'
+LEGACY_BASE='cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e'
 
 cleanup() {
 	[[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]] && rm -rf "$TEST_ROOT"
@@ -118,6 +119,8 @@ test_release_preflight_validates_immutable_sources() {
 	else
 		pass "unavailable immutable source blocks preflight"
 	fi
+	printf 'FROM --platform=linux/amd64 %s AS build\nFROM %s\n' "$PINNED_BASE" "$PINNED_BASE" >"${repo_dir}/Dockerfile"
+	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" preflight-release v1.0.0 >/dev/null 2>&1 && pass "FROM platform flag skipped in preflight" || fail "FROM platform flag skipped in preflight"
 	return 0
 }
 
@@ -163,6 +166,40 @@ test_release_gate_rejects_package_defects() {
 	return 0
 }
 
+test_base_transition() {
+	local repo_dir="${TEST_ROOT}/transition"
+	local bin_dir="${TEST_ROOT}/transition-bin"
+	local output=""
+	local image=""
+	make_fixture "$repo_dir"
+	write_fake_docker "$bin_dir"
+	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-compatibility >/dev/null && pass "current base passes audit" || fail "current base passes audit"
+	printf 'FROM %s\n' "$LEGACY_BASE" >"${repo_dir}/Dockerfile"
+	if output=$(PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-compatibility 2>&1); then
+		fail "legacy base produces audit finding"
+	else
+		pass "legacy base produces audit finding"
+	fi
+	assert_equal 1 "$(printf '%s\n' "$output" | grep -c '^- Upgrade base image')" "legacy base produces exactly one upgrade finding"
+	[[ "$output" == *minBoxVersion*9.1.0* ]] && pass "upgrade finding includes platform qualification" || fail "upgrade finding includes platform qualification"
+	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" prepare-release 1.1.0 4.5.6 release-notes.md >/dev/null && pass "legacy base allows upstream release preparation" || fail "legacy base allows upstream release preparation"
+	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" preflight-release v1.1.0 >/dev/null && pass "legacy base passes release check and preflight" || fail "legacy base passes release check and preflight"
+	for image in \
+		'cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453f327297d7183525cb05424e7b34' \
+		'cloudron/php-base:8.5-20260920@sha256:a59a4334fbf50ebfdf8f6cc5527e099e4586349a1aefc546e85f7401ea366d65' \
+		'cloudron/php-base:8.4-20260920@sha256:e9352b5fba7ad0a231b8a9e454034400a3a34a7fe1800425f634d32ffcae4a52'; do
+		printf 'FROM %s\n' "$image" >"${repo_dir}/Dockerfile"
+		PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-compatibility >/dev/null && pass "reviewed runtime pin passes audit: $image" || fail "reviewed runtime pin passes audit: $image"
+	done
+	printf 'FROM cloudron/base:6.0.0@sha256:%064d\n' 0 >"${repo_dir}/Dockerfile"
+	if PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-release v1.1.0 >/dev/null 2>&1; then
+		fail "unknown digest still blocks release"
+	else
+		pass "unknown digest still blocks release"
+	fi
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -170,6 +207,7 @@ main() {
 	test_invalid_prepare_is_non_mutating
 	test_release_gate_rejects_package_defects
 	test_release_preflight_validates_immutable_sources
+	test_base_transition
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0

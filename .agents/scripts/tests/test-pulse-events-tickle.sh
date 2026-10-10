@@ -169,9 +169,14 @@ source_tickle_fresh() {
 # Test 1: 304 response → exit 0 (fresh), counter incremented
 # ---------------------------------------------------------------------------
 test_304_returns_fresh() {
+	local mode="${1:-stderr}"
+	setup_sandbox ""
 	local stub="${TEST_ROOT}/gh-304"
-	write_gh_stub "$stub" \
-		"printf 'HTTP/2 304\r\n\r\n'; exit 1"
+	if [[ "$mode" == "legacy" ]]; then
+		write_gh_stub "$stub" "printf 'HTTP/2 304\r\n\r\n'; exit 1"
+	else
+		write_gh_stub "$stub" "printf 'gh: HTTP 304\n' >&2; exit 1"
+	fi
 	# gh exits non-zero on 304 (not a 2xx response)
 
 	local bin_dir="${TEST_ROOT}/bin"
@@ -189,8 +194,28 @@ test_304_returns_fresh() {
 	assert_equals "test_304: returns exit 0 (fresh)" "0" "$rc"
 	assert_equals "test_304: TICKLE_FRESH incremented" "1" "$_PULSE_EVENTS_TICKLE_FRESH"
 	assert_equals "test_304: TICKLE_STALE unchanged" "0" "$_PULSE_EVENTS_TICKLE_STALE"
+	assert_file_contains "test_304: freshness logged" "$LOGFILE" '304 ETag match'
 
 	teardown_sandbox
+	return 0
+}
+
+test_stderr_errors_fail_open() {
+	local status=""
+	for status in 304 500; do
+		setup_sandbox
+		write_gh_stub "${TEST_ROOT}/bin/gh" "printf 'gh: HTTP ${status}\n' >&2; exit 1"
+		source_tickle_fresh
+		# 304 without a cached ETag is not evidence of freshness.
+		printf '{"etag":"","owner_type":"users"}\n' \
+			>"${HOME}/.aidevops/cache/pulse-events-etag/testowner.json"
+		local rc=0
+		events_tickle "testowner" || rc=$?
+		assert_equals "stderr $status: fails open" "2" "$rc"
+		assert_equals "stderr $status: no fresh count" "0" "$_PULSE_EVENTS_TICKLE_FRESH"
+		assert_equals "stderr $status: stale count" "1" "$_PULSE_EVENTS_TICKLE_STALE"
+		teardown_sandbox
+	done
 	return 0
 }
 
@@ -272,7 +297,7 @@ for _arg in "$@"; do
 	fi
 done
 if [[ "$_found_etag" -eq 1 ]]; then
-	printf 'HTTP/2 304\r\n\r\n'
+	printf 'gh: HTTP 304\n' >&2
 	exit 1
 else
 	printf 'HTTP/2 200\r\nETag: "first-etag"\r\n\r\n[]\n'
@@ -397,7 +422,7 @@ test_counter_accumulation() {
 #!/usr/bin/env bash
 for _arg in "$@"; do
 	if [[ "$_arg" == */freshowner/* ]]; then
-		printf 'HTTP/2 304\r\n\r\n'
+		printf 'gh: HTTP 304\n' >&2
 		exit 1
 	fi
 done
@@ -475,7 +500,7 @@ test_batch_prefetch_skips_fresh_owner() {
 	# Stub: always return 304 (all owners are fresh)
 	local stub="${TEST_ROOT}/gh-304-all"
 	write_gh_stub "$stub" \
-		"printf 'HTTP/2 304\r\n\r\n'; exit 1"
+		"printf 'gh: HTTP 304\n' >&2; exit 1"
 	local bin_dir="${TEST_ROOT}/bin"
 	cp "$stub" "${bin_dir}/gh"
 
@@ -513,9 +538,9 @@ main() {
 	fi
 
 	# Run all tests — each sets up and tears down its own sandbox.
-	setup_sandbox  # initial sandbox for test 1
-
 	test_304_returns_fresh
+	test_304_returns_fresh legacy
+	test_stderr_errors_fail_open
 	test_200_first_call_caches_etag
 	test_200_updates_cache
 	test_sends_if_none_match

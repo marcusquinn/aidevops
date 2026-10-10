@@ -1167,6 +1167,46 @@ test_release_clears_lockdir_with_pid_file() {
 }
 
 #######################################
+# Test (GH#33916): a lease-less manual worker registers first through the
+# production headless-runtime-lib producer; the dispatcher's later register
+# for the same session is an idempotent no-op. The worker's entry must
+# therefore carry the issue and a `.git`-free repo so check-issue finds it,
+# and an unbound timestamp key must never be read as an issue number.
+#######################################
+test_manual_worker_registration_is_issue_visible() {
+	setup_test_env
+	local scripts_dir="${SCRIPT_DIR}/.."
+	local worktree="${TEST_ROOT}/worktree"
+	git init -q "$worktree"
+	git -C "$worktree" remote add origin "https://github.com/owner/repo.git"
+
+	local result=0 entry="" unbound_issue=""
+	(
+		SCRIPT_DIR="$scripts_dir"
+		# shellcheck source=../headless-runtime-lib.sh
+		source "${scripts_dir}/headless-runtime-lib.sh"
+		DISPATCH_LEDGER_HELPER="$LEDGER_HELPER"
+		unset AIDEVOPS_DISPATCH_LEASE_TOKEN
+		WORKER_ISSUE_NUMBER=51 _register_dispatch_ledger "manual-cli-51-1700000000" "$worktree"
+		WORKER_ISSUE_NUMBER=99 _register_dispatch_ledger "manual-cli-52-1700000000" "$worktree"
+	) || result=1
+	# Dispatcher-style registration after readiness (must not be needed).
+	run_helper "$LEDGER_HELPER" register --session-key "manual-cli-51-1700000000" \
+		--issue 51 --repo "owner/repo" --pid $$ --worktree "$worktree"
+
+	entry=$("$LEDGER_HELPER" check-issue --issue 51 --repo "owner/repo" 2>/dev/null) || result=1
+	[[ "$(printf '%s' "$entry" | jq -r '.session_key // ""')" == "manual-cli-51-1700000000" ]] || result=1
+	[[ "$(printf '%s' "$entry" | jq -r '.worktree_path // ""')" == "$worktree" ]] || result=1
+	unbound_issue=$(jq -rs 'map(select(.session_key == "manual-cli-52-1700000000")) | last | .issue_number' \
+		"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl")
+	[[ "$unbound_issue" == "" ]] || result=1
+	print_result "manual worker self-registration is visible to check-issue (GH#33916)" "$result" \
+		"entry=${entry}, unbound_issue=${unbound_issue}"
+	teardown_test_env
+	return 0
+}
+
+#######################################
 # Run all tests
 #######################################
 main() {
@@ -1225,6 +1265,7 @@ main() {
 	test_stale_lock_blocks_on_live_owner_within_max_age
 	test_stale_lock_recovered_legacy_no_pid_lockdir
 	test_release_clears_lockdir_with_pid_file
+	test_manual_worker_registration_is_issue_visible
 
 	echo ""
 	echo "=== Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ==="

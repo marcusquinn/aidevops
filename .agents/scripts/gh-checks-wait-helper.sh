@@ -235,25 +235,71 @@ canonicalize_checks() {
 	local raw="$1"
 	printf '%s' "$raw" | jq -c '
 		if type != "array" then error("checks result is not an array") else . end
-		| map({name:(.name // "unnamed"), workflow:(.workflow // ""), state:(.state // "unknown"), bucket:(.bucket // "unknown"), link:(.link // "")})
+		| map({name:(.name // "unnamed"), workflow:(.workflow // ""), state:(.state // "unknown"), bucket:(.bucket // "unknown"), link:(.link // ""), description:(.description // "")})
 		| sort_by(.workflow, .name, .link)
 	' 2>/dev/null
 	return $?
 }
 
+# Keep this separate from Actions billing-annotation signatures: qlty reports a
+# commit status description. Exact naming excludes the Qlty Regression Gate job.
+apply_qlty_billing_policy() {
+	local checks="$1" policy="$2"
+	printf '%s' "$checks" | jq -c --arg policy "$policy" '
+		map(if (.name | test("^qlty check$"; "i")) and .bucket == "fail"
+			and (.description | test("out of minutes|out of credits"; "i"))
+		then . + {qlty_billing: true}
+			| if $policy == "limited" then .bucket = "skipping" else . end
+		else . end)
+	'
+	return $?
+}
+
+read_qlty_credit_policy() {
+	local repo="$1" metadata="" policy=""
+	metadata=$(gh api "repos/${repo}" 2>/dev/null) || {
+		printf 'unknown\n'
+		return 0
+	}
+	policy=$(printf '%s' "$metadata" | jq -er '
+		if (.private | type) != "boolean" or (.owner.type != "User" and .owner.type != "Organization") then
+			error("invalid repository billing metadata")
+		elif .private or .owner.type == "Organization" then "limited"
+		else "public-personal" end
+	' 2>/dev/null) || policy="unknown"
+	printf '%s\n' "$policy"
+	return 0
+}
+
+emit_qlty_billing_notes() {
+	local checks="$1" previous="$2" policy="$3"
+	printf '%s' "$checks" | jq -r --argjson previous "${previous:-[]}" --arg policy "$policy" '
+		.[] | select(.qlty_billing == true) | . as $check
+		| select(any($previous[]; .qlty_billing == true and .name == $check.name
+			and .workflow == $check.workflow and .link == $check.link and .bucket == $check.bucket) | not)
+		| if .bucket == "skipping" then "SKIPPED (qlty out of credits): \(.name)\(if .link == "" then "" else " " + .link end)"
+		elif $policy == "public-personal" then "NOTE: unexpected qlty out-of-credits failure on a public personal-account repository: \(.name)"
+		else "NOTE: repository credit policy unavailable; retaining qlty billing failure: \(.name)" end
+	'
+	return 0
+}
+
 state_counts() {
 	local checks="$1"
-	printf '%s' "$checks" | jq -r '
+	local missing_contexts="${2:-}"
+	printf '%s' "$checks" | jq -r --arg missing "$missing_contexts" '
 		group_by(.bucket)
 		| map("\(.[0].bucket)=\(length)")
 		| if length == 0 then "none=0" else join(" ") end
+		| . + (if $missing == "" then "" else " missing=" + $missing end)
 	'
 	return 0
 }
 
 emit_initial_state() {
 	local checks="$1"
-	printf 'CI wait started: %s\n' "$(state_counts "$checks")"
+	local missing_contexts="${2:-}"
+	printf 'CI wait started: %s\n' "$(state_counts "$checks" "$missing_contexts")"
 	printf '%s' "$checks" | jq -r '.[] | "  \(.name): \(.bucket)"'
 	return 0
 }
@@ -305,11 +351,19 @@ configured_required_contexts() {
 configured_context_missing_from_checks() {
 	local configured_contexts="$1"
 	local checks="$2"
-	local context=""
+	local context="" separator=""
+	local missing_contexts=""
 	while IFS= read -r context; do
 		[[ -z "$context" ]] && continue
-		printf '%s' "$checks" | jq -e --arg context "$context" 'any(.[]; .name == $context)' >/dev/null || return 0
+		if ! printf '%s' "$checks" | jq -e --arg context "$context" 'any(.[]; .name == $context)' >/dev/null; then
+			missing_contexts+="${separator}${context}"
+			separator=", "
+		fi
 	done <<<"$configured_contexts"
+	if [[ -n "$missing_contexts" ]]; then
+		printf '%s\n' "$missing_contexts"
+		return 0
+	fi
 	return 1
 }
 
@@ -323,10 +377,11 @@ classify_state() {
 	count=$(printf '%s' "$checks" | jq 'length')
 	if [[ "$required_only" -eq 1 ]]; then
 		local configured_contexts="" configured_rc=0
+		local missing_contexts=""
 		configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
 		if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
-			configured_context_missing_from_checks "$configured_contexts" "$checks"; then
-			printf 'pending\n'
+			missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
+			printf 'pending\t%s\n' "$missing_contexts"
 			return 0
 		fi
 		if [[ "$count" -eq 0 && "$configured_rc" -ne 0 && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
@@ -398,6 +453,17 @@ read_head_sha() {
 	return $?
 }
 
+verified_head_sha() {
+	local pr_number="$1" repo="$2" phase="$3" head=""
+	head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
+	if [[ -z "$head" ]]; then
+		printf 'INDETERMINATE: PR head could not be verified %s\n' "$phase" >&2
+		return 2
+	fi
+	printf '%s\n' "$head"
+	return 0
+}
+
 read_draft_state() {
 	local pr_number="$1"
 	local repo="$2"
@@ -452,18 +518,27 @@ next_interval() {
 	return 0
 }
 
+emit_recovered_state() {
+	local state_summary="$1"
+	if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
+		printf 'GitHub check observation recovered: %s\n' "$state_summary"
+		_GCW_ACTIVE_DEFERRAL=""
+	fi
+	if [[ "$_GCW_API_ERROR_VISIBLE" -eq 1 ]]; then
+		printf 'API state recovered: %s\n' "$state_summary"
+		_GCW_API_ERROR_VISIBLE=0
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
 	local start_epoch="" poll_number=0 valid_state_seen=0
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
-	local interval="$initial_interval" previous="" initial_head=""
-	initial_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
-	if [[ -z "$initial_head" ]]; then
-		printf 'INDETERMINATE: PR head could not be verified before required-check observation\n' >&2
-		return 2
-	fi
+	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
+	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
 	_GCW_API_ERROR_VISIBLE=0
@@ -471,7 +546,8 @@ wait_for_checks() {
 	while true; do
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
-		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head=""
+		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head="" state_summary=""
+		local missing_contexts=""
 		fetch_diagnostic_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-checks-wait-fetch.XXXXXX") || return 2
 		raw=$(fetch_checks "$pr_number" "$repo" "$required_only" "$poll_number" "$initial_head" 2>"$fetch_diagnostic_file") || fetch_rc=$?
 		fetch_diagnostic=$(<"$fetch_diagnostic_file")
@@ -489,41 +565,38 @@ wait_for_checks() {
 			interval="$_GCW_NEXT_INTERVAL"
 			continue
 		fi
-		if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
-			printf 'GitHub check observation recovered: %s\n' "$(state_counts "$current")"
-			_GCW_ACTIVE_DEFERRAL=""
+		current=$(apply_qlty_billing_policy "$current" "${qlty_credit_policy:-unknown}")
+		if [[ -z "$qlty_credit_policy" ]] && printf '%s' "$current" | jq -e 'any(.[]; .qlty_billing == true)' >/dev/null; then
+			# Read once per wait, including failures; unknown metadata never permits skipping.
+			qlty_credit_policy=$(read_qlty_credit_policy "$repo")
+			current=$(apply_qlty_billing_policy "$current" "$qlty_credit_policy")
 		fi
-		if [[ "$_GCW_API_ERROR_VISIBLE" -eq 1 ]]; then
-			printf 'API state recovered: %s\n' "$(state_counts "$current")"
-			_GCW_API_ERROR_VISIBLE=0
-		fi
+		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
+		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
+		state_summary=$(state_counts "$current" "$missing_contexts")
+		emit_recovered_state "$state_summary"
 		valid_state_seen=1
 		if [[ -z "$previous" ]]; then
-			emit_initial_state "$current"
+			emit_initial_state "$current" "$missing_contexts"
 			changed=1
 		elif [[ "$current" != "$previous" ]]; then
 			emit_transitions "$previous" "$current"
 			changed=1
 		elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
-			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$(state_counts "$current")"
+			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
 			next_heartbeat=$((now_epoch + heartbeat_interval))
 		fi
 		if [[ "$changed" -eq 1 ]]; then
 			next_heartbeat=$((now_epoch + heartbeat_interval))
 		fi
 
-		classification=$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")
 		case "$classification" in
 		failure)
 			emit_failure_details "$current"
 			return 1
 			;;
 		success | no-required | no-checks)
-			final_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
-			if [[ -z "$final_head" ]]; then
-				printf 'INDETERMINATE: PR head could not be verified after required checks completed\n' >&2
-				return 2
-			fi
+			final_head=$(verified_head_sha "$pr_number" "$repo" 'after required checks completed') || return 2
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
 				initial_head="$final_head"
@@ -539,7 +612,7 @@ wait_for_checks() {
 		esac
 		if [[ "$elapsed" -ge "$timeout" ]]; then
 			if [[ "$valid_state_seen" -eq 1 ]]; then
-				printf 'TIMEOUT: required checks remain non-terminal after %ss (%s)\n' "$elapsed" "$(state_counts "$current")" >&2
+				printf 'TIMEOUT: required checks remain non-terminal after %ss (%s)\n' "$elapsed" "$state_summary" >&2
 				return 8
 			fi
 			return 2
@@ -592,6 +665,16 @@ cmd_wait() {
 		log_error "Cannot resolve repository; pass --repo OWNER/REPO"
 		return 2
 	}
+	# shellcheck source=repo-actions-capability-lib.sh
+	source "${SCRIPT_DIR}/repo-actions-capability-lib.sh"
+	if repo_actions_unavailable "$repo"; then
+		# An admin fallback must still use GitHub's required checks. Local
+		# evidence is never permission to bypass native branch protection.
+		if [[ "${AIDEVOPS_ACTIONS_NATIVE_CHECKS_ONLY:-0}" != "1" ]]; then
+			repo_actions_verify_local "$repo" "$pr_number"
+			return $?
+		fi
+	fi
 	wait_for_checks "$pr_number" "$repo" "$required_only" "$timeout" "$initial_interval" "$max_interval" "$heartbeat_interval"
 	return $?
 }

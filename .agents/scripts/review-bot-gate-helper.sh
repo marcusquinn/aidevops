@@ -19,7 +19,8 @@
 # Commands:
 #   check          — Check once, return PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP
 #   event-check    — Accept trusted bot review evidence from the Actions event
-#   is-trusted-issue-sync-pr — Verify the exact generated PR identity and optional head
+#   is-trusted-issue-sync-pr — Verify the exact generated TODO PR identity (Issue
+#                     Sync or Pulse TODO handoff) and optional head
 #   classify-infra-rate-limit — Classify API exhaustion from immutable event trust
 #   wait           — Poll until a bot posts or timeout (default 600s)
 #   list           — List all bot comments found on the PR
@@ -107,6 +108,9 @@ RBG_AUTHOR_CLASS_TRUSTED="trusted"
 RBG_GITHUB_ACTIONS_BOT_ID="41898282"
 RBG_ISSUE_SYNC_PR_BRANCH="aidevops/issue-sync-todo"
 RBG_ISSUE_SYNC_PR_MARKER="<!-- aidevops:issue-sync-todo-pr -->"
+# Pulse protected-default TODO handoff (pulse-todo-publication.sh): the branch
+# suffix is the first 16 hex characters of the snapshot-derived handoff ID.
+RBG_PULSE_TODO_HANDOFF_BRANCH_PREFIX="aidevops/pulse-todo-"
 
 # Rate-limit / quota notice patterns — entries that indicate the bot tried to
 # review but was capacity-constrained. Used by grace-period logic
@@ -201,7 +205,7 @@ usage() {
 	echo "Commands:"
 	echo "  check          Check once for bot reviews (returns PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP)"
 	echo "  event-check    Check trusted bot review evidence from REVIEW_GATE_EVENT_* variables"
-	echo "  is-trusted-issue-sync-pr  Return TRUSTED (0), UNTRUSTED (1), or API error (2) from live PR metadata"
+	echo "  is-trusted-issue-sync-pr  Return TRUSTED (0), UNTRUSTED (1), or API error (2) for Issue Sync or Pulse TODO handoff PRs from live PR metadata"
 	echo "  classify-infra-rate-limit  Resolve trusted/default-advisory API exhaustion without another API call"
 	echo "  wait           Poll until bot reviews appear or timeout"
 	echo "  list           List all bot comments found"
@@ -1333,16 +1337,56 @@ _rbg_is_account_issue_sync_pr_metadata() {
 	' <<<"$pr_metadata_json" >/dev/null 2>&1
 }
 
-_rbg_is_trusted_account_issue_sync_pr() {
+_rbg_is_pulse_todo_handoff_pr_metadata() {
+	local repo="$1"
+	local pr_metadata_json="$2"
+	local expected_head_sha="$3"
+
+	[[ -n "$repo" && -n "$pr_metadata_json" && -n "$expected_head_sha" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+
+	#aidevops:trust-boundary -- GH#33955: Pulse TODO handoff PRs are generated
+	# by the runner account from a snapshot-derived handoff ID. Require one
+	# exact handoff marker whose ID prefix equals the deterministic branch
+	# suffix, a same-repository head, and the exact current head. Live
+	# permission and changed-file evidence are checked separately below.
+	jq -e \
+		--arg repo "$repo" \
+		--arg prefix "$RBG_PULSE_TODO_HANDOFF_BRANCH_PREFIX" \
+		--arg expected_head "$expected_head_sha" '
+		try (
+			(.user.login | type == "string" and length > 0) and
+			.user.type == "User" and
+			.head.repo.full_name == $repo and
+			.base.repo.full_name == $repo and
+			.head.sha == $expected_head and
+			(.head.ref | type == "string" and startswith($prefix)) and
+			(
+				(.head.ref | ltrimstr($prefix)) as $suffix |
+				([.body | scan("<!-- aidevops:pulse-todo-handoff id=([0-9a-f]{40}) -->") | .[0]] | unique) as $ids |
+				($suffix | test("^[0-9a-f]{16}$")) and
+				($ids | length) == 1 and
+				($ids[0][0:16] == $suffix)
+			)
+		) catch false
+	' <<<"$pr_metadata_json" >/dev/null 2>&1
+}
+
+# Live evidence shared by account-authored generated TODO PRs: the author must
+# hold maintainer-equivalent permission now, and the complete changed-file set
+# must be exactly TODO.md. With allow_added_briefs=1 (Pulse handoff only), the
+# set may also contain newly added todo/tasks/tNNN-brief.md captures written by
+# stale-publication repair (GH#34149); edits, deletions, renames and any other
+# path stay untrusted. Returns 0 trusted, 1 untrusted, 2 API failure.
+_rbg_account_todo_only_live_evidence() {
 	local pr_number="$1"
 	local repo="$2"
 	local pr_metadata_json="$3"
-	local expected_head_sha="$4"
+	local allow_added_briefs="${4:-0}"
 	local author_login=""
 	local permission=""
 	local changed_files=""
 
-	_rbg_is_account_issue_sync_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha" || return 1
 	author_login=$(jq -r '.user.login // empty' <<<"$pr_metadata_json" 2>/dev/null) || return 1
 	[[ "$author_login" =~ ^[A-Za-z0-9-]+$ ]] || return 1
 
@@ -1353,9 +1397,59 @@ _rbg_is_trusted_account_issue_sync_pr() {
 	*) return 1 ;;
 	esac
 
+	if [[ "$allow_added_briefs" == "1" ]]; then
+		#aidevops:trust-boundary -- GH#34149: TODO.md must change, and every
+		# other file must be a newly added brief capture under todo/tasks/.
+		changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files?per_page=100" \
+			--jq '.[] | [.filename, .status] | @tsv') || return 2
+		_rbg_todo_with_added_briefs_only "$changed_files" || return 1
+		return 0
+	fi
 	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files?per_page=100" \
 		--jq '.[].filename') || return 2
-	[[ "$changed_files" == "TODO.md" ]]
+	[[ "$changed_files" == "TODO.md" ]] || return 1
+	return 0
+}
+
+# Input: "<filename>\t<status>" lines. Exactly one TODO.md modification plus
+# zero or more added todo/tasks/tNNN-brief.md files; anything else fails.
+_rbg_todo_with_added_briefs_only() {
+	local changed_files="$1"
+	local filename="" status="" todo_seen=0
+	[[ -n "$changed_files" ]] || return 1
+	while IFS=$'\t' read -r filename status; do
+		if [[ "$filename" == "TODO.md" && "$status" == "modified" && "$todo_seen" -eq 0 ]]; then
+			todo_seen=1
+			continue
+		fi
+		[[ "$status" == "added" && "$filename" =~ ^todo/tasks/t[0-9]+(\.[0-9]+)*-brief\.md$ ]] || return 1
+	done <<<"$changed_files"
+	[[ "$todo_seen" -eq 1 ]] || return 1
+	return 0
+}
+
+_rbg_is_trusted_account_issue_sync_pr() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_metadata_json="$3"
+	local expected_head_sha="$4"
+	local evidence_rc=0
+
+	_rbg_is_account_issue_sync_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha" || return 1
+	_rbg_account_todo_only_live_evidence "$pr_number" "$repo" "$pr_metadata_json" || evidence_rc=$?
+	return "$evidence_rc"
+}
+
+_rbg_is_trusted_pulse_todo_handoff_pr() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_metadata_json="$3"
+	local expected_head_sha="$4"
+	local evidence_rc=0
+
+	_rbg_is_pulse_todo_handoff_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha" || return 1
+	_rbg_account_todo_only_live_evidence "$pr_number" "$repo" "$pr_metadata_json" 1 || evidence_rc=$?
+	return "$evidence_rc"
 }
 
 do_is_trusted_issue_sync_pr() {
@@ -1382,6 +1476,18 @@ do_is_trusted_issue_sync_pr() {
 		return 0
 	elif [[ "$account_trust_rc" -eq 2 ]]; then
 		echo "ERROR: Could not establish live account permission or complete changed-file evidence for Issue Sync trust classification." >&2
+		return 2
+	fi
+	# GH#33955: Pulse TODO handoff PRs carry a non-closing Ref and therefore
+	# have no linked-issue authority; the same exact-head, write-permission,
+	# TODO.md-only evidence is their authority instead.
+	local handoff_trust_rc=0
+	_rbg_is_trusted_pulse_todo_handoff_pr "$pr_number" "$repo" "$pr_metadata_json" "$expected_head_sha" || handoff_trust_rc=$?
+	if [[ "$handoff_trust_rc" -eq 0 ]]; then
+		echo "TRUSTED"
+		return 0
+	elif [[ "$handoff_trust_rc" -eq 2 ]]; then
+		echo "ERROR: Could not establish live account permission or complete changed-file evidence for Pulse TODO handoff trust classification." >&2
 		return 2
 	fi
 	echo "UNTRUSTED"

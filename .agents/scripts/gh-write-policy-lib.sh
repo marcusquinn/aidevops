@@ -654,13 +654,20 @@ _shim_normalize_dispatch_labels() {
 		if [[ $has_manual -eq 1 ]]; then
 			_shim_filter_cli_label_action "--add-label" "$_SHIM_DISPATCH_AUTO_LABEL"
 			_shim_filter_cli_label_action "--remove-label" "$_SHIM_DISPATCH_MANUAL_LABEL"
-			_shim_cli_label_action_has "--remove-label" "$_SHIM_DISPATCH_AUTO_LABEL" ||
-				_modified_args+=(--remove-label "$_SHIM_DISPATCH_AUTO_LABEL")
+			if _shim_dispatch_label_exists "$_SHIM_DISPATCH_AUTO_LABEL"; then
+				_shim_cli_label_action_has "--remove-label" "$_SHIM_DISPATCH_AUTO_LABEL" ||
+					_modified_args+=(--remove-label "$_SHIM_DISPATCH_AUTO_LABEL")
+			fi
 			[[ $has_auto -eq 0 ]] || _shim_warn_dispatch_label_conflict
 		elif [[ $has_auto -eq 1 ]]; then
 			_shim_filter_cli_label_action "--remove-label" "$_SHIM_DISPATCH_AUTO_LABEL"
-			_shim_cli_label_action_has "--remove-label" "$_SHIM_DISPATCH_MANUAL_LABEL" ||
-				_modified_args+=(--remove-label "$_SHIM_DISPATCH_MANUAL_LABEL")
+			# Only inject the opposite removal when it exists. `gh issue edit`
+			# fails the whole update when asked to remove a nonexistent label.
+			# Lookup failures are fail-open: preserve the user's requested edit.
+			if _shim_dispatch_label_exists "$_SHIM_DISPATCH_MANUAL_LABEL"; then
+				_shim_cli_label_action_has "--remove-label" "$_SHIM_DISPATCH_MANUAL_LABEL" ||
+					_modified_args+=(--remove-label "$_SHIM_DISPATCH_MANUAL_LABEL")
+			fi
 		fi
 		return 0
 		;;
@@ -683,6 +690,20 @@ _shim_normalize_dispatch_labels() {
 		_shim_warn_dispatch_label_conflict
 	fi
 	return 0
+}
+
+_shim_dispatch_label_exists() {
+	local label="$1"
+	local repo=""
+	local labels_json=""
+	local label_delimiter=$'\n'
+	repo=$(_shim_target_repo_slug "${_modified_args[@]}" 2>/dev/null || true)
+	[[ -n "$repo" ]] || return 1
+	labels_json=$(AIDEVOPS_GH_ROUTE_DECISION="dispatch-label-presence" \
+		_shim_run_transport "$REAL_GH" rest gh_dispatch_label_presence 0 \
+		api "/repos/${repo}/labels?per_page=100" --paginate --jq '.[].name' 2>/dev/null) || return 1
+	[[ "${label_delimiter}${labels_json}${label_delimiter}" == *"${label_delimiter}${label}${label_delimiter}"* ]]
+	return $?
 }
 
 _shim_managed_label_inventory_runner() {

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from command_policy_network import _normalize_host, _run_git_query
+from trusted_executable import require_trusted_executable
 
 NAMESPACE = "aidevops-ssh-binding-v1"
 RECOVERY = "Prepare an exact grant with ssh_binding_helper.py prepare; owner-sign it as described in reference/ssh-bindings.md"
@@ -164,7 +165,7 @@ def authorized_binding(argv: list[str], cwd: str) -> dict[str, Any]:
         signers.write_text(f'approval@aidevops.sh namespaces="{NAMESPACE}" {public_key}\n')
         sig.write_bytes(signature)
         verified = subprocess.run(  # nosec B603 -- fixed verifier argv, no shell or network.
-            ["/usr/bin/ssh-keygen", "-Y", "verify", "-f", str(signers), "-I", "approval@aidevops.sh",
+            [require_trusted_executable("ssh-keygen"), "-Y", "verify", "-f", str(signers), "-I", "approval@aidevops.sh",
              "-n", NAMESPACE, "-s", str(sig)], input=raw, capture_output=True, timeout=5, check=False,
         )
     if verified.returncode:

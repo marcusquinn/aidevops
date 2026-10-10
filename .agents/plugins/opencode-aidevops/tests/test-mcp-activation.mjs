@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -28,7 +29,10 @@ import { createMcpSessionRuntime, getMcpRegistry, getOnDemandMcpAgents, register
 import { normalizeMcpArtifactPaths } from "../mcp-artifact-paths.mjs";
 
 test("normalizes Playwright artifact links using the MCP cwd, not the worktree", () => {
-  const runtime = createMcpSessionRuntime("/home/example/.aidevops/.agent-workspace", { nonce: "links" });
+  // Symlink-free fixture root: macOS /home and /var are symlinks, which the
+  // normalizer deliberately refuses to traverse.
+  const fixtureRoot = join(realpathSync(tmpdir()), "aidevops-links-fixture-absent");
+  const runtime = createMcpSessionRuntime(join(fixtureRoot, ".aidevops/.agent-workspace"), { nonce: "links" });
   const workspace = runtime.workspaces.playwright;
   const snapshot = join(workspace.outputDirectory, "page.yml");
   const output = { output: `[Snapshot](${relative(workspace.outputDirectory, snapshot)})\n[Screenshot](./shot.png)` };
@@ -271,6 +275,9 @@ test("pins legacy Playwriter commands while preserving custom commands", () => {
     registerMcpServers(config);
 
     assert.strictEqual(config.mcp.playwriter, playwriter);
+    assert.deepEqual(playwriter.command.slice(0, 1), ["bash"]);
+    assert.match(playwriter.command[1], /browser-mcp-launcher\.sh$/);
+    assert.equal(playwriter.command[2], "playwriter");
     assert.equal(playwriter.command.at(-1), "playwriter@0.5.0");
     assert.ok(!playwriter.command.includes("playwriter@latest"));
     assert.equal(playwriter.enabled, false);
@@ -344,8 +351,11 @@ test("opts framework-generated Playwriter commands into the authenticated relay 
   try {
     const generated = { mcp: {}, tools: {} };
     registerMcpServers(generated);
-    assert.match(generated.mcp.playwriter.command[0], /node$/);
-    assert.match(generated.mcp.playwriter.command[1], /playwriter-authenticated-relay\.mjs$/);
+    assert.equal(generated.mcp.playwriter.command[0], "bash");
+    assert.match(generated.mcp.playwriter.command[1], /browser-mcp-launcher\.sh$/);
+    assert.equal(generated.mcp.playwriter.command[2], "playwriter");
+    assert.match(generated.mcp.playwriter.command[3], /node$/);
+    assert.match(generated.mcp.playwriter.command[4], /playwriter-authenticated-relay\.mjs$/);
     assert.equal(generated.mcp.playwriter.command.at(-1), "playwriter@0.5.0");
     assert.ok(!generated.mcp.playwriter.command.some((part) => part.includes("TOKEN")));
 
@@ -360,9 +370,16 @@ test("opts framework-generated Playwriter commands into the authenticated relay 
       tools: {},
     };
     registerMcpServers(previousGenerated);
+    assert.match(previousGenerated.mcp.playwriter.command[1], /browser-mcp-launcher\.sh$/);
     assert.match(
-      previousGenerated.mcp.playwriter.command[1],
+      previousGenerated.mcp.playwriter.command[4],
       /playwriter-authenticated-relay\.mjs$/,
+    );
+    registerMcpServers(previousGenerated);
+    assert.equal(
+      previousGenerated.mcp.playwriter.command.filter((part) => part === "playwriter").length,
+      1,
+      "repeated registration must not re-wrap the confined command",
     );
     assert.equal(previousGenerated.mcp.playwriter.enabled, false);
 
@@ -414,7 +431,7 @@ test("migrates browser MCPs to disconnected and globally denied", () => {
   assert.ok(config.mcp.playwriter.command.includes("playwriter@0.5.0"));
   assert.ok(!config.mcp.playwriter.command.includes("playwriter@latest"));
   assert.equal(config.mcp.playwright.enabled, false);
-  assert.equal(config.mcp.playwright.command[0], "/bin/bash");
+  assert.equal(config.mcp.playwright.command[0], "bash");
   assert.ok(config.mcp.playwright.command.includes(runtime.workspaces.playwright.directory));
   assert.ok(config.mcp.playwright.command.includes(
     join(runtime.workspaces.playwright.directory, ".playwright-mcp"),

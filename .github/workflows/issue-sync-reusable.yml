@@ -268,8 +268,13 @@ jobs:
           # limited to contents publication and the bounded PR fallback.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # GH#33809: one task's issue-creation failure must not skip publication,
+      # ref pull-back or TODO.md publication for every other task. The failure
+      # is re-raised by "Report task issue-creation failure" at the end of the job.
       - name: Push new tasks as issues
+        id: push-tasks
         if: steps.check-author.outputs.skip != 'true'
+        continue-on-error: true
         run: |
           echo "=== Creating issues for new tasks ==="
           set +e
@@ -385,6 +390,12 @@ jobs:
         if: steps.relationship-sync.outputs.pending == 'true'
         run: |
           echo "::warning::Relationship sync remains pending after durable TODO.md ref persistence; a later bounded reconciliation will retry it."
+
+      - name: Report task issue-creation failure
+        if: steps.push-tasks.outcome == 'failure'
+        run: |
+          echo "::error::Issue creation failed for one or more TODO.md tasks (see 'Push new tasks as issues'); publication and ref sync still ran for the remaining tasks."
+          exit 1
 
   sync-on-issue:
     name: Sync GitHub Issue → TODO.md

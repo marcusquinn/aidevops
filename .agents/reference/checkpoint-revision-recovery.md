@@ -17,6 +17,28 @@ and release. That comment names the release ID, attempt and both exits: approve
 after correcting the brief, or close the draft to restart dispatch (GH#33132).
 It grants nothing, starts no line with an event prefix and never dispatches.
 
+### Clean or completed release with an open draft (GH#33850)
+
+The same `blocked-attention` entrypoint also handles a latest trusted
+`CLAIM_RELEASED reason=clean` or `reason=worker_complete` when no newer owner
+exists. These are runtime exit classifications, not evidence that the draft is
+complete or that its work landed elsewhere: `worker_complete` includes a
+fail-open PR-presence result. Releases from another trusted runner are accepted
+when the release runner matches its poster. The released attempt's own closing
+terminal lease is ignored using the shared ownership predicate (GH#33839);
+unrelated terminal leases and successor claims still suppress the record.
+
+Pulse posts one `BLOCKED_CHECKPOINT_ATTENTION` per PR head, even across later
+clean/completed releases. It grants no approval, launches no worker, changes no
+assignment, and never closes a draft based only on an exit reason. The brief owner
+must inspect the exact head against the default branch and any replacement PR:
+recover unique work through the guarded exact-head workflow, mark complete work
+ready for normal review, or close already-landed work with a verified merged
+replacement pointer. Automatic stall retries and blocked revision approvals are
+unchanged. A new draft head re-arms attention.
+
+### Approving a corrected blocked checkpoint
+
 1. Read fresh issue/PR metadata and coordination comments. Verify the exact
    original worker attempt has released as `blocked`, no successor owns the
    objective, and the proposed scope correction preserves the authorised outcome.

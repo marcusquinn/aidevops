@@ -601,6 +601,25 @@ _gh_ci_ensure_requested_reminder_label() {
 	return 0
 }
 
+# GH#34003: provision the lifecycle label this wrapper derives itself
+# (_gh_ci_prepare_status_label), using the canonical status-label contract.
+# Caller-supplied labels are never created here. Best-effort by design: a
+# converged repo costs one cached exact-label read, while customised label
+# definitions, missing label permissions, or a transient read failure must not
+# block creation in repos where the label already exists. When provisioning
+# fails, explain the prerequisite before gh reports any missing label.
+_gh_ci_ensure_derived_status_label() {
+	local target_repo="$1"
+	[[ ${#_GH_CI_STATUS_LABEL_ARGS[@]} -gt 0 ]] || return 0
+	declare -F ensure_status_labels_exist >/dev/null 2>&1 || return 0
+	[[ -n "$target_repo" ]] || target_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+	[[ -n "$target_repo" ]] || return 0
+	if ! ensure_status_labels_exist "$target_repo" 2>/dev/null; then
+		printf 'gh_create_issue: could not verify or provision canonical status:* labels on %s (label-create permission or API failure); creation fails if derived status:available is absent — create the standard status labels or pass an existing status:* label\n' "$target_repo" >&2
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -674,6 +693,7 @@ gh_create_issue() {
 	local issue_output rc auto_assignee="" target_repo=""
 	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
 	_gh_ci_ensure_requested_reminder_label "$target_repo" "$@" || return 1
+	_gh_ci_ensure_derived_status_label "$target_repo"
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		if [[ "${AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT:-0}" == 1 ]]; then
 			# GH#30325: pending publication withholds auto-dispatch from the

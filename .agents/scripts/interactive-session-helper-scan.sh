@@ -288,9 +288,10 @@ _isc_cmd_release_if_dead() {
 	[[ -n "$stamp_hostname" && "$stamp_hostname" == "$local_hostname" ]] || return 1
 
 	local label_rc=0
+	local lockdown=0
 	_isc_has_label "$issue" "$slug" "no-auto-dispatch" || label_rc=$?
 	case "$label_rc" in
-	0) return 1 ;;
+	0) lockdown=1 ;;
 	2) return 1 ;;
 	esac
 
@@ -298,6 +299,15 @@ _isc_cmd_release_if_dead() {
 	stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp_path" 2>/dev/null || echo "")
 	if [[ -n "$pid" ]] && _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
 		return 1
+	fi
+
+	if [[ "$lockdown" -eq 1 ]]; then
+		# A lockdown on a closed issue protects no dispatch decision (GH#33873):
+		# remove only the dead local stamp and leave labels/assignees untouched.
+		_isc_issue_is_closed "$issue" "$slug" || return 1
+		_isc_info "release-if-dead: removing dead stamp for closed lockdown issue #${issue} in ${slug}"
+		rm -f "$stamp_path" 2>/dev/null || true
+		return 0
 	fi
 
 	_isc_info "release-if-dead: releasing #${issue} in ${slug} after same-host owner exit"
@@ -395,12 +405,74 @@ _isc_worktree_has_recoverable_progress() {
 	return 1
 }
 
+# Apply the auto-release decision for one dead, progress-free stamp.
+# Sets _ISC_DEAD_STAMP_OUTCOME to one of:
+#   released         — canonical release (stamp + labels/assignee)
+#   closed-reaped    — closed lockdown issue; only the local stamp was removed
+#   no-auto-dispatch — open lockdown issue; preserved (fail closed)
+#   lookup-failed    — labels unverifiable; preserved (fail closed)
+# A lockdown on a closed issue protects no dispatch decision, so its dead stamp
+# is removed without changing labels or assignees (GH#33873).
+_ISC_DEAD_STAMP_OUTCOME=""
+_isc_auto_release_dead_stamp() {
+	local stamp="$1"
+	local issue="$2"
+	local slug="$3"
+	local label_rc=0
+	_ISC_DEAD_STAMP_OUTCOME="lookup-failed"
+	_isc_has_label "$issue" "$slug" "no-auto-dispatch" || label_rc=$?
+	[[ "$label_rc" -eq 2 ]] && return 0
+	if [[ "$label_rc" -eq 0 ]]; then
+		_ISC_DEAD_STAMP_OUTCOME="no-auto-dispatch"
+		# _isc_issue_is_closed returns 1 on lookup failure, so an unverifiable
+		# state keeps the stamp.
+		_isc_issue_is_closed "$issue" "$slug" || return 0
+		_isc_info "[scan-stale] removing dead stamp for closed lockdown issue: $(basename "$stamp")"
+		rm -f "$stamp" 2>/dev/null || true
+		_ISC_DEAD_STAMP_OUTCOME="closed-reaped"
+		return 0
+	fi
+	_isc_info "[scan-stale] auto-releasing dead stamp: $(basename "$stamp")"
+	_isc_release_claim_by_stamp_path "$stamp" >/dev/null 2>&1 || true
+	_ISC_DEAD_STAMP_OUTCOME="released"
+	return 0
+}
+
+# Print the Phase 1 auto-release summary. Skipped dead stamps are reported so
+# the pulse log never implies there are no stale stamps when every stamp was
+# preserved by a fail-closed gate (GH#33873).
+_isc_print_auto_release_summary() {
+	local released="$1"
+	local closed_reaped="$2"
+	local skip_lockdown="$3"
+	local skip_progress="$4"
+	local skip_lookup="$5"
+	local skipped=$((skip_lockdown + skip_progress + skip_lookup))
+	local skip_detail="no-auto-dispatch=${skip_lockdown}, progress=${skip_progress}, lookup-failed=${skip_lookup}"
+
+	if [[ "$released" -gt 0 ]]; then
+		_isc_info "[scan-stale] Phase 1 auto-released $released stamp(s)."
+		printf 'Phase 1: auto-released %d dead stamp(s) (PID gone or argv-hash mismatch).\n' "$released"
+	fi
+	if [[ "$closed_reaped" -gt 0 ]]; then
+		printf 'Phase 1: removed %d dead stamp(s) for closed lockdown issues (labels unchanged).\n' "$closed_reaped"
+	fi
+	if [[ "$skipped" -gt 0 ]]; then
+		printf 'No releasable stale claims for %d dead stamp(s) (skipped: %s).\n' "$skipped" "$skip_detail"
+	elif [[ "$released" -eq 0 && "$closed_reaped" -eq 0 ]]; then
+		printf 'No stale interactive claims.\n'
+	fi
+	return 0
+}
+
 _isc_scan_dead_stamps_phase() {
 	local auto_release_flag="${1:-0}"
 	local stamp_limit="${2:-0}"
 	[[ "$stamp_limit" =~ ^[0-9]+$ ]] || stamp_limit=0
 	local stale_count=0
 	local auto_released=0
+	local closed_reaped=0
+	local skip_lockdown=0 skip_progress=0 skip_lookup=0
 	local stamps_examined=0
 	local local_host
 	local_host=$(hostname 2>/dev/null || echo "unknown")
@@ -441,15 +513,19 @@ _isc_scan_dead_stamps_phase() {
 				_isc_worktree_has_recoverable_progress "$worktree" || progress_rc=$?
 				# Dirty/ahead work is a durable recovery checkpoint. Unknown Git
 				# state also fails closed rather than releasing possible work.
-				[[ "$progress_rc" -eq 0 || "$progress_rc" -eq 2 ]] && continue
+				if [[ "$progress_rc" -eq 0 || "$progress_rc" -eq 2 ]]; then
+					skip_progress=$((skip_progress + 1))
+					continue
+				fi
 				if [[ "$auto_release_flag" == "1" ]]; then
-					local label_rc=0
-					_isc_has_label "$issue" "$slug" "no-auto-dispatch" || label_rc=$?
-					# Lockdowns and GitHub lookup failures both fail closed.
-					[[ $label_rc -eq 0 || $label_rc -eq 2 ]] && continue
-					_isc_info "[scan-stale] auto-releasing dead stamp: $(basename "$stamp")"
-					_isc_release_claim_by_stamp_path "$stamp" >/dev/null 2>&1 || true
-					auto_released=$((auto_released + 1))
+					# Open lockdowns and GitHub lookup failures fail closed.
+					_isc_auto_release_dead_stamp "$stamp" "$issue" "$slug"
+					case "$_ISC_DEAD_STAMP_OUTCOME" in
+					released) auto_released=$((auto_released + 1)) ;;
+					closed-reaped) closed_reaped=$((closed_reaped + 1)) ;;
+					no-auto-dispatch) skip_lockdown=$((skip_lockdown + 1)) ;;
+					*) skip_lookup=$((skip_lookup + 1)) ;;
+					esac
 				else
 					[[ $stale_count -eq 0 ]] && printf 'Stale interactive claims (dead session — PID gone or recycled by unrelated process):\n\n'
 					printf '  #%s in %s\n' "$issue" "$slug"
@@ -464,12 +540,8 @@ _isc_scan_dead_stamps_phase() {
 	fi
 
 	if [[ "$auto_release_flag" == "1" ]]; then
-		if [[ $auto_released -eq 0 ]]; then
-			printf 'No stale interactive claims.\n'
-		else
-			_isc_info "[scan-stale] Phase 1 auto-released $auto_released stamp(s)."
-			printf 'Phase 1: auto-released %d dead stamp(s) (PID gone or argv-hash mismatch).\n' "$auto_released"
-		fi
+		_isc_print_auto_release_summary "$auto_released" "$closed_reaped" \
+			"$skip_lockdown" "$skip_progress" "$skip_lookup"
 	else
 		if [[ $stale_count -eq 0 ]]; then
 			printf 'No stale interactive claims.\n'

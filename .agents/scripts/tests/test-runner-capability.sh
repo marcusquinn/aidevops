@@ -40,6 +40,8 @@ printf 'PRIVATE_ERROR\n' >&2
         global passed
         if requirements is None:
             config.unlink(missing_ok=True)
+        elif isinstance(requirements, str):
+            config.write_text(requirements)
         else:
             config.write_text(json.dumps({'dispatch_class_requirements': requirements}))
         result = subprocess.run(['bash', '-c',
@@ -55,6 +57,15 @@ printf 'PRIVATE_ERROR\n' >&2
 
     issue = {'labels': [{'name': 'dispatch-class:publish'}], 'body': ''}
     check('no declarations preserves dispatch', issue)
+    malformed_config = '{"dispatch_class_requirements": {}} trailing'
+    check('malformed config without labels preserves dispatch', {'body': ''}, malformed_config)
+    check('malformed config without class labels preserves dispatch',
+          {'labels': [{'name': 'bug'}, 'auto-dispatch'], 'body': ''}, malformed_config)
+    check('malformed config with class label defers distinctly', issue, malformed_config, False,
+          'config_unreadable path=.aidevops.json')
+    check('malformed config still checks brief secrets without class labels',
+          {'body': 'requires-secrets: MISSING'}, malformed_config, False,
+          'secret_missing name=MISSING')
     check('missing secret defers', issue, {'publish': {'secrets': ['MISSING']}}, False,
           'secret_missing name=MISSING')
     check('resolvable secret proceeds without output', issue, {'publish': {'secrets': ['GOOD']}})
@@ -164,12 +175,16 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
     for transport in ('pipe', 'socket', 'file'):
         for label, fresh, requirements, success in (
             ('capable', fresh_issue, None, True),
+            ('malformed config without class label', dict(fresh_issue, labels=[]), malformed_config, True),
+            ('malformed config with class label', fresh_issue, malformed_config, False),
             ('missing secret', dict(fresh_issue, body='requires-secrets: MISSING'), None, False),
             ('failed probe', fresh_issue, {'publish': {'probe': 'probe'}}, False),
             ('closed metadata', dict(fresh_issue, state='closed'), None, False),
         ):
             config.unlink(missing_ok=True)
-            if requirements is not None:
+            if isinstance(requirements, str):
+                config.write_text(requirements)
+            elif requirements is not None:
                 probe.write_text('#!/usr/bin/env bash\nexit 1\n')
                 config.write_text(json.dumps({'dispatch_class_requirements': requirements}))
             check_env = dict(dispatch_env, FRESH_META=json.dumps(fresh))
@@ -198,6 +213,12 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
             assert 'No such device' not in diagnostics and 'PRIVATE_' not in diagnostics, diagnostics
             if not success:
                 assert 'runner_capability_unmet' in diagnostics, diagnostics
+            if label == 'malformed config with class label':
+                assert 'reason=config_unreadable path=.aidevops.json' in diagnostics, diagnostics
+                assert 'signal=config_unreadable cooldown=none' in diagnostics, diagnostics
+            elif label in ('missing secret', 'failed probe'):
+                signal = 'secret_missing' if label == 'missing secret' else 'probe_failed'
+                assert f'signal={signal} cooldown=eligible' in diagnostics, diagnostics
             print('PASS fresh gate', transport, label)
             passed += 1
     config.unlink(missing_ok=True)

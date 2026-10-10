@@ -32,18 +32,31 @@ async function gitWorktreeIdentity(root, subject = "Image", role = "requested wo
   };
 }
 
+// `registry verify-owner` exits 3 with this receipt when the row names the
+// current session but its owner process exited (for example after a reboot).
+const STALE_SAME_SESSION_EXIT = 3;
+const STALE_SAME_SESSION_RECEIPT = "STALE_OWNER_SAME_SESSION";
+
+export function ownershipFailureMessage(subject, root, error) {
+  if (error?.code === STALE_SAME_SESSION_EXIT && String(error?.stdout || "").trim() === STALE_SAME_SESSION_RECEIPT) {
+    return `${subject} workdir is registered to the current OpenCode session, but its recorded owner process has exited (for example after a restart). Run aidevops_pre_edit_check with workdir=${root} (or pre-edit-check.sh in that worktree) to re-claim it for this session, then retry.`;
+  }
+  return `${subject} workdir is not owned by the current OpenCode session. For a registered previous-session worktree, run worktree-helper.sh adopt <path> <session> <task> after its owner exits; live owners cannot be adopted.`;
+}
+
 async function verifyRegisteredOwnership({ root, sessionID, scriptsDir, subject }) {
   if (!scriptsDir) throw new Error(`${subject} worktree ownership verification is unavailable.`);
+  let stdout;
   try {
-    const { stdout } = await execFileAsync(
+    ({ stdout } = await execFileAsync(
       join(scriptsDir, "worktree-helper.sh"),
       ["registry", "verify-owner", root, sessionID],
       { encoding: "utf8", timeout: 10_000 },
-    );
-    if (stdout.trim() !== "VERIFIED") throw new Error("unexpected verification receipt");
-  } catch {
-    throw new Error(`${subject} workdir is not owned by the current OpenCode session. For a registered previous-session worktree, run worktree-helper.sh adopt <path> <session> <task> after its owner exits; live owners cannot be adopted.`);
+    ));
+  } catch (error) {
+    throw new Error(ownershipFailureMessage(subject, root, error));
   }
+  if (stdout.trim() !== "VERIFIED") throw new Error(ownershipFailureMessage(subject, root, undefined));
 }
 
 async function registeredCanonicalRoot(canonicalRoot) {

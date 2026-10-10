@@ -102,6 +102,16 @@ cmd_commit_and_pr() {
 
 	_parse_commit_and_pr_args "$@" || return 1
 
+	# Reject the final title before staging, rebasing or publishing anything.
+	if [[ -z "$pr_title" ]]; then
+		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")" || return 1
+	fi
+	if ! _full_loop_valid_squash_subject "$pr_title"; then
+		print_error "PR title is not a valid squash subject; refusing commit-and-pr"
+		print_error "Use GH#N: ..., tNNN: ..., or conventional type(scope): ...; extra issues belong in the body as Resolves #N."
+		return 1
+	fi
+
 	# Validate inputs and detect repo/branch (sets $repo and $branch in this scope)
 	local repo="" branch="" base_branch="" base_ref=""
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
@@ -145,6 +155,10 @@ cmd_commit_and_pr() {
 	_validate_replacement_pr_ancestry "$issue_number" "$repo" "$branch" \
 		"$replacement_pr" "$replacement_reason" || return 1
 	local replacement_pr_head_sha="${ISSUE_OPEN_PR_HEAD_SHA:-}"
+	# GH#34233: prove a seed draft's head is in this branch before WIP
+	# finalization squashes it; the proven SHA authorizes closing the seed.
+	local seed_proof=""
+	seed_proof=$("${SCRIPT_DIR}/seed-pr-helper.sh" proof "$issue_number" --repo "$repo" 2>/dev/null) || seed_proof=""
 	# GH#27902: WIP commits are durable checkpoints, not publishable history.
 	# If any exist on the branch, replace the branch range with one final commit
 	# before validators inspect HEAD and before rebase/push can publish it.
@@ -157,15 +171,37 @@ cmd_commit_and_pr() {
 
 	local files_changed=""
 	local closing_keyword="Resolves"
+	local planning_only=0
 	local pr_body=""
 	local origin_label=""
+	local pr_only_scope=0
 	_commit_and_pr_prepare_metadata || return 1
 	_commit_and_pr_check_readiness || return 1
 	local pr_number=""
 	_commit_and_pr_publish || return 1
+	if [[ -n "$seed_proof" && -n "$pr_number" ]]; then
+		"${SCRIPT_DIR}/seed-pr-helper.sh" supersede "$issue_number" "$pr_number" --repo "$repo" \
+			--seed-oid "${seed_proof##*$'\t'}" >&2 ||
+			print_warning "Seed PR for #${issue_number} was not closed; close it after verifying PR #${pr_number} contains it"
+	fi
 
 	# Output PR number for caller to pass to `merge`
 	printf '%s\n' "$pr_number"
+	return 0
+}
+
+# Only non-empty diffs confined to planning paths qualify.
+_diff_is_planning_only() {
+	local base_ref="$1"
+	local paths="" path=""
+	paths=$(git diff --name-only "${base_ref}..HEAD") || return 1
+	[[ -n "$paths" ]] || return 1
+	while IFS= read -r path; do
+		case "$path" in
+		TODO.md | todo/*) ;;
+		*) return 1 ;;
+		esac
+	done <<<"$paths"
 	return 0
 }
 
@@ -195,6 +231,11 @@ _commit_and_pr_prepare_metadata() {
 	elif _issue_has_parent_task_label "$issue_number" "$repo"; then
 		closing_keyword="For"
 		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
+	fi
+	if [[ "$allow_parent_close" -eq 0 ]] && _diff_is_planning_only "$base_ref"; then
+		closing_keyword="For"
+		planning_only=1
+		print_info "Planning-only diff — using 'For' keyword; issue stays dispatchable"
 	fi
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then
@@ -255,6 +296,44 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 		print_error "Completion bookkeeping requires issue #${issue_number} to be verified closed with a terminal reason"
 		return 1
 	fi
+	# GH#34052: resolve trusted PR-only scope before any remote mutation so an
+	# unknown scope never publishes a PR that lacks its merge hold.
+	local pr_only_rc=0
+	_issue_pr_only_contract_state "$issue_number" "$repo" || pr_only_rc=$?
+	case "$pr_only_rc" in
+	0)
+		pr_only_scope=1
+		print_info "Issue #${issue_number} has a trusted PR-only completion contract; the PR will carry hold-for-review"
+		;;
+	1) ;;
+	*)
+		print_error "Aborting: unable to verify PR-only completion scope for issue #${issue_number}; retry when GitHub reads recover"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+# GH#34052: a trusted PR-only task ends at a verified ready PR. The live
+# hold-for-review label refuses every full-loop, pulse, auto-merge and stuck-PR
+# merge transport until a maintainer removes it. Verify the postcondition so a
+# partial label write cannot leave the PR mergeable; rerunning commit-and-pr
+# continues the same PR and reapplies the hold.
+_apply_pr_only_hold() {
+	local pr_number="$1"
+	local repo="$2"
+	local labels=""
+	if ! gh_pr_edit_safe "$pr_number" --repo "$repo" --add-label "hold-for-review" >/dev/null; then
+		print_error "Could not apply hold-for-review to PR-only PR #${pr_number}; rerun commit-and-pr before any merge"
+		return 1
+	fi
+	labels=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
+		--json labels --jq '[.labels[].name] | join(",")') || labels=""
+	if [[ ",${labels}," != *",hold-for-review,"* ]]; then
+		print_error "PR-only PR #${pr_number} did not reach the hold-for-review postcondition; rerun commit-and-pr before any merge"
+		return 1
+	fi
+	print_info "PR #${pr_number} held for maintainer review (trusted PR-only scope); emit POST_PR_HANDOFF instead of merging"
 	return 0
 }
 
@@ -294,12 +373,17 @@ _commit_and_pr_publish() {
 			"$branch" "$issue_number" "$commit_message" >&2
 		return 1
 	}
+	if [[ "$pr_only_scope" -eq 1 ]]; then
+		_apply_pr_only_hold "$pr_number" "$repo" || return 1
+	fi
 	# Recover from partial GraphQL writes before marking either side in review.
 	if [[ "$origin_label" == "origin:worker" && "$closing_keyword" == "Resolves" ]]; then
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1
 	fi
 	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions" || return 1
-	_label_issue_in_review "$issue_number" "$repo"
+	if [[ "$planning_only" -eq 0 ]]; then
+		_label_issue_in_review "$issue_number" "$repo"
+	fi
 	_label_pr_in_review "$pr_number" "$repo"
 	if is_loop_active; then
 		_full_loop_record_phase "pr-review" "$pr_number" || return 1

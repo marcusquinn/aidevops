@@ -25,7 +25,7 @@ but workers couldn't discover from the brief.
 |--------|-----------|-------------|
 | `function-complexity` | 100 lines | `(file, fname)` |
 | `nesting-depth` | 4 levels deep | `(file, 'NEST')` |
-| `file-size` | 1500 lines (shell) | `(file)` |
+| `file-size` | Non-README Markdown: 1000 lines at root / 500 elsewhere | `(file)` |
 
 **Decision rule for brief authors:**
 
@@ -54,6 +54,16 @@ extract plan without re-discovering it from scratch.
 to the PR with a `## Complexity Bump Justification` section. See section 4 of this doc.
 
 ## 1. When to Use This
+
+### Markdown size remediation
+
+The pre-push hook, local linter and CI ratchet gate non-README Markdown above 1,000 lines at repository root (no `/` in the repo-relative path), or 500 lines elsewhere. `README.md` anywhere is exempt. Existing violations remain debt, not a new regression; code file length is not gated by this metric.
+
+When a hook self-blocks or any process reports a Markdown size violation:
+
+1. Review the **whole document** for concision **without losing any detail**: repetition, wordiness, duplicated sections and tables instead of prose. Apply that pass wherever possible; preserve facts, constraints and discoverability.
+2. Only if that is insufficient, split/index while preserving all detail and navigation.
+3. Only then consider a justified `complexity-bump-ok` / `COMPLEXITY_GUARD_DISABLE=1` bypass under the existing authorization rules. Record why concision and splitting cannot solve it (for example an exact upstream copy); never silently bypass a gate.
 
 Use this playbook when:
 
@@ -208,7 +218,8 @@ human reviewer can distinguish a split artifact from new debt.
 ### 4.2 Pre-push complexity guard
 
 The client-side `complexity-regression-pre-push.sh` hook rejects on the same
-false positive. Targeted bypass:
+false positive. For Markdown, follow the conciseness-first sequence above before
+considering an authorized, justified targeted bypass:
 
 ```bash
 COMPLEXITY_GUARD_DISABLE=1 git push

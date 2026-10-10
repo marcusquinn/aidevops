@@ -470,6 +470,9 @@ _dj_launch_job() {
 			GITHUB_REPOSITORY="$repo_slug" \
 			"${command_args[@]}" >>"$job_log" 2>&1 &
 	else
+		# GH#34250: prompt jobs are standalone, never issue work. Prose that
+		# mentions an issue must not demand the issue-worker env contract.
+		command_args+=(--standalone-prompt)
 		"${command_args[@]}" >>"$job_log" 2>&1 &
 	fi
 	_DJ_CHILD_PID=$!

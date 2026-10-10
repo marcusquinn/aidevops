@@ -23,7 +23,7 @@ tools:
 
 - **Auto-run**: Called by `version-manager.sh release` before version bump
 - **Manual**: `.agents/scripts/linters-local.sh`
-- **Skip**: `version-manager.sh release [type] --force --skip-preflight`
+- **Skip**: `version-manager.sh release [type] --force --skip-preflight` (aidevops repo only; other repos follow their own release docs)
 - **Fast mode**: `.agents/scripts/linters-local.sh --fast`
 
 **Check Phases** (fast -> slow):

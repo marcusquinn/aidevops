@@ -17,12 +17,12 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 
 ## Task Creation
 
-Issue-first planning uses the implemented atomic publication contract in
-`reference/planning-publication-lifecycle.md`: online local creators add
-`publication:pending` and withhold positive dispatch labels until the exact
-default-branch TODO/ref/brief snapshot is validated. Direct publication or a
-merged planning PR triggers idempotent reconciliation; failed or closed-unmerged
-publication leaves the issue blocked and safe to retry.
+Issues lead; `TODO.md` and briefs are repository backups (GH#34232,
+`reference/planning-publication-lifecycle.md`). A worker-ready issue gets its
+intended dispatch labels at creation and never waits for a planning merge.
+`publication:pending` is an opt-in hold for bodies that are not yet
+self-contained (for example `/new-task --batch` template stubs); companion
+files go on a seed draft PR (`workflows/brief.md` "Seeded Draft PR Decision").
 
 1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
 2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `~/.aidevops/agents/templates/brief-template.md`)
@@ -135,14 +135,16 @@ Natural-language task capture must be as explicit as slash commands. When a user
 |-------------|-------|--------------|
 | `/full-loop ...`, issue/task number after `/full-loop`, "do/work/fix/implement this now", "in this session" | Execute `/full-loop` in the primary conversation | Do not ask whether to start or delegate; proceed unless blocked by safety/secret/destructive gates |
 | "background", "worker", "auto-dispatch", "have an agent do this" | Compose with `workflows/brief.md`, create TODO/issue with `#auto-dispatch` when readiness passes, and queue/dispatch | Ask only for missing secrets, destructive approval, unknown repo, or unavailable verification |
-| "save", "log", "for later", `/save-todo`, `/aidevops-save-todo` | Compose with `workflows/brief.md`; save as a local TODO/plan without creating an implementation issue | Do not ask again; explicit later intent is the decision |
+| "save", "log", "for later", `/save-todo`, `/aidevops-save-todo` | Compose with `workflows/brief.md`; saved `tNNN` TODO rows publish through issue-sync as non-dispatched tracking issues without `auto-dispatch`; ID-less plan lines stay local | Do not ask again; explicit later intent is the decision |
 | "create/file/open an issue", or a session identifies a fixable out-of-scope finding | Compose with `workflows/brief.md`; create a worker-ready implementation issue with `#auto-dispatch` | Do not ask for separate dispatch approval; issue creation authorizes implementation |
 | Ambiguous "we need to...", "should add...", "can you note..." | Infer the safest productive route from the established objective: implement in scope now, otherwise create a worker-ready auto-dispatch issue | Ask before publication only when human input is materially irreplaceable under `reference/self-improvement.md` |
 
 Never offer "create an issue" and "create an issue and auto-dispatch" as separate
 choices for implementation work. Decide whether an issue should exist before
-publishing it; once created, automatic implementation is the default. Explicit
-save/later intent stays local and needs no follow-up question. If a brief cannot
+publishing it; once an implementation issue is created, automatic implementation
+is the default. Explicit save/later intent creates non-dispatched tracking issues
+for `tNNN` TODO rows through issue-sync; only ID-less plan lines stay local. Neither
+form needs a follow-up dispatch question. If a brief cannot
 meet auto-dispatch readiness, repair it autonomously when possible; otherwise
 record the concrete blocker and missing irreplaceable input without converting
 routine uncertainty into `#no-auto-dispatch`.

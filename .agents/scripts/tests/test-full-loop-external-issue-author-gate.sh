@@ -5,7 +5,7 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-STATE_HELPER="${TEST_DIR}/../full-loop-helper-state.sh"
+STATE_HELPER="${TEST_DIR}/../full-loop-helper-state-lifecycle.sh"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 SCRIPT_DIR="$TEST_ROOT"
@@ -16,6 +16,8 @@ MOCK_HEADLESS=0
 TESTS_RUN=0
 TESTS_FAILED=0
 
+# The extracted gates use the lifecycle module's boolean constants.
+eval "$(sed -n '/^_FULL_LOOP_BOOL_TRUE=/p; /^_FULL_LOOP_BOOL_FALSE=/p' "$STATE_HELPER")"
 helper_source=$(awk '/^_linked_issue_author_allows_start\(\) \{/,/^}/ { print }' "$STATE_HELPER")
 gate_source=$(awk '/^_check_linked_issue_gate\(\) \{/,/^}/ { print }' "$STATE_HELPER")
 [[ -n "$helper_source" ]] || {

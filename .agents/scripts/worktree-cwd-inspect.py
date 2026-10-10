@@ -3,6 +3,11 @@
 
 Install a root-owned copy with a single-executable sudoers rule. Never run
 this from a writable worktree through sudo. Output is a path, not a verdict.
+
+The interpreter is deliberately absolute, not `/usr/bin/env python3`: this
+runs as root via sudo, where an env lookup could follow the caller's PATH.
+The installing operator rewrites line 1 to the root-owned python3 of the host
+(see reference/worktree-cwd-visibility.md).
 """
 
 import os

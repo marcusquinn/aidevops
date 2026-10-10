@@ -178,6 +178,18 @@
       "probes": {"configured": {"env_any": ["DATAFORSEO_USERNAME"]}, "authenticated": {"env_all": ["DATAFORSEO_USERNAME", "DATAFORSEO_PASSWORD"]}, "authorized": {"live": "requires provider permission check"}, "reachable": {"live": "requires MCP handshake"}, "tool_visible": {"tool": "dataforseo_*"}}
     },
     {
+      "name": "seo-utils-data",
+      "aliases": ["seo-utils", "seoutils", "seoutils-mcp"],
+      "owner": "SEO",
+      "description": "Local SEO Utils desktop app data and actions through its stdio MCP",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["seo/seo-utils.md", "scripts/seo-utils-mcp-launcher.sh"],
+      "mcp": "seo-utils",
+      "fallback": "seo-data",
+      "required": ["deployed", "enabled", "reachable", "tool_visible"],
+      "probes": {"deployed": {"path": "scripts/seo-utils-mcp-launcher.sh"}, "enabled": {"live": "requires SEO Utils MCP access and Settings > MCP Server enabled"}, "reachable": {"live": "requires MCP handshake"}, "tool_visible": {"tool": "seo-utils_*"}}
+    },
+    {
       "name": "getanyapi-data",
       "aliases": ["getanyapi", "anyapi", "data-api-marketplace", "scraping-api"],
       "owner": "Research",

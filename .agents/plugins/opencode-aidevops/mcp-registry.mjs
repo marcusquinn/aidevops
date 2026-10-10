@@ -20,6 +20,9 @@ const SPEND_GUIDANCE = "Calls may consume paid credits or API quota; keep reques
 const PLAYWRITER_AUTHENTICATED_RELAY_LAUNCHER = fileURLToPath(
   new URL("../../scripts/playwriter-authenticated-relay.mjs", import.meta.url),
 );
+const BROWSER_MCP_LAUNCHER = fileURLToPath(
+  new URL("../../scripts/browser-mcp-launcher.sh", import.meta.url),
+);
 
 function envFlagEnabled(name) {
   return ["1", "true", "yes"].includes((process.env[name] || "").toLowerCase());
@@ -192,6 +195,7 @@ function getPkgRunner() {
  *   - approvalRequiredTools: allowed tool names mapped to OpenCode "ask"; not a
  *     security boundary, because `opencode --auto` launches approve them silently
  *   - activationGuidance: optional domain-specific lifecycle guidance
+ *   - timeout: optional per-tool timeout in ms for generated local entries
  *   - requiresBinary: optional binary name that must exist for local MCPs
  *   - macOnly: optional flag for macOS-only MCPs
  *   - description: human-readable description for logging
@@ -240,7 +244,7 @@ export function getMcpRegistry() {
       name: "outscraper",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server",
       ],
@@ -256,7 +260,7 @@ export function getMcpRegistry() {
       name: "dataforseo",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         `source "$HOME/.aidevops/agents/scripts/dataforseo-credentials.sh" && dataforseo_load_credentials && exec ${pkgRunner} dataforseo-mcp-server`,
       ],
@@ -267,6 +271,28 @@ export function getMcpRegistry() {
       agentSource: ["seo", "dataforseo.md"],
       activationGuidance: [SPEND_GUIDANCE],
       description: "Comprehensive SEO data",
+    },
+    {
+      // User-owned entries (e.g. SEO Utils "Add to OpenCode") are preserved
+      // but kept disconnected until @seo-utils connects them.
+      name: "seo-utils",
+      type: "local",
+      command: [join(homedir(), ".aidevops", "agents", "scripts", "seo-utils-mcp-launcher.sh")],
+      // Upstream: some SEO Utils tools run for minutes; OpenCode defaults to 60s.
+      timeout: 900_000,
+      eager: false,
+      toolPattern: "seo-utils_*",
+      globallyEnabled: false,
+      activationAgent: "seo-utils",
+      agentSource: ["seo", "seo-utils.md"],
+      activationGuidance: [
+        "Answer from local data first: query_database, query_gsc and read_action are free; never substitute lookup_action for data SEO Utils already stores.",
+        "lookup_action spends the user's DataForSEO or other provider credits; state the scope before large or bulk lookups.",
+        "write_action creates, changes, deletes, runs or sends; require explicit approval with the exact target before every call, and confirm names and IDs before destructive or WordPress-applying actions.",
+        UNTRUSTED_OUTPUT_GUIDANCE,
+      ],
+      modelTier: "standard",
+      description: "SEO Utils desktop app data (rank trackers, GSC, GA4, local SEO, backlinks) via local stdio MCP",
     },
     {
       name: "shadcn",
@@ -425,7 +451,7 @@ export function getMcpRegistry() {
       name: "gsc",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         `GOOGLE_APPLICATION_CREDENTIALS=$\{GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} ${pkgRunner} mcp-server-gsc`,
       ],
@@ -441,7 +467,7 @@ export function getMcpRegistry() {
       name: "google-analytics-mcp",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} analytics-mcp",
       ],
@@ -624,7 +650,7 @@ export function getMcpRegistry() {
       name: "amazon-order-history",
       type: "local",
       command: [
-        "/bin/bash",
+        "bash",
         "-c",
         "node ~/Git/mcp/amazon-order-history-csv-download-mcp/dist/index.js",
       ],
@@ -731,10 +757,18 @@ function buildMcpConfigEntry(mcp, runtime) {
   }
   const workspace = runtime?.workspaces?.[mcp.name];
   if (!workspace) {
-    const command = mcp.name === "playwriter" && authenticatedPlaywriterRelayEnabled()
-      ? authenticatedPlaywriterRelayCommand(mcp.command)
-      : mcp.command;
-    return { type: "local", command, enabled: mcp.eager };
+    let command = mcp.command;
+    if (mcp.name === "playwriter") {
+      command = confinePlaywriterCommand(authenticatedPlaywriterRelayEnabled()
+        ? authenticatedPlaywriterRelayCommand(command)
+        : command);
+    }
+    return {
+      type: "local",
+      command,
+      enabled: mcp.eager,
+      ...(mcp.timeout ? { timeout: mcp.timeout } : {}),
+    };
   }
 
   const outputDir = workspace.outputDirectory || join(workspace.directory, ".playwright-mcp");
@@ -757,7 +791,7 @@ function buildMcpConfigEntry(mcp, runtime) {
   return {
     type: "local",
     command: [
-      "/bin/bash",
+      "bash",
       "-c",
       launcher,
       "aidevops-playwright-mcp",
@@ -817,6 +851,30 @@ function isCurrentGeneratedPlaywriterCommand(command) {
 }
 
 /**
+ * Identify framework-generated Playwriter commands, with or without the
+ * authenticated relay wrapper. Custom user commands are never matched.
+ * @param {unknown} command
+ * @returns {boolean}
+ */
+function isFrameworkPlaywriterCommand(command) {
+  if (!Array.isArray(command)) return false;
+  if (command[1] === PLAYWRITER_AUTHENTICATED_RELAY_LAUNCHER) {
+    return isCurrentGeneratedPlaywriterCommand(command.slice(2));
+  }
+  return isCurrentGeneratedPlaywriterCommand(command);
+}
+
+/**
+ * GH#34111: start Playwriter from a private artifact cwd so raw relative
+ * screenshot paths in execute calls never resolve into the project checkout.
+ * @param {string[]} command
+ * @returns {string[]}
+ */
+function confinePlaywriterCommand(command) {
+  return ["bash", BROWSER_MCP_LAUNCHER, "playwriter", ...command];
+}
+
+/**
  * Register a single MCP server in the config. Returns true if newly registered.
  * @param {object} mcp - MCP registry entry
  * @param {object} config - OpenCode Config object (mutable)
@@ -841,6 +899,10 @@ function registerSingleMcp(mcp, config, runtime) {
     config.mcp[mcp.name].command = authenticatedPlaywriterRelayCommand(
       config.mcp[mcp.name].command,
     );
+  }
+  if (mcp.name === "playwriter"
+    && isFrameworkPlaywriterCommand(config.mcp[mcp.name].command)) {
+    config.mcp[mcp.name].command = confinePlaywriterCommand(config.mcp[mcp.name].command);
   }
 
   // Runtime-activated MCPs must stay disconnected at startup, including when

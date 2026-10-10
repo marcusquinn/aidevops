@@ -3,6 +3,7 @@
 
 import {createHash} from "node:crypto";
 import {execFileSync} from "node:child_process";
+import {resolveTrustedExecutable} from "../../scripts/trusted-executable.mjs";
 import {
   closeSync,
   constants,
@@ -24,7 +25,7 @@ import {
 const MAX_AGENT_SOURCE_BYTES = 1024 * 1024;
 const MAX_OVERLAY_BYTES = 64 * 1024;
 const MAX_ROSTER_BYTES = 1024 * 1024;
-const PYTHON_BINARY = "/usr/bin/python3";
+const PYTHON_BINARY = resolveTrustedExecutable("python3");
 const ROSTER_KEYS = ["agents", "document_type", "roster_digest", "roster_id", "schema_version"];
 const ROSTER_AGENT_KEYS = [
   "agent_id",

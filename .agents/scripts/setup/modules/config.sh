@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Configuration functions: setup_configs, set_permissions, ssh, aidevops-cli, opencode-config, claude-config, validate, extract-prompts, drift-check
+# Configuration functions: setup_configs, set_permissions, ssh, aidevops-cli, opencode-config, claude-config, safety-hooks, validate, extract-prompts, drift-check
 # Part of aidevops setup.sh modularization (t316.3)
 
 # Shell safety baseline
@@ -157,6 +157,37 @@ update_claude_config() {
 	return 0
 }
 
+# Install/refresh Claude Code safety hooks in ~/.aidevops/hooks and their
+# settings registrations. Restored after GH#34128: the only real definition
+# lived in tool-beads.sh, which the Beads retirement (#33270) deleted, leaving
+# a no-op placeholder that froze deployed hooks. Prefer the repo helper being
+# installed so hook sources match this setup run; fall back to the deployed copy.
+# Non-critical: failures warn without aborting the rest of setup.
+setup_safety_hooks() {
+	print_info "Setting up Claude Code safety hooks..."
+
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_warning "Python 3 not found - safety hooks require Python 3"
+		return 0
+	fi
+
+	local helper_script="${INSTALL_DIR:-.}/.agents/scripts/install-hooks-helper.sh"
+	if [[ ! -f "$helper_script" ]]; then
+		helper_script="$HOME/.aidevops/agents/scripts/install-hooks-helper.sh"
+	fi
+	if [[ ! -f "$helper_script" ]]; then
+		print_warning "install-hooks-helper.sh not found - skipping safety hooks"
+		return 0
+	fi
+
+	if bash "$helper_script" install; then
+		print_success "Claude Code safety hooks installed"
+	else
+		print_warning "Safety hook installation encountered issues (non-critical); run: install-hooks-helper.sh install"
+	fi
+	return 0
+}
+
 # Unified runtime config update (t1665.4)
 # Generates config for all installed runtimes in a single pass.
 # Called by setup.sh as an alternative to separate update_opencode_config + update_claude_config.
@@ -294,14 +325,19 @@ except (FileNotFoundError, json.JSONDecodeError):
 if "mcpServers" not in cfg or not isinstance(cfg["mcpServers"], dict):
     cfg["mcpServers"] = {}
 
-if name in cfg["mcpServers"]:
+old_playwright = {"command": "npx", "args": ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"]}
+existing = cfg["mcpServers"].get(name)
+migrate = name == "playwright" and (
+    existing == old_playwright or existing == dict(old_playwright, env={})
+)
+if name in cfg["mcpServers"] and not migrate:
     print(f"SKIP  = {name} (already configured)")
 else:
     cfg["mcpServers"][name] = json.loads(value_json)
     with open(file_path, 'w') as f:
         json.dump(cfg, f, indent=2)
         f.write('\n')
-    print(f"ADDED + {name}")
+    print(f"MIGRATED + {name}" if migrate else f"ADDED + {name}")
 PYEOF
 		) || true
 		echo "  ${py_output#* }"
@@ -314,8 +350,8 @@ PYEOF
 	# --- context7 (library docs) ---
 	_add_cursor_mcp "context7" '{"command":"npx","args":["-y","@upstash/context7-mcp@latest"]}'
 
-	# --- Playwright MCP ---
-	_add_cursor_mcp "playwright" '{"command":"npx","args":["-y","@playwright/mcp@0.0.79","--headless","--isolated"]}'
+	# --- Playwright MCP (GH#34111: private artifact cwd via launcher) ---
+	_add_cursor_mcp "playwright" "$(printf '{"command":"bash","args":["%s","playwright","npx","-y","@playwright/mcp@0.0.79","--headless","--isolated"]}' "$HOME/.aidevops/agents/scripts/browser-mcp-launcher.sh")"
 
 	# --- shadcn UI ---
 	_add_cursor_mcp "shadcn" '{"command":"npx","args":["shadcn@latest","mcp"]}'

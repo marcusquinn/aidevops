@@ -575,16 +575,19 @@ _setup_opencode_timeout_cmd() {
 	"$@" >"$output_file" 2>&1 &
 	pid=$!
 
-	local elapsed=0
+	# Poll in 0.1s ticks: hosts without timeout(1) (stock macOS) would
+	# otherwise pay a full second for every fast `opencode --version`.
+	local ticks=0
+	local tick_limit=$((timeout_seconds * 10))
 	while kill -0 "$pid" 2>/dev/null; do
-		if [[ "$elapsed" -ge "$timeout_seconds" ]]; then
+		if [[ "$ticks" -ge "$tick_limit" ]]; then
 			kill "$pid" 2>/dev/null || true
 			wait "$pid" 2>/dev/null || true
 			rm -f "$output_file" 2>/dev/null || true
 			return 124
 		fi
-		sleep 1
-		elapsed=$((elapsed + 1))
+		sleep 0.1
+		ticks=$((ticks + 1))
 	done
 
 	local rc=0
@@ -601,8 +604,10 @@ _setup_opencode_version_output() {
 	local version_timeout="${AIDEVOPS_OPENCODE_VERSION_TIMEOUT:-5}"
 	local version_path=""
 
+	local fallback_path=""
 	version_path=$(_setup_opencode_node_path_for_binary "$bin")
-	PATH="${version_path}${PATH:+:${PATH}}" _setup_opencode_timeout_cmd "$version_timeout" "$bin" --version
+	fallback_path=$(_setup_opencode_fallback_path_for_binary "$bin")
+	PATH="${version_path}${PATH:+:${PATH}}:${fallback_path}" _setup_opencode_timeout_cmd "$version_timeout" "$bin" --version
 	return $?
 }
 
@@ -611,11 +616,13 @@ _setup_opencode_help_output() {
 	local help_timeout="${AIDEVOPS_OPENCODE_VERSION_TIMEOUT:-5}"
 	local help_path=""
 
+	local fallback_path=""
 	help_path=$(_setup_opencode_node_path_for_binary "$bin")
+	fallback_path=$(_setup_opencode_fallback_path_for_binary "$bin")
 	# OpenCode 1.18.31 writes its help text to stderr. Merge both streams so
 	# identity validation accepts the functional CLI while still checking the
 	# actual command surface rather than trusting semver alone.
-	PATH="${help_path}${PATH:+:${PATH}}" _setup_opencode_timeout_cmd "$help_timeout" "$bin" --help 2>&1
+	PATH="${help_path}${PATH:+:${PATH}}:${fallback_path}" _setup_opencode_timeout_cmd "$help_timeout" "$bin" --help 2>&1
 	return $?
 }
 
@@ -799,7 +806,18 @@ _setup_opencode_print_manual_install_hint() {
 	return 0
 }
 
+# PATH entries placed BEFORE the inherited PATH: aidevops-owned dirs only.
+# System and binary dirs must never lead: they would shadow user-managed
+# toolchains (nvm, mise, corepack, Nix profiles, Homebrew-in-~).
 _setup_opencode_node_path_for_binary() {
+	printf '%s\n' "${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts"
+	return 0
+}
+
+# PATH entries appended AFTER the inherited PATH: the OpenCode binary's own
+# dir (its Node launcher may need a sibling `node`) and generic system roots,
+# so a daemon with a minimal PATH still works.
+_setup_opencode_fallback_path_for_binary() {
 	local bin="$1"
 	local bin_dir=""
 	local path_value=""
@@ -808,7 +826,7 @@ _setup_opencode_node_path_for_binary() {
 	if [[ -n "$bin_dir" && "$bin_dir" == /* ]]; then
 		path_value="${bin_dir}:"
 	fi
-	path_value="${path_value}${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:/usr/local/bin:/usr/bin:/bin"
+	path_value="${path_value}/usr/local/bin:/usr/bin:/bin"
 	printf '%s\n' "$path_value"
 	return 0
 }
@@ -843,16 +861,67 @@ _setup_clear_canary_negative_cache() {
 _setup_opencode_managed_shim_target() {
 	local shim_path="${1:-}"
 	local exec_line=""
+	local encoded="" decoded="" char=""
 
 	[[ -f "$shim_path" ]] || return 1
 	grep -Fq '# aidevops:terminal-title-owner' "$shim_path" 2>/dev/null || return 1
 	exec_line=$(grep '^exec "' "$shim_path" 2>/dev/null || true)
-	if [[ "$exec_line" =~ ^exec[[:space:]]+\"([^\"]+)\" ]]; then
-		printf '%s\n' "${BASH_REMATCH[1]}"
+	local pattern='^exec[[:space:]]+"(([^"\\]|\\.)*)"[[:space:]]+"\$@"$'
+	if [[ "$exec_line" =~ $pattern ]]; then
+		encoded="${BASH_REMATCH[1]}"
+		while [[ -n "$encoded" ]]; do
+			char="${encoded:0:1}"
+			encoded="${encoded:1}"
+			if [[ "$char" == "\\" ]]; then
+				[[ -n "$encoded" ]] || return 1
+				char="${encoded:0:1}"
+				encoded="${encoded:1}"
+			fi
+			decoded+="$char"
+		done
+		printf '%s\n' "$decoded"
 		return 0
 	fi
 
 	return 1
+}
+
+# Check managed exec chains without running them. -ef catches symlink and
+# hard-link aliases; the depth cap also bounds non-cyclic wrapper chains.
+_setup_opencode_target_is_safe() {
+	local bin="$1"
+	local forbidden="${2:-}"
+	local target="" seen_bin=""
+	local seen=()
+	local depth=0
+	while [[ "$depth" -lt 16 ]]; do
+		[[ -f "$bin" && -x "$bin" ]] || return 1
+		[[ -z "$forbidden" || ! "$bin" -ef "$forbidden" ]] || return 1
+		# Bash 3.2 (macOS /bin/bash) treats an empty "${seen[@]}" as unbound.
+		for seen_bin in ${seen[@]+"${seen[@]}"}; do
+			[[ ! "$bin" -ef "$seen_bin" ]] || return 1
+		done
+		seen+=("$bin")
+		if ! grep -Fq '# aidevops:terminal-title-owner' "$bin" 2>/dev/null; then
+			return 0
+		fi
+		target=$(_setup_opencode_managed_shim_target "$bin") || return 1
+		[[ "$target" == /* ]] || return 1
+		bin="$target"
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
+# Escape literal values embedded inside the generated shell's double quotes.
+_setup_opencode_quote_value() {
+	local value="$1"
+	value="${value//\\/\\\\}"
+	value="${value//\$/\\\$}"
+	value="${value//\`/\\\`}"
+	value="${value//\"/\\\"}"
+	printf '%s' "$value"
+	return 0
 }
 
 # Bump when the generated V2 shim changes so existing shims regenerate.
@@ -958,6 +1027,7 @@ _setup_write_opencode_v2_shim() {
 	local temp_shim="$1"
 	local wrapper_path="$2"
 	local wrapper_path_value="$3"
+	local fallback_path_value="${4:-}"
 	local version_marker=""
 	version_marker=$(_setup_opencode_v2_shim_version_marker)
 	cat >"$temp_shim" <<EOF || return 1
@@ -966,7 +1036,7 @@ _setup_write_opencode_v2_shim() {
 # aidevops:terminal-title-owner
 # aidevops:opencode-v2-isolation
 $version_marker
-export PATH="$wrapper_path_value\${PATH:+:\$PATH}"
+export PATH="$wrapper_path_value\${PATH:+:\$PATH}${fallback_path_value:+:$fallback_path_value}"
 export AIDEVOPS_OPENCODE_PROFILE=v2
 export AIDEVOPS_TERMINAL_TITLE_OWNER="\${AIDEVOPS_TERMINAL_TITLE_OWNER:-aidevops}"
 export OPENCODE_DISABLE_AUTOUPDATE="\${OPENCODE_DISABLE_AUTOUPDATE:-1}"
@@ -1048,11 +1118,12 @@ _setup_write_opencode_v1_shim() {
 	local temp_shim="$1"
 	local wrapper_path="$2"
 	local wrapper_path_value="$3"
+	local fallback_path_value="${4:-}"
 	cat >"$temp_shim" <<EOF || return 1
 #!/usr/bin/env bash
 # Generated by aidevops setup: daemon-safe OpenCode shim.
 # aidevops:terminal-title-owner
-export PATH="$wrapper_path_value\${PATH:+:\$PATH}"
+export PATH="$wrapper_path_value\${PATH:+:\$PATH}${fallback_path_value:+:$fallback_path_value}"
 export AIDEVOPS_TERMINAL_TITLE_OWNER="\${AIDEVOPS_TERMINAL_TITLE_OWNER:-aidevops}"
 if [[ "\$AIDEVOPS_TERMINAL_TITLE_OWNER" == "aidevops" ]]; then
 	export OPENCODE_DISABLE_TERMINAL_TITLE="\${OPENCODE_DISABLE_TERMINAL_TITLE:-1}"
@@ -1070,15 +1141,16 @@ _setup_ensure_opencode_stable_shim() {
 	local shim_path="${shim_dir}/${binary_name}"
 	local resolved_bin=""
 	local wrapper_path=""
-	local wrapper_dir=""
+	local physical_dir=""
 	local wrapper_path_value=""
+	local fallback_path_value=""
 	local temp_shim=""
 	local isolation_ready=1
 	local existing_target=""
 
 	[[ -n "$real_bin" ]] || return 1
 	resolved_bin=$(command -v "$real_bin" 2>/dev/null || printf '%s' "$real_bin")
-	if [[ "$resolved_bin" == "$shim_path" ]]; then
+	if [[ "$resolved_bin" == "$shim_path" || "$resolved_bin" -ef "$shim_path" ]]; then
 		existing_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
 		if [[ -n "$existing_target" ]] && _setup_validate_opencode_binary "$existing_target"; then
 			resolved_bin="$existing_target"
@@ -1086,6 +1158,10 @@ _setup_ensure_opencode_stable_shim() {
 			resolved_bin=$(_setup_find_valid_opencode_binary) || return 1
 		fi
 	fi
+	_setup_opencode_target_is_safe "$resolved_bin" "$shim_path" || {
+		printf 'OpenCode shim target is missing or self-referential: %s\n' "$resolved_bin" >&2
+		return 1
+	}
 	_setup_validate_opencode_binary "$resolved_bin" || return 1
 	if _setup_opencode_binary_is_ephemeral "$resolved_bin" &&
 		! _setup_opencode_binary_is_ephemeral "${HOME}/.aidevops-home"; then
@@ -1093,9 +1169,14 @@ _setup_ensure_opencode_stable_shim() {
 	fi
 
 	mkdir -p "$shim_dir" 2>/dev/null || return 1
-	wrapper_dir=$(cd "$(dirname "$resolved_bin")" 2>/dev/null && pwd -P) || return 1
-	wrapper_path="${wrapper_dir}/$(basename "$resolved_bin")"
-	if _setup_opencode_binary_is_ephemeral "$wrapper_path" &&
+	# Keep profile symlinks logical: pinning a Nix store generation breaks
+	# upgrades and can leave a garbage-collected executable in the launcher.
+	[[ "$resolved_bin" == /* ]] || return 1
+	wrapper_path="$resolved_bin"
+	# Retain the physical-directory persistence guard without using that
+	# physical path as the execution target (profiles must remain upgradeable).
+	physical_dir=$(cd "$(dirname "$resolved_bin")" 2>/dev/null && pwd -P) || return 1
+	if _setup_opencode_binary_is_ephemeral "$physical_dir/$(basename "$resolved_bin")" &&
 		! _setup_opencode_binary_is_ephemeral "${HOME}/.aidevops-home"; then
 		return 1
 	fi
@@ -1103,22 +1184,33 @@ _setup_ensure_opencode_stable_shim() {
 		! grep -Fxq "$(_setup_opencode_v2_shim_version_marker)" "$shim_path" 2>/dev/null; then
 		isolation_ready=0
 	fi
+	wrapper_path_value=$(_setup_opencode_node_path_for_binary "$wrapper_path")
+	wrapper_path_value=$(_setup_opencode_quote_value "$wrapper_path_value")
+	fallback_path_value=$(_setup_opencode_fallback_path_for_binary "$wrapper_path")
+	fallback_path_value=$(_setup_opencode_quote_value "$fallback_path_value")
 	if [[ "$resolved_bin" != "$shim_path" ]] &&
 		_setup_validate_opencode_binary "$shim_path" &&
 		[[ "$isolation_ready" -eq 1 ]] &&
+		grep -Fxq "export PATH=\"$wrapper_path_value\${PATH:+:\$PATH}:$fallback_path_value\"" "$shim_path" 2>/dev/null &&
 		[[ "$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)" == "$wrapper_path" ]]; then
 		printf '%s\n' "$shim_path"
 		return 0
 	fi
-	wrapper_path_value=$(_setup_opencode_node_path_for_binary "$wrapper_path")
+	wrapper_path=$(_setup_opencode_quote_value "$wrapper_path")
 
 	temp_shim="${shim_path}.tmp.$$"
 	if [[ "$binary_name" == "opencode2" ]]; then
-		_setup_write_opencode_v2_shim "$temp_shim" "$wrapper_path" "$wrapper_path_value" || return 1
+		_setup_write_opencode_v2_shim "$temp_shim" "$wrapper_path" "$wrapper_path_value" "$fallback_path_value" || return 1
 	else
-		_setup_write_opencode_v1_shim "$temp_shim" "$wrapper_path" "$wrapper_path_value" || return 1
+		_setup_write_opencode_v1_shim "$temp_shim" "$wrapper_path" "$wrapper_path_value" "$fallback_path_value" || return 1
 	fi
 	chmod +x "$temp_shim" 2>/dev/null || {
+		rm -f "$temp_shim" 2>/dev/null || true
+		return 1
+	}
+	_setup_opencode_target_is_safe "$temp_shim" "$shim_path" &&
+		_setup_validate_opencode_binary "$temp_shim" || {
+		printf 'OpenCode generated launcher validation failed; keeping existing launcher\n' >&2
 		rm -f "$temp_shim" 2>/dev/null || true
 		return 1
 	}
@@ -1154,11 +1246,21 @@ _setup_find_valid_opencode_binary() {
 	local shim_path="${HOME}/.local/bin/${binary_name}"
 	local managed_shim_target=""
 	local isolated_install_bin=""
+	local path_dir=""
+	local path_dirs=() path_candidates=()
 
 	managed_shim_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
 	if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
 		isolated_install_bin=$(_setup_opencode_v2_install_binary 2>/dev/null || true)
 	fi
+	# command -v only sees the first launcher. Inspect every absolute PATH
+	# entry too (this is how profile-managed installs such as Nix, mise or
+	# nvm are found), never cwd/empty entries and never distro-specific roots.
+	IFS=: read -r -a path_dirs <<<"${PATH:-}"
+	for path_dir in "${path_dirs[@]}"; do
+		[[ "$path_dir" == /* ]] || continue
+		path_candidates+=("${path_dir}/${binary_name}")
+	done
 
 	for candidate in \
 		"$preferred_bin" \
@@ -1169,11 +1271,13 @@ _setup_find_valid_opencode_binary() {
 		"${HOME}/.npm-global/bin/${binary_name}" \
 		"${HOME}/.bun/bin/${binary_name}" \
 		"$managed_shim_target" \
+		"${path_candidates[@]}" \
 		"$binary_name"; do
 		[[ -n "$candidate" ]] || continue
 		[[ "$candidate" == "$shim_path" ]] && continue
 		candidate_path=$(command -v "$candidate" 2>/dev/null || printf '%s' "$candidate")
 		[[ "$candidate_path" == "$shim_path" ]] && continue
+		_setup_opencode_target_is_safe "$candidate_path" "$shim_path" || continue
 		if _setup_opencode_binary_is_ephemeral "$candidate_path" &&
 			! _setup_opencode_binary_is_ephemeral "${HOME}/.aidevops-home"; then
 			continue
@@ -1273,6 +1377,8 @@ _setup_validate_opencode_binary() {
 	profile=$(_setup_opencode_profile_id)
 	[[ -n "$bin" ]] || return 2
 	command -v "$bin" >/dev/null 2>&1 || return 2
+	bin=$(command -v "$bin") || return 2
+	_setup_opencode_target_is_safe "$bin" || return 2
 
 	local v
 	v=$(_setup_opencode_version_output "$bin" 2>/dev/null || printf '')

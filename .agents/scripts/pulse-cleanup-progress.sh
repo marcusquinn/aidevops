@@ -41,7 +41,7 @@ _pc_progress_jobs() {
 	done < <(jq -c '.initialized_repos[] | select((.local_only // false) == false) | select((.path // "" | test("[\\r\\n]")) | not)' "$repos_json")
 	# One bounded, rotating central scan after registered repository jobs.
 	printf '["central-unregistered"]\n'
-	printf '["relocate"]\n["outliers"]\n'
+	printf '["relocate"]\n["outliers"]\n["localdev-prune"]\n'
 	return 0
 }
 
@@ -78,6 +78,7 @@ _pc_progress_run_job() {
 	central-unregistered) count=$(_pc_cleanup_central_unregistered) || count=0 ;;
 	relocate) _pc_relocate_registered_worktrees "$repos_json" >/dev/null || true ;;
 	outliers) count=$(_pc_cleanup_orphan_sibling_dirs "$repos_json" "$(date +%s)") || count=0 ;;
+	localdev-prune) _pc_prune_localdev_registrations "$repos_json" || true ;;
 	*) return 1 ;;
 	esac
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0

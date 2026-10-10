@@ -51,6 +51,7 @@ setup_test_env() {
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
 	export TEST_CHECK_SCENARIO="terminal_failure"
+	export TEST_QLTY_METADATA='{"private":true,"owner":{"type":"User"}}'
 	export TEST_WORKER_SLEEP_SECONDS="2"
 	unset TEST_INITIAL_PR_HEAD_SHA
 	unset TEST_INITIAL_PR_HEAD_EMPTY
@@ -242,6 +243,11 @@ GHEOF
 
 _append_gh_mock_routes() {
 	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
+	if [[ "${1:-} ${2:-}" == "api repos/owner/repo" ]]; then
+		[[ "${TEST_QLTY_METADATA:-}" == "unavailable" ]] && exit 1
+		printf '%s\n' "$TEST_QLTY_METADATA"
+		exit 0
+	fi
 	if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
 		_is_required=0
 		[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
@@ -339,6 +345,10 @@ GHEOF
 # GH#32869: check-run annotations for the Actions billing classifier.
 _append_gh_annotation_mock_routes() {
 	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/check-runs/456" ]]; then
+	printf '%s\n' '{"app":{"slug":"github-actions"}}'
+	exit 0
+fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/check-runs/456/annotations" ]]; then
 	printf 'annotations %s\n' "${2:-}" >>"${TEST_ROOT}/gh-annotations.log"
 	case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
@@ -446,8 +456,23 @@ extract_process_stage_functions() {
 	return 0
 }
 
+define_ci_drift_helpers() {
+	DRIFT_NAMES="Lint"
+	DRIFT_NAMES_RC=0
+	DRIFT_PENDING_RC=1
+	# shellcheck source=../pulse-merge-ci-drift-ledger.sh
+	source "${SCRIPT_DIR}/../pulse-merge-ci-drift-ledger.sh"
+	_required_checks_terminal_failure_names() {
+		printf '%s\n' "$DRIFT_NAMES"
+		return "$DRIFT_NAMES_RC"
+	}
+	_check_required_checks_have_pending_or_in_progress() { return "$DRIFT_PENDING_RC"; }
+	return 0
+}
+
 define_process_helper() {
 	local fn_src="" process_stage_src="" repair_helper_src="" review_gate_src=""
+	define_ci_drift_helpers
 	review_gate_src=$(extract_function _handle_changes_requested_review_gate "$MERGE_SCRIPT")
 	repair_helper_src=$(extract_function _handle_review_blocked_ci_repair "$PROCESS_SCRIPT")
 	process_stage_src=$(extract_process_stage_functions "$MERGE_SCRIPT")
@@ -601,11 +626,10 @@ EOF
 	_is_process_alive_and_matches() { local process_pid="$1"; local process_pattern="$2"; local stored_hash="$3"; [[ -n "$process_pattern" || -n "$stored_hash" ]]; kill -0 "$process_pid" 2>/dev/null; return $?; }
 	_file_mtime_epoch() { local file_path="$1"; [[ -e "$file_path" ]] || return 1; date +%s; return 0; }
 	gh_pr_checks_exact_json() {
-		local repo_slug="$1"
-		local pr_number="$2"
-		local selection_mode="$3"
+		local repo_slug="$1" pr_number="$2" selection_mode="$3"
 		printf 'exact-checks %s %s %s\n' "$repo_slug" "$pr_number" "$selection_mode" >>"$GH_LOG"
 		case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
+		qlty_quota) printf '%s\n' "$TEST_QLTY_CHECKS"; return 1 ;;
 		nonrequired_baseline)
 			if [[ "$selection_mode" == "all" ]]; then
 				printf '%s\n' '[{"name":"Qlty Smell Threshold","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/125/job/791"},{"name":"Qlty Smell Regression","bucket":"pass","state":"SUCCESS","conclusion":"success","link":"https://github.com/owner/repo/actions/runs/125/job/792"}]'
@@ -650,6 +674,7 @@ define_ci_dispatch_helpers() {
 		_ci_actionable_failed_checks_markdown
 		_ci_check_evidence_role
 		_ci_filter_nonrequired_baseline_evidence
+		_ci_filter_qlty_quota_evidence
 		_ci_terminal_failed_check_results
 		_ci_merge_check_sets
 		_ci_repair_required_checks_json
@@ -663,6 +688,9 @@ define_ci_dispatch_helpers() {
 		# shellcheck disable=SC1090
 		eval "$fn_src"
 	done
+	fn_src=$(extract_function _pmrc_repo_has_qlty_credit_limit "${SCRIPT_DIR}/../pulse-merge-required-checks.sh")
+	[[ -n "$fn_src" ]] || return 1
+	eval "$fn_src"
 	unset _CI_INFRA_SIGNATURE_LIB_LOADED
 	# shellcheck source=../ci-infra-signature-lib.sh
 	source "${FEEDBACK_CI_REPAIR_SCRIPT%/*}/ci-infra-signature-lib.sh" || return 1
@@ -712,6 +740,85 @@ test_rebase_success_defers_ci_repair_route() {
 		print_result "successful CI-drift rebase defers CI repair routing" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
 	else
 		print_result "successful CI-drift rebase defers CI repair routing" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_drift_ledger_routing() {
+	local scenario="" signature="" expected_rebases=0 expected_routes=0
+	for scenario in absent different repeat same_head pending dry unknown expired corrupt; do
+		setup_test_env
+		define_process_helper || return 1
+		local pr_number=100 repo_slug="owner/repo" pr_labels="origin:worker"
+		local timing_prefix="" pr_head_ref_oid="new-head" pr_base_ref_name="main"
+		local linked_issue=42 pr_updated_at="" pr_author="worker-bot" pr_obj="{}"
+		REBASE_RETRY_RC=0
+		signature=$(printf 'Lint\n' | shasum -a 256 | cut -d ' ' -f 1)
+		if [[ "$scenario" != absent ]]; then
+			_ci_drift_ledger_record "$repo_slug" "$pr_number" "old-head" "$signature"
+		fi
+		expected_rebases=1 expected_routes=0
+		case "$scenario" in
+		different) DRIFT_NAMES="Unit" ;;
+		repeat) expected_rebases=0 expected_routes=1 ;;
+		same_head) pr_head_ref_oid="old-head" ;;
+		pending)
+			DRIFT_PENDING_RC=0
+			expected_rebases=0
+			;;
+		dry)
+			DRY_RUN=1
+			expected_rebases=0
+			;;
+		unknown) DRIFT_NAMES_RC=1 ;;
+		expired) printf '%s\t%s\told-head\t1\n' "${repo_slug}#${pr_number}" "$signature" >"${AIDEVOPS_HEADLESS_RUNTIME_DIR}/ci-drift-ledger.tsv" ;;
+		corrupt) printf 'invalid\n' >"${AIDEVOPS_HEADLESS_RUNTIME_DIR}/ci-drift-ledger.tsv" ;;
+		esac
+		_pmp_stage_required_checks || true
+		if [[ "$REBASE_RETRY_CALLS" != "$expected_rebases" || "$ROUTE_CALLS" != "$expected_routes" ]]; then
+			print_result "CI-drift ledger: ${scenario}" 1 "rebase=${REBASE_RETRY_CALLS}, route=${ROUTE_CALLS}"
+		elif [[ "$expected_rebases" == 1 && "$scenario" != unknown ]] && ! _ci_drift_ledger_should_skip "$repo_slug" "$pr_number" "next-head" "$(printf '%s\n' "$DRIFT_NAMES" | shasum -a 256 | cut -d ' ' -f 1)"; then
+			print_result "CI-drift ledger: ${scenario}" 1 "successful rebase not recorded"
+		elif [[ "$scenario" == repeat ]] && ! grep -q 'same failing required contexts (Lint)' "$LOGFILE"; then
+			print_result "CI-drift ledger: ${scenario}" 1 "missing context diagnostic"
+		elif [[ "$scenario" == unknown ]] && ! grep -q 'classification unavailable' "$LOGFILE"; then
+			print_result "CI-drift ledger: ${scenario}" 1 "missing fail-open diagnostic"
+		else
+			print_result "CI-drift ledger: ${scenario}" 0
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
+test_ci_drift_context_names() {
+	setup_test_env
+	local fn_src="" names=""
+	fn_src=$(extract_function _required_checks_terminal_failure_names "${SCRIPT_DIR}/../pulse-merge-required-checks.sh")
+	eval "$fn_src"
+	_required_contexts_for_default_branch() {
+		printf 'Unit\nLint\nPending\nMissing\n'
+		return 0
+	}
+	gh_pr_check_runs_rest() {
+		printf '%s\n' '[{"name":"Lint","conclusion":"success"},{"name":"Unit","conclusion":"timed_out"},{"name":"Lint","conclusion":"failure"},{"name":"Pending","status":"in_progress","conclusion":null},{"name":"Advisory","conclusion":"failure"}]'
+		return 0
+	}
+	names=$(_required_checks_terminal_failure_names "owner/repo" 100 "head")
+	if [[ "$names" == $'Lint\nUnit' ]]; then
+		print_result "CI-drift names sorted, required-only, terminal-only, latest result" 0
+	else
+		print_result "CI-drift names sorted, required-only, terminal-only, latest result" 1 "$names"
+	fi
+	gh_pr_check_runs_rest() {
+		printf 'null\n'
+		return 0
+	}
+	if _required_checks_terminal_failure_names "owner/repo" 100 "head" 2>/dev/null; then
+		print_result "CI-drift invalid rollup is unclassifiable" 1
+	else
+		print_result "CI-drift invalid rollup is unclassifiable" 0
 	fi
 	teardown_test_env
 	return 0
@@ -1209,6 +1316,55 @@ test_ci_feedback_skips_mixed_pending_pass_checks() {
 	return 0
 }
 
+test_ci_feedback_filters_qlty_billing_only() {
+	local scenario="" expected="" checks="" supplied=""
+	for scenario in private org case minutes analysis_minutes public unknown malformed real regression check_run mixed supplied error_private error_public error_real; do
+		setup_test_env
+		define_feedback_helpers || return 1
+		TEST_CHECK_SCENARIO="qlty_quota"
+		expected="skip"
+		checks='[{"name":"qlty check","bucket":"fail","state":"FAILURE","workflow":"","description":"Qlty did not run because you are out of credits.","link":"https://example.invalid/qlty"}]'
+		case "$scenario" in
+		org) TEST_QLTY_METADATA='{"private":false,"owner":{"type":"Organization"}}' ;;
+		case) checks=$(jq -c '.[0].name = "QLTY CHECK" | .[0].description = "OUT OF CREDITS"' <<<"$checks") ;;
+		minutes) checks=$(jq -c '.[0].description = "Out of minutes"' <<<"$checks") ;;
+		analysis_minutes) checks=$(jq -c '.[0].description = "out of analysis minutes"' <<<"$checks") ;;
+		public) TEST_QLTY_METADATA='{"private":false,"owner":{"type":"User"}}'; expected="dispatch" ;;
+		unknown) TEST_QLTY_METADATA="unavailable"; expected="dispatch" ;;
+		malformed) TEST_QLTY_METADATA='{"private":"true","owner":{"type":"User"}}'; expected="dispatch" ;;
+		real) checks=$(jq -c '.[0].description = "Code findings exceed threshold"' <<<"$checks"); expected="dispatch" ;;
+		regression) checks=$(jq -c '.[0].name = "Qlty Regression Gate"' <<<"$checks"); expected="dispatch" ;;
+		check_run) checks=$(jq -c '.[0].source = "check_run"' <<<"$checks"); expected="dispatch" ;;
+		mixed) checks=$(jq -c '. + [{name:"Lint",bucket:"fail",state:"FAILURE",link:"https://example.invalid/lint"}]' <<<"$checks"); expected="dispatch" ;;
+		error_private) checks=$(jq -c '.[0].state = "ERROR"' <<<"$checks") ;;
+		error_public) checks=$(jq -c '.[0].state = "ERROR"' <<<"$checks"); TEST_QLTY_METADATA='{"private":false,"owner":{"type":"User"}}'; expected="dispatch" ;;
+		error_real) checks=$(jq -c '.[0].state = "ERROR" | .[0].description = "Analysis failed on source code"' <<<"$checks"); expected="dispatch" ;;
+		esac
+		export TEST_QLTY_CHECKS="$checks"
+		supplied=""
+		[[ "$scenario" == "supplied" ]] && supplied=$(jq -c '.[0].source = "commit_status"' <<<"$checks")
+		_dispatch_ci_repair_session() {
+			printf 'quota-test-dispatch\n' >>"$GH_LOG"
+			return 0
+		}
+		_dispatch_ci_fix_worker "100" "owner/repo" "42" "$supplied"
+		if [[ "$expected" == "skip" ]] && ! grep -qF 'quota-test-dispatch' "$GH_LOG" &&
+			! grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt" && [[ ! -e "${TEST_ROOT}/classified-names.txt" ]]; then
+			print_result "qlty ${scenario} billing-only evidence never reaches repair or classification" 0
+		elif [[ "$expected" == "dispatch" ]] && grep -qF 'quota-test-dispatch' "$GH_LOG"; then
+			if [[ "$scenario" != "mixed" || "$(<"${TEST_ROOT}/classified-names.txt")" == "Lint" ]]; then
+				print_result "qlty ${scenario} actionable failure retains repair dispatch" 0
+			else
+				print_result "mixed failure excludes only billing evidence" 1
+			fi
+		else
+			print_result "qlty ${scenario} expected ${expected}" 1 "$(<"$LOGFILE")"
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
 test_ci_feedback_classifies_qlty_evidence_roles() {
 	setup_test_env
 	define_feedback_helpers || { print_result "defines feedback helpers for Qlty evidence roles" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
@@ -1676,6 +1832,8 @@ test_ci_feedback_includes_required_and_advisory_failures_together() {
 main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_rebase_success_defers_ci_repair_route
+	test_ci_drift_ledger_routing
+	test_ci_drift_context_names
 	test_converged_changes_requested_prefers_strict_rebase_before_ci_repair
 	test_converged_changes_requested_routes_terminal_ci_after_rebase_noop
 	test_converged_changes_requested_never_falls_through_to_merge
@@ -1695,6 +1853,7 @@ main() {
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks
 	test_ci_feedback_classifies_qlty_evidence_roles
+	test_ci_feedback_filters_qlty_billing_only
 	test_ci_repair_archives_trusted_terminal_outcome
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
 	test_ci_feedback_preserves_supplied_nonrequired_baseline_evidence

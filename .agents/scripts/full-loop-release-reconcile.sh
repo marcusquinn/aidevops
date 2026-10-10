@@ -24,6 +24,9 @@ _FULL_LOOP_RELEASE_JSON_STRING_TYPE="string"
 _FULL_LOOP_RELEASE_MODE_RECONCILE="reconcile"
 _FULL_LOOP_RELEASE_PHASE_REMOTE="remote-publication"
 _FULL_LOOP_RELEASE_STEP_QUEUE_POSTFLIGHT="Queue exact-tag postflight"
+_FULL_LOOP_RELEASE_STEP_DEFERRED_POSTFLIGHT="Record deferred postflight"
+_FULL_LOOP_RELEASE_POSTFLIGHT_ABSENT_RC=6
+_FULL_LOOP_RELEASE_POSTFLIGHT_FAILED_RC=9
 _FULL_LOOP_RELEASE_PROVENANCE_PREDICATE="https://slsa.dev/provenance/v1"
 _FULL_LOOP_RELEASE_TRUE="true"
 _FULL_LOOP_RELEASE_SHA_REGEX='^[0-9a-f]{40}$'
@@ -947,6 +950,106 @@ _full_loop_release_success_grace_expired() {
 	return 0
 }
 
+# True when the publication run's jobs show the quota-deferred postflight marker.
+_full_loop_release_run_postflight_deferred() {
+	local repo="$1"
+	local run_id=""
+	run_id=$(jq -er --arg number_type "$_FULL_LOOP_RELEASE_JSON_NUMBER_TYPE" \
+		'.id | select(type == $number_type and . > 0 and floor == .)' \
+		<<<"$_FULL_LOOP_RELEASE_RUN_JSON") || return 2
+	_full_loop_release_fetch_run_jobs "$repo" "$run_id" || return 2
+	jq -e --arg step "$_FULL_LOOP_RELEASE_STEP_DEFERRED_POSTFLIGHT" \
+		--arg completed "$_FULL_LOOP_RELEASE_STATUS_COMPLETED" \
+		--arg success "$_FULL_LOOP_RELEASE_CONCLUSION_SUCCESS" '
+		any(.jobs[]?.steps[]?; .name == $step and .status == $completed and .conclusion == $success)
+	' <<<"$_FULL_LOOP_RELEASE_RUN_JOBS_JSON" >/dev/null
+	return $?
+}
+
+# Select postflight evidence bound to the exact verified tag by run-name.
+# Prints POSTFLIGHT_STATUS and returns 0 (terminal success), 8 (pending or
+# unverifiable), 6 (absent) or 9 (terminal non-success). Read-only.
+_full_loop_release_postflight_gate() {
+	local repo="$1"
+	local tag_name="$2"
+	local runs_file=""
+	local state=""
+	local deferred_rc=0
+
+	_full_loop_release_run_postflight_deferred "$repo" || deferred_rc=$?
+	case "$deferred_rc" in
+	0) ;;
+	1) return 0 ;;
+	*)
+		printf 'POSTFLIGHT_STATUS=unverified\n'
+		return 8
+		;;
+	esac
+	runs_file=$(mktemp) || return 8
+	if ! gh api --method GET "repos/${repo}/actions/workflows/postflight.yml/runs" \
+		-f event="$_FULL_LOOP_RELEASE_EVENT_RECOVERY" -f branch=main -F per_page=100 --paginate \
+		>"$runs_file" 2>/dev/null || ! _full_loop_release_runs_payload_valid "$runs_file"; then
+		rm -f "$runs_file"
+		printf 'POSTFLIGHT_STATUS=unverified\n'
+		return 8
+	fi
+	#aidevops:trust-boundary
+	state=$(jq -rs --arg title "Postflight Verification ${tag_name}" \
+		--arg completed "$_FULL_LOOP_RELEASE_STATUS_COMPLETED" \
+		--arg success "$_FULL_LOOP_RELEASE_CONCLUSION_SUCCESS" \
+		--arg event "$_FULL_LOOP_RELEASE_EVENT_RECOVERY" '
+		[.[].workflow_runs[]? | select(.event == $event and .head_branch == "main" and .display_title == $title)] as $runs
+		| if ($runs | length) == 0 then "absent"
+		  elif any($runs[]; .status == $completed and .conclusion == $success) then "succeeded"
+		  elif any($runs[]; .status != $completed) then "pending"
+		  else "failed" end
+	' "$runs_file") || {
+		rm -f "$runs_file"
+		return 8
+	}
+	rm -f "$runs_file"
+	printf 'POSTFLIGHT_STATUS=%s\n' "$state"
+	case "$state" in
+	succeeded) return 0 ;;
+	absent) return "$_FULL_LOOP_RELEASE_POSTFLIGHT_ABSENT_RC" ;;
+	failed) return "$_FULL_LOOP_RELEASE_POSTFLIGHT_FAILED_RC" ;;
+	*) return 8 ;;
+	esac
+}
+
+# Channels verified: the release is published only once any deferred postflight
+# has reached terminal success.
+_full_loop_release_published_if_postflight_ready() {
+	local repo="$1"
+	local tag_name="$2"
+	local gate_rc=0
+	_full_loop_release_postflight_gate "$repo" "$tag_name" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
+	printf 'RELEASE_REMOTE_STATE=published\n'
+	return 0
+}
+
+#aidevops:trust-boundary
+# Queue postflight for the verified exact tag only, from main, without
+# republishing. Uses the operator's own gh credential.
+_full_loop_release_dispatch_postflight() {
+	local repo="$1"
+	local tag_name="$2"
+	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
+	local tag_detail="tag=$tag_name"
+
+	[[ "$tag_name" =~ $_FULL_LOOP_RELEASE_VERSION_TAG_REGEX ]] || return 1
+	_full_loop_release_resolve_tag_commit "$tag_name" >/dev/null || return 1
+	if [[ -x "$audit_helper" ]]; then
+		AUDIT_QUIET=true "$audit_helper" log operation.verify \
+			"Dispatching exact-tag postflight reconciliation" \
+			--detail "repo=${repo}" --detail "$tag_detail" || return 1
+	fi
+	gh workflow run postflight.yml --repo "$repo" --ref main -f "$tag_detail" || return 1
+	printf 'release:postflight-queued tag=%s\n' "$tag_name"
+	return 8
+}
+
 _full_loop_release_inspect_remote() {
 	local repo="$1"
 	local tag_name="$2"
@@ -982,8 +1085,8 @@ _full_loop_release_inspect_remote() {
 			run_url=$(jq -r '.html_url // ""' <<<"$_FULL_LOOP_RELEASE_RUN_JSON") || return 1
 			[[ -z "$run_url" ]] || printf 'RECOVERED_WORKFLOW_URL=%s\n' "$run_url"
 			if _full_loop_release_verify_channels "$repo" "$tag_name"; then
-				printf 'RELEASE_REMOTE_STATE=published\n'
-				return 0
+				_full_loop_release_published_if_postflight_ready "$repo" "$tag_name"
+				return $?
 			fi
 			# A successful sibling is evidence of publication; a failed newer
 			# recovery must not trigger another dispatch during propagation.
@@ -998,8 +1101,8 @@ _full_loop_release_inspect_remote() {
 		_full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON" || return 8
 		return 5
 	fi
-	printf 'RELEASE_REMOTE_STATE=published\n'
-	return 0
+	_full_loop_release_published_if_postflight_ready "$repo" "$tag_name"
+	return $?
 }
 
 _full_loop_release_dispatch_recovery() {
@@ -1488,6 +1591,33 @@ _full_loop_release_not_requested_status() {
 	return 0
 }
 
+# Map a non-success remote inspection result to the read-only or dispatching action.
+_full_loop_release_handle_inspect_rc() {
+	local mode="$1"
+	local repo="$2"
+	local tag_name="$3"
+	local inspect_rc="$4"
+	case "$inspect_rc" in
+	8) return 8 ;;
+	1) return 1 ;;
+	"$_FULL_LOOP_RELEASE_POSTFLIGHT_ABSENT_RC")
+		[[ "$mode" != "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]] && return 8
+		_full_loop_release_dispatch_postflight "$repo" "$tag_name"
+		return $?
+		;;
+	"$_FULL_LOOP_RELEASE_POSTFLIGHT_FAILED_RC")
+		printf 'Postflight for %s did not succeed; inspect the Postflight Verification run before reconciling again.\n' "$tag_name" >&2
+		return 1
+		;;
+	3 | 4 | 5)
+		[[ "$mode" == "status" ]] && return "$inspect_rc"
+		_full_loop_release_dispatch_recovery "$repo" "$tag_name"
+		return $?
+		;;
+	*) return 1 ;;
+	esac
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1577,14 +1707,6 @@ _full_loop_release_existing_command() {
 		fi
 		return 0
 	fi
-	case "$inspect_rc" in
-	8) return 8 ;;
-	1) return 1 ;;
-	3 | 4 | 5)
-		[[ "$mode" == "status" ]] && return "$inspect_rc"
-		_full_loop_release_dispatch_recovery "$repo" "$tag_name"
-		return $?
-		;;
-	*) return 1 ;;
-	esac
+	_full_loop_release_handle_inspect_rc "$mode" "$repo" "$tag_name" "$inspect_rc"
+	return $?
 }

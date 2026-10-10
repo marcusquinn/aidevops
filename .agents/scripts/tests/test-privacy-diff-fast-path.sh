@@ -78,13 +78,22 @@ else
 fi
 printf 'person\tSynthetic Name\n' >"$ENTITIES"
 fixture 'ordinary line'
-expect 0 'nonempty inventory retains authoritative scanning' privacy_scan_public_diff base head "$ENTITIES"
-[[ -s "$TRACE" ]] && pass 'custom inventory disables fast rejection' || fail 'custom inventory disables fast rejection'
+expect 0 'nonempty inventory passes ordinary line' privacy_scan_public_diff base head "$ENTITIES"
+[[ ! -s "$TRACE" ]] && pass 'custom inventory batches ordinary lines without per-line scans' || fail 'custom inventory batches ordinary lines without per-line scans'
+fixture 'ordinary line' 'has Synthetic Name here'
+expect 0 'matching line reaches authoritative scanner' privacy_scan_public_diff base head "$ENTITIES"
+[[ "$(wc -l <"$TRACE")" -eq 1 ]] && pass 'only entity candidate is scanned' || fail 'only entity candidate is scanned'
 : >"$ENTITIES"
 : >"$TRACE"
 printf 'ordinary\n' >"$HOME/.aidevops/configs/privacy-guard-private-path-patterns.txt"
-expect 0 'configured path rules retain authoritative scanning' privacy_scan_public_diff base head "$ENTITIES"
-[[ -s "$TRACE" ]] && pass 'custom path rules disable fast rejection' || fail 'custom path rules disable fast rejection'
+fixture 'plain' 'an ordinary line'
+expect 0 'configured path rules reach scanner only for matches' privacy_scan_public_diff base head "$ENTITIES"
+[[ "$(wc -l <"$TRACE")" -eq 1 ]] && pass 'only path-rule candidate is scanned' || fail 'only path-rule candidate is scanned'
+: >"$TRACE"
+printf '(unclosed\n' >"$HOME/.aidevops/configs/privacy-guard-private-path-patterns.txt"
+fixture 'plain' 'other'
+expect 0 'invalid regex inventory falls back to full scan' privacy_scan_public_diff base head "$ENTITIES"
+[[ "$(wc -l <"$TRACE")" -eq 2 ]] && pass 'fallback scans every line' || fail 'fallback scans every line'
 rm "$HOME/.aidevops/configs/privacy-guard-private-path-patterns.txt"
 
 # Restore the real scanners for detection, redaction, and line-number checks.

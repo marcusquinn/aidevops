@@ -68,7 +68,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc 'echo hello'
+ExecStart=/usr/bin/env bash -lc 'echo hello'
 TimeoutStartSec=60
 StandardOutput=append:${log_file}
 StandardError=append:${log_file}
@@ -89,7 +89,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc 'echo check'
+ExecStart=/usr/bin/env bash -lc 'echo check'
 TimeoutStartSec=120
 Nice=10
 IOSchedulingClass=idle
@@ -112,7 +112,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc 'echo sync'
+ExecStart=/usr/bin/env bash -lc 'echo sync'
 TimeoutStartSec=300
 Nice=10
 IOSchedulingClass=idle
@@ -135,7 +135,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc 'echo pulse'
+ExecStart=/usr/bin/env bash -lc 'echo pulse'
 TimeoutStartSec=3600
 TimeoutStopSec=30
 SendSIGKILL=yes
@@ -177,7 +177,7 @@ test_real_scheduler_units_verify() {
 		service_text=$(<"$service_file")
 		timer_text=$(<"$timer_file")
 		[[ "$service_text" == *"KillMode=control-group"* ]] || rc=1
-		[[ "$service_text" == *"ExecStart=/bin/bash -lc"* ]] || rc=1
+		[[ "$service_text" == *"ExecStart=/usr/bin/env bash -lc"* ]] || rc=1
 		[[ "$timer_text" == *"OnUnitActiveSec=60"* ]] || rc=1
 		[[ "$timer_text" == *"Persistent=true"* ]] || rc=1
 

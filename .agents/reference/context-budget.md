@@ -61,7 +61,7 @@ context-budget-helper.sh analyze <capture.json>
 context-budget-helper.sh compare <control.json> <candidate.json>
 
 # Token evidence for any window (UTC); capture prints this automatically for OC1.
-context-budget-helper.sh tokens --since 2026-01-01T12:00 --model claude-haiku-4-5 --new-sessions
+context-budget-helper.sh tokens --since 2026-01-01T12:00 --model claude-haiku-5-5 --new-sessions
 ```
 
 Add `--headless` to measure the worker/headless prompt (`AIDEVOPS_HEADLESS=1`).

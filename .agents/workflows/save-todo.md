@@ -13,7 +13,7 @@ Topic/context: $ARGUMENTS
 
 ## Core Rule
 
-All TODOs, plans, and issues created by this workflow MUST use `workflows/brief.md` and `~/.aidevops/agents/templates/brief-template.md` so future workers can execute without the original chat. For auto-dispatch, use only the shared "Dispatch Readiness Contract (brief schema v2)" checklist and its `verify-brief-helper.sh check-readiness <brief>` gate. Saving is explicit later intent: keep the work as a local TODO/plan and do not ask whether to dispatch it. If an implementation issue is created, that creation authorizes implementation, so add `auto-dispatch` when readiness passes. If the user says `/full-loop`, "work on it now", or equivalent, route to `/full-loop` instead of stopping after capture.
+All TODOs, plans, and issues created by this workflow MUST use `workflows/brief.md` and `~/.aidevops/agents/templates/brief-template.md` so future workers can execute without the original chat. For auto-dispatch, use only the shared "Dispatch Readiness Contract (brief schema v2)" checklist and its `verify-brief-helper.sh check-readiness <brief>` gate. Saving is explicit later intent: saved `tNNN` TODO rows publish through issue-sync as non-dispatched tracking issues without `auto-dispatch`; ID-less plan lines stay local. Do not ask whether to dispatch saved work. If an implementation issue is created, that creation authorizes implementation, so add `auto-dispatch` when readiness passes. If the user says `/full-loop`, "work on it now", or equivalent, route to `/full-loop` instead of stopping after capture.
 
 ## Intent Routing
 
@@ -26,13 +26,13 @@ issue from the active interactive implementation session.
 |--------|--------|
 | `/full-loop`, "work on this now", "fix/implement/do this in this session" | Start `/full-loop $ARGUMENTS`; do not ask whether to begin |
 | "background", "worker", "auto-dispatch" | Create a briefed TODO/issue and add `#auto-dispatch` when readiness passes |
-| "save", "log", "for later", `/save-todo`, `/aidevops-save-todo` | Save a local briefed TODO/plan; do not create an implementation issue or ask about dispatch |
+| "save", "log", "for later", `/save-todo`, `/aidevops-save-todo` | Save a briefed TODO/plan: `tNNN` rows publish as non-dispatched tracking issues without `auto-dispatch`; ID-less plan lines stay local; do not ask about dispatch |
 | "create/file/open an issue", or a fixable out-of-scope finding | Create a worker-ready implementation issue with `#auto-dispatch`; do not seek separate dispatch approval |
 | Ambiguous "we need to", "should add", "can you note" | Infer the safest productive route; ask only when human input is materially irreplaceable |
 
 Never offer "create an issue" and "create an issue and auto-dispatch" as
 separate choices. Decide whether an issue should exist before publishing it;
-once created, automatic implementation is the default.
+once an implementation issue is created, automatic implementation is the default.
 
 ## Auto-Detection
 
@@ -52,7 +52,7 @@ once created, automatic implementation is the default.
 
 ## Step 1b: Dispatch Tags (MANDATORY)
 
-**`#auto-dispatch`** — For background intent or a published implementation issue, add when ALL true: clear description with specific files/patterns, ≤2h scope, no credentials/purchases needed, no user-preference design decisions, automatable verification. **Default published implementation issues to `#auto-dispatch`** — omit only when a specific exclusion applies. Explicit save/later intent remains a local TODO/plan without this tag. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging". Canonical blocker labels: `reference/dispatch-blockers.md`.
+**`#auto-dispatch`** — For background intent or a published implementation issue, add when ALL true: clear description with specific files/patterns, ≤2h scope, no credentials/purchases needed, no user-preference design decisions, automatable verification. **Default published implementation issues to `#auto-dispatch`** — omit only when a specific exclusion applies. Explicit save/later intent omits this tag: saved `tNNN` TODO rows publish as non-dispatched tracking issues through issue-sync, while ID-less plan lines stay local. Full criteria: `workflows/plans.md` "Auto-Dispatch Tagging". Canonical blocker labels: `reference/dispatch-blockers.md`.
 
 **`#plan`** — Add when decomposition needed before implementation (multi-phase, >2h, research/design).
 

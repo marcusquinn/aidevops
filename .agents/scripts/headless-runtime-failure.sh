@@ -1174,6 +1174,14 @@ _push_wip_commits_on_exit() {
 	else
 		print_warning "[lifecycle] worker_exit_push_failed branch=${branch_name} ahead=${ahead_count}"
 		_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
+		# GH#34040: committed work has no diff to archive; bundle it instead.
+		local bundle_file=""
+		if bundle_file=$(_worker_write_recovery_bundle "$work_dir" "$branch_name"); then
+			_WORKER_DIRTY_WORK_PRESERVED=1
+			print_warning "[lifecycle] worker_dirty_work_preserved bundle=${bundle_file}"
+		else
+			print_warning "[lifecycle] work_lost branch=${branch_name} ahead=${ahead_count} — push and recovery bundle both failed"
+		fi
 	fi
 	return 0
 }
@@ -1355,6 +1363,80 @@ _worker_archive_dirty_worktree_patch() {
 }
 
 #######################################
+# GH#34040: Write a verified git bundle of commits not reachable from any
+# origin remote-tracking ref, beside the dirty-worktree archives.
+# Args: $1=worktree path, $2=branch name (may be empty when detached)
+# Outputs: bundle path on stdout
+# Returns: 0 only when the bundle exists and `git bundle verify` passes
+#######################################
+_worker_write_recovery_bundle() {
+	local work_dir="$1"
+	local branch_name="$2"
+	local archive_root="${AIDEVOPS_WORKER_DIRTY_ARCHIVE_DIR:-${HOME}/.aidevops/.agent-workspace/work/dirty-worktrees}"
+	local safe_branch="${branch_name//[^A-Za-z0-9._-]/_}"
+	local stamp=""
+	stamp=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || printf '%s' "unknown-time")
+	local archive_dir="${archive_root}/${safe_branch:-detached}-${stamp}"
+	local bundle_file="${archive_dir}/commits.bundle"
+	local bundle_ref="HEAD"
+	case "$branch_name" in
+	"" | HEAD) ;;
+	*) bundle_ref="refs/heads/${branch_name}" ;;
+	esac
+
+	mkdir -p "$archive_dir" 2>/dev/null || return 1
+	git -C "$work_dir" bundle create "$bundle_file" "$bundle_ref" --not --remotes=origin \
+		>/dev/null 2>&1 || return 1
+	git -C "$work_dir" bundle verify "$bundle_file" >/dev/null 2>&1 || return 1
+	git -C "$work_dir" rev-parse HEAD >"${archive_dir}/head.txt" 2>/dev/null || true
+	printf '%s\n' "$bundle_file"
+	return 0
+}
+
+#######################################
+# GH#34040: Prove committed worker work is durable before a blocked handoff
+# claims preservation. Push the branch; on failure write a verified recovery
+# bundle. Never reports preservation without one of those proofs.
+# Args: $1=worktree path
+# Globals updated:
+#   _WORKER_COMMIT_DURABILITY — none | pushed:<branch> | bundle:<path> | work_lost
+# Returns: 0 when commits are absent or durable, 1 when work is lost
+#######################################
+_worker_secure_branch_commits() {
+	local work_dir="$1"
+	local branch_name="" unpushed="" bundle_file=""
+	_WORKER_COMMIT_DURABILITY="work_lost"
+	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
+		_WORKER_COMMIT_DURABILITY="none"
+		return 0
+	fi
+	branch_name=$(git -C "$work_dir" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch_name=""
+	unpushed=$(git -C "$work_dir" rev-list --count HEAD --not --remotes=origin 2>/dev/null) || unpushed=""
+	if [[ "$unpushed" == "0" ]]; then
+		_WORKER_COMMIT_DURABILITY="none"
+		return 0
+	fi
+	case "$branch_name" in
+	"" | main | master) ;;
+	*)
+		if git -C "$work_dir" push -u origin "$branch_name" >/dev/null 2>&1; then
+			_WORKER_COMMIT_DURABILITY="pushed:${branch_name}"
+			print_info "[lifecycle] worker_commits_pushed branch=${branch_name} unpushed=${unpushed:-unknown}"
+			return 0
+		fi
+		print_warning "[lifecycle] worker_commits_push_failed branch=${branch_name} unpushed=${unpushed:-unknown}"
+		;;
+	esac
+	if bundle_file=$(_worker_write_recovery_bundle "$work_dir" "$branch_name"); then
+		_WORKER_COMMIT_DURABILITY="bundle:${bundle_file}"
+		print_warning "[lifecycle] worker_commits_bundled branch=${branch_name:-detached} bundle=${bundle_file}"
+		return 0
+	fi
+	print_warning "[lifecycle] work_lost branch=${branch_name:-detached} unpushed=${unpushed:-unknown} — push and recovery bundle both failed"
+	return 1
+}
+
+#######################################
 # Record deterministic launch capability failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
@@ -1397,12 +1479,14 @@ _hrff_finalize_exit_trap() {
 	local force_nonzero_exit="$5"
 	local checkpoint_reason="${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}"
 	local claim_release_handled=0
-	local last_stage=""
-	local last_completed_stage=""
+	local last_stage="${_WORKER_PRELAUNCH_LAST_STAGE:-}"
+	local last_completed_stage="${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}"
 
 	if declare -F worker_attempt_observability_last_stage >/dev/null 2>&1; then
-		last_stage=$(worker_attempt_observability_last_stage)
-		last_completed_stage=$(worker_attempt_observability_last_completed_stage)
+		last_stage=$(worker_attempt_observability_last_stage) || last_stage=""
+		last_completed_stage=$(worker_attempt_observability_last_completed_stage) || last_completed_stage=""
+		last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
+		last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 	fi
 	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 	_push_wip_commits_on_exit
@@ -1478,9 +1562,9 @@ _hrff_durable_exit_code_file() {
 # _WORKER_WORKTREE_PATH, _WORKER_EXIT_CODE_FILE, _WORKER_RUNTIME_LAUNCH_STARTED
 #######################################
 _exit_trap_handler() {
-	local session_key="$1"
 	# Capture exit status immediately — any subsequent command will overwrite $?
 	local exit_status=$?
+	local session_key="$1"
 
 	# t3050: prefer the worker's actual wait_status (persisted by _invoke_opencode
 	# at ${exit_code_file}.wait_status) over $?. By the time EXIT fires, the
@@ -1510,8 +1594,8 @@ _exit_trap_handler() {
 	local session_count=0
 	local ledger_terminal_reason=""
 	local force_nonzero_exit=0
-	local last_stage=""
-	local last_completed_stage=""
+	local last_stage="${_WORKER_PRELAUNCH_LAST_STAGE:-}"
+	local last_completed_stage="${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}"
 	if [[ -x "${DISPATCH_LEDGER_HELPER:-}" && -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]]; then
 		ledger_terminal_reason=$("$DISPATCH_LEDGER_HELPER" terminal-reason --session-key "$session_key" \
 			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null) || ledger_terminal_reason=""
@@ -1519,8 +1603,10 @@ _exit_trap_handler() {
 	if [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != "1" ]]; then
 		reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-$_HRFF_PRELAUNCH_NOT_INVOKED}"
 		if declare -F worker_attempt_observability_last_stage >/dev/null 2>&1; then
-			last_stage=$(worker_attempt_observability_last_stage)
-			last_completed_stage=$(worker_attempt_observability_last_completed_stage)
+			last_stage=$(worker_attempt_observability_last_stage) || last_stage=""
+			last_completed_stage=$(worker_attempt_observability_last_completed_stage) || last_completed_stage=""
+			last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
+			last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 		fi
 		print_warning "[exit-trap] runtime invocation never started after worker preparation; reason=${reason} last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 		if [[ ! "$exit_status" =~ ^[1-9][0-9]*$ ]]; then
@@ -1660,6 +1746,8 @@ _fast_fail_read_state() {
 #   $7  - retry_after (epoch seconds)
 #   $8  - new_backoff (seconds)
 #   $9  - crash_type (may be empty)
+#   $10 - set_enrichment (true|false, default false). When true, flags
+#         enrichment_needed unless enrichment_done is already true.
 #######################################
 _fast_fail_write_state() {
 	local state_file="$1"
@@ -1671,7 +1759,14 @@ _fast_fail_write_state() {
 	local retry_after="$7"
 	local new_backoff="$8"
 	local crash_type="$9"
+	local set_enrichment="${10:-false}"
 	local aidevops_version="${AIDEVOPS_UNKNOWN_VERSION:-unknown}"
+	# shellcheck disable=SC2016 # jq variables, not shell expansion
+	local jq_program='.[$k] = ((.[$k] // {}) + {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type, "aidevops_version": $aidevops_version, "release_reset_policy": $release_reset_policy})'
+	if [[ "$set_enrichment" == "true" ]]; then
+		# shellcheck disable=SC2016 # jq variables, not shell expansion
+		jq_program+=' | if .[$k].enrichment_done != true then .[$k].enrichment_needed = true else . end'
+	fi
 	local release_reset_policy=""
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "${AIDEVOPS_UNKNOWN_VERSION:-unknown}")
@@ -1688,7 +1783,7 @@ _fast_fail_write_state() {
 			--arg crash_type "${crash_type:-}" \
 			--arg aidevops_version "$aidevops_version" \
 			--arg release_reset_policy "$release_reset_policy" \
-			'.[$k] = ((.[$k] // {}) + {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type, "aidevops_version": $aidevops_version, "release_reset_policy": $release_reset_policy})' \
+			"$jq_program" \
 			"$state_file") || {
 			echo "Error: Failed to update $state_file" >&2
 			updated_state=""
@@ -1703,7 +1798,7 @@ _fast_fail_write_state() {
 			--arg crash_type "${crash_type:-}" \
 			--arg aidevops_version "$aidevops_version" \
 			--arg release_reset_policy "$release_reset_policy" \
-			'.[$k] = ((.[$k] // {}) + {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type, "aidevops_version": $aidevops_version, "release_reset_policy": $release_reset_policy})' \
+			"$jq_program" \
 			2>/dev/null) || updated_state=""
 	fi
 	if [[ -z "$updated_state" ]]; then
@@ -1717,6 +1812,24 @@ _fast_fail_write_state() {
 	printf '%s\n' "$updated_state" >"$tmp_file" 2>/dev/null &&
 		mv "$tmp_file" "$state_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
 	return 0
+}
+
+#######################################
+# Decide whether a worker-side failure reason warrants pulse enrichment.
+# PR-exists reasons (post-PR handoff, closed-unmerged) are review/handoff
+# problems, not missing implementation guidance, so they are not flagged.
+#
+# Args: $1 - failure reason
+# Returns: 0=flag for enrichment, 1=do not flag
+#######################################
+_fast_fail_reason_wants_enrichment() {
+	local reason="$1"
+	case "$reason" in
+	worker_noop_zero_output | watchdog_stall_killed | worker_failed | premature_exit | stale_timeout)
+		return 0
+		;;
+	esac
+	return 1
 }
 
 #######################################
@@ -1806,9 +1919,14 @@ _report_failure_to_fast_fail() {
 	[[ "$new_backoff" -gt "$max_backoff" ]] && new_backoff="$max_backoff"
 	local retry_after=$((now + new_backoff))
 
+	local set_enrichment="false"
+	if [[ "$new_count" -eq 1 ]] && _fast_fail_reason_wants_enrichment "$reason"; then
+		set_enrichment="true"
+	fi
+
 	# Write updated state atomically (tmp + mv)
 	_fast_fail_write_state "$state_file" "$state_dir" "$key" "$new_count" "$now" \
-		"$reason" "$retry_after" "$new_backoff" "$crash_type"
+		"$reason" "$retry_after" "$new_backoff" "$crash_type" "$set_enrichment"
 
 	# Release lock
 	rmdir "$lock_dir" 2>/dev/null || true

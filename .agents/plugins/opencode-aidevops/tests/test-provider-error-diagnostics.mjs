@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   createProviderErrorHandler,
   normalizeProviderError,
+  localFailureCheck,
 } from "../provider-error-diagnostics.mjs";
 
 function apiError(overrides = {}) {
@@ -133,4 +134,39 @@ test("reserves concurrent delivery and retries after a failed toast", async () =
   fail = false;
   await retryHandler(denied);
   assert.equal(toasts.length, 2);
+});
+
+test("bound failures emit one content-free toast and receipt per window for V1 and V2", async () => {
+  for (const error of [apiError({ statusCode: 404, message: "sentinel-private-body" }),
+    { name: "UnknownError", data: { message: "ECONNREFUSED sentinel-private-body" } },
+    { code: "VAULT_POLICY_DENIED" }, { message: "model identity mismatch" }, { code: "ETIMEDOUT" }]) {
+    const toasts = [];
+    const receipts = [];
+    let time = 0;
+    const handler = createProviderErrorHandler({ policy: { bound: true }, now: () => time,
+      isHeadless: () => false, client: { tui: { showToast: async (toast) => toasts.push(toast) } },
+      append: (event) => { receipts.push(event); return true; } });
+    const event = { event: { type: "session.error", data: { sessionID: "ses_test", error } } };
+    await Promise.all([handler(event), handler(event)]);
+    assert.equal(toasts.length, 1);
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].reason, localFailureCheck(error));
+    assert.doesNotMatch(JSON.stringify({ toasts, receipts }), /sentinel-private-body/);
+    time += 30001;
+    await handler(event);
+    assert.equal(receipts.length, 2);
+  }
+});
+
+test("headless and unavailable TUI retain receipt; receipt failures remain content-free", async () => {
+  for (const headless of [true, false]) {
+    let receipts = 0;
+    const handler = createProviderErrorHandler({ policy: { bound: true },
+      isHeadless: () => headless, client: { tui: { showToast: async () => { throw new Error("no TUI"); } } },
+      append: () => { receipts++; return true; } });
+    const event = { type: "session.error", properties: { sessionID: "ses_test", error: apiError({ statusCode: 404 }) } };
+    await handler(event);
+    await handler(event);
+    assert.equal(receipts, 1);
+  }
 });

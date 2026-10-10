@@ -21,10 +21,28 @@ SNAPSHOT_REPO="${TEST_ROOT}/snapshot.git"
 TESTS=0
 FAILURES=0
 
+# Native Git and a minimal system PATH from the caller's PATH, so the fixture
+# also runs where git/bash/python3 are not in /usr/bin (no FHS layout).
+# The resolver skips aidevops Git shims that may lead the caller's PATH.
+# shellcheck disable=SC2016 # Expanded by the child shell.
+NATIVE_GIT=$(bash -c 'source "$1/runtime-env.sh" && aidevops_resolve_native_git' _ "$SCRIPT_DIR") || exit 1
+TEST_SYS_PATH=""
+for _tool in env bash git python3; do
+	_tool_path=$(type -P "$_tool") || exit 1
+	[[ "$_tool" == git ]] && _tool_path="$NATIVE_GIT"
+	_tool_dir="${_tool_path%/*}"
+	case ":${TEST_SYS_PATH}:" in
+	*":${_tool_dir}:"*) ;;
+	*) TEST_SYS_PATH="${TEST_SYS_PATH:+${TEST_SYS_PATH}:}${_tool_dir}" ;;
+	esac
+done
+TEST_SYS_PATH="${TEST_SYS_PATH}:/usr/bin:/bin"
+unset _tool _tool_path _tool_dir
+
 # Fixture setup must bypass the guard under test; policy assertions invoke the
 # shim explicitly below.
 git() {
-	/usr/bin/git "$@"
+	"$NATIVE_GIT" "$@"
 	return $?
 }
 
@@ -114,6 +132,20 @@ assert_allowed_with_temp_root() {
 	return 0
 }
 
+# GH#34179: version flags have no subcommand, but are exact read-only queries.
+assert_allowed "allows canonical version flag" "$REPO" "git --version"
+assert_allowed "allows canonical short version flag" "$REPO" "git -v"
+assert_allowed "allows version flag with canonical -C target" "$REPO" "git -C '$REPO' --version"
+assert_blocked "blocks unknown flag-only invocation" "git --unknown"
+assert_blocked "blocks unknown flag before version" "git --unknown --version"
+assert_blocked "blocks unknown flag after version" "git --version --unknown"
+assert_blocked "blocks malformed -C version invocation" "git -C --version"
+assert_blocked "blocks version followed by canonical mutation" "git --version branch -M renamed"
+assert_blocked "blocks version after canonical mutation" "git branch -M renamed --version"
+assert_blocked "blocks option terminator before version" "git -- --version"
+# shellcheck disable=SC2016
+assert_blocked "blocks unresolved version -C target" 'git -C "$REPO" --version'
+assert_blocked "blocks chained mutation after version" "git --version && git branch -M renamed"
 assert_blocked "blocks canonical detached switch" "git switch --detach main"
 GUIDANCE_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git pull --ff-only origin main" 2>&1)
 RECOVERY_HELPER="${SCRIPT_DIR}/canonical-recovery-helper.sh"
@@ -195,7 +227,7 @@ assert_blocked "blocks mutation in a repository with an aidevops project marker"
 	"git -C '$MARKED_REPO' add managed.txt"
 assert_allowed "allows git add in an unregistered temp repo with a project marker" "$REPO" \
 	"git -C '$UNREGISTERED_REPO' add disposable.txt"
-if (cd "$UNREGISTERED_REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" add disposable.txt) &&
+if (cd "$UNREGISTERED_REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" add disposable.txt) &&
 	! git -C "$UNREGISTERED_REPO" diff --cached --quiet -- disposable.txt; then
 	pass "PATH shim stages files in an unregistered temp marker repo"
 else
@@ -213,7 +245,7 @@ assert_blocked "blocks an unrelated Git directory from mutating a marker-managed
 	"git --git-dir='$PASSWORD_REPO/.git' --work-tree='$SEPARATE_REPO' reset --hard"
 assert_allowed "allows gopass-style Git mutation in an unrelated password store" "$REPO" \
 	"git -C '$PASSWORD_REPO' add test-secret.gpg"
-if (cd "$REPO" && env PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" -C "$PASSWORD_REPO" add test-secret.gpg); then
+if (cd "$REPO" && env PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" -C "$PASSWORD_REPO" add test-secret.gpg); then
 	if git -C "$PASSWORD_REPO" diff --cached --quiet -- test-secret.gpg; then
 		fail "PATH shim permits unrelated password-store mutation"
 	else
@@ -247,6 +279,10 @@ assert_allowed "allows canonical branch listing" "$REPO" "git branch -vv --no-ab
 assert_allowed "allows canonical branch pattern listing" "$REPO" "git branch --list 'feature/*'"
 assert_allowed "allows canonical branch containment query" "$REPO" "git branch --contains main"
 assert_allowed "allows canonical ref format validation" "$REPO" "git check-ref-format --branch feature/valid-ref"
+assert_allowed "allows canonical no-index ignore query" "$REPO" "git check-ignore --no-index -v -- node_modules/x"
+assert_allowed "allows canonical quiet ignore query" "$REPO" "git check-ignore --quiet -- README.md"
+assert_allowed "allows canonical attribute query" "$REPO" "git check-attr -a -- README.md"
+assert_allowed "allows canonical mailmap query" "$REPO" "git check-mailmap 'Test <test@example.invalid>'"
 assert_allowed "allows canonical ls-remote query" "$REPO" "git ls-remote origin refs/heads/main"
 assert_allowed "allows canonical rev-list tag query" "$REPO" "git rev-list -n 1 HEAD"
 assert_allowed "allows canonical rev-list count query" "$REPO" "git rev-list --count HEAD"
@@ -272,6 +308,30 @@ assert_allowed "allows unrelated writes in an unmanaged isolated bare temp repo"
 	"$REPO" "git -C '$PROSPECTIVE_REPO' update-ref refs/heads/main '$INITIAL_HEAD'"
 
 git -C "$REPO" worktree add -q -b feature/example "$LINKED"
+assert_allowed "allows linked-worktree version flag" "$LINKED" "git --version"
+assert_allowed "allows version flag with linked -C target" "$REPO" "git -C '$LINKED' --version"
+assert_allowed "allows version flag with repeated -C targets" "$REPO" "git -C '$TEST_ROOT' -C linked --version"
+NATIVE_VERSION=$(git --version)
+for VERSION_CWD in "$REPO" "$LINKED"; do
+	VERSION_RC=0
+	VERSION_OUTPUT=$(cd "$VERSION_CWD" && env PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --version 2>&1) || VERSION_RC=$?
+	TARGET_VERSION_RC=0
+	TARGET_VERSION_OUTPUT=$(cd "$VERSION_CWD" && env PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" -C "$LINKED" --version 2>&1) || TARGET_VERSION_RC=$?
+	if [[ "$VERSION_RC" -eq 0 && "$TARGET_VERSION_RC" -eq 0 && "$VERSION_OUTPUT" == "$NATIVE_VERSION" && "$TARGET_VERSION_OUTPUT" == "$NATIVE_VERSION" ]]; then
+		pass "PATH shim preserves native version output and status from ${VERSION_CWD##*/}"
+	else
+		fail "PATH shim preserves native version output and status from ${VERSION_CWD##*/} (rc=$VERSION_RC target_rc=$TARGET_VERSION_RC)"
+	fi
+done
+NATIVE_MISSING_RC=0
+git -C "$TEST_ROOT/missing" --version >/dev/null 2>&1 || NATIVE_MISSING_RC=$?
+SHIM_MISSING_RC=0
+env PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" -C "$TEST_ROOT/missing" --version >/dev/null 2>&1 || SHIM_MISSING_RC=$?
+if [[ "$NATIVE_MISSING_RC" -ne 0 && "$SHIM_MISSING_RC" -eq "$NATIVE_MISSING_RC" ]]; then
+	pass "PATH shim preserves native invalid version target exit status"
+else
+	fail "PATH shim preserves native invalid version target exit status (native_rc=$NATIVE_MISSING_RC shim_rc=$SHIM_MISSING_RC)"
+fi
 git init --bare -q "$SNAPSHOT_REPO"
 assert_allowed "allows an isolated snapshot repository to index a linked worktree" "$REPO" \
 	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$LINKED' add --all --sparse"
@@ -288,7 +348,7 @@ assert_blocked "blocks linked-worktree metadata from mutating the canonical work
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(
 	unset -f git
-	export PATH="${SCRIPT_DIR}:/usr/bin:/bin"
+	export PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}"
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
 	_get_default_branch_for_repo "$REPO"
@@ -299,8 +359,8 @@ else
 	fail "deployed shim lets pulse resolve a non-main default branch (output=$DEFAULT_BRANCH)"
 fi
 
-if (cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/unsafe >/dev/null 2>&1) ||
-	(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" symbolic-ref --delete refs/remotes/origin/HEAD >/dev/null 2>&1); then
+if (cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/unsafe >/dev/null 2>&1) ||
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" symbolic-ref --delete refs/remotes/origin/HEAD >/dev/null 2>&1); then
 	fail "PATH shim blocks symbolic-ref mutation before execution"
 elif [[ "$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD)" == "origin/develop" ]]; then
 	pass "PATH shim blocks symbolic-ref mutation before execution"
@@ -312,12 +372,25 @@ VALID_REF_RC=0
 INVALID_REF_RC=0
 NATIVE_INVALID_REF_RC=0
 git check-ref-format --branch "invalid ref" >/dev/null 2>&1 || NATIVE_INVALID_REF_RC=$?
-(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch feature/valid-ref >/dev/null) || VALID_REF_RC=$?
-(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch "invalid ref" >/dev/null 2>&1) || INVALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" check-ref-format --branch feature/valid-ref >/dev/null) || VALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" check-ref-format --branch "invalid ref" >/dev/null 2>&1) || INVALID_REF_RC=$?
 if [[ "$VALID_REF_RC" -eq 0 && "$NATIVE_INVALID_REF_RC" -ne 0 && "$INVALID_REF_RC" -eq "$NATIVE_INVALID_REF_RC" ]]; then
 	pass "PATH shim preserves native ref format validation"
 else
 	fail "PATH shim preserves native ref format validation (valid_rc=${VALID_REF_RC}, invalid_rc=${INVALID_REF_RC}, native_invalid_rc=${NATIVE_INVALID_REF_RC})"
+fi
+
+# GH#33858: child build tools probe ignore rules from canonical checkouts and
+# must see native check-ignore results, not the guard's block code.
+printf 'node_modules/\n' >>"${REPO}/.git/info/exclude"
+IGNORED_RC=0
+TRACKED_RC=0
+IGNORED_OUTPUT=$(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" check-ignore --no-index -v -- node_modules/x 2>&1) || IGNORED_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" check-ignore --quiet -- README.md >/dev/null 2>&1) || TRACKED_RC=$?
+if [[ "$IGNORED_RC" -eq 0 && "$IGNORED_OUTPUT" == *"node_modules/"* && "$TRACKED_RC" -eq 1 ]]; then
+	pass "PATH shim preserves native check-ignore results"
+else
+	fail "PATH shim preserves native check-ignore results (ignored_rc=${IGNORED_RC}, tracked_rc=${TRACKED_RC}, output=${IGNORED_OUTPUT})"
 fi
 
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:$PATH" "$SHIM" switch --detach main >/dev/null 2>&1); then
@@ -334,37 +407,37 @@ fi
 SHIM_BIN="${TEST_ROOT}/bin"
 mkdir -p "$SHIM_BIN"
 ln -s "$SHIM" "${SHIM_BIN}/git"
-if (cd "$REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git status --short >/dev/null); then
+if (cd "$REPO" && env PATH="${SHIM_BIN}:${TEST_SYS_PATH}" git status --short >/dev/null); then
 	pass "deployed symlink shim resolves policy engine"
 else
 	fail "deployed symlink shim resolves policy engine"
 fi
 HASH_INPUT="canonical hash-object read-only fixture $RANDOM"
 printf '%s\n' "$HASH_INPUT" >"${REPO}/hash-input.txt"
-EXPECTED_STDIN_HASH=$(printf '%s' "$HASH_INPUT" | /usr/bin/git hash-object --stdin)
-EXPECTED_PATH_HASH=$(/usr/bin/git -C "$REPO" hash-object hash-input.txt)
-COUNT_OUTPUT=$(/usr/bin/git -C "$REPO" count-objects)
+EXPECTED_STDIN_HASH=$(printf '%s' "$HASH_INPUT" | "$NATIVE_GIT" hash-object --stdin)
+EXPECTED_PATH_HASH=$("$NATIVE_GIT" -C "$REPO" hash-object hash-input.txt)
+COUNT_OUTPUT=$("$NATIVE_GIT" -C "$REPO" count-objects)
 OBJECT_COUNT_BEFORE=${COUNT_OUTPUT%% *}
-SHIM_STDIN_HASH=$(printf '%s' "$HASH_INPUT" | (cd "$REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git hash-object --stdin))
-SHIM_PATH_HASH=$(cd "$REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git hash-object hash-input.txt)
+SHIM_STDIN_HASH=$(printf '%s' "$HASH_INPUT" | (cd "$REPO" && env PATH="${SHIM_BIN}:${TEST_SYS_PATH}" git hash-object --stdin))
+SHIM_PATH_HASH=$(cd "$REPO" && env PATH="${SHIM_BIN}:${TEST_SYS_PATH}" git hash-object hash-input.txt)
 if [[ "$SHIM_STDIN_HASH" == "$EXPECTED_STDIN_HASH" && "$SHIM_PATH_HASH" == "$EXPECTED_PATH_HASH" ]]; then
 	pass "deployed symlink shim allows read-only content and path hashing"
 else
 	fail "deployed symlink shim preserves native read-only hash-object output"
 fi
-WRITE_OUTPUT=$(printf '%s' "blocked hash-object write $RANDOM" | (cd "$REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git hash-object -w --stdin) 2>&1)
+WRITE_OUTPUT=$(printf '%s' "blocked hash-object write $RANDOM" | (cd "$REPO" && env PATH="${SHIM_BIN}:${TEST_SYS_PATH}" git hash-object -w --stdin) 2>&1)
 WRITE_RC=$?
-COUNT_OUTPUT=$(/usr/bin/git -C "$REPO" count-objects)
+COUNT_OUTPUT=$("$NATIVE_GIT" -C "$REPO" count-objects)
 OBJECT_COUNT_AFTER=${COUNT_OUTPUT%% *}
 if [[ "$WRITE_RC" -eq 42 && "$WRITE_OUTPUT" == *"BLOCKED by canonical Git guard"* && "$OBJECT_COUNT_AFTER" == "$OBJECT_COUNT_BEFORE" && "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]]; then
 	pass "deployed symlink shim blocks hash-object writes without changing objects or refs"
 else
 	fail "deployed symlink shim blocks hash-object writes without changing objects or refs (rc=$WRITE_RC objects=${OBJECT_COUNT_BEFORE}->${OBJECT_COUNT_AFTER})"
 fi
-if (cd "$REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git switch --detach main >/dev/null 2>&1); then
+if (cd "$REPO" && env PATH="${SHIM_BIN}:${TEST_SYS_PATH}" git switch --detach main >/dev/null 2>&1); then
 	fail "deployed symlink shim blocks canonical mutation"
 else
-	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] && pass "deployed symlink shim blocks canonical mutation" || fail "symlink shim changed canonical HEAD"
+	[[ "$("$NATIVE_GIT" -C "$REPO" branch --show-current)" == "main" ]] && pass "deployed symlink shim blocks canonical mutation" || fail "symlink shim changed canonical HEAD"
 fi
 
 OLD_BUNDLE="${TEST_ROOT}/.aidevops/runtime-bundles/old/agents/scripts"
@@ -390,7 +463,7 @@ ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${OLD_BUNDLE}/canonical_git_r
 ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${NEW_BUNDLE}/canonical_git_repository.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${OLD_BUNDLE}/canonical_shell_parser.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${NEW_BUNDLE}/canonical_shell_parser.py"
-if (cd "$REPO" && env PATH="${OLD_BUNDLE}:${NEW_BUNDLE}:/usr/bin:/bin" "${OLD_BUNDLE}/git" status --short >/dev/null); then
+if (cd "$REPO" && env PATH="${OLD_BUNDLE}:${NEW_BUNDLE}:${TEST_SYS_PATH}" "${OLD_BUNDLE}/git" status --short >/dev/null); then
 	pass "runtime-bundle shim skips every aidevops shim generation"
 else
 	fail "runtime-bundle shim skips every aidevops shim generation"
@@ -417,8 +490,8 @@ fi
 
 LITERAL_REPO="${TEST_ROOT}/repo[1]"
 mkdir -p "$LITERAL_REPO"
-/usr/bin/git -C "$LITERAL_REPO" init -q -b main
-if (cd "$LITERAL_REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git status --short >/dev/null); then
+"$NATIVE_GIT" -C "$LITERAL_REPO" init -q -b main
+if (cd "$LITERAL_REPO" && env PATH="${SHIM_BIN}:${TEST_SYS_PATH}" git status --short >/dev/null); then
 	pass "shim accepts already-expanded literal metacharacter path"
 else
 	fail "shim accepts already-expanded literal metacharacter path"

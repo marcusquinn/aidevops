@@ -68,7 +68,7 @@ Choose the workflow by source material:
 
 ## Verification Checklist
 
-- `media-qa-helper.sh probe` confirms stream metadata; use `loudness`, `contact-sheet`, and `intelligibility` for audio, frame, and speech checks.
+- `media-qa-helper.sh probe` confirms stream metadata; use `loudness`, `contact-sheet`, `strip`, `scan`, and `intelligibility` for audio, frame, dead-time, and speech checks.
 - Preview render passes cut-boundary checks and representative-frame inspection.
 - Captions are readable and not hidden by overlays.
 - Audio has no obvious pops, clipping, or unintended silence.

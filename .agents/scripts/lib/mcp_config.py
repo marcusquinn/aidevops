@@ -27,7 +27,7 @@ LAZY_MCPS = {
     'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo',
     'google-analytics-mcp', 'grep_app', 'gsc', 'ios-simulator', 'localwp',
     'macos-automator', 'mobile-mcp', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',
-    'sentry', 'shadcn', 'socket', 'websearch',
+    'sentry', 'seo-utils', 'shadcn', 'socket', 'websearch',
 }
 
 # Oh-My-OpenCode tool patterns to disable globally
@@ -122,7 +122,7 @@ def _register_outscraper(config):
     if 'outscraper' not in config['mcp']:
         config['mcp']['outscraper'] = {
             "type": "local",
-            "command": ["/bin/bash", "-c",
+            "command": ["bash", "-c",
                         "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
             "enabled": False
         }
@@ -136,7 +136,7 @@ def _register_dataforseo(config, pkg_runner):
     if 'dataforseo' not in config['mcp']:
         config['mcp']['dataforseo'] = {
             "type": "local",
-            "command": ["/bin/bash", "-c",
+            "command": ["bash", "-c",
                         f'source "$HOME/.aidevops/agents/scripts/dataforseo-credentials.sh" && '
                         f'dataforseo_load_credentials && exec {pkg_runner} dataforseo-mcp-server'],
             "enabled": False

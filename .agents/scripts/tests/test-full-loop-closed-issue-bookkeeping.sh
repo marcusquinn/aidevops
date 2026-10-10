@@ -45,6 +45,9 @@ extract_function() {
 
 COMMIT_HELPER="${SCRIPTS_DIR}/full-loop-helper-commit.sh"
 MAIN_HELPER="${SCRIPTS_DIR}/full-loop-helper.sh"
+# cmd_commit_and_pr validates the squash subject before any mutation.
+# shellcheck source=../full-loop-helper-subject.sh
+source "${SCRIPTS_DIR}/full-loop-helper-subject.sh"
 
 eval "$(extract_function "$COMMIT_HELPER" _parse_commit_and_pr_args)"
 eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_request)"
@@ -169,6 +172,12 @@ git() {
 		;;
 	esac
 	return 0
+}
+
+# GH#34052 PR-only scope has dedicated coverage in
+# test-full-loop-merge-authority-guard.sh; these fixtures carry no marker.
+_issue_pr_only_contract_state() {
+	return 1
 }
 
 _validate_commit_and_pr_inputs() {

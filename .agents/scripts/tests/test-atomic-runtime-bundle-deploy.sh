@@ -212,6 +212,7 @@ test_initial_activation_and_manifest() {
 	assert_file_contains "$active_root/.bundle-manifest" '^status=validated$' "validated manifest is inside the active bundle"
 	assert_file_contains "$active_root/.bundle-manifest" '^cli_compatibility=2.0.0$' "manifest binds CLI compatibility"
 	assert_eq "preserved" "$(tr -d '[:space:]' <"$active_root/custom/user.txt")" "user custom content survives bundle migration"
+	assert_eq "$HOME/.aidevops/user-agents/custom" "$(readlink "$active_root/custom")" "custom lives in stable user state, not the bundle"
 	[[ -L "$HOME/.aidevops/previous-runtime-bundle" ]] || fail "previous validated bundle is retained"
 	pass "previous validated bundle is retained"
 	return 0
@@ -597,6 +598,80 @@ test_plist_override_survives_two_bundle_activations() {
 	return 0
 }
 
+stage_and_activate_revision() {
+	local target_dir="$1"
+	local version="$2"
+	write_fake_revision "$version" "user-state-$version"
+	write_fake_plugin_manifest
+	MOCK_PLUGIN_VERIFY_MODE="available"
+	stage_revision "$target_dir"
+	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	return 0
+}
+
+# GH#34088: emulate a pre-fix bundle whose real custom/ package holds absolute
+# current/previous/entry links into that bundle, then promote twice, prune the
+# original bundle and roll the active link back.
+test_custom_package_links_survive_promotion_prune_and_rollback() {
+	local saved_home="$HOME"
+	HOME="$TEST_ROOT/home-gh34088"
+	mkdir -p "$HOME/.aidevops"
+	local target_dir="$HOME/.aidevops/agents"
+	local user_root="$HOME/.aidevops/user-agents"
+	local bundles_dir="" legacy_root="" second_root="" pkg="" venv_pip=""
+
+	stage_and_activate_revision "$target_dir" "20.0.0"
+	legacy_root=$(_runtime_bundle_resolve_root "$target_dir")
+	bundles_dir=$(cd "$HOME/.aidevops/runtime-bundles" && pwd -P)
+	rm -rf "${legacy_root:?}/custom" "${legacy_root:?}/draft" "$user_root"
+	pkg="$legacy_root/custom/pkg"
+	mkdir -p "$pkg/versions/1.0/bin" "$pkg/versions/2.0/bin" "$pkg/venv/bin" "$legacy_root/custom/bin" "$legacy_root/draft"
+	printf '#!/usr/bin/env bash\nprintf "v1\\n"\n' >"$pkg/versions/1.0/bin/tool"
+	printf '#!/usr/bin/env bash\nprintf "v2\\n"\n' >"$pkg/versions/2.0/bin/tool"
+	chmod +x "$pkg/versions/1.0/bin/tool" "$pkg/versions/2.0/bin/tool"
+	ln -s "$pkg/versions/2.0" "$pkg/current"
+	ln -s "$pkg/versions/1.0" "$pkg/previous"
+	ln -s "$bundles_dir/older-bundle/agents/custom/pkg/versions/1.0" "$pkg/older"
+	ln -s "versions/1.0" "$pkg/relative"
+	ln -s "/usr/bin" "$pkg/external"
+	ln -s "$pkg/current/bin/tool" "$legacy_root/custom/bin/pkg"
+	printf 'home = %s/venv/bin\n' "$pkg" >"$pkg/venv/pyvenv.cfg"
+	printf '#!%s/venv/bin/python\n' "$pkg" >"$pkg/venv/bin/pip"
+	venv_pip=$(cat "$pkg/venv/bin/pip")
+	printf 'draft note\n' >"$legacy_root/draft/note.md"
+
+	stage_and_activate_revision "$target_dir" "21.0.0"
+	second_root=$(_runtime_bundle_resolve_root "$target_dir")
+	[[ -L "$second_root/custom" && -L "$second_root/draft" ]] || fail "promoted bundle exposes custom/draft as links"
+	pass "promoted bundle exposes custom/draft as links to stable user state"
+	assert_eq "$user_root/custom" "$(readlink "$second_root/custom")" "bundle custom link targets the stable root"
+	assert_eq "$user_root/custom/pkg/versions/2.0" "$(readlink "$user_root/custom/pkg/current")" "absolute current pointer is rebased to the stable root"
+	assert_eq "$user_root/custom/pkg/versions/1.0" "$(readlink "$user_root/custom/pkg/previous")" "absolute previous pointer is rebased to the stable root"
+	assert_eq "$user_root/custom/pkg/versions/1.0" "$(readlink "$user_root/custom/pkg/older")" "pointer into an older bundle is rebased"
+	assert_eq "versions/1.0" "$(readlink "$user_root/custom/pkg/relative")" "relative pointer is preserved"
+	assert_eq "/usr/bin" "$(readlink "$user_root/custom/pkg/external")" "unrelated absolute pointer is preserved"
+	assert_eq "$venv_pip" "$(cat "$user_root/custom/pkg/venv/bin/pip")" "Python environment shebang is reported, never rewritten"
+	assert_eq "v2" "$("$target_dir/custom/bin/pkg")" "stable entry runs through the documented path"
+	[[ -d "$legacy_root/custom/pkg" ]] || fail "legacy in-bundle copy is retained until pruning"
+	pass "legacy in-bundle copy is retained until pruning"
+
+	printf 'kept\n' >"$target_dir/custom/after-migration.txt"
+	AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS=0 stage_and_activate_revision "$target_dir" "22.0.0"
+	[[ ! -d "${legacy_root%/agents}" ]] || fail "original bundle is pruned"
+	pass "original pre-migration bundle is pruned"
+	assert_eq "v2" "$("$target_dir/custom/bin/pkg")" "stable entry survives pruning of the original bundle"
+	assert_eq "kept" "$(tr -d '[:space:]' <"$target_dir/custom/after-migration.txt")" "post-migration writes survive the next promotion"
+	assert_eq "draft note" "$(cat "$target_dir/draft/note.md")" "draft content migrates to stable state"
+
+	_runtime_bundle_switch_link "$target_dir" "$second_root"
+	assert_eq "$second_root" "$(_runtime_bundle_resolve_root "$target_dir")" "active link rolls back to the previous bundle"
+	assert_eq "v2" "$("$target_dir/custom/bin/pkg")" "rollback keeps the shared stable custom state"
+	assert_eq "kept" "$(tr -d '[:space:]' <"$target_dir/custom/after-migration.txt")" "rollback does not restore an older custom copy"
+
+	HOME="$saved_home"
+	return 0
+}
+
 test_serialized_older_version_refuses_global_activation() {
 	local target_dir="$HOME/.aidevops/agents"
 	local stale_bundle=""
@@ -687,6 +762,7 @@ main() {
 	test_missing_dependency_lock_preserves_active_bundle
 	test_dependency_install_failure_preserves_active_bundle
 	test_plist_override_survives_two_bundle_activations
+	test_custom_package_links_survive_promotion_prune_and_rollback
 	test_serialized_older_version_refuses_global_activation
 	test_same_version_ancestor_refuses_global_activation
 

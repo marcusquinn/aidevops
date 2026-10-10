@@ -174,8 +174,12 @@ _isc_claim_ownership_class() {
 				and ((.body // "") | contains("Interactive session claimed by @\($author)")))
 			| select((.createdAt // "" | fromdateiso8601?) as $created
 				| $created != null and ($now - $created) >= 0 and ($now - $created) < 7200)
-		] | sort_by(.createdAt) | reverse | first as $live_claim |
+		] | sort_by(.createdAt) | reverse as $live_claims |
+		($live_claims | first) as $live_claim |
+		($live_claims | map(select(.author.login != $user)) | first) as $live_foreign_claim |
 		if $state != "open" then "invalid-state"
+		elif ($active | not) and $live_foreign_claim != null
+		then "foreign-interactive:" + $live_foreign_claim.author.login
 		elif ($active | not) then "unclaimed"
 		elif ($assignees | length) == 1 and $assignees[0] == $user then "own"
 		elif $live_claim != null then "foreign-interactive:" + $live_claim.author.login
@@ -447,9 +451,13 @@ _isc_cmd_claim() {
 		return 0
 	fi
 
-	# Transition to in-review with atomic self-assign. The helper preserves the
-	# deferred-comment contract for canonical-rooted issue starts.
-	_isc_apply_new_claim "$issue" "$slug" "$worktree_path" "$user" "$defer_comment"
+	# Inactive issues can retain stale assignees. Replace them in the same
+	# status:claimed transition, after the live-interactive and dispatch guards.
+	# The shared transition still verifies sole ownership before writing a stamp.
+	local stale_assignees=""
+	stale_assignees=$(printf '%s' "$claim_metadata" | jq -r \
+		'[.assignees[]?.login] | join(",")' 2>/dev/null) || return 1
+	_isc_take_over_worker_claim "$issue" "$slug" "$worktree_path" "$user" "$defer_comment" "$stale_assignees"
 	return $?
 }
 
@@ -851,6 +859,8 @@ _isc_cmd_status() {
 
 	local found=0
 	local stamp
+	local local_host
+	local_host=$(hostname 2>/dev/null || echo "unknown")
 	for stamp in "$CLAIM_STAMP_DIR"/*.json; do
 		[[ -f "$stamp" ]] || continue
 		local issue slug worktree claimed pid hostname user
@@ -870,12 +880,24 @@ _isc_cmd_status() {
 			continue
 		fi
 
+		# Same-host owners are verifiable; mark dead ones so stale stamps are
+		# not presented as active claims (GH#33873).
+		local liveness=""
+		if [[ "$pid" =~ ^[0-9]+$ && "$hostname" == "$local_host" ]]; then
+			local stored_hash
+			stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
+			liveness=" (owner dead)"
+			if _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+				liveness=" (owner alive)"
+			fi
+		fi
+
 		found=1
 		printf '#%s in %s\n' "$issue" "$slug"
 		printf '  user:     %s\n' "${user:-unknown}"
 		printf '  worktree: %s\n' "${worktree:-unknown}"
 		printf '  claimed:  %s\n' "${claimed:-unknown}"
-		printf '  pid:      %s on %s\n' "${pid:-unknown}" "${hostname:-unknown}"
+		printf '  pid:      %s on %s%s\n' "${pid:-unknown}" "${hostname:-unknown}" "$liveness"
 	done
 
 	if [[ $found -eq 0 ]]; then

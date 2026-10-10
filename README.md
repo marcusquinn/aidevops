@@ -25,7 +25,7 @@ token efficiency, and quality control built in.**
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-3.38.18-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.39.0-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 
@@ -188,6 +188,14 @@ aidevops skills                 # Discover available workflows and capabilities
 aidevops security               # Security posture, hygiene and supply-chain checks
 aidevops metrics generate       # Refresh local repository metrics
 ```
+
+For a registered repository whose GitHub Actions cannot run, record
+`aidevops repos actions off owner/repo "billing blocked"`. Full-loop and worker
+verification then uses the repository's configured local checks with trusted
+exact-head PR evidence, without polling unavailable Actions. Restore normal CI
+with `aidevops repos actions on owner/repo`. Non-billing failures, reviews and
+native branch protection still block; see the
+[local-verification contract](.agents/reference/ci-gate-policy.md#github-actions-unavailable).
 
 If a registered repository loses its ignored `.aidevops.json`, first preview
 `aidevops project-config restore owner/repo --backup /path/to/verified-backup.json`.

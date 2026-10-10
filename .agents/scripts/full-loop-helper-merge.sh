@@ -8,6 +8,12 @@
 # resolution, admin-merge fallback signaling, merge execution, resource
 # unlocking (PR/issue), stacked PR retargeting, and the cmd_merge command.
 #
+# Focused sub-libraries (sourced below; GH#30748):
+#   - full-loop-helper-merge-worktree.sh    -- worktree identity, cleanup targets
+#   - full-loop-helper-merge-authority.sh   -- external/fork merge authority gates
+#   - full-loop-helper-merge-prospective.sh -- pinned PR refs, isolated object store
+#   - full-loop-helper-merge-cleanup.sh     -- canonical sync, post-merge cleanup
+#
 # Usage: source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 #
 # Dependencies:
@@ -40,11 +46,8 @@ _flm_gh_read() {
 _flm_gh_read_once() {
 	local rc=0
 	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
-	local remaining=$(( ${_FULL_LOOP_ADMISSION_DEADLINE:-$((SECONDS + 60))} - SECONDS ))
-	[[ "$remaining" -gt 0 ]] || return 1
-	if [[ "$AIDEVOPS_GH_READ_TIMEOUT" =~ ^[0-9]+$ && "$AIDEVOPS_GH_READ_TIMEOUT" -gt "$remaining" ]]; then
-		AIDEVOPS_GH_READ_TIMEOUT="$remaining"
-	fi
+	# A fresh read keeps its transport timeout, even after a slow healthy gate.
+	# The admission deadline bounds recovery waiting, not transport attempts.
 	export AIDEVOPS_GH_READ_TIMEOUT
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
 		_gh_with_timeout read "$@" || rc=$?
@@ -54,8 +57,8 @@ _flm_gh_read_once() {
 	return "$rc"
 }
 
-# One recovery owner per read/gate: nested reads inherit the same deadline and
-# do not start their own retry loops. Only explicit local-admission evidence is
+# One recovery owner per read/gate: the deadline starts at the first deferral;
+# nested reads do not start their own retry loops. Only local-admission evidence is
 # retryable; quota exhaustion, HTTP errors and review/CI failures fail closed.
 _merge_with_admission_retry() {
 	if [[ "${_FULL_LOOP_ADMISSION_ACTIVE:-0}" == 1 ]]; then
@@ -66,7 +69,7 @@ _merge_with_admission_retry() {
 	[[ "$budget" =~ ^[0-9]{1,4}$ && "$budget" -gt 0 ]] || budget=60
 	[[ "$budget" -le 60 ]] || budget=60
 	local _FULL_LOOP_ADMISSION_ACTIVE=1
-	local _FULL_LOOP_ADMISSION_DEADLINE=$((SECONDS + budget))
+	local _FULL_LOOP_ADMISSION_DEADLINE=0
 	local attempts=0 rc=0 diagnostics="" retry_at="" now="" wait_seconds=0 round_up=0
 	local err_file="" out_file=""
 	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-admission-error.XXXXXX") || return 1
@@ -91,6 +94,9 @@ _merge_with_admission_retry() {
 		retry_at="${diagnostics##*deferred_by=local_admission retry_at=}"
 		retry_at="${retry_at%%[[:space:]]*}"
 		[[ "$retry_at" =~ ^[0-9]{1,10}([.][0-9]+)?$ ]] || break
+		if [[ "$_FULL_LOOP_ADMISSION_DEADLINE" -eq 0 ]]; then
+			_FULL_LOOP_ADMISSION_DEADLINE=$((SECONDS + budget))
+		fi
 		now=$(date +%s) || break
 		round_up=0
 		[[ ! "$retry_at" =~ [.][0-9]*[1-9] ]] || round_up=1
@@ -155,6 +161,10 @@ fi
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
 
+# shellcheck source=./full-loop-helper-subject.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/full-loop-helper-subject.sh"
+
 # Canonical TODO task/issue mapping parser shared with issue-sync and pre-push.
 # shellcheck source=./issue-sync-pr-task-resolver.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
@@ -170,6 +180,21 @@ source "${SCRIPT_DIR}/trusted-dependabot-lib.sh"
 # shellcheck source=./full-loop-helper-merge-worktree.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-merge-worktree.sh"
+
+# External/fork authority gates applied before every merge mode (GH#28622).
+# shellcheck source=./full-loop-helper-merge-authority.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-merge-authority.sh"
+
+# Pinned PR refs and the isolated object store for the prospective TODO guard.
+# shellcheck source=./full-loop-helper-merge-prospective.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-merge-prospective.sh"
+
+# Post-merge canonical synchronization and linked-worktree cleanup.
+# shellcheck source=./full-loop-helper-merge-cleanup.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-merge-cleanup.sh"
 
 # --- Repo Resolution ---
 
@@ -436,682 +461,6 @@ _merge_reconcile_closing_issues() {
 	return 1
 }
 
-_merge_issue_requires_maintainer_review() {
-	local issue_number="$1"
-	local repo="$2"
-	local labels_csv=""
-	local labels_padded=""
-
-	labels_csv=$(_flm_gh_read gh issue view "$issue_number" --repo "$repo" \
-		--json labels --jq '[.labels[].name] | join(",")') || return 2
-	printf -v labels_padded ',%s,' "$labels_csv"
-	if [[ "$labels_padded" == *",needs-maintainer-review,"* ]]; then
-		return 0
-	fi
-	return 1
-}
-
-# Resolve the verifier from the current framework tree first so worktree fixes
-# are exercised before deployment. The public key remains in the user's
-# root-protected aidevops approval-key directory and is read by the helper.
-_merge_approval_helper_path() {
-	local approval_helper="${SCRIPT_DIR}/approval-helper.sh"
-	if [[ ! -f "$approval_helper" ]]; then
-		approval_helper="${HOME}/.aidevops/agents/scripts/approval-helper.sh"
-	fi
-	[[ -f "$approval_helper" ]] || return 1
-	printf '%s\n' "$approval_helper"
-	return 0
-}
-
-_merge_target_crypto_approved() {
-	local target_type="$1"
-	local target_number="$2"
-	local repo="$3"
-	local expected_head_sha="${4:-}"
-	local approval_helper=""
-	local result=""
-
-	approval_helper=$(_merge_approval_helper_path) || return 1
-	if [[ "$target_type" == "pr" ]]; then
-		[[ -n "$expected_head_sha" ]] || return 1
-		result=$(bash "$approval_helper" verify pr "$target_number" "$repo" \
-			--expect-head "$expected_head_sha" 2>/dev/null) || result=""
-	else
-		result=$(bash "$approval_helper" verify issue "$target_number" "$repo" 2>/dev/null) || result=""
-	fi
-	[[ "$result" == "VERIFIED" ]]
-	return $?
-}
-
-_merge_is_trusted_issue_sync_pr() {
-	local pr_number="$1"
-	local repo="$2"
-	local expected_head_sha="$3"
-	local rbg_helper=""
-
-	[[ -n "$expected_head_sha" ]] || return 1
-	rbg_helper=$(_full_loop_review_bot_gate_helper_path) || return 1
-	#aidevops:trust-boundary -- bind the exact generated Issue Sync identity to
-	# the already verified merge head; helper/API failures remain external.
-	bash "$rbg_helper" is-trusted-issue-sync-pr \
-		"$pr_number" "$repo" "$expected_head_sha" >/dev/null 2>&1
-	return $?
-}
-
-# Returns 0 for live admin/maintain/write authority, 1 for a confirmed external
-# author, 2 when GitHub cannot provide a trustworthy verdict, or 75 on deferral.
-_merge_author_has_write_authority() {
-	local author="$1"
-	local repo="$2"
-	local permission=""
-	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
-	export AIDEVOPS_GH_READ_TIMEOUT
-	local permission_rc=0
-
-	# shared-constants.sh loads the App-aware helper in normal full-loop use. It
-	# distinguishes a confirmed 404 non-collaborator (permission=none) from API
-	# uncertainty; the direct gh fallback keeps this library sourceable in tests.
-	if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
-		_merge_with_admission_retry _gh_collaborator_permission_lookup "$repo" "$author" permission || permission_rc=$?
-	else
-		permission=$(_flm_gh_read gh api "repos/${repo}/collaborators/${author}/permission" \
-			--jq '.permission // "none"') || permission_rc=$?
-	fi
-	[[ "$permission_rc" -ne 75 ]] || return 75
-	[[ "$permission_rc" -eq 0 ]] || return 2
-	case "$permission" in
-	admin | maintain | write) return 0 ;;
-	none | read | triage) return 1 ;;
-	*) return 2 ;;
-	esac
-}
-
-_merge_collect_linked_issue_authority_gaps() {
-	local issue_numbers="$1"
-	local repo="$2"
-	local require_crypto="$3"
-	local issue_number=""
-	local verify_rc=0
-
-	while IFS= read -r issue_number; do
-		[[ -n "$issue_number" ]] || continue
-		verify_rc=0
-		_merge_issue_requires_maintainer_review "$issue_number" "$repo" || verify_rc=$?
-		if [[ "$verify_rc" -eq 0 ]]; then
-			print_error "Merge blocked: linked issue #${issue_number} still requires maintainer review"
-			return 1
-		elif [[ "$verify_rc" -ne 1 ]]; then
-			print_error "Merge blocked: unable to verify maintainer-review labels on issue #${issue_number}"
-			return 1
-		fi
-		if [[ "$require_crypto" -eq 1 ]]; then
-			FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS+=("issue:${issue_number}")
-			if ! _merge_target_crypto_approved issue "$issue_number" "$repo"; then
-				FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("issue:${issue_number}")
-			fi
-		fi
-	done <<<"$issue_numbers"
-	return 0
-}
-
-# Report a non-verdict author permission lookup: 75 is a deferral, not a denial.
-_merge_report_author_lookup_failure() {
-	local author_rc="$1"
-	local pr_author="$2"
-
-	if [[ "$author_rc" -eq 75 ]]; then
-		print_warning "Merge deferred: GitHub permission read admission deferred for PR author ${pr_author}; retry when capacity returns"
-	else
-		print_error "Merge blocked: unable to verify live repository permission for PR author ${pr_author}"
-	fi
-	return 0
-}
-
-_merge_collect_external_authority_gaps() {
-	local pr_number="$1"
-	local repo="$2"
-	local expected_head_sha="${3:-}"
-	local pr_json="" pr_author="" current_head_sha="" labels_csv="" labels_padded="" is_fork="false"
-	local issue_numbers=""
-	local author_rc=0 treat_as_external=0 trusted_dependabot=0 trusted_issue_sync=0
-
-	FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS=()
-	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
-	if ! pr_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
-		--json author,labels,isCrossRepository,headRefOid,closingIssuesReferences,body); then
-		print_error "Merge blocked: unable to verify PR #${pr_number} authority metadata"
-		return 1
-	fi
-	if ! printf '%s' "$pr_json" | jq -e '
-		def is_string: type == "string";
-		type == "object"
-		and (.author.login | is_string and length > 0)
-		and (.headRefOid | is_string and length > 0)
-		and (.labels | type == "array")
-		and (.isCrossRepository | type == "boolean")
-		and (.closingIssuesReferences | type == "array")
-		and ((.body == null) or (.body | is_string))
-	' >/dev/null 2>&1; then
-		print_error "Merge blocked: PR #${pr_number} returned malformed authority metadata"
-		return 1
-	fi
-
-	pr_author=$(printf '%s' "$pr_json" | jq -r '.author.login') || return 1
-	current_head_sha=$(printf '%s' "$pr_json" | jq -r '.headRefOid') || return 1
-	labels_csv=$(printf '%s' "$pr_json" | jq -r '[.labels[].name] | join(",")') || return 1
-	printf -v labels_padded ',%s,' "$labels_csv"
-	is_fork=$(printf '%s' "$pr_json" | jq -r '.isCrossRepository') || return 1
-	if [[ -n "$expected_head_sha" && "$current_head_sha" != "$expected_head_sha" ]]; then
-		print_error "Merge blocked: PR #${pr_number} head changed before the final authority check"
-		return 1
-	fi
-	# GH#33374: a native sidebar/development closing link must not override a
-	# For/Ref checkpoint. Fail closed before any merge write; do not silently
-	# unlink issues or infer completion from GitHub's closing metadata alone.
-	if ! printf '%s' "$pr_json" | jq -e '
-		(.body // "") as $body
-		| all(.closingIssuesReferences[]; .number as $num
-			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
-			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
-			else true end)' >/dev/null 2>&1; then
-		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
-		return 1
-	fi
-
-	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
-	# explicit hold. Marker text is never merge authority at this boundary.
-	if [[ "$labels_padded" == *",needs-maintainer-review,"* ]]; then
-		print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
-		return 1
-	fi
-
-	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot
-	# PRs may lack collaborator permission. Both narrow predicates bind immutable
-	# bot identity and repository ownership to the exact current head. Live PR and
-	# linked-issue NMR labels remain unconditional holds.
-	if [[ "$pr_author" == "app/github-actions" || "$pr_author" == "github-actions[bot]" ]] &&
-		_merge_is_trusted_issue_sync_pr "$pr_number" "$repo" "$current_head_sha"; then
-		trusted_issue_sync=1
-	elif _is_trusted_dependabot_update_pr "$pr_number" "$repo" "$pr_author" "$current_head_sha"; then
-		trusted_dependabot=1
-	else
-		_merge_author_has_write_authority "$pr_author" "$repo" || author_rc=$?
-		if [[ "$author_rc" -eq 75 || "$author_rc" -eq 2 ]]; then
-			_merge_report_author_lookup_failure "$author_rc" "$pr_author"
-			return 1
-		fi
-		if [[ "$labels_padded" == *",external-contributor,"* ]] ||
-			[[ "$is_fork" == "true" ]] || [[ "$author_rc" -ne 0 ]]; then
-			treat_as_external=1
-		fi
-	fi
-
-	issue_numbers=$(_merge_linked_issue_numbers "$pr_number" "$repo" "$pr_json") || {
-		print_error "Merge blocked: unable to verify linked issues for PR #${pr_number}"
-		return 1
-	}
-
-	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" || return 1
-	if [[ "$trusted_dependabot" -eq 1 || "$trusted_issue_sync" -eq 1 || "$treat_as_external" -eq 0 ]]; then
-		return 0
-	fi
-	if [[ -z "$issue_numbers" ]]; then
-		print_error "Merge blocked: external/fork PR #${pr_number} has no linked issue"
-		return 1
-	fi
-	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS+=("pr:${pr_number}")
-	if ! _merge_target_crypto_approved pr "$pr_number" "$repo" "$current_head_sha"; then
-		FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("pr:${pr_number}")
-	fi
-
-	return 0
-}
-
-# Legacy name retained for sourced callers and tests. This is now the common
-# final authority guard for every full-loop merge mode, not only --admin.
-_merge_linked_issue_authority_clear() {
-	local issue_numbers="$1"
-	local repo="$2"
-	local require_crypto="$3"
-	local target=""
-
-	FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS=()
-	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
-	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$require_crypto" || return 1
-	for target in "${FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS[@]}"; do
-		print_error "Merge blocked: external/fork PR linked issue #${target#issue:} lacks current cryptographic development authority"
-		return 1
-	done
-	return 0
-}
-
-# Legacy name retained for sourced callers and tests. This is now the common
-# final authority guard for every full-loop merge mode, not only --admin.
-_merge_guard_admin_merge_maintainer_review() {
-	local pr_number="$1"
-	local repo="$2"
-	local expected_head_sha="${3:-}"
-	local target=""
-
-	_merge_collect_external_authority_gaps "$pr_number" "$repo" "$expected_head_sha" || return 1
-	for target in "${FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS[@]}"; do
-		case "$target" in
-		issue:*)
-			print_error "Merge blocked: external/fork PR linked issue #${target#issue:} lacks current cryptographic development authority"
-			;;
-		pr:*)
-			print_error "Merge blocked: external/fork PR #${target#pr:} lacks V2 merge authority for the current head"
-			;;
-		esac
-		return 1
-	done
-
-	return 0
-}
-
-_merge_fetch_head_sha_rest() {
-	local pr_number="$1"
-	local repo="$2"
-	local head_sha="" err_file="" rc=0
-	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-sha.XXXXXX") || err_file="/dev/null"
-	head_sha=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>"$err_file") || rc=$?
-	if [[ "$rc" -ne 0 || -z "$head_sha" ]]; then
-		# Surface transport diagnostics (e.g. local-admission deferral) on stderr
-		# so the caller can distinguish pacing from a real failure.
-		if [[ "$err_file" != /dev/null ]]; then
-			cat "$err_file" >&2
-			rm -f "$err_file"
-		fi
-		return 1
-	fi
-	[[ "$err_file" == /dev/null ]] || rm -f "$err_file"
-	printf '%s\n' "$head_sha"
-	return 0
-}
-
-# Return the fresh base ref, base SHA, head SHA, base repository, and clone URL
-# that GitHub currently binds to the PR. These fields form the pinned evidence
-# boundary for a local prospective merge-tree check and keep explicit-repository
-# merges independent of the caller's current Git remote.
-_merge_fetch_pr_refs_rest() {
-	local pr_number="$1"
-	local repo="$2"
-	local refs=""
-	refs=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" \
-		--jq '[.base.ref // empty, .base.sha // empty, .head.sha // empty, .base.repo.full_name // empty, .base.repo.clone_url // empty] | @tsv') || return 1
-	[[ "$refs" == *$'\t'*$'\t'*$'\t'*$'\t'* ]] || return 1
-	printf '%s\n' "$refs"
-	return 0
-}
-
-_merge_validate_target_remote_url() {
-	local target_repo="$1"
-	local remote_url="$2"
-	local git_host="${GH_HOST:-github.com}"
-	local expected_url=""
-	local normalized_remote_url=""
-	local normalized_expected_url=""
-	[[ "$git_host" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
-	[[ "$target_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
-	expected_url="https://${git_host}/${target_repo}.git"
-	normalized_remote_url=$(printf '%s' "$remote_url" | tr '[:upper:]' '[:lower:]')
-	normalized_expected_url=$(printf '%s' "$expected_url" | tr '[:upper:]' '[:lower:]')
-	[[ "$normalized_remote_url" == "$normalized_expected_url" ]] || return 1
-	return 0
-}
-
-_merge_fetch_pinned_commit_objects() {
-	local pr_number="$1"
-	local base_ref="$2"
-	local base_sha="$3"
-	local head_sha="$4"
-	local object_repo="${5:-}"
-	local remote_url="${6:-}"
-	local real_git="${7:-}"
-	local fetched_sha=""
-	if [[ -z "$object_repo" ]]; then
-		git cat-file -e "${base_sha}^{commit}" 2>/dev/null ||
-			git fetch --quiet --no-tags origin "refs/heads/${base_ref}" || return 1
-		git cat-file -e "${head_sha}^{commit}" 2>/dev/null ||
-			git fetch --quiet --no-tags origin "refs/pull/${pr_number}/head" || return 1
-		git cat-file -e "${base_sha}^{commit}" 2>/dev/null || return 1
-		git cat-file -e "${head_sha}^{commit}" 2>/dev/null || return 1
-		return 0
-	fi
-
-	[[ -x "$real_git" && -n "$remote_url" ]] || return 1
-	_merge_configure_prospective_remote "$real_git" "$object_repo" "$remote_url" || return 1
-	if ! _merge_run_repository_isolated_git "$real_git" -C "$object_repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
-		_merge_fetch_partial_objects "$real_git" "$object_repo" "" \
-			-- "$_MERGE_PROSPECTIVE_REMOTE" "refs/heads/${base_ref}" || return 1
-		fetched_sha=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-			rev-parse FETCH_HEAD 2>/dev/null) || return 1
-		if [[ "$fetched_sha" != "$base_sha" ]]; then
-			_merge_fetch_partial_objects "$real_git" "$object_repo" "" \
-				-- "$_MERGE_PROSPECTIVE_REMOTE" "$base_sha" || return 1
-			fetched_sha=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-				rev-parse FETCH_HEAD 2>/dev/null) || return 1
-			[[ "$fetched_sha" == "$base_sha" ]] || return 1
-		fi
-	fi
-	if ! _merge_run_repository_isolated_git "$real_git" -C "$object_repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
-		_merge_fetch_partial_objects "$real_git" "$object_repo" "" \
-			-- "$_MERGE_PROSPECTIVE_REMOTE" "refs/pull/${pr_number}/head" || return 1
-		fetched_sha=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-			rev-parse FETCH_HEAD 2>/dev/null) || return 1
-		[[ "$fetched_sha" == "$head_sha" ]] || return 1
-	fi
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		cat-file -e "${base_sha}^{commit}" 2>/dev/null || return 1
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		cat-file -e "${head_sha}^{commit}" 2>/dev/null || return 1
-	_merge_prefetch_prospective_blobs "$real_git" "$object_repo" \
-		"$base_sha" "$head_sha" || return 1
-	return 0
-}
-
-# Dedicated remote for the isolated object store. A named remote is required
-# for partial fetch from path and URL remotes alike; the name is unusual so
-# caller-level remote configuration cannot shadow the pinned URL.
-_MERGE_PROSPECTIVE_REMOTE="aidevops-prospective-target"
-
-_merge_configure_prospective_remote() {
-	local real_git="$1"
-	local object_repo="$2"
-	local remote_url="$3"
-	local remote_key="remote.${_MERGE_PROSPECTIVE_REMOTE}"
-	local configured_urls=""
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local core.repositoryformatversion 1 || return 1
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local "${remote_key}.url" "$remote_url" || return 1
-	# Fail closed if any other config scope adds or overrides the pinned URL.
-	configured_urls=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --get-all "${remote_key}.url") || return 1
-	[[ "$configured_urls" == "$remote_url" ]] || return 1
-	_merge_prospective_store_is_lazy_fetch_free "$real_git" "$object_repo" || {
-		print_error "Merge blocked: Git configuration marks a remote as a promisor (remote.<name>.promisor); prospective TODO validation refuses implicit object transfer"
-		return 1
-	}
-	return 0
-}
-
-# Git lazily fetches a missing object only when a promisor remote is
-# configured. GIT_NO_LAZY_FETCH (Git 2.44+) also disables that, but older Git
-# ignores it (GH#33752), so the store is a partial clone only while an explicit,
-# bounded fetch runs. Every other command sees a plain repository in which a
-# missing object is an error on every Git version.
-_merge_enable_prospective_promisor() {
-	local real_git="$1"
-	local object_repo="$2"
-	local remote_key="remote.${_MERGE_PROSPECTIVE_REMOTE}"
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local extensions.partialClone "$_MERGE_PROSPECTIVE_REMOTE" || return 1
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local "${remote_key}.promisor" true || return 1
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local "${remote_key}.partialclonefilter" blob:none || return 1
-	return 0
-}
-
-_merge_disable_prospective_promisor() {
-	local real_git="$1"
-	local object_repo="$2"
-	local remote_key="remote.${_MERGE_PROSPECTIVE_REMOTE}"
-	local key=""
-	local rc=0
-	# Fetch may register partial-clone keys itself; remove every local copy.
-	for key in extensions.partialClone "${remote_key}.promisor" "${remote_key}.partialclonefilter"; do
-		rc=0
-		_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-			config --local --unset-all "$key" || rc=$?
-		# Exit 5 means the key was not set, which is the desired state.
-		[[ "$rc" -eq 0 || "$rc" -eq 5 ]] || return 1
-	done
-	_merge_prospective_store_is_lazy_fetch_free "$real_git" "$object_repo" || return 1
-	return 0
-}
-
-# Succeeds only when no config scope makes any remote a promisor for the store.
-_merge_prospective_store_is_lazy_fetch_free() {
-	local real_git="$1"
-	local object_repo="$2"
-	local promisor_entries=""
-	local rc=0
-	# extensions.partialClone is honoured only in repository-local config.
-	if _merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --local --get extensions.partialClone >/dev/null 2>&1; then
-		return 1
-	fi
-	promisor_entries=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		config --get-regexp '^remote\..*\.promisor$' 2>/dev/null) || rc=$?
-	# Exit 1 means no promisor key exists in any scope.
-	[[ "$rc" -eq 1 ]] && return 0
-	[[ "$rc" -eq 0 ]] || return 1
-	# A valueless boolean key means true; only explicit false values are safe.
-	printf '%s\n' "$promisor_entries" | awk '
-		{ value = tolower($2) }
-		value != "false" && value != "no" && value != "off" && value != "0" { unsafe = 1 }
-		END { exit unsafe }
-	' || return 1
-	return 0
-}
-
-# Fetch from the pinned remote without blob content. Commits and trees are
-# enough for merge-base discovery; blobs the prospective merge can read are
-# requested explicitly afterwards, so unrelated history never crosses the
-# network (GH#32641). Every transfer is time-bounded and a server that ignores
-# the filter fails closed instead of starting an unbounded full transfer.
-# The promisor configuration exists only for the duration of this fetch.
-_merge_fetch_partial_objects() {
-	local real_git="$1"
-	local object_repo="$2"
-	local stdin_file="$3"
-	shift 3
-	local stderr_file="${object_repo%/*}/fetch.stderr"
-	local timeout_secs="${AIDEVOPS_PROSPECTIVE_FETCH_TIMEOUT:-300}"
-	local rc=0
-	[[ "$timeout_secs" =~ ^[1-9][0-9]*$ ]] || timeout_secs=300
-	_merge_enable_prospective_promisor "$real_git" "$object_repo" || {
-		print_error "Merge blocked: unable to configure the bounded prospective fetch"
-		return 1
-	}
-	_merge_run_bounded_isolated_git "$timeout_secs" "$stdin_file" "$real_git" -C "$object_repo" \
-		fetch --quiet --no-tags --recurse-submodules=no --filter=blob:none "$@" \
-		2>"$stderr_file" || rc=$?
-	_merge_disable_prospective_promisor "$real_git" "$object_repo" || {
-		print_error "Merge blocked: unable to disable implicit object transfer after the bounded prospective fetch"
-		return 1
-	}
-	if [[ "$rc" -eq 124 || "$rc" -eq 137 || "$rc" -eq 143 ]]; then
-		print_error "Merge blocked: prospective object transfer exceeded ${timeout_secs}s (AIDEVOPS_PROSPECTIVE_FETCH_TIMEOUT)"
-		return 1
-	fi
-	if [[ "$rc" -ne 0 ]]; then
-		cat "$stderr_file" >&2 2>/dev/null || true
-		return 1
-	fi
-	if grep -qi 'filtering not recognized by server' "$stderr_file" 2>/dev/null; then
-		print_error "Merge blocked: target remote does not support partial fetch; refusing an unbounded object transfer"
-		return 1
-	fi
-	return 0
-}
-
-# Upper bound on merge pairs enumerated for one prospective merge. Ordinary
-# histories need one pair; each criss-cross level adds pairs of merge bases.
-_MERGE_PROSPECTIVE_PAIR_LIMIT=32
-
-# Materialize only blobs a prospective merge can read: every path changed
-# between a merge base and either side, plus both sides' TODO.md. Unchanged
-# paths resolve by object ID without content. With several merge bases,
-# merge-ort first merges those bases into a virtual base, which reads blobs
-# changed between the bases and their own merge bases (GH#33513), so pairs of
-# merge bases are enumerated recursively. Outside the explicit fetch the store
-# has no promisor remote, and every wanted blob is verified present, so a
-# missed object fails closed with a count instead of transferring more data.
-_merge_prefetch_prospective_blobs() {
-	local real_git="$1"
-	local object_repo="$2"
-	local base_sha="$3"
-	local head_sha="$4"
-	local context_root="${object_repo%/*}"
-	local candidates="${context_root}/prospective-blob-candidates"
-	local wanted="${context_root}/prospective-blobs"
-	local -a pairs=("${base_sha} ${head_sha}")
-	local -a bases=()
-	local seen_pairs=" "
-	local pair_index=0
-	local pair=""
-	local left=""
-	local right=""
-	local merge_bases=""
-	local merge_base=""
-	local side=""
-	local todo_oid=""
-	local i=0
-	local j=0
-	local rc=0
-	: >"$candidates" || return 1
-	while [[ "$pair_index" -lt "${#pairs[@]}" ]]; do
-		if [[ "$pair_index" -ge "$_MERGE_PROSPECTIVE_PAIR_LIMIT" ]]; then
-			print_error "Merge blocked: prospective merge history exceeds ${_MERGE_PROSPECTIVE_PAIR_LIMIT} merge-base pairs"
-			return 1
-		fi
-		pair="${pairs[$pair_index]}"
-		pair_index=$((pair_index + 1))
-		left="${pair% *}"
-		right="${pair#* }"
-		rc=0
-		merge_bases=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-			merge-base --all "$left" "$right" 2>/dev/null) || rc=$?
-		# Exit 1 means unrelated histories; merge-tree reports that itself.
-		[[ "$rc" -eq 0 || "$rc" -eq 1 ]] || return 1
-		bases=()
-		for merge_base in $merge_bases; do
-			bases+=("$merge_base")
-			for side in "$left" "$right"; do
-				_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-					diff-tree -r --no-renames "$merge_base" "$side" >"${candidates}.raw" || return 1
-				# Raw lines: ":<old mode> <new mode> <old oid> <new oid> <status>\t<path>".
-				# Gitlink (160000) entries name commits in other repositories.
-				awk '$1 != ":160000" { print $3 } $2 != "160000" { print $4 }' \
-					"${candidates}.raw" >>"$candidates" || return 1
-			done
-		done
-		[[ "${#bases[@]}" -gt 1 ]] || continue
-		for ((i = 0; i < ${#bases[@]}; i++)); do
-			for ((j = i + 1; j < ${#bases[@]}; j++)); do
-				pair="${bases[$i]} ${bases[$j]}"
-				[[ "$seen_pairs" == *" ${pair} "* ]] && continue
-				seen_pairs+="${pair} "
-				pairs+=("$pair")
-			done
-		done
-	done
-	for side in "$base_sha" "$head_sha"; do
-		if todo_oid=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-			rev-parse --verify --quiet "${side}:TODO.md"); then
-			printf '%s\n' "$todo_oid" >>"$candidates" || return 1
-		fi
-	done
-	awk '!/^0+$/ && NF && !seen[$0]++' "$candidates" >"$wanted" || return 1
-	[[ -s "$wanted" ]] || return 0
-	_merge_fetch_partial_objects "$real_git" "$object_repo" "$wanted" \
-		--no-write-fetch-head --stdin -- "$_MERGE_PROSPECTIVE_REMOTE" || return 1
-	_merge_verify_prospective_blobs "$real_git" "$object_repo" "$wanted" || return 1
-	return 0
-}
-
-# A zero fetch exit status does not prove every wanted object arrived. Check
-# presence locally (no promisor remote, so no lazy fetch) and report only
-# counts, never paths.
-_merge_verify_prospective_blobs() {
-	local real_git="$1"
-	local object_repo="$2"
-	local wanted="$3"
-	local report="${wanted}.present"
-	local wanted_count=0
-	local missing_count=0
-	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		cat-file --batch-check <"$wanted" >"$report" 2>/dev/null || {
-		print_error "Merge blocked: unable to verify prospective blob presence"
-		return 1
-	}
-	wanted_count=$(awk 'END { print NR }' "$wanted")
-	missing_count=$(awk '$2 != "blob" { n++ } END { print n + 0 }' "$report")
-	if [[ "$missing_count" -ne 0 ]]; then
-		print_error "Merge blocked: ${missing_count} of ${wanted_count} required prospective blobs were not materialized by the bounded fetch"
-		return 1
-	fi
-	return 0
-}
-
-_merge_unset_repository_git_env() {
-	unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_ATTR_SOURCE GIT_COMMON_DIR GIT_DIR
-	unset GIT_EXEC_PATH GIT_GRAFT_FILE GIT_INDEX_FILE GIT_NAMESPACE
-	unset GIT_OBJECT_DIRECTORY GIT_QUARANTINE_PATH GIT_REPLACE_REF_BASE
-	unset GIT_SHALLOW_FILE GIT_WORK_TREE
-	# Partial object stores must never contact a remote implicitly; every
-	# transfer goes through the explicit, bounded fetches above. Removing the
-	# promisor configuration outside those fetches enforces this on every Git
-	# version; GIT_NO_LAZY_FETCH (Git 2.44+) is defence in depth.
-	export GIT_NO_LAZY_FETCH=1
-	return 0
-}
-
-_merge_run_repository_isolated_git() (
-	local git_bin="$1"
-	shift
-	_merge_unset_repository_git_env
-	"$git_bin" "$@"
-	return $?
-)
-
-_merge_run_bounded_isolated_git() (
-	local timeout_secs="$1"
-	local stdin_file="$2"
-	shift 2
-	_merge_unset_repository_git_env
-	if [[ -n "$stdin_file" ]]; then
-		timeout_sec "$timeout_secs" "$@" <"$stdin_file"
-		return $?
-	fi
-	timeout_sec "$timeout_secs" "$@" </dev/null
-	return $?
-)
-
-_merge_run_config_isolated_git() (
-	local real_git="$1"
-	local config_root="$2"
-	shift 2
-	unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
-	export HOME="${config_root}/home" XDG_CONFIG_HOME="${config_root}/xdg"
-	export GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1
-	# Config-isolated commands never transfer objects: they run while the store
-	# has no promisor remote. Never wait on a credential prompt regardless.
-	export GIT_TERMINAL_PROMPT=0
-	_merge_run_repository_isolated_git "$real_git" "$@"
-	return $?
-)
-
-_merge_create_prospective_object_context() {
-	local context_root="$1"
-	local real_git="$2"
-	local object_repo="${context_root}/repository.git"
-	[[ -x "$real_git" ]] || return 1
-	mkdir -p "${context_root}/home" "${context_root}/xdg" || return 1
-	# Do not borrow objects or object-format details from the caller's Git
-	# context. This guard is also called by Pulse from a non-Git workspace.
-	# The pinned target remote below supplies every object required for validation.
-	_merge_run_config_isolated_git "$real_git" "$context_root" -c init.templateDir= \
-		-C "$context_root" init --bare --quiet repository.git || return 1
-	[[ -d "${object_repo}/objects/info" ]] || return 1
-	printf '%s\n' "$object_repo"
-	return 0
-}
-
 # Fail closed unless the exact current PR head can be merged prospectively into
 # the fresh base without introducing duplicate TODO task IDs or issue mappings.
 _merge_guard_prospective_todo() (
@@ -1130,7 +479,7 @@ _merge_guard_prospective_todo() (
 	local temp_dir=""
 	local object_repo=""
 	local remote_url=""
-	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
 	local report=""
 	local report_rc="0"
 
@@ -1557,6 +906,11 @@ _merge_resolve_squash_subject() {
 		return 1
 	}
 	subject=$(printf '%s\n' "$pr_json" | jq -r '.title // empty') || return 1
+	if ! _full_loop_valid_squash_subject "$subject"; then
+		print_error "PR #${pr_number} title is not a valid squash subject; refusing merge"
+		print_error "Use a task-prefixed or conventional title before retrying."
+		return 1
+	fi
 	if [[ "$subject" =~ $task_ere ]]; then
 		task_body="${subject#*: }"
 		if [[ ! "$task_body" =~ $conventional_ere ]]; then
@@ -1567,9 +921,7 @@ _merge_resolve_squash_subject() {
 			fi
 		fi
 	fi
-	if [[ "$subject" == *$'\n'* || "$subject" == *$'\r'* ||
-		"$task_body" =~ ^[Ww][Ii][Pp][[:space:]:\(] ||
-		! "$subject" =~ $conventional_ere && ! "$subject" =~ $task_ere ]]; then
+	if ! _full_loop_valid_squash_subject "$subject"; then
 		print_error "PR #${pr_number} title is not a valid squash subject; refusing merge"
 		print_error "Use a task-prefixed or conventional title before retrying."
 		return 1
@@ -1760,7 +1112,7 @@ _merge_admin_fallback_required_checks_clear() {
 	local pr_number="$1"
 	local repo="$2"
 	local checks_rc=0
-	_merge_with_admission_retry "${SCRIPT_DIR}/gh-checks-wait-helper.sh" wait "$pr_number" --repo "$repo" --timeout 0 --initial-interval 1 --max-interval 1 || checks_rc=$?
+	AIDEVOPS_ACTIONS_NATIVE_CHECKS_ONLY=1 _merge_with_admission_retry "${SCRIPT_DIR}/gh-checks-wait-helper.sh" wait "$pr_number" --repo "$repo" --timeout 0 --initial-interval 1 --max-interval 1 || checks_rc=$?
 	case "$checks_rc" in
 	0) return 0 ;;
 	8)
@@ -1803,10 +1155,25 @@ _merge_try_review_only_admin_fallback() {
 	return 1
 }
 
+_merge_check_admin_capability() {
+	local pr_number="$1" repo="$2" has_admin="$3"
+	if [[ "$has_admin" -eq 1 ]]; then
+		# shellcheck source=repo-actions-capability-lib.sh
+		source "${BASH_SOURCE[0]%/*}/repo-actions-capability-lib.sh"
+		#aidevops:trust-boundary -- local evidence never authorizes an explicit
+		# admin bypass of unavailable native required checks.
+		if repo_actions_unavailable "$repo"; then
+			_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return 1
+		fi
+	fi
+	return 0
+}
+
 _merge_execute() {
 	local pr_number="$1" repo="$2" merge_method="$3"
 	local has_admin="$4" has_auto="$5" squash_subject=""
 	local merge_body_file="${6:-}"
+	_merge_check_admin_capability "$pr_number" "$repo" "$has_admin" || return 1
 	squash_subject=$(_merge_resolve_subject_for_method "$pr_number" "$repo" "$merge_method") || return 1
 	local merge_flags=()
 	[[ "$has_admin" -eq 1 ]] && merge_flags+=("--admin")
@@ -1985,494 +1352,6 @@ _retarget_stacked_children_interactive() {
 	return 0
 }
 
-# --- Post-Merge Worktree Cleanup ---
-
-_merge_current_canonical_dir_for_cleanup() {
-	local current_root="$1"
-	local porcelain=""
-	local canonical_dir=""
-
-	[[ -n "$current_root" ]] || return 1
-	porcelain=$(git worktree list --porcelain 2>/dev/null || true)
-	[[ -n "$porcelain" ]] || return 1
-	canonical_dir="${porcelain%%$'\n'*}"
-	canonical_dir="${canonical_dir#worktree }"
-	[[ -n "$canonical_dir" && "$canonical_dir" != "$current_root" && -d "$canonical_dir" ]] || return 1
-	printf '%s\n' "$canonical_dir"
-	return 0
-}
-
-_merge_canonical_dir_for_sync() {
-	local porcelain=""
-	local canonical_dir=""
-	porcelain=$(git worktree list --porcelain 2>/dev/null) || return 1
-	canonical_dir="${porcelain%%$'\n'*}"
-	[[ "$canonical_dir" == worktree\ * ]] || return 1
-	canonical_dir="${canonical_dir#worktree }"
-	[[ -d "$canonical_dir" ]] || return 1
-	printf '%s\n' "$canonical_dir"
-	return 0
-}
-
-# Resolve a managed repository's canonical path from its registered slug, not
-# the current worktree. `full-loop-helper.sh merge PR owner/repo` is allowed
-# to run from another repository.
-_merge_repo_path_for_slug() {
-	local repo_slug="$1"
-	local repos_json="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local repo_path=""
-	[[ -n "$repo_slug" && -f "$repos_json" ]] || return 1
-	repo_path=$(jq -r --arg slug "$repo_slug" '
-		.initialized_repos[]?
-		| select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase))
-		| .path // empty
-	' "$repos_json" 2>/dev/null | sed -n '1p') || repo_path=""
-	[[ -n "$repo_path" ]] || return 1
-	repo_path="${repo_path/#\~/$HOME}"
-	[[ -d "$repo_path" ]] || return 1
-	printf '%s\n' "$repo_path"
-	return 0
-}
-
-_merge_reconcile_planning_publication() {
-	local pr_number="$1"
-	local repo="$2"
-	local merge_sha="$3"
-	local canonical_synced="${4:-1}"
-	local repo_path=""
-	local changed_files=""
-	local reconciler="${SCRIPT_DIR}/planning-publication-reconcile.sh"
-
-	[[ -x "$reconciler" && "$merge_sha" =~ ^[0-9a-f]{40}$ ]] || return 0
-	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files" --jq '.[].filename' 2>/dev/null || true)
-	if ! printf '%s\n' "$changed_files" | grep -qE '^(TODO\.md|todo/tasks/)'; then
-		return 0
-	fi
-	if [[ "$canonical_synced" != "1" ]]; then
-		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}: canonical sync pending or no canonical working tree"
-		printf 'PLANNING_RECONCILE_NEXT=planning-publication-reconcile.sh reconcile --repo %q --sha %q\n' "$repo" "$merge_sha"
-		return 0
-	fi
-	repo_path=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || true)
-	if [[ -z "$repo_path" ]]; then
-		print_warning "Planning publication reconcile skipped: canonical path for ${repo} is not registered"
-		return 0
-	fi
-	if (cd "$repo_path" && "$reconciler" reconcile --repo "$repo" --sha "$merge_sha"); then
-		print_success "Planning publication reconciled for merged PR #${pr_number}"
-	else
-		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}"
-		printf 'PLANNING_RECONCILE_NEXT=planning-publication-reconcile.sh reconcile --repo %q --sha %q\n' "$repo" "$merge_sha"
-	fi
-	return 0
-}
-
-_merge_current_worktree_cleanup_plan() {
-	local pr_head_ref="$1"
-	local pr_head_oid="$2"
-	local pr_head_repo="$3"
-	local repo="$4"
-	local cleanup_target=""
-	local worktree_path=""
-	local branch_name=""
-	local delete_remote_branch=""
-	local canonical_dir=""
-
-	cleanup_target=$(_merge_current_worktree_cleanup_target "$pr_head_ref" "$pr_head_oid" "$pr_head_repo" "$repo") || return 1
-	IFS=$'\t' read -r worktree_path branch_name delete_remote_branch <<<"$cleanup_target"
-	canonical_dir=$(_merge_current_canonical_dir_for_cleanup "$worktree_path") || return 1
-	printf '%s\t%s\t%s\t%s\n' "$worktree_path" "$branch_name" "$canonical_dir" "$delete_remote_branch"
-	return 0
-}
-
-_merge_fresh_worktree_cleanup_target() {
-	local pr_number="$1"
-	local repo="$2"
-	local pr_json=""
-	pr_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo" \
-		--json headRefName,headRefOid,headRepository,isCrossRepository 2>/dev/null) || return 1
-	printf '%s' "$pr_json" | jq -e --arg string_type "string" '
-		(.headRefName | type == $string_type and length > 0)
-		and (.headRefOid | type == $string_type and length > 0)
-		and (.headRepository.nameWithOwner | type == $string_type and length > 0)
-		and (.isCrossRepository | type == "boolean")' >/dev/null 2>&1 || return 1
-
-	local pr_head_ref=""
-	local pr_head_oid=""
-	local pr_head_repo=""
-	local is_cross_repository=""
-	IFS=$'\t' read -r pr_head_ref pr_head_oid pr_head_repo is_cross_repository < <(
-		printf '%s' "$pr_json" | jq -r '[.headRefName, .headRefOid, .headRepository.nameWithOwner, .isCrossRepository] | @tsv'
-	)
-	: "$is_cross_repository"
-	_merge_current_worktree_cleanup_target "$pr_head_ref" "$pr_head_oid" "$pr_head_repo" "$repo" || return 1
-	return 0
-}
-
-_merge_fresh_worktree_cleanup_plan() {
-	local pr_number="$1"
-	local repo="$2"
-	local cleanup_target=""
-	local worktree_path=""
-	local branch_name=""
-	local delete_remote_branch=""
-	local canonical_dir=""
-
-	cleanup_target=$(_merge_fresh_worktree_cleanup_target "$pr_number" "$repo") || return 1
-	IFS=$'\t' read -r worktree_path branch_name delete_remote_branch <<<"$cleanup_target"
-	canonical_dir=$(_merge_current_canonical_dir_for_cleanup "$worktree_path") || return 1
-	printf '%s\t%s\t%s\t%s\n' "$worktree_path" "$branch_name" "$canonical_dir" "$delete_remote_branch"
-	return 0
-}
-
-_merge_fresh_adopted_worktree_cleanup_target() {
-	local pr_number="$1"
-	local repo="$2"
-	local pr_json=""
-	local pr_head_ref=""
-	local pr_head_oid=""
-	local pr_head_repo=""
-	local cleanup_target=""
-	local worktree_path=""
-	local branch_name=""
-	local delete_remote_branch=""
-	local current_repo=""
-
-	pr_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo" \
-		--json state,mergedAt,mergeCommit,headRefName,headRefOid,headRepository,isCrossRepository 2>/dev/null) || return 2
-	printf '%s' "$pr_json" | jq -e '
-		.state == "MERGED"
-		and (.mergedAt | strings | length > 0)
-		and (.mergeCommit.oid | strings | length > 0)
-		and (.headRefName | strings | length > 0)
-		and (.headRefOid | strings | length > 0)
-		and (.headRepository.nameWithOwner | strings | length > 0)
-		and (.isCrossRepository == true or .isCrossRepository == false)
-	' >/dev/null 2>&1 || return 3
-	IFS=$'\t' read -r pr_head_ref pr_head_oid pr_head_repo < <(
-		printf '%s' "$pr_json" | jq -r '[.headRefName, .headRefOid, .headRepository.nameWithOwner] | @tsv'
-	)
-	cleanup_target=$(_merge_current_worktree_cleanup_target "$pr_head_ref" "$pr_head_oid" "$pr_head_repo" "$repo") || return 1
-	IFS=$'\t' read -r worktree_path branch_name delete_remote_branch <<<"$cleanup_target"
-	: "$delete_remote_branch"
-	[[ "$branch_name" == "$pr_head_ref" ]] || return 1
-	current_repo=$(_merge_current_github_repo_identity "$worktree_path" 2>/dev/null || true)
-	[[ -n "$current_repo" && "$current_repo" == "$repo" ]] || return 1
-	printf '%s\n' "$cleanup_target"
-	return 0
-}
-
-_merge_default_branch_for_cleanup() {
-	local canonical_dir="$1"
-	local default_ref=""
-	default_ref=$(git -C "$canonical_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)
-	default_ref="${default_ref#refs/remotes/origin/}"
-	if [[ -n "$default_ref" && "$default_ref" != refs/* ]]; then
-		printf '%s\n' "$default_ref"
-		return 0
-	fi
-	printf '%s\n' "main"
-	return 0
-}
-
-# Remote default-branch tip observed by the last canonical refresh (read-only
-# `git ls-remote`; canonical refs are never fetched outside the audited helper).
-FULL_LOOP_CANONICAL_REMOTE_HEAD=""
-
-# Query the remote default-branch tip without mutating canonical. A direct
-# `git fetch` in canonical is denied by the canonical Git guard (GH#33013), so
-# only read-only ls-remote runs here; canonical-recovery-helper.sh owns fetches.
-_merge_canonical_remote_head() {
-	local canonical_dir="$1"
-	local default_branch="$2"
-	local ls_output=""
-	local remote_head=""
-	if ! ls_output=$(git -C "$canonical_dir" ls-remote origin "refs/heads/${default_branch}" 2>&1); then
-		if [[ "$ls_output" == *"canonical Git guard"* ]]; then
-			print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_guard_denied"
-		else
-			print_warning "CANONICAL_SYNC_PENDING=true reason=origin_query_failed"
-		fi
-		return 1
-	fi
-	remote_head=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${default_branch}" '$2 == ref { print $1; exit }')
-	if [[ ! "$remote_head" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
-		print_warning "CANONICAL_SYNC_PENDING=true reason=origin_query_failed"
-		return 1
-	fi
-	printf '%s\n' "$remote_head"
-	return 0
-}
-
-_merge_canonical_fast_forward_enabled() {
-	[[ "${AIDEVOPS_MERGE_CANONICAL_FAST_FORWARD:-1}" != "0" ]] || return 1
-	! _merge_is_headless_session || return 1
-	return 0
-}
-
-_merge_resolve_canonical_recovery_helper() {
-	local candidate=""
-	for candidate in "${SCRIPT_DIR}/canonical-recovery-helper.sh" \
-		"${HOME:-}/.aidevops/agents/scripts/canonical-recovery-helper.sh"; do
-		if [[ -f "$candidate" ]]; then
-			printf '%s\n' "$candidate"
-			return 0
-		fi
-	done
-	return 1
-}
-
-# Fast-forward a clean interactive canonical default branch to the merged tip
-# through the audited recovery helper. Returns 2 when preconditions exclude the
-# attempt (no mutation), 1 when the helper refused, and 0 after a fast-forward.
-_merge_fast_forward_canonical() {
-	local canonical_dir="$1"
-	local default_branch="$2"
-	local merge_sha="$3"
-	local issue_number="$4"
-	local current_branch=""
-	local status_output=""
-	local canonical_head=""
-	local helper=""
-	local helper_output=""
-	local refusal=""
-
-	_merge_canonical_fast_forward_enabled || return 2
-	[[ "$merge_sha" =~ ^[0-9a-f]{40}$ && "$issue_number" =~ ^[0-9]+$ ]] || return 2
-	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
-	[[ -n "$current_branch" && "$current_branch" == "$default_branch" ]] || return 2
-	status_output=$(git -C "$canonical_dir" status --porcelain 2>/dev/null) || return 2
-	[[ -z "$status_output" ]] || return 2
-	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-	[[ -n "$canonical_head" ]] || return 2
-	# When the merge commit is already local, prove ancestry before mutating.
-	# Otherwise the helper fetches the tip and refuses any non-fast-forward.
-	if git -C "$canonical_dir" cat-file -e "${merge_sha}^{commit}" 2>/dev/null &&
-		! git -C "$canonical_dir" merge-base --is-ancestor "$canonical_head" "$merge_sha" 2>/dev/null; then
-		return 2
-	fi
-	helper=$(_merge_resolve_canonical_recovery_helper) || {
-		print_warning "CANONICAL_SYNC_PENDING=true reason=fast_forward_refused detail=recovery_helper_unavailable"
-		return 1
-	}
-	if helper_output=$(AIDEVOPS_REAL_GIT_BIN="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}" bash "$helper" \
-		fast-forward-current --repo "$canonical_dir" --branch "$default_branch" \
-		--issue "$issue_number" --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
-		print_info "Canonical ${default_branch} fast-forwarded through canonical-recovery-helper.sh"
-		# Surface safe outcome records; never forward command output or local paths.
-		printf '%s\n' "$helper_output" | grep '^POST_SYNC outcome=' || true
-		return 0
-	fi
-	refusal=$(printf '%s\n' "$helper_output" | grep -m1 'BLOCKED' || true)
-	print_warning "CANONICAL_SYNC_PENDING=true reason=fast_forward_refused${refusal:+ detail=${refusal}}"
-	return 1
-}
-
-# Args: canonical_dir default_branch [merge_sha issue_number]
-# Without a merge SHA this is read-only. With one, interactive sessions may
-# fast-forward a clean default-branch canonical via the audited helper.
-_merge_refresh_canonical_for_cleanup() {
-	local canonical_dir="$1"
-	local default_branch="$2"
-	local merge_sha="${3:-}"
-	local issue_number="${4:-}"
-	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
-
-	FULL_LOOP_CANONICAL_REMOTE_HEAD=""
-	local remote_head=""
-	remote_head=$(_merge_canonical_remote_head "$canonical_dir" "$default_branch") || return 1
-	FULL_LOOP_CANONICAL_REMOTE_HEAD="$remote_head"
-	local current_canonical_branch=""
-	current_canonical_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
-	local canonical_head=""
-	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-	if [[ "$current_canonical_branch" == "$default_branch" && "$canonical_head" == "$remote_head" ]]; then
-		print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${remote_head}"
-		return 0
-	fi
-	if [[ -n "$merge_sha" ]]; then
-		local ff_rc=0
-		_merge_fast_forward_canonical "$canonical_dir" "$default_branch" "$merge_sha" "$issue_number" || ff_rc=$?
-		if [[ "$ff_rc" -eq 0 ]]; then
-			canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-			if [[ -n "$canonical_head" && "$canonical_head" == "$remote_head" ]]; then
-				print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${remote_head}"
-				return 0
-			fi
-			if [[ -n "$canonical_head" ]] &&
-				git -C "$canonical_dir" merge-base --is-ancestor "$merge_sha" "$canonical_head" 2>/dev/null; then
-				FULL_LOOP_CANONICAL_REMOTE_HEAD="$canonical_head"
-				print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${canonical_head}"
-				return 0
-			fi
-		fi
-	fi
-	print_warning "CANONICAL_SYNC_PENDING=true canonical=${canonical_dir} branch=${current_canonical_branch:-detached}"
-	return 1
-}
-
-_merge_report_canonical_sync_state() {
-	local canonical_dir="$1"
-	local issue_number="${2:-}"
-	local merge_sha="${3:-}"
-	if [[ -z "$canonical_dir" ]]; then
-		print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_path_unavailable"
-		return 1
-	fi
-	# GH#33381: linked worktrees may share a bare common Git directory. There
-	# is no canonical working tree to preserve or fast-forward, so this layout
-	# is valid, not a canonical-layout failure; the PR lifecycle completes and
-	# only working-tree-dependent follow-ups (planning reconcile) are deferred.
-	if [[ "$(git -C "$canonical_dir" rev-parse --is-bare-repository 2>/dev/null || true)" == "true" ]]; then
-		print_info "LIFECYCLE_STATE=CANONICAL_SYNC_NOT_APPLICABLE reason=bare_common_dir canonical=${canonical_dir}"
-		return 1
-	fi
-	local default_branch
-	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
-	if _merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch" "$merge_sha" "$issue_number"; then
-		return 0
-	fi
-	local current_branch=""
-	local clean=""
-	local local_head=""
-	local remote_head="$FULL_LOOP_CANONICAL_REMOTE_HEAD"
-	local fast_forward_candidate=0
-	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
-	clean=$(git -C "$canonical_dir" status --porcelain 2>/dev/null || true)
-	local_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-	[[ -n "$remote_head" ]] || remote_head=$(git -C "$canonical_dir" rev-parse "origin/${default_branch}" 2>/dev/null || true)
-	if [[ "$current_branch" == "$default_branch" && -z "$clean" && -n "$local_head" && -n "$remote_head" ]]; then
-		# An unfetched remote tip cannot be proven locally; the audited
-		# fast-forward helper fetches it and refuses any divergence.
-		if ! git -C "$canonical_dir" cat-file -e "${remote_head}^{commit}" 2>/dev/null ||
-			git -C "$canonical_dir" merge-base --is-ancestor "$local_head" "$remote_head" 2>/dev/null; then
-			fast_forward_candidate=1
-		fi
-	fi
-	if [[ "$fast_forward_candidate" -eq 1 ]]; then
-		printf 'CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh fast-forward-current --repo %q --branch %q --issue %q --confirm FAST_FORWARD_CANONICAL_BRANCH\n' "$canonical_dir" "$default_branch" "$issue_number"
-	else
-		printf 'CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh sync-mirror --repo %q --issue %q --confirm SYNCHRONIZE_CANONICAL_MIRROR\n' "$canonical_dir" "$issue_number"
-	fi
-	return 1
-}
-
-# Sync canonical first (audited fast-forward when eligible) so planning
-# reconcile sees the exact merged snapshot (GH#33013).
-_merge_sync_canonical_then_reconcile() {
-	local pr_number="$1"
-	local repo="$2"
-	local canonical_dir="${3:-}"
-	local canonical_synced=0
-	canonical_dir=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || printf '%s' "$canonical_dir")
-	_merge_report_canonical_sync_state "$canonical_dir" "${WORKER_ISSUE_NUMBER:-$pr_number}" \
-		"${FULL_LOOP_MERGE_SHA:-}" && canonical_synced=1
-	_merge_reconcile_planning_publication "$pr_number" "$repo" "${FULL_LOOP_MERGE_SHA:-}" "$canonical_synced"
-	return 0
-}
-
-_merge_resolve_worktree_helper() {
-	if [[ -x "${SCRIPT_DIR}/worktree-helper.sh" ]]; then
-		printf '%s\n' "${SCRIPT_DIR}/worktree-helper.sh"
-		return 0
-	fi
-	if [[ -n "${HOME:-}" && -x "${HOME}/.aidevops/agents/scripts/worktree-helper.sh" ]]; then
-		printf '%s\n' "${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
-		return 0
-	fi
-	return 1
-}
-
-_merge_remove_worktree_for_cleanup() {
-	local branch_name="$1"
-	local helper_path=""
-
-	helper_path=$(_merge_resolve_worktree_helper 2>/dev/null || true)
-	if [[ -n "$helper_path" ]]; then
-		WORKTREE_FORCE_REMOVE=1 "$helper_path" remove "$branch_name" --force >/dev/null 2>&1 && return 0
-		print_warning "Post-merge worktree cleanup: guarded helper deferred removal for ${branch_name}"
-		return 1
-	fi
-
-	print_warning "Post-merge worktree cleanup: guarded worktree helper unavailable for ${branch_name}"
-	return 1
-}
-_merge_cleanup_linked_worktree() {
-	local cleanup_plan="$1"
-	local repo="$2"
-	[[ -n "$cleanup_plan" ]] || return 0
-
-	local worktree_path branch_name canonical_dir delete_remote_branch
-	IFS=$'\t' read -r worktree_path branch_name canonical_dir delete_remote_branch <<<"$cleanup_plan"
-	[[ -n "$worktree_path" && -n "$branch_name" && -n "$canonical_dir" ]] || return 0
-	[[ -d "$canonical_dir" ]] || return 0
-	print_info "Post-merge worktree cleanup: removing linked worktree ${worktree_path} for ${branch_name} in ${repo}"
-	local default_branch=""
-	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
-	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch" || true
-
-	if ! cd "$canonical_dir" 2>/dev/null; then
-		print_warning "Post-merge worktree cleanup: could not cd to canonical repo ${canonical_dir}"
-		return 0
-	fi
-
-	if _merge_remove_worktree_for_cleanup "$branch_name"; then
-		if [[ "$delete_remote_branch" == "1" ]]; then
-			git push origin --delete "$branch_name" >/dev/null 2>&1 || true
-		fi
-		git branch -D "$branch_name" >/dev/null 2>&1 || true
-		print_success "Post-merge worktree cleanup complete for ${branch_name}"
-		return 0
-	fi
-
-	print_warning "Post-merge worktree cleanup did not remove ${worktree_path}; safety-net cleanup will retry later"
-	return 0
-}
-
-_merge_record_deferred_cleanup_owner() {
-	local pr_number="$1"
-	local repo="$2"
-	local cleanup_target="$3"
-	local release_status="${4:-pending}"
-	local executor_completion_state="${5:-FINALIZATION_PENDING}"
-	local worktree_path="" branch_name="" delete_remote_branch=""
-	IFS=$'\t' read -r worktree_path branch_name delete_remote_branch <<<"$cleanup_target"
-	: "$delete_remote_branch"
-	[[ -n "$worktree_path" && -n "$branch_name" ]] || return 1
-	[[ -d "$worktree_path" ]] || return 1
-
-	local owner_pid=""
-	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
-		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || true)
-	fi
-	[[ "$owner_pid" =~ ^[0-9]+$ ]] || owner_pid="$PPID"
-	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
-
-	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$_FULL_LOOP_OWNER_SESSION_FALLBACK}}}"
-	if ! declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
-		return 1
-	fi
-	full_loop_write_cleanup_deferred "$repo" "$pr_number" "$worktree_path" "$branch_name" \
-		"$owner_pid" "$owner_session" "$release_status" "$executor_completion_state" >/dev/null || return 1
-
-	local marker_dir="${worktree_path}/.agents"
-	local marker_path="${marker_dir}/.full-loop-cleanup-deferred"
-	mkdir -p "$marker_dir" || return 1
-	# Keep the legacy marker during rollout so an older deployed cleanup
-	# supervisor still preserves the live owner. The external receipt above is
-	# the durable source of lifecycle truth and survives worktree removal.
-	printf '%s\n' "$owner_pid" >"${marker_path}.tmp.$$" || return 1
-	mv "${marker_path}.tmp.$$" "$marker_path" || return 1
-
-	if declare -F claim_worktree_ownership >/dev/null 2>&1; then
-		claim_worktree_ownership "$worktree_path" "$branch_name" \
-			--owner-pid "$owner_pid" \
-			--session "$owner_session" \
-			--task "post-merge-cleanup" >/dev/null 2>&1 || true
-	fi
-	return 0
-}
-
 cmd_adopt_merged_receipt() {
 	local pr_number="${1:-}"
 	local repo=""
@@ -2590,6 +1469,30 @@ _merge_finalize_post_merge() {
 # "merge now", so --auto adds no value); --auto is dropped silently with an
 # informational message rather than failing the merge.
 # Exit codes: 0 = merged (or queued, with --auto), 1 = gate failed or merge failed
+
+# Protected release PRs (version-manager-protected-main.sh) carry a signed
+# release commit that the tag points at. Squash or rebase rewrites it, so the
+# tag is never reachable from main and reconciliation fails. Prints the method
+# to use: always --merge for release provenance branches, else the request.
+_merge_release_provenance_method() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_method="$3"
+	local head_ref="${4:-}"
+	if [[ -z "$head_ref" ]]; then
+		head_ref=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.ref // ""') || {
+			print_error "Merge blocked: cannot read PR #${pr_number} head ref for release provenance check"
+			return 1
+		}
+	fi
+	if [[ "$head_ref" =~ ^chore/release-v[0-9]+\.[0-9]+\.[0-9]+-provenance$ && "$merge_method" != "--merge" ]]; then
+		print_info "PR #${pr_number} is a protected release provenance PR; using --merge (not ${merge_method}) to keep the signed release commit reachable from main"
+		merge_method="--merge"
+	fi
+	printf '%s\n' "$merge_method"
+	return 0
+}
+
 _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_REPO=""
 	FULL_LOOP_MERGE_PARSED_METHOD="--squash"
@@ -2728,10 +1631,10 @@ cmd_merge() {
 		_merge_report_pre_merge_gate_failure
 		return 1
 	}
+	local _release_lane_head_ref=""
 	if [[ "$repo" == "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]]; then
 		local _release_lane_pr_refs=""
 		local _release_lane_base_ref=""
-		local _release_lane_head_ref=""
 		local _release_lane_pr_endpoint="repos/${repo}/pulls"
 		_release_lane_pr_refs=$(_flm_gh_read gh api "${_release_lane_pr_endpoint}/${pr_number}" --jq '[.base.ref, .head.ref] | @tsv') || {
 			print_error "Merge blocked: cannot verify release-lane PR identity"
@@ -2743,6 +1646,7 @@ cmd_merge() {
 			return 1
 		}
 	fi
+	merge_method=$(_merge_release_provenance_method "$pr_number" "$repo" "$merge_method" "$_release_lane_head_ref") || return 1
 	local _cleanup_target=""
 	local _cleanup_worktree=""
 	local _cleanup_branch=""

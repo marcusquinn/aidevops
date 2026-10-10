@@ -994,6 +994,33 @@ assert_eq "evaluation failure keeps label-present hold active" "true true true" 
 PERM_BAD_TEXT=$(bash -c 'source "$1"; _render_issue_permission_hold_text "$2"' _ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$PERM_BAD_HOLD" 2>/dev/null)
 assert_contains "text points to verify-permissions on evaluation failure" "aidevops approve verify-permissions" "$PERM_BAD_TEXT"
 
+# --- Test 24 (GH#34110): terminal-only blockers are visible, not "no records" ---
+printf '\nTest 24: terminal blocker diagnostics\n'
+TB_RELEASE='<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=r1 ts=2026-10-01T00:00:00Z\n\nTerminal blocker: reason=permission_required owner=permission-maintainer task=77 attempt=abcdef0123456789.\nProjected state: status:available.\nNext action: x\n<!-- ops:end -->'
+TB_COMMENTS=$(jq -cn --arg body "$(printf '%b' "$TB_RELEASE")" '[
+	{id: 1, author_association: "MEMBER", created_at: "2026-10-01T00:00:00Z", body: $body},
+	{id: 2, author_association: "MEMBER", created_at: "2026-10-01T01:00:00Z", body: $body},
+	{id: 3, author_association: "NONE", created_at: "2026-10-01T02:00:00Z",
+	 body: "Terminal blocker: reason=target_code_blocker owner=target-maintainer task=77"}
+]')
+TB_JSON=$(bash -c 'source "$1"; _issue_terminal_blocker_json "$2"' _ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$TB_COMMENTS" 2>/dev/null)
+assert_eq "terminal blocker uses latest trusted projection" "permission_required permission-maintainer 2 status:available" \
+	"$(printf '%s' "$TB_JSON" | jq -r '"\(.reason) \(.owner) \(.observations) \(.projected_state)"')"
+TB_EXCERPTS=$(mktemp -d)
+printf 'BLOCKED: redacted\n' >"$TB_EXCERPTS/issue-77-20261001T000000Z-1.log"
+printf 'BLOCKED: redacted\n' >"$TB_EXCERPTS/issue-77-20261001T010000Z-2.log"
+printf 'other issue\n' >"$TB_EXCERPTS/issue-770-20261001T020000Z-3.log"
+TB_TEXT=$(AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR="$TB_EXCERPTS" bash -c 'source "$1"; _render_issue_terminal_blocker_text "$2" "{\"request_id\":null}" 77' \
+	_ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$TB_JSON" 2>/dev/null)
+assert_contains "terminal-only permission report names absent request" "Permission request: none recorded" "$TB_TEXT"
+assert_contains "terminal-only permission report points at runner capability class" "runner_capability_unmet" "$TB_TEXT"
+assert_contains "desired operation points at newest local excerpt for this issue only" \
+	"excerpts (2 on this runner), newest: $TB_EXCERPTS/issue-77-20261001T010000Z-2.log" "$TB_TEXT"
+rm -rf "$TB_EXCERPTS"
+TB_NONE=$(bash -c 'source "$1"; _render_issue_terminal_blocker_text "$(_issue_terminal_blocker_json "[]")" "{}" 77' \
+	_ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" 2>/dev/null)
+assert_eq "no terminal blocker renders nothing" "" "$TB_NONE"
+
 # =============================================================================
 # Summary
 # =============================================================================

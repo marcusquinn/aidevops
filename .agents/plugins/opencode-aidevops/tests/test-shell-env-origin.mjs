@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { runtimePath } from "../runtime-path.mjs";
 import {
   createSessionModelStore,
   createShellEnvHook,
@@ -24,6 +25,12 @@ function makeHook() {
     workspaceDir: "/tmp/aidevops-workspace",
   });
 }
+
+test("runtime PATH keeps inherited order, injects no distro roots, drops unsafe entries", () => {
+  const path = runtimePath("/guard:/project/bin:/guard::relative:/opt/toolchain/bin:/usr/bin");
+  assert.deepEqual(path.split(":"), ["/guard", "/project/bin", "/opt/toolchain/bin", "/usr/bin"]);
+  assert.equal(runtimePath(path), path);
+});
 
 function withTempAgentsDir(fn) {
   const root = mkdtempSync(join(tmpdir(), "aidevops-shell-env-"));

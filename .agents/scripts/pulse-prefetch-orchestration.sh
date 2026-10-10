@@ -493,6 +493,9 @@ PULSE_TIER_LAST_CHECK_FILE="${PULSE_TIER_LAST_CHECK_FILE:-${HOME}/.aidevops/logs
 ########################################
 PULSE_TIER_SCRIPT="${PULSE_TIER_SCRIPT:-${SCRIPT_DIR}/pulse-repo-tier.sh}"
 
+# shellcheck source=./pulse-repo-dormancy.sh
+source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+
 ########################################
 # Check whether a repo should be skipped this cycle based on its activity tier.
 #
@@ -517,6 +520,11 @@ PULSE_TIER_SCRIPT="${PULSE_TIER_SCRIPT:-${SCRIPT_DIR}/pulse-repo-tier.sh}"
 check_repo_tier_skip() {
 	local slug="$1"
 	local state_file="${2:-$PULSE_TIER_LAST_CHECK_FILE}"
+
+	# Wake/backstop scans must not wait for the cold tier interval.
+	if declare -F pulse_repo_wake_pending >/dev/null 2>&1 && pulse_repo_wake_pending "$slug"; then
+		return 0
+	fi
 
 	# Feature flag — enabled by default (set to 0 to disable for rollback)
 	if [[ "${PULSE_TIER_CLASSIFICATION_ENABLED:-1}" != "1" ]]; then

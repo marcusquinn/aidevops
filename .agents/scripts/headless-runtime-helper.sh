@@ -528,7 +528,12 @@ _derive_worker_failure_evidence() {
 		next_action="resume_existing_session"
 		;;
 	watchdog_stall_killed)
-		launch_failure_cause="stall_hard_killed"
+		# GH#34068: a cap kill after recent liveness evidence is not a stall.
+		if [[ "$kill_reason" == "hard_kill_cap_active" ]]; then
+			launch_failure_cause="elapsed_cap_while_active"
+		else
+			launch_failure_cause="stall_hard_killed"
+		fi
 		next_action="redispatch_worker"
 		;;
 	rate_limit | rate_limit_fast)
@@ -680,6 +685,18 @@ _normalize_worker_exit_code_and_kill_reason() {
 	return 0
 }
 
+# Keep prelaunch stages in the owning shell as well as the optional durable
+# PRRTS trace. Ordinary issue workers do not have an attempt state file.
+_record_run_attempt_stage() {
+	local stage="$1"
+	_WORKER_PRELAUNCH_LAST_STAGE="$stage"
+	case "$stage" in
+	post_*) _WORKER_PRELAUNCH_LAST_COMPLETED_STAGE="$stage" ;;
+	esac
+	print_info "[lifecycle] ${stage} session=${session_key} pid=$$"
+	return 0
+}
+
 # _execute_run_attempt: run one headless invocation and handle the result.
 # Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
 # Args: role session_key work_dir title prompt selected_model variant_override agent_name
@@ -699,16 +716,18 @@ _execute_run_attempt() {
 	local agent_name="$8"
 	shift 8
 	local -a extra_args=("$@")
+	_WORKER_PRELAUNCH_LAST_STAGE=""
+	_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE=""
 	_begin_worker_runtime_run
 	local runtime=""
 	local prompt_arg="$prompt" prompt_file_arg="" claude_stdin_file="" force_file_transport=0
 	local provider="" persisted_session="" metric_work_dir=""
 	local -a cmd=()
 	local prepare_status=0
-	print_info "[lifecycle] pre_attempt_command_prepare session=$session_key pid=$$"
+	_record_run_attempt_stage pre_attempt_command_prepare
 	_prepare_run_attempt_command || prepare_status=$?
 	[[ "$prepare_status" -eq 0 ]] || return "$prepare_status"
-	print_info "[lifecycle] post_attempt_command_prepare session=$session_key pid=$$"
+	_record_run_attempt_stage post_attempt_command_prepare
 
 	# GH#17549: Claim guard — verify a DISPATCH_CLAIM exists for this runner
 	# before launching a worker for an issue. This prevents pulse LLMs from
@@ -731,21 +750,25 @@ _execute_run_attempt() {
 	local _t3077_watcher_pid="" _normalized_exit_info=""
 	local _run_watchdog_hard_killed=0 _stall_killed_marker="" _rl_fast_sentinel=""
 	prepare_status=0
-	print_info "[lifecycle] pre_attempt_file_create session=$session_key pid=$$"
+	_record_run_attempt_stage pre_attempt_file_create
 	_create_run_attempt_files || prepare_status=$?
 	[[ "$prepare_status" -eq 0 ]] || return "$prepare_status"
-	print_info "[lifecycle] post_attempt_file_create session=$session_key pid=$$"
+	_record_run_attempt_stage post_attempt_file_create
 	prepare_status=0
-	print_info "[lifecycle] pre_attempt_context_configure session=$session_key pid=$$"
+	_record_run_attempt_stage pre_attempt_context_configure
 	_configure_run_attempt_context || prepare_status=$?
 	[[ "$prepare_status" -eq 0 ]] || return "$prepare_status"
-	print_info "[lifecycle] post_attempt_context_configure session=$session_key pid=$$"
+	_record_run_attempt_stage post_attempt_context_configure
+	_record_run_attempt_stage pre_attempt_ownership_verify
 	if [[ "$role" == "worker" ]] && ! _hrw_verify_dispatch_ownership; then
 		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_OWNERSHIP_LOST"
 		print_error "[lifecycle] runtime ownership fence stopped session=${session_key} before model invocation"
 		return 85
 	fi
+	_record_run_attempt_stage post_attempt_ownership_verify
+	_record_run_attempt_stage pre_attempt_observers_start
 	_start_run_attempt_observers
+	_record_run_attempt_stage post_attempt_observers_start
 	_hrw_mark_runtime_launch_started "$session_key" "$runtime"
 	_emit_verbose_checkpoint worker_started \
 		"model=${selected_model} runtime=${runtime} fix_the_fixer=${_T3077_FIX_THE_FIXER:-0}"
@@ -985,11 +1008,13 @@ cmd_run() {
 	local detach=0
 	local private_workload="${AIDEVOPS_PRIVATE_WORKLOAD:-0}"
 	local private_profile_sha256=""
+	local standalone_prompt=0
 	local -a extra_args=()
 
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
 	_validate_private_workload_args || return 1
+	_validate_standalone_prompt_args || return 1
 	_validate_model_replay_args || return 1
 	local _cmd_run_stop=0 _cmd_run_return_status=1
 	_prepare_cmd_run_environment "$@" || return $?
@@ -1069,7 +1094,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
   headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier simple|standard|thinking]
-  headless-runtime-helper.sh run --role pulse|worker|triage|model-replay --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--detach]
+  headless-runtime-helper.sh run --role pulse|worker|triage|model-replay --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--standalone-prompt] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker|triage] [--hours N] [--model SUBSTRING] [--fast-threshold N]
@@ -1095,6 +1120,13 @@ Private workloads:
   private directory, suppresses transcript streaming and diagnostic excerpts,
   sanitizes activity evidence, and discards the isolated OpenCode session database
   after exit.
+
+Standalone prompts:
+  --standalone-prompt declares a worker prompt that is not issue work, such as a
+  scheduled report or review that mentions an issue number in prose. It skips only
+  prompt-prose issue classification. It requires --role worker and refuses an
+  issue-N session key, an "Issue #N" title, and WORKER_ISSUE_NUMBER or
+  WORKER_WORKTREE_PATH. It never grants issue claim or worktree authority.
 
 Backoff granularity:
   Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-5-5).

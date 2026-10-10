@@ -66,6 +66,8 @@ OpenCode V2 (`opencode2`) runs server plugins in a tty-less background service, 
 
 V2 session titles double as tab labels, so the `· AIDevOps <version>` suffix is not written into them. The same TUI entrypoint instead renders muted version labels into V2 UI slots: `AIDevOps <version>` in `prompt.footer.status` (home and session prompts) and `OpenCode <version> · AIDevOps <version>` in `sidebar.footer`. `sidebar.content` and `home.footer.status` are opt-in. The AIDevOps version is a live signal refreshed from the version file (cached for 60s), so `aidevops update` appears in running sessions without a restart. Choose slots with `AIDEVOPS_TUI_VERSION_SLOTS=<comma list>` or disable with `AIDEVOPS_TUI_VERSION_SLOTS=none`.
 
+OpenCode 1.x matches this: setup registers `plugins/opencode-aidevops/v1-tui/tui.tsx` in `~/.config/opencode/tui.json` and disables the built-ins it replaces (`internal:sidebar-mcp`, `internal:sidebar-footer`). The sidebar footer reads `OpenCode <version> · AIDevOps <version>`, and the MCP section starts collapsed. The V1 session-title suffix is paused; set `AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX=true` to restore it. To revert the sidebar, set `aidevops-tui` to `false` and both built-ins to `true` under `plugin_enabled` in `tui.json`.
+
 ## Shell Integration
 
 | Shell | Config file | Hook |
@@ -81,6 +83,7 @@ V2 session titles double as tab labels, so the `· AIDevOps <version>` suffix is
 - **tmux** (`~/.tmux.conf`): `set -g set-titles on` + `set -g set-titles-string "#T"`
 - **screen** (`~/.screenrc`): `termcapinfo xterm* ti@:te@`
 - **VS Code**: Enable "Terminal > Integrated: Allow Workspace Shell"
+- **Live-verifying TUI plugin changes (OpenCode 1.x)**: run `opencode-test-helper.sh tui-capture --session <id> --out <temp text file> --expect "MCP" --expect "AIDevOps <version>"` from the session's launcher directory (or supply `--cwd <launch directory>`). The helper derives the launcher's per-project data directory, renders a temporary read-only-source SQLite snapshot in a bounded pty (20s, 200×50 by default), answers cursor queries, terminates the child, and writes ANSI-stripped render text. This is a transcript of screen updates, not a final-screen emulator. Repeat `--expect` to assert text; missing strings and `Session not found` fail with diagnostics. Use `--data-dir <XDG data directory>` for non-project sessions, `--seconds`, `--cols`/`--rows` for capture sizing, and `--tui-config <temp tui.json>` for an overlay: never edit `~/.config/opencode/tui.json` or `opencode.json` for a test. The source session DB and overlay are not edited. `--binary opencode2` is best effort until V2 is verified.
 
 ## Related
 

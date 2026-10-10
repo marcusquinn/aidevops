@@ -1132,6 +1132,27 @@ ensure_continuation_reminder_label_exists() {
 	return 0
 }
 
+# Provision the PR auto-close opt-out before pulse comments recommend it (GH#34197).
+# Name, colour and description mirror SYSTEM_LABELS in label-sync-helper.sh.
+_DO_NOT_CLOSE_LABEL_ENSURED=""
+ensure_do_not_close_label_exists() {
+	local repo="$1"
+	[[ -n "$repo" ]] || return 1
+	case ",${_DO_NOT_CLOSE_LABEL_ENSURED:-}," in
+	*",$repo,"*) return 0 ;;
+	esac
+	local labels_snapshot=""
+	labels_snapshot=$(_gh_managed_label_names_snapshot "$repo") || return 1
+	if ! _gh_managed_label_snapshot_has "$labels_snapshot" "do-not-close"; then
+		AIDEVOPS_GH_ROUTE_DECISION="$_GH_MANAGED_LABEL_CREATE_ROUTE" \
+			_gh_with_timeout write gh label create "do-not-close" --repo "$repo" \
+			--description "Opt-out: never auto-close this PR in pulse sweeps" \
+			--color "EDEDED" || return 1
+	fi
+	_DO_NOT_CLOSE_LABEL_ENSURED="${_DO_NOT_CLOSE_LABEL_ENSURED:+$_DO_NOT_CLOSE_LABEL_ENSURED,}$repo"
+	return 0
+}
+
 #######################################
 # Resolve completion attribution from a merged PR's origin labels.
 # Unknown or contradictory provenance is deliberately not guessed.

@@ -333,6 +333,109 @@ if [[ "$ACCOUNT_API_ERROR_STATUS" -ne 2 ]]; then
 fi
 printf 'PASS: account Issue Sync live evidence failures remain distinct and fail-closed\n'
 
+# GH#33955: Pulse TODO handoff PRs (non-closing Ref, runner-account author).
+HANDOFF_ID='987084363c8b80cb71492e2f66896700396b71ef'
+LIVE_HANDOFF_JSON=$(jq -nc --arg id "$HANDOFF_ID" '{
+	author_association: "COLLABORATOR",
+	user: {login: "pulse-runner", id: 321, type: "User"},
+	head: {ref: ("aidevops/pulse-todo-" + $id[0:16]), sha: "head-123", repo: {full_name: "marcusquinn/aidevops"}},
+	base: {repo: {full_name: "marcusquinn/aidevops"}},
+	body: ("<!-- aidevops:pulse-todo-handoff id=" + $id + " -->\n## Pulse TODO publication\n\n- Ref #33701\n")
+}')
+
+# Handoff evidence reads "<filename>\t<status>" rows (GH#34149).
+HANDOFF_TODO_ROW=$'TODO.md\tmodified'
+run_handoff() {
+	local payload="$1"
+	local permission="${2:-write}"
+	local files="${3-$HANDOFF_TODO_ROW}"
+	local expected_head="${4-head-123}"
+	REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$payload" \
+		REVIEW_GATE_ACCOUNT_PERMISSION="$permission" REVIEW_GATE_ACCOUNT_FILES="$files" \
+		PATH="${STATE_DIR}/bin:${PATH}" \
+		bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+		123 marcusquinn/aidevops "$expected_head" >/dev/null 2>&1
+}
+
+for account_permission in write maintain admin; do
+	if ! run_handoff "$LIVE_HANDOFF_JSON" "$account_permission"; then
+		printf 'FAIL: live helper rejected exact-head Pulse TODO handoff with %s permission\n' "$account_permission" >&2
+		exit 1
+	fi
+done
+printf 'PASS: live helper accepts exact-head TODO.md-only Pulse TODO handoff from maintainer-equivalent authors\n'
+
+assert_handoff_rejected() {
+	local case_name="$1"
+	shift
+	if run_handoff "$@"; then
+		printf 'FAIL: live helper accepted Pulse TODO handoff %s\n' "$case_name" >&2
+		return 1
+	fi
+	printf 'PASS: live helper rejects Pulse TODO handoff %s\n' "$case_name"
+	return 0
+}
+
+HANDOFF_BRIEF_ROW=$'todo/tasks/t18617-brief.md\tadded'
+if ! run_handoff "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'"${HANDOFF_BRIEF_ROW}"$'\n'$'todo/tasks/t18607.2-brief.md\tadded'; then
+	printf 'FAIL: live helper rejected a Pulse TODO handoff with added stale-publication brief captures\n' >&2
+	exit 1
+fi
+printf 'PASS: live helper accepts Pulse TODO handoff with TODO.md plus added brief captures\n'
+
+assert_handoff_rejected 'with read permission' "$LIVE_HANDOFF_JSON" read
+assert_handoff_rejected 'with a todo/ planning file' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/PLANS.md\tmodified'
+assert_handoff_rejected 'with a non-planning file' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'.agents/scripts/pulse-merge.sh\tmodified'
+assert_handoff_rejected 'with a modified existing brief' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/tasks/t18617-brief.md\tmodified'
+assert_handoff_rejected 'with a removed brief' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/tasks/t18617-brief.md\tremoved'
+assert_handoff_rejected 'with an added non-brief todo/tasks file' "$LIVE_HANDOFF_JSON" write "${HANDOFF_TODO_ROW}"$'\n'$'todo/tasks/prd-x.md\tadded'
+assert_handoff_rejected 'with a brief but no TODO.md change' "$LIVE_HANDOFF_JSON" write "$HANDOFF_BRIEF_ROW"
+assert_handoff_rejected 'with an empty changed-file set' "$LIVE_HANDOFF_JSON" write ''
+assert_handoff_rejected 'with stale exact-head evidence' "$LIVE_HANDOFF_JSON" write "$HANDOFF_TODO_ROW" stale-head
+assert_handoff_rejected 'without exact-head evidence' "$LIVE_HANDOFF_JSON" write "$HANDOFF_TODO_ROW" ''
+assert_handoff_rejected 'from a fork head' \
+	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.head.repo.full_name = "attacker/aidevops"')"
+assert_handoff_rejected 'from a bot actor' \
+	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.user.type = "Bot"')"
+assert_handoff_rejected 'without the generated marker' \
+	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.body = "- Ref #33701"')"
+assert_handoff_rejected 'when the marker ID does not match the branch suffix' \
+	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.head.ref = "aidevops/pulse-todo-0000000000000000"')"
+assert_handoff_rejected 'with conflicting duplicate markers' \
+	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.body += "\n<!-- aidevops:pulse-todo-handoff id=0000000000000000000000000000000000000000 -->"')"
+assert_handoff_rejected 'on a non-handoff branch' \
+	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.head.ref = "feature/987084363c8b80cb"')"
+assert_handoff_rejected 'with an uppercase branch suffix' \
+	"$(printf '%s' "$LIVE_HANDOFF_JSON" | jq -c '.head.ref = "aidevops/pulse-todo-987084363C8B80CB"')"
+
+HANDOFF_API_ERROR_STATUS=0
+if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_HANDOFF_JSON" \
+	REVIEW_GATE_ACCOUNT_PERMISSION_ERROR=1 PATH="${STATE_DIR}/bin:${PATH}" \
+	bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+	123 marcusquinn/aidevops head-123 >/dev/null 2>&1; then
+	HANDOFF_API_ERROR_STATUS=0
+else
+	HANDOFF_API_ERROR_STATUS=$?
+fi
+if [[ "$HANDOFF_API_ERROR_STATUS" -ne 2 ]]; then
+	printf 'FAIL: Pulse TODO handoff permission API failure expected exit 2, got %s\n' "$HANDOFF_API_ERROR_STATUS" >&2
+	exit 1
+fi
+HANDOFF_API_ERROR_STATUS=0
+if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_HANDOFF_JSON" \
+	REVIEW_GATE_ACCOUNT_FILES_ERROR=1 PATH="${STATE_DIR}/bin:${PATH}" \
+	bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+	123 marcusquinn/aidevops head-123 >/dev/null 2>&1; then
+	HANDOFF_API_ERROR_STATUS=0
+else
+	HANDOFF_API_ERROR_STATUS=$?
+fi
+if [[ "$HANDOFF_API_ERROR_STATUS" -ne 2 ]]; then
+	printf 'FAIL: Pulse TODO handoff changed-file API failure expected exit 2, got %s\n' "$HANDOFF_API_ERROR_STATUS" >&2
+	exit 1
+fi
+printf 'PASS: Pulse TODO handoff live evidence failures remain distinct and fail-closed\n'
+
 if ! REVIEW_GATE_LIVE_TRUSTED=true REVIEW_GATE_ACCOUNT_PERMISSION_ERROR=1 \
 	REVIEW_GATE_ACCOUNT_FILES_ERROR=1 PATH="${STATE_DIR}/bin:${PATH}" \
 	bash "${HELPER_FILE}" is-trusted-issue-sync-pr 123 marcusquinn/aidevops head-123 >/dev/null; then

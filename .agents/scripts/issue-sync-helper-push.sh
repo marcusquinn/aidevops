@@ -297,7 +297,10 @@ _push_verify_publication_pending() {
 _push_warn_if_task_id_collides() {
 	local repo="$1" task_id="$2"
 	local collision_pr
-	collision_pr=$(gh_find_merged_pr "$repo" "$task_id")
+	# Planning PRs publish the task, not its implementation. Filter before
+	# selecting evidence so a planning PR cannot hide a real ID collision.
+	collision_pr=$(gh pr list --repo "$repo" --state merged --search "$task_id in:title" \
+		--limit 100 --json number,url,title --jq "[.[] | select(.title | test(\"^${task_id}: plan([[:space:]]|$)\") | not)][0] | if . == null then empty else \"\(.number)|\(.url)\" end" 2>/dev/null) || collision_pr=""
 	if [[ -n "$collision_pr" ]]; then
 		local collision_num="${collision_pr%%|*}"
 		local collision_url="${collision_pr#*|}"
@@ -324,12 +327,12 @@ _push_validate_targets() {
 
 cmd_push() {
 	local target_task="${1:-}"
+	# GH#34232: issue-first. The created issue body is composed from the brief,
+	# so it leads and is dispatchable at creation; TODO.md/briefs are backups.
+	# Callers whose bodies are template stubs (new-task batch) pass
+	# AIDEVOPS_PLANNING_PUBLICATION_STATE=pending explicitly.
 	if [[ -z "${AIDEVOPS_PLANNING_PUBLICATION_STATE:-}" ]]; then
-		if [[ "${GITHUB_ACTIONS:-}" == "$_PUSH_BOOLEAN_TRUE" && -z "$target_task" ]]; then
-			AIDEVOPS_PLANNING_PUBLICATION_STATE="$_PUSH_PUBLICATION_CANONICAL"
-		else
-			AIDEVOPS_PLANNING_PUBLICATION_STATE="$_PUSH_PUBLICATION_PENDING"
-		fi
+		AIDEVOPS_PLANNING_PUBLICATION_STATE="$_PUSH_PUBLICATION_CANONICAL"
 	fi
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO" project_root="$_CMD_ROOT"
@@ -381,6 +384,11 @@ cmd_push() {
 		[[ "$result" == *"RELATIONSHIPS_PENDING"* ]] && relationships_pending=$((relationships_pending + 1))
 	done
 	print_info "Push complete: $created created, $skipped skipped, $failed failed, $relationships_pending relationships pending"
+	if [[ "$created" -gt 0 ]]; then
+		# shellcheck source=./pulse-repo-dormancy.sh
+		source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
+		pulse_repo_wake "$repo" planning_publication || true
+	fi
 	if [[ $failed -gt 0 ]]; then
 		print_error "Issue creation failed for $failed task(s); TODO.md still contains active task(s) without GitHub refs"
 		return 1

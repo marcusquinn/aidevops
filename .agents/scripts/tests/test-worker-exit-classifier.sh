@@ -626,6 +626,61 @@ test_exit_push_ignores_marker_only_dirty_state() {
 	return 0
 }
 
+# GH#34040: a blocked handoff may claim preservation only with proof: a pushed
+# branch, a verified recovery bundle, or else an explicit work_lost result.
+test_secure_branch_commits_proves_durability() {
+	# Bypass the production canonical-repository guard for this disposable fixture.
+	git() { /usr/bin/git "$@"; }
+	local case_dir="${TMPDIR_TEST}/durability"
+	local origin_dir="${case_dir}/origin.git"
+	local repo_dir="${case_dir}/repo"
+	local AIDEVOPS_WORKER_DIRTY_ARCHIVE_DIR="${case_dir}/archive"
+	mkdir -p "$case_dir"
+	git init --bare "$origin_dir" >/dev/null 2>&1
+	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
+	git -C "$repo_dir" config user.email "worker@example.invalid"
+	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" config commit.gpgsign false
+	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
+	printf 'base\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
+	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
+	git -C "$repo_dir" checkout -b feature/durable >/dev/null 2>&1
+
+	local none_state="" pushed_state="" bundle_state="" lost_state="" lost_rc=0 bundle_heads=""
+	_worker_secure_branch_commits "$repo_dir"
+	none_state="$_WORKER_COMMIT_DURABILITY"
+	printf 'one\n' >>"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" commit -am "test: first" >/dev/null 2>&1
+	_worker_secure_branch_commits "$repo_dir"
+	pushed_state="$_WORKER_COMMIT_DURABILITY"
+	printf 'two\n' >>"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" commit -am "test: second" >/dev/null 2>&1
+	git -C "$repo_dir" remote set-url origin "${case_dir}/missing.git"
+	_worker_secure_branch_commits "$repo_dir"
+	bundle_state="$_WORKER_COMMIT_DURABILITY"
+	bundle_heads=$(git -C "$repo_dir" bundle list-heads "${bundle_state#bundle:}" 2>/dev/null || true)
+	chmod 500 "$case_dir"
+	AIDEVOPS_WORKER_DIRTY_ARCHIVE_DIR="${case_dir}/blocked/archive"
+	_worker_secure_branch_commits "$repo_dir" || lost_rc=$?
+	lost_state="$_WORKER_COMMIT_DURABILITY"
+	chmod 700 "$case_dir"
+
+	if [[ "$none_state" == "none" && "$pushed_state" == "pushed:feature/durable" && \
+		"$bundle_state" == "bundle:${case_dir}/archive/"*"/commits.bundle" && \
+		"$bundle_heads" == *"refs/heads/feature/durable"* && \
+		"$lost_state" == "work_lost" && "$lost_rc" -eq 1 ]]; then
+		print_result "blocked handoff proves commit durability or reports work_lost" 0
+	else
+		print_result "blocked handoff proves commit durability or reports work_lost" 1 \
+			"none=${none_state} pushed=${pushed_state} bundle=${bundle_state} heads='${bundle_heads}' lost=${lost_state} rc=${lost_rc}"
+	fi
+	unset -f git
+	unset _WORKER_COMMIT_DURABILITY
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -659,6 +714,7 @@ main() {
 	test_exit_push_preserves_dirty_worktree
 	test_exit_push_excludes_deferred_cleanup_marker
 	test_exit_push_ignores_marker_only_dirty_state
+	test_secure_branch_commits_proves_durability
 
 	printf '\n%d tests: %d passed, %d failed\n' \
 		"$TESTS_RUN" "$TESTS_PASSED" "$TESTS_FAILED"

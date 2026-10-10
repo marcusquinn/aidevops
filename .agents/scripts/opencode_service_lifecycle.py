@@ -92,10 +92,16 @@ class Service(ServiceState):
         lock.rmdir()
 
     def install_data(self, args, old):
+        # aidevops dirs, then the installing user's PATH (their toolchain wins),
+        # then resolved binary dirs and generic system roots as a fallback.
+        # No distro-specific roots: plain PATH resolution on every platform.
         binaries = [shutil.which(name) for name in ("opencode", "python3", "node")]
-        paths = [str(Path(binary).parent) for binary in binaries if binary]
-        paths += [str(self.home / ".local/bin"), str(self.home / ".bun/bin"),
-                  "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        paths = [str(self.home / ".local/bin"), str(self.home / ".aidevops/agents/scripts")]
+        paths += [entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+                  if os.path.isabs(entry) and "/.aidevops/runtime-bundles/" not in entry
+                  and os.path.isdir(entry)]
+        paths += [str(Path(binary).parent) for binary in binaries if binary]
+        paths += ["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         data = old or {"schema": SCHEMA, "port": args.port if args.port is not None else 49036,
                        "shard": args.shard or "managed-default", "directory": str(self.home),
                        "enabled": True, "route_new": False}
@@ -160,17 +166,21 @@ class Service(ServiceState):
         environment = {"HOME": str(self.home), "PATH": data["path"],
                        "AIDEVOPS_WORK_DIR": str(self.work)}
         launcher = HELPER.with_name("opencode-launcher-helper.sh")
-        os.execve("/bin/bash", ["/bin/bash", str(launcher), "server", "--dir", data["directory"],
+        bash = shutil.which("bash", path=data["path"])
+        require(bash, "bash is required in the service PATH")
+        os.execve(bash, [bash, str(launcher), "server", "--dir", data["directory"],
                                "--port", str(data["port"]), "--session-id", data["shard"]], environment)
 
     def attach(self, data, args):
         if not args.dry_run:
             self.start(data)
-        argv = ["/bin/bash", str(HELPER.with_name("opencode-launcher-helper.sh")),
+        bash = shutil.which("bash", path=data["path"])
+        require(bash, "bash is required in the service PATH")
+        argv = [bash, str(HELPER.with_name("opencode-launcher-helper.sh")),
                 "attach", self.url(data), "--dir", args.dir]
         if args.session:
             argv += ["--session", args.session]
         if args.dry_run:
             argv += ["--dry-run"]
         # Fixed interpreter and script; directory/session remain separate argv values.
-        os.execv("/bin/bash", argv)
+        os.execv(bash, argv)

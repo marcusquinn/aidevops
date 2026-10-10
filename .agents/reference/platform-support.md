@@ -20,6 +20,34 @@ here or imply that every derivative, architecture, or provider image was tested.
 | WSL2 (Ubuntu) | Full | systemd / cron | Recommended Windows path |
 | Windows (native) | Limited | — | Experimental `/optimise-windows-indexing-backups` only; use WSL2 for full support |
 
+## Command lookup (PATH only)
+
+Tools are resolved through PATH on every platform; there are no distro-specific
+roots. This lets hosts without `/usr/bin/git` or `/bin/bash` (for example NixOS
+without envfs) work with the same code as macOS and Ubuntu.
+
+- **PATH order**: aidevops directories first, then the inherited PATH, then
+  `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` (plus `/opt/homebrew/bin` for
+  services) only as a de-duplicated fallback. Builder: `scripts/runtime-env.sh`.
+- **Services**: generated systemd units and cron lines bake the installing
+  user's sanitised PATH and start via `/usr/bin/env bash`. Launchd plists keep
+  `/bin/bash` (macOS only). Re-run setup to regenerate existing units; running
+  processes keep their original environment.
+- **Shebangs**: `#!/usr/bin/env bash|python3` (`-S python3 -I` for isolated
+  mode). `tests/test-portable-shebangs.sh` rejects new absolute interpreters.
+  Exception: root sudo targets such as `worktree-cwd-inspect.py`.
+- **Native Git**: `aidevops_resolve_native_git` walks PATH, skipping the aidevops
+  Git shim, and exports `AIDEVOPS_REAL_GIT_BIN`. An explicit override wins.
+- **Trusted tools** (source access, vault Python, sudo, release-lane `ps`,
+  `ssh-keygen`, team-interface helpers): the first PATH entry whose file and directory chain the current user
+  cannot modify (root-owned when running as root); fails closed otherwise.
+  Implementations: `aidevops_resolve_trusted_tool` (`runtime-env.sh`),
+  `trusted_executable.py`, `trusted-executable.mjs`.
+
+This covers command discovery, not full packaging compatibility: downloaded FHS
+binaries may still need native packages, and the model-replay `bwrap` sandbox
+still looks for `bwrap` in fixed locations.
+
 ## Native Windows Support Posture
 
 Native Windows remains outside full aidevops platform support. The only native Windows path currently documented is `/optimise-windows-indexing-backups`, a limited experimental local-ops command that audits Windows Search, File History/Windows Backup, OneDrive, and backup-client churn with dry-run recommendations by default.

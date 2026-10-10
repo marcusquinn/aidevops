@@ -14,6 +14,9 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from pathlib import Path
+from vault_runtime_policy import RUNTIME_BOUND as _RUNTIME_BOUND
+from vault_runtime_policy import runtime_policy_check as _runtime_policy_check
+from vault_runtime_policy import NoRedirect as _NoRedirect
 
 # Word count threshold: emails with <= this many words use heuristic summary
 SUMMARY_WORD_THRESHOLD = 100
@@ -29,7 +32,6 @@ ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 
 # Anthropic model for summarisation (cheapest tier)
 ANTHROPIC_MODEL = 'claude-haiku-4-20250414'
-
 
 def _validated_ollama_api_url():
     """Return the configured Ollama HTTP(S) URL, or None when it is unsafe."""
@@ -154,6 +156,8 @@ def _summarise_with_ollama(plain_text, subject):
     if not api_url:
         return None
 
+    _runtime_policy_check('ollama/summary', api_url)
+
     req = urllib.request.Request(
         api_url,
         data=payload,
@@ -163,7 +167,8 @@ def _summarise_with_ollama(plain_text, subject):
     try:
         # _validated_ollama_api_url restricts this configurable target to an
         # HTTP(S) URL with an authority before the request is constructed.
-        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310 nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected,python_urlopen_rule-urllib-urlopen
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect()) if _RUNTIME_BOUND else urllib.request
+        with opener.open(req, timeout=30) if _RUNTIME_BOUND else opener.urlopen(req, timeout=30) as resp:  # nosec B310 nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected,python_urlopen_rule-urllib-urlopen
             data = json.loads(resp.read().decode('utf-8'))
             summary = data.get('response', '').strip()
             if summary:
@@ -182,6 +187,7 @@ def _summarise_with_anthropic(plain_text, subject):
 
     Returns summary string or None if API is unavailable.
     """
+    _runtime_policy_check('anthropic/summary')
     api_key = _get_anthropic_api_key()
     if not api_key:
         return None

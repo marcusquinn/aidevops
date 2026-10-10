@@ -185,6 +185,14 @@ _dlw_lock_prelaunch_issue() {
 	started_ns=$(_ds_now_ns)
 	if ! lock_issue_for_worker "$issue_number" "$repo_slug"; then
 		_ds_record "$issue_number" "$repo_slug" "lock_issue" "$started_ns"
+		# GH#34057: keep the low-cardinality stage reason unchanged and add the
+		# allowlisted cause separately; the deny decision is unaffected.
+		local lock_cause=""
+		if declare -F conversation_lock_failure_summary >/dev/null 2>&1; then
+			lock_cause=$(conversation_lock_failure_summary) || lock_cause=""
+		fi
+		[[ -n "$lock_cause" ]] || lock_cause="cause=unclassified detail=none mutation=unclassified"
+		aidevops_log_line "[dispatch_worker_launch] WARN conversation lock failed issue=${issue_number} repo=${repo_slug} ${lock_cause}"
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "conversation_lock_failed" 2
 		return $?
 	fi
@@ -740,10 +748,62 @@ _dlw_prepare_existing_worktree() {
 		return 0
 	fi
 
-	# Only clean, verified zero-ahead retries restart from the default branch.
+	# Only clean, verified zero-ahead retries restart from the default branch
+	# (or from the trusted seed head, GH#34233).
 	git -C "$existing_path" checkout -- . 2>/dev/null || true
 	git -C "$existing_path" clean -fd 2>/dev/null || true
-	git -C "$existing_path" reset --hard "origin/${main_branch}" 2>/dev/null || true
+	git -C "$existing_path" reset --hard "${_DLW_SEED_OID:-origin/${main_branch}}" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# GH#34233: resolve a trusted seed draft PR for issues labelled seed-pr and
+# fetch its exact head so the worker branch can start from it. Unseeded issues
+# cost no API call. Sets _DLW_SEED_PR/_DLW_SEED_REF/_DLW_SEED_OID.
+# Records a seed_pr_unavailable pre-runtime failure and returns 2 (skip this
+# cycle) only when a labelled seed cannot be read or fetched; no seed or a
+# rejected seed falls back to the default branch.
+#######################################
+_dlw_resolve_seed_base() {
+	local issue_number="$1" repo_slug="$2"
+	_dlw_resolve_seed_base_inner "$@" && return 0
+	_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "seed_pr_unavailable" 2
+	return $?
+}
+
+# Print the worker prompt addition for a resolved seed (nothing otherwise).
+_dlw_seed_prompt_note() {
+	[[ -n "${_DLW_SEED_PR:-}" ]] || return 0
+	printf '\n\nSeed: this worktree starts from seed draft PR #%s (head %s); its companion files are already present. Build on them and open your own PR with full-loop commit-and-pr, which closes the superseded seed. Do not edit, ready or merge the seed PR.' \
+		"$_DLW_SEED_PR" "${_DLW_SEED_OID:0:12}"
+	return 0
+}
+
+_dlw_resolve_seed_base_inner() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3" repo_path="$4"
+	local seed_row="" seed_rc=0
+	_DLW_SEED_PR="" _DLW_SEED_REF="" _DLW_SEED_OID=""
+	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("seed-pr") != null' >/dev/null 2>&1 || return 0
+	seed_row=$("${SCRIPT_DIR}/seed-pr-helper.sh" find "$issue_number" --repo "$repo_slug" 2>>"$LOGFILE") || seed_rc=$?
+	case "$seed_rc" in
+	0) ;;
+	3 | 4)
+		echo "[dispatch_with_dedup] #${issue_number}: no usable seed PR (rc=${seed_rc}); worker starts from the default branch" >>"$LOGFILE"
+		return 0
+		;;
+	*)
+		echo "[dispatch_with_dedup] #${issue_number}: seed PR lookup failed (rc=${seed_rc}); skipping this cycle" >>"$LOGFILE"
+		return 1
+		;;
+	esac
+	IFS=$'\t' read -r _DLW_SEED_PR _DLW_SEED_REF _DLW_SEED_OID <<<"$seed_row"
+	if ! git -C "$repo_path" fetch -q origin "refs/heads/${_DLW_SEED_REF}" 2>/dev/null ||
+		! git -C "$repo_path" cat-file -e "${_DLW_SEED_OID}^{commit}" 2>/dev/null; then
+		echo "[dispatch_with_dedup] #${issue_number}: seed PR #${_DLW_SEED_PR} head ${_DLW_SEED_OID:0:12} unavailable after fetch; skipping this cycle" >>"$LOGFILE"
+		_DLW_SEED_PR="" _DLW_SEED_REF="" _DLW_SEED_OID=""
+		return 1
+	fi
+	echo "[dispatch_with_dedup] #${issue_number}: worker base is seed PR #${_DLW_SEED_PR} head ${_DLW_SEED_OID:0:12}" >>"$LOGFILE"
 	return 0
 }
 
@@ -910,12 +970,12 @@ _dlw_precreate_worktree() {
 	# observed on one machine in 24h, 2.2 GB wasted).
 	local _branch _wt_output=""
 	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
-	# Run from repo_path — worktree-helper.sh uses git commands that need
-	# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
+	# Run from repo_path (pulse cwd is typically /); GH#34233: a resolved seed SHA is the branch base.
 	_wt_output=$(cd "$repo_path" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
+		AIDEVOPS_WORKTREE_BASE="${_DLW_SEED_OID:-${AIDEVOPS_WORKTREE_BASE:-}}" \
 		"$_wt_helper" add "$_branch" --issue "$issue_number" 2>&1) || true
 	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
 	local _path _path_source="porcelain"
@@ -1051,6 +1111,31 @@ _dlw_prelaunch_budget_available() {
 }
 
 #######################################
+# Extract the allowlisted denial reason emitted by
+# `dispatch-claim-helper.sh transition` (GH#34057). Only the exact marker line
+# is trusted, and only a known reason is returned; anything else, including
+# missing or tampered output, maps to "unclassified". Never echo the input.
+# Arguments: captured helper stderr
+#######################################
+_dlw_lease_transition_reason() {
+	local captured="$1"
+	local line="" reason="unclassified"
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^DISPATCH_LEASE_TRANSITION_DENIED\ reason=([a-z_]+)$ ]]; then
+			reason="${BASH_REMATCH[1]}"
+		fi
+	done <<<"$captured"
+	case "$reason" in
+	invalid_phase | invalid_arguments | identity_unavailable | claims_unavailable | \
+		lease_unmatched | claim_malformed | owner_mismatch | device_mismatch | \
+		session_mismatch | phase_disallowed | mutation_failed) ;;
+	*) reason="unclassified" ;;
+	esac
+	printf '%s\n' "$reason"
+	return 0
+}
+
+#######################################
 # Protect the complete bounded preparation interval before worktree/API work,
 # then recheck before OpenCode warm-up. The worker renews after process start.
 # Remaining preparation time decreases; retries cannot slide that deadline.
@@ -1064,7 +1149,7 @@ _dlw_renew_prelaunch_lease() {
 	local attempt_id="${5:-$_DLW_UNKNOWN_VALUE}"
 	local prewarm_timeout="${OPENCODE_PREWARM_TIMEOUT_SECONDS:-90}"
 	local lease_ttl="${AIDEVOPS_DISPATCH_PREWARM_LEASE_TTL:-}"
-	local claim_rc=0
+	local claim_rc=0 claim_stderr="" claim_reason=""
 
 	if [[ -z "${_claim_lease_token:-}" ]]; then
 		return 0
@@ -1082,17 +1167,22 @@ _dlw_renew_prelaunch_lease() {
 
 	_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \
 		"dispatcher_prelaunch_lease_renew_start session=${session_key} pid=$$"
-	AIDEVOPS_DEVICE_ID="${_claim_lease_device:-${AIDEVOPS_DEVICE_ID:-}}" \
+	# Capture helper stderr in memory only (stdout stays discarded) so the
+	# allowlisted denial reason can be attributed; raw text is never logged.
+	claim_stderr=$(AIDEVOPS_DEVICE_ID="${_claim_lease_device:-${AIDEVOPS_DEVICE_ID:-}}" \
 		AIDEVOPS_ATTEMPT_ID="$attempt_id" \
 		"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$issue_number" \
 		"$repo_slug" "$_claim_lease_token" "$session_key" "$lease_ttl" \
-		>/dev/null 2>&1 || claim_rc=$?
+		2>&1 >/dev/null) || claim_rc=$?
 	if [[ "$claim_rc" -ne 0 ]]; then
+		claim_reason=$(_dlw_lease_transition_reason "$claim_stderr")
+		claim_stderr=""
 		_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \
-			"WARN dispatcher prelaunch lease renewal failed before OpenCode warm-up issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc} pid=$$"
-		aidevops_log_line "[dispatch_worker_launch] WARN prelaunch lease renewal failed issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc}"
+			"WARN dispatcher prelaunch lease renewal failed before OpenCode warm-up issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc} reason=${claim_reason} pid=$$"
+		aidevops_log_line "[dispatch_worker_launch] WARN prelaunch lease renewal failed issue=${issue_number} repo=${repo_slug} session=${session_key} helper_rc=${claim_rc} reason=${claim_reason}"
 		return 1
 	fi
+	claim_stderr=""
 	_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \
 		"dispatcher_prelaunch_lease_renew_done session=${session_key} pid=$$"
 	return 0
@@ -1812,6 +1902,8 @@ _dispatch_launch_worker() {
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.
 	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	_dlw_resolve_seed_base "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path" || return $?
+	prompt+=$(_dlw_seed_prompt_note)
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_precreate_worktree "$issue_number" "$repo_path"; then
 		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"

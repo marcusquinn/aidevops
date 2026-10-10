@@ -42,8 +42,9 @@ readonly REMOTE_TRANSPORTS="ssh tailscale netbird nvpn wireguard"
 # Non-login SSH shells miss nvm/bun/Homebrew installs, so AI CLIs look absent.
 # Prepend common user tool locations and load nvm before detecting or running
 # the worker CLI (GH#32583: nvm-installed opencode was reported missing).
+# System locations are only appended: the remote PATH keeps precedence.
 # shellcheck disable=SC2016 # Expands on the remote host.
-readonly REMOTE_PATH_PREAMBLE='for _d in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.aidevops/bin" /opt/homebrew/bin /usr/local/bin; do if [ -d "$_d" ]; then PATH="$_d:$PATH"; fi; done; if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; fi; export PATH;'
+readonly REMOTE_PATH_PREAMBLE='for _d in /opt/homebrew/bin /usr/local/bin; do case ":$PATH:" in *":$_d:"*) ;; *) if [ -d "$_d" ]; then PATH="${PATH:+$PATH:}$_d"; fi ;; esac; done; for _d in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.aidevops/bin"; do if [ -d "$_d" ]; then PATH="$_d:$PATH"; fi; done; if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; fi; export PATH;'
 
 # --- Colours (reuse shared-constants if available) ---
 readonly _BOLD='\033[1m'

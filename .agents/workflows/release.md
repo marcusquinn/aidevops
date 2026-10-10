@@ -118,7 +118,7 @@ aidevops release patch <one-authorized-pr> --expected-sources <pr>,<pr>,<pr>
 
 The helper pins the latest fetched `main` commit and baseline release identities under the publisher lane, creates a detached worktree from that SHA, and invokes `version-manager.sh release --source-pr`. Ordinary PRs may continue merging; later commits belong to the next release. Terminal receipts still require every publication and deployment gate. A tag push durably queues the unified GitHub/npm/Homebrew workflow; exit `8` means pending work, never completed publication. Status/reconciliation reuses the same snapshot rather than bumping again. Full snapshot, integrity, retry, and historical-tag contracts: `reference/release-lane-coordination.md`.
 
-When `main` is protected, the helper reports `release:queued protected-pr=<N>` and opens that release PR with GitHub auto-merge enabled using a merge commit, which preserves the signed release commit. It needs no manual merge: wait for its required checks, then run `aidevops release reconcile <source-PR>` once it has merged. If you do run `full-loop-helper.sh merge <N> --merge`, a PR that auto-merge already merged at the verified head is reported as already merged, and no write is issued.
+When `main` is protected, the helper reports `release:queued protected-pr=<N>` and opens that release PR with GitHub auto-merge enabled using a merge commit, which preserves the signed release commit. It needs no manual merge: wait for its required checks, then run `aidevops release reconcile <source-PR>` once it has merged. If you do run `full-loop-helper.sh merge <N>`, it forces `--merge` for `chore/release-v<semver>-provenance` heads (squash or rebase would orphan the signed tag commit), and a PR that auto-merge already merged at the verified head is reported as already merged, and no write is issued. If a release PR was squashed anyway, recover with a PR whose head is exactly the signed release commit, merged with `--merge`, then reconcile.
 
 Before version mutation, the helper reserves the repository's remote release lane. The lane records the active source PR, reviewed source set, phase, tag when known, and terminal receipt without command arguments or secrets. A different source receives the active lane plus exact status/reconcile commands and cannot bump a competing version. The same source resumes through `status` or `reconcile`; process exit does not release queued publication. A same-source lane that remained in the side-effect-free `reserved` phase for at least five minutes, with no tag or terminal receipt, can be recovered through compare-and-swap and a rotated fencing token. Once preparation begins, or a tag or receipt exists, recovery is reconcile-only because the original process may still publish or has crossed a publication boundary. Verified terminal receipt evidence advances the lane to inactive so the next source can reserve it atomically. API/authentication uncertainty fails closed; only a verified missing lane ref uses legacy compatibility.
 
@@ -275,6 +275,14 @@ or publication authority.
 
 ## Manual Release (Non-aidevops Repos)
 
+Applies whenever `.agents/scripts/version-manager.sh` is absent (also the `/release`
+command fallback; "Manual Release (Non-aidevops Repos)"). Never run that script, or pass
+`--skip-preflight --force` to a project's own scripts. Look for the documented
+process in `RELEASING.md`, `CONTRIBUTING.md` (Releasing) or `package.json` release
+scripts, and follow it: bump versions in a linked worktree and PR, merge with
+`full-loop-helper.sh merge`, then tag. With no `VERSION` file, the latest tag
+(`git describe --tags --abbrev=0`) is the baseline for the commit range and bump type.
+
 Publication still requires explicit release authority and follows the repository's
 own process. For GitHub repos with Actions enabled, opt into read-only evidence
 before publishing: `aidevops sync-workflows --repo OWNER/REPO --workflow
@@ -347,6 +355,23 @@ gates, publication, and deployment health. It does not rerun source lint/securit
 scans already owned by development, CI, and release preflight. See
 `workflows/postflight.md`.
 
+Verify deployed helpers by absolute path (`~/.aidevops/agents/scripts/<helper>.sh`); the current session's `PATH` stays pinned to its start-time runtime bundle until a new session starts. Never verify a side-effect fix through `PATH`.
+
+**Postflight quota deferral**: the queue step tries `SYNC_PAT` first, then the job
+token. `SYNC_PAT` must be a fine-grained token with repository **Actions: Read and
+write** on this repository (it is also used for issue-sync); a `Resource not
+accessible by personal access token` 403 raises an annotation naming that
+permission. If both routes fail and the job-token error is an installation API
+rate limit, the job finishes successfully with `postflight_deferred=true`, a
+step-summary line and a `Record deferred postflight` step; every earlier
+verification must already have passed. Other 403 and 5xx errors stay fatal. Run
+`aidevops release reconcile <PR>` after the quota resets: it queues
+`postflight.yml` for the verified exact tag on `main` without republishing, reports
+`POSTFLIGHT_STATUS`, and records the terminal receipt only once the run titled
+`Postflight Verification <tag>` concludes successfully. Pending runs stay queued;
+failed runs fail reconciliation. `aidevops release status <PR>` is read-only and
+never dispatches.
+
 **Follow-up**: Verify artifacts/download links, update docs site, notify stakeholders, close milestone.
 
 ## Rollback
@@ -369,6 +394,7 @@ git commit -m "fix: resolve critical issue"
 | Signed tag already exists | Do not delete or retag it. Run `aidevops release status <source-pr>` and then `aidevops release reconcile <source-pr>`. |
 | Publication queued/interrupted | Exit `8` is durable pending state. Reconcile the same source PR; never bump again for the same tag. |
 | Another source owns the release lane | Run the printed `aidevops release status <active-pr>` command. Reconcile that source when its remote work is ready; aggregate later sources only through a reviewed exact-tip PR. |
+| Lane `reconcile-required` with `tag=pending`; `reconcile` exits 2 (tag not found) | Version-manager failed before tagging, so there is nothing to reconcile and `recover-reservation` (reserved phase only) does not apply. Re-run the lane's own source: `aidevops release <type> <lane-source-pr> incremental`. It recovers the failed pre-publication lane, keeps the reviewed authorization, and continues from a fresh pinned snapshot; then follow the normal exit-`8` reconcile flow. |
 | Expected/observed source mismatch | Stop before mutation. Correct the reviewed aggregation integrity manifest and verify each source is a PR merged to the default branch; bare ancestry without merged-PR provenance is insufficient. |
 | Historical immutable tag omitted authorized PRs | Preserve pending receipts and write detached `authorization-gap` evidence. Do not retag or create terminal cleanup evidence. |
 | Published tag is older than the latest release | Never republish or deploy the older tag. Reconcile it only through verified post-publication supersession; uncertain evidence remains `release:failed`. |

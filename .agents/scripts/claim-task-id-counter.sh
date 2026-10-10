@@ -442,6 +442,7 @@ _cas_run_pre_push_hook() {
 	local remote_url=""
 	local hook_path=""
 	local hook_rc=0
+	local object_dir=""
 
 	started_at=$(date +%s)
 	remote_url=$(_counter_git remote get-url "$REMOTE_NAME" 2>/dev/null) || {
@@ -454,15 +455,23 @@ _cas_run_pre_push_hook() {
 	elapsed=$((finished_at - started_at))
 	log_info "CAS remote configuration validated in ${elapsed}s"
 
-	hook_path=$(_counter_source_git rev-parse --git-path hooks/pre-push 2>/dev/null) || {
+	hook_path=$(_counter_source_git rev-parse --path-format=absolute --git-path hooks/pre-push 2>/dev/null) || {
 		log_error "Could not resolve the pre-push hook path"
 		return 1
 	}
 	[[ -x "$hook_path" ]] || return 0
+	if _counter_context_is_isolated; then
+		object_dir=$(_counter_git rev-parse --path-format=absolute --git-path objects) || return 1
+	fi
 
 	started_at=$(date +%s)
 	(
 		cd "${CAS_SOURCE_REPO_PATH:-${REPO_PATH:-$PWD}}" || exit 1
+		# Keep source refs/config/worktree semantics, but make the plumbing-only
+		# counter commit and its parent visible to read-only hook scanners.
+		if [[ -n "$object_dir" ]]; then
+			export GIT_ALTERNATE_OBJECT_DIRECTORIES="${object_dir}${GIT_ALTERNATE_OBJECT_DIRECTORIES:+:${GIT_ALTERNATE_OBJECT_DIRECTORIES}}"
+		fi
 		timeout_sec "${CAS_HOOK_TIMEOUT_S:-300}" "$hook_path" "$REMOTE_NAME" "$remote_url" \
 			<<<"${local_sha} ${local_sha} ${remote_ref} ${remote_sha}" >/dev/null
 	) || hook_rc=$?
@@ -470,11 +479,11 @@ _cas_run_pre_push_hook() {
 	elapsed=$((finished_at - started_at))
 
 	if [[ $hook_rc -eq 124 ]]; then
-		log_error "Pre-push hook timed out after ${elapsed}s (limit=${CAS_HOOK_TIMEOUT_S:-300}s); remote push was not attempted"
+		log_error "Pre-push hook ${hook_path##*/} timed out after ${elapsed}s (limit=${CAS_HOOK_TIMEOUT_S:-300}s); remote push was not attempted"
 		return 1
 	fi
 	if [[ $hook_rc -ne 0 ]]; then
-		log_error "Pre-push hook failed after ${elapsed}s with rc=${hook_rc}; remote push was not attempted"
+		log_error "Pre-push hook ${hook_path##*/} failed after ${elapsed}s with rc=${hook_rc}; remote push was not attempted"
 		return 1
 	fi
 
@@ -1561,7 +1570,10 @@ _cas_build_and_push() {
 	local push_stderr=""
 	local push_err_file=""
 	if ! _cas_run_pre_push_hook "$commit_sha" "$pinned_sha"; then
-		return 1
+		# Hook rejection is a setup failure, not counter drift. Preserve the
+		# existing non-reconcilable exit contract through allocation callers.
+		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "pre_push_hook_failed"
+		return "$CAS_PROTECTED_BRANCH_RC"
 	fi
 	push_err_file=$(mktemp "${TMPDIR:-/tmp}/claim-task-id-push.XXXXXX" 2>/dev/null) || push_err_file=""
 	if [[ -n "$push_err_file" ]]; then

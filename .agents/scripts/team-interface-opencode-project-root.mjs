@@ -7,8 +7,10 @@ import {homedir} from "node:os";
 import {isAbsolute, join, parse, relative, resolve, sep} from "node:path";
 
 import {readBoundedJson} from "./team-interface-common.mjs";
+import {resolveTrustedExecutable} from "./trusted-executable.mjs";
 
-const GIT_BINARY = "/usr/bin/git";
+// Caller-owned shims or overrides must not falsify repository metadata.
+const GIT_BINARY = resolveTrustedExecutable("git");
 const MAX_REPOSITORY_METADATA_BYTES = 1024 * 1024;
 
 export class ProjectRootValidationError extends Error {

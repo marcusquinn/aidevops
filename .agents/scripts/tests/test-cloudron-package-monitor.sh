@@ -11,7 +11,7 @@ GH_COOLDOWN="${SCRIPT_DIR}/../shared-gh-secondary-cooldown.sh"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
-PINNED_BASE='cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e'
+PINNED_BASE='cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b'
 
 cleanup() {
 	[[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]] && rm -rf "$TEST_ROOT"
@@ -220,6 +220,14 @@ COMMENT
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'INSPECT %s\n' "$*" >>"${MONITOR_API_LOG:-/dev/null}"
+if [[ "${MONITOR_IMAGE_STATE:-}" == withdrawn ]]; then
+    printf "%s\n" "no such manifest: $*" >&2
+    exit 1
+fi
+if [[ "${MONITOR_IMAGE_STATE:-}" == neterror ]]; then
+    printf "%s\n" "dial tcp: connection timed out" >&2
+    exit 1
+fi
 if [[ "${MONITOR_IMAGE_STATE:-missing}" == missing ]]; then
     printf '%s\n' 'not found' >&2
     exit 1
@@ -313,12 +321,14 @@ test_monitor_deduplicates_and_preserves_source() {
 
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
 	assert_equal 1 "$(grep -c '^CALL ' "$log_file")" "clean compatibility check creates no issue"
-	printf 'FROM cloudron/base:5.1.0\n' >"${repo_dir}/Dockerfile"
+	printf 'FROM cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e\n' >"${repo_dir}/Dockerfile"
 	local docker_before=""
 	docker_before=$(cksum "${repo_dir}/Dockerfile")
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
 	assert_equal 2 "$(grep -c '^CALL ' "$log_file")" "compatibility finding is deduplicated"
+	assert_equal 1 "$(grep -c '^- Upgrade base image' "$log_file")" "legacy upgrade creates one actionable finding"
+	grep -Fq 'minBoxVersion' "$log_file" && assert_equal true true "upgrade issue includes platform qualification" || assert_equal true false "upgrade issue includes platform qualification"
 	assert_equal "$docker_before" "$(cksum "${repo_dir}/Dockerfile")" "compatibility monitor does not mutate package source"
 	return 0
 }
@@ -562,6 +572,8 @@ test_monitor_scheduler_cooldown_integration() {
 	local blocked_rc=0
 	local eligible_count=0
 	local iteration=0
+	local attempts=0
+	local terminal_status=""
 	write_fake_commands "$bin_dir"
 	write_two_package_fixture "$home_dir" "$repo_dir"
 	mkdir -p "${home_dir}/.aidevops/agents/scripts"
@@ -591,11 +603,21 @@ WRAPPER
 	source "$PULSE_ROUTINES"
 
 	_routine_execute r916 "Cloudron packages" scripts/rate-monitor.sh "" "$case_root"
+	# Script routines run in a detached child that alone writes state; wait
+	# (bounded) for its terminal status instead of racing the dispatcher.
+	while [[ "$attempts" -lt 400 ]]; do
+		if [[ -f "$state_file" ]]; then
+			terminal_status=$(jq -r '.r916.last_status // ""' "$state_file" 2>/dev/null) || terminal_status=""
+			[[ -z "$terminal_status" || "$terminal_status" == "running" ]] || break
+		fi
+		sleep 0.05
+		attempts=$((attempts + 1))
+	done
 	deferred_until=$(jq -r '.r916.deferred_until' "$state_file")
 	assert_equal deferred "$(jq -r '.r916.last_status' "$state_file")" "rate-limited monitor is classified as deferred"
 	[[ "$deferred_until" -ge 9999999999 && "$deferred_until" -le 10000000006 ]] &&
 		assert_equal true true "scheduler persists reset plus bounded jitter" ||
-		assert_equal true false "scheduler persists reset plus bounded jitter"
+		assert_equal true false "scheduler persists reset plus bounded jitter (deferred_until=${deferred_until})"
 	assert_equal 1 "$(grep -c '^API ' "$api_log")" "integrated monitor touches only the first registration"
 
 	AIDEVOPS_ROUTINE_NOW_EPOCH=$((deferred_until - 1))
@@ -696,6 +718,23 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	return 0
 }
 
+test_monitor_reports_withdrawn_docker_sources() {
+	local home_dir="${TEST_ROOT}/src-home"
+	local repo_dir="${TEST_ROOT}/src-package"
+	local bin_dir="${TEST_ROOT}/src-bin"
+	local log_file="${TEST_ROOT}/src-issues.log"
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	printf 'FROM --platform=linux/amd64 quay.io/minio/minio:RELEASE.1@sha256:aaaa AS minio\nFROM minio AS stage2\nFROM %s\n' "$PINNED_BASE" >"${repo_dir}/Dockerfile"
+	: >"$log_file"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_IMAGE_STATE=neterror MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null 2>&1
+	assert_equal 0 "$(grep -c '^CALL ' "$log_file" || true)" "network errors create no unavailable-source finding"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_IMAGE_STATE=withdrawn MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null 2>&1
+	assert_equal 1 "$(grep -c '^CALL ' "$log_file")" "withdrawn pinned source creates one finding"
+	grep -Fq 'quay.io/minio/minio:RELEASE.1@sha256:aaaa (Dockerfile line 1)' "$log_file" && assert_equal true true "finding names image and line" || assert_equal true false "finding names image and line"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -711,6 +750,7 @@ main() {
 	test_monitor_scheduler_cooldown_integration
 	test_monitor_rejects_blank_package_title
 	test_monitor_waits_for_release_parent_image_and_rearms_once
+	test_monitor_reports_withdrawn_docker_sources
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0

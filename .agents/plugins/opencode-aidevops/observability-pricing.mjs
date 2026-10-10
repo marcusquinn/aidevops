@@ -16,12 +16,14 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const HOME = homedir();
-const FALLBACK_PRICING_VERSION = "2026-09-30.1";
+const FALLBACK_PRICING_VERSION = "2026-10-07.1";
 
 /** Hardcoded fallback — used only when model-pricing.json is unreadable */
 const FALLBACK_PRICING = {
   "opus-4":    { input: 15.0,  output: 75.0,  cacheRead: 1.50,   cacheWrite: 18.75 },
   "sonnet-4":  { input: 3.0,   output: 15.0,  cacheRead: 0.30,   cacheWrite: 3.75  },
+  // Haiku 5.5 prompts-up-to-100K tier; longer prompts cost 5x (not modelled).
+  "haiku-5-5": { input: 0.10,  output: 0.50,  cacheRead: 0.01,   cacheWrite: 0.125 },
   "haiku-4":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
   "haiku-3":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
   "gpt-6-astra":   { input: 10.0, output: 50.0, cacheRead: 1.0, cacheWrite: 12.50 },

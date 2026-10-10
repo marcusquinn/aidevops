@@ -630,4 +630,103 @@ for invalid_mode in bad-author bad-actions bad-ruleset bad-ruleset-exclusion \
 done
 printf 'PASS malformed GitHub release settings fail closed\n'
 
+# Executable queue-step scenarios: extract the real step script and stub gh.
+QUEUE_SCRIPT="${TEST_ROOT}/queue-postflight.sh"
+awk '
+	$0 == "      - name: Queue exact-tag postflight" { inside_step = 1; next }
+	inside_step && $0 == "        run: |" { inside_script = 1; next }
+	inside_script && $0 ~ /^      (- name:|#)/ { exit }
+	inside_script { sub(/^          /, ""); print }
+' "$PACKAGE_WORKFLOW" >"$QUEUE_SCRIPT"
+if [[ ! -s "$QUEUE_SCRIPT" ]]; then
+	printf 'FAIL postflight queue script could not be extracted\n'
+	exit 1
+fi
+QUEUE_BIN="${TEST_ROOT}/queue-bin"
+mkdir -p "$QUEUE_BIN"
+cat >"${QUEUE_BIN}/gh" <<'STUB'
+#!/usr/bin/env bash
+mode="${FAKE_JOB_MODE:-ok}"
+[[ "${GH_TOKEN:-}" == "pat-token" ]] && mode="${FAKE_PAT_MODE:-ok}"
+case "$mode" in
+ok) exit 0 ;;
+pat-403) printf 'HTTP 403: Resource not accessible by personal access token\n' >&2 ;;
+quota) printf 'HTTP 403: API rate limit exceeded for installation\n' >&2 ;;
+forbidden) printf 'HTTP 403: Forbidden\n' >&2 ;;
+bad-gateway) printf 'HTTP 502: Bad Gateway\n' >&2 ;;
+esac
+exit 1
+STUB
+chmod +x "${QUEUE_BIN}/gh"
+
+run_queue_step() {
+	local pat_mode="$1"
+	local job_mode="$2"
+	local pat_token="${3-pat-token}"
+	QUEUE_OUTPUT="${TEST_ROOT}/queue-output"
+	QUEUE_SUMMARY="${TEST_ROOT}/queue-summary"
+	QUEUE_LOG="${TEST_ROOT}/queue-log"
+	: >"$QUEUE_OUTPUT"
+	: >"$QUEUE_SUMMARY"
+	QUEUE_RC=0
+	FAKE_PAT_MODE="$pat_mode" FAKE_JOB_MODE="$job_mode" PATH="${QUEUE_BIN}:${PATH}" \
+		SYNC_TOKEN="$pat_token" JOB_TOKEN="job-token" RELEASE_TAG="v1.2.3" \
+		GITHUB_REPOSITORY="test/repo" RUNNER_TEMP="$TEST_ROOT" GITHUB_OUTPUT="$QUEUE_OUTPUT" \
+		GITHUB_STEP_SUMMARY="$QUEUE_SUMMARY" bash "$QUEUE_SCRIPT" >"$QUEUE_LOG" 2>&1 || QUEUE_RC=$?
+	return 0
+}
+assert_queue() {
+	local name="$1"
+	local expected_rc="$2"
+	local expected_output="$3"
+	if [[ "$QUEUE_RC" -ne "$expected_rc" ]]; then
+		printf 'FAIL %s (rc=%s)\n' "$name" "$QUEUE_RC"
+		exit 1
+	fi
+	if [[ -n "$expected_output" ]] && ! grep -qx "$expected_output" "$QUEUE_OUTPUT"; then
+		printf 'FAIL %s (missing %s)\n' "$name" "$expected_output"
+		exit 1
+	fi
+	printf 'PASS %s\n' "$name"
+	return 0
+}
+
+run_queue_step ok ok
+assert_queue "queue step succeeds through the PAT" 0 "postflight_deferred=false"
+run_queue_step pat-403 ok
+assert_queue "queue step succeeds through the job token after PAT failure" 0 "postflight_deferred=false"
+if ! grep -qF "Actions: Read and write" "$QUEUE_LOG" || ! grep -qF "::warning::SYNC_PAT lacks permission" "$QUEUE_LOG"; then
+	printf 'FAIL PAT permission 403 lacks the actionable Actions annotation\n'
+	exit 1
+fi
+printf 'PASS PAT permission 403 yields an actionable Actions: Read and write annotation\n'
+run_queue_step forbidden ok
+if grep -qF "Actions: Read and write" "$QUEUE_LOG"; then
+	printf 'FAIL generic PAT failure claimed a permission diagnosis\n'
+	exit 1
+fi
+printf 'PASS non-permission PAT failures keep the generic warning\n'
+run_queue_step pat-403 quota
+assert_queue "installation quota exhaustion defers only the postflight queue" 0 "postflight_deferred=true"
+if ! grep -qF "deferred by installation API rate limit" "$QUEUE_SUMMARY"; then
+	printf 'FAIL quota deferral did not write a step summary\n'
+	exit 1
+fi
+printf 'PASS quota deferral writes a step summary\n'
+run_queue_step ok quota ""
+assert_queue "missing PAT falls back to the job token and defers on quota" 0 "postflight_deferred=true"
+for fatal_mode in forbidden bad-gateway pat-403; do
+	run_queue_step pat-403 "$fatal_mode"
+	assert_queue "job-token ${fatal_mode} dispatch failure remains fatal" 1 ""
+	if grep -qx "postflight_deferred=true" "$QUEUE_OUTPUT"; then
+		printf 'FAIL fatal dispatch failure was marked deferred\n'
+		exit 1
+	fi
+done
+assert_contains "deferred postflight leaves a distinct jobs-API marker step" \
+	"name: Record deferred postflight" "$PACKAGE_WORKFLOW"
+# shellcheck disable=SC2016 # Match the literal workflow expression.
+assert_contains "postflight run-name is bound to the exact tag" \
+	'run-name: Postflight Verification ${{ github.event.inputs.tag }}' "$POSTFLIGHT_WORKFLOW"
+
 exit 0

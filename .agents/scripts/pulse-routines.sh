@@ -29,6 +29,18 @@
 # module unconditionally on start, and characterization tests re-source to
 # verify idempotency.
 [[ -n "${_PULSE_ROUTINES_LOADED:-}" ]] && return 0
+if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+	# Detached runners source this module without the orchestrator's helpers.
+	# shellcheck source=./portable-stat.sh
+	source "${BASH_SOURCE[0]%/*}/portable-stat.sh" || return 1
+fi
+if ! declare -F _gh_secondary_cooldown_expires_at >/dev/null 2>&1; then
+	# Detached runners also need the shared cooldown reset so deferred routines
+	# honour GitHub's reset instead of the fixed fallback. Non-fatal: the
+	# deferral path already falls back when the reset is unavailable.
+	# shellcheck source=./shared-gh-secondary-cooldown.sh
+	source "${BASH_SOURCE[0]%/*}/shared-gh-secondary-cooldown.sh" || true
+fi
 _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"
@@ -266,9 +278,33 @@ _routine_dispatch_agent() {
 }
 
 #######################################
+# Publish an already-populated lock atomically. POSIX rename refuses to
+# replace a nonempty directory, closing the mkdir-to-owner-marker race.
+#######################################
+_routine_acquire_runner_lock() {
+	local lock_dir="$1"
+	local owner_pid="${BASHPID:-$$}"
+	local candidate=""
+	candidate=$(mktemp -d "${lock_dir}.XXXXXX") || return 1
+	if printf '%s\n' "$owner_pid" >"$candidate/pid-$owner_pid"; then
+		if command -v perl >/dev/null 2>&1; then
+			if perl -e 'exit(rename($ARGV[0], $ARGV[1]) ? 0 : 1)' "$candidate" "$lock_dir"; then
+				return 0
+			fi
+		elif mv -T -- "$candidate" "$lock_dir" 2>/dev/null; then
+			# GNU mv provides the same no-directory-nesting rename semantics.
+			return 0
+		fi
+	fi
+	rm -f -- "$candidate/pid-$owner_pid"
+	rmdir -- "$candidate" 2>/dev/null || true
+	return 1
+}
+
+#######################################
 # Run one validated script routine outside Pulse's process group, then record
-# its terminal lifecycle state. The per-routine mkdir lock protects the small
-# window between recording `running` and a detached child starting.
+# its terminal lifecycle state. Only the child that acquires the per-routine
+# directory lock records `running`; duplicate dispatches leave state untouched.
 #######################################
 _routine_run_detached_script() {
 	local routine_id="$1"
@@ -281,12 +317,40 @@ _routine_run_detached_script() {
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local exit_code=0
 	local deferred_until=0
+	local owner_pid=""
+	local owner_file=""
+	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
+	local lock_epoch=0
+	local now_epoch=0
 
-	if ! mkdir "$lock_dir" 2>/dev/null; then
-		echo "[pulse-wrapper] routine ${routine_id}: detached runner already active" >>"$LOGFILE"
-		return 0
+	if [[ -e "$lock_dir" ]] || ! _routine_acquire_runner_lock "$lock_dir"; then
+		for owner_file in "$lock_dir"/pid-*; do
+			[[ -f "$owner_file" ]] || continue
+			owner_pid="${owner_file##*/pid-}"
+			if [[ ! "$owner_pid" =~ ^[1-9][0-9]*$ ]] || kill -0 "$owner_pid" 2>/dev/null; then
+				echo "[pulse-wrapper] routine ${routine_id}: detached runner already active" >>"$LOGFILE"
+				return 0
+			fi
+		done
+		lock_epoch=$(_file_mtime_epoch "$lock_dir") || lock_epoch=0
+		now_epoch=$(date +%s)
+		# Fail closed when age cannot be determined; allow the mkdir-to-PID gap.
+		if [[ ! "$lock_epoch" =~ ^[0-9]+$ || "$lock_epoch" -eq 0 || $((now_epoch - lock_epoch)) -lt 60 ]]; then
+			return 0
+		fi
+		# PID-specific names prevent a losing reclaimer from unlinking a new
+		# owner's marker. rmdir refuses any populated replacement lock.
+		[[ -z "$owner_pid" ]] || rm -f -- "$lock_dir/pid-$owner_pid"
+		if ! _routine_acquire_runner_lock "$lock_dir"; then
+			return 0
+		fi
+		echo "[pulse-wrapper] routine ${routine_id}: reclaimed stale runner lock" >>"$LOGFILE"
 	fi
-	trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+	# Expand the path now: the function-local variable is gone at shell EXIT.
+	# shellcheck disable=SC2064
+	trap "rm -f -- $(printf '%q' "$pid_file"); rmdir -- $(printf '%q' "$lock_dir") 2>/dev/null || true" EXIT
+	_routine_update_state "$routine_id" "running"
+	_routine_record_lifecycle "$routine_id" "running" 0
 	if [[ "$#" -gt 0 ]]; then
 		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 || exit_code=$?
 	else
@@ -303,6 +367,9 @@ _routine_run_detached_script() {
 		echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
 	fi
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
+	rm -f -- "$pid_file"
+	rmdir -- "$lock_dir" 2>/dev/null || true
+	trap - EXIT
 	return 0
 }
 
@@ -316,8 +383,6 @@ _routine_dispatch_script() {
 	local module_path="${BASH_SOURCE[0]}"
 	local runner_log="${LOGFILE}.routine-${routine_id}.log"
 
-	_routine_update_state "$routine_id" "running"
-	_routine_record_lifecycle "$routine_id" "running" 0
 	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER
 	if command -v setsid >/dev/null 2>&1; then
 		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
@@ -509,14 +574,16 @@ _routine_dedicated_heading_transition() {
 #
 # Arguments: $1 - path to TODO.md
 # Output: active, non-indented lines inside the routine registry
-# Returns: 0 for one supported registry, 1 for missing/duplicate/malformed input
+# Returns: 0 for one supported registry, 1 for duplicate/malformed input or
+#          routine-shaped lines outside any registry, 2 when the file simply
+#          has no registry and no routine-shaped lines (nothing to schedule)
 #######################################
 _routine_extract_section() {
 	local todo_file="$1"
 	[[ -f "$todo_file" ]] || return 1
 	local line="" section_content="" section_style="" heading_transition=""
-	local dedicated_style="dedicated" project_style="project"
-	local in_section=0 section_count=0 structure_error=0 dedicated_phase=0 pre_registry_heading=0
+	local dedicated_style="dedicated" project_style="project" routine_shape_re='^[-*][[:space:]]+\[[[:space:]xX]\][[:space:]]+r[^[:space:]]*[[:space:]].*repeat:'
+	local in_section=0 section_count=0 structure_error=0 dedicated_phase=0 pre_registry_heading=0 stray_routine=0
 	_RML_ACTIVE_LINE="" _RML_TRIMMED_LINE="" _RML_FENCE_CHAR="" _RML_FENCE_LENGTH=0 _RML_IN_COMMENT=0
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
@@ -544,6 +611,7 @@ _routine_extract_section() {
 			pre_registry_heading=1
 			continue
 		fi
+		[[ -z "$section_style" && "$_RML_TRIMMED_LINE" =~ $routine_shape_re ]] && stray_routine=1
 
 		if [[ "$section_style" == "$dedicated_style" ]] &&
 			[[ "$_RML_TRIMMED_LINE" =~ ^#[[:space:]]+ || "$_RML_TRIMMED_LINE" =~ ^##[[:space:]]+ ]]; then
@@ -570,6 +638,12 @@ _routine_extract_section() {
 
 	if [[ "$section_style" == "$dedicated_style" && "$dedicated_phase" -ne 3 ]]; then
 		structure_error=1
+	fi
+	# GH#34169: an absent registry is the normal state for repos without
+	# routines (the default TODO template has none). Only misplaced
+	# routine-shaped lines or ambiguous boundaries warrant a diagnostic.
+	if [[ "$section_count" -eq 0 && "$stray_routine" -eq 0 && -z "$_RML_FENCE_CHAR" && "$_RML_IN_COMMENT" -eq 0 ]]; then
+		return 2
 	fi
 	if [[ "$section_count" -ne 1 || "$structure_error" -ne 0 || -n "$_RML_FENCE_CHAR" || "$_RML_IN_COMMENT" -ne 0 ]]; then
 		return 1
@@ -815,9 +889,13 @@ evaluate_routines() {
 		# Validate and buffer the complete canonical Markdown section before any
 		# routine dispatch. This prevents fenced examples, other TODO sections,
 		# and malformed/duplicate boundaries from becoming scheduler input.
-		local routine_section=""
-		if ! routine_section=$(_routine_extract_section "$todo_file"); then
-			echo "[pulse-wrapper] evaluate_routines: ${_routine_slug} TODO.md has a missing, duplicate, or malformed routines registry — skipping" >>"$LOGFILE"
+		local routine_section="" extract_rc=0
+		routine_section=$(_routine_extract_section "$todo_file") || extract_rc=$?
+		if [[ "$extract_rc" -eq 2 ]]; then
+			# No registry and no routine-shaped lines: nothing to schedule (GH#34169).
+			continue
+		elif [[ "$extract_rc" -ne 0 ]]; then
+			echo "[pulse-wrapper] evaluate_routines: ${_routine_slug} TODO.md has a duplicate or malformed routines registry, or routine lines outside it — skipping" >>"$LOGFILE"
 			continue
 		fi
 

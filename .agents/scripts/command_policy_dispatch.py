@@ -12,6 +12,7 @@ from command_policy_git import _analyze_git
 from command_policy_http import _analyze_curl
 from command_policy_localdev import local_site_hosts
 from command_policy_network import _add_destination
+from command_policy_owned_listener import owned_listener_hosts
 from command_policy_transport import _analyze_scp, _analyze_ssh
 from command_policy_wget import _analyze_wget
 
@@ -30,7 +31,9 @@ def _validate_argv(value: Any) -> list[str]:
     return value
 
 
-def analyze_network_argv(argv: list[str], cwd: str) -> dict[str, Any]:
+def analyze_network_argv(
+    argv: list[str], cwd: str, owned_listeners: dict[str, Any] | None = None
+) -> dict[str, Any]:
     exact = _validate_argv(argv)
     executable = os.path.basename(exact[0]).lower()
     result: dict[str, Any] = {
@@ -58,8 +61,10 @@ def analyze_network_argv(argv: list[str], cwd: str) -> dict[str, Any]:
         result["recognized"] = True
         _analyze_dns_query(exact, result)
     result["destinations"] = sorted(set(result["destinations"]))
-    result["local_site_hosts"] = local_site_hosts(
-        result["endpoints"], cwd, executable in {"curl", "wget"}
+    http_client = executable in {"curl", "wget"}
+    result["local_site_hosts"] = local_site_hosts(result["endpoints"], cwd, http_client)
+    result["owned_listener_hosts"] = owned_listener_hosts(
+        result["endpoints"], http_client, owned_listeners
     )
     return result
 

@@ -10,7 +10,42 @@ The goal is that any maintainer can answer three questions without private chat
 history: what is running, how to prove whether it is healthy, and what to change
 when a runner is offline or mis-sized.
 
-## Current deployment
+## Org-scoped GitHub App runners (recommended)
+
+Model: one GitHub App per org (only the `organization_self_hosted_runners: write`
+permission, webhook inactive, installable only on that org), one org runner group
+restricted to selected private repos with public repositories disallowed, and
+ephemeral JIT-registered runners (one container per job) whose registration
+tokens come from App installation tokens. A key compromise is limited to one org,
+and fork PRs on public repos can never reach the host. Public repos keep free
+GitHub-hosted minutes.
+
+`runs-on` guidance: private repos use `[self-hosted, linux, <POOL_LABEL>]`;
+public repos stay on GitHub-hosted runners.
+
+The server-side pool (systemd, rootless or DinD containers, JIT registration) is
+operator-owned. `github-runner-org-helper.sh` prepares and verifies its inputs.
+
+One-time onboarding per org:
+
+1. In the GitHub web UI, create the App (permission above, webhook inactive,
+   installable only on `<ORG>`), install it on `<ORG>`, and generate a private key.
+2. Store the key: `aidevops secret set <ORG>_RUNNERS_APP_KEY` (never paste it in chat).
+3. Create or reconcile the private-only runner group (needs `admin:org` on `gh`):
+   `github-runner-org-helper.sh group-ensure --org <ORG> --name <GROUP> --repos all-private --dry-run`,
+   then rerun without `--dry-run`. It refuses any public repo.
+4. Verify the key, App owner and installation permissions:
+   `github-runner-org-helper.sh verify-key --org <ORG> --app-id <APP_ID> --secret <ORG>_RUNNERS_APP_KEY`
+5. Deliver the key to the runner host (mode 600, fingerprint compared):
+   `github-runner-org-helper.sh push-key --secret <ORG>_RUNNERS_APP_KEY --host <USER>@<HOST> --dest <KEY_PATH>`
+6. Start the pool for the group, then check it:
+   `github-runner-org-helper.sh status --org <ORG> --group <GROUP>`
+
+The helper reads the key only from an env var injected by
+`aidevops secret NAME -- ...`; it never prints it, puts it in argv or writes it to
+a local file. Only the public-key SHA-256 is displayed.
+
+## Current deployment (legacy repo-scoped pool)
 
 Verified on the server during the 2026-06-20 inspection. Concrete repository,
 image, and environment names are represented with placeholders so this public
@@ -35,6 +70,51 @@ removed implicitly. Completed ephemeral jobs are replaced after the
 `RestartSec=5` delay.
 
 ## Runner capacity and labels
+
+### Stale queued workflow watchdog
+
+Pulse runs `.agents/scripts/pulse-stale-queued-runs.sh` as a bounded optional
+stage, at most once per hour per Pulse-managed repository. It skips local-only,
+maintenance-disabled and contributor repositories and verifies repository write
+permission before touching Actions runs. The token must also have Actions write
+permission; denied API calls are non-fatal and raw responses are never logged.
+
+| Setting | Default | Behaviour |
+|---------|---------|-----------|
+| `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Minimum queued age in whole hours; `0` disables the stage. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE_EMPTY` | `1` | Deletes ghosts (409 from both cancellation endpoints) only when a fresh read shows zero jobs and the logs endpoint returns 404/410; logged as `deleted-empty-ghost`. Any API error keeps the run. `0` disables. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` allows deletion of stale ghosts that return HTTP 409 from both cancellation endpoints and have jobs or logs. |
+
+Each scan requests one page (up to 100 stale queued runs), rechecks status and
+age before writes, requests cancellation, and tries force-cancellation if the
+first request returns 409 or leaves the run queued. Logs contain run ID, workflow
+name, age in seconds and outcome. A successful request is not reported as a
+confirmed cancellation until a subsequent read observes a cancelled conclusion;
+a run that started meanwhile is reported as `no-longer-queued` instead.
+Cancellation can be asynchronous; `cancellation-pending` is retried next hour.
+Reruns (`run_attempt > 1`) are excluded: their original creation timestamp does
+not establish the current attempt's queue age. Age is conservatively based on
+the original run's `created_at`, not runner capacity or job count.
+
+Unkillable ghosts are logged once per repository/run ID and left alone by default,
+except job-less runs with no logs, which hold no work and are deleted.
+Deleting runs with jobs or logs removes history: enable it only deliberately. Cadence and
+ghost records live under `~/.aidevops/.agent-workspace/pulse/stale-queued-runs/`.
+The stage respects Pulse stop/rate-limit flags, the circuit breaker, REST budget
+admission and the wrapper's stage timeout. Standalone execution uses the same
+quota guard:
+
+```bash
+bash .agents/scripts/pulse-stale-queued-runs.sh
+```
+
+For operational verification, compare queued Actions runs before and after an
+hourly scan and inspect watchdog outcomes. `pulse-wrapper.sh --dry-run` does not
+cancel or delete runs. A scan is limited to 100 candidates; additional old runs
+are handled by rotating through up to ten pages (GitHub's 1,000-result filtered
+search limit) on later scans, even if the first page contains permanent ghosts.
+The owner-PID lock is released on normal exit or stage termination and a dead
+owner is reclaimed on the next scan.
 
 The launch script supports the enabled service instance numbers only:
 

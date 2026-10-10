@@ -13,7 +13,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers). Long-r
 
 - Run `/session-review` before ending.
 - Suggest a new session after PR merge, domain switch, or 3+ hours.
-- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets, and finish with the What Next block below.
+- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets, and finish with the What Next block below. Each delivery bullet links its evidence (PR, issue, commit, file, preview) as a bare URL on its own line per Clickable Evidence Links below.
 - Leave linked-worktree removal and other deferred cleanup to the guarded post-exit routines. Do not attempt that cleanup, and never turn it into a user task: a guarded-removal refusal or a command-policy block on deletion is not a reason to ask the user to clean up.
 - If cleanup is worth mentioning, use one closing line that explains what happens and makes clear nothing is needed, for example: `Cleanup: the worktree is removed automatically by a routine after this session closes; no action needed.` Omit lifecycle tokens, marker files, and retention details.
 - Present cleanup as a user action only for failures that require it or that put unpublished work at risk; then state the evidence and the exact action.
@@ -30,14 +30,20 @@ screen alone. Headless workers skip it.
 **What next**
 - **Session:** <aim in plain words, ≤15> — <Active | Blocked | Done>
 - **Needed from you:** <None | numbered asks below>
-  1. <yes/no question about a named object>?
+  1. **<yes/no question about a named object>?**
+     - <full URL of that object, alone on its line>
      - **y** = <effect> · n = <effect>
-  2. <choice question>?
+  2. **<choice question>?**
+     - <full URL of what to review>
      - **a)** <option> · b) <option> · c) <option>
-  3. <value only you know> (explicit)
-     - reply `3: <value>`
+  3. **<human-only action or value only you know>** (explicit)
+     - **Steps:** numbered sub-list per Human Action Steps below
+     - reply `3 done` or `3: <value>`
 - **Left to capture:** <None | uncaptured work, its exact location, and why it remains>
+  - <full URL or absolute path of that location>
 - **Close:** <Ready to close — start `/new` for your next task | Not yet: <reason> | Blocked on #N; resume via #R>
+  - <full URL of #N>
+  - <full URL of #R>
 - **Reply:** e.g. `1y 2b 3: <value>` · `ok` = all bold defaults · or plain text
 ```
 
@@ -56,6 +62,11 @@ Rules:
   executor (pulse, worker, routine) is not a user action; say which executor
   owns it on the Session line if relevant. Omit the **Reply** line when there
   are no asks.
+- **Link everything the user must look at.** Every ask, and every PR, issue,
+  commit, file, preview or dashboard cited as done, blocked or uncaptured,
+  carries a clickable link so the user can inspect and answer without asking
+  for links, recalling the session or searching. Each link is a bare full URL
+  on its own line. See Clickable Evidence Links.
 - **Check live Git state before writing `None`** under Left to capture or
   Close; see Capture Check step 2.
 - **Close is a recommendation, never an ask.** Starting `/new` is the user's
@@ -84,7 +95,10 @@ Rules:
   failed"), run it before replying.
 - **Session** restates the original aim, not the last step, so a user returning
   after hours can reorient. Keep the runtime title in step with `session-rename`
-  (stable purpose plus current phase).
+  (stable purpose plus current phase). `Done` means the objective is Delivered
+  (see Execution Ownership and Truthful Stops). When only an inspection or
+  report of a larger objective finished, say so and give the objective's real
+  state, for example `status check done; objective Blocked on #N`.
 - **Left to capture** is filled from the capture check below, not from memory of
   intent. Capture owed items yourself (issue, TODO, doc, memory) before
   replying; list only what you could not capture, with the reason and durable
@@ -94,10 +108,22 @@ Rules:
 - **Ready to close** only when: no open question to the user other than asks
   marked `(optional)`; no session-owned repository changes remain uncommitted;
   every PR is merged
-  or handed to a named live executor; deferred and follow-up work has an issue or
+  or handed to a named live executor; every unresolved objective phase is
+  Externally blocked with an owner and resume condition, or Active under a
+  named live executor (see Execution Ownership and Truthful Stops); deferred
+  and follow-up work has an issue or
   TODO number; evidenced lessons are routed per `reference/self-improvement.md`;
   and the commitment scan (unfulfilled promises, unnotified parties, displaced
   requests) is clean. Otherwise say `Not yet` with the concrete reason.
+  Another session holding the plan is not an executor.
+- **Held phases.** For each held or blocked phase, classify what it waits on.
+  Missing human-only authority or input (deployment, customer write,
+  activation, private source evidence) becomes one bounded numbered ask naming
+  scope, exclusions and the linked object. Discovery, coordination and tracking
+  the agent can do stay agent-owned: do them or name their executor and next
+  action. Open issues alone never force an ask; `None` stays valid when no
+  human input is needed. Handoff prose, merged source and dispatch labels never
+  create operational authority or acceptance evidence.
 - Short conversational replies with no asks may use one line with the same
   fields, for example `What next: nothing needed from you; session active (aim: …).`
   Any open ask uses the full block so its options get their own line.
@@ -108,7 +134,8 @@ Example (work merged; only a publication decision remains):
 **What next**
 - **Session:** add CSV export to reports — Done
 - **Needed from you:**
-  1. Publish a patch release containing PR #123? (explicit, optional)
+  1. **Publish a patch release containing PR #123?** (explicit, optional)
+     - https://github.com/<owner>/<repo>/pull/123
      - y = release now · no reply = ships with the next release
 - **Left to capture:** None
 - **Close:** Ready to close — start `/new` for your next task
@@ -123,12 +150,17 @@ Example (work merged; only a publication decision remains):
   (at most 4 mutually exclusive, self-contained options of ≤10 words; add a
   lettered "both"/"neither" option instead of expecting prose); value
   `N: <value>` with a concrete placeholder.
-- Put the question on the numbered line and the answer options on their own
-  nested bullet directly below it, never inline at the end of a long sentence.
-  Pair each option with its effect (`**y** = merge now · n = close PR #123`);
-  keep the question to one short sentence.
+- Put the question on the numbered line in **bold** and the answer options on
+  their own nested bullet directly below it, never inline at the end of a long
+  sentence. Pair each option with its effect (`**y** = merge now · n = close
+  PR #123`); keep the question to one short sentence. Never bury an ask in a
+  paragraph: the rendered TUI transcript must show it as its own list item.
+- An ask the user must carry out (account, billing, permission, secret,
+  external-platform setting, physical action) includes Human Action Steps.
 - Name the concrete object (`PR #123`, `issue #45`, file path), never "this" or
-  "the above", and state the effect of each answer when it is not obvious.
+  "the above", link it, and state the effect of each answer when it is not
+  obvious. When the decision depends on a specific diff, line, comment or
+  check, link that exact location rather than only its parent PR or issue.
 - **Bold** the recommended option so `ok` accepts every bold default. Mark asks
   that publish, release, delete, spend, change security/permissions or need a
   secret `(explicit)`: they have no default and `ok` never answers them.
@@ -139,6 +171,80 @@ Example (work merged; only a publication decision remains):
   Unanswered or unclear asks stay open and are re-asked with the same wording in
   the next block; never infer consent from silence, from an answer to another
   ask, or from a guess.
+
+### Clickable Evidence Links
+
+Asks and delivery reports must let the user open what they need to judge in one
+click, so they never spend a turn asking for links or searching.
+
+- **One link per line, always.** In chat, every link is a bare full URL alone
+  on its own line, so it stands out in the transcript and copies cleanly.
+  Name the object (`PR #123`) on the line above; inside a list, put the URL in
+  its own nested list item so renderers keep the line break:
+
+  ```markdown
+  - Merged PR #123 (CSV export)
+    - https://github.com/<owner>/<repo>/pull/123
+  ```
+
+  Never use Markdown link syntax (`[label](url)`), code spans, angle brackets,
+  a label or dash before the URL, trailing punctuation after it, or two URLs
+  on one line. Terminals do not autolink `#123` or repo-relative paths, so
+  always print the full URL. GitHub comments and web UIs, where Markdown
+  renders, may use link syntax.
+- **Take URLs from tool output; never guess or hand-build them.** Reuse URLs
+  already in context (wrapper or `gh pr create` output); otherwise fetch them:
+  `gh pr view <N> --repo <owner>/<repo> --json url -q .url`, `gh issue view`
+  likewise, `gh run view <id> --json url -q .url` for CI, and
+  `gh browse --no-browser --repo <owner>/<repo> --commit=<sha> <path>:<line>`
+  for a pushed file at the reviewed version (`--commit` needs the `=` form).
+- **Local work.** Uncommitted or unpushed files: absolute `path:line` on its own
+  line, like a URL (terminals and editors open it on click), never a
+  repo-relative path alone. Local previews: the `localhost`/`.local` URL
+  printed by the dev server or helper.
+- **Link the exact thing.** Put each link directly under the ask or bullet
+  that needs it, pointing at the specific diff, line, comment, check run or
+  preview the decision depends on; no separate link dump at the end.
+- **No URL available** (offline, no access): say so and give the exact
+  identifier plus the command that resolves it; never fabricate a link.
+- Private repository URLs are fine in local chat; keep them out of public
+  GitHub content per `reference/pre-push-guards.md`.
+
+### Human Action Steps
+
+When only the user can act, especially on another site or platform, never
+describe the task in prose. Nest short numbered steps under the ask so the user
+can follow them without knowing where the setting lives:
+
+```markdown
+  2. **Add the `DEPLOY_TOKEN` secret for <owner>/<repo>?** (explicit)
+     - **Steps:**
+       1. Open the repository:
+          - <deepest verified URL, alone on its line>
+       2. Go to **Settings › Secrets and variables › Actions**
+       3. Click **New repository secret**; name `DEPLOY_TOKEN`; paste the token
+       4. Click **Add secret**
+     - **Done when:** reply `2 done`; I verify with `gh secret list --repo <owner>/<repo>`
+```
+
+- **One action per step**, imperative, ≤15 words, in the order performed.
+- **Direct link first.** Start with the deepest URL that lands on the right
+  page, taken from tool output, repo files, or provider docs read in this
+  session. If no deep link is verified, use the verified entry URL and
+  rely on the navigation path; never guess a deep link.
+- **Navigation path** in bold with `›` separators, using the platform's exact
+  menu, tab and button labels (**Settings › Billing › Payment methods**).
+  Name the account, org, project or environment when there is more than one.
+- **Markdown that stands out in the TUI:** bold for UI labels and buttons,
+  code spans for values to type or paste, commands and names; nested numbered
+  lists for steps; URLs and absolute paths bare on their own line, never in
+  code spans or link syntax. No tables or headings inside the What next block;
+  they break the list.
+- **Never put secrets in steps.** Name where to obtain the value and where to
+  store it (`aidevops secret set NAME` in a separate terminal); never ask the
+  user to paste it into chat. See `reference/secret-handling.md`.
+- **Done when** states the reply that completes the ask and how the agent
+  verifies it; run that verification before reporting the step complete.
 
 ### Capture Check (after a full loop or before `Ready to close`)
 
@@ -197,7 +303,7 @@ the recorded next safe action. Do not substitute a progress explanation for that
 execution solely because context is low.
 
 For a human-only gate, leave one durable handoff that states the exact action, where
-to take it, what it unblocks, and how delivery will be verified. Say that no user
+to take it (as Human Action Steps), what it unblocks, and how delivery will be verified. Say that no user
 action is required only when a named live executor owns continuation; never imply
 background progress without that executor. Do not repeat short-lived approval or
 recovery commands after they expire.
@@ -216,6 +322,7 @@ preserves continuation; it does not make incomplete delivery complete.
 | A recoverable API call fails | Try a distinct safe recovery route; if pausing, checkpoint the next route rather than claim delivery. |
 | A human may not return soon | Preserve the durable handoff and resume condition; do not promise immediate attendance or repeat expired commands. |
 | Every accepted criterion has evidence | Delivered; summarize outcome and evidence without inventing remaining work. |
+| A status check finds held phases awaiting authority or inputs | The inspection is done, not the objective; give each hold a named owner and resume condition, or one bounded human-only ask. |
 | The user explicitly stops work | Stop execution, preserve the requested state, and do not represent the unfinished objective as delivered. |
 
 Review these examples against the task's actual evidence; literal policy checks do
@@ -255,7 +362,8 @@ Omit empty fields rather than inventing state.
 - Continuation prompt: `session-checkpoint-helper.sh continuation`
 - Checkpoint after each task, before large operations, and after PR creation or merge.
 - Runtime delivery: `.agents/plugins/opencode-aidevops/compaction.mjs`. Full workflow: `workflows/session-manager.md` "Compaction Resilience".
-- Keep-going guard: OpenCode uses `session-continuation-guard.mjs`; Claude Code uses the `Stop` hook `hooks/session_continuation_stop.py`, which blocks an interactive stop (max 2 per session) while TodoWrite items are open, unless the final message asks a question or reports a blocker, the user asked to stop, or the session is headless.
+- Keep-going guard: OpenCode uses `session-continuation-guard.mjs`; Claude Code uses the `Stop` hook `hooks/session_continuation_stop.py`, which blocks an interactive stop (max 2 per session) while TodoWrite items are open, unless the final message asks a question, names a human dependency, lists a What next `Needed from you` ask, or reports a blocker with at most one todo open, the user asked to stop, or the session is headless. With 2+ open todos, both runtimes treat a reported blocker as pausing only its own path and steer to the next unblocked todo. Negated mentions (`no blocker`, `not blocked`) and code spans are not blocker reports.
+- Steering is model-only: plugin `experimental.text.complete` hooks never modify the rendered assistant text. OpenCode queues continuation steering and delivers it once as a synthetic message on the next model call, the same channel TTSR corrections use; Claude Code uses the Stop hook `reason` (GH#34123).
 - Override: set `AIDEVOPS_STOP_HOOK_DISABLE=1` (or `AIDEVOPS_STOP_HOOK_MAX_BLOCKS=0`) before launching Claude Code; any parse error fails open.
 
 ## Git Workflow Detail

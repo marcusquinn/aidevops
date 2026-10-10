@@ -122,14 +122,13 @@ _pulse_wrapper_resolve_script_dir() {
 # PATH normalisation
 # The MCP shell environment may have a minimal PATH that excludes /bin
 # and other standard directories, causing `env bash` to fail. Ensure
-# essential directories are always present.
+# essential directories are always present without overriding the operator's
+# working toolchain (including Nix profiles and platform package managers).
 #######################################
-_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/bin:/usr/bin"
-if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" && -d "/home/linuxbrew/.linuxbrew/bin" ]]; then
-	_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin"
-fi
-export PATH="${_aidevops_path_prefix}:${PATH}"
-unset _aidevops_path_prefix
+AIDEVOPS_PATH_PROFILE=daemon _aidevops_self="${BASH_SOURCE[0]:-$0}"
+[[ "$_aidevops_self" == */* ]] || _aidevops_self="./${_aidevops_self}"
+# shellcheck source=runtime-env.sh
+[[ ! -f "${_aidevops_self%/*}/runtime-env.sh" ]] || source "${_aidevops_self%/*}/runtime-env.sh"
 
 #######################################
 # FD budget: raise soft limit to avoid exhaustion (GH#19044)
@@ -1083,6 +1082,20 @@ _pulse_run_deterministic_pipeline() {
 			reap_orphan_workers || true
 	fi
 
+	# GH#33602: bounded, hourly stale Actions queue cleanup, then the grouped
+	# Dependabot alert monitor (dedupes by package/ecosystem/patched version).
+	# GH#34000: both are short and run before the long merge/sync/graph stages
+	# so a cycle that reaches the pipeline late cannot starve them. Optional
+	# work keeps the quota admission gate; the helpers gate every API call.
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
+			env REPOS_JSON="$REPOS_JSON" STOP_FLAG="$STOP_FLAG" LOGFILE="$LOGFILE" \
+			PULSE_RATE_LIMIT_FLAG="$PULSE_RATE_LIMIT_FLAG" \
+			bash "${SCRIPT_DIR}/pulse-stale-queued-runs.sh" || true
+		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
+			dependabot_alert_monitor_scan_repos || true
+	fi
+
 	# Deterministic merge pass: approve and merge all ready PRs across pulse
 	# repos. This runs BEFORE the LLM session because merging is free (no
 	# worker slot) and deterministic (no judgment needed). Previously merging
@@ -1255,16 +1268,6 @@ _pulse_run_deterministic_pipeline() {
 			# A budget-deferred round is retryable, not a set -e cycle abort.
 			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max || true
 		fi
-	fi
-
-	# Dependency-alert monitor: create grouped worker-ready issues for open
-	# Dependabot alerts across managed pulse repos. The helper dedupes by
-	# package/ecosystem/patched-version and uses neutral issue wording.
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared — skipping Dependabot alert monitor" >>"$LOGFILE"
-	else
-		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
-			dependabot_alert_monitor_scan_repos || true
 	fi
 
 	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
@@ -1695,8 +1698,16 @@ main() {
 	_pulse_check_runaway_log || true
 
 	# Recover dependency close events missed by async merge/issue-close races.
-	# Sentinel-gated to bound API use; the reconciler itself fails closed.
-	_pulse_run_budget_priority_stage "stale_blocked_reconcile" _pulse_reconcile_stale_blocked_if_due || true
+	# Cadence limits frequency, not duration: a cold sweep can visit hundreds of
+	# blocked issues before early dispatch. Bound it like cache priming while
+	# preserving the first-wave reserve and the reconciler's fail-closed checks.
+	# The sweep stops before this deadline and resumes from a per-repo cursor
+	# on the next cycle (GH#33957).
+	local _pulse_stale_blocked_timeout="${PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS:-60}"
+	[[ "$_pulse_stale_blocked_timeout" =~ ^[1-9][0-9]*$ ]] || _pulse_stale_blocked_timeout=60
+	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
+		_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile" "$_pulse_stale_blocked_timeout" \
+		_pulse_reconcile_stale_blocked_if_due || true
 
 	# t3077: LLM-driven fix-the-fixer detector. Classifies new auto-dispatch
 	# issues — when the work itself touches the worker dispatch system,
@@ -1813,7 +1824,13 @@ main() {
 	# reacquires this lock and writes only when health still names this cycle,
 	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
 	release_instance_lock
-	_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
+	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
+	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle.
+	if [[ "${_PULSE_PREFETCH_DEGRADED:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete this cycle (GH#34000)" >>"$LOGFILE"
+	else
+		_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
+	fi
 
 	# GH#28361: compute one terminal typed outcome after both deterministic and
 	# LLM dispatch paths, then project it through health and idle-backoff

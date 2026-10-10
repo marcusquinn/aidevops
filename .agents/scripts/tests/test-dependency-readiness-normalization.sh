@@ -259,6 +259,74 @@ assert_true "active dependency lifecycle is left unchanged" \
 	_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_linked"
 assert_eq "active dependency lifecycle receives no status write" "" "$dependency_status_writes"
 
+# GH#33957: enrich must not revert a verified unblock. A declared edge whose
+# complete native blocker set is closed leaves the issue available; open,
+# missing, truncated or unreadable native state still blocks.
+native_blockers_json=""
+native_read_rc=0
+gh() {
+	local command="$1"
+	local target="${2:-}"
+	if [[ "$command $target" == "api graphql" ]]; then
+		[[ "$native_read_rc" -eq 0 ]] || return "$native_read_rc"
+		printf '%s\n' "$native_blockers_json"
+	elif [[ "$command $target" == "issue view" ]]; then
+		printf '%s\n' "$dependency_status"
+	elif [[ "$command $target" == "issue edit" ]]; then
+		dependency_status_writes="${dependency_status_writes}$(_test_render_args "$@")"$'\n'
+		dependency_status="status:blocked,auto-dispatch"
+	fi
+	return 0
+}
+export -f gh
+_native_blockers_fixture() {
+	local nodes="$1" has_next="${2:-false}"
+	printf '{"data":{"repository":{"issue":{"blockedBy":{"nodes":%s,"pageInfo":{"hasNextPage":%s}}}}}}' "$nodes" "$has_next"
+	return 0
+}
+closed_10='{"id":"I_10","number":10,"state":"CLOSED","repository":{"nameWithOwner":"owner/repo"}}'
+closed_11='{"id":"I_11","number":11,"state":"CLOSED","repository":{"nameWithOwner":"owner/repo"}}'
+open_11='{"id":"I_11","number":11,"state":"OPEN","repository":{"nameWithOwner":"owner/repo"}}'
+_run_closed_blocker_case() {
+	local label="$1" expected="$2" blocker_ref="$3" nodes="$4" has_next="${5:-false}" read_rc="${6:-0}"
+	dependency_status="status:available,auto-dispatch"
+	dependency_status_writes=""
+	native_read_rc="$read_rc"
+	native_blockers_json=$(_native_blockers_fixture "$nodes" "$has_next")
+	_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_already_present" "$blocker_ref" || true
+	if [[ -n "$dependency_status_writes" ]]; then
+		assert_eq "$label" "$expected" "blocked"
+	else
+		assert_eq "$label" "$expected" "available"
+	fi
+	return 0
+}
+_run_closed_blocker_case "closed native blocker by number is not re-blocked" available 10 "[${closed_10}]"
+_run_closed_blocker_case "closed native blocker by node ID is not re-blocked" available I_10 "[${closed_10},${closed_11}]"
+_run_closed_blocker_case "another open native blocker still blocks" blocked 10 "[${closed_10},${open_11}]"
+_run_closed_blocker_case "declared blocker missing from native set still blocks" blocked 12 "[${closed_10}]"
+_run_closed_blocker_case "empty native set still blocks" blocked 10 "[]"
+_run_closed_blocker_case "truncated native set still blocks" blocked 10 "[${closed_10}]" true
+_run_closed_blocker_case "native read failure still blocks" blocked 10 "[${closed_10}]" false 1
+dependency_status="status:available,auto-dispatch"
+dependency_status_writes=""
+native_read_rc=0
+native_blockers_json=$(_native_blockers_fixture "[${closed_10}]")
+_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_batch_failed" || true
+assert_true "retry hold without blocker evidence still blocks" \
+	grep -Fq -- "--add-label status:blocked" <<<"$dependency_status_writes"
+# A closed-edge skip must not mark the issue synced: a later failed edge for
+# the same issue in the same pass still holds it blocked.
+_RELATIONSHIP_STATUS_SYNCED_FILE="${TMP_ROOT}/status-synced"
+: >"$_RELATIONSHIP_STATUS_SYNCED_FILE"
+dependency_status="status:available,auto-dispatch"
+dependency_status_writes=""
+_ensure_dependency_status_blocked "20" "owner/repo" "native_relationship_already_present" "10" || true
+_hold_dependency_sync_retry "20" "owner/repo" "native_relationship_batch_failed" || true
+assert_true "closed-edge skip leaves later retry hold effective" \
+	grep -Fq -- "--add-label status:blocked" <<<"$dependency_status_writes"
+unset _RELATIONSHIP_STATUS_SYNCED_FILE
+
 _run_relationship_status_sync_cases() (
 	local dependency_status="status:available,auto-dispatch"
 	local dependency_status_writes=""
@@ -432,42 +500,62 @@ SCRIPT_DIR="$SCRIPTS_DIR"
 source "${SCRIPTS_DIR}/pulse-repo-meta.sh"
 candidate_fetch_file="${TMP_ROOT}/candidate-fetch-count"
 normalization_file="${TMP_ROOT}/normalization-count"
+normalization_seconds_file="${TMP_ROOT}/normalization-seconds"
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
-export candidate_fetch_file normalization_file
+printf '0\n' >"$normalization_seconds_file"
+export candidate_fetch_file normalization_file normalization_seconds_file
 gh_issue_list() {
 	local candidate_fetch_count=""
 	candidate_fetch_count=$(<"$candidate_fetch_file")
 	candidate_fetch_count=$((candidate_fetch_count + 1))
 	printf '%s\n' "$candidate_fetch_count" >"$candidate_fetch_file"
 	if [[ "$candidate_fetch_count" -eq 1 ]]; then
-		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:blocked"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
+		# A complete snapshot with 118 blocked issues and one runnable issue.
+		jq -cn '[20, range(100;217)] | map({number:., title:"blocked child",
+			url:"", assignees:[], labels:[{name:"auto-dispatch"},{name:"status:blocked"}]})
+			+ [{number:30,title:"unrelated work",url:"",assignees:[],
+			labels:[{name:"auto-dispatch"},{name:"status:available"}]}]'
 	else
 		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
 	fi
 	return 0
 }
 normalize_repo_dependency_readiness_if_due() {
-	local normalization_count=""
+	local normalization_count="" normalization_seconds=0
 	normalization_count=$(<"$normalization_file")
 	normalization_count=$((normalization_count + 1))
 	printf '%s\n' "$normalization_count" >"$normalization_file"
+	# Simulate the observed 936-second backlog cost without a real sleep.
+	normalization_seconds=$(<"$normalization_seconds_file")
+	printf '%s\n' "$((normalization_seconds + 936))" >"$normalization_seconds_file"
 	return 0
 }
 export -f gh_issue_list normalize_repo_dependency_readiness_if_due
-fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" "skip")
+completeness_file="${TMP_ROOT}/candidate-completeness"
+fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "skip" "$completeness_file")
 assert_eq "fast candidate mode fetches once" "1" "$(<"$candidate_fetch_file")"
 assert_eq "fast candidate mode skips dependency normalization" "0" "$(<"$normalization_file")"
+assert_eq "slow backlog normalization consumes no fast refill time" "0" "$(<"$normalization_seconds_file")"
+assert_eq "all 118 blocked candidates remain filtered" "1" "$(jq 'length' <<<"$fast_candidates")"
 assert_eq "fast candidate mode keeps blocked child out" "0" \
 	"$(printf '%s' "$fast_candidates" | jq 'map(select(.number == 20)) | length')"
+assert_eq "deferred blocked readiness cannot lend reserved product slots" "0" "$(<"$completeness_file")"
+assert_eq "fast candidate mode keeps already-available work" "30" \
+	"$(printf '%s' "$fast_candidates" | jq -r '.[0].number')"
+
+fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "skip" "$completeness_file")
+assert_eq "fast candidate mode with no blocked work retains completeness" "1" "$(<"$completeness_file")"
 
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
-recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100)
+recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file")
 assert_eq "default candidate mode fetches again after normalization" "2" "$(<"$candidate_fetch_file")"
 assert_eq "all-blocked roadmap triggers dependency normalization" "1" "$(<"$normalization_file")"
+assert_eq "normal sweep retains the simulated slow normalization" "936" "$(<"$normalization_seconds_file")"
 assert_eq "next dependency-ready child reaches shared candidate stream" "20" \
 	"$(printf '%s' "$recovered_candidates" | jq -r 'map(select(.number == 20))[0].number')"
+assert_eq "successful normal readiness scan retains completeness" "1" "$(<"$completeness_file")"
 
 # A successful command that returns null after dependency normalization is not
 # a complete empty snapshot. Preserve failure provenance so campaign renewal
@@ -558,18 +646,28 @@ _refresh_try_unblock_issue "owner/repo" "20" '{"task_ids":[],"issue_nums":[]}' '
 assert_true "concurrent queued transition wins resolved unblock" \
 	grep -Fq -- "--remove-label status:available" <<<"$status_write"
 
+# Missing native edges use declared fallback; return 2 means positively clear,
+# not an incomplete repair. Keep both admission contracts covered separately.
+fixture_native_clear=false
 _blocked_by_check_native_relationships() {
-	return 2
+	[[ "$fixture_native_clear" != true ]] || return 2
+	return 1
 }
 _blocked_by_check_issue_num() {
 	return 0
 }
 export -f _blocked_by_check_native_relationships _blocked_by_check_issue_num
 if _refresh_dependency_is_resolved "owner/repo" "20" '{"task_ids":[],"issue_nums":["10"]}' '{}' '[]' '[10,20]'; then
-	assert_eq "partial native repair still checks declared edge" "blocked" "resolved"
+	assert_eq "missing native relationships still check declared edge" "blocked" "resolved"
 else
-	assert_eq "partial native repair still checks declared edge" "blocked" "blocked"
+	assert_eq "missing native relationships still check declared edge" "blocked" "blocked"
 fi
+# Contract since 138608aa76: a complete, positively clear native set is
+# authoritative over stale body/TODO edges (mirrors
+# test-pulse-dep-graph-stale-label-cleanup.sh).
+fixture_native_clear=true
+assert_true "positively clear native relationships remain authoritative" \
+	_refresh_dependency_is_resolved "owner/repo" "20" '{"task_ids":[],"issue_nums":["10"]}' '{}' '[]' '[10,20]'
 
 python3 - "$SCRIPTS_DIR/pulse-check-queue-scan.py" <<'PY'
 import datetime as dt

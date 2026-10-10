@@ -13,9 +13,12 @@
 #                              --brief-file is supplied or a brief exists at
 #                              todo/tasks/{task_id}-brief.md)
 #   --labels "label1,label2"   Comma-separated labels (optional)
-#   --publication-state STATE  Issue/planning state: pending (default) withholds
-#                              dispatch labels; canonical is for verified
-#                              default-branch creation only
+#   --publication-state STATE  Issue/planning state: canonical (default,
+#                              GH#34232 issue-first) applies the intended
+#                              dispatch labels at creation; pending is an
+#                              explicit hold (publication:pending, no
+#                              auto-dispatch/status:available) for issues whose
+#                              body depends on files not yet published
 #   --count N                  Allocate N consecutive IDs (default: 1)
 #                              Creates one GitHub/GitLab issue per ID using
 #                              the same --title. Output includes ref_tNNN=GH#NNN
@@ -171,7 +174,10 @@ SYNC_COUNTER_BRANCH=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
-TASK_PUBLICATION_STATE="pending"
+# GH#34232: issue-first. The issue body is composed from the validated brief,
+# so the issue is the leading record and is dispatchable at creation; TODO.md
+# and todo/tasks/ are background backups. `pending` is an explicit opt-in hold.
+TASK_PUBLICATION_STATE="canonical"
 TASK_COUNTER_STATUS_FALLBACK="fallback"
 # t2838: populated by --parent-issue N; read by _compose_issue_body for body
 # injection and create_github_issue / _try_issue_sync_delegation for explicit
@@ -455,8 +461,9 @@ _validate_and_normalize_args() {
 
 # _validate_interactive_dispatch_scope — fail before allocation when an
 # interactive session files auto-dispatch work without a canonical Files Scope.
-# Pending publication withholds auto-dispatch from the created issue (GH#30325),
-# so the gh_create_issue scope gate cannot see the intent. The author has the
+# An explicit pending hold withholds auto-dispatch from the created issue
+# (GH#30325), so the gh_create_issue scope gate cannot always see the intent,
+# and issue-first (GH#34232) issues dispatch immediately. The author has the
 # most context, so ask now; unscoped briefs from other paths are dispatched with
 # worker-owned scope discovery (GH#33243) so findings are never lost.
 _validate_interactive_dispatch_scope() {
@@ -980,6 +987,68 @@ _auto_create_blocked_by_label() {
 	fi
 }
 
+# _prepare_label_cache — populate the session label cache ($AIDEVOPS_LABEL_CACHE_FILE)
+# from `gh label list` once per session; reuse it when already populated.
+# Args: $1 repo_slug (owner/repo).
+# Returns: 0 = cache ready (path in AIDEVOPS_LABEL_CACHE_FILE), 1 = unavailable (fail-open).
+_prepare_label_cache() {
+	local repo_slug="$1"
+	local cache_file="${AIDEVOPS_LABEL_CACHE_FILE:-}"
+
+	if [[ -z "$cache_file" ]]; then
+		cache_file=$(mktemp /tmp/aidevops-label-cache-XXXXXX 2>/dev/null) || return 1
+		export AIDEVOPS_LABEL_CACHE_FILE="$cache_file"
+		# shellcheck disable=SC2064
+		trap "rm -f '${cache_file}' 2>/dev/null || true" EXIT
+	fi
+
+	# Fetch label list if cache is empty or stale (> 0 bytes = populated)
+	if [[ ! -s "$cache_file" ]]; then
+		if ! gh label list --repo "$repo_slug" --limit 1000 \
+			--json name --jq '.[].name' >"$cache_file" 2>/dev/null; then
+			log_warn "Label list query failed (rate limit or network) — skipping label validation (fail-open)"
+			return 1
+		fi
+	fi
+	return 0
+}
+
+# _ensure_publication_pending_label — make sure the framework-owned
+# publication:pending label exists before the counter advances. The issue
+# projection (_publication_pending_labels) always appends it for pending tasks,
+# so a fresh repository without it would strand the allocated ID.
+# Args: $1 repo_slug (owner/repo).
+# Returns: 0 = exists/created (or fail-open when labels cannot be listed),
+#          1 = creation failed — caller must abort before allocation.
+_ensure_publication_pending_label() {
+	local repo_slug="$1"
+	local label="publication:pending"
+
+	[[ -z "$repo_slug" ]] && return 0
+	command -v gh >/dev/null 2>&1 || return 0
+	gh auth status >/dev/null 2>&1 || return 0
+
+	_prepare_label_cache "$repo_slug" || return 0
+	local cache_file="${AIDEVOPS_LABEL_CACHE_FILE:-}"
+	[[ -n "$cache_file" ]] || return 0
+
+	grep -Fxq "$label" "$cache_file" 2>/dev/null && return 0
+
+	if gh label create "$label" --repo "$repo_slug" \
+		--color "FBCA04" \
+		--description "Opt-in hold until TODO+brief land on default branch; auto-clears, Pulse repairs after 6h" \
+		>/dev/null 2>&1; then
+		printf '%s\n' "$label" >>"$cache_file" 2>/dev/null || true
+		log_info "Auto-created label '${label}' in ${repo_slug}"
+		return 0
+	fi
+
+	log_error "Could not create required label '${label}' in ${repo_slug} (permission or rate limit)"
+	log_error "  Create it manually and re-run: gh label create '${label}' --repo \"${repo_slug}\""
+	log_error "  Claim aborted — counter NOT advanced."
+	return 1
+}
+
 # _validate_labels_exist — check that every label in $2 exists in repo $1.
 # Args: $1 repo_slug (owner/repo), $2 comma-separated label names.
 # Returns: 0 = all valid (or fail-open), 1 = invalid labels found.
@@ -998,24 +1067,11 @@ _validate_labels_exist() {
 	command -v gh >/dev/null 2>&1 || return 0
 	gh auth status >/dev/null 2>&1 || return 0
 
-	# Populate label cache once per session (or reuse if already set)
+	# Populate label cache once per session (or reuse if already set).
+	# API failure → fail-open: skip validation, proceed with claim.
+	_prepare_label_cache "$repo_slug" || return 0
 	local cache_file="${AIDEVOPS_LABEL_CACHE_FILE:-}"
-	if [[ -z "$cache_file" ]]; then
-		cache_file=$(mktemp /tmp/aidevops-label-cache-XXXXXX 2>/dev/null) || return 0
-		export AIDEVOPS_LABEL_CACHE_FILE="$cache_file"
-		# shellcheck disable=SC2064
-		trap "rm -f '${cache_file}' 2>/dev/null || true" EXIT
-	fi
-
-	# Fetch label list if cache is empty or stale (> 0 bytes = populated)
-	if [[ ! -s "$cache_file" ]]; then
-		if ! gh label list --repo "$repo_slug" --limit 1000 \
-			--json name --jq '.[].name' >"$cache_file" 2>/dev/null; then
-			# API failure → fail-open: skip validation, proceed with claim
-			log_warn "Label list query failed (rate limit or network) — skipping label validation (fail-open)"
-			return 0
-		fi
-	fi
+	[[ -n "$cache_file" ]] || return 0
 
 	# Regex for the auto-create exception class (blocked-by:tNNN / blocked-by:GH#NNN / blocked-by:#NNN).
 	# _normalise_ref() in _detect_predecessor_refs produces GH#NNN for GitHub issue refs,
@@ -1897,12 +1953,18 @@ main() {
 		&& [[ "$OFFLINE_MODE" == "false" ]] \
 		&& [[ "$DRY_RUN" == "false" ]] \
 		&& [[ "$NO_ISSUE" == "false" ]] \
-		&& [[ "$platform" == "github" ]] \
-		&& [[ -n "$TASK_LABELS" ]]; then
+		&& [[ "$platform" == "github" ]]; then
 		local _val_slug=""
 		_val_slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
 		if [[ -n "$_val_slug" ]]; then
-			if ! _validate_labels_exist "$_val_slug" "$TASK_LABELS"; then
+			# Framework-injected label: ensure it exists so a new repository
+			# cannot strand the ID after the counter advances.
+			if [[ "$TASK_PUBLICATION_STATE" == "pending" ]] \
+				&& ! _ensure_publication_pending_label "$_val_slug"; then
+				return 3
+			fi
+			if [[ -n "$TASK_LABELS" ]] \
+				&& ! _validate_labels_exist "$_val_slug" "$TASK_LABELS"; then
 				return 3
 			fi
 		fi

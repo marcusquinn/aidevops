@@ -30,6 +30,8 @@ Constants are read from:
   3. Hardcoded defaults (last resort)
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os

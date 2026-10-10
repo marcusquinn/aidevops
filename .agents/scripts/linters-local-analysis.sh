@@ -17,6 +17,7 @@
 #   - Nesting depth (Codacy alignment — GH#4939)
 #   - File size (ratchet gate — t2938)
 #   - Python complexity (Lizard + Pyflakes)
+#   - Python 3.9 annotation compatibility (GH#34098)
 #   - Remote CLI status
 #   - Skill frontmatter validation
 #   - Pulse wrapper canary (GH#18790)
@@ -783,7 +784,7 @@ append_file_size_result() {
 # File Size Check — ratchet-based gate (t2938)
 # =============================================================================
 # Block only when this commit introduces a net increase in non-README Markdown
-# files >500 lines, or adds a brand-new non-README Markdown file >500 lines.
+# files over 1000 lines at root / 500 elsewhere, or adds a new oversized path.
 # Code file size is not gated here; function-complexity/nesting-depth gates
 # provide more actionable code limits. Pre-existing debt does not block.
 # Framework rule: t2228 — "Any gate MUST be ratchet-based: block only on regressions."
@@ -808,7 +809,9 @@ check_file_size() {
 	md_files=$(git ls-files '*.md' 2>/dev/null | grep -Ev '(^|/)README\.md$|_archive/' || true)
 	while IFS= read -r file; do
 		[[ -n "$file" ]] || continue
-		append_file_size_result "$file" "$tmp_file" "$MAX_FILE_LINES_WARN" "$MAX_FILE_LINES_BLOCK"
+		local limit="$MAX_FILE_LINES_BLOCK"
+		[[ "$file" == */* ]] || limit="$MAX_ROOT_FILE_LINES_BLOCK"
+		append_file_size_result "$file" "$tmp_file" "$limit" "$limit"
 	done <<<"$md_files"
 
 	if [[ -s "$tmp_file" ]]; then
@@ -822,7 +825,7 @@ check_file_size() {
 		# Advisory display — show non-README Markdown files for developer awareness.
 		# These are informational; the ratchet gate below decides whether to block.
 		if [[ "$block_violations" -gt 0 ]]; then
-			print_warning "File size: $block_violations non-README Markdown files exceed ${MAX_FILE_LINES_BLOCK} lines (should be split or indexed)"
+			print_warning "File size: $block_violations non-README Markdown files exceed 1000 lines at root / 500 elsewhere. First make the whole document more concise without losing detail; split or bypass only if that is not enough."
 			grep '^BLOCK' "$tmp_file" | sed 's/^BLOCK /  /' | head -10
 		fi
 
@@ -846,11 +849,11 @@ check_file_size() {
 
 	if [[ "$ratchet_exit" -eq 0 ]]; then
 		local total=$((block_violations + warn_violations))
-		print_success "File size: no regression. $total oversized non-README Markdown files ($block_violations over ${MAX_FILE_LINES_BLOCK}, $warn_violations advisory). Tracked by #21146."
+		print_success "File size: no regression. $total oversized non-README Markdown files (root limit 1000 / elsewhere 500). Tracked by #21146."
 		return 0
 	fi
 
-	print_error "File size: regression — new non-README Markdown file(s) added over ${MAX_FILE_LINES_BLOCK} lines. Split/index before committing, or add the 'complexity-bump-ok' label in the PR."
+	print_error "File size: regression — new non-README Markdown file(s) over 1000 lines at root / 500 elsewhere. First make the whole document more concise without losing detail; split or bypass only if that is not enough. A bypass needs 'complexity-bump-ok' and a Complexity Bump Justification in the PR."
 	return 1
 }
 
@@ -932,6 +935,45 @@ check_python_complexity() {
 		print_warning "Python complexity: $total issues ($violations complexity, $warnings pyflakes)"
 	fi
 	return 0
+}
+
+# =============================================================================
+# Python 3.9 Annotation Compatibility (GH#34098) — blocking
+# =============================================================================
+# Python 3.9 evaluates `X | None` signature/module/class annotations at import
+# time unless the module postpones annotations. Static AST check; never imports.
+# Args: optional newline-separated .py file list (default: all tracked .py files)
+check_python_annotation_compat() {
+	local file_list="${1-__all__}"
+	local checker="${SCRIPT_DIR}/python-annotation-compat-check.py"
+	local -a py_files=()
+	local file="" output="" status=0
+	echo -e "${BLUE}Checking Python 3.9 annotation compatibility...${NC}"
+
+	if [[ "$file_list" == "__all__" ]]; then
+		lint_python_files
+		file_list="$LINT_PY_FILES"
+	fi
+	while IFS= read -r file; do
+		[[ -n "$file" && -f "$file" ]] && py_files+=("$file")
+	done <<<"$file_list"
+	if [[ ${#py_files[@]} -eq 0 ]]; then
+		print_success "Python 3.9 annotations: no Python files selected"
+		return 0
+	fi
+	if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$checker" ]]; then
+		print_warning "Python 3.9 annotations: python3 or checker unavailable; skipped"
+		return 0
+	fi
+
+	output=$(python3 "$checker" "${py_files[@]}" 2>&1) || status=$?
+	if [[ "$status" -eq 0 ]]; then
+		print_success "Python 3.9 annotations: ${#py_files[@]} files compatible"
+		return 0
+	fi
+	printf '%s\n' "$output"
+	print_error "Python 3.9 annotations: runtime PEP 604 unions found (see above)"
+	return 1
 }
 
 check_remote_cli_status() {

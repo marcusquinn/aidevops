@@ -97,9 +97,20 @@ _scheduler_systemd_env_lines() {
 
 	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
 	if [[ "$_has_path" -eq 0 ]]; then
-		_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
+		_env_lines+="Environment=PATH=$(_systemd_escape "$(_scheduler_service_path)")"$'\n'
 	fi
 	printf '%s' "$_env_lines"
+	return 0
+}
+
+# PATH baked into generated units/cron lines: the installing user's PATH,
+# sanitised and de-duplicated, with system roots only as a trailing fallback.
+_scheduler_service_path() {
+	if declare -F aidevops_service_path >/dev/null 2>&1; then
+		aidevops_service_path "${PATH:-}"
+	else
+		printf '%s' "${PATH:-}"
+	fi
 	return 0
 }
 
@@ -126,7 +137,7 @@ _scheduler_cron_env_prefix() {
 # Install a generic scheduler via systemd user timer (Linux with systemd).
 # Args:
 #   $1 = service_name    (e.g. "aidevops-stats-wrapper")
-#   $2 = exec_command    (shell command run via /bin/bash -lc)
+#   $2 = exec_command    (shell command run via /usr/bin/env bash -lc)
 #   $3 = interval_sec    (OnUnitActiveSec interval in seconds; may be empty for calendar-only)
 #   $4 = log_file        (absolute path to log file)
 #   $5 = env_vars        (newline-separated KEY=VALUE pairs, may be empty)
@@ -187,7 +198,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=control-group
-ExecStart=/bin/bash -lc $(_systemd_escape "$exec_command")
+ExecStart=/usr/bin/env bash -lc $(_systemd_escape "$exec_command")
 TimeoutStartSec=${timeout_sec}
 ${_service_extra}${_env_lines}StandardOutput=append:${log_file}
 StandardError=append:${log_file}
@@ -235,12 +246,17 @@ _install_scheduler_cron() {
 	local _env_prefix
 
 	_env_prefix=$(_scheduler_cron_env_prefix "$env_vars")
+	# cron's default PATH (/usr/bin:/bin) cannot find user or non-FHS tools;
+	# bake the sanitised installing-user PATH unless the caller supplied one.
+	if [[ $'\n'"$env_vars" != *$'\n'PATH=* ]]; then
+		_env_prefix+="PATH=$(_cron_escape "$(_scheduler_service_path)") "
+	fi
 	_cron_exec=$(_cron_escape "$exec_command")
 	_cron_log=$(_cron_escape "$log_file")
 
 	(
 		crontab -l 2>/dev/null | _scheduler_filter_cron_tag "$cron_tag" || true
-		echo "${cron_schedule} ${_env_prefix}/bin/bash -lc ${_cron_exec} >> ${_cron_log} 2>&1 # ${cron_tag}"
+		echo "${cron_schedule} ${_env_prefix}/usr/bin/env bash -lc ${_cron_exec} >> ${_cron_log} 2>&1 # ${cron_tag}"
 	) | crontab - 2>/dev/null || true
 	return 0
 }
@@ -466,7 +482,7 @@ _reconcile_linux_scheduler_duplicates() {
 #   $1 = service_name   (systemd service name, e.g. "aidevops-stats-wrapper")
 #   $2 = cron_tag       (comment tag for cron line, e.g. "aidevops: stats-wrapper")
 #   $3 = cron_schedule  (cron schedule expression, e.g. "*/15 * * * *")
-#   $4 = exec_command   (shell command run via /bin/bash -lc)
+#   $4 = exec_command   (shell command run via /usr/bin/env bash -lc)
 #   $5 = interval_sec   (systemd OnUnitActiveSec in seconds; may be empty for calendar-only)
 #   $6 = log_file       (absolute path to log file)
 #   $7 = env_vars       (newline-separated KEY=VALUE pairs for systemd/cron, may be empty)

@@ -24,6 +24,22 @@ print_info() { printf '%b[INFO]%b %s\n' "${YELLOW}" "${NC}" "$*"; return 0; }
 print_success() { printf '%b[OK]%b %s\n' "${GREEN}" "${NC}" "$*"; return 0; }
 print_error() { printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "$*" >&2; return 0; }
 
+# GH#34125: AIDEVOPS_RUNTIME_POLICY binding vocabulary (vault_runtime_policy_bound).
+# shellcheck source=vault-data-policy-helper.sh
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+
+# #aidevops:trust-boundary — stop host exporters before SDK initialization, not
+# just plugin enrichment after startup. Disable telemetry conservatively while
+# bound; shell hooks also stamp this protection into controlled subprocesses.
+if vault_runtime_policy_bound; then
+    export OTEL_SDK_DISABLED=true
+    export OTEL_TRACES_EXPORTER=none OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none
+    unset OTEL_EXPORTER_OTLP_ENDPOINT OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+    unset OTEL_EXPORTER_OTLP_HEADERS OTEL_EXPORTER_OTLP_TRACES_HEADERS
+    unset OTEL_EXPORTER_OTLP_METRICS_HEADERS OTEL_EXPORTER_OTLP_LOGS_HEADERS
+fi
+
 OPT_DESKTOP_SOURCE_BINARY="--source-binary"
 ERR_DIR_REQUIRES_PATH="--dir requires a path"
 ERR_SESSION_ID_REQUIRES_VALUE="--session-id requires a value"
@@ -1377,6 +1393,9 @@ maybe_managed_tui() {
     # Explicit shards and Tabby recovery stay direct; unsupported flags must not
     # silently create a conversation in a different database.
     ((direct == 0 && shared == 0 && tabby == 0)) || return 0
+    # GH#34125: the shared server's plugin never sees this launch's local-only
+    # binding, so a bound launch stays direct (plugin runs in this environment).
+    vault_runtime_policy_bound && return 0
     [[ -z "${shard}" && -f "${HOME}/.config/aidevops/opencode-service.json" ]] || return 0
     route=$(python3 "${SCRIPT_DIR}/opencode-service-helper.py" route) || return 1
     [[ "${route}" == "managed" ]] || return 0
@@ -1505,10 +1524,11 @@ cmd_tui_launch() {
         print_error "--tabby-shell requires aidevops isolated OpenCode storage"
         return 1
     fi
+    # ${arr[@]+...}: bash 3.2 (macOS /bin/bash) treats an empty array as unbound.
     if ((use_shared_db == 0)); then
-        TABBY_RECOVERY_ARGS=("${opencode_args[@]}")
-        apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir "${opencode_args[@]}" || return 1
-        opencode_args=("${TABBY_RECOVERY_ARGS[@]}")
+        TABBY_RECOVERY_ARGS=(${opencode_args[@]+"${opencode_args[@]}"})
+        apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir ${opencode_args[@]+"${opencode_args[@]}"} || return 1
+        opencode_args=(${TABBY_RECOVERY_ARGS[@]+"${TABBY_RECOVERY_ARGS[@]}"})
     fi
     validate_launch_directory "${launch_dir}" || return 1
     if [[ -z "${session_id}" ]]; then
@@ -1516,7 +1536,7 @@ cmd_tui_launch() {
     fi
 
     if ((use_shared_db == 1)); then
-        run_shared_tui "${launch_dir}" "${dry_run}" "${opencode_args[@]}"
+        run_shared_tui "${launch_dir}" "${dry_run}" ${opencode_args[@]+"${opencode_args[@]}"}
         return $?
     fi
 
@@ -1524,7 +1544,7 @@ cmd_tui_launch() {
         data_dir=$(build_session_data_dir "${session_id}")
     fi
 
-    run_isolated_tui "${launch_dir}" "${data_dir}" "${tabby_shell}" "${dry_run}" "${opencode_args[@]}"
+    run_isolated_tui "${launch_dir}" "${data_dir}" "${tabby_shell}" "${dry_run}" ${opencode_args[@]+"${opencode_args[@]}"}
     return $?
 }
 
@@ -1582,6 +1602,11 @@ run_conversation_session() {
         "OPENCODE_DISABLE_PROJECT_CONFIG=1"
         "OPENCODE_DISABLE_SHARE=1"
     )
+    # env -i must not discard the operator binding or re-enable host telemetry.
+    if vault_runtime_policy_bound; then
+        runtime_environment+=("AIDEVOPS_RUNTIME_POLICY=local-only" "OTEL_SDK_DISABLED=true"
+            "OTEL_TRACES_EXPORTER=none" "OTEL_METRICS_EXPORTER=none" "OTEL_LOGS_EXPORTER=none")
+    fi
     [[ -n "${USER:-}" ]] && runtime_environment+=("USER=${USER}")
     [[ -n "${LOGNAME:-}" ]] && runtime_environment+=("LOGNAME=${LOGNAME}")
     [[ -n "${SHELL:-}" ]] && runtime_environment+=("SHELL=${SHELL}")
@@ -1799,6 +1824,23 @@ main() {
     TMP="${TMP:-$TMPDIR}"
     TEMP="${TEMP:-$TMPDIR}"
     export TMPDIR TMP TEMP
+    # GH#34125: attach/managed/desktop run the plugin in a server or app process
+    # that does not carry this launch's binding; refuse instead of silently
+    # running unbound.
+    local session_route="${1:-}"
+    if [[ "${session_route}" == "desktop" ]]; then
+        case "${2:-launch}" in
+        status | install | install-app | install-shortcut | help | --help | -h) session_route="" ;;
+        esac
+    fi
+    case "${session_route}" in
+    managed | attach | desktop)
+        if vault_runtime_policy_bound; then
+            print_error "VAULT_POLICY_DENIED: AIDEVOPS_RUNTIME_POLICY binds this launch to local AI, but '${1}' would run in a process without that binding. Launch a direct session instead: AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode --direct"
+            return 64
+        fi
+        ;;
+    esac
     case "${1:-}" in
     service)
         shift

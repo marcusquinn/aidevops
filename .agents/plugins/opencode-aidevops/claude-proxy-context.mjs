@@ -151,17 +151,25 @@ const AGENT_MCPS = new Map([
 const MCP_DEFINITIONS = new Map([
   ["context7", { command: "npx", args: ["-y", "@upstash/context7-mcp@latest"], type: "stdio" }],
   ["gsc", {
-    command: "/bin/bash",
+    command: "bash",
     args: ["-c", "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/aidevops/gsc-credentials.json} npx -y mcp-server-gsc"],
     type: "stdio",
   }],
   ["dataforseo", {
-    command: "/bin/bash",
+    command: "bash",
     args: ["-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx -y dataforseo-mcp-server"],
     type: "stdio",
   }],
   ["shadcn", { command: "npx", args: ["shadcn@latest", "mcp"], type: "stdio" }],
-  ["playwright", { command: "npx", args: ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"], type: "stdio" }],
+  // GH#34111: launch from a private artifact cwd, never the project checkout.
+  ["playwright", {
+    command: "bash",
+    args: [
+      join(homedir(), ".aidevops", "agents", "scripts", "browser-mcp-launcher.sh"),
+      "playwright", "npx", "-y", "@playwright/mcp@0.0.79", "--headless", "--isolated",
+    ],
+    type: "stdio",
+  }],
 ]);
 
 const MCP_CONFIG_DIR = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
@@ -273,7 +281,8 @@ export function parseChatMessages(messages) {
 // ---------------------------------------------------------------------------
 
 const MODEL_ALIASES = new Map([
-  ["haiku",    "claude-haiku-4-5"],
+  ["haiku45",  "claude-haiku-4-5"],
+  ["haiku",    "claude-haiku-5-5"],
   ["sonnet45", "claude-sonnet-4-5"],
   ["sonnet46", "claude-sonnet-4-6"],
   ["sonnet",   "claude-sonnet-5-5"],

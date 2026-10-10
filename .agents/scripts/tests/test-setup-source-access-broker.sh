@@ -23,6 +23,37 @@ production_release_signer_identity="$_SOURCE_ACCESS_RELEASE_SIGNER_IDENTITY"
 production_current_release_signer_key="$_SOURCE_ACCESS_CURRENT_RELEASE_SIGNER_KEY"
 production_historical_release_signer_key="$_SOURCE_ACCESS_HISTORICAL_RELEASE_SIGNER_KEY"
 
+# Selection walks PATH but skips caller-modifiable entries (a user-writable
+# directory, even when it symlinks to a root-owned binary), and fails closed
+# when only caller-controlled entries exist. No distro-specific roots.
+mkdir -p "$TEST_DIR/caller-bin"
+ln -s /bin/false "$TEST_DIR/caller-bin/git"
+system_git_dir=""
+while IFS= read -r system_git_candidate; do
+	[[ "$system_git_candidate" == "$TEST_DIR"/* ]] && continue
+	if [[ ! -w "$system_git_candidate" && ! -w "${system_git_candidate%/*}" ]]; then
+		system_git_dir="${system_git_candidate%/*}"
+		break
+	fi
+done < <(type -a -p git)
+[[ -n "$system_git_dir" ]] || {
+	printf 'FAIL: fixture needs a non-user-writable git on PATH\n' >&2
+	exit 1
+}
+trusted_git=$(PATH="$TEST_DIR/caller-bin:${system_git_dir}" _source_access_system_path git)
+if [[ "$trusted_git" != "${system_git_dir}/git" ]]; then
+	printf 'FAIL: broker selected caller-controlled Git: %s\n' "$trusted_git" >&2
+	exit 1
+fi
+if PATH="$TEST_DIR/caller-bin" _source_access_system_path git >/dev/null; then
+	printf 'FAIL: broker accepted Git from a caller-writable PATH directory\n' >&2
+	exit 1
+fi
+if _source_access_system_path ../git >/dev/null; then
+	printf 'FAIL: system lookup accepted a path instead of a command name\n' >&2
+	exit 1
+fi
+
 fixture_repo="$TEST_DIR/repo"
 mkdir -p "$fixture_repo/.agents/scripts/setup/modules"
 git -C "$fixture_repo" init -q
@@ -75,9 +106,12 @@ while [[ $# -gt 0 ]]; do
 	*) shift ;;
 	esac
 done
-/usr/bin/git -C "$repo" update-ref refs/tags/v1.2.3 "$TEST_SOURCE_ACCESS_TAG_OBJECT"
+"$TEST_SOURCE_ACCESS_NATIVE_GIT" -C "$repo" update-ref refs/tags/v1.2.3 "$TEST_SOURCE_ACCESS_TAG_OBJECT"
 SH
 chmod +x "$fixture_repo/.agents/scripts/canonical-recovery-helper.sh"
+# shellcheck disable=SC2016 # Expanded by the child shell; skips aidevops Git shims.
+TEST_SOURCE_ACCESS_NATIVE_GIT=$(bash -c 'source "$1/runtime-env.sh" && aidevops_resolve_native_git' _ "$REPO_ROOT/.agents/scripts") || exit 1
+export TEST_SOURCE_ACCESS_NATIVE_GIT
 export TEST_SOURCE_ACCESS_TAG_FETCH_CALLS="$tag_fetch_calls"
 export TEST_SOURCE_ACCESS_TAG_OBJECT="$release_tag_object"
 git -C "$fixture_repo" update-ref -d refs/tags/v1.2.3

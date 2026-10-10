@@ -65,6 +65,18 @@ for tool in bash dirname readlink basename; do
 done
 ln -s "$TMP/home/.aidevops/agents/scripts/gh" "$TMP/fallback-bin/gh"
 
+# System tail for the fixture PATHs: directories of the base tools on the
+# caller's PATH, then the FHS defaults (hosts without /usr/bin/bash too).
+TEST_SYS_PATH=""
+for tool in env bash dirname readlink basename; do
+	tool_path=$(type -P "$tool") || exit 1
+	case ":${TEST_SYS_PATH}:" in
+	*":${tool_path%/*}:"*) ;;
+	*) TEST_SYS_PATH="${TEST_SYS_PATH:+${TEST_SYS_PATH}:}${tool_path%/*}" ;;
+	esac
+done
+TEST_SYS_PATH="${TEST_SYS_PATH}:${TEST_SYS_PATH}"
+
 run_case() {
 	local name="$1"
 	local entry="$2"
@@ -73,7 +85,7 @@ run_case() {
 	local expected_one="$command_one"
 	local count=0
 	: >"$TMP/native.log"
-	if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/repo/.agents/scripts:$TMP/home/.aidevops/bin:$TMP/native-linux:/usr/bin:/bin" \
+	if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/repo/.agents/scripts:$TMP/home/.aidevops/bin:$TMP/native-linux:${TEST_SYS_PATH}" \
 		"$entry" "$command_one" ${command_two:+"$command_two"}; then
 		count=$(wc -l <"$TMP/native.log" | tr -d ' ')
 		# Intercepted reads may make instrumented REST preflight attempts before
@@ -95,7 +107,7 @@ run_case "installed ordinary passthrough" "$TMP/home/.aidevops/agents/scripts/gh
 run_case "repository intercepted command" "$TMP/repo/.agents/scripts/gh" "issue" "view"
 
 : >"$TMP/native.log"
-if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/repo/.agents/scripts:$TMP/native-linux:/usr/bin:/bin" \
+if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/repo/.agents/scripts:$TMP/native-linux:${TEST_SYS_PATH}" \
 	"$TMP/repo/.agents/scripts/gh" --version && [[ $(wc -l <"$TMP/native.log" | tr -d ' ') -eq 1 ]]; then
 	pass "interactive shim-first PATH reaches native gh without recursion"
 else
@@ -104,7 +116,7 @@ fi
 
 : >"$TMP/native.log"
 if NATIVE_GH_LOG="$TMP/native.log" AIDEVOPS_GH_SHIM_DISABLE=1 \
-	PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/repo/.agents/scripts:$TMP/home/.aidevops/bin:$TMP/native-linux:/usr/bin:/bin" \
+	PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/repo/.agents/scripts:$TMP/home/.aidevops/bin:$TMP/native-linux:${TEST_SYS_PATH}" \
 	"$TMP/runtime-bundles/old/agents/scripts/gh" --version; then
 	if [[ $(wc -l <"$TMP/native.log" | tr -d ' ') -eq 1 ]]; then
 		pass "bypass reaches native gh exactly once"
@@ -116,7 +128,7 @@ else
 fi
 
 : >"$TMP/native.log"
-if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/native-homebrew:/usr/bin:/bin" \
+if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/native-homebrew:${TEST_SYS_PATH}" \
 	"$TMP/runtime-bundles/old/agents/scripts/gh" --version && [[ -s "$TMP/native.log" ]]; then
 	pass "Homebrew-style native fixture resolves after managed shim"
 else
@@ -134,7 +146,7 @@ fi
 : >"$TMP/native.log"
 workers=0
 while [[ $workers -lt 8 ]]; do
-	NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/native-linux:/usr/bin:/bin" \
+	NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/native-linux:${TEST_SYS_PATH}" \
 		"$TMP/runtime-bundles/old/agents/scripts/gh" --version &
 	workers=$((workers + 1))
 done

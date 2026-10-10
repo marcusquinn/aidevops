@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { readAidevopsVersion, withAidevopsTitleSuffix } from "./session-title-suffix.mjs";
+import {
+  isSessionTitleVersionSuffixEnabled,
+  readAidevopsVersion,
+  withAidevopsTitleSuffix,
+} from "./session-title-suffix.mjs";
 import { emitTerminalTitle as defaultEmitTerminalTitle } from "./terminal-title.mjs";
 
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/;
@@ -132,7 +136,8 @@ function shouldApplyFallback(input, sessionTitles, userMessagesBySession, fallba
 async function applyFallbackTitle(deps, sessionID, prompt) {
   const currentTitle = deps.sessionTitles.get(sessionID) || "";
   if (!isDefaultSessionTitle(currentTitle)) return;
-  const version = readAidevopsVersion(deps.agentsDir);
+  // An empty version yields the plain title (suffix paused, t18612).
+  const version = deps.isVersionSuffixEnabled() ? readAidevopsVersion(deps.agentsDir) : "";
   const title = withAidevopsTitleSuffix(deriveFallbackTitleFromPrompt(prompt), version);
   await updateSessionTitle(deps.client, sessionID, title);
   deps.emitTerminalTitle(title);
@@ -157,6 +162,7 @@ export function createSessionTitleFallbackHandler({
   client,
   fallbackDelayMs = FALLBACK_DELAY_MS,
   emitTerminalTitle = defaultEmitTerminalTitle,
+  isVersionSuffixEnabled = isSessionTitleVersionSuffixEnabled,
 }) {
   const sessionTitles = new Map();
   const userMessagesBySession = new Map();
@@ -174,6 +180,7 @@ export function createSessionTitleFallbackHandler({
       agentsDir,
       client,
       emitTerminalTitle,
+      isVersionSuffixEnabled,
       fallbackDelayMs,
       fallbackDone,
       pendingFallbacks,

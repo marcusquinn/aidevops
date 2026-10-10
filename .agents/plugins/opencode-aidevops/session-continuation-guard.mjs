@@ -10,6 +10,7 @@ import {
   capMap,
   classifyToolOutcome,
   isExplicitCompletionClaim,
+  isPathBlockerYield,
   operationFingerprint,
   sessionId,
   toolOutcomeFailed,
@@ -17,7 +18,7 @@ import {
 
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const DEFAULT_MAX_SCOPES = 32;
-const COMPLETION_CORRECTION_MARKER = "<!-- SESSION_CONTINUATION_GUARD -->";
+const STEERING_PREFIX = "[aidevops continuation guard]";
 
 function defaultCheckpointAdapter(checkpointHelper, repository, qualityLog) {
   const helperPath = checkpointHelper ? resolve(checkpointHelper) : "";
@@ -103,6 +104,9 @@ function resolveScope(state, scope, evidence) {
 }
 
 function beforeTool(state, input, output) {
+  // GH#34123: a later tool call means the text was not the turn's yield, so
+  // steering queued from it is stale.
+  state.steering.delete(sessionId(input));
   const callID = String(input?.callID || "");
   if (!callID) return;
   state.calls.set(callID, {
@@ -174,20 +178,77 @@ function afterTool(state, input, output) {
   return { failed: true, replan: true, count: failure.count, correction };
 }
 
+function sessionHashFor(input) {
+  return createHash("sha256").update(sessionId(input)).digest("hex").slice(0, 12);
+}
+
+// GH#34123: steering is model-only. text.complete output is the rendered,
+// persisted assistant message, so corrections are queued per session and
+// delivered once as a synthetic message by injectSteering() on the next model
+// call. The user-visible text is never modified.
+function queueSteering(state, input, kind, text) {
+  const key = sessionId(input);
+  state.steering.set(key, { kind, text: `${STEERING_PREFIX} ${text}` });
+  capMap(state.steering, state.maxScopes);
+}
+
+// GH#33888: a reported blocker pauses only its own path. When another active
+// todo remains, steer the next model call to continue the unblocked work.
+// Steering only: no auto-continuation, no todo state changes.
+function correctBlockerYield(state, input) {
+  const scope = scopeFor(state, input);
+  const active = state.tasks.get(scope) || [];
+  if (active.length <= 1) return { corrected: false };
+
+  const remaining = active.join("; ");
+  queueSteering(state, input, "blocker", `Your last message reported a blocker while ${active.length} todos remain active: ${remaining}. A blocker pauses only its own path; unless the latest user message redirects the session, continue the next unblocked safe todo or record that todo's own blocker.`);
+  state.qualityLog?.("WARN", `[session-continuation] queued path-blocker steering with ${active.length} active todos for session ${sessionHashFor(input)}`);
+  return { corrected: true, remaining, blocker: true };
+}
+
 function completeText(state, input, output) {
-  if (!isExplicitCompletionClaim(output?.text)) return { corrected: false };
+  if (!isExplicitCompletionClaim(output?.text)) {
+    if (isPathBlockerYield(output?.text)) return correctBlockerYield(state, input);
+    return { corrected: false };
+  }
   const scope = scopeFor(state, input);
   const recovery = loadRecovery(state, scope);
   const active = state.tasks.get(scope) || [];
   const unresolvedRecovery = recovery?.unresolved || ["recovering", "blocked"].includes(recovery?.status);
   if (active.length === 0 && !unresolvedRecovery) return { corrected: false };
-  if (String(output.text).includes(COMPLETION_CORRECTION_MARKER)) return { corrected: true };
 
   const remaining = remainingFor(state, scope, recovery);
   const nextAction = boundedText(recovery?.nextSafeRoute || `Continue the first active task: ${active[0] || remaining}`);
-  output.text = `${output.text}\n\n${COMPLETION_CORRECTION_MARKER}\nCompletion is not yet valid. Remaining criteria: ${remaining}. Continue with: ${nextAction}.`;
-  state.qualityLog?.("WARN", `[session-continuation] corrected premature completion claim for session ${createHash("sha256").update(sessionId(input)).digest("hex").slice(0, 12)}`);
+  queueSteering(state, input, "completion", `Your last message claimed completion, but it is not yet valid. Remaining criteria: ${remaining}. Unless the latest user message redirects the session, continue with: ${nextAction}.`);
+  state.qualityLog?.("WARN", `[session-continuation] queued premature-completion steering for session ${sessionHashFor(input)}`);
   return { corrected: true, remaining, nextAction };
+}
+
+// Deliver queued steering once, as a synthetic user message appended to the
+// model request (the same channel TTSR corrections use).
+function deliverSteering(state, input, output) {
+  const messages = output?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) return { injected: false };
+  const key = String(input?.sessionID || messages.at(-1)?.info?.sessionID || messages[0]?.info?.sessionID || "");
+  const pending = key ? state.steering.get(key) : null;
+  if (!pending) return { injected: false };
+  state.steering.delete(key);
+  const id = `continuation-steering-${Date.now()}`;
+  messages.push({
+    info: { id, sessionID: key, role: "user", time: { created: Date.now() }, parentID: "" },
+    parts: [{ id: `${id}-part`, sessionID: key, messageID: id, type: "text", text: pending.text, synthetic: true }],
+  });
+  return { injected: true, kind: pending.kind, text: pending.text };
+}
+
+// Fail-open: a steering failure must never block the model request.
+function injectSteering(state, input, output) {
+  try {
+    return deliverSteering(state, input, output);
+  } catch (error) {
+    state.qualityLog?.("WARN", `[session-continuation] steering injection failed: ${boundedText(error?.message)}`);
+    return { injected: false };
+  }
 }
 
 function resolveGuard(state, input, evidence) {
@@ -213,21 +274,24 @@ export function createSessionContinuationGuard(options = {}) {
     tasks: new Map(),
     recoveries: new Map(),
     loadedScopes: new Set(),
+    steering: new Map(),
   };
 
   return {
     beforeTool: beforeTool.bind(null, state),
     afterTool: afterTool.bind(null, state),
     completeText: completeText.bind(null, state),
+    injectSteering: injectSteering.bind(null, state),
     resolve: resolveGuard.bind(null, state),
     getState: getState.bind(null, state),
   };
 }
 
 export {
-  COMPLETION_CORRECTION_MARKER,
+  STEERING_PREFIX,
   classifyToolOutcome,
   isExplicitCompletionClaim,
+  isPathBlockerYield,
   operationFingerprint,
   toolOutcomeFailed,
 };

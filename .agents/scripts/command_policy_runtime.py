@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Any
 
 from command_policy_account_mutation import (
     account_mutation_workspace_root_from_environment,
@@ -56,6 +57,12 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-pid", type=int, default=0)
     parser.add_argument("--runtime-process-identity", default="")
     parser.add_argument("--process-table-fixture", default="")
+    # #aidevops:trust-boundary — owned listener roots come from the plugin
+    # host's bounded-operation table, like --runtime-pid, and are re-verified
+    # against the live process table (see command_policy_owned_listener.py).
+    # Direct CLI callers only influence their own advisory output.
+    parser.add_argument("--owned-listener-roots", default="")
+    parser.add_argument("--listener-table-fixture", default="")
     parser.add_argument("--approval-helper", default="")
     parser.add_argument("--worker", action="store_true")
     parser.add_argument(
@@ -74,9 +81,22 @@ def _argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _network_action(invocations: list[list[str]], cwd: str) -> int:
+def owned_listener_options(args: argparse.Namespace) -> dict[str, Any]:
+    """Collect plugin-supplied owned-listener evidence from parsed CLI args."""
+    return {
+        "roots": args.owned_listener_roots,
+        "runtime_pid": args.runtime_pid,
+        "runtime_identity": args.runtime_process_identity,
+        "process_table_fixture": args.process_table_fixture,
+        "listener_table_fixture": args.listener_table_fixture,
+    }
+
+
+def _network_action(
+    invocations: list[list[str]], cwd: str, owned_listeners: dict[str, Any] | None = None
+) -> int:
     if len(invocations) == 1:
-        output = analyze_network_argv(invocations[0], cwd)
+        output = analyze_network_argv(invocations[0], cwd, owned_listeners)
         exit_code = 0
     else:
         output = {

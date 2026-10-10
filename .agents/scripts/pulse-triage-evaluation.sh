@@ -947,6 +947,7 @@ _consolidation_filter_substantive_comments() {
 			+ "|^_Automated by"
 			+ "|^<!-- aidevops:brief-(hold|scope-normalized)"
 			+ "|^Brief (repaired|scope normalized):"
+			+ "|^Implementation checkpoint:"
 		) as $patterns |
 		[$comments[] | select(
 			(significant_body | length) >= $min

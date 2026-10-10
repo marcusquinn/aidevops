@@ -45,6 +45,16 @@ export function sanitizeSessionTitle(title) {
   return String(title || "").replace(IMAGE_PLACEHOLDER_RE, " ").replace(/\s+/g, " ").trim();
 }
 
+// Paused (t18612): OpenCode 1.x session titles no longer carry
+// `· AIDevOps <version>`; the v1-tui sidebar footer shows it instead, as
+// OpenCode 2 does. Set AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX=true to restore.
+// Terminal titles built by v2-plugin/tui.mjs call withAidevopsTitleSuffix
+// directly and are not affected.
+export function isSessionTitleVersionSuffixEnabled(env = process.env) {
+  const value = String(env.AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX || "").trim().toLowerCase();
+  return value === "true" || value === "1";
+}
+
 export function withAidevopsTitleSuffix(title, version) {
   const baseTitle = sanitizeSessionTitle(String(title || "").replace(AIDEVOPS_TITLE_SUFFIX_RE, ""));
   if (!version) return baseTitle;
@@ -101,12 +111,18 @@ export function createSessionTitleSuffixHandler({
   agentsDir = activeAgentsDir,
   client,
   emitTerminalTitle = defaultEmitTerminalTitle,
+  isEnabled = isSessionTitleVersionSuffixEnabled,
 }) {
   const inFlight = new Set();
 
   return async function sessionTitleSuffixHandler(input) {
     const update = getSessionUpdate(input);
     if (!shouldSynchronizeSessionTitle(update)) return;
+    if (!isEnabled()) {
+      // Keep reasserting the session title to the terminal; never rewrite it.
+      if (update.sessionID) emitTerminalTitle(update.title);
+      return;
+    }
 
     const version = readAidevopsVersion(activeAgentsDir || agentsDir, agentsDir);
     const suffixedTitle = withAidevopsTitleSuffix(update.title, version);

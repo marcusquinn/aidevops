@@ -31,7 +31,14 @@ readonly DEFAULT_OUTPUT_DIR="$HOME/Downloads"
 readonly CONFIG_DIR="$HOME/.config/aidevops/transcription"
 readonly CONFIG_FILE="$CONFIG_DIR/config.json"
 readonly CACHE_DIR="$HOME/.cache/aidevops/transcription"
-readonly VENV_DIR="$HOME/.aidevops/.agent-workspace/work/speech-to-speech/.venv"
+# Helper-owned venv created by `install`; discovered by every later session.
+readonly TRANSCRIPTION_VENV_DIR="$HOME/.aidevops/.agent-workspace/work/transcription/.venv"
+# Fallback: an existing speech-to-speech venv may already provide faster-whisper.
+readonly S2S_VENV_DIR="$HOME/.aidevops/.agent-workspace/work/speech-to-speech/.venv"
+readonly FASTER_WHISPER_REQUIREMENT="faster-whisper>=1.2,<2"
+# faster-whisper 1.2.x calls av.open(..., metadata_errors=...), which PyAV 19
+# removed (TypeError on every decode). Keep PyAV below 19 until upstream adapts.
+readonly PYAV_REQUIREMENT="av<19"
 
 # Supported audio/video extensions
 readonly AUDIO_EXTENSIONS="wav|mp3|flac|ogg|m4a|wma|aac"
@@ -92,18 +99,33 @@ detect_source() {
 }
 
 # Find the best available Python with transcription deps
+# Order: helper-owned venv, speech-to-speech venv, system python3.
 find_python() {
-	# Prefer the speech-to-speech venv if it exists
-	if [[ -x "${VENV_DIR}/bin/python" ]]; then
-		echo "${VENV_DIR}/bin/python"
-		return 0
-	fi
-	# Fall back to system python
+	local venv_dir
+	for venv_dir in "$TRANSCRIPTION_VENV_DIR" "$S2S_VENV_DIR"; do
+		if [[ -x "${venv_dir}/bin/python" ]]; then
+			echo "${venv_dir}/bin/python"
+			return 0
+		fi
+	done
 	if command -v python3 &>/dev/null; then
 		echo "python3"
 		return 0
 	fi
-	print_error "Python 3 not found. Install Python 3.10+ or run: speech-to-speech-helper.sh setup"
+	print_error "Python 3 not found. Install Python 3.10+, then run: transcription-helper.sh install"
+	return 1
+}
+
+# Find yt-dlp: helper venv copy (installed when none is on PATH), then PATH.
+find_ytdlp() {
+	if [[ -x "${TRANSCRIPTION_VENV_DIR}/bin/yt-dlp" ]]; then
+		echo "${TRANSCRIPTION_VENV_DIR}/bin/yt-dlp"
+		return 0
+	fi
+	if command -v yt-dlp &>/dev/null; then
+		command -v yt-dlp
+		return 0
+	fi
 	return 1
 }
 
@@ -149,15 +171,18 @@ extract_audio() {
 download_youtube_audio() {
 	local url="$1"
 	local output="$2"
+	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+	vault_runtime_policy_check "remote/audio-download" || return 64
 
-	if ! command -v yt-dlp &>/dev/null; then
+	local ytdlp_bin
+	if ! ytdlp_bin=$(find_ytdlp); then
 		print_error "yt-dlp is required for YouTube downloads."
-		print_info "Install: brew install yt-dlp (macOS) or pip install yt-dlp"
+		print_info "Install: transcription-helper.sh install"
 		return 1
 	fi
 
 	print_info "Downloading audio from YouTube..."
-	yt-dlp -x --audio-format wav --audio-quality 0 \
+	"$ytdlp_bin" -x --audio-format wav --audio-quality 0 \
 		-o "$output" --no-playlist "$url" 2>&1 | tail -5
 	return $?
 }
@@ -166,6 +191,8 @@ download_youtube_audio() {
 download_url_audio() {
 	local url="$1"
 	local output="$2"
+	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+	vault_runtime_policy_check "remote/audio-download" || return 64
 
 	print_info "Downloading from URL..."
 	if ! curl -sL -o "${output}.tmp" "$url"; then
@@ -331,6 +358,8 @@ transcribe_whisper_cpp() {
 # Transcribe using Groq cloud API
 transcribe_groq() {
 	local audio_file="$1"
+	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+	vault_runtime_policy_check "groq/transcription" || return 64
 	local language="$3"
 	local output_format="$4"
 	local output_file="$5"
@@ -432,6 +461,8 @@ for seg in segments:
 # Transcribe using OpenAI Whisper API
 transcribe_openai() {
 	local audio_file="$1"
+	source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+	vault_runtime_policy_check "openai/transcription" || return 64
 	local language="$3"
 	local output_format="$4"
 	local output_file="$5"
@@ -505,7 +536,7 @@ select_backend() {
 				echo "faster-whisper"
 				return 0
 			fi
-			print_error "faster-whisper not available. Install: pip install faster-whisper"
+			print_error "faster-whisper not available. Install: transcription-helper.sh install"
 			return 1
 			;;
 		whisper-cpp | whisper.cpp)
@@ -572,7 +603,7 @@ select_backend() {
 
 	print_error "No transcription backend available."
 	print_info "Install one of:"
-	print_info "  pip install faster-whisper    (recommended, local)"
+	print_info "  transcription-helper.sh install  (faster-whisper, recommended, local)"
 	print_info "  brew install --cask buzz      (GUI + CLI, local)"
 	print_info "  aidevops secret set GROQ_API_KEY  (cloud, free tier)"
 	return 1
@@ -931,42 +962,142 @@ cmd_configure() {
 	return 0
 }
 
-# Install dependencies
-cmd_install() {
-	print_header "Installing Transcription Dependencies"
+# Pick an interpreter for the helper venv (3.12 preferred for wheel availability)
+_select_venv_python() {
+	local candidate
+	for candidate in python3.12 python3.11 python3.13 python3.10 python3; do
+		if command -v "$candidate" &>/dev/null; then
+			echo "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
 
+# Create the helper-owned venv, or reuse it when it already exists.
+# Uses uv when available (pattern: speech-to-speech-helper.sh cmd_setup).
+_ensure_transcription_venv() {
+	if [[ -x "${TRANSCRIPTION_VENV_DIR}/bin/python" ]]; then
+		print_info "Reusing venv: $TRANSCRIPTION_VENV_DIR"
+		return 0
+	fi
+
+	local py_bin
+	if ! py_bin=$(_select_venv_python); then
+		print_error "Python 3.10+ not found. Install Python 3, then re-run: transcription-helper.sh install"
+		return 1
+	fi
+
+	# A directory without bin/python is a failed earlier attempt; recreate it.
+	if [[ -d "$TRANSCRIPTION_VENV_DIR" ]]; then
+		rm -rf "$TRANSCRIPTION_VENV_DIR"
+	fi
+	mkdir -p "$(dirname "$TRANSCRIPTION_VENV_DIR")"
+
+	print_info "Creating venv with $py_bin: $TRANSCRIPTION_VENV_DIR"
+	if command -v uv &>/dev/null; then
+		uv venv --quiet --python "$py_bin" "$TRANSCRIPTION_VENV_DIR" || return 1
+	elif ! "$py_bin" -m venv "$TRANSCRIPTION_VENV_DIR"; then
+		print_error "Venv creation failed. On Debian/Ubuntu install python3-venv (or uv), then re-run install."
+		return 1
+	fi
+	return 0
+}
+
+# Install or upgrade packages inside the helper venv (never system Python)
+_venv_pip_install() {
+	local venv_python="${TRANSCRIPTION_VENV_DIR}/bin/python"
+	if command -v uv &>/dev/null; then
+		uv pip install --quiet --python "$venv_python" --upgrade "$@"
+	else
+		"$venv_python" -m pip install --quiet --upgrade "$@"
+	fi
+	return $?
+}
+
+# Decode a generated WAV through faster-whisper's PyAV path so an
+# incompatible dependency resolution fails at install time, not mid-transcribe.
+_smoke_test_faster_whisper() {
+	local venv_python="${TRANSCRIPTION_VENV_DIR}/bin/python"
+	"$venv_python" - <<'PY'
+import os
+import tempfile
+import wave
+
+from faster_whisper.audio import decode_audio
+
+fd, path = tempfile.mkstemp(suffix=".wav")
+os.close(fd)
+try:
+    with wave.open(path, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000)
+    decode_audio(path)
+finally:
+    os.unlink(path)
+PY
+	return $?
+}
+
+# Install ffmpeg (and yt-dlp where the package manager is current) system-wide
+_install_system_dependencies() {
 	local os_type
 	os_type=$(uname -s)
 
-	# Install ffmpeg and yt-dlp
-	echo ""
 	print_info "Installing system dependencies..."
 	case "$os_type" in
 	"Darwin")
 		if command -v brew &>/dev/null; then
 			brew install ffmpeg yt-dlp 2>&1 | tail -5
 		else
-			print_warning "Homebrew not found. Install manually: ffmpeg, yt-dlp"
+			print_warning "Homebrew not found. Install manually: ffmpeg"
 		fi
 		;;
 	"Linux")
 		if command -v apt-get &>/dev/null; then
-			sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg 2>&1 | tail -3
-			pip3 install -U yt-dlp 2>&1 | tail -3
+			# python3-venv supplies ensurepip for the no-uv venv path.
+			# yt-dlp goes into the helper venv: apt's copy lags YouTube changes.
+			sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg python3-venv 2>&1 | tail -3
 		elif command -v pacman &>/dev/null; then
 			sudo pacman -S --noconfirm ffmpeg yt-dlp 2>&1 | tail -3
 		else
-			print_warning "Unknown package manager. Install manually: ffmpeg, yt-dlp"
+			print_warning "Unknown package manager. Install manually: ffmpeg"
 		fi
 		;;
 	esac
+	return 0
+}
 
-	# Install faster-whisper
+# Install dependencies
+cmd_install() {
+	print_header "Installing Transcription Dependencies"
+
 	echo ""
-	print_info "Installing faster-whisper (recommended local backend)..."
-	local python_bin
-	python_bin=$(find_python 2>/dev/null || echo "python3")
-	"$python_bin" -m pip install faster-whisper 2>&1 | tail -5
+	_install_system_dependencies
+
+	echo ""
+	_ensure_transcription_venv || return 1
+
+	local packages=("$FASTER_WHISPER_REQUIREMENT" "$PYAV_REQUIREMENT")
+	if ! command -v yt-dlp &>/dev/null; then
+		packages+=("yt-dlp")
+	fi
+
+	print_info "Installing into venv: ${packages[*]}"
+	if ! _venv_pip_install "${packages[@]}"; then
+		print_error "Package installation failed in $TRANSCRIPTION_VENV_DIR"
+		return 1
+	fi
+
+	print_info "Verifying faster-whisper audio decoding..."
+	if ! _smoke_test_faster_whisper; then
+		print_error "faster-whisper is installed but cannot decode audio (dependency mismatch)."
+		print_info "Inspect: ${TRANSCRIPTION_VENV_DIR}/bin/python -m pip list"
+		return 1
+	fi
+	print_success "faster-whisper decodes audio in $TRANSCRIPTION_VENV_DIR"
 
 	echo ""
 	cmd_status
@@ -987,9 +1118,10 @@ cmd_status() {
 	fi
 
 	# yt-dlp
-	if command -v yt-dlp &>/dev/null; then
+	local ytdlp_bin
+	if ytdlp_bin=$(find_ytdlp); then
 		local ytdlp_version
-		ytdlp_version=$(yt-dlp --version 2>/dev/null)
+		ytdlp_version=$("$ytdlp_bin" --version 2>/dev/null)
 		print_success "yt-dlp: $ytdlp_version"
 	else
 		print_warning "yt-dlp: not installed (needed for YouTube)"
@@ -999,7 +1131,7 @@ cmd_status() {
 	if has_faster_whisper; then
 		print_success "faster-whisper: available"
 	else
-		print_warning "faster-whisper: not installed (pip install faster-whisper)"
+		print_warning "faster-whisper: not installed (run: transcription-helper.sh install)"
 	fi
 
 	# whisper.cpp
@@ -1050,9 +1182,11 @@ Commands:
   transcribe <input> [opts]  Transcribe audio/video file or URL
   models                     List available transcription models and backends
   configure [model] [fmt]    Set default model and output format
-  install                    Install transcription dependencies
+  install                    Install dependencies into the helper-owned venv
   status                     Check installation status
   help                       Show this help message
+
+  <command> --help           Show help for install, status, or models
 
 Transcribe Options:
   --model, -m <model>        Whisper model (default: large-v3-turbo)
@@ -1090,6 +1224,57 @@ EOF
 	return 0
 }
 
+# Show usage for subcommands that take no arguments
+show_subcommand_help() {
+	local subcommand="$1"
+	case "$subcommand" in
+	install)
+		cat <<'EOF'
+Usage: transcription-helper.sh install
+
+Installs transcription dependencies. This may run privileged package-manager
+commands (sudo apt-get / sudo pacman / brew) for ffmpeg, then creates or
+reuses the helper-owned venv:
+  ~/.aidevops/.agent-workspace/work/transcription/.venv
+and installs faster-whisper (plus yt-dlp when none is on PATH) into it.
+Re-running reuses the venv and upgrades within the pinned constraints.
+EOF
+		;;
+	status)
+		cat <<'EOF'
+Usage: transcription-helper.sh status
+
+Reports installed tools, available backends, API keys and config. Read-only.
+EOF
+		;;
+	models)
+		cat <<'EOF'
+Usage: transcription-helper.sh models
+
+Lists transcription models and which backends are available. Read-only.
+EOF
+		;;
+	esac
+	return 0
+}
+
+# Handle --help or reject arguments for a no-argument subcommand.
+# Returns 0 to run the subcommand, 2 when help was printed, 1 on bad input.
+_check_no_arg_subcommand() {
+	local subcommand="$1"
+	shift
+	[[ $# -eq 0 ]] && return 0
+	case "$1" in
+	-h | --help)
+		show_subcommand_help "$subcommand"
+		return 2
+		;;
+	esac
+	print_error "Unknown argument for '$subcommand': $1"
+	print_info "Usage: transcription-helper.sh $subcommand [--help]"
+	return 1
+}
+
 # ─── Main Entry Point ────────────────────────────────────────────────
 
 main() {
@@ -1100,17 +1285,17 @@ main() {
 	transcribe)
 		cmd_transcribe "$@"
 		;;
-	models)
-		cmd_models
+	models | install | status)
+		local arg_rc=0
+		_check_no_arg_subcommand "$command" "$@" || arg_rc=$?
+		case "$arg_rc" in
+		0) "cmd_${command}" ;;
+		2) return 0 ;;
+		*) return 1 ;;
+		esac
 		;;
 	configure)
 		cmd_configure "$@"
-		;;
-	install)
-		cmd_install
-		;;
-	status)
-		cmd_status
 		;;
 	help | -h | --help | "")
 		show_help
@@ -1121,6 +1306,7 @@ main() {
 		return 1
 		;;
 	esac
+	return 0
 }
 
 main "$@"

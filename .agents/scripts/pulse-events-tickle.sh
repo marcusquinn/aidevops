@@ -132,7 +132,9 @@ _events_tickle_write_cache() {
 # return so the status code matches case branches cleanly.
 _events_tickle_parse_status() {
 	local raw="$1"
-	printf '%s' "$raw" | grep -m1 "^HTTP/" | awk '{print $2}' | tr -d '\r' 2>/dev/null || printf ''
+	# gh 2.102 reports non-2xx statuses on stderr without response headers.
+	printf '%s' "$raw" | sed -E 's/^gh: HTTP ([0-9]{3})([[:space:]].*)?$/HTTP\/2 \1/' | \
+		grep -m1 '^HTTP/' | awk '{print $2}' | tr -d '\r' 2>/dev/null || printf ''
 	return 0
 }
 
@@ -275,6 +277,8 @@ events_tickle() {
 
 	local http_status
 	http_status=$(_events_tickle_parse_status "$response")
+	# A 304 can prove freshness only when we actually sent If-None-Match.
+	[[ "$http_status" == "304" && -z "$stored_etag" ]] && http_status=""
 	if _events_tickle_rate_limited_response "$response" "$http_status"; then
 		_events_tickle_log "cooldown recorded for owner=${owner} (status=${http_status:-none} exit=${exit_code}); skipping search fanout"
 		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))

@@ -349,15 +349,82 @@ STUB
 }
 
 # ---------------------------------------------------------------------------
+# Tests 6-8 (GH#34033): publication:pending is ensured before allocation.
+# Arg $1: "missing-ok" | "missing-fail" | "present"
+# ---------------------------------------------------------------------------
+_run_publication_case() {
+	local mode="$1"
+	local stub_dir
+	stub_dir=$(_make_stub_dir)
+	local create_count_file="${stub_dir}/create_count"
+	local listed="bug\n"
+	[[ "$mode" == "present" ]] && listed="bug\npublication:pending\n"
+	local create_rc=0
+	[[ "$mode" == "missing-fail" ]] && create_rc=1
+
+	cat >"${stub_dir}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "auth" && "\${2:-}" == "status" ]]; then exit 0; fi
+if [[ "\${1:-}" == "label" && "\${2:-}" == "list" ]]; then
+  printf '${listed}'
+  exit 0
+fi
+if [[ "\${1:-}" == "label" && "\${2:-}" == "create" ]]; then
+  printf '%s\n' "\${3:-}" >> "${create_count_file}"
+  exit ${create_rc}
+fi
+exit 0
+STUB
+	chmod +x "${stub_dir}/gh"
+
+	local saved_path="$PATH"
+	PATH="${stub_dir}:${PATH}"
+	local saved_cache="${AIDEVOPS_LABEL_CACHE_FILE:-}"
+	unset AIDEVOPS_LABEL_CACHE_FILE
+
+	local rc=0 rc2=0
+	_ensure_publication_pending_label "owner/repo" 2>/dev/null || rc=$?
+	# Second call in the same session must not create again (cache updated)
+	if [[ "$mode" == "missing-ok" ]]; then
+		_ensure_publication_pending_label "owner/repo" 2>/dev/null || rc2=$?
+	fi
+
+	PATH="$saved_path"
+	[[ -n "$saved_cache" ]] && export AIDEVOPS_LABEL_CACHE_FILE="$saved_cache" || unset AIDEVOPS_LABEL_CACHE_FILE
+
+	local creates=0
+	[[ -f "$create_count_file" ]] && creates=$(wc -l <"$create_count_file" | tr -d ' ')
+
+	case "$mode" in
+	missing-ok)
+		assert_return "test6_publication_pending_created_returns_0" "$rc" "0"
+		assert_return "test6_publication_pending_second_call_returns_0" "$rc2" "0"
+		assert_eq "test6_publication_pending_created_once" "$creates" "1"
+		;;
+	missing-fail)
+		assert_return "test7_publication_pending_create_fails_returns_1" "$rc" "1"
+		;;
+	present)
+		assert_return "test8_publication_pending_present_returns_0" "$rc" "0"
+		assert_eq "test8_publication_pending_present_no_create" "$creates" "0"
+		;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
-printf '\n=== test-claim-label-auto-create.sh (GH#21474) ===\n\n'
+printf '\n=== test-claim-label-auto-create.sh (GH#21474, GH#34033) ===\n\n'
 
 _run_test1
 _run_test2
 _run_test3
 _run_test4
 _run_test5
+_run_publication_case missing-ok
+_run_publication_case missing-fail
+_run_publication_case present
 
 # ---------------------------------------------------------------------------
 # Summary

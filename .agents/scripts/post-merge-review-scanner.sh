@@ -191,6 +191,15 @@ scanner_budget_exhausted() {
 	local now_epoch elapsed
 	now_epoch=$(date +%s)
 	elapsed=$((now_epoch - start_epoch))
+	# Respect the absolute outer deadline too: child startup must not extend
+	# the budget beyond the watchdog's reserve, even with a larger local budget.
+	local stage_deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
+	local stage_reserve="${AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS:-30}"
+	[[ "$stage_reserve" =~ ^[0-9]+$ ]] || stage_reserve=30
+	if [[ "$stage_deadline" =~ ^[0-9]+$ ]] &&
+		[[ "$now_epoch" -ge "$((stage_deadline - stage_reserve))" ]]; then
+		return 0
+	fi
 	[[ "$elapsed" -ge "$SCANNER_BUDGET_SECONDS" ]]
 	return $?
 }

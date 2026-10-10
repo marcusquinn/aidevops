@@ -101,6 +101,22 @@ configured_missing_rc=$?
 set -e
 [[ "$configured_missing_rc" -eq 8 ]] && pass "configured but unreported required checks remain pending" || fail "configured but unreported required checks remain pending" "got ${configured_missing_rc}"
 assert_contains "configured but unreported required checks time out as pending" "TIMEOUT: required checks remain non-terminal" "$configured_missing_output"
+assert_contains "initial state names every unreported context" "CI wait started: none=0 missing=Format, Lint" "$configured_missing_output"
+assert_contains "timeout names every unreported context" "(none=0 missing=Format, Lint)" "$configured_missing_output"
+
+partial_dir="${TMPDIR_TEST}/partial"
+write_fixture "$partial_dir" 1 '[{"name":"Format","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+partial_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nQlty Regression Gate\nLint' run_fixture_wait "$partial_dir" --timeout 3 --heartbeat 1 2>&1)
+partial_rc=$?
+set -e
+assert_eq "passing reported checks cannot satisfy missing contexts" "8" "$partial_rc"
+assert_contains "initial state names only missing contexts" "CI wait started: pass=1 missing=Qlty Regression Gate, Lint" "$partial_output"
+heartbeat_line=$(printf '%s\n' "$partial_output" | grep '^heartbeat:' || true)
+assert_contains "heartbeat names missing contexts" "(pass=1 missing=Qlty Regression Gate, Lint)" "$heartbeat_line"
+timeout_line=$(printf '%s\n' "$partial_output" | grep '^TIMEOUT:' || true)
+assert_contains "timeout names missing contexts with passing checks" "(pass=1 missing=Qlty Regression Gate, Lint)" "$timeout_line"
+[[ "$partial_output" != *'missing=Format'* ]] && pass "reported context is excluded from missing names" || fail "reported context is excluded from missing names"
 
 all_checks_dir="${TMPDIR_TEST}/all-checks"
 write_fixture "$all_checks_dir" 1 '[{"name":"Preview","workflow":"Deploy","state":"PENDING","bucket":"pending","link":""}]'
@@ -123,6 +139,17 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
 	else
 		printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
 	fi
+	exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo" ]]; then
+	[[ -z "${GH_TEST_METADATA_LOG:-}" ]] || printf 'read\n' >>"$GH_TEST_METADATA_LOG"
+	case "${GH_TEST_REPO_KIND:-personal}" in
+	private) printf '%s\n' '{"private":true,"owner":{"type":"User"}}' ;;
+	organisation) printf '%s\n' '{"private":false,"owner":{"type":"Organization"}}' ;;
+	unavailable) exit 1 ;;
+	malformed) printf '%s\n' '{}' ;;
+	*) printf '%s\n' '{"private":false,"owner":{"type":"User"}}' ;;
+	esac
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/pulls/123" ]]; then
@@ -160,6 +187,14 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/rules/branches/main" 
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
+	if [[ "${GH_TEST_MODE:-}" == "qlty-billing" ]]; then
+		jq -nc --arg name "${GH_TEST_CHECK_NAME:-qlty check}" --arg description "${GH_TEST_DESCRIPTION:-Qlty did not run because you are out of minutes.}" '
+			{data:{node:{__typename:"PullRequest",statusCheckRollup:{nodes:[{commit:{statusCheckRollup:{contexts:{nodes:[
+				{__typename:"StatusContext",context:$name,state:"ERROR",targetUrl:"https://example.invalid/qlty",createdAt:"2026-08-01T00:00:00Z",description:$description,isRequired:true},
+				{__typename:"StatusContext",context:"Lint",state:"SUCCESS",targetUrl:"",createdAt:"2026-08-01T00:00:00Z",description:"",isRequired:true}
+			],pageInfo:{hasNextPage:false,endCursor:null}}}}}]}},rateLimit:{cost:1}}}'
+		exit 0
+	fi
 	if [[ "${GH_TEST_MODE:-no-required}" == "api-error" ]]; then
 		printf '%s\n' 'HTTP 503: service unavailable' >&2
 		exit 1
@@ -170,6 +205,60 @@ fi
 exit 1
 STUB
 chmod +x "${live_bin}/gh"
+
+for repo_kind in private organisation personal unavailable malformed; do
+	set +e
+	billing_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=qlty-billing GH_TEST_REPO_KIND="$repo_kind" \
+		AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 "$HELPER" wait 123 --repo example/repo --all --timeout 0 2>&1)
+	billing_rc=$?
+	set -e
+	case "$repo_kind" in
+	private | organisation)
+		assert_eq "$repo_kind billing exits successfully" 0 "$billing_rc"
+		assert_contains "$repo_kind reports skipped status and link" 'SKIPPED (qlty out of credits): qlty check https://example.invalid/qlty' "$billing_output"
+		assert_contains "$repo_kind uses normalized counts" 'pass=1 skipping=1' "$billing_output"
+		;;
+	*)
+		assert_eq "$repo_kind billing remains a terminal failure" 1 "$billing_rc"
+		[[ "$billing_output" != *'SKIPPED ('* ]] && pass "$repo_kind does not skip" || fail "$repo_kind does not skip"
+		;;
+	esac
+	if [[ "$repo_kind" == personal ]]; then
+		assert_contains "public personal billing is unexpected" 'NOTE: unexpected qlty out-of-credits failure on a public personal-account repository' "$billing_output"
+	fi
+done
+
+for check_name in 'QLTY CHECK' 'Qlty Regression Gate'; do
+	set +e
+	name_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=qlty-billing GH_TEST_REPO_KIND=organisation GH_TEST_CHECK_NAME="$check_name" \
+		GH_TEST_DESCRIPTION='OUT OF CREDITS' AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 "$HELPER" wait 123 --repo example/repo --all --timeout 0 2>&1)
+	name_rc=$?
+	set -e
+	if [[ "$check_name" == 'QLTY CHECK' ]]; then
+		assert_eq "case-insensitive qlty credit status skips" 0 "$name_rc"
+	else
+		assert_eq "Actions regression gate is never skipped" 1 "$name_rc"
+	fi
+done
+
+set +e
+code_failure_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=qlty-billing GH_TEST_REPO_KIND=private \
+	GH_TEST_DESCRIPTION='Lint violations found' AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 "$HELPER" wait 123 --repo example/repo --all --timeout 0 2>&1)
+code_failure_rc=$?
+set -e
+assert_eq "non-billing qlty failure stays terminal" 1 "$code_failure_rc"
+assert_contains "non-billing qlty is listed in failure details" 'qlty check: fail' "$code_failure_output"
+
+billing_transition_dir="${TMPDIR_TEST}/billing-transition"
+write_fixture "$billing_transition_dir" 1 '[{"name":"qlty check","state":"ERROR","bucket":"fail","description":"out of minutes","link":"https://example.invalid/qlty"},{"name":"Lint","state":"PENDING","bucket":"pending"}]'
+write_fixture "$billing_transition_dir" 2 '[{"name":"qlty check","state":"ERROR","bucket":"fail","description":"out of minutes","link":"https://example.invalid/qlty"},{"name":"Lint","state":"SUCCESS","bucket":"pass"}]'
+billing_metadata_log="${TMPDIR_TEST}/billing-metadata"
+billing_transition_output=$(PATH="${live_bin}:$PATH" GH_TEST_REPO_KIND=organisation GH_TEST_METADATA_LOG="$billing_metadata_log" \
+	run_fixture_wait "$billing_transition_dir" --all)
+assert_eq "billing metadata is cached across polls" read "$(<"$billing_metadata_log")"
+billing_note_count=$(printf '%s\n' "$billing_transition_output" | grep -c '^SKIPPED (' || true)
+assert_eq "billing skip is printed once across polls" 1 "$billing_note_count"
+assert_contains "other pending checks must finish" '+ Lint: pending -> pass' "$billing_transition_output"
 
 live_no_required_output=$(PATH="${live_bin}:$PATH" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)

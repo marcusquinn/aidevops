@@ -723,6 +723,41 @@ set_repo_maintenance() {
 	return 0
 }
 
+# Set the explicit Actions capability without changing Pulse or maintenance.
+set_repo_actions() {
+	local selector="$1" desired="$2" reason="${3:-}"
+	local matches="" temp_file=""
+	case "$desired" in
+	available | unavailable) ;;
+	*) return 1 ;;
+	esac
+	init_repos_file
+	if [[ -d "$selector" ]]; then
+		selector=$(resolve_canonical_repo_path "$selector") || return 1
+	fi
+	matches=$(jq -r --arg selector "$selector" '[.initialized_repos[]?
+		| select(.slug == $selector or .path == $selector)] | length' "$REPOS_FILE") || return 1
+	if [[ "$matches" != "1" ]]; then
+		print_error "Expected one registered repository; found $matches"
+		return 1
+	fi
+	temp_file=$(mktemp "${REPOS_FILE}.tmp.XXXXXX") || return 1
+	if ! jq --arg selector "$selector" --arg desired "$desired" --arg reason "$reason" '
+		(.initialized_repos[] | select(.slug == $selector or .path == $selector)) |=
+			(if $desired == "available" then del(.actions, .actions_reason)
+			else .actions = $desired | if $reason != "" then .actions_reason = $reason
+				else del(.actions_reason) end end)
+	' "$REPOS_FILE" >"$temp_file" || ! jq -e '.initialized_repos | type == "array"' "$temp_file" >/dev/null; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	if ! mv "$temp_file" "$REPOS_FILE"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	return 0
+}
+
 # Print effective maintenance state for a registered repository.
 # Output: maintenance<TAB>pulse<TAB>slug<TAB>path
 get_repo_maintenance_state() {

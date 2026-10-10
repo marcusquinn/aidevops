@@ -31,7 +31,7 @@ When dispatched against an auto-generated issue body (review-followup, quality-d
 
 - **A. Premise falsified → close the issue** with a `> Premise falsified. <claim>. <code reality>. Not acting.` rationale comment. No PR. The closing comment trains the next session and the noise filter.
 - **B. Premise correct + obvious fix → implement and PR** with normal lifecycle gate (`Resolves #<this-issue>`).
-- **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Then apply `hold-for-review` and stop. The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
+- **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Link every file, line, PR, run or comment cited (GitHub permalinks from `gh browse --no-browser --commit=<sha> <path>:<line>`, URLs from `gh ... --json url`) so the reviewer can decide without searching. Then apply `hold-for-review` and stop. The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
 
 Ambiguity about scope or style is NOT Outcome C. Applying any review hold at issue creation time merely to punt analysis to a human is forbidden. Reasoning responsibility applies here too: you do the thinking.
 
@@ -220,6 +220,18 @@ AI brief owner:
    (`wake`: `brief_revision`, `environment_fix`, `owner_change`,
    `dependency_change` or `human_decision`). A decision suppresses
    re-assessment for 24h; unchanged blockers are not retried blindly.
+
+#### Recoverable policy denials (GH#33969)
+
+A `[NET-TIER]` loopback denial is a routing hint, not a terminal blocker. Never
+release with `status:blocked`, `permission_required` or a draft checkpoint
+because of it alone. Follow the route the denial names: keep the server running
+in an `aidevops_bounded_operation` and retry the probe once the port listens,
+run server and client inside one bounded operation, or use the registered
+local-hosting site. Report a blocker only after those routes have been tried and
+failed, or when the denial says a whole-process egress backend is active, with
+the denial text and the attempted route as evidence. Details:
+`services/hosting/local-hosting.md` "Headless worker verification access".
 
 ## PR auto-approval defense-in-depth (GH#17671, t2933)
 

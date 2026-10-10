@@ -48,7 +48,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 
 # Extract _derive_pr_title_prefix from the helper (same pattern as
 # test-full-loop-parent-task.sh). Function ends on a column-0 `}`.
-eval "$(sed -n '/^_derive_pr_title_prefix()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper.sh")"
+eval "$(sed -n '/^_derive_pr_title_prefix()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # ============================================================================
 # Case 1: open tNNN entry with matching ref:GH#N → tNNN

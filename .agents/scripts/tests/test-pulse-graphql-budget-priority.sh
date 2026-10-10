@@ -137,7 +137,8 @@ if _pulse_should_defer_budget_priority_stage "reap_orphan_workers"; then
 	printf 'FAIL: critical stage deferred in REST reserve mode\n' >&2
 	exit 1
 fi
-grep -q '_pulse_run_budget_priority_stage "stale_blocked_reconcile" _pulse_reconcile_stale_blocked_if_due' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
+grep -q '_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile"' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
+grep -q '^[[:space:]]*_pulse_reconcile_stale_blocked_if_due || true' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
 grep -q '_pulse_run_budget_priority_stage "approval_merge_trigger" _drain_merge_trigger_file_if_present' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
 _pulse_defer_budget_priority_stage "dashboard_freshness_check"
 grep -q 'pulse_rest_core_budget_reserve_mode' "${TMP_DIR}/counters.log"

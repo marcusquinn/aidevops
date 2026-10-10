@@ -1686,6 +1686,43 @@ test_status_accepts_live_identity_matched_ledger_pid() {
 	return 0
 }
 
+# GH#33916: real `ps` right-aligns PIDs and pads STAT; PIDs below 10000 on
+# macOS carry leading spaces and must not be dropped by either evidence path.
+# A live but unobservable ledger PID is unresolved, never confidently inactive.
+test_status_handles_padded_ps_rows_and_unresolved_identity() {
+	local worker='bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key manual-cli-12345-1 --dir /tmp/aidevops-existing --title Issue #12345'
+	local out="" rc=0
+
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-1'
+	MOCK_LIVE_PIDS="888"
+	MOCK_PS_LINES="  888 Ss   ${worker}"
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local ledger_ok=1
+	[[ "$rc" -eq 0 && "$out" == *"Active dispatch for #12345 (owner/repo):"* && "$out" == *"888"* ]] && ledger_ok=0
+	print_result "status verifies a padded ledger PID row" "$ledger_ok" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=""
+	MOCK_PS_LINES="  703 S+   ${worker}"
+	rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local process_ok=1
+	[[ "$rc" -eq 0 && "$out" == *"live process evidence"* && "$out" == *"703"* ]] && process_ok=0
+	print_result "status detects a padded live worker row without ledger evidence" "$process_ok" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-1'
+	MOCK_PS_LINES=""
+	rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local unresolved_ok=1
+	[[ "$rc" -eq 0 && "$out" == *"Unresolved dispatch"* && "$out" != *"No active dispatch"* ]] && unresolved_ok=0
+	print_result "status reports a live unobservable ledger PID as unresolved" "$unresolved_ok" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=""
+	MOCK_LIVE_PIDS=""
+	MOCK_PS_LINES=""
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
@@ -1791,13 +1828,42 @@ sys.exit(0 if sys.argv[3] in os.environ['AVAILABLE'].split(',') else 1)
             else:
                 assert not effects, (evidence, effects)
                 assert 'runner_capability_unmet' in result.stderr, evidence
-            assert not any(name in result.stdout + result.stderr for name in names), evidence
+                if label == 'failed fresh read':
+                    # GH#34003: metadata_unreadable belongs only to the fresh read.
+                    assert 'metadata_unreadable' in result.stderr, evidence
+                    assert 'reason=repo_' not in result.stderr, evidence
+            # Requirement names are public diagnostics only as the missing-secret
+            # reason (name=NAME), matching test-runner-capability.sh.
+            output = result.stdout + result.stderr
+            for name in names:
+                output = output.replace('reason=secret_missing name=' + name, '')
+            assert not any(name in output for name in names), evidence
     # A missing registered repository must not silently check the caller's cwd.
+    # GH#34003: unregistered and moved checkouts get distinct, actionable reasons
+    # (never metadata_unreadable), and dry-run discloses the same refusal.
+    missing = str(root / 'moved-away')
+    # The stubbed target validation leaves display-only metadata unset.
+    dryrun_env = dict(fixture_env, _DSI_ISSUE_TITLE='fixture', _DSI_TIER='standard',
+                      _DSI_ISSUE_URL='https://github.com/owner/repo/issues/123')
+    for repo_path, reason in (('', 'repo_unregistered'), (missing, 'repo_path_missing')):
+        for extra in ([], ['--dry-run']):
+            events.write_text('')
+            command = ['cmd_dispatch', '123', 'owner/repo', *extra]
+            result = subprocess.run(['bash', '-c', invocation, 'fixture', *command],
+                                    env=dict(dryrun_env, REPO_PATH=repo_path),
+                                    capture_output=True, text=True)
+            evidence = (command, reason, result.returncode, result.stdout, result.stderr)
+            assert result.returncode == 1 and not events.read_text(), evidence
+            assert 'reason=' + reason in result.stderr, evidence
+            assert 'metadata_unreadable' not in result.stderr, evidence
+            assert 'Dry-run complete' not in result.stdout, evidence
+    # A registered path still yields a clean, non-mutating dry-run.
     events.write_text('')
-    result = subprocess.run(['bash', '-c', invocation, 'fixture', 'cmd_dispatch', '123', 'owner/repo'],
-                            env=dict(fixture_env, REPO_PATH=''), capture_output=True, text=True)
-    assert result.returncode != 0 and not events.read_text(), result
-print('PASS 25 isolated normal/no-ceremony/resume capability admission fixtures')
+    result = subprocess.run(['bash', '-c', invocation, 'fixture', 'cmd_dispatch', '123', 'owner/repo', '--dry-run'],
+                            env=dryrun_env, capture_output=True, text=True)
+    assert result.returncode == 0 and not events.read_text(), result
+    assert 'Dry-run complete' in result.stdout and 'reason=repo_' not in result.stderr, result
+print('PASS 29 isolated normal/no-ceremony/resume capability admission fixtures')
 PY
 	print_result "fresh runner capabilities block manual claims and checkpoint resume without secret disclosure" "$result"
 	return 0
@@ -1868,6 +1934,7 @@ _run_tests() {
 	test_status_reports_live_process_without_ledger
 	test_status_rejects_dead_or_reused_ledger_pid
 	test_status_accepts_live_identity_matched_ledger_pid
+	test_status_handles_padded_ps_rows_and_unresolved_identity
 
 	echo
 	echo "======================================"

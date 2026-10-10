@@ -184,3 +184,25 @@ if _dispatch_cycle_budget_admits_round fixture before; then
 	exit 1
 fi
 printf 'PASS first wave preserves the per-candidate ceremony reserve\n'
+
+# GH#33944: post-label refill must not spend its admission budget normalizing
+# the entire blocked backlog before already-available candidates can launch.
+rm -f "$STOP_FLAG"
+unset _PULSE_FIRST_DISPATCH_WAVE
+printf '200\n' >"$CLOCK"
+: >"$EVENTS"
+_dispatch_invalidate_candidate_snapshot() {
+	local reason="$1"
+	printf 'invalidate:%s\n' "$reason" >>"$EVENTS"
+	return 0
+}
+apply_dispatch_max() {
+	local mode="${1:-normalize}"
+	printf 'refill:%s\n' "$mode" >>"$EVENTS"
+	[[ "$mode" == skip ]] || return 1
+	return 0
+}
+_preflight_post_label_refill
+[[ "$(tr '\n' ';' <"$EVENTS")" == 'invalidate:label_maintenance_complete;refill:skip;' ]]
+[[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 0 ]]
+printf 'PASS post-label refill invalidates stale candidates and defers backlog normalization without partial first-wave discovery\n'

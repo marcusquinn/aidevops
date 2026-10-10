@@ -141,10 +141,132 @@ check_dispatch_dedup() {
 	return 1
 }
 
+#######################################
+# Conversation-lock failure attribution (GH#34057). Values are normalized
+# against a fixed allowlist before any log write, so lifecycle logs never carry
+# raw stderr, response bodies, credentials or workload content. These globals
+# are diagnostics only; they never influence a lock, verify or deny decision.
+#######################################
+_PULSE_CONVERSATION_LOCK_UNCLASSIFIED="unclassified"
+_PULSE_CONVERSATION_LOCK_FAILURE_REASON=""
+_PULSE_CONVERSATION_LOCK_FAILURE_DETAIL=""
+_PULSE_CONVERSATION_LOCK_MUTATION=""
+
+_conversation_lock_reset_attribution() {
+	_PULSE_CONVERSATION_LOCK_FAILURE_REASON=""
+	_PULSE_CONVERSATION_LOCK_FAILURE_DETAIL=""
+	_PULSE_CONVERSATION_LOCK_MUTATION="not_attempted"
+	return 0
+}
+
+#######################################
+# Record one conversation-lock failure cause (normalized when summarized).
+# Args: $1 = reason, $2 = optional read-failure class
+#######################################
+_conversation_lock_set_failure() {
+	local reason="$1"
+	local detail="${2:-none}"
+	_PULSE_CONVERSATION_LOCK_FAILURE_REASON="$reason"
+	_PULSE_CONVERSATION_LOCK_FAILURE_DETAIL="$detail"
+	return 0
+}
+
+#######################################
+# Print a value only when it belongs to the named allowlist.
+# Args: $1 = kind (reason|detail|mutation), $2 = value
+#######################################
+_conversation_lock_allowlisted() {
+	local kind="$1"
+	local value="$2"
+	case "${kind}:${value}" in
+	reason:invalid_arguments | reason:read_unavailable | reason:state_malformed | \
+		reason:verify_read_unavailable | reason:verify_read_malformed | \
+		reason:verify_not_propagated | reason:marker_record_failed | \
+		detail:none | detail:not_found | detail:auth_rejected | detail:rate_limited | \
+		detail:forbidden | detail:server_error | detail:transport_error | \
+		detail:no_diagnostic | mutation:not_attempted | mutation:accepted | \
+		mutation:rejected)
+		printf '%s\n' "$value"
+		;;
+	*) printf '%s\n' "$_PULSE_CONVERSATION_LOCK_UNCLASSIFIED" ;;
+	esac
+	return 0
+}
+
+#######################################
+# Print the last conversation-lock failure as sanitized key=value fields.
+# Unknown or unset state is reported as unclassified, never inferred.
+#######################################
+conversation_lock_failure_summary() {
+	printf 'cause=%s detail=%s mutation=%s\n' \
+		"$(_conversation_lock_allowlisted reason "${_PULSE_CONVERSATION_LOCK_FAILURE_REASON:-}")" \
+		"$(_conversation_lock_allowlisted detail "${_PULSE_CONVERSATION_LOCK_FAILURE_DETAIL:-none}")" \
+		"$(_conversation_lock_allowlisted mutation "${_PULSE_CONVERSATION_LOCK_MUTATION:-not_attempted}")"
+	return 0
+}
+
+#######################################
+# Map gh API stderr to a bounded class. The raw text stays in process memory
+# and is never echoed. Rate limits are checked before generic HTTP 403.
+# Args: $1 = captured stderr text
+#######################################
+_conversation_lock_read_failure_class() {
+	local err_text="$1"
+	local lowered=""
+	if [[ -z "$err_text" ]]; then
+		printf 'no_diagnostic\n'
+		return 0
+	fi
+	lowered=$(printf '%s' "$err_text" | tr '[:upper:]' '[:lower:]')
+	case "$lowered" in
+	*"rate limit"* | *"http 429"*) printf 'rate_limited\n' ;;
+	*"http 404"* | *"not found"*) printf 'not_found\n' ;;
+	*"http 401"* | *"bad credentials"*) printf 'auth_rejected\n' ;;
+	*"http 403"*) printf 'forbidden\n' ;;
+	*"http 5"[0-9][0-9]*) printf 'server_error\n' ;;
+	*"timeout"* | *"timed out"* | *"connection"* | *"dial tcp"* | *"no such host"* | \
+		*"could not resolve"* | *"eof"* | *"tls"*) printf 'transport_error\n' ;;
+	*) printf '%s\n' "$_PULSE_CONVERSATION_LOCK_UNCLASSIFIED" ;;
+	esac
+	return 0
+}
+
+#######################################
+# Read the live conversation-lock state for one issue.
+# Success stdout is unchanged (the API .locked value). On read failure the
+# function still returns 1 and prints only "unavailable:<class>" so callers
+# that inspect the exit status keep their fail-closed behaviour (GH#34057).
+#######################################
 _read_issue_conversation_lock() {
 	local issue_num="$1"
 	local slug="$2"
-	gh api "repos/${slug}/issues/${issue_num}" --jq '.locked' 2>/dev/null || return 1
+	local err_file="" err_target="/dev/null" locked_state="" read_rc=0 err_text=""
+	err_file=$(mktemp 2>/dev/null) || err_file=""
+	[[ -z "$err_file" ]] || err_target="$err_file"
+	locked_state=$(gh api "repos/${slug}/issues/${issue_num}" --jq '.locked' 2>"$err_target") || read_rc=$?
+	if [[ -n "$err_file" ]]; then
+		err_text=$(<"$err_file") || err_text=""
+		rm -f "$err_file" 2>/dev/null || true
+	fi
+	if [[ "$read_rc" -ne 0 ]]; then
+		printf 'unavailable:%s\n' "$(_conversation_lock_read_failure_class "$err_text")"
+		return 1
+	fi
+	printf '%s\n' "$locked_state"
+	return 0
+}
+
+#######################################
+# Extract the bounded read-failure class from a failed read's stdout.
+# Args: $1 = captured stdout of a failed _read_issue_conversation_lock call
+#######################################
+_conversation_lock_read_failure_detail() {
+	local captured="$1"
+	if [[ "$captured" == unavailable:* ]]; then
+		printf '%s\n' "${captured#unavailable:}"
+		return 0
+	fi
+	printf '%s\n' "$_PULSE_CONVERSATION_LOCK_UNCLASSIFIED"
 	return 0
 }
 
@@ -230,17 +352,27 @@ _verify_issue_conversation_lock() {
 
 	while [[ "$attempt" -le "$attempts" ]]; do
 		# Retry observed propagation lag, never an unknown transport outcome.
-		locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug") || return 1
+		if ! locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug"); then
+			_conversation_lock_set_failure verify_read_unavailable \
+				"$(_conversation_lock_read_failure_detail "$locked_state")"
+			return 1
+		fi
 		if [[ "$locked_state" == "true" ]]; then
 			return 0
 		fi
-		[[ "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
+		if [[ "$locked_state" != "$_PULSE_DISPATCH_FALSE" ]]; then
+			_conversation_lock_set_failure verify_read_malformed
+			return 1
+		fi
 		if [[ "$attempt" -lt "$attempts" ]]; then
 			sleep "$retry_delay"
 		fi
 		attempt=$((attempt + 1))
 	done
 
+	# Every bounded read answered locked=false: the mutation outcome is not
+	# visible yet. This is not evidence that the lock is absent indefinitely.
+	_conversation_lock_set_failure verify_not_propagated
 	return 1
 }
 
@@ -257,34 +389,51 @@ _apply_issue_conversation_lock_state() {
 	local reason="${3:-resolved}"
 	local locked_state="$4"
 
-	[[ -n "$issue_num" && -n "$slug" ]] || return 1
+	_conversation_lock_reset_attribution
+	if [[ -z "$issue_num" || -z "$slug" ]]; then
+		_conversation_lock_set_failure invalid_arguments
+		return 1
+	fi
 	case "$locked_state" in
 	true)
-		_record_auto_dispatch_lock "$issue_num" "$slug" || return 1
+		if ! _record_auto_dispatch_lock "$issue_num" "$slug"; then
+			_conversation_lock_set_failure marker_record_failed
+			return 1
+		fi
 		echo "[pulse-wrapper] Reused existing verified conversation lock for #${issue_num} in ${slug} (GH#30180)" >>"$LOGFILE"
 		return 0
 		;;
 	false) ;;
-	*) return 1 ;;
+	*)
+		_conversation_lock_set_failure state_malformed
+		return 1
+		;;
 	esac
 
 	# aidevops:trust-boundary — never launch a worker when the mutable public
 	# instruction surface could not be frozen and independently re-read.
 	local lock_applied=0
 	if ! gh issue lock "$issue_num" --repo "$slug" --reason "$reason" >/dev/null 2>&1; then
+		# A rejected mutation is not retried: only an independent read may
+		# establish that another actor already froze the conversation.
+		_PULSE_CONVERSATION_LOCK_MUTATION="rejected"
 		if ! _verify_issue_conversation_lock "$issue_num" "$slug"; then
-			echo "[pulse-wrapper] Failed to verify conversation lock for #${issue_num} in ${slug}; dispatch remains blocked (GH#30180)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Failed to verify conversation lock for #${issue_num} in ${slug}; dispatch remains blocked (GH#30180) $(conversation_lock_failure_summary)" >>"$LOGFILE"
 			return 1
 		fi
 		echo "[pulse-wrapper] Reused existing verified conversation lock for #${issue_num} in ${slug} (GH#30180)" >>"$LOGFILE"
 	else
 		lock_applied=1
+		_PULSE_CONVERSATION_LOCK_MUTATION="accepted"
 	fi
 	if [[ "$lock_applied" -eq 1 ]] && ! _verify_issue_conversation_lock "$issue_num" "$slug"; then
-		echo "[pulse-wrapper] Failed to verify conversation lock for #${issue_num} in ${slug}; dispatch remains blocked (GH#30180)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Failed to verify conversation lock for #${issue_num} in ${slug}; dispatch remains blocked (GH#30180) $(conversation_lock_failure_summary)" >>"$LOGFILE"
 		return 1
 	fi
-	_record_auto_dispatch_lock "$issue_num" "$slug" || return 1
+	if ! _record_auto_dispatch_lock "$issue_num" "$slug"; then
+		_conversation_lock_set_failure marker_record_failed
+		return 1
+	fi
 	echo "[pulse-wrapper] Locked #${issue_num} in ${slug} during worker execution (t1934)" >>"$LOGFILE"
 
 	return 0
@@ -296,12 +445,20 @@ lock_issue_for_worker() {
 	local reason="${3:-resolved}"
 	local locked_state=""
 
-	[[ -n "$issue_num" && -n "$slug" ]] || return 1
+	_conversation_lock_reset_attribution
+	if [[ -z "$issue_num" || -z "$slug" ]]; then
+		_conversation_lock_set_failure invalid_arguments
+		return 1
+	fi
 
 	# The launch path always uses a fresh per-target read. Repository-level
 	# reconciliation calls _apply_issue_conversation_lock_state directly with a
 	# bounded authoritative batch snapshot and cannot weaken this final gate.
-	locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug") || return 1
+	if ! locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug"); then
+		_conversation_lock_set_failure read_unavailable \
+			"$(_conversation_lock_read_failure_detail "$locked_state")"
+		return 1
+	fi
 	_apply_issue_conversation_lock_state "$issue_num" "$slug" "$reason" "$locked_state"
 	return $?
 }

@@ -116,6 +116,13 @@ source "$SHARED_GH" >/dev/null 2>&1 || true
 # provisioning, only about which --label flags reach gh)
 _ensure_origin_labels_for_args() { return 0; }
 
+# Record derived status-label provisioning in call order (GH#34003). The real
+# contract reconciliation has its own suite (test-status-label-state-machine.sh).
+ensure_status_labels_exist() {
+	printf 'ensure-status %s\n' "$1" >>"${GH_RECORD_FILE}"
+	return "${MOCK_ENSURE_STATUS_RC:-0}"
+}
+
 # Stub _gh_wrapper_auto_sig (no-op — bypasses signature footer modification
 # so we don't have to plumb a fake helper path)
 _gh_wrapper_auto_sig() {
@@ -613,6 +620,47 @@ else
 		"status_count=$status_n line: $last"
 fi
 unset TEST_TODO_TASK_ID TEST_TODO_DERIVED_LABELS
+
+# B'10: derived status:available is provisioned on the target repo before the
+# create call (GH#34003: a new repo failed with "status:available not found").
+reset_recorder
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "advisory" --body "body" >/dev/null 2>&1
+ensure_line=$(grep -n '^ensure-status o/r$' "$GH_RECORD_FILE" | cut -d: -f1)
+create_line=$(grep -n '^issue create ' "$GH_RECORD_FILE" | cut -d: -f1)
+if [[ -n "$ensure_line" && -n "$create_line" && "$ensure_line" -lt "$create_line" ]]; then
+	print_result "B'10: gh_create_issue provisions derived status label before create" 0
+else
+	print_result "B'10: gh_create_issue provisions derived status label before create" 1 \
+		"calls: $(tr '\n' ' ' <"$GH_RECORD_FILE")"
+fi
+
+# B'11: caller-supplied status → wrapper provisions nothing (never creates
+# arbitrary caller labels).
+reset_recorder
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "advisory" --body "body" \
+	--label "status:blocked" >/dev/null 2>&1
+if ! grep -q '^ensure-status ' "$GH_RECORD_FILE" && grep -q '^issue create ' "$GH_RECORD_FILE"; then
+	print_result "B'11: caller status label skips derived-label provisioning" 0
+else
+	print_result "B'11: caller status label skips derived-label provisioning" 1 \
+		"calls: $(tr '\n' ' ' <"$GH_RECORD_FILE")"
+fi
+
+# B'12: provisioning failure (e.g. no label-create permission) emits a bounded
+# prerequisite diagnostic and attempts exactly one create — no retry/duplicate.
+reset_recorder
+provision_err="${TEST_ROOT}/provision-err.txt"
+MOCK_ENSURE_STATUS_RC=1 SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "advisory" --body "body" >/dev/null 2>"$provision_err"
+create_count=$(grep -c '^issue create ' "$GH_RECORD_FILE" || true)
+if [[ "$create_count" -eq 1 ]] && grep -q 'could not verify or provision canonical status:\* labels on o/r' "$provision_err"; then
+	print_result "B'12: provisioning failure is diagnosed with one create attempt" 0
+else
+	print_result "B'12: provisioning failure is diagnosed with one create attempt" 1 \
+		"creates=$create_count stderr=$(tr '\n' ' ' <"$provision_err")"
+fi
 
 # ---------------------------------------------------------------------------
 # Layer C: structural checks on full-loop-helper-commit.sh

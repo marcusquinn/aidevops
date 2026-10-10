@@ -18,6 +18,11 @@
 #       If the markers don't exist, the block is inserted after the first
 #       H1 (or at the top of the file if no H1).
 #
+#   starter-owned <readme-path>
+#       Exit 0 when the README badge block belongs to a WordPress plugin
+#       starter (rename-plugin.sh rewrites it), else exit 1. inject and check
+#       leave such blocks alone.
+#
 #   check <readme-path> <slug> [--branch BRANCH]
 #       Compare the README's current badge block to what would be rendered.
 #       Exit 0 if they match (or no block present and not requested), exit 1
@@ -55,6 +60,7 @@
 #   readme-badges-helper.sh render <slug> [options]
 #   readme-badges-helper.sh inject <readme-path> <slug> [options]
 #   readme-badges-helper.sh check <readme-path> <slug> [options]
+#   readme-badges-helper.sh starter-owned <readme-path>
 #
 # Options:
 #   --branch BRANCH        Override default branch detection
@@ -179,6 +185,12 @@ parse_args() {
 			SLUG="$_slug"
 			shift
 			;;
+		starter-owned)
+			[[ $# -ge 1 ]] || die "starter-owned: <readme-path> required" 2
+			local _readme="$1"
+			README_PATH="$_readme"
+			shift
+			;;
 		inject | check)
 			[[ $# -ge 2 ]] || die "$CMD: <readme-path> <slug> required" 2
 			local _readme="$1"
@@ -192,7 +204,7 @@ parse_args() {
 			exit 0
 			;;
 		*)
-			die "unknown subcommand: $CMD (try render|inject|check)" 2
+			die "unknown subcommand: $CMD (try render|inject|check|starter-owned)" 2
 			;;
 	esac
 
@@ -848,6 +860,26 @@ render_full_block() {
 
 # ───────────────────────────── inject / check ─────────────────────────────
 
+STARTER_OWNED_NOTE='<!-- On GitHub only: the Read Me tab skips this block. scripts/rename-plugin.sh rewrites it. -->'
+
+# Succeed when the README badge block is owned by a WordPress plugin starter:
+# the line after the start marker is the starter's note, or the repo carries
+# scripts/rename-plugin.sh with a set_badges function.
+is_starter_owned() {
+	local _readme="$1"
+	[[ -f "$_readme" ]] || return 1
+	grep -qF "$MARKER_START" "$_readme" || return 1
+	local _next
+	_next=$(awk -v start="$MARKER_START" 'found { sub(/\r$/, ""); print; exit } $0 == start { found = 1 }' "$_readme")
+	if [[ "$_next" == "$STARTER_OWNED_NOTE" ]]; then
+		return 0
+	fi
+	local _script
+	_script="$(cd "$(dirname "$_readme")" 2>/dev/null && pwd)/scripts/rename-plugin.sh"
+	[[ -f "$_script" ]] || return 1
+	grep -qE '^[[:space:]]*(function[[:space:]]+)?set_badges[[:space:]]*(\(\))?' "$_script"
+}
+
 # Read the existing badge block from a README, or empty if absent.
 extract_existing_block() {
 	local _readme="$1"
@@ -870,6 +902,11 @@ inject_block() {
 	local _rendered="$2"
 
 	[[ -f "$_readme" ]] || die "README not found: $_readme"
+
+	if is_starter_owned "$_readme"; then
+		log "starter-owned badge block left untouched ($_readme)"
+		return 0
+	fi
 
 	local _tmp _repl
 	_tmp=$(mktemp)
@@ -944,6 +981,11 @@ check_drift() {
 		return 0
 	fi
 
+	if is_starter_owned "$_readme"; then
+		log "starter-owned badge block; not checked for drift ($_readme)"
+		return 0
+	fi
+
 	local _existing
 	_existing=$(extract_existing_block "$_readme")
 
@@ -969,6 +1011,11 @@ check_drift() {
 
 main() {
 	parse_args "$@"
+
+	if [[ "$CMD" == "starter-owned" ]]; then
+		is_starter_owned "$README_PATH"
+		exit $?
+	fi
 
 	local _rendered
 	_rendered=$(render_full_block)

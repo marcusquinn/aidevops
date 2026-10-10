@@ -198,6 +198,9 @@ tmp.*.json
 
 # Analysis reports and results
 *.sarif
+codacy-results.json
+# Codacy Analysis CLI config: regenerated from Codacy Cloud (`codacy-cli.sh init`)
+.codacy/
 reports/
 !.agents/reports/
 !.agents/reports/*.md

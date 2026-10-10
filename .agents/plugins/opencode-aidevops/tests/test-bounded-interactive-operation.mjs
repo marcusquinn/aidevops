@@ -77,7 +77,12 @@ function launcher({ started = false } = {}) {
   };
 }
 
-async function terminal(instance, operationID, context = owner, timeoutMs = 2000) {
+// Success-path budgets must absorb node startup on a loaded host (`node --test`
+// runs files in parallel); timeout and latency semantics use their own bounds.
+const SUCCESS_BUDGET_MS = 10_000;
+
+// Upper bound only: polling returns as soon as the operation is terminal.
+async function terminal(instance, operationID, context = owner, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   let receipt;
   do {
@@ -95,7 +100,7 @@ describe("bounded interactive operations", () => {
     const started = await instance.start({
       command: [process.execPath, "-e", "console.log('AIDEVOPS_PROGRESS: phase-one'); setTimeout(() => process.exit(0), 80)"],
       cwd: root,
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
       progressIntervalMs: 30,
     }, owner);
 
@@ -110,6 +115,7 @@ describe("bounded interactive operations", () => {
     assert.equal(result.restoration_state, "not_required");
     assert.equal(result.command_execution, "observed");
     assert.match(result.supervisor_runtime, /^node v\d+\./);
+    assert.equal(result.post_exit_descendants_terminated, false);
     assert.equal(JSON.stringify(result).includes("phase-one"), false);
   });
 
@@ -182,7 +188,7 @@ describe("bounded interactive operations", () => {
     const started = await instance.start({
       command: [process.execPath, "-e", "process.exit(0)"],
       cwd: linked,
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
     assert.equal(realpathSync(resolution.requested), realpathSync(linked));
@@ -232,7 +238,7 @@ describe("bounded interactive operations", () => {
       await assert.rejects(resolveSessionOwnedWorktreeRoot(alias, parent, owner, options), /unsafe/);
       const instance = manager({ projectRoot: parent, resolveWorktreeRoot: (cwd, project, context) =>
         resolveSessionOwnedWorktreeRoot(cwd, project, context, options) });
-      const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 1000 }, owner);
+      const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: SUCCESS_BUDGET_MS }, owner);
       assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
       await assert.rejects(instance.start({ command: [process.execPath], cwd: alias }, owner), /unsafe/);
       await assert.rejects(instance.start({ command: [process.execPath], cwd: repo }, owner), /linked Git worktree/);
@@ -320,6 +326,71 @@ describe("bounded interactive operations", () => {
     }
   });
 
+  test("same-session worktree with an exited owner recommends pre-edit re-claim, not adopt (GH#33853)", async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-stale-owner-")));
+    const repo = join(fixture, "repo");
+    const linked = join(fixture, "linked");
+    const scriptsDir = fileURLToPath(new URL("../../../scripts/", import.meta.url));
+    const helper = join(scriptsDir, "worktree-helper.sh");
+    const env = { ...process.env, WORKTREE_REGISTRY_DIR: fixture,
+      WORKTREE_REGISTRY_DB: join(fixture, "registry.db"), AUDIT_LOG_FILE: join(fixture, "audit.jsonl"),
+      OPENCODE_SESSION_ID: owner.sessionID, OPENCODE_PID: String(process.pid) };
+    const environmentKeys = ["WORKTREE_REGISTRY_DIR", "WORKTREE_REGISTRY_DB"];
+    const priorEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
+    const previousOwner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    try {
+      execFileSync("git", ["init", "-q", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "feature/stale", linked]);
+      // Registered by this session without a task, as an interactive pre-edit claim does.
+      execFileSync("bash", ["-c", 'source "$1"; register_worktree "$2" feature/stale --owner-pid "$3" --session "$4"',
+        "fixture", join(scriptsDir, "shared-constants.sh"), linked, String(previousOwner.pid), owner.sessionID], { env });
+      const exited = once(previousOwner, "exit");
+      previousOwner.kill();
+      await exited;
+
+      const verify = (sessionID) => {
+        try {
+          return { code: 0, stdout: execFileSync(helper, ["registry", "verify-owner", linked, sessionID], { env, encoding: "utf8" }) };
+        } catch (error) {
+          return { code: error.status, stdout: String(error.stdout || "") };
+        }
+      };
+      assert.deepEqual(verify(owner.sessionID), { code: 3, stdout: "STALE_OWNER_SAME_SESSION\n" });
+      assert.deepEqual(verify("ses_other"), { code: 1, stdout: "" }, "another session's stale row keeps the generic failure");
+
+      process.env.WORKTREE_REGISTRY_DIR = env.WORKTREE_REGISTRY_DIR;
+      process.env.WORKTREE_REGISTRY_DB = env.WORKTREE_REGISTRY_DB;
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(linked, fixture, owner, { scriptsDir, subject: "Operation" }),
+        (error) => /aidevops_pre_edit_check/.test(error.message) && !/worktree-helper\.sh adopt/.test(error.message));
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(linked, fixture, { sessionID: "ses_other" }, { scriptsDir, subject: "Operation" }),
+        /worktree-helper\.sh adopt/);
+
+      let adoptError;
+      try {
+        execFileSync(helper, ["adopt", linked, owner.sessionID, "33853"], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      } catch (error) {
+        adoptError = error;
+      }
+      assert.equal(adoptError?.status, 1);
+      assert.match(String(adoptError?.stderr), /^adopt refused: registry task_id is empty/m);
+
+      // The recommended route: the same trusted session re-claims through the pre-edit claim path.
+      execFileSync("bash", ["-c", 'source "$1"; claim_worktree_ownership "$2" feature/stale --owner-pid "$3" --session "$4"',
+        "fixture", join(scriptsDir, "shared-constants.sh"), linked, String(process.pid), owner.sessionID], { env });
+      assert.deepEqual(verify(owner.sessionID), { code: 0, stdout: "VERIFIED\n" });
+      const resolved = await resolveSessionOwnedWorktreeRoot(linked, fixture, owner, { scriptsDir, subject: "Operation" });
+      assert.equal(resolved.root, linked);
+    } finally {
+      for (const key of environmentKeys) {
+        if (priorEnvironment[key] === undefined) delete process.env[key];
+        else process.env[key] = priorEnvironment[key];
+      }
+      previousOwner.kill();
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   test("failure, timeout, and scoped cancellation cannot appear as success", async () => {
     const instance = manager();
     const failed = await instance.start({
@@ -338,12 +409,29 @@ describe("bounded interactive operations", () => {
     assert.equal(timedResult.state, "timed_out");
     assert.notEqual(timedResult.process_signal, null);
 
-    const forked = await instance.start({
-      command: [process.execPath, "-e", "const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e','setTimeout(()=>{},1000)'],{stdio:['ignore','inherit','inherit']}); c.unref()"],
-      budgetMs: 60,
+    // Wait for the descendant's SIGTERM handler before exiting the parent.
+    // Parent-exit cleanup starts immediately, but its grace must outlast the
+    // budget: inherited stdio remains live until the deadline, not a startup race.
+    const forkedInstance = manager({ killGraceMs: 5000 });
+    const recordedBeforeFork = recorded.length;
+    const forked = await forkedInstance.start({
+      command: [process.execPath, "-e", `
+        const { spawn } = require('node:child_process');
+        const child = spawn(process.execPath, ['-e',
+          "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); process.send('ready');"],
+          { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+        child.once('message', (message) => {
+          if (message !== 'ready') process.exit(1);
+          console.log('forked-descendant-ready');
+          child.disconnect();
+          child.unref();
+        });
+      `],
+      budgetMs: 3000,
       progressIntervalMs: 20,
     }, owner);
-    assert.equal((await terminal(instance, forked.operation_id)).state, "timed_out");
+    assert.equal((await terminal(forkedInstance, forked.operation_id)).state, "timed_out");
+    assert.match(recorded.slice(recordedBeforeFork).map((entry) => entry.content).join("\n"), /forked-descendant-ready/);
 
     const cancellable = await instance.start({
       command: [process.execPath, "-e", "setTimeout(() => {}, 1000)"],
@@ -441,6 +529,8 @@ describe("bounded interactive operations", () => {
         if (mode === "cancel") instance.cancel(started.operation_id, owner);
         const result = await terminal(instance, started.operation_id, owner, 5000);
         assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
+        // GH#34047: only completion-triggered cleanup is reported; exit 0 is not liveness.
+        assert.equal(result.post_exit_descendants_terminated, mode === "completion", `${mode}: post-exit receipt field`);
         let running = false;
         try {
           process.kill(pid, 0);

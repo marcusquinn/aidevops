@@ -423,8 +423,7 @@ _cmd_check_git_update() {
 		update_state "update" "$remote" "runtime_stale_branch"
 		return 1
 	fi
-	if ! AIDEVOPS_REAL_GIT_BIN="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}" \
-		bash "$recovery_helper" fast-forward-current --repo "$INSTALL_DIR" --branch main \
+	if ! bash "$recovery_helper" fast-forward-current --repo "$INSTALL_DIR" --branch main \
 		--reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH >>"$LOG_FILE" 2>&1; then
 		log_error "Audited canonical fast-forward failed; preserving local history"
 		update_state "update" "$remote" "pull_failed"

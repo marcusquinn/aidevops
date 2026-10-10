@@ -76,6 +76,48 @@ export function isExplicitCompletionClaim(text) {
   return /(?:^|[.!?]\s+)(?:FULL_LOOP_COMPLETE\b|(?:the\s+)?(?:task|work|implementation|objective|issue|request)\s+(?:is|has been)\s+(?:now\s+)?(?:done|complete|completed|finished)|(?:all|everything)\s+(?:is|has been)\s+(?:done|complete|completed|finished))/im.test(normalized);
 }
 
+// Ported from .agents/hooks/session_continuation_stop.py; keep both in sync.
+// A path blocker pauses one route; a human dependency, a question, or a
+// What next ask hands the whole turn back to the user.
+const HUMAN_DEPENDENCY_RE = /\b(?:need|needs|require|requires|waiting (?:for|on)) (?:your|user|human|maintainer)\b/i;
+const PATH_BLOCKER_RE = /\bBLOCKED\b|\bblocker\b|\bblocked (?:on|by)\b|\b(?:cannot|can't|unable to) (?:continue|proceed)\b/i;
+// GH#34123: "no blocker", "not blocked", "without blockers" state the opposite.
+const NEGATED_BLOCKER_RE = /\b(?:no|not|never|without|nothing)\s+(?:\w+\s+){0,2}?(?:blockers?|blocked)\b/gi;
+// GH#34123: the What next field (reference/session.md) that lists user asks.
+const NEEDED_FROM_YOU_RE = /Needed from you:[*_\s]*([^\n]*)/gi;
+const NO_ASK_RE = /^(?:none|nothing|n\/a)\b/i;
+
+function withoutCode(text) {
+  return String(text || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`]*`/g, " ");
+}
+
+// GH#34123: a What next block whose "Needed from you" field holds anything
+// but None lists numbered asks, so the turn is a deliberate handback.
+function hasWhatNextAsk(normalized) {
+  const values = [...normalized.matchAll(NEEDED_FROM_YOU_RE)].map((match) => match[1].trim());
+  const last = values.at(-1);
+  return Boolean(last) && !NO_ASK_RE.test(last);
+}
+
+function handsBackToUser(normalized) {
+  const lines = normalized.split("\n").map((line) => line.trim().replace(/[*_` ]+$/, "")).filter(Boolean);
+  if (lines.slice(-3).some((line) => line.endsWith("?"))) return true;
+  return HUMAN_DEPENDENCY_RE.test(normalized) || hasWhatNextAsk(normalized);
+}
+
+export function reportsBlocker(text) {
+  return PATH_BLOCKER_RE.test(withoutCode(text).replace(NEGATED_BLOCKER_RE, " "));
+}
+
+// GH#33888: true when the text reports a blocker without asking the user a
+// question, naming a human dependency, or listing a What next ask, so other
+// active todos may continue.
+export function isPathBlockerYield(text) {
+  const normalized = withoutCode(text);
+  if (handsBackToUser(normalized)) return false;
+  return reportsBlocker(normalized);
+}
+
 export function sessionId(input) {
   return String(input?.sessionID || input?.sessionId || input?.session?.id || "unknown-session");
 }

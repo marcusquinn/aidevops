@@ -8,14 +8,15 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 try:  # Python 3.11+
     import tomllib  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - Python <3.11 fallback
     tomllib = None  # type: ignore[assignment]
 
-ManifestParseResult = tuple[dict[str, Any] | None, set[str], set[str]]
+# Runtime alias: Optional keeps it importable on Python 3.9 (no `X | None`).
+ManifestParseResult = tuple[Optional[dict[str, Any]], set[str], set[str]]
 ManifestParser = Callable[[Path, Path], ManifestParseResult]
 LockParser = Callable[[Path], tuple[int, set[str]]]
 
@@ -43,7 +44,9 @@ def normalise_dep_name(value: str) -> str:
     if value.startswith("@"):
         parts = value.split("/")
         if len(parts) >= 2:
-            return f"{parts[0]}/{re.split(r'[\s@<>=~!;]', parts[1], maxsplit=1)[0]}"
+            # No backslash inside the f-string expression: Python <3.12 rejects it.
+            package = re.split(r"[\s@<>=~!;]", parts[1], maxsplit=1)[0]
+            return f"{parts[0]}/{package}"
     match = re.match(r"([A-Za-z0-9_][A-Za-z0-9_.-]*)", value)
     return match.group(1) if match else ""
 

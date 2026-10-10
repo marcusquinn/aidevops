@@ -71,6 +71,10 @@ readonly PROCESS_RUNTIME_OK="OK"
 readonly PROCESS_RUNTIME_MANAGED="MANAGED"
 readonly PROCESS_RUNTIME_OVER="OVER"
 readonly PROCESS_CGROUP_UNKNOWN='unknown'
+# macOS launchd job for the aidevops persistent OpenCode server
+# (opencode_service_state.py LABEL; Linux uses aidevops-opencode-server.service).
+readonly PROCESS_GUARD_OPENCODE_SERVER_LABEL='sh.aidevops.opencode-server'
+readonly PROCESS_GUARD_LINEAGE_MAX_DEPTH=32
 
 # Validate all numeric config to prevent command injection via arithmetic expansion
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
@@ -211,6 +215,197 @@ _is_managed_opencode_web_process() {
 }
 
 #######################################
+# Return the host platform name (overridable in tests).
+#######################################
+_process_guard_platform() {
+	uname -s 2>/dev/null || printf '%s' 'unknown'
+	return 0
+}
+
+#######################################
+# Return a process's parent PID, or empty when unavailable.
+# Arguments:
+#   $1 - PID
+#######################################
+_get_process_parent_pid() {
+	local pid="$1"
+	local parent_pid=""
+	parent_pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') || parent_pid=""
+	printf '%s' "$parent_pid"
+	return 0
+}
+
+#######################################
+# Return a process's full command line, or empty when unavailable.
+# Arguments:
+#   $1 - PID
+#######################################
+_get_process_command() {
+	local pid="$1"
+	ps -ww -o command= -p "$pid" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Return the executable image path of a macOS process. `ps -o comm=` reports
+# caller-controlled argv[0], so ownership uses the mapped text image instead.
+# Arguments:
+#   $1 - PID
+# Output: executable path, or empty when unavailable
+#######################################
+_get_process_executable_path() {
+	local pid="$1"
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+	command -v lsof >/dev/null 2>&1 || return 0
+	lsof -a -p "$pid" -d txt -Fn 2>/dev/null | awk '/^n/ { print substr($0, 2); exit }' || true
+	return 0
+}
+
+#######################################
+# Return the PID of a running per-user launchd job, or empty.
+# Arguments:
+#   $1 - launchd label
+#######################################
+_launchd_job_pid() {
+	local label="$1"
+	local user_id=""
+	command -v launchctl >/dev/null 2>&1 || return 0
+	user_id=$(id -u 2>/dev/null) || return 0
+	launchctl print "gui/${user_id}/${label}" 2>/dev/null | awk '/^\tpid = [0-9]+$/ { print $3; exit }' || true
+	return 0
+}
+
+#######################################
+# Return whether a process is, or descends from, an ancestor PID.
+# Arguments:
+#   $1 - PID
+#   $2 - ancestor PID (must be > 1)
+# Returns: 0 when the ancestor is found within the bounded lineage walk
+#######################################
+_is_process_lineage_of() {
+	local pid="$1"
+	local ancestor_pid="$2"
+	local current_pid="$pid"
+	local depth=0
+
+	[[ "$ancestor_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$ancestor_pid" -gt 1 ]] || return 1
+	while [[ "$depth" -lt "$PROCESS_GUARD_LINEAGE_MAX_DEPTH" ]]; do
+		[[ "$current_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+		if [[ "$current_pid" == "$ancestor_pid" ]]; then
+			return 0
+		fi
+		[[ "$current_pid" -gt 1 ]] || return 1
+		current_pid=$(_get_process_parent_pid "$current_pid")
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
+#######################################
+# Return whether a process belongs to the aidevops persistent OpenCode server
+# (opencode-service-helper.py). Linux evidence is the systemd unit cgroup;
+# macOS evidence is lineage from the running launchd job's PID.
+# Arguments:
+#   $1 - PID
+# Returns: 0 for managed persistent-server lineage, 1 otherwise
+#######################################
+_is_managed_opencode_server_process() {
+	local pid="$1"
+	local cgroup_path=""
+	local job_pid=""
+	local service_regex='/aidevops-opencode-server\.service(/|$)'
+
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	cgroup_path=$(_get_process_cgroup_path "$pid")
+	if [[ "$cgroup_path" != "$PROCESS_CGROUP_UNKNOWN" ]]; then
+		if [[ "$cgroup_path" =~ $service_regex ]]; then
+			return 0
+		fi
+		return 1
+	fi
+	[[ "$(_process_guard_platform)" == "Darwin" ]] || return 1
+	job_pid=$(_launchd_job_pid "$PROCESS_GUARD_OPENCODE_SERVER_LABEL")
+	if _is_process_lineage_of "$pid" "$job_pid"; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Return whether a macOS process is part of the OpenCode desktop app: any
+# executable inside OpenCode.app (Electron helpers, crashpad, Squirrel ShipIt),
+# or the app-bundled CLI running its `serve` subcommand. Command-line text is
+# never sufficient: the executable image path is the ownership evidence, and
+# the subcommand only narrows it so bundled-CLI `run` sessions stay governed.
+# Arguments:
+#   $1 - PID
+# Returns: 0 for OpenCode desktop-owned processes, 1 otherwise
+#######################################
+_is_opencode_desktop_process() {
+	local pid="$1"
+	local executable_path=""
+	local command_line=""
+	local arguments=""
+
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$(_process_guard_platform)" == "Darwin" ]] || return 1
+	executable_path=$(_get_process_executable_path "$pid")
+	[[ -n "$executable_path" ]] || return 1
+	case "$executable_path" in
+	*/OpenCode.app/Contents/*)
+		return 0
+		;;
+	*"/Library/Application Support/ai.opencode.desktop/cli/"*/opencode-cli)
+		command_line=$(_get_process_command "$pid")
+		# The image path is the evidence; argv only narrows it to the subcommand,
+		# so tolerate a relative or symlinked argv[0] spelling.
+		arguments="${command_line#*opencode-cli}"
+		[[ "$arguments" != "$command_line" ]] || return 1
+		arguments="${arguments#"${arguments%%[![:space:]]*}"}"
+		if [[ "${arguments%% *}" == "serve" ]]; then
+			return 0
+		fi
+		return 1
+		;;
+	esac
+	return 1
+}
+
+#######################################
+# Return a log-safe executable basename for a ps command line. Executable
+# paths may contain spaces (e.g. "Application Support"), so absolute paths are
+# extended word by word until they name an existing file.
+# Arguments:
+#   $1 - full command line
+#######################################
+_command_basename() {
+	local cmd_full="$1"
+	local candidate="${cmd_full%% *}"
+	local remainder="${cmd_full#"$candidate"}"
+	local probe="$candidate"
+	local next_word=""
+	local attempts=0
+
+	if [[ "$candidate" == /* && ! -f "$candidate" ]]; then
+		while [[ -n "$remainder" && "$attempts" -lt 16 ]]; do
+			remainder="${remainder# }"
+			next_word="${remainder%% *}"
+			probe="${probe} ${next_word}"
+			remainder="${remainder#"$next_word"}"
+			attempts=$((attempts + 1))
+			if [[ -f "$probe" ]]; then
+				candidate="$probe"
+				break
+			fi
+		done
+	fi
+	candidate="${candidate##*/}"
+	printf '%s' "${candidate// /_}"
+	return 0
+}
+
+#######################################
 # Describe the lifecycle owner that supersedes the generic runtime limit.
 # Arguments:
 #   $1 - PID
@@ -224,6 +419,14 @@ _runtime_management_owner() {
 	fi
 	if _is_managed_opencode_web_process "$pid"; then
 		printf '%s' "opencode-web-service"
+		return 0
+	fi
+	if _is_managed_opencode_server_process "$pid"; then
+		printf '%s' "opencode-server-service"
+		return 0
+	fi
+	if _is_opencode_desktop_process "$pid"; then
+		printf '%s' "opencode-desktop-app"
 		return 0
 	fi
 	return 0
@@ -417,8 +620,8 @@ cmd_scan() {
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
 
 		# Extract basename for limit selection (e.g., /usr/bin/shellcheck → shellcheck)
-		local cmd_base="${cmd_full%% *}"
-		cmd_base="${cmd_base##*/}"
+		local cmd_base
+		cmd_base=$(_command_basename "$cmd_full")
 
 		local rss_mb=$((rss / 1024))
 		total_rss_kb=$((total_rss_kb + rss))
@@ -517,8 +720,8 @@ cmd_kill_runaways() {
 			continue
 		fi
 
-		local cmd_base="${cmd_full%% *}"
-		cmd_base="${cmd_base##*/}"
+		local cmd_base
+		cmd_base=$(_command_basename "$cmd_full")
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
@@ -669,8 +872,8 @@ cmd_status() {
 			continue
 		fi
 
-		local cmd_base="${cmd_full%% *}"
-		cmd_base="${cmd_base##*/}"
+		local cmd_base
+		cmd_base=$(_command_basename "$cmd_full")
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
 		local runtime_status

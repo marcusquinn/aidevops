@@ -37,19 +37,22 @@ print_result() {
 	return 0
 }
 
-# write_transcript <file> <user_text> <todo_status> <final_assistant_text>
-# todo_status "none" omits the TodoWrite call entirely.
+# write_transcript <file> <user_text> <todo_status> <final_assistant_text> [extra_status]
+# todo_status "none" omits the TodoWrite call entirely; extra_status adds a
+# third todo ("Update the docs") with that status.
 write_transcript() {
-	local file="$1" user_text="$2" todo_status="$3" final_text="$4"
-	python3 - "$file" "$user_text" "$todo_status" "$final_text" <<'PY'
+	local file="$1" user_text="$2" todo_status="$3" final_text="$4" extra_status="${5:-}"
+	python3 - "$file" "$user_text" "$todo_status" "$final_text" "$extra_status" <<'PY'
 import json, sys
-path, user_text, status, final_text = sys.argv[1:5]
+path, user_text, status, final_text, extra_status = sys.argv[1:6]
 lines = [{"type": "user", "message": {"role": "user", "content": user_text}}]
 if status != "none":
     todos = [
         {"content": "Write the hook", "status": "completed", "activeForm": "Writing"},
         {"content": "Register the hook", "status": status, "activeForm": "Registering"},
     ]
+    if extra_status:
+        todos.append({"content": "Update the docs", "status": extra_status, "activeForm": "Updating"})
     lines.append({"type": "assistant", "message": {"role": "assistant", "content": [
         {"type": "tool_use", "id": "t1", "name": "TodoWrite", "input": {"todos": todos}}]}})
     lines.append({"type": "user", "message": {"role": "user", "content": [
@@ -123,6 +126,38 @@ test_hook_decisions() {
 	expect_allow "final message asks a question → allow" "$(run_hook s-question "$t")"
 	write_transcript "$t" "Implement the stop hook" "pending" "BLOCKED: missing credentials for the API."
 	expect_allow "final message reports a blocker → allow" "$(run_hook s-blocker "$t")"
+	# GH#33888: with 2+ open todos a blocker pauses only its own path.
+	write_transcript "$t" "Implement the stop hook" "in_progress" "BLOCKED: dependency audit fails." "pending"
+	local mixed
+	mixed=$(run_hook s-blocker-mixed "$t")
+	expect_block "blocker with another open todo → block" "$mixed"
+	if [[ "$mixed" == *"Update the docs"* && "$mixed" == *"pauses only its own path"* ]]; then
+		print_result "blocker nudge lists remaining todos and path scope" 0
+	else
+		print_result "blocker nudge lists remaining todos and path scope" 1 "got: ${mixed:-<empty>}"
+	fi
+	write_transcript "$t" "Implement the stop hook" "in_progress" "BLOCKED: dependency audit fails." "cancelled"
+	expect_allow "blocker with only its own todo open → allow" "$(run_hook s-blocker-single "$t")"
+	write_transcript "$t" "Implement the stop hook" "in_progress" "Blocked on the audit. Should I skip it?" "pending"
+	expect_allow "blocker plus question with open todos → allow" "$(run_hook s-blocker-question "$t")"
+	write_transcript "$t" "Implement the stop hook" "in_progress" "Blocked: this needs your approval to rotate the token." "pending"
+	expect_allow "human dependency with open todos → allow" "$(run_hook s-blocker-human "$t")"
+	write_transcript "$t" "stop here for now" "in_progress" "BLOCKED: dependency audit fails." "pending"
+	expect_allow "user stop with mixed blocker todos → allow" "$(run_hook s-blocker-userstop "$t")"
+	# GH#34123: a What next block with a numbered ask hands back to the user.
+	write_transcript "$t" "Implement the stop hook" "in_progress" $'PR is open.\n\n**What next**\n- **Session:** stop hook — Blocked\n- **Needed from you:**\n  1. **Approve the release?** (explicit)\n- **Close:** Not yet: waiting on 1\n- **Reply:** `1y`' "pending"
+	expect_allow "What next ask with open todos → allow" "$(run_hook s-whatnext-ask "$t")"
+	# GH#34123: a negated blocker is not a blocker report.
+	write_transcript "$t" "Implement the stop hook" "in_progress" "Docs updated; no blocker remains." "pending"
+	local negated
+	negated=$(run_hook s-negated "$t")
+	expect_block "negated blocker with open todos → generic block" "$negated"
+	if [[ "$negated" != *"pauses only its own path"* ]]; then
+		print_result "negated blocker does not get the path-blocker nudge" 0
+	else
+		print_result "negated blocker does not get the path-blocker nudge" 1 "got: $negated"
+	fi
+
 	write_transcript "$t" "stop here for now" "pending" "Stopping."
 	expect_allow "user asked to stop → allow" "$(run_hook s-userstop "$t")"
 	write_transcript "$t" "Implement the stop hook" "none" "Done."

@@ -99,7 +99,7 @@ _score_body() {
 
 	local heading
 	for heading in "${PRIMARY_HEADINGS[@]}" "${ALTERNATE_HEADINGS[@]}"; do
-		if printf '%s\n' "$body" | grep -qiF "$heading"; then
+		if grep -qiF "$heading" <<<"$body"; then
 			score=$((score + 1))
 		fi
 	done
@@ -114,7 +114,7 @@ _is_schema_v2_brief() {
 	local unfenced=""
 
 	unfenced=$(_unfenced_brief_text "$body")
-	if printf '%s\n' "$unfenced" | grep -qF "$BRIEF_SCHEMA_V2_MARKER"; then
+	if grep -qF "$BRIEF_SCHEMA_V2_MARKER" <<<"$unfenced"; then
 		return 0
 	fi
 	return 1
@@ -196,7 +196,7 @@ _field_is_substantive() {
 
 	line=$(_field_line "$section" "$field")
 	[[ -n "$line" ]] || return 1
-	if printf '%s\n' "$line" | grep -qiE ':\*\*[[:space:]]*($|TBD$|TODO$|N/?A[[:space:]]*$|unknown[[:space:]]*$|\{|<)'; then
+	if grep -qiE ':\*\*[[:space:]]*($|TBD$|TODO$|N/?A[[:space:]]*$|unknown[[:space:]]*$|\{|<)' <<<"$line"; then
 		return 1
 	fi
 	# The field wrapper contributes eight characters. Require at least four
@@ -213,10 +213,10 @@ _write_surface_field_is_valid() {
 
 	_field_is_substantive "$section" "$field" || return 1
 	line=$(_field_line "$section" "$field")
-	if printf '%s\n' "$line" | grep -qE "\`[^\`]+\`|(^|[[:space:]])(EDIT|NEW):"; then
+	if grep -qE "\`[^\`]+\`|(^|[[:space:]])(EDIT|NEW):" <<<"$line"; then
 		return 0
 	fi
-	if printf '%s\n' "$line" | grep -qiE '(N/?A|not applicable|not yet knowable|unknown).*(because|evidence|searched|documentation-only|new-file-only|until|no existing)'; then
+	if grep -qiE '(N/?A|not applicable|not yet knowable|unknown).*(because|evidence|searched|documentation-only|new-file-only|until|no existing)' <<<"$line"; then
 		return 0
 	fi
 	return 1
@@ -249,7 +249,7 @@ _has_file_target() {
 	local -a _args=("$@")
 	local section="${_args[0]}"
 
-	if printf '%s\n' "$section" | grep -qE "^[[:space:]]*-[[:space:]]+[\`]?(EDIT|NEW):[[:space:]]+[\`]?[^ \`{<]+"; then
+	if grep -qE "^[[:space:]]*-[[:space:]]+[\`]?(EDIT|NEW):[[:space:]]+[\`]?[^ \`{<]+" <<<"$section"; then
 		return 0
 	fi
 	return 1
@@ -259,7 +259,7 @@ _has_implementation_step() {
 	local -a _args=("$@")
 	local section="${_args[0]}"
 
-	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+[^<{][^{}]{8,}'; then
+	if grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+[^<{][^{}]{8,}' <<<"$section"; then
 		return 0
 	fi
 	return 1
@@ -269,7 +269,7 @@ _has_executable_verification() {
 	local -a _args=("$@")
 	local section="${_args[0]}"
 
-	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*(\$[[:space:]]*)?(bash |shellcheck |pytest( |$)|python[0-9]* |node |npm |pnpm |yarn |bun |go test( |$)|cargo test( |$)|make |bundle exec |composer |git diff( |$)|\./|[.][[:alnum:]_/-]+\.sh([[:space:]]|$))'; then
+	if grep -qE '^[[:space:]]*(\$[[:space:]]*)?(bash |shellcheck |pytest( |$)|python[0-9]* |node |npm |pnpm |yarn |bun |go test( |$)|cargo test( |$)|make |bundle exec |composer |git diff( |$)|\./|[.][[:alnum:]_/-]+\.sh([[:space:]]|$))' <<<"$section"; then
 		return 0
 	fi
 	return 1
@@ -372,8 +372,14 @@ _validate_v2_body() {
 
 	checkbox_count=$(printf '%s\n' "$acceptance" | grep -cE "$checkbox_pattern" || true)
 	[[ "$checkbox_count" -ge 2 ]] || errors="${errors}acceptance:multiple-observable-criteria;"
-	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -qiE "$negative_pattern" || errors="${errors}acceptance:negative-regression;"
-	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -viE "$negative_pattern" | grep -q . || errors="${errors}acceptance:positive;"
+	# Materialise intermediate results instead of piping into early-exit
+	# readers: under pipefail a writer's SIGPIPE turns a match into a miss
+	# (GH#33882).
+	local checkbox_lines="" positive_lines=""
+	checkbox_lines=$(grep -E "$checkbox_pattern" <<<"$acceptance" || true)
+	grep -qiE "$negative_pattern" <<<"$checkbox_lines" || errors="${errors}acceptance:negative-regression;"
+	positive_lines=$(grep -viE "$negative_pattern" <<<"$checkbox_lines" || true)
+	grep -q . <<<"$positive_lines" || errors="${errors}acceptance:positive;"
 	placeholder_match=$(_first_unfilled_placeholder "$visible" || true)
 	[[ -n "$placeholder_match" ]] && errors="${errors}placeholder:unfilled;"
 
@@ -639,7 +645,7 @@ cmd_similarity() {
 			continue
 		fi
 		total_lines=$((total_lines + 1))
-		if printf '%s\n' "$norm_body" | grep -qF "$line"; then
+		if grep -qF -- "$line" <<<"$norm_body"; then
 			matching_lines=$((matching_lines + 1))
 		fi
 	done <<<"$norm_brief"

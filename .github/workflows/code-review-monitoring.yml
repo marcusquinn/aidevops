@@ -30,6 +30,7 @@ jobs:
   code-review-monitoring:
     name: 🤖 Monitor & Auto-Fix Code Quality
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     permissions:
       contents: write
@@ -76,15 +77,22 @@ jobs:
         fi
         rm -rf qlty.tar.xz qlty-x86_64-unknown-linux-gnu 2>/dev/null || true
 
-        # Codacy CLI: the Linux binary was removed from releases (only JAR remains).
-        # Skip install — codacy-analysis-cli is not used in monitor-code-review.sh.
-        echo "Codacy CLI binary no longer available as a release asset; skipping."
+        # Codacy Analysis CLI (npm @codacy/analysis-cli, pinned in codacy-cli.sh).
+        # Fail-open: monitor-code-review.sh skips Codacy when the CLI is absent.
+        if ! bash ./.agents/scripts/codacy-cli.sh install; then
+          echo "::warning::Codacy Analysis CLI install failed — skipping codacy analysis"
+        fi
     
     - name: 🏃 Run Code Review Monitoring
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        # Repository token preferred; the account token is the fallback for
+        # pulling the Codacy Cloud configuration (codacy-cli.sh init remote).
         CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+        CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+        # Pull requests analyze only changed files; push/schedule scan everything.
+        CODACY_ANALYZE_ARGS: ${{ github.event_name == 'pull_request' && format('--diff origin/{0}', github.base_ref) || '' }}
       run: |
         # Run monitoring with full analysis
         bash ./.agents/scripts/monitor-code-review.sh monitor
@@ -124,7 +132,7 @@ jobs:
     
     - name: 📤 Upload SARIF Results
       if: always() && hashFiles('codacy-results.sarif') != ''
-      uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
       with:
         sarif_file: codacy-results.sarif
         category: codacy
@@ -310,7 +318,7 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🛠️ Tools Used:" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ SonarCloud Analysis" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Codacy Analysis with Auto-Fix" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Codacy Analysis CLI (report only, SARIF to code scanning)" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Qlty Universal Linting" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ TOON Format Validation" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY

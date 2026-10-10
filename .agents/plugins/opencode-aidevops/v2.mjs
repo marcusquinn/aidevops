@@ -11,6 +11,7 @@ import { BoundedInteractiveOperationManager } from "./bounded-interactive-operat
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
+import { loadModelRouting } from "./model-routing.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import {
   createPoolTool,
@@ -37,6 +38,8 @@ import {
   loadTeamInterfaceConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
+import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
 import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
@@ -45,6 +48,8 @@ import { isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
 import { loadV2PrimaryProfiles, registerV2PrimaryProfiles } from "./v2-agent-profiles.mjs";
 import { applyV2ContextBudget, readV2ContextBudget } from "./v2-context-budget.mjs";
+import { registerV2SubagentProfiles } from "./v2-subagent-profiles.mjs";
+import { registerV2OnDemandMcpAgents } from "./v2-on-demand-mcp-agents.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
 import {
   addV1ToolsToV2Editor,
@@ -298,6 +303,8 @@ export async function setupAidevopsV2(ctx) {
     adapterId: "opencode-v2",
   });
 
+  // GH#34125 #aidevops:trust-boundary: bind before any hook registers.
+  const localOnlyPolicy = initLocalOnlyPolicy(process.env);
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
@@ -339,6 +346,7 @@ export async function setupAidevopsV2(ctx) {
       repositoryDir: directory,
       continuationGuard,
       resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID),
+      ownedListenerRoots: (sessionID) => boundedOperationManager.ownedListenerRoots(sessionID),
     });
     const shellEnvHook = createShellEnvHook({
       activeAgentsDir: ACTIVE_AGENTS_DIR,
@@ -376,8 +384,17 @@ export async function setupAidevopsV2(ctx) {
     // this service process has no reliable terminal and must not write titles.
 
     const primaryProfiles = loadV2PrimaryProfiles(ACTIVE_AGENTS_DIR);
+    const modelRouting = loadModelRouting([
+      process.env.AIDEVOPS_MODEL_ROUTING_TABLE,
+      join(AGENTS_DIR, "custom", "configs", "model-routing-table.json"),
+      join(AGENTS_DIR, "configs", "model-routing-table.json"),
+    ]);
+    const mcpToolPolicy = mcpRuntime.toolPolicy();
     await register(registrations, ctx.agent.transform((editor) => {
       registerV2PrimaryProfiles(editor, primaryProfiles);
+      registerV2SubagentProfiles(editor, { agentsDir: AGENTS_DIR, routing: modelRouting });
+      // After primaries so every registered agent receives the MCP denies (GH#34219).
+      registerV2OnDemandMcpAgents(editor, { agentsDir: AGENTS_DIR, toolPolicy: mcpToolPolicy });
     }));
     const budget = readV2ContextBudget();
     if (budget && typeof ctx.catalog?.transform === "function") await register(registrations, ctx.catalog.transform((editor) => {
@@ -410,6 +427,7 @@ export async function setupAidevopsV2(ctx) {
     // Released 2.0.3 dispatches these hooks separately on the base transcript.
     // Keep framework transformations identical before adding compaction's tail.
     const transformContext = async (event) => {
+      assertLocalOnlyEgress(localOnlyPolicy, event, "context");
       const input = v1HookInput(event);
       sessionModels.remember(event.sessionID, input.model.modelID);
       const legacy = { system: systemStrings(event.system), messages: event.messages };
@@ -438,7 +456,14 @@ export async function setupAidevopsV2(ctx) {
         content: [{ type: "text", text }],
       })));
     }));
-    await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));
+    await register(registrations, ctx.session.hook("http.request", async (event) => {
+      // GH#34125: check the outgoing Request, and again after our own
+      // provider-auth rewrite so no aidevops mutation can change the endpoint.
+      // Other installed plugins are trusted in-process code (reference/vault.md).
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+      await providerAuth.httpRequest(event);
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+    }));
     await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
     await register(registrations, ctx.session.hook("retry", providerAuth.retry));
     await register(registrations, ctx.permission.hook("evaluate", async (event) => {
@@ -446,6 +471,8 @@ export async function setupAidevopsV2(ctx) {
     }));
 
     const normalizeCompletion = createV2CompletionNormalizer();
+    const providerErrorHandler = createProviderErrorHandler({ client, isHeadless,
+      policy: localOnlyPolicy, resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) });
     stopEvents = await startEventLoop(ctx, async (input) => {
       const completed = normalizeCompletion(input.event);
       const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
@@ -454,6 +481,7 @@ export async function setupAidevopsV2(ctx) {
         completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         permissionBroker.handleEvent(input),
+        providerErrorHandler(input),
       ]);
     });
     recordPluginHealthStage("factory_initialized", {

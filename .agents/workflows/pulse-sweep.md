@@ -50,19 +50,21 @@ If `AVAILABLE > 0` and `WORKER_COUNT == 0`, attempt admission for available auth
 
 ## Initial Dispatch (DO THIS FIRST)
 
-### 1. Normalise PATH and check capacity
+### 1. Check circuit breaker and capacity
 
 ```bash
-export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 ~/.aidevops/agents/scripts/circuit-breaker-helper.sh check  # exit 1 = stop
 
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command capacity
 gh api user --jq '.login'
 ```
 
-The capacity command prints `MAX_WORKERS|WORKER_COUNT|AVAILABLE`. Use those
-values in subsequent direct helper invocations; do not source the wrapper or
-compose shell assignments around it.
+The capacity command prints `MAX_WORKERS|WORKER_COUNT|AVAILABLE`; the `gh api`
+call prints `RUNNER_USER`. Substitute those literal values into later commands.
+Every command in this file must pass the OpenCode shared command policy: run one
+plain helper call per Bash invocation, never `export`, `source`, shell variables,
+`$(...)`, `$((...))`, `[[ ... ]]`, `&&`/`||` chains or redirects. Compute values
+yourself from printed output. The launcher already provides `PATH`.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
@@ -137,9 +139,11 @@ After initial dispatch, enter a monitoring loop. Each cycle (repeat until exit c
 2. **Sleep 60 seconds** — write a heartbeat log line first:
 
    ```bash
-   echo "[pulse] Monitoring cycle $N: sleeping 60s (active $WORKER_COUNT/$MAX_WORKERS, elapsed ${ELAPSED}s)"
+   echo "[pulse] Monitoring cycle N: sleeping 60s (active WORKER_COUNT/MAX_WORKERS, elapsed ELAPSED_SECONDS)"
    sleep 60
    ```
+
+   Replace the uppercase placeholders with literal numbers before running.
 
 3. **Check capacity**:
 
@@ -156,8 +160,10 @@ After initial dispatch, enter a monitoring loop. Each cycle (repeat until exit c
 On exit, run best-effort cleanup:
 
 ```bash
-~/.aidevops/agents/scripts/session-miner-pulse.sh 2>&1 || true
+~/.aidevops/agents/scripts/session-miner-pulse.sh
 ```
+
+A non-zero exit here is non-fatal; note it in the summary and finish.
 
 Output a brief summary of total actions taken across all cycles (past tense).
 
@@ -254,9 +260,12 @@ failures, also summarise what previous workers attempted.
 
 ### Model tier selection
 
+`pulse-wrapper.sh --command dispatch` takes no model argument; it resolves the
+model from the issue's workload-tier label. To escalate, replace the tier label
+in one call, then dispatch normally:
+
 ```bash
-RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve <tier>)
-# Pass: --model "$RESOLVED_MODEL"
+gh issue edit NUMBER --repo SLUG --remove-label tier:standard --add-label tier:thinking
 ```
 
 Precedence: (1) failure escalation (cascade: `tier:simple` → `tier:standard` →
@@ -300,33 +309,29 @@ Only dispatch workers for repos in the pre-fetched state (`pulse: true`). Worker
 ```bash
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command count-debt SLUG quality-debt
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command count-debt SLUG simplification-debt
-
-QUALITY_DEBT_MAX=$(( MAX_WORKERS * QUALITY_DEBT_CAP_PCT / 100 ))
-[[ "$QUALITY_DEBT_MAX" -lt 1 ]] && QUALITY_DEBT_MAX=1
-SIMPLIFICATION_DEBT_MAX=$(( MAX_WORKERS * 10 / 100 ))
-[[ "$SIMPLIFICATION_DEBT_MAX" -lt 1 ]] && SIMPLIFICATION_DEBT_MAX=1
-TOTAL_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
-[[ "$TOTAL_DEBT_MAX" -lt 1 ]] && TOTAL_DEBT_MAX=1
 ```
+
+Compute the caps yourself from `MAX_WORKERS` (integer division, minimum 1):
 
 - Quality-debt: max `QUALITY_DEBT_CAP_PCT`% of slots (default 30%, minimum 1)
 - Simplification-debt: max 10% of slots (minimum 1, only when no higher-priority work)
-- Combined: max 30% of slots
+- Combined: max 30% of slots (minimum 1)
 
 ### Worktree dispatch (MANDATORY for quality-debt)
 
 Quality-debt workers MUST use pre-created worktrees to prevent branch conflicts:
 
 ```bash
-CANONICAL_BRANCH=$(git -C PATH rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-[[ "$CANONICAL_BRANCH" == "main" || "$CANONICAL_BRANCH" == "master" ]] || continue
-
+git -C PATH rev-parse --abbrev-ref HEAD
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree PATH NUMBER TITLE
 
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
   "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER QD_WT_PATH \
   "/full-loop Implement issue #NUMBER (URL) -- TITLE"
 ```
+
+Skip the issue unless the `rev-parse` output is `main` or `master`. Use the
+worktree path printed by `create-debt-worktree` as `QD_WT_PATH`; skip on failure.
 
 **PR title for debt issues:** `GH#<number>: <description>` — never `qd-`, bare numbers, or `t` prefix.
 
@@ -393,11 +398,11 @@ Each repo has a persistent "Daily Code Quality Review" issue (`quality-review` +
 
 ## Audit-Quality Comments (MANDATORY)
 
-Every comment must be self-sufficient for audit without reading logs. Generate signature footer first:
+Every comment must be self-sufficient for audit without reading logs. Generate the signature footer first, then paste its printed output where the templates below say `SIG_FOOTER`:
 
 ```bash
-SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer \
-  --model "<full model ID>" --issue "<slug>#<number>")
+~/.aidevops/agents/scripts/gh-signature-helper.sh footer \
+  --model "FULL_MODEL_ID" --issue "SLUG#NUMBER"
 ```
 
 **Dispatch comment** — posted automatically by `dispatch_with_dedup()` (GH#15317). Do NOT post manually — the function handles it after confirming worker PID is alive. Duplicate dispatch comments break the Layer 5 dedup check.
@@ -410,7 +415,7 @@ Worker killed after <duration> with <N> commits (struggle_ratio: <ratio>).
 - **Reason**: <why killed>
 - **Diagnosis**: <1-line hypothesis>
 - **Next action**: <re-dispatch / escalate / manual review>
-${SIG_FOOTER}
+SIG_FOOTER
 ```
 
 `<duration>` MUST come from `process_uptime` in pre-fetched Active Workers data (from `ps etime`).
@@ -421,7 +426,7 @@ ${SIG_FOOTER}
 Completed via PR #<N>.
 - **Attempts**: <total>
 - **Duration**: <wall-clock from first dispatch to merge>
-${SIG_FOOTER}
+SIG_FOOTER
 ```
 
 **No arbitrary line targets in Scope/Direction.** Do not invent target line counts for simplification issues — the worker reads `code-simplifier.md` which determines the result.

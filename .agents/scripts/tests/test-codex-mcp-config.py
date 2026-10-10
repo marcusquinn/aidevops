@@ -84,6 +84,21 @@ model = "another-model"
         self.assertEqual(data["profiles"], {"personal": {"model": "another-model"}})
         self.assertEqual(migrate(result), result)
 
+    def test_generated_playwright_default_moves_behind_launcher(self):
+        text = '''[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@0.0.79", "--headless", "--isolated"]
+enabled = true
+startup_timeout_sec = 60
+'''
+        result = migrate(text)
+        server = migration.tomllib.loads(result)["mcp_servers"]["playwright"]
+        self.assertEqual(server["command"], "bash")
+        self.assertEqual(server["args"], migration.PLAYWRIGHT_LAUNCH_ARGS)
+        self.assertTrue(server["args"][0].endswith("/browser-mcp-launcher.sh"))
+        self.assertTrue(server["enabled"])
+        self.assertEqual(migrate(result), result)
+
     def test_preserve_custom_commands_and_explicit_settings(self):
         text = '''[mcp_servers.playwright]
 command = "/custom/launcher"

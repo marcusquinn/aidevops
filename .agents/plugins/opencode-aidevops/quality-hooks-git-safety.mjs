@@ -1,50 +1,23 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
+import {
+  appendRuntimePolicyArgs,
+  commandPolicyError,
+  executeCommandPolicy,
+} from "./quality-hooks-command-policy.mjs";
 import { classifyFullLoopCommitAndPr } from "./quality-hooks-full-loop-trust.mjs";
 import {
-  isPolicyHelperTimeout,
   parsePolicyPayload,
   policyExecutionFailure,
-  policyNetworkOperation,
   runPolicyHelper,
-  transientPolicyTimeoutError,
 } from "./quality-hooks-policy-runner.mjs";
 
 export { bindActiveScriptsDir } from "./quality-hooks-full-loop-trust.mjs";
-
-function processIdentity(pid) {
-  const psBinary = existsSync("/bin/ps") ? "/bin/ps" : "ps";
-  try {
-    return execFileSync(
-      psBinary,
-      ["-p", String(pid), "-o", "lstart="],
-      {
-        encoding: "utf8",
-        env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 5000,
-      },
-    ).trim().replaceAll(/\s+/g, " ");
-  } catch {
-    return "";
-  }
-}
-
-const RUNTIME_PROCESS_IDENTITY = processIdentity(process.pid);
-
-function isWorkerContext(env = process.env) {
-  if (env.AIDEVOPS_WORKER_ID) return true;
-  return [
-    "FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS",
-    "CLAUDE_HEADLESS", "Claude_HEADLESS", "HEADLESS", "GITHUB_ACTIONS",
-  ]
-    .some((key) => ["1", "true", "yes"].includes((env[key] || "").toLowerCase()));
-}
+export { checkArgvSafetyGate } from "./quality-hooks-command-policy.mjs";
 
 function normaliseToolName(tool) {
   if (typeof tool !== "string") return "";
@@ -160,37 +133,6 @@ export function checkCanonicalWriteSafetyGate(
   }
 }
 
-function commandPolicyError(result) {
-  return new Error(
-    `BLOCKED by shared command policy (${result.decision || "forbid"}, ${result.rule_id || "policy.invalid-response"}): ${result.reason || "invalid policy response"}`,
-  );
-}
-
-function executeCommandPolicy(helperArgs) {
-  let raw = "";
-  let executionError = null;
-  try {
-    raw = runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] });
-  } catch (error) {
-    if (isPolicyHelperTimeout(error)) {
-      throw transientPolicyTimeoutError("command", policyNetworkOperation(helperArgs));
-    }
-    executionError = error;
-    raw = error?.stdout?.toString() || "";
-  }
-  let result;
-  try {
-    result = parsePolicyPayload(raw);
-  } catch {
-    const detail = executionError?.stderr?.toString().trim()
-      || executionError?.message
-      || "command policy returned malformed output";
-    throw new Error(`BLOCKED: command policy failed closed: ${detail}`);
-  }
-  if (executionError) throw commandPolicyError(result);
-  return result;
-}
-
 export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(), options = {}) {
   if (typeof command !== "string" || !command) return;
   const helper = join(scriptsDir, "command-policy-helper.py");
@@ -216,28 +158,7 @@ export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(),
     ? "git commit --dry-run"
     : command;
   const helperArgs = [helper, "check-command", "--cwd", cwd, "--command", guardedCommand];
-  // #aidevops:trust-boundary — process.pid and its start identity come from
-  // the running OpenCode plugin host, never from the command being checked.
-  helperArgs.push(
-    "--runtime-pid",
-    String(options.runtimePid ?? process.pid),
-    "--runtime-process-identity",
-    options.runtimeProcessIdentity ?? RUNTIME_PROCESS_IDENTITY,
-  );
-  if (options.processTableFixture) {
-    helperArgs.push("--process-table-fixture", options.processTableFixture);
-  }
-  if (options.approvalHelper) {
-    helperArgs.push("--approval-helper", options.approvalHelper);
-  }
-  const worker = options.worker ?? isWorkerContext();
-  if (worker) {
-    helperArgs.push(
-      "--worker",
-      "--worker-id",
-      options.workerId || process.env.AIDEVOPS_WORKER_ID || "opencode-worker",
-    );
-  }
+  appendRuntimePolicyArgs(helperArgs, options);
   const result = executeCommandPolicy(helperArgs);
   if (result.decision !== "allow") {
     throw commandPolicyError(result);

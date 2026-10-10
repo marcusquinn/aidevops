@@ -122,6 +122,62 @@ test_issue_worker_env_contract_accepts_valid_precreated_worktree() {
 	return 0
 }
 
+test_standalone_prompt_skips_only_prose_issue_classification() {
+	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
+	local prose="Review completion evidence for issue #34250; report only."
+	local standalone_output="" standalone_status=0
+	local default_output="" default_status=0
+	local key_output="" key_status=0
+	local title_output="" title_status=0
+	standalone_output=$(_validate_issue_worker_env_contract \
+		"worker" "deferred-dj-1" "$TEST_ROOT" "Deferred job: report" "$prose" 1 2>&1) || standalone_status=$?
+	default_output=$(_validate_issue_worker_env_contract \
+		"worker" "deferred-dj-1" "$TEST_ROOT" "Deferred job: report" "$prose" 2>&1) || default_status=$?
+	key_output=$(_validate_issue_worker_env_contract \
+		"worker" "issue-34250" "$TEST_ROOT" "Deferred job: report" "$prose" 1 2>&1) || key_status=$?
+	title_output=$(_validate_issue_worker_env_contract \
+		"worker" "deferred-dj-1" "$TEST_ROOT" "Issue #34250: report" "$prose" 1 2>&1) || title_status=$?
+
+	if [[ "$standalone_status" -eq 0 && -z "$standalone_output" &&
+		"$default_status" -ne 0 && "$default_output" == *"WORKER_ISSUE_NUMBER unset"* &&
+		"$key_status" -ne 0 && "$key_output" == *"WORKER_ISSUE_NUMBER unset"* &&
+		"$title_status" -ne 0 && "$title_output" == *"WORKER_ISSUE_NUMBER unset"* ]]; then
+		print_result "standalone prompt skips only prose issue classification" 0
+		return 0
+	fi
+	print_result "standalone prompt skips only prose issue classification" 1 \
+		"standalone=$standalone_status default=$default_status key=$key_status title=$title_status"
+	return 0
+}
+
+test_standalone_prompt_args_refuse_issue_identity() {
+	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
+	local standalone_prompt=1 role="worker" session_key="deferred-dj-1" title="Deferred job: report"
+	local valid_status=0 triage_status=0 key_status=0 title_status=0 env_status=0
+	_validate_standalone_prompt_args >/dev/null 2>&1 || valid_status=$?
+	role="triage"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || triage_status=$?
+	role="worker"
+	session_key="issue-34250"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || key_status=$?
+	session_key="deferred-dj-1"
+	title="Review Issue #34250"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || title_status=$?
+	title="Deferred job: report"
+	export WORKER_ISSUE_NUMBER="34250"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || env_status=$?
+	unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+
+	if [[ "$valid_status" -eq 0 && "$triage_status" -ne 0 && "$key_status" -ne 0 &&
+		"$title_status" -ne 0 && "$env_status" -ne 0 ]]; then
+		print_result "standalone prompt flag refuses issue identity and non-worker roles" 0
+		return 0
+	fi
+	print_result "standalone prompt flag refuses issue identity and non-worker roles" 1 \
+		"valid=$valid_status triage=$triage_status key=$key_status title=$title_status env=$env_status"
+	return 0
+}
+
 test_triage_env_contract_does_not_require_worker_authority() {
 	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
 	local output=""
@@ -1691,36 +1747,60 @@ test_runtime_launch_marker_precedes_invocation() {
 }
 
 test_clean_prelaunch_exit_is_precise_nonzero_failure() {
-	local output="" status=0
-	set +e
-	output=$(
-		(
-			print_info() { printf '%s\n' "$*"; return 0; }
-			print_warning() { printf '%s\n' "$*"; return 0; }
+	local output="" status=0 original_status=0 expected_status=0
+	for original_status in 0 29 85; do
+		status=0
+		expected_status="$original_status"
+		[[ "$expected_status" -ne 0 ]] || expected_status=1
+		set +e
+		output=$(
+			local session_key="issue-28060"
+			print_info() {
+				printf '%s\n' "$*"
+				return 0
+			}
+			print_warning() {
+				printf '%s\n' "$*"
+				return 0
+			}
+			worker_attempt_observability_last_stage() { return 1; }
+			worker_attempt_observability_last_completed_stage() { return 0; }
 			_push_wip_commits_on_exit() { return 0; }
+			_hrff_write_external_outcome() { return 0; }
 			_emit_worker_runtime_event() { return 0; }
 			_hrw_record_terminal_outcome() { return 0; }
 			_cleanup_headless_runtime_temp_paths() { return 0; }
-			_release_dispatch_claim() { return 0; }
+			_release_dispatch_claim() {
+				local release_status="$3"
+				printf 'release_status=%s\n' "$release_status"
+				return 0
+			}
 			_release_session_lock() { return 0; }
 			_update_dispatch_ledger() { return 0; }
 			_WORKER_RUNTIME_LAUNCH_STARTED=0
 			_WORKER_START_EPOCH_MS=0
+			_WORKER_PRELAUNCH_FAILURE_REASON=""
+			_WORKER_EXIT_CODE_FILE=""
+			_WORKER_LAST_EXIT_CODE_FILE=""
+			_record_run_attempt_stage post_attempt_context_configure
+			_record_run_attempt_stage pre_attempt_ownership_verify
 			AIDEVOPS_DISPATCH_LEASE_TOKEN=""
 			trap "_exit_trap_handler 'issue-28060'" EXIT
-			exit 0
-		)
-	) || status=$?
-	set -e
+			exit "$original_status"
+		) || status=$?
+		set -e
 
-	if [[ "$status" -eq 1 && "$output" == *"reason=worker_runtime_not_invoked"* &&
-		"$output" != *"worker_noop_zero_output"* ]] &&
-		_worker_failure_reason_is_launch_preflight "worker_runtime_not_invoked"; then
-		print_result "clean exit before runtime invocation is a precise non-zero prelaunch failure" 0
-		return 0
-	fi
-	print_result "clean exit before runtime invocation is a precise non-zero prelaunch failure" 1 \
-		"status=$status output=$output"
+		if [[ "$status" -eq "$expected_status" && "$output" == *"reason=worker_runtime_not_invoked"* &&
+			"$output" == *"exit=$expected_status "* && "$output" == *"release_status=$expected_status"* &&
+			"$output" == *"last_stage=pre_attempt_ownership_verify last_completed_stage=post_attempt_context_configure"* &&
+			"$output" != *"worker_noop_zero_output"* ]] &&
+			_worker_failure_reason_is_launch_preflight "worker_runtime_not_invoked"; then
+			print_result "prelaunch exit $original_status retains precise status, stages and release" 0
+		else
+			print_result "prelaunch exit $original_status retains precise status, stages and release" 1 \
+				"status=$status output=$output"
+		fi
+	done
 	return 0
 }
 

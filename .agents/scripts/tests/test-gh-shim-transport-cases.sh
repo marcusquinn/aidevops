@@ -4,12 +4,15 @@
 # Sourced by the existing hermetic gh shim harness after legacy-path coverage.
 
 printf '\nTest 27: shared raw transport controls and response-owned quota\n'
-for library in gh-transport-controls.sh gh-transport-governor.py gh_transport_budget.py gh_transport_schema.py gh_transport_identity.py gh_transport_reconcile.py gh_transport_recovery.py gh_transport_capacity.py shared-gh-secondary-cooldown.sh shared-gh-primary-cooldown.sh; do
+for library in gh-transport-controls.sh gh-transport-governor.py gh_transport_budget.py gh_transport_schema.py gh_transport_identity.py gh_transport_reconcile.py gh_transport_recovery.py gh_transport_status.py gh_transport_capacity.py shared-gh-secondary-cooldown.sh shared-gh-primary-cooldown.sh; do
 	cp "${REPO_DIR}/.agents/scripts/${library}" "${TMP}/scripts/${library}"
 done
 mkdir -p "${TMP}/governor/tmp"
 export AIDEVOPS_GH_TRANSPORT_STATE_DIR="${TMP}/governor/state"
 export AIDEVOPS_TEMP_DIR="${TMP}/governor/tmp"
+# Quota-owner discovery is separate coverage; keep this response-cost fixture
+# deterministic without an extra authenticated-login probe.
+export AIDEVOPS_GH_QUOTA_OWNER=fixture-owner
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TMP}/governor/cooldown.json"
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE="${TMP}/governor/events.jsonl"
 export AIDEVOPS_GH_API_LOG="${TMP}/governor/api.tsv"

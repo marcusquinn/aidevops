@@ -474,7 +474,7 @@ _preflight_early_dispatch() {
 		echo "[pulse-wrapper] Early dispatch_max: dispatching workers before housekeeping" >>"$LOGFILE"
 		# GH#28971: the first fill is a latency-sensitive fast path. Keep blocked
 		# children filtered from its fetched snapshot, but defer dependency graph
-		# normalization/refetch to the post-label refill below. Pass the mode as an
+		# normalization/refetch to housekeeping and normal sweeps. Pass the mode as an
 		# internal argument so it cannot leak into launched worker environments.
 		apply_dispatch_max "skip"
 	fi
@@ -535,7 +535,11 @@ _preflight_post_label_refill() {
 			return 0
 		fi
 		echo "[pulse-wrapper] Post-label dispatch_max: refilling after label maintenance" >>"$LOGFILE"
-		apply_dispatch_max
+		# GH#33944: refill already-eligible work before a full blocked-backlog
+		# normalization can consume the candidate admission budget. Existing
+		# housekeeping and normal sweeps retain dependency normalization; live
+		# per-candidate dependency/claim gates still apply to this fast refill.
+		apply_dispatch_max "skip"
 	fi
 	return 0
 }
@@ -591,12 +595,31 @@ _preflight_ownership_reconcile() {
 }
 
 #######################################
+# GH#34000: finalisation reserve for the preflight prefetch stage. Prefetch
+# must leave the deterministic pipeline (orphan reaping, hourly watchdogs,
+# merge/dispatch admission) a bounded share of the cycle instead of spending
+# the last minutes and ending the cycle. AIDEVOPS_PULSE_PIPELINE_RESERVE_S=0
+# restores the legacy shared finalisation reserve.
+# Stdout: finalisation reserve plus deterministic-pipeline reserve (seconds).
+#######################################
+_preflight_prefetch_reserved_finalise_seconds() {
+	local finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"
+	local pipeline_seconds="${AIDEVOPS_PULSE_PIPELINE_RESERVE_S:-180}"
+	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
+	[[ "$pipeline_seconds" =~ ^[0-9]+$ ]] || pipeline_seconds=180
+	printf '%s\n' "$((finalise_seconds + pipeline_seconds))"
+	return 0
+}
+
+#######################################
 # Prefetch GitHub state + restore persisted PULSE_SCOPE_REPOS.
 #
 # Returns:
-#   0 - prefetch succeeded (or succeeded with warnings)
-#   1 - prefetch failed; caller should abort this cycle to avoid stale
-#       dispatch decisions
+#   0   - prefetch succeeded (or succeeded with warnings)
+#   124 - prefetch timed out or was deferred by the cycle budget; the caller
+#         continues the deterministic pipeline on cached state (GH#34000)
+#   1   - prefetch failed; caller should abort this cycle to avoid stale
+#         dispatch decisions
 #######################################
 _preflight_prefetch_and_scope() {
 	# GH#18979 (t2097): clear any stale flag from a previous cycle before
@@ -604,7 +627,13 @@ _preflight_prefetch_and_scope() {
 	# leftover files from a previous cycle would cause false aborts.
 	rm -f "$PULSE_RATE_LIMIT_FLAG" 2>/dev/null || true
 
-	if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
+	local prefetch_rc=0
+	run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state || prefetch_rc=$?
+	if [[ "$prefetch_rc" -eq 124 ]]; then
+		echo "[pulse-wrapper] prefetch_state timed out or was deferred by the cycle budget — continuing with cached state (GH#34000)" >>"$LOGFILE"
+		return 124
+	fi
+	if [[ "$prefetch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
 		_PULSE_HEALTH_PREFETCH_ERRORS=$((_PULSE_HEALTH_PREFETCH_ERRORS + 1))
 		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"

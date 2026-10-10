@@ -120,7 +120,11 @@ localdev_auto_branch_rm() {
 	app_name=$(detect_localdev_project "$repo_root") || return 0
 	[[ -z "$app_name" ]] && return 0
 
-	"$LOCALDEV_HELPER" branch-rm "$app_name" "$branch" >/dev/null 2>&1 || true
+	# `branch rm` is the real subcommand; the former `branch-rm` spelling was
+	# rejected as unknown and silently discarded (GH#33970).
+	if ! "$LOCALDEV_HELPER" branch rm "$app_name" "$branch" >/dev/null 2>&1; then
+		echo -e "${YELLOW}Localdev: could not remove branch route for '$branch'; reclaim with: localdev-helper.sh branch prune --repo $repo_root${NC}" >&2
+	fi
 	return 0
 }
 

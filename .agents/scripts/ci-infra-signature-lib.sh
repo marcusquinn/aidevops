@@ -14,6 +14,8 @@ _CI_INFRA_SIGNATURE_LIB_LOADED=1
 
 # Case-insensitive ERE matched against annotation text and failed logs.
 CI_BILLING_OUTAGE_PATTERN='account payments have failed|spending limit needs to be increased'
+# Qlty's complete no-run message. Anchored so a finding that quotes it never matches.
+CI_QLTY_NO_RUN_PATTERN='^\s*Qlty did not run because you are out of minutes[.!]?\s*$'
 
 #######################################
 # Return whether a check-run annotations JSON array reports an Actions
@@ -38,8 +40,8 @@ ci_annotations_json_indicate_billing_outage() {
 }
 
 #######################################
-# Read one check run's annotations and return whether GitHub refused the job
-# for Actions billing or spending reasons. For Actions jobs the check-run ID
+# Read one check run and classify a provider-specific did-not-run outage.
+# Unknown providers and ordinary code findings remain blocking. For Actions the ID
 # equals the job ID in `/actions/runs/<run>/job/<id>` URLs. API failures
 # return 1 so callers keep their existing behaviour (no silent suppression).
 #
@@ -52,10 +54,47 @@ ci_annotations_json_indicate_billing_outage() {
 ci_check_run_indicates_billing_outage() {
 	local repo_slug="$1"
 	local check_run_id="$2"
-	local annotations_json=""
+	local annotations_json="" check_json="" app=""
 
 	[[ -n "$repo_slug" && "$check_run_id" =~ ^[0-9]+$ ]] || return 1
+	check_json=$(gh api "repos/${repo_slug}/check-runs/${check_run_id}" 2>/dev/null) || return 1
+	app=$(jq -er '.app.slug' <<<"$check_json") || return 1
+	case "$app" in
+	qlty)
+		# Match the provider's complete no-run message, not quota words in findings.
+		jq -e --arg pattern "$CI_QLTY_NO_RUN_PATTERN" 'any([.output.title, .output.summary, .output.text][];
+			type == "string" and test($pattern; "i"))' \
+			<<<"$check_json" >/dev/null 2>&1 || return 1
+		return 0
+		;;
+	github-actions) ;;
+	*) return 1 ;;
+	esac
 	annotations_json=$(gh api "repos/${repo_slug}/check-runs/${check_run_id}/annotations" 2>/dev/null) || return 1
 	ci_annotations_json_indicate_billing_outage "$annotations_json"
 	return $?
+}
+
+#######################################
+# Classify one commit status (GitHub statuses API object) as a provider
+# did-not-run outage. Qlty reports its quota outage as a commit status on some
+# repositories instead of a check run.
+#
+# Args:
+#   $1 - commit status JSON object ({context,state,description,creator})
+#
+# Returns: 0=provider quota outage, 1=anything else or unparseable.
+#######################################
+ci_commit_status_indicates_quota_outage() {
+	local status_json="${1:-}"
+
+	[[ -n "$status_json" ]] || return 1
+	#aidevops:trust-boundary -- any writer can post a commit status with any
+	# context, so require the Qlty bot account and its exact no-run message.
+	jq -e --arg pattern "$CI_QLTY_NO_RUN_PATTERN" '
+		type == "object" and (.state == "error" or .state == "failure")
+		and .creator.login == "qltysh[bot]" and .creator.type == "Bot"
+		and (.description | type == "string" and test($pattern; "i"))' \
+		<<<"$status_json" >/dev/null 2>&1 || return 1
+	return 0
 }

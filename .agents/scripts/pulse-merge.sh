@@ -323,6 +323,10 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-process.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
 source "${_PULSE_MERGE_DIR}/pulse-merge-required-checks.sh"
 
+# shellcheck source=./pulse-merge-ci-drift-ledger.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-merge-ci-drift-ledger.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
@@ -577,6 +581,12 @@ _pm_gate_origin_authority() {
 	if [[ -n "${_OW_LABEL_PAT:-}" && ",${labels_str}," == *"${_OW_LABEL_PAT:-}"* && "$trusted_issue_sync" -eq 0 ]]; then
 		_attempt_worker_briefed_auto_merge "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" "$author_permission" "$pr_author" || return 1
 	elif [[ "$trusted_issue_sync" -eq 1 ]]; then
+		# GH#33955: generated-TODO trust replaces only linked-issue authority.
+		# Maintainer opt-outs that the worker path enforces still apply.
+		if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — trusted generated TODO PR is draft or has hold-for-review" >>"$LOGFILE"
+			return 1
+		fi
 		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — exact-head Issue Sync trust satisfies worker authority without a linked issue" >>"$LOGFILE"
 	fi
 	return 0
@@ -619,6 +629,11 @@ _check_pr_merge_gates() {
 	local ci_repair_only="${PULSE_REVIEW_GATE_MODE_CI_REPAIR_ONLY:-ci-repair-only}"
 	local trusted_issue_sync=0 author_permission=""
 	_PULSE_REVIEW_GATE_EVIDENCE=""
+	# Association is not closure authority. Keep this fallback local to the
+	# gates so partial deliveries never reach post-merge issue closing.
+	if [[ -z "$linked_issue" && ",${pr_labels}," == *",origin:worker,"* ]]; then
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit) || return 1
+	fi
 	if [[ -n "$linked_issue" ]] && _interactive_claim_fence_blocks_merge "$linked_issue" "$repo_slug" "$expected_head_sha"; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has a live interactive owner with different unmerged work (GH#30274)" >>"$LOGFILE"
 		return 1
@@ -1569,6 +1584,7 @@ _pmp_stage_review_and_gates() {
 
 _pmp_stage_required_checks() {
 	local required_labels="$pr_labels" ci_route_rc=0
+	local drift_names="" drift_signature="" drift_skip=0
 	[[ -n "$timing_prefix" ]] && _branch_protection_start=$(_pmp_now_epoch)
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author" "$pr_head_ref_oid" \
@@ -1582,7 +1598,23 @@ _pmp_stage_required_checks() {
 				echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} has non-passing required checks; would evaluate CI-drift rebase or repair routing" >>"$LOGFILE"
 				return 1
 			fi
-			if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid"; then
+			# Never use old ledger evidence while current required checks are active.
+			_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$pr_head_ref_oid" && return 1
+			if drift_names=$(_required_checks_terminal_failure_names "$repo_slug" "$pr_number" "$pr_head_ref_oid"); then
+				if [[ -n "$drift_names" ]]; then
+					drift_signature=$(printf '%s\n' "$drift_names" | shasum -a 256 | cut -d ' ' -f 1) || drift_signature=""
+				fi
+			else
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift context classification unavailable (required-context/head/REST parse failure); allowing one rebase" >>"$LOGFILE"
+			fi
+			if [[ -n "$drift_signature" ]] && _ci_drift_ledger_should_skip "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature"; then
+				drift_skip=1
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase already tried for the same failing required contexts (${drift_names//$'\n'/, }); routing to CI fix-worker" >>"$LOGFILE"
+			fi
+			if [[ "$drift_skip" -eq 0 ]] && _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid"; then
+				if [[ -n "$drift_signature" ]]; then
+					_ci_drift_ledger_record "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$drift_signature" || echo "[pulse-merge] CI-drift ledger write failed for PR #${pr_number}" >>"$LOGFILE"
+				fi
 				[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}branch_protection_s" "$_branch_protection_start"
 				return 1
 			fi
@@ -1929,18 +1961,73 @@ _extract_linked_issue() {
 # Resolve a work target for conflict repair/carry-forward, never issue closing.
 # A native closing target wins; ambiguous or unavailable closing metadata must
 # not fall back. Otherwise require one distinct local For/Ref or title identity.
-# Args: $1=PR number, $2=repo slug
+# Mode explicit is for merge association: no title inference, only standalone
+# local For/Ref declarations outside code/quotes and secondary-work sections.
+# Args: $1=PR number, $2=repo slug, $3=mode (repair(default) or explicit)
 #######################################
 _extract_pr_work_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local mode="${3:-repair}"
 	local closing_issue="" pr_body="" pr_title=""
+	[[ "$repo_slug" =~ ^[^/]+/[^/]+$ ]] || return 1
+	[[ "$mode" == "repair" || "$mode" == "explicit" ]] || return 1
 	closing_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
 	if [[ -n "$closing_issue" ]]; then
 		printf '%s' "$closing_issue"
 		return 0
 	fi
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	if [[ "$mode" == "explicit" ]]; then
+		local explicit_issues=""
+		explicit_issues=$(printf '%s\n' "$pr_body" | awk '
+			/^[[:space:]]*(```|~~~)/ {
+				fence_line = $0
+				sub(/^[[:space:]]*/, "", fence_line)
+				match(fence_line, /^(`+|~+)/)
+				fence_run = substr(fence_line, 1, RLENGTH)
+				if (!fence) {
+					fence = 1
+					fence_marker = substr(fence_run, 1, 1)
+					fence_length = length(fence_run)
+				} else if (substr(fence_run, 1, 1) == fence_marker && length(fence_run) >= fence_length &&
+					substr(fence_line, length(fence_run) + 1) ~ /^[[:space:]]*$/) {
+					fence = 0
+				}
+				next
+			}
+			fence { next }
+			/<!--/ { comment = 1 }
+			comment { if ($0 ~ /-->/) comment = 0; next }
+			/^[[:space:]]*#/ {
+				section = tolower($0)
+				sub(/^[[:space:]]*/, "", section)
+				match(section, /^#+/)
+				depth = RLENGTH
+				if (secondary && depth <= secondary) secondary = 0
+				if (section ~ /(remaining|follow.?up|related|next steps)/) secondary = depth
+				next
+			}
+			secondary || /^[[:space:]]*>/ || /^([ ]{4}|\t)/ { next }
+			{
+				line = tolower($0)
+				if (line !~ /^[[:space:]]*(for|ref)[:[:space:]]+#[1-9][0-9]*([^[:alnum:]_]|$)/) next
+				sub(/^[[:space:]]*(for|ref)[:[:space:]]+#/, "", line)
+				issue = line
+				sub(/[^0-9].*$/, "", issue)
+				sub(/^[0-9]+/, "", line)
+				# Multiple declarations on one line are not a unique task.
+				if (line ~ /#[0-9]+/) print "ambiguous"
+				print issue
+			}
+		' | sort -u) || return 1
+		if [[ "$explicit_issues" == *$'\n'* || "$explicit_issues" == "ambiguous" ]]; then
+			echo "[pulse-wrapper] _extract_pr_work_issue: PR #${pr_number} in ${repo_slug} has ambiguous explicit issue identities — no merge association" >>"$LOGFILE"
+			return 1
+		fi
+		printf '%s' "$explicit_issues"
+		return 0
+	fi
 	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || return 1
 
 	local body_issues="" title_issue="" work_issues=""

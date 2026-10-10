@@ -195,6 +195,9 @@ define_helpers_under_test() {
 	src_worker_briefed=$(awk '
 		/^_attempt_worker_briefed_auto_merge\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
+	src_worker_briefed+=$'\n'$(awk '
+		/^_worker_briefed_link_kind\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
 		return 1
@@ -209,6 +212,12 @@ define_helpers_under_test() {
 	eval "$src_crypto_approval"
 	# shellcheck disable=SC1090
 	eval "$src_worker_briefed"
+	# Default: the PR has a closing-keyword link (GH#33999 gates only the
+	# non-closing path). Tests set TEST_CLOSING_ISSUE="" for For/Ref-only PRs.
+	_extract_linked_issue() {
+		printf '%s' "${TEST_CLOSING_ISSUE-1}"
+		return 0
+	}
 	return 0
 }
 
@@ -860,6 +869,90 @@ test_case_v_spoofed_crypto_marker_blocked() {
 	return 0
 }
 
+test_reference_to_pr_is_not_a_worker_brief() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	printf '{"author_association":"OWNER","pull_request":{"url":"mock"}}' >"${TEST_ROOT}/issue.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+	export APPROVAL_VERIFY_RESULT="VERIFIED"
+	local result=0
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || result=$?
+	if [[ "$result" == "1" ]]; then
+		print_result "PR number is not an issue brief even with trusted author and crypto" 0
+	else
+		print_result "PR number is not an issue brief even with trusted author and crypto" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_partial_worker_association_reaches_authority_gate() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local src="" result=0 linked_issue="" review_rc=0
+	printf '{"author_association":"OWNER","state":"open","labels":[]}' >"${TEST_ROOT}/issue.json"
+	src=$(awk '
+		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
+		/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }
+		/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }
+		/^_check_pr_merge_gates\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	eval "$src"
+	gh_pr_view() {
+		if [[ "$*" == *"labels,isDraft"* ]]; then
+			printf '%s' '{"labels":[{"name":"origin:worker"}],"isDraft":false}'
+		else
+			printf '%s' $'## Summary\nFor #12303 — partial people-phase delivery; leave the issue open.\n## Remaining work\nRef #12643'
+		fi
+		return 0
+	}
+	_interactive_claim_fence_blocks_merge() { return 1; }
+	_pm_gate_review_mode() { return 0; }
+	_pm_gate_author_trust() { return 0; }
+	_pm_gate_repository_and_issue() { return 0; }
+	_pm_gate_review_bot() { return "$review_rc"; }
+	_OW_LABEL_PAT=",origin:worker,"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1 APPROVAL_VERIFY_RESULT=""
+	_check_pr_merge_gates "12641" "owner/repo" "worker" "NONE" "$linked_issue" "origin:worker" "head" || result=$?
+	if [[ "$result" == "0" && -z "$linked_issue" ]] && grep -q 'passed all gates (issue #12303' "$LOGFILE" && ! grep -q 'no linked issue' "$LOGFILE"; then
+		print_result "partial worker reaches real authority gate without no-issue skip or closing target" 0
+	else
+		print_result "partial worker reaches real authority gate without no-issue skip or closing target" 1
+	fi
+	review_rc=1
+	result=0
+	_check_pr_merge_gates "12641" "owner/repo" "worker" "NONE" "" "origin:worker" "head" || result=$?
+	print_result "partial worker passing authority still stops at review gate" "$((1 - result))"
+	teardown_test_env
+	return 0
+}
+
+# GH#33999: For/Ref-only association — open non-parent passes; closed and
+# parent-task stay ineligible. Closing-keyword links are covered by cases above.
+test_non_closing_reference_gates() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+	TEST_CLOSING_ISSUE=""
+	local r_open=0 r_closed=0 r_parent=0 logged=1
+	printf '{"author_association":"OWNER","state":"open","labels":[{"name":"enhancement"}]}' >"${TEST_ROOT}/issue.json"
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || r_open=$?
+	grep -q 'link=non-closing reference' "$LOGFILE" && logged=0
+	printf '{"author_association":"OWNER","state":"closed","labels":[]}' >"${TEST_ROOT}/issue.json"
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || r_closed=$?
+	printf '{"author_association":"OWNER","state":"open","labels":[{"name":"parent-task"}]}' >"${TEST_ROOT}/issue.json"
+	_attempt_worker_briefed_auto_merge "100" "owner/repo" "origin:worker" "false" "42" || r_parent=$?
+	unset TEST_CLOSING_ISSUE
+	if [[ "$r_open" == "0" && "$logged" == "0" && "$r_closed" == "1" && "$r_parent" == "1" ]]; then
+		print_result "non-closing reference: open non-parent passes; closed and parent-task skipped (GH#33999)" 0
+	else
+		print_result "non-closing reference: open non-parent passes; closed and parent-task skipped (GH#33999)" 1 \
+			"open=${r_open} logged=${logged} closed=${r_closed} parent=${r_parent}"
+	fi
+	teardown_test_env
+	return 0
+}
+
 # =============================================================================
 # Run all cases
 # =============================================================================
@@ -891,6 +984,9 @@ main() {
 	test_case_t_worker_gate_ignores_mismatched_precomputed_permission
 	test_case_u_worker_gate_ignores_empty_precomputed_pr_author_login
 	test_case_v_spoofed_crypto_marker_blocked
+	test_reference_to_pr_is_not_a_worker_brief
+	test_partial_worker_association_reaches_authority_gate
+	test_non_closing_reference_gates
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

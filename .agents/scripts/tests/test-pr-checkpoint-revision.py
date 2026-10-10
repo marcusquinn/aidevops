@@ -98,6 +98,24 @@ class RevisionTests(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(ValueError):
                 revision.validate(data)
 
+    def test_template_refuses_releases_dispatch_approved_rejects(self):
+        # GH#33997: never print an approval that dispatch-approved cannot accept.
+        data = fixture()
+        data["comments"] = data["comments"][:2]
+        template = {**data, "release_id": 2, "attempt": "attempt:original"}
+        line = revision.template(template)
+        approved = {**fixture(), "comments": template["comments"] + [
+            comment(3, line, "maintainer", "OWNER")]}
+        self.assertEqual(revision.validate(approved)["approval_id"], 3)
+        for reason in ("worker_draft_checkpoint", "crash_during_execution", "worker_failed"):
+            refused = copy.deepcopy(template)
+            refused["comments"][1]["body"] = f"CLAIM_RELEASED reason={reason} runner=worker"
+            with self.subTest(reason=reason), self.assertRaises(ValueError):
+                revision.template(refused)
+        for key, value in (("attempt", "attempt:other"), ("release_id", 99)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                revision.template({**template, key: value})
+
     def test_unassigned_and_newer_coordination(self):
         data = fixture()
         data["issue"]["assignees"] = []
@@ -105,6 +123,23 @@ class RevisionTests(unittest.TestCase):
         for event in EVENTS:
             with self.subTest(event=event), self.assertRaises(ValueError):
                 revision.validate({**data, "comments": data["comments"] + [comment(4, event + "new-owner")]})
+
+    def test_released_attempt_terminal_lease_is_not_a_successor(self):
+        # GH#33839: production launchers close the released lease after CLAIM_RELEASED.
+        def with_closing(field, author="worker", phase="terminal"):
+            data = fixture()
+            body = f"DISPATCH_LEASE phase={phase} {field} session=issue-123 expires_at=0"
+            data["comments"].insert(2, {**comment(4, body, author), "id": 2.5})
+            return data
+
+        original = next(part for part in fixture()["comments"][0]["body"].split()
+                        if part.startswith("lease_token="))
+        self.assertEqual(revision.validate(with_closing(original))["approval_id"], 3)
+        for field, author, phase in [("lease_token=unseen", "worker", "terminal"),
+                                     (original, "other", "terminal"),
+                                     (original, "worker", "ready")]:
+            with self.subTest(field=field, author=author, phase=phase), self.assertRaises(ValueError):
+                revision.validate(with_closing(field, author, phase))
 
     def test_own_claim_and_lease_are_required_after_transfer(self):
         data = fixture()

@@ -59,7 +59,7 @@ Paths below are relative to this directory (`tools/video/remotion/`; source chec
 
 ## CLI Commands
 
-After rendering, run `media-qa-helper.sh probe out/video.mp4` to verify colour metadata alongside the stream details.
+After rendering, run `media-qa-helper.sh probe out/video.mp4` to verify colour metadata alongside the stream details. For motion films, follow the frame critique in `tools/video/motion-design.md` (contact sheets, transition strips, loop and determinism checks).
 
 ```bash
 npx remotion studio                                    # Dev studio

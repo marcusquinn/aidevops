@@ -43,7 +43,10 @@ _dsi_repo_slug_for_worktree() {
 		return 0
 	fi
 	remote_url=$(git -C "$worktree_path" remote get-url origin 2>/dev/null || true)
-	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
+	# Strip suffixes before matching so dotted names (owner/my.repo) resolve.
+	remote_url="${remote_url%/}"
+	remote_url="${remote_url%.git}"
+	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
 		printf '%s\n' "${BASH_REMATCH[1]}"
 		return 0
 	fi
@@ -55,6 +58,9 @@ _dsi_repo_slug_for_worktree() {
 # Emit active worker process lines for duplicate detection.
 # Tests override this function with fixture output.
 # Stdout: ps rows: "PID STAT COMMAND..."
+# `ps` right-aligns PID and pads STAT, so consumers must strip leading
+# whitespace before each field split. Untrimmed, every PID below 10000 on
+# macOS parses as empty and live workers are silently dropped (GH#33916).
 #######################################
 _dsi_ps_worker_lines() {
 	ps axwwo pid=,stat=,command= 2>/dev/null || true
@@ -124,9 +130,11 @@ _dsi_find_live_dispatch() {
 	local line pid stat cmd worktree_path worker_repo log_path session_key
 
 	while IFS= read -r line; do
+		line="${line#"${line%%[![:space:]]*}"}"
 		[[ -n "$line" ]] || continue
 		pid="${line%%[[:space:]]*}"
 		line="${line#*[[:space:]]}"
+		line="${line#"${line%%[![:space:]]*}"}"
 		stat="${line%%[[:space:]]*}"
 		cmd="${line#*[[:space:]]}"
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -196,7 +204,8 @@ _dsi_print_dispatch_details() {
 # launch-worker status must independently validate PID liveness plus the
 # session, worktree, issue, and repository encoded in the process command.
 # Args: $1 - issue number, $2 - repo slug, $3 - ledger TSV record
-# Returns: 0 verified live worker, 1 stale/dead/reused PID evidence
+# Returns: 0 verified live worker, 1 stale/dead/reused PID evidence,
+#          2 PID is live but absent from the process listing (unverifiable)
 #######################################
 _dsi_ledger_record_has_live_identity() {
 	local issue_number="$1"
@@ -213,10 +222,12 @@ _dsi_ledger_record_has_live_identity() {
 	local line="" process_pid="" stat="" cmd=""
 	local process_session="" process_worktree="" process_repo=""
 	while IFS= read -r line; do
+		line="${line#"${line%%[![:space:]]*}"}"
 		[[ -n "$line" ]] || continue
 		process_pid="${line%%[[:space:]]*}"
 		[[ "$process_pid" == "$pid" ]] || continue
 		line="${line#*[[:space:]]}"
+		line="${line#"${line%%[![:space:]]*}"}"
 		stat="${line%%[[:space:]]*}"
 		cmd="${line#*[[:space:]]}"
 		[[ "$stat" != *Z* && "$stat" != *T* ]] || return 1
@@ -232,7 +243,9 @@ _dsi_ledger_record_has_live_identity() {
 		return 0
 	done < <(_dsi_ps_worker_lines)
 
-	return 1
+	# kill -0 succeeded but no listing row named the PID: identity is unknown,
+	# not disproven. Callers must not report this as a confident inactive state.
+	return 2
 }
 
 #######################################
@@ -270,8 +283,9 @@ _dsi_guard_no_existing_dispatch() {
 
 #######################################
 # Resolve the real worker PID from the worker_log file.
-# headless-runtime-helper.sh _detach_worker prints "Dispatched PID: <pid>"
-# right before forking the actual worker subshell (see headless-runtime-helper.sh:1483).
+# _detach_worker (headless-runtime-worker-prepare.sh) prints "Dispatched PID: <pid>"
+# for the detached worker process itself; under systemd it runs in its own
+# user scope outside the caller's cgroup (GH#33993).
 # We poll the log briefly waiting for that line; if it never appears,
 # fall back to the launch wrapper PID (degraded — ledger may show dead PID).
 # Args: $1 - worker_log path, $2 - launch_pid (fallback)

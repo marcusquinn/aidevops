@@ -3,7 +3,9 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Observe release executor identity without equating a fence with liveness."""
 
+import functools
 import hashlib
+import importlib.util
 import json
 import os
 import socket
@@ -11,6 +13,21 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+
+
+@functools.lru_cache(maxsize=1)
+def _trusted_ps():
+    """Load the sibling resolver explicitly: `python3 -I` omits the script dir.
+
+    Resolved once per process, so later PATH changes cannot redirect it.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "_aidevops_trusted_executable", Path(__file__).resolve().with_name("trusted_executable.py"))
+    if spec is None or spec.loader is None:
+        raise OSError("trusted executable resolver unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.require_trusted_executable("ps")
 
 
 def host_id():
@@ -30,9 +47,10 @@ def host_id():
 
 
 def process_start(pid):
-    # Identity evidence must not be selected by a caller-controlled PATH.
+    # Identity evidence must not be selected by a caller-controlled PATH:
+    # only a root-controlled ps on PATH is accepted.
     result = subprocess.run(
-        ["/bin/ps", "-p", str(pid), "-o", "lstart="],
+        [_trusted_ps(), "-p", str(pid), "-o", "lstart="],
         capture_output=True, text=True, timeout=5, check=False,
         env={**os.environ, "LC_ALL": "C"},
     )

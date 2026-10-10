@@ -1,0 +1,92 @@
+name: PATH portability
+
+# Exercises PATH-order, native-git and trusted-executable resolution on real
+# macOS and Ubuntu runners: tools must resolve through PATH (no FHS-only
+# absolute paths) without changing macOS launchd or Ubuntu behaviour.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.agents/scripts/runtime-env.sh'
+      - '.agents/scripts/trusted_executable.py'
+      - '.agents/scripts/trusted-executable.mjs'
+      - '.agents/scripts/git'
+      - '.agents/scripts/setup/**'
+      - '.agents/plugins/opencode-aidevops/runtime-path.mjs'
+      - '.agents/plugins/opencode-aidevops/source-access-*.mjs'
+      - '.github/workflows/path-portability.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  path-portability:
+    name: PATH portability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolution facts
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          printf 'PATH=%s\n' "$PATH"
+          type -a -p git bash python3 ssh-keygen ps || true
+          bash --version | head -1
+
+      - name: Shell and Python checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(
+            .agents/scripts/tests/test-runtime-env.sh
+            .agents/scripts/tests/test-launchd-sanitized-path.sh
+            .agents/scripts/tests/test-pulse-path-precedence.sh
+            .agents/scripts/tests/test-tool-install-opencode.sh
+            .agents/scripts/tests/test-setup-source-access-broker.sh
+            .agents/scripts/tests/test-portable-shebangs.sh
+          )
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            tests+=(
+              .agents/scripts/tests/test-systemd-unit-generation.sh
+              .agents/scripts/tests/test-routine-systemd-calendar.sh
+            )
+          fi
+          failed=0
+          for test_script in "${tests[@]}"; do
+            printf '\n==> %s\n' "$test_script"
+            if ! bash "$test_script"; then
+              printf '::error file=%s::PATH portability failed\n' "$test_script"
+              failed=1
+            fi
+          done
+          for test_script in \
+            .agents/scripts/tests/test-source-access-helper.py \
+            .agents/scripts/tests/test_opencode_service.py \
+            .agents/scripts/tests/test-release-lane-owner.py; do
+            printf '\n==> %s\n' "$test_script"
+            if ! python3 "$test_script"; then
+              printf '::error file=%s::PATH portability failed\n' "$test_script"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - name: Plugin checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test \
+            .agents/plugins/opencode-aidevops/tests/test-shell-env-origin.mjs \
+            .agents/plugins/opencode-aidevops/tests/test-source-access-guidance.mjs \
+            .agents/plugins/opencode-aidevops/tests/test-mcp-activation.mjs

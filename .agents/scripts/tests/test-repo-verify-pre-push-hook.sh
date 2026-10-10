@@ -20,6 +20,9 @@
 #  11. defaults conf: Cargo.toml triggers RUST_CARGO toolchain (cargo fmt --check)
 #  12. typecheck failure NEVER auto-fixes — exit 1 even with AUTOFIX=1
 #  13. Missing bun-installed tsc is diagnosed as missing dev dependencies
+# 13d. Missing npm lint tooling/plugins vs a real lint violation (GH#34094)
+# 13m. Missing Python tooling (ruff/pytest) vs a real Ruff violation (GH#34110)
+# 13v. Inferred Ruff defaults resolve the project .venv (GH#34163)
 #  14. Proven task-id counter-only CAS push skips a missing TypeScript install
 #  15. Mixed-file task-id-counter push falls back to repository verification
 #  16. Normal-branch counter-only push falls back to repository verification
@@ -350,6 +353,166 @@ JSON
 	assert_eq '13. missing tsc → exit 1' '1' "$ec"
 	assert_contains '13b. missing tsc → dependency diagnosis' 'missing JavaScript dev dependencies' "$stderr"
 	assert_contains '13c. missing tsc → exact remediation' 'Run: bun install' "$stderr"
+	rm -rf "$repo"
+}
+
+# Test 13d: GH#34094 — npm lint whose eslint binary or flat-config plugin is
+# absent is unavailable tooling, not a source defect; real diagnostics are not.
+{
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "echo 'sh: eslint: command not found' >&2; exit 127", "lint_fix": "touch fixed.txt" } }
+JSON
+	printf '{ "name": "fixture" }\n' >"$repo/package.json"
+	printf '{}\n' >"$repo/package-lock.json"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add npm lint fixture')
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=1)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13d. missing eslint → exit 1 (gate stays blocked)' '1' "$ec"
+	assert_contains '13e. missing eslint → tooling diagnosis' 'lint tooling or plugins are unavailable' "$stderr"
+	assert_contains '13f. missing eslint → lockfile install command' 'npm ci' "$stderr"
+	assert_contains '13g. missing eslint → reuse guidance' 'Linked-worktree lint tooling' "$stderr"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$stderr" | grep -qF 'fix the source' 2>/dev/null || [[ -e "$repo/fixed.txt" ]]; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: 13h. missing eslint → no source-fix advice or autofix\n' "$TEST_RED" "$TEST_NC"
+	else
+		printf '%sPASS%s: 13h. missing eslint → no source-fix advice or autofix\n' "$TEST_GREEN" "$TEST_NC"
+	fi
+	rm -rf "$repo"
+
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "echo \"Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'typescript-eslint' imported from /w/eslint.config.js\" >&2; exit 2" } }
+JSON
+	printf '{ "name": "fixture" }\n' >"$repo/package.json"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add plugin fixture')
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13i. unresolved flat-config plugin → exit 1' '1' "$ec"
+	assert_contains '13j. unresolved flat-config plugin → tooling diagnosis' 'lint tooling or plugins are unavailable' "$stderr"
+
+	repo2=$(_mk_repo)
+	cat >"$repo2/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "printf '/w/src/a.ts\\n  1:7  error  x is unused  no-unused-vars\\n\\n✖ 1 problem (1 error, 0 warnings)\\n'; exit 1" } }
+JSON
+	printf '{ "name": "fixture" }\n' >"$repo2/package.json"
+	(cd "$repo2" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add lint violation fixture')
+	out=$(_run_hook "$repo2" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13k. real lint violation → exit 1' '1' "$ec"
+	assert_contains '13l. real lint violation → source remediation kept' 'fix the source' "$stderr"
+	rm -rf "$repo" "$repo2"
+}
+
+# Test 13m: GH#34110 — a Python verification tool absent from PATH is
+# unavailable tooling, not a source defect or a permission blocker.
+{
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "format": "echo 'bash: line 1: ruff: command not found' >&2; exit 127", "format_fix": "touch fixed.txt", "lint": "echo '/usr/bin/python3: No module named ruff' >&2; exit 1", "lint_fix": "touch fixed.txt" } }
+JSON
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add python tooling fixture')
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=1)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13m. missing ruff → exit 1 (gate stays blocked)' '1' "$ec"
+	assert_contains '13n. missing ruff → tooling diagnosis' "format could not start: Python verification tool 'ruff' is unavailable" "$stderr"
+	assert_contains '13o. missing ruff module → lint tooling diagnosis' "lint could not start: Python verification tool 'ruff' is unavailable" "$stderr"
+	assert_contains '13p. missing ruff → explicit approved-interpreter guidance' '<approved-venv>/bin/python -m ruff' "$stderr"
+	assert_contains '13q. missing ruff → runner capability class, not permission' 'TERMINAL_BLOCKER_REASON=runner_capability_unmet' "$stderr"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$stderr" | grep -qF 'fix the source' 2>/dev/null || [[ -e "$repo/fixed.txt" ]]; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: 13r. missing ruff → no source-fix advice or autofix\n' "$TEST_RED" "$TEST_NC"
+	else
+		printf '%sPASS%s: 13r. missing ruff → no source-fix advice or autofix\n' "$TEST_GREEN" "$TEST_NC"
+	fi
+	rm -rf "$repo"
+
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "printf 'x.py:1:1: F401 unused import\\nFound 1 error.\\n'; exit 1" } }
+JSON
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add ruff violation fixture')
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13s. real ruff violation → exit 1' '1' "$ec"
+	assert_contains '13t. real ruff violation → source remediation kept' 'fix the source' "$stderr"
+
+	repo2=$(_mk_repo)
+	cat >"$repo2/.aidevops.json" <<'JSON'
+{ "verify": { "typecheck": "echo \"ModuleNotFoundError: No module named 'pytest_asyncio'\" >&2; exit 1" } }
+JSON
+	(cd "$repo2" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add plugin import fixture')
+	out=$(_run_hook "$repo2" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_contains '13u. pytest plugin import error → not misread as missing pytest' 'fix the source' "$stderr"
+	rm -rf "$repo" "$repo2"
+}
+
+# Test 13v: GH#34163 — inferred Ruff defaults resolve the project's own .venv
+# (worktree first; main worktree for interactive linked worktrees only).
+_mk_ruff_venv() {
+	local _venv="$1"
+	mkdir -p "$_venv/bin"
+	printf 'home = /usr/bin\n' >"$_venv/pyvenv.cfg"
+	printf '#!/bin/sh\nexit 0\n' >"$_venv/bin/ruff"
+	chmod +x "$_venv/bin/ruff"
+	return 0
+}
+{
+	repo=$(_mk_repo)
+	printf '[tool.ruff]\nline-length = 100\n' >"$repo/pyproject.toml"
+	printf '.venv/\n' >"$repo/.gitignore"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add ruff config')
+	_mk_ruff_venv "$repo/.venv"
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13v. defaults ruff + worktree .venv → exit 0' '0' "$ec"
+	assert_contains '13w. defaults ruff → worktree .venv source logged' 'python tool source: worktree .venv' "$stderr"
+
+	wt="${repo}-linked"
+	(cd "$repo" && /usr/bin/git worktree add -q "$wt" -b linked) >/dev/null 2>&1
+	out=$(_run_hook "$wt" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	ec=$(printf '%s' "$out" | head -n 1)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	assert_eq '13x. linked worktree → main-worktree .venv used interactively' '0' "$ec"
+	assert_contains '13y. linked worktree → main-worktree source logged' 'python tool source: main-worktree .venv' "$stderr"
+
+	out=$(_run_hook "$wt" AIDEVOPS_HEADLESS=1 AIDEVOPS_PREPUSH_AUTOFIX=0)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$stderr" | grep -qF 'python tool source:' 2>/dev/null; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: 13z. headless linked worktree → main-worktree .venv not consulted\n' "$TEST_RED" "$TEST_NC"
+	else
+		printf '%sPASS%s: 13z. headless linked worktree → main-worktree .venv not consulted\n' "$TEST_GREEN" "$TEST_NC"
+	fi
+	(cd "$repo" && /usr/bin/git worktree remove --force "$wt") >/dev/null 2>&1
+	rm -rf "$repo" "$wt"
+
+	repo=$(_mk_repo)
+	cat >"$repo/.aidevops.json" <<'JSON'
+{ "verify": { "lint": "ruff check ." } }
+JSON
+	printf '.venv/\n' >"$repo/.gitignore"
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'explicit ruff')
+	_mk_ruff_venv "$repo/.venv"
+	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
+	stderr=$(printf '%s' "$out" | tail -n +2)
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$stderr" | grep -qF 'python tool source:' 2>/dev/null; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: 13za. explicit .aidevops.json command → PATH untouched\n' "$TEST_RED" "$TEST_NC"
+	else
+		printf '%sPASS%s: 13za. explicit .aidevops.json command → PATH untouched\n' "$TEST_GREEN" "$TEST_NC"
+	fi
 	rm -rf "$repo"
 }
 

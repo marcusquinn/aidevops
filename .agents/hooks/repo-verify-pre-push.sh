@@ -106,10 +106,15 @@ if [[ -z "$REPO_ROOT" ]]; then
 	exit 0
 fi
 
+_is_headless_session() {
+	[[ -n "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}" ]] && return 0
+	return 1
+}
+
 # Auto-fix default: ON in headless, OFF interactive. AIDEVOPS_PREPUSH_AUTOFIX
 # (when set) wins over the heuristic.
 _autofix_default() {
-	if [[ -n "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${GITHUB_ACTIONS:-}" ]]; then
+	if _is_headless_session || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
 		printf '1\n'
 	else
 		printf '0\n'
@@ -147,6 +152,93 @@ _load_verify_config() {
 	return 0
 }
 
+# ----- Python tool source for inferred defaults (GH#34163) ----------------
+
+# Bin directory prepended to PATH for each check; empty means bare PATH.
+VERIFY_TOOL_PATH=''
+
+# Print the distinct Python tools invoked as the first word of the inferred
+# commands. Only these names are looked up in a candidate environment.
+_default_python_tools() {
+	local cmd="" tool="" seen=" "
+	for cmd in "$VERIFY_FORMAT" "$VERIFY_FORMAT_FIX" "$VERIFY_LINT" "$VERIFY_LINT_FIX" "$VERIFY_TYPECHECK"; do
+		tool="${cmd%% *}"
+		[[ -n "$tool" && "$tool" =~ ^(${_PY_VERIFY_TOOLS})$ ]] || continue
+		[[ "$seen" == *" $tool "* ]] && continue
+		seen+="$tool "
+		printf '%s\n' "$tool"
+	done
+	return 0
+}
+
+# A candidate is a real virtual environment (pyvenv.cfg) whose bin/ holds an
+# executable for every inferred tool. Nothing is executed or installed.
+_python_env_provides_tools() {
+	local venv="$1"
+	local tools="$2"
+	local tool=""
+	[[ -f "$venv/pyvenv.cfg" && -d "$venv/bin" ]] || return 1
+	while IFS= read -r tool; do
+		[[ -n "$tool" ]] || continue
+		[[ -f "$venv/bin/$tool" && -x "$venv/bin/$tool" ]] || return 1
+	done <<<"$tools"
+	return 0
+}
+
+# Main worktree root for a linked worktree, or nothing. One fixed path derived
+# from Git metadata; never a directory scan.
+_main_worktree_root() {
+	local common_dir="" main_root=""
+	common_dir=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ "$(basename "$common_dir")" == ".git" ]] || return 1
+	main_root=$(dirname "$common_dir")
+	[[ -d "$main_root" && ! "$main_root" -ef "$REPO_ROOT" ]] || return 1
+	printf '%s\n' "$main_root"
+	return 0
+}
+
+# Inferred Python defaults call bare tool names (repo-verify-defaults.conf).
+# Resolve them from the project's own environment in a fixed order:
+#   1. <worktree>/.venv
+#   2. interactive sessions only: <main worktree>/.venv (linked worktrees do not
+#      carry the gitignored environment; headless workers keep PATH containment)
+# Explicit .aidevops.json and package.json commands are never altered. When no
+# candidate qualifies, bare PATH and the GH#34110 missing-tool diagnosis apply.
+_resolve_default_python_tool_path() {
+	local tools="" main_root="" candidate=""
+	[[ "$VERIFY_SOURCE" == defaults\(PYTHON_* ]] || return 0
+	tools=$(_default_python_tools)
+	[[ -n "$tools" ]] || return 0
+	if _python_env_provides_tools "$REPO_ROOT/.venv" "$tools"; then
+		VERIFY_TOOL_PATH="$REPO_ROOT/.venv/bin"
+		_log INFO "python tool source: worktree .venv"
+		return 0
+	fi
+	if _is_headless_session; then
+		_dbg "headless session: main-worktree environment not consulted"
+		return 0
+	fi
+	main_root=$(_main_worktree_root) || return 0
+	candidate="$main_root/.venv"
+	if _python_env_provides_tools "$candidate" "$tools"; then
+		VERIFY_TOOL_PATH="$candidate/bin"
+		_log INFO "python tool source: main-worktree .venv"
+	fi
+	return 0
+}
+
+# Evaluate one declared command from the repo root, with the resolved tool
+# source (if any) first on PATH for that command only.
+_eval_in_repo() {
+	local cmd="$1"
+	cd "$REPO_ROOT" || return 1
+	if [[ -n "$VERIFY_TOOL_PATH" ]]; then
+		export PATH="$VERIFY_TOOL_PATH${PATH:+:$PATH}"
+	fi
+	eval "$cmd" && return 0
+	return 1
+}
+
 # ----- run a single verify check ------------------------------------------
 
 # _run_check NAME COMMAND -> exit 0 on pass, 1 on fail. Captures output for
@@ -157,7 +249,7 @@ _run_check() {
 	local log
 	log=$(mktemp -t "aidevops-prepush-${name}.XXXXXX")
 	_log INFO "running $name: $cmd"
-	if (cd "$REPO_ROOT" && eval "$cmd") >"$log" 2>&1; then
+	if (_eval_in_repo "$cmd") >"$log" 2>&1; then
 		_log OK "$name passed"
 		rm -f "$log"
 		return 0
@@ -187,7 +279,7 @@ _run_autofix() {
 	fi
 
 	_log INFO "running $name autofix: $fix_cmd"
-	if ! (cd "$REPO_ROOT" && eval "$fix_cmd") >>"${LAST_FAIL_LOG:-/dev/null}" 2>&1; then
+	if ! (_eval_in_repo "$fix_cmd") >>"${LAST_FAIL_LOG:-/dev/null}" 2>&1; then
 		_log WARN "$name autofix command itself failed"
 		return 1
 	fi
@@ -261,6 +353,128 @@ _emit_missing_bun_dev_dependencies() {
 	printf '    2. Re-run: %s\n' "$VERIFY_TYPECHECK" >&2
 	printf '    3. git push (re-runs repo verification)\n' >&2
 	printf '\n' >&2
+	return 0
+}
+
+# GH#34094: a declared JavaScript lint command that cannot start (linter binary
+# absent, or a flat-config plugin/package unresolvable) is unavailable tooling,
+# not a demonstrated source defect. Log content is only pattern-matched, never
+# executed. Any ESLint problem summary keeps the normal source-failure path.
+_lint_missing_js_tooling() {
+	local log_file="$1"
+	[[ -f "$REPO_ROOT/package.json" && -f "$log_file" ]] || return 1
+	if grep -Eq '^[[:space:]]*(✖|x)?[[:space:]]*[0-9]+ problems? \(' "$log_file" 2>/dev/null; then
+		return 1
+	fi
+	if grep -Eq '(^|[[:space:]:])(eslint|biome|oxlint|next)(: command not found|: not found)' \
+		"$log_file" 2>/dev/null; then
+		return 0
+	fi
+	if grep -Eq "Cannot find (package|module) '[^']+' imported from [^[:space:]]*eslint\.config\.[cm]?[jt]s" \
+		"$log_file" 2>/dev/null; then
+		return 0
+	fi
+	grep -Eq "ESLint couldn't find the (plugin|config)" "$log_file" 2>/dev/null || return 1
+	return 0
+}
+
+# Name the project-declared install command from the tracked lockfile.
+_js_install_command() {
+	if [[ -f "$REPO_ROOT/bun.lock" || -f "$REPO_ROOT/bun.lockb" ]]; then
+		printf 'bun install --frozen-lockfile'
+	elif [[ -f "$REPO_ROOT/pnpm-lock.yaml" ]]; then
+		printf 'pnpm install --frozen-lockfile'
+	elif [[ -f "$REPO_ROOT/yarn.lock" ]]; then
+		printf 'yarn install --frozen-lockfile'
+	elif [[ -f "$REPO_ROOT/package-lock.json" ]]; then
+		printf 'npm ci'
+	else
+		printf 'npm install'
+	fi
+	return 0
+}
+
+_emit_missing_js_lint_tooling() {
+	_log BLOCK "lint could not start: JavaScript lint tooling or plugins are unavailable in this worktree"
+	_log BLOCK "this is not a demonstrated source lint defect; the unchanged lint gate must still run and pass"
+	printf '\n' >&2
+	printf '  Resolution (keep source, config and lockfile unchanged):\n' >&2
+	printf '    1. Provision dev dependencies (downloads need approval): %s\n' "$(_js_install_command)" >&2
+	printf '       Interactive alternative: explicitly approved read-only reuse of an\n' >&2
+	printf '       existing compatible install — see tools/runtime/node-server-admin.md\n' >&2
+	printf '       "Linked-worktree lint tooling". A global eslint binary is not enough\n' >&2
+	printf '       when the flat config imports plugins.\n' >&2
+	printf '    2. Re-run: %s   (must pass)\n' "$VERIFY_LINT" >&2
+	printf '    3. git push (re-runs repo verification)\n' >&2
+	printf '\n' >&2
+	return 0
+}
+
+# GH#34110: a Python verification tool that is not on this PATH (or not
+# importable by the selected interpreter) cannot have evaluated the source.
+# Print the missing tool name; return 1 when the log shows the tool actually
+# ran (ruff/black/mypy summaries) or no missing-tool signature is present.
+# Log content is only pattern-matched, never executed.
+_PY_VERIFY_TOOLS='ruff|black|flake8|pytest|mypy|isort|pyright|pylint'
+_missing_python_tooling() {
+	local log_file="$1"
+	local match=""
+	[[ -f "$log_file" ]] || return 1
+	if grep -Eiq '(^Found [0-9]+ errors?|[0-9]+ files? (would be|left) (reformatted|unchanged)|^would reformat)' \
+		"$log_file" 2>/dev/null; then
+		return 1
+	fi
+	# bash/sh/env forms: "line 1: ruff: command not found", "sh: 1: ruff: not
+	# found", "env: 'ruff': No such file or directory"; zsh: "command not
+	# found: ruff"; interpreter: "python: No module named ruff".
+	match=$(grep -Eo "(^|[[:space:]:/])'?(${_PY_VERIFY_TOOLS})'?(: command not found|: not found|: No such file or directory)" \
+		"$log_file" 2>/dev/null | head -n 1) || match=""
+	if [[ -z "$match" ]]; then
+		match=$(grep -Eo "command not found: (${_PY_VERIFY_TOOLS})([[:space:]]|$)" "$log_file" 2>/dev/null | head -n 1) || match=""
+	fi
+	if [[ -z "$match" ]]; then
+		match=$(grep -Eo "No module named '?(${_PY_VERIFY_TOOLS})('|[[:space:]]|$)" "$log_file" 2>/dev/null | head -n 1) || match=""
+	fi
+	[[ -n "$match" ]] || return 1
+	match=$(printf '%s' "$match" | grep -Eo "(${_PY_VERIFY_TOOLS})" | head -n 1)
+	printf '%s\n' "$match"
+	return 0
+}
+
+_emit_missing_python_tooling() {
+	local name="$1"
+	local tool="$2"
+	local check_cmd="$3"
+	_log BLOCK "$name could not start: Python verification tool '$tool' is unavailable to the selected interpreter/PATH"
+	_log BLOCK "this is not a demonstrated source defect; the unchanged $name gate must still run and pass"
+	printf '\n' >&2
+	printf '  Resolution (keep source and configuration unchanged; never bypass this gate):\n' >&2
+	if [[ -x "$REPO_ROOT/.venv/bin/$tool" ]]; then
+		printf '    1. This worktree has %s. Declare it explicitly in .aidevops.json\n' ".venv/bin/$tool" >&2
+		printf '       .verify, for example: "%s": ".venv/bin/%s ..."\n' "$name" "$tool" >&2
+	else
+		printf '    1. Reuse an approved existing environment by declaring its interpreter\n' >&2
+		printf '       explicitly in .aidevops.json .verify, for example:\n' >&2
+		printf '       "%s": "<approved-venv>/bin/python -m %s ..."\n' "$name" "$tool" >&2
+		printf '       Do not scan host directories for environments.\n' >&2
+	fi
+	printf '    2. Otherwise installing %s needs dependency-installation authority.\n' "$tool" >&2
+	printf '       Headless workers: report TERMINAL_BLOCKER_REASON=runner_capability_unmet,\n' >&2
+	printf '       not permission_required, and name the missing tool in the dossier.\n' >&2
+	printf '    3. Re-run: %s   (must pass)\n' "$check_cmd" >&2
+	printf '\n' >&2
+	return 0
+}
+
+# Classify one failed check. Returns 0 (and prints guidance) only for missing
+# Python tooling, in which case callers skip autofix: the fixer shares the
+# unavailable toolchain.
+_check_failed_on_missing_python_tooling() {
+	local name="$1"
+	local check_cmd="$2"
+	local tool=""
+	tool=$(_missing_python_tooling "${LAST_FAIL_LOG:-}") || return 1
+	_emit_missing_python_tooling "$name" "$tool" "$check_cmd"
 	return 0
 }
 
@@ -352,11 +566,14 @@ main() {
 	fi
 
 	_log INFO "verify source: $VERIFY_SOURCE"
+	_resolve_default_python_tool_path
 	local overall=0
 
 	if [[ -n "$VERIFY_FORMAT" ]]; then
 		if ! _run_check 'format' "$VERIFY_FORMAT"; then
-			if _run_autofix 'format' "$VERIFY_FORMAT_FIX" "$VERIFY_FORMAT"; then
+			if _check_failed_on_missing_python_tooling 'format' "$VERIFY_FORMAT"; then
+				overall=1
+			elif _run_autofix 'format' "$VERIFY_FORMAT_FIX" "$VERIFY_FORMAT"; then
 				:
 			else
 				_emit_mentor_fail 'format' "$VERIFY_FORMAT_FIX" "$VERIFY_FORMAT"
@@ -367,7 +584,13 @@ main() {
 
 	if [[ -n "$VERIFY_LINT" ]]; then
 		if ! _run_check 'lint' "$VERIFY_LINT"; then
-			if _run_autofix 'lint' "$VERIFY_LINT_FIX" "$VERIFY_LINT"; then
+			if _lint_missing_js_tooling "${LAST_FAIL_LOG:-}"; then
+				# The fixer shares the unavailable toolchain; skip autofix.
+				_emit_missing_js_lint_tooling
+				overall=1
+			elif _check_failed_on_missing_python_tooling 'lint' "$VERIFY_LINT"; then
+				overall=1
+			elif _run_autofix 'lint' "$VERIFY_LINT_FIX" "$VERIFY_LINT"; then
 				:
 			else
 				_emit_mentor_fail 'lint' "$VERIFY_LINT_FIX" "$VERIFY_LINT"
@@ -381,6 +604,8 @@ main() {
 		if ! _run_check 'typecheck' "$VERIFY_TYPECHECK"; then
 			if _typecheck_missing_bun_dev_dependencies "${LAST_FAIL_LOG:-}"; then
 				_emit_missing_bun_dev_dependencies
+			elif _check_failed_on_missing_python_tooling 'typecheck' "$VERIFY_TYPECHECK"; then
+				:
 			else
 				_emit_mentor_fail 'typecheck' '' "$VERIFY_TYPECHECK"
 			fi

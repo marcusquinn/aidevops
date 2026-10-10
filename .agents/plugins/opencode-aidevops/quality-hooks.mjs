@@ -21,6 +21,7 @@ import {
 } from "./output-compaction.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
+import { assertLocalOnlyToolCall, activeLocalOnlyPolicy } from "./local-only-policy.mjs";
 import {
   checkSecretReadGate,
   isReadTool,
@@ -40,6 +41,7 @@ import { checkGrepPathScope } from "./grep-path-guard.mjs";
 import { checkRedactedEdit } from "./redacted-edit-guard.mjs";
 import {
   bindActiveScriptsDir,
+  checkArgvSafetyGate,
   checkCanonicalGitSafetyGate,
   checkCanonicalWriteSafetyGate,
   isApplyPatchMutationTool,
@@ -51,6 +53,7 @@ import {
   scrubToolOutput,
 } from "./quality-hooks-output-scrub.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
+import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -94,6 +97,16 @@ function isWriteOrEditTool(tool) {
  */
 function isBashTool(tool) {
   return tool === "Bash" || tool === "bash";
+}
+
+/**
+ * Check if a tool name is the bounded-operation tool, including MCP-prefixed
+ * names such as `mcp__aidevops__aidevops_bounded_operation`.
+ * @param {string} tool
+ * @returns {boolean}
+ */
+function isBoundedOperationTool(tool) {
+  return typeof tool === "string" && /(?:^|[_.:/])aidevops_bounded_operation$/.test(tool);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,12 +229,24 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
     {
       activeScriptsDir: ctx.activeScriptsDir,
       activeScriptsDirBinding: ctx.activeScriptsDirBinding,
+      ownedListenerRoots: ctx.ownedListenerRoots(sessionId),
     },
   );
   const signatureModel = ctx.resolveSessionModel(sessionId);
   checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output, {
     model: signatureModel,
     useProcessModelFallback: false,
+  });
+}
+
+// GH#33969: bounded-operation starts get the same worker command policy as
+// Bash, including the owned-listener loopback allowance.
+function enforceBoundedOperationSafety(ctx, input, output, sessionId) {
+  if (!isBoundedOperationTool(input.tool)) return;
+  const args = output.args ?? {};
+  if (args.action !== "start") return;
+  checkArgvSafetyGate(args.command, ctx.scriptsDir, args.cwd || ctx.repositoryDir || process.cwd(), {
+    ownedListenerRoots: ctx.ownedListenerRoots(sessionId),
   });
 }
 
@@ -267,6 +292,12 @@ async function resolveToolSourceContexts(ctx, input, output, sessionId, after = 
 }
 
 async function handleToolBefore(ctx, log, input, output) {
+  assertLocalOnlyToolCall(input.tool, output.args || {}, {
+    ...activeLocalOnlyPolicy(), directory: ctx.repositoryDir,
+  });
+  assertPrivateProcessingRead({ tool: input.tool, args: output.args || {},
+    repositoryDir: ctx.repositoryDir, sessionID: input.sessionID || input.sessionId || "",
+    classification: ctx.privateProcessingPolicy });
   ctx.continuationGuard?.beforeTool(input, output);
   enforceDirectFileMutationSafety(ctx, input, output);
 
@@ -298,6 +329,7 @@ async function handleToolBefore(ctx, log, input, output) {
     sourceContextForPath,
   }, input, output);
   enforceBashToolSafety(ctx, log, input, output, sessionId);
+  enforceBoundedOperationSafety(ctx, input, output, sessionId);
   if (isBashTool(input.tool)) rememberBashOutputPolicy(callID, output.args);
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
 }
@@ -413,6 +445,7 @@ export function createQualityHooks(deps) {
   const detailLogPath = join(logsDir, "quality-hooks-detail.log");
   const detailMaxBytes = 5 * 1024 * 1024; // 5MB before rotation
   const ctx = {
+    privateProcessingPolicy: loadPrivateProcessingPolicy(),
     scriptsDir,
     activeScriptsDir,
     activeScriptsDirBinding,
@@ -432,6 +465,9 @@ export function createQualityHooks(deps) {
     resolveSessionModel: typeof deps.resolveSessionModel === "function"
       ? deps.resolveSessionModel
       : () => "",
+    ownedListenerRoots: typeof deps.ownedListenerRoots === "function"
+      ? deps.ownedListenerRoots
+      : () => [],
   };
 
   function boundQualityLog(level, message) {

@@ -195,6 +195,71 @@ test_network_local_site_allowance() {
 	return 0
 }
 
+OWNED_RUNTIME_ID="Thu Oct 8 10:00:00 2026"
+OWNED_ROOTS='[{"pid":200,"identity":"Thu Oct  8 10:05:00 2026"}]'
+
+expect_owned_listener() {
+	local expected="$1"
+	local name="$2"
+	local argv_json="$3"
+	local roots="${4:-$OWNED_ROOTS}"
+	local runtime_id="${5:-$OWNED_RUNTIME_ID}"
+	local status=0
+	HOME="$TEST_HOME" AIDEVOPS_LOCALDEV_REGISTRY="${TEST_ROOT}/missing-ports.json" \
+		"$NETWORK_HELPER" check-argv "$argv_json" --cwd "$TEST_HOME" --worker-id test \
+		--owned-listener-roots "$roots" --runtime-pid 100 --runtime-process-identity "$runtime_id" \
+		--process-table-fixture "${TEST_ROOT}/owned-procs.json" \
+		--listener-table-fixture "${TEST_ROOT}/owned-listeners.json" >/dev/null 2>&1 || status=$?
+	if [[ "$expected" == "allow" && "$status" -eq 0 ]] || [[ "$expected" == "deny" && "$status" -ne 0 ]]; then
+		pass "owned listener: ${name}"
+	else
+		fail "owned listener: ${name}" "expected=${expected} status=${status}"
+	fi
+	return 0
+}
+
+# GH#33969: loopback HTTP to a port served by a descendant of one of the
+# worker's live bounded-operation supervisors (PID 200, child of runtime 100).
+test_network_owned_listener_allowance() {
+	local message=""
+	printf '%s\n' '{"processes":[
+{"pid":1,"ppid":0,"pgid":1,"start":"Thu Oct 8 09:00:00 2026","comm":"launchd"},
+{"pid":100,"ppid":1,"pgid":100,"start":"Thu Oct 8 10:00:00 2026","comm":"opencode"},
+{"pid":200,"ppid":100,"pgid":200,"start":"Thu Oct 8 10:05:00 2026","comm":"node"},
+{"pid":250,"ppid":200,"pgid":250,"start":"Thu Oct 8 10:05:01 2026","comm":"bash"},
+{"pid":300,"ppid":250,"pgid":250,"start":"Thu Oct 8 10:05:02 2026","comm":"node"},
+{"pid":400,"ppid":1,"pgid":400,"start":"Thu Oct 8 08:00:00 2026","comm":"operator-service"},
+{"pid":500,"ppid":100,"pgid":500,"start":"Thu Oct 8 10:01:00 2026","comm":"mcp"}]}' >"${TEST_ROOT}/owned-procs.json"
+	# "system" is the unattributed netstat/ss view; port 8000 has a hidden
+	# (other-user) 127.0.0.1 listener that lsof could not attribute.
+	printf '%s\n' '{"listeners":[{"port":4173,"pid":300},{"port":4096,"pid":400},{"port":5000,"pid":500},{"port":6000,"pid":300},{"port":6000,"pid":400},{"port":8000,"pid":300,"address":"*"}],
+"system":[{"port":4173,"address":"127.0.0.1"},{"port":4096,"address":"127.0.0.1"},{"port":5000,"address":"127.0.0.1"},{"port":6000,"address":"127.0.0.1"},{"port":8000,"address":"*"},{"port":8000,"address":"127.0.0.1"}]}' >"${TEST_ROOT}/owned-listeners.json"
+
+	expect_owned_listener allow "worker-started server port" '["curl","-sI","http://127.0.0.1:4173/"]'
+	expect_owned_listener allow "localhost name" '["curl","-sI","http://localhost:4173/"]'
+	expect_owned_listener allow "wget client" '["wget","-qO-","http://127.0.0.1:4173/"]'
+	expect_owned_listener deny "operator-owned service" '["curl","http://127.0.0.1:4096/"]'
+	expect_owned_listener deny "runtime child outside bounded operations" '["curl","http://127.0.0.1:5000/"]'
+	expect_owned_listener deny "port shared with an unowned listener" '["curl","http://127.0.0.1:6000/"]'
+	expect_owned_listener deny "no listener yet" '["curl","http://127.0.0.1:7000/"]'
+	expect_owned_listener deny "unattributable listener on the port" '["curl","http://127.0.0.1:8000/"]'
+	expect_owned_listener deny "mixed owned and operator endpoints" '["curl","http://127.0.0.1:4173/","http://127.0.0.1:4096/"]'
+	expect_owned_listener deny "stale supervisor generation" '["curl","http://127.0.0.1:4173/"]' '[{"pid":200,"identity":"Thu Oct 8 11:00:00 2026"}]'
+	expect_owned_listener deny "root not a runtime child" '["curl","http://127.0.0.1:4173/"]' '[{"pid":250,"identity":"Thu Oct 8 10:05:01 2026"}]'
+	expect_owned_listener deny "runtime generation mismatch" '["curl","http://127.0.0.1:4173/"]' "$OWNED_ROOTS" "Thu Oct 8 12:00:00 2026"
+	expect_owned_listener deny "malformed roots" '["curl","http://127.0.0.1:4173/"]' '{"pid":200}'
+	expect_owned_listener deny "non-HTTP client" '["ssh","-p","4173","127.0.0.1"]'
+	expect_owned_listener deny "private raw IP" '["curl","http://10.0.0.5:4173/"]'
+
+	message="$(HOME="$TEST_HOME" "$NETWORK_HELPER" check-argv '["curl","http://127.0.0.1:9999/"]' --cwd "$TEST_HOME" --worker-id test 2>&1)"
+	if [[ "$message" == *"aidevops_bounded_operation"* && "$message" == *"localdev-helper.sh add"* && "$message" == *"not a terminal blocker"* ]]; then
+		pass "owned listener: denial names recovery routes"
+	else
+		fail "owned listener: denial names recovery routes" "$message"
+	fi
+	return 0
+}
+
 test_network_policy_fail_closed() {
 	local malformed="${TEST_ROOT}/network-tiers.conf"
 	printf '[tier5\nrequestbin.com\n' >"$malformed"
@@ -350,6 +415,7 @@ main() {
 	write_fake_network_tools
 	test_network_check_command
 	test_network_local_site_allowance
+	test_network_owned_listener_allowance
 	test_network_policy_fail_closed
 	test_network_helper_timeout
 	test_sandbox_enforcement

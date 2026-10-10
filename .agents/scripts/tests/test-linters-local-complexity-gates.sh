@@ -113,6 +113,7 @@ source_linter_analysis() {
 	MAX_NESTING_VIOLATIONS=1
 	MAX_FILE_LINES_WARN=500
 	MAX_FILE_LINES_BLOCK=500
+	MAX_ROOT_FILE_LINES_BLOCK=1000
 	# shellcheck source=../linters-local-analysis.sh
 	source "${REPO_ROOT}/.agents/scripts/linters-local-analysis.sh"
 	return 0
@@ -235,12 +236,69 @@ test_changed_nesting_regression_blocks() {
 	return 0
 }
 
+test_markdown_size_boundary() {
+	local path="$1"
+	local lines="$2"
+	local expected="$3"
+	setup_repo
+	printf '# Baseline\n' >"${TEST_ROOT}/baseline.md"
+	mark_origin_main
+	mkdir -p "${TEST_ROOT}/docs"
+	local i=0
+	while [[ "$i" -lt "$lines" ]]; do
+		printf 'Detail %d\n' "$i" >>"${TEST_ROOT}/${path}"
+		i=$((i + 1))
+	done
+	"$GIT_BIN" -C "$TEST_ROOT" add "$path"
+	source_linter_analysis
+	local rc=0
+	(
+		cd "$TEST_ROOT" || exit 1
+		check_file_size >"${TEST_ROOT}/size.out" 2>&1
+	) || rc=$?
+	if [[ "$rc" -eq "$expected" ]] && ! grep -q '^BLOCK' "${TEST_ROOT}/size.out"; then
+		print_result "local Markdown $path at $lines lines → exit $expected" 0
+	else
+		print_result "local Markdown $path at $lines lines → exit $expected" 1 "got exit $rc"
+	fi
+	local helper="${REPO_ROOT}/.agents/scripts/complexity-regression-helper.sh"
+	local scan
+	scan=$("$helper" scan "$TEST_ROOT" --metric file-size)
+	if { [[ "$expected" -eq 0 && -z "$scan" ]] || [[ "$expected" -eq 1 && "$scan" == "$path"$'\tSIZE\t'"$lines" ]]; }; then
+		print_result "CI Markdown $path at $lines lines" 0
+	else
+		print_result "CI Markdown $path at $lines lines" 1 "$scan"
+	fi
+	# Commit the Markdown-only fixture so the real pre-push path scans it.
+	mark_origin_main
+	"$GIT_BIN" -C "$TEST_ROOT" update-ref refs/remotes/origin/main HEAD~1
+	rc=0
+	(
+		cd "$TEST_ROOT" || exit 1
+		bash "${REPO_ROOT}/.agents/hooks/complexity-regression-pre-push.sh" >"${TEST_ROOT}/hook.out" 2>&1
+	) || rc=$?
+	if [[ "$rc" -eq "$expected" ]]; then
+		print_result "Markdown-only pre-push $path at $lines lines → exit $expected" 0
+	else
+		print_result "Markdown-only pre-push $path at $lines lines → exit $expected" 1 "got exit $rc"
+	fi
+	teardown
+	return 0
+}
+
 main() {
 	test_historical_function_debt_is_advisory
 	test_changed_function_regression_blocks
 	test_function_brace_spacing_change_is_not_regression
 	test_historical_nesting_debt_is_advisory
 	test_changed_nesting_regression_blocks
+	test_markdown_size_boundary STANDARDS.md 554 0
+	test_markdown_size_boundary STANDARDS.md 1000 0
+	test_markdown_size_boundary STANDARDS.md 1001 1
+	test_markdown_size_boundary docs/guide.md 500 0
+	test_markdown_size_boundary docs/guide.md 501 1
+	test_markdown_size_boundary README.md 1001 0
+	test_markdown_size_boundary docs/README.md 1001 0
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

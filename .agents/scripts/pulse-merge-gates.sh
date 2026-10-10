@@ -354,14 +354,17 @@ _external_pr_has_linked_issue() {
 # Arguments:
 #   $1 - PR number
 #   $2 - repo slug (owner/repo)
+#   $3 - issue already resolved from this PR (optional; association, not closure)
 # Returns: 0 if approved, 1 if not approved or no linked issue
 #######################################
 _external_pr_linked_issue_crypto_approved() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local linked
-	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked=""
-	[[ -z "$linked" ]] && return 1
+	local linked="${3:-}"
+	if [[ -z "$linked" ]]; then
+		linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked=""
+	fi
+	[[ "$linked" =~ ^[0-9]+$ ]] || return 1
 	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
 	[[ ! -f "$approval_helper" ]] && return 1
 	local result
@@ -535,6 +538,14 @@ _pulse_merge_admin_safety_check() {
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: linked issue extraction failed for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
 	fi
+	# Recheck the same non-closing worker association at the final boundary;
+	# an issue gaining NMR after initial gating must still stop the merge.
+	if [[ -z "$linked" && "$labels_str" =~ (^|,)origin:worker(,|$) ]]; then
+		if ! linked=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit); then
+			echo "[pulse-merge] _pulse_merge_admin_safety_check: worker issue association extraction failed for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
+			return 1
+		fi
+	fi
 	if [[ -n "$linked" ]]; then
 		linked_labels=$(gh api "repos/${repo_slug}/issues/${linked}" --jq '[.labels[].name] | join(",")' 2>/dev/null) || linked_labels="__API_ERROR__"
 		if [[ "$linked_labels" == "__API_ERROR__" || ",${linked_labels}," == *",needs-maintainer-review,"* ]]; then
@@ -557,7 +568,7 @@ _pulse_merge_admin_safety_check() {
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR has no linked issue (t2934)" >>"$LOGFILE"
 		return 1
 	fi
-	if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug"; then
+	if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug" "$linked"; then
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR linked issue #${linked} lacks crypto approval (t2934)" >>"$LOGFILE"
 		return 1
 	fi

@@ -9,6 +9,45 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `A
 
 ---
 
+## Storing multi-line secrets
+
+Run secret setup in your own terminal, never paste secret values into AI chat.
+The hidden `aidevops secret set NAME` prompt accepts **one line only**. For PEM
+keys, JSON service-account credentials, or other multi-line values, initialize
+encrypted storage with `aidevops secret init`, then use:
+
+```bash
+chmod 600 /secure/path/app.pem
+aidevops secret set APP_KEY --from-file /secure/path/app.pem
+```
+
+`--from-file` requires a readable regular file, refuses symlinks and any
+group/other permissions, and validates the opened descriptor before reading.
+Alternatively, full redirected/piped stdin is accepted, for example
+`aidevops secret set APP_KEY < /secure/path/app.pem` in your terminal.
+Embedded newlines are preserved; trailing newlines are trimmed consistently
+with environment injection. NUL bytes are rejected. PEM keys remain valid
+without their final newline. The plaintext `credentials.sh` fallback refuses
+multi-line input without changing existing credentials; use gopass instead.
+It also refuses dollar signs and backticks, which its line-oriented readers
+cannot safely round-trip as literal shell data.
+
+Verify without printing the key:
+
+```bash
+aidevops secret APP_KEY -- sh -c 'printf "%s\n" "$APP_KEY" | openssl pkey -noout -check'
+```
+
+After successful storage and verification, delete the source file using your
+local secure-deletion policy (ordinary removal does not guarantee erasure on
+SSDs, snapshots or backups). A detected multi-line terminal paste is silently
+drained and rejected, never stored as a first-line fragment. The drain waits
+for a short quiet interval; it cannot protect arbitrary delayed input, so
+always use file/stdin input for multi-line secrets. If a key was previously
+pasted into the shell or appears in scrollback/history, revoke and replace it.
+
+---
+
 ## Headless runner GPG availability
 
 `aidevops secret check NAME` is status-only: exit 0 means readable, 1 means

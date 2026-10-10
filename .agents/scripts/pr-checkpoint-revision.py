@@ -13,7 +13,8 @@ import hashlib
 import json
 import sys
 
-from pr_checkpoint_events import release_for, successors_valid, timestamp, trusted
+from pr_checkpoint_events import (release_for, released_attempt_token, successors_valid,
+                                  timestamp, trusted)
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -48,7 +49,11 @@ def candidate(data, comments, comment, now):
     if approval is None:
         return None
     release = release_for(comments, approval, comment)
-    if release is None or not successors_valid(data, comments, release["id"], comment["id"], now):
+    if release is None:
+        return None
+    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    if not successors_valid({**data, "released_lease": closing}, comments, release["id"],
+                            comment["id"], now):
         return None
     owners = [a["login"] for a in data["issue"].get("assignees", [])]
     allowed_owners = [[data["assignee"]]]
@@ -59,11 +64,15 @@ def candidate(data, comments, comment, now):
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
 
 
-def validate(data):
+def sorted_comments(data):
     comments = data["comments"]
     if comments and isinstance(comments[0], list):
         comments = [c for page in comments for c in page]
-    comments = sorted(comments, key=lambda c: (c["created_at"], c["id"]))
+    return sorted(comments, key=lambda c: (c["created_at"], c["id"]))
+
+
+def validate(data):
+    comments = sorted_comments(data)
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
     candidates = [result for c in comments if (result := candidate(data, comments, c, now)) is not None]
     if len(candidates) != 1:
@@ -71,12 +80,29 @@ def validate(data):
     return candidates[0]
 
 
+def template(data):
+    """Emit an approval line only when dispatch-approved could accept its release.
+
+    GH#33997: an approval naming a non-blocked release (for example
+    worker_draft_checkpoint or crash_during_execution) can never dispatch, and
+    a trusted approval comment also disables the legacy continuation path.
+    """
+    approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
+    # The approval comment does not exist yet; any later comment id qualifies.
+    if release_for(sorted_comments(data), approval, {"id": float("inf")}) is None:
+        raise ValueError(
+            f"release {approval['release_id']} is not a trusted CLAIM_RELEASED reason=blocked "
+            f"by {approval['runner']} closing {approval['attempt']}; dispatch-approved would "
+            "reject this approval, so none was generated")
+    return PREFIX + json.dumps(approval)
+
+
 if __name__ == "__main__":
+    template_mode = sys.argv[1:] == ["template"]
     try:
         payload = json.load(sys.stdin)
-        if sys.argv[1:] == ["template"]:
-            print(PREFIX + json.dumps({**binding(payload), "release_id": payload["release_id"], "attempt": payload["attempt"]}))
-        else:
-            print(json.dumps(validate(payload)))
-    except (ValueError, KeyError, TypeError, OverflowError):
+        print(template(payload) if template_mode else json.dumps(validate(payload)))
+    except (ValueError, KeyError, TypeError, OverflowError) as error:
+        if template_mode:
+            print(f"approval-template: {error}", file=sys.stderr)
         sys.exit(1)

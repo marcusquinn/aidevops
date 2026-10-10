@@ -155,7 +155,8 @@ register_all_mcp_servers() {
 	register_mcp "context7" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp@latest\"]}"
 
 	# --- Playwright MCP (correct package: @playwright/mcp) ---
-	register_mcp "playwright" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@playwright/mcp@0.0.79\",\"--headless\",\"--isolated\"]}"
+	# GH#34111: private artifact cwd via browser-mcp-launcher.sh.
+	register_mcp "playwright" "{\"type\":\"stdio\",\"command\":\"bash\",\"args\":[\"$HOME/.aidevops/agents/scripts/browser-mcp-launcher.sh\",\"playwright\",\"npx\",\"-y\",\"@playwright/mcp@0.0.79\",\"--headless\",\"--isolated\"]}"
 
 	# --- shadcn UI ---
 	register_mcp "shadcn" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"shadcn@latest\",\"mcp\"]}"
