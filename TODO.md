@@ -1619,7 +1619,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18647 fix(approval): maintainer state change on a linked external issue must not stale signed approvals #bug ref:GH#34266 pr:#34275 completed:2026-10-10
 
-- [ ] t18648 Approved external parent-task issues never auto-close after children complete (stale approval blocks terminal close) #bug ref:GH#34281
+- [x] t18648 Approved external parent-task issues never auto-close after children complete (stale approval blocks terminal close) #bug ref:GH#34281 pr:#34284 completed:2026-10-10
 
 ## In Progress
 
