@@ -77,10 +77,25 @@ _get_cost_budget_for_tier() {
 # GH#34248: GitHub can omit cross-reference events for delivered partial PRs.
 # Closeout markers supply candidates only; verify each PR through REST before
 # treating its actual merge time as a checkpoint. Never reset from prose alone.
-# Args: issue number, repo slug, slurped comments JSON, timeline checkpoint epoch.
+# Args: issue number, repo slug, slurped comments JSON.
 # Stdout: latest verified merge epoch; returns 1 on fetch/parse failure.
 _cost_checkpoint_from_closeouts() {
-	local issue_number="$1" repo_slug="$2" comments_json="$3" checkpoint_epoch="$4"
+	local issue_number="$1" repo_slug="$2" comments_json="$3"
+	# Delivered checkpoints start a new spend window, not a lifetime budget.
+	# Reference creation time is not merge time; unrelated PRs cannot reset spend.
+	local timeline_json checkpoint_epoch
+	timeline_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/timeline" --paginate --slurp 2>/dev/null) || return 1
+	checkpoint_epoch=$(printf '%s' "$timeline_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
+		[.[][]
+		 | select(.event == "cross-referenced")
+		 | .source.issue
+		 | select(.repository.full_name == $repo)
+		 | select(((.title // "") + "\n" + (.body // ""))
+			| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
+		 | .pull_request.merged_at // empty
+		 | fromdateiso8601] | max // 0
+	' 2>/dev/null) || return 1
+
 	local candidates pr_number pr_json merge_epoch
 	candidates=$(printf '%s' "$comments_json" | jq -r '
 		[.[][] | select(.author_association == "OWNER" or
@@ -128,26 +143,9 @@ _sum_issue_token_spend() {
 		return 1
 	fi
 
-	# Delivered checkpoints start a new spend window, not a lifetime budget.
-	# REST cross-reference events embed pull_request.merged_at (not the event's
-	# created_at). Only same-repository PRs with an explicit issue reference count;
-	# open/unmerged PRs and incidental mentions must not hide an actual loop.
-	# A failed timeline lookup/parse leaves dispatch fail-open, like comments.
-	local timeline_json checkpoint_epoch
-	timeline_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/timeline" --paginate --slurp 2>/dev/null) || return 1
-	checkpoint_epoch=$(printf '%s' "$timeline_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
-		[.[][]
-		 | select(.event == "cross-referenced")
-		 | .source.issue
-		 | select(.repository.full_name == $repo)
-		 | select(((.title // "") + "\n" + (.body // ""))
-			| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
-		 | .pull_request.merged_at // empty
-		 | fromdateiso8601] | max // 0
-	' 2>/dev/null) || return 1
-
+	local checkpoint_epoch
 	checkpoint_epoch=$(_cost_checkpoint_from_closeouts "$issue_number" "$repo_slug" \
-		"$comments_json" "$checkpoint_epoch") || return 1
+		"$comments_json") || return 1
 
 	# Extract comment bodies, excluding interactive-session signature footers and
 	# comments predating the latest approval, cost reset marker or merged checkpoint.
