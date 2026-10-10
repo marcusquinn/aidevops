@@ -91,9 +91,15 @@ _oc_upgrade_cmd=$(_opencode_upgrade_cmd "latest")
 # Homebrew-owned OpenCode is compared against its installed formula (which may
 # be tap-qualified, e.g. anomalyco/tap/opencode, and lag the npm registry).
 _opencode_brew_formula_name() {
-	local full_name=""
-	full_name=$(brew list --formula --full-name 2>/dev/null | grep -E '(^|/)opencode$' | head -1 || true)
-	printf '%s\n' "${full_name:-opencode}"
+	local formulae="" formula=""
+	formulae=$(brew list --formula --full-name 2>/dev/null || true)
+	while IFS= read -r formula; do
+		if [[ "$formula" == opencode || "$formula" == */opencode ]]; then
+			printf '%s\n' "$formula"
+			return 0
+		fi
+	done <<<"$formulae"
+	printf '%s\n' opencode
 	return 0
 }
 
