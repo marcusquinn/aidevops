@@ -273,7 +273,8 @@ test_housekeeping_blocker_refresh_catchup() {
 	touch -t 202601010000 "$DEP_GRAPH_CACHE_FILE"
 	_pulse_run_post_dispatch_housekeeping_stages 7
 	got=$(_catchup_stages)
-	if [[ "$got" != "dep_graph:1 blocked_refresh brief_hold_release ownership_reconcile " ]]; then
+	# GH#34287: the cheap terminal reconcile runs before the slow catch-up.
+	if [[ "$got" != "ownership_reconcile dep_graph:1 blocked_refresh brief_hold_release " ]]; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | stale cache order: ${got}"
 	fi
@@ -306,11 +307,146 @@ test_housekeeping_blocker_refresh_catchup() {
 	return 0
 }
 
+_dead_pid() {
+	sleep 0 &
+	local pid=$!
+	wait "$pid" 2>/dev/null || true
+	printf '%s\n' "$pid"
+	return 0
+}
+
+# GH#34287: a run that reclaims a killed run's lock resumes at the first
+# incomplete stage; a clean complete run clears the progress state.
+test_housekeeping_resumes_after_interrupted_run() {
+	setup_test_env
+	local lockdir state_file now failures=0 failmsg=""
+	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
+	state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+	now=$(date +%s)
+	mkdir -p "$lockdir"
+	_dead_pid >"${lockdir}/pid"
+	printf 'coderabbit_review=%s\npost_merge_scanner=%s\npr_review_thread_response=%s\n' \
+		"$((now - 60))" "$((now - 30))" "$((now - 4000))" >"$state_file"
+
+	_pulse_run_post_dispatch_housekeeping_stages 7
+
+	local skipped
+	for skipped in coderabbit post_merge; do
+		if grep -q "^${skipped}$" "$STAGE_LOG" 2>/dev/null; then
+			failures=$((failures + 1))
+			failmsg="${failmsg} | fresh completed stage ${skipped} re-ran"
+		fi
+	done
+	local expected
+	for expected in pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
+		if ! grep -q "^${expected}$" "$STAGE_LOG" 2>/dev/null; then
+			failures=$((failures + 1))
+			failmsg="${failmsg} | incomplete or stale stage ${expected} skipped"
+		fi
+	done
+	if ! grep -q 'reclaiming stale lock' "$LOGFILE" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | stale lock not reclaimed"
+	fi
+	if ! grep -q 'resume — skipping coderabbit_review' "$LOGFILE" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | resume skip log missing"
+	fi
+	if [[ -e "$state_file" ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | complete run left progress state"
+	fi
+
+	# Resume disabled: every stage runs despite fresh state.
+	: >"$STAGE_LOG"
+	printf 'coderabbit_review=%s\n' "$now" >"$state_file"
+	AIDEVOPS_PULSE_HOUSEKEEPING_RESUME_WINDOW_S=0 _pulse_run_post_dispatch_housekeeping_stages 7
+	if ! grep -q '^coderabbit$' "$STAGE_LOG" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | disabled resume skipped coderabbit"
+	fi
+
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "post-dispatch housekeeping resumes at first incomplete stage" 0
+	else
+		print_result "post-dispatch housekeeping resumes at first incomplete stage" 1 "$failmsg"
+	fi
+	teardown_test_env
+	return 0
+}
+
+_stage_rc_143() { return 143; }
+_stage_rc_1() { return 1; }
+
+# GH#34287: a stage killed by a signal is not recorded as complete.
+test_housekeeping_signal_killed_stage_not_recorded() {
+	setup_test_env
+	local state_file failures=0 failmsg=""
+	state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+	_pulse_run_resumable_housekeeping_stage "killed_stage" "$state_file" _stage_rc_143
+	_pulse_run_resumable_housekeeping_stage "failed_stage" "$state_file" _stage_rc_1
+	if grep -q '^killed_stage=' "$state_file" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | signal-killed stage recorded"
+	fi
+	if ! grep -q '^failed_stage=[0-9][0-9]*$' "$state_file" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | finished (failed) stage not recorded"
+	fi
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "post-dispatch housekeeping does not record signal-killed stages" 0
+	else
+		print_result "post-dispatch housekeeping does not record signal-killed stages" 1 "$failmsg"
+	fi
+	teardown_test_env
+	return 0
+}
+
+# GH#34287: SIGTERM (deploy reconciliation) is attributed in pulse.log.
+test_async_housekeeping_logs_termination() {
+	setup_test_env
+	export AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=1
+	export TEST_STAGE_SLEEP_ONCE=2
+	local failures=0 failmsg="" child_pid="" attempts=0
+	_pulse_start_post_dispatch_housekeeping 7
+	child_pid=$(sed -n 's/.*Async post-dispatch housekeeping: launched pid=\([0-9][0-9]*\).*/\1/p' "$LOGFILE" 2>/dev/null | tail -n 1)
+	while [[ "$attempts" -lt 20 ]] && ! grep -q '^optional:coderabbit_review:' "$STAGE_LOG" 2>/dev/null; do
+		sleep 0.25
+		attempts=$((attempts + 1))
+	done
+	if [[ -n "$child_pid" ]]; then
+		kill -TERM "$child_pid" 2>/dev/null || true
+	fi
+	attempts=0
+	while [[ "$attempts" -lt 12 ]] && ! grep -q 'terminated by SIGTERM' "$LOGFILE" 2>/dev/null; do
+		sleep 1
+		attempts=$((attempts + 1))
+	done
+	if ! grep -q 'Async post-dispatch housekeeping: terminated by SIGTERM during coderabbit_review' "$LOGFILE" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | termination log missing: $(grep -o 'terminated by.*' "$LOGFILE" 2>/dev/null | tr '\n' ' ')"
+	fi
+	if grep -q 'Async post-dispatch housekeeping: complete' "$LOGFILE" 2>/dev/null; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | killed run reported complete"
+	fi
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "post-dispatch housekeeping logs SIGTERM with active stage" 0
+	else
+		print_result "post-dispatch housekeeping logs SIGTERM with active stage" 1 "$failmsg"
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_sync_housekeeping_runs_all_stages
 	test_async_housekeeping_returns_before_slow_stage
 	test_housekeeping_lock_skips_live_duplicate
 	test_housekeeping_blocker_refresh_catchup
+	test_housekeeping_resumes_after_interrupted_run
+	test_housekeeping_signal_killed_stage_not_recorded
+	test_async_housekeeping_logs_termination
 
 	printf '\n============================================\n'
 	printf 'Tests run:    %d\n' "$TESTS_RUN"
