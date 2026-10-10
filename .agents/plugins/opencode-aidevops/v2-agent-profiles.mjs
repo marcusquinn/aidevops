@@ -8,15 +8,22 @@ const SOURCE = /^([A-Za-z0-9 +.-]+),([a-z0-9-]+\.md),([^\n]*?),((?:simple|standa
 // Host releases differ (shell/bash, subagent/task); rules for unused aliases never match.
 const ACTIONS = { bash: ["shell", "bash"], task: ["subagent", "task"], write: ["edit"], patch: ["edit"] };
 
-function deniedTools(source) {
-  const frontmatter = /^---\n([\s\S]*?)\n---/.exec(source)?.[1];
-  if (!frontmatter) return null;
-  const denied = [];
+function toolLines(frontmatter) {
+  const lines = [];
   let tools = false;
   for (const line of frontmatter.split("\n")) {
     if (line === "tools:") { tools = true; continue; }
     if (tools && !line.startsWith("  ")) tools = false;
-    if (!tools) continue;
+    if (tools) lines.push(line);
+  }
+  return lines;
+}
+
+function deniedTools(source) {
+  const frontmatter = /^---\n([\s\S]*?)\n---/.exec(source)?.[1];
+  if (!frontmatter) return null;
+  const denied = [];
+  for (const line of toolLines(frontmatter)) {
     const match = /^  ([a-z][a-z0-9_-]*): (true|false)$/.exec(line);
     if (!match) return null; // Never silently drop a restrictive tool rule.
     if (match[2] === "false") {
