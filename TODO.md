@@ -1617,6 +1617,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18646 fix(pulse): recognise blocked-by:GH#NNN labels so closed blockers unblock issues #bug ref:GH#34264
 
+- [ ] t18647 fix(approval): maintainer state change on a linked external issue must not stale signed approvals #bug ref:GH#34266
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
