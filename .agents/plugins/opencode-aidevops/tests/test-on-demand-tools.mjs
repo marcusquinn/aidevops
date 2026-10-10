@@ -61,7 +61,7 @@ test("rare tools move behind one dispatcher; gated and frequent tools stay direc
 
 test("the V1 entrypoint applies the dispatcher and V2 keeps Code Mode deferral", () => {
   const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
-  assert.match(read("index.mjs"), /moveToolsOnDemand\(baseTools, tool\)/);
+  assert.match(read("index.mjs"), /moveToolsOnDemand\(tools, tool\)/);
   assert.doesNotMatch(read("v2.mjs"), /moveToolsOnDemand/);
 });
 
