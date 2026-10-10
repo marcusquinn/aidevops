@@ -63,14 +63,26 @@ def lint_file(path: Path, policy: Path) -> bool:
     count = 0
     for line, command in bash_commands(path.read_text(encoding="utf-8")):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT_DIR / "command-policy-helper.py"),
-             "check-command", "--policy", str(policy), "--cwd", str(REPO_ROOT),
-             "--command", command],
-            capture_output=True, text=True, check=False, timeout=30,
+            [
+                sys.executable, str(SCRIPT_DIR / "command-policy-helper.py"),
+                "check-command", "--policy", str(policy), "--cwd", str(REPO_ROOT),
+                "--command", command,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
         )
         decision = json.loads(result.stdout)
-        if result.returncode not in (0, 20) or decision.get("decision") not in ("allow", "forbid"):
-            raise ValueError(f"policy checker failed at line {line} (exit {result.returncode})")
+        if (
+            result.returncode not in (0, 20)
+            or not isinstance(decision, dict)
+            or decision.get("decision") not in ("allow", "forbid")
+            or not isinstance(decision.get("rule_id"), str)
+        ):
+            raise ValueError(
+                f"policy checker failed at line {line} (exit {result.returncode})"
+            )
         count += 1
         if decision["decision"] == "forbid":
             forbidden += 1
@@ -81,8 +93,14 @@ def lint_file(path: Path, policy: Path) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("files", nargs="*", type=Path, help="Markdown files (default: headless pulse allowlist)")
-    parser.add_argument("--policy", type=Path, default=SCRIPT_DIR.parent / "configs/command-policy.json")
+    parser.add_argument(
+        "files", nargs="*", type=Path,
+        help="Markdown files (default: headless pulse allowlist)",
+    )
+    parser.add_argument(
+        "--policy", type=Path,
+        default=SCRIPT_DIR.parent / "configs/command-policy.json",
+    )
     args = parser.parse_args()
     files = args.files or [REPO_ROOT / name for name in HEADLESS_PROMPTS]
     passed = True
