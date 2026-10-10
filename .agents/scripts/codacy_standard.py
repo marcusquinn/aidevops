@@ -17,99 +17,13 @@ The account token is read from CODACY_API_TOKEN (never argv) and sent in the
 
 import argparse
 import json
-import os
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
 
-API = os.environ.get("CODACY_API_URL", "https://app.codacy.com/api/v3")
-PROVIDER = "gh"
-PAGE_LIMIT = 1000
-
-
-class CodacyError(Exception):
-    """API or procedure failure."""
-
-
-def token():
-    value = os.environ.get("CODACY_API_TOKEN", "")
-    if not value:
-        raise SystemExit("CODACY_API_TOKEN is not set (use: aidevops secret CODACY_API_TOKEN -- ...)")
-    return value
-
-
-def call(method, path, body=None, params=None):
-    """Return decoded JSON (or None for empty bodies)."""
-    url = API + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("api-token", token())
-    req.add_header("Accept", "application/json")
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            raw = resp.read()
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode(errors="replace")[:300]
-        raise CodacyError(f"{method} {path} -> HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise CodacyError(f"{method} {path} failed: {exc.reason}") from exc
-    return json.loads(raw) if raw.strip() else None
-
-
-def paged(path, params=None):
-    """Collect `data` across pagination.cursor pages."""
-    items = []
-    query = dict(params or {})
-    query.setdefault("limit", PAGE_LIMIT)
-    while True:
-        page = call("GET", path, params=query) or {}
-        items.extend(page.get("data", []))
-        cursor = (page.get("pagination") or {}).get("cursor")
-        if not cursor:
-            return items
-        query["cursor"] = cursor
-
-
-def org_base(org):
-    return f"/organizations/{PROVIDER}/{urllib.parse.quote(org)}"
-
-
-def organizations():
-    return [o["name"] for o in paged("/user/organizations")]
-
-
-def standards(org):
-    return paged(org_base(org) + "/coding-standards")
-
-
-def standard_tools(org, std_id):
-    return paged(f"{org_base(org)}/coding-standards/{std_id}/tools")
-
-
-def tool_enabled(tool):
-    for key in ("isEnabled", "enabled"):
-        if key in tool:
-            return bool(tool[key])
-    return False
-
-
-def tool_uuid(tool):
-    return tool.get("uuid") or tool.get("id")
-
-
-def resolve_tool(tools, ref):
-    """Match a tool by UUID or case-insensitive name."""
-    wanted = ref.lower()
-    for tool in tools:
-        name = str(tool.get("name", "")).lower()
-        if str(tool_uuid(tool)).lower() == wanted or name == wanted:
-            return tool
-    raise CodacyError(f"tool not found in standard: {ref}")
+from codacy_standard_api import (
+    PROVIDER, CodacyError, call, org_base, organizations, paged,
+    resolve_tool, standard_tools, standards, tool_enabled, tool_uuid,
+)
 
 
 def enabled_patterns(org, std_id, uuid):
@@ -168,28 +82,33 @@ def state_word(value):
     return {True: "on", False: "off", None: "n/a"}[value]
 
 
+def list_standard(org, std, tool_ref):
+    """Print a standard's selected tool and its effective repository states."""
+    std_id = std["id"]
+    repos = linked_repositories(org, std_id)
+    tools = standard_tools(org, std_id)
+    line = f"  {std_id} {std.get('name', '?')!r} isDefault={std.get('isDefault')} draft={std.get('isDraft')} repos={len(repos)}"
+    uuid = None
+    if tool_ref:
+        try:
+            tool = resolve_tool(tools, tool_ref)
+            uuid = tool_uuid(tool)
+            line += f" {tool.get('name')}={state_word(tool_enabled(tool))}"
+        except CodacyError:
+            line += f" {tool_ref}=absent"
+    print(line)
+    for repo in repos:
+        effective = repo_tool_state(org, repo, uuid) if uuid else None
+        suffix = f" effective={state_word(effective)}" if uuid else ""
+        print(f"      {repo}{suffix}")
+
+
 def cmd_list(args):
     orgs = [args.org] if args.org else organizations()
     for org in orgs:
         print(f"== {org}")
         for std in standards(org):
-            std_id = std["id"]
-            repos = linked_repositories(org, std_id)
-            tools = standard_tools(org, std_id)
-            line = f"  {std_id} {std.get('name', '?')!r} isDefault={std.get('isDefault')} draft={std.get('isDraft')} repos={len(repos)}"
-            uuid = None
-            if args.tool:
-                try:
-                    tool = resolve_tool(tools, args.tool)
-                    uuid = tool_uuid(tool)
-                    line += f" {tool.get('name')}={state_word(tool_enabled(tool))}"
-                except CodacyError:
-                    line += f" {args.tool}=absent"
-            print(line)
-            for repo in repos:
-                effective = repo_tool_state(org, repo, uuid) if uuid else None
-                suffix = f" effective={state_word(effective)}" if uuid else ""
-                print(f"      {repo}{suffix}")
+            list_standard(org, std, args.tool)
     return 0
 
 
@@ -215,8 +134,10 @@ def create_draft(org, source):
     return draft
 
 
-def run_draft(org, source, uuid, enabled, before, promote):
+def run_draft(args, source, uuid, before):
     """Create, repair, edit, diff; promote if exact. Return exit code."""
+    org = args.org
+    enabled = args.enabled == "true"
     draft = create_draft(org, source)
     print(f"source={source['id']} draft={draft}")
     try:
@@ -239,7 +160,7 @@ def run_draft(org, source, uuid, enabled, before, promote):
             print("REFUSED: draft differs from the requested change; not promoting", file=sys.stderr)
             delete_draft(org, draft)
             return 1
-        if not promote:
+        if not args.promote:
             print("dry run: diff equals the requested change")
             delete_draft(org, draft)
             return 0
@@ -264,7 +185,7 @@ def cmd_set_tool(args):
         print(f"{tool.get('name')} already {state_word(enabled)} in standard {source['id']}; nothing to do")
         return 0
     before = snapshot(args.org, source["id"])
-    return run_draft(args.org, source, uuid, enabled, before, args.promote)
+    return run_draft(args, source, uuid, before)
 
 
 def build_parser():
