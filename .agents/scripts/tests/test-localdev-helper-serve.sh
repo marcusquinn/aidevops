@@ -165,7 +165,7 @@ start_helper() {
 	local stale_lock="${6:-.next/dev/lock}"
 	(
 		cd "$project" || exit 1
-		exec /bin/bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
+		exec bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
 			--lock "$stale_lock" --health-url "http://127.0.0.1:${port}/" \
 			--startup-timeout 15 -- env LAUNCH_LOG="$launch_log" STARTUP_DELAY="$startup_delay" \
 			python3 server.py
@@ -184,7 +184,7 @@ run_helper_once() {
 	local status=0
 	(
 		cd "$project" || exit 1
-		/bin/bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
+		bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
 			--lock "$stale_lock" --health-url "http://127.0.0.1:${port}/" \
 			--startup-timeout 5 -- env LAUNCH_LOG="$launch_log" python3 server.py
 	) >"$output_file" 2>&1 || status=$?
