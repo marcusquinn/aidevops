@@ -327,12 +327,12 @@ _push_validate_targets() {
 
 cmd_push() {
 	local target_task="${1:-}"
+	# GH#34232: issue-first. The created issue body is composed from the brief,
+	# so it leads and is dispatchable at creation; TODO.md/briefs are backups.
+	# Callers whose bodies are template stubs (new-task batch) pass
+	# AIDEVOPS_PLANNING_PUBLICATION_STATE=pending explicitly.
 	if [[ -z "${AIDEVOPS_PLANNING_PUBLICATION_STATE:-}" ]]; then
-		if [[ "${GITHUB_ACTIONS:-}" == "$_PUSH_BOOLEAN_TRUE" && -z "$target_task" ]]; then
-			AIDEVOPS_PLANNING_PUBLICATION_STATE="$_PUSH_PUBLICATION_CANONICAL"
-		else
-			AIDEVOPS_PLANNING_PUBLICATION_STATE="$_PUSH_PUBLICATION_PENDING"
-		fi
+		AIDEVOPS_PLANNING_PUBLICATION_STATE="$_PUSH_PUBLICATION_CANONICAL"
 	fi
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO" project_root="$_CMD_ROOT"
