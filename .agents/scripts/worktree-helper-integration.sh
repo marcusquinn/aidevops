@@ -14,6 +14,9 @@
 # via local proxy. On worktree add, allocate a port + register a proxy
 # route. On remove, free the port + deregister. Both best-effort, non-fatal.
 #
+# Docker teardown (GH#34285): on removal, remove the aidevops-labelled Docker
+# resources recorded for that worktree via docker-resource-helper.sh.
+#
 # Usage: source "${SCRIPT_DIR}/worktree-helper-integration.sh"
 #
 # Dependencies:
@@ -195,5 +198,36 @@ preview_proxy_auto_free() {
 	[[ -z "$repo_slug" ]] && return 0
 
 	"$PREVIEW_PROXY_HELPER" free "$repo_slug" "$branch" 2>/dev/null || true
+	return 0
+}
+
+# --- Docker disposable resources (GH#34285) ---
+
+# Tear down Docker containers, networks and volumes labelled
+# sh.aidevops.worktree=<path> once that linked worktree has been removed
+# (post-merge cleanup, `worktree-helper.sh clean`, manual remove). Only
+# resources carrying sh.aidevops.owner=1 are touched. Best-effort and
+# non-fatal: skipped without docker or with AIDEVOPS_DOCKER_TEARDOWN=0, and
+# the helper gives up after a short daemon probe. Output goes to stderr so
+# `clean --auto` keeps an empty stdout.
+# Args: $1=removed worktree path
+docker_resource_auto_teardown() {
+	local worktree_path="${1:-}"
+	local helper="${SCRIPT_DIR}/docker-resource-helper.sh"
+	[[ -n "$worktree_path" ]] || return 0
+	[[ "${AIDEVOPS_DOCKER_TEARDOWN:-1}" != "0" ]] || return 0
+	command -v docker >/dev/null 2>&1 || return 0
+	[[ -x "$helper" ]] || return 0
+	# Probe the daemon once per process so a batch `clean` with Docker stopped
+	# pays the short timeout once, not once per removed worktree.
+	if [[ -z "${_WT_DOCKER_DAEMON_READY:-}" ]]; then
+		_WT_DOCKER_DAEMON_READY=1
+		if declare -F timeout_sec >/dev/null 2>&1 &&
+			! timeout_sec "${AIDEVOPS_DOCKER_TIMEOUT_SECONDS:-5}" docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+			_WT_DOCKER_DAEMON_READY=0
+		fi
+	fi
+	[[ "$_WT_DOCKER_DAEMON_READY" == "1" ]] || return 0
+	"$helper" teardown --worktree "$worktree_path" 1>&2 || true
 	return 0
 }

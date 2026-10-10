@@ -1172,9 +1172,29 @@ cleanup_stale_opencode() {
 	# stalled-worker, zombie-reap and ledger stages that follow. Bound the
 	# per-cycle budget so the backlog drains incrementally across cycles.
 	local _scratch_budget="${PULSE_SCRATCH_CLEANUP_MAX_SECONDS:-60}"
+	local _scratch_rc=0
 	[[ "$_scratch_budget" =~ ^[0-9]+$ ]] || _scratch_budget=60
 	if [[ -x "${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" ]]; then
-		"${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" --force --max-seconds "$_scratch_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" --force --max-seconds "$_scratch_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || _scratch_rc=1
+	fi
+	_pulse_reap_docker_resources || true
+	return "$_scratch_rc"
+}
+
+# GH#34285: reap aidevops-labelled (sh.aidevops.owner=1) Docker test stacks
+# whose worktree is gone and issue/PR closed, or whose TTL expired. Report-only
+# until AIDEVOPS_DOCKER_REAP=1. Unlabelled resources are never removed. The
+# helper exits 0 within a short timeout when Docker is absent or stopped.
+_pulse_reap_docker_resources() {
+	local _helper="${_PULSE_CLEANUP_SCRIPT_DIR}/docker-resource-helper.sh"
+	local _budget="${PULSE_DOCKER_CLEANUP_MAX_SECONDS:-30}"
+	[[ -x "$_helper" ]] || return 0
+	command -v docker >/dev/null 2>&1 || return 0
+	[[ "$_budget" =~ ^[0-9]+$ ]] || _budget=30
+	if [[ "${AIDEVOPS_DOCKER_REAP:-0}" == "1" ]]; then
+		"$_helper" reap --apply --max-seconds "$_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+	else
+		"$_helper" reap --max-seconds "$_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || true
 	fi
 	return 0
 }

@@ -928,6 +928,23 @@ WPRH_PC_VOLUME=""
 WPRH_PC_DB_CONTAINER=""
 WPRH_PC_DB_PASS=""
 WPRH_PC_WP_ADMIN_PASS=""
+# aidevops owner labels (GH#34285) so a stack orphaned by a killed run is
+# found by docker-resource-helper.sh reap/teardown; wprh_pc_cleanup remains
+# the primary cleanup.
+WPRH_PC_LABELS=()
+
+# Fill WPRH_PC_LABELS with --label=sh.aidevops.*=... arguments. Labels are
+# optional: a missing or failing helper leaves the array empty.
+wprh_pc_load_labels() {
+	local helper="${WPRH_DIR}/docker-resource-helper.sh" line="" output=""
+	WPRH_PC_LABELS=()
+	[[ -x "$helper" ]] || return 0
+	output="$("$helper" labels --ttl-hours 24 2>/dev/null)" || return 0
+	while IFS= read -r line; do
+		[[ "$line" == --label=* ]] && WPRH_PC_LABELS+=("$line")
+	done <<<"$output"
+	return 0
+}
 
 wprh_pc_cleanup() {
 	[[ -n "$WPRH_PC_DB_CONTAINER" ]] && docker rm -f "$WPRH_PC_DB_CONTAINER" >/dev/null 2>&1 || true
@@ -1003,12 +1020,13 @@ wprh_pc_create_stack() {
 	WPRH_PC_WP_ADMIN_PASS="$(aidevops_generate_execution_id wprhadmin)"
 
 	log_info "creating disposable Docker network/volume/db for plugin-check (${run_id})"
-	docker network create "$WPRH_PC_NETWORK" >/dev/null
-	docker volume create "$WPRH_PC_VOLUME" >/dev/null
-	docker run --rm --user root -v "${WPRH_PC_VOLUME}:/var/www/html" wordpress:cli-php8.3 \
+	wprh_pc_load_labels
+	docker network create ${WPRH_PC_LABELS[@]+"${WPRH_PC_LABELS[@]}"} "$WPRH_PC_NETWORK" >/dev/null
+	docker volume create ${WPRH_PC_LABELS[@]+"${WPRH_PC_LABELS[@]}"} "$WPRH_PC_VOLUME" >/dev/null
+	docker run --rm ${WPRH_PC_LABELS[@]+"${WPRH_PC_LABELS[@]}"} --user root -v "${WPRH_PC_VOLUME}:/var/www/html" wordpress:cli-php8.3 \
 		chown -R 33:33 /var/www/html >/dev/null
 
-	docker run -d --name "$WPRH_PC_DB_CONTAINER" --network "$WPRH_PC_NETWORK" \
+	docker run -d ${WPRH_PC_LABELS[@]+"${WPRH_PC_LABELS[@]}"} --name "$WPRH_PC_DB_CONTAINER" --network "$WPRH_PC_NETWORK" \
 		-e "$(wprh_pc_kv MARIADB_ROOT_PASSWORD "$WPRH_PC_DB_PASS")" -e MARIADB_DATABASE=wordpress \
 		mariadb:10.6 >/dev/null
 
@@ -1029,7 +1047,7 @@ wprh_pc_create_stack() {
 # array from a function).
 wprh_pc_wp_cli_args() {
 	printf '%s\n' \
-		--rm --network "$WPRH_PC_NETWORK" -v "${WPRH_PC_VOLUME}:/var/www/html" \
+		--rm ${WPRH_PC_LABELS[@]+"${WPRH_PC_LABELS[@]}"} --network "$WPRH_PC_NETWORK" -v "${WPRH_PC_VOLUME}:/var/www/html" \
 		--user 33:33 -e "$(wprh_pc_kv WORDPRESS_DB_HOST "$WPRH_PC_DB_CONTAINER")" \
 		-e WORDPRESS_DB_USER=root -e "$(wprh_pc_kv WORDPRESS_DB_PASSWORD "$WPRH_PC_DB_PASS")" \
 		-e WORDPRESS_DB_NAME=wordpress \
@@ -1064,7 +1082,7 @@ wprh_pc_check_zip() {
 	local zip_dir zip_name
 	zip_dir="$(dirname "$zip")"
 	zip_name="$(basename "$zip")"
-	docker run --rm --network "$WPRH_PC_NETWORK" \
+	docker run --rm ${WPRH_PC_LABELS[@]+"${WPRH_PC_LABELS[@]}"} --network "$WPRH_PC_NETWORK" \
 		-v "${WPRH_PC_VOLUME}:/var/www/html" -v "${zip_dir}:/zips:ro" \
 		--user 33:33 -e "$(wprh_pc_kv WORDPRESS_DB_HOST "$WPRH_PC_DB_CONTAINER")" \
 		-e WORDPRESS_DB_USER=root -e "$(wprh_pc_kv WORDPRESS_DB_PASSWORD "$WPRH_PC_DB_PASS")" \

@@ -336,6 +336,10 @@ _remove_finalize_post_removal() {
 	local cleanup_receipt="$2"
 	local path_to_remove="$3"
 
+	# GH#34285: remove aidevops-labelled Docker resources for this worktree.
+	if declare -F docker_resource_auto_teardown >/dev/null 2>&1; then
+		docker_resource_auto_teardown "$path_to_remove"
+	fi
 	if [[ -n "$removed_branch" ]]; then
 		localdev_auto_branch_rm "$removed_branch"
 		preview_proxy_auto_free "$removed_branch"

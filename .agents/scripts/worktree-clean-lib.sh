@@ -1588,6 +1588,10 @@ _clean_remove_classified_worktree() {
 		return 1
 	fi
 	_clean_release_removal_lease "$worktree_path" || true
+	# GH#34285: remove aidevops-labelled Docker resources for this worktree.
+	if declare -F docker_resource_auto_teardown >/dev/null 2>&1; then
+		docker_resource_auto_teardown "$worktree_path"
+	fi
 	if [[ "$preserve_branch" != "$_WT_CLEAN_BOOL_TRUE" ]]; then
 		localdev_auto_branch_rm "$worktree_branch"
 		if [[ -f "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" ]]; then

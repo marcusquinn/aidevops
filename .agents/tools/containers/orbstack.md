@@ -57,3 +57,5 @@ docker system df                      # Disk usage
 ```
 
 **Destructive ops:** `docker system prune -a` removes all unused containers, images, networks, and build cache. Prefer `docker image prune` or `docker container prune` unless a full reset is intended. `orb reset` is a factory reset — last resort.
+
+**Leftover test stacks / `all predefined address pools have been fully subnetted`:** see `tools/containers/disposable-resources.md` (owner labels, `docker-resource-helper.sh report`, safe network cleanup, `default-address-pools`).
