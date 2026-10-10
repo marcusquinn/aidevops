@@ -8,6 +8,14 @@ from __future__ import annotations
 GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 
 
+def is_version_query(argv: list[str]) -> bool:
+    """Accept only a version flag, optionally preceded by exact -C pairs."""
+    index = 0
+    while index + 1 < len(argv) and argv[index] == "-C":
+        index += 2
+    return argv[index:] in (["--version"], ["-v"])
+
+
 def split_invocation(
     argv: list[str], base_cwd: str
 ) -> tuple[list[str], str, str, list[str]]:
@@ -24,6 +32,10 @@ def split_invocation(
             prefix.extend([arg, argv[index + 1]])
             index += 2
             continue
+        # Version flags terminate Git's global-option handling. Do not let them
+        # contaminate repository probes for a purported trailing subcommand.
+        if arg in {"--version", "-v"}:
+            return prefix, base_cwd, "", argv[index:]
         if arg.startswith("-"):
             prefix.append(arg)
             index += 1

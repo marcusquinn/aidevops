@@ -382,6 +382,10 @@ _allocate_one_task() {
 	local repo_path="$5"
 	local claim_script="$6"
 
+	# GH#34232: issue-first creation is canonical everywhere else. Batch issues
+	# are the deliberate exception: their bodies come from template stub briefs
+	# ("Fill in How section before dispatching"), so they keep the explicit
+	# publication:pending hold until the completed brief is published.
 	local -a claim_args=(--title "$title" --repo-path "$repo_path" --publication-state pending)
 	[[ -n "$labels" ]] && claim_args+=(--labels "$labels")
 	[[ "$no_issue" == "true" ]] && claim_args+=(--no-issue)

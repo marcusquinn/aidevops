@@ -36,6 +36,7 @@ _repo_path_is_canonical_checkout() {
 check_line() {
 	local description="$1"
 	local expected="$2"
+	local labels="${3:-bug}"
 	local line parsed
 	printf '# TODO\n\n## Backlog\n- [ ] t71 local predecessor ref:GH#201\n- [ ] t99 prefix decoy ref:GH#2010\n' >"${TEST_TMP}/TODO.md"
 	TASK_DESCRIPTION="$description"
@@ -43,7 +44,7 @@ check_line() {
 	DRY_RUN=false
 	_apply_blocked_by_detection
 	local original_refs="$_CLAIM_BLOCKED_BY_REFS"
-	_ensure_todo_entry_written t80 300 'follow-up work' bug "$TEST_TMP" 2>"${TEST_TMP}/warnings"
+	_ensure_todo_entry_written t80 300 'follow-up work' "$labels" "$TEST_TMP" 2>"${TEST_TMP}/warnings"
 	[[ "$_CLAIM_BLOCKED_BY_REFS" == "$original_refs" ]]
 	if [[ "${TEST_CANONICAL:-false}" == true ]]; then
 		line=$(grep '^- \[ \] t80 ' "${TEST_TMP}/warnings")
@@ -55,8 +56,23 @@ check_line() {
 		line=$(grep '^- \[ \] t80 ' "${TEST_TMP}/TODO.md")
 	fi
 	[[ "$line" != *'blocked-by:GH#'* ]]
+	[[ "$line" != *'#blocked-by:'* ]]
+	local dependency_fields=0 field
+	for field in $line; do
+		[[ "$field" != blocked-by:* ]] || dependency_fields=$((dependency_fields + 1))
+	done
+	if [[ -n "$expected" ]]; then
+		[[ "$dependency_fields" -eq 1 ]]
+	else
+		[[ "$dependency_fields" -eq 0 ]]
+	fi
 	parsed=$(parse_task_line "$line")
 	grep -qx "blocked_by=${expected}" <<<"$parsed"
+	if [[ "$labels" == *enhancement* ]]; then
+		[[ "$line" == *' #bug #feat #auto-dispatch #security '* ]]
+		[[ "$line" != *'#status:'* && "$line" != *'#tier:'* && "$line" != *'#origin:'* ]]
+		[[ "$line" != *'#dispatched:'* && "$line" != *'#implemented:'* && "$line" != *'#aidevops:'* ]]
+	fi
 	printf 'PASS: %s -> blocked_by=%s\n' "$description" "$expected"
 	return 0
 }
@@ -74,6 +90,14 @@ check_line 'Follow-up from GH#205' ''
 grep -q 'Cannot resolve predecessor GH#205' "${TEST_TMP}/warnings"
 check_line 'Follow-up from GH#201; tracked in GH#203' t71
 grep -q 'Cannot resolve predecessor GH#203' "${TEST_TMP}/warnings"
+check_line 'Independent description' t71 'bug,blocked-by:t71'
+check_line 'Independent description' t71,t72 'blocked-by:t71,blocked-by:t72'
+check_line 'Independent description' t71 'blocked-by:GH#201'
+check_line 'blocked-by:t71' t71 'bug,blocked-by:t71,blocked-by:t71'
+check_line 'Follow-up from GH#201' t71 'blocked-by:t71'
+check_line 'blocked-by:t71' t71,t72 'blocked-by:GH#202'
+check_line 'Independent description' t71 ' bug , enhancement , auto-dispatch , security , status:available,tier:standard,origin:worker,dispatched:standard,implemented:standard,aidevops:test, blocked-by:t71 '
 TEST_CANONICAL=true
 check_line 'Follow-up from GH#202' t72
+check_line 'Independent description' t71 'bug,blocked-by:t71'
 printf 'All blocked-by TODO checks passed\n'

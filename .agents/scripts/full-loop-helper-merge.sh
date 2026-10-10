@@ -1469,6 +1469,30 @@ _merge_finalize_post_merge() {
 # "merge now", so --auto adds no value); --auto is dropped silently with an
 # informational message rather than failing the merge.
 # Exit codes: 0 = merged (or queued, with --auto), 1 = gate failed or merge failed
+
+# Protected release PRs (version-manager-protected-main.sh) carry a signed
+# release commit that the tag points at. Squash or rebase rewrites it, so the
+# tag is never reachable from main and reconciliation fails. Prints the method
+# to use: always --merge for release provenance branches, else the request.
+_merge_release_provenance_method() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_method="$3"
+	local head_ref="${4:-}"
+	if [[ -z "$head_ref" ]]; then
+		head_ref=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.ref // ""') || {
+			print_error "Merge blocked: cannot read PR #${pr_number} head ref for release provenance check"
+			return 1
+		}
+	fi
+	if [[ "$head_ref" =~ ^chore/release-v[0-9]+\.[0-9]+\.[0-9]+-provenance$ && "$merge_method" != "--merge" ]]; then
+		print_info "PR #${pr_number} is a protected release provenance PR; using --merge (not ${merge_method}) to keep the signed release commit reachable from main"
+		merge_method="--merge"
+	fi
+	printf '%s\n' "$merge_method"
+	return 0
+}
+
 _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_REPO=""
 	FULL_LOOP_MERGE_PARSED_METHOD="--squash"
@@ -1607,10 +1631,10 @@ cmd_merge() {
 		_merge_report_pre_merge_gate_failure
 		return 1
 	}
+	local _release_lane_head_ref=""
 	if [[ "$repo" == "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]]; then
 		local _release_lane_pr_refs=""
 		local _release_lane_base_ref=""
-		local _release_lane_head_ref=""
 		local _release_lane_pr_endpoint="repos/${repo}/pulls"
 		_release_lane_pr_refs=$(_flm_gh_read gh api "${_release_lane_pr_endpoint}/${pr_number}" --jq '[.base.ref, .head.ref] | @tsv') || {
 			print_error "Merge blocked: cannot verify release-lane PR identity"
@@ -1622,6 +1646,7 @@ cmd_merge() {
 			return 1
 		}
 	fi
+	merge_method=$(_merge_release_provenance_method "$pr_number" "$repo" "$merge_method" "$_release_lane_head_ref") || return 1
 	local _cleanup_target=""
 	local _cleanup_worktree=""
 	local _cleanup_branch=""

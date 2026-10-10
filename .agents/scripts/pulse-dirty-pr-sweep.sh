@@ -824,6 +824,12 @@ ${body}"
 		return 0
 	fi
 
+	# GH#34197: never recommend the do-not-close opt-out on a repo lacking it.
+	if [[ "$body" == *do-not-close* ]] && declare -F ensure_do_not_close_label_exists >/dev/null 2>&1; then
+		ensure_do_not_close_label_exists "$repo_slug" >/dev/null 2>&1 ||
+			_dps_log "PR #$pr_number ($repo_slug): could not provision do-not-close label"
+	fi
+
 	if gh_pr_comment "$pr_number" --repo "$repo_slug" --body "$full_body" >/dev/null 2>&1; then
 		return 0
 	fi

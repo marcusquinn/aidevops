@@ -12,6 +12,7 @@
 #   CURRENT     — badge block is present and matches what would be rendered
 #   DRIFTED     — badge block is present but has drifted from the canonical render
 #   METRICS-MISSING — badge block is current but local metrics artifacts are absent
+#   STARTER-OWNED — a WordPress plugin starter owns the block; left alone
 #   NO-README   — no README.md found in the repo directory
 #   NO-BLOCK    — README exists but no aidevops:badges:start/end markers
 #   LOCAL-ONLY  — repo has `local_only: true`, skip
@@ -223,6 +224,11 @@ _classify_badges_repo() {
 		return 0
 	fi
 
+	if bash "$_badges_helper" starter-owned "$_readme" >/dev/null 2>&1; then
+		printf 'STARTER-OWNED\tbadge block managed by the plugin starter (scripts/rename-plugin.sh)\n'
+		return 0
+	fi
+
 	if [[ "$_is_external" -eq 1 ]]; then
 		# EXTERNAL repos can have a block but we still only classify as EXTERNAL
 		printf 'EXTERNAL\tbadge block present\n'
@@ -266,7 +272,7 @@ _render_row_human() {
 		CURRENT) _colour=$'\e[32m' ;;          # green
 		DRIFTED | METRICS-MISSING) _colour=$'\e[33m' ;; # yellow
 		NO-README | NO-BLOCK) _colour=$'\e[31m' ;; # red
-		LOCAL-ONLY | EXTERNAL) _colour=$'\e[90m' ;; # grey
+		LOCAL-ONLY | EXTERNAL | STARTER-OWNED) _colour=$'\e[90m' ;; # grey
 		esac
 	else
 		_colour_reset=''
@@ -342,7 +348,7 @@ _process_repos() {
 	fi
 
 	local _any_failure=0
-	local _total=0 _current=0 _drifted=0 _metrics_missing=0 _no_readme=0 _no_block=0 _local_only=0 _external=0
+	local _total=0 _current=0 _drifted=0 _metrics_missing=0 _no_readme=0 _no_block=0 _local_only=0 _external=0 _starter_owned=0
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
 		printf '\n  %-50s %-12s %s\n' "REPO" "STATUS" "NOTE"
@@ -369,6 +375,7 @@ _process_repos() {
 		case "$_class" in
 		LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
 		EXTERNAL) _external=$((_external + 1)) ;;
+		STARTER-OWNED) _starter_owned=$((_starter_owned + 1)) ;;
 		NO-README) _no_readme=$((_no_readme + 1)) ;;
 		NO-BLOCK) _no_block=$((_no_block + 1)) ;;
 		CURRENT) _current=$((_current + 1)) ;;
@@ -406,8 +413,8 @@ _process_repos() {
 	done <<<"$_rows"
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-		printf '\n  Summary: %d entries — %d current, %d drifted, %d metrics-missing, %d no-block, %d no-readme, %d external, %d local-only\n\n' \
-			"$_total" "$_current" "$_drifted" "$_metrics_missing" "$_no_block" "$_no_readme" "$_external" "$_local_only"
+		printf '\n  Summary: %d entries — %d current, %d drifted, %d metrics-missing, %d no-block, %d no-readme, %d starter-owned, %d external, %d local-only\n\n' \
+			"$_total" "$_current" "$_drifted" "$_metrics_missing" "$_no_block" "$_no_readme" "$_starter_owned" "$_external" "$_local_only"
 		((_any_failure == 1)) && printf '  Exit code 1 — see DRIFTED or METRICS-MISSING entries above.\n\n'
 	fi
 

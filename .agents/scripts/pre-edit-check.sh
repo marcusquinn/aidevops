@@ -827,6 +827,14 @@ if [[ "$_shallow_clone_check" == "true" ]]; then
 	echo -e "${YELLOW}  See .agents/reference/git-hygiene.md for details.${NC}"
 fi
 
+# GH#34199: report JavaScript verification-tool readiness once per session
+# entry into this worktree. Read-only and cached: never lints, installs or
+# provisions, and a missing helper (older deployment) is a silent no-op.
+if [[ -x "$SCRIPT_DIR/worktree-js-readiness-helper.sh" ]]; then
+	"$SCRIPT_DIR/worktree-js-readiness-helper.sh" entry "$worktree_path" \
+		"${worktree_owner_session:-pid-${worktree_owner_pid}}" 2>/dev/null || true
+fi
+
 # go for it — linked worktree is the correct working context
 echo -e "${GREEN}OK${NC} - In linked worktree on ref: ${BOLD}$current_branch${NC}"
 exit 0

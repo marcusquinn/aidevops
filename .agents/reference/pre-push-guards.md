@@ -90,7 +90,7 @@ In headless sessions (pulse, CI workers, routines), the guard auto-fixes formatt
 
 2. **`<repo>/package.json` scripts** — only exact, non-empty scripts from tracked project metadata are used. Format checks require `format:check`, `format-check`, or a `format` body containing a recognised check/no-write flag. Fix commands require declared `format:fix`/`format_fix` or `lint:fix`/`lint_fix` scripts; aidevops never appends guessed flags. Multiple package-manager lockfiles, or a `packageManager` declaration conflicting with the tracked lockfile, are ambiguous and block inference.
 
-3. **`.agents/configs/repo-verify-defaults.conf`** — evidence-based toolchain detection from tracked files. Cargo and Go have standard commands; Python requires committed Ruff/Black/Flake8 configuration. `pyproject.toml` or `setup.py` alone is not sufficient evidence.
+3. **`.agents/configs/repo-verify-defaults.conf`** — evidence-based toolchain detection from tracked files. Cargo and Go have standard commands; Python requires committed Ruff/Black/Flake8 configuration. `pyproject.toml` or `setup.py` alone is not sufficient evidence. Inferred Python commands resolve their tool from the project's own environment before bare `PATH` (GH#34163): first `<worktree>/.venv`, then, in interactive sessions only, the main worktree's `.venv` (linked worktrees do not carry the gitignored environment). A candidate needs `pyvenv.cfg` plus an executable `bin/<tool>`; there is no directory scanning or installation, explicit `.aidevops.json`/`package.json` commands are never altered, and headless workers keep bare `PATH`. With no candidate, the missing-tool diagnosis applies unchanged.
 
 4. **No match: silent skip (exit 0).** Repo is not verify-eligible; nothing to enforce.
 
@@ -128,4 +128,4 @@ an interrupted writer cannot leave stale lock ownership behind.
 
 ### Test harness
 
-`.agents/scripts/tests/test-repo-verify-pre-push-hook.sh` — 14 hermetic end-to-end scenarios covering bypass paths, all three discovery layers, autofix amend + recheck, and the typecheck-never-autofixes invariant. Run: `bash .agents/scripts/tests/test-repo-verify-pre-push-hook.sh`.
+`.agents/scripts/tests/test-repo-verify-pre-push-hook.sh` — hermetic end-to-end scenarios covering bypass paths, all three discovery layers, Python environment resolution, autofix amend + recheck, and the typecheck-never-autofixes invariant. Run: `bash .agents/scripts/tests/test-repo-verify-pre-push-hook.sh`.

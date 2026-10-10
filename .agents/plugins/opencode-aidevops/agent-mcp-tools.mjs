@@ -31,6 +31,7 @@ const AGENT_MCP_TOOLS = {
   // SEO / analytics
   "google-search-console": ["gsc_*"],
   dataforseo: ["dataforseo_*"],
+  "seo-utils": ["seo-utils_*"],
   "google-analytics": ["google-analytics-mcp_*"],
   posthog: ["posthog_*"],
   // Monitoring

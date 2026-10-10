@@ -27,7 +27,7 @@ LAZY_MCPS = {
     'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo',
     'google-analytics-mcp', 'grep_app', 'gsc', 'ios-simulator', 'localwp',
     'macos-automator', 'mobile-mcp', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',
-    'sentry', 'shadcn', 'socket', 'websearch',
+    'sentry', 'seo-utils', 'shadcn', 'socket', 'websearch',
 }
 
 # Oh-My-OpenCode tool patterns to disable globally

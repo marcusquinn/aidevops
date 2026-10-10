@@ -34,6 +34,7 @@ tools:
 | | Perplexity MCP | `PERPLEXITY_API_KEY` |
 | | Google Search Console | `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON) |
 | | Rank Math MCP | Per-site WordPress Application Password via `wordpress-mcp-helper.sh rankmath-config` |
+| | SEO Utils MCP | SEO Utils desktop app (>2.5.0) + MCP access; local stdio via `seo-utils-mcp-launcher.sh`, no token (`seo/seo-utils.md`) |
 | CRM & Business | Fluent plugins MCP (CRM, Boards, Forms, Support, Booking) | Per-site WordPress Application Password via `wordpress-mcp-helper.sh plugin-mcp-config <preset>` |
 | Document Processing | Unstract MCP | `UNSTRACT_API_KEY` + `API_BASE_URL` (Docker, self-hosted default) |
 | Mobile Testing | iOS Simulator MCP | macOS + Xcode + Facebook IDB |

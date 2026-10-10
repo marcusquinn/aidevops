@@ -348,6 +348,62 @@ test_manual_issue_dispatch_and_scheduler_rendering() {
 	return 0
 }
 
+test_prompt_jobs_launch_standalone_and_issue_worktree_jobs_do_not() {
+	reset_fixture standalone
+	local prompt_file="${TEST_ROOT}/standalone.prompt"
+	local worktree="${TEST_ROOT}/issue-wt"
+	local prompt_id=""
+	local issue_id=""
+	local prompt_line=""
+	local issue_line=""
+	printf 'Review completion evidence for issue #34250 and report findings only.\n' >"$prompt_file"
+	mkdir -p "$worktree"
+	git -C "$worktree" init -q
+	git -C "$worktree" remote add origin "https://github.com/owner/repo.git"
+	prompt_id=$(run_helper_at "$NOW_EPOCH" once --after 1s --name standalone \
+		--dir "${TEST_ROOT}/work" --prompt-file "$prompt_file" | awk '{print $2}')
+	issue_id=$(run_helper_at "$NOW_EPOCH" once --after 2s --name issue-wt --dir "$worktree" \
+		--issue 42 --repo owner/repo --worktree "$worktree" | awk '{print $2}')
+	run_helper_at "$((NOW_EPOCH + 20))" run-due >/dev/null
+	run_helper_at "$((NOW_EPOCH + 20))" run-due >/dev/null
+	prompt_line=$(grep -F "deferred-${prompt_id}" "$DISPATCH_LOG" || true)
+	issue_line=$(grep -F "deferred-${issue_id}" "$DISPATCH_LOG" || true)
+	if [[ "$prompt_line" == *"--role worker"* && "$prompt_line" == *"--standalone-prompt"* &&
+		"$issue_line" == *"--role worker"* && "$issue_line" != *"--standalone-prompt"* &&
+		"$(jq -r '.status' "${STATE_DIR}/jobs/${prompt_id}.json")" == "success" &&
+		"$(jq -r '.status' "${STATE_DIR}/jobs/${issue_id}.json")" == "success" &&
+		"$(dispatch_count)" -eq 2 ]]; then
+		result "prompt jobs declare standalone contract while issue-worktree jobs keep issue identity" 0
+	else
+		result "prompt jobs declare standalone contract while issue-worktree jobs keep issue identity" 1 \
+			"count=$(dispatch_count) log=$(<"$DISPATCH_LOG")"
+	fi
+	return 0
+}
+
+test_prompt_jobs_reject_issue_shaped_titles_before_queueing() {
+	reset_fixture issue-title
+	local prompt_file="${TEST_ROOT}/issue-title.prompt"
+	local title_rc=0
+	local name_rc=0
+	local job_count=0
+	printf 'safe fixture\n' >"$prompt_file"
+	run_helper_at "$NOW_EPOCH" once --after 1h --name titled --title "Issue #5 review" \
+		--dir "${TEST_ROOT}/work" --prompt-file "$prompt_file" >/dev/null 2>&1 || title_rc=$?
+	run_helper_at "$NOW_EPOCH" once --after 1h --name "Issue #6 report" \
+		--dir "${TEST_ROOT}/work" --prompt-file "$prompt_file" >/dev/null 2>&1 || name_rc=$?
+	if [[ -d "${STATE_DIR}/jobs" ]]; then
+		job_count=$(find "${STATE_DIR}/jobs" -name '*.json' | wc -l | tr -d '[:space:]')
+	fi
+	if [[ "$title_rc" -eq 2 && "$name_rc" -eq 2 && "$job_count" -eq 0 && "$(dispatch_count)" -eq 0 ]]; then
+		result "prompt jobs reject issue-shaped titles before queueing" 0
+	else
+		result "prompt jobs reject issue-shaped titles before queueing" 1 \
+			"title_rc=$title_rc name_rc=$name_rc jobs=$job_count"
+	fi
+	return 0
+}
+
 test_deferred_scheduler_preserves_child_survival_exception() {
 	reset_fixture scheduler-policy
 	local rendered=""
@@ -389,6 +445,8 @@ main() {
 	test_claim_recovery_and_running_fuse
 	test_failed_preflight_is_durable
 	test_manual_issue_dispatch_and_scheduler_rendering
+	test_prompt_jobs_launch_standalone_and_issue_worktree_jobs_do_not
+	test_prompt_jobs_reject_issue_shaped_titles_before_queueing
 	test_deferred_scheduler_preserves_child_survival_exception
 	test_purge_removes_only_owned_state
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

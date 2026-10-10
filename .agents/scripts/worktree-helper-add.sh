@@ -377,14 +377,46 @@ _restore_worktree_node_modules_release_lock() {
 	return 0
 }
 
+# Re-prove the owner generation this provisioner is allowed to write for.
+# Without an expected contract (pulse path) the owner must be this process and
+# carry a complete session/task lease. With one (cmd_add path) the row must be
+# exactly the generation that cmd_add just registered and verified.
+# Args: $1=worktree path, $2=snapshot owner fields (pid|session|batch|task|created),
+#       $3=expected contract from cmd_add or empty.
+_provision_worktree_owner_still_exact() {
+	local wt_path="$1"
+	local snapshot="$2"
+	local expected="$3"
+	local -a fields=()
+	IFS='|' read -r -a fields <<<"${snapshot}|"
+	[[ "${#fields[@]}" -ge 5 ]] || return 1
+	local owner_pid="${fields[0]}"
+	local owner_session="${fields[1]}"
+	local owner_batch="${fields[2]}"
+	local owner_task="${fields[3]}"
+	local owner_created="${fields[4]}"
+	if [[ -z "$expected" ]]; then
+		worktree_has_exact_owner_contract "$wt_path" "$$" "$owner_session" "$owner_task" || return 1
+		return 0
+	fi
+	worktree_has_exact_owner_generation "$wt_path" "$owner_pid" "$owner_session" \
+		"$owner_batch" "$owner_task" "$owner_created" || return 1
+	return 0
+}
+
 # Controller-only copy into a newly owned worktree. No resume or permission
 # mutation: a continuation owned by another process (even dead) is left intact.
+# Args: $1=worktree path, $2=canonical repo root, $3=relative package dir,
+#       $4=optional exact registration contract (pid|session|batch|task|created)
+#          that cmd_add created and verified for this new worktree (GH#34224).
 _provision_worktree_node_modules() (
 	local wt_path="$1"
 	local repo_root="$2"
 	local relative="${3:-.}"
+	local expected_contract="${4:-}"
 	local owner="" validator="" before="" after="" stage=""
 	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created="" owner_start=""
+	local owner_fields=""
 	local destination="${wt_path}/${relative}/node_modules"
 	local max_bytes="${WORKTREE_NODE_MODULES_RESTORE_MAX_BYTES:-67108864}"
 	# aidevops:trust-boundary -- only the registered current controller may write;
@@ -393,8 +425,26 @@ _provision_worktree_node_modules() (
 	declare -F worktree_has_exact_owner_contract >/dev/null 2>&1 || return 1
 	owner=$(check_worktree_owner_snapshot "$wt_path") || return 1
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created owner_start <<<"$owner"
-	[[ "$owner_pid" == "$$" && -n "$owner_start" && -n "$owner_created" ]] || return 1
-	worktree_has_exact_owner_contract "$wt_path" "$$" "$owner_session" "$owner_task" || return 1
+	owner_fields="${owner_pid}|${owner_session}|${owner_batch}|${owner_task}|${owner_created}"
+	if [[ -n "$expected_contract" ]]; then
+		# #aidevops:trust-boundary (GH#34224) -- cmd_add registers the runtime
+		# PID, not $$, as owner. Accept only the exact generation it just
+		# registered and verified (incl. created_at and live process start);
+		# any foreign, replaced, recycled or continuation owner is refused.
+		declare -F worktree_has_exact_owner_generation >/dev/null 2>&1 || return 1
+		if [[ "$owner_fields" != "$expected_contract" || -z "$owner_start" || -z "$owner_created" ]] ||
+			! _provision_worktree_owner_still_exact "$wt_path" "$owner_fields" "$expected_contract"; then
+			printf 'dependency-provision-rejected reason=owner-contract-changed\n' >&2
+			return 1
+		fi
+	else
+		if [[ "$owner_pid" != "$$" || -z "$owner_start" || -z "$owner_created" ]]; then
+			# GH#34199: name the refusal (fixed, path-free) so readiness reports it.
+			printf 'dependency-provision-rejected reason=controller-not-owner\n' >&2
+			return 1
+		fi
+		_provision_worktree_owner_still_exact "$wt_path" "$owner_fields" "" || return 1
+	fi
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	validator="$(dirname "${BASH_SOURCE[0]}")/worktree-dependency-provision.py"
 	before=$(python3 "$validator" "$repo_root" "$wt_path" "$relative" --max-bytes "$max_bytes") || return 1
@@ -407,25 +457,69 @@ _provision_worktree_node_modules() (
 	[[ "$before" == "$after" ]] || return 1
 	after=$(python3 "$validator" "$repo_root" "$wt_path" "$relative" --snapshot "${stage}/node_modules" --max-bytes "$max_bytes") || return 1
 	[[ "$before" == "$after" ]] || return 1
-	[[ "$(check_worktree_owner_snapshot "$wt_path")" == "$owner" ]] || return 1
-	worktree_has_exact_owner_contract "$wt_path" "$$" "$owner_session" "$owner_task" || return 1
+	if [[ "$(check_worktree_owner_snapshot "$wt_path")" != "$owner" ]] ||
+		! _provision_worktree_owner_still_exact "$wt_path" "$owner_fields" "$expected_contract"; then
+		[[ -z "$expected_contract" ]] ||
+			printf 'dependency-provision-rejected reason=owner-contract-changed\n' >&2
+		return 1
+	fi
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	python3 "$validator" "$repo_root" "$wt_path" "$relative" --publish "${stage}/node_modules" --max-bytes "$max_bytes" >/dev/null || return 1
 	printf 'Dependency snapshot provisioned (sha256 bytes entries): %s\n' "$after"
 	return 0
 )
 
+# GH#34199: persist the root restore outcome for the JavaScript readiness
+# probe so a skipped or refused restore is reported, not silently successful.
+_restore_worktree_node_modules_record() {
+	local wt_path="$1"
+	local outcome="$2"
+	local reason="${3:-}"
+	local helper="${SCRIPT_DIR}/worktree-js-readiness-helper.sh"
+	[[ -x "$helper" ]] || return 0
+	"$helper" record-restore "$wt_path" "$outcome" "$reason" >/dev/null 2>&1 || true
+	return 0
+}
+
+# Provision one package directory. Validator stderr is still shown; only the
+# fixed, path-free rejection code is retained for the root package record.
+_restore_worktree_node_modules_one() {
+	local wt_path="$1"
+	local repo_root="$2"
+	local rel="$3"
+	local owner_contract="${4:-}"
+	local err="" rc=0 reason="provision-refused"
+	{ err=$(_provision_worktree_node_modules "$wt_path" "$repo_root" "${rel#/}" "$owner_contract" 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
+	if [[ "$rc" -eq 0 ]]; then
+		[[ -n "$rel" ]] || _restore_worktree_node_modules_record "$wt_path" provisioned
+		return 0
+	fi
+	[[ -z "$err" ]] || printf '%s\n' "$err" >&2
+	if [[ "$err" =~ dependency-provision-rejected\ reason=([a-z0-9-]+) ]]; then
+		reason="${BASH_REMATCH[1]}"
+	fi
+	[[ -n "$rel" ]] || _restore_worktree_node_modules_record "$wt_path" rejected "$reason"
+	return 1
+}
+
+# Args: $1=worktree path, $2=canonical repo root, $3=optional exact owner
+#       registration contract created by cmd_add (see _provision_*).
 _restore_worktree_node_modules() {
 	local wt_path="$1"
 	local repo_root="$2"
+	local owner_contract="${3:-}"
 
 	[[ -n "$repo_root" && -d "$wt_path" ]] || return 0
 	[[ "$WORKTREE_NODE_MODULES_RESTORE_ENABLED" == "1" ]] || return 0
 
 	local _lock_dir=""
 	_lock_dir=$(_restore_worktree_node_modules_lock_dir)
-	if ! _restore_worktree_node_modules_acquire_lock "$_lock_dir"; then
+	# One bounded re-attempt after the existing wait; contention is then
+	# recorded so readiness reports preparing:lock-contention, not success.
+	if ! _restore_worktree_node_modules_acquire_lock "$_lock_dir" &&
+		! _restore_worktree_node_modules_acquire_lock "$_lock_dir"; then
 		print_warning "Skipping node_modules restore for ${wt_path}: another restore is active"
+		_restore_worktree_node_modules_record "$wt_path" contention
 		return 0
 	fi
 
@@ -442,16 +536,38 @@ _restore_worktree_node_modules() {
 		_rel="${_pdir#"$wt_path"}"
 		local _src="${repo_root}${_rel}/node_modules"
 		local _dst="${wt_path}${_rel}/node_modules"
+		[[ -d "$_src" && ! -d "$_dst" ]] || continue
 		# Only a package-local package-lock.json or pnpm-lock.yaml can pass the
 		# validator; skip guaranteed rejections instead of holding the lock.
-		if [[ -d "$_src" && ! -d "$_dst" ]] &&
-			[[ -f "${_pdir}/package-lock.json" || -f "${_pdir}/pnpm-lock.yaml" ]]; then
-			if _provision_worktree_node_modules "$wt_path" "$repo_root" "${_rel#/}"; then
+		if [[ -f "${_pdir}/package-lock.json" || -f "${_pdir}/pnpm-lock.yaml" ]]; then
+			if _restore_worktree_node_modules_one "$wt_path" "$repo_root" "$_rel" "$owner_contract"; then
 				_restored=$((_restored + 1))
 			fi
+		elif [[ -z "$_rel" ]]; then
+			_restore_worktree_node_modules_record "$wt_path" rejected unsupported-lockfile
 		fi
 	done < <(find "$wt_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
 	_restore_worktree_node_modules_release_lock "$_lock_dir"
+	return 0
+}
+
+# GH#34199: report whether the declared JavaScript verification tools can
+# start in the new worktree. Read-only and bounded; never changes the exit
+# status of worktree creation.
+_print_worktree_js_readiness() {
+	local wt_path="$1"
+	local helper="${SCRIPT_DIR}/worktree-js-readiness-helper.sh"
+	local report="" line=""
+	[[ -x "$helper" && -d "$wt_path" ]] || return 0
+	report=$("$helper" report "$wt_path" 2>/dev/null) || return 0
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		if [[ "$line" == "JS_TOOL_READINESS=ready"* ]]; then
+			print_info "$line"
+		else
+			print_warning "$line"
+		fi
+	done <<<"$report"
 	return 0
 }
 
@@ -1163,7 +1279,12 @@ _cmd_add_reconcile_cleanup_generation() {
 	local reconcile_status=0
 
 	declare -F full_loop_supersede_cleaned_receipts_for_recreated_worktree >/dev/null 2>&1 || return 0
-	head_sha=$(git -C "$path" rev-parse --verify HEAD 2>/dev/null) || return 1
+	head_sha=$(git -C "$path" rev-parse --verify HEAD 2>/dev/null) || {
+		print_warning "Cleanup-receipt reconciliation refused: could not resolve HEAD of the new worktree at ${path}."
+		printf 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED branch=%s head=unknown reason=head_unresolved\n' \
+			"$branch" >&2
+		return 1
+	}
 	if receipt_path=$(full_loop_supersede_cleaned_receipts_for_recreated_worktree \
 		"$path" "$branch" "$head_sha" "$owner_pid" "$owner_session"); then
 		prior_pr=$(jq -r '.pr_number // empty' "$receipt_path" 2>/dev/null || true)
@@ -1175,9 +1296,9 @@ _cmd_add_reconcile_cleanup_generation() {
 		reconcile_status=$?
 	fi
 	[[ "$reconcile_status" -eq 2 ]] && return 0
-	print_warning "Worktree creation cannot continue because cleanup-receipt generation reconciliation failed."
-	printf 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED branch=%s head=%s\n' \
-		"$branch" "$head_sha" >&2
+	print_warning "Worktree creation cannot continue because cleanup-receipt generation reconciliation failed (status ${reconcile_status}; reason printed above)."
+	printf 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=RECONCILIATION_FAILED branch=%s head=%s status=%s\n' \
+		"$branch" "$head_sha" "$reconcile_status" >&2
 	return 1
 }
 
@@ -1290,6 +1411,9 @@ _cmd_add_verify_created_generation() {
 	local registered_created_at=""
 	local repository_root=""
 
+	# GH#34224: only a contract registered and verified by this call may be
+	# handed to dependency provisioning; never inherit a stale/env value.
+	_ADD_PROVISION_OWNER_CONTRACT=""
 	_cmd_add_verify_collision_tip "$branch" "$path" || return 1
 	owner_pid=$(_resolve_worktree_owner_pid "") || return 1
 	register_worktree "$path" "$branch" --task "$explicit_issue" || registration_status=$?
@@ -1306,6 +1430,7 @@ _cmd_add_verify_created_generation() {
 		registered_task registered_created_at <<<"$registration_contract"
 
 	if _cmd_add_reconcile_cleanup_generation "$branch" "$path" "$owner_pid" "$owner_session"; then
+		_ADD_PROVISION_OWNER_CONTRACT="${registered_owner_pid}|${registered_owner_session}|${registered_owner_batch}|${registered_task}|${registered_created_at}"
 		return 0
 	fi
 	repository_root=$(get_repo_root) || return 1
@@ -1316,6 +1441,20 @@ _cmd_add_verify_created_generation() {
 		return 1
 	fi
 	return 1
+}
+
+# Restore/bootstrap worktree-local JavaScript dependencies and report readiness.
+# GH#34224: pass the exact owner contract this add just registered so the
+# controller-owned snapshot can run for a runtime-owned (interactive) row.
+_cmd_add_prepare_worktree_deps() {
+	local path="$1"
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+	_restore_worktree_node_modules "$path" "$repo_root" "${_ADD_PROVISION_OWNER_CONTRACT:-}"
+	_ADD_PROVISION_OWNER_CONTRACT=""
+	_bootstrap_aidevops_worktree_js_deps "$path"
+	_print_worktree_js_readiness "$path"
+	return 0
 }
 
 # --- cmd_add ---
@@ -1388,10 +1527,7 @@ cmd_add() {
 	_cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
-	local _repo_root=""
-	_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
-	_restore_worktree_node_modules "$path" "$_repo_root"
-	_bootstrap_aidevops_worktree_js_deps "$path"
+	_cmd_add_prepare_worktree_deps "$path"
 
 	# t2885: exclude the new worktree from macOS Spotlight + Time Machine.
 	# Worktrees are ephemeral — persistent state lives on the git remote.

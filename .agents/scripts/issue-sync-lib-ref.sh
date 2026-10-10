@@ -667,7 +667,7 @@ _labels_json_to_tags() {
 
 		# Skip system/operational labels — not part of TODO source-of-truth
 		case "$label" in
-			tier:* | status:* | origin:* | source:* | needs-* | priority:*) continue ;;
+			tier:* | status:* | origin:* | source:* | needs-* | priority:* | publication:*) continue ;;
 			hold-for-review | no-auto-dispatch | no-takeover) continue ;;
 			coderabbit-nits-ok | new-file-smell-ok | complexity-bump-ok) continue ;;
 			workflow-cascade-ok | ratchet-bump) continue ;;

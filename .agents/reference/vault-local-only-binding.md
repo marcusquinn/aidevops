@@ -46,6 +46,54 @@ Local provider IDs are listed once in `configs/local-ai-providers.conf`, shared
 by the plugin and `vault-data-policy-helper.sh`; a missing list means nothing
 is local. Denials never include prompt content or the endpoint URL.
 
+## Protected reads and local failure visibility (Phase 2)
+
+The operator may classify roots with a mode-600, current-user-owned JSON file at
+`~/.config/aidevops/local-only-roots.json` (or the launch `XDG_CONFIG_HOME`):
+
+```json
+{ "roots": ["/absolute/operator-selected/protected-root"] }
+```
+
+All listed roots have the strict `local-LLM-only` processing label. This list is
+classification, not a parallel authorization store; existing secret and source
+permissions still apply, including in bound sessions. Vault's storage gate does
+not currently expose a path-to-processing-label registry, so no Vault collection
+is silently assigned this label. Configure every plaintext root that requires it.
+
+The plugin snapshots the list before tools run. A missing list leaves unclassified
+reads unchanged; malformed, symlinked, unreadable or insecure configuration denies
+read tools content-free. Restart after operator classification changes. Model
+output, read contents, tool arguments and later environment changes cannot change
+the active classification or binding. Direct write/patch targets for the list are
+refused, including relative targets and symlink aliases.
+
+Unbound Read/Grep/Glob/list operations on classified paths, their aliases or
+containing search directories fail before intent/provenance hooks or tool execution
+with `VAULT_POLICY_DENIED` and the local-only relaunch command. Bash and bounded
+operation starts use the same gate. With configured roots, unbound shell reads
+are deliberately restricted to a single literal `cat`, `head`, `tail`, `wc`,
+`ls`, `stat` or `pwd` command with no options. Opaque programs, interpreters,
+substitutions, pipelines and executable reader options cannot be proven safe and
+are denied; use native scoped tools or a local-only session. Bound shell behavior
+is otherwise unchanged: this phase does not introduce tool/network sandboxing.
+
+In bound sessions, `session.error` for a local HTTP 404, refused connection,
+timeout, model-identity mismatch or `VAULT_POLICY_DENIED` produces a foreground
+content-free toast and bounded receipt, once per session per 30 seconds. Receipts
+are recorded even headlessly or when the TUI is unavailable; a persistence failure
+never permits the blocked operation and is reported without error/path content.
+The append-only, mode-600 log is
+`~/.aidevops/.agent-workspace/private-processing-blockers.jsonl`, bounded to 1 MiB
+by the shared blocker logger. Only fixed check/operation names and validated session
+IDs are supplied; ambient worker repository/request metadata is suppressed.
+
+Readiness uses the launch binding and Phase 1 request checks, not model claims.
+No additional health probe is made: a successful local parent turn demonstrates
+availability, not service attestation; another probe cannot prove the service will
+not forward data. Later backend failures abort through the host's existing error
+path, notify the operator and never authorize remote fallback.
+
 ## Trust assumptions and gaps
 
 - The loopback check trusts the service at that port: a local proxy that
@@ -54,8 +102,12 @@ is local. Denials never include prompt content or the endpoint URL.
 - Other installed OpenCode plugins run in the same process and are trusted
   code: one could rewrite a request after the aidevops hook approves it, or send
   data itself. Install only plugins you trust for local-only work.
-- Not yet covered (later GH#34125 phases): local-backend readiness checks,
-  protected-read denial, MCP output, observability/transcript persistence,
+- The operator configuration and launch environment are trusted. Same-user
+  arbitrary code or bound Bash can alter files for a future launch; the current
+  frozen policy is unchanged. Review classification before relaunching after
+  running untrusted code. This is not an OS isolation or attestation mechanism.
+- Not yet covered (later GH#34125 phases): active backend attestation,
+  MCP output, observability/transcript persistence,
   helpers that call provider APIs without the shared gate, and network egress
   the model starts through Bash (for example `curl`, or a helper run with the
   variable cleared).

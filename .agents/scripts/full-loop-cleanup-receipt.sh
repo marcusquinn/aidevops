@@ -946,6 +946,15 @@ _full_loop_supersede_recreated_receipt_files() {
 	return 0
 }
 
+# Print an actionable refusal reason on stderr. Callers capture stdout, so the
+# reason still reaches the operator (GH#34002).
+_full_loop_supersede_reason() {
+	local reason="$1"
+
+	printf 'Cleanup-receipt reconciliation refused: %s\n' "$reason" >&2
+	return 0
+}
+
 # Preserve terminal cleanup history while retiring it as active lifecycle
 # evidence when a manual add creates a new worktree generation at the same path.
 # Every unsuperseded receipt for the path must already be CLEANED; an active
@@ -964,15 +973,31 @@ full_loop_supersede_cleaned_receipts_for_recreated_worktree() {
 	local now=""
 	local receipt_file_count=0
 
-	[[ -d "$worktree" && ! -L "$worktree" && -n "$branch" ]] || return 1
-	[[ "$head_sha" =~ ^[0-9a-fA-F]{40,64}$ && "$owner_pid" =~ ^[0-9]+$ ]] || return 1
-	receipt_dir=$(_full_loop_cleanup_receipt_dir) || return 1
+	if [[ ! -d "$worktree" || -L "$worktree" || -z "$branch" ]]; then
+		_full_loop_supersede_reason "worktree path is missing, a symlink, or branch is empty: ${worktree}"
+		return 1
+	fi
+	if [[ ! "$head_sha" =~ ^[0-9a-fA-F]{40,64}$ || ! "$owner_pid" =~ ^[0-9]+$ ]]; then
+		_full_loop_supersede_reason "head SHA or owner PID is not valid"
+		return 1
+	fi
+	receipt_dir=$(_full_loop_cleanup_receipt_dir) || {
+		_full_loop_supersede_reason "cleanup receipt directory could not be resolved"
+		return 1
+	}
 	[[ -d "$receipt_dir" ]] || return 2
-	command -v git >/dev/null 2>&1 || return 1
-	command -v jq >/dev/null 2>&1 || return 1
-	_full_loop_recreated_worktree_identity_matches "$worktree" "$branch" "$head_sha" || return 1
-	_full_loop_receipt_lock_acquire || return 1
+	command -v git >/dev/null 2>&1 || { _full_loop_supersede_reason "git is not available"; return 1; }
+	command -v jq >/dev/null 2>&1 || { _full_loop_supersede_reason "jq is not available"; return 1; }
+	_full_loop_recreated_worktree_identity_matches "$worktree" "$branch" "$head_sha" || {
+		_full_loop_supersede_reason "worktree root, branch or HEAD does not match the new generation (${worktree})"
+		return 1
+	}
+	_full_loop_receipt_lock_acquire || {
+		_full_loop_supersede_reason "could not acquire the receipt lock for ${receipt_dir}"
+		return 1
+	}
 	receipt_file_count=$(_full_loop_valid_receipt_file_count "$receipt_dir") || {
+		_full_loop_supersede_reason "a receipt in ${receipt_dir} is a symlink or not a JSON object"
 		_full_loop_receipt_lock_release
 		return 1
 	}
@@ -984,18 +1009,25 @@ full_loop_supersede_cleaned_receipts_for_recreated_worktree() {
 		_full_loop_receipt_lock_release
 		return 2
 	}
-	if ! _full_loop_recreated_worktree_identity_matches "$worktree" "$branch" "$head_sha" ||
-		! _full_loop_active_recreated_receipts_are_cleaned "$receipt_dir" "$worktree"; then
+	if ! _full_loop_recreated_worktree_identity_matches "$worktree" "$branch" "$head_sha"; then
+		_full_loop_supersede_reason "worktree identity changed while the receipt lock was held"
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	if ! _full_loop_active_recreated_receipts_are_cleaned "$receipt_dir" "$worktree"; then
+		_full_loop_supersede_reason "a receipt for ${worktree} is not CLEANED (active or deferred lifecycle, e.g. ${selected_path}); finish or clean it first"
 		_full_loop_receipt_lock_release
 		return 1
 	fi
 
 	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || {
+		_full_loop_supersede_reason "could not read the clock"
 		_full_loop_receipt_lock_release
 		return 1
 	}
 	if ! _full_loop_supersede_recreated_receipt_files "$receipt_dir" "$worktree" "$branch" \
 		"$head_sha" "$owner_pid" "$owner_session" "$now"; then
+		_full_loop_supersede_reason "receipt supersede transaction failed in ${receipt_dir}; changes were rolled back"
 		_full_loop_receipt_lock_release
 		return 1
 	fi

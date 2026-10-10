@@ -272,17 +272,34 @@ aidevops_opencode_pin_applies() {
 # tool updates and the fail-closed headless version guard. The optional
 # AIDEVOPS_OPENCODE_BIN environment variable lets callers preserve an already
 # resolved binary path that is not present on PATH.
-aidevops_opencode_upgrade_command() {
-	local pkg_version="$1"
-	local profile="${2:-$(aidevops_opencode_profile_id)}"
-	local package binary
-	package=$(aidevops_opencode_profile_value package "$profile") || return 1
+#
+# GH#34181: the aidevops daemon-safe shim (~/.local/bin/opencode) is a regular
+# script, so readlink cannot see the real install owner behind it. The payload
+# follows only recognised managed shims (terminal-title-owner marker) through
+# their literal `exec "<absolute path>" "$@"` line, mirroring
+# _setup_opencode_target_is_safe: never executed or sourced, depth-bounded, and
+# a cyclic/unresolvable chain keeps the original path. The payload stays on one
+# line for the tool-spec reader.
+#
+# GH#34252: the ownership decision is a separate payload prefix that sets
+# r_owner=brew|bun|npm|none, so tool-version-check.sh can classify the release
+# channel with the exact probe that later selects the upgrade route.
+aidevops_opencode_owner_payload() {
+	local profile="${1:-$(aidevops_opencode_profile_id)}"
+	local binary
 	binary=$(aidevops_opencode_profile_value binary "$profile") || return 1
 
 	# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 	printf '%s' \
 		'r="${AIDEVOPS_OPENCODE_BIN:-}"; [[ -n "$r" ]] || r=$(command -v '"${binary}"' 2>/dev/null || printf ""); ' \
-		'if [[ -n "$r" ]]; then ' \
+		'r_orig="$r"; r_depth=0; r_pat=' "'" '^exec[[:space:]]+"([^"\\]*)"[[:space:]]+"\$@"$' "'" '; ' \
+		'while [[ -n "$r" && -f "$r" && "$r_depth" -lt 16 ]] && grep -Fq "# aidevops:terminal-title-owner" "$r" 2>/dev/null; do ' \
+		'r_next=""; while IFS= read -r r_line || [[ -n "$r_line" ]]; do [[ "$r_line" =~ $r_pat ]] && r_next="${BASH_REMATCH[1]}"; done <"$r"; ' \
+		'if [[ "$r_next" == /* && -f "$r_next" && -x "$r_next" && ! "$r_next" -ef "$r" ]]; then r="$r_next"; r_depth=$((r_depth + 1)); else r="$r_orig"; break; fi; ' \
+		'done; ' \
+		'if [[ "$r_depth" -ge 16 ]] && grep -Fq "# aidevops:terminal-title-owner" "$r" 2>/dev/null; then r="$r_orig"; fi; ' \
+		'r_owner=none; if [[ -n "$r" ]]; then ' \
+		'r_owner=npm; if [[ "$r" == *bun* ]]; then r_owner=bun; fi; ' \
 		'if [[ '"${profile}"' == v1 ]] && command -v brew >/dev/null 2>&1; then ' \
 		'r_dir=$(cd "$(dirname "$r")" 2>/dev/null && pwd -P || printf ""); ' \
 		'r_link=$(readlink "$r" 2>/dev/null || printf ""); r_real="$r"; ' \
@@ -294,10 +311,39 @@ aidevops_opencode_upgrade_command() {
 		'[[ -d "$brew_formula" ]] && brew_formula_real=$(cd "$brew_formula" && pwd -P || printf ""); ' \
 		'fi; ' \
 		'if [[ -n "$brew_formula_real" ]] && { [[ "$r_dir" == "$brew_formula_real"/* ]] || [[ "$r_real_dir" == "$brew_formula_real"/* ]]; }; then ' \
-		'brew upgrade opencode || brew reinstall opencode; exit $?; ' \
-		'fi; fi; ' \
-		'if [[ "$r" == *bun* ]]; then bun install -g '"${package}"'@'"${pkg_version}"'; else npm install -g '"${package}"'@'"${pkg_version}"'; fi; ' \
-		'else printf "OpenCode binary not found for repair\\n" >&2; exit 1; fi'
+		'r_owner=brew; ' \
+		'fi; fi; fi; '
+	return 0
+}
+
+# Print the package manager that owns the resolved OpenCode binary:
+# brew, bun, npm, or none (binary not found).
+aidevops_opencode_install_owner() {
+	local profile="${1:-$(aidevops_opencode_profile_id)}"
+	local payload
+	payload=$(aidevops_opencode_owner_payload "$profile") || return 1
+	# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
+	bash -c "${payload}"'printf "%s\n" "$r_owner"'
+	return $?
+}
+
+# Print the self-contained repair payload: brew upgrade for a verified
+# Homebrew-owned binary, otherwise bun/npm install of the requested version.
+aidevops_opencode_upgrade_command() {
+	local pkg_version="$1"
+	local profile="${2:-$(aidevops_opencode_profile_id)}"
+	local package owner_payload
+	package=$(aidevops_opencode_profile_value package "$profile") || return 1
+	owner_payload=$(aidevops_opencode_owner_payload "$profile") || return 1
+
+	# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
+	printf '%s' "$owner_payload" \
+		'case "$r_owner" in ' \
+		'brew) brew upgrade opencode || brew reinstall opencode; exit $? ;; ' \
+		'bun) bun install -g '"${package}"'@'"${pkg_version}"' ;; ' \
+		'npm) npm install -g '"${package}"'@'"${pkg_version}"' ;; ' \
+		'*) printf "OpenCode binary not found for repair\\n" >&2; exit 1 ;; ' \
+		'esac'
 	return 0
 }
 

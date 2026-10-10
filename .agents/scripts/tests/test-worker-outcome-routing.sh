@@ -111,6 +111,83 @@ if [[ "$(_enrichment_parse_fast_fail_key 501:owner/repo)" != $'501\towner/repo' 
 	fail "quality-debt enrichment lost legacy fast-fail key compatibility"
 fi
 
+# Exercise the real enrichment launcher and unchanged runtime env validator,
+# without contacting a model or writing a GitHub issue.
+(
+	FIXTURE_SCRIPTS="${TEST_ROOT}/fixture-scripts"
+	FIXTURE_REPO="${TEST_ROOT}/source-repo"
+	mkdir -p "$FIXTURE_SCRIPTS"
+	git clone --quiet --shared --no-checkout "${SCRIPTS_DIR}/../.." "$FIXTURE_REPO"
+	git -C "$FIXTURE_REPO" remote set-url origin https://github.com/owner/repo.git
+	export ENRICHMENT_TEST_ROOT="$TEST_ROOT" ENRICHMENT_SCRIPTS_DIR="$SCRIPTS_DIR"
+	cat >"${FIXTURE_SCRIPTS}/worktree-helper.sh" <<'HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+add)
+	[[ "${ENRICHMENT_PREPARE_FAIL:-0}" != 1 ]] || exit 1
+	git worktree add -b "$2" "${ENRICHMENT_TEST_ROOT}/${2#feature/}" HEAD
+	;;
+remove) git worktree remove "$2" ;;
+*) exit 1 ;;
+esac
+HELPER
+	cat >"${FIXTURE_SCRIPTS}/runtime.sh" <<'RUNTIME'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$ENRICHMENT_SCRIPTS_DIR"
+source "${SCRIPT_DIR}/headless-runtime-launch.sh"
+work_dir="" session_key="" title=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--dir) work_dir="$2"; shift 2 ;;
+	--session-key) session_key="$2"; shift 2 ;;
+	--title) title="$2"; shift 2 ;;
+	*) shift ;;
+	esac
+done
+_validate_issue_worker_env_contract worker "$session_key" "$work_dir" "$title" 'issue #502'
+[[ "$WORKER_ISSUE_NUMBER" == 502 && "$WORKER_REPO_SLUG" == owner/repo ]]
+[[ -f "$work_dir/.git" ]]
+printf '%s\n' "$work_dir" >"${ENRICHMENT_TEST_ROOT}/launched-worktree"
+printf 'model-selection-reached\n'
+if [[ "${ENRICHMENT_RUNTIME_FAIL:-0}" == 1 ]]; then
+	printf 'discard-before-tail\n'
+	for ((i=1; i<=25; i++)); do printf 'runtime-failure-%s\n' "$i"; done
+	exit 7
+fi
+touch "${ENRICHMENT_TEST_ROOT}/guidance-added"
+RUNTIME
+	chmod +x "${FIXTURE_SCRIPTS}/worktree-helper.sh" "${FIXTURE_SCRIPTS}/runtime.sh"
+	SCRIPT_DIR="$FIXTURE_SCRIPTS"
+	HEADLESS_RUNTIME_HELPER="${FIXTURE_SCRIPTS}/runtime.sh"
+	gh() {
+		printf 'brief\n'
+		[[ ! -f "${TEST_ROOT}/guidance-added" ]] || printf '## Worker Guidance\n'
+		return 0
+	}
+	prompt_file=$(mktemp)
+	_enrichment_run_worker "$prompt_file" 502 owner/repo "$FIXTURE_REPO" test/model || fail "enrichment did not pass the real env contract"
+	launched_worktree=$(<"${TEST_ROOT}/launched-worktree")
+	[[ ! -e "$prompt_file" && ! -d "$launched_worktree" ]] || fail "successful enrichment did not clean up"
+	[[ -z "$(check_worktree_owner "$launched_worktree")" ]] || fail "enrichment left registry ownership"
+	rm -f "${TEST_ROOT}/guidance-added"
+	export ENRICHMENT_RUNTIME_FAIL=1
+	prompt_file=$(mktemp)
+	enrichment_status=0
+	_enrichment_run_worker "$prompt_file" 502 owner/repo "$FIXTURE_REPO" test/model || enrichment_status=$?
+	[[ "$enrichment_status" == 1 ]] || fail "runtime failure was not reported"
+	grep -q 'runtime-failure-25' "$LOGFILE" || fail "runtime output was discarded"
+	if grep -q 'discard-before-tail\|runtime-failure-5$' "$LOGFILE"; then fail "runtime output tail was not bounded"; fi
+	launched_worktree=$(<"${TEST_ROOT}/launched-worktree")
+	[[ ! -e "$prompt_file" && ! -d "$launched_worktree" ]] || fail "failed enrichment did not clean up"
+	export ENRICHMENT_PREPARE_FAIL=1
+	prompt_file=$(mktemp)
+	enrichment_status=0
+	_enrichment_run_worker "$prompt_file" 502 owner/repo "$FIXTURE_REPO" test/model || enrichment_status=$?
+	[[ "$enrichment_status" == 2 && ! -e "$prompt_file" ]] || fail "preparation failure lost retry status or prompt cleanup"
+)
+
 ENRICHMENT_MAX_PER_CYCLE=5
 STOP_FLAG="${TEST_ROOT}/stop"
 ENRICHMENT_MODEL_CALLS="${TEST_ROOT}/enrichment-model-calls"
@@ -158,5 +235,13 @@ fi
 if [[ "$(wc -l <"$ENRICHMENT_MARK_CALLS" | tr -d ' ')" != "2" ]]; then
 	fail "quality-debt enrichment did not finalize both suppressed and processed entries"
 fi
+
+_enrichment_run_worker() {
+	return 2
+}
+rm -f "$ENRICHMENT_MARK_CALLS"
+remaining_slots=$(dispatch_enrichment_workers 2)
+[[ "$remaining_slots" == 2 ]] || fail "preparation failure consumed an enrichment slot"
+[[ "$(wc -l <"$ENRICHMENT_MARK_CALLS" | tr -d ' ')" == 1 ]] || fail "preparation failure was marked enrichment done"
 
 printf 'PASS worker outcome routing consults reconciled dispositions\n'

@@ -302,7 +302,7 @@ _prepare_triage_runtime_directory() {
 # _parse_run_args: parse cmd_run flags into caller-scoped variables.
 # Caller must declare: role session_key work_dir title prompt prompt_file
 #                      model_override initial_model tier_override variant_override agent_name
-#                      private_workload private_profile_sha256 extra_args
+#                      private_workload private_profile_sha256 standalone_prompt extra_args
 # Returns 1 on unknown flag.
 _parse_run_args() {
 	local -a run_args=("$@")
@@ -372,6 +372,12 @@ _parse_run_args() {
 		--private-profile-sha256)
 			private_profile_sha256="$value"
 			run_args=("${run_args[@]:2}")
+			;;
+		--standalone-prompt)
+			# GH#34250: caller declares a non-issue prompt dispatch. CLI-only so
+			# model-spawned children never inherit the declaration.
+			standalone_prompt=1
+			run_args=("${run_args[@]:1}")
 			;;
 		--detach)
 			detach=1
@@ -650,6 +656,30 @@ _validate_private_workload_args() {
 	return 0
 }
 
+# _validate_standalone_prompt_args: --standalone-prompt only relaxes prompt-prose
+# issue classification (GH#34250). It must never be combined with issue identity,
+# so callers cannot use it to launch issue work without the worktree contract.
+_validate_standalone_prompt_args() {
+	[[ "${standalone_prompt:-0}" == "1" ]] || return 0
+	if [[ "${role:-}" != "worker" ]]; then
+		print_error "--standalone-prompt requires --role worker"
+		return 1
+	fi
+	if [[ "${session_key:-}" =~ ^issue-[0-9]+$ ]]; then
+		print_error "--standalone-prompt cannot use an issue session key"
+		return 1
+	fi
+	if [[ "${title:-}" =~ Issue[[:space:]]+#[0-9]+ ]]; then
+		print_error "--standalone-prompt cannot use an issue-shaped title"
+		return 1
+	fi
+	if [[ -n "${WORKER_ISSUE_NUMBER:-}" || -n "${WORKER_WORKTREE_PATH:-}" ]]; then
+		print_error "--standalone-prompt cannot be combined with issue worker environment"
+		return 1
+	fi
+	return 0
+}
+
 # _validate_run_args: check required fields and resolve prompt from file if needed.
 # Operates on caller-scoped variables set by _parse_run_args.
 _validate_run_args() {
@@ -717,11 +747,14 @@ _ensure_valid_launch_cwd() {
 # _run_requires_issue_env_contract: detect issue-scoped implementation workers
 # from independent caller-owned signals. Triage correlation deliberately uses
 # issue-shaped titles/session keys without carrying worker lifecycle authority.
+# A caller-declared standalone prompt (GH#34250) skips only the prose signal;
+# session-key and title signals stay strict.
 _run_requires_issue_env_contract() {
 	local role_value="$1"
 	local session_key_value="$2"
 	local title_value="$3"
 	local prompt_value="$4"
+	local standalone_prompt_value="${5:-0}"
 
 	[[ "$role_value" == "worker" ]] || return 1
 	if [[ "$session_key_value" =~ ^issue-[0-9]+$ ]]; then
@@ -733,7 +766,7 @@ _run_requires_issue_env_contract() {
 	if [[ "$title_value" =~ Issue[[:space:]]+#[0-9]+ ]]; then
 		return 0
 	fi
-	if [[ "$prompt_value" =~ [Ii]ssue[[:space:]]*#?[0-9]+ ]]; then
+	if [[ "$standalone_prompt_value" != "1" && "$prompt_value" =~ [Ii]ssue[[:space:]]*#?[0-9]+ ]]; then
 		return 0
 	fi
 
@@ -748,9 +781,10 @@ _validate_issue_worker_env_contract() {
 	local work_dir_value="$3"
 	local title_value="$4"
 	local prompt_value="$5"
+	local standalone_prompt_value="${6:-0}"
 	local session_issue_number=""
 
-	if ! _run_requires_issue_env_contract "$role_value" "$session_key_value" "$title_value" "$prompt_value"; then
+	if ! _run_requires_issue_env_contract "$role_value" "$session_key_value" "$title_value" "$prompt_value" "$standalone_prompt_value"; then
 		return 0
 	fi
 

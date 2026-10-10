@@ -99,26 +99,40 @@ run_qlty_analysis() {
 	fi
 }
 
-# Run Codacy analysis
+# Run Codacy analysis (Codacy Analysis CLI; report only, writes SARIF for
+# code scanning). Skips cleanly when the CLI is not installed.
 run_codacy_analysis() {
-	print_info "Running Codacy analysis (timeout: 5m)..."
+	local codacy_script="$REPO_ROOT/.agents/scripts/codacy-cli.sh"
+	if ! command -v codacy-analysis >/dev/null 2>&1; then
+		print_info "Codacy Analysis CLI not installed; skipping (install: bash $codacy_script install)"
+		return 0
+	fi
+
+	local timeout="${CODACY_ANALYSIS_TIMEOUT:-900}"
+	print_info "Running Codacy analysis (timeout: ${timeout}s)..."
 
 	local log_file="$REPO_ROOT/.agents/tmp/codacy-results.txt"
+	local sarif_file="$REPO_ROOT/codacy-results.sarif"
+	rm -f "$sarif_file"
+	# Optional scope, e.g. CODACY_ANALYZE_ARGS="--diff origin/main" for PRs
+	local scope_args=()
+	read -r -a scope_args <<<"${CODACY_ANALYZE_ARGS:-}"
 
 	# Run in background
-	bash "$REPO_ROOT/.agents/scripts/codacy-cli.sh" analyze --fix >"$log_file" 2>&1 &
+	bash "$codacy_script" analyze --sarif "$sarif_file" \
+		${scope_args[@]+"${scope_args[@]}"} >"$log_file" 2>&1 &
 	local pid=$!
 
-	# Wait loop with timeout (300 seconds)
-	local timeout=300
+	# Wait loop with timeout
 	local interval=2
 	local elapsed=0
 
 	while kill -0 $pid 2>/dev/null; do
 		if [[ $elapsed -ge $timeout ]]; then
-			print_error "Codacy analysis timed out after ${timeout}s"
-			kill $pid 2>/dev/null
-			return 1
+			print_warning "Codacy analysis timed out after ${timeout}s"
+			kill $pid 2>/dev/null || true
+			echo "$(date): Codacy analysis timed out after ${timeout}s" >>"$MONITOR_LOG"
+			return 0 # Don't fail the whole monitor script
 		fi
 
 		# Show progress
@@ -136,16 +150,16 @@ run_codacy_analysis() {
 	wait $pid || status=$?
 
 	if [[ $status -eq 0 ]]; then
-		print_success "Codacy analysis completed with auto-fixes"
-		echo "$(date): Codacy analysis completed with auto-fixes" >>"$MONITOR_LOG"
-
-		# Check for issues in the log
-		if grep -q "Issues found" "$log_file"; then
-			print_warning "Issues found during analysis. Check $log_file for details."
-		fi
+		print_success "Codacy analysis: no issues found"
+		echo "$(date): Codacy analysis completed - no issues" >>"$MONITOR_LOG"
+		return 0
+	elif [[ $status -le 2 && -s "$sarif_file" ]]; then
+		# 1 = issues found; 2 = some analyzers errored but results were written
+		print_warning "Codacy analysis: issues found (exit $status, SARIF: $sarif_file, log: $log_file)"
+		echo "$(date): Codacy analysis completed - issues found (exit $status)" >>"$MONITOR_LOG"
 		return 0
 	else
-		print_warning "Codacy analysis completed with warnings or failed (status: $status)"
+		print_warning "Codacy analysis failed (status: $status)"
 		# Show last few lines of log for context
 		if [[ -f "$log_file" ]]; then
 			echo "Last 5 lines of log:"

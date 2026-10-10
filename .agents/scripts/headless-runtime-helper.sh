@@ -1008,11 +1008,13 @@ cmd_run() {
 	local detach=0
 	local private_workload="${AIDEVOPS_PRIVATE_WORKLOAD:-0}"
 	local private_profile_sha256=""
+	local standalone_prompt=0
 	local -a extra_args=()
 
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
 	_validate_private_workload_args || return 1
+	_validate_standalone_prompt_args || return 1
 	_validate_model_replay_args || return 1
 	local _cmd_run_stop=0 _cmd_run_return_status=1
 	_prepare_cmd_run_environment "$@" || return $?
@@ -1092,7 +1094,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
   headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier simple|standard|thinking]
-  headless-runtime-helper.sh run --role pulse|worker|triage|model-replay --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--detach]
+  headless-runtime-helper.sh run --role pulse|worker|triage|model-replay --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--standalone-prompt] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker|triage] [--hours N] [--model SUBSTRING] [--fast-threshold N]
@@ -1118,6 +1120,13 @@ Private workloads:
   private directory, suppresses transcript streaming and diagnostic excerpts,
   sanitizes activity evidence, and discards the isolated OpenCode session database
   after exit.
+
+Standalone prompts:
+  --standalone-prompt declares a worker prompt that is not issue work, such as a
+  scheduled report or review that mentions an issue number in prose. It skips only
+  prompt-prose issue classification. It requires --role worker and refuses an
+  issue-N session key, an "Issue #N" title, and WORKER_ISSUE_NUMBER or
+  WORKER_WORKTREE_PATH. It never grants issue claim or worktree authority.
 
 Backoff granularity:
   Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-5-5).

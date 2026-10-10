@@ -387,6 +387,8 @@ build_secret_env() {
 			while IFS= read -r secret_path; do
 				[[ -z "$secret_path" ]] && continue
 				local name="${secret_path#"${GOPASS_PREFIX}"/}"
+				# Other tools may store nested paths or non-environment names.
+				[[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
 				local val
 				val=$(get_gopass_entry_value "$secret_path")
 				if [[ -n "$val" ]]; then

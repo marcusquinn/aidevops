@@ -130,8 +130,6 @@ SKIP_HELP=(
 	"ampcode-cli.sh"
 	"agno-setup.sh"
 	"sonarscanner-cli.sh"
-	"codacy-cli.sh"
-	"codacy-cli-chunked.sh"
 	"coderabbit-pro-analysis.sh"
 	"snyk-helper.sh"
 	"verify-mirrors.sh"
@@ -146,11 +144,18 @@ SKIP_HELP=(
 
 is_skip_help() {
 	local name="$1"
+	# Sourced libraries / command modules print nothing when run directly
+	case "$name" in
+	*-lib.sh | *-commands.sh | *-cmds.sh | *-core.sh) return 0 ;;
+	esac
 	for s in "${SKIP_HELP[@]}"; do
 		[[ "$name" == "$s" ]] && return 0
 	done
 	return 1
 }
+
+HELP_SCRATCH_DIR=$(mktemp -d)
+trap 'rm -rf "$HELP_SCRATCH_DIR"' EXIT
 
 help_pass=0
 help_fail=0
@@ -178,14 +183,20 @@ while IFS= read -r script; do
 	fi
 
 	# Run help command with timeout (5s max) and capture output
-	help_output=$(timeout 5 bash "$abs_path" help 2>&1)
-	help_exit=$?
+	# Run from a scratch dir so scripts treating args as paths cannot litter the repo.
+	# Capture the exit status without tripping set -e.
+	help_exit=0
+	help_output=$(cd "$HELP_SCRATCH_DIR" && timeout 5 bash "$abs_path" help 2>&1) || help_exit=$?
 
 	# Some scripts exit 0 on help, some exit 1 (usage error) - both are acceptable
 	# as long as they produce output and don't hang/crash
 	if [[ -n "$help_output" ]]; then
 		pass "help: $name"
 		help_pass=$((help_pass + 1))
+	elif [[ $help_exit -eq 0 && ! -x "$abs_path" ]]; then
+		# Non-executable, silent on direct run: a source-only module
+		skip "help: $name (source-only module)"
+		help_skip=$((help_skip + 1))
 	elif [[ $help_exit -eq 124 ]]; then
 		fail "help: $name" "Timed out after 5 seconds"
 		help_fail=$((help_fail + 1))

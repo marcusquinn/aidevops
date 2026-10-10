@@ -10,7 +10,42 @@ The goal is that any maintainer can answer three questions without private chat
 history: what is running, how to prove whether it is healthy, and what to change
 when a runner is offline or mis-sized.
 
-## Current deployment
+## Org-scoped GitHub App runners (recommended)
+
+Model: one GitHub App per org (only the `organization_self_hosted_runners: write`
+permission, webhook inactive, installable only on that org), one org runner group
+restricted to selected private repos with public repositories disallowed, and
+ephemeral JIT-registered runners (one container per job) whose registration
+tokens come from App installation tokens. A key compromise is limited to one org,
+and fork PRs on public repos can never reach the host. Public repos keep free
+GitHub-hosted minutes.
+
+`runs-on` guidance: private repos use `[self-hosted, linux, <POOL_LABEL>]`;
+public repos stay on GitHub-hosted runners.
+
+The server-side pool (systemd, rootless or DinD containers, JIT registration) is
+operator-owned. `github-runner-org-helper.sh` prepares and verifies its inputs.
+
+One-time onboarding per org:
+
+1. In the GitHub web UI, create the App (permission above, webhook inactive,
+   installable only on `<ORG>`), install it on `<ORG>`, and generate a private key.
+2. Store the key: `aidevops secret set <ORG>_RUNNERS_APP_KEY` (never paste it in chat).
+3. Create or reconcile the private-only runner group (needs `admin:org` on `gh`):
+   `github-runner-org-helper.sh group-ensure --org <ORG> --name <GROUP> --repos all-private --dry-run`,
+   then rerun without `--dry-run`. It refuses any public repo.
+4. Verify the key, App owner and installation permissions:
+   `github-runner-org-helper.sh verify-key --org <ORG> --app-id <APP_ID> --secret <ORG>_RUNNERS_APP_KEY`
+5. Deliver the key to the runner host (mode 600, fingerprint compared):
+   `github-runner-org-helper.sh push-key --secret <ORG>_RUNNERS_APP_KEY --host <USER>@<HOST> --dest <KEY_PATH>`
+6. Start the pool for the group, then check it:
+   `github-runner-org-helper.sh status --org <ORG> --group <GROUP>`
+
+The helper reads the key only from an env var injected by
+`aidevops secret NAME -- ...`; it never prints it, puts it in argv or writes it to
+a local file. Only the public-key SHA-256 is displayed.
+
+## Current deployment (legacy repo-scoped pool)
 
 Verified on the server during the 2026-06-20 inspection. Concrete repository,
 image, and environment names are represented with placeholders so this public
@@ -47,7 +82,8 @@ permission; denied API calls are non-fatal and raw responses are never logged.
 | Setting | Default | Behaviour |
 |---------|---------|-----------|
 | `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Minimum queued age in whole hours; `0` disables the stage. |
-| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` allows deletion of stale ghosts that return HTTP 409 from both cancellation endpoints. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE_EMPTY` | `1` | Deletes ghosts (409 from both cancellation endpoints) only when a fresh read shows zero jobs and the logs endpoint returns 404/410; logged as `deleted-empty-ghost`. Any API error keeps the run. `0` disables. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` allows deletion of stale ghosts that return HTTP 409 from both cancellation endpoints and have jobs or logs. |
 
 Each scan requests one page (up to 100 stale queued runs), rechecks status and
 age before writes, requests cancellation, and tries force-cancellation if the
@@ -60,8 +96,9 @@ Reruns (`run_attempt > 1`) are excluded: their original creation timestamp does
 not establish the current attempt's queue age. Age is conservatively based on
 the original run's `created_at`, not runner capacity or job count.
 
-Unkillable ghosts are logged once per repository/run ID and left alone by default.
-Deletion removes run history and logs: enable it only deliberately. Cadence and
+Unkillable ghosts are logged once per repository/run ID and left alone by default,
+except job-less runs with no logs, which hold no work and are deleted.
+Deleting runs with jobs or logs removes history: enable it only deliberately. Cadence and
 ghost records live under `~/.aidevops/.agent-workspace/pulse/stale-queued-runs/`.
 The stage respects Pulse stop/rate-limit flags, the circuit breaker, REST budget
 admission and the wrapper's stage timeout. Standalone execution uses the same
