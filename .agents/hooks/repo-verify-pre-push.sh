@@ -106,10 +106,15 @@ if [[ -z "$REPO_ROOT" ]]; then
 	exit 0
 fi
 
+_is_headless_session() {
+	[[ -n "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}" ]] && return 0
+	return 1
+}
+
 # Auto-fix default: ON in headless, OFF interactive. AIDEVOPS_PREPUSH_AUTOFIX
 # (when set) wins over the heuristic.
 _autofix_default() {
-	if [[ -n "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${GITHUB_ACTIONS:-}" ]]; then
+	if _is_headless_session || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
 		printf '1\n'
 	else
 		printf '0\n'
@@ -147,6 +152,93 @@ _load_verify_config() {
 	return 0
 }
 
+# ----- Python tool source for inferred defaults (GH#34163) ----------------
+
+# Bin directory prepended to PATH for each check; empty means bare PATH.
+VERIFY_TOOL_PATH=''
+
+# Print the distinct Python tools invoked as the first word of the inferred
+# commands. Only these names are looked up in a candidate environment.
+_default_python_tools() {
+	local cmd="" tool="" seen=" "
+	for cmd in "$VERIFY_FORMAT" "$VERIFY_FORMAT_FIX" "$VERIFY_LINT" "$VERIFY_LINT_FIX" "$VERIFY_TYPECHECK"; do
+		tool="${cmd%% *}"
+		[[ -n "$tool" && "$tool" =~ ^(${_PY_VERIFY_TOOLS})$ ]] || continue
+		[[ "$seen" == *" $tool "* ]] && continue
+		seen+="$tool "
+		printf '%s\n' "$tool"
+	done
+	return 0
+}
+
+# A candidate is a real virtual environment (pyvenv.cfg) whose bin/ holds an
+# executable for every inferred tool. Nothing is executed or installed.
+_python_env_provides_tools() {
+	local venv="$1"
+	local tools="$2"
+	local tool=""
+	[[ -f "$venv/pyvenv.cfg" && -d "$venv/bin" ]] || return 1
+	while IFS= read -r tool; do
+		[[ -n "$tool" ]] || continue
+		[[ -f "$venv/bin/$tool" && -x "$venv/bin/$tool" ]] || return 1
+	done <<<"$tools"
+	return 0
+}
+
+# Main worktree root for a linked worktree, or nothing. One fixed path derived
+# from Git metadata; never a directory scan.
+_main_worktree_root() {
+	local common_dir="" main_root=""
+	common_dir=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ "$(basename "$common_dir")" == ".git" ]] || return 1
+	main_root=$(dirname "$common_dir")
+	[[ -d "$main_root" && ! "$main_root" -ef "$REPO_ROOT" ]] || return 1
+	printf '%s\n' "$main_root"
+	return 0
+}
+
+# Inferred Python defaults call bare tool names (repo-verify-defaults.conf).
+# Resolve them from the project's own environment in a fixed order:
+#   1. <worktree>/.venv
+#   2. interactive sessions only: <main worktree>/.venv (linked worktrees do not
+#      carry the gitignored environment; headless workers keep PATH containment)
+# Explicit .aidevops.json and package.json commands are never altered. When no
+# candidate qualifies, bare PATH and the GH#34110 missing-tool diagnosis apply.
+_resolve_default_python_tool_path() {
+	local tools="" main_root="" candidate=""
+	[[ "$VERIFY_SOURCE" == defaults\(PYTHON_* ]] || return 0
+	tools=$(_default_python_tools)
+	[[ -n "$tools" ]] || return 0
+	if _python_env_provides_tools "$REPO_ROOT/.venv" "$tools"; then
+		VERIFY_TOOL_PATH="$REPO_ROOT/.venv/bin"
+		_log INFO "python tool source: worktree .venv"
+		return 0
+	fi
+	if _is_headless_session; then
+		_dbg "headless session: main-worktree environment not consulted"
+		return 0
+	fi
+	main_root=$(_main_worktree_root) || return 0
+	candidate="$main_root/.venv"
+	if _python_env_provides_tools "$candidate" "$tools"; then
+		VERIFY_TOOL_PATH="$candidate/bin"
+		_log INFO "python tool source: main-worktree .venv"
+	fi
+	return 0
+}
+
+# Evaluate one declared command from the repo root, with the resolved tool
+# source (if any) first on PATH for that command only.
+_eval_in_repo() {
+	local cmd="$1"
+	cd "$REPO_ROOT" || return 1
+	if [[ -n "$VERIFY_TOOL_PATH" ]]; then
+		export PATH="$VERIFY_TOOL_PATH${PATH:+:$PATH}"
+	fi
+	eval "$cmd" && return 0
+	return 1
+}
+
 # ----- run a single verify check ------------------------------------------
 
 # _run_check NAME COMMAND -> exit 0 on pass, 1 on fail. Captures output for
@@ -157,7 +249,7 @@ _run_check() {
 	local log
 	log=$(mktemp -t "aidevops-prepush-${name}.XXXXXX")
 	_log INFO "running $name: $cmd"
-	if (cd "$REPO_ROOT" && eval "$cmd") >"$log" 2>&1; then
+	if (_eval_in_repo "$cmd") >"$log" 2>&1; then
 		_log OK "$name passed"
 		rm -f "$log"
 		return 0
@@ -187,7 +279,7 @@ _run_autofix() {
 	fi
 
 	_log INFO "running $name autofix: $fix_cmd"
-	if ! (cd "$REPO_ROOT" && eval "$fix_cmd") >>"${LAST_FAIL_LOG:-/dev/null}" 2>&1; then
+	if ! (_eval_in_repo "$fix_cmd") >>"${LAST_FAIL_LOG:-/dev/null}" 2>&1; then
 		_log WARN "$name autofix command itself failed"
 		return 1
 	fi
@@ -474,6 +566,7 @@ main() {
 	fi
 
 	_log INFO "verify source: $VERIFY_SOURCE"
+	_resolve_default_python_tool_path
 	local overall=0
 
 	if [[ -n "$VERIFY_FORMAT" ]]; then

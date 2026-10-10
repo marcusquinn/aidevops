@@ -74,6 +74,52 @@ _get_cost_budget_for_tier() {
 	return 0
 }
 
+# GH#34248: GitHub can omit cross-reference events for delivered partial PRs.
+# Closeout markers supply candidates only; verify each PR through REST before
+# treating its actual merge time as a checkpoint. Never reset from prose alone.
+# Args: issue number, repo slug, slurped comments JSON.
+# Stdout: latest verified merge epoch; returns 1 on fetch/parse failure.
+_cost_checkpoint_from_closeouts() {
+	local issue_number="$1" repo_slug="$2" comments_json="$3"
+	# Delivered checkpoints start a new spend window, not a lifetime budget.
+	# Reference creation time is not merge time; unrelated PRs cannot reset spend.
+	local timeline_json checkpoint_epoch
+	timeline_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/timeline" --paginate --slurp 2>/dev/null) || return 1
+	checkpoint_epoch=$(printf '%s' "$timeline_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
+		[.[][]
+		 | select(.event == "cross-referenced")
+		 | .source.issue
+		 | select(.repository.full_name == $repo)
+		 | select(((.title // "") + "\n" + (.body // ""))
+			| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
+		 | .pull_request.merged_at // empty
+		 | fromdateiso8601] | max // 0
+	' 2>/dev/null) || return 1
+
+	local candidates pr_number pr_json merge_epoch
+	candidates=$(printf '%s' "$comments_json" | jq -r '
+		[.[][] | select(.author_association == "OWNER" or
+			.author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		 | (.body // "") | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->") | .[0]]
+		 | unique[]
+	' 2>/dev/null) || return 1
+	while IFS= read -r pr_number; do
+		[[ -n "$pr_number" ]] || continue
+		pr_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+		merge_epoch=$(printf '%s' "$pr_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
+			select(.base.repo.full_name == $repo)
+			| select(((.title // "") + "\n" + (.body // ""))
+				| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
+			| .merged_at // empty | fromdateiso8601
+		' 2>/dev/null) || return 1
+		if [[ -n "$merge_epoch" && "$merge_epoch" -gt "$checkpoint_epoch" ]]; then
+			checkpoint_epoch="$merge_epoch"
+		fi
+	done <<<"$candidates"
+	printf '%s' "$checkpoint_epoch"
+	return 0
+}
+
 #######################################
 # Sum token spend across all signature footers in an issue's comments.
 # Aggregates ALL workers (no author filter) — the breaker is per-issue,
@@ -97,23 +143,9 @@ _sum_issue_token_spend() {
 		return 1
 	fi
 
-	# Delivered checkpoints start a new spend window, not a lifetime budget.
-	# REST cross-reference events embed pull_request.merged_at (not the event's
-	# created_at). Only same-repository PRs with an explicit issue reference count;
-	# open/unmerged PRs and incidental mentions must not hide an actual loop.
-	# A failed timeline lookup/parse leaves dispatch fail-open, like comments.
-	local timeline_json checkpoint_epoch
-	timeline_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/timeline" --paginate --slurp 2>/dev/null) || return 1
-	checkpoint_epoch=$(printf '%s' "$timeline_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
-		[.[][]
-		 | select(.event == "cross-referenced")
-		 | .source.issue
-		 | select(.repository.full_name == $repo)
-		 | select(((.title // "") + "\n" + (.body // ""))
-			| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
-		 | .pull_request.merged_at // empty
-		 | fromdateiso8601] | max // 0
-	' 2>/dev/null) || return 1
+	local checkpoint_epoch
+	checkpoint_epoch=$(_cost_checkpoint_from_closeouts "$issue_number" "$repo_slug" \
+		"$comments_json") || return 1
 
 	# Extract comment bodies, excluding interactive-session signature footers and
 	# comments predating the latest approval, cost reset marker or merged checkpoint.
@@ -139,6 +171,9 @@ _sum_issue_token_spend() {
 		|
 		.[]
 		| select((.body // "") | contains("with the user in an interactive session") | not)
+		# Closeouts copy PR summaries (including prior worker footers); they are
+		# delivery receipts, not additional worker attempts or token spend.
+		| select((.body // "") | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->") | not)
 		| select(($reset_epoch == 0) or (epoch > $reset_epoch))
 		| .body // empty
 	' 2>/dev/null) || return 1

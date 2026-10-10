@@ -487,6 +487,10 @@ Commands:
   upload [REPORT] [COMMIT]   Upload a report from 'analyze --sarif' (default: ${CODACY_DEFAULT_SARIF})
   status                     Show CLI, Node.js, configuration and auth status (exit 1 if not ready)
   info                       Pass through to '${CODACY_BIN} info'
+  standard list [--org ORG] [--tool NAME|UUID]
+                             Coding standards with tool state per standard and repository
+  standard set-tool --org ORG --standard ID --tool NAME|UUID --enabled true|false [--promote]
+                             Draft, repair, diff; promote only an exact diff (dry run without --promote)
   help                       Show this help
 
 Analyze options:
@@ -522,6 +526,22 @@ EOF
 	return 0
 }
 
+# Coding-standard management (GH#34183): list, set-tool. The account token is
+# taken from CODACY_API_TOKEN, or injected via `aidevops secret` when unset.
+run_codacy_standard() {
+	local module="${SCRIPT_DIR}/codacy_standard.py"
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_error "python3 is required for 'standard'"
+		return 2
+	fi
+	if [[ -z "${CODACY_API_TOKEN:-}" ]] && command -v aidevops >/dev/null 2>&1; then
+		aidevops secret CODACY_API_TOKEN -- python3 "$module" "$@"
+		return $?
+	fi
+	python3 "$module" "$@"
+	return $?
+}
+
 # Run repository-scoped commands from the repository root so the default
 # configuration path and report paths resolve consistently.
 cd_repo_root() {
@@ -545,6 +565,7 @@ main() {
 	upload) upload_codacy_results "$@" || rc=$? ;;
 	status) cd_repo_root && show_codacy_status || rc=$? ;;
 	info) require_codacy_cli && run_codacy info "$@" || rc=$? ;;
+	standard) run_codacy_standard "$@" || rc=$? ;;
 	help | --help | -h) show_help ;;
 	*)
 		print_error "$ERROR_UNKNOWN_COMMAND $command"

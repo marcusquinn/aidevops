@@ -129,9 +129,11 @@ DISPATCH_LABELS=(
 # --- aidevops System Labels ---
 SYSTEM_LABELS=(
 	"auto-dispatch|0E8A16|Eligible for automated worker dispatch"
-	"publication:pending|FBCA04|Dispatch hold until TODO+brief land on default branch; auto-clears, Pulse repairs after 6h"
+	"publication:pending|FBCA04|Opt-in hold until TODO+brief land on default branch; auto-clears, Pulse repairs after 6h"
+	"seed-pr|C5DEF5|Seed draft PR: companion files a worker starts from (not an implementation checkpoint)"
 	"no-auto-dispatch|EDEDED|Opt-out: block all auto-dispatch on this issue"
 	"hold-for-review|${LABEL_COLOR_ATTENTION}|Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review"
+	"do-not-close|EDEDED|Opt-out: never auto-close this PR in pulse sweeps"
 	"needs-credentials|${LABEL_COLOR_ATTENTION}|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
 	"persistent|FBCA04|Persistent issue — do not close"

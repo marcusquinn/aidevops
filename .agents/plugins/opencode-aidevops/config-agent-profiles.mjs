@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
 import { isAbsolute, join, relative, resolve, sep } from "path";
+import { parseAgentFrontmatter } from "./agent-frontmatter.mjs";
 import { loadAgentIndex, registerDelegatedDomainProfiles } from "./agent-loader.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { DEFAULT_ESCALATION_ORDER, normalizeRoutingTier } from "./model-routing.mjs";
@@ -93,41 +94,56 @@ function registerBuiltInRoutedAgents(config, routing, state) {
   return injected;
 }
 
-const MCP_ACTIVATION_TOOL = "aidevops_mcp";
+export const MCP_ACTIVATION_TOOL = "aidevops_mcp";
 
 function agentPromptFromSource(source) {
   const match = source.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/);
   return match?.[1]?.trim() || "";
 }
 
-function onDemandMcpPrompt(mcp, agentsDir) {
+/**
+ * Source-derived parts of an on-demand MCP activation agent, shared by the V1
+ * config hook and the V2 agent transform (GH#34219). `unparsed` is true when an
+ * authored source exists but its frontmatter cannot be read, so callers can
+ * fail closed instead of silently dropping restrictive tool rules.
+ * @param {object} mcp - Entry from getOnDemandMcpAgents()
+ * @param {string} agentsDir
+ * @returns {{description: string, prompt: string, tools: unknown, permission: unknown, unparsed: boolean}}
+ */
+export function onDemandMcpSourceProfile(mcp, agentsDir) {
   const source = mcp.agentSource?.length ? readIfExists(join(agentsDir, ...mcp.agentSource)) : "";
   const parsed = source ? parseAgentFrontmatter(source) : null;
-  const prompt = parsed?.prompt
+  const body = parsed?.prompt
     || agentPromptFromSource(source)
     || `Use the ${mcp.name} MCP for ${mcp.description}.`;
-  return { parsed, prompt };
-}
-
-function createOnDemandMcpProfile(mcp, agentsDir) {
-  const { parsed, prompt } = onDemandMcpPrompt(mcp, agentsDir);
-  const profile = {
+  return {
     description: parsed?.profile.description || mcp.description,
-    mode: "subagent",
     prompt: [
       `Before the first ${mcp.name} operation, call ${MCP_ACTIVATION_TOOL} with action \"connect\" and name \"${mcp.name}\".`,
       `After it succeeds, continue on the next step with ${mcp.allowedTools?.join(", ") || mcp.toolPattern} tools.`,
       `When the requested ${mcp.name} work is complete, call ${MCP_ACTIVATION_TOOL} with action \"disconnect\".`,
       ...(mcp.activationGuidance || []),
       "",
-      prompt,
+      body,
     ].join("\n"),
+    tools: parsed?.profile.tools,
+    permission: parsed?.profile.permission,
+    unparsed: Boolean(source) && !parsed,
+  };
+}
+
+function createOnDemandMcpProfile(mcp, agentsDir) {
+  const source = onDemandMcpSourceProfile(mcp, agentsDir);
+  const profile = {
+    description: source.description,
+    mode: "subagent",
+    prompt: source.prompt,
     tools: {
-      ...(parsed?.profile.tools || {}),
+      ...(source.tools || {}),
       [MCP_ACTIVATION_TOOL]: true,
     },
     permission: {
-      ...parsed?.profile.permission,
+      ...source.permission,
       [MCP_ACTIVATION_TOOL]: "allow",
     },
   };
@@ -218,57 +234,12 @@ const RESEARCH_STAGING_DENIED_NAMES = [
   ".env", ".env.*", ".ssh", ".gnupg", ".aws", ".azure", ".kube",
   ".netrc", ".npmrc", ".pypirc", ".git-credentials", "auth.json", "credential*",
 ];
-const UNSAFE_FRONTMATTER_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const RESEARCH_ONLY_FALLBACK_PROMPT = `# Research-only subagent
 
 Gather evidence from the assigned repository and read-only web sources. Return
 findings, citations, uncertainty, and recommendations. Never modify local or
 external state, invoke another agent, access credentials, or perform Git,
 account, network-write, or worktree operations.`;
-
-function parseFrontmatterScalar(value) {
-  const booleans = { true: true, false: false };
-  if (Object.hasOwn(booleans, value)) return booleans[value];
-  return value.startsWith('"') ? JSON.parse(value) : value;
-}
-
-function parseFrontmatterEntry(line) {
-  if (!line.trim() || line.trimStart().startsWith("#")) return null;
-  const entry = line.match(/^( *)(?:"([^"]+)"|([A-Za-z0-9_.*-]+)):\s*(.*)$/);
-  if (!entry || entry[1].length % 2 !== 0) throw new Error("Invalid agent frontmatter entry");
-  return entry;
-}
-
-function assignFrontmatterEntry(stack, entry) {
-  const indent = entry[1].length;
-  while (stack.at(-1).indent >= indent) stack.pop();
-  if (indent > stack.at(-1).indent + 2) throw new Error("Invalid agent frontmatter indentation");
-
-  const key = entry[2] || entry[3];
-  const parent = stack.at(-1).value;
-  if (UNSAFE_FRONTMATTER_KEYS.has(key) || Object.hasOwn(parent, key)) {
-    throw new Error("Unsafe or duplicate agent frontmatter key");
-  }
-  parent[key] = entry[4] ? parseFrontmatterScalar(entry[4]) : {};
-  if (!entry[4]) stack.push({ indent, value: parent[key] });
-}
-
-function parseAgentFrontmatter(source) {
-  try {
-    const match = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-    if (!match) throw new Error("Agent frontmatter is missing");
-
-    const profile = {};
-    const stack = [{ indent: -1, value: profile }];
-    match[1].split("\n")
-      .map(parseFrontmatterEntry)
-      .filter(Boolean)
-      .forEach((entry) => assignFrontmatterEntry(stack, entry));
-    return { profile, prompt: match[2].trim() };
-  } catch {
-    return null;
-  }
-}
 
 function researchOnlyProfile(agentsDir) {
   const source = readIfExists(join(agentsDir, "tools", "ai-assistants", "research-only.md"));

@@ -10,6 +10,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.0] - 2026-10-10
+
+### Added
+
+- add github-runner-org-helper and org/App/JIT runbook (GH#34235) (#34236)
+
+### Changed
+
+- Tests: guard cost accounting for repeated partial closeouts (#34254)
+- Maintenance: sync GitHub issue refs to TODO.md (#34245)
+- Maintenance: sync GitHub issue refs to TODO.md (#34244)
+- Documentation: release troubleshooting row for no-tag reconcile-required lane (GH#34239) (#34241)
+
+### Fixed
+
+- classify Homebrew-owned OpenCode under the brew release channel
+- run deferred prompt jobs as standalone prompts
+- normalize source_access_blocked and route circuit meta fixes to framework source (#34243)
+- explain record-published/included-release failures (GH#34240) (#34242)
+
+## [3.38.46] - 2026-10-10
+
+### Added
+
+- seed draft PRs carry companion files to workers without a default-branch merge
+- issue-first dispatch — issues lead, TODO/brief are background backups
+- register research-only, specialist-advisor and domain subagents on OpenCode V2 (#34229)
+- lint headless pulse prompts against command policy (#34220)
+
+### Changed
+
+- Maintenance: sync ref:GH#34233 to TODO.md (#34231)
+
+### Fixed
+
+- GH#34224 provision node_modules for the exact contract interactive worktree add registered (#34230)
+- register OpenCode V2 on-demand MCP activation agents
+- GH#34199 truthful JavaScript verification-tool readiness at worktree admission
+- skip non-identifier gopass entries during secret run (#34222)
+
+## [3.38.45] - 2026-10-10
+
+### Added
+
+- generate quality sweep briefs by area
+
+### Changed
+
+- Maintenance: mark t18640 complete (pr:#34206 completed:2026-10-09) (#34212)
+
+### Fixed
+
+- provision do-not-close label before sweep comments recommend it
+- make /pulse and /pulse-sweep commands OpenCode-policy compatible
+- validate API URL scheme before urlopen in codacy_standard.py (GH#34183) (#34214)
+
+## [3.38.44] - 2026-10-10
+
+### Added
+
+- add SEO Utils MCP support via on-demand @seo-utils
+- delete job-less, log-less ghost queued runs (GH#34001) (#34192)
+- gate non-closing For/Ref worker PR auto-merge (#34194)
+
+### Changed
+
+- Maintenance: mark t18607 complete (pr:#34207 completed:2026-10-09) (#34211)
+- Documentation: add Google Cloud operations guide (GH#34204) (#34209)
+- Maintenance: sync ref:GH#34205 to TODO.md (#34202)
+
+### Fixed
+
+- launch enrichment in a dispatcher-owned worktree (GH#33877) (#34207)
+- bound replay and review monitoring job hangs (#34188)
+- normalize TODO sync SSH remotes and skip contributor repos (#34198)
+- keep the deterministic pipeline running when preflight prefetch times out (GH#34000) (#34201)
+- report cause of cleanup-receipt RECONCILIATION_FAILED (GH#34002) (#34190)
+
+## [3.38.43] - 2026-10-09
+
+### Changed
+
+- Maintenance: repair 9 stale publication:pending tasks (GH#34149 repair path)
+- Maintenance: mark t18636 complete (pr:#34176 completed:2026-10-09) (#34177)
+
+### Fixed
+
+- require new Worker Guidance heading for enrichment success (t18609) (#34189)
+- resolve aidevops-managed OpenCode shims before choosing upgrade package manager
+- resolve project .venv for inferred Python verify commands
+- flag enrichment_needed on first worker-side failure (t18608) (#34191)
+- allow exact read-only Git version queries (#34184)
+- restore test-pulse-routines-selector Case 9/11 after detached script routines
+- make test-smoke-help.sh robust under set -e (GH#34166) (#34174)
+- surface Git rejection reason on protected-main tag push failure (#34173)
+- silence missing routines registry noise for repos without routines
+
 ## [3.38.42] - 2026-10-09
 
 ### Added

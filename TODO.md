@@ -1605,6 +1605,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18632 GH#34125 Phase 3: block tool-level egress from local-only bound sessions #auto-dispatch #feat #security #interactive tier:thinking blocked-by:t18631 ref:GH#34147 logged:2026-10-09 -> [todo/tasks/t18632-brief.md]
 - [ ] t18633 fix(opencode): tool-schema fallback lacks object and yields host-incompatible schemas when @opencode-ai/plugin is unresolvable #auto-dispatch #bug #interactive tier:standard ref:GH#34148 logged:2026-10-09 -> [todo/tasks/t18633-brief.md]
 - [x] t18634 Migrate Codacy local analysis to Codacy Analysis CLI (@codacy/analysis-cli) #feat #quality #interactive tier:standard ref:GH#34164 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18634-brief.md] pr:#34165 completed:2026-10-09
+- [x] t18635 fix(pulse): silence missing routines registry noise for repos without routines #bug #interactive ref:GH#34169 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18635-brief.md] pr:#34170 completed:2026-10-09
+- [x] t18636 fix(tests): restore test-pulse-routines-selector Case 9/11 after detached script routines #auto-dispatch #bug #interactive ref:GH#34172 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18636-brief.md] pr:#34176 completed:2026-10-09
+- [x] t18637 fix(pulse): TODO ref sync fails every cycle for SSH remotes and contributor repos #auto-dispatch #bug #pulse #interactive tier:standard ref:GH#34185 logged:2026-10-09 -> [todo/tasks/t18637-brief.md] pr:#34198 completed:2026-10-09
+- [x] t18640 Add SEO Utils MCP support (on-demand @seo-utils) #feat #seo #mcp #interactive tier:standard ref:GH#34205 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18640-brief.md] pr:#34206 completed:2026-10-09
+- [x] t18641 GH#34180 Leaf C: interactive worktree add never provisions node_modules (controller-not-owner) #auto-dispatch #bug tier:thinking ref:GH#34224 logged:2026-10-10 -> [todo/tasks/t18641-brief.md] pr:#34230 completed:2026-10-10
+
+- [x] t18642 feat: issue-first dispatch — issues lead, TODO/brief are background backups #feat #framework ref:GH#34232 pr:#34234 completed:2026-10-10
+
+- [x] t18643 feat: seed draft PRs — companion files for issues without waiting on default-branch merge #feat #framework ref:GH#34233 pr:#34237 completed:2026-10-10
 
 ## In Progress
 
@@ -5170,3 +5179,25 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18586 New WordPress plugin capability: create from WP Plugin Starter with saved maker defaults #enhancement ref:GH#33504 pr:#33515 completed:2026-10-04
 
 - [x] t18600 Decision asks and completion summaries include clickable links to evidence #enhancement ref:GH#33829 pr:#33831 completed:2026-10-06
+
+- [ ] t18629 refactor: unify runtime-env trust, Git-shim detection and native Git resoluti... #refactor ref:GH#34133
+
+- [x] t18621 fix(worktree): add on existing remote branch fails with silent RECONCILIATION_FAILED #auto-dispatch #bug ref:GH#34002 pr:#34190 completed:2026-10-09
+
+- [x] t18620 feat(pulse): stale queued-run watchdog safely deletes job-less ghost runs #auto-dispatch #enhancement ref:GH#34001 pr:#34192 completed:2026-10-09
+
+- [x] t18619 fix(pulse): preflight timeouts starve the deterministic pipeline (merge pass, dispatch_max, stale_queued_runs) #auto-dispatch #bug ref:GH#34000 pr:#34201 completed:2026-10-09
+
+- [x] t18618 feat(pulse-merge): auto-merge green worker PRs linked via For #N to open non-parent issues #auto-dispatch #enhancement ref:GH#33999 pr:#34194 completed:2026-10-09
+
+- [x] t18617 ci: add timeout-minutes to hung-prone GitHub-hosted jobs (model-replay-linux, code-review-monitoring) #auto-dispatch #bug ref:GH#33986 pr:#34188 completed:2026-10-09
+
+- [x] t18609 fix(pulse): enrichment success check is a false positive when the brief already has Worker Guidance #auto-dispatch #bug #pulse ref:GH#33879 pr:#34189 completed:2026-10-09
+
+- [x] t18608 fix(fast-fail): worker-side failures never flag enrichment_needed #auto-dispatch #bug #pulse ref:GH#33878 pr:#34191 completed:2026-10-09
+
+- [x] t18607 fix(pulse): enrichment worker always aborts on the issue-worker env contract #auto-dispatch #bug #pulse ref:GH#33877 pr:#34207 completed:2026-10-09
+
+
+
+- [ ] t18639 GH#34180 Leaf B: durable owner-approved policy for frozen JavaScript worktree installs #auto-dispatch #blocked-by:GH#34199 #enhancement ref:GH#34200

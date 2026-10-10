@@ -13,9 +13,12 @@
 #                              --brief-file is supplied or a brief exists at
 #                              todo/tasks/{task_id}-brief.md)
 #   --labels "label1,label2"   Comma-separated labels (optional)
-#   --publication-state STATE  Issue/planning state: pending (default) withholds
-#                              dispatch labels; canonical is for verified
-#                              default-branch creation only
+#   --publication-state STATE  Issue/planning state: canonical (default,
+#                              GH#34232 issue-first) applies the intended
+#                              dispatch labels at creation; pending is an
+#                              explicit hold (publication:pending, no
+#                              auto-dispatch/status:available) for issues whose
+#                              body depends on files not yet published
 #   --count N                  Allocate N consecutive IDs (default: 1)
 #                              Creates one GitHub/GitLab issue per ID using
 #                              the same --title. Output includes ref_tNNN=GH#NNN
@@ -171,7 +174,10 @@ SYNC_COUNTER_BRANCH=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
-TASK_PUBLICATION_STATE="pending"
+# GH#34232: issue-first. The issue body is composed from the validated brief,
+# so the issue is the leading record and is dispatchable at creation; TODO.md
+# and todo/tasks/ are background backups. `pending` is an explicit opt-in hold.
+TASK_PUBLICATION_STATE="canonical"
 TASK_COUNTER_STATUS_FALLBACK="fallback"
 # t2838: populated by --parent-issue N; read by _compose_issue_body for body
 # injection and create_github_issue / _try_issue_sync_delegation for explicit
@@ -455,8 +461,9 @@ _validate_and_normalize_args() {
 
 # _validate_interactive_dispatch_scope — fail before allocation when an
 # interactive session files auto-dispatch work without a canonical Files Scope.
-# Pending publication withholds auto-dispatch from the created issue (GH#30325),
-# so the gh_create_issue scope gate cannot see the intent. The author has the
+# An explicit pending hold withholds auto-dispatch from the created issue
+# (GH#30325), so the gh_create_issue scope gate cannot always see the intent,
+# and issue-first (GH#34232) issues dispatch immediately. The author has the
 # most context, so ask now; unscoped briefs from other paths are dispatched with
 # worker-owned scope discovery (GH#33243) so findings are never lost.
 _validate_interactive_dispatch_scope() {
@@ -1029,7 +1036,7 @@ _ensure_publication_pending_label() {
 
 	if gh label create "$label" --repo "$repo_slug" \
 		--color "FBCA04" \
-		--description "Dispatch hold until TODO+brief land on default branch; auto-clears, Pulse repairs after 6h" \
+		--description "Opt-in hold until TODO+brief land on default branch; auto-clears, Pulse repairs after 6h" \
 		>/dev/null 2>&1; then
 		printf '%s\n' "$label" >>"$cache_file" 2>/dev/null || true
 		log_info "Auto-created label '${label}' in ${repo_slug}"

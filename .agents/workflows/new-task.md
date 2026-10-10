@@ -57,7 +57,7 @@ Allocated: {task_id} (ref:{task_ref})
 Task: "{title}"
 
 Options:
-1. Add to TODO.md with brief (recommended — dispatches after planning publication)
+1. Add to TODO.md with brief (recommended — dispatches once the issue is filed)
 2. Add to TODO.md with brief AND claim for this session (prevents pulse pickup)
 3. Customize estimate, tags, and dependencies
 4. Just show the ID (don't add to TODO.md)
@@ -121,7 +121,8 @@ After the brief is worker-ready, consider an optional implementation-seeded draf
 
 - Seed only when current-session discovery produced high-confidence file paths, line ranges, and implementation patterns verified against current `HEAD`.
 - Keep issue-only when the implementation is uncertain, depends on design judgment, or would anchor workers to stale assumptions.
-- If seeded, create the PR as draft, link it back to the issue/brief, mark unrun checks as `UNVERIFIED`, and record the draft PR number/status in the brief's **Seeded Draft PR** section.
+- Also seed when the issue needs companion files (fixtures, notes, scaffolding) before a worker can start; they travel on the seed, not the default branch.
+- If seeded, open it with `seed-pr-helper.sh open <issue> --notes <file>` from a linked worktree (mark unrun checks `UNVERIFIED` in the notes) and record the draft PR number/status in the brief's **Seeded Draft PR** section. Mechanics: `workflows/brief.md` "Seed mechanics".
 - If skipped, record the rationale in the same section so later workers know whether the absence of a seed was intentional.
 
 ### Step 3.5: Classify and Decompose (t1408.2)
@@ -179,11 +180,13 @@ if [[ -n "${task_ref:-}" && "${task_ref:-}" != "none" && "${task_ref:-}" != "off
 fi
 ```
 
-Online local creation leaves the issue `publication:pending` and omits positive
-dispatch labels until the exact default-branch TODO/ref/brief snapshot lands.
-Planning-PR and failed-publication outcomes remain blocked and must never be
-reported as queued. A closed-unmerged planning PR remains pending; retry
-publication idempotently without creating a new issue.
+Issue-first (GH#34232): the issue body is composed from the brief, so a
+worker-ready `#auto-dispatch` issue is queued at creation; the TODO row and
+brief you commit are repository backups and need not merge first. Pulse seeds a
+missing backup row after `AIDEVOPS_ORPHAN_SEED_GRACE_HOURS`. Only `--batch`
+(template-stub bodies) or an explicit `--publication-state pending` creates the
+`publication:pending` hold, which clears when the completed brief reaches the
+default branch. Contract: `reference/planning-publication-lifecycle.md`.
 
 `#{origin}`: `#interactive` (user present) or `#worker` (headless). Detect via `detect_session_origin` from `shared-constants.sh`. Maps to `origin:interactive` / `origin:worker` GitHub labels on issue sync.
 
@@ -304,6 +307,7 @@ Tasks without a complete How section will fail tier:simple dispatch.
 - The `.task-counter` branch is updated per allocation — that is unavoidable.
 - The planning files (`TODO.md`, `todo/tasks/*.md`) use a **single** publication: direct commit+push when allowed, or one planning-only PR when branch protection requires PRs.
 - `--labels` applies the same label set to all tasks in the batch.
+- Batch issues keep the `publication:pending` hold (their bodies are template stubs) until the completed briefs reach the default branch; this is the issue-first exception.
 - `--no-issue` skips GitHub issue creation (useful for offline / bulk planning).
 
 ```text

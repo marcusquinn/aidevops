@@ -500,18 +500,24 @@ _has_open_pr_check_healthy_sibling() {
 	healthy_state_pattern="^(CLEAN|HAS_HOOKS|UNSTABLE|BEHIND)$"
 	blocked_state_pattern="^(DIRTY|BLOCKED|CONFLICTING)$"
 
+	# GH#34233: a seed draft (label seed-pr + exact marker for this issue) holds
+	# companion files the worker starts from; it is not an implementation
+	# checkpoint. Applying the label already requires triage access; the worker
+	# launch path re-checks author trust and same-repository heads.
 	draft_pr=$(printf '%s' "$pr_json" | jq -r \
 		--arg title_pattern "$title_ref_pattern" \
-		--arg body_pattern "$body_ref_pattern" '
+		--arg body_pattern "$body_ref_pattern" \
+		--arg seed_marker "<!-- aidevops:seed-pr issue=${issue_number} -->" '
 		def names: [.labels[]?.name];
 		def protected: names | any(
 			. == "origin:interactive" or . == "hold-for-review" or
 			. == "no-auto-dispatch" or . == "needs-maintainer-review"
 		);
 		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
+		def seed_for_issue: (names | any(. == "seed-pr")) and ((.body // "") | contains($seed_marker));
 		[
 			.[] | select(
-				(.isDraft == true) and
+				(.isDraft == true) and (seed_for_issue | not) and
 				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i")))
 			)
 		] | .[0] |

@@ -289,22 +289,54 @@ TODOEOF
 		fail "Case 7b (GH#28808): repository TODO ignores fenced r004 and keeps descriptive IDs" "ids=$repo_ids"
 	fi
 
-	local malformed_count=0
+	local malformed_count=0 rc=0
 	printf '# Tasks\n\n- [x] r-missing Missing heading repeat:daily(@01:00)\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	printf '## Routines\n\n## Ready\n\n## Routines\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	printf '```markdown\n## Routines\n- [x] r-fenced Unclosed repeat:daily(@01:00)\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	printf '## Routines\n<!-- unclosed\n- [x] r-commented Hidden repeat:daily(@01:00)\n' >"$fixture"
-	_routine_extract_section "$fixture" >/dev/null || malformed_count=$((malformed_count + 1))
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	[[ "$rc" -eq 1 ]] && malformed_count=$((malformed_count + 1))
 	if [[ "$malformed_count" -eq 4 ]]; then
-		pass "Case 8 (GH#28808): missing, duplicate, and malformed boundaries fail closed"
+		pass "Case 8 (GH#28808): misplaced, duplicate, and malformed boundaries fail closed"
 	else
-		fail "Case 8 (GH#28808): missing, duplicate, and malformed boundaries fail closed" \
-			"expected 4 failures, got $malformed_count"
+		fail "Case 8 (GH#28808): misplaced, duplicate, and malformed boundaries fail closed" \
+			"expected 4 rc=1 failures, got $malformed_count"
+	fi
+
+	# GH#34169: the default TODO template has no registry; that is "no routines",
+	# not a malformed file, and must not produce a per-cycle diagnostic.
+	printf '# TODO\n\n## Ready\n\n- [ ] t001 Ordinary task\n\n## Done\n' >"$fixture"
+	rc=0; _routine_extract_section "$fixture" >/dev/null || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		pass "Case 8b (GH#34169): absent registry without routine lines returns no-registry"
+	else
+		fail "Case 8b (GH#34169): absent registry without routine lines returns no-registry" "rc=$rc"
 	fi
 	return 0
+}
+
+# _wait_for_detached_routine_success: script routines run in a detached runner
+# since GH#32637, so evaluate_routines returns before the script finishes.
+# Poll the routine state file (bounded, ~10s) for a terminal success.
+_wait_for_detached_routine_success() {
+	local state_file="$1"
+	local routine_id="$2"
+	local attempt=0
+	while [[ "$attempt" -lt 100 ]]; do
+		if [[ -f "$state_file" ]] &&
+			jq -e --arg id "$routine_id" '.[$id].last_status == "success"' "$state_file" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
 }
 
 # _test_supervisor_self_recursion_guard: case 9 — production evaluator path.
@@ -363,6 +395,7 @@ SCHEDULE_SCRIPT
 		source "$CORE_ROUTINES"
 		get_core_routine_entries | grep -q '^r901|x|.*|repeat:persistent|.*|scripts/pulse-wrapper.sh|script$' &&
 			evaluate_routines &&
+			_wait_for_detached_routine_success "$state_file" "r-downstream-monitor" &&
 			[[ ! -e "$self_marker" ]] &&
 			[[ -e "$downstream_marker" ]] &&
 			jq -e '."r-downstream-monitor".last_status == "success" and (.r901 | not)' "$state_file" >/dev/null &&

@@ -270,6 +270,16 @@ case "$1" in
 				"status:blocked" "d93f0b" "Partial work blocked; inspect reason and next action"
 			exit 0
 		fi
+		# GH#33896: status transitions require an exact GraphQL label
+		# snapshot. Answer it from the REST fixture above (same contract as
+		# test-interactive-session-claim.sh) instead of returning no data.
+		if [[ "$2" == "graphql" && "$*" == *'label0: label(name:'* ]]; then
+			"$0" api '/repos/fixture/labels?per_page=100' | jq -Rn '
+				[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}]
+				| to_entries | map({key: ("label" + (.key | tostring)), value: .value})
+				| from_entries | {data: {repository: .}}'
+			exit $?
+		fi
 		# Force the compatibility path; REST-first behavior has a dedicated
 		# production-wrapper test in test-status-label-state-machine.sh.
 		[[ "$2" == /repos/*/issues/[0-9]* ]] && exit 1
@@ -424,6 +434,14 @@ case "$1" in
 				"status:done" "6f42c1" "Task is complete" \
 				"status:blocked" "d93f0b" "Partial work blocked; inspect reason and next action"
 			exit 0
+		fi
+		# GH#33896: exact GraphQL label snapshot from the REST fixture above.
+		if [[ "$2" == "graphql" && "$*" == *'label0: label(name:'* ]]; then
+			"$0" api '/repos/fixture/labels?per_page=100' | jq -Rn '
+				[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}]
+				| to_entries | map({key: ("label" + (.key | tostring)), value: .value})
+				| from_entries | {data: {repository: .}}'
+			exit $?
 		fi
 		[[ "$2" == /repos/*/issues/[0-9]* ]] && exit 1
 		;;

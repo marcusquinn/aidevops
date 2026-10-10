@@ -132,6 +132,20 @@ assert_allowed_with_temp_root() {
 	return 0
 }
 
+# GH#34179: version flags have no subcommand, but are exact read-only queries.
+assert_allowed "allows canonical version flag" "$REPO" "git --version"
+assert_allowed "allows canonical short version flag" "$REPO" "git -v"
+assert_allowed "allows version flag with canonical -C target" "$REPO" "git -C '$REPO' --version"
+assert_blocked "blocks unknown flag-only invocation" "git --unknown"
+assert_blocked "blocks unknown flag before version" "git --unknown --version"
+assert_blocked "blocks unknown flag after version" "git --version --unknown"
+assert_blocked "blocks malformed -C version invocation" "git -C --version"
+assert_blocked "blocks version followed by canonical mutation" "git --version branch -M renamed"
+assert_blocked "blocks version after canonical mutation" "git branch -M renamed --version"
+assert_blocked "blocks option terminator before version" "git -- --version"
+# shellcheck disable=SC2016
+assert_blocked "blocks unresolved version -C target" 'git -C "$REPO" --version'
+assert_blocked "blocks chained mutation after version" "git --version && git branch -M renamed"
 assert_blocked "blocks canonical detached switch" "git switch --detach main"
 GUIDANCE_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git pull --ff-only origin main" 2>&1)
 RECOVERY_HELPER="${SCRIPT_DIR}/canonical-recovery-helper.sh"
@@ -294,6 +308,30 @@ assert_allowed "allows unrelated writes in an unmanaged isolated bare temp repo"
 	"$REPO" "git -C '$PROSPECTIVE_REPO' update-ref refs/heads/main '$INITIAL_HEAD'"
 
 git -C "$REPO" worktree add -q -b feature/example "$LINKED"
+assert_allowed "allows linked-worktree version flag" "$LINKED" "git --version"
+assert_allowed "allows version flag with linked -C target" "$REPO" "git -C '$LINKED' --version"
+assert_allowed "allows version flag with repeated -C targets" "$REPO" "git -C '$TEST_ROOT' -C linked --version"
+NATIVE_VERSION=$(git --version)
+for VERSION_CWD in "$REPO" "$LINKED"; do
+	VERSION_RC=0
+	VERSION_OUTPUT=$(cd "$VERSION_CWD" && env PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --version 2>&1) || VERSION_RC=$?
+	TARGET_VERSION_RC=0
+	TARGET_VERSION_OUTPUT=$(cd "$VERSION_CWD" && env PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" -C "$LINKED" --version 2>&1) || TARGET_VERSION_RC=$?
+	if [[ "$VERSION_RC" -eq 0 && "$TARGET_VERSION_RC" -eq 0 && "$VERSION_OUTPUT" == "$NATIVE_VERSION" && "$TARGET_VERSION_OUTPUT" == "$NATIVE_VERSION" ]]; then
+		pass "PATH shim preserves native version output and status from ${VERSION_CWD##*/}"
+	else
+		fail "PATH shim preserves native version output and status from ${VERSION_CWD##*/} (rc=$VERSION_RC target_rc=$TARGET_VERSION_RC)"
+	fi
+done
+NATIVE_MISSING_RC=0
+git -C "$TEST_ROOT/missing" --version >/dev/null 2>&1 || NATIVE_MISSING_RC=$?
+SHIM_MISSING_RC=0
+env PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" -C "$TEST_ROOT/missing" --version >/dev/null 2>&1 || SHIM_MISSING_RC=$?
+if [[ "$NATIVE_MISSING_RC" -ne 0 && "$SHIM_MISSING_RC" -eq "$NATIVE_MISSING_RC" ]]; then
+	pass "PATH shim preserves native invalid version target exit status"
+else
+	fail "PATH shim preserves native invalid version target exit status (native_rc=$NATIVE_MISSING_RC shim_rc=$SHIM_MISSING_RC)"
+fi
 git init --bare -q "$SNAPSHOT_REPO"
 assert_allowed "allows an isolated snapshot repository to index a linked worktree" "$REPO" \
 	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$LINKED' add --all --sparse"

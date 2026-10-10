@@ -11,6 +11,7 @@ import { BoundedInteractiveOperationManager } from "./bounded-interactive-operat
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
+import { loadModelRouting } from "./model-routing.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import {
   createPoolTool,
@@ -47,6 +48,8 @@ import { isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
 import { loadV2PrimaryProfiles, registerV2PrimaryProfiles } from "./v2-agent-profiles.mjs";
 import { applyV2ContextBudget, readV2ContextBudget } from "./v2-context-budget.mjs";
+import { registerV2SubagentProfiles } from "./v2-subagent-profiles.mjs";
+import { registerV2OnDemandMcpAgents } from "./v2-on-demand-mcp-agents.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
 import {
   addV1ToolsToV2Editor,
@@ -381,8 +384,17 @@ export async function setupAidevopsV2(ctx) {
     // this service process has no reliable terminal and must not write titles.
 
     const primaryProfiles = loadV2PrimaryProfiles(ACTIVE_AGENTS_DIR);
+    const modelRouting = loadModelRouting([
+      process.env.AIDEVOPS_MODEL_ROUTING_TABLE,
+      join(AGENTS_DIR, "custom", "configs", "model-routing-table.json"),
+      join(AGENTS_DIR, "configs", "model-routing-table.json"),
+    ]);
+    const mcpToolPolicy = mcpRuntime.toolPolicy();
     await register(registrations, ctx.agent.transform((editor) => {
       registerV2PrimaryProfiles(editor, primaryProfiles);
+      registerV2SubagentProfiles(editor, { agentsDir: AGENTS_DIR, routing: modelRouting });
+      // After primaries so every registered agent receives the MCP denies (GH#34219).
+      registerV2OnDemandMcpAgents(editor, { agentsDir: AGENTS_DIR, toolPolicy: mcpToolPolicy });
     }));
     const budget = readV2ContextBudget();
     if (budget && typeof ctx.catalog?.transform === "function") await register(registrations, ctx.catalog.transform((editor) => {

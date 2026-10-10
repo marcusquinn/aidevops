@@ -155,6 +155,10 @@ cmd_commit_and_pr() {
 	_validate_replacement_pr_ancestry "$issue_number" "$repo" "$branch" \
 		"$replacement_pr" "$replacement_reason" || return 1
 	local replacement_pr_head_sha="${ISSUE_OPEN_PR_HEAD_SHA:-}"
+	# GH#34233: prove a seed draft's head is in this branch before WIP
+	# finalization squashes it; the proven SHA authorizes closing the seed.
+	local seed_proof=""
+	seed_proof=$("${SCRIPT_DIR}/seed-pr-helper.sh" proof "$issue_number" --repo "$repo" 2>/dev/null) || seed_proof=""
 	# GH#27902: WIP commits are durable checkpoints, not publishable history.
 	# If any exist on the branch, replace the branch range with one final commit
 	# before validators inspect HEAD and before rebase/push can publish it.
@@ -175,6 +179,11 @@ cmd_commit_and_pr() {
 	_commit_and_pr_check_readiness || return 1
 	local pr_number=""
 	_commit_and_pr_publish || return 1
+	if [[ -n "$seed_proof" && -n "$pr_number" ]]; then
+		"${SCRIPT_DIR}/seed-pr-helper.sh" supersede "$issue_number" "$pr_number" --repo "$repo" \
+			--seed-oid "${seed_proof##*$'\t'}" >&2 ||
+			print_warning "Seed PR for #${issue_number} was not closed; close it after verifying PR #${pr_number} contains it"
+	fi
 
 	# Output PR number for caller to pass to `merge`
 	printf '%s\n' "$pr_number"

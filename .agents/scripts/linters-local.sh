@@ -294,6 +294,8 @@ main() {
 
 	# Run all local quality checks (respecting bundle skip_gates)
 	local exit_code=0
+	# Always check the small headless allowlist; interactive shell examples are excluded.
+	python3 "${SCRIPT_DIR}/prompt-command-policy-lint.py" || exit_code=1
 	_run_gate_checks || exit_code=1
 
 	if [[ "${LINTERS_LOCAL_MODE:-changed}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then

@@ -5,22 +5,30 @@ import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 const SOURCE = /^([A-Za-z0-9 +.-]+),([a-z0-9-]+\.md),([^\n]*?),((?:simple|standard|thinking))(?:,|$)/;
-const ACTIONS = { bash: "shell", task: "subagent", write: "edit", patch: "edit" };
+// Host releases differ (shell/bash, subagent/task); rules for unused aliases never match.
+const ACTIONS = { bash: ["shell", "bash"], task: ["subagent", "task"], write: ["edit"], patch: ["edit"] };
+
+function toolLines(frontmatter) {
+  const lines = [];
+  let tools = false;
+  for (const line of frontmatter.split("\n")) {
+    if (line === "tools:") { tools = true; continue; }
+    if (tools && !line.startsWith("  ")) tools = false;
+    if (tools) lines.push(line);
+  }
+  return lines;
+}
 
 function deniedTools(source) {
   const frontmatter = /^---\n([\s\S]*?)\n---/.exec(source)?.[1];
   if (!frontmatter) return null;
   const denied = [];
-  let tools = false;
-  for (const line of frontmatter.split("\n")) {
-    if (line === "tools:") { tools = true; continue; }
-    if (tools && !line.startsWith("  ")) tools = false;
-    if (!tools) continue;
+  for (const line of toolLines(frontmatter)) {
     const match = /^  ([a-z][a-z0-9_-]*): (true|false)$/.exec(line);
     if (!match) return null; // Never silently drop a restrictive tool rule.
-    if (match[2] === "false") denied.push({
-      action: ACTIONS[match[1]] || match[1], resource: "*", effect: "deny",
-    });
+    if (match[2] === "false") {
+      for (const action of ACTIONS[match[1]] || [match[1]]) denied.push({ action, resource: "*", effect: "deny" });
+    }
   }
   return denied;
 }

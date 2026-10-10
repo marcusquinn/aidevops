@@ -97,7 +97,8 @@ assert_match_count() {
 
 assert_refill_runtime_contract() {
 	local label="$1"
-	local actual_events="" expected_events="dispatch:skip;routine;stage:auto_approve_maintainer_issues:7;nmr;invalidate:label_maintenance_complete;dispatch:normalize;"
+	# GH#33944: the post-label refill also skips full dependency normalization.
+	local actual_events="" expected_events="dispatch:skip;routine;stage:auto_approve_maintainer_issues:7;nmr;invalidate:label_maintenance_complete;dispatch:skip;"
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual_events=$(
 		(
@@ -481,6 +482,41 @@ assert_dispatch_cycle_budget_contract() {
 	return 0
 }
 
+# GH#34000: a prefetch timeout/deferral (124) continues the cycle on cached
+# state; any other prefetch failure still aborts. The prefetch reserve adds
+# the pipeline share to the finalisation reserve and supports opt-out.
+assert_prefetch_degraded_contract() {
+	local actual="" expected="timeout:124;failure:1;reserve:270;optout:90;"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	actual=$(
+		(
+			unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+			# shellcheck source=../pulse-dispatch-preflight-lib.sh
+			source "$PREFLIGHT_LIB"
+			LOGFILE="/dev/null" PIDFILE="/dev/null" SCOPE_FILE="" PRE_RUN_STAGE_TIMEOUT=600
+			PULSE_RATE_LIMIT_FLAG="${TMPDIR:-/tmp}/gh34000-missing-rate-limit-flag"
+			_PULSE_HEALTH_PREFETCH_ERRORS=0 TEST_PREFETCH_RC=124
+			run_stage_with_timeout() { return "$TEST_PREFETCH_RC"; }
+			local rc=0
+			_preflight_prefetch_and_scope || rc=$?
+			printf 'timeout:%s;' "$rc"
+			TEST_PREFETCH_RC=1 rc=0
+			_preflight_prefetch_and_scope || rc=$?
+			printf 'failure:%s;' "$rc"
+			unset AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S AIDEVOPS_PULSE_PIPELINE_RESERVE_S
+			printf 'reserve:%s;' "$(_preflight_prefetch_reserved_finalise_seconds)"
+			printf 'optout:%s;' "$(AIDEVOPS_PULSE_PIPELINE_RESERVE_S=0 _preflight_prefetch_reserved_finalise_seconds)"
+		)
+	)
+	if [[ "$actual" == "$expected" ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: prefetch timeout continues on cached state; failures still abort"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: prefetch degraded contract (${actual:-none})"
+	fi
+	return 0
+}
+
 assert_interrupted_dispatch_progress_contract() {
 	local actual="" expected='["worker-dispatched"]'
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -515,6 +551,7 @@ DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
 DISPATCH_CAPACITY_LIB="$SCRIPT_DIR/pulse-dispatch-lib-capacity.sh"
 DISPATCH_CANDIDATES_LIB="$SCRIPT_DIR/pulse-dispatch-lib-candidates.sh"
 PREFLIGHT_LIB="$SCRIPT_DIR/pulse-dispatch-preflight-lib.sh"
+WRAPPER="$SCRIPT_DIR/pulse-wrapper.sh"
 # The wrapper loads the shared cycle clock before sourcing preflight helpers.
 # Mirror that order for the standalone runtime contracts below.
 # shellcheck source=../pulse-watchdog.sh
@@ -701,7 +738,7 @@ assert_match_count \
 	1 \
 	"$PREFLIGHT_LIB"
 assert_refill_runtime_contract \
-	"9l: trusted NMR reconciliation completes before the normalized refill"
+	"9l: trusted NMR reconciliation completes before the same-cycle refill"
 assert_refill_wall_clock_budget_contract \
 	"9l1: refill skips with telemetry when remaining cycle budget is insufficient"
 assert_routine_comment_rest_block_contract \
@@ -801,6 +838,37 @@ assert_order \
 	'_ds_stage_start.*nmr_gate' \
 	'^[[:space:]]*if _check_nmr_approval_gate' \
 	"$CORE"
+
+# --- GH#34000: preflight timeouts must not starve the deterministic pipeline ---
+
+assert_grep \
+	"11a: prefetch timeout marks the cycle degraded instead of aborting" \
+	'_PULSE_PREFETCH_DEGRADED=1' \
+	"$ENGINE"
+assert_grep \
+	"11b: prefetch runs with the deterministic-pipeline reserve" \
+	'AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="\$\(_preflight_prefetch_reserved_finalise_seconds\)"' \
+	"$ENGINE"
+assert_order \
+	"11c: hourly stale_queued_runs runs before the long merge pass" \
+	'_pulse_run_optional_stage_with_timeout "stale_queued_runs"' \
+	'_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass"' \
+	"$WRAPPER"
+assert_order \
+	"11d: Dependabot alert monitor runs before the long merge pass" \
+	'_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor"' \
+	'_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass"' \
+	"$WRAPPER"
+assert_order \
+	"11e: orphan reaping still opens the deterministic pipeline" \
+	'run_stage_with_timeout "reap_orphan_workers"' \
+	'_pulse_run_optional_stage_with_timeout "stale_queued_runs"' \
+	"$WRAPPER"
+assert_grep \
+	"11f: degraded prefetch skips only the STATE_FILE-reading LLM supervisor" \
+	'_PULSE_PREFETCH_DEGRADED:-0\}" == "1"' \
+	"$WRAPPER"
+assert_prefetch_degraded_contract
 
 assert_stage_cycle_budget_contract
 assert_dispatch_cycle_budget_contract

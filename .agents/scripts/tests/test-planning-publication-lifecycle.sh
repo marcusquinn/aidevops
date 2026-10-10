@@ -21,9 +21,11 @@ grep -Fq '_publication_task_has_dependency' "$PUBLICATION_RECONCILE"
 # Matching the literal variable reference in source.
 # shellcheck disable=SC2016
 grep -Fq -- '--remove-label "$PUBLICATION_AVAILABLE_LABEL"' "$PUBLICATION_RECONCILE"
-grep -Fq 'closed-unmerged' "$WORKFLOW_DOC"
-grep -Fq 'reported as queued' "$WORKFLOW_DOC"
+# GH#34232: issue-first is documented; batch template bodies keep the hold.
+grep -Fq 'Issue-first (GH#34232)' "$WORKFLOW_DOC"
+grep -Fq 'Batch issues keep the' "$WORKFLOW_DOC"
+grep -Fq -- '--publication-state pending' "$NEW_TASK"
 
 printf 'PASS batch publication outcomes remain pending on failure\n'
-printf 'PASS pulse recovery is bounded and documentation is fail-closed\n'
+printf 'PASS pulse recovery is bounded; issue-first and batch hold are documented\n'
 printf 'PASS dependency-bearing publication projects a blocked lifecycle state\n'

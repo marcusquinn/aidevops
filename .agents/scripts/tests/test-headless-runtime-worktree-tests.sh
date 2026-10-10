@@ -122,6 +122,62 @@ test_issue_worker_env_contract_accepts_valid_precreated_worktree() {
 	return 0
 }
 
+test_standalone_prompt_skips_only_prose_issue_classification() {
+	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
+	local prose="Review completion evidence for issue #34250; report only."
+	local standalone_output="" standalone_status=0
+	local default_output="" default_status=0
+	local key_output="" key_status=0
+	local title_output="" title_status=0
+	standalone_output=$(_validate_issue_worker_env_contract \
+		"worker" "deferred-dj-1" "$TEST_ROOT" "Deferred job: report" "$prose" 1 2>&1) || standalone_status=$?
+	default_output=$(_validate_issue_worker_env_contract \
+		"worker" "deferred-dj-1" "$TEST_ROOT" "Deferred job: report" "$prose" 2>&1) || default_status=$?
+	key_output=$(_validate_issue_worker_env_contract \
+		"worker" "issue-34250" "$TEST_ROOT" "Deferred job: report" "$prose" 1 2>&1) || key_status=$?
+	title_output=$(_validate_issue_worker_env_contract \
+		"worker" "deferred-dj-1" "$TEST_ROOT" "Issue #34250: report" "$prose" 1 2>&1) || title_status=$?
+
+	if [[ "$standalone_status" -eq 0 && -z "$standalone_output" &&
+		"$default_status" -ne 0 && "$default_output" == *"WORKER_ISSUE_NUMBER unset"* &&
+		"$key_status" -ne 0 && "$key_output" == *"WORKER_ISSUE_NUMBER unset"* &&
+		"$title_status" -ne 0 && "$title_output" == *"WORKER_ISSUE_NUMBER unset"* ]]; then
+		print_result "standalone prompt skips only prose issue classification" 0
+		return 0
+	fi
+	print_result "standalone prompt skips only prose issue classification" 1 \
+		"standalone=$standalone_status default=$default_status key=$key_status title=$title_status"
+	return 0
+}
+
+test_standalone_prompt_args_refuse_issue_identity() {
+	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
+	local standalone_prompt=1 role="worker" session_key="deferred-dj-1" title="Deferred job: report"
+	local valid_status=0 triage_status=0 key_status=0 title_status=0 env_status=0
+	_validate_standalone_prompt_args >/dev/null 2>&1 || valid_status=$?
+	role="triage"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || triage_status=$?
+	role="worker"
+	session_key="issue-34250"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || key_status=$?
+	session_key="deferred-dj-1"
+	title="Review Issue #34250"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || title_status=$?
+	title="Deferred job: report"
+	export WORKER_ISSUE_NUMBER="34250"
+	_validate_standalone_prompt_args >/dev/null 2>&1 || env_status=$?
+	unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+
+	if [[ "$valid_status" -eq 0 && "$triage_status" -ne 0 && "$key_status" -ne 0 &&
+		"$title_status" -ne 0 && "$env_status" -ne 0 ]]; then
+		print_result "standalone prompt flag refuses issue identity and non-worker roles" 0
+		return 0
+	fi
+	print_result "standalone prompt flag refuses issue identity and non-worker roles" 1 \
+		"valid=$valid_status triage=$triage_status key=$key_status title=$title_status env=$env_status"
+	return 0
+}
+
 test_triage_env_contract_does_not_require_worker_authority() {
 	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
 	local output=""

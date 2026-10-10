@@ -21,6 +21,7 @@
 #   (i) near-match publication label → ordinary orphan seeding
 #   (j) publication:pending issue with a TODO row → ref sync proceeds
 #   (k) removing publication:pending → orphan seeding resumes
+#   (r) GH#34232 issue-first: young unlabelled orphans wait out the backup grace
 set -euo pipefail
 
 PASS=0
@@ -374,6 +375,25 @@ GITHUB_ACTIONS=true run_pull_with_issues "${root_q}/TODO.md" \
 check "$ok" "(q) GitHub Actions — repair is Pulse-owned and stays deferred"
 rm -rf "$root_q"
 unset -f gh
+
+# ─── (r) GH#34232: issue-first backup grace window ──────────────────────────
+
+todo_r=$(make_todo)
+before_r=$(<"$todo_r")
+now_r=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+issues_r_young='[{"number":20950,"title":"t3150: issue-first task","assignees":[],"createdAt":"'"$now_r"'","labels":[{"name":"auto-dispatch"}]}]'
+output_r=$(run_pull_with_issues "$todo_r" "$issues_r_young" 2>&1)
+[[ "$before_r" == "$(<"$todo_r")" ]] && ok=1 || ok=0
+check "$ok" "(r) young unlabelled orphan — backup seeding deferred" "output: $output_r"
+issues_r_old='[{"number":20950,"title":"t3150: issue-first task","assignees":[],"createdAt":"2020-01-01T00:00:00Z","labels":[{"name":"auto-dispatch"}]}]'
+run_pull_with_issues "$todo_r" "$issues_r_old" >/dev/null 2>&1
+grep -q 'ref:GH#20950' "$todo_r" && ok=1 || ok=0
+check "$ok" "(r) orphan past grace window — backup row seeded"
+todo_r0=$(make_todo)
+AIDEVOPS_ORPHAN_SEED_GRACE_HOURS=0 run_pull_with_issues "$todo_r0" "$issues_r_young" >/dev/null 2>&1
+grep -q 'ref:GH#20950' "$todo_r0" && ok=1 || ok=0
+check "$ok" "(r) grace 0 — young orphan seeded immediately"
+rm -f "$todo_r" "$todo_r0"
 
 # ─── _labels_json_to_tags unit tests ────────────────────────────────────────
 
