@@ -102,9 +102,16 @@ grep -Fq 'End every completed review with the exact ready-to-run approval comman
 	exit 1
 }
 grep -Fq 'subtask: true' "${COMMAND_DIR}/agent-review.md" || {
-	printf 'FAIL unrelated subtask routing was removed\n' >&2
+	printf 'FAIL agent-review lost its explicit child-session routing\n' >&2
 	exit 1
 }
+if grep -Fq 'subtask: true' "${COMMAND_DIR}/postflight.md"; then
+	printf 'FAIL postflight must stay in the primary session\n' >&2
+	exit 1
+fi
+
+# A stale release file with a forced child session must be replaced.
+printf '%s\n' '---' 'agent: Build+' 'subtask: true' '---' 'stale body' >"${COMMAND_DIR}/release.md"
 
 _generate_hardcoded_commands "opencode" "$COMMAND_DIR" || {
 	printf 'FAIL successful hardcoded generation returned nonzero\n' >&2
@@ -112,6 +119,21 @@ _generate_hardcoded_commands "opencode" "$COMMAND_DIR" || {
 }
 [[ "$_GENERATED_HARDCODED_COMMAND_COUNT" -eq 7 ]] || {
 	printf 'FAIL expected seven total hardcoded commands, got %s\n' "$_GENERATED_HARDCODED_COMMAND_COUNT" >&2
+	exit 1
+}
+
+for _cmd in release onboarding setup-aidevops postflight; do
+	grep -Fq 'agent: Build+' "${COMMAND_DIR}/${_cmd}.md" || {
+		printf 'FAIL %s does not target Build+\n' "$_cmd" >&2
+		exit 1
+	}
+	if grep -Fq 'subtask:' "${COMMAND_DIR}/${_cmd}.md"; then
+		printf 'FAIL %s writes a subtask line\n' "$_cmd" >&2
+		exit 1
+	fi
+done
+grep -Fq 'aidevops release [patch|minor|major]' "${COMMAND_DIR}/release.md" || {
+	printf 'FAIL release body lacks the canonical entry point\n' >&2
 	exit 1
 }
 
