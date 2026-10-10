@@ -286,7 +286,7 @@ _render_template_for_target() {
 	_ref_repl=$(_escape_sed_replacement "$_ref")
 	local _rendered
 	_rendered=$(sed -E \
-		-e "s|(uses:[[:space:]]*)${_default_repo_escaped}(/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1${_repo_repl}\2@${_ref_repl}|" \
+		-e "s|^([[:space:]]*uses:[[:space:]]*)${_default_repo_escaped}(/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1${_repo_repl}\2@${_ref_repl}|" \
 		-e "s|${_default_repo_escaped}(/\.github/workflows/[^[:space:]]+)|${_repo_repl}\1|g" \
 		-e "s|^(      aidevops_ref:).*$|\1 ${_ref_repl}|" \
 		"$_template")

@@ -125,7 +125,8 @@ def parsed_issue:
           | if valid_task_id then . elif malformed_task_candidate then "__malformed__" else empty end]) as $label_task_ids
       | (($body_task_ids + $label_task_ids) | unique | map(select(. != $task_id))) as $task_ids
       | ([$blocker_text | scan("#[0-9]+") | ltrimstr("#")]) as $body_issue_nums
-      | ([$labels[] | select(test("^blocked-by:#[0-9]+$")) | ltrimstr("blocked-by:#")]) as $label_issue_nums
+      # claim-task-id.sh emits both blocked-by:#N and blocked-by:GH#N (GH#34264).
+      | ([$labels[] | select(test("^blocked-by:(GH)?#[0-9]+$")) | sub("^blocked-by:(GH)?#"; "")]) as $label_issue_nums
       | (($body_issue_nums + $label_issue_nums) | unique | map(select(. != ($number | tostring)))) as $issue_nums
       | ($body | defer_marker) as $defer
       | consolidation_parent as $parent

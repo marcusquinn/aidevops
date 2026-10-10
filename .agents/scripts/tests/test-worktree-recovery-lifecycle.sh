@@ -2187,6 +2187,13 @@ test_automatic_maintenance_is_bounded_and_policy_bound() {
 	bucket_a="${archive_a%/*}"
 	bucket_b="${archive_b%/*}"
 	protected_bucket="${archive_protected%/*}"
+	# The existing clear-evidence fixture permits a size differential without
+	# adding any production/test interface. One slot must select the larger bucket.
+	python3 - "$archive_b" <<'PY' || rc=1
+from pathlib import Path
+import sys
+Path(sys.argv[1], "size-fixture").write_bytes(b"x" * 1048576)
+PY
 	printf 'pending\n' >"${protected_bucket}/${_WT_RECOVERY_DIR_NAME}/source-removal-outcome" || rc=1
 	install_clear_evidence_stubs
 	output=$(
@@ -2216,6 +2223,7 @@ test_automatic_maintenance_is_bounded_and_policy_bound() {
 	[[ -d "$bucket_a" ]] && removed_count=$((removed_count + 0)) || removed_count=$((removed_count + 1))
 	[[ -d "$bucket_b" ]] && removed_count=$((removed_count + 0)) || removed_count=$((removed_count + 1))
 	[[ "$removed_count" -eq 1 ]] || rc=1
+	[[ ! -e "$bucket_b" && -d "$bucket_a" ]] || rc=1
 	receipt_path=$(printf '%s\n' "$output" | jq -r '.receipt') || rc=1
 	jq -e --arg policy_id "$WORKTREE_RECOVERY_AUTOMATION_POLICY_ID" '
 		.complete == true and .candidate_count == 1 and
@@ -2268,7 +2276,8 @@ test_automatic_maintenance_checks_capacity_before_aggregate_size() {
 	jq -e '
 		.automatic_policy.pressure_active == true and
 		.automatic_policy.pressure_reason == "filesystem-free-kb-soft-limit" and
-		.automatic_policy.store_bytes == null and
+		.automatic_policy.store_bytes > 0 and
+		.automatic_policy.store_size_source == "indexed-estimate" and
 		.entries[0].maintenance.selected_reason == "pressure"
 	' "$receipt_path" >/dev/null || rc=1
 	[[ ! -e "$bucket_path" ]] || rc=1
@@ -2290,6 +2299,8 @@ test_automatic_maintenance_enters_pressure_when_aggregate_size_times_out() {
 		"bugfix/gh30443-age-fallback") || rc=1
 	bucket_path="${archive_path%/*}"
 	install_clear_evidence_stubs
+	# Simulate unavailable advisory telemetry as well as the exact-store timeout.
+	ln -s "$home_path" "$recovery_root/.size-index" || rc=1
 	output=$(
 		uname() {
 			printf 'Linux\n'
@@ -2527,7 +2538,7 @@ test_automatic_maintenance_preserves_bucket_when_exact_size_is_unavailable() {
 		.diagnostics.cursor_before == 0 and .diagnostics.cursor_after == 0 and
 		.diagnostics.coverage_complete == true and
 		.diagnostics.reason_counts.unknown_sizing == 1 and
-		.diagnostics.classification_reason_counts.sizing_unavailable == 1
+		.diagnostics.classification_reason_counts.sizing_timeout == 1
 	' >/dev/null || rc=1
 	[[ -d "$bucket_path" ]] || rc=1
 	print_result "automatic_maintenance_preserves_bucket_when_exact_size_is_unavailable" "$rc" \
@@ -2645,7 +2656,8 @@ test_automatic_maintenance_escalates_completed_zero_candidate_cycle() {
 	second_output=$(run_zero_candidate_cycle_fixture "$home_path" "$recovery_root" "$state_dir") || rc=1
 	printf '%s\n' "$first_output" | jq -e '
 		.outcome == "no-candidates" and .policy.pressure_active == true and
-		.policy.store_bytes == null and .diagnostics.scanned_count == 2 and
+		.policy.store_bytes == 0 and .policy.store_size_source == "indexed-estimate" and
+		.diagnostics.scanned_count == 2 and
 		.diagnostics.cursor_before == 0 and .diagnostics.cursor_after == 2 and
 		.diagnostics.classification_reason_counts.unknown_archive == 1 and
 		.diagnostics.classification_reason_counts.source_removal_not_complete == 1 and
@@ -3036,6 +3048,73 @@ test_large_plan_avoids_json_argv_limits() {
 	return 0
 }
 
+test_recovery_size_index_is_advisory() {
+	local root="${TEST_DIR}/size-index-store"
+	local rc=0
+
+	python3 - "$SCRIPTS_DIR" "$root" <<'PY' || rc=1
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import worktree_recovery_size_index as index
+
+root = Path(sys.argv[2])
+root.mkdir()
+small = root / (index.PREFIX + "a")
+large = root / (index.PREFIX + "b")
+small.mkdir()
+large.mkdir()
+(large / "data").write_bytes(b"x" * 1048576)
+assert index.snapshot(root, 0)["store_bytes"] is None
+summary = index.snapshot(root, 2)
+assert summary["store_bytes"] >= 1048576 and summary["indexed_count"] == 2
+inventory = root / "inventory"
+inventory.write_text(f"{small}\n{large}\n")
+helper = Path(sys.argv[1]) / "worktree_recovery_size_index.py"
+ordered = subprocess.check_output([sys.executable, str(helper), "order", str(inventory)], text=True)
+assert ordered.splitlines() == [str(large), str(small)]
+trash = root / ".retention-trash"
+trash.mkdir()
+(trash / "pending").mkdir()
+assert index.snapshot(root, 0)["store_bytes"] is None
+directory = index.index_directory(root)
+record = directory / (large.name + ".json")
+expired = json.loads(record.read_text())
+expired["measured_at"] = 0
+record.write_text(json.dumps(expired))
+assert index.read_hint(large, directory) is None
+index.record_size(large, directory, 2)
+plan = root / "plan"
+plan.write_text(json.dumps({"entries": [{"bucket_path": str(large)}]}))
+subprocess.run([sys.executable, str(helper), "invalidate-plan", str(plan)], check=True)
+assert not record.exists()
+record.symlink_to(large / "data")
+assert index.read_hint(large, directory) is None
+record.unlink()
+small.rename(root / "old-bucket")
+small.mkdir()
+assert index.read_hint(small, directory) is None
+original_record = index.record_size
+def interrupted(*args):
+    raise SystemExit(99)
+index.record_size = interrupted
+try:
+    index.snapshot(root, 2)
+    raise AssertionError("expected interrupted sizing")
+except SystemExit as error:
+    assert error.code == 99
+finally:
+    index.record_size = original_record
+assert (directory / ".backfill-cursor").read_text() == "1"
+PY
+	print_result "recovery_size_index_is_advisory" "$rc" \
+		"Expected indexed ordering, incomplete/staged totals, invalidation and replaced/symlink hints to remain non-authoritative"
+	return 0
+}
+
 # shellcheck source=../audit-worktree-removal-helper.sh
 source "${SCRIPTS_DIR}/audit-worktree-removal-helper.sh"
 # shellcheck source=../worktree-recovery-lifecycle-helper.sh
@@ -3048,6 +3127,7 @@ source "${SCRIPTS_DIR}/worktree-helper-cmds.sh"
 run_all_tests() {
 	setup
 	printf '=== test-worktree-recovery-lifecycle.sh ===\n'
+	test_recovery_size_index_is_advisory
 	test_git_state_detects_recovery_data
 	test_cache_policy_recognises_python_and_root_codegraph_only
 	test_git_state_protects_tracked_regenerable_cache_roots

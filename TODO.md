@@ -1615,6 +1615,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18643 feat: seed draft PRs — companion files for issues without waiting on default-branch merge #feat #framework ref:GH#34233 pr:#34237 completed:2026-10-10
 
+- [ ] t18646 fix(pulse): recognise blocked-by:GH#NNN labels so closed blockers unblock issues #bug ref:GH#34264
+
+- [ ] t18647 fix(approval): maintainer state change on a linked external issue must not stale signed approvals #bug ref:GH#34266
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
@@ -5200,4 +5204,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [ ] t18639 GH#34180 Leaf B: durable owner-approved policy for frozen JavaScript worktree installs #auto-dispatch #blocked-by:GH#34199 #enhancement ref:GH#34200
+- [ ] t18639 GH#34180 Leaf B: durable owner-approved policy for frozen JavaScript worktree installs #auto-dispatch #enhancement tier:thinking ref:GH#34200

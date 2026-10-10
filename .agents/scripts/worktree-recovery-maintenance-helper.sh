@@ -195,6 +195,9 @@ _worktree_recovery_maintenance_pressure_json() {
 	local ignored=""
 	local pressure=false
 	local reason="none"
+	local indexed=""
+	local size_source="unavailable"
+	local index_deadline=0
 
 	aidevops_disk_capacity_snapshot "$recovery_root" || return 1
 	if [[ "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB" -lt "$minimum_free_kb" ]]; then
@@ -204,28 +207,40 @@ _worktree_recovery_maintenance_pressure_json() {
 		pressure=true
 		reason="filesystem-free-percent-soft-limit"
 	fi
-	if [[ "$pressure" == "true" ]]; then
-		store_bytes="$WORKTREE_RECOVERY_PLAN_JSON_NULL"
+	# Report bytes even under filesystem pressure. Cached hints do not replace
+	# exact candidate sizing, and an incomplete index never claims a full total.
+	index_deadline=$(($(date +%s) + (aggregate_timeout_tenths + 9) / 10)) || return 1
+	indexed=$(_worktree_recovery_run_before_epoch "$index_deadline" \
+		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+		snapshot "$recovery_root" --budget "$((aggregate_timeout_tenths / 10))") || indexed='{}'
+	store_bytes=$(printf '%s\n' "$indexed" | jq -r '.store_bytes // "null"') || return 1
+	if [[ "$store_bytes" =~ ^[0-9]+$ ]]; then
+		size_source="indexed-estimate"
 	else
 		measured=$(_worktree_recovery_maintenance_measure_store "$recovery_root" \
 			"$aggregate_timeout_tenths") || return 1
 		IFS='|' read -r store_bytes confidence ignored <<<"$measured"
 		if [[ "$confidence" == "$WORKTREE_RECOVERY_PLAN_CONFIDENCE_EXACT" && "$store_bytes" =~ ^[0-9]+$ ]]; then
-			if [[ "$store_bytes" -gt "$max_store_bytes" ]]; then
-				pressure=true
-				reason="store-soft-limit"
-			fi
+			size_source="exact"
 		else
 			store_bytes="$WORKTREE_RECOVERY_PLAN_JSON_NULL"
+		fi
+	fi
+	if [[ "$pressure" != "true" ]]; then
+		if [[ "$store_bytes" == "$WORKTREE_RECOVERY_PLAN_JSON_NULL" ]]; then
 			pressure=true
 			reason="aggregate-size-unavailable"
+		elif [[ "$store_bytes" -gt "$max_store_bytes" ]]; then
+			pressure=true
+			reason="store-soft-limit"
 		fi
 	fi
 	jq -cn --argjson active "$pressure" --arg reason "$reason" \
+		--arg size_source "$size_source" \
 		--argjson store_bytes "$store_bytes" \
 		--argjson available_kb "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB" \
 		--argjson available_percent "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT" \
-		'{active:$active,reason:$reason,store_bytes:$store_bytes,
+		'{active:$active,reason:$reason,store_bytes:$store_bytes,size_source:$size_source,
 		available_kb:$available_kb,available_percent:$available_percent}'
 	return $?
 }
@@ -253,6 +268,20 @@ _worktree_recovery_maintenance_inventory_file() {
 }
 
 _worktree_recovery_maintenance_order_inventory() {
+	local inventory_path="$1"
+	local ordered_path="$2"
+	local offset="$3"
+
+	if ! _worktree_recovery_run_before_epoch "$WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_EPOCH" \
+		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+		order "$inventory_path" --offset "$offset" >"$ordered_path"; then
+		# Hints are optional; discard partial output and preserve inventory coverage.
+		cp "$inventory_path" "$ordered_path" || return 1
+	fi
+	return 0
+}
+
+_worktree_recovery_maintenance_rotate_inventory() {
 	local inventory_path="$1"
 	local ordered_path="$2"
 	local offset="$3"
@@ -792,8 +821,8 @@ _worktree_recovery_maintenance_scan() {
 	local reasons_path="$8"
 	local deadline_seconds="$9"
 	local deadline_epoch="${10}"
-	local raw_record="" state="" bucket_path="" measured=""
-	local bytes="" confidence="" entry_json="" disposition="" primary_reason=""
+	local raw_record="" state="" bucket_path=""
+	local bytes="" entry_json="" disposition="" primary_reason=""
 	local current_epoch=0
 	local remaining_seconds=0
 	local state_status=0
@@ -832,16 +861,11 @@ _worktree_recovery_maintenance_scan() {
 			_worktree_recovery_maintenance_mark_unknown_sizing "$reasons_path" || return 1
 			break
 		fi
-		measured=$(_worktree_recovery_measure_path "$bucket_path" \
-			"$((remaining_seconds * 10))") || return 1
-		IFS='|' read -r bytes confidence _ <<<"$measured"
-		if [[ "$confidence" != "$WORKTREE_RECOVERY_PLAN_CONFIDENCE_EXACT" || ! "$bytes" =~ ^[0-9]+$ ]]; then
-			_worktree_recovery_maintenance_mark_unknown_sizing "$reasons_path" || return 1
-			continue
-		fi
+		# The classifier already performs exact sizing for candidates when passed
+		# null. Protected archives can reach cache-root pruning without a full du.
 		entry_status=0
 		entry_json=$(_worktree_recovery_maintenance_attributed_entry_before_epoch \
-			"$deadline_epoch" "$bucket_path" "$bytes") || entry_status=$?
+			"$deadline_epoch" "$bucket_path" "$WORKTREE_RECOVERY_PLAN_JSON_NULL") || entry_status=$?
 		if [[ "$entry_status" -eq 124 ]]; then
 			WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_EXHAUSTED=true
 			_worktree_recovery_maintenance_mark_unknown_classification "$reasons_path" || return 1
@@ -873,6 +897,11 @@ _worktree_recovery_maintenance_scan() {
 				"$entry_json" "$deadline_epoch" "$reasons_path" || return 1
 			continue
 		fi
+		bytes=$(printf '%s\n' "$entry_json" | jq -r '.expected_allocated_bytes') || return 1
+		[[ "$bytes" =~ ^[0-9]+$ ]] || return 1
+		_worktree_recovery_run_before_epoch "$deadline_epoch" \
+			python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+			record "$bucket_path" --bytes "$bytes" >/dev/null 2>&1 || true
 		_worktree_recovery_maintenance_select_candidate "$entry_json" "$bytes" "$selected_path" \
 			"$max_candidates" "$max_bytes" "$retention_seconds" "$pressure_active" "$reasons_path" || return 1
 	done <"$ordered_path"
@@ -890,7 +919,7 @@ _worktree_recovery_maintenance_plan_json() {
 	local plan_json=""
 	local authorization=""
 
-	entries_json=$(jq -sc 'sort_by(.maintenance.age_seconds) | reverse' "$selected_path") || return 1
+	entries_json=$(jq -sc 'sort_by(.expected_allocated_bytes, .maintenance.age_seconds) | reverse' "$selected_path") || return 1
 	plan_material=$(jq -cn --arg schema "$WORKTREE_RECOVERY_PLAN_SCHEMA" \
 		--argjson entries "$entries_json" --argjson automatic_policy "$policy_json" \
 		'{schema:$schema,inventory_complete:true,inventory_error:null,entries:$entries,
@@ -1052,7 +1081,7 @@ _worktree_recovery_maintenance_build_selection_plan() {
 		max_candidates:.max_candidates,max_bytes:.max_bytes,max_store_bytes:.max_store_bytes,
 		pressure_min_free_kb:.minimum_free_kb,pressure_min_free_percent:.minimum_free_percent,
 		pressure_active:.pressure.active,pressure_reason:.pressure.reason,
-		store_bytes:.pressure.store_bytes,available_kb:.pressure.available_kb,
+		store_bytes:.pressure.store_bytes,store_size_source:.pressure.size_source,available_kb:.pressure.available_kb,
 		available_percent:.pressure.available_percent,scanned_count:$scanned,
 		protected_count:$protected,unknown_count:$unknown}') || return 1
 	WORKTREE_RECOVERY_MAINTENANCE_POLICY_JSON="$policy_json"
@@ -1113,8 +1142,9 @@ _worktree_recovery_maintenance_prepare_selection() {
 		return 1
 	fi
 	WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT="$bucket_count"
+	_worktree_recovery_maintenance_order_inventory "$inventory_path" "$ordered_path" 0 || return 1
 	WORKTREE_RECOVERY_MAINTENANCE_INVENTORY_DIGEST=$(
-		_worktree_recovery_plan_sha256_file "$inventory_path"
+		_worktree_recovery_plan_sha256_file "$ordered_path"
 	) || {
 		_worktree_recovery_maintenance_cleanup_selection_temp_files || true
 		return 1
@@ -1140,8 +1170,9 @@ _worktree_recovery_maintenance_prepare_selection() {
 		cycle_remaining=$((bucket_count - WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_SCANNED))
 		[[ "$scan_limit" -le "$cycle_remaining" ]] || scan_limit="$cycle_remaining"
 	fi
-	if ! _worktree_recovery_maintenance_order_inventory "$inventory_path" "$ordered_path" "$offset" ||
-		! _worktree_recovery_maintenance_scan "$ordered_path" "$selected_path" "$scan_limit" \
+	# Rotate the exact sorted snapshot whose digest was recorded, not fresh hints.
+	if ! _worktree_recovery_maintenance_rotate_inventory "$ordered_path" "$inventory_path" "$offset" ||
+		! _worktree_recovery_maintenance_scan "$inventory_path" "$selected_path" "$scan_limit" \
 			"$max_candidates" "$max_bytes" "$retention_seconds" "$pressure_active" "$reasons_path" \
 			"$deadline_seconds" "$WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_EPOCH"; then
 		_worktree_recovery_maintenance_cleanup_selection_temp_files || true
@@ -1258,6 +1289,11 @@ _worktree_recovery_maintenance_finalize_pending() {
 	local destination=""
 
 	jq -e '.complete == true' "$receipt_path" >/dev/null 2>&1 || return 1
+	# Covers both new and resumed cache/archive transactions. Rebuild hints on
+	# the next census instead of retaining pre-prune sizes for another day.
+	_worktree_recovery_run_before_epoch "$(($(date +%s) + 2))" \
+		python3 "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree_recovery_size_index.py" \
+		invalidate-plan "$plan_path" >/dev/null 2>&1 || true
 	plan_id=$(jq -r '.plan_id' "$plan_path") || return 1
 	[[ "$plan_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
 	mkdir -p "$completed_root" || return 1

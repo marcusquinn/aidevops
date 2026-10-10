@@ -357,7 +357,8 @@ _der_collect_candidates() {
 
 	for query in \
 		"repo:${repo} is:issue is:open in:body ${quote}#${closed_number}${quote}" \
-		"repo:${repo} is:issue is:open label:${quote}blocked-by:#${closed_number}${quote}"; do
+		"repo:${repo} is:issue is:open label:${quote}blocked-by:#${closed_number}${quote}" \
+		"repo:${repo} is:issue is:open label:${quote}blocked-by:GH#${closed_number}${quote}"; do
 		result=$(_der_search_issues "$repo" "$query") || return 1
 		while IFS= read -r candidate; do
 			[[ -n "$candidate" ]] || continue
