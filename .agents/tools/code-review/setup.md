@@ -24,8 +24,11 @@ Setup time: ~5 min per platform via GitHub OAuth. Targets: CodeFactor A+, Codacy
 | CodeFactor | <https://www.codefactor.io/> → add repo → enable GitHub Checks | A-F grade, cyclomatic complexity, technical debt, trends | — |
 | Codacy | <https://app.codacy.com/> → import repo | Security scanning, quality metrics, test coverage, standards | `.codacy.yml` |
 | SonarCloud | <https://sonarcloud.io/> → create org → import project → add `SONAR_TOKEN` GitHub secret | Security hotspots, bugs, code smells, duplication, quality gate | `sonar-project.properties` |
+| Qlty | Install the Qlty GitHub App for the account or organisation | Multi-linter findings and smells on PRs; monthly minutes limited on organisation and private repos | `.qlty/qlty.toml` (optional) |
 
-Deep dives: `coderabbit.md`, `codacy.md`, `tools.md`, `.agents/scripts/sonarcloud-cli.sh`
+Deep dives: `coderabbit.md`, `codacy.md`, `qlty.md`, `tools.md`, `.agents/scripts/sonarcloud-cli.sh`
+
+Qlty's out-of-minutes failure is billing: skip it, keep the app, and never make "qlty check" a required check on a credit-limited repository (`reference/ci-gate-policy.md` rule 14).
 
 <!-- AI-CONTEXT-END -->
 
@@ -48,3 +51,4 @@ Replace `{owner}/{repo}` with your repository slug.
 | CodeRabbit not reviewing | Ensure repo is connected, app permissions granted, and PR triggers enabled. |
 | CodeFactor not updating | Check repo connection, webhook/GitHub Checks status, and repo authorization. |
 | Codacy analysis issues | Check `.codacy.yml`, confirm import succeeded, and verify file types are supported. |
+| "qlty check" fails: "out of minutes" | Billing, not a finding. Skip it and merge on the other checks; keep the app; never make it required (`qlty.md`, `reference/ci-gate-policy.md` rule 14). |

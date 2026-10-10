@@ -163,7 +163,10 @@ run those directly too, without `-k` (they do not provide unittest filtering).
     not rerun it, change code, file an issue or wait for it. Merge when the
     other checks pass, and note the skipped check in the PR body. A qlty
     failure with real findings still counts, and an out-of-credits failure on
-    a public personal-account repository is unexpected: report it.
+    a public personal-account repository is unexpected: report it. The free
+    minutes return monthly, so keep the app installed (it is not a reason to
+    remove Qlty) and never make "qlty check" a required check on a limited
+    repository. Setup guidance: `tools/code-review/qlty.md`.
 
 ## Private repositories and public launch
 

@@ -28,8 +28,21 @@ tools:
 - Commands: `bash .agents/scripts/qlty-cli.sh install|init|check|fmt --all|smells --all [ORG]`
 - Storage: `~/.config/aidevops/api-keys` (600 permissions)
 - Path: Ensure `~/.qlty/bin` in PATH
+- GitHub App on organisation or private repos: monthly minutes run out; an out-of-minutes "qlty check" is billing, not a finding. Keep the app and skip the check (`reference/ci-gate-policy.md` rule 14; see "GitHub App: monthly minutes")
 
 <!-- AI-CONTEXT-END -->
+
+## GitHub App: monthly minutes
+
+Qlty's GitHub App posts a "qlty check" on pull requests. Its analysis minutes are limited on private repositories and on every organisation-owned repository, public or private; only public repositories on personal accounts are unlimited. The free minutes return each month, so early-month PRs get real findings and later ones may fail with "Qlty did not run because you are out of minutes".
+
+When setting up or managing repositories:
+
+- Keep the app installed for its free minutes. A red out-of-minutes check is not a reason to uninstall Qlty, remove it from a repository's docs, buy credits or ask the owner, unless the owner asks about cost.
+- Skip the out-of-minutes failure: don't rerun it, change code, file an issue or wait for it. Merge when the other checks pass and note the skipped check in the PR body. The merge helpers do this already (`gh-checks-wait-helper.sh` `apply_qlty_billing_policy`, `pulse-merge-required-checks.sh` `_pmrc_repo_has_qlty_credit_limit`).
+- Never make "qlty check" a required status check or ruleset check on a credit-limited repository: once the minutes run out it would block every merge for the rest of the month.
+- A qlty check with real findings still counts, and an out-of-minutes failure on a public personal-account repository is unexpected: report it.
+- CI jobs that run the qlty CLI in a repository's own Actions (such as the aidevops Qlty Regression Gate and Qlty Smell Threshold) are separate from the app and do not use its minutes; their failures are real.
 
 ## Credentials
 
