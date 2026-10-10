@@ -40,6 +40,8 @@ fi
 # appropriate frontmatter format.
 
 _GENERATED_HARDCODED_COMMAND_COUNT=0
+# Explicit opt-in value for OpenCode child-session routing (subtask: true).
+_SUBTASK_CHILD="true"
 
 # Helper: write a command file for OpenCode format
 _write_opencode_command() {
@@ -54,7 +56,7 @@ _write_opencode_command() {
 		echo "---"
 		echo "description: ${description}"
 		[[ -n "$agent" ]] && echo "agent: ${agent}"
-		[[ "$subtask" == "true" ]] && echo "subtask: true"
+		[[ "$subtask" == "$_SUBTASK_CHILD" ]] && echo "subtask: true"
 		echo "---"
 		echo ""
 		echo "$body"
@@ -678,7 +680,11 @@ _generate_commands_for_runtime() {
 #   $3 - command name
 #   $4 - description
 #   $5 - body content
-#   $6 - OpenCode subtask flag (optional, defaults to true)
+#   $6 - OpenCode subtask flag (optional). Omitted/empty writes no subtask
+#        line, so the command runs in the invoking primary session. Pass
+#        "true" only with a comment justifying a child session; "false" is
+#        written explicitly. Frontmatter only affects user-typed slash commands;
+#        explicit Task delegation and headless dispatch are unaffected.
 # Returns: 0 when written
 _maybe_write_hardcoded_command() {
 	local runtime_id="$1"
@@ -686,7 +692,7 @@ _maybe_write_hardcoded_command() {
 	local name="$3"
 	local description="$4"
 	local body="$5"
-	local subtask="${6:-true}"
+	local subtask="${6:-}"
 
 	case "$runtime_id" in
 	opencode)
@@ -708,6 +714,8 @@ _generate_hardcoded_quality_commands() {
 	local count=0
 
 	# --- Agent Review ---
+	# Decision: child session (subtask true). Read-mostly, output-heavy rubric
+	# review with no worktree-owned operations or git side effects.
 	# shellcheck disable=SC2016
 	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "agent-review" \
 		"Systematic review and improvement of agent instructions" \
@@ -715,7 +723,8 @@ _generate_hardcoded_quality_commands() {
 
 Review target: $ARGUMENTS
 
-If no target is provided, review the instruction surfaces used in this session.'; then
+If no target is provided, review the instruction surfaces used in this session.' \
+		"$_SUBTASK_CHILD"; then
 		count=$((count + 1))
 	fi
 
@@ -747,6 +756,8 @@ End every completed review with the exact ready-to-run approval command when the
 	fi
 
 	# --- Preflight ---
+	# Decision: child session (subtask true). Read-only quality checks with
+	# bulky output; no bounded operations or git side effects.
 	# shellcheck disable=SC2016
 	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "preflight" \
 		"Run quality checks before version bump and release" \
@@ -758,11 +769,15 @@ This includes:
 1. Code quality checks (ShellCheck, SonarCloud, secrets scan)
 2. Markdown formatting validation
 3. Version consistency verification
-4. Git status check (clean working tree)'; then
+4. Git status check (clean working tree)' \
+		"$_SUBTASK_CHILD"; then
 		count=$((count + 1))
 	fi
 
 	# --- Postflight ---
+	# Decision: primary session (subtask omitted). Default is read-only, but its
+	# rollback/hotfix paths create linked worktrees and revert commits, which a
+	# child cannot own for the invoking session.
 	# shellcheck disable=SC2016
 	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "postflight" \
 		"Check code audit feedback on latest push (branch or PR)" \
@@ -798,6 +813,9 @@ _generate_hardcoded_lifecycle_commands() {
 	local count=0
 
 	# --- Release ---
+	# Decision: primary session (subtask omitted). workflows/release.md
+	# (GH#33488) requires OpenCode releases to run in the session owning the
+	# linked worktree; a child cannot start aidevops_bounded_operation there.
 	# shellcheck disable=SC2016
 	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "release" \
 		"Full release workflow with version bump, tag, and GitHub release" \
@@ -808,16 +826,18 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
 **Steps:**
 1. Pick the baseline: if `VERSION` exists use `v$(cat VERSION)`, else the latest tag (`git describe --tags --abbrev=0`), else the root commit. Run `git log <baseline>..HEAD --oneline`
 2. If no release type provided, determine it from commits
-3. If `.agents/scripts/version-manager.sh` exists (the aidevops repository), run the single release command:
+3. Read `~/.aidevops/agents/workflows/release.md`. For the aidevops repository on OpenCode, run this inline in this session (do not launch a Task child) through `aidevops_bounded_operation` with `cwd` set to the session-owned linked worktree:
    ```bash
-   .agents/scripts/version-manager.sh release [type] --skip-preflight --force
+   aidevops release [patch|minor|major] <merged-pr-number> [incremental|full]
    ```
-   Otherwise (any other managed repository) do NOT run that script or pass `--skip-preflight --force` to project scripts. Follow the repository'"'"'s documented release process (`RELEASING.md`, `CONTRIBUTING.md` Releasing section, or `package.json` release scripts): bump versions in a linked worktree and PR, merge with `full-loop-helper.sh merge`, then tag. See `workflows/release.md` "Manual Release (Non-aidevops Repos)"
+   Release requires a merged PR and explicit user release intent; follow the workflow for status/reconcile. Otherwise (any other managed repository) do NOT run that script or pass `--skip-preflight --force` to project scripts. Follow the repository'"'"'s documented release process (`RELEASING.md`, `CONTRIBUTING.md` Releasing section, or `package.json` release scripts): bump versions in a linked worktree and PR, merge with `full-loop-helper.sh merge`, then tag. See `workflows/release.md` "Manual Release (Non-aidevops Repos)"
 4. Report the result with the GitHub release URL'; then
 		count=$((count + 1))
 	fi
 
 	# --- Onboarding ---
+	# Decision: primary session (subtask omitted). Conversational multi-turn
+	# wizard; a child returns a single result and cannot converse with the user.
 	# shellcheck disable=SC2016
 	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "onboarding" \
 		"Interactive onboarding wizard - discover services, configure integrations" \
@@ -828,6 +848,8 @@ Arguments: $ARGUMENTS'; then
 	fi
 
 	# --- Setup ---
+	# Decision: primary session (subtask omitted). Runs setup.sh whose output
+	# the user must see in the invoking session.
 	# shellcheck disable=SC2016
 	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "setup-aidevops" \
 		"Deploy latest aidevops agent changes locally" \
