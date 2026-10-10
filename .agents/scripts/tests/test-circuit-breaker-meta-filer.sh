@@ -64,6 +64,9 @@ FIXTURE_META_BODY="${TEST_ROOT}/fixture-meta-body"
 FIXTURE_HAS_FRAMEWORK_SOURCE="${TEST_ROOT}/fixture-has-framework-source"
 FIXTURE_REPO_PRIVATE="${TEST_ROOT}/fixture-repo-private"
 FIXTURE_BLOCKED_BY_COUNT="${TEST_ROOT}/fixture-blocked-by-count"
+FIXTURE_LABELED_REFS="${TEST_ROOT}/fixture-labeled-refs"
+CREATE_ARGS_FILE="${TEST_ROOT}/issue-create-args"
+FIXTURE_SEARCH_REFS="${TEST_ROOT}/fixture-search-refs"
 FIXTURE_STATUS_JSON="${TEST_ROOT}/fixture-status.json"
 cat >"$FIXTURE_STATUS_JSON" <<'STATUS'
 {"data":{"repository":{
@@ -83,7 +86,7 @@ printf 'false' >"$FIXTURE_REPO_PRIVATE"
 printf '0' >"$FIXTURE_BLOCKED_BY_COUNT"
 
 write_stub_gh() {
-	cat >"${STUB_DIR}/gh" <<STUB
+	cat >"${STUB_DIR}/gh-base" <<STUB
 #!/usr/bin/env bash
 # Stub gh for test-circuit-breaker-meta-filer.sh
 echo "\$@" >>"${STUB_LOG}"
@@ -180,11 +183,35 @@ fi
 
 exit 0
 STUB
+	chmod +x "${STUB_DIR}/gh-base"
+	return 0
+}
+
+# GH#34223: front stub that captures full create args (multi-line bodies) and
+# answers withheld-original label lookups with post---jq fixtures, then
+# delegates everything else to the base stub.
+write_stub_gh_front() {
+	cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "create" ]]; then
+	printf '%s\n' "\$*" >"${CREATE_ARGS_FILE}"
+fi
+if [[ "\$1" == "api" && "\$2" == "-X" && "\$3" == "GET" ]]; then
+	echo "\$@" >>"${STUB_LOG}"
+	case "\$4" in
+		search/issues) cat "${FIXTURE_SEARCH_REFS}" 2>/dev/null ;;
+		repos/*/issues) cat "${FIXTURE_LABELED_REFS}" 2>/dev/null ;;
+	esac
+	exit 0
+fi
+exec "${STUB_DIR}/gh-base" "\$@"
+STUB
 	chmod +x "${STUB_DIR}/gh"
 	return 0
 }
 
 write_stub_gh
+write_stub_gh_front
 
 # Stub gh-signature-helper.sh so signature footer call doesn't blow up
 mkdir -p "${HOME}/.aidevops/agents/scripts"
@@ -218,6 +245,10 @@ reset_stubs() {
 	printf '1' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
 	printf 'false' >"$FIXTURE_REPO_PRIVATE"
 	printf '0' >"$FIXTURE_BLOCKED_BY_COUNT"
+	: >"$CREATE_ARGS_FILE"
+	: >"$FIXTURE_LABELED_REFS"
+	: >"$FIXTURE_SEARCH_REFS"
+	printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
 	return 0
 }
 
@@ -323,6 +354,50 @@ if grep -q 'circuit-breaker-meta-filed:marcusquinn/aidevops#99999' "$STUB_LOG"; 
 	print_result "cross-repo: marker records full meta ref" 0
 else
 	print_result "cross-repo: marker records full meta ref" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+# =============================================================================
+# Test 1c (GH#34223): private app repos without framework sources route metas
+# to the framework source repo and withhold the private original identity.
+# =============================================================================
+reset_stubs
+printf '0' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
+printf 'true' >"$FIXTURE_REPO_PRIVATE"
+echo "[2026-04-30 00:02:00] worker for #7007 in privateorg/secretrepo failed at /srv/secretrepo" >>"$PULSE_LOG"
+
+OUT=$("$META_FILER" file \
+	--issue 7007 --repo privateorg/secretrepo \
+	--breaker no_work --failure-count 3 \
+	--reason "secret path /srv/secretrepo/config" 2>&1)
+RC=$?
+CREATE_LINE=$(cat "$CREATE_ARGS_FILE" 2>/dev/null || true)
+
+if [[ "$RC" -eq 0 ]] && printf '%s' "$OUT" | tail -1 | grep -q 'github.com/marcusquinn/aidevops/issues/99999' &&
+	printf '%s' "$CREATE_LINE" | grep -q -- '--repo marcusquinn/aidevops'; then
+	print_result "private-cross-repo: files meta in framework source repo" 0
+else
+	print_result "private-cross-repo: files meta in framework source repo" 1 "rc=$RC stdout: $OUT"
+fi
+
+if [[ -n "$CREATE_LINE" ]] && ! printf '%s' "$CREATE_LINE" | grep -qE 'secretrepo|privateorg|7007'; then
+	print_result "private-cross-repo: title/body withhold private slug, number, reason and forensics" 0
+else
+	print_result "private-cross-repo: title/body withhold private slug, number, reason and forensics" 1 "create: $CREATE_LINE"
+fi
+
+if printf '%s' "$CREATE_LINE" | grep -q 'circuit-breaker-meta-original:withheld' &&
+	printf '%s' "$CREATE_LINE" | grep -q -- '- Original: withheld (private repository)' &&
+	printf '%s' "$CREATE_LINE" | grep -q '\.agents/scripts/headless-runtime-failure\.sh'; then
+	print_result "private-cross-repo: framework brief carries withheld marker and framework scope" 0
+else
+	print_result "private-cross-repo: framework brief carries withheld marker and framework scope" 1 "create: $CREATE_LINE"
+fi
+
+if grep -qE 'issue edit 7007 --repo privateorg/secretrepo .*--add-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG" &&
+	grep -q 'circuit-breaker-meta-filed:marcusquinn/aidevops#99999' "$STUB_LOG"; then
+	print_result "private-cross-repo: original keeps full blocked-by label and marker" 0
+else
+	print_result "private-cross-repo: original keeps full blocked-by label and marker" 1 "stub log: $(cat "$STUB_LOG")"
 fi
 
 # =============================================================================
@@ -535,6 +610,48 @@ if [[ "$RC" -eq 0 ]] \
 	print_result "unblock-other-blocker: preserves blocked lifecycle and NMR" 0
 else
 	print_result "unblock-other-blocker: preserves blocked lifecycle and NMR" 1 "rc=$RC output=$OUT stub log: $(cat "$STUB_LOG")"
+fi
+
+# =============================================================================
+# Test 5d (GH#34223): withheld meta unblocks originals found by exact label
+# =============================================================================
+reset_stubs
+printf '{"initialized_repos":[{"slug":"privateorg/secretrepo"},{"slug":"marcusquinn/aidevops"}]}\n' \
+	>"${HOME}/.config/aidevops/repos.json"
+printf 'privateorg/secretrepo#7007\n' >"$FIXTURE_LABELED_REFS"
+printf 'privateorg/secretrepo#7007\notherorg/other#12\n' >"$FIXTURE_SEARCH_REFS"
+cat >"$FIXTURE_META_BODY" <<'EOF'
+<!-- aidevops:generator=circuit-breaker-meta-filer -->
+<!-- circuit-breaker-meta-original:withheld -->
+## Tracking original issue
+
+- Original: withheld (private repository)
+EOF
+
+OUT=$("$META_FILER" unblock-on-merge \
+	--meta 99999 --repo marcusquinn/aidevops 2>&1)
+RC=$?
+
+if [[ "$RC" -eq 0 ]] &&
+	grep -qE 'api -X GET repos/privateorg/secretrepo/issues .*labels=blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG" &&
+	! grep -qE 'api -X GET repos/marcusquinn/aidevops/issues' "$STUB_LOG"; then
+	print_result "unblock-withheld: looks up exact cross-repo label in inventory repos" 0
+else
+	print_result "unblock-withheld: looks up exact cross-repo label in inventory repos" 1 "rc=$RC output=$OUT stub log: $(cat "$STUB_LOG")"
+fi
+
+if [[ "$(grep -cE 'issue edit 7007 --repo privateorg/secretrepo --remove-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG")" == "1" ]] &&
+	grep -qE 'issue edit 7007 --repo privateorg/secretrepo .*--add-label status:available' "$STUB_LOG" &&
+	grep -qE 'issue comment 7007 --repo privateorg/secretrepo' "$STUB_LOG"; then
+	print_result "unblock-withheld: unblocks the de-duplicated private original once" 0
+else
+	print_result "unblock-withheld: unblocks the de-duplicated private original once" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+if grep -qE 'issue edit 12 --repo otherorg/other --remove-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG"; then
+	print_result "unblock-withheld: search covers labelled originals outside the inventory" 0
+else
+	print_result "unblock-withheld: search covers labelled originals outside the inventory" 1 "stub log: $(cat "$STUB_LOG")"
 fi
 
 # =============================================================================
