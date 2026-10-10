@@ -184,7 +184,13 @@ reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
 allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'source_access_blocked', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
-if reason == 'input_required':
+if reason == 'affected_host_reproduction_unavailable':
+    # GH#34259: legacy workers named the missing affected-runner prerequisite
+    # directly. Treat it as maintainer-owned input, not an unknown code blocker
+    # that unrelated merges can re-arm. Use the existing fingerprint so a prior
+    # input_required hold remains effective across both producer spellings.
+    print('input_required:maintainer')
+elif reason == 'input_required':
     # GH#33332: the hold must name exactly one accountable role; otherwise the
     # evidence stays unclassified and retryable.
     owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
