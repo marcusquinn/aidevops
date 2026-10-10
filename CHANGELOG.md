@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.46] - 2026-10-10
+
+### Added
+
+- seed draft PRs carry companion files to workers without a default-branch merge
+- issue-first dispatch — issues lead, TODO/brief are background backups
+- register research-only, specialist-advisor and domain subagents on OpenCode V2 (#34229)
+- lint headless pulse prompts against command policy (#34220)
+
+### Changed
+
+- Maintenance: sync ref:GH#34233 to TODO.md (#34231)
+
+### Fixed
+
+- GH#34224 provision node_modules for the exact contract interactive worktree add registered (#34230)
+- register OpenCode V2 on-demand MCP activation agents
+- GH#34199 truthful JavaScript verification-tool readiness at worktree admission
+- skip non-identifier gopass entries during secret run (#34222)
+
 ## [3.38.45] - 2026-10-10
 
 ### Added
