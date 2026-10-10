@@ -343,6 +343,17 @@ assert_true "ready listener survives its startup deadline" curl --fail --silent 
 terminate_pid "$delayed_pid"
 assert_true "delayed-health cleanup releases the port" wait_for_port_free "$delayed_port"
 
+# A genuinely failed startup still times out and cleans up its owned child.
+failed_output="$TEST_ROOT/failed-startup.out"
+start_helper "$PROJECT_A" "$delayed_port" "$delayed_log" "$failed_output" 0 .next/dev/lock /health 30 3
+failed_pid="$STARTED_PID"
+assert_true "failed startup also serves a healthy root" wait_for_health "$delayed_port"
+failed_status=0
+wait "$failed_pid" || failed_status=$?
+assert_status "unhealthy configured endpoint causes startup failure" 1 "$failed_status"
+assert_true "timeout distinguishes failed health from absent listener" file_contains "$failed_output" "owned listener detected; health probe failed (curl exit 22)"
+assert_true "failed startup cleans up its listener" wait_for_port_free "$delayed_port"
+
 # An owned but unhealthy listener must remain running and block replacement.
 unhealthy_log="$TEST_ROOT/unhealthy.log"
 (
