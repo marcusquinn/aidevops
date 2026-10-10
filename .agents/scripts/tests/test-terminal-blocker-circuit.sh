@@ -828,6 +828,38 @@ test_push_policy_timeout_checkpoint() {
 	return 0
 }
 
+test_affected_host_reproduction_alias() {
+	local output="${TEST_ROOT}/affected-host.ndjson" status=0 fingerprint="" revision="" changed="" comments=""
+	local issue='{"title":"Reproduce before fixing","body":"### Files Scope\n- helper.sh"}'
+	printf '%s\n' '{"type":"text","text":"BLOCKED: missing affected-runner reproduction target\nTERMINAL_BLOCKER_REASON=affected_host_reproduction_unavailable"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$fingerprint" == "$(_terminal_blocker_hash 'v2:input_required:maintainer')" ]] || status=1
+	[[ "$(_terminal_blocker_recovery "$fingerprint")" == *'owner=maintainer'* ]] || status=1
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT") || status=1
+	comments=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$comments" "$revision" "$fingerprint")" == circuit ]] || status=1
+	comments=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-circuit revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:05:00Z",author_association:"MEMBER"}]')
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT") || status=1
+	[[ "$changed" == "$revision" ]] || status=1
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	changed=$(terminal_blocker_task_revision '{"title":"Reproduce before fixing","body":"### Files Scope\n- helper.sh\nAffected-runner target supplied"}' owner/repo 42 "$TEST_ROOT") || status=1
+	[[ "$changed" != "$revision" ]] || status=1
+	# Only the exact legacy marker is an alias; ambiguous/unknown output stays
+	# retryable, and tool evidence cannot override the final assistant dossier.
+	printf '%s\n' '{"type":"tool_result","text":"BLOCKED: old evidence\nTERMINAL_BLOCKER_REASON=affected_host_reproduction_unavailable"}' \
+		'{"type":"text","text":"BLOCKED: unclassified\nTERMINAL_BLOCKER_REASON=not_a_supported_reason"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "affected-host legacy marker shares maintainer-input hold and ignores unrelated merges" "$status"
+	return 0
+}
+
 test_runner_capability_class() {
 	local status=0 output="$TEST_ROOT/capability-output.jsonl" fingerprint="" revision="" fragment="" comments=""
 	printf '%s\n' '{"type":"text","text":"BLOCKED: staging secret cannot resolve\nTERMINAL_BLOCKER_REASON=runner_capability_unmet"}' >"$output"
@@ -847,6 +879,7 @@ $fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_
 }
 
 main() {
+	test_affected_host_reproduction_alias
 	test_runner_capability_class
 	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
