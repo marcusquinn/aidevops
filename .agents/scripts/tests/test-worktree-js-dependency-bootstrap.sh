@@ -382,7 +382,8 @@ _interactive "$READINESS" approve "$NOPOLICY_WT" >/dev/null || fail "interactive
 	fail "approve did not record the lockfile-bound policy"
 [[ "$(stat -c '%a' "$AIDEVOPS_REPOS_FILE" 2>/dev/null || stat -f '%Lp' "$AIDEVOPS_REPOS_FILE")" == 600 ]] ||
 	fail "approve did not preserve the repos.json file mode"
-[[ "$("$READINESS" status "$NOPOLICY_WT" | head -1)" == "JS_DEPENDENCY_POLICY=current" ]] || fail "status does not report a current policy"
+status_out=$("$READINESS" status "$NOPOLICY_WT")
+[[ "${status_out%%$'\n'*}" == "JS_DEPENDENCY_POLICY=current" ]] || fail "status does not report a current policy"
 printf 'PASS interactive approve records a lockfile-bound policy in repos.json (mode preserved)\n'
 
 # Positive: a fresh worktree under a matching policy is prepared, then ready.
@@ -409,7 +410,8 @@ git -C "$STALE_WT" -c user.name=Fixture -c user.email=fixture@example.invalid co
 _bootstrap_worktree_js_deps "$STALE_WT" >/dev/null 2>&1
 [[ "$(_npm_calls)" == 1 && ! -e "${STALE_WT}/node_modules" ]] || fail "a changed lockfile still installed"
 _expect_state "$STALE_WT" "blocked:policy-stale" "a changed lockfile reports blocked:policy-stale"
-[[ "$("$READINESS" status "$STALE_WT" | head -1)" == "JS_DEPENDENCY_POLICY=stale-lockfile" ]] ||
+status_out=$("$READINESS" status "$STALE_WT")
+[[ "${status_out%%$'\n'*}" == "JS_DEPENDENCY_POLICY=stale-lockfile" ]] ||
 	fail "status does not name the stale lockfile"
 
 # Negative: changed package manager or Node major -> blocked:policy-stale.
