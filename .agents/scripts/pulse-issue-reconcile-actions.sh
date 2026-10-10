@@ -801,6 +801,25 @@ _pir_reopen_unstable_parent_close() {
 }
 
 #######################################
+# Close a parent, verify the post-close snapshot, and compensate by reopening
+# when evidence changed. Args: slug parent_num live_body child_nums child_source
+# Returns: 0=closed and stable, 1=close failed or compensated
+#######################################
+_pir_close_parent_with_postcondition() {
+	local slug="$1" parent_num="$2" live_parent_body="$3" child_nums="$4" child_source="$5"
+	gh issue close "$parent_num" --repo "$slug" >/dev/null 2>&1 || return 1
+	if ! _pir_parent_close_postcondition_is_stable "$slug" "$parent_num" "$live_parent_body" \
+		"$child_nums" "$child_source"; then
+		if [[ "$_PIR_CPT_POST_CLOSE_REOPEN_ALLOWED" -eq 1 ]]; then
+			_pir_reopen_unstable_parent_close "$slug" "$parent_num" || \
+				echo "[pulse-wrapper] Reconcile parent-task: unable to compensate unstable close #${parent_num} in ${slug}" >>"${LOGFILE:-/dev/null}"
+		fi
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Budget guard for multi-round-trip mutations (GH#34289). Reads the
 # single-pass locals _t2984_start_ts/_t2984_budget via dynamic scope. A parent
 # close spans several reads, the close, a stability check, an optional reopen
@@ -905,15 +924,8 @@ _try_close_parent_tracker() {
 		return 1
 	fi
 	local close_basis="$_PIR_PARENT_TRUST_BASIS"
-	gh issue close "$parent_num" --repo "$slug" >/dev/null 2>&1 || return 1
-	if ! _pir_parent_close_postcondition_is_stable "$slug" "$parent_num" "$live_parent_body" \
-		"$child_nums" "$child_source"; then
-		if [[ "$_PIR_CPT_POST_CLOSE_REOPEN_ALLOWED" -eq 1 ]]; then
-			_pir_reopen_unstable_parent_close "$slug" "$parent_num" || \
-				echo "[pulse-wrapper] Reconcile parent-task: unable to compensate unstable close #${parent_num} in ${slug}" >>"${LOGFILE:-/dev/null}"
-		fi
-		return 1
-	fi
+	_pir_close_parent_with_postcondition "$slug" "$parent_num" "$live_parent_body" \
+		"$child_nums" "$child_source" || return 1
 	gh_issue_comment "$parent_num" --repo "$slug" \
 		--body "## All declared child tasks completed — closing parent tracker
 
