@@ -14,12 +14,15 @@ from pathlib import Path
 from typing import Iterator
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent.parent
+# The agents root is `.agents/` in a source checkout and `agents/` in a
+# deployed runtime bundle; resolve defaults from it, like --policy (GH#34296).
+AGENTS_DIR = SCRIPT_DIR.parent
+REPO_ROOT = AGENTS_DIR.parent
 # Proven headless OpenCode entry points: pulse-wrapper-cycle.sh launches these.
 # Do not expand this list to interactive documentation without execution evidence.
 HEADLESS_PROMPTS = (
-    ".agents/workflows/pulse.md",
-    ".agents/workflows/pulse-sweep.md",
+    "workflows/pulse.md",
+    "workflows/pulse-sweep.md",
 )
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
@@ -112,10 +115,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--policy", type=Path,
-        default=SCRIPT_DIR.parent / "configs/command-policy.json",
+        default=AGENTS_DIR / "configs/command-policy.json",
     )
     args = parser.parse_args()
-    files = args.files or [REPO_ROOT / name for name in HEADLESS_PROMPTS]
+    files = args.files or [AGENTS_DIR / name for name in HEADLESS_PROMPTS]
     passed = True
     for path in files:
         try:
