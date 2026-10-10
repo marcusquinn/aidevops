@@ -40,6 +40,13 @@ export function hasToolSchemas(helper) {
   }
 }
 
+// Build host-facing tools only when real schemas exist. Fallback helpers yield
+// an empty registry so no definition-only schema can reach a host adapter.
+export function createSchemaGatedTools(helper, factory) {
+  if (helper?.schemasUnavailable) return {};
+  return factory();
+}
+
 export async function loadV1ToolHelper(options = {}) {
   const importer = options.importer || ((specifier) => import(specifier));
   const requirePinnedRuntime = options.requirePinnedRuntime

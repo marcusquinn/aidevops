@@ -89,6 +89,7 @@ import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.
 // Existing modules
 import { createTools, tool } from "./tools.mjs";
 import { moveToolsOnDemand } from "./on-demand-tools.mjs";
+import { createSchemaGatedTools } from "./tool-schema.mjs";
 import {
   initObservability,
   getRoutingFeedback,
@@ -429,26 +430,27 @@ export async function AidevopsPlugin({ directory, client }) {
     readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
   });
   process.once("exit", () => boundedOperationManager.dispose());
-  const baseTools = tool.schemasUnavailable ? {} : createTools(SCRIPTS_DIR, run, {
-    aidevopsRun: runChecked,
-    sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
-    poolToolFactory: () => createPoolTool(client),
-    imageFetch: IMAGE_FETCH,
-    imageOAuthAccountResolver: selectOpenAIRequestAccount,
-    imageOAuthAccountRotator: (skipEmail) => rotateOpenAIPoolToken(client, skipEmail),
-    projectRoot: directory,
-    mcpClient: client.mcp,
-    mcpDirectory: directory,
-    managedMcpNames: getOnDemandMcpAgents().map((mcp) => mcp.name),
-    managedMcpWorkspaces: mcpRuntime.workspaces,
-    boundedOperationManager,
-  });
-  if (!tool.schemasUnavailable) {
-    baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+  const baseTools = createSchemaGatedTools(tool, () => {
+    const tools = createTools(SCRIPTS_DIR, run, {
+      aidevopsRun: runChecked,
+      sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
+      poolToolFactory: () => createPoolTool(client),
+      imageFetch: IMAGE_FETCH,
+      imageOAuthAccountResolver: selectOpenAIRequestAccount,
+      imageOAuthAccountRotator: (skipEmail) => rotateOpenAIPoolToken(client, skipEmail),
+      projectRoot: directory,
+      mcpClient: client.mcp,
+      mcpDirectory: directory,
+      managedMcpNames: getOnDemandMcpAgents().map((mcp) => mcp.name),
+      managedMcpWorkspaces: mcpRuntime.workspaces,
+      boundedOperationManager,
+    });
+    tools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
     // GH#32592: V1 sends every tool schema on every request, so rarely used
     // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
-    moveToolsOnDemand(baseTools, tool);
-  }
+    moveToolsOnDemand(tools, tool);
+    return tools;
+  });
 
   // Create hooks from extracted modules
   const modelRouting = loadModelRouting([

@@ -42,6 +42,7 @@ import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
+import { createSchemaGatedTools } from "./tool-schema.mjs";
 import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
 import { createRootSessionGreetingGate } from "./root-session-greeting-gate.mjs";
 import { isHeadless } from "./proxy-lifecycle.mjs";
@@ -321,20 +322,21 @@ export async function setupAidevopsV2(ctx) {
       recordOutput: createOutputSandboxRecorder(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
       readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
     });
-    const baseTools = tool.schemasUnavailable ? {} : createTools(SCRIPTS_DIR, run, {
-      aidevopsRun: runChecked,
-      sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
-      poolToolFactory: () => createPoolTool(client),
-      projectRoot: directory,
-      mcpClient: mcpRuntime.client,
-      mcpDirectory: directory,
-      managedMcpNames: getOnDemandMcpAgents().map((mcp) => mcp.name),
-      managedMcpWorkspaces: mcpRuntime.workspaces,
-      boundedOperationManager,
+    const baseTools = createSchemaGatedTools(tool, () => {
+      const tools = createTools(SCRIPTS_DIR, run, {
+        aidevopsRun: runChecked,
+        sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
+        poolToolFactory: () => createPoolTool(client),
+        projectRoot: directory,
+        mcpClient: mcpRuntime.client,
+        mcpDirectory: directory,
+        managedMcpNames: getOnDemandMcpAgents().map((mcp) => mcp.name),
+        managedMcpWorkspaces: mcpRuntime.workspaces,
+        boundedOperationManager,
+      });
+      tools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+      return tools;
     });
-    if (!tool.schemasUnavailable) {
-      baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
-    }
 
     const continuationGuard = createSessionContinuationGuard({
       repository: directory,
@@ -404,9 +406,8 @@ export async function setupAidevopsV2(ctx) {
     }));
 
     await register(registrations, ctx.tool.transform((editor) => {
-      if (!tool.schemasUnavailable) {
-        addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
-      }
+      // Schema-gated baseTools is empty when schemas are unavailable.
+      addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
       editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
       editor.update("grep", (definition) => adaptToolDefinition({ toolID: "grep" }, definition));
       editor.update("apply_patch", (definition) => adaptToolDefinition({ toolID: "apply_patch" }, definition));
