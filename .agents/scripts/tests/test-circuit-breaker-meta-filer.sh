@@ -372,22 +372,23 @@ OUT=$("$META_FILER" file \
 RC=$?
 CREATE_LINE=$(cat "$CREATE_ARGS_FILE" 2>/dev/null || true)
 
-if [[ "$RC" -eq 0 ]] && printf '%s' "$OUT" | tail -1 | grep -q 'github.com/marcusquinn/aidevops/issues/99999' &&
-	printf '%s' "$CREATE_LINE" | grep -q -- '--repo marcusquinn/aidevops'; then
+if [[ "$RC" -eq 0 && "$OUT" == *"github.com/marcusquinn/aidevops/issues/99999" &&
+	"$CREATE_LINE" == "issue create --repo marcusquinn/aidevops "* ]]; then
 	print_result "private-cross-repo: files meta in framework source repo" 0
 else
 	print_result "private-cross-repo: files meta in framework source repo" 1 "rc=$RC stdout: $OUT"
 fi
 
-if [[ -n "$CREATE_LINE" ]] && ! printf '%s' "$CREATE_LINE" | grep -qE 'secretrepo|privateorg|7007'; then
+if [[ -n "$CREATE_LINE" && "$CREATE_LINE" != *secretrepo* && "$CREATE_LINE" != *privateorg* &&
+	"$CREATE_LINE" != *7007* ]]; then
 	print_result "private-cross-repo: title/body withhold private slug, number, reason and forensics" 0
 else
 	print_result "private-cross-repo: title/body withhold private slug, number, reason and forensics" 1 "create: $CREATE_LINE"
 fi
 
-if printf '%s' "$CREATE_LINE" | grep -q 'circuit-breaker-meta-original:withheld' &&
-	printf '%s' "$CREATE_LINE" | grep -q -- '- Original: withheld (private repository)' &&
-	printf '%s' "$CREATE_LINE" | grep -q '\.agents/scripts/headless-runtime-failure\.sh'; then
+if [[ "$CREATE_LINE" == *"<!-- circuit-breaker-meta-original:withheld -->"* &&
+	"$CREATE_LINE" == *"- Original: withheld (private repository)"* &&
+	"$CREATE_LINE" == *"- \`.agents/scripts/headless-runtime-failure.sh\`"* ]]; then
 	print_result "private-cross-repo: framework brief carries withheld marker and framework scope" 0
 else
 	print_result "private-cross-repo: framework brief carries withheld marker and framework scope" 1 "create: $CREATE_LINE"
