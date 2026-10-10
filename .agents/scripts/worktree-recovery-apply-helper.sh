@@ -209,11 +209,16 @@ _worktree_recovery_apply_validate_automatic_plan_shape() {
 		--arg reason_filesystem_percent "$reason_filesystem_percent" '
 		.automatic_policy as $policy |
 		($policy | type == $object_type) and
-		($policy | keys | sort) == (["available_kb","available_percent","max_bytes",
+		($policy | del(.store_size_source) | keys | sort) == (["available_kb","available_percent","max_bytes",
 			"max_candidates","max_scan","max_store_bytes","policy_id","pressure_active",
 			"pressure_min_free_kb","pressure_min_free_percent","pressure_reason",
 			"protected_count","retention_days","scanned_count","schema","store_bytes",
 			"unknown_count"] | sort) and
+		(if $policy | has("store_size_source") then
+			($policy.store_size_source | IN("exact","indexed-estimate","unavailable")) and
+			(if $policy.store_size_source == "unavailable" then $policy.store_bytes == null
+			else $policy.store_bytes != null end)
+		else true end) and
 		$policy.schema == $policy_schema and $policy.policy_id == $policy_id and
 		([ $policy.retention_days,$policy.max_scan,$policy.max_candidates,$policy.max_bytes,
 			$policy.max_store_bytes,$policy.pressure_min_free_kb,

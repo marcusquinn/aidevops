@@ -232,12 +232,32 @@ evidence remain mandatory before deletion. One pass cheaply enumerates paths,
 then validates and classifies at most 50 rotating inventory entries inside a
 120-second deadline, and applies at most 20 candidates or 5 GiB. Expensive
 per-archive Git validation is limited to that cursor window and bounded by the
-same deadline. Both the initial size probe and its mandatory drift-detection
-remeasurement use the remaining pass budget rather than the shorter global
-reporting timeout. Final exact archive sizing is candidate-only; protected and
-unknown entries retain their existing inventory observation without that probe.
-A persistent cursor advances after a deadline stop so large inventories cannot
-starve later entries. Operators may tune these soft limits with:
+same deadline. Evidence classification precedes whole-archive sizing: the
+classifier's candidate-only exact probe uses the remaining pass budget, and
+apply still revalidates identity and exact allocated bytes. Protected mixed
+archives can reach approved cache-root pruning without a whole-archive `du`.
+
+The default framework store maintains mode-0600 advisory records in `.size-index`
+at archive completion and after exact candidate sizing. A bounded, separate
+backfill cursor advances even on sizing timeout, gradually indexing old stores.
+Fresh hints avoid a recursive aggregate scan; `store_size_source` distinguishes
+`indexed-estimate` from `exact` and `unavailable`, including when filesystem
+pressure is already active. Indexed totals estimate archive allocation, excluding
+small reservation/index overhead; they are not exact filesystem usage or deletion
+evidence. Incomplete indexing or root-level staged transactions fall back to
+bounded exact-store measurement, then conservative pressure if it is unavailable.
+Hints expire after 24 hours and completed maintenance transactions invalidate
+affected records, including resumed cache pruning. Missing/replaced buckets are
+excluded from the next census. A broken index never grants mutation authority.
+
+Inventory is ordered largest-estimated-first before applying its rotating cursor;
+selected exact candidates are ordered largest-first. The coverage digest includes
+this scheduling order, so changed hints cannot falsely complete an old cycle.
+Rotation still reaches protected and unindexed entries instead of repeatedly
+probing only the largest protected archive. The seven-day retention and 5 GiB
+store limits remain evidence-gated soft bounds: unique, active, unreadable, or
+otherwise protected data cannot be deleted merely to enforce a hard byte quota.
+Operators may tune these soft limits with:
 
 - `AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_RETENTION_DAYS`
 - `AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MAX_SCAN`
