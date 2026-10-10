@@ -426,6 +426,76 @@ test_parent_live_hold_gate() {
 }
 
 # ---------------------------------------------------------------------------
+# GH#34180/#34125 class: a maintainer-approved external parent whose approval
+# went stale through lifecycle drift may be closed (only) with graph children.
+# ---------------------------------------------------------------------------
+test_parent_stale_approval_terminal_close() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local stub_dir="" result=""
+	stub_dir=$(mktemp -d)
+	cat >"${stub_dir}/approval-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "${APPROVAL_STUB_RESULT:-NO_APPROVAL}"
+STUB
+	chmod +x "${stub_dir}/approval-helper.sh"
+	result=$(ACTIONS_SH="$actions_sh" STUB_DIR="$stub_dir" bash -c '
+		_PIR_NMR_LABEL="needs-maintainer-review"
+		_PIR_PERSISTENT_LABEL="persistent"
+		_PIR_PT_LABEL="parent-task"
+		LOGFILE="/dev/null"
+		source "$ACTIONS_SH"
+		_PIR_SCRIPT_DIR="$STUB_DIR"
+		_gh_actor_has_repo_write_authority() { return 1; }
+		gh_issue_edit_safe() { printf "nmr-added\n"; return 0; }
+		gh() {
+			[[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/issues/42" ]] || return 1
+			printf "%s\n" "{\"number\":42,\"state\":\"open\",\"labels\":[{\"name\":\"parent-task\"}],\"author_association\":\"CONTRIBUTOR\",\"user\":{\"login\":\"outsider\",\"type\":\"User\"}}"
+			return 0
+		}
+		for APPROVAL_STUB_RESULT in STALE_APPROVAL VERIFIED MALFORMED_APPROVAL; do
+			export APPROVAL_STUB_RESULT
+			_pir_parent_mutation_is_allowed owner/repo 42 open close &&
+				printf "%s-close:allowed:%s\n" "$APPROVAL_STUB_RESULT" "$_PIR_PARENT_TRUST_BASIS" ||
+				printf "%s-close:blocked\n" "$APPROVAL_STUB_RESULT"
+			_pir_parent_mutation_is_allowed owner/repo 42 open &&
+				printf "%s-other:allowed\n" "$APPROVAL_STUB_RESULT" ||
+				printf "%s-other:blocked\n" "$APPROVAL_STUB_RESULT"
+		done
+		_PIR_PARENT_TRUST_BASIS="$_PIR_PARENT_TRUST_STALE_APPROVED_CLOSE"
+		for source in graph graph+body+prose body prose+comments; do
+			_pir_parent_close_evidence_is_trusted "$source" &&
+				printf "stale-evidence-%s:ok\n" "$source" || printf "stale-evidence-%s:rejected\n" "$source"
+		done
+		_PIR_PARENT_TRUST_BASIS="$_PIR_PARENT_TRUST_TRUSTED"
+		_pir_parent_close_evidence_is_trusted body &&
+			printf "trusted-evidence-body:ok\n" || printf "trusted-evidence-body:rejected\n"
+	' 2>/dev/null)
+	rm -rf "$stub_dir"
+
+	local expected="" all_ok=1
+	for expected in \
+		'STALE_APPROVAL-close:allowed:stale-approved-terminal-close' \
+		'STALE_APPROVAL-other:blocked' \
+		'VERIFIED-close:allowed:trusted' \
+		'VERIFIED-other:allowed' \
+		'MALFORMED_APPROVAL-close:blocked' \
+		'MALFORMED_APPROVAL-other:blocked' \
+		'stale-evidence-graph:ok' \
+		'stale-evidence-graph+body+prose:ok' \
+		'stale-evidence-body:rejected' \
+		'stale-evidence-prose+comments:rejected' \
+		'trusted-evidence-body:ok'; do
+		printf '%s\n' "$result" | grep -qxF "$expected" || all_ok=0
+	done
+	if [[ "$all_ok" -eq 1 ]]; then
+		_pass "stale-approved external parent may close only with graph-backed children"
+	else
+		_fail "stale-approved terminal close mismatch: ${result}"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Test 8b: mergedAt helper prefers gh_pr_view wrapper when available
 # ---------------------------------------------------------------------------
 test_pr_merged_at_prefers_wrapper() {
@@ -1653,6 +1723,7 @@ test_single_pass_cache_consolidation
 test_body_in_prefetch_fetch
 test_should_predicates
 test_parent_live_hold_gate
+test_parent_stale_approval_terminal_close
 test_pr_merged_at_prefers_wrapper
 test_single_pass_wired_in_engine
 test_recent_parent_repair_reachable_from_single_pass

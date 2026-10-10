@@ -375,6 +375,13 @@ _PIR_RECENT_PARENT_CYCLE_CANDIDATES=0
 _PIR_CPT_VERIFIED_CHILD_COUNT=0
 _PIR_CPT_VERIFIED_CHILD_SUMMARY=""
 _PIR_CPT_REPAIR_REASON=""
+# Parent mutation kinds and trust bases (see _pir_live_parent_trust_is_allowed).
+_PIR_PARENT_MUTATION_CLOSE=close
+_PIR_PARENT_TRUST_TRUSTED=trusted
+_PIR_PARENT_TRUST_STALE_APPROVED_CLOSE=stale-approved-terminal-close
+_PIR_PARENT_TRUST_BASIS="$_PIR_PARENT_TRUST_TRUSTED"
+_PIR_EXTERNAL_GATE_VERIFICATION=""
+_PIR_APPROVAL_STALE=STALE_APPROVAL
 
 _parent_comments_api_path() {
 	local slug="$1" parent_num="$2"
@@ -730,7 +737,7 @@ _pir_parent_close_snapshot_is_stable() {
 
 	# No remote reads may sit between this state/authority/body fence and close.
 	# The revision check also catches metadata mutations when GitHub supplies it.
-	_pir_parent_mutation_is_allowed "$slug" "$parent_num" open || return 1
+	_pir_parent_mutation_is_allowed "$slug" "$parent_num" open "$_PIR_PARENT_MUTATION_CLOSE" || return 1
 	final_parent_body=$(_pir_parent_body_from_json "$_PIR_LIVE_PARENT_JSON") || return 1
 	[[ "$final_parent_body" == "$live_parent_body" ]] || return 1
 	final_parent_revision=$(_pir_parent_revision_from_json "$_PIR_LIVE_PARENT_JSON") || return 1
@@ -759,7 +766,7 @@ _pir_parent_close_postcondition_is_stable() {
 		((.state_reason // .stateReason // "" | ascii_downcase) == "completed")
 	' >/dev/null 2>&1 || return 1
 	_PIR_CPT_POST_CLOSE_REOPEN_ALLOWED=1
-	_pir_live_parent_trust_is_allowed "$slug" "$parent_num" "$live_parent_json" || return 1
+	_pir_live_parent_trust_is_allowed "$slug" "$parent_num" "$live_parent_json" "$_PIR_PARENT_MUTATION_CLOSE" || return 1
 	live_parent_body=$(_pir_parent_body_from_json "$live_parent_json") || return 1
 	[[ "$live_parent_body" == "$expected_body" ]] || return 1
 	printf '%s' "$live_parent_json" | jq -e --arg parent "${_PIR_PT_LABEL:-parent-task}" \
@@ -783,7 +790,7 @@ _pir_parent_close_postcondition_is_stable() {
 
 _pir_reopen_unstable_parent_close() {
 	local slug="$1" parent_num="$2"
-	_pir_parent_mutation_is_allowed "$slug" "$parent_num" closed || return 1
+	_pir_parent_mutation_is_allowed "$slug" "$parent_num" closed "$_PIR_PARENT_MUTATION_CLOSE" || return 1
 	printf '%s' "$_PIR_LIVE_PARENT_JSON" | jq -e '
 		(.state_reason // .stateReason // "" | ascii_downcase) == "completed"
 	' >/dev/null 2>&1 || return 1
@@ -838,7 +845,7 @@ _try_close_parent_tracker() {
 	# Child reads and close-contract checks can span several API round-trips.
 	# Re-read the parent at the final mutation boundary so an NMR/persistent hold
 	# added during that interval cannot race the earlier caller-side gate.
-	_pir_parent_mutation_is_allowed "$slug" "$parent_num" open || return 1
+	_pir_parent_mutation_is_allowed "$slug" "$parent_num" open "$_PIR_PARENT_MUTATION_CLOSE" || return 1
 	if ! live_parent_body=$(_pir_parent_body_from_json "$_PIR_LIVE_PARENT_JSON"); then
 		_PARENT_CLOSE_CONTRACT_REASON="$_PARENT_CLOSE_CONTRACT_LIVE_BODY_UNAVAILABLE"
 		_PARENT_CLOSE_CONTRACT_DECLARED=0
@@ -871,6 +878,11 @@ _try_close_parent_tracker() {
 	child_source="$_PIR_CPT_CHILD_SOURCE"
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
 	child_summary="$_PIR_CPT_VERIFIED_CHILD_SUMMARY"
+	if ! _pir_parent_close_evidence_is_trusted "$child_source"; then
+		echo "[pulse-wrapper] Reconcile parent-task: kept #${parent_num} open in ${slug} — stale-approved external parent lacks sub-issue graph children (source=${child_source})" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	local close_basis="$_PIR_PARENT_TRUST_BASIS"
 	gh issue close "$parent_num" --repo "$slug" >/dev/null 2>&1 || return 1
 	if ! _pir_parent_close_postcondition_is_stable "$slug" "$parent_num" "$live_parent_body" \
 		"$child_nums" "$child_source"; then
@@ -890,8 +902,25 @@ All ${child_count} declared child issue(s) are resolved and the parent close con
 _Detected by reconcile_completed_parent_tasks (pulse-issue-reconcile.sh)._" \
 		>/dev/null 2>&1 || true
 
-	echo "[pulse-wrapper] Reconcile parent-task: closed #${parent_num} in ${slug} — all ${child_count} children closed (source=${child_source})" >>"$LOGFILE"
+	echo "[pulse-wrapper] Reconcile parent-task: closed #${parent_num} in ${slug} — all ${child_count} children closed (source=${child_source}, trust=${close_basis})" >>"$LOGFILE"
 	return 0
+}
+
+#######################################
+# A stale-approved external parent may close only when its child set includes
+# the sub-issue graph, which only write-authorized users can change. Untrusted
+# body/prose references can add children that must also be closed, but can
+# never be the sole evidence. Trusted parents are unaffected.
+# Args: $1=child evidence source (e.g. graph+body)
+# Returns: 0=evidence acceptable for the current trust basis, 1=insufficient
+#######################################
+_pir_parent_close_evidence_is_trusted() {
+	local child_source="$1"
+	[[ "$_PIR_PARENT_TRUST_BASIS" == "$_PIR_PARENT_TRUST_STALE_APPROVED_CLOSE" ]] || return 0
+	case "+${child_source}+" in
+	*+graph+*) return 0 ;;
+	esac
+	return 1
 }
 
 # Exact comma-delimited label membership without substring matches.
@@ -1053,6 +1082,7 @@ _action_reconcile_external_issue_gate() {
 	local author_association="$4"
 	local author_login="$5"
 	_PIR_EXTERNAL_GATE_MUTATED=0
+	_PIR_EXTERNAL_GATE_VERIFICATION=""
 
 	if _pir_labels_csv_contains "$labels_csv" "$_PIR_NMR_LABEL"; then
 		return 0
@@ -1092,6 +1122,7 @@ _action_reconcile_external_issue_gate() {
 		return 0
 	fi
 	verification=$("$approval_helper" verify "$issue_num" "$slug" 2>/dev/null) || true
+	_PIR_EXTERNAL_GATE_VERIFICATION="$verification"
 	if [[ "$verification" == "VERIFIED" ]]; then
 		return 1
 	fi
@@ -1985,12 +2016,24 @@ _pir_collect_parent_child_evidence() {
 # MEMBER, bots, write-authorized collaborators, and cryptographically approved
 # contributors may proceed. Unknown or unapproved authors fail closed; the
 # shared gate may add needs-maintainer-review as its idempotent repair.
-# Args: $1=slug, $2=issue number, $3=live issue JSON
+#
+# #aidevops:trust-boundary -- terminal tracker close (GH#34180/#34125 class):
+# a maintainer-signed approval that later verifies STALE (signature valid,
+# snapshot drifted) still proves a maintainer accepted the parent. Ordinary
+# lifecycle work after approval (decomposition labels, dispatch unlock) always
+# drifts that snapshot, so requiring VERIFIED left every approved external
+# parent permanently open. For the close action only, STALE is accepted and
+# _PIR_PARENT_TRUST_BASIS records it; _try_close_parent_tracker then requires
+# the child set to include the write-controlled sub-issue graph. All other
+# mutations (phase filing, nudges, escalations) still require VERIFIED because
+# they act on untrusted parent content.
+# Args: $1=slug, $2=issue number, $3=live issue JSON, $4=mutation kind (optional)
 # Returns: 0=trusted/approved, 1=blocked
 #######################################
 _pir_live_parent_trust_is_allowed() {
-	local slug="$1" issue_num="$2" live_issue_json="$3"
+	local slug="$1" issue_num="$2" live_issue_json="$3" mutation="${4:-}"
 	local author_association="" author_login="" author_type="" author_is_bot="false" labels_csv=""
+	_PIR_PARENT_TRUST_BASIS="$_PIR_PARENT_TRUST_TRUSTED"
 	author_association=$(printf '%s' "$live_issue_json" | \
 		jq -r '.author_association // .authorAssociation // ""' 2>/dev/null) || return 1
 	author_login=$(printf '%s' "$live_issue_json" | \
@@ -2005,7 +2048,10 @@ _pir_live_parent_trust_is_allowed() {
 	if _should_reconcile_external_issue_gate "$author_association" "$author_type" "$author_is_bot"; then
 		if _action_reconcile_external_issue_gate "$slug" "$issue_num" "$labels_csv" \
 			"$author_association" "$author_login"; then
-			return 1
+			[[ "$mutation" == "$_PIR_PARENT_MUTATION_CLOSE" && \
+				"$_PIR_EXTERNAL_GATE_MUTATED" -eq 0 && \
+				"$_PIR_EXTERNAL_GATE_VERIFICATION" == "$_PIR_APPROVAL_STALE" ]] || return 1
+			_PIR_PARENT_TRUST_BASIS="$_PIR_PARENT_TRUST_STALE_APPROVED_CLOSE"
 		fi
 	fi
 	return 0
@@ -2015,10 +2061,12 @@ _pir_live_parent_trust_is_allowed() {
 # are only an initial filter; missing metadata, label removal, NMR, persistent
 # state, or unresolved external-author trust all fail closed for this cycle.
 # When supplied, $3 requires the live issue to remain in that exact state.
+# $4 names the mutation kind; only the close kind may use a stale approval.
 _pir_parent_mutation_is_allowed() {
 	local slug="$1"
 	local issue_num="$2"
 	local expected_state="${3:-}"
+	local mutation="${4:-}"
 	local live_issue_json=""
 	local nmr_label="${_PIR_NMR_LABEL:-needs-maintainer-review}"
 	local parent_label="${_PIR_PT_LABEL:-parent-task}"
@@ -2040,7 +2088,7 @@ _pir_parent_mutation_is_allowed() {
 		(($expected_state == "") or ((.state // "" | ascii_downcase) == ($expected_state | ascii_downcase)))
 	' >/dev/null 2>&1 || return 1
 	#aidevops:trust-boundary -- live author authority gates every parent mutation.
-	_pir_live_parent_trust_is_allowed "$slug" "$issue_num" "$live_issue_json" || return 1
+	_pir_live_parent_trust_is_allowed "$slug" "$issue_num" "$live_issue_json" "$mutation" || return 1
 	_PIR_LIVE_PARENT_JSON="$live_issue_json"
 	return 0
 }
@@ -2126,7 +2174,7 @@ _action_cpt_single() {
 	fi
 
 	if [[ "$can_close" == "1" ]]; then
-		_pir_parent_mutation_is_allowed "$slug" "$issue_num" || return 0
+		_pir_parent_mutation_is_allowed "$slug" "$issue_num" "" "$_PIR_PARENT_MUTATION_CLOSE" || return 0
 		if _try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source" "$issue_body"; then
 			_SP_CPT_CLOSED=1
 		fi
