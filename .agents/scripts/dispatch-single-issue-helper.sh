@@ -391,6 +391,9 @@ _dsi_repo_path_hint() {
 	repo_path_missing)
 		printf 'Registered canonical path for %s is not a directory; restore the checkout or correct its repos.json path\n' "$repo_slug"
 		;;
+	*)
+		_dsi_origin_identity_hint "$reason" "$repo_slug"
+		;;
 	esac
 	return 0
 }
@@ -479,6 +482,8 @@ _dsi_register_ledger() {
 # shellcheck source=./dispatch-single-issue-tracking.sh
 # shellcheck disable=SC1091 # sibling library resolved at runtime
 source "${_DSI_SCRIPT_DIR}/dispatch-single-issue-tracking.sh"
+# shellcheck disable=SC1091 # sibling library resolved at runtime
+source "${_DSI_SCRIPT_DIR}/dispatch-single-issue-origin.sh"
 
 #######################################
 # Build the worker prompt.  Headless-runtime-lib auto-appends
@@ -529,13 +534,17 @@ _dsi_prepare_worker_git_auth() {
 	local origin="" normalized_origin="" token_file="" meta_file=""
 	local strategy="" app_slug=""
 	_dsi_clear_worker_git_auth
+	_DSI_GIT_AUTH_FAILURE_REASON="worker_git_auth_failed"
 
 	[[ "${WORKER_SCOPED_TOKENS:-true}" == "true" ]] || return 0
 	[[ -x "$_DSI_TOKEN_HELPER" && -x "$_DSI_ASKPASS_HELPER" ]] || return 0
 	origin=$(git -C "$worktree_path" remote get-url origin 2>/dev/null || true)
 	normalized_origin=$(_dsi_normalize_github_https_origin "$origin") || return 0
 	[[ "$normalized_origin" == "https://github.com/${repo_slug}" ]] || {
+		# GH#33629: a prerequisite (normally caught before claim), not an auth fault.
+		_DSI_GIT_AUTH_FAILURE_REASON="repository_origin_mismatch"
 		_dsi_err "Worker Git origin does not match the dispatch repository"
+		_dsi_info "  $(_dsi_origin_identity_hint repository_origin_mismatch "$repo_slug")" >&2
 		return 1
 	}
 
@@ -797,7 +806,7 @@ _dsi_print_dryrun() {
 	local dedup_result="$6"
 	local repo_path="" prerequisite=""
 	repo_path=$(_dsi_repo_path_for_slug "$repo_slug" 2>/dev/null || true)
-	prerequisite=$(_dsi_repo_path_prerequisite "$repo_path") || true
+	prerequisite=$(_dsi_runner_local_prerequisite "$repo_path" "$repo_slug") || true
 	local base_ref=""
 	base_ref=$(_dsi_dispatch_base_ref "$repo_slug" "$repo_path")
 	_dsi_info "DRY RUN — would dispatch:"
@@ -810,7 +819,11 @@ _dsi_print_dryrun() {
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Base ref:     ${base_ref}"
-	if [[ -n "$prerequisite" ]]; then
+	if [[ "$prerequisite" == repository_* ]]; then
+		_dsi_info "  Repo path:    ${repo_path}"
+		_dsi_warn "  Origin:       UNMET (reason=${prerequisite}) — real dispatch would refuse before claim"
+		_dsi_warn "                $(_dsi_repo_path_hint "$prerequisite" "$repo_slug")"
+	elif [[ -n "$prerequisite" ]]; then
 		_dsi_warn "  Repo path:    UNRESOLVED (reason=${prerequisite}) — real dispatch would refuse before claim"
 		_dsi_warn "                $(_dsi_repo_path_hint "$prerequisite" "$repo_slug")"
 	else
@@ -1085,8 +1098,9 @@ _dsi_check_runner_capability() {
 	local repo_path="" prerequisite=""
 	repo_path=$(_dsi_repo_path_for_slug "$repo_slug") || repo_path=""
 	# GH#34003: report the missing local prerequisite, not a metadata failure;
-	# the fresh metadata read below owns metadata_unreadable.
-	if ! prerequisite=$(_dsi_repo_path_prerequisite "$repo_path"); then
+	# the fresh metadata read below owns metadata_unreadable. GH#33629: origin
+	# identity drift is classified here, before claim, not as an auth failure.
+	if ! prerequisite=$(_dsi_runner_local_prerequisite "$repo_path" "$repo_slug"); then
 		_dsi_err "runner_capability_unmet source=fresh reason=${prerequisite} repo=${repo_slug}"
 		_dsi_info "  $(_dsi_repo_path_hint "$prerequisite" "$repo_slug")" >&2
 		return 1
@@ -1230,7 +1244,7 @@ _dsi_dispatch_after_dedup_clear() {
 	# aidevops:trust-boundary — bind a short-lived credential and commit identity
 	# only after the exact worktree/repository origin is known.
 	if ! _dsi_prepare_worker_git_auth "$repo_slug" "$_DSI_WORKTREE_PATH" "$self_login"; then
-		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "worker_git_auth_failed"
+		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "${_DSI_GIT_AUTH_FAILURE_REASON:-worker_git_auth_failed}"
 		return 1
 	fi
 
@@ -1415,6 +1429,8 @@ Commands:
   dispatch <issue> <slug> [opts]   Launch a worker against a single issue.
   resume   <issue> <slug> [opts]   Resume a signed grant in its original manual worktree.
   status   <issue> <slug>          Show active dispatch state from ledger.
+  repair-origin <slug> [--apply]   Realign origin after a verified same-ID
+                                   repository transfer (GH#33629).
   help                             Show this help.
 
 Examples:
@@ -1445,7 +1461,8 @@ adaptive cadence, and many other concerns this CLI does NOT cover.
 Exit codes:
   0  Success (worker launched, dry-run completed, or skipped: already claimed)
   1  Validation failure (issue not found, parent-task, unregistered or
-     missing canonical repo path — also under --dry-run, etc.)
+     missing canonical repo path, origin identity drift/mismatch — also
+     under --dry-run, etc.)
   2  Invalid subcommand or missing required arg
 EOF
 	return 0
@@ -1464,6 +1481,9 @@ main() {
 		;;
 	status)
 		cmd_status "$@"
+		;;
+	repair-origin)
+		cmd_repair_origin "$@"
 		;;
 	-h | --help | help | "")
 		_usage

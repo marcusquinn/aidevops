@@ -163,6 +163,15 @@ the next runner independently checks capabilities. It does not grant credentials
 or bypass permission/security guards. Repositories without declarations retain
 the existing behavior.
 
+Manual dispatch (`dispatch-single-issue-helper.sh`) also checks the registered
+checkout's origin before claim, in dry-run and real dispatch alike (GH#33629).
+`reason=repository_identity_drift` means the origin is a verified former name of
+the same GitHub repository (same numeric ID via redirect); review, then run
+`dispatch-single-issue-helper.sh repair-origin <owner/repo> --apply`, which
+compare-and-swaps only `remote.origin.url`, preserving transport. Any other
+mismatch is `reason=repository_origin_mismatch` and is never rewritten. Neither
+weakens the repository-bound worker credential check.
+
 Checked by `pre-dispatch-validator-helper.sh` and the pre-dispatch eligibility gate (t2424) before spawning a worker.
 
 | Condition | Exit | Enforced by |

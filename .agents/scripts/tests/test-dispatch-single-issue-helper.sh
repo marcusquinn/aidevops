@@ -1383,6 +1383,63 @@ test_askpass_rejects_changed_origin() {
 	return 0
 }
 
+# GH#33629: verified same-ID transfer drift is a distinct pre-claim prerequisite
+# with an explicit compare-and-swap repair; unknown origins still fail closed.
+test_origin_identity_drift_prerequisite_and_repair() {
+	local root="" result=0
+	root=$(mktemp -d)
+	root=$(cd "$root" && pwd -P)
+	(
+		# owner/repo is the transferred (current) name; old/repo redirects to it.
+		gh() {
+			case "$2" in
+			repos/old/repo | repos/owner/repo) printf '42\towner/repo\n' ;;
+			repos/other/repo) printf '99\tother/repo\n' ;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		_DSI_TOKEN_HELPER=/usr/bin/true
+		_DSI_ASKPASS_HELPER=/usr/bin/true
+		MOCK_REPO_PATH="$root/repo"
+		local repo="$root/repo"
+		command git -C "$root" init -q repo
+		command git -C "$repo" remote add origin https://github.com/owner/repo.git
+		command git -C "$repo" remote add upstream https://github.com/up/repo.git
+		_dsi_runner_local_prerequisite "$repo" owner/repo >/dev/null || exit 1
+		command git -C "$repo" remote set-url origin https://github.com/old/repo.git
+		[[ "$(_dsi_runner_local_prerequisite "$repo" owner/repo)" == repository_identity_drift ]] || exit 1
+		[[ "$(_dsi_origin_identity_hint repository_identity_drift owner/repo)" != *old/* ]] || exit 1
+		command git -C "$repo" remote set-url origin https://github.com/other/repo.git
+		[[ "$(_dsi_runner_local_prerequisite "$repo" owner/repo)" == repository_origin_mismatch ]] || exit 1
+		command git -C "$repo" remote set-url origin https://github.com/gone/repo.git
+		[[ "$(_dsi_runner_local_prerequisite "$repo" owner/repo)" == repository_origin_mismatch ]] || exit 1
+		# Unknown identity is never rewritten, with or without --apply.
+		if cmd_repair_origin owner/repo --apply 2>/dev/null; then exit 1; fi
+		[[ "$(command git -C "$repo" remote get-url origin)" == https://github.com/gone/repo.git ]] || exit 1
+		# Verified drift: plan-only by default, then transport-preserving CAS.
+		command git -C "$repo" remote set-url origin git@github.com:old/repo.git
+		cmd_repair_origin owner/repo >/dev/null 2>&1 || exit 1
+		[[ "$(command git -C "$repo" remote get-url origin)" == git@github.com:old/repo.git ]] || exit 1
+		command git -C "$repo" config remote.origin.pushurl git@github.com:old/repo.git
+		if cmd_repair_origin owner/repo --apply 2>/dev/null; then exit 1; fi
+		command git -C "$repo" config --unset remote.origin.pushurl
+		cmd_repair_origin owner/repo --apply >/dev/null 2>&1 || exit 1
+		[[ "$(command git -C "$repo" remote get-url origin)" == git@github.com:owner/repo.git ]] || exit 1
+		[[ "$(command git -C "$repo" remote get-url upstream)" == https://github.com/up/repo.git ]] || exit 1
+		command git -C "$repo" remote set-url origin https://github.com/old/repo.git
+		cmd_repair_origin owner/repo --apply >/dev/null 2>&1 || exit 1
+		[[ "$(command git -C "$repo" remote get-url origin)" == https://github.com/owner/repo.git ]] || exit 1
+		_dsi_runner_local_prerequisite "$repo" owner/repo >/dev/null || exit 1
+		# Scoped tokens disabled: the auth gate does not apply, so neither does this.
+		command git -C "$repo" remote set-url origin https://github.com/other/repo.git
+		WORKER_SCOPED_TOKENS=false _dsi_runner_local_prerequisite "$repo" owner/repo >/dev/null || exit 1
+	) || result=1
+	rm -rf "$root"
+	print_result "verified transfer drift is a pre-claim prerequisite with a fail-closed CAS repair" "$result"
+	return 0
+}
+
 test_create_worktree_uses_target_repo_path() {
 	local failed=1
 	if grep -Fq "repo_path=\$(_dsi_repo_path_for_slug \"\$repo_slug\")" "$HELPER_PATH" &&
@@ -1918,6 +1975,7 @@ _run_tests() {
 	test_launch_worker_forwards_github_login
 	test_launch_worker_forwards_bounded_git_auth
 	test_askpass_rejects_changed_origin
+	test_origin_identity_drift_prerequisite_and_repair
 	test_create_worktree_uses_target_repo_path
 	test_create_worktree_registers_dispatch_owner
 	test_dispatch_base_ref_prefers_repo_configured_pr_base
