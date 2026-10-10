@@ -92,6 +92,20 @@ A fresh linked worktree has no `node_modules/`, so a declared lint gate can fail
 
 Default: install with the project package manager and frozen lockfile, with download approval. Interactive sessions may instead reuse an existing install only on explicit user approval, after verifying: approved real paths inside the user's own project boundary; matching linter/plugin versions and byte-identical lint config; no existing worktree `node_modules/`; and `git check-ignore` coverage. Create a real `node_modules/` directory and symlink only the required read-only packages (`.bin`, linter, plugins, `globals`) into it. Never symlink `node_modules` itself, because a directory-only ignore such as `node_modules/` may not ignore a symlink. Never mutate the shared install, auto-link, alter config or lockfiles, bypass the hook, or treat a dirty-worktree skip as verification. Headless workers never cross project boundaries for tooling (GH#31880).
 
+### Linked-worktree tooling readiness
+
+`worktree-helper.sh add` and the first `pre-edit-check.sh` run of each session in a worktree print `JS_TOOL_READINESS=<state> (<tools>)` from `worktree-js-readiness-helper.sh` (GH#34199), so a missing tool surfaces at admission instead of at pre-push. The probe reads the declared format/lint/typecheck commands (`repo-verify-config-lib.sh`), requires each JavaScript tool at `<worktree>/node_modules/.bin/<tool>` (a PATH/global binary never counts), and for ESLint/`next lint` resolves every bare package imported by `eslint.config.*` from the worktree root. It never lints, installs, copies or reads the canonical checkout; results are cached in the worktree's git dir until manifests, lockfiles, config, installed package names or Node change.
+
+| State | Meaning |
+|-------|---------|
+| `ready` | Every declared JavaScript tool can start |
+| `preparation-needed:<reason>` | `node-modules-missing`, `tool-missing-<tool>`, `config-import-unresolved-<pkg>` or `restore-skipped-lock-contention` |
+| `preparing:lock-contention` | A concurrent restore held the lock within the last 120 s (`AIDEVOPS_JS_READINESS_CONTENTION_WINDOW_S`) |
+| `blocked:<reason>` | `snapshot-<reason>` (restore refused, such as `snapshot-controller-not-owner` or `snapshot-byte-budget-exceeded`), `node-missing`, `probe-timeout` or `probe-failed` |
+| `not-applicable:<reason>` | No package.json, Yarn PnP, or no declared JavaScript verification tool (prints nothing) |
+
+Worktree creation still succeeds in every state; the unchanged pre-push gate remains authoritative. Resolve non-ready states with the lockfile install or approved reuse above, then `worktree-js-readiness-helper.sh report <worktree>`.
+
 ## Maintenance and Update Actions
 
 When the user authorizes implementation, return to Build+ with exact files, smallest safe change, rollback, and verification:

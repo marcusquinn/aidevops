@@ -393,7 +393,11 @@ _provision_worktree_node_modules() (
 	declare -F worktree_has_exact_owner_contract >/dev/null 2>&1 || return 1
 	owner=$(check_worktree_owner_snapshot "$wt_path") || return 1
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created owner_start <<<"$owner"
-	[[ "$owner_pid" == "$$" && -n "$owner_start" && -n "$owner_created" ]] || return 1
+	if [[ "$owner_pid" != "$$" || -z "$owner_start" || -z "$owner_created" ]]; then
+		# GH#34199: name the refusal (fixed, path-free) so readiness reports it.
+		printf 'dependency-provision-rejected reason=controller-not-owner\n' >&2
+		return 1
+	fi
 	worktree_has_exact_owner_contract "$wt_path" "$$" "$owner_session" "$owner_task" || return 1
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	validator="$(dirname "${BASH_SOURCE[0]}")/worktree-dependency-provision.py"
@@ -415,6 +419,38 @@ _provision_worktree_node_modules() (
 	return 0
 )
 
+# GH#34199: persist the root restore outcome for the JavaScript readiness
+# probe so a skipped or refused restore is reported, not silently successful.
+_restore_worktree_node_modules_record() {
+	local wt_path="$1"
+	local outcome="$2"
+	local reason="${3:-}"
+	local helper="${SCRIPT_DIR}/worktree-js-readiness-helper.sh"
+	[[ -x "$helper" ]] || return 0
+	"$helper" record-restore "$wt_path" "$outcome" "$reason" >/dev/null 2>&1 || true
+	return 0
+}
+
+# Provision one package directory. Validator stderr is still shown; only the
+# fixed, path-free rejection code is retained for the root package record.
+_restore_worktree_node_modules_one() {
+	local wt_path="$1"
+	local repo_root="$2"
+	local rel="$3"
+	local err="" rc=0 reason="provision-refused"
+	{ err=$(_provision_worktree_node_modules "$wt_path" "$repo_root" "${rel#/}" 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
+	if [[ "$rc" -eq 0 ]]; then
+		[[ -n "$rel" ]] || _restore_worktree_node_modules_record "$wt_path" provisioned
+		return 0
+	fi
+	[[ -z "$err" ]] || printf '%s\n' "$err" >&2
+	if [[ "$err" =~ dependency-provision-rejected\ reason=([a-z0-9-]+) ]]; then
+		reason="${BASH_REMATCH[1]}"
+	fi
+	[[ -n "$rel" ]] || _restore_worktree_node_modules_record "$wt_path" rejected "$reason"
+	return 1
+}
+
 _restore_worktree_node_modules() {
 	local wt_path="$1"
 	local repo_root="$2"
@@ -424,8 +460,12 @@ _restore_worktree_node_modules() {
 
 	local _lock_dir=""
 	_lock_dir=$(_restore_worktree_node_modules_lock_dir)
-	if ! _restore_worktree_node_modules_acquire_lock "$_lock_dir"; then
+	# One bounded re-attempt after the existing wait; contention is then
+	# recorded so readiness reports preparing:lock-contention, not success.
+	if ! _restore_worktree_node_modules_acquire_lock "$_lock_dir" &&
+		! _restore_worktree_node_modules_acquire_lock "$_lock_dir"; then
 		print_warning "Skipping node_modules restore for ${wt_path}: another restore is active"
+		_restore_worktree_node_modules_record "$wt_path" contention
 		return 0
 	fi
 
@@ -442,16 +482,38 @@ _restore_worktree_node_modules() {
 		_rel="${_pdir#"$wt_path"}"
 		local _src="${repo_root}${_rel}/node_modules"
 		local _dst="${wt_path}${_rel}/node_modules"
+		[[ -d "$_src" && ! -d "$_dst" ]] || continue
 		# Only a package-local package-lock.json or pnpm-lock.yaml can pass the
 		# validator; skip guaranteed rejections instead of holding the lock.
-		if [[ -d "$_src" && ! -d "$_dst" ]] &&
-			[[ -f "${_pdir}/package-lock.json" || -f "${_pdir}/pnpm-lock.yaml" ]]; then
-			if _provision_worktree_node_modules "$wt_path" "$repo_root" "${_rel#/}"; then
+		if [[ -f "${_pdir}/package-lock.json" || -f "${_pdir}/pnpm-lock.yaml" ]]; then
+			if _restore_worktree_node_modules_one "$wt_path" "$repo_root" "$_rel"; then
 				_restored=$((_restored + 1))
 			fi
+		elif [[ -z "$_rel" ]]; then
+			_restore_worktree_node_modules_record "$wt_path" rejected unsupported-lockfile
 		fi
 	done < <(find "$wt_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
 	_restore_worktree_node_modules_release_lock "$_lock_dir"
+	return 0
+}
+
+# GH#34199: report whether the declared JavaScript verification tools can
+# start in the new worktree. Read-only and bounded; never changes the exit
+# status of worktree creation.
+_print_worktree_js_readiness() {
+	local wt_path="$1"
+	local helper="${SCRIPT_DIR}/worktree-js-readiness-helper.sh"
+	local report="" line=""
+	[[ -x "$helper" && -d "$wt_path" ]] || return 0
+	report=$("$helper" report "$wt_path" 2>/dev/null) || return 0
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		if [[ "$line" == "JS_TOOL_READINESS=ready"* ]]; then
+			print_info "$line"
+		else
+			print_warning "$line"
+		fi
+	done <<<"$report"
 	return 0
 }
 
@@ -1397,6 +1459,7 @@ cmd_add() {
 	_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
 	_restore_worktree_node_modules "$path" "$_repo_root"
 	_bootstrap_aidevops_worktree_js_deps "$path"
+	_print_worktree_js_readiness "$path"
 
 	# t2885: exclude the new worktree from macOS Spotlight + Time Machine.
 	# Worktrees are ephemeral — persistent state lives on the git remote.
