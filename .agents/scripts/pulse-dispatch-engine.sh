@@ -1344,7 +1344,7 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	local stage_timeout="${1:-${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}}"
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 
-	local lockdir state_file
+	local lockdir="" state_file=""
 	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
 	state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
 	if ! _pulse_acquire_post_dispatch_housekeeping_lock "$lockdir"; then
