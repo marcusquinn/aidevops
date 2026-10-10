@@ -61,6 +61,8 @@ trap 'rm -rf "$TEST_TMPDIR"' EXIT
 LOGFILE="${TEST_TMPDIR}/pulse.log"
 : >"$LOGFILE"
 export LOGFILE
+# GH#34299: keep the single-pass resume cursor out of the real state dir.
+export AIDEVOPS_RECONCILE_SP_CURSOR_FILE="${TEST_TMPDIR}/reconcile-single-pass.cursor"
 
 # Fake repos.json — one pulse-enabled repo
 REPOS_JSON="${TEST_TMPDIR}/repos.json"

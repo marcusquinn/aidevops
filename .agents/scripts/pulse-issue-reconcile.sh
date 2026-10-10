@@ -243,6 +243,9 @@ source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-parent.sh"
 # shellcheck source=./pulse-issue-reconcile-close.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-close.sh"
+# shellcheck source=./pulse-issue-reconcile-cursor.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-cursor.sh"
 
 #######################################
 # (Phase 12 helper) Assign runner to orphaned active issues.
@@ -1443,6 +1446,9 @@ _pir_reconcile_slug() {
 		] | join("|")
 	') || issues_tsv=""
 	[[ -n "$issues_tsv" ]] || return 0
+	# GH#34299: fast-forward the cursor slug to the issue a prior pass stopped at.
+	local _sp_seek_issue="" _sp_skip_seek_issue=0
+	_pir_sp_cursor_seek_for_slug "$slug" "$issues_tsv"
 
 	# t2985: one merged-PR prefetch per repo; empty lookup defers stage 3 closes.
 	local oimp_lookup=""
@@ -1489,13 +1495,25 @@ _pir_reconcile_issue_rows() {
 		issue_author_association issue_author_login_b64 issue_author_type issue_author_is_bot; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
+		# GH#34299: skip issues a prior pass already covered on this slug.
+		local _sp_attempts=0
+		if [[ -n "${_sp_seek_issue:-}" ]]; then
+			[[ "$issue_num" == "$_sp_seek_issue" ]] || continue
+			_sp_seek_issue=""
+			[[ "${_sp_skip_seek_issue:-0}" -eq 1 ]] && continue
+			_sp_attempts=$((${_sp_cursor_attempts:-0} + 1))
+		fi
+
 		# t2984: per-issue budget gate (cheap — uses Bash builtin SECONDS)
 		if [[ "$_t2984_budget" -gt 0 ]]; then
 			if [[ $((SECONDS - _t2984_start_ts)) -ge "$_t2984_budget" ]]; then
 				_t2984_aborted=1
+				_pir_sp_cursor_write "$slug" "$issue_num" 0
 				return 0
 			fi
 		fi
+		# Record the in-flight issue so a stage-timeout kill resumes here.
+		_pir_sp_cursor_write "$slug" "$issue_num" "$_sp_attempts"
 
 		local issue_title="" issue_body="" issue_author_login=""
 		if [[ -n "$issue_title_b64" ]]; then
@@ -1666,6 +1684,11 @@ reconcile_issues_single_pass() {
 			"$cpt_max_repair_repo_scans" "$cpt_max_repair_candidates"
 		cpt_total_reopened="$_PIR_RECENT_PARENT_CYCLE_REOPENED"
 	fi
+	# GH#34299: resume where the previous aborted or killed pass stopped.
+	local _sp_cursor_file="" _sp_cursor_slug="" _sp_cursor_issue="" _sp_cursor_attempts=0
+	_pir_sp_cursor_load
+	local _sp_slugs=""
+	_sp_slugs=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 	local slug=""
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -1673,12 +1696,16 @@ reconcile_issues_single_pass() {
 		if [[ "$_t2984_budget" -gt 0 ]]; then
 			if [[ $((SECONDS - _t2984_start_ts)) -ge "$_t2984_budget" ]]; then
 				_t2984_aborted=1
+				_pir_sp_cursor_write "$slug" "" 0
 				break
 			fi
 		fi
+		# The resume slug keeps its issue position until its rows are reached.
+		[[ "$slug" == "${_sp_cursor_slug:-}" ]] || _pir_sp_cursor_write "$slug" "" 0
 		_pir_reconcile_slug "$slug" "$_slug_start"
 		[[ "$_t2984_aborted" -eq 1 ]] && break
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	done < <(_pir_sp_rotate_slugs "$_sp_slugs")
+	[[ "$_t2984_aborted" -eq 1 ]] || _pir_sp_cursor_clear
 	_pir_finish_reconcile_cycle
 	return 0
 }
