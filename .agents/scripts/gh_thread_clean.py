@@ -80,35 +80,47 @@ def author_login(item):
     return None
 
 
+def thread_comments(data):
+    """Emit the thread body when present and return its comment records."""
+    if isinstance(data, dict):
+        if 'body' in data:
+            emit_record('Body', data.get('body'))
+        return list_records(data.get('comments') or data.get('nodes'))
+    if isinstance(data, list):
+        return list_records(data)
+    return []
+
+
+def is_code_scanning_onboarding(author, raw_body):
+    # Check the original body so generic cleaning cannot erase extra findings
+    # and accidentally turn a mixed security comment into onboarding-only noise.
+    if author != 'github-advanced-security[bot]':
+        return False
+    return CODE_SCANNING_ONBOARDING.fullmatch(str(raw_body or '').strip()) is not None
+
+
+def comment_text(item):
+    """Return the cleaned comment body, or '' when the comment is noise."""
+    if is_code_scanning_onboarding(author_login(item), item.get('body')):
+        return ''
+    body = clean_body(item.get('body', ''))
+    if BOT_STATUS.search(body) and not re.search(r'\b[\w./-]+:\d+\b', body):
+        return ''
+    return body
+
+
 def main(path):
     with open(path, encoding='utf-8', errors='replace') as handle:
         raw = handle.read()
     if not raw.strip():
         return 0
-    data = json.loads(raw)
-    if isinstance(data, dict):
-        if 'body' in data:
-            emit_record('Body', data.get('body'))
-        comments = list_records(data.get('comments') or data.get('nodes'))
-    elif isinstance(data, list):
-        comments = list_records(data)
-    else:
-        comments = []
-
+    comments = thread_comments(json.loads(raw))
     for index, item in enumerate(comments, 1):
         if not isinstance(item, dict):
             continue
-        author = author_login(item)
-        # Check the original body so generic cleaning cannot erase extra findings
-        # and accidentally turn a mixed security comment into onboarding-only noise.
-        if author == 'github-advanced-security[bot]' and CODE_SCANNING_ONBOARDING.fullmatch(str(item.get('body') or '').strip()):
-            continue
-        body = clean_body(item.get('body', ''))
-        if not body:
-            continue
-        if BOT_STATUS.search(body) and not re.search(r'\b[\w./-]+:\d+\b', body):
-            continue
-        emit_record(f'Comment {index} ({author or "unknown"})', body)
+        body = comment_text(item)
+        if body:
+            emit_record(f'Comment {index} ({author_login(item) or "unknown"})', body)
     return 0
 
 
