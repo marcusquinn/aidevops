@@ -115,6 +115,30 @@ _sum_issue_token_spend() {
 		 | fromdateiso8601] | max // 0
 	' 2>/dev/null) || return 1
 
+	# GH#34248: GitHub can omit cross-reference events for delivered partial PRs.
+	# Closeout markers supply candidates only; verify each PR through REST before
+	# treating its actual merge time as a checkpoint. Never reset from prose alone.
+	local candidates pr_number pr_json merge_epoch
+	candidates=$(printf '%s' "$comments_json" | jq -r '
+		[.[][] | select(.author_association == "OWNER" or
+			.author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		 | (.body // "") | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->") | .[0]]
+		 | unique[]
+	' 2>/dev/null) || return 1
+	while IFS= read -r pr_number; do
+		[[ -n "$pr_number" ]] || continue
+		pr_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+		merge_epoch=$(printf '%s' "$pr_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
+			select(.base.repo.full_name == $repo)
+			| select(((.title // "") + "\n" + (.body // ""))
+				| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
+			| .merged_at // empty | fromdateiso8601
+		' 2>/dev/null) || return 1
+		if [[ -n "$merge_epoch" && "$merge_epoch" -gt "$checkpoint_epoch" ]]; then
+			checkpoint_epoch="$merge_epoch"
+		fi
+	done <<<"$candidates"
+
 	# Extract comment bodies, excluding interactive-session signature footers and
 	# comments predating the latest approval, cost reset marker or merged checkpoint.
 	# Interactive footers are maintainer triage/review activity that should
@@ -139,6 +163,9 @@ _sum_issue_token_spend() {
 		|
 		.[]
 		| select((.body // "") | contains("with the user in an interactive session") | not)
+		# Closeouts copy PR summaries (including prior worker footers); they are
+		# delivery receipts, not additional worker attempts or token spend.
+		| select((.body // "") | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->") | not)
 		| select(($reset_epoch == 0) or (epoch > $reset_epoch))
 		| .body // empty
 	' 2>/dev/null) || return 1

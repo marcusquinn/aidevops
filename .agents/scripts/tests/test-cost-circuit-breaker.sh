@@ -66,6 +66,7 @@ mkdir -p "$STUB_DIR"
 FIXTURE_ISSUE_JSON="${TEST_ROOT}/fixture-issue.json"
 FIXTURE_COMMENTS_JSON="${TEST_ROOT}/fixture-comments.json"
 FIXTURE_TIMELINE_JSON="${TEST_ROOT}/fixture-timeline.json"
+FIXTURE_PR_JSON="${TEST_ROOT}/fixture-pr.json"
 FIXTURE_STATUS_JSON="${TEST_ROOT}/fixture-status.json"
 cat >"$FIXTURE_STATUS_JSON" <<'STATUS'
 {"data":{"repository":{
@@ -113,6 +114,10 @@ if [[ "\$1" == "api" ]]; then
 	fi
 	if [[ "\$2" == "repos/"*"/issues/"*"/timeline" ]]; then
 		jq -s '.' "${FIXTURE_TIMELINE_JSON}" 2>/dev/null || exit 1
+		exit 0
+	fi
+	if [[ "\$2" == "repos/"*"/pulls/"* ]]; then
+		cat "${FIXTURE_PR_JSON}" 2>/dev/null || exit 1
 		exit 0
 	fi
 	if [[ "\$2" == "user" ]]; then
@@ -544,6 +549,34 @@ if [[ "$rc" -eq 1 && -z "$output" ]]; then
 else
 	print_result "timeline lookup/parse failure stays fail-open" 1 "(rc=$rc output='$output')"
 fi
+
+# Missing timeline references must not erase independently verified delivery.
+printf '[]' >"$FIXTURE_TIMELINE_JSON"
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[{"created_at":"2026-05-03T19:00:00Z","body":"spent 700000 tokens"}]
+[{"created_at":"2026-05-03T19:26:00Z","author_association":"COLLABORATOR","body":"<!-- PARTIAL_PARENT_CLOSEOUT:PR#42 -->\nCopied summary: spent 700000 tokens"},
+ {"created_at":"2026-05-03T19:30:00Z","body":"spent 300000 tokens"}]
+JSON
+cat >"$FIXTURE_PR_JSON" <<'JSON'
+{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18013","merged_at":"2026-05-03T19:25:00Z"}
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+[[ "$sum_output" == "300000|1" ]]
+print_result "verified closeout resets missing timeline; copied footer is not spend" "$?" "(got: '$sum_output')"
+
+for invalid_pr in \
+	'{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18013","merged_at":null}' \
+	'{"base":{"repo":{"full_name":"other/repo"}},"body":"For #18013","merged_at":"2026-05-03T19:25:00Z"}' \
+	'{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #180130","merged_at":"2026-05-03T19:25:00Z"}'; do
+	printf '%s' "$invalid_pr" >"$FIXTURE_PR_JSON"
+	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+	[[ "$sum_output" == "1000000|2" ]]
+	print_result "unverified closeout does not reset budget" "$?" "(got: '$sum_output')"
+done
+printf 'not-valid-json' >"$FIXTURE_PR_JSON"
+run_check_cost_budget 18013 "owner/repo" "standard"
+[[ "$rc" -eq 1 && -z "$output" ]]
+print_result "closeout PR parse failure stays fail-open" "$?"
 
 export PATH="$OLD_PATH"
 
