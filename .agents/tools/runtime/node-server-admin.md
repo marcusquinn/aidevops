@@ -90,7 +90,25 @@ Heap snapshots, CPU profiles, diagnostic reports, and traces can pause a process
 
 A fresh linked worktree has no `node_modules/`, so a declared lint gate can fail to start (`eslint: command not found`, or `Cannot find package '<plugin>' imported from …/eslint.config.js`). `repo-verify-pre-push.sh` reports that as unavailable tooling, not a source defect; the gate stays blocked until the unchanged command runs and passes. A global `eslint` binary is insufficient when the flat config imports plugins.
 
-Default: install with the project package manager and frozen lockfile, with download approval. Interactive sessions may instead reuse an existing install only on explicit user approval, after verifying: approved real paths inside the user's own project boundary; matching linter/plugin versions and byte-identical lint config; no existing worktree `node_modules/`; and `git check-ignore` coverage. Create a real `node_modules/` directory and symlink only the required read-only packages (`.bin`, linter, plugins, `globals`) into it. Never symlink `node_modules` itself, because a directory-only ignore such as `node_modules/` may not ignore a symlink. Never mutate the shared install, auto-link, alter config or lockfiles, bypass the hook, or treat a dirty-worktree skip as verification. Headless workers never cross project boundaries for tooling (GH#31880).
+Default: a durable owner-approved install policy (below), so unchanged projects need no per-session approval. Without a policy, install with the project package manager and frozen lockfile, with download approval. As a one-off fallback, interactive sessions may reuse an existing install only on explicit user approval, after verifying: approved real paths inside the user's own project boundary; matching linter/plugin versions and byte-identical lint config; no existing worktree `node_modules/`; and `git check-ignore` coverage. Create a real `node_modules/` directory and symlink only the required read-only packages (`.bin`, linter, plugins, `globals`) into it. Never symlink `node_modules` itself, because a directory-only ignore such as `node_modules/` may not ignore a symlink. Never mutate the shared install, auto-link, alter config or lockfiles, bypass the hook, or treat a dirty-worktree skip as verification. Headless workers never cross project boundaries for tooling (GH#31880).
+
+### Durable worktree install policy
+
+`worktree-js-readiness-helper.sh approve <repo-or-worktree>` (interactive only; refused when any headless/worker marker is set) records the owner's decision once in the repo's `~/.config/aidevops/repos.json` entry, which stays local and private (GH#34200). The entry is written under the repos.json lock via temp file and `mv`, and the file mode is preserved:
+
+```json
+"js_dependency_policy": {"approved_at": "<UTC ISO-8601>", "lockfile_sha256": "<hex>", "package_manager": "npm|pnpm|yarn|yarn-berry|bun", "node_major": "<major>|none", "scope": "worktree-install"}
+```
+
+`status <repo-or-worktree>` prints the policy, its staleness (`current`, `stale-lockfile`, `stale-package-manager`, `stale-node-major`, `stale-scope`, `unsupported-package-manager`) and the current identity. `revoke` deletes the field. Without the field, behaviour is unchanged.
+
+`worktree-helper.sh add` runs `prepare` for every non-aidevops project; for worker worktrees this happens on the controller, before launch. The aidevops repo keeps its built-in Bun bootstrap. `prepare` installs only when all of these hold:
+
+- Leaf A reports `preparation-needed:*` or a content/budget `blocked:snapshot-*` refusal. Ownership and structure refusals are never routed around.
+- The policy matches the worktree's single lockfile hash, the package manager (including a non-conflicting `packageManager`) and the active Node major.
+- `node_modules` is absent and Git-ignored, and the tree is tracked-clean.
+
+It then holds the restore lock and runs `npm ci --ignore-scripts`, `pnpm install --frozen-lockfile --ignore-scripts`, `yarn install --frozen-lockfile --ignore-scripts`, `YARN_ENABLE_SCRIPTS=false yarn install --immutable` (Berry) or `bun install --frozen-lockfile --ignore-scripts`. Every run sets `npm_config_ignore_scripts=true`, unsets `NODE_OPTIONS` and is bounded by `AIDEVOPS_JS_POLICY_INSTALL_TIMEOUT_S` (default 300 s). Afterwards it re-probes. A ready worktree is never reinstalled. If any Git-visible change appears, `node_modules` is removed, tracked files are restored, and the result is `blocked:install-mutated-tree`. On failure or timeout, the partial `node_modules` is removed. An interrupted install's own leftovers are removed before the next retry; foreign `node_modules` is never touched.
 
 ### Linked-worktree tooling readiness
 
@@ -101,10 +119,10 @@ Default: install with the project package manager and frozen lockfile, with down
 | `ready` | Every declared JavaScript tool can start |
 | `preparation-needed:<reason>` | `node-modules-missing`, `tool-missing-<tool>`, `config-import-unresolved-<pkg>` or `restore-skipped-lock-contention` |
 | `preparing:lock-contention` | A concurrent restore held the lock within the last 120 s (`AIDEVOPS_JS_READINESS_CONTENTION_WINDOW_S`) |
-| `blocked:<reason>` | `snapshot-<reason>` (restore refused, such as `snapshot-controller-not-owner` or `snapshot-byte-budget-exceeded`), `node-missing`, `probe-timeout` or `probe-failed` |
+| `blocked:<reason>` | `snapshot-<reason>` (restore refused, such as `snapshot-controller-not-owner` or `snapshot-byte-budget-exceeded`), `node-missing`, `probe-timeout` or `probe-failed`; policy install: `policy-stale`, `unsupported-package-manager`, `package-manager-missing`, `existing-node-modules`, `node-modules-not-ignored`, `dirty-worktree`, `install-failed`, `install-timeout` or `install-mutated-tree` |
 | `not-applicable:<reason>` | No package.json, Yarn PnP, or no declared JavaScript verification tool (prints nothing) |
 
-Worktree creation still succeeds in every state; the unchanged pre-push gate remains authoritative. Resolve non-ready states with the lockfile install or approved reuse above, then `worktree-js-readiness-helper.sh report <worktree>`.
+Worktree creation still succeeds in every state; the unchanged pre-push gate remains authoritative. Non-ready reports name the exact install command and `approve <worktree>`. Resolve with the policy, the lockfile install or approved reuse above, then `worktree-js-readiness-helper.sh report <worktree>`.
 
 ## Maintenance and Update Actions
 

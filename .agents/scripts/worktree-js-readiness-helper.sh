@@ -10,14 +10,22 @@
 # tool binaries and, for ESLint/Next, that every bare package imported by the
 # flat config resolves from the worktree root.
 #
-# It never runs a linter, never installs or copies dependencies, never reads
-# the canonical checkout, and never accepts a PATH/global binary as ready.
+# The probe never runs a linter, never installs or copies dependencies, never
+# reads the canonical checkout, and never accepts a PATH/global binary as ready.
+#
+# GH#34200: `prepare` (called by worktree-helper.sh add) runs a frozen-lockfile,
+# lifecycle-scripts-disabled install into the worktree's own node_modules only
+# when the owner recorded a durable approval (`approve`, interactive only) in
+# the repo's repos.json entry (`js_dependency_policy`) and its lockfile hash,
+# package manager and Node major still match.
 #
 # Usage:
 #   worktree-js-readiness-helper.sh probe <worktree> [--json] [--no-cache]
 #   worktree-js-readiness-helper.sh report <worktree>
 #   worktree-js-readiness-helper.sh entry <worktree> <session-key>
 #   worktree-js-readiness-helper.sh record-restore <worktree> <outcome> [reason]
+#   worktree-js-readiness-helper.sh prepare <worktree> [--lock-held]
+#   worktree-js-readiness-helper.sh approve|revoke|status <repo-or-worktree>
 #
 # States:
 #   ready                        every declared JS tool can start
@@ -28,7 +36,9 @@
 #
 # State files (untracked, inside the worktree's own git dir, removed with the
 # worktree): aidevops/js-readiness.json (cache), aidevops/js-restore.json
-# (last restore outcome), aidevops/js-readiness-entry (last reported session).
+# (last restore outcome), aidevops/js-readiness-entry (last reported session),
+# aidevops/js-prepare.json (last policy install outcome) and
+# aidevops/js-install-partial (marks an install in progress or interrupted).
 # =============================================================================
 
 set -euo pipefail
@@ -41,7 +51,13 @@ source "${SCRIPT_DIR}/repo-verify-config-lib.sh"
 
 : "${AIDEVOPS_JS_READINESS_PROBE_TIMEOUT_S:=10}"
 : "${AIDEVOPS_JS_READINESS_CONTENTION_WINDOW_S:=120}"
+: "${AIDEVOPS_JS_POLICY_INSTALL_TIMEOUT_S:=300}"
 readonly JSR_SCHEMA=1
+readonly JSR_POLICY_SCOPE="worktree-install"
+# Snapshot refusals about controller authority or worktree structure; a
+# lockfile install must never route around them.
+readonly JSR_NO_INSTALL_SNAPSHOT_REASONS=" controller-not-owner owner-contract-changed foreign-repository not-linked-worktree not-repository-root symlink-component "
+readonly JSR_PREPARE_NEEDS_LOCK=3
 readonly JSR_MAX_SPECIFIERS=64
 readonly JSR_JS_TOOLS=" eslint next biome oxlint prettier tsc vue-tsc tsgo xo standard stylelint svelte-check astro "
 readonly JSR_LOCKFILES="package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb"
@@ -53,6 +69,10 @@ readonly JSR_DOC_REF='tools/runtime/node-server-admin.md "Linked-worktree toolin
 JSR_STATE=""
 JSR_TOOLS=""
 JSR_CACHED=0
+JSR_PM=""
+JSR_LOCK_SHA=""
+JSR_POLICY_STATUS=""
+JSR_ARGV=()
 
 _jsr_usage() {
 	cat <<'USAGE'
@@ -61,6 +81,8 @@ Usage:
   worktree-js-readiness-helper.sh report <worktree>
   worktree-js-readiness-helper.sh entry <worktree> <session-key>
   worktree-js-readiness-helper.sh record-restore <worktree> contention|rejected|provisioned [reason]
+  worktree-js-readiness-helper.sh prepare <worktree> [--lock-held]
+  worktree-js-readiness-helper.sh approve|revoke|status <repo-or-worktree>
 USAGE
 	return 0
 }
@@ -134,9 +156,11 @@ _jsr_input_key() {
 	if [[ -d "${wt}/node_modules" ]]; then
 		manifest+="node_modules $(_jsr_installed_names "${wt}/node_modules" | _jsr_sha256)"$'\n'
 	fi
-	if [[ -f "${state_dir}/js-restore.json" ]]; then
-		manifest+="restore $(_jsr_sha256 <"${state_dir}/js-restore.json")"$'\n'
-	fi
+	for name in js-restore.json js-prepare.json; do
+		if [[ -f "${state_dir}/${name}" ]]; then
+			manifest+="${name} $(_jsr_sha256 <"${state_dir}/${name}")"$'\n'
+		fi
+	done
 	node_version=$(node --version 2>/dev/null || printf 'absent')
 	manifest+="node ${node_version} $(command -v node 2>/dev/null || true)"$'\n'
 	manifest+="schema ${JSR_SCHEMA}"
@@ -316,6 +340,28 @@ _jsr_apply_restore_outcome() {
 	return 0
 }
 
+# GH#34200: a refused policy install explains a still-missing tool, but only
+# for the lockfile it was evaluated against; never overrides preparing:*.
+_jsr_apply_prepare_outcome() {
+	local wt="$1"
+	local state_dir="$2"
+	local record="${state_dir}/js-prepare.json"
+	local outcome="" reason="" lock=""
+	[[ -n "$state_dir" && -f "$record" ]] || return 0
+	case "$JSR_STATE" in
+	preparation-needed:* | blocked:snapshot-*) ;;
+	*) return 0 ;;
+	esac
+	outcome=$(jq -r '.outcome // empty' "$record" 2>/dev/null || true)
+	reason=$(jq -r '.reason // empty' "$record" 2>/dev/null || true)
+	lock=$(jq -r '.lockfile_sha256 // empty' "$record" 2>/dev/null || true)
+	[[ "$outcome" == blocked && "$reason" =~ ^[a-z0-9-]{1,64}$ ]] || return 0
+	_jsr_lock_identity "$wt" || JSR_LOCK_SHA=""
+	[[ "$lock" == "$JSR_LOCK_SHA" ]] || return 0
+	JSR_STATE="blocked:${reason}"
+	return 0
+}
+
 # Compute JSR_STATE/JSR_TOOLS without a cache. Runs in the current shell so
 # repo-verify detection globals stay available.
 _jsr_compute() {
@@ -350,12 +396,14 @@ _jsr_compute() {
 	if [[ ! -d "${wt}/node_modules" ]]; then
 		JSR_STATE="$JSR_NODE_MODULES_MISSING"
 		_jsr_apply_restore_outcome "$state_dir"
+		_jsr_apply_prepare_outcome "$wt" "$state_dir"
 		return 0
 	fi
 	for tool in $JSR_TOOLS; do
 		tool_state=$(_jsr_tool_state "$wt" "$tool")
 		if [[ -n "$tool_state" ]]; then
 			JSR_STATE="$tool_state"
+			_jsr_apply_prepare_outcome "$wt" "$state_dir"
 			return 0
 		fi
 	done
@@ -406,19 +454,315 @@ _jsr_probe() {
 	return 0
 }
 
+# --- GH#34200: durable owner-approved install policy -------------------------
+
+# Package-manager identity of a tree: exactly one supported lockfile and no
+# conflicting packageManager field. Sets JSR_PM and JSR_LOCK_SHA.
+_jsr_lock_identity() {
+	local dir="$1"
+	local name="" found="" count=0 declared=""
+	JSR_PM=""
+	JSR_LOCK_SHA=""
+	for name in $JSR_LOCKFILES; do
+		if [[ -f "${dir}/${name}" ]]; then
+			found="$name"
+			count=$((count + 1))
+		fi
+	done
+	[[ "$count" -eq 1 ]] || return 1
+	case "$found" in
+	package-lock.json | npm-shrinkwrap.json) JSR_PM="npm" ;;
+	pnpm-lock.yaml) JSR_PM="pnpm" ;;
+	yarn.lock) JSR_PM="yarn" ;;
+	*) JSR_PM="bun" ;;
+	esac
+	declared=$(jq -r '.packageManager // empty | strings' "${dir}/package.json" 2>/dev/null || true)
+	if [[ -n "$declared" && "${declared%%@*}" != "$JSR_PM" ]]; then
+		JSR_PM=""
+		return 1
+	fi
+	local berry_re='^yarn@([2-9]|[1-9][0-9])'
+	if [[ "$JSR_PM" == yarn ]] && [[ -f "${dir}/.yarnrc.yml" || "$declared" =~ $berry_re ]]; then
+		JSR_PM="yarn-berry"
+	fi
+	JSR_LOCK_SHA=$(_jsr_sha256 <"${dir}/${found}")
+	return 0
+}
+
+# Frozen-lockfile, lifecycle-scripts-disabled argv for JSR_PM (JSR_ARGV).
+# Yarn Berry has no --ignore-scripts; YARN_ENABLE_SCRIPTS=false is always set.
+_jsr_install_argv() {
+	case "$JSR_PM" in
+	npm) JSR_ARGV=(npm ci --ignore-scripts) ;;
+	pnpm) JSR_ARGV=(pnpm install --frozen-lockfile --ignore-scripts) ;;
+	yarn) JSR_ARGV=(yarn install --frozen-lockfile --ignore-scripts) ;;
+	yarn-berry) JSR_ARGV=(yarn install --immutable) ;;
+	bun) JSR_ARGV=(bun install --frozen-lockfile --ignore-scripts) ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
 _jsr_install_command() {
 	local wt="$1"
-	if [[ -f "${wt}/bun.lock" || -f "${wt}/bun.lockb" ]]; then
-		printf 'bun install --frozen-lockfile'
-	elif [[ -f "${wt}/pnpm-lock.yaml" ]]; then
-		printf 'pnpm install --frozen-lockfile'
-	elif [[ -f "${wt}/yarn.lock" ]]; then
-		printf 'yarn install --frozen-lockfile'
-	elif [[ -f "${wt}/package-lock.json" || -f "${wt}/npm-shrinkwrap.json" ]]; then
-		printf 'npm ci'
-	else
-		printf 'npm install'
+	if ! _jsr_lock_identity "$wt" || ! _jsr_install_argv; then
+		printf 'one supported lockfile with a frozen install and lifecycle scripts disabled'
+		return 0
 	fi
+	[[ "$JSR_PM" != yarn-berry ]] || printf 'YARN_ENABLE_SCRIPTS=false '
+	printf '%s' "${JSR_ARGV[*]}"
+	return 0
+}
+
+_jsr_node_major() {
+	local version=""
+	version=$(node --version 2>/dev/null || true)
+	version="${version#v}"
+	version="${version%%.*}"
+	[[ "$version" =~ ^[0-9]+$ ]] || version="none"
+	printf '%s\n' "$version"
+	return 0
+}
+
+_jsr_manager_bin() {
+	local name="$1"
+	local bin=""
+	bin=$(command -v "$name" 2>/dev/null || true)
+	if [[ -z "$bin" && "$name" == bun && -n "${HOME:-}" && -x "${HOME}/.bun/bin/bun" ]]; then
+		bin="${HOME}/.bun/bin/bun"
+	fi
+	[[ -n "$bin" ]] || return 1
+	printf '%s\n' "$bin"
+	return 0
+}
+
+# Policy writes are owner decisions; refuse every headless/worker context.
+_jsr_is_headless() {
+	local marker="" lower=""
+	for marker in "${AIDEVOPS_HEADLESS:-}" "${FULL_LOOP_HEADLESS:-}" "${OPENCODE_HEADLESS:-}" \
+		"${CLAUDE_HEADLESS:-}" "${HEADLESS:-}" "${GITHUB_ACTIONS:-}"; do
+		lower=$(printf '%s' "$marker" | tr '[:upper:]' '[:lower:]')
+		case "$lower" in
+		1 | true | yes | on) return 0 ;;
+		esac
+	done
+	[[ -z "${WORKER_ISSUE_NUMBER:-}${WORKER_TASK_NUMBER:-}${WORKER_WORKTREE_PATH:-}" ]] || return 0
+	return 1
+}
+
+_jsr_repos_file() {
+	printf '%s\n' "${AIDEVOPS_REPOS_FILE:-${HOME:+$HOME/.config/aidevops/repos.json}}"
+	return 0
+}
+
+# Canonical checkout path of a repository or linked worktree, derived from
+# Git metadata only (no canonical file is read). It keys the repos.json entry.
+_jsr_canonical_root() {
+	local dir="$1"
+	local common=""
+	common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ -n "$common" && "${common##*/}" == ".git" ]] || return 1
+	printf '%s\n' "${common%/.git}"
+	return 0
+}
+
+_jsr_tilde_path() {
+	local path="$1"
+	if [[ -n "${HOME:-}" && "$path" == "${HOME}/"* ]]; then
+		# Literal "~/" form, as some repos.json entries store it (not expanded).
+		printf '%s/%s\n' '~' "${path#"${HOME}/"}"
+	else
+		printf '%s\n' "$path"
+	fi
+	return 0
+}
+
+_jsr_policy_get() {
+	local canon="$1"
+	local repos_file="" tilde=""
+	repos_file=$(_jsr_repos_file)
+	[[ -n "$repos_file" && -f "$repos_file" ]] || return 0
+	tilde=$(_jsr_tilde_path "$canon")
+	jq -c --arg p "$canon" --arg t "$tilde" \
+		'first(.initialized_repos[]? | select(.path == $p or .path == $t) | .js_dependency_policy // empty | objects) // empty' \
+		"$repos_file" 2>/dev/null || true
+	return 0
+}
+
+# Set (policy JSON) or delete ("null") js_dependency_policy on the repo entry,
+# reusing repo-verify's repos.json lock + temp file + mode-preserving mv.
+# Returns 2 when the repository is not registered.
+_jsr_policy_write() {
+	local canon="$1"
+	local policy="$2"
+	local repos_file="" tilde="" temp_file="" rc=0
+	repos_file=$(_jsr_repos_file)
+	[[ -n "$repos_file" && -f "$repos_file" ]] || return 2
+	tilde=$(_jsr_tilde_path "$canon")
+	jq -e --arg p "$canon" --arg t "$tilde" 'any(.initialized_repos[]?; .path == $p or .path == $t)' \
+		"$repos_file" >/dev/null 2>&1 || return 2
+	_repo_verify_lock_acquire "$repos_file" || return 1
+	temp_file=$(mktemp "${repos_file}.tmp.XXXXXX") || {
+		_repo_verify_lock_release
+		return 1
+	}
+	if jq --arg p "$canon" --arg t "$tilde" --argjson policy "$policy" '
+		.initialized_repos = [(.initialized_repos // [])[] |
+			if (.path == $p or .path == $t) then
+				(if $policy == null then del(.js_dependency_policy) else .js_dependency_policy = $policy end)
+			else . end]' "$repos_file" >"$temp_file"; then
+		_repo_verify_preserve_mode "$repos_file" "$temp_file"
+		mv -f "$temp_file" "$repos_file" || rc=1
+	else
+		rm -f "$temp_file"
+		rc=1
+	fi
+	_repo_verify_lock_release
+	return "$rc"
+}
+
+# JSR_POLICY_STATUS: none | current | unsupported-package-manager |
+# stale-scope | stale-package-manager | stale-lockfile | stale-node-major
+_jsr_policy_evaluate() {
+	local dir="$1"
+	local policy="$2"
+	JSR_POLICY_STATUS="none"
+	[[ -n "$policy" ]] || return 0
+	if ! _jsr_lock_identity "$dir"; then
+		JSR_POLICY_STATUS="unsupported-package-manager"
+	elif [[ "$(jq -r '.scope // empty' <<<"$policy")" != "$JSR_POLICY_SCOPE" ]]; then
+		JSR_POLICY_STATUS="stale-scope"
+	elif [[ "$(jq -r '.package_manager // empty' <<<"$policy")" != "$JSR_PM" ]]; then
+		JSR_POLICY_STATUS="stale-package-manager"
+	elif [[ "$(jq -r '.lockfile_sha256 // empty' <<<"$policy")" != "$JSR_LOCK_SHA" ]]; then
+		JSR_POLICY_STATUS="stale-lockfile"
+	elif [[ "$(jq -r '.node_major // empty | tostring' <<<"$policy")" != "$(_jsr_node_major)" ]]; then
+		JSR_POLICY_STATUS="stale-node-major"
+	else
+		JSR_POLICY_STATUS="current"
+	fi
+	return 0
+}
+
+_jsr_record_prepare() {
+	local state_dir="$1"
+	local outcome="$2"
+	local reason="${3:-}"
+	local command="${4:-}"
+	local content=""
+	content=$(jq -cn --arg outcome "$outcome" --arg reason "$reason" --arg command "$command" \
+		--arg lock "$JSR_LOCK_SHA" --argjson at "$(date +%s)" \
+		'{schema:1,outcome:$outcome,reason:$reason,command:$command,lockfile_sha256:$lock,at:$at}')
+	_jsr_write_atomic "${state_dir}/js-prepare.json" "$content" || true
+	return 0
+}
+
+# Only missing dependencies or a content/budget snapshot refusal qualify.
+_jsr_install_eligible() {
+	local reason=""
+	case "$JSR_STATE" in
+	preparation-needed:*) return 0 ;;
+	blocked:snapshot-*)
+		reason="${JSR_STATE#blocked:snapshot-}"
+		[[ "$JSR_NO_INSTALL_SNAPSHOT_REASONS" == *" ${reason} "* ]] || return 0
+		;;
+	esac
+	return 1
+}
+
+# Fail closed before installing. Removes only node_modules that this helper's
+# own interrupted install left behind (js-install-partial marker).
+_jsr_prepare_preflight() {
+	local wt="$1"
+	local state_dir="$2"
+	local partial="${state_dir}/js-install-partial"
+	if [[ -e "${wt}/node_modules" || -L "${wt}/node_modules" ]]; then
+		if [[ -f "$partial" && -d "${wt}/node_modules" && ! -L "${wt}/node_modules" ]]; then
+			rm -rf -- "${wt}/node_modules"
+		else
+			_jsr_record_prepare "$state_dir" blocked existing-node-modules
+			return 1
+		fi
+	fi
+	rm -f -- "$partial"
+	if ! git -C "$wt" check-ignore -q --no-index node_modules/.package-lock.json 2>/dev/null; then
+		_jsr_record_prepare "$state_dir" blocked node-modules-not-ignored
+		return 1
+	fi
+	if [[ -n "$(git -C "$wt" status --porcelain --untracked-files=no 2>/dev/null || printf 'unknown')" ]]; then
+		_jsr_record_prepare "$state_dir" blocked dirty-worktree
+		return 1
+	fi
+	_jsr_install_argv || {
+		_jsr_record_prepare "$state_dir" blocked unsupported-package-manager
+		return 1
+	}
+	if ! _jsr_manager_bin "${JSR_ARGV[0]}" >/dev/null; then
+		_jsr_record_prepare "$state_dir" blocked package-manager-missing "$(_jsr_install_command "$wt")"
+		return 1
+	fi
+	return 0
+}
+
+# Run the approved install. Any Git-visible change rolls back node_modules
+# and tracked files (the tree was tracked-clean before) and fails closed.
+_jsr_prepare_install() {
+	local wt="$1"
+	local state_dir="$2"
+	local display="" before="" after="" rc=0
+	local -a argv=()
+	display=$(_jsr_install_command "$wt")
+	argv=("$(_jsr_manager_bin "${JSR_ARGV[0]}")" "${JSR_ARGV[@]:1}")
+	before=$(git -C "$wt" status --porcelain 2>/dev/null) || return 0
+	_jsr_write_atomic "${state_dir}/js-install-partial" "$display" || return 0
+	printf 'JS_DEPENDENCY_PREPARE=installing (%s)\n' "$display"
+	(cd "$wt" && timeout_sec "$AIDEVOPS_JS_POLICY_INSTALL_TIMEOUT_S" env -u NODE_OPTIONS \
+		npm_config_ignore_scripts=true YARN_ENABLE_SCRIPTS=false "${argv[@]}") </dev/null 1>&2 || rc=$?
+	after=$(git -C "$wt" status --porcelain 2>/dev/null || printf 'unknown')
+	if [[ "$after" != "$before" || "$rc" -ne 0 ]]; then
+		rm -rf -- "${wt}/node_modules"
+		rm -f -- "${state_dir}/js-install-partial"
+	fi
+	if [[ "$after" != "$before" ]]; then
+		git -C "$wt" checkout -q -- . 2>/dev/null || true
+		_jsr_record_prepare "$state_dir" blocked install-mutated-tree "$display"
+	elif [[ "$rc" -eq 124 ]]; then
+		_jsr_record_prepare "$state_dir" blocked install-timeout "$display"
+	elif [[ "$rc" -ne 0 ]]; then
+		_jsr_record_prepare "$state_dir" blocked install-failed "$display"
+	else
+		rm -f -- "${state_dir}/js-install-partial"
+		_jsr_record_prepare "$state_dir" installed "" "$display"
+		printf 'JS_DEPENDENCY_PREPARE=installed (%s)\n' "$display"
+	fi
+	return 0
+}
+
+_jsr_prepare_hint() {
+	local wt="$1"
+	local command=""
+	command=$(jq -r '.command // empty' "$(_jsr_state_dir "$wt" 2>/dev/null || printf '/nonexistent')/js-prepare.json" 2>/dev/null || true)
+	case "$JSR_STATE" in
+	blocked:policy-stale)
+		printf 'the recorded js_dependency_policy no longer matches this lockfile, package manager or Node major, so nothing was installed; review the change, then re-approve interactively with worktree-js-readiness-helper.sh approve %s' "$wt"
+		;;
+	blocked:install-failed | blocked:install-timeout)
+		printf 'the approved install (%s) did not finish; partial node_modules was removed and the next worktree admission retries it' "$command"
+		;;
+	blocked:install-mutated-tree)
+		printf 'the approved install (%s) changed Git-visible files; node_modules was removed and tracked files restored' "$command"
+		;;
+	blocked:unsupported-package-manager)
+		printf 'policy installs need exactly one npm, pnpm, yarn or bun lockfile that matches package.json packageManager'
+		;;
+	blocked:package-manager-missing)
+		printf 'install the project package manager so the approved install (%s) can run' "$command"
+		;;
+	blocked:existing-node-modules | blocked:node-modules-not-ignored | blocked:dirty-worktree)
+		printf 'the approved install only runs into an absent, Git-ignored node_modules of a tracked-clean worktree'
+		;;
+	*) return 1 ;;
+	esac
 	return 0
 }
 
@@ -427,7 +771,7 @@ _jsr_print_report() {
 	local wt="$1"
 	local hint=""
 	local install_hint=""
-	install_hint="provision worktree-local dependencies with the project lockfile ($(_jsr_install_command "$wt"); downloads need approval) without changing source, config or lockfile"
+	install_hint="provision worktree-local dependencies with the project lockfile ($(_jsr_install_command "$wt"); downloads need approval) without changing source, config or lockfile, or record a durable owner approval once (interactive only): worktree-js-readiness-helper.sh approve ${wt}"
 	case "$JSR_STATE" in
 	not-applicable:*) return 0 ;;
 	"$JSR_STATE_READY")
@@ -443,7 +787,7 @@ _jsr_print_report() {
 	blocked:probe-*)
 		hint="the readiness probe itself could not finish; tool readiness is unknown, not ready"
 		;;
-	*) hint="$install_hint" ;;
+	*) hint=$(_jsr_prepare_hint "$wt") || hint="$install_hint" ;;
 	esac
 	printf 'JS_TOOL_READINESS=%s (%s)\n' "$JSR_STATE" "$JSR_TOOLS"
 	printf 'JS_TOOL_READINESS_HINT=declared verification tools cannot start yet and the pre-push gate will block until they do: %s. See %s.\n' "$hint" "$JSR_DOC_REF"
@@ -523,6 +867,134 @@ cmd_record_restore() {
 	return $?
 }
 
+# Policy-gated install into a worktree's own node_modules (GH#34200).
+# Without --lock-held it only evaluates: blocked outcomes are recorded for
+# the readiness report, and an install that is due exits JSR_PREPARE_NEEDS_LOCK
+# so the caller can take the restore lock and re-run with --lock-held.
+cmd_prepare() {
+	local wt="" lock_held=0 arg="" state_dir=""
+	local canon=""
+	local policy=""
+	for arg in "$@"; do
+		case "$arg" in
+		--lock-held) lock_held=1 ;;
+		-*)
+			printf 'worktree-js-readiness: unknown option: %s\n' "$arg" >&2
+			return 1
+			;;
+		*) [[ -z "$wt" ]] && wt="$arg" ;;
+		esac
+	done
+	wt=$(_jsr_resolve_worktree "$wt") || return 1
+	state_dir=$(_jsr_state_dir "$wt") || return 0
+	# Each admission re-evaluates from scratch, so a re-approval is picked up.
+	rm -f -- "${state_dir}/js-prepare.json"
+	_jsr_probe "$wt" 0
+	_jsr_install_eligible || return 0
+	canon=$(_jsr_canonical_root "$wt") || return 0
+	policy=$(_jsr_policy_get "$canon")
+	_jsr_policy_evaluate "$wt" "$policy"
+	case "$JSR_POLICY_STATUS" in
+	none) return 0 ;;
+	current) ;;
+	unsupported-package-manager)
+		_jsr_record_prepare "$state_dir" blocked unsupported-package-manager
+		return 0
+		;;
+	*)
+		_jsr_record_prepare "$state_dir" blocked policy-stale "$JSR_POLICY_STATUS"
+		return 0
+		;;
+	esac
+	_jsr_prepare_preflight "$wt" "$state_dir" || return 0
+	[[ "$lock_held" -eq 1 ]] || return "$JSR_PREPARE_NEEDS_LOCK"
+	_jsr_prepare_install "$wt" "$state_dir"
+	return 0
+}
+
+_jsr_policy_target() {
+	local dir="${1:-}"
+	local canon=""
+	dir=$(_jsr_resolve_worktree "$dir") || return 1
+	canon=$(_jsr_canonical_root "$dir") || {
+		printf 'worktree-js-readiness: not inside a Git repository: %s\n' "$dir" >&2
+		return 1
+	}
+	printf '%s\n%s\n' "$dir" "$canon"
+	return 0
+}
+
+cmd_approve() {
+	local target="" dir="" node_major="" rc=0
+	local canon=""
+	local policy=""
+	if _jsr_is_headless; then
+		printf 'worktree-js-readiness: approve is an owner decision and is refused in headless/worker sessions\n' >&2
+		return 1
+	fi
+	target=$(_jsr_policy_target "${1:-}") || return 1
+	dir="${target%%$'\n'*}"
+	canon="${target#*$'\n'}"
+	if ! _jsr_lock_identity "$dir"; then
+		printf 'worktree-js-readiness: approve needs exactly one npm, pnpm, yarn or bun lockfile matching package.json packageManager\n' >&2
+		return 1
+	fi
+	node_major=$(_jsr_node_major)
+	policy=$(jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sha "$JSR_LOCK_SHA" --arg pm "$JSR_PM" \
+		--arg node "$node_major" --arg scope "$JSR_POLICY_SCOPE" \
+		'{approved_at:$at,lockfile_sha256:$sha,package_manager:$pm,node_major:$node,scope:$scope}')
+	_jsr_policy_write "$canon" "$policy" || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		printf 'worktree-js-readiness: repository is not registered in repos.json; run aidevops init in it first\n' >&2
+		return 1
+	elif [[ "$rc" -ne 0 ]]; then
+		printf 'worktree-js-readiness: could not update repos.json\n' >&2
+		return 1
+	fi
+	printf 'JS_DEPENDENCY_POLICY=approved (%s, node %s, lockfile sha256 %s)\n' "$JSR_PM" "$node_major" "${JSR_LOCK_SHA:0:12}"
+	printf 'Linked worktrees now get %s into their own node_modules while lockfile, package manager and Node major stay unchanged.\n' "$(_jsr_install_command "$dir")"
+	return 0
+}
+
+cmd_revoke() {
+	local target="" rc=0
+	local canon=""
+	if _jsr_is_headless; then
+		printf 'worktree-js-readiness: revoke is an owner decision and is refused in headless/worker sessions\n' >&2
+		return 1
+	fi
+	target=$(_jsr_policy_target "${1:-}") || return 1
+	canon="${target#*$'\n'}"
+	_jsr_policy_write "$canon" null || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		printf 'worktree-js-readiness: repository is not registered in repos.json\n' >&2
+		return 1
+	elif [[ "$rc" -ne 0 ]]; then
+		printf 'worktree-js-readiness: could not update repos.json\n' >&2
+		return 1
+	fi
+	printf 'JS_DEPENDENCY_POLICY=revoked\n'
+	return 0
+}
+
+cmd_status() {
+	local target="" dir=""
+	local canon=""
+	local policy=""
+	target=$(_jsr_policy_target "${1:-}") || return 1
+	dir="${target%%$'\n'*}"
+	canon="${target#*$'\n'}"
+	policy=$(_jsr_policy_get "$canon")
+	_jsr_policy_evaluate "$dir" "$policy"
+	printf 'JS_DEPENDENCY_POLICY=%s\n' "$JSR_POLICY_STATUS"
+	[[ -z "$policy" ]] || printf 'JS_DEPENDENCY_POLICY_RECORD=%s\n' "$policy"
+	_jsr_lock_identity "$dir" || true
+	jq -cn --arg pm "$JSR_PM" --arg sha "$JSR_LOCK_SHA" --arg node "$(_jsr_node_major)" \
+		'{package_manager:$pm,lockfile_sha256:$sha,node_major:$node}' |
+		sed 's/^/JS_DEPENDENCY_CURRENT=/'
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	[[ $# -gt 0 ]] && shift
@@ -535,6 +1007,10 @@ main() {
 	report) cmd_report "$@" ;;
 	entry) cmd_entry "$@" ;;
 	record-restore) cmd_record_restore "$@" ;;
+	prepare) cmd_prepare "$@" ;;
+	approve) cmd_approve "$@" ;;
+	revoke) cmd_revoke "$@" ;;
+	status) cmd_status "$@" ;;
 	help | -h | --help) _jsr_usage ;;
 	*)
 		_jsr_usage >&2

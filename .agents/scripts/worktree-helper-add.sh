@@ -355,9 +355,16 @@ _restore_worktree_node_modules_acquire_lock() {
 			lock_mtime=$(_file_mtime_epoch "$lock_dir")
 			now_epoch=$(date +%s)
 			age_s=$((now_epoch - lock_mtime))
+			# GH#34200: break a stale lock only when its holder is gone. A
+			# policy install can legitimately hold it past 60 s, and the pid
+			# file made the old bare rmdir fail and spin without a timeout.
 			if ((age_s > 60)); then
-				rmdir "$lock_dir" 2>/dev/null || true
-				continue
+				local holder=""
+				holder=$(cat "${lock_dir}/pid" 2>/dev/null || true)
+				if [[ ! "$holder" =~ ^[0-9]+$ ]] || ! kill -0 "$holder" 2>/dev/null; then
+					rm -f "${lock_dir}/pid" 2>/dev/null || true
+					rmdir "$lock_dir" 2>/dev/null && continue
+				fi
 			fi
 		fi
 		if ((elapsed >= timeout_s * 10)); then
@@ -571,19 +578,53 @@ _print_worktree_js_readiness() {
 	return 0
 }
 
+_worktree_is_aidevops_js_repo() {
+	local wt_path="$1"
+	[[ -f "${wt_path}/package.json" && -f "${wt_path}/bun.lock" ]] || return 1
+	[[ -f "${wt_path}/aidevops.sh" && -d "${wt_path}/.agents/scripts" ]] || return 1
+	grep -Eq '"name"[[:space:]]*:[[:space:]]*"aidevops"' "${wt_path}/package.json" 2>/dev/null || return 1
+	return 0
+}
+
+# GH#34200: aidevops keeps its built-in policy below. Every other project
+# installs only under an owner-recorded, lockfile/runtime-bound
+# js_dependency_policy (worktree-js-readiness-helper.sh prepare), serialized
+# under the restore lock. Never changes the exit status of worktree creation.
+_bootstrap_worktree_js_deps() {
+	local wt_path="$1"
+	local helper="${SCRIPT_DIR}/worktree-js-readiness-helper.sh"
+	local lock_dir="" output="" line="" rc=0
+
+	[[ "$AIDEVOPS_WORKTREE_JS_BOOTSTRAP_ENABLED" == "1" ]] || return 0
+	if _worktree_is_aidevops_js_repo "$wt_path"; then
+		_bootstrap_aidevops_worktree_js_deps "$wt_path"
+		return 0
+	fi
+	[[ -x "$helper" && -f "${wt_path}/package.json" ]] || return 0
+	"$helper" prepare "$wt_path" >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 3 ]] || return 0
+	lock_dir=$(_restore_worktree_node_modules_lock_dir)
+	if ! _restore_worktree_node_modules_acquire_lock "$lock_dir"; then
+		print_warning "Skipping approved dependency install for ${wt_path}: another restore is active"
+		_restore_worktree_node_modules_record "$wt_path" contention
+		return 0
+	fi
+	output=$("$helper" prepare "$wt_path" --lock-held) || true
+	_restore_worktree_node_modules_release_lock "$lock_dir"
+	while IFS= read -r line; do
+		[[ -z "$line" ]] || print_info "$line"
+	done <<<"$output"
+	return 0
+}
+
 # Install the aidevops repository's locked JavaScript dependencies when the
-# canonical checkout could not provide node_modules. Keep this deliberately
-# repo-specific: worktree-helper.sh also creates worktrees for user projects,
-# whose package lifecycle scripts must never run implicitly.
+# canonical checkout could not provide node_modules (built-in policy).
 _bootstrap_aidevops_worktree_js_deps() {
 	local wt_path="$1"
-	local package_file="${wt_path}/package.json"
 	local bun_bin=""
 
 	[[ "$AIDEVOPS_WORKTREE_JS_BOOTSTRAP_ENABLED" == "1" ]] || return 0
-	[[ -f "$package_file" && -f "${wt_path}/bun.lock" ]] || return 0
-	[[ -f "${wt_path}/aidevops.sh" && -d "${wt_path}/.agents/scripts" ]] || return 0
-	grep -Eq '"name"[[:space:]]*:[[:space:]]*"aidevops"' "$package_file" 2>/dev/null || return 0
+	_worktree_is_aidevops_js_repo "$wt_path" || return 0
 	[[ ! -x "${wt_path}/node_modules/.bin/tsc" ]] || return 0
 
 	bun_bin=$(command -v bun 2>/dev/null || true)
@@ -1452,7 +1493,7 @@ _cmd_add_prepare_worktree_deps() {
 	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
 	_restore_worktree_node_modules "$path" "$repo_root" "${_ADD_PROVISION_OWNER_CONTRACT:-}"
 	_ADD_PROVISION_OWNER_CONTRACT=""
-	_bootstrap_aidevops_worktree_js_deps "$path"
+	_bootstrap_worktree_js_deps "$path"
 	_print_worktree_js_readiness "$path"
 	return 0
 }
