@@ -1017,34 +1017,16 @@ cmd_record_published_release() {
 	return 0
 }
 
-cmd_record_included_release() {
-	local pr_number="${1:-}"
-	local source_pr="${2:-}"
-	local tag_name="${3:-}"
-	local repo="" source_json="" feature_json="" source_merge="" feature_merge=""
-	local source_receipt="" receipt_path="" release_status="" compare_json=""
-	local workflow_file="" workflow_event="" evidence_path="" status=0
-	if [[ $# -lt 3 || ! "$pr_number" =~ ^[1-9][0-9]*$ || ! "$source_pr" =~ ^[1-9][0-9]*$ || "$pr_number" == "$source_pr" || ! "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX ]]; then
-		print_error "Usage: record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]"
-		return 1
-	fi
-	shift 3
-	_full_loop_parse_published_release_options "$@" || return 1
-	[[ "$_FULL_LOOP_PARSED_GENERATED_CATALOG" == "$_FULL_LOOP_BOOL_FALSE" ]] || {
-		print_error "record-included-release does not support --generated-cloudron-catalog"
-		return 1
-	}
-	repo=$(_full_loop_resolve_repo "$_FULL_LOOP_PARSED_REPO_ARG") || {
-		print_error "Repository for included-release evidence could not be resolved"
-		return 1
-	}
-	# Canonical aidevops releases retain their signed aggregation manifest path.
-	if [[ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" == "marcusquinn/aidevops" ]]; then
-		print_error "record-included-release is not available for ${repo}; canonical releases use the signed aggregation manifest path"
-		return 1
-	fi
-	workflow_file="$_FULL_LOOP_PARSED_WORKFLOW_FILE"
-	workflow_event="$_FULL_LOOP_PARSED_WORKFLOW_EVENT"
+# Load and validate the source receipt plus both merge commits for
+# record-included-release. Sets _FULL_LOOP_INCLUDED_* globals; every failure
+# prints a specific reason.
+_full_loop_load_included_release_evidence() {
+	local repo="$1"
+	local pr_number="$2"
+	local source_pr="$3"
+	local tag_name="$4"
+	local source_receipt="" release_status="" source_json="" feature_json=""
+	local source_merge="" feature_merge=""
 	source_receipt=$(_full_loop_release_receipt_path "$repo" "$source_pr") || {
 		print_error "Cannot resolve release receipt path for source PR #${source_pr}"
 		return 1
@@ -1081,6 +1063,44 @@ cmd_record_included_release() {
 		print_error "Merge commit of PR #${pr_number} or source PR #${source_pr} is not a full SHA"
 		return 1
 	fi
+	_FULL_LOOP_INCLUDED_SOURCE_RECEIPT="$source_receipt"
+	_FULL_LOOP_INCLUDED_SOURCE_MERGE="$source_merge"
+	_FULL_LOOP_INCLUDED_FEATURE_MERGE="$feature_merge"
+	return 0
+}
+
+cmd_record_included_release() {
+	local pr_number="${1:-}"
+	local source_pr="${2:-}"
+	local tag_name="${3:-}"
+	local repo="" source_json="" feature_json="" source_merge="" feature_merge=""
+	local source_receipt="" receipt_path="" release_status="" compare_json=""
+	local workflow_file="" workflow_event="" evidence_path="" status=0
+	if [[ $# -lt 3 || ! "$pr_number" =~ ^[1-9][0-9]*$ || ! "$source_pr" =~ ^[1-9][0-9]*$ || "$pr_number" == "$source_pr" || ! "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX ]]; then
+		print_error "Usage: record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]"
+		return 1
+	fi
+	shift 3
+	_full_loop_parse_published_release_options "$@" || return 1
+	[[ "$_FULL_LOOP_PARSED_GENERATED_CATALOG" == "$_FULL_LOOP_BOOL_FALSE" ]] || {
+		print_error "record-included-release does not support --generated-cloudron-catalog"
+		return 1
+	}
+	repo=$(_full_loop_resolve_repo "$_FULL_LOOP_PARSED_REPO_ARG") || {
+		print_error "Repository for included-release evidence could not be resolved"
+		return 1
+	}
+	# Canonical aidevops releases retain their signed aggregation manifest path.
+	if [[ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" == "marcusquinn/aidevops" ]]; then
+		print_error "record-included-release is not available for ${repo}; canonical releases use the signed aggregation manifest path"
+		return 1
+	fi
+	workflow_file="$_FULL_LOOP_PARSED_WORKFLOW_FILE"
+	workflow_event="$_FULL_LOOP_PARSED_WORKFLOW_EVENT"
+	_full_loop_load_included_release_evidence "$repo" "$pr_number" "$source_pr" "$tag_name" || return 1
+	source_receipt="$_FULL_LOOP_INCLUDED_SOURCE_RECEIPT"
+	source_merge="$_FULL_LOOP_INCLUDED_SOURCE_MERGE"
+	feature_merge="$_FULL_LOOP_INCLUDED_FEATURE_MERGE"
 	# aidevops:trust-boundary — ancestry proves inclusion only AFTER independently
 	# verifying the published source receipt, exact source tag and successful run.
 	_full_loop_verify_published_release "$repo" "$tag_name" "$source_merge" "$workflow_file" "$workflow_event" || {
