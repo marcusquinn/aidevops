@@ -13,6 +13,9 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+export { LOCAL_ONLY_CURL, isLocalOnlyCurlArgv } from "./local-only-shell-policy.mjs";
+export { captureLocalOnlyMcpConfig, assertLocalOnlyToolDestination, assertLocalOnlyMcp,
+  assertLocalOnlyToolCall } from "./local-only-tool-policy.mjs";
 
 export const RUNTIME_POLICY_ENV = "AIDEVOPS_RUNTIME_POLICY";
 export const VAULT_POLICY_DENIED = "VAULT_POLICY_DENIED";

@@ -75,8 +75,8 @@ operation starts use the same gate. With configured roots, unbound shell reads
 are deliberately restricted to a single literal `cat`, `head`, `tail`, `wc`,
 `ls`, `stat` or `pwd` command with no options. Opaque programs, interpreters,
 substitutions, pipelines and executable reader options cannot be proven safe and
-are denied; use native scoped tools or a local-only session. Bound shell behavior
-is otherwise unchanged: this phase does not introduce tool/network sandboxing.
+are denied; use native scoped tools or a local-only session. Phase 2 does not
+introduce tool/network sandboxing; bound restrictions are described below.
 
 In bound sessions, `session.error` for a local HTTP 404, refused connection,
 timeout, model-identity mismatch or `VAULT_POLICY_DENIED` produces a foreground
@@ -94,6 +94,65 @@ availability, not service attestation; another probe cannot prove the service wi
 not forward data. Later backend failures abort through the host's existing error
 path, notify the operator and never authorize remote fallback.
 
+## Tool-level egress (Phase 3)
+
+The pre-tool hook gates execution before intent logging or OTEL enrichment.
+While bound, host webfetch/websearch, direct image generation, unknown tools and
+unknown MCP entries fail with a fixed content-free `VAULT_POLICY_DENIED`.
+MCP classification uses copied type/URL fields from the trusted merged V1 config,
+not tool arguments or registry defaults. Local processes and remote entries at
+literal loopback remain allowed; non-loopback remote activation and tool calls
+are refused. V2 snapshots resolved managed entries; unknown user entries deny.
+
+### Shell mechanism
+
+A network-command denylist is not a confinement boundary: interpreters, wrappers,
+custom binaries and cleared environments bypass it. Instead, bound Bash and
+bounded-operation network starts accept only one literal, proxy/config-free curl form:
+
+```bash
+/usr/bin/curl --disable --noproxy '*' --proxy '' --max-time 30 --url 'http://127.0.0.1:11434/api/tags'
+```
+
+On NixOS the fixed system executable is `/run/current-system/sw/bin/curl`.
+Plain `curl <literal-loopback-URL>` and its two-element argv are normalized to
+this safe form before execution, so curlrc and proxy inheritance cannot leak.
+The corresponding argv is accepted by bounded operations; restoration commands
+are checked too. No redirects, additional options, shell composition, substitutions
+or environment overrides are accepted. Existing command/workdir safety checks still
+run. Already-running owned loopback listeners are reachable, but opaque local
+listener startup and arbitrary local shell workflows remain denied until a verified
+OS sandbox can allow those without external egress. This is a deliberate safety-stop
+fallback, not a claim that the full owned-listener compatibility criterion is met.
+
+Bound Bash also preserves single literal `cat`, `head`, `tail`, `wc`, `ls` and
+`stat` reads through fixed system executables, without options or composition.
+Both the absolute operand and resolved symlink target must pass the existing
+secret-path classifier; lookup failures deny. Credential approval is never granted
+through Bash: use the existing guarded native read path instead. Path checks are
+not atomic with execution and do not protect against concurrent filesystem changes.
+
+### Helpers and telemetry
+
+Remote embeddings, Groq/OpenAI transcription, transcription downloads, signature
+LLM extraction, cloud email summaries, E-E-A-T scoring and video generation call
+the shared shell runtime gate before sending. Generated embedding engines also
+gate direct invocation. Regenerate pre-existing cached engines after deployment.
+Local email-summary Ollama requests require literal loopback, ignore proxy settings
+and refuse redirects. A refused remote fallback terminates rather than silently
+retrying. Heuristic signature parsing remains available with
+`EMAIL_PARSER_NO_LLM=true`; local transcription backends are unchanged.
+
+OAuth pool/token health, static model registry/availability and health probes do
+not send session content and do not need these provider-content gates. This
+classification does not authorize model-initiated shell invocations of those tools.
+
+The launcher disables OTEL before host SDK initialization in bound launches;
+plugin enrichment is suppressed and the shell hook disables non-loopback OTLP
+projection, including signal-specific endpoints. Direct host launches bypassing
+the framework launcher must disable host instrumentation before startup themselves:
+the plugin cannot revoke an exporter already initialized by trusted host code.
+
 ## Trust assumptions and gaps
 
 - The loopback check trusts the service at that port: a local proxy that
@@ -106,11 +165,16 @@ path, notify the operator and never authorize remote fallback.
   arbitrary code or bound Bash can alter files for a future launch; the current
   frozen policy is unchanged. Review classification before relaunching after
   running untrusted code. This is not an OS isolation or attestation mechanism.
-- Not yet covered (later GH#34125 phases): active backend attestation,
-  MCP output, observability/transcript persistence,
-  helpers that call provider APIs without the shared gate, and network egress
-  the model starts through Bash (for example `curl`, or a helper run with the
-  variable cleared).
+- Local MCP processes, their configuration and binaries are trusted executable
+  code, not network-isolated: a local MCP that forwards content is equivalent to
+  a loopback proxy. Only install/configure local-only services for bound work.
+- Standalone shell helpers inherit an environment binding, not an immutable OS
+  credential. Clearing it outside the plugin is outside enforcement. The Phase 1
+  shell parser removes internal whitespace; malformed opt-out normalization remains
+  pre-existing debt. New Python paths re-stamp a recognized binding before the shared
+  gate so malformed values cannot authorize their remote requests.
+- Not yet covered: active backend attestation, transcript persistence controls,
+  unknown V2 user-local MCP classification, and sandboxed arbitrary local command/
+  owned-listener startup. The parent remains open for these gaps.
 
-The binding keeps the session's own model traffic on the device; it is not yet
-a sandbox for tools.
+The binding gates controlled tool execution; it is not an OS isolation mechanism.

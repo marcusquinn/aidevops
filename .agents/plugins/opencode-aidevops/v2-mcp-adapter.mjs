@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { createMcpSessionRuntime, registerMcpServers } from "./mcp-registry.mjs";
+import { captureLocalOnlyMcpConfig } from "./local-only-policy.mjs";
 
 export function toV2McpConfig(config) {
   const { enabled, env, ...rest } = config;
@@ -36,14 +37,17 @@ export function createV2McpRuntime(ctx, workspaceDir, options = {}) {
     const config = { mcp: definitions, tools: toolPolicy };
     registerMcpServers(config, { runtime });
     await addTransform((editor) => {
+      const resolved = {};
       for (const [name, definition] of Object.entries(definitions)) {
         if (!editor.get(name)) editor.set(name, toV2McpConfig(definition));
+        resolved[name] = editor.get(name);
         if (disabledOverrides.has(name)) {
           editor.update(name, (server) => {
             server.disabled = disabledOverrides.get(name);
           });
         }
       }
+      captureLocalOnlyMcpConfig(resolved, options.repositoryDir);
     });
   }
 

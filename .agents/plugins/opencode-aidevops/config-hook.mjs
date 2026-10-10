@@ -9,6 +9,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { applyAgentMcpTools } from "./agent-loader.mjs";
 import { registerMcpServers } from "./mcp-registry.mjs";
+import { captureLocalOnlyMcpConfig } from "./local-only-policy.mjs";
 import { registerPoolProvider, getAccounts, ensureValidToken } from "./oauth-pool.mjs";
 import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
@@ -402,6 +403,7 @@ export function createConfigHook(deps) {
     ensureAgentGuard(config, workspaceDir);
 
     const mcps = registerMcpServers(config, { runtime: mcpRuntime });
+    captureLocalOnlyMcpConfig(config.mcp, repositoryDir);
     const agentTools = applyAgentMcpTools(config);
     const directories = registerManagedDirectoryPermissions(config);
     const permissionGrants = registerApprovedWorkerPermissions(config, { repositoryDir });

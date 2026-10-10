@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, join } from "path";
 import { runtimePath } from "./runtime-path.mjs";
+import { projectLocalOnlyShellEnvironment } from "./local-only-shell-policy.mjs";
 
 /**
  * Read a file if it exists, or return empty string.
@@ -289,6 +290,7 @@ async function shellEnvHook(config, input, output) {
   projectFrameworkEnvironment(output.env, config);
   projectSessionIdentity(input, output.env, config.onSessionIdentity);
   projectOtelEnvironment(output.env);
+  projectLocalOnlyShellEnvironment(output.env);
   if (config.sourceAccessRuntime) {
     Object.assign(output.env, await config.sourceAccessRuntime.environment(getSessionId(input)));
   }

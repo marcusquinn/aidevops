@@ -15,6 +15,7 @@ import {
   requestOAuthImage,
 } from "./gpt-image-request.mjs";
 import { resolveGptImageProjectRoot } from "./gpt-image-worktree.mjs";
+import { assertLocalOnlyToolDestination } from "./local-only-policy.mjs";
 
 const IMAGE_QUALITIES = new Set(["low", "medium", "high", "auto"]);
 const IMAGE_FORMATS = new Set(["png", "jpeg", "webp"]);
@@ -102,6 +103,7 @@ function billingLabel(mode) {
 }
 
 async function executeImageGeneration(rawArgs, options, context) {
+  assertLocalOnlyToolDestination(false);
   validateRawArgs(rawArgs);
   const args = {
     ...rawArgs,

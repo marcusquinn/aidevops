@@ -24,6 +24,8 @@ set -euo pipefail
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
+vault_runtime_policy_check "remote/eeat-scoring" || exit 64
 
 readonly SCRIPT_DIR
 readonly CONFIG_DIR="${HOME}/.config/aidevops"

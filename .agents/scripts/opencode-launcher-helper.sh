@@ -28,6 +28,18 @@ print_error() { printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "$*" >&2; return 0; }
 # shellcheck source=vault-data-policy-helper.sh
 source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
 
+# #aidevops:trust-boundary — stop host exporters before SDK initialization, not
+# just plugin enrichment after startup. Disable telemetry conservatively while
+# bound; shell hooks also stamp this protection into controlled subprocesses.
+if vault_runtime_policy_bound; then
+    export OTEL_SDK_DISABLED=true
+    export OTEL_TRACES_EXPORTER=none OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none
+    unset OTEL_EXPORTER_OTLP_ENDPOINT OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+    unset OTEL_EXPORTER_OTLP_HEADERS OTEL_EXPORTER_OTLP_TRACES_HEADERS
+    unset OTEL_EXPORTER_OTLP_METRICS_HEADERS OTEL_EXPORTER_OTLP_LOGS_HEADERS
+fi
+
 OPT_DESKTOP_SOURCE_BINARY="--source-binary"
 ERR_DIR_REQUIRES_PATH="--dir requires a path"
 ERR_SESSION_ID_REQUIRES_VALUE="--session-id requires a value"
@@ -1590,6 +1602,11 @@ run_conversation_session() {
         "OPENCODE_DISABLE_PROJECT_CONFIG=1"
         "OPENCODE_DISABLE_SHARE=1"
     )
+    # env -i must not discard the operator binding or re-enable host telemetry.
+    if vault_runtime_policy_bound; then
+        runtime_environment+=("AIDEVOPS_RUNTIME_POLICY=local-only" "OTEL_SDK_DISABLED=true"
+            "OTEL_TRACES_EXPORTER=none" "OTEL_METRICS_EXPORTER=none" "OTEL_LOGS_EXPORTER=none")
+    fi
     [[ -n "${USER:-}" ]] && runtime_environment+=("USER=${USER}")
     [[ -n "${LOGNAME:-}" ]] && runtime_environment+=("LOGNAME=${LOGNAME}")
     [[ -n "${SHELL:-}" ]] && runtime_environment+=("SHELL=${SHELL}")
