@@ -271,6 +271,33 @@ for shim_dir in shim-cycle-case/a shim-rel-case shim-unmarked-case; do
 done
 assert_eq "unresolvable shims fall back without brew" "npm install -g opencode-ai@1.15.10;npm install -g opencode-ai@1.15.10;npm install -g opencode-ai@1.15.10" "$(tr '\n' ';' <"$SANDBOX/npm-case/calls" | sed 's/;$//')"
 
+printf 'Test 3e: Homebrew-owned OpenCode is checked against its tap formula, not npm (GH#34252)\n'
+tap_root="$SANDBOX/tap-brew"
+mkdir -p "$tap_root/Cellar/opencode/1.18.35/bin" "$tap_root/opt" "$tap_root/brew-bin" "$tap_root/local-bin"
+write_executable "$tap_root/Cellar/opencode/1.18.35/bin/opencode" '#!/usr/bin/env bash
+printf "1.18.35\n"'
+ln -s "../Cellar/opencode/1.18.35" "$tap_root/opt/opencode"
+write_managed_shim "$tap_root/local-bin/opencode" "$tap_root/Cellar/opencode/1.18.35/bin/opencode"
+# shellcheck disable=SC2016 # Literal stub body; quoted SANDBOX segments are expanded by the outer script.
+write_executable "$tap_root/brew-bin/brew" '#!/usr/bin/env bash
+printf "brew %s\n" "$*" >>"'"$tap_root"'/calls"
+case "$*" in
+"list --versions opencode") printf "opencode 1.18.35\n" ;;
+"--prefix opencode") printf "%s\n" "'"$tap_root"'/opt/opencode" ;;
+"list --formula --full-name") printf "jq\nanomalyco/tap/opencode\nripgrep\n" ;;
+"info --json=v2 anomalyco/tap/opencode") printf "{\"formulae\":[{\"versions\":{\"stable\":\"1.18.35\"}}]}\n" ;;
+*) exit 1 ;;
+esac'
+: >"$SANDBOX/routine-freshness/calls"
+tap_path="$tap_root/local-bin:$tap_root/brew-bin:$SANDBOX/routine-freshness/bin:$SYSTEM_PATH"
+tap_brew_json=$(PATH="$tap_path" "$TOOL_VERSION_CHECK" --category brew --json)
+tap_opencode_json=$(printf '%s\n' "$tap_brew_json" | grep '"name": "OpenCode"' || true)
+assert_eq "brew-owned OpenCode listed under brew and current with its formula" "1" "$([[ "$tap_opencode_json" == *'"category": "brew", "installed": "1.18.35", "latest": "1.18.35", "status": "up_to_date"'* ]] && printf '1\n' || printf '0\n')"
+assert_eq "brew candidate queried with tap-qualified formula" "1" "$(grep -c '^brew info --json=v2 anomalyco/tap/opencode$' "$tap_root/calls" || true)"
+tap_npm_json=$(PATH="$tap_path" "$TOOL_VERSION_CHECK" --category npm --json)
+assert_eq "brew-owned OpenCode excluded from npm category" "0" "$(printf '%s\n' "$tap_npm_json" | grep -c '"name": "OpenCode"' || true)"
+assert_eq "brew-owned OpenCode triggers no npm install" "" "$(cat "$SANDBOX/routine-freshness/calls")"
+
 printf 'Test 4: headless guard provisions an isolated pin without changing newer general install\n'
 mkdir -p "$SANDBOX/version-guard/runtime" "$SANDBOX/version-guard/bin" "$SANDBOX/version-guard/state"
 # shellcheck disable=SC2016 # Fixture receives the exported newer_general_version.
