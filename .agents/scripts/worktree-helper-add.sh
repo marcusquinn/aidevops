@@ -1443,6 +1443,20 @@ _cmd_add_verify_created_generation() {
 	return 1
 }
 
+# Restore/bootstrap worktree-local JavaScript dependencies and report readiness.
+# GH#34224: pass the exact owner contract this add just registered so the
+# controller-owned snapshot can run for a runtime-owned (interactive) row.
+_cmd_add_prepare_worktree_deps() {
+	local path="$1"
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+	_restore_worktree_node_modules "$path" "$repo_root" "${_ADD_PROVISION_OWNER_CONTRACT:-}"
+	_ADD_PROVISION_OWNER_CONTRACT=""
+	_bootstrap_aidevops_worktree_js_deps "$path"
+	_print_worktree_js_readiness "$path"
+	return 0
+}
+
 # --- cmd_add ---
 
 cmd_add() {
@@ -1513,14 +1527,7 @@ cmd_add() {
 	_cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
-	local _repo_root=""
-	_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
-	# GH#34224: pass the exact owner contract this add just registered so the
-	# controller-owned snapshot can run for a runtime-owned (interactive) row.
-	_restore_worktree_node_modules "$path" "$_repo_root" "${_ADD_PROVISION_OWNER_CONTRACT:-}"
-	_ADD_PROVISION_OWNER_CONTRACT=""
-	_bootstrap_aidevops_worktree_js_deps "$path"
-	_print_worktree_js_readiness "$path"
+	_cmd_add_prepare_worktree_deps "$path"
 
 	# t2885: exclude the new worktree from macOS Spotlight + Time Machine.
 	# Worktrees are ephemeral — persistent state lives on the git remote.
