@@ -496,6 +496,68 @@ STUB
 }
 
 # ---------------------------------------------------------------------------
+# GH#34281 follow-up: the single-pass stage router must hand a stale-approved
+# external parent to stage 4 (never stages 1-3); the stage-0b block previously
+# consumed it first, so the stale-approved close basis was unreachable.
+# ---------------------------------------------------------------------------
+test_stage0b_routes_stale_approved_parent_to_stage4() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local stages_fn="" result=""
+	stages_fn=$(sed -n '/^_pir_reconcile_issue_stages()/,/^}/p' "$RECONCILE_SH")
+	result=$(ACTIONS_SH="$actions_sh" STAGES_FN="$stages_fn" bash -c '
+		_PIR_NMR_LABEL="needs-maintainer-review"
+		_PIR_PERSISTENT_LABEL="persistent"
+		_PIR_PT_LABEL="parent-task"
+		LOGFILE="/dev/null"
+		source "$ACTIONS_SH"
+		eval "$STAGES_FN"
+		_should_reconcile_persistent_issue() { return 1; }
+		_action_reconcile_external_issue_gate() {
+			_PIR_EXTERNAL_GATE_MUTATED="$GATE_MUTATED"
+			_PIR_EXTERNAL_GATE_VERIFICATION="$GATE_VERIFICATION"
+			return 0
+		}
+		_should_ciw() { printf "stage1-reached\n"; return 0; }
+		_action_ciw_single() { return 1; }
+		_should_rsd() { printf "stage2-reached\n"; return 1; }
+		_should_oimp() { printf "stage3-reached\n"; return 1; }
+		_pir_reconcile_parent_stage() { printf "stage4-reached\n"; return 0; }
+		slug=owner/repo issue_num=42 issue_title=T issue_body=B
+		issue_author_association=CONTRIBUTOR issue_author_type=User
+		issue_author_is_bot=false issue_author_login=outsider
+		_ciw_rsd_enabled=1 ciw_per_repo=0 ciw_max_repo=5 rsd_per_repo=0 rsd_max_repo=5
+		oimp_total_closed=0 oimp_max=5 external_gated=0 parent_task_nums=""
+		run_case() {
+			local name="$1" out=""
+			labels_csv="$2" GATE_VERIFICATION="$3" GATE_MUTATED="$4"
+			out=$(_pir_reconcile_issue_stages | tr "\n" " ")
+			printf "%s:[%s]\n" "$name" "${out% }"
+		}
+		run_case stale-parent "status:available,parent-task" STALE_APPROVAL 0
+		run_case stale-plain "status:available" STALE_APPROVAL 0
+		run_case stale-parent-nmr "parent-task,needs-maintainer-review" STALE_APPROVAL 0
+		run_case unapproved-parent "status:available,parent-task" NO_APPROVAL 1
+		run_case malformed-parent "status:available,parent-task" MALFORMED_APPROVAL 0
+	' 2>/dev/null)
+
+	local expected="" all_ok=1
+	for expected in \
+		'stale-parent:[stage4-reached]' \
+		'stale-plain:[]' \
+		'stale-parent-nmr:[]' \
+		'unapproved-parent:[]' \
+		'malformed-parent:[]'; do
+		printf '%s\n' "$result" | grep -qxF "$expected" || all_ok=0
+	done
+	if [[ "$all_ok" -eq 1 ]]; then
+		_pass "stage 0b routes only stale-approved parent trackers to stage 4"
+	else
+		_fail "stage 0b stale-parent routing mismatch: ${result}"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Test 8b: mergedAt helper prefers gh_pr_view wrapper when available
 # ---------------------------------------------------------------------------
 test_pr_merged_at_prefers_wrapper() {
@@ -1724,6 +1786,7 @@ test_body_in_prefetch_fetch
 test_should_predicates
 test_parent_live_hold_gate
 test_parent_stale_approval_terminal_close
+test_stage0b_routes_stale_approved_parent_to_stage4
 test_pr_merged_at_prefers_wrapper
 test_single_pass_wired_in_engine
 test_recent_parent_repair_reachable_from_single_pass

@@ -1155,6 +1155,26 @@ _action_reconcile_external_issue_gate() {
 	return 0
 }
 
+#######################################
+# Stage 0 routing predicate (GH#34281): after the external gate blocked an
+# issue, decide whether it may still enter stage 4 (parent reconcile) — never
+# stages 1-3. Only an unmutated parent-task whose approval verified STALE
+# qualifies; stage 4 re-reads live state per mutation and admits only the
+# terminal close (graph-backed) and its compensating reopen.
+# Without this route the stale-approved close basis is unreachable in the
+# single-pass loop because stage 0 consumes the issue first.
+# Args: $1=labels CSV (cached)
+# Returns: 0=route to stage 4, 1=stay blocked
+#######################################
+_pir_stale_approved_parent_may_reconcile() {
+	local labels_csv="$1"
+	#aidevops:trust-boundary -- STALE (signature valid) only; NO_APPROVAL/INVALID stay blocked.
+	[[ "${_PIR_EXTERNAL_GATE_MUTATED:-0}" -eq 0 ]] || return 1
+	[[ "${_PIR_EXTERNAL_GATE_VERIFICATION:-}" == "$_PIR_APPROVAL_STALE" ]] || return 1
+	_should_cpt "$labels_csv" || return 1
+	return 0
+}
+
 # Stage 1 predicate: issue has status:available (candidate for close-via-merged-PR).
 # Args: $1 = labels_csv (comma-separated label names from pre-fetched JSON)
 # Note: unquoted case patterns avoid adding to the string-literal ratchet count.

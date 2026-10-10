@@ -1528,11 +1528,16 @@ _pir_reconcile_issue_stages() {
 
 	# Stage 0b: cached trust metadata heals missed creation-time NMR labels
 	# and blocks every later action for unapproved external issue input.
+	# GH#34281: a stale-approved parent tracker skips stages 1-3 but still
+	# reaches stage 4, whose live gate admits only the terminal close.
 	if _should_reconcile_external_issue_gate "$issue_author_association" \
 		"$issue_author_type" "$issue_author_is_bot"; then
 		if _action_reconcile_external_issue_gate "$slug" "$issue_num" "$labels_csv" \
 			"$issue_author_association" "$issue_author_login"; then
 			[[ "${_PIR_EXTERNAL_GATE_MUTATED:-0}" -eq 1 ]] && external_gated=$((external_gated + 1))
+			if _pir_stale_approved_parent_may_reconcile "$labels_csv"; then
+				_pir_reconcile_parent_stage "$slug" "$issue_num" "$issue_title" "$issue_body" "$labels_csv"
+			fi
 			return 0
 		fi
 	fi
