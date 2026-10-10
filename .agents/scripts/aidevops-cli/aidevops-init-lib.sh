@@ -1628,14 +1628,7 @@ _init_optional_scaffolding() {
 		# Skip when another workflow already calls the reusable metrics workflow (GH#34276).
 		local _existing_caller=""
 		if [[ ! -f "$_wf_dest" ]]; then
-			local _wf_file
-			for _wf_file in "$project_root"/.github/workflows/*.yml "$project_root"/.github/workflows/*.yaml; do
-				[[ -f "$_wf_file" ]] || continue
-				if grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^#[:space:]]*loc-badge-reusable\.yml' "$_wf_file" 2>/dev/null; then
-					_existing_caller="${_wf_file##*/}"
-					break
-				fi
-			done
+			_existing_caller=$(_init_find_metrics_caller "$project_root") || _existing_caller=""
 		fi
 
 		# Install repo metrics refresh workflow for repos that can run GitHub Actions.
@@ -1701,6 +1694,21 @@ _init_optional_scaffolding() {
 	_init_security_and_registration || return 1
 	_init_offer_release_verification "$repo_slug"
 	return 0
+}
+
+# Print the basename of a workflow with a non-comment `uses:` of
+# loc-badge-reusable.yml; return 1 when none exists (GH#34276).
+_init_find_metrics_caller() {
+	local project_root="$1"
+	local wf_file
+	for wf_file in "$project_root"/.github/workflows/*.yml "$project_root"/.github/workflows/*.yaml; do
+		[[ -f "$wf_file" ]] || continue
+		if grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^#[:space:]]*loc-badge-reusable\.yml' "$wf_file" 2>/dev/null; then
+			printf '%s\n' "${wf_file##*/}"
+			return 0
+		fi
+	done
+	return 1
 }
 
 _init_offer_release_verification() {
