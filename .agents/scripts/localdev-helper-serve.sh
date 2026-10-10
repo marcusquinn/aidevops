@@ -143,6 +143,22 @@ _serve_listener_pids() {
 		print_error "Unable to inspect port $port (lsof exit $status)"
 		return 1
 	fi
+	if [[ -z "$output" && -d /proc ]] && command -v ss >/dev/null 2>&1; then
+		local ss_output=""
+		local ss_status=0
+		ss_output="$(ss -H -ltnp "sport = :$port" 2>/dev/null)" || ss_status=$?
+		if [[ "$ss_status" -ne 0 ]]; then
+			print_error "Unable to inspect port $port (ss exit $ss_status)"
+			return 1
+		fi
+		if [[ -n "$ss_output" ]]; then
+			output="$(printf '%s\n' "$ss_output" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)"
+			if [[ -z "$output" ]]; then
+				print_error "Unable to identify the listener owner on port $port"
+				return 1
+			fi
+		fi
+	fi
 	[[ -n "$output" ]] && printf '%s\n' "$output"
 	return 0
 }
@@ -151,6 +167,9 @@ _serve_process_cwd() {
 	local pid="$1"
 	local process_cwd=""
 	process_cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | awk '/^n/{sub(/^n/, ""); print; exit}')"
+	if [[ -z "$process_cwd" && -L "/proc/$pid/cwd" ]]; then
+		process_cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)" || process_cwd=""
+	fi
 	if [[ -n "$process_cwd" ]]; then
 		(cd "$process_cwd" 2>/dev/null && pwd -P) || true
 	fi

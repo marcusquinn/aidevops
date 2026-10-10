@@ -125,6 +125,37 @@ wait_for_path_absent() {
 	return 1
 }
 
+wait_for_text() {
+	local file="$1"
+	local text="$2"
+	local attempt=0
+	while [[ "$attempt" -lt 50 ]]; do
+		grep -Fq -- "$text" "$file" && return 0
+		sleep 0.2
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+wait_for_single_pid() {
+	local first_pid="$1"
+	local second_pid="$2"
+	local attempt=0
+	local alive_first=0
+	local alive_second=0
+	while [[ "$attempt" -lt 50 ]]; do
+		alive_first=0
+		alive_second=0
+		kill -0 "$first_pid" 2>/dev/null && alive_first=1
+		kill -0 "$second_pid" 2>/dev/null && alive_second=1
+		[[ $((alive_first + alive_second)) -eq 1 ]] && return 0
+		[[ $((alive_first + alive_second)) -eq 0 ]] && return 1
+		sleep 0.2
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
 register_pid() {
 	local pid="$1"
 	ACTIVE_PIDS+=("$pid")
@@ -319,6 +350,62 @@ assert_true "foreign collision is explained" file_contains "$foreign_output" "ou
 terminate_pid "$leader_pid"
 assert_true "leader termination releases the port" wait_for_port_free "$port"
 
+# Linux lsof can miss host listeners when unrelated container mounts are
+# uninspectable. The ss fallback must still identify and validate the owner.
+fallback_port="$(pick_port)"
+fallback_log="$TEST_ROOT/fallback.log"
+fallback_output="$TEST_ROOT/fallback.out"
+fallback_bin="$TEST_ROOT/fallback-bin"
+mkdir -p "$fallback_bin"
+touch "$fallback_log"
+cat >"$fallback_bin/lsof" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+cat >"$fallback_bin/ss" <<'SH'
+#!/usr/bin/env bash
+pid=""
+line=""
+if [[ -f "${FAKE_SS_PID_FILE:-}" ]]; then
+	IFS= read -r line <"$FAKE_SS_PID_FILE" || true
+	pid="${line#pid=}"
+	pid="${pid%% *}"
+fi
+if [[ "$pid" =~ ^[0-9]+$ ]]; then
+	printf 'LISTEN 0 511 127.0.0.1:%s 0.0.0.0:* users:(("python3",pid=%s,fd=3))\n' "${PORT:-0}" "$pid"
+fi
+exit 0
+SH
+chmod +x "$fallback_bin/lsof" "$fallback_bin/ss"
+export FAKE_SS_PID_FILE="$fallback_log"
+PATH="$fallback_bin:$PATH" start_helper "$PROJECT_A" "$fallback_port" "$fallback_log" "$fallback_output" 1
+fallback_pid="$STARTED_PID"
+unset FAKE_SS_PID_FILE
+assert_true "ss fallback launch becomes healthy" wait_for_health "$fallback_port" 75
+assert_true "ss fallback reports readiness" wait_for_text "$fallback_output" "integration-test is ready on port $fallback_port"
+assert_true "ss fallback keeps the ready listener running" kill -0 "$fallback_pid"
+terminate_pid "$fallback_pid"
+assert_true "ss fallback termination releases the port" wait_for_port_free "$fallback_port"
+
+fallback_foreign_log="$TEST_ROOT/fallback-foreign.log"
+fallback_foreign_output="$TEST_ROOT/fallback-foreign.out"
+(
+	cd "$PROJECT_B" || exit 1
+	exec env PORT="$fallback_port" LAUNCH_LOG="$fallback_foreign_log" python3 server.py
+) >"$TEST_ROOT/fallback-foreign-server.out" 2>&1 &
+fallback_foreign_pid=$!
+register_pid "$fallback_foreign_pid"
+assert_true "ss fallback foreign listener becomes healthy" wait_for_health "$fallback_port"
+export FAKE_SS_PID_FILE="$fallback_foreign_log"
+PATH="$fallback_bin:$PATH" run_helper_once "$PROJECT_A" "$fallback_port" "$launch_log" "$fallback_foreign_output"
+fallback_foreign_status=$?
+unset FAKE_SS_PID_FILE
+assert_status "ss fallback rejects a foreign listener" 1 "$fallback_foreign_status"
+assert_true "ss fallback leaves a foreign listener running" kill -0 "$fallback_foreign_pid"
+assert_true "ss fallback explains foreign ownership" file_contains "$fallback_foreign_output" "outside project root"
+terminate_pid "$fallback_foreign_pid"
+assert_true "ss fallback foreign cleanup releases the port" wait_for_port_free "$fallback_port"
+
 # An owned but unhealthy listener must remain running and block replacement.
 unhealthy_log="$TEST_ROOT/unhealthy.log"
 (
@@ -386,30 +473,30 @@ parallel_pid_one="$STARTED_PID"
 start_helper "$PROJECT_A" "$parallel_port" "$parallel_log" "$parallel_two" 2
 parallel_pid_two="$STARTED_PID"
 assert_true "parallel launch becomes healthy" wait_for_health "$parallel_port" 75
-sleep 1
 assert_true "parallel launch starts one command" line_count_is "$parallel_log" 1
+assert_true "parallel follower exits after reusing the leader" wait_for_single_pid "$parallel_pid_one" "$parallel_pid_two"
 
 alive_one=0
 alive_two=0
 kill -0 "$parallel_pid_one" 2>/dev/null && alive_one=1
 kill -0 "$parallel_pid_two" 2>/dev/null && alive_two=1
 if [[ $((alive_one + alive_two)) -eq 1 ]]; then
-	record_pass "parallel follower exits after reusing the leader"
+	if [[ "$alive_one" -eq 1 ]]; then
+		parallel_leader="$parallel_pid_one"
+		parallel_follower="$parallel_pid_two"
+	else
+		parallel_leader="$parallel_pid_two"
+		parallel_follower="$parallel_pid_one"
+	fi
+	follower_status=0
+	wait "$parallel_follower" || follower_status=$?
+	assert_status "parallel follower returns success" 0 "$follower_status"
+	terminate_pid "$parallel_leader"
 else
-	record_fail "parallel follower exits after reusing the leader (alive: $alive_one/$alive_two)"
+	record_fail "parallel follower state is bounded (alive: $alive_one/$alive_two)"
+	terminate_pid "$parallel_pid_one"
+	terminate_pid "$parallel_pid_two"
 fi
-
-if [[ "$alive_one" -eq 1 ]]; then
-	parallel_leader="$parallel_pid_one"
-	parallel_follower="$parallel_pid_two"
-else
-	parallel_leader="$parallel_pid_two"
-	parallel_follower="$parallel_pid_one"
-fi
-follower_status=0
-wait "$parallel_follower" || follower_status=$?
-assert_status "parallel follower returns success" 0 "$follower_status"
-terminate_pid "$parallel_leader"
 assert_true "parallel leader termination releases the port" wait_for_port_free "$parallel_port"
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
