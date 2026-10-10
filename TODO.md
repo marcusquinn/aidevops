@@ -1617,7 +1617,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18646 fix(pulse): recognise blocked-by:GH#NNN labels so closed blockers unblock issues #bug ref:GH#34264 pr:#34265 completed:2026-10-10
 
-- [ ] t18647 fix(approval): maintainer state change on a linked external issue must not stale signed approvals #bug ref:GH#34266
+- [x] t18647 fix(approval): maintainer state change on a linked external issue must not stale signed approvals #bug ref:GH#34266 pr:#34275 completed:2026-10-10
 
 ## In Progress
 
