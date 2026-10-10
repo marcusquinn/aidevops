@@ -748,10 +748,46 @@ _dlw_prepare_existing_worktree() {
 		return 0
 	fi
 
-	# Only clean, verified zero-ahead retries restart from the default branch.
+	# Only clean, verified zero-ahead retries restart from the default branch
+	# (or from the trusted seed head, GH#34233).
 	git -C "$existing_path" checkout -- . 2>/dev/null || true
 	git -C "$existing_path" clean -fd 2>/dev/null || true
-	git -C "$existing_path" reset --hard "origin/${main_branch}" 2>/dev/null || true
+	git -C "$existing_path" reset --hard "${_DLW_SEED_OID:-origin/${main_branch}}" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# GH#34233: resolve a trusted seed draft PR for issues labelled seed-pr and
+# fetch its exact head so the worker branch can start from it. Unseeded issues
+# cost no API call. Sets _DLW_SEED_PR/_DLW_SEED_REF/_DLW_SEED_OID.
+# Returns 1 (skip this cycle) only when a labelled seed cannot be read or
+# fetched; no seed or a rejected seed falls back to the default branch.
+#######################################
+_dlw_resolve_seed_base() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3" repo_path="$4"
+	local seed_row="" seed_rc=0
+	_DLW_SEED_PR="" _DLW_SEED_REF="" _DLW_SEED_OID=""
+	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("seed-pr") != null' >/dev/null 2>&1 || return 0
+	seed_row=$("${SCRIPT_DIR}/seed-pr-helper.sh" find "$issue_number" --repo "$repo_slug" 2>>"$LOGFILE") || seed_rc=$?
+	case "$seed_rc" in
+	0) ;;
+	3 | 4)
+		echo "[dispatch_with_dedup] #${issue_number}: no usable seed PR (rc=${seed_rc}); worker starts from the default branch" >>"$LOGFILE"
+		return 0
+		;;
+	*)
+		echo "[dispatch_with_dedup] #${issue_number}: seed PR lookup failed (rc=${seed_rc}); skipping this cycle" >>"$LOGFILE"
+		return 1
+		;;
+	esac
+	IFS=$'\t' read -r _DLW_SEED_PR _DLW_SEED_REF _DLW_SEED_OID <<<"$seed_row"
+	if ! git -C "$repo_path" fetch -q origin "refs/heads/${_DLW_SEED_REF}" 2>/dev/null ||
+		! git -C "$repo_path" cat-file -e "${_DLW_SEED_OID}^{commit}" 2>/dev/null; then
+		echo "[dispatch_with_dedup] #${issue_number}: seed PR #${_DLW_SEED_PR} head ${_DLW_SEED_OID:0:12} unavailable after fetch; skipping this cycle" >>"$LOGFILE"
+		_DLW_SEED_PR="" _DLW_SEED_REF="" _DLW_SEED_OID=""
+		return 1
+	fi
+	echo "[dispatch_with_dedup] #${issue_number}: worker base is seed PR #${_DLW_SEED_PR} head ${_DLW_SEED_OID:0:12}" >>"$LOGFILE"
 	return 0
 }
 
@@ -918,13 +954,17 @@ _dlw_precreate_worktree() {
 	# observed on one machine in 24h, 2.2 GB wasted).
 	local _branch _wt_output=""
 	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
+	# GH#34233: start from the exact trusted seed head when one was resolved.
+	local -a _wt_base_args=()
+	[[ -z "${_DLW_SEED_OID:-}" ]] || _wt_base_args=(--base "$_DLW_SEED_OID")
 	# Run from repo_path — worktree-helper.sh uses git commands that need
 	# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
 	_wt_output=$(cd "$repo_path" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
-		"$_wt_helper" add "$_branch" --issue "$issue_number" 2>&1) || true
+		"$_wt_helper" add "$_branch" --issue "$issue_number" \
+		${_wt_base_args[@]+"${_wt_base_args[@]}"} 2>&1) || true
 	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
 	local _path _path_source="porcelain"
 	_path=$(_dlw_worktree_path_for_branch "$repo_path" "$_branch") || _path=""
@@ -1850,6 +1890,12 @@ _dispatch_launch_worker() {
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.
 	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	if ! _dlw_resolve_seed_base "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "seed_pr_unavailable" 2 || return $?
+	fi
+	if [[ -n "${_DLW_SEED_PR:-}" ]]; then
+		prompt+=$'\n\n'"Seed: this worktree starts from seed draft PR #${_DLW_SEED_PR} (head ${_DLW_SEED_OID:0:12}); its companion files are already present. Build on them and open your own PR with full-loop commit-and-pr, which closes the superseded seed. Do not edit, ready or merge the seed PR."
+	fi
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_precreate_worktree "$issue_number" "$repo_path"; then
 		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"

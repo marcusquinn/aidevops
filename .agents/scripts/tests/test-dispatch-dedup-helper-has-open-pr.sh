@@ -610,6 +610,27 @@ test_has_open_pr_keeps_protected_draft_unroutable() {
 	return 0
 }
 
+# GH#34233: a seed draft (label seed-pr + exact marker) is not a checkpoint.
+test_has_open_pr_ignores_seed_draft_only_for_its_issue() {
+	local seed_labels='[{"name":"origin:interactive"},{"name":"seed-pr"}]' output="" rc=0
+	set_gh_fixtures "marcusquinn/aidevops|open|#18783|[{\"number\":18909,\"title\":\"GH#18783: seed companion files\",\"body\":\"<!-- aidevops:seed-pr issue=18783 -->\\nFor #18783\",\"isDraft\":true,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"UNKNOWN\",\"labels\":${seed_labels}}]"
+	output=$("$HELPER_SCRIPT" has-open-pr 18783 marcusquinn/aidevops 'seeded issue') || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		print_result "has-open-pr does not block on the issue's own seed draft" 0
+	else
+		print_result "has-open-pr does not block on the issue's own seed draft" 1 "rc=${rc}: ${output}"
+	fi
+	# A marker for another issue keeps the ordinary draft-checkpoint block.
+	set_gh_fixtures "marcusquinn/aidevops|open|#18783|[{\"number\":18909,\"title\":\"GH#18783: seed companion files\",\"body\":\"<!-- aidevops:seed-pr issue=18784 -->\\nFor #18783\",\"isDraft\":true,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"UNKNOWN\",\"labels\":${seed_labels}}]"
+	output=$("$HELPER_SCRIPT" has-open-pr 18783 marcusquinn/aidevops 'foreign seed marker') || true
+	if [[ "$output" == *"draft PR #18909 is a durable checkpoint"* ]]; then
+		print_result "has-open-pr still blocks a seed-labelled draft without this issue's marker" 0
+	else
+		print_result "has-open-pr still blocks a seed-labelled draft without this issue's marker" 1 "output: ${output}"
+	fi
+	return 0
+}
+
 test_has_open_pr_fails_closed_when_sibling_lookup_fails() {
 	export GH_PR_LIST_FAIL=1
 	local output=""
@@ -1230,6 +1251,7 @@ main() {
 	test_has_open_pr_distinguishes_body_mentions_from_references
 	test_has_open_pr_marks_worker_draft_for_stale_routing
 	test_has_open_pr_keeps_protected_draft_unroutable
+	test_has_open_pr_ignores_seed_draft_only_for_its_issue
 	test_has_open_pr_fails_closed_when_sibling_lookup_fails
 	test_has_open_pr_recovers_after_lookup_uncertainty
 	test_has_open_pr_classifies_sanitized_lookup_failures
