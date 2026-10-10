@@ -287,7 +287,7 @@ test_labels() {
 	[[ "$out" == *"--label=sh.aidevops.owner=1"* && "$out" == *"--label=sh.aidevops.repo=ex/repo"* ]] || rc=1
 	[[ "$out" == *"--label=sh.aidevops.ref=GH#7"* && "$out" == *"--label=sh.aidevops.worktree=/tmp/wt"$'\n'* ]] || rc=1
 	[[ "$out" == *"--label=sh.aidevops.ttl-hours=12"* ]] || rc=1
-	printf '%s\n' "$out" | grep -qE '^--label=sh\.aidevops\.created=[0-9]+$' || rc=1
+	[[ "$out" =~ (^|$'\n')--label=sh\.aidevops\.created=[0-9]+($'\n'|$) ]] || rc=1
 	compose=$(run_helper compose-labels --repo ex/repo --ref PR#9 --worktree /tmp/wt --indent 2) || rc=1
 	[[ "$compose" == *"  labels:"* && "$compose" == *'    sh.aidevops.ref: "PR#9"'* ]] || rc=1
 	run_helper labels --ref bogus >/dev/null 2>&1 && rc=1
