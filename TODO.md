@@ -1602,7 +1602,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18628 refactor: replace 20 _aidevops_path_prefix blocks with a runtime-env.sh helper #refactor ref:GH#34081 -> [todo/tasks/t18628-brief.md] pr:#34093 completed:2026-10-09
 
 - [x] t18631 GH#34125 Phase 2: stop-and-notify on local backend failure and deny protected reads outside a local-only binding #auto-dispatch #feat #security #interactive tier:thinking ref:GH#34146 logged:2026-10-09 -> [todo/tasks/t18631-brief.md] pr:#34155 completed:2026-10-09
-- [ ] t18632 GH#34125 Phase 3: block tool-level egress from local-only bound sessions #auto-dispatch #feat #security #interactive tier:thinking blocked-by:t18631 ref:GH#34147 logged:2026-10-09 -> [todo/tasks/t18632-brief.md]
+- [x] t18632 GH#34125 Phase 3: block tool-level egress from local-only bound sessions #auto-dispatch #feat #security #interactive tier:thinking blocked-by:t18631 ref:GH#34147 pr:#34162 logged:2026-10-09 -> [todo/tasks/t18632-brief.md] completed:2026-10-10
 - [x] t18633 fix(opencode): tool-schema fallback lacks object and yields host-incompatible schemas when @opencode-ai/plugin is unresolvable #auto-dispatch #bug #interactive tier:standard ref:GH#34148 logged:2026-10-09 -> [todo/tasks/t18633-brief.md] pr:#34154 completed:2026-10-10
 - [x] t18634 Migrate Codacy local analysis to Codacy Analysis CLI (@codacy/analysis-cli) #feat #quality #interactive tier:standard ref:GH#34164 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18634-brief.md] pr:#34165 completed:2026-10-09
 - [x] t18635 fix(pulse): silence missing routines registry noise for repos without routines #bug #interactive ref:GH#34169 assignee:marcusquinn logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18635-brief.md] pr:#34170 completed:2026-10-09
@@ -1615,7 +1615,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18643 feat: seed draft PRs — companion files for issues without waiting on default-branch merge #feat #framework ref:GH#34233 pr:#34237 completed:2026-10-10
 
-- [ ] t18646 fix(pulse): recognise blocked-by:GH#NNN labels so closed blockers unblock issues #bug ref:GH#34264
+- [x] t18646 fix(pulse): recognise blocked-by:GH#NNN labels so closed blockers unblock issues #bug ref:GH#34264 pr:#34265 completed:2026-10-10
 
 - [ ] t18647 fix(approval): maintainer state change on a linked external issue must not stale signed approvals #bug ref:GH#34266
 
@@ -5204,4 +5204,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [ ] t18639 GH#34180 Leaf B: durable owner-approved policy for frozen JavaScript worktree installs #auto-dispatch #enhancement tier:thinking ref:GH#34200
+- [x] t18639 GH#34180 Leaf B: durable owner-approved policy for frozen JavaScript worktree installs #auto-dispatch #enhancement tier:thinking ref:GH#34200 pr:#34271 completed:2026-10-10
