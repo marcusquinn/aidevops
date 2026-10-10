@@ -23,6 +23,20 @@ GitHub-hosted minutes.
 `runs-on` guidance: private repos use `[self-hosted, linux, <POOL_LABEL>]`;
 public repos stay on GitHub-hosted runners.
 
+Shared or template workflows (starters synced into public and private repos)
+should keep one file for both: `runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}`,
+and pass the same expression as `runner:` to aidevops reusable workflows. Set
+`CI_RUNNER=<POOL_LABEL>` only on private repos in the runner group whose
+fork pull-request workflows are off:
+
+- Use a repository variable (`gh variable set CI_RUNNER --repo <ORG>/<REPO> --body <POOL_LABEL>`).
+  On the GitHub Free plan, organization variables are listed for private repos but
+  are not passed to their workflows, so the job falls back to `ubuntu-latest`.
+- Check fork workflows: `gh api repos/<ORG>/<REPO>/actions/permissions/fork-pr-workflows-private-repos`
+  must show `"run_workflows_from_fork_pull_requests":false`.
+- Verify: `gh api repos/<ORG>/<REPO>/actions/runs/<RUN_ID>/jobs --jq '.jobs[] | "\(.name): \(.runner_name)"'`
+  shows the pool's runner names.
+
 The server-side pool (systemd, rootless or DinD containers, JIT registration) is
 operator-owned. `github-runner-org-helper.sh` prepares and verifies its inputs.
 
