@@ -90,6 +90,13 @@ cmd_pull() {
 							publication_deferred=$((publication_deferred + 1))
 							continue
 						fi
+						# GH#34232: issue-first — the TODO row is a background backup.
+						# Give the issue creator's own planning commit a head start.
+						if orphan_backup_within_grace "$issue_line"; then
+							print_info "Issue-first backup: deferred TODO seeding for new #$num ($tid)"
+							publication_deferred=$((publication_deferred + 1))
+							continue
+						fi
 						# t2698: seed a TODO.md entry for the open orphan
 						if _seed_orphan_todo_line "$num" "$tid" "$title" "$labels_json" "$todo_file" "${DRY_RUN:-}"; then
 							orphan_seeded=$((orphan_seeded + 1))

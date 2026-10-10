@@ -170,6 +170,9 @@ run_create() {
 
 _setup
 
+# GH#34232: issue-first — creation without --publication-state is canonical.
+assert_contains "issue_first_default_state_canonical" "$TASK_PUBLICATION_STATE" 'canonical'
+
 args_default=$(run_create 'auto-dispatch,tier:standard,bug')
 assert_contains "pending_blocker_added" "$args_default" '--label tier:standard,bug,publication:pending'
 assert_not_contains "pending_auto_dispatch_withheld" "$args_default" 'auto-dispatch'

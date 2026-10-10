@@ -4,7 +4,9 @@
 # =============================================================================
 # Issue Sync — Stale Planning Publication Repair (GH#34149)
 # =============================================================================
-# An issue-first task carries publication:pending until its TODO.md row and
+# Since GH#34232 issues are created canonical (issue-first) by default; only an
+# explicit hold (e.g. new-task batch template bodies, legacy issues) carries
+# publication:pending until its TODO.md row and
 # todo/tasks/<task>-brief.md reach the default branch. When the creating session
 # never publishes (abandoned worktree, closed or conflicting planning PR), no
 # other actor owns the transition, so a worker-ready issue would stay
@@ -67,6 +69,23 @@ _publication_repair_age_hours() {
 	((created_epoch <= now_epoch)) || return 1
 	printf '%s\n' "$(((now_epoch - created_epoch) / 3600))"
 	return 0
+}
+
+# GH#34232: issue-first creation makes open issues without a default-branch
+# TODO row normal for a while: the issue creator publishes its own planning
+# backup. Returns 0 while the issue is younger than the grace window so Pulse
+# does not race that commit on TODO.md. Missing or invalid createdAt fails open
+# (returns 1) because the row is only a backup.
+orphan_backup_within_grace() {
+	local issue_line="$1" created_at="" age_hours=""
+	local grace="${AIDEVOPS_ORPHAN_SEED_GRACE_HOURS:-6}"
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=6
+	[[ "$grace" -gt 0 ]] || return 1
+	created_at=$(printf '%s' "$issue_line" | jq -r '.createdAt // empty' 2>/dev/null) || return 1
+	[[ -n "$created_at" ]] || return 1
+	age_hours=$(_publication_repair_age_hours "$created_at") || return 1
+	[[ "$age_hours" -lt "$grace" ]] && return 0
+	return 1
 }
 
 # Labels that express a deliberate hold or live ownership. Repair never adds

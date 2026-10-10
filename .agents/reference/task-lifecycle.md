@@ -17,12 +17,12 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 
 ## Task Creation
 
-Issue-first planning uses the implemented atomic publication contract in
-`reference/planning-publication-lifecycle.md`: online local creators add
-`publication:pending` and withhold positive dispatch labels until the exact
-default-branch TODO/ref/brief snapshot is validated. Direct publication or a
-merged planning PR triggers idempotent reconciliation; failed or closed-unmerged
-publication leaves the issue blocked and safe to retry.
+Issues lead; `TODO.md` and briefs are repository backups (GH#34232,
+`reference/planning-publication-lifecycle.md`). A worker-ready issue gets its
+intended dispatch labels at creation and never waits for a planning merge.
+`publication:pending` is an opt-in hold for bodies that are not yet
+self-contained (for example `/new-task --batch` template stubs); companion
+files go on a seed draft PR (`workflows/brief.md` "Seeded Draft PR Decision").
 
 1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
 2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `~/.aidevops/agents/templates/brief-template.md`)
