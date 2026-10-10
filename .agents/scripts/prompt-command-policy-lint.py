@@ -62,7 +62,8 @@ def lint_file(path: Path, policy: Path) -> bool:
     forbidden = 0
     count = 0
     for line, command in bash_commands(path.read_text(encoding="utf-8")):
-        result = subprocess.run(
+        # The prompt command is data for check-command, never executable argv.
+        result = subprocess.run(  # nosec B603 -- fixed interpreter/local checker; command is data, no shell.
             [
                 sys.executable, str(SCRIPT_DIR / "command-policy-helper.py"),
                 "check-command", "--policy", str(policy), "--cwd", str(REPO_ROOT),
@@ -71,6 +72,7 @@ def lint_file(path: Path, policy: Path) -> bool:
             capture_output=True,
             text=True,
             check=False,
+            shell=False,
             timeout=30,
         )
         decision = json.loads(result.stdout)
