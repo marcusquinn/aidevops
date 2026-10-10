@@ -128,7 +128,7 @@ _prepare_cmd_run_environment() {
 		return 0
 	fi
 	_ensure_valid_launch_cwd "$work_dir" || return 1
-	_validate_issue_worker_env_contract "$role" "$session_key" "$work_dir" "$title" "$prompt" || return 1
+	_validate_issue_worker_env_contract "$role" "$session_key" "$work_dir" "$title" "$prompt" "${standalone_prompt:-0}" || return 1
 	_recover_deleted_cwd_before_launch "$work_dir" "cmd_run" || return 1
 	aidevops_init_temp_workspace || {
 		print_error "Could not initialize aidevops temporary workspace"
