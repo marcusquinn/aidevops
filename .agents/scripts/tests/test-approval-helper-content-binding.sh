@@ -120,7 +120,7 @@ append_signed_comment() {
 	local number="$2"
 	local issued_at="$3"
 	local comment_id="${4:-$((number * 100 + 99))}"
-	local source_timestamp_profile="${5:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
+	local source_timestamp_profile="${5:-$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND}"
 	local comments_file="${FIXTURES}/comments-${number}.json"
 	local timeline_file="${FIXTURES}/timeline-${number}.json"
 	local payload="" signature_file="" signature="" body="" updated=""
@@ -1124,6 +1124,22 @@ test_trusted_linked_source_profiles() {
 	append_signed_comment pr 42 "2026-01-01T00:05:00Z"
 	set_linked_source 42 '.author_association = "CONTRIBUTOR"'
 	assert_verify "linked-source association drift stales PR approval" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+
+	# GH#34266: closing/reopening a linked external source carries no scope.
+	write_baseline_fixtures
+	set_linked_source 41 '.author_association = "NONE" | .state = "open"'
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z"
+	set_linked_source 41 '.state = "closed"'
+	assert_verify "maintainer closing a linked external source keeps issue approval" issue 41 VERIFIED 0
+	set_linked_source 41 '.body = "external author rewrote the linked body"'
+	assert_verify "external linked-source body edit still stales issue approval" issue 41 STALE_APPROVAL 4
+
+	write_baseline_fixtures
+	set_linked_source 42 '.author_association = "NONE" | .state = "open"'
+	append_signed_comment pr 42 "2026-01-01T00:05:00Z" 4298 "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES"
+	assert_verify "pre-GH#34266 trusted-sources approval remains verifiable" pr 42 VERIFIED 0 "$PR_HEAD"
+	set_linked_source 42 '.state = "closed"'
+	assert_verify "pre-GH#34266 approval still binds linked-source state" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
 
 	write_baseline_fixtures
 	set_linked_source 42 '.author_association = "OWNER"'

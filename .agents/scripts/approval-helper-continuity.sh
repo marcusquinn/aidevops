@@ -370,9 +370,10 @@ _approval_verify_locked_issue_continuity() {
 	return 0
 }
 
-# Prints STABLE_MATCH or LEGACY_MATCH when an older linked-source profile
-# reproduces the complete signed digest (the caller then accepts it), otherwise
-# VERIFIED (proven lifecycle continuity), API_ERROR, or STALE_APPROVAL.
+# Prints TRUSTED_SOURCES_MATCH, STABLE_MATCH or LEGACY_MATCH when an older
+# linked-source profile reproduces the complete signed digest (the caller then
+# accepts it), otherwise VERIFIED (proven lifecycle continuity), API_ERROR, or
+# STALE_APPROVAL.
 _approval_classify_digest_mismatch() {
 	local target_type="$1"
 	local target_number="$2"
@@ -383,8 +384,23 @@ _approval_classify_digest_mismatch() {
 	local payload="$7"
 	local snapshot_json="$8"
 	local signed_digest="$9"
+	local trusted_snapshot_json="" trusted_digest=""
 	local stable_snapshot_json="" stable_digest="" legacy_snapshot_json="" legacy_digest="" continuity_rc=0
 
+	# #aidevops:trust-boundary — approvals issued before GH#34266 also bind
+	# content-bound linked-source state (trusted-sources profile); exact match only.
+	trusted_snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$issue_lifecycle_profile") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	trusted_digest=$(approval_snapshot_v2_digest "$trusted_snapshot_json") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	if [[ "$trusted_digest" == "$signed_digest" ]]; then
+		printf 'TRUSTED_SOURCES_MATCH\n'
+		return 0
+	fi
 	# #aidevops:trust-boundary — approvals issued before GH#32455 bind all
 	# linked-source content (stable profile); accept only an exact match.
 	stable_snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_STABLE" "$issue_lifecycle_profile") || {
@@ -413,8 +429,12 @@ _approval_classify_digest_mismatch() {
 	fi
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
 		_approval_verify_locked_issue_continuity "$payload" "$snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
-		# Approvals signed before GH#32455 used the stable linked-source profile;
-		# their lifecycle continuity must be proven against that exact profile.
+		# Approvals signed before GH#34266 / GH#32455 used the trusted-sources /
+		# stable linked-source profiles; prove continuity against that exact profile.
+		if [[ "$continuity_rc" -eq 1 ]]; then
+			continuity_rc=0
+			_approval_verify_locked_issue_continuity "$payload" "$trusted_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+		fi
 		if [[ "$continuity_rc" -eq 1 ]]; then
 			continuity_rc=0
 			_approval_verify_locked_issue_continuity "$payload" "$stable_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?

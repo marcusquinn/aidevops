@@ -10,10 +10,12 @@ APPROVAL_SNAPSHOT_V2_SCHEMA="aidevops-approval-snapshot/v2"
 APPROVAL_SNAPSHOT_PROFILE_CURRENT="current"
 APPROVAL_SNAPSHOT_PROFILE_LEGACY="legacy"
 # Linked-source profiles: legacy (pre-GH#29009, binds source updated_at),
-# stable (GH#29009, binds all source content), trusted-sources (GH#32455,
-# default for new approvals; see _approval_snapshot_v2_linked_references_json).
+# stable (GH#29009, binds all source content), trusted-sources (GH#32455),
+# source-state-unbound (GH#34266, default for new approvals; see
+# _approval_snapshot_v2_linked_source_content).
 APPROVAL_SNAPSHOT_PROFILE_STABLE="stable"
 APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES="trusted-sources"
+APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND="source-state-unbound"
 APPROVAL_JSON_OBJECT="object"
 
 _approval_snapshot_v2_create_temp_dir() {
@@ -179,17 +181,31 @@ _approval_snapshot_v2_comments_json() {
 # write authority on the target repository. Sources from other repositories
 # (association is repository-relative) or with any other association keep full
 # content binding. Mirrored by source_access_core._issue_reference.
+#
+# #aidevops:trust-boundary — GH#34266: under the source-state-unbound profile
+# (default for new approvals) a content-bound source still binds its title and
+# body, which are the only scope-bearing text, but not its open/closed state.
+# Closing or reopening carries no instructions, and binding it let a maintainer
+# closing a linked external issue stale every approval that referenced it.
+# The trusted-sources profile keeps binding state so approvals signed before
+# GH#34266 still verify on an exact match (they need a fresh signature after a
+# linked-source state change).
 _approval_snapshot_v2_linked_source_content() {
 	cat <<'JQ'
+def trusted_profile_active:
+	$source_timestamp_profile == $trusted_profile or $source_timestamp_profile == $state_unbound_profile;
 def trusted_source:
-	$source_timestamp_profile == $trusted_profile
+	trusted_profile_active
 	and ((.repository.full_name // $empty) | ascii_downcase) == ($target_repository | ascii_downcase)
 	and ((.author_association // $empty) as $association | any(("OWNER", "MEMBER", "COLLABORATOR"); . == $association));
 def source_content:
-	if $source_timestamp_profile != $trusted_profile then
+	if (trusted_profile_active | not) then
 		{title: (.title // $empty), body: (.body // $empty), state: (.state // $empty)}
 	elif trusted_source then
 		{author_association: .author_association, content_bound: false}
+	elif $source_timestamp_profile == $state_unbound_profile then
+		{title: (.title // $empty), body: (.body // $empty),
+			author_association: (.author_association // $empty), content_bound: true}
 	else
 		{title: (.title // $empty), body: (.body // $empty), state: (.state // $empty),
 			author_association: (.author_association // $empty), content_bound: true}
@@ -201,13 +217,13 @@ JQ
 _approval_snapshot_v2_linked_references_json() {
 	local pages_json="$1"
 	local issued_at_cutoff="${2:-}"
-	local source_timestamp_profile="${3:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
+	local source_timestamp_profile="${3:-$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND}"
 	local target_repository="${4:-}"
 	local empty_string=""
 	local timestamp_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 	case "$source_timestamp_profile" in
 	"$APPROVAL_SNAPSHOT_PROFILE_STABLE" | "$APPROVAL_SNAPSHOT_PROFILE_LEGACY") ;;
-	"$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES")
+	"$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" | "$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND")
 		[[ "$target_repository" == */* ]] || return 1
 		;;
 	*) return 1 ;;
@@ -225,7 +241,8 @@ _approval_snapshot_v2_linked_references_json() {
 	# bound (see _approval_snapshot_v2_linked_source_content for GH#32455).
 	jq -cS --arg empty "$empty_string" --arg cutoff "$issued_at_cutoff" --arg timestamp_pattern "$timestamp_pattern" \
 		--arg source_timestamp_profile "$source_timestamp_profile" --arg legacy_profile "$APPROVAL_SNAPSHOT_PROFILE_LEGACY" --arg issue_kind "$APPROVAL_TARGET_ISSUE" \
-		--arg trusted_profile "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" --arg target_repository "$target_repository" "
+		--arg trusted_profile "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" --arg state_unbound_profile "$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND" \
+		--arg target_repository "$target_repository" "
 		$(_approval_snapshot_v2_linked_source_content)"'
 		def is_linked_reference:
 			(.event // $empty) == "cross-referenced"
@@ -365,7 +382,7 @@ approval_snapshot_v2_build() (
 	local slug="$3"
 	local excluded_comment_id="${4:-}"
 	local issued_at_cutoff="${5:-}"
-	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
+	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND}"
 	local issue_lifecycle_profile="${7:-$APPROVAL_SNAPSHOT_PROFILE_CURRENT}"
 	local issue_json="" comments_pages="" comments_json="" timeline_pages="" linked_references_json="" normalized_slug=""
 	local issue_lifecycle_json=""
@@ -520,7 +537,7 @@ approval_snapshot_v2_payload() (
 	local slug="$3"
 	local issued_at="$4"
 	local excluded_comment_id="${5:-}"
-	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
+	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND}"
 	local snapshot_json="" digest="" normalized_slug="" content_digests="null"
 	local temp_dir=""
 

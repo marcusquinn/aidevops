@@ -322,14 +322,15 @@ def _issue_reference(event: dict[str, Any], target_repository: str) -> dict[str,
     if source is not None:
         repository = ((source.get("repository") or {}).get("full_name") or "").lower()
         association = source.get("author_association") or ""
-        # #aidevops:trust-boundary — mirrors the GH#32455 trusted-sources
+        # #aidevops:trust-boundary — mirrors the GH#34266 source-state-unbound
         # profile in approval-snapshot-v2.sh: same-repository sources authored
-        # by write-trusted associations bind identity, not mutable content.
+        # by write-trusted associations bind identity, not mutable content;
+        # other sources bind title/body (scope-bearing) but not open/closed state.
         if repository == target_repository.lower() and association in _TRUSTED_SOURCE_ASSOCIATIONS:
             projection = _issue_fields(source, "node_id", "number id")
             projection.update(author_association=association, content_bound=False)
         else:
-            projection = _issue_fields(source, "node_id title body state", "number id")
+            projection = _issue_fields(source, "node_id title body", "number id")
             projection.update(author_association=association, content_bound=True)
         projection.update(kind="pr" if source.get("pull_request") is not None else "issue",
                           repository=repository, author=_issue_actor(source.get("user")))
