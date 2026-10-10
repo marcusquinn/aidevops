@@ -336,6 +336,24 @@ _sync_readme() {
 
 # ─── Workflow install ────────────────────────────────────────────────────────
 
+# _find_metrics_caller <repo_path>
+# Prints the basename of the first workflow in .github/workflows/ with a
+# non-comment `uses:` line referencing loc-badge-reusable.yml; returns 1 if none.
+_find_metrics_caller() {
+	local _repo="$1"
+	local _wf_dir="$_repo/.github/workflows"
+	local _f
+	[[ -d "$_wf_dir" ]] || return 1
+	for _f in "$_wf_dir"/*.yml "$_wf_dir"/*.yaml; do
+		[[ -f "$_f" ]] || continue
+		if grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^#[:space:]]*loc-badge-reusable\.yml' "$_f" 2>/dev/null; then
+			printf '%s\n' "${_f##*/}"
+			return 0
+		fi
+	done
+	return 1
+}
+
 # _install_workflow <slug> <path> <apply> <branch_name> <default_branch>
 # Installs the repo metrics caller into .github/workflows/loc-badge.yml.
 _install_workflow() {
@@ -355,6 +373,13 @@ _install_workflow() {
 	# Already installed check
 	if [[ -f "$_target" ]]; then
 		printf '%s\t%s\tloc-badge.yml already installed\n' "$_slug" "$_STATUS_SKIPPED"
+		return 0
+	fi
+
+	# Another workflow already calls the reusable metrics workflow (GH#34276)
+	local _existing_caller
+	if _existing_caller=$(_find_metrics_caller "$_path"); then
+		printf '%s\t%s\tmetrics caller already present: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_existing_caller"
 		return 0
 	fi
 

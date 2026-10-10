@@ -1625,8 +1625,23 @@ _init_optional_scaffolding() {
 			'.initialized_repos // [] | map(select(.slug == $s)) | if length > 0 then .[0].local_only // false else false end' \
 			"$HOME/.config/aidevops/repos.json" 2>/dev/null || echo "false")
 
+		# Skip when another workflow already calls the reusable metrics workflow (GH#34276).
+		local _existing_caller=""
+		if [[ ! -f "$_wf_dest" ]]; then
+			local _wf_file
+			for _wf_file in "$project_root"/.github/workflows/*.yml "$project_root"/.github/workflows/*.yaml; do
+				[[ -f "$_wf_file" ]] || continue
+				if grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^#[:space:]]*loc-badge-reusable\.yml' "$_wf_file" 2>/dev/null; then
+					_existing_caller="${_wf_file##*/}"
+					break
+				fi
+			done
+		fi
+
 		# Install repo metrics refresh workflow for repos that can run GitHub Actions.
-		if [[ "$_is_local_only" != "true" && -f "$_wf_template" && ! -f "$_wf_dest" ]]; then
+		if [[ -n "$_existing_caller" ]]; then
+			print_info "Skipping loc-badge.yml: metrics caller already present: $_existing_caller"
+		elif [[ "$_is_local_only" != "true" && -f "$_wf_template" && ! -f "$_wf_dest" ]]; then
 			mkdir -p "$project_root/.github/workflows"
 			cp "$_wf_template" "$_wf_dest"
 			print_success "Installed .github/workflows/loc-badge.yml (repo metrics refresh workflow)"
