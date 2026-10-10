@@ -67,6 +67,7 @@ FIXTURE_ISSUE_JSON="${TEST_ROOT}/fixture-issue.json"
 FIXTURE_COMMENTS_JSON="${TEST_ROOT}/fixture-comments.json"
 FIXTURE_TIMELINE_JSON="${TEST_ROOT}/fixture-timeline.json"
 FIXTURE_PR_JSON="${TEST_ROOT}/fixture-pr.json"
+FIXTURE_EARLY_PR_JSON="${TEST_ROOT}/fixture-early-pr.json"
 FIXTURE_STATUS_JSON="${TEST_ROOT}/fixture-status.json"
 cat >"$FIXTURE_STATUS_JSON" <<'STATUS'
 {"data":{"repository":{
@@ -117,6 +118,10 @@ if [[ "\$1" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "\$2" == "repos/"*"/pulls/"* ]]; then
+		if [[ "\$2" == "repos/owner/repo/pulls/41" ]]; then
+			cat "${FIXTURE_EARLY_PR_JSON}" 2>/dev/null || exit 1
+			exit 0
+		fi
 		cat "${FIXTURE_PR_JSON}" 2>/dev/null || exit 1
 		exit 0
 	fi
@@ -561,8 +566,9 @@ cat >"$FIXTURE_PR_JSON" <<'JSON'
 {"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18013","merged_at":"2026-05-03T19:25:00Z"}
 JSON
 sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
-[[ "$sum_output" == "300000|1" ]]
-print_result "verified closeout resets missing timeline; copied footer is not spend" "$?" "(got: '$sum_output')"
+assertion_rc=1
+if [[ "$sum_output" == "300000|1" ]]; then assertion_rc=0; fi
+print_result "verified closeout resets missing timeline; copied footer is not spend" "$assertion_rc" "(got: '$sum_output')"
 
 for invalid_pr in \
 	'{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18013","merged_at":null}' \
@@ -570,13 +576,63 @@ for invalid_pr in \
 	'{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #180130","merged_at":"2026-05-03T19:25:00Z"}'; do
 	printf '%s' "$invalid_pr" >"$FIXTURE_PR_JSON"
 	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
-	[[ "$sum_output" == "1000000|2" ]]
-	print_result "unverified closeout does not reset budget" "$?" "(got: '$sum_output')"
+	assertion_rc=1
+	if [[ "$sum_output" == "1000000|2" ]]; then assertion_rc=0; fi
+	print_result "unverified closeout does not reset budget" "$assertion_rc" "(got: '$sum_output')"
 done
 printf 'not-valid-json' >"$FIXTURE_PR_JSON"
 run_check_cost_budget 18013 "owner/repo" "standard"
-[[ "$rc" -eq 1 && -z "$output" ]]
-print_result "closeout PR parse failure stays fail-open" "$?"
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "closeout PR parse failure stays fail-open" "$assertion_rc"
+
+# GH#34251: four counted footers were two worker reports and two copied
+# closeout summaries, not four consecutive failures. Timeline references were
+# missing. Retain the incident's spend shape without private source data.
+printf '[]' >"$FIXTURE_TIMELINE_JSON"
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-05-03T18:00:00Z","body":"spent 246727 tokens"},
+ {"created_at":"2026-05-03T19:00:00Z","body":"spent 244443 tokens"},
+ {"created_at":"2026-05-03T19:30:00Z","body":"spent 186376 tokens"},
+ {"created_at":"2026-05-03T19:40:00Z","body":"spent 190989 tokens"}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "868535|4" ]]; then assertion_rc=0; fi
+print_result "unmarked incident control counts 868535 tokens across four footers" "$assertion_rc" "(got: '$sum_output')"
+
+# Put the newer receipt first: comment/candidate order must not pick the older
+# checkpoint. Both receipts copy worker footers and neither is another attempt.
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-05-03T18:00:00Z","body":"spent 246727 tokens"},
+ {"created_at":"2026-05-03T19:40:00Z","body":"spent 190989 tokens"}
+]
+[
+ {"created_at":"2026-05-03T20:01:00Z","author_association":"MEMBER","body":"<!-- PARTIAL_PARENT_CLOSEOUT:PR#42 -->\nCopied summary: spent 186376 tokens"},
+ {"created_at":"2026-05-03T18:26:00Z","author_association":"MEMBER","body":"<!-- PARTIAL_PARENT_CLOSEOUT:PR#41 -->\nCopied summary: spent 244443 tokens"}
+]
+JSON
+cat >"$FIXTURE_EARLY_PR_JSON" <<'JSON'
+{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18013","merged_at":"2026-05-03T18:25:00Z"}
+JSON
+cat >"$FIXTURE_PR_JSON" <<'JSON'
+{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18013","merged_at":"2026-05-03T20:00:00Z"}
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "0|0" ]]; then assertion_rc=0; fi
+print_result "latest verified partial delivery clears incident spend without timeline events" "$assertion_rc" "(got: '$sum_output')"
+: >"$STUB_LOG"
+run_check_cost_budget 18013 "owner/repo" "standard"
+if [[ "$rc" -eq 1 && -z "$output" ]] &&
+	! grep -qE '^issue (edit|comment) ' "$STUB_LOG"; then
+	print_result "delivered incident history does not block or file another meta issue" 0
+else
+	print_result "delivered incident history does not block or file another meta issue" 1 "(rc=$rc output='$output')"
+fi
 
 export PATH="$OLD_PATH"
 
