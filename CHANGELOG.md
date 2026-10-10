@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.45] - 2026-10-10
+
+### Added
+
+- generate quality sweep briefs by area
+
+### Changed
+
+- Maintenance: mark t18640 complete (pr:#34206 completed:2026-10-09) (#34212)
+
+### Fixed
+
+- provision do-not-close label before sweep comments recommend it
+- make /pulse and /pulse-sweep commands OpenCode-policy compatible
+- validate API URL scheme before urlopen in codacy_standard.py (GH#34183) (#34214)
+
 ## [3.38.44] - 2026-10-10
 
 ### Added
