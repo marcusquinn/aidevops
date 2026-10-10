@@ -136,7 +136,7 @@ cmd_status() {
 	done < <(printf '%s' "$groups" | jq -r --arg g "$group" '.[] | select($g == "" or .name == $g) | [.id, .name, .visibility, .allows_public_repositories] | @tsv')
 
 	if [[ -n "$group" ]]; then
-		gid=$(printf '%s' "$groups" | jq -r --arg g "$group" '.[] | select(.name == $g) | .id' | head -n1)
+		gid=$(printf '%s' "$groups" | jq -r --arg g "$group" '.[] | select(.name == $g) | .id' | sed -n '1p')
 		if [[ -z "$gid" ]]; then
 			_ro_err "status: group not found: ${group}"
 			return 1
@@ -194,7 +194,7 @@ _ro_print_group() {
 		--jq '.repositories[] | "\(.name)\t\(.private)"') || return 1
 	printf 'Group id: %s\nvisibility: %s\nallows_public_repositories: %s\nSelected repositories:\n' "$gid" "$visibility" "$public"
 	printf '%s\n' "$repos" | cut -f1 | sed 's/^/  /'
-	if [[ "$public" == "true" ]] || printf '%s\n' "$repos" | cut -f2 | grep -qx 'false'; then
+	if [[ "$public" == "true" ]] || printf '%s\n' "$repos" | cut -f2 | grep -x 'false' >/dev/null; then
 		_ro_err "group-ensure: group allows public repositories or contains a public repo"
 		return 1
 	fi
@@ -264,7 +264,7 @@ cmd_group_ensure() {
 		elif grep -Eqi '409|422|already exists|name.*taken' "$err_file"; then
 			# Concurrent creator won the race: reconcile the existing group.
 			gid="$(_ro_api "re-list runner groups" --paginate "orgs/${org}/actions/runner-groups" \
-				--jq ".runner_groups[] | select(.name == \"${name}\") | .id" | head -n1)" || {
+				--jq ".runner_groups[] | select(.name == \"${name}\") | .id" | sed -n '1p')" || {
 				rm -f "$err_file"
 				return 1
 			}
