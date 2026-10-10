@@ -234,6 +234,15 @@ Seeded draft PR bodies must mentor the next worker with:
 
 Record the decision in `~/.aidevops/agents/templates/brief-template.md` under **Seeded Draft PR** whether a seed was created or intentionally skipped.
 
+### Seed mechanics (GH#34233)
+
+Seeds also carry companion files (fixtures, research notes, scaffolding) an issue needs, so nothing waits for a default-branch merge. Commit them in a linked worktree branch, then run `seed-pr-helper.sh open <issue> --notes <file> [--dispatch]`. It pushes, opens a same-repository draft labelled `seed-pr` with the body marker `<!-- aidevops:seed-pr issue=N -->` and `For #N`, and labels the issue `seed-pr` (`--dispatch` also adds `auto-dispatch`). Re-running pushes an updated head to the same seed.
+
+- **Dispatch:** dedup ignores the seed as an implementation checkpoint; the worker worktree starts from the exact seed head SHA.
+- **Trust:** only one open, same-repository draft by an OWNER/MEMBER/COLLABORATOR counts. Several marked seeds, forks, or untrusted authors are ignored, and the worker starts from the default branch.
+- **Supersede:** `full-loop-helper.sh commit-and-pr` proves the seed head is an ancestor before WIP squash/rebase, then closes the seed once the implementation PR exists. A seed that moved after the proof stays open.
+- Never mark a seed ready or merge it; its commits land through the implementation PR.
+
 ## Tier Classification
 
 Use `reference/task-taxonomy.md` as the single policy source. In order:

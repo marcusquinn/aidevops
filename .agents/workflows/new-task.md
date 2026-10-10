@@ -121,7 +121,8 @@ After the brief is worker-ready, consider an optional implementation-seeded draf
 
 - Seed only when current-session discovery produced high-confidence file paths, line ranges, and implementation patterns verified against current `HEAD`.
 - Keep issue-only when the implementation is uncertain, depends on design judgment, or would anchor workers to stale assumptions.
-- If seeded, create the PR as draft, link it back to the issue/brief, mark unrun checks as `UNVERIFIED`, and record the draft PR number/status in the brief's **Seeded Draft PR** section.
+- Also seed when the issue needs companion files (fixtures, notes, scaffolding) before a worker can start; they travel on the seed, not the default branch.
+- If seeded, open it with `seed-pr-helper.sh open <issue> --notes <file>` from a linked worktree (mark unrun checks `UNVERIFIED` in the notes) and record the draft PR number/status in the brief's **Seeded Draft PR** section. Mechanics: `workflows/brief.md` "Seed mechanics".
 - If skipped, record the rationale in the same section so later workers know whether the absence of a seed was intentional.
 
 ### Step 3.5: Classify and Decompose (t1408.2)
