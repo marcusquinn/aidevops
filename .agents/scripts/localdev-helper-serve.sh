@@ -9,6 +9,7 @@ _LOCALDEV_SERVE_LIB_LOADED=1
 
 SERVE_CHILD_PID=""
 SERVE_EXISTING=0
+SERVE_READINESS_DETAIL=""
 SERVE_LAUNCH_LOCK=""
 SERVE_LOCK_HELD=0
 
@@ -190,16 +191,21 @@ _serve_check_existing() {
 	local allow_unhealthy="${4:-0}"
 	local announce="${5:-1}"
 	local listener_pids=""
+	local health_status=0
 	SERVE_EXISTING=0
+	SERVE_READINESS_DETAIL="no listener detected by lsof"
 	listener_pids="$(_serve_listener_pids "$port")" || return 1
 	[[ -z "$listener_pids" ]] && return 0
 	_serve_validate_owners "$listener_pids" "$root" || return 1
-	if ! _serve_health_ready "$health_url"; then
+	_serve_health_ready "$health_url" || health_status=$?
+	if [[ "$health_status" -ne 0 ]]; then
+		SERVE_READINESS_DETAIL="owned listener detected; health probe failed (curl exit $health_status)"
 		[[ "$allow_unhealthy" -eq 1 ]] && return 0
 		print_error "Owned listener on port $port is unhealthy; stop it explicitly before restarting"
 		return 1
 	fi
 	SERVE_EXISTING=1
+	SERVE_READINESS_DETAIL="owned listener is healthy"
 	[[ "$announce" -eq 1 ]] && print_success "Reusing $name on port $port"
 	return 0
 }
@@ -356,6 +362,7 @@ _serve_wait_for_readiness() {
 		attempt=$((attempt + 1))
 	done
 	print_error "Server did not become ready on port $port within ${startup_timeout}s"
+	print_error "Last readiness observation: $SERVE_READINESS_DETAIL"
 	return 1
 }
 

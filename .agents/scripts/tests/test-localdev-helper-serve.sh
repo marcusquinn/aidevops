@@ -163,11 +163,14 @@ start_helper() {
 	local output_file="$4"
 	local startup_delay="${5:-0}"
 	local stale_lock="${6:-.next/dev/lock}"
+	local health_path="${7:-/}"
+	local health_delay="${8:-0}"
+	local startup_timeout="${9:-15}"
 	(
 		cd "$project" || exit 1
-		exec /bin/bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
-			--lock "$stale_lock" --health-url "http://127.0.0.1:${port}/" \
-			--startup-timeout 15 -- env LAUNCH_LOG="$launch_log" STARTUP_DELAY="$startup_delay" \
+		exec bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
+			--lock "$stale_lock" --health-url "http://127.0.0.1:${port}${health_path}" \
+			--startup-timeout "$startup_timeout" -- env LAUNCH_LOG="$launch_log" STARTUP_DELAY="$startup_delay" HEALTH_DELAY="$health_delay" \
 			python3 server.py
 	) >"$output_file" 2>&1 &
 	STARTED_PID=$!
@@ -184,7 +187,7 @@ run_helper_once() {
 	local status=0
 	(
 		cd "$project" || exit 1
-		/bin/bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
+		bash "$HELPER" serve --name integration-test --port "$port" --root "$project" \
 			--lock "$stale_lock" --health-url "http://127.0.0.1:${port}/" \
 			--startup-timeout 5 -- env LAUNCH_LOG="$launch_log" python3 server.py
 	) >"$output_file" 2>&1 || status=$?
@@ -269,10 +272,14 @@ with open(os.environ["LAUNCH_LOG"], "a", encoding="utf-8") as log:
     log.flush()
 time.sleep(float(os.environ.get("STARTUP_DELAY", "0")))
 status = int(os.environ.get("HEALTH_STATUS", "200"))
+health_ready_at = time.monotonic() + float(os.environ.get("HEALTH_DELAY", "0"))
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(status)
+        response_status = status
+        if self.path == "/health" and time.monotonic() < health_ready_at:
+            response_status = 503
+        self.send_response(response_status)
         self.end_headers()
         self.wfile.write(b"ok")
 
@@ -318,6 +325,34 @@ assert_true "foreign collision is explained" file_contains "$foreign_output" "ou
 
 terminate_pid "$leader_pid"
 assert_true "leader termination releases the port" wait_for_port_free "$port"
+
+# The root page is healthy while the configured endpoint is still warming up.
+# Keep the child alive beyond its startup deadline to catch erroneous cleanup.
+delayed_port="$(pick_port)"
+delayed_log="$TEST_ROOT/delayed.log"
+delayed_output="$TEST_ROOT/delayed.out"
+start_helper "$PROJECT_A" "$delayed_port" "$delayed_log" "$delayed_output" 0 .next/dev/lock /health 4 8
+delayed_pid="$STARTED_PID"
+assert_true "delayed-health root page becomes healthy first" wait_for_health "$delayed_port"
+assert_true "root response does not release readiness lock" test -d "$HOME/.local-dev-proxy/run-locks/port-${delayed_port}.lock"
+assert_true "delayed configured health releases readiness lock" wait_for_path_absent "$HOME/.local-dev-proxy/run-locks/port-${delayed_port}.lock"
+assert_true "helper announces delayed configured health readiness" file_contains "$delayed_output" "integration-test is ready on port $delayed_port"
+sleep 9
+assert_true "ready helper survives its startup deadline" kill -0 "$delayed_pid"
+assert_true "ready listener survives its startup deadline" curl --fail --silent --output /dev/null --noproxy '*' "http://127.0.0.1:${delayed_port}/health"
+terminate_pid "$delayed_pid"
+assert_true "delayed-health cleanup releases the port" wait_for_port_free "$delayed_port"
+
+# A genuinely failed startup still times out and cleans up its owned child.
+failed_output="$TEST_ROOT/failed-startup.out"
+start_helper "$PROJECT_A" "$delayed_port" "$delayed_log" "$failed_output" 0 .next/dev/lock /health 30 3
+failed_pid="$STARTED_PID"
+assert_true "failed startup also serves a healthy root" wait_for_health "$delayed_port"
+failed_status=0
+wait "$failed_pid" || failed_status=$?
+assert_status "unhealthy configured endpoint causes startup failure" 1 "$failed_status"
+assert_true "timeout distinguishes failed health from absent listener" file_contains "$failed_output" "owned listener detected; health probe failed (curl exit 22)"
+assert_true "failed startup cleans up its listener" wait_for_port_free "$delayed_port"
 
 # An owned but unhealthy listener must remain running and block replacement.
 unhealthy_log="$TEST_ROOT/unhealthy.log"
