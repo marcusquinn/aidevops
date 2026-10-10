@@ -52,7 +52,8 @@ Options for once:
   --after DURATION   Relative delay using s, m, h, or d, up to 3650d
   --name NAME        Private operator label shown by status
   --dir PATH         Dispatch working directory
-  --prompt-file PATH Copy prompt into private state; prompt text is never stored in job JSON
+  --prompt-file PATH Copy prompt into private state; prompt text is never stored in job JSON.
+                     Runs as a standalone prompt without issue authority; use --issue for issue work
   --issue N          GitHub issue number (requires --repo)
   --repo OWNER/REPO  Repository scope for issue work
   --worktree PATH    Existing issue worktree; otherwise canonical manual dispatch is used
@@ -208,6 +209,12 @@ _dj_validate_once_payload() {
 		prompt_size=$(wc -c <"$_DJ_ARG_PROMPT_FILE" | tr -d '[:space:]')
 		if [[ ! "$prompt_size" =~ ^[0-9]+$ || "$prompt_size" -eq 0 || "$prompt_size" -gt 1048576 ]]; then
 			printf 'ERROR: --prompt-file must contain 1 to 1048576 bytes\n' >&2
+			return 2
+		fi
+		# GH#34250: prompt jobs launch as standalone workers, which refuse
+		# issue-shaped titles. Reject now instead of failing when due.
+		if [[ "${_DJ_ARG_TITLE:-Deferred job: ${_DJ_ARG_NAME}}" =~ Issue[[:space:]]+#[0-9]+ ]]; then
+			printf 'ERROR: --prompt-file jobs must not use an "Issue #N" title or name; use --issue N --repo OWNER/REPO for issue work\n' >&2
 			return 2
 		fi
 		if [[ -x "$guard_helper" ]] && ! "$guard_helper" scan-file "$_DJ_ARG_PROMPT_FILE" >/dev/null 2>&1; then
