@@ -772,31 +772,60 @@ _full_loop_verify_published_release() {
 	local workflow_runs_json=""
 	local workflow_runs_endpoint=""
 
-	[[ "$repo" == */* && "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX && "$merge_commit" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
+	if [[ "$repo" != */* || ! "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX || ! "$merge_commit" =~ $_FULL_LOOP_SHA40_REGEX ]]; then
+		print_error "Invalid release evidence arguments (repo=${repo}, tag=${tag_name}, commit=${merge_commit})"
+		return 1
+	fi
 	if [[ "$workflow_event" != "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" &&
 		"$workflow_event" != "push" && "$workflow_event" != "workflow_dispatch" ]]; then
+		print_error "Invalid --event '${workflow_event}': expected release, push, or workflow_dispatch"
 		return 1
 	fi
 	if [[ -n "$workflow_file" ]]; then
 		if [[ ! "$workflow_file" =~ ^[1-9][0-9]*$ && ! "$workflow_file" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$ ]]; then
+			print_error "Invalid --workflow '${workflow_file}': expected a bare *.yml/*.yaml file name or numeric workflow ID"
 			return 1
 		fi
 		workflow_runs_endpoint="repos/${repo}/actions/workflows/${workflow_file}/runs?event=${workflow_event}&status=success&per_page=100"
 	else
-		[[ "$workflow_event" == "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" ]] || return 1
+		if [[ "$workflow_event" != "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" ]]; then
+			print_error "--event ${workflow_event} requires --workflow to bind publication evidence to an exact workflow"
+			return 1
+		fi
 		workflow_runs_endpoint="repos/${repo}/actions/runs?event=release&status=success&per_page=100"
 	fi
-	tag_commit=$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name") || return 1
+	tag_commit=$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name") || {
+		print_error "Tag ${tag_name} not found in ${repo} or does not resolve to a commit"
+		return 1
+	}
 	if [[ "$tag_commit" != "$merge_commit" ]]; then
 		#aidevops:trust-boundary — never substitute a generic ancestry check.
-		[[ "$generated_catalog" == "$_FULL_LOOP_BOOL_TRUE" && -n "$workflow_file" ]] || return 1
+		if [[ "$generated_catalog" != "$_FULL_LOOP_BOOL_TRUE" || -z "$workflow_file" ]]; then
+			print_error "Tag ${tag_name} points at ${tag_commit}, not the merge commit ${merge_commit}"
+			return 1
+		fi
 		python3 "${SCRIPT_DIR}/cloudron-release-evidence.py" --repo "$repo" --tag "$tag_name" \
-			--source "$merge_commit" --commit "$tag_commit" --workflow "$workflow_file" --event "$workflow_event" || return 1
-		[[ "$tag_commit" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || return 1
+			--source "$merge_commit" --commit "$tag_commit" --workflow "$workflow_file" --event "$workflow_event" || {
+			print_error "Generated catalog evidence for tag ${tag_name} was rejected"
+			return 1
+		}
+		[[ "$tag_commit" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || {
+			print_error "Tag ${tag_name} moved while verifying generated catalog evidence"
+			return 1
+		}
 	fi
-	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || return 1
-	jq -e --arg tag_name "$tag_name" '.tag_name == $tag_name and .draft == false' <<<"$release_json" >/dev/null || return 1
-	workflow_runs_json=$(gh api "$workflow_runs_endpoint" 2>/dev/null) || return 1
+	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || {
+		print_error "No GitHub release found for tag ${tag_name} in ${repo}"
+		return 1
+	}
+	jq -e --arg tag_name "$tag_name" '.tag_name == $tag_name and .draft == false' <<<"$release_json" >/dev/null || {
+		print_error "Release for tag ${tag_name} is a draft or does not match the tag"
+		return 1
+	}
+	workflow_runs_json=$(gh api "$workflow_runs_endpoint" 2>/dev/null) || {
+		print_error "Cannot read workflow runs from ${workflow_runs_endpoint}"
+		return 1
+	}
 	jq -e --arg tag_name "$tag_name" --arg merge_commit "$merge_commit" \
 		--arg completed "$_FULL_LOOP_PHASE_COMPLETED" --arg workflow_event "$workflow_event" '
 		[.workflow_runs[]? | select(
@@ -804,7 +833,10 @@ _full_loop_verify_published_release() {
 			and .head_sha == $merge_commit
 			and ($workflow_event != "release" or .head_branch == $tag_name)
 		)] | length > 0
-	' <<<"$workflow_runs_json" >/dev/null || return 1
+	' <<<"$workflow_runs_json" >/dev/null || {
+		print_error "No successful ${workflow_event} run${workflow_file:+ of workflow ${workflow_file}} found for ${merge_commit}"
+		return 1
+	}
 	return 0
 }
 
@@ -887,8 +919,21 @@ _full_loop_parse_published_release_options() {
 			}
 			option_value="${args[$((arg_index + 1))]}"
 			if [[ "$option" == "--workflow" ]]; then
+				# Accept .github/workflows/<name>.yml by taking its basename.
+				if [[ "$option_value" =~ ^\.github/workflows/([A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml)$ ]]; then
+					option_value="${BASH_REMATCH[1]}"
+				fi
+				if [[ ! "$option_value" =~ ^[1-9][0-9]*$ && ! "$option_value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$ ]]; then
+					print_error "Invalid --workflow '${option_value}': expected a bare *.yml/*.yaml file name, .github/workflows/<name>.yml, or numeric workflow ID"
+					return 1
+				fi
 				_FULL_LOOP_PARSED_WORKFLOW_FILE="$option_value"
 			else
+				if [[ "$option_value" != "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" &&
+					"$option_value" != "push" && "$option_value" != "workflow_dispatch" ]]; then
+					print_error "Invalid --event '${option_value}': expected release, push, or workflow_dispatch"
+					return 1
+				fi
 				_FULL_LOOP_PARSED_WORKFLOW_EVENT="$option_value"
 			fi
 			arg_index=$((arg_index + 2))
@@ -985,31 +1030,79 @@ cmd_record_included_release() {
 	fi
 	shift 3
 	_full_loop_parse_published_release_options "$@" || return 1
-	[[ "$_FULL_LOOP_PARSED_GENERATED_CATALOG" == "$_FULL_LOOP_BOOL_FALSE" ]] || return 1
-	repo=$(_full_loop_resolve_repo "$_FULL_LOOP_PARSED_REPO_ARG") || return 1
+	[[ "$_FULL_LOOP_PARSED_GENERATED_CATALOG" == "$_FULL_LOOP_BOOL_FALSE" ]] || {
+		print_error "record-included-release does not support --generated-cloudron-catalog"
+		return 1
+	}
+	repo=$(_full_loop_resolve_repo "$_FULL_LOOP_PARSED_REPO_ARG") || {
+		print_error "Repository for included-release evidence could not be resolved"
+		return 1
+	}
 	# Canonical aidevops releases retain their signed aggregation manifest path.
-	[[ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" != "marcusquinn/aidevops" ]] || return 1
+	if [[ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" == "marcusquinn/aidevops" ]]; then
+		print_error "record-included-release is not available for ${repo}; canonical releases use the signed aggregation manifest path"
+		return 1
+	fi
 	workflow_file="$_FULL_LOOP_PARSED_WORKFLOW_FILE"
 	workflow_event="$_FULL_LOOP_PARSED_WORKFLOW_EVENT"
-	source_receipt=$(_full_loop_release_receipt_path "$repo" "$source_pr") || return 1
-	[[ -f "$source_receipt" ]] || return 1
-	IFS= read -r release_status <"$source_receipt" || return 1
-	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
-	source_json=$(_full_loop_read_fresh_merged_pr_json "$source_pr" "$repo") || return 1
-	feature_json=$(_full_loop_read_fresh_merged_pr_json "$pr_number" "$repo") || return 1
-	source_merge=$(jq -er '.mergeCommit.oid' <<<"$source_json") || return 1
-	feature_merge=$(jq -er '.mergeCommit.oid' <<<"$feature_json") || return 1
-	[[ "$source_merge" =~ $_FULL_LOOP_SHA40_REGEX && "$feature_merge" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
+	source_receipt=$(_full_loop_release_receipt_path "$repo" "$source_pr") || {
+		print_error "Cannot resolve release receipt path for source PR #${source_pr}"
+		return 1
+	}
+	if [[ ! -f "$source_receipt" ]]; then
+		print_error "source PR #${source_pr} has no release:published receipt; run record-published-release ${source_pr} ${tag_name} first"
+		return 1
+	fi
+	IFS= read -r release_status <"$source_receipt" || {
+		print_error "Cannot read release receipt for source PR #${source_pr}"
+		return 1
+	}
+	if [[ "$release_status" != "$_FULL_LOOP_RELEASE_PUBLISHED" ]]; then
+		print_error "source PR #${source_pr} receipt is release:${release_status}, not release:published; run record-published-release ${source_pr} ${tag_name} first"
+		return 1
+	fi
+	source_json=$(_full_loop_read_fresh_merged_pr_json "$source_pr" "$repo") || {
+		print_error "Source PR #${source_pr} lacks merged evidence"
+		return 1
+	}
+	feature_json=$(_full_loop_read_fresh_merged_pr_json "$pr_number" "$repo") || {
+		print_error "PR #${pr_number} lacks merged evidence"
+		return 1
+	}
+	source_merge=$(jq -er '.mergeCommit.oid' <<<"$source_json") || {
+		print_error "Source PR #${source_pr} has no merge commit"
+		return 1
+	}
+	feature_merge=$(jq -er '.mergeCommit.oid' <<<"$feature_json") || {
+		print_error "PR #${pr_number} has no merge commit"
+		return 1
+	}
+	if [[ ! "$source_merge" =~ $_FULL_LOOP_SHA40_REGEX || ! "$feature_merge" =~ $_FULL_LOOP_SHA40_REGEX ]]; then
+		print_error "Merge commit of PR #${pr_number} or source PR #${source_pr} is not a full SHA"
+		return 1
+	fi
 	# aidevops:trust-boundary — ancestry proves inclusion only AFTER independently
 	# verifying the published source receipt, exact source tag and successful run.
-	_full_loop_verify_published_release "$repo" "$tag_name" "$source_merge" "$workflow_file" "$workflow_event" || return 1
-	compare_json=$(gh api "repos/${repo}/compare/${feature_merge}...${source_merge}" 2>/dev/null) || return 1
+	_full_loop_verify_published_release "$repo" "$tag_name" "$source_merge" "$workflow_file" "$workflow_event" || {
+		print_error "Cannot record release:superseded: source PR #${source_pr} release evidence for ${tag_name} does not verify"
+		return 1
+	}
+	compare_json=$(gh api "repos/${repo}/compare/${feature_merge}...${source_merge}" 2>/dev/null) || {
+		print_error "Cannot compare ${feature_merge} with ${source_merge} in ${repo}"
+		return 1
+	}
 	jq -e --arg feature "$feature_merge" --arg source "$source_merge" '
 		(.status == "ahead" or .status == "identical")
 		and .merge_base_commit.sha == $feature and .base_commit.sha == $feature
 		and (if .status == "identical" then $source == $feature else true end)
-	' <<<"$compare_json" >/dev/null || return 1
-	[[ "$source_merge" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || return 1
+	' <<<"$compare_json" >/dev/null || {
+		print_error "PR #${pr_number} merge commit is not an ancestor of source PR #${source_pr} merge commit"
+		return 1
+	}
+	[[ "$source_merge" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || {
+		print_error "Tag ${tag_name} does not point at source PR #${source_pr} merge commit"
+		return 1
+	}
 	_full_loop_acquire_transition_lock || return 1
 	# Recheck the linked receipt under the same lock used for destination writes.
 	IFS= read -r release_status <"$source_receipt" || status=1
@@ -1039,7 +1132,10 @@ cmd_record_included_release() {
 		_full_loop_update_superseded_cleanup_receipt "$repo" "$pr_number" || status=1
 	fi
 	_full_loop_release_transition_lock
-	[[ "$status" -eq 0 ]] || return 1
+	[[ "$status" -eq 0 ]] || {
+		print_error "Cannot record release:superseded for PR #${pr_number}: receipt state conflicts with existing evidence"
+		return 1
+	}
 	print_success "release:superseded recorded for PR #${pr_number}, included in source PR #${source_pr} (${tag_name})"
 	return 0
 }
