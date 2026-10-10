@@ -55,6 +55,7 @@ test("V2 preserves operator agents and restrictive canonical tool rules", () => 
     registerV2PrimaryProfiles(clean, profiles);
     assert.deepEqual(clean.get("Review").permissions, [
       { action: "shell", resource: "*", effect: "deny" },
+      { action: "bash", resource: "*", effect: "deny" },
       { action: "edit", resource: "*", effect: "deny" },
     ]);
     const invalid = profiles.filter(({ name }) => name !== "Build+");
