@@ -43,7 +43,8 @@ function trustedSymlinkChain(path, hops = 0) {
       if (metadata.uid !== 0 || !trustedChain(parse(prefix).dir)) return false;
       const target = readlinkSync(prefix);
       const next = isAbsolute(target) ? target : `${parse(prefix).dir}/${target}`;
-      return trustedSymlinkChain(`${next}/${parts.slice(index + 1).join("/")}`, hops + 1);
+      const remaining = parts.slice(index + 1).join("/");
+      return trustedSymlinkChain(remaining ? `${next}/${remaining}` : next, hops + 1);
     }
   }
   return trustedChain(path);
