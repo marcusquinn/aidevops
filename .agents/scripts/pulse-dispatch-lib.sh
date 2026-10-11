@@ -870,8 +870,10 @@ _dispatch_max_loop() {
 
 #######################################
 # GH#33538: skip a candidate whose cross-cycle negative-cache hint is current,
-# without spawning a ceremony. Only the local cache file is read here (no API,
-# no process scan); the child still runs the full prefilter. Records an
+# without spawning a ceremony. Reads the local cache file; no process scan. The
+# only API use is GH#34402: a live worker-draft hint with a stale PR snapshot
+# makes one bounded exact-PR REST read, cheaper than the capacity wait and
+# ceremony it replaces. The child still runs the full prefilter. Records an
 # ineligible outcome so priority phases neither retry it nor count it unknown.
 #
 # Arguments:

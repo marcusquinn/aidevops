@@ -44,11 +44,12 @@ When the last attempt on a candidate was blocked by a worker draft checkpoint, t
 - `NEW: _dispatch_negative_pr_rest_fingerprint` in the same file — one `timeout_sec`-bounded `gh api repos/{repo}/pulls/{pr}` read that returns `updated_at` + `_` + `head.sha` only for an open draft; any error returns 1. Model the field mapping on `.agents/scripts/pulse-batch-prefetch-helper.sh:395-405` so both sources produce identical fingerprints.
 - `EDIT: .agents/scripts/pulse-dispatch-lib.sh:287-291` — check the TTL before reading the PR, so an expired hint costs no API call.
 - `EDIT: .agents/scripts/pulse-dispatch-lib.sh:66-80` — add `_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS` (env `AIDEVOPS_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS`, default 10, range 1–30).
+- `EDIT: .agents/scripts/pulse-dispatch-lib.sh:838-841` — the GH#33538 parent-prefilter comment says "no API"; record the one bounded REST read a live worker-draft hint can now make there.
 - `EDIT: .agents/scripts/tests/test-pulse-stale-pr-continuation.sh:280-285` — the "stale snapshot cannot suppress dispatch" contract changes. Replace it with stale-snapshot cases for a failed read, an unchanged open draft (record and read), a closed PR and a ready PR, plus "fresh complete snapshot needs no read" and "expired hint costs no read".
 
 ### Complete Write Surface
 
-- **Callers/readers:** `_dispatch_negative_pr_fingerprint` has two callers, `_dispatch_negative_cache_record` (`pulse-dispatch-lib.sh:237`) and `_dispatch_negative_cache_reason` (`:289`); `rg -n "_dispatch_negative_pr_fingerprint" .agents/scripts` finds no others.
+- **Callers/readers:** `_dispatch_negative_pr_fingerprint` has two callers, `_dispatch_negative_cache_record` (`pulse-dispatch-lib.sh:237`) and `_dispatch_negative_cache_reason` (`:289`); `rg -n "_dispatch_negative_pr_fingerprint" .agents/scripts` finds no others. `_dispatch_negative_cache_reason` in turn runs in the parallel loop's parent prefilter (`_dispatch_max_prefilter_cached_block`, `:848`, called at `:798`, serial, before capacity checks) and in each candidate's own prefilter (`_dispatch_prefilter_owned_candidate`, `:307`, called at `:541` by every loop).
 - **Writers/mutation paths:** records under `~/.aidevops/logs/dispatch-negative-cache/` keep their format; the fingerprint string is identical from either source.
 - **Existing verification/tests:** `.agents/scripts/tests/test-pulse-stale-pr-continuation.sh`; `.agents/scripts/tests/test-dispatch-max-parallel.sh` exercises `_dispatch_cache_confirmed_block` for other reasons.
 - **Schemas/config:** one optional env var (above).
@@ -67,7 +68,8 @@ When the last attempt on a candidate was blocked by a worker draft checkpoint, t
 
 - **Safety:** the hint only skips; it never launches, claims or relabels. The issue `updatedAt` match, the 1800s TTL and the exact PR revision match all still apply. Requiring an open draft from REST is stricter than the snapshot path.
 - **Time-based transitions:** the GH#34008 expired-claim continuation and Layer 6 stale-assignment recovery change neither fingerprint, so a live hint can delay them by up to the unchanged 30-minute TTL, as designed in GH#33034.
-- **API cost:** at most one REST core call per recorded block and per live hint read while the snapshot is stale (tens per cycle at most), versus the ceremony's many calls. Bounded at 10s, so a slow API cannot hold a candidate stage.
+- **API cost:** at most one REST core call per recorded block and per live hint read while the snapshot is stale (tens per cycle at most), versus the ceremony's many calls. The pulse puts the `gh` shim first on `PATH`, and the shim records the call, so the helper does not record it again.
+- **Parent wave loop:** the GH#33538 parent prefilter runs serially before capacity checks, so a live worker-draft hint with a stale snapshot now costs one REST read there (typically under a second). This replaces the capacity wait, inter-launch delay and ~63s ceremony a spawned candidate would otherwise pay. Each read is bounded at 10s; a complete API stall costs at most 10s per hinted candidate, when every ceremony would be failing too. Keeping the parent local-only would forfeit the GH#33538 benefit (skip without spending a wave slot) for exactly these candidates.
 - **Mixed versions:** older bundles keep reading the same record format.
 - **Bash 3.2:** no new constructs.
 
@@ -88,7 +90,7 @@ bash .agents/scripts/tests/test-dispatch-max-parallel.sh
 ```
 
 - **Surface mapping:** the stale-continuation suite drives the real record and read functions with a stubbed snapshot helper and stubbed `gh`; the max-parallel suite covers the other cached reasons through the same recorder.
-- **Live check after release and update:** `rg -c "cross-cycle ownership block:worker_draft_checkpoint_blocked" ~/.aidevops/logs/pulse.log` rises above 0 while repeated `WORKER_DRAFT_CHECKPOINT` rediscoveries for the same issues fall.
+- **Live check after release and update:** `rg -c "cross-cycle (ownership )?block:worker_draft_checkpoint_blocked" ~/.aidevops/logs/pulse.log` rises above 0 while repeated `WORKER_DRAFT_CHECKPOINT` rediscoveries for the same issues fall. The parent prefilter logs `cross-cycle block:`; the candidate prefilter logs `cross-cycle ownership block:`.
 - **Broad verification trigger:** Not required — one module, no shared contract, root tooling or release infrastructure change.
 
 ### Recoverability Checkpoint
@@ -144,12 +146,12 @@ and Pulse intake in `reference/worker-discipline.md` when local recovery is unsa
     run: "bash .agents/scripts/tests/test-pulse-stale-pr-continuation.sh"
   ```
 
-- [ ] After release and update, the runner logs `cross-cycle ownership block:worker_draft_checkpoint_blocked` hits.
+- [ ] After release and update, the runner logs `cross-cycle block:worker_draft_checkpoint_blocked` (parent prefilter) or `cross-cycle ownership block:worker_draft_checkpoint_blocked` (candidate prefilter) hits.
 
   ```yaml
   verify:
     method: manual
-    prompt: "rg -c 'cross-cycle ownership block:worker_draft_checkpoint_blocked' ~/.aidevops/logs/pulse.log is above 0 after the deploy"
+    prompt: "rg -c 'cross-cycle (ownership )?block:worker_draft_checkpoint_blocked' ~/.aidevops/logs/pulse.log is above 0 after the deploy"
   ```
 
 ## Context & Decisions
