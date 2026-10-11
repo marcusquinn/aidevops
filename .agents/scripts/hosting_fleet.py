@@ -34,6 +34,12 @@ from hosting_fleet_plan import (  # noqa: E402
     CLEAN_STATES, build_plan,
 )
 from hosting_fleet_privacy import config_pairs, fleet_entities, merge_private_entities  # noqa: E402
+from hosting_fleet_provision import (  # noqa: E402
+    assert_plan_current,
+    build_provision,
+    load_reviewed_plan,
+    print_provision,
+)
 from hosting_fleet_ready import build_readiness, print_readiness  # noqa: E402
 from hosting_fleet_remote import API_BASE, discover_networks, fetch_websites  # noqa: E402
 from repo_layout_migrate import (  # noqa: E402
@@ -48,6 +54,7 @@ DEFAULT_STATE_DIR = "~/.aidevops/.agent-workspace/work/hostinger-fleet"
 DEFAULT_CONFIG = "~/.config/aidevops/hosting-fleet.json"
 DRIFT_EXIT = 3
 NOT_READY_EXIT = 4
+PROVISION_FAILED_EXIT = 5
 
 
 def write_private(path_value: str | None, payload: dict[str, Any], default_name: str) -> Path:
@@ -214,6 +221,23 @@ def ready_command(args: argparse.Namespace) -> int:
     return NOT_READY_EXIT if args.fail_on_not_ready and not receipt["all_ready"] else 0
 
 
+def provision_command(args: argparse.Namespace) -> int:
+    """Preview, or apply against the exact reviewed plan hash."""
+    if args.apply and not args.plan_sha256:
+        raise FleetError("--apply requires --plan-sha256 of the reviewed plan")
+    plan_path = expand_path(args.plan)
+    plan = load_reviewed_plan(plan_path, args.plan_sha256)
+    if args.apply:
+        assert_plan_current(plan_path, plan, load_fleet_config(args.config))
+    report = build_provision(plan, {"apply": args.apply, "site": args.site,
+                                    "repos_json": args.repos_json, "state_dir": DEFAULT_STATE_DIR})
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print_provision(report)
+    return PROVISION_FAILED_EXIT if report["counts"].get("failed") else 0
+
+
 def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     """Arguments shared by plan and drift."""
     parser.add_argument("--inventory", help="Inventory JSON (default: private state dir)")
@@ -274,6 +298,17 @@ def build_parser() -> argparse.ArgumentParser:
     ready.add_argument("--fail-on-not-ready", action="store_true",
                        help=f"Exit {NOT_READY_EXIT} unless every repository is ready")
     ready.set_defaults(handler=ready_command)
+    provision = commands.add_parser("provision", help="Create/adopt, clone, init and deliver from a reviewed plan")
+    provision.add_argument("--plan", default=f"{DEFAULT_STATE_DIR}/plan.json")
+    provision.add_argument("--site", action="append", metavar="DOMAIN",
+                           help="Limit to one planned site (repeatable)")
+    provision.add_argument("--apply", action="store_true", help="Execute; requires --plan-sha256")
+    provision.add_argument("--plan-sha256", help="Exact hash of the reviewed plan")
+    provision.add_argument("--repos-json", default="~/.config/aidevops/repos.json")
+    provision.add_argument("--config", default=DEFAULT_CONFIG,
+                           help="Fleet config; apply refuses plans that predate its owner/ignore list")
+    provision.add_argument("--json", action="store_true")
+    provision.set_defaults(handler=provision_command)
     return parser
 
 

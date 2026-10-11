@@ -197,13 +197,13 @@ fleet_command() {
         python3 "$engine" "$subcommand" --discovery-lib "$discovery_lib" "$@" || status=$?
         return "$status"
         ;;
-    privacy-sync)
+    privacy-sync | provision)
         shift
         python3 "$engine" "$subcommand" "$@" || status=$?
         return "$status"
         ;;
     help | -h | --help)
-        echo "Usage: $0 fleet <inventory|plan|drift|ready|privacy-sync> [options]"
+        echo "Usage: $0 fleet <inventory|plan|drift|ready|provision|privacy-sync> [options]"
         echo ""
         echo "  inventory [--username U] [--discover-networks --ssh ALIAS] [--network-map FILE]"
         echo "      GET-only website inventory; groups shared roots; optional read-only"
@@ -217,6 +217,10 @@ fleet_command() {
         echo "      Read-only configured readiness per repo: private remote, owner, push,"
         echo "      default-branch heads, effective project config, Pulse/maintenance,"
         echo "      gh auth; writes a private receipt (exit 4 if not all ready)"
+        echo "  provision [--plan FILE] [--site DOMAIN]... [--apply --plan-sha256 HASH]"
+        echo "      Preview (default) or apply the saved plan: create/adopt private repo,"
+        echo "      clone, native init, push + issue + PR (never merges); resumable,"
+        echo "      append-only private receipt (exit 5 if any repository failed)"
         echo "  privacy-sync [--inventory FILE] [--config FILE]"
         echo "      Offline sync to the local private entity guard (counts only)"
         echo "      Also runs automatically after inventory"
