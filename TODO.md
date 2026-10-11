@@ -1637,9 +1637,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18665 fix(pulse): rotate dispatch attempts so repeatedly blocked head candidates stop starving the never-attempted backlog #bug #framework tier:standard ref:GH#34363 logged:2026-10-11 -> [todo/tasks/t18665-brief.md] pr:#34365 completed:2026-10-11
 
-- [ ] t18666 fix(pulse): log secret-gate issue-fetch skips and restore test-pulse-wrapper-silent-dispatch.sh (4/21 failing since #32748) #auto-dispatch #bug #framework ref:GH#34364
+- [x] t18666 fix(pulse): log secret-gate issue-fetch skips and restore test-pulse-wrapper-silent-dispatch.sh (4/21 failing since #32748) #auto-dispatch #bug #framework ref:GH#34364 pr:#34368 completed:2026-10-11
 
-- [ ] t18667 fix(pulse): reserve the post-label refill's real dispatch admission budget so pre-refill stages cannot spend it #bug #framework tier:standard ref:GH#34370 logged:2026-10-11 -> [todo/tasks/t18667-brief.md]
+- [x] t18667 fix(pulse): reserve the post-label refill's real dispatch admission budget so pre-refill stages cannot spend it #bug #framework tier:standard ref:GH#34370 logged:2026-10-11 -> [todo/tasks/t18667-brief.md] pr:#34371 completed:2026-10-11
 
 ## In Progress
 
