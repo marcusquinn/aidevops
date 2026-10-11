@@ -501,7 +501,7 @@ else
 	fail "shim accepts already-expanded literal metacharacter path"
 fi
 
-if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" <<'PY'
+if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" <<'PY'; then
 import os
 import subprocess
 import sys
@@ -547,7 +547,6 @@ for name, search in (("git", os.defpath), ("git", str(native_dir)), ("git", ""),
 assert trusted_executable("git", str(native_dir)) is None
 assert subprocess.run([sys.executable, "-I", "-S", "-B", scripts + "/trusted_executable.py", "../git"], env=environment).returncode == 2
 PY
-then
 	pass "native resolver rejects overrides and all shims; shell trust matches Python"
 else
 	fail "shared native Git and trusted-tool regression checks"

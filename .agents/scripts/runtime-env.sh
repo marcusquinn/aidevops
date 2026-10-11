@@ -145,7 +145,7 @@ aidevops_dir_chain_is_trusted() {
 			target=$(command -p readlink "$current") || return 1
 			[[ "$target" == /* ]] || target="${current%/*}/$target"
 			aidevops_dir_chain_is_trusted "$target" "$((hops + 1))" || return 1
-		elif (( (8#$mode & 0022) != 0 )); then
+		elif (((8#$mode & 0022) != 0)); then
 			[[ -k "$current" ]] || return 1
 		fi
 		[[ "$current" == / ]] && break
@@ -156,7 +156,7 @@ aidevops_dir_chain_is_trusted() {
 		metadata=$(aidevops_bootstrap_metadata "$physical") || return 1
 		read -r uid mode <<<"$metadata"
 		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || return 1
-		if (( (8#$mode & 0022) != 0 )); then
+		if (((8#$mode & 0022) != 0)); then
 			[[ -k "$physical" ]] || return 1
 		fi
 		[[ "$physical" == "/" ]] && break
@@ -187,7 +187,7 @@ aidevops_resolve_trusted_tool() {
 		metadata=$(aidevops_bootstrap_metadata "$physical") || continue
 		read -r uid mode <<<"$metadata"
 		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || continue
-		(( (8#$mode & 0022) == 0 )) || continue
+		(((8#$mode & 0022) == 0)) || continue
 		aidevops_dir_chain_is_trusted "${candidate%/*}" || continue
 		aidevops_dir_chain_is_trusted "${physical%/*}" || continue
 		if [[ "$#" -gt 1 ]]; then
