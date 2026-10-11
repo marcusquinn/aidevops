@@ -799,6 +799,21 @@ _full_loop_release_start_new() {
 	return $?
 }
 
+_full_loop_release_preview_sources() {
+	local source_pr="$1"
+	local tag_name="$2"
+	local gap_reason="$3"
+	local expected_sources="$4"
+	[[ "$source_pr" =~ ^[0-9]+$ && -z "$tag_name" && -z "$gap_reason" && -z "$expected_sources" ]] || return 1
+	_full_loop_release_bind_repo_context || return 1
+	(
+		cd "$REPO_ROOT" || exit 1
+		bash "${SCRIPT_DIR}/release-provenance-helper.sh" preview-sources \
+			--source-pr "$source_pr" --repo "$AIDEVOPS_FULL_LOOP_REPO" --branch main
+	)
+	return $?
+}
+
 main() {
 	local release_type="${1:-patch}"
 	local source_pr="${2:-}"
@@ -841,13 +856,7 @@ main() {
 		return 0
 		;;
 	sources)
-		[[ "$source_pr" =~ ^[0-9]+$ && -z "$tag_name" && -z "$gap_reason" && -z "$expected_sources" ]] || return 1
-		_full_loop_release_bind_repo_context || return 1
-		(
-			cd "$REPO_ROOT" || exit 1
-			bash "${SCRIPT_DIR}/release-provenance-helper.sh" preview-sources \
-				--source-pr "$source_pr" --repo "$AIDEVOPS_FULL_LOOP_REPO" --branch main
-		)
+		_full_loop_release_preview_sources "$source_pr" "$tag_name" "$gap_reason" "$expected_sources"
 		return $?
 		;;
 	status | reconcile | recover-reservation)
