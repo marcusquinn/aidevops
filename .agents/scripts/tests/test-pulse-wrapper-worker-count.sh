@@ -322,10 +322,13 @@ test_policy_compatible_command_router() {
 		print_result "command router rejects invalid FOSS capacity" 0
 	fi
 
-	# GH#34323: delegated statuses must survive errexit-suppressed callers
-	# (if/||/set +e); stdout stays the delegate's own output.
-	local expected_rc="" actual_rc="" stub_rc=""
+	# GH#34323/GH#34329: conditional callers retain status and delegate output,
+	# with exactly one machine-readable result appended.
+	local expected_rc="" actual_rc="" stub_rc="" outcome="" expected_output=""
 	for expected_rc in 0 1 3; do
+		outcome="deferred"
+		[[ "$expected_rc" -eq 0 ]] && outcome="launched"
+		expected_output=$(printf 'dispatch:7\nPULSE_COMMAND_RESULT command=dispatch rc=%s outcome=%s' "$expected_rc" "$outcome")
 		actual_rc=0
 		output=$(
 			dispatch_with_dedup() {
@@ -335,29 +338,63 @@ test_policy_compatible_command_router() {
 			stub_rc="$expected_rc"
 			_pulse_wrapper_run_command dispatch 1 owner/repo "title" "Issue #1" gpt /tmp/repo "prompt"
 		) || actual_rc=$?
-		if [[ "$actual_rc" == "$expected_rc" && "$output" == "dispatch:7" ]]; then
+		if [[ "$actual_rc" == "$expected_rc" && "$output" == "$expected_output" ]]; then
 			print_result "command router propagates dispatch status ${expected_rc} in conditional context (GH#34323)" 0
 		else
 			print_result "command router propagates dispatch status ${expected_rc} in conditional context (GH#34323)" 1 \
-				"Expected rc=${expected_rc} output=dispatch:7, got rc=${actual_rc} output='${output}'"
+				"Expected rc=${expected_rc} output='${expected_output}', got rc=${actual_rc} output='${output}'"
 		fi
 	done
 
+	# Fresh bash processes exercise the CLI's set -euo pipefail even though this
+	# test captures their status with ||. Command substitutions alone disable -e.
+	local command_name=""
+	for command_name in dispatch repo-cap; do
+		for expected_rc in 0 1 3 7; do
+			outcome="failed"
+			case "${command_name}:${expected_rc}" in
+			dispatch:0) outcome="launched" ;;
+			dispatch:1 | dispatch:3) outcome="deferred" ;;
+			repo-cap:0) outcome="at-cap" ;;
+			repo-cap:1) outcome="below-cap" ;;
+			esac
+			actual_rc=0
+			output=$(bash -euo pipefail -c '
+				source "$1/pulse-wrapper-commands.sh"
+				stub_rc="$3"
+				dispatch_with_dedup() { return "$stub_rc"; }
+				check_repo_worker_cap() { return "$stub_rc"; }
+				if [[ "$2" == dispatch ]]; then
+					_pulse_wrapper_run_command dispatch 1 owner/repo title issue user /tmp/repo prompt
+				else
+					_pulse_wrapper_run_command repo-cap /tmp/repo
+				fi
+			' bash "$SCRIPT_DIR" "$command_name" "$expected_rc") || actual_rc=$?
+			expected_output="PULSE_COMMAND_RESULT command=${command_name} rc=${expected_rc} outcome=${outcome}"
+			if [[ "$actual_rc" == "$expected_rc" && "$output" == "$expected_output" ]]; then
+				print_result "command router reports ${command_name} status ${expected_rc} under errexit (GH#34329)" 0
+			else
+				print_result "command router reports ${command_name} status ${expected_rc} under errexit (GH#34329)" 1 \
+					"Expected rc=${expected_rc} output='${expected_output}', got rc=${actual_rc} output='${output}'"
+			fi
+		done
+	done
+
 	actual_rc=0
-	(
-		check_repo_worker_cap() { return 1; }
-		_pulse_wrapper_run_command repo-cap /tmp/repo
-	) || actual_rc=$?
-	if [[ "$actual_rc" == "1" ]]; then
-		print_result "command router preserves repo-cap below-cap predicate in conditional context (GH#34323)" 0
+	output=$(bash -euo pipefail -c '
+		source "$1/pulse-wrapper-commands.sh"
+		dispatch_with_dedup() { false; printf "unsafe continuation\n"; return 0; }
+		_pulse_wrapper_run_command dispatch 1 owner/repo title issue user /tmp/repo prompt
+	' bash "$SCRIPT_DIR") || actual_rc=$?
+	if [[ "$actual_rc" == 1 && "$output" == 'PULSE_COMMAND_RESULT command=dispatch rc=1 outcome=deferred' ]]; then
+		print_result "command router preserves fail-closed internal errexit (GH#34329)" 0
 	else
-		print_result "command router preserves repo-cap below-cap predicate in conditional context (GH#34323)" 1 \
-			"Expected rc=1, got rc=${actual_rc}"
+		print_result "command router preserves fail-closed internal errexit (GH#34329)" 1 "rc=${actual_rc} output='${output}'"
 	fi
 
 	actual_rc=0
-	(_pulse_wrapper_run_command repo-cap >/dev/null 2>&1) || actual_rc=$?
-	if [[ "$actual_rc" == "2" ]]; then
+	output=$(_pulse_wrapper_run_command repo-cap 2>/dev/null) || actual_rc=$?
+	if [[ "$actual_rc" == "2" && -z "$output" ]]; then
 		print_result "command router keeps usage exit 2 (GH#34323)" 0
 	else
 		print_result "command router keeps usage exit 2 (GH#34323)" 1 "Expected rc=2, got rc=${actual_rc}"

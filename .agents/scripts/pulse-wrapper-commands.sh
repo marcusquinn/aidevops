@@ -20,6 +20,29 @@ _pulse_wrapper_command_usage() {
 	return 2
 }
 
+_pulse_wrapper_report_result() {
+	local command_name="$1" rc="$2" outcome="failed"
+	case "${command_name}:${rc}" in
+	dispatch:0) outcome="launched" ;;
+	dispatch:1 | dispatch:3) outcome="deferred" ;;
+	repo-cap:0) outcome="at-cap" ;;
+	repo-cap:1) outcome="below-cap" ;;
+	esac
+	printf 'PULSE_COMMAND_RESULT command=%s rc=%s outcome=%s\n' "$command_name" "$rc" "$outcome"
+	return 0
+}
+
+_pulse_wrapper_observe_command() (
+	local command_name="$1"
+	shift
+	# A subshell-local EXIT trap reports both normal returns and errexit exits,
+	# without replacing the caller's traps or suppressing errexit in the delegate.
+	# Do not invoke the delegate in if/||/&&, or enable/disable shell options here.
+	trap '_pulse_wrapper_report_result "$command_name" "$?"' EXIT
+	"$@"
+	return $?
+)
+
 _pulse_wrapper_run_command() {
 	local command_name="${1:-}"
 	[[ -n "$command_name" ]] || {
@@ -56,7 +79,7 @@ _pulse_wrapper_run_command() {
 			_pulse_wrapper_command_usage
 			return 2
 		}
-		dispatch_with_dedup "$@"
+		_pulse_wrapper_observe_command dispatch dispatch_with_dedup "$@"
 		;;
 	approve-pr)
 		[[ "$#" -eq 3 ]] || {
@@ -84,7 +107,7 @@ _pulse_wrapper_run_command() {
 			_pulse_wrapper_command_usage
 			return 2
 		}
-		check_repo_worker_cap "$@"
+		_pulse_wrapper_observe_command repo-cap check_repo_worker_cap "$@"
 		;;
 	count-debt)
 		[[ "$#" -eq 2 ]] || {

@@ -294,6 +294,8 @@ Also check bundle overrides: `bundle-helper.sh get agent_routing <repo-path>`.
 
 Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch).
 
+Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: OpenCode may hide nonzero exit statuses. `command=repo-cap rc=0 outcome=at-cap` means skip; `command=repo-cap rc=1 outcome=below-cap` means capacity is available. After dispatch, `command=dispatch rc=0 outcome=launched` confirms launch; `rc=1` or `rc=3` with `outcome=deferred` means no launch. Other statuses report `outcome=failed`; do not count them as launches or available capacity. Both commands preserve their exit statuses and print exactly one result line in addition to any delegate output. Usage errors return 2 on stderr with no result line.
+
 ### Lineage context for subtasks
 
 When dispatching a subtask (task ID contains a dot, e.g., `t1408.3`), include a TASK LINEAGE block in the dispatch prompt. Use `task-decompose-helper.sh format-lineage TASK_ID` to generate it.
