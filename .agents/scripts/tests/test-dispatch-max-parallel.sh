@@ -656,6 +656,134 @@ EOF
 	return 0
 }
 
+# GH#34428: run one cycle-floor scenario. Called in a subshell so the real
+# watchdog helpers and the stubs below do not leak into later tests.
+# Args: cycle seconds remaining after the finalise reserve, capture directory
+_run_dispatch_cycle_floor_scenario() {
+	local remaining="$1" capture_dir="$2" rc=0
+	# shellcheck source=../pulse-watchdog.sh
+	source "${SCRIPT_DIR}/pulse-watchdog.sh"
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s/timing.txt"\nexit 0\n' "$capture_dir" >"${capture_dir}/dispatch-timing-helper.sh"
+	chmod +x "${capture_dir}/dispatch-timing-helper.sh"
+	export PATH="${capture_dir}:$PATH"
+	export DISPATCH_TIMING_ADAPTIVE=0 DISPATCH_PER_CANDIDATE_TIMEOUT=30 DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=600
+	export AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S=90 PULSE_STALE_THRESHOLD=$((remaining + 90)) PULSE_LOCK_MAX_AGE_S=86400
+	export PULSE_START_EPOCH
+	PULSE_START_EPOCH=$(date +%s)
+	# shellcheck disable=SC2317  # called via _dispatch_with_timeout
+	dispatch_with_dedup() {
+		printf 'called\n' >>"${capture_dir}/calls.txt"
+		return 0
+	}
+	# shellcheck disable=SC2317  # called via _dispatch_with_timeout
+	run_stage_with_timeout() {
+		printf '%s\n' "$2" >"${capture_dir}/stage-timeout.txt"
+		shift 2
+		"$@"
+		return $?
+	}
+	# shellcheck disable=SC2317  # called via _dispatch_stats_increment
+	pulse_stats_increment() {
+		printf '%s\n' "$1" >>"${capture_dir}/counters.txt"
+		return 0
+	}
+	_dispatch_with_timeout 340 "o/r" "Issue #340" "title" "me" "/tmp/repo" "prompt" "issue-340" "" || rc=$?
+	printf '%s\n' "$rc" >"${capture_dir}/rc.txt"
+	: >"${capture_dir}/outcomes.txt"
+	_dispatch_record_candidate_outcome '{"number":340,"repo_slug":"o/r"}' "$rc" "${capture_dir}/outcomes.txt" || true
+	_dispatch_max_aggregate_outcomes "${capture_dir}/outcomes.txt"
+	printf '%s\n' "$_DISPATCH_ROUND_DISPATCHED" >"${capture_dir}/round.txt"
+	return 0
+}
+
+# GH#34428: the per-candidate floor is re-checked where the stage starts.
+# Args: cycle seconds remaining after the finalise reserve, expected result
+# ("defer" or "run").
+test_dispatch_with_timeout_cycle_floor() {
+	local remaining="$1" expected="$2" capture_dir rc="" stage_timeout="" calls="" counters="" timing=""
+	local outcome_line="" fails=""
+	capture_dir=$(mktemp -d)
+	: >"$LOGFILE"
+	(_run_dispatch_cycle_floor_scenario "$remaining" "$capture_dir")
+	rc=$(cat "${capture_dir}/rc.txt" 2>/dev/null || true)
+	outcome_line=$(cat "${capture_dir}/outcomes.txt" 2>/dev/null || true)
+	fails=$(cat "${capture_dir}/round.txt" 2>/dev/null || true)
+	stage_timeout=$(cat "${capture_dir}/stage-timeout.txt" 2>/dev/null || true)
+	calls=$(cat "${capture_dir}/calls.txt" 2>/dev/null || true)
+	counters=$(cat "${capture_dir}/counters.txt" 2>/dev/null || true)
+	timing=$(cat "${capture_dir}/timing.txt" 2>/dev/null || true)
+	rm -rf "$capture_dir"
+	[[ "$rc" =~ ^[0-9]+$ ]] || rc=999
+	[[ "$fails" =~ ^[0-9]+$ ]] || fails=999
+	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=0
+
+	local name="dispatch_with_timeout: ${remaining}s remaining -> ${expected}"
+	if [[ "$expected" == defer ]]; then
+		if [[ "$rc" -eq "$_DISPATCH_CYCLE_BUDGET_DEFER_RC" && -z "$calls" && "$stage_timeout" -eq 0 && -z "$timing" &&
+			"$counters" == "dispatch_candidate_deferred_cycle_budget" && "$fails" -eq 0 &&
+			"$outcome_line" == "defer|340|rc=75|reason=cycle_budget_floor|"* ]] &&
+			grep -Eq "deferring #340 \(o/r\) — cycle budget 5[0-9]{2}s below per-candidate floor 600s" "$LOGFILE"; then
+			print_result "$name" 0
+		else
+			print_result "$name" 1 "rc=${rc} calls=${calls} stage=${stage_timeout} counters=${counters} timing=${timing} round=${fails} outcome=${outcome_line}"
+		fi
+	elif [[ "$rc" -eq 0 && "$calls" == called && "$stage_timeout" -ge 600 && "$outcome_line" == "success|340|"* ]] &&
+		! grep -q "deferring #340" "$LOGFILE"; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "rc=${rc} calls=${calls} stage=${stage_timeout} outcome=${outcome_line}"
+	fi
+	return 0
+}
+
+# GH#34428: no failure classifier/cache or later phase sees a deferred attempt.
+test_dispatch_cycle_deferral_accounting() {
+	local rc=0
+	(
+		local candidate='{"number":340,"repo_slug":"o/r","repo_priority":"product"}'
+		local outcomes="${TEST_ROOT}/deferred.outcomes" candidates="${TEST_ROOT}/deferred.candidates"
+		local classified=0 cached=0 cleared=0 result=0 product_result=""
+		_dispatch_record_nonzero_dispatch_result() { classified=$((classified + 1)); return 0; }
+		_dispatch_cache_confirmed_block() { cached=$((cached + 1)); return 0; }
+		_dispatch_attempt_recency_clear() { cleared=$((cleared + 1)); return 0; }
+		_dispatch_record_and_cache_block "$candidate" 340 o/r "$_DISPATCH_CYCLE_BUDGET_DEFER_RC" || result=$?
+		[[ "$result" -eq 75 && "$classified" -eq 0 && "$cached" -eq 0 && "$cleared" -eq 1 ]] || exit 1
+		printf '%s\n' "$candidate" >"$candidates"
+		: >"$outcomes"
+		_dispatch_record_candidate_outcome "$candidate" "$result" "$outcomes" || exit 1
+		[[ -z "$(_dispatch_priority_phase_candidates "$candidates" "$outcomes" remainder)" ]] || exit 1
+		product_result=$(_dispatch_priority_product_outcomes "$outcomes")
+		[[ "$product_result" == '0 0' ]] || exit 1
+		_dispatch_max_aggregate_outcomes "$outcomes"
+		[[ "$_DISPATCH_ROUND_DISPATCHED" -eq 0 && "$_DISPATCH_ROUND_NO_WORKER_FAILURES" -eq 0 ]] || exit 1
+		# Empty next-cycle outcomes restore eligibility without a backoff cache.
+		: >"$outcomes"
+		[[ "$(_dispatch_priority_phase_candidates "$candidates" "$outcomes" remainder)" == "$candidate" ]] || exit 1
+	) || rc=1
+	print_result "cycle deferral: no failure/cache, no same-cycle retry, eligible next cycle" "$rc"
+	return 0
+}
+
+test_dispatch_cycle_floor_clock_fallback() {
+	local rc=0
+	(
+		local DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=600
+		unset -f _pulse_cycle_remaining_seconds
+		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
+		_pulse_cycle_remaining_seconds() { return 1; }
+		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
+		_pulse_cycle_remaining_seconds() { printf 'invalid\n'; return 0; }
+		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
+		_pulse_cycle_remaining_seconds() { printf '600\n'; return 0; }
+		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
+		DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=601
+		_dispatch_cycle_budget_defers_candidate 340 o/r || exit 1
+		return 0
+	) || rc=1
+	print_result "cycle floor: unavailable/failed/invalid clocks fail open, configured boundary honoured" "$rc"
+	return 0
+}
+
 # =============================================================================
 # Test 5: serial loop preserves existing behavior (regression escape hatch)
 # =============================================================================
@@ -1120,6 +1248,10 @@ test_parallel_loop_stop_flag_aborts
 test_parallel_loop_graphql_budget_aborts
 test_parallel_loop_rest_budget_aborts
 test_dispatch_with_timeout_noop_outcome
+test_dispatch_with_timeout_cycle_floor 580 defer
+test_dispatch_with_timeout_cycle_floor 700 run
+test_dispatch_cycle_deferral_accounting
+test_dispatch_cycle_floor_clock_fallback
 test_serial_loop_basic
 test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
