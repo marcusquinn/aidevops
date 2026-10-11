@@ -395,7 +395,7 @@ describe("bounded interactive operations", () => {
     const instance = manager();
     const failed = await instance.start({
       command: [process.execPath, "-e", "process.exit(7)"],
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
       progressIntervalMs: 20,
     }, owner);
     assert.equal((await terminal(instance, failed.operation_id)).state, "failed");
@@ -446,8 +446,8 @@ describe("bounded interactive operations", () => {
     const spawnFailure = await instance.start({
       command: [join(root, "missing-executable")],
       restorationCommand: [process.execPath, "-e", "process.exit(0)"],
-      budgetMs: 1000,
-      restorationBudgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     const spawnFailureResult = await terminal(instance, spawnFailure.operation_id);
     assert.equal(spawnFailureResult.state, "failed");
@@ -612,8 +612,8 @@ describe("bounded interactive operations", () => {
     const restored = await instance.start({
       command: [process.execPath, "-e", "process.exit(0)"],
       restorationCommand: [process.execPath, "-e", "process.exit(0)"],
-      budgetMs: 1000,
-      restorationBudgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     const restoredResult = await terminal(instance, restored.operation_id);
     assert.equal(restoredResult.state, "succeeded");
@@ -623,8 +623,8 @@ describe("bounded interactive operations", () => {
     const brokenRestore = await instance.start({
       command: [process.execPath, "-e", "process.exit(0)"],
       restorationCommand: [process.execPath, "-e", "process.exit(9)"],
-      budgetMs: 1000,
-      restorationBudgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     const brokenResult = await terminal(instance, brokenRestore.operation_id);
     assert.equal(brokenResult.state, "restoration_failed");
@@ -634,7 +634,7 @@ describe("bounded interactive operations", () => {
     const timedRestore = await instance.start({
       command: [process.execPath, "-e", "process.exit(0)"],
       restorationCommand: [process.execPath, "-e", "const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e','setTimeout(()=>{},1000)'],{stdio:['ignore','inherit','inherit']}); c.unref()"],
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
       restorationBudgetMs: 30,
     }, owner);
     const timedRestoreResult = await terminal(instance, timedRestore.operation_id);
@@ -647,7 +647,7 @@ describe("bounded interactive operations", () => {
     const started = await instance.start({
       command: [process.execPath, "-e", "process.exit(0)"],
       restorationCommand: [process.execPath, "-e", "setTimeout(() => process.exit(0), 200)"],
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
       restorationBudgetMs: 30,
     }, owner);
     const deadline = Date.now() + 1000;
@@ -666,7 +666,7 @@ describe("bounded interactive operations", () => {
     const privateValue = `${root}/private-token-value`;
     const started = await instance.start({
       command: [process.execPath, "-e", `console.log(${JSON.stringify(privateValue)})`],
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     const result = await terminal(instance, started.operation_id);
     const serialized = JSON.stringify(result);
@@ -676,7 +676,7 @@ describe("bounded interactive operations", () => {
 
     const newlineFree = await instance.start({
       command: [process.execPath, "-e", "process.stdout.write('x'.repeat(20000))"],
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     await terminal(instance, newlineFree.operation_id);
     assert.ok(instance.operations.get(newlineFree.operation_id).progressRemainder.length <= 4096);
@@ -686,7 +686,7 @@ describe("bounded interactive operations", () => {
     const instance = manager();
     const started = await instance.start({
       command: [process.execPath, "-e", "console.log('retrieval-proof')"],
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
     }, owner);
     await assert.rejects(instance.output(started.operation_id, owner), /only after.*terminal/i);
     await terminal(instance, started.operation_id);
@@ -743,7 +743,7 @@ describe("bounded interactive operations", () => {
     const secondOwner = { sessionID: "ses_second" };
     const second = await instance.start({
       command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 100)"],
-      budgetMs: 1000,
+      budgetMs: SUCCESS_BUDGET_MS,
     }, secondOwner);
     instance.handleEvent({ event: { type: "session.deleted", properties: { info: { id: owner.sessionID } } } });
     const deadline = Date.now() + 2000;
