@@ -17,8 +17,9 @@
 #   install-privacy-guard.sh status       Report current state
 #   install-privacy-guard.sh test         Run the shared test harness
 #
-# The installer targets the git COMMON dir (`git rev-parse --git-common-dir`)
-# so worktrees share the hook with the parent repo.
+# The delegate installs into the effective hooks dir (`git rev-parse --git-path
+# hooks`): core.hooksPath when set, otherwise the git COMMON dir hooks shared by
+# all worktrees (GH#34411).
 
 set -euo pipefail
 

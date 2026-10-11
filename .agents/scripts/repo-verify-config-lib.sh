@@ -79,7 +79,9 @@ _repo_verify_preserve_mode() {
 	local target_file="$2"
 	local mode=""
 	[[ -f "$source_file" ]] || return 0
-	mode=$(stat -f '%Lp' "$source_file" 2>/dev/null || stat -c '%a' "$source_file" 2>/dev/null || true)
+	# shellcheck source=portable-stat.sh disable=SC1091
+	source "${REPO_VERIFY_LIB_DIR}/portable-stat.sh" 2>/dev/null || return 0
+	mode=$(_file_perms "$source_file" 2>/dev/null || true)
 	[[ -n "$mode" ]] && chmod "$mode" "$target_file" 2>/dev/null || true
 	return 0
 }
@@ -380,15 +382,24 @@ repo_verify_emit_json() {
 	return 0
 }
 
+# Effective pre-push hook path Git executes (honours core.hooksPath, GH#34411).
+repo_verify_hook_file() {
+	local repo_root="$1"
+	local hooks_dir=""
+	# shellcheck source=git-hooks-path-lib.sh disable=SC1091
+	source "${REPO_VERIFY_LIB_DIR}/git-hooks-path-lib.sh" 2>/dev/null || return 1
+	hooks_dir=$(aidevops_git_hooks_dir "$repo_root") || return 1
+	printf '%s/pre-push' "$hooks_dir"
+	return 0
+}
+
 repo_verify_hook_status() {
 	local repo_root="$1"
-	local common_dir hook_file
-	common_dir=$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null) || {
+	local hook_file
+	hook_file=$(repo_verify_hook_file "$repo_root") || {
 		printf 'unavailable\n'
 		return 1
 	}
-	[[ "$common_dir" != /* ]] && common_dir="${repo_root}/${common_dir}"
-	hook_file="${common_dir}/hooks/pre-push"
 	if [[ ! -f "$hook_file" ]]; then
 		printf 'missing\n'
 		return 0

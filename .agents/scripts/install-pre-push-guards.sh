@@ -21,6 +21,9 @@
 #   install-pre-push-guards.sh install [--guard <name>]
 #         Install (or refresh) guard(s).
 #         --guard: privacy|complexity|scope|credential|dup-todo|repo-verify|brief-filename|all (default: all)
+#         Also accepted (used by install-hooks-helper.sh so both managers coexist,
+#         GH#34411): gh-wrapper|quality (pre-push) and pre-commit-quality.
+#         A trailing Beads section is preserved and runs after the guards.
 #
 #   install-pre-push-guards.sh uninstall [--guard <name>]
 #         Remove guard entry/entries.
@@ -76,6 +79,9 @@ print_error() {
 	return 0
 }
 
+# shellcheck source=git-hooks-path-lib.sh disable=SC1091
+source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-hooks-path-lib.sh"
+
 # Marker strings embedded in the managed hook file — used for detect/update.
 HOOK_MARKER_MANAGED="# aidevops-pre-push-guards"
 HOOK_MARKER_PRECOMMIT_MANAGED="# aidevops-pre-commit-guards"
@@ -86,6 +92,12 @@ HOOK_MARKER_CREDENTIAL="# guard:credential"
 HOOK_MARKER_DUP_TODO="# guard:dup-todo"
 HOOK_MARKER_REPO_VERIFY="# guard:repo-verify"
 HOOK_MARKER_BRIEF_FILENAME="# guard:brief-filename"
+# Guards owned by install-hooks-helper.sh that share these dispatchers (GH#34411).
+# Their markers are recognised, preserved on rewrite, and run with stdin replay.
+HOOK_MARKER_GH_WRAPPER="# aidevops-gh-wrapper-guard"
+HOOK_MARKER_QUALITY="# aidevops-pre-push-quality-hook"
+HOOK_MARKER_PRECOMMIT_QUALITY="# aidevops-pre-commit-hook"
+HOOK_RE_PRECOMMIT_QUALITY="^${HOOK_MARKER_PRECOMMIT_QUALITY}\$"
 
 DEPLOYED_PRIVACY_HOOK="$HOME/.aidevops/agents/hooks/privacy-guard-pre-push.sh"
 DEPLOYED_COMPLEXITY_HOOK="$HOME/.aidevops/agents/hooks/complexity-regression-pre-push.sh"
@@ -173,15 +185,10 @@ _find_hook_src() {
 #######################################
 _git_hooks_dir() {
 	local _hdir=""
-	_hdir=$(git rev-parse --git-path hooks 2>/dev/null) || {
+	_hdir=$(aidevops_git_hooks_dir) || {
 		print_error "not a git repository"
 		return 1
 	}
-	if [[ "$_hdir" != /* ]]; then
-		local _root=""
-		_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
-		_hdir="${_root}/${_hdir}"
-	fi
 	printf '%s' "$_hdir"
 	return 0
 }
@@ -216,8 +223,25 @@ _install_precommit_brief_filename() {
 	_chook_path=$(_commit_hook_path) || return 1
 
 	# Refuse to overwrite an unmanaged pre-commit hook.
+	local _beads_section="" _has_qc=0
+	[[ "${AIDEVOPS_PRECOMMIT_ADD_QUALITY:-0}" == "1" ]] && _has_qc=1
 	if [[ -f "$_chook_path" ]]; then
-		if ! grep -q "$HOOK_MARKER_PRECOMMIT_MANAGED" "$_chook_path" 2>/dev/null; then
+		if ! grep -q "$HOOK_MARKER_PRECOMMIT_MANAGED" "$_chook_path" 2>/dev/null &&
+			grep -q "$HOOK_RE_PRECOMMIT_QUALITY" "$_chook_path" 2>/dev/null; then
+			# Dispatcher owned by install-hooks-helper.sh: chain our guard onto it
+			# rather than refusing (GH#34411).
+			_chain_brief_filename_onto_quality_hook "$_chook_path"
+			return $?
+		fi
+		if grep -q "$HOOK_MARKER_PRECOMMIT_MANAGED" "$_chook_path" 2>/dev/null; then
+			# Rewriting our own dispatcher: keep the hooks-helper quality section
+			# and any complete trailing Beads section.
+			if ! _beads_section=$(aidevops_beads_section "$_chook_path"); then
+				print_error "ambiguous Beads integration; leaving existing pre-commit hook unchanged"
+				return 1
+			fi
+			grep -q "$HOOK_RE_PRECOMMIT_QUALITY" "$_chook_path" 2>/dev/null && _has_qc=1
+		else
 			print_error "existing pre-commit hook at $_chook_path is NOT managed by aidevops"
 			print_error "Refusing to overwrite. To chain manually, add the guard to your hook:"
 			# shellcheck disable=SC2016
@@ -263,10 +287,79 @@ else
   printf '[pre-commit][WARN] brief-filename hook not found -- skipping\n' >&2
 fi
 
-exit "\$_exit_code"
 COMMIT_HOOK
 
+	if [[ "$_has_qc" -eq 1 ]]; then
+		_precommit_quality_block >>"$_chook_path"
+	fi
+	# The Beads section stays trailing and decides the final status (see
+	# _write_dispatcher); without it the dispatcher exits with the guard status.
+	# shellcheck disable=SC2016
+	if [[ -n "$_beads_section" ]]; then
+		{
+			printf '[[ "$_exit_code" -eq 0 ]] || exit "$_exit_code"\n\n'
+			printf '%s\n' "$_beads_section"
+		} >>"$_chook_path"
+	else
+		printf 'exit "$_exit_code"\n' >>"$_chook_path"
+	fi
+
 	chmod +x "$_chook_path"
+	return 0
+}
+
+#######################################
+# Quality-validation section owned by install-hooks-helper.sh, expressed as a
+# guard block of the guards dispatcher (accumulates into _exit_code).
+#######################################
+_precommit_quality_block() {
+	cat <<QC_BLOCK
+${HOOK_MARKER_PRECOMMIT_QUALITY}
+_pch_hook=""
+if [[ -f "\${_git_root}/.agents/scripts/pre-commit-hook.sh" ]]; then
+  _pch_hook="\${_git_root}/.agents/scripts/pre-commit-hook.sh"
+elif [[ -f "\$HOME/.aidevops/agents/scripts/pre-commit-hook.sh" ]]; then
+  _pch_hook="\$HOME/.aidevops/agents/scripts/pre-commit-hook.sh"
+fi
+if [[ -n "\$_pch_hook" ]]; then
+  HOOK_MODE=pre-commit "\$_pch_hook" "\$@" || _exit_code=\$?
+else
+  printf '[pre-commit-hook][WARN] hook not found -- allowing commit\n' >&2
+fi
+
+QC_BLOCK
+	return 0
+}
+
+#######################################
+# Append the brief-filename guard to a dispatcher owned by install-hooks-helper.sh
+# (no stdin use; the hooks-helper dispatcher has no final exit). Idempotent.
+#######################################
+_chain_brief_filename_onto_quality_hook() {
+	local _chook_path="$1"
+	if grep -q "$HOOK_MARKER_BRIEF_FILENAME" "$_chook_path" 2>/dev/null; then
+		print_info "brief-filename guard already chained into $_chook_path"
+		return 0
+	fi
+	local _hook_src
+	if ! _hook_src=$(_find_hook_src brief-filename 2>/dev/null); then
+		print_warning "brief-filename hook source not found — skipping pre-commit guard"
+		return 0
+	fi
+	cat >>"$_chook_path" <<CHAIN_BLOCK
+
+${HOOK_MARKER_BRIEF_FILENAME}
+_bfg_hook=""
+_bfg_root=\$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [[ -n "\$_bfg_root" && -f "\${_bfg_root}/.agents/hooks/brief-filename-guard.sh" ]]; then
+  _bfg_hook="\${_bfg_root}/.agents/hooks/brief-filename-guard.sh"
+elif [[ -f "${_hook_src}" ]]; then
+  _bfg_hook="${_hook_src}"
+fi
+if [[ -n "\$_bfg_hook" ]]; then
+  "\$_bfg_hook" "\$@" || exit \$?
+fi
+CHAIN_BLOCK
 	return 0
 }
 
@@ -285,6 +378,11 @@ _uninstall_precommit_brief_filename() {
 		print_warning "pre-commit hook at $_chook_path is NOT managed by aidevops — leaving it alone"
 		return 0
 	fi
+	if grep -q "$HOOK_RE_PRECOMMIT_QUALITY" "$_chook_path" 2>/dev/null ||
+		grep -q 'BEADS INTEGRATION' "$_chook_path" 2>/dev/null; then
+		print_warning "pre-commit hook at $_chook_path also carries quality/Beads sections — leaving it in place"
+		return 0
+	fi
 	rm -f "$_chook_path"
 	print_success "removed pre-commit hook (brief-filename guard)"
 	return 0
@@ -301,6 +399,22 @@ _hook_is_managed() {
 	grep -q "$HOOK_MARKER_MANAGED" "$_p" 2>/dev/null && return 0
 	# Legacy marker from old install-privacy-guard.sh single-guard dispatcher
 	grep -q "# aidevops-privacy-guard" "$_p" 2>/dev/null && return 0
+	# Dispatchers written by install-hooks-helper.sh are adopted so both managers
+	# coexist instead of refusing each other (GH#34411).
+	grep -q "$HOOK_MARKER_GH_WRAPPER" "$_p" 2>/dev/null && return 0
+	grep -q "$HOOK_MARKER_QUALITY" "$_p" 2>/dev/null && return 0
+	return 1
+}
+
+#######################################
+# True if the hook carries sections we must not delete: guards owned by
+# install-hooks-helper.sh, or a Beads integration section.
+#######################################
+_hook_has_foreign_sections() {
+	local _p="$1"
+	grep -q "$HOOK_MARKER_GH_WRAPPER" "$_p" 2>/dev/null && return 0
+	grep -q "$HOOK_MARKER_QUALITY" "$_p" 2>/dev/null && return 0
+	grep -q 'BEADS INTEGRATION' "$_p" 2>/dev/null && return 0
 	return 1
 }
 
@@ -316,6 +430,8 @@ _append_guard_block() {
 	local _guard_name="$2"
 	local _repo_rel_path="$3"
 	local _deployed_path="$4"
+	local _env_prefix="${5:-}"
+	local _extra_marker="${6:-#}"
 	local _guard_var="${_guard_name//-/_}"
 
 	# Unquoted heredoc — ${_guard_name} and ${_repo_rel_path} expand here;
@@ -324,6 +440,7 @@ _append_guard_block() {
 	# shellcheck disable=SC2016
 	cat >>"$_hook_path" <<GUARD_BLOCK
 # guard:${_guard_name}
+${_extra_marker}
 _${_guard_var}_hook=""
 if [[ -n "\$_git_root" && -f "\${_git_root}/${_repo_rel_path}" ]]; then
   _${_guard_var}_hook="\${_git_root}/${_repo_rel_path}"
@@ -331,7 +448,7 @@ elif [[ -f "${_deployed_path}" ]]; then
   _${_guard_var}_hook="${_deployed_path}"
 fi
 if [[ -n "\$_${_guard_var}_hook" ]]; then
-  printf '%s\n' "\$_stdin_data" | "\$_${_guard_var}_hook" "\$@" || _exit_code=\$?
+  printf '%s\n' "\$_stdin_data" | ${_env_prefix:+$_env_prefix }"\$_${_guard_var}_hook" "\$@" || _exit_code=\$?
 else
   printf '[pre-push][WARN] ${_guard_name} hook not found -- skipping\n' >&2
 fi
@@ -358,6 +475,21 @@ _write_dispatcher() {
 	local _inc_repo_verify="${7:-0}"
 
 	mkdir -p "$(dirname "$_hook_path")"
+
+	# Capture state from the existing hook BEFORE truncating it: a complete
+	# trailing Beads section (fail closed if ambiguous) and the guards owned by
+	# install-hooks-helper.sh (GH#34411), plus any requested via CHAIN_ADD.
+	local _beads_section="" _inc_ghw=0 _inc_quality=0
+	if [[ -f "$_hook_path" ]]; then
+		if ! _beads_section=$(aidevops_beads_section "$_hook_path"); then
+			print_error "ambiguous Beads integration; leaving existing hook unchanged"
+			return 1
+		fi
+		grep -q "$HOOK_MARKER_GH_WRAPPER" "$_hook_path" 2>/dev/null && _inc_ghw=1
+		grep -q "$HOOK_MARKER_QUALITY" "$_hook_path" 2>/dev/null && _inc_quality=1
+	fi
+	case " ${AIDEVOPS_PREPUSH_CHAIN_ADD:-} " in *" gh-wrapper "*) _inc_ghw=1 ;; esac
+	case " ${AIDEVOPS_PREPUSH_CHAIN_ADD:-} " in *" quality "*) _inc_quality=1 ;; esac
 
 	# Write the fixed header (single-quoted heredoc = no expansion)
 	cat >"$_hook_path" <<'HOOK_HEADER'
@@ -393,10 +525,27 @@ HOOK_HEADER
 		"dup-todo" ".agents/hooks/pre-push-dup-todo-guard.sh" "$DEPLOYED_DUP_TODO_HOOK"
 	[[ "$_inc_repo_verify" -eq 1 ]] && _append_guard_block "$_hook_path" \
 		"repo-verify" ".agents/hooks/repo-verify-pre-push.sh" "$DEPLOYED_REPO_VERIFY_HOOK"
+	[[ "$_inc_ghw" -eq 1 ]] && _append_guard_block "$_hook_path" \
+		"gh-wrapper" ".agents/hooks/gh-wrapper-guard-pre-push.sh" \
+		"$HOME/.aidevops/agents/hooks/gh-wrapper-guard-pre-push.sh" "" "$HOOK_MARKER_GH_WRAPPER"
+	[[ "$_inc_quality" -eq 1 ]] && _append_guard_block "$_hook_path" \
+		"quality" ".agents/scripts/pre-commit-hook.sh" \
+		"$HOME/.aidevops/agents/scripts/pre-commit-hook.sh" "HOOK_MODE=pre-push" "$HOOK_MARKER_QUALITY"
 
+	# A preserved Beads section stays the TRAILING section (so a later refresh can
+	# find it again) and decides the final status: it runs after the guards, with
+	# stdin replayed, and only when every guard passed.
 	# Single-quoted to write literal $-vars into the generated script (not expand here)
 	# shellcheck disable=SC2016
-	printf 'exit "$_exit_code"\n' >>"$_hook_path"
+	if [[ -n "$_beads_section" ]]; then
+		{
+			printf '[[ "$_exit_code" -eq 0 ]] || exit "$_exit_code"\n'
+			printf 'exec <<<"$_stdin_data"\n\n'
+			printf '%s\n' "$_beads_section"
+		} >>"$_hook_path"
+	else
+		printf 'exit "$_exit_code"\n' >>"$_hook_path"
+	fi
 	chmod +x "$_hook_path"
 	return 0
 }
@@ -489,7 +638,7 @@ cmd_install() {
 
 	# Determine which guards to add based on filter
 	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0 _want_dup_todo=0 _want_repo_verify=0
-	local _want_brief_filename=0
+	local _want_brief_filename=0 _chain_add=""
 	case "$_guard_filter" in
 	all)            _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1; _want_dup_todo=1; _want_repo_verify=1; _want_brief_filename=1 ;;
 	privacy)        _want_privacy=1 ;;
@@ -499,8 +648,15 @@ cmd_install() {
 	dup-todo)       _want_dup_todo=1 ;;
 	repo-verify)    _want_repo_verify=1 ;;
 	brief-filename) _want_brief_filename=1 ;;
+	gh-wrapper|quality) _chain_add="$_guard_filter" ;;
+	pre-commit-quality)
+		# Pre-commit section owned by install-hooks-helper.sh, kept inside this dispatcher.
+		AIDEVOPS_PRECOMMIT_ADD_QUALITY=1 _install_precommit_brief_filename || return 1
+		print_success "installed guards: pre-commit-quality(pre-commit)"
+		return 0
+		;;
 	*)
-		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, repo-verify, brief-filename)"
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, repo-verify, brief-filename, gh-wrapper, quality, pre-commit-quality)"
 		return 1
 		;;
 	esac
@@ -540,7 +696,9 @@ cmd_install() {
 		fi
 	fi
 
-	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 && "$_inc_dup_todo" -eq 0 && "$_inc_repo_verify" -eq 0 ]]; then
+	if [[ -n "$_chain_add" ]]; then
+		_installed_list="${_installed_list}${_chain_add} "
+	elif [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 && "$_inc_dup_todo" -eq 0 && "$_inc_repo_verify" -eq 0 ]]; then
 		# Only brief-filename was requested (or all others were missing): acceptable
 		if [[ -n "${_installed_list:-}" ]]; then
 			print_success "installed guards: ${_installed_list% }"
@@ -550,7 +708,7 @@ cmd_install() {
 		return 0
 	fi
 
-	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential" "$_inc_dup_todo" "$_inc_repo_verify"
+	AIDEVOPS_PREPUSH_CHAIN_ADD="$_chain_add" _write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential" "$_inc_dup_todo" "$_inc_repo_verify" || return 1
 	print_success "installed guards: ${_installed_list% }"
 	print_info "pre-push hook: $_hook_path"
 	print_info "bypass pre-push: git push --no-verify"
@@ -591,8 +749,13 @@ cmd_uninstall() {
 	fi
 
 	if [[ "$_guard_filter" == "all" ]]; then
-		rm -f "$_hook_path"
-		print_success "removed pre-push hook"
+		if _hook_has_foreign_sections "$_hook_path"; then
+			_write_dispatcher "$_hook_path" 0 0 0 0 0 0 || return 1
+			print_success "removed pre-push guards (kept hooks-helper guards / Beads section)"
+		else
+			rm -f "$_hook_path"
+			print_success "removed pre-push hook"
+		fi
 		_uninstall_precommit_brief_filename
 		return 0
 	fi
@@ -626,10 +789,15 @@ cmd_uninstall() {
 	esac
 
 	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 && "$_cur_credential" -eq 0 && "$_cur_dup_todo" -eq 0 && "$_cur_repo_verify" -eq 0 ]]; then
-		rm -f "$_hook_path"
-		print_success "removed last pre-push guard — hook deleted"
+		if _hook_has_foreign_sections "$_hook_path"; then
+			_write_dispatcher "$_hook_path" 0 0 0 0 0 0 || return 1
+			print_success "removed last pre-push guard (kept hooks-helper guards / Beads section)"
+		else
+			rm -f "$_hook_path"
+			print_success "removed last pre-push guard — hook deleted"
+		fi
 	else
-		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential" "$_cur_dup_todo" "$_cur_repo_verify"
+		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential" "$_cur_dup_todo" "$_cur_repo_verify" || return 1
 		print_success "removed $_guard_filter guard from pre-push hook"
 	fi
 	return 0
@@ -670,6 +838,11 @@ cmd_status() {
 	_status_report_guard "credential"  "$_has_credential"
 	_status_report_guard "dup-todo"    "$_has_dup_todo"
 	_status_report_guard "repo-verify" "$_has_repo_verify"
+	local _has_ghw=0 _has_quality=0
+	grep -q "$HOOK_MARKER_GH_WRAPPER" "$_hook_path" 2>/dev/null && _has_ghw=1
+	grep -q "$HOOK_MARKER_QUALITY" "$_hook_path" 2>/dev/null && _has_quality=1
+	_status_report_guard "gh-wrapper"  "$_has_ghw"
+	_status_report_guard "quality"     "$_has_quality"
 
 	# Pre-commit guards (separate hook file)
 	local _chook_path

@@ -27,6 +27,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh disable=SC1091
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=git-hooks-path-lib.sh disable=SC1091
+source "${SCRIPT_DIR}/git-hooks-path-lib.sh"
 
 HOOKS_DIR="$HOME/.aidevops/hooks"
 HOOK_SCRIPT="$HOOKS_DIR/git_safety_guard.py"
@@ -113,15 +115,43 @@ _find_gh_wrapper_guard_hook() {
 	return 1
 }
 
+# True when the hook file is the multi-guard dispatcher written by
+# install-pre-push-guards.sh (or its legacy privacy-guard predecessor). Those
+# files run guards with stdin replay, so chained guards must go through that
+# installer instead of being appended after its final `exit` (GH#34411).
+_pre_push_is_guards_dispatcher() {
+	local hook_path="$1"
+	grep -qE '^# aidevops-(pre-push-guards|privacy-guard)$' "$hook_path" 2>/dev/null
+	return $?
+}
+
+# Add a hooks-helper-owned guard (gh-wrapper|quality) to the dispatcher managed
+# by install-pre-push-guards.sh.
+_delegate_pre_push_guard() {
+	local guard="$1"
+	local installer="${SCRIPT_DIR}/install-pre-push-guards.sh"
+	[[ -f "$installer" ]] || installer="$HOME/.aidevops/agents/scripts/install-pre-push-guards.sh"
+	if [[ ! -f "$installer" ]]; then
+		print_warning "install-pre-push-guards.sh not found — cannot chain $guard guard"
+		return 0
+	fi
+	if bash "$installer" install --guard "$guard" >/dev/null; then
+		print_success "chained $guard guard into the aidevops pre-push dispatcher"
+		return 0
+	fi
+	print_warning "could not chain $guard guard into the aidevops pre-push dispatcher"
+	return 0
+}
+
 install_gh_wrapper_guard_hook() {
 	# Only install if we're in a git repo
-	local common_dir
-	common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+	local hooks_dir
+	hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null) || {
 		print_warning "Not in a git repo — skipping gh-wrapper-guard pre-push hook"
 		return 0
 	}
 
-	local hook_path="${common_dir}/hooks/pre-push"
+	local hook_path="${hooks_dir}/pre-push"
 	mkdir -p "$(dirname "$hook_path")"
 
 	local source_hook
@@ -131,7 +161,12 @@ install_gh_wrapper_guard_hook() {
 	fi
 
 	if [[ -f "$hook_path" ]]; then
-		if grep -q "$GH_WRAPPER_GUARD_MARKER" "$hook_path" 2>/dev/null; then
+		if _pre_push_is_guards_dispatcher "$hook_path"; then
+			# install-pre-push-guards.sh owns this file; chain through it so both
+			# guard sets coexist (GH#34411).
+			_delegate_pre_push_guard gh-wrapper
+			return $?
+		elif grep -q "$GH_WRAPPER_GUARD_MARKER" "$hook_path" 2>/dev/null; then
 			print_info "gh-wrapper-guard already in pre-push hook — updating"
 		elif grep -q "aidevops" "$hook_path" 2>/dev/null; then
 			# Existing aidevops hook (e.g. privacy-guard) — chain ours in
@@ -212,13 +247,13 @@ _find_pre_commit_hook() {
 
 install_pre_commit_hook() {
 	# Only install if we're in a git repo
-	local common_dir
-	common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+	local hooks_dir
+	hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null) || {
 		print_warning "Not in a git repo — skipping pre-commit quality hook"
 		return 0
 	}
 
-	local hook_path="${common_dir}/hooks/pre-commit"
+	local hook_path="${hooks_dir}/pre-commit"
 	mkdir -p "$(dirname "$hook_path")"
 
 	local source_hook
@@ -228,7 +263,17 @@ install_pre_commit_hook() {
 	fi
 
 	if [[ -f "$hook_path" ]]; then
-		if grep -q "$PRE_COMMIT_MARKER" "$hook_path" 2>/dev/null; then
+		if grep -q '^# aidevops-pre-commit-guards$' "$hook_path" 2>/dev/null; then
+			# Guards dispatcher (brief-filename): add our section through its
+			# installer; appending would land after its final `exit` (GH#34411).
+			_delegate_pre_push_guard pre-commit-quality
+			return 0
+		elif grep -q "$PRE_COMMIT_MARKER" "$hook_path" 2>/dev/null; then
+			if grep -q '^# guard:brief-filename$' "$hook_path" 2>/dev/null; then
+				# Guards chained onto this dispatcher: a rewrite would drop them.
+				print_info "pre-commit hook already installed with chained guards — leaving unchanged"
+				return 0
+			fi
 			print_info "pre-commit hook already installed — refreshing dispatcher"
 		elif grep -qE "^#[[:space:]]*aidevops-[a-z-]+" "$hook_path" 2>/dev/null; then
 			# Existing aidevops-managed pre-commit hook — chain ours in.
@@ -367,13 +412,13 @@ install_pre_commit_only() {
 
 install_pre_push_quality_hook() {
 	# Only install if we're in a git repo
-	local common_dir
-	common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+	local hooks_dir
+	hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null) || {
 		print_warning "Not in a git repo — skipping pre-push quality hook"
 		return 0
 	}
 
-	local hook_path="${common_dir}/hooks/pre-push"
+	local hook_path="${hooks_dir}/pre-push"
 	mkdir -p "$(dirname "$hook_path")"
 
 	local source_hook
@@ -383,6 +428,10 @@ install_pre_push_quality_hook() {
 	fi
 
 	if [[ -f "$hook_path" ]]; then
+		if _pre_push_is_guards_dispatcher "$hook_path"; then
+			_delegate_pre_push_guard quality
+			return $?
+		fi
 		if grep -q "$PRE_PUSH_QUALITY_MARKER" "$hook_path" 2>/dev/null; then
 			print_info "pre-push quality hook already installed — skipping"
 			return 0
@@ -462,13 +511,14 @@ install_markdoc_validate_hook() {
 		return 0
 	fi
 
-	local common_dir
-	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+	local hooks_dir
+	if ! hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null); then
 		print_info "markdoc-validate: not in a git repo — skipping"
 		return 0
 	fi
 
-	local hook_path="${common_dir}/hooks/pre-commit"
+	local hook_path="${hooks_dir}/pre-commit"
+	mkdir -p "$hooks_dir"
 
 	if [[ -f "$hook_path" ]] && grep -q "$MARKDOC_VALIDATE_MARKER" "$hook_path" 2>/dev/null; then
 		print_info "markdoc-validate pre-commit hook already installed — skipping"
@@ -518,18 +568,44 @@ SNIPPET
 		return 0
 	fi
 
+	if grep -q '^# aidevops-pre-commit-guards$' "$hook_path" 2>/dev/null; then
+		# Guards dispatcher ends with `exit "$_exit_code"`; a section appended after
+		# it would never run, so insert before that final exit (GH#34411).
+		local _snippet_file _staged
+		_snippet_file=$(mktemp) || return 1
+		_staged=$(mktemp) || return 1
+		printf '%s\n\n%s\n\n' "$_header" "$hook_snippet" >"$_snippet_file"
+		awk '
+			NR == FNR { snippet = snippet $0 "\n"; next }
+			{ lines[++n] = $0 }
+			END {
+				# Insert before the final exit, or (Beads-trailing dispatcher) before
+				# the status gate that precedes the Beads section.
+				for (i = n; i >= 1; i--) if (lines[i] ~ /^exit "\$_exit_code"$/ || lines[i] ~ /^\[\[ "\$_exit_code" -eq 0 \]\] \|\| exit/) { last = i; break }
+				for (i = 1; i <= n; i++) { if (i == last) printf "%s", snippet; print lines[i] }
+			}
+		' "$_snippet_file" "$hook_path" >"$_staged" || {
+			rm -f "$_snippet_file" "$_staged"
+			return 1
+		}
+		cat "$_staged" >"$hook_path"
+		rm -f "$_snippet_file" "$_staged"
+		print_success "chained markdoc-validate into guards pre-commit hook at $hook_path"
+		return 0
+	fi
+
 	printf '\n%s\n\n%s\n' "$_header" "$hook_snippet" >>"$hook_path"
 	print_success "chained markdoc-validate into existing pre-commit hook at $hook_path"
 	return 0
 }
 
 _check_status_markdoc_validate_hook() {
-	local common_dir hook_path
-	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+	local hooks_dir hook_path
+	if ! hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null); then
 		print_info "markdoc-validate: not in a git repo — skipped"
 		return 0
 	fi
-	hook_path="${common_dir}/hooks/pre-commit"
+	hook_path="${hooks_dir}/pre-commit"
 	if [[ -f "$hook_path" ]] && grep -q "$MARKDOC_VALIDATE_MARKER" "$hook_path" 2>/dev/null; then
 		print_success "markdoc-validate: installed in pre-commit hook"
 	else
@@ -1331,12 +1407,12 @@ sys.exit(1)
 }
 
 _check_status_gh_wrapper_guard() {
-	local common_dir hook_path
-	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+	local hooks_dir hook_path
+	if ! hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null); then
 		print_info "gh-wrapper-guard: not in a git repo — skipped"
 		return 0
 	fi
-	hook_path="${common_dir}/hooks/pre-push"
+	hook_path="${hooks_dir}/pre-push"
 	if [[ -f "$hook_path" ]] && grep -q "$GH_WRAPPER_GUARD_MARKER" "$hook_path" 2>/dev/null; then
 		print_success "gh-wrapper-guard: installed in pre-push hook"
 	elif [[ -f "$hook_path" ]] && grep -q "gh-wrapper-guard" "$hook_path" 2>/dev/null; then
@@ -1404,12 +1480,12 @@ sys.exit(1)
 }
 
 _check_status_precommit_hook() {
-	local common_dir pc_hook_path
-	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+	local hooks_dir pc_hook_path
+	if ! hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null); then
 		print_info "pre-commit-hook: not in a git repo — skipped"
 		return 0
 	fi
-	pc_hook_path="${common_dir}/hooks/pre-commit"
+	pc_hook_path="${hooks_dir}/pre-commit"
 	if [[ -f "$pc_hook_path" ]] && grep -q "$PRE_COMMIT_MARKER" "$pc_hook_path" 2>/dev/null; then
 		print_success "pre-commit-hook: installed"
 	elif [[ -f "$pc_hook_path" ]] && grep -q "pre-commit-hook.sh" "$pc_hook_path" 2>/dev/null; then
@@ -1421,12 +1497,12 @@ _check_status_precommit_hook() {
 }
 
 _check_status_prepush_quality_hook() {
-	local common_dir pp_hook_path
-	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+	local hooks_dir pp_hook_path
+	if ! hooks_dir=$(aidevops_git_hooks_dir 2>/dev/null); then
 		print_info "pre-push-quality-hook: not in a git repo — skipped"
 		return 0
 	fi
-	pp_hook_path="${common_dir}/hooks/pre-push"
+	pp_hook_path="${hooks_dir}/pre-push"
 	if [[ -f "$pp_hook_path" ]] && grep -q "$PRE_PUSH_QUALITY_MARKER" "$pp_hook_path" 2>/dev/null; then
 		print_success "pre-push-quality-hook: installed"
 	elif [[ -f "$pp_hook_path" ]] && grep -q "HOOK_MODE=pre-push" "$pp_hook_path" 2>/dev/null; then
@@ -1434,6 +1510,20 @@ _check_status_prepush_quality_hook() {
 	else
 		print_warning "pre-push-quality-hook: not installed (run: install-hooks-helper.sh install)"
 	fi
+	return 0
+}
+
+# Warn about aidevops hooks that exist in <common-dir>/hooks but never run
+# because core.hooksPath points elsewhere (GH#34411).
+_check_status_inactive_hooks() {
+	local inactive
+	inactive=$(aidevops_inactive_hooks_report 2>/dev/null || true)
+	[[ -n "$inactive" ]] || return 0
+	local hook_file
+	while IFS= read -r hook_file; do
+		print_warning "inactive hook (core.hooksPath points elsewhere, Git never runs it): $hook_file"
+	done <<<"$inactive"
+	print_warning "  re-run: install-hooks-helper.sh install  (installs into $(aidevops_git_hooks_dir 2>/dev/null || true))"
 	return 0
 }
 
@@ -1482,6 +1572,7 @@ check_status() {
 	echo "Markdoc Validate Hook (t2968, opt-in)"
 	echo "--------------------------------------"
 	_check_status_markdoc_validate_hook
+	_check_status_inactive_hooks
 
 	echo ""
 	if [[ "$all_ok" == "true" ]]; then
@@ -1717,24 +1808,29 @@ show_help() {
 	echo "Full install writes to:"
 	echo "  ~/.aidevops/hooks/git_safety_guard.py"
 	echo "  ~/.claude/settings.json (PreToolUse hook config)"
-	echo "  .git/hooks/pre-push (gh-wrapper-guard t2113, quality-validation t2207)"
-	echo "  .git/hooks/pre-commit (fast quality-validation, t2191+t2207)"
+	echo "  <hooks-dir>/pre-push (gh-wrapper-guard t2113, quality-validation t2207)"
+	echo "  <hooks-dir>/pre-commit (fast quality-validation, t2191+t2207)"
+	echo "  <hooks-dir> is the effective Git hooks dir: core.hooksPath when set (e.g. Beads'"
+	echo "  .beads/hooks), otherwise <git-common-dir>/hooks shared by all worktrees."
 	return 0
 }
 
 # Main
-cmd="${1:-install}"
-shift || true
-case "$cmd" in
-install) install_hook "$@" ;;
-install-pre-commit) install_pre_commit_only "$@" ;;
-uninstall) uninstall_hook ;;
-status) check_status ;;
-test) test_hook ;;
-help | --help | -h) show_help ;;
-*)
-	print_error "Unknown command: $cmd"
-	show_help
-	exit 1
-	;;
-esac
+# Skipped when sourced, so tests can call the git-hook installers directly.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	cmd="${1:-install}"
+	shift || true
+	case "$cmd" in
+	install) install_hook "$@" ;;
+	install-pre-commit) install_pre_commit_only "$@" ;;
+	uninstall) uninstall_hook ;;
+	status) check_status ;;
+	test) test_hook ;;
+	help | --help | -h) show_help ;;
+	*)
+		print_error "Unknown command: $cmd"
+		show_help
+		exit 1
+		;;
+	esac
+fi

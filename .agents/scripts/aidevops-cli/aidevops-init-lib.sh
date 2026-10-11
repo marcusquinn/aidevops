@@ -177,10 +177,8 @@ _init_finalize_repo_verify() {
 
 _init_repo_verify_hook_integrity() {
 	local project_root="$1"
-	local common_dir="" hook_file=""
-	common_dir=$(git -C "$project_root" rev-parse --git-common-dir 2>/dev/null) || return 1
-	[[ "$common_dir" == /* ]] || common_dir="${project_root}/${common_dir}"
-	hook_file="${common_dir}/hooks/pre-push"
+	local hook_file=""
+	hook_file=$(repo_verify_hook_file "$project_root") || return 1
 	[[ -x "$hook_file" ]] || return 1
 	bash -n "$hook_file" >/dev/null 2>&1 || return 1
 	# shellcheck disable=SC2016 # Match literal dispatcher expressions.

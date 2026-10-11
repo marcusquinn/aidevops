@@ -16,8 +16,9 @@
 # If a pre-existing commit-msg hook is found that is NOT ours, we refuse to
 # overwrite and print remediation instructions.
 #
-# The installer targets the git COMMON dir (git rev-parse --git-common-dir)
-# so worktrees share the hook with the parent repo.
+# The installer targets the effective hooks dir (git rev-parse --git-path hooks):
+# core.hooksPath when set (e.g. Beads' .beads/hooks), otherwise the git COMMON
+# dir hooks so worktrees share the hook with the parent repo (GH#34411).
 #
 # Bypass: TASK_ID_GUARD_DISABLE=1 git commit ...  or git commit --no-verify
 
@@ -33,6 +34,9 @@ print_info() { printf '%s[INFO]%s %s\n' "$BLUE" "$NC" "$1"; }
 print_success() { printf '%s[OK]%s %s\n' "$GREEN" "$NC" "$1"; }
 print_warning() { printf '%s[WARN]%s %s\n' "$YELLOW" "$NC" "$1" >&2; }
 print_error() { printf '%s[ERROR]%s %s\n' "$RED" "$NC" "$1" >&2; }
+
+# shellcheck source=git-hooks-path-lib.sh disable=SC1091
+source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-hooks-path-lib.sh"
 
 HOOK_MARKER="# aidevops-task-id-guard"
 DEPLOYED_HOOK="$HOME/.aidevops/agents/hooks/task-id-collision-guard.sh"
@@ -59,8 +63,8 @@ _find_source_hook() {
 #######################################
 # Resolve the git common dir (shared between worktrees).
 #######################################
-_git_common_dir() {
-	git rev-parse --git-common-dir 2>/dev/null || {
+_git_hooks_dir() {
+	aidevops_git_hooks_dir 2>/dev/null || {
 		print_error "not a git repository"
 		return 1
 	}
@@ -72,10 +76,10 @@ _git_common_dir() {
 # abort with a clear message. Otherwise write a small dispatcher script.
 #######################################
 cmd_install() {
-	local common_dir
-	common_dir=$(_git_common_dir) || return 1
+	local hooks_dir
+	hooks_dir=$(_git_hooks_dir) || return 1
 
-	local hook_path="${common_dir}/hooks/commit-msg"
+	local hook_path="${hooks_dir}/commit-msg"
 	mkdir -p "$(dirname "$hook_path")"
 
 	local source_hook
@@ -133,9 +137,9 @@ HOOKEOF
 # Remove the hook if (and only if) it is managed by us.
 #######################################
 cmd_uninstall() {
-	local common_dir
-	common_dir=$(_git_common_dir) || return 1
-	local hook_path="${common_dir}/hooks/commit-msg"
+	local hooks_dir
+	hooks_dir=$(_git_hooks_dir) || return 1
+	local hook_path="${hooks_dir}/commit-msg"
 
 	if [[ ! -f "$hook_path" ]]; then
 		print_info "no commit-msg hook installed"
@@ -156,9 +160,9 @@ cmd_uninstall() {
 # Report current state.
 #######################################
 cmd_status() {
-	local common_dir
-	common_dir=$(_git_common_dir) || return 1
-	local hook_path="${common_dir}/hooks/commit-msg"
+	local hooks_dir
+	hooks_dir=$(_git_hooks_dir) || return 1
+	local hook_path="${hooks_dir}/commit-msg"
 
 	if [[ ! -f "$hook_path" ]]; then
 		printf 'commit-msg hook: NOT INSTALLED\n'

@@ -293,7 +293,7 @@ _prepare_pre_commit_fixture() {
 	local fixture="$1"
 	mkdir -p "$fixture/home/.aidevops/agents/scripts" "$fixture/home/.aidevops/hooks" \
 		"$fixture/home/.claude" "$fixture/scripts" "$fixture/repo" || return 1
-	cp "$TEST_SCRIPTS_DIR/install-hooks-helper.sh" "$fixture/scripts/" || return 1
+	cp "$TEST_SCRIPTS_DIR/install-hooks-helper.sh" "$TEST_SCRIPTS_DIR/git-hooks-path-lib.sh" "$fixture/scripts/" || return 1
 	# Load the real constants with their complete sibling dependency graph.
 	printf 'source %q\n' "$TEST_SCRIPTS_DIR/shared-constants.sh" >"$fixture/scripts/shared-constants.sh"
 	printf '%s\n' 'user settings sentinel' >"$fixture/home/.claude/settings.json"
