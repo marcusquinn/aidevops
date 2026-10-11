@@ -656,8 +656,15 @@ _pulse_reconcile_stale_blocked_if_due() {
 		printf '%s\n' "$(((position + 1) % repo_count))" >"$next_repo_file" 2>/dev/null || true
 		repo_deadline=$((now_epoch + (sweep_deadline - now_epoch) / (due_count - index)))
 		rc=0
+		# GH#34432: use this existing bounded per-repo cadence to revisit
+		# partial merges whose lease was still live at merge time.
+		if declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1; then
+			_pm_reconcile_partial_continuations "${repos[position]}" "$repo_deadline" 2>>"$LOGFILE" || rc=$?
+		fi
+		local blocked_rc=0
 		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
-			reconcile_stale_blocked_issues "${repos[position]}" 2>>"$LOGFILE" || rc=$?
+			reconcile_stale_blocked_issues "${repos[position]}" 2>>"$LOGFILE" || blocked_rc=$?
+		[[ "$blocked_rc" -eq 0 ]] || rc="$blocked_rc"
 		if [[ "$rc" -eq "$partial_rc" ]]; then
 			partial=$((partial + 1))
 		elif [[ "$rc" -ne 0 ]]; then

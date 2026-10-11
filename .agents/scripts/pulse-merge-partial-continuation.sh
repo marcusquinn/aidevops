@@ -135,9 +135,9 @@ _pmpc_issue_scope() {
 
 #######################################
 # Resolve the runner whose finished run still owns the issue.
-# The newest trusted coordination event must be a claim release or a terminal
-# dispatch lease; any later dispatch, lease or interactive claim means another
-# owner is live. A continuation marker for this PR means the work was done.
+# The newest trusted coordination event must be a claim release, terminal lease
+# or lease expired beyond PULSE_PARTIAL_LEASE_GRACE_SECONDS (default 900).
+# Any later claim means another owner is live. A marker means work was done.
 # Args: $1=comments JSON (one page or `gh api --paginate --slurp` pages),
 #       $2=merged PR number
 # Stdout: runner login (runner= field of CLAIM_RELEASED, else comment author)
@@ -147,8 +147,11 @@ _pmpc_issue_scope() {
 _pmpc_release_owner_from_comments() {
 	local comments_json="$1"
 	local pr_number="$2"
-	local verdict=""
+	local verdict="" now_epoch="" grace="${PULSE_PARTIAL_LEASE_GRACE_SECONDS:-900}"
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=900
+	now_epoch=$(date +%s) || return 1
 	verdict=$(printf '%s' "$comments_json" | jq -r \
+		--argjson now "$now_epoch" --argjson grace "$grace" \
 		--arg pattern "$_PMPC_EVENT_PATTERN" \
 		--arg marker "kind=${_PMPC_MARKER_KIND} pr=${pr_number} " "${_PMPC_COMMENTS_JQ_DEFS}"'
 		[comments[] | select(trusted)] as $trusted
@@ -163,6 +166,12 @@ _pmpc_release_owner_from_comments() {
 			elif (.body | test("(^|\n)CLAIM_RELEASED reason=")) then
 				"released:" + (((.body | capture("(^|\n)CLAIM_RELEASED reason=[^\n]* runner=(?<runner>[A-Za-z0-9._-]+(\\[bot\\])?)") | .runner) // .login))
 			elif (.body | test("(^|\n)DISPATCH_LEASE phase=terminal ")) then "released:" + .login
+			elif (.body | test("(^|\n)DISPATCH_LEASE phase=")) then
+				. as $event
+				| [(.body | split("\n")[] | select(test("^DISPATCH_LEASE phase="))
+					| capture("(^| )expires_at=(?<expiry>[0-9]+)([ \\r]|$)") | .expiry | tonumber)] as $expiries
+				| if ($expiries | length) == 1 and $expiries[0] < ($now - $grace)
+					then "released:" + $event.login else "live" end
 			else "live" end
 		end
 	' 2>/dev/null) || return 1
@@ -363,7 +372,8 @@ _pmpc_project_available() {
 # auto-dispatch; parent-task trackers end without it.
 #
 # Args: $1=merged PR number, $2=repo slug, $3=closing target (empty for
-#       non-closing partials), $4=PR labels CSV (fetched when empty)
+#       non-closing partials), $4=PR labels CSV (fetched when empty),
+#       $5=expected issue target for periodic reconciliation (optional)
 # Returns: 0 always (best-effort post-merge hygiene)
 #######################################
 _pm_restore_partial_continuation() {
@@ -371,6 +381,7 @@ _pm_restore_partial_continuation() {
 	local repo_slug="$2"
 	local linked_issue="${3:-}"
 	local pr_labels="${4:-}"
+	local expected_target="${5:-}"
 	local closing="" target="" issue_api="" issue_json="" scope="" comments_json=""
 	local runner_login="" pr_author="" assignees="" parent_has_dispatch=0
 
@@ -391,6 +402,7 @@ _pm_restore_partial_continuation() {
 	fi
 	target=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit 2>/dev/null) || return 0
 	[[ "$target" =~ ^[0-9]+$ ]] || return 0
+	[[ -z "$expected_target" || "$target" == "$expected_target" ]] || return 0
 	if ! pr_author=$(_pmpc_merged_pr_author "$repo_slug" "$pr_number"); then
 		echo "[pulse-wrapper] Deterministic merge: kept #${target} in review after partial PR #${pr_number} — merge not confirmed by a fresh PR read (GH#34312)" >>"$LOGFILE"
 		return 0
@@ -416,5 +428,81 @@ _pm_restore_partial_continuation() {
 		parent_has_dispatch=1
 	fi
 	_pmpc_project_available "$repo_slug" "$target" "$scope" "$assignees" "$pr_number" "$parent_has_dispatch" || true
+	return 0
+}
+
+# GH#34432: revisit one bounded page of in-review issues on the existing
+# per-repo stale-blocked cadence. Persist the next page and pending issue IDs
+# before processing so a killed/slow issue cannot starve the page suffix.
+# Full pages stay due next cycle;
+# the final page resets the cursor and starts the normal cadence interval.
+# Args: $1=repo slug, $2=deadline epoch
+# Returns: 0 at traversal end, 3 when more pages/time are needed, 1 on read failure
+_pm_reconcile_partial_continuations() {
+	local repo_slug="$1" deadline="$2"
+	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1
+	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
+	local cursor="" issues_json="" issues="" issue_num="" timeline="" pr_number="" now_epoch="" count=0
+	local line="" loaded=0 remaining=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
+	[[ "$cap" =~ ^[1-9][0-9]*$ && "$cap" -le 100 ]] || cap=10
+	cursor="${cursor_dir}/${repo_slug//\//__}"
+	mkdir -p "$cursor_dir" 2>/dev/null || return 1
+	if [[ -r "$cursor" ]]; then
+		while IFS= read -r line; do
+			if [[ "$loaded" -eq 0 ]]; then
+				page="$line"
+				loaded=1
+			elif [[ "$line" =~ ^[0-9]+$ ]]; then
+				issues="${issues}${issues:+$'\n'}${line}"
+			fi
+		done <"$cursor"
+	fi
+	[[ "$page" =~ ^[1-9][0-9]*$ ]] || page=1
+	now_epoch=$(date +%s) || return 1
+	[[ "$now_epoch" -lt "$deadline" ]] || return 3
+	if [[ -z "$issues" ]]; then
+		issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=status%3Ain-review&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
+		issues=$(printf '%s' "$issues_json" | jq -r '
+		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
+		else .[] | select(.pull_request == null) | .number end
+		' 2>/dev/null) || return 1
+		count=$(printf '%s' "$issues_json" | jq 'length') || return 1
+		[[ "$count" -lt "$cap" ]] || next_page=$((page + 1))
+	else
+		next_page="$page"
+	fi
+	remaining="$issues"
+	printf '%s\n%s\n' "$next_page" "$remaining" >"$cursor" || return 1
+	while IFS= read -r issue_num; do
+		[[ -n "$issue_num" ]] || continue
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 3
+		# Advance past only the current issue before its potentially slow API
+		# reads. A deadline between issues retains every unstarted issue.
+		if [[ "$remaining" == *$'\n'* ]]; then
+			remaining="${remaining#*$'\n'}"
+		else
+			remaining=""
+		fi
+		printf '%s\n%s\n' "$next_page" "$remaining" >"$cursor" || return 1
+		# Timeline cross-references carry merged_at. Select the newest merged
+		# PR, not an older eligible partial hidden by a later closing delivery.
+		timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+		pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
+			if type != "array" then error("unreadable timeline")
+			elif (.[0]? | type) == "array" then [.[][]] else . end
+			| [ .[] | select(.event == "cross-referenced") | .source.issue
+				| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
+			| sort_by(.pull_request.merged_at, .number) | last
+			| if . == null then empty elif (.number | type) == "number" then .number
+				else error("unreadable PR number") end
+		' 2>/dev/null) || return 1
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
+		# All current issue/PR/comment metadata is re-read by the merge-time
+		# guard, including open PR ownership, held issues and marker idempotency.
+		_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
+	done <<<"$issues"
+	[[ "$next_page" -eq 1 ]] || return 3
 	return 0
 }

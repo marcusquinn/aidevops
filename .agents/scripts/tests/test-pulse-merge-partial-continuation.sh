@@ -71,6 +71,17 @@ reset_case() {
 	TEST_OPEN_PRS="[]"
 	TEST_OPEN_PR_PAGES=""
 	TEST_OPEN_PRS_RC=0
+	TEST_NOW=2000000000
+	TEST_DEADLINE_AFTER_FIRST=0
+	PULSE_PARTIAL_LEASE_GRACE_SECONDS=900
+	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=10
+	PULSE_PARTIAL_RECONCILE_STATE_DIR="${TEST_ROOT}/partial-cursor"
+	if [[ -d "$PULSE_PARTIAL_RECONCILE_STATE_DIR" ]]; then
+		printf '1\n' >"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo"
+	fi
+	TEST_REVIEW_ISSUES='[{"number":501},{"number":502}]'
+	TEST_REVIEW_PAGE2='[]'
+	TEST_TIMELINE='[[{"event":"cross-referenced","source":{"issue":{"number":900,"repository_url":"https://api.github.com/repos/owner/repo","pull_request":{"merged_at":"2026-10-10T12:00:00Z"}}}}]]'
 	TEST_ISSUE_JSON=$(issue_json "status:in-review,origin:worker,tier:standard" "runner1")
 	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 "Dispatching worker (deterministic).")" \
 		"$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_ready_missing_linkage runner=runner1 ts=2026-10-10T10:20:00Z")")
@@ -139,6 +150,11 @@ _extract_linked_issue() {
 }
 
 _extract_pr_work_issue() {
+	local pr_number="$1"
+	if [[ "$pr_number" == "902" ]]; then
+		printf '502'
+		return 0
+	fi
 	[[ -n "$TEST_TARGET" ]] || return 1
 	printf '%s' "$TEST_TARGET"
 	return 0
@@ -154,6 +170,10 @@ gh_pr_view() {
 	if [[ "$args" == *"--json body"* ]]; then
 		printf '%s\n' "pr-body $*" >>"$API_LOG"
 		[[ "$TEST_PR_BODY_RC" -eq 0 ]] || return "$TEST_PR_BODY_RC"
+		if [[ "$args" == "902 "* ]]; then
+			printf 'For #502'
+			return 0
+		fi
 		printf '%s\n' "$TEST_PR_BODY"
 		return 0
 	fi
@@ -162,6 +182,34 @@ gh_pr_view() {
 
 gh() {
 	printf '%s\n' "$*" >>"$API_LOG"
+	if [[ "${2:-}" == "repos/${SLUG}/issues?state=open"* ]]; then
+		if [[ "${2:-}" == *"&page=2" ]]; then
+			printf '%s' "$TEST_REVIEW_PAGE2"
+		else
+			printf '%s' "$TEST_REVIEW_ISSUES"
+		fi
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/issues/501/timeline"* ]]; then
+		printf '%s' "$TEST_TIMELINE"
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/issues/502/timeline"* ]]; then
+		printf '%s' "${TEST_TIMELINE//900/902}"
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/pulls/902" ]]; then
+		pr_json true runner1
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/issues/502/comments"* ]]; then
+		pages "$(comment 2 MEMBER runner1 "DISPATCH_LEASE phase=ready expires_at=2000001000")"
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/issues/502" ]]; then
+		issue_json "status:in-review" "runner1"
+		return 0
+	fi
 	# Open-PR listing: `gh api --paginate --slurp` pages. TEST_OPEN_PRS is one
 	# page; TEST_OPEN_PR_PAGES supplies several pages verbatim.
 	if [[ "${1:-}" == "api" && "${2:-}" == "repos/${SLUG}/pulls?state=open"* ]]; then
@@ -192,6 +240,20 @@ gh() {
 		return 0
 	fi
 	return 1
+}
+
+date() {
+	local arg="${1:-}"
+	if [[ "$arg" == "+%s" ]]; then
+		if [[ "$TEST_DEADLINE_AFTER_FIRST" -eq 1 ]] && grep -Fq 'issues/501/timeline' "$API_LOG"; then
+			printf '2000000061\n'
+			return 0
+		fi
+		printf '%s\n' "$TEST_NOW"
+		return 0
+	fi
+	command date "$@"
+	return $?
 }
 
 set_issue_status() {
@@ -677,6 +739,118 @@ test_qualified_open_pr_reference_keeps_review() {
 	return 0
 }
 
+test_expired_lease_recovery() {
+	local expiry="" event=""
+	reset_case
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 "DISPATCH_LEASE phase=ready expires_at=1999999099")")
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"lease older than grace: releases"
+	for expiry in 2000001000 1999999100 1999999500 missing garbage 1999990000bad; do
+		reset_case
+		TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 "DISPATCH_LEASE phase=ready expires_at=${expiry}")")
+		_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+		assert_no_write "live/grace/malformed expiry ${expiry}: no write"
+	done
+	reset_case
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 'DISPATCH_LEASE phase=ready lease_token=redacted')")
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	assert_no_write "missing expires_at: no write"
+	for event in 'DISPATCH_CLAIM runner=runner2' 'Dispatching worker.' '> Interactive session claimed by @runner2' 'CLAIM_RELEASED reason=worker_ownership_lost runner=runner1'; do
+		reset_case
+		TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 'DISPATCH_LEASE phase=ready expires_at=1999990000')" \
+			"$(comment 2 MEMBER runner1 "$event")")
+		_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+		assert_no_write "newer ${event}: preserves owner"
+	done
+	reset_case
+	PULSE_PARTIAL_LEASE_GRACE_SECONDS=2000
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 'DISPATCH_LEASE phase=ready expires_at=1999998500')")
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	assert_no_write "configured grace: protects recent expiry"
+	return 0
+}
+
+test_periodic_pass() {
+	local label="" rc=0
+	reset_case
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 'DISPATCH_LEASE phase=ready expires_at=1999990000')")
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"periodic pass: expired zombie restored, live #502 untouched"
+	TEST_COMMENTS_AFTER_ATTEMPT=$(pages "$(comment 1 MEMBER runner1 'DISPATCH_LEASE phase=ready expires_at=1999990000')" \
+		"$(comment 2 MEMBER pulse '<!-- aidevops:ops kind=merged-partial-continuation pr=900 -->')")
+	: >"$STATUS_LOG"
+	: >"$COMMENT_LOG"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "periodic second run: marker prevents repeat"
+	for label in hold-for-review no-auto-dispatch needs-maintainer-review needs-maintainer-permissions persistent; do
+		reset_case
+		TEST_ISSUE_JSON=$(issue_json "status:in-review,${label}" runner1)
+		_pm_reconcile_partial_continuations "$SLUG" 2000000060
+		assert_no_write "periodic held ${label}: no write"
+	done
+	reset_case
+	TEST_OPEN_PRS='[{"number":901,"body":"For #501"}]'
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "periodic open PR: no write"
+	reset_case
+	TEST_PR_BODY=$'For #501\nCloses #777'
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "periodic latest merged PR closes: no write"
+	reset_case
+	TEST_TARGET=777
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "periodic reference resolves to different target: no write"
+	reset_case
+	TEST_TIMELINE='not-json'
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
+	[[ "$rc" -eq 1 ]] && pass "unreadable timeline fails closed" || fail "unreadable timeline fails closed"
+	assert_no_write "unreadable timeline: no write"
+	reset_case
+	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=1
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	rc=0
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
+	[[ "$rc" -eq 3 ]] && pass "full page remains due" || fail "full page remains due"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	if grep -Fq '&page=2' "$API_LOG"; then
+		pass "bounded pass resumes next page"
+	else
+		fail "bounded pass resumes next page"
+	fi
+	reset_case
+	rc=0
+	_pm_reconcile_partial_continuations "$SLUG" 2000000000 || rc=$?
+	[[ "$rc" -eq 3 ]] && pass "deadline defers pass" || fail "deadline defers pass"
+	assert_no_write "deadline: no write"
+	reset_case
+	TEST_DEADLINE_AFTER_FIRST=1
+	rc=0
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
+	[[ "$rc" -eq 3 ]] && pass "mid-page deadline keeps pass due" || fail "mid-page deadline keeps pass due"
+	TEST_DEADLINE_AFTER_FIRST=0
+	: >"$API_LOG"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	if grep -Fq 'issues/502/timeline' "$API_LOG" && ! grep -Fq 'issues/501/timeline' "$API_LOG"; then
+		pass "mid-page resume processes pending suffix without restarting first issue"
+	else
+		fail "mid-page resume processes pending suffix without restarting first issue"
+	fi
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c '.[0] += [{event:"cross-referenced",source:{issue:{number:888,repository_url:"https://api.github.com/repos/owner/repo",pull_request:{merged_at:"2026-10-09T12:00:00Z"}}}}]')
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"periodic pass selects newest merged PR, not last timeline entry"
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:in-review,parent-task' runner1)
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1" \
+		"periodic parent tracker: releases runner without auto-dispatch"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -718,6 +892,8 @@ main() {
 	test_unreadable_reread_skips_retry
 	test_qualified_open_pr_reference_keeps_review
 	test_unparsed_closing_reference_is_noop
+	test_expired_lease_recovery
+	test_periodic_pass
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
