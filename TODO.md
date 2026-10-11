@@ -1629,6 +1629,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18661 fix(pulse): keep dependants blocked while a consolidated blocker's successor is open #bug #framework tier:standard ref:GH#34341 logged:2026-10-11 -> [todo/tasks/t18661-brief.md]
 
+- [ ] t18662 fix(pulse): release dependency-ready issues held only by brief terminal-blocker text #bug #framework tier:standard ref:GH#34348 logged:2026-10-11 -> [todo/tasks/t18662-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

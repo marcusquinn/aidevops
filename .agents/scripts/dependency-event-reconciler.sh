@@ -104,10 +104,19 @@ _der_labels_have_hold() {
 	return 1
 }
 
+# Strong machine hold markers. Terminal-blocker vocabulary counts only in
+# trusted comments: the runtime records terminal blockers as comments
+# (_apply_terminal_blocker, terminal-blocker-circuit.sh), while issue bodies
+# document the worker protocol (`TERMINAL_BLOCKER_REASON=...`) as instructions.
+DER_STRONG_HOLD_RE='HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|ACTION REQUIRED|worker[_ -]blocked|aidevops:brief-hold'
+DER_TERMINAL_BLOCKER_RE='Terminal[_ -]blocker([_ -]detected)?'
+
+# $1: issue body plus trusted comments; $2: trusted comments only.
 _der_text_has_strong_hold() {
 	local text="$1"
-	printf '%s\n' "$text" |
-		grep -qiE 'HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|Terminal[_ -]blocker([_ -]detected)?|ACTION REQUIRED|worker[_ -]blocked|aidevops:brief-hold' && return 0
+	local comments="${2:-}"
+	printf '%s\n' "$text" | grep -qiE "$DER_STRONG_HOLD_RE" && return 0
+	printf '%s\n' "$comments" | grep -qiE "$DER_TERMINAL_BLOCKER_RE" && return 0
 	if printf '%s\n' "$text" | grep -qiE '\*\*BLOCKED\*\*' &&
 		printf '%s\n' "$text" | grep -qiE 'cannot proceed'; then
 		return 0
@@ -237,7 +246,7 @@ _der_has_hold() {
 		comments="${comments//aidevops:brief-hold/expired-brief-hold}"
 	fi
 	local text="${body}"$'\n'"${comments}"
-	_der_labels_have_hold "$labels" || _der_text_has_strong_hold "$text" || _der_text_has_operational_hold "$text"
+	_der_labels_have_hold "$labels" || _der_text_has_strong_hold "$text" "$comments" || _der_text_has_operational_hold "$text"
 	return $?
 }
 
@@ -329,12 +338,19 @@ query($searchQuery:String!) {
 	return $?
 }
 
+# Text that declares a candidate's blockers: its body plus label names.
+_der_candidate_dependency_text() {
+	local candidate_json="$1"
+	printf '%s' "$candidate_json" | jq -r '(.body // "") + "\n" + ([.labels.nodes[].name] | join("\n"))'
+	return $?
+}
+
 _der_candidate_declares() {
 	local candidate_json="$1"
 	local closed_number="$2"
 	local closed_task_id="$3"
 	local text="" ref=""
-	text=$(printf '%s' "$candidate_json" | jq -r '(.body // "") + "\n" + ([.labels.nodes[].name] | join("\n"))') || return 1
+	text=$(_der_candidate_dependency_text "$candidate_json") || return 1
 	while IFS= read -r ref; do
 		[[ "$ref" == "$closed_number" ]] && return 0
 	done < <(_der_issue_refs "$text")
@@ -460,13 +476,27 @@ _der_find_task_issue() {
 	return 0
 }
 
+# Positive dependency evidence without a native edge: a declared blocker ref in
+# the body or a blocked-by: label (cf. _hold_dependency_sync_retry). A jq
+# failure counts as no evidence, so the caller leaves the issue blocked.
+_der_declares_blockers() {
+	local candidate_json="$1"
+	local text="" refs=""
+	text=$(_der_candidate_dependency_text "$candidate_json" 2>/dev/null) || return 1
+	refs=$(_der_issue_refs "$text")
+	[[ -n "$refs" ]] && return 0
+	refs=$(_der_task_refs "$text")
+	[[ -n "$refs" ]]
+	return $?
+}
+
 # Optional $3 dependant ref selects the readiness rule (_der_live_blocker_resolved).
 _der_all_declared_blockers_closed() {
 	local repo="$1"
 	local candidate_json="$2"
 	local dependant_ref="${3:-}"
 	local blocker="" task_id="" issue_number="" text=""
-	text=$(printf '%s' "$candidate_json" | jq -r '(.body // "") + "\n" + ([.labels.nodes[].name] | join("\n"))') || return 1
+	text=$(_der_candidate_dependency_text "$candidate_json") || return 1
 	while IFS= read -r blocker; do
 		[[ -n "$blocker" ]] || continue
 		_der_live_blocker_resolved "$repo" "$blocker" "$dependant_ref" || return $?
@@ -553,6 +583,10 @@ _der_try_unblock() {
 	_der_has_hold "$body" "$comments" "$labels" "$comments_json" && return 0
 	_der_native_blockers_closed "$repo" "$issue_number" readiness || return $?
 	if [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
+		# No native edge and no declared blocker: status:blocked came from another
+		# mechanism (cost breaker, infrastructure failure, sync retry hold) that
+		# owns its own release.
+		_der_declares_blockers "$candidate_json" || return 0
 		_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || return $?
 	fi
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
@@ -568,7 +602,7 @@ reconcile_dependants_after_verified_closure() {
 	local closed_number="$2"
 	local owner="${repo%%/*}"
 	local name="${repo#*/}"
-	local context="" closed_task_id="" candidates="" issue_number="" candidate_repo=""
+	local context="" closed_task_id="" candidates="" issue_number="" candidate_repo="" try_status=0
 	local candidate
 	[[ "$repo" == */* && "$closed_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -n "$owner" && -n "$name" ]] || return 1
@@ -591,7 +625,10 @@ reconcile_dependants_after_verified_closure() {
 		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || return 1
 		[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 		[[ "$candidate_repo" == */* ]] || return 1
-		_der_try_unblock "$candidate_repo" "$issue_number" "$candidate" || return 1
+		try_status=0
+		_der_try_unblock "$candidate_repo" "$issue_number" "$candidate" || try_status=$?
+		# A dependant still waiting on another blocker must not stop the rest.
+		[[ "$try_status" -eq 0 || "$try_status" -eq "$DER_NOT_READY" ]] || return 1
 	done <<<"$candidates"
 	return 0
 }

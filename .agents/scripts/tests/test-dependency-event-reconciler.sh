@@ -19,10 +19,13 @@ NATIVE_HAS_NEXT_PAGE=false
 NATIVE_NULL_NODE=false
 NATIVE_EXTRA_STATE=""
 NATIVE_EXTRA_REPO=""
+NATIVE_EXTRA_FOR=""
 NATIVE_DIRECT=true
 SEARCH_AMBIGUOUS=false
 EXPLICIT_LABEL=true
+EXTRA_DEPENDANT=false
 STALE_HOLD_LABEL=""
+STALE_DEP_LABEL="blocked-by:#10"
 BODY20="Blocked by #10"
 CLOSED_TITLE="t10: blocker"
 CONTEXT_REPO="owner/repo"
@@ -164,7 +167,12 @@ _der_search_issues() {
 	if [[ "$query" == *"in:title"* ]]; then
 		candidate 10 CLOSED "$CLOSED_TITLE" "" "" | jq -sc '.'
 	elif [[ "$query" == *"#10"* || "$query" == *"t10"* ]]; then
-		candidate 20 OPEN "t20: direct" "$BODY20" "$labels" | jq -sc '.'
+		{
+			candidate 20 OPEN "t20: direct" "$BODY20" "$labels"
+			if [[ "$EXTRA_DEPENDANT" == "true" ]]; then
+				candidate 21 OPEN "t21: second" "Blocked by #10" $'status:blocked\nblocked-by:#10'
+			fi
+		} | jq -sc '.'
 	else
 		printf '[]\n'
 	fi
@@ -190,7 +198,7 @@ supersession_fixture() {
 
 gh() {
 	local command="$1"
-	local nodes="" live_state=""
+	local nodes="" live_state="" arg="" issue_arg="" extra_state="$NATIVE_EXTRA_STATE"
 	shift
 	case "$command $1" in
 	"issue view")
@@ -217,13 +225,18 @@ gh() {
 			supersession_fixture "$@"
 			return 0
 		fi
+		# NATIVE_EXTRA_FOR limits the extra native blocker #11 to one dependant.
+		for arg in "$@"; do
+			[[ "$arg" == n=* ]] && issue_arg="${arg#n=}"
+		done
+		[[ -z "$NATIVE_EXTRA_FOR" || "$issue_arg" == "$NATIVE_EXTRA_FOR" ]] || extra_state=""
 		if [[ "$NATIVE_NULL_NODE" == "true" ]]; then
 			nodes='[null]'
 		elif [[ "$NATIVE_EMPTY" == "true" ]]; then
 			nodes='[]'
 		else
 			nodes=$(jq -cn --arg state "$NATIVE_STATE" --arg reason "$NATIVE_REASON" --arg repo "$NATIVE_REPO" \
-				--arg extra_state "$NATIVE_EXTRA_STATE" --arg extra_repo "$NATIVE_EXTRA_REPO" '
+				--arg extra_state "$extra_state" --arg extra_repo "$NATIVE_EXTRA_REPO" '
               [{number:10,state:$state,stateReason:(if $reason == "" then null else $reason end),repository:{nameWithOwner:$repo}}]
               + (if $extra_state == "" then [] else
                   [{number:11,state:$extra_state,repository:{nameWithOwner:$extra_repo}}]
@@ -235,7 +248,7 @@ gh() {
 		;;
 	"api --paginate")
 		if [[ "$*" == *"/issues?state=open"* ]]; then
-			jq -cn --arg body "$BODY20" --arg hold "$STALE_HOLD_LABEL" '[[{number:20,state:"open",title:"t20: direct",body:$body,labels:([{name:"status:blocked"},{name:"blocked-by:#10"}] + (if $hold == "" then [] else [{name:$hold}] end))}]]'
+			jq -cn --arg body "$BODY20" --arg dep "$STALE_DEP_LABEL" --arg hold "$STALE_HOLD_LABEL" '[[{number:20,state:"open",title:"t20: direct",body:$body,labels:([{name:"status:blocked"}] + (if $dep == "" then [] else [{name:$dep}] end) + (if $hold == "" then [] else [{name:$hold}] end))}]]'
 		else
 			printf '%s\n' "$COMMENTS"
 		fi
@@ -317,11 +330,31 @@ assert_hold 1 $'```text\nACTION REQUIRED in generated worker output\n```' "" "st
 assert_hold 0 "This reference explains why an issue may be on hold for review." "" "status:blocked" "direct classifier ignores explanatory hold prose"
 assert_hold 0 $'<!--\nPaused: example only\n-->' "" "status:blocked" "direct classifier ignores hold phrases in HTML comments"
 
+# t18662: terminal-blocker vocabulary is hold evidence only in trusted comments;
+# issue bodies document the worker protocol rather than record a blocker.
+TB_PROTOCOL=$'On exit 1, emit `TERMINAL_BLOCKER_REASON=runner_capability_unmet` and stop.\nDo not set `status:blocked`: the terminal-blocker circuit keeps this issue `status:available`.'
+assert_hold 0 "$TB_PROTOCOL" "" "status:blocked" "direct classifier ignores terminal-blocker protocol documented in the body"
+assert_hold 0 "Terminal blocker detected" "" "status:blocked" "direct classifier ignores terminal-blocker vocabulary in the body"
+assert_hold 1 "" "Terminal blocker: reason=target_code_blocker owner=target-maintainer task=77" "status:blocked" "direct classifier preserves terminal-blocker observations in trusted comments"
+assert_hold 1 "$TB_PROTOCOL" "TERMINAL_BLOCKER_CIRCUIT active=true observations=2" "status:blocked" "direct classifier preserves terminal-blocker circuit comments beside body protocol text"
+assert_hold 1 "HUMAN_UNBLOCK_REQUIRED" "" "status:blocked" "direct classifier preserves human-unblock markers in the body"
+assert_hold 1 "ACTION REQUIRED: rotate the deploy key" "" "status:blocked" "direct classifier preserves action-required markers in the body"
+
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n| Outcome | Action |\n|---|---|\n| unknown_review | Hold for bounded review; no implementation issue |'
 assert_eq 1 "$(run_reconcile)" "classification table prose does not suppress close-event reconciliation"
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\nThis reference explains why an issue may be on hold for review.'
 assert_eq 1 "$(run_reconcile)" "explanatory prose does not suppress close-event reconciliation"
+
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n'"$TB_PROTOCOL"
+assert_eq 1 "$(run_reconcile)" "terminal-blocker protocol in the body does not suppress close-event reconciliation"
+
+# t18662: a dependant still waiting on another open blocker must not stop the
+# close event from releasing the remaining dependants.
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" EXTRA_DEPENDANT=true \
+	NATIVE_EXTRA_STATE="OPEN" NATIVE_EXTRA_REPO="owner/repo" NATIVE_EXTRA_FOR=20
+assert_eq 1 "$(run_reconcile)" "close event releases a later dependant after one still waiting on another blocker"
+EXTRA_DEPENDANT=false NATIVE_EXTRA_STATE="" NATIVE_EXTRA_REPO="" NATIVE_EXTRA_FOR=""
 
 EDIT_COUNT=0 REREAD_LABELS="status:done,status:blocked" BODY20="Blocked by #10"
 assert_eq 0 "$(run_reconcile)" "status done is preserved"
@@ -429,6 +462,29 @@ stale_sweep_status=0
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || stale_sweep_status=$?
 assert_eq 1 "$stale_sweep_status" "periodic stale sweep still reports API ambiguity"
 COMMENTS='[[]]'
+
+# t18662: body protocol text no longer pins a resolved dependant; trusted
+# terminal-blocker comments still do.
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n'"$TB_PROTOCOL"
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases a resolved dependant whose body documents the terminal-blocker protocol"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" COMMENTS='[[{"author_association":"OWNER","body":"**Terminal blocker detected** (GH#5141) — skipping dispatch."}]]'
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 0 "$EDIT_COUNT" "periodic stale sweep preserves trusted terminal-blocker comments"
+COMMENTS='[[]]'
+
+# t18662: without a native edge, a declared ref or a blocked-by: label, the
+# block belongs to another mechanism and is left for it to release.
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Cost circuit breaker tripped for this task." STALE_DEP_LABEL="" NATIVE_EMPTY=true
+stale_sweep_status=0
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || stale_sweep_status=$?
+assert_eq 0 "$EDIT_COUNT" "periodic stale sweep leaves a block without dependency evidence unchanged"
+assert_eq 0 "$stale_sweep_status" "periodic stale sweep counts a block without dependency evidence as checked"
+STALE_DEP_LABEL="blocked-by:#10"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases a label-declared dependant without a native edge"
+NATIVE_EMPTY=false
 
 # GH#34341: a blocker closed as superseded keeps dependants blocked while its
 # successor is open; completion checks keep closed-is-done.
