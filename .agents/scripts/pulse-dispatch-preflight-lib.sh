@@ -447,16 +447,61 @@ _preflight_label_maintenance() {
 	return 0
 }
 
+# t18667: raw cycle seconds the post-label refill needs at admission. Its
+# dispatch_max round enumerates only while the finalise reserve, the
+# per-candidate floor and the measured full-scan enumeration estimate all
+# remain (_dispatch_cycle_budget_admits_round, GH#33560). Admitting at the
+# configured minimum alone let optional pre-refill work spend that budget: the
+# refill was admitted and then skipped before enumeration (remaining=700s and
+# 724s against floor=600s enumeration=300s). The configured minimum stays a
+# lower bound. The dispatch reserve is ignored when that gate is off, its
+# estimator is not loaded, or it could never fit one cycle.
+# Stdout: seconds. Returns 1 when the configured minimum is invalid.
+_preflight_post_label_refill_required_seconds() {
+	local required="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	local finalise="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	local cycle="${PULSE_STALE_THRESHOLD:-}" lock="${PULSE_LOCK_MAX_AGE_S:-1800}" enumeration="" reserve=0
+	[[ "$required" =~ ^[1-9][0-9]*$ ]] || return 1
+	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" && "$finalise" =~ ^[0-9]{1,5}$ &&
+		"$cycle" =~ ^[1-9][0-9]{0,8}$ && "$lock" =~ ^[1-9][0-9]{0,8}$ ]] &&
+		declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
+		[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
+		[[ "$lock" -lt "$cycle" ]] && cycle="$lock"
+		enumeration=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_enumeration_expected_seconds) || enumeration=""
+		if [[ "${#floor}" -le 9 && "$enumeration" =~ ^[0-9]{1,5}$ ]]; then
+			reserve=$((10#$finalise + 10#$floor + 10#$enumeration))
+			((reserve > required && reserve < cycle)) && required="$reserve"
+		fi
+	fi
+	printf '%s\n' "$required"
+	return 0
+}
+
 # Give optional pre-refill work only the time left before the refill's
 # admission threshold. The watchdog polls every two seconds and needs time to
 # terminate a stalled child, so reserve five seconds beyond the refill budget.
+# t18667: while the refill still fits, protect its real admission budget with
+# a 60 s margin. Clamped stages overran a 5 s margin by 6-24 s (70 s with REST
+# degraded) and admission runs 2-5 s after the refill gate. Once the refill no
+# longer fits it is skipped regardless, so keep the configured minimum rather
+# than starving the optional work for a refill that cannot run.
 # An unknown clock/budget fails open to the next stage, never to unbounded work.
 _preflight_refill_reserved_timeout() {
 	local stage_limit="$1"
-	local refill_reserve="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
-	[[ "$stage_limit" =~ ^[1-9][0-9]*$ && "$refill_reserve" =~ ^[1-9][0-9]*$ ]] || return 1
+	local configured="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	local refill_reserve="" margin=5 remaining=""
+	[[ "$stage_limit" =~ ^[1-9][0-9]*$ ]] || return 1
+	refill_reserve=$(_preflight_post_label_refill_required_seconds) || return 1
+	if [[ "$refill_reserve" -gt "$configured" ]]; then
+		remaining=$(_pulse_cycle_remaining_seconds 0) || return 1
+		if [[ "$remaining" =~ ^-?[0-9]+$ && "$remaining" -ge "$refill_reserve" ]]; then
+			margin=60
+		else
+			refill_reserve="$configured"
+		fi
+	fi
 	local available=""
-	available=$(_pulse_cycle_remaining_seconds "$((refill_reserve + 5))") || return 1
+	available=$(_pulse_cycle_remaining_seconds "$((refill_reserve + margin))") || return 1
 	[[ "$available" -gt 0 ]] || return 1
 	[[ "$available" -lt "$stage_limit" ]] && stage_limit="$available"
 	printf '%s\n' "$stage_limit"
@@ -519,10 +564,15 @@ _preflight_early_dispatch() {
 # Return whether the post-label refill has enough measured wall-clock budget
 # to start. The refill retains candidate-level timeouts; this admission gate
 # prevents a second full dispatch pass from starting near the cycle ceiling.
+# t18667: require the refill's real dispatch admission budget so a refill that
+# admission would skip is not started (and does not invalidate the snapshot).
 #######################################
 _preflight_post_label_refill_wall_clock_allows() {
 	local required_seconds="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	local remaining_seconds=""
+	if [[ "$required_seconds" =~ ^[1-9][0-9]*$ ]]; then
+		required_seconds=$(_preflight_post_label_refill_required_seconds) || required_seconds=""
+	fi
 	remaining_seconds=$(_pulse_cycle_remaining_seconds 0) || remaining_seconds=""
 
 	if [[ ! "$required_seconds" =~ ^[1-9][0-9]*$ || -z "$remaining_seconds" ]]; then
