@@ -153,8 +153,9 @@ pmc-close-conflicting-generic|pulse-merge-conflict.sh|734|Deterministic merge: c
 pmc-false-positive-heuristic|pulse-merge-conflict.sh|656|Deterministic merge: task ID match.*no implementation file overlap.*false-positive|Task ID match with no file overlap — false-positive heuristic, PR left open for rebase
 pmc-carry-diff|pulse-merge-conflict.sh|904|_carry_forward_pr_diff: appended diff from PR #|Carried forward PR diff to linked issue before close
 pmc-carry-diff-skip|pulse-merge-conflict.sh|859|_carry_forward_pr_diff: issue.*already has diff marker|Diff carry-forward skipped — already has diff marker for this PR
-pfd-deferred|dispatch-dedup-footprint.sh|220|\[footprint-defer\] event=deferred issue=#|Footprint overlap persisted as a bounded cross-cycle defer
-pfd-wake|dispatch-dedup-footprint.sh|170|\[footprint-defer\] event=wake issue=#|Footprint overlap defer woke after lifecycle, footprint, cooldown, or operator change
+pfd-deferred|dispatch-dedup-footprint.sh|256|\[footprint-defer\] event=deferred issue=#|Footprint overlap persisted as a bounded cross-cycle defer
+pfd-suppressed|dispatch-dedup-footprint.sh|387|\[footprint-defer\] event=suppressed issue=#|Unchanged footprint overlap skipped before candidate ceremony (blocker still in flight)
+pfd-wake|dispatch-dedup-footprint.sh|205|\[footprint-defer\] event=wake issue=#|Footprint overlap defer woke after lifecycle, coordinator, footprint, cooldown, or operator change
 dps-classify|pulse-dirty-pr-sweep.sh|788|PR #.*decision=|Dirty PR sweep classification decision
 dps-rebase-ok|pulse-dirty-pr-sweep.sh|615|PR #.*rebased \+ pushed|Dirty PR rebased and force-pushed successfully
 dps-rebase-cooldown|pulse-dirty-pr-sweep.sh|535|PR #.*rebase skipped.*cooldown|Rebase skipped — cooldown active

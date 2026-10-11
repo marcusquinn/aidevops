@@ -1641,6 +1641,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18667 fix(pulse): reserve the post-label refill's real dispatch admission budget so pre-refill stages cannot spend it #bug #framework tier:standard ref:GH#34370 logged:2026-10-11 -> [todo/tasks/t18667-brief.md] pr:#34371 completed:2026-10-11
 
+- [ ] t18668 fix(pulse): restore footprint defer suppression for bodiless candidate snapshots and size its TTL to the reconsideration gap #bug #framework tier:standard ref:GH#34373 logged:2026-10-11 -> [todo/tasks/t18668-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

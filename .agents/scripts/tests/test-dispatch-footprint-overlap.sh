@@ -249,11 +249,22 @@ TEST_BIN="${TEST_ROOT}/bin"
 mkdir -p "$TEST_BIN"
 cat >"${TEST_BIN}/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
+[[ -z "${MOCK_GH_CALL_LOG:-}" ]] || printf '%s\n' "$*" >>"$MOCK_GH_CALL_LOG"
+# t18668: any issue other than blocker #401 is a candidate whose body is read
+# because production candidate snapshots carry none.
+if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" != "401" ]]; then
+	[[ "${MOCK_CANDIDATE_FAIL:-0}" == "1" ]] && exit 1
+	printf '{"body":"## Files to Modify\\n- `EDIT: %s:100-120`"}\n' \
+		"${MOCK_CANDIDATE_PATH:-.agents/scripts/pulse-wrapper.sh}"
+	exit 0
+fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
 	[[ "${MOCK_BLOCKER_FAIL:-0}" == "1" ]] && exit 1
-	printf '{"number":401,"state":"%s","body":"## Files to Modify\\n- `EDIT: %s`","labels":[{"name":"%s"}]}\n' \
+	extra_label=""
+	[[ -z "${MOCK_BLOCKER_EXTRA_LABEL:-}" ]] || extra_label=$(printf ',{"name":"%s"}' "$MOCK_BLOCKER_EXTRA_LABEL")
+	printf '{"number":401,"state":"%s","body":"## Files to Modify\\n- `EDIT: %s`","labels":[{"name":"%s"}%s]}\n' \
 		"${MOCK_BLOCKER_STATE:-OPEN}" "${MOCK_BLOCKER_PATH:-.agents/scripts/pulse-wrapper.sh}" \
-		"${MOCK_BLOCKER_LABEL:-status:in-review}"
+		"${MOCK_BLOCKER_LABEL:-status:in-review}" "$extra_label"
 	exit 0
 fi
 
@@ -495,6 +506,94 @@ else
 	print_result "durable defer: blocker refresh failure remains fail-closed" 1 "(unsafe reconsideration)"
 fi
 unset MOCK_BLOCKER_FAIL
+
+# =============================================================================
+# Test 20 — t18668: a production-shaped candidate snapshot carries no body.
+# The defer reads the candidate issue instead of treating the missing body
+# as a changed footprint, then suppresses and logs the unchanged overlap.
+# =============================================================================
+_footprint_defer_record_overlap "507" "test/repo" \
+	"$(_footprint_extract_paths "$candidate_body")" "$inflight_data" "401" ".agents/scripts/pulse-wrapper.sh"
+snapshot_json='{"number":507,"title":"Fixture","labels":["auto-dispatch"],"createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z","repo_slug":"test/repo"}'
+if _footprint_defer_should_suppress "507" "test/repo" "$snapshot_json"; then
+	status_json=$(_footprint_defer_status_json "507" "test/repo")
+	if [[ "$(printf '%s' "$status_json" | jq -r '.suppressed_count // 0')" == "1" ]] &&
+		grep -q 'event=suppressed issue=#507 repo=test/repo blocker=#401 suppressed=1' "$LOGFILE"; then
+		print_result "durable defer: bodiless candidate snapshot suppresses unchanged overlap" 0
+	else
+		print_result "durable defer: bodiless candidate snapshot suppresses unchanged overlap" 1 "(state=${status_json})"
+	fi
+else
+	print_result "durable defer: bodiless candidate snapshot suppresses unchanged overlap" 1 \
+		"(woke: $(_footprint_defer_status_json "507" "test/repo"))"
+fi
+
+# =============================================================================
+# Test 21 — an unreadable candidate falls through without ending the defer
+# =============================================================================
+MOCK_CANDIDATE_FAIL=1
+export MOCK_CANDIDATE_FAIL
+if _footprint_defer_should_suppress "507" "test/repo" "$snapshot_json"; then
+	print_result "durable defer: unreadable candidate falls through to live check" 1 "(unsafe suppression)"
+elif [[ "$(_footprint_defer_status_json "507" "test/repo" | jq -r '.active')" == "true" ]]; then
+	print_result "durable defer: unreadable candidate falls through to live check" 0
+else
+	print_result "durable defer: unreadable candidate falls through to live check" 1 "(defer was tombstoned)"
+fi
+unset MOCK_CANDIDATE_FAIL
+
+# =============================================================================
+# Test 22 — a candidate edit read from the issue wakes the defer
+# =============================================================================
+MOCK_CANDIDATE_PATH=.agents/scripts/other.sh
+export MOCK_CANDIDATE_PATH
+if _footprint_defer_should_suppress "507" "test/repo" "$snapshot_json"; then
+	print_result "durable defer: fetched candidate edit wakes reconsideration" 1 "(still suppressed)"
+elif [[ "$(_footprint_defer_status_json "507" "test/repo" | jq -r '.wake_reason')" == "candidate_footprint_changed" ]]; then
+	print_result "durable defer: fetched candidate edit wakes reconsideration" 0
+else
+	print_result "durable defer: fetched candidate edit wakes reconsideration" 1 \
+		"(state=$(_footprint_defer_status_json "507" "test/repo"))"
+fi
+unset MOCK_CANDIDATE_PATH
+
+# =============================================================================
+# Test 23 — a blocker that became a coordinator hands back to the live check,
+# which owns the parent-task/no-auto-dispatch footprint exclusions
+# =============================================================================
+_footprint_defer_record_overlap "508" "test/repo" \
+	"$(_footprint_extract_paths "$candidate_body")" "$inflight_data" "401" ".agents/scripts/pulse-wrapper.sh"
+MOCK_BLOCKER_EXTRA_LABEL=parent-task
+export MOCK_BLOCKER_EXTRA_LABEL
+if _footprint_defer_should_suppress "508" "test/repo" "$snapshot_json"; then
+	print_result "durable defer: coordinator blocker wakes live check" 1 "(still suppressed)"
+elif [[ "$(_footprint_defer_status_json "508" "test/repo" | jq -r '.wake_reason')" == "blocker_coordinator_recheck" ]]; then
+	print_result "durable defer: coordinator blocker wakes live check" 0
+else
+	print_result "durable defer: coordinator blocker wakes live check" 1 \
+		"(state=$(_footprint_defer_status_json "508" "test/repo"))"
+fi
+unset MOCK_BLOCKER_EXTRA_LABEL
+
+# =============================================================================
+# Test 24 — an expired defer wakes before any GitHub read
+# =============================================================================
+_footprint_defer_record_overlap "509" "test/repo" \
+	"$(_footprint_extract_paths "$candidate_body")" "$inflight_data" "401" ".agents/scripts/pulse-wrapper.sh"
+state_path=$(_footprint_defer_state_path "test/repo" "509")
+state_json=$(_footprint_defer_read_json "$state_path")
+_footprint_defer_write_json "$state_path" "$(printf '%s' "$state_json" | jq -c '.expires_at = 0')"
+MOCK_GH_CALL_LOG="${TEST_ROOT}/gh-calls-expired.log"
+export MOCK_GH_CALL_LOG
+: >"$MOCK_GH_CALL_LOG"
+if _footprint_defer_should_suppress "509" "test/repo" "$snapshot_json"; then
+	print_result "durable defer: expiry wakes without GitHub reads" 1 "(still suppressed)"
+elif [[ "$(_footprint_defer_status_json "509" "test/repo" | jq -r '.wake_reason')" == "cooldown_expired" && ! -s "$MOCK_GH_CALL_LOG" ]]; then
+	print_result "durable defer: expiry wakes without GitHub reads" 0
+else
+	print_result "durable defer: expiry wakes without GitHub reads" 1 "(calls: $(tr '\n' ';' <"$MOCK_GH_CALL_LOG"))"
+fi
+unset MOCK_GH_CALL_LOG
 PATH="$OLD_PATH"
 
 # =============================================================================

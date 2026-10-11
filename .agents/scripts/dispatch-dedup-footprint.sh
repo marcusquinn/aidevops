@@ -46,9 +46,13 @@ _FOOTPRINT_CACHE_EPOCH=0
 
 # Cross-cycle defer state. The live overlap check remains authoritative; this
 # state only suppresses unchanged reconsideration until a bounded wake event.
+# Every suppression re-reads the candidate and blocker, so the TTL is only a
+# staleness backstop. It must outlast the gap between reconsiderations: the
+# first wave reaches a deferred candidate about every 3 h (median), and a
+# 30 min TTL had expired before 95% of them (t18668).
 _FOOTPRINT_DEFER_STATE_DIR="${AIDEVOPS_FOOTPRINT_DEFER_STATE_DIR:-${HOME}/.aidevops/cache/footprint-defers}"
-_FOOTPRINT_DEFER_TTL_SECONDS="${AIDEVOPS_FOOTPRINT_DEFER_TTL_SECONDS:-1800}"
-[[ "$_FOOTPRINT_DEFER_TTL_SECONDS" =~ ^[1-9][0-9]*$ ]] || _FOOTPRINT_DEFER_TTL_SECONDS=1800
+_FOOTPRINT_DEFER_TTL_SECONDS="${AIDEVOPS_FOOTPRINT_DEFER_TTL_SECONDS:-21600}"
+[[ "$_FOOTPRINT_DEFER_TTL_SECONDS" =~ ^[1-9][0-9]*$ ]] || _FOOTPRINT_DEFER_TTL_SECONDS=21600
 _FOOTPRINT_DEFER_SCHEMA="aidevops-footprint-defer/v1"
 
 # Same-cycle reservation store (GH#32977). The TTL only needs to cover the
@@ -256,8 +260,69 @@ _footprint_defer_record_overlap() {
 }
 
 #######################################
+# Print the candidate body used for the defer footprint comparison. Pulse
+# candidate snapshots carry no body (number,title,url,assignees,labels,
+# createdAt,updatedAt), so read the issue when the candidate JSON has none;
+# treating the missing body as a changed footprint woke every defer (t18668).
+# Args: $1 = candidate issue, $2 = repo slug, $3 = candidate JSON
+# Output: body text (possibly empty)
+# Exit: 0 resolved, 1 unreadable
+#######################################
+_footprint_defer_candidate_body() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local candidate_json="$3"
+	local issue_json=""
+	if printf '%s' "$candidate_json" | jq -e '(.body | type) == "string"' >/dev/null 2>&1; then
+		printf '%s' "$candidate_json" | jq -r '.body'
+		return 0
+	fi
+	if declare -F gh_issue_view >/dev/null 2>&1; then
+		issue_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" --json body 2>/dev/null) || return 1
+	else
+		issue_json=$(gh issue view "$issue_number" --repo "$repo_slug" --json body 2>/dev/null) || return 1
+	fi
+	printf '%s' "$issue_json" | jq -er '(.body // "") | strings' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# Print the wake reason for a refreshed blocker, or nothing while it still
+# holds the recorded footprint. Mirrors _footprint_refresh_inflight_cache:
+# parent-task and claimed no-auto-dispatch coordinators may not hold an
+# in-flight footprint there, so they hand the decision back to the live check.
+# Args: $1 = blocker issue JSON, $2 = defer state JSON
+#######################################
+_footprint_defer_blocker_wake_reason() {
+	local blocker_json="$1"
+	local state_json="$2"
+	local blocker_files="" blocker_hash=""
+	if ! printf '%s' "$blocker_json" | jq -e '
+		[(.labels // [])[]? | if type == "object" then .name else . end] as $names
+		| (((.state // "") | ascii_upcase) == "OPEN")
+		and ($names | any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed"))' >/dev/null 2>&1; then
+		printf 'blocker_lifecycle_changed\n'
+		return 0
+	fi
+	if printf '%s' "$blocker_json" | jq -e '
+		[(.labels // [])[]? | if type == "object" then .name else . end] as $names
+		| (($names | index("parent-task")) != null)
+		or ((($names | index("no-auto-dispatch")) != null) and (($names | index("status:claimed")) != null))' >/dev/null 2>&1; then
+		printf 'blocker_coordinator_recheck\n'
+		return 0
+	fi
+	blocker_files=$(_footprint_extract_paths "$(printf '%s' "$blocker_json" | jq -r '.body // ""')")
+	blocker_hash=$(_footprint_hash_text "$blocker_files") || blocker_hash=""
+	if [[ -z "$blocker_hash" ]] || ! printf '%s' "$state_json" | jq -e --arg hash "$blocker_hash" '.blocker_hash == $hash' >/dev/null 2>&1; then
+		printf 'blocker_footprint_changed\n'
+	fi
+	return 0
+}
+
+#######################################
 # Return success when an unchanged durable overlap should suppress this cycle.
-# Missing/corrupt/stale state falls through to the authoritative live check.
+# Missing/corrupt/stale state, or an unreadable candidate, falls through to
+# the authoritative live check.
 # Args: $1 = candidate issue, $2 = repo slug, $3 = candidate JSON
 # Exit: 0 suppress, 1 reconsider normally
 #######################################
@@ -269,8 +334,8 @@ _footprint_defer_should_suppress() {
 	local state_json=""
 	local candidate_body="" candidate_files="" candidate_hash=""
 	local now_epoch="" expires_at=""
-	local blocking_issue="" blocker_json="" blocker_state=""
-	local blocker_files="" blocker_hash="" updated_json="" suppressed_count=""
+	local blocking_issue="" blocker_json="" wake_reason=""
+	local updated_json="" suppressed_count=""
 	state_path=$(_footprint_defer_state_path "$repo_slug" "$issue_number") || return 1
 	if ! state_json=$(_footprint_defer_read_json "$state_path"); then
 		[[ -e "$state_path" || -L "$state_path" ]] && rm -f "$state_path" 2>/dev/null || true
@@ -281,7 +346,14 @@ _footprint_defer_should_suppress() {
 		_footprint_defer_wake "$state_path" "$state_json" "operator_reconsideration" || true
 		return 1
 	fi
-	candidate_body=$(printf '%s' "$candidate_json" | jq -r '.body // ""' 2>/dev/null) || candidate_body=""
+	# Local expiry first, so an expired record costs no GitHub read.
+	now_epoch=$(date +%s)
+	expires_at=$(printf '%s' "$state_json" | jq -r '.expires_at')
+	if [[ ! "$expires_at" =~ ^[0-9]+$ || "$now_epoch" -ge "$expires_at" ]]; then
+		_footprint_defer_wake "$state_path" "$state_json" "cooldown_expired" || true
+		return 1
+	fi
+	candidate_body=$(_footprint_defer_candidate_body "$issue_number" "$repo_slug" "$candidate_json") || return 1
 	candidate_files=$(_footprint_extract_paths "$candidate_body")
 	[[ -n "$candidate_files" ]] || {
 		_footprint_defer_wake "$state_path" "$state_json" "candidate_footprint_changed" || true
@@ -292,12 +364,6 @@ _footprint_defer_should_suppress() {
 		_footprint_defer_wake "$state_path" "$state_json" "candidate_footprint_changed" || true
 		return 1
 	fi
-	now_epoch=$(date +%s)
-	expires_at=$(printf '%s' "$state_json" | jq -r '.expires_at')
-	if [[ ! "$expires_at" =~ ^[0-9]+$ || "$now_epoch" -ge "$expires_at" ]]; then
-		_footprint_defer_wake "$state_path" "$state_json" "cooldown_expired" || true
-		return 1
-	fi
 	blocking_issue=$(printf '%s' "$state_json" | jq -r '.blocking_issue')
 	if declare -F gh_issue_view >/dev/null 2>&1; then
 		blocker_json=$(gh_issue_view "$blocking_issue" --repo "$repo_slug" --json number,state,labels,body 2>/dev/null) || blocker_json=""
@@ -305,16 +371,9 @@ _footprint_defer_should_suppress() {
 		blocker_json=$(gh issue view "$blocking_issue" --repo "$repo_slug" --json number,state,labels,body 2>/dev/null) || blocker_json=""
 	fi
 	if [[ -n "$blocker_json" ]]; then
-		blocker_state=$(printf '%s' "$blocker_json" | jq -r '.state // ""' | tr '[:lower:]' '[:upper:]')
-		if [[ "$blocker_state" != "OPEN" ]] || ! printf '%s' "$blocker_json" | jq -e \
-			'[(.labels // [])[]? | if type == "object" then .name else . end] | any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed")' >/dev/null 2>&1; then
-			_footprint_defer_wake "$state_path" "$state_json" "blocker_lifecycle_changed" || true
-			return 1
-		fi
-		blocker_files=$(_footprint_extract_paths "$(printf '%s' "$blocker_json" | jq -r '.body // ""')")
-		blocker_hash=$(_footprint_hash_text "$blocker_files") || blocker_hash=""
-		if [[ -z "$blocker_hash" ]] || ! printf '%s' "$state_json" | jq -e --arg hash "$blocker_hash" '.blocker_hash == $hash' >/dev/null 2>&1; then
-			_footprint_defer_wake "$state_path" "$state_json" "blocker_footprint_changed" || true
+		wake_reason=$(_footprint_defer_blocker_wake_reason "$blocker_json" "$state_json")
+		if [[ -n "$wake_reason" ]]; then
+			_footprint_defer_wake "$state_path" "$state_json" "$wake_reason" || true
 			return 1
 		fi
 	fi
@@ -324,6 +383,10 @@ _footprint_defer_should_suppress() {
 	updated_json=$(printf '%s' "$state_json" | jq -c --argjson count "$suppressed_count" --argjson checked "$now_epoch" \
 		'.suppressed_count = $count | .last_checked_at = $checked') || updated_json=""
 	[[ -n "$updated_json" ]] && _footprint_defer_write_json "$state_path" "$updated_json" || true
+	if [[ -n "${LOGFILE:-}" ]]; then
+		printf '[footprint-defer] event=suppressed issue=#%s repo=%s blocker=#%s suppressed=%s expires_at=%s\n' \
+			"$issue_number" "$repo_slug" "$blocking_issue" "$suppressed_count" "$expires_at" >>"$LOGFILE"
+	fi
 	return 0
 }
 
