@@ -70,6 +70,9 @@ setup_test_env() {
 	# checks that otherwise require GitHub transport and persistent stats.
 	_dispatch_recent_dirty_worktree_marker_active() { return 1; }
 	_dispatch_stats_increment() { return 0; }
+	# The secret gate fetches the issue via gh and fails closed on non-JSON
+	# mocks; it has its own tests, so treat "no secrets declared" here.
+	_dispatch_skip_for_secrets() { return 1; }
 	: >"$LOGFILE"
 	return 0
 }

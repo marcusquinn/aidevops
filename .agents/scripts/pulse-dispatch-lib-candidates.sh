@@ -35,7 +35,10 @@ _dispatch_secret_missing_names() {
 
 _dispatch_skip_for_secrets() {
 	local issue_number="$1" repo_slug="$2" issue_json="" missing="" created="" age=0 threshold=""
-	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 0
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || {
+		echo "[pulse-wrapper] #${issue_number}: secret gate issue fetch failed; yielding" >>"$LOGFILE"
+		return 0
+	}
 	missing=$(_dispatch_secret_missing_names "$issue_json") || {
 		echo "[pulse-wrapper] #${issue_number}: secret name evidence unavailable; yielding" >>"$LOGFILE"
 		return 0
