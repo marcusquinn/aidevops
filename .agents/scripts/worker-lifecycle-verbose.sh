@@ -74,11 +74,30 @@ _emit_verbose_checkpoint() {
 }
 
 #######################################
+# Stop a lifecycle watcher's log follower when its reported PID is valid.
+# Arguments:
+#   follower_pid - PID the follower reported on its first output line
+# Returns: always 0
+#######################################
+_verbose_lifecycle_stop_follower() {
+	local follower_pid="${1:-}"
+	[[ "$follower_pid" =~ ^[0-9]+$ ]] || return 0
+	kill "$follower_pid" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Watch a worker log and emit its first four progression checkpoints.
 # Arguments:
 #   worker_log - worker log path
-#   worker_pid - OpenCode child PID
+#   worker_pid - PID whose exit ends the watch (the runtime wrapper)
 # Returns: watcher PID via stdout; always 0
+#
+# t18672: callers capture the PID with $(...), so the background watcher must
+# not inherit that stdout pipe: the capture would wait for the watcher, which
+# waits for log lines from a model that only starts after the capture returns.
+# Reads poll, so a quiet log cannot outlive the worker or the timeout, and the
+# follower reports its PID first so every exit path can stop it.
 #######################################
 _start_verbose_lifecycle_watcher() {
 	local worker_log="$1"
@@ -90,14 +109,24 @@ _start_verbose_lifecycle_watcher() {
 
 	local timeout="${AIDEVOPS_VERBOSE_LIFECYCLE_WATCH_TIMEOUT:-1800}"
 	[[ "$timeout" =~ ^[0-9]+$ ]] || timeout=1800
+	local poll="${AIDEVOPS_VERBOSE_LIFECYCLE_WATCH_POLL_SECONDS:-5}"
+	[[ "$poll" =~ ^[1-9][0-9]*$ ]] || poll=5
 
 	(
 		local _w_start
 		_w_start=$(date +%s)
 		local _saw_session=0 _saw_tool=0 _saw_commit=0 _saw_push=0
 		local _emit_meta="source=watcher worker_pid=${worker_pid}"
+		local _follower_pid="" line=""
+		trap '_verbose_lifecycle_stop_follower "$_follower_pid"; exit 0' TERM
 
-		while IFS= read -r line; do
+		while :; do
+			if [[ -z "$_follower_pid" ]]; then
+				# The follower's first line is its own PID (see below).
+				IFS= read -r _follower_pid || break
+				[[ "$_follower_pid" =~ ^[0-9]+$ ]] || break
+				continue
+			fi
 			if [[ "$_saw_session" -eq 1 && "$_saw_tool" -eq 1 &&
 				"$_saw_commit" -eq 1 && "$_saw_push" -eq 1 ]]; then
 				break
@@ -108,6 +137,13 @@ _start_verbose_lifecycle_watcher() {
 			_now=$(date +%s 2>/dev/null) || _now=0
 			_elapsed=$((_now - _w_start))
 			[[ "$_elapsed" -gt "$timeout" ]] && break
+
+			if ! IFS= read -r -t "$poll" line; then
+				# Bash 3.2 returns 1 for both a read timeout and EOF; only a
+				# live follower makes this a quiet interval worth re-polling.
+				kill -0 "$_follower_pid" 2>/dev/null || break
+				continue
+			fi
 
 			if [[ "$_saw_session" -eq 0 ]] &&
 				printf '%s' "$line" | grep -qE '"session(\.|_)created"|session_id|opencode session created' 2>/dev/null; then
@@ -129,9 +165,10 @@ _start_verbose_lifecycle_watcher() {
 				_emit_verbose_checkpoint first_push_attempted "$_emit_meta"
 				_saw_push=1
 			fi
-		done < <(tail -F -n 0 "$worker_log" 2>/dev/null)
+		done < <(sh -c 'printf "%s\n" "$$"; exec tail -F -n 0 "$1" 2>/dev/null' sh "$worker_log")
+		_verbose_lifecycle_stop_follower "$_follower_pid"
 		return 0
-	) &
+	) >/dev/null &
 	local watcher_pid=$!
 	disown "$watcher_pid" 2>/dev/null || true
 
