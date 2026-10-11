@@ -157,6 +157,51 @@ else
 fi
 
 # =============================================================================
+# Test 6b — EDIT/NEW prose before a bare word and template placeholders are
+# not declarations. Consolidated briefs inline instructions such as these;
+# every brief carrying them used to share the synthetic paths "wildcard",
+# "regressions.", "path/to/file" and "todo/<area>/...", deferring unrelated
+# work on each other. Real declaration shapes found in existing briefs
+# (combined, repeated, bold, heading and colon-less backticked markers) stay.
+# =============================================================================
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+body_marker_prose='## Consolidation instructions
+
+One repo-relative path per line (`- EDIT: path/to/file` or `- NEW: path/to/file`).
+Carry over tool-generated paths such as `- NEW: todo/<area>/log/*/*/<slug>-*.jsonl`.
+Inherited NEW wildcard lines are intentionally retained; check EDIT-to-NEW regressions.
+- NEW JSON parts under `todo/specs/example*.json`: use the generic builder.
+
+### Files to Modify
+
+- EDIT: `docs/example-guide.md`
+- NEW: `todo/research/log/*/*/example-*.jsonl`
+1. EDIT: `scripts/example-helper.sh:10-20`
+- `NEW/EDIT: docs/combined.md` — combined marker
+- `EDIT: docs/first.md`, `EDIT: docs/second.md` — two declarations on one line
+- **EDIT: `docs/bold.md`** — bold declaration
+- NEW `tests/colonless.mjs` — colon-less marker before a backticked path
+- `NEW: {path/to/new-file}` — placeholder left from the template
+- NEW: `todo/<area>/notes.md`
+### File: `docs/heading.md`'
+
+result=$(_footprint_extract_paths "$body_marker_prose")
+expected='docs/bold.md
+docs/combined.md
+docs/example-guide.md
+docs/first.md
+docs/heading.md
+docs/second.md
+scripts/example-helper.sh
+tests/colonless.mjs
+todo/research/log/*/*/example-*.jsonl'
+if [[ "$result" == "$expected" ]]; then
+	print_result "extract_paths: ignores bare-word marker prose and placeholders, keeps real declaration shapes" 0
+else
+	print_result "extract_paths: ignores bare-word marker prose and placeholders, keeps real declaration shapes" 1 "(got: ${result})"
+fi
+
+# =============================================================================
 # Test 7 — _footprint_check_overlap detects overlap via mock cache
 # =============================================================================
 # Simulate an in-flight issue #100 modifying pulse-wrapper.sh

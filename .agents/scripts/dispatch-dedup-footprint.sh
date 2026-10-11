@@ -750,10 +750,18 @@ _footprint_extract_paths() {
 	# context and must not create false dispatch-overlap deferrals (GH#27787).
 	# File requires its explicit colon so prose such as "File refs verified"
 	# cannot become a synthetic path claim (GH#28861).
+	# EDIT/NEW without a colon declares only a backtick- or quote-wrapped path
+	# ("- NEW `tests/x.mjs`"); before a bare word it is prose ("Inherited NEW
+	# wildcard lines", "EDIT-to-NEW regressions."). Tokens with <, >, { or }, or
+	# starting path/to/, are template placeholders ("`- NEW: todo/<area>/...`",
+	# "`- EDIT: path/to/file`"), never repo paths: every brief quoting the same
+	# instruction text would otherwise claim the same synthetic file.
 	local prefixed
 	# shellcheck disable=SC2016 # Backticks are literal regex characters, not shell expansion.
-	prefixed=$(printf '%s' "$issue_body" | grep -oE '((EDIT|NEW):?|File:)[[:space:]]+[`"]?[^`"[:space:],]+' 2>/dev/null |
-		sed -E 's/^((EDIT|NEW):?|File:)[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || prefixed=""
+	prefixed=$(printf '%s' "$issue_body" |
+		grep -oE '((EDIT|NEW|File):[[:space:]]+[`"]?|(EDIT|NEW)[[:space:]]+[`"])[^`"[:space:],]+' 2>/dev/null |
+		sed -E 's/^((EDIT|NEW):?|File:)[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' |
+		grep -vE '[<>{}]|^path/to/' | sort -u) || prefixed=""
 
 	# GH#32977: a canonical `## Files Scope` / `### Files Scope` section is an
 	# explicit ownership declaration (see pre-dispatch-validator-lib-brief-scope.sh),
