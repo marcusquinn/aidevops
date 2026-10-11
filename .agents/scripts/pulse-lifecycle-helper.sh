@@ -19,6 +19,9 @@
 #                           Used by setup.sh and aidevops update.
 #   reconcile-managed       Serialize with runtime activation, stop stale Pulse
 #                           instances, and start only when its supervisor is enabled.
+#                           A launchd-managed cycle from an earlier bundle is left
+#                           to finish instead (GH#34452); launchd starts the
+#                           activated bundle when it exits.
 #
 # Env:
 #   AIDEVOPS_SKIP_PULSE_RESTART=1     Skip restart operations (for debug).
@@ -37,6 +40,12 @@
 #   AIDEVOPS_ACTIVE_AGENTS_LINK=<path>
 #                                     activation link to resolve under the
 #                                     shared runtime transition lock.
+#   AIDEVOPS_PULSE_RECONCILE_DRAIN=1  reconcile-managed lets an in-flight
+#                                     earlier-bundle cycle finish; 0 restores
+#                                     immediate replacement.
+#   AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=3600
+#                                     cycles at or above this age are replaced
+#                                     immediately (treated as stuck).
 #   AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN=<regex>
 #                                     test override for stale merge routines.
 #
@@ -121,6 +130,14 @@ _PULSE_SIGTERM_WAIT="${AIDEVOPS_PULSE_SIGTERM_WAIT:-2}"
 # launchd may accept kickstart before scheduler load permits the process to run.
 # Keep this proof window bounded while tolerating starts beyond the former 5s.
 _PULSE_LAUNCHD_START_WAIT=15
+# GH#34452: setup reconciliation lets a launchd-managed cycle from an earlier
+# bundle finish rather than killing it. Healthy cycles on a loaded runner took
+# up to ~2,450s (2026-10-10/11), so the default ceiling is about 1.5x that; an
+# older cycle is treated as stuck and replaced immediately, as before.
+_PULSE_RECONCILE_DRAIN="${AIDEVOPS_PULSE_RECONCILE_DRAIN:-1}"
+_PULSE_RECONCILE_DRAIN_MAX_AGE="${AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S:-3600}"
+[[ "$_PULSE_RECONCILE_DRAIN_MAX_AGE" =~ ^[0-9]+$ ]] || _PULSE_RECONCILE_DRAIN_MAX_AGE=3600
+_PULSE_RECONCILE_DRAIN_MAX_AGE=$((10#$_PULSE_RECONCILE_DRAIN_MAX_AGE))
 
 # Expected-max coexistence threshold (GH#21903).
 #
@@ -254,6 +271,19 @@ _pulse_launchd_supervisor_present() {
 	return 0
 }
 
+# A deferred reconciliation relies on launchd starting the stable activation
+# link again after the in-flight cycle exits (StartInterval/KeepAlive), so the
+# job must be loaded, not merely installed as a plist.
+_pulse_launchd_supervisor_loaded() {
+	local os_name="${AIDEVOPS_PULSE_OS_NAME:-}"
+	local pulse_label="${AIDEVOPS_PULSE_LAUNCHD_LABEL:-com.aidevops.aidevops-supervisor-pulse}"
+	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
+	[[ "$os_name" == "Darwin" ]] || return 1
+	command -v launchctl >/dev/null 2>&1 || return 1
+	launchctl print "gui/$(id -u)/${pulse_label}" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _pulse_wait_for_launchd_runtime() {
 	local baseline_pids="$1"
 	local waited_seconds=0
@@ -322,25 +352,51 @@ _pulse_pid_list_contains() {
 	return 1
 }
 
+# True when an ancestor of PID (parent upwards, stopping before PID 1) is in the
+# newline-separated list.
+_pulse_pid_descends_from() {
+	local _pid="$1"
+	local _ancestors="$2"
+	local _depth=0
+	[[ "$_pid" =~ ^[0-9]+$ && -n "$_ancestors" ]] || return 1
+	while [[ "$_depth" -lt 64 ]]; do
+		_pid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
+		[[ "$_pid" =~ ^[0-9]+$ && "$_pid" -gt 1 ]] || return 1
+		_pulse_pid_list_contains "$_ancestors" "$_pid" && return 0
+		_depth=$((_depth + 1))
+	done
+	return 1
+}
+
 # Snapshot every runtime process whose sourced code must be replaced. The
 # snapshot is deliberate: a launchd KeepAlive replacement created after this
 # point belongs to the activated bundle and is not a failed-stop residual.
+# Scope "standalone-merge" (GH#34452) selects only merge routines outside every
+# Pulse wrapper process tree. launchd starts those from the stable link rather
+# than a leased bundle, so they are retired even while a cycle drains; merge
+# routines a draining cycle spawned run from its bundle and finish with it.
 _pulse_reconciliation_pids_raw() {
+	local _scope="${1:-all}"
 	local _wrapper_pids=""
 	local _merge_pids=""
 	local _emitted=""
 	local _pid=""
 	_wrapper_pids=$(_pulse_pids_raw)
 	_merge_pids=$(_pulse_merge_pids_raw)
+	if [[ "$_scope" != "standalone-merge" ]]; then
+		while IFS= read -r _pid; do
+			[[ "$_pid" =~ ^[0-9]+$ ]] || continue
+			if ! _pulse_pid_list_contains "$_emitted" "$_pid"; then
+				printf '%s\n' "$_pid"
+				_emitted="${_emitted}${_emitted:+$'\n'}${_pid}"
+			fi
+		done <<<"$_wrapper_pids"
+	fi
 	while IFS= read -r _pid; do
 		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
-		if ! _pulse_pid_list_contains "$_emitted" "$_pid"; then
-			printf '%s\n' "$_pid"
-			_emitted="${_emitted}${_emitted:+$'\n'}${_pid}"
+		if [[ "$_scope" == "standalone-merge" ]] && _pulse_pid_descends_from "$_pid" "$_wrapper_pids"; then
+			continue
 		fi
-	done <<<"$_wrapper_pids"
-	while IFS= read -r _pid; do
-		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
 		if ! _pulse_pid_list_contains "$_emitted" "$_pid"; then
 			printf '%s\n' "$_pid"
 			_emitted="${_emitted}${_emitted:+$'\n'}${_pid}"
@@ -370,14 +426,44 @@ _pulse_process_start_token() {
 	return 0
 }
 
+# Elapsed seconds for a PID from `ps -o etime=` ([[dd-]hh:]mm:ss). macOS ps has
+# no etimes keyword. Returns 1 when the process is gone or the value is unusable.
+_pulse_process_age_seconds() {
+	local _pid="$1"
+	local _elapsed=""
+	local _days=0
+	local _hours=0
+	local _minutes=0
+	local _seconds=0
+	local _colons=""
+	[[ "$_pid" =~ ^[0-9]+$ ]] || return 1
+	_elapsed=$(ps -p "$_pid" -o etime= 2>/dev/null | tr -d ' ') || return 1
+	[[ -n "$_elapsed" ]] || return 1
+	if [[ "$_elapsed" == *-* ]]; then
+		_days="${_elapsed%%-*}"
+		_elapsed="${_elapsed#*-}"
+	fi
+	_colons="${_elapsed//[!:]/}"
+	case "${#_colons}" in
+	2) IFS=':' read -r _hours _minutes _seconds <<<"$_elapsed" ;;
+	1) IFS=':' read -r _minutes _seconds <<<"$_elapsed" ;;
+	*) _seconds="$_elapsed" ;;
+	esac
+	[[ "$_days" =~ ^[0-9]+$ && "$_hours" =~ ^[0-9]+$ ]] || return 1
+	[[ "$_minutes" =~ ^[0-9]+$ && "$_seconds" =~ ^[0-9]+$ ]] || return 1
+	printf '%s\n' "$((10#$_days * 86400 + 10#$_hours * 3600 + 10#$_minutes * 60 + 10#$_seconds))"
+	return 0
+}
+
 # Capture PID plus process start time before signalling. A numeric PID alone is
 # not a stable identity: a fast exit followed by PID reuse could otherwise let
 # reconciliation signal an unrelated process during the TERM/KILL windows.
 _pulse_reconciliation_identities() {
+	local _scope="${1:-all}"
 	local _pids=""
 	local _pid=""
 	local _start_token=""
-	_pids=$(_pulse_reconciliation_pids_raw)
+	_pids=$(_pulse_reconciliation_pids_raw "$_scope")
 	while IFS= read -r _pid; do
 		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
 		if ! _start_token=$(_pulse_process_start_token "$_pid"); then
@@ -723,18 +809,24 @@ _stop_all() {
 # Stop only the processes present at the beginning of setup reconciliation.
 # Unlike _stop_all, the final check intentionally ignores later PIDs: launchd
 # KeepAlive may immediately create the intended active-bundle replacement.
+# Optional scope: see _pulse_reconciliation_pids_raw.
 _stop_reconciliation_processes() {
+	local _scope="${1:-all}"
 	local _identities=""
 	local _survivors=""
 	local _residual=""
 	local _display_pids=""
-	if ! _identities=$(_pulse_reconciliation_identities); then
+	if ! _identities=$(_pulse_reconciliation_identities "$_scope"); then
 		return 1
 	fi
 	[[ -n "$_identities" ]] || return 0
 
 	_display_pids=$(_pulse_identity_pids "$_identities" | tr '\n' ' ')
-	_pl_info "Stopping pre-reconciliation Pulse process(es): ${_display_pids}"
+	if [[ "$_scope" == "standalone-merge" ]]; then
+		_pl_info "Retiring pre-activation standalone merge routine(s): ${_display_pids}"
+	else
+		_pl_info "Stopping pre-reconciliation Pulse process(es): ${_display_pids}"
+	fi
 	_survivors=$(_pulse_snapshot_survivors "$_identities")
 	_pulse_signal_snapshot TERM "$_survivors"
 	sleep "$_PULSE_SIGTERM_WAIT"
@@ -750,6 +842,52 @@ _stop_reconciliation_processes() {
 	if [[ -n "$_residual" ]]; then
 		_display_pids=$(_pulse_identity_pids "$_residual" | tr '\n' ' ')
 		_pl_err "Failed to retire pre-reconciliation Pulse processes after SIGKILL — residual PIDs: ${_display_pids}"
+		return 1
+	fi
+	return 0
+}
+
+# GH#34452: decide whether setup reconciliation leaves running Pulse processes
+# alone. A main Pulse executes one immutable bundle (physical script directory
+# plus runtime lease), so a cycle started before activation can finish safely;
+# killing it on every setup run discarded up to ~26 minutes of cycle work and
+# the dispatch it was about to make. Defer only when launchd will start the
+# stable activation link after the cycle exits and every earlier-bundle main
+# PID is younger than the drain ceiling. The caller still retires standalone
+# merge routines, which run from the stable link rather than a leased bundle.
+# Returns 0 to leave the Pulse process trees running, 1 to continue with
+# immediate replacement.
+_pulse_reconcile_defers_to_cycle_boundary() {
+	local _main_pids=""
+	local _pid=""
+	local _age=""
+	local _draining=""
+	local _current=""
+	[[ "$_PULSE_RECONCILE_DRAIN" != "0" ]] || return 1
+	_pulse_launchd_supervisor_loaded || return 1
+	_main_pids=$(_pulse_pids)
+	[[ -n "$_main_pids" ]] || return 1
+	while IFS= read -r _pid; do
+		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
+		if _pulse_pid_uses_active_runtime "$_pid"; then
+			_current="${_current}${_current:+ }${_pid}"
+			continue
+		fi
+		if ! _age=$(_pulse_process_age_seconds "$_pid"); then
+			_pl_info "Pulse PID ${_pid} age is unavailable; using immediate replacement"
+			return 1
+		fi
+		if [[ "$_age" -ge "$_PULSE_RECONCILE_DRAIN_MAX_AGE" ]]; then
+			_pl_info "Pulse PID ${_pid} has run ${_age}s (drain ceiling ${_PULSE_RECONCILE_DRAIN_MAX_AGE}s); replacing it now"
+			return 1
+		fi
+		_draining="${_draining}${_draining:+ }${_pid} (${_age}s)"
+	done <<<"$_main_pids"
+	if [[ -n "$_draining" ]]; then
+		_pl_info "Deferring Pulse replacement to the cycle boundary: earlier-bundle cycle ${_draining} keeps running; launchd starts bundle $(_pulse_runtime_bundle_id) when it exits"
+	elif [[ -n "$_current" ]]; then
+		_pl_info "Pulse already running from the activated bundle (PID ${_current})"
+	else
 		return 1
 	fi
 	return 0
@@ -890,6 +1028,9 @@ _reconcile_managed() {
 			reconcile_rc=1
 		fi
 		[[ "$reconcile_rc" -eq 0 ]] && _pl_info "Pulse remains stopped because its supervisor is disabled"
+	elif _pulse_reconcile_defers_to_cycle_boundary; then
+		# GH#34452: launchd starts the activated bundle when the cycle exits.
+		_stop_reconciliation_processes standalone-merge || reconcile_rc=$?
 	else
 		_stop_reconciliation_processes || reconcile_rc=$?
 		if [[ "$reconcile_rc" -eq 0 ]]; then
@@ -1030,6 +1171,10 @@ Env:
   AIDEVOPS_AGENTS_DIR=<path>               Override ~/.aidevops/agents.
   AIDEVOPS_ACTIVE_AGENTS_LINK=<path>        Active runtime link for reconciliation.
   AIDEVOPS_PULSE_MANAGED_ENABLED=true       Allow reconcile-managed to start Pulse.
+  AIDEVOPS_PULSE_RECONCILE_DRAIN=0          Replace an in-flight launchd cycle
+                                            immediately (default 1 lets it finish).
+  AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=3600
+                                            Replace cycles at least this old now.
   AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN=...  Override merge-routine match (tests).
 
 Exit codes:

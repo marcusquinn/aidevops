@@ -1655,6 +1655,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18674 fix(pulse): stop every worker launch scanning the whole temp root with du before model selection #bug #framework tier:standard ref:GH#34421 logged:2026-10-11 -> [todo/tasks/t18674-brief.md] pr:#34423 completed:2026-10-11
 
+- [ ] t18675 fix(pulse): stop setup reconciliation killing in-flight Pulse cycles on every deploy #bug #framework tier:standard ref:GH#34452 logged:2026-10-11 -> [todo/tasks/t18675-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
