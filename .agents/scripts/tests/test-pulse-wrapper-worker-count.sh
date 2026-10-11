@@ -322,6 +322,47 @@ test_policy_compatible_command_router() {
 		print_result "command router rejects invalid FOSS capacity" 0
 	fi
 
+	# GH#34323: delegated statuses must survive errexit-suppressed callers
+	# (if/||/set +e); stdout stays the delegate's own output.
+	local expected_rc="" actual_rc="" stub_rc=""
+	for expected_rc in 0 1 3; do
+		actual_rc=0
+		output=$(
+			dispatch_with_dedup() {
+				printf 'dispatch:%s\n' "$#"
+				return "$stub_rc"
+			}
+			stub_rc="$expected_rc"
+			_pulse_wrapper_run_command dispatch 1 owner/repo "title" "Issue #1" gpt /tmp/repo "prompt"
+		) || actual_rc=$?
+		if [[ "$actual_rc" == "$expected_rc" && "$output" == "dispatch:7" ]]; then
+			print_result "command router propagates dispatch status ${expected_rc} in conditional context (GH#34323)" 0
+		else
+			print_result "command router propagates dispatch status ${expected_rc} in conditional context (GH#34323)" 1 \
+				"Expected rc=${expected_rc} output=dispatch:7, got rc=${actual_rc} output='${output}'"
+		fi
+	done
+
+	actual_rc=0
+	(
+		check_repo_worker_cap() { return 1; }
+		_pulse_wrapper_run_command repo-cap /tmp/repo
+	) || actual_rc=$?
+	if [[ "$actual_rc" == "1" ]]; then
+		print_result "command router preserves repo-cap below-cap predicate in conditional context (GH#34323)" 0
+	else
+		print_result "command router preserves repo-cap below-cap predicate in conditional context (GH#34323)" 1 \
+			"Expected rc=1, got rc=${actual_rc}"
+	fi
+
+	actual_rc=0
+	(_pulse_wrapper_run_command repo-cap >/dev/null 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" == "2" ]]; then
+		print_result "command router keeps usage exit 2 (GH#34323)" 0
+	else
+		print_result "command router keeps usage exit 2 (GH#34323)" 1 "Expected rc=2, got rc=${actual_rc}"
+	fi
+
 	return 0
 }
 
