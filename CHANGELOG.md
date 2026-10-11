@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.10] - 2026-10-11
+
+### Changed
+
+- Maintenance: mark t18662 complete (pr:#34351 completed:2026-10-11) (#34345)
+
+### Fixed
+
+- stop stale-blocked sweep and dep-graph refresh starving repos with real backlogs
+
 ## [3.39.9] - 2026-10-11
 
 ### Fixed
