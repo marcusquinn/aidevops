@@ -650,10 +650,18 @@ _gh_wrapper_normalize_stdin_body_file() {
 	while [[ $i -lt ${#_GH_WRAPPER_BODY_FILE_ARGS[@]} ]]; do
 		case "${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset))]}" in
 		--body-file)
+			# argv from quoted paths/tool calls does not receive shell tilde expansion.
+			# Resolve only ~/; never evaluate arbitrary shell text or ~other-user.
+			if [[ "${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset + 1))]:-}" == \~/* ]]; then
+				_GH_WRAPPER_BODY_FILE_ARGS[i + array_index_offset + 1]="${HOME}/${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset + 1))]#\~/}"
+			fi
 			[[ "${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset + 1))]:-}" == "-" ]] && needs_stdin=1
 			i=$((i + 1))
 			;;
 		--body-file=-) needs_stdin=1 ;;
+		--body-file=\~/*)
+			_GH_WRAPPER_BODY_FILE_ARGS[i + array_index_offset]="--body-file=${HOME}/${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset))]#--body-file=\~/}"
+			;;
 		esac
 		i=$((i + 1))
 	done
@@ -727,14 +735,14 @@ _gh_validate_body_file_content() {
 	file_size=$(echo "$file_size" | tr -d '[:space:]')
 	if [[ "$file_size" -eq 0 ]]; then
 		_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is empty"
-		printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 		return 1
 	fi
 	local body_file_body
 	body_file_body=$(<"$body_file_val")
 	if ! _gh_body_has_substantive_content "$body_file_body"; then
 		_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' has no content before signature footer"
-		printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 		return 1
 	fi
 	return 0
@@ -796,13 +804,13 @@ _gh_validate_edit_args() {
 		trimmed_title="${trimmed_title%"${trimmed_title##*[![:space:]]}"}"
 		if [[ -z "$trimmed_title" ]]; then
 			_GH_EDIT_REJECTION_REASON="empty title (after trimming whitespace)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		# Reject bare task-ID stubs: "tNNN: " or "GH#NNN: " with nothing after
 		if [[ "$trimmed_title" =~ ^(t[0-9]+|GH#[0-9]+):[[:space:]]*$ ]]; then
 			_GH_EDIT_REJECTION_REASON="stub title '${trimmed_title}' (task-ID prefix with no description)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 	fi
@@ -811,7 +819,7 @@ _gh_validate_edit_args() {
 	if [[ "$has_body" -eq 1 ]]; then
 		if ! _gh_body_has_substantive_content "$body_val"; then
 			_GH_EDIT_REJECTION_REASON="empty body (after trimming whitespace)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 	fi
@@ -820,17 +828,17 @@ _gh_validate_edit_args() {
 	if [[ "$has_body_file" -eq 1 ]]; then
 		if [[ "$body_file_val" == "/dev/null" ]]; then
 			_GH_EDIT_REJECTION_REASON="body-file is /dev/null (would clear body)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		if [[ ! -f "$body_file_val" ]]; then
 			_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' does not exist"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		if [[ ! -r "$body_file_val" ]]; then
 			_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is not readable"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		_gh_validate_body_file_content "$body_file_val" || return 1

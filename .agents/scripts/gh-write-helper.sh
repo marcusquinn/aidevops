@@ -22,6 +22,8 @@ usage() {
 main() {
 	local resource="${1:-}"
 	local action="${2:-}"
+	# Dynamically scoped for shared validation diagnostics, not exported to children.
+	local _GH_WRITE_OPERATION="${resource} ${action}"
 	if [[ "$resource" == "help" || "$resource" == "--help" || "$resource" == "-h" ]]; then
 		usage
 		return 0
