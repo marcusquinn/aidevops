@@ -1653,7 +1653,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18673 fix(pulse): read the exact PR when the prefetch snapshot is stale so worker draft-checkpoint dispatch hints work #bug #framework tier:standard ref:GH#34402 logged:2026-10-11 -> [todo/tasks/t18673-brief.md] pr:#34404 completed:2026-10-11
 
-- [ ] t18674 fix(pulse): stop every worker launch scanning the whole temp root with du before model selection #bug #framework tier:standard ref:GH#34421 logged:2026-10-11 -> [todo/tasks/t18674-brief.md]
+- [x] t18674 fix(pulse): stop every worker launch scanning the whole temp root with du before model selection #bug #framework tier:standard ref:GH#34421 logged:2026-10-11 -> [todo/tasks/t18674-brief.md] pr:#34423 completed:2026-10-11
 
 ## In Progress
 
