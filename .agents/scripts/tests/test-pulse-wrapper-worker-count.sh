@@ -400,6 +400,17 @@ test_policy_compatible_command_router() {
 		print_result "command router keeps usage exit 2 (GH#34323)" 1 "Expected rc=2, got rc=${actual_rc}"
 	fi
 
+	for command_name in dispatch repo-cap; do
+		actual_rc=0
+		output=$(_pulse_wrapper_run_command "$command_name" 2>&1 >/dev/null) || actual_rc=$?
+		if [[ "$actual_rc" == 2 && "$output" == 'usage: pulse-wrapper.sh --command '* && "$output" != *PULSE_COMMAND_RESULT* ]]; then
+			print_result "command router keeps ${command_name} usage stderr-only without outcome (GH#34329)" 0
+		else
+			print_result "command router keeps ${command_name} usage stderr-only without outcome (GH#34329)" 1 \
+				"rc=${actual_rc} stderr='${output}'"
+		fi
+	done
+
 	return 0
 }
 
