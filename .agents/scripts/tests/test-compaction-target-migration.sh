@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# GH#32807: one-time reset of raised OpenCode compaction targets to 240K.
+# GH#32807 / GH#34416: one-time resets of raised OpenCode compaction targets to 240K.
 
 set -euo pipefail
 
@@ -68,6 +68,16 @@ marker_exists() {
 	return 0
 }
 
+reset_marker_exists() {
+	local home="$1"
+	if [[ -f "$home/.aidevops/cache/migrations/gh34416-compaction-target-240k-reset" ]]; then
+		printf 'yes'
+	else
+		printf 'no'
+	fi
+	return 0
+}
+
 assert_eq "2" "$(grep -c 'migrate_compaction_target_240k' "$SETUP_SCRIPT")" "setup runs the migration in interactive and non-interactive paths"
 
 # Raised opt-outs are reset once, unrelated settings and permissions preserved.
@@ -86,10 +96,30 @@ assert_eq "400000" "$(jq -r '.runtime.opencode.astra_compaction_target' "$HOME/.
 assert_eq "640" "$(stat -f '%Lp' "$settings" 2>/dev/null || stat -c '%a' "$settings")" "settings permissions are preserved"
 assert_eq "yes" "$(marker_exists "$HOME")" "migration records its marker"
 
+assert_eq "yes" "$(reset_marker_exists "$HOME")" "first run also records the GH#34416 marker"
+assert_eq "no" "$([[ -e "$HOME/.aidevops/config-backups/migrations/gh34416-settings.json" ]] && printf yes || printf no)" "GH#34416 pass has nothing left to back up"
+
 # A later explicit opt-out survives because the migration runs once.
 jq '.runtime.opencode.astra_compaction_target = 400000' "$settings" >"$settings.tmp" && mv "$settings.tmp" "$settings"
 migrate_compaction_target_240k
 assert_eq "400000" "$(jq -r '.runtime.opencode.astra_compaction_target' "$settings")" "later explicit opt-out is honoured"
+
+# GH#34416: settings raised after the GH#32807 marker are reset once more.
+HOME="$TEST_ROOT/raised-after-gh32807"
+write_settings "$HOME" '{"runtime":{"opencode":{"astra_compaction_target":400000,"gpt6_context_cap":false,"v2_compaction_target":false}}}'
+mkdir -p "$HOME/.aidevops/cache/migrations"
+date -u +%Y-%m-%dT%H:%M:%SZ >"$HOME/.aidevops/cache/migrations/gh32807-compaction-target-240k"
+migrate_compaction_target_240k
+settings="$(settings_for "$HOME")"
+assert_eq "240000" "$(jq -r '.runtime.opencode.astra_compaction_target' "$settings")" "GH#34416 resets a post-GH#32807 Astra opt-out"
+assert_eq "false" "$(jq -r '.runtime.opencode | has("gpt6_context_cap")' "$settings")" "GH#34416 removes a post-GH#32807 GPT-6 opt-out"
+assert_eq "240000" "$(jq -r '.runtime.opencode.v2_compaction_target' "$settings")" "GH#34416 resets a post-GH#32807 OpenCode 2 opt-out"
+assert_eq "400000" "$(jq -r '.runtime.opencode.astra_compaction_target' "$HOME/.aidevops/config-backups/migrations/gh34416-settings.json")" "GH#34416 backup keeps the original settings"
+assert_eq "no" "$([[ -e "$HOME/.aidevops/config-backups/migrations/gh32807-settings.json" ]] && printf yes || printf no)" "completed GH#32807 pass does not run again"
+assert_eq "yes" "$(reset_marker_exists "$HOME")" "GH#34416 pass records its marker"
+jq '.runtime.opencode.gpt6_context_cap = false' "$settings" >"$settings.tmp" && mv "$settings.tmp" "$settings"
+migrate_compaction_target_240k
+assert_eq "false" "$(jq -r '.runtime.opencode.gpt6_context_cap' "$settings")" "opt-out after GH#34416 is honoured"
 
 # Already-default settings are left byte-identical but still marked.
 HOME="$TEST_ROOT/default"
