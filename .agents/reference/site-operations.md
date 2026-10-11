@@ -30,8 +30,10 @@ Each `sites` entry identifies a canonical hostname, aliases, platform, environme
 DNS provider/zone reference, hosting provider/account boundary, deployment path,
 provenance, freshness, and optional multisite `children`. `hosting_accounts` holds
 reusable connection metadata once per account. The helper matches an exact site key
-or canonical hostname first, then an alias, then a child hostname. A child inherits
-its parent hosting account and path unless it overrides the path.
+or canonical hostname first, then an alias, then a child hostname or child `aliases`.
+Children may have an `aliases` array, matched after their hostname. A child inherits
+its parent hosting account and path unless it overrides the path. Its `dns` record
+overrides the parent DNS record when present; otherwise it inherits parent DNS.
 
 The helper is read-only. `discover` reports configured local evidence and gaps but
 does not call providers or persist anything; provider discovery must be explicitly

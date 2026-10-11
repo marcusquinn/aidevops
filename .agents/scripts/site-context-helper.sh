@@ -36,11 +36,11 @@ validate_inventory() {
 lookup_record() {
 	local hostname="$1"
 	jq -ce --arg hostname "$hostname" '
-		def selected: to_entries[] | select(.key == $hostname or .value.canonical_hostname == $hostname or (.value.aliases // [] | index($hostname)) or (.value.children // {} | to_entries[]? | select(.value.hostname == $hostname)));
+		def selected: to_entries[] | select(.key == $hostname or .value.canonical_hostname == $hostname or (.value.aliases // [] | index($hostname)) or (.value.children // {} | to_entries[]? | select(.value.hostname == $hostname or (.value.aliases // [] | index($hostname)))));
 		(.sites | selected) as $match
-		| ([($match.value.children // {} | to_entries[]? | select(.value.hostname == $hostname) | .value)][0] // null) as $child
+		| ([($match.value.children // {} | to_entries[]? | select(.value.hostname == $hostname or (.value.aliases // [] | index($hostname))) | .value)][0] // null) as $child
 		| (.hosting_accounts[$match.value.hosting.account_ref] // {}) as $account
-		| {status:"found", matched_hostname:$hostname, site_id:$match.key, name:$match.value.name, canonical_hostname:$match.value.canonical_hostname, platform:$match.value.platform, environment:$match.value.environment, dns:$match.value.dns, hosting:($match.value.hosting + {deployment_path:($child.deployment_path // $match.value.hosting.deployment_path), ssh_host:$account.ssh_host, ssh_port:$account.ssh_port, ssh_user:$account.ssh_user, credential_env:$account.credential_env, last_verified:$account.last_verified}), child:$child, provenance:$match.value.provenance, last_verified:$match.value.last_verified}
+		| {status:"found", matched_hostname:$hostname, site_id:$match.key, name:$match.value.name, canonical_hostname:$match.value.canonical_hostname, platform:$match.value.platform, environment:$match.value.environment, dns:($child.dns // $match.value.dns), hosting:($match.value.hosting + {deployment_path:($child.deployment_path // $match.value.hosting.deployment_path), ssh_host:$account.ssh_host, ssh_port:$account.ssh_port, ssh_user:$account.ssh_user, credential_env:$account.credential_env, last_verified:$account.last_verified}), child:$child, provenance:$match.value.provenance, last_verified:$match.value.last_verified}
 	' "$INVENTORY_PATH"
 	return $?
 }

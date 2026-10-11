@@ -24,7 +24,7 @@
       "hosting": { "provider": "hostinger", "account_ref": "shared-hosting-account", "deployment_path": "/domains/example.com/public_html" },
       "provenance": "manual",
       "last_verified": "2026-01-01T00:00:00Z",
-      "children": { "store": { "hostname": "store.example.com", "identity": "store", "deployment_path": "/domains/example.com/public_html" } }
+      "children": { "store": { "hostname": "store.example.com", "aliases": ["store-alias.example.com"], "identity": "store", "deployment_path": "/domains/example.com/public_html" } }
     }
   }
 }
