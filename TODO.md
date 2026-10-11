@@ -1649,7 +1649,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18671 fix(project-config): stop re-filing the .aidevops.json migration issue from a stale local index and an unmatched duplicate search #bug #framework tier:standard ref:GH#34388 pr:#34389 logged:2026-10-11 -> [todo/tasks/t18671-brief.md] completed:2026-10-11
 
-- [ ] t18672 fix(worker-lifecycle): stop the fix-the-fixer log watcher deadlocking workers before model invocation #bug #framework tier:standard ref:GH#34393 logged:2026-10-11 -> [todo/tasks/t18672-brief.md]
+- [x] t18672 fix(worker-lifecycle): stop the fix-the-fixer log watcher deadlocking workers before model invocation #bug #framework tier:standard ref:GH#34393 logged:2026-10-11 -> [todo/tasks/t18672-brief.md] pr:#34394 completed:2026-10-11
 
 ## In Progress
 
