@@ -398,9 +398,18 @@ aidevops_version_at_least() {
 	return 1
 }
 
+# GH#34415: the aidevops gh PATH shim satisfies `command -v gh` even when the
+# native GitHub CLI is absent; the shim then exits 127 for every command. A
+# successful `gh --version` proves a native binary is reachable through it.
+aidevops_gh_native_available() {
+	command -v gh >/dev/null 2>&1 || return 1
+	gh --version >/dev/null 2>&1 || return 1
+	return 0
+}
+
 aidevops_gh_installed_version() {
 	local output=""
-	if ! command -v gh >/dev/null 2>&1; then
+	if ! aidevops_gh_native_available; then
 		return 1
 	fi
 	output=$(gh --version 2>/dev/null || true)
@@ -417,7 +426,7 @@ aidevops_gh_slurp_supported() {
 
 aidevops_gh_slurp_status_message() {
 	local installed=""
-	if ! command -v gh >/dev/null 2>&1; then
+	if ! aidevops_gh_native_available; then
 		printf 'GitHub CLI (gh) is not installed; gh api --paginate --slurp requires gh >= %s. %s' \
 			"$AIDEVOPS_GH_MIN_SLURP_VERSION" "$(aidevops_gh_slurp_remediation_guidance)"
 		return 0

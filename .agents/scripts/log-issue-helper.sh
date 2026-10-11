@@ -169,9 +169,11 @@ EOF
 # -----------------------------------------------------------------------------
 
 check_gh_auth() {
-	if ! command -v gh &>/dev/null; then
+	# GH#34415: the aidevops gh shim satisfies `command -v gh` without a native
+	# binary; a working `gh --version` proves the native CLI is reachable.
+	if ! command -v gh &>/dev/null || ! gh --version &>/dev/null; then
 		echo "ERROR: GitHub CLI (gh) not installed" >&2
-		echo "Install with: brew install gh (macOS) or apt install gh (Linux)" >&2
+		echo "Install with: brew install gh (macOS) or the official GitHub CLI apt repository (Linux: https://cli.github.com/), then run: gh auth login" >&2
 		return 1
 	fi
 

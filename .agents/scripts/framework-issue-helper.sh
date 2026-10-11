@@ -300,9 +300,11 @@ _validate_gh_prereqs() {
 		return 1
 	fi
 
-	if ! command -v gh &>/dev/null; then
+	# GH#34415: the aidevops gh shim satisfies `command -v gh` without a native
+	# binary; a working `gh --version` proves the native CLI is reachable.
+	if ! command -v gh &>/dev/null || ! gh --version &>/dev/null; then
 		log_error "GitHub CLI (gh) not installed — cannot create issue"
-		log_error "Install with: brew install gh (macOS) or apt install gh (Linux)"
+		log_error "Install with: brew install gh (macOS) or the official GitHub CLI apt repository (Linux: https://cli.github.com/), then run: gh auth login"
 		return 1
 	fi
 	# `gh auth status` validates stored keyring entries and can fail even when an

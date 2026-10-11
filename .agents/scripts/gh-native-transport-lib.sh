@@ -83,6 +83,15 @@ _find_real_gh() {
 	return 1
 }
 
+# Explain a missing native GitHub CLI (GH#34415). The shim is on PATH, so
+# `command -v gh` succeeds; tell the user the CLI itself must be installed.
+_shim_report_missing_native_gh() {
+	local reason="$1"
+	printf '[aidevops] gh shim: %s\n' "$reason" >&2
+	printf '[aidevops] GitHub CLI (gh) is not installed. Install it (macOS: brew install gh; Linux: the official GitHub CLI package repository at https://cli.github.com/), then run: gh auth login\n' >&2
+	return 0
+}
+
 # _shim_classify_endpoint <sub1> [<sub2>]
 # Classify a gh invocation for instrumentation. Returns one of:
 #   graphql | rest | search-rest | other

@@ -78,8 +78,9 @@ setup_git_clis() {
 	local missing_names=()
 	local gh_needs_slurp_upgrade="false"
 
-	# Check for GitHub CLI
-	if ! command -v gh >/dev/null 2>&1; then
+	# Check for GitHub CLI. GH#34415: the aidevops gh shim on PATH satisfies
+	# `command -v gh` without a native binary, so require a working --version.
+	if ! command -v gh >/dev/null 2>&1 || ! gh --version >/dev/null 2>&1; then
 		missing_packages+=("gh")
 		missing_names+=("GitHub CLI")
 	elif declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && ! aidevops_gh_slurp_supported; then

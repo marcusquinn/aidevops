@@ -140,7 +140,7 @@ if [[ "${AIDEVOPS_GH_SHIM_DISABLE:-0}" == "1" ]]; then
 		exit 1
 	fi
 	_real_gh="$(_find_real_gh)" || {
-		printf '[aidevops] gh shim: native gh binary not found on PATH\n' >&2
+		_shim_report_missing_native_gh 'native gh binary not found on PATH'
 		exit 127
 	}
 	exec "$_real_gh" "$@"
@@ -294,7 +294,7 @@ case "${1:-}:${2:-}" in
 		# native stdin, stdout, stderr, and exit status byte-for-byte for every auth
 		# subcommand.
 		_real_gh="$(_find_real_gh)" || {
-			printf '[aidevops] gh shim: real gh binary not found on PATH\n' >&2
+			_shim_report_missing_native_gh 'real gh binary not found on PATH'
 			exit 127
 		}
 		exec "$_real_gh" "$@"
@@ -313,7 +313,7 @@ api:*)
 	;;
 *)
 	_real_gh="$(_find_real_gh)" || {
-		printf '[aidevops] gh shim: real gh binary not found on PATH\n' >&2
+		_shim_report_missing_native_gh 'real gh binary not found on PATH'
 		exit 127
 	}
 	# GH#21857/t3448: instrument every passthrough gh call (pr merge, pr checks,
@@ -329,7 +329,7 @@ esac
 export _AIDEVOPS_GH_SHIM_ACTIVE=1
 
 REAL_GH="$(_find_real_gh)" || {
-	printf '[aidevops] gh shim: real gh binary not found; aborting\n' >&2
+	_shim_report_missing_native_gh 'real gh binary not found; aborting'
 	exit 127
 }
 
