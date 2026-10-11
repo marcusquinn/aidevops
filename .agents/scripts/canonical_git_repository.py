@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 
 from native_git import real_git
 
