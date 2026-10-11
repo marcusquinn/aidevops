@@ -602,8 +602,9 @@ _complexity_scan_permission_gate() {
 	return 0
 }
 
-# _complexity_scan_pull_latest — pull aidevops repo before scanning (GH#17848, t2001)
-# Fail-closed: returns 1 (skip cycle) if pull fails to avoid stale-state warnings.
+# _complexity_scan_pull_latest — refresh origin/main into a temp scan tree (GH#17848, t2001, GH#34426)
+# Fail-closed: returns 1 (skip cycle) if the refresh fails to avoid stale-state warnings.
+# Outputs: scan tree path via stdout.
 _complexity_scan_pull_latest() {
 	local aidevops_path="$1"
 
@@ -622,12 +623,37 @@ _complexity_scan_pull_latest() {
 	# timeout protection (or, if set -e is active, aborts the stage). The
 	# portable timeout_sec helper from shared-constants.sh tries `timeout`,
 	# `gtimeout`, and a bash-native PGID-kill fallback.
-	if git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		if ! GIT_TERMINAL_PROMPT=0 timeout_sec 30 \
-			git -C "$aidevops_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
-			echo "[pulse-wrapper] Complexity scan: git pull failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
-			return 1
-		fi
+	#
+	# GH#34426: the canonical checkout is a guarded read-only mirror, so
+	# `git pull` there is blocked. Instead local-clone its object store (read-only
+	# on the source), point origin at the real remote, fetch origin main and check
+	# it out detached in a private temp tree. Prints the tree path on stdout; the
+	# caller removes it. Not a git repo: scan in place (read-only).
+	if ! git -C "$aidevops_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		printf '%s\n' "$aidevops_path"
+		return 0
 	fi
+	local origin_url scan_tree tmp_base="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+	origin_url=$(git -C "$aidevops_path" remote get-url origin 2>/dev/null) || origin_url=""
+	mkdir -p "$tmp_base" 2>/dev/null || true
+	scan_tree=$(mktemp -d "${tmp_base}/complexity-scan-tree.XXXXXX" 2>/dev/null) || scan_tree=""
+	if [[ -z "$origin_url" || -z "$scan_tree" ]]; then
+		echo "[pulse-wrapper] Complexity scan: cannot prepare scan tree for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
+		[[ -n "$scan_tree" ]] && rm -rf "$scan_tree"
+		return 1
+	fi
+	if ! {
+		git clone --quiet --local --no-checkout "$aidevops_path" "$scan_tree" &&
+			git -C "$scan_tree" remote set-url origin "$origin_url" &&
+			GIT_TERMINAL_PROMPT=0 timeout_sec 30 \
+				git -C "$scan_tree" fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' &&
+			git -C "$scan_tree" checkout --quiet --detach refs/remotes/origin/main &&
+			git -C "$scan_tree" remote set-head origin main
+	} >>"$LOGFILE" 2>&1; then
+		echo "[pulse-wrapper] Complexity scan: origin/main export failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
+		rm -rf "$scan_tree"
+		return 1
+	fi
+	printf '%s\n' "$scan_tree"
 	return 0
 }
