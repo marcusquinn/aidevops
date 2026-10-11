@@ -547,6 +547,28 @@ def recovery_marker_consumers(
     return consumers
 
 
+def select_plan_sources(
+    discovered: list[Path], workspace: Path, requested: list[str] | None
+) -> list[Path]:
+    """Validate exact fleet selection without bypassing native discovery."""
+    if requested is None:
+        return discovered
+    if not requested or any(not value for value in requested):
+        raise MigrationError("Explicit source selection must not be empty")
+    selected: list[Path] = []
+    for value in requested:
+        source = expand_path(value)
+        if source.is_symlink() or not source.is_dir():
+            raise MigrationError("Selected source must be an existing non-symlink directory")
+        source = source.resolve()
+        if not path_is_inside(workspace, source) or source not in discovered:
+            raise MigrationError("Selected source is not a discovered workspace repository")
+        if source in selected:
+            raise MigrationError("Duplicate selected source")
+        selected.append(source)
+    return sorted(selected)
+
+
 def plan_command(args: argparse.Namespace) -> int:
     """Create a deterministic, non-mutating migration plan."""
     workspace = expand_path(args.workspace)
@@ -561,24 +583,7 @@ def plan_command(args: argparse.Namespace) -> int:
     exclusions: list[dict[str, str]] = []
     discovered = list(discover_repositories(workspace, discovery_lib))
     requested_sources = getattr(args, "source", None)
-    selected_sources = None
-    if requested_sources is not None:
-        selected_sources = []
-        for value in requested_sources:
-            if not value:
-                raise MigrationError("Explicit source selection must not be empty")
-            source = expand_path(value)
-            if source.is_symlink() or not source.is_dir():
-                raise MigrationError("Selected source must be an existing non-symlink directory")
-            source = source.resolve()
-            if not path_is_inside(workspace, source) or source not in discovered:
-                raise MigrationError("Selected source is not a discovered workspace repository")
-            if source in selected_sources:
-                raise MigrationError("Duplicate selected source")
-            selected_sources.append(source)
-        if not selected_sources:
-            raise MigrationError("Explicit source selection must not be empty")
-        discovered = sorted(selected_sources)
+    discovered = select_plan_sources(discovered, workspace, requested_sources)
     for source in discovered:
         repository, exclusion = plan_repository(source, workspace, repos_json, registrations, args)
         if repository:
@@ -606,8 +611,8 @@ def plan_command(args: argparse.Namespace) -> int:
         "consumers": consumers,
         "state_dir": str(state_dir),
     }
-    if selected_sources is not None:
-        plan["selected_sources"] = [str(source) for source in sorted(selected_sources)]
+    if requested_sources is not None:
+        plan["selected_sources"] = [str(source) for source in discovered]
     plan["plan_sha256"] = sha256_bytes(canonical_bytes(plan))
     if any(item["destination_collision"] for item in repositories):
         raise MigrationError("Destination collision detected; no plan was written")
