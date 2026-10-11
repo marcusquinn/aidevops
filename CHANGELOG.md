@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.14] - 2026-10-11
+
+### Changed
+
+- Maintenance: mark t18667 complete (pr:#34371 completed:2026-10-11) (#34369)
+
+### Fixed
+
+- restore footprint defer suppression for bodiless candidate snapshots
+
 ## [3.39.13] - 2026-10-11
 
 ### Changed
