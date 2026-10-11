@@ -35,6 +35,26 @@ Children may have an `aliases` array, matched after their hostname. A child inhe
 its parent hosting account and path unless it overrides the path. Its `dns` record
 overrides the parent DNS record when present; otherwise it inherits parent DNS.
 
+Optional `purpose` describes what the site is for in one line. Optional `ownership`
+records `type`, `owner` (person or organisation), `managed_by`, `confirmed`, and
+`evidence`. Allowed types are `client`, `former-client`, `business` (the operator's
+own business), `personal`, `partner`, `community`, and `unknown`. Agents may infer
+ownership from evidence, but must record `confirmed: false`, explain that evidence,
+and never present an inference as fact. Set `confirmed: true` only after ownership
+has been confirmed. A child's `purpose` and whole `ownership` object override the
+parent's when present; absent values inherit from the parent, without merging
+individual ownership fields.
+
+Top-level `dns_accounts` holds reusable DNS account metadata. The effective `dns`
+record's optional `account_ref` must name a key in that map. Lookup resolves it into
+`dns.account` with `name`, `credential_env`, `account_id_env`, and `last_verified`.
+A child's own DNS record is selected before resolving the account reference; it
+does not merge fields from parent DNS. Store only secret variable names in
+`credential_env` and `account_id_env`, never tokens or secret account IDs. These
+fields are additive and optional; inventory version remains `1`, and inventories
+without them retain their existing lookup output. Validation checks ownership
+types, boolean confirmation flags, and DNS account references on sites and children.
+
 The helper is read-only. `discover` reports configured local evidence and gaps but
 does not call providers or persist anything; provider discovery must be explicitly
 implemented and authorized separately. Missing or stale records are evidence gaps,

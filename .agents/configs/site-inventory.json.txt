@@ -13,6 +13,15 @@
       "last_verified": "2026-01-01T00:00:00Z"
     }
   },
+  "dns_accounts": {
+    "cloudflare-example": {
+      "provider": "cloudflare",
+      "name": "Example Account",
+      "account_id_env": "CLOUDFLARE_EXAMPLE_ACCOUNT_ID",
+      "credential_env": "CLOUDFLARE_EXAMPLE_API_TOKEN",
+      "last_verified": "2026-01-01T00:00:00Z"
+    }
+  },
   "sites": {
     "example-wordpress-network": {
       "name": "Example WordPress Network",
@@ -20,11 +29,35 @@
       "aliases": ["www.example.com"],
       "platform": "wordpress-multisite",
       "environment": "production",
-      "dns": { "provider": "cloudflare", "zone_ref": "example.com" },
+      "purpose": "Example client's public website network.",
+      "ownership": {
+        "type": "client",
+        "owner": "Example Client Ltd",
+        "managed_by": "Example Agency",
+        "confirmed": false,
+        "evidence": "Example only: inferred from a project brief, awaiting owner confirmation."
+      },
+      "dns": { "provider": "cloudflare", "zone_ref": "example.com", "account_ref": "cloudflare-example" },
       "hosting": { "provider": "hostinger", "account_ref": "shared-hosting-account", "deployment_path": "/domains/example.com/public_html" },
       "provenance": "manual",
       "last_verified": "2026-01-01T00:00:00Z",
-      "children": { "store": { "hostname": "store.example.com", "aliases": ["store-alias.example.com"], "identity": "store", "deployment_path": "/domains/example.com/public_html" } }
+      "children": {
+        "store": {
+          "hostname": "store.example.com",
+          "aliases": ["store-alias.example.com"],
+          "identity": "store",
+          "purpose": "Example client's online store.",
+          "ownership": {
+            "type": "client",
+            "owner": "Example Client Ltd",
+            "managed_by": "Example Agency",
+            "confirmed": false,
+            "evidence": "Example only: inferred from the store brief, awaiting owner confirmation."
+          },
+          "dns": { "provider": "cloudflare", "zone_ref": "example.com", "account_ref": "cloudflare-example" },
+          "deployment_path": "/domains/example.com/public_html"
+        }
+      }
     }
   }
 }

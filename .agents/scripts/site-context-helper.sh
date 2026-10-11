@@ -29,7 +29,23 @@ require_inventory() {
 }
 
 validate_inventory() {
-	jq -e '(.version | type == "number") and (.sites | type == "object") and ([.sites[] | (.canonical_hostname | type == "string") and (.hosting | type == "object")] | all)' "$INVENTORY_PATH" >/dev/null
+	jq -e '
+		def valid_metadata($accounts):
+			(if has("ownership") then
+				.ownership | type == "object"
+				and (if has("type") then .type as $type | ["client", "former-client", "business", "personal", "partner", "community", "unknown"] | index($type) != null else true end)
+				and (if has("confirmed") then .confirmed | type == "boolean" else true end)
+			else true end)
+			and (if (.dns // {} | has("account_ref")) then
+				.dns.account_ref as $ref | ($ref | type == "string") and ($accounts | has($ref))
+			else true end);
+		(.dns_accounts // {}) as $accounts
+		| (.version | type == "number") and (.sites | type == "object")
+		and ($accounts | type == "object")
+		and ([.sites[] | (.canonical_hostname | type == "string") and (.hosting | type == "object")
+			and valid_metadata($accounts)
+			and ([.children // {} | .[] | valid_metadata($accounts)] | all)] | all)
+	' "$INVENTORY_PATH" >/dev/null
 	return $?
 }
 
@@ -40,7 +56,11 @@ lookup_record() {
 		(.sites | selected) as $match
 		| ([($match.value.children // {} | to_entries[]? | select(.value.hostname == $hostname or (.value.aliases // [] | index($hostname))) | .value)][0] // null) as $child
 		| (.hosting_accounts[$match.value.hosting.account_ref] // {}) as $account
-		| {status:"found", matched_hostname:$hostname, site_id:$match.key, name:$match.value.name, canonical_hostname:$match.value.canonical_hostname, platform:$match.value.platform, environment:$match.value.environment, dns:($child.dns // $match.value.dns), hosting:($match.value.hosting + {deployment_path:($child.deployment_path // $match.value.hosting.deployment_path), ssh_host:$account.ssh_host, ssh_port:$account.ssh_port, ssh_user:$account.ssh_user, credential_env:$account.credential_env, last_verified:$account.last_verified}), child:$child, provenance:$match.value.provenance, last_verified:$match.value.last_verified}
+		| ($child.dns // $match.value.dns) as $dns
+		| (if $dns.account_ref != null then $dns + {account:(.dns_accounts[$dns.account_ref] | {name, credential_env, account_id_env, last_verified})} else $dns end) as $resolved_dns
+		| {status:"found", matched_hostname:$hostname, site_id:$match.key, name:$match.value.name, canonical_hostname:$match.value.canonical_hostname, platform:$match.value.platform, environment:$match.value.environment, dns:$resolved_dns, hosting:($match.value.hosting + {deployment_path:($child.deployment_path // $match.value.hosting.deployment_path), ssh_host:$account.ssh_host, ssh_port:$account.ssh_port, ssh_user:$account.ssh_user, credential_env:$account.credential_env, last_verified:$account.last_verified}), child:$child, provenance:$match.value.provenance, last_verified:$match.value.last_verified}
+		+ (if ($child.purpose // $match.value.purpose) != null then {purpose:($child.purpose // $match.value.purpose)} else {} end)
+		+ (if ($child.ownership // $match.value.ownership) != null then {ownership:($child.ownership // $match.value.ownership)} else {} end)
 	' "$INVENTORY_PATH"
 	return $?
 }
