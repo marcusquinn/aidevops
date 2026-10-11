@@ -1645,7 +1645,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18669 fix(pulse): stop footprint extraction turning EDIT/NEW prose and template placeholders into shared file claims #bug #framework tier:standard ref:GH#34380 pr:#34381 logged:2026-10-11 -> [todo/tasks/t18669-brief.md] completed:2026-10-11
 
-- [ ] t18670 fix(dispatch-dedup): an open PR with over 100 changed files must not make the open-siblings lookup permanently uncertain #bug #framework tier:standard ref:GH#34385 logged:2026-10-11 -> [todo/tasks/t18670-brief.md]
+- [x] t18670 fix(dispatch-dedup): an open PR with over 100 changed files must not make the open-siblings lookup permanently uncertain #bug #framework tier:standard ref:GH#34385 logged:2026-10-11 -> [todo/tasks/t18670-brief.md] pr:#34386 completed:2026-10-11
 
 ## In Progress
 
