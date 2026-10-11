@@ -57,8 +57,7 @@ init_repos_file() {
 
 _init_repos_file_locked() {
 	if [[ ! -f "$REPOS_FILE" ]]; then
-		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"], "worktree_base_dir": "~/Git/_worktrees"}' >"$AIDEVOPS_REGISTRY_TEMP_FILE" || return 1
-		mv "$AIDEVOPS_REGISTRY_TEMP_FILE" "$REPOS_FILE" || return 1
+		aidevops_migrate_repos_json_worktree_base_dir "$REPOS_FILE" || return 1
 	elif command -v jq &>/dev/null; then
 		# Migrate: add git_parent_dirs if missing from existing repos.json
 		if ! jq -e '.git_parent_dirs' "$REPOS_FILE" &>/dev/null; then
