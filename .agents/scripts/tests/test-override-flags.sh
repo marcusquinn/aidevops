@@ -217,13 +217,15 @@ section "2. FORCE_PUSH bypass log (issue-sync-helper.sh)"
 
 # Test 2a: FORCE_PUSH=false (default) — bulk push is skipped outside CI
 reset_log
+# _init_cmd requires a TODO.md in the project root (find_project_root stub -> $TMP).
+printf '## Tasks\n- [ ] t9999 Test task ref:GH#9999\n' >"${TMP}/TODO.md"
 unset GITHUB_ACTIONS
 FORCE_PUSH=false
 _result=$(GITHUB_ACTIONS="" FORCE_PUSH=false cmd_push "" 2>&1)
 if log_contains "Bulk push skipped" || printf '%s' "$_result" | grep -q "Bulk push skipped"; then
 	pass "FORCE_PUSH=false correctly blocks bulk push outside CI"
 else
-	fail "FORCE_PUSH=false should block bulk push outside CI"
+	fail "FORCE_PUSH=false should block bulk push outside CI" "out: $_result log: $(cat "$INFO_LOG")"
 fi
 
 # Test 2b: FORCE_PUSH=true — logs bypass
@@ -247,11 +249,17 @@ unset TODO_FILE GH_CALLS_LOG
 # ============================================================
 section "3. FORCE_CLOSE bypass log (issue-sync-helper.sh)"
 
+# The immutable task->issue mapping gate runs before the bypass site and needs
+# live GitHub metadata; stub it so these tests exercise only the bypass logic.
+require_task_issue_mapping() { return 0; }
+CLOSE_TODO="${TMP}/close-todo.md"
+printf '## Tasks\n- [ ] t9999 Test task ref:GH#9999\n' >"$CLOSE_TODO"
+
 # Test 3a: FORCE_CLOSE=false (default) — close blocked without evidence
 reset_log
 FORCE_CLOSE=false
-# Invoke close_issue with a task that has no evidence (no pr: or verified:)
-_result=$(FORCE_CLOSE=false cmd_close "t9999" 2>&1) || true
+# Close a task that has no evidence (no pr: or verified:)
+_result=$(FORCE_CLOSE=false _do_close "t9999" "9999" "$CLOSE_TODO" "test/test" 2>&1) || true
 # Should have warned about no evidence
 if log_contains "no merged PR or verified:" || printf '%s' "$_result" | grep -q "no merged PR"; then
 	pass "FORCE_CLOSE=false correctly blocks close without evidence"
@@ -261,9 +269,6 @@ fi
 
 # Test 3b: FORCE_CLOSE=true — logs bypass
 reset_log
-# Create minimal TODO.md fixture
-CLOSE_TODO="${TMP}/close-todo.md"
-printf '## Tasks\n- [ ] t9999 Test task ref:GH#9999\n' >"$CLOSE_TODO"
 FORCE_CLOSE=true _do_close "t9999" "9999" "$CLOSE_TODO" "test/test" 2>/dev/null || true
 if log_contains "FORCE_CLOSE active"; then
 	pass "FORCE_CLOSE=true emits info_log at bypass site"
@@ -368,10 +373,11 @@ _check_audit_log_present() {
 	return 0
 }
 
-_check_audit_log_present "FORCE_ENRICH" "FORCE_ENRICH active" "$HELPER"
-_check_audit_log_present "FORCE_PUSH" "FORCE_PUSH active" "$HELPER"
-_check_audit_log_present "FORCE_CLOSE" "FORCE_CLOSE active" "$HELPER"
-_check_audit_log_present "AIDEVOPS_SKIP_AUTO_CLAIM" "AIDEVOPS_SKIP_AUTO_CLAIM set" "${SCRIPTS_DIR}/worktree-helper.sh"
+# Bypass log sites live in modules sourced by the top-level helpers.
+_check_audit_log_present "FORCE_ENRICH" "FORCE_ENRICH active" "${SCRIPTS_DIR}/issue-sync-helper-enrich.sh"
+_check_audit_log_present "FORCE_PUSH" "FORCE_PUSH active" "${SCRIPTS_DIR}/issue-sync-helper-push.sh"
+_check_audit_log_present "FORCE_CLOSE" "FORCE_CLOSE active" "${SCRIPTS_DIR}/issue-sync-helper-close.sh"
+_check_audit_log_present "AIDEVOPS_SKIP_AUTO_CLAIM" "AIDEVOPS_SKIP_AUTO_CLAIM set" "${SCRIPTS_DIR}/worktree-helper-add.sh"
 _check_audit_log_present "CONTENT_SCANNER_SKIP_NORMALIZE" "CONTENT_SCANNER_SKIP_NORMALIZE=true" "${SCRIPTS_DIR}/content-scanner-helper.sh"
 
 # ============================================================
