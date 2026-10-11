@@ -10,16 +10,18 @@ authority each time they run.
   multisite network discovery, fleet-scoped `migrate-layout plan --source`.
 - [ ] Phase 2 — provisioning with per-site receipts: create or adopt private repos,
   run native init, register them, and support resume and explicit partial results.
-- [ ] Phase 3 — readiness verification: visibility, owner, default-branch heads,
-  effective features, Pulse/maintenance flags and worker auth.
+- [x] Phase 3 — readiness verification (`fleet ready`): visibility, owner,
+  default-branch heads, effective features, Pulse/maintenance flags and worker auth;
+  configured readiness, with optional merged-worker-PR evidence kept separate.
 - [ ] Phase 4 — fleet layout-move wrapper: snapshot and restore maintenance and
   Pulse settings around `migrate-layout --source`.
 
 ### Files Scope
 
 - `.agents/scripts/hosting_fleet.py`, `hosting_fleet_inventory.py`,
-  `hosting_fleet_plan.py`, `hosting_fleet_remote.py` (new modules; the names avoid
-  the `.gitignore` credential pattern `hostinger_*`)
+  `hosting_fleet_plan.py`, `hosting_fleet_remote.py`, `hosting_fleet_ready.py`,
+  `hosting_fleet_checks.py` (new modules; the names avoid the `.gitignore`
+  credential pattern `hostinger_*`)
 - `.agents/scripts/hostinger-helper.sh`
 - `.agents/scripts/repo_layout_migrate.py`, `.agents/scripts/repo-layout-migrate-helper.sh`
 - `.agents/scripts/aidevops-cli/aidevops-repos-lib.sh`,

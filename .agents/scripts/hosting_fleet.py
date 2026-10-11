@@ -34,6 +34,7 @@ from hosting_fleet_plan import (  # noqa: E402
     CLEAN_STATES, build_plan,
 )
 from hosting_fleet_privacy import config_pairs, fleet_entities, merge_private_entities  # noqa: E402
+from hosting_fleet_ready import build_readiness, print_readiness  # noqa: E402
 from hosting_fleet_remote import API_BASE, discover_networks, fetch_websites  # noqa: E402
 from repo_layout_migrate import (  # noqa: E402
     MigrationError,
@@ -46,6 +47,7 @@ from repo_layout_migrate import (  # noqa: E402
 DEFAULT_STATE_DIR = "~/.aidevops/.agent-workspace/work/hostinger-fleet"
 DEFAULT_CONFIG = "~/.config/aidevops/hosting-fleet.json"
 DRIFT_EXIT = 3
+NOT_READY_EXIT = 4
 
 
 def write_private(path_value: str | None, payload: dict[str, Any], default_name: str) -> Path:
@@ -199,6 +201,19 @@ def drift_command(args: argparse.Namespace) -> int:
     return DRIFT_EXIT if args.fail_on_drift and plan["drift"] else 0
 
 
+def ready_command(args: argparse.Namespace) -> int:
+    """Read-only configured readiness of every fleet repository, with a private receipt."""
+    plan = plan_from_args(args)
+    receipt = build_readiness(plan, args.repos_json, evidence=args.worker_evidence)
+    destination = write_private(args.output, receipt, "readiness.json")
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    else:
+        print_readiness(receipt, all_repos=args.all)
+        print(f"Receipt: {destination}  readiness_sha256: {receipt['readiness_sha256']}")
+    return NOT_READY_EXIT if args.fail_on_not_ready and not receipt["all_ready"] else 0
+
+
 def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     """Arguments shared by plan and drift."""
     parser.add_argument("--inventory", help="Inventory JSON (default: private state dir)")
@@ -250,6 +265,15 @@ def build_parser() -> argparse.ArgumentParser:
     drift.add_argument("--fail-on-drift", action="store_true",
                        help=f"Exit {DRIFT_EXIT} when any drift is found")
     drift.set_defaults(handler=drift_command)
+    ready = commands.add_parser("ready", help="Read-only configured readiness per repository")
+    add_plan_arguments(ready)
+    ready.add_argument("--output", help="Receipt path (default: private state dir)")
+    ready.add_argument("--json", action="store_true")
+    ready.add_argument("--worker-evidence", action="store_true",
+                       help="Also report each repo's latest merged worker PR (evidence only)")
+    ready.add_argument("--fail-on-not-ready", action="store_true",
+                       help=f"Exit {NOT_READY_EXIT} unless every repository is ready")
+    ready.set_defaults(handler=ready_command)
     return parser
 
 

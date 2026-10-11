@@ -192,7 +192,7 @@ fleet_command() {
         python3 "$engine" inventory "$@" || status=$?
         return "$status"
         ;;
-    plan | drift)
+    plan | drift | ready)
         shift
         python3 "$engine" "$subcommand" --discovery-lib "$discovery_lib" "$@" || status=$?
         return "$status"
@@ -203,7 +203,7 @@ fleet_command() {
         return "$status"
         ;;
     help | -h | --help)
-        echo "Usage: $0 fleet <inventory|plan|drift|privacy-sync> [options]"
+        echo "Usage: $0 fleet <inventory|plan|drift|ready|privacy-sync> [options]"
         echo ""
         echo "  inventory [--username U] [--discover-networks --ssh ALIAS] [--network-map FILE]"
         echo "      GET-only website inventory; groups shared roots; optional read-only"
@@ -213,6 +213,10 @@ fleet_command() {
         echo "      Write a content-hashed onboarding plan (no mutations)"
         echo "  drift [plan options] [--json] [--fail-on-drift]"
         echo "      Compare hosting, repos.json and canonical layout (exit 3 on drift)"
+        echo "  ready [plan options] [--worker-evidence] [--json] [--fail-on-not-ready]"
+        echo "      Read-only configured readiness per repo: private remote, owner, push,"
+        echo "      default-branch heads, effective project config, Pulse/maintenance,"
+        echo "      gh auth; writes a private receipt (exit 4 if not all ready)"
         echo "  privacy-sync [--inventory FILE] [--config FILE]"
         echo "      Offline sync to the local private entity guard (counts only)"
         echo "      Also runs automatically after inventory"
