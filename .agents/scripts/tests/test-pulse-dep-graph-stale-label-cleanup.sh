@@ -60,6 +60,21 @@ teardown_test() {
 	return 0
 }
 
+# GH#34341: blocker #2 was closed as superseded by #5 (state from env).
+supersession_fixture() {
+	local arg="" number=""
+	for arg in "$@"; do
+		[[ "$arg" == number=* ]] && number="${arg#number=}"
+	done
+	if [[ "$number" == 2 ]]; then
+		printf '{"data":{"repository":{"issueOrPullRequest":{"__typename":"Issue","state":"CLOSED","stateReason":"NOT_PLANNED","comments":{"nodes":[{"authorAssociation":"OWNER","body":"Superseded by #5. Continue there."}]}}},"rateLimit":{"cost":1}}}\n'
+		return 0
+	fi
+	printf '{"data":{"repository":{"issueOrPullRequest":{"__typename":"Issue","state":"%s","stateReason":%s,"comments":{"nodes":[]}}},"rateLimit":{"cost":1}}}\n' \
+		"${GH_SUCCESSOR_STATE:-OPEN}" "${GH_SUCCESSOR_REASON:-null}"
+	return 0
+}
+
 gh() {
 	local top_command="${1:-}"
 	shift || true
@@ -69,8 +84,13 @@ gh() {
 			"${AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE:-}" \
 			"${AIDEVOPS_GH_ROUTE_DECISION:-}" "$*" >>"$GH_LOG"
 	fi
+	if [[ "$top_command" == "api" && "${1:-}" == "graphql" && "$*" == *issueOrPullRequest* ]]; then
+		supersession_fixture "$@"
+		return 0
+	fi
 	if [[ "$top_command" == "api" && "${1:-}" == "graphql" ]]; then
-		printf '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"number":2,"state":"%s"}],"pageInfo":{"hasNextPage":false}}}},"rateLimit":{"cost":1}}}\n' "${GH_NATIVE_STATE:-CLOSED}"
+		printf '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"number":2,"state":"%s","stateReason":%s,"repository":{"nameWithOwner":"example/repo"}}],"pageInfo":{"hasNextPage":false}}}},"rateLimit":{"cost":1}}}\n' \
+			"${GH_NATIVE_STATE:-CLOSED}" "${GH_NATIVE_REASON:-null}"
 		return 0
 	fi
 	if [[ "$top_command" == "api" && "${1:-}" == "repos/example/repo" ]]; then
@@ -100,6 +120,10 @@ gh() {
 			fi
 			if [[ "$*" == *"--json comments"* ]]; then
 				printf '\n'
+				return 0
+			fi
+			if [[ "$*" == *"--json state,stateReason"* ]]; then
+				printf '%s\n' "${GH_LIVE_STATE:-CLOSED:COMPLETED}"
 				return 0
 			fi
 			printf 'unsupported issue view %s %s\n' "$issue_num" "$*" >&2
@@ -155,6 +179,47 @@ test_native_relationships_use_response_cost() {
 	fi
 	assert_log_contains "native relationship query reports response-owned cost" "$GH_LOG" \
 		"api||1|pulse-blocked-by-exact-cost|graphql"
+	return 0
+}
+
+# GH#34341: a blocker closed as superseded keeps the dependant blocked until its
+# successor finishes, on both the native and the live issue-number paths.
+test_superseded_blocker_waits_for_successor() {
+	local rc=0
+	local no_refs='{"task_ids":[],"issue_nums":[],"has_defer_marker":false}'
+	GH_NATIVE_REASON='"NOT_PLANNED"'
+	reset_logs
+	_blocked_by_check_native_relationships "example/repo" "3" || rc=$?
+	[[ "$rc" -eq 0 ]] && print_result "superseded native blocker with open successor blocks" 0 ||
+		print_result "superseded native blocker with open successor blocks" 1 "expected rc=0; got ${rc}"
+	assert_log_contains "superseded blocker decision is logged" "$LOGFILE" \
+		"blocker example/repo#2 closed NOT_PLANNED but successor #5 of #2 is open"
+	assert_log_contains "supersession lookup reports response-owned cost" "$GH_LOG" \
+		"api||1|dependency-supersession-exact-cost|graphql"
+	if _refresh_dependency_is_resolved "example/repo" "3" "$no_refs" '{}' '[]' '[]'; then
+		print_result "refresh keeps a superseded dependency unresolved" 1
+	else
+		print_result "refresh keeps a superseded dependency unresolved" 0
+	fi
+	GH_SUCCESSOR_STATE=CLOSED GH_SUCCESSOR_REASON='"COMPLETED"'
+	rc=0
+	_blocked_by_check_native_relationships "example/repo" "3" || rc=$?
+	[[ "$rc" -eq 2 ]] && print_result "completed successor releases the native dependency" 0 ||
+		print_result "completed successor releases the native dependency" 1 "expected rc=2; got ${rc}"
+	unset GH_SUCCESSOR_STATE GH_SUCCESSOR_REASON GH_NATIVE_REASON
+	GH_LIVE_STATE="CLOSED:NOT_PLANNED"
+	rc=0
+	_blocked_by_check_issue_num_live 2 "example/repo" 3 || rc=$?
+	[[ "$rc" -eq 0 ]] && print_result "superseded live blocker with open successor blocks" 0 ||
+		print_result "superseded live blocker with open successor blocks" 1 "expected rc=0; got ${rc}"
+	GH_LIVE_STATE="CLOSED:COMPLETED"
+	rc=0
+	reset_logs
+	_blocked_by_check_issue_num_live 2 "example/repo" 3 || rc=$?
+	[[ "$rc" -eq 1 ]] && print_result "completed live blocker resolves" 0 ||
+		print_result "completed live blocker resolves" 1 "expected rc=1; got ${rc}"
+	assert_log_not_contains "completed blocker skips the supersession lookup" "$GH_LOG" "dependency-supersession-exact-cost"
+	unset GH_LIVE_STATE
 	return 0
 }
 
@@ -450,6 +515,7 @@ test_gh_prefixed_label_removed_and_status_available
 test_unvalidated_repository_fails_closed
 test_repository_identity_is_cached
 test_native_relationships_use_response_cost
+test_superseded_blocker_waits_for_successor
 test_complete_native_relationships_override_stale_body_numbers
 test_available_issue_stale_label_removed
 test_blocked_issue_label_removed_and_status_available

@@ -16,6 +16,8 @@ _der_dir="${BASH_SOURCE[0]%/*}"
 DER_BLOCKED_BY_VALUE_AWK="${_der_dir}/blocked-by-value.awk"
 # shellcheck source=./task-identity-lib.sh
 source "${_der_dir}/task-identity-lib.sh"
+# shellcheck source=./dependency-supersession-lib.sh
+source "${_der_dir}/dependency-supersession-lib.sh"
 unset _der_dir
 
 _der_reconcile_terminal_worker_blockers() {
@@ -414,6 +416,29 @@ _der_live_issue_closed() {
 	return 1
 }
 
+# Declared-blocker check. A dependant ref ("owner/repo#N") selects the readiness
+# rule (GH#34341): a blocker closed as superseded is not ready while its
+# successor chain is open. Completion checks omit it and keep closed-is-done.
+_der_live_blocker_resolved() {
+	local repo="$1"
+	local issue_number="$2"
+	local dependant_ref="${3:-}"
+	local row="" state="" reason=""
+	if [[ -z "$dependant_ref" ]]; then
+		_der_live_issue_closed "$repo" "$issue_number"
+		return $?
+	fi
+	row=$(gh issue view "$issue_number" --repo "$repo" --json state,stateReason --jq '"\(.state):\(.stateReason // "")"' 2>/dev/null) || return 1
+	IFS=':' read -r state reason <<<"$row"
+	case "$state" in
+	"$DER_STATE_CLOSED" | closed) ;;
+	OPEN | open) return "$DER_NOT_READY" ;;
+	*) return 1 ;;
+	esac
+	dep_supersession_blocks "[dependency-reconciler] ${dependant_ref}" "$repo" "$issue_number" "$reason" "$dependant_ref" && return "$DER_NOT_READY"
+	return 0
+}
+
 _der_find_task_issue() {
 	local repo="$1"
 	local task_id="$2"
@@ -435,32 +460,37 @@ _der_find_task_issue() {
 	return 0
 }
 
+# Optional $3 dependant ref selects the readiness rule (_der_live_blocker_resolved).
 _der_all_declared_blockers_closed() {
 	local repo="$1"
 	local candidate_json="$2"
+	local dependant_ref="${3:-}"
 	local blocker="" task_id="" issue_number="" text=""
 	text=$(printf '%s' "$candidate_json" | jq -r '(.body // "") + "\n" + ([.labels.nodes[].name] | join("\n"))') || return 1
 	while IFS= read -r blocker; do
 		[[ -n "$blocker" ]] || continue
-		_der_live_issue_closed "$repo" "$blocker" || return $?
+		_der_live_blocker_resolved "$repo" "$blocker" "$dependant_ref" || return $?
 	done < <(_der_issue_refs "$text")
 	while IFS= read -r task_id; do
 		[[ -n "$task_id" ]] || continue
 		issue_number=$(_der_find_task_issue "$repo" "$task_id") || return 1
-		_der_live_issue_closed "$repo" "$issue_number" || return $?
+		_der_live_blocker_resolved "$repo" "$issue_number" "$dependant_ref" || return $?
 	done < <(_der_task_refs "$text")
 	return 0
 }
 
+# Optional $3 "readiness" also keeps blockers closed as superseded not ready
+# while their successor chain is open (GH#34341); completion checks omit it.
 _der_native_blockers_closed() {
 	local repo="$1"
 	local issue_number="$2"
+	local mode="${3:-}"
 	local owner="${repo%%/*}"
 	local name="${repo#*/}"
-	local result="" blocker_count=""
+	local result="" blocker_count="" nodes="" node_repo="" node_number="" node_reason=""
 	_DER_NATIVE_BLOCKERS_PRESENT=false
 	# shellcheck disable=SC2016
-	result=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){blockedBy(first:100){nodes{number state repository{nameWithOwner}}pageInfo{hasNextPage}}}}}' -F o="$owner" -F r="$name" -F n="$issue_number" 2>/dev/null) || return 1
+	result=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){blockedBy(first:100){nodes{number state stateReason repository{nameWithOwner}}pageInfo{hasNextPage}}}}}' -F o="$owner" -F r="$name" -F n="$issue_number" 2>/dev/null) || return 1
 	printf '%s' "$result" | jq -e --arg closed "$DER_STATE_CLOSED" '
       def is_object: type == "object";
       def is_array: type == ([] | type);
@@ -482,6 +512,12 @@ _der_native_blockers_closed() {
 	fi
 	printf '%s' "$result" | jq -e --arg closed "$DER_STATE_CLOSED" '
       all(.data.repository.issue.blockedBy.nodes[]; .state == $closed)' >/dev/null 2>&1 || return "$DER_NOT_READY"
+	[[ "$mode" == "readiness" ]] || return 0
+	nodes=$(printf '%s' "$result" | jq -r '.data.repository.issue.blockedBy.nodes[] | "\(.repository.nameWithOwner) \(.number) \(.stateReason // "")"' 2>/dev/null) || return 1
+	while read -r node_repo node_number node_reason; do
+		[[ -n "$node_repo" ]] || continue
+		dep_supersession_blocks "[dependency-reconciler] ${repo}#${issue_number}" "$node_repo" "$node_number" "$node_reason" "${repo}#${issue_number}" && return "$DER_NOT_READY"
+	done <<<"$nodes"
 	return 0
 }
 
@@ -515,9 +551,9 @@ _der_try_unblock() {
 	# aidevops:trust-boundary — external comments cannot assert a hold.
 	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) | .body // ""' 2>/dev/null) || return 1
 	_der_has_hold "$body" "$comments" "$labels" "$comments_json" && return 0
-	_der_native_blockers_closed "$repo" "$issue_number" || return $?
+	_der_native_blockers_closed "$repo" "$issue_number" readiness || return $?
 	if [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
-		_der_all_declared_blockers_closed "$repo" "$candidate_json" || return $?
+		_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || return $?
 	fi
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_der_labels_has "$labels" status:blocked || return 0

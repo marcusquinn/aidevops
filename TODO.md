@@ -1627,6 +1627,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18660 fix(pulse): explicit For/Ref merge association treats same-line context references as extra declarations #bug #framework tier:standard ref:GH#34338 logged:2026-10-11 -> [todo/tasks/t18660-brief.md] pr:#34339 completed:2026-10-11
 
+- [ ] t18661 fix(pulse): keep dependants blocked while a consolidated blocker's successor is open #bug #framework tier:standard ref:GH#34341 logged:2026-10-11 -> [todo/tasks/t18661-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

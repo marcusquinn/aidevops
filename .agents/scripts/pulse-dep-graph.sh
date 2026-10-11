@@ -38,6 +38,8 @@ _pulse_dep_graph_dir="${BASH_SOURCE[0]%/*}"
 source "${_pulse_dep_graph_dir}/task-identity-lib.sh"
 # shellcheck source=./issue-hold-marker-lib.sh
 source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
+# shellcheck source=./dependency-supersession-lib.sh
+source "${_pulse_dep_graph_dir}/dependency-supersession-lib.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
 DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
 DEP_GRAPH_BLOCKED_BY_VALUE_AWK="${_pulse_dep_graph_dir}/blocked-by-value.awk"
@@ -1105,7 +1107,7 @@ query($owner:String!,$name:String!,$number:Int!) {
   repository(owner:$owner, name:$name) {
     issue(number:$number) {
       blockedBy(first: 50) {
-        nodes { number state }
+        nodes { number state stateReason repository { nameWithOwner } }
 		pageInfo { hasNextPage }
       }
     }
@@ -1125,25 +1127,25 @@ query($owner:String!,$name:String!,$number:Int!) {
 	rel_states=$(printf '%s' "$response" | jq -r '
 		.data.repository.issue.blockedBy as $b
 		| (if $b.pageInfo.hasNextPage then "__TRUNCATED__:UNKNOWN" else empty end),
-		  ($b.nodes[]? | "\(.number):\(.state)")
+		  ($b.nodes[]? | "\(.number):\(.state):\(.stateReason // ""):\(.repository.nameWithOwner // "")")
 	' 2>/dev/null) || {
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy response invalid — checking body fallback (GH#24576)" >>"$LOGFILE"
 		return 3
 	}
 
-	local rel_state="" rel_num="" state="" saw_relationship="${DEP_FALSE}"
+	local rel_state="" rel_num="" state="" rel_reason="" rel_repo="" saw_relationship="${DEP_FALSE}"
 	while IFS= read -r rel_state; do
 		[[ -n "$rel_state" ]] || continue
 		saw_relationship="true"
-		rel_num="${rel_state%%:*}"
-		state="${rel_state#*:}"
+		IFS=':' read -r rel_num state rel_reason rel_repo <<<"$rel_state"
 		case "$state" in
 			[Oo][Pp][Ee][Nn])
 				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by native relationship #${rel_num} (open) — skipping dispatch (GH#23932)" >>"$LOGFILE"
 				return 0
 				;;
 			[Cc][Ll][Oo][Ss][Ee][Dd])
-				# Positively clear, continue checking other native blockers.
+				# Clear unless its work moved to a still-open successor (GH#34341).
+				dep_supersession_blocks "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number}" "${rel_repo:-$repo_slug}" "$rel_num" "$rel_reason" "${repo_slug}#${issue_number}" && return 0
 				;;
 			*)
 				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy #${rel_num} has unknown state '${state}' — skipping dispatch (GH#23932)" >>"$LOGFILE"
@@ -1338,18 +1340,20 @@ _blocked_by_check_issue_num_live() {
 	local repo_slug="$2"
 	local issue_number="$3"
 
-	local blocker_state=""
+	local blocker_state="" blocker_reason=""
 	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
-		--json state --jq '.state // ""' 2>/dev/null); then
+		--json state,stateReason --jq '"\(.state // ""):\(.stateReason // "")"' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
 		return 0
 	fi
+	IFS=':' read -r blocker_state blocker_reason <<<"$blocker_state"
 	case "$blocker_state" in
 		[Oo][Pp][Ee][Nn])
 			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
 			return 0
 			;;
 		[Cc][Ll][Oo][Ss][Ee][Dd])
+			dep_supersession_blocks "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number}" "$repo_slug" "$blocker_num" "$blocker_reason" "${repo_slug}#${issue_number}" && return 0
 			return 1
 			;;
 	esac

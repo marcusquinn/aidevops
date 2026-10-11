@@ -29,6 +29,11 @@ CONTEXT_REPO="owner/repo"
 CONTEXT_STATE="CLOSED"
 CONTEXT_HAS_NEXT_PAGE=false
 CLOSED_LIVE_STATE="CLOSED"
+NATIVE_REASON=""
+NATIVE_EMPTY=false
+LIVE_REASON=""
+SUCCESSOR_STATE="OPEN"
+SUCCESSOR_REASON=""
 BLOCKER_RECONCILE_FAIL=false
 BLOCKER_RECONCILE_LOG=$(mktemp)
 DER_STALE_BLOCKED_CURSOR_DIR=$(mktemp -d)
@@ -166,14 +171,37 @@ _der_search_issues() {
 	return 0
 }
 
+# GH#34341: blocker #10 was closed as superseded by #12 (state from env).
+supersession_fixture() {
+	local arg="" number=""
+	for arg in "$@"; do
+		[[ "$arg" == number=* ]] && number="${arg#number=}"
+	done
+	if [[ "$number" == 10 ]]; then
+		jq -cn '{data:{repository:{issueOrPullRequest:{__typename:"Issue",state:"CLOSED",stateReason:"NOT_PLANNED",
+			comments:{nodes:[{authorAssociation:"OWNER",body:"Superseded by #12. Continue there."}]}}},rateLimit:{cost:1}}}'
+		return 0
+	fi
+	jq -cn --arg state "$SUCCESSOR_STATE" --arg reason "$SUCCESSOR_REASON" '
+      {data:{repository:{issueOrPullRequest:{__typename:"Issue",state:$state,
+        stateReason:(if $reason == "" then null else $reason end),comments:{nodes:[]}}},rateLimit:{cost:1}}}'
+	return 0
+}
+
 gh() {
 	local command="$1"
-	local nodes=""
+	local nodes="" live_state=""
 	shift
 	case "$command $1" in
 	"issue view")
 		if [[ "$*" == *"--json state"* ]]; then
-			[[ "$*" == "view 11 "* ]] && printf 'OPEN\n' || printf '%s\n' "$CLOSED_LIVE_STATE"
+			live_state="$CLOSED_LIVE_STATE"
+			[[ "$*" == "view 11 "* ]] && live_state="OPEN"
+			if [[ "$*" == *"stateReason"* && -n "$LIVE_REASON" ]]; then
+				printf '%s:%s\n' "$live_state" "$LIVE_REASON"
+			else
+				printf '%s\n' "$live_state"
+			fi
 		else
 			printf '%s\n' "$REREAD_LABELS"
 		fi
@@ -185,12 +213,18 @@ gh() {
 		return 0
 		;;
 	"api graphql")
+		if [[ "$*" == *issueOrPullRequest* ]]; then
+			supersession_fixture "$@"
+			return 0
+		fi
 		if [[ "$NATIVE_NULL_NODE" == "true" ]]; then
 			nodes='[null]'
+		elif [[ "$NATIVE_EMPTY" == "true" ]]; then
+			nodes='[]'
 		else
-			nodes=$(jq -cn --arg state "$NATIVE_STATE" --arg repo "$NATIVE_REPO" \
+			nodes=$(jq -cn --arg state "$NATIVE_STATE" --arg reason "$NATIVE_REASON" --arg repo "$NATIVE_REPO" \
 				--arg extra_state "$NATIVE_EXTRA_STATE" --arg extra_repo "$NATIVE_EXTRA_REPO" '
-              [{number:10,state:$state,repository:{nameWithOwner:$repo}}]
+              [{number:10,state:$state,stateReason:(if $reason == "" then null else $reason end),repository:{nameWithOwner:$repo}}]
               + (if $extra_state == "" then [] else
                   [{number:11,state:$extra_state,repository:{nameWithOwner:$extra_repo}}]
                 end)') || return 1
@@ -395,6 +429,34 @@ stale_sweep_status=0
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || stale_sweep_status=$?
 assert_eq 1 "$stale_sweep_status" "periodic stale sweep still reports API ambiguity"
 COMMENTS='[[]]'
+
+# GH#34341: a blocker closed as superseded keeps dependants blocked while its
+# successor is open; completion checks keep closed-is-done.
+NATIVE_REASON="NOT_PLANNED" SUCCESSOR_STATE="OPEN" SUCCESSOR_REASON=""
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10"
+LOGFILE=$(mktemp)
+assert_eq 0 "$(run_reconcile)" "superseded native blocker with an open successor keeps the dependant blocked"
+grep -q 'owner/repo#20 blocker owner/repo#10 closed NOT_PLANNED but successor #12 of #10 is open' "$LOGFILE" &&
+	pass "open successor is the logged reason for keeping the dependant blocked" ||
+	fail "open successor is the logged reason for keeping the dependant blocked ($(cat "$LOGFILE"))"
+rm -f "$LOGFILE"
+unset LOGFILE
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 0 "$EDIT_COUNT" "stale sweep keeps a dependant of an open successor blocked"
+completion_status=0
+_der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:t10" || completion_status=$?
+assert_eq 0 "$completion_status" "completion keeps closed-is-done for superseded blockers"
+SUCCESSOR_STATE="CLOSED" SUCCESSOR_REASON="COMPLETED"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+assert_eq 1 "$(run_reconcile)" "completed successor releases the superseded dependency"
+NATIVE_EMPTY=true LIVE_REASON="NOT_PLANNED" SUCCESSOR_STATE="OPEN" SUCCESSOR_REASON=""
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+assert_eq 0 "$(run_reconcile)" "declared superseded blocker with an open successor keeps the dependant blocked"
+LIVE_REASON="COMPLETED"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+assert_eq 1 "$(run_reconcile)" "declared completed blocker still releases the dependant"
+NATIVE_EMPTY=false LIVE_REASON="" NATIVE_REASON=""
 
 # GH#33957: bounded passes resume from a per-repo cursor in ascending issue
 # order until the whole blocked set is traversed. Unblock decisions are stubbed;
