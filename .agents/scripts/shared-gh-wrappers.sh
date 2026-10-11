@@ -490,6 +490,25 @@ _gh_block_uncaptured_write() {
 	return 0
 }
 
+_gh_timeout_budget_seconds() {
+	local op_class="$1"
+	local deadline_epoch="$2"
+	local secs now_epoch remaining_secs
+	case "$op_class" in
+	read) secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}" ;;
+	write) secs="${AIDEVOPS_GH_WRITE_TIMEOUT:-45}" ;;
+	*) secs=30 ;;
+	esac
+	if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
+		now_epoch=$(date +%s 2>/dev/null) || return 124
+		remaining_secs=$((deadline_epoch - now_epoch))
+		[[ "$remaining_secs" -gt 0 ]] || return 124
+		[[ "$remaining_secs" -ge "$secs" ]] || secs="$remaining_secs"
+	fi
+	printf '%s\n' "$secs"
+	return 0
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
@@ -507,25 +526,11 @@ _gh_with_timeout() {
 	local AIDEVOPS_GH_WRAPPER_PREFLIGHT=1
 	export AIDEVOPS_GH_WRAPPER_PREFLIGHT
 	local secs
-	case "$op_class" in
-	read) secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}" ;;
-	write) secs="${AIDEVOPS_GH_WRITE_TIMEOUT:-45}" ;;
-	*) secs=30 ;;
-	esac
 	local deadline_epoch="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
-	local now_epoch="" remaining_secs=""
-	if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
-		if ! now_epoch=$(date +%s 2>/dev/null); then
-			_gh_record_timeout_if_needed 124 "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
-			return 124
-		fi
-		remaining_secs=$((deadline_epoch - now_epoch))
-		if [[ "$remaining_secs" -le 0 ]]; then
-			_gh_record_timeout_if_needed 124 "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
-			return 124
-		fi
-		[[ "$remaining_secs" -ge "$secs" ]] || secs="$remaining_secs"
-	fi
+	secs=$(_gh_timeout_budget_seconds "$op_class" "$deadline_epoch") || {
+		_gh_record_timeout_if_needed 124 "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
+		return 124
+	}
 	# Invocation-scoped diagnostics may provide a pre-created counter file.
 	# File-backed counting survives command substitutions. Callers may attach a
 	# sanitized operation class; payloads and endpoint arguments are never stored.
