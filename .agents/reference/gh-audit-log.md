@@ -250,6 +250,36 @@ into historical audit entries, or remove the current-state proof requirement
 just to silence such an alert. Resolve the alert with the snapshot, event and
 delivery evidence; preserve the original audit record and completed issue state.
 
+### Worked example: worker exit transitions (GH#34361)
+
+The `2026-10-11T09:53:40Z` scan reported three removals of
+`status:in-progress` in a private source repository. Investigation matched each
+audit entry to independent GitHub label events and contemporaneous worker
+checkpoints. Source identities and private delivery links are deliberately omitted.
+
+| Audit timestamp (UTC, 2026-10-11) | Title/body lengths, before = after | Label delta | Independent evidence |
+| --- | --- | --- | --- |
+| 03:13:29 | 69 / 15659 | Remove `status:in-progress`; add `status:blocked` and `hold-for-review` | GitHub records all three changes at 03:13:27. The 03:13:24 checkpoint describes partial delivery and a maintainer-owned continuity decision; the subsequent claim release records `input_required`. |
+| 04:18:00 | 37 / 15373 | Remove `status:in-progress`; add `status:available` | GitHub records both changes and unassignment at 04:17:58. The 04:15:53 checkpoint explicitly keeps the task open after partial delivery; the subsequent claim release records `worker_merged_partial`. |
+| 05:04:20 | 53 / 14929 | Remove `status:in-progress`; retain existing `status:blocked` | GitHub records blocking at 05:04:08 and progress-label removal at 05:04:18. The 05:03:59 checkpoint reports unfinished prerequisite phases and no repository or publication changes; the subsequent claim release records `external_trigger_pending`. |
+
+All six snapshots have `capture_status:ok`, and all three deltas have
+`comparable:true` with zero title/body percentage changes. Exact lengths also
+match within each pair; this supplies no evidence of content loss, but length
+equality alone cannot prove text identity. The checked current issues remain open
+with nonempty content and the respective blocked, available, and blocked states.
+The available task also has a later `needs-consolidation` label; that is not part
+of the audited delta.
+
+These are evidenced worker exit transitions, not destructive edits requiring
+restoration. Retain the source holds and continuation state: closing this audit
+alert does not complete the source tasks or authorize another publication.
+Each entry has generic `gh-write-helper.sh` / `main` provenance and empty
+`flags`, so independent forensic evidence must not be retroactively treated as
+verified transition provenance. Leave the audit entries and scanner filters
+unchanged; do not suppress generic progress-to-blocked or progress-to-available
+removals based only on their destination labels.
+
 ## Retention and Rotation Policy
 
 - **Log file:** `~/.aidevops/logs/gh-audit.log`
