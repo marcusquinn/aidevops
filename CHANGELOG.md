@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.5] - 2026-10-11
+
+### Fixed
+
+- preserve delegated exit status in --command router
+
+## [3.39.4] - 2026-10-11
+
+### Changed
+
+- Tests: run full-loop completion-evidence suite in CI, skip PyYAML section locally (#34322)
+
+### Fixed
+
+- throttle bounded-operation escaped-process marker scan to decision points
+- update stale origin-label literals in gh write timeout coverage test (GH#34318) (#34321)
+
 ## [3.39.3] - 2026-10-11
 
 ### Changed

@@ -112,6 +112,9 @@ _pulse_wrapper_run_command() {
 		return 2
 		;;
 	esac
-
-	return 0
+	# GH#34323: return the delegated status. A case takes the status of its arm's
+	# last command; callers that suppress errexit (if, ||, set +e) must still see
+	# deferred dispatch (1/3) and predicate results such as repo-cap below-cap (1).
+	# Do not wrap delegates in `|| rc=$?`: that would disable errexit inside them.
+	return $?
 }
