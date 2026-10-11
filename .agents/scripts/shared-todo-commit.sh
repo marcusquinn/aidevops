@@ -566,7 +566,15 @@ _todo_commit_planning_worktree() {
 	_TODO_PLANNING_PR_COMMIT="$commit_sha"
 	git -C "$repo_path" update-ref "refs/aidevops/planning/${publication_id}" "$commit_sha" || return 1
 
-	git -C "$worktree_path" push origin "HEAD:refs/heads/${branch_name}" >/dev/null 2>>"$log_target" || {
+	#aidevops:trust-boundary
+	# GH#34459: the planning worktree is a fresh, dependency-free checkout of
+	# origin/<default>, so the repo-verify pre-push guard (format/lint/typecheck)
+	# cannot start there (same failure as GH#34434 for release worktrees). This
+	# push carries only TODO.md and todo/* files (_todo_safe_planning_path) and
+	# the planning PR still runs CI, so skip only repo-verify for this one
+	# command; the privacy, credential, complexity, scope and duplicate-TODO
+	# guards still run.
+	AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$worktree_path" push origin "HEAD:refs/heads/${branch_name}" >/dev/null 2>>"$log_target" || {
 		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: branch push failed" >>"$log_target"
 		return 1
 	}
