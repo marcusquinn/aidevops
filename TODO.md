@@ -1627,9 +1627,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18660 fix(pulse): explicit For/Ref merge association treats same-line context references as extra declarations #bug #framework tier:standard ref:GH#34338 logged:2026-10-11 -> [todo/tasks/t18660-brief.md] pr:#34339 completed:2026-10-11
 
-- [ ] t18661 fix(pulse): keep dependants blocked while a consolidated blocker's successor is open #bug #framework tier:standard ref:GH#34341 logged:2026-10-11 -> [todo/tasks/t18661-brief.md]
+- [x] t18661 fix(pulse): keep dependants blocked while a consolidated blocker's successor is open #bug #framework tier:standard ref:GH#34341 logged:2026-10-11 -> [todo/tasks/t18661-brief.md] pr:#34344 completed:2026-10-11
 
-- [ ] t18662 fix(pulse): release dependency-ready issues held only by brief terminal-blocker text #bug #framework tier:standard ref:GH#34348 logged:2026-10-11 -> [todo/tasks/t18662-brief.md]
+- [x] t18662 fix(pulse): release dependency-ready issues held only by brief terminal-blocker text #bug #framework tier:standard ref:GH#34348 logged:2026-10-11 -> [todo/tasks/t18662-brief.md] pr:#34351 completed:2026-10-11
 
 ## In Progress
 
