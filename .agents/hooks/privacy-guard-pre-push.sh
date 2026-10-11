@@ -128,6 +128,24 @@ if [[ -n "$remote_name" ]]; then
 	fi
 fi
 
+# Both scans diff from the remote tip. When that commit is absent locally (for
+# example GitHub's "Update branch" merged main into it), the diff cannot run
+# and the push is a non-fast-forward anyway. Fail closed with the actionable
+# cause instead of a generic scan failure (GH#34308).
+missing_remote_tip=0
+for _ref_entry in "${_all_refs[@]}"; do
+	read -r _lr _ls _rr _rs <<<"$_ref_entry"
+	[[ -z "$_ls" || "$_ls" =~ ^0+$ ]] && continue
+	[[ -z "$_rs" || "$_rs" =~ ^0+$ ]] && continue
+	if ! git cat-file -e "${_rs}^{commit}" 2>/dev/null; then
+		privacy_log ERROR "remote ref ${_rr} is at ${_rs}, which is not in this clone — run git fetch and merge or rebase, then push again"
+		missing_remote_tip=1
+	fi
+done
+if [[ "$missing_remote_tip" -ne 0 ]]; then
+	exit 1
+fi
+
 # Secret-material scan is global for public pushes. Unlike private-repo slug
 # scanning, it is not limited to planning/docs paths because private-key blocks
 # are unsafe in any public commit.

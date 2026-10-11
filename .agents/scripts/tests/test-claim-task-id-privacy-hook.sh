@@ -60,12 +60,24 @@ git -C "$ROOT/source" rev-parse --git-path hooks/pre-push >/dev/null
 (
 	cd "$ROOT/source"
 	bash "$SCRIPT_DIR/../hooks/privacy-guard-pre-push.sh" origin https://github.com/example/synthetic.git \
-		<<<"$head $head refs/heads/task-id-counter $parent"
+		<<<"$head $head refs/heads/task-id-counter 0000000000000000000000000000000000000000"
 ) >"$ROOT/output" 2>"$ROOT/error" || rc=$?
 [[ "$rc" -eq 1 ]]
 grep -q 'private-entity scan failed.*no verified findings' "$ROOT/error"
 if grep -q '\[BLOCK\].*contains private references' "$ROOT/error"; then exit 1; fi
 printf 'PASS: unavailable objects produce an explicit fail-closed scan error\n'
+
+# A remote tip missing from this clone names the fetch fix, not a scan failure.
+rc=0
+(
+	cd "$ROOT/source"
+	bash "$SCRIPT_DIR/../hooks/privacy-guard-pre-push.sh" origin https://github.com/example/synthetic.git \
+		<<<"$head $head refs/heads/task-id-counter $parent"
+) >"$ROOT/output" 2>"$ROOT/error" || rc=$?
+[[ "$rc" -eq 1 ]]
+grep -q "remote ref refs/heads/task-id-counter is at $parent, which is not in this clone" "$ROOT/error"
+if grep -q 'scan failed' "$ROOT/error"; then exit 1; fi
+printf 'PASS: unfetched remote tip produces an actionable fetch-and-merge error\n'
 
 _cas_run_pre_push_hook "$head" "$parent"
 printf 'PASS: isolated numeric counter diff passes the real privacy hook\n'
