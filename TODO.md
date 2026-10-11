@@ -1621,7 +1621,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18648 Approved external parent-task issues never auto-close after children complete (stale approval blocks terminal close) #bug ref:GH#34281 pr:#34284 completed:2026-10-10
 
-- [ ] t18656 fix: throttle bounded-operation escaped-process marker scan that costs ~0.4 CPU cores per operation on macOS #bug #framework tier:standard ref:GH#34324 logged:2026-10-11 -> [todo/tasks/t18656-brief.md]
+- [x] t18656 fix: throttle bounded-operation escaped-process marker scan that costs ~0.4 CPU cores per operation on macOS #bug #framework tier:standard ref:GH#34324 logged:2026-10-11 -> [todo/tasks/t18656-brief.md] pr:#34325 completed:2026-10-11
 
 ## In Progress
 
