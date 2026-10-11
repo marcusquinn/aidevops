@@ -893,6 +893,7 @@ test("fails closed when required policy is malformed", () => {
     copyFileSync(join(scriptsDir, "canonical-git-command-guard.py"), join(isolatedScripts, "canonical-git-command-guard.py"));
     // Shared PATH-based resolver imported by command_policy_evaluation.py.
     copyFileSync(join(scriptsDir, "trusted_executable.py"), join(isolatedScripts, "trusted_executable.py"));
+    copyFileSync(join(scriptsDir, "native_git.py"), join(isolatedScripts, "native_git.py"));
     writeFileSync(join(isolatedConfigs, "command-policy.json"), "{not-json\n");
     assert.throws(
       () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),

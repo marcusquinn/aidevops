@@ -463,6 +463,10 @@ ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${OLD_BUNDLE}/canonical_git_r
 ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${NEW_BUNDLE}/canonical_git_repository.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${OLD_BUNDLE}/canonical_shell_parser.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${NEW_BUNDLE}/canonical_shell_parser.py"
+for bundle in "$OLD_BUNDLE" "$NEW_BUNDLE"; do
+	ln -s "${SCRIPT_DIR}/runtime-env.sh" "${bundle}/runtime-env.sh"
+	ln -s "${SCRIPT_DIR}/native_git.py" "${bundle}/native_git.py"
+done
 if (cd "$REPO" && env PATH="${OLD_BUNDLE}:${NEW_BUNDLE}:${TEST_SYS_PATH}" "${OLD_BUNDLE}/git" status --short >/dev/null); then
 	pass "runtime-bundle shim skips every aidevops shim generation"
 else
@@ -495,6 +499,80 @@ if (cd "$LITERAL_REPO" && env PATH="${SHIM_BIN}:${TEST_SYS_PATH}" git status --s
 	pass "shim accepts already-expanded literal metacharacter path"
 else
 	fail "shim accepts already-expanded literal metacharacter path"
+fi
+
+if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+scripts, root, native, old, new = sys.argv[1:]
+sys.path.insert(0, scripts)
+from native_git import NativeGitUnavailable, is_git_shim, real_git
+from trusted_executable import trusted_executable
+
+for key in ("AIDEVOPS_REAL_GIT_BIN", "AIDEVOPS_REAL_GIT"):
+    os.environ.pop(key, None)
+native_dir = Path(root) / "native"
+native_dir.mkdir()
+(native_dir / "git").symlink_to(native)
+os.environ["PATH"] = os.pathsep.join((old, new, str(native_dir)))
+assert is_git_shim(old + "/git") and is_git_shim(new + "/git")
+assert real_git() == os.path.realpath(native)
+for override in (old + "/git", "git", root, root + "/missing"):
+    os.environ["AIDEVOPS_REAL_GIT_BIN"] = override
+    try:
+        real_git()
+    except NativeGitUnavailable as error:
+        assert str(error).startswith("BLOCKED:")
+    else:
+        raise AssertionError("invalid override accepted")
+os.environ.pop("AIDEVOPS_REAL_GIT_BIN")
+os.environ["PATH"] = old + os.pathsep + new
+try:
+    real_git()
+except NativeGitUnavailable:
+    pass
+else:
+    raise AssertionError("all-shim PATH accepted")
+
+# Invoke the existing shell via the standard utility path, not the all-shim PATH.
+environment = {**os.environ, "PATH": os.defpath, "AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY": "1"}
+shell = ["bash", "-c", 'source "$1/runtime-env.sh"; aidevops_resolve_trusted_tool "$2" "$3"', "_", scripts]
+for name, search in (("git", os.defpath), ("git", str(native_dir)), ("git", ""), ("../git", os.defpath)):
+    expected = trusted_executable(name, search)
+    result = subprocess.run([*shell, name, search], env=environment, text=True, capture_output=True)
+    assert (result.stdout.strip() if result.returncode == 0 else None) == expected
+assert trusted_executable("git", str(native_dir)) is None
+assert subprocess.run([sys.executable, "-I", "-S", "-B", scripts + "/trusted_executable.py", "../git"], env=environment).returncode == 2
+PY
+then
+	pass "native resolver rejects overrides and all shims; shell trust matches Python"
+else
+	fail "shared native Git and trusted-tool regression checks"
+fi
+
+if bash -c '
+	before="$PATH"
+	AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY=1 source "$1/runtime-env.sh" || exit 1
+	[[ "$PATH" == "$before" ]] || exit 1
+	[[ "$(AIDEVOPS_PATH_KEEP_MISSING=1 aidevops_compose_path /example/ /example/// /)" == /example:/ ]] || exit 1
+	! aidevops_physical_path "" || exit 1
+	HOME="$2/missing-home" aidevops_service_path "" | command -p grep -F "$2/missing-home/.bun/bin" >/dev/null || exit 1
+	AIDEVOPS_REAL_GIT_BIN="$1/git" aidevops_resolve_native_git && exit 1
+	AIDEVOPS_REAL_GIT_BIN=relative aidevops_resolve_native_git && exit 1
+	exit 0
+' _ "$SCRIPT_DIR" "$TEST_ROOT"; then
+	pass "runtime library mode, slash deduplication, stable dirs and invalid overrides"
+else
+	fail "runtime path and override regression checks"
+fi
+bash "${SCRIPT_DIR}/runtime-env.sh" >/dev/null 2>&1
+if [[ "$?" -eq 2 ]]; then
+	pass "runtime library rejects direct execution"
+else
+	fail "runtime library rejects direct execution"
 fi
 
 printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"

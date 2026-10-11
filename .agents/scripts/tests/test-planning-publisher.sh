@@ -1038,6 +1038,8 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 		return 0
 	}
 	cp "${SCRIPT_DIR_TEST}/../git" \
+		"${SCRIPT_DIR_TEST}/../runtime-env.sh" \
+		"${SCRIPT_DIR_TEST}/../native_git.py" \
 		"${SCRIPT_DIR_TEST}/../canonical-git-command-guard.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_invocation.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_policy.py" \

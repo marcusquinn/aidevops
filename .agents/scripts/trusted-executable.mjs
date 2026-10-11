@@ -7,7 +7,7 @@
 // same rule covers macOS, FHS Linux and store-symlinked layouts.
 // Python counterpart: trusted_executable.py.
 
-import {realpathSync, statSync} from "node:fs";
+import {lstatSync, readlinkSync, realpathSync, statSync} from "node:fs";
 import {delimiter, isAbsolute, join, parse, resolve} from "node:path";
 
 // Owned by root and not group/other writable (sticky directories allowed).
@@ -32,10 +32,27 @@ function trustedChain(path) {
   return true;
 }
 
+function trustedSymlinkChain(path, hops = 0) {
+  if (hops >= 40) return false;
+  const parts = path.split("/").filter(Boolean);
+  let prefix = "/";
+  for (let index = 0; index < parts.length; index++) {
+    prefix = join(prefix, parts[index]);
+    const metadata = lstatSync(prefix);
+    if (metadata.isSymbolicLink()) {
+      if (metadata.uid !== 0 || !trustedChain(parse(prefix).dir)) return false;
+      const target = readlinkSync(prefix);
+      const next = isAbsolute(target) ? target : `${parse(prefix).dir}/${target}`;
+      return trustedSymlinkChain(`${next}/${parts.slice(index + 1).join("/")}`, hops + 1);
+    }
+  }
+  return trustedChain(path);
+}
+
 // Returns the trusted path, or a non-existent sentinel so callers fail closed.
-export function resolveTrustedExecutable(name, searchPath = process.env.PATH || "") {
+export function resolveTrustedExecutable(name, searchPath = `${process.env.PATH || ""}${delimiter}/bin${delimiter}/usr/bin`) {
   if (!/^[A-Za-z0-9_.+-]+$/.test(name) || name === "." || name === "..") return `/nonexistent/aidevops-untrusted-tool`;
-  for (const directory of `${searchPath}${delimiter}/bin${delimiter}/usr/bin`.split(delimiter)) {
+  for (const directory of searchPath.split(delimiter)) {
     if (!isAbsolute(directory)) continue;
     const candidate = join(directory, name);
     try {
@@ -46,7 +63,7 @@ export function resolveTrustedExecutable(name, searchPath = process.env.PATH || 
       // Sticky shared dirs (e.g. /nix/store) only count as ancestors: a sticky
       // PATH dir such as /tmp lets any user plant a symlink to a root binary.
       if (!rootControlled(parse(real).dir, false) || !rootControlled(realDirectory, false)) continue;
-      if (trustedChain(real) && trustedChain(realDirectory)) {
+      if (trustedSymlinkChain(candidate) && trustedChain(real) && trustedChain(realDirectory)) {
         return candidate;
       }
     } catch {

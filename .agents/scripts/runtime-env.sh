@@ -124,12 +124,33 @@ aidevops_dir_chain_is_trusted() {
 	local metadata=""
 	local uid=""
 	local mode=""
+	local current="$dir"
+	local target=""
+	local hops="${2:-0}"
 	[[ -n "$dir" && "$dir" == /* ]] || return 1
+	[[ "$hops" -lt 40 ]] || return 1
 	physical=$(cd -P -- "$dir" 2>/dev/null && pwd -P) || return 1
 	# A sticky shared dir (e.g. /tmp) never holds trusted tools; it is only
 	# acceptable as an ancestor (e.g. /nix/store). Matters as root, where -O
 	# alone cannot see group/world-writable modes.
 	[[ -k "$physical" ]] && return 1
+	# Check logical prefixes too: resolving first must not conceal an editable
+	# intermediate symlink or a link target reached through an untrusted chain.
+	while :; do
+		metadata=$(aidevops_bootstrap_metadata "$current") || return 1
+		read -r uid mode <<<"$metadata"
+		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || return 1
+		if [[ -L "$current" ]]; then
+			target=$(command -p readlink "$current") || return 1
+			[[ "$target" == /* ]] || target="${current%/*}/$target"
+			aidevops_dir_chain_is_trusted "$target" "$((hops + 1))" || return 1
+		elif (( (8#$mode & 0022) != 0 )); then
+			[[ -k "$current" ]] || return 1
+		fi
+		[[ "$current" == / ]] && break
+		current="${current%/*}"
+		[[ -n "$current" ]] || current=/
+	done
 	while :; do
 		metadata=$(aidevops_bootstrap_metadata "$physical") || return 1
 		read -r uid mode <<<"$metadata"
@@ -145,13 +166,13 @@ aidevops_dir_chain_is_trusted() {
 }
 
 # Resolve a tool through PATH for trust-sensitive callers: accept the first
-# PATH entry whose executable and directory chain the current user cannot
-# modify (root-owned when running as root). No fixed distro roots, so the
+# PATH entry whose executable and directory chain are root-controlled.
+# No fixed distro roots, so the
 # same rule works on macOS, FHS Linux and Nix-based systems.
 # Usage: aidevops_resolve_trusted_tool <name> [search_path]
 aidevops_resolve_trusted_tool() {
 	local tool="$1"
-	local search_path="${2:-${PATH:-}}"
+	local search_path="${2-${PATH:-}}"
 	local candidate=""
 	local physical=""
 	local library="${BASH_SOURCE[0]%/*}/trusted_executable.py"
@@ -161,14 +182,18 @@ aidevops_resolve_trusted_tool() {
 	[[ "$tool" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
 	while IFS= read -r candidate; do
 		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
-		physical=$(aidevops_physical_path "$candidate") || continue
+		physical=$(aidevops_physical_path "$candidate" 1) || continue
 		metadata=$(aidevops_bootstrap_metadata "$physical") || continue
 		read -r uid mode <<<"$metadata"
 		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || continue
 		(( (8#$mode & 0022) == 0 )) || continue
 		aidevops_dir_chain_is_trusted "${candidate%/*}" || continue
 		aidevops_dir_chain_is_trusted "${physical%/*}" || continue
-		"$physical" -I -S -B "$library" "$tool" "$search_path"
+		if [[ "$#" -gt 1 ]]; then
+			"$physical" -I -S -B "$library" "$tool" "$search_path"
+		else
+			"$physical" -I -S -B "$library" "$tool"
+		fi
 		return $?
 	done < <(PATH="${PATH:-}:/bin:/usr/bin" type -a -p python3 2>/dev/null)
 	return 1
@@ -180,8 +205,18 @@ aidevops_physical_path() {
 	local directory=""
 	local link=""
 	local hops=0
+	local trusted="${2:-0}"
+	local metadata=""
+	local uid=""
+	local mode=""
 	[[ -n "$candidate" && "$candidate" == /* ]] || return 1
 	while :; do
+		if [[ "$trusted" == 1 ]]; then
+			aidevops_dir_chain_is_trusted "${candidate%/*}/" || return 1
+			metadata=$(aidevops_bootstrap_metadata "$candidate") || return 1
+			read -r uid mode <<<"$metadata"
+			[[ "$uid" == 0 ]] || return 1
+		fi
 		directory=$(cd -P -- "${candidate%/*}/" 2>/dev/null && pwd -P) || return 1
 		candidate="${directory%/}/${candidate##*/}"
 		[[ -L "$candidate" ]] || break
@@ -220,13 +255,13 @@ aidevops_resolve_native_git() {
 			printf 'BLOCKED: invalid native Git override\n' >&2
 			return 1
 		fi
-		aidevops_physical_path "$override" || return 1
+		printf '%s' "$override"
 		return 0
 	fi
 	while IFS= read -r candidate; do
 		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
 		aidevops_is_git_shim "$candidate" && continue
-		aidevops_physical_path "$candidate" || continue
+		printf '%s' "$candidate"
 		return 0
 	done < <(type -a -p git 2>/dev/null)
 	printf 'BLOCKED: native Git unavailable on PATH\n' >&2

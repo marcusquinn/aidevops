@@ -37,12 +37,27 @@ without envfs) work with the same code as macOS and Ubuntu.
   mode). `tests/test-portable-shebangs.sh` rejects new absolute interpreters.
   Exception: root sudo targets such as `worktree-cwd-inspect.py`.
 - **Native Git**: `aidevops_resolve_native_git` walks PATH, skipping the aidevops
-  Git shim, and exports `AIDEVOPS_REAL_GIT_BIN`. An explicit override wins.
+  Git shim, and exports `AIDEVOPS_REAL_GIT_BIN`. Python policy adapters share
+  `scripts/native_git.py`. Both identify shims by a resolved sibling
+  `canonical-git-command-guard.py`, including symlinked runtime generations.
+  Overrides (`AIDEVOPS_REAL_GIT_BIN`, legacy `AIDEVOPS_REAL_GIT`) must be absolute,
+  executable regular files and not shims; invalid overrides and missing native
+  Git fail closed with `BLOCKED:` rather than falling back to `/usr/bin/git`.
 - **Trusted tools** (source access, vault Python, sudo, release-lane `ps`,
-  `ssh-keygen`, team-interface helpers): the first PATH entry whose file and directory chain the current user
-  cannot modify (root-owned when running as root); fails closed otherwise.
-  Implementations: `aidevops_resolve_trusted_tool` (`runtime-env.sh`),
-  `trusted_executable.py`, `trusted-executable.mjs`.
+  `ssh-keygen`, team-interface helpers): root-owned executable, symlink chain
+  and parent directories, with no group/other write. Sticky directories are
+  allowed only as ancestors, never as the executable's immediate PATH directory.
+  Shell selection delegates to `trusted_executable.py` through an unmodifiable
+  `python3 -I -S -B`; the bootstrap uses standard-path portable stat and fails
+  closed when unavailable. The Python CLI accepts `<name> [search_path]`:
+  exit 1 means unavailable, 2 invalid arguments, 3 untrusted interpreter.
+  Python and `trusted-executable.mjs` append platform defaults (`/bin:/usr/bin`)
+  for implicit PATH searches; an explicit search path remains exact.
+- **Runtime library**: source `runtime-env.sh`, never execute it directly.
+  Set `AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY=1` when sourcing to load functions
+  without modifying PATH or Git overrides. Service PATHs preserve stable
+  per-user directories even before installation; all builders strip trailing
+  slashes before deduplication.
 
 This covers command discovery, not full packaging compatibility: downloaded FHS
 binaries may still need native packages, and the model-replay `bwrap` sandbox

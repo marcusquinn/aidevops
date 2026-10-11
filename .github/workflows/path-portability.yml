@@ -13,6 +13,12 @@ on:
       - '.agents/scripts/trusted_executable.py'
       - '.agents/scripts/trusted-executable.mjs'
       - '.agents/scripts/git'
+      - '.agents/scripts/native_git.py'
+      - '.agents/scripts/canonical*git*.py'
+      - '.agents/scripts/canonical_write_policy_paths.py'
+      - '.agents/scripts/command_policy_git_query.py'
+      - '.agents/hooks/git_safety_guard.py'
+      - '.agents/scripts/tests/test-*git*.sh'
       - '.agents/scripts/setup/**'
       - '.agents/plugins/opencode-aidevops/runtime-path.mjs'
       - '.agents/plugins/opencode-aidevops/source-access-*.mjs'
@@ -52,6 +58,9 @@ jobs:
             .agents/scripts/tests/test-runtime-env.sh
             .agents/scripts/tests/test-launchd-sanitized-path.sh
             .agents/scripts/tests/test-pulse-path-precedence.sh
+            .agents/scripts/tests/test-canonical-git-command-guard.sh
+            .agents/scripts/tests/test-command-policy-helper.sh
+            .agents/scripts/tests/test-planning-publisher.sh
             .agents/scripts/tests/test-tool-install-opencode.sh
             .agents/scripts/tests/test-setup-source-access-broker.sh
             .agents/scripts/tests/test-portable-shebangs.sh
@@ -87,6 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test \
+            .agents/plugins/opencode-aidevops/tests/test-git-safety-gate.mjs \
             .agents/plugins/opencode-aidevops/tests/test-shell-env-origin.mjs \
             .agents/plugins/opencode-aidevops/tests/test-source-access-guidance.mjs \
             .agents/plugins/opencode-aidevops/tests/test-mcp-activation.mjs
