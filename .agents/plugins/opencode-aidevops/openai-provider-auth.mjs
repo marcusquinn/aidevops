@@ -4,7 +4,14 @@
  * The built-in OpenAI provider does not pass through the Anthropic AuthHook,
  * so interactive sessions need a response-aware fetch guard that marks
  * usage-limited accounts and retries once with another pooled account.
+ *
+ * The same guard zstd-compresses ChatGPT Codex backend request bodies (GH#34414).
+ * The backend rejects uncompressed bodies above 1 MiB with an HTTP 503
+ * "upstream connect error"; upstream Codex CLI compresses these requests by
+ * default (`enable_request_compression`), OpenCode's built-in provider does not.
  */
+
+import * as zlib from "node:zlib";
 
 import {
   applyOpenAIPoolAccount,
@@ -25,6 +32,7 @@ const OPENAI_API_PREFIX = "/v1/";
 const OPENAI_CODEX_HOST = "chatgpt.com";
 const OPENAI_CODEX_PREFIX = "/backend-api/codex/";
 const DEFAULT_OPENAI_COOLDOWN_MS = 300_000;
+const COMPRESSION_DISABLED_VALUES = new Set(["0", "false", "off", "no"]);
 const USAGE_LIMIT_MARKERS = [
   "usage limit",
   "rate limit",
@@ -84,13 +92,51 @@ export function parseRetryAfterMs(response) {
   return Math.max(parsed ?? DEFAULT_OPENAI_COOLDOWN_MS, DEFAULT_OPENAI_COOLDOWN_MS);
 }
 
-export function isOpenAIProviderRequest(input) {
+function parseRequestUrl(input) {
   const rawUrl = typeof input === "string" || input instanceof URL ? input.toString() : input?.url;
-  const url = URL.parse(rawUrl);
+  return URL.parse(rawUrl);
+}
+
+/** True for ChatGPT Codex backend requests (OAuth), not the Platform API. */
+export function isCodexBackendRequest(input) {
+  const url = parseRequestUrl(input);
+  return Boolean(url && url.hostname === OPENAI_CODEX_HOST && url.pathname.startsWith(OPENAI_CODEX_PREFIX));
+}
+
+export function isOpenAIProviderRequest(input) {
+  const url = parseRequestUrl(input);
   return Boolean(url && (
     (url.hostname === OPENAI_API_HOST && url.pathname.startsWith(OPENAI_API_PREFIX))
-    || (url.hostname === OPENAI_CODEX_HOST && url.pathname.startsWith(OPENAI_CODEX_PREFIX))
+    || isCodexBackendRequest(input)
   ));
+}
+
+/** `AIDEVOPS_CODEX_REQUEST_COMPRESSION=0|false|off|no` disables compression for diagnosis. */
+export function codexRequestCompressionEnabled(env = process.env) {
+  const raw = String(env.AIDEVOPS_CODEX_REQUEST_COMPRESSION ?? "").trim().toLowerCase();
+  return !COMPRESSION_DISABLED_VALUES.has(raw);
+}
+
+function resolveZstdCompressor() {
+  if (typeof globalThis.Bun?.zstdCompressSync === "function") {
+    return (data) => globalThis.Bun.zstdCompressSync(data);
+  }
+  if (typeof zlib.zstdCompressSync === "function") return (data) => zlib.zstdCompressSync(data);
+  return null;
+}
+
+/**
+ * zstd-compress a serialized request body. Returns null when the runtime lacks
+ * zstd or compression fails, so callers send the original body unchanged.
+ */
+export function compressCodexRequestBody(body, compress = resolveZstdCompressor()) {
+  if (!compress || typeof body !== "string" || !body) return null;
+  try {
+    const compressed = compress(Buffer.from(body, "utf8"));
+    return compressed instanceof Uint8Array && compressed.byteLength > 0 ? compressed : null;
+  } catch {
+    return null;
+  }
 }
 
 async function readOpenAIErrorPayload(response) {
@@ -164,8 +210,26 @@ async function prepareOpenAIRequest(input, init) {
   }
   if (body === null) return { input, init };
   const transformedBody = transformOpenAIRequestBody(body);
+  const encodedInit = encodeCodexRequestInit(input, init, transformedBody);
+  if (encodedInit) return { input, init: encodedInit };
   if (!body || transformedBody === body) return { input, init };
   return { input, init: extendRequestInit(init, { body: transformedBody }) };
+}
+
+/**
+ * Build an init carrying the zstd-compressed body and `content-encoding: zstd`
+ * for Codex backend requests. Retries reuse this init, so every attempt sends
+ * the same encoded bytes. Returns null to leave the request uncompressed.
+ */
+function encodeCodexRequestInit(input, init, body) {
+  if (!body || !isCodexBackendRequest(input) || !codexRequestCompressionEnabled()) return null;
+  const headers = headersFrom(input, init);
+  if (headers.has("content-encoding")) return null;
+  const compressed = compressCodexRequestBody(body);
+  if (!compressed) return null;
+  headers.set("content-encoding", "zstd");
+  headers.delete("content-length");
+  return extendRequestInit(init, { body: compressed, headers });
 }
 
 function buildRetryInit(input, init, account) {

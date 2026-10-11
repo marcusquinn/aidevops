@@ -95,6 +95,7 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
     import assert from "node:assert/strict";
     import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
     import { join } from "node:path";
+    import { zstdDecompressSync } from "node:zlib";
 
     const home = process.env.HOME;
     const aidevopsDir = join(home, ".aidevops");
@@ -134,6 +135,7 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
     }, async (input, init, calls) => {
       calls.push({
         authorization: new Headers(init?.headers).get("authorization"),
+        encoding: new Headers(init?.headers).get("content-encoding"),
         body: JSON.parse(String(init?.body || "{}")),
       });
       if (calls.length === 1) {
@@ -169,6 +171,61 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
     assert.equal(responseRotation.pool.openai[1].status, "active");
     assert.equal(responseRotation.authWrites[0].path.id, "openai");
     assert.equal(responseRotation.authWrites[0].body.accountId, "acct_healthy");
+    for (const call of responseRotation.calls) assert.equal(call.encoding, null);
+
+    // GH#34414: Codex backend bodies are zstd-compressed on every attempt.
+    const codexSource = JSON.stringify({ input: "x".repeat(1_100_000), tools: [{
+      type: "function",
+      name: "read_file",
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+    }] });
+    const codexCompression = await withInstalledGuard({
+      openai: [
+        { email: "limited@example.com", access: "limited-token", refresh: "limited-refresh", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z" },
+        { email: "healthy@example.com", access: "healthy-token", refresh: "healthy-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-01T00:00:00Z", accountId: "acct_healthy" },
+      ],
+    }, async (input, init, calls) => {
+      const headers = new Headers(init?.headers);
+      const bytes = init?.body instanceof Uint8Array ? init.body : null;
+      calls.push({
+        authorization: headers.get("authorization"),
+        encoding: headers.get("content-encoding"),
+        length: headers.get("content-length"),
+        size: bytes?.byteLength ?? -1,
+        body: bytes ? JSON.parse(zstdDecompressSync(bytes).toString("utf8")) : null,
+      });
+      if (calls.length === 1) return new Response("usage limit", { status: 429 });
+      return new Response("ok", { status: 200 });
+    }, {
+      url: "https://chatgpt.com/backend-api/codex/responses",
+      init: {
+        method: "POST",
+        headers: { authorization: "Bearer limited-token", "content-length": String(codexSource.length) },
+        body: codexSource,
+      },
+    });
+    assert.equal(codexCompression.response.status, 200);
+    assert.deepEqual(codexCompression.calls.map((call) => call.authorization), ["Bearer limited-token", "Bearer healthy-token"]);
+    for (const call of codexCompression.calls) {
+      assert.equal(call.encoding, "zstd");
+      assert.equal(call.length, null);
+      assert.ok(call.size > 0 && call.size < 1_048_576, "compressed body stays below the 1 MiB proxy limit");
+      assert.equal(call.body.input.length, 1_100_000);
+      assert.equal(call.body.tools[0].parameters.properties.agent__intent.type, "string");
+    }
+
+    process.env.AIDEVOPS_CODEX_REQUEST_COMPRESSION = "0";
+    const codexOptOut = await withInstalledGuard({
+      openai: [{ email: "healthy@example.com", access: "healthy-token", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0 }],
+    }, async (input, init, calls) => {
+      calls.push({ encoding: new Headers(init?.headers).get("content-encoding"), body: init?.body });
+      return new Response("ok", { status: 200 });
+    }, {
+      url: "https://chatgpt.com/backend-api/codex/responses",
+      init: { method: "POST", headers: { authorization: "Bearer healthy-token" }, body: "{}" },
+    });
+    delete process.env.AIDEVOPS_CODEX_REQUEST_COMPRESSION;
+    assert.deepEqual(codexOptOut.calls, [{ encoding: null, body: "{}" }]);
 
     const requestSource = JSON.stringify({ tools: [{
       type: "function",
