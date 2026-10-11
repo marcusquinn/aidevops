@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.11] - 2026-10-11
+
+### Changed
+
+- Maintenance: mark t18663 complete (pr:#34354 completed:2026-10-11) (#34355)
+
+### Fixed
+
+- stop Pulse-run auto-updates rolling back every verified release
+
 ## [3.39.10] - 2026-10-11
 
 ### Changed
