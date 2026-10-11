@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.18] - 2026-10-11
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#34392)
+
+### Fixed
+
+- stop the fix-the-fixer log watcher deadlocking workers before model invocation
+
 ## [3.39.17] - 2026-10-11
 
 ### Changed

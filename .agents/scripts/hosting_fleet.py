@@ -41,6 +41,7 @@ from repo_layout_migrate import (  # noqa: E402
 )
 
 DEFAULT_STATE_DIR = "~/.aidevops/.agent-workspace/work/hostinger-fleet"
+DEFAULT_CONFIG = "~/.config/aidevops/hosting-fleet.json"
 DRIFT_EXIT = 3
 
 
@@ -70,6 +71,8 @@ def print_plan(plan: dict[str, Any], *, all_sites: bool) -> None:
         where = item.get("registered_path") or item.get("expected_path") or "-"
         role = item.get("role") or "-"
         print(f"  {item['state']:<18} {item['action']:<15} {item['domain']:<45} {role:<15} {where}")
+        if item.get("served_by"):
+            print(f"  {'':<18} {'':<15} served by repository {item['expected_slug']}")
         if item.get("detail"):
             print(f"  {'':<18} {'':<15} {item['detail']}")
 
@@ -116,10 +119,49 @@ def inventory_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def load_fleet_config(path_value: str) -> dict[str, Any]:
+    """Optional owner-private fleet config; absent means no stored defaults."""
+    path = expand_path(path_value)
+    if not path.exists() and not path.is_symlink():
+        return {}
+    details = path.lstat()
+    if path.is_symlink() or not path.is_file() or details.st_uid != os.getuid() \
+            or details.st_mode & 0o077:
+        raise FleetError(f"Fleet config must be an owner-private (0600) regular file: {path}")
+    config = load_json(path)
+    if not isinstance(config, dict):
+        raise FleetError("Fleet config must be a JSON object")
+    return config
+
+
+def config_pairs(config: dict[str, Any], key: str) -> list[str]:
+    """Convert a config mapping into the DOMAIN=VALUE form the CLI accepts."""
+    mapping = config.get(key) or {}
+    if not isinstance(mapping, dict):
+        raise FleetError(f"Fleet config '{key}' must be an object")
+    return [f"{name}={value}" for name, value in sorted(mapping.items())]
+
+
+def merged_options(args: argparse.Namespace) -> dict[str, Any]:
+    """CLI options layered over the private fleet config (CLI wins for owner)."""
+    config = load_fleet_config(args.config)
+    options = vars(args).copy()
+    options["owner"] = args.owner or config.get("owner")
+    if not options["owner"]:
+        raise FleetError("Pass --owner or set \"owner\" in the fleet config")
+    options["owner_exception"] = config_pairs(config, "owner_exceptions") + (args.owner_exception or [])
+    options["site_repo"] = config_pairs(config, "site_repos") + (args.site_repo or [])
+    ignored = config.get("ignore") or []
+    if not isinstance(ignored, list):
+        raise FleetError("Fleet config 'ignore' must be a list")
+    options["ignore"] = [str(item) for item in ignored] + (args.ignore or [])
+    return options
+
+
 def plan_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    """Build a plan from the selected inventory and CLI options."""
+    """Build a plan from the selected inventory, fleet config and CLI options."""
     inventory = load_inventory(expand_path(args.inventory or f"{DEFAULT_STATE_DIR}/inventory.json"))
-    return build_plan(inventory, vars(args))
+    return build_plan(inventory, merged_options(args))
 
 
 def plan_command(args: argparse.Namespace) -> int:
@@ -144,9 +186,15 @@ def drift_command(args: argparse.Namespace) -> int:
 def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     """Arguments shared by plan and drift."""
     parser.add_argument("--inventory", help="Inventory JSON (default: private state dir)")
-    parser.add_argument("--owner", required=True, help="GitHub owner for fleet repositories")
+    parser.add_argument("--config", default=DEFAULT_CONFIG,
+                        help="Owner-private fleet config JSON (owner, owner_exceptions, "
+                             "site_repos, ignore); flags add to it")
+    parser.add_argument("--owner", help="GitHub owner for fleet repositories (or config owner)")
     parser.add_argument("--owner-exception", action="append", metavar="DOMAIN=OWNER",
                         help="Repository owner exception for one site (repeatable)")
+    parser.add_argument("--site-repo", action="append", metavar="HOSTED_DOMAIN=REPO",
+                        help="Hosted site served by a differently named repository, e.g. a "
+                             "pre-launch subdomain (repeatable)")
     parser.add_argument("--ignore", action="append", metavar="DOMAIN",
                         help="Exclude one domain from this fleet (repeatable)")
     parser.add_argument("--host", default="github.com")

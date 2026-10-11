@@ -62,6 +62,23 @@ def parse_exceptions(values: list[str] | None) -> dict[str, str]:
     return exceptions
 
 
+def parse_site_repos(values: list[str] | None) -> dict[str, str]:
+    """Parse HOSTED_DOMAIN=REPO maps: a hosted site served by a differently named repo.
+
+    Used for pre-launch hosts (a staging subdomain whose production domain names
+    the repository) and network blogs that share a repository.
+    """
+    site_repos = {}
+    for value in values or []:
+        domain, separator, repo = value.partition("=")
+        domain = domain.strip().lower()
+        repo = repo.strip().lower()
+        if not separator or not DOMAIN_RE.match(domain) or not DOMAIN_RE.match(repo):
+            raise FleetError("Site repositories must use HOSTED_DOMAIN=REPO_DOMAIN")
+        site_repos[domain] = repo
+    return site_repos
+
+
 def load_registrations(repos_json: Path) -> list[dict[str, str]]:
     """Return initialized repository registrations with owner, name and path."""
     payload = load_json(repos_json)
@@ -132,30 +149,35 @@ def plan_entry(domain: str, state: str, **fields: Any) -> dict[str, Any]:
 def classify_site(site: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """Classify one site against registrations and the canonical layout."""
     domain = site["domain"]
-    owner = context["exceptions"].get(domain, context["owner"])
+    repo = context["site_repos"].get(domain, domain)
+    owner = context["exceptions"].get(repo, context["exceptions"].get(domain, context["owner"]))
     destination = recommended_path(
-        context["workspace"], (context["host"], owner, domain), context["repos_json"], context["lib"]
+        context["workspace"], (context["host"], owner, repo), context["repos_json"], context["lib"]
     )
-    matches = [item for item in context["registrations"] if item["name"].lower() == domain]
+    matches = [item for item in context["registrations"] if item["name"].lower() == repo]
     registration = matches[0] if len(matches) == 1 else {}
     if len(matches) > 1:
         state = "ambiguous"
     elif registration:
         state = registered_state(registration, destination, owner)
     else:
-        state = unregistered_state(destination, owner, domain)
-    if state == "ok" and domain in context["exceptions"]:
+        state = unregistered_state(destination, owner, repo)
+    if state == "ok" and (domain in context["exceptions"] or repo != domain
+                          or repo in context["exceptions"]):
         state = "ok-exception"
-    return plan_entry(
+    entry = plan_entry(
         domain,
         state,
         role=site.get("role"),
         codebase_primary=site.get("codebase_primary"),
-        expected_slug=f"{owner}/{domain}",
+        expected_slug=f"{owner}/{repo}",
         expected_path=str(destination),
         registered_slug=registration.get("slug"),
         registered_path=registration.get("path"),
     )
+    if repo != domain:
+        entry["served_by"] = repo
+    return entry
 
 
 def not_in_hosting(context: dict[str, Any], hosted: set[str]) -> list[dict[str, Any]]:
@@ -177,15 +199,19 @@ def not_in_hosting(context: dict[str, Any], hosted: set[str]) -> list[dict[str, 
 
 
 def mark_shared_destinations(results: list[dict[str, Any]]) -> None:
-    """Two sites must never plan the same canonical destination."""
-    seen: dict[str, str] = {}
+    """Two sites must never plan the same destination unless a site-repo map joins them."""
+    seen: dict[str, dict[str, Any]] = {}
     for item in results:
         path = item.get("expected_path")
-        if path and path in seen:
-            item.update(state="collision", action=STATE_ACTIONS["collision"][0],
-                        detail=f"Shares a destination with {seen[path]}")
-        elif path:
-            seen[path] = item["domain"]
+        if not path:
+            continue
+        first = seen.setdefault(path, item)
+        if first is item or first.get("expected_slug") == item.get("expected_slug") and (
+            item.get("served_by") or first.get("served_by")
+        ):
+            continue
+        item.update(state="collision", action=STATE_ACTIONS["collision"][0],
+                    detail=f"Shares a destination with {first['domain']}")
 
 
 def plan_context(options: dict[str, Any]) -> dict[str, Any]:
@@ -197,6 +223,7 @@ def plan_context(options: dict[str, Any]) -> dict[str, Any]:
         "owner": options["owner"],
         "host": options["host"],
         "exceptions": parse_exceptions(options.get("owner_exception")),
+        "site_repos": parse_site_repos(options.get("site_repo")),
         "ignored": {value.strip().lower() for value in options.get("ignore") or []},
         "workspace": expand_path(options["workspace"]),
         "repos_json": repos_json,
@@ -209,6 +236,7 @@ def build_plan(inventory: dict[str, Any], options: dict[str, Any]) -> dict[str, 
     """Classify every site without mutating anything."""
     context = plan_context(options)
     hosted = {site["domain"] for site in inventory["sites"]}
+    hosted |= {context["site_repos"].get(domain, domain) for domain in hosted}
     results = [
         classify_site(site, context)
         for site in inventory["sites"]
@@ -225,6 +253,7 @@ def build_plan(inventory: dict[str, Any], options: dict[str, Any]) -> dict[str, 
         "owner": context["owner"],
         "host": context["host"],
         "owner_exceptions": context["exceptions"],
+        "site_repos": context["site_repos"],
         "ignored": sorted(context["ignored"]),
         "workspace": str(context["workspace"]),
         "counts": dict(sorted(counts.items())),

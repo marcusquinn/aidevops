@@ -29,7 +29,11 @@ _AIDEVOPS_REPOS_LIB_LOADED=1
 
 _aidevops_repos_source_worktree_paths() {
 	local helper=""
-	if [[ -n "${AGENTS_DIR:-}" && -f "${AGENTS_DIR}/scripts/worktree-paths.sh" ]]; then
+	local sibling_helper="${BASH_SOURCE[0]%/*}/../worktree-paths.sh"
+	# Keep the registry lock and its callers on the same installed/source version.
+	if [[ -f "$sibling_helper" ]]; then
+		helper="$sibling_helper"
+	elif [[ -n "${AGENTS_DIR:-}" && -f "${AGENTS_DIR}/scripts/worktree-paths.sh" ]]; then
 		helper="${AGENTS_DIR}/scripts/worktree-paths.sh"
 	elif [[ -n "${INSTALL_DIR:-}" && -f "${INSTALL_DIR}/.agents/scripts/worktree-paths.sh" ]]; then
 		helper="${INSTALL_DIR}/.agents/scripts/worktree-paths.sh"
@@ -47,35 +51,41 @@ _aidevops_repos_source_worktree_paths
 
 # Initialize repos.json if it doesn't exist
 init_repos_file() {
+	aidevops_with_registry_lock "$REPOS_FILE" _init_repos_file_locked
+	return $?
+}
+
+_init_repos_file_locked() {
 	if [[ ! -f "$REPOS_FILE" ]]; then
-		mkdir -p "$CONFIG_DIR"
-		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"], "worktree_base_dir": "~/Git/_worktrees"}' >"$REPOS_FILE"
+		aidevops_migrate_repos_json_worktree_base_dir "$REPOS_FILE" || return 1
 	elif command -v jq &>/dev/null; then
 		# Migrate: add git_parent_dirs if missing from existing repos.json
 		if ! jq -e '.git_parent_dirs' "$REPOS_FILE" &>/dev/null; then
-			local temp_file="${REPOS_FILE}.tmp"
+			local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 			if jq '. + {"git_parent_dirs": ["~/Git"]}' "$REPOS_FILE" >"$temp_file"; then
-				mv "$temp_file" "$REPOS_FILE"
+				mv "$temp_file" "$REPOS_FILE" || return 1
 			else
 				rm -f "$temp_file"
+				return 1
 			fi
 		fi
 		# Migrate: add centralized worktree base directory if missing.
 		if declare -F aidevops_migrate_repos_json_worktree_base_dir >/dev/null 2>&1; then
-			aidevops_migrate_repos_json_worktree_base_dir "$REPOS_FILE" "~"'/Git/_worktrees' || true
+			aidevops_migrate_repos_json_worktree_base_dir "$REPOS_FILE" "~"'/Git/_worktrees' || return 1
 		elif ! jq -e '.worktree_base_dir // .worktrees_dir // empty' "$REPOS_FILE" &>/dev/null; then
-			local temp_file="${REPOS_FILE}.tmp"
+			local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 			if jq '. + {"worktree_base_dir": "~/Git/_worktrees"}' "$REPOS_FILE" >"$temp_file"; then
-				mv "$temp_file" "$REPOS_FILE"
+				mv "$temp_file" "$REPOS_FILE" || return 1
 			else
 				rm -f "$temp_file"
+				return 1
 			fi
 		fi
 		# Migrate: backfill slug for entries missing it (detect from git remote)
 		local needs_slug
 		needs_slug=$(jq '[.initialized_repos[] | select(.slug == null or .slug == "")] | length' "$REPOS_FILE" 2>/dev/null) || needs_slug="0"
 		if [[ "$needs_slug" -gt 0 ]]; then
-			local temp_file="${REPOS_FILE}.tmp"
+			local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 			local repo_path slug
 			# Build a map of path->slug for repos missing slugs
 			while IFS= read -r repo_path; do
@@ -85,7 +95,7 @@ init_repos_file() {
 				if [[ -n "$slug" ]]; then
 					jq --arg path "$repo_path" --arg slug "$slug" \
 						'(.initialized_repos[] | select(.path == $path and (.slug == null or .slug == ""))) |= . + {slug: $slug}' \
-						"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+						"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE" || return 1
 				fi
 			done < <(jq -r '.initialized_repos[] | select(.slug == null or .slug == "") | .path' "$REPOS_FILE" 2>/dev/null)
 		fi
@@ -522,7 +532,7 @@ _repo_registration_update_existing() {
 	local cloudron_defaults="${12}"
 	local cloudron_app_type="${13}"
 	local detected_role="${14}"
-	local temp_file="${REPOS_FILE}.tmp"
+	local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 	jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 		--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
 		--arg detected_role "$detected_role" \
@@ -553,10 +563,15 @@ _repo_registration_update_existing() {
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features> [verified-slug]
 register_repo() {
+	aidevops_with_registry_lock "$REPOS_FILE" _register_repo_locked "$@"
+	return $?
+}
+
+_register_repo_locked() {
 	local repo_path="$1" version="$2" features="$3"
 	local verified_slug="${4:-}"
 
-	init_repos_file
+	init_repos_file || return 1
 
 	# Normalize path (resolve symlinks, remove trailing slash)
 	if ! repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P); then
@@ -619,7 +634,7 @@ register_repo() {
 			"$is_local_only" "$maintainer" "$DEFAULT_PULSE" "$DEFAULT_PRIORITY" \
 			"$default_init_scope" "$has_interface" "$app_type_default" "$cloudron_defaults" "$cloudron_app_type" "$detected_role" || return 1
 	else
-		local temp_file="${REPOS_FILE}.tmp"
+		local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --arg maintainer "$maintainer" \
 			--arg detected_role "$detected_role" \
@@ -647,7 +662,7 @@ register_repo() {
 					.cloudron_package = ($cloudron_defaults + {monitor_upstream: false})
 				  else . end
 			)]' \
-			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE" || return 1
 	fi
 	return 0
 }
@@ -670,9 +685,14 @@ get_registered_repos() {
 # Disabling maintenance also disables Pulse so all existing pulse selectors
 # converge even before they learn the maintenance field directly.
 set_repo_maintenance() {
+	aidevops_with_registry_lock "$REPOS_FILE" _set_repo_maintenance_locked "$@"
+	return $?
+}
+
+_set_repo_maintenance_locked() {
 	local selector="$1"
 	local desired="$2"
-	init_repos_file
+	init_repos_file || return 1
 
 	if ! command -v jq &>/dev/null; then
 		print_error "jq required for repo management"
@@ -701,7 +721,7 @@ set_repo_maintenance() {
 	fi
 
 	local temp_file
-	temp_file=$(mktemp "${REPOS_FILE}.tmp.XXXXXX") || return 1
+	temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 	if ! jq --arg selector "$selector" --argjson desired "$desired" '
 		(.initialized_repos[] | select(.slug == $selector or .path == $selector)) |=
 			(if $desired then .maintenance = true
@@ -725,13 +745,18 @@ set_repo_maintenance() {
 
 # Set the explicit Actions capability without changing Pulse or maintenance.
 set_repo_actions() {
+	aidevops_with_registry_lock "$REPOS_FILE" _set_repo_actions_locked "$@"
+	return $?
+}
+
+_set_repo_actions_locked() {
 	local selector="$1" desired="$2" reason="${3:-}"
 	local matches="" temp_file=""
 	case "$desired" in
 	available | unavailable) ;;
 	*) return 1 ;;
 	esac
-	init_repos_file
+	init_repos_file || return 1
 	if [[ -d "$selector" ]]; then
 		selector=$(resolve_canonical_repo_path "$selector") || return 1
 	fi
@@ -741,7 +766,7 @@ set_repo_actions() {
 		print_error "Expected one registered repository; found $matches"
 		return 1
 	fi
-	temp_file=$(mktemp "${REPOS_FILE}.tmp.XXXXXX") || return 1
+	temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
 	if ! jq --arg selector "$selector" --arg desired "$desired" --arg reason "$reason" '
 		(.initialized_repos[] | select(.slug == $selector or .path == $selector)) |=
 			(if $desired == "available" then del(.actions, .actions_reason)

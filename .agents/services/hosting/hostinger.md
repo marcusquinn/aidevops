@@ -55,13 +55,15 @@ Only request another SSH credential when API inventory, the hosting panel, or a 
 
 ```bash
 hostinger-helper.sh fleet inventory --discover-networks --ssh <account-alias>
-hostinger-helper.sh fleet drift --owner <org> --owner-exception <domain>=<personal-login>
+hostinger-helper.sh fleet drift --owner <org> --owner-exception <domain>=<personal-login> \
+  --site-repo <review-host>=<production-domain>
 hostinger-helper.sh fleet plan  --owner <org>   # content-hashed plan for onboarding
 ```
 
 - **Inventory** fetches every page of `GET /api/hosting/v1/websites` and refuses a partial result. Sites that share an account document root form one codebase: the primary holds the shared code, and the other sites are `network-member` (WordPress) or `alias`.
 - **`--discover-networks`** runs a fixed, read-only SSH probe (`wp core is-installed --network`, `wp site list`) on every `domains/*/public_html` root. It adds multisite blogs that have no panel entry. The panel's `website_type` is not reliable: a live multisite network was reported as `other`. Use `--network-map FILE` (blog → primary JSON) when SSH is unavailable.
 - **Plan and drift** compare each site, using `<owner>/<domain>` repository names, against `repos.json` and the owner layout in `reference/repo-organization.md`. Results: `ok`, `ok-exception`, `new`, `unregistered-clone`, `missing-clone`, `misplaced`, `owner-mismatch`, `collision`, `ambiguous` and `not-in-hosting`. `drift --fail-on-drift` exits 3 when there is drift.
+- **Fleet config** (optional) lives in `~/.config/aidevops/hosting-fleet.json`. It must be a regular 0600 file. It stores `owner`, `owner_exceptions` (`{domain: owner}`), `site_repos` (`{hosted-domain: repo}`) and `ignore` (`[domain]`); command-line flags add to it, and `--owner` overrides it. Use `--site-repo HOST=REPO` when a hosted site is served by a repository with a different name, for example a pre-launch review subdomain whose future production domain names the repository. Several hosts may share one mapped repository, and their clean state is `ok-exception`.
 - **Repairs** are separate, explicitly authorised steps. For `misplaced`, run the move only for the selected fleet repositories: `aidevops repos migrate-layout plan --source <path>`.
 
 ### PHP runtime
