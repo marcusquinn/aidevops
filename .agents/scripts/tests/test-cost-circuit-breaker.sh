@@ -634,6 +634,70 @@ else
 	print_result "delivered incident history does not block or file another meta issue" 1 "(rc=$rc output='$output')"
 fi
 
+# GH#34342: signature footers report cumulative OpenCode session time and
+# tokens. A continuation dispatch that resumed the 08:00 session posted
+# 89,214 → 217,569 → 356,637; summing every footer counted 809,536 after the
+# 09:22 checkpoint and tripped the breaker. Anonymized incident shape.
+cat >"$FIXTURE_TIMELINE_JSON" <<'JSON'
+[{"event":"cross-referenced","source":{"issue":{"repository":{"full_name":"owner/repo"},"body":"For #18014","pull_request":{"merged_at":"2026-05-03T09:22:30Z"}}}}]
+JSON
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-05-03T08:06:18Z","user":{"login":"runner-b"},"body":"Checkpoint.\n---\nwith model spent 6m and 89,214 tokens on this as a headless worker."},
+ {"created_at":"2026-05-03T12:41:19Z","user":{"login":"runner-c"},"body":"Checkpoint.\n---\nwith model spent 13m and 147,569 tokens on this as a headless worker."},
+ {"created_at":"2026-05-03T14:05:12Z","user":{"login":"runner-b"},"body":"Continuation.\n---\nwith model spent 6h 5m and 217,569 tokens on this as a headless worker."},
+ {"created_at":"2026-05-03T15:19:39Z","user":{"login":"runner-a"},"body":"Blocked.\n---\nwith model spent 4m and 87,761 tokens on this as a headless worker."},
+ {"created_at":"2026-05-03T21:02:24Z","user":{"login":"runner-b"},"body":"Continuation.\n---\nwith model spent 13h 2m and 356,637 tokens on this as a headless worker."}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "502753|4" ]]; then assertion_rc=0; fi
+print_result "resumed-session footers count increments, pre-window footer is baseline" "$assertion_rc" "(got: '$sum_output')"
+: >"$STUB_LOG"
+run_check_cost_budget 18014 "owner/repo" "standard"
+if [[ "$rc" -eq 1 && -z "$output" ]] && ! grep -qE '^issue (edit|comment) ' "$STUB_LOG"; then
+	print_result "resumed-session incident history stays under budget" 0
+else
+	print_result "resumed-session incident history stays under budget" 1 "(rc=$rc output='$output')"
+fi
+
+# Separate sessions by the same author (different implied start) still sum.
+printf '[]' >"$FIXTURE_TIMELINE_JSON"
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-05-03T10:00:00Z","user":{"login":"runner-b"},"body":"spent 5m and 400,000 tokens"},
+ {"created_at":"2026-05-03T11:00:00Z","user":{"login":"runner-b"},"body":"spent 5m and 500,000 tokens"},
+ {"created_at":"2026-05-03T11:30:00Z","user":{"login":"runner-c"},"body":"spent 1h 35m and 600,000 tokens"}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "1500000|3" ]]; then assertion_rc=0; fi
+print_result "distinct sessions and other authors are not merged" "$assertion_rc" "(got: '$sum_output')"
+
+# Merged checkpoints reported only as "PR #N" in trusted signed worker comments
+# are verified through REST; unreadable mentions are skipped, never fail-open.
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-05-03T18:00:00Z","body":"spent 700000 tokens"},
+ {"created_at":"2026-05-03T19:26:00Z","author_association":"MEMBER","body":"Checkpoint merged in PR #43.\n<!-- aidevops:sig -->\n---\nspent 200000 tokens"},
+ {"created_at":"2026-05-03T19:30:00Z","body":"spent 300000 tokens"}
+]
+JSON
+cat >"$FIXTURE_PR_JSON" <<'JSON'
+{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18014","merged_at":"2026-05-03T19:25:00Z"}
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "500000|2" ]]; then assertion_rc=0; fi
+print_result "verified PR mention in signed worker report resets spend" "$assertion_rc" "(got: '$sum_output')"
+printf 'not-valid-json' >"$FIXTURE_PR_JSON"
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "1200000|3" ]]; then assertion_rc=0; fi
+print_result "unreadable PR mention is skipped without failing open" "$assertion_rc" "(got: '$sum_output')"
+
 export PATH="$OLD_PATH"
 
 # =============================================================================

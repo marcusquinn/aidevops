@@ -96,23 +96,40 @@ _cost_checkpoint_from_closeouts() {
 		 | fromdateiso8601] | max // 0
 	' 2>/dev/null) || return 1
 
-	local candidates pr_number pr_json merge_epoch
+	# GH#34342: continuation workers often report merged checkpoints only as
+	# "PR #N" prose in their signed comments, with neither timeline events nor a
+	# closeout marker. Those mentions are candidates only (at most the three
+	# highest numbers, to bound REST calls); unlike closeouts, an unreadable or
+	# non-PR mention is skipped rather than failing the whole aggregation.
+	local candidates kind pr_number pr_json merge_epoch
 	candidates=$(printf '%s' "$comments_json" | jq -r '
 		[.[][] | select(.author_association == "OWNER" or
 			.author_association == "MEMBER" or .author_association == "COLLABORATOR")
-		 | (.body // "") | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->") | .[0]]
-		 | unique[]
+		 | .body // ""] as $trusted
+		| ([$trusted[] | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->") | .[0] | tonumber]
+			| unique) as $closeouts
+		| ($closeouts[] | "closeout \(.)"),
+		  ([$trusted[] | select(contains("<!-- aidevops:sig -->"))
+			| select(test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->") | not)
+			| scan("\\bPR #([0-9]+)\\b") | .[0] | tonumber]
+			| unique - $closeouts | reverse | .[:3][] | "report \(.)")
 	' 2>/dev/null) || return 1
-	while IFS= read -r pr_number; do
-		[[ -n "$pr_number" ]] || continue
-		pr_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
-		merge_epoch=$(printf '%s' "$pr_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
+	while read -r kind pr_number; do
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
+		if ! pr_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null); then
+			[[ "$kind" == "report" ]] && continue
+			return 1
+		fi
+		if ! merge_epoch=$(printf '%s' "$pr_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
 			select(.base.repo.full_name == $repo)
 			| select(((.title // "") + "\n" + (.body // ""))
 				| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
 			| .merged_at // empty | fromdateiso8601
-		' 2>/dev/null) || return 1
-		if [[ -n "$merge_epoch" && "$merge_epoch" -gt "$checkpoint_epoch" ]]; then
+		' 2>/dev/null); then
+			[[ "$kind" == "report" ]] && continue
+			return 1
+		fi
+		if [[ "$merge_epoch" =~ ^[0-9]+$ && "$merge_epoch" -gt "$checkpoint_epoch" ]]; then
 			checkpoint_epoch="$merge_epoch"
 		fi
 	done <<<"$candidates"
@@ -159,61 +176,73 @@ _sum_issue_token_spend() {
 	# t3077: a signed maintainer approval is also a budget reset boundary. Without
 	# this, approving/removing NMR after a cost trip immediately re-trips on the
 	# same historical worker footers and no new dispatch can occur.
-	local bodies
-	bodies=$(printf '%s' "$comments_json" | jq -r --argjson checkpoint "$checkpoint_epoch" '
+	#
+	# Footer shapes: "spent 30,000 tokens", "spent 4m and 30,000 tokens",
+	# "spent 1h 30m and …", "spent 1d 3h and …", historical "has used N tokens".
+	# The cumulative "N total tokens on this issue." line is intentionally NOT
+	# matched — it is the running aggregate and would double-count.
+	#
+	# GH#34342: footer tokens and time are cumulative for the OpenCode session
+	# (gh-signature-helper-session.sh), and continuation dispatches can resume
+	# that session. A later footer then repeats every earlier footer's spend
+	# ("6m and 89,214" → "6h 5m and 217,569" → "13h 2m and 356,637"). Footers
+	# by the same author whose implied session start (created_at − duration,
+	# widened by the display resolution and posting slack) overlaps and whose
+	# tokens do not decrease are one session: count only the increment. A
+	# pre-window footer of that session is the baseline, never window spend.
+	local spend_data
+	spend_data=$(printf '%s' "$comments_json" | jq -r --argjson checkpoint "$checkpoint_epoch" '
 		def epoch: try ((.created_at // "") | fromdateiso8601) catch 0;
-		[.[][]]
-		|
-		(map(select(
+		# Durations are truncated to their smallest displayed unit
+		# (_format_duration drops minutes once days are shown).
+		def duration:
+			if test("^[0-9]+[dhms]( [0-9]+[dhms])*$") then
+				{secs: ([scan("([0-9]+)([dhms])")
+					| (.[0] | tonumber) * ({"d": 86400, "h": 3600, "m": 60, "s": 1}[.[1]])] | add),
+				 res: (if test("d") then 3600 elif test("[hm]") then 60 else 1 end)}
+			else null end;
+		120 as $slack
+		| [.[][]] as $all
+		| ($all | map(select(
 				((.body // "") | contains("<!-- aidevops-signed-approval -->"))
 				or ((.body // "") | contains("<!-- cost-circuit-breaker:reset"))
 			) | epoch) + [$checkpoint] | max // 0) as $reset_epoch
-		|
-		.[]
-		| select((.body // "") | contains("with the user in an interactive session") | not)
-		# Closeouts copy PR summaries (including prior worker footers); they are
-		# delivery receipts, not additional worker attempts or token spend.
-		| select((.body // "") | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->") | not)
-		| select(($reset_epoch == 0) or (epoch > $reset_epoch))
-		| .body // empty
+		| [$all[]
+			| select((.body // "") | contains("with the user in an interactive session") | not)
+			# Closeouts copy PR summaries (including prior worker footers); they are
+			# delivery receipts, not additional worker attempts or token spend.
+			| select((.body // "") | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->") | not)
+			| epoch as $t
+			| (.user.login // "") as $who
+			| (.body // "")
+			| match("(spent|has used) (?:(.*) and )?([0-9,]+) tokens"; "g")
+			| (.captures[2].string | gsub(","; "")) as $raw
+			| select($raw | test("^[0-9]+$"))
+			| ((.captures[1].string // "") | duration) as $dur
+			| {t: $t, who: $who, tok: ($raw | tonumber),
+			   inwin: (($reset_epoch == 0) or ($t > $reset_epoch)),
+			   session: (if $dur != null and $who != "" and $t > 0 then
+				{lo: ($t - $dur.secs - $dur.res - $slack), hi: ($t - $dur.secs + $slack)}
+				else null end)}]
+		| sort_by(.t)
+		| reduce .[] as $f ({chains: [], total: 0, attempts: 0};
+			(if $f.session == null then null else
+				([.chains | to_entries[] | .value as $c
+					| select($c.who == $f.who and $c.last <= $f.tok
+						and $c.lo <= $f.session.hi and $f.session.lo <= $c.hi) | .key]
+				 | last) end) as $idx
+			| (if $idx == null then $f.tok else $f.tok - .chains[$idx].last end) as $inc
+			| (if $f.session == null then .
+				elif $idx == null then .chains += [$f.session + {who: $f.who, last: $f.tok}]
+				else .chains[$idx] = ($f.session + {who: $f.who, last: $f.tok}) end)
+			| if $f.inwin then .total += $inc | .attempts += 1 else . end)
+		| "\(.total)|\(.attempts)"
 	' 2>/dev/null) || return 1
-	if [[ -z "$bodies" ]]; then
-		# No countable comments — zero spend, zero attempts (fail-open via 0|0 not 1)
-		printf '0|0'
-		return 0
+	if [[ ! "$spend_data" =~ ^[0-9]+\|[0-9]+$ ]]; then
+		return 1
 	fi
 
-	# Match signature footer patterns. The footer can take several shapes:
-	#   "spent 30,000 tokens"                  (no time)
-	#   "spent 4m and 30,000 tokens"           (with session time)
-	#   "spent 1h 30m and 30,000 tokens"       (with hours+minutes)
-	#   "spent 2d 3h 15m and 30,000 tokens"    (with days+hours+minutes)
-	#   "has used 30,000 tokens"               (historical wording)
-	#
-	# Strategy: collapse the optional "<time> and " infix so all variants
-	# reduce to "(spent|has used) N tokens", then extract N. The cumulative
-	# "N total tokens on this issue." line is intentionally NOT matched —
-	# it's the running aggregate of prior comments and would double-count
-	# every time a new worker reports its own per-comment spend.
-	local raw_vals
-	raw_vals=$(printf '%s' "$bodies" |
-		sed -E 's/(spent|has used) (.* and )?([0-9,]+ tokens)/\1 \3/g' |
-		grep -oE '(spent|has used) [0-9,]+ tokens' |
-		grep -oE '[0-9,]+' |
-		tr -d ',' || true)
-
-	local total_tokens=0 attempts=0
-	if [[ -n "$raw_vals" ]]; then
-		local v
-		while IFS= read -r v; do
-			[[ -z "$v" ]] && continue
-			[[ "$v" =~ ^[0-9]+$ ]] || continue
-			total_tokens=$((total_tokens + v))
-			attempts=$((attempts + 1))
-		done <<<"$raw_vals"
-	fi
-
-	printf '%s|%s' "$total_tokens" "$attempts"
+	printf '%s' "$spend_data"
 	return 0
 }
 
