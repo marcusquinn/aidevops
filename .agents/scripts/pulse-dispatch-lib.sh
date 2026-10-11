@@ -66,6 +66,11 @@ _DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
 _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS:-1800}"
 [[ "$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS=1800
 ((_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS <= 1800)) || _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS=1800
+# GH#34402: bound the exact-PR REST read behind a worker-draft hint, so a slow
+# API cannot hold the candidate stage that only wanted to skip cheaply.
+_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS:-10}"
+[[ "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=10
+((_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS <= 30)) || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=30
 # A terminal-blocker circuit is keyed to the issue revision: an edit, a retry
 # directive or any new comment bumps updatedAt and invalidates the hint at once.
 # Only target-code revisions can re-arm it silently, so bound that delay. Each
@@ -127,19 +132,45 @@ _dispatch_negative_cache_path() {
 
 # Prefetch runs before dispatch and can take several minutes. Bound snapshot age
 # to 15 minutes (rather than 90 seconds) so this cycle's PR evidence survives
-# the prefetch lane; missing/changed PRs and older snapshots fall through.
+# the prefetch lane. A complete snapshot within that bound is authoritative: a
+# PR missing from it is no longer open. GH#34402: early dispatch can spend the
+# cycle budget before prefetch for hours, so otherwise read the exact PR.
 _dispatch_negative_pr_fingerprint() {
 	local repo="$1" pr="$2" snapshot=""
 	[[ "$pr" =~ ^[0-9]+$ ]] || return 1
-	snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) || return 1
-	jq -er --argjson pr "$pr" '
-		select(.complete == true and ((now - (.timestamp | fromdateiso8601)) >= 0)
-			and ((now - (.timestamp | fromdateiso8601)) < 900)) |
-		.items[] | select(.number == $pr) |
-		select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
-		select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
-		[.updatedAt, .headRefOid] | join("_")
-	' <<<"$snapshot" 2>/dev/null
+	if snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) &&
+		jq -e '.complete == true and ((now - (.timestamp | fromdateiso8601)) >= 0)
+			and ((now - (.timestamp | fromdateiso8601)) < 900)' <<<"$snapshot" >/dev/null 2>&1; then
+		jq -er --argjson pr "$pr" '
+			.items[] | select(.number == $pr) |
+			select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
+			select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
+			[.updatedAt, .headRefOid] | join("_")
+		' <<<"$snapshot" 2>/dev/null
+		return $?
+	fi
+	_dispatch_negative_pr_rest_fingerprint "$repo" "$pr"
+	return $?
+}
+
+# GH#34402: one bounded REST read of the exact PR, mapped like the prefetch
+# REST snapshot (updated_at -> updatedAt, head.sha -> headRefOid) so either
+# source yields the same fingerprint. Only an open draft can be a worker
+# checkpoint; any error or other state returns 1 and the full ceremony runs.
+# The pulse puts the gh shim first on PATH, and its plain REST read path
+# records this call, so it is not recorded here as well.
+_dispatch_negative_pr_rest_fingerprint() {
+	local repo="$1" pr="$2" pr_json=""
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	declare -F timeout_sec >/dev/null 2>&1 || return 1
+	pr_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+		gh api "repos/${repo}/pulls/${pr}" 2>/dev/null) || return 1
+	jq -er '
+		select(.state == "open" and .draft == true) |
+		select((.updated_at | type) == "string" and (.head.sha | type) == "string") |
+		select((.updated_at | length) > 0 and (.head.sha | length) > 0) |
+		[.updated_at, .head.sha] | join("_")
+	' <<<"$pr_json" 2>/dev/null
 	return $?
 }
 
@@ -266,8 +297,8 @@ _dispatch_negative_cache_reason() {
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
 		! _dispatch_maintainer_gate_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
-		# owner. The worker-draft exception uses a complete, bounded-age PR
-		# snapshot and exact fingerprint instead; neither path permits a launch.
+		# owner. The worker-draft exception uses the exact PR fingerprint from a
+		# fresh complete snapshot or one bounded REST read; neither permits a launch.
 		jq -e '(.assignees // [] | length) > 0 and
 			([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
 	fi
@@ -286,6 +317,9 @@ _dispatch_negative_cache_reason() {
 		;;
 	worker_draft_checkpoint_blocked)
 		[[ -n "$fingerprint" ]] || return 1
+		# GH#34402: the PR read can cost an API call, so expire first.
+		now=$(date +%s)
+		((now >= stamp && now - stamp < ttl)) || return 1
 		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
 		;;

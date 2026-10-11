@@ -1651,6 +1651,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18672 fix(worker-lifecycle): stop the fix-the-fixer log watcher deadlocking workers before model invocation #bug #framework tier:standard ref:GH#34393 logged:2026-10-11 -> [todo/tasks/t18672-brief.md] pr:#34394 completed:2026-10-11
 
+- [ ] t18673 fix(pulse): read the exact PR when the prefetch snapshot is stale so worker draft-checkpoint dispatch hints work #bug #framework tier:standard ref:GH#34402 logged:2026-10-11 -> [todo/tasks/t18673-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

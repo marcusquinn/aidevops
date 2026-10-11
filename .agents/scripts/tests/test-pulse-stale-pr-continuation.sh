@@ -236,6 +236,28 @@ write_pr_snapshot() {
 		'{complete:$complete,timestamp:$ts,items:[{number:$pr,updatedAt:$updated,headRefOid:$oid}]}' >"$SNAPSHOT_FILE"
 	return 0
 }
+# GH#34402: stub the bounded exact-PR REST read. Fingerprints are read inside
+# command substitutions, so calls are counted in a file.
+GH_CALLS_FILE="${TEST_ROOT}/gh-calls"
+: >"$GH_CALLS_FILE"
+STUB_PR_REST_JSON=""
+timeout_sec() {
+	shift
+	"$@"
+	return $?
+}
+gh() {
+	printf '%s\n' "$*" >>"$GH_CALLS_FILE"
+	[[ -n "$STUB_PR_REST_JSON" ]] || return 1
+	printf '%s\n' "$STUB_PR_REST_JSON"
+	return 0
+}
+pr_rest_json() {
+	local state="$1" draft="$2" oid="$3"
+	jq -cn --arg state "$state" --argjson draft "$draft" --arg oid "$oid" \
+		'{state:$state,draft:$draft,updated_at:"2026-09-29T12:00:00Z",head:{sha:$oid}}'
+	return 0
+}
 candidate='{"number":29507,"repo_slug":"owner/repo","updatedAt":"2026-09-29T12:01:00Z","assignees":[],"labels":["status:available"]}'
 cache_file="${HOME}/.aidevops/logs/dispatch-negative-cache/owner--repo--29507"
 write_pr_snapshot 430 first-head
@@ -277,11 +299,17 @@ if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
 else
 	print_result "missing PR invalidates the checkpoint" 1
 fi
-write_pr_snapshot 901 first-head
-if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
-	print_result "stale snapshot cannot suppress dispatch" 0
+if [[ ! -s "$GH_CALLS_FILE" ]]; then
+	print_result "fresh complete snapshot is authoritative without an exact-PR read" 0
 else
-	print_result "stale snapshot cannot suppress dispatch" 1
+	print_result "fresh complete snapshot is authoritative without an exact-PR read" 1
+fi
+write_pr_snapshot 901 first-head
+if ! _dispatch_negative_cache_reason "$candidate" >/dev/null &&
+	[[ "$(<"$GH_CALLS_FILE")" == "api repos/owner/repo/pulls/29519" ]]; then
+	print_result "stale snapshot with a failed exact-PR read cannot suppress dispatch" 0
+else
+	print_result "stale snapshot with a failed exact-PR read cannot suppress dispatch" 1
 fi
 write_pr_snapshot 430 first-head
 if ! _dispatch_negative_cache_reason "${candidate/12:01:00/12:02:00}" >/dev/null; then
@@ -289,6 +317,47 @@ if ! _dispatch_negative_cache_reason "${candidate/12:01:00/12:02:00}" >/dev/null
 else
 	print_result "edited issue invalidates the checkpoint" 1
 fi
+
+# GH#34402: prefetch can go hours without a fresh snapshot, so a stale or
+# incomplete one falls back to the exact PR; only an unchanged open draft holds.
+write_pr_snapshot 901 first-head
+STUB_PR_REST_JSON=$(pr_rest_json open true first-head)
+if [[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_blocked ]]; then
+	print_result "stale snapshot reuses the hint for the unchanged open draft" 0
+else
+	print_result "stale snapshot reuses the hint for the unchanged open draft" 1
+fi
+STUB_PR_REST_JSON=$(pr_rest_json closed true first-head)
+closed_rc=0
+_dispatch_negative_cache_reason "$candidate" >/dev/null || closed_rc=$?
+STUB_PR_REST_JSON=$(pr_rest_json open false first-head)
+ready_rc=0
+_dispatch_negative_cache_reason "$candidate" >/dev/null || ready_rc=$?
+if [[ "$closed_rc" -ne 0 && "$ready_rc" -ne 0 ]]; then
+	print_result "closed or ready PR does not suppress dispatch" 0
+else
+	print_result "closed or ready PR does not suppress dispatch" 1
+fi
+rm -f "$cache_file"
+write_pr_snapshot 430 first-head 29519 false
+STUB_PR_REST_JSON=$(pr_rest_json open true rest-head)
+_dispatch_cache_confirmed_block "$candidate" 29507 owner/repo
+if grep -q $'\tworker_draft_checkpoint_blocked\t29519\t2026-09-29T12:00:00Z_rest-head\t' "$cache_file" &&
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_blocked ]]; then
+	print_result "incomplete snapshot records and reuses the exact PR revision" 0
+else
+	print_result "incomplete snapshot records and reuses the exact PR revision" 1
+fi
+: >"$GH_CALLS_FILE"
+printf '%s\t%s\t%s\t%s\t%s\t\n' "$(($(date +%s) - _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS - 1))" \
+	"2026-09-29T12:01:00Z" worker_draft_checkpoint_blocked 29519 "2026-09-29T12:00:00Z_rest-head" >"$cache_file"
+if ! _dispatch_negative_cache_reason "$candidate" >/dev/null && [[ ! -s "$GH_CALLS_FILE" ]]; then
+	print_result "expired hint is rejected before any exact-PR read" 0
+else
+	print_result "expired hint is rejected before any exact-PR read" 1
+fi
+STUB_PR_REST_JSON=""
+unset -f gh timeout_sec
 
 # GH#33654: a stall-released (unassigned, status:available) issue whose worker
 # draft has no live worker routes to the exact-head continuation helper instead
