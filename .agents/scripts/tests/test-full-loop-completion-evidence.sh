@@ -992,10 +992,15 @@ if bash "$complete_runner" >/dev/null 2>&1; then
 fi
 printf 'PASS release:failed blocks cleanup before worktree removal\n'
 
+# CI checks out a detached HEAD; the handoff needs worktree and branch evidence.
+handoff_repo="${ROOT}/handoff-repo"
+mkdir -p "$handoff_repo"
+git -C "$handoff_repo" init -q -b handoff-test
 handoff_runner="${ROOT}/handoff-runner.sh"
 cat >"$handoff_runner" <<RUNNER
 #!/usr/bin/env bash
 set -euo pipefail
+cd '${handoff_repo}'
 SCRIPT_DIR='${SCRIPTS_DIR}'
 STATE_DIR='${ROOT}/handoff-state'
 STATE_FILE='${ROOT}/handoff-state/full-loop.state'
@@ -1032,6 +1037,7 @@ status_runner="${ROOT}/status-runner.sh"
 cat >"$status_runner" <<RUNNER
 #!/usr/bin/env bash
 set -euo pipefail
+cd '${handoff_repo}'
 SCRIPT_DIR='${SCRIPTS_DIR}'
 STATE_DIR='${ROOT}/handoff-state'
 STATE_FILE='${ROOT}/handoff-state/full-loop.state'
