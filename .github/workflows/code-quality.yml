@@ -463,6 +463,7 @@ jobs:
         bash .agents/scripts/tests/test-repo-maintenance-state.sh
         bash .agents/scripts/tests/test-maintenance-repo-selection.sh
         bash .agents/scripts/tests/test-maintenance-selector-contract.sh
+        bash .agents/scripts/tests/test-full-loop-completion-evidence.sh
 
     - name: MCP Inspector Health Identity Regression (GH#27967)
       run: |

@@ -434,6 +434,14 @@ unset AIDEVOPS_FULL_LOOP_RECEIPT_DIR
 printf 'PASS manual release inclusion verifies source evidence and ancestry, fails closed, and replays without mutation\n'
 
 # Execute the workflow's actual verification shell, without publishing anything.
+# Needs PyYAML: CI installs it and must never skip; locally skip only this section.
+if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+	if [[ "${CI:-}" == "true" ]]; then
+		printf 'FAIL actual workflow shell verification: PyYAML unavailable under CI=true\n'
+		exit 1
+	fi
+	printf 'SKIP actual workflow shell verification: PyYAML unavailable (CI installs PyYAML==6.0.3)\n'
+else
 python3 - "$SCRIPTS_DIR" "$ROOT" <<'PY'
 import json
 import os
@@ -490,6 +498,7 @@ result = subprocess.run(['bash', str(scripts / 'check-workflows-helper.sh'), '--
 assert 'CURRENT/CALLER' in result.stdout, result.stdout
 print('PASS managed release caller is offered only with Actions enabled and classifies current')
 PY
+fi
 
 direct_worktree="${ROOT}/direct-merge-worktree"
 mkdir -p "$direct_worktree"
