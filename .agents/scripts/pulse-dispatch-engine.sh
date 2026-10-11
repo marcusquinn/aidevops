@@ -1900,7 +1900,7 @@ _run_preflight_stages() {
 	local _label_timeout=""
 	if _label_timeout=$(_preflight_refill_reserved_timeout "$_pflt_timeout"); then
 		_pulse_run_budget_priority_stage_with_timeout "preflight_label_maintenance" "$_label_timeout" \
-			_preflight_label_maintenance || true
+			_preflight_label_maintenance "$_label_timeout" || true
 	else
 		echo "[pulse-wrapper] preflight_label_maintenance deferred: insufficient wall-clock budget for post-label refill" >>"$LOGFILE"
 	fi

@@ -619,6 +619,27 @@ _consolidation_ttl_sweep_one() {
 # Cheap: one gh issue list per repo + one child-exists lookup per labelled
 # issue, then dispatch only for those missing a child.
 #######################################
+_backfill_consolidation_locks_for_repo() {
+	local slug="$1" locked_issues_json='[]' locked_num=""
+	# The caller's total_locks_expired is dynamically scoped (Bash 3.2).
+	_pte_label_phase_needed "$slug" 1 || return 0
+	locked_issues_json=$(gh_issue_list --repo "$slug" --state open \
+		--label "consolidation-in-progress" \
+		--json number --limit 50 2>/dev/null) || return 1
+	while IFS= read -r locked_num; do
+		[[ "$locked_num" =~ ^[0-9]+$ ]] || continue
+		_pte_label_issue_start "$slug" 1 "$locked_num" || {
+			[[ "$?" -eq 1 ]] && continue
+			return 1
+		}
+		_pte_rest_core_deferrable_allows_next "consolidation_lock_issue:${slug}#${locked_num}" || return 1
+		if _consolidation_ttl_sweep_one "$slug" "$locked_num"; then
+			total_locks_expired=$((total_locks_expired + 1))
+		fi
+	done < <(printf '%s' "$locked_issues_json" | jq -r 'sort_by(.number) | .[]?.number // ""' 2>/dev/null)
+	return 0
+}
+
 _backfill_stale_consolidation_labels() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
@@ -627,6 +648,7 @@ _backfill_stale_consolidation_labels() {
 	local maintenance_flag="" pulse_flag="" rest_deferred=0
 	while IFS='|' read -r slug rpath maintenance_flag pulse_flag; do
 		[[ -n "$slug" ]] || continue
+		_pte_label_issue_start "$slug" 0 0 || { [[ "$?" -eq 1 ]] || return 1; }
 		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 			|| ! repo_allows_pulse_write_actions "$slug"; then
 			continue
@@ -641,22 +663,10 @@ _backfill_stale_consolidation_labels() {
 		# on a parent that already has both labels (lock was acquired before
 		# needs-consolidation was applied) or only the lock (acquire path
 		# where child creation failed after lock but before flag-parent).
-		local locked_issues_json
-		locked_issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--label "consolidation-in-progress" \
-			--json number --limit 50 2>/dev/null) || locked_issues_json='[]'
-		local locked_num
-		while IFS= read -r locked_num; do
-			[[ "$locked_num" =~ ^[0-9]+$ ]] || continue
-			if ! _pte_rest_core_deferrable_allows_next "consolidation_lock_issue:${slug}#${locked_num}"; then
-				rest_deferred=1
-				break
-			fi
-			if _consolidation_ttl_sweep_one "$slug" "$locked_num"; then
-				total_locks_expired=$((total_locks_expired + 1))
-			fi
-		done < <(printf '%s' "$locked_issues_json" | jq -r '.[]?.number // ""' 2>/dev/null)
-		[[ "$rest_deferred" -eq 0 ]] || break
+		if ! _backfill_consolidation_locks_for_repo "$slug"; then
+			rest_deferred=1
+			break
+		fi
 		[[ "$maintenance_flag" == "false" || "$pulse_flag" != "true" ]] && continue
 		if ! _pte_rest_core_deferrable_allows_next "consolidation_backfill_scan:${slug}"; then
 			rest_deferred=1
@@ -666,10 +676,11 @@ _backfill_stale_consolidation_labels() {
 		local issues_json
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "needs-consolidation" \
-			--json number,labels --limit 50 2>/dev/null) || issues_json='[]'
+			--json number,labels --limit 50 2>/dev/null) || { rest_deferred=1; break; }
 
 		while IFS='|' read -r num labels_csv; do
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			_pte_label_issue_start "$slug" 2 "$num" || { [[ "$?" -eq 1 ]] && continue; return 1; }
 			if ! _pte_rest_core_deferrable_allows_next "consolidation_backfill_issue:${slug}#${num}"; then
 				rest_deferred=1
 				break
@@ -705,9 +716,9 @@ _backfill_stale_consolidation_labels() {
 			if _dispatch_issue_consolidation "$num" "$slug" "$rpath"; then
 				total_backfilled=$((total_backfilled + 1))
 			fi
-		done < <(printf '%s' "$issues_json" | jq -r '.[] | "\(.number)|\([.labels[].name] | join(","))"' 2>/dev/null)
+		done < <(printf '%s' "$issues_json" | jq -r 'sort_by(.number) | .[] | "\(.number)|\([.labels[].name] | join(","))"' 2>/dev/null)
 		[[ "$rest_deferred" -eq 0 ]] || break
-	done < <(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | "\(.slug)|\(.path // "")|\(if .maintenance == false then false else true end)|\(.pulse // false)"' "$repos_json" 2>/dev/null)
+	done < <(_pte_label_repos "$(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | "\(.slug)|\(.path // "")|\(if .maintenance == false then false else true end)|\(.pulse // false)"' "$repos_json" 2>/dev/null)")
 
 	if [[ "$total_backfilled" -gt 0 ]]; then
 		echo "[pulse-wrapper] Consolidation backfill: dispatched ${total_backfilled} stale consolidation child issue(s)" >>"$LOGFILE"
@@ -718,6 +729,7 @@ _backfill_stale_consolidation_labels() {
 	if [[ "$total_locks_expired" -gt 0 ]]; then
 		echo "[pulse-wrapper] Consolidation backfill: cleared ${total_locks_expired} stale consolidation-in-progress lock(s) (t2151 TTL)" >>"$LOGFILE"
 	fi
+	_pte_label_pass_finished "$rest_deferred" || return $?
 	return 0
 }
 

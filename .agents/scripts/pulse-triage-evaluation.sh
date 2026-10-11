@@ -62,6 +62,10 @@ fi
 _pte_rest_core_deferrable_allows_next() {
 	local context="$1"
 	local budget_rc=0
+	if [[ "${_LABEL_MAINTENANCE_DEADLINE:-}" =~ ^[0-9]+$ ]] && [[ "$(date +%s)" -ge "$_LABEL_MAINTENANCE_DEADLINE" ]]; then
+		echo "[pulse-wrapper] Label maintenance: deadline reached at ${context}; resuming next cycle" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null 2>&1; then
 		pulse_rest_core_priority_allows_next deferrable "$context" || budget_rc=$?
 	elif declare -F pulse_rest_core_priority_allows >/dev/null 2>&1; then
@@ -72,6 +76,58 @@ _pte_rest_core_deferrable_allows_next() {
 	[[ "$budget_rc" -eq 0 ]] && return 0
 	echo "[pulse-wrapper] Label maintenance: REST-core reserve reached at ${context}; remaining work deferred (GH#29742)" >>"${LOGFILE:-/dev/null}"
 	return 1
+}
+
+# Cursor helpers are inert outside the orchestrated maintenance stage. Persist
+# before work so a watchdog kill can repeat at most the current idempotent unit.
+# Numeric phases distinguish backfill's lock sweep, metadata and label sweep.
+_pte_label_cursor_write() {
+	local slug="$1" phase="${2:-0}" issue="${3:-0}"
+	[[ -n "${_LABEL_CURSOR_FILE:-}" ]] || return 0
+	local tmp=""
+	tmp=$(mktemp "${_LABEL_CURSOR_FILE}.XXXXXX") || return 1
+	printf '%s %s %s\n' "$slug" "$phase" "$issue" >"$tmp"
+	mv -f "$tmp" "$_LABEL_CURSOR_FILE" || return 1
+	return 0
+}
+
+_pte_label_repos() {
+	local rows="$1"
+	# Earlier repositories already completed in this sweep. Unknown/deleted
+	# resume repositories reset the pass rather than dropping the entire list.
+	printf '%s\n' "$rows" | awk -F '|' -v start="${_LABEL_CURSOR_SLUG:-}" '
+		NF { a[++n]=$0; if ($(1) == start) s=n }
+		END { if (!s) s=1; for (i=s; i<=n; i++) print a[i] }'
+	return 0
+}
+
+_pte_label_issue_start() {
+	local slug="$1" phase="$2" issue="$3"
+	if [[ "$slug" == "${_LABEL_CURSOR_SLUG:-}" ]]; then
+		[[ "$phase" -lt "${_LABEL_CURSOR_PHASE:-0}" ]] && return 1
+		if [[ "$phase" -eq "${_LABEL_CURSOR_PHASE:-0}" && "$issue" -lt "${_LABEL_CURSOR_ISSUE:-0}" ]]; then
+			return 1
+		fi
+	fi
+	_pte_label_cursor_write "$slug" "$phase" "$issue" || return 2
+	return 0
+}
+
+_pte_label_phase_needed() {
+	local slug="$1" phase="$2"
+	[[ "$slug" == "${_LABEL_CURSOR_SLUG:-}" && "$phase" -lt "${_LABEL_CURSOR_PHASE:-0}" ]] && return 1
+	return 0
+}
+
+_pte_label_pass_finished() {
+	local deferred="$1"
+	[[ -n "${_LABEL_CURSOR_FILE:-}" ]] || return 0
+	if [[ "$deferred" -ne 0 ]]; then
+		echo "[pulse-wrapper] Label maintenance: partial ${_LABEL_MAINTENANCE_KEY:-}; resume $(<"$_LABEL_CURSOR_FILE")" >>"${LOGFILE:-/dev/null}"
+		return 2
+	fi
+	rm -f "$_LABEL_CURSOR_FILE" || return 1
+	return 0
 }
 
 # t2161: Idempotently remove the `needs-consolidation` label from an issue
@@ -322,6 +378,7 @@ _reevaluate_consolidation_labels() {
 	local total_cleared=0 rest_deferred=0
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		_pte_label_issue_start "$slug" 0 0 || { [[ "$?" -eq 1 ]] || return 1; }
 		if ! _pte_rest_core_deferrable_allows_next "consolidation_repo:${slug}"; then
 			rest_deferred=1
 			break
@@ -329,10 +386,11 @@ _reevaluate_consolidation_labels() {
 		local issues_json
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "needs-consolidation" \
-			--json number --limit 50 2>/dev/null) || issues_json="[]"
+			--json number --limit 50 2>/dev/null) || { rest_deferred=1; break; }
 
 		while IFS= read -r num; do
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			_pte_label_issue_start "$slug" 1 "$num" || { [[ "$?" -eq 1 ]] && continue; return 1; }
 			if ! _pte_rest_core_deferrable_allows_next "consolidation_issue:${slug}#${num}"; then
 				rest_deferred=1
 				break
@@ -342,13 +400,14 @@ _reevaluate_consolidation_labels() {
 			if ! _issue_needs_consolidation "$num" "$slug"; then
 				total_cleared=$((total_cleared + 1))
 			fi
-		done < <(printf '%s' "$issues_json" | jq -r '.[]?.number // ""')
+		done < <(printf '%s' "$issues_json" | jq -r 'sort_by(.number) | .[]?.number // ""')
 		[[ "$rest_deferred" -eq 0 ]] || break
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	done < <(_pte_label_repos "$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)")
 
 	if [[ "$total_cleared" -gt 0 ]]; then
 		echo "[pulse-wrapper] Consolidation re-evaluation: cleared ${total_cleared} stale needs-consolidation label(s)" >>"$LOGFILE"
 	fi
+	_pte_label_pass_finished "$rest_deferred" || return $?
 	return 0
 }
 
@@ -534,6 +593,10 @@ _backfill_simplification_auto_dispatch_labels() {
 	local slug="$1"
 	local issues_json="[]"
 	local updated=0
+	if ! _pte_label_phase_needed "$slug" 1; then
+		printf '0\n'
+		return 0
+	fi
 
 	[[ -n "$slug" ]] || {
 		printf '0\n'
@@ -541,24 +604,25 @@ _backfill_simplification_auto_dispatch_labels() {
 	}
 	if ! _pte_rest_core_deferrable_allows_next "simplification_backfill_repo:${slug}"; then
 		printf '0\n'
-		return 0
+		return 2
 	fi
 
 	issues_json=$(gh_issue_list --repo "$slug" --state open \
 		--label "function-complexity-debt" --label "status:available" \
-		--json number,labels --limit 100 2>/dev/null) || issues_json="[]"
+		--json number,labels --limit 100 2>/dev/null) || return 2
 
 	local num="" labels_to_add=""
 	while IFS=$'\t' read -r num labels_to_add; do
 		[[ "$num" =~ ^[0-9]+$ ]] || continue
-		_pte_rest_core_deferrable_allows_next "simplification_backfill_issue:${slug}#${num}" || break
+		_pte_label_issue_start "$slug" 1 "$num" || { [[ "$?" -eq 1 ]] && continue; return 2; }
+		_pte_rest_core_deferrable_allows_next "simplification_backfill_issue:${slug}#${num}" || return 2
 		[[ -n "$labels_to_add" ]] || labels_to_add="auto-dispatch"
 		if gh issue edit "$num" --repo "$slug" \
 			--add-label "$labels_to_add" >/dev/null 2>&1; then
 			updated=$((updated + 1))
 		fi
 	done < <(printf '%s' "$issues_json" | jq -r '
-		.[]?
+		sort_by(.number) | .[]?
 		| (.labels | map(.name)) as $labels
 		| select(($labels | index("auto-dispatch")) == null)
 		| select(($labels | index("no-auto-dispatch")) == null)
@@ -598,6 +662,7 @@ _reevaluate_simplification_labels() {
 	local rest_deferred=0
 	while IFS='|' read -r slug rpath; do
 		[[ -n "$slug" && -n "$rpath" ]] || continue
+		_pte_label_issue_start "$slug" 0 0 || { [[ "$?" -eq 1 ]] || return 1; }
 		if ! _pte_rest_core_deferrable_allows_next "simplification_repo:${slug}"; then
 			rest_deferred=1
 			break
@@ -612,7 +677,7 @@ _reevaluate_simplification_labels() {
 		_pulse_refresh_repo "$rpath"
 
 		local backfilled_count=0
-		backfilled_count=$(_backfill_simplification_auto_dispatch_labels "$slug") || backfilled_count=0
+		backfilled_count=$(_backfill_simplification_auto_dispatch_labels "$slug") || { rest_deferred=1; break; }
 		[[ "$backfilled_count" =~ ^[0-9]+$ ]] || backfilled_count=0
 		total_backfilled=$((total_backfilled + backfilled_count))
 		if ! _pte_rest_core_deferrable_allows_next "simplification_repo_after_backfill:${slug}"; then
@@ -623,12 +688,13 @@ _reevaluate_simplification_labels() {
 		local issues_json
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "needs-simplification" \
-			--json number,body --limit 50 2>/dev/null) || issues_json="[]"
+			--json number,body --limit 50 2>/dev/null) || { rest_deferred=1; break; }
 
 		local issue="" num="" body=""
 		while IFS= read -r issue; do
 			num=$(jq -r '.number // ""' <<<"$issue")
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			_pte_label_issue_start "$slug" 2 "$num" || { [[ "$?" -eq 1 ]] && continue; return 1; }
 			if ! _pte_rest_core_deferrable_allows_next "simplification_issue:${slug}#${num}"; then
 				rest_deferred=1
 				break
@@ -656,9 +722,9 @@ _reevaluate_simplification_labels() {
 					total_cleared=$((total_cleared + 1))
 				fi
 			fi
-		done < <(printf '%s' "$issues_json" | jq -c '.[]?')
+		done < <(printf '%s' "$issues_json" | jq -c 'sort_by(.number) | .[]?')
 		[[ "$rest_deferred" -eq 0 ]] || break
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
+	done < <(_pte_label_repos "$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)")
 
 	if [[ "$total_cleared" -gt 0 ]]; then
 		echo "[pulse-wrapper] Simplification re-evaluation: cleared ${total_cleared} stale needs-simplification label(s)" >>"$LOGFILE"
@@ -666,6 +732,7 @@ _reevaluate_simplification_labels() {
 	if [[ "$total_backfilled" -gt 0 ]]; then
 		echo "[pulse-wrapper] Simplification re-evaluation: backfilled auto-dispatch on ${total_backfilled} function-complexity-debt issue(s)" >>"$LOGFILE"
 	fi
+	_pte_label_pass_finished "$rest_deferred" || return $?
 	return 0
 }
 

@@ -324,12 +324,13 @@ _preflight_rest_core_allows_next() {
 }
 
 #######################################
-# Oldest completed substage first; equal/missing epochs retain historical order.
+# Oldest attempted substage first; bootstrap from completion epochs on upgrade.
 #######################################
 _preflight_label_maintenance_order() {
-	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.attempts"
 	local key="" epoch="" extra=""
 	local consolidation=0 backfill=0 simplification=0
+	[[ -f "$state_file" ]] || state_file="${state_file%.attempts}"
 	if [[ -r "$state_file" && -f "$state_file" ]]; then
 		while read -r key epoch extra; do
 			[[ -z "$extra" && "$epoch" =~ ^[0-9]+$ ]] || continue
@@ -350,7 +351,7 @@ _preflight_label_maintenance_order() {
 #######################################
 _preflight_label_maintenance_completed() {
 	local completed_key="$1"
-	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
+	local state_file="${2:-${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}}"
 	local key="" epoch="" extra="" tmp=""
 	mkdir -p "${state_file%/*}" || return 1
 	tmp=$(mktemp "${state_file}.XXXXXX") || return 1
@@ -392,7 +393,17 @@ _preflight_label_maintenance_first_attempt() {
 # candidates for the post-maintenance refill.
 #######################################
 _preflight_label_maintenance() {
-	local key context fn timing started rc first=1
+	local timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	[[ "$timeout" =~ ^[1-9][0-9]*$ ]] || return 1
+	# Reserve 30s for an in-flight API/git unit and watchdog scheduling. Each
+	# substage gets a share of the remaining time; partials count as attempts
+	# for ordering, but never as completed sweeps in label-maintenance-epochs.
+	local stage_deadline=$(($(date +%s) + timeout - 30)) remaining=3 now
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
+	local _LABEL_MAINTENANCE_DEADLINE=0 _LABEL_MAINTENANCE_KEY=""
+	local _LABEL_CURSOR_FILE="" _LABEL_CURSOR_SLUG="" _LABEL_CURSOR_PHASE=0 _LABEL_CURSOR_ISSUE=0
+	mkdir -p "${state_file%/*}" || return 1
+	local key context fn timing started rc first=1 first_key=""
 	while IFS= read -r key; do
 		case "$key" in
 			consolidation) context="label_maintenance_consolidation_reevaluate"; fn="_reevaluate_consolidation_labels"; timing="reevaluate_consolidation_labels" ;;
@@ -400,18 +411,34 @@ _preflight_label_maintenance() {
 			simplification) context="label_maintenance_simplification_reevaluate"; fn="_reevaluate_simplification_labels"; timing="reevaluate_simplification_labels" ;;
 			*) continue ;;
 		esac
+		now=$(date +%s)
+		[[ "$now" -lt "$stage_deadline" ]] || return 0
+		_LABEL_MAINTENANCE_DEADLINE=$((now + (stage_deadline - now) / remaining))
+		remaining=$((remaining - 1))
+		_LABEL_MAINTENANCE_KEY="$key"
+		_LABEL_CURSOR_FILE="${state_file}.${key}.cursor"
+		_LABEL_CURSOR_SLUG="" _LABEL_CURSOR_PHASE=0 _LABEL_CURSOR_ISSUE=0
+		if [[ -r "$_LABEL_CURSOR_FILE" ]]; then
+			read -r _LABEL_CURSOR_SLUG _LABEL_CURSOR_PHASE _LABEL_CURSOR_ISSUE <"$_LABEL_CURSOR_FILE" || true
+			if [[ ! "$_LABEL_CURSOR_SLUG" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$_LABEL_CURSOR_PHASE" =~ ^[0-9]+$ || ! "$_LABEL_CURSOR_ISSUE" =~ ^[0-9]+$ ]]; then
+				_LABEL_CURSOR_SLUG="" _LABEL_CURSOR_PHASE=0 _LABEL_CURSOR_ISSUE=0
+			fi
+		fi
 		_preflight_rest_core_allows_next "$context" || return 0
 		if [[ "$first" -eq 1 ]]; then
 			_preflight_label_maintenance_first_attempt "$key" || true
 			first=0
+			first_key="$key"
 		fi
 		started=$SECONDS
+		_preflight_label_maintenance_completed "$key" "${state_file}.attempts" || return 1
 		rc=0
 		"$fn" || rc=$?
 		_log_substage_timing "substage:label_maintenance/${timing}" "$started" "$rc"
+		[[ "$rc" -eq 2 ]] && continue
 		[[ "$rc" -eq 0 ]] || return "$rc"
 		_preflight_label_maintenance_completed "$key" || echo "[pulse-wrapper] Could not persist label-maintenance completion: $key" >>"$LOGFILE"
-		if [[ "$first" -eq 0 ]]; then
+		if [[ "$key" == "$first_key" ]]; then
 			rm -f "${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.first-attempt"
 			first=2
 		fi

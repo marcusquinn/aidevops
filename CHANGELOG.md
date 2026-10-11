@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.2] - 2026-10-11
+
+### Added
+
+- owner labels, worktree teardown and report-only reaping for disposable Docker resources (#34298)
+
+### Changed
+
+- Documentation: keep Qlty on organisation repos and skip its out-of-minutes check
+
+### Fixed
+
+- privacy-guard pre-push reports unfetched remote tip
+- exempt non-required provider no-run checks from worker first-pass contract
+- bound and resume label maintenance (GH#34302) (#34306)
+- resume reconcile single pass from a cursor after budget abort or stage timeout (GH#34299)
+- resolve headless prompt defaults from agents root for deployed bundles (GH#34296)
+- defer parent-close near reconcile budget (GH#34289) (#34292)
+- resume interrupted async housekeeping and reconcile before blocker catch-up (#34291)
+
 ## [3.39.1] - 2026-10-10
 
 ### Changed
