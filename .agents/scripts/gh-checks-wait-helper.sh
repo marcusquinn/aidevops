@@ -341,7 +341,7 @@ configured_required_contexts() {
 		# GitHub answers 404 with these exact messages when the branch has no
 		# required status checks (or no classic protection). That is verified
 		# absence from the protection API; any other failure stays unknown.
-		if printf '%s' "$protection_json" | grep -qE 'Required status checks not enabled|Branch not protected'; then
+		if grep -qE 'Required status checks not enabled|Branch not protected' <<<"$protection_json"; then
 			protection_json='{}'
 		else
 			return 1

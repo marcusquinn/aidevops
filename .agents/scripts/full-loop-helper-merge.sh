@@ -1147,9 +1147,9 @@ _merge_try_review_only_admin_fallback() {
 	local pr_number="$1" repo="$2" merge_method="$3" match_head_sha="$4"
 	local squash_subject="$5" merge_body_file="$6" merge_output="$7"
 	local review_block=0
-	if printf '%s' "$merge_output" | grep -qE 'At least [0-9]+ approving review'; then
+	if grep -qE 'At least [0-9]+ approving review' <<<"$merge_output"; then
 		review_block=1
-	elif printf '%s' "$merge_output" | grep -qE 'base branch policy prohibits' &&
+	elif grep -qE 'base branch policy prohibits' <<<"$merge_output" &&
 		_merge_generic_block_is_review_only "$pr_number" "$repo"; then
 		review_block=1
 	fi
