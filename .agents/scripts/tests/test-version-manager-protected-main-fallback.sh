@@ -53,6 +53,9 @@ cat >"${BIN}/git" <<'STUB'
 set -u
 printf '%s\n' "$*" >>"${FAKE_GIT_LOG:?}"
 args=" $* "
+if [[ "$args" == *" push "* ]]; then
+	printf 'repo_verify=%s %s\n' "${AIDEVOPS_PREPUSH_REPO_VERIFY:-unset}" "$*" >>"${FAKE_PUSH_ENV_LOG:?}"
+fi
 if [[ "$args" == *" push --atomic origin HEAD:refs/heads/main --tags "* ]]; then
 	count=0
 	if [[ -f "${DIRECT_PUSH_COUNT:?}" ]]; then
@@ -147,6 +150,7 @@ chmod +x "${BIN}/gh"
 export REAL_GIT REMOTE RELEASE_COMMIT TAG_OBJECT
 export FAKE_GIT_LOG="${TEST_ROOT}/git.log"
 export FAKE_GH_LOG="${TEST_ROOT}/gh.log"
+export FAKE_PUSH_ENV_LOG="${TEST_ROOT}/push-env.log"
 export DIRECT_PUSH_COUNT="${TEST_ROOT}/direct-push-count"
 export PR_CREATED_FILE="${TEST_ROOT}/pr-created"
 export AUTO_MERGE_FILE="${TEST_ROOT}/auto-merge"
@@ -229,6 +233,16 @@ if grep -Eq ' rebase | commit --amend| tag -(d|s) ' "$FAKE_GIT_LOG"; then
 	exit 1
 fi
 printf 'PASS recovery branch preserves the original release commit and tag object\n'
+
+# GH#34434: release-tool pushes run in dependency-free worktrees, so each one
+# skips only the repo-verify guard for that command.
+grep -q 'push --atomic origin HEAD:refs/heads/main --tags' "$FAKE_PUSH_ENV_LOG"
+grep -q "push origin ${RECOVERY_HEAD}:refs/heads/${RECOVERY_BRANCH}" "$FAKE_PUSH_ENV_LOG"
+if grep -qv '^repo_verify=0 ' "$FAKE_PUSH_ENV_LOG"; then
+	printf 'FAIL a release push ran the dependency-bound repo-verify guard\n'
+	exit 1
+fi
+printf 'PASS release pushes skip only the repo-verify guard\n'
 
 grep -q '^pr create .*--head chore/release-v1.2.3-provenance .*--base main ' "$FAKE_GH_LOG"
 grep -q "^pr merge 77 --repo test/repo --auto --merge --match-head-commit ${RECOVERY_HEAD}$" "$FAKE_GH_LOG"

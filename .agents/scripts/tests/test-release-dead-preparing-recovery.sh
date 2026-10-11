@@ -262,6 +262,17 @@ printf 'PASS missing preparation refuses uncertain ownership, publication, regis
 		printf '{"host_id":"local","pid":43,"started_at":"new"}\n'
 		return 0
 	}
+	# GH#34433: same-source reclaim drops the contract and records its predecessor.
+	RECLAIM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+	RECLAIMED_JQ='del(.reservation_contract) | .phase="reconcile-required"
+		| .reservation_contract_reclaim={type:"same-source-reclaim/v1",
+			prior_contract:"fenced-prepublication/v1",
+			previous_head:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",reclaimed_at:"2020-01-01T00:00:00Z"}'
+	_release_lane_state_at_head() {
+		[[ "$1" == "test/repo" && "$2" == "$RECLAIM_HEAD" ]] || return 1
+		printf '%s\n' "$PREDECESSOR_STATE"
+		return 0
+	}
 	_release_lane_write() {
 		[[ "$1" == "test/repo" && "$3" == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]] || return 1
 		[[ "$CAS_FAIL" == "false" ]] || return 75
@@ -292,6 +303,7 @@ printf 'PASS missing preparation refuses uncertain ownership, publication, regis
 		VALID_SOURCE=true
 		CAS_FAIL=false
 		FENCE_RACE=false
+		PREDECESSOR_STATE=$(jq -c '.phase="reserved"' <<<"$BASE_STATE")
 		rm -f "${TEST_ROOT}/preserved-queue.log"
 		return 0
 	}
@@ -309,7 +321,32 @@ printf 'PASS missing preparation refuses uncertain ownership, publication, regis
 	_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null || queue_rc=$?
 	[[ "$queue_rc" -eq 8 && "$RECOVERY_CALLS" -eq 2 ]]
 	printf 'PASS preserved signed candidate resumes after either preparation interruption without a bump\n'
-	for refusal in provenance authorization manifest channels process permission alive unknown competing phase snapshot contract cas; do
+	# GH#34433: a version-manager failure after local signing leaves the lane in
+	# reconcile-required with no tag; the same proofs make it claimable.
+	reset_preserved_fixture
+	STATE=$(jq '.phase="reconcile-required"' <<<"$STATE")
+	queue_rc=0
+	_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null || queue_rc=$?
+	[[ "$queue_rc" -eq 8 && "$RECOVERY_CALLS" -eq 1 && -e "${TEST_ROOT}/preserved-queue.log" ]]
+	jq -e '.phase == "remote-publication" and .tag == "v1.2.4"
+		and .preserved_tag_recovery.tag_object == "4444444444444444444444444444444444444444"' <<<"$STATE" >/dev/null
+	printf 'PASS reconcile-required lane with a preserved signed tag is claimed without a bump\n'
+	reset_preserved_fixture
+	STATE=$(jq '.phase="reconcile-required"' <<<"$STATE")
+	EXECUTOR_STATE=alive
+	deferred_output=$(_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 2>&1 >/dev/null) || true
+	[[ "$deferred_output" == *'not claimed: previous release executor is alive'* &&
+		"$deferred_output" == *'aidevops release status 101'* && "$RECOVERY_CALLS" -eq 0 ]]
+	printf 'PASS deferred preserved-tag claim prints its reason and next command\n'
+	reset_preserved_fixture
+	STATE=$(jq -c "$RECLAIMED_JQ" <<<"$STATE")
+	queue_rc=0
+	_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null || queue_rc=$?
+	[[ "$queue_rc" -eq 8 && "$RECOVERY_CALLS" -eq 1 && -e "${TEST_ROOT}/preserved-queue.log" ]]
+	jq -e --arg head "$RECLAIM_HEAD" '.phase == "remote-publication" and .reservation_contract == null
+		and .preserved_tag_recovery.reservation_lineage.previous_head == $head' <<<"$STATE" >/dev/null
+	printf 'PASS reclaimed lane with verified fenced lineage is claimed and records that lineage\n'
+	for refusal in provenance authorization manifest channels process permission alive unknown competing phase snapshot contract cas reconcile_tagged reconcile_alive reclaim_unfenced reclaim_diverged; do
 		reset_preserved_fixture
 		case "$refusal" in
 		provenance) VALID_SOURCE=false ;;
@@ -327,6 +364,19 @@ printf 'PASS missing preparation refuses uncertain ownership, publication, regis
 		snapshot) STATE=$(jq '.snapshot_sha="9999999999999999999999999999999999999999"' <<<"$STATE") ;;
 		contract) STATE=$(jq 'del(.reservation_contract)' <<<"$STATE") ;;
 		cas) CAS_FAIL=true ;;
+		reconcile_tagged) STATE=$(jq '.phase="reconcile-required" | .tag="v1.2.4"' <<<"$STATE") ;;
+		reconcile_alive)
+			STATE=$(jq '.phase="reconcile-required"' <<<"$STATE")
+			EXECUTOR_STATE=alive
+			;;
+		reclaim_unfenced)
+			STATE=$(jq -c "$RECLAIMED_JQ" <<<"$STATE")
+			PREDECESSOR_STATE=$(jq -c 'del(.reservation_contract)' <<<"$PREDECESSOR_STATE")
+			;;
+		reclaim_diverged)
+			STATE=$(jq -c "$RECLAIMED_JQ" <<<"$STATE")
+			PREDECESSOR_STATE=$(jq -c '.snapshot_sha="9999999999999999999999999999999999999999"' <<<"$PREDECESSOR_STATE")
+			;;
 		esac
 		queue_rc=0
 		_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null 2>&1 || queue_rc=$?
