@@ -22,6 +22,8 @@ usage() {
 main() {
 	local resource="${1:-}"
 	local action="${2:-}"
+	# Dynamically scoped for shared validation diagnostics, not exported to children.
+	local _GH_WRITE_OPERATION="${resource} ${action}"
 	if [[ "$resource" == "help" || "$resource" == "--help" || "$resource" == "-h" ]]; then
 		usage
 		return 0
@@ -51,4 +53,10 @@ main() {
 	return $?
 }
 
-main "$@"
+# Keep failures inside an explicit status check so captured transport stderr is
+# replayed before errexit can terminate the CLI. Preserve the original status.
+main "$@" || {
+	rc=$?
+	printf '[aidevops][gh-write-helper][ERROR] GitHub write failed (exit %s).\n' "$rc" >&2
+	exit "$rc"
+}

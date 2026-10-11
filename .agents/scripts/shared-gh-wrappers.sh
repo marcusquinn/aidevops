@@ -469,9 +469,50 @@ _gh_timeout_cooldown_preflight() {
 	return "$rc"
 }
 
+# Record shim privacy denials without persisting the rejected body or matches.
+# The flag prevents comment wrappers from retrying a denied write through REST.
+_gh_record_transport_privacy_block() {
+	local op_class="$1"
+	local rc="$2"
+	local err_file="$3"
+	if [[ "$op_class" == "write" && "$rc" -ne 0 && -f "$err_file" ]] &&
+		grep -Fq '[privacy-scan][BLOCK]' "$err_file"; then
+		_GH_WRITE_PRIVACY_BLOCKED=1
+		_gh_edit_audit_rejection "public write" "transport privacy scan blocked write"
+	fi
+	return 0
+}
+
+_gh_block_uncaptured_write() {
+	_GH_WRITE_PRIVACY_BLOCKED=1
+	printf '[aidevops][gh-wrapper][BLOCK] Cannot capture write diagnostics; refusing transport.\n' >&2
+	_gh_edit_audit_rejection "public write" "write diagnostic capture unavailable"
+	return 0
+}
+
+_gh_timeout_budget_seconds() {
+	local op_class="$1"
+	local deadline_epoch="$2"
+	local secs now_epoch remaining_secs
+	case "$op_class" in
+	read) secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}" ;;
+	write) secs="${AIDEVOPS_GH_WRITE_TIMEOUT:-45}" ;;
+	*) secs=30 ;;
+	esac
+	if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
+		now_epoch=$(date +%s 2>/dev/null) || return 124
+		remaining_secs=$((deadline_epoch - now_epoch))
+		[[ "$remaining_secs" -gt 0 ]] || return 124
+		[[ "$remaining_secs" -ge "$secs" ]] || secs="$remaining_secs"
+	fi
+	printf '%s\n' "$secs"
+	return 0
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
+	_GH_WRITE_PRIVACY_BLOCKED=0
 	local timeout_caller="${BASH_SOURCE[1]:-${0}}"
 	local timeout_path="" timeout_start_ms="" AIDEVOPS_GH_LOGICAL_ID=""
 	AIDEVOPS_GH_LOGICAL_ID=$(_gh_timeout_logical_id)
@@ -485,25 +526,11 @@ _gh_with_timeout() {
 	local AIDEVOPS_GH_WRAPPER_PREFLIGHT=1
 	export AIDEVOPS_GH_WRAPPER_PREFLIGHT
 	local secs
-	case "$op_class" in
-	read) secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}" ;;
-	write) secs="${AIDEVOPS_GH_WRITE_TIMEOUT:-45}" ;;
-	*) secs=30 ;;
-	esac
 	local deadline_epoch="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
-	local now_epoch="" remaining_secs=""
-	if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
-		if ! now_epoch=$(date +%s 2>/dev/null); then
-			_gh_record_timeout_if_needed 124 "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
-			return 124
-		fi
-		remaining_secs=$((deadline_epoch - now_epoch))
-		if [[ "$remaining_secs" -le 0 ]]; then
-			_gh_record_timeout_if_needed 124 "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
-			return 124
-		fi
-		[[ "$remaining_secs" -ge "$secs" ]] || secs="$remaining_secs"
-	fi
+	secs=$(_gh_timeout_budget_seconds "$op_class" "$deadline_epoch") || {
+		_gh_record_timeout_if_needed 124 "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
+		return 124
+	}
 	# Invocation-scoped diagnostics may provide a pre-created counter file.
 	# File-backed counting survives command substitutions. Callers may attach a
 	# sanitized operation class; payloads and endpoint arguments are never stored.
@@ -516,27 +543,31 @@ _gh_with_timeout() {
 	local rc=0
 	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
 		err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || {
+			if [[ "$op_class" == "write" ]]; then
+				_gh_block_uncaptured_write
+				return 1
+			fi
 			"$@" || rc=$?
 			_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 			return "$rc"
 		}
 		out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || {
-			"$@" 2>"$err_file"
-			rc=$?
+			"$@" 2>"$err_file" || rc=$?
 			_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 			cat "$err_file" >&2 2>/dev/null || true
+			_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 			rm -f "$err_file"
 			return $rc
 		}
 		if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
-			_gh_run_bounded_function "$secs" "$@" >"$out_file" 2>"$err_file"
+			_gh_run_bounded_function "$secs" "$@" >"$out_file" 2>"$err_file" || rc=$?
 		else
-			"$@" >"$out_file" 2>"$err_file"
+			"$@" >"$out_file" 2>"$err_file" || rc=$?
 		fi
-		rc=$?
 		_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
+		_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
 		rm -f "$err_file" "$out_file"
 		return $rc
@@ -550,16 +581,19 @@ _gh_with_timeout() {
 		}
 	fi
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
-		_gh_run_bounded_command "$secs" "$@" >"$out_file" 2>"$err_file"
-		rc=$?
+		_gh_run_bounded_command "$secs" "$@" >"$out_file" 2>"$err_file" || rc=$?
 	else
-		_gh_run_bounded_command "$secs" "$@"
-		rc=$?
+		if [[ "$op_class" == "write" ]]; then
+			_gh_block_uncaptured_write
+			return 1
+		fi
+		_gh_run_bounded_command "$secs" "$@" || rc=$?
 	fi
 	_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
 		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
+		_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
 		rm -f "$err_file" "$out_file"
 	fi
@@ -616,10 +650,18 @@ _gh_wrapper_normalize_stdin_body_file() {
 	while [[ $i -lt ${#_GH_WRAPPER_BODY_FILE_ARGS[@]} ]]; do
 		case "${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset))]}" in
 		--body-file)
+			# argv from quoted paths/tool calls does not receive shell tilde expansion.
+			# Resolve only ~/; never evaluate arbitrary shell text or ~other-user.
+			if [[ "${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset + 1))]:-}" == \~/* ]]; then
+				_GH_WRAPPER_BODY_FILE_ARGS[i + array_index_offset + 1]="${HOME}/${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset + 1))]#\~/}"
+			fi
 			[[ "${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset + 1))]:-}" == "-" ]] && needs_stdin=1
 			i=$((i + 1))
 			;;
 		--body-file=-) needs_stdin=1 ;;
+		--body-file=\~/*)
+			_GH_WRAPPER_BODY_FILE_ARGS[i + array_index_offset]="--body-file=${HOME}/${_GH_WRAPPER_BODY_FILE_ARGS[$((i + array_index_offset))]#--body-file=\~/}"
+			;;
 		esac
 		i=$((i + 1))
 	done
@@ -693,14 +735,14 @@ _gh_validate_body_file_content() {
 	file_size=$(echo "$file_size" | tr -d '[:space:]')
 	if [[ "$file_size" -eq 0 ]]; then
 		_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is empty"
-		printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 		return 1
 	fi
 	local body_file_body
 	body_file_body=$(<"$body_file_val")
 	if ! _gh_body_has_substantive_content "$body_file_body"; then
 		_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' has no content before signature footer"
-		printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 		return 1
 	fi
 	return 0
@@ -762,13 +804,13 @@ _gh_validate_edit_args() {
 		trimmed_title="${trimmed_title%"${trimmed_title##*[![:space:]]}"}"
 		if [[ -z "$trimmed_title" ]]; then
 			_GH_EDIT_REJECTION_REASON="empty title (after trimming whitespace)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		# Reject bare task-ID stubs: "tNNN: " or "GH#NNN: " with nothing after
 		if [[ "$trimmed_title" =~ ^(t[0-9]+|GH#[0-9]+):[[:space:]]*$ ]]; then
 			_GH_EDIT_REJECTION_REASON="stub title '${trimmed_title}' (task-ID prefix with no description)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 	fi
@@ -777,7 +819,7 @@ _gh_validate_edit_args() {
 	if [[ "$has_body" -eq 1 ]]; then
 		if ! _gh_body_has_substantive_content "$body_val"; then
 			_GH_EDIT_REJECTION_REASON="empty body (after trimming whitespace)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 	fi
@@ -786,17 +828,17 @@ _gh_validate_edit_args() {
 	if [[ "$has_body_file" -eq 1 ]]; then
 		if [[ "$body_file_val" == "/dev/null" ]]; then
 			_GH_EDIT_REJECTION_REASON="body-file is /dev/null (would clear body)"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		if [[ ! -f "$body_file_val" ]]; then
 			_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' does not exist"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		if [[ ! -r "$body_file_val" ]]; then
 			_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is not readable"
-			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			printf '[SAFETY] gh %s rejected: %s\n' "${_GH_WRITE_OPERATION:-edit}" "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
 		_gh_validate_body_file_content "$body_file_val" || return 1

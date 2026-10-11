@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.19] - 2026-10-11
+
+### Changed
+
+- Maintenance: replace private client names with neutral placeholders
+- Maintenance: mark t18672 complete (pr:#34394 completed:2026-10-11) (#34398)
+
+### Fixed
+
+- read the exact PR when the prefetch snapshot is stale so worker draft-checkpoint dispatch hints work
+- serialize concurrent repository registry writes (#34396)
+
 ## [3.39.18] - 2026-10-11
 
 ### Changed
