@@ -616,7 +616,9 @@ _create_hotfix_tag() {
 	# Push the hotfix tag (the release tag is pushed by push_changes;
 	# the hotfix tag needs a separate push since --tags only pushes
 	# tags that point to reachable commits, which this one does).
-	if git push origin "$hotfix_tag" 2>/dev/null; then
+	# GH#34434: post-release runs in a dependency-free tag worktree; skip only
+	# repo-verify (rationale in version-manager-protected-main.sh).
+	if AIDEVOPS_PREPUSH_REPO_VERIFY=0 git push origin "$hotfix_tag" 2>/dev/null; then
 		print_success "Pushed hotfix signal tag: $hotfix_tag"
 	else
 		print_error "Failed to push hotfix signal tag after GitHub release publication"

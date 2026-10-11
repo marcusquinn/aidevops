@@ -32,7 +32,8 @@ printf 'PRIVATE_ERROR\n' >&2
 ''')
     cli.chmod(0o700)
     env = dict(os.environ, PATH=str(bin_dir) + ':' + os.environ['PATH'],
-               AIDEVOPS_TEMP_DIR=str(root / 'workspace-temp'))
+               AIDEVOPS_TEMP_DIR=str(root / 'workspace-temp'),
+               AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS='2')
     config = repo / '.aidevops.json'
     passed = 0
 

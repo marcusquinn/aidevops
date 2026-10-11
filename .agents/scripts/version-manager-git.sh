@@ -659,8 +659,10 @@ push_changes() {
 		# Use --atomic to ensure commit and tag are pushed together (all-or-nothing).
 		# Capture stderr so permanent branch-policy rejection is classified after
 		# one attempt rather than retried as transient contention.
+		# GH#34434: release-tool push from a dependency-free release worktree;
+		# skip only repo-verify (rationale in version-manager-protected-main.sh).
 		_version_manager_require_aggregate_fence || return 1
-		if push_output=$(git push --atomic origin HEAD:refs/heads/main --tags 2>&1); then
+		if push_output=$(AIDEVOPS_PREPUSH_REPO_VERIFY=0 git push --atomic origin HEAD:refs/heads/main --tags 2>&1); then
 			print_success "Pushed changes and tags to remote"
 			return 0
 		fi

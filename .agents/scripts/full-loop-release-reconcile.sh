@@ -23,6 +23,7 @@ _FULL_LOOP_RELEASE_CONCLUSION_SUCCESS="success"
 _FULL_LOOP_RELEASE_JSON_STRING_TYPE="string"
 _FULL_LOOP_RELEASE_MODE_RECONCILE="reconcile"
 _FULL_LOOP_RELEASE_PHASE_REMOTE="remote-publication"
+_FULL_LOOP_RELEASE_PHASE_RECONCILE_REQUIRED="reconcile-required"
 _FULL_LOOP_RELEASE_STEP_QUEUE_POSTFLIGHT="Queue exact-tag postflight"
 _FULL_LOOP_RELEASE_STEP_DEFERRED_POSTFLIGHT="Record deferred postflight"
 _FULL_LOOP_RELEASE_POSTFLIGHT_ABSENT_RC=6
@@ -137,34 +138,68 @@ _full_loop_release_verify_candidate_tag_provenance() {
 	return 1
 }
 
+# GH#34433: every deferred claim names its reason and the next command instead
+# of returning a silent 75.
+_full_loop_release_preserved_claim_deferred() {
+	local source_pr="$1"
+	local reason="$2"
+	printf 'Preserved-tag recovery for PR #%s not claimed: %s\n' "$source_pr" "$reason" >&2
+	printf 'Inspect: aidevops release status %s; retry: aidevops release reconcile %s\n' \
+		"$source_pr" "$source_pr" >&2
+	return 0
+}
+
 #aidevops:trust-boundary
 # A signed candidate is not publication authority. Claim only its exact modern
 # snapshot lane, after proving the old local executor and descendants are gone.
+# GH#34433: a version-manager failure after local signing moves the lane from
+# preparing to reconcile-required without a tag. That state is still
+# pre-publication, so it is claimable under exactly the same proofs. A
+# same-source reclaim removes the fenced contract; as in dead-preparing
+# recovery, accept only lineage verified back to a fenced reservation.
 _full_loop_release_claim_preserved_tag() {
 	local repo="$1"
 	local source_pr="$2"
 	local tag_name="$3"
 	local expected_sources="" source_json="" snapshot="" release_parent=""
 	local lane_head="" release_path="" observation="" permission="" state_json="" token=""
-	local owner_pid=""
+	local owner_pid="" lane_summary="" executor_state="" reclaim_evidence="" reclaim_rc=0
 	release_lane_read "$repo" || return 1
 	lane_head="$_AIDEVOPS_RELEASE_LANE_HEAD"
 	_version_manager_local_tag_identity "$tag_name" || return 1
-	jq -e --argjson pr "$source_pr" --arg tag "$tag_name" \
+	reclaim_evidence=$(_release_lane_resolve_reclaim_evidence "$repo") || reclaim_rc=$?
+	case "$reclaim_rc" in
+	0) [[ -n "$reclaim_evidence" ]] || reclaim_evidence="null" ;;
+	3)
+		_full_loop_release_preserved_claim_deferred "$source_pr" \
+			"lane has neither the fenced reservation contract nor verified reclaim lineage"
+		return 75
+		;;
+	*) return 1 ;;
+	esac
+	if ! jq -e --argjson pr "$source_pr" --arg tag "$tag_name" \
 		--arg phase "$_FULL_LOOP_RELEASE_PHASE_REMOTE" \
+		--arg reconcile "$_FULL_LOOP_RELEASE_PHASE_RECONCILE_REQUIRED" \
 		--arg object "$_VERSION_MANAGER_LOCAL_TAG_OBJECT" \
-		--arg commit "$_VERSION_MANAGER_LOCAL_TAG_COMMIT" '
+		--arg commit "$_VERSION_MANAGER_LOCAL_TAG_COMMIT" \
+		--argjson reclaim "$reclaim_evidence" '
 		.active == true and .source_pr == $pr and .terminal_receipt == null
-		and .reservation_contract == "fenced-prepublication/v1"
+		and (.reservation_contract == "fenced-prepublication/v1" or $reclaim != null)
 		and .snapshot_manifest_bound == true
 		and (.aggregate_recovery // null) == null and (.aggregate_successor // null) == null
 		and (.reserved_authorization_refresh // null) == null
 		and (.prepublication_recovery // null) == null
-		and ((.phase == "preparing" and .tag == null)
+		and (((.phase == "preparing" or .phase == $reconcile) and .tag == null)
 			or (.phase == $phase and .tag == $tag
 				and .preserved_tag_recovery.tag_object == $object
 				and .preserved_tag_recovery.release_commit == $commit))
-	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 75
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
+		lane_summary=$(jq -r '"source_pr=\(.source_pr // "none") phase=\(.phase // "unknown") tag=\(.tag // "pending")"' \
+			<<<"$_AIDEVOPS_RELEASE_LANE_JSON" 2>/dev/null) || lane_summary="unreadable"
+		_full_loop_release_preserved_claim_deferred "$source_pr" \
+			"lane ${lane_summary} is not a claimable pre-publication state for ${tag_name}"
+		return 75
+	fi
 	expected_sources=$(_full_loop_read_release_authorization "$repo" "$source_pr") || return 1
 	[[ "$expected_sources" == "$(jq -er '.expected_sources' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" ]] || return 1
 	source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
@@ -173,28 +208,44 @@ _full_loop_release_claim_preserved_tag() {
 	release_parent=$(git -C "$REPO_ROOT" rev-parse "${_VERSION_MANAGER_LOCAL_TAG_COMMIT}^") || return 1
 	[[ "$snapshot" == "$release_parent" ]] || return 1
 	observation=$(_release_lane_executor_observe "$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
-	[[ "$(jq -r '.state' <<<"$observation")" == "dead" ]] || return 75
+	executor_state=$(jq -r '.state // "unknown"' <<<"$observation" 2>/dev/null) || executor_state="unreadable"
+	if [[ "$executor_state" != "dead" ]]; then
+		_full_loop_release_preserved_claim_deferred "$source_pr" \
+			"previous release executor is ${executor_state}, not proven dead"
+		return 75
+	fi
 	owner_pid=$(jq -er '.executor.pid | select(type == "number" and . > 0 and floor == .)' \
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	# preparing and reconcile-required both belong to the original release run.
 	release_path="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}/aidevops-release-${source_pr}-${owner_pid}"
 	if [[ "$(jq -r '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" == "$_FULL_LOOP_RELEASE_PHASE_REMOTE" ]]; then
 		release_path="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}/aidevops-release-reconcile-${tag_name#v}-${owner_pid}"
 	fi
-	_full_loop_recovery_process_uses_path "$release_path" || return 75
+	if ! _full_loop_recovery_process_uses_path "$release_path"; then
+		_full_loop_release_preserved_claim_deferred "$source_pr" \
+			"cannot prove no live process still uses ${release_path}"
+		return 75
+	fi
 	permission=$(gh api "repos/${repo}" \
 		--jq '.permissions.push == true or .permissions.maintain == true or .permissions.admin == true') || return 1
-	[[ "$permission" == "true" ]] || return 75
+	if [[ "$permission" != "true" ]]; then
+		_full_loop_release_preserved_claim_deferred "$source_pr" \
+			"GitHub credentials lack push, maintain or admin permission on ${repo}"
+		return 75
+	fi
 	_full_loop_recovery_verify_channels_absent "$repo" "$tag_name" || return 1
 	token=$(uuidgen) || return 1
 	state_json=$(jq -c --arg token "$token" --arg tag "$tag_name" \
 		--arg phase "$_FULL_LOOP_RELEASE_PHASE_REMOTE" \
 		--arg object "$_VERSION_MANAGER_LOCAL_TAG_OBJECT" --arg commit "$_VERSION_MANAGER_LOCAL_TAG_COMMIT" \
 		--arg owner "${_AIDEVOPS_RELEASE_LANE_OWNER_PREFIX}$$" \
-		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --argjson executor "$(_release_lane_executor_capture)" '
+		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --argjson executor "$(_release_lane_executor_capture)" \
+		--argjson reclaim "$reclaim_evidence" '
 		.executor as $previous_executor | .phase=$phase | .tag=$tag
 		| .operation_token=$token | .owner=$owner | .executor=$executor | .updated_at=$now
 		| .preserved_tag_recovery={tag_object:$object,release_commit:$commit,
 			previous_executor:$previous_executor,claimed_at:$now}
+		| if $reclaim == null then . else .preserved_tag_recovery.reservation_lineage=$reclaim end
 	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	_release_lane_write "$repo" "$state_json" "$lane_head" || return $?
 	_AIDEVOPS_RELEASE_LANE_TOKEN="$token"

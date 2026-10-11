@@ -36,6 +36,9 @@ _runner_capability_check_fresh_logged() {
 	return 0
 }
 
+# GH#34427: AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS bounds each
+# `aidevops secret check` (default 15, clamped 1-60, invalid -> default).
+
 # GH#33743: keep the operator-facing "deferred:" text, and append a structured
 # reason with the repo slug so candidate-scoped log matching classifies it as
 # runner_capability_unmet instead of no_recent_log_evidence. cooldown=eligible
@@ -277,6 +280,12 @@ try:
                            'ssh', cwd=root, timeout=network_timeout)
         if reason:
             unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
+    # Loaded runners can exceed 5s; default 15s, clamped 1-60, invalid -> default.
+    try:
+        secret_timeout = int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS', '15'))
+    except ValueError:
+        secret_timeout = 15
+    secret_timeout = min(60, max(1, secret_timeout))
     if sys.argv[3] == 'fresh':
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',
               file=sys.stderr)
@@ -287,7 +296,7 @@ try:
             if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', cached_name):
                 unreadable(cached_name, handle, state, cached=True)
             for name in sorted(secrets):
-                reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', secret=True)
+                reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
                 if reason.startswith('secret_unreadable '):
                     unreadable(name, handle, state)
                 if reason:

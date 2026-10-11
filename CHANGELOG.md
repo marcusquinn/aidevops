@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.20] - 2026-10-11
+
+### Added
+
+- one-time reset of raised OpenCode compaction targets to 240K
+
+### Changed
+
+- Tests: update override-flags audit assertions for modularised bypass sites (#34417)
+
+### Fixed
+
+- detect a missing native GitHub CLI behind the aidevops gh shim
+- zstd-compress Codex backend request bodies to avoid HTTP 503 above 1 MiB
+- normalize home-prefixed GitHub body files (GH#34406) (#34410)
+- install pre-push guards in the effective core.hooksPath
+
 ## [3.39.19] - 2026-10-11
 
 ### Changed

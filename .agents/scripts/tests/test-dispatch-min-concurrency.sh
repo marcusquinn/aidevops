@@ -58,6 +58,13 @@ source "${SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
 # shellcheck source=../pulse-capacity-alloc.sh
 source "${SCRIPT_DIR}/pulse-capacity-alloc.sh"
 
+# Deterministic CPU admission gate: never read the host's live load or iostat
+# idle. Cases needing a closed gate set TEST_CPU_GATE=closed explicitly.
+_pulse_cpu_pressure() {
+	printf '1.00 16 %s 4.0 na\n' "${TEST_CPU_GATE:-open}"
+	return 0
+}
+
 get_max_workers_target() {
 	printf '%s\n' "${TEST_MAX_WORKERS:-1}"
 	return 0

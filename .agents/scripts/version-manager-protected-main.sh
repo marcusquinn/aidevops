@@ -40,6 +40,15 @@ _VERSION_MANAGER_PR_STATE_CLOSED="closed"
 _VERSION_MANAGER_TIMESTAMP_REGEX='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 
 #aidevops:trust-boundary
+# GH#34434: release-tool pushes (direct main+tags, protected recovery branch,
+# preserved tag, hotfix signal tag) carry only version-file bumps, provenance
+# merges and signed tags on top of CI-verified main. They run from detached,
+# dependency-free release/tag worktrees where the repo-verify pre-push guard
+# (format/lint/typecheck) cannot start, which blocked every release push. Each
+# of those exact push commands sets AIDEVOPS_PREPUSH_REPO_VERIFY=0 for that one
+# command only; the privacy, credential, complexity and scope guards still run.
+
+#aidevops:trust-boundary
 _version_manager_require_aggregate_fence() {
 	if declare -F _version_manager_verify_preserved_lane_fence >/dev/null 2>&1; then
 		_version_manager_verify_preserved_lane_fence || return 1
@@ -352,7 +361,8 @@ _version_manager_prepare_protected_release_head() {
 	fi
 
 	_version_manager_require_aggregate_fence || return 1
-	if push_output=$(git -C "$REPO_ROOT" push origin \
+	# GH#34434: release-tool push; skip only the dependency-bound repo-verify guard.
+	if push_output=$(AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$REPO_ROOT" push origin \
 		"${_VERSION_MANAGER_PROTECTED_RELEASE_HEAD}:refs/heads/${branch_name}" 2>&1); then
 		return 0
 	fi
@@ -590,7 +600,8 @@ _version_manager_publish_reachable_tag() {
 		return 1
 	fi
 	_version_manager_require_aggregate_fence || return 1
-	if ! push_output=$(git -C "$REPO_ROOT" push origin \
+	# GH#34434: release-tool push; skip only the dependency-bound repo-verify guard.
+	if ! push_output=$(AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$REPO_ROOT" push origin \
 		"refs/tags/${tag_name}:refs/tags/${tag_name}" 2>&1); then
 		print_error "Failed to publish preserved ${tag_name} after main became reachable"
 		_version_manager_print_push_rejection "$push_output"
