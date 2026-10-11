@@ -450,6 +450,35 @@ test_refresh_elapsed_budget() {
 	return 0
 }
 
+# t18663: repos without dependency entries spend no time, so they must not
+# dilute the share; smaller backlogs run first and the largest gets the rest.
+test_refresh_budget_shared_by_active_repos() {
+	local entry='{"task_ids":[],"issue_nums":["2"],"has_defer_marker":false}'
+	if (
+		refresh_fixture
+		mock_refresh_candidates
+		jq -cn --argjson e "$entry" '{repos:{"example/active":{closed_issues:[2],known_issues:[2],blocked_by:{"2":$e,"10":$e,"11":$e}},"example/idle-a":{blocked_by:{}},"example/idle-b":{},"example/idle-c":{blocked_by:{}}}}' >"$DEP_GRAPH_CACHE_FILE"
+		DEP_GRAPH_REFRESH_MAX_CANDIDATES=10
+		ADVANCE_REFRESH_SECONDS=4
+		refresh_blocked_status_from_graph
+		[[ "$(tr '\n' ' ' <"$LOGFILE")" == *'refresh repo=example/active candidates=3 resumed_after=0 pending=3 visited=3 blocked=0 unblocked=0 batch_limit=10 budget_secs=30 complete=true'* ]] || exit 1
+		reset_logs
+		jq -cn --argjson e "$entry" '{repos:{"example/big":{blocked_by:{"2":$e,"3":$e,"4":$e,"5":$e}},"example/small":{blocked_by:{"2":$e}}}}' >"$DEP_GRAPH_CACHE_FILE"
+		DEP_GRAPH_REFRESH_CURSOR_DIR="${TEST_ROOT}/cursor-rollover-${TESTS_RUN}"
+		DEP_GRAPH_REFRESH_BUDGET_SECS=12
+		ADVANCE_REFRESH_SECONDS=2
+		refresh_blocked_status_from_graph
+		[[ "$(tr '\n' ' ' <"$STATUS_LOG")" == 'example/small:2 example/big:2 example/big:3 example/big:4 example/big:5 ' ]] || exit 1
+		[[ "$(tr '\n' ' ' <"$LOGFILE")" == *'refresh repo=example/small candidates=1 resumed_after=0 pending=1 visited=1 blocked=0 unblocked=0 batch_limit=10 budget_secs=6 complete=true'* ]] || exit 1
+		[[ "$(tr '\n' ' ' <"$LOGFILE")" == *'refresh repo=example/big candidates=4 resumed_after=0 pending=4 visited=4 blocked=0 unblocked=0 batch_limit=10 budget_secs=10 complete=true'* ]]
+	); then
+		print_result "refresh budget is shared by repos with entries and rolls forward to the largest backlog" 0
+	else
+		print_result "refresh budget is shared by repos with entries and rolls forward to the largest backlog" 1
+	fi
+	return 0
+}
+
 test_refresh_cursor_validation() {
 	local value="" file="${TEST_ROOT}/invalid.cursor" failed=0
 	for value in '-1' '01' '1e9' '999999999999999999999' '../escape' 'broken'; do
@@ -524,6 +553,7 @@ test_brief_hold_preserves_dependency_labels
 test_refresh_batches
 test_refresh_interruption
 test_refresh_elapsed_budget
+test_refresh_budget_shared_by_active_repos
 test_refresh_cursor_validation
 test_refresh_cursor_write_failure
 test_refresh_preserves_guards

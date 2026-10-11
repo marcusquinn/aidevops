@@ -571,15 +571,44 @@ _pulse_stale_blocked_sweep_deadline() {
 	return 0
 }
 
+# t18663: per-repo completion stamp for the stale-blocked sweep.
+_pulse_stale_blocked_repo_stamp() {
+	local repo="$1"
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	printf '%s/.aidevops/cache/stale-blocked-complete/%s\n' "$HOME" "${repo//\//__}"
+	return 0
+}
+
+# Returns 0 when the repo finished a clean pass within the cadence interval.
+# A missing, unreadable or future-dated stamp makes the repo due again.
+_pulse_stale_blocked_repo_fresh() {
+	local repo="$1" interval="$2" now_epoch="$3" stamp="" stamp_epoch=""
+	stamp=$(_pulse_stale_blocked_repo_stamp "$repo") || return 1
+	[[ -f "$stamp" ]] || return 1
+	stamp_epoch=$(_file_mtime_epoch "$stamp")
+	[[ "$stamp_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+	[[ "$now_epoch" -ge "$stamp_epoch" && $((now_epoch - stamp_epoch)) -lt "$interval" ]]
+	return $?
+}
+
+# Best effort: a stamp that cannot be written only keeps the repo due.
+_pulse_stale_blocked_repo_mark_complete() {
+	local repo="$1" stamp=""
+	stamp=$(_pulse_stale_blocked_repo_stamp "$repo") || return 0
+	mkdir -p "${stamp%/*}" 2>/dev/null || return 0
+	touch "$stamp" 2>/dev/null || true
+	return 0
+}
+
 _pulse_reconcile_stale_blocked_if_due() {
 	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
 	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
 	local interval="${PULSE_STALE_BLOCKED_RECONCILE_INTERVAL:-1800}"
 	local now_epoch="" stamp_epoch="" age_s="" repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local repo_slug="" failures=0 partial=0 rc=0 index=0 repo_count=0 sweep_deadline="" repo_deadline="" start_offset=0 position=0
-	local partial_rc="${DER_SWEEP_PARTIAL:-3}"
+	local partial_rc="${DER_SWEEP_PARTIAL:-3}" due_count=0 fresh=0
 	local next_repo_file="${HOME}/.aidevops/cache/pulse-stale-blocked-next-repo"
-	local repos=()
+	local repos=() due=()
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
 	if [[ -f "$sentinel" ]]; then
@@ -594,9 +623,9 @@ _pulse_reconcile_stale_blocked_if_due() {
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null || true)
 	repo_count="${#repos[@]}"
 	sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
-	# Each remaining repo gets a fair share of the remaining budget; unused
-	# time rolls forward, and each repo's cursor resumes partial passes. Once
-	# the sweep deadline passes, remaining repos are deferred as partial rather
+	# Each due repo gets a fair share of the remaining budget; unused time
+	# rolls forward, and each repo's cursor resumes partial passes. Once the
+	# sweep deadline passes, remaining due repos are deferred as partial rather
 	# than started. The persisted next-repo position advances before each
 	# start, so a deferred or killed sweep begins with the next repo in line.
 	if [[ -f "$next_repo_file" ]]; then
@@ -604,15 +633,28 @@ _pulse_reconcile_stale_blocked_if_due() {
 	fi
 	[[ "$start_offset" =~ ^[0-9]+$ ]] || start_offset=0
 	[[ "$repo_count" -gt 0 ]] && start_offset=$((start_offset % repo_count))
+	# t18663: a repo with a clean pass inside the interval is not re-listed.
+	# Only partial, failed or never-swept repos share the budget, so one large
+	# resumable backlog no longer makes every repo re-list on every cycle.
+	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
 	for ((index = 0; index < repo_count; index++)); do
+		position=$(((start_offset + index) % repo_count))
+		if _pulse_stale_blocked_repo_fresh "${repos[position]}" "$interval" "$now_epoch"; then
+			fresh=$((fresh + 1))
+			continue
+		fi
+		due+=("$position")
+	done
+	due_count="${#due[@]}"
+	for ((index = 0; index < due_count; index++)); do
 		now_epoch=$(date +%s 2>/dev/null) || now_epoch="$sweep_deadline"
 		if [[ "$now_epoch" -ge "$sweep_deadline" ]]; then
-			partial=$((partial + repo_count - index))
+			partial=$((partial + due_count - index))
 			break
 		fi
-		position=$(((start_offset + index) % repo_count))
+		position="${due[index]}"
 		printf '%s\n' "$(((position + 1) % repo_count))" >"$next_repo_file" 2>/dev/null || true
-		repo_deadline=$((now_epoch + (sweep_deadline - now_epoch) / (repo_count - index)))
+		repo_deadline=$((now_epoch + (sweep_deadline - now_epoch) / (due_count - index)))
 		rc=0
 		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
 			reconcile_stale_blocked_issues "${repos[position]}" 2>>"$LOGFILE" || rc=$?
@@ -620,6 +662,10 @@ _pulse_reconcile_stale_blocked_if_due() {
 			partial=$((partial + 1))
 		elif [[ "$rc" -ne 0 ]]; then
 			failures=$((failures + 1))
+		else
+			# Only a clean, complete pass starts this repo's own cadence;
+			# partial and failed passes stay due for the next sweep.
+			_pulse_stale_blocked_repo_mark_complete "${repos[position]}"
 		fi
 	done
 	# The cadence sentinel marks a complete traversal; partial passes resume
@@ -627,7 +673,7 @@ _pulse_reconcile_stale_blocked_if_due() {
 	if [[ "$partial" -eq 0 ]]; then
 		touch "$sentinel" 2>/dev/null || true
 	fi
-	echo "[pulse-wrapper] stale-blocked reconciliation completed failures=${failures} partial_repos=${partial} repos=${repo_count} cadence=${interval}s" >>"$LOGFILE"
+	echo "[pulse-wrapper] stale-blocked reconciliation completed failures=${failures} partial_repos=${partial} repos=${repo_count} fresh_repos=${fresh} cadence=${interval}s" >>"$LOGFILE"
 	return 0
 }
 

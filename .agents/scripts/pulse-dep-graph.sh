@@ -925,16 +925,27 @@ refresh_blocked_status_from_graph() {
 	local budget_secs="${DEP_GRAPH_REFRESH_BUDGET_SECS:-30}"
 	[[ "$max_candidates" =~ ^[1-9][0-9]{0,5}$ ]] || max_candidates=10
 	[[ "$budget_secs" =~ ^[1-9][0-9]{0,5}$ ]] || budget_secs=30
-	local slugs="" slug="" repo_data="" repo_count=0 share_secs=1
-	slugs=$(printf '%s' "$graph_json" | jq -r '.repos | keys[]' 2>/dev/null) || slugs=""
+	local slugs="" slug="" entry_count="" repo_data="" active_left=0 share_secs=1 started="$SECONDS"
+	# t18663: only repos with dependency entries can spend time, so the budget
+	# is shared among them alone (a fixed split across every configured repo
+	# rounded each share down to 1s). Smallest backlogs run first and unused
+	# time rolls forward, so the largest backlog receives what remains.
+	slugs=$(printf '%s' "$graph_json" | jq -r '.repos | to_entries
+		| map([((.value.blocked_by // {}) | if type == "object" then length else 0 end), .key])
+		| sort | .[] | "\(.[0])\t\(.[1])"' 2>/dev/null) || slugs=""
 	[[ -n "$slugs" ]] || return 0
-	repo_count=$(printf '%s' "$graph_json" | jq '.repos | length') || return 0
-	share_secs=$((budget_secs / repo_count))
-	[[ "$share_secs" -gt 0 ]] || share_secs=1
+	active_left=$(printf '%s\n' "$slugs" | awk -F '\t' '$1 > 0 { n++ } END { print n + 0 }')
+	[[ "$active_left" =~ ^[0-9]+$ ]] || active_left=0
 
-	while IFS= read -r slug; do
+	while IFS=$'\t' read -r entry_count slug; do
 		[[ -n "$slug" ]] || continue
 		repo_data=$(printf '%s' "$graph_json" | jq -c --arg s "$slug" '.repos[$s]' 2>/dev/null) || continue
+		share_secs=1
+		if [[ "$entry_count" =~ ^[1-9][0-9]*$ && "$active_left" -gt 0 ]]; then
+			share_secs=$(((budget_secs - (SECONDS - started)) / active_left))
+			[[ "$share_secs" -gt 0 ]] || share_secs=1
+			active_left=$((active_left - 1))
+		fi
 		if ! _refresh_graph_repo "$slug" "$repo_data" "$max_candidates" "$share_secs"; then
 			printf '[pulse-wrapper] dep-graph-cache: refresh failed repo=%s — invalid data or cursor persistence failure\n' "$slug" >>"$LOGFILE"
 		fi

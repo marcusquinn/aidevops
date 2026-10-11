@@ -112,8 +112,10 @@ reconcile_stale_blocked_issues() {
 	return 0
 }
 first_starts=""
+STAMP_DIR="$HOME/.aidevops/cache/stale-blocked-complete"
 for sweep in 1 2 3; do
-	rm -f "$SENTINEL"
+	# Each sweep is a first traversal: no per-repo stamps (t18663).
+	rm -rf "$SENTINEL" "$STAMP_DIR"
 	STARTED=""
 	FAKE_NOW=$((1000 + sweep * 120))
 	PULSE_STAGE_DEADLINE_EPOCH=$((FAKE_NOW + 60)) PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS=15 \
@@ -123,6 +125,83 @@ done
 unset -f date
 [[ "$first_starts" == "owner/one owner/two owner/one " || "$first_starts" == "owner/two owner/one owner/two " ]] || {
 	printf 'FAIL: budget-consuming repo starved the next repo: %s\n' "$first_starts"
+	exit 1
+}
+
+# t18663: a repo with a clean pass inside the interval is not re-listed, and
+# the remaining due repo receives the whole sweep budget.
+rm -rf "$SENTINEL" "$STAMP_DIR"
+mkdir -p "$STAMP_DIR"
+touch "$STAMP_DIR/owner__one"
+_file_mtime_epoch() {
+	case "$1" in
+	*/owner__one) date +%s ;;
+	*) printf '0\n' ;;
+	esac
+	return 0
+}
+STARTED=""
+DEADLINES=""
+reconcile_stale_blocked_issues() {
+	STARTED="${STARTED}${1} "
+	DEADLINES="${DEADLINES}${DER_STALE_BLOCKED_DEADLINE_EPOCH:-unset}:${DER_STALE_BLOCKED_STOP_EPOCH:-unset} "
+	return 3
+}
+now_epoch=$(date +%s)
+PULSE_STAGE_DEADLINE_EPOCH=$((now_epoch + 100)) PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS=10 \
+	_pulse_reconcile_stale_blocked_if_due
+[[ "$STARTED" == "owner/two " && "$DEADLINES" == "$((now_epoch + 90)):$((now_epoch + 90)) " ]] || {
+	printf 'FAIL: fresh repo was re-listed or the due repo lost budget: started=%s deadlines=%s\n' "$STARTED" "$DEADLINES"
+	exit 1
+}
+[[ ! -f "$SENTINEL" && ! -f "$STAMP_DIR/owner__two" ]] || {
+	printf 'FAIL: partial pass stamped the sweep or the repo cadence\n'
+	exit 1
+}
+grep -q 'partial_repos=1 repos=2 fresh_repos=1' "$LOGFILE" || {
+	printf 'FAIL: fresh repo count was not reported\n'
+	exit 1
+}
+reconcile_stale_blocked_issues() {
+	STARTED="${STARTED}${1} "
+	return 0
+}
+STARTED=""
+_pulse_reconcile_stale_blocked_if_due
+[[ "$STARTED" == "owner/two " && -f "$STAMP_DIR/owner__two" && -f "$SENTINEL" ]] || {
+	printf 'FAIL: clean pass did not start the repo cadence (started=%s)\n' "$STARTED"
+	exit 1
+}
+
+# A failed pass stays due; a future-dated stamp never suppresses a repo.
+rm -rf "$SENTINEL" "$STAMP_DIR"
+reconcile_stale_blocked_issues() {
+	[[ "$1" == "owner/one" ]] && return 1
+	return 0
+}
+_pulse_reconcile_stale_blocked_if_due
+[[ ! -f "$STAMP_DIR/owner__one" && -f "$STAMP_DIR/owner__two" ]] || {
+	printf 'FAIL: failed pass was stamped or clean pass was not\n'
+	exit 1
+}
+grep -q 'failures=1 partial_repos=0 repos=2 fresh_repos=0' "$LOGFILE" || {
+	printf 'FAIL: failed repo was not reported\n'
+	exit 1
+}
+rm -f "$SENTINEL"
+touch "$STAMP_DIR/owner__one"
+_file_mtime_epoch() {
+	printf '%s\n' "$(($(date +%s) + 3600))"
+	return 0
+}
+reconcile_stale_blocked_issues() {
+	STARTED="${STARTED}${1} "
+	return 0
+}
+STARTED=""
+_pulse_reconcile_stale_blocked_if_due
+[[ "$STARTED" == *"owner/one "* && "$STARTED" == *"owner/two "* ]] || {
+	printf 'FAIL: future-dated stamps suppressed due repos: %s\n' "$STARTED"
 	exit 1
 }
 
