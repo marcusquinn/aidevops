@@ -48,6 +48,7 @@ printf 'PASS root help lists release command\n'
 
 release_output=$(run_cli release --help)
 if [[ "$release_output" != *"aidevops release status SOURCE_PR"* ]] ||
+	[[ "$release_output" != *"aidevops release sources SOURCE_PR"* ]] ||
 	[[ "$release_output" != *"aidevops release reconcile SOURCE_PR"* ]]; then
 	printf 'FAIL release help did not reach the release helper\n'
 	exit 1
@@ -94,6 +95,10 @@ if [[ "$expected_set_output" != *"deployed release helper: patch 90 full --expec
 	exit 1
 fi
 printf 'PASS root CLI preserves explicit multi-PR release authorization input\n'
+
+sources_output=$(run_deployed_cli release sources 90)
+[[ "$sources_output" == *"deployed release helper: sources 90"* ]]
+printf 'PASS root CLI delegates read-only release sources preview\n'
 
 gap_output=$(run_deployed_cli release authorization-gap 90 --tag v3.32.200 \
 	--expected-sources 89@1111111111111111111111111111111111111111 \

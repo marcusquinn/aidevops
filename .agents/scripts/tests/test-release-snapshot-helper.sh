@@ -157,10 +157,49 @@ resolved=$(bash "$resolver" resolve-source --snapshot --source-pr 1 --repo test/
 jq -e --arg sha "$SNAPSHOT" --arg base "$BASE" --argjson sources "$expected" '
 	.mode == "snapshot" and .source_pr == 2 and .source_merge == $sha
 	and .snapshot_base == $base and .expected_sources == $sources' <<<"$resolved" >/dev/null
-if bash "$resolver" resolve-source --snapshot --source-pr 1 --repo test/repo --expected-sources 1 2>/dev/null; then
+refs_before=$(git show-ref)
+if bash "$resolver" resolve-source --snapshot --source-pr 1 --repo test/repo --expected-sources 1 >"$TEST_ROOT/mismatch-out" 2>"$TEST_ROOT/mismatch-err"; then
 	printf 'FAIL: incomplete expected manifest accepted\n' >&2
 	exit 1
 fi
+[[ ! -s "$TEST_ROOT/mismatch-out" && "$(git show-ref)" == "$refs_before" ]]
+for diagnostic in 'expected PRs: [1]' 'observed PRs: [1,2]' 'missing PRs: []' 'unexpected PRs: [2]'; do
+	grep -Fq "$diagnostic" "$TEST_ROOT/mismatch-err"
+done
+# Direct comparison also covers missing PRs and same-PR/different-SHA failures.
+(
+	# shellcheck source=../release-provenance-helper.sh
+	source "$resolver" help >/dev/null
+	if _release_provenance_assert_expected_sources '[{"pr":1,"merge":"aaa"},{"pr":3,"merge":"ccc"}]' '[{"pr":1,"merge":"bbb"},{"pr":2,"merge":"ddd"}]' >"$TEST_ROOT/assert-out" 2>"$TEST_ROOT/assert-err"; then
+		exit 1
+	fi
+	[[ ! -s "$TEST_ROOT/assert-out" ]]
+	grep -Fq 'missing PRs: [3]' "$TEST_ROOT/assert-err"
+	grep -Fq 'unexpected PRs: [2]' "$TEST_ROOT/assert-err"
+	grep -Fq '"pr":1,"expected_merge":"aaa","observed_merge":"bbb"' "$TEST_ROOT/assert-err"
+	_release_provenance_assert_expected_sources '[{"pr":2,"merge":"bbb"},{"pr":1,"merge":"aaa"}]' '[{"pr":1,"merge":"aaa"},{"pr":2,"merge":"bbb"}]'
+)
+printf 'PASS: mismatch diagnostics identify missing, unexpected and changed-merge sources without writing refs\n'
+
+# Exercise the actual release command in the fixture, not a publication mock.
+# Repo-root marker files let the helper bind the isolated fixture repository.
+mkdir -p .agents/scripts
+printf '# fixture\n' >aidevops.sh
+printf '# fixture\n' >.agents/scripts/version-manager.sh
+worktrees_before=$(git worktree list --porcelain)
+status_before=$(git status --porcelain)
+preview=$(AIDEVOPS_FULL_LOOP_REPO=test/repo AIDEVOPS_RELEASE_EXPECTED_SOURCES='' \
+	AIDEVOPS_RELEASE_SNAPSHOT_SHA="$SNAPSHOT" \
+	bash "$SCRIPT_DIR/full-loop-release-helper.sh" sources 1)
+jq -e --arg sha "$LATER" '.source_merge == $sha and .source_pr == 3 and ([.expected_sources[].pr] == [1,2,3])' <<<"$preview" >/dev/null
+[[ "$(git rev-parse HEAD)" == "$SNAPSHOT" && "$(git show-ref)" == "$refs_before" ]]
+[[ "$(git worktree list --porcelain)" == "$worktrees_before" && "$(git status --porcelain)" == "$status_before" ]]
+if API_FAILURE=true AIDEVOPS_FULL_LOOP_REPO=test/repo AIDEVOPS_RELEASE_EXPECTED_SOURCES='' \
+	bash "$SCRIPT_DIR/full-loop-release-helper.sh" sources 1 >/dev/null 2>&1; then
+	printf 'FAIL: preview accepted unverified sources\n' >&2
+	exit 1
+fi
+printf 'PASS: release sources previews remote snapshot, ignores stale publisher pins and leaves refs/worktrees unchanged\n'
 bash "$resolver" resolve-source --snapshot --source-pr 1 --repo test/repo --expected-sources 2,1 >/dev/null
 if bash "$resolver" resolve-source --snapshot --source-pr 3 --repo test/repo 2>/dev/null; then
 	printf 'FAIL: later PR entered frozen snapshot\n' >&2

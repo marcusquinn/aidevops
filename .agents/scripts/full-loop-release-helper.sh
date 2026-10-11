@@ -340,8 +340,9 @@ Release publication is provenance-bound and normally unattended. `status` and
 for the locally fetched origin/main snapshot, without reserving a lane. Fetch
 main and tags beforehand for a current preview; later merges can change the set.
 Use expected_sources[].pr as the --expected-sources list, or include merge SHAs
-to pin it. Preview is not publication authorization. `reconcile` verifies the newest matching signed tag, queues an
-idempotent recovery workflow when needed, and finalizes local release receipts
+to pin it. Preview is not publication authorization. `reconcile` verifies the
+newest matching signed tag, queues an idempotent recovery workflow when needed,
+and finalizes local release receipts
 only after GitHub, npm, and Homebrew all converge. A published stale tag can be
 settled only by verified post-publication supersession; it is never redispatched.
 EOF

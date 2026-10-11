@@ -30,6 +30,7 @@ Usage:
   release-provenance-helper.sh resolve-tag-authorization --tag TAG --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR@SHA[,PR@SHA...]]
   release-provenance-helper.sh resolve-tag-expected-sources --tag TAG --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR@SHA[,PR@SHA...]]
   release-provenance-helper.sh resolve-source --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR[,PR...]]
+  release-provenance-helper.sh preview-sources --source-pr PR --repo OWNER/REPO [--branch BRANCH]
 
 Verifies that a release tag is signed, version-consistent, reachable from the
 canonical branch, and bound to a merged source PR through immutable tag trailers.
@@ -215,7 +216,7 @@ _release_provenance_assert_expected_sources() {
 	local expected_json="$1"
 	local observed_json="$2"
 	if [[ "$(jq -c 'sort_by(.pr)' <<<"$expected_json")" != "$(jq -c 'sort_by(.pr)' <<<"$observed_json")" ]]; then
-		_release_provenance_error "observed release source manifest does not exactly match the trusted expected source set"
+		_release_provenance_error "observed release source manifest does not exactly match the trusted expected source set" || true
 		jq -nr --argjson expected "$expected_json" --argjson observed "$observed_json" '
 			($expected | map(.pr) | sort | unique) as $e
 			| ($observed | map(.pr) | sort | unique) as $o
@@ -247,7 +248,7 @@ _release_provenance_resolve_snapshot() {
 	local source_pr=""
 	local base_object=""
 	local snapshot_ref="${5:-HEAD}"
-	snapshot=$(git rev-parse "${snapshot_ref}^{commit}") || return 1
+	snapshot=$(git rev-parse "$snapshot_ref") || return 1
 	git merge-base --is-ancestor "$snapshot" "origin/$branch" || return 1
 	if [[ -n "${AIDEVOPS_RELEASE_SNAPSHOT_SHA:-}" ]]; then
 		[[ "$snapshot" == "$AIDEVOPS_RELEASE_SNAPSHOT_SHA" ]] || return 1
