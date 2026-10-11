@@ -152,8 +152,10 @@ Registration, maintenance, and Pulse are separate scopes:
 Manage the state without hand-editing JSON:
 
 ```bash
-aidevops repos maintenance off owner/repo
-aidevops repos maintenance on owner/repo
+aidevops repos maintenance off owner/repo   # also sets pulse: false
+aidevops repos maintenance on owner/repo    # Pulse stays as it is
+aidevops repos pulse on owner/repo          # refused while maintenance is paused
+aidevops repos pulse off owner/repo
 ```
 
 Repository layout migration treats every explicit `initialized_repos[].path` as

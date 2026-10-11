@@ -743,6 +743,60 @@ _set_repo_maintenance_locked() {
 	return 0
 }
 
+# Set Pulse task/issue automation for one registered repository.
+# Usage: set_repo_pulse <slug-or-path> <true|false>
+# Enabling Pulse requires maintenance; a dormant repository is never
+# Pulse-eligible, so resume maintenance first. Other fields are preserved.
+set_repo_pulse() {
+	aidevops_with_registry_lock "$REPOS_FILE" _set_repo_pulse_locked "$@"
+	return $?
+}
+
+_set_repo_pulse_locked() {
+	local selector="$1"
+	local desired="$2"
+	local matches="" dormant="" temp_file=""
+	case "$desired" in
+	true | false) ;;
+	*)
+		print_error "Pulse state must be 'true' or 'false'"
+		return 2
+		;;
+	esac
+	init_repos_file || return 1
+	if [[ -d "$selector" ]]; then
+		selector=$(cd "$selector" 2>/dev/null && pwd -P) || return 1
+		selector=$(resolve_canonical_repo_path "$selector")
+	fi
+	matches=$(jq -r --arg selector "$selector" \
+		'[.initialized_repos[]? | select(.slug == $selector or .path == $selector)] | length' \
+		"$REPOS_FILE" 2>/dev/null) || return 1
+	if [[ "$matches" != "1" ]]; then
+		print_error "Expected one registered repo matching '$selector'; found $matches"
+		return 1
+	fi
+	dormant=$(jq -r --arg selector "$selector" \
+		'.initialized_repos[] | select(.slug == $selector or .path == $selector) | .maintenance == false' \
+		"$REPOS_FILE") || return 1
+	if [[ "$desired" == "true" && "$dormant" == "true" ]]; then
+		print_error "Maintenance is paused for '$selector'; run 'aidevops repos maintenance on' first"
+		return 1
+	fi
+	temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
+	if ! jq --arg selector "$selector" --argjson desired "$desired" '
+		(.initialized_repos[] | select(.slug == $selector or .path == $selector)) |= (.pulse = $desired)
+	' "$REPOS_FILE" >"$temp_file" || ! jq -e '.initialized_repos | type == "array"' "$temp_file" >/dev/null 2>&1; then
+		rm -f "$temp_file"
+		print_error "Refusing to write an invalid repos.json"
+		return 1
+	fi
+	if ! mv "$temp_file" "$REPOS_FILE"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	return 0
+}
+
 # Set the explicit Actions capability without changing Pulse or maintenance.
 set_repo_actions() {
 	aidevops_with_registry_lock "$REPOS_FILE" _set_repo_actions_locked "$@"

@@ -924,6 +924,31 @@ _repos_maintenance() {
 	return 0
 }
 
+_repos_pulse() {
+	local state="${1:-}"
+	local selector="${2:-}"
+	case "$state" in
+	on | true) state="true" ;;
+	off | false) state="false" ;;
+	*)
+		print_error "Usage: aidevops repos pulse <on|off> [slug-or-path]"
+		return 2
+		;;
+	esac
+	if [[ -z "$selector" ]]; then
+		selector=$(git rev-parse --show-toplevel 2>/dev/null) || {
+			print_error "Specify a repo slug/path or run from within a registered repo"
+			return 1
+		}
+	fi
+	set_repo_pulse "$selector" "$state" || return $?
+	local result maintenance pulse slug path
+	result=$(get_repo_maintenance_state "$selector") || return 1
+	IFS=$'\t' read -r maintenance pulse slug path <<<"$result"
+	print_success "Pulse ${pulse} for ${slug:-$path} (maintenance ${maintenance})"
+	return 0
+}
+
 _repos_actions() {
 	local state="${1:-}" selector="${2:-}" reason="${3:-}"
 	case "$state" in
@@ -972,6 +997,10 @@ cmd_repos() {
 		shift
 		_repos_maintenance "$@"
 		;;
+	pulse)
+		shift
+		_repos_pulse "$@"
+		;;
 	actions)
 		shift
 		_repos_actions "$@"
@@ -988,6 +1017,8 @@ cmd_repos() {
 		echo "           Guarded owner-layout migration with durable receipts"
 		echo "  maintenance <on|off> [repo]"
 		echo "           Include/exclude a registered repo from recurring automation"
+		echo "  pulse <on|off> [repo]"
+		echo "           Enable/disable Pulse task automation (on requires maintenance)"
 		echo "  actions <on|off> [repo] [reason]"
 		echo "           Record GitHub Actions availability; off requires exact-head local checks"
 		;;

@@ -192,7 +192,7 @@ fleet_command() {
         python3 "$engine" inventory "$@" || status=$?
         return "$status"
         ;;
-    plan | drift | ready)
+    plan | drift | ready | move)
         shift
         python3 "$engine" "$subcommand" --discovery-lib "$discovery_lib" "$@" || status=$?
         return "$status"
@@ -203,7 +203,7 @@ fleet_command() {
         return "$status"
         ;;
     help | -h | --help)
-        echo "Usage: $0 fleet <inventory|plan|drift|ready|provision|privacy-sync> [options]"
+        echo "Usage: $0 fleet <inventory|plan|drift|ready|provision|move|privacy-sync> [options]"
         echo ""
         echo "  inventory [--username U] [--discover-networks --ssh ALIAS] [--network-map FILE]"
         echo "      GET-only website inventory; groups shared roots; optional read-only"
@@ -221,6 +221,12 @@ fleet_command() {
         echo "      Preview (default) or apply the saved plan: create/adopt private repo,"
         echo "      clone, native init, push + issue + PR (never merges); resumable,"
         echo "      append-only private receipt (exit 5 if any repository failed)"
+        echo "  move --site DOMAIN... [plan options] [--apply --confirm HASH]"
+        echo "      Preview named misplaced sites (read-only). Apply: snapshot maintenance/"
+        echo "      Pulse, pause, scoped native migrate-layout plan + apply, restore both"
+        echo "      by slug; partial moves stay paused (exit 6 on failure)"
+        echo "  move --restore SNAPSHOT"
+        echo "      Restore a paused move once every repository moved (or none did)"
         echo "  privacy-sync [--inventory FILE] [--config FILE]"
         echo "      Offline sync to the local private entity guard (counts only)"
         echo "      Also runs automatically after inventory"

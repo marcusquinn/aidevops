@@ -16,21 +16,25 @@ authority each time they run.
 - [x] Phase 3 — readiness verification (`fleet ready`): visibility, owner,
   default-branch heads, effective features, Pulse/maintenance flags and worker auth;
   configured readiness, with optional merged-worker-PR evidence kept separate.
-- [ ] Phase 4 — fleet layout-move wrapper: snapshot and restore maintenance and
-  Pulse settings around `migrate-layout --source`.
+- [x] Phase 4 — fleet layout-move wrapper (`fleet move`): named misplaced sites
+  only; confirm the fleet plan hash; snapshot, pause, scoped native plan (after
+  pausing) and apply; restore maintenance and Pulse by slug with read-back proof
+  (new native `aidevops repos pulse on|off`); partial moves stay paused until
+  `--restore`.
 
 ### Files Scope
 
 - `.agents/scripts/hosting_fleet.py`, `hosting_fleet_inventory.py`,
   `hosting_fleet_plan.py`, `hosting_fleet_remote.py`, `hosting_fleet_ready.py`,
   `hosting_fleet_checks.py`, `hosting_fleet_provision.py`, `hosting_fleet_steps.py`,
-  `hosting_fleet_deliver.py` (new modules; the names avoid the `.gitignore`
+  `hosting_fleet_deliver.py`, `hosting_fleet_move.py` (new modules; the names avoid the `.gitignore`
   credential pattern `hostinger_*`)
 - `.agents/scripts/hostinger-helper.sh`
 - `.agents/scripts/repo_layout_migrate.py`, `.agents/scripts/repo-layout-migrate-helper.sh`
 - `.agents/scripts/aidevops-cli/aidevops-repos-lib.sh`,
-  `.agents/scripts/aidevops-cli/repo-discovery-lib.sh`
-- `.agents/services/hosting/hostinger.md`, `.agents/reference/repo-organization.md`
+  `.agents/scripts/aidevops-cli/repo-discovery-lib.sh`, `aidevops.sh` (`repos pulse`)
+- `.agents/services/hosting/hostinger.md`, `.agents/reference/repo-organization.md`,
+  `.agents/reference/repos-json-fields.md`
 - `tests/test-repo-layout-migrate.py`
 
 ## Goal and observed evidence

@@ -34,6 +34,7 @@ from hosting_fleet_plan import (  # noqa: E402
     CLEAN_STATES, build_plan,
 )
 from hosting_fleet_privacy import config_pairs, fleet_entities, merge_private_entities  # noqa: E402
+from hosting_fleet_move import run_move  # noqa: E402
 from hosting_fleet_provision import (  # noqa: E402
     assert_plan_current,
     build_provision,
@@ -238,6 +239,11 @@ def provision_command(args: argparse.Namespace) -> int:
     return PROVISION_FAILED_EXIT if report["counts"].get("failed") else 0
 
 
+def move_command(args: argparse.Namespace) -> int:
+    """Preview a scoped native layout plan, or apply one with automation snapshot/restore."""
+    return run_move(args, lambda: plan_from_args(args), expand_path(DEFAULT_STATE_DIR))
+
+
 def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     """Arguments shared by plan and drift."""
     parser.add_argument("--inventory", help="Inventory JSON (default: private state dir)")
@@ -309,6 +315,16 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Fleet config; apply refuses plans that predate its owner/ignore list")
     provision.add_argument("--json", action="store_true")
     provision.set_defaults(handler=provision_command)
+    move = commands.add_parser("move", help="Move named misplaced sites with automation snapshot/restore")
+    add_plan_arguments(move)
+    move.add_argument("--site", action="append", metavar="DOMAIN", help="Misplaced site to move (repeatable)")
+    move.add_argument("--apply", action="store_true",
+                      help="Snapshot, pause, native plan + apply, restore; requires --confirm")
+    move.add_argument("--confirm", help="Exact fleet plan_sha256 printed by the preview")
+    move.add_argument("--restore", metavar="SNAPSHOT",
+                      help="Restore automation from a paused move snapshot once moves are complete")
+    move.add_argument("--json", action="store_true")
+    move.set_defaults(handler=move_command)
     return parser
 
 
