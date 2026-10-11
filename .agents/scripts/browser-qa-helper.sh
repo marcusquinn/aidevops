@@ -92,7 +92,7 @@ cmd_links() {
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
 
-const baseUrl = process.argv[2].replace(/\/$/, '');
+const baseUrl = process.argv[2];
 const maxDepth = parseInt(process.argv[3] || '2', 10);
 const timeout = parseInt(process.argv[4] || '30000', 10);
 
@@ -178,12 +178,15 @@ _generate_stability_script() {
 	local timeout="$5"
 	local poll_interval="$6"
 	local poll_max_wait="$7"
+	local pages_default="${8:-true}"
 
 	cat >"$script_file" <<SCRIPT
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
 
-const baseUrl = '${safe_url}'.replace(/\/\$/, '');
+const baseUrl = '${safe_url}';
+const pagesDefault = ${pages_default};
+$(_page_url_js)
 const pages = [${pages_array}];
 const reloads = ${reloads};
 const timeout = ${timeout};
@@ -242,7 +245,7 @@ async function run() {
   const allResults = [];
 
   for (const pagePath of pages) {
-    const url = baseUrl + pagePath;
+    const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
     const reloadResults = [];
     let stable = true;
     let baseFingerprint = null;

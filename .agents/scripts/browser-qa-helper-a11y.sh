@@ -42,11 +42,13 @@ _run_contrast_checks() {
 	local url="$1"
 	local pages="$2"
 	local level="$3"
+	local pages_default="${4:-false}"
 	local contrast_script="${SCRIPT_DIR}/accessibility/playwright-contrast.mjs"
 	local contrast_json='[]'
 
 	for page_path in $pages; do
-		local full_url="${url%/}${page_path}"
+		local full_url
+		full_url=$(node -e "$(_page_url_js); console.log(resolvePageUrl(process.argv[1], process.argv[2], process.argv[3] === 'true'));" "$url" "$page_path" "$pages_default") || return 1
 		log_info "Running accessibility check on ${full_url} (level: ${level})"
 
 		if [[ -f "$contrast_script" ]]; then
@@ -183,6 +185,7 @@ _generate_a11y_script() {
 	local script_file="$1"
 	local safe_url="$2"
 	local pages_array="$3"
+	local pages_default="${4:-true}"
 	local element_checks document_checks
 	element_checks=$(_a11y_js_element_checks)
 	document_checks=$(_a11y_js_document_checks)
@@ -193,7 +196,9 @@ ${document_checks}"
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
 
-const baseUrl = '${safe_url}'.replace(/\/\$/, '');
+const baseUrl = '${safe_url}';
+const pagesDefault = ${pages_default};
+$(_page_url_js)
 const pages = [${pages_array}];
 
 async function run() {
@@ -206,7 +211,7 @@ async function run() {
   const contrastData = JSON.parse(process.argv[2] || '[]');
 
   for (const pagePath of pages) {
-    const url = baseUrl + pagePath;
+    const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
     try {
       await page.goto(url, { waitUntil: 'load', timeout: 30000 });
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
@@ -243,6 +248,7 @@ SCRIPT
 cmd_a11y() {
 	local url=""
 	local pages="/"
+	local pages_default=true
 	local level="AA"
 
 	while [[ $# -gt 0 ]]; do
@@ -253,6 +259,7 @@ cmd_a11y() {
 			;;
 		--pages)
 			pages="$2"
+			pages_default=false
 			shift 2
 			;;
 		--level)
@@ -272,7 +279,7 @@ cmd_a11y() {
 	fi
 
 	local contrast_json
-	contrast_json=$(_run_contrast_checks "$url" "$pages" "$level")
+	contrast_json=$(_run_contrast_checks "$url" "$pages" "$level" "$pages_default") || return 1
 
 	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
 	local script_dir script_file
@@ -284,7 +291,7 @@ cmd_a11y() {
 	local safe_url
 	safe_url=$(js_escape_string "$url")
 
-	_generate_a11y_script "$script_file" "$safe_url" "$pages_array"
+	_generate_a11y_script "$script_file" "$safe_url" "$pages_array" "$pages_default"
 
 	local exit_code=0
 	run_playwright_node "$script_file" "$contrast_json" || exit_code=$?
