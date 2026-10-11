@@ -590,6 +590,26 @@ _dispatch_order_idle_borrowing_candidates() {
 }
 
 #######################################
+# Order one dispatch round: attempt-recency rotation (GH#34363) when the
+# candidate library is loaded, then the trusted review-debt fairness share.
+# Both are order-only; every candidate still passes its live gates.
+#
+# Arguments:
+#   $1 - ranked candidate JSON array
+#   $2 - available implementation slots
+# Returns: reordered JSON array
+#######################################
+_dispatch_order_round_candidates() {
+	local candidates_json="$1"
+	local available_slots="$2"
+	if declare -F _dispatch_order_attempt_recency_candidates >/dev/null 2>&1; then
+		candidates_json=$(_dispatch_order_attempt_recency_candidates "$candidates_json")
+	fi
+	_dispatch_order_idle_borrowing_candidates "$candidates_json" "$available_slots"
+	return 0
+}
+
+#######################################
 # Re-open a candidate that was suppressed only by this Pulse cycle's local
 # benign-block ledger while the worker pool is empty. The authoritative dedup
 # layers run again before any launch, so a live owner or durable launch remains
@@ -808,7 +828,7 @@ dispatch_max() {
 		echo 0
 		return 0
 	fi
-	candidates_json=$(_dispatch_order_idle_borrowing_candidates "$candidates_json" "$available_slots")
+	candidates_json=$(_dispatch_order_round_candidates "$candidates_json" "$available_slots")
 
 	local _dispatch_owns_benign_blocks_cycle=0
 	local _effective_slots="$available_slots"

@@ -1635,6 +1635,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18664 fix(auto-update): stop Pulse-run auto-updates rolling back every verified release #bug #framework tier:standard ref:GH#34357 logged:2026-10-11 -> [todo/tasks/t18664-brief.md] pr:#34358 completed:2026-10-11
 
+- [ ] t18665 fix(pulse): rotate dispatch attempts so repeatedly blocked head candidates stop starving the never-attempted backlog #bug #framework tier:standard ref:GH#34363 logged:2026-10-11 -> [todo/tasks/t18665-brief.md]
+
+- [ ] t18666 fix(pulse): log secret-gate issue-fetch skips and restore test-pulse-wrapper-silent-dispatch.sh (4/21 failing since #32748) #auto-dispatch #bug #framework ref:GH#34364
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

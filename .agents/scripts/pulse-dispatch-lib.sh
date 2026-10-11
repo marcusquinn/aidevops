@@ -574,6 +574,7 @@ _dispatch_process_candidate() {
 	echo "[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #${issue_number} (${repo_slug})" >>"$LOGFILE"
 	local dispatch_rc=0 attempt_epoch=""
 	attempt_epoch=$(date +%s)
+	_dispatch_attempt_recency_stamp "$issue_number" "$repo_slug" "$attempt_epoch" # GH#34363
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
@@ -596,6 +597,7 @@ _dispatch_process_candidate() {
 		return 1
 	fi
 	_dispatch_stats_increment "dispatch_worker_spawned"
+	_dispatch_attempt_recency_clear "$issue_number" "$repo_slug"
 	_DISPATCH_CANDIDATE_ELIGIBILITY="eligible"
 
 	# Launch confirmed. Reset consecutive streak and clear throttle if active.

@@ -1120,6 +1120,113 @@ _dispatch_filter_capability_cooled_candidates() {
 }
 
 #######################################
+# GH#34363: attempt-recency rotation. Rounds are bounded by the cycle budget
+# and each attempt costs a full dedup/eligibility ceremony, so a deterministic
+# ranking re-attempted the same blocked head candidates every cycle and never
+# reached the untried tail. Every DISPATCH_CANDIDATE_ATTEMPT stamps the
+# candidate; a confirmed worker launch clears the stamp. dispatch_max then puts
+# candidates stamped within the window after the rest of their priority tier,
+# oldest attempt first. Order only: every live gate still runs for every
+# attempted candidate. Runner-local soft state; 0 disables; capped at 7 days.
+#######################################
+_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS="${AIDEVOPS_DISPATCH_ATTEMPT_RECENCY_SECONDS:-86400}"
+[[ "$_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS" =~ ^(0|[1-9][0-9]{0,6})$ ]] || _DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=86400
+((_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS <= 604800)) || _DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=604800
+
+_dispatch_attempt_recency_dir() {
+	printf '%s/.aidevops/cache/dispatch-attempt-recency\n' "$HOME"
+	return 0
+}
+
+_dispatch_attempt_recency_path() {
+	local issue="$1" repo="$2"
+	[[ "$issue" =~ ^[0-9]+$ && "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	printf '%s/%s--%s--%s\n' "$(_dispatch_attempt_recency_dir)" "${repo%%/*}" "${repo##*/}" "$issue"
+	return 0
+}
+
+# Arguments: issue number, repo slug, attempt epoch. Best effort; returns 0.
+_dispatch_attempt_recency_stamp() {
+	local issue="$1" repo="$2" epoch="$3" file tmp
+	((_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS > 0)) || return 0
+	[[ "$epoch" =~ ^[1-9][0-9]{0,11}$ ]] || return 0
+	file=$(_dispatch_attempt_recency_path "$issue" "$repo") || return 0
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	tmp=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+	if ! { printf '%s\n' "$epoch" >"$tmp" && mv -f "$tmp" "$file"; } 2>/dev/null; then
+		rm -f "$tmp" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Arguments: issue number, repo slug. Called once a worker launch is confirmed.
+_dispatch_attempt_recency_clear() {
+	local issue="$1" repo="$2" file=""
+	file=$(_dispatch_attempt_recency_path "$issue" "$repo") || return 0
+	rm -f "$file" 2>/dev/null || true
+	return 0
+}
+
+# Emit "<owner>--<repo>--<issue>\t<epoch>" for each stamp inside the window and
+# remove expired, future-dated and malformed stamps. In-flight mktemp files do
+# not match the exact name and are left alone.
+# Arguments: stamp directory, current epoch
+_dispatch_attempt_recency_stamps() {
+	local dir="$1" now="$2" file name stamp
+	for file in "$dir"/*; do
+		name="${file##*/}"
+		[[ "$name" =~ ^[A-Za-z0-9._-]+--[A-Za-z0-9._-]+--[0-9]+$ && -f "$file" && ! -L "$file" ]] || continue
+		stamp=""
+		IFS= read -r stamp 2>/dev/null <"$file" || true
+		if [[ "$stamp" =~ ^[1-9][0-9]{0,11}$ ]] && ((stamp <= now && now - stamp < _DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS)); then
+			printf '%s\t%s\n' "$name" "$stamp"
+		else
+			rm -f "$file" 2>/dev/null || true
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Order one round's ranked candidates for attempt-recency rotation (see
+# above): stable sort by explicit priority tier (GH#32703 urgent labels still
+# lead strictly), then not-recently-attempted before recently attempted, then
+# oldest attempt first, then the incoming rank. Fails open: any state or jq
+# error returns the input unchanged.
+#
+# Arguments: ranked candidate JSON array
+# Stdout: reordered JSON array
+#######################################
+_dispatch_order_attempt_recency_candidates() {
+	# Every local below is assigned before it is read (dispatch_max style).
+	local candidates_json="$1" dir now stamps result demoted ordered
+	dir=$(_dispatch_attempt_recency_dir)
+	now=$(date +%s)
+	if ((_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS == 0)) || [[ ! -d "$dir" || ! "$now" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	stamps=$(_dispatch_attempt_recency_stamps "$dir" "$now")
+	if [[ -z "$stamps" ]] || ! result=$(jq -c --arg stamps "$stamps" '
+		def stamp_key: "\((.repo_slug // "") | sub("/"; "--"))--\(.number // "")";
+		($stamps | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: (.[1] | tonumber)}) | from_entries) as $at |
+		[to_entries[] | {i: .key, c: .value, tier: (.value.priority_rank // 0), at: $at[.value | stamp_key]}] as $rows |
+		($rows | map(select(.at != null)) | length),
+		($rows | sort_by([-.tier, (if .at == null then 0 else 1 end), (.at // 0), .i]) | map(.c))
+	' <<<"$candidates_json" 2>/dev/null) || ! { IFS= read -r demoted && IFS= read -r ordered; } <<<"$result" ||
+		[[ ! "$demoted" =~ ^[1-9][0-9]*$ || -z "$ordered" ]]; then
+		# No stamped candidate in this round (or a parse failure): keep the
+		# incoming order byte-for-byte.
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	echo "[pulse-wrapper] Dispatch_max: attempt-recency rotation — ${demoted} candidate(s) attempted without launch in the last ${_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS}s ordered after the rest of their priority tier, oldest attempt first (GH#34363)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_candidate_attempt_recency_demoted"
+	printf '%s\n' "$ordered"
+	return 0
+}
+
+#######################################
 # Record a non-zero dispatch_with_dedup outcome for one candidate.
 #
 # Arguments:
