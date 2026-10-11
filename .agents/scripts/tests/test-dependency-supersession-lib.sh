@@ -47,7 +47,7 @@ gh() {
 	done
 	printf '%s\n' "$number" >>"$CALL_LOG"
 	[[ "$number" != "$GH_FAIL_NUMBER" ]] || return 1
-	row=$(printf '%s\n' "$FIXTURES" | grep -E "^${number}[|]" | head -n 1)
+	row=$(grep -m 1 -E "^${number}[|]" <<<"$FIXTURES")
 	IFS='|' read -r _ typename state reason comments <<<"$row"
 	jq -cn --arg t "$typename" --arg s "$state" --arg r "$reason" \
 		--argjson c "${comments:-[]}" --argjson no_cost "$GH_NO_COST" '
