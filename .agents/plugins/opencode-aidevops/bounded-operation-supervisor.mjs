@@ -27,8 +27,11 @@ async function readPrivateConfig() {
 }
 
 // Nested process groups created by helpers such as timeout_sec are tracked
-// separately (GH#33514); see bounded-operation-process-tree.mjs.
+// separately (GH#33514); see bounded-operation-process-tree.mjs. Periodic
+// ticks scan escaped-process markers only every MARKER_SCAN_INTERVAL_MS;
+// exit, termination and drain decisions force that scan (GH#34324).
 const TRACK_INTERVAL_MS = 250;
+const MARKER_SCAN = Object.freeze({ markers: true });
 
 function signalOwnGroup(signal) {
   try {
@@ -70,7 +73,7 @@ function validCommand(command) {
 function createTerminator(tracker, killGraceMs, reportContainment) {
   const state = { terminating: false };
   const signalNested = (signal) => {
-    const snapshot = tracker.track();
+    const snapshot = tracker.track(MARKER_SCAN);
     signalEach(tracker.nestedTargets(snapshot), signal, snapshot?.entries);
   };
   state.terminate = () => {
@@ -92,9 +95,15 @@ function createTerminator(tracker, killGraceMs, reportContainment) {
 // descendant is alive. Nested descendants keep inherited stdio open, so the
 // operation is not drained while they live; the budget still bounds them, and
 // once termination has begun they are escalated instead of awaiting the grace.
+// A tree that looks drained is confirmed with a marker scan, so an escaped
+// marked descendant is never missed between periodic scans (GH#34324).
 function ownedTreeDrained(tracker, terminator, terminateSurvivors) {
-  const snapshot = tracker.track();
+  let snapshot = tracker.track();
   if (!snapshot) return false;
+  if (tracker.ownGroupMembers(snapshot) === 1 && tracker.nestedTargets(snapshot).length === 0) {
+    snapshot = tracker.track(MARKER_SCAN);
+    if (!snapshot) return false;
+  }
   const nested = tracker.nestedTargets(snapshot);
   if (nested.length || tracker.ownGroupMembers(snapshot) > 1) terminateSurvivors();
   if (tracker.ownGroupMembers(snapshot) !== 1) return false;
@@ -157,7 +166,7 @@ export async function runSupervisor() {
     result.exit = Number.isInteger(code) ? code : 1;
     // Command completion also owns cleanup of servers with detached stdio.
     // Preserve its exit status while draining any surviving owned descendants.
-    const snapshot = tracker.track();
+    const snapshot = tracker.track(MARKER_SCAN);
     if (snapshot && (tracker.nestedTargets(snapshot).length || tracker.ownGroupMembers(snapshot) > 1)) {
       terminateSurvivors();
     }
