@@ -17,6 +17,7 @@ Usage:
   aidevops repos migrate-layout status --receipt ID
 
 Plan options:
+  --source PATH              Select an exact source repository (repeatable)
   --include-registered-paths   Approve exact initialized_repos[].path retargets
   --repos-json PATH           Override ~/.config/aidevops/repos.json
   --tabby-config PATH         Include an existing Tabby config
@@ -27,6 +28,8 @@ Plan options:
 
 The plan command never mutates repositories or consumers. Apply and rollback
 require the exact SHA-256 printed by plan/status and fail closed on drift.
+With --source, only selected repositories enter the transaction; native consumer
+inventory and all application guards remain active. Empty selection is refused.
 EOF
 	return 0
 }

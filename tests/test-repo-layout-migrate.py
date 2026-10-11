@@ -167,7 +167,7 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         )
         marker.chmod(0o600)
 
-    def _plan(self, *, include_registered: bool = True) -> dict:
+    def _plan(self, *, include_registered: bool = True, sources: list[str] | None = None) -> dict:
         arguments = [
             "plan",
             "--workspace",
@@ -189,6 +189,9 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         ]
         if include_registered:
             arguments.append("--include-registered-paths")
+        if sources is not None:
+            for source in sources:
+                arguments.extend(["--source", source])
         result = self._run(*arguments)
         return json.loads(result.stdout)
 
@@ -215,6 +218,30 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self.assertEqual(payload["consumers"]["databases"][-1]["rows"], [])
         self.assertEqual(len(payload["consumers"]["markers"]), 1)
         self.assertFalse(self.destination.exists())
+
+    def test_exact_source_selection_retains_native_consumer_inventory(self) -> None:
+        other = self.workspace / "Unrelated"
+        self._git("clone", "-q", str(self.source), str(other))
+        self._git("remote", "set-url", "origin", "git@github.com:Acme/Unrelated.git", cwd=other)
+        before = self._repository_snapshot(other)
+        summary = self._plan(sources=[str(self.source)])
+        payload = json.loads(self.plan.read_text(encoding="utf-8"))
+        self.assertEqual(summary["moves"], 1)
+        self.assertEqual(payload["selected_sources"], [str(self.source)])
+        self.assertEqual([item["source"] for item in payload["repositories"]], [str(self.source)])
+        self.assertEqual(len(payload["consumers"]["databases"]), 3)
+        self.assertEqual(len(payload["consumers"]["markers"]), 1)
+        self.assertEqual(before, self._repository_snapshot(other))
+
+    def test_invalid_or_empty_explicit_source_is_refused(self) -> None:
+        for source in ("", str(self.home), str(self.workspace / "absent")):
+            with self.subTest(source=source):
+                result = self._run(
+                    "plan", "--workspace", str(self.workspace), "--output", str(self.plan),
+                    "--source", source, "--repos-json", str(self.repos_json), check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.plan.exists())
 
     def test_apply_resume_or_rollback_preserves_exact_state(self) -> None:
         before_repository = self._repository_snapshot(self.source)

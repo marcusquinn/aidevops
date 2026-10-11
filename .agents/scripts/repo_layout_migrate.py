@@ -559,7 +559,27 @@ def plan_command(args: argparse.Namespace) -> int:
     registrations = load_registrations(repos_json)
     repositories: list[dict[str, Any]] = []
     exclusions: list[dict[str, str]] = []
-    for source in discover_repositories(workspace, discovery_lib):
+    discovered = list(discover_repositories(workspace, discovery_lib))
+    requested_sources = getattr(args, "source", None)
+    selected_sources = None
+    if requested_sources is not None:
+        selected_sources = []
+        for value in requested_sources:
+            if not value:
+                raise MigrationError("Explicit source selection must not be empty")
+            source = expand_path(value)
+            if source.is_symlink() or not source.is_dir():
+                raise MigrationError("Selected source must be an existing non-symlink directory")
+            source = source.resolve()
+            if not path_is_inside(workspace, source) or source not in discovered:
+                raise MigrationError("Selected source is not a discovered workspace repository")
+            if source in selected_sources:
+                raise MigrationError("Duplicate selected source")
+            selected_sources.append(source)
+        if not selected_sources:
+            raise MigrationError("Explicit source selection must not be empty")
+        discovered = sorted(selected_sources)
+    for source in discovered:
         repository, exclusion = plan_repository(source, workspace, repos_json, registrations, args)
         if repository:
             repositories.append(repository)
@@ -586,6 +606,8 @@ def plan_command(args: argparse.Namespace) -> int:
         "consumers": consumers,
         "state_dir": str(state_dir),
     }
+    if selected_sources is not None:
+        plan["selected_sources"] = [str(source) for source in sorted(selected_sources)]
     plan["plan_sha256"] = sha256_bytes(canonical_bytes(plan))
     if any(item["destination_collision"] for item in repositories):
         raise MigrationError("Destination collision detected; no plan was written")
@@ -2097,6 +2119,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan = subparsers.add_parser("plan")
     plan.add_argument("--workspace", required=True)
     plan.add_argument("--output", required=True)
+    plan.add_argument("--source", action="append", help="Exact source repository; repeat for a scoped plan")
     plan.add_argument("--include-registered-paths", action="store_true")
     plan.add_argument("--repos-json")
     plan.add_argument("--tabby-config")
