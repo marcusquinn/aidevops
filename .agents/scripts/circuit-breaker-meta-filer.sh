@@ -800,7 +800,7 @@ cmd_unblock_on_merge() {
 	original_ref=$(_cb_meta_extract_original "$meta_number" "$repo_slug")
 	if [[ -z "$original_ref" ]]; then
 		if _cb_meta_body_is_withheld "$meta_number" "$repo_slug"; then
-			_cb_meta_unblock_withheld_originals "$meta_number" "$repo_slug"
+			_cb_meta_unblock_withheld_originals "$meta_number" "$repo_slug" || return 2
 			return 0
 		fi
 		log_info "[circuit-breaker-meta-filer] unblock: no original-issue line in #${meta_number} body — not a meta-issue, skip" >&2
@@ -814,7 +814,7 @@ cmd_unblock_on_merge() {
 		return 0
 	fi
 
-	_cb_meta_unblock_original "$original_repo" "$original_issue" "$repo_slug" "$meta_number"
+	_cb_meta_unblock_original "$original_repo" "$original_issue" "$repo_slug" "$meta_number" || return 2
 	return 0
 }
 
@@ -877,22 +877,51 @@ _cb_meta_find_withheld_originals() {
 #######################################
 # Unblock every original linked to a withheld meta-issue.
 # Args: $1=meta_issue_number, $2=meta_repo
-# Returns: 0 always (best-effort)
+# Returns: 0 on success/no match, 2 if any original could not be reset
 #######################################
 _cb_meta_unblock_withheld_originals() {
 	local meta_number="$1"
 	local meta_repo="$2"
-	local originals="" ref="" count=0
+	local originals="" ref="" count=0 reset_failed=0
 
 	originals=$(_cb_meta_find_withheld_originals "$meta_number" "$meta_repo")
 	while IFS= read -r ref; do
 		[[ -n "$ref" ]] || continue
-		_cb_meta_unblock_original "${ref%#*}" "${ref##*#}" "$meta_repo" "$meta_number"
+		_cb_meta_unblock_original "${ref%#*}" "${ref##*#}" "$meta_repo" "$meta_number" || reset_failed=1
 		count=$((count + 1))
 	done <<<"$originals"
 	if [[ "$count" -eq 0 ]]; then
 		log_info "[circuit-breaker-meta-filer] unblock: withheld original for ${meta_repo}#${meta_number} not found on this runner; the meta blocker label remains for a runner with access" >&2
 	fi
+	[[ "$reset_failed" -eq 0 ]] || return 2
+	return 0
+}
+
+#######################################
+# Persist a cost-window boundary once per merged meta, before releasing dispatch.
+# GH#34349: label removal alone immediately re-trips on the old worker spend.
+# Args: $1=original_repo, $2=original_issue, $3=meta_repo, $4=meta_number
+# Returns: 0 on durable reset, 1 on read/write failure (keep the blocker).
+#######################################
+_cb_meta_reset_cost_window() {
+	local original_repo="$1" original_issue="$2" meta_repo="$3" meta_number="$4"
+	local marker="<!-- cost-circuit-breaker:reset meta=${meta_repo}#${meta_number} -->"
+	local comments_json reset_count
+	comments_json=$(gh api "repos/${original_repo}/issues/${original_issue}/comments" \
+		--paginate --slurp 2>/dev/null) || return 1
+	reset_count=$(printf '%s' "$comments_json" | jq -r --arg marker "$marker" '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then . else error("invalid comments") end)
+		| [.[] | select(.author_association == "OWNER" or
+			.author_association == "MEMBER" or .author_association == "COLLABORATOR")
+			| select((.body // "") | contains($marker))] | length
+	' 2>/dev/null) || return 1
+	[[ "$reset_count" =~ ^[0-9]+$ ]] || return 1
+	[[ "$reset_count" -gt 0 ]] && return 0
+	gh_issue_comment "$original_issue" --repo "$original_repo" \
+		--body "${marker}
+The circuit-breaker meta-issue ${meta_repo}#${meta_number} has merged its fix. Start a new worker cost window before removing its dispatch blocker; historical spend remains in the audit trail." \
+		2>/dev/null || return 1
 	return 0
 }
 
@@ -900,13 +929,17 @@ _cb_meta_unblock_withheld_originals() {
 # Remove one meta blocker from an original issue, restore availability when no
 # other blocked-by labels remain, and post the unblock comment.
 # Args: $1=original_repo, $2=original_issue, $3=meta_repo, $4=meta_number
-# Returns: 0 always (best-effort)
+# Returns: 0 on success, 2 when the durable reset cannot be recorded
 #######################################
 _cb_meta_unblock_original() {
 	local original_repo="$1"
 	local original_issue="$2"
 	local repo_slug="$3"
 	local meta_number="$4"
+
+	# A failed reset must leave the structural blocker intact. Posting it after
+	# status:available creates a race with dispatch on another runner.
+	_cb_meta_reset_cost_window "$original_repo" "$original_issue" "$repo_slug" "$meta_number" || return 2
 
 	local blocked_label
 	blocked_label=$(_cb_meta_blocked_label "$original_repo" "$repo_slug" "$meta_number")

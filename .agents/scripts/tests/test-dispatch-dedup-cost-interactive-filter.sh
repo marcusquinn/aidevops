@@ -69,7 +69,17 @@ cat >"${STUB_DIR}/gh" <<STUB
 # Stub gh for test-dispatch-dedup-cost-interactive-filter.sh
 if [[ "\$1" == "api" ]]; then
 	if [[ "\$2" == "repos/"*"/issues/"*"/comments" ]]; then
+		if [[ " \$* " == *" --slurp "* ]]; then
+			jq -s '.' "${FIXTURE_COMMENTS_JSON}" || exit 1
+			exit 0
+		fi
 		cat "${FIXTURE_COMMENTS_JSON}" 2>/dev/null || echo '[]'
+		exit 0
+	fi
+	# Cost aggregation now verifies delivered checkpoints through the timeline.
+	# This isolated filter fixture has no merged PRs, but must model slurped pages.
+	if [[ "\$2" == "repos/"*"/issues/"*"/timeline" ]]; then
+		printf '[[]]'
 		exit 0
 	fi
 	if [[ "\$2" == "user" ]]; then
@@ -126,7 +136,7 @@ write_mixed_comments() {
 
 run_sum() {
 	local issue="$1" repo="${2:-owner/repo}"
-	"$DEDUP_HELPER" sum-issue-token-spend "$issue" "$repo" 2>/dev/null
+	"$DEDUP_HELPER" sum-issue-token-spend "$issue" "$repo" 2>/dev/null || return 1
 	return 0
 }
 
