@@ -71,8 +71,17 @@ print_header() { return 0; }
 print_info() { return 0; }
 print_warning() { return 0; }
 print_success() { return 0; }
+# Every framework release re-enters the tracked-config migration path, so later
+# runs advance this version instead of replaying an already-registered one.
+TEST_RELEASE_VERSION="9.9.9"
 get_version() {
-	printf '9.9.9\n'
+	printf '%s\n' "$TEST_RELEASE_VERSION"
+	return 0
+}
+update_for_next_release() {
+	local version="$1"
+	TEST_RELEASE_VERSION="$version"
+	_update_sync_projects false "$version"
 	return 0
 }
 
@@ -101,7 +110,12 @@ _project_config_repo_slug() {
 	return 0
 }
 _project_config_migration_exists() {
+	[[ -f "${TEST_ROOT}/migration-lookup-fails" ]] && return 2
 	[[ -f "${TEST_ROOT}/migration-created" ]]
+	return $?
+}
+_project_config_remote_tracks_config() {
+	[[ ! -f "${TEST_ROOT}/remote-migrated" ]]
 	return $?
 }
 _project_config_write_migration_issue() {
@@ -151,8 +165,24 @@ assert_equal "local config version advances" "9.9.9" "$(jq -r '.version' "$local
 assert_equal "local registration advances" "9.9.9" "$(jq -r --arg path "$local_repo" '.initialized_repos[] | select(.path == $path) | .version' "$REPOS_FILE")"
 assert_equal "local repository remains clean" "" "$(/usr/bin/git -C "$local_repo" status --porcelain)"
 
-_update_sync_projects false 9.9.9
-assert_equal "second update does not duplicate migration" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
+update_for_next_release 9.9.10
+assert_equal "next release does not duplicate an open migration" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
+
+# After a worker closes the issue, a canonical checkout that is behind still
+# tracks the config locally; only the migrated default branch may decide.
+rm -f "${TEST_ROOT}/migration-created"
+touch "${TEST_ROOT}/remote-migrated"
+update_for_next_release 9.9.11
+assert_equal "stale local index does not re-file after default-branch migration" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
+
+rm -f "${TEST_ROOT}/remote-migrated"
+touch "${TEST_ROOT}/migration-lookup-fails"
+update_for_next_release 9.9.12
+assert_equal "failed duplicate lookup does not file a possible duplicate" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
+rm -f "${TEST_ROOT}/migration-lookup-fails"
+
+update_for_next_release 9.9.13
+assert_equal "pending default-branch migration is re-queued once its issue closes" "2" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
 
 linked_before=$(cksum <"$linked_repo/.aidevops.json")
 _project_config_migrate_linked_worktree "$linked_repo"

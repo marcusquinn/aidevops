@@ -1647,6 +1647,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18670 fix(dispatch-dedup): an open PR with over 100 changed files must not make the open-siblings lookup permanently uncertain #bug #framework tier:standard ref:GH#34385 logged:2026-10-11 -> [todo/tasks/t18670-brief.md] pr:#34386 completed:2026-10-11
 
+- [ ] t18671 fix(project-config): stop re-filing the .aidevops.json migration issue from a stale local index and an unmatched duplicate search #bug #framework tier:standard ref:GH#34388 logged:2026-10-11 -> [todo/tasks/t18671-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

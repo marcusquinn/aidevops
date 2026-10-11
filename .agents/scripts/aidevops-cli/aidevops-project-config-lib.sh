@@ -47,6 +47,9 @@ _project_config_is_linked_worktree() {
 }
 
 _PROJECT_CONFIG_MIGRATION_MARKER="<!-- aidevops:project-config-migration -->"
+# GitHub search matches the HTML-comment marker only as a quoted phrase. The
+# unquoted form never matches, which let every update file another duplicate.
+_PROJECT_CONFIG_MIGRATION_QUERY="\"${_PROJECT_CONFIG_MIGRATION_MARKER}\" in:body"
 _PROJECT_CONFIG_MIGRATION_MAX_REPOS="${AIDEVOPS_PROJECT_CONFIG_MIGRATION_MAX_REPOS:-3}"
 
 _project_config_repo_slug() {
@@ -77,19 +80,68 @@ _project_config_can_file_migration() {
 	return $?
 }
 
+# Returns 0 when an open migration issue or PR exists, 1 when none exists, and
+# 2 when GitHub could not answer. Callers must not file on 2.
 _project_config_migration_exists() {
 	local repo_slug="$1"
-	local marker="$_PROJECT_CONFIG_MIGRATION_MARKER"
+	local query="$_PROJECT_CONFIG_MIGRATION_QUERY"
 	local existing=""
-	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker} in:body" \
-		--limit 1 --json number --jq '.[0].number // empty' 2>/dev/null) || return 1
+	existing=$(gh issue list --repo "$repo_slug" --state open --search "$query" \
+		--limit 1 --json number --jq '.[0].number // empty' 2>/dev/null) || return 2
 	if [[ -n "$existing" ]]; then
 		return 0
 	fi
-	existing=$(gh pr list --repo "$repo_slug" --state open --search "${marker} in:body" \
-		--limit 1 --json number --jq '.[0].number // empty' 2>/dev/null) || return 1
-	[[ -n "$existing" ]]
-	return $?
+	existing=$(gh pr list --repo "$repo_slug" --state open --search "$query" \
+		--limit 1 --json number --jq '.[0].number // empty' 2>/dev/null) || return 2
+	if [[ -n "$existing" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# A canonical checkout that is behind still tracks .aidevops.json in its local
+# index after the default branch has migrated, so only the default branch
+# decides whether the repository still needs the migration. Returns 0 when the
+# default branch tracks the file, 1 when GitHub reports it absent (HTTP 404),
+# and 2 when the answer is unknown.
+_project_config_remote_tracks_config() {
+	local repo_slug="$1"
+	local api_err=""
+	if api_err=$(gh api --silent "repos/${repo_slug}/contents/.aidevops.json" 2>&1); then
+		return 0
+	fi
+	if [[ "$api_err" == *"HTTP 404"* ]]; then
+		return 1
+	fi
+	return 2
+}
+
+# Decide whether a repository whose local checkout tracks .aidevops.json needs a
+# migration issue. Every unknown answer declines, so an API failure can delay a
+# migration but can never file a duplicate.
+_project_config_migration_needed() {
+	local repo_slug="$1"
+	local rc=0
+	_project_config_remote_tracks_config "$repo_slug" || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		print_info "Default branch no longer tracks .aidevops.json; this checkout is behind, so no migration is queued"
+		return 1
+	fi
+	if [[ "$rc" -ne 0 ]]; then
+		print_warning "Could not confirm whether the default branch tracks .aidevops.json; migration not queued"
+		return 1
+	fi
+	rc=0
+	_project_config_migration_exists "$repo_slug" || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_info "Tracked .aidevops.json migration is already queued for this repository"
+		return 1
+	fi
+	if [[ "$rc" -ne 1 ]]; then
+		print_warning "Could not check for an existing .aidevops.json migration; not queueing a possible duplicate"
+		return 1
+	fi
+	return 0
 }
 
 _project_config_write_migration_issue() {
@@ -115,10 +167,7 @@ _project_config_queue_migration() {
 		print_warning "Tracked .aidevops.json needs a linked-worktree migration; GitHub write access is unavailable"
 		return 0
 	}
-	if _project_config_migration_exists "$repo_slug"; then
-		print_info "Tracked .aidevops.json migration is already queued for this repository"
-		return 0
-	fi
+	_project_config_migration_needed "$repo_slug" || return 0
 	[[ "${_PROJECT_CONFIG_MIGRATIONS_QUEUED:-0}" -lt "$queue_limit" ]] || {
 		print_info "Tracked .aidevops.json migration queue limit reached for this update"
 		return 0
