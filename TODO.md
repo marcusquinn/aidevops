@@ -1633,7 +1633,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18663 fix(pulse): stop stale-blocked sweep and dep-graph refresh starving repos with real backlogs #bug #framework tier:standard ref:GH#34353 logged:2026-10-11 -> [todo/tasks/t18663-brief.md] pr:#34354 completed:2026-10-11
 
-- [ ] t18664 fix(auto-update): stop Pulse-run auto-updates rolling back every verified release #bug #framework tier:standard ref:GH#34357 logged:2026-10-11 -> [todo/tasks/t18664-brief.md]
+- [x] t18664 fix(auto-update): stop Pulse-run auto-updates rolling back every verified release #bug #framework tier:standard ref:GH#34357 logged:2026-10-11 -> [todo/tasks/t18664-brief.md] pr:#34358 completed:2026-10-11
 
 ## In Progress
 
