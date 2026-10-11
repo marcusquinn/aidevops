@@ -50,6 +50,16 @@ function trustedSymlinkChain(path, hops = 0) {
   return trustedChain(path);
 }
 
+function trustedCandidate(candidate, directory) {
+  const metadata = statSync(candidate);
+  if (!metadata.isFile() || (metadata.mode & 0o111) === 0) return false;
+  const real = realpathSync(candidate);
+  const realDirectory = realpathSync(directory);
+  // Sticky directories are allowed only as ancestors, not PATH leaves.
+  if (!rootControlled(parse(real).dir, false) || !rootControlled(realDirectory, false)) return false;
+  return trustedSymlinkChain(candidate) && trustedChain(real) && trustedChain(realDirectory);
+}
+
 // Returns the trusted path, or a non-existent sentinel so callers fail closed.
 export function resolveTrustedExecutable(name, searchPath = `${process.env.PATH || ""}${delimiter}/bin${delimiter}/usr/bin`) {
   if (!/^[A-Za-z0-9_.+-]+$/.test(name) || name === "." || name === "..") return `/nonexistent/aidevops-untrusted-tool`;
@@ -58,16 +68,7 @@ export function resolveTrustedExecutable(name, searchPath = `${process.env.PATH 
     // Do not collapse symlink/.. components before filesystem resolution.
     const candidate = `${directory.replace(/\/+$/, "")}/${name}`;
     try {
-      const metadata = statSync(candidate);
-      if (!metadata.isFile() || (metadata.mode & 0o111) === 0) continue;
-      const real = realpathSync(candidate);
-      const realDirectory = realpathSync(directory);
-      // Sticky shared dirs (e.g. /nix/store) only count as ancestors: a sticky
-      // PATH dir such as /tmp lets any user plant a symlink to a root binary.
-      if (!rootControlled(parse(real).dir, false) || !rootControlled(realDirectory, false)) continue;
-      if (trustedSymlinkChain(candidate) && trustedChain(real) && trustedChain(realDirectory)) {
-        return candidate;
-      }
+      if (trustedCandidate(candidate, directory)) return candidate;
     } catch {
       continue;
     }

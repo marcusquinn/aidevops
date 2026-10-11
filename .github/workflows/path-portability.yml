@@ -73,7 +73,7 @@ jobs:
           failed=0
           for test_script in "${tests[@]}"; do
             printf '\n==> %s\n' "$test_script"
-            test_env=()
+            test_env=(env)
             if [[ "$test_script" == */test-command-policy-helper.sh ]]; then
               # This suite separately models workers and interactive sessions;
               # the Actions host must not turn its interactive fixture into a worker.
