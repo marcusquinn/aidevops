@@ -445,11 +445,21 @@ _ptsw_effective_recovery_cap() {
 	[[ "$count_threshold" =~ ^[1-9][0-9]*$ ]] || count_threshold=50
 	[[ "$size_threshold_mib" =~ ^[1-9][0-9]*$ ]] || size_threshold_mib=10240
 	candidate_count=$(_ptsw_count_workspace_candidates "$temp_root") || candidate_count=0
+	# Both pressure rules only ever raise the cap to candidate_count, so the
+	# size of the shared temp root matters only when count pressure has not
+	# already decided. The worker launch path runs this sweep for every
+	# candidate, and a full-tree du there stalled dispatch for minutes.
+	if [[ "$candidate_count" -le "$configured_cap" ]]; then
+		printf '%s\n' "$configured_cap"
+		return 0
+	fi
+	if [[ "$candidate_count" -ge "$count_threshold" ]]; then
+		printf '%s\n' "$candidate_count"
+		return 0
+	fi
 	usage_kib=$(_ptsw_temp_root_usage_kib "$temp_root") || usage_kib=0
 	size_threshold_kib=$((size_threshold_mib * 1024))
-	if [[ "$candidate_count" -gt "$configured_cap" && "$candidate_count" -ge "$count_threshold" ]]; then
-		configured_cap="$candidate_count"
-	elif [[ "$usage_kib" -ge "$size_threshold_kib" && "$candidate_count" -gt "$configured_cap" ]]; then
+	if [[ "$usage_kib" -ge "$size_threshold_kib" ]]; then
 		configured_cap="$candidate_count"
 	fi
 	printf '%s\n' "$configured_cap"

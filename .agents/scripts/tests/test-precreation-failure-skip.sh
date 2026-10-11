@@ -250,6 +250,7 @@ claim_worktree_ownership() {
 # Re-stub launch-orchestrator dependencies after sourcing; the module defines
 # real implementations when loaded, but this test isolates precreation failure.
 _ds_now_ns() { printf '0\n'; return 0; }
+_ds_stage_start() { return 0; }
 _ds_record() { return 0; }
 _dlw_resolve_tier_and_model() {
 	_DLW_DISPATCH_TIER="standard"

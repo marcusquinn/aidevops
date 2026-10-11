@@ -503,6 +503,38 @@ _dlw_prebootstrap_gates() {
 	return 0
 }
 
+#######################################
+# Prepare the worker log, then run the pre-bootstrap gates. Both steps run
+# before resolve_tier_model and record entry and completion stage events, so a
+# slow step stays attributable even when a per-candidate timeout kills it.
+# Sets _DLW_WORKER_LOG for the launch orchestrator.
+# Args: issue number, repo slug, issue metadata JSON, repo path
+# Returns: 0 to continue, otherwise the pre-runtime failure return code
+#######################################
+_dlw_timed_log_and_prebootstrap() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+	local repo_path="$4"
+	local _ds_t0="" _ds_stage_attempt_id=""
+	_DLW_WORKER_LOG=""
+
+	_ds_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "setup_worker_log" "$_ds_t0" _ds_stage_attempt_id
+	_DLW_WORKER_LOG=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
+	_ds_record "$issue_number" "$repo_slug" "setup_worker_log" "$_ds_t0"
+
+	_ds_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "prebootstrap_gates" "$_ds_t0" _ds_stage_attempt_id
+	if ! _dlw_prebootstrap_gates "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		_ds_record "$issue_number" "$repo_slug" "prebootstrap_gates" "$_ds_t0"
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prebootstrap_gate" 2 || return $?
+		return 0
+	fi
+	_ds_record "$issue_number" "$repo_slug" "prebootstrap_gates" "$_ds_t0"
+	return 0
+}
+
 _dlw_issue_still_open_before_claim() {
 	local issue_number="$1"
 	local repo_slug="$2"

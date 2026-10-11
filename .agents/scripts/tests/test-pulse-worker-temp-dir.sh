@@ -15,6 +15,7 @@ setup() {
 	export HOME="${TEST_ROOT}/home"
 	mkdir -p "$HOME"
 	unset AIDEVOPS_PULSE_TMP_DIR
+	unset AIDEVOPS_TEMP_DIR
 	unset XDG_RUNTIME_DIR
 	# shellcheck source=../shared-constants.sh
 	source "${SCRIPTS_DIR}/shared-constants.sh"

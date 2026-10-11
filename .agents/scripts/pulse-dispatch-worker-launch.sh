@@ -1862,12 +1862,8 @@ _dispatch_launch_worker() {
 	# t3034: per-stage timing for launch sub-stages
 	local _ds_t0
 
-	local worker_log
-	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
-
-	if ! _dlw_prebootstrap_gates "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prebootstrap_gate" 2 || return $?
-	fi
+	_dlw_timed_log_and_prebootstrap "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path" || return $?
+	local worker_log="$_DLW_WORKER_LOG"
 
 	_ds_t0=$(_ds_now_ns)
 	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override" "$repo_path" "$issue_title" "$prompt"
