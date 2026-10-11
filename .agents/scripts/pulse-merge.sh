@@ -327,6 +327,11 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-required-checks.sh"
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR}/pulse-merge-ci-drift-ledger.sh"
 
+# GH#34312: return merged non-closing worker partials to the dispatch queue.
+# shellcheck source=./pulse-merge-partial-continuation.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-merge-partial-continuation.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
@@ -1302,6 +1307,10 @@ _handle_post_merge_actions() {
 
 	# Post partial parent closeout if a For/Ref reference exists (GH#23937).
 	_pm_handle_partial_parent_closeout "$pr_number" "$repo_slug" "$merge_summary" "$linked_issue"
+	# GH#34312: a merged worker partial no longer owns its in-review target.
+	if declare -F _pm_restore_partial_continuation >/dev/null 2>&1; then
+		_pm_restore_partial_continuation "$pr_number" "$repo_slug" "$linked_issue" "$pr_labels" || true
+	fi
 
 	# Auto-release interactive claim if one exists for this issue (t2413).
 	# Handles the "when a PR they opened merges" release trigger from AGENTS.md
