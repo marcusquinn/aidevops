@@ -335,7 +335,18 @@ configured_required_contexts() {
 	fi
 	base_branch=$(gh api "repos/${repo}/pulls/${pr_number}" --jq '.base.ref // empty' 2>/dev/null) || return 1
 	[[ -n "$base_branch" ]] || return 1
-	protection_json=$(gh api "repos/${repo}/branches/${base_branch}/protection/required_status_checks" 2>/dev/null) || return 1
+	local protection_rc=0
+	protection_json=$(gh api "repos/${repo}/branches/${base_branch}/protection/required_status_checks" 2>&1) || protection_rc=$?
+	if [[ "$protection_rc" -ne 0 ]]; then
+		# GitHub answers 404 with these exact messages when the branch has no
+		# required status checks (or no classic protection). That is verified
+		# absence from the protection API; any other failure stays unknown.
+		if grep -qE 'Required status checks not enabled|Branch not protected' <<<"$protection_json"; then
+			protection_json='{}'
+		else
+			return 1
+		fi
+	fi
 	rules_json=$(gh api "repos/${repo}/rules/branches/${base_branch}" 2>/dev/null) || return 1
 	printf '%s\n%s\n' "$protection_json" "$rules_json" | jq -sr '
 		if length != 2 or (.[0] | type) != "object" or (.[1] | type) != "array" then

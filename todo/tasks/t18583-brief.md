@@ -22,19 +22,31 @@ they run.
   (new native `aidevops repos pulse on|off`); partial moves stay paused until
   `--restore`.
 
+The new `hosting_fleet_*.py` modules avoid the `.gitignore` credential pattern
+`hostinger_*`. `aidevops.sh` gained `repos pulse`.
+
 ### Files Scope
 
-- `.agents/scripts/hosting_fleet.py`, `hosting_fleet_inventory.py`,
-  `hosting_fleet_plan.py`, `hosting_fleet_remote.py`, `hosting_fleet_ready.py`,
-  `hosting_fleet_checks.py`, `hosting_fleet_provision.py`, `hosting_fleet_steps.py`,
-  `hosting_fleet_deliver.py`, `hosting_fleet_move.py` (new modules; the names avoid the `.gitignore`
-  credential pattern `hostinger_*`)
+- `.agents/scripts/hosting_fleet.py`
+- `.agents/scripts/hosting_fleet_inventory.py`
+- `.agents/scripts/hosting_fleet_plan.py`
+- `.agents/scripts/hosting_fleet_remote.py`
+- `.agents/scripts/hosting_fleet_ready.py`
+- `.agents/scripts/hosting_fleet_checks.py`
+- `.agents/scripts/hosting_fleet_provision.py`
+- `.agents/scripts/hosting_fleet_steps.py`
+- `.agents/scripts/hosting_fleet_deliver.py`
+- `.agents/scripts/hosting_fleet_move.py`
+- `.agents/scripts/hosting_fleet_automation.py`
 - `.agents/scripts/hostinger-helper.sh`
-- `.agents/scripts/repo_layout_migrate.py`, `.agents/scripts/repo-layout-migrate-helper.sh`
-- `.agents/scripts/aidevops-cli/aidevops-repos-lib.sh`,
-  `.agents/scripts/aidevops-cli/repo-discovery-lib.sh`, `aidevops.sh` (`repos pulse`)
-- `.agents/services/hosting/hostinger.md`, `.agents/reference/repo-organization.md`,
-  `.agents/reference/repos-json-fields.md`
+- `.agents/scripts/repo_layout_migrate.py`
+- `.agents/scripts/repo-layout-migrate-helper.sh`
+- `.agents/scripts/aidevops-cli/aidevops-repos-lib.sh`
+- `.agents/scripts/aidevops-cli/repo-discovery-lib.sh`
+- `aidevops.sh`
+- `.agents/services/hosting/hostinger.md`
+- `.agents/reference/repo-organization.md`
+- `.agents/reference/repos-json-fields.md`
 - `tests/test-repo-layout-migrate.py`
 
 ## Goal and observed evidence

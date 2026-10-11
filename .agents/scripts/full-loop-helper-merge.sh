@@ -1126,12 +1126,37 @@ _merge_admin_fallback_required_checks_clear() {
 	esac
 }
 
-# Only a review-count failure after a fresh required-check read permits an
-# implicit admin retry. A generic branch-policy error is not review evidence.
+# Generic "base branch policy prohibits the merge" text carries no review
+# evidence. Confirm from live state: the PR still needs review and the base
+# branch protection requires at least one approving review.
+_merge_generic_block_is_review_only() {
+	local pr_number="$1" repo="$2"
+	local decision="" base_branch="" review_count=""
+	decision=$(_merge_with_admission_retry gh pr view "$pr_number" --repo "$repo" --json reviewDecision --jq '.reviewDecision // ""') || return 1
+	[[ "$decision" == "REVIEW_REQUIRED" ]] || return 1
+	base_branch=$(_merge_with_admission_retry gh api "repos/${repo}/pulls/${pr_number}" --jq '.base.ref // empty') || return 1
+	[[ -n "$base_branch" ]] || return 1
+	review_count=$(_merge_with_admission_retry gh api "repos/${repo}/branches/${base_branch}/protection/required_pull_request_reviews" --jq '.required_approving_review_count // 0') || return 1
+	[[ "$review_count" =~ ^[0-9]+$ && "$review_count" -ge 1 ]] || return 1
+	return 0
+}
+
+# Only a review block after a fresh required-check read permits an implicit
+# admin retry. A generic branch-policy error needs live review evidence.
 _merge_try_review_only_admin_fallback() {
 	local pr_number="$1" repo="$2" merge_method="$3" match_head_sha="$4"
 	local squash_subject="$5" merge_body_file="$6" merge_output="$7"
-	if ! printf '%s' "$merge_output" | grep -qE 'At least [0-9]+ approving review'; then
+	local review_block=0
+	if grep -qE 'At least [0-9]+ approving review' <<<"$merge_output"; then
+		review_block=1
+	elif grep -qE 'base branch policy prohibits' <<<"$merge_output" &&
+		_merge_generic_block_is_review_only "$pr_number" "$repo"; then
+		review_block=1
+	fi
+	if [[ "$review_block" -ne 1 ]]; then
+		# Still re-read required checks so pending/missing contexts report
+		# their lifecycle state before the generic refusal.
+		_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return $?
 		print_error "Merge remains blocked by branch policy; refusing admin fallback without a review-only block"
 		return 1
 	fi
@@ -1248,9 +1273,8 @@ ${_merge_retry_out}"
 			return 0
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected'; then
-			_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return $?
-			print_error "Merge remains blocked by branch policy; refusing admin fallback without a review-only block"
-			return 1
+			_merge_try_review_only_admin_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" "$_merge_out" || return $?
+			return 0
 		else
 			print_error "Merge failed for PR #${pr_number}"
 			return 1

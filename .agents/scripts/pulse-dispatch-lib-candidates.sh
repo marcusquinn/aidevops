@@ -515,37 +515,20 @@ _dispatch_record_launch_failure() {
 }
 
 #######################################
-# t2989: Run dispatch_with_dedup with a per-candidate wall-clock timeout.
-#
-# Wraps the call in run_stage_with_timeout (default 30s, env override
-# DISPATCH_PER_CANDIDATE_TIMEOUT). On timeout, kills the entire process
-# tree, emits a distinct log line, and bumps the
-# dispatch_per_candidate_timeout counter in pulse-stats.json so cycle
-# cadence regressions are visible to operators without a deep log dive.
-#
-# GH#18804 isolation contract preserved: dispatch_with_dedup has no
-# shared-variable contract with the caller; it only mutates GitHub state
-# via gh API and fork-execs the worker via nohup, both of which survive
-# subshell isolation. run_stage_with_timeout backgrounds the call via
-# "$@ &" — strictly stronger isolation than the previous (...) subshell
-# while still capturing rc via ||.
-#
-# Arguments:
-#   $1 - issue_number (used for stage name + log lines AND passed through)
-#   $2 - repo_slug    (used for log lines AND passed through)
-#   $3..$9 - remaining dispatch_with_dedup positional args (dispatch_title,
-#            issue_title, self_login, repo_path, prompt, dedup_key,
-#            model_override). All "$@" forwarded verbatim to
-#            dispatch_with_dedup.
-#
-# Returns:
-#   0     - dispatch_with_dedup completed successfully
-#   124   - per-candidate timeout (already logged + counter bumped)
-#   other - dispatch_with_dedup non-zero rc (failed dedup check, etc.)
+# GH#34428: return code for a candidate deferred because the cycle budget fell
+# below the per-candidate floor before its stage started. dispatch_with_dedup
+# returns 0-3 and 124 is the stage timeout, so 75 (EX_TEMPFAIL) is distinct.
 #######################################
-_dispatch_with_timeout() {
-	local issue_number="$1"
-	local repo_slug="$2"
+_DISPATCH_CYCLE_BUDGET_DEFER_RC=75
+
+#######################################
+# Compute the per-candidate stage timeout for one repository: the adaptive
+# recommendation (or legacy fixed value), raised to the ceremony floor.
+# Arguments: $1 repo slug
+# Stdout: "<timeout_seconds> <timeout_ms> <probe_mode>"
+#######################################
+_dispatch_candidate_timeout_plan() {
+	local repo_slug="$1"
 
 	# t3003: adaptive per-candidate timeout. When DISPATCH_TIMING_ADAPTIVE=1
 	# (default), dispatch-timing-helper.sh recommends a budget based on the
@@ -593,6 +576,54 @@ _dispatch_with_timeout() {
 	if [[ "$floor_seconds" =~ ^[0-9]+$ ]] && ((timeout_seconds < floor_seconds)); then
 		timeout_seconds="$floor_seconds"
 		timeout_ms=$((floor_seconds * 1000))
+	fi
+	printf '%s %s %s\n' "$timeout_seconds" "$timeout_ms" "$probe_mode"
+	return 0
+}
+
+#######################################
+# t2989: Run dispatch_with_dedup with a per-candidate wall-clock timeout.
+#
+# Wraps the call in run_stage_with_timeout (default 30s, env override
+# DISPATCH_PER_CANDIDATE_TIMEOUT). On timeout, kills the entire process
+# tree, emits a distinct log line, and bumps the
+# dispatch_per_candidate_timeout counter in pulse-stats.json so cycle
+# cadence regressions are visible to operators without a deep log dive.
+#
+# GH#18804 isolation contract preserved: dispatch_with_dedup has no
+# shared-variable contract with the caller; it only mutates GitHub state
+# via gh API and fork-execs the worker via nohup, both of which survive
+# subshell isolation. run_stage_with_timeout backgrounds the call via
+# "$@ &" — strictly stronger isolation than the previous (...) subshell
+# while still capturing rc via ||.
+#
+# Arguments:
+#   $1 - issue_number (used for stage name + log lines AND passed through)
+#   $2 - repo_slug    (used for log lines AND passed through)
+#   $3..$9 - remaining dispatch_with_dedup positional args (dispatch_title,
+#            issue_title, self_login, repo_path, prompt, dedup_key,
+#            model_override). All "$@" forwarded verbatim to
+#            dispatch_with_dedup.
+#
+# Returns:
+#   0     - dispatch_with_dedup completed successfully
+#   75    - deferred: cycle budget below the per-candidate floor, stage not
+#           started (_DISPATCH_CYCLE_BUDGET_DEFER_RC, GH#34428)
+#   124   - per-candidate timeout (already logged + counter bumped)
+#   other - dispatch_with_dedup non-zero rc (failed dedup check, etc.)
+#######################################
+_dispatch_with_timeout() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local timeout_seconds="" timeout_ms="" probe_mode="false" timeout_plan=""
+	timeout_plan=$(_dispatch_candidate_timeout_plan "$repo_slug")
+	read -r timeout_seconds timeout_ms probe_mode <<<"$timeout_plan"
+
+	# GH#34428: a parallel candidate admitted above the floor may reach this
+	# point after its pre-stage checks have consumed the margin. Defer rather
+	# than start a stage that the cycle clamp would shorten below the floor.
+	if _dispatch_cycle_budget_defers_candidate "$issue_number" "$repo_slug"; then
+		return "$_DISPATCH_CYCLE_BUDGET_DEFER_RC"
 	fi
 
 	local start_ms dispatch_rc=0 outcome elapsed_ms
@@ -642,6 +673,28 @@ _dispatch_with_timeout() {
 	fi
 
 	return "$dispatch_rc"
+}
+
+#######################################
+# GH#34428: re-check the per-candidate floor where the dispatch stage starts.
+# Mirrors _dispatch_graphql_budget_allows_next, which runs before the
+# candidate's pre-stage checks. Fails open when the remaining-seconds helper
+# is unavailable or returns a non-integer.
+#
+# Arguments: $1 issue number, $2 repo slug (log line only)
+# Returns: 0 defer (logged + counted), 1 proceed
+#######################################
+_dispatch_cycle_budget_defers_candidate() {
+	local issue_number="$1" repo_slug="$2" remaining=""
+	local floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 1
+	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 1
+	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 1
+	((remaining < floor_seconds)) || return 1
+	echo "[pulse-wrapper] Dispatch_max: deferring #${issue_number} (${repo_slug}) — cycle budget ${remaining}s below per-candidate floor ${floor_seconds}s; stage not started, retry next cycle (GH#34428)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_candidate_deferred_cycle_budget"
+	return 0
 }
 
 #######################################
@@ -1303,6 +1356,8 @@ _dispatch_record_nonzero_dispatch_result() {
 #       dispatched_count; if _DISPATCH_THROTTLE_CLEARED=1 also restore
 #       _effective_slots)
 #   1 - candidate skipped or dispatch failed (caller should `continue`)
+#   75 - deferred before its stage started: cycle budget below the
+#        per-candidate floor (_DISPATCH_CYCLE_BUDGET_DEFER_RC, GH#34428)
 #
 # Side effects:
 #   - Updates _DISPATCH_ROUND_DISPATCHED / _DISPATCH_ROUND_NO_WORKER_FAILURES /
