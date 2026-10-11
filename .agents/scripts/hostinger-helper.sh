@@ -166,6 +166,59 @@ api_call() {
     return 0
 }
 
+# Read-only fleet inventory, onboarding plan and drift check (hosting_fleet.py).
+# Module names avoid the credential ignore pattern 'hostinger_*' in .gitignore.
+fleet_command() {
+    local subcommand="${1:-help}"
+    local engine="${SCRIPT_DIR}/hosting_fleet.py"
+    local discovery_lib="${SCRIPT_DIR}/aidevops-cli/repo-discovery-lib.sh"
+    local status=0
+    local argument=""
+    local offline=0
+
+    case "$subcommand" in
+    inventory)
+        shift
+        for argument in "$@"; do
+            [[ "$argument" == "--api-response" ]] && offline=1
+        done
+        # Inject the token from the secret store without exposing it.
+        if [[ "$offline" -eq 0 && -z "${HOSTINGER_API_TOKEN:-}" ]] &&
+            command -v aidevops >/dev/null 2>&1 &&
+            aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
+            aidevops secret HOSTINGER_API_TOKEN -- python3 "$engine" inventory "$@" || status=$?
+            return "$status"
+        fi
+        python3 "$engine" inventory "$@" || status=$?
+        return "$status"
+        ;;
+    plan | drift)
+        shift
+        python3 "$engine" "$subcommand" --discovery-lib "$discovery_lib" "$@" || status=$?
+        return "$status"
+        ;;
+    help | -h | --help)
+        echo "Usage: $0 fleet <inventory|plan|drift> [options]"
+        echo ""
+        echo "  inventory [--username U] [--discover-networks --ssh ALIAS] [--network-map FILE]"
+        echo "      GET-only website inventory; groups shared roots; optional read-only"
+        echo "      SSH 'wp site list' adds multisite blogs that have no panel entry"
+        echo "  plan  --owner ORG [--owner-exception DOMAIN=OWNER]... [--ignore DOMAIN]..."
+        echo "      Write a content-hashed onboarding plan (no mutations)"
+        echo "  drift --owner ORG [--owner-exception DOMAIN=OWNER]... [--json] [--fail-on-drift]"
+        echo "      Compare hosting, repos.json and canonical layout (exit 3 on drift)"
+        echo ""
+        echo "Private output: ~/.aidevops/.agent-workspace/work/hostinger-fleet/"
+        echo "Details: services/hosting/hostinger.md 'Fleet inventory and drift'"
+        return 0
+        ;;
+    *)
+        print_error "Unknown fleet command: $subcommand"
+        return 1
+        ;;
+    esac
+}
+
 # Main function
 main() {
     # Assign positional parameters to local variables
@@ -199,6 +252,11 @@ main() {
         fi
         api_call "$param2"
         ;;
+    "fleet")
+        shift
+        fleet_command "$@"
+        return $?
+        ;;
     "help"|"-h"|"--help"|"")
         echo "Hostinger Helper Script"
         echo "Usage: $0 [command] [options]"
@@ -208,6 +266,7 @@ main() {
         echo "  connect [site]    - Connect to site directory via SSH"
         echo "  exec [site] [cmd] - Execute command on site"
         echo "  api [endpoint]    - Make API call to Hostinger"
+        echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
         echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"

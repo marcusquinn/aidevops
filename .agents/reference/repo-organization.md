@@ -82,7 +82,9 @@ from outside both paths, and run that resume command. The migration does not
 create compatibility symlinks for a live process.
 Explicit `initialized_repos[].path` entries remain excluded unless planning uses
 `--include-registered-paths`; that approval is recorded in the content-hashed
-plan. Apply rechecks the complete before-state, rejects cross-device moves and
+plan. Repeat `--source <path>` to limit a plan to exact repositories, such as one
+hosting fleet. Native consumer inventory and every apply guard still apply, and an
+empty selection is refused. Apply rechecks the complete before-state, rejects cross-device moves and
 active-path ambiguity, moves one repository at a time, and writes owner-private
 append-only receipts. Replaying apply resumes verified steps. Rollback requires
 the latest receipt hash and stops rather than overwriting post-plan changes.
