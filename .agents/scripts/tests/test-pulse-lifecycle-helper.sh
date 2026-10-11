@@ -1009,6 +1009,61 @@ test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early() {
 	return 0
 }
 
+# GH#34456: Bash 3.2 may flush a failed printf again at process exit.
+# Assert the trap contract directly so Linux also catches premature restoration.
+test_pid_emitters_preserve_pipe_trap_after_closed_consumer() {
+	local emitter="" parent_pid="" closed="" out="" rc=0
+	for emitter in _pulse_pids _pulse_pids_sidecar; do
+		for parent_pid in 1 42; do
+			for closed in 0 1; do
+				rc=0
+				out=$(
+					# shellcheck source=../pulse-lifecycle-helper.sh
+					source "$HELPER"
+					trap - PIPE
+					_pulse_pids_raw() {
+						printf '123\n'
+						return 0
+					}
+					ps() {
+						local format="${4:-}"
+						if [[ "$format" == "ppid=" ]]; then
+							printf '%s\n' "$parent_pid"
+						elif [[ "$emitter" == "_pulse_pids_sidecar" ]]; then
+							printf 'bash pulse-wrapper.sh --merge-only\n'
+						else
+							printf 'bash pulse-wrapper.sh\n'
+						fi
+						return 0
+					}
+					_pulse_parent_is_wrapper() {
+						return 1
+					}
+					_pulse_emit_pid() {
+						local pid="$1"
+						: "$pid"
+						[[ "$closed" -eq 0 ]] || return 1
+						return 0
+					}
+					"$emitter" >/dev/null
+					trap -p PIPE
+				) || rc=$?
+				_assert_eq "$emitter returns 0 (parent=$parent_pid closed=$closed)" 0 "$rc"
+				if [[ "$closed" -eq 1 ]]; then
+					if [[ "$out" == *"''"* ]]; then
+						_print_result "$emitter leaves SIGPIPE ignored after EPIPE (parent=$parent_pid)" 1
+					else
+						_print_result "$emitter restored SIGPIPE after EPIPE (parent=$parent_pid trap=$out)" 0
+					fi
+				else
+					_assert_eq "$emitter restores default SIGPIPE on completion (parent=$parent_pid)" "" "$out"
+				fi
+			done
+		done
+	done
+	return 0
+}
+
 test_pipe_trap_restore_avoids_eval() {
 	local out=""
 	out=$(
@@ -1493,6 +1548,7 @@ main() {
 	test_skip_env_honoured_in_restart
 	test_missing_pulse_script_exit_2
 	test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early
+	test_pid_emitters_preserve_pipe_trap_after_closed_consumer
 	test_pipe_trap_restore_avoids_eval
 	test_pipe_trap_restore_ignored_sigpipe
 
