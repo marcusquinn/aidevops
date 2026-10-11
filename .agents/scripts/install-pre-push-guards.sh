@@ -29,9 +29,9 @@
 #   install-pre-push-guards.sh status
 #         Report which guards are present and their hook source locations.
 #
-# Pre-push installer writes .git/hooks/pre-push targeting `git rev-parse
-# --git-common-dir` so worktrees share the hook with the parent repo.
-# Pre-commit installer writes .git/hooks/pre-commit (same common-dir logic).
+# Hooks are written to the effective hooks directory (`git rev-parse
+# --git-path hooks`): core.hooksPath when set (e.g. Beads' .beads/hooks),
+# otherwise the common-dir hooks directory shared by all worktrees.
 #
 # Existing hooks NOT managed by aidevops are refused and left untouched.
 #
@@ -165,33 +165,44 @@ _find_hook_src() {
 }
 
 #######################################
-# Resolve the common git dir (shared across worktrees).
+# Resolve the effective hooks directory Git will execute from.
+# Honours core.hooksPath (e.g. Beads sets .beads/hooks); without it this is
+# the common-dir hooks directory shared by all worktrees. Writing to
+# <common-dir>/hooks while core.hooksPath points elsewhere installs guards
+# that never run. Mirrors _git_hooks_dir in install-canonical-guard.sh.
 #######################################
-_git_common_dir() {
-	git rev-parse --git-common-dir 2>/dev/null || {
+_git_hooks_dir() {
+	local _hdir=""
+	_hdir=$(git rev-parse --git-path hooks 2>/dev/null) || {
 		print_error "not a git repository"
 		return 1
 	}
+	if [[ "$_hdir" != /* ]]; then
+		local _root=""
+		_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+		_hdir="${_root}/${_hdir}"
+	fi
+	printf '%s' "$_hdir"
 	return 0
 }
 
 #######################################
-# Return the canonical pre-push hook file path.
+# Return the effective pre-push hook file path.
 #######################################
 _hook_path() {
-	local _cdir
-	_cdir=$(_git_common_dir) || return 1
-	printf '%s/hooks/pre-push' "$_cdir"
+	local _hdir
+	_hdir=$(_git_hooks_dir) || return 1
+	printf '%s/pre-push' "$_hdir"
 	return 0
 }
 
 #######################################
-# Return the canonical pre-commit hook file path.
+# Return the effective pre-commit hook file path.
 #######################################
 _commit_hook_path() {
-	local _cdir
-	_cdir=$(_git_common_dir) || return 1
-	printf '%s/hooks/pre-commit' "$_cdir"
+	local _hdir
+	_hdir=$(_git_hooks_dir) || return 1
+	printf '%s/pre-commit' "$_hdir"
 	return 0
 }
 
