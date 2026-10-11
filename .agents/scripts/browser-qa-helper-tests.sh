@@ -45,6 +45,7 @@ fi
 cmd_stability() {
 	local url=""
 	local pages="/"
+	local pages_default=true
 	local reloads=3
 	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
 	local poll_interval=500
@@ -59,6 +60,7 @@ cmd_stability() {
 			;;
 		--pages)
 			pages="$2"
+			pages_default=false
 			shift 2
 			;;
 		--reloads)
@@ -109,7 +111,7 @@ cmd_stability() {
 	safe_url=$(js_escape_string "$url")
 
 	_generate_stability_script "$script_file" "$safe_url" "$pages_array" \
-		"$reloads" "$timeout" "$poll_interval" "$poll_max_wait"
+		"$reloads" "$timeout" "$poll_interval" "$poll_max_wait" "$pages_default"
 
 	log_info "Running stability test on ${url} for pages: ${pages} (${reloads} reloads each)"
 	local exit_code=0
@@ -180,12 +182,15 @@ _generate_smoke_script() {
 	local safe_url="$2"
 	local pages_array="$3"
 	local timeout="$4"
+	local pages_default="${5:-true}"
 
 	cat >"$script_file" <<SCRIPT
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
 
-const baseUrl = '${safe_url}'.replace(/\/\$/, '');
+const baseUrl = '${safe_url}';
+const pagesDefault = ${pages_default};
+$(_page_url_js)
 const pages = [${pages_array}];
 const timeout = ${timeout};
 
@@ -217,7 +222,7 @@ async function run() {
       });
     });
 
-    const url = baseUrl + pagePath;
+    const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
     try {
       const response = await page.goto(url, { waitUntil: 'load', timeout });
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
@@ -283,6 +288,7 @@ SCRIPT
 cmd_smoke() {
 	local url=""
 	local pages="/"
+	local pages_default=true
 	local format="json"
 	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
 
@@ -294,6 +300,7 @@ cmd_smoke() {
 			;;
 		--pages)
 			pages="$2"
+			pages_default=false
 			shift 2
 			;;
 		--format)
@@ -326,7 +333,7 @@ cmd_smoke() {
 	local safe_url
 	safe_url=$(js_escape_string "$url")
 
-	_generate_smoke_script "$script_file" "$safe_url" "$pages_array" "$timeout"
+	_generate_smoke_script "$script_file" "$safe_url" "$pages_array" "$timeout" "$pages_default"
 
 	log_info "Running smoke test on ${url} for pages: ${pages}"
 	local exit_code=0
@@ -362,6 +369,11 @@ _run_qa_phases() {
 	local timestamp="$5"
 	local timeout="$6"
 	local max_dim="$7"
+	local pages_default="${8:-false}"
+	local page_args=(--url "$url")
+	if [[ "$pages_default" != true ]]; then
+		page_args+=(--pages "$pages")
+	fi
 
 	log_info "=== Browser QA Full Run ==="
 	log_info "URL: ${url}"
@@ -371,13 +383,13 @@ _run_qa_phases() {
 	# Phase 1: Smoke test
 	log_info "--- Phase 1: Smoke Test ---"
 	local smoke_result
-	smoke_result=$(cmd_smoke --url "$url" --pages "$pages" --timeout "$timeout" 2>/dev/null) || smoke_result='{"error": "smoke test failed"}'
+	smoke_result=$(cmd_smoke "${page_args[@]}" --timeout "$timeout" 2>/dev/null) || smoke_result='{"error": "smoke test failed"}'
 
 	# Phase 2: Screenshots
 	log_info "--- Phase 2: Screenshots ---"
 	local screenshot_dir="${output_dir}/screenshots-${timestamp}"
 	local screenshot_result
-	screenshot_result=$(cmd_screenshot --url "$url" --pages "$pages" --viewports "$viewports" --output-dir "$screenshot_dir" --timeout "$timeout" --max-dim "$max_dim" 2>/dev/null) || screenshot_result='{"error": "screenshot capture failed"}'
+	screenshot_result=$(cmd_screenshot "${page_args[@]}" --viewports "$viewports" --output-dir "$screenshot_dir" --timeout "$timeout" --max-dim "$max_dim" 2>/dev/null) || screenshot_result='{"error": "screenshot capture failed"}'
 
 	# Phase 3: Broken links
 	log_info "--- Phase 3: Broken Link Check ---"
@@ -387,7 +399,7 @@ _run_qa_phases() {
 	# Phase 4: Accessibility
 	log_info "--- Phase 4: Accessibility ---"
 	local a11y_result
-	a11y_result=$(cmd_a11y --url "$url" --pages "$pages" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
+	a11y_result=$(cmd_a11y "${page_args[@]}" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
 
 	cat <<REPORT
 {
@@ -410,6 +422,7 @@ REPORT
 cmd_run() {
 	local url=""
 	local pages="/"
+	local pages_default=true
 	local viewports="$BROWSER_QA_DEFAULT_VIEWPORTS"
 	local format="json"
 	local output_dir="$QA_RESULTS_DIR"
@@ -424,6 +437,7 @@ cmd_run() {
 			;;
 		--pages)
 			pages="$2"
+			pages_default=false
 			shift 2
 			;;
 		--viewports)
@@ -464,7 +478,7 @@ cmd_run() {
 	local report_file="${output_dir}/qa-report-${timestamp}.json"
 
 	local combined
-	combined=$(_run_qa_phases "$url" "$pages" "$viewports" "$output_dir" "$timestamp" "$timeout" "$max_dim")
+	combined=$(_run_qa_phases "$url" "$pages" "$viewports" "$output_dir" "$timestamp" "$timeout" "$max_dim" "$pages_default")
 
 	if [[ "$format" == "markdown" ]]; then
 		format_as_markdown "$combined"

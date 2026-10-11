@@ -63,6 +63,17 @@ js_escape_string() {
 	return 0
 }
 
+# Shared WHATWG URL resolution for generated scripts and contrast checks.
+# Omitted --pages loads the supplied URL unchanged, including query/fragment.
+_page_url_js() {
+	cat <<'JS'
+function resolvePageUrl(baseUrl, pagePath, pagesDefault) {
+  return pagesDefault ? baseUrl : new URL(pagePath, baseUrl).href;
+}
+JS
+	return 0
+}
+
 # Resolve max image dimension guardrail from optional user input.
 # Args: $1 = requested max dimension (optional)
 # Output: validated max dimension integer
@@ -359,12 +370,15 @@ _generate_screenshot_script() {
 	local safe_output_dir="$5"
 	local timeout="$6"
 	local full_page="$7"
+	local pages_default="${8:-true}"
 
 	cat >"$script_file" <<SCRIPT
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
 const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
 
-const baseUrl = '${safe_url}'.replace(/\/\$/, '');
+const baseUrl = '${safe_url}';
+const pagesDefault = ${pages_default};
+$(_page_url_js)
 const viewports = [${viewport_array}];
 const pages = [${pages_array}];
 const outputDir = '${safe_output_dir}';
@@ -384,7 +398,7 @@ async function run() {
     const page = await context.newPage();
 
     for (const pagePath of pages) {
-      const url = baseUrl + pagePath;
+      const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
       const safeName = pagePath.replace(/\\//g, '_').replace(/^_/, '') || 'index';
       const filename = \`\${safeName}-\${vp.name}-\${vp.width}x\${vp.height}.png\`;
       const filepath = \`\${outputDir}/\${filename}\`;
@@ -420,6 +434,7 @@ SCRIPT
 cmd_screenshot() {
 	local url=""
 	local pages="/"
+	local pages_default=true
 	local viewports="$BROWSER_QA_DEFAULT_VIEWPORTS"
 	local output_dir="$SCREENSHOTS_DIR"
 	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
@@ -434,6 +449,7 @@ cmd_screenshot() {
 			;;
 		--pages)
 			pages="$2"
+			pages_default=false
 			shift 2
 			;;
 		--viewports)
@@ -486,7 +502,7 @@ cmd_screenshot() {
 	safe_url=$(js_escape_string "$url")
 	safe_output_dir=$(js_escape_string "$output_dir")
 
-	_generate_screenshot_script "$script_file" "$safe_url" "$viewport_array" "$pages_array" "$safe_output_dir" "$timeout" "$full_page"
+	_generate_screenshot_script "$script_file" "$safe_url" "$viewport_array" "$pages_array" "$safe_output_dir" "$timeout" "$full_page" "$pages_default"
 
 	log_info "Capturing screenshots for ${pages} at viewports: ${viewports}"
 	local exit_code=0
