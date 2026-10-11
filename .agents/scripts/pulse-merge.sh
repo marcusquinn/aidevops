@@ -2025,8 +2025,16 @@ _extract_pr_work_issue() {
 				issue = line
 				sub(/[^0-9].*$/, "", issue)
 				sub(/^[0-9]+/, "", line)
-				# Multiple declarations on one line are not a unique task.
-				if (line ~ /#[0-9]+/) print "ambiguous"
+				# Targets end at the first sentence terminator. Another #N in that
+				# clause ("For #42 and #43") or a later same-line For/Ref is not a
+				# unique task; later context ("PR #41") is ignored, as on its own line.
+				clause = line
+				rest = ""
+				if (match(line, /[.;!?]([[:space:]]|$)/)) {
+					clause = substr(line, 1, RSTART - 1)
+					rest = substr(line, RSTART)
+				}
+				if (clause ~ /#[0-9]/ || rest ~ /[^[:alnum:]_](for|ref)[:[:space:]]+#[0-9]/) print "ambiguous"
 				print issue
 			}
 		' | sort -u) || return 1

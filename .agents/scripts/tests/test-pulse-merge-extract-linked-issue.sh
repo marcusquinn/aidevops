@@ -255,6 +255,20 @@ test_explicit_merge_association() {
 	assert_association "" 1 "distinct explicit declarations fail closed"
 	export TEST_PR_BODY='For #42 and Ref #43'
 	assert_association "" 1 "multiple references on one declaration fail closed"
+	export TEST_PR_BODY='For #101. Continuing the merged checkpoint from PR #99. Scope: data files only.'
+	assert_association "101" 0 "context sentences after the declaration are not a second task"
+	export TEST_PR_BODY='For #101. **Ready partial delivery; do not close the issue or tracker #90.**'
+	assert_association "101" 0 "an emphasised tracker reference after the declaration is context"
+	export TEST_PR_BODY='For #42, #43'
+	assert_association "" 1 "a comma-separated target list fails closed"
+	export TEST_PR_BODY='For #42 and #43. Partial delivery.'
+	assert_association "" 1 "a conjunctive target list fails closed"
+	export TEST_PR_BODY='For #42 (parent gate #41 / t018).'
+	assert_association "" 1 "a parenthetical reference inside the declaration clause fails closed"
+	export TEST_PR_BODY='For #42. Ref #43.'
+	assert_association "" 1 "a second same-line declaration sentence fails closed"
+	export TEST_PR_BODY='For #42; ref: #43'
+	assert_association "" 1 "a declaration after a clause terminator fails closed"
 	export TEST_PR_BODY='No issue declaration.'
 	assert_association "" 0 "title-only task ID cannot supply merge association"
 	export TEST_PR_BODY='For other/repo#42'
