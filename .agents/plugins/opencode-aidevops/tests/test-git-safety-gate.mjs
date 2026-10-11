@@ -26,10 +26,22 @@ import {
 } from "../quality-hooks-git-safety.mjs";
 import { validateBashWorkingDirectory } from "../quality-hooks-workdir.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
+import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = join(here, "..", "..", "..", "scripts");
 const realGit = "/usr/bin/git";
+
+test("trusted JS and Python discovery preserve explicit PATH and symlink/.. components", () => {
+  for (const searchPath of ["/bin/../bin", "/usr/bin", "", "relative"]) {
+    const expected = execFileSync("python3", [
+      "-c",
+      "import sys; sys.path.insert(0, sys.argv[1]); from trusted_executable import trusted_executable; print(trusted_executable('git', sys.argv[2]) or '/nonexistent/aidevops-untrusted-git')",
+      scriptsDir, searchPath,
+    ], { encoding: "utf8" }).trim();
+    assert.equal(resolveTrustedExecutable("git", searchPath), expected);
+  }
+});
 
 function setupRepo({ managed = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), "aidevops-git-gate-"));

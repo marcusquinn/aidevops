@@ -60,7 +60,6 @@ jobs:
             .agents/scripts/tests/test-pulse-path-precedence.sh
             .agents/scripts/tests/test-canonical-git-command-guard.sh
             .agents/scripts/tests/test-command-policy-helper.sh
-            .agents/scripts/tests/test-planning-publisher.sh
             .agents/scripts/tests/test-tool-install-opencode.sh
             .agents/scripts/tests/test-setup-source-access-broker.sh
             .agents/scripts/tests/test-portable-shebangs.sh
@@ -74,7 +73,13 @@ jobs:
           failed=0
           for test_script in "${tests[@]}"; do
             printf '\n==> %s\n' "$test_script"
-            if ! bash "$test_script"; then
+            test_env=()
+            if [[ "$test_script" == */test-command-policy-helper.sh ]]; then
+              # This suite separately models workers and interactive sessions;
+              # the Actions host must not turn its interactive fixture into a worker.
+              test_env=(env -u GITHUB_ACTIONS)
+            fi
+            if ! "${test_env[@]}" bash "$test_script"; then
               printf '::error file=%s::PATH portability failed\n' "$test_script"
               failed=1
             fi

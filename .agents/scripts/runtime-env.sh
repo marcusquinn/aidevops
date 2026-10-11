@@ -21,7 +21,8 @@ AIDEVOPS_SYSTEM_PATH_FALLBACK="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # Selected by setting AIDEVOPS_PATH_PROFILE=daemon before sourcing this file:
 #   AIDEVOPS_PATH_PROFILE=daemon
 #   source "${BASH_SOURCE[0]%/*}/runtime-env.sh"
-AIDEVOPS_DAEMON_PATH_FALLBACK="/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:${AIDEVOPS_SYSTEM_PATH_FALLBACK}"
+# Keep the historical package-manager order without repeating /usr/local/bin.
+AIDEVOPS_DAEMON_PATH_FALLBACK="/opt/homebrew/bin:${AIDEVOPS_SYSTEM_PATH_FALLBACK%%:*}:/home/linuxbrew/.linuxbrew/bin:${AIDEVOPS_SYSTEM_PATH_FALLBACK#*:}"
 
 # Compose a PATH from colon-separated segments, in argument order.
 # Drops empty and relative entries, duplicates, missing directories (when

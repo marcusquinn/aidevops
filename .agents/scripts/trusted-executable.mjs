@@ -8,7 +8,7 @@
 // Python counterpart: trusted_executable.py.
 
 import {lstatSync, readlinkSync, realpathSync, statSync} from "node:fs";
-import {delimiter, isAbsolute, join, parse, resolve} from "node:path";
+import {delimiter, isAbsolute, parse} from "node:path";
 
 // Owned by root and not group/other writable (sticky directories allowed).
 function rootControlled(path, directory) {
@@ -26,7 +26,7 @@ function trustedChain(path) {
   let current = path;
   if (!rootControlled(current, statSync(current).isDirectory())) return false;
   while (current !== parse(current).root) {
-    current = resolve(current, "..");
+    current = parse(current).dir;
     if (!rootControlled(current, true)) return false;
   }
   return true;
@@ -37,7 +37,7 @@ function trustedSymlinkChain(path, hops = 0) {
   const parts = path.split("/").filter(Boolean);
   let prefix = "/";
   for (let index = 0; index < parts.length; index++) {
-    prefix = join(prefix, parts[index]);
+    prefix = `${prefix === "/" ? "" : prefix}/${parts[index]}`;
     const metadata = lstatSync(prefix);
     if (metadata.isSymbolicLink()) {
       if (metadata.uid !== 0 || !trustedChain(parse(prefix).dir)) return false;
@@ -54,7 +54,8 @@ export function resolveTrustedExecutable(name, searchPath = `${process.env.PATH 
   if (!/^[A-Za-z0-9_.+-]+$/.test(name) || name === "." || name === "..") return `/nonexistent/aidevops-untrusted-tool`;
   for (const directory of searchPath.split(delimiter)) {
     if (!isAbsolute(directory)) continue;
-    const candidate = join(directory, name);
+    // Do not collapse symlink/.. components before filesystem resolution.
+    const candidate = `${directory.replace(/\/+$/, "")}/${name}`;
     try {
       const metadata = statSync(candidate);
       if (!metadata.isFile() || (metadata.mode & 0o111) === 0) continue;
