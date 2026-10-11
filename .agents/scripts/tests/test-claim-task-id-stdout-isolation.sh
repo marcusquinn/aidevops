@@ -29,21 +29,19 @@
 #
 # Tests (structural — no network, no real pushes):
 #   1. _cas_build_and_push redirects `git push` stdout to /dev/null.
-#   2. _cas_build_and_push redirects its conflict-recovery git fetch
-#      stdout to /dev/null.
-#   3. _cas_fetch_and_pin redirects its primary git fetch stdout to
-#      /dev/null.
-#   4. _cas_fetch_and_pin redirects its bootstrap-path git fetch
-#      stdout to /dev/null.
-#   5. Presence check: the GH#20208 comment anchor is in the source so
+#   2. _cas_build_and_push delegates both fetch paths to
+#      _cas_fetch_counter_branch, whose fetch stdout goes to /dev/null.
+#   3. _cas_fetch_and_pin delegates primary and bootstrap fetches to
+#      the same stdout-isolating helper; neither caller fetches directly.
+#   4. Presence check: the GH#20208 comment anchor is in the source so
 #      a later edit that removes the redirect is easy to spot in a
 #      blame view.
-#   6. Behavioural smoke test: call a mocked `git push`/`git fetch`
+#   5. Behavioural smoke test: call a mocked `git push`/`git fetch`
 #      that emits ANSI on stdout + succeeds, source the real
 #      _cas_build_and_push wrapper, assert its captured stdout is
 #      arithmetic-safe.
 #
-# Tests 1-5 are structural (grep-based) and always run.  Test 6 is
+# Tests 1-4 are structural (grep-based) and always run.  Test 5 is
 # behavioural and runs when bash >= 4 is available (requires
 # `declare -f` scoping semantics that differ in bash 3.2).
 
@@ -147,23 +145,31 @@ test_cas_build_push_redirects_push_stdout() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 2: _cas_build_and_push conflict-recovery fetch + normal-path fetch
-#         both redirect stdout to /dev/null
+# Shared assertion: both caller paths delegate fetches, and the shared
+# helper contains at least one fetch with every fetch redirecting stdout.
 # ---------------------------------------------------------------------------
-test_cas_build_push_redirects_fetch_stdout() {
-	local name="_cas_build_and_push: both git fetch calls redirect stdout to /dev/null"
-	local body
-	body=$(_func_body _cas_build_and_push "$CLAIM_SCRIPT")
+assert_cas_fetch_stdout_isolated() {
+	local caller="$1"
+	local name="$2"
+	local body fetch_body helper_calls total_fetches redirected_fetches
+	body=$(_func_body "$caller" "$CLAIM_SCRIPT" | grep -vE '^[[:space:]]*#')
+	fetch_body=$(_func_body _cas_fetch_counter_branch "$CLAIM_SCRIPT" | grep -vE '^[[:space:]]*#')
+	helper_calls=$(printf '%s\n' "$body" | grep -cE '^[[:space:]]*(if ! )?_cas_fetch_counter_branch([[:space:]]|$)' || true)
 
-	# Count fetch lines, and count fetch lines with >/dev/null.
-	local total_fetches redirected_fetches
-	# shellcheck disable=SC2016  # single-quoted regex matches literal "$REMOTE_NAME" in source
-	total_fetches=$(printf '%s\n' "$body" | grep -cE 'fetch -q "\$REMOTE_NAME"' || true)
-	# shellcheck disable=SC2016  # single-quoted regex matches literal "$REMOTE_NAME" in source
-	redirected_fetches=$(printf '%s\n' "$body" | grep -cE 'fetch -q "\$REMOTE_NAME"[^\n]*>/dev/null' || true)
+	if [[ "$helper_calls" -lt 2 ]]; then
+		fail "$name" "expected >=2 shared fetch helper calls in $caller, found $helper_calls"
+		return 0
+	fi
+	# Match fetch commands (including continuation lines), not log messages.
+	if printf '%s\n' "$body" | grep -qE '^[[:space:]]*((git|_counter_git|_run_git_with_ssh_fallback)[[:space:]]+.*)?fetch([[:space:]]|$)'; then
+		fail "$name" "$caller bypasses _cas_fetch_counter_branch with a direct fetch"
+		return 0
+	fi
+	total_fetches=$(printf '%s\n' "$fetch_body" | grep -cE '(^|[[:space:]])fetch([[:space:]]|$)' || true)
+	redirected_fetches=$(printf '%s\n' "$fetch_body" | grep -cE '(^|[[:space:]])fetch[[:space:]].*>/dev/null' || true)
 
-	if [[ "$total_fetches" -lt 2 ]]; then
-		fail "$name" "expected >=2 fetch calls in _cas_build_and_push, found $total_fetches"
+	if [[ "$total_fetches" -lt 1 ]]; then
+		fail "$name" "expected >=1 fetch call in _cas_fetch_counter_branch, found $total_fetches"
 		return 0
 	fi
 	if [[ "$redirected_fetches" -lt "$total_fetches" ]]; then
@@ -175,28 +181,17 @@ test_cas_build_push_redirects_fetch_stdout() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 3: _cas_fetch_and_pin primary fetch redirects stdout
+# Tests 2-3: all caller fetch paths use the stdout-isolating shared helper.
 # ---------------------------------------------------------------------------
+test_cas_build_push_redirects_fetch_stdout() {
+	assert_cas_fetch_stdout_isolated _cas_build_and_push \
+		"_cas_build_and_push: both fetch paths use the stdout-isolating helper"
+	return 0
+}
+
 test_cas_fetch_and_pin_redirects_stdout() {
-	local name="_cas_fetch_and_pin: git fetch stdout redirected to /dev/null"
-	local body
-	body=$(_func_body _cas_fetch_and_pin "$CLAIM_SCRIPT")
-
-	local total_fetches redirected_fetches
-	# shellcheck disable=SC2016  # single-quoted regex matches literal "$REMOTE_NAME" in source
-	total_fetches=$(printf '%s\n' "$body" | grep -cE 'fetch -q "\$REMOTE_NAME"' || true)
-	# shellcheck disable=SC2016  # single-quoted regex matches literal "$REMOTE_NAME" in source
-	redirected_fetches=$(printf '%s\n' "$body" | grep -cE 'fetch -q "\$REMOTE_NAME"[^\n]*>/dev/null' || true)
-
-	if [[ "$total_fetches" -lt 1 ]]; then
-		fail "$name" "expected >=1 fetch call in _cas_fetch_and_pin, found $total_fetches"
-		return 0
-	fi
-	if [[ "$redirected_fetches" -lt "$total_fetches" ]]; then
-		fail "$name" "expected all $total_fetches fetch calls to redirect, only $redirected_fetches do"
-		return 0
-	fi
-	pass "$name"
+	assert_cas_fetch_stdout_isolated _cas_fetch_and_pin \
+		"_cas_fetch_and_pin: both fetch paths use the stdout-isolating helper"
 	return 0
 }
 
