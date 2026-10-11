@@ -70,18 +70,24 @@ function recordSnapshot(snapshot, rootPid, owned, operationID, nestedGroups) {
 // termination and drain decisions request a scan with `{ markers: true }`.
 export const MARKER_SCAN_INTERVAL_MS = 5000;
 
+// Returns the operation ID when a marker scan is due for this track() call,
+// otherwise "" so recordSnapshot() skips the environment scan.
+function createMarkerScanGate(operationID) {
+  let lastScanAt = null;
+  return (request) => {
+    const now = Date.now();
+    const due = Boolean(operationID)
+      && (request?.markers === true || lastScanAt === null || now - lastScanAt >= MARKER_SCAN_INTERVAL_MS);
+    if (due) lastScanAt = now;
+    return due ? operationID : "";
+  };
+}
+
 export function createProcessTreeTracker(rootPid, snapshotProcesses = processSnapshot, operationID = "") {
   const owned = new Map();
   const nestedGroups = new Set();
   let attributionComplete = true;
-  let lastMarkerScanAt = null;
-  const markerScanDue = (request) => {
-    if (!operationID) return false;
-    const now = Date.now();
-    if (request?.markers !== true && lastMarkerScanAt !== null && now - lastMarkerScanAt < MARKER_SCAN_INTERVAL_MS) return false;
-    lastMarkerScanAt = now;
-    return true;
-  };
+  const markerScanOperationID = createMarkerScanGate(operationID);
   // Periodic timers call track() without a request; decision points pass
   // { markers: true } so escaped marked processes are always recovered first.
   const track = (request) => {
@@ -90,7 +96,7 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
       attributionComplete = false;
       return null;
     }
-    recordSnapshot(snapshot, rootPid, owned, markerScanDue(request) ? operationID : "", nestedGroups);
+    recordSnapshot(snapshot, rootPid, owned, markerScanOperationID(request), nestedGroups);
     return snapshot;
   };
   return {
