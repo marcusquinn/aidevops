@@ -176,12 +176,25 @@ aidevops_resolve_trusted_tool() {
 	local search_path="${2-${PATH:-}}"
 	local candidate=""
 	local physical=""
-	local library="${BASH_SOURCE[0]%/*}/trusted_executable.py"
+	local directory=""
+	local -a directories=()
 	local metadata=""
 	local uid=""
 	local mode=""
 	[[ "$tool" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
-	while IFS= read -r candidate; do
+	[[ "$tool" != . && "$tool" != .. ]] || return 1
+	# Bootstrap with standard shell utilities: macOS's Python launcher may
+	# dispatch to a user-owned developer toolchain, even when it is root-owned.
+	# Only implicit searches append the standard utility PATH, like Python's
+	# trusted_executable; an explicit empty search must remain empty.
+	if [[ "$#" -eq 1 ]]; then
+		search_path="${search_path}:$(command -p getconf PATH)" || return 1
+	fi
+	IFS=':' read -r -a directories <<<"$search_path"
+	# Bash 3.2 treats an empty array as unset under nounset.
+	for directory in ${directories[@]+"${directories[@]}"}; do
+		[[ "$directory" == /* ]] || continue
+		candidate="${directory%/}/$tool"
 		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
 		physical=$(aidevops_physical_path "$candidate" 1) || continue
 		metadata=$(aidevops_bootstrap_metadata "$physical") || continue
@@ -190,13 +203,9 @@ aidevops_resolve_trusted_tool() {
 		(((8#$mode & 0022) == 0)) || continue
 		aidevops_dir_chain_is_trusted "${candidate%/*}" || continue
 		aidevops_dir_chain_is_trusted "${physical%/*}" || continue
-		if [[ "$#" -gt 1 ]]; then
-			"$physical" -I -S -B "$library" "$tool" "$search_path"
-		else
-			"$physical" -I -S -B "$library" "$tool"
-		fi
-		return $?
-	done < <(PATH="${PATH:-}:/bin:/usr/bin" type -a -p python3 2>/dev/null)
+		printf '%s\n' "$candidate"
+		return 0
+	done
 	return 1
 }
 

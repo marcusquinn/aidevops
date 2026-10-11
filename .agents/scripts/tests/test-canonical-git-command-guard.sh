@@ -26,7 +26,9 @@ FAILURES=0
 # The resolver skips aidevops Git shims that may lead the caller's PATH.
 # shellcheck disable=SC2016 # Expanded by the child shell.
 NATIVE_GIT=$(bash -c 'source "$1/runtime-env.sh" && aidevops_resolve_native_git' _ "$SCRIPT_DIR") || exit 1
-TEST_SYS_PATH=""
+# Keep the selected native Git ahead of env/bash directories, which can also
+# contain a different Git (Apple Git versus Homebrew Git on macOS).
+TEST_SYS_PATH="${NATIVE_GIT%/*}"
 for _tool in env bash git python3; do
 	_tool_path=$(type -P "$_tool") || exit 1
 	[[ "$_tool" == git ]] && _tool_path="$NATIVE_GIT"
@@ -503,6 +505,7 @@ fi
 
 if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" <<'PY'; then
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -539,11 +542,13 @@ else:
 
 # Invoke the existing shell via the standard utility path, not the all-shim PATH.
 environment = {**os.environ, "PATH": os.defpath, "AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY": "1"}
-shell = ["bash", "-c", 'source "$1/runtime-env.sh"; aidevops_resolve_trusted_tool "$2" "$3"', "_", scripts]
-for name, search in (("git", os.defpath), ("git", str(native_dir)), ("git", ""), ("../git", os.defpath)):
-    expected = trusted_executable(name, search)
-    result = subprocess.run([*shell, name, search], env=environment, text=True, capture_output=True)
-    assert (result.stdout.strip() if result.returncode == 0 else None) == expected
+shell = [shutil.which("bash", path=os.defpath), "-uc", 'source "$1/runtime-env.sh"; aidevops_resolve_trusted_tool "$2" "$3"', "_", scripts]
+# Trusted Git lookup must also work without a Python interpreter on PATH.
+for path in (os.defpath, str(native_dir)):
+    for name, search in (("git", os.defpath), ("git", str(native_dir)), ("git", ""), ("../git", os.defpath), (".", os.defpath), ("..", os.defpath)):
+        expected = trusted_executable(name, search)
+        result = subprocess.run([*shell, name, search], env={**environment, "PATH": path}, text=True, capture_output=True)
+        assert (result.stdout.strip() if result.returncode == 0 else None) == expected, (path, name, search, result.stderr)
 assert trusted_executable("git", str(native_dir)) is None
 assert subprocess.run([sys.executable, "-I", "-S", "-B", scripts + "/trusted_executable.py", "../git"], env=environment).returncode == 2
 PY
