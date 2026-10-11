@@ -171,6 +171,14 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/pulls/123" ]]; then
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/branches/main/protection/required_status_checks" ]]; then
+	if [[ "${GH_TEST_MODE:-}" == "protection-not-enabled" ]]; then
+		printf '%s\n' 'gh: Required status checks not enabled (HTTP 404)' >&2
+		exit 1
+	fi
+	if [[ "${GH_TEST_MODE:-}" == "protection-error" ]]; then
+		printf '%s\n' 'gh: Resource not accessible (HTTP 403)' >&2
+		exit 1
+	fi
 	if [[ "${GH_TEST_MODE:-}" == "required-protection" ]]; then
 		printf '%s\n' '{"contexts":["Format"]}'
 	else
@@ -277,6 +285,17 @@ for policy_mode in required-protection required-ruleset; do
 	set -e
 	[[ "$policy_rc" -eq 8 ]] && pass "$policy_mode: unreported context remains pending" || fail "$policy_mode: unreported context remains pending" "got ${policy_rc}"
 done
+
+not_enabled_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=protection-not-enabled AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
+assert_contains "protection 404 'not enabled' is verified no-required" "PASS: verified no required checks" "$not_enabled_output"
+
+set +e
+protection_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=protection-error AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
+protection_error_rc=$?
+set -e
+[[ "$protection_error_rc" -ne 0 ]] && pass "unreadable protection stays non-clear" || fail "unreadable protection stays non-clear" "$protection_error_output"
 
 set +e
 live_api_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=api-error AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
