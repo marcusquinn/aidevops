@@ -251,8 +251,15 @@ _ddpr_closing_keyword_pattern() {
 # shape. Keep the existing 20-result search bound, but request rateLimit.cost in
 # the same response so exact-cost observations do not rely on cumulative deltas.
 #
+# A PR with more than 100 changed files returns a partial file page. That is
+# reported as `filesTruncated` instead of failing the lookup: the file list only
+# exempts planning-only PRs, and a truncated PR is never exempt, so the partial
+# page can only keep a sibling owning. Failing the whole response instead made
+# every issue that search matches to one large open PR undispatchable. Partial
+# labels still fail the lookup because they classify protected drafts.
+#
 # Args: $1 = issue number, $2 = repo slug
-# Outputs: gh-pr-list-compatible JSON array
+# Outputs: gh-pr-list-compatible JSON array (plus filesTruncated per PR)
 # Returns: 0 for a complete response, 1 for API or validation failure
 #######################################
 _ddpr_graphql_open_siblings() {
@@ -303,7 +310,7 @@ _ddpr_graphql_open_siblings() {
 			(.number | type) == $number_type and
 			(.isDraft | type) == $boolean_type and
 			((.files.nodes // []) | type) == $array_type and
-			.files.pageInfo.hasNextPage == false and
+			(.files.pageInfo.hasNextPage | type) == $boolean_type and
 			((.labels.nodes // []) | type) == $array_type and
 			.labels.pageInfo.hasNextPage == false
 		))
@@ -317,6 +324,7 @@ _ddpr_graphql_open_siblings() {
 			mergeable,
 			changedFiles,
 			files: (.files.nodes // []),
+			filesTruncated: .files.pageInfo.hasNextPage,
 			labels: (.labels.nodes // [])
 		})
 	' 2>/dev/null) || return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
@@ -544,6 +552,7 @@ _has_open_pr_check_healthy_sibling() {
 		'def complete_planning_only_scope:
 			(.changedFiles // 0) as $changed |
 			([.files[]?.path] | length) as $returned |
+			((.filesTruncated // false) | not) and
 			($changed > 0) and ($returned == $changed) and
 			([.files[]?.path] | all(.[]; test("^(TODO\\.md$|todo/)")));
 		[

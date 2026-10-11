@@ -722,14 +722,52 @@ test_has_open_pr_fails_closed_on_partial_sibling_connections() {
 		return 0
 	fi
 
-	fixture='marcusquinn/aidevops|open|#18785|[{"number":18910,"title":"Checkpoint for #18785","body":"For #18785","isDraft":true,"filesHasNextPage":true}]'
-	set_gh_fixtures "$fixture"
-	rc=0
+	print_result "has-open-pr rejects partial sibling labels" 0
+	return 0
+}
+
+# t18670: a partial file page (over 100 changed files) is decided, not uncertain.
+# The draft still blocks as a checkpoint; only the uncertainty is gone.
+test_has_open_pr_decides_draft_with_partial_sibling_files() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|#18785|[{"number":18910,"title":"Checkpoint for #18785","body":"For #18785","isDraft":true,"changedFiles":595,"filesHasNextPage":true}]'
+	local output=""
+	local rc=0
 	output=$("$HELPER_SCRIPT" has-open-pr 18785 marcusquinn/aidevops 'partial sibling files') || rc=$?
-	if [[ "$rc" -eq 0 && "$output" == PR_LOOKUP_UNCERTAIN:* ]]; then
-		print_result "has-open-pr rejects partial sibling connections" 0
+	if [[ "$rc" -eq 0 && "$output" == *"draft PR #18910 is a durable checkpoint for issue #18785"* &&
+		"$output" != *PR_LOOKUP_UNCERTAIN* ]]; then
+		print_result "has-open-pr decides a draft sibling with partial files" 0
 	else
-		print_result "has-open-pr rejects partial sibling connections" 1 "rc=${rc} output=${output}"
+		print_result "has-open-pr decides a draft sibling with partial files" 1 "rc=${rc} output=${output}"
+	fi
+	return 0
+}
+
+# t18670: search matches PRs that mention the issue anywhere. A large open PR
+# that does not reference the issue in its title or body must not block it.
+test_has_open_pr_allows_past_oversized_unrelated_sibling() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|#18786|[{"number":18911,"title":"Sync platform users into the CRM","body":"For #18700","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","changedFiles":595,"files":[{"path":"src/a.ts"}],"filesHasNextPage":true}]'
+	local output=""
+	local rc=0
+	output=$("$HELPER_SCRIPT" has-open-pr 18786 marcusquinn/aidevops 'oversized unrelated sibling') || rc=$?
+	if [[ "$rc" -eq 1 && "$output" != *PR_LOOKUP_UNCERTAIN* ]]; then
+		print_result "has-open-pr allows dispatch past an oversized unrelated sibling" 0
+	else
+		print_result "has-open-pr allows dispatch past an oversized unrelated sibling" 1 "rc=${rc} output=${output}"
+	fi
+	return 0
+}
+
+# t18670: a truncated file page is never exempt as planning-only, even when its
+# first page and changedFiles alone would look complete and planning-only.
+test_has_open_pr_blocks_truncated_planning_looking_sibling() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|#18787|[{"number":18912,"title":"Planning first page","body":"For #18787.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","changedFiles":2,"files":[{"path":"TODO.md"},{"path":"todo/tasks/t18787-brief.md"}],"filesHasNextPage":true}]'
+	local output=""
+	local rc=0
+	output=$("$HELPER_SCRIPT" has-open-pr 18787 marcusquinn/aidevops 'truncated planning-looking sibling') || rc=$?
+	if [[ "$rc" -eq 0 && "$output" == *"open PR #18912 is approved or mergeable for issue #18787"* ]]; then
+		print_result "has-open-pr keeps a truncated planning-looking sibling owning" 0
+	else
+		print_result "has-open-pr keeps a truncated planning-looking sibling owning" 1 "rc=${rc} output=${output}"
 	fi
 	return 0
 }
@@ -1257,6 +1295,9 @@ main() {
 	test_has_open_pr_classifies_sanitized_lookup_failures
 	test_has_open_pr_fails_closed_without_response_owned_cost
 	test_has_open_pr_fails_closed_on_partial_sibling_connections
+	test_has_open_pr_decides_draft_with_partial_sibling_files
+	test_has_open_pr_allows_past_oversized_unrelated_sibling
+	test_has_open_pr_blocks_truncated_planning_looking_sibling
 	test_has_open_pr_ignores_open_body_planning_for_reference
 	test_has_open_pr_requires_open_close_keyword_for_our_issue
 	test_has_open_pr_blocks_approved_mergeable_sibling
