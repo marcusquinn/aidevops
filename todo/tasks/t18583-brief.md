@@ -1,8 +1,8 @@
 # t18583: Reusable Hostinger fleet onboarding and drift sync
 
-Status: In progress, phased. Implementation is authorized. Production repairs
-(repo creation, registration, layout moves) still need explicit operator
-authority each time they run.
+Status: All four phases implemented. Production repairs (repo creation,
+registration, layout moves) still need explicit operator authority each time
+they run.
 
 ## Progress
 
