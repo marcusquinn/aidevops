@@ -63,7 +63,11 @@ export function poolActionStatus(provider, accounts, hint, now) {
   const active = accounts.filter((a) => ["active", "idle"].includes(a.status)).length;
   const rl = accounts.filter((a) => a.status === "rate-limited" && a.cooldownUntil && a.cooldownUntil > now).length;
   const ae = accounts.filter((a) => a.status === "auth-error").length;
-  const avail = accounts.filter((a) => !a.cooldownUntil || a.cooldownUntil <= now).length;
+  // auth-error accounts are never dispatch-eligible, even after cooldown expiry
+  // (matches rotation, recovery and Pulse capacity predicates; GH#34377).
+  const avail = accounts.filter(
+    (a) => a.status !== "auth-error" && (!a.cooldownUntil || a.cooldownUntil <= now),
+  ).length;
   const epCd = getEndpointCooldownValue(provider);
   return [
     `${provider} pool status:`,

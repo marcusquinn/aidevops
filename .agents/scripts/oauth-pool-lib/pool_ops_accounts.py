@@ -181,6 +181,22 @@ def cmd_import_check() -> None:
     print("no")
 
 
+def _is_status_available(account: dict, now_ms: int) -> bool:
+    """Effective dispatch eligibility for status reporting.
+
+    An ``auth-error`` account is never available, whatever its cooldown:
+    expiry only makes it eligible for refresh re-validation, and rotation
+    (``pool_ops_rotate._is_immediately_available``) and Pulse capacity
+    (``pulse-capacity.sh::_pulse_capacity_provider_account_counts``) both
+    exclude it. Every other account is available once its cooldown is
+    missing, null, zero or expired.
+    """
+    if account.get("status") == "auth-error":
+        return False
+    cooldown = account.get("cooldownUntil") or 0
+    return cooldown <= now_ms
+
+
 def cmd_status_stats() -> None:
     """status-stats: Print pool statistics.
 
@@ -192,10 +208,12 @@ def cmd_status_stats() -> None:
     accounts = pool.get(prov, [])
 
     total = len(accounts)
-    available = sum(1 for a in accounts if not a.get("cooldownUntil") or a["cooldownUntil"] <= now)
+    available = sum(1 for a in accounts if _is_status_available(a, now))
     active = sum(1 for a in accounts if a.get("status") in ("active", "idle"))
     rate_lim = sum(
-        1 for a in accounts if a.get("status") == "rate-limited" and a.get("cooldownUntil", 0) > now
+        1
+        for a in accounts
+        if a.get("status") == "rate-limited" and (a.get("cooldownUntil") or 0) > now
     )
     auth_err = sum(1 for a in accounts if a.get("status") == "auth-error")
 
@@ -206,7 +224,15 @@ def cmd_status_stats() -> None:
     print(f"  Rate limited   : {rate_lim}")
     print(f"  Auth errors    : {auth_err}")
     if available == 0 and total > 0:
-        print("  WARNING: no accounts available — run reset-cooldowns or add an account")
+        if auth_err > 0:
+            # reset-cooldowns marks auth-error accounts idle without
+            # validating credentials, so it must not be the recovery advice.
+            print(
+                "  WARNING: no accounts available — auth-error accounts need re-authentication: "
+                "run check, or re-add the account (reset-cooldowns does not validate credentials)"
+            )
+        else:
+            print("  WARNING: no accounts available — run reset-cooldowns or add an account")
 
 
 def cmd_list_accounts() -> None:

@@ -8,7 +8,7 @@ import {
   formatDuration, formatAgo, poolActionCheck,
   poolActionRemove, poolActionResetCooldowns,
   poolActionAssignPending, poolActionSetPriority,
-  poolAccountAddCommand, poolActionRotate,
+  poolAccountAddCommand, poolActionRotate, poolActionStatus,
 } from "../oauth-pool-display.mjs";
 import { poolActionCheck as healthCheckAction } from "../oauth-pool-health-check.mjs";
 import {
@@ -42,6 +42,21 @@ test("pool remediation uses the supported account-add command", async () => {
     await poolActionRotate({}, "openai", [], () => async () => true),
     /aidevops model-accounts-pool add openai/,
   );
+});
+
+test("pool status never counts auth-error accounts as available (GH#34377)", () => {
+  const now = 100_000;
+  const status = poolActionStatus("anthropic", [
+    { status: "active" },
+    { status: "rate-limited", cooldownUntil: 50_000 },
+    { status: "rate-limited", cooldownUntil: 200_000 },
+    { status: "auth-error", cooldownUntil: 0 },
+    { status: "auth-error", cooldownUntil: null },
+    { status: "auth-error", cooldownUntil: 200_000 },
+  ], "", now);
+  assert.match(status, /Available now: {2}2\n/);
+  assert.match(status, /Rate limited: {3}1\n/);
+  assert.match(status, /Auth errors: {4}3\n/);
 });
 
 test("V2 pool remediation stays isolated and never uses V1 OpenAI device login", () => {

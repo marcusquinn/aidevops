@@ -888,6 +888,63 @@ class SimpleCommandsSmokeTests(unittest.TestCase):
         self.assertIn("Total accounts : 2", result.stdout)
         self.assertIn("anthropic pool", result.stdout)
 
+    def _status_stats(self, accounts: list[dict], now_ms: int = 100_000) -> str:
+        result = run_pool_ops(
+            "status-stats",
+            {"NOW_MS": str(now_ms), "PROV": "anthropic"},
+            stdin=json.dumps({"anthropic": accounts}),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_status_stats_auth_error_never_available(self) -> None:
+        """GH#34377: auth-error is unavailable whatever its cooldown."""
+        auth_error_cooldowns = [
+            {},
+            {"cooldownUntil": None},
+            {"cooldownUntil": 0},
+            {"cooldownUntil": 50_000},
+            {"cooldownUntil": 200_000},
+        ]
+        for extra in auth_error_cooldowns:
+            with self.subTest(extra=extra):
+                out = self._status_stats([{"status": "auth-error", **extra}])
+                self.assertIn("Available now  : 0", out)
+                self.assertIn("Auth errors    : 1", out)
+                self.assertIn("auth-error accounts need re-authentication", out)
+                self.assertNotIn("run reset-cooldowns", out)
+
+    def test_status_stats_keeps_active_and_rate_limit_eligibility(self) -> None:
+        cases = [
+            ({"status": "active"}, 1, 0),
+            ({"status": "idle", "cooldownUntil": None}, 1, 0),
+            ({"status": "rate-limited", "cooldownUntil": 50_000}, 1, 0),
+            ({"status": "rate-limited", "cooldownUntil": 200_000}, 0, 1),
+        ]
+        for account, available, limited in cases:
+            with self.subTest(account=account):
+                out = self._status_stats([account])
+                self.assertIn(f"Available now  : {available}", out)
+                self.assertIn(f"Rate limited   : {limited}", out)
+        out = self._status_stats([{"status": "rate-limited", "cooldownUntil": 200_000}])
+        self.assertIn("run reset-cooldowns or add an account", out)
+
+    def test_status_stats_mixed_pool_totals_are_consistent(self) -> None:
+        out = self._status_stats([
+            {"status": "active"},
+            {"status": "idle", "cooldownUntil": 0},
+            {"status": "rate-limited", "cooldownUntil": 50_000},
+            {"status": "rate-limited", "cooldownUntil": 200_000},
+            {"status": "auth-error", "cooldownUntil": 0},
+            {"status": "auth-error", "cooldownUntil": 200_000},
+        ])
+        self.assertIn("Total accounts : 6", out)
+        self.assertIn("Available now  : 3", out)
+        self.assertIn("Active/idle    : 2", out)
+        self.assertIn("Rate limited   : 1", out)
+        self.assertIn("Auth errors    : 2", out)
+        self.assertNotIn("WARNING", out)
+
     def test_list_accounts(self) -> None:
         pool = {"anthropic": [{"email": "a@example.com", "status": "active", "priority": 3}]}
         result = run_pool_ops(
