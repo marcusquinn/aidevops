@@ -51,4 +51,10 @@ main() {
 	return $?
 }
 
-main "$@"
+# Keep failures inside an explicit status check so captured transport stderr is
+# replayed before errexit can terminate the CLI. Preserve the original status.
+main "$@" || {
+	rc=$?
+	printf '[aidevops][gh-write-helper][ERROR] GitHub write failed (exit %s).\n' "$rc" >&2
+	exit "$rc"
+}

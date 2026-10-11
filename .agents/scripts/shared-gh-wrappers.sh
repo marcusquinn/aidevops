@@ -469,9 +469,24 @@ _gh_timeout_cooldown_preflight() {
 	return "$rc"
 }
 
+# Record shim privacy denials without persisting the rejected body or matches.
+# The flag prevents comment wrappers from retrying a denied write through REST.
+_gh_record_transport_privacy_block() {
+	local op_class="$1"
+	local rc="$2"
+	local err_file="$3"
+	if [[ "$op_class" == "write" && "$rc" -ne 0 && -f "$err_file" ]] &&
+		grep -Fq '[privacy-scan][BLOCK]' "$err_file"; then
+		_GH_WRITE_PRIVACY_BLOCKED=1
+		_gh_edit_audit_rejection "public write" "transport privacy scan blocked write"
+	fi
+	return 0
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
+	_GH_WRITE_PRIVACY_BLOCKED=0
 	local timeout_caller="${BASH_SOURCE[1]:-${0}}"
 	local timeout_path="" timeout_start_ms="" AIDEVOPS_GH_LOGICAL_ID=""
 	AIDEVOPS_GH_LOGICAL_ID=$(_gh_timeout_logical_id)
@@ -521,22 +536,22 @@ _gh_with_timeout() {
 			return "$rc"
 		}
 		out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || {
-			"$@" 2>"$err_file"
-			rc=$?
+			"$@" 2>"$err_file" || rc=$?
 			_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 			cat "$err_file" >&2 2>/dev/null || true
+			_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 			rm -f "$err_file"
 			return $rc
 		}
 		if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
-			_gh_run_bounded_function "$secs" "$@" >"$out_file" 2>"$err_file"
+			_gh_run_bounded_function "$secs" "$@" >"$out_file" 2>"$err_file" || rc=$?
 		else
-			"$@" >"$out_file" 2>"$err_file"
+			"$@" >"$out_file" 2>"$err_file" || rc=$?
 		fi
-		rc=$?
 		_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
+		_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
 		rm -f "$err_file" "$out_file"
 		return $rc
@@ -550,16 +565,15 @@ _gh_with_timeout() {
 		}
 	fi
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
-		_gh_run_bounded_command "$secs" "$@" >"$out_file" 2>"$err_file"
-		rc=$?
+		_gh_run_bounded_command "$secs" "$@" >"$out_file" 2>"$err_file" || rc=$?
 	else
-		_gh_run_bounded_command "$secs" "$@"
-		rc=$?
+		_gh_run_bounded_command "$secs" "$@" || rc=$?
 	fi
 	_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
 		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
+		_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
 		rm -f "$err_file" "$out_file"
 	fi

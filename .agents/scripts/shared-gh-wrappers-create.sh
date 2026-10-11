@@ -87,8 +87,11 @@ _gh_guard_public_write_args() {
 		esac
 	done
 	[[ "$expect" != "repo" ]] || return 1
-	privacy_guard_public_write "$repo" "$text"
-	return $?
+	if ! privacy_guard_public_write "$repo" "$text"; then
+		_gh_edit_audit_rejection "public write" "privacy guard blocked write" --repo "$repo"
+		return 1
+	fi
+	return 0
 }
 
 # t2436: Extract the tNNN task ID from a --title "tNNN: ..." argument.
@@ -1337,7 +1340,7 @@ gh_issue_comment() {
 	fi
 	_gh_with_timeout write "$gh_command" issue comment "$@"
 	local rc=$?
-	if [[ $rc -ne 0 && -z "$ephemeral_body_file" ]] && _rest_should_fallback; then
+	if [[ $rc -ne 0 && -z "$ephemeral_body_file" && "${_GH_WRITE_PRIVACY_BLOCKED:-0}" -ne 1 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue comment"
 		_rest_issue_comment "$@"
 		rc=$?
@@ -1364,7 +1367,7 @@ gh_pr_comment() {
 	fi
 	_gh_with_timeout write gh pr comment "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	if [[ $rc -ne 0 && "${_GH_WRITE_PRIVACY_BLOCKED:-0}" -ne 1 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr comment"
 		_rest_pr_comment "$@"
 		rc=$?
