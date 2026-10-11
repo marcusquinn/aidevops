@@ -1,8 +1,31 @@
 # t18583: Reusable Hostinger fleet onboarding and drift sync
 
-Status: Backlog; brief only. No implementation issue, automatic dispatch, or
-production deployment is authorized by saving this brief. A future execution
-request is required.
+Status: In progress, phased. Implementation is authorized. Production repairs
+(repo creation, registration, layout moves) still need explicit operator
+authority each time they run.
+
+## Progress
+
+- [x] Phase 1 — read-only inventory, plan and drift (`hostinger-helper.sh fleet`),
+  multisite network discovery, fleet-scoped `migrate-layout plan --source`.
+- [ ] Phase 2 — provisioning with per-site receipts: create or adopt private repos,
+  run native init, register them, and support resume and explicit partial results.
+- [ ] Phase 3 — readiness verification: visibility, owner, default-branch heads,
+  effective features, Pulse/maintenance flags and worker auth.
+- [ ] Phase 4 — fleet layout-move wrapper: snapshot and restore maintenance and
+  Pulse settings around `migrate-layout --source`.
+
+### Files Scope
+
+- `.agents/scripts/hosting_fleet.py`, `hosting_fleet_inventory.py`,
+  `hosting_fleet_plan.py`, `hosting_fleet_remote.py` (new modules; the names avoid
+  the `.gitignore` credential pattern `hostinger_*`)
+- `.agents/scripts/hostinger-helper.sh`
+- `.agents/scripts/repo_layout_migrate.py`, `.agents/scripts/repo-layout-migrate-helper.sh`
+- `.agents/scripts/aidevops-cli/aidevops-repos-lib.sh`,
+  `.agents/scripts/aidevops-cli/repo-discovery-lib.sh`
+- `.agents/services/hosting/hostinger.md`, `.agents/reference/repo-organization.md`
+- `tests/test-repo-layout-migrate.py`
 
 ## Goal and observed evidence
 
