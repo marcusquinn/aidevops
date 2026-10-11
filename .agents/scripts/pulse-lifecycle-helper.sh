@@ -639,8 +639,11 @@ _pulse_find_active_runtime_pid_since() {
 # Watchdog/status callers may pipe PID lists into consumers that intentionally
 # exit after the first match. Bash's printf reports EPIPE as noisy "Broken pipe"
 # stderr output unless stderr is suppressed at the emit site. Callers ignore
-# SIGPIPE for the full emit loop and restore the prior trap afterwards; return 1
-# to tell the caller to stop emitting without treating the closed pipe as
+# SIGPIPE for the emit loop and restore the prior trap only when the loop
+# completes. After a closed consumer they leave SIGPIPE ignored: bash 3.2
+# printf keeps the failed write in its stdio buffer and flushes it at exit, so
+# the default disposition would kill the producer with status 141. Return 1 to
+# tell the caller to stop emitting without treating the closed pipe as
 # discovery failure.
 _pulse_emit_pid() {
 	local _pid="$1" _rc=0
@@ -701,7 +704,7 @@ _pulse_parent_is_wrapper() {
 }
 
 _pulse_pids() {
-	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap=""
+	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap="" _consumer_closed=0
 	_pids=$(_pulse_pids_raw)
 	[[ -z "$_pids" ]] && return 0
 	_pipe_trap=$(trap -p PIPE || true)
@@ -718,7 +721,7 @@ _pulse_pids() {
 		if [[ "$_ppid" == "1" ]]; then
 			# Layer 3 (sidecar guard): skip if argv contains a sidecar flag.
 			[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-			_pulse_emit_pid "$_pid" || break
+			_pulse_emit_pid "$_pid" || { _consumer_closed=1; break; }
 			continue
 		fi
 		# Layer 2 (fallback for manually-started instances): skip PIDs whose
@@ -728,9 +731,9 @@ _pulse_pids() {
 		# Layer 3 (sidecar guard): also skip non-launchd-started sidecars
 		# (manual --merge-only invocations during testing or debugging).
 		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-		_pulse_emit_pid "$_pid" || break
+		_pulse_emit_pid "$_pid" || { _consumer_closed=1; break; }
 	done <<<"$_pids"
-	_pulse_restore_pipe_trap "$_pipe_trap"
+	[[ "$_consumer_closed" -eq 1 ]] || _pulse_restore_pipe_trap "$_pipe_trap"
 	return 0
 }
 
@@ -741,7 +744,7 @@ _pulse_pids() {
 # Subshell guards (Layers 1 and 2) still apply — sidecars run as top-level
 # launchd-spawned processes (PPID=1), never as subshells of a main pulse.
 _pulse_pids_sidecar() {
-	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap=""
+	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap="" _consumer_closed=0
 	_pids=$(_pulse_pids_raw)
 	[[ -z "$_pids" ]] && return 0
 	_pipe_trap=$(trap -p PIPE || true)
@@ -756,10 +759,10 @@ _pulse_pids_sidecar() {
 			_pulse_parent_is_wrapper "$_ppid_cmd" && continue
 		fi
 		if [[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]]; then
-			_pulse_emit_pid "$_pid" || break
+			_pulse_emit_pid "$_pid" || { _consumer_closed=1; break; }
 		fi
 	done <<<"$_pids"
-	_pulse_restore_pipe_trap "$_pipe_trap"
+	[[ "$_consumer_closed" -eq 1 ]] || _pulse_restore_pipe_trap "$_pipe_trap"
 	return 0
 }
 
