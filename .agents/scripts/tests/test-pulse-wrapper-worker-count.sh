@@ -346,6 +346,11 @@ test_policy_compatible_command_router() {
 		fi
 	done
 
+	return 0
+}
+
+test_command_router_outcomes_under_errexit() {
+	local output="" expected_rc="" actual_rc="" outcome="" expected_output=""
 	# Fresh bash processes exercise the CLI's set -euo pipefail even though this
 	# test captures their status with ||. Command substitutions alone disable -e.
 	local command_name=""
@@ -1331,6 +1336,7 @@ main() {
 	test_has_worker_exact_dir_match_accepts_correct_path
 	test_counts_review_issue_pr_workers
 	test_policy_compatible_command_router
+	test_command_router_outcomes_under_errexit
 	test_list_dispatchable_candidates_default_open_except_needs_labels
 	test_list_dispatchable_candidates_logs_cooldown_skip_not_failure
 	test_count_runnable_candidates_counts_default_open_backlog
