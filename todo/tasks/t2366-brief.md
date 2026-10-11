@@ -26,7 +26,7 @@ Routine integrates with the existing core-routines pipeline so that `aidevops up
 
 - 1 entry pointing at a deleted folder (stale legacy `aidevops.sh-chore-aidevops-init` — cleaned up in this session but the class is recurring)
 - Multiple `.aidevops.json` files at v3.8.65 when framework is v3.8.72 (bump via `aidevops init` requires user intervention today)
-- 1 entry at v3.1.266 (very stale — `propertyservicesdirectory.com`)
+- 1 entry at v3.1.266 (very stale — a private client site repo)
 - At least 7 active git repos with no `.aidevops.json` (internal tools and external FOSS repos where TODO.md authorship would leak to public)
 
 Manual audit took ~30 min of interactive time and was only triggered because the user explicitly asked. Without a routine, these drift classes accumulate silently until someone hits a "version too old" error or notices orphan entries in the dashboard. The pulse, dashboard, and session-time tools already iterate `repos.json` — they deserve accurate data.

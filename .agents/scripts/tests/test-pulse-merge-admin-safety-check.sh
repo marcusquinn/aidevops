@@ -314,7 +314,7 @@ test_case_a2_same_name_owner_repo_pr_returns_0() {
 		'## Summary\n\nResolves #101' 'VERIFIED'
 
 	local result
-	_pulse_merge_admin_safety_check "101" "awardsapp/awardsapp"
+	_pulse_merge_admin_safety_check "101" "sameapp/sameapp"
 	result=$?
 
 	if [[ "$result" -ne 0 ]]; then

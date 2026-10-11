@@ -5,8 +5,8 @@
 ## Session Origin
 
 Interactive session with marcusquinn on 2026-04-19. While initialising four
-new `local_only: true` Jersey website repos (`trinityjoinery.je`,
-`trinitywindows.je`, `autocarejersey.com`, `connections.je`), we confirmed
+new `local_only: true` client website repos (`<site-a>`, `<site-b>`,
+`<site-c>`, `<site-d>`), we confirmed
 that `aidevops init planning` creates ~14 files per repo — and for a private
 WP single-site repo that will never have an external contributor, >50% of
 those files are pure noise (`LICENCE`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`,

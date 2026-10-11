@@ -13,7 +13,7 @@
 
 - **Created:** 2026-04-20
 - **Session:** opencode interactive
-- **Created by:** ai-interactive (during user request to upgrade planning templates on webapp + propertyservicesdirectory.com)
+- **Created by:** ai-interactive (during user request to upgrade planning templates on webapp + a private client site repo)
 - **Conversation context:** User asked to upgrade 2 projects flagged by `aidevops update` (outdated planning templates). First run on webapp silently dropped 141 `[x]` completed tasks from `## Done` (extraction only covers `## Backlog`). Restored from `.bak` before proceeding. Fixing the bug before re-running the upgrades.
 
 ## What

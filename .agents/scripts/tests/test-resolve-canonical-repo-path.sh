@@ -13,7 +13,7 @@
 # vs `git rev-parse --git-common-dir` to detect linked worktrees
 # deterministically, then resolves them to the main worktree path via
 # `git worktree list --porcelain`. This is heuristic-free and handles repos
-# with any naming convention, including TLD-style names (wpallstars.com).
+# with any naming convention, including TLD-style names (sitename.com).
 #
 # This test:
 #   1. Creates a temporary git repo and a linked worktree.

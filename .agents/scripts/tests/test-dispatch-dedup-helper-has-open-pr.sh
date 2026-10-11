@@ -421,7 +421,7 @@ test_has_open_pr_allows_owner_repo_same_name() {
 	export GH_OPEN_COMMITS_JSON='[{"number":1061,"title":"Same-name repo fix","isDraft":false,"commits":[{"messageHeadline":"Fixes #10001 in same-name owner repo"}]}]'
 	printf '' >"$GH_GRAPHQL_CALL_LOG"
 
-	if output=$("$HELPER_SCRIPT" has-open-pr 10001 awardsapp/awardsapp 't10001: same-name repo dispatch dedup'); then
+	if output=$("$HELPER_SCRIPT" has-open-pr 10001 sameapp/sameapp 't10001: same-name repo dispatch dedup'); then
 		unset GH_OPEN_COMMITS_JSON
 		if [[ "$output" == *"open PR #1061 has commits targeting issue #10001"* ]] && \
 			grep -qF '1|dispatch-dedup-open-commits-exact-cost|' "$GH_GRAPHQL_CALL_LOG"; then

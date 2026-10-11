@@ -3400,7 +3400,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: finalize CodeFactor fix release aggregation
 - Documentation: aggregate release for CodeFactor clustering fix
 - Maintenance: pin patched nanoid
-- Documentation: aggregate release for awardsapp pulse fix
+- Documentation: aggregate release for same-name repo pulse fix
 
 ### Fixed
 
@@ -3409,7 +3409,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - prevent false CodeFactor systemic clusters
 - harden continued worker sessions and databases
 - preserve Remotion help behavior (#30194)
-- preserve awardsapp pulse worker dispatch
+- preserve same-name repo pulse worker dispatch
 - detect continued-session worker activity
 - initialize fresh worker database schema
 
@@ -3417,12 +3417,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Documentation: aggregate release for awardsapp pulse fix
+- Documentation: aggregate release for same-name repo pulse fix
 
 ### Fixed
 
 - preserve Remotion help behavior (#30194)
-- preserve awardsapp pulse worker dispatch
+- preserve same-name repo pulse worker dispatch
 - detect continued-session worker activity
 
 ## [3.32.257] - 2026-08-13

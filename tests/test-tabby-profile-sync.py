@@ -6,7 +6,7 @@
 t2250: covers the two root causes behind duplicate Tabby profiles
 (``>-`` folded YAML scalars missed by the dedup regex) and worktree
 leakage (the string-heuristic failing on names with dots like
-``wpallstars.com-chore-aidevops-init``).
+``sitename.com-chore-aidevops-init``).
 """
 
 import importlib.util
@@ -234,7 +234,7 @@ class TestIsLinkedWorktree(unittest.TestCase):
     Replaces the old string-heuristic that tried to guess worktrees from
     basename patterns like ``repo.branch-name``. That heuristic broke for:
 
-    - repo names containing a dot (``wpallstars.com``, ``example.io``)
+    - repo names containing a dot (``sitename.com``, ``example.io``)
     - worktrees whose branch prefix is not in the hard-coded list
       (``feature-``, ``bugfix-``, ``hotfix-``, ``refactor-``,
       ``chore-``, ``experiment-``)
@@ -287,16 +287,16 @@ class TestIsLinkedWorktree(unittest.TestCase):
     def test_worktree_with_dot_in_repo_name_is_detected(self):
         """The original bug: worktrees of repos with TLD-style names.
 
-        ``wpallstars.com`` worktree named ``wpallstars.com-chore-aidevops-init``
+        ``sitename.com`` worktree named ``sitename.com-chore-aidevops-init``
         was not caught by the old heuristic because splitting on the first
         dot yielded ``com-chore-aidevops-init``, which does not start with
         any of the hard-coded branch prefixes.
         """
-        repo = self.tmp / "wpallstars.com"
+        repo = self.tmp / "sitename.com"
         repo.mkdir()
         self._git("init", "-q", "-b", "main", cwd=repo)
         self._git("commit", "--allow-empty", "-q", "-m", "init", cwd=repo)
-        wt = self.tmp / "wpallstars.com-chore-aidevops-init"
+        wt = self.tmp / "sitename.com-chore-aidevops-init"
         self._git(
             "worktree", "add", "-q",
             str(wt), "-b", "chore/aidevops-init",

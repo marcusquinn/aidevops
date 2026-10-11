@@ -5,7 +5,7 @@
 Interactive. User observed the routine that creates Tabby terminal profiles from `repos.json` had:
 
 1. Produced a duplicate profile for `wordpress/wp-plugin-starter-template-for-ai-coding`.
-2. Created a profile for `wpallstars.com-chore-aidevops-init` — a linked git worktree, not a canonical repo.
+2. Created a profile for `sitename.com-chore-aidevops-init` — a linked git worktree, not a canonical repo.
 
 ## What
 
@@ -21,7 +21,7 @@ to fragile string heuristics that can't handle real-world inputs:
   worktrees by splitting the basename on `.` and checking if the remainder
   starts with a known branch prefix (`feature-`, `bugfix-`, `chore-`, ...).
   The heuristic fails for repos whose names contain a dot
-  (`wpallstars.com`, `example.io`, `essentials.com`) because `split(".", 1)[1]`
+  (`sitename.com`, `example.io`, `essentials.com`) because `split(".", 1)[1]`
   begins with the TLD (`com-...`), not the branch prefix.
 
 Also: the upstream cause of worktrees ending up in `repos.json` at all —
@@ -102,7 +102,7 @@ Three-layer defense, paired with a one-shot migration:
       cwd as an existing path (verified against real user config).
 - [x] `is_linked_worktree()` returns True for linked worktrees including
       TLD-named ones, False for main and non-git paths.
-- [x] `get_repos()` no longer emits the wpallstars.com worktree (verified
+- [x] `get_repos()` no longer emits the sitename.com worktree (verified
       end-to-end via `tabby-profile-sync.py --status-only`).
 - [x] `register_repo()` resolves worktree input paths to the canonical main.
 - [x] Migration removes the stale worktree entry from the real user config;
@@ -122,5 +122,5 @@ The fix prevents *new* duplicates from appearing.
 
 - Canonical failure config: `~/Library/Application Support/tabby/config.yaml`
   (lines 809 and 1176 had identical `cwd` for the wp-plugin-starter path).
-- Canonical worktree leak: `wpallstars.com-chore-aidevops-init`.
+- Canonical worktree leak: `sitename.com-chore-aidevops-init`.
 - Related: PR #17555 (tabby-helper refactor), PR #18677 (issue-sync SYNC_PAT).

@@ -88,7 +88,7 @@ def is_linked_worktree(repo_path: str) -> bool:
     Deterministic replacement for the old string-heuristic that tried to guess
     worktrees from the basename pattern ``repo.branch-name``. That heuristic
     broke whenever the repo name itself contained a dot (domain-like names such
-    as ``wpallstars.com`` / ``example.io``) or when a worktree branch did not
+    as ``sitename.com`` / ``example.io``) or when a worktree branch did not
     start with one of the six hard-coded prefixes.
 
     Detection rule (no subprocess; spawning ``git`` resolves to the slow

@@ -123,7 +123,7 @@ bash .agents/scripts/tests/test-worker-outcome-routing.sh
 
 Evidence:
 
-- pulse log: `Enrichment: successfully added Worker Guidance to #11499 in awardsapp/awardsapp`;
+- pulse log: `Enrichment: successfully added Worker Guidance to #11499 in <owner>/<webapp>`;
 - the issue body of #11499 contains `### Worker Guidance` at line 3;
 - GraphQL `userContentEdits` shows the last body edit at 2026-10-04T06:59:45Z;
 - the fast-fail entry that triggered enrichment is dated 2026-10-04T07:24:59Z, so the body was not edited by enrichment;
