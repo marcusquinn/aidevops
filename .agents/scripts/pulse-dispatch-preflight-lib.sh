@@ -400,8 +400,8 @@ _preflight_label_maintenance() {
 	# for ordering, but never as completed sweeps in label-maintenance-epochs.
 	local stage_deadline=$(($(date +%s) + timeout - 30)) remaining=3 now
 	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
-	local _LABEL_MAINTENANCE_DEADLINE _LABEL_MAINTENANCE_KEY
-	local _LABEL_CURSOR_FILE _LABEL_CURSOR_SLUG _LABEL_CURSOR_PHASE _LABEL_CURSOR_ISSUE
+	local _LABEL_MAINTENANCE_DEADLINE=0 _LABEL_MAINTENANCE_KEY=""
+	local _LABEL_CURSOR_FILE="" _LABEL_CURSOR_SLUG="" _LABEL_CURSOR_PHASE=0 _LABEL_CURSOR_ISSUE=0
 	mkdir -p "${state_file%/*}" || return 1
 	local key context fn timing started rc first=1 first_key=""
 	while IFS= read -r key; do
