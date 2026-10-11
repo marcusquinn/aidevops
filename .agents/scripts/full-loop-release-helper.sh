@@ -108,7 +108,7 @@ _full_loop_release_prepare_control_worktree() {
 	return 0
 }
 
-if [[ -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
+if [[ "${1:-}" != "sources" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
 	printf 'Cannot prepare a linked release control worktree.\n' >&2
 	exit 1
 fi
@@ -328,14 +328,19 @@ _full_loop_release_usage() {
 Usage:
   aidevops release [patch|minor|major] SOURCE_PR [incremental|full] [--expected-sources PR[,PR...]]
   aidevops release status SOURCE_PR
+  aidevops release sources SOURCE_PR
   aidevops release reconcile SOURCE_PR
   aidevops release recover-reservation SOURCE_PR
   aidevops release refresh-aggregate STALE_AGGREGATION_PR
   aidevops release recover-aggregate SOURCE_PR --tag TAG --expected-sources PR[,PR...]
   aidevops release authorization-gap SOURCE_PR --tag TAG --expected-sources PR@SHA[,PR@SHA...] --reason TEXT
 
-Release publication is provenance-bound and normally unattended. `status` is
-read-only. `reconcile` verifies the newest matching signed tag, queues an
+Release publication is provenance-bound and normally unattended. `status` and
+`sources` are read-only. `sources` prints the verified source manifest as JSON
+for the locally fetched origin/main snapshot, without reserving a lane. Fetch
+main and tags beforehand for a current preview; later merges can change the set.
+Use expected_sources[].pr as the --expected-sources list, or include merge SHAs
+to pin it. Preview is not publication authorization. `reconcile` verifies the newest matching signed tag, queues an
 idempotent recovery workflow when needed, and finalizes local release receipts
 only after GitHub, npm, and Homebrew all converge. A published stale tag can be
 settled only by verified post-publication supersession; it is never redispatched.
@@ -833,6 +838,16 @@ main() {
 	help | --help | -h)
 		_full_loop_release_usage
 		return 0
+		;;
+	sources)
+		[[ "$source_pr" =~ ^[0-9]+$ && -z "$tag_name" && -z "$gap_reason" && -z "$expected_sources" ]] || return 1
+		_full_loop_release_bind_repo_context || return 1
+		(
+			cd "$REPO_ROOT" || exit 1
+			bash "${SCRIPT_DIR}/release-provenance-helper.sh" preview-sources \
+				--source-pr "$source_pr" --repo "$AIDEVOPS_FULL_LOOP_REPO" --branch main
+		)
+		return $?
 		;;
 	status | reconcile | recover-reservation)
 		[[ "$source_pr" =~ ^[0-9]+$ ]] || {
