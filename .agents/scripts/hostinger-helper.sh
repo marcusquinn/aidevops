@@ -197,8 +197,13 @@ fleet_command() {
         python3 "$engine" "$subcommand" --discovery-lib "$discovery_lib" "$@" || status=$?
         return "$status"
         ;;
+    privacy-sync)
+        shift
+        python3 "$engine" "$subcommand" "$@" || status=$?
+        return "$status"
+        ;;
     help | -h | --help)
-        echo "Usage: $0 fleet <inventory|plan|drift> [options]"
+        echo "Usage: $0 fleet <inventory|plan|drift|privacy-sync> [options]"
         echo ""
         echo "  inventory [--username U] [--discover-networks --ssh ALIAS] [--network-map FILE]"
         echo "      GET-only website inventory; groups shared roots; optional read-only"
@@ -208,6 +213,9 @@ fleet_command() {
         echo "      Write a content-hashed onboarding plan (no mutations)"
         echo "  drift [plan options] [--json] [--fail-on-drift]"
         echo "      Compare hosting, repos.json and canonical layout (exit 3 on drift)"
+        echo "  privacy-sync [--inventory FILE] [--config FILE]"
+        echo "      Offline sync to the local private entity guard (counts only)"
+        echo "      Also runs automatically after inventory"
         echo ""
         echo "Fleet config (optional, 0600): ~/.config/aidevops/hosting-fleet.json"
         echo "  {\"owner\": ORG, \"owner_exceptions\": {DOMAIN: OWNER},"

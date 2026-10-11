@@ -13,8 +13,10 @@ The API token is read from HOSTINGER_API_TOKEN and is never written or printed.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,13 +26,16 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from hosting_fleet_inventory import (  # noqa: E402
+    DOMAIN_RE,
     FleetError,
     build_inventory,
     load_inventory,
     load_network_map,
     probe_roots,
 )
-from hosting_fleet_plan import CLEAN_STATES, build_plan  # noqa: E402
+from hosting_fleet_plan import (  # noqa: E402
+    CLEAN_STATES, OWNER_RE, build_plan, parse_exceptions, parse_site_repos,
+)
 from hosting_fleet_remote import API_BASE, discover_networks, fetch_websites  # noqa: E402
 from repo_layout_migrate import (  # noqa: E402
     MigrationError,
@@ -42,6 +47,7 @@ from repo_layout_migrate import (  # noqa: E402
 
 DEFAULT_STATE_DIR = "~/.aidevops/.agent-workspace/work/hostinger-fleet"
 DEFAULT_CONFIG = "~/.config/aidevops/hosting-fleet.json"
+DEFAULT_ENTITIES = "~/.aidevops/configs/privacy-guard-private-entities.txt"
 DRIFT_EXIT = 3
 
 
@@ -116,6 +122,7 @@ def inventory_command(args: argparse.Namespace) -> int:
           + f" accounts={len(inventory['accounts'])}"
           + f" network_discovery={inventory['network_discovery']}")
     print(f"inventory_sha256: {inventory['inventory_sha256']}")
+    sync_privacy(inventory, args.config)
     return 0
 
 
@@ -140,6 +147,83 @@ def config_pairs(config: dict[str, Any], key: str) -> list[str]:
     if not isinstance(mapping, dict):
         raise FleetError(f"Fleet config '{key}' must be an object")
     return [f"{name}={value}" for name, value in sorted(mapping.items())]
+
+
+def fleet_entities(inventory: dict[str, Any], config: dict[str, Any]) -> set[tuple[str, str]]:
+    """Select client names and fleet-owned repository slugs without printing values."""
+    mappings = parse_site_repos(config_pairs(config, "site_repos"))
+    exceptions = parse_exceptions(config_pairs(config, "owner_exceptions"))
+    ignored = config.get("ignore") or []
+    if not isinstance(ignored, list) or not all(isinstance(item, str) for item in ignored):
+        raise FleetError("Fleet ignore must be a list of domains")
+    excluded = {item.strip().lower() for item in ignored} | set(exceptions)
+    # Exempt mapped repository names too, including when they are also hosted.
+    excluded |= {mappings[name] for name in excluded if name in mappings}
+    domains = {site["domain"] for site in inventory["sites"]} | set(mappings)
+    names = domains | set(mappings.values())
+    if not all(isinstance(name, str) and DOMAIN_RE.fullmatch(name) for name in names):
+        raise FleetError("Invalid fleet domain")
+    owner = config.get("owner")
+    if owner is not None and (not isinstance(owner, str) or not OWNER_RE.fullmatch(owner)):
+        raise FleetError("Invalid fleet owner")
+    entities = {("client", name) for name in names - excluded}
+    if owner:
+        repos = {mappings.get(domain, domain) for domain in domains - excluded} - excluded
+        entities |= {("repo", f"{owner}/{repo}") for repo in repos}
+    return entities
+
+
+def merge_private_entities(entities: set[tuple[str, str]]) -> int:
+    """Serialize additive updates, preserving manual text and securing the file."""
+    destination = expand_path(DEFAULT_ENTITIES)
+    private_directory(destination.parent)
+    lock = destination.with_suffix(".lock")
+    descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "r+") as handle:
+        details = os.fstat(handle.fileno())
+        if not stat.S_ISREG(details.st_mode) or details.st_uid != os.getuid():
+            raise FleetError("Unsafe privacy lock")
+        os.fchmod(handle.fileno(), 0o600)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        text = ""
+        if destination.exists() or destination.is_symlink():
+            details = destination.lstat()
+            if not stat.S_ISREG(details.st_mode) or details.st_uid != os.getuid():
+                raise FleetError("Unsafe privacy entities file")
+            text = destination.read_text(encoding="utf-8")
+        existing = set()
+        for line in text.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            separator = "\t" if "\t" in line else ":"
+            kind, _, value = line.partition(separator)
+            existing.add(("".join(kind.split()), value.strip()))
+        additions = sorted(entities - existing)
+        if text and not text.endswith("\n") and additions:
+            text += "\n"
+        text += "".join(f"{kind}:{value}\n" for kind, value in additions)
+        atomic_write(destination, text.encode("utf-8"))
+    return len(additions)
+
+
+def sync_privacy(inventory: dict[str, Any], config_path: str) -> None:
+    """Update the local guard, reporting counts only even on failure."""
+    try:
+        entities = fleet_entities(inventory, load_fleet_config(config_path))
+        added = merge_private_entities(entities)
+    except (FleetError, MigrationError, OSError, ValueError, KeyError, TypeError) as exc:
+        raise FleetError("Privacy sync failed; check private inventory, config and entity file") from exc
+    print(f"Privacy sync: selected={len(entities)} added={added}")
+
+
+def privacy_sync_command(args: argparse.Namespace) -> int:
+    """Sync a previously saved inventory without hosting or GitHub requests."""
+    try:
+        inventory = load_inventory(expand_path(args.inventory))
+    except (FleetError, MigrationError, OSError, ValueError) as exc:
+        raise FleetError("Privacy sync failed; check private inventory") from exc
+    sync_privacy(inventory, args.config)
+    return 0
 
 
 def merged_options(args: argparse.Namespace) -> dict[str, Any]:
@@ -210,6 +294,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     inventory = commands.add_parser("inventory")
     inventory.add_argument("--output")
+    inventory.add_argument("--config", default=DEFAULT_CONFIG,
+                           help="Private fleet config for the automatic privacy sync")
     inventory.add_argument("--username", help="Limit to one hosting account username")
     inventory.add_argument("--network-map", help="JSON object: blog domain -> primary domain")
     inventory.add_argument("--discover-networks", action="store_true",
@@ -218,6 +304,10 @@ def build_parser() -> argparse.ArgumentParser:
     inventory.add_argument("--api-response", help="Use a saved websites response (offline)")
     inventory.add_argument("--api-base", default=API_BASE)
     inventory.set_defaults(handler=inventory_command)
+    privacy = commands.add_parser("privacy-sync", help="Sync fleet names to the local privacy guard")
+    privacy.add_argument("--inventory", default=f"{DEFAULT_STATE_DIR}/inventory.json")
+    privacy.add_argument("--config", default=DEFAULT_CONFIG)
+    privacy.set_defaults(handler=privacy_sync_command)
     plan = commands.add_parser("plan")
     add_plan_arguments(plan)
     plan.add_argument("--output")
