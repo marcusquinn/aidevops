@@ -457,32 +457,52 @@ _pulse_maybe_run_llm_supervisor() {
 # helper's stop→sleep→start window means _start's _is_running early-return
 # skips priming entirely, and the original t2992 hook never fired during
 # launchd-managed restarts (the canonical path on macOS).
+#
+# GH#34331: only a completed prime refreshes the success sentinel, so a prime
+# that cannot finish inside its stage bound re-ran for the full timeout every
+# cycle. A separate attempt marker limits retries of a stale-sentinel prime to
+# one per AIDEVOPS_PULSE_PRIME_RETRY_AFTER_S (default: the max age). A missing
+# success sentinel still primes every time (post-install / forced prime).
 _pulse_prime_caches_if_stale() {
 	[[ "${AIDEVOPS_SKIP_CACHE_PRIME:-0}" == "1" ]] && return 0
 
 	local _prime_helper=""
 	local _prime_sentinel=""
+	local _prime_attempt=""
 	local _prime_max_age=""
+	local _prime_retry_after=""
 	_prime_helper="${SCRIPT_DIR}/pulse-cache-prime.sh"
 	_prime_sentinel="${HOME}/.aidevops/cache/pulse-cache-prime-last-run"
+	_prime_attempt="${HOME}/.aidevops/cache/pulse-cache-prime-last-attempt"
 	_prime_max_age="${AIDEVOPS_PULSE_PRIME_MAX_AGE:-7200}"
 	[[ "$_prime_max_age" =~ ^[0-9]+$ ]] || _prime_max_age=7200
+	_prime_retry_after="${AIDEVOPS_PULSE_PRIME_RETRY_AFTER_S:-$_prime_max_age}"
+	[[ "$_prime_retry_after" =~ ^[0-9]+$ ]] || _prime_retry_after="$_prime_max_age"
 
 	mkdir -p "$(dirname "$_prime_sentinel")"
 	[[ ! -x "$_prime_helper" ]] && return 0
 
-	local _should_prime=0
+	local _should_prime=0 _now_epoch="" _stamp_epoch="" _age_s=""
+	_now_epoch=$(date +%s 2>/dev/null)
 	if [[ ! -f "$_prime_sentinel" ]]; then
 		_should_prime=1
 	else
-		local _now_epoch="" _stamp_epoch="" _age_s=""
-		_now_epoch=$(date +%s 2>/dev/null)
 		_stamp_epoch=$(_file_mtime_epoch "$_prime_sentinel")
 		_age_s=$((${_now_epoch:-0} - ${_stamp_epoch:-0}))
 		[[ "$_age_s" -gt "$_prime_max_age" ]] && _should_prime=1
+		if [[ "$_should_prime" == "1" && -f "$_prime_attempt" ]]; then
+			_stamp_epoch=$(_file_mtime_epoch "$_prime_attempt")
+			_age_s=$((${_now_epoch:-0} - ${_stamp_epoch:-0}))
+			if [[ "$_age_s" -ge 0 && "$_age_s" -lt "$_prime_retry_after" ]]; then
+				printf '[pulse-wrapper] Cache prime deferred: last attempt %ss ago (retry after %ss); prefetch_state keeps caches warm (GH#34331)\n' \
+					"$_age_s" "$_prime_retry_after" >&2
+				_should_prime=0
+			fi
+		fi
 	fi
 
 	if [[ "$_should_prime" == "1" ]]; then
+		touch "$_prime_attempt" 2>/dev/null || true
 		printf '[pulse-wrapper] Pre-warming pulse caches (t2992 + t2994 stale-gate)...\n' >&2
 		"$_prime_helper" >/dev/null 2>&1 || printf '[pulse-wrapper] WARN: cache prime returned non-zero (non-fatal — first cycle may be slow)\n' >&2
 	fi

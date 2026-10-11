@@ -85,7 +85,10 @@ _dispatch_prepare_round() { _dispatch_max_parallel=1; return 0; }
 _dispatch_execute_candidate_loop() {
 	local candidate_file="$1" candidates="$2"
 	[[ -s "$candidate_file" ]] || return 1
-	jq -e 'length == 1 and .[0].product_discovery_complete == false' <<<"$candidates" >/dev/null
+	# GH#34331: the first wave fills its 19 free slots from consecutive
+	# repositories instead of stopping at the first nonempty one.
+	jq -e 'length == 19 and all(.[]; .product_discovery_complete == false)
+		and ([.[].repo_slug] | unique | length) == 19' <<<"$candidates" >/dev/null
 	printf 'launch\n' >>"$EVENTS"
 	printf '{"lease_phase":"prelaunch","dispatched_at":"fixture"}\n' >>"$AIDEVOPS_DISPATCH_LEDGER_FILE"
 	dispatched_count=1
@@ -135,12 +138,21 @@ _pulse_should_defer_budget_priority_stage() { return 0; }
 _pulse_defer_budget_priority_stage() { return 0; }
 _PULSE_HEALTH_PREFETCH_THROTTLED=0
 
+scan_events() {
+	local first="$1" last="$2" index=0
+	for ((index = first; index <= last; index++)); do
+		printf 'scan:owner/repo%s;' "$index"
+	done
+	return 0
+}
+
 _run_preflight_stages
 actual=$(tr '\n' ';' <"$EVENTS")
-[[ "$actual" == 'host-capacity;scan:owner/repo1;scan:owner/repo2;launch;cleanup;host-capacity;' ]] || {
+[[ "$actual" == "host-capacity;$(scan_events 1 20)launch;cleanup;host-capacity;" ]] || {
 	printf 'FAIL first-wave ordering: %s\n' "$actual" >&2
 	exit 1
 }
+[[ "$(<"${HOME}/.aidevops/cache/pulse-first-wave-cursor")" == owner/repo20 ]]
 [[ "$(_pulse_capture_dispatch_total)" == 1 ]]
 [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 0 ]]
 [[ "${PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED:-1}" == 1 ]]
@@ -156,10 +168,11 @@ jq -e 'length == 39 and all(.[]; .product_discovery_complete == true)' <<<"$full
 printf 'PASS normal refill retains full repository discovery and product completeness\n'
 
 # Partial first waves rotate across repositories even when a backlog persists.
+# Without a slot target (direct callers) a first wave keeps the GH#33647 scope.
 : >"$EVENTS"
 rotated=$(_PULSE_FIRST_DISPATCH_WAVE=1 build_ranked_dispatch_candidates_json 50 skip)
-[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo3;' ]]
-jq -e 'length == 1 and .[0].repo_slug == "owner/repo3" and .[0].product_discovery_complete == false' <<<"$rotated" >/dev/null
+[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo21;' ]]
+jq -e 'length == 1 and .[0].repo_slug == "owner/repo21" and .[0].product_discovery_complete == false' <<<"$rotated" >/dev/null
 printf 'owner/repo40\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
 : >"$EVENTS"
 _PULSE_FIRST_DISPATCH_WAVE=1 build_ranked_dispatch_candidates_json 50 skip >/dev/null
@@ -169,6 +182,30 @@ printf 'removed/repo\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
 _PULSE_FIRST_DISPATCH_WAVE=1 build_ranked_dispatch_candidates_json 50 skip >/dev/null
 [[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo1;scan:owner/repo2;' ]]
 printf 'PASS first-wave cursor rotates, wraps and tolerates removed repositories\n'
+
+# GH#34331: a slot target keeps polling later repositories (wrapping past the
+# cursor) until the wave holds enough candidates, then stops and rotates.
+printf 'owner/repo39\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+: >"$EVENTS"
+filled=$(_PULSE_FIRST_DISPATCH_WAVE=1 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=3 build_ranked_dispatch_candidates_json 50 skip)
+[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo40;scan:owner/repo1;scan:owner/repo2;scan:owner/repo3;' ]]
+jq -e 'length == 3 and ([.[].repo_slug] | sort) == ["owner/repo2","owner/repo3","owner/repo40"]
+	and all(.[]; .product_discovery_complete == false)' <<<"$filled" >/dev/null
+[[ "$(<"${HOME}/.aidevops/cache/pulse-first-wave-cursor")" == owner/repo3 ]]
+printf 'PASS first wave fills its slot target across repositories, then stops and rotates\n'
+
+# GH#34331: the enumeration budget stops an unfilled wave between repositories
+# (each simulated scan costs five seconds; the 12s budget allows three).
+: >"$EVENTS"
+PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=12 _PULSE_FIRST_DISPATCH_WAVE=1 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=19 \
+	build_ranked_dispatch_candidates_json 50 skip >/dev/null
+[[ "$(tr '\n' ';' <"$EVENTS")" == "$(scan_events 4 6)" ]]
+[[ "$(<"${HOME}/.aidevops/cache/pulse-first-wave-cursor")" == owner/repo6 ]]
+# A normal (non-first-wave) round ignores the slot target and budget entirely.
+: >"$EVENTS"
+PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=0 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=1 build_ranked_dispatch_candidates_json 50 normalize >/dev/null
+[[ "$(wc -l <"$EVENTS")" -eq 40 ]]
+printf 'PASS first-wave enumeration budget bounds an unfilled wave; normal rounds stay unbounded\n'
 
 # A stop flag prevents the first-wave path from invoking dispatch at all.
 : >"$STOP_FLAG"

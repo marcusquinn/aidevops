@@ -702,8 +702,9 @@ _dispatch_rest_core_requires_serial() {
 _dispatch_enumeration_expected_seconds() {
 	local timing_file="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds" expected=300
 	local max_age="${AIDEVOPS_PULSE_ENUMERATION_ESTIMATE_MAX_AGE_S:-7200}" mtime="" now=""
-	# A first-wave scan stops at the first nonempty repository. Its estimate
-	# must not inherit a paced all-repository census that exceeds a whole cycle.
+	# A first-wave scan stops once it can fill its free slots or its bounded
+	# budget elapses (GH#34331). Its estimate must not inherit a paced
+	# all-repository census that exceeds a whole cycle.
 	[[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != "1" ]] || timing_file="${timing_file}-first-wave"
 	if [[ -f "$timing_file" && ! -L "$timing_file" ]]; then
 		read -r expected <"$timing_file" || expected=300
@@ -762,6 +763,9 @@ _dispatch_cycle_budget_admits_round() {
 # 3 budget-deferred. Keep timing/guard logic out of the dispatch orchestrator.
 _dispatch_enumerate_ranked_round() {
 	local scan_limit="$1" normalization_mode="$2" slots="$3" started_ms="" ranked_json="" count=0
+	# GH#34331: dynamically scoped candidate target for a first-wave census
+	# (read only when _PULSE_FIRST_DISPATCH_WAVE=1); never exported to workers.
+	local _PULSE_FIRST_WAVE_CANDIDATE_TARGET="$slots"
 	_dispatch_cycle_budget_admits_round "Dispatch_max" before || return 3
 	started_ms=$(_dispatch_now_ms) || started_ms=""
 	if ! ranked_json=$(_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode"); then

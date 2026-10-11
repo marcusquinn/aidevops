@@ -143,13 +143,19 @@ cycle does a cold cache prime that can take ~3.5 minutes. This is
 expected. If subsequent cycles are still slow:
 
 ```bash
-# Check the prime sentinel
-ls -la ~/.aidevops/cache/pulse-cache-prime-last-run
+# Check the prime success sentinel and the last attempt (GH#34331)
+ls -la ~/.aidevops/cache/pulse-cache-prime-last-run ~/.aidevops/cache/pulse-cache-prime-last-attempt
 
 # Force a prime
 rm -f ~/.aidevops/cache/pulse-cache-prime-last-run
 pulse-lifecycle-helper.sh restart
 ```
+
+A stale success sentinel retries the prime at most once per
+`AIDEVOPS_PULSE_PRIME_RETRY_AFTER_S` (default: the 7200s max age), so a
+prime that cannot finish inside `PULSE_CACHE_PRIME_TIMEOUT` no longer
+costs the full timeout every cycle; `prefetch_state` keeps caches warm
+between attempts. A missing success sentinel always primes.
 
 t2992 + t2994 cover the prime mechanism in detail.
 

@@ -424,9 +424,12 @@ _pulse_run_fix_the_fixer_detector_if_stale() {
 	fi
 
 	if [[ "$_should_run" == "1" ]]; then
-		"$_ftf_helper" run 2>>"${WRAPPER_LOGFILE:-/dev/null}" || true
-		# Touch sentinel regardless of outcome (fail-open).
+		# Claim the cadence slot before running, regardless of outcome
+		# (fail-open). The stage wrapper kills this function at its timeout,
+		# so a touch after the helper never ran and a detector slower than
+		# the bound re-ran (and timed out) every cycle (GH#34331).
 		touch "$_ftf_sentinel" 2>/dev/null || true
+		"$_ftf_helper" run 2>>"${WRAPPER_LOGFILE:-/dev/null}" || true
 	fi
 	return 0
 }

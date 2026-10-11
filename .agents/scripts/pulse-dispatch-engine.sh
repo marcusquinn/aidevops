@@ -384,6 +384,50 @@ _dispatch_first_wave_advance_cursor() {
 	return 0
 }
 
+# GH#34331: whole-second clock for first-wave bounds. Reuses the dispatch
+# millisecond clock when loaded so the enumeration budget shares its source.
+_dispatch_first_wave_now_s() {
+	local now_ms=""
+	if declare -F _dispatch_now_ms >/dev/null 2>&1; then
+		now_ms=$(_dispatch_now_ms 2>/dev/null) || now_ms=""
+	fi
+	if [[ "$now_ms" =~ ^[0-9]{1,16}$ ]]; then
+		printf '%s\n' "$((now_ms / 1000))"
+	else
+		date +%s
+	fi
+	return 0
+}
+
+# GH#34331: first-wave census bounds as "<candidate target> <deadline epoch>".
+# The target is the free-slot count supplied by _dispatch_enumerate_ranked_round
+# (default 1: the GH#33647 first-nonempty-repository behaviour). The budget
+# (PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S, default 180s) stays below the 300s
+# enumeration estimate floor that first-wave admission already reserves; 0
+# restores the GH#33647 first-nonempty-repository scope.
+_dispatch_first_wave_bounds() {
+	local target="${_PULSE_FIRST_WAVE_CANDIDATE_TARGET:-1}" budget="${PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S:-180}"
+	[[ "$target" =~ ^[1-9][0-9]{0,3}$ ]] || target=1
+	[[ "$budget" =~ ^[0-9]{1,5}$ ]] || budget=180
+	printf '%s %s\n' "$target" "$(($(_dispatch_first_wave_now_s) + 10#$budget))"
+	return 0
+}
+
+# GH#34331: return 0 when a first-wave census may stop polling repositories:
+# it holds candidates for every free slot, or its enumeration budget elapsed.
+# Args: JSONL candidate file (one candidate per line), bounds from above
+_dispatch_first_wave_enumeration_done() {
+	local candidate_file="$1" bounds="$2" target=1 deadline=0 count=0
+	read -r target deadline <<<"$bounds"
+	[[ "$target" =~ ^[0-9]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 0
+	count=$(wc -l <"$candidate_file" 2>/dev/null) || count=0
+	count="${count//[[:space:]]/}"
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	((count >= target)) && return 0
+	(($(_dispatch_first_wave_now_s) >= deadline)) && return 0
+	return 1
+}
+
 # Emit managed repository rows, optionally rotated after a first-wave cursor.
 _dispatch_repository_rows() {
 	local cursor="$1"
@@ -431,9 +475,12 @@ build_ranked_dispatch_candidates_json() {
 	fi
 
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
-	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor"
-	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" && -f "$cursor_file" && ! -L "$cursor_file" ]]; then
-		IFS= read -r cursor <"$cursor_file" || cursor=""
+	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor" first_wave_bounds=""
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
+		first_wave_bounds=$(_dispatch_first_wave_bounds)
+		if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
+			IFS= read -r cursor <"$cursor_file" || cursor=""
+		fi
 	fi
 	tmp_candidates=$(mktemp) || return 1
 	completeness_file=$(mktemp) || {
@@ -444,6 +491,11 @@ build_ranked_dispatch_candidates_json() {
 
 	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		# GH#34331: stop a first wave once it can fill its free slots or its budget elapses.
+		if [[ -n "$first_wave_bounds" && -s "$tmp_candidates" ]] &&
+			_dispatch_first_wave_enumeration_done "$tmp_candidates" "$first_wave_bounds"; then
+			break
+		fi
 		if ! check_repo_pulse_schedule "$repo_slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
 			continue
 		fi
@@ -454,6 +506,10 @@ build_ranked_dispatch_candidates_json() {
 		fi
 		# Record that we are polling this repo now (atomic write, non-fatal)
 		update_repo_pulse_timestamp "$repo_slug"
+		# GH#33647/GH#34331: rotate the first-wave cursor past every polled
+		# repository, even if its candidates later fail live dispatch gates,
+		# so one repository's backlog cannot monopolize every first wave.
+		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug"
 		local repo_candidates_json
 		printf '0\n' >"$completeness_file"
 		repo_candidates_json=$(pulse_campaign_shadow_candidates_json "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || {
@@ -465,7 +521,7 @@ build_ranked_dispatch_candidates_json() {
 			product_complete=false
 		fi
 		# GH#33743: drop unchanged runner_capability_unmet candidates before
-		# the first-wave "first nonempty repository" decision below.
+		# they count toward the first-wave candidate target.
 		if declare -F _dispatch_filter_capability_cooled_candidates >/dev/null 2>&1 &&
 			[[ -n "$repo_candidates_json" && "$repo_candidates_json" != "[]" ]]; then
 			repo_candidates_json=$(_dispatch_filter_capability_cooled_candidates "$repo_slug" "$repo_path" "$repo_candidates_json")
@@ -476,16 +532,10 @@ build_ranked_dispatch_candidates_json() {
 
 		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
 			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
-		# GH#33647: the first wave needs launchable work, not a global census.
-		# Leave later repositories unpolled for the normal refill. Do not claim
-		# complete product discovery from this intentionally partial snapshot.
-		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" && -s "$tmp_candidates" ]]; then
-			product_complete=false
-			# Rotate even if these candidates later fail live dispatch gates, so
-			# one repository's backlog cannot monopolize every first wave.
-			_dispatch_first_wave_advance_cursor "$repo_slug"
-			break
-		fi
+		# GH#33647: the first wave needs launchable work, not a global census;
+		# the loop-top check (GH#34331) leaves later repositories for the normal
+		# refill. Never claim complete product discovery from a partial snapshot.
+		[[ -z "$first_wave_bounds" ]] || product_complete=false
 	done < <(_dispatch_repository_rows "$cursor")
 
 	if [[ ! -s "$tmp_candidates" ]]; then
