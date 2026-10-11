@@ -409,6 +409,46 @@ JS
 	return 0
 }
 
+# GH#34425: execute URL resolution from every generated script, without a browser.
+test_generated_page_urls() {
+	local script_dir
+	script_dir=$(mktemp -d)
+	local base_url="https://example.com/dir/page?q=1/#section/"
+	local safe_url
+	safe_url=$(js_escape_string "$base_url")
+	local pages_default generator
+	local result=0
+	for pages_default in true false; do
+		for generator in screenshot smoke stability a11y; do
+			local script_file="${script_dir}/${generator}.mjs"
+			case "$generator" in
+			screenshot) _generate_screenshot_script "$script_file" "$safe_url" "{name:'desktop',width:1440,height:900}" "'/'" "$script_dir" 30000 false "$pages_default" ;;
+			smoke) _generate_smoke_script "$script_file" "$safe_url" "'/'" 30000 "$pages_default" ;;
+			stability) _generate_stability_script "$script_file" "$safe_url" "'/'" 1 30000 500 10000 "$pages_default" ;;
+			a11y) _generate_a11y_script "$script_file" "$safe_url" "'/'" "$pages_default" ;;
+			esac
+			node --check "$script_file" || result=1
+			node - "$script_file" "$base_url" "$pages_default" <<'JS' || result=1
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const [file, base, useDefault] = process.argv.slice(2);
+const prefix = fs.readFileSync(file, 'utf8').split('async function run()')[0]
+  .replace(/^const playwrightImport = .*$/m, '')
+  .replace(/^const \{ chromium \} = .*$/m, '');
+const resolve = vm.runInNewContext(prefix + '\n(page) => resolvePageUrl(baseUrl, page, pagesDefault)', { URL });
+const defaultExpected = useDefault === 'true';
+for (const page of ['/', '/a', '/b', 'child', '?q=2', '#next', '/a?q=2#next']) {
+  assert.equal(resolve(page), defaultExpected ? base : new URL(page, base).href);
+}
+JS
+		done
+	done
+	rm -rf "$script_dir"
+	print_result "generated scripts preserve default URLs and resolve explicit paths" "$result"
+	return 0
+}
+
 main() {
 	# Source after function declarations so helper functions are available here.
 	# main() in helper is guarded and will not auto-run when sourced.
@@ -436,6 +476,7 @@ main() {
 	test_journey_requires_config_and_environment
 	test_journey_runner_syntax
 	test_stability_script_generation
+	test_generated_page_urls
 	test_format_stability_markdown_stable
 	test_format_stability_markdown_unstable
 	test_runtime_resolves_npx_cached_package
