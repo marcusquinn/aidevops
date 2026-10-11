@@ -1633,6 +1633,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18663 fix(pulse): stop stale-blocked sweep and dep-graph refresh starving repos with real backlogs #bug #framework tier:standard ref:GH#34353 logged:2026-10-11 -> [todo/tasks/t18663-brief.md]
 
+- [ ] t18664 fix(auto-update): stop Pulse-run auto-updates rolling back every verified release #bug #framework tier:standard ref:GH#34357 logged:2026-10-11 -> [todo/tasks/t18664-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

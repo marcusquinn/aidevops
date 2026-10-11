@@ -516,8 +516,14 @@ update_state() {
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/auto-update-freshness-lib.sh"
 
+# Update verification and rollback act on the global activation link, never on
+# the caller's runtime pin. pulse-wrapper.sh exports AIDEVOPS_AGENTS_DIR pinned
+# to its own physical bundle and routine r902 runs this updater as a Pulse
+# child, so resolving the pin after setup re-read the replaced bundle and rolled
+# back every verified Pulse-run update. Same rule as setup's
+# pin_aidevops_active_runtime_bundle_root (setup/modules/agent-runtime.sh).
 _auto_update_runtime_bundle_root() {
-	local agents_path="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
+	local agents_path="${HOME}/.aidevops/agents"
 	[[ -d "$agents_path" ]] || return 1
 	(cd "$agents_path" && pwd -P) || return 1
 	return 0
