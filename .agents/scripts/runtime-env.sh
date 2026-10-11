@@ -6,6 +6,11 @@
 # ahead of the inherited PATH, so user-managed toolchains (mise, nvm, corepack,
 # Nix profiles, Homebrew-in-~) win over older system copies.
 
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	printf 'runtime-env.sh is a source-only library\n' >&2
+	exit 2
+fi
+
 # Generic last-resort roots, appended only when they exist on this host. They
 # exist so a daemon started with an empty or minimal PATH can still find basic
 # tools; they never shadow inherited entries.
@@ -16,7 +21,7 @@ AIDEVOPS_SYSTEM_PATH_FALLBACK="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # Selected by setting AIDEVOPS_PATH_PROFILE=daemon before sourcing this file:
 #   AIDEVOPS_PATH_PROFILE=daemon
 #   source "${BASH_SOURCE[0]%/*}/runtime-env.sh"
-AIDEVOPS_DAEMON_PATH_FALLBACK="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:${AIDEVOPS_SYSTEM_PATH_FALLBACK}"
+AIDEVOPS_DAEMON_PATH_FALLBACK="/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:${AIDEVOPS_SYSTEM_PATH_FALLBACK}"
 
 # Compose a PATH from colon-separated segments, in argument order.
 # Drops empty and relative entries, duplicates, missing directories (when
@@ -33,6 +38,9 @@ aidevops_compose_path() {
 		IFS=':' read -r -a _acp_dirs <<<"$_acp_segment"
 		for _acp_dir in "${_acp_dirs[@]}"; do
 			[[ "$_acp_dir" == /* ]] || continue
+			while [[ "$_acp_dir" != / && "$_acp_dir" == */ ]]; do
+				_acp_dir="${_acp_dir%/}"
+			done
 			case "$_acp_dir" in
 			*/.aidevops/runtime-bundles/*) continue ;;
 			esac
@@ -72,8 +80,9 @@ aidevops_service_path() {
 	if [[ -n "${HOME:-}" ]]; then
 		stable_path="${HOME}/.bun/bin:${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
 	fi
-	aidevops_compose_path "$stable_path" "$input_path" \
-		"/opt/homebrew/bin:${AIDEVOPS_SYSTEM_PATH_FALLBACK}"
+	stable_path=$(AIDEVOPS_PATH_KEEP_MISSING=1 aidevops_compose_path "$stable_path")
+	input_path=$(aidevops_compose_path "$input_path" "$AIDEVOPS_DAEMON_PATH_FALLBACK")
+	AIDEVOPS_PATH_KEEP_MISSING=1 aidevops_compose_path "$stable_path" "$input_path"
 	return 0
 }
 
@@ -95,21 +104,38 @@ aidevops_launchd_sanitized_path() {
 	return 0
 }
 
-# Return 0 when the current user cannot modify a directory or any ancestor.
-# Uses shell builtins only (no PATH lookup). As root, require root ownership.
+# Bootstrap metadata uses only the shell's standard utility PATH, isolated
+# from caller PATH and portable-stat's cached state.
+aidevops_bootstrap_metadata() (
+	local candidate="$1"
+	PATH=$(command -p getconf PATH) || return 1
+	export PATH
+	unset _PORTABLE_STAT_LOADED
+	# shellcheck source=portable-stat.sh
+	source "${BASH_SOURCE[0]%/*}/portable-stat.sh" || return 1
+	_stat_batch '%u %a' "$candidate" || return 1
+	return 0
+)
+
+# Bootstrap only: root ownership, no group/other writes; sticky ancestors allowed.
 aidevops_dir_chain_is_trusted() {
 	local dir="$1"
 	local physical=""
+	local metadata=""
+	local uid=""
+	local mode=""
+	[[ -n "$dir" && "$dir" == /* ]] || return 1
 	physical=$(cd -P -- "$dir" 2>/dev/null && pwd -P) || return 1
 	# A sticky shared dir (e.g. /tmp) never holds trusted tools; it is only
 	# acceptable as an ancestor (e.g. /nix/store). Matters as root, where -O
 	# alone cannot see group/world-writable modes.
 	[[ -k "$physical" ]] && return 1
 	while :; do
-		if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-			[[ -O "$physical" ]] || return 1
-		else
-			[[ -w "$physical" ]] && return 1
+		metadata=$(aidevops_bootstrap_metadata "$physical") || return 1
+		read -r uid mode <<<"$metadata"
+		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || return 1
+		if (( (8#$mode & 0022) != 0 )); then
+			[[ -k "$physical" ]] || return 1
 		fi
 		[[ "$physical" == "/" ]] && break
 		physical="${physical%/*}"
@@ -126,47 +152,60 @@ aidevops_dir_chain_is_trusted() {
 aidevops_resolve_trusted_tool() {
 	local tool="$1"
 	local search_path="${2:-${PATH:-}}"
-	local dir=""
 	local candidate=""
-	local -a dirs=()
+	local physical=""
+	local library="${BASH_SOURCE[0]%/*}/trusted_executable.py"
+	local metadata=""
+	local uid=""
+	local mode=""
 	[[ "$tool" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
-	IFS=':' read -r -a dirs <<<"$search_path"
-	for dir in "${dirs[@]}"; do
-		[[ "$dir" == /* ]] || continue
-		candidate="${dir%/}/${tool}"
-		[[ -f "$candidate" && -x "$candidate" ]] || continue
-		if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-			[[ -O "$candidate" ]] || continue
-		else
-			[[ -w "$candidate" ]] && continue
-		fi
-		aidevops_dir_chain_is_trusted "$dir" || continue
-		printf '%s' "$candidate"
-		return 0
-	done
+	while IFS= read -r candidate; do
+		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
+		physical=$(aidevops_physical_path "$candidate") || continue
+		metadata=$(aidevops_bootstrap_metadata "$physical") || continue
+		read -r uid mode <<<"$metadata"
+		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || continue
+		(( (8#$mode & 0022) == 0 )) || continue
+		aidevops_dir_chain_is_trusted "${candidate%/*}" || continue
+		aidevops_dir_chain_is_trusted "${physical%/*}" || continue
+		"$physical" -I -S -B "$library" "$tool" "$search_path"
+		return $?
+	done < <(PATH="${PATH:-}:/bin:/usr/bin" type -a -p python3 2>/dev/null)
 	return 1
+}
+
+# Resolve links without ever allowing an empty dirname to mean $PWD.
+aidevops_physical_path() {
+	local candidate="$1"
+	local directory=""
+	local link=""
+	local hops=0
+	[[ -n "$candidate" && "$candidate" == /* ]] || return 1
+	while :; do
+		directory=$(cd -P -- "${candidate%/*}/" 2>/dev/null && pwd -P) || return 1
+		candidate="${directory%/}/${candidate##*/}"
+		[[ -L "$candidate" ]] || break
+		[[ "$hops" -lt 40 ]] || return 1
+		link=$(command -p readlink "$candidate") || return 1
+		case "$link" in
+		/*) candidate="$link" ;;
+		*) candidate="${directory}/${link}" ;;
+		esac
+		hops=$((hops + 1))
+	done
+	[[ -f "$candidate" ]] || return 1
+	printf '%s' "$candidate"
+	return 0
 }
 
 # Return 0 when a resolved candidate is an aidevops Git shim (or a symlink to one).
 aidevops_is_git_shim() {
 	local candidate="$1"
-	local resolved="$candidate"
+	local resolved=""
 	local directory=""
-	local link=""
-	local hops=0
-	while [[ -L "$resolved" && "$hops" -lt 40 ]]; do
-		directory=$(cd "${resolved%/*}" && pwd -P) || return 1
-		link=$(readlink "$resolved") || return 1
-		case "$link" in
-		/*) resolved="$link" ;;
-		*) resolved="${directory}/${link}" ;;
-		esac
-		hops=$((hops + 1))
-	done
-	[[ -L "$resolved" ]] && return 0
-	directory=$(cd "${resolved%/*}" && pwd -P) || return 0
+	resolved=$(aidevops_physical_path "$candidate") || return 0
+	directory="${resolved%/*}"
 	[[ -f "${directory}/canonical-git-command-guard.py" ]] && return 0
-	[[ -f "${directory}/../canonical-git-command-guard.py" && "${directory##*/}" == safe-bin ]] && return 0
 	return 1
 }
 
@@ -175,23 +214,28 @@ aidevops_is_git_shim() {
 # copy of the shim. AIDEVOPS_REAL_GIT_BIN (operator override) wins.
 aidevops_resolve_native_git() {
 	local candidate=""
-	if [[ -n "${AIDEVOPS_REAL_GIT_BIN:-}" ]]; then
-		printf '%s' "$AIDEVOPS_REAL_GIT_BIN"
+	local override="${AIDEVOPS_REAL_GIT_BIN:-${AIDEVOPS_REAL_GIT:-}}"
+	if [[ -n "$override" ]]; then
+		if [[ "$override" != /* || ! -f "$override" || ! -x "$override" ]] || aidevops_is_git_shim "$override"; then
+			printf 'BLOCKED: invalid native Git override\n' >&2
+			return 1
+		fi
+		aidevops_physical_path "$override" || return 1
 		return 0
 	fi
 	while IFS= read -r candidate; do
 		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
 		aidevops_is_git_shim "$candidate" && continue
-		printf '%s' "$candidate"
+		aidevops_physical_path "$candidate" || continue
 		return 0
 	done < <(type -a -p git 2>/dev/null)
+	printf 'BLOCKED: native Git unavailable on PATH\n' >&2
 	return 1
 }
 
+[[ "${AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY:-0}" != 1 ]] || return 0
 PATH=$(aidevops_runtime_path "${PATH:-}")
 export PATH
-if [[ -z "${AIDEVOPS_REAL_GIT_BIN:-}" ]]; then
-	AIDEVOPS_REAL_GIT_BIN=$(aidevops_resolve_native_git) || AIDEVOPS_REAL_GIT_BIN=""
-	[[ -z "$AIDEVOPS_REAL_GIT_BIN" ]] || export AIDEVOPS_REAL_GIT_BIN
-fi
+AIDEVOPS_REAL_GIT_BIN=$(aidevops_resolve_native_git) || return 1
+export AIDEVOPS_REAL_GIT_BIN
 return 0

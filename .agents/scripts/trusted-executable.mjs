@@ -34,7 +34,8 @@ function trustedChain(path) {
 
 // Returns the trusted path, or a non-existent sentinel so callers fail closed.
 export function resolveTrustedExecutable(name, searchPath = process.env.PATH || "") {
-  for (const directory of searchPath.split(delimiter)) {
+  if (!/^[A-Za-z0-9_.+-]+$/.test(name) || name === "." || name === "..") return `/nonexistent/aidevops-untrusted-tool`;
+  for (const directory of `${searchPath}${delimiter}/bin${delimiter}/usr/bin`.split(delimiter)) {
     if (!isAbsolute(directory)) continue;
     const candidate = join(directory, name);
     try {

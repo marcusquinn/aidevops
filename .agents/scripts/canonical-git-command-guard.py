@@ -82,7 +82,11 @@ def main() -> int:
     parser.add_argument("--argv-json", default="")
     parser.add_argument("--real-git", default="")
     args = parser.parse_args()
-    real_git_path = real_git(args.real_git)
+    try:
+        real_git_path = real_git(args.real_git)
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        return BLOCK_EXIT
     if args.argv_json:
         try:
             git_argv = json.loads(args.argv_json)

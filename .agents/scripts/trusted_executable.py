@@ -13,7 +13,9 @@ because it may only load its fixed, root-owned file set.
 from __future__ import annotations
 
 import os
+import re
 import stat
+import sys
 from pathlib import Path
 
 
@@ -45,8 +47,10 @@ def trusted_executable(name: str, search_path: str | None = None) -> str | None:
     emptied or hostile PATH cannot hide the system tool; trust is still decided
     by ownership, never by location.
     """
-    if search_path is None:
-        search_path = os.pathsep.join(filter(None, (os.environ.get("PATH"), os.defpath)))
+    if not re.fullmatch(r"[A-Za-z0-9_.+-]+", name) or name in {".", ".."}:
+        return None
+    search_path = os.pathsep.join(filter(None, (
+        os.environ.get("PATH", "") if search_path is None else search_path, os.defpath)))
     for directory in search_path.split(os.pathsep):
         if not os.path.isabs(directory):
             continue
@@ -72,3 +76,20 @@ def require_trusted_executable(name: str) -> str:
     if resolved is None:
         raise FileNotFoundError(f"no root-controlled {name} found on PATH")
     return resolved
+
+
+def main() -> int:
+    """CLI: 1 unavailable, 2 invalid arguments, 3 untrusted interpreter."""
+    if len(sys.argv) not in {2, 3} or not re.fullmatch(r"[A-Za-z0-9_.+-]+", sys.argv[1]):
+        return 2
+    if not trusted_executable(Path(sys.executable).name, str(Path(sys.executable).parent)):
+        return 3
+    resolved = trusted_executable(sys.argv[1], sys.argv[2] if len(sys.argv) == 3 else None)
+    if resolved is None:
+        return 1
+    print(resolved)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

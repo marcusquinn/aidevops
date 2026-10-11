@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
+
+from native_git import NativeGitUnavailable, real_git
 
 _GIT_QUERY_TIMEOUT_ENV = "AIDEVOPS_GIT_POLICY_QUERY_TIMEOUT_SECONDS"
 _GIT_QUERY_DEFAULT_TIMEOUT = 10
@@ -30,7 +31,10 @@ def _run_git_query_detailed(
     Returns (stdout lines, "") on success, or (None, failure) where failure is
     a fixed token (timeout, spawn-error, exit-N) safe to show in a denial.
     """
-    git_binary = "/usr/bin/git" if Path("/usr/bin/git").is_file() else "git"
+    try:
+        git_binary = real_git()
+    except NativeGitUnavailable:
+        return None, "native-git-unavailable"
     failure = "not-run"
     for _attempt in range(_GIT_QUERY_ATTEMPTS):
         try:

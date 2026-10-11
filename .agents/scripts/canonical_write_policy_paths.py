@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from canonical_git_policy import _git_output as _shared_git_output
-from canonical_git_policy import real_git
+from native_git import real_git
 
 
 GIT_WORKSPACE_ROOT_ENV = "AIDEVOPS_GIT_WORKSPACE_ROOT"
@@ -30,12 +30,7 @@ class Classification:
 
 
 def _real_git() -> str:
-    explicit = os.environ.get("AIDEVOPS_REAL_GIT_BIN", "") or os.environ.get(
-        "AIDEVOPS_REAL_GIT", ""
-    )
-    if not explicit and os.path.isfile("/usr/bin/git"):
-        explicit = "/usr/bin/git"
-    return real_git(explicit)
+    return real_git()
 
 
 def git_output(cwd: Path, *args: str) -> str:

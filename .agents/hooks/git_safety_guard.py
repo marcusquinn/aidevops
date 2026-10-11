@@ -24,18 +24,12 @@ Exit behavior:
 """
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-GIT_BINARY = os.environ.get("AIDEVOPS_REAL_GIT", "")
-if not GIT_BINARY:
-    GIT_BINARY = (
-        "/usr/bin/git"
-        if os.path.isfile("/usr/bin/git")
-        else (shutil.which("git") or "git")
-    )
+# Git discovery is owned by native_git.py inside the shared policy helpers,
+# not by this adapter. Keeping an unused binary fallback here hid divergence.
 
 DIRECT_FILE_TOOL_NAMES = {
     "edit",

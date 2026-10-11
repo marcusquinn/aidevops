@@ -19,44 +19,11 @@ if [[ "${!REENTRY_SENTINEL:-}" == "1" ]]; then
 	exit 126
 fi
 
-is_aidevops_git_shim() {
-	local candidate_real="$1"
-	case "$candidate_real" in
-	*/.aidevops/agents/scripts/git | \
-		*/.aidevops/bin/git | \
-		*/.aidevops/runtime-bundles/*/agents/scripts/git | \
-		*/aidevops/.agents/scripts/git | \
-		*/aidevops/.agents/scripts/safe-bin/git | \
-		*/.agents/scripts/git | \
-		*/.agents/scripts/safe-bin/git) return 0 ;;
-	esac
-	return 1
-}
+# shellcheck source=runtime-env.sh
+AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY=1 source "${SCRIPT_DIR}/runtime-env.sh" || exit 126
 
-resolve_real_git() {
-	local candidate=""
-	local candidates=""
-	# macOS keeps the Xcode-selected git first; elsewhere PATH order decides.
-	if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]] && command -v xcrun >/dev/null 2>&1; then
-		candidates=$(xcrun --find git 2>/dev/null || true)
-	fi
-	candidates="${candidates}${candidates:+$'\n'}$(type -a -p git 2>/dev/null || true)"
-	while IFS= read -r candidate; do
-		[[ -n "$candidate" ]] || continue
-		[[ -x "$candidate" ]] || continue
-		[[ "$candidate" -ef "$SCRIPT_SOURCE" ]] && continue
-		local candidate_real=""
-		candidate_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null || true)
-		[[ -n "$candidate_real" ]] || continue
-		is_aidevops_git_shim "$candidate_real" && continue
-		printf '%s' "$candidate_real"
-		return 0
-	done <<<"$candidates"
-	return 1
-}
-
-REAL_GIT=$(resolve_real_git) || {
-	printf 'FATAL: canonical Git guard could not resolve the real git binary\n' >&2
+REAL_GIT=$(aidevops_resolve_native_git) || {
+	printf 'BLOCKED: canonical Git guard could not resolve the real git binary\n' >&2
 	exit 127
 }
 
