@@ -483,6 +483,13 @@ _gh_record_transport_privacy_block() {
 	return 0
 }
 
+_gh_block_uncaptured_write() {
+	_GH_WRITE_PRIVACY_BLOCKED=1
+	printf '[aidevops][gh-wrapper][BLOCK] Cannot capture write diagnostics; refusing transport.\n' >&2
+	_gh_edit_audit_rejection "public write" "write diagnostic capture unavailable"
+	return 0
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
@@ -531,6 +538,10 @@ _gh_with_timeout() {
 	local rc=0
 	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
 		err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || {
+			if [[ "$op_class" == "write" ]]; then
+				_gh_block_uncaptured_write
+				return 1
+			fi
 			"$@" || rc=$?
 			_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 			return "$rc"
@@ -567,6 +578,10 @@ _gh_with_timeout() {
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
 		_gh_run_bounded_command "$secs" "$@" >"$out_file" 2>"$err_file" || rc=$?
 	else
+		if [[ "$op_class" == "write" ]]; then
+			_gh_block_uncaptured_write
+			return 1
+		fi
 		_gh_run_bounded_command "$secs" "$@" || rc=$?
 	fi
 	_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
