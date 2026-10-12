@@ -1655,11 +1655,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18674 fix(pulse): stop every worker launch scanning the whole temp root with du before model selection #bug #framework tier:standard ref:GH#34421 logged:2026-10-11 -> [todo/tasks/t18674-brief.md] pr:#34423 completed:2026-10-11
 
-- [ ] t18675 fix(pulse): stop setup reconciliation killing in-flight Pulse cycles on every deploy #bug #framework tier:standard ref:GH#34452 logged:2026-10-11 -> [todo/tasks/t18675-brief.md]
+- [x] t18675 fix(pulse): stop setup reconciliation killing in-flight Pulse cycles on every deploy #bug #framework tier:standard ref:GH#34452 logged:2026-10-11 -> [todo/tasks/t18675-brief.md] pr:#34453 completed:2026-10-11
 
 - [ ] t18676 fix(pulse): keep SIGPIPE ignored after a closed consumer so bash 3.2 PID emitters exit 0 #auto-dispatch #bug #framework tier:simple ref:GH#34456 logged:2026-10-12 -> [todo/tasks/t18676-brief.md]
 
-- [ ] t18677 fix(planning): skip only repo-verify on the dependency-free planning publication push #bug #framework tier:simple ref:GH#34459 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18677-brief.md]
+- [x] t18677 fix(planning): skip only repo-verify on the dependency-free planning publication push #bug #framework tier:simple ref:GH#34459 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18677-brief.md] pr:#34461 completed:2026-10-12
 
 ## In Progress
 
