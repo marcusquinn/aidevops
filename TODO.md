@@ -1663,7 +1663,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18678 fix(pulse): keep process-lifetime EXIT cleanup off the shared RETURN-trap cleanup stack #bug #framework tier:standard ref:GH#34469 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18678-brief.md] pr:#34472 completed:2026-10-12
 
-- [ ] t18679 fix(shared): make the push_cleanup/_run_cleanups stack run each scope only at its owner's return #auto-dispatch #bug #framework tier:thinking ref:GH#34470 logged:2026-10-12 -> [todo/tasks/t18679-brief.md]
+- [x] t18679 fix(shared): make the push_cleanup/_run_cleanups stack run each scope only at its owner's return #auto-dispatch #bug #framework tier:thinking ref:GH#34470 logged:2026-10-12 -> [todo/tasks/t18679-brief.md] pr:#34481 completed:2026-10-12
 
 - [x] t18680 fix(pulse): stop counting the async post-dispatch housekeeping run as a Pulse cycle #bug #framework tier:standard ref:GH#34474 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18680-brief.md] pr:#34475 completed:2026-10-12
 
