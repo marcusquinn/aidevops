@@ -185,3 +185,60 @@ for _run_result_label in task_complete post_pr_handoff; do
 	[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == worker_merged_partial ]]
 done
 printf 'PASS: non-closing linkage, release, open-done healing and worker checkpoint regressions\n'
+
+# GH#34505: use real fingerprint comparison and release projection, stubbing
+# only GitHub transport. Delivery identity survives a different worker attempt.
+# shellcheck source=../headless-runtime-failure.sh
+source "${SCRIPT_DIR}/headless-runtime-failure.sh"
+_unlock_issue_after_dispatch_release() { return 0; }
+release_reason=""
+_hrw_release_dispatch_claim() {
+	local session="$1" reason="$2"
+	[[ "$session" == issue-42 ]] || return 1
+	release_reason="$reason"
+	_hrff_project_post_release_state 42 owner/repo runner "$reason"
+	return $?
+}
+ISSUE_JSON='{"state":"open","labels":[]}'
+COMMENTS_JSON='[[]]'
+HANDOFF='merged_missing_linkage|77'
+_hrw_preserve_merged_checkpoint_handoff issue-42 "$SCRIPT_DIR"
+assert_status available
+[[ "$release_reason" == worker_merged_partial ]]
+delivery_key="$_HRW_MERGED_DELIVERY_KEY"
+COMMENTS_JSON=$(jq -nc --arg key "$delivery_key" '[[{author_association:"MEMBER",created_at:"2026-10-12T17:00:00Z",body:("CLAIM_RELEASED reason=worker_merged_partial\nMERGED_PARTIAL_DELIVERY key="+$key)}]]')
+for _run_result_label in task_complete post_pr_handoff; do
+	_hrw_finish_success_run issue-42 "$SCRIPT_DIR"
+	assert_status blocked
+	[[ "$release_reason" == worker_merged_partial_no_progress ]]
+	[[ "$_HRW_FINAL_RUNTIME_STATUS" == blocked ]]
+done
+# New PR and new head evidence each permit continuation; an untrusted comment
+# must never suppress delivery. Failed reads retain ownership, not availability.
+HANDOFF='merged_missing_linkage|78'
+_hrw_preserve_merged_checkpoint_handoff issue-42 "$SCRIPT_DIR"
+assert_status available
+HANDOFF='merged_missing_linkage|77'
+COMMENTS_JSON=$(printf '%s' "$COMMENTS_JSON" | jq '.[0][0].body |= sub("key=.*"; "key=77:older-head")')
+_hrw_preserve_merged_checkpoint_handoff issue-42 "$SCRIPT_DIR"
+assert_status available
+COMMENTS_JSON=$(jq -nc --arg key "$delivery_key" '[[{author_association:"NONE",body:("CLAIM_RELEASED reason=worker_merged_partial\nMERGED_PARTIAL_DELIVERY key="+$key)}]]')
+_hrw_preserve_merged_checkpoint_handoff issue-42 "$SCRIPT_DIR"
+assert_status available
+API_FAIL=1
+release_reason=''
+_hrw_preserve_merged_checkpoint_handoff issue-42 "$SCRIPT_DIR"
+[[ -z "$release_reason" && ! -s "$STATUS_LOG" ]]
+[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == merged_delivery_unverified ]]
+API_FAIL=0
+ISSUE_JSON='{"state":"closed","labels":[],"assignees":[{"login":"runner"}]}'
+_hrff_project_post_release_state 42 owner/repo runner worker_merged_partial_no_progress
+assert_status 'done'
+ISSUE_JSON='{"state":"open","labels":[],"assignees":[{"login":"other-runner"}]}'
+_hrff_project_post_release_state 42 owner/repo runner worker_merged_partial_no_progress
+[[ ! -s "$STATUS_LOG" ]]
+# Existing blockers stay sticky until the brief owner explicitly reconciles.
+ISSUE_JSON='{"state":"open","labels":[{"name":"status:blocked"}]}'
+_hrff_project_post_release_state 42 owner/repo runner worker_merged_partial
+assert_status blocked
+printf 'PASS: unchanged merged-partial continuation holds; new delivery proceeds; untrusted evidence ignored; failed reads retain ownership\n'

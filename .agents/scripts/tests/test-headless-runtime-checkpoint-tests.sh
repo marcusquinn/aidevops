@@ -635,6 +635,9 @@ test_merged_partial_pr_is_deferred_continuation_not_draft() {
 	result=$(
 		(
 			_worker_produced_output() { printf 'merged_checkpoint'; return 0; }
+			# This routing fixture is not a Git worktree; delivery comparison has
+			# separate production-path coverage in the non-closing regression.
+			_hrw_merged_checkpoint_delivery() { _HRW_MERGED_DELIVERY_REPEATED=0; return 0; }
 			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
 			_report_failure_to_fast_fail() { return 0; }
 			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"

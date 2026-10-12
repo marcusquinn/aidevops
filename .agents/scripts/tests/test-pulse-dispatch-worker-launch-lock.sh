@@ -16,6 +16,37 @@ source "${SCRIPTS_DIR}/shared-constants.sh"
 # shellcheck source=../pulse-dispatch-worker-launch.sh
 source "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh"
 
+# GH#34505: launch-time closure is authoritative, not the dispatch snapshot.
+(
+	live_state=open
+	projection=''
+	unlocked=0
+	gh() {
+		[[ "$live_state" != unavailable ]] || return 1
+		printf '%s' "$live_state"
+		return 0
+	}
+	set_issue_status() {
+		projection="$*"
+		return 0
+	}
+	unlock_issue_after_worker() { unlocked=1; return 0; }
+	_dlw_live_issue_open_guard 42 owner/repo runner || exit 1
+	[[ -z "$projection" ]] || exit 1
+	live_state=closed
+	if _dlw_live_issue_open_guard 42 owner/repo runner; then exit 1; fi
+	[[ "$projection" == '42 owner/repo done --remove-assignee runner' && "$unlocked" == 1 ]] || exit 1
+	projection=''
+	# The final ownership fence must apply the state guard before assignment.
+	if _dlw_final_assignment_guard 42 owner/repo runner; then exit 1; fi
+	[[ "$projection" == '42 owner/repo done --remove-assignee runner' ]] || exit 1
+	projection=''
+	live_state=unavailable
+	if _dlw_live_issue_open_guard 42 owner/repo runner; then exit 1; fi
+	[[ -z "$projection" ]] || exit 1
+) || exit 1
+printf 'PASS: live closed issues reject launch and clear runner ownership; unavailable state fails closed\n'
+
 TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/t3458-worker-launch-lock-XXXXXX")"
 
 cleanup() {

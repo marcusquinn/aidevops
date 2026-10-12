@@ -45,6 +45,7 @@ _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
 # GH#33545: a ready partial PR merged during the session; no draft remains and
 # the issue stays open for continuation from the brief ledger.
 _HRW_REASON_MERGED_PARTIAL="worker_merged_partial"
+_HRW_REASON_MERGED_NO_PROGRESS="worker_merged_partial_no_progress"
 _HRW_REASON_READY_MISSING_LINKAGE="worker_ready_missing_linkage"
 _HRW_REASON_READY_LINKAGE_HANDOFF_FAILED="worker_ready_missing_linkage_transition_failed"
 _HRW_REASON_READY_MISSING_SUMMARY="worker_ready_missing_summary"
@@ -2326,14 +2327,56 @@ _hrw_preserve_draft_checkpoint_handoff() {
 
 _hrw_preserve_merged_checkpoint_handoff() {
 	local session_key="$1"
+	local work_dir="${2:-${_WORKER_WORKTREE_PATH:-}}"
+	local reason="$_HRW_REASON_MERGED_PARTIAL"
+	_HRW_MERGED_DELIVERY_KEY=""
+	if [[ -n "$work_dir" ]]; then
+		_hrw_merged_checkpoint_delivery "$session_key" "$work_dir" || {
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_BLOCKED" "merged_delivery_unverified"
+			return 0
+		}
+		[[ "$_HRW_MERGED_DELIVERY_REPEATED" != 1 ]] || reason="$_HRW_REASON_MERGED_NO_PROGRESS"
+	fi
 	# A merged PR no longer owns an in-review issue. Live-state projection
 	# preserves its blocker or releases unfinished work, never marks it done.
 	# GH#33545: no draft exists, so do not report it as a draft checkpoint.
-	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_MERGED_PARTIAL"
+	_hrw_release_dispatch_claim "$session_key" "$reason"
 	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
 	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 	_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
-	_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_MERGED_PARTIAL"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$reason"
+	[[ "$reason" != "$_HRW_REASON_MERGED_NO_PROGRESS" ]] || _HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_BLOCKED"
+	return 0
+}
+
+# Compare the exact delivered PR/head with the last trusted partial release.
+# Comments are repository-scoped durable evidence, including across runners.
+_hrw_merged_checkpoint_delivery() {
+	local session_key="$1"
+	local work_dir="$2"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local issue_number=""
+	local head=""
+	local handoff=""
+	local comments=""
+	local previous=""
+	local branch=""
+	_HRW_MERGED_DELIVERY_REPEATED=0
+	issue_number=$(_hrw_issue_number_for_session "$session_key") || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
+	handoff=$(_pr_handoff_state_for_branch_or_issue "$branch" "$issue_number" "$repo_slug" "" "$head" 1) || return 1
+	[[ "$handoff" =~ ^merged[^\|]*\|[1-9][0-9]*$ ]] || return 1
+	_HRW_MERGED_DELIVERY_KEY="${handoff##*|}:${head}"
+	local comments_endpoint=""
+	printf -v comments_endpoint 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number"
+	comments=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
+	previous=$(printf '%s' "$comments" | jq -r --arg trusted '^(OWNER|MEMBER|COLLABORATOR)$' \
+		--arg release 'CLAIM_RELEASED reason=worker_merged_partial( |\n|$|_no_progress)' \
+		'[.[][] | select((.author_association // "") | test($trusted)) | select((.body // "") | test($release))] | sort_by(.created_at) | last | .body // ""') || return 1
+	if [[ "$previous" == *"MERGED_PARTIAL_DELIVERY key=${_HRW_MERGED_DELIVERY_KEY}"* ]]; then
+		_HRW_MERGED_DELIVERY_REPEATED=1
+	fi
 	return 0
 }
 
@@ -2380,7 +2423,7 @@ _hrw_handle_unverified_post_pr_handoff() {
 	[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
 	case "$output_class" in
 	draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class" ;;
-	merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" ;;
+	merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir" ;;
 	ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class" ;;
 	ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class" ;;
 	*)
@@ -2455,7 +2498,7 @@ _hrw_finish_success_run() {
 			release_needed=0
 			;;
 		merged_checkpoint)
-			_hrw_preserve_merged_checkpoint_handoff "$session_key"
+			_hrw_preserve_merged_checkpoint_handoff "$session_key" "$work_dir"
 			release_needed=0
 			;;
 		ready_missing_summary)

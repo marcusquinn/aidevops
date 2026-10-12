@@ -734,6 +734,11 @@ _release_dispatch_claim() {
 		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is blocked. Next action: verify the exact head and current brief before resuming.\n'
 	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
 		terminal_blocker_fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
+	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
+		terminal_blocker_fragment=$'\nBLOCKED: continuation delivered no new PR or head after a merged partial. AI brief owner: reconcile merged worker-side scope with remaining acceptance items before retrying.\n'
+	fi
+	if [[ "$reason" == worker_merged_partial* && -n "${_HRW_MERGED_DELIVERY_KEY:-}" ]]; then
+		terminal_blocker_fragment+="MERGED_PARTIAL_DELIVERY key=${_HRW_MERGED_DELIVERY_KEY}"$'\n'
 	fi
 	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 ${machine_readable_part}${terminal_blocker_fragment}
@@ -744,7 +749,7 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
-	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" || return 1
 	return 0
 }
 
@@ -766,6 +771,10 @@ _hrff_project_post_release_state() {
 	local runner_name="$3"
 	local reason="$4"
 
+	if [[ "$reason" == worker_merged_partial_no_progress ]]; then
+		_hrff_project_merged_no_progress "$issue_number" "$repo_slug" "$runner_name"
+		return $?
+	fi
 	if [[ "$reason" == "${_HRW_REASON_OWNERSHIP_LOST:-worker_ownership_lost}" ]]; then
 		print_info "Preserving live issue ownership for #${issue_number} after worker ownership loss"
 		return 0
@@ -813,6 +822,29 @@ _hrff_project_post_release_state() {
 			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
 	fi
 	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	return 0
+}
+
+# Preserve terminal closure and concurrent ownership when a partial repeats.
+# A no-progress hold is deliberately sticky: only brief-owner reconciliation
+# may release it, so new delivery cannot erase an unrelated existing blocker.
+_hrff_project_merged_no_progress() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local issue_json="" projection=""
+	local issue_endpoint=""
+	printf -v issue_endpoint 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
+	issue_json=$(gh api "$issue_endpoint" 2>/dev/null) || return 1
+	projection=$(printf '%s' "$issue_json" | jq -er --arg runner "$runner_name" '
+		if .state == "closed" then "done"
+		elif .state != "open" then empty
+		elif any(.assignees[]?; .login != $runner) then "preserve"
+		else "blocked" end') || return 1
+	[[ "$projection" != preserve ]] || return 0
+	set_issue_status "$issue_number" "$repo_slug" "$projection" --remove-assignee "$runner_name" || return 1
+	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	print_info "Projected unchanged merged partial #${issue_number} as ${projection}; AI brief owner owns reconciliation"
 	return 0
 }
 

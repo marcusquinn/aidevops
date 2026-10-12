@@ -162,6 +162,7 @@ _dlw_final_assignment_guard() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local self_login="$3"
+	_dlw_live_issue_open_guard "$issue_number" "$repo_slug" "$self_login" || return 1
 	local claim_helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
 	if [[ ! -x "$claim_helper" ]]; then
 		echo "[dispatch_with_dedup] Final ownership fence unavailable for #${issue_number} in ${repo_slug}: ${claim_helper}" >>"$LOGFILE"
@@ -175,6 +176,25 @@ _dlw_final_assignment_guard() {
 		return 0
 	fi
 	echo "[dispatch_with_dedup] Final ownership fence blocked #${issue_number} in ${repo_slug} before assignment (rc=${guard_rc}): ${guard_output}" >>"$LOGFILE"
+	return 1
+}
+
+# A claim can win just before closure. Never publish queued ownership or spawn
+# from a stale OPEN snapshot; remove only this runner's assignment on closure.
+_dlw_live_issue_open_guard() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local state=""
+	state=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.state' 2>/dev/null) || return 1
+	case "$state" in
+	open) return 0 ;;
+	closed)
+		set_issue_status "$issue_number" "$repo_slug" "done" --remove-assignee "$self_login" || return 1
+		unlock_issue_after_worker "$issue_number" "$repo_slug" || true
+		print_info "Skipped closed issue #${issue_number} before worker launch"
+		;;
+	esac
 	return 1
 }
 
@@ -1923,6 +1943,7 @@ _dispatch_launch_worker() {
 	_dlw_publish_queued_ownership "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json" || return $?
 	_dlw_start_codegraph_init "$issue_number" "$worker_worktree_path"
 
+	_dlw_live_issue_open_guard "$issue_number" "$repo_slug" "$self_login" || return 1
 	_ds_t0=$(_ds_now_ns)
 	if ! worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
