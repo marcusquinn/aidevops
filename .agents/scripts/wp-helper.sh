@@ -242,14 +242,15 @@ load_config() {
 	if [[ "$CONFIG_FILE" == "$WP_SITE_INVENTORY" && -z "$CONFIG_JSON" ]]; then
 		# Allowlist fields: no credential values or unrelated inventory metadata.
 		if ! CONFIG_JSON=$(jq -c '
-			{servers: ((.hosting_accounts // {}) | map_values({
+			(.hosting_accounts // {}) as $accounts |
+			{servers: ($accounts | map_values({
 				ssh_host, ssh_port, ssh_user, ssh_identity_file,
 				ssh_password_env: .credential_env})),
 			 sites: ((.sites // {}) | to_entries | map(
 				select((.value.platform // "") | startswith("wordpress")) |
 				{key: .key, value: {
 					name: (.value.name // .key),
-					type: (.value.hosting.provider // "ssh"),
+					type: (.value.hosting.provider // $accounts[.value.hosting.account_ref // ""].provider // "ssh"),
 					url: .value.home_url,
 					wp_path: .value.hosting.deployment_path,
 					server_ref: .value.hosting.account_ref,
