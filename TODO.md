@@ -1671,6 +1671,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18681 fix(full-loop): define the cleanup-receipt failure helper at file scope #bug #framework tier:simple ref:GH#34477 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18681-brief.md] pr:#34478 completed:2026-10-12
 
+- [ ] t18682 fix(tests): update gate-pull-before-measure triage case for pinned-blob measurement #auto-dispatch #bug ref:GH#34514
+
+- [ ] t18683 fix(tests): stub final ownership fence in worker-detection dispatch_with_dedup cases #auto-dispatch #bug ref:GH#34515
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
