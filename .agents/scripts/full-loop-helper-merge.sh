@@ -375,6 +375,15 @@ _merge_try_interactive_admin_auto_fallback() {
 	return 2
 }
 
+# GH#34466: succeed only when every closing reference names its repository.
+_merge_closing_refs_have_repository() {
+	local pr_json="$1"
+	printf '%s' "$pr_json" | jq -e '
+		all(.closingIssuesReferences[]?;
+			[.repository.owner.login, .repository.name] | all(. != null))' >/dev/null 2>&1
+	return $?
+}
+
 _merge_linked_issue_numbers() {
 	local pr_number="$1"
 	local repo="$2"
@@ -386,7 +395,18 @@ _merge_linked_issue_numbers() {
 			--json closingIssuesReferences,body) || return 1
 	fi
 
-	issue_numbers=$(printf '%s' "$pr_json" | jq -r '.closingIssuesReferences[]?.number // empty') || return 1
+	# GH#34466: a closing reference carries its own repository. Only references
+	# in this PR's repository are same-repo issue numbers; a reference with no
+	# repository data cannot be bound to a target, so fail closed.
+	_merge_closing_refs_have_repository "$pr_json" || return 1
+	issue_numbers=$(printf '%s' "$pr_json" | jq -r --arg repo "$repo" '
+		.closingIssuesReferences[]?
+		| select(((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))
+		| .number // empty') || return 1
+	if printf '%s' "$pr_json" | jq -e '(.closingIssuesReferences | length) > 0' >/dev/null 2>&1; then
+		printf '%s\n' "$issue_numbers" | grep -E '^[0-9]+$' | sort -u || true
+		return 0
+	fi
 
 	if [[ -z "$issue_numbers" ]]; then
 		issue_numbers=$(printf '%s' "$pr_json" | jq -r '.body // ""' |
@@ -395,6 +415,26 @@ _merge_linked_issue_numbers() {
 	fi
 
 	printf '%s\n' "$issue_numbers" | grep -E '^[0-9]+$' | sort -u || true
+	return 0
+}
+
+# GH#34466: closing references that live in another repository, as owner/name#N.
+# Same fail-closed repository binding as _merge_linked_issue_numbers.
+_merge_linked_cross_repo_references() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json="${3:-}"
+
+	if [[ -z "$pr_json" ]]; then
+		pr_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
+			--json closingIssuesReferences) || return 1
+	fi
+	_merge_closing_refs_have_repository "$pr_json" || return 1
+	printf '%s' "$pr_json" | jq -r --arg repo "$repo" '
+		.closingIssuesReferences[]?
+		| (.repository.owner.login + "/" + .repository.name) as $slug
+		| select(($slug | ascii_downcase) != ($repo | ascii_downcase))
+		| "\($slug)#\(.number)"' | sort -u || true
 	return 0
 }
 

@@ -80,7 +80,9 @@ extract_readiness_function() {
 
 load_functions() {
 	: >"$EXTRACTED"
+	extract_function _merge_closing_refs_have_repository
 	extract_function _merge_linked_issue_numbers
+	extract_function _merge_linked_cross_repo_references
 	extract_function _merge_issue_requires_maintainer_review
 	extract_function _merge_author_has_write_authority
 	extract_function _merge_is_trusted_issue_sync_pr
@@ -117,6 +119,7 @@ FIXTURE_PERMISSION_FAIL=0
 FIXTURE_PR_LOOKUP_FAIL=0
 FIXTURE_ISSUE_LABELS=""
 FIXTURE_ISSUE_LOOKUP_FAIL=0
+FIXTURE_CROSS_ISSUE_LABELS=""
 FIXTURE_ISSUE_APPROVED=0
 FIXTURE_PR_APPROVED=0
 FIXTURE_GH_MODE="guard"
@@ -128,6 +131,7 @@ FIXTURE_ISSUE_API_FAIL=0
 FIXTURE_HOLD_LABELS_CSV=""
 FIXTURE_LABEL_EDIT_FAIL=0
 ISSUE_API_CALLS="${TEST_ROOT}/issue-api-calls.log"
+ISSUE_VIEW_CALLS="${TEST_ROOT}/issue-view-calls.log"
 LABEL_EDIT_CALLS="${TEST_ROOT}/label-edit-calls.log"
 PR_ONLY_MARKER='<!-- aidevops:completion-contract:pr-only/v1 -->'
 AUTHORITY_GUARD_PASS=1
@@ -217,6 +221,11 @@ gh() {
 	fi
 	if [[ "$command" == "issue" && "$subcommand" == "view" ]]; then
 		[[ "$FIXTURE_ISSUE_LOOKUP_FAIL" -eq 0 ]] || return 1
+		printf '%s\n' "$*" >>"$ISSUE_VIEW_CALLS"
+		if [[ "$*" == *"--repo owner/repo-b "* ]]; then
+			printf '%s\n' "$FIXTURE_CROSS_ISSUE_LABELS"
+			return 0
+		fi
 		printf '%s\n' "$FIXTURE_ISSUE_LABELS"
 		return 0
 	fi
@@ -298,7 +307,8 @@ set_pr_fixture() {
 		--argjson labels "$labels_json" \
 		--argjson fork "$is_fork" \
 		--argjson issues "$issues_json" \
-		'{author:{login:$author},labels:$labels,isCrossRepository:$fork,headRefOid:$head,closingIssuesReferences:$issues,body:$body}')
+		'($issues | map(.repository //= {owner:{login:"owner"},name:"repo"})) as $issues
+		| {author:{login:$author},labels:$labels,isCrossRepository:$fork,headRefOid:$head,closingIssuesReferences:$issues,body:$body}')
 	return 0
 }
 
@@ -308,6 +318,7 @@ reset_fixture() {
 	FIXTURE_PR_LOOKUP_FAIL=0
 	FIXTURE_ISSUE_LABELS=""
 	FIXTURE_ISSUE_LOOKUP_FAIL=0
+	FIXTURE_CROSS_ISSUE_LABELS=""
 	FIXTURE_ISSUE_APPROVED=0
 	FIXTURE_PR_APPROVED=0
 	FIXTURE_GH_MODE="guard"
@@ -323,6 +334,7 @@ reset_fixture() {
 	AUTHORITY_GUARD_PASS=1
 	AUTHORITY_GUARD_FAIL_ON_CALL=0
 	: >"$ISSUE_API_CALLS"
+	: >"$ISSUE_VIEW_CALLS"
 	: >"$LABEL_EDIT_CALLS"
 	: >"$CRYPTO_CALLS"
 	: >"$MERGE_CALLS"
@@ -528,6 +540,57 @@ test_authority_guard() {
 	else
 		print_result "internal PR does not require external crypto" 1 "unexpected crypto verification"
 	fi
+	return 0
+}
+
+# GH#34466: closing references bind to their own repository.
+test_cross_repo_closing_references() {
+	local xref='[{"number":461,"repository":{"owner":{"login":"owner"},"name":"repo-b"}}]'
+	local xref_same='[{"number":207,"repository":{"owner":{"login":"owner"},"name":"repo-b"}}]'
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false "$xref" 'Resolves owner/repo-b#461'
+	FIXTURE_CROSS_ISSUE_LABELS="bug"
+	expect_guard_result "cross-repo closing reference absent locally does not block" 0
+	if grep -q -- '--repo owner/repo-b ' "$ISSUE_VIEW_CALLS" && ! grep -q -- '--repo owner/repo ' "$ISSUE_VIEW_CALLS"; then
+		print_result "cross-repo reference is checked in its own repository only" 0
+	else
+		print_result "cross-repo reference is checked in its own repository only" 1 "$(<"$ISSUE_VIEW_CALLS")"
+	fi
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false "$xref" 'Resolves owner/repo-b#461'
+	FIXTURE_ISSUE_LABELS="needs-maintainer-review"
+	FIXTURE_CROSS_ISSUE_LABELS="bug"
+	expect_guard_result "local NMR label is not consulted for a cross-repo reference" 0
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false "$xref" 'Resolves owner/repo-b#461'
+	FIXTURE_CROSS_ISSUE_LABELS="needs-maintainer-review"
+	expect_guard_result "cross-repo reference NMR in its own repository blocks" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false "$xref" 'Resolves owner/repo-b#461'
+	FIXTURE_ISSUE_LOOKUP_FAIL=1
+	expect_guard_result "cross-repo label lookup failure blocks" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":461,"repository":null}]' 'Resolves #461'
+	FIXTURE_PR_JSON=$(jq -c '.closingIssuesReferences[0].repository = null' <<<"$FIXTURE_PR_JSON")
+	expect_guard_result "closing reference without repository data fails closed" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false "$xref_same" 'For #207 and Resolves owner/repo-b#207'
+	expect_guard_result "For #N plus cross-repo Resolves same number is not contradictory" 0
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":207}]' 'For #207'
+	expect_guard_result "same-repo For/Ref contradiction still blocks" 1
+
+	reset_fixture
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_ISSUE_LABELS="needs-maintainer-review"
+	expect_guard_result "same-repo closing reference with NMR still blocks" 1
 	return 0
 }
 
@@ -1007,6 +1070,7 @@ main() {
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
 	test_authority_guard
+	test_cross_repo_closing_references
 	test_hold_for_review_guard
 	test_pr_only_contract_guard
 	test_pre_merge_authority_preflight

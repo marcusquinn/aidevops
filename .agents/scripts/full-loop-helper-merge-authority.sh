@@ -193,8 +193,28 @@ _merge_collect_linked_issue_authority_gaps() {
 	local issue_numbers="$1"
 	local repo="$2"
 	local require_crypto="$3"
+	local cross_repo_refs="${4:-}"
 	local issue_number=""
+	local cross_ref=""
 	local verify_rc=0
+
+	# GH#34466: other-repository closing references are checked against their
+	# own repository's labels. They are excluded from the crypto approval
+	# targets (`issue:N` is bound to this PR's repository, so reusing it for a
+	# foreign issue would verify an unrelated local issue).
+	#aidevops:trust-boundary GH#17671 -- foreign references stay fail-closed.
+	while IFS= read -r cross_ref; do
+		[[ -n "$cross_ref" ]] || continue
+		verify_rc=0
+		_merge_issue_requires_maintainer_review "${cross_ref##*#}" "${cross_ref%#*}" || verify_rc=$?
+		if [[ "$verify_rc" -eq 0 ]]; then
+			print_error "Merge blocked: linked issue ${cross_ref} still requires maintainer review"
+			return 1
+		elif [[ "$verify_rc" -ne 1 ]]; then
+			print_error "Merge blocked: unable to verify maintainer-review labels on issue ${cross_ref}"
+			return 1
+		fi
+	done <<<"$cross_repo_refs"
 
 	while IFS= read -r issue_number; do
 		[[ -n "$issue_number" ]] || continue
@@ -257,7 +277,7 @@ _merge_collect_external_authority_gaps() {
 	local repo="$2"
 	local expected_head_sha="${3:-}"
 	local pr_json="" pr_author="" current_head_sha="" labels_csv="" labels_padded="" is_fork="false"
-	local issue_numbers=""
+	local issue_numbers="" cross_repo_refs=""
 	local author_rc=0 treat_as_external=0 trusted_dependabot=0 trusted_issue_sync=0
 
 	FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS=()
@@ -293,9 +313,10 @@ _merge_collect_external_authority_gaps() {
 	# GH#33374: a native sidebar/development closing link must not override a
 	# For/Ref checkpoint. Fail closed before any merge write; do not silently
 	# unlink issues or infer completion from GitHub's closing metadata alone.
-	if ! printf '%s' "$pr_json" | jq -e '
+	if ! printf '%s' "$pr_json" | jq -e --arg repo "$repo" '
 		(.body // "") as $body
-		| all(.closingIssuesReferences[]; .number as $num
+		| all(.closingIssuesReferences[]
+			| select(((.repository.owner.login // "") + "/" + (.repository.name // "")) | ascii_downcase == ($repo | ascii_downcase)); .number as $num
 			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
 			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
 			else true end)' >/dev/null 2>&1; then
@@ -331,8 +352,13 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	}
 
+	cross_repo_refs=$(_merge_linked_cross_repo_references "$pr_number" "$repo" "$pr_json") || {
+		print_error "Merge blocked: unable to verify linked issues for PR #${pr_number}"
+		return 1
+	}
+
 	_merge_headless_pr_only_scope_clear "$issue_numbers" "$repo" || return 1
-	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" || return 1
+	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" "$cross_repo_refs" || return 1
 	if [[ "$trusted_dependabot" -eq 1 || "$trusted_issue_sync" -eq 1 || "$treat_as_external" -eq 0 ]]; then
 		return 0
 	fi
