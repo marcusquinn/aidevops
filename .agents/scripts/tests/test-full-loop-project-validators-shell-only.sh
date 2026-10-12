@@ -365,21 +365,39 @@ export NPM_CALL_LOG NPM_FAKE_RC=0
 	[[ "$linked_setup_rc" -eq 0 ]] || exit 1
 	cd "$LINKED_REPO" || exit 1
 	[[ ! -e .aidevops.json ]] || exit 1
-	timeout_sec() { local seconds="$1"; [[ "$seconds" == 900 ]] || return 1; shift; "$@"; return $?; }
+	timeout_sec() {
+		local seconds="$1"
+		[[ "$seconds" == 900 ]] || return 1
+		shift
+		"$@"
+		return $?
+	}
 	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=60 _run_project_validators 0
 ) >/dev/null 2>"${TEST_ROOT}/canonical-timeout.log"
 print_result "linked worktree inherits canonical 900-second timeout over environment" "$?"
 (
 	cd "$LINKED_REPO" || exit 1
 	printf '%s\n' '{"validator_timeout_seconds":1500}' >.aidevops.json
-	timeout_sec() { local seconds="$1"; [[ "$seconds" == 1500 ]] || return 1; shift; "$@"; return $?; }
+	timeout_sec() {
+		local seconds="$1"
+		[[ "$seconds" == 1500 ]] || return 1
+		shift
+		"$@"
+		return $?
+	}
 	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=60 _run_project_validators 0
 ) >/dev/null 2>"${TEST_ROOT}/linked-local-timeout.log"
 print_result "worktree-local timeout overrides canonical configuration and environment" "$?"
 (
 	cd "$LINKED_REPO" || exit 1
 	printf '%s\n' '{}' >.aidevops.json
-	timeout_sec() { local seconds="$1"; [[ "$seconds" == 420 ]] || return 1; shift; "$@"; return $?; }
+	timeout_sec() {
+		local seconds="$1"
+		[[ "$seconds" == 420 ]] || return 1
+		shift
+		"$@"
+		return $?
+	}
 	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=420 _run_project_validators 0
 ) >/dev/null 2>"${TEST_ROOT}/linked-empty-timeout.log"
 print_result "local config without timeout uses environment rather than canonical timeout" "$?"
