@@ -564,7 +564,7 @@ else
 		cd "$HOOK_REPO" || exit 1
 		git checkout -qb edge-public "$LEAK_HEAD"
 		printf 'testorg/private-\000mirror\n' >binary.txt
-		printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'synthetic fixture only' >secret.txt
+		printf '%s\n' '-----BEGIN PRI''VATE KEY-----' 'synthetic fixture only' >secret.txt
 		git add binary.txt secret.txt
 		git commit -qm 'public edge fixtures'
 		git update-ref refs/remotes/origin/main HEAD
