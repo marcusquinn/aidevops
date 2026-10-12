@@ -74,6 +74,13 @@ wp plugin search "seo" --fields=name,slug,rating
 `wp-fleet-helper.sh` coordinates `plan`, `backup`, `deploy`, `verify` and `report`.
 It reads the allowlisted, tenant-aware `wp-helper.sh --export-sites` inventory;
 shared server references and SSH aliases retain the existing authentication path.
+When neither the active tenant nor global `wordpress-sites.json` exists, sites
+come from `~/.config/aidevops/site-inventory.json` (WordPress platforms only).
+This fallback is read-only and in memory; existing WordPress configs take precedence.
+Ownership type (or environment) supplies the category, and hosting account references
+supply SSH transport fields. `wp-helper.sh --config` reports the source in use.
+Omit `--tenant` to use this global fallback; an explicit `--tenant` still requires
+that tenant's WordPress config and never silently selects the global inventory.
 Inventory, manifests, artifacts, backups and checkpoints are private: never attach
 them to public issues. Python 3.6+ and WP-CLI must already exist on selected hosts;
 the helper does not install dependencies or contact sites without explicit selection.

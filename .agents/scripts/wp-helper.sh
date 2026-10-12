@@ -28,10 +28,12 @@ readonly WP_TENANTS_DIR="${WP_CONFIG_DIR}/tenants"
 readonly WP_ACTIVE_TENANT_FILE="${WP_CONFIG_DIR}/active-tenant"
 readonly WP_PROJECT_TENANT_FILE=".aidevops-tenant"
 readonly WP_GLOBAL_CONFIG="${WP_CONFIG_DIR}/wordpress-sites.json"
+readonly WP_SITE_INVENTORY="${WP_CONFIG_DIR}/site-inventory.json"
 TEMPLATE_FILE="${HOME}/.aidevops/agents/configs/wordpress-sites.json.txt"
 
 # Resolved config file (set by resolve_config_file)
 CONFIG_FILE=""
+CONFIG_JSON=""
 
 # Get the active tenant name using the same priority chain as credential-helper.sh
 # Priority: 1) Project override (.aidevops-tenant), 2) Global active-tenant, 3) "default"
@@ -62,6 +64,7 @@ get_wp_active_tenant() {
 # Sets CONFIG_FILE to the first existing config found:
 #   1) ~/.config/aidevops/tenants/{tenant}/wordpress-sites.json
 #   2) ~/.config/aidevops/wordpress-sites.json (global fallback)
+#   3) ~/.config/aidevops/site-inventory.json (read-only WordPress projection)
 resolve_config_file() {
 	local tenant
 	tenant=$(get_wp_active_tenant)
@@ -74,6 +77,19 @@ resolve_config_file() {
 
 	# Fallback to global config
 	CONFIG_FILE="$WP_GLOBAL_CONFIG"
+	if [[ ! -f "$CONFIG_FILE" && -f "$WP_SITE_INVENTORY" ]]; then
+		CONFIG_FILE="$WP_SITE_INVENTORY"
+	fi
+	return 0
+}
+
+# Query the resolved registry without writing a derived private inventory to disk.
+query_config() {
+	if [[ "$CONFIG_FILE" == "$WP_SITE_INVENTORY" ]]; then
+		jq "$@" <<<"$CONFIG_JSON" || return 1
+	else
+		jq "$@" "$CONFIG_FILE" || return 1
+	fi
 	return 0
 }
 
@@ -98,7 +114,8 @@ resolve_server_ref() {
 
 	# Look up server definition in config file
 	local server_def
-	server_def=$(jq -r --arg ref "$server_ref" '.servers[$ref] // empty' "$CONFIG_FILE" 2>/dev/null)
+	# shellcheck disable=SC2016 # $ref is a jq variable, not a shell variable.
+	server_def=$(query_config -r --arg ref "$server_ref" '.servers[$ref] // empty' 2>/dev/null)
 
 	if [[ -z "$server_def" ]]; then
 		# >&2 is required: resolve_server_ref() is called via $() in execute_wp_via_ssh().
@@ -222,6 +239,27 @@ load_config() {
 		fi
 		exit 1
 	fi
+	if [[ "$CONFIG_FILE" == "$WP_SITE_INVENTORY" && -z "$CONFIG_JSON" ]]; then
+		# Allowlist fields: no credential values or unrelated inventory metadata.
+		if ! CONFIG_JSON=$(jq -c '
+			{servers: ((.hosting_accounts // {}) | map_values({
+				ssh_host, ssh_port, ssh_user, ssh_identity_file,
+				ssh_password_env: .credential_env})),
+			 sites: ((.sites // {}) | to_entries | map(
+				select((.value.platform // "") | startswith("wordpress")) |
+				{key: .key, value: {
+					name: (.value.name // .key),
+					type: (.value.hosting.provider // "ssh"),
+					url: .value.home_url,
+					wp_path: .value.hosting.deployment_path,
+					server_ref: .value.hosting.account_ref,
+					multisite: (.value.platform == "wordpress-multisite"),
+					category: (.value.ownership.type // .value.environment)
+				}}) | from_entries)}' "$CONFIG_FILE" 2>/dev/null); then
+			print_error "Unable to read site inventory" >&2
+			return 1
+		fi
+	fi
 	return 0
 }
 
@@ -232,7 +270,8 @@ get_site_config() {
 	load_config
 
 	local site_config
-	site_config=$(jq -r --arg key "$site_key" '.sites[$key]' "$CONFIG_FILE")
+	# shellcheck disable=SC2016 # $key is a jq variable.
+	site_config=$(query_config -r --arg key "$site_key" '.sites[$key]')
 	if [[ "$site_config" == "null" ]]; then
 		print_error "$ERROR_SITE_NOT_FOUND: $site_key"
 		list_sites
@@ -248,7 +287,7 @@ list_sites() {
 	load_config
 	print_info "Configured WordPress sites:"
 	echo ""
-	jq -r '.sites | to_entries[] | "\(.key)|\(.value.name)|\(.value.type)|\(.value.url // .value.path)|\(.value.category // "uncategorized")"' "$CONFIG_FILE" |
+	query_config -r '.sites | to_entries[] | "\(.key)|\(.value.name)|\(.value.type)|\(.value.url // .value.path)|\(.value.category // "uncategorized")"' |
 		while IFS='|' read -r key name type url category; do
 			printf "  %-20s %-25s %-12s %-40s [%s]\n" "$key" "$name" "$type" "$url" "$category"
 		done
@@ -262,7 +301,8 @@ list_sites_by_category() {
 	load_config
 	print_info "Sites in category: $category"
 	echo ""
-	jq -r --arg cat "$category" '.sites | to_entries[] | select(.value.category == $cat) | "\(.key)|\(.value.name)|\(.value.type)|\(.value.url // .value.path)"' "$CONFIG_FILE" |
+	# shellcheck disable=SC2016 # $cat is a jq variable.
+	query_config -r --arg cat "$category" '.sites | to_entries[] | select(.value.category == $cat) | "\(.key)|\(.value.name)|\(.value.type)|\(.value.url // .value.path)"' |
 		while IFS='|' read -r key name type url; do
 			printf "  %-20s %-25s %-12s %s\n" "$key" "$name" "$type" "$url"
 		done
@@ -447,7 +487,8 @@ run_on_category() {
 	echo ""
 
 	local site_keys
-	site_keys=$(jq -r --arg cat "$category" '.sites | to_entries[] | select(.value.category == $cat) | .key' "$CONFIG_FILE")
+	# shellcheck disable=SC2016 # $cat is a jq variable.
+	site_keys=$(query_config -r --arg cat "$category" '.sites | to_entries[] | select(.value.category == $cat) | .key')
 
 	if [[ -z "$site_keys" ]]; then
 		print_warning "No sites found in category: $category"
@@ -492,7 +533,7 @@ run_on_all() {
 	echo ""
 
 	local site_keys
-	site_keys=$(jq -r '.sites | keys[]' "$CONFIG_FILE")
+	site_keys=$(query_config -r '.sites | keys[]')
 
 	local success_count=0
 	local fail_count=0
@@ -530,13 +571,14 @@ get_site_info() {
 list_categories() {
 	load_config
 	print_info "Available categories:"
-	jq -r '.sites[].category // "uncategorized"' "$CONFIG_FILE" | sort -u | while read -r cat; do
+	query_config -r '.sites[].category // "uncategorized"' | sort -u | while read -r cat; do
 		local count
 		if [[ "$cat" == "uncategorized" ]]; then
 			# Count sites with null/missing category
-			count=$(jq -r '[.sites[] | select(.category == null or .category == "")] | length' "$CONFIG_FILE")
+			count=$(query_config -r '[.sites[] | select(.category == null or .category == "")] | length')
 		else
-			count=$(jq -r --arg c "$cat" '[.sites[] | select(.category == $c)] | length' "$CONFIG_FILE")
+			# shellcheck disable=SC2016 # $c is a jq variable.
+			count=$(query_config -r --arg c "$cat" '[.sites[] | select(.category == $c)] | length')
 		fi
 		echo "  - $cat ($count sites)"
 	done
@@ -561,11 +603,15 @@ show_config() {
 		print_info "Active tenant: $tenant"
 	fi
 	print_info "Config file:   $CONFIG_FILE"
+	if [[ "$CONFIG_FILE" == "$WP_SITE_INVENTORY" ]]; then
+		print_info "Source:        site inventory (read-only fallback)"
+	fi
 
 	if [[ -f "$CONFIG_FILE" ]]; then
+		load_config
 		local site_count server_count
-		site_count=$(jq -r '.sites | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
-		server_count=$(jq -r 'if .servers then (.servers | to_entries | map(select(.key | startswith("_") | not)) | length) else 0 end' "$CONFIG_FILE" 2>/dev/null || echo "0")
+		site_count=$(query_config -r '.sites | length' 2>/dev/null || echo "0")
+		server_count=$(query_config -r 'if .servers then (.servers | to_entries | map(select(.key | startswith("_") | not)) | length) else 0 end' 2>/dev/null || echo "0")
 		print_info "Sites:         $site_count"
 		print_info "Servers:       $server_count"
 	else
@@ -594,11 +640,12 @@ export_sites() {
 	local key site
 	load_config
 	while IFS= read -r key; do
-		site=$(jq -c --arg key "$key" '.sites[$key]' "$CONFIG_FILE")
+		# shellcheck disable=SC2016 # $key is a jq variable.
+		site=$(query_config -c --arg key "$key" '.sites[$key]')
 		site=$(resolve_server_ref "$site")
 		jq -c --arg id "$key" '{id: $id, category, type, wp_path,
-			ssh_host, ssh_user, ssh_port, ssh_identity_file, ssh_password_env}' <<<"$site"
-	done < <(jq -r '.sites | keys[]' "$CONFIG_FILE")
+			ssh_host, ssh_user, ssh_port, ssh_identity_file, ssh_password_env, multisite}' <<<"$site"
+	done < <(query_config -r '.sites | keys[]')
 	return 0
 }
 

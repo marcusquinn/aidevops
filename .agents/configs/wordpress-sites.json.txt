@@ -1,7 +1,7 @@
 {
   "_description": "WordPress Sites Registry",
   "_docs": "See .agents/tools/wordpress/wp-admin.md for usage",
-  "_setup": "Copy to ~/.config/aidevops/wordpress-sites.json and fill in your sites",
+  "_setup": "Copy to ~/.config/aidevops/wordpress-sites.json and fill in your sites. When neither the active tenant nor global WordPress config exists, wp-helper.sh reads WordPress entries from ~/.config/aidevops/site-inventory.json in memory; an existing WordPress config always wins. Explicit --tenant requires its own WordPress config.",
 
   "_tenant_setup": {
     "_note": "For multi-tenant (freelancer managing multiple clients), use per-tenant configs:",
