@@ -216,6 +216,70 @@ printf 'PASS partial batches leave earlier dependencies blocked and later failur
 )
 printf 'PASS young absent tasks defer; stale, malformed timestamp and missing brief fail without edits\n'
 
+# A not-worker-ready auto-dispatch brief is held (exit 0, one diagnostic), a ready
+# task still reconciles, and a genuine failure still fails the run.
+held_tmp=$(mktemp -d)
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	issue_sync_prepare_ci_context() { return 0; }
+	_publication_exact_default_snapshot() { return 0; }
+	note_log="${held_tmp}/notes"
+	: >"$note_log"
+	_publication_note_brief_not_ready() { printf '%s|%s\n' "$2" "$4" >>"$note_log"; return 0; }
+	_publication_validate_mapping() {
+		printf -- '- [ ] %s Task #auto-dispatch ref:GH#%s\n' "$1" "$2"
+		return 0
+	}
+	_publication_brief_ready() {
+		if [[ "$1" == *t9200-brief.md ]]; then
+			printf 'WORKER_READY=false SCHEMA=v2\nVALIDATION_ERRORS=missing write surface\n'
+			return 1
+		fi
+		return 0
+	}
+	gh() {
+		if [[ "$1" == repo ]]; then
+			printf 'main\n'
+		elif [[ "$1" == issue && "$2" == list ]]; then
+			printf '[{"number":91,"title":"t9200: stale brief","createdAt":"2020-01-01T00:00:00Z"},{"number":92,"title":"t9201: ready","createdAt":"2020-01-01T00:00:00Z"}]\n'
+		else
+			printf '{"number":%s,"title":"t9201: ready","state":"OPEN","labels":[{"name":"publication:pending"}]}\n' "$3"
+		fi
+		return 0
+	}
+	# Held-only run: exit 0, held=1 failed=0, diagnostic names validator errors.
+	gh_issue_edit_safe() { return 1; }
+	output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789 --task t9200)
+	[[ "$output" == *'failed=0 unmapped=0 held=1'* ]]
+	grep -q 'VALIDATION_ERRORS=missing write surface' "$note_log"
+	# Ready task whose label edit errors is a genuine failure (non-zero).
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789 --task t9201); then exit 1; fi
+	[[ "$output" == *'failed=1'* ]]
+	# Mixed run: held does not mask the genuine failure, but alone never fails.
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789); then exit 1; fi
+	[[ "$output" == *'failed=1 unmapped=0 held=1'* ]]
+)
+rm -rf "$held_tmp"
+printf 'PASS not-ready auto-dispatch brief is held without failing; genuine failures still fail\n'
+
+# The diagnostic is idempotent via its marker.
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	comment_log=$(mktemp)
+	gh_issue_comment() { printf '%s\n' "$1" >>"$comment_log"; return 0; }
+	gh() {
+		if [[ "$2" == *"/issues/401/"* ]]; then printf '9001\n'; fi
+		return 0
+	}
+	_publication_note_brief_not_ready example/repo 400 t9200 'VALIDATION_ERRORS=x'
+	_publication_note_brief_not_ready example/repo 401 t9200 'VALIDATION_ERRORS=x'
+	[[ "$(cat "$comment_log")" == "400" ]]
+	rm -f "$comment_log"
+)
+printf 'PASS brief-not-ready diagnostic is posted once per issue\n'
+
 # GH#33321: unmapped pending issues are a distinct, non-fatal class that cannot
 # consume the reconcile budget; ref:GH#N maps issues without a tNNN title.
 unmapped_tmp=$(mktemp -d)

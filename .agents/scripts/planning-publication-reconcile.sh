@@ -26,6 +26,7 @@ PUBLICATION_LIMIT="${AIDEVOPS_PUBLICATION_RECONCILE_LIMIT:-100}"
 PUBLICATION_SCAN_LIMIT="${AIDEVOPS_PUBLICATION_SCAN_LIMIT:-200}"
 PUBLICATION_STALE_HOURS="${AIDEVOPS_PUBLICATION_STALE_HOURS:-24}"
 PUBLICATION_UNMAPPED_MARKER="<!-- aidevops:publication-unmapped -->"
+PUBLICATION_BRIEF_NOT_READY_MARKER="<!-- aidevops:publication-brief-not-ready -->"
 
 _publication_usage() {
 	printf 'Usage: planning-publication-reconcile.sh {reconcile --repo owner/repo --sha SHA [--task tNNN] | sweep-closed --repo owner/repo}\n'
@@ -114,6 +115,35 @@ ${PUBLICATION_UNMAPPED_MARKER}
 **Planning publication cannot map this issue.** It carries \`${PUBLICATION_PENDING_LABEL}\`, but its title has no \`tNNN:\` prefix and no TODO.md task line carries \`ref:GH#${issue_num}\`, so reconciliation can never verify publication and the issue stays dispatch-blocked.
 
 Fix: add a TODO.md task line with \`ref:GH#${issue_num}\` (and its \`todo/tasks/tNNN-brief.md\`) to the default branch; the next reconcile pass then publishes it. If the issue is not meant to be planned work, remove \`${PUBLICATION_PENDING_LABEL}\` deliberately.
+EOF
+	gh_issue_comment "$issue_num" --repo "$repo" --body-file "$body_file" >/dev/null 2>&1 || {
+		rm -f "$body_file"
+		return 1
+	}
+	rm -f "$body_file"
+	return 0
+}
+
+# One idempotent diagnostic for an auto-dispatch brief that fails the worker
+# readiness schema. Author-side gap: the issue is held, not failed.
+_publication_note_brief_not_ready() {
+	local repo="$1" issue_num="$2" task_id="$3" validation="${4:-}"
+	local existing="" body_file="" errors=""
+	existing=$(gh api "repos/${repo}/issues/${issue_num}/comments" --paginate \
+		--jq ".[] | select(.body | contains(\"${PUBLICATION_BRIEF_NOT_READY_MARKER}\")) | .id" 2>/dev/null) || return 1
+	[[ -z "$existing" ]] || return 0
+	errors=$(printf '%s\n' "$validation" | grep -E '^(WORKER_READY|SCHEMA|VALIDATION_ERRORS)=' || true)
+	[[ -n "$errors" ]] || errors="VALIDATION_ERRORS=(no validator detail captured)"
+	body_file=$(mktemp) || return 1
+	cat >"$body_file" <<EOF
+${PUBLICATION_BRIEF_NOT_READY_MARKER}
+**Planning publication is held: the \`#auto-dispatch\` brief for ${task_id} is not worker-ready.** The issue keeps \`${PUBLICATION_PENDING_LABEL}\`, so it stays undispatchable; other tasks are unaffected.
+
+\`\`\`
+${errors}
+\`\`\`
+
+Fix: upgrade \`todo/tasks/${task_id}-brief.md\` to the current brief template (\`verify-brief-helper.sh check-readiness\` must report \`WORKER_READY=true\`), or remove \`#auto-dispatch\` from the TODO.md task deliberately. The next reconcile pass then publishes it.
 EOF
 	gh_issue_comment "$issue_num" --repo "$repo" --body-file "$body_file" >/dev/null 2>&1 || {
 		rm -f "$body_file"
@@ -251,12 +281,14 @@ _publication_validate_mapping() {
 
 _publication_brief_ready() {
 	local brief_path="$1"
-	"${SCRIPT_DIR}/verify-brief-helper.sh" check-readiness "$brief_path" >/dev/null 2>&1 || return 1
+	# Validator output goes to stdout so callers can surface VALIDATION_ERRORS.
+	"${SCRIPT_DIR}/verify-brief-helper.sh" check-readiness "$brief_path" 2>&1 || return 1
 	return 0
 }
 
 # GH#32904: worker readiness gates dispatch, not publication. Held and untagged
 # tasks publish with a lightweight brief; only auto-dispatch projection needs it.
+# On failure, the validator output is printed for the held diagnostic.
 _publication_dispatch_ready() {
 	local task_id="$1" desired_labels="$2"
 	[[ ",${desired_labels}," == *",${PUBLICATION_AUTO_LABEL},"* ]] || return 0
@@ -296,9 +328,14 @@ _publication_reconcile_one() {
 		print_warning "${task_id}/#${issue_num}: task line parse failed; retaining ${PUBLICATION_PENDING_LABEL}"
 		return 1
 	}
-	_publication_dispatch_ready "$task_id" "$desired_labels" || {
-		print_warning "${task_id}/#${issue_num}: auto-dispatch brief is not worker-ready; retaining ${PUBLICATION_PENDING_LABEL}"
-		return 1
+	local readiness_out=""
+	readiness_out=$(_publication_dispatch_ready "$task_id" "$desired_labels") || {
+		# Author-side content gap: held (code 5), not a run failure. The fence
+		# stays (publication:pending retained) so the brief is never dispatched.
+		print_warning "${task_id}/#${issue_num}: auto-dispatch brief is not worker-ready; held, retaining ${PUBLICATION_PENDING_LABEL}"
+		_publication_note_brief_not_ready "$repo" "$issue_num" "$task_id" "$readiness_out" ||
+			print_warning "${task_id}/#${issue_num}: could not post brief-not-ready diagnostic"
+		return 5
 	}
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
 	_publication_task_has_dependency "$task_line" "$issue_json" "$repo" "$issue_num" && has_dependency=1
@@ -412,7 +449,7 @@ cmd_reconcile() {
 	}
 
 	local issues_json="" issue_num="" title="" task_id="" created_at="" age_hours="" rc=0 title_bound=1
-	local reconciled=0 deferred=0 stale=0 failed=0 unmapped=0 attempts=0 diagnostics=0
+	local reconciled=0 deferred=0 stale=0 failed=0 unmapped=0 held=0 attempts=0 diagnostics=0
 	issues_json=$(gh issue list --repo "$repo" --state open --label "$PUBLICATION_PENDING_LABEL" \
 		--limit "$scan_limit" --json number,title,createdAt) || return 1
 	while IFS=$'\t' read -r issue_num title created_at; do
@@ -463,10 +500,11 @@ cmd_reconcile() {
 				fi
 			fi
 			;;
+		5) held=$((held + 1)) ;;
 		*) failed=$((failed + 1)) ;;
 		esac
 	done < <(jq -r '.[] | [.number, .title, (.createdAt // "")] | @tsv' <<<"$issues_json")
-	printf 'PUBLICATION_RECONCILE_SUMMARY reconciled=%s deferred=%s stale=%s failed=%s unmapped=%s\n' "$reconciled" "$deferred" "$stale" "$failed" "$unmapped"
+	printf 'PUBLICATION_RECONCILE_SUMMARY reconciled=%s deferred=%s stale=%s failed=%s unmapped=%s held=%s\n' "$reconciled" "$deferred" "$stale" "$failed" "$unmapped" "$held"
 	[[ $((stale + failed)) -eq 0 ]]
 }
 
