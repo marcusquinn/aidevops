@@ -694,6 +694,18 @@ cmd_sweep_check() {
 		fi
 	fi
 
+	if _sweep_check_debt "$repo_slug" "$stall_hours" "$now_epoch"; then
+		return 0
+	fi
+	return 1
+}
+
+# Evaluate debt snapshots after the daily sweep cooldown has elapsed.
+_sweep_check_debt() {
+	local repo_slug="$1"
+	local stall_hours="$2"
+	local now_epoch="$3"
+
 	# Check 2: Has debt count stalled?
 	local current_debt=0
 	current_debt=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
@@ -873,6 +885,24 @@ cmd_ratchet_check() {
 		return 1
 	fi
 
+	local actual_func actual_nest actual_size actual_bash32
+	actual_func=$(_ratchet_count_functions "$repo_path" "$sh_files")
+	actual_nest=$(_ratchet_count_nesting "$repo_path" "$sh_files")
+	actual_size=$(_ratchet_count_size "$repo_path" "$sh_files")
+	actual_bash32=$(_ratchet_count_bash32 "$repo_path" "$sh_files")
+
+	if _ratchet_propose "$gap" "$func_threshold" "$nest_threshold" "$size_threshold" "$bash32_threshold" \
+		"$actual_func" "$actual_nest" "$actual_size" "$actual_bash32"; then
+		return 0
+	fi
+	return 1
+}
+
+# Keep each metric's existing scanner independent of threshold proposals.
+_ratchet_count_functions() {
+	local repo_path="$1"
+	local sh_files="$2"
+
 	# Count function complexity violations (>100 lines per function)
 	local actual_func=0
 	while IFS= read -r file; do
@@ -890,6 +920,14 @@ cmd_ratchet_check() {
 			actual_func=$((actual_func + count))
 		fi
 	done <<<"$sh_files"
+
+	printf '%s\n' "$actual_func"
+	return 0
+}
+
+_ratchet_count_nesting() {
+	local repo_path="$1"
+	local sh_files="$2"
 
 	# Count nesting depth violations (>8 levels per file)
 	local actual_nest=0
@@ -910,6 +948,14 @@ cmd_ratchet_check() {
 		fi
 	done <<<"$sh_files"
 
+	printf '%s\n' "$actual_nest"
+	return 0
+}
+
+_ratchet_count_size() {
+	local repo_path="$1"
+	local sh_files="$2"
+
 	# Count file size violations (>1500 lines)
 	local actual_size=0
 	while IFS= read -r file; do
@@ -922,6 +968,14 @@ cmd_ratchet_check() {
 			actual_size=$((actual_size + 1))
 		fi
 	done <<<"$sh_files"
+
+	printf '%s\n' "$actual_size"
+	return 0
+}
+
+_ratchet_count_bash32() {
+	local repo_path="$1"
+	local sh_files="$2"
 
 	# Count Bash 3.2 compatibility violations
 	local actual_bash32=0
@@ -966,6 +1020,22 @@ cmd_ratchet_check() {
 			actual_bash32=$((actual_bash32 + cnt3))
 		fi
 	done <<<"$sh_files"
+
+	printf '%s\n' "$actual_bash32"
+	return 0
+}
+
+# Report ratchet proposals in their original order with the same +2 buffer.
+_ratchet_propose() {
+	local gap="$1"
+	local func_threshold="$2"
+	local nest_threshold="$3"
+	local size_threshold="$4"
+	local bash32_threshold="$5"
+	local actual_func="$6"
+	local actual_nest="$7"
+	local actual_size="$8"
+	local actual_bash32="$9"
 
 	_log "INFO" "Actual violations — func:${actual_func} nest:${actual_nest} size:${actual_size} bash32:${actual_bash32}"
 	_log "INFO" "Current thresholds — func:${func_threshold} nest:${nest_threshold} size:${size_threshold} bash32:${bash32_threshold}"
