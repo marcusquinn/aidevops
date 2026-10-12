@@ -1173,12 +1173,12 @@ _emit_sync_pat_advisory() {
 	cat >"$advisory_file" <<ADVISORY_EOF
 [ADVISORY] SYNC_PAT not set for ${slug}
 
-This repo uses issue-sync.yml and has protection on the default branch
+This repo uses issue-sync or Repository Metrics and has protection on the default branch
 (${protection_desc}).
 Direct publication therefore routes through one deterministic pull request.
 This repository does not allow GitHub Actions to create pull requests, so the
-job-scoped token cannot open that fallback PR. Without SYNC_PAT, TODO.md
-auto-completion fails after publishing its protected-branch candidate.
+job-scoped token cannot open that fallback PR. Without SYNC_PAT, generated
+TODO.md or repository metrics updates cannot complete protected publication.
 
 For a guided fix across all affected repos, run \`/setup-git\` in
 your AI assistant (OpenCode or Claude Code). It walks you through
@@ -1200,7 +1200,7 @@ Verify:
 Dismiss once fixed:
    aidevops security dismiss sync-pat-${slug_sanitised}
 
-See AGENTS.md "Known limitation — issue-sync TODO auto-completion" for background.
+See reference/sync-pat-platforms.md and aidevops/badges.md for background.
 ADVISORY_EOF
 
 	print_info "  Advisory written to: $advisory_file"
@@ -1258,6 +1258,29 @@ _actions_can_create_pull_requests() {
 	return 1
 }
 
+# GH#34480: metrics callers can have arbitrary names (e.g. repo-metrics.yaml).
+# Inspect active uses: lines, not comments or filenames, without executing content.
+_repo_uses_metrics_workflow() {
+	local slug="$1"
+	local workflow_paths=""
+	local workflow_path=""
+	local content=""
+	workflow_paths=$(gh api "repos/${slug}/contents/.github/workflows" \
+		--jq '.[] | select(.type == "file" and (.name | test("\\.ya?ml$"))) | .path' 2>/dev/null) || return 1
+	while IFS= read -r workflow_path; do
+		case "$workflow_path" in
+		.github/workflows/*.yml | .github/workflows/*.yaml) ;;
+		*) continue ;;
+		esac
+		content=$(gh api "repos/${slug}/contents/${workflow_path}" --jq '.content' 2>/dev/null |
+			base64 --decode 2>/dev/null) || continue
+		if grep -Eq '^[[:space:]]*uses:[[:space:]]*[^#[:space:]]*/\.github/workflows/loc-badge-reusable\.yml@' <<<"$content"; then
+			return 0
+		fi
+	done <<<"$workflow_paths"
+	return 1
+}
+
 # Check whether a repo requires SYNC_PAT based on workflow + branch protection.
 # Writes result to global SYNC_PAT_NEED_RESULT: "needed:<desc>" | "not_needed".
 # Side effect: prints findings and cleans stale advisories.
@@ -1277,10 +1300,11 @@ _check_sync_pat_need() {
 
 	SYNC_PAT_NEED_RESULT=""
 
-	# Step 1: Does the repo use issue-sync.yml?
-	if ! gh api "repos/${slug}/contents/.github/workflows/issue-sync.yml" &>/dev/null 2>&1; then
-		print_pass "No issue-sync.yml — SYNC_PAT not needed for $slug"
-		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No issue-sync.yml in $slug"
+	# Step 1: Does any supported publisher need a protected-branch PR path?
+	if ! gh api "repos/${slug}/contents/.github/workflows/issue-sync.yml" &>/dev/null 2>&1 &&
+		! _repo_uses_metrics_workflow "$slug"; then
+		print_pass "No issue-sync.yml or metrics caller — SYNC_PAT not needed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No issue-sync.yml or metrics caller in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
 		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
 		return 0
@@ -1319,7 +1343,7 @@ _check_sync_pat_need() {
 	if [[ "$protected_kind" == "$SYNC_PAT_PROTECTION_CLASSIC" ]] &&
 		! jq -e '.required_pull_request_reviews != null or .required_status_checks != null' \
 			<<<"$protection_json" >/dev/null 2>&1; then
-		print_pass "Branch protection does not block direct issue-sync publication — SYNC_PAT not needed for $slug"
+		print_pass "Branch protection does not block direct publication — SYNC_PAT not needed for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No publication-blocking protection in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
 		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
@@ -1329,7 +1353,7 @@ _check_sync_pat_need() {
 	# The job-scoped token is sufficient when Actions may create pull requests,
 	# even though direct publication is blocked by default-branch protection.
 	if _actions_can_create_pull_requests "$slug"; then
-		print_pass "Actions can create the issue-sync PR — SYNC_PAT not needed for $slug"
+		print_pass "Actions can create the protected-publication PR — SYNC_PAT not needed for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "Actions PR creation enabled in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
 		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
@@ -1376,7 +1400,7 @@ check_sync_pat() {
 	local repo_path="$1"
 	local ruleset_details="${2:-}"
 
-	print_header "Phase 7: SYNC_PAT Detection (issue-sync)"
+	print_header "Phase 7: SYNC_PAT Detection (issue-sync / Repository Metrics)"
 
 	# Need gh CLI
 	if ! command -v gh &>/dev/null; then
@@ -1432,7 +1456,7 @@ check_sync_pat() {
 	local protection_desc
 	protection_desc="${SYNC_PAT_NEED_RESULT#needed:}"
 
-	print_warn "SYNC_PAT not set for $slug — protected issue-sync cannot create its fallback PR"
+	print_warn "SYNC_PAT not set for $slug — protected publication cannot create its fallback PR"
 	add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "SYNC_PAT not set for $slug"
 
 	_emit_sync_pat_advisory "$slug" "$slug_sanitised" "$advisory_file" "$protection_desc"

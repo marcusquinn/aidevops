@@ -123,14 +123,16 @@ The helper never reads the secret value — it only confirms presence.
 `security-posture-helper-repo.sh` Phase 7 (`_check_sync_pat_need`) determines
 whether a repo needs `SYNC_PAT` based on:
 
-1. Does `.github/workflows/issue-sync.yml` exist? (No → not needed.)
+1. Does `.github/workflows/issue-sync.yml` exist, or does an active workflow
+   `uses:` line call `loc-badge-reusable.yml`? Metrics caller filenames may vary.
+   (Neither → not needed.)
 2. Is the default branch protected (classic protection OR rulesets, t2806)?
    (No → not needed.)
 3. Can GitHub Actions create the deterministic fallback PR? (Yes → not needed
    for protected publication.)
 4. Is `SYNC_PAT` already set? (Yes → configured.)
 
-When issue-sync exists, protection blocks direct publication, Actions cannot
+When issue-sync or Repository Metrics exists, protection blocks direct publication, Actions cannot
 create the fallback PR, and the secret is absent, an advisory is written at
 `~/.aidevops/advisories/sync-pat-<SLUG_SAFE>.advisory`. The
 `setup-debt-helper.sh` aggregator picks it up for the toast warning and

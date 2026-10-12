@@ -70,7 +70,7 @@ on:
         default: 'ubuntu-latest'
         type: string
       fail_on_push_error:
-        description: 'Fail the job when the metrics push is still rejected after retries (for example a missing, expired or under-scoped SYNC_PAT on a protected branch). Set false to keep the old warning-only behaviour.'
+        description: 'Fail when direct or protected-branch PR publication fails after bounded attempts. Set false to keep warning-only behaviour.'
         required: false
         type: boolean
         default: true
@@ -80,7 +80,7 @@ on:
         description: 'Optional token with read access to a private configured helper repository'
       SYNC_PAT:
         required: false
-        description: 'Fine-grained PAT with Contents:read/write, bypasses branch protection on default-branch push'
+        description: 'Optional fine-grained PAT with Contents:read/write; add Pull requests:read/write for the bounded PR API fallback when Actions cannot create PRs. Does not bypass protection.'
 
 jobs:
   generate:
@@ -91,7 +91,9 @@ jobs:
       group: repo-metrics-${{ github.ref }}
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: write
+      pull-requests: write
 
     steps:
       - name: Skip if commit was made by GitHub Actions
@@ -113,10 +115,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::warning::SYNC_PAT not present in this run — metrics commit may be rejected by branch protection."
-            echo "::warning::Set with: gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
+            echo "::notice::SYNC_PAT not present — direct metrics publication uses GITHUB_TOKEN; GH006 routes through one PR when Actions PR creation is enabled."
           else
-            echo "::notice::SYNC_PAT present — metrics commit will use PAT"
+            echo "::notice::SYNC_PAT present — direct publication uses PAT; branch protection remains authoritative and the PR API may use it as a bounded fallback."
           fi
 
       - name: Checkout repository
@@ -126,16 +127,34 @@ jobs:
           fetch-depth: 1
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
+      - name: Resolve metrics helper ref
+        id: helper-ref
+        if: steps.check-author.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HELPER_REPOSITORY: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
+          HELPER_REF: ${{ inputs.aidevops_ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HELPER_REF" ]]; then
+            # job.workflow_sha/repository are not supported expression contexts.
+            # The run records the exact SHA of each referenced reusable workflow.
+            HELPER_REF=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" |
+              jq -er --arg prefix "${HELPER_REPOSITORY}/.github/workflows/loc-badge-reusable.yml@" \
+                '[.referenced_workflows[]? | select(.path | startswith($prefix)) | .sha] | unique | if length == 1 then .[0] else error("Cannot resolve one pinned metrics helper SHA; set aidevops_ref explicitly") end')
+            [[ "$HELPER_REF" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          fi
+          [[ "$HELPER_REF" != *$'\n'* && "$HELPER_REF" != *$'\r'* ]] || exit 1
+          printf 'ref=%s\n' "$HELPER_REF" >> "$GITHUB_OUTPUT"
+
       - name: Checkout aidevops framework scripts
         if: steps.check-author.outputs.skip != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
-          # An explicit aidevops_ref wins. Otherwise use the commit this reusable
-          # workflow file was called at (job.workflow_sha), when helpers come from
-          # that same repository, so helpers never drift from the pinned YAML.
-          ref: ${{ inputs.aidevops_ref || ((inputs.aidevops_repository || 'marcusquinn/aidevops') == job.workflow_repository && job.workflow_sha) || 'main' }}
+          # Explicit override or the exact referenced reusable workflow SHA.
+          ref: ${{ steps.helper-ref.outputs.ref }}
           fetch-depth: 1
           token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -188,33 +207,10 @@ jobs:
           LEGACY_BADGE_DIR: ${{ inputs.legacy_badge_dir }}
           COMMIT_SUBJECT: ${{ inputs.commit_message }}
           FAIL_ON_PUSH_ERROR: ${{ inputs.fail_on_push_error }}
-          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AIDEVOPS_METRICS_PR_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
           set -euo pipefail
-          METRIC_PATHS=("$OUTPUT_DIR" "$BADGE_DIR")
-          [[ -z "${LEGACY_BADGE_DIR:-}" ]] || METRIC_PATHS+=("$LEGACY_BADGE_DIR")
-          if [[ -z "$(git status --porcelain -- "${METRIC_PATHS[@]}")" ]]; then
-            echo "No repository metrics changes to commit"
-            exit 0
-          fi
-          git add -- "${METRIC_PATHS[@]}"
-          git commit -m "$COMMIT_SUBJECT"
-          for i in 1 2 3; do
-            echo "Push attempt $i..."
-            git pull --rebase origin "${GITHUB_REF_NAME}" || true
-            if git push; then
-              echo "Push succeeded on attempt $i"
-              exit 0
-            fi
-            sleep $((i * 3))
-          done
-          # GH#33583: a rejected push must not look like a passed run, or badges
-          # and docs/metrics go stale silently.
-          if [[ "${FAIL_ON_PUSH_ERROR:-true}" == "false" ]]; then
-            echo "::warning::Failed to push repository metrics updates after 3 attempts (likely branch protection without a valid SYNC_PAT)"
-            echo "::warning::Set with: gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
-            exit 0
-          fi
-          echo "::error::Failed to push repository metrics updates after 3 attempts (likely branch protection without a valid SYNC_PAT)"
-          echo "::error::Set with: gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
-          exit 1
+          bash __aidevops/.agents/scripts/repo-metrics-git-push-helper.sh \
+            "${GITHUB_REF_NAME}" "$OUTPUT_DIR" "$BADGE_DIR" \
+            "$LEGACY_BADGE_DIR" "$COMMIT_SUBJECT"
