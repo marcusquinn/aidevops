@@ -743,6 +743,23 @@ create_github_issue() {
 		return 0
 	fi
 
+	_create_github_issue_fallback "$title" "$description" "$labels" "$repo_path" \
+		"$_task_id_for_todo" "$_slug_for_warn" "$skip_wrapper_auto_assignment"
+	return $?
+}
+
+# Create a structured issue when delegation and duplicate recovery did not succeed.
+_create_github_issue_fallback() {
+	local title="$1"
+	local description="$2"
+	local labels="$3"
+	local repo_path="$4"
+	local _task_id_for_todo="$5"
+	local _slug_for_warn="$6"
+	local skip_wrapper_auto_assignment="$7"
+	local canonical_labels="$labels"
+	local issue_num
+
 	# Fallback: bare issue creation with structured body.
 	# t3039: use gh_create_issue (REST-aware wrapper, from shared-gh-wrappers.sh sourced
 	# transitively via shared-constants.sh) instead of raw gh issue create so that issue
@@ -819,6 +836,28 @@ create_github_issue() {
 		return 1
 	fi
 
+	_finalize_github_issue_fallback "$issue_num" "$repo_path" "$title" "$labels" "$body" "$_slug_for_warn"
+
+	# Persist the canonical labels, not the publication-filtered API labels.
+	if ! _converge_created_issue_ref \
+		"$_task_id_for_todo" "$issue_num" "$title" "$canonical_labels" "$repo_path"; then
+		log_warn "Created issue #${issue_num}, but failed to persist task mapping for ${_task_id_for_todo}"
+		return 1
+	fi
+
+	echo "$issue_num"
+	return 0
+}
+
+# Preserve bare-creation assignment, locking, relationships and parent warnings.
+_finalize_github_issue_fallback() {
+	local issue_num="$1"
+	local repo_path="$2"
+	local title="$3"
+	local labels="$4"
+	local body="$5"
+	local _slug_for_warn="$6"
+
 	# Auto-assign to current user to prevent duplicate dispatch
 	_auto_assign_issue "$issue_num" "$repo_path"
 	_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
@@ -862,18 +901,6 @@ create_github_issue() {
 		fi
 	fi
 
-	# t2548: ensure TODO.md has an entry for this task. The bare-fallback
-	# path creates the issue via `gh issue create` directly and never goes
-	# through issue-sync-helper.sh, so _push_process_task never runs and
-	# the TODO entry is never written. This call closes that gap idempotently.
-	# GH#21473: pass $title (one-liner), not $description (full body).
-	if ! _converge_created_issue_ref \
-		"$_task_id_for_todo" "$issue_num" "$title" "$canonical_labels" "$repo_path"; then
-		log_warn "Created issue #${issue_num}, but failed to persist task mapping for ${_task_id_for_todo}"
-		return 1
-	fi
-
-	echo "$issue_num"
 	return 0
 }
 
@@ -1876,29 +1903,8 @@ _claim_validate_target_repo() {
 	return 0
 }
 
-main() {
-	parse_args "$@"
-	load_project_config "$REPO_PATH"
-	_claim_validate_target_repo || return 1
-	_main_handle_namespaced_mode
-	[[ "$_CLAIM_NAMESPACED_HANDLED" == "true" ]] && return "$_CLAIM_NAMESPACED_RC"
-
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup _claim_counter_cleanup_git_context
-	local counter_setup_rc=0
-	_claim_counter_prepare_git_context "$REPO_PATH" || counter_setup_rc=$?
-	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
-	_claim_apply_detected_default_branch
-
-	if [[ "$SYNC_COUNTER_BRANCH" == "true" ]]; then
-		_main_sync_counter_branch "$REPO_PATH"
-		return $?
-	fi
-
-	resolve_implicit_counter_branch "$REPO_PATH" || counter_setup_rc=$?
-	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
-
+# Surface routing and duplicate warnings before allocation without mutating IDs.
+_main_preclaim_discovery() {
 	# GH#20834: detect predecessor refs in description and populate
 	# _CLAIM_BLOCKED_BY_REFS for use by _ensure_todo_entry_written.
 	_apply_blocked_by_detection
@@ -1931,11 +1937,12 @@ main() {
 		fi
 	fi
 
-	log_info "Using remote: ${REMOTE_NAME}, counter branch: ${COUNTER_BRANCH}"
+	return 0
+}
 
-	local platform
-	platform=$(detect_platform)
-	log_info "Detected platform: $platform"
+# Validate remote policy, labels and body before advancing the monotonic counter.
+_main_preflight_allocation() {
+	local platform="$1"
 
 	# A CAS counter cannot use a branch whose updates must arrive through pull
 	# requests: review/merge is not an atomic compare-and-swap lock. GitHub's
@@ -1975,6 +1982,58 @@ main() {
 	if ! _validate_description_scope_before_allocation; then
 		return 3
 	fi
+	return 0
+}
+
+# Merge pre-written TODO tags into the canonical issue labels after allocation.
+_main_enrich_todo_labels() {
+	local first_id="$1"
+	local is_offline="$2"
+
+	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]]; then
+		local _task_id_for_scan
+		_task_id_for_scan=$(_format_legacy_task_id "$first_id") || return 1
+		local _todo_derived_labels=""
+		_todo_derived_labels=$(_scan_todo_labels_for_task "$_task_id_for_scan" "$REPO_PATH") || true
+		if [[ -n "$_todo_derived_labels" ]]; then
+			TASK_LABELS="${TASK_LABELS:+${TASK_LABELS},}${_todo_derived_labels}"
+			# Deduplicate merged label set
+			TASK_LABELS=$(printf '%s' "$TASK_LABELS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+			log_info "t2436: Derived labels from TODO.md tags for ${_task_id_for_scan}: ${_todo_derived_labels}"
+		fi
+	fi
+	return 0
+}
+
+main() {
+	parse_args "$@"
+	load_project_config "$REPO_PATH"
+	_claim_validate_target_repo || return 1
+	_main_handle_namespaced_mode
+	[[ "$_CLAIM_NAMESPACED_HANDLED" == "true" ]] && return "$_CLAIM_NAMESPACED_RC"
+
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup _claim_counter_cleanup_git_context
+	local counter_setup_rc=0
+	_claim_counter_prepare_git_context "$REPO_PATH" || counter_setup_rc=$?
+	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
+	_claim_apply_detected_default_branch
+
+	if [[ "$SYNC_COUNTER_BRANCH" == "true" ]]; then
+		_main_sync_counter_branch "$REPO_PATH"
+		return $?
+	fi
+
+	resolve_implicit_counter_branch "$REPO_PATH" || counter_setup_rc=$?
+	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
+
+	_main_preclaim_discovery || return $?
+	log_info "Using remote: ${REMOTE_NAME}, counter branch: ${COUNTER_BRANCH}"
+	local platform
+	platform=$(detect_platform)
+	log_info "Detected platform: $platform"
+	_main_preflight_allocation "$platform" || return $?
 
 	# --- Allocate the ID(s) first (the critical atomic step) ---
 
@@ -2006,18 +2065,7 @@ main() {
 	# this ensures protected labels like parent-task are applied at creation
 	# time rather than waiting for the asynchronous issue-sync workflow.
 	# Non-blocking: failure to find the entry leaves TASK_LABELS unchanged.
-	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]]; then
-		local _task_id_for_scan
-		_task_id_for_scan=$(_format_legacy_task_id "$first_id") || return 1
-		local _todo_derived_labels=""
-		_todo_derived_labels=$(_scan_todo_labels_for_task "$_task_id_for_scan" "$REPO_PATH") || true
-		if [[ -n "$_todo_derived_labels" ]]; then
-			TASK_LABELS="${TASK_LABELS:+${TASK_LABELS},}${_todo_derived_labels}"
-			# Deduplicate merged label set
-			TASK_LABELS=$(printf '%s' "$TASK_LABELS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
-			log_info "t2436: Derived labels from TODO.md tags for ${_task_id_for_scan}: ${_todo_derived_labels}"
-		fi
-	fi
+	_main_enrich_todo_labels "$first_id" "$is_offline" || return 1
 
 	local _issue_ref_prefix="" _issue_has_any="" _issue_first_num="" _issue_nums_csv=""
 	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then
