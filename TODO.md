@@ -1671,9 +1671,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18681 fix(full-loop): define the cleanup-receipt failure helper at file scope #bug #framework tier:simple ref:GH#34477 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18681-brief.md] pr:#34478 completed:2026-10-12
 
-- [ ] t18682 fix(tests): update gate-pull-before-measure triage case for pinned-blob measurement #auto-dispatch #bug ref:GH#34514
+- [x] t18682 fix(tests): update gate-pull-before-measure triage case for pinned-blob measurement #auto-dispatch #bug ref:GH#34514 pr:#34518 completed:2026-10-12
 
-- [ ] t18683 fix(tests): stub final ownership fence in worker-detection dispatch_with_dedup cases #auto-dispatch #bug ref:GH#34515
+- [x] t18683 fix(tests): stub final ownership fence in worker-detection dispatch_with_dedup cases #auto-dispatch #bug ref:GH#34515 pr:#34519 completed:2026-10-12
 
 ## In Progress
 
