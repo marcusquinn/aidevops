@@ -708,13 +708,18 @@ ffl_reapply_edits() {
 	return 0
 }
 
-# Fast-forward a remote-less (local_only) canonical default branch to a
-# linked-worktree branch tip. Dirty user state is backed up, verified, and
-# re-applied after the fast-forward.
-fast_forward_local() {
+FFL_DEFAULT_BRANCH=""
+FFL_OLD_SHA=""
+FFL_NEW_SHA=""
+FFL_BACKUP_ID=""
+FFL_BACKUP_DIR=""
+FFL_EDITS_TREE=""
+
+# Validate a local fast-forward request. Returns 0 when eligible, 1 when
+# blocked, 2 when the default branch already equals the source tip.
+ffl_validate() {
 	local repo="$1"
 	local from_branch="$2"
-	local task_id="$3"
 	local local_ref=""
 	local from_ref="refs/heads/${from_branch}"
 	local default_branch=""
@@ -725,15 +730,6 @@ fast_forward_local() {
 	local line=""
 	local occupied_path=""
 	local from_linked=false
-	local lock="${common_dir}/aidevops-canonical-recovery.lock"
-	local backup_helper="${SCRIPT_DIR}/dirty-worktree-backup-helper.sh"
-	local audit="${SCRIPT_DIR}/audit-log-helper.sh"
-	local audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
-	local status_out=""
-	local backup_id=""
-	local backup_dir=""
-	local backup_output=""
-	local edits_tree=""
 	local git_path=""
 
 	remotes=$("$REAL_GIT" -C "$repo" remote) || { ffl_block "remote list cannot be read"; return 1; }
@@ -776,10 +772,82 @@ fast_forward_local() {
 		{ ffl_block "source branch ${from_branch} is not checked out in a linked worktree"; return 1; }
 	"$REAL_GIT" -C "$repo" merge-base --is-ancestor "$old_sha" "$new_sha" ||
 		{ ffl_block "source branch ${from_branch} is not a pure fast-forward of ${default_branch}"; return 1; }
-	if [[ "$old_sha" == "$new_sha" ]]; then
-		printf 'VERIFIED: %s already at %s\n' "$default_branch" "$from_branch"
+	FFL_DEFAULT_BRANCH="$default_branch"
+	FFL_OLD_SHA="$old_sha"
+	FFL_NEW_SHA="$new_sha"
+	[[ "$old_sha" != "$new_sha" ]] || return 2
+	return 0
+}
+
+# Back up, verify and clean dirty canonical state; sets FFL_BACKUP_* globals.
+ffl_preserve_and_clean() {
+	local repo="$1"
+	local task_id="$2"
+	local new_sha="$3"
+	local backup_helper="${SCRIPT_DIR}/dirty-worktree-backup-helper.sh"
+	local status_out=""
+	local backup_output=""
+	local backup_id=""
+	local backup_dir=""
+	local edits_tree=""
+
+	status_out=$("$REAL_GIT" -C "$repo" status --porcelain=v1) || { ffl_block "canonical status cannot be read"; return 1; }
+	[[ -n "$status_out" ]] || return 0
+	[[ -f "$backup_helper" ]] || { ffl_block "dirty-worktree backup helper is unavailable"; return 1; }
+	backup_output=$(AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" backup \
+		--repo "$repo" --reason "canonical local fast-forward" \
+		--operation-id "canonical-local-ff-${task_id}-${new_sha}" --machine) ||
+		{ ffl_block "canonical dirty state could not be preserved"; return 1; }
+	IFS='|' read -r backup_id backup_dir <<<"${backup_output##*$'\n'}"
+	[[ -n "$backup_id" && -d "$backup_dir" ]] || { ffl_block "canonical backup evidence is incomplete"; return 1; }
+	AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" verify --repo "$repo" --backup "$backup_id" >/dev/null ||
+		{ ffl_block "canonical backup verification failed"; return 1; }
+	AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" matches --repo "$repo" --backup "$backup_id" >/dev/null ||
+		{ ffl_block "canonical state changed after backup"; return 1; }
+	printf 'PRESERVED_BACKUP_ID=%s\n' "$backup_id"
+	printf 'PRESERVED_BACKUP_DIR=%s\n' "$backup_dir"
+	printf 'RESTORE_COMMAND=%q restore --repo %q --backup %q --confirm RESTORE_DIRTY_WORKTREE_BACKUP\n' \
+		"$backup_helper" "$repo" "$backup_id"
+	edits_tree=$(awk -F'\t' '$1 == "worktree_tree" { print $2 }' "${backup_dir}/manifest.tsv")
+	[[ -n "$edits_tree" ]] || { ffl_block "backup worktree tree is missing"; return 1; }
+	AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" clean --repo "$repo" --backup "$backup_id" \
+		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null ||
+		{ ffl_block "canonical clean failed (backup ${backup_id})"; return 1; }
+	FFL_BACKUP_ID="$backup_id"
+	FFL_BACKUP_DIR="$backup_dir"
+	FFL_EDITS_TREE="$edits_tree"
+	return 0
+}
+
+# Fast-forward a remote-less (local_only) canonical default branch to a
+# linked-worktree branch tip. Dirty user state is backed up, verified, and
+# re-applied after the fast-forward.
+fast_forward_local() {
+	local repo="$1"
+	local from_branch="$2"
+	local task_id="$3"
+	local default_branch=""
+	local local_ref=""
+	local old_sha=""
+	local new_sha=""
+	local validate_status=0
+	local lock="${common_dir}/aidevops-canonical-recovery.lock"
+	local audit="${SCRIPT_DIR}/audit-log-helper.sh"
+	local audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
+	local backup_id=""
+	local backup_dir=""
+	local edits_tree=""
+
+	ffl_validate "$repo" "$from_branch" || validate_status=$?
+	if [[ "$validate_status" -eq 2 ]]; then
+		printf 'VERIFIED: %s already at %s\n' "$FFL_DEFAULT_BRANCH" "$from_branch"
 		return 0
 	fi
+	[[ "$validate_status" -eq 0 ]] || return 1
+	default_branch="$FFL_DEFAULT_BRANCH"
+	old_sha="$FFL_OLD_SHA"
+	new_sha="$FFL_NEW_SHA"
+	local_ref="refs/heads/${default_branch}"
 	[[ -x "$audit" ]] || { ffl_block "tamper-evident audit helper is unavailable"; return 1; }
 
 	mkdir "$lock" 2>/dev/null || { ffl_block "canonical recovery lock is already held"; return 1; }
@@ -794,29 +862,10 @@ fast_forward_local() {
 		--detail "old_sha=${old_sha}" --detail "new_sha=${new_sha}" >/dev/null ||
 		{ ffl_block "recovery audit record could not be written"; return 1; }
 
-	status_out=$("$REAL_GIT" -C "$repo" status --porcelain=v1) || { ffl_block "canonical status cannot be read"; return 1; }
-	if [[ -n "$status_out" ]]; then
-		[[ -f "$backup_helper" ]] || { ffl_block "dirty-worktree backup helper is unavailable"; return 1; }
-		backup_output=$(AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" backup \
-			--repo "$repo" --reason "canonical local fast-forward" \
-			--operation-id "canonical-local-ff-${task_id}-${new_sha}" --machine) ||
-			{ ffl_block "canonical dirty state could not be preserved"; return 1; }
-		IFS='|' read -r backup_id backup_dir <<<"${backup_output##*$'\n'}"
-		[[ -n "$backup_id" && -d "$backup_dir" ]] || { ffl_block "canonical backup evidence is incomplete"; return 1; }
-		AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" verify --repo "$repo" --backup "$backup_id" >/dev/null ||
-			{ ffl_block "canonical backup verification failed"; return 1; }
-		AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" matches --repo "$repo" --backup "$backup_id" >/dev/null ||
-			{ ffl_block "canonical state changed after backup"; return 1; }
-		printf 'PRESERVED_BACKUP_ID=%s\n' "$backup_id"
-		printf 'PRESERVED_BACKUP_DIR=%s\n' "$backup_dir"
-		printf 'RESTORE_COMMAND=%q restore --repo %q --backup %q --confirm RESTORE_DIRTY_WORKTREE_BACKUP\n' \
-			"$backup_helper" "$repo" "$backup_id"
-		edits_tree=$(awk -F'\t' '$1 == "worktree_tree" { print $2 }' "${backup_dir}/manifest.tsv")
-		[[ -n "$edits_tree" ]] || { ffl_block "backup worktree tree is missing"; return 1; }
-		AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" clean --repo "$repo" --backup "$backup_id" \
-			--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null ||
-			{ ffl_block "canonical clean failed (backup ${backup_id})"; return 1; }
-	fi
+	ffl_preserve_and_clean "$repo" "$task_id" "$new_sha" || return 1
+	backup_id="$FFL_BACKUP_ID"
+	backup_dir="$FFL_BACKUP_DIR"
+	edits_tree="$FFL_EDITS_TREE"
 
 	# shellcheck source=shared-constants.sh
 	source "${SCRIPT_DIR}/shared-constants.sh"
