@@ -1268,9 +1268,26 @@ unset _shared_constants_dir
 #       # ... single file, no clobbering risk
 #   }
 #
-# Nesting: RETURN traps are function-scoped in bash 3.2+, so nested
-# function calls each get their own trap. _save_cleanup_scope saves the
-# parent's cleanup list; _run_cleanups restores it after executing.
+# Nesting and ownership (t18679): the RETURN trap is one global setting, not
+# a per-function one. A callee's trap can persist into a trap-less caller
+# (and on bash 4+ even replace a caller's different trap), so the trap may
+# fire in frames that do not own the current scope. _save_cleanup_scope
+# therefore records the owning frame depth (${#FUNCNAME[@]}) with each scope,
+# and _run_cleanups acts only on scopes owned by the frame that is returning
+# (or by deeper frames that already returned without running theirs). A fire
+# in any other frame is a no-op. After running its own scope, _run_cleanups
+# clears the RETURN trap (it has the trace attribute, so `trap - RETURN`
+# reaches the returning frame); bash then restores the caller's saved trap,
+# so the cleared trap never keeps firing in trap-less callers.
+#
+# Helpers that open a scope on behalf of their caller pass the number of
+# extra frames: `_save_cleanup_scope 1` binds the scope to the helper's
+# caller (see _gh_wrapper_enter_cleanup_scope in shared-gh-wrappers.sh).
+#
+# Direct calls (EXIT/signal handlers, or an explicit call after
+# `trap - RETURN`) run the caller's own scope when it has one; otherwise,
+# when no _run_cleanups RETURN trap is active, they run the innermost
+# pending scope (exit-time behaviour).
 #
 # Migration from raw trap (only needed for multi-cleanup functions):
 #   BEFORE: trap 'rm -f "${a:-}"' RETURN  # second trap clobbers first
@@ -1283,8 +1300,14 @@ unset _shared_constants_dir
 # Global state for the cleanup stack.
 # _CLEANUP_CMDS: newline-separated list of commands for the current scope.
 # _CLEANUP_SAVE_STACK: saved parent scopes (unit-separator delimited).
+# _CLEANUP_OWNER: FUNCNAME depth of the frame owning the current scope
+#   (0 = unowned base scope).
+# _CLEANUP_OWNER_STACK: saved parent owners, kept in step with
+#   _CLEANUP_SAVE_STACK (unit-separator delimited).
 _CLEANUP_CMDS=""
 _CLEANUP_SAVE_STACK=""
+_CLEANUP_OWNER=0
+_CLEANUP_OWNER_STACK=""
 
 # Add a cleanup command to the current scope.
 # The command runs when the calling function returns (LIFO order).
@@ -1301,56 +1324,139 @@ push_cleanup() {
 	return 0
 }
 
-# Run all cleanup commands for the current scope (reverse order),
-# then restore the parent scope's cleanup list.
-# This is the RETURN trap handler — do not call directly.
-_run_cleanups() {
-	if [[ -n "$_CLEANUP_CMDS" ]]; then
-		# Reverse the command list (LIFO) without an external pipeline. Using
-		# echo | tail -r/tac can emit Broken pipe noise under pipefail when the
-		# consumer exits early.
-		local reversed
-		reversed=""
-		local line
-		while IFS= read -r line; do
-			[[ -z "$line" ]] && continue
-			if [[ -n "$reversed" ]]; then
-				reversed="${line}"$'\n'"${reversed}"
-			else
-				reversed="$line"
-			fi
-		done <<<"$_CLEANUP_CMDS"
-		while IFS= read -r line; do
-			[[ -z "$line" ]] && continue
-			# Bare function names must run in the current shell so cleanup can
-			# update process-local ownership state before removing resources.
-			# Compound commands remain isolated in a child shell.
-			if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && declare -F "$line" >/dev/null 2>&1; then
-				"$line" 2>/dev/null || true
-			else
-				bash -c "$line" 2>/dev/null || true
-			fi
-		done <<<"$reversed"
-	fi
-	# Restore parent scope (pop from save stack)
+# Run a newline-separated cleanup command list in reverse (LIFO) order.
+# A failing command never stops the remaining commands.
+# Arguments:
+#   $1 - command list (may be empty)
+_cleanup_run_commands() {
+	local cmds="$1"
+	[[ -n "$cmds" ]] || return 0
+	# Reverse the command list (LIFO) without an external pipeline. Using
+	# echo | tail -r/tac can emit Broken pipe noise under pipefail when the
+	# consumer exits early.
+	local reversed=""
+	local line
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		if [[ -n "$reversed" ]]; then
+			reversed="${line}"$'\n'"${reversed}"
+		else
+			reversed="$line"
+		fi
+	done <<<"$cmds"
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		# Bare function names must run in the current shell so cleanup can
+		# update process-local ownership state before removing resources.
+		# Compound commands remain isolated in a child shell.
+		if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && declare -F "$line" >/dev/null 2>&1; then
+			"$line" 2>/dev/null || true
+		else
+			bash -c "$line" 2>/dev/null || true
+		fi
+	done <<<"$reversed"
+	return 0
+}
+
+# Drop the current scope and restore the parent scope and its owner.
+_cleanup_pop_scope() {
 	local sep=$'\x1F'
-	if [[ -n "$_CLEANUP_SAVE_STACK" ]]; then
+	if [[ -n "${_CLEANUP_SAVE_STACK:-}" ]]; then
 		_CLEANUP_CMDS="${_CLEANUP_SAVE_STACK%%"${sep}"*}"
 		_CLEANUP_SAVE_STACK="${_CLEANUP_SAVE_STACK#*"${sep}"}"
 	else
 		_CLEANUP_CMDS=""
 	fi
+	if [[ -n "${_CLEANUP_OWNER_STACK:-}" ]]; then
+		_CLEANUP_OWNER="${_CLEANUP_OWNER_STACK%%"${sep}"*}"
+		_CLEANUP_OWNER_STACK="${_CLEANUP_OWNER_STACK#*"${sep}"}"
+	else
+		_CLEANUP_OWNER=0
+	fi
 	return 0
 }
 
-# Save the current cleanup scope and start a fresh one.
+# RETURN trap handler: run the scopes owned by the returning frame (and by
+# deeper frames that already returned), LIFO, then restore the parent scope.
+# A fire in a frame that owns no pending scope is a no-op (t18679).
+# Direct calls are supported for EXIT/signal handlers; see the usage notes.
+_run_cleanups() {
+	local depth=0
+	if [[ -n "${BASH_VERSION:-}" ]]; then
+		depth=$((${#FUNCNAME[@]} - 1))
+	fi
+	local owner cmds
+	local ran_own=0
+	local ran_any=0
+	while true; do
+		owner="${_CLEANUP_OWNER:-0}"
+		[[ "$owner" =~ ^[0-9]+$ ]] || owner=0
+		if [[ "$owner" -eq 0 || "$owner" -lt "$depth" ]]; then
+			break
+		fi
+		if [[ "$owner" -eq "$depth" ]]; then
+			ran_own=1
+		fi
+		ran_any=1
+		# Pop before running so scopes opened by cleanup functions cannot be
+		# confused with this one; a leftover deeper scope is swept next pass.
+		cmds="$_CLEANUP_CMDS"
+		_cleanup_pop_scope
+		_cleanup_run_commands "$cmds"
+	done
+	if [[ "$ran_own" -eq 1 ]]; then
+		# The owner's trap has done its job. Clearing it stops it firing again
+		# in trap-less callers; bash restores a caller's own saved trap.
+		if [[ -n "${BASH_VERSION:-}" ]]; then
+			trap - RETURN
+		fi
+		return 0
+	fi
+	if [[ "$ran_any" -eq 1 ]]; then
+		return 0
+	fi
+	# Nothing here belongs to this frame. When a _run_cleanups RETURN trap is
+	# active this is a fire in a non-owning frame: leave the stack alone.
+	local return_trap=""
+	if [[ -n "${BASH_VERSION:-}" ]]; then
+		return_trap="$(trap -p RETURN 2>/dev/null)" || return_trap=""
+	fi
+	if [[ "$return_trap" == *_run_cleanups* ]]; then
+		return 0
+	fi
+	# Direct call (EXIT/signal handler or explicit call without an active
+	# RETURN trap): run the innermost pending scope.
+	cmds="$_CLEANUP_CMDS"
+	_cleanup_pop_scope
+	_cleanup_run_commands "$cmds"
+	return 0
+}
+# Trace attribute: inherit (not save/restore) the RETURN trap so the
+# `trap - RETURN` above applies to the returning owner frame.
+if [[ -n "${BASH_VERSION:-}" ]]; then
+	declare -ft _run_cleanups
+fi
+
+# Save the current cleanup scope and start a fresh one owned by the caller.
 # Call at the top of any function that uses push_cleanup, BEFORE setting
 # `trap '_run_cleanups' RETURN`. This preserves the parent function's
 # cleanup list so nested calls don't interfere.
+# Arguments:
+#   $1 - extra frames between the caller and the owner (optional, default 0;
+#        a helper that opens a scope for its own caller passes 1)
 _save_cleanup_scope() {
+	local extra_frames="${1:-0}"
+	[[ "$extra_frames" =~ ^[0-9]+$ ]] || extra_frames=0
+	local owner=0
+	if [[ -n "${BASH_VERSION:-}" ]]; then
+		owner=$((${#FUNCNAME[@]} - 1 - extra_frames))
+		[[ "$owner" -gt 0 ]] || owner=0
+	fi
 	local sep=$'\x1F'
-	_CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK}"
+	_CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK:-}"
+	_CLEANUP_OWNER_STACK="${_CLEANUP_OWNER:-0}${sep}${_CLEANUP_OWNER_STACK:-}"
 	_CLEANUP_CMDS=""
+	_CLEANUP_OWNER="$owner"
 	return 0
 }
 

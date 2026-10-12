@@ -54,10 +54,15 @@ fi
 # shared-constants.sh provides the canonical cleanup stack before sourcing this
 # file in normal bash helper execution. OpenCode zsh recovery commands can
 # source shared-gh-wrappers.sh directly, so provide minimal fallbacks and avoid
-# bash-only `trap ... RETURN` under zsh.
+# bash-only `trap ... RETURN` under zsh. Keep these copies behaviourally in
+# sync with shared-constants.sh "RETURN Trap Cleanup Stack" (t18679 owner
+# tracking); bash-only builtins (`declare -F/-ft`, `trap -p`, FUNCNAME) stay
+# behind BASH_VERSION guards because zsh `declare -F` creates a float.
 if ! command -v push_cleanup >/dev/null 2>&1; then
 	_CLEANUP_CMDS=""
 	_CLEANUP_SAVE_STACK=""
+	_CLEANUP_OWNER=0
+	_CLEANUP_OWNER_STACK=""
 	push_cleanup() {
 		local cmd="$1"
 		if [[ -n "$_CLEANUP_CMDS" ]]; then
@@ -69,44 +74,116 @@ if ! command -v push_cleanup >/dev/null 2>&1; then
 	}
 fi
 if ! command -v _run_cleanups >/dev/null 2>&1; then
-	_run_cleanups() {
-		if [[ -n "$_CLEANUP_CMDS" ]]; then
-			local reversed=""
-			local line
-			while IFS= read -r line; do
-				[[ -z "$line" ]] && continue
-				if [[ -n "$reversed" ]]; then
-					reversed="${line}"$'\n'"${reversed}"
-				else
-					reversed="$line"
-				fi
-			done <<<"$_CLEANUP_CMDS"
-			while IFS= read -r line; do
-				[[ -z "$line" ]] && continue
+	_cleanup_run_commands() {
+		local cmds="$1"
+		[[ -n "$cmds" ]] || return 0
+		local reversed=""
+		local line
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
+			if [[ -n "$reversed" ]]; then
+				reversed="${line}"$'\n'"${reversed}"
+			else
+				reversed="$line"
+			fi
+		done <<<"$cmds"
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
+			if [[ -n "${BASH_VERSION:-}" && "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && declare -F "$line" >/dev/null 2>&1; then
+				"$line" 2>/dev/null || true
+			else
 				bash -c "$line" 2>/dev/null || true
-			done <<<"$reversed"
-		fi
+			fi
+		done <<<"$reversed"
+		return 0
+	}
+	_cleanup_pop_scope() {
 		local sep=$'\x1F'
-		if [[ -n "$_CLEANUP_SAVE_STACK" ]]; then
+		if [[ -n "${_CLEANUP_SAVE_STACK:-}" ]]; then
 			_CLEANUP_CMDS="${_CLEANUP_SAVE_STACK%%"${sep}"*}"
 			_CLEANUP_SAVE_STACK="${_CLEANUP_SAVE_STACK#*"${sep}"}"
 		else
 			_CLEANUP_CMDS=""
 		fi
+		if [[ -n "${_CLEANUP_OWNER_STACK:-}" ]]; then
+			_CLEANUP_OWNER="${_CLEANUP_OWNER_STACK%%"${sep}"*}"
+			_CLEANUP_OWNER_STACK="${_CLEANUP_OWNER_STACK#*"${sep}"}"
+		else
+			_CLEANUP_OWNER=0
+		fi
 		return 0
 	}
+	_run_cleanups() {
+		local depth=0
+		if [[ -n "${BASH_VERSION:-}" ]]; then
+			depth=$((${#FUNCNAME[@]} - 1))
+		fi
+		local owner cmds
+		local ran_own=0
+		local ran_any=0
+		while true; do
+			owner="${_CLEANUP_OWNER:-0}"
+			[[ "$owner" =~ ^[0-9]+$ ]] || owner=0
+			if [[ "$owner" -eq 0 || "$owner" -lt "$depth" ]]; then
+				break
+			fi
+			if [[ "$owner" -eq "$depth" ]]; then
+				ran_own=1
+			fi
+			ran_any=1
+			cmds="$_CLEANUP_CMDS"
+			_cleanup_pop_scope
+			_cleanup_run_commands "$cmds"
+		done
+		if [[ "$ran_own" -eq 1 ]]; then
+			if [[ -n "${BASH_VERSION:-}" ]]; then
+				trap - RETURN
+			fi
+			return 0
+		fi
+		if [[ "$ran_any" -eq 1 ]]; then
+			return 0
+		fi
+		local return_trap=""
+		if [[ -n "${BASH_VERSION:-}" ]]; then
+			return_trap="$(trap -p RETURN 2>/dev/null)" || return_trap=""
+		fi
+		if [[ "$return_trap" == *_run_cleanups* ]]; then
+			return 0
+		fi
+		cmds="$_CLEANUP_CMDS"
+		_cleanup_pop_scope
+		_cleanup_run_commands "$cmds"
+		return 0
+	}
+	if [[ -n "${BASH_VERSION:-}" ]]; then
+		declare -ft _run_cleanups
+	fi
 fi
 if ! command -v _save_cleanup_scope >/dev/null 2>&1; then
 	_save_cleanup_scope() {
+		local extra_frames="${1:-0}"
+		[[ "$extra_frames" =~ ^[0-9]+$ ]] || extra_frames=0
+		local owner=0
+		if [[ -n "${BASH_VERSION:-}" ]]; then
+			owner=$((${#FUNCNAME[@]} - 1 - extra_frames))
+			[[ "$owner" -gt 0 ]] || owner=0
+		fi
 		local sep=$'\x1F'
-		_CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK}"
+		_CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK:-}"
+		_CLEANUP_OWNER_STACK="${_CLEANUP_OWNER:-0}${sep}${_CLEANUP_OWNER_STACK:-}"
 		_CLEANUP_CMDS=""
+		_CLEANUP_OWNER="$owner"
 		return 0
 	}
 fi
 
+# Open a cleanup scope owned by the calling gh_* wrapper (t18679). The scope
+# is bound to the caller, not this helper, so the RETURN trap set here is a
+# no-op when this helper returns; it persists into the wrapper (which has no
+# trap of its own) and runs the wrapper's cleanups when the wrapper returns.
 _gh_wrapper_enter_cleanup_scope() {
-	_save_cleanup_scope
+	_save_cleanup_scope 1
 	if [[ -n "${BASH_VERSION:-}" ]]; then
 		trap '_run_cleanups' RETURN
 	fi
