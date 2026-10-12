@@ -293,7 +293,8 @@ export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
 ) 2>"${TEST_ROOT}/timeout-error.log"
 case6_rc=$?
 if [[ "$case6_rc" -ne 0 ]] && grep -q 'TIMEOUT after' "${TEST_ROOT}/timeout-error.log" &&
-	grep -q 'AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun' "${TEST_ROOT}/timeout-error.log"; then
+	grep -q 'AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun' "${TEST_ROOT}/timeout-error.log" &&
+	grep -q "validator_timeout_seconds.*${TIMEOUT_REPO}/.aidevops.json" "${TEST_ROOT}/timeout-error.log"; then
 	print_result "portable validator timeout is a distinct failure" 0
 else
 	print_result "portable validator timeout is a distinct failure" 1 "rc=${case6_rc}"
@@ -341,6 +342,82 @@ if [[ "$case_env_rc" -eq 0 && "$case_default_rc" -eq 0 ]]; then
 	print_result "environment timeout and 300-second fallback" 0
 else
 	print_result "environment timeout and 300-second fallback" 1 "env=${case_env_rc} default=${case_default_rc}"
+fi
+
+# GH#34502: ignored canonical configuration survives linked-worktree creation.
+# Use spaces in paths to exercise canonical configuration path handling.
+CANONICAL_REPO="${TEST_ROOT}/canonical checkout"
+LINKED_REPO="${TEST_ROOT}/linked checkout"
+make_repo "$CANONICAL_REPO"
+(
+	cd "$CANONICAL_REPO" || exit 1
+	printf '%s\n' '.aidevops.json' >.gitignore
+	printf '%s\n' 'const answer = 42;' >index.ts
+	git add .gitignore index.ts
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'typescript change'
+	printf '%s\n' '{"validator_timeout_seconds":900}' >.aidevops.json
+	git worktree add -qb feature/linked "$LINKED_REPO" || exit 1
+)
+linked_setup_rc=$?
+NPM_CALL_LOG="${TEST_ROOT}/npm-linked.log"
+export NPM_CALL_LOG NPM_FAKE_RC=0
+(
+	[[ "$linked_setup_rc" -eq 0 ]] || exit 1
+	cd "$LINKED_REPO" || exit 1
+	[[ ! -e .aidevops.json ]] || exit 1
+	timeout_sec() { local seconds="$1"; [[ "$seconds" == 900 ]] || return 1; shift; "$@"; return $?; }
+	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=60 _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/canonical-timeout.log"
+print_result "linked worktree inherits canonical 900-second timeout over environment" "$?"
+(
+	cd "$LINKED_REPO" || exit 1
+	printf '%s\n' '{"validator_timeout_seconds":1500}' >.aidevops.json
+	timeout_sec() { local seconds="$1"; [[ "$seconds" == 1500 ]] || return 1; shift; "$@"; return $?; }
+	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=60 _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/linked-local-timeout.log"
+print_result "worktree-local timeout overrides canonical configuration and environment" "$?"
+(
+	cd "$LINKED_REPO" || exit 1
+	printf '%s\n' '{}' >.aidevops.json
+	timeout_sec() { local seconds="$1"; [[ "$seconds" == 420 ]] || return 1; shift; "$@"; return $?; }
+	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=420 _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/linked-empty-timeout.log"
+print_result "local config without timeout uses environment rather than canonical timeout" "$?"
+(
+	cd "$LINKED_REPO" || exit 1
+	rm .aidevops.json
+	timeout_sec() { return 124; }
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/canonical-remedy.log"
+canonical_remedy_rc=$?
+if [[ "$canonical_remedy_rc" -ne 0 ]] &&
+	grep -q 'TIMEOUT after 900s' "${TEST_ROOT}/canonical-remedy.log" &&
+	grep -q "validator_timeout_seconds.*${CANONICAL_REPO}/.aidevops.json" "${TEST_ROOT}/canonical-remedy.log"; then
+	print_result "timeout remedy identifies canonical durable configuration" 0
+else
+	print_result "timeout remedy identifies canonical durable configuration" 1
+fi
+printf '%s\n' '{"validator_timeout_seconds":0}' >"$CANONICAL_REPO/.aidevops.json"
+(
+	cd "$LINKED_REPO" || exit 1
+	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=60 _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/canonical-invalid-timeout.log"
+canonical_invalid_rc=$?
+if [[ "$canonical_invalid_rc" -ne 0 ]] && grep -q 'must be a positive integer' "${TEST_ROOT}/canonical-invalid-timeout.log"; then
+	print_result "invalid canonical timeout fails closed" 0
+else
+	print_result "invalid canonical timeout fails closed" 1
+fi
+printf '%s\n' 'not-json' >"$CANONICAL_REPO/.aidevops.json"
+(
+	cd "$LINKED_REPO" || exit 1
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/canonical-invalid-json.log"
+canonical_json_rc=$?
+if [[ "$canonical_json_rc" -ne 0 ]] && grep -q 'invalid .aidevops.json configuration' "${TEST_ROOT}/canonical-invalid-json.log"; then
+	print_result "invalid canonical JSON fails closed" 0
+else
+	print_result "invalid canonical JSON fails closed" 1
 fi
 
 # Case 7: a root/shared Node change visibly broadens to every declared workspace

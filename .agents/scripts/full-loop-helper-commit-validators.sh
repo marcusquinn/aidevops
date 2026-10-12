@@ -254,7 +254,7 @@ _run_scoped_node_checks() {
 		) >"${snapshot_dir}/install.log" 2>&1 || install_rc=$?
 		if [[ "$install_rc" -ne 0 ]]; then
 			print_error "[validators] ENVIRONMENT FAILURE (exit ${install_rc}): npm ci (${scope_label})"
-			[[ "$install_rc" -eq 124 ]] && print_error "[validators] Set AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun; do not skip checks"
+			[[ "$install_rc" -eq 124 ]] && _validator_timeout_remedy
 			tail -20 "${snapshot_dir}/install.log" >&2
 			return 1
 		fi
@@ -276,7 +276,7 @@ _run_scoped_node_checks() {
 		_validator_state_unchanged "${snapshot_dir}/before-${check_index}" "${snapshot_dir}/after-${check_index}" "$pm run $script_name ($scope_label)" || return 1
 		if [[ "$command_rc" -eq 124 ]]; then
 			print_error "[validators] TIMEOUT after ${t}s: $pm run $script_name ($scope_label)"
-			print_error "[validators] Set AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun; do not skip checks"
+			_validator_timeout_remedy
 			return 1
 		elif [[ "$command_rc" -ne 0 ]]; then
 			print_error "[validators] CHECK FAILED (exit ${command_rc}): $pm run $script_name ($scope_label)"
@@ -289,6 +289,14 @@ _run_scoped_node_checks() {
 		print_error "[validators] configure lint, typecheck, or a check-only format script in ${package_json}"
 		return 1
 	fi
+	return 0
+}
+
+# The orchestrator's selected config is inherited by scoped checks. Keep the
+# durable remedy alongside the env hint, which cannot override a project value.
+_validator_timeout_remedy() {
+	print_error "[validators] Set validator_timeout_seconds to a larger positive integer in ${validator_config:-.aidevops.json} (durable project setting; takes precedence over the environment)"
+	print_error "[validators] Set AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun if no project timeout is configured; do not skip checks"
 	return 0
 }
 
@@ -309,15 +317,28 @@ _run_project_validators() {
 		return 0
 	fi
 	print_info "[validators] running node project validators ($pm)..."
-	local validator_timeout
+	local validator_timeout validator_config=".aidevops.json"
+	# Ignored project settings are not copied to linked worktrees. The common Git
+	# directory's first worktree is the canonical checkout, including repositories
+	# with a separate Git directory. Never fall back when a local config exists.
+	if [[ ! -e "$validator_config" ]]; then
+		local common_dir="" record=""
+		common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+		while IFS= read -r record; do
+			if [[ "$record" == worktree\ * ]]; then
+				validator_config="${record#worktree }/.aidevops.json"
+				break
+			fi
+		done < <(git -c core.quotePath=false --git-dir="$common_dir" worktree list --porcelain)
+	fi
 	# Project configuration takes precedence over the environment override.
-	if [[ -f .aidevops.json ]]; then
-		if ! jq -e 'type == "object"' .aidevops.json >/dev/null 2>&1; then
-			print_error "[validators] invalid .aidevops.json configuration"
+	if [[ -f "$validator_config" ]]; then
+		if ! jq -e 'type == "object"' "$validator_config" >/dev/null 2>&1; then
+			print_error "[validators] invalid .aidevops.json configuration: ${validator_config}"
 			return 1
 		fi
-		if jq -e 'has("validator_timeout_seconds")' .aidevops.json >/dev/null; then
-			validator_timeout=$(jq -r '.validator_timeout_seconds | tostring' .aidevops.json) || return 1
+		if jq -e 'has("validator_timeout_seconds")' "$validator_config" >/dev/null; then
+			validator_timeout=$(jq -r '.validator_timeout_seconds | tostring' "$validator_config") || return 1
 		else
 			validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT-300}"
 		fi
