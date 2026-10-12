@@ -816,6 +816,7 @@ _pulse_execute_self_check() {
 	local _sc_expected_fns=(
 		resolve_dispatch_model_for_labels
 		acquire_instance_lock
+		_pulse_exit_cleanup
 		check_dedup
 		prefetch_state
 		_extract_frontmatter_field
@@ -1514,7 +1515,10 @@ main() {
 	# SIGKILL cannot be trapped; stale-lock detection handles that case.
 	# GH#33739: _pulse_cycle_index_record_once runs after the interrupted
 	# finaliser so killed/aborted cycles still append one partial index record.
-	trap '_dispatch_cleanup_benign_blocks_cycle; _dispatch_cleanup_cycle_cache; _pulse_release_llm_lock; _pulse_cycle_state_finish_interrupted; _pulse_cycle_index_record_once; _pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
+	# t18678 (GH#34469): one dedicated handler (pulse-instance-lock.sh) owns all
+	# process-lifetime cleanup. Never move it onto the shared
+	# push_cleanup/_run_cleanups stack, whose RETURN traps fire in callers.
+	trap '_pulse_exit_cleanup' EXIT
 
 	if ! acquire_instance_lock; then
 		return 0
@@ -1538,8 +1542,6 @@ main() {
 	# exact read semantics, but pulse can avoid re-fetching the same PR list/view
 	# data across gates. PR view caches use TTL-based freshness and a stable cache
 	# directory so repeated daemon restarts do not create cold PID-scoped caches.
-	local _pulse_pr_cache_cleanup_scope=0
-	local _pulse_rm_rf="rm -rf"
 	unset AIDEVOPS_GH_PR_VIEW_CACHE
 	unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
 	unset AIDEVOPS_GH_PR_VIEW_CACHE_TTL
@@ -1552,21 +1554,6 @@ main() {
 		export AIDEVOPS_GH_PR_VIEW_CACHE=1
 		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${AIDEVOPS_PULSE_PR_VIEW_CACHE_DIR:-${HOME}/.aidevops/cache/pulse-pr-view-cache}"
 		export AIDEVOPS_GH_PR_VIEW_CACHE_TTL="${AIDEVOPS_PULSE_PR_VIEW_CACHE_TTL:-3600}"
-		_save_cleanup_scope
-		# Register process-lifetime resources first so LIFO cleanup removes
-		# per-cycle caches, records the cycle, releases the lock, then drops the
-		# runtime bundle lease last.
-		push_cleanup 'aidevops_runtime_bundle_lease_release'
-		push_cleanup 'release_instance_lock'
-		push_cleanup '_pulse_efficiency_cycle_finish'
-		push_cleanup '_pulse_cycle_index_record_once'
-		push_cleanup '_pulse_cycle_state_finish_interrupted'
-		push_cleanup '_pulse_release_llm_lock'
-		push_cleanup '_dispatch_cleanup_benign_blocks_cycle'
-		# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
-		# register release_instance_lock before replacing the direct EXIT trap.
-		trap '_run_cleanups' EXIT
-		_pulse_pr_cache_cleanup_scope=1
 		if ! mkdir -p "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"; then
 			printf '[pulse-wrapper] Failed to create REST PR view cache directory: %s\n' "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" >&2
 		fi
@@ -1578,22 +1565,11 @@ main() {
 		export AIDEVOPS_GH_PR_LIST_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
 		export PULSE_PR_LIST_PROVIDER_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-cache-${$}"
 		export PULSE_PR_LIST_PROVIDER_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
-		if [[ "$_pulse_pr_cache_cleanup_scope" -eq 0 ]]; then
-			_save_cleanup_scope
-			push_cleanup 'aidevops_runtime_bundle_lease_release'
-			push_cleanup 'release_instance_lock'
-			push_cleanup '_pulse_efficiency_cycle_finish'
-			push_cleanup '_pulse_cycle_index_record_once'
-			push_cleanup '_pulse_cycle_state_finish_interrupted'
-			push_cleanup '_pulse_release_llm_lock'
-			push_cleanup '_dispatch_cleanup_benign_blocks_cycle'
-			# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
-			# register release_instance_lock before replacing the direct EXIT trap.
-			trap '_run_cleanups' EXIT
-			_pulse_pr_cache_cleanup_scope=1
-		fi
-		push_cleanup "${_pulse_rm_rf} \"${AIDEVOPS_GH_PR_LIST_CACHE_DIR}\""
-		push_cleanup "${_pulse_rm_rf} \"${PULSE_PR_LIST_PROVIDER_CACHE_DIR}\""
+		# GH#23728/t18678: _pulse_exit_cleanup removes only these dirs created by
+		# this process at EXIT. Never push them onto the shared RETURN-trap
+		# cleanup stack, where a nested helper's trap ran them mid-cycle.
+		_PULSE_EXIT_PR_LIST_CACHE_DIR="$AIDEVOPS_GH_PR_LIST_CACHE_DIR"
+		_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR="$PULSE_PR_LIST_PROVIDER_CACHE_DIR"
 		if ! rm -rf "$AIDEVOPS_GH_PR_LIST_CACHE_DIR"; then
 			printf '[pulse-wrapper] Failed to reset PR list cache directory: %s\n' "$AIDEVOPS_GH_PR_LIST_CACHE_DIR" >&2
 		fi

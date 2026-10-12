@@ -27,6 +27,7 @@
 #   - _handle_existing_lock    (acquire helper: live vs stale owner check)
 #   - acquire_instance_lock
 #   - release_instance_lock
+#   - _pulse_exit_cleanup      (process-lifetime EXIT handler for main())
 #   - _handle_setup_sentinel
 #   - _handle_running_pulse_pid
 #   - check_dedup
@@ -342,6 +343,46 @@ release_instance_lock() {
 	fi
 
 	rm -rf "$LOCKDIR" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Process-lifetime EXIT handler for pulse-wrapper.sh main() (t18678, GH#34469)
+#
+# main() installs `trap '_pulse_exit_cleanup' EXIT` before acquiring the
+# instance lock. This handler must never move onto the shared function-scoped
+# cleanup stack (shared-constants.sh push_cleanup/_run_cleanups): a RETURN
+# trap set by a nested helper (e.g. _gh_wrapper_enter_cleanup_scope in the
+# gh_* write wrappers) stays installed after that helper returns and fires
+# again in its callers, and each fire runs and pops whichever scope is
+# current. While this list lived on that stack, a stage calling a gh write
+# wrapper ran it mid-cycle: the runtime bundle lease, per-cycle PR list caches
+# and benign-block ledger disappeared while the cycle was still running.
+#
+# Order matches the original direct EXIT trap, with this process's per-cycle
+# PR list caches first and the runtime bundle lease last. Every step is
+# idempotent and failure-tolerant, so one failing step cannot skip the lock or
+# lease release. Subshells reset EXIT traps, so it runs only in the main shell.
+#######################################
+_PULSE_EXIT_PR_LIST_CACHE_DIR=""
+_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR=""
+
+_pulse_exit_cleanup() {
+	local cache_dir=""
+	for cache_dir in "${_PULSE_EXIT_PR_LIST_CACHE_DIR:-}" "${_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR:-}"; do
+		[[ -n "$cache_dir" ]] || continue
+		rm -rf -- "$cache_dir" 2>/dev/null || true
+	done
+	_PULSE_EXIT_PR_LIST_CACHE_DIR=""
+	_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR=""
+	_dispatch_cleanup_benign_blocks_cycle || true
+	_dispatch_cleanup_cycle_cache || true
+	_pulse_release_llm_lock || true
+	_pulse_cycle_state_finish_interrupted || true
+	_pulse_cycle_index_record_once || true
+	_pulse_efficiency_cycle_finish || true
+	release_instance_lock || true
+	aidevops_runtime_bundle_lease_release || true
 	return 0
 }
 

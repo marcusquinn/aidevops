@@ -39,6 +39,8 @@ WRAPPER_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper.sh"
 # is still pulse-wrapper.sh (which sources bootstrap), but Test 3's static
 # grep needs to look in the new location.
 BOOTSTRAP_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper-bootstrap.sh"
+# t18678: _pulse_exit_cleanup (the lifetime EXIT handler) lives in this module.
+LOCK_MODULE="${SCRIPT_DIR}/../pulse-instance-lock.sh"
 # t3016: pulse-wrapper-bootstrap.sh::_load_config requires the canonical
 # defaults file to be present at $HOME/.aidevops/agents/configs/. The
 # sandboxed HOME used by Tests 1 and 2 must seed this file or the bootstrap
@@ -91,14 +93,17 @@ print_result() {
 # A sandboxed HOME prevents lock directory collisions with a live pulse and
 # ensures the test is fully isolated.
 test_canary_exits_zero() {
-	local sandbox rc output lock_retained=0
+	local sandbox rc output lock_retained=0 cache_dirs_retained=""
 	sandbox=$(mktemp -d)
-	mkdir -p "${sandbox}/home"
+	mkdir -p "${sandbox}/home" "${sandbox}/tmp"
 	# t3016: seed canonical defaults so bootstrap's _load_config succeeds
 	seed_sandbox_config "${sandbox}/home"
 
+	# t18678: a sandboxed TMPDIR makes the per-cycle PR list cache dirs
+	# observable; _pulse_exit_cleanup must remove them at EXIT.
 	output=$(
 		HOME="${sandbox}/home" \
+			TMPDIR="${sandbox}/tmp" \
 			FULL_LOOP_HEADLESS=1 \
 			timeout 60 bash "$WRAPPER_SCRIPT" --canary 2>&1
 	)
@@ -106,14 +111,15 @@ test_canary_exits_zero() {
 	if [[ -d "${sandbox}/home/.aidevops/logs/pulse-wrapper.lockdir" ]]; then
 		lock_retained=1
 	fi
+	cache_dirs_retained=$(find "${sandbox}/tmp" -maxdepth 1 -name 'aidevops-pulse-pr-list-*' -print 2>/dev/null || true)
 	rm -rf "$sandbox"
 
-	if [[ "$rc" -eq 0 && "$lock_retained" -eq 0 ]]; then
-		print_result "--canary exits 0 and releases its instance lock" 0
+	if [[ "$rc" -eq 0 && "$lock_retained" -eq 0 && -z "$cache_dirs_retained" ]]; then
+		print_result "--canary exits 0 and releases its instance lock and per-cycle PR list caches" 0
 		return 0
 	fi
-	print_result "--canary exits 0 and releases its instance lock" 1 \
-		"Expected exit 0 and no retained lock, got rc=$rc lock_retained=$lock_retained. Output: ${output}"
+	print_result "--canary exits 0 and releases its instance lock and per-cycle PR list caches" 1 \
+		"Expected exit 0, no retained lock and no cache dirs, got rc=$rc lock_retained=$lock_retained cache_dirs=[${cache_dirs_retained}]. Output: ${output}"
 	return 0
 }
 
@@ -190,24 +196,59 @@ test_canary_short_circuit_after_lock() {
 	return 0
 }
 
-cleanup_registration_precedes_exit_trap() {
+# t18678 (GH#34469): the dedicated lifetime EXIT handler is installed before
+# acquire_instance_lock, so every exit path after the lock releases it.
+exit_handler_precedes_lock() {
 	awk '
-		/^[[:space:]]*_save_cleanup_scope/ {
-			seen_scope = 1
+		/^[[:space:]]*trap[[:space:]]+'\''_pulse_exit_cleanup'\''[[:space:]]+EXIT/ {
+			seen_trap = 1
 			next
 		}
-		seen_scope && /^[[:space:]]*push_cleanup[[:space:]]+'\''release_instance_lock'\''/ {
-			seen_cleanup = 1
-			next
-		}
-		seen_scope && seen_cleanup && /^[[:space:]]*trap[[:space:]]+'\''_run_cleanups'\''[[:space:]]+EXIT/ {
-			found = 1
+		/^[[:space:]]*if ! acquire_instance_lock/ {
+			found = seen_trap
 			exit
 		}
 		END {
 			exit found ? 0 : 1
 		}
 	' "$WRAPPER_SCRIPT"
+	return $?
+}
+
+# t18678 (GH#34469): process-lifetime cleanup must stay off the shared
+# push_cleanup/_run_cleanups stack. A RETURN trap set by a nested helper keeps
+# firing in its callers, and each fire runs and pops whichever scope is
+# current, which released the lease, caches and ledger mid-cycle.
+lifetime_cleanup_off_shared_stack() {
+	if grep -Eq "^[[:space:]]*trap[[:space:]]+'_run_cleanups'[[:space:]]+EXIT" "$WRAPPER_SCRIPT"; then
+		return 1
+	fi
+	if grep -Eq "^[[:space:]]*push_cleanup[[:space:]]+.*(release_instance_lock|aidevops_runtime_bundle_lease_release|_pulse_cycle_index_record_once|aidevops-pulse-pr-list|PR_LIST_CACHE_DIR|PR_LIST_PROVIDER_CACHE_DIR)" "$WRAPPER_SCRIPT"; then
+		return 1
+	fi
+	return 0
+}
+
+# t18678 (GH#34469): the handler removes this process's per-cycle PR list
+# caches and releases the instance lock before the runtime bundle lease.
+exit_handler_releases_lifetime_resources() {
+	awk '
+		/^_pulse_exit_cleanup\(\) \{/ {
+			in_fn = 1
+			next
+		}
+		in_fn && /^}/ {
+			exit
+		}
+		in_fn && /_PULSE_EXIT_PR_LIST_CACHE_DIR/ { list_cache = 1 }
+		in_fn && /_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR/ { provider_cache = 1 }
+		in_fn && /^[[:space:]]*_pulse_cycle_index_record_once/ { cycle_index = 1 }
+		in_fn && /^[[:space:]]*release_instance_lock/ { lock = 1 }
+		in_fn && /^[[:space:]]*aidevops_runtime_bundle_lease_release/ { lease = lock }
+		END {
+			exit (list_cache && provider_cache && cycle_index && lock && lease) ? 0 : 1
+		}
+	' "$LOCK_MODULE"
 	return $?
 }
 
@@ -234,11 +275,18 @@ test_pr_cache_ttls_are_per_cycle() {
 	if ! grep -q 'AIDEVOPS_GH_PR_LIST_CACHE_DIR=.*aidevops-pulse-pr-list-cache' "$WRAPPER_SCRIPT"; then
 		missing="${missing} list-cache-dir"
 	fi
-	if ! grep -q "trap '_run_cleanups' EXIT" "$WRAPPER_SCRIPT"; then
-		missing="${missing} exit-cleanup-trap"
+	if ! grep -qF "_PULSE_EXIT_PR_LIST_CACHE_DIR=\"\$AIDEVOPS_GH_PR_LIST_CACHE_DIR\"" "$WRAPPER_SCRIPT" ||
+		! grep -qF "_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR=\"\$PULSE_PR_LIST_PROVIDER_CACHE_DIR\"" "$WRAPPER_SCRIPT"; then
+		missing="${missing} list-cache-exit-registration"
 	fi
-	if ! cleanup_registration_precedes_exit_trap; then
-		missing="${missing} lock-cleanup-before-exit-trap"
+	if ! exit_handler_precedes_lock; then
+		missing="${missing} exit-handler-before-lock"
+	fi
+	if ! lifetime_cleanup_off_shared_stack; then
+		missing="${missing} lifetime-cleanup-on-shared-stack"
+	fi
+	if ! exit_handler_releases_lifetime_resources; then
+		missing="${missing} exit-handler-resources"
 	fi
 
 	if [[ -z "$missing" ]]; then

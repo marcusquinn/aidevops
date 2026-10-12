@@ -1661,6 +1661,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18677 fix(planning): skip only repo-verify on the dependency-free planning publication push #bug #framework tier:simple ref:GH#34459 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18677-brief.md] pr:#34461 completed:2026-10-12
 
+- [ ] t18678 fix(pulse): keep process-lifetime EXIT cleanup off the shared RETURN-trap cleanup stack #bug #framework tier:standard ref:GH#34469 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18678-brief.md]
+
+- [ ] t18679 fix(shared): make the push_cleanup/_run_cleanups stack run each scope only at its owner's return #auto-dispatch #bug #framework tier:thinking ref:GH#34470 logged:2026-10-12 -> [todo/tasks/t18679-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
