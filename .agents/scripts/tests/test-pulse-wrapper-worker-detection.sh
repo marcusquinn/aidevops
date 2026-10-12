@@ -234,6 +234,11 @@ set_successful_dispatch_function_stubs() {
 		fi
 		if [[ "${1:-}" == "api" && "${2:-}" == repos/*/issues/* ]]; then
 			if [[ " $* " == *" --jq "* ]]; then
+				# The final ownership fence refreshes the live REST issue state.
+				if [[ "${3:-}" == "--jq" && "${4:-}" == ".state" ]]; then
+					printf 'open\n'
+					return 0
+				fi
 				if [[ " $* " == *".locked"* ]]; then
 					printf '%s\n' "${FIXTURE_ISSUE_LOCKED}"
 					return 0
