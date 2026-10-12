@@ -457,20 +457,23 @@ _full_loop_receipt_lock_acquire() {
 	local owner_pid=""
 	local ownerless_lock_minimum_age="${AIDEVOPS_FULL_LOOP_RECEIPT_LOCK_OWNERLESS_GRACE_SECONDS:-5}"
 	local attempt=0
-	[[ "$ownerless_lock_minimum_age" =~ ^[1-9][0-9]*$ ]] || return 1
-	receipt_dir=$(_full_loop_cleanup_receipt_dir) || return 1
-	mkdir -p "$receipt_dir" || return 1
+	_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-timeout"
+	[[ "$ownerless_lock_minimum_age" =~ ^[1-9][0-9]*$ ]] || { _FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-config-invalid"; return 1; }
+	receipt_dir=$(_full_loop_cleanup_receipt_dir) || { _FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-dir-unavailable"; return 1; }
+	mkdir -p "$receipt_dir" || { _FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-dir-unavailable"; return 1; }
 	lock_dir="${receipt_dir}/.mutation.lock.d"
 	while [[ "$attempt" -lt 200 ]]; do
 		if mkdir "$lock_dir" 2>/dev/null; then
 			printf '%s\n' "$$" >"${lock_dir}/owner" || {
 				rmdir "$lock_dir" 2>/dev/null || true
+				_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-owner-write-failed"
 				return 1
 			}
 			_FULL_LOOP_RECEIPT_LOCK="$lock_dir"
 			if declare -F _full_loop_recover_recreated_receipt_transactions >/dev/null 2>&1 &&
 				! _full_loop_recover_recreated_receipt_transactions "$receipt_dir"; then
 				_full_loop_receipt_lock_release
+				_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-recovery-failed"
 				return 1
 			fi
 			return 0
@@ -495,7 +498,20 @@ _full_loop_receipt_lock_release() {
 	[[ -n "$_FULL_LOOP_RECEIPT_LOCK" ]] || return 0
 	rm -f "${_FULL_LOOP_RECEIPT_LOCK}/owner" 2>/dev/null || true
 	rmdir "$_FULL_LOOP_RECEIPT_LOCK" 2>/dev/null || true
-	_FULL_LOOP_RECEIPT_LOCK=""
+_FULL_LOOP_RECEIPT_LOCK=""
+# Stable reason code for the last deferred-cleanup receipt failure (GH#34468).
+_FULL_LOOP_CLEANUP_FAILURE_REASON=""
+_FULL_LOOP_RECEIPT_LOCK_FAILURE=""
+_FULL_LOOP_REASON_WRITE_FAILED="receipt-write-failed"
+
+# Record a stable failure reason (global + stderr) and return 1.
+_full_loop_cleanup_fail() {
+	local reason="$1"
+	_FULL_LOOP_CLEANUP_FAILURE_REASON="$reason"
+	printf 'cleanup-receipt-failure: %s\n' "$reason" >&2
+	return 1
+}
+
 	return 0
 }
 
@@ -547,17 +563,20 @@ full_loop_write_cleanup_deferred() {
 	local now=""
 	local temp_path=""
 
-	[[ -n "$worktree" && -n "$branch" && "$owner_pid" =~ ^[0-9]+$ ]] || return 1
-	[[ "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_FINALIZATION_PENDING" || "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_COMPLETE" ]] || return 1
-	command -v jq >/dev/null 2>&1 || return 1
-	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || return 1
-	_full_loop_receipt_lock_acquire || return 1
+	_FULL_LOOP_CLEANUP_FAILURE_REASON=""
+	[[ -n "$worktree" && -n "$branch" && "$owner_pid" =~ ^[0-9]+$ ]] || { _full_loop_cleanup_fail "invalid-receipt-arguments"; return 1; }
+	[[ "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_FINALIZATION_PENDING" || "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_COMPLETE" ]] || { _full_loop_cleanup_fail "invalid-completion-state"; return 1; }
+	command -v jq >/dev/null 2>&1 || { _full_loop_cleanup_fail "jq-unavailable"; return 1; }
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || { _full_loop_cleanup_fail "receipt-path-unavailable"; return 1; }
+	_full_loop_receipt_lock_acquire || { _full_loop_cleanup_fail "${_FULL_LOOP_RECEIPT_LOCK_FAILURE:-receipt-lock-timeout}"; return 1; }
 	kill -0 "$owner_pid" 2>/dev/null || {
 		_full_loop_receipt_lock_release
+		_full_loop_cleanup_fail "owner-not-live"
 		return 1
 	}
 	owner_identity=$(_full_loop_process_identity "$owner_pid") || {
 		_full_loop_receipt_lock_release
+		_full_loop_cleanup_fail "owner-identity-unavailable"
 		return 1
 	}
 	if [[ -f "$receipt_path" ]]; then
@@ -568,10 +587,12 @@ full_loop_write_cleanup_deferred() {
 			return 0
 		fi
 		_full_loop_receipt_lock_release
+		_full_loop_cleanup_fail "receipt-mismatch"
 		return 1
 	fi
 	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || {
 		_full_loop_receipt_lock_release
+		_full_loop_cleanup_fail "$_FULL_LOOP_REASON_WRITE_FAILED"
 		return 1
 	}
 	temp_path="${receipt_path}.tmp.$$"
@@ -588,12 +609,15 @@ full_loop_write_cleanup_deferred() {
 		  owner:{pid:$owner_pid,process_identity:$owner_identity,session:$owner_session},
 		  cleanup_lease:{state:$cleanup_lease_pending,pid:null,acquired_at:null},created_at:$now,updated_at:$now,cleaned_at:null}' \
 		>"$temp_path" || {
+		rm -f "$temp_path"
 		_full_loop_receipt_lock_release
+		_full_loop_cleanup_fail "$_FULL_LOOP_REASON_WRITE_FAILED"
 		return 1
 	}
 	mv "$temp_path" "$receipt_path" || {
 		rm -f "$temp_path"
 		_full_loop_receipt_lock_release
+		_full_loop_cleanup_fail "$_FULL_LOOP_REASON_WRITE_FAILED"
 		return 1
 	}
 	_full_loop_receipt_lock_release

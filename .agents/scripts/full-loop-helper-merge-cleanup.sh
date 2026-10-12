@@ -504,6 +504,15 @@ _merge_cleanup_linked_worktree() {
 	return 0
 }
 
+_MERGE_REASON_MARKER_FAILED="marker-write-failed"
+
+# Record a stable reason for a failed deferred-cleanup receipt (GH#34468).
+_merge_cleanup_owner_fail() {
+	local reason="$1"
+	_FULL_LOOP_CLEANUP_FAILURE_REASON="$reason"
+	return 0
+}
+
 _merge_record_deferred_cleanup_owner() {
 	local pr_number="$1"
 	local repo="$2"
@@ -513,31 +522,54 @@ _merge_record_deferred_cleanup_owner() {
 	local worktree_path="" branch_name="" delete_remote_branch=""
 	IFS=$'\t' read -r worktree_path branch_name delete_remote_branch <<<"$cleanup_target"
 	: "$delete_remote_branch"
-	[[ -n "$worktree_path" && -n "$branch_name" ]] || return 1
-	[[ -d "$worktree_path" ]] || return 1
+	_FULL_LOOP_CLEANUP_FAILURE_REASON=""
+	if [[ -z "$worktree_path" || -z "$branch_name" ]]; then
+		_merge_cleanup_owner_fail "cleanup-target-missing"
+		return 1
+	fi
+	if [[ ! -d "$worktree_path" ]]; then
+		_merge_cleanup_owner_fail "worktree-missing"
+		return 1
+	fi
 
 	local owner_pid=""
 	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
 		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || true)
 	fi
 	[[ "$owner_pid" =~ ^[0-9]+$ ]] || owner_pid="$PPID"
-	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+	if [[ ! "$owner_pid" =~ ^[0-9]+$ ]]; then
+		_merge_cleanup_owner_fail "owner-pid-invalid"
+		return 1
+	fi
 
 	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$_FULL_LOOP_OWNER_SESSION_FALLBACK}}}"
 	if ! declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
+		_merge_cleanup_owner_fail "receipt-writer-unavailable"
 		return 1
 	fi
-	full_loop_write_cleanup_deferred "$repo" "$pr_number" "$worktree_path" "$branch_name" \
-		"$owner_pid" "$owner_session" "$release_status" "$executor_completion_state" >/dev/null || return 1
+	# Retry once on lock contention only (GH#34468).
+	local attempt=0
+	while :; do
+		if full_loop_write_cleanup_deferred "$repo" "$pr_number" "$worktree_path" "$branch_name" \
+			"$owner_pid" "$owner_session" "$release_status" "$executor_completion_state" >/dev/null; then
+			break
+		fi
+		attempt=$((attempt + 1))
+		if [[ "$attempt" -lt 2 && "${_FULL_LOOP_CLEANUP_FAILURE_REASON:-}" == "receipt-lock-timeout" ]]; then
+			continue
+		fi
+		_merge_cleanup_owner_fail "${_FULL_LOOP_CLEANUP_FAILURE_REASON:-receipt-write-failed}"
+		return 1
+	done
 
 	local marker_dir="${worktree_path}/.agents"
 	local marker_path="${marker_dir}/.full-loop-cleanup-deferred"
-	mkdir -p "$marker_dir" || return 1
+	mkdir -p "$marker_dir" || { _merge_cleanup_owner_fail "$_MERGE_REASON_MARKER_FAILED"; return 1; }
 	# Keep the legacy marker during rollout so an older deployed cleanup
 	# supervisor still preserves the live owner. The external receipt above is
 	# the durable source of lifecycle truth and survives worktree removal.
-	printf '%s\n' "$owner_pid" >"${marker_path}.tmp.$$" || return 1
-	mv "${marker_path}.tmp.$$" "$marker_path" || return 1
+	printf '%s\n' "$owner_pid" >"${marker_path}.tmp.$$" || { _merge_cleanup_owner_fail "$_MERGE_REASON_MARKER_FAILED"; return 1; }
+	mv "${marker_path}.tmp.$$" "$marker_path" || { rm -f "${marker_path}.tmp.$$"; _merge_cleanup_owner_fail "$_MERGE_REASON_MARKER_FAILED"; return 1; }
 
 	if declare -F claim_worktree_ownership >/dev/null 2>&1; then
 		claim_worktree_ownership "$worktree_path" "$branch_name" \

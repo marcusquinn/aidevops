@@ -1468,7 +1468,8 @@ _merge_finalize_post_merge() {
 		if _merge_record_deferred_cleanup_owner "$pr_number" "$repo" "$cleanup_target"; then
 			print_info "LIFECYCLE_STATE=CLEANUP_DEFERRED; guarded cleanup ownership persisted outside the worktree"
 		else
-			print_warning "Post-merge worktree cleanup deferred, but durable handoff evidence could not be recorded"
+			print_warning "Post-merge worktree cleanup deferred, but durable handoff evidence could not be recorded (reason: ${_FULL_LOOP_CLEANUP_FAILURE_REASON:-unknown})"
+			print_info "Recovery: full-loop-helper.sh adopt-merged-receipt ${pr_number} ${repo}, then finalize-receipt (or record-no-release) once release status is known"
 		fi
 	fi
 	return 0
