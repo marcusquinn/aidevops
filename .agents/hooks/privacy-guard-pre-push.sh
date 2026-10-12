@@ -115,9 +115,10 @@ done
 # Priority: remote/HEAD (repo-configured) → remote/main → remote/master.
 _default_remote_head=""
 if [[ -n "$remote_name" ]]; then
-	_default_remote_head=$(git symbolic-ref --short "refs/remotes/${remote_name}/HEAD" 2>/dev/null)
+	_default_remote_head=$(git symbolic-ref "refs/remotes/${remote_name}/HEAD" 2>/dev/null)
+	[[ "$_default_remote_head" == "refs/remotes/${remote_name}/"* ]] || _default_remote_head=""
 	if [[ -z "$_default_remote_head" ]]; then
-		for _candidate in "${remote_name}/main" "${remote_name}/master"; do
+		for _candidate in "refs/remotes/${remote_name}/main" "refs/remotes/${remote_name}/master"; do
 			git rev-parse --verify "$_candidate" >/dev/null 2>&1
 			_status=$?
 			if [[ $_status -eq 0 ]]; then
@@ -189,11 +190,16 @@ for _ref_entry in "${_all_refs[@]}"; do
 	fi
 
 	_scan_base="$remote_sha"
+	_public_head=""
 	if [[ -z "$_scan_base" || "$_scan_base" =~ ^0+$ ]]; then
 		_scan_base=$(git merge-base "$local_sha" "$_default_remote_head" 2>/dev/null || echo "")
 		[[ -z "$_scan_base" ]] && _scan_base="$remote_sha"
+	elif [[ -n "$_default_remote_head" ]]; then
+		# Existing branches may import already-public lines when merging main.
+		# Pin the default tip; an unknown tip retains the unfiltered scan.
+		_public_head=$(git rev-parse --verify "${_default_remote_head}^{commit}" 2>/dev/null) || _public_head=""
 	fi
-	hits_output=$(privacy_scan_public_diff "$_scan_base" "$local_sha" "$entities_file")
+	hits_output=$(privacy_scan_public_diff "$_scan_base" "$local_sha" "$entities_file" "$_public_head")
 	scan_rc=$?
 	if [[ "$scan_rc" -ne 0 && ("$scan_rc" -ne 1 || -z "$hits_output") ]]; then
 		privacy_log ERROR "private-entity scan failed (rc=${scan_rc}, ref=${remote_ref}) — failing closed; no verified findings"

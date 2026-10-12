@@ -404,7 +404,7 @@ else
 		PRIVACY_REPOS_CONFIG="$PRIVACY_REPOS_CONFIG" \
 			PRIVACY_CACHE_FILE="$PRIVACY_CACHE_FILE" \
 			printf '%s\n' "$ref_line" |
-			bash "$HOOK" "$remote_name" "$remote_url" >/dev/null 2>&1
+			bash "$HOOK" "$remote_name" "$remote_url" >"${TMP}/hook-output" 2>&1
 		local rc=$?
 		popd >/dev/null || return 99
 		return "$rc"
@@ -490,6 +490,134 @@ else
 		pass "hook dispatch: branch deletion (zeros local SHA) → exit 0"
 	else
 		fail "hook dispatch: branch deletion should exit 0 without scanning (got $rc)"
+	fi
+
+	# GH#34504: an existing feature imports a public entity from the default tip.
+	(
+		cd "$HOOK_REPO" || exit 1
+		git checkout -qb feature "$CLEAN_HEAD"
+		printf 'feature content\n' >feature.txt
+		git add feature.txt
+		git commit -qm 'feature base'
+		git update-ref refs/remotes/origin/main "$LEAK_HEAD"
+		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+		git merge --no-ff -qm 'merge public main' "$LEAK_HEAD"
+	) || fail "hook dispatch: could not seed default-branch merge"
+	MERGED_HEAD=$(git -C "$HOOK_REPO" rev-parse HEAD)
+	FEATURE_BASE=$(git -C "$HOOK_REPO" rev-parse HEAD^1)
+	_seed_cache "test/public" false 0
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/feature ${MERGED_HEAD} refs/heads/feature ${FEATURE_BASE}"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "hook dispatch: merge imports already-public entity → allowed"
+	else
+		fail "hook dispatch: public default-branch line should be excluded (got $rc)"
+	fi
+
+	(
+		cd "$HOOK_REPO" || exit 1
+		printf 'testorg/local-only new feature entity\n' >>TODO.md
+		git add TODO.md
+		git commit -qm 'new feature entity'
+	) || fail "hook dispatch: could not seed feature entity"
+	FEATURE_LEAK=$(git -C "$HOOK_REPO" rev-parse HEAD)
+	for ENTITY_BASE in "$FEATURE_BASE" "$MERGED_HEAD"; do
+		_run_hook origin "git@github.com:test/public.git" \
+			"refs/heads/feature ${FEATURE_LEAK} refs/heads/feature ${ENTITY_BASE}"
+		rc=$?
+		if [[ "$rc" -eq 1 ]] && grep -q 'TODO.md:2:' "${TMP}/hook-output" &&
+			! grep -q 'TODO.md:1:' "${TMP}/hook-output"; then
+			pass "hook dispatch: own entity blocked, only new line reported (base=$ENTITY_BASE)"
+		else
+			fail "hook dispatch: own entity must block without reporting public line (got $rc)"
+		fi
+	done
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/new ${MERGED_HEAD} refs/heads/new 0000000000000000000000000000000000000000"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "hook dispatch: new clean branch retains merge-base behavior"
+	else
+		fail "hook dispatch: new clean branch should pass (got $rc)"
+	fi
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/new ${FEATURE_LEAK} refs/heads/new 0000000000000000000000000000000000000000"
+	rc=$?
+	if [[ "$rc" -eq 1 ]] && grep -q 'TODO.md:2:' "${TMP}/hook-output"; then
+		pass "hook dispatch: new branch still blocks own entity"
+	else
+		fail "hook dispatch: new branch with entity should block (got $rc)"
+	fi
+	git -C "$HOOK_REPO" update-ref -d refs/remotes/origin/HEAD
+	git -C "$HOOK_REPO" update-ref refs/tags/origin/main "$FEATURE_LEAK"
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/feature ${FEATURE_LEAK} refs/heads/feature ${FEATURE_BASE}"
+	rc=$?
+	if [[ "$rc" -eq 1 ]] && grep -q 'TODO.md:2:' "${TMP}/hook-output"; then
+		pass "hook dispatch: local tag cannot impersonate public default tip"
+	else
+		fail "hook dispatch: local tag must not exempt unpublished content (got $rc)"
+	fi
+	git -C "$HOOK_REPO" update-ref -d refs/tags/origin/main
+	(
+		cd "$HOOK_REPO" || exit 1
+		git checkout -qb edge-public "$LEAK_HEAD"
+		printf 'testorg/private-\000mirror\n' >binary.txt
+		printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'synthetic fixture only' >secret.txt
+		git add binary.txt secret.txt
+		git commit -qm 'public edge fixtures'
+		git update-ref refs/remotes/origin/main HEAD
+	) || fail "hook dispatch: could not seed edge fixtures"
+	EDGE_PUBLIC=$(git -C "$HOOK_REPO" rev-parse HEAD)
+	pushd "$HOOK_REPO" >/dev/null || exit 1
+	EDGE_DIFF=$'diff --git a/TODO.md b/TODO.md\n+++ b/TODO.md\n@@ -0,0 +1 @@\n+- [x] rNNN testorg/private-mirror leak test\ndiff --git "a/z\\tquoted.txt" "b/z\\tquoted.txt"\n+++ "b/z\\tquoted.txt"\n@@ -0,0 +1 @@\n+- [x] rNNN testorg/private-mirror leak test\ndiff --git a/binary.txt b/binary.txt\n+++ b/binary.txt\n@@ -0,0 +1 @@\n+testorg/private-mirror\ndiff --git a/new.txt b/new.txt\n+++ b/new.txt\n@@ -0,0 +1 @@\n+- [x] rNNN testorg/private-mirror leak test'
+	EDGE_OUTPUT=$(_privacy_exclude_public_lines "$EDGE_DIFF" "$EDGE_PUBLIC")
+	rc=$?
+	popd >/dev/null || exit 1
+	if [[ "$rc" -eq 0 ]] && [[ $(printf '%s\n' "$EDGE_OUTPUT" | grep -c '^+-') -eq 2 ]]; then
+		pass "public filter: quoted and missing paths cannot borrow another file's exemption"
+	else
+		fail "public filter: exact public line must be excluded only in its own file"
+	fi
+	if printf '%s\n' "$EDGE_OUTPUT" | grep -q '^+testorg/private-mirror$'; then
+		pass "public filter: NUL bytes cannot create an exact-line match"
+	else
+		fail "public filter: binary public blob must not exempt different text"
+	fi
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/feature ${EDGE_PUBLIC} refs/heads/feature ${FEATURE_BASE}"
+	rc=$?
+	if [[ "$rc" -eq 1 ]] && grep -q 'secret/private-key material' "${TMP}/hook-output"; then
+		pass "hook dispatch: already-public secret material still blocks"
+	else
+		fail "hook dispatch: public entity exemption must not affect secret scan (got $rc)"
+	fi
+	(
+		cd "$HOOK_REPO" || exit 1
+		printf -- '- [x] rNNN testorg/private-mirror leak test\n' >>TODO.md
+		printf -- '- [x] rNNN testorg/private-mirror leak test\n' >$'z\tquoted.txt'
+		git add TODO.md $'z\tquoted.txt'
+		git commit -qm 'quoted-path feature entity'
+	) || fail "hook dispatch: could not seed quoted-path entity"
+	QUOTED_HEAD=$(git -C "$HOOK_REPO" rev-parse HEAD)
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/feature ${QUOTED_HEAD} refs/heads/feature ${EDGE_PUBLIC}"
+	rc=$?
+	if [[ "$rc" -eq 1 ]] && grep -q 'private references' "${TMP}/hook-output"; then
+		pass "hook dispatch: candidate filtering preserves quoted-path exemption boundary"
+	else
+		fail "hook dispatch: quoted-path entity must remain blocked after filtering (got $rc)"
+	fi
+	git -C "$HOOK_REPO" update-ref -d refs/remotes/origin/HEAD
+	git -C "$HOOK_REPO" update-ref -d refs/remotes/origin/main
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/feature ${MERGED_HEAD} refs/heads/feature ${FEATURE_BASE}"
+	rc=$?
+	if [[ "$rc" -eq 1 ]] && grep -q 'TODO.md:1:' "${TMP}/hook-output"; then
+		pass "hook dispatch: unknown default tip retains full entity scan"
+	else
+		fail "hook dispatch: unknown default tip must not exempt entities (got $rc)"
 	fi
 fi
 

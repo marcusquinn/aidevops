@@ -1134,14 +1134,80 @@ privacy_scan_diff() {
 }
 
 #######################################
+# Replace already-public additions with context lines, preserving line counters.
+# Quoted/unrecognized paths receive no exemption. Blob bytes stay in a file so
+# shell command substitution cannot remove NUL bytes and create false matches.
+_privacy_exclude_public_lines() {
+	local diff_output="$1"
+	local public_head="$2"
+	local line current_file="" public_tree="" loaded=0 scratch in_hunk=0
+	scratch=$(mktemp -d) || return 2
+	while IFS= read -r line; do
+		if [[ "$line" == "diff --git "* ]]; then
+			current_file=""
+			in_hunk=0
+			loaded=0
+		elif [[ "$line" == "@@ "* ]]; then
+			in_hunk=1
+		elif [[ "$in_hunk" -eq 0 && "$line" == "+""++ b/"* ]]; then
+			current_file="${line#+""++ b/}"
+			loaded=0
+		elif [[ "$in_hunk" -eq 0 && "$line" == "+""++ "* ]]; then
+			current_file=""
+			loaded=0
+		elif [[ "$in_hunk" -eq 1 && "$line" == "+"* ]]; then
+			if [[ -n "$current_file" ]]; then
+				if [[ "$loaded" -eq 0 ]]; then
+					if ! public_tree=$(git ls-tree "$public_head" -- ":(literal)$current_file" 2>/dev/null); then
+						rm -rf "$scratch"
+						return 2
+					fi
+					if [[ -n "$public_tree" ]] && ! git show "${public_head}:${current_file}" >"${scratch}/blob" 2>/dev/null; then
+						rm -rf "$scratch"
+						return 2
+					fi
+					loaded=1
+				fi
+				if [[ -n "$public_tree" ]] && grep -aFx -- "${line:1}" "${scratch}/blob" >/dev/null; then
+					line=" ${line:1}"
+				fi
+			fi
+		fi
+		printf '%s\n' "$line"
+	done <<<"$diff_output"
+	rm -rf "$scratch"
+	return 0
+}
+
+#######################################
+# Do not approve a filtered scan if custom rules appeared or changed during it.
+_privacy_public_inventory_unchanged() {
+	local entities_file="$1"
+	local configured_paths="$2"
+	local filtered="$3"
+	local snap_dir="$4"
+	[[ -f "$entities_file" ]] || return 1
+	[[ "$filtered" -eq 1 && (-s "$entities_file" || -s "$configured_paths") ]] && return 1
+	if [[ "$filtered" -eq 2 ]]; then
+		local current_paths="$configured_paths" snap_paths="${snap_dir}/paths"
+		[[ -f "$current_paths" ]] || current_paths=/dev/null
+		[[ -f "$snap_paths" ]] || snap_paths=/dev/null
+		cmp -s "$entities_file" "${snap_dir}/entities" && cmp -s "$current_paths" "$snap_paths" || return 1
+	fi
+	return 0
+}
+
+#######################################
 # Scan added diff lines with the tagged public-entity scanner. Output contains
 # file/line context and generic hit classes only.
 # Arguments: $1=base SHA $2=head SHA $3=tagged entity inventory
+# Optional $4=verified public default tip: exclude identical lines in the same file.
 #######################################
 privacy_scan_public_diff() {
 	local base_sha="$1"
 	local head_sha="$2"
 	local entities_file="$3"
+	local public_head="${4:-}"
 	local diff_base="$base_sha" diff_output
 	local current_file="" line_num=0 hits=0 line added matching_hits scan_rc hit
 	local aidevops_script_basenames
@@ -1156,6 +1222,10 @@ privacy_scan_public_diff() {
 		[[ -z "$diff_base" ]] && diff_base=$(git hash-object -t tree /dev/null)
 	fi
 	diff_output=$(git diff --unified=0 --no-color "$diff_base" "$head_sha" -- . 2>/dev/null) || return 2
+	# Keep raw file boundaries intact before the candidate filter drops headers.
+	if [[ -n "$public_head" ]]; then
+		diff_output=$(_privacy_exclude_public_lines "$diff_output" "$public_head") || return 2
+	fi
 	if [[ ! -s "$entities_file" && ! -s "$configured_paths" ]]; then
 		diff_output=$(_privacy_builtin_candidate_diff "$diff_output" public) || return 2
 		filtered=1
@@ -1216,22 +1286,9 @@ privacy_scan_public_diff() {
 		" "*) line_num=$((line_num + 1)) ;;
 		esac
 	done <<<"$diff_output"
-	# Do not approve a filtered scan if custom rules appeared or changed during it.
-	if [[ ! -f "$entities_file" ]]; then
+	if ! _privacy_public_inventory_unchanged "$entities_file" "$configured_paths" "$filtered" "$snap_dir"; then
 		[[ -n "$snap_dir" ]] && rm -rf "$snap_dir"
 		return 2
-	fi
-	if [[ "$filtered" -eq 1 && (-s "$entities_file" || -s "$configured_paths") ]]; then
-		return 2
-	fi
-	if [[ "$filtered" -eq 2 ]]; then
-		local current_paths="$configured_paths" snap_paths="${snap_dir}/paths"
-		[[ -f "$current_paths" ]] || current_paths=/dev/null
-		[[ -f "$snap_paths" ]] || snap_paths=/dev/null
-		if ! cmp -s "$entities_file" "${snap_dir}/entities" || ! cmp -s "$current_paths" "$snap_paths"; then
-			rm -rf "$snap_dir"
-			return 2
-		fi
 	fi
 	[[ -n "$snap_dir" ]] && rm -rf "$snap_dir"
 	[[ "$hits" -gt 0 ]] && return 1
