@@ -1667,6 +1667,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18680 fix(pulse): stop counting the async post-dispatch housekeeping run as a Pulse cycle #bug #framework tier:standard ref:GH#34474 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18680-brief.md]
 
+- [ ] t18681 fix(full-loop): define the cleanup-receipt failure helper at file scope #bug #framework tier:simple ref:GH#34477 assignee:marcusquinn logged:2026-10-12 started:2026-10-12 -> [todo/tasks/t18681-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

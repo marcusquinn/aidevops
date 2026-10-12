@@ -498,8 +498,13 @@ _full_loop_receipt_lock_release() {
 	[[ -n "$_FULL_LOOP_RECEIPT_LOCK" ]] || return 0
 	rm -f "${_FULL_LOOP_RECEIPT_LOCK}/owner" 2>/dev/null || true
 	rmdir "$_FULL_LOOP_RECEIPT_LOCK" 2>/dev/null || true
-_FULL_LOOP_RECEIPT_LOCK=""
+	_FULL_LOOP_RECEIPT_LOCK=""
+	return 0
+}
+
 # Stable reason code for the last deferred-cleanup receipt failure (GH#34468).
+# File scope (t18681): these must exist before the first lock release, because
+# a fresh process can fail before it ever holds the receipt lock.
 _FULL_LOOP_CLEANUP_FAILURE_REASON=""
 _FULL_LOOP_RECEIPT_LOCK_FAILURE=""
 _FULL_LOOP_REASON_WRITE_FAILED="receipt-write-failed"
@@ -510,9 +515,6 @@ _full_loop_cleanup_fail() {
 	_FULL_LOOP_CLEANUP_FAILURE_REASON="$reason"
 	printf 'cleanup-receipt-failure: %s\n' "$reason" >&2
 	return 1
-}
-
-	return 0
 }
 
 _full_loop_cleanup_deferred_matches() {
