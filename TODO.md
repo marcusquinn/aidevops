@@ -535,6 +535,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] Reusable protected repository metrics rollout checklist and live validation #docs #plan #deferred #interactive logged:2026-10-12 -> [todo/tasks/tasks-protected-metrics-rollout.md] — Saved brief only; no worker dispatch or downstream changes authorized.
+
 - [x] t18583 Reusable Hostinger fleet onboarding and drift sync — phased: inventory/plan/drift PR #34379, readiness PR #34445, provisioning PR #34447, layout-move wrapper PR #34448. #enhancement #hosting #interactive tier:standard ref:GH#33811 logged:2026-10-03 -> [todo/tasks/t18583-brief.md] pr:#34448 completed:2026-10-11
 
 - [x] t18480 fix(setup): stop duplicate aidevops plugin registration in OpenCode V2 #bug #framework #setup #interactive tier:standard ref:GH#32422 logged:2026-09-26 -> [todo/tasks/t18480-brief.md] pr:#32424 completed:2026-09-26
