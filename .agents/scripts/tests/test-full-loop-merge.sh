@@ -133,11 +133,17 @@ if [[ "$subcommand" == "fetch" ]]; then
 	}
 	request=$'protocol=https\nhost=github.com\npath=testorg/testrepo.git\n\n'
 	# Never reach a real OS keyring, even when the code under test regresses:
-	# the fake global helper is the only inherited helper in scope.
-	credential=$(env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
-		/usr/bin/git "${config_args[@]}" credential fill <<<"$request") || exit 128
-	env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
-		/usr/bin/git "${config_args[@]}" credential approve <<<"${credential}"$'\n' || exit 128
+	# the fake global helper is the only inherited helper in scope. Run outside
+	# every repository too, because a developer checkout's local config can
+	# name osxkeychain and system/global isolation does not hide it (GH#34511).
+	no_repo=$(mktemp -d) || exit 128
+	credential=$(cd "$no_repo" && env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
+		GIT_CEILING_DIRECTORIES="$no_repo" \
+		/usr/bin/git "${config_args[@]}" credential fill <<<"$request") || { rmdir "$no_repo"; exit 128; }
+	(cd "$no_repo" && env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
+		GIT_CEILING_DIRECTORIES="$no_repo" \
+		/usr/bin/git "${config_args[@]}" credential approve <<<"${credential}"$'\n') || { rmdir "$no_repo"; exit 128; }
+	rmdir "$no_repo"
 fi
 exec /usr/bin/git "$@"
 PROBE_EOF

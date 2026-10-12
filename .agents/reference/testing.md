@@ -135,6 +135,40 @@ for `BASH_SOURCE`-relative helper resolution.
 - Clean up tmpdirs via `trap 'rm -rf "$TMPDIR_TEST"' EXIT`.
 - Stub PATH commands (e.g., `gh`) by prepending a per-test `stub-bin`
   directory to `PATH` in the test, not by globally shadowing them.
+- Run baseline comparisons from a linked worktree or scratch directory,
+  never with a canonical checkout as the working directory. The
+  canonical Git guard blocks the fixture's `git init`/`clone` there, and
+  tests that ignore setup failures can then pass falsely. To baseline
+  `main`, invoke its script path from a non-canonical cwd (GH#34511).
+
+## Credential-helper isolation (GH#34511)
+
+Tests and ad-hoc probes must never reach a real OS credential store
+(`osxkeychain`, libsecret, Git Credential Manager). On macOS a reached
+helper raises a SecurityAgent dialog in the operator's GUI. That is the
+unattended-prompt failure aidevops exists to prevent, so treat it as a
+security defect, not test noise.
+
+- **Repository config is a credential source.** `git credential`, clone,
+  fetch and push read the local `.git/config` of the current directory.
+  `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL` and a temporary `HOME` do not
+  hide a checkout's `credential.helper=osxkeychain`. Run credential
+  requests from a fresh `mktemp -d` directory with
+  `GIT_CEILING_DIRECTORIES` set to it, never from a repo or worktree.
+- **Replace every other source.** Use `GIT_CONFIG_NOSYSTEM=1` (or
+  `GIT_CONFIG_SYSTEM=/dev/null`), point `GIT_CONFIG_GLOBAL` at a fixture
+  file, and unset inherited `GIT_CONFIG_COUNT`/`GIT_CONFIG_PARAMETERS`.
+- **Preflight before the first request.** List visible helpers with
+  `git config --get-regexp '^credential\..*helper$'` from the isolated
+  directory, and abort if any value lies outside the fixture. The guard
+  must hold even when the code under test regresses. Pattern:
+  `tests/test-issue-sync-project-root.sh` (GH#34511 block).
+- **Fake helpers only, including negative controls.** A "non-GitHub
+  keeps its helper" control must hit a fake helper, never the real chain.
+  Keep fixture remotes local (`url.<file-url>.insteadOf`) so no request
+  leaves the host.
+- **Disable prompts.** Set `GIT_TERMINAL_PROMPT=0` and unset
+  `GIT_ASKPASS`/`SSH_ASKPASS` around credential requests.
 
 ## Hermetic pnpm/Vitest preflight triage
 

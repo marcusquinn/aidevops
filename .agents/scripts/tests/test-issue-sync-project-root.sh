@@ -618,4 +618,159 @@ eval "$run_issue_sync_stage_definition"
 unset PULSE_TODO_SYNC_WORKSPACE_GRACE_SECS PULSE_TODO_SYNC_MAX_RECOVERIES_PER_RUN \
 	AIDEVOPS_TODO_SYNC_TRASH_ROOT SYNC_BLOCK_MARKER SYNC_BLOCK_RELEASE
 
+# GH#34511: unattended GitHub HTTPS Git authentication uses only the gh
+# credential principal; inherited helpers never receive get/store/erase.
+# Hermetic by construction (reference/testing.md "Credential-helper
+# isolation"): every config source is a fixture and credential requests run
+# outside any repository, so a regression reaches only the fake helper, never
+# a real OS credential store or GUI prompt.
+auth_root="${TMP}/github-auth"
+auth_no_repo="${auth_root}/no-repo"
+mkdir -p "${auth_root}/bin" "$auth_no_repo"
+export TEST_INHERITED_LOG="${auth_root}/inherited.log"
+export TEST_GH_LOG="${auth_root}/gh.log"
+cat >"${auth_root}/inherited-helper" <<'HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "${1:-}" >>"$TEST_INHERITED_LOG"
+cat >/dev/null
+printf 'username=inherited\npassword=inherited-synthetic\n'
+HELPER
+cat >"${auth_root}/bin/gh" <<'GH'
+#!/usr/bin/env bash
+[[ "${1:-} ${2:-}" == "auth git-credential" ]] || exit 1
+printf '%s\n' "${3:-}" >>"$TEST_GH_LOG"
+cat >/dev/null
+[[ "${3:-}" == "get" && -z "${TEST_GH_NO_TOKEN:-}" ]] || exit 0
+printf 'username=x-access-token\npassword=managed-synthetic\n'
+GH
+chmod +x "${auth_root}/inherited-helper" "${auth_root}/bin/gh"
+repo_auth="${TMP}/repo-auth"
+remote_auth="${TMP}/remote-auth.git"
+setup_sync_repo "$repo_auth" "$remote_auth"
+/usr/bin/git -C "$repo_auth" remote set-url origin git@github.com:owner/repo-auth.git
+auth_global="${auth_root}/global.gitconfig"
+/usr/bin/git config --file "$auth_global" credential.helper "${auth_root}/inherited-helper"
+/usr/bin/git config --file "$auth_global" credential.https://github.com.helper "${auth_root}/inherited-helper"
+/usr/bin/git config --file "$auth_global" "url.file://${remote_auth}.insteadOf" \
+	https://github.com/owner/repo-auth.git
+auth_previous_path="$PATH"
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ASKPASS SSH_ASKPASS
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL="$auth_global"
+export PATH="${auth_root}/bin:${PATH}"
+
+# Hermeticity preflight: abort before any credential request if a helper
+# outside the fixture is visible (for example a developer checkout's local
+# credential.helper=osxkeychain).
+auth_visible_helpers=$(cd "$auth_no_repo" && GIT_CEILING_DIRECTORIES="$auth_root" \
+	/usr/bin/git config --get-regexp '^credential\..*helper$' || true)
+while read -r auth_helper_key auth_helper_value; do
+	[[ -n "$auth_helper_key" ]] || continue
+	[[ "$auth_helper_value" == "${auth_root}/"* ]] ||
+		fail "non-fixture credential helper visible to auth test: ${auth_helper_key}"
+done <<<"$auth_visible_helpers"
+# The fixture remote must resolve locally so no request leaves the host.
+[[ $(/usr/bin/git config --get "url.file://${remote_auth}.insteadOf") == \
+	https://github.com/owner/repo-auth.git ]] || fail "auth fixture global config is not in effect"
+
+_test_github_credential_roundtrip() {
+	local remote_url="$1"
+	local credential=""
+	# A prompt-capable context is a regression; record it and refuse.
+	if [[ "${GIT_TERMINAL_PROMPT:-}" != "0" || -n "${GIT_ASKPASS:-}" || -n "${SSH_ASKPASS:-}" ]]; then
+		printf '%s\n' prompt-capable >>"$TEST_INHERITED_LOG"
+		return 1
+	fi
+	credential=$(cd "$auth_no_repo" && GIT_CEILING_DIRECTORIES="$auth_root" GIT_TERMINAL_PROMPT=0 \
+		/usr/bin/git credential fill <<<"$(printf 'protocol=https\nhost=github.com\npath=%s\n' \
+			"${remote_url#https://github.com/}")") || return 1
+	(cd "$auth_no_repo" && GIT_CEILING_DIRECTORIES="$auth_root" GIT_TERMINAL_PROMPT=0 \
+		/usr/bin/git credential approve <<<"${credential}") || return 1
+	return 0
+}
+auth_original_git_definition=$(declare -f git)
+# Fixture remotes are local, so emulate the credential exchange real HTTPS
+# would perform for each GitHub network command, then run it via insteadOf.
+git() {
+	local arg="" prev="" subcommand="" repo_dir="" target=""
+	for arg in "$@"; do
+		if [[ "$prev" == "-C" ]]; then
+			repo_dir="$arg"
+		elif [[ -z "$subcommand" && "$arg" != -* ]]; then
+			subcommand="$arg"
+		fi
+		[[ "$arg" == https://github.com/* ]] && target="$arg"
+		prev="$arg"
+	done
+	case "$subcommand" in
+	clone | fetch | ls-remote | push)
+		if [[ -z "$target" && -n "$repo_dir" ]]; then
+			target=$(/usr/bin/git -C "$repo_dir" remote get-url origin 2>/dev/null || true)
+		fi
+		if [[ "$target" == https://github.com/* ]]; then
+			_test_github_credential_roundtrip "$target" || return 128
+		fi
+		;;
+	esac
+	/usr/bin/git "$@"
+	return $?
+}
+
+: >"$TEST_INHERITED_LOG"
+: >"$TEST_GH_LOG"
+auth_rc=0
+GIT_ASKPASS=/bin/echo SSH_ASKPASS=/bin/echo \
+	sync_todo_refs_for_repo owner/repo-auth "$repo_auth" || auth_rc=$?
+[[ "$auth_rc" -eq 0 ]] || fail "SSH-registered GitHub repo did not sync through the gh helper (rc=${auth_rc})"
+[[ ! -s "$TEST_INHERITED_LOG" ]] ||
+	fail "inherited credential helper or prompt path was used: $(tr '\n' ' ' <"$TEST_INHERITED_LOG")"
+if ! grep -qx get "$TEST_GH_LOG" || ! grep -qx store "$TEST_GH_LOG"; then
+	fail "gh credential helper did not serve get/store for TODO sync"
+fi
+git --git-dir="$remote_auth" show main:TODO.md | grep -q '^synced:owner/repo-auth$' ||
+	fail "gh-authenticated TODO sync did not publish"
+[[ -z "${GIT_CONFIG_COUNT:-}" && -z "${GIT_TERMINAL_PROMPT:-}" ]] ||
+	fail "TODO-sync auth context leaked into the caller"
+
+# Canonical refresh reads use the same isolation.
+: >"$TEST_INHERITED_LOG"
+: >"$TEST_GH_LOG"
+auth_ls_remote=$(_pulse_unattended_git ls-remote https://github.com/owner/repo-auth.git refs/heads/main) ||
+	fail "isolated canonical ls-remote failed"
+[[ "$auth_ls_remote" == *refs/heads/main* ]] || fail "isolated canonical ls-remote returned no default ref"
+if [[ -s "$TEST_INHERITED_LOG" ]] || ! grep -qx get "$TEST_GH_LOG"; then
+	fail "canonical refresh ls-remote did not use only the gh helper"
+fi
+
+# Missing managed credentials fail once with redacted, actionable guidance.
+: >"$TEST_INHERITED_LOG"
+auth_missing_rc=0
+auth_missing_output=$(TEST_GH_NO_TOKEN=1 \
+	sync_todo_refs_for_repo owner/repo-auth "$repo_auth" 2>&1) || auth_missing_rc=$?
+[[ "$auth_missing_rc" -eq 1 ]] || fail "missing gh credential was not a retryable failure"
+[[ ! -s "$TEST_INHERITED_LOG" ]] || fail "missing gh credential fell back to an inherited helper"
+[[ "$auth_missing_output" == *"reason=github_auth_unavailable action=run_gh_auth_status"* ]] ||
+	fail "missing gh credential omitted actionable guidance: ${auth_missing_output}"
+[[ "$auth_missing_output" != *synthetic* ]] || fail "auth failure diagnostic exposed a credential"
+if only_todo_sync_workspace >/dev/null 2>&1; then
+	fail "auth failure left an automation workspace behind"
+fi
+
+# Isolation is host-scoped: other hosts keep their configured helpers.
+: >"$TEST_INHERITED_LOG"
+: >"$TEST_GH_LOG"
+(
+	_ptsw_isolate_github_git_auth || exit 1
+	cd "$auth_no_repo" || exit 1
+	GIT_CEILING_DIRECTORIES="$auth_root" /usr/bin/git credential fill \
+		<<<"$(printf 'protocol=https\nhost=example.invalid\npath=o/r.git\n')" >/dev/null
+) || fail "non-GitHub credential lookup failed under isolation"
+if ! grep -qx get "$TEST_INHERITED_LOG" || [[ -s "$TEST_GH_LOG" ]]; then
+	fail "GitHub isolation changed a non-GitHub host's helper"
+fi
+
+eval "$auth_original_git_definition"
+unset -f _test_github_credential_roundtrip
+unset GIT_CONFIG_NOSYSTEM GIT_CONFIG_SYSTEM GIT_CONFIG_GLOBAL TEST_INHERITED_LOG TEST_GH_LOG
+export PATH="$auth_previous_path"
+
 printf 'PASS: issue sync automation-workspace contract\n'

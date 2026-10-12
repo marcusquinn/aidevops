@@ -25,6 +25,9 @@ _PTSW_LEGACY_COMMAND_STATUS=1
 _PTSW_LEGACY_SNAPSHOTS_READY=0
 _PTSW_LEGACY_CAP_LOGGED=0
 _PTSW_CLONE_DIAGNOSTIC_MAX_CHARS=512
+_PTSW_GITHUB_CREDENTIAL_KEY="credential.https://github.com.helper"
+_PTSW_GITHUB_CREDENTIAL_HELPER="!gh auth git-credential"
+_PTSW_GITHUB_GIT_AUTH_ISOLATED=0
 _PULSE_TODO_SYNC_WORKSPACE=""
 _PULSE_TODO_SYNC_WORKSPACE_ROOT=""
 _PULSE_TODO_SYNC_OWNER_PID=""
@@ -53,6 +56,48 @@ _ptsw_process_start_fingerprint() {
 	process_start="${process_start%"${process_start##*[![:space:]]}"}"
 	[[ -n "$process_start" ]] || return 1
 	printf '%s\n' "$process_start"
+	return 0
+}
+
+_ptsw_append_git_config_env() {
+	local config_key="$1"
+	local config_value="$2"
+	local config_count="${GIT_CONFIG_COUNT:-0}"
+	[[ "$config_count" =~ ^[0-9]+$ ]] || return 1
+	export "GIT_CONFIG_KEY_${config_count}=${config_key}"
+	export "GIT_CONFIG_VALUE_${config_count}=${config_value}"
+	export GIT_CONFIG_COUNT=$((config_count + 1))
+	return 0
+}
+
+#######################################
+# _ptsw_isolate_github_git_auth
+#
+# Route unattended GitHub HTTPS authentication through the gh credential
+# principal for every Git process started by the calling shell (GH#34511).
+# Call only inside the subshell that owns one unattended operation, so the
+# process-scoped configuration never reaches the caller or worker launches.
+#
+# Environment configuration is read after system, global and repository
+# files. The empty URL-scoped value clears every inherited helper selected for
+# https://github.com (osxkeychain, libsecret, GCM, generic or URL-scoped)
+# before the gh helper is added, so get/store/erase never reach an OS
+# credential store and nothing is persisted. Other hosts keep their helpers.
+# No operator is present, so askpass and terminal prompts are disabled.
+# Fails closed when Git does not apply environment configuration (< 2.31).
+#######################################
+_ptsw_isolate_github_git_auth() {
+	local effective_helper=""
+	[[ "$_PTSW_GITHUB_GIT_AUTH_ISOLATED" == "1" ]] && return 0
+	_ptsw_append_git_config_env "$_PTSW_GITHUB_CREDENTIAL_KEY" "" || return 1
+	_ptsw_append_git_config_env "$_PTSW_GITHUB_CREDENTIAL_KEY" "$_PTSW_GITHUB_CREDENTIAL_HELPER" || return 1
+	_ptsw_append_git_config_env "core.askPass" "" || return 1
+	unset GIT_ASKPASS SSH_ASKPASS
+	export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never
+	effective_helper=$(git config --show-scope --get-all "$_PTSW_GITHUB_CREDENTIAL_KEY" 2>/dev/null |
+		tail -n 1) || effective_helper=""
+	[[ "$effective_helper" == "command"$'\t'"$_PTSW_GITHUB_CREDENTIAL_HELPER" ]] || return 1
+	_PTSW_GITHUB_GIT_AUTH_ISOLATED=1
 	return 0
 }
 
@@ -199,6 +244,7 @@ _ptsw_create_workspace() {
 	local clone_error_file=""
 	local clone_error=""
 	local clone_rc=0
+	local auth_hint=""
 	local owner_pid="${BASHPID:-}"
 	local owner_start=""
 	local owner_created=""
@@ -249,8 +295,14 @@ _ptsw_create_workspace() {
 	if [[ "$clone_rc" -ne 0 ]]; then
 		clone_error=$(dd if="$clone_error_file" bs=512 count=2 2>/dev/null || true)
 		rm -f "$clone_error_file" 2>/dev/null || true
+		# Missing or unusable managed credentials fail once with guidance; the
+		# isolated auth context has no OS-helper fallback to retry (GH#34511).
+		if [[ "$remote_url" == https://github.com/* ]] &&
+			grep -qiE 'could not read (username|password)|terminal prompts disabled|authentication failed' <<<"$clone_error"; then
+			auth_hint=" reason=github_auth_unavailable action=run_gh_auth_status"
+		fi
 		clone_error=$(_ptsw_sanitize_clone_diagnostic "$clone_error") || clone_error="clone diagnostic unavailable"
-		printf '[pulse-wrapper] TODO ref sync clone failed detail=%s\n' "$clone_error" >&2
+		printf '[pulse-wrapper] TODO ref sync clone failed%s detail=%s\n' "$auth_hint" "$clone_error" >&2
 		return 1
 	fi
 	rm -f "$clone_error_file" 2>/dev/null || true

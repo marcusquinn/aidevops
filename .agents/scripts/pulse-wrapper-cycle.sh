@@ -48,6 +48,23 @@ if [[ -f "${SCRIPT_DIR}/pulse-todo-sync-workspace.sh" ]]; then
 fi
 
 #######################################
+# Run one unattended Git network read in a subshell that owns the GitHub
+# credential isolation (GH#34511), so an inherited OS helper never prompts and
+# the process-scoped configuration does not leak to the caller.
+# Arguments: git arguments
+# Returns: git exit status; 1 when isolation is unavailable (fails closed)
+#######################################
+_pulse_unattended_git() {
+	local git_rc=0
+	(
+		declare -F _ptsw_isolate_github_git_auth >/dev/null 2>&1 || exit 1
+		_ptsw_isolate_github_git_auth || exit 1
+		git "$@"
+	) || git_rc=$?
+	return "$git_rc"
+}
+
+#######################################
 # t2433/GH#20071: Refresh a repo from remote before the large-file gate
 # measures it. Without this, stale local checkouts (post-split-PR) cause
 # the gate to fire on pre-split line counts, creating spurious file-size-debt
@@ -130,7 +147,7 @@ _pulse_refresh_should_skip_repo() {
 	fi
 
 	local ls_remote_exit=0
-	git -C "$repo_path" ls-remote --exit-code "$upstream_remote" "refs/heads/${upstream_branch}" >/dev/null 2>&1 || ls_remote_exit=$?
+	_pulse_unattended_git -C "$repo_path" ls-remote --exit-code "$upstream_remote" "refs/heads/${upstream_branch}" >/dev/null 2>&1 || ls_remote_exit=$?
 	if [[ "$ls_remote_exit" -eq 2 ]]; then
 		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — upstream ${upstream_ref} does not exist" >>"$LOGFILE"
 		return 0
@@ -165,7 +182,7 @@ _pulse_refresh_repo() {
 	local default_branch="" remote_sha="" local_sha=""
 	default_branch=$(_pulse_refresh_default_branch "$repo_path") || default_branch=""
 	if [[ -n "$default_branch" ]]; then
-		remote_sha=$(git -C "$repo_path" ls-remote origin "refs/heads/${default_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || remote_sha=""
+		remote_sha=$(_pulse_unattended_git -C "$repo_path" ls-remote origin "refs/heads/${default_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || remote_sha=""
 	fi
 	local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || true)
 	if [[ -z "$remote_sha" ]]; then
@@ -702,7 +719,8 @@ _pulse_create_todo_sync_workspace() {
 	fi
 	remote_url=$(git -C "$repo_path" remote get-url "$remote_name" 2>/dev/null) || return 1
 	[[ -n "$remote_url" ]] || return 1
-	# Launchd has no SSH agent; GitHub HTTPS uses the authenticated gh helper.
+	# Launchd has no SSH agent; GitHub HTTPS authenticates through the gh
+	# helper that sync_todo_refs_for_repo installs process-locally (GH#34511).
 	# Match only GitHub's standard SSH forms, preserving all other remotes.
 	if [[ "$remote_url" =~ ^(git@github[.]com:|ssh://git@github[.]com/)([^/[:space:]]+/[^/[:space:]]+)$ ]]; then
 		github_path="${BASH_REMATCH[2]}"
@@ -869,6 +887,16 @@ sync_todo_refs_for_repo() (
 	trap 'exit 143' TERM
 	trap 'exit 130' INT
 	trap 'exit 129' HUP
+
+	# Every Git network call below (clone, snapshot, handoff, publication) and
+	# every helper child inherits this subshell-scoped GitHub auth context.
+	lifecycle_stage="auth"
+	if ! declare -F _ptsw_isolate_github_git_auth >/dev/null 2>&1 ||
+		! _ptsw_isolate_github_git_auth; then
+		printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=auth reason=git_auth_isolation_unavailable repo=%s\n' \
+			"$repo_slug" >>"$WRAPPER_LOGFILE"
+		return 1
+	fi
 
 	lifecycle_stage="clone"
 	_pulse_create_todo_sync_workspace "$repo_path" "$repo_slug" || {
