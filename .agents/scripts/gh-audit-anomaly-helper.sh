@@ -33,13 +33,16 @@ init_log_file || true
 # Constants
 # =============================================================================
 
-readonly GH_ANOMALY_VERSION="1.1.0"
+readonly GH_ANOMALY_VERSION="1.2.0"
 readonly GH_ANOMALY_STATE_FILE_DEFAULT="${HOME}/.aidevops/logs/gh-audit-scanner.state"
 readonly GH_ANOMALY_LOG_DIR_DEFAULT="${HOME}/.aidevops/logs"
 readonly GH_ANOMALY_LOG_FILENAME="gh-audit.log"
 readonly GH_ANOMALY_DEFAULT_REPO="marcusquinn/aidevops"
 readonly GH_ANOMALY_NMR_LABEL="needs-maintainer-review"
 readonly GH_ANOMALY_PERMISSION_LABEL="needs-maintainer-permissions"
+# GH#34499: the evidence (gh-audit.log) exists only on the producing runner, so
+# alerts are a durable locality hold, never pulse worker candidates.
+readonly GH_ANOMALY_HOLD_LABEL="no-auto-dispatch"
 readonly GH_ANOMALY_REDACTED_REPO="[private repository]"
 # Maximum anomaly entries to include in an issue (prevents overly large issues)
 readonly GH_ANOMALY_MAX_ISSUE_ENTRIES=20
@@ -299,6 +302,8 @@ BODY
 
 ## Next Steps
 
+**Review owner:** the runner that filed this alert (the issue author). The evidence in \`gh-audit.log\` exists only on that runner, so this alert is labelled \`${GH_ANOMALY_HOLD_LABEL}\` and is never dispatched to workers.
+
 1. Review each entry in \`~/.aidevops/logs/gh-audit.log\`, including each snapshot's \`capture_status\`.
 2. Verify the current GitHub state and cross-reference the events API:
    \`gh api /repos/OWNER/REPO/issues/N/events --jq '[.[] | select(.event == "renamed")]'\`
@@ -334,6 +339,7 @@ _cmd_scan_file_issue() {
 			--title "$title" \
 			--body-file "$body_file" \
 			--label "monitoring" \
+			--label "$GH_ANOMALY_HOLD_LABEL" \
 			2>"$gh_stderr_file") || {
 			local gh_err
 			gh_err="$(tr '\n' ' ' <"$gh_stderr_file")"
@@ -348,7 +354,8 @@ _cmd_scan_file_issue() {
 			--repo "$issue_repo" \
 			--title "$title" \
 			--body-file "$body_file" \
-			--label "monitoring") || {
+			--label "monitoring" \
+			--label "$GH_ANOMALY_HOLD_LABEL") || {
 			_ga_warn "Failed to create anomaly issue on ${issue_repo}"
 			return 1
 		}

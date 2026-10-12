@@ -322,6 +322,15 @@ The scanner:
    they match the destination repository), failing closed on lookup errors
 4. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when anomalies are found
 
+Alerts are labelled `monitoring` and `no-auto-dispatch` (GH#34499). The evidence
+is in the producing runner's local `gh-audit.log`, so the review owner is the
+runner that filed the alert (the issue author). Other runners' workers cannot read
+it: before this hold, #34495 used three worker launches that each ended blocked.
+Investigate on the producing runner with the Forensics Workflow above. Then close
+the alert with evidence, or file a separately scoped repair task. Do not remove
+`no-auto-dispatch` to "unstick" an alert; that removal is itself a
+protected-label audit signal.
+
 To run the scanner manually:
 
 ```bash
