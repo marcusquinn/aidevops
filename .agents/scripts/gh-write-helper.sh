@@ -38,6 +38,13 @@ main() {
 		return 2
 	fi
 	shift 2
+	local arg
+	for arg in "$@"; do
+		if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+			usage
+			return 0
+		fi
+	done
 	case "${resource}:${action}" in
 	issue:create) gh_create_issue "$@" ;;
 	issue:edit) gh_issue_edit_safe "$@" ;;
