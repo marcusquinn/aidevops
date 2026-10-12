@@ -305,6 +305,16 @@ _publication_note_concurrent() {
 	return 0
 }
 
+# Author-side content gap: held (code 5), not a run failure. The fence stays
+# (publication:pending retained) so the brief is never dispatched.
+_publication_hold_not_ready() {
+	local repo="$1" task_id="$2" issue_num="$3" validation="${4:-}"
+	print_warning "${task_id}/#${issue_num}: auto-dispatch brief is not worker-ready; held, retaining ${PUBLICATION_PENDING_LABEL}"
+	_publication_note_brief_not_ready "$repo" "$issue_num" "$task_id" "$validation" ||
+		print_warning "${task_id}/#${issue_num}: could not post brief-not-ready diagnostic"
+	return 5
+}
+
 _publication_reconcile_one() {
 	local repo="$1" task_id="$2" issue_num="$3"
 	# 1 = issue title must start with "<task_id>:" (title-derived mapping);
@@ -329,14 +339,8 @@ _publication_reconcile_one() {
 		return 1
 	}
 	local readiness_out=""
-	readiness_out=$(_publication_dispatch_ready "$task_id" "$desired_labels") || {
-		# Author-side content gap: held (code 5), not a run failure. The fence
-		# stays (publication:pending retained) so the brief is never dispatched.
-		print_warning "${task_id}/#${issue_num}: auto-dispatch brief is not worker-ready; held, retaining ${PUBLICATION_PENDING_LABEL}"
-		_publication_note_brief_not_ready "$repo" "$issue_num" "$task_id" "$readiness_out" ||
-			print_warning "${task_id}/#${issue_num}: could not post brief-not-ready diagnostic"
-		return 5
-	}
+	readiness_out=$(_publication_dispatch_ready "$task_id" "$desired_labels") ||
+		{ _publication_hold_not_ready "$repo" "$task_id" "$issue_num" "$readiness_out"; return $?; }
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
 	_publication_task_has_dependency "$task_line" "$issue_json" "$repo" "$issue_num" && has_dependency=1
 	jq -e --arg task_prefix "${task_id}:" --arg bound "$require_title_prefix" \
