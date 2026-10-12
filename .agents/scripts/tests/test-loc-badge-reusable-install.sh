@@ -31,7 +31,8 @@ _fail() {
 _assert_contains() {
 	local _name="$1"
 	local _pattern="$2"
-	if grep -Fq -- "$_pattern" "$WORKFLOW"; then
+	local _file="${3:-$WORKFLOW}"
+	if grep -Fq -- "$_pattern" "$_file"; then
 		_pass "$_name"
 		return 0
 	fi
@@ -95,7 +96,9 @@ main() {
 	_assert_contains "declares private mirror read token" "AIDEVOPS_READ_TOKEN:"
 	_assert_contains "checks out configured helper repository" "repository: \${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}"
 	_assert_contains "keeps runtime bounded" "timeout-minutes: 5"
-	_assert_contains "detects untracked generated metrics" "git status --porcelain"
+	_assert_contains "delegates metrics publication" "bash __aidevops/.agents/scripts/repo-metrics-git-push-helper.sh"
+	_assert_contains "detects untracked generated metrics" "git status --porcelain" \
+		"$SCRIPT_DIR/../repo-metrics-git-push-helper.sh"
 	_assert_not_regex "does not apt-install tokei" 'apt(-get)? install.*tokei'
 	_assert_not_regex "does not install jq" 'apt(-get)? install.*jq'
 	_assert_not_regex "does not cargo-install tokei" 'cargo install.*tokei'

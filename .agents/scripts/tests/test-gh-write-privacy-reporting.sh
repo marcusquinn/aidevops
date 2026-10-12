@@ -25,6 +25,9 @@ cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" >>"$GH_CALLS_FILE"
+if [[ "${GH_HELP_ONLY:-0}" == 1 ]]; then
+    exit 99
+fi
 case "$1 $2" in
 "api repos/public/repo") printf 'false\n'; exit 0 ;;
 "auth status") exit 0 ;;
@@ -55,6 +58,29 @@ exit 0
 STUB
 chmod +x "${TEST_ROOT}/bin/gh"
 export PATH="${TEST_ROOT}/bin:${PATH}"
+
+check_help() {
+	: >"$GH_CALLS_FILE"
+	: >"$AUDIT_LOG_FILE"
+	GH_HELP_ONLY=1 bash "${SCRIPT_DIR}/gh-write-helper.sh" "$@" \
+		>"${TEST_ROOT}/stdout" 2>"${TEST_ROOT}/stderr"
+	grep -Fq 'Usage: gh-write-helper.sh' "${TEST_ROOT}/stdout"
+	[[ ! -s "${TEST_ROOT}/stderr" && ! -s "$GH_CALLS_FILE" && ! -s "$AUDIT_LOG_FILE" ]]
+	printf 'PASS help without GitHub calls or audit events: %s\n' "$*"
+	return 0
+}
+
+for help_flag in help --help -h; do
+	check_help "$help_flag"
+done
+for resource in issue pr; do
+	for action in create edit comment; do
+		for help_flag in --help -h; do
+			check_help "$resource" "$action" "$help_flag"
+			check_help "$resource" "$action" 1 --repo public/repo --body-file "${TEST_ROOT}/missing-body" "$help_flag"
+		done
+	done
+done
 
 check_cli() {
 	local resource="$1"

@@ -79,10 +79,29 @@ Plus the GitHub Actions wiring:
 4. **`.github/workflows/loc-badge-reusable.yml`** — reusable workflow
    that downstream repos call from a tiny caller YAML; it runs weekly and on
    default-branch pushes, skips outputs fresher than 24h by default, and never
-   runs on pull_request events. A metrics push still rejected after three
-   attempts (usually a missing or under-scoped `SYNC_PAT` on a protected
-   branch) fails the job; set `fail_on_push_error: false` to keep it a warning
+   runs on pull_request events. A GH006 rejection routes through one deterministic
+   `aidevops/repository-metrics` PR; later refreshes replace its generated snapshot.
+   Protection, administrator enforcement, review and required checks stay unchanged.
+   Successful PR publication means queued, not merged. Other publication failures
+   fail the job; set `fail_on_push_error: false` to keep warning-only behaviour.
 5. **`.agents/templates/workflows/loc-badge-caller.yml`** — the caller template
+
+Both caller and reusable job require `contents: write`, `pull-requests: write`,
+and `actions: read` (to resolve the reusable helper SHA when no override is set).
+Refresh existing caller permissions when upgrading; a reusable workflow cannot
+elevate the caller's token permissions. The job token creates the PR first. Only
+when that API path fails does it recover a concurrent PR and try the configured
+per-repo `SYNC_PAT` once (Contents and Pull requests: read/write). The PAT is not
+a default-branch protection bypass. The setup advisory also recognizes metrics
+callers with nonstandard filenames and only requires the PAT when protection
+blocks direct publication and Actions PR creation is disabled.
+
+Fallback branch commits omit `[skip ci]`, but `GITHUB_TOKEN`-created events can
+suppress Actions triggers. Before merging, use the consumer repository's authorized
+check-trigger mechanism and verify required checks; never bypass them. The eventual
+squash title retains `[skip ci]` and existing bot-author filtering prevents refresh
+loops. A queued scan whose source is no longer the current branch tip is skipped,
+so it cannot overwrite a newer metrics snapshot.
 
 ## Add badges to a repo (manual flow)
 
@@ -115,7 +134,9 @@ To pin the workflow by commit SHA like other actions, put the same SHA on
 `uses:` and in `aidevops_ref` (see the caller template comment);
 `aidevops sync-workflows` keeps the two coupled. When a caller omits
 `aidevops_ref`, the reusable workflow checks out helpers at its own commit
-(`job.workflow_sha`), so helper code never drifts from the pinned YAML.
+(the run API's `referenced_workflows[].sha`), so helper code never drifts from the
+pinned YAML. An unresolved or ambiguous SHA fails closed; when fetching helpers
+from a different repository, provide `aidevops_ref` explicitly.
 
 Do not add GitHub-backed Shields badges such as repository size, stars,
 watchers, language count, release date, or issue counts to the canonical block.

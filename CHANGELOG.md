@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.24] - 2026-10-12
+
+### Changed
+
+- Maintenance: mark t18681 complete (pr:#34478 completed:2026-10-12) (#34476)
+
+### Fixed
+
+- publish protected repository metrics through one deterministic PR
+- short-circuit GitHub write subcommand help (GH#34462) (#34483)
+- run each cleanup scope only at its owner's return (#34481)
+
 ## [3.39.23] - 2026-10-12
 
 ### Changed

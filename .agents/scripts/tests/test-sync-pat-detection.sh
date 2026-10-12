@@ -111,6 +111,7 @@ STUB_SECRET_RESPONSE=""          # Output from gh secret list, empty = no SYNC_P
 STUB_RULESETS_LIST=""            # JSON response for /rulesets list endpoint
 STUB_RULESET_DETAIL=""           # JSON response for /rulesets/{id} detail endpoint
 STUB_ACTIONS_PR_CREATION="false" # "true" when GITHUB_TOKEN may create PRs
+STUB_METRICS_CONTENT=""          # Active or commented uses: line in an arbitrary caller
 
 # Single shared gh stub — dispatches based on STUB_* variables
 gh() {
@@ -121,7 +122,14 @@ gh() {
 		;;
 	api)
 		local url="${2:-}"
-		if [[ "$url" == *"$GH_API_SYNC_PATTERN"* ]]; then
+		if [[ "$url" == */contents/.github/workflows ]]; then
+			[[ -n "$STUB_METRICS_CONTENT" ]] || return 1
+			printf '.github/workflows/custom-metrics.yaml\n'
+			return 0
+		elif [[ "$url" == */contents/.github/workflows/custom-metrics.yaml ]]; then
+			printf '%s' "$STUB_METRICS_CONTENT" | base64
+			return 0
+		elif [[ "$url" == *"$GH_API_SYNC_PATTERN"* ]]; then
 			if [[ "$STUB_HAS_ISSUE_SYNC" == "true" ]]; then
 				echo "$ISSUE_SYNC_RESPONSE"
 				return 0
@@ -263,6 +271,7 @@ eval "$(sed -n '/^_ruleset_targets_default_branch()/,/^}/p' "${SCRIPTS_DIR}/secu
 eval "$(sed -n '/^_default_branch_ruleset_details()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_branch_is_rulesets_protected()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_actions_can_create_pull_requests()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
+eval "$(sed -n '/^_repo_uses_metrics_workflow()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_check_sync_pat_need()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^check_sync_pat()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 
@@ -306,6 +315,7 @@ reset_state() {
 	STUB_RULESETS_LIST=""
 	STUB_RULESET_DETAIL=""
 	STUB_ACTIONS_PR_CREATION="false"
+	STUB_METRICS_CONTENT=""
 	return 0
 }
 
@@ -564,7 +574,7 @@ else
 	fail "Advisory retained despite Actions PR creation being enabled"
 fi
 
-if grep -q '\[PASS\].*Actions can create the issue-sync PR' "$OUTPUT_LOG" 2>/dev/null; then
+if grep -q '\[PASS\].*Actions can create the protected-publication PR' "$OUTPUT_LOG" 2>/dev/null; then
 	pass "Pass message identifies the sufficient job-token PR path"
 else
 	fail "No pass message for enabled Actions PR creation" "Log: $(cat "$OUTPUT_LOG")"
@@ -600,10 +610,37 @@ else
 	fail "Advisory fired for protection that does not block direct publication"
 fi
 
-if grep -q '\[PASS\].*does not block direct issue-sync publication' "$OUTPUT_LOG" 2>/dev/null; then
+if grep -q '\[PASS\].*does not block direct publication' "$OUTPUT_LOG" 2>/dev/null; then
 	pass "Pass message identifies non-publication branch protection"
 else
 	fail "No pass message for non-publication branch protection" "Log: $(cat "$OUTPUT_LOG")"
+fi
+
+# GH#34480: the same advisory contract applies to metrics-only repositories.
+reset_state
+STUB_HAS_ISSUE_SYNC="false"
+STUB_METRICS_CONTENT='    uses: example/framework/.github/workflows/loc-badge-reusable.yml@main'
+check_sync_pat "$FAKE_REPO"
+if [[ -f "$ADVISORY_PATH" ]]; then
+	pass "Custom-named metrics-only caller advises when Actions PR creation is disabled"
+else
+	fail "Metrics-only repository omitted from SYNC_PAT detection"
+fi
+STUB_ACTIONS_PR_CREATION="true"
+check_sync_pat "$FAKE_REPO"
+if [[ ! -f "$ADVISORY_PATH" ]]; then
+	pass "Metrics-only caller clears advisory with sufficient job-token PR path"
+else
+	fail "Metrics-only caller unnecessarily requires SYNC_PAT"
+fi
+reset_state
+STUB_HAS_ISSUE_SYNC="false"
+STUB_METRICS_CONTENT='    # uses: example/framework/.github/workflows/loc-badge-reusable.yml@main'
+check_sync_pat "$FAKE_REPO"
+if [[ ! -f "$ADVISORY_PATH" ]]; then
+	pass "Commented metrics example does not activate the advisory"
+else
+	fail "Commented metrics example incorrectly activates the advisory"
 fi
 
 # =============================================================================
