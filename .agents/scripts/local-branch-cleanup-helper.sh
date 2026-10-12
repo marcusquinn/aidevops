@@ -74,8 +74,45 @@ default_branch() {
 	if [[ -z "$branch" ]]; then
 		branch=$(repo_git remote show "$REMOTE_NAME" 2>/dev/null | sed -n 's/^[[:space:]]*HEAD branch: //p' | sed -n '1p') || branch=""
 	fi
+	if [[ -z "$branch" ]] && local_only_repo; then
+		# No remote (local_only repo): the checked-out canonical branch is the default.
+		branch=$(repo_git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
+	fi
 	[[ -n "$branch" ]] || branch=main
 	printf '%s\n' "$branch"
+	return 0
+}
+
+# True when the configured remote exists. Without one (local_only repos) the
+# local default branch is the only merge authority and no PR lookup is possible.
+has_remote() {
+	repo_git remote get-url "$REMOTE_NAME" >/dev/null 2>&1
+	return $?
+}
+
+# True for a remote-less repo registered `local_only: true` in repos.json.
+# Only these repos accept local default-branch ancestry as the sole merge proof.
+local_only_repo() {
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local top=""
+	has_remote && return 1
+	[[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1 || return 1
+	top=$(repo_git rev-parse --show-toplevel 2>/dev/null) || return 1
+	jq -e --arg p "$top" --arg q "$REPO_PATH" \
+		'any(.initialized_repos[]?; ((.path // "") == $p or (.path // "") == $q) and (.local_only // false) == true)' \
+		"$repos_json" >/dev/null 2>&1
+	return $?
+}
+
+# Ancestry base for merge evidence: remote default branch, or the local default
+# branch for local_only repos.
+ancestry_base_ref() {
+	local default="$1"
+	if local_only_repo; then
+		printf 'refs/heads/%s\n' "$default"
+	else
+		printf 'refs/remotes/%s/%s\n' "$REMOTE_NAME" "$default"
+	fi
 	return 0
 }
 
@@ -156,6 +193,11 @@ closed_pr_lookup() {
 pr_evidence() {
 	local branch="$1" sha="$2" slug="$3" need_merged="$4" enforce_budget="${5:-0}"
 	PR_STATUS=unavailable
+	if local_only_repo; then
+		# local_only: no PR can exist; merge proof is local ancestry only.
+		PR_STATUS=none
+		return 0
+	fi
 	[[ "${AIDEVOPS_LOCAL_BRANCH_CLEANUP_SKIP_GH:-0}" != 1 && -n "$slug" ]] || return 0
 	command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
 	load_open_pr_refs "$slug"
@@ -261,7 +303,7 @@ scan_branch() {
 	if is_protected_branch "$branch" "$default"; then reason='protected/default branch'
 	elif active_branch "$branch"; then reason='checked out'
 	else
-		if repo_git merge-base --is-ancestor "$sha" "refs/remotes/${REMOTE_NAME}/${default}" 2>/dev/null; then
+		if repo_git merge-base --is-ancestor "$sha" "$(ancestry_base_ref "$default")" 2>/dev/null; then
 			merged_by_ancestry=1
 		fi
 		pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))" 1

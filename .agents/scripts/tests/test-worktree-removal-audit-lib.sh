@@ -1130,6 +1130,53 @@ test_manual_degraded_recovery_rejects_unsafe_candidates() {
 	return 0
 }
 
+# GH#34488: a local_only repo (no origin, registered in repos.json) accepts
+# local default-branch ancestry as degraded-visibility merge proof; unmerged
+# and dirty candidates still fail closed.
+test_local_only_degraded_recovery_uses_ancestry() {
+	local repo_path="${TEST_DIR}/local-only-degraded-repo"
+	local wt_path="${TEST_DIR}/local-only-degraded-worktree"
+	local branch_name="feature/local-only-degraded"
+	local repos_json="${TEST_DIR}/local-only-repos.json"
+	local rc=0
+
+	create_git_worktree_fixture "$repo_path" "$wt_path" "$branch_name" || rc=1
+	printf '{"initialized_repos":[{"path":"%s","local_only":true}]}\n' "$repo_path" >"$repos_json" || rc=1
+	if ! (
+		unset _WORKTREE_CMDS_LIB_LOADED 2>/dev/null || true
+		SCRIPT_DIR="${COMMANDS_HELPER%/*}"
+		RED="" NC=""
+		# shellcheck source=../worktree-helper-cmds.sh
+		source "$COMMANDS_HELPER"
+		export AIDEVOPS_REPOS_JSON="$repos_json"
+		worktree_has_changes() { return 1; }
+		is_worktree_owned_by_others() { return 1; }
+		_branch_has_active_interactive_claim() { return 1; }
+		WORKTREE_REMOVAL_GUARD_REASON="cwd-visibility-degraded"
+		_remove_degraded_fallback_allowed "$wt_path" || exit 1
+		[[ "$_WT_REMOVE_DEGRADED_PR" == "local-ancestry" ]] || exit 1
+		# Unmerged commit must refuse.
+		printf 'more\n' >"${wt_path}/more.txt"
+		"$GIT_BIN" -C "$wt_path" add more.txt
+		"$GIT_BIN" -C "$wt_path" commit -q -m unmerged || exit 1
+		if _remove_degraded_fallback_allowed "$wt_path"; then
+			exit 1
+		fi
+		# Unregistered repo must not use the ancestry path.
+		printf '{"initialized_repos":[]}\n' >"$repos_json"
+		"$GIT_BIN" -C "$wt_path" reset -q --hard main || exit 1
+		if _remove_degraded_fallback_allowed "$wt_path"; then
+			exit 1
+		fi
+		exit 0
+	); then
+		rc=1
+	fi
+	print_result "local_only_degraded_recovery_uses_ancestry" "$rc" \
+		"Expected local_only ancestry proof to allow only merged candidates"
+	return 0
+}
+
 # =============================================================================
 # A recoverable caller cannot rely on stale guard evidence. If a foreign lock
 # exists when archive preparation starts, source removal must not start.
@@ -2271,6 +2318,7 @@ test_manual_cleanup_archives_removes_and_prunes
 test_manual_cleanup_recovers_degraded_visibility_exact_head
 test_manual_degraded_recheck_requires_live_exact_lease
 test_manual_degraded_recovery_rejects_unsafe_candidates
+test_local_only_degraded_recovery_uses_ancestry
 test_recoverable_cleanup_preserves_lock_acquired_after_guard
 test_recoverable_cleanup_preserves_lease_loss_after_archive
 test_skill_cleanup_has_no_removal_failure_fallback

@@ -114,4 +114,30 @@ fi
 assert_has "$result" 'failed race ref changed after scan'
 [[ "$(git -C "$REPO" rev-parse refs/heads/race)" == "$TEST_NEW_SHA" ]] || fail 'moved ref lost'
 [[ "$(git -C "$REPO" worktree list --porcelain)" != *"$ROOT/transport"* ]] || fail 'transport left registered'
-printf 'PASS: local cleanup dry-run, ancestry, merged PR, refusal, lease and transport\n'
+
+# local_only (no origin): local default-branch ancestry is merge evidence.
+rm -f "$BIN/git"
+LOCAL="$ROOT/local-only"
+git init -q "$LOCAL"
+git -C "$LOCAL" config user.email test@example.invalid
+git -C "$LOCAL" config user.name 'Local Cleanup Test'
+printf 'x\n' >"$LOCAL/base"
+git -C "$LOCAL" add base
+git -C "$LOCAL" -c commit.gpgsign=false commit -qm base
+git -C "$LOCAL" branch -M main
+git -C "$LOCAL" branch lo-merged
+git -C "$LOCAL" checkout -qb lo-unmerged
+printf 'y\n' >"$LOCAL/y"
+git -C "$LOCAL" add y
+git -C "$LOCAL" -c commit.gpgsign=false commit -qm y
+git -C "$LOCAL" checkout -q main
+# Register after setup: the canonical guard blocks branch mutation on registered repos.
+printf '{"initialized_repos":[{"path":"%s","local_only":true}]}\n' "$LOCAL" >"$ROOT/repos.json"
+export AIDEVOPS_REPOS_JSON="$ROOT/repos.json"
+result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$LOCAL" --branch lo-merged --apply)
+assert_has "$result" 'deleted lo-merged'
+git -C "$LOCAL" show-ref --verify --quiet refs/heads/lo-merged && fail 'local_only merged branch survived'
+result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$LOCAL" --branch lo-unmerged --apply)
+assert_has "$result" 'keep lo-unmerged unmerged local commits'
+git -C "$LOCAL" show-ref --verify --quiet refs/heads/lo-unmerged || fail 'local_only unmerged branch deleted'
+printf 'PASS: local cleanup dry-run, ancestry, merged PR, refusal, lease, transport and local_only\n'

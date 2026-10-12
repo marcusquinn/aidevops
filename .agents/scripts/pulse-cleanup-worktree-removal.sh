@@ -1376,6 +1376,54 @@ _cleanup_single_worktree() {
 }
 
 #######################################
+# Remove a local_only linked worktree when local proof shows it is merged.
+#
+# Proof: clean tree, named branch, not the canonical default branch, HEAD is an
+# ancestor of the canonical checkout's current branch, and the worktree has been
+# idle for AIDEVOPS_LOCAL_ONLY_WORKTREE_MIN_AGE_SECS (default 21600). Removal
+# goes through worktree-helper.sh remove, which keeps the ownership, live-cwd
+# and archive-first guards and deletes the merged branch afterwards.
+#
+# Args: $1 - canonical repo path, $2 - linked worktree path
+# Returns: 0 if removed, 1 if skipped (dirty, unmerged, young, owned, or error)
+#######################################
+_pc_local_only_merged_worktree_removed() {
+	local rp_local="$1"
+	local wt_path="$2"
+	local helper="" default_branch="" wt_branch="" wt_head="" git_dir="" mtime="" now="" min_age=""
+
+	if [[ -n "${_PULSE_CLEANUP_SCRIPT_DIR:-}" && -x "${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-helper.sh" ]]; then
+		helper="${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-helper.sh"
+	elif [[ -x "${HOME}/.aidevops/agents/scripts/worktree-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
+	fi
+	[[ -n "$helper" ]] || return 1
+	git -C "$rp_local" remote get-url origin >/dev/null 2>&1 && return 1
+	[[ -z "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]] || return 1
+	default_branch=$(git -C "$rp_local" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
+	wt_branch=$(git -C "$wt_path" branch --show-current 2>/dev/null) || return 1
+	[[ -n "$default_branch" && -n "$wt_branch" && "$wt_branch" != "$default_branch" ]] || return 1
+	wt_head=$(git -C "$wt_path" rev-parse --verify HEAD 2>/dev/null) || return 1
+	git -C "$rp_local" merge-base --is-ancestor "$wt_head" "refs/heads/${default_branch}" 2>/dev/null || return 1
+
+	min_age="${AIDEVOPS_LOCAL_ONLY_WORKTREE_MIN_AGE_SECS:-21600}"
+	[[ "$min_age" =~ ^[0-9]+$ ]] || min_age=21600
+	git_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+	if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		# shellcheck source=portable-stat.sh
+		source "${_PULSE_CLEANUP_SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/portable-stat.sh" 2>/dev/null || return 1
+	fi
+	mtime=$(_file_mtime_epoch "${git_dir}/HEAD") || return 1
+	now=$(date +%s)
+	# mtime 0 is the helper's failure fallback: fail closed.
+	[[ "$mtime" =~ ^[1-9][0-9]*$ && $((now - mtime)) -ge "$min_age" ]] || return 1
+
+	(cd "$rp_local" && bash "$helper" remove "$wt_path" >/dev/null 2>&1) || return 1
+	[[ ! -d "$wt_path" ]] || return 1
+	return 0
+}
+
+#######################################
 # Audit linked worktrees for repos intentionally excluded from cleanup.
 #
 # Local-only repos are not safe for automated branch/PR cleanup because they may
@@ -1408,6 +1456,10 @@ _pc_log_local_only_worktree_skips() {
 			[[ "$wt_path_local" == "$rp_local" ]] && continue
 			[[ ! -d "$wt_path_local" ]] && continue
 
+			if _pc_local_only_merged_worktree_removed "$rp_local" "$wt_path_local"; then
+				echo "[pulse-wrapper] Orphan cleanup ($repo_name_local): removed $wt_path_local — local_only ancestry proof" >>"$LOGFILE"
+				continue
+			fi
 			echo "[pulse-wrapper] Orphan cleanup ($repo_name_local): skipping $wt_path_local — repo is local_only" >>"$LOGFILE"
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_local" "local-only-repo" "$_PC_REMOVAL_SKIPPED"
 		done < <(git -C "$rp_local" worktree list 2>/dev/null)

@@ -142,8 +142,8 @@ _remove_show_guard_error() {
 		printf '%s\n' "Recovery: repair Git metadata access and verify the exact worktree block is unlocked before retrying. --force cannot bypass this protection." >&2
 		;;
 	cwd-visibility-degraded)
-		printf '%s\n' "Reason: cwd-visibility-degraded — targeted recovery could not prove a clean, unowned exact-head merged-PR worktree." >&2
-		printf '%s\n' "Recovery: resolve dirty, claim, ownership, open-PR, or GitHub-proof state and retry. --force cannot bypass live-CWD protection." >&2
+		printf '%s\n' "Reason: cwd-visibility-degraded — targeted recovery could not prove a clean, unowned worktree merged (exact-head merged PR, or local default-branch ancestry for local_only repos)." >&2
+		printf '%s\n' "Recovery: resolve dirty, claim, ownership, open-PR, or merge-proof state and retry. --force cannot bypass live-CWD protection." >&2
 		;;
 	*)
 		printf '%s\n' "Reason: ${guard_reason:-guard-refused} — the shared safety guard did not authorize removal." >&2
@@ -240,13 +240,65 @@ _remove_degraded_fallback_allowed() {
 		is_worktree_owned_by_others "$path_to_remove" && return 1
 	fi
 	head_sha=$(git -C "$path_to_remove" rev-parse --verify HEAD 2>/dev/null) || return 1
-	pr_number=$(_remove_exact_head_merged_pr "$path_to_remove" "$branch_name" "$head_sha") || return 1
+	local proof_kind="merged_pr"
+	local branch_preserved="true"
+	if _remove_is_local_only_worktree "$path_to_remove"; then
+		# local_only repo (no origin): local default-branch ancestry is the proof.
+		_remove_local_only_merged_proof "$path_to_remove" "$head_sha" || return 1
+		pr_number="local-ancestry"
+		proof_kind="local_ancestry"
+		branch_preserved="false"
+	else
+		pr_number=$(_remove_exact_head_merged_pr "$path_to_remove" "$branch_name" "$head_sha") || return 1
+	fi
 	head_after_proof=$(git -C "$path_to_remove" rev-parse --verify HEAD 2>/dev/null) || return 1
 	[[ "$head_after_proof" == "$head_sha" ]] || return 1
 
 	_WT_REMOVE_DEGRADED_BRANCH="$branch_name"
 	_WT_REMOVE_DEGRADED_PR="$pr_number"
-	_WT_REMOVE_DEGRADED_AUDIT_CONTEXT="recovery_path=manual-archive-first visibility=degraded branch=${branch_name} head=${head_sha} merged_pr=${pr_number} branch_preserved=true"
+	_WT_REMOVE_DEGRADED_AUDIT_CONTEXT="recovery_path=manual-archive-first visibility=degraded branch=${branch_name} head=${head_sha} proof=${proof_kind} merged_pr=${pr_number} branch_preserved=${branch_preserved}"
+	return 0
+}
+
+# True when the worktree's repository has no origin remote AND its canonical
+# checkout is registered `local_only: true` in repos.json.
+# Args: $1=path_to_remove
+_remove_is_local_only_worktree() {
+	local path_to_remove="$1"
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local porcelain=""
+	local main_worktree=""
+
+	git -C "$path_to_remove" remote get-url origin >/dev/null 2>&1 && return 1
+	[[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1 || return 1
+	porcelain=$(git -C "$path_to_remove" worktree list --porcelain 2>/dev/null) || return 1
+	main_worktree="${porcelain%%$'\n'*}"
+	main_worktree="${main_worktree#worktree }"
+	[[ -n "$main_worktree" ]] || return 1
+	jq -e --arg p "$main_worktree" \
+		'any(.initialized_repos[]?; (.path // "") == $p and (.local_only // false) == true)' \
+		"$repos_json" >/dev/null 2>&1
+	return $?
+}
+
+# Local ancestry proof for remote-less repos: HEAD must be an ancestor of the
+# primary (canonical) checkout's current local default branch.
+# Args: $1=path_to_remove, $2=head_sha
+_remove_local_only_merged_proof() {
+	local path_to_remove="$1"
+	local head_sha="$2"
+	local porcelain=""
+	local main_worktree=""
+	local default_branch=""
+
+	[[ "$head_sha" =~ ^[0-9a-fA-F]{40,64}$ ]] || return 1
+	porcelain=$(git -C "$path_to_remove" worktree list --porcelain 2>/dev/null) || return 1
+	main_worktree="${porcelain%%$'\n'*}"
+	main_worktree="${main_worktree#worktree }"
+	[[ -n "$main_worktree" && "$main_worktree" != "$path_to_remove" ]] || return 1
+	default_branch=$(git -C "$main_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
+	[[ -n "$default_branch" ]] || return 1
+	git -C "$path_to_remove" merge-base --is-ancestor "$head_sha" "refs/heads/${default_branch}" 2>/dev/null || return 1
 	return 0
 }
 
@@ -269,12 +321,23 @@ _remove_validate_path() {
 	else
 		guard_status=$?
 	fi
+	# Preserve the guard reason: fallback predicates may clobber it, and a
+	# degraded-visibility refusal must never print an empty reason.
+	local guard_reason="${WORKTREE_REMOVAL_GUARD_REASON:-}"
+	if [[ -z "$guard_reason" && "$guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
+		guard_reason="${_WT_CWD_REASON_DEGRADED:-cwd-visibility-degraded}"
+		WORKTREE_REMOVAL_GUARD_REASON="$guard_reason"
+	fi
 	if [[ "$guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]] &&
 		_remove_degraded_fallback_allowed "$path_to_remove"; then
 		_WT_REMOVE_DEGRADED_RECOVERY=1
-		printf '%s\n' "Targeted recovery: exact merged PR #${_WT_REMOVE_DEGRADED_PR}; using archive-first removal with branch preservation."
+		if [[ "$_WT_REMOVE_DEGRADED_PR" == "local-ancestry" ]]; then
+			printf '%s\n' "Targeted recovery: local_only repo, HEAD is an ancestor of the local default branch; using archive-first removal."
+		else
+			printf '%s\n' "Targeted recovery: exact merged PR #${_WT_REMOVE_DEGRADED_PR}; using archive-first removal with branch preservation."
+		fi
 	elif [[ "$guard_status" -ne 0 ]]; then
-		_remove_show_guard_error "$path_to_remove" "${WORKTREE_REMOVAL_GUARD_REASON:-}"
+		_remove_show_guard_error "$path_to_remove" "${guard_reason:-${WORKTREE_REMOVAL_GUARD_REASON:-}}"
 		return 1
 	fi
 
@@ -400,6 +463,9 @@ _remove_cleanup_and_execute() {
 		completed_mode="recoverable-trash"
 		audit_context="$_WT_REMOVE_DEGRADED_AUDIT_CONTEXT"
 	elif [[ "$guard_status" -ne 0 ]]; then
+		if [[ -z "${WORKTREE_REMOVAL_GUARD_REASON:-}" && "$guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
+			WORKTREE_REMOVAL_GUARD_REASON="${_WT_CWD_REASON_DEGRADED:-cwd-visibility-degraded}"
+		fi
 		_remove_show_guard_error "$path_to_remove" "${WORKTREE_REMOVAL_GUARD_REASON:-}"
 		return 1
 	fi
