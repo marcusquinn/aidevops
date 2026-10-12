@@ -6,8 +6,8 @@
 #
 # Verifies that the large-file gate never measures a stale canonical checkout.
 # `_pulse_refresh_repo` uses guarded canonical recovery and may legitimately
-# leave a runner stale; the gate must detect that state and defer without issue
-# mutations instead of trusting pre-split line counts.
+# leave a runner stale; the gate must measure verified pinned remote blobs or
+# defer without issue mutations instead of trusting pre-split line counts.
 #
 # Tests:
 #   test_refresh_pulls_before_gate_measures
@@ -27,8 +27,8 @@
 #       Path that is not a git work-tree returns 0 without errors.
 #
 #   test_triage_refresh_before_issue_targets_large_files
-#       Simulates triage after a guarded refresh cannot converge and verifies
-#       _issue_targets_large_files blocks for retry before measuring or mutating.
+#       Verifies triage measures the pinned 500-line blob without applying a
+#       label, but defers before measurement when ls-remote is unavailable.
 #
 # Cross-references: GH#20071 (root cause), t2433 (this fix),
 #   GH#19964-#20023 (6 false-positive debt issues triggered by stale local copy)
@@ -118,7 +118,7 @@ _setup_git_sandbox() {
 	local work_copy="${sandbox_dir}.work-copy"
 
 	mkdir -p "$sandbox_dir"
-	_git_test init -q "$sandbox_dir"
+	_git_test init -q --initial-branch=master "$sandbox_dir"
 	_git_test -C "$sandbox_dir" config commit.gpgsign false
 	_git_test -C "$sandbox_dir" config tag.gpgsign false
 
@@ -151,6 +151,7 @@ _setup_git_sandbox() {
 	# production repos; we must do it manually for init-based sandboxes).
 	_git_test -C "$sandbox_dir" remote add origin "$bare_dir"
 	_git_test -C "$sandbox_dir" fetch -q origin
+	_git_test -C "$sandbox_dir" remote set-head origin master
 	_git_test -C "$sandbox_dir" branch --set-upstream-to=origin/master master 2>/dev/null || true
 	# Deliberately do NOT pull — local HEAD is still the 2500-line version
 
@@ -297,22 +298,30 @@ test_triage_refresh_before_issue_targets_large_files() {
 		return 0
 	}
 
-	# Simulate triage with a stale pre-split checkout. Metadata reads are stubbed
-	# so this remains a local regression test with no GitHub writes.
-	local pre_pull_count post_pull_count gate_rc=0
-	local measure_marker="${TMP}/stale-measure-called"
+	# Measure through the real collector. Stub mutation paths so a regression
+	# cannot write to GitHub, and record any unexpected label application.
+	local pre_pull_count post_pull_count gate_rc=0 defer_rc=0 remote_sha
+	local measure_marker="${TMP}/unverifiable-measure-called"
+	local mutation_marker="${TMP}/triage-mutation-called"
+	local triage_log="${TMP}/triage.log"
 	pre_pull_count=$(wc -l <"${sandbox}/large-target.sh" | tr -d ' ')
+	remote_sha=$(_git_test -C "$sandbox" rev-parse origin/master)
 
 	# Run refresh in a subshell
 	(
 		# shellcheck disable=SC1090
 		source "${WRAPPER_SCRIPT}" --self-check >/dev/null 2>&1 || true
+		LOGFILE="$triage_log"
 		declare -A _PULSE_REFRESHED_THIS_CYCLE=()
 		_pulse_refresh_repo "$sandbox" 2>>"$LOGFILE"
 		_large_file_gate_issue_labels() { printf ''; return 0; }
 		_large_file_gate_issue_title() { printf 'Issue 9999'; return 0; }
-		_large_file_gate_collect_large_files() {
-			printf 'called\n' >"$measure_marker"
+		_large_file_gate_apply() {
+			printf 'called\n' >"$mutation_marker"
+			return 0
+		}
+		_large_file_gate_clear_stale_label() {
+			printf 'called\n' >"$mutation_marker"
 			return 0
 		}
 		_issue_targets_large_files "9999" "owner/repo" \
@@ -322,14 +331,50 @@ test_triage_refresh_before_issue_targets_large_files() {
 
 	post_pull_count=$(wc -l <"${sandbox}/large-target.sh" | tr -d ' ')
 
-	# Exit 0 blocks/defer-retries the candidate. The stale file remains untouched,
-	# and the collection marker proves no local line-count decision was made.
-	if [[ "${pre_pull_count:-0}" -ge 2000 && "${post_pull_count:-0}" -ge 2000 \
-		&& "$gate_rc" -eq 0 && ! -e "$measure_marker" ]]; then
+	# The same lagging mirror must defer when its remote cannot be verified,
+	# even though the previously fetched split commit is available locally.
+	(
+		# shellcheck disable=SC1090
+		source "${WRAPPER_SCRIPT}" --self-check >/dev/null 2>&1 || true
+		LOGFILE="$triage_log"
+		git() {
+			local first_arg="${1:-}" third_arg="${3:-}"
+			if [[ "$first_arg" == "-C" && "$third_arg" == "ls-remote" ]]; then
+				return 1
+			fi
+			command git "$@"
+			return $?
+		}
+		_large_file_gate_issue_labels() { printf ''; return 0; }
+		_large_file_gate_issue_title() { printf 'Issue 9999'; return 0; }
+		_large_file_gate_collect_large_files() {
+			printf 'called\n' >"$measure_marker"
+			return 0
+		}
+		_large_file_gate_apply() {
+			printf 'called\n' >"$mutation_marker"
+			return 0
+		}
+		_large_file_gate_clear_stale_label() {
+			printf 'called\n' >"$mutation_marker"
+			return 0
+		}
+		_issue_targets_large_files "9999" "owner/repo" \
+			"## How"$'\n'"- EDIT: \`large-target.sh\`" "$sandbox" "true"
+	)
+	defer_rc=$?
+
+	# Exit 1 allows dispatch for the verified small remote blob; exit 0 defers
+	# the unverifiable case before collection. Neither may mutate issue labels.
+	if [[ "$pre_pull_count" -eq 2500 && "$post_pull_count" -eq 2500 \
+		&& "$gate_rc" -eq 1 && "$defer_rc" -eq 0 \
+		&& ! -e "$measure_marker" && ! -e "$mutation_marker" ]] \
+		&& grep -Fq "measured #9999 targets from pinned remote blob ${remote_sha}" "$triage_log" \
+		&& grep -Fq 'deferring #9999 (owner/repo)' "$triage_log"; then
 		print_result "test_triage_refresh_before_issue_targets_large_files" 0
 	else
 		print_result "test_triage_refresh_before_issue_targets_large_files" 1 \
-			"pre=${pre_pull_count} post=${post_pull_count} gate_rc=${gate_rc} — expected stale defer"
+			"pre=${pre_pull_count} post=${post_pull_count} gate_rc=${gate_rc} defer_rc=${defer_rc} — expected pinned measurement and unverifiable defer"
 	fi
 	return 0
 }
