@@ -676,6 +676,53 @@ assertion_rc=1
 if [[ "$sum_output" == "1500000|3" ]]; then assertion_rc=0; fi
 print_result "distinct sessions and other authors are not merged" "$assertion_rc" "(got: '$sum_output')"
 
+# GH#34510: a partial closeout can be the only footer carrying the resumed
+# session baseline. It arrives just after the verified merge, but is neither
+# new spend nor an attempt. Dropping it charges the full session again.
+cat >"$FIXTURE_PR_JSON" <<'JSON'
+{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18014","merged_at":"2026-05-04T18:44:24Z"}
+JSON
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-05-04T18:44:37Z","user":{"login":"runner-b"},"author_association":"MEMBER","body":"<!-- PARTIAL_PARENT_CLOSEOUT:PR#42 -->\nspent 1d 3h and 1,150,739 tokens as a headless worker"},
+ {"created_at":"2026-05-04T20:06:53Z","user":{"login":"runner-b"},"body":"spent 1d 5h and 1,393,983 tokens as a headless worker"}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "243244|1" ]]; then assertion_rc=0; fi
+print_result "merged receipt preserves resumed-session baseline without another attempt" "$assertion_rc" "(got: '$sum_output')"
+: >"$STUB_LOG"
+run_check_cost_budget 18014 "owner/repo" "thinking"
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]] && ! grep -qE '^issue (edit|comment) ' "$STUB_LOG"; then assertion_rc=0; fi
+print_result "resumed worker after merged receipt does not falsely trip thinking budget" "$assertion_rc" "(rc=$rc output='$output')"
+
+# Receipt metadata cannot reduce a different session or an unverified delivery.
+receipt_fixture=$(<"$FIXTURE_COMMENTS_JSON")
+for receipt_filter in \
+	'.[0].author_association = "NONE"' \
+	'.[0].user.login = "other-runner"' \
+	'.[0].created_at = "2026-05-04T18:47:37Z"' \
+	'.[0].body |= sub("1d 3h"; "5m")'; do
+	printf '%s' "$receipt_fixture" | jq "$receipt_filter" >"$FIXTURE_COMMENTS_JSON"
+	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+	assertion_rc=1
+	if [[ "$sum_output" == "1393983|1" ]]; then assertion_rc=0; fi
+	print_result "receipt baseline rejects $receipt_filter" "$assertion_rc" "(got: '$sum_output')"
+done
+printf '%s' "$receipt_fixture" >"$FIXTURE_COMMENTS_JSON"
+for invalid_pr in \
+	'{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18014","merged_at":null}' \
+	'{"base":{"repo":{"full_name":"other/repo"}},"body":"For #18014","merged_at":"2026-05-04T18:44:24Z"}' \
+	'{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #180140","merged_at":"2026-05-04T18:44:24Z"}'; do
+	printf '%s' "$invalid_pr" >"$FIXTURE_PR_JSON"
+	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+	assertion_rc=1
+	if [[ "$sum_output" == "1393983|1" ]]; then assertion_rc=0; fi
+	print_result "unverified receipt cannot supply a session baseline" "$assertion_rc" "(got: '$sum_output')"
+done
+
 # Merged checkpoints reported only as "PR #N" in trusted signed worker comments
 # are verified through REST; unreadable mentions are skipped, never fail-open.
 cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'

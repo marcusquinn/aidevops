@@ -78,7 +78,8 @@ _get_cost_budget_for_tier() {
 # Closeout markers supply candidates only; verify each PR through REST before
 # treating its actual merge time as a checkpoint. Never reset from prose alone.
 # Args: issue number, repo slug, slurped comments JSON.
-# Stdout: latest verified merge epoch; returns 1 on fetch/parse failure.
+# Stdout: JSON with latest verified merge epoch and verified closeout PRs.
+# Returns 1 on fetch/parse failure.
 _cost_checkpoint_from_closeouts() {
 	local issue_number="$1" repo_slug="$2" comments_json="$3"
 	# Delivered checkpoints start a new spend window, not a lifetime budget.
@@ -102,6 +103,7 @@ _cost_checkpoint_from_closeouts() {
 	# highest numbers, to bound REST calls); unlike closeouts, an unreadable or
 	# non-PR mention is skipped rather than failing the whole aggregation.
 	local candidates kind pr_number pr_json merge_epoch
+	local verified_closeouts='[]'
 	candidates=$(printf '%s' "$comments_json" | jq -r '
 		[.[][] | select(.author_association == "OWNER" or
 			.author_association == "MEMBER" or .author_association == "COLLABORATOR")
@@ -129,11 +131,19 @@ _cost_checkpoint_from_closeouts() {
 			[[ "$kind" == "report" ]] && continue
 			return 1
 		fi
-		if [[ "$merge_epoch" =~ ^[0-9]+$ && "$merge_epoch" -gt "$checkpoint_epoch" ]]; then
-			checkpoint_epoch="$merge_epoch"
+		if [[ "$merge_epoch" =~ ^[0-9]+$ ]]; then
+			if [[ "$kind" == "closeout" ]]; then
+				verified_closeouts=$(printf '%s' "$verified_closeouts" | jq -c \
+					--argjson pr "$pr_number" --argjson epoch "$merge_epoch" \
+					'. + [{pr: $pr, epoch: $epoch}]') || return 1
+			fi
+			if [[ "$merge_epoch" -gt "$checkpoint_epoch" ]]; then
+				checkpoint_epoch="$merge_epoch"
+			fi
 		fi
 	done <<<"$candidates"
-	printf '%s' "$checkpoint_epoch"
+	jq -cn --argjson epoch "$checkpoint_epoch" --argjson closeouts "$verified_closeouts" \
+		'{epoch: $epoch, closeouts: $closeouts}' || return 1
 	return 0
 }
 
@@ -160,8 +170,8 @@ _sum_issue_token_spend() {
 		return 1
 	fi
 
-	local checkpoint_epoch
-	checkpoint_epoch=$(_cost_checkpoint_from_closeouts "$issue_number" "$repo_slug" \
+	local checkpoint_data
+	checkpoint_data=$(_cost_checkpoint_from_closeouts "$issue_number" "$repo_slug" \
 		"$comments_json") || return 1
 
 	# Extract comment bodies, excluding interactive-session signature footers and
@@ -191,7 +201,7 @@ _sum_issue_token_spend() {
 	# tokens do not decrease are one session: count only the increment. A
 	# pre-window footer of that session is the baseline, never window spend.
 	local spend_data
-	spend_data=$(printf '%s' "$comments_json" | jq -r --argjson checkpoint "$checkpoint_epoch" '
+	spend_data=$(printf '%s' "$comments_json" | jq -r --argjson checkpoint "$checkpoint_data" '
 		def epoch: try ((.created_at // "") | fromdateiso8601) catch 0;
 		# Durations are truncated to their smallest displayed unit
 		# (_format_duration drops minutes once days are shown).
@@ -206,13 +216,21 @@ _sum_issue_token_spend() {
 		| ($all | map(select(
 				((.body // "") | contains("<!-- aidevops-signed-approval -->"))
 				or ((.body // "") | contains("<!-- cost-circuit-breaker:reset"))
-			) | epoch) + [$checkpoint] | max // 0) as $reset_epoch
+			) | epoch) + [$checkpoint.epoch] | max // 0) as $reset_epoch
 		| [$all[]
 			| select((.body // "") | contains("with the user in an interactive session") | not)
-			# Closeouts copy PR summaries (including prior worker footers); they are
-			# delivery receipts, not additional worker attempts or token spend.
-			| select((.body // "") | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->") | not)
 			| epoch as $t
+			| ((.body // "") | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->")) as $receipt
+			# GH#34510: a trusted receipt posted within posting slack of its
+			# verified merge supplies a cumulative session baseline, never spend.
+			# Delayed copies cannot reliably identify the original session start.
+			| select($receipt == false or (
+				(.author_association == "OWNER" or .author_association == "MEMBER"
+					or .author_association == "COLLABORATOR") and
+				([(.body // "" | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->")
+					| .[0] | tonumber)] as $prs
+				 | any($checkpoint.closeouts[]; .pr as $pr
+					| ($prs | index($pr)) != null and $t >= .epoch and $t <= .epoch + $slack))))
 			| (.user.login // "") as $who
 			| (.body // "")
 			| match("(spent|has used) (?:(.*) and )?([0-9,]+) tokens"; "g")
@@ -220,7 +238,7 @@ _sum_issue_token_spend() {
 			| select($raw | test("^[0-9]+$"))
 			| ((.captures[1].string // "") | duration) as $dur
 			| {t: $t, who: $who, tok: ($raw | tonumber),
-			   inwin: (($reset_epoch == 0) or ($t > $reset_epoch)),
+			   inwin: ($receipt == false and (($reset_epoch == 0) or ($t > $reset_epoch))),
 			   session: (if $dur != null and $who != "" and $t > 0 then
 				{lo: ($t - $dur.secs - $dur.res - $slack), hi: ($t - $dur.secs + $slack)}
 				else null end)}]
