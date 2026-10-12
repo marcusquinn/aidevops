@@ -1675,6 +1675,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18683 fix(tests): stub final ownership fence in worker-detection dispatch_with_dedup cases #auto-dispatch #bug ref:GH#34515
 
+- [ ] t18684 fix(pulse): stop dependency sweeps starving large blocked backlogs and re-evaluating dependency-blocked available issues #bug ref:GH#34521
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

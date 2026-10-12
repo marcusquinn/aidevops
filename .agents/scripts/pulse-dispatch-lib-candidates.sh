@@ -1283,6 +1283,45 @@ _dispatch_order_attempt_recency_candidates() {
 }
 
 #######################################
+# Move a status:available candidate to status:blocked after dispatch proved
+# an unresolved dependency (an open blocker, or a superseded blocker whose
+# successor is open). Left available, the issue re-entered the candidate
+# set every cycle and spent ~20-60s of dispatch evaluation each time, while
+# telling humans it was ready. Once blocked, it leaves the candidate set and
+# the dependency reconcilers return it to available when the blocker closes.
+# Inconclusive lookups (failed/unavailable reads) are never normalized.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - recent pulse log lines for this candidate
+# Returns: 0 always (best effort).
+#######################################
+_dispatch_normalize_dependency_blocked_candidate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local recent_lines="$3"
+	local owner="${repo_slug%%/*}" name="${repo_slug#*/}" open_count=""
+	[[ "${AIDEVOPS_DISPATCH_NORMALIZE_DEP_BLOCKED:-1}" == "1" ]] || return 0
+	[[ "$(type -t _refresh_ensure_unresolved_is_blocked 2>/dev/null)" == "function" ]] || return 0
+	[[ "$issue_number" =~ ^[0-9]+$ && "$repo_slug" == */* ]] || return 0
+	# Positive evidence only: the supersession verdict line (it names the
+	# repo, so it is attributable to this candidate), or a fresh native read
+	# showing at least one OPEN blocker. Unknown or failed reads do nothing.
+	if [[ "$recent_lines" != *"#${issue_number} blocker ${repo_slug}#"*" is open — keeping blocked (GH#34341)"* ]]; then
+		# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub.
+		open_count=$(gh api graphql -F owner="$owner" -F name="$name" -F number="$issue_number" \
+			-f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){blockedBy(first:50){nodes{state}}}}}' \
+			--jq '[.data.repository.issue.blockedBy.nodes[]? | select(.state == "OPEN")] | length' 2>/dev/null) || return 0
+		[[ "$open_count" =~ ^[1-9][0-9]*$ ]] || return 0
+	fi
+	if _refresh_ensure_unresolved_is_blocked "$repo_slug" "$issue_number"; then
+		_dispatch_stats_increment "dispatch_candidate_dependency_normalized"
+	fi
+	return 0
+}
+
+#######################################
 # Record a non-zero dispatch_with_dedup outcome for one candidate.
 #
 # Arguments:
@@ -1330,6 +1369,8 @@ _dispatch_record_nonzero_dispatch_result() {
 		_dispatch_mark_benign_blocked_candidate "$issue_number" "$repo_slug" "$failure_reason"
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) blocked:${failure_reason} benign dispatch block" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
+		[[ "$failure_reason" != blocked_by_unresolved ]] ||
+			_dispatch_normalize_dependency_blocked_candidate "$issue_number" "$repo_slug" "$recent_lines"
 		return 0
 	fi
 

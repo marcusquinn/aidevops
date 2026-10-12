@@ -676,6 +676,30 @@ _der_stale_epoch_reached() {
 	return $?
 }
 
+# Print open status:blocked issue numbers that still have an OPEN native
+# blocker, from one paginated GraphQL listing. _der_try_unblock would return
+# DER_NOT_READY for each of them after a comments read and a per-issue
+# blockedBy query, so the sweep can skip them without per-issue API calls.
+# Best effort: any read or shape failure prints nothing, so every candidate
+# keeps the full per-issue visit. Never used to unblock anything.
+_der_open_native_blocked_numbers() {
+	local repo="$1"
+	local owner="${repo%%/*}" name="${repo#*/}" pages=""
+	[[ "${DER_STALE_BLOCKED_PREFILTER:-1}" == "1" ]] || return 0
+	[[ "$repo" == */* && -n "$owner" && -n "$name" ]] || return 0
+	# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub.
+	pages=$(gh api graphql --paginate --slurp -F owner="$owner" -F name="$name" \
+		-f query='query($owner:String!,$name:String!,$endCursor:String){repository(owner:$owner,name:$name){issues(states:OPEN,labels:["status:blocked"],first:100,after:$endCursor){nodes{number blockedBy(first:20){nodes{state}}} pageInfo{hasNextPage endCursor}}}}' \
+		2>/dev/null) || return 0
+	printf '%s' "$pages" | jq -r '
+		if type != "array" then empty else
+		.[] | .data.repository.issues.nodes // empty | .[]
+		| select((.number | type) == "number")
+		| select(any((.blockedBy.nodes // [])[]; .state == "OPEN"))
+		| .number end' 2>/dev/null || true
+	return 0
+}
+
 # Periodically recover status:blocked issues whose close event was missed.
 # REST pagination is consumed in full, then bounded before any mutation.
 # Candidates are visited in ascending issue order after the persisted cursor;
@@ -690,7 +714,7 @@ reconcile_stale_blocked_issues() {
 	local max_candidates="${DER_STALE_BLOCKED_MAX_CANDIDATES:-500}"
 	local share_deadline="${DER_STALE_BLOCKED_DEADLINE_EPOCH:-0}"
 	local stop_deadline="${DER_STALE_BLOCKED_STOP_EPOCH:-0}"
-	local pages candidates candidate issue_number cursor_file="" cursor=0
+	local pages candidates candidate issue_number cursor_file="" cursor=0 open_blocked="" prefiltered=0
 	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
@@ -700,10 +724,20 @@ reconcile_stale_blocked_issues() {
 	_der_json_pages_valid "$pages" || return 1
 	total=$(printf '%s' "$pages" | jq '[.[][] | select(.pull_request == null)] | length') || return 1
 	pending=$(printf '%s' "$pages" | jq --argjson cursor "$cursor" '[.[][] | select(.pull_request == null and .number > $cursor)] | length') || return 1
+	[[ "$pending" -eq 0 ]] || open_blocked=$(_der_open_native_blocked_numbers "$repo")
 	candidates=$(printf '%s' "$pages" | jq -c --arg repo "$repo" --argjson cursor "$cursor" --argjson limit "$max_candidates" '[.[][] | select(.pull_request == null and .number > $cursor)] | sort_by(.number) | .[: $limit][] | {number,state,title,body,repository:{nameWithOwner:$repo},labels:{nodes:[.labels[] | {name:.name}],pageInfo:{hasNextPage:false}}}') || return 1
 	[[ "$pending" -le "$max_candidates" ]] || complete=false
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
+		issue_number=$(printf '%s' "$candidate" | jq -r '.number' 2>/dev/null) || issue_number=""
+		# A still-open native blocker is a verdict without API calls; advance
+		# the cursor so the share is spent on candidates that may be ready.
+		if [[ "$issue_number" =~ ^[0-9]+$ && -n "$open_blocked" ]] &&
+			printf '%s\n' "$open_blocked" | grep -qx "$issue_number"; then
+			prefiltered=$((prefiltered + 1))
+			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+			continue
+		fi
 		if _der_stale_epoch_reached "$stop_deadline" ||
 			{ [[ "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; }; then
 			complete=false
@@ -729,7 +763,7 @@ reconcile_stale_blocked_issues() {
 	if [[ "$complete" == true ]]; then
 		_der_stale_cursor_write "$cursor_file" 0 || cursor_failed=true
 	fi
-	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$failed" "$max_candidates" "$complete" "$cursor_failed" >&2
+	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s prefiltered_open_blocker=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$prefiltered" "$failed" "$max_candidates" "$complete" "$cursor_failed" >&2
 	# Without a durable cursor, later passes cannot resume; report a failure
 	# (not partial progress) so the operator sees it in the cycle summary.
 	[[ "$cursor_failed" == false ]] || return 1

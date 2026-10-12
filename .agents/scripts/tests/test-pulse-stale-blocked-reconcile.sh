@@ -246,4 +246,23 @@ for configured_timeout in unset 37 0 invalid; do
 		exit 1
 	}
 done
+
+# GH#34432 regression: 45s across 61 due repos must not round each share to
+# 0s (an already-expired repo deadline); the minimum share is capped by the
+# sweep deadline.
+share_deadline=$(_pulse_stale_blocked_repo_deadline 1000 1045 61)
+[[ "$share_deadline" == 1005 ]] || {
+	printf 'FAIL: zero fair share not raised to the minimum: %s\n' "$share_deadline"
+	exit 1
+}
+share_deadline=$(_pulse_stale_blocked_repo_deadline 1000 1003 61)
+[[ "$share_deadline" == 1003 ]] || {
+	printf 'FAIL: minimum share exceeded the sweep deadline: %s\n' "$share_deadline"
+	exit 1
+}
+share_deadline=$(_pulse_stale_blocked_repo_deadline 1000 1060 2)
+[[ "$share_deadline" == 1030 ]] || {
+	printf 'FAIL: fair share above the minimum changed: %s\n' "$share_deadline"
+	exit 1
+}
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'

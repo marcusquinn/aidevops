@@ -608,6 +608,26 @@ _pulse_stale_blocked_repo_fresh() {
 	return $?
 }
 
+# GH#34432 regression: with many due repos an even split rounds each share
+# down to 0s, so the partial-continuation pass returned partial at once for
+# every repo, no repo was ever stamped complete, and all repos stayed due on
+# every cycle — leaving the largest backlog one stale-block visit per cycle.
+# Give each repo a minimum share (capped at the sweep deadline); repos that
+# finish are stamped fresh and drop out, so the due set converges.
+# Args: now_epoch sweep_deadline repos_left. Prints the repo deadline epoch.
+_pulse_stale_blocked_repo_deadline() {
+	local now_epoch="$1" sweep_deadline="$2" repos_left="$3"
+	local min_share="${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}" share=0 deadline=0
+	[[ "$min_share" =~ ^[0-9]+$ ]] || min_share=5
+	[[ "$repos_left" =~ ^[1-9][0-9]*$ ]] || repos_left=1
+	share=$(((sweep_deadline - now_epoch) / repos_left))
+	[[ "$share" -ge "$min_share" ]] || share="$min_share"
+	deadline=$((now_epoch + share))
+	[[ "$deadline" -le "$sweep_deadline" ]] || deadline="$sweep_deadline"
+	printf '%s\n' "$deadline"
+	return 0
+}
+
 # Best effort: a stamp that cannot be written only keeps the repo due.
 _pulse_stale_blocked_repo_mark_complete() {
 	local repo="$1" stamp=""
@@ -671,7 +691,7 @@ _pulse_reconcile_stale_blocked_if_due() {
 		fi
 		position="${due[index]}"
 		printf '%s\n' "$(((position + 1) % repo_count))" >"$next_repo_file" 2>/dev/null || true
-		repo_deadline=$((now_epoch + (sweep_deadline - now_epoch) / (due_count - index)))
+		repo_deadline=$(_pulse_stale_blocked_repo_deadline "$now_epoch" "$sweep_deadline" "$((due_count - index))")
 		rc=0
 		# GH#34432: use this existing bounded per-repo cadence to revisit
 		# partial merges whose lease was still live at merge time.
