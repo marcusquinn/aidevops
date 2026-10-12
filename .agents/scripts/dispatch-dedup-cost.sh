@@ -174,6 +174,15 @@ _sum_issue_token_spend() {
 	checkpoint_data=$(_cost_checkpoint_from_closeouts "$issue_number" "$repo_slug" \
 		"$comments_json") || return 1
 
+	_cost_spend_from_comments "$comments_json" "$checkpoint_data" || return 1
+	return 0
+}
+
+# Aggregate fetched comments against verified checkpoint data, without API calls.
+# Args: slurped comments JSON, checkpoint JSON. Stdout: spent_tokens|attempt_count.
+# Returns 1 on parse failure or malformed output (caller fail-open).
+_cost_spend_from_comments() {
+	local comments_json="$1" checkpoint_data="$2"
 	# Extract comment bodies, excluding interactive-session signature footers and
 	# comments predating the latest approval, cost reset marker or merged checkpoint.
 	# Interactive footers are maintainer triage/review activity that should
