@@ -45,7 +45,12 @@
 #                                     immediate replacement.
 #   AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=3600
 #                                     cycles at or above this age are replaced
-#                                     immediately (treated as stuck).
+#                                     immediately (treated as stuck). The async
+#                                     post-dispatch housekeeping run is not a
+#                                     cycle and is not counted as an instance.
+#   AIDEVOPS_PULSE_HOUSEKEEPING_LOCK_DIR=<path>
+#                                     test override for the async housekeeping
+#                                     lock that identifies that run.
 #   AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN=<regex>
 #                                     test override for stale merge routines.
 #
@@ -182,6 +187,14 @@ _PULSE_EXPECTED_MAX_INSTANCES=$((10#$_PULSE_EXPECTED_MAX_INSTANCES))
 # legitimate t2774 overlap window. _pulse_pids filters them out; status
 # reports them informationally on a separate line.
 _PULSE_SIDECAR_FLAGS_RE='(--merge-only|--self-check|--dry-run|--canary)'
+
+# Async post-dispatch housekeeping lock (pulse-dispatch-engine.sh
+# _pulse_post_dispatch_housekeeping_lockdir). The async run is a disowned
+# subshell of a cycle with its own process group (GH#33256), so it outlives
+# the cycle, is reparented to PID 1 and keeps the bare wrapper argv. The
+# async-pid file it writes is the only marker that tells it apart from a main
+# cycle; a synchronous run is the cycle itself and writes only pid.
+_PULSE_HOUSEKEEPING_LOCK_DIR="${AIDEVOPS_PULSE_HOUSEKEEPING_LOCK_DIR:-${HOME}/.aidevops/logs/pulse-post-dispatch-housekeeping.lock}"
 
 # ANSI colors (guarded — don't collide with shared-constants)
 [[ -z "${_PL_GREEN+x}" ]] && _PL_GREEN='\033[0;32m'
@@ -703,6 +716,44 @@ _pulse_parent_is_wrapper() {
 	return 0
 }
 
+# True when PID is the async post-dispatch housekeeping run recorded in its
+# lock. Its stages run up to PREFLIGHT_GROUP_TIMEOUT each, so a healthy run
+# often lasts over an hour; counted as a cycle it reached the reconcile drain
+# ceiling and made setup replace a young in-flight cycle. A process that
+# started after the marker was written is a reused PID, not that run.
+_pulse_pid_is_async_housekeeping() {
+	local _pid="$1"
+	local _pid_file="${_PULSE_HOUSEKEEPING_LOCK_DIR}/async-pid"
+	local _lock_pid=""
+	local _written=""
+	local _age=""
+	local _now=""
+	[[ "$_pid" =~ ^[0-9]+$ && -f "$_pid_file" ]] || return 1
+	IFS= read -r _lock_pid <"$_pid_file" 2>/dev/null || true
+	[[ "$_lock_pid" =~ ^[0-9]+$ && "$_lock_pid" == "$_pid" ]] || return 1
+	_written=$(date -r "$_pid_file" +%s 2>/dev/null) || return 1
+	_age=$(_pulse_process_age_seconds "$_pid") || return 1
+	_now=$(date +%s 2>/dev/null) || return 1
+	[[ "$_written" =~ ^[0-9]+$ && "$_now" =~ ^[0-9]+$ ]] || return 1
+	# Whole-second ps/mtime granularity: allow 2s between fork and the write.
+	[[ $((_now - _age)) -le $((_written + 2)) ]] || return 1
+	return 0
+}
+
+# Print the live async housekeeping PID, if any.
+_pulse_async_housekeeping_pid() {
+	local _pid=""
+	local _cmd=""
+	[[ -f "${_PULSE_HOUSEKEEPING_LOCK_DIR}/async-pid" ]] || return 1
+	IFS= read -r _pid <"${_PULSE_HOUSEKEEPING_LOCK_DIR}/async-pid" 2>/dev/null || true
+	[[ "$_pid" =~ ^[0-9]+$ ]] || return 1
+	_cmd=$(ps -p "$_pid" -o command= 2>/dev/null) || return 1
+	[[ "$_cmd" =~ $_PULSE_PATTERN ]] || return 1
+	_pulse_pid_is_async_housekeeping "$_pid" || return 1
+	printf '%s\n' "$_pid"
+	return 0
+}
+
 _pulse_pids() {
 	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap="" _consumer_closed=0
 	_pids=$(_pulse_pids_raw)
@@ -715,6 +766,9 @@ _pulse_pids() {
 		_pulse_command_is_launcher "$_cmd" && continue
 		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
 		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
+		# Async housekeeping guard: the one subshell that outlives its cycle
+		# and is reparented to init/launchd (or a subreaper) is not a cycle.
+		_pulse_pid_is_async_housekeeping "$_pid" && continue
 		# Layer 1 (fast path): process started by init/launchd (PPID=1) is the
 		# canonical top-level instance. Subshells of pulse always have PPID = the
 		# pulse PID itself (> 1), never 1.
@@ -858,6 +912,8 @@ _stop_reconciliation_processes() {
 # stable activation link after the cycle exits and every earlier-bundle main
 # PID is younger than the drain ceiling. The caller still retires standalone
 # merge routines, which run from the stable link rather than a leased bundle.
+# The async housekeeping run is not a cycle and never sets the ceiling for one
+# (_pulse_pids excludes it); it only decides the case where no cycle runs.
 # Returns 0 to leave the Pulse process trees running, 1 to continue with
 # immediate replacement.
 _pulse_reconcile_defers_to_cycle_boundary() {
@@ -869,7 +925,19 @@ _pulse_reconcile_defers_to_cycle_boundary() {
 	[[ "$_PULSE_RECONCILE_DRAIN" != "0" ]] || return 1
 	_pulse_launchd_supervisor_loaded || return 1
 	_main_pids=$(_pulse_pids)
-	[[ -n "$_main_pids" ]] || return 1
+	if [[ -z "$_main_pids" ]]; then
+		# No cycle runs. A young housekeeping run finishes on its own bundle
+		# and launchd starts the activated bundle at its next interval; one
+		# at or above the ceiling is replaced with everything else, as before.
+		_pid=$(_pulse_async_housekeeping_pid) || return 1
+		_age=$(_pulse_process_age_seconds "$_pid") || return 1
+		if [[ "$_age" -ge "$_PULSE_RECONCILE_DRAIN_MAX_AGE" ]]; then
+			_pl_info "Async housekeeping PID ${_pid} has run ${_age}s (drain ceiling ${_PULSE_RECONCILE_DRAIN_MAX_AGE}s) with no cycle running; replacing it now"
+			return 1
+		fi
+		_pl_info "Deferring Pulse start to the launchd interval: no cycle is running; async housekeeping PID ${_pid} (${_age}s) finishes on its own bundle"
+		return 0
+	fi
 	while IFS= read -r _pid; do
 		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
 		if _pulse_pid_uses_active_runtime "$_pid"; then
@@ -1067,10 +1135,11 @@ _reconcile_managed() {
 #   it. GH#21903 reframes it as PILE-UP detection: warn only when the count
 #   exceeds the threshold (genuine respawn-outpacing-cycle-completion pattern).
 _status() {
-	local _pids="" _sidecar_pids=""
+	local _pids="" _sidecar_pids="" _housekeeping_pid=""
 	_pids=$(_pulse_pids)
 	_sidecar_pids=$(_pulse_pids_sidecar)
-	if [[ -z "$_pids" && -z "$_sidecar_pids" ]]; then
+	_housekeeping_pid=$(_pulse_async_housekeeping_pid) || _housekeeping_pid=""
+	if [[ -z "$_pids" && -z "$_sidecar_pids" && -z "$_housekeeping_pid" ]]; then
 		printf 'Pulse: not running\n'
 		return 0
 	fi
@@ -1083,7 +1152,9 @@ _status() {
 		[[ "$_pid_count" =~ ^[0-9]+$ ]] || _pid_count=0
 	fi
 
-	if [[ "$_pid_count" -eq 0 ]]; then
+	if [[ "$_pid_count" -eq 0 && -z "$_sidecar_pids" ]]; then
+		printf 'Pulse: not running (async housekeeping only)\n'
+	elif [[ "$_pid_count" -eq 0 ]]; then
 		printf 'Pulse: not running (sidecar(s) only)\n'
 	else
 		printf 'Pulse: running (%s instance%s)\n' "$_pid_count" "$([[ $_pid_count -eq 1 ]] || printf 's')"
@@ -1138,6 +1209,14 @@ _status() {
 		done <<<"$_sidecar_pids"
 	fi
 
+	# Async housekeeping (informational only — not a cycle, not counted).
+	if [[ -n "$_housekeeping_pid" ]]; then
+		local _hetime=""
+		_hetime=$(ps -p "$_housekeeping_pid" -o etime= 2>/dev/null | tr -d ' ')
+		printf '  Async housekeeping: PID %s (uptime %s; not a cycle, excluded from the instance count)\n' \
+			"$_housekeeping_pid" "${_hetime:-unknown}"
+	fi
+
 	# PILE-UP check applies to MAIN count only — sidecars are categorically
 	# different and counted separately above (GH#21903).
 	if [[ "$_pid_count" -gt "$_PULSE_EXPECTED_MAX_INSTANCES" ]]; then
@@ -1178,6 +1257,7 @@ Env:
                                             immediately (default 1 lets it finish).
   AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=3600
                                             Replace cycles at least this old now.
+  AIDEVOPS_PULSE_HOUSEKEEPING_LOCK_DIR=...  Override the async housekeeping lock (tests).
   AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN=...  Override merge-routine match (tests).
 
 Exit codes:

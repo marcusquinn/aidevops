@@ -1149,7 +1149,39 @@ _adaptive_launch_settle_wait() {
 # Returns 0 always; emits path on stdout.
 #######################################
 _pulse_post_dispatch_housekeeping_lockdir() {
+	# pulse-lifecycle-helper.sh reads this lock's async-pid file to tell the
+	# async run apart from a main cycle (_PULSE_HOUSEKEEPING_LOCK_DIR); keep
+	# both in step.
 	printf '%s\n' "${HOME}/.aidevops/logs/pulse-post-dispatch-housekeeping.lock"
+	return 0
+}
+
+#######################################
+# Record the housekeeping lock owner in a freshly created lock directory.
+#
+# The async run is a subshell of the cycle. Bash 3.2 has no BASHPID and $$
+# stays the cycle PID there, so resolve the executing shell as in
+# pulse-logging.sh; recording the cycle PID would make the duplicate check
+# follow the cycle instead of the run. The async run also writes async-pid:
+# it outlives the cycle with the bare wrapper argv, and that marker is how
+# pulse-lifecycle-helper.sh keeps it out of the main-cycle PID set. A
+# synchronous run is the cycle itself and records only pid.
+#
+# Args:
+#   $1 - lock directory path
+# Returns 0 always.
+#######################################
+_pulse_record_post_dispatch_housekeeping_owner() {
+	local lockdir="$1"
+	local owner_pid="${BASHPID:-}"
+	if [[ -z "$owner_pid" ]]; then
+		owner_pid="$(exec sh -c 'printf "%s" "$PPID"')" || owner_pid=""
+	fi
+	[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || owner_pid="$$"
+	printf '%s\n' "$owner_pid" >"${lockdir}/pid" 2>/dev/null || true
+	if [[ "${_PULSE_HOUSEKEEPING_ASYNC:-0}" == "1" ]]; then
+		printf '%s\n' "$owner_pid" >"${lockdir}/async-pid" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -1167,7 +1199,7 @@ _pulse_acquire_post_dispatch_housekeeping_lock() {
 	mkdir -p "$lock_parent" 2>/dev/null || return 1
 
 	if mkdir "$lockdir" 2>/dev/null; then
-		printf '%s\n' "${BASHPID:-$$}" >"${lockdir}/pid" 2>/dev/null || true
+		_pulse_record_post_dispatch_housekeeping_owner "$lockdir"
 		return 0
 	fi
 
@@ -1183,7 +1215,7 @@ _pulse_acquire_post_dispatch_housekeeping_lock() {
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: reclaiming stale lock (pid=${lock_pid:-missing})" >>"$LOGFILE"
 	rm -rf "$lockdir" 2>/dev/null || true
 	if mkdir "$lockdir" 2>/dev/null; then
-		printf '%s\n' "${BASHPID:-$$}" >"${lockdir}/pid" 2>/dev/null || true
+		_pulse_record_post_dispatch_housekeeping_owner "$lockdir"
 		return 0
 	fi
 	return 1
@@ -1483,6 +1515,7 @@ _pulse_start_post_dispatch_housekeeping() {
 		trap '_pulse_housekeeping_on_signal TERM' TERM
 		trap '_pulse_housekeeping_on_signal HUP' HUP
 		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
+		_PULSE_HOUSEKEEPING_ASYNC=1
 		_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
 	) >>"$LOGFILE" 2>&1 &
 	local housekeeping_pid=$!

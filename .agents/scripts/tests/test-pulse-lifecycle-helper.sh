@@ -32,6 +32,7 @@
 #   20. Launchd runtime proof handles prompt, delayed, wrong, and missing starts
 #   21. Default discovery uses the stable link when its env override is unset
 #   22. Default discovery ignores another local user's Pulse process
+#   23. The async post-dispatch housekeeping run is not counted as a cycle
 #
 # No real pulse is touched. We use a unique mock filename and match pattern
 # on pulse-wrapper.sh which we control inside TEST_ROOT.
@@ -109,6 +110,7 @@ SH
 	local _escaped_root="${TEST_ROOT//./\\.}"
 	export AIDEVOPS_PULSE_PROCESS_PATTERN="${_escaped_root}/scripts/pulse-wrapper\\.sh"
 	export AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN="${_escaped_root}/scripts/pulse-merge-routine\\.sh"
+	export AIDEVOPS_PULSE_HOUSEKEEPING_LOCK_DIR="${TEST_ROOT}/logs/post-dispatch-housekeeping.lock"
 
 	# Ensure env overrides don't leak between tests.
 	unset AIDEVOPS_SKIP_PULSE_RESTART 2>/dev/null || true
@@ -1415,6 +1417,66 @@ test_status_sidecar_only_reports_not_running() {
 	return 0
 }
 
+# The async post-dispatch housekeeping run outlives its cycle with the bare
+# wrapper argv. The PID its lock records in async-pid is not a cycle, so a long
+# run can neither mask a dead Pulse nor set the setup drain ceiling. A PID the
+# marker predates was reused, and a pid-only lock (synchronous housekeeping
+# inside the cycle) keeps that cycle counted.
+test_async_housekeeping_is_not_a_main_cycle() {
+	_kill_mocks
+	local _lockdir="$AIDEVOPS_PULSE_HOUSEKEEPING_LOCK_DIR"
+	local _hk_pid="" _out="" _rc=0
+	rm -rf "$_lockdir"
+	if ! _spawn_extra_mock_pulse; then
+		_print_result "async housekeeping: mock run did not start" 0
+		_kill_mocks
+		return 0
+	fi
+	_hk_pid="${MOCK_PIDS[${#MOCK_PIDS[@]} - 1]}"
+	mkdir -p "$_lockdir"
+	printf '%s\n' "$_hk_pid" >"${_lockdir}/pid"
+	printf '%s\n' "$_hk_pid" >"${_lockdir}/async-pid"
+
+	"$HELPER" is-running >/dev/null 2>&1 || _rc=$?
+	_assert_eq "is-running: async housekeeping alone is not a running Pulse" "1" "$_rc"
+	_out=$("$HELPER" status 2>&1) || true
+	if [[ "$_out" == *"not running (async housekeeping only)"* && "$_out" == *"Async housekeeping: PID ${_hk_pid} "* ]]; then
+		_print_result "status: async housekeeping is listed apart from cycles" 1
+	else
+		_print_result "status: async housekeeping not listed apart (out=$_out)" 0
+	fi
+
+	_spawn_extra_mock_pulse || true
+	_out=$("$HELPER" status 2>&1) || true
+	if [[ "$_out" == *"Pulse: running (1 instance)"* ]]; then
+		_print_result "status: one cycle plus async housekeeping is one instance" 1
+	else
+		_print_result "status: async housekeeping counted as a cycle (out=$_out)" 0
+	fi
+
+	# Marker written before the process started: a reused PID, so a cycle.
+	touch -t 202001010000 "${_lockdir}/async-pid"
+	_out=$("$HELPER" status 2>&1) || true
+	if [[ "$_out" == *"Pulse: running (2 instances)"* && "$_out" != *"Async housekeeping:"* ]]; then
+		_print_result "status: a PID the async marker predates counts as a cycle" 1
+	else
+		_print_result "status: reused PID treated as async housekeeping (out=$_out)" 0
+	fi
+
+	# Synchronous housekeeping records only pid: that cycle stays counted.
+	rm -f "${_lockdir}/async-pid"
+	printf '%s\n' "$_hk_pid" >"${_lockdir}/pid"
+	_out=$("$HELPER" status 2>&1) || true
+	if [[ "$_out" == *"Pulse: running (2 instances)"* ]]; then
+		_print_result "status: a pid-only housekeeping lock keeps its cycle counted" 1
+	else
+		_print_result "status: synchronous housekeeping lock hid a cycle (out=$_out)" 0
+	fi
+	rm -rf "$_lockdir"
+	_kill_mocks
+	return 0
+}
+
 test_default_pattern_uses_stable_link_when_active_link_unset() {
 	_kill_mocks
 	local fixture_home="${TEST_ROOT}-default-home"
@@ -1565,6 +1627,7 @@ main() {
 	test_status_four_main_plus_sidecar_warns
 	test_is_running_returns_false_with_only_sidecar
 	test_status_sidecar_only_reports_not_running
+	test_async_housekeeping_is_not_a_main_cycle
 	test_default_pattern_uses_stable_link_when_active_link_unset
 	test_default_pattern_ignores_foreign_user_pulse
 

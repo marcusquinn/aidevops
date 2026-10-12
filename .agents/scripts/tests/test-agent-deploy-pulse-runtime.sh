@@ -458,6 +458,82 @@ test_launchd_reconcile_replaces_cycle_past_drain_ceiling() {
 	return 0
 }
 
+# The async post-dispatch housekeeping run outlives its earlier-bundle cycle
+# with the bare wrapper argv. It is not a cycle: past the drain ceiling it must
+# not make setup replace the cycle the activated bundle runs. With no cycle
+# running, a young run finishes and launchd starts the next cycle as before.
+test_launchd_reconcile_ignores_async_housekeeping_age() {
+	local stale_root="$1"
+	local active_link="$2"
+	local fake_bin="$TEST_ROOT/fake-bin"
+	local launchctl_log="$TEST_ROOT/launchctl.log"
+	local output_file="$TEST_ROOT/launchd-housekeeping.out"
+	local lockdir="$HOME/.aidevops/logs/pulse-post-dispatch-housekeeping.lock"
+	local stale_script="$stale_root/agents/scripts/pulse-wrapper.sh"
+	local active_agents=""
+	local active_script=""
+	local housekeeping_pid=""
+	local cycle_pid=""
+	local output=""
+	write_enabled_launchctl_fake "$fake_bin"
+	stop_test_pulses
+	start_stale_pulse "$stale_root"
+	housekeeping_pid="$STALE_PULSE_PID"
+	mkdir -p "$lockdir"
+	printf '%s\n' "$housekeeping_pid" >"$lockdir/pid"
+	printf '%s\n' "$housekeeping_pid" >"$lockdir/async-pid"
+	# Launch by physical path, as the launchd fake does, so the cycle passes
+	# the activated-runtime proof.
+	active_agents=$(cd "$active_link" && pwd -P)
+	active_script="$active_agents/scripts/pulse-wrapper.sh"
+	nohup "$active_script" >/dev/null 2>&1 &
+	cycle_pid=$!
+	wait_for_script_pid "$cycle_pid" "$active_script" || fail "activated-bundle cycle fixture did not start"
+	: >"$launchctl_log"
+	(
+		export PATH="$fake_bin:$PATH"
+		export AIDEVOPS_PULSE_OS_NAME=Darwin
+		export LAUNCHCTL_LOG="$launchctl_log"
+		export AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=0
+		_restart_pulse_if_running "$active_agents" true "$active_link" >"$output_file"
+	)
+	output=$(<"$output_file")
+	pulse_script_pid_alive "$cycle_pid" "$active_script" ||
+		fail "async housekeeping age made reconciliation replace the activated-bundle cycle"
+	pulse_script_pid_alive "$housekeeping_pid" "$stale_script" ||
+		fail "reconciliation killed the async housekeeping run"
+	if [[ -s "$launchctl_log" ]]; then
+		fail "reconciliation kickstarted launchd for an async housekeeping run"
+	fi
+	[[ "$output" == *"Pulse already running from the activated bundle (PID ${cycle_pid})"* ]] ||
+		fail "reconciliation did not keep the activated-bundle cycle"
+	[[ "$output" != *"drain ceiling"* ]] || fail "async housekeeping age reached the drain ceiling check"
+	pass "async housekeeping past the drain ceiling leaves the activated-bundle cycle running"
+
+	kill -TERM "$cycle_pid" 2>/dev/null || true
+	wait "$cycle_pid" 2>/dev/null || true
+	: >"$launchctl_log"
+	(
+		export PATH="$fake_bin:$PATH"
+		export AIDEVOPS_PULSE_OS_NAME=Darwin
+		export LAUNCHCTL_LOG="$launchctl_log"
+		_restart_pulse_if_running "$active_agents" true "$active_link" >"$output_file"
+	)
+	output=$(<"$output_file")
+	pulse_script_pid_alive "$housekeeping_pid" "$stale_script" ||
+		fail "reconciliation killed a young async housekeeping run with no cycle running"
+	if [[ -s "$launchctl_log" ]]; then
+		fail "reconciliation kickstarted launchd while a young async housekeeping run finishes"
+	fi
+	[[ "$output" == *"Deferring Pulse start to the launchd interval"* ]] ||
+		fail "reconciliation did not report the async housekeeping deferral"
+	[[ "$output" != *"$TEST_ROOT"* ]] || fail "housekeeping deferral diagnostics expose a private local path"
+	pass "young async housekeeping with no cycle running finishes on its own bundle"
+	rm -rf "$lockdir"
+	stop_test_pulses
+	return 0
+}
+
 runtime_freshness_output() {
 	local manifest_file="$1"
 	local update_state_file="$2"
@@ -642,6 +718,7 @@ main() {
 	test_launchd_enabled_service_owns_restart "$active_root" "$active_link"
 	test_launchd_reconcile_lets_inflight_cycle_finish "$stale_root" "$active_root" "$active_link"
 	test_launchd_reconcile_replaces_cycle_past_drain_ceiling "$stale_root" "$active_root" "$active_link"
+	test_launchd_reconcile_ignores_async_housekeeping_age "$stale_root" "$active_link"
 	test_protected_release_merge_freshness
 	test_runtime_freshness_diagnostics
 

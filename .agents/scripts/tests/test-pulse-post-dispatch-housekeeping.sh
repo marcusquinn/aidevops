@@ -258,6 +258,60 @@ test_housekeeping_lock_skips_live_duplicate() {
 	return 0
 }
 
+# The lock names the shell that runs housekeeping, also on Bash 3.2 where $$
+# is the cycle PID inside the async subshell. Only the async run writes
+# async-pid, the marker pulse-lifecycle-helper.sh uses to keep it out of the
+# main-cycle PID set; a synchronous run is the cycle itself.
+test_housekeeping_lock_records_executing_shell() {
+	setup_test_env
+	local lockdir child_pid="" recorded="" marker="" failures=0 failmsg=""
+	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
+	(
+		_PULSE_HOUSEKEEPING_ASYNC=1
+		_pulse_acquire_post_dispatch_housekeeping_lock "$lockdir" || exit 1
+		exit 0
+	) &
+	child_pid=$!
+	if ! wait "$child_pid"; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | async lock not acquired"
+	fi
+	read -r recorded <"${lockdir}/pid" 2>/dev/null || recorded=""
+	read -r marker <"${lockdir}/async-pid" 2>/dev/null || marker=""
+	if [[ "$recorded" != "$child_pid" ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | pid=${recorded:-none}, async subshell=${child_pid}"
+	fi
+	if [[ "$marker" != "$child_pid" ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | async-pid=${marker:-none}, async subshell=${child_pid}"
+	fi
+	_pulse_release_post_dispatch_housekeeping_lock "$lockdir"
+
+	if ! _pulse_acquire_post_dispatch_housekeeping_lock "$lockdir"; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | synchronous lock not acquired"
+	fi
+	read -r recorded <"${lockdir}/pid" 2>/dev/null || recorded=""
+	if [[ "$recorded" != "$$" ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | synchronous pid=${recorded:-none}, cycle=$$"
+	fi
+	if [[ -e "${lockdir}/async-pid" ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | synchronous run wrote async-pid"
+	fi
+	_pulse_release_post_dispatch_housekeeping_lock "$lockdir"
+
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "post-dispatch housekeeping lock records the executing shell" 0
+	else
+		print_result "post-dispatch housekeeping lock records the executing shell" 1 "$failmsg"
+	fi
+	teardown_test_env
+	return 0
+}
+
 _catchup_stages() {
 	grep -E '^(dep_graph:|blocked_refresh$|brief_hold_release$|ownership_reconcile$)' "$STAGE_LOG" 2>/dev/null | tr '\n' ' '
 	return 0
@@ -443,6 +497,7 @@ main() {
 	test_sync_housekeeping_runs_all_stages
 	test_async_housekeeping_returns_before_slow_stage
 	test_housekeeping_lock_skips_live_duplicate
+	test_housekeeping_lock_records_executing_shell
 	test_housekeeping_blocker_refresh_catchup
 	test_housekeeping_resumes_after_interrupted_run
 	test_housekeeping_signal_killed_stage_not_recorded
