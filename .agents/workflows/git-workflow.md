@@ -78,6 +78,11 @@ backup ID and restore command and are safe to retry. Use `restore-default` only
 when the canonical checkout is on the wrong branch. Full details:
 `reference/dirty-worktree-preservation.md`.
 
+Local-only repos (`"local_only": true`, no `origin`): complete a user-authorized
+full-loop with `canonical-recovery-helper.sh fast-forward-local --repo PATH
+--from-branch BRANCH --task tNNN --confirm FAST_FORWARD_LOCAL_CANONICAL`
+instead of handing raw `git stash`/`git merge` to the user.
+
 **Worktrees** (DEFAULT for all feature work):
 
 Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays on `main`. Create linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` using flat `<repo>-<branch-slug>` names; do not create durable implementation worktrees in runtime temp paths such as macOS `/var/folders/.../T/opencode/`.

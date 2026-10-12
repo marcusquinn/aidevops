@@ -77,6 +77,28 @@ branch occupancy, identity ambiguity, and ref drift remain blocked. A failure
 after ref creation deletes that ref only when it still points to the pinned tip
 and verifies the original clean unborn state before returning.
 
+### Local-only repositories (no `origin`)
+
+Repos registered with `"local_only": true` have no remote, so `sync-mirror`
+cannot pin a tip. When the user has authorized making a reviewed linked-worktree
+branch live, use the remote-less route:
+
+```bash
+.agents/scripts/canonical-recovery-helper.sh fast-forward-local \
+  --repo /path/to/canonical-checkout --from-branch feature/branch \
+  --task t123 --confirm FAST_FORWARD_LOCAL_CANONICAL
+```
+
+It refuses any repository that has a remote (use `sync-mirror`), any branch not
+checked out in a linked worktree, and any branch that is not a pure fast-forward
+of the canonical default branch. Under the recovery lock it verifies the audit
+chain, records the authorization with `--task` in place of `--issue`, backs up
+and verifies dirty state, cleans it, compare-and-swaps the local ref, updates the
+worktree, then re-applies the preserved tracked edits with a three-way merge and
+restores untracked files. On a merge conflict it leaves the default ref at the new
+tip with a clean worktree, prints `CONFLICT_PATH=` lines, and keeps the edits in
+the printed backup ID (`RESTORE_COMMAND` restores the pre-run state).
+
 Clean records an in-progress transition before its first worktree mutation. Any
 reset, removal, hook, final-status, or evidence-finalization failure immediately
 restores and verifies the complete pre-clean snapshot. The manifest audits the
