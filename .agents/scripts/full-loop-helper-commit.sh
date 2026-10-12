@@ -287,8 +287,10 @@ _validate_completion_bookkeeping_paths() {
 	local changed_file=""
 	local changed_count=0
 	local todo_changed=0
+	local comparison_base=""
 
-	changed_files=$(git diff --name-only "${base_ref}..HEAD") || {
+	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
+	changed_files=$(git diff --name-only "$comparison_base" HEAD) || {
 		print_error "Completion bookkeeping could not inspect the final diff"
 		return 1
 	}
@@ -310,7 +312,7 @@ _validate_completion_bookkeeping_paths() {
 		print_error "Completion bookkeeping requires a TODO.md completion-proof diff"
 		return 1
 	fi
-	deleted_files=$(git diff --name-only --diff-filter=D "${base_ref}..HEAD") || return 1
+	deleted_files=$(git diff --name-only --diff-filter=D "$comparison_base" HEAD) || return 1
 	if [[ -n "$deleted_files" ]]; then
 		print_error "Completion bookkeeping may not delete completion metadata files: ${deleted_files//$'\n'/, }"
 		return 1
@@ -357,7 +359,9 @@ _validate_completion_bookkeeping_todo() {
 	local todo_patch=""
 	local patch_line=""
 	local patch_payload=""
-	todo_patch=$(git diff --unified=0 "${base_ref}..HEAD" -- TODO.md) || return 1
+	local comparison_base=""
+	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
+	todo_patch=$(git diff --unified=0 "$comparison_base" HEAD -- TODO.md) || return 1
 	if [[ -z "$todo_patch" ]]; then
 		print_error "Completion bookkeeping found no TODO.md changes against ${base_ref}"
 		return 1
@@ -1161,7 +1165,7 @@ _issue_has_parent_task_label() {
 # Build the PR body string and print it to stdout.
 # Arguments: issue_number, summary_what, summary_testing, files_changed,
 #            sig_footer, closing_keyword (default: Resolves), requested_risk,
-#            requested_testing_level, base_ref
+#            requested_testing_level, base_ref (resolved merge base)
 _build_pr_body() {
 	local issue_number="$1" summary_what="$2" summary_testing="$3"
 	local files_changed="$4" sig_footer="$5"

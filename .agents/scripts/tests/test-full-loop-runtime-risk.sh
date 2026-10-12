@@ -423,9 +423,93 @@ unrelated_base=$(printf 'unrelated root\n' | /usr/bin/git -C "$BEHIND_REPO" -c c
 assert_rejected "unrelated comparison history fails closed" \
 	pending_in_behind_repo Low self-assessed "diff reviewed" "Update guide" "$unrelated_base"
 
-# Final validation retains direct final-diff semantics, not pending ancestry.
-final_result=$(cd "$BEHIND_REPO" && _derive_runtime_risk Low src/helper.js "Adjust helper" main HEAD)
-assert_contains "final committed diff retains upstream-sensitive hunks" "$final_result" "Critical"
+# Final metadata uses the same ownership base as pending validation (GH#34465).
+final_result=$(cd "$BEHIND_REPO" && _derive_runtime_risk Low src/helper.js "Adjust helper" \
+	"$(_pending_runtime_comparison_base main)" HEAD)
+assert_contains "final committed diff excludes upstream-sensitive hunks" "$final_result" "Medium"
+
+# Exercise the real metadata orchestration without GitHub writes or signatures.
+eval "$(sed -n '/^_diff_is_planning_only() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper.sh")"
+eval "$(sed -n '/^_commit_and_pr_prepare_metadata() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper.sh")"
+_resolve_remote_default_branch() {
+	printf 'main\n'
+	return 0
+}
+session_origin_label() {
+	printf 'origin:worker\n'
+	return 0
+}
+_issue_has_parent_task_label() {
+	return 1
+}
+print_info() {
+	local message="$1"
+	printf '%s\n' "$message" >&2
+	return 0
+}
+prepare_fixture_metadata() {
+	local summary_what="$1" summary_testing="$2"
+	local SCRIPT_DIR="${TEST_ROOT}/no-helper-binaries"
+	local completion_bookkeeping=0 closing_keyword=Resolves base_branch="" base_ref=""
+	local issue_number=34465 files_changed="" pr_body="" runtime_risk="" testing_level=""
+	local pr_title="Fixture" commit_message="fix: fixture" origin_label="" repo="example/fixture"
+	local allow_parent_close=0 planning_only=0 replacement_pr="" replacement_reason=""
+	_commit_and_pr_prepare_metadata || return 1
+	printf '%s\n' "$pr_body"
+	return 0
+}
+
+FINAL_REPO="${TEST_ROOT}/final-repo"
+mkdir -p "${FINAL_REPO}/src"
+/usr/bin/git -C "$FINAL_REPO" init -q -b main
+/usr/bin/git -C "$FINAL_REPO" config user.name "Runtime Risk Test"
+/usr/bin/git -C "$FINAL_REPO" config user.email "runtime-risk@example.invalid"
+printf 'export const value = 1;\n' >"${FINAL_REPO}/src/helper.js"
+printf '%s\n' '- [ ] t1 Finish task ref:GH#34465' >"${FINAL_REPO}/TODO.md"
+/usr/bin/git -C "$FINAL_REPO" add .
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: shared base"
+final_base=$(/usr/bin/git -C "$FINAL_REPO" rev-parse HEAD)
+printf 'export const credential = rotateCredential();\n' >"${FINAL_REPO}/src/helper.js"
+printf 'export const payment = charge();\n' >"${FINAL_REPO}/src/billing.js"
+printf '%s\n' '- [ ] t2 Upstream task' >>"${FINAL_REPO}/TODO.md"
+/usr/bin/git -C "$FINAL_REPO" add .
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: upstream sensitive changes"
+/usr/bin/git -C "$FINAL_REPO" update-ref refs/remotes/origin/main HEAD
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/final "$final_base"
+printf 'export const value = 2;\n' >"${FINAL_REPO}/src/helper.js"
+/usr/bin/git -C "$FINAL_REPO" add .
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: harmless branch change"
+final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" "diff reviewed")
+assert_contains "metadata lists only branch files" "$final_body" $'## Files Changed\n\nsrc/helper.js\n'
+assert_contains "metadata risk ignores upstream sensitive changes" "$final_body" '**Risk level:** Medium'
+final_pending=$(cd "$FINAL_REPO" && _validate_pending_runtime_metadata Medium self-assessed \
+	"diff reviewed" "Adjust helper" origin/main && printf accepted)
+assert_contains "pending and final risk agree behind upstream" "$final_pending" accepted
+
+/usr/bin/git -C "$FINAL_REPO" switch -q -c feature/bookkeeping "$final_base"
+printf '%s\n' '- [x] t1 Finish task ref:GH#34465 pr:#123 completed:2026-10-12' >"${FINAL_REPO}/TODO.md"
+/usr/bin/git -C "$FINAL_REPO" add TODO.md
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: completion proof"
+bookkeeping_result=$(cd "$FINAL_REPO" &&
+	_validate_completion_bookkeeping_paths t1 origin/main &&
+	_validate_completion_bookkeeping_todo 34465 123 t1 origin/main && printf accepted)
+assert_contains "TODO-only bookkeeping excludes upstream files and TODO edits" "$bookkeeping_result" accepted
+planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record completion" "diff reviewed")
+assert_contains "planning classification excludes upstream files" "$planning_body" 'For #34465'
+
+/usr/bin/git -C "$FINAL_REPO" switch -q feature/final
+printf 'export const payment = charge();\n' >"${FINAL_REPO}/src/billing.js"
+/usr/bin/git -C "$FINAL_REPO" add .
+/usr/bin/git -C "$FINAL_REPO" commit -qm "fixture: branch sensitive change"
+prepare_local_critical_metadata() {
+	(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" "diff reviewed")
+	return $?
+}
+assert_rejected "final metadata rejects local Critical change without runtime evidence" \
+	prepare_local_critical_metadata
+critical_final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" \
+	"runtime-verified with sensitive branch fixture")
+assert_contains "local Critical change still derives Critical" "$critical_final_body" '**Risk level:** Critical'
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

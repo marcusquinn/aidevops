@@ -193,8 +193,9 @@ cmd_commit_and_pr() {
 # Only non-empty diffs confined to planning paths qualify.
 _diff_is_planning_only() {
 	local base_ref="$1"
-	local paths="" path=""
-	paths=$(git diff --name-only "${base_ref}..HEAD") || return 1
+	local paths="" path="" comparison_base=""
+	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
+	paths=$(git diff --name-only "$comparison_base" HEAD) || return 1
 	[[ -n "$paths" ]] || return 1
 	while IFS= read -r path; do
 		case "$path" in
@@ -208,13 +209,17 @@ _diff_is_planning_only() {
 # Derive final-diff metadata after rebase but before any remote mutation.
 # Invalid risk/testing evidence must not leave a pushed orphan branch.
 _commit_and_pr_prepare_metadata() {
+	local comparison_base=""
 	if [[ "$completion_bookkeeping" -eq 1 ]]; then
 		closing_keyword="For"
 	fi
 	base_branch=$(_resolve_remote_default_branch origin) || return 1
 	base_ref="origin/${base_branch}"
-	files_changed=$(git diff --name-only "${base_ref}..HEAD" 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g' || echo "")
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref") || return 1
+	# Freeze the comparison once: upstream movement is not part of this PR.
+	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
+	files_changed=$(git diff --name-only "$comparison_base" HEAD) || return 1
+	files_changed=$(printf '%s' "$files_changed" | tr '\n' ',' | sed 's/,/, /g')
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base") || return 1
 
 	# Preserve explicit titles; avoid double-prefixing a GH# or tNNN commit title.
 	if [[ -z "$pr_title" ]]; then
@@ -232,7 +237,7 @@ _commit_and_pr_prepare_metadata() {
 		closing_keyword="For"
 		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
 	fi
-	if [[ "$allow_parent_close" -eq 0 ]] && _diff_is_planning_only "$base_ref"; then
+	if [[ "$allow_parent_close" -eq 0 ]] && _diff_is_planning_only "$comparison_base"; then
 		closing_keyword="For"
 		planning_only=1
 		print_info "Planning-only diff — using 'For' keyword; issue stays dispatchable"
@@ -242,7 +247,7 @@ _commit_and_pr_prepare_metadata() {
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
 		[[ -n "$replacement_pr_head_sha" ]] && replacement_note="${replacement_note} Verified ancestor before WIP finalization: ${replacement_pr_head_sha}."
 	fi
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref" "$replacement_note") || return 1
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note") || return 1
 
 	# Parent-task closing keywords are forbidden except for an explicit final phase.
 	local keyword_guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"

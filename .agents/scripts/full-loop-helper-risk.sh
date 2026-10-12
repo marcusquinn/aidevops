@@ -118,6 +118,7 @@ _runtime_paths_keyword_context() {
 
 # Print diff hunks for the requested files without mutating the real index.
 # WORKTREE includes tracked branch/index/worktree changes plus untracked files.
+# Callers must pass a resolved merge base, not a moving upstream tree.
 _runtime_diff_output() {
 	local base_ref="$1"
 	local diff_target="${2:-HEAD}"
@@ -141,7 +142,7 @@ _runtime_diff_output() {
 			fi
 		else
 			git diff --unified=0 --no-color --no-ext-diff \
-				"${base_ref}..${diff_target}" -- "$path" 2>/dev/null || return 1
+				"$base_ref" "$diff_target" -- "$path" 2>/dev/null || return 1
 		fi
 	done < <(printf '%s\n' "$files_changed" | tr ',' '\n')
 	return 0

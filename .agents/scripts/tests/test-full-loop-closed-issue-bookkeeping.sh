@@ -48,6 +48,9 @@ MAIN_HELPER="${SCRIPTS_DIR}/full-loop-helper.sh"
 # cmd_commit_and_pr validates the squash subject before any mutation.
 # shellcheck source=../full-loop-helper-subject.sh
 source "${SCRIPTS_DIR}/full-loop-helper-subject.sh"
+# Metadata and bookkeeping share the production merge-base resolver.
+# shellcheck source=../full-loop-helper-risk.sh
+source "${SCRIPTS_DIR}/full-loop-helper-risk.sh"
 
 eval "$(extract_function "$COMMIT_HELPER" _parse_commit_and_pr_args)"
 eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_request)"
@@ -60,6 +63,7 @@ eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_pr_bo
 eval "$(extract_function "$COMMIT_HELPER" _validate_closed_issue_completion_bookkeeping)"
 eval "$(extract_function "$COMMIT_HELPER" _create_or_continue_pr)"
 eval "$(extract_function "$MAIN_HELPER" cmd_commit_and_pr)"
+eval "$(extract_function "$MAIN_HELPER" _diff_is_planning_only)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_prepare_metadata)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_check_readiness)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_publish)"
@@ -154,6 +158,10 @@ git() {
 	local first_arg="${1:-}"
 	local arguments=" $* "
 	case "$command_name" in
+	merge-base)
+		printf '%s\n' 'fixture-merge-base'
+		return 0
+		;;
 	diff)
 		case "$arguments" in
 		*" --diff-filter=D "*) printf '%s' "$TEST_DELETED_FILES" ;;
@@ -166,6 +174,10 @@ git() {
 	rev-parse)
 		if [[ "$first_arg" == "--show-toplevel" ]]; then
 			printf '%s\n' "$FIXTURE_ROOT"
+			return 0
+		fi
+		if [[ "$first_arg" == "--verify" ]]; then
+			printf '%s\n' 'fixture-commit'
 			return 0
 		fi
 		return 1
