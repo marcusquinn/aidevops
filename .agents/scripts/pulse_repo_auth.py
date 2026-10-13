@@ -4,7 +4,6 @@
 """Repository-scoped Pulse read authentication; writes retain their original auth."""
 
 import argparse
-import contextlib
 import json
 import os
 from pathlib import Path
@@ -12,9 +11,9 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 
-from github_app_auth import AuthError, atomic_json, cached_token, private_read
+from github_app_auth import AuthError, cached_token
+from pulse_auth_config import paths, registry, settings, update_registry
 
 SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 READS = {"issue": {"list", "view"}, "pr": {"list", "view", "checks", "diff"},
@@ -29,50 +28,6 @@ WRITES = {"issue": {"create", "edit", "comment", "close", "reopen", "delete", "t
 
 def valid_slug(value):
     return bool(SLUG.fullmatch(value)) and all(part not in (".", "..") for part in value.split("/"))
-
-
-def paths():
-    base = Path.home() / ".config/aidevops"
-    return (Path(os.environ.get("AIDEVOPS_REPOS_CONFIG", base / "repos.json")),
-            Path(os.environ.get("AIDEVOPS_GITHUB_APP_CONFIG", base / "github-app-auth.json")))
-
-
-def registry(path):
-    if not path.exists() and not path.is_symlink():
-        return {"initialized_repos": []}
-    value = json.loads(private_read(path))
-    if (not isinstance(value, dict) or not isinstance(value.get("initialized_repos"), list)
-            or not all(isinstance(entry, dict) for entry in value["initialized_repos"])):
-        raise AuthError("Invalid repository registry")
-    return value
-
-
-def entry_for(data, repo):
-    entries = [entry for entry in data["initialized_repos"] if str(entry.get("slug", "")).lower() == repo.lower()]
-    if len(entries) != 1:
-        raise AuthError("Repository must have exactly one registry entry")
-    return entries[0]
-
-
-def settings(data, repo, config_path):
-    entry = entry_for(data, repo)
-    auth = entry.get("pulse_auth")
-    if auth is None:
-        return None
-    if not isinstance(auth, dict) or auth.get("provider") != "github-app":
-        raise AuthError("Unsupported Pulse auth provider")
-    if entry.get("local_only"):
-        raise AuthError("Local-only repositories cannot use GitHub App auth")
-    config = json.loads(private_read(config_path))
-    profile = config.get("profiles", {}).get(auth.get("profile"))
-    if not isinstance(profile, dict) or not str(profile.get("app_id", "")).isdigit():
-        raise AuthError("Missing or invalid GitHub App profile")
-    if not profile.get("private_key_path") or not str(auth.get("installation_id", "")).isdigit():
-        raise AuthError("Missing key path or installation ID")
-    permissions = profile.get("permissions", {"metadata": "read", "issues": "read", "pull_requests": "read"})
-    if not isinstance(permissions, dict) or not permissions or any(v != "read" for v in permissions.values()):
-        raise AuthError("Pulse App profile must request only read permissions")
-    return auth, profile
 
 
 def option_values(args, long, short=None):
@@ -141,11 +96,9 @@ def api_operation(args):
     if method in ("GET", "HEAD"):
         # Maintainer identity is still the write actor. Unscoped budget probes
         # describe that existing account, not any particular App installation.
-        if endpoint.strip("/") == "user":
-            return "account"
-        if endpoint.strip("/") == "rate_limit" and not os.environ.get("AIDEVOPS_PULSE_REPO"):
-            return "account"
-        return "read"
+        account = endpoint.strip("/") == "user" or (
+            endpoint.strip("/") == "rate_limit" and not os.environ.get("AIDEVOPS_PULSE_REPO"))
+        return "account" if account else "read"
     if method in ("POST", "PUT", "PATCH", "DELETE"):
         return "write"
     return "unknown"
@@ -238,56 +191,7 @@ def execute(shim, args, data, config_path):
         return run_shim(shim, args, env)
 
 
-@contextlib.contextmanager
-def registry_lock(path):
-    # Share the mkdir lock used by aidevops_with_registry_lock, not a second lock.
-    directory = Path(str(path) + ".lock")
-    deadline = time.monotonic() + 10
-    while True:
-        try:
-            directory.mkdir(mode=0o700)
-            break
-        except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise AuthError("Repository registry is locked") from None
-            time.sleep(0.1)
-    try:
-        yield
-    finally:
-        directory.rmdir()
-
-
-def main():
-    registry_path, config_path = paths()
-    if len(sys.argv) > 2 and sys.argv[1] == "exec-gh":
-        if operation(sys.argv[3:]) in ("write", "local", "account"):
-            env = dict(os.environ, AIDEVOPS_PULSE_AUTH_ACTIVE="1")
-            return run_shim(sys.argv[2], sys.argv[3:], env)
-        return execute(sys.argv[2], sys.argv[3:], registry(registry_path), config_path)
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("set", "status", "check", "clear"))
-    parser.add_argument("repo")
-    parser.add_argument("--provider", choices=("github-app",), default="github-app")
-    parser.add_argument("--profile")
-    parser.add_argument("--installation-id")
-    args = parser.parse_args()
-    if not valid_slug(args.repo):
-        raise AuthError("Repository must be owner/repo")
-    if args.action in ("set", "clear"):
-        with registry_lock(registry_path):
-            data = registry(registry_path)
-            entry = entry_for(data, args.repo)
-            if args.action == "set":
-                if not args.profile or not args.installation_id:
-                    raise AuthError("--profile and --installation-id are required")
-                entry["pulse_auth"] = {"provider": args.provider, "profile": args.profile,
-                                       "installation_id": args.installation_id}
-                settings(data, args.repo, config_path)
-            else:
-                entry.pop("pulse_auth", None)
-            atomic_json(registry_path, data)
-        print(json.dumps({"updated": True, "pulse_enabled_changed": False}))
-        return 0
+def auth_status(args, registry_path, config_path):
     data = registry(registry_path)
     selected = settings(data, args.repo, config_path)
     if selected is None:
@@ -307,6 +211,27 @@ def main():
         result["read_check"] = "passed"
     print(json.dumps(result))
     return 0
+
+
+def main():
+    registry_path, config_path = paths()
+    if len(sys.argv) > 2 and sys.argv[1] == "exec-gh":
+        if operation(sys.argv[3:]) in ("write", "local", "account"):
+            env = dict(os.environ, AIDEVOPS_PULSE_AUTH_ACTIVE="1")
+            return run_shim(sys.argv[2], sys.argv[3:], env)
+        return execute(sys.argv[2], sys.argv[3:], registry(registry_path), config_path)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=("set", "status", "check", "clear"))
+    parser.add_argument("repo")
+    parser.add_argument("--provider", choices=("github-app",), default="github-app")
+    parser.add_argument("--profile")
+    parser.add_argument("--installation-id")
+    args = parser.parse_args()
+    if not valid_slug(args.repo):
+        raise AuthError("Repository must be owner/repo")
+    if args.action in ("set", "clear"):
+        return update_registry(args, registry_path, config_path)
+    return auth_status(args, registry_path, config_path)
 
 
 if __name__ == "__main__":
