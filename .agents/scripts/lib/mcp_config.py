@@ -32,12 +32,15 @@ LAZY_MCPS = {
 
 # Oh-My-OpenCode tool patterns to disable globally
 OMO_TOOL_PATTERNS = ['grep_app_*', 'websearch_*']
-PLAYWRITER_MCP_PACKAGE = 'playwriter@0.5.0'
-LEGACY_PLAYWRITER_MCP_PACKAGE = 'playwriter@latest'
+PLAYWRITER_MCP_PACKAGE = 'playwriter@0.8.0'
+# Packages emitted by earlier aidevops generators (GH#30851, GH#34549).
+LEGACY_PLAYWRITER_MCP_PACKAGES = ('playwriter@latest', 'playwriter@0.5.0')
+# Playwriter >= 0.8.0 relays send usage telemetry unless opted out (GH#34549).
+PLAYWRITER_TELEMETRY_OPT_OUT = {'PLAYWRITER_TELEMETRY': '0', 'DO_NOT_TRACK': '1'}
 
 
-def _is_legacy_generated_playwriter_command(command):
-    """Return whether command is an exact prior generated Playwriter launcher."""
+def _is_generated_playwriter_command(command, packages):
+    """Return whether command is an exact generated launcher for packages."""
     if not isinstance(command, list) or not command:
         return False
     runner = command[0]
@@ -47,12 +50,29 @@ def _is_legacy_generated_playwriter_command(command):
     is_bun = isinstance(runner, str) and (
         runner == 'bun' or (os.path.isabs(runner) and os.path.basename(runner) == 'bun')
     )
-    return (
-        is_runner and command[1:] in (
-            [LEGACY_PLAYWRITER_MCP_PACKAGE],
-            ['-y', LEGACY_PLAYWRITER_MCP_PACKAGE],
-        )
-    ) or (is_bun and command[1:] == ['x', LEGACY_PLAYWRITER_MCP_PACKAGE])
+    for package in packages:
+        if is_runner and command[1:] in ([package], ['-y', package]):
+            return True
+        if is_bun and command[1:] == ['x', package]:
+            return True
+    return False
+
+
+def _is_legacy_generated_playwriter_command(command):
+    """Return whether command is an exact prior generated Playwriter launcher."""
+    return _is_generated_playwriter_command(command, LEGACY_PLAYWRITER_MCP_PACKAGES)
+
+
+def _apply_playwriter_telemetry_opt_out(playwriter_config):
+    """Default telemetry off unless the operator set PLAYWRITER_TELEMETRY."""
+    environment = playwriter_config.get('environment')
+    if environment is None:
+        environment = {}
+        playwriter_config['environment'] = environment
+    if not isinstance(environment, dict) or 'PLAYWRITER_TELEMETRY' in environment:
+        return
+    environment['PLAYWRITER_TELEMETRY'] = PLAYWRITER_TELEMETRY_OPT_OUT['PLAYWRITER_TELEMETRY']
+    environment.setdefault('DO_NOT_TRACK', PLAYWRITER_TELEMETRY_OPT_OUT['DO_NOT_TRACK'])
 
 
 def apply_mcp_loading_policy(config):
@@ -98,12 +118,14 @@ def _register_playwriter(config, bun_path):
             config['mcp']['playwriter'] = {
                 "type": "local",
                 "command": ["bun", "x", PLAYWRITER_MCP_PACKAGE],
+                "environment": dict(PLAYWRITER_TELEMETRY_OPT_OUT),
                 "enabled": False
             }
         else:
             config['mcp']['playwriter'] = {
                 "type": "local",
                 "command": ["npx", PLAYWRITER_MCP_PACKAGE],
+                "environment": dict(PLAYWRITER_TELEMETRY_OPT_OUT),
                 "enabled": False
             }
         print("  Added legacy Playwriter compatibility MCP (explicit @playwriter requests only)")
@@ -111,8 +133,10 @@ def _register_playwriter(config, bun_path):
         playwriter_config = config['mcp']['playwriter']
         command = playwriter_config.get('command')
         if _is_legacy_generated_playwriter_command(command):
-            command[command.index(LEGACY_PLAYWRITER_MCP_PACKAGE)] = PLAYWRITER_MCP_PACKAGE
-            print("  Pinned legacy playwriter MCP command to 0.5.0")
+            command[-1] = PLAYWRITER_MCP_PACKAGE
+            print(f"  Pinned legacy playwriter MCP command to {PLAYWRITER_MCP_PACKAGE}")
+        if _is_generated_playwriter_command(command, (PLAYWRITER_MCP_PACKAGE,)):
+            _apply_playwriter_telemetry_opt_out(playwriter_config)
         playwriter_config['enabled'] = False
     config['tools']['playwriter_*'] = False
 

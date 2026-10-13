@@ -3,13 +3,15 @@
   "_preferred": "Use standalone Playwright with Brave preferred; use Microsoft Playwright Extension only for interactive user-browser access",
   "_docs": "https://github.com/remorses/playwriter",
   "_extension": "https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe",
+  "_telemetry": "Playwriter 0.8.0+ relays send anonymous usage stats unless PLAYWRITER_TELEMETRY=0 or DO_NOT_TRACK=1 is set before the relay starts; aidevops defaults both off",
   
   "opencode": {
     "_location": "~/.config/opencode/opencode.json",
     "_merge_into": "mcp",
     "playwriter": {
       "type": "local",
-      "command": ["npx", "playwriter@0.5.0"],
+      "command": ["npx", "playwriter@0.8.0"],
+      "environment": { "PLAYWRITER_TELEMETRY": "0", "DO_NOT_TRACK": "1" },
       "enabled": false
     }
   },
@@ -19,7 +21,8 @@
     "_merge_into": "mcpServers",
     "playwriter": {
       "command": "npx",
-      "args": ["playwriter@0.5.0"]
+      "args": ["playwriter@0.8.0"],
+      "env": { "PLAYWRITER_TELEMETRY": "0", "DO_NOT_TRACK": "1" }
     }
   },
   
@@ -28,7 +31,8 @@
     "_merge_into": "mcpServers",
     "playwriter": {
       "command": "npx",
-      "args": ["playwriter@0.5.0"]
+      "args": ["playwriter@0.8.0"],
+      "env": { "PLAYWRITER_TELEMETRY": "0", "DO_NOT_TRACK": "1" }
     }
   },
 
@@ -39,7 +43,7 @@
     "4. Add MCP config to your AI assistant",
     "5. Restart AI assistant",
     "6. Click extension icon on tabs you want to control (turns green)",
-    "7. Use the 'execute' tool with Playwright code"
+    "7. Use the 'execute' tool with Playwright code; store the target tab in state.page (0.8.0 has no page global)"
   ],
 
   "usage_notes": [
@@ -47,6 +51,8 @@
     "Works with your existing browser - reuse sessions, extensions",
     "Disconnect extension to bypass automation detection",
     "Only controls tabs where you clicked the extension icon",
+    "Never opens tabs on its own; select an enabled tab from context.pages() or open one only with approval",
+    "Do not start Remote control sharing; it exposes every Playwriter-enabled tab to the remote agent",
     "WebSocket server runs on localhost:19988"
   ]
 }

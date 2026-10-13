@@ -12,23 +12,35 @@ import {
   createPrivateRuntime,
   probeAuthenticatedRelay,
   validatePlaywriterCommand,
+  withTelemetryOptOut,
 } from "../playwriter-authenticated-relay.mjs";
 
 test("accepts only reviewed Playwriter package-runner commands", () => {
-  assert.deepEqual(validatePlaywriterCommand(["npx", "playwriter@0.5.0"]), [
-    "npx", "playwriter@0.5.0",
+  assert.deepEqual(validatePlaywriterCommand(["npx", "playwriter@0.8.0"]), [
+    "npx", "playwriter@0.8.0",
   ]);
-  assert.deepEqual(validatePlaywriterCommand(["bun", "x", "playwriter@0.5.0"]), [
-    "bun", "x", "playwriter@0.5.0",
+  assert.deepEqual(validatePlaywriterCommand(["bun", "x", "playwriter@0.8.0"]), [
+    "bun", "x", "playwriter@0.8.0",
   ]);
+  for (const unreviewed of ["playwriter@latest", "playwriter@0.5.0"]) {
+    assert.throws(
+      () => validatePlaywriterCommand(["npx", unreviewed]),
+      /reviewed Playwriter package shape/,
+    );
+  }
   assert.throws(
-    () => validatePlaywriterCommand(["npx", "playwriter@latest"]),
+    () => validatePlaywriterCommand(["sh", "-c", "playwriter@0.8.0"]),
     /reviewed Playwriter package shape/,
   );
-  assert.throws(
-    () => validatePlaywriterCommand(["sh", "-c", "playwriter@0.5.0"]),
-    /reviewed Playwriter package shape/,
-  );
+});
+
+test("defaults Playwriter telemetry off but keeps an explicit operator choice", () => {
+  assert.deepEqual(withTelemetryOptOut({ PATH: "/bin" }), {
+    PATH: "/bin", PLAYWRITER_TELEMETRY: "0", DO_NOT_TRACK: "1",
+  });
+  assert.deepEqual(withTelemetryOptOut({ PLAYWRITER_TELEMETRY: "1" }), {
+    PLAYWRITER_TELEMETRY: "1",
+  });
 });
 
 test("proves both relay version and token enforcement", async (t) => {
@@ -36,7 +48,7 @@ test("proves both relay version and token enforcement", async (t) => {
   const server = createServer((request, response) => {
     if (request.url === "/version") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end('{"version":"0.5.0"}');
+      response.end('{"version":"0.8.0"}');
       return;
     }
     const url = new URL(request.url, "http://127.0.0.1");

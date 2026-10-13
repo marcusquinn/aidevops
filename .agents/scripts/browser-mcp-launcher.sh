@@ -13,7 +13,8 @@
 #   bash browser-mcp-launcher.sh playwright npx -y @playwright/mcp@<pin> [args...]
 #   bash browser-mcp-launcher.sh playwriter <playwriter command...>
 # Playwright also receives --output-dir for its managed artifacts; Playwriter
-# has no output-dir option, so it receives only the private cwd.
+# has no output-dir option, so it receives only the private cwd plus a
+# telemetry opt-out default (PLAYWRITER_TELEMETRY=0, DO_NOT_TRACK=1).
 # The package invocation stays visible so mcp-diagnose.sh can version-check it.
 # stdout is reserved for the MCP protocol; diagnostics go to stderr.
 # Absolute or traversal paths in raw code are not confined; that needs an OS
@@ -87,6 +88,13 @@ main() {
 	cd -- "$session_dir" || return 1
 	if [[ "$server" == "playwright" ]]; then
 		exec "$@" --output-dir "$session_dir"
+	fi
+	# GH#34549: Playwriter >= 0.8.0 relays (including ones the MCP auto-starts,
+	# which inherit this environment) send usage telemetry unless opted out.
+	# Default it off; an explicit operator PLAYWRITER_TELEMETRY value is kept.
+	if [[ -z "${PLAYWRITER_TELEMETRY+x}" ]]; then
+		export PLAYWRITER_TELEMETRY=0
+		export DO_NOT_TRACK="${DO_NOT_TRACK:-1}"
 	fi
 	exec "$@"
 }

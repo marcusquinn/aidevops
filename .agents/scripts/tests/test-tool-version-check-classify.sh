@@ -90,7 +90,7 @@ TEST_APT_CANDIDATE=2.101.0-1
 [[ "$(_tool_normalize_version "$(get_apt_candidate gh)")" == 2.101.0 ]]
 [[ "$(_tool_normalize_version jq-1.8.2)" == 1.8.2 ]]
 [[ "$(_tool_normalize_version '')" == unknown ]]
-[[ "$(_tool_latest_version npm playwriter 0.5.0)" == 0.5.0 ]]
+[[ "$(_tool_latest_version npm playwriter 0.5.0)" == 0.8.0 ]]
 TEST_APT_CANDIDATE=2.100.0-1
 [[ "$(_tool_latest_version brew gh 2.100.0)" == channel_current ]] || {
 	printf 'FAIL: apt-installed tool incorrectly compared to upstream release\n' >&2

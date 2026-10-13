@@ -148,7 +148,7 @@ NPM_TOOLS=(
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
 	"npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|npm install -g mcp-server-gsc@latest"
-	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@0.5.0"
+	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@0.8.0"
 	"npm|macOS Automator MCP|macos-automator-mcp|--version|@steipete/macos-automator-mcp|npm install -g @steipete/macos-automator-mcp@latest"
 	"npm|Claude Code MCP|claude-code-mcp|--version|@steipete/claude-code-mcp|npm install -g @steipete/claude-code-mcp@latest"
 	"npm|Google Workspace CLI|gws|--version|@googleworkspace/cli|npm install -g @googleworkspace/cli@latest"
@@ -567,7 +567,7 @@ _tool_latest_version() {
 
 	case "$category" in
 	npm)
-		if [[ "$pkg" == playwriter ]]; then printf '%s\n' 0.5.0; else get_npm_latest "$pkg"; fi ;;
+		if [[ "$pkg" == playwriter ]]; then printf '%s\n' 0.8.0; else get_npm_latest "$pkg"; fi ;;
 	brew)
 		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* ]]; then
 			# Tap-qualified formulas (owner/tap/formula) exist only in Homebrew.

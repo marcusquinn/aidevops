@@ -19,7 +19,10 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
-const PLAYWRITER_PACKAGE = "playwriter@0.5.0";
+// Reviewed pin (GH#34549). Bump only after re-proving the /version, token
+// challenge, loopback and telemetry opt-out contract against the release.
+const PLAYWRITER_VERSION = "0.8.0";
+const PLAYWRITER_PACKAGE = `playwriter@${PLAYWRITER_VERSION}`;
 const RELAY_HOST = "127.0.0.1";
 const RELAY_PORT = 19988;
 const START_TIMEOUT_MS = 5_000;
@@ -45,6 +48,20 @@ export function validatePlaywriterCommand(command) {
     throw fixedError("command is not the reviewed Playwriter package shape");
   }
   return [...command];
+}
+
+/**
+ * Playwriter >= 0.8.0 relays send anonymous usage telemetry unless opted out.
+ * Default it off before any relay or MCP process starts; an operator who set
+ * PLAYWRITER_TELEMETRY explicitly keeps that choice.
+ */
+export function withTelemetryOptOut(environment) {
+  if (environment.PLAYWRITER_TELEMETRY !== undefined) return { ...environment };
+  return {
+    ...environment,
+    PLAYWRITER_TELEMETRY: "0",
+    DO_NOT_TRACK: environment.DO_NOT_TRACK ?? "1",
+  };
 }
 
 function requireToken(environment) {
@@ -120,7 +137,7 @@ export async function probeAuthenticatedRelay({
     const versionResponse = await boundedFetch(fetchImpl, relayUrl("/version", port));
     if (!versionResponse.ok) return { reachable: true, ready: false };
     const versionPayload = await versionResponse.json();
-    if (versionPayload?.version !== "0.5.0") return { reachable: true, ready: false };
+    if (versionPayload?.version !== PLAYWRITER_VERSION) return { reachable: true, ready: false };
 
     const wrongToken = randomUUID();
     const wrongResponse = await boundedFetch(
@@ -202,7 +219,7 @@ function writeState(runtime, relay) {
     schema: "aidevops-playwriter-relay/v1",
     host: RELAY_HOST,
     port: RELAY_PORT,
-    version: "0.5.0",
+    version: PLAYWRITER_VERSION,
     supervisorPid: process.pid,
     relayPid: relay.owned ? relay.child.pid : null,
     owned: relay.owned,
@@ -261,7 +278,7 @@ export async function main(argv = process.argv.slice(2), environment = process.e
     throw fixedError("opt-in environment flag is not enabled");
   }
   const command = validatePlaywriterCommand(argv);
-  return supervise(command, environment);
+  return supervise(command, withTelemetryOptOut(environment));
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";

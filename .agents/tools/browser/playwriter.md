@@ -27,7 +27,9 @@ mcp:
 
 - **Purpose**: Browser automation via Chrome extension — full Playwright API
 - **Extension**: [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) (Chrome, Brave, Edge)
-- **MCP**: `npx playwriter@0.5.0` — single `execute` tool runs Playwright code snippets
+- **MCP**: `npx playwriter@0.8.0` — single `execute` tool runs Playwright code snippets; there is no `page` global, so store the target tab in `state.page`
+- **Version policy**: reviewed pin `0.8.0` (2026-10-13, GH#34549), never `@latest`. Re-review on the next upstream minor or security release by re-proving the `/version`, token-challenge, loopback and telemetry opt-out contract before bumping every pin site together
+- **Telemetry**: 0.8.0+ relays send anonymous usage stats unless opted out; aidevops sets `PLAYWRITER_TELEMETRY=0` and `DO_NOT_TRACK=1` before any relay starts unless the operator explicitly set `PLAYWRITER_TELEMETRY`
 - **OpenCode activation**: Select `@playwriter` from agent autocomplete (a structured agent mention); literal pasted text does not switch agents or connect the MCP
 - **Icon**: Gray/Black = disconnected · Green = ready · Orange = connecting · Red = error
 - **Performance**: Navigate 2.95s, form fill 2.24s, reliability 1.96s avg. Always headed.
@@ -57,7 +59,8 @@ mcp:
   "mcpServers": {
     "playwriter": {
       "command": "npx",
-      "args": ["-y", "playwriter@0.5.0"]
+      "args": ["-y", "playwriter@0.8.0"],
+      "env": { "PLAYWRITER_TELEMETRY": "0", "DO_NOT_TRACK": "1" }
     }
   }
 }
@@ -70,7 +73,8 @@ mcp:
   "mcp": {
     "playwriter": {
       "type": "local",
-      "command": ["npx", "playwriter@0.5.0"],
+      "command": ["npx", "playwriter@0.8.0"],
+      "environment": { "PLAYWRITER_TELEMETRY": "0", "DO_NOT_TRACK": "1" },
       "enabled": false
     }
   }
@@ -102,10 +106,12 @@ starting the app with `AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY=1` and injecting
 `PLAYWRITER_TOKEN` through `aidevops secret PLAYWRITER_TOKEN -- opencode`. Store
 the value first with `aidevops secret set PLAYWRITER_TOKEN`; never place it in
 MCP configuration, commands, logs, or prompts. The launcher accepts only the
-reviewed `playwriter@0.5.0` command, requires a 32-character token, verifies the
+reviewed `playwriter@0.8.0` command, requires a 32-character token, verifies the
 relay version and token challenge, records private ownership state, and stops
 only a relay process it started. A conflicting or unverifiable relay fails
-closed without `--replace` or port-owner termination.
+closed without `--replace` or port-owner termination. After a pin upgrade, a
+still-running relay from the previous version fails this proof; stop it from the
+session or terminal that started it, then reconnect. aidevops never terminates it.
 
 1. Connect Playwriter and enumerate the accessible pages with `context.pages()`.
    Inspect only the URL and title needed to classify the intended target; do not
@@ -113,18 +119,27 @@ closed without `--replace` or port-owner termination.
 2. Match the intended target by its exact approved HTTPS URL and expected title.
    Confirm that the controlled tab and expected Chrome profile/session are
    visible before authenticated work.
+   Store the match in `state.page`; Playwriter 0.8.0 has no `page` global and
+   its helpers (`snapshot`, `getLatestLogs`, `waitForPageLoad`, ...) need an
+   explicit `{ page: state.page }`.
 3. Classify a result with no exact match as one of: no controlled pages; exactly
-   one `about:blank` bootstrap page; unmatched non-blank or multiple pages; or a
-   target lost after MCP reconnection. Do not collapse these states into a generic
-   request to reactivate the extension.
-4. For exactly one `about:blank` bootstrap page, navigate that page only when the
-   user already approved the exact HTTPS destination. Revalidate the resulting
-   URL and expected profile/session before continuing. This bounded bootstrap is
-   not consent to inspect another page or navigate to a broader origin.
-5. For no pages, unmatched non-blank or multiple pages, or any target/profile
-   ambiguity, fail closed with the classified diagnostic. After reconnection,
-   repeat the preflight and report when the prior attachment was invalidated. Do
-   not ask the user to log in.
+   one `about:blank` bootstrap page; unmatched non-blank or multiple pages; an
+   extension-not-connected error; or a target lost after MCP reconnection. Do not
+   collapse these states into a generic request to reactivate the extension.
+   Playwriter 0.8.0 never opens a tab on its own, so no controlled pages is the
+   normal state of a fresh session, not a failure.
+4. Bounded bootstrap, only when the user already approved the exact HTTPS destination:
+   - For exactly one `about:blank` bootstrap page, navigate that page.
+   - For no controlled pages, open one agent-owned tab with
+     `state.page = await context.newPage()` and navigate it.
+
+   Revalidate the resulting URL and expected profile/session before continuing.
+   This bounded bootstrap is not consent to inspect another page or navigate to a
+   broader origin.
+5. For unmatched non-blank or multiple pages, an unconnected extension, a missing
+   destination approval, or any target/profile ambiguity, fail closed with the
+   classified diagnostic. After reconnection, repeat the preflight and report
+   when the prior attachment was invalidated. Do not ask the user to log in.
 6. Never silently substitute isolated-profile Playwright. Explain the storage
    boundary and obtain explicit user consent before any fallback.
 7. On completion or cancellation, disconnect the Playwriter MCP. Never close
@@ -152,24 +167,29 @@ privileged or profile-bound page.
 
 ### The `execute` Tool
 
-Runs Playwright code against connected tabs:
+Runs Playwright code against connected tabs. Since 0.8.0 there is no `page`
+global; select the approved tab once (see the target preflight above) and reuse
+it through `state`, which persists across `execute` calls:
 
 ```javascript
-await page.goto('https://example.com')
-await page.click('button.submit')
-await page.fill('input[name="email"]', 'user@example.com')
-await page.screenshot({ path: 'screenshot.png' })
-const title = await page.textContent('h1')
-await page.waitForSelector('.loaded')
+state.page = context.pages().find((p) => p.url().startsWith('https://example.com/'))
+await state.page.click('button.submit')
+await state.page.fill('input[name="email"]', 'user@example.com')
+await state.page.screenshot({ path: 'screenshot.png' })
+const title = await state.page.textContent('h1')
+await state.page.waitForSelector('.loaded')
 ```
 
-Multi-tab:
+Agent-owned tab (only for an approved destination):
 
 ```javascript
-const pages = context.pages()
-const newPage = await context.newPage()
-await newPage.goto('https://example.com')
+state.page = await context.newPage()
+await state.page.goto('https://example.com')
 ```
+
+Never use Playwriter remote/tunnel sharing (`--host` on a public interface,
+remote relay URLs, or shared session links); aidevops supports only the
+loopback relay.
 
 ### Programmatic (without MCP)
 
@@ -179,7 +199,8 @@ import { startPlayWriterCDPRelayServer, getCdpUrl } from 'playwriter'
 
 const server = await startPlayWriterCDPRelayServer()
 const browser = await chromium.connectOverCDP(getCdpUrl())
-const page = browser.contexts()[0].pages()[0]
+// 0.8.0 opens no tab automatically: create one instead of assuming pages()[0]
+const page = await browser.contexts()[0].newPage()
 await page.goto('https://example.com')
 await page.screenshot({ path: 'screenshot.png' })
 await browser.close()
@@ -194,13 +215,13 @@ server.close()
 
 ```javascript
 // Viewport screenshot (safe for AI review)
-await page.screenshot({ path: 'viewport.png' })
+await state.page.screenshot({ path: 'viewport.png' })
 
 // Element screenshot (safe — scoped, not full page)
-await page.locator('.chart').screenshot({ path: 'chart.png' })
+await state.page.locator('.chart').screenshot({ path: 'chart.png' })
 
 // PDF export
-await page.pdf({ path: 'page.pdf', format: 'A4' })
+await state.page.pdf({ path: 'page.pdf', format: 'A4' })
 ```
 
 ### Two-Sided Messaging and Live Chat
@@ -233,14 +254,18 @@ approved-tab, privacy, and mutation boundaries.
 - **Local WebSocket** on `localhost:19988` — no CORS, only local processes connect
 - **User-controlled** — only tabs where you clicked the extension are accessible
 - **Explicit consent** — Chrome shows automation banner on controlled tabs
-- New tabs from automation are controlled; unconnected tabs and remote access are not possible
+- New tabs from automation are controlled; unconnected tabs are not accessible
+- **Loopback only** — 0.8.0 can expose the relay remotely; aidevops never enables remote/tunnel sharing
+- **Telemetry off** — `PLAYWRITER_TELEMETRY=0` and `DO_NOT_TRACK=1` are set for framework-launched relays
 
 ## Troubleshooting
 
 - **Extension not connecting**: Installed and pinned? Click icon on tab (should turn green). Red badge = error. Reload tab.
 - **MCP not finding tabs**: Green icon? Restart MCP client. Verify WebSocket on port 19988.
 - **No approved tab**: Click the Playwriter extension on the intended tab and wait for the icon to turn green; this consent requirement is distinct from missing MCP tools.
-- **Blank bootstrap only**: If the sole accessible page is `about:blank`, use the bounded exact-HTTPS bootstrap above instead of repeatedly requesting extension reactivation.
+- **Blank bootstrap only / no pages**: If the sole accessible page is `about:blank`, or no page exists (normal on 0.8.0), use the bounded exact-HTTPS bootstrap above instead of repeatedly requesting extension reactivation.
+- **`page is not defined`**: 0.8.0 removed the global; assign `state.page` from `context.pages()` first.
+- **Relay version mismatch after upgrade**: An older relay still owns port 19988; stop it from the session that started it, then reconnect.
 - **Terminal OpenCode activation failure**: After the one bounded reset, treat Playwriter as unavailable for the session and use the documented secure CLI diagnostic path only to isolate the cause. Do not retry through another child or treat direct CLI initialization as successful OpenCode activation.
 - **Automation detection**: Disconnect (click icon → gray) → complete manual action (login, captcha) → reconnect (click → green) → resume.
 
