@@ -488,6 +488,7 @@ async function issueBundleFixture(root, key, stateDir, proposalId) {
 from pathlib import Path
 from unittest.mock import patch
 h=runpy.run_path(sys.argv[1]); c=h['_SOURCE_CORE']; root=Path(sys.argv[2]); uid=os.getuid()
+os.umask(0o022)  # mkdir(parents=True) applies the umask to intermediates; keep the fixture umask-independent
 cfg=c.Config(config_dir=root/'issuer-config',state_dir=Path(sys.argv[4]),request_root=root/'requests',trust_uid=uid)
 cfg.private_key.parent.mkdir(parents=True,mode=0o700)
 shutil.copyfile(sys.argv[3],cfg.private_key); cfg.private_key.chmod(0o600); h['setup_key_material'](cfg)
