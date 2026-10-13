@@ -106,12 +106,17 @@ test("shell env moves the Git guard scripts directory to PATH first", async () =
   const binDir = join(root, "bin");
   mkdirSync(scriptsDir);
   mkdirSync(binDir);
+  // Worker runners export AIDEVOPS_PROJECT_NODE_BIN, which the hook legitimately
+  // prepends; isolate this ordering test from the ambient runner environment.
+  const priorNodeBin = process.env.AIDEVOPS_PROJECT_NODE_BIN;
+  delete process.env.AIDEVOPS_PROJECT_NODE_BIN;
   try {
     const hook = createShellEnvHook({ agentsDir: root, scriptsDir, workspaceDir: root });
     const output = { env: { PATH: `/usr/bin:${binDir}:${scriptsDir}:/bin` } };
     await hook({ sessionID: "path-test" }, output);
     assert.equal(output.env.PATH, `${scriptsDir}:${binDir}:/usr/bin:/bin`);
   } finally {
+    if (priorNodeBin !== undefined) process.env.AIDEVOPS_PROJECT_NODE_BIN = priorNodeBin;
     rmSync(root, { recursive: true, force: true });
   }
 });
