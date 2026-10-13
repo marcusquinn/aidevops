@@ -14,90 +14,15 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
 
 from github_app_auth import AuthError, cached_token
-from pulse_auth_config import any_configured, paths, registry, settings, update_registry
-from pulse_gh_policy import api_endpoint, operation, option_values
-
-SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
-APP = "app"
-# Existing-auth reasons recorded in gh-api-calls.log (field 18).
-REASONS = {"write": "write", "local": "local", "account": "account", "unknown": "unclassified"}
-INSTRUMENT = Path(__file__).resolve().with_name("gh-api-instrument.sh")
-
-
-def valid_slug(value):
-    return bool(SLUG.fullmatch(value)) and all(part not in (".", "..") for part in value.split("/"))
-
-
-def repository(args):
-    candidates = option_values(args, "--repo", "-R")
-    context = os.environ.get("AIDEVOPS_PULSE_REPO")
-    if context:
-        candidates.append(context)
-    if len(args) > 1 and args[0] == "api":
-        match = re.match(r"/?repos/([^/?#]+/[^/?#]+)(?:[/?#]|$)", api_endpoint(args))
-        if match:
-            candidates.append(match[1])
-        fields = option_values(args, "--field", "-F") + option_values(args, "--raw-field", "-f")
-        owners = [value[6:] for value in fields if value.startswith("owner=")]
-        names = [value[5:] for value in fields if value.startswith("name=")]
-        if api_endpoint(args).strip("/") == "graphql" and owners and names:
-            candidates.extend(owner + "/" + name for owner in owners for name in names)
-        for field in fields:
-            if field.startswith("q="):
-                candidates.extend(re.findall(r"(?:^|\s)repo:([^\s]+)", field[2:]))
-    normalized = {candidate.lower() for candidate in candidates}
-    if len(normalized) != 1 or not all(valid_slug(value) for value in normalized):
-        raise AuthError("Pulse App reads require one explicit repository (--repo, REST path or AIDEVOPS_PULSE_REPO)")
-    return normalized.pop()
-
-
-def classify(args):
-    # Malformed argv is the caller's problem to report; it is not an App read.
-    try:
-        return operation(args)
-    except AuthError:
-        return "unknown"
-
-
-def caller_override(args):
-    """Return a reason when the caller pins transport details an App read cannot honour."""
-    hosts = option_values(args, "--hostname")
-    if any(host != "github.com" for host in hosts) or os.environ.get("GH_HOST", "github.com") != "github.com":
-        return "other-host"
-    endpoint = api_endpoint(args) if args[0] == "api" else ""
-    if "://" in endpoint or endpoint.startswith("//"):
-        return "absolute-url"
-    if any(re.match(r"(?i)authorization\s*:", header) for header in option_values(args, "--header", "-H")):
-        return "explicit-auth"
-    if "--verbose" in args:
-        return "verbose"
-    return None
-
-
-def decide(args, data, config_path):
-    """Return (reason, selection); selection is (repo, auth, profile) only for App reads."""
-    kind = classify(args)
-    if kind != "read":
-        return REASONS.get(kind, "unclassified"), None
-    if not any_configured(data):
-        return "not-configured", None
-    try:
-        repo = repository(args)
-    except AuthError:
-        return "unscoped", None
-    selected = settings(data, repo, config_path)
-    if selected is None:
-        return "not-configured", None
-    override = caller_override(args)
-    if override:
-        return override, None
-    return APP, (repo, *selected)
+from pulse_auth_config import paths, registry, settings, update_registry
+from pulse_auth_route import APP, classify, decide, repository, valid_slug  # noqa: F401 (public API)
+from pulse_auth_usage import INSTRUMENT, usage
+from pulse_gh_policy import operation  # noqa: F401 (public API used by tests)
 
 
 def existing_environment(reason):
@@ -183,40 +108,6 @@ def auth_status(args, registry_path, config_path):
     return 0
 
 
-def parse_window(value):
-    match = re.fullmatch(r"([1-9][0-9]*)([smhd]?)", value)
-    if not match:
-        raise AuthError("--since must look like 3600, 30m, 1h or 2d")
-    return int(match[1]) * {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[match[2]]
-
-
-def usage(args, registry_path):
-    """Summarise recent gh requests by credential and routing reason."""
-    window = parse_window(args.since)
-    data = registry(registry_path)
-    configured = sorted(entry["slug"] for entry in data["initialized_repos"]
-                        if entry.get("pulse_auth") is not None and entry.get("slug"))
-    with tempfile.TemporaryDirectory(prefix="pulse-auth-usage-") as directory:
-        report = Path(directory) / "report.json"
-        # Fixed sibling script; the window is a validated integer.
-        subprocess.run([str(INSTRUMENT), "report", str(report), str(window)],  # nosec B603
-                       check=False, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not report.is_file():
-            raise AuthError("gh-api-calls.log report is unavailable")
-        value = json.loads(report.read_text())
-
-    def summary(group):
-        return {name: {"requests": metrics.get("attempted_requests", 0),
-                       "failed": metrics.get("failed_attempts", 0),
-                       "events": metrics.get("total", 0)}
-                for name, metrics in value.get(group, {}).items()}
-
-    print(json.dumps({"window_seconds": window, "app_repositories": configured,
-                      "by_auth_mode": summary("by_auth_mode"),
-                      "by_auth_reason": summary("by_auth_reason")}, indent=2))
-    return 0
-
-
 def main():
     registry_path, config_path = paths()
     if len(sys.argv) > 2 and sys.argv[1] == "exec-gh":
@@ -234,7 +125,7 @@ def main():
     parser.add_argument("--since", default="1h", help="usage window, e.g. 30m, 1h, 2d (default 1h)")
     args = parser.parse_args()
     if args.action == "usage":
-        return usage(args, registry_path)
+        return usage(args.since, registry(registry_path))
     if not args.repo or not valid_slug(args.repo):
         raise AuthError("Repository must be owner/repo")
     if args.action in ("set", "clear"):

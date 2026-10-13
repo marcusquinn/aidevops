@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import github_app_auth as backend
+import pulse_auth_usage as usage
 import pulse_repo_auth as auth
 
 
@@ -135,12 +136,12 @@ class RepositoryAuthTests(unittest.TestCase):
         record.assert_called_once_with("456")
 
     def test_usage_window_parsing(self):
-        self.assertEqual(auth.parse_window("90"), 90)
-        self.assertEqual(auth.parse_window("30m"), 1800)
-        self.assertEqual(auth.parse_window("2d"), 172800)
+        self.assertEqual(usage.parse_window("90"), 90)
+        self.assertEqual(usage.parse_window("30m"), 1800)
+        self.assertEqual(usage.parse_window("2d"), 172800)
         for value in ("0", "1w", "-1h", "h"):
             with self.assertRaises(backend.AuthError):
-                auth.parse_window(value)
+                usage.parse_window(value)
 
     def test_account_identity_is_not_replaced_by_bot(self):
         for command in (["api", "user"], ["api", "rate_limit"]):
