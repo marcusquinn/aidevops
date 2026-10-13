@@ -91,17 +91,28 @@ function createTerminator(tracker, killGraceMs, reportContainment) {
   return state;
 }
 
+// A process inventory can still contain the command whose exit was observed.
+// Attribute descendants first, then exclude only that completed start identity
+// from drain decisions. A reused PID or any real descendant remains a survivor.
+function survivorSnapshot(snapshot, exitedCommand) {
+  if (!snapshot || !exitedCommand) return snapshot;
+  return {
+    ...snapshot,
+    entries: snapshot.entries.filter((entry) => entry.pid !== exitedCommand.pid || entry.started !== exitedCommand.started),
+  };
+}
+
 // True once only the supervisor remains in its group and no owned nested-group
 // descendant is alive. Nested descendants keep inherited stdio open, so the
 // operation is not drained while they live; the budget still bounds them, and
 // once termination has begun they are escalated instead of awaiting the grace.
 // A tree that looks drained is confirmed with a marker scan, so an escaped
 // marked descendant is never missed between periodic scans (GH#34324).
-function ownedTreeDrained(tracker, terminator, terminateSurvivors) {
-  let snapshot = tracker.track();
+function ownedTreeDrained(tracker, terminator, terminateSurvivors, exitedCommand) {
+  let snapshot = survivorSnapshot(tracker.track(), exitedCommand);
   if (!snapshot) return false;
   if (tracker.ownGroupMembers(snapshot) === 1 && tracker.nestedTargets(snapshot).length === 0) {
-    snapshot = tracker.track(MARKER_SCAN);
+    snapshot = survivorSnapshot(tracker.track(MARKER_SCAN), exitedCommand);
     if (!snapshot) return false;
   }
   const nested = tracker.nestedTargets(snapshot);
@@ -120,7 +131,7 @@ export async function runSupervisor() {
 
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 30 * 1000);
-  const result = { finished: false, exit: 1, started: Promise.resolve() };
+  const result = { finished: false, exit: 1, started: Promise.resolve(), commandIdentity: null };
   const tracker = createProcessTreeTracker(process.pid, undefined, operationID);
   // GH#34047: distinguish "exited 0 with nothing left" from "exited 0, then
   // cleanup terminated surviving descendants" (for example a detached worker).
@@ -155,7 +166,9 @@ export async function runSupervisor() {
   const trackTimer = setInterval(tracker.track, TRACK_INTERVAL_MS);
   child.once("spawn", () => {
     result.started = reportCommandStarted(operationID);
-    tracker.track();
+    const snapshot = tracker.track();
+    const entry = snapshot?.entries.find((entry) => entry.pid === child.pid);
+    if (entry) result.commandIdentity = { pid: entry.pid, started: entry.started };
   });
   child.once("error", () => {
     result.finished = true;
@@ -166,7 +179,7 @@ export async function runSupervisor() {
     result.exit = Number.isInteger(code) ? code : 1;
     // Command completion also owns cleanup of servers with detached stdio.
     // Preserve its exit status while draining any surviving owned descendants.
-    const snapshot = tracker.track(MARKER_SCAN);
+    const snapshot = survivorSnapshot(tracker.track(MARKER_SCAN), result.commandIdentity);
     if (snapshot && (tracker.nestedTargets(snapshot).length || tracker.ownGroupMembers(snapshot) > 1)) {
       terminateSurvivors();
     }
@@ -174,7 +187,7 @@ export async function runSupervisor() {
 
   return new Promise((resolve) => {
     const drainTimer = setInterval(() => {
-      if (!result.finished || !ownedTreeDrained(tracker, terminator, terminateSurvivors)) return;
+      if (!result.finished || !ownedTreeDrained(tracker, terminator, terminateSurvivors, result.commandIdentity)) return;
       clearInterval(drainTimer);
       clearInterval(trackTimer);
       clearTimeout(budgetTimer);
