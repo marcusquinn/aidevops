@@ -1031,6 +1031,54 @@ _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS="${AIDEVOPS_DISPATCH_CAPABILITY_COOLDO
 # jq: number, updatedAt and sorted dispatch-class labels (last: may be empty).
 _DISPATCH_CAPABILITY_FIELDS_JQ='[(.number // "" | tostring), (.updatedAt // ""), ([.labels[]? | (.name? // .) | select(type == "string" and startswith("dispatch-class:"))] | sort | join(","))] | @tsv'
 
+# GH#34526: reuse the ownership negative cache, not a parallel checkpoint store.
+_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS="${AIDEVOPS_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS:-1800}"
+[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=1800
+((_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS <= 3600)) || _DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=3600
+
+_dispatch_checkpoint_cooldown_eligible() {
+	local lines="$1"
+	[[ "$lines" == *"WORKER_DRAFT_CHECKPOINT:"* &&
+		("$lines" == *"BLOCKED_CHECKPOINT_ATTENTION_EXISTS"* || "$lines" == *"STALLED_CHECKPOINT_CONTINUATION_SKIPPED"*) &&
+		"$lines" != *"checkpoint_routed"* && "$lines" != *"CONTINUATION_ROUTED"* ]] || return 1
+	return 0
+}
+
+_dispatch_checkpoint_fingerprint() {
+	local candidate="$1" labels=""
+	labels=$(jq -cer '[.labels[]? | .name? // .] | sort' <<<"$candidate" 2>/dev/null) || return 1
+	_dispatch_capability_fingerprint "" "$labels" ""
+	return $?
+}
+
+# This enumeration pass performs no PR/attention/continuation reads. Only the
+# specifically confirmed benign checkpoint reason can bypass ownership checks.
+_dispatch_filter_checkpoint_cooled_candidates() {
+	local repo="$1" candidates="$2" candidate="" ranked="" issue="" skipped="" filtered=""
+	local dir="$HOME/.aidevops/logs/dispatch-negative-cache"
+	if [[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -eq 0 || ! -d "$dir" ||
+		! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
+		! compgen -G "${dir}/${repo%%/*}--${repo##*/}--*" >/dev/null 2>&1; then
+		printf '%s\n' "$candidates"
+		return 0
+	fi
+	while IFS= read -r candidate; do
+		ranked=$(jq -c --arg repo "$repo" '. + {repo_slug: $repo}' <<<"$candidate") || continue
+		_dispatch_negative_cache_reason "$ranked" worker_draft_checkpoint_cooldown >/dev/null || continue
+		issue=$(jq -r '.number' <<<"$candidate") || continue
+		skipped="${skipped:+${skipped},}${issue}"
+	done < <(jq -c --arg repo "$repo" '.[] | . + {repo_slug: $repo}' <<<"$candidates" 2>/dev/null)
+	if [[ -z "$skipped" ]] || ! filtered=$(jq -c --arg skipped "$skipped" \
+		'($skipped | split(",") | map(tonumber)) as $cooled | map(select((.number as $n | $cooled | index($n)) == null))' <<<"$candidates" 2>/dev/null); then
+		printf '%s\n' "$candidates"
+		return 0
+	fi
+	echo "[pulse-wrapper] Dispatch enumeration: ${repo} draft checkpoint cooldown skipped #${skipped//,/ #} (issue and labels unchanged; ttl=${_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS}s)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_candidate_checkpoint_cooldown_filtered"
+	printf '%s\n' "$filtered"
+	return 0
+}
+
 _dispatch_capability_cooldown_dir() {
 	printf '%s/.aidevops/logs/dispatch-capability-cooldown\n' "$HOME"
 	return 0
@@ -1148,6 +1196,8 @@ _dispatch_filter_capability_cooled_candidates() {
 	local repo_slug="$1" repo_path="$2" candidates_json="$3"
 	local dir="" config_fp="" rows="" issue="" skipped="" filtered=""
 	local updated='' classes='' fingerprint=''
+	# Keep the engine's existing pre-ranking filter entrypoint for both reasons.
+	candidates_json=$(_dispatch_filter_checkpoint_cooled_candidates "$repo_slug" "$candidates_json")
 	dir=$(_dispatch_capability_cooldown_dir)
 	if [[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -eq 0 || ! -d "$dir" ||
 		! "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
@@ -1369,6 +1419,9 @@ _dispatch_record_nonzero_dispatch_result() {
 		_dispatch_mark_benign_blocked_candidate "$issue_number" "$repo_slug" "$failure_reason"
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) blocked:${failure_reason} benign dispatch block" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
+		if [[ "$failure_reason" == dedup_active_claim ]] && _dispatch_checkpoint_cooldown_eligible "$recent_lines"; then
+			_dispatch_negative_cache_record "$candidate_json" worker_draft_checkpoint_cooldown
+		fi
 		[[ "$failure_reason" != blocked_by_unresolved ]] ||
 			_dispatch_normalize_dependency_blocked_candidate "$issue_number" "$repo_slug" "$recent_lines"
 		return 0

@@ -63,4 +63,62 @@ assert_reason 'TERMINAL_BLOCKER_CIRCUIT task_revision=aaaaaaaaaaaaaaaaaaaaaaaa' 
 assert_reason '' 'no_recent_log_evidence'
 assert_reason 'new blocker shape not yet classified' 'unclassified_signal'
 
+# GH#34526: exercise the production classifier/cache/filter across two cycles.
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
+export HOME="$TEST_ROOT"
+LOGFILE="$TEST_ROOT/pulse.log"
+# shellcheck source=../pulse-dispatch-lib.sh
+source "$SCRIPT_DIR/../pulse-dispatch-lib.sh"
+_dispatch_stats_increment() { return 0; }
+_dispatch_stats_increment_candidate_failed() { return 0; }
+_dispatch_mark_benign_blocked_candidate() { return 0; }
+_dispatch_candidate_recent_lines() { printf '%s\n' "$ATTEMPT_LINES"; return 0; }
+_dispatch_candidate_failure_reason() { printf '%s\n' "$ATTEMPT_REASON"; return 0; }
+# A cooled checkpoint must never require the old expensive PR lookup.
+_dispatch_negative_pr_fingerprint() { return 1; }
+candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
+ATTEMPT_REASON=dedup_active_claim
+ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123 is a durable checkpoint
+STALLED_CHECKPOINT_CONTINUATION_SKIPPED'
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
+[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]
+for cycle in 1 2; do
+	[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" == '[]' ]]
+done
+changed=$(jq -c '.updatedAt = "2026-10-13T00:00:01Z"' <<<"$candidate")
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" != '[]' ]]
+changed=$(jq -c '.labels += ["retry"]' <<<"$candidate")
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" != '[]' ]]
+changed=$(jq -c '.labels |= reverse' <<<"$candidate")
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" == '[]' ]]
+cache=$(_dispatch_negative_cache_path 34526 example/repo)
+fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate")
+printf '%s\t%s\t%s\t-\t%s\t\n' "$(($(date +%s) - _DISPATCH_CHECKPOINT_COOLDOWN_SECONDS))" \
+	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
+rm -f "$cache"
+for signal in 'checkpoint_routed' 'CONTINUATION_ROUTED'; do
+	ATTEMPT_LINES="WORKER_DRAFT_CHECKPOINT: draft PR #123 BLOCKED_CHECKPOINT_ATTENTION_EXISTS $signal"
+	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+	[[ ! -f "$cache" ]]
+done
+ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123'
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+[[ ! -f "$cache" ]]
+ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123 BLOCKED_CHECKPOINT_ATTENTION_EXISTS'
+ATTEMPT_REASON=unclassified_signal
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+[[ ! -f "$cache" ]]
+ATTEMPT_REASON=dedup_active_claim
+_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=0
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+[[ ! -f "$cache" ]]
+_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=1800
+_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=0
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
+printf 'PASS draft-checkpoint cooldown: two cycles, revision/label wake, TTL, disable and negative outcomes\n'
+
 printf 'PASS dispatch-candidate-failure-reasons\n'

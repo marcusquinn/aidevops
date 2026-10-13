@@ -247,7 +247,7 @@ _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -268,6 +268,11 @@ _dispatch_negative_cache_record() {
 	if [[ "$reason" == worker_draft_checkpoint_blocked ]]; then
 		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
 	fi
+	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
+		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
+		pr="-" # Nonempty TSV placeholder: read must not shift the fingerprint.
+		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
+	fi
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
@@ -282,6 +287,7 @@ _dispatch_negative_cache_record() {
 
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
+	local expected_reason="${2:-}"
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
@@ -289,12 +295,14 @@ _dispatch_negative_cache_reason() {
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
 	[[ -f "$file" && ! -L "$file" ]] || return 1
 	IFS=$'\t' read -r stamp cached reason pr fingerprint owner_path <"$file" || return 1
+	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
 	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
 	# hold is keyed to the owner generation rather than the issue revision.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
 		"$reason" != worker_draft_checkpoint_blocked &&
+		"$reason" != worker_draft_checkpoint_cooldown &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
 		! _dispatch_maintainer_gate_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
@@ -304,6 +312,12 @@ _dispatch_negative_cache_reason() {
 			([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
 	fi
 	case "$reason" in
+	worker_draft_checkpoint_cooldown)
+		ttl="$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS"
+		[[ "$ttl" -gt 0 && -n "$fingerprint" ]] || return 1
+		current=$(_dispatch_checkpoint_fingerprint "$candidate") || return 1
+		[[ "$current" == "$fingerprint" ]] || return 1
+		;;
 	terminal_blocker_circuit)
 		# The circuit hold applies to unowned available issues by design. An
 		# unchanged updatedAt proves no edit, retry directive or new comment.
@@ -362,6 +376,9 @@ _dispatch_prefilter_owned_candidate() {
 _dispatch_cache_confirmed_block() {
 	local candidate="$1" issue="$2" repo="$3" reason="" lines="" pr=""
 	lines=$(_dispatch_candidate_recent_lines "$issue" "$repo") || lines=""
+	# Already recorded by the benign result classifier; do not overwrite it with
+	# the older PR-read cache (or an unusable available-issue active-claim hint).
+	_dispatch_checkpoint_cooldown_eligible "$lines" && return 0
 	# Only a positively identified worker draft with an unchanged prefetched PR
 	# can bypass the next ceremony. Never cache interactive checkpoint routing.
 	if [[ "$lines" != *"checkpoint_routed"* &&
