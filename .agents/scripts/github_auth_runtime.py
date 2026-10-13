@@ -20,9 +20,17 @@ import tempfile
 
 from github_app_auth import AuthError, cached_token
 from github_auth_config import paths, registry, settings, update_registry
-from github_auth_routing import APP, classify, decide, repository, valid_slug  # noqa: F401 (public API)
+from github_auth_routing import APP, classify, decide, repository, valid_slug
 from github_auth_usage import INSTRUMENT, usage
-from pulse_gh_policy import operation  # noqa: F401 (public API used by tests)
+from pulse_gh_policy import operation
+
+# Preserve the public auth helpers exposed through pulse_repo_auth as well.
+__all__ = [
+    "APP", "AuthError", "INSTRUMENT", "app_environment", "auth_status", "cached_token",
+    "classify", "decide", "execute", "existing_environment", "main", "operation",
+    "paths", "record_app_failure", "registry", "repository", "run_shim", "settings",
+    "update_registry", "usage", "valid_slug",
+]
 
 
 def existing_environment(reason):
