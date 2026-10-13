@@ -86,6 +86,8 @@ install_stubs() {
 	PENDING_CHECK_RC=1
 	ADMIN_SAFETY_RC=0
 	UPDATE_BRANCH_RC=0
+	# The closed-issue guard has its own isolated runtime regression suite.
+	_feedback_route_guard_closed_issue() { return 0; }
 	gh() {
 		local arg1="${1:-}"
 		local arg2="${2:-}"
