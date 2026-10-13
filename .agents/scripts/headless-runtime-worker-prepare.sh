@@ -536,18 +536,50 @@ _hrw_detach_systemd_scope() {
 	return 0
 }
 
+#######################################
+# Create the detached worker log in the managed per-user temp root (GH#34556).
+# The root is AIDEVOPS_TEMP_DIR as set by aidevops_init_temp_workspace, so
+# AIDEVOPS_WORKSPACE_DIR is the caller-approved override. There is no host /tmp
+# fallback. Logs stay flat in the root so system-cleanup.sh ages each file.
+# mktemp creates the file exclusively with mode 600: a planted symlink is never
+# followed and repeated attempts for one session key never truncate each other.
+# Args: $1 = session key
+# Output: absolute log path
+# Returns: 0 created, 1 unusable root (caller must not spawn)
+#######################################
+_hrw_create_detached_log() {
+	local session_key="$1"
+	local root="${AIDEVOPS_TEMP_DIR:-}"
+	local safe_key="" log_file=""
+	if [[ "$root" != /* || -L "$root" || ! -d "$root" || ! -O "$root" || ! -w "$root" ]]; then
+		print_error "Detached worker log root is unusable: ${root:-<unset>} (must be an owned, writable, non-symlink directory; set AIDEVOPS_WORKSPACE_DIR to an approved location)"
+		return 1
+	fi
+	# Session keys are caller-supplied; keep the name inside the root.
+	safe_key=$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9_.-' '-')
+	safe_key="${safe_key:0:96}"
+	log_file=$(mktemp "${root}/worker-${safe_key}.log.XXXXXX") || {
+		print_error "Could not create detached worker log in ${root}"
+		return 1
+	}
+	printf '%s\n' "$log_file"
+	return 0
+}
+
 _detach_worker() {
 	local session_key="$1"
 	shift
-	local log_file="/tmp/worker-${session_key}.log"
+	local log_file=""
 	local arg="" child_pid=""
 	local -a run_command=("$0" run)
 	for arg in "$@"; do
 		[[ "$arg" == "--detach" ]] && continue
 		run_command+=("$arg")
 	done
-	print_info "Detaching worker (log: $log_file)"
-	: >"$log_file"
+	log_file=$(_hrw_create_detached_log "$session_key") || return 1
+	# Contract line: dispatch-single-issue-tracking.sh reads the runtime log
+	# path from it. Plain printf keeps the path byte-exact (no echo -e).
+	printf '[INFO] Detaching worker (log: %s)\n' "$log_file" >&2
 	if _dlw_systemd_user_service_available; then
 		child_pid=$(_hrw_detach_systemd_scope "$session_key" "$log_file" "${run_command[@]}")
 	elif command -v setsid >/dev/null 2>&1; then

@@ -248,6 +248,7 @@ run_cmd_run_orchestration_tests() {
 	test_cmd_run_preserves_validated_ai_research_origin
 	test_cmd_run_attempt_loop_preserves_attempt_exit
 	test_deleted_launch_cwd_recovers_to_work_dir
+	test_detached_worker_log_uses_managed_root
 	return 0
 }
 
@@ -331,6 +332,70 @@ test_terminal_attempt_evidence_preserves_classification() {
 	else
 		print_result "terminal attempts retain provider classification, diagnostics and fast-path parity" 1 "$evidence"
 	fi
+	return 0
+}
+
+# GH#34556: run the production _detach_worker with a stub launcher as $0 so no
+# provider runs. Prints "rc=<n>" plus the launcher's stderr.
+_detach_with_stub() {
+	local temp_dir="$1"
+	local session_key="$2"
+	local stub="${TEST_ROOT}/stub launcher"
+	local rc=0 out=""
+	if [[ ! -x "$stub" ]]; then
+		cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+printf 'stub-run %s\n' "$*"
+: >"$STUB_MARKER"
+STUB
+		chmod 700 "$stub"
+	fi
+	# Clear positional args before sourcing so the helper's main sees none.
+	out=$(STUB_MARKER="${TEST_ROOT}/stub-spawned" bash -c '
+		helper="$1" temp_dir="$2" session_key="$3"
+		set --
+		source "$helper" >/dev/null 2>&1
+		export AIDEVOPS_TEMP_DIR="$temp_dir"
+		_dlw_systemd_user_service_available() { return 1; }
+		_detach_worker "$session_key" --role worker --detach' "$stub" "$HELPER_SCRIPT" "$temp_dir" "$session_key" 2>&1) || rc=$?
+	printf 'rc=%s\n%s\n' "$rc" "$out"
+	return 0
+}
+
+test_detached_worker_log_uses_managed_root() {
+	local root="${TEST_ROOT}/approved logs" out="" second="" path="" path2="" escape_path="" attempt=0 bad_root=""
+	local failures=""
+	mkdir -p "$root" "${TEST_ROOT}/unwritable"
+	chmod 700 "$root"
+	chmod 500 "${TEST_ROOT}/unwritable"
+	ln -s "$root" "${TEST_ROOT}/linked-root"
+	rm -f "${TEST_ROOT}/stub-spawned"
+	out=$(_detach_with_stub "$root" "gh34556-key")
+	path=$(printf '%s\n' "$out" | sed -n 's/^\[INFO\] Detaching worker (log: \(.*\))$/\1/p')
+	for ((attempt = 0; attempt < 50; attempt++)); do
+		[[ -s "$path" ]] && grep -q 'Dispatched PID' <<<"$out" && grep -q '^stub-run run --role worker$' "$path" && break
+		sleep 0.1
+	done
+	[[ "$out" == rc=0* && "${path%/*}" == "$root" && "${path##*/}" == worker-gh34556-key.log.* ]] || failures+=" configured-root"
+	grep -q '^stub-run run --role worker$' "$path" 2>/dev/null || failures+=" log-content"
+	[[ -n "$(find "$path" -perm 600 2>/dev/null)" ]] || failures+=" mode"
+	[[ ! -e /tmp/worker-gh34556-key.log ]] || failures+=" host-tmp"
+	second=$(_detach_with_stub "$root" "gh34556-key")
+	path2=$(printf '%s\n' "$second" | sed -n 's/^\[INFO\] Detaching worker (log: \(.*\))$/\1/p')
+	[[ -n "$path2" && "$path2" != "$path" && -f "$path" ]] || failures+=" separate-attempts"
+	out=$(_detach_with_stub "$root" "../../escape/x")
+	escape_path=$(printf '%s\n' "$out" | sed -n 's/^\[INFO\] Detaching worker (log: \(.*\))$/\1/p')
+	[[ -n "$escape_path" && "${escape_path%/*}" == "$root" ]] || failures+=" path-escape"
+	sleep 0.3
+	rm -f "${TEST_ROOT}/stub-spawned"
+	for bad_root in "" "relative/root" "${TEST_ROOT}/linked-root" "${TEST_ROOT}/unwritable" "${TEST_ROOT}/missing"; do
+		second=$(_detach_with_stub "$bad_root" "gh34556-refused")
+		[[ "$second" == rc=1* && "$second" == *"log root is unusable"* && "$second" != *"Dispatched PID"* ]] || failures+=" refuse:${bad_root:-unset}"
+	done
+	[[ ! -e "${TEST_ROOT}/stub-spawned" ]] || failures+=" spawned-after-refusal"
+	chmod 700 "${TEST_ROOT}/unwritable"
+	print_result "detached worker log uses approved managed root, unique private files, and fails before spawn" \
+		"$([[ -z "$failures" ]] && printf 0 || printf 1)" "failed:${failures}"
 	return 0
 }
 

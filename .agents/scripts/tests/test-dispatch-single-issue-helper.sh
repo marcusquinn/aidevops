@@ -1266,13 +1266,14 @@ SCRIPT_DIR="$FIXTURE_SCRIPTS"
 source "$SCRIPT_DIR/headless-runtime-lib.sh"
 source "$SCRIPT_DIR/headless-runtime-run.sh"
 source "$SCRIPT_DIR/headless-runtime-worker-prepare.sh"
-# Only unrelated worker setup is stubbed; authentication, detach, and cleanup
-# are production functions, executed in fresh processes with the real envelope.
+source "$SCRIPT_DIR/shared-temp-workspace.sh"
+# Only unrelated worker setup is stubbed; authentication, temp-root setup,
+# detach, and cleanup are production functions, executed in fresh processes
+# with the real envelope.
 _hrff_capture_external_outcome_contract() { return 0; }
 _ensure_valid_launch_cwd() { return 0; }
 _validate_issue_worker_env_contract() { return 0; }
 _recover_deleted_cwd_before_launch() { return 0; }
-aidevops_init_temp_workspace() { return 0; }
 role=worker private_workload=0 detach=0
 session_key="$FIXTURE_SESSION" work_dir="$WORKER_WORKTREE_PATH" title=fixture prompt=fixture
 _cmd_run_stop=0
@@ -1294,6 +1295,9 @@ FIXTURE
 		# GH#33402: interactive caller metadata must not leak into the worker,
 		# including the re-executed detached child and synchronous preflight.
 		export AIDEVOPS_SESSION_ORIGIN=interactive AIDEVOPS_HEADLESS=false
+		# GH#34556: the detached log lands in this approved root (with a space).
+		export AIDEVOPS_WORKSPACE_DIR="$root/approved workspace"
+		local log_root="$root/approved workspace/tmp" runtime_log=""
 		_DSI_HEADLESS="$root/runtime"
 		_DSI_TOKEN_HELPER="$root/token-helper"
 		_DSI_ASKPASS_HELPER="$_DSI_SCRIPT_DIR/../scripts/github-auth-askpass.sh"
@@ -1314,7 +1318,8 @@ FIXTURE
 			"$FIXTURE_SCRIPTS/headless-runtime-helper.sh" run --role worker \
 			--session-key "$FIXTURE_SESSION" --dir "$root/repo" --title fixture \
 			--prompt fixture --detach >"$root/preflight.log" 2>&1 || exit 1
-		[[ -f "$_DSI_GIT_AUTH_TOKEN_FILE" && ! -f "/tmp/worker-${FIXTURE_SESSION}.log" ]] || exit 1
+		[[ -f "$_DSI_GIT_AUTH_TOKEN_FILE" ]] || exit 1
+		[[ -z "$(find "$root" -name "worker-${FIXTURE_SESSION}.log.*" -print -quit)" ]] || exit 1
 		local pid="" attempt=0
 		pid=$(_dsi_launch_worker "$FIXTURE_SESSION" "$root/repo" fixture fixture standard '' '' "$root/launch.log" 1 owner/repo fixture) || exit 1
 		[[ "$pid" =~ ^[0-9]+$ ]] || exit 1
@@ -1323,14 +1328,17 @@ FIXTURE
 			sleep 0.1
 		done
 		[[ -f "$root/ready" && -f "$root/cleaned" && ! -e "$_DSI_GIT_AUTH_TOKEN_FILE" ]] || exit 1
-		rm -f "$root/ready" "$root/cleaned" "/tmp/worker-${FIXTURE_SESSION}.log"
+		runtime_log=$(_dsi_detached_runtime_log "$root/launch.log") || exit 1
+		[[ "$runtime_log" == "$log_root"/"worker-${FIXTURE_SESSION}.log."* && -f "$runtime_log" ]] || exit 1
+		[[ ! -e "/tmp/worker-${FIXTURE_SESSION}.log" ]] || exit 1
+		rm -f "$root/ready" "$root/cleaned"
 		_test_git_auth_token_fixture "$HOME"
 		_dsi_prepare_worker_git_auth owner/repo "$root/repo" fixture || exit 1
 		_DSI_GIT_AUTH_EXPECTED_ORIGIN=https://github.com/owner/other
 		for attempt in 1 2; do
 			if _dsi_launch_worker "$FIXTURE_SESSION" "$root/repo" fixture fixture standard '' '' "$root/rejected.log" 1 owner/repo fixture; then exit 1; fi
 		done
-		[[ ! -f "$root/ready" && ! -f "/tmp/worker-${FIXTURE_SESSION}.log" ]] || exit 1
+		[[ ! -f "$root/ready" && "$(find "$root" -name "worker-${FIXTURE_SESSION}.log.*" | wc -l | tr -d ' ')" == 1 ]] || exit 1
 		[[ -f "$_DSI_GIT_AUTH_TOKEN_FILE" ]] || exit 1
 		[[ "$(grep -c 'reason=repository_mismatch' "$root/rejected.log")" == 2 ]] || exit 1
 		! grep -q 'fixture-only-not-a-credential' "$root/launch.log" "$root/rejected.log" || exit 1
@@ -1580,50 +1588,63 @@ test_readiness_timeout_tracks_canary_budget() {
 	return 0
 }
 
+# GH#34556: readiness reads the runtime log path that _detach_worker emits in
+# the launcher log. Creates "<dir>/launcher.log" pointing at "<dir>/runtime log".
+_readiness_fixture_dir() {
+	local dir=""
+	dir=$(mktemp -d) || return 1
+	printf '[INFO] Detaching worker (log: %s)\n' "${dir}/runtime log" >"${dir}/launcher.log"
+	printf '%s\n' "$dir"
+	return 0
+}
+
 test_readiness_accepts_worker_started_marker() {
 	MOCK_LEDGER_RECORD=""
 	local session_key="manual-cli-ready-$$"
-	local runtime_log=""
-	runtime_log=$(_dsi_detached_runtime_log "$session_key")
+	local dir="" runtime_log=""
+	dir=$(_readiness_fixture_dir)
+	runtime_log=$(_dsi_detached_runtime_log "${dir}/launcher.log")
 	printf '%s\n' "[lifecycle] worker_started session=${session_key}" >"$runtime_log"
 
 	local out="" rc=0
-	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" /tmp/manual-ready.log 2>&1) || rc=$?
-	rm -f "$runtime_log"
+	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || rc=$?
+	rm -rf "$dir"
 
 	local passed=1
-	[[ "$rc" -eq 0 && -z "$out" ]] && passed=0
-	print_result "readiness gate accepts worker_started marker" "$passed" "rc=$rc output=$out"
+	[[ "$rc" -eq 0 && -z "$out" && "$runtime_log" == "${dir}/runtime log" ]] && passed=0
+	print_result "readiness gate accepts worker_started marker at the emitted log path" "$passed" "rc=$rc runtime_log=$runtime_log output=$out"
 	return 0
 }
 
 test_readiness_rejects_live_child_without_ready_signal() {
 	MOCK_LEDGER_RECORD=""
 	local session_key="manual-cli-not-ready-$$"
-	local runtime_log=""
-	runtime_log=$(_dsi_detached_runtime_log "$session_key")
-	rm -f "$runtime_log"
+	local dir=""
+	dir=$(_readiness_fixture_dir)
 
-	local out="" rc=0
-	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" /tmp/manual-not-ready.log 2>&1) || rc=$?
-	rm -f "$runtime_log"
+	local out="" rc=0 unreported="" unreported_rc=0
+	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || rc=$?
+	# A launcher that never reported a log path must not be guessed into /tmp.
+	: >"${dir}/launcher.log"
+	unreported=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || unreported_rc=$?
+	rm -rf "$dir"
 
 	local passed=1
-	[[ "$rc" -eq 1 && "$out" == *"did not reach readiness"* && "$out" == *"Runtime log:"* ]] && passed=0
-	print_result "readiness gate rejects live child without ready signal" "$passed" "rc=$rc output=$out"
+	[[ "$rc" -eq 1 && "$out" == *"did not reach readiness"* && "$out" == *"Runtime log:  ${dir}/runtime log"* &&
+		"$unreported_rc" -eq 1 && "$unreported" == *"<not reported by launcher>"* && "$unreported" != *"/tmp/worker-"* ]] && passed=0
+	print_result "readiness gate rejects live child without ready signal or reported log" "$passed" "rc=$rc output=$out unreported=$unreported"
 	return 0
 }
 
 test_readiness_rejects_ledger_without_worker_started() {
 	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-ledger'
 	local session_key="manual-cli-ledger-only-$$"
-	local runtime_log=""
-	runtime_log=$(_dsi_detached_runtime_log "$session_key")
-	rm -f "$runtime_log"
+	local dir=""
+	dir=$(_readiness_fixture_dir)
 
 	local out="" rc=0
-	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" /tmp/manual-ledger-only.log 2>&1) || rc=$?
-	rm -f "$runtime_log"
+	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" "${dir}/launcher.log" 2>&1) || rc=$?
+	rm -rf "$dir"
 	MOCK_LEDGER_RECORD=""
 
 	local passed=1

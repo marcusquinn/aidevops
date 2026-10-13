@@ -314,13 +314,25 @@ _dsi_resolve_worker_pid() {
 }
 
 #######################################
-# Return the detached runtime log path used by headless-runtime-helper.sh.
-# Args: $1 - session_key
+# Return the detached runtime log path reported by headless-runtime-helper.sh.
+# _detach_worker creates a unique log in the managed temp root and prints
+# "Detaching worker (log: <path>)" before spawning (GH#34556). Read that
+# emitted path from the launcher log instead of reconstructing it; the first
+# match is the launcher's own line, written before any worker output exists.
+# Args: $1 - launcher_log path
 # Stdout: absolute log path
+# Returns: 0 found, 1 not (yet) reported
 #######################################
 _dsi_detached_runtime_log() {
-	local session_key="$1"
-	printf '/tmp/worker-%s.log' "$session_key"
+	local launcher_log="$1"
+	local marker="Detaching worker (log: "
+	local line="" path=""
+	[[ -f "$launcher_log" ]] || return 1
+	line=$(grep -F -m 1 "$marker" "$launcher_log" 2>/dev/null) || return 1
+	path="${line#*"$marker"}"
+	path="${path%)}"
+	[[ "$path" == /* ]] || return 1
+	printf '%s\n' "$path"
 	return 0
 }
 
@@ -367,15 +379,17 @@ _dsi_wait_for_worker_readiness() {
 	local session_key="$3"
 	local worker_pid="$4"
 	local launcher_log="$5"
-	local runtime_log
-	runtime_log=$(_dsi_detached_runtime_log "$session_key")
+	local runtime_log=""
 	local timeout_s
 	timeout_s=$(_dsi_ready_timeout_seconds)
 	local attempts=0
 	local max_attempts=$((timeout_s * 10))
 
 	while [[ "$attempts" -le "$max_attempts" ]]; do
-		if [[ -s "$runtime_log" ]] &&
+		if [[ -z "$runtime_log" ]]; then
+			runtime_log=$(_dsi_detached_runtime_log "$launcher_log") || runtime_log=""
+		fi
+		if [[ -n "$runtime_log" && -s "$runtime_log" ]] &&
 			grep -Fq -e "worker_started" -e "worker_start session=${session_key}" "$runtime_log" 2>/dev/null; then
 			return 0
 		fi
@@ -383,7 +397,7 @@ _dsi_wait_for_worker_readiness() {
 		if [[ -n "$worker_pid" ]] && ! kill -0 "$worker_pid" 2>/dev/null; then
 			_dsi_err "Worker launch failed — detached child exited before readiness"
 			_dsi_info "  Launcher log: ${launcher_log}"
-			_dsi_info "  Runtime log:  ${runtime_log}"
+			_dsi_info "  Runtime log:  ${runtime_log:-<not reported by launcher>}"
 			return 1
 		fi
 
@@ -397,6 +411,6 @@ _dsi_wait_for_worker_readiness() {
 	_dsi_err "Worker launch did not reach readiness within ${timeout_s}s"
 	_dsi_info "  Worker PID:   ${worker_pid}"
 	_dsi_info "  Launcher log: ${launcher_log}"
-	_dsi_info "  Runtime log:  ${runtime_log}"
+	_dsi_info "  Runtime log:  ${runtime_log:-<not reported by launcher>}"
 	return 1
 }

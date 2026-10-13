@@ -1128,6 +1128,14 @@ Standalone prompts:
   issue-N session key, an "Issue #N" title, and WORKER_ISSUE_NUMBER or
   WORKER_WORKTREE_PATH. It never grants issue claim or worktree authority.
 
+Detached logs (GH#34556):
+  --detach writes the worker log to a new private file
+  $AIDEVOPS_WORKSPACE_DIR/tmp/worker-<key>.log.<random> (default workspace
+  ~/.aidevops/.agent-workspace) and prints "Detaching worker (log: <path>)"
+  before spawning. Set AIDEVOPS_WORKSPACE_DIR to a caller-approved directory to
+  relocate it; that is not a broad filesystem grant. An unusable root fails
+  before launch with no host /tmp fallback. system-cleanup.sh ages these files.
+
 Backoff granularity:
   Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-5-5).
   Auth errors are recorded per provider (e.g. anthropic) since credentials are shared.

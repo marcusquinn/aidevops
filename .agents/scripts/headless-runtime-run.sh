@@ -135,7 +135,7 @@ _prepare_cmd_run_environment() {
 		return 1
 	}
 	if [[ "$detach" -eq 1 ]]; then
-		_detach_worker "$session_key" "$@"
+		_detach_worker "$session_key" "$@" || return 1
 		_cmd_run_stop=1
 		_cmd_run_return_status=0
 	fi
