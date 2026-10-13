@@ -1801,9 +1801,16 @@ main() {
 	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
 	release_instance_lock
 	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
-	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle.
+	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle —
+	# unless prefetch has degraded long enough that the supervisor would starve;
+	# then run it with the state file marked incomplete.
 	if [[ "${_PULSE_PREFETCH_DEGRADED:-0}" == "1" ]]; then
-		echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete this cycle (GH#34000)" >>"$LOGFILE"
+		if _pulse_degraded_prefetch_supervisor_escape_due; then
+			echo "[pulse-wrapper] LLM supervisor: prefetch incomplete, but no supervisor attempt within ${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}s — running with state marked incomplete (GH#34000 starvation escape)" >>"$LOGFILE"
+			_PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
+		else
+			echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete this cycle (GH#34000)" >>"$LOGFILE"
+		fi
 	else
 		_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
 	fi

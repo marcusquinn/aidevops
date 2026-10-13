@@ -955,6 +955,30 @@ _pulse_llm_failure_cooldown_active() {
 	return 1
 }
 
+#######################################
+# GH#34000 follow-up: an incomplete prefetch defers the LLM supervisor because
+# its prompt points at STATE_FILE. A runner whose prefetch degrades on every
+# cycle would then never run the supervisor, starving the daily sweep and
+# terminal-blocker recovery indefinitely. Admit a degraded-prefetch supervisor
+# decision once the latest attempt/success is older than
+# PULSE_LLM_DEGRADED_ESCAPE_SECONDS (default 6h; 0 disables). The normal
+# _should_run_llm_supervisor gates and failure cooldown still apply, and the
+# prompt marks the state file incomplete.
+# Returns: 0 when a degraded-prefetch supervisor run is admitted, 1 otherwise
+#######################################
+_pulse_degraded_prefetch_supervisor_escape_due() {
+	local escape_seconds="${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}"
+	local now_epoch="" last_success="" last_attempt="" latest=0
+	[[ "$escape_seconds" =~ ^[0-9]+$ && "$escape_seconds" -gt 0 ]] || return 1
+	now_epoch=$(date +%s)
+	last_success=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
+	last_attempt=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_attempt_epoch")
+	latest="$last_success"
+	[[ "$last_attempt" -gt "$latest" ]] && latest="$last_attempt"
+	[[ $((now_epoch - latest)) -ge "$escape_seconds" ]] || return 1
+	return 0
+}
+
 _should_run_llm_supervisor() {
 	local now_epoch
 	now_epoch=$(date +%s)

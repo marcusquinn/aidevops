@@ -210,6 +210,10 @@ Runtime sandbox rule: supervisor-pulse is launched from the aidevops agent works
 Pre-fetched state file: ${state_file}
 Read this file before proceeding — it contains the current repo/PR/issue state
 gathered by pulse-wrapper.sh BEFORE this session started."
+		if [[ "${_PULSE_SUPERVISOR_STATE_INCOMPLETE:-0}" == "1" ]]; then
+			prompt="${prompt}
+WARNING: this cycle's prefetch timed out, so the state file is INCOMPLETE and may be stale or missing repositories. Treat it as hints only: verify current issue/PR state with gh or the named helpers before any decision or write, and never infer that absent items do not exist."
+		fi
 	fi
 	prompt="${prompt}
 

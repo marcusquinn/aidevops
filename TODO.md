@@ -1677,6 +1677,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18684 fix(pulse): stop dependency sweeps starving large blocked backlogs and re-evaluating dependency-blocked available issues #bug ref:GH#34521
 
+- [ ] t18685 fix(pulse): bound GH#34000 supervisor deferral so a permanently degraded prefetch cannot starve the LLM supervisor #bug ref:GH#34524
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
