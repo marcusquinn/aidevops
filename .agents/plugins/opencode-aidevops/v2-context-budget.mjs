@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isXaiGrokModel, physicalInputLimit, XAI_GROK_COMPACTION_TARGET } from "./model-limits.mjs";
 
 const V2_DEFAULT_BUFFER = 20_000; // OpenCode 2.0.3 local compaction default.
 const V2_TARGET = 240000;
@@ -32,7 +33,10 @@ export function readV2ContextBudget(file = process.env.AIDEVOPS_SETTINGS_FILE ||
   return { target: V2_TARGET, buffer };
 }
 
-/** Cap only model input; keep context, output, variants, and short windows native. */
+/**
+ * Cap only model input; keep context, output, variants, and short windows native.
+ * xAI Grok uses its lower price-band target (GH#34538) under the same opt-out.
+ */
 export function applyV2ContextBudget(editor, budget) {
   if (!budget) return 0;
   let changed = 0;
@@ -40,10 +44,16 @@ export function applyV2ContextBudget(editor, budget) {
     for (const model of record.models.values()) {
       const limit = model.limit;
       if (!Number.isSafeInteger(limit?.context) || !Number.isSafeInteger(limit.output) ||
-          limit.output <= 0 || limit.context <= limit.output) continue;
-      const physical = limit.context - limit.output;
-      const capped = Math.min(physical, budget.target + budget.buffer);
-      if (physical <= budget.target || capped <= 0 ||
+          limit.output <= 0 || limit.context <= 0) continue;
+      const target = isXaiGrokModel({ providerID: record.provider.id, id: model.id })
+        ? Math.min(budget.target, XAI_GROK_COMPACTION_TARGET) : budget.target;
+      // V2's request-output clamp is not yet qualified, so only windows that
+      // advertise output >= context (no input space under the old rule) use
+      // the host clamp; capping them can only lower input.
+      const physical = limit.output >= limit.context
+        ? physicalInputLimit(limit) : limit.context - limit.output;
+      const capped = Math.min(physical, target + budget.buffer);
+      if (physical <= target || capped <= 0 ||
           (limit.input !== undefined && limit.input <= capped)) continue;
       editor.model.update(record.provider.id, model.id, (draft) => {
         draft.limit.input = capped;

@@ -61,6 +61,48 @@ export const GPT6_MODEL_IDS = [
   "gpt-6-luna-fast",
 ];
 
+/**
+ * xAI Grok compaction target (GH#34538), not a provider capacity claim.
+ * xAI bills every token of a request at 2x once its prompt reaches 200K
+ * (docs.x.ai/developers/pricing: Grok 4.3-4.7 and 4.20), so the shared 240K
+ * target sits inside the long-context band. 190K leaves ~10K for one turn of
+ * tool output before OpenCode's post-step overflow check compacts.
+ */
+export const XAI_GROK_COMPACTION_TARGET = 190000;
+
+/**
+ * Match Grok on xAI and on routers, clouds or custom providers (for example
+ * `x-ai/grok-4.6`, `xai.grok-4.6`), where xAI's price tiers still apply.
+ * @param {{providerID?: string, id?: string}} model
+ * @returns {boolean}
+ */
+export function isXaiGrokModel(model) {
+  if (model?.providerID === "xai") return true;
+  return /(?:^|[/:.-])grok-/i.test(String(model?.id ?? ""));
+}
+
+/** OpenCode's default request output clamp (`ProviderTransform.OUTPUT_TOKEN_MAX`). */
+export const HOST_OUTPUT_TOKEN_MAX = 32000;
+
+/**
+ * Input space left in a window after the output the host will actually request.
+ * Many catalogues (xAI Grok 4.5+, Kimi K3, GLM-5.x and others) advertise output
+ * equal to, or close to, the whole window. Without an explicit input limit,
+ * OpenCode compacts at context minus its request-output clamp (32K, or
+ * OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX), so measuring those windows against
+ * the advertised output skipped the managed budget (GH#34538). An explicit
+ * input limit with a smaller advertised output keeps the conservative
+ * context-minus-output ceiling.
+ * @param {{context: number, output: number, input?: number}} limit
+ * @returns {number}
+ */
+export function physicalInputLimit(limit) {
+  if (limit.input !== undefined && limit.output < limit.context) return limit.context - limit.output;
+  const override = Number.parseInt(process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX ?? "", 10);
+  const clamp = Number.isSafeInteger(override) && override > 0 ? override : HOST_OUTPUT_TOKEN_MAX;
+  return limit.context - Math.min(limit.output, clamp);
+}
+
 /** GPT-5.6 model IDs currently exposed by the OpenAI provider. */
 export const GPT56_MODEL_IDS = [
   "gpt-5.6-sol",

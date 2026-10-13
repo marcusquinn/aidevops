@@ -66,7 +66,10 @@
 | `runtime.opencode.v2_compaction_target` | number/false | `240000` | -- | OpenCode 2 usable-input compaction target on models with larger windows; `false` (or any value other than `240000`) keeps native limits. |
 
 All models target 240K usable input unless their native window is smaller
-(GH#32807). The next `aidevops update` after that release resets raised values
+(GH#32807). xAI Grok targets 190K, below xAI's 200K long-context price band
+(GH#34538). There is no setting for it; an explicit
+`provider.<name>.models.<id>.limit.input` overrides it in OpenCode 1, and
+`v2_compaction_target` opts OpenCode 2 out of both targets. The next `aidevops update` after that release resets raised values
 of these keys (`astra_compaction_target: 400000`, `astra_context_cap`/`gpt6_context_cap`/
 `gpt56_context_cap: false`, non-240K `v2_compaction_target`) to the defaults
 once, with a backup under `~/.aidevops/config-backups/migrations/`. Opt-outs set

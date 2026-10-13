@@ -173,7 +173,11 @@ default (GH#32807; it was opt-in before). To keep native limits, merge this into
 Restart the **V2 background service and client** to apply the change. OpenCode
 2.0.3 uses a 20K local-compaction buffer by default, so the catalogue
 transform caps a large model's `limit.input` at 260K; the local threshold then
-becomes 240K. The model's context, output, name, and variants stay native. Models
+becomes 240K. xAI Grok models are capped at 210K instead, giving a 190K
+threshold below xAI's 200K long-context price band (GH#34538). Catalogue
+entries that advertise output equal to the whole window (Grok 4.5+, Kimi K3)
+are measured against a 32K request output rather than skipped. The model's
+context, output, name, and variants stay native. Models
 whose smaller native input or physical context already triggers earlier are not
 expanded. This is an explicit policy override: it also caps any larger
 user-supplied model input limit, because V2's catalogue transform does not expose

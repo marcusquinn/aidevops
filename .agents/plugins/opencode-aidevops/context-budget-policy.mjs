@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { describeOpus47Override, GPT6_MODEL_IDS, OPUS_47_CONTEXT_DEFAULT } from "./model-limits.mjs";
+import { describeOpus47Override, GPT6_MODEL_IDS, isXaiGrokModel, OPUS_47_CONTEXT_DEFAULT,
+  physicalInputLimit, XAI_GROK_COMPACTION_TARGET } from "./model-limits.mjs";
 
 export function preserveGpt6Limit(settings, model) {
   const explicit = model.limit?.context !== undefined || model.limit?.input !== undefined;
@@ -48,7 +49,8 @@ export function opus47UsableTarget(model) {
 // One usable-input compaction target for every model (GH#32807). A replay of
 // 42 Opus 5.5 main sessions found 240K cheaper than the former 500K Anthropic
 // target: cache re-reads and post-pause rewrites grow with context length.
-// Models whose native window is smaller keep their own lower target.
+// Models whose native window is smaller keep their own lower target. xAI Grok
+// targets 190K to stay below xAI's 200K long-context price band (GH#34538).
 export const DEFAULT_COMPACTION_TARGET = 240000;
 
 export function contextBudgetForModel(model) {
@@ -57,6 +59,7 @@ export function contextBudgetForModel(model) {
   }
   const opus47 = opus47UsableTarget(model ?? {});
   if (opus47 !== null) return { target: opus47 };
+  if (isXaiGrokModel(model)) return { target: XAI_GROK_COMPACTION_TARGET };
   return { target: DEFAULT_COMPACTION_TARGET };
 }
 
@@ -107,8 +110,8 @@ export function capResolvedModel(model, reserve, { target = DEFAULT_COMPACTION_T
     if (limit.input !== undefined) limit.input = Math.min(limit.input, Math.max(0, limit.context - limit.output));
     changed = true;
   }
-  const usable = limit.input !== undefined ? limit.input - reserve : limit.context - limit.output;
-  const physicalInput = limit.context - limit.output;
+  const physicalInput = physicalInputLimit(limit);
+  const usable = limit.input !== undefined ? limit.input - reserve : physicalInput;
   if (!Number.isFinite(usable) || usable <= target || physicalInput <= 0) return changed;
   limit.input = Math.min(target + reserve, physicalInput);
   limit.context = Math.min(limit.context, limit.input + limit.output);

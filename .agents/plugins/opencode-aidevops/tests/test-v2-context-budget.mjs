@@ -58,3 +58,29 @@ test("V2 catalog cap yields 240K local compaction threshold without changing nat
   assert.equal(models.get("short").limit.input, 190000);
   assert.equal(applyV2ContextBudget(editor, { target: 240000, buffer: 20000 }), 0);
 });
+
+test("V2 caps xAI Grok at 190K usable input, below the 200K price band (GH#34538)", () => {
+  // Grok 4.5+ catalogues advertise output equal to context (500K/500K).
+  const xai = new Map([
+    ["grok-4.6", { id: "grok-4.6", limit: { context: 500000, output: 500000 } }],
+  ]);
+  const router = new Map([
+    ["x-ai/grok-4.7", { id: "x-ai/grok-4.7", limit: { context: 500000, output: 500000 } }],
+    ["other", { id: "other", limit: { context: 1000000, output: 128000 } }],
+    ["kimi-k2.6", { id: "kimi-k2.6", limit: { context: 262144, output: 262144 } }],
+  ]);
+  const records = [{ provider: { id: "xai" }, models: xai }, { provider: { id: "openrouter" }, models: router }];
+  const editor = {
+    provider: { list: () => records },
+    model: { update(providerID, id, change) {
+      change(records.find((record) => record.provider.id === providerID).models.get(id));
+    } },
+  };
+  assert.equal(applyV2ContextBudget(editor, { target: 240000, buffer: 20000 }), 3);
+  assert.equal(xai.get("grok-4.6").limit.input - 20000, 190000);
+  assert.equal(router.get("x-ai/grok-4.7").limit.input - 20000, 190000);
+  assert.equal(router.get("other").limit.input - 20000, 240000);
+  assert.equal(xai.get("grok-4.6").limit.context, 500000);
+  assert.deepEqual(router.get("kimi-k2.6").limit, { context: 262144, output: 262144 });
+  assert.equal(applyV2ContextBudget(editor, { target: 240000, buffer: 20000 }), 0);
+});

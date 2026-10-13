@@ -60,9 +60,73 @@ test("uses the 240K usable-input target for every large Anthropic model (GH#3280
   const customProvider = model("custom", "claude-opus-5-5");
   assert.equal(budget.apply({ model: customProvider }), true);
   assert.equal(customProvider.limit.input - 20000, 240000);
-  const smallerNative = model("anthropic", "claude-opus-5-5", { context: 300000, output: 64000 });
+  // OpenCode compacts at context minus its 32K request-output clamp when no
+  // input limit is set: 250K - 32K = 218K stays native; 300K - 32K = 268K is capped.
+  const smallerNative = model("anthropic", "claude-opus-5-5", { context: 250000, output: 64000 });
   assert.equal(budget.apply({ model: smallerNative }), false);
-  assert.deepEqual(smallerNative.limit, { context: 300000, output: 64000 });
+  assert.deepEqual(smallerNative.limit, { context: 250000, output: 64000 });
+  const hostThreshold = model("anthropic", "claude-opus-5-5", { context: 300000, output: 64000 });
+  assert.equal(budget.apply({ model: hostThreshold }), true);
+  assert.deepEqual(hostThreshold.limit, { context: 300000, output: 64000, input: 260000 });
+  assert.equal(budget.apply({ model: hostThreshold }), false);
+});
+
+test("targets 190K usable input for xAI Grok below the 200K price band (GH#34538)", () => {
+  const budget = setup();
+  budget.capture({});
+  // Native catalogue windows: Grok 4.5-4.7 advertise output equal to context.
+  for (const [provider, id, limit] of [
+    ["xai", "grok-4.6", { context: 500000, output: 500000 }],
+    ["xai", "grok-4.7", { context: 500000, output: 500000 }],
+    ["xai", "grok-4.5", { context: 500000, output: 500000 }],
+    ["xai", "grok-4.20-0309-reasoning", { context: 1000000, output: 30000 }],
+    ["openrouter", "x-ai/grok-4.6", { context: 500000, output: 450000 }],
+    ["nano-gpt", "x-ai/grok-4.7", { context: 500000, input: 500000, output: 500000 }],
+    ["amazon-bedrock", "us.xai.grok-4.6", { context: 500000, output: 500000 }],
+    ["llmgateway", "grok-4-6", { context: 500000, output: 500000 }],
+  ]) {
+    const resolved = model(provider, id, limit);
+    assert.equal(budget.apply({ model: resolved }), true, `${provider}/${id}`);
+    assert.equal(resolved.limit.input - 20000, 190000, `${provider}/${id}`);
+    assert.equal(resolved.limit.context, Math.min(limit.context, resolved.limit.input + limit.output),
+      `${provider}/${id}`);
+    assert.equal(resolved.limit.output, limit.output, `${provider}/${id}`);
+    assert.equal(budget.apply({ model: resolved }), false, `${provider}/${id}`);
+  }
+  for (const [provider, id] of [["openai", "gpt-6.1-sol"], ["anthropic", "claude-opus-5-5"]]) {
+    const resolved = model(provider, id);
+    assert.equal(budget.apply({ model: resolved }), true, id);
+    assert.equal(resolved.limit.input - 20000, 240000, id);
+  }
+  const custom = setup();
+  custom.capture({ provider: { xai: { models: { "grok-4.6": { limit: { input: 300000 } } } } } });
+  const chosen = model("xai", "grok-4.6", { context: 2000000, input: 300000, output: 64000 });
+  assert.equal(custom.apply({ model: chosen }), false);
+  assert.equal(chosen.limit.input, 300000);
+});
+
+test("windows advertising output equal to context use the host output clamp (GH#34538)", () => {
+  const previous = process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX;
+  try {
+    delete process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX;
+    const budget = setup();
+    budget.capture({});
+    const large = model("moonshotai", "kimi-k3", { context: 1048576, output: 1048576 });
+    assert.equal(budget.apply({ model: large }), true);
+    assert.equal(large.limit.input - 20000, 240000);
+    assert.equal(large.limit.context, 1048576);
+    // 262144 - 32000 = 230144 usable is already below the target: stay native.
+    const near = model("moonshotai", "kimi-k2.6", { context: 262144, output: 262144 });
+    assert.equal(budget.apply({ model: near }), false);
+    assert.deepEqual(near.limit, { context: 262144, output: 262144 });
+    process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX = "300000";
+    const clamped = model("xai", "grok-4.6", { context: 500000, output: 500000 });
+    assert.equal(budget.apply({ model: clamped }), true);
+    assert.equal(clamped.limit.input, 200000);
+  } finally {
+    if (previous === undefined) delete process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX;
+    else process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX = previous;
+  }
 });
 
 test("caps Haiku 4.5 at native 200K, targeting 180K without reducing output headroom", () => {

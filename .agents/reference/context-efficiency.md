@@ -154,9 +154,25 @@ list. This includes native Anthropic Opus 5.5+, Fable 5.1+, and Sonnet 5+, which
 targeted 500K before GH#32807: a replay of 42 Opus 5.5 main sessions found 240K
 about 14% cheaper, because every turn re-reads the cached context and every pause
 over five minutes rewrites it. Haiku 4.5 is capped at its 200K physical context and targets
-180K usable input. When the output limit and compaction reserve require more
-than 20K headroom, the effective trigger is earlier (for a 32K output limit,
-no later than 168K before considering any extra reserve). The policy does not
+180K usable input. xAI Grok models (provider `xai`, or a `grok-` model ID on a
+router or custom provider) target 190K usable input (GH#34538). From a 200K
+prompt, xAI bills every token of the request at twice the normal rate, so 240K
+would put the last part of each session in that band. The 10K headroom allows
+for one turn of tool output before compaction. OpenCode 2 applies the same
+xAI target.
+
+A window is "larger" when OpenCode's own threshold exceeds the target. Without
+an explicit input limit, OpenCode compacts at context minus its 32K
+request-output clamp (`OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` when set), not
+minus the advertised output. The plugin uses the same rule. Before GH#34538 it
+subtracted the advertised output, so it skipped catalogue entries that list
+output equal to or close to the window, such as Grok 4.5+ (500K/500K), Kimi K3
+and GLM-5.x. Those sessions ran to about 468K or more. The OpenCode 2 adapter
+applies the clamp only to entries whose output equals or exceeds the window,
+until its own output clamp is qualified. When the output limit
+and compaction reserve require more than 20K headroom, the effective trigger
+is earlier (for a 32K output limit, no later than 168K before considering any
+extra reserve). The policy does not
 expand smaller windows, modify output limits or variants, or override explicit
 `provider.<name>.models.<id>.limit.context/input` entries.
 Existing GPT-5.6, Astra, and GPT-6 opt-outs/extended-target selections are
