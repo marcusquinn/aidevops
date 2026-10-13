@@ -119,7 +119,8 @@ if [[ "${1:-}" == "api" ]]; then
 		exit 0
 	fi
 	# GH#21799: REST check-runs endpoint
-	if [[ "$path" == */check-runs ]]; then
+	# The production reader appends ?per_page=100, so match with or without it.
+	if [[ "$path" == */check-runs || "$path" == */check-runs\?* ]]; then
 		if [[ -n "$jq_filter" ]]; then
 			jq -r "$jq_filter" <"$CHECK_RUNS_FIXTURE" 2>/dev/null || echo "[]"
 		else
@@ -129,7 +130,7 @@ if [[ "${1:-}" == "api" ]]; then
 	fi
 	# GH#21799: legacy combined-status endpoint — empty (modern repos use
 	# check-runs exclusively).
-	if [[ "$path" == */status ]]; then
+	if [[ "$path" == */status || "$path" == */status\?* ]]; then
 		if [[ -n "$jq_filter" ]]; then
 			jq -r "$jq_filter" <<<'{"statuses":[]}' 2>/dev/null || echo "[]"
 		else
