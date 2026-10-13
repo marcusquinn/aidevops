@@ -520,6 +520,37 @@ my_cmd_with_run_trap() {
 
 This bug shipped in `wp-plugin-release-helper.sh`'s `plugin-check` command and was only caught by actually running it against a failing fixture and checking `docker ps -a`/`network ls`/`volume ls` afterward — shellcheck and shfmt do not flag it.
 
+## Caller IFS in sourced libraries (GH#34558)
+
+Sourced libraries inherit the caller's `IFS`, including strict `IFS=$'\n\t'` settings that exclude spaces. Never rely on the default IFS for parsing: pin the delimiter on each `read` that splits fields, and use quoted arrays instead of unquoted expansions for word lists. Do not reset the caller's script-level IFS to make a library work.
+
+```bash
+# Banned: depends on the caller including space in IFS
+read -r uid mode <<<"$metadata"
+for tool in $tool_names; do
+    ...
+done
+
+# Allowed: the input contract is space-separated metadata
+IFS=' ' read -r uid mode <<<"$metadata"
+
+# Allowed: split a documented space-separated list once, then quote its array
+IFS=' ' read -r -a tools <<<"$tool_names"
+for tool in "${tools[@]}"; do
+    ...
+done
+```
+
+Choose the delimiter from the producer's contract (`IFS='.'` for version components, `IFS=':'` for PATH entries, or `IFS=$'\t'` for tab-separated fields). Use `IFS= read -r line` to preserve a whole line without splitting. The command-prefix form is local to that `read`, preserves the caller's IFS, and works in Bash 3.2. When values are already separate, build a quoted array directly rather than joining and splitting them again.
+
+### Why the failure is silent
+
+ShellCheck passes a bare multi-variable `read`; it cannot prove the caller's runtime IFS. A space-separated `"0 755"` under strict IFS becomes `uid="0 755"` and an empty `mode`, causing a resolver/parse miss rather than a syntax error. Verify sourced parsing under both default and strict caller IFS; lint alone is insufficient.
+
+### Originating incident
+
+GH#34558: `team-interface-buzz-worktree.sh` set strict IFS before sourcing `runtime-env.sh`, making trusted-tool resolution reject trusted executables. The merged fix pins `IFS=' ' read -r uid mode <<<"$metadata"` in `aidevops_resolve_trusted_tool`, `aidevops_dir_chain_is_trusted`, and `aidevops_physical_path`. Keep every two-variable metadata read pinned; the existing `tests/test-runtime-env.sh` and `tests/test-team-interface-buzz-worktree.mjs` cover the resolver and its strict-IFS caller.
+
 ## Watchdog self-write anti-pattern (t3058 / t3071)
 
 If a script monitors file `X` for activity as a **stall signal** (byte-delta, line-count, or mtime polling), the SAME script MUST NOT write status markers to `X`. Self-writes register as "progress" and silently neuter the timeout — the very condition the marker was meant to instrument becomes unreachable. There is no log line, no exit code, no alert when this happens; the watchdog simply never trips.

@@ -520,7 +520,7 @@ setup_shell_compatibility() {
 	local counts
 	counts=$(_shell_compat_count_customizations "${bash_files[@]}")
 	local total_exports total_aliases total_paths
-	read -r total_exports total_aliases total_paths <<<"$counts"
+	IFS=' ' read -r total_exports total_aliases total_paths <<<"$counts"
 
 	if [[ $total_exports -eq 0 && $total_aliases -eq 0 && $total_paths -eq 0 ]]; then
 		print_info "No bash customizations detected - skipping cross-shell setup"

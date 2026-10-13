@@ -74,15 +74,16 @@ if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
 		if [[ "$(uname -s 2>/dev/null || true)" != "$_aidevops_macos_platform" ]]; then
 			_aidevops_bash_candidates="${_aidevops_bash_candidates} /home/linuxbrew/.linuxbrew/bin/bash"
 		fi
+		IFS=' ' read -r -a _aidevops_bash_candidate_paths <<<"$_aidevops_bash_candidates"
 		_aidevops_path_bash="$(command -v bash 2>/dev/null || true)"
-		[[ -n "$_aidevops_path_bash" ]] && _aidevops_bash_candidates="${_aidevops_bash_candidates} ${_aidevops_path_bash}"
-		for _aidevops_bash_candidate in $_aidevops_bash_candidates; do
+		[[ -n "$_aidevops_path_bash" ]] && _aidevops_bash_candidate_paths+=("$_aidevops_path_bash")
+		for _aidevops_bash_candidate in "${_aidevops_bash_candidate_paths[@]}"; do
 			if [[ -n "$_aidevops_bash_candidate" && -f "$_aidevops_bash_candidate" && -x "$_aidevops_bash_candidate" && "$_aidevops_bash_candidate" != "/bin/bash" ]]; then
 				export AIDEVOPS_BASH_REEXECED=1
 				exec "$_aidevops_bash_candidate" "$_aidevops_top_caller" "$@"
 			fi
 		done
-		unset _aidevops_bash_candidate _aidevops_bash_candidates _aidevops_path_bash _aidevops_macos_platform
+		unset _aidevops_bash_candidate _aidevops_bash_candidates _aidevops_bash_candidate_paths _aidevops_path_bash _aidevops_macos_platform
 	fi
 	unset _aidevops_top_caller
 	# Fall through: no modern bash found. The calling script will run

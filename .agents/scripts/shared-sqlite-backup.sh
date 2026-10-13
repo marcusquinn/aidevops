@@ -93,7 +93,9 @@ verify_sqlite_backup() {
 	fi
 
 	local table
-	for table in $tables; do
+	local -a table_names=()
+	IFS=' ' read -r -a table_names <<<"$tables"
+	for table in ${table_names[@]+"${table_names[@]}"}; do
 		local orig_count backup_count
 		orig_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
 		backup_count=$(sqlite3 -cmd ".timeout 5000" "$backup_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
@@ -131,7 +133,9 @@ verify_migration_rowcounts() {
 	fi
 
 	local table
-	for table in $tables; do
+	local -a table_names=()
+	IFS=' ' read -r -a table_names <<<"$tables"
+	for table in ${table_names[@]+"${table_names[@]}"}; do
 		local post_count pre_count
 		post_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
 		pre_count=$(sqlite3 -cmd ".timeout 5000" "$backup_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
