@@ -1675,9 +1675,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18683 fix(tests): stub final ownership fence in worker-detection dispatch_with_dedup cases #auto-dispatch #bug ref:GH#34515 pr:#34519 completed:2026-10-12
 
-- [ ] t18684 fix(pulse): stop dependency sweeps starving large blocked backlogs and re-evaluating dependency-blocked available issues #bug ref:GH#34521
+- [x] t18684 fix(pulse): stop dependency sweeps starving large blocked backlogs and re-evaluating dependency-blocked available issues #bug ref:GH#34521 pr:#34522 completed:2026-10-13
 
-- [ ] t18685 fix(pulse): bound GH#34000 supervisor deferral so a permanently degraded prefetch cannot starve the LLM supervisor #bug ref:GH#34524
+- [x] t18685 fix(pulse): bound GH#34000 supervisor deferral so a permanently degraded prefetch cannot starve the LLM supervisor #bug ref:GH#34524 pr:#34525 completed:2026-10-13
 
 - [ ] t18686 fix(pulse): cool down dispatch re-evaluation of issues pinned by an unchanged draft checkpoint #auto-dispatch #bug ref:GH#34526
 
