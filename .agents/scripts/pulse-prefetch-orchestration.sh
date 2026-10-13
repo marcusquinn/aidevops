@@ -20,6 +20,22 @@ fi
 
 _PREFETCH_BOOL_TRUE=true
 
+# Clamp a phase to the effective stage deadline, leaving time for publication
+# and timeout-helper descendant cleanup. Without a stage deadline, retain caps.
+_prefetch_remaining_seconds() {
+	local cap="$1"
+	local reserve="${2:-15}"
+	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
+	local remaining=0
+	if [[ "$deadline" =~ ^[1-9][0-9]*$ ]]; then
+		remaining=$((deadline - $(date +%s) - reserve))
+		[[ "$remaining" -gt 0 ]] || return 1
+		[[ "$remaining" -ge "$cap" ]] || cap="$remaining"
+	fi
+	printf '%s\n' "$cap"
+	return 0
+}
+
 # =============================================================================
 # Parallel Wait + State Assembly (GH#5627)
 # =============================================================================
@@ -34,7 +50,7 @@ _PREFETCH_BOOL_TRUE=true
 # Arguments:
 #   $1 - timeout in seconds
 #   $2..N - PIDs to wait for (passed as remaining args)
-# Returns: 0 always (best-effort — kills stragglers on timeout)
+# Returns: 0 when complete, 124 after killing timed-out fetches
 #######################################
 _wait_parallel_pids() {
 	local timeout_secs="$1"
@@ -42,6 +58,7 @@ _wait_parallel_pids() {
 	local pids=("$@")
 
 	local wait_elapsed=0
+	local wait_rc=0
 	local all_done=false
 	while [[ "$all_done" != "$_PREFETCH_BOOL_TRUE" ]] && [[ "$wait_elapsed" -lt "$timeout_secs" ]]; do
 		all_done=$_PREFETCH_BOOL_TRUE
@@ -57,6 +74,7 @@ _wait_parallel_pids() {
 		fi
 	done
 	if [[ "$all_done" != "$_PREFETCH_BOOL_TRUE" ]]; then
+		wait_rc=124
 		echo "[pulse-wrapper] Parallel gh fetch timeout after ${wait_elapsed}s — killing remaining fetches" >>"$LOGFILE"
 		for pid in "${pids[@]}"; do
 			if kill -0 "$pid" 2>/dev/null; then
@@ -75,7 +93,7 @@ _wait_parallel_pids() {
 	for pid in "${pids[@]}"; do
 		wait "$pid" 2>/dev/null || true
 	done
-	return 0
+	return "$wait_rc"
 }
 
 #######################################

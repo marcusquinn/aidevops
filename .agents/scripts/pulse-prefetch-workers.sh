@@ -29,6 +29,15 @@ _prefetch_batch_refresh() {
 	local _batch_output="" _batch_rc=0
 	local _batch_timeout="${PULSE_BATCH_PREFETCH_TIMEOUT_SECONDS:-180}"
 	[[ "$_batch_timeout" =~ ^[1-9][0-9]*$ ]] || _batch_timeout=180
+	# GH#34527: batch warming must not consume the primary repo-fetch budget.
+	# Reserve the existing 120s parallel cap plus cleanup/publication headroom.
+	if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
+		_batch_timeout=$(_prefetch_remaining_seconds "$_batch_timeout" 150) || {
+			printf '[pulse-wrapper] prefetch_batch_refresh skipped: reserving primary fetch budget (GH#34527)\n' \
+				>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+			return 0
+		}
+	fi
 	if ! declare -F run_cmd_with_timeout >/dev/null 2>&1; then
 		printf '[pulse-wrapper] prefetch_batch_refresh skipped: timeout helper unavailable (non-fatal)\n' \
 			>>"${LOGFILE:-/dev/null}" 2>/dev/null || true

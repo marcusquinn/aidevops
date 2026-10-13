@@ -103,6 +103,11 @@ prefetch_state() {
 	# GH#19963: Batch prefetch via org-level gh search (L3 cache layer).
 	_prefetch_batch_refresh
 
+	# GH#34527: use the cycle-clamped watchdog deadline, not independent caps
+	# whose sum can exhaust every cycle before state/scope publication.
+	local parallel_timeout=120 prefetch_rc=0
+	parallel_timeout=$(_prefetch_remaining_seconds 120) || return 124
+
 	# Temp dir for parallel fetches
 	local tmpdir
 	tmpdir=$(mktemp -d)
@@ -123,7 +128,7 @@ prefetch_state() {
 	# GH#15060: Raised from 60s to 120s. With 13 repos and repos having 100+ PRs,
 	# the GraphQL responses are large and rate limiting serializes parallel calls.
 	# 60s caused silent timeouts producing "Open PRs (0)" on large backlogs.
-	_wait_parallel_pids 120 "${pids[@]}"
+	_wait_parallel_pids "$parallel_timeout" "${pids[@]}" || prefetch_rc=$?
 
 	# Assemble state file in repo order
 	_assemble_state_file "$tmpdir"
@@ -131,23 +136,35 @@ prefetch_state() {
 	# Clean up
 	rm -rf "$tmpdir"
 
+	# Persist scope before optional helpers: their runtime grows with repo count.
+	local scope_slugs
+	scope_slugs=$(echo "$repo_entries" | cut -d'|' -f1 | grep . | paste -sd ',' -)
+	export PULSE_SCOPE_REPOS="$scope_slugs"
+	echo "$scope_slugs" >"$SCOPE_FILE"
+	echo "[pulse-wrapper] PULSE_SCOPE_REPOS=${scope_slugs}" >>"$LOGFILE"
+	if [[ "$prefetch_rc" -ne 0 ]]; then
+		printf '\nWARNING: INCOMPLETE primary repo fetch — verify live state before decisions.\n' >>"$STATE_FILE"
+		return "$prefetch_rc"
+	fi
+
 	# t1482: Sub-helpers that call external scripts (gh API, pr-salvage,
 	# gh-failure-miner) get individual timeouts via run_cmd_with_timeout.
 	# If a helper times out, the pulse proceeds without that section —
 	# degraded but functional. Shell functions that only read local state
 	# (priority allocations, queue governor, contribution watch) run
 	# directly since they complete instantly.
-	_append_prefetch_sub_helpers "$repo_entries"
-
-	# Export PULSE_SCOPE_REPOS — comma-separated list of repo slugs that
-	# workers are allowed to create PRs/branches on (t1405, GH#2928).
-	# Workers CAN file issues on any repo (cross-repo self-improvement),
-	# but code changes (branches, PRs) are restricted to this list.
-	local scope_slugs
-	scope_slugs=$(echo "$repo_entries" | cut -d'|' -f1 | grep . | paste -sd ',' -)
-	export PULSE_SCOPE_REPOS="$scope_slugs"
-	echo "$scope_slugs" >"$SCOPE_FILE"
-	echo "[pulse-wrapper] PULSE_SCOPE_REPOS=${scope_slugs}" >>"$LOGFILE"
+	local secondary_timeout=0
+	if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
+		if secondary_timeout=$(_prefetch_remaining_seconds "$PRE_RUN_STAGE_TIMEOUT"); then
+			run_cmd_with_timeout "$secondary_timeout" _append_prefetch_sub_helpers "$repo_entries" || {
+				echo "[pulse-wrapper] Optional prefetch helpers did not complete within ${secondary_timeout}s — primary state and scope preserved (GH#34527)" >>"$LOGFILE"
+			}
+		else
+			echo "[pulse-wrapper] Optional prefetch helpers deferred: stage publication reserve reached (GH#34527)" >>"$LOGFILE"
+		fi
+	else
+		_append_prefetch_sub_helpers "$repo_entries"
+	fi
 
 	local repo_count
 	repo_count=$(echo "$repo_entries" | wc -l | tr -d ' ')
