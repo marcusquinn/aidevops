@@ -212,8 +212,10 @@ register_worktree() {
 	return 0
 }
 STUB_OWNER_INFO=""
+STUB_OWNER_READ_RC=0
 check_worktree_owner_snapshot() {
 	local wt_path="$1"
+	[[ "$STUB_OWNER_READ_RC" -eq 0 ]] || return "$STUB_OWNER_READ_RC"
 	[[ -n "$wt_path" && -n "$STUB_OWNER_INFO" ]] || return 1
 	printf '%s\n' "$STUB_OWNER_INFO"
 	return 0
@@ -275,6 +277,11 @@ _dlw_exec_detached() {
 STUB_REFRESH_STATE="OPEN"
 
 gh() {
+	# The final assignment fence requests the scalar REST state, not the object.
+	if [[ "${1:-}" == "api" && "${2:-}" == repos/owner/repo/issues/* && "${4:-}" == '.state' ]]; then
+		printf '%s\n' "$STUB_REFRESH_STATE" | tr '[:upper:]' '[:lower:]'
+		return 0
+	fi
 	# The fresh runner-capability gate projects the REST issue object.
 	if [[ "${1:-}" == "api" && "${2:-}" == repos/owner/repo/issues/* && "${4:-}" == '{number, state, body, labels}' ]]; then
 		local issue_ref="${2##*/}" state_lower=""
@@ -559,6 +566,27 @@ else
 fi
 
 # =============================================================================
+# Registry read failures must not reach the atomic-claim fallback or preparation.
+# A claim stub that would succeed ensures this exercises the dispatcher guard.
+STUB_OWNER_READ_RC=2
+STUB_CLAIM_WORKTREE_RC=0
+CLAIMED_WORKTREE_ARGS=""
+REGISTERED_WORKTREE_ARGS=""
+if _dlw_precreate_worktree "66666" "$FAKE_REPO"; then
+	rc=0
+else
+	rc=$?
+fi
+if [[ "$rc" -eq 1 && -z "$CLAIMED_WORKTREE_ARGS" && -z "$REGISTERED_WORKTREE_ARGS" &&
+	"${_DLW_PRECREATE_FAILURE_REASON:-}" == "worktree_owner_unavailable" ]]; then
+	pass "unavailable registry rejects reuse without attempting an ownership mutation"
+else
+	fail "unavailable registry rejects reuse without attempting an ownership mutation" \
+		"rc=$rc claim='$CLAIMED_WORKTREE_ARGS' reason='${_DLW_PRECREATE_FAILURE_REASON:-}'"
+fi
+STUB_OWNER_READ_RC=0
+STUB_CLAIM_WORKTREE_RC=1
+
 # Test 3e (GH#33026): a live mismatched owner's refusal is classified and keyed
 # to its process generation; the owner row is read, never removed or replaced.
 # =============================================================================

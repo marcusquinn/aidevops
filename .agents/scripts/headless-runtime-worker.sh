@@ -1765,12 +1765,16 @@ _hrw_transfer_authorized_continuation_owner() {
 		return 1
 	fi
 
-	local owner_info=""
-	owner_info=$(check_worktree_owner_snapshot "$work_dir" 2>/dev/null || true)
-	[[ -n "$owner_info" ]] || {
+	local owner_info="" snapshot_status=0
+	owner_info=$(check_worktree_owner_snapshot "$work_dir" 2>/dev/null) || snapshot_status=$?
+	if [[ "$snapshot_status" -eq 1 ]]; then
 		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_OWNER_ABSENT"
 		return 1
-	}
+	fi
+	if [[ "$snapshot_status" -ne 0 || -z "$owner_info" ]]; then
+		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_owner_unavailable"
+		return 1
+	fi
 
 	local owner_pid="" owner_session="" owner_batch="" owner_task="" created_at="" owner_process_start=""
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at owner_process_start <<<"$owner_info"

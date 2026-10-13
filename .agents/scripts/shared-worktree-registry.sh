@@ -268,12 +268,8 @@ _wt_normalize_path() {
 
 	local normalized=""
 	if command -v python3 >/dev/null 2>&1; then
-		normalized=$(
-			python3 - "$raw_path" <<'PY' 2>/dev/null || true
-import os, sys
-print(os.path.realpath(sys.argv[1]))
-PY
-		)
+		normalized=$(python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry-platform.py" \
+			normalize "$raw_path" 2>/dev/null) || normalized=""
 	fi
 
 	if [[ -z "$normalized" ]]; then
@@ -290,33 +286,17 @@ PY
 
 _wt_registry_resolve_path_python() {
 	local requested_path="$1"
-	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 2
+	local output_mode="${2:-path}"
 	command -v python3 >/dev/null 2>&1 || return 2
 
-	python3 - "$WORKTREE_REGISTRY_DB" "$requested_path" <<'PY' 2>/dev/null
-import os
-import sqlite3
-import sys
-
-database_path, requested_path = sys.argv[1:]
-normalized = os.path.realpath(requested_path)
-try:
-    with sqlite3.connect(database_path) as connection:
-        rows = connection.execute("SELECT worktree_path FROM worktree_owners")
-        for (stored_path,) in rows:
-            if stored_path and os.path.realpath(stored_path) == normalized:
-                print(stored_path)
-                raise SystemExit(0)
-except sqlite3.Error:
-    raise SystemExit(2)
-print(normalized)
-PY
+	python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry.py" \
+		"$WORKTREE_REGISTRY_DB" "$requested_path" "$output_mode" 2>/dev/null
 	return $?
 }
 
-# Resolve the registry key for a worktree path. Resolve all legacy rows in one
-# Python process so a lookup remains O(rows) without spawning one interpreter
-# per row. If Python or SQLite access fails, retain the portable shell fallback.
+# Resolve the registry key for a worktree path. Indexed current keys avoid the
+# legacy alias scan. If Python or SQLite access fails, retain the portable shell
+# fallback for this path-only API; ownership snapshots never use that fallback.
 _wt_registry_lookup_path() {
 	local requested_path="$1"
 	local resolved_path=""
@@ -534,95 +514,9 @@ _wt_claim_owner_record() {
 	local task_id="$6"
 	local owner_comm="$7" owner_process_start="$8" trusted_opencode_session="$9"
 
-	python3 - "$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" "$session_id" \
-		"$batch_id" "$task_id" "$owner_comm" "$owner_process_start" "$trusted_opencode_session" <<'PY' || return 1
-import os
-import sqlite3
-import sys
-
-(
-    db_path,
-    worktree_path,
-    branch,
-    owner_pid_text,
-    session_id,
-    batch_id,
-    task_id,
-    owner_comm,
-    owner_process_start,
-    trusted_session_text,
-) = sys.argv[1:]
-owner_pid = int(owner_pid_text)
-trusted_session = trusted_session_text == "1"
-
-connection = sqlite3.connect(db_path, isolation_level=None)
-try:
-    connection.execute("BEGIN IMMEDIATE")
-    existing_owner = connection.execute(
-        """SELECT owner_pid, COALESCE(owner_session, '')
-           FROM worktree_owners WHERE worktree_path = ?""",
-        (worktree_path,),
-    ).fetchone()
-    if (
-        existing_owner
-        and isinstance(existing_owner[0], int)
-        and existing_owner[0] != owner_pid
-    ):
-        try:
-            os.kill(existing_owner[0], 0)
-        except ProcessLookupError:
-            connection.execute(
-                """DELETE FROM worktree_owners
-                   WHERE worktree_path = ? AND owner_pid = ?
-                     AND COALESCE(owner_session, '') = ?""",
-                (worktree_path, existing_owner[0], existing_owner[1]),
-            )
-        except (PermissionError, OSError):
-            pass
-
-    connection.execute(
-        """UPDATE worktree_owners
-           SET branch = ?, owner_pid = ?, owner_session = ?, owner_batch = ?,
-               task_id = ?, owner_comm = ?, owner_process_start = ?, owner_dead_seen_at = ''
-           WHERE worktree_path = ?
-             AND (owner_pid = ? OR (? AND owner_session = ?))""",
-        (
-            branch,
-            owner_pid,
-            session_id,
-            batch_id,
-            task_id,
-            owner_comm,
-            owner_process_start,
-            worktree_path,
-            owner_pid,
-            trusted_session,
-            session_id,
-        ),
-    )
-    connection.execute(
-        """INSERT OR IGNORE INTO worktree_owners
-           (worktree_path, branch, owner_pid, owner_session, owner_batch,
-            task_id, owner_comm, owner_process_start, owner_dead_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')""",
-        (worktree_path, branch, owner_pid, session_id, batch_id, task_id, owner_comm, owner_process_start),
-    )
-    final_owner = connection.execute(
-        """SELECT owner_pid, COALESCE(owner_session, '')
-           FROM worktree_owners WHERE worktree_path = ?""",
-        (worktree_path,),
-    ).fetchone()
-    connection.execute("COMMIT")
-except Exception:
-    if connection.in_transaction:
-        connection.execute('ROLLBACK')
-    raise
-finally:
-    connection.close()
-
-if final_owner:
-    print(f"{final_owner[0]}|{final_owner[1]}")
-PY
+	python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry-owner.py" claim \
+		"$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" "$session_id" \
+		"$batch_id" "$task_id" "$owner_comm" "$owner_process_start" "$trusted_opencode_session" || return 1
 	return 0
 }
 
@@ -722,74 +616,11 @@ _wt_compare_and_swap_owner_record() {
 	shift
 	local expected_process_start="$1"
 
-	python3 - "$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" \
+	python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry-owner.py" transfer \
+		"$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" \
 		"$session_id" "$batch_id" "$task_id" "$owner_comm" "$owner_process_start" \
 		"$expected_owner_pid" "$expected_session_id" "$expected_batch_id" \
-		"$expected_task_id" "$expected_created_at" "$expected_process_start" <<'PY' || return 1
-import sqlite3
-import sys
-
-(
-    db_path,
-    worktree_path,
-    branch,
-    owner_pid_text,
-    session_id,
-    batch_id,
-    task_id,
-    owner_comm,
-    owner_process_start,
-    expected_owner_pid_text,
-    expected_session_id,
-    expected_batch_id,
-    expected_task_id,
-    expected_created_at,
-    expected_process_start,
-) = sys.argv[1:]
-
-connection = sqlite3.connect(db_path, isolation_level=None)
-try:
-    connection.execute("BEGIN IMMEDIATE")
-    cursor = connection.execute(
-        """UPDATE worktree_owners
-           SET branch = ?, owner_pid = ?, owner_session = ?, owner_batch = ?,
-               task_id = ?, owner_comm = ?, owner_process_start = ?, owner_dead_seen_at = '',
-               created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-           WHERE worktree_path = ?
-             AND owner_pid = ?
-             AND COALESCE(owner_session, '') = ?
-              AND COALESCE(owner_batch, '') = ?
-              AND COALESCE(task_id, '') = ?
-              AND COALESCE(created_at, '') = ?
-              AND COALESCE(owner_process_start, '') = ?""",
-        (
-            branch,
-            int(owner_pid_text),
-            session_id,
-            batch_id,
-            task_id,
-            owner_comm,
-            owner_process_start,
-            worktree_path,
-            int(expected_owner_pid_text),
-            expected_session_id,
-            expected_batch_id,
-            expected_task_id,
-            expected_created_at,
-            expected_process_start,
-        ),
-    )
-    if cursor.rowcount != 1:
-        connection.execute('ROLLBACK')
-        sys.exit(1)
-    connection.execute("COMMIT")
-except Exception:
-    if connection.in_transaction:
-        connection.execute("ROLLBACK")
-    raise
-finally:
-    connection.close()
-PY
+		"$expected_task_id" "$expected_created_at" "$expected_process_start" || return 1
 	return 0
 }
 
@@ -1087,27 +918,12 @@ worktree_owner_session_has_newer_claim() {
 # Arguments:
 #   $1 - worktree path
 # Output: owner info (pid|session|batch|task|created_at|process_start) or empty
-# Returns: 0 if owned, 1 if not owned
+# Returns: 0 if owned, 1 if absent, 2 if unavailable (including legacy schema).
+# Read-only: schema migration belongs to registry mutation, never observation.
 check_worktree_owner_snapshot() {
 	local wt_path="$1"
-
-	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
-	_init_registry_db || return 1
-	wt_path=$(_wt_registry_lookup_path "$wt_path")
-
-	local owner_info
-	owner_info=$(_wt_sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
-        SELECT owner_pid, owner_session, owner_batch, task_id, created_at,
-               COALESCE(owner_process_start, '')
-        FROM worktree_owners
-        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
-    " 2>/dev/null || printf '')
-
-	if [[ -n "$owner_info" ]]; then
-		printf '%s\n' "$owner_info"
-		return 0
-	fi
-	return 1
+	_wt_registry_resolve_path_python "$wt_path" snapshot
+	return $?
 }
 
 # Check who owns a worktree while preserving the historical five-field output.
@@ -1120,7 +936,7 @@ check_worktree_owner() {
 	local owner_info=""
 	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at="" owner_process_start=""
 
-	owner_info=$(check_worktree_owner_snapshot "$wt_path") || return 1
+	owner_info=$(check_worktree_owner_snapshot "$wt_path") || return $?
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at owner_process_start <<<"$owner_info"
 	printf '%s|%s|%s|%s|%s\n' "$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$owner_created_at"
 	return 0
@@ -1193,18 +1009,8 @@ _wt_owner_dead_cooldown_expired() {
 _wt_pid_is_definitely_absent() {
 	local owner_pid="$1"
 	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
-	python3 - "$owner_pid" <<'PY' >/dev/null 2>&1 || return 1
-import os
-import sys
-
-try:
-    os.kill(int(sys.argv[1]), 0)
-except ProcessLookupError:
-    raise SystemExit(0)
-except (PermissionError, OSError, ValueError):
-    raise SystemExit(1)
-raise SystemExit(1)
-PY
+	python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry-platform.py" \
+		pid-absent "$owner_pid" >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -1272,16 +1078,8 @@ _wt_live_process_started_after_registry_row() {
 	verified_process_start=$(_wt_process_start_token_for_pid "$owner_pid") || return 1
 	[[ "$verified_process_start" == "$expected_process_start" ]] || return 1
 
-	LC_ALL=C python3 - "$created_at" "$process_lstart" <<'PY' >/dev/null 2>&1 || return 1
-from datetime import datetime, timezone
-import sys
-
-created_at, process_lstart = sys.argv[1:]
-created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-process_started = datetime.strptime(process_lstart.strip(), "%a %b %d %H:%M:%S %Y")
-process_started = process_started.astimezone(timezone.utc)
-raise SystemExit(0 if process_started > created else 1)
-PY
+	LC_ALL=C python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry-platform.py" \
+		started-after "$created_at" "$process_lstart" >/dev/null 2>&1 || return 1
 	return 0
 }
 

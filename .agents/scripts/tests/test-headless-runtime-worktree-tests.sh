@@ -793,6 +793,43 @@ test_worker_worktree_continuation_absent_owner_race_fails_closed() {
 	return 0
 }
 
+test_worker_worktree_continuation_rejects_unavailable_snapshot() {
+	local worktree_dir="${TEST_ROOT}/continuation-owner-unavailable"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	set_continuation_transfer_env "99999" "generation-7" "batch-7" "22438" "2026-07-18T00:00:03Z"
+	local claim_calls=0 transfer_calls=0 injected_snapshot_status=0
+	claim_worktree_ownership() {
+		claim_calls=$((claim_calls + 1))
+		return 0
+	}
+	check_worktree_owner_snapshot() {
+		return "$injected_snapshot_status"
+	}
+	transfer_worktree_ownership_if_expected() {
+		transfer_calls=$((transfer_calls + 1))
+		return 0
+	}
+
+	local status=0 reason=""
+	for injected_snapshot_status in 2 0; do
+		status=0
+		_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+		reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+		if [[ "$status" -ne 0 && "$claim_calls" -eq 0 && "$transfer_calls" -eq 0 &&
+			"$reason" == "worker_worktree_owner_unavailable" ]]; then
+			print_result "continuation rejects unavailable/empty snapshot (status=$injected_snapshot_status) without mutations" 0
+		else
+			print_result "continuation rejects unavailable/empty snapshot (status=$injected_snapshot_status) without mutations" 1 \
+				"status=$status claim_calls=$claim_calls transfer_calls=$transfer_calls reason=$reason"
+		fi
+	done
+	unset -f claim_worktree_ownership check_worktree_owner_snapshot transfer_worktree_ownership_if_expected 2>/dev/null || true
+	clear_continuation_transfer_env
+	return 0
+}
+
 test_worker_worktree_continuation_classifies_task_mismatch() {
 	local worktree_dir="${TEST_ROOT}/continuation-task-mismatch"
 	mkdir -p "$worktree_dir"

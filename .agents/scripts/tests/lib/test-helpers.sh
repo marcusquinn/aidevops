@@ -126,7 +126,7 @@ _test_discover_shared_deps() {
 }
 
 # -----------------------------------------------------------------------------
-# _test_copy_shared_deps <src_dir> <dest_dir>
+# _test_copy_shared_deps <src_dir> <dest_dir> [additional-sibling ...]
 # -----------------------------------------------------------------------------
 # Copies shared-constants.sh and every sibling it sources from <src_dir> into
 # <dest_dir>. The destination must already exist.
@@ -138,6 +138,7 @@ _test_discover_shared_deps() {
 # Arguments:
 #   $1 — source directory (typically `.agents/scripts/`)
 #   $2 — destination directory (typically a `mktemp -d` tmpdir)
+#   Remaining arguments — explicitly needed lazy-loaded sibling modules
 #
 # Returns:
 #   0 on success, 1 on failure (with FAIL: message on stderr).
@@ -145,6 +146,7 @@ _test_discover_shared_deps() {
 _test_copy_shared_deps() {
 	local src_dir="$1"
 	local dest_dir="$2"
+	shift 2
 
 	if [[ ! -d "$src_dir" ]]; then
 		printf 'FAIL: source directory not found: %s\n' "$src_dir" >&2
@@ -165,6 +167,9 @@ _test_copy_shared_deps() {
 	local sibling
 	local deps
 	deps=$(_test_discover_shared_deps "$src_dir") || return 1
+	for sibling in "$@"; do
+		deps="${deps}${deps:+$'\n'}${sibling}"
+	done
 
 	# Iterate over discovered deps. Empty `deps` is fine — means no siblings.
 	while IFS= read -r sibling; do
@@ -178,6 +183,12 @@ _test_copy_shared_deps() {
 			printf 'FAIL: could not copy %s to %s\n' "$sibling" "$dest_dir" >&2
 			return 1
 		fi
+		# Keep a facade's same-stem Python entry point and split companions together.
+		local companion
+		for companion in "${src_dir}/${sibling%.sh}.py" "${src_dir}/${sibling%.sh}-"*.py; do
+			[[ -f "$companion" ]] || continue
+			cp "$companion" "$dest_dir/" || return 1
+		done
 	done <<<"$deps"
 
 	# Recursively discover sub-library deps. Split wrapper modules can source

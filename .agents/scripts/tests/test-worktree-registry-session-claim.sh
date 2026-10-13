@@ -9,6 +9,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REGISTRY_LIB="${SCRIPT_DIR}/../shared-worktree-registry.sh"
 WORKTREE_HELPER="${SCRIPT_DIR}/../worktree-helper.sh"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-$(command -v git)}"
 TEST_ROOT=$(mktemp -d)
 WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
 WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
@@ -77,14 +78,14 @@ create_linked_worktree_fixture() {
 	local branch="$3"
 
 	mkdir -p "$canonical_path"
-	/usr/bin/git -C "$canonical_path" init -q -b main || return 1
-	/usr/bin/git -C "$canonical_path" config user.name Test || return 1
-	/usr/bin/git -C "$canonical_path" config user.email test@example.invalid || return 1
-	/usr/bin/git -C "$canonical_path" config commit.gpgsign false || return 1
+	"$GIT_BIN" -C "$canonical_path" init -q -b main || return 1
+	"$GIT_BIN" -C "$canonical_path" config user.name Test || return 1
+	"$GIT_BIN" -C "$canonical_path" config user.email test@example.invalid || return 1
+	"$GIT_BIN" -C "$canonical_path" config commit.gpgsign false || return 1
 	printf 'seed\n' >"${canonical_path}/README.md" || return 1
-	/usr/bin/git -C "$canonical_path" add README.md || return 1
-	/usr/bin/git -C "$canonical_path" commit -q -m seed || return 1
-	/usr/bin/git -C "$canonical_path" worktree add -q -b "$branch" "$linked_path" || return 1
+	"$GIT_BIN" -C "$canonical_path" add README.md || return 1
+	"$GIT_BIN" -C "$canonical_path" commit -q -m seed || return 1
+	"$GIT_BIN" -C "$canonical_path" worktree add -q -b "$branch" "$linked_path" || return 1
 	return 0
 }
 
@@ -316,15 +317,15 @@ test_canonical_paths_are_purged_without_signalling_live_owner() {
 	local canonical_path="${TEST_ROOT}/canonical"
 	local linked_path="${TEST_ROOT}/linked"
 	mkdir -p "$canonical_path"
-	/usr/bin/git -C "$canonical_path" init -q -b develop
-	/usr/bin/git -C "$canonical_path" config user.name Test
-	/usr/bin/git -C "$canonical_path" config user.email test@example.invalid
-	/usr/bin/git -C "$canonical_path" config commit.gpgsign false
+	"$GIT_BIN" -C "$canonical_path" init -q -b develop
+	"$GIT_BIN" -C "$canonical_path" config user.name Test
+	"$GIT_BIN" -C "$canonical_path" config user.email test@example.invalid
+	"$GIT_BIN" -C "$canonical_path" config commit.gpgsign false
 	printf 'seed\n' >"${canonical_path}/README.md"
-	/usr/bin/git -C "$canonical_path" add README.md
-	/usr/bin/git -C "$canonical_path" commit -q -m seed
-	/usr/bin/git -C "$canonical_path" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
-	/usr/bin/git -C "$canonical_path" worktree add -q -b feature/linked "$linked_path"
+	"$GIT_BIN" -C "$canonical_path" add README.md
+	"$GIT_BIN" -C "$canonical_path" commit -q -m seed
+	"$GIT_BIN" -C "$canonical_path" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	"$GIT_BIN" -C "$canonical_path" worktree add -q -b feature/linked "$linked_path"
 
 	_init_registry_db
 	sqlite3 "$WORKTREE_REGISTRY_DB" "
@@ -593,8 +594,93 @@ test_owner_writers_fail_when_process_generation_is_unavailable() {
 	return 0
 }
 
+test_snapshot_is_read_only() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/snapshot-source"
+	local rc=0 expected="" before=""
+	mkdir -p "$wt_path"
+	register_worktree "$wt_path" feature/snapshot --owner-pid "$OWNER_PID" --session snapshot || rc=1
+	expected=$(check_worktree_owner_snapshot "$wt_path") || rc=1
+	before=$(cksum "$WORKTREE_REGISTRY_DB")
+	(
+		_init_registry_db() { return 1; }
+		_wt_sqlite3() { return 1; }
+		[[ "$(check_worktree_owner_snapshot "$wt_path")" == "$expected" ]] || exit 1
+		[[ "$(check_worktree_owner "$wt_path")" == "${expected%|*}" ]] || exit 1
+	) || rc=1
+	[[ "$(cksum "$WORKTREE_REGISTRY_DB")" == "$before" ]] || rc=1
+	print_result "snapshot reads without migrations or SQLite CLI and preserves database bytes" "$rc"
+	return 0
+}
+
+test_snapshot_distinguishes_absence_from_failure() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/snapshot-absent"
+	local rc=0 status=0 output="" before=""
+	output=$(check_worktree_owner_snapshot "$wt_path") || status=$?
+	[[ "$status" -eq 1 && -z "$output" && ! -e "$WORKTREE_REGISTRY_DB" ]] || rc=1
+	_init_registry_db || rc=1
+	status=0
+	output=$(check_worktree_owner_snapshot "$wt_path") || status=$?
+	[[ "$status" -eq 1 && -z "$output" ]] || rc=1
+	# Missing required schema is unknown, never an invitation to migrate on read.
+	sqlite3 "$WORKTREE_REGISTRY_DB" 'DROP TABLE worktree_owners; CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY);' || rc=1
+	before=$(cksum "$WORKTREE_REGISTRY_DB")
+	status=0
+	output=$(check_worktree_owner_snapshot "$wt_path") || status=$?
+	[[ "$status" -eq 2 && -z "$output" && "$(cksum "$WORKTREE_REGISTRY_DB")" == "$before" ]] || rc=1
+	printf 'not a database\n' >"$WORKTREE_REGISTRY_DB"
+	status=0
+	output=$(check_worktree_owner "$wt_path") || status=$?
+	[[ "$status" -eq 2 && -z "$output" ]] || rc=1
+	print_result "snapshot distinguishes absent database and owner from incompatible or corrupt database" "$rc"
+	return 0
+}
+
+test_snapshot_reads_during_uncommitted_writer() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/snapshot-concurrent"
+	local rc=0 expected="" attempt=0
+	local ready="${TEST_ROOT}/snapshot-writer-ready" release="${TEST_ROOT}/snapshot-writer-release"
+	mkdir -p "$wt_path"
+	register_worktree "$wt_path" feature/snapshot --owner-pid "$OWNER_PID" --session original || rc=1
+	expected=$(check_worktree_owner_snapshot "$wt_path") || rc=1
+	python3 - "$WORKTREE_REGISTRY_DB" "$ready" "$release" <<'PY' &
+from pathlib import Path
+import sqlite3
+import sys
+import time
+database, ready, release = sys.argv[1:]
+with sqlite3.connect(database) as connection:
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("UPDATE worktree_owners SET owner_session = 'uncommitted'")
+    Path(ready).touch()
+    deadline = time.monotonic() + 10
+    while not Path(release).exists():
+        if time.monotonic() >= deadline:
+            raise SystemExit(1)
+        time.sleep(0.02)
+    connection.rollback()
+PY
+	LOCK_PID=$!
+	while [[ ! -f "$ready" && "$attempt" -lt 100 ]]; do
+		sleep 0.02
+		attempt=$((attempt + 1))
+	done
+	[[ -f "$ready" ]] || rc=1
+	[[ "$(check_worktree_owner_snapshot "$wt_path")" == "$expected" ]] || rc=1
+	touch "$release"
+	wait "$LOCK_PID" || rc=1
+	LOCK_PID=""
+	print_result "snapshot reads committed owner while another writer holds its transaction" "$rc"
+	return 0
+}
+
 main() {
 	start_live_pids
+	test_snapshot_is_read_only
+	test_snapshot_distinguishes_absence_from_failure
+	test_snapshot_reads_during_uncommitted_writer
 	test_registry_sqlite_contention_is_bounded
 	test_registry_owner_verification_command
 	test_source_preflight_reclaims_only_dead_same_session_owner

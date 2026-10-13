@@ -82,10 +82,9 @@ install_helper_with_libs() {
 	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
 	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
 	cp "${SOURCE_HELPER%/*}/profile-contribution-chart.py" "${helper_dir}/profile-contribution-chart.py"
-	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" || return 1
+	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh || return 1
 	cp "${SOURCE_HELPER%/*}/audit-worktree-removal-helper.sh" \
 		"${SOURCE_HELPER%/*}/shared-sqlite-backup.sh" \
-		"${SOURCE_HELPER%/*}/shared-worktree-registry.sh" \
 		"${SOURCE_HELPER%/*}/portable-stat.sh" \
 		"${SOURCE_HELPER%/*}/screen-time-interval-engine.py" \
 		"${SOURCE_HELPER%/*}/screen_time_interval_common.py" \

@@ -830,11 +830,11 @@ _dlw_resolve_seed_base_inner() {
 _dlw_capture_reused_worktree_owner() {
 	local issue_number="$1"
 	local worktree_path="$2"
-	declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 1
+	declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 2
 
 	local owner_info=""
-	owner_info=$(check_worktree_owner_snapshot "$worktree_path" 2>/dev/null || true)
-	[[ -n "$owner_info" ]] || return 1
+	owner_info=$(check_worktree_owner_snapshot "$worktree_path" 2>/dev/null) || return $?
+	[[ -n "$owner_info" ]] || return 2
 
 	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at="" owner_process_start=""
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at owner_process_start <<<"$owner_info"
@@ -935,6 +935,29 @@ _dlw_reset_precreated_worktree_state() {
 	return 0
 }
 
+_dlw_resume_existing_worktree() {
+	local issue_number="$1" repo_path="$2" worktree_path="$3" branch="$4"
+	_DLW_WORKTREE_PATH="$worktree_path"
+	_DLW_WORKTREE_BRANCH="$branch"
+	_DLW_WORKTREE_REUSED=1
+	local has_continuation_owner=0 owner_snapshot_status=0
+	_dlw_capture_reused_worktree_owner "$issue_number" "$worktree_path" || owner_snapshot_status=$?
+	if [[ "$owner_snapshot_status" -eq 0 ]]; then
+		has_continuation_owner=1
+	elif [[ "$owner_snapshot_status" -ne 1 ]]; then
+		_DLW_PRECREATE_FAILURE_REASON="worktree_owner_unavailable"
+		echo "[dispatch_with_dedup] Refusing reused worktree with unavailable ownership evidence for #${issue_number}: ${worktree_path}" >>"$LOGFILE"
+		return 1
+	elif ! _dlw_claim_unowned_reused_worktree "$issue_number" "$worktree_path" "$branch"; then
+		_dlw_capture_live_owner_refusal "$worktree_path" || true
+		return 1
+	fi
+	_dlw_prepare_existing_worktree "$worktree_path" "$repo_path" "$has_continuation_owner"
+	_dlw_restore_worktree_deps "$worktree_path" "$repo_path"
+	echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${worktree_path} (branch: ${branch})" >>"$LOGFILE"
+	return 0
+}
+
 _dlw_precreate_worktree() {
 	local issue_number="$1"
 	local repo_path="$2"
@@ -963,21 +986,8 @@ _dlw_precreate_worktree() {
 	done < <(git -C "$repo_path" worktree list 2>/dev/null)
 
 	if [[ -n "$_existing_path" ]]; then
-		_DLW_WORKTREE_PATH="$_existing_path"
-		_DLW_WORKTREE_BRANCH="$_existing_branch"
-		_DLW_WORKTREE_REUSED=1
-		local _has_continuation_owner=0
-		if _dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH"; then
-			_has_continuation_owner=1
-		elif ! _dlw_claim_unowned_reused_worktree "$issue_number" "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH"; then
-			_dlw_capture_live_owner_refusal "$_DLW_WORKTREE_PATH" || true
-			return 1
-		fi
-		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path" "$_has_continuation_owner"
-		# Restore gitignored deps that git clean -fd just wiped
-		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
-		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
-		return 0
+		_dlw_resume_existing_worktree "$issue_number" "$repo_path" "$_existing_path" "$_existing_branch"
+		return $?
 	fi
 
 	# --- Create new worktree with issue-linked branch name ---
