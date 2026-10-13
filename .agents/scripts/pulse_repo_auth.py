@@ -14,7 +14,36 @@ import tempfile
 
 from github_app_auth import AuthError, cached_token
 from pulse_auth_config import paths, registry, settings, update_registry
-from pulse_gh_policy import api_endpoint, operation, option_values, repository, valid_slug
+from pulse_gh_policy import api_endpoint, operation, option_values
+
+SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+
+
+def valid_slug(value):
+    return bool(SLUG.fullmatch(value)) and all(part not in (".", "..") for part in value.split("/"))
+
+
+def repository(args):
+    candidates = option_values(args, "--repo", "-R")
+    context = os.environ.get("AIDEVOPS_PULSE_REPO")
+    if context:
+        candidates.append(context)
+    if len(args) > 1 and args[0] == "api":
+        match = re.match(r"/?repos/([^/?#]+/[^/?#]+)(?:[/?#]|$)", api_endpoint(args))
+        if match:
+            candidates.append(match[1])
+        fields = option_values(args, "--field", "-F") + option_values(args, "--raw-field", "-f")
+        owners = [value[6:] for value in fields if value.startswith("owner=")]
+        names = [value[5:] for value in fields if value.startswith("name=")]
+        if api_endpoint(args).strip("/") == "graphql" and owners and names:
+            candidates.extend(owner + "/" + name for owner in owners for name in names)
+        for field in fields:
+            if field.startswith("q="):
+                candidates.extend(re.findall(r"(?:^|\s)repo:([^\s]+)", field[2:]))
+    normalized = {candidate.lower() for candidate in candidates}
+    if len(normalized) != 1 or not all(valid_slug(value) for value in normalized):
+        raise AuthError("Pulse App reads require one explicit repository (--repo, REST path or AIDEVOPS_PULSE_REPO)")
+    return normalized.pop()
 
 
 def app_environment(token, installation, config_dir):

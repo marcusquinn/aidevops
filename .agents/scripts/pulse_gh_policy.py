@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Classify Pulse gh commands and resolve their explicit repository scope."""
+"""Classify Pulse gh commands without invoking a transport or reading credentials."""
 
 import os
 import re
 
 from github_app_auth import AuthError
 
-SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 READS = {"issue": {"list", "view"}, "pr": {"list", "view", "checks", "diff"},
          "repo": {"view"}, "search": {"issues", "prs", "code", "commits"},
          "run": {"list", "view"}, "workflow": {"list", "view"},
@@ -16,10 +15,6 @@ WRITES = {"issue": {"create", "edit", "comment", "close", "reopen", "delete", "t
           "pr": {"create", "edit", "comment", "close", "reopen", "merge", "review", "ready", "lock", "unlock", "update-branch"},
           "run": {"cancel", "rerun", "delete"}, "workflow": {"run", "enable", "disable"},
           "release": {"create", "edit", "delete", "upload"}}
-
-
-def valid_slug(value):
-    return bool(SLUG.fullmatch(value)) and all(part not in (".", "..") for part in value.split("/"))
 
 
 def option_values(args, long, short=None):
@@ -37,9 +32,10 @@ def option_values(args, long, short=None):
 
 
 def api_endpoint(args):
-    value_options = {"--method", "-X", "--field", "-F", "--raw-field", "-f",
-                     "--header", "-H", "--input", "--hostname", "--jq", "-q",
-                     "--template", "-t", "--preview", "-p", "--cache"}
+    # Keep each long option paired with its alias so the two forms cannot drift.
+    aliases = {"--method": "-X", "--field": "-F", "--raw-field": "-f",
+               "--header": "-H", "--jq": "-q", "--template": "-t", "--preview": "-p"}
+    value_options = set(aliases) | set(aliases.values()) | {"--input", "--hostname", "--cache"}
     boolean_options = {"--include", "-i", "--paginate", "--slurp", "--silent", "--verbose"}
     endpoints = []
     skip = False
@@ -104,26 +100,3 @@ def operation(args):
     if len(args) > 1 and args[1] in WRITES.get(args[0], set()):
         return "write"
     return api_operation(args) if args[0] == "api" else "unknown"
-
-
-def repository(args):
-    candidates = option_values(args, "--repo", "-R")
-    context = os.environ.get("AIDEVOPS_PULSE_REPO")
-    if context:
-        candidates.append(context)
-    if len(args) > 1 and args[0] == "api":
-        match = re.match(r"/?repos/([^/?#]+/[^/?#]+)(?:[/?#]|$)", api_endpoint(args))
-        if match:
-            candidates.append(match[1])
-        fields = option_values(args, "--field", "-F") + option_values(args, "--raw-field", "-f")
-        owners = [value[6:] for value in fields if value.startswith("owner=")]
-        names = [value[5:] for value in fields if value.startswith("name=")]
-        if api_endpoint(args).strip("/") == "graphql" and owners and names:
-            candidates.extend(owner + "/" + name for owner in owners for name in names)
-        for field in fields:
-            if field.startswith("q="):
-                candidates.extend(re.findall(r"(?:^|\s)repo:([^\s]+)", field[2:]))
-    normalized = {candidate.lower() for candidate in candidates}
-    if len(normalized) != 1 or not all(valid_slug(value) for value in normalized):
-        raise AuthError("Pulse App reads require one explicit repository (--repo, REST path or AIDEVOPS_PULSE_REPO)")
-    return normalized.pop()
