@@ -52,6 +52,37 @@ For bounded in-session browser operations, delegate to `playwright` with the tar
 
 OpenCode launches Playwright inside a unique aidevops-managed temporary workspace and supplies that workspace's output directory to the server. Server-generated files and relative filenames supplied to output-producing tools stay there, including when OpenCode itself started in a canonical checkout. Absolute and `..` traversal output paths are rejected. Consume any review artifacts before disconnecting, and always disconnect when browser work finishes so the bounded workspace can be removed.
 
+### Invocation-scoped transport selection (native Task)
+
+When the parent selects a transport, pass a JSON Task `prompt` (optionally preceded
+by an effort marker), not a prose-only transport restriction:
+
+```json
+{
+  "schema": "aidevops.browser-task/v1",
+  "browser_transport": "playwright",
+  "readiness": {},
+  "prompt": "The bounded task: target, authorization, allowed actions, budget, cleanup and stop-on-auth/challenge conditions"
+}
+```
+
+`playwright` here means the standalone package/browser transport. Replace
+`readiness` with the actual selected helper result, retaining its package/browser
+scope. The native Task pre-tool guard **rejects standalone dispatch before child
+creation or resume**, even when that probe is ready: the canonical browser role
+enables MCP and native Task cannot currently impose an invocation-only tool ceiling.
+Use the approved standalone repository runner in the parent instead, or report the
+capability blocker. Do not retry with MCP, another role or a prose-only prompt.
+
+For explicitly approved MCP, set `browser_transport` to `mcp`, use a fresh
+`subagent_type: playwright` (no `task_id`), and supply the default/MCP helper's
+successful `browser-automation` route result. Unknown mandatory dimensions and
+standalone transport evidence are rejected. The envelope does not establish live
+readiness, grant site authority, connect MCP or override existing permission gates.
+Retain all target, action-budget, cleanup and auth/challenge stop rules in `prompt`.
+Legacy calls without transport selection retain their default MCP behavior; arbitrary
+prose is not parsed as a security policy. These guards do not sandbox shell commands.
+
 ### Screenshot and Artifact Handoff
 
 - **Parent request**: Give the child the parent's linked-worktree context, a relative filename such as `editor-desktop.png`, and the managed MCP output directory as the allowed storage boundary. If that directory is not known yet, ask the child to obtain it from the connected server's output; do not invent it or pass an arbitrary absolute destination to the screenshot tool.

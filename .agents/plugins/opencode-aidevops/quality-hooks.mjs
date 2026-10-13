@@ -54,6 +54,7 @@ import {
 } from "./quality-hooks-output-scrub.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
+import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -292,6 +293,7 @@ async function resolveToolSourceContexts(ctx, input, output, sessionId, after = 
 }
 
 async function handleToolBefore(ctx, log, input, output) {
+  assertBrowserTaskTransport(input, output);
   assertLocalOnlyToolCall(input.tool, output.args || {}, {
     ...activeLocalOnlyPolicy(), directory: ctx.repositoryDir,
   });
