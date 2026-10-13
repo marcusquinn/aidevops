@@ -2279,7 +2279,7 @@ import pathlib
 import subprocess
 import sys
 sys.path.insert(0, sys.argv[1])
-from worktree_recovery_archive_copy import copy_without_caches, reserve_archive, retire_missing_attempt
+from worktree_recovery_archive_copy import copy_without_caches, reserve_archive
 
 source, scratch, git = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), sys.argv[4]
 (source / '.gitignore').write_text('node_modules/\n.next/\n.env\n')
@@ -2350,20 +2350,13 @@ import hashlib
 import pathlib
 import sys
 sys.path.insert(0, sys.argv[1])
-from worktree_recovery_archive_copy import reserve_archive, retire_missing_attempt
+from worktree_recovery_archive_copy import reserve_archive
 source, store, git = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]) / 'bounded-attempts', sys.argv[4]
 bucket = next(store.glob('aidevops-worktree-cleanup-*')).resolve()
 # A vanished bucket does not authorize replacement of its reservation.
 # Reproduce the reference host's failure without touching a real archive.
 reservation = next(store.glob('.archive-attempt-*.json'))
 reservation_before = reservation.read_bytes()
-digest = hashlib.sha256(reservation_before).hexdigest()
-try:
-    retire_missing_attempt(source, store, digest)
-except ValueError as error:
-    assert 'still exists' in str(error)
-else:
-    raise AssertionError('existing archive must not be retired')
 bucket.rmdir()
 try:
     reserve_archive(source, store, git)
@@ -2374,84 +2367,7 @@ else:
 assert reservation.read_bytes() == reservation_before
 assert not list(store.glob('aidevops-worktree-cleanup-*'))
 assert source.is_dir()
-for confirmation, message in [('0' * 64, 'confirmation mismatch')]:
-    try:
-        retire_missing_attempt(source, store, confirmation)
-    except ValueError as error:
-        assert message in str(error)
-    else:
-        raise AssertionError('unconfirmed repair must fail')
-trash = store / '.retention-trash'
-trash.mkdir()
-try:
-    retire_missing_attempt(source, store, digest)
-except ValueError as error:
-    assert 'retention state' in str(error)
-else:
-    raise AssertionError('retention state must block repair')
-trash.rmdir()
-# Resume an interruption after history publication, before active-name retirement.
-history = store / f'.reviewed-missing-attempt-{digest}.json'
-history.hardlink_to(reservation)
-history = pathlib.Path(retire_missing_attempt(source, store, digest))
-assert history.read_bytes() == reservation_before
-assert not reservation.exists()
-assert source.is_dir()
-new_bucket = pathlib.Path(reserve_archive(source, store, git))
-assert new_bucket != bucket and new_bucket.is_dir()
-assert history.read_bytes() == reservation_before
 PY
-	return 0
-}
-
-test_repair_missing_creates_snapshot_without_removal() {
-	local repo_path="${TEST_DIR}/repair-repo"
-	local wt_path="${TEST_DIR}/repair-source"
-	local root="${TEST_DIR}/repair-store"
-	local confirmation=""
-	local rc=0
-	create_git_worktree_fixture "$repo_path" "$wt_path" "feature/repair-missing" || rc=1
-	printf 'preserve current user data\n' >"$wt_path/user-note"
-	confirmation=$(
-		python3 - "$SCRIPT_DIR/.." "$wt_path" "$root" "$GIT_BIN" <<'PY'
-import hashlib
-from pathlib import Path
-import sys
-sys.path.insert(0, sys.argv[1])
-from worktree_recovery_archive_copy import reserve_archive
-source, root = Path(sys.argv[2]), Path(sys.argv[3])
-root.mkdir()
-Path(reserve_archive(source, root, sys.argv[4])).rmdir()
-print(hashlib.sha256(next(root.glob('.archive-attempt-*.json')).read_bytes()).hexdigest())
-PY
-	) || rc=1
-	(
-		# shellcheck source=../worktree-helper-cmds.sh
-		source "$COMMANDS_HELPER"
-		worktree_process_platform() {
-			printf '%s\n' nixos
-			return 0
-		}
-		export AIDEVOPS_WORKTREE_TRASH_ROOT="$root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
-		_worktree_recovery_acquire_producer_lock "$root" || exit 1
-		# A separate invocation cannot retire the reservation while another producer owns it.
-		if (cmd_recovery repair-missing "$wt_path" --confirm "$confirmation"); then exit 1; fi
-		_worktree_recovery_release_producer_lock || exit 1
-		cmd_recovery repair-missing "$wt_path" --confirm "$confirmation" || exit 1
-		[[ -f "$wt_path/user-note" ]] || exit 1
-		cmp "$wt_path/user-note" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH/user-note" || exit 1
-		[[ -f "$root/.reviewed-missing-attempt-$confirmation.json" ]] || exit 1
-		_worktree_recovery_archive_is_valid "$WORKTREE_RECOVERABLE_ARCHIVE_PATH" || exit 1
-		if cmd_recovery repair-missing "$wt_path" --confirm "$confirmation"; then exit 1; fi
-		worktree_process_platform() {
-			printf '%s\n' linux
-			return 0
-		}
-		if cmd_recovery repair-missing "$wt_path" --confirm "$confirmation"; then exit 1; fi
-	) || rc=1
-	[[ -f "$wt_path/user-note" ]] || rc=1
-	print_result "repair_missing_creates_snapshot_without_removal" "$rc" \
-		"Expected locked, confirmed, NixOS-only snapshot creation with source and history preserved"
 	return 0
 }
 
@@ -2523,7 +2439,6 @@ test_missing_worktree_physical_parent_alias
 test_permanent_helper_preserves_lock_acquired_after_guard
 test_recovery_store_selects_platform_semantics
 test_archive_copy_filters_before_io_and_bounds_retries
-test_repair_missing_creates_snapshot_without_removal
 test_recovery_store_permission_preflight
 test_recovery_inventory_reports_legacy_buckets_fail_closed
 test_recoverable_archive_then_native_remove

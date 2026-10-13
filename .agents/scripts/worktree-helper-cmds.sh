@@ -1005,12 +1005,6 @@ cmd_recovery() {
 		shift
 		_cmd_recovery_apply "$@" || return 1
 		;;
-	repair-missing)
-		[[ "$#" -eq 4 && "$3" == --confirm ]] || return 1
-		# shellcheck source=worktree-recovery-repair.sh
-		source "$(dirname "${BASH_SOURCE[0]}")/worktree-recovery-repair.sh" || return 1
-		worktree_recovery_repair_missing "$2" "$4" || return 1
-		;;
 	unreadable-processes)
 		[[ "$#" -eq 1 ]] || return 1
 		declare -F worktree_recovery_unreadable_processes >/dev/null 2>&1 || return 1

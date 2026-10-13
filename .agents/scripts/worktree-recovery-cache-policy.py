@@ -8,12 +8,7 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from worktree_recovery_archive_copy import (
-    copy_without_caches,
-    matching_copy,
-    reserve_archive,
-    retire_missing_attempt,
-)
+from worktree_recovery_archive_copy import copy_without_caches, matching_copy, reserve_archive
 from worktree_recovery_cache_policy_common import (
     GIT_OUTPUT_LIMIT_RC,
     GIT_OUTPUT_MAX_BYTES,
@@ -134,17 +129,6 @@ def handle_matching_copy(arguments: List[str]) -> int:
     return invoke_mode(arguments, (existing_directory, existing_directory, str), matching_copy)
 
 
-def handle_retire_missing(arguments: List[str]) -> int:
-    """Operator-confirmed transition; caller must hold the producer lock."""
-    try:
-        return invoke_mode(
-            arguments, (existing_directory, existing_directory, str), retire_missing_attempt, str
-        )
-    except OSError:
-        print("reservation review unavailable; source preserved", file=sys.stderr)
-        return 2
-
-
 def handle_manifest(arguments: List[str]) -> int:
     """Handle bounded cache-manifest generation."""
     return invoke_mode(
@@ -197,7 +181,6 @@ MODE_HANDLERS: Dict[str, Callable[[List[str]], int]] = {
     "prune": handle_prune,
     "copy": handle_copy,
     "reserve": handle_reserve,
-    "retire-missing": handle_retire_missing,
     "matching-copy": handle_matching_copy,
     "git-state": handle_git_state,
     "manifest": handle_manifest,

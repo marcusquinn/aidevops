@@ -94,11 +94,11 @@ install_helper_with_libs() {
 		"${SOURCE_HELPER%/*}/screen_time_linux.py" \
 		"${SOURCE_HELPER%/*}/screen_time_linux_logind.py" \
 		"${SOURCE_HELPER%/*}/screen_time_linux_wtmp.py" \
-		"${SOURCE_HELPER%/*}/screen_time_history.py" \
-		"${SOURCE_HELPER%/*}/worktree-recovery-cache-policy.py" \
-		"${SOURCE_HELPER%/*}/worktree_recovery_archive_copy.py" \
-		"${SOURCE_HELPER%/*}/worktree_recovery_cache_policy_common.py" \
-		"${SOURCE_HELPER%/*}/worktree_recovery_cache_policy_operations.py" "$helper_dir/"
+		"${SOURCE_HELPER%/*}/screen_time_history.py" "$helper_dir/"
+	# Copy the worktree module family as a unit, not a second hand-maintained
+	# dependency list that breaks whenever the runtime splits a module.
+	cp "${SOURCE_HELPER%/*}"/worktree-*.sh "${SOURCE_HELPER%/*}"/worktree-*.py \
+		"${SOURCE_HELPER%/*}"/worktree_*.py "$helper_dir/" || return 1
 	# Keep this profile-boundary fixture independent of host /proc visibility.
 	# Shared worktree-removal guard behaviour has dedicated tests; this stub proves
 	# the profile helper invokes cleanup from the canonical checkout after its
@@ -1200,18 +1200,18 @@ test_observability_model_usage_calculates_sessions_and_hours() {
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	OBS_DB_FILE="${TEST_DIR}/llm-requests.db"
-	sqlite3 "$OBS_DB_FILE" '
+	sqlite3 "$OBS_DB_FILE" "
 		CREATE TABLE llm_requests (
 			timestamp TEXT, session_id TEXT, model_id TEXT, duration_ms INTEGER,
 			tokens_input INTEGER, tokens_output INTEGER, tokens_cache_read INTEGER,
 			tokens_cache_write INTEGER, cost REAL
 		);
 		INSERT INTO llm_requests VALUES
-			("2026-09-01T00:00:00Z", "session-1", "model-a", 3600000, 10, 1, 100, 0, 1.0),
-			("2026-09-01T01:00:00Z", "session-1", "model-a", 1800000, 20, 2, 200, 0, 1.0),
-			("2026-09-01T02:00:00Z", "session-2", "model-a", 1800000, 30, 3, 300, 0, 1.0),
-			("2026-09-01T03:00:00Z", "session-2", "model-b", 3600000, 40, 4, 400, 0, 1.0),
-			("2026-09-01T04:00:00Z", "session-2", "model-c", "corrupt", 50, 5, 500, 0, 1.0);'
+			('2026-09-01T00:00:00Z', 'session-1', 'model-a', 3600000, 10, 1, 100, 0, 1.0),
+			('2026-09-01T01:00:00Z', 'session-1', 'model-a', 1800000, 20, 2, 200, 0, 1.0),
+			('2026-09-01T02:00:00Z', 'session-2', 'model-a', 1800000, 30, 3, 300, 0, 1.0),
+			('2026-09-01T03:00:00Z', 'session-2', 'model-b', 3600000, 40, 4, 400, 0, 1.0),
+			('2026-09-01T04:00:00Z', 'session-2', 'model-c', 'corrupt', 50, 5, 500, 0, 1.0);"
 
 	local result
 	result=$(_get_model_usage_from_obs_db "")

@@ -61,9 +61,8 @@ CI/CD matrix or change the other platforms' runtime selection for this rollout.
 On NixOS, a failed reservation emits `recovery-reservation-unavailable` with
 `stage=reserve` in the cleanup audit log, before the existing aggregate archive
 failure. This distinguishes an archive prerequisite from an actual copy failure.
-The reference-host investigation found five retained attempt records pointing to
-missing archive buckets; one source's device/inode identity was confirmed to
-still match its record. The cause of the buckets' disappearance was not established.
+External deletion of archive directories can leave retained attempt records
+pointing to missing buckets. Process observation cannot resolve that storage state.
 
 An existing `.archive-attempt-*.json` is not disposable cache. A missing bucket
 fails validation with `archive bucket unavailable`; repeated cleanup cannot
@@ -74,25 +73,13 @@ markers, or claim that a newly captured source restores missing historical data.
 The isolated archive-copy test covers this case and verifies that the reservation
 and source remain intact without allocating another bucket.
 
-After reviewing the missing archive and accepting that its historical contents
-cannot be reconstructed, an operator on NixOS can explicitly request a **new
-snapshot of the current source**, without removing the worktree:
-
-```bash
-sha256sum /absolute/recovery/root/.archive-attempt-<key>.json
-worktree-helper.sh recovery repair-missing /absolute/source/worktree --confirm <record-sha256>
-```
-
-Review the record's source, device/inode identity and bucket before confirming.
-The command checks the exact record digest and source identity under the existing
-producer lock. An existing bucket (including a dangling symlink), conflicting
-history, or any `.retention-trash` state blocks the transition. The original
-record is retained as `.reviewed-missing-attempt-<digest>.json`, durably linked
-before its active name is retired; an interrupted link publication can resume
-only with the same record inode. Existing archival checks then create a fresh
-snapshot. Failure leaves the source and available evidence intact; never delete
-the history to force a retry. This command does not run automatically, restore
-lost historical data, remove worktrees, or bypass later removal guards.
+Any operator-authorized one-time removal of stale records must use the existing
+producer lock, validate record schema and identity-derived filename, and confirm
+that the referenced direct-child bucket is absent immediately before mutation.
+Permission errors and dangling symlinks are not absence. Retention transaction
+state needs separate review. Preserve records for existing buckets and do not
+delete source worktrees or create new snapshots as a side effect. This adapter
+does not add automatic reservation repair or a new recovery command.
 
 Recovery stores and their PID-based producer locks are **host-local**. Multiple
 pulse hosts must use separate local stores/worktrees; sharing the recovery root
