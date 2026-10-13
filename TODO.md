@@ -1679,9 +1679,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18685 fix(pulse): bound GH#34000 supervisor deferral so a permanently degraded prefetch cannot starve the LLM supervisor #bug ref:GH#34524 pr:#34525 completed:2026-10-13
 
-- [ ] t18686 fix(pulse): cool down dispatch re-evaluation of issues pinned by an unchanged draft checkpoint #auto-dispatch #bug ref:GH#34526
+- [x] t18686 fix(pulse): cool down dispatch re-evaluation of issues pinned by an unchanged draft checkpoint #auto-dispatch #bug ref:GH#34526 pr:#34528 completed:2026-10-13
 
-- [ ] t18687 fix(pulse): preflight prefetch times out on every cycle for large repo sets #auto-dispatch #bug ref:GH#34527
+- [x] t18687 fix(pulse): preflight prefetch times out on every cycle for large repo sets #auto-dispatch #bug ref:GH#34527 pr:#34530 completed:2026-10-13
 
 ## In Progress
 
