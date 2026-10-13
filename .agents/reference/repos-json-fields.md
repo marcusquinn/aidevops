@@ -170,6 +170,7 @@ the receipt-owned before-state only when no later config drift is present.
 | `pulse_hours` | object or array | `{"start": 17, "end": 5}` or `[17, 5]` | Limits dispatch to window (24h local time). Overnight supported. Omit for 24/7. Array form is accepted for compatibility; object form is preferred for readability. |
 | `pulse_interval` | integer | `600` | Minimum seconds between dispatch polls for this repo. Default: omit (poll every cycle). Min: 60. Useful for contributor-role repos with low activity — e.g. 600 polls every 5 cycles instead of every cycle, reducing GraphQL budget consumption ~5×. State: `~/.aidevops/logs/pulse-last-per-repo.json`. |
 | `pulse_expires` | string | `"2026-05-01"` | Past this date, pulse auto-sets `pulse: false`. Useful for temporary windows. |
+| `pulse_auth` | object | `{"provider":"github-app","profile":"team-pulse","installation_id":"987654"}` | Opt-in App credentials for Pulse reads only; recognized writes keep their existing auth. No personal fallback for failed App reads. Manage with `aidevops repos pulse auth`; see [GitHub App auth](github-app-auth.md#repository-scoped-pulse-reads). |
 | `dependabot_alert_monitor` | bool | `true` | For `pulse: true` maintainer repos, pulse checks open GitHub Dependabot alerts and creates grouped, neutral, worker-ready remediation issues. Set `false` to opt out for repos that handle dependency alerts elsewhere. |
 
 ## PR Throughput Preferences

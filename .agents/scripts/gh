@@ -107,6 +107,12 @@ _SHIM_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || _SHIM_DIR="
 _SHIM_SOURCE="${_SHIM_DIR}/$(basename "$_SHIM_SOURCE")"
 _shim_timing path_resolution
 
+# Select credentials before any quota probe, translation or native transport.
+# The child re-enters this same shim, preserving all write/safety policies.
+if [[ "${AIDEVOPS_PULSE_AUTH:-0}" == "1" && "${AIDEVOPS_PULSE_AUTH_ACTIVE:-0}" != "1" ]]; then
+	exec python3 "${_SHIM_DIR}/pulse_repo_auth.py" exec-gh "$_SHIM_SOURCE" "$@"
+fi
+
 # shellcheck source=./gh-native-transport-lib.sh
 # shellcheck disable=SC1091  # sibling library resolved at runtime via $_SHIM_DIR
 source "${_SHIM_DIR}/gh-native-transport-lib.sh"

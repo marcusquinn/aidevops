@@ -230,31 +230,19 @@ _github_app_cache_token() {
 	return 0
 }
 
-_github_app_base64url() {
-	base64 | tr '+/' '-_' | tr -d '=\n'
-	return 0
+_github_app_backend() {
+	local app_id key_path helper_dir
+	app_id=$(github_app_app_id)
+	key_path=$(github_app_private_key_path)
+	helper_dir=$(dirname "${BASH_SOURCE[0]:-$0}")
+	AIDEVOPS_GITHUB_APP_ID="$app_id" AIDEVOPS_GITHUB_APP_PRIVATE_KEY_PATH="$key_path" \
+		python3 "${helper_dir}/github_app_auth.py" "$@"
+	return $?
 }
 
 github_app_create_jwt() {
-	local app_id key_path now iat exp header payload signing_input signature
-	app_id=$(github_app_app_id)
-	key_path=$(github_app_private_key_path)
-	if [[ -z "$app_id" || -z "$key_path" || ! -r "$key_path" ]]; then
-		return 1
-	fi
-	if ! command -v openssl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-		return 1
-	fi
-	now=$(date +%s)
-	iat=$((now - 60))
-	exp=$((now + 540))
-	header=$(printf '{"alg":"RS256","typ":"JWT"}' | _github_app_base64url)
-	payload=$(jq -nc --argjson iat "$iat" --argjson exp "$exp" --arg iss "$app_id" '{iat:$iat,exp:$exp,iss:$iss}' | _github_app_base64url)
-	signing_input="${header}.${payload}"
-	signature=$(printf '%s' "$signing_input" | openssl dgst -sha256 -sign "$key_path" -binary 2>/dev/null | _github_app_base64url) || return 1
-	[[ -n "$signature" ]] || return 1
-	printf '%s.%s\n' "$signing_input" "$signature"
-	return 0
+	_github_app_backend jwt
+	return $?
 }
 
 github_app_has_private_key_source() {
@@ -278,18 +266,14 @@ github_app_is_configured() {
 
 github_app_installation_id_for_repo() {
 	local repo="${1:-}"
-	local installation_id jwt
+	local installation_id
 	installation_id=$(github_app_installation_id)
 	if [[ -n "$installation_id" ]]; then
 		printf '%s\n' "$installation_id"
 		return 0
 	fi
 	[[ -n "$repo" ]] || return 1
-	jwt=$(github_app_create_jwt) || return 1
-	installation_id=$(gh api "/repos/${repo}/installation" \
-		-H "Authorization: Bearer ${jwt}" \
-		-H "Accept: application/vnd.github+json" \
-		--jq '.id // empty' 2>/dev/null || true)
+	installation_id=$(_github_app_backend installation "$repo") || return 1
 	[[ -n "$installation_id" ]] || return 1
 	printf '%s\n' "$installation_id"
 	return 0
@@ -297,12 +281,9 @@ github_app_installation_id_for_repo() {
 
 github_app_exchange_token() {
 	local repo="${1:-}"
-	local installation_id jwt response token expires_at
+	local installation_id response token expires_at
 	installation_id=$(github_app_installation_id_for_repo "$repo") || return 1
-	jwt=$(github_app_create_jwt) || return 1
-	response=$(gh api -X POST "/app/installations/${installation_id}/access_tokens" \
-		-H "Authorization: Bearer ${jwt}" \
-		-H "Accept: application/vnd.github+json" 2>/dev/null) || return 1
+	response=$(_github_app_backend exchange "$installation_id") || return 1
 	token=$(printf '%s\n' "$response" | jq -r '.token // empty' 2>/dev/null || true)
 	expires_at=$(printf '%s\n' "$response" | jq -r '.expires_at // empty' 2>/dev/null || true)
 	[[ -n "$token" ]] || return 1
@@ -358,6 +339,12 @@ github_app_api_call() {
 	local timeout_class="$1"
 	local api_pool="$2"
 	shift 2
+	# A selected Pulse read already has its scoped credentials. Preserve them
+	# through REST translators; legacy callers and write routing stay unchanged.
+	if [[ "${AIDEVOPS_PULSE_AUTH_ACTIVE:-0}" == "1" && "${AIDEVOPS_GH_AUTH_MODE:-}" == "github-app" ]]; then
+		_github_app_api_invoke "$timeout_class" "$@"
+		return $?
+	fi
 	local repo token installation_id context_wrapper context_operation context_stage
 	local old_token token_was_set old_auth auth_was_set old_principal principal_was_set
 	local old_pool pool_was_set old_route route_was_set old_context_operation context_operation_was_set

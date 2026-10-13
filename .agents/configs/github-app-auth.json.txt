@@ -5,6 +5,18 @@
   "app_id": "",
   "installation_id": "",
   "private_key_path": "",
+  "profiles": {
+    "team-pulse": {
+      "app_id": "",
+      "client_id": "",
+      "private_key_path": "$HOME/.config/aidevops/keys/team-pulse.pem",
+      "permissions": {
+        "metadata": "read",
+        "issues": "read",
+        "pull_requests": "read"
+      }
+    }
+  },
   "private_key_path_secret": "GITHUB_APP_PRIVATE_KEY_PATH",
   "routing": {
     "rest_first_when_app_configured": true,

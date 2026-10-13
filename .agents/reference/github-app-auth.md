@@ -6,6 +6,11 @@ User-owned GitHub Apps give aidevops a separate GitHub auth principal per instal
 
 ## Configuration
 
+The configuration below is the existing global routing policy. For opt-in,
+read-only Pulse authentication per repository, use the named profiles described
+under **Repository-scoped Pulse reads**; do not enable global routing just to use
+a named profile.
+
 Copy `.agents/configs/github-app-auth.json.txt` to `~/.config/aidevops/github-app-auth.json` and fill only non-secret identifiers:
 
 ```json
@@ -76,8 +81,137 @@ Status and route commands never print tokens or private key material. The `token
 Run the focused tests after changing this area:
 
 ```bash
+python3 .agents/scripts/tests/test_pulse_repo_auth.py
 bash .agents/scripts/tests/test-github-app-auth-helper.sh
 bash .agents/scripts/tests/test-gh-api-instrument.sh
 bash .agents/scripts/tests/test-gh-wrapper-rest-fallback.sh
 shellcheck .agents/scripts/github-app-auth-helper.sh .agents/scripts/gh-api-instrument.sh .agents/scripts/shared-gh-wrappers.sh .agents/scripts/shared-gh-wrappers-rest-fallback.sh .agents/scripts/shared-gh-wrappers-status.sh
 ```
+
+## Repository-scoped Pulse reads
+
+Keep the existing `pulse` boolean and scheduling fields in `repos.json`. Add
+`pulse_auth` inside the selected `initialized_repos` entry using the CLI. The
+setting changes read credentials, not scheduling, permissions or write identity.
+
+In `~/.config/aidevops/github-app-auth.json`, add a named profile (non-secret
+identifiers and a local key reference only):
+
+```json
+{
+  "enabled": false,
+  "profiles": {
+    "team-pulse": {
+      "app_id": "123456",
+      "client_id": "YOUR_APP_CLIENT_ID",
+      "private_key_path": "$HOME/.config/aidevops/keys/team-pulse.pem",
+      "permissions": {
+        "metadata": "read",
+        "issues": "read",
+        "pull_requests": "read"
+      }
+    }
+  }
+}
+```
+
+The private key must be a current-user-owned regular file with no group/other
+permissions (use `0600`). Symlink keys are rejected. Each trusted operator may
+use a different key of the same App: all such keys have App-wide authority;
+they are not per-user permission boundaries. Keep keys out of Git and chat.
+
+```bash
+aidevops repos pulse auth set OWNER/REPO --provider github-app --profile team-pulse --installation-id 987654
+aidevops repos pulse auth status OWNER/REPO
+aidevops repos pulse auth check OWNER/REPO
+```
+
+`set` validates local configuration and atomically updates the registry under
+its existing lock. It does not install an App, mint a token, enable Pulse or
+alter other repository settings. `status` is offline. `check` mints/reuses a
+scoped installation token and performs a repository metadata read through the
+same gh shim as Pulse. No command prints a token or private key. Configuration
+errors, duplicate repository entries and unsupported providers fail closed.
+
+### Read/write boundary
+
+`pulse-wrapper.sh` enables the repository resolver for its child gh commands.
+Normal interactive gh commands are unaffected. The resolver runs before shim
+quota probes and REST translations and then re-enters the same shim, retaining
+its existing safety policies and instrumentation.
+
+- Native issue/PR lists/views and supported repository, search, workflow, run
+  and release reads use the selected App. REST GET/HEAD and explicit GraphQL
+  query documents are reads; GraphQL POST is not automatically a write.
+- Recognized writes and mutations retain the caller's existing auth path. This
+  is operation routing, not a fallback after an App failure. Git transport is
+  not changed. The profile rejects write permissions.
+- Account-level `/user` reads retain the maintainer identity. Unscoped
+  `/rate_limit` probes retain the existing account budget; use explicit
+  `AIDEVOPS_PULSE_REPO` context to inspect an installation's budget instead.
+  These are explicit account operations, not repository-read fallbacks.
+- Explicit App reads never retry with personal auth on mint failure, 401, 403
+  or rate limiting. Missing keys fail even if a token remains in the cache.
+- Unknown command/GraphQL forms fail closed when profiles are configured.
+  JSON `--input` GraphQL documents and extensions require explicit future
+  classification; do not assume they use the App or personal identity.
+- Reads require one explicit repo: `--repo/-R`, a `/repos/OWNER/REPO/...` REST
+  endpoint, explicit GraphQL `owner`/`name` variables, or
+  `AIDEVOPS_PULSE_REPO=OWNER/REPO` for a repository-scoped caller.
+  Conflicting scopes and multi-repository search are rejected. CWD is not an
+  authority source. Other unscoped global reads must be moved into an explicit
+  repository context before opting that Pulse deployment in.
+- Only github.com is supported. Explicit Authorization headers, absolute API
+  URLs and verbose HTTP logging are rejected for App reads.
+
+### Lifetime and rollback
+
+Signing and exchange are shared with the legacy helper through
+`github_app_auth.py`; JWTs use a Bearer header held in memory, not process argv.
+The resolver verifies App/installation/owner identity before minting and narrows
+tokens to one repository and the profile's read permissions. It supplies a token
+only to the child gh process, with an empty temporary gh configuration and no
+personal credential fallback. Authentication selection happens per invocation,
+not once at startup of the long-lived scheduler.
+
+Tokens are cached in `0600` files in a `0700` directory. The key includes App,
+installation, repository, permissions and key-material digest. Refresh starts
+with less than two minutes remaining. A bounded Python lock serializes refresh;
+its non-inheritable descriptor closes before starting gh. API budgets remain
+installation-scoped, not per token, repository or operator. A single long gh
+invocation does not renew credentials mid-request. No HTTP retries or new
+cross-host coordination system are introduced.
+
+Rotate a key by generating and securely deploying a replacement, running
+`auth check`, then retiring the old key. Removing a key does not revoke tokens
+already issued with it. Cache refresh is not evidence of server-side revocation.
+
+Explicit rollback:
+
+```bash
+aidevops repos pulse auth clear OWNER/REPO
+```
+
+This removes only the repository auth selection, restoring its existing routing;
+it does not revoke tokens or change the `pulse` flag. Disable Pulse separately
+if automation must stop. There is no automatic rollback to personal credentials.
+
+### Verification evidence and boundaries
+
+The development POC exercised a single selected repository and read-only App
+installation. With a deliberately invalid personal token in the parent, native
+issue/PR reads and the real `gh_issue_list` shared wrapper passed through the new
+resolver. After revocation, a direct REST request returned 401 and the shim
+failed; invalid cached credentials and a missing key also failed. Test tokens
+were revoked and the temporary configuration/cache removed. No production
+Pulse configuration, App permissions or repository content was changed.
+
+Focused tests cover operation/scope classification, unchanged write credentials,
+no personal retry, registry preservation, cache refresh/rotation/scope separation
+and private-file/lock safety. This does not establish full scheduler readiness:
+global/unscoped queries, additional permission needs, git operations, worker
+actor assumptions and multi-host claims require separate verification before
+cutover. An earlier pre-resolver revocation probe returned success immediately
+after revocation; its cause was not established and is not attributed to a
+personal fallback. The isolated resolver probe above supplies the current
+negative-path evidence.

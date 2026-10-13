@@ -71,6 +71,10 @@ fi
 
 set -euo pipefail
 
+# Per-repository App read credentials are selected by the gh shim. No token is
+# exported by this long-lived scheduler; each gh invocation refreshes as needed.
+export AIDEVOPS_PULSE_AUTH=1
+
 : "${AIDEVOPS_PULSE_MERGE_DIRTY_QUEUE_ENABLED:=1}"
 export AIDEVOPS_PULSE_MERGE_DIRTY_QUEUE_ENABLED
 

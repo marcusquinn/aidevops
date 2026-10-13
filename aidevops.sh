@@ -927,6 +927,13 @@ _repos_maintenance() {
 _repos_pulse() {
 	local state="${1:-}"
 	local selector="${2:-}"
+	if [[ "$state" == "auth" ]]; then
+		shift
+		local auth_helper="${AIDEVOPS_CLI_MODULES_DIR%/aidevops-cli}/pulse_repo_auth.py"
+		[[ -f "$auth_helper" ]] || auth_helper="${AGENTS_DIR}/scripts/pulse_repo_auth.py"
+		AIDEVOPS_REPOS_CONFIG="$REPOS_FILE" python3 "$auth_helper" "$@"
+		return $?
+	fi
 	case "$state" in
 	on | true) state="true" ;;
 	off | false) state="false" ;;
@@ -1019,6 +1026,8 @@ cmd_repos() {
 		echo "           Include/exclude a registered repo from recurring automation"
 		echo "  pulse <on|off> [repo]"
 		echo "           Enable/disable Pulse task automation (on requires maintenance)"
+		echo "  pulse auth <set|status|check|clear> owner/repo [options]"
+		echo "           Configure repository GitHub App reads without changing write auth"
 		echo "  actions <on|off> [repo] [reason]"
 		echo "           Record GitHub Actions availability; off requires exact-head local checks"
 		;;
