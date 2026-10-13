@@ -48,6 +48,10 @@ function escapeRegExp(value) {
 function isRegisteredWindow(window, registry, scan) {
   const cached = scan.memo.get(window);
   if (cached !== undefined) return cached;
+  if (scan.identifiers.has(window)) {
+    scan.memo.set(window, false);
+    return false;
+  }
   scan.evaluations++;
   const digest = createHmac("sha256", registry.key).update(window, "utf8").digest("hex");
   const registered = registry.byLength.get(window.length)?.has(digest) === true;
@@ -108,9 +112,9 @@ function replaceRanges(text, ranges) {
   return result + text.slice(cursor);
 }
 
-function redactDigestMatches(text, registry) {
+function redactDigestMatches(text, registry, identifiers) {
   if (!registry) return { text, count: 0 };
-  const context = { registry, scan: { memo: new Map(), evaluations: 0 }, ranges: [] };
+  const context = { registry, scan: { memo: new Map(), evaluations: 0, identifiers }, ranges: [] };
   const minLength = registry.lengths.at(-1);
   for (const match of text.matchAll(TOKEN_RUN)) {
     if (match[0].length >= minLength) matchRun(match.index, match[0], context);
@@ -173,7 +177,7 @@ export function createSecretValueRedactor(options = {}) {
   function redactText(text) {
     if (typeof text !== "string" || text.length < MIN_VALUE_LENGTH) return { text, count: 0 };
     const known = redactPlaintext(text, plaintextPattern());
-    const digest = redactDigestMatches(known.text, sources.digestRegistry());
+    const digest = redactDigestMatches(known.text, sources.digestRegistry(), sources.identifierValues());
     return { text: digest.text, count: known.count + digest.count };
   }
 

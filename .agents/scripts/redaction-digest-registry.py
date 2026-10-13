@@ -30,6 +30,9 @@ MIN_LENGTH = 8
 MAX_LENGTH = 4096
 MAX_ENTRIES = 4096
 TOKEN_CHARSET = re.compile(r"[A-Za-z0-9._~+/=-]+")
+# Public account identifiers (for example WPORG_USERNAME) are not secrets.
+# Must mirror IDENTIFIER_ENV_NAME in registered-value-sources.mjs.
+IDENTIFIER_NAME = re.compile(r"(?:^|_)(?:USER|USERNAME|LOGIN|EMAIL)$")
 PLACEHOLDERS = {
     "", "***", "[redacted]", "[redacted-credential]", "<redacted>", "not set",
     "(not set)", "none", "null", "undefined", "missing", "changeme",
@@ -92,7 +95,9 @@ def read_values(data: bytes) -> list[str]:
     for record in data.split(b"\0"):
         if b"=" not in record:
             continue
-        raw = record.split(b"=", 1)[1]
+        name, raw = record.split(b"=", 1)
+        if IDENTIFIER_NAME.search(name.decode("utf-8", "replace")):
+            continue
         try:
             value = raw.decode("utf-8")
         except UnicodeDecodeError:

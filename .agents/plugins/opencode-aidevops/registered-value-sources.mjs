@@ -28,6 +28,10 @@ const EXPORT_LINE = /^export[ \t]+([A-Z_][A-Z0-9_]*)=(.*)$/;
 const SENSITIVE_ENV_NAME =
   /(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|ENCRYPTION_KEY|SIGNING_KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/;
 const PLACEHOLDERS = new Set(["", "***", "[redacted]", REDACTION_TOKEN, "<redacted>", "not set", "(not set)", "none", "null", "undefined", "missing", "changeme"]);
+// Public account identifiers stored beside credentials (for example
+// WPORG_USERNAME) are not secrets. Redacting them corrupts GitHub URLs, git
+// remotes and commit metadata. Mirrored by redaction-digest-registry.py.
+export const IDENTIFIER_ENV_NAME = /(?:^|_)(?:USER|USERNAME|LOGIN|EMAIL)$/;
 
 const hasUsableLength = (value) => value.length >= MIN_VALUE_LENGTH && value.length <= MAX_VALUE_LENGTH;
 const isPlaceholder = (value) => PLACEHOLDERS.has(value.toLowerCase()) || value.includes(REDACTION_TOKEN);
@@ -142,12 +146,27 @@ export class RegisteredValueSources {
   plaintextValues() {
     const entries = this.credentialEntries();
     const registeredNames = new Set(entries.map((entry) => entry.name));
-    const values = new Set(entries.map((entry) => entry.value).filter(usableValue));
+    const values = new Set(entries.filter((entry) => !IDENTIFIER_ENV_NAME.test(entry.name)).map((entry) => entry.value).filter(usableValue));
     for (const [name, value] of Object.entries(this.env)) {
+      if (IDENTIFIER_ENV_NAME.test(name)) continue;
       const namedSecret = registeredNames.has(name) || SENSITIVE_ENV_NAME.test(name);
       if (namedSecret && usableValue(value)) values.add(value);
     }
     return [...values].sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+  }
+
+  /**
+   * Values held only by identifier names (for example WPORG_USERNAME). Digest
+   * matches for them are ignored so registries written before identifiers were
+   * excluded stop redacting them. A value also held by a secret name stays redacted.
+   */
+  identifierValues() {
+    const secrets = new Set(this.plaintextValues());
+    const values = new Set();
+    for (const entry of this.credentialEntries()) {
+      if (IDENTIFIER_ENV_NAME.test(entry.name) && usableValue(entry.value) && !secrets.has(entry.value)) values.add(entry.value);
+    }
+    return values;
   }
 
   digestRegistry() {
