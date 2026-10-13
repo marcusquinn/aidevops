@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -90,8 +91,12 @@ def jwt(profile):
     now = int(time.time())
     unsigned = encode(b'{"alg":"RS256","typ":"JWT"}') + b"." + encode(
         json.dumps({"iat": now - 60, "exp": now + 540, "iss": issuer}).encode())
-    result = subprocess.run(
-        ["openssl", "dgst", "-sha256", "-sign", str(path), "-binary"],
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise AuthError("OpenSSL is required for GitHub App signing")
+    # Resolved executable, fixed signer flags, validated local key, no shell.
+    result = subprocess.run(  # nosec B603
+        [openssl, "dgst", "-sha256", "-sign", str(path), "-binary"],
         input=unsigned, capture_output=True, timeout=15, check=False)
     if result.returncode or not result.stdout:
         raise AuthError("GitHub App JWT signing failed")

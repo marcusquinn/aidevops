@@ -112,17 +112,22 @@ def api_endpoint(args):
     return endpoints[0] if not skip and len(endpoints) == 1 else ""
 
 
-def operation(args):
-    if not args:
-        return "local"
-    if args[0] in ("--version", "version", "help"):
-        return "local"
-    if len(args) > 1 and args[1] in READS.get(args[0], set()):
-        return "read"
-    if len(args) > 1 and args[1] in WRITES.get(args[0], set()):
-        return "write"
-    if args[0] != "api":
+def graphql_operation(fields, inputs):
+    queries = [value[6:] for value in fields if value.startswith("query=")]
+    if inputs or len(queries) != 1 or any(value.startswith("query=@") for value in fields):
         return "unknown"
+    # Strip strings/comments; mixed or unfamiliar documents fail closed.
+    query = re.sub(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\n]*', " ", queries[0]).strip()
+    if re.match(r"mutation\b", query) and not re.search(r"\bquery\b", query):
+        return "write"
+    if re.search(r"\b(?:mutation|subscription)\b", query):
+        return "unknown"
+    if query.startswith("{") or re.match(r"query\b", query):
+        return "read"
+    return "unknown"
+
+
+def api_operation(args):
     # Parse flags without reading request files or guessing dynamic endpoints.
     endpoint = api_endpoint(args)
     if not endpoint:
@@ -132,19 +137,7 @@ def operation(args):
     inputs = option_values(args, "--input")
     method = methods[-1].upper() if methods else ("POST" if fields or inputs else "GET")
     if endpoint.strip("/") == "graphql":
-        queries = [value[6:] for value in fields if value.startswith("query=")]
-        if inputs or len(queries) != 1 or any(value.startswith("query=@") for value in fields):
-            return "unknown"
-        # Strip GraphQL strings/comments before classifying operations. This is
-        # deliberately not a query rewriter; mixed or unfamiliar documents fail.
-        query = re.sub(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\n]*', " ", queries[0]).strip()
-        if re.match(r"mutation\b", query) and not re.search(r"\bquery\b", query):
-            return "write"
-        if re.search(r"\b(?:mutation|subscription)\b", query):
-            return "unknown"
-        if query.startswith("{") or re.match(r"query\b", query):
-            return "read"
-        return "unknown"
+        return graphql_operation(fields, inputs)
     if method in ("GET", "HEAD"):
         # Maintainer identity is still the write actor. Unscoped budget probes
         # describe that existing account, not any particular App installation.
@@ -156,6 +149,16 @@ def operation(args):
     if method in ("POST", "PUT", "PATCH", "DELETE"):
         return "write"
     return "unknown"
+
+
+def operation(args):
+    if not args or args[0] in ("--version", "version", "help"):
+        return "local"
+    if len(args) > 1 and args[1] in READS.get(args[0], set()):
+        return "read"
+    if len(args) > 1 and args[1] in WRITES.get(args[0], set()):
+        return "write"
+    return api_operation(args) if args[0] == "api" else "unknown"
 
 
 def repository(args):
@@ -196,19 +199,27 @@ def app_environment(token, installation, config_dir):
     return env
 
 
+def run_shim(shim, args, env):
+    expected = Path(__file__).resolve().with_name("gh")
+    if Path(shim).resolve() != expected:
+        raise AuthError("Auth resolver can only invoke its sibling gh shim")
+    # Fixed absolute sibling script and argv-only gh arguments; never a shell.
+    return subprocess.call([str(expected), *args], env=env)  # nosec B603
+
+
 def execute(shim, args, data, config_path):
     original = os.environ.copy()
     original["AIDEVOPS_PULSE_AUTH_ACTIVE"] = "1"
     kind = operation(args)
     configured = any(entry.get("pulse_auth") is not None for entry in data["initialized_repos"])
     if kind in ("write", "local", "account") or not configured:
-        return subprocess.call([shim, *args], env=original)
+        return run_shim(shim, args, original)
     if kind != "read":
         raise AuthError("Unclassified Pulse gh command; explicit read/write support is required")
     repo = repository(args)
     selected = settings(data, repo, config_path)
     if selected is None:
-        return subprocess.call([shim, *args], env=original)
+        return run_shim(shim, args, original)
     hosts = option_values(args, "--hostname")
     if any(host != "github.com" for host in hosts) or os.environ.get("GH_HOST", "github.com") != "github.com":
         raise AuthError("Pulse App auth currently supports github.com only")
@@ -224,7 +235,7 @@ def execute(shim, args, data, config_path):
     with tempfile.TemporaryDirectory(prefix="pulse-gh-config-") as config_dir:
         env = app_environment(token["token"], auth["installation_id"], config_dir)
         # Never retry under a different principal, even on 401/403/429.
-        return subprocess.call([shim, *args], env=env)
+        return run_shim(shim, args, env)
 
 
 @contextlib.contextmanager
@@ -251,7 +262,7 @@ def main():
     if len(sys.argv) > 2 and sys.argv[1] == "exec-gh":
         if operation(sys.argv[3:]) in ("write", "local", "account"):
             env = dict(os.environ, AIDEVOPS_PULSE_AUTH_ACTIVE="1")
-            return subprocess.call(sys.argv[2:], env=env)
+            return run_shim(sys.argv[2], sys.argv[3:], env)
         return execute(sys.argv[2], sys.argv[3:], registry(registry_path), config_path)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("set", "status", "check", "clear"))
