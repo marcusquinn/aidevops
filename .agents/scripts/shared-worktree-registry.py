@@ -38,16 +38,24 @@ def lookup_row(
     return None
 
 
+def database_status(database: Path, mode: str) -> int:
+    """Distinguish a missing database from an inaccessible filesystem path."""
+    try:
+        database.stat()
+    except FileNotFoundError:
+        return 1 if mode == "snapshot" else 2
+    except OSError:
+        return 2
+    return 0
+
+
 def read_registry(database: Path, requested_path: str, mode: str) -> tuple[int, str]:
     """Read one consistent snapshot; never conflate I/O or schema errors with absence."""
     if mode not in QUERIES:
         return 2, ""
-    try:
-        database.stat()
-    except FileNotFoundError:
-        return (1 if mode == "snapshot" else 2), ""
-    except OSError:
-        return 2, ""
+    status = database_status(database, mode)
+    if status:
+        return status, ""
     try:
         normalized = os.path.realpath(requested_path)
         # URI encoding preserves literal ?, # and % in filesystem paths. A DB
@@ -58,9 +66,9 @@ def read_registry(database: Path, requested_path: str, mode: str) -> tuple[int, 
             row = lookup_row(connection, normalized, mode)
         if mode == "path":
             return 0, str(row[0]) if row else normalized
-        if row is None:
-            return 1, ""
-        return 0, "|".join("" if value is None else str(value) for value in row[1:])
+        return (1, "") if row is None else (
+            0, "|".join("" if value is None else str(value) for value in row[1:])
+        )
     except (OSError, ValueError, sqlite3.Error):
         return 2, ""
 
