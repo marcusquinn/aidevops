@@ -50,17 +50,23 @@ _prefetch_remaining_seconds() {
 # Arguments:
 #   $1 - timeout in seconds
 #   $2..N - PIDs to wait for (passed as remaining args)
-# Returns: 0 when complete, 124 after killing timed-out fetches
+# Returns: 0 when complete, 124 after timeout, 1 on a failed fetch
 #######################################
 _wait_parallel_pids() {
 	local timeout_secs="$1"
 	shift
 	local pids=("$@")
 
-	local wait_elapsed=0
+	local wait_start=0 wait_deadline=0 wait_elapsed=0
+	wait_start=$(date +%s)
+	wait_deadline=$((wait_start + timeout_secs))
+	if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]] &&
+		[[ "$((PULSE_STAGE_DEADLINE_EPOCH - 15))" -lt "$wait_deadline" ]]; then
+		wait_deadline=$((PULSE_STAGE_DEADLINE_EPOCH - 15))
+	fi
 	local wait_rc=0
 	local all_done=false
-	while [[ "$all_done" != "$_PREFETCH_BOOL_TRUE" ]] && [[ "$wait_elapsed" -lt "$timeout_secs" ]]; do
+	while [[ "$all_done" != "$_PREFETCH_BOOL_TRUE" ]] && [[ "$(date +%s)" -lt "$wait_deadline" ]]; do
 		all_done=$_PREFETCH_BOOL_TRUE
 		for pid in "${pids[@]}"; do
 			if kill -0 "$pid" 2>/dev/null; then
@@ -70,7 +76,16 @@ _wait_parallel_pids() {
 		done
 		if [[ "$all_done" != "$_PREFETCH_BOOL_TRUE" ]]; then
 			sleep 2
-			wait_elapsed=$((wait_elapsed + 2))
+		fi
+	done
+	wait_elapsed=$(($(date +%s) - wait_start))
+	# A fetch can finish during the last polling sleep; check before declaring
+	# the entire primary snapshot incomplete at that boundary.
+	all_done=$_PREFETCH_BOOL_TRUE
+	for pid in "${pids[@]}"; do
+		if kill -0 "$pid" 2>/dev/null; then
+			all_done=false
+			break
 		fi
 	done
 	if [[ "$all_done" != "$_PREFETCH_BOOL_TRUE" ]]; then
@@ -91,7 +106,9 @@ _wait_parallel_pids() {
 	fi
 	# Reap all child processes (non-blocking since they're dead or killed)
 	for pid in "${pids[@]}"; do
-		wait "$pid" 2>/dev/null || true
+		if ! wait "$pid" 2>/dev/null && [[ "$wait_rc" -eq 0 ]]; then
+			wait_rc=1
+		fi
 	done
 	return "$wait_rc"
 }

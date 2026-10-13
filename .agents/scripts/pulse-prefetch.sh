@@ -116,6 +116,7 @@ prefetch_state() {
 	local pids=()
 	local idx=0
 	while IFS='|' read -r slug path; do
+		_prefetch_remaining_seconds 120 >/dev/null || { prefetch_rc=124; break; }
 		(
 			_prefetch_single_repo "$slug" "$path" "${tmpdir}/${idx}.txt"
 		) &
@@ -136,7 +137,8 @@ prefetch_state() {
 	# Clean up
 	rm -rf "$tmpdir"
 
-	# Persist scope before optional helpers: their runtime grows with repo count.
+	# Persist the schedule-filtered worker code scope before optional helpers.
+	# Cross-repo issue filing does not authorize code changes outside this scope.
 	local scope_slugs
 	scope_slugs=$(echo "$repo_entries" | cut -d'|' -f1 | grep . | paste -sd ',' -)
 	export PULSE_SCOPE_REPOS="$scope_slugs"
@@ -150,12 +152,11 @@ prefetch_state() {
 	# t1482: Sub-helpers that call external scripts (gh API, pr-salvage,
 	# gh-failure-miner) get individual timeouts via run_cmd_with_timeout.
 	# If a helper times out, the pulse proceeds without that section —
-	# degraded but functional. Shell functions that only read local state
-	# (priority allocations, queue governor, contribution watch) run
-	# directly since they complete instantly.
+	# degraded but functional. Bound the whole optional tail too: even local
+	# helpers can accumulate significant work across a large repo set.
 	local secondary_timeout=0
 	if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
-		if secondary_timeout=$(_prefetch_remaining_seconds "$PRE_RUN_STAGE_TIMEOUT"); then
+		if secondary_timeout=$(_prefetch_remaining_seconds "${PRE_RUN_STAGE_TIMEOUT:-600}"); then
 			run_cmd_with_timeout "$secondary_timeout" _append_prefetch_sub_helpers "$repo_entries" || {
 				echo "[pulse-wrapper] Optional prefetch helpers did not complete within ${secondary_timeout}s — primary state and scope preserved (GH#34527)" >>"$LOGFILE"
 			}
