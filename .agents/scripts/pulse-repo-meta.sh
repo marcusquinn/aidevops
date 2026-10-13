@@ -39,6 +39,9 @@ source "${SCRIPT_DIR}/infrastructure-advisory-lib.sh"
 # shellcheck source=./pulse-repo-dormancy.sh
 source "${SCRIPT_DIR}/pulse-repo-dormancy.sh"
 
+# shellcheck source=./pulse-repo-auth-status-lib.sh
+source "${SCRIPT_DIR}/pulse-repo-auth-status-lib.sh"
+
 #######################################
 # Resolve managed repo path from slug
 # Arguments:
@@ -434,6 +437,35 @@ _pulse_persist_candidate_snapshot_evidence() {
 	return 0
 }
 
+#######################################
+# Decide whether a candidate source may be read at all. On a gate, writes the
+# empty raw snapshot/failed status evidence and sets _PULSE_CANDIDATE_GATE_RC
+# to the caller's return code: 0 for a dormant repo (expected skip), 1 for an
+# invalid pulse_auth configuration (GH#34552: source unavailable, never an
+# empty queue). The auth fault is logged once, attributed, to LOGFILE and stderr
+# instead of burning gh calls that can only fail closed.
+# Args: repo slug, optional raw snapshot file, optional snapshot status file
+# Returns: 0 proceed, 1 gated
+#######################################
+_pulse_candidate_source_gate() {
+	local repo_slug="$1" raw_snapshot_file="$2" snapshot_status_file="$3"
+	local auth_fault_class="" auth_fault_line=""
+	_PULSE_CANDIDATE_GATE_RC=0
+	if ! pulse_repo_scan_allowed "$repo_slug"; then
+		_PULSE_CANDIDATE_GATE_RC=0
+	elif auth_fault_class=$(pulse_repo_auth_config_fault "$repo_slug"); then
+		_PULSE_CANDIDATE_GATE_RC=1
+		auth_fault_line="[pulse-wrapper] list_dispatchable_issue_candidates: repo auth config invalid for ${repo_slug} (class=${auth_fault_class}); candidates unavailable; remedy: $(pulse_repo_auth_fault_remedy "$repo_slug")"
+		printf '%s\n' "$auth_fault_line" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+		printf '%s\n' "$auth_fault_line" >&2
+	else
+		return 0
+	fi
+	[[ -z "$raw_snapshot_file" ]] || printf '[]\n' >"$raw_snapshot_file"
+	[[ -z "$snapshot_status_file" ]] || printf '0\n' >"$snapshot_status_file"
+	return 1
+}
+
 list_dispatchable_issue_candidates_json() {
 	local repo_slug="$1"
 	local limit="${2:-100}"
@@ -450,11 +482,9 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
-	if ! pulse_repo_scan_allowed "$repo_slug"; then
-		[[ -z "$raw_snapshot_file" ]] || printf '[]\n' >"$raw_snapshot_file"
-		[[ -z "$snapshot_status_file" ]] || printf '0\n' >"$snapshot_status_file"
+	if ! _pulse_candidate_source_gate "$repo_slug" "$raw_snapshot_file" "$snapshot_status_file"; then
 		printf '[]\n'
-		return 0
+		return "$_PULSE_CANDIDATE_GATE_RC"
 	fi
 	pulse_repo_dormancy_prepare "$repo_slug"
 

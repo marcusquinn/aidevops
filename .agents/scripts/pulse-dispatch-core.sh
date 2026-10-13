@@ -872,13 +872,33 @@ _dispatch_metadata_error_is_permanent() {
 }
 
 #######################################
+# GH#34552: a pulse_auth configuration fault will not recover by retrying.
+# Uses the shared pulse_repo_auth.py classifier (pulse-repo-auth-status-lib.sh)
+# on the gh error text, then on the repo's live status.
+# Args: $1 = error summary, $2 = repo slug
+# Sets: _DISPATCH_METADATA_CONFIG_CLASS
+# Exit: 0 config fault, 1 otherwise
+#######################################
+_dispatch_metadata_error_is_config() {
+	local summary="$1" repo_slug="$2" fault_class=""
+	_DISPATCH_METADATA_CONFIG_CLASS=""
+	declare -F pulse_repo_auth_error_class >/dev/null 2>&1 || return 1
+	if ! fault_class=$(pulse_repo_auth_error_class "$summary"); then
+		fault_class=$(pulse_repo_auth_config_fault "$repo_slug") || return 1
+	fi
+	_DISPATCH_METADATA_CONFIG_CLASS="$fault_class"
+	return 0
+}
+
+#######################################
 # GH#33524: fetch the canonical issue bundle into the caller-owned
 # issue_meta_json, retrying transient gh failures once with a short backoff
 # and logging the gh error instead of discarding it.
 # Args: $1 = issue number, $2 = repo slug
 # Env:  AIDEVOPS_DISPATCH_METADATA_ATTEMPTS (1-9, default 2)
 #       AIDEVOPS_DISPATCH_METADATA_RETRY_DELAY (seconds, default 3)
-# Exit: 0 loaded, 1 permanent failure, 2 transient failure (retry next cycle)
+# Exit: 0 loaded, 1 permanent or repo-auth config failure (GH#34552),
+#       2 transient failure (retry next cycle)
 #######################################
 _dispatch_fetch_issue_metadata() {
 	local issue_number="$1" repo_slug="$2"
@@ -899,6 +919,15 @@ _dispatch_fetch_issue_metadata() {
 		fi
 		issue_meta_json=""
 		summary=$(_dispatch_metadata_error_summary "$err_file")
+		# GH#34552: an invalid per-repo App auth configuration fails closed on
+		# every read until an operator repairs it. Classify it as config, not
+		# transient, and skip the in-cycle retry/backoff.
+		if _dispatch_metadata_error_is_config "$summary" "$repo_slug"; then
+			[[ -z "$err_file" ]] || rm -f "$err_file"
+			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: repo auth config invalid (config, class=${_DISPATCH_METADATA_CONFIG_CLASS}, rc=${fetch_rc}); no retry this cycle" >>"$LOGFILE"
+			echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_metadata_unavailable signal=config issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+			return 1
+		fi
 		if _dispatch_metadata_error_is_permanent "$summary"; then
 			[[ -z "$err_file" ]] || rm -f "$err_file"
 			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata (permanent, rc=${fetch_rc}, gh: ${summary})" >>"$LOGFILE"

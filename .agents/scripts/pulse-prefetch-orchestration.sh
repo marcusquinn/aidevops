@@ -243,6 +243,13 @@ _append_prefetch_sub_helpers() {
 	# include every cycle. Nonzero triggers investigation.
 	prefetch_hygiene_anomalies >>"$STATE_FILE"
 
+	# GH#34552: Repo Auth Faults — one local pulse_repo_auth.py status check per
+	# pulse_auth repository, so a fail-closed App configuration explains idle
+	# slots instead of looking like an empty queue.
+	if declare -F prefetch_repo_auth_faults >/dev/null 2>&1; then
+		prefetch_repo_auth_faults "$repo_entries" >>"$STATE_FILE" || true
+	fi
+
 	# Append mission state (reads local files — fast)
 	prefetch_missions "$repo_entries" >>"$STATE_FILE"
 

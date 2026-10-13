@@ -77,17 +77,41 @@ integration_recovery_observe() {
 	return "$result"
 }
 
+#######################################
+# GH#34552: classify a failed live observation without echoing gh output.
+# A fail-closed per-repo Pulse App auth configuration is reported by class so
+# operators can repair it; anything else stays a generic observation failure.
+# Arguments: $1 - repo slug from the queued record
+# Output: error class on stdout
+#######################################
+integration_recovery_observe_error_class() {
+	local repo="$1" fault_class=""
+	if [[ -f "${_IR_SCRIPT_DIR}/pulse-repo-auth-status-lib.sh" ]]; then
+		# shellcheck source=pulse-repo-auth-status-lib.sh
+		source "${_IR_SCRIPT_DIR}/pulse-repo-auth-status-lib.sh"
+		if fault_class=$(pulse_repo_auth_config_fault "$repo"); then
+			printf 'repo_auth_config_invalid:%s\n' "$fault_class"
+			return 0
+		fi
+	fi
+	printf 'observation_failed\n'
+	return 0
+}
+
 integration_recovery_pending() {
 	local records="" id="" observed=""
+	local repo error_class
 	records=$(python3 "${_IR_SCRIPT_DIR}/integration_recovery.py" pending) || return 1
-	while IFS= read -r id; do
+	while IFS=$'\t' read -r id repo; do
 		[[ -n "$id" ]] || continue
 		if observed=$(integration_recovery_observe "$id"); then
 			[[ "$observed" == null ]] || printf '%s\n' "$observed"
 		else
-			printf 'Recovery request %s remains owned by Pulse; live observation unavailable\n' "$id" >&2
+			error_class=$(integration_recovery_observe_error_class "$repo")
+			printf 'Recovery request %s remains owned by Pulse; live observation unavailable (error_class=%s)\n' \
+				"$id" "$error_class" >&2
 		fi
-	done < <(jq -r '.[].id' <<<"$records")
+	done < <(jq -r '.[] | [.id, (.repo // "")] | @tsv' <<<"$records")
 	return 0
 }
 
@@ -102,7 +126,11 @@ integration_recovery_decision() {
 	# never a worker's event or an actor field supplied through stdin.
 	gh api "repos/${repo}/collaborators/${actor}/permission" --jq '.permission' |
 		grep -Eq '^(admin|maintain|write)$' || return 1
-	integration_recovery_observe "$id" >/dev/null || return 1
+	integration_recovery_observe "$id" >/dev/null || {
+		printf 'Recovery decision for %s not recorded; live observation unavailable (error_class=%s)\n' \
+			"$id" "$(integration_recovery_observe_error_class "$repo")" >&2
+		return 1
+	}
 	jq --arg actor "$actor" '. + {actor:$actor}' <<<"$input" |
 		python3 "${_IR_SCRIPT_DIR}/integration_recovery.py" decision --id "$id"
 	return $?
