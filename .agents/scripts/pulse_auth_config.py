@@ -27,18 +27,29 @@ def registry(path):
     return value
 
 
+def matching_entries(data, repo):
+    return [entry for entry in data["initialized_repos"] if str(entry.get("slug", "")).lower() == repo.lower()]
+
+
 def entry_for(data, repo):
-    entries = [entry for entry in data["initialized_repos"] if str(entry.get("slug", "")).lower() == repo.lower()]
+    entries = matching_entries(data, repo)
     if len(entries) != 1:
         raise AuthError("Repository must have exactly one registry entry")
     return entries[0]
 
 
+def any_configured(data):
+    return any(entry.get("pulse_auth") is not None for entry in data["initialized_repos"])
+
+
 def settings(data, repo, config_path):
+    # Unregistered repositories and entries without pulse_auth keep their
+    # existing auth. Only an App selection must be unambiguous and valid.
+    entries = matching_entries(data, repo)
+    if all(entry.get("pulse_auth") is None for entry in entries):
+        return None
     entry = entry_for(data, repo)
     auth = entry.get("pulse_auth")
-    if auth is None:
-        return None
     if not isinstance(auth, dict) or auth.get("provider") != "github-app":
         raise AuthError("Unsupported Pulse auth provider")
     if entry.get("local_only"):

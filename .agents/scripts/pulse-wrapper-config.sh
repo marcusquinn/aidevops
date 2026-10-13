@@ -24,6 +24,13 @@
 [[ -n "${_PULSE_WRAPPER_CONFIG_LOADED:-}" ]] && return 0
 _PULSE_WRAPPER_CONFIG_LOADED=1
 
+# Pulse identity for gh: every process that loads Pulse configuration (wrapper,
+# merge routine, merge webhook receiver, complexity scan, cleanup helpers via
+# pulse-cleanup.sh) enables the repository App read resolver here, once. The gh
+# shim selects credentials per invocation; reads it cannot prove repository
+# scoped keep existing auth, so no token is exported by these processes.
+export AIDEVOPS_PULSE_AUTH=1
+
 # Defensive SCRIPT_DIR fallback (matches issue-sync-lib.sh pattern)
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_lib_path="${BASH_SOURCE[0]%/*}"

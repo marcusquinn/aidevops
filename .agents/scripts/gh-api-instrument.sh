@@ -46,7 +46,10 @@
 # Legacy log format (TSV, still readable):
 #   <unix_ts>\t<caller_basename>\t<path>\t<auth_mode>\t<api_pool>\t<route_decision>\t<budget_remaining>
 # Version 2 appends these privacy-safe fields after the legacy prefix:
-#   v2\t<event_kind>\t<logical_id>\t<attempt_id>\t<page>\t<retry>\t<outcome>\t<http_status>\t<elapsed_ms>\t<quota_cost>
+#   v2\t<event_kind>\t<logical_id>\t<attempt_id>\t<page>\t<retry>\t<outcome>\t<http_status>\t<elapsed_ms>\t<quota_cost>[\t<auth_reason>]
+# auth_reason (optional, from AIDEVOPS_GH_AUTH_REASON) is the Pulse auth route:
+# app | write | local | account | unclassified | unscoped | not-configured |
+# other-host | absolute-url | explicit-auth | verbose. Empty = not routed.
 #
 # Override env vars:
 #   AIDEVOPS_GH_API_LOG          — path to the log file (default
@@ -582,6 +585,7 @@ _gh_append_v2() {
 	local recorded_at="${1:-}"
 	local ts=""
 	local record=""
+	local auth_reason=""
 	if [[ -n "$recorded_at" ]]; then
 		[[ "$recorded_at" =~ ^[1-9][0-9]*$ ]] || return 1
 		ts="$recorded_at"
@@ -603,9 +607,13 @@ _gh_append_v2() {
 	http_status=$(_gh_safe_number "$http_status")
 	elapsed_ms=$(_gh_safe_number "$elapsed_ms")
 	quota_cost=$(_gh_safe_number "$quota_cost")
-	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+	# The Pulse auth resolver labels its child gh process; other callers leave
+	# the reason empty ("unrouted" in reports).
+	auth_reason=$(_gh_safe_text "${AIDEVOPS_GH_AUTH_REASON:-}" "")
+	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
 		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
-		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost"
+		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost" \
+		"$auth_reason"
 	_gh_append_record "$record"
 	return 0
 }

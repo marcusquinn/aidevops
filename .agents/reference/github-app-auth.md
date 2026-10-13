@@ -124,6 +124,7 @@ they are not per-user permission boundaries. Keep keys out of Git and chat.
 aidevops repos pulse auth set OWNER/REPO --provider github-app --profile team-pulse --installation-id 987654
 aidevops repos pulse auth status OWNER/REPO
 aidevops repos pulse auth check OWNER/REPO
+aidevops repos pulse auth usage --since 1h
 ```
 
 `set` validates local configuration and atomically updates the registry under
@@ -132,11 +133,29 @@ alter other repository settings. `status` is offline. `check` mints/reuses a
 scoped installation token and performs a repository metadata read through the
 same gh shim as Pulse. No command prints a token or private key. Configuration
 errors, duplicate repository entries and unsupported providers fail closed.
+`usage` summarises `gh-api-calls.log` for the window by credential
+(`by_auth_mode`) and by route reason (`by_auth_reason`, below); it reads only
+local metadata and never contacts GitHub.
+
+### Quota model
+
+Installation access tokens use the installation's own primary rate limit
+(15,000/h on GitHub Enterprise Cloud organizations), separate from the
+maintainer's personal 5,000/h budget shared by PATs, `gh auth` and user-to-server
+App tokens. The budget is per installation, not per App or token: one App
+installed in two organizations, or two Apps in one organization, have separate
+budgets; every token minted for one installation, on any host or OS user,
+shares it. Secondary limits still apply. Source: GitHub "Rate limits for the REST API",
+sections "Primary rate limit for authenticated users" and "Primary rate limit
+for GitHub App installations".
 
 ### Read/write boundary
 
-`pulse-wrapper.sh` enables the repository resolver for its child gh commands.
-Normal interactive gh commands are unaffected. The resolver runs before shim
+`pulse-wrapper-config.sh` enables the repository resolver; every process that
+loads Pulse configuration (wrapper, merge routine, merge webhook receiver,
+complexity scan, cleanup helpers) inherits it, so all their child gh commands
+are routed. Normal interactive gh commands are
+unaffected. The resolver runs before shim
 quota probes and REST translations and then re-enters the same shim, retaining
 its existing safety policies and instrumentation.
 
@@ -152,17 +171,26 @@ its existing safety policies and instrumentation.
   These are explicit account operations, not repository-read fallbacks.
 - Explicit App reads never retry with personal auth on mint failure, 401, 403
   or rate limiting. Missing keys fail even if a token remains in the cache.
-- Unknown command/GraphQL forms fail closed when profiles are configured.
-  JSON `--input` GraphQL documents and extensions require explicit future
-  classification; do not assume they use the App or personal identity.
-- Reads require one explicit repo: `--repo/-R`, a `/repos/OWNER/REPO/...` REST
-  endpoint, explicit GraphQL `owner`/`name` variables, or
-  `AIDEVOPS_PULSE_REPO=OWNER/REPO` for a repository-scoped caller.
-  Conflicting scopes and multi-repository search are rejected. CWD is not an
-  authority source. Other unscoped global reads must be moved into an explicit
-  repository context before opting that Pulse deployment in.
-- Only github.com is supported. Explicit Authorization headers, absolute API
-  URLs and verbose HTTP logging are rejected for App reads.
+- An App read requires one explicit repo: `--repo/-R`, a
+  `/repos/OWNER/REPO/...` REST endpoint, explicit GraphQL `owner`/`name`
+  variables, or `AIDEVOPS_PULSE_REPO=OWNER/REPO` for a repository-scoped
+  caller. CWD is not an authority source.
+- Every invocation that cannot be proven an App read keeps the existing auth,
+  unchanged, and is labelled in `gh-api-calls.log` field 18 so coverage gaps
+  stay visible without breaking unrelated Pulse stages:
+
+  | Reason | Meaning |
+  |--------|---------|
+  | `app` | Repository App installation token |
+  | `write` / `local` / `account` | Classified non-read operation |
+  | `unclassified` | Unknown command form, extension or GraphQL `--input` |
+  | `unscoped` | Read without exactly one repository (conflicts, global search) |
+  | `not-configured` | Repository (registered or not) has no `pulse_auth` |
+  | `other-host` / `absolute-url` / `explicit-auth` / `verbose` | Caller pinned transport the App read cannot honour |
+
+  Empty field 18 (`unrouted` in reports) means the resolver was not enabled.
+  This is operation routing, never a fallback: once a read is selected for the
+  App, failure does not retry with personal auth.
 
 ### Lifetime and rollback
 

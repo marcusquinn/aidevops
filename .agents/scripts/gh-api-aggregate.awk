@@ -35,10 +35,13 @@ function metric_get(group, value, metric) {
 	return metrics[group SUBSEP value SUBSEP metric] + 0
 }
 
+# auth_reason is a per-record global (field 18) so existing call sites keep
+# their signature; it is reset for every record in the main rule.
 function metric_add_dimensions(caller, path, auth, pool, decision, metric, amount) {
 	metric_add("caller", caller, metric, amount)
 	metric_add("path", path, metric, amount)
 	metric_add("auth", auth, metric, amount)
+	metric_add("reason", auth_reason, metric, amount)
 	metric_add("pool", pool, metric, amount)
 	metric_add("decision", decision, metric, amount)
 }
@@ -147,6 +150,7 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 	decision = (NF >= 6 && $6 != "") ? $6 : "unspecified"
 	budget = (NF >= 7) ? $7 : ""
 	version = (NF >= 8) ? $8 : ""
+	auth_reason = (NF >= 18 && $18 != "") ? $18 : "unrouted"
 	attempt_unidentified = 0
 	attempt_duplicate = 0
 	attempt_page_unknown = 0
@@ -382,6 +386,8 @@ END {
 	emit_group("by_path", "path")
 	print ","
 	emit_group("by_auth_mode", "auth")
+	print ","
+	emit_group("by_auth_reason", "reason")
 	print ","
 	emit_group("by_api_pool", "pool")
 	print ","

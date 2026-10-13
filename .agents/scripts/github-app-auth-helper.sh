@@ -367,16 +367,18 @@ github_app_api_call() {
 	AIDEVOPS_GH_COOLDOWN_WRAPPER="$context_wrapper"
 	AIDEVOPS_GH_COOLDOWN_STAGE="$context_stage"
 	AIDEVOPS_GH_API_POOL="$api_pool"
+	# Credentials are recorded in the auth column. The route keeps the caller's
+	# label: encoding auth here went stale when a downstream resolver (Pulse
+	# repository App reads) replaced the credential for the actual request.
+	AIDEVOPS_GH_ROUTE_DECISION="${AIDEVOPS_GH_ROUTE_DECISION:-${api_pool}-selected}"
 	if [[ -n "$token" ]]; then
 		installation_id=$(github_app_installation_id 2>/dev/null || true)
 		GH_TOKEN="$token"
 		AIDEVOPS_GH_AUTH_MODE="github-app"
 		AIDEVOPS_GH_AUTH_PRINCIPAL="app-installation:${installation_id:-unknown}"
-		AIDEVOPS_GH_ROUTE_DECISION="${api_pool}-github-app"
 	else
 		AIDEVOPS_GH_AUTH_MODE="gh-pat"
 		AIDEVOPS_GH_AUTH_PRINCIPAL="${AIDEVOPS_GH_AUTH_PRINCIPAL:-unknown}"
-		AIDEVOPS_GH_ROUTE_DECISION="${api_pool}-gh-pat"
 	fi
 	export GH_TOKEN AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE
 	_github_app_api_invoke "$timeout_class" "$@"

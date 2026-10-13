@@ -1028,6 +1028,8 @@ cmd_repos() {
 		echo "           Enable/disable Pulse task automation (on requires maintenance)"
 		echo "  pulse auth <set|status|check|clear> owner/repo [options]"
 		echo "           Configure repository GitHub App reads without changing write auth"
+		echo "  pulse auth usage [--since 1h]"
+		echo "           Show recent gh requests by credential and Pulse auth route"
 		echo "  actions <on|off> [repo] [reason]"
 		echo "           Record GitHub Actions availability; off requires exact-head local checks"
 		;;

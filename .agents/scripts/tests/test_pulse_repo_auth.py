@@ -33,6 +33,8 @@ class RepositoryAuthTests(unittest.TestCase):
         self.profile = {"app_id": "123", "private_key_path": str(self.key)}
         self.config = self.root / "app.json"
         self.config.write_text(json.dumps({"profiles": {"team": self.profile}}))
+        # Independent of the host umask (002 makes it group-writable).
+        self.config.chmod(0o600)
         self.data = {"initialized_repos": [
             {"slug": "owner/repo", "pulse": False, "pulse_auth": {
                 "provider": "github-app", "profile": "team", "installation_id": "456"}},
@@ -80,39 +82,70 @@ class RepositoryAuthTests(unittest.TestCase):
         self.assertFalse(Path(env["GH_CONFIG_DIR"]).exists())
         self.assertEqual(os.environ, original)
 
-    def test_writes_and_legacy_repo_keep_original_credentials(self):
-        for command in (["pr", "merge", "1", "-R", "owner/repo"],
-                        ["issue", "list", "-R", "owner/legacy"]):
-            with patch.object(auth, "cached_token") as mint, \
-                    patch.object(auth.subprocess, "call", return_value=0) as call:
-                self.assertEqual(auth.execute(self.shim, command, self.data, self.config), 0)
-            mint.assert_not_called()
-            self.assertEqual(call.call_args.kwargs["env"]["GH_TOKEN"], self.personal_credential)
+    def assert_existing_route(self, command, reason):
+        with patch.object(auth, "cached_token") as mint, \
+                patch.object(auth.subprocess, "call", return_value=0) as call:
+            self.assertEqual(auth.execute(self.shim, command, self.data, self.config), 0)
+        mint.assert_not_called()
+        env = call.call_args.kwargs["env"]
+        self.assertEqual(env["GH_TOKEN"], self.personal_credential, command)
+        self.assertEqual(env["AIDEVOPS_GH_AUTH_REASON"], reason, command)
+        self.assertEqual(env["AIDEVOPS_PULSE_AUTH_ACTIVE"], "1")
+
+    def test_writes_and_unconfigured_repos_keep_original_credentials(self):
+        self.assert_existing_route(["pr", "merge", "1", "-R", "owner/repo"], "write")
+        self.assert_existing_route(["issue", "list", "-R", "owner/legacy"], "not-configured")
+        # Unregistered repositories are not configuration errors.
+        self.assert_existing_route(["issue", "list", "-R", "elsewhere/unregistered"], "not-configured")
+
+    def test_unprovable_reads_keep_existing_auth_with_reason(self):
+        # One App repository must not break unrelated or unscoped Pulse reads.
+        cases = ((["api", "/search/issues"], "unscoped"),
+                 (["issue", "list"], "unscoped"),
+                 (["issue", "list", "-R", "owner/repo", "-R", "owner/legacy"], "unscoped"),
+                 (["custom-extension"], "unclassified"),
+                 (["label", "create", "x", "-R", "owner/repo"], "unclassified"),
+                 (["api", "graphql", "--input", "body.json"], "unclassified"),
+                 (["api", "user"], "account"),
+                 (["api", "/repos/owner/repo", "-H", "Authorization: example"], "explicit-auth"),
+                 (["api", "/repos/owner/repo", "--hostname", "other.example"], "other-host"),
+                 (["api", "/repos/owner/repo", "--verbose"], "verbose"))
+        for command, reason in cases:
+            self.assert_existing_route(command, reason)
+
+    def test_no_registry_configuration_short_circuits(self):
+        data = {"initialized_repos": [{"slug": "owner/legacy", "pulse": True}]}
+        self.assertEqual(auth.decide(["issue", "list"], data, self.config), ("not-configured", None))
+
+    def test_app_read_is_labelled(self):
+        with patch.object(auth, "cached_token", return_value={"token": self.installation_credential}), \
+                patch.object(auth.subprocess, "call", return_value=0) as call:
+            auth.execute(self.shim, ["api", "/repos/OWNER/repo/issues"], self.data, self.config)
+        env = call.call_args.kwargs["env"]
+        self.assertEqual(env["AIDEVOPS_GH_AUTH_REASON"], "app")
+        self.assertEqual(env["AIDEVOPS_GH_AUTH_MODE"], "github-app")
 
     def test_failed_mint_never_invokes_personal_transport(self):
         with patch.object(auth, "cached_token", side_effect=backend.AuthError("denied")), \
+                patch.object(auth, "record_app_failure") as record, \
                 patch.object(auth.subprocess, "call") as call:
-            with self.assertRaises(backend.AuthError):
+            with self.assertRaisesRegex(backend.AuthError, "owner/repo.*no personal-token retry"):
                 auth.execute("gh", ["issue", "list", "-R", "owner/repo"], self.data, self.config)
         call.assert_not_called()
+        record.assert_called_once_with("456")
 
-    def test_ambiguous_scope_and_header_override_fail_closed(self):
-        for command in (["api", "/search/issues"], ["custom-extension"],
-                        ["api", "/repos/owner/repo", "-H", "Authorization: example"],
-                        ["api", "/repos/owner/repo", "--hostname", "other.example"]):
-            with patch.object(auth.subprocess, "call") as call:
-                with self.assertRaises(backend.AuthError):
-                    auth.execute("gh", command, self.data, self.config)
-                call.assert_not_called()
+    def test_usage_window_parsing(self):
+        self.assertEqual(auth.parse_window("90"), 90)
+        self.assertEqual(auth.parse_window("30m"), 1800)
+        self.assertEqual(auth.parse_window("2d"), 172800)
+        for value in ("0", "1w", "-1h", "h"):
+            with self.assertRaises(backend.AuthError):
+                auth.parse_window(value)
 
     def test_account_identity_is_not_replaced_by_bot(self):
         for command in (["api", "user"], ["api", "rate_limit"]):
             self.assertEqual(auth.operation(command), "account")
-            with patch.object(auth, "cached_token") as mint, \
-                    patch.object(auth.subprocess, "call", return_value=0) as call:
-                auth.execute(self.shim, command, self.data, self.config)
-                mint.assert_not_called()
-                self.assertEqual(call.call_args.kwargs["env"]["GH_TOKEN"], self.personal_credential)
+            self.assert_existing_route(command, "account")
         with patch.dict(os.environ, {"AIDEVOPS_PULSE_REPO": "owner/repo"}):
             self.assertEqual(auth.operation(["api", "rate_limit"]), "read")
 
@@ -140,6 +173,7 @@ class RepositoryAuthTests(unittest.TestCase):
     def test_cli_set_is_atomic_and_preserves_pulse(self):
         registry = self.root / "repos.json"
         registry.write_text(json.dumps(self.data))
+        registry.chmod(0o600)
         env = dict(os.environ, AIDEVOPS_REPOS_CONFIG=str(registry), AIDEVOPS_GITHUB_APP_CONFIG=str(self.config))
         command = [sys.executable, str(Path(auth.__file__)), "set", "owner/repo", "--profile", "team", "--installation-id", "789"]
         # Interpreter and sibling test target are fixed; no shell or external command input.

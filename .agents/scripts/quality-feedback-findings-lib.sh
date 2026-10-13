@@ -521,9 +521,10 @@ _resolved_review_comment_ids() {
 	local repo="${repo_slug#*/}"
 
 	# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not the shell.
+	# owner/name variables let the Pulse auth resolver identify the repository.
 	gh api graphql \
-		-f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:100){nodes{databaseId}}}}}}}' \
-		-f owner="$owner" -f repo="$repo" -F pr="$pr_num" \
+		-f query='query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:100){nodes{databaseId}}}}}}}' \
+		-f owner="$owner" -f name="$repo" -F pr="$pr_num" \
 		--jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved) | .comments.nodes[].databaseId]' \
 		2>/dev/null || printf '[]\n'
 	return 0
