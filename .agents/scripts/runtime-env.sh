@@ -139,7 +139,7 @@ aidevops_dir_chain_is_trusted() {
 	# intermediate symlink or a link target reached through an untrusted chain.
 	while :; do
 		metadata=$(aidevops_bootstrap_metadata "$current") || return 1
-		read -r uid mode <<<"$metadata"
+		IFS=' ' read -r uid mode <<<"$metadata"
 		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || return 1
 		if [[ -L "$current" ]]; then
 			target=$(command -p readlink "$current") || return 1
@@ -154,7 +154,7 @@ aidevops_dir_chain_is_trusted() {
 	done
 	while :; do
 		metadata=$(aidevops_bootstrap_metadata "$physical") || return 1
-		read -r uid mode <<<"$metadata"
+		IFS=' ' read -r uid mode <<<"$metadata"
 		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || return 1
 		if (((8#$mode & 0022) != 0)); then
 			[[ -k "$physical" ]] || return 1
@@ -170,6 +170,8 @@ aidevops_dir_chain_is_trusted() {
 # PATH entry whose executable and directory chain are root-controlled.
 # No fixed distro roots, so the
 # same rule works on macOS, FHS Linux and Nix-based systems.
+# Metadata reads pin IFS so callers with a strict IFS (e.g. $'\n\t') still split
+# "uid mode"; otherwise every trusted tool is silently rejected.
 # Usage: aidevops_resolve_trusted_tool <name> [search_path]
 aidevops_resolve_trusted_tool() {
 	local tool="$1"
@@ -198,7 +200,7 @@ aidevops_resolve_trusted_tool() {
 		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
 		physical=$(aidevops_physical_path "$candidate" 1) || continue
 		metadata=$(aidevops_bootstrap_metadata "$physical") || continue
-		read -r uid mode <<<"$metadata"
+		IFS=' ' read -r uid mode <<<"$metadata"
 		[[ "$uid" == 0 && "$mode" =~ ^[0-7]+$ ]] || continue
 		(((8#$mode & 0022) == 0)) || continue
 		aidevops_dir_chain_is_trusted "${candidate%/*}" || continue
@@ -224,7 +226,7 @@ aidevops_physical_path() {
 		if [[ "$trusted" == 1 ]]; then
 			aidevops_dir_chain_is_trusted "${candidate%/*}/" || return 1
 			metadata=$(aidevops_bootstrap_metadata "$candidate") || return 1
-			read -r uid mode <<<"$metadata"
+			IFS=' ' read -r uid mode <<<"$metadata"
 			[[ "$uid" == 0 ]] || return 1
 		fi
 		directory=$(cd -P -- "${candidate%/*}/" 2>/dev/null && pwd -P) || return 1
