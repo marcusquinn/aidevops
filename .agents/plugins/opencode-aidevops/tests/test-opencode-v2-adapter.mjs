@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 
 import { getOpenCodeRuntimeProfile, profileForOpenCodeVersion } from "../runtime-profile.mjs";
 import { loadV1ToolHelper, tool } from "../tools.mjs";
@@ -482,6 +483,56 @@ test("V2 permission evaluation maps SDK action/resources to broker input", () =>
   assert.deepEqual(observed.patterns, ["/outside"]);
   assert.equal(event.effect, "deny");
   assert.equal("decision" in event, false);
+});
+
+test("V2 pooled OpenAI requests preserve zstd bytes and transform only plain JSON", async () => {
+  const account = { email: "pooled@example.com", access: "test-token", accountId: "test-account" };
+  const runtime = createV2ProviderAuthRuntime({
+    getAccounts: (provider) => provider === "openai" ? [account] : [],
+    selectRuntimePoolAccount: async () => account,
+    patchAccount: () => {},
+    markRejectedTokenFailure: () => {},
+    ensureProviderActivation: () => {},
+  });
+  const original = {
+    input: "Keep unicode: café 日本語",
+    tools: [{ type: "function", name: "sample", parameters: { type: "object", properties: {} } }],
+  };
+  const compressed = zstdCompressSync(JSON.stringify(original));
+  const event = {
+    sessionID: "zstd-session",
+    model: { providerID: "openai", id: "test-model" },
+    request: new Request("https://example.test/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-encoding": "zstd",
+        "content-length": String(compressed.byteLength),
+      },
+      body: compressed,
+    }),
+  };
+  await runtime.httpRequest(event);
+  const forwarded = Buffer.from(await event.request.arrayBuffer());
+  assert.deepEqual(forwarded, compressed);
+  assert.deepEqual(JSON.parse(zstdDecompressSync(forwarded).toString()), original);
+  assert.equal(event.request.headers.get("content-encoding"), "zstd");
+  assert.equal(event.request.headers.get("content-length"), String(compressed.byteLength));
+  assert.equal(event.request.headers.get("authorization"), "Bearer test-token");
+  assert.equal(event.request.headers.get("chatgpt-account-id"), "test-account");
+
+  const plain = JSON.stringify(original);
+  event.request = new Request("https://example.test/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(plain)) },
+    body: plain,
+  });
+  await runtime.httpRequest(event);
+  const transformed = await event.request.json();
+  assert.ok(transformed.tools[0].parameters.properties.agent__intent);
+  assert.equal(transformed.input, original.input);
+  assert.equal(event.request.headers.get("content-encoding"), null);
+  assert.equal(event.request.headers.get("content-length"), null);
 });
 
 test("V2 provider hooks rotate pooled accounts after a retryable response", async () => {

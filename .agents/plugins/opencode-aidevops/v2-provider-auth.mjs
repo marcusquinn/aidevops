@@ -39,6 +39,8 @@ function requestBodyAllowed(request) {
 
 async function transformedBody(request, provider, sessionID) {
   if (!requestBodyAllowed(request)) return undefined;
+  // The V2 HTTP hook receives already-encoded bytes; decoding them as text is lossy.
+  if (request.headers.get("content-encoding")) return undefined;
   const body = await request.clone().text().catch(() => null);
   if (body === null) return undefined;
   return provider === "anthropic"
@@ -55,6 +57,8 @@ function rebuildRequest(request, url, headers, body) {
   };
   if (requestBodyAllowed(request)) init.body = body ?? request.body;
   if (typeof init.body === "string") headers.delete("content-length");
+  // Node requires duplex when forwarding the original ReadableStream body.
+  else if (init.body) init.duplex = "half";
   return new Request(url, init);
 }
 
