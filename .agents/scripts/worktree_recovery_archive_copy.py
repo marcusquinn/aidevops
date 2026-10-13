@@ -82,8 +82,8 @@ def copy_without_caches(source: Path, destination: Path, git_bin: str) -> int:
     return 0
 
 
-def validate_attempt(record: dict, source: Path, root: Path, identity: str) -> Path:
-    """Validate one exact reservation; incomplete copies need operator review."""
+def attempt_bucket(record: dict, source: Path, root: Path, identity: str) -> Path:
+    """Validate reservation identity independently of archive availability."""
     require(isinstance(record, dict), "invalid archive reservation")
     require(record.get("schema") == ATTEMPT_SCHEMA, "unknown archive reservation")
     require(record.get("source") == str(source), "archive source changed")
@@ -91,6 +91,12 @@ def validate_attempt(record: dict, source: Path, root: Path, identity: str) -> P
     bucket = Path(record.get("bucket", ""))
     require(bucket.parent == root, "archive bucket escaped recovery root")
     require(bucket.name.startswith(BUCKET_PREFIX), "unknown archive bucket")
+    return bucket
+
+
+def validate_attempt(record: dict, source: Path, root: Path, identity: str) -> Path:
+    """Validate one exact reservation; incomplete copies need operator review."""
+    bucket = attempt_bucket(record, source, root, identity)
     require(bucket.is_dir() and not bucket.is_symlink(), "archive bucket unavailable")
     metadata = bucket / ".aidevops-worktree-recovery"
     marker = metadata / "archive-complete"
@@ -160,14 +166,60 @@ def matching_copy(source: Path, archive: Path, git_bin: str) -> int:
     return 0
 
 
+def reservation_identity(source: Path, root: Path) -> tuple[str, Path]:
+    """Share the producer's exact source identity and reservation key."""
+    identity = root_identity(source)
+    require(identity is not None, "source identity unavailable")
+    key = hashlib.sha256(f"{source}\0{identity}".encode()).hexdigest()
+    return identity, root / f".archive-attempt-{key}.json"
+
+
+def retire_missing_attempt(source: Path, root: Path, confirmation: str) -> str:
+    """Operator-only transition under the producer lock; never delete source data.
+
+    Confirmation binds the exact old record. Keep it as durable history before
+    permitting a new attempt. Missing historical data is not claimed recovered.
+    A suspended retention transaction must be resolved through its own journal.
+    """
+    require(not source.is_symlink() and not root.is_symlink(), "symlinked repair path")
+    source, root = source.resolve(), root.resolve()
+    identity, reservation = reservation_identity(source, root)
+    require(reservation.is_file() and not reservation.is_symlink(), "reservation unavailable")
+    raw = reservation.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    require(confirmation == digest, "reservation confirmation mismatch")
+    bucket = attempt_bucket(json.loads(raw), source, root, identity)
+    require(not os.path.lexists(bucket), "archive bucket still exists")
+    trash = root / ".retention-trash"
+    require(not os.path.lexists(trash), "retention state requires review")
+    history = root / f".reviewed-missing-attempt-{digest}.json"
+    # Publish a hard link first: an interruption leaves either the original
+    # reservation or both names, never loses its evidence, and cannot overwrite.
+    if os.path.lexists(history):
+        require(
+            not history.is_symlink() and history.samefile(reservation),
+            "conflicting review history",
+        )
+    else:
+        os.link(reservation, history, follow_symlinks=False)
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+        require(reservation.read_bytes() == raw, "reservation changed during review")
+        require(root_identity(source) == identity, "source identity changed during review")
+        require(not os.path.lexists(bucket), "archive appeared during review")
+        reservation.unlink()
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return str(history)
+
+
 def reserve_archive(source: Path, root: Path, _git_bin: str) -> str:
     """Allow at most one unfinished attempt for an unchanged source identity."""
     source = source.resolve()
     root = root.resolve()
-    identity = root_identity(source)
-    require(identity is not None, "source identity unavailable")
-    key = hashlib.sha256(f"{source}\0{identity}".encode()).hexdigest()
-    reservation = root / f".archive-attempt-{key}.json"
+    identity, reservation = reservation_identity(source, root)
     try:
         if os.path.lexists(reservation):
             require(not reservation.is_symlink(), "reservation is a symlink")

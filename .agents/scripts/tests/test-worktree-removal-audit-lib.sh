@@ -1813,6 +1813,10 @@ test_privileged_inspector_uses_bounded_execution() {
 	local output=""
 	local rc=0
 	output=$(
+		worktree_process_platform() {
+			printf '%s\n' Linux
+			return 0
+		}
 		timeout_sec() {
 			[[ "$1" == "5" && "$2" == "sudo" && "$3" == "-n" && "$4" == "--" ]] || return 1
 			[[ "$5" == "/usr/local/libexec/aidevops-worktree-cwd-inspect" && "$6" == "2" ]] || return 1
@@ -1823,6 +1827,105 @@ test_privileged_inspector_uses_bounded_execution() {
 	[[ "$output" == "/bounded-cwd" ]] || rc=1
 	print_result "privileged_inspector_uses_bounded_execution" "$rc" \
 		"Expected the privileged inspector to use the shared five-second timeout"
+	return 0
+}
+
+# Platform detection reads data, not executable shell, and never enables removal.
+test_process_platform_policy() {
+	local release_file="${TEST_DIR}/os-release"
+	local id_value=""
+	local rc=0
+	for id_value in nixos '"nixos"' "'nixos'"; do
+		printf 'ID=%s\n' "$id_value" >"$release_file"
+		[[ "$(worktree_process_platform Linux "$release_file")" == nixos ]] || rc=1
+	done
+	[[ "$(worktree_process_platform Darwin "$release_file")" == Darwin ]] || rc=1
+	printf 'ID=ubuntu\nID_LIKE=nixos\n' >"$release_file"
+	[[ "$(worktree_process_platform Linux "$release_file")" == Linux ]] || rc=1
+	[[ "$(worktree_process_platform Linux "${TEST_DIR}/missing-release")" == Linux ]] || rc=1
+	printf '%s\n' "ID=\$(exit 99)" >"$release_file"
+	[[ "$(worktree_process_platform Linux "$release_file")" == Linux ]] || rc=1
+	worktree_process_inspector_allowed nixos && rc=1
+	worktree_process_inspector_allowed Linux || rc=1
+	worktree_process_inspector_allowed Darwin || rc=1
+	print_result "process_platform_policy" "$rc" "Expected exact NixOS detection with unchanged legacy policy"
+	return 0
+}
+
+test_unprivileged_proc_collector() {
+	local rc=0
+	python3 - "$SCRIPT_DIR/.." "$TEST_DIR" <<'PY' || rc=1
+import contextlib
+import io
+import os
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import worktree_process_proc as provider
+
+root = Path(sys.argv[2]) / 'portable-proc'
+root.mkdir()
+uid = os.getuid()
+for pid, identities, state in (
+    ('1', [uid] * 4, 'S'),
+    ('2', [uid] * 4, 'S'),
+    ('3', [uid + 1] * 4, 'S'),
+    ('4', [uid + 1, uid, uid + 1, uid + 1], 'S'),
+    ('5', [uid] * 4, 'Z'),
+    ('6', [], 'S'),
+    ('7', [uid] * 4, 'S'),
+):
+    process = root / pid
+    process.mkdir()
+    (process / 'status').write_text(f'State:\t{state}\nUid:\t' + ' '.join(map(str, identities)))
+    (process / 'cwd').symlink_to('/visible' if pid != '7' else '/invalid\npath')
+    (process / 'comm').write_text('sshd-session\n')
+real_readlink = os.readlink
+
+def readlink(path):
+    if Path(path).parent.name not in ('1', '7'):
+        raise PermissionError('fixture denial')
+    return real_readlink(path)
+
+with patch.object(provider.os, 'readlink', readlink):
+    paths, denied = provider.collect(root)
+assert paths == ['/visible']
+assert {p.name for p in denied} == {'2', '4', '6', '7'}
+assert provider.denied_process_is_irrelevant(root / 'vanished', uid)
+for snapshot, expected in ((paths, 0), ([], 1)):
+    with patch.object(provider, 'collect', return_value=(snapshot, [])), contextlib.redirect_stdout(io.StringIO()):
+        assert provider.main(['paths']) == expected
+with patch.object(provider, 'collect', return_value=(paths, denied)), contextlib.redirect_stdout(io.StringIO()):
+    assert provider.main(['paths']) == 2
+    assert provider.main(['denied']) == 0
+with patch.object(provider, 'collect', side_effect=PermissionError()):
+    assert provider.main(['paths']) == 1
+assert provider.main(['invalid']) == 1
+PY
+	print_result "unprivileged_proc_collector" "$rc" "Expected portable fail-closed process evidence without subprocesses"
+	return 0
+}
+
+test_nixos_process_inspector_never_escalates() {
+	local output=""
+	local rc=0
+	if output=$(
+		worktree_process_platform() {
+			printf '%s\n' nixos
+			return 0
+		}
+		timeout_sec() {
+			printf '%s\n' unexpected-escalation
+			return 0
+		}
+		_worktree_privileged_read_cwd /proc /proc/2
+	); then
+		rc=1
+	fi
+	[[ -z "$output" ]] || rc=1
+	print_result "nixos_process_inspector_never_escalates" "$rc" "Expected refusal before invoking the privileged adapter"
 	return 0
 }
 
@@ -2171,11 +2274,12 @@ test_archive_copy_filters_before_io_and_bounds_retries() {
 	local rc=0
 	create_git_worktree_fixture "$repo_path" "$wt_path" "feature/filtered-copy" || rc=1
 	python3 - "$SCRIPT_DIR/.." "$wt_path" "$TEST_DIR" "$GIT_BIN" <<'PY' || rc=1
+import hashlib
 import pathlib
 import subprocess
 import sys
 sys.path.insert(0, sys.argv[1])
-from worktree_recovery_archive_copy import copy_without_caches, reserve_archive
+from worktree_recovery_archive_copy import copy_without_caches, reserve_archive, retire_missing_attempt
 
 source, scratch, git = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), sys.argv[4]
 (source / '.gitignore').write_text('node_modules/\n.next/\n.env\n')
@@ -2218,8 +2322,8 @@ alias.symlink_to(store, target_is_directory=True)
 alias_buckets = list(alias.glob('aidevops-worktree-cleanup-*'))
 assert alias_buckets != [bucket], (alias_buckets, bucket)
 assert [path.resolve() for path in alias_buckets] == [bucket.resolve()], (alias_buckets, bucket)
-assert source.is_dir()
 PY
+	_test_missing_reservation_review "$wt_path" "$TEST_DIR" "$GIT_BIN" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/reuse-completed" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
 		archive_worktree_path_recoverably "$wt_path" "test.sh" "reuse-test" || rc=1
 	first_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
@@ -2234,6 +2338,120 @@ PY
 	[[ -f "$wt_path/new-user-note" && ! -e "$first_archive/new-user-note" ]] || rc=1
 	print_result "archive_copy_filters_before_io_and_bounds_retries" "$rc" \
 		"Expected cache exclusion before copy, preservation of user/tracked data, and bounded retries"
+	return 0
+}
+
+_test_missing_reservation_review() {
+	local source_path="$1"
+	local scratch="$2"
+	local git_bin="$3"
+	python3 - "$SCRIPT_DIR/.." "$source_path" "$scratch" "$git_bin" <<'PY' || return 1
+import hashlib
+import pathlib
+import sys
+sys.path.insert(0, sys.argv[1])
+from worktree_recovery_archive_copy import reserve_archive, retire_missing_attempt
+source, store, git = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]) / 'bounded-attempts', sys.argv[4]
+bucket = next(store.glob('aidevops-worktree-cleanup-*')).resolve()
+# A vanished bucket does not authorize replacement of its reservation.
+# Reproduce the reference host's failure without touching a real archive.
+reservation = next(store.glob('.archive-attempt-*.json'))
+reservation_before = reservation.read_bytes()
+digest = hashlib.sha256(reservation_before).hexdigest()
+try:
+    retire_missing_attempt(source, store, digest)
+except ValueError as error:
+    assert 'still exists' in str(error)
+else:
+    raise AssertionError('existing archive must not be retired')
+bucket.rmdir()
+try:
+    reserve_archive(source, store, git)
+except ValueError as error:
+    assert 'archive bucket unavailable' in str(error)
+else:
+    raise AssertionError('missing archive must remain an explicit review boundary')
+assert reservation.read_bytes() == reservation_before
+assert not list(store.glob('aidevops-worktree-cleanup-*'))
+assert source.is_dir()
+for confirmation, message in [('0' * 64, 'confirmation mismatch')]:
+    try:
+        retire_missing_attempt(source, store, confirmation)
+    except ValueError as error:
+        assert message in str(error)
+    else:
+        raise AssertionError('unconfirmed repair must fail')
+trash = store / '.retention-trash'
+trash.mkdir()
+try:
+    retire_missing_attempt(source, store, digest)
+except ValueError as error:
+    assert 'retention state' in str(error)
+else:
+    raise AssertionError('retention state must block repair')
+trash.rmdir()
+# Resume an interruption after history publication, before active-name retirement.
+history = store / f'.reviewed-missing-attempt-{digest}.json'
+history.hardlink_to(reservation)
+history = pathlib.Path(retire_missing_attempt(source, store, digest))
+assert history.read_bytes() == reservation_before
+assert not reservation.exists()
+assert source.is_dir()
+new_bucket = pathlib.Path(reserve_archive(source, store, git))
+assert new_bucket != bucket and new_bucket.is_dir()
+assert history.read_bytes() == reservation_before
+PY
+	return 0
+}
+
+test_repair_missing_creates_snapshot_without_removal() {
+	local repo_path="${TEST_DIR}/repair-repo"
+	local wt_path="${TEST_DIR}/repair-source"
+	local root="${TEST_DIR}/repair-store"
+	local confirmation=""
+	local rc=0
+	create_git_worktree_fixture "$repo_path" "$wt_path" "feature/repair-missing" || rc=1
+	printf 'preserve current user data\n' >"$wt_path/user-note"
+	confirmation=$(
+		python3 - "$SCRIPT_DIR/.." "$wt_path" "$root" "$GIT_BIN" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from worktree_recovery_archive_copy import reserve_archive
+source, root = Path(sys.argv[2]), Path(sys.argv[3])
+root.mkdir()
+Path(reserve_archive(source, root, sys.argv[4])).rmdir()
+print(hashlib.sha256(next(root.glob('.archive-attempt-*.json')).read_bytes()).hexdigest())
+PY
+	) || rc=1
+	(
+		# shellcheck source=../worktree-helper-cmds.sh
+		source "$COMMANDS_HELPER"
+		worktree_process_platform() {
+			printf '%s\n' nixos
+			return 0
+		}
+		export AIDEVOPS_WORKTREE_TRASH_ROOT="$root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
+		_worktree_recovery_acquire_producer_lock "$root" || exit 1
+		# A separate invocation cannot retire the reservation while another producer owns it.
+		if (cmd_recovery repair-missing "$wt_path" --confirm "$confirmation"); then exit 1; fi
+		_worktree_recovery_release_producer_lock || exit 1
+		cmd_recovery repair-missing "$wt_path" --confirm "$confirmation" || exit 1
+		[[ -f "$wt_path/user-note" ]] || exit 1
+		cmp "$wt_path/user-note" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH/user-note" || exit 1
+		[[ -f "$root/.reviewed-missing-attempt-$confirmation.json" ]] || exit 1
+		_worktree_recovery_archive_is_valid "$WORKTREE_RECOVERABLE_ARCHIVE_PATH" || exit 1
+		if cmd_recovery repair-missing "$wt_path" --confirm "$confirmation"; then exit 1; fi
+		worktree_process_platform() {
+			printf '%s\n' linux
+			return 0
+		}
+		if cmd_recovery repair-missing "$wt_path" --confirm "$confirmation"; then exit 1; fi
+	) || rc=1
+	[[ -f "$wt_path/user-note" ]] || rc=1
+	print_result "repair_missing_creates_snapshot_without_removal" "$rc" \
+		"Expected locked, confirmed, NixOS-only snapshot creation with source and history preserved"
 	return 0
 }
 
@@ -2305,6 +2523,7 @@ test_missing_worktree_physical_parent_alias
 test_permanent_helper_preserves_lock_acquired_after_guard
 test_recovery_store_selects_platform_semantics
 test_archive_copy_filters_before_io_and_bounds_retries
+test_repair_missing_creates_snapshot_without_removal
 test_recovery_store_permission_preflight
 test_recovery_inventory_reports_legacy_buckets_fail_closed
 test_recoverable_archive_then_native_remove
@@ -2338,6 +2557,9 @@ test_proc_snapshot_marks_same_uid_unreadable_entry_degraded
 test_proc_snapshot_recovers_protected_same_uid_cwd
 test_privileged_inspector_rejects_untrusted_proc_root
 test_privileged_inspector_uses_bounded_execution
+test_process_platform_policy
+test_unprivileged_proc_collector
+test_nixos_process_inspector_never_escalates
 test_privileged_inspector_uid_rule
 test_proc_snapshot_rejects_failed_inspector_output
 test_proc_snapshot_skips_zombie_cwd_denial

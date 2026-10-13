@@ -14,6 +14,93 @@ accepts the process, so installing or repairing the inspector clears it, and
 `stop-only` when only stopping the process through its normal controls clears
 it. The listing is read-only and is for manual review only.
 
+## Unprivileged NixOS adapter
+
+On Linux with exact `ID=nixos` in `/etc/os-release`, process observation does
+not invoke the privileged inspector. Selection is automatic with no opt-in flag.
+The release file is parsed as data, never sourced as shell code. Other Linux
+systems and macOS retain their existing observation paths.
+
+The diagnostic reports `unprivileged-review` on NixOS. This does not prove that
+a denied process is idle or unrelated. Readable CWD matches still block cleanup,
+and unreadable same-user processes still produce degraded evidence. Existing
+candidate-local lease, Git, terminal-PR and archive checks remain authoritative;
+this adapter alone does not fix archive failures or authorize permanent removal.
+Do not stop login/session services merely to silence the diagnostic.
+
+Implementation boundaries:
+
+- `scripts/worktree-process-policy.sh`: platform selection and inspector policy.
+- `scripts/worktree-process-providers.sh`: shared procfs/lsof observation adapters.
+- `scripts/worktree_process_proc.py`: Linux procfs collector using only Python
+  stdlib, without per-process subprocesses; initially selected only on NixOS.
+- `scripts/audit-worktree-removal-helper.sh`: identity, ownership and removal guards.
+
+Providers retain the existing stdout and exit-status contract: readable CWDs,
+with status 0 for complete, 2 for degraded, and 1 for unusable evidence. Future
+platform adapters must preserve uncertainty and positive matches rather than
+duplicating or weakening removal policy. The modules are sourced through the
+audit helper, not standalone cleanup commands.
+
+Verification: `bash .agents/scripts/tests/test-worktree-removal-audit.sh`;
+on non-FHS hosts set `AIDEVOPS_TEST_GIT_BIN` to the installed real Git executable.
+Run the isolated suite with native Git first on its subprocess PATH: the agent's
+Git shim can reject the suite's temporary race-injection wrappers before they
+exercise late-lock protection. Do not change the interactive session's Git guard.
+Run `worktree-helper.sh recovery unreadable-processes` for read-only host evidence.
+
+The local verification matrix is native NixOS plus an unprivileged Ubuntu 26.04
+LTS container. Install `python3`, `git`, `jq`, `lsof` and `sqlite3` in the disposable
+container, mount the scripts read-only, and run the suite as a non-root user with
+a disposable HOME. SQLite is required for the live lease test. This checks Ubuntu
+userspace portability, not a separate kernel or a real macOS host. Do not add a
+CI/CD matrix or change the other platforms' runtime selection for this rollout.
+
+### Recovery reservation failures are separate from process visibility
+
+On NixOS, a failed reservation emits `recovery-reservation-unavailable` with
+`stage=reserve` in the cleanup audit log, before the existing aggregate archive
+failure. This distinguishes an archive prerequisite from an actual copy failure.
+The reference-host investigation found five retained attempt records pointing to
+missing archive buckets; one source's device/inode identity was confirmed to
+still match its record. The cause of the buckets' disappearance was not established.
+
+An existing `.archive-attempt-*.json` is not disposable cache. A missing bucket
+fails validation with `archive bucket unavailable`; repeated cleanup cannot
+repair it by waiting. Preserve the source and reservation, inspect historical
+removal/retention evidence, and obtain an explicit recovery decision before
+replacing an attempt. Do not silently reset reservations, recreate completion
+markers, or claim that a newly captured source restores missing historical data.
+The isolated archive-copy test covers this case and verifies that the reservation
+and source remain intact without allocating another bucket.
+
+After reviewing the missing archive and accepting that its historical contents
+cannot be reconstructed, an operator on NixOS can explicitly request a **new
+snapshot of the current source**, without removing the worktree:
+
+```bash
+sha256sum /absolute/recovery/root/.archive-attempt-<key>.json
+worktree-helper.sh recovery repair-missing /absolute/source/worktree --confirm <record-sha256>
+```
+
+Review the record's source, device/inode identity and bucket before confirming.
+The command checks the exact record digest and source identity under the existing
+producer lock. An existing bucket (including a dangling symlink), conflicting
+history, or any `.retention-trash` state blocks the transition. The original
+record is retained as `.reviewed-missing-attempt-<digest>.json`, durably linked
+before its active name is retired; an interrupted link publication can resume
+only with the same record inode. Existing archival checks then create a fresh
+snapshot. Failure leaves the source and available evidence intact; never delete
+the history to force a retry. This command does not run automatically, restore
+lost historical data, remove worktrees, or bypass later removal guards.
+
+Recovery stores and their PID-based producer locks are **host-local**. Multiple
+pulse hosts must use separate local stores/worktrees; sharing the recovery root
+over NFS is not supported by this change. Cross-host task claims are a separate
+boundary (see `cross-runner-coordination.md`); local process absence never proves
+that a task on another host is inactive. GitHub App authentication is separate
+work and is not introduced here.
+
 ## Optional privileged read-only inspector
 
 `.agents/scripts/worktree-cwd-inspect.py` reads **one** process CWD. It accepts

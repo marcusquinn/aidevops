@@ -246,12 +246,16 @@ _worktree_proc_entry_is_zombie() {
 # installed inspector must be root-owned and sudoers must allow only that
 # executable; neither a failed sudo call nor an untrusted /proc root grants
 # removal permission. See .agents/reference/worktree-cwd-visibility.md.
+# shellcheck source=worktree-process-policy.sh
+source "$(dirname "${BASH_SOURCE[0]}")/worktree-process-policy.sh"
+
 _worktree_privileged_read_cwd() {
 	local proc_root="$1"
 	local proc_dir="$2"
 	local pid="${proc_dir##*/}"
 	local timeout_seconds=5
 	[[ "$proc_root" == /proc && "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	worktree_process_inspector_allowed || return 1
 	if declare -F timeout_sec >/dev/null 2>&1; then
 		timeout_sec "$timeout_seconds" sudo -n -- \
 			/usr/local/libexec/aidevops-worktree-cwd-inspect "$pid" 2>/dev/null
@@ -260,105 +264,12 @@ _worktree_privileged_read_cwd() {
 	command -v timeout >/dev/null 2>&1 || return 1
 	command timeout "$timeout_seconds" sudo -n -- \
 		/usr/local/libexec/aidevops-worktree-cwd-inspect "$pid" 2>/dev/null
+	return $?
 }
 
-_capture_worktree_proc_cwds() {
-	local proc_root="$1"
-	local cwd_link=""
-	local cwd_target=""
-	local captured_count=0
-	local current_uid=""
-	local visibility_degraded=0
-	local proc_dir=""
-
-	current_uid=$(id -u 2>/dev/null) || current_uid=""
-
-	for cwd_link in "$proc_root"/[0-9]*/cwd; do
-		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
-			# Vanished processes are harmless. Linux commonly denies cwd reads for
-			# other users, so skip entries whose ownership proves they are foreign.
-			# Same-UID metadata such as comm, cmdline, parent, or process start time
-			# cannot prove that an unreadable process is unrelated to this worktree.
-			# Preserve degraded visibility rather than adding daemon exemptions.
-			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-			proc_dir="${cwd_link%/cwd}"
-			_worktree_proc_entry_is_zombie "$proc_dir" && continue
-			_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
-			# A root-owned inspector may read only this caller's protected CWD.
-			# A denial, a vanished process, or an empty result stays fail-closed.
-			if cwd_target=$(_worktree_privileged_read_cwd "$proc_root" "$proc_dir"); then
-				if [[ "$cwd_target" == /* && "$cwd_target" != *$'\n'* ]]; then
-					printf '%s\n' "$cwd_target"
-					captured_count=$((captured_count + 1))
-					continue
-				fi
-			fi
-			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-			visibility_degraded=1
-			continue
-		fi
-		if [[ -n "$cwd_target" ]]; then
-			printf '%s\n' "$cwd_target"
-			captured_count=$((captured_count + 1))
-		fi
-	done
-	if [[ "$visibility_degraded" -eq 1 ]]; then
-		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
-	fi
-	[[ "$captured_count" -gt 0 ]] || return 1
-	return 0
-}
-
-_capture_worktree_lsof_cwds() {
-	local cwd_target=""
-	local captured_count=0
-	local lsof_line=""
-	local lsof_output=""
-	local lsof_status=0
-
-	if lsof_output=$(lsof -n -F n -d cwd 2>/dev/null); then
-		lsof_status=0
-	else
-		lsof_status=$?
-	fi
-	while IFS= read -r lsof_line; do
-		case "$lsof_line" in
-		n*)
-			cwd_target="${lsof_line#n}"
-			if [[ -n "$cwd_target" ]]; then
-				printf '%s\n' "$cwd_target"
-				captured_count=$((captured_count + 1))
-			fi
-			;;
-		esac
-	done <<<"$lsof_output"
-	[[ "$captured_count" -gt 0 ]] || return 1
-	if [[ "$lsof_status" -ne 0 ]]; then
-		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
-	fi
-	return 0
-}
-
-# Capture every visible live-process cwd. stdout always preserves readable
-# targets. Return 0 for complete visibility, 2 for degraded visibility with
-# same-UID/unknown denials, and 1 when no usable snapshot can be established.
-# Callers may supply the resulting snapshot and visibility to the guard so one
-# safety check performs only one platform scan.
-capture_worktree_process_cwds() {
-	if [[ -d /proc ]]; then
-		_capture_worktree_proc_cwds /proc
-		return $?
-	fi
-
-	if command -v lsof >/dev/null 2>&1; then
-		# macOS lacks /proc, but `lsof +D <worktree>` recursively walks the
-		# whole tree (including node_modules). Query only cwd descriptors once.
-		_capture_worktree_lsof_cwds
-		return $?
-	fi
-	return 1
-}
+# Providers collect evidence only; ownership, Git and removal policy stay here.
+# shellcheck source=worktree-process-providers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/worktree-process-providers.sh"
 
 # Operator-invoked diagnostic only (GH#32853). Print "<pid>\t<comm>\t<remedy>"
 # for each process that makes _capture_worktree_proc_cwds report degraded
@@ -380,6 +291,10 @@ list_worktree_unreadable_proc_cwds() {
 	local remedy=""
 
 	[[ -d "$proc_root" ]] || return 1
+	if [[ "$proc_root" == /proc && "$(worktree_process_platform)" == nixos ]]; then
+		_worktree_unprivileged_proc_scan denied
+		return $?
+	fi
 	current_uid=$(id -u 2>/dev/null) || current_uid=""
 	for cwd_link in "$proc_root"/[0-9]*/cwd; do
 		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
@@ -400,6 +315,9 @@ list_worktree_unreadable_proc_cwds() {
 		comm=$(printf '%s' "$comm" | LC_ALL=C tr -cd '[:print:]' | cut -c1-32)
 		remedy="stop-only"
 		_worktree_proc_entry_is_inspectable_uid "$proc_dir" "$current_uid" && remedy="inspector"
+		if ! worktree_process_inspector_allowed; then
+			remedy="unprivileged-review"
+		fi
 		printf '%s\t%s\t%s\n' "$pid" "${comm:-unknown}" "$remedy"
 	done
 	return 0
@@ -1427,8 +1345,15 @@ _archive_worktree_path_recoverably_under_lock() {
 	worktree_basename="${worktree_basename##*/}"
 	[[ -n "$worktree_basename" && "$worktree_basename" != "." &&
 		"$worktree_basename" != "$_WT_RECOVERY_DIR_NAME" ]] || return 1
-	recovery_bucket=$(_worktree_recovery_cache_policy "reserve" "$wt_path_real" \
-		"$recovery_root_real" "$_WT_ID_REAL_GIT") || return 1
+	if ! recovery_bucket=$(_worktree_recovery_cache_policy "reserve" "$wt_path_real" \
+		"$recovery_root_real" "$_WT_ID_REAL_GIT"); then
+		if [[ "$(worktree_process_platform)" == nixos ]]; then
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+				"recovery-reservation-unavailable" "$_WTAR_MODE_SKIPPED" \
+				"stage=reserve source_preserved=true operator_review=required"
+		fi
+		return 1
+	fi
 	archive_path="${recovery_bucket}/${worktree_basename}"
 	recovery_dir="${recovery_bucket}/${_WT_RECOVERY_DIR_NAME}"
 	recovery_admin="${recovery_dir}/admin"

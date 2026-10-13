@@ -33,6 +33,13 @@ setup() {
 	trap teardown EXIT
 	# Maintenance runs must never write session advisories outside the fixture.
 	export AIDEVOPS_ADVISORIES_DIR="${TEST_DIR}/advisories"
+	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
+	# Retention fixtures must not depend on the host's login daemons. Actual
+	# CWD guards and degraded visibility are covered by the removal audit suite.
+	capture_worktree_process_cwds() {
+		printf '%s\n' /
+		return 0
+	}
 	return 0
 }
 
@@ -2462,12 +2469,14 @@ test_automatic_maintenance_bounds_classification_subprocesses() {
 			local ignored_path="$2"
 			local ignored_bytes="$3"
 			: "$ignored_role" "$ignored_path" "$ignored_bytes"
-			sleep 5
+			sleep 10
 			return 1
 		}
+		# Allow inventory startup to finish before timing out the classifier.
+		# The unchanged six-second bound still rejects an unbounded ten-second child.
 		HOME="$home_path" AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_STATE_DIR="$state_dir" \
 			AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MAX_SCAN=1 \
-			AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_SECONDS=1 \
+			AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_SECONDS=3 \
 			AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MIN_FREE_KB=10 \
 			AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MIN_FREE_PERCENT=0 \
 			worktree_recovery_maintenance_run
@@ -2481,6 +2490,9 @@ test_automatic_maintenance_bounds_classification_subprocesses() {
 		.diagnostics.reason_counts.unknown_classification == 1
 	' >/dev/null || rc=1
 	[[ "$elapsed_seconds" -le 6 && -d "$bucket_path" ]] || rc=1
+	if [[ "$rc" -ne 0 ]]; then
+		printf '  elapsed_seconds=%s result=%s\n' "$elapsed_seconds" "$output"
+	fi
 	print_result "automatic_maintenance_bounds_classification_subprocesses" "$rc" \
 		"Expected classification and descendants to stop at the aggregate deadline without deleting the bucket"
 	return 0
@@ -2856,6 +2868,9 @@ test_unreadable_process_listing_matches_degraded_visibility() {
 	make_fake_proc_entry "$proc_root" 108 "0 $uid $uid $uid" 'S (sleeping)' 'root-real' unreadable || rc=1
 	listing=$(list_worktree_unreadable_proc_cwds "$proc_root") || rc=1
 	expected=$(printf '101\tgpg-agent\tinspector\n105\tbadname\tinspector\n106\tfusermount3\tinspector\n107\tsetuid-other\tstop-only\n108\troot-real\tstop-only')
+	if ! worktree_process_inspector_allowed; then
+		expected=$(printf '101\tgpg-agent\tunprivileged-review\n105\tbadname\tunprivileged-review\n106\tfusermount3\tunprivileged-review\n107\tsetuid-other\tunprivileged-review\n108\troot-real\tunprivileged-review')
+	fi
 	[[ "$listing" == "$expected" ]] || {
 		printf '  listing:\n%s\n' "$listing"
 		rc=1

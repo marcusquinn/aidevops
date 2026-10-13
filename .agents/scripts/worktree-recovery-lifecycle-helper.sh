@@ -1521,7 +1521,11 @@ worktree_recovery_unreadable_processes() {
 		printf '%s\n' 'No same-user processes with unreadable CWDs were found; process visibility is currently complete.'
 		return 0
 	fi
-	printf '%s\n' 'Same-user processes whose CWD is unreadable. REMEDY "inspector": install or repair the opt-in inspector in reference/worktree-cwd-visibility.md. REMEDY "stop-only": stop the process through its normal controls.'
+	if worktree_process_inspector_allowed; then
+		printf '%s\n' 'Same-user processes whose CWD is unreadable. REMEDY "inspector": install or repair the opt-in inspector in reference/worktree-cwd-visibility.md. REMEDY "stop-only": stop the process through its normal controls.'
+	else
+		printf '%s\n' 'Same-user processes whose CWD is unreadable. REMEDY "unprivileged-review": review candidate ownership and recoverable-cleanup evidence. Unknown CWDs remain protected; no privileged inspector is invoked.'
+	fi
 	printf 'PID\tCOMM\tREMEDY\n'
 	printf '%s\n' "$listing"
 	return 0
