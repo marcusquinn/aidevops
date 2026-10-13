@@ -1025,7 +1025,7 @@ _approve_target_after_confirmation() {
 	local slug="$3"
 	local actual_key="$4"
 
-	local timestamp payload sig_file comment_body
+	local timestamp payload sig_file comment_body payload_rc=0
 	# #aidevops:trust-boundary — provision every repository-level label needed by the post-signature
 	# transition before creating irreversible approval evidence. This keeps a
 	# newly managed repository from ending in a signed but undispatchable state.
@@ -1038,11 +1038,21 @@ _approve_target_after_confirmation() {
 			return 1
 		}
 	fi
-	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	payload=$(approval_snapshot_v2_payload "$target_type" "$target_number" "$slug" "$timestamp") || {
+	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
+		# GH#34554: an unanchored lock makes post-handoff verification impossible.
+		payload=$(_approval_build_anchored_issue_payload "$target_number" "$slug") || payload_rc=$?
+		if [[ "$payload_rc" -eq 1 ]]; then
+			_approval_report_unanchored_lock "$target_number" "$slug"
+			return 1
+		fi
+	else
+		timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		payload=$(approval_snapshot_v2_payload "$target_type" "$target_number" "$slug" "$timestamp") || payload_rc=$?
+	fi
+	if [[ "$payload_rc" -ne 0 ]]; then
 		_print_error "Could not build the immutable approval snapshot; approval was not posted"
 		return 1
-	}
+	fi
 	sig_file=$(mktemp)
 
 	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then

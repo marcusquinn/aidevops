@@ -449,8 +449,82 @@ _approval_classify_digest_mismatch() {
 			printf 'API_ERROR\n'
 			return 0
 		fi
+		# GH#34554: a signature over locked=true without a lock anchor can never
+		# prove continuity. Name it so operators do not re-sign the same issue.
+		if jq -e '.issue.lifecycle.locked == true and .issue.lifecycle.lock_anchor == null' <<<"$payload" >/dev/null 2>&1; then
+			printf 'APPROVAL_REASON: unanchored-lock-signature\n' >&2
+			printf 'STALE_APPROVAL\n'
+			return 0
+		fi
 	fi
 	printf 'APPROVAL_REASON: stale-or-unproven-continuity\n' >&2
 	printf 'STALE_APPROVAL\n'
+	return 0
+}
+
+# GH#34554: issue approvals must start from an authoritative lock anchor.
+_APPROVAL_LOCK_ANCHOR_ATTEMPTS="${AIDEVOPS_APPROVAL_LOCK_ANCHOR_ATTEMPTS:-3}"
+_APPROVAL_LOCK_ANCHOR_RETRY_SECONDS="${AIDEVOPS_APPROVAL_LOCK_ANCHOR_RETRY_SECONDS:-3}"
+[[ "$_APPROVAL_LOCK_ANCHOR_ATTEMPTS" =~ ^[1-9][0-9]?$ ]] || _APPROVAL_LOCK_ANCHOR_ATTEMPTS=3
+[[ "$_APPROVAL_LOCK_ANCHOR_RETRY_SECONDS" =~ ^[0-9]{1,2}$ ]] || _APPROVAL_LOCK_ANCHOR_RETRY_SECONDS=3
+# GitHub stopped exposing lifecycle events at 310 on an observed issue; treat
+# counts at or above this as a saturated timeline that cannot prove continuity.
+_APPROVAL_TIMELINE_SATURATION_EVENTS=300
+
+# Returns 0 only when an issue approval payload binds locked=true with an
+# object lock anchor. Malformed payloads fail closed.
+_approval_payload_lock_anchored() {
+	local payload="$1"
+	jq -e --arg object "$APPROVAL_JSON_OBJECT" \
+		'.issue.lifecycle.locked == true and (.issue.lifecycle.lock_anchor | type == $object)' \
+		<<<"$payload" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# #aidevops:trust-boundary — build an issue approval payload only once the
+# REST timeline exposes the uninterrupted lock interval the payload must bind.
+# Re-reads a bounded number of times for event visibility lag; never
+# synthesizes an anchor. Prints the payload. Returns 1 when the anchor stays
+# absent and 2 when the snapshot itself cannot be built.
+_approval_build_anchored_issue_payload() {
+	local target_number="$1"
+	local slug="$2"
+	local attempt=1 timestamp="" payload=""
+	while :; do
+		timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		payload=$(approval_snapshot_v2_payload "$APPROVAL_TARGET_ISSUE" "$target_number" "$slug" "$timestamp") || return 2
+		if _approval_payload_lock_anchored "$payload"; then
+			printf '%s\n' "$payload"
+			return 0
+		fi
+		[[ "$attempt" -lt "$_APPROVAL_LOCK_ANCHOR_ATTEMPTS" ]] || return 1
+		attempt=$((attempt + 1))
+		sleep "$_APPROVAL_LOCK_ANCHOR_RETRY_SECONDS"
+	done
+}
+
+# Prints the REST timeline's lifecycle event count for saturation diagnostics.
+_approval_issue_lifecycle_event_count() {
+	local slug="$1"
+	local target_number="$2"
+	local pages=""
+	pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 1
+	jq '[.[][]? | select((.event // "") | test("^((un)?(labeled|assigned|locked)|(de)?milestoned|renamed|closed|reopened)$"))] | length' <<<"$pages" || return 1
+	return 0
+}
+
+# Explains an unanchored-lock refusal with one bounded recovery route.
+_approval_report_unanchored_lock() {
+	local target_number="$1"
+	local slug="$2"
+	local count=""
+	_print_error "Approval refused: issue #${target_number} is locked, but GitHub's timeline exposes no uninterrupted lock event to anchor approval continuity (${_APPROVAL_LOCK_ANCHOR_ATTEMPTS} reads). Nothing was signed or posted; needs-maintainer-review was not cleared."
+	count=$(_approval_issue_lifecycle_event_count "$slug" "$target_number" 2>/dev/null) || count=""
+	if [[ "$count" =~ ^[0-9]+$ && "$count" -ge "$_APPROVAL_TIMELINE_SATURATION_EVENTS" ]]; then
+		_print_error "GitHub returns ${count} lifecycle events for #${target_number}; its timeline appears saturated, so newer lock/label events are not exposed and continuity can never be proven on this issue. Re-signing it will fail the same way."
+		_print_error "Recovery: open a replacement issue with the same reviewed body and 'Ref #${target_number}', close #${target_number} as superseded, then approve the replacement."
+		return 0
+	fi
+	_print_error "Recovery: retry approval once after a minute. If it is refused again, inspect the newest locked/unlocked event with: gh api --paginate repos/${slug}/issues/${target_number}/timeline"
 	return 0
 }

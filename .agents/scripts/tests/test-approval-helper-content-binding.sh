@@ -1059,6 +1059,52 @@ test_locked_issue_continuity() {
 	return 0
 }
 
+verify_issue_reason() {
+	local number="$1"
+	HOME="$TEST_HOME" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" \
+		AIDEVOPS_APPROVAL_PUB="${TEST_ROOT}/approval.pub" \
+		"$APPROVAL_HELPER" verify issue "$number" owner/repo 2>&1 >/dev/null | sed -n 's/^APPROVAL_REASON: //p' | tail -n 1
+	return 0
+}
+
+# GH#34554: GitHub stopped returning lifecycle events for a saturated issue, so
+# REST reported locked=true while the newest visible lock event was an unlock.
+# Such a signature can never prove continuity and must say so explicitly.
+test_unanchored_lock_signature() {
+	local reason=""
+	write_baseline_fixtures
+	jq '.locked = true | .active_lock_reason = "resolved" | .labels = [{id:7,node_id:"L_7",name:"origin:interactive"}] | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4180,"node_id":"EV_4180","event":"locked","created_at":"2026-01-01T00:03:00Z","actor":{"id":1,"node_id":"U_1","login":"maintainer","type":"User"}}'
+	append_issue_timeline_event '{"id":4181,"node_id":"EV_4181","event":"unlocked","created_at":"2026-01-01T00:03:30Z","actor":{"id":1,"node_id":"U_1","login":"maintainer","type":"User"}}'
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
+	if jq -e '.issue.lifecycle.locked == true and .issue.lifecycle.lock_anchor == null' "${TEST_ROOT}/payload-41.json" >/dev/null 2>&1; then
+		print_result "saturated timeline fixture produces an unanchored locked payload" 0
+	else
+		print_result "saturated timeline fixture produces an unanchored locked payload" 1
+	fi
+	# Post-approval handoff with no visible timeline events (truncated stream).
+	jq '.assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}] | .labels += [{id:10,node_id:"L_10",name:"auto-dispatch"},{id:11,node_id:"L_11",name:"status:available"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	assert_verify "unanchored locked signature fails closed after lifecycle handoff" issue 41 STALE_APPROVAL 4
+	reason=$(verify_issue_reason 41)
+	if [[ "$reason" == "unanchored-lock-signature" ]]; then
+		print_result "unanchored locked signature reports a distinct reason" 0
+	else
+		print_result "unanchored locked signature reports a distinct reason" 1 "reason=${reason}"
+	fi
+
+	# An anchored signature with unrelated drift keeps the generic reason.
+	write_locked_issue_fixture
+	jq '.labels += [{id:12,node_id:"L_12",name:"security"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4182,"node_id":"EV_4182","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"security"}}'
+	reason=$(verify_issue_reason 41)
+	if [[ "$reason" == "stale-or-unproven-continuity" ]]; then
+		print_result "anchored continuity failure keeps the generic reason" 0
+	else
+		print_result "anchored continuity failure keeps the generic reason" 1 "reason=${reason}"
+	fi
+	return 0
+}
+
 test_linked_source_timestamp_profiles() {
 	write_baseline_fixtures
 	append_signed_comment pr 42 "2026-01-01T00:05:00Z" 4298 legacy
@@ -1189,6 +1235,7 @@ main() {
 	test_dispatch_audit_comments_fail_closed
 	test_post_approval_linked_references
 	test_locked_issue_continuity
+	test_unanchored_lock_signature
 	test_locked_issue_trusted_comment_continuity
 	test_locked_issue_trusted_content_edits
 	test_locked_issue_tier_backfill_continuity
