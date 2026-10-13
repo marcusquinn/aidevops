@@ -44,6 +44,7 @@ MOCK_PR_REVISION_PAIR=""
 MOCK_LABELS_JSON=""
 MOCK_LABEL_INVENTORY_FAILURE=0
 MOCK_LABEL_WRITE_FAILURE=0
+MOCK_ISSUE_LABELS_JSON='[]'
 readonly EXPECTED_TEXT_SNAPSHOT_HASH="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 MOCK_CURRENT_TEXT_SNAPSHOT_HASH="$EXPECTED_TEXT_SNAPSHOT_HASH"
 readonly EXPECTED_PUBLIC_REVISION="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -118,6 +119,7 @@ SIG_STUB
 	MOCK_LABELS_JSON='[{"name":"review:approve","color":"0e8a16","description":"Advisory automated triage recommendation: approve"},{"name":"review:feedback","color":"fbca04","description":"Advisory automated triage recommendation: request changes"},{"name":"review:decline","color":"d73a4a","description":"Advisory automated triage recommendation: decline"}]'
 	MOCK_LABEL_INVENTORY_FAILURE=0
 	MOCK_LABEL_WRITE_FAILURE=0
+	MOCK_ISSUE_LABELS_JSON='[]'
 	MOCK_CURRENT_TEXT_SNAPSHOT_HASH="$EXPECTED_TEXT_SNAPSHOT_HASH"
 	MOCK_CURRENT_PUBLIC_REVISION="$EXPECTED_PUBLIC_REVISION"
 	unset TRIAGE_TEST_RUNTIME_EXIT_STATUS TRIAGE_TEST_SIGNATURE_FAILURE 2>/dev/null || true
@@ -185,6 +187,10 @@ gh() {
 	case "$command_name" in
 	issue)
 		if [[ "$action" == "view" ]]; then
+			if [[ "$call_args" == *"--json labels --jq"* ]]; then
+				printf '%s\n' "$MOCK_ISSUE_LABELS_JSON"
+				return 0
+			fi
 			local viewed_number="${3:-0}"
 			jq -cn --argjson number "$viewed_number" '{
 				number: $number,
@@ -642,11 +648,11 @@ $(tail -5 "$GH_CALL_LOG")"
 	local label_line="" comment_line=""
 	label_line=$(grep -n -- '--add-label review:approve' "$GH_CALL_LOG" | cut -d: -f1 | head -n 1)
 	comment_line=$(grep -n '^issue comment 18400 ' "$GH_CALL_LOG" | cut -d: -f1 | head -n 1)
-	if [[ -n "$label_line" && -n "$comment_line" && "$label_line" -lt "$comment_line" ]] && \
+	if [[ -n "$label_line" && -n "$comment_line" && "$label_line" -gt "$comment_line" ]] && \
 		grep -q -- '--remove-label review:feedback --remove-label review:decline --add-label review:approve' "$GH_CALL_LOG"; then
-		print_result "advisory approve label is made mutually exclusive before comment transport" 0
+		print_result "advisory approve label is made mutually exclusive after comment transport" 0
 	else
-		print_result "advisory approve label is made mutually exclusive before comment transport" 1
+		print_result "advisory approve label is made mutually exclusive after comment transport" 1
 	fi
 	if grep -qF '<!-- aidevops:triage-review -->' "$POSTED_BODY_LOG"; then
 		print_result "posted triage review carries trusted cache marker" 0
@@ -770,7 +776,28 @@ test_recommendation_label_inventory_stops_at_page_bound() {
 	teardown_test_env
 }
 
-test_review_label_write_failure_blocks_comment_and_cache() {
+test_recommendation_label_already_correct_is_noop() {
+	setup_test_env
+	load_helpers_under_test
+	local review="" ok=0 detail=""
+	review=$(_valid_review_text)
+	MOCK_ISSUE_LABELS_JSON='["needs-maintainer-review","review:approve"]'
+	_set_triage_recommendation_label "29004" "owner/repo" "$review" || ok=1
+	_set_triage_recommendation_label "29004" "owner/repo" "$review" || ok=1
+	if grep -q '^issue edit ' "$GH_CALL_LOG"; then
+		ok=1
+		detail="already-correct label edited on retry"
+	fi
+	MOCK_ISSUE_LABELS_JSON='["review:approve","review:decline"]'
+	_set_triage_recommendation_label "29004" "owner/repo" "$review" || ok=1
+	grep -q 'issue edit 29004 .*--remove-label review:decline .*--add-label review:approve' \
+		"$GH_CALL_LOG" || { ok=1; detail="${detail} conflicting label not reconciled"; }
+	print_result "correct advisory labels are no-ops; conflicting labels reconcile" "$ok" "$detail"
+	teardown_test_env
+	return 0
+}
+
+test_review_label_write_failure_preserves_posted_comment_and_cache() {
 	setup_test_env
 	load_helpers_under_test
 	local payload="${TEST_ROOT}/payload.json"
@@ -782,20 +809,25 @@ test_review_label_write_failure_blocks_comment_and_cache() {
 	_dispatch_triage_review_worker \
 		"29004" "owner/repo" "/tmp/repo" "$prompt_file" "hash-label-write" "" "issue" \
 		"" "$EXPECTED_TEXT_SNAPSHOT_HASH" "$EXPECTED_PUBLIC_REVISION" 2>/dev/null
-	if grep -q 'issue comment 29004' "$GH_CALL_LOG"; then
+	if ! grep -q 'issue comment 29004' "$GH_CALL_LOG"; then
 		ok=1
-		detail="comment posted"
+		detail="comment not posted"
 	fi
-	if [[ -s "$TRIAGE_CACHE_LOG" ]]; then
+	if ! grep -q '^update 29004 owner/repo hash-label-write' "$TRIAGE_CACHE_LOG"; then
 		ok=1
-		detail="${detail} cache/retry mutated"
+		detail="${detail} successful post not cached"
 	fi
-	if ! grep -q 'github-review-label-write-failed' "$LOGFILE"; then
+	if ! grep -q 'review posted; leaving label reconciliation' "$LOGFILE"; then
 		ok=1
-		detail="${detail} infrastructure classification missing"
+		detail="${detail} label failure diagnostic missing"
 	fi
-	print_result "advisory label write failure suppresses comment and remains retryable" "$ok" "$detail"
+	if ! awk '/^issue comment 29004 / { posted=1 } /^issue edit 29004 .*--add-label review:/ { if (!posted) exit 1; labeled=1 } END { if (!labeled) exit 1 }' "$GH_CALL_LOG"; then
+		ok=1
+		detail="${detail} label write did not follow comment"
+	fi
+	print_result "advisory label failure preserves posted review and successful cache" "$ok" "$detail"
 	teardown_test_env
+	return 0
 }
 
 test_signature_failure_blocks_comment_transport() {
@@ -1303,6 +1335,10 @@ test_comment_write_failure_is_infrastructure() {
 		ok=1
 		detail="${detail} retry/cache budget consumed"
 	fi
+	if grep -q -- '--add-label review:' "$GH_CALL_LOG"; then
+		ok=1
+		detail="${detail} advisory label written without comment"
+	fi
 	print_result "comment write failure is infrastructure and clears stale triage state" "$ok" "$detail"
 	teardown_test_env
 }
@@ -1344,7 +1380,8 @@ main() {
 	test_recommendation_labels_map_exact_decisions
 	test_recommendation_label_provisioning_uses_bounded_rest_routes
 	test_recommendation_label_inventory_stops_at_page_bound
-	test_review_label_write_failure_blocks_comment_and_cache
+	test_recommendation_label_already_correct_is_noop
+	test_review_label_write_failure_preserves_posted_comment_and_cache
 	test_signature_failure_blocks_comment_transport
 	test_dispatch_rejects_issue_schema_for_pr
 	test_dispatch_suppresses_oversized_output

@@ -334,6 +334,19 @@ _set_triage_recommendation_label() {
 	*) return 1 ;;
 	esac
 
+	local current_labels=""
+	current_labels=$(gh issue view "$issue_num" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name]' 2>/dev/null) || return 1
+	# Fail closed on an unreadable inventory; retries must not churn events.
+	jq -e 'type == "array" and all(.[]; type == "string")' \
+		<<<"$current_labels" >/dev/null 2>&1 || return 1
+	if jq -e --arg target "$target_label" \
+		--arg other_one "$remove_label_one" --arg other_two "$remove_label_two" \
+		'index($target) != null and index($other_one) == null and index($other_two) == null' \
+		<<<"$current_labels" >/dev/null 2>&1; then
+		return 0
+	fi
+
 	_ensure_triage_recommendation_labels "$repo_slug" || return 1
 	gh issue edit "$issue_num" --repo "$repo_slug" \
 		--remove-label "$remove_label_one" \

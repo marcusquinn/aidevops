@@ -891,17 +891,16 @@ _extract_and_post_triage_review() {
 		return 0
 	fi
 
-	if ! _set_triage_recommendation_label "$issue_num" "$repo_slug" "$review_text"; then
-		echo "[pulse-wrapper] Triage advisory label write failed for #${issue_num} in ${repo_slug} — comment suppressed, will retry" >>"$LOGFILE"
-		printf 'FAILED:github-review-label-write-failed\n'
-		return 0
-	fi
-
 	local comment_failure_detail=""
 	if ! comment_failure_detail=$(_post_triage_review_comment "$issue_num" "$repo_slug" "$review_text"); then
 		echo "[pulse-wrapper] Triage review comment write failed for #${issue_num} in ${repo_slug}: ${comment_failure_detail:-rc=unknown category=unknown} — infrastructure failure, will retry" >>"$LOGFILE"
 		printf 'FAILED:github-comment-write-failed\n'
 		return 0
+	fi
+	# Advisory labels describe a durable review, never an attempted post. A label
+	# failure must not turn a posted comment into a retry that reposts the review.
+	if ! _set_triage_recommendation_label "$issue_num" "$repo_slug" "$review_text"; then
+		echo "[pulse-wrapper] Triage advisory label write failed for #${issue_num} in ${repo_slug} — review posted; leaving label reconciliation to a later cycle" >>"$LOGFILE"
 	fi
 	echo "[pulse-wrapper] Posted sandboxed triage review for #${issue_num} in ${repo_slug} (${output_chars} extracted chars)" >>"$LOGFILE"
 	printf 'POSTED\n'
