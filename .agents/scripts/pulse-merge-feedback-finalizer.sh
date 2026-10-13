@@ -653,6 +653,61 @@ _feedback_route_hold_for_maintainer() {
 	return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
 }
 
+# Closed issues have no redispatch executor. Hold only the PR, without creating
+# recoverable automation-hold provenance or changing the closed issue (GH#34531).
+_feedback_route_guard_closed_issue() {
+	local pr_number="$1" repo_slug="$2" linked_issue="$3" kind="$4"
+	local expected_head="${5:-}"
+	local metadata="" state="" reason="" snapshot="" pr_state="" head="" labels=""
+	local marker="" comments="" actor="" body="" receipt_exists=0
+
+	metadata=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	state=$(printf '%s' "$metadata" | jq -r '.state // empty') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	[[ "$state" != "open" ]] || return 0
+	[[ "$state" == "closed" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	[[ "${DRY_RUN:-0}" != "1" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	IFS=$'\t' read -r pr_state head labels <<<"$snapshot"
+	[[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] || return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
+	[[ "$head" =~ ^[0-9A-Za-z]{7,64}$ ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	[[ -z "$expected_head" || "$head" == "$expected_head" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	_feedback_route_labels_allow_worker_route "$labels" 1 || return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
+	reason=$(printf '%s' "$metadata" | jq -r '
+		if .state_reason == "not_planned" or any(.labels[]?; .name == "consolidated" or .name == "not-planned")
+		then "orphaned (not planned or consolidated)"
+		elif .state_reason == "completed" then "prematurely completed with an open unmerged PR"
+		else "closed with an open unmerged PR" end') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	marker="<!-- feedback-route:closed-issue:PR${pr_number}:ISSUE${linked_issue}:SHA${head} -->"
+	actor=$(_feedback_route_authenticated_actor) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	[[ -n "$actor" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	comments=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	#aidevops:trust-boundary — copied markers cannot satisfy the terminal receipt.
+	if printf '%s' "$comments" | jq -e --arg marker "$marker" --arg actor "$actor" \
+		--argjson trusted "$PULSE_FEEDBACK_ROUTE_TRUSTED_ASSOCIATIONS" '
+		(if (.[0]? | type) == "array" then add else . end) |
+		any(.[]; .user.login == $actor and (.author_association as $a | $trusted | index($a)) != null
+			and ((.body // "") | contains($marker)))' >/dev/null; then
+		receipt_exists=1
+	fi
+	# Persist the comment first: a failed hold write retries without another comment.
+	if [[ "$receipt_exists" -eq 0 ]]; then
+		body="${marker}
+Holding this ${kind} repair PR for maintainer review: linked issue #${linked_issue} is ${reason}. The closed issue is unchanged; no repair worker will be dispatched. Review the linked issue's closing rationale before resolving this hold."
+		_feedback_route_gh_write pr comment "$pr_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	fi
+	if ! _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL"; then
+		_feedback_route_gh_write pr edit "$pr_number" --repo "$repo_slug" \
+			--add-label "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" >/dev/null 2>&1 || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	fi
+	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	IFS=$'\t' read -r pr_state head labels <<<"$snapshot"
+	_feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	if [[ "$receipt_exists" -eq 0 ]]; then
+		echo "[pulse-wrapper] feedback finalizer: terminal closed-issue hold for PR #${pr_number} and issue #${linked_issue} in ${repo_slug} (${reason})" >>"$LOGFILE"
+	fi
+	return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
+}
+
 _feedback_route_defer() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -1138,6 +1193,7 @@ _feedback_route_prepare_finalization_snapshot() {
 	local labels=""
 	local clear_automation_hold=0
 
+	_feedback_route_guard_closed_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" "$expected_head" || return $?
 	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || {
 		_feedback_route_defer "$pr_number" "$repo_slug" "$linked_issue" \
 			"current PR snapshot unavailable before ${kind} finalization"

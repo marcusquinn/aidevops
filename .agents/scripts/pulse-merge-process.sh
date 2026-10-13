@@ -941,12 +941,17 @@ _route_pr_guard_and_dispatch_with_retry() {
 	local checks_json="$8"
 	local route_rc=0
 
-	_route_pr_feedback_terminal_guard "$has_routed_label" "$pr_number" "$repo_slug" \
-		"$linked_issue" "$kind" "$routed_label" || route_rc=$?
+	# Classify closed issues before recovering old terminal markers or dispatching.
+	_feedback_route_guard_closed_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || route_rc=$?
+	if [[ "$route_rc" -eq 0 ]]; then
+		_route_pr_feedback_terminal_guard "$has_routed_label" "$pr_number" "$repo_slug" \
+			"$linked_issue" "$kind" "$routed_label" || route_rc=$?
+	fi
 	if [[ "$route_rc" -eq 0 ]]; then
 		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json" || route_rc=$?
 	fi
-	if [[ "$route_rc" -eq 0 ]] && declare -F _pulse_merge_queue_finish >/dev/null 2>&1; then
+	if [[ "$route_rc" -eq 0 || "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_MAINTAINER_RC:-76}" ]] \
+		&& declare -F _pulse_merge_queue_finish >/dev/null 2>&1; then
 		_pulse_merge_queue_finish 2
 	fi
 	_route_pr_preserve_deferred_retry "$route_rc" "$pr_number" "$repo_slug" "$linked_issue" "$kind"
