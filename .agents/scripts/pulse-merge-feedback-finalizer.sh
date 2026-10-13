@@ -668,6 +668,18 @@ _feedback_route_closed_issue_receipt() {
 	return 1
 }
 
+_feedback_route_closed_issue_current_labels() {
+	local pr_number="$1" repo_slug="$2" expected_head="$3"
+	local snapshot="" state="" head="" labels=""
+	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	IFS=$'\t' read -r state head labels <<<"$snapshot"
+	[[ "$state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" ]] || return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
+	[[ "$head" == "$expected_head" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	_feedback_route_labels_allow_worker_route "$labels" 1 || return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
+	printf '%s' "$labels"
+	return 0
+}
+
 # Closed issues have no redispatch executor. Hold only the PR, without creating
 # recoverable automation-hold provenance or changing the closed issue (GH#34531).
 _feedback_route_guard_closed_issue() {
@@ -706,12 +718,13 @@ Holding this ${kind} repair PR for maintainer review: linked issue #${linked_iss
 		_feedback_route_gh_write pr comment "$pr_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 		_feedback_route_closed_issue_receipt "$pr_number" "$repo_slug" "$marker" "$actor" || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	fi
+	# Revalidate the receipt's generation and ownership at the label boundary.
+	labels=$(_feedback_route_closed_issue_current_labels "$pr_number" "$repo_slug" "$head") || return $?
 	if ! _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL"; then
 		_feedback_route_gh_write pr edit "$pr_number" --repo "$repo_slug" \
 			--add-label "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" >/dev/null 2>&1 || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	fi
-	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-	IFS=$'\t' read -r pr_state head labels <<<"$snapshot"
+	labels=$(_feedback_route_closed_issue_current_labels "$pr_number" "$repo_slug" "$head") || return $?
 	_feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	if [[ "$receipt_rc" -eq 1 ]]; then
 		echo "[pulse-wrapper] feedback finalizer: terminal closed-issue hold for PR #${pr_number} and issue #${linked_issue} in ${repo_slug} (${reason})" >>"$LOGFILE"

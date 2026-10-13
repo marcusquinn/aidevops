@@ -16,6 +16,7 @@ PR_LABELS="origin:worker,conflict-feedback-routed"
 HEAD="abc123repairsha"
 WRITES=0 COMMENTS=0 DISPATCHES=0 FINISHED=0 FAIL_HOLD=0 COMMENT_NOOP=0
 COMMENT_JSON='[]'
+AFTER_COMMENT_HEAD="" AFTER_COMMENT_LABELS="" AFTER_HOLD_HEAD=""
 
 gh() {
 	local command="$1" endpoint="$2"
@@ -49,10 +50,13 @@ _feedback_route_gh_write() {
 		COMMENTS=$((COMMENTS + 1))
 		[[ "$COMMENT_NOOP" == "0" ]] || return 0
 		COMMENT_JSON=$(jq -n --arg body "$body" '{body:$body,user:{login:"automation"},author_association:"MEMBER"} | [.]')
+		[[ -z "$AFTER_COMMENT_HEAD" ]] || HEAD="$AFTER_COMMENT_HEAD"
+		[[ -z "$AFTER_COMMENT_LABELS" ]] || PR_LABELS="$AFTER_COMMENT_LABELS"
 		;;
 	edit)
 		[[ "$FAIL_HOLD" == "0" ]] || return 1
 		PR_LABELS="${PR_LABELS},hold-for-review"
+		[[ -z "$AFTER_HOLD_HEAD" ]] || HEAD="$AFTER_HOLD_HEAD"
 		;;
 	*) return 1 ;;
 	esac
@@ -157,3 +161,27 @@ rc=0
 _feedback_route_guard_closed_issue 100 owner/repo 42 conflict differenthead || rc=$?
 [[ "$rc" == "75" && "$WRITES" == "0" ]]
 printf 'PASS: dry-run and head drift do not mutate the PR\n'
+
+AFTER_COMMENT_LABELS="origin:interactive"
+COMMENT_JSON='[]'
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 conflict || rc=$?
+[[ "$rc" == "76" && "$WRITES" == "1" && "$PR_LABELS" == "origin:interactive" ]]
+AFTER_COMMENT_LABELS=""
+printf 'PASS: ownership drift before label mutation preserves interactive PR\n'
+
+PR_LABELS="origin:worker"
+COMMENT_JSON='[]'
+WRITES=0
+AFTER_COMMENT_HEAD="newhead123"
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 conflict || rc=$?
+[[ "$rc" == "75" && "$WRITES" == "1" && "$PR_LABELS" == "origin:worker" ]]
+AFTER_COMMENT_HEAD=""
+AFTER_HOLD_HEAD="finalhead123"
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 conflict || rc=$?
+[[ "$rc" == "75" ]]
+AFTER_HOLD_HEAD=""
+route conflict
+printf 'PASS: head drift at both write boundaries reclassifies before terminal success\n'
