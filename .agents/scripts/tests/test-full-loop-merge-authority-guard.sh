@@ -108,6 +108,7 @@ load_functions() {
 	extract_function _compose_pr_title
 	extract_function _derive_pr_title_prefix
 	extract_readiness_function cmd_pre_merge_gate
+	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
 	return 0
@@ -290,6 +291,11 @@ _full_loop_review_bot_gate_helper_path() {
 }
 
 _full_loop_verify_pr_readiness() {
+	if [[ "${FIXTURE_READINESS_RC:-0}" -ne 0 ]]; then
+		FULL_LOOP_PR_CHECK_STATUS="${FIXTURE_CHECK_STATUS:-}"
+		FULL_LOOP_PR_FAILURE_EVIDENCE="${FIXTURE_FAILURE_EVIDENCE:-}"
+		return 1
+	fi
 	return 0
 }
 
@@ -329,6 +335,9 @@ reset_fixture() {
 	FIXTURE_ISSUE_API_FAIL=0
 	FIXTURE_HOLD_LABELS_CSV=""
 	FIXTURE_LABEL_EDIT_FAIL=0
+	FIXTURE_READINESS_RC=0
+	FIXTURE_CHECK_STATUS=""
+	FIXTURE_FAILURE_EVIDENCE=""
 	unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS WORKER_ISSUE_NUMBER
 	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	AUTHORITY_GUARD_PASS=1
@@ -801,6 +810,41 @@ test_pre_merge_authority_preflight() {
 		print_result "API uncertainty emits no incomplete final approval command" 1 \
 			"rc=$actual_rc output=$output"
 	fi
+
+	reset_fixture
+	set_pr_fixture external '[]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_PERMISSION="none"
+	FIXTURE_ISSUE_LABELS="needs-maintainer-review"
+	FIXTURE_READINESS_RC=1
+	FIXTURE_CHECK_STATUS="terminal-failure"
+	FIXTURE_FAILURE_EVIDENCE='[{"name":"gate / Maintainer Review & Assignee Gate","state":"FAILURE","bucket":"fail"}]'
+	actual_rc=0
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 1 ]] &&
+		grep -qF 'sudo aidevops approve batch issue:42 pr:900 owner/repo' <<<"$output" &&
+		! grep -qF 'Running review bot gate' <<<"$output"; then
+		print_result "authority-only required failure reports approval without passing readiness" 0
+	else
+		print_result "authority-only required failure reports approval without passing readiness" 1 \
+			"rc=$actual_rc output=$output"
+	fi
+
+	local failure_evidence=""
+	for failure_evidence in \
+		'[{"name":"lint","state":"FAILURE","bucket":"fail"}]' \
+		'[{"name":"gate / Maintainer Review & Assignee Gate"},{"name":"lint"}]' \
+		'[]' 'not-json'; do
+		FIXTURE_FAILURE_EVIDENCE="$failure_evidence"
+		actual_rc=0
+		output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 ]] && ! grep -qF 'aidevops approve batch' <<<"$output"; then
+			print_result "non-authority or invalid failure evidence prints no approval: $failure_evidence" 0
+		else
+			print_result "non-authority or invalid failure evidence prints no approval: $failure_evidence" 1 \
+				"rc=$actual_rc output=$output"
+		fi
+	done
+	reset_fixture
 	return 0
 }
 

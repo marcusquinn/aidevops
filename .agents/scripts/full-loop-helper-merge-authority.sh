@@ -194,6 +194,7 @@ _merge_collect_linked_issue_authority_gaps() {
 	local repo="$2"
 	local require_crypto="$3"
 	local cross_repo_refs="${4:-}"
+	local diagnostic_only="${5:-0}"
 	local issue_number=""
 	local cross_ref=""
 	local verify_rc=0
@@ -221,6 +222,14 @@ _merge_collect_linked_issue_authority_gaps() {
 		verify_rc=0
 		_merge_issue_requires_maintainer_review "$issue_number" "$repo" || verify_rc=$?
 		if [[ "$verify_rc" -eq 0 ]]; then
+			#aidevops:trust-boundary GH#34568 -- only the failed-check diagnostic
+			# may report a local external issue hold as an approval target. Merge
+			# transports omit this flag and remain unconditionally blocked.
+			if [[ "$diagnostic_only" == "1" && "$require_crypto" -eq 1 ]]; then
+				FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS+=("issue:${issue_number}")
+				FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("issue:${issue_number}")
+				continue
+			fi
 			print_error "Merge blocked: linked issue #${issue_number} still requires maintainer review"
 			return 1
 		elif [[ "$verify_rc" -ne 1 ]]; then
@@ -276,6 +285,7 @@ _merge_collect_external_authority_gaps() {
 	local pr_number="$1"
 	local repo="$2"
 	local expected_head_sha="${3:-}"
+	local diagnostic_only="${4:-0}"
 	local pr_json="" pr_author="" current_head_sha="" labels_csv="" labels_padded="" is_fork="false"
 	local issue_numbers="" cross_repo_refs=""
 	local author_rc=0 treat_as_external=0 trusted_dependabot=0 trusted_issue_sync=0
@@ -358,7 +368,7 @@ _merge_collect_external_authority_gaps() {
 	}
 
 	_merge_headless_pr_only_scope_clear "$issue_numbers" "$repo" || return 1
-	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" "$cross_repo_refs" || return 1
+	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" "$cross_repo_refs" "$diagnostic_only" || return 1
 	if [[ "$trusted_dependabot" -eq 1 || "$trusted_issue_sync" -eq 1 || "$treat_as_external" -eq 0 ]]; then
 		return 0
 	fi
@@ -415,4 +425,3 @@ _merge_guard_admin_merge_maintainer_review() {
 
 	return 0
 }
-

@@ -455,7 +455,20 @@ cmd_pre_merge_gate() {
 		fi
 	fi
 
-	_full_loop_verify_pr_readiness "$pr_number" "$repo" || return 1
+	# Clear prior observations so an early readiness failure cannot reuse stale CI evidence.
+	FULL_LOOP_PR_CHECK_STATUS=""
+	FULL_LOOP_PR_FAILURE_EVIDENCE=""
+	if ! _full_loop_verify_pr_readiness "$pr_number" "$repo"; then
+		# Diagnostic only: never turn a failed authority check into merge readiness.
+		if [[ "$FULL_LOOP_PR_CHECK_STATUS" == "terminal-failure" ]] &&
+			printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -e '
+				type == "array" and length > 0 and
+				all(.[]; .name == "gate / Maintainer Review & Assignee Gate")
+			' >/dev/null 2>&1; then
+			_full_loop_report_external_authority_preflight "$pr_number" "$repo" 1 || true
+		fi
+		return 1
+	fi
 
 	local rbg_helper=""
 	if ! rbg_helper=$(_full_loop_review_bot_gate_helper_path); then
@@ -486,6 +499,15 @@ cmd_pre_merge_gate() {
 		;;
 	esac
 
+	_full_loop_report_external_authority_preflight "$pr_number" "$repo"
+	return $?
+}
+
+_full_loop_report_external_authority_preflight() {
+	local pr_number="$1"
+	local repo="$2"
+	local diagnostic_only="${3:-0}"
+
 	#aidevops:trust-boundary GH#17671/GH#28622 -- resolve every authority target
 	# from the final live PR snapshot. This diagnostic never grants authority; the
 	# merge transport repeats the same evaluation immediately before its write.
@@ -502,7 +524,7 @@ cmd_pre_merge_gate() {
 	fi
 	declare -p FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS >/dev/null 2>&1 ||
 		FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
-	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo"; then
+	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo" "" "$diagnostic_only"; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="external-authority"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="unable to verify external/fork authority"
 		return 1
