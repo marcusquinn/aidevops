@@ -262,20 +262,23 @@ class RepositoryAuthTests(unittest.TestCase):
                     parser.parse_args(arguments)
 
     def test_usage_filter_uses_recorded_consumer_not_current_binding(self):
-        aggregator = Path(auth.__file__).with_name("gh-api-aggregate.awk")
+        log = self.root / "gh-api-calls.log"
         # Append consumer metadata to otherwise identical valid v2 attempts.
-        record = ["100", "test", "rest", "github-app", "rest-core", "app", "", "v2",
+        record = [str(int(time.time())), "test", "rest", "github-app", "rest-core", "app", "", "v2",
                   "attempt", "logical", "attempt", "1", "0", "success", "200", "2", "1", "app"]
         rows = ["\t".join(record + ["pulse"])]
         record[10] = "other-attempt"
         rows.append("\t".join(record))
-        result = subprocess.run(["awk", "-F", "\t", "-v", "now=101", "-v", "cutoff=0", "-v", "window=101",
-                                 "-f", str(aggregator)], input="\n".join(rows) + "\n", text=True,
-                                capture_output=True, check=True,
-                                env=dict(os.environ, AIDEVOPS_GH_REPORT_CONSUMER="pulse"))
-        report = json.loads(result.stdout)
+        log.write_text("\n".join(rows) + "\n")
+        # Exercise the production reporter, including its consumer environment,
+        # against an isolated log instead of launching a separate awk command.
+        with patch.dict(os.environ, {"AIDEVOPS_GH_API_LOG": str(log)}):
+            report = usage.aggregate(3600, "pulse")
+            unfiltered = usage.aggregate(3600)
         self.assertEqual(report["_meta"]["attempted_requests"], 1)
         self.assertEqual(report["by_consumer"]["pulse"]["attempted_requests"], 1)
+        self.assertEqual(unfiltered["_meta"]["attempted_requests"], 2)
+        self.assertEqual(unfiltered["by_consumer"]["unknown"]["attempted_requests"], 1)
 
     def test_usage_rejects_failed_reporter(self):
         with patch.object(usage.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
