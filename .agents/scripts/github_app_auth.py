@@ -44,7 +44,8 @@ def atomic_json(path, value):
     fd, temporary = tempfile.mkstemp(prefix=".app-auth-", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as stream:
-            json.dump(value, stream)
+            json.dump(value, stream, indent=2)
+            stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)

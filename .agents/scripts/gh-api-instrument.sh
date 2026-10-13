@@ -610,10 +610,12 @@ _gh_append_v2() {
 	# The Pulse auth resolver labels its child gh process; other callers leave
 	# the reason empty ("unrouted" in reports).
 	auth_reason=$(_gh_safe_text "${AIDEVOPS_GH_AUTH_REASON:-}" "")
-	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+	local auth_consumer=""
+	auth_consumer=$(_gh_safe_text "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" "")
+	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
 		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
 		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost" \
-		"$auth_reason"
+		"$auth_reason" "$auth_consumer"
 	_gh_append_record "$record"
 	return 0
 }

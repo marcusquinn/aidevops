@@ -109,8 +109,13 @@ _shim_timing path_resolution
 
 # Select credentials before any quota probe, translation or native transport.
 # The child re-enters this same shim, preserving all write/safety policies.
-if [[ "${AIDEVOPS_PULSE_AUTH:-0}" == "1" && "${AIDEVOPS_PULSE_AUTH_ACTIVE:-0}" != "1" ]]; then
-	exec python3 "${_SHIM_DIR}/pulse_repo_auth.py" exec-gh "$_SHIM_SOURCE" "$@"
+if [[ -n "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" && "$AIDEVOPS_GITHUB_AUTH_CONSUMER" != "pulse" ]]; then
+	printf 'Unsupported GitHub auth consumer\n' >&2
+	exit 1
+fi
+if [[ ( "${AIDEVOPS_PULSE_AUTH:-0}" == "1" || "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" == "pulse" ) && "${AIDEVOPS_PULSE_AUTH_ACTIVE:-0}" != "1" ]]; then
+	export AIDEVOPS_GITHUB_AUTH_CONSUMER=pulse
+	exec python3 "${_SHIM_DIR}/github_auth_runtime.py" exec-gh "$_SHIM_SOURCE" "$@"
 fi
 
 # shellcheck source=./gh-native-transport-lib.sh

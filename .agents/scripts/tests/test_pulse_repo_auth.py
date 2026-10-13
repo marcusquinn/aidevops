@@ -4,6 +4,8 @@
 """Focused standard-library checks for the repository auth boundary."""
 
 import json
+import contextlib
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -18,6 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import github_app_auth as backend
 import pulse_auth_usage as usage
 import pulse_repo_auth as auth
+import github_auth_cli as cli
+import github_auth_migration as migration
+from github_auth_policy import policy
 
 
 class RepositoryAuthTests(unittest.TestCase):
@@ -173,7 +178,10 @@ class RepositoryAuthTests(unittest.TestCase):
 
     def test_cli_set_is_atomic_and_preserves_pulse(self):
         registry = self.root / "repos.json"
-        registry.write_text(json.dumps(self.data))
+        data = json.loads(json.dumps(self.data))
+        data["initialized_repos"][0]["github_auth"] = {"pulse": policy(data["initialized_repos"][0])}
+        del data["initialized_repos"][0]["pulse_auth"]
+        registry.write_text(json.dumps(data))
         registry.chmod(0o600)
         env = dict(os.environ, AIDEVOPS_REPOS_CONFIG=str(registry), AIDEVOPS_GITHUB_APP_CONFIG=str(self.config))
         command = [sys.executable, str(Path(auth.__file__)), "set", "owner/repo", "--profile", "team", "--installation-id", "789"]
@@ -182,9 +190,154 @@ class RepositoryAuthTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         actual = json.loads(registry.read_text())
         self.assertFalse(actual["initialized_repos"][0]["pulse"])
-        self.assertEqual(actual["initialized_repos"][0]["pulse_auth"]["installation_id"], "789")
+        self.assertEqual(actual["initialized_repos"][0]["github_auth"]["pulse"]["read"]["installation_id"], "789")
         self.assertEqual(actual["initialized_repos"][1], self.data["initialized_repos"][1])
         self.assertFalse(Path(str(registry) + ".lock").exists())
+
+    def new_policy(self):
+        entry = self.data["initialized_repos"][0]
+        routes = policy(entry)
+        entry["github_auth"] = {"pulse": routes}
+        del entry["pulse_auth"]
+        return routes
+
+    def test_new_routes_preserve_app_reads_and_inherited_writes(self):
+        self.new_policy()
+        self.test_read_isolation_and_no_retry()
+        self.test_writes_and_unconfigured_repos_keep_original_credentials()
+        self.test_failed_mint_never_invokes_personal_transport()
+
+    def test_invalid_new_routes_fail_before_transport(self):
+        routes = self.new_policy()
+        routes["write"] = routes["read"].copy()
+        with patch.object(auth, "run_shim") as run:
+            with self.assertRaisesRegex(backend.AuthError, "write routing is not supported"):
+                auth.execute(self.shim, ["pr", "merge", "1", "-R", "owner/repo"], self.data, self.config)
+            run.assert_not_called()
+        routes["write"] = {"provider": "inherit", "profile": "team"}
+        with self.assertRaises(backend.AuthError):
+            policy(self.data["initialized_repos"][0])
+        del routes["write"]
+        with self.assertRaises(backend.AuthError):
+            policy(self.data["initialized_repos"][0])
+
+    def test_migration_is_explicit_idempotent_and_preserves_unrelated_fields(self):
+        registry = self.root / "repos.json"
+        backend.atomic_json(registry, self.data)
+        with self.assertRaises(backend.AuthError):
+            migration.migrate(registry, self.config, False)
+        with patch.dict(os.environ, {"AIDEVOPS_GITHUB_AUTH_CONFIG": str(self.config)}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            migration.migrate(registry, self.config, True)
+            first = registry.read_bytes()
+            migration.migrate(registry, self.config, True)
+        self.assertEqual(registry.read_bytes(), first)
+        migrated = json.loads(first)
+        self.assertEqual(migrated["initialized_repos"][1], self.data["initialized_repos"][1])
+        entry = migrated["initialized_repos"][0]
+        self.assertFalse(entry["pulse"])
+        self.assertNotIn("pulse_auth", entry)
+        self.assertEqual(entry["github_auth"]["pulse"]["write"], {"provider": "inherit"})
+        self.assertTrue(first.endswith(b"\n"))
+
+    def test_migration_conflict_does_not_partially_write(self):
+        registry = self.root / "repos.json"
+        conflicting = dict(self.data["initialized_repos"][0], slug="owner/conflict")
+        conflicting["github_auth"] = {"pulse": policy(conflicting)}
+        self.data["initialized_repos"].append(conflicting)
+        backend.atomic_json(registry, self.data)
+        original = registry.read_bytes()
+        with self.assertRaisesRegex(backend.AuthError, "Conflicting"):
+            migration.migrate(registry, self.config, True)
+        self.assertEqual(registry.read_bytes(), original)
+
+    def test_cli_requires_explicit_mutation_selectors(self):
+        parser = cli.parser()
+        with contextlib.redirect_stderr(io.StringIO()):
+            for arguments in (["set", "owner/repo", "--inherit"],
+                              ["clear", "owner/repo", "--consumer", "pulse"],
+                              ["set", "owner/repo", "--consumer", "pulse", "--operation", "write",
+                               "--inherit", "--profile", "team"]):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(arguments)
+
+    def test_usage_filter_uses_recorded_consumer_not_current_binding(self):
+        aggregator = Path(auth.__file__).with_name("gh-api-aggregate.awk")
+        # Append consumer metadata to otherwise identical valid v2 attempts.
+        record = ["100", "test", "rest", "github-app", "rest-core", "app", "", "v2",
+                  "attempt", "logical", "attempt", "1", "0", "success", "200", "2", "1", "app"]
+        rows = ["\t".join(record + ["pulse"])]
+        record[10] = "other-attempt"
+        rows.append("\t".join(record))
+        result = subprocess.run(["awk", "-F", "\t", "-v", "now=101", "-v", "cutoff=0", "-v", "window=101",
+                                 "-f", str(aggregator)], input="\n".join(rows) + "\n", text=True,
+                                capture_output=True, check=True,
+                                env=dict(os.environ, AIDEVOPS_GH_REPORT_CONSUMER="pulse"))
+        report = json.loads(result.stdout)
+        self.assertEqual(report["_meta"]["attempted_requests"], 1)
+        self.assertEqual(report["by_consumer"]["pulse"]["attempted_requests"], 1)
+
+    def test_usage_rejects_failed_reporter(self):
+        with patch.object(usage.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
+            with self.assertRaises(backend.AuthError):
+                usage.aggregate(3600)
+
+    def test_check_never_reports_inherited_transport_as_app_success(self):
+        self.new_policy()
+        registry = self.root / "repos.json"
+        backend.atomic_json(registry, self.data)
+        args = cli.parser().parse_args(["check", "owner/repo"])
+        with patch.dict(os.environ, {"GH_HOST": "other.example"}), patch.object(cli, "execute") as run:
+            with self.assertRaises(backend.AuthError):
+                cli.describe(args, registry, self.config)
+            run.assert_not_called()
+
+    def test_null_policy_and_malformed_profiles_do_not_inherit(self):
+        entry = {"slug": "owner/repo", "github_auth": {"pulse": None}}
+        with self.assertRaises(backend.AuthError):
+            policy(entry)
+        for document in ([], {"profiles": []}):
+            backend.atomic_json(self.config, document)
+            with self.assertRaisesRegex(backend.AuthError, "Invalid GitHub auth profiles"):
+                auth.settings(self.data, "owner/repo", self.config)
+
+    def test_migration_detects_profile_identity_collision(self):
+        registry = self.root / "repos.json"
+        old = self.root / "github-app-auth.json"
+        new = self.root / "github-auth.json"
+        backend.atomic_json(registry, self.data)
+        backend.atomic_json(old, {"profiles": {"team": self.profile}})
+        backend.atomic_json(new, {"profiles": {"team": dict(self.profile, app_id="999")}})
+        original = registry.read_bytes()
+        with patch.dict(os.environ, {"AIDEVOPS_GITHUB_AUTH_CONFIG": "", "AIDEVOPS_GITHUB_APP_CONFIG": ""}), \
+                patch.object(migration, "profile_destination", return_value=new):
+            with self.assertRaisesRegex(backend.AuthError, "Conflicting profile files"):
+                migration.migrate(registry, new, True)
+        self.assertEqual(registry.read_bytes(), original)
+
+    def test_profile_cli_and_registry_lifecycle(self):
+        registry = self.root / "repos.json"
+        backend.atomic_json(registry, self.data)
+        env = {"AIDEVOPS_GITHUB_AUTH_CONFIG": str(self.config), "AIDEVOPS_REPOS_CONFIG": str(registry)}
+        commands = [
+            ["profile", "set", "second", "--app-id", "123", "--private-key-path", str(self.key)],
+            ["profile", "list"], ["profile", "show", "second"],
+            ["migrate", "--confirm-stopped"],
+            ["set", "owner/repo", "--consumer", "pulse", "--operation", "read", "--inherit"],
+            ["status", "owner/repo"],
+            ["set", "owner/repo", "--consumer", "pulse", "--operation", "read",
+             "--profile", "second", "--installation-id", "456"],
+            ["clear", "owner/repo", "--consumer", "pulse", "--operation", "read"],
+        ]
+        with patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()):
+            for arguments in commands:
+                with patch.object(sys, "argv", ["github_auth_cli.py", *arguments]):
+                    self.assertEqual(cli.main(), 0)
+        updated = json.loads(registry.read_text())["initialized_repos"]
+        self.assertFalse(updated[0]["pulse"])
+        self.assertEqual(updated[0]["github_auth"]["pulse"]["read"], {"provider": "inherit"})
+        self.assertEqual(updated[1], self.data["initialized_repos"][1])
+        self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
 
     def test_cache_refresh_rotation_and_scope(self):
         cache = self.root / "cache"

@@ -42,6 +42,7 @@ function metric_add_dimensions(caller, path, auth, pool, decision, metric, amoun
 	metric_add("path", path, metric, amount)
 	metric_add("auth", auth, metric, amount)
 	metric_add("reason", auth_reason, metric, amount)
+	metric_add("consumer", auth_consumer, metric, amount)
 	metric_add("pool", pool, metric, amount)
 	metric_add("decision", decision, metric, amount)
 }
@@ -141,6 +142,8 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 }
 
 {
+	auth_consumer = (NF >= 19 && $19 != "") ? $19 : "unknown"
+	if (ENVIRON["AIDEVOPS_GH_REPORT_CONSUMER"] != "" && auth_consumer != ENVIRON["AIDEVOPS_GH_REPORT_CONSUMER"]) next
 	ts = $1 + 0
 	if (ts > now) next
 	caller = ($2 != "") ? $2 : "unknown"
@@ -388,6 +391,8 @@ END {
 	emit_group("by_auth_mode", "auth")
 	print ","
 	emit_group("by_auth_reason", "reason")
+	print ","
+	emit_group("by_consumer", "consumer")
 	print ","
 	emit_group("by_api_pool", "pool")
 	print ","

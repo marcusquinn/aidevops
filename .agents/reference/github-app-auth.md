@@ -90,16 +90,20 @@ shellcheck .agents/scripts/github-app-auth-helper.sh .agents/scripts/gh-api-inst
 
 ## Repository-scoped Pulse reads
 
-Keep the existing `pulse` boolean and scheduling fields in `repos.json`. Add
-`pulse_auth` inside the selected `initialized_repos` entry using the CLI. The
-setting changes read credentials, not scheduling, permissions or write identity.
+For the user setup agreement, naming, CLI and explicit migration, see
+[Repository GitHub authorization](github-auth.md). This section documents the
+runtime boundary; the earlier global helper is a separate integration.
 
-In `~/.config/aidevops/github-app-auth.json`, add a named profile (non-secret
+Keep the existing `pulse` boolean and scheduling fields in `repos.json`. Configure
+`github_auth.pulse.read` and `github_auth.pulse.write` inside the selected entry.
+This stage supports only App reads and inherited writes. It does not change
+scheduling, GitHub permissions or interactive identity.
+
+In `~/.config/aidevops/github-auth.json`, add a named profile (non-secret
 identifiers and a local key reference only):
 
 ```json
 {
-  "enabled": false,
   "profiles": {
     "team-pulse": {
       "app_id": "123456",
@@ -121,10 +125,10 @@ use a different key of the same App: all such keys have App-wide authority;
 they are not per-user permission boundaries. Keep keys out of Git and chat.
 
 ```bash
-aidevops repos pulse auth set OWNER/REPO --provider github-app --profile team-pulse --installation-id 987654
-aidevops repos pulse auth status OWNER/REPO
-aidevops repos pulse auth check OWNER/REPO
-aidevops repos pulse auth usage --since 1h
+aidevops github auth set OWNER/REPO --consumer pulse --operation read --profile team-pulse --installation-id 987654
+aidevops github auth status OWNER/REPO
+aidevops github auth check OWNER/REPO --consumer pulse
+aidevops github auth usage --consumer pulse --since 1h
 ```
 
 `set` validates local configuration and atomically updates the registry under
@@ -185,7 +189,7 @@ its existing safety policies and instrumentation.
   | `write` / `local` / `account` | Classified non-read operation |
   | `unclassified` | Unknown command form, extension or GraphQL `--input` |
   | `unscoped` | Read without exactly one repository (conflicts, global search) |
-  | `not-configured` | Repository (registered or not) has no `pulse_auth` |
+  | `not-configured` | Repository has no App read selection, or explicitly inherits credentials |
   | `other-host` / `absolute-url` / `explicit-auth` / `verbose` | Caller pinned transport the App read cannot honour |
 
   Empty field 18 (`unrouted` in reports) means the resolver was not enabled.
@@ -217,10 +221,10 @@ already issued with it. Cache refresh is not evidence of server-side revocation.
 Explicit rollback:
 
 ```bash
-aidevops repos pulse auth clear OWNER/REPO
+aidevops github auth clear OWNER/REPO --consumer pulse --operation read
 ```
 
-This removes only the repository auth selection, restoring its existing routing;
+This resets only the read route to explicit `inherit`, restoring its existing routing;
 it does not revoke tokens or change the `pulse` flag. Disable Pulse separately
 if automation must stop. There is no automatic rollback to personal credentials.
 

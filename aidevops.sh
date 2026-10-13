@@ -974,6 +974,19 @@ _repos_actions() {
 	return 0
 }
 
+cmd_github() {
+	local action="${1:-}"
+	if [[ "$action" != "auth" ]]; then
+		print_error "Usage: aidevops github auth <set|status|check|clear|profile|usage|migrate>"
+		return 1
+	fi
+	shift
+	local auth_helper="${AIDEVOPS_CLI_MODULES_DIR%/aidevops-cli}/github_auth_cli.py"
+	[[ -f "$auth_helper" ]] || auth_helper="${AGENTS_DIR}/scripts/github_auth_cli.py"
+	AIDEVOPS_REPOS_CONFIG="$REPOS_FILE" python3 "$auth_helper" "$@"
+	return $?
+}
+
 # Repos management command
 cmd_repos() {
 	local action="${1:-list}"
@@ -1239,6 +1252,7 @@ _help_commands() {
 	echo "  email [cmd]        Email mailbox management (mailbox add/list/test/remove)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  review-gate <cmd>  Configure review_gate merge policies (rate-limit/completion)"
+	echo "  github auth <cmd> Repository auth routes, App profiles, checks and local usage"
 	echo "  github-app-auth    GitHub App auth setup/status and API route decisions"
 	echo "  source-access <cmd> Session-bound, sudo-signed source-read approvals"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
@@ -1996,6 +2010,7 @@ _main_dispatch() {
 	lint) _dispatch_helper "lint-helper.sh" "lint-helper.sh" "$@" ;;
 	upgrade-planning | up) cmd_upgrade_planning "$@" ;;
 	repos | projects) cmd_repos "$@" ;;
+	github) cmd_github "$@" ;;
 	design) _dispatch_helper "design-guidelines-helper.sh" "design-guidelines-helper.sh" "$@" ;;
 	keywords | kw) _dispatch_helper "keywords-helper.sh" "keywords-helper.sh" "$@" ;;
 	skill) cmd_skill "$@" ;;
