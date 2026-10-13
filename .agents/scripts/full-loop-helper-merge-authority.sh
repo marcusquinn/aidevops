@@ -281,6 +281,25 @@ _merge_pr_label_holds_clear() {
 	return 0
 }
 
+_merge_authority_metadata_valid() {
+	local pr_number="$1"
+	local pr_json="$2"
+	if ! printf '%s' "$pr_json" | jq -e '
+		def is_string: type == "string";
+		type == "object"
+		and (.author.login | is_string and length > 0)
+		and (.headRefOid | is_string and length > 0)
+		and (.labels | type == "array")
+		and (.isCrossRepository | type == "boolean")
+		and (.closingIssuesReferences | type == "array")
+		and ((.body == null) or (.body | is_string))
+	' >/dev/null 2>&1; then
+		print_error "Merge blocked: PR #${pr_number} returned malformed authority metadata"
+		return 1
+	fi
+	return 0
+}
+
 _merge_collect_external_authority_gaps() {
 	local pr_number="$1"
 	local repo="$2"
@@ -297,19 +316,7 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: unable to verify PR #${pr_number} authority metadata"
 		return 1
 	fi
-	if ! printf '%s' "$pr_json" | jq -e '
-		def is_string: type == "string";
-		type == "object"
-		and (.author.login | is_string and length > 0)
-		and (.headRefOid | is_string and length > 0)
-		and (.labels | type == "array")
-		and (.isCrossRepository | type == "boolean")
-		and (.closingIssuesReferences | type == "array")
-		and ((.body == null) or (.body | is_string))
-	' >/dev/null 2>&1; then
-		print_error "Merge blocked: PR #${pr_number} returned malformed authority metadata"
-		return 1
-	fi
+	_merge_authority_metadata_valid "$pr_number" "$pr_json" || return 1
 
 	pr_author=$(printf '%s' "$pr_json" | jq -r '.author.login') || return 1
 	current_head_sha=$(printf '%s' "$pr_json" | jq -r '.headRefOid') || return 1

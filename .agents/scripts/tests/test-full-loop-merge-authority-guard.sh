@@ -93,6 +93,7 @@ load_functions() {
 	extract_function _issue_pr_only_contract_state
 	extract_function _merge_headless_pr_only_scope_clear
 	extract_function _apply_pr_only_hold
+	extract_function _merge_authority_metadata_valid
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -810,6 +811,12 @@ test_pre_merge_authority_preflight() {
 		print_result "API uncertainty emits no incomplete final approval command" 1 \
 			"rc=$actual_rc output=$output"
 	fi
+	return 0
+}
+
+test_pre_merge_authority_check_failure() {
+	local output=""
+	local actual_rc=0
 
 	reset_fixture
 	set_pr_fixture external '[]' false '[{"number":42}]' 'Resolves #42'
@@ -1118,6 +1125,7 @@ main() {
 	test_hold_for_review_guard
 	test_pr_only_contract_guard
 	test_pre_merge_authority_preflight
+	test_pre_merge_authority_check_failure
 	test_all_merge_modes_use_guard
 	test_secondary_merge_transports_refresh_authority
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
