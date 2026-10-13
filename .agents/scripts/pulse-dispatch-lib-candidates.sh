@@ -1054,7 +1054,7 @@ _dispatch_checkpoint_fingerprint() {
 # This enumeration pass performs no PR/attention/continuation reads. Only the
 # specifically confirmed benign checkpoint reason can bypass ownership checks.
 _dispatch_filter_checkpoint_cooled_candidates() {
-	local repo="$1" candidates="$2" candidate="" ranked="" issue="" skipped="" filtered=""
+	local repo="$1" candidates="$2" candidate="" issue="" skipped="" filtered=""
 	local dir="$HOME/.aidevops/logs/dispatch-negative-cache"
 	if [[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -eq 0 || ! -d "$dir" ||
 		! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
@@ -1063,8 +1063,7 @@ _dispatch_filter_checkpoint_cooled_candidates() {
 		return 0
 	fi
 	while IFS= read -r candidate; do
-		ranked=$(jq -c --arg repo "$repo" '. + {repo_slug: $repo}' <<<"$candidate") || continue
-		_dispatch_negative_cache_reason "$ranked" worker_draft_checkpoint_cooldown >/dev/null || continue
+		_dispatch_negative_cache_reason "$candidate" worker_draft_checkpoint_cooldown >/dev/null || continue
 		issue=$(jq -r '.number' <<<"$candidate") || continue
 		skipped="${skipped:+${skipped},}${issue}"
 	done < <(jq -c --arg repo "$repo" '.[] | . + {repo_slug: $repo}' <<<"$candidates" 2>/dev/null)

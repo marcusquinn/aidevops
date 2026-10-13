@@ -73,8 +73,10 @@ source "$SCRIPT_DIR/../pulse-dispatch-lib.sh"
 _dispatch_stats_increment() { return 0; }
 _dispatch_stats_increment_candidate_failed() { return 0; }
 _dispatch_mark_benign_blocked_candidate() { return 0; }
-_dispatch_candidate_recent_lines() { printf '%s\n' "$ATTEMPT_LINES"; return 0; }
-_dispatch_candidate_failure_reason() { printf '%s\n' "$ATTEMPT_REASON"; return 0; }
+_dispatch_candidate_recent_lines() {
+	printf '%s\nDISPATCH_BLOCK_REASON reason=%s signal=test\n' "$ATTEMPT_LINES" "$ATTEMPT_REASON"
+	return 0
+}
 # A cooled checkpoint must never require the old expensive PR lookup.
 _dispatch_negative_pr_fingerprint() { return 1; }
 candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
@@ -99,9 +101,12 @@ printf '%s\t%s\t%s\t-\t%s\t\n' "$(($(date +%s) - _DISPATCH_CHECKPOINT_COOLDOWN_S
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_cooldown "$fingerprint" >"$cache"
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 rm -f "$cache"
+# A successful old PR-cache lookup must not mask routed-continuation safety.
+_dispatch_negative_pr_fingerprint() { printf 'test-pr-fingerprint\n'; return 0; }
 for signal in 'checkpoint_routed' 'CONTINUATION_ROUTED'; do
 	ATTEMPT_LINES="WORKER_DRAFT_CHECKPOINT: draft PR #123 BLOCKED_CHECKPOINT_ATTENTION_EXISTS $signal"
 	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
+	_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
 	[[ ! -f "$cache" ]]
 done
 ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123'
@@ -120,5 +125,13 @@ _dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
 _DISPATCH_CHECKPOINT_COOLDOWN_SECONDS=0
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 printf 'PASS draft-checkpoint cooldown: two cycles, revision/label wake, TTL, disable and negative outcomes\n'
+
+# GH#33743: the existing capability cooldown still filters independently.
+capability_candidate=$(jq -c '.number = 33743 | .labels = ["dispatch-class:gpu"]' <<<"$candidate")
+_dispatch_capability_cooldown_record "$capability_candidate" 'DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=missing_secret cooldown=eligible'
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$capability_candidate]")" == '[]' ]]
+changed=$(jq -c '.updatedAt = "2026-10-13T00:00:01Z"' <<<"$capability_candidate")
+[[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" != '[]' ]]
+printf 'PASS existing runner-capability cooldown remains independent\n'
 
 printf 'PASS dispatch-candidate-failure-reasons\n'

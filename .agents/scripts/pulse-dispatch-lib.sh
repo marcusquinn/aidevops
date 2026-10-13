@@ -376,6 +376,8 @@ _dispatch_prefilter_owned_candidate() {
 _dispatch_cache_confirmed_block() {
 	local candidate="$1" issue="$2" repo="$3" reason="" lines="" pr=""
 	lines=$(_dispatch_candidate_recent_lines "$issue" "$repo") || lines=""
+	# A routed continuation must not fall through to any older ownership hint.
+	[[ "$lines" != *"checkpoint_routed"* && "$lines" != *"CONTINUATION_ROUTED"* ]] || return 0
 	# Already recorded by the benign result classifier; do not overwrite it with
 	# the older PR-read cache (or an unusable available-issue active-claim hint).
 	_dispatch_checkpoint_cooldown_eligible "$lines" && return 0
