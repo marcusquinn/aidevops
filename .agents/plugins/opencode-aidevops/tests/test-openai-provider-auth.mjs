@@ -114,17 +114,29 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
         JSON.stringify(payload) + "\n" + status;
     }
 
+    const logs = [];
+    console.error = (...args) => logs.push(args.map(String).join(" "));
+
     async function withInstalledGuard(pool, fetchImpl, request) {
       writeFileSync(poolPath, JSON.stringify(pool));
+      logs.length = 0;
       const calls = [];
       globalThis.fetch = async (input, init) => fetchImpl(input, init, calls);
       const authWrites = [];
       const { installOpenAIProviderFetchRotation } = await import("./openai-provider-auth.mjs?case=" + Math.random());
       installOpenAIProviderFetchRotation({
         auth: { set: async (entry) => authWrites.push(entry) },
-      });
+      }, { version: "9.9.9" });
       const response = await fetch(request.input ?? request.url, request.init);
-      return { response, calls, authWrites, pool: JSON.parse(readFileSync(poolPath, "utf-8")) };
+      const codexLines = logs.filter((line) => line.includes("OpenAI provider: codex request"));
+      return { response, calls, authWrites, logs: [...logs], codexLines, pool: JSON.parse(readFileSync(poolPath, "utf-8")) };
+    }
+
+    // GH#34562: diagnostic lines carry metadata only.
+    function assertMetadataOnly(line) {
+      for (const forbidden of ["@", "Bearer", "token", "acct_", "chatgpt.com", "backend-api", "xxxx"]) {
+        assert.equal(line.includes(forbidden), false, "diagnostic leaked " + forbidden + ": " + line);
+      }
     }
 
     const responseRotation = await withInstalledGuard({
@@ -213,6 +225,48 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
       assert.equal(call.body.input.length, 1_100_000);
       assert.equal(call.body.tools[0].parameters.properties.agent__intent.type, "string");
     }
+    // Compressed requests that end without a 5xx stay out of the log.
+    assert.deepEqual(codexCompression.codexLines, []);
+    const installLine = codexCompression.logs.find((line) => line.includes("fetch guard installed"));
+    assert.match(installLine, /version=9\.9\.9 runtime=(bun|node)-\S+ zstd=(bun|node|none) codex_compression=enabled/);
+
+    // GH#34562: a Codex 5xx records the compression decision and every attempt.
+    const codexUpstreamFailure = await withInstalledGuard({
+      openai: [
+        { email: "limited@example.com", access: "limited-token", refresh: "limited-refresh", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z", accountId: "acct_limited" },
+        { email: "healthy@example.com", access: "healthy-token", refresh: "healthy-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-01T00:00:00Z", accountId: "acct_healthy" },
+      ],
+    }, async (input, init, calls) => {
+      calls.push(new Headers(init?.headers).get("content-encoding"));
+      if (calls.length === 1) return new Response("usage limit", { status: 429 });
+      return new Response("upstream connect error or disconnect/reset before headers", {
+        status: 503,
+        headers: { "cf-ray": "8f00test-LHR" },
+      });
+    }, {
+      url: "https://chatgpt.com/backend-api/codex/responses?client=test",
+      init: { method: "POST", headers: { authorization: "Bearer limited-token", "chatgpt-account-id": "acct_limited" }, body: codexSource },
+    });
+    assert.equal(codexUpstreamFailure.response.status, 503);
+    assert.deepEqual(codexUpstreamFailure.calls, ["zstd", "zstd"]);
+    assert.equal(codexUpstreamFailure.codexLines.length, 1);
+    const failureLine = codexUpstreamFailure.codexLines[0];
+    assert.match(failureLine, /endpoint=responses reason=applied original_bytes=\d{7} encoded_bytes=\d+ encoding=zstd compressor=(bun|node)/);
+    assert.match(failureLine, /attempts=initial:429,usage-rotate:503 request_id=8f00test-LHR$/);
+    assertMetadataOnly(failureLine);
+
+    // Transport errors are recorded with their code and still propagate.
+    const codexTransportError = await withInstalledGuard({
+      openai: [{ email: "healthy@example.com", access: "healthy-token", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0 }],
+    }, async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+    }, {
+      url: "https://chatgpt.com/backend-api/codex/responses",
+      init: { method: "POST", headers: { authorization: "Bearer healthy-token" }, body: "{}" },
+    }).catch((error) => ({ error, codexLines: logs.filter((line) => line.includes("codex request")) }));
+    assert.equal(codexTransportError.error?.message, "fetch failed");
+    assert.equal(codexTransportError.codexLines.length, 1);
+    assert.match(codexTransportError.codexLines[0], /reason=applied .*attempts=initial:fetch-error request_id=none error=ECONNRESET$/);
 
     process.env.AIDEVOPS_CODEX_REQUEST_COMPRESSION = "0";
     const codexOptOut = await withInstalledGuard({
@@ -224,8 +278,20 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
       url: "https://chatgpt.com/backend-api/codex/responses",
       init: { method: "POST", headers: { authorization: "Bearer healthy-token" }, body: "{}" },
     });
-    delete process.env.AIDEVOPS_CODEX_REQUEST_COMPRESSION;
     assert.deepEqual(codexOptOut.calls, [{ encoding: null, body: "{}" }]);
+    assert.deepEqual(codexOptOut.codexLines, []);
+
+    // An uncompressed Codex body above 1 MiB is logged even when it succeeds.
+    const codexOversizeOptOut = await withInstalledGuard({
+      openai: [{ email: "healthy@example.com", access: "healthy-token", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0 }],
+    }, async () => new Response("ok", { status: 200 }), {
+      url: "https://chatgpt.com/backend-api/codex/responses",
+      init: { method: "POST", headers: { authorization: "Bearer healthy-token" }, body: codexSource },
+    });
+    delete process.env.AIDEVOPS_CODEX_REQUEST_COMPRESSION;
+    assert.equal(codexOversizeOptOut.codexLines.length, 1);
+    assert.match(codexOversizeOptOut.codexLines[0], /reason=disabled original_bytes=(\d+) encoded_bytes=\1 encoding=identity .*attempts=initial:200/);
+    assertMetadataOnly(codexOversizeOptOut.codexLines[0]);
 
     const requestSource = JSON.stringify({ tools: [{
       type: "function",
@@ -488,6 +554,7 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
     assert.equal(genericServerFailure.response.status, 503);
     assert.deepEqual(genericServerFailure.calls, ["Bearer active-token"]);
     assert.equal(genericServerFailure.authWrites.length, 0);
+    assert.deepEqual(genericServerFailure.codexLines, [], "Platform API requests are not Codex diagnostics");
 
   `;
   runProviderScript("aidevops-openai-rotation-", script);

@@ -787,7 +787,7 @@ export async function AidevopsPlugin({ directory, client }) {
     auth: (() => {
       const poolHook = createPoolAuthHook(client);
       const providerHook = createProviderAuthHook(client);
-      installOpenAIProviderFetchRotation(client);
+      installOpenAIProviderFetchRotation(client, { version: currentAidevopsVersion() });
       return {
         provider: "anthropic",
         methods: poolHook.methods,
