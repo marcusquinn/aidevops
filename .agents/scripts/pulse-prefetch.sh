@@ -116,7 +116,10 @@ prefetch_state() {
 	local pids=()
 	local idx=0
 	while IFS='|' read -r slug path; do
-		_prefetch_remaining_seconds 120 >/dev/null || { prefetch_rc=124; break; }
+		_prefetch_remaining_seconds 120 >/dev/null || {
+			prefetch_rc=124
+			break
+		}
 		(
 			_prefetch_single_repo "$slug" "$path" "${tmpdir}/${idx}.txt"
 		) &
