@@ -804,6 +804,7 @@ gh_run_transport_attempt() {
 		fi
 	fi
 	start_ms=$(_gh_now_ms) || start_ms=""
+	_GH_TRANSPORT_ERROR_HTTP_STATUS=""
 	local -a transport_command=("$@")
 	if declare -F _gh_transport_capture_errors >/dev/null 2>&1; then
 		transport_command=(_gh_transport_capture_errors "$@")
@@ -822,7 +823,7 @@ gh_run_transport_attempt() {
 		elapsed_ms=$((end_ms - start_ms))
 	fi
 	gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
-		"${AIDEVOPS_GH_HTTP_STATUS:-}" "$elapsed_ms" "$quota_cost" \
+		"${AIDEVOPS_GH_HTTP_STATUS:-${_GH_TRANSPORT_ERROR_HTTP_STATUS:-}}" "$elapsed_ms" "$quota_cost" \
 		"${AIDEVOPS_GH_AUTH_MODE:-}" "${AIDEVOPS_GH_API_POOL:-}" "${AIDEVOPS_GH_ROUTE_DECISION:-}" \
 		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}"
 	return "$rc"

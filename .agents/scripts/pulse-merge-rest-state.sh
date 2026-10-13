@@ -344,11 +344,27 @@ _pmp_update_branch_rest() {
 			"$pr_number" "$repo_slug" >&2
 		return 2
 	fi
-	AIDEVOPS_GH_QUOTA_COST=1 \
+	# Every caller shares one head-bound semantic-conflict cooldown (GH#34560).
+	# The helpers live in pulse-merge-process.sh; absent helpers fail open.
+	if declare -F _pmp_update_branch_conflict_cooldown_active >/dev/null 2>&1 &&
+		_pmp_update_branch_conflict_cooldown_active "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		printf 'update-branch skipped: semantic conflict cooldown active for PR #%s head %s (GH#34560)\n' \
+			"$pr_number" "${expected_head_sha:0:12}" >&2
+		return 1
+	fi
+
+	local ub_output=""
+	local ub_rc=0
+	ub_output=$(AIDEVOPS_GH_QUOTA_COST=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="pulse-update-branch-rest" \
 		_pmrs_gh_call write gh api --method PUT "repos/${repo_slug}/pulls/${pr_number}/update-branch" \
-			-f expected_head_sha="$expected_head_sha"
-	return $?
+		-f expected_head_sha="$expected_head_sha" 2>&1) || ub_rc=$?
+	[[ -z "$ub_output" ]] || printf '%s\n' "$ub_output"
+	if [[ "$ub_rc" -ne 0 && "$ub_output" == *"HTTP 422"* ]] &&
+		declare -F _pmp_record_update_branch_conflict_cooldown >/dev/null 2>&1; then
+		_pmp_record_update_branch_conflict_cooldown "$pr_number" "$repo_slug" "$expected_head_sha" || true
+	fi
+	return "$ub_rc"
 }
 
 #######################################

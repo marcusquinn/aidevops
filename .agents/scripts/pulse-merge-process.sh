@@ -353,9 +353,9 @@ _merge_ready_prs_for_repo() {
 # fall through to the close path).
 #
 # Rate-limit considerations: one REST update-branch call per CONFLICTING
-# PR per merge cycle. A confirmed interactive semantic conflict is persisted
-# for a bounded cooldown so later cycles do not retry an impossible write
-# until the head changes or the cooldown expires (GH#30396).
+# PR per merge cycle. A confirmed semantic conflict (any PR origin) is
+# persisted for a bounded cooldown so later cycles do not retry an impossible
+# write until the head changes or the cooldown expires (GH#30396, GH#34560).
 #
 # Args: $1=pr_number, $2=repo_slug, $3=expected current head SHA
 #######################################
@@ -388,12 +388,8 @@ _attempt_pr_update_branch() {
 		_PMP_UPDATE_BRANCH_SEMANTIC_CONFLICT_PR="$pr_number"
 		_PMP_UPDATE_BRANCH_SEMANTIC_CONFLICT_REPO="$repo_slug"
 		_PMP_UPDATE_BRANCH_SEMANTIC_CONFLICT_HEAD="$expected_head_sha"
-		local _ub_labels=""
-		_ub_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels \
-			--jq '[.labels[]?.name] | join(",")' 2>/dev/null) || _ub_labels=""
-		if [[ ",${_ub_labels}," == *"$_PMP_ORIGIN_INTERACTIVE_PATTERN"* ]]; then
-			_pmp_record_update_branch_conflict_cooldown "$pr_number" "$repo_slug" "$expected_head_sha" || true
-		fi
+		# The head-bound cooldown is recorded for every PR origin inside
+		# _pmp_update_branch_rest so all callers share it (GH#34560).
 	fi
 	echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch failed, falling through to close (t2116): ${_ub_output}" >>"$LOGFILE"
 	return 1

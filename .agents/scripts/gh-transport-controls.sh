@@ -50,9 +50,26 @@ _gh_transport_record_error() {
 	return 0
 }
 
+# Extract the status code from gh's "(HTTP NNN)" diagnostic so write failures
+# (which bypass the GET-only governor) still carry a status in the call log
+# (GH#34560). Prints nothing when no status is present; never prints bodies.
+_gh_transport_error_http_status() {
+	local error_file="$1"
+	local line=""
+	local status=""
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" =~ \(HTTP\ ([1-5][0-9][0-9])\) ]]; then
+			status="${BASH_REMATCH[1]}"
+		fi
+	done <"$error_file"
+	[[ -z "$status" ]] || printf '%s' "$status"
+	return 0
+}
+
 _gh_transport_capture_errors() {
 	local error_file=""
 	local rc=0
+	_GH_TRANSPORT_ERROR_HTTP_STATUS=""
 	# Preserve native terminal/editor/progress behaviour in an attached TTY.
 	if [[ -t 2 ]]; then
 		"$@"
@@ -62,6 +79,9 @@ _gh_transport_capture_errors() {
 	error_file=$(mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/gh-transport-error.XXXXXX") || return 75
 	"$@" 2>"$error_file" || rc=$?
 	command cat "$error_file" >&2
+	if [[ "$rc" -ne 0 ]]; then
+		_GH_TRANSPORT_ERROR_HTTP_STATUS=$(_gh_transport_error_http_status "$error_file")
+	fi
 	_gh_transport_record_error "$rc" "$error_file"
 	rm -f -- "$error_file"
 	return "$rc"
