@@ -10,6 +10,8 @@ TEST_ROOT=""
 TEST_MODE="normal"
 TEST_ORIGINAL_BODY_FILE=""
 TEST_HEAD_COMMIT_MESSAGE=""
+TEST_HEAD_RESPONSE=""
+TEST_HEAD_READ_DENIED=0
 TEST_RESOLVE_HEAD_FAIL=0
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -76,8 +78,19 @@ capture_rest_body_field() {
 gh() {
 	local command="${1:-}"
 	local subcommand="${2:-}"
+	if [[ "$command" == "api" && "$subcommand" == *"commits"* ]]; then
+		printf '%s\n' "$subcommand" >>"${TEST_ROOT}/api-reads"
+	fi
 	if [[ "$command" == "api" && "$subcommand" == "repos/testorg/testrepo/pulls/42/commits?per_page=100" ]]; then
 		[[ "$*" == *"--paginate --slurp"* ]] || return 1
+		if [[ "$TEST_HEAD_READ_DENIED" -eq 1 ]]; then
+			printf '%s\n' 'HTTP 403 Resource not accessible by integration' >&2
+			return 1
+		fi
+		if [[ -n "$TEST_HEAD_RESPONSE" ]]; then
+			printf '%s\n' "$TEST_HEAD_RESPONSE"
+			return 0
+		fi
 		jq -n --arg message "$TEST_HEAD_COMMIT_MESSAGE" \
 			'[[{sha:"fixture-head-sha", commit:{message:$message}}]]'
 		return 0
@@ -336,6 +349,49 @@ assert_head_body_mismatch_fails() {
 	return 0
 }
 
+test_pr_commit_evidence() {
+	local body_file="${TEST_ROOT}/pr-commit-body"
+	local mode="" output="" rc=0 read_count=0
+	TEST_MODE="normal"
+	set_matching_head_manifest
+	write_fixture_body "$body_file"
+	# Put the verified SHA on a later page, not at the current list tip. The
+	# selected message must still require the identical aggregation body.
+	TEST_HEAD_RESPONSE=$(jq -n --arg message "$TEST_HEAD_COMMIT_MESSAGE" '
+		[[{sha:"other-sha",commit:{message:"ordinary commit"}}],
+		 [{sha:"fixture-head-sha",commit:{message:$message}},
+		  {sha:"later-sha",commit:{message:"ordinary later commit"}}]]')
+	assert_transport_preserves_body normal "paginated exact-SHA PR read" 1
+	TEST_HEAD_RESPONSE=""
+	for mode in denied missing duplicate null-message malformed invalid-manifest; do
+		TEST_HEAD_READ_DENIED=0
+		case "$mode" in
+		denied) TEST_HEAD_READ_DENIED=1 ;;
+		missing) TEST_HEAD_RESPONSE='[[{"sha":"other-sha","commit":{"message":"ordinary"}}]]' ;;
+		duplicate) TEST_HEAD_RESPONSE='[[{"sha":"fixture-head-sha","commit":{"message":"ordinary"}},{"sha":"fixture-head-sha","commit":{"message":"ordinary"}}]]' ;;
+		null-message) TEST_HEAD_RESPONSE='[[{"sha":"fixture-head-sha","commit":{"message":null}}]]' ;;
+		malformed) TEST_HEAD_RESPONSE='{"message":"not PR commit pages"}' ;;
+		invalid-manifest)
+			TEST_HEAD_RESPONSE=$(jq -n --arg message $'release\n\nAidevops-Release-Aggregator-PR: 99\nAidevops-Release-Aggregates: invalid' \
+				'[[{sha:"fixture-head-sha",commit:{message:$message}}]]')
+			;;
+		esac
+		rc=0
+		rm -f "${TEST_ROOT}/capture-count" "${TEST_ROOT}/retarget-called" "${TEST_ROOT}/api-reads"
+		output=$(cmd_merge 42 testorg/testrepo --squash --body-file "$body_file" 2>&1) || rc=$?
+		read_count=$(wc -l <"${TEST_ROOT}/api-reads")
+		if [[ "$rc" -ne 0 && "$read_count" -eq 1 && "$output" == *"Merge blocked:"* &&
+			! -e "${TEST_ROOT}/capture-count" && ! -e "${TEST_ROOT}/retarget-called" ]]; then
+			print_result "$mode PR commit evidence blocks without fallback or mutation" 0
+		else
+			print_result "$mode PR commit evidence blocks without fallback or mutation" 1 "rc=${rc}; reads=${read_count}; output=${output}"
+		fi
+	done
+	TEST_HEAD_READ_DENIED=0
+	TEST_HEAD_RESPONSE=""
+	return 0
+}
+
 test_aggregation_head_requires_body_file() {
 	local output=""
 	local rc=0
@@ -483,6 +539,7 @@ main() {
 	assert_transport_preserves_body auto-admin "interactive auto-to-admin fallback" 2 1
 	assert_transport_preserves_body stale-401 "stale-auth retry" 2
 	assert_transport_preserves_body rest "REST fallback" 1
+	test_pr_commit_evidence
 	test_aggregation_head_requires_body_file
 	assert_head_body_mismatch_fails partial "partial head/body manifest"
 	assert_head_body_mismatch_fails reordered "reordered head/body manifest"
