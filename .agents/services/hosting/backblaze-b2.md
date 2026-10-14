@@ -31,6 +31,8 @@ mcp:
 Backblaze B2 cloud storage is distinct from the Backblaze desktop backup client.
 Use this agent only for B2 buckets and B2/S3-compatible storage operations.
 
+For B2 objects streamed through a Node route, see [Proxied object storage](../../tools/runtime/node-server-admin.md#proxied-object-storage) for bounded SDK clients, abort forwarding, socket-pool diagnosis, and the public/private cache split.
+
 Read-only discovery may use the connected MCP after confirming the account alias and
 target. The baseline blocks destructive calls, key management, partner/group
 administration, durable-secret output, inline secrets, and arbitrary local-file
