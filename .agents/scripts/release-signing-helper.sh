@@ -55,7 +55,8 @@ release_signing_preflight() {
 			awk -F: -v exact="$exact" -v selector="$selector" '
 				BEGIN {key_id_field = 5; fingerprint_field = 10}
 				/^(sec|ssb):/ {id = toupper($key_id_field); if (!exact) print id}
-				/^fpr:/ && exact && (id == selector || toupper($fingerprint_field) == selector) {print id}
+				/^fpr:/ && exact && (id == selector || toupper($fingerprint_field) == selector ||
+					(length(selector) == 8 && substr(id, length(id) - 7) == selector)) {print id}
 			') || {
 			printf 'Release signing preflight: cannot resolve configured OpenPGP signing key\n' >&2
 			return 1
@@ -63,6 +64,10 @@ release_signing_preflight() {
 		# Ambiguous selectors must not approve a different key from the one Git uses.
 		if [[ -z "$key_ids" ]]; then
 			printf 'Release signing preflight: configured OpenPGP key has no resolvable secret signing key\n' >&2
+			return 1
+		fi
+		if [[ -n "$exact" && "$key_ids" == *$'\n'* ]]; then
+			printf 'Release signing preflight: ambiguous forced OpenPGP key; configure the full signing fingerprint\n' >&2
 			return 1
 		fi
 		keys=$(gh api --paginate --slurp user/gpg_keys) || {

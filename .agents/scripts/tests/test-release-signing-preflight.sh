@@ -85,6 +85,9 @@ printf 'PASS unregistered signer stops before any release history or lane mutati
 # GPG registration matches the actual primary/subkey IDs, not user identity.
 gpg() {
 	printf 'sec:u:255:22:0123456789ABCDEF:0:0:::::scSC:\nfpr:::::::::0000000000000000000000000123456789ABCDEF:\nssb:u:255:22:FEDCBA9876543210:0:0:::::s:\nfpr:::::::::000000000000000000000000FEDCBA9876543210:\n'
+	if [[ "${AMBIGUOUS_SHORT:-0}" -eq 1 ]]; then
+		printf 'sec:u:255:22:AAAAAAAA89ABCDEF:0:0:::::scSC:\nfpr:::::::::000000000000000000000000AAAAAAAA89ABCDEF:\n'
+	fi
 	return 0
 }
 git -C "$ROOT/repo" config gpg.format openpgp
@@ -99,6 +102,14 @@ fi
 git -C "$ROOT/repo" config user.signingkey '0123456789ABCDEF!'
 KEY_JSON='[[{"key_id":"0123456789ABCDEF","subkeys":[]}]]'
 release_signing_preflight "$ROOT/repo"
+git -C "$ROOT/repo" config user.signingkey '89ABCDEF!'
+release_signing_preflight "$ROOT/repo"
+AMBIGUOUS_SHORT=1
+if release_signing_preflight "$ROOT/repo" 2>/dev/null; then
+	printf 'FAIL ambiguous forced OpenPGP short ID accepted\n'
+	exit 1
+fi
+AMBIGUOUS_SHORT=0
 git -C "$ROOT/repo" config user.signingkey '000000000000000000000000FEDCBA9876543210!'
 KEY_JSON='[[{"key_id":"0123456789ABCDEF","subkeys":[{"key_id":"FEDCBA9876543210"}]}]]'
 release_signing_preflight "$ROOT/repo"
