@@ -149,6 +149,29 @@ test("starts without a launch flag and refuses a guardian without the supervisor
   assert.match(unreviewed.stderr, /reviewed Playwriter package shape/, "no opt-in flag gate precedes command review");
 });
 
+test("rejects Windows before supervisor or guardian startup", () => {
+  // No launcher injection seam: isolate the platform override before imports,
+  // leaving the test runner and production API unchanged.
+  const launcher = new URL("../playwriter-authenticated-relay.mjs", import.meta.url).href;
+  const script = `
+    import assert from "node:assert/strict";
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const { main } = await import(${JSON.stringify(launcher)});
+    for (const argv of ${JSON.stringify([["npx", "playwriter@0.8.0"], GUARDIAN_ARGS])}) {
+      await assert.rejects(
+        main(argv, {}),
+        { message: "Authenticated Playwriter relay: requires POSIX process groups; Windows is not supported" },
+      );
+    }
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test("proves both relay version and token enforcement", async (t) => {
   const token = "a".repeat(32);
   const server = createServer((request, response) => {

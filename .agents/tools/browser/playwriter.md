@@ -115,7 +115,9 @@ it has no process groups. The launcher accepts only the reviewed
 records private ownership state, and stops only a relay process it started. One
 relay serves one session: if another session (or a manual `playwriter serve`)
 holds port `19988`, connection fails closed until Playwriter disconnects there.
-Its relay runs under a guardian
+The authenticated launcher requires POSIX process groups (macOS/Linux); direct
+invocation on Windows refuses to start before creating runtime state or spawning
+any relay or MCP process. On supported platforms its relay runs under a guardian
 that stops the whole package-runner process group (`npm exec`/`bun x` plus the
 `playwriter-serve` listener) on MCP disconnect, repeated or hangup signals, or
 even a killed supervisor. The next launch reconciles any owned relay whose
