@@ -437,15 +437,19 @@ test_housekeeping_signal_killed_stage_not_recorded() {
 	setup_test_env
 	local state_file failures=0 failmsg=""
 	state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
-	_pulse_run_resumable_housekeeping_stage "killed_stage" "$state_file" _stage_rc_143
-	_pulse_run_resumable_housekeeping_stage "failed_stage" "$state_file" _stage_rc_1
+	if _pulse_run_resumable_housekeeping_stage "killed_stage" "$state_file" _stage_rc_143; then
+		failures=$((failures + 1))
+	fi
+	if _pulse_run_resumable_housekeeping_stage "failed_stage" "$state_file" _stage_rc_1; then
+		failures=$((failures + 1))
+	fi
 	if grep -q '^killed_stage=' "$state_file" 2>/dev/null; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | signal-killed stage recorded"
 	fi
-	if ! grep -q '^failed_stage=[0-9][0-9]*$' "$state_file" 2>/dev/null; then
+	if grep -q '^failed_stage=' "$state_file" 2>/dev/null; then
 		failures=$((failures + 1))
-		failmsg="${failmsg} | finished (failed) stage not recorded"
+		failmsg="${failmsg} | failed stage recorded as complete"
 	fi
 	if [[ "$failures" -eq 0 ]]; then
 		print_result "post-dispatch housekeeping does not record signal-killed stages" 0
@@ -493,6 +497,84 @@ test_async_housekeeping_logs_termination() {
 	return 0
 }
 
+# Exercise the complete maintenance path, not only the checkpoint helper.
+# Failed, timed-out and budget-deferred work must resume without rerunning
+# successful independent stages or carrying a deferral into the next stage.
+test_housekeeping_retries_incomplete_stages() {
+	local mode
+	for mode in failure timeout deferred; do
+		setup_test_env
+		local state_file failures=0
+		state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
+		_pulse_run_optional_stage_with_timeout() {
+			local stage_name="$1"
+			shift 2
+			if [[ "$stage_name" == "coderabbit_review" ]]; then
+				case "$mode" in
+				failure) return 1 ;;
+				timeout) return 124 ;;
+				deferred) _PULSE_BUDGET_STAGE_DEFERRED=1; return 0 ;;
+				esac
+			fi
+			"$@"
+			return 0
+		}
+		_pulse_run_post_dispatch_housekeeping_stages 7
+		[[ -f "$state_file" ]] || failures=$((failures + 1))
+		if grep -q '^coderabbit_review=' "$state_file" 2>/dev/null; then
+			failures=$((failures + 1))
+		fi
+		grep -q '^post_merge_scanner=' "$state_file" || failures=$((failures + 1))
+		if grep -q 'housekeeping: complete$' "$LOGFILE"; then
+			failures=$((failures + 1))
+		fi
+		: >"$STAGE_LOG"
+		install_stage_stubs
+		_pulse_run_post_dispatch_housekeeping_stages 7
+		grep -q '^coderabbit$' "$STAGE_LOG" || failures=$((failures + 1))
+		if grep -q '^post_merge$' "$STAGE_LOG"; then
+			failures=$((failures + 1))
+		fi
+		[[ ! -e "$state_file" ]] || failures=$((failures + 1))
+		print_result "housekeeping resumes ${mode} without repeating successful stages" "$failures"
+		teardown_test_env
+	done
+	return 0
+}
+
+test_blocker_catchup_stops_after_failed_prerequisite() {
+	local mode
+	for mode in failure deferred; do
+		setup_test_env
+		local failures=0
+		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/missing-graph.json"
+		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
+		_pulse_run_budget_priority_stage_with_timeout() {
+			local stage_name="$1"
+			shift 2
+			if [[ "$stage_name" == "build_dependency_graph_cache" ]]; then
+				if [[ "$mode" == "deferred" ]]; then
+					_PULSE_BUDGET_STAGE_DEFERRED=1
+					return 0
+				fi
+				return 1
+			fi
+			"$@"
+			return 0
+		}
+		if _pulse_run_blocker_refresh_catchup 7; then
+			failures=$((failures + 1))
+		fi
+		if grep -Eq '^(blocked_refresh|brief_hold_release)$' "$STAGE_LOG"; then
+			failures=$((failures + 1))
+		fi
+		print_result "blocker catch-up stops after ${mode} prerequisite" "$failures"
+		unset _PULSE_BUDGET_STAGE_DEFERRED
+		teardown_test_env
+	done
+	return 0
+}
+
 main() {
 	test_sync_housekeeping_runs_all_stages
 	test_async_housekeeping_returns_before_slow_stage
@@ -501,6 +583,8 @@ main() {
 	test_housekeeping_blocker_refresh_catchup
 	test_housekeeping_resumes_after_interrupted_run
 	test_housekeeping_signal_killed_stage_not_recorded
+	test_housekeeping_retries_incomplete_stages
+	test_blocker_catchup_stops_after_failed_prerequisite
 	test_async_housekeeping_logs_termination
 
 	printf '\n============================================\n'

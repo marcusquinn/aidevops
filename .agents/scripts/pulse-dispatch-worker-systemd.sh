@@ -19,6 +19,29 @@
 [[ -n "${_PULSE_DISPATCH_WORKER_SYSTEMD_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED=1
 
+# Select lifecycle ownership before attempting a launch. Availability failures
+# must not silently move a systemd-owned worker into its parent's cgroup.
+# The legacy skip flag remains an explicit opt-in to the detached backend.
+_dlw_select_worker_backend() {
+	local backend="${AIDEVOPS_WORKER_BACKEND:-auto}"
+	case "$backend" in
+	systemd|detached) printf '%s\n' "$backend"; return 0 ;;
+	auto) ;;
+	*)
+		echo "[dispatch_worker_launch] ERROR: unsupported worker backend: ${backend}" >>"$LOGFILE"
+		return 1
+		;;
+	esac
+	if [[ "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]]; then
+		printf 'detached\n'
+	elif [[ "$(uname -s)" == "Linux" ]] && { [[ -d /run/systemd/system || -n "${INVOCATION_ID:-}" ]] || _dlw_systemd_user_service_available; }; then
+		printf 'systemd\n'
+	else
+		printf 'detached\n'
+	fi
+	return 0
+}
+
 #######################################
 # Return 0 when a Linux systemd user manager is available for transient
 # services. `setsid` detaches workers from the pulse process group, but it
@@ -27,11 +50,16 @@ _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED=1
 # oneshot exits (GH#23073). A transient user service gives each worker an
 # intentional lifecycle owner outside aidevops-supervisor-pulse.service.
 _dlw_systemd_user_service_available() {
-	[[ "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]] && return 1
+	[[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "detached" ]] && return 1
+	if [[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "auto" && "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]]; then
+		return 1
+	fi
 	[[ "$(uname -s 2>/dev/null || printf '%s' unknown)" == "Linux" ]] || return 1
 	command -v systemd-run >/dev/null 2>&1 || return 1
 	command -v systemctl >/dev/null 2>&1 || return 1
-	systemctl --user status >/dev/null 2>&1 || return 1
+	# A degraded manager can still launch services; status conflates unrelated
+	# failed units with bus availability. Query the manager itself instead.
+	systemctl --user show --property=Version --value >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -147,8 +175,8 @@ _dlw_systemd_resolve_main_pid() {
 
 		case "${active_state:-unknown}" in
 			inactive|failed)
-				echo "[dispatch_worker_launch] systemd unit ${unit_name} has no live MainPID state=${active_state:-unknown}/${sub_state:-unknown}; falling back to setsid/nohup for #${issue_number}" >>"$LOGFILE"
-				return 1
+				echo "[dispatch_worker_launch] systemd unit ${unit_name} has no live MainPID state=${active_state:-unknown}/${sub_state:-unknown} for #${issue_number}" >>"$LOGFILE"
+				return 2
 				;;
 		esac
 
@@ -173,6 +201,9 @@ _dlw_exec_systemd_user_service() {
 
 	local unit_name=""
 	unit_name=$(_dlw_systemd_unit_name "$unit_prefix" "$issue_number")
+	# Persist ownership before submission, including when the manager reply is
+	# lost. Failure to retain that identity must prevent an untracked launch.
+	printf 'Unit=%s\nLaunchState=submitting\n' "$unit_name" >"$state_file" || return 1
 	local runner_script
 	# shellcheck disable=SC2016  # Expanded by the child bash launched by systemd-run.
 	runner_script='
@@ -220,16 +251,32 @@ _dlw_exec_systemd_user_service() {
 	return $?
 }
 
+# Return a ready worker PID or fail without changing lifecycle backend.
+_dlw_launch_systemd_worker() {
+	local worker_log="$1"
+	local issue_number="$2"
+	shift 2
+	local state_file="${worker_log}.systemd-launch" worker_pid="" systemd_rc=0
+	if ! _dlw_systemd_user_service_available; then
+		echo "[dispatch_worker_launch] ERROR: selected systemd backend unavailable for #${issue_number}; detached fallback suppressed" >>"$LOGFILE"
+		return 1
+	fi
+	if worker_pid=$(_DLW_SYSTEMD_STATE_FILE="$state_file" _dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "$@"); then
+		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid launched via systemd-run transient user service outside pulse cgroup" >>"$LOGFILE"
+		printf '%s\n' "$worker_pid"
+		return 0
+	else
+		systemd_rc=$?
+	fi
+	_dlw_handle_systemd_launch_failure "$systemd_rc" "$state_file" "$worker_log" "$issue_number" || true
+	return 1
+}
+
 _dlw_handle_systemd_launch_failure() {
 	local systemd_rc="$1"
 	local systemd_state_file="$2"
 	local worker_log="$3"
 	local issue_number="$4"
-
-	if [[ "$systemd_rc" -ne 2 && "$systemd_rc" -ne 3 ]]; then
-		echo "[dispatch_worker_launch] WARNING: systemd-run worker launch unresolved for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
-		return 0
-	fi
 
 	if [[ -f "$systemd_state_file" ]]; then
 		{

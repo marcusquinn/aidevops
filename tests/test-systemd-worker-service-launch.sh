@@ -18,7 +18,10 @@ mkdir -p "${TMP_DIR}/bin"
 cat >"${TMP_DIR}/bin/systemctl" <<'STUB_SYSTEMCTL'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--user" && "${2:-}" == "status" ]]; then
-	exit 0
+	exit 1
+fi
+if [[ "${1:-}" == "--user" && "${3:-}" == "--property=Version" ]]; then
+	exit "${STUB_MANAGER_RC:-0}"
 fi
 
 if [[ "${1:-}" == "--user" && "${2:-}" == "show" ]]; then
@@ -62,6 +65,7 @@ chmod +x "${TMP_DIR}/bin/uname"
 cat >"${TMP_DIR}/bin/systemd-run" <<'STUB_SYSTEMD_RUN'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_SYSTEMD_RUN_LOG:?}"
+[[ "${STUB_SYSTEMD_RUN_RC:-0}" == "0" ]] || exit "$STUB_SYSTEMD_RUN_RC"
 
 prev=""
 pid_file=""
@@ -94,13 +98,17 @@ export STUB_SETSID_LOG="${TMP_DIR}/setsid.log"
 export STUB_SYSTEMCTL_COUNT_FILE="${TMP_DIR}/systemctl.count"
 export LOGFILE="${TMP_DIR}/pulse.log"
 export AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE=0
+export AIDEVOPS_WORKER_BACKEND=auto
 
 # shellcheck source=.agents/scripts/pulse-dispatch-worker-launch.sh
 source "${REPO_ROOT}/.agents/scripts/pulse-dispatch-worker-launch.sh"
 
 reset_logs() {
 	: >"$STUB_SYSTEMD_RUN_LOG"
-	: >"$STUB_SETSID_LOG"
+	# Detached stubs inherit their case's log path; late writes must not
+	# contaminate assertions for a subsequent fail-closed launch.
+	STUB_SETSID_LOG=$(mktemp "${TMP_DIR}/setsid.XXXXXX")
+	export STUB_SETSID_LOG
 	: >"$LOGFILE"
 	: >"$STUB_SYSTEMCTL_COUNT_FILE"
 	export STUB_SYSTEMCTL_SEQUENCE=stable
@@ -108,6 +116,7 @@ reset_logs() {
 	export STUB_SYSTEMCTL_SUB_STATE=running
 	export STUB_SYSTEMCTL_EXEC_STATUS=0
 	export STUB_SYSTEMCTL_RESULT=success
+	export STUB_MANAGER_RC=0 STUB_SYSTEMD_RUN_RC=0
 	return 0
 }
 
@@ -188,16 +197,13 @@ export STUB_SYSTEMD_RUN_WRITE_PID=0
 export STUB_SYSTEMCTL_MAINPID=0
 export STUB_SYSTEMCTL_ACTIVE_STATE=inactive
 export STUB_SYSTEMCTL_SUB_STATE=dead
-pid="$(_dlw_exec_detached "${TMP_DIR}/worker-fallback.log" "23524" /bin/true)"
-
-if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
-	printf 'FAIL expected numeric fallback pid, got %s\n' "$pid" >&2
+if _dlw_exec_detached "${TMP_DIR}/worker-fallback.log" "23524" /bin/true >/dev/null; then
+	printf 'FAIL expected inactive systemd worker launch to fail\n' >&2
 	exit 1
 fi
 
-assert_contains "$LOGFILE" 'falling back to setsid/nohup' 'expected fallback diagnostic when unit has no MainPID'
-assert_contains "$LOGFILE" 'systemd unit aidevops-worker-23524-' 'expected systemd unit in fallback diagnostic'
-assert_eventually_contains "$STUB_SETSID_LOG" '/bin/true' 'expected setsid fallback when unit has no MainPID'
+assert_contains "$LOGFILE" 'duplicate fallback suppressed' 'expected fail-closed diagnostic when unit has no MainPID'
+assert_empty_file "$STUB_SETSID_LOG" 'failed systemd launch must not switch backend'
 
 reset_logs
 export STUB_SYSTEMD_RUN_WRITE_PID=1
@@ -240,4 +246,46 @@ assert_empty_file "$STUB_SYSTEMD_RUN_LOG" 'non-systemd path must not invoke syst
 assert_eventually_contains "$STUB_SETSID_LOG" '/bin/true' 'non-systemd path should retain setsid semantics'
 export AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE=0
 
-printf 'PASS %s\n' "systemd launch readiness, evidence, handoff, and fallback semantics"
+reset_logs
+export AIDEVOPS_WORKER_BACKEND=systemd STUB_MANAGER_RC=1
+if _dlw_exec_detached "${TMP_DIR}/worker-manager.log" "27356" /bin/true >/dev/null; then
+	printf 'FAIL unavailable selected manager must block launch\n' >&2
+	exit 1
+fi
+assert_empty_file "$STUB_SYSTEMD_RUN_LOG" 'unavailable manager must not submit a launch'
+assert_empty_file "$STUB_SETSID_LOG" 'unavailable selected manager must not switch backend'
+
+reset_logs
+export AIDEVOPS_WORKER_BACKEND=auto STUB_MANAGER_RC=1
+if INVOCATION_ID=test-supervisor _dlw_exec_detached "${TMP_DIR}/worker-auto-manager.log" "27360" /bin/true >/dev/null; then
+	printf 'FAIL auto backend must preserve known systemd ownership\n' >&2
+	exit 1
+fi
+assert_empty_file "$STUB_SYSTEMD_RUN_LOG" 'auto selection must not submit to an unavailable manager'
+assert_empty_file "$STUB_SETSID_LOG" 'auto selection must not escape to detached on manager failure'
+
+reset_logs
+export AIDEVOPS_WORKER_BACKEND=systemd STUB_SYSTEMD_RUN_RC=1
+if _dlw_exec_detached "${TMP_DIR}/worker-submit.log" "27357" /bin/true >/dev/null; then
+	printf 'FAIL rejected or ambiguous submission must block fallback\n' >&2
+	exit 1
+fi
+assert_contains "${TMP_DIR}/worker-submit.log.systemd-launch" 'Unit=aidevops-worker-27357-' 'submission failure must retain unit identity'
+assert_empty_file "$STUB_SETSID_LOG" 'submission failure must not duplicate a worker'
+
+reset_logs
+export AIDEVOPS_WORKER_BACKEND=invalid
+if _dlw_exec_detached "${TMP_DIR}/worker-invalid.log" "27358" /bin/true >/dev/null; then
+	printf 'FAIL invalid backend must fail closed\n' >&2
+	exit 1
+fi
+assert_empty_file "$STUB_SYSTEMD_RUN_LOG" 'invalid backend must not launch systemd'
+assert_empty_file "$STUB_SETSID_LOG" 'invalid backend must not launch detached'
+
+reset_logs
+export AIDEVOPS_WORKER_BACKEND=detached
+pid="$(_dlw_exec_detached "${TMP_DIR}/worker-detached.log" "27359" /bin/true)"
+assert_empty_file "$STUB_SYSTEMD_RUN_LOG" 'explicit detached backend must not use systemd'
+assert_eventually_contains "$STUB_SETSID_LOG" '/bin/true' 'explicit detached backend should launch'
+
+printf 'PASS %s\n' "systemd launch readiness, evidence, handoff, and backend selection"

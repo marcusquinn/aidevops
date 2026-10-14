@@ -1290,7 +1290,8 @@ _pulse_blocker_refresh_starved() {
 #
 # Args:
 #   $1 - per-stage timeout seconds
-# Returns 0 always.
+# Returns 0 when no catch-up is needed or all available steps succeed;
+# returns 1 when a prerequisite fails or is deferred.
 #######################################
 _pulse_run_blocker_refresh_catchup() {
 	local stage_timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
@@ -1299,14 +1300,17 @@ _pulse_run_blocker_refresh_catchup() {
 	declare -F build_dependency_graph_cache >/dev/null 2>&1 || return 0
 	echo "[pulse-wrapper] Blocker refresh catch-up: dependency graph cache stale or missing — running starved stages (GH#33246)" >>"$LOGFILE"
 	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_budget_priority_stage_with_timeout "build_dependency_graph_cache" "$stage_timeout" \
-		build_dependency_graph_cache || true
+		build_dependency_graph_cache || return 1
+	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
 	if declare -F refresh_blocked_status_from_graph >/dev/null 2>&1; then
 		_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" \
-			refresh_blocked_status_from_graph || true
+			refresh_blocked_status_from_graph || return 1
+		[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
 	fi
 	if declare -F release_repaired_brief_holds >/dev/null 2>&1; then
 		_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$stage_timeout" \
-			release_repaired_brief_holds || true
+			release_repaired_brief_holds || return 1
+		[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "0" ]] || return 1
 	fi
 	return 0
 }
@@ -1404,7 +1408,7 @@ _pulse_housekeeping_mark_stage_done() {
 #   $1 - stage name (state key)
 #   $2 - state file path
 #   $@ - stage command and arguments
-# Returns 0 always.
+# Returns 0 for completed work (including a fresh checkpoint), 1 otherwise.
 #######################################
 _pulse_run_resumable_housekeeping_stage() {
 	local stage_name="$1"
@@ -1417,15 +1421,16 @@ _pulse_run_resumable_housekeeping_stage() {
 	fi
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="$stage_name"
 	local stage_rc=0
+	# Scope the budget adapter's result to this invocation; a previous stage's
+	# deferral must not leak into the next stage or the enclosing Pulse cycle.
+	local _PULSE_BUDGET_STAGE_DEFERRED=0
 	"$@" || stage_rc=$?
-	# A stage child killed by a signal (e.g. the same deploy SIGTERM that is
-	# about to reach this subshell) did not finish: leave it for the resume.
-	if [[ "$stage_rc" -gt 128 ]]; then
-		echo "[pulse-wrapper] Async post-dispatch housekeeping: ${stage_name} ended by signal (rc=${stage_rc}) — not recorded as complete" >>"$LOGFILE"
-	else
-		_pulse_housekeeping_mark_stage_done "$stage_name" "$state_file"
-	fi
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="between_stages"
+	if [[ "$stage_rc" -ne 0 || "$_PULSE_BUDGET_STAGE_DEFERRED" -ne 0 ]]; then
+		echo "[pulse-wrapper] Async post-dispatch housekeeping: ${stage_name} incomplete (rc=${stage_rc}, deferred=${_PULSE_BUDGET_STAGE_DEFERRED}) — not recorded as complete" >>"$LOGFILE"
+		return 1
+	fi
+	_pulse_housekeeping_mark_stage_done "$stage_name" "$state_file"
 	return 0
 }
 
@@ -1477,28 +1482,34 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		return 0
 	fi
 
+	# Aggregate explicit results without stopping independent maintenance.
+	local incomplete=0
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="startup"
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: started (timeout=${stage_timeout}s)" >>"$LOGFILE"
 	_pulse_run_resumable_housekeeping_stage "coderabbit_review" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "coderabbit_review" "$stage_timeout" run_daily_codebase_review
+		_pulse_run_optional_stage_with_timeout "coderabbit_review" "$stage_timeout" run_daily_codebase_review || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner
+		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "pr_review_thread_response" "$stage_timeout" _run_pr_review_thread_response_scanner
+		_pulse_run_optional_stage_with_timeout "pr_review_thread_response" "$stage_timeout" _run_pr_review_thread_response_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "auto_decomposer_scanner" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$stage_timeout" _run_auto_decomposer_scanner
+		_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$stage_timeout" _run_auto_decomposer_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "dedup_cleanup" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup
+		_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "fast_fail_prune_expired" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired
+		_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "preflight_ownership_reconcile" "$state_file" \
 		run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
-		_preflight_ownership_reconcile "$stage_timeout"
+		_preflight_ownership_reconcile "$stage_timeout" || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
-		_pulse_run_blocker_refresh_catchup "$stage_timeout"
+		_pulse_run_blocker_refresh_catchup "$stage_timeout" || incomplete=1
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="finishing"
-	rm -f "$state_file" 2>/dev/null || true
-	echo "[pulse-wrapper] Async post-dispatch housekeeping: complete" >>"$LOGFILE"
+	if [[ "$incomplete" -eq 0 ]]; then
+		rm -f "$state_file" 2>/dev/null || true
+		echo "[pulse-wrapper] Async post-dispatch housekeeping: complete" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Async post-dispatch housekeeping: incomplete — preserving successful stages for resume" >>"$LOGFILE"
+	fi
 
 	_pulse_release_post_dispatch_housekeeping_lock "$lockdir"
 	return 0

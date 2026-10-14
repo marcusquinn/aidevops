@@ -1230,10 +1230,11 @@ _dlw_prepare_opencode_db() {
 	return 0
 }
 
-# Execute a worker command via systemd-run (Linux user services) or setsid +
-# nohup fallback, detaching it from the pulse's process group (t2757) and, on
+# Execute a worker command via the selected systemd or detached backend,
+# detaching it from the pulse's process group (t2757) and, on
 # systemd, from the pulse oneshot cgroup (GH#23073). Without this, workers
 # either die with the pulse cgroup or survive as ambiguous leftover children.
+# Selection and failure contract: reference/pulse-runtime-contracts.md.
 #
 # macOS ships /usr/bin/setsid on recent versions (12+). Older macOS or
 # systems without setsid fall back to nohup-only with a log warning.
@@ -1282,17 +1283,10 @@ _dlw_exec_detached() {
 	# `exec` re-opens, or `coproc`. Higher FDs (10+) are rare in this
 	# codebase and can be added if measurement justifies it.
 
-	local worker_pid systemd_rc=1
-	local systemd_state_file="${worker_log}.systemd-launch"
-	if _dlw_systemd_user_service_available; then
-		if worker_pid=$(_DLW_SYSTEMD_STATE_FILE="$systemd_state_file" _dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "${worker_command[@]}"); then
-			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid launched via systemd-run transient user service outside pulse cgroup" >>"$LOGFILE"
-		else
-			systemd_rc=$?
-			if ! _dlw_handle_systemd_launch_failure "$systemd_rc" "$systemd_state_file" "$worker_log" "$issue_number"; then
-				return 1
-			fi
-		fi
+	local worker_pid backend=""
+	backend=$(_dlw_select_worker_backend) || return 1
+	if [[ "$backend" == "systemd" ]]; then
+		worker_pid=$(_dlw_launch_systemd_worker "$worker_log" "$issue_number" "${worker_command[@]}") || return 1
 	fi
 
 	if [[ -z "${worker_pid:-}" ]] && command -v setsid >/dev/null 2>&1; then
