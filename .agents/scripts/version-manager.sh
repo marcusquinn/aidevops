@@ -614,6 +614,10 @@ _main_release() {
 		print_error "aidevops releases require --source-pr <merged-pr-number>"
 		exit 1
 	fi
+	# Signing authority is structural, not a skippable quality preflight.
+	# shellcheck source=./release-signing-helper.sh
+	source "${SCRIPT_DIR}/release-signing-helper.sh"
+	release_signing_preflight "$REPO_ROOT" || return 1
 
 	# Verify local branch is in sync with remote
 	if ! verify_remote_sync "main"; then

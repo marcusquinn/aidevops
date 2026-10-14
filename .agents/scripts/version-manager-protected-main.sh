@@ -534,6 +534,8 @@ _version_manager_is_signed_snapshot() {
 	local tag_name="$1"
 	local base=""
 	local source=""
+	local verification=""
+	_VERSION_MANAGER_SNAPSHOT_SIGNATURE_UNTRUSTED=0
 	base=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "refs/tags/$tag_name" |
 		awk '/^Aidevops-Snapshot-Base: / {print $2}') || return 1
 	source=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "refs/tags/$tag_name" |
@@ -541,8 +543,15 @@ _version_manager_is_signed_snapshot() {
 	[[ "$base" =~ ^[0-9a-f]{40}$ && "$source" =~ ^[0-9a-f]{40}$ ]] || return 1
 	[[ "$(git -C "$REPO_ROOT" rev-parse "refs/tags/${tag_name}^{commit}^1")" == "$source" ]] || return 1
 	git -C "$REPO_ROOT" merge-base --is-ancestor "$base" "$source" || return 1
-	git -C "$REPO_ROOT" verify-tag "$tag_name" >/dev/null 2>&1
-	return $?
+	if ! verification=$(git -C "$REPO_ROOT" verify-tag "$tag_name" 2>&1); then
+		_VERSION_MANAGER_SNAPSHOT_SIGNATURE_UNTRUSTED=1
+		print_error "Snapshot ${tag_name} is signature-unverified on this host (signer-untrusted)"
+		# Git's diagnostics identify the signer/fingerprint without reading keys.
+		print_info "$verification"
+		print_info "Verify the exact tag object's GitHub signing-key registration and local signer trust; do not recreate the tag or aggregate"
+		return 1
+	fi
+	return 0
 }
 
 # Print a bounded, credential-redacted tail of Git push output so operators can
@@ -594,6 +603,10 @@ _version_manager_publish_reachable_tag() {
 	release_tree=$(git -C "$REPO_ROOT" rev-parse "${_VERSION_MANAGER_LOCAL_TAG_COMMIT}^{tree}" 2>/dev/null) || return 1
 	main_tree=$(git -C "$REPO_ROOT" rev-parse "origin/main^{tree}" 2>/dev/null) || return 1
 	if [[ "$release_tree" != "$main_tree" ]] && ! _version_manager_is_signed_snapshot "$tag_name"; then
+		if [[ "${_VERSION_MANAGER_SNAPSHOT_SIGNATURE_UNTRUSTED:-0}" == "1" ]]; then
+			_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="signer-untrusted"
+			return 1
+		fi
 		_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="aggregation-required"
 		print_error "Refusing to publish ${tag_name}: protected main has a different tree from the signed release commit"
 		print_info "Create a newly reviewed exact-tip aggregation release; no tag or package channel was mutated"

@@ -753,6 +753,11 @@ _full_loop_release_start_new() {
 	local existing_state_rc=0
 	local persisted_expected=""
 	local preparing_recovery_rc=0
+	# Before history recovery or any lane write, prove this host can produce a
+	# GitHub-verifiable signature. Existing-tag reconciliation does not use this path.
+	# shellcheck source=./release-signing-helper.sh
+	source "${SCRIPT_DIR}/release-signing-helper.sh"
+	release_signing_preflight "$REPO_ROOT" || return 1
 	_FULL_LOOP_RESERVED_RECOVERY_COMPLETED=false
 	_FULL_LOOP_RESERVED_RECOVERY_FAILED_PREPUBLICATION=false
 	_full_loop_release_ensure_full_history || return 1

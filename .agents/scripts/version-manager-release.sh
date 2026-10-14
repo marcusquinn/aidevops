@@ -346,6 +346,10 @@ create_git_tag() {
 	local tag_name="v$version"
 	local tag_message=""
 
+	# Also guard standalone `tag` and callers that bypass the release command.
+	# shellcheck source=./release-signing-helper.sh
+	source "${SCRIPT_DIR}/release-signing-helper.sh"
+	release_signing_preflight "$REPO_ROOT" || return 1
 	print_info "Creating git tag: $tag_name"
 
 	cd "$REPO_ROOT" || exit 1
