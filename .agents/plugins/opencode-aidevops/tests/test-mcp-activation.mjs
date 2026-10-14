@@ -159,7 +159,9 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.equal(config.agent.playwriter.permission.aidevops_mcp, "allow");
   assert.equal(config.agent.playwriter.permission["playwriter_*"], "allow");
   assert.match(config.agent.playwriter.prompt, /connect.*playwriter/);
-  assert.match(config.agent.playwriter.prompt, /no browser tab is approved/i);
+  // GH#34648: a not-connected report is classified, never relayed as "click the icon".
+  assert.match(config.agent.playwriter.prompt, /no approved tab or a disconnected extension/i);
+  assert.match(config.agent.playwriter.prompt, /mcp-diagnose\.sh playwriter.*Relay extension state/);
   assert.match(config.agent.playwriter.prompt, /before requesting authentication/i);
   assert.match(config.agent.playwriter.prompt, /enumerate.*context\.pages\(\)/i);
   assert.match(config.agent.playwriter.prompt, /exactly one `about:blank` bootstrap page/i);

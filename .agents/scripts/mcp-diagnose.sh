@@ -576,6 +576,200 @@ PYEOF
 	return 0
 }
 
+# GH#34648: classify why the Playwriter MCP can report "extension is not
+# connected" while the browser shows an enabled (green) tab. Reads only the
+# loopback relay endpoints and the current relay run's upstream log
+# (truncated by each relay start). Prints counts and versions, never profile
+# emails, tab URLs/titles or tokens, and never stops or changes a process.
+_playwriter_extension_diagnosis() {
+	local relay_port="$1"
+	local relay_version="$2"
+	local expected_version="$3"
+
+	python3 - "$relay_port" "$relay_version" "$expected_version" <<'PYEOF' || return 1
+import http.client
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+
+port = int(sys.argv[1])
+relay_version = sys.argv[2]
+expected_version = sys.argv[3]
+log_path = os.environ.get('PLAYWRITER_LOG_FILE_PATH') or os.path.join(
+    os.path.expanduser('~'), '.playwriter', 'relay-server.log')
+
+EVENTS = (
+    ('connected', re.compile(r'Extension connected \(')),
+    ('disconnected', re.compile(r'Extension disconnected: ')),
+    ('rejected', re.compile(r'Rejecting /(extension|cdp) WebSocket')),
+    ('port-conflict', re.compile(r'already bound to port|is in use by a non-relay process')),
+    # Client routes only: this diagnostic's own status probe is also rejected.
+    ('token-rejected', re.compile(r'Rejecting /(cdp|cli|recording)\S*: invalid or missing token')),
+)
+
+GUIDANCE = {
+    'relay-down': 'No relay is listening. The MCP starts one on activation and the guarded relay stops on disconnect; rerun while the Playwriter MCP is connected, and use the relay log summary for the last run.',
+    'relay-unresponsive': f'Port {port} is held by a process that does not answer /version. Identify it with: lsof -nP -iTCP:{port} -sTCP:LISTEN (aidevops never terminates it).',
+    'relay-version-mismatch': 'A relay from another Playwriter version owns the port; stop it from the session or terminal that started it, then reconnect.',
+    'relay-up-no-extension': 'The relay has no extension attached. If the user reports a green icon, report a browser/relay mismatch (another Chrome profile, a relay replaced after the extension connected, or an extension socket that has not reconnected). Do not ask the user to enable the tab again.',
+    'extension-rejected': 'The relay refused the extension WebSocket (see log lines): the installed extension ID or origin is not one this relay accepts. Use the Chrome Web Store build of Playwriter.',
+    'extension-connected': 'The relay sees the extension. A not-connected error now means the MCP session lost its attachment: reconnect the MCP and repeat the tab preflight.',
+    'extension-state-unknown': 'The relay extension status could not be read and no relay log was found; report the state as unverified rather than asking the user to enable the tab.',
+}
+
+
+def clean(text, limit=200):
+    return re.sub(r'[^\x20-\x7e]', '?', text)[:limit]
+
+
+def port_open():
+    try:
+        with socket.create_connection(('127.0.0.1', port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def port_listeners():
+    """Return 'pid:name' for port listeners. Never argv: `playwriter serve --token` carries a secret."""
+    try:
+        pids = subprocess.run(
+            ['lsof', '-nP', f'-iTCP:{port}', '-sTCP:LISTEN', '-t'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, timeout=3, check=False).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return []
+    listeners = []
+    for pid in pids[:4]:
+        if not pid.isdigit():
+            continue
+        try:
+            name = subprocess.run(
+                ['ps', '-o', 'comm=', '-p', pid],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=3, check=False).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            name = ''
+        listeners.append(f'{pid}:{clean(os.path.basename(name), 60) or "unknown"}')
+    return listeners
+
+
+def extension_status():
+    """Return (state, local_extensions); state is ok, token-protected or unavailable."""
+    try:
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+        connection.request('GET', '/extensions/status')
+        response = connection.getresponse()
+        body = response.read(65536)
+        connection.close()
+    except Exception:
+        return 'unavailable', []
+    if response.status in (401, 403):
+        return 'token-protected', []
+    if not 200 <= response.status < 300:
+        return 'unavailable', []
+    try:
+        extensions = json.loads(body.decode('utf-8')).get('extensions')
+    except Exception:
+        return 'unavailable', []
+    if not isinstance(extensions, list):
+        return 'unavailable', []
+    local = []
+    for extension in extensions:
+        if not isinstance(extension, dict):
+            continue
+        stable_key = extension.get('stableKey')
+        if isinstance(stable_key, str) and stable_key.startswith('remote:'):
+            continue
+        targets = extension.get('activeTargets')
+        version = extension.get('playwriterVersion')
+        local.append((targets if isinstance(targets, int) else 0,
+                      clean(version, 40) if isinstance(version, str) else 'unknown'))
+    return 'ok', local
+
+
+def read_log_events():
+    """Return (found, ordered events, classified lines) from the current relay log."""
+    try:
+        with open(log_path, 'rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 262144))
+            text = stream.read().decode('utf-8', 'replace')
+    except OSError:
+        return False, [], []
+    events, lines = [], []
+    for line in text.splitlines():
+        for name, pattern in EVENTS:
+            if pattern.search(line):
+                events.append(name)
+                lines.append(clean(line))
+                break
+    return True, events, lines
+
+
+log_found, events, event_lines = read_log_events()
+last_extension_event = next(
+    (event for event in reversed(events) if event in ('connected', 'disconnected')), None)
+last_connect = max((i for i, event in enumerate(events) if event == 'connected'), default=-1)
+rejected_since_connect = any(event == 'rejected' for event in events[last_connect + 1:])
+
+source = 'relay /version probe'
+local_extensions = []
+if not relay_version:
+    verdict = 'relay-unresponsive' if port_open() else 'relay-down'
+elif expected_version and relay_version != expected_version:
+    verdict = 'relay-version-mismatch'
+else:
+    source = 'relay status endpoint'
+    state, local_extensions = extension_status()
+    if state == 'ok':
+        if local_extensions:
+            verdict = 'extension-connected'
+        elif rejected_since_connect:
+            verdict = 'extension-rejected'
+        else:
+            verdict = 'relay-up-no-extension'
+    elif log_found:
+        # Each relay start truncates the log, so no connect event means no
+        # extension has attached to the running relay.
+        source = 'relay log (status endpoint is token-protected)' if state == 'token-protected' \
+            else 'relay log (status endpoint unavailable)'
+        if last_extension_event == 'connected':
+            verdict = 'extension-connected'
+        elif rejected_since_connect:
+            verdict = 'extension-rejected'
+        else:
+            verdict = 'relay-up-no-extension'
+    else:
+        source = f'status endpoint {state}; no relay log'
+        verdict = 'extension-state-unknown'
+
+print(f'   Relay extension state: {verdict} (source: {source})')
+if verdict != 'relay-down':
+    listeners = port_listeners()
+    print(f"   Port {port} listener(s): {', '.join(listeners) if listeners else 'not identified (lsof unavailable or no permission)'}")
+if local_extensions:
+    tabs = sum(targets for targets, _ in local_extensions)
+    versions = ', '.join(sorted({version for _, version in local_extensions}))
+    print(f'   Connected local extensions: {len(local_extensions)}; enabled tabs: {tabs}; extension Playwriter version(s): {versions}')
+if log_found:
+    counts = {name: events.count(name) for name, _ in EVENTS}
+    print('   Relay log (current or last run): '
+          f"{counts['connected']} extension connect(s), {counts['disconnected']} disconnect(s), "
+          f"{counts['rejected']} rejected extension socket(s), {counts['port-conflict']} port conflict(s), "
+          f"{counts['token-rejected']} token rejection(s); last extension event: {last_extension_event or 'none'}")
+    for line in event_lines[-5:]:
+        print(f'     | {line}')
+else:
+    print('   Relay log: not found (no relay has run for this user, or PLAYWRITER_LOG_FILE_PATH differs)')
+print(f'   Guidance: {GUIDANCE[verdict]}')
+PYEOF
+	return 0
+}
+
 if [[ "$MCP_IS_REMOTE" == "true" ]]; then
 	echo -e "   ${CYAN}[remote]${NC} $MCP_NAME is a remote/SSE MCP (type: ${MCP_CONFIGURED_TYPE}) — no local command required."
 	echo "   Remote MCPs connect over the network and cannot be diagnosed locally."
@@ -659,6 +853,16 @@ if [[ "$MCP_NAME" == "playwriter" ]]; then
 	else
 		echo "   Live local relay version: unavailable"
 	fi
+	# The configured runtime command defines the expected relay; a global PATH
+	# install may legitimately differ and is already reported above. Generated
+	# OpenCode entries are disabled and wrapped at runtime, so fall back to the
+	# reviewed pin from the shared MCP policy instead of adding a pin site.
+	_expected_relay_version="$_playwriter_configured_version"
+	if [[ "$_expected_relay_version" == "unknown" ]]; then
+		_expected_relay_version=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import mcp_config; print(mcp_config.PLAYWRITER_MCP_PACKAGE.split("@", 1)[1])' "${SCRIPT_DIR}/lib" 2>/dev/null) || _expected_relay_version=""
+	fi
+	_playwriter_extension_diagnosis "$_playwriter_relay_port" "$_relay_version" "$_expected_relay_version" ||
+		echo "   Relay extension state: diagnostic error (python3 failed)"
 fi
 
 if [[ "$INSTALLED_VERSION" == "unknown" && "$_configured_version_found" -eq 0 ]]; then

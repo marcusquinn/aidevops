@@ -140,6 +140,13 @@ session or terminal that started it, then reconnect. aidevops never terminates i
    collapse these states into a generic request to reactivate the extension.
    Playwriter 0.8.0 never opens a tab on its own, so no controlled pages is the
    normal state of a fresh session, not a failure.
+   Upstream's "The Playwriter Chrome extension is not connected" text tells the
+   agent to ask the user to click a gray icon; it comes from one relay status
+   probe and does not prove the user's tab is off. Before disconnecting, run
+   `~/.aidevops/agents/scripts/mcp-diagnose.sh playwriter` once and report its
+   `Relay extension state` verdict (see Troubleshooting). When the user reports
+   a green icon, describe a browser/relay mismatch; do not ask them to enable
+   the tab again (GH#34648).
 4. Bounded bootstrap, only when the user already approved the exact HTTPS destination:
    - For exactly one `about:blank` bootstrap page, navigate that page.
    - For no controlled pages, open one agent-owned tab with
@@ -274,6 +281,13 @@ approved-tab, privacy, and mutation boundaries.
 
 - **Extension not connecting**: Installed and pinned? Click icon on tab (should turn green). Red badge = error. Reload tab.
 - **MCP not finding tabs**: Green icon? Restart MCP client. Verify WebSocket on port 19988.
+- **"Extension is not connected" but the icon is green**: Run `mcp-diagnose.sh playwriter` while the MCP is still connected. It reads only loopback relay status and the current relay run's `~/.playwriter/relay-server.log`, and prints counts, versions and the port listener's PID and process name (no tab URLs, profile emails, process arguments or tokens). When the guarded relay's per-session token protects the status endpoint, it falls back to that log. Verdicts:
+  - `relay-down`: nothing listens. The guarded relay stops on disconnect, so rerun while connected; the log summary still describes the last run.
+  - `relay-unresponsive`: the port is held by a process that does not answer `/version`; identify it with `lsof`, never terminate it.
+  - `relay-version-mismatch`: a relay from a version other than the configured command or reviewed pin owns the port (see **Relay version mismatch after upgrade** below).
+  - `relay-up-no-extension`: the relay has no extension attached. With a green icon this is a mismatch: another Chrome profile, a relay replaced after the extension connected, or an extension socket that has not reconnected.
+  - `extension-rejected`: the relay refused the extension's WebSocket (unknown extension ID or origin); use the Chrome Web Store build.
+  - `extension-connected`: the relay sees the extension, so the MCP session lost its attachment. Reconnect and repeat the preflight.
 - **No approved tab**: Click the Playwriter extension on the intended tab and wait for the icon to turn green; this consent requirement is distinct from missing MCP tools.
 - **Blank bootstrap only / no pages**: If the sole accessible page is `about:blank`, or no page exists (normal on 0.8.0), use the bounded exact-HTTPS bootstrap above instead of repeatedly requesting extension reactivation.
 - **`page is not defined`**: 0.8.0 removed the global; assign `state.page` from `context.pages()` first.

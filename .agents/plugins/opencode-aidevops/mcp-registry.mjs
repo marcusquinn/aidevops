@@ -221,7 +221,7 @@ export function getMcpRegistry() {
       agentSource: ["tools", "browser", "playwriter.md"],
       activationGuidance: [
         "Use this legacy compatibility MCP only when the user explicitly requests Playwriter.",
-        "If no browser tab is approved, relay the MCP consent diagnostic instead of claiming the tools are missing.",
+        "If Playwriter reports no approved tab or a disconnected extension, do not claim the tools are missing or repeat its 'click the icon' text: before disconnecting, run ~/.aidevops/agents/scripts/mcp-diagnose.sh playwriter and report its 'Relay extension state' verdict (GH#34648).",
       ],
       modelTier: "standard",
       description: "Legacy Playwriter compatibility for explicit requests",
