@@ -1021,6 +1021,8 @@ test_closed_issue_dirty_lock_race_preserves_files() {
 	wt_root=$(git -C "$wt_path" rev-parse --show-toplevel) || rc=1
 	printf 'dirty tracked state\n' >>"$wt_path/closed-issue-dirty-race.txt" || rc=1
 	printf 'dirty untracked state\n' >"$wt_path/untracked-race.txt" || rc=1
+	printf 'staged state\n' >>"$wt_path/README.md" || rc=1
+	git -C "$wt_path" add README.md || rc=1
 	expected_status=$(git -C "$wt_path" status --porcelain --untracked-files=all) || rc=1
 	expected_tracked=$(<"$wt_path/closed-issue-dirty-race.txt")
 	expected_untracked=$(<"$wt_path/untracked-race.txt")
@@ -1069,8 +1071,56 @@ RACE_GIT
 	grep -Fqx "locked foreign-after-archive" <<<"$metadata" || rc=1
 	[[ "$stash_count" -eq 0 ]] || rc=1
 	[[ "$first_backup_count" -eq 1 && "$second_backup_count" -eq 1 && "$third_backup_count" -eq 1 ]] || rc=1
+	# Pass 4: reuse a restored backup and then successfully remove the source.
+	# The sole retained copy must have been reopened before deletion.
+	git -C "$repo_path" worktree unlock "$wt_path" || rc=1
+	run_dirty_race_cleanup_pass "$repo_path" "$wt_path" "$branch" "$wrapper_path" "$final_race_marker" || rc=1
+	[[ ! -d "$wt_path" && "$(count_dirty_backup_refs "$repo_path")" -eq 1 ]] || rc=1
+	local backup_ref="" backup_id=""
+	backup_ref=$(git -C "$repo_path" for-each-ref --format='%(refname)' refs/aidevops/dirty-worktree-backups/)
+	backup_id="${backup_ref##*/}"
+	assert_file_contains "$HOME/.aidevops/.agent-workspace/tmp/dirty-main-backups/$backup_id/manifest.tsv" $'^state\topen$' || rc=1
 	print_result "closed issue dirty lock race preserves files without duplicate archives" "$rc" \
 		"Expected intact dirty files, foreign lock authority, no stash, and one backup across passes (got ${first_backup_count}/${second_backup_count}/${third_backup_count})"
+	return 0
+}
+
+test_closed_issue_late_edit_preserves_files() {
+	local repo_path="${TEST_ROOT}/repo-late-edit"
+	local wt_path="${TEST_ROOT}/wt-late-edit"
+	local wrapper_path="${TEST_ROOT}/late-edit-git"
+	local race_marker="${TEST_ROOT}/late-edit-marker"
+	local branch="feature/auto-gh99034"
+	local backup_ref="" backup_id=""
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/late-edit-cleanup.log"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" branch "$branch" || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+	printf 'original dirty state\n' >>"$wt_path/README.md" || rc=1
+	printf 'original untracked state\n' >"$wt_path/untracked.txt" || rc=1
+	cat >"$wrapper_path" <<'RACE_GIT'
+#!/usr/bin/env bash
+if [[ "$*" == *"worktree remove"* && ! -e "${RACE_MARKER:?}" ]]; then
+	: >"$RACE_MARKER"
+	printf 'late tracked edit\n' >>"${RACE_WORKTREE:?}/README.md"
+fi
+exec "${RACE_NATIVE_GIT:?}" "$@"
+RACE_GIT
+	chmod +x "$wrapper_path" || rc=1
+	if run_dirty_race_cleanup_pass "$repo_path" "$wt_path" "$branch" "$wrapper_path" "$race_marker"; then
+		rc=1
+	fi
+	[[ -e "$race_marker" && -d "$wt_path" ]] || rc=1
+	assert_file_contains "$wt_path/README.md" '^late tracked edit$' || rc=1
+	[[ "$(count_dirty_backup_refs "$repo_path")" -eq 1 ]] || rc=1
+	backup_ref=$(git -C "$repo_path" for-each-ref --format='%(refname)' refs/aidevops/dirty-worktree-backups/)
+	backup_id="${backup_ref##*/}"
+	[[ "$(git -C "$repo_path" show "${backup_ref}:README.md")" == *"original dirty state"* ]] || rc=1
+	assert_file_contains "$HOME/.aidevops/.agent-workspace/tmp/dirty-main-backups/$backup_id/untracked/untracked.txt" '^original untracked state$' || rc=1
+	assert_file_contains "$HOME/.aidevops/.agent-workspace/tmp/dirty-main-backups/$backup_id/manifest.tsv" $'^state\topen$' || rc=1
+	print_result "closed issue late tracked edit refuses removal and preserves both versions" "$rc" \
+		"Expected late edit in surviving worktree and original dirty state in an open backup"
 	return 0
 }
 
@@ -1164,6 +1214,7 @@ test_closed_issue_unproven_branch_removes_worktree_preserves_branch
 test_fix_numeric_closed_issue_branch_removes_worktree_preserves_branch
 test_closed_issue_dirty_unproven_branch_stashes_and_preserves_branch
 test_closed_issue_dirty_lock_race_preserves_files
+test_closed_issue_late_edit_preserves_files
 test_force_merged_preserves_unreadable_index
 test_degraded_cleanup_audits_unreadable_index
 
