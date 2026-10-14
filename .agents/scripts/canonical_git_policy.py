@@ -322,6 +322,37 @@ def _is_clone_outside_canonical(
         return False
 
 
+def _classify_canonical_operation(
+    real_git_path: str, cwd: str, prefix: list[str], subcommand: str,
+    args: list[str], check_unresolved: bool,
+) -> tuple[bool, str]:
+    """Classify narrow exceptions after the repository identity is established."""
+    if _is_isolated_prospective_merge_tree(
+        real_git_path, cwd, prefix, subcommand, args
+    ):
+        return True, "isolated prospective merge-tree probe"
+    if _is_isolated_routines_publisher(real_git_path, cwd, prefix, subcommand):
+        return True, "isolated routines publisher mutation"
+    if subcommand == "worktree" and _is_linked_worktree_remove_for_canonical(
+        real_git_path, cwd, prefix, args
+    ):
+        return True, "linked-worktree removal for canonical repository"
+    if subcommand == "clone":
+        if _is_clone_outside_canonical(
+            real_git_path, cwd, prefix, args, check_unresolved
+        ):
+            return True, "clone to an explicit destination outside canonical checkouts"
+        return False, (
+            "clone requires an explicit absent or empty destination outside canonical "
+            "checkouts and safe options; clone into a path outside this checkout "
+            "(the workspace layout in reference/repo-organization.md), "
+            "or run it from that path's parent"
+        )
+    if _is_allowed_canonical(subcommand, args):
+        return True, "read-only canonical operation or linked-worktree creation"
+    return False, f"canonical worktree mutation via 'git {subcommand}'"
+
+
 def classify_git_argv(
     argv: list[str], cwd: str, real_git_path: str, check_unresolved: bool = False
 ) -> tuple[bool, str]:
@@ -344,32 +375,8 @@ def classify_git_argv(
     else:
         if not is_canonical:
             result = True, "linked worktree or non-repository target"
-        elif _is_isolated_prospective_merge_tree(
-            real_git_path, effective_cwd, prefix, subcommand, args
-        ):
-            result = True, "isolated prospective merge-tree probe"
-        elif _is_isolated_routines_publisher(
-            real_git_path, effective_cwd, prefix, subcommand
-        ):
-            result = True, "isolated routines publisher mutation"
-        elif subcommand == "worktree" and _is_linked_worktree_remove_for_canonical(
-            real_git_path, effective_cwd, prefix, args
-        ):
-            result = True, "linked-worktree removal for canonical repository"
-        elif subcommand == "clone":
-            if _is_clone_outside_canonical(
-                real_git_path, effective_cwd, prefix, args, check_unresolved
-            ):
-                result = True, "clone to an explicit destination outside canonical checkouts"
-            else:
-                result = False, (
-                    "clone requires an explicit absent or empty destination outside canonical "
-                    "checkouts and safe options; clone into a path outside this checkout "
-                    "(the workspace layout in reference/repo-organization.md), "
-                    "or run it from that path's parent"
-                )
-        elif _is_allowed_canonical(subcommand, args):
-            result = True, "read-only canonical operation or linked-worktree creation"
         else:
-            result = False, f"canonical worktree mutation via 'git {subcommand}'"
+            result = _classify_canonical_operation(
+                real_git_path, effective_cwd, prefix, subcommand, args, check_unresolved
+            )
     return result
