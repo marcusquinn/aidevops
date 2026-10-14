@@ -115,7 +115,7 @@ fi
 # selected formulas supplied by another package manager.
 # On Debian/Ubuntu (apt), use apt-get install --only-upgrade.
 # On Fedora/RHEL/CentOS (dnf/yum), use dnf upgrade.
-# Falls back to brew upgrade if no system package manager is detected.
+# Fails explicitly if no supported system package manager is detected.
 # $1 = brew formula name (e.g. "gh", "jq", "shellcheck")
 # $2 = apt/dnf package name if different from brew name (optional; defaults to $1)
 # The returned string is a self-contained bash -c payload (no expansion at definition time).
@@ -205,6 +205,7 @@ CUSTOM_TOOLS=(
 # Counters
 OUTDATED_COUNT=0
 INSTALLED_COUNT=0
+EXTERNALLY_MANAGED_COUNT=0
 NOT_INSTALLED_COUNT=0
 TIMEOUT_COUNT=0
 UNKNOWN_COUNT=0
@@ -674,11 +675,15 @@ _print_tool_status() {
 	local icon="$5"
 	local color="$6"
 
-	if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" ]]; then
+	if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" && "$status" != "externally_managed" ]]; then
 		return 0
 	fi
 
 	case "$status" in
+	externally_managed)
+		echo -e "${color}${icon}  $name: $installed (Nix-managed; automatic update skipped)${NC}"
+		echo "   Update through the Nix configuration or profile that owns this tool (NixOS, Home Manager, or nix profile)."
+		;;
 	not_installed)
 		echo -e "${color}${icon}  $name: not installed${NC}"
 		if [[ "$QUIET" != "true" ]]; then
@@ -713,6 +718,20 @@ _print_tool_status() {
 	return 0
 }
 
+# Nix also runs on non-NixOS hosts: detect binary ownership, not the OS or
+# presence of the nix CLI. Resolve profile/system symlinks before checking.
+_tool_is_nix_managed() {
+	local cmd="$1"
+	local binary="" resolved=""
+	binary=$(command -v "$cmd" 2>/dev/null) || return 1
+	[[ "$binary" == /* ]] || return 1
+	resolved=$(readlink -f "$binary" 2>/dev/null || realpath "$binary" 2>/dev/null || printf '%s' "$binary")
+	if [[ "$resolved" == /nix/store/* ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Check a single tool
 check_tool() {
 	local category="$1"
@@ -728,6 +747,19 @@ check_tool() {
 	# npm tools: pass package name so fallback to package.json works.
 	# All other categories: standard CLI binary detection.
 	installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
+
+	# The owning Nix configuration/profile controls the update channel. Do not
+	# query unrelated registries or queue commands that cannot update this binary.
+	if _tool_is_nix_managed "$cmd"; then
+		local managed_status="externally_managed"
+		((++EXTERNALLY_MANAGED_COUNT))
+		if [[ "$JSON_OUTPUT" == "true" ]]; then
+			_append_tool_json_result "$category" "$name" "$installed" "unknown" "$managed_status" ""
+		else
+			_print_tool_status "$name" "$installed" "unknown" "$managed_status" "⊘" "$YELLOW"
+		fi
+		return 0
+	fi
 
 	local latest="unknown"
 	latest=$(_tool_latest_version "$category" "$pkg" "$installed")
@@ -836,7 +868,8 @@ _output_json_results() {
 	echo "    \"outdated\": $OUTDATED_COUNT,"
 	echo "    \"not_installed\": $NOT_INSTALLED_COUNT,"
 	echo "    \"timeout\": $TIMEOUT_COUNT,"
-	echo "    \"unknown\": $UNKNOWN_COUNT"
+	echo "    \"unknown\": $UNKNOWN_COUNT,"
+	echo "    \"externally_managed\": $EXTERNALLY_MANAGED_COUNT"
 	echo "  },"
 	echo "  \"tools\": ["
 	local first=true
@@ -925,6 +958,9 @@ _output_summary_and_updates() {
 		echo "  Installed & up to date: $INSTALLED_COUNT"
 		echo "  Outdated: $OUTDATED_COUNT"
 		echo "  Not installed: $NOT_INSTALLED_COUNT"
+		if [[ $EXTERNALLY_MANAGED_COUNT -gt 0 ]]; then
+			echo "  Externally managed (Nix; skipped): $EXTERNALLY_MANAGED_COUNT"
+		fi
 		if [[ $TIMEOUT_COUNT -gt 0 ]]; then
 			echo "  Timeout (version check hung): $TIMEOUT_COUNT"
 		fi
@@ -963,6 +999,8 @@ _output_summary_and_updates() {
 		fi
 	elif [[ $UNKNOWN_COUNT -gt 0 ]]; then
 		echo -e "${YELLOW}No verified tool updates are pending; ${UNKNOWN_COUNT} installed tool(s) could not be verified.${NC}"
+	elif [[ $EXTERNALLY_MANAGED_COUNT -gt 0 ]]; then
+		echo -e "${YELLOW}No automatic tool updates are pending; Nix-managed tools were skipped.${NC}"
 	else
 		echo -e "${GREEN}All installed tools are up to date!${NC}"
 	fi

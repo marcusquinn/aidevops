@@ -25,6 +25,7 @@ extract_function() {
 		/^get_apt_candidate\(\)/, /^}$/ { print; next }
 		/^_tool_normalize_version\(\)/, /^}$/ { print; next }
 		/^_tool_latest_version\(\)/, /^}$/ { print; next }
+		/^_tool_is_nix_managed\(\)/, /^}$/ { print; next }
 		/^check_tool\(\)/, /^}$/ { print; next }
 		/^_run_outdated_tool_updates\(\)/, /^}$/ { print; next }
 		/^_output_summary_and_updates\(\)/, /^}$/ { print; next }
@@ -45,6 +46,7 @@ source_extracted() {
 	BOLD=""
 	AIDEVOPS_GH_MIN_SLURP_VERSION="2.67.0"
 	INSTALLED_COUNT=0
+	EXTERNALLY_MANAGED_COUNT=0
 	OUTDATED_COUNT=0
 	NOT_INSTALLED_COUNT=0
 	TIMEOUT_COUNT=0
@@ -176,4 +178,55 @@ if [[ "$latest" != "unknown" ]]; then
 fi
 
 printf 'PASS: _classify_tool_status updates caller latest_ref\n'
+
+# Ownership controls maintenance even when Nix coexists with another manager.
+command() {
+	local flag="$1"
+	local cmd="${2:-}"
+	if [[ "$flag" == -v ]]; then
+		case "$cmd" in
+		nix-direct) printf '%s\n' /nix/store/test-tool/bin/tool; return 0 ;;
+		nix-profile) printf '%s\n' /example-profile/bin/tool; return 0 ;;
+		non-nix) printf '%s\n' /example-local/bin/tool; return 0 ;;
+		missing-tool) return 1 ;;
+		esac
+	fi
+	if ! builtin command "$@"; then
+		return 1
+	fi
+	return 0
+}
+readlink() {
+	local flag="$1"
+	local path="$2"
+	if [[ "$flag" == -f && "$path" == /example-profile/bin/tool ]]; then
+		printf '%s\n' /nix/store/test-tool/bin/tool
+		return 0
+	fi
+	if ! builtin command readlink "$@"; then
+		return 1
+	fi
+	return 0
+}
+_tool_is_nix_managed nix-direct
+_tool_is_nix_managed nix-profile
+if _tool_is_nix_managed non-nix || _tool_is_nix_managed missing-tool; then
+	printf 'FAIL: non-Nix or missing tool incorrectly classified as Nix-managed\n' >&2
+	exit 1
+fi
+
+# Any latest-version lookup here is a failure: Nix tools must exit before it.
+_tool_latest_version() { return 1; }
+OUTDATED_COUNT=0
+UNKNOWN_COUNT=0
+OUTDATED_PACKAGES=()
+OUTDATED_TOOL_SPECS=()
+JSON_RESULTS=()
+check_tool brew Example nix-profile --version example 'false'
+[[ "${JSON_RESULTS[0]}" == externally_managed && $EXTERNALLY_MANAGED_COUNT -eq 1 ]]
+[[ ${#OUTDATED_PACKAGES[@]} -eq 0 && ${#OUTDATED_TOOL_SPECS[@]} -eq 0 ]]
+summary_output=$(_output_summary_and_updates)
+[[ "$summary_output" == *'Nix-managed tools were skipped'* ]]
+[[ "$summary_output" != *'All installed tools are up to date!'* ]]
+printf 'PASS: Nix ownership skips registry lookups and automatic update queues\n'
 exit 0
