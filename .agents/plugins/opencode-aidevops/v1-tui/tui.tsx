@@ -15,10 +15,39 @@
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { homedir } from "node:os";
-import { createVersionReader, formatVersionLabel } from "../v2-plugin/tui.mjs";
+import { createVersionReader, extractPromptRows, formatVersionLabel, isPromptsEnabled, safeCall } from "../v2-plugin/tui.mjs";
 
 export const AIDEVOPS_V1_TUI_PLUGIN_ID = "aidevops-tui";
 const VERSION_POLL_MS = 5000;
+
+function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
+  const [open, setOpen] = createSignal(true);
+  const theme = () => props.api.theme.current;
+  const rows = createMemo(() => safeCall(() => extractPromptRows(
+    props.api.state.session.messages(props.sessionID),
+    (id: string) => props.api.state.part(id),
+  ), []));
+  const timeline = () => safeCall(() => props.api.keymap.dispatchCommand?.("session.timeline"), undefined);
+  return (
+    <Show when={rows().length > 0}>
+      <box>
+        <box flexDirection="row">
+          <text fg={theme().text} onMouseDown={() => setOpen((value) => !value)}>
+            <b>{open() ? "▼ Prompts" : "▶ Prompts"}</b>
+          </text>
+          <Show when={!open()}>
+            <text fg={theme().textMuted} onMouseDown={timeline}> ({rows().length})</text>
+          </Show>
+        </box>
+        <Show when={open()}>
+          <For each={rows()}>
+            {(row) => <text fg={theme().text} wrapMode="none" onMouseDown={timeline}>{row.text}</text>}
+          </For>
+        </Show>
+      </box>
+    </Show>
+  );
+}
 
 function McpView(props: { api: TuiPluginApi }) {
   // The only behavioural change from the built-in: start collapsed.
@@ -176,6 +205,17 @@ const tui: TuiPlugin = async (api) => {
   const timer = setInterval(() => setVersion(readVersion()), VERSION_POLL_MS);
   timer.unref?.();
   api.lifecycle.onDispose(() => clearInterval(timer));
+
+  if (isPromptsEnabled()) {
+    safeCall(() => api.slots.register({
+      order: 50,
+      slots: {
+        sidebar_content(_ctx, props) {
+          return <PromptsView api={api} sessionID={props.session_id} />;
+        },
+      },
+    }), undefined);
+  }
 
   // Same order as the built-ins so the sidebar layout does not move.
   api.slots.register({
