@@ -143,6 +143,23 @@ instruction_override:
     description: "Attempts to wipe memory"
     pattern: '(?i)\bwipe\s+(your\s+)?(memory|context|slate)'
 
+  # --- t1375 inline coverage: priority manipulation ---
+  - severity: HIGH
+    description: "Priority override claim"
+    pattern: 'PRIORITY:\s*(HIGHEST|URGENT|OVERRIDE|CRITICAL)|IMPORTANCE:\s*(MAXIMUM|OVERRIDE|HIGHEST)'
+
+  - severity: HIGH
+    description: "Must follow instruction"
+    pattern: 'MUST\s+FOLLOW|MANDATORY\s+INSTRUCTION|REQUIRED\s+ACTION|NON-NEGOTIABLE'
+
+  - severity: MEDIUM
+    description: "Instruction priority claim"
+    pattern: '([Tt]his|[Tt]hese)\s+(instruction|directive|command)s?\s+(has|have|takes?|gets?)\s+(highest|top|maximum|absolute)\s+priority'
+
+  - severity: MEDIUM
+    description: "Supersede instructions"
+    pattern: '([Tt]his|[Tt]hese)\s+(supersede|override|replace|overwrite)s?\s+(all\s+)?(previous|prior|other|existing)\s+(instructions|rules|directives)'
+
 # ================================================================
 # ROLE PLAY / JAILBREAK
 # ================================================================
@@ -236,6 +253,19 @@ role_play:
     description: "Dark side persona request"
     pattern: '(?i)\byour\s+(evil|dark|shadow|unrestricted)\s+(side|self|version)'
 
+  # --- t1375 inline coverage: keep persona context, never generic UI modes ---
+  - severity: HIGH
+    description: "Evil twin persona"
+    pattern: '([Yy]our\s+)?(evil|dark|shadow|hidden|true|real)\s+(twin|self|side|personality|persona)\s+(would|should|must|wants?\s+to)'
+
+  - severity: HIGH
+    description: "Split personality attack"
+    pattern: '([Ss]witch|[Cc]hange|[Aa]ctivate)\s+(to\s+)?(your\s+)?(other|alternate|hidden|secret|true)\s+(personality|persona|mode|self)'
+
+  - severity: MEDIUM
+    description: "Unrestricted mode request"
+    pattern: '([Ee]nter|[Ss]witch\s+to|[Aa]ctivate|[Ee]nable)\s+(unrestricted|unfiltered|uncensored|raw|unmoderated)\s+(mode|output|response)'
+
 # ================================================================
 # DELIMITER INJECTION
 # ================================================================
@@ -282,6 +312,23 @@ delimiter_injection:
   - severity: HIGH
     description: "Fake instruction block markers"
     pattern: '(?i)\[INST\]|\[/INST\]|\[SYS\]|\[/SYS\]'
+
+  # --- t1375 inline coverage: prompt and tool/conversation boundaries ---
+  - severity: HIGH
+    description: "Fake end of prompt"
+    pattern: '---\s*END\s+(OF\s+)?(SYSTEM\s+)?(PROMPT|INSTRUCTIONS|CONTEXT)\s*---|===\s*END\s+(OF\s+)?(PROMPT|INSTRUCTIONS)\s*==='
+
+  - severity: HIGH
+    description: "Fake begin new section"
+    pattern: '---\s*BEGIN\s+(NEW\s+)?(SYSTEM\s+)?(PROMPT|INSTRUCTIONS|CONTEXT)\s*---|===\s*BEGIN\s+(NEW\s+)?(PROMPT|INSTRUCTIONS)\s*==='
+
+  - severity: MEDIUM
+    description: "Fake tool output boundary"
+    pattern: '</?tool_output>|</?function_result>|</?tool_response>|</?api_response>'
+
+  - severity: MEDIUM
+    description: "Fake conversation turn"
+    pattern: '<\|user\|>|<\|assistant\|>|<\|human\|>|<\|ai\|>'
 
 # ================================================================
 # ENCODING TRICKS
@@ -364,6 +411,31 @@ encoding_tricks:
     description: "Acrostic/steganographic instruction"
     pattern: '(?i)\bread\s+(the\s+)?(first|last|nth)\s+(letter|character)\s+of\s+each'
 
+  # --- t1375 inline coverage: unlabeled encodings and mixed scripts ---
+  - severity: MEDIUM
+    description: "URL encoded payload"
+    pattern: '%[0-9a-fA-F]{2}(%[0-9a-fA-F]{2}){5,}'
+
+  - severity: LOW
+    description: "Cyrillic homoglyph characters"
+    pattern: '\p{Cyrillic}.*(gnore|verride|ystem|rompt|nstruction)'
+
+  - severity: LOW
+    description: "Greek homoglyph characters"
+    pattern: '\p{Greek}.*(gnore|verride|ystem|rompt|nstruction)'
+
+  - severity: LOW
+    description: "Zero-width space sequences"
+    pattern: '[\x{200B}]{2,}|[\x{200C}]{2,}|[\x{200D}]{2,}'
+
+  - severity: LOW
+    description: "Mixed script with injection"
+    pattern: '\p{Cyrillic}[\x00-\x7F]*(nstruction|ommand|xecute|un\b)|\p{Greek}[\x00-\x7F]*(nstruction|ommand|xecute|un\b)'
+
+  - severity: LOW
+    description: "Acrostic instruction pattern"
+    pattern: '[A-Z][a-z]+\s*\n[A-Z][a-z]+\s*\n[A-Z][a-z]+\s*\n[A-Z][a-z]+\s*\n[A-Z][a-z]+'
+
 # ================================================================
 # SYSTEM PROMPT EXTRACTION
 # ================================================================
@@ -389,6 +461,15 @@ system_prompt_extraction:
   - severity: MEDIUM
     description: "Initial instruction extraction"
     pattern: '(?i)\bwhat\s+(were\s+)?you\s+told\s+(to\s+do|at\s+the\s+(start|beginning))'
+
+  # --- t1375 inline coverage: indirect extraction ---
+  - severity: LOW
+    description: "System prompt extraction variant"
+    pattern: '([Ww]rite|[Tt]ype|[Oo]utput)\s+(out\s+)?(the\s+)?(text|content|words)\s+(above|before|preceding)\s+(this|my)\s+(message|input|prompt)'
+
+  - severity: LOW
+    description: "Prompt leak via translation"
+    pattern: '([Tt]ranslate|[Cc]onvert)\s+(your\s+)?(system\s+)?(prompt|instructions|rules)\s+(to|into)\s+(French|Spanish|Chinese|another\s+language)'
 
 # ================================================================
 # SOCIAL ENGINEERING
@@ -617,6 +698,41 @@ context_manipulation:
   - severity: HIGH
     description: "Dismisses previous content as fake"
     pattern: '(?i)\bthe\s+above\s+(was|is)\s+(just\s+)?(a\s+)?(test|joke|fake|distraction)'
+
+  # --- t1375 inline coverage: fake roles and comment instructions ---
+  # Use \x27 for apostrophes: both YAML and the shell loader preserve it.
+  - severity: HIGH
+    description: "Fake JSON system role"
+    pattern: '"role"\s*:\s*"system"|\x27role\x27\s*:\s*\x27system\x27'
+
+  - severity: HIGH
+    description: "Fake JSON assistant message"
+    pattern: '"role"\s*:\s*"assistant"|\x27role\x27\s*:\s*\x27assistant\x27'
+
+  - severity: HIGH
+    description: "Fake XML role tags"
+    pattern: '<role>system</role>|<role>assistant</role>'
+
+  - severity: HIGH
+    description: "HTML comment with instructions"
+    pattern: '<!--\s*(system|ignore|override|instruction|prompt|secret|hidden)'
+
+  - severity: HIGH
+    description: "Code comment with instructions"
+    pattern: '//\s*(SYSTEM|OVERRIDE|IGNORE|INSTRUCTION|HIDDEN):|#\s*(SYSTEM|OVERRIDE|IGNORE|INSTRUCTION|HIDDEN):'
+
+  # --- t1375 inline coverage: fabricated conversation history ---
+  - severity: MEDIUM
+    description: "Fake previous AI response"
+    pattern: '([Ii]n\s+)?(my|our)\s+(previous|last|earlier)\s+(response|message|reply|conversation)\s*,?\s*[Ii]\s+(said|told|agreed|confirmed|promised)'
+
+  - severity: MEDIUM
+    description: "Fake established agreement"
+    pattern: '([Ww]e\s+)?(already|previously)\s+(agreed|established|decided|confirmed)\s+(that|to)\s+(you\s+would|you\s+should|you\s+will|I\s+can)'
+
+  - severity: MEDIUM
+    description: "Fake continuation claim"
+    pattern: '([Cc]ontinuing|[Rr]esuming)\s+(from\s+)?(where\s+)?(we|you)\s+(left\s+off|stopped|were)|[Aa]s\s+(we|you)\s+(discussed|agreed)\s+(earlier|before|previously)'
 
 # ================================================================
 # CREDENTIAL EXPOSURE (t4954)
