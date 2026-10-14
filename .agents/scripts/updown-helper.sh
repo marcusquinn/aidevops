@@ -66,8 +66,8 @@ load_config() {
 # ------------------------------------------------------------------------------
 
 execute_request() {
-    local method="$command"
-    local endpoint="$account_name"
+    local method="$1"
+    local endpoint="$2"
     local data="${3:-}"
     
     local api_key
@@ -130,7 +130,7 @@ get_checks_json() {
 }
 
 add_check() {
-    local url="$command"
+    local url="$1"
     local alias="${2:-}"
     local period="${3:-3600}" # Default to 1 hour (3600 seconds)
 
@@ -157,7 +157,7 @@ add_check() {
 }
 
 delete_check() {
-    local token="$command"
+    local token="$1"
 
     if [[ -z "$token" ]]; then
         print_error "Check token is required"
@@ -174,7 +174,7 @@ delete_check() {
 }
 
 get_metrics() {
-    local token="$command"
+    local token="$1"
     
     if [[ -z "$token" ]]; then
         print_error "Check token is required"
@@ -209,20 +209,11 @@ show_help() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    check_dependencies || return 1
-
-    local command="${1:-help}"
     local arg1="${2:-}"
     local arg2="${3:-}"
     local arg3="${4:-}"
+
+    check_dependencies || return 1
 
     case "$command" in
         "list")
