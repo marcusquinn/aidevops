@@ -648,6 +648,32 @@ assert_eq "6i: original evidence retained and terminal events appended" "5 3" \
 assert_eq "6j: newer supervisor blocker stays retained" "1" \
 	"$(env "WAH_BLOCKER_LOG_FILE=$SUP_LOG" "$HELPER" summary --since 7d --json --no-pr-check 2>/dev/null | jq -r '.progress_blockers.retained_supervisor_permission_total')"
 
+# GH#34681: retained terminal evidence is independent of the metrics window.
+TERMINAL_LOG="$FIXTURE_DIR/terminal-blockers.jsonl"
+for terminal_issue in 31 32; do
+	printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"event":"terminal_blocker_captured","status":"observed","reason":"unknown","blocking":false,"source":"terminal-blocker-circuit","issue_number":%d,"repo_slug":"owner/repo","session_key":"issue-%d","request_id":"attempt-%d","blocker_fingerprint":"6986da1ae19a0543f4b73332","detail":"BLOCKED: retained replay evidence"}\n' \
+		"$T_25H_AGO" "$terminal_issue" "$terminal_issue" "$terminal_issue" >>"$TERMINAL_LOG"
+done
+JSON=$(env "${RUN_ENV[@]}" "WAH_BLOCKER_LOG_FILE=$TERMINAL_LOG" "$HELPER" summary --since 1h --repo owner/repo --json --no-pr-check 2>&1)
+assert_eq "6k: older terminal events do not inflate current window counts" "0" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.event_total')"
+assert_eq "6l: old terminal evidence survives the default window" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.retained_terminal_total')"
+assert_eq "6m: repeated class fingerprint groups distinct attempts" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.repeated_terminal_fingerprints[0].attempts')"
+assert_eq "6n: retained historical observation is not a live blocker" "0" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.active_total')"
+assert_eq "6o: old evidence remains readable" "BLOCKED: retained replay evidence" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.retained_terminal_blockers[0].detail')"
+JSON=$(env "${RUN_ENV[@]}" "WAH_BLOCKER_LOG_FILE=$TERMINAL_LOG" "$HELPER" summary --since 1h --repo different/repo --json --no-pr-check 2>&1)
+assert_eq "6p: retained terminal evidence respects repository scope" "0" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.retained_terminal_total')"
+printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"event":"permission_request_captured","status":"blocked","reason":"permission_required","blocking":true,"issue_number":31,"repo_slug":"owner/repo","session_key":"issue-31","request_id":"attempt-31"}\n' \
+	"$((T_25H_AGO - 1))" >>"$TERMINAL_LOG"
+JSON=$(env "${RUN_ENV[@]}" "WAH_BLOCKER_LOG_FILE=$TERMINAL_LOG" "$HELPER" summary --since 1h --repo owner/repo --json --no-pr-check 2>&1)
+assert_eq "6q: historical capture cannot clear an unrelated active permission blocker" "1" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.active_total')"
+
 # ---------------------------------------------------------------------------
 # Section 7: runtime handoff and GitHub delivery stages remain distinct.
 # ---------------------------------------------------------------------------

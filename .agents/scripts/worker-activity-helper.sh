@@ -444,9 +444,17 @@ _wah_blocker_details_json() {
 		def proven_current: has_issue_scope or has_live_owner;
 		[split("\n")[] | fromjson? | scoped] as $all
 		| [$all[] | select((.ts // 0) >= $cutoff)] as $window
-		| ($all | group_by(identity) | map(sort_by(.ts // 0) | last) | map(select(.blocking == true))) as $unresolved
+		| ($all | map(select(.event != "terminal_blocker_captured"))
+			| group_by(identity) | map(sort_by(.ts // 0) | last) | map(select(.blocking == true))) as $unresolved
 		| ($unresolved | map(select(proven_current))) as $active
 		| ($unresolved | map(select(proven_current | not))) as $retained
+		| ($all | map(select(.event == "terminal_blocker_captured"))) as $terminal
+		| ($terminal | group_by([.repo_slug, .blocker_fingerprint])
+			| map(select(length > 1 and ((.[0].blocker_fingerprint // "") | test("^[a-f0-9]{24}$")))
+				| {repo_slug: .[0].repo_slug, fingerprint: .[0].blocker_fingerprint,
+					reason: .[0].reason, attempts: (map(identity) | unique | length),
+					issues: (map(.issue_number) | unique), latest_ts: (map(.ts) | max)})
+			| map(select(.attempts > 1)) | sort_by(.latest_ts) | reverse) as $repeated
 		| {
 			event_total: ($window | length),
 			active_total: ($active | length),
@@ -457,6 +465,10 @@ _wah_blocker_details_json() {
 						or (((.source // "") | contains("supervisor-pulse")))))] | length),
 			event_counts: (reduce $window[] as $row ({}; .[$row.event // "unknown"] += 1)),
 			reason_counts: (reduce $window[] as $row ({}; .[$row.reason // "unknown"] += 1)),
+			retained_terminal_total: ($terminal | length),
+			retained_terminal_blockers: ($terminal | sort_by(.ts // 0) | reverse | .[0:20]
+				| map({ts, timestamp, issue_number, repo_slug, session_key, request_id, reason, blocker_fingerprint, detail})),
+			repeated_terminal_fingerprints: $repeated[0:20],
 			active_blockers: ($active | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, timestamp, issue_number, repo_slug, session_key, request_id, event, reason, status, source, permission, tool, risk_level, grantable, detail})),
 			retained_unverified: ($retained | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, timestamp, issue_number, repo_slug, session_key, request_id, event, reason, status, source})),
 			recent_blockers: ($window | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, timestamp, issue_number, repo_slug, session_key, request_id, event, reason, status, blocking, source}))
@@ -744,6 +756,9 @@ _wah_emit_human() {
 	printf '  Reasons:                     %s\n' "$(printf '%s' "$blocker_json" | jq -c '.reason_counts // {}' 2>/dev/null || printf '{}')"
 	printf '  Active blockers:             %s\n' "$(printf '%s' "$blocker_json" | jq -c '.active_blockers // []' 2>/dev/null || printf '[]')"
 	printf '  Retained blockers:           %s\n' "$(printf '%s' "$blocker_json" | jq -c '.retained_unverified // []' 2>/dev/null || printf '[]')"
+	printf '  Terminal evidence retained:  %s\n' "$(printf '%s' "$blocker_json" | jq -r '.retained_terminal_total // 0' 2>/dev/null || printf '0')"
+	printf '  Terminal evidence:           %s\n' "$(printf '%s' "$blocker_json" | jq -c '.retained_terminal_blockers // []' 2>/dev/null || printf '[]')"
+	printf '  Repeated class fingerprints: %s\n' "$(printf '%s' "$blocker_json" | jq -c '.repeated_terminal_fingerprints // []' 2>/dev/null || printf '[]')"
 	printf '\n'
 	printf 'pulse-stats.json (global dispatch-side counters; scope: global):\n'
 	printf '  pulse_dispatch_circuit_broken:           %d\n' "$cb"

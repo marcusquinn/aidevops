@@ -145,6 +145,25 @@ active blockers from the latest retained event per worker session.
 `pulse-diagnose-helper.sh issue` filters the same records by issue/repository and
 includes them in human output and JSON `progress_blockers`.
 
+Terminal assistant blocker evidence is captured before transient runtime output
+is removed. `summary` also reports `retained_terminal_blockers` (latest 20) and
+`repeated_terminal_fingerprints` (latest 20 groups) across the entire retained log,
+independent of `--since`. Event counts still obey that window. Use
+`summary --since 7d --repo <owner/repo> --no-pr-check --json` for older releases.
+These non-blocking observations retain redacted evidence, reason, issue, session,
+attempt and class fingerprint; they do not assert a current blocker. Identical
+class fingerprints (especially `unknown`) group triage work, not proven common
+root causes. A ready PR reclassifies an unstructured blocker as post-PR handoff
+only after exact-head, linkage, summary, clean-worktree and nonfailing-check
+verification. Explicit reason markers remain blockers.
+
+Evidence uses the existing mode-600, size-bounded blocker log (default 5 MiB,
+`AIDEVOPS_WORKER_BLOCKER_LOG_MAX_BYTES`), not a 24-hour expiry. Oldest complete
+records are trimmed when the byte budget is reached; this is bounded retention,
+not a guaranteed time-based archive. Previously deleted evidence cannot be
+reconstructed from a class fingerprint. Keep diagnostic output private; do not
+paste retained dossiers into public issue comments.
+
 Permission blocker reasons distinguish a normal `permission_required` or
 `needs_maintainer_permissions` pause from non-grantable sensitive scope,
 capture/comment/label/marker persistence failures, missing or invalid signed

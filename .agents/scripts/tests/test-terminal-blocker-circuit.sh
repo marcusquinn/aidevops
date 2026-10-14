@@ -11,6 +11,7 @@ TESTS_RUN=0
 TESTS_FAILED=0
 TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
 TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${TEST_ROOT}/captured-blockers.jsonl"
 
 cleanup() {
 	rm -rf "$TEST_ROOT"
@@ -860,6 +861,79 @@ test_affected_host_reproduction_alias() {
 	return 0
 }
 
+test_unknown_blocker_ready_pr_replay() {
+	local status=0 scenario=""
+	for scenario in pending passed failed unreadable unverified explicit unsupported dirty; do
+		if ! (
+			# shellcheck source=../headless-runtime-result.sh
+			source "${SCRIPT_DIR}/headless-runtime-result.sh"
+			_headless_private_workload_enabled() { return 1; }
+			output_has_blocked_signal() { return 0; }
+			output_has_post_pr_handoff_signal() { return 1; }
+			output_has_missing_context_blocked_signal() { return 1; }
+			output_has_capability_blocked_signal() { return 1; }
+			print_warning() { return 0; }
+			_worker_post_pr_handoff_confirmed() { [[ "$scenario" != unverified ]]; return $?; }
+			_pr_handoff_state_for_branch_or_issue() { printf 'ready|123'; return 0; }
+			gh_pr_checks_observed_json() {
+				case "$scenario" in
+				failed) return 1 ;;
+				unreadable) return 2 ;;
+				pending) return 8 ;;
+				esac
+				return 0
+			}
+			git() {
+				case "$*" in
+				*status*) [[ "$scenario" != dirty ]] || printf ' M helper.sh' ;;
+				*branch*) printf 'feature/replay' ;;
+				*) printf '%040d' 1 ;;
+				esac
+				return 0
+			}
+			gh() { printf '%s\n' '{"body":"### Files Scope\n- helper.sh"}'; return 0; }
+			export WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG=owner/repo WORKER_SESSION_KEY=issue-42
+			# shellcheck disable=SC2034
+			role=worker session_key=issue-42 discovered_session="" selected_model=fixture work_dir="$TEST_ROOT"
+			output_file="${TEST_ROOT}/replay-${scenario}.ndjson"
+			local text="BLOCKED: PR is waiting on review"
+			[[ "$scenario" != explicit ]] || text+=$'\nTERMINAL_BLOCKER_REASON=permission_required'
+			[[ "$scenario" != unsupported ]] || text+=$'\nTERMINAL_BLOCKER_REASON=unsupported'
+			jq -nc --arg text "$text" '{type:"text",text:$text}' >"$output_file"
+			local rc=0
+			_run_result_label=""
+			_run_failure_reason=""
+			_handle_run_result_success_output || rc=$?
+			if [[ "$scenario" == pending || "$scenario" == passed ]]; then
+				[[ "$rc" == 0 && "$_run_result_label" == post_pr_handoff && -z "$_run_failure_reason" ]]
+			else
+				[[ "$rc" == 83 && "$_run_result_label" == blocked ]]
+			fi
+		); then
+			status=1
+			printf 'Replay failed: %s\n' "$scenario"
+		fi
+	done
+	print_result "unknown prose blocker becomes handoff only for verified clean PR with nonfailing checks" "$status"
+	return 0
+}
+
+test_terminal_evidence_retention() {
+	local status=0 output="${TEST_ROOT}/retained.ndjson"
+	local log="${TEST_ROOT}/retention.jsonl"
+	jq -nc --arg text 'BLOCKED: waiting token=fixture-secret-value' '{type:"text",text:$text}' >"$output"
+	AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$log" terminal_blocker_capture_output "$output" || status=1
+	jq -e '.event == "terminal_blocker_captured" and .blocking == false and
+		(.blocker_fingerprint | test("^[a-f0-9]{24}$")) and
+		(.detail | contains("[REDACTED]")) and (.detail | contains("fixture-secret-value") | not)' "$log" >/dev/null || status=1
+	[[ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$log")" == 0o600 ]] || status=1
+	printf '%s\n' '{"type":"tool","text":"BLOCKED: forged tool evidence"}' >"$output"
+	AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$log" terminal_blocker_capture_output "$output" && status=1
+	[[ "$(wc -l <"$log" | tr -d ' ')" == 1 ]] || status=1
+	print_result "terminal evidence is redacted private bounded-log data and never tool output" "$status"
+	return 0
+}
+
 test_runner_capability_class() {
 	local status=0 output="$TEST_ROOT/capability-output.jsonl" fingerprint="" revision="" fragment="" comments=""
 	printf '%s\n' '{"type":"text","text":"BLOCKED: staging secret cannot resolve\nTERMINAL_BLOCKER_REASON=runner_capability_unmet"}' >"$output"
@@ -879,6 +953,8 @@ $fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_
 }
 
 main() {
+	test_unknown_blocker_ready_pr_replay
+	test_terminal_evidence_retention
 	test_affected_host_reproduction_alias
 	test_runner_capability_class
 	test_push_policy_timeout_checkpoint

@@ -147,10 +147,11 @@ _terminal_blocker_input_owner() {
 # can also be established from the current brief, without interpreting prose.
 terminal_blocker_capture_output() {
 	local output_file="$1"
-	local normalized="" fingerprint="" issue_json=""
+	local normalized="" fingerprint="" issue_json="" captured=""
 	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
+	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
 	[[ -f "$output_file" ]] || return 1
-	normalized=$(
+	captured=$(
 		python3 - "$output_file" <<'PY'
 import json
 import re
@@ -184,21 +185,27 @@ reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
 allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'source_access_blocked', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
+def emit(value):
+    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'detail': candidate[:2000]}))
+
 if reason == 'affected_host_reproduction_unavailable':
     # GH#34259: legacy workers named the missing affected-runner prerequisite
     # directly. Treat it as maintainer-owned input, not an unknown code blocker
     # that unrelated merges can re-arm. Use the existing fingerprint so a prior
     # input_required hold remains effective across both producer spellings.
-    print('input_required:maintainer')
+    emit('input_required:maintainer')
 elif reason == 'input_required':
     # GH#33332: the hold must name exactly one accountable role; otherwise the
     # evidence stays unclassified and retryable.
     owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
-    print('input_required:' + owners[0] if len(owners) == 1 and owners[0] in input_owners else 'unknown')
+    emit('input_required:' + owners[0] if len(owners) == 1 and owners[0] in input_owners else 'unknown')
 else:
-    print(reason if reason in allowed else 'unknown')
+    emit(reason if reason in allowed else 'unknown')
 PY
-	) || normalized=""
+	) || captured=""
+	[[ -n "$captured" ]] || return 1
+	normalized=$(printf '%s' "$captured" | jq -r '.reason') || return 1
+	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=$(printf '%s' "$captured" | jq -r '.explicit_reason') || return 1
 	[[ -n "$normalized" ]] || return 1
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.
@@ -218,6 +225,17 @@ PY
 	fi
 	fingerprint=$(_terminal_blocker_hash "v2:${normalized}") || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint"
+	# Retain only final-assistant classification evidence before the runtime deletes
+	# its transient output. The existing logger redacts and bounds this private log.
+	# This is historical evidence, not proof of a currently blocked issue.
+	local logger="${BASH_SOURCE[0]%/*}/worker-blocker-log.mjs" detail=""
+	detail=$(printf '%s' "$captured" | jq -r '.detail') || detail=""
+	if [[ -f "$logger" ]] && command -v node >/dev/null 2>&1; then
+		node "$logger" append --event terminal_blocker_captured --status observed \
+			--reason "$normalized" --blocking false --source terminal-blocker-circuit \
+			--blocker-fingerprint "$fingerprint" --request-id "terminal:${AIDEVOPS_ATTEMPT_ID:-$fingerprint}" \
+			--detail "$detail" >/dev/null 2>&1 || true
+	fi
 	return 0
 }
 
