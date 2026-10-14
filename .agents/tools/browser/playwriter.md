@@ -108,7 +108,12 @@ the value first with `aidevops secret set PLAYWRITER_TOKEN`; never place it in
 MCP configuration, commands, logs, or prompts. The launcher accepts only the
 reviewed `playwriter@0.8.0` command, requires a 32-character token, verifies the
 relay version and token challenge, records private ownership state, and stops
-only a relay process it started. A conflicting or unverifiable relay fails
+only a relay process it started. On macOS/Linux its relay runs under a guardian
+that stops the whole package-runner process group (`npm exec`/`bun x` plus the
+`playwriter-serve` listener) on MCP disconnect, repeated or hangup signals, or
+even a killed supervisor. The next launch reconciles any owned relay whose
+supervisor died, but only after matching marker-protected state, a dead
+supervisor, and the reviewed relay command. A conflicting or unverifiable relay fails
 closed without `--replace` or port-owner termination. After a pin upgrade, a
 still-running relay from the previous version fails this proof; stop it from the
 session or terminal that started it, then reconnect. aidevops never terminates it.
