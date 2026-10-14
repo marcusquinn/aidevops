@@ -11,7 +11,11 @@ from typing import Optional
 
 SHELL_OPERATORS = {"&&", "||", ";", "|", "(", ")", "&"}
 WRAPPERS = {"command", "sudo", "time", "nohup"}
-REPOSITORY_ENVIRONMENT = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
+REPOSITORY_ENVIRONMENT = {
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_TEMPLATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+}
 
 
 def _shell_tokens(command: str) -> list[str]:

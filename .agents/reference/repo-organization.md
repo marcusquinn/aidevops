@@ -27,7 +27,9 @@ This applies to `git clone` and the Git command run by `gh repo clone`. Omitted
 destinations, destinations inside a canonical checkout, and non-empty targets
 remain blocked there. Use the workspace layout above, or run the clone from the
 destination's parent. Auxiliary template and separate-Git-directory paths must
-also remain outside canonical checkouts.
+also remain outside canonical checkouts and be absent or empty. The allowance
+accepts a conservative set of clone options; unknown options and Git
+configuration or environment overrides stay blocked from a canonical checkout.
 
 Normalize new owner directory names to lowercase. Repository names retain their
 upstream spelling. Configure personal aliases per Git host in `repos.json`; do

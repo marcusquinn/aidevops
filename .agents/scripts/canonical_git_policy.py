@@ -10,8 +10,13 @@ import re
 import tempfile
 from pathlib import Path
 
-from canonical_git_invocation import clone_paths, is_version_query, repository_values, split_invocation
-from canonical_git_management import is_managed_root
+from canonical_git_invocation import (
+    clone_paths,
+    is_version_query,
+    repository_values,
+    split_invocation,
+)
+from canonical_git_management import is_managed_root, is_registered_common_dir
 from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
@@ -241,42 +246,78 @@ def _is_linked_worktree_remove_for_canonical(
     return allowed
 
 
-def _is_clone_outside_canonical(
-    real_git_path: str, cwd: str, prefix: list[str], args: list[str],
-    check_unresolved: bool,
-) -> bool:
-    """Allow only explicit, empty clone targets outside canonical roots."""
-    destination, auxiliary = clone_paths(args)
-    if not destination or any(os.environ.get(name) for name in (
-        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-    )):
-        return False
-    # Git applies successive -C options relative to the previous effective cwd.
+def _clone_cwd(cwd: str, prefix: list[str]) -> Path | None:
+    """Resolve only exact -C pairs; reject configuration/repository overrides."""
     clone_cwd = Path(cwd)
     index = 0
     while index < len(prefix):
         if prefix[index] != "-C" or index + 1 >= len(prefix):
-            return False
+            return None
         value = prefix[index + 1]
         if value:
             clone_cwd = (clone_cwd / value).resolve()
         index += 2
+    return clone_cwd
+
+
+def _clone_path_is_protected(path: Path, canonical_top: str) -> bool:
+    """Check checkout ancestry and registered separate Git metadata ancestry."""
+    if canonical_top and path.is_relative_to(Path(canonical_top).resolve()):
+        return True
+    return any(
+        is_managed_root(str(parent)) or is_registered_common_dir(str(parent))
+        for parent in (path, *path.parents)
+    )
+
+
+def _clone_path_is_allowed(
+    value: str, clone_cwd: Path, canonical_top: str, check_unresolved: bool,
+) -> bool:
+    """Resolve one literal path and require an unprotected absent/empty target."""
+    if check_unresolved and (
+        value.startswith("~") or re.search(r"[$`*?\[\]{}]", value)
+    ):
+        return False
+    path = (clone_cwd / value).resolve()
+    if _clone_path_is_protected(path, canonical_top):
+        return False
+    return not path.exists() or (
+        path.is_dir() and next(path.iterdir(), None) is None
+    )
+
+
+def _is_clone_outside_canonical(
+    real_git_path: str,
+    cwd: str,
+    prefix: list[str],
+    args: list[str],
+    check_unresolved: bool,
+) -> bool:
+    """Allow only explicit, empty clone targets outside canonical roots."""
+    destination, auxiliary = clone_paths(args)
+    if not destination or any(
+        os.environ.get(name)
+        for name in (
+            "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+            "GIT_TEMPLATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+        )
+    ):
+        return False
     canonical_top = _git_output(
         real_git_path, cwd, *prefix, "rev-parse", "--show-toplevel",
     )
     try:
-        paths = []
+        # Git applies successive -C options relative to the previous cwd.
+        clone_cwd = _clone_cwd(cwd, prefix)
+        if clone_cwd is None:
+            return False
         for value in [destination, *auxiliary]:
-            if check_unresolved and (value.startswith("~") or re.search(r"[$`*?\[\]{}]", value)):
+            if not _clone_path_is_allowed(
+                value, clone_cwd, canonical_top, check_unresolved
+            ):
                 return False
-            path = (clone_cwd / value).resolve()
-            if canonical_top and path.is_relative_to(Path(canonical_top).resolve()):
-                return False
-            if any(is_managed_root(str(parent)) for parent in (path, *path.parents)):
-                return False
-            paths.append(path)
-        target = paths[0]
-        return not target.exists() or (target.is_dir() and next(target.iterdir(), None) is None)
+        return True
     except (OSError, RuntimeError, ValueError):
         return False
 

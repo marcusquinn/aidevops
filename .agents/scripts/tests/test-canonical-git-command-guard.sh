@@ -151,6 +151,13 @@ assert_blocked "blocks clone into a nonempty directory" "git clone '$REPO' '$TES
 assert_blocked "blocks clone via symlink into canonical checkout" "git clone '$REPO' '$TEST_ROOT/canonical-alias/nested'"
 assert_blocked "blocks clone with canonical separate git dir" "git clone --separate-git-dir '$REPO/.git/objects/new' '$REPO' '$TEST_ROOT/new-clone'"
 assert_blocked "blocks clone with canonical template" "git clone --template='$REPO/.git' '$REPO' '$TEST_ROOT/new-clone'"
+assert_blocked "blocks clone into registered separate metadata" "git clone --separate-git-dir '$SEPARATE_GIT_DIR/clone' '$REPO' '$TEST_ROOT/new-clone'"
+assert_blocked "blocks clone into nonempty auxiliary directory" "git clone --separate-git-dir '$TEST_ROOT/nonempty-clone' '$REPO' '$TEST_ROOT/new-clone'"
+assert_blocked "blocks clone object-directory redirection" "env GIT_OBJECT_DIRECTORY='$REPO/.git/objects' git clone --no-local '$REPO' '$TEST_ROOT/new-clone'"
+assert_blocked "blocks clone global config override" "env GIT_CONFIG_GLOBAL='$TEST_ROOT/config' git clone '$REPO' '$TEST_ROOT/new-clone'"
+assert_blocked "blocks clone system config override" "env GIT_CONFIG_SYSTEM='$TEST_ROOT/config' git clone '$REPO' '$TEST_ROOT/new-clone'"
+GIT_OBJECT_DIRECTORY="$REPO/.git/objects" assert_blocked "blocks inherited clone object override" "git clone '$REPO' '$TEST_ROOT/new-clone'"
+GIT_CONFIG_GLOBAL="$TEST_ROOT/config" assert_blocked "blocks inherited clone config override" "git clone '$REPO' '$TEST_ROOT/new-clone'"
 assert_blocked "blocks clone config redirection" "git clone -c core.worktree='$REPO' '$REPO' '$TEST_ROOT/new-clone'"
 assert_blocked "blocks unknown clone options" "git clone --unknown '$REPO' '$TEST_ROOT/new-clone'"
 # shellcheck disable=SC2016
