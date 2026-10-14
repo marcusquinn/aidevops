@@ -188,6 +188,15 @@ export function reconcileStaleRelays(parent, options = {}) {
   return reconcileOwnedRelays(parent, RELAY_CONTRACT, options);
 }
 
+function guardianStartTime(child, command) {
+  const leader = inspectProcess(child.pid);
+  const expected = [...RELAY_CONTRACT.guardianArgv, ...command];
+  const matches = leader?.groupId === child.pid
+    && leader.argv?.length === expected.length
+    && expected.every((part, index) => leader.argv[index] === part);
+  return matches ? leader.startTime : null;
+}
+
 async function ensureRelay(command, environment, runtime, token) {
   const existing = await probeAuthenticatedRelay({ token });
   if (existing.ready) return { child: null, owned: false };
@@ -196,6 +205,9 @@ async function ensureRelay(command, environment, runtime, token) {
   }
 
   const child = spawnGuardian(GUARDIAN, command, environment, runtime);
+  // Capture the spawned guardian, not a later occupant of its PID after the
+  // asynchronous readiness probe. An unreadable identity stays unproven.
+  const relayStartTime = guardianStartTime(child, command);
   const proof = await waitForRelay(token, child);
   if (!proof.ready) {
     await stopGuardian(child);
@@ -205,7 +217,7 @@ async function ensureRelay(command, environment, runtime, token) {
     // Another relay won the port race; this guardian has already exited.
     return { child: null, owned: false };
   }
-  return { child, owned: true };
+  return { child, owned: true, relayStartTime };
 }
 
 function writeState(runtime, relay) {
@@ -216,7 +228,7 @@ function writeState(runtime, relay) {
     version: PLAYWRITER_VERSION,
     supervisorPid: process.pid,
     relayGroupId: relay.owned ? relay.child.pid : null,
-    relayStartTime: relay.owned ? inspectProcess(relay.child.pid)?.startTime ?? null : null,
+    relayStartTime: relay.owned ? relay.relayStartTime : null,
     owned: relay.owned,
   };
   writeFileSync(runtime.statePath, `${JSON.stringify(state)}\n`, { flag: "wx", mode: 0o600 });

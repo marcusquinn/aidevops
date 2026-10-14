@@ -31,7 +31,8 @@ const LAUNCHER = fileURLToPath(new URL("../playwriter-authenticated-relay.mjs", 
 
 function inspectSyntheticGuardian(pid) {
   const leader = inspectProcess(pid);
-  if (!GUARDIAN_ARGS.every((part, index) => leader?.argv.at(-GUARDIAN_ARGS.length + index) === part)) return leader;
+  const argv = leader?.argv ?? leader?.legacyArgv;
+  if (!GUARDIAN_ARGS.every((part, index) => argv?.at(-GUARDIAN_ARGS.length + index) === part)) return leader;
   return { ...leader, argv: [process.execPath, LAUNCHER, ...GUARDIAN_ARGS] };
 }
 
@@ -49,12 +50,20 @@ function alive(pid) {
   }
 }
 
-async function startSyntheticGroup(t, extraArgs = []) {
+async function startSyntheticGroup(t, extraArgs = [], realGuardian = false) {
   // `--` keeps the guardian-shaped arguments out of Node's own option parser
   // while leaving them visible in the process command line.
-  const leader = spawn(process.execPath, ["-e", LEADER, "--", ...extraArgs], {
+  let args = ["-e", LEADER, "--", ...extraArgs];
+  if (realGuardian) {
+    // Exercise the actual launcher and inspector without running a package
+    // manager or contacting the network. The reviewed runner name is npx.
+    const runner = join(mkdtempSync(join(tmpdir(), "aidevops-playwriter-runner-")), "npx");
+    writeFileSync(runner, `#!${process.execPath}\n${LEADER}\n`, { mode: 0o700 });
+    args = [LAUNCHER, GUARDIAN_ARGS[0], runner, ...GUARDIAN_ARGS.slice(2)];
+  }
+  const leader = spawn(process.execPath, args, {
     detached: true,
-    stdio: ["ignore", "pipe", "ignore"],
+    stdio: ["ignore", "pipe", "ignore", "ipc"],
   });
   t.after(() => {
     try { process.kill(-leader.pid, "SIGKILL"); } catch {}
@@ -165,12 +174,12 @@ test("stops every member of an owned relay process group", { skip: !POSIX }, asy
   await assert.rejects(terminateProcessGroup(process.pid), /invalid process group/);
 });
 
-test("reconciles an owned relay left by a dead supervisor", { skip: !POSIX }, async (t) => {
+test("reconciles an owned relay left by a dead supervisor", { skip: process.platform !== "linux" }, async (t) => {
   const parent = privateRuntimeParent(mkdtempSync(join(tmpdir(), "aidevops-playwriter-relay-")));
-  const { groupId, descendantPid } = await startSyntheticGroup(t, GUARDIAN_ARGS);
+  const { groupId, descendantPid } = await startSyntheticGroup(t, GUARDIAN_ARGS, true);
   const session = writeSession(parent, deadPid(), { relayGroupId: groupId });
 
-  assert.deepEqual(await reconcileStaleRelays(parent, { inspect: inspectSyntheticGuardian }), [session.name]);
+  assert.deepEqual(await reconcileStaleRelays(parent), [session.name]);
   assert.equal(processGroupAlive(groupId), false);
   assert.equal(alive(descendantPid), false);
   assert.equal(existsSync(session.directory), false);
@@ -228,6 +237,10 @@ test("requires the exact guardian executable, launcher, flag and reviewed runner
     assert.equal(processGroupAlive(group.groupId), true);
     assert.equal(existsSync(session.directory), true);
   }
+  const inspect = (pid) => ({ ...inspectProcess(pid), argv: undefined, legacyArgv: expected });
+  assert.deepEqual(await reconcileStaleRelays(parent, { inspect }), [], "ambiguous ps tokens are not v2 argv proof");
+  assert.equal(processGroupAlive(group.groupId), true);
+  assert.equal(existsSync(session.directory), true);
 });
 
 test("keeps legacy v1 reconciliation with exact package and relay argument tokens", { skip: !POSIX }, async (t) => {

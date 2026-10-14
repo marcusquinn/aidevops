@@ -21,6 +21,7 @@ const LEGACY_STATE_SCHEMA = "aidevops-playwriter-relay/v1";
 const SESSION_DIRECTORY = /^session-(\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 export function inspectProcess(pid) {
+  if (process.platform === "linux") return inspectLinuxProcess(pid);
   const result = spawnSync("ps", ["-ww", "-o", "pgid=", "-o", "lstart=", "-o", "command=", "-p", String(pid)], {
     encoding: "utf8",
     env: { ...process.env, LC_ALL: "C" },
@@ -31,18 +32,28 @@ export function inspectProcess(pid) {
     ? /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+([^\n]+)$/.exec(result.stdout.trim()) : null;
   if (!match) return null;
   const startTime = match[2].replace(/\s+/g, " ");
+  // ps cannot prove argv boundaries. Retain its legacy v1 compatibility path,
+  // but never authorize a v2 guardian from this ambiguous rendering.
+  return { groupId: Number(match[1]), legacyArgv: match[3].split(/\s+/), startTime };
+}
+
+function linuxIdentity(pid) {
+  const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  return { groupId: Number(fields[2]), startTime: `linux:${boot}:${fields[19]}` };
+}
+
+function inspectLinuxProcess(pid) {
   try {
-    // Linux exposes actual argv boundaries and a boot-relative start tick,
-    // avoiding both ps rendering ambiguity and same-second PID reuse.
-    if (process.platform === "linux") {
-      const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
-      if (argv.pop() !== "") return null;
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      const ticks = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
-      if (!/^\d+$/.test(ticks)) return null;
-      return { groupId: Number(match[1]), argv, startTime: `${startTime}:${ticks}` };
-    }
-    return { groupId: Number(match[1]), argv: match[3].split(/\s+/), startTime };
+    // Bind actual argv boundaries to one incarnation, rejecting PID reuse
+    // during inspection. Both group and start tick come from the same stat.
+    const before = linuxIdentity(pid);
+    const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    const after = linuxIdentity(pid);
+    if (argv.pop() !== "" || before.startTime !== after.startTime
+      || before.groupId !== after.groupId || !/^linux:[0-9a-f-]{36}:\d+$/.test(after.startTime)) return null;
+    return { ...after, argv };
   } catch {
     return null;
   }
@@ -89,7 +100,7 @@ function staleRelayGroup(state, contract, inspect) {
   if (!processGroupAlive(groupId)) return null;
   const leader = inspect(leaderPid);
   const matches = leader?.groupId === groupId
-    && matchesRelayArgv(leader.argv, contract, legacy)
+    && matchesRelayArgv(legacy ? leader.argv ?? leader.legacyArgv : leader.argv, contract, legacy)
     // Older v2 state has no process identity: preserve it as unproven.
     && (legacy || (typeof state.relayStartTime === "string"
       && state.relayStartTime === leader.startTime));
@@ -97,13 +108,13 @@ function staleRelayGroup(state, contract, inspect) {
 }
 
 function matchesRelayArgv(argv, contract, legacy) {
-  if (!Array.isArray(argv)) return false;
+  if (!Array.isArray(argv)
+    || (!legacy && !contract.guardianArgv.every((part, index) => argv[index] === part))) return false;
   if (legacy) {
     const tail = contract.legacyArgs;
     return argv.includes(contract.packageName)
       && tail.every((part, index) => argv[argv.length - tail.length + index] === part);
   }
-  if (!contract.guardianArgv.every((part, index) => argv[index] === part)) return false;
   try {
     contract.validateCommand(argv.slice(contract.guardianArgv.length));
     return true;
