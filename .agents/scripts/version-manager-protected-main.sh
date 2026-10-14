@@ -535,17 +535,21 @@ _version_manager_is_signed_snapshot() {
 	local base=""
 	local source=""
 	local verification=""
+	local tagger=""
+	local tag_ref="refs/tags/$tag_name"
 	_VERSION_MANAGER_SNAPSHOT_SIGNATURE_UNTRUSTED=0
-	base=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "refs/tags/$tag_name" |
+	base=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "$tag_ref" |
 		awk '/^Aidevops-Snapshot-Base: / {print $2}') || return 1
-	source=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "refs/tags/$tag_name" |
+	source=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "$tag_ref" |
 		awk '/^Aidevops-Source-Merge: / {print $2}') || return 1
 	[[ "$base" =~ ^[0-9a-f]{40}$ && "$source" =~ ^[0-9a-f]{40}$ ]] || return 1
-	[[ "$(git -C "$REPO_ROOT" rev-parse "refs/tags/${tag_name}^{commit}^1")" == "$source" ]] || return 1
+	[[ "$(git -C "$REPO_ROOT" rev-parse "${tag_ref}^{commit}^1")" == "$source" ]] || return 1
 	git -C "$REPO_ROOT" merge-base --is-ancestor "$base" "$source" || return 1
 	if ! verification=$(git -C "$REPO_ROOT" verify-tag "$tag_name" 2>&1); then
 		_VERSION_MANAGER_SNAPSHOT_SIGNATURE_UNTRUSTED=1
 		print_error "Snapshot ${tag_name} is signature-unverified on this host (signer-untrusted)"
+		tagger=$(git -C "$REPO_ROOT" for-each-ref --format='%(taggername) %(taggeremail)' "$tag_ref") || tagger="unknown"
+		print_info "Tagger (unverified identity): $tagger"
 		# Git's diagnostics identify the signer/fingerprint without reading keys.
 		print_info "$verification"
 		print_info "Verify the exact tag object's GitHub signing-key registration and local signer trust; do not recreate the tag or aggregate"
