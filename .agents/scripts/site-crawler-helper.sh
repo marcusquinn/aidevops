@@ -8,9 +8,10 @@
 # Uses Crawl4AI when available, falls back to lightweight Python crawler
 #
 # Sub-libraries:
-#   site-crawler-helper-markdown.sh  -- metadata extraction & markdown saving
-#   site-crawler-helper-crawl4ai.sh  -- Crawl4AI API engine & report generation
-#   site-crawler-helper-fallback.sh  -- fallback Python crawler generator
+#   site-crawler-helper-markdown.sh   -- metadata extraction & markdown saving
+#   site-crawler-helper-crawl4ai.sh   -- Crawl4AI API engine & report generation
+#   site-crawler-helper-librecrawl.sh -- LibreCrawl REST API engine & export mapping
+#   site-crawler-helper-fallback.sh   -- fallback Python crawler generator
 #
 # Usage: ./site-crawler-helper.sh [command] [url] [options]
 # Commands:
@@ -39,6 +40,10 @@ readonly CONFIG_FILE="${CONFIG_DIR}/site-crawler.json"
 readonly DEFAULT_OUTPUT_DIR="${HOME}/Downloads"
 readonly CRAWL4AI_PORT="11235"
 readonly CRAWL4AI_URL="http://localhost:${CRAWL4AI_PORT}"
+readonly ENGINE_AUTO="auto"
+readonly ENGINE_LIBRECRAWL="librecrawl"
+readonly ENGINE_CRAWL4AI="crawl4ai"
+readonly ENGINE_FALLBACK="fallback"
 
 # Default configuration
 DEFAULT_DEPTH=3
@@ -60,6 +65,10 @@ source "${SCRIPT_DIR}/site-crawler-helper-markdown.sh"
 # shellcheck source=./site-crawler-helper-crawl4ai.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/site-crawler-helper-crawl4ai.sh"
+
+# shellcheck source=./site-crawler-helper-librecrawl.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/site-crawler-helper-librecrawl.sh"
 
 # shellcheck source=./site-crawler-helper-fallback.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
@@ -144,39 +153,101 @@ create_output_dir() {
 # --- Crawl execution ---
 
 # Parse do_crawl options into caller-local variables.
-# Sets: depth, max_urls, format, output_base, force_fallback
+# Sets: depth, max_urls, format, output_base, engine
+# LibreCrawl-only flags are recorded by librecrawl_store_opt.
 _do_crawl_parse_opts() {
 	depth="$DEFAULT_DEPTH"
 	max_urls="$DEFAULT_MAX_URLS"
 	format="$DEFAULT_FORMAT"
 	output_base="$DEFAULT_OUTPUT_DIR"
-	force_fallback=false
+	engine="$ENGINE_AUTO"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--depth)
-			depth="$2"
-			shift 2
-			;;
-		--max-urls)
-			max_urls="$2"
-			shift 2
-			;;
-		--format)
-			format="$2"
-			shift 2
-			;;
-		--output)
-			output_base="$2"
+		--depth | --max-urls | --format | --output | --engine)
+			if [[ $# -lt 2 ]]; then
+				print_error "$1 needs a value"
+				return 1
+			fi
+			case "$1" in
+			--depth) depth="$2" ;;
+			--max-urls) max_urls="$2" ;;
+			--format) format="$2" ;;
+			--output) output_base="$2" ;;
+			--engine) engine="$2" ;;
+			esac
 			shift 2
 			;;
 		--fallback)
-			force_fallback=true
+			engine="$ENGINE_FALLBACK"
+			shift
+			;;
+		--render-js | --ignore-robots | --include-pagespeed | --user-agent | --include | --exclude | --timeout)
+			librecrawl_store_opt "$@" || return 1
+			shift "$_LIBRECRAWL_OPT_SHIFT"
+			;;
+		--*)
+			print_warning "Ignoring unknown option: $1"
 			shift
 			;;
 		*) shift ;;
 		esac
 	done
+	return 0
+}
+
+# Resolve the requested engine to librecrawl, crawl4ai or fallback.
+# Sets caller-local: engine. Fails before any output directory is created.
+_do_crawl_select_engine() {
+	case "$engine" in
+	auto | librecrawl | crawl4ai | fallback) ;;
+	*)
+		print_error "Unknown --engine: $engine (use auto, librecrawl, crawl4ai or fallback)"
+		return 1
+		;;
+	esac
+
+	local wants_librecrawl=false
+	[[ "$engine" == "$ENGINE_LIBRECRAWL" ]] && wants_librecrawl=true
+
+	if [[ -n "$LIBRECRAWL_ONLY_FLAGS" && "$engine" != "$ENGINE_AUTO" && "$wants_librecrawl" == false ]]; then
+		print_error "${LIBRECRAWL_ONLY_FLAGS}: needs --engine librecrawl (the ${engine} engine does not implement it)"
+		return 1
+	fi
+
+	if [[ "$engine" == "$ENGINE_AUTO" || "$wants_librecrawl" == true ]]; then
+		if check_librecrawl && librecrawl_is_local; then
+			engine="$ENGINE_LIBRECRAWL"
+			return 0
+		fi
+		if [[ "$wants_librecrawl" == true || -n "$LIBRECRAWL_ONLY_FLAGS" ]]; then
+			[[ -n "$LIBRECRAWL_ONLY_FLAGS" ]] && print_error "${LIBRECRAWL_ONLY_FLAGS}: needs the LibreCrawl engine"
+			print_error "LibreCrawl in local mode is not reachable at ${LIBRECRAWL_URL}${LIBRECRAWL_TIER:+ (tier: ${LIBRECRAWL_TIER})}"
+			_librecrawl_local_mode_help
+			return 1
+		fi
+		[[ -n "$LIBRECRAWL_TIER" ]] && print_warning "LibreCrawl answers at ${LIBRECRAWL_URL} but is not in local mode; skipping it"
+		engine="$ENGINE_FALLBACK"
+		check_crawl4ai && engine="$ENGINE_CRAWL4AI"
+		return 0
+	fi
+
+	if [[ "$engine" == "$ENGINE_CRAWL4AI" ]] && ! check_crawl4ai; then
+		print_error "Crawl4AI is not running at ${CRAWL4AI_URL} (setup: crawl4ai-helper.sh)"
+		return 1
+	fi
+	return 0
+}
+
+# Report a finished crawl.
+# Arguments: $1=output_dir $2=output_base $3=domain
+_do_crawl_print_done() {
+	local output_dir="$1"
+	local output_base="$2"
+	local domain="$3"
+	print_success "Crawl complete!"
+	print_info "Results: $output_dir"
+	print_info "Latest: ${output_base}/${domain}/_latest"
 	return 0
 }
 
@@ -218,9 +289,7 @@ _do_crawl_run_python() {
 	rm -f "$crawler_script"
 
 	if [[ $exit_code -eq 0 ]]; then
-		print_success "Crawl complete!"
-		print_info "Results: $output_dir"
-		print_info "Latest: ${output_base}/${domain}/_latest"
+		_do_crawl_print_done "$output_dir" "$output_base" "$domain"
 	else
 		print_error "Crawl failed with exit code $exit_code"
 	fi
@@ -233,8 +302,13 @@ do_crawl() {
 	local url="$1"
 	shift
 
-	local depth max_urls format output_base force_fallback
-	_do_crawl_parse_opts "$@"
+	local depth max_urls format output_base engine
+	_do_crawl_parse_opts "$@" || return 1
+	_do_crawl_select_engine || return 1
+	# Validate before create_output_dir moves _latest to an empty directory
+	if [[ "$engine" == "$ENGINE_LIBRECRAWL" ]]; then
+		_librecrawl_validate_limits "$max_urls" "$depth" || return 1
+	fi
 
 	local domain
 	domain=$(get_domain "$url")
@@ -245,14 +319,22 @@ do_crawl() {
 	print_header "Site Crawler - SEO Audit"
 	print_info "URL: $url"
 	print_info "Output: $output_dir"
-	print_info "Depth: $depth, Max URLs: $max_urls"
+	print_info "Depth: $depth, Max URLs: $max_urls, Engine: $engine"
 
-	if [[ "$force_fallback" != "true" ]] && check_crawl4ai; then
+	if [[ "$engine" == "$ENGINE_LIBRECRAWL" ]]; then
+		if ! crawl_with_librecrawl "$url" "$output_dir" "$max_urls" "$depth"; then
+			print_error "LibreCrawl crawl failed or was incomplete"
+			print_info "Results so far: $output_dir"
+			return 1
+		fi
+		_do_crawl_print_done "$output_dir" "$output_base" "$domain"
+		return 0
+	fi
+
+	if [[ "$engine" == "$ENGINE_CRAWL4AI" ]]; then
 		print_success "Crawl4AI detected at ${CRAWL4AI_URL}"
 		crawl_with_crawl4ai "$url" "$output_dir" "$max_urls" "$depth"
-		print_success "Crawl complete!"
-		print_info "Results: $output_dir"
-		print_info "Latest: ${output_base}/${domain}/_latest"
+		_do_crawl_print_done "$output_dir" "$output_base" "$domain"
 		return 0
 	fi
 
@@ -383,6 +465,18 @@ compare_crawls() {
 check_status() {
 	print_header "Site Crawler Status"
 
+	# Check LibreCrawl
+	print_info "Checking LibreCrawl..."
+	if check_librecrawl; then
+		if librecrawl_is_local; then
+			print_success "LibreCrawl: running at ${LIBRECRAWL_URL} (local mode)"
+		else
+			print_warning "LibreCrawl: running at ${LIBRECRAWL_URL} but not in local mode (tier: ${LIBRECRAWL_TIER:-none}); the helper will not use it"
+		fi
+	else
+		print_warning "LibreCrawl: not reachable at ${LIBRECRAWL_URL} (optional; see seo/librecrawl.md)"
+	fi
+
 	# Check Crawl4AI
 	print_info "Checking Crawl4AI..."
 	if check_crawl4ai; then
@@ -436,11 +530,26 @@ Commands:
   help                  Show this help message
 
 Options:
-  --depth <n>           Max crawl depth (default: 3)
+  --depth <n>           Max crawl depth (default: 3; LibreCrawl accepts 1-10)
   --max-urls <n>        Max URLs to crawl (default: 100)
   --format <fmt>        Output format: csv, xlsx, all (default: xlsx)
   --output <dir>        Output directory (default: ~/Downloads)
-  --fallback            Force use of fallback crawler (skip Crawl4AI)
+  --engine <name>       auto (default), librecrawl, crawl4ai or fallback
+  --fallback            Same as --engine fallback
+
+LibreCrawl-only options (other engines reject them):
+  --render-js           Render JavaScript in Chromium (SPAs)
+  --user-agent <ua>     Custom user agent
+  --ignore-robots       Do not obey robots.txt
+  --include <regex,..>  Only crawl URLs matching a regex (repeatable)
+  --exclude <regex,..>  Skip URLs matching a regex (repeatable)
+  --include-pagespeed   PageSpeed for the home page and 2 section pages
+                        (key: GOOGLE_API_KEY env or aidevops secret)
+  --timeout <min>       Stop and export partial results after N minutes (default: 60)
+
+Engine selection (auto):
+  LibreCrawl when it answers in local mode at LIBRECRAWL_URL
+  (default http://127.0.0.1:5000), else Crawl4AI, else the fallback crawler.
 
 Examples:
   # Full site crawl
@@ -448,6 +557,10 @@ Examples:
 
   # Limited crawl
   site-crawler-helper.sh crawl https://example.com --depth 2 --max-urls 50
+
+  # LibreCrawl with JavaScript rendering, skipping admin paths
+  site-crawler-helper.sh crawl https://example.com --engine librecrawl \
+    --render-js --exclude '/wp-admin/,/wp-json/'
 
   # Quick broken link check
   site-crawler-helper.sh audit-links https://example.com
@@ -466,11 +579,14 @@ Output Structure:
     - redirects.csv        Redirect chains
     - meta-issues.csv      Title/description issues
     - summary.json         Crawl statistics
+    - librecrawl-urls.json, librecrawl-links.csv, librecrawl-issues.csv
+                           Raw LibreCrawl exports (LibreCrawl engine only)
 
   ~/Downloads/{domain}/_latest -> symlink to latest crawl
 
 Backends:
-  - Crawl4AI (preferred): Uses Docker-based Crawl4AI when available
+  - LibreCrawl: self-hosted SEO crawler (seo/librecrawl.md); used when it answers
+  - Crawl4AI: Docker-based Crawl4AI when available
   - Fallback: Lightweight async Python crawler
 
 Related:

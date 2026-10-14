@@ -16,6 +16,7 @@ subagents:
   - ahrefs
   - semrush
   - site-crawler
+  - librecrawl
   - screaming-frog
   - eeat-score
   - contentking
@@ -68,7 +69,7 @@ subagents:
 - **Research**: `conversational-search-intent` (user jobs, query forms, provenance, trends) | `keyword-research` (SERP weakness, 17 types, KeywordScore 0-100) | `ranking-opportunities` (quick wins, striking distance, cannibalization) | `query-fanout-research` (thematic fan-out) | `keyword-mapper` (placement/density) | `domain-research` | `domain-opportunities` (ranked local auction evidence)
 - **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `seo-utils` (SEO Utils desktop app: local rank trackers, GSC history, GA4, GMB grids, LLM visibility, log analysis via on-demand MCP) | `serper` (Google Search API) | `serpapi` (multi-engine SERP API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
 - **Analytics**: `google-analytics` (GA4 reporting) | `analytics-tracking` (GA4 setup, events, UTM, attribution)
-- **Technical**: `site-crawler` (links, meta, redirects) | `screaming-frog` (SEO Spider CLI) | `contentking` (real-time monitoring) | `pagespeed`
+- **Technical**: `site-crawler` (links, meta, redirects) | `librecrawl` (self-hosted SEO crawler engine: JS rendering, large crawls) | `screaming-frog` (SEO Spider CLI) | `contentking` (real-time monitoring) | `pagespeed`
 - **Content**: `content-analyzer` (readability, keywords, quality) | `seo-optimizer` (on-page audit) | `eeat-score` (7 criteria, 1-10) | `programmatic-seo` (pages at scale)
 - **Link building**: `link-building` (competitor backlink gap → topical reason per prospect → human approval → agent-sent outreach) | `backlink-checker` (lost links, reclamation)
 - **Off-site experiments**: `youtube-description-link-acquisition` (contextual sponsored placements in already-ranking videos; controlled measurement and link-spam guardrails)
@@ -109,7 +110,7 @@ site-crawler-helper.sh {crawl|audit-links|audit-meta|audit-redirects} https://ex
 **E-E-A-T scoring** (7 criteria, 1-10: Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing; output: `{domain}-eeat-score-{date}.xlsx`):
 
 ```bash
-eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
+eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.csv
 eeat-score-helper.sh score https://example.com/article
 ```
 

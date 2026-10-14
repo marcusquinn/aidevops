@@ -99,6 +99,7 @@ Hetzner.
 | Context7 MCP | Real-time documentation for AI assistants | [CONTEXT7-MCP-SETUP.md](CONTEXT7-MCP-SETUP.md) |
 | MCP Servers | Model Context Protocol configuration | [MCP-SERVERS.md](MCP-SERVERS.md) |
 | Crawl4AI | AI-powered web crawler, LLM-friendly output | [CRAWL4AI.md](CRAWL4AI.md) |
+| LibreCrawl | Free, self-hosted SEO crawler (MIT): JS rendering, large crawls, JSON/CSV exports; `site-crawler-helper.sh` engine | [seo/librecrawl.md](../seo/librecrawl.md) |
 
 ## Infrastructure Organization
 
