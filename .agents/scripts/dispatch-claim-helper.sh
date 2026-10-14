@@ -575,6 +575,33 @@ _fetch_claim_marker_comments() {
 #   $2 = repo slug
 # Returns: JSON array on stdout, exit 0 on success, exit 1 on failure
 #######################################
+# Resolve ambiguous comment authors once per snapshot, never from body fields.
+_claim_permission_trusted_authors() {
+	local comments_json="$1"
+	local repo_slug="$2"
+	local candidates login association
+	local trusted='[]'
+	[[ -n "$repo_slug" ]] || { printf '[]'; return 0; }
+	if ! declare -F _gh_actor_has_repo_write_authority >/dev/null; then
+		# shellcheck source=shared-gh-collaborator-permission.sh
+		source "${DISPATCH_CLAIM_HELPER_DIR}/shared-gh-collaborator-permission.sh" || { printf '[]'; return 0; }
+	fi
+	candidates=$(printf '%s' "$comments_json" | jq -r '
+		[.[] | select(.author_association == "CONTRIBUTOR" or .author_association == "NONE")
+		 | {login:(.author // .user.login // ""), association:.author_association}
+		 | select(.login != "")] | unique_by(.login)[] | [.login, .association] | @tsv
+	') || { printf '[]'; return 0; }
+	while IFS=$'\t' read -r login association; do
+		[[ -n "$login" ]] || continue
+		#aidevops:trust-boundary -- only authenticated write authority elevates an author.
+		if _gh_actor_has_repo_write_authority "$repo_slug" "$login" "$association"; then
+			trusted=$(printf '%s' "$trusted" | jq -c --arg login "$login" '. + [$login]')
+		fi
+	done <<<"$candidates"
+	printf '%s' "$trusted"
+	return 0
+}
+
 _fetch_claims() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -607,9 +634,12 @@ _fetch_claims() {
 	# Parse claim fields from comment bodies and filter by max age.
 	# t2401: version is an optional trailing field; legacy pre-t2401 claims
 	# lack it and parse as "unknown".
+	local permission_trusted_authors
+	permission_trusted_authors=$(_claim_permission_trusted_authors "$comments_json" "$repo_slug")
 	local parsed
 	parsed=$(printf '%s\n%s\n' "$claims_only" "$comments_json" | jq -nc --argjson now "$now_epoch" \
 		--argjson max_age "$DISPATCH_CLAIM_MAX_AGE" --argjson include_terminal false \
+		--argjson permission_trusted_authors "$permission_trusted_authors" \
 		-f "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || {
 		echo "Error: failed to parse claim comments" >&2
 		return 1
@@ -618,7 +648,7 @@ _fetch_claims() {
 	# t2400: Apply runtime override filter (extracted to keep _fetch_claims
 	# under the 100-line complexity threshold — same behaviour, separate fn).
 	parsed=$(_apply_ignore_filter "$parsed" "$issue_number" "$repo_slug" "$self_runner")
-	parsed=$(_filter_orphan_prelaunch_claims "$parsed" "$comments_json" "$issue_number" "$repo_slug" "$self_runner")
+	parsed=$(_filter_orphan_prelaunch_claims "$parsed" "$comments_json" "$issue_number" "$repo_slug" "$self_runner" "$permission_trusted_authors")
 
 	printf '%s' "$parsed"
 	return 0
@@ -636,6 +666,7 @@ _filter_orphan_prelaunch_claims() {
 	local issue_number="$3"
 	local repo_slug="$4"
 	local self_runner="${5:-}"
+	local permission_trusted_authors="${6:-}"
 
 	if [[ -z "$parsed_claims" || "$parsed_claims" == "[]" ]]; then
 		printf '%s' "${parsed_claims:-[]}"
@@ -665,7 +696,7 @@ _filter_orphan_prelaunch_claims() {
 	fi
 
 	local filtered_claims orphaned_claims removed_count remaining_count
-	filtered_claims=$(_filter_claims_with_launch_evidence "$parsed_claims" "$comments_json")
+	filtered_claims=$(_filter_claims_with_launch_evidence "$parsed_claims" "$comments_json" "$repo_slug" "$permission_trusted_authors")
 	orphaned_claims=$(printf '%s\n%s\n' "$parsed_claims" "$filtered_claims" | jq -nc '
 		input as $before | input as $after |
 		[$before[] | select(.id as $id | [$after[].id] | index($id) | not)]
@@ -687,8 +718,15 @@ _filter_orphan_prelaunch_claims() {
 _filter_claims_with_launch_evidence() {
 	local parsed_claims="$1"
 	local comments_json="$2"
+	local repo_slug="${3:-}"
+	local permission_trusted_authors="${4:-}"
+	# Reuse the fetch snapshot to avoid a second lookup during orphan filtering.
+	if [[ -z "$permission_trusted_authors" ]]; then
+		permission_trusted_authors=$(_claim_permission_trusted_authors "$comments_json" "$repo_slug")
+	fi
 
 	printf '%s\n%s\n' "$parsed_claims" "$comments_json" | jq -nc \
+		--argjson permission_trusted_authors "$permission_trusted_authors" \
 		--arg empty "" --argjson orphan_grace "$DISPATCH_CLAIM_ORPHAN_GRACE" --argjson now "$(_now_epoch)" '
 		def field($body; $name):
 			((try ($body | capture("(^|[[:space:]])" + $name + "=(?<value>[^[:space:]]+)").value) catch $empty) // $empty);
@@ -700,7 +738,9 @@ _filter_claims_with_launch_evidence() {
 			| select([(.created_at | fromdateiso8601? // 0), (.id | tonumber? // 0)] >
 				 [($claim.created_epoch // 0), ($claim.id | tonumber? // 0)])
 			# aidevops:trust-boundary
-			| select((.author_association // $empty) == "OWNER" or (.author_association // $empty) == "MEMBER" or (.author_association // $empty) == "COLLABORATOR")
+			| select((.author_association // $empty) as $assoc | (.author // .user.login // $empty) as $login |
+				$assoc == "OWNER" or $assoc == "MEMBER" or $assoc == "COLLABORATOR" or
+				(($assoc == "CONTRIBUTOR" or $assoc == "NONE") and $login != $empty and ($permission_trusted_authors | index($login) != null)))
 			| select((.author // $empty) != $empty and (.author // $empty) == ($claim.claim_author // $empty))
 			| (.body // $empty) as $body
 			| select($body | test("(^|\\n)Dispatching worker"; "i"))

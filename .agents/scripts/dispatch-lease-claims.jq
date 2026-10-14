@@ -1,5 +1,8 @@
-def trusted_association:
-    . == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
+def trusted_author($assoc; $login):
+    $assoc == "OWNER" or $assoc == "MEMBER" or $assoc == "COLLABORATOR"
+    or (($assoc == "CONTRIBUTOR" or $assoc == "NONE")
+        and $login != ""
+        and (($ARGS.named.permission_trusted_authors // []) | index($login) != null));
 
 def field($body; $name):
     ((try ($body | capture("(^|[[:space:]])" + $name + "=(?<value>[^[:space:]]+)").value) catch "") // "");
@@ -42,7 +45,7 @@ input as $comments |
        #aidevops:trust-boundary
        | select(.nonce != "" and .runner != "" and .ts != "")
        | select(.claim_author != "" and .claim_author == .runner)
-       | select(.claim_association | trusted_association)
+        | select(trusted_author(.claim_association; .claim_author))
    )) as $parsed_claims |
 [$parsed_claims[]
  | . as $claim
@@ -57,7 +60,7 @@ input as $comments |
       | (field($body; "expires_at")) as $expires
       | (field($body; "attempt_id")) as $attempt_id
       #aidevops:trust-boundary
-      | select(($comment.author_association // "") | trusted_association)
+       | select(trusted_author(($comment.author_association // ""); ($comment | author_login)))
       | select(($comment | author_login) != "" and ($comment | author_login) == $claim.claim_author)
       | select($lease_token != "" and $lease_token == $claim.lease_token and $device == $claim.device and $session == $claim.session)
       | select($phase == "prelaunch" or $phase == "ready" or $phase == "terminal")
@@ -74,7 +77,7 @@ input as $comments |
         | (field($body; "nonce")) as $nonce
         | (field($body; "runner")) as $runner
         #aidevops:trust-boundary
-        | select(($comment.author_association // "") | trusted_association)
+         | select(trusted_author(($comment.author_association // ""); ($comment | author_login)))
         | select(($comment | author_login) != "" and ($comment | author_login) == $claim.claim_author)
         | select($claim_id != "" and $nonce != "" and $runner != "")
         | select($runner == $claim.runner)
