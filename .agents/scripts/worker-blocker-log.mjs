@@ -97,6 +97,7 @@ export function normalizeWorkerBlockerEvent(input = {}, options = {}) {
     reason: cleanText(input.reason || "unknown", MAX_FIELD_LENGTH, options),
     blocking: input.blocking !== false,
     source: cleanText(input.source || "unknown", MAX_FIELD_LENGTH, options),
+    blocker_fingerprint: /^[a-f0-9]{24}$/.test(input.blocker_fingerprint || "") ? input.blocker_fingerprint : "",
     issue_number: issueNumber,
     repo_slug: normalizeWorkerBlockerRepoSlug(input.repo_slug || process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "", options),
     session_key: normalizeWorkerBlockerSessionKey(input.session_key || process.env.WORKER_SESSION_KEY || "", options),
