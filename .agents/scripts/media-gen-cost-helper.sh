@@ -183,7 +183,18 @@ _mgc_compare() {
 		done
 	fi
 
-	printf '%s' "$rows" | awk -F '\t' -v n="$clips" -v s="$secs" -v t="$takes" '
+	_mgc_render_report "$rows" "$clips" "$secs" "$takes"
+	return $?
+}
+
+# Renders the comparison table, cheapest route and GPU break-even volumes from
+# rows of "KIND<TAB>LABEL<TAB>VARIABLE_PER_KEEPER<TAB>FIXED_COST".
+_mgc_render_report() {
+	local rows="$1"
+	local clips="$2"
+	local secs="$3"
+	local takes="$4"
+	printf '%s' "$rows" | awk -v n="$clips" -v s="$secs" -v t="$takes" '
 	{
 		split($0, f, "\t")
 		kind[NR] = f[1]; label[NR] = f[2]; var[NR] = f[3] + 0; fixed[NR] = f[4] + 0
