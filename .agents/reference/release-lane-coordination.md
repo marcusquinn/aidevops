@@ -138,6 +138,21 @@ snapshot, absent-channel, permission, and remote-CAS checks rotate the lane into
 the existing tag publication. Unknown or conflicting PR, ancestry, channel,
 executor, or CAS evidence leaves the preparing lane unchanged.
 
+For an active `remote-publication` lane with no local tag candidate, discovery
+uses its exact source PR and tag to locate the merged, collaborator-authored
+same-repository protected provenance PR. Before opening that PR, version-manager
+stores the original signed object at `refs/aidevops/release-tags/v<semver>` using
+create-only CAS; an existing different object is never overwritten. Discovery
+fetches that ref and checks both tag-object and release-commit identities. Older
+PRs without a staging ref may recover the API's signed payload plus signature,
+but only the exact pinned tag-object hash is adopted. A conflicting staging ref,
+untrusted PR, malformed marker or changed payload refuses recovery. This local
+adoption never publishes: the existing candidate verifier still checks signatures,
+manifests and merged-head ancestry before any public tag push. Merge-helper
+post-merge handling resumes only the matching active source lane once; pending
+publication remains queued, not a terminal receipt. Native auto-merge without a
+merge-helper observation still needs the same-source reconcile command.
+
 Same-source reservation reclaim still removes automatic eligibility, but now
 records a `same-source-reclaim/v1` marker when it removes a modern fenced
 contract. For lanes reclaimed before that marker existed, recovery must verify

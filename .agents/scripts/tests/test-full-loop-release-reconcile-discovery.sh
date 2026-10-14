@@ -8,6 +8,103 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	exec bash "$(dirname "${BASH_SOURCE[0]}")/test-full-loop-release-reconcile.sh" "$@"
 fi
 
+# Ordinary no-match fixtures have no active remote lane.
+release_lane_read() { return 2; }
+
+# GH#34633: use a real remote and a second clone with no public/local tag.
+(
+	recovery_remote="${TEST_ROOT}/recovery-remote.git"
+	recovery_source="${TEST_ROOT}/recovery-source"
+	recovery_clone="${TEST_ROOT}/recovery-clone"
+	git init -q --bare "$recovery_remote"
+	git init -q -b main "$recovery_source"
+	git -C "$recovery_source" config user.name Test
+	git -C "$recovery_source" config user.email test@example.invalid
+	git -C "$recovery_source" -c commit.gpgsign=false commit -q --allow-empty -m seed
+	git -C "$recovery_source" -c commit.gpgsign=false commit -q --allow-empty -m release
+	recovery_commit=$(git -C "$recovery_source" rev-parse HEAD)
+	git -C "$recovery_source" remote add origin "$recovery_remote"
+	git -C "$recovery_source" push -q origin main
+	ssh-keygen -q -t ed25519 -N '' -f "${TEST_ROOT}/recovery-key"
+	printf 'test@example.invalid %s\n' "$(<"${TEST_ROOT}/recovery-key.pub")" >"${TEST_ROOT}/recovery-allowed"
+	git -C "$recovery_source" -c gpg.format=ssh -c user.signingkey="${TEST_ROOT}/recovery-key" \
+		tag -s v8.0.0 -m $'Release\n\nAidevops-Source-PR: 89'
+	recovery_object=$(git -C "$recovery_source" rev-parse refs/tags/v8.0.0)
+	REPO_ROOT="$recovery_source"
+	_version_manager_stage_protected_tag v8.0.0 "$recovery_object"
+	git --git-dir="$recovery_remote" symbolic-ref HEAD refs/heads/main
+	git clone -q "$recovery_remote" "$recovery_clone"
+	REPO_ROOT="$recovery_clone"
+	git -C "$REPO_ROOT" config gpg.format ssh
+	git -C "$REPO_ROOT" config gpg.ssh.allowedSignersFile "${TEST_ROOT}/recovery-allowed"
+	if git -C "$REPO_ROOT" show-ref --verify --quiet refs/tags/v8.0.0; then exit 1; fi
+	printf -v recovery_marker '<!-- aidevops:release-provenance tag=v8.0.0 tag-object=%s release-commit=%s merge-method=merge -->' \
+		"$recovery_object" "$recovery_commit"
+	recovery_pr=$(jq -cn --arg body "$recovery_marker" --arg sha "$recovery_commit" '{
+		number:77,state:"closed",merged_at:"2026-10-14T07:36:48Z",author_association:"OWNER",body:$body,
+		head:{ref:"chore/release-v8.0.0-provenance",sha:$sha,repo:{full_name:"test/repo"}},
+		base:{ref:"main",repo:{full_name:"test/repo"}}}')
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON='{"active":true,"source_pr":89,"phase":"remote-publication","tag":"v8.0.0","terminal_receipt":null}'
+		return 0
+	}
+	gh() {
+		local args="$*"
+		case "$args" in
+		*"git/tags/"*) printf '%s\n' "$recovery_api" ;;
+		*"repos/test/repo/pulls"*) printf '[%s]\n' "$recovery_pr" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	_full_loop_release_source_json_from_tag() {
+		printf '{"source_pr":89,"aggregated_sources":[]}\n'
+		return 0
+	}
+	_full_loop_release_tag_body() {
+		local tag_name="$1"
+		git -C "$REPO_ROOT" for-each-ref --format='%(contents)' "refs/tags/${tag_name}"
+		return $?
+	}
+	_full_loop_release_verify_protected_source_provenance() {
+		local repo="$1" tag_name="$2"
+		[[ "$repo" == test/repo ]] || return 1
+		git -C "$REPO_ROOT" verify-tag "$tag_name" >/dev/null 2>&1
+		return $?
+	}
+	_full_loop_release_find_tag_for_pr test/repo 89
+	[[ "$_FULL_LOOP_RELEASE_FOUND_TAG" == v8.0.0 ]]
+	[[ "$(git -C "$REPO_ROOT" rev-parse refs/tags/v8.0.0)" == "$recovery_object" ]]
+	[[ -z "$(git ls-remote --tags "$recovery_remote")" ]]
+	printf 'PASS cross-host staging discovery preserves signed object and verifies merged ancestry without publishing\n'
+
+	# An untrusted PR must not adopt even an otherwise valid staged object.
+	git -C "$REPO_ROOT" update-ref -d refs/tags/v8.0.0
+	recovery_pr=$(jq '.author_association="NONE"' <<<"$recovery_pr")
+	if _full_loop_release_recover_lane_tag test/repo 89 >/dev/null 2>&1; then exit 1; fi
+	recovery_pr=$(jq '.author_association="OWNER"' <<<"$recovery_pr")
+	# A different object at the staging ref must fail, not fall back to the API.
+	git --git-dir="$recovery_remote" update-ref refs/aidevops/release-tags/v8.0.0 "$recovery_commit"
+	if _full_loop_release_recover_lane_tag test/repo 89 >/dev/null 2>&1; then exit 1; fi
+	if _version_manager_stage_protected_tag v8.0.0 "$recovery_object" >/dev/null 2>&1; then exit 1; fi
+	printf 'PASS untrusted PR and competing staging objects fail closed\n'
+
+	# Backward compatibility: reconstruct only exact stored signed payload bytes.
+	git --git-dir="$recovery_remote" update-ref -d refs/aidevops/release-tags/v8.0.0
+	recovery_api=$(git -C "$recovery_source" cat-file tag "$recovery_object" |
+		jq -Rs --arg sha "$recovery_commit" 'split("-----BEGIN SSH SIGNATURE-----") |
+		{tag:"v8.0.0",object:{sha:$sha,type:"commit"},verification:{payload:.[0],
+		signature:("-----BEGIN SSH SIGNATURE-----" + .[1])}}')
+	_full_loop_release_find_tag_for_pr test/repo 89
+	[[ "$_FULL_LOOP_RELEASE_FOUND_TAG" == v8.0.0 ]]
+	git -C "$REPO_ROOT" verify-tag v8.0.0 >/dev/null 2>&1
+	git -C "$REPO_ROOT" update-ref -d refs/tags/v8.0.0
+	recovery_api=$(jq '.verification.payload += "tampered"' <<<"$recovery_api")
+	if _full_loop_release_recover_lane_tag test/repo 89 >/dev/null 2>&1; then exit 1; fi
+	if git -C "$REPO_ROOT" show-ref --verify --quiet refs/tags/v8.0.0; then exit 1; fi
+	printf 'PASS exact API signature-payload recovery works without staging and rejects changed bytes\n'
+)
+
 legacy_found_tag_file="${TEST_ROOT}/legacy-found-tag.txt"
 (
 	git() {

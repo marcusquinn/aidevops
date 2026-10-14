@@ -1185,12 +1185,18 @@ _merge_admin_fallback_required_checks_clear() {
 # Generic "base branch policy prohibits the merge" text carries no review
 # evidence. Confirm from live state: the PR still needs review and the base
 # branch protection requires at least one approving review.
+_merge_pr_api_path() {
+	local repo="$1" pr_number="$2"
+	printf 'repos/%s/pulls/%s\n' "$repo" "$pr_number"
+	return 0
+}
+
 _merge_generic_block_is_review_only() {
 	local pr_number="$1" repo="$2"
 	local decision="" base_branch="" review_count=""
 	decision=$(_merge_with_admission_retry gh pr view "$pr_number" --repo "$repo" --json reviewDecision --jq '.reviewDecision // ""') || return 1
 	[[ "$decision" == "REVIEW_REQUIRED" ]] || return 1
-	base_branch=$(_merge_with_admission_retry gh api "repos/${repo}/pulls/${pr_number}" --jq '.base.ref // empty') || return 1
+	base_branch=$(_merge_with_admission_retry gh api "$(_merge_pr_api_path "$repo" "$pr_number")" --jq '.base.ref // empty') || return 1
 	[[ -n "$base_branch" ]] || return 1
 	review_count=$(_merge_with_admission_retry gh api "repos/${repo}/branches/${base_branch}/protection/required_pull_request_reviews" --jq '.required_approving_review_count // 0') || return 1
 	[[ "$review_count" =~ ^[0-9]+$ && "$review_count" -ge 1 ]] || return 1
@@ -1497,6 +1503,32 @@ _merge_capture_session_distill_provenance() {
 	return 0
 }
 
+# A merged protected release PR resumes only the matching active source lane.
+# Run in a subshell: release helpers must not alter merge/cleanup globals.
+_merge_reconcile_provenance_release() (
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json="" head_ref="" tag_name="" source_pr="" reconcile_rc=0 lane_rc=0
+	pr_json=$(_flm_gh_read gh api "$(_merge_pr_api_path "$repo" "$pr_number")") || return 1
+	head_ref=$(jq -r '.head.ref // ""' <<<"$pr_json") || return 1
+	[[ "$head_ref" =~ ^chore/release-(v[0-9]+\.[0-9]+\.[0-9]+)-provenance$ ]] || return 0
+	tag_name="${BASH_REMATCH[1]}"
+	#aidevops:trust-boundary
+	jq -e --arg repo "$repo" '.merged == true and .head.repo.full_name == $repo
+		and .base.repo.full_name == $repo and .base.ref == "main"' <<<"$pr_json" >/dev/null || return 1
+	# shellcheck source=./release-lane-helper.sh
+	source "${SCRIPT_DIR}/release-lane-helper.sh"
+	release_lane_read "$repo" || lane_rc=$?
+	case "$lane_rc" in 0) ;; 2) return 0 ;; *) return 1 ;; esac
+	source_pr=$(jq -er --arg tag "$tag_name" 'select(.active == true
+		and .phase == "remote-publication" and .tag == $tag and .terminal_receipt == null)
+		| .source_pr | select(type == "number" and . > 0 and floor == .)' \
+		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 0
+	AIDEVOPS_FULL_LOOP_REPO="$repo" bash "${SCRIPT_DIR}/full-loop-release-helper.sh" \
+		reconcile "$source_pr" || reconcile_rc=$?
+	case "$reconcile_rc" in 0 | 8) return 0 ;; *) return "$reconcile_rc" ;; esac
+)
+
 _merge_finalize_post_merge() {
 	local pr_number="$1"
 	local repo="$2"
@@ -1512,6 +1544,8 @@ _merge_finalize_post_merge() {
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$linked_issue" || true
 	fi
 	_merge_reconcile_closing_issues "$pr_number" "$repo" || true
+	_merge_reconcile_provenance_release "$pr_number" "$repo" ||
+		print_warning "Protected release reconciliation deferred; inspect the matching source lane with aidevops release status"
 	if declare -F _full_loop_record_merged_pr >/dev/null 2>&1; then
 		_full_loop_record_merged_pr "$pr_number" || return 1
 	fi
@@ -1561,7 +1595,7 @@ _merge_release_provenance_method() {
 	local merge_method="$3"
 	local head_ref="${4:-}"
 	if [[ -z "$head_ref" ]]; then
-		head_ref=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.ref // ""') || {
+		head_ref=$(_flm_gh_read gh api "$(_merge_pr_api_path "$repo" "$pr_number")" --jq '.head.ref // ""') || {
 			print_error "Merge blocked: cannot read PR #${pr_number} head ref for release provenance check"
 			return 1
 		}

@@ -379,6 +379,72 @@ _full_loop_release_candidate_tags_for_pr() {
 	return 0
 }
 
+#aidevops:trust-boundary
+# Discovery may adopt an object, never publish it. The caller still verifies the
+# signed source manifest and the protected PR's exact-head/main ancestry.
+_full_loop_release_recover_lane_tag() {
+	local repo="$1"
+	local requested_pr="$2"
+	local tag_name="" tag_ref="" branch_name="" body="" tag_object="" release_commit=""
+	local fetched_object="" fetched_commit="" staging_ref="" api_tag="" lane_rc=0
+	local marker_regex='<!-- aidevops:release-provenance tag=(v[0-9]+\.[0-9]+\.[0-9]+) tag-object=([0-9a-f]{40}) release-commit=([0-9a-f]{40}) merge-method=merge -->'
+
+	release_lane_read "$repo" || lane_rc=$?
+	case "$lane_rc" in 0) ;; 2) return 0 ;; *) return 1 ;; esac
+	if ! jq -e --argjson pr "$requested_pr" --arg phase "$_FULL_LOOP_RELEASE_PHASE_REMOTE" \
+		--arg string "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" '
+		.active == true and .source_pr == $pr and .phase == $phase
+		and .terminal_receipt == null and (.tag | type == $string)
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
+		return 0
+	fi
+	tag_name=$(jq -er '.tag' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	[[ "$tag_name" =~ $_FULL_LOOP_RELEASE_VERSION_TAG_REGEX ]] || return 1
+	branch_name=$(_version_manager_protected_release_branch_name "${tag_name#v}") || return 1
+	_version_manager_find_protected_release_pr "$repo" "$branch_name" || return 1
+	[[ -n "$_VERSION_MANAGER_PROTECTED_PR_NUMBER" ]] || return 1
+	_version_manager_verify_protected_pr_state \
+		"$(jq -r '.state' <<<"$_VERSION_MANAGER_PROTECTED_PR_JSON")" \
+		"$(jq -r '.merged_at // ""' <<<"$_VERSION_MANAGER_PROTECTED_PR_JSON")" || return 1
+	[[ "$(jq -r '.state' <<<"$_VERSION_MANAGER_PROTECTED_PR_JSON")" == "closed" ]] || return 0
+	body=$(jq -r '.body // ""' <<<"$_VERSION_MANAGER_PROTECTED_PR_JSON") || return 1
+	[[ "$body" =~ $marker_regex && "${BASH_REMATCH[1]}" == "$tag_name" ]] || return 1
+	tag_object="${BASH_REMATCH[2]}"
+	release_commit="${BASH_REMATCH[3]}"
+	_version_manager_verify_protected_pr_identity "$repo" "$branch_name" "${tag_name#v}" \
+		"$tag_object" "$release_commit" || return 1
+	staging_ref=$(git -C "$REPO_ROOT" ls-remote origin "refs/aidevops/release-tags/${tag_name}") || return 1
+	if [[ -n "$staging_ref" ]]; then
+		git -C "$REPO_ROOT" fetch --no-tags origin "refs/aidevops/release-tags/${tag_name}" --quiet || return 1
+		fetched_object=$(git -C "$REPO_ROOT" rev-parse FETCH_HEAD) || return 1
+	else
+		# Older protected PRs have no staging ref. GitHub retains the signed
+		# payload; restore only bytes hashing to the PR's pinned object. Its
+		# API verification verdict is NOT a substitute for local verify-tag.
+		api_tag=$(gh api "repos/${repo}/git/tags/${tag_object}") || return 1
+		jq -e --arg tag "$tag_name" --arg commit "$release_commit" \
+			--arg string "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" '
+			.tag == $tag and .object.sha == $commit and .object.type == "commit"
+			and (.verification.payload | type == $string)
+			and (.verification.signature | type == $string)
+		' <<<"$api_tag" >/dev/null || return 1
+		fetched_object=$(jq -j '.verification.payload + .verification.signature' <<<"$api_tag" |
+			git -C "$REPO_ROOT" hash-object -t tag -w --stdin) || return 1
+		[[ "$fetched_object" == "$tag_object" ]] || return 1
+		git -C "$REPO_ROOT" fetch --no-tags origin main --quiet || return 1
+	fi
+	fetched_commit=$(git -C "$REPO_ROOT" rev-parse "${fetched_object}^{commit}") || return 1
+	[[ "$fetched_object" == "$tag_object" && "$fetched_commit" == "$release_commit" ]] || return 1
+	[[ "$(git -C "$REPO_ROOT" cat-file -t "$fetched_object")" == "tag" ]] || return 1
+	# CAS creation refuses to replace any pre-existing local tag, including a
+	# concurrent discovery result. All publication remains in the verifier path.
+	printf -v tag_ref 'refs/tags/%s' "$tag_name"
+	git -C "$REPO_ROOT" update-ref "$tag_ref" "$tag_object" \
+		0000000000000000000000000000000000000000 || return 1
+	printf '%s\n' "$tag_name"
+	return 0
+}
+
 _full_loop_release_find_tag_for_pr() {
 	local repo="$1"
 	local requested_pr="$2"
@@ -407,6 +473,9 @@ _full_loop_release_find_tag_for_pr() {
 		_full_loop_release_timing_finish release-tag-candidate-index "$phase_started" failed
 		_full_loop_release_timing_finish release-tag-discovery "$discovery_started" failed
 		return 1
+	fi
+	if [[ -z "$candidate_tags" ]]; then
+		candidate_tags=$(_full_loop_release_recover_lane_tag "$repo" "$requested_pr") || return 1
 	fi
 	while IFS= read -r candidate_tag; do
 		[[ -n "$candidate_tag" ]] && candidate_count=$((candidate_count + 1))

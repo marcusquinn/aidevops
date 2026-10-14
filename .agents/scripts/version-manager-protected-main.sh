@@ -613,6 +613,22 @@ _version_manager_publish_reachable_tag() {
 	return 0
 }
 
+_version_manager_stage_protected_tag() {
+	local tag_name="$1"
+	local tag_object="$2"
+	local staging_ref="refs/aidevops/release-tags/${tag_name}" existing=""
+	existing=$(git -C "$REPO_ROOT" ls-remote origin "$staging_ref") || return 1
+	if [[ -n "$existing" ]]; then
+		[[ "$existing" == "$tag_object"$'\t'"$staging_ref" ]]
+		return $?
+	fi
+	_version_manager_require_aggregate_fence || return 1
+	# The empty lease is create-only CAS, not permission to replace an object.
+	AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$REPO_ROOT" push \
+		--force-with-lease="${staging_ref}:" origin "${tag_object}:${staging_ref}" || return 1
+	return 0
+}
+
 _version_manager_queue_protected_main_release() {
 	local version="$1"
 	local tag_name="v${version}"
@@ -651,6 +667,9 @@ _version_manager_queue_protected_main_release() {
 		_version_manager_publish_reachable_tag "$tag_name" || return 1
 		return 0
 	fi
+	# Preserve the original signed object on a fetchable, non-publication ref
+	# before the PR can merge. Never force a competing object at this name.
+	_version_manager_stage_protected_tag "$tag_name" "$tag_object" || return 1
 	_version_manager_create_or_reuse_protected_pr "$repo" "$version" "$branch_name" \
 		"$_VERSION_MANAGER_PROTECTED_RELEASE_HEAD" "$tag_object" "$release_commit" || return 1
 	_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="$_VERSION_MANAGER_RELEASE_RESULT_QUEUED"

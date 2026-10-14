@@ -157,7 +157,7 @@ export AUTO_MERGE_FILE="${TEST_ROOT}/auto-merge"
 export PR_MERGED_FILE="${TEST_ROOT}/pr-merged"
 export STALE_PR_FILE="${TEST_ROOT}/stale-pr"
 export PR_RECREATED_FILE="${TEST_ROOT}/pr-recreated"
-export PATH="${BIN}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="${BIN}:${PATH}"
 export AIDEVOPS_VERSION_MANAGER_REPO_SLUG=test/repo
 
 print_error() {
@@ -233,6 +233,9 @@ if grep -Eq ' rebase | commit --amend| tag -(d|s) ' "$FAKE_GIT_LOG"; then
 	exit 1
 fi
 printf 'PASS recovery branch preserves the original release commit and tag object\n'
+
+[[ "$("$REAL_GIT" ls-remote "$REMOTE" refs/aidevops/release-tags/v1.2.3 | cut -f1)" == "$TAG_OBJECT" ]]
+printf 'PASS protected PR queue first preserves the exact tag on a fetchable staging ref\n'
 
 # GH#34434: release-tool pushes run in dependency-free worktrees, so each one
 # skips only the repo-verify guard for that command.

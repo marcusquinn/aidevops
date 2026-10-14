@@ -181,6 +181,43 @@ PROBE_EOF
 	return 0
 }
 
+test_protected_release_merge_reconciles_matching_lane() {
+	local rc=0
+	(
+		SCRIPT_DIR="${SCRIPT_DIR}/.."
+		# shellcheck source=../full-loop-helper-merge.sh
+		source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+		_AIDEVOPS_RELEASE_LANE_LOADED=1
+		fixture_pr='{"merged":true,"head":{"ref":"chore/release-v8.0.0-provenance","repo":{"full_name":"test/repo"}},"base":{"ref":"main","repo":{"full_name":"test/repo"}}}'
+		fixture_lane='{"active":true,"source_pr":89,"phase":"remote-publication","tag":"v8.0.0","terminal_receipt":null}'
+		_flm_gh_read() {
+			printf '%s\n' "$fixture_pr"
+			return 0
+		}
+		release_lane_read() {
+			_AIDEVOPS_RELEASE_LANE_JSON="$fixture_lane"
+			return 0
+		}
+		bash() {
+			[[ "$AIDEVOPS_FULL_LOOP_REPO" == test/repo && "$*" == *'full-loop-release-helper.sh reconcile 89' ]] || return 1
+			printf 'reconcile\n' >>"${TEST_ROOT}/protected-reconcile.log"
+			return 8
+		}
+		_merge_reconcile_provenance_release 77 test/repo || exit 1
+		[[ "$(wc -l <"${TEST_ROOT}/protected-reconcile.log")" -eq 1 ]] || exit 1
+		fixture_lane=$(jq '.tag="v9.0.0"' <<<"$fixture_lane")
+		_merge_reconcile_provenance_release 77 test/repo || exit 1
+		[[ "$(wc -l <"${TEST_ROOT}/protected-reconcile.log")" -eq 1 ]] || exit 1
+		fixture_pr=$(jq '.merged=false' <<<"$fixture_pr")
+		if _merge_reconcile_provenance_release 77 test/repo; then exit 1; fi
+		fixture_pr=$(jq '.head.ref="feature/ordinary"' <<<"$fixture_pr")
+		_merge_reconcile_provenance_release 77 test/repo || exit 1
+		[[ "$(wc -l <"${TEST_ROOT}/protected-reconcile.log")" -eq 1 ]] || exit 1
+	) || rc=$?
+	print_result "protected release merge resumes only its matching active source lane once" "$rc"
+	return 0
+}
+
 # shellcheck source=./test-full-loop-merge-cases.sh
 # shellcheck disable=SC1091  # Sibling test module resolved at runtime.
 source "${SCRIPT_DIR}/test-full-loop-merge-cases.sh"
@@ -204,6 +241,7 @@ main() {
 	test_other_error_no_fallback
 	test_late_review_blocks_every_merge_transport
 	test_graphql_rate_limit_rest_fallback
+	test_protected_release_merge_reconciles_matching_lane
 	test_graphql_rate_limit_cmd_merge_phase_autofile
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback
