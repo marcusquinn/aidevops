@@ -979,7 +979,9 @@ run_dirty_race_cleanup_pass() {
 		}
 		worktree_has_changes() {
 			local candidate_path="$1"
-			git -C "$candidate_path" status --porcelain 2>/dev/null | grep -q .
+			local candidate_status=""
+			candidate_status=$(git -C "$candidate_path" status --porcelain 2>/dev/null) || return 1
+			[[ -n "$candidate_status" ]]
 			return $?
 		}
 		_clean_remove_classified_worktree "$wt_path" "$branch" "true" "true" \
@@ -1039,7 +1041,7 @@ RACE_GIT
 	fi
 	first_backup_count=$(count_dirty_backup_refs "$repo_path")
 	metadata=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null) || rc=1
-	printf '%s\n' "$metadata" | grep -Fqx "locked foreign-after-archive" || rc=1
+	grep -Fqx "locked foreign-after-archive" <<<"$metadata" || rc=1
 
 	# Pass 2: the lock is gone before the next pass but wins again after the
 	# archive; the unchanged worktree must reuse its existing backup.
@@ -1063,8 +1065,8 @@ RACE_GIT
 	[[ "$(<"$wt_path/closed-issue-dirty-race.txt")" == "$expected_tracked" ]] || rc=1
 	[[ "$(<"$wt_path/untracked-race.txt")" == "$expected_untracked" ]] || rc=1
 	[[ "$actual_status" == "$expected_status" ]] || rc=1
-	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
-	printf '%s\n' "$metadata" | grep -Fqx "locked foreign-after-archive" || rc=1
+	grep -Fqx "worktree $wt_root" <<<"$metadata" || rc=1
+	grep -Fqx "locked foreign-after-archive" <<<"$metadata" || rc=1
 	[[ "$stash_count" -eq 0 ]] || rc=1
 	[[ "$first_backup_count" -eq 1 && "$second_backup_count" -eq 1 && "$third_backup_count" -eq 1 ]] || rc=1
 	print_result "closed issue dirty lock race preserves files without duplicate archives" "$rc" \
