@@ -20,6 +20,12 @@ function lifecycleError(message) {
   return new Error(`Authenticated Playwriter relay: ${message}`);
 }
 
+export function requirePosixProcessGroups() {
+  if (!POSIX_GROUPS) {
+    throw lifecycleError("requires POSIX process groups; Windows is not supported");
+  }
+}
+
 export function cleanupPrivateRuntime(runtime) {
   const stats = lstatSync(runtime.directory);
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
@@ -123,4 +129,3 @@ export async function terminateChild(child) {
   child.kill("SIGKILL");
   await waitForExit(child, KILL_SETTLE_MS);
 }
-

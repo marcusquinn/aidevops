@@ -11,13 +11,13 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { runGuardian, spawnGuardian, stopGuardian } from "./playwriter-relay-guardian.mjs";
 import {
   MARKER_NAME,
-  POSIX_GROUPS,
   STATE_SCHEMA,
   STOP_SIGNALS,
   TERMINATE_GRACE_MS,
   hasExited,
   pause,
   removePrivateRuntime,
+  requirePosixProcessGroups,
   terminateChild,
 } from "./playwriter-relay-lifecycle.mjs";
 import { guardianStartTime, reconcileOwnedRelays } from "./playwriter-relay-reconcile.mjs";
@@ -303,9 +303,7 @@ async function supervise(command, environment) {
 export async function main(argv = process.argv.slice(2), environment = process.env) {
   // Refuse both supervisor and guardian entry before any runtime or child exists.
   // Signalling only a Windows package runner can orphan the real relay listener.
-  if (!POSIX_GROUPS) {
-    throw fixedError("requires POSIX process groups; Windows is not supported");
-  }
+  requirePosixProcessGroups();
   if (argv[0] === GUARDIAN_FLAG) {
     // The guardian inherits the supervisor's token; minting here would start
     // a relay its MCP client cannot authenticate to, or none at all.
