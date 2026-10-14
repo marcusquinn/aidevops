@@ -61,7 +61,7 @@ LibreCrawl has no versioned API. After an update, run a small crawl (`--max-urls
 
 1. Signs in as a guest (`POST /api/guest-login`) with a cookie jar in a private `mktemp -d` directory that is removed on exit, then checks `GET /api/user/info`. Local mode gives guests the admin tier; any other tier stops the crawl.
 2. Applies settings for that session only (`POST /api/save_settings`, then `/api/update_crawler_settings`). Your dashboard settings are not changed. Unset options use LibreCrawl's defaults (1 s crawl delay, 5 workers, sitemap discovery on).
-3. Starts the crawl (`POST /api/start_crawl`) and polls `GET /api/crawl_status` every 2 s. On `--timeout` (default 60 min) or Ctrl-C it calls `POST /api/stop_crawl`; a timeout still exports partial results and exits non-zero.
+3. Starts the crawl (`POST /api/start_crawl`) and polls `GET /api/crawl_status` every 2 s. On `--timeout` (default 60 min) or Ctrl-C it calls `POST /api/stop_crawl`. A timeout still exports partial results with `"complete": false` and exits non-zero; Ctrl-C removes the private temp directory and exits 130 without exporting reports.
 4. Exports through `GET /api/export_stream` and writes the shared layout.
 
 | Helper flag | LibreCrawl setting |
@@ -69,11 +69,28 @@ LibreCrawl has no versioned API. After an update, run a small crawl (`--max-urls
 | `--depth N` (1–10) | `maxDepth` |
 | `--max-urls N` | `maxUrls` |
 | `--render-js` | `enableJavaScript` (Chromium via Playwright) |
-| `--user-agent UA` | `userAgent` and `jsUserAgent` |
+| `--user-agent UA` | `userAgent` and `jsUserAgent`; applies to HTTP crawling with JavaScript rendering off as well as the JS setting |
 | `--ignore-robots` | `respectRobotsTxt=false` |
 | `--include a,b` / `--exclude a,b` | `includePatterns` / `excludePatterns` (Python regexes matched anywhere in the URL; repeat the flag or separate with commas) |
 | `--include-pagespeed` | `enablePageSpeed`, plus `googleApiKey` from `GOOGLE_API_KEY` in the environment or `aidevops secret get GOOGLE_API_KEY`. The key goes in a request body file, never on a command line. LibreCrawl tests the home page and two section pages. |
 | `--timeout MIN` | Helper-side limit |
+
+Include/exclude patterns filter discovered crawl URLs, not the initial URL: the start page is still crawled even when it does not match `--include`. Robots.txt and sitemap discovery requests can also fall outside these patterns. Use `crawl-data.csv` to check the filtered HTML pages, rather than assuming every request in the server log must match.
+
+## Live verification
+
+Verified on 2026-10-14 against upstream `05a1372de833`, in local mode, using a loopback-only fixture with relative `/blog/` and `/shop/` links. No engine changes were needed. The evidence and commands are recorded in [issue #34652](https://github.com/marcusquinn/aidevops/issues/34652) and its linked PR.
+
+| CLI path | Observed result |
+|----------|-----------------|
+| `--user-agent aidevops-ua-check/1.0 --max-urls 10` (JS off) | Fixture logged that exact UA for page, robots.txt and sitemap requests; exit 0, seven HTML rows, `"complete": true` |
+| `--include /blog/ --max-urls 50` | Exit 0; start URL plus three `/blog/` rows, no `/shop/` rows |
+| `--exclude /shop/ --max-urls 50` | Exit 0; start URL plus three `/blog/` rows, no `/shop/` rows |
+| `--timeout 1 --max-urls 1000` (361 discovered pages, slow responses) | Exit 1; 99 partial HTML rows and `"complete": false`, `librecrawl.status: "timeout"`; `POST /api/stop_crawl` returned 200 and the session was no longer running |
+| SIGINT during a slow crawl | Session was `running` before SIGINT; exit 130; `POST /api/stop_crawl` returned 200; session no longer running; no `librecrawl-*` private temp directories remained |
+| `--engine fallback --user-agent x` | Exit 1 with the LibreCrawl-only flag rejection |
+
+This verifies the listed paths on that upstream revision, not API compatibility with future LibreCrawl updates. Repeat the slow-crawl checks after upstream changes to settings, stop or export handling.
 
 ## Output
 
