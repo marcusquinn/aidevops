@@ -1119,7 +1119,9 @@ _lia_author_authority() {
 	else
 		case "$assoc" in
 		OWNER | MEMBER) is_external="$_PIR_BOOL_FALSE" ;;
-		COLLABORATOR)
+		# GH#34644: private org members surface as CONTRIBUTOR/NONE; the
+		# shared helper trusts them only with write+ repository permission.
+		COLLABORATOR | CONTRIBUTOR | NONE)
 			local authority_rc=0
 			if declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1; then
 				_gh_actor_has_repo_write_authority "$slug" "$author_login" "$assoc" || authority_rc=$?

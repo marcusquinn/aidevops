@@ -19,10 +19,16 @@ _AIDEVOPS_GH_COLLAB_API_FAILURE_REASON="api-failure"
 # OWNER and MEMBER are authoritative webhook associations. COLLABORATOR is
 # ambiguous because GitHub also emits it for read/triage collaborators, so it
 # must be backed by the authenticated per-repository permission endpoint.
+# CONTRIBUTOR and NONE are ambiguous in the other direction: GitHub reports a
+# private organization member (even an org admin with repository admin) as
+# CONTRIBUTOR or NONE (GH#24546, GH#34644). Those associations therefore use
+# the same permission lookup; only admin/maintain/write grants trust, and a
+# lookup failure stays unknown (rc=2) so callers fail closed without mutation.
 # Installation-authenticated REST may report a user-repository owner as
 # COLLABORATOR with permission=none; that anomaly receives a second, canonical
-# repository-identity check. Other associations are confirmed non-maintainer
-# inputs and do not spend an additional API request.
+# repository-identity check. Remaining associations (FIRST_TIMER,
+# FIRST_TIME_CONTRIBUTOR, MANNEQUIN, unknown values) are confirmed
+# non-maintainer inputs and do not spend an additional API request.
 #
 # Globals written:
 #   AIDEVOPS_GH_ACTOR_AUTHORITY_LEVEL
@@ -43,6 +49,8 @@ _gh_actor_has_repo_write_authority() {
 	export AIDEVOPS_GH_ACTOR_AUTHORITY_LEVEL AIDEVOPS_GH_ACTOR_AUTHORITY_REASON
 
 	#aidevops:trust-boundary -- bare COLLABORATOR must never authorize worker input.
+	# CONTRIBUTOR/NONE never authorize by association either; they are trusted
+	# only when the authenticated per-repository permission is write or higher.
 	case "$association" in
 	OWNER | MEMBER)
 		AIDEVOPS_GH_ACTOR_AUTHORITY_LEVEL="$association"
@@ -50,8 +58,15 @@ _gh_actor_has_repo_write_authority() {
 		export AIDEVOPS_GH_ACTOR_AUTHORITY_LEVEL AIDEVOPS_GH_ACTOR_AUTHORITY_REASON
 		return 0
 		;;
-	COLLABORATOR)
+	COLLABORATOR | CONTRIBUTOR | NONE)
 		if [[ -z "$repo_slug" || -z "$user" ]]; then
+			if [[ "$association" != "COLLABORATOR" ]]; then
+				# Without an identity there is nothing to elevate: the
+				# association alone remains a confirmed untrusted input.
+				AIDEVOPS_GH_ACTOR_AUTHORITY_REASON="untrusted-association:${association}"
+				export AIDEVOPS_GH_ACTOR_AUTHORITY_REASON
+				return 1
+			fi
 			AIDEVOPS_GH_ACTOR_AUTHORITY_REASON="missing-collaborator-identity"
 			export AIDEVOPS_GH_ACTOR_AUTHORITY_REASON
 			return 2
@@ -72,11 +87,11 @@ _gh_actor_has_repo_write_authority() {
 		*)
 			#aidevops:trust-boundary -- login/slug text alone is not authority.
 			# Require canonical repository metadata before repairing the known
-			# installation-auth owner anomaly.
+			# installation-auth owner anomaly (reported as COLLABORATOR only).
 			local user_lower="" repo_owner_lower=""
 			user_lower=$(printf '%s' "$user" | tr '[:upper:]' '[:lower:]')
 			repo_owner_lower=$(printf '%s' "$repo_owner" | tr '[:upper:]' '[:lower:]')
-			if [[ "$user_lower" == "$repo_owner_lower" ]]; then
+			if [[ "$association" == "COLLABORATOR" && "$user_lower" == "$repo_owner_lower" ]]; then
 				local repository_owner_rc=0
 				_gh_repository_owner_matches_actor "$repo_slug" "$user" || repository_owner_rc=$?
 				if [[ "$repository_owner_rc" -eq 0 ]]; then

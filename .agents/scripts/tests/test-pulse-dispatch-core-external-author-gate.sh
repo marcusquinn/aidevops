@@ -214,10 +214,48 @@ test_read_collaborator_without_approval_blocks() {
 test_collaborator_permission_lookup_failure_blocks() {
 	setup_case "COLLABORATOR" "User" "" 2
 	if _check_external_issue_author_gate 23 "owner/repo"; then
-		print_result "collaborator permission lookup failure blocks" 0
+		if grep -q -- '--add-label needs-maintainer-review' "$GH_CALLS_FILE"; then
+			print_result "collaborator permission lookup failure blocks without NMR" 1 "Unexpected label mutation"
+		else
+			print_result "collaborator permission lookup failure blocks without NMR" 0
+		fi
 	else
-		print_result "collaborator permission lookup failure blocks" 1 "Expected gate to fail closed"
+		print_result "collaborator permission lookup failure blocks without NMR" 1 "Expected gate to fail closed"
 	fi
+	cleanup_case
+	return 0
+}
+
+# GH#34644: private org members (including org admins) are reported as
+# CONTRIBUTOR; the shared authority helper resolves them via permission lookup.
+test_write_authorized_contributor_allows_dispatch() {
+	setup_case "CONTRIBUTOR" "User" "" 0
+	if _check_external_issue_author_gate 34644 "owner/repo"; then
+		print_result "write-authorized CONTRIBUTOR author bypasses external gate" 1 "Expected gate to allow dispatch"
+	elif grep -q -- '--add-label' "$GH_CALLS_FILE"; then
+		print_result "write-authorized CONTRIBUTOR author bypasses external gate" 1 "Unexpected label mutation"
+	else
+		print_result "write-authorized CONTRIBUTOR author bypasses external gate" 0
+	fi
+	cleanup_case
+	return 0
+}
+
+test_nmr_label_failure_is_logged() {
+	setup_case "CONTRIBUTOR" "User" "" 1
+	gh_issue_edit_safe() {
+		printf 'gh_issue_edit_safe %s\n' "$*" >>"$GH_CALLS_FILE"
+		return 1
+	}
+	if _check_external_issue_author_gate 34645 "owner/repo" && grep -q 'failed to apply needs-maintainer-review' "$LOGFILE"; then
+		print_result "failed NMR label write keeps block and is logged" 0
+	else
+		print_result "failed NMR label write keeps block and is logged" 1 "Expected block plus label-failure log"
+	fi
+	gh_issue_edit_safe() {
+		printf 'gh_issue_edit_safe %s\n' "$*" >>"$GH_CALLS_FILE"
+		return 0
+	}
 	cleanup_case
 	return 0
 }
@@ -415,6 +453,8 @@ main() {
 	test_collaborator_author_allows_dispatch
 	test_read_collaborator_without_approval_blocks
 	test_collaborator_permission_lookup_failure_blocks
+	test_write_authorized_contributor_allows_dispatch
+	test_nmr_label_failure_is_logged
 	test_external_origin_bot_without_approval_blocks
 	test_bot_with_null_labels_fails_closed
 	test_bot_with_missing_labels_fails_closed

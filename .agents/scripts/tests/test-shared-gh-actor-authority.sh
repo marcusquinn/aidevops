@@ -98,10 +98,44 @@ main() {
 	check_result "collaborator lookup failure remains unknown" 2 "permission-lookup-failed:fixture-failure" \
 		_gh_actor_has_repo_write_authority owner/repo unknown COLLABORATOR
 
+	# GH#34644: private org members (even org admins) surface as CONTRIBUTOR
+	# or NONE; the per-repository permission endpoint is authoritative.
+	MOCK_PERMISSION_RC=0
+	MOCK_PERMISSION="admin"
+	MOCK_LOOKUPS=0
+	check_result "private-org admin reported as CONTRIBUTOR is authoritative" 0 "trusted-permission" \
+		_gh_actor_has_repo_write_authority owner/repo private-admin CONTRIBUTOR
+	[[ "$MOCK_LOOKUPS" -eq 1 && "$AIDEVOPS_GH_ACTOR_AUTHORITY_LEVEL" == "admin" ]] || TESTS_FAILED=$((TESTS_FAILED + 1))
+
+	MOCK_PERMISSION="write"
+	check_result "write member reported as NONE is authoritative" 0 "trusted-permission" \
+		_gh_actor_has_repo_write_authority owner/repo private-writer NONE
+
+	MOCK_PERMISSION="read"
+	check_result "read contributor is not authoritative" 1 "insufficient-permission:read" \
+		_gh_actor_has_repo_write_authority owner/repo contributor CONTRIBUTOR
+
+	MOCK_PERMISSION="none"
+	check_result "outside contributor (404/none) is not authoritative" 1 "insufficient-permission:none" \
+		_gh_actor_has_repo_write_authority owner/repo outsider CONTRIBUTOR
+
+	MOCK_PERMISSION="none"
+	check_result "contributor named like the repo owner gets no owner repair" 1 "insufficient-permission:none" \
+		_gh_actor_has_repo_write_authority owner/repo owner CONTRIBUTOR
+
+	MOCK_PERMISSION_RC=2
+	check_result "contributor lookup failure remains unknown" 2 "permission-lookup-failed:fixture-failure" \
+		_gh_actor_has_repo_write_authority owner/repo contributor CONTRIBUTOR
+
 	MOCK_PERMISSION_RC=0
 	MOCK_LOOKUPS=0
-	check_result "contributor is untrusted without spending a permission lookup" 1 "untrusted-association:CONTRIBUTOR" \
-		_gh_actor_has_repo_write_authority owner/repo contributor CONTRIBUTOR
+	check_result "contributor without identity is untrusted without a lookup" 1 "untrusted-association:CONTRIBUTOR" \
+		_gh_actor_has_repo_write_authority "" "" CONTRIBUTOR
+	[[ "$MOCK_LOOKUPS" -eq 0 ]] || TESTS_FAILED=$((TESTS_FAILED + 1))
+
+	MOCK_PERMISSION="admin"
+	check_result "first-time contributor is untrusted without spending a permission lookup" 1 "untrusted-association:FIRST_TIME_CONTRIBUTOR" \
+		_gh_actor_has_repo_write_authority owner/repo newcomer FIRST_TIME_CONTRIBUTOR
 	[[ "$MOCK_LOOKUPS" -eq 0 ]] || TESTS_FAILED=$((TESTS_FAILED + 1))
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

@@ -190,7 +190,8 @@ _check_nmr_approval_gate() {
 # immediately before worker launch. OWNER/MEMBER, write-authorized collaborators,
 # and bot-created issues keep the fast path. External, read/triage collaborator,
 # or unknown authors must carry a valid cryptographic approval; otherwise the
-# pulse applies NMR and blocks this candidate in the current cycle.
+# pulse applies NMR and blocks this candidate in the current cycle. A failed
+# authority lookup blocks this cycle without label mutation (GH#34644).
 #
 # Args:
 #   $1 - issue_number
@@ -234,8 +235,10 @@ _check_external_issue_author_gate() {
 		return 1
 	fi
 	local authority_rc=2
+	local authority_checked=0
 	if [[ "$metadata_valid" -eq 1 && "$external_source" != true ]]; then
 		authority_rc=0
+		authority_checked=1
 		_gh_actor_has_repo_write_authority "$repo_slug" "$author_login" "$author_association" || authority_rc=$?
 	fi
 	if [[ "$authority_rc" -eq 0 ]]; then
@@ -260,13 +263,28 @@ _check_external_issue_author_gate() {
 		fi
 	fi
 
+	# aidevops:trust-boundary — an unavailable authority lookup is not evidence
+	# of an external author (GH#34644). Block this cycle, but leave labels alone
+	# so a transient permission-API failure cannot park a write-authorized
+	# author's issue behind NMR. Stage 0 reconcile applies the same rule.
+	if [[ "$authority_checked" -eq 1 && "$authority_rc" -ne 1 ]]; then
+		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: author_association=${author_association}, authority lookup unavailable (${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}); skipping dispatch without changing labels (transient, GH#34644)" >>"$LOGFILE"
+		return 0
+	fi
+
 	echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: author_association=${author_association}, author_type=${author_type:-unknown}, external_source=${external_source}, authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}; applying ${nmr_label} until cryptographic approval lands (GH#22399)" >>"$LOGFILE"
+	local label_rc=0
 	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
 		gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
-			--add-label "$nmr_label" >/dev/null 2>&1 || true
+			--add-label "$nmr_label" >/dev/null 2>&1 || label_rc=$?
 	else
 		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "$nmr_label" >/dev/null 2>&1 || true
+			--add-label "$nmr_label" >/dev/null 2>&1 || label_rc=$?
+	fi
+	# GH#34644: a silently failed label write left the issue status:available,
+	# so every cycle re-selected it. Record the mismatch; dispatch stays blocked.
+	if [[ "$label_rc" -ne 0 ]]; then
+		echo "[dispatch_with_dedup] GH#34644: failed to apply ${nmr_label} to #${issue_number} in ${repo_slug} (rc=${label_rc}); dispatch remains blocked and the next cycle retries the label" >>"$LOGFILE"
 	fi
 	return 0
 }
