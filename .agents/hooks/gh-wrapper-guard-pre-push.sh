@@ -70,16 +70,22 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
 	base_ref="$remote_sha"
 	if [[ "$remote_sha" =~ ^0+$ ]]; then
 		# New branch — find a reasonable base
-		base_ref=$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || echo "")
+		base_ref=$(git merge-base "$local_sha" main 2>/dev/null || git merge-base "$local_sha" master 2>/dev/null || true)
 		if [[ -z "$base_ref" ]]; then
 			[[ "${GH_WRAPPER_GUARD_DEBUG:-0}" == "1" ]] && printf '[gh-wrapper-guard][INFO] cannot determine base for new branch — skipping\n' >&2
 			continue
 		fi
 	fi
 
+	# Orphan histories cannot introduce changes to the main-based scripts.
+	if ! git merge-base "$base_ref" "$local_sha" >/dev/null 2>&1; then
+		[[ "${GH_WRAPPER_GUARD_DEBUG:-0}" == "1" ]] && printf '[gh-wrapper-guard][INFO] unrelated histories — skipping ref %s\n' "$_local_ref" >&2
+		continue
+	fi
+
 	[[ "${GH_WRAPPER_GUARD_DEBUG:-0}" == "1" ]] && printf '[gh-wrapper-guard][INFO] scanning %s..%s\n' "$base_ref" "$local_sha" >&2
 
-	if ! bash "$GUARD" check --base "$base_ref" 2>&1; then
+	if ! bash "$GUARD" check --base "$base_ref" --head "$local_sha" 2>&1; then
 		printf '\n[gh-wrapper-guard][BLOCK] Push contains raw gh issue/pr create calls.\n' >&2
 		printf '  Use gh_create_issue / gh_create_pr wrappers instead.\n' >&2
 		printf '  Bypass: GH_WRAPPER_GUARD_DISABLE=1 git push ... or git push --no-verify\n\n' >&2

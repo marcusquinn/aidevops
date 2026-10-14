@@ -11,7 +11,7 @@
 #      --title or --body. Always use gh_issue_edit_safe / gh_pr_edit_safe."
 #
 # Subcommands:
-#   check        --base <ref>   Scan added/modified lines in diff vs <ref>
+#   check        --base <ref> [--head <ref>]   Scan added/modified lines in range
 #   check-staged                Scan staged changes (git diff --cached)
 #   check-full                  Scan all tracked .sh files in the repo
 #
@@ -157,8 +157,9 @@ _report_violations() {
 
 cmd_check() {
 	local base_ref="${1:-}"
+	local head_ref="${2:-HEAD}"
 	if [[ -z "$base_ref" ]]; then
-		printf 'Usage: gh-wrapper-guard.sh check --base <ref>\n' >&2
+		printf 'Usage: gh-wrapper-guard.sh check --base <ref> [--head <ref>]\n' >&2
 		return 2
 	fi
 
@@ -167,7 +168,7 @@ cmd_check() {
 
 	# Get list of .sh files changed relative to base
 	local changed_files
-	changed_files=$(git diff --name-only "$base_ref"...HEAD -- '*.sh' 2>/dev/null || true)
+	changed_files=$(git diff --name-only "$base_ref"..."$head_ref" -- '*.sh' 2>/dev/null || true)
 	if [[ -z "$changed_files" ]]; then
 		return 0
 	fi
@@ -175,10 +176,14 @@ cmd_check() {
 	while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 		_is_excluded_file "$file" && continue
-		[[ -f "$file" ]] || continue
+		if [[ "$head_ref" == "HEAD" ]]; then
+			[[ -f "$file" ]] || continue
+		else
+			git cat-file -e "$head_ref:$file" 2>/dev/null || continue
+		fi
 
 		local diff_output
-		diff_output=$(git diff "$base_ref"...HEAD -- "$file" 2>/dev/null || true)
+		diff_output=$(git diff "$base_ref"..."$head_ref" -- "$file" 2>/dev/null || true)
 		[[ -z "$diff_output" ]] && continue
 
 		_scan_diff_for_file "$file" "$diff_output"
@@ -266,7 +271,7 @@ cmd_check_full() {
 show_help() {
 	printf 'gh-wrapper-guard.sh — enforce safe gh wrapper usage (create + edit)\n\n'
 	printf 'Usage:\n'
-	printf '  gh-wrapper-guard.sh check --base <ref>   Scan PR diff vs base ref\n'
+	printf '  gh-wrapper-guard.sh check --base <ref> [--head <ref>]   Scan diff (head defaults to HEAD)\n'
 	printf '  gh-wrapper-guard.sh check-staged          Scan staged changes\n'
 	printf '  gh-wrapper-guard.sh check-full             Scan all tracked .sh files\n'
 	printf '  gh-wrapper-guard.sh help                   Show this help\n\n'
@@ -278,21 +283,37 @@ show_help() {
 }
 
 # --- argument parsing --------------------------------------------------------
-_parse_base_arg() {
-	# Extracts --base <ref> or bare <ref> from args. Prints the ref.
+_check_args() {
+	local base_ref=""
+	local head_ref="HEAD"
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--base)
-			echo "${2:-}"
-			return 0
+		local arg="$1"
+		local value="${2:-}"
+		case "$arg" in
+		--base | --head)
+			if [[ $# -lt 2 || -z "$value" || "$value" == --* ]]; then
+				printf 'Missing value for %s\n' "$arg" >&2
+				return 2
+			fi
+			if [[ "$arg" == "--base" ]]; then
+				base_ref="$value"
+			else
+				head_ref="$value"
+			fi
+			shift 2
 			;;
 		*)
-			echo "$1"
-			return 0
+			if [[ -n "$base_ref" || "$arg" == -* ]]; then
+				printf 'Unexpected argument: %s\n' "$arg" >&2
+				return 2
+			fi
+			base_ref="$arg"
+			shift
 			;;
 		esac
 	done
-	return 0
+	cmd_check "$base_ref" "$head_ref"
+	return $?
 }
 
 # --- main --------------------------------------------------------------------
@@ -301,7 +322,7 @@ main() {
 	shift || true
 
 	case "$cmd" in
-	check) cmd_check "$(_parse_base_arg "$@")" ;;
+	check) _check_args "$@" ;;
 	check-staged) cmd_check_staged ;;
 	check-full) cmd_check_full ;;
 	help | --help | -h) show_help ;;
