@@ -1067,10 +1067,9 @@ _clean_issue_is_closed() {
 # survives a refused removal reuses its verified backup on later cleanup runs
 # instead of adding another archive. Backups live under
 # refs/aidevops/dirty-worktree-backups/, never in the human `git stash list`,
-# and the worktree is never modified, so a surviving worktree keeps its
-# tracked, staged, and untracked files. Edits made after the final match and
-# before forced native removal are not preserved (same window as the former
-# stash push/apply design).
+# and removal uses transactional cleaning followed by non-forced native Git.
+# A refused clean worktree is restored; a late writer's dirty worktree is
+# left untouched with its original state retained in the open backup.
 _clean_dirty_backup_helper() {
 	printf '%s\n' "${_WT_CLEAN_DIRTY_BACKUP_HELPER:-${SCRIPT_DIR}/dirty-worktree-backup-helper.sh}"
 	return 0
@@ -1106,10 +1105,8 @@ _clean_archive_dirty_worktree() {
 	return 0
 }
 
-# Final content check, run after the removal guard and immediately before
-# native removal: the worktree must still byte-match the verified backup (or
-# still be clean when no backup was needed). This narrows, but cannot close,
-# the window before the forced native removal.
+# Final content check before transactional cleaning: the worktree must still
+# byte-match the backup (or still be clean when no backup was needed).
 _clean_archive_still_matches() {
 	local wt_path="$1"
 	local backup_helper=""
@@ -1146,6 +1143,8 @@ _clean_remove_preserving_branch() {
 	local wt_path="$1"
 	local wt_branch="$2"
 	local audit_context="$3"
+	local backup_helper=""
+	local real_git=""
 
 	# GH#34572: check native Git removability before archiving. The caller has
 	# already passed the removal guard; it is re-checked after the archive
@@ -1158,7 +1157,24 @@ _clean_remove_preserving_branch() {
 	worktree_removal_guard "$wt_path" "$_WTAR_WH_CALLER" \
 		"$_WT_CLEAN_REASON_CLOSED_ISSUE_ARCHIVE" || return 1
 	_clean_archive_still_matches "$wt_path" || return 1
-	_worktree_remove_with_native_git "$wt_path" "$_WTAR_WH_CALLER" "$audit_context" "true" || return 1
+	if [[ -n "$_WT_CLEAN_LAST_ARCHIVE_ID" ]]; then
+		backup_helper=$(_clean_dirty_backup_helper)
+		real_git=$(_worktree_cleanup_real_git) || return 1
+		AIDEVOPS_REAL_GIT_BIN="$real_git" bash "$backup_helper" clean \
+			--repo "$wt_path" --backup "$_WT_CLEAN_LAST_ARCHIVE_ID" \
+			--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 || return 1
+	fi
+	# Never force: a tracked/untracked write after cleaning must veto removal.
+	if ! _worktree_remove_with_native_git "$wt_path" "$_WTAR_WH_CALLER" "$audit_context" "false"; then
+		if [[ -n "$_WT_CLEAN_LAST_ARCHIVE_ID" && -d "$wt_path" ]]; then
+			# restore refuses dirty state, so it cannot overwrite the late edit.
+			# In that case the original dirty state remains in the open backup.
+			AIDEVOPS_REAL_GIT_BIN="$real_git" bash "$backup_helper" restore \
+				--repo "$wt_path" --backup "$_WT_CLEAN_LAST_ARCHIVE_ID" \
+				--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 || return 1
+		fi
+		return 1
+	fi
 	return 0
 }
 

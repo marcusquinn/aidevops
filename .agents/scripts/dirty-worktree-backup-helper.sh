@@ -678,6 +678,12 @@ cmd_backup() {
 	if [[ -d "$backup_dir" ]]; then
 		verify_backup_dir "$repo_path" "$backup_dir" || return 1
 		current_state_matches_backup "$repo_path" "$backup_dir" || return 1
+		# An operation may reuse a restored/acknowledged content-addressed
+		# backup before deleting its source. Reopen it before returning so the
+		# only remaining copy cannot be pruned after that deletion.
+		if [[ -n "$operation_id" ]]; then
+			manifest_set "$backup_dir/manifest.tsv" state open || return 1
+		fi
 		rm -rf "$capture_dir"
 		capture_dir=""
 		[[ "$machine" == true ]] && printf '%s|%s\n' "$backup_id" "$backup_dir" || printf '%s\n' "$backup_dir"
