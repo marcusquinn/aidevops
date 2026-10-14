@@ -38,6 +38,8 @@ LIBRECRAWL_DEFAULT_TIMEOUT_MIN=60
 
 # Tier reported by the last successful probe (admin = local mode)
 LIBRECRAWL_TIER=""
+_LIBRECRAWL_ACCOUNT=false
+_LIBRECRAWL_ACCOUNT_CONFIGURED=false
 
 # Options that only the LibreCrawl engine implements (set by librecrawl_store_opt)
 LIBRECRAWL_OPT_RENDER_JS=false
@@ -137,20 +139,73 @@ _librecrawl_download() {
 	return $?
 }
 
-# Sign in as guest and read the session tier into LIBRECRAWL_TIER.
+# Resolve credentials without exposing their values in command arguments.
+_librecrawl_secret() {
+	local name="$1"
+	local value="${!name:-}"
+	if [[ -z "$value" ]] && command -v aidevops &>/dev/null; then
+		value=$(aidevops secret get "$name" </dev/null 2>/dev/null) || value=""
+	fi
+	printf '%s' "$value"
+	return 0
+}
+
+# Sign in with an account when configured, otherwise retain the guest path.
 # In local mode guests get the admin tier. Requires _LIBRECRAWL_JAR.
 # Returns 0 when a LibreCrawl server answered, 1 otherwise.
 _librecrawl_login() {
-	local login_json info_json
+	local login_json info_json username password body="" endpoint="/api/guest-login"
 	LIBRECRAWL_TIER=""
+	_LIBRECRAWL_ACCOUNT=false
+	_LIBRECRAWL_ACCOUNT_CONFIGURED=false
+	username=$(_librecrawl_secret LIBRECRAWL_USERNAME)
+	if [[ -n "$username" ]]; then
+		_LIBRECRAWL_ACCOUNT_CONFIGURED=true
+		# Refuse sending an account password over non-local plaintext HTTP.
+		# Match the entire authority: localhost:port@remote is not loopback.
+		if [[ "$LIBRECRAWL_URL" != https://* && ! "$LIBRECRAWL_URL" =~ ^http://(localhost|127[.]0[.]0[.]1)(:[0-9]+)?$ ]]; then
+			print_error "LibreCrawl account sign-in requires HTTPS (except loopback)"
+			return 1
+		fi
+		password=$(_librecrawl_secret LIBRECRAWL_PASSWORD)
+		[[ -n "$password" ]] || {
+			print_error "LibreCrawl sign-in needs LIBRECRAWL_PASSWORD"
+			return 1
+		}
+		body="${_LIBRECRAWL_JAR%/*}/login.json"
+		(
+			umask 077
+			LIBRECRAWL_LOGIN_USER="$username" LIBRECRAWL_LOGIN_PASSWORD="$password" \
+				jq -n '{username:env.LIBRECRAWL_LOGIN_USER,password:env.LIBRECRAWL_LOGIN_PASSWORD}' >"$body"
+		) || return 1
+		password=""
+		endpoint="/api/login"
+	fi
 
 	# Port 5000 is also macOS AirPlay Receiver: require LibreCrawl's JSON shape
-	login_json=$(_librecrawl_api POST "/api/guest-login" "" 5 2>/dev/null) || return 1
+	local rc=0
+	login_json=$(_librecrawl_api POST "$endpoint" "$body" 5 2>/dev/null) || rc=1
+	[[ -z "$body" ]] || rm -f "$body"
+	[[ "$rc" == 0 ]] || {
+		print_error "LibreCrawl sign-in request failed"
+		return 1
+	}
+	if [[ -n "$username" ]]; then
+		if ! printf '%s' "$login_json" | jq -e '.success == true' >/dev/null 2>&1; then
+			print_error "LibreCrawl account sign-in failed; check username/password and account access"
+			return 1
+		fi
+		_LIBRECRAWL_ACCOUNT=true
+	fi
 	printf '%s' "$login_json" | jq -e 'has("success")' >/dev/null 2>&1 || return 1
 
 	# With guest sign-in disabled, local mode still auto-signs in on this call
-	info_json=$(_librecrawl_api GET "/api/user/info" "" 5 2>/dev/null) || return 0
+	info_json=$(_librecrawl_api GET "/api/user/info" "" 5 2>/dev/null) || return 1
 	LIBRECRAWL_TIER=$(printf '%s' "$info_json" | jq -r '.user.tier // empty' 2>/dev/null) || LIBRECRAWL_TIER=""
+	[[ -n "$LIBRECRAWL_TIER" ]] || {
+		print_error "LibreCrawl sign-in did not establish a session"
+		return 1
+	}
 	return 0
 }
 
@@ -163,6 +218,15 @@ check_librecrawl() {
 	saved_jar="$_LIBRECRAWL_JAR"
 	_LIBRECRAWL_JAR="${probe_dir}/cookies.txt"
 	_librecrawl_login || rc=1
+	if [[ "$rc" == 0 ]]; then
+		print_info "LibreCrawl session tier: $LIBRECRAWL_TIER"
+		if [[ "$LIBRECRAWL_TIER" == guest ]]; then
+			case "$LIBRECRAWL_URL" in
+			http://127.0.0.1:* | http://localhost:*) ;;
+			*) print_warning "Remote LibreCrawl guest tier: 3 crawls/day, no JavaScript; configure an account" ;;
+			esac
+		fi
+	fi
 	_LIBRECRAWL_JAR="$saved_jar"
 	rm -rf "$probe_dir"
 	return $rc
@@ -174,10 +238,17 @@ librecrawl_is_local() {
 	return $?
 }
 
+# A successful account session also works on shared servers, at its own tier.
+librecrawl_is_usable() {
+	[[ "$LIBRECRAWL_TIER" == admin || "$_LIBRECRAWL_ACCOUNT" == true ]]
+	return $?
+}
+
 # Print the guidance for a server that is reachable but not in local mode.
 _librecrawl_local_mode_help() {
 	print_info "  Run LibreCrawl with LOCAL_MODE=true, bound to 127.0.0.1 (docker-compose default)."
 	print_info "  Outside local mode a guest gets 3 crawls a day and no JavaScript rendering."
+	print_info "  Shared server: set LIBRECRAWL_USERNAME and store LIBRECRAWL_PASSWORD with aidevops secret."
 	print_info "  Setup: ~/.aidevops/agents/seo/librecrawl.md"
 	return 0
 }
@@ -540,7 +611,7 @@ _librecrawl_run() {
 		_librecrawl_local_mode_help
 		return 1
 	fi
-	if ! librecrawl_is_local; then
+	if ! librecrawl_is_usable; then
 		print_error "LibreCrawl at ${LIBRECRAWL_URL} is not in local mode (tier: ${LIBRECRAWL_TIER:-none})"
 		_librecrawl_local_mode_help
 		return 1

@@ -70,6 +70,10 @@ source "${SCRIPT_DIR}/site-crawler-helper-crawl4ai.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/site-crawler-helper-librecrawl.sh"
 
+# shellcheck source=./site-crawler-helper-seoprostats.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/site-crawler-helper-seoprostats.sh"
+
 # shellcheck source=./site-crawler-helper-fallback.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/site-crawler-helper-fallback.sh"
@@ -161,10 +165,13 @@ _do_crawl_parse_opts() {
 	format="$DEFAULT_FORMAT"
 	output_base="$DEFAULT_OUTPUT_DIR"
 	engine="$ENGINE_AUTO"
+	push_site=""
+	local value
 
 	while [[ $# -gt 0 ]]; do
+		local value="${2:-}"
 		case "$1" in
-		--depth | --max-urls | --format | --output | --engine)
+		--depth | --max-urls | --format | --output | --engine | --push-seoprostats)
 			if [[ $# -lt 2 ]]; then
 				print_error "$1 needs a value"
 				return 1
@@ -175,6 +182,7 @@ _do_crawl_parse_opts() {
 			--format) format="$2" ;;
 			--output) output_base="$2" ;;
 			--engine) engine="$2" ;;
+			--push-seoprostats) push_site="$value" ;;
 			esac
 			shift 2
 			;;
@@ -216,13 +224,13 @@ _do_crawl_select_engine() {
 	fi
 
 	if [[ "$engine" == "$ENGINE_AUTO" || "$wants_librecrawl" == true ]]; then
-		if check_librecrawl && librecrawl_is_local; then
+		if check_librecrawl && librecrawl_is_usable; then
 			engine="$ENGINE_LIBRECRAWL"
 			return 0
 		fi
-		if [[ "$wants_librecrawl" == true || -n "$LIBRECRAWL_ONLY_FLAGS" ]]; then
+		if [[ "$wants_librecrawl" == true || -n "$LIBRECRAWL_ONLY_FLAGS" || "$_LIBRECRAWL_ACCOUNT_CONFIGURED" == true ]]; then
 			[[ -n "$LIBRECRAWL_ONLY_FLAGS" ]] && print_error "${LIBRECRAWL_ONLY_FLAGS}: needs the LibreCrawl engine"
-			print_error "LibreCrawl in local mode is not reachable at ${LIBRECRAWL_URL}${LIBRECRAWL_TIER:+ (tier: ${LIBRECRAWL_TIER})}"
+			print_error "No usable LibreCrawl session at ${LIBRECRAWL_URL}${LIBRECRAWL_TIER:+ (tier: ${LIBRECRAWL_TIER})} (use local mode or an account)"
 			_librecrawl_local_mode_help
 			return 1
 		fi
@@ -302,7 +310,7 @@ do_crawl() {
 	local url="$1"
 	shift
 
-	local depth max_urls format output_base engine
+	local depth max_urls format output_base engine push_site
 	_do_crawl_parse_opts "$@" || return 1
 	_do_crawl_select_engine || return 1
 	# Validate before create_output_dir moves _latest to an empty directory
@@ -328,18 +336,21 @@ do_crawl() {
 			return 1
 		fi
 		_do_crawl_print_done "$output_dir" "$output_base" "$domain"
+		[[ -z "$push_site" ]] || push_seoprostats "$output_dir" --site "$push_site" || return 1
 		return 0
 	fi
 
 	if [[ "$engine" == "$ENGINE_CRAWL4AI" ]]; then
 		print_success "Crawl4AI detected at ${CRAWL4AI_URL}"
-		crawl_with_crawl4ai "$url" "$output_dir" "$max_urls" "$depth"
+		crawl_with_crawl4ai "$url" "$output_dir" "$max_urls" "$depth" || return 1
 		_do_crawl_print_done "$output_dir" "$output_base" "$domain"
+		[[ -z "$push_site" ]] || push_seoprostats "$output_dir" --site "$push_site" || return 1
 		return 0
 	fi
 
-	_do_crawl_run_python "$url" "$output_dir" "$max_urls" "$depth" "$format" "$output_base" "$domain"
-	return $?
+	_do_crawl_run_python "$url" "$output_dir" "$max_urls" "$depth" "$format" "$output_base" "$domain" || return 1
+	[[ -z "$push_site" ]] || push_seoprostats "$output_dir" --site "$push_site" || return 1
+	return 0
 }
 
 # --- Audit commands ---
@@ -471,7 +482,7 @@ check_status() {
 		if librecrawl_is_local; then
 			print_success "LibreCrawl: running at ${LIBRECRAWL_URL} (local mode)"
 		else
-			print_warning "LibreCrawl: running at ${LIBRECRAWL_URL} but not in local mode (tier: ${LIBRECRAWL_TIER:-none}); the helper will not use it"
+			print_info "LibreCrawl: running at ${LIBRECRAWL_URL} (tier: ${LIBRECRAWL_TIER:-none})"
 		fi
 	else
 		print_warning "LibreCrawl: not reachable at ${LIBRECRAWL_URL} (optional; see seo/librecrawl.md)"
@@ -526,6 +537,8 @@ Commands:
   audit-redirects <url> Analyze redirects and chains
   generate-sitemap <url> Generate XML sitemap from crawl
   compare [url|dir1] [dir2] Compare two crawls
+  push-seoprostats <dir> --site <hostname> [--transport auto|ssh|rest] [--timeout <seconds>]
+                        Import a saved crawl into SEO Pro Stats 1.11.0+
   status                Check crawler dependencies
   help                  Show this help message
 
@@ -536,6 +549,7 @@ Options:
   --output <dir>        Output directory (default: ~/Downloads)
   --engine <name>       auto (default), librecrawl, crawl4ai or fallback
   --fallback            Same as --engine fallback
+  --push-seoprostats <hostname>  Import after a successful crawl (SSH if ready, else REST)
 
 LibreCrawl-only options (other engines reject them):
   --render-js           Render JavaScript in Chromium (SPAs)
@@ -548,7 +562,7 @@ LibreCrawl-only options (other engines reject them):
   --timeout <min>       Stop and export partial results after N minutes (default: 60)
 
 Engine selection (auto):
-  LibreCrawl when it answers in local mode at LIBRECRAWL_URL
+  LibreCrawl when it answers in local mode or with configured account credentials at LIBRECRAWL_URL
   (default http://127.0.0.1:5000), else Crawl4AI, else the fallback crawler.
 
 Examples:
@@ -623,6 +637,9 @@ main() {
 		;;
 	status)
 		check_status
+		;;
+	push-seoprostats)
+		push_seoprostats "$@"
 		;;
 	help | -h | --help | "")
 		show_help

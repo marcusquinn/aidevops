@@ -63,6 +63,11 @@ Any unavailable channel read is uncertainty, not absence, and blocks recovery.
 
 1. Verify the provisional tag and all channel-absence evidence.
 2. Resolve the exact aggregate and normalize every source to `PR@MERGE_SHA`.
+   Signed-tag recovery uses the non-snapshot aggregate resolver: its immutable
+   trailers must identify the reviewed exact `origin/main` tip and complete
+   authorized manifest. It does not rediscover a baseline with `git describe`,
+   which could select the unpublished local tag already merged on protected main.
+   Normal releases and tagless prepublication retries retain snapshot resolution.
 3. Rotate the release-lane token into `aggregation-recovery-refresh`, fencing the
    prior process before authorization broadens. Persist the expanded
    authorization, then advance the same owned lane to `aggregation-recovery`.

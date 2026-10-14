@@ -19,9 +19,9 @@ tools:
 
 - **Purpose**: Free, self-hosted SEO crawler (Screaming Frog-style) with JavaScript rendering, robots.txt control, include/exclude regexes, PageSpeed, issue detection and JSON/CSV exports. It keeps the crawl queue in SQLite, so large crawls survive a restart and can be resumed from its dashboard.
 - **License**: MIT. **Source**: [PhialsBasement/LibreCrawl](https://github.com/PhialsBasement/LibreCrawl) (no tagged releases; the helper was written against `main` at `05a1372de833`).
-- **Helper**: `site-crawler-helper.sh crawl <url> --engine librecrawl` (also picked by `--engine auto` when LibreCrawl answers in local mode).
+- **Helper**: `site-crawler-helper.sh crawl <url> --engine librecrawl` (also picked by `--engine auto` in local mode or with configured account credentials).
 - **Server URL**: `LIBRECRAWL_URL`, default `http://127.0.0.1:5000`.
-- **Check**: `site-crawler-helper.sh status` reports whether LibreCrawl is reachable and in local mode.
+- **Check**: `site-crawler-helper.sh status` reports reachability and the session tier.
 - **Safety**: local mode gives **every visitor admin rights**. Bind it to `127.0.0.1` only. The helper connects to a running server; it never starts or exposes containers.
 
 <!-- AI-CONTEXT-END -->
@@ -44,7 +44,25 @@ site-crawler-helper.sh status
   ```
 
 - Crawl history and the user database persist in `./data` in the checkout.
-- For a shared or remote server, run LibreCrawl **without** local mode behind its own accounts. The helper does not use such a server: a guest there gets 3 crawls a day and no JavaScript rendering, so `--engine librecrawl` stops with guidance instead of half-working.
+- For a shared or remote server, run LibreCrawl **without** local mode behind its own accounts; configure account sign-in below.
+
+## Shared servers and account sign-in
+
+The Cloudron package (`marcusquinn/cloudron-librecrawl-app`, issue #1) runs a shared server with guest access and registration disabled. Use a provisioned account, not local mode. Keep local mode disabled on any publicly reachable deployment.
+
+```bash
+export LIBRECRAWL_URL=https://crawler.example.com
+aidevops secret set LIBRECRAWL_USERNAME
+aidevops secret set LIBRECRAWL_PASSWORD
+site-crawler-helper.sh status
+site-crawler-helper.sh crawl https://example.com --engine librecrawl --format csv
+```
+
+Environment variables of the same names take precedence over stored secrets. When a username is configured, the helper sends `POST /api/login` with a JSON body made by `jq -n`, then keeps the session in its private cookie jar. The password never appears in command arguments or diagnostic output; do not enable shell tracing (`bash -x`) around credentials. HTTPS is required for account sign-in except on HTTP loopback (`localhost` or `127.0.0.1`). Failed account sign-in is an error, never a fallback to guest login.
+
+Without a username, `POST /api/guest-login` remains the default. Local mode still auto-signs in if guest sign-in is disabled. The helper reports the tier and warns about a guest on a non-local server (3 crawls/day, no JavaScript); shared guest sessions are not selected as a crawler engine. Account sessions use the server's assigned tier, without elevating it or bypassing its limits. Start with a small crawl to verify the account can use the requested settings.
+
+To import a local or shared-server crawl into WordPress, use `--push-seoprostats <hostname>` on `crawl`, or `push-seoprostats <crawl-output-dir> --site <hostname>` afterwards. See `seo/site-crawler.md` for transports and WordPress credentials. The helper does not schedule crawls or start the server.
 
 ## Update
 
@@ -59,7 +77,7 @@ LibreCrawl has no versioned API. After an update, run a small crawl (`--max-urls
 
 ## How the helper uses it
 
-1. Signs in as a guest (`POST /api/guest-login`) with a cookie jar in a private `mktemp -d` directory that is removed on exit, then checks `GET /api/user/info`. Local mode gives guests the admin tier; any other tier stops the crawl.
+1. Signs in with a configured account (`POST /api/login`) or as a guest (`POST /api/guest-login`) with a cookie jar in a private `mktemp -d` directory that is removed on exit, then checks `GET /api/user/info`. Account sessions and local-mode admin sessions are usable; non-local guest sessions are skipped.
 2. Applies settings for that session only (`POST /api/save_settings`, then `/api/update_crawler_settings`). Your dashboard settings are not changed. Unset options use LibreCrawl's defaults (1 s crawl delay, 5 workers, sitemap discovery on).
 3. Starts the crawl (`POST /api/start_crawl`) and polls `GET /api/crawl_status` every 2 s. On `--timeout` (default 60 min) or Ctrl-C it calls `POST /api/stop_crawl`. A timeout still exports partial results with `"complete": false` and exits non-zero; Ctrl-C removes the private temp directory and exits 130 without exporting reports.
 4. Exports through `GET /api/export_stream` and writes the shared layout.

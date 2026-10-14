@@ -71,6 +71,35 @@ clear_terminal_issue_dispatch_labels() {
 	return "$exit_code"
 }
 
+# GH#34681: a completed (closed) issue must not keep status:blocked after its
+# work merged. Swap it for status:done; NOT_PLANNED closures are left alone.
+heal_closed_blocked_status_label() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local state_reason="${3:-}"
+	local current_labels="${4:-}"
+	local labels_blob=$'\n'"$current_labels"$'\n'
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ || -z "$repo_slug" ]]; then
+		return 1
+	fi
+	[[ "$state_reason" == "COMPLETED" ]] || return 0
+	[[ "$labels_blob" == *$'\n'"status:blocked"$'\n'* ]] || return 0
+
+	local exit_code=0
+	if [[ "$labels_blob" == *$'\n'status:done$'\n'* ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" --remove-label status:blocked >/dev/null 2>&1 || exit_code=$?
+	else
+		gh issue edit "$issue_number" --repo "$repo_slug" --remove-label status:blocked --add-label status:done >/dev/null 2>&1 || exit_code=$?
+	fi
+	if [[ "$exit_code" -eq 0 ]]; then
+		echo "[pulse-wrapper] dispatch-label-cleanup: replaced status:blocked with status:done on closed ${repo_slug}#${issue_number}" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] dispatch-label-cleanup: failed to heal status:blocked on closed ${repo_slug}#${issue_number}" >>"$LOGFILE"
+	return 1
+}
+
 clear_closed_pr_dispatch_labels() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -254,6 +283,8 @@ sweep_closed_auto_dispatch_issues() {
 			[[ "$state_reason" == "NOT_PLANNED" ]] && reason="issue_closed_not_planned"
 			clear_terminal_issue_dispatch_labels "$issue_number" "$repo_slug" \
 				"closed-blocker-sweep" "${labels_csv//|/$'\n'}" "true" || label_failed=$((label_failed + 1))
+			heal_closed_blocked_status_label "$issue_number" "$repo_slug" "$state_reason" \
+				"${labels_csv//|/$'\n'}" || label_failed=$((label_failed + 1))
 			if reconcile_terminal_issue_worker_blockers "$issue_number" "$repo_slug" "$reason" "dispatch-label-cleanup-sweep"; then
 				total=$((total + 1))
 			else

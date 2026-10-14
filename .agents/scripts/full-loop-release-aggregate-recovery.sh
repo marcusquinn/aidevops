@@ -33,9 +33,15 @@ _full_loop_recovery_http_status() {
 	local response=""
 	local status_line=""
 	local status_code=""
-	response=$(gh api --include --silent "$endpoint" 2>/dev/null || true)
+	response=$(gh api --include --silent "$endpoint" 2>&1 || true)
 	status_line="${response%%$'\n'*}"
 	status_code=$(printf '%s' "$status_line" | cut -d ' ' -f 2)
+	# gh and the governed transport can omit --include headers on HTTP errors
+	# and report only the terminal CLI status on stderr (same contract as
+	# _release_lane_remote_head). Match that status line, never body text.
+	if [[ ! "$status_code" =~ ^[0-9]{3}$ && "$status_line" =~ ^gh:.*\(HTTP[[:space:]]([0-9]{3})\)$ ]]; then
+		status_code="${BASH_REMATCH[1]}"
+	fi
 	[[ "$status_code" =~ ^[0-9]{3}$ ]] || return 1
 	printf '%s\n' "$status_code"
 	return 0
@@ -45,7 +51,10 @@ _full_loop_recovery_verify_github_release_absent() {
 	local repo="$1"
 	local tag_name="$2"
 	local status_code=""
-	status_code=$(_full_loop_recovery_http_status "repos/${repo}/releases/tags/${tag_name}") || return 1
+	status_code=$(_full_loop_recovery_http_status "repos/${repo}/releases/tags/${tag_name}") || {
+		printf 'Aggregate recovery refused: GitHub release state for %s is unknown\n' "$tag_name" >&2
+		return 1
+	}
 	[[ "$status_code" == "404" ]] || {
 		printf 'Aggregate recovery refused: GitHub release state for %s is HTTP %s\n' "$tag_name" "$status_code" >&2
 		return 1
@@ -673,7 +682,11 @@ _full_loop_recovery_prepare_aggregate() {
 	git -C "$REPO_ROOT" worktree add --detach "$_FULL_LOOP_RELEASE_PATH" origin/main >/dev/null || return 1
 	trap 'cleanup_release_worktree' EXIT
 	resolver="$_FULL_LOOP_RELEASE_PATH/.agents/scripts/release-provenance-helper.sh"
-	_full_loop_resolve_requested_release_source "$repo" "$source_pr" "$_FULL_LOOP_RELEASE_PATH" "$resolver" "$expected_sources" || return 1
+	# The provisional local tag may already be an ancestor of protected main.
+	# Do not discover a snapshot baseline via that unpublished tag; validate the
+	# reviewed exact-tip aggregate and its immutable manifest instead.
+	_full_loop_resolve_requested_release_source "$repo" "$source_pr" "$_FULL_LOOP_RELEASE_PATH" \
+		"$resolver" "$expected_sources" aggregate || return 1
 	[[ "$(jq -r '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON")" == "aggregate" ]] || return 1
 	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$_FULL_LOOP_RESOLVED_EXPECTED_SOURCES"
 	return 0

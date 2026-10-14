@@ -274,6 +274,29 @@ test_sweep_transitions_closed_pr_labels() {
 	return 0
 }
 
+test_heal_closed_blocked_status_label() {
+	setup_env
+	install_gh_stub
+	# shellcheck source=../shared-dispatch-label-cleanup.sh
+	source "$HELPER"
+	heal_closed_blocked_status_label 301 owner/repo COMPLETED $'bug\nstatus:blocked'
+	heal_closed_blocked_status_label 302 owner/repo NOT_PLANNED $'status:blocked'
+	heal_closed_blocked_status_label 303 owner/repo COMPLETED $'bug'
+	local completed_edit
+	completed_edit=$(grep 'issue edit 301 ' "${TEST_ROOT}/gh.log" || true)
+	if [[ "$completed_edit" == *"--remove-label status:blocked"* &&
+		"$completed_edit" == *"--add-label status:done"* ]] &&
+		! grep -q 'issue edit 302 ' "${TEST_ROOT}/gh.log" &&
+		! grep -q 'issue edit 303 ' "${TEST_ROOT}/gh.log"; then
+		print_result "closed completed issue swaps status:blocked for status:done" 0
+	else
+		print_result "closed completed issue swaps status:blocked for status:done" 1
+	fi
+	teardown_env
+	return 0
+}
+
+test_heal_closed_blocked_status_label
 test_clear_terminal_labels_removes_dispatch_labels
 test_sweep_reconciles_closed_active_blocker_candidates
 test_sweep_preserves_blockers_on_api_ambiguity
