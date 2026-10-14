@@ -81,6 +81,10 @@ export function resolveWorkerBlockerMaxBytes(options = {}) {
   return parsed;
 }
 
+function cleanWorkerBlockerFingerprint(value) {
+  return typeof value === "string" && /^[a-f0-9]{24}$/.test(value) ? value : "";
+}
+
 export function normalizeWorkerBlockerEvent(input = {}, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const issueValue = Object.hasOwn(input, "issue_number")
@@ -97,7 +101,7 @@ export function normalizeWorkerBlockerEvent(input = {}, options = {}) {
     reason: cleanText(input.reason || "unknown", MAX_FIELD_LENGTH, options),
     blocking: input.blocking !== false,
     source: cleanText(input.source || "unknown", MAX_FIELD_LENGTH, options),
-    blocker_fingerprint: /^[a-f0-9]{24}$/.test(input.blocker_fingerprint || "") ? input.blocker_fingerprint : "",
+    blocker_fingerprint: cleanWorkerBlockerFingerprint(input.blocker_fingerprint),
     issue_number: issueNumber,
     repo_slug: normalizeWorkerBlockerRepoSlug(input.repo_slug || process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "", options),
     session_key: normalizeWorkerBlockerSessionKey(input.session_key || process.env.WORKER_SESSION_KEY || "", options),
