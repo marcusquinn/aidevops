@@ -354,9 +354,10 @@ test("pins legacy Playwriter commands while preserving custom commands", () => {
   assert.equal(customLatestWithYesConfig.tools["playwriter_*"], false);
 });
 
-test("opts framework-generated Playwriter commands into the authenticated relay launcher", () => {
+// GH#34651: guarded by default on POSIX, with no launch flag or operator token.
+test("runs framework-generated Playwriter commands under the guarded relay launcher by default", { skip: process.platform === "win32" }, () => {
   const previous = process.env.AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY;
-  process.env.AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY = "1";
+  delete process.env.AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY;
   try {
     const generated = { mcp: {}, tools: {} };
     registerMcpServers(generated);

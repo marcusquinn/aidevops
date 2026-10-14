@@ -17,6 +17,7 @@ import {
   probeAuthenticatedRelay,
   reconcileStaleRelays,
   validatePlaywriterCommand,
+  withRelayToken,
   withTelemetryOptOut,
 } from "../playwriter-authenticated-relay.mjs";
 import {
@@ -63,7 +64,7 @@ async function startSyntheticGroup(t, extraArgs = [], realGuardian = false) {
   }
   const leader = spawn(process.execPath, args, {
     detached: true,
-    env: { ...process.env, AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY: "1" },
+    env: { ...process.env, PLAYWRITER_TOKEN: "t".repeat(32) },
     stdio: ["ignore", "pipe", "ignore", "ipc"],
   });
   t.after(() => {
@@ -124,6 +125,28 @@ test("defaults Playwriter telemetry off but keeps an explicit operator choice", 
   assert.deepEqual(withTelemetryOptOut({ PLAYWRITER_TELEMETRY: "1" }), {
     PLAYWRITER_TELEMETRY: "1",
   });
+});
+
+test("mints a per-session relay token unless a valid one was injected", () => {
+  const minted = withRelayToken({ PATH: "/bin" });
+  assert.match(minted.PLAYWRITER_TOKEN, /^[0-9a-f]{64}$/);
+  assert.notEqual(withRelayToken({}).PLAYWRITER_TOKEN, minted.PLAYWRITER_TOKEN);
+  assert.equal(withRelayToken({ PLAYWRITER_TOKEN: "" }).PLAYWRITER_TOKEN.length, 64);
+  const injected = "i".repeat(32);
+  assert.equal(withRelayToken({ PLAYWRITER_TOKEN: injected }).PLAYWRITER_TOKEN, injected);
+  assert.throws(() => withRelayToken({ PLAYWRITER_TOKEN: "short" }), /at least 32 characters/);
+});
+
+test("starts without a launch flag and refuses a guardian without the supervisor token", () => {
+  const environment = { ...process.env };
+  delete environment.AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY;
+  delete environment.PLAYWRITER_TOKEN;
+  const guardian = spawnSync(process.execPath, [LAUNCHER, ...GUARDIAN_ARGS], { env: environment, encoding: "utf8" });
+  assert.equal(guardian.status, 1);
+  assert.match(guardian.stderr, /guardian started without the supervisor's relay token/);
+  const unreviewed = spawnSync(process.execPath, [LAUNCHER, "npx", "playwriter@latest"], { env: environment, encoding: "utf8" });
+  assert.equal(unreviewed.status, 1);
+  assert.match(unreviewed.stderr, /reviewed Playwriter package shape/, "no opt-in flag gate precedes command review");
 });
 
 test("proves both relay version and token enforcement", async (t) => {
@@ -219,7 +242,12 @@ test("preserves substring impostors and mismatched or missing start identities",
   for (const relayStartTime of ["different-process-start", null, undefined]) {
     const group = await startSyntheticGroup(t, GUARDIAN_ARGS);
     const session = writeSession(parent, deadPid(), { relayGroupId: group.groupId, relayStartTime });
-    assert.deepEqual(await reconcileStaleRelays(parent, { inspect: inspectSyntheticGuardian }), []);
+    // Upgrade only this group to synthetic guardian argv. On macOS `ps` splits
+    // the impostor's single argument into guardian-shaped tokens, so applying
+    // the helper to every session would forge argv proof for the impostor.
+    const inspect = (pid) => pid === group.groupId ? inspectSyntheticGuardian(pid) : inspectProcess(pid);
+    assert.deepEqual(await reconcileStaleRelays(parent, { inspect }), []);
+    assert.equal(processGroupAlive(impostor.groupId), true);
     assert.equal(processGroupAlive(group.groupId), true);
     assert.equal(alive(group.descendantPid), true);
     assert.equal(existsSync(session.directory), true);

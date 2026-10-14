@@ -7,7 +7,7 @@ import { chmodSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { runGuardian, spawnGuardian, stopGuardian } from "./playwriter-relay-guardian.mjs";
 import {
   MARKER_NAME,
@@ -81,12 +81,21 @@ export function withTelemetryOptOut(environment) {
   };
 }
 
-function requireToken(environment) {
-  const token = environment.PLAYWRITER_TOKEN;
-  if (typeof token !== "string" || token.length < 32) {
-    throw fixedError("PLAYWRITER_TOKEN must be injected through the environment and contain at least 32 characters");
+/**
+ * GH#34651: give the relay and its MCP client a shared token without operator
+ * setup. An injected PLAYWRITER_TOKEN is kept (it must be >= 32 characters);
+ * otherwise a random per-session token is minted. It authenticates only the
+ * MCP client to the relay this launcher starts (Playwriter's /extension
+ * endpoint is gated by loopback plus extension origin, not the token) and
+ * travels only in child environments, never argv, config, state or logs.
+ */
+export function withRelayToken(environment, mint = () => randomBytes(32).toString("hex")) {
+  const supplied = environment.PLAYWRITER_TOKEN;
+  if (!supplied) return { ...environment, PLAYWRITER_TOKEN: mint() };
+  if (typeof supplied !== "string" || supplied.length < 32) {
+    throw fixedError("an injected PLAYWRITER_TOKEN must contain at least 32 characters");
   }
-  return token;
+  return { ...environment };
 }
 
 function privateDirectory(path) {
@@ -192,7 +201,9 @@ async function ensureRelay(command, environment, runtime, token) {
   const existing = await probeAuthenticatedRelay({ token });
   if (existing.ready) return { child: null, owned: false };
   if (existing.reachable) {
-    throw fixedError("port 19988 is occupied without matching token and version proof");
+    // Usually another session's relay (its token differs) or one started by
+    // hand. Never take over or stop a relay this launcher cannot prove it owns.
+    throw fixedError("port 19988 is held by another Playwriter relay (another session or a manual start); disconnect Playwriter there, then reconnect");
   }
 
   const child = spawnGuardian(GUARDIAN, command, environment, runtime);
@@ -226,7 +237,7 @@ function writeState(runtime, relay) {
 }
 
 async function supervise(command, environment) {
-  const token = requireToken(environment);
+  const token = environment.PLAYWRITER_TOKEN;
   const tempRoot = environment.AIDEVOPS_TEMP_DIR
     || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
   await reconcileStaleRelays(privateRuntimeParent(tempRoot));
@@ -289,15 +300,15 @@ async function supervise(command, environment) {
 }
 
 export async function main(argv = process.argv.slice(2), environment = process.env) {
-  if (environment.AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY !== "1") {
-    throw fixedError("opt-in environment flag is not enabled");
-  }
   if (argv[0] === GUARDIAN_FLAG) {
+    // The guardian inherits the supervisor's token; minting here would start
+    // a relay its MCP client cannot authenticate to, or none at all.
+    if (!environment.PLAYWRITER_TOKEN) throw fixedError("guardian started without the supervisor's relay token");
     const relayCommand = validatePlaywriterCommand(argv.slice(1));
     return runGuardian(relayCommand, RELAY_ARGS, withTelemetryOptOut(environment));
   }
   const command = validatePlaywriterCommand(argv);
-  return supervise(command, withTelemetryOptOut(environment));
+  return supervise(command, withRelayToken(withTelemetryOptOut(environment)));
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";

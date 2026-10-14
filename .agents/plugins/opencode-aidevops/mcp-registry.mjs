@@ -761,7 +761,7 @@ function buildMcpConfigEntry(mcp, runtime) {
   if (!workspace) {
     let command = mcp.command;
     if (mcp.name === "playwriter") {
-      command = confinePlaywriterCommand(authenticatedPlaywriterRelayEnabled()
+      command = confinePlaywriterCommand(guardedPlaywriterRelaySupported()
         ? authenticatedPlaywriterRelayCommand(command)
         : command);
     }
@@ -840,8 +840,16 @@ function isLegacyGeneratedPlaywriterCommand(command) {
   return isGeneratedPlaywriterCommandFor(command, LEGACY_PLAYWRITER_MCP_PACKAGES);
 }
 
-function authenticatedPlaywriterRelayEnabled() {
-  return process.env.AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY === "1";
+/**
+ * GH#34651: framework-generated Playwriter commands always run under the
+ * guarded relay launcher where it can stop the relay's whole process group
+ * (macOS/Linux). No launch flag or operator token is needed: the launcher
+ * mints a per-session token. Windows has no process groups (GH#34629), so it
+ * keeps the plain confined command.
+ * @returns {boolean}
+ */
+function guardedPlaywriterRelaySupported() {
+  return process.platform !== "win32";
 }
 
 function authenticatedPlaywriterRelayCommand(command) {
@@ -897,7 +905,7 @@ function registerSingleMcp(mcp, config, runtime) {
     command[command.length - 1] = PLAYWRITER_MCP_PACKAGE;
   }
   if (mcp.name === "playwriter"
-    && authenticatedPlaywriterRelayEnabled()
+    && guardedPlaywriterRelaySupported()
     && isCurrentGeneratedPlaywriterCommand(config.mcp[mcp.name].command)) {
     config.mcp[mcp.name].command = authenticatedPlaywriterRelayCommand(
       config.mcp[mcp.name].command,

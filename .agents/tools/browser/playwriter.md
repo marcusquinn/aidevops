@@ -66,7 +66,7 @@ mcp:
 }
 ```
 
-**OpenCode**: aidevops generates this entry as disabled and exposes it only through `@playwriter`. Ensure `npx` is available in the app's PATH if it is restricted:
+**OpenCode**: aidevops generates this entry as disabled and exposes it only through `@playwriter`; at startup the plugin wraps it in the guarded relay launcher described under [Authenticated Relay and Tab Preflight](#authenticated-relay-and-tab-preflight). Ensure `npx` is available in the app's PATH if it is restricted:
 
 ```json
 {
@@ -101,14 +101,21 @@ Use `@playwriter` only for an explicit legacy compatibility request. Select the 
 
 Before requesting authentication, credentials, or any authenticated action:
 
-OpenCode can opt into the framework-owned authenticated localhost relay by
-starting the app with `AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY=1` and injecting
-`PLAYWRITER_TOKEN` through `aidevops secret PLAYWRITER_TOKEN -- opencode`. Store
-the value first with `aidevops secret set PLAYWRITER_TOKEN`; never place it in
-MCP configuration, commands, logs, or prompts. The launcher accepts only the
-reviewed `playwriter@0.8.0` command, requires a 32-character token, verifies the
-relay version and token challenge, records private ownership state, and stops
-only a relay process it started. On macOS/Linux its relay runs under a guardian
+On macOS/Linux, OpenCode always runs the framework-generated Playwriter command
+through the framework-owned authenticated localhost relay launcher (GH#34651).
+No launch flag, secret or special start command is needed. The launcher mints a
+random per-session `PLAYWRITER_TOKEN` and passes it only through the relay and
+MCP child environments; the browser extension does not use it. An operator may
+still inject a persistent token of at least 32 characters
+(`aidevops secret PLAYWRITER_TOKEN -- opencode`), but never in MCP
+configuration, commands, logs, or prompts. Custom `mcp.playwriter` commands are
+left as written and bypass the launcher; Windows keeps the plain command because
+it has no process groups. The launcher accepts only the reviewed
+`playwriter@0.8.0` command, verifies the relay version and token challenge,
+records private ownership state, and stops only a relay process it started. One
+relay serves one session: if another session (or a manual `playwriter serve`)
+holds port `19988`, connection fails closed until Playwriter disconnects there.
+Its relay runs under a guardian
 that stops the whole package-runner process group (`npm exec`/`bun x` plus the
 `playwriter-serve` listener) on MCP disconnect, repeated or hangup signals, or
 even a killed supervisor. The next launch reconciles any owned relay whose
