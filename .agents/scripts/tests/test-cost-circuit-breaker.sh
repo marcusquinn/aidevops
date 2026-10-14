@@ -68,6 +68,10 @@ FIXTURE_COMMENTS_JSON="${TEST_ROOT}/fixture-comments.json"
 FIXTURE_TIMELINE_JSON="${TEST_ROOT}/fixture-timeline.json"
 FIXTURE_PR_JSON="${TEST_ROOT}/fixture-pr.json"
 FIXTURE_EARLY_PR_JSON="${TEST_ROOT}/fixture-early-pr.json"
+# Collaborator permission verdict for permission lookups: a permission name,
+# "404" (confirmed non-collaborator) or "fail" (API error). Default: 404.
+FIXTURE_PERMISSION="${TEST_ROOT}/fixture-permission"
+printf '404' >"$FIXTURE_PERMISSION"
 FIXTURE_STATUS_JSON="${TEST_ROOT}/fixture-status.json"
 cat >"$FIXTURE_STATUS_JSON" <<'STATUS'
 {"data":{"repository":{
@@ -115,6 +119,21 @@ if [[ "\$1" == "api" ]]; then
 	fi
 	if [[ "\$2" == "repos/"*"/issues/"*"/timeline" ]]; then
 		jq -s '.' "${FIXTURE_TIMELINE_JSON}" 2>/dev/null || exit 1
+		exit 0
+	fi
+	if [[ " \$* " == *"/collaborators/"*"/permission "* ]]; then
+		permission=\$(<"${FIXTURE_PERMISSION}")
+		[[ "\$permission" == "fail" ]] && exit 1
+		if [[ "\$2" == "-i" ]]; then
+			if [[ "\$permission" == "404" ]]; then
+				printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
+				exit 1
+			fi
+			printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "\$permission"
+			exit 0
+		fi
+		[[ "\$permission" == "404" ]] && exit 1
+		printf '%s\n' "\$permission"
 		exit 0
 	fi
 	if [[ "\$2" == "repos/"*"/pulls/"* ]]; then
@@ -722,6 +741,53 @@ for invalid_pr in \
 	if [[ "$sum_output" == "1393983|1" ]]; then assertion_rc=0; fi
 	print_result "unverified receipt cannot supply a session baseline" "$assertion_rc" "(got: '$sum_output')"
 done
+
+# GH#34598: installation-authenticated REST reports private org members as
+# CONTRIBUTOR. Association-only trust dropped every closeout receipt, the
+# timeline lacked the cross-references, and delivered work was re-charged
+# (incident: 931421|6 instead of 0|0). Write permission must restore the
+# receipt; a confirmed non-collaborator must not; lookup failure fails open.
+printf '[]' >"$FIXTURE_TIMELINE_JSON"
+cat >"$FIXTURE_PR_JSON" <<'JSON'
+{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18015","merged_at":"2026-05-05T12:00:00Z"}
+JSON
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-05-05T10:00:00Z","user":{"login":"runner-a"},"author_association":"CONTRIBUTOR","body":"spent 5m and 500,000 tokens"},
+ {"created_at":"2026-05-05T11:00:00Z","user":{"login":"runner-a"},"author_association":"CONTRIBUTOR","body":"spent 5m and 450,000 tokens"},
+ {"created_at":"2026-05-05T12:00:20Z","user":{"login":"runner-a"},"author_association":"CONTRIBUTOR","body":"<!-- PARTIAL_PARENT_CLOSEOUT:PR#42 -->\nspent 5m and 100,000 tokens"},
+ {"created_at":"2026-05-05T13:00:00Z","user":{"login":"runner-b"},"author_association":"CONTRIBUTOR","body":"spent 5m and 120,000 tokens"}
+]
+JSON
+printf 'write' >"$FIXTURE_PERMISSION"
+: >"$STUB_LOG"
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18015 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "120000|1" ]] && grep -q 'collaborators/runner-a/permission' "$STUB_LOG" &&
+	! grep -q 'collaborators/runner-b/permission' "$STUB_LOG"; then
+	assertion_rc=0
+fi
+print_result "write-permission CONTRIBUTOR receipt resets delivered spend" "$assertion_rc" "(got: '$sum_output')"
+run_check_cost_budget 18015 "owner/repo" "thinking"
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "permission-verified receipt prevents false thinking-budget trip" "$assertion_rc" "(rc=$rc output='$output')"
+printf '404' >"$FIXTURE_PERMISSION"
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18015 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "1070000|3" ]]; then assertion_rc=0; fi
+print_result "non-collaborator receipt cannot reset spend" "$assertion_rc" "(got: '$sum_output')"
+printf 'read' >"$FIXTURE_PERMISSION"
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18015 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "1070000|3" ]]; then assertion_rc=0; fi
+print_result "read-permission receipt cannot reset spend" "$assertion_rc" "(got: '$sum_output')"
+printf 'fail' >"$FIXTURE_PERMISSION"
+run_check_cost_budget 18015 "owner/repo" "thinking"
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "permission lookup failure stays fail-open" "$assertion_rc" "(rc=$rc output='$output')"
+printf '404' >"$FIXTURE_PERMISSION"
 
 # Merged checkpoints reported only as "PR #N" in trusted signed worker comments
 # are verified through REST; unreadable mentions are skipped, never fail-open.

@@ -74,6 +74,51 @@ _get_cost_budget_for_tier() {
 	return 0
 }
 
+# GH#34598: installation-authenticated REST (pulse App routing) reports private
+# org members as CONTRIBUTOR, so association alone dropped every closeout receipt
+# and re-charged delivered work. Resolve ambiguous authors of checkpoint
+# nominations (closeout markers, signed PR reports) through the collaborator
+# permission endpoint; at most 5 distinct logins to bound REST calls.
+# Args: repo slug, slurped comments JSON.
+# Stdout: JSON array of logins with admin/maintain/write permission.
+# Returns 1 on lookup failure (caller fail-open: cannot classify the evidence).
+_COST_TRUSTED_ASSOCIATIONS='["OWNER","MEMBER","COLLABORATOR"]'
+_cost_verified_nominator_logins() {
+	local repo_slug="$1" comments_json="$2"
+	local logins login permission lookup_rc
+	local verified='[]'
+	logins=$(printf '%s' "$comments_json" | jq -r --argjson assoc "$_COST_TRUSTED_ASSOCIATIONS" '
+		[.[][] | select((.author_association // "NONE") as $a | $assoc | index($a) | not)
+		 | select(.body // "" | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->")
+			or (contains("<!-- aidevops:sig -->") and test("\\bPR #[0-9]+\\b")))
+		 | .user.login // empty] | unique | .[:5][]
+	' 2>/dev/null) || return 1
+	while IFS= read -r login; do
+		[[ "$login" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$ ]] || continue
+		permission=""
+		lookup_rc=0
+		#aidevops:trust-boundary GH#34598: only an authenticated write-level
+		# permission verdict promotes an ambiguous association; a confirmed
+		# non-collaborator (404 → none) stays untrusted, uncertainty fails open.
+		# Without the shared lookup a 404 is indistinguishable from an outage,
+		# so the bare fallback treats any failure as untrusted.
+		if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+			_gh_collaborator_permission_lookup "$repo_slug" "$login" permission || lookup_rc=$?
+			[[ "$lookup_rc" -eq 0 ]] || return 1
+		else
+			permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" \
+				--jq '.permission // ""' 2>/dev/null) || permission=""
+		fi
+		case "$permission" in
+		admin | maintain | write)
+			verified=$(printf '%s' "$verified" | jq -c --arg login "$login" '. + [$login]') || return 1
+			;;
+		esac
+	done <<<"$logins"
+	printf '%s' "$verified"
+	return 0
+}
+
 # GH#34248: GitHub can omit cross-reference events for delivered partial PRs.
 # Closeout markers supply candidates only; verify each PR through REST before
 # treating its actual merge time as a checkpoint. Never reset from prose alone.
@@ -102,11 +147,13 @@ _cost_checkpoint_from_closeouts() {
 	# closeout marker. Those mentions are candidates only (at most the three
 	# highest numbers, to bound REST calls); unlike closeouts, an unreadable or
 	# non-PR mention is skipped rather than failing the whole aggregation.
-	local candidates kind pr_number pr_json merge_epoch
+	local candidates kind pr_number pr_json merge_epoch trusted_logins
 	local verified_closeouts='[]'
-	candidates=$(printf '%s' "$comments_json" | jq -r '
-		[.[][] | select(.author_association == "OWNER" or
-			.author_association == "MEMBER" or .author_association == "COLLABORATOR")
+	trusted_logins=$(_cost_verified_nominator_logins "$repo_slug" "$comments_json") || return 1
+	candidates=$(printf '%s' "$comments_json" | jq -r --argjson logins "$trusted_logins" \
+		--argjson assoc "$_COST_TRUSTED_ASSOCIATIONS" '
+		[.[][] | select(((.author_association // "NONE") as $a | $assoc | index($a) != null)
+			or ((.user.login // "") as $who | $logins | index($who) != null))
 		 | .body // ""] as $trusted
 		| ([$trusted[] | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->") | .[0] | tonumber]
 			| unique) as $closeouts
@@ -143,7 +190,8 @@ _cost_checkpoint_from_closeouts() {
 		fi
 	done <<<"$candidates"
 	jq -cn --argjson epoch "$checkpoint_epoch" --argjson closeouts "$verified_closeouts" \
-		'{epoch: $epoch, closeouts: $closeouts}' || return 1
+		--argjson logins "$trusted_logins" \
+		'{epoch: $epoch, closeouts: $closeouts, trusted_logins: $logins}' || return 1
 	return 0
 }
 
@@ -235,7 +283,10 @@ _cost_spend_from_comments() {
 			# Delayed copies cannot reliably identify the original session start.
 			| select($receipt == false or (
 				(.author_association == "OWNER" or .author_association == "MEMBER"
-					or .author_association == "COLLABORATOR") and
+					or .author_association == "COLLABORATOR"
+					# GH#34598: permission-verified author (ambiguous association).
+					or ((.user.login // "") as $who
+						| ($checkpoint.trusted_logins // []) | index($who) != null)) and
 				([(.body // "" | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->")
 					| .[0] | tonumber)] as $prs
 				 | any($checkpoint.closeouts[]; .pr as $pr
