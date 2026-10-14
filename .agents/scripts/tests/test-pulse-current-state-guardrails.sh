@@ -656,15 +656,21 @@ EOF_KILL_RUNNER
 
 test_wrapper_registers_benign_block_cleanup() {
 	local wrapper_file="${SCRIPT_DIR}/pulse-wrapper.sh"
-	local cleanup_stack_count=""
-	cleanup_stack_count=$(grep -c "push_cleanup '_dispatch_cleanup_benign_blocks_cycle'" "$wrapper_file" 2>/dev/null || true)
-	if grep -Fq "trap '_dispatch_cleanup_benign_blocks_cycle;" "$wrapper_file" &&
+	local lock_module="${SCRIPT_DIR}/pulse-instance-lock.sh"
+	# t18678: graceful cleanup belongs to the dedicated lifetime EXIT handler,
+	# not the shared RETURN-trap cleanup stack. Match the call inside its body.
+	if grep -Eq "^[[:space:]]*trap[[:space:]]+'_pulse_exit_cleanup'[[:space:]]+EXIT" "$wrapper_file" &&
 		grep -Fq $'\t_dispatch_cleanup_stale_benign_blocks || true' "$wrapper_file" &&
-		[[ "$cleanup_stack_count" == "2" ]]; then
+		awk '
+			/^_pulse_exit_cleanup\(\) \{/ { in_fn = 1; next }
+			in_fn && /^}/ { exit }
+			in_fn && /^[[:space:]]*_dispatch_cleanup_benign_blocks_cycle[[:space:]]*\|\|[[:space:]]*true[[:space:]]*$/ { cleanup = 1 }
+			END { exit cleanup ? 0 : 1 }
+		' "$lock_module"; then
 		print_result "guardrail: pulse wrapper registers graceful and startup benign-ledger cleanup" 0
 		return 0
 	fi
-	print_result "guardrail: pulse wrapper registers graceful and startup benign-ledger cleanup" 1 "cleanup_stack_count=${cleanup_stack_count}"
+	print_result "guardrail: pulse wrapper registers graceful and startup benign-ledger cleanup" 1 "missing EXIT handler, handler ledger cleanup, or startup cleanup"
 	return 0
 }
 
