@@ -10,7 +10,8 @@ import re
 import tempfile
 from pathlib import Path
 
-from canonical_git_invocation import is_version_query, repository_values, split_invocation
+from canonical_git_invocation import clone_paths, is_version_query, repository_values, split_invocation
+from canonical_git_management import is_managed_root
 from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
@@ -240,6 +241,46 @@ def _is_linked_worktree_remove_for_canonical(
     return allowed
 
 
+def _is_clone_outside_canonical(
+    real_git_path: str, cwd: str, prefix: list[str], args: list[str],
+    check_unresolved: bool,
+) -> bool:
+    """Allow only explicit, empty clone targets outside canonical roots."""
+    destination, auxiliary = clone_paths(args)
+    if not destination or any(os.environ.get(name) for name in (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+    )):
+        return False
+    # Git applies successive -C options relative to the previous effective cwd.
+    clone_cwd = Path(cwd)
+    index = 0
+    while index < len(prefix):
+        if prefix[index] != "-C" or index + 1 >= len(prefix):
+            return False
+        value = prefix[index + 1]
+        if value:
+            clone_cwd = (clone_cwd / value).resolve()
+        index += 2
+    canonical_top = _git_output(
+        real_git_path, cwd, *prefix, "rev-parse", "--show-toplevel",
+    )
+    try:
+        paths = []
+        for value in [destination, *auxiliary]:
+            if check_unresolved and (value.startswith("~") or re.search(r"[$`*?\[\]{}]", value)):
+                return False
+            path = (clone_cwd / value).resolve()
+            if canonical_top and path.is_relative_to(Path(canonical_top).resolve()):
+                return False
+            if any(is_managed_root(str(parent)) for parent in (path, *path.parents)):
+                return False
+            paths.append(path)
+        target = paths[0]
+        return not target.exists() or (target.is_dir() and next(target.iterdir(), None) is None)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 def classify_git_argv(
     argv: list[str], cwd: str, real_git_path: str, check_unresolved: bool = False
 ) -> tuple[bool, str]:
@@ -274,6 +315,18 @@ def classify_git_argv(
             real_git_path, effective_cwd, prefix, args
         ):
             result = True, "linked-worktree removal for canonical repository"
+        elif subcommand == "clone":
+            if _is_clone_outside_canonical(
+                real_git_path, effective_cwd, prefix, args, check_unresolved
+            ):
+                result = True, "clone to an explicit destination outside canonical checkouts"
+            else:
+                result = False, (
+                    "clone requires an explicit absent or empty destination outside canonical "
+                    "checkouts and safe options; clone into a path outside this checkout "
+                    "(the workspace layout in reference/repo-organization.md), "
+                    "or run it from that path's parent"
+                )
         elif _is_allowed_canonical(subcommand, args):
             result = True, "read-only canonical operation or linked-worktree creation"
         else:

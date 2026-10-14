@@ -21,6 +21,14 @@ gh repo clone personal-account/project ~/Git/project
 gh repo clone example-org/service ~/Git/example-org/service
 ```
 
+Cloning from inside a canonical checkout is allowed when an explicit destination
+resolves outside every canonical checkout and is absent or an empty directory.
+This applies to `git clone` and the Git command run by `gh repo clone`. Omitted
+destinations, destinations inside a canonical checkout, and non-empty targets
+remain blocked there. Use the workspace layout above, or run the clone from the
+destination's parent. Auxiliary template and separate-Git-directory paths must
+also remain outside canonical checkouts.
+
 Normalize new owner directory names to lowercase. Repository names retain their
 upstream spelling. Configure personal aliases per Git host in `repos.json`; do
 not assume that one GitHub login is the user's identity on every host:
