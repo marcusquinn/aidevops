@@ -662,13 +662,37 @@ run_credential_inventory() {
 	return "$exit_code"
 }
 
+# Parse `set` options after SECRET_NAME into SET_SOURCE_FILE and
+# SET_RECORD_ARGS (globals keep Bash 3.2 compatibility without namerefs).
+parse_set_options() {
+	SET_SOURCE_FILE=""
+	SET_RECORD_ARGS=()
+	while [[ $# -gt 0 ]]; do
+		local flag="$1"
+		local flag_value="${2:-}"
+		case "$flag" in
+		--from-file | --provider | --account | --purpose | --zones | --resources | --expires | --kind)
+			[[ -n "$flag_value" ]] || return 1
+			if [[ "$flag" == "--from-file" ]]; then
+				SET_SOURCE_FILE="$flag_value"
+			else
+				SET_RECORD_ARGS+=("$flag" "$flag_value")
+			fi
+			shift 2
+			;;
+		*)
+			return 1
+			;;
+		esac
+	done
+	return 0
+}
+
 # Set a secret (hidden single-line input, full stdin, or private file).
 # Optional metadata flags record which account the secret opens (GH#34680);
 # they are validated before the value is read so a rejection stores nothing.
 cmd_set() {
 	local name="${1:-}"
-	local source_file=""
-	local -a record_args=()
 	local usage="Usage: aidevops secret set SECRET_NAME [--from-file PATH] [--provider P [--account REF] [--purpose TEXT] [--zones LIST] [--resources LIST] [--expires YYYY-MM-DD|never] [--kind KIND]]"
 
 	if [[ -z "$name" || "$name" == -* ]]; then
@@ -676,28 +700,13 @@ cmd_set() {
 		return 1
 	fi
 	shift
-	while [[ $# -gt 0 ]]; do
-		local flag="$1"
-		local flag_value="${2:-}"
-		case "$flag" in
-		--from-file | --provider | --account | --purpose | --zones | --resources | --expires | --kind)
-			if [[ -z "$flag_value" ]]; then
-				print_error "$usage"
-				return 1
-			fi
-			if [[ "$flag" == "--from-file" ]]; then
-				source_file="$flag_value"
-			else
-				record_args+=("$flag" "$flag_value")
-			fi
-			shift 2
-			;;
-		*)
-			print_error "$usage"
-			return 1
-			;;
-		esac
-	done
+	if ! parse_set_options "$@"; then
+		print_error "$usage"
+		return 1
+	fi
+	local source_file="$SET_SOURCE_FILE"
+	local -a record_args=()
+	[[ ${#SET_RECORD_ARGS[@]} -eq 0 ]] || record_args=("${SET_RECORD_ARGS[@]}")
 
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
