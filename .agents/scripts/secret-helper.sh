@@ -12,6 +12,8 @@
 #   secret-helper.sh get NAME              # Get secret value (for scripts/piping)
 #   secret-helper.sh list                  # List secret names (never values)
 #   secret-helper.sh inventory             # Deterministic names-only JSON inventory
+#   secret-helper.sh describe [NAME]       # Non-secret registry: account, reach, owner, expiry
+#   secret-helper.sh record|account|default|alias|resolve ...  # Registry maintenance (GH#34680)
 #   secret-helper.sh run CMD [ARGS...]     # Inject all secrets, redact output
 #   secret-helper.sh NAME [NAME...] -- CMD # Inject specific secrets, redact output
 #   secret-helper.sh init                  # Initialize gopass store
@@ -643,27 +645,68 @@ cmd_init() {
 	return 0
 }
 
-# Set a secret (hidden single-line input, full stdin, or private file)
+# Delegate non-secret credential registry commands (GH#34680). The registry
+# stores names, accounts, reach and expiry only; it never reads secret values.
+run_credential_inventory() {
+	local inventory_cli="${SCRIPT_DIR}/credential_inventory.py"
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_error "python3 is required for credential registry commands" >&2
+		return 1
+	fi
+	if [[ ! -f "$inventory_cli" ]]; then
+		print_error "Credential registry helper not found: credential_inventory.py" >&2
+		return 1
+	fi
+	local exit_code=0
+	python3 "$inventory_cli" "$@" || exit_code=$?
+	return "$exit_code"
+}
+
+# Set a secret (hidden single-line input, full stdin, or private file).
+# Optional metadata flags record which account the secret opens (GH#34680);
+# they are validated before the value is read so a rejection stores nothing.
 cmd_set() {
 	local name="${1:-}"
 	local source_file=""
+	local -a record_args=()
+	local usage="Usage: aidevops secret set SECRET_NAME [--from-file PATH] [--provider P [--account REF] [--purpose TEXT] [--zones LIST] [--resources LIST] [--expires YYYY-MM-DD|never] [--kind KIND]]"
 
-	if [[ -z "$name" ]] || { [[ $# -ne 1 ]] && [[ $# -ne 3 ]]; }; then
-		print_error "Usage: aidevops secret set SECRET_NAME [--from-file PATH]"
+	if [[ -z "$name" || "$name" == -* ]]; then
+		print_error "$usage"
 		return 1
 	fi
-	if [[ $# -eq 3 ]]; then
-		if [[ "$2" != "--from-file" || -z "$3" ]]; then
-			print_error "Usage: aidevops secret set SECRET_NAME [--from-file PATH]"
+	shift
+	while [[ $# -gt 0 ]]; do
+		local flag="$1"
+		local flag_value="${2:-}"
+		case "$flag" in
+		--from-file | --provider | --account | --purpose | --zones | --resources | --expires | --kind)
+			if [[ -z "$flag_value" ]]; then
+				print_error "$usage"
+				return 1
+			fi
+			if [[ "$flag" == "--from-file" ]]; then
+				source_file="$flag_value"
+			else
+				record_args+=("$flag" "$flag_value")
+			fi
+			shift 2
+			;;
+		*)
+			print_error "$usage"
 			return 1
-		fi
-		source_file="$3"
-	fi
+			;;
+		esac
+	done
 
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
 	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
 		print_error "Secret name must be a valid environment variable name"
+		return 1
+	fi
+	if [[ ${#record_args[@]} -gt 0 ]] && ! run_credential_inventory record "$name" "${record_args[@]}" --check; then
+		print_error "Credential metadata rejected; nothing was stored"
 		return 1
 	fi
 
@@ -724,8 +767,24 @@ cmd_set() {
 		print_info "Recommend: aidevops secret init (to enable encrypted storage)"
 		print_info "Do not run concurrent refreshes for the same rotating refresh token"
 	fi
+	record_set_metadata "$name" ${record_args[@]+"${record_args[@]}"}
 	print_info "Verify key name only: aidevops secret list"
 
+	return 0
+}
+
+# Record registry metadata after a successful store, or hint how to add it.
+# A metadata failure never undoes the stored secret; it reports the retry.
+record_set_metadata() {
+	local name="$1"
+	shift
+	if [[ $# -eq 0 ]]; then
+		print_info "Record which account it opens: aidevops secret record $name --provider PROVIDER --account REF"
+		return 0
+	fi
+	if ! run_credential_inventory record "$name" "$@"; then
+		print_warning "Stored $name, but recording its metadata failed; retry with: aidevops secret record $name $*"
+	fi
 	return 0
 }
 
@@ -1182,6 +1241,17 @@ cmd_help() {
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  status                            Show backend status"
 	echo ""
+	print_info "Credential registry (non-secret; which account each secret opens):"
+	echo ""
+	echo "  set <NAME> --provider P --account REF [--purpose T] [--zones LIST] [--expires DATE|never]"
+	echo "  record <NAME> --provider P [--account REF] [...]   Describe an already stored secret"
+	echo "  describe [NAME] [--json]          Account, reach, owner, expiry, default"
+	echo "  account add REF --provider P --name NAME [--ownership-type T --owner O --confirmed]"
+	echo "  account list [--json]             List provider accounts"
+	echo "  default PROVIDER [NAME|--none]    Show or declare the provider default"
+	echo "  alias NAME OLD_NAME               Keep a retired name working (no rename)"
+	echo "  resolve PROVIDER                  Print default name (exit 3 none, 4 undeclared)"
+	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
 	echo "  import-credentials                Import from credentials.sh to gopass"
@@ -1248,6 +1318,9 @@ main() {
 		;;
 	inventory)
 		cmd_inventory "$@"
+		;;
+	describe | record | account | default | alias | resolve)
+		run_credential_inventory "$command" "$@" || return $?
 		;;
 	run)
 		cmd_run "$@"

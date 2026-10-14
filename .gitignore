@@ -90,6 +90,8 @@ authorized_keys
 !.agents/**/*credential*.ts
 !.agents/**/*credential*.py
 !.agents/**/*credential*.md
+# GH#34717: placeholder-only template for the non-secret credential registry.
+!.agents/configs/credential-inventory.json.txt
 
 # Environment files
 .env*

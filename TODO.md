@@ -1683,6 +1683,20 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18687 fix(pulse): preflight prefetch times out on every cycle for large repo sets #auto-dispatch #bug ref:GH#34527 pr:#34530 completed:2026-10-13
 
+- [ ] t18695 Credential registry: record account, reach, owner, expiry and explicit provider defaults #feat ref:GH#34717
+
+- [ ] t18696 Credential aliases and explicit provider defaults resolve at secret injection #feat ref:GH#34718
+
+- [ ] t18697 aidevops secret dependents: show what uses a credential before rename, rotation or revocation #feat ref:GH#34719
+
+- [ ] t18698 Default-aware credential consumers: onboarding and MCP validation honour the declared provider default #feat ref:GH#34720
+
+- [ ] t18699 Consolidate credential naming guidance into one convention with registry metadata #documentation ref:GH#34721
+
+- [ ] t18700 Read-only Cloudflare credential verification, drift report and resource ownership lookup #feat ref:GH#34722
+
+- [ ] t18701 aidevops secret organise: plan-first cleanup of inconsistent credentials without renames #feat ref:GH#34723
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
