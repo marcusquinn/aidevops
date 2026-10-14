@@ -151,7 +151,7 @@ assert_blocked "blocks untrusted gh credential executable" "git -c credential.he
 if python3 - "$SCRIPT_DIR" <<'PY'; then
 import sys
 sys.path.insert(0, sys.argv[1])
-from canonical_git_policy import _gh_credential_executable
+from canonical_git_clone import _gh_credential_executable
 
 assert _gh_credential_executable('!"/usr/bin/gh" auth git-credential') == '/usr/bin/gh'
 for helper in (

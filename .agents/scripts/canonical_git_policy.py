@@ -10,19 +10,16 @@ import re
 import tempfile
 from pathlib import Path
 
-from trusted_executable import trusted_executable
-
+from canonical_git_clone import is_clone_outside_canonical
 from canonical_git_invocation import (
-    clone_paths,
     is_version_query,
     repository_values,
     split_invocation,
 )
-from canonical_git_management import is_managed_root, is_registered_common_dir
 from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
-from canonical_git_repository import real_git
+from canonical_git_repository import real_git as real_git
 
 BLOCK_EXIT = 42
 READ_ONLY = frozenset(
@@ -248,146 +245,39 @@ def _is_linked_worktree_remove_for_canonical(
     return allowed
 
 
-def _gh_credential_executable(helper: str) -> str:
-    """Extract only the absolute executable from an exact gh auth helper."""
-    match = re.fullmatch(
-        r'!(?:"(?P<quoted>/[A-Za-z0-9_./+ -]+)"|(?P<plain>/[A-Za-z0-9_./+-]+))'
-        r' auth git-credential',
-        helper,
-    )
-    if not match:
-        return ""
-    executable = match.group("quoted") or match.group("plain")
-    name = os.path.basename(executable)
-    if name not in {"gh", ".gh-wrapped"}:
-        return ""
-    return executable
-
-
-def _is_clone_credential_config(value: str) -> bool:
-    """Accept GitHub CLI credential resets/helpers, never arbitrary shell helpers."""
-    key, separator, helper = value.partition("=")
-    if not separator or not re.fullmatch(r"credential(?:\.https://[^\s/]+)?\.helper", key):
-        return False
-    if not helper:
-        return True
-    executable = _gh_credential_executable(helper)
-    if not executable:
-        return False
-    name = os.path.basename(executable)
-    trusted = trusted_executable(name, os.path.dirname(executable))
-    return bool(trusted and os.path.realpath(executable) == os.path.realpath(trusted))
-
-
-def _clone_cwd(cwd: str, prefix: list[str]) -> Path | None:
-    """Resolve -C pairs and permit only GitHub CLI's trusted credential config."""
-    clone_cwd = Path(cwd)
-    index = 0
-    while index < len(prefix):
-        option = prefix[index]
-        if option not in {"-C", "-c"} or index + 1 >= len(prefix):
-            return None
-        value = prefix[index + 1]
-        if option == "-c":
-            if not _is_clone_credential_config(value):
-                return None
-        elif value:
-            clone_cwd = (clone_cwd / value).resolve()
-        index += 2
-    return clone_cwd
-
-
-def _clone_path_is_protected(path: Path, canonical_top: str) -> bool:
-    """Check checkout ancestry and registered separate Git metadata ancestry."""
-    if canonical_top and path.is_relative_to(Path(canonical_top).resolve()):
-        return True
-    return any(
-        is_managed_root(str(parent)) or is_registered_common_dir(str(parent))
-        for parent in (path, *path.parents)
-    )
-
-
-def _clone_path_is_allowed(
-    value: str, clone_cwd: Path, canonical_top: str, check_unresolved: bool,
-) -> bool:
-    """Resolve one literal path and require an unprotected absent/empty target."""
-    if check_unresolved and (
-        value.startswith("~") or re.search(r"[$`*?\[\]{}]", value)
-    ):
-        return False
-    path = (clone_cwd / value).resolve()
-    if _clone_path_is_protected(path, canonical_top):
-        return False
-    return not path.exists() or (
-        path.is_dir() and next(path.iterdir(), None) is None
-    )
-
-
-def _is_clone_outside_canonical(
-    real_git_path: str,
-    cwd: str,
-    prefix: list[str],
-    args: list[str],
-    check_unresolved: bool,
-) -> bool:
-    """Allow only explicit, empty clone targets outside canonical roots."""
-    destination, auxiliary = clone_paths(args)
-    if not destination or any(
-        os.environ.get(name)
-        for name in (
-            "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-            "GIT_OBJECT_DIRECTORY", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
-            "GIT_TEMPLATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
-        )
-    ):
-        return False
-    canonical_top = _git_output(
-        real_git_path, cwd, *prefix, "rev-parse", "--show-toplevel",
-    )
-    try:
-        # Git applies successive -C options relative to the previous cwd.
-        clone_cwd = _clone_cwd(cwd, prefix)
-        if clone_cwd is None:
-            return False
-        for value in [destination, *auxiliary]:
-            if not _clone_path_is_allowed(
-                value, clone_cwd, canonical_top, check_unresolved
-            ):
-                return False
-        return True
-    except (OSError, RuntimeError, ValueError):
-        return False
-
-
 def _classify_canonical_operation(
-    real_git_path: str, cwd: str, prefix: list[str], subcommand: str,
-    args: list[str], check_unresolved: bool,
+    real_git_path: str, cwd: str, prefix: list[str],
+    command: tuple[str, list[str]], check_unresolved: bool,
 ) -> tuple[bool, str]:
     """Classify narrow exceptions after the repository identity is established."""
+    subcommand, args = command
+    result = False, f"canonical worktree mutation via 'git {subcommand}'"
     if _is_isolated_prospective_merge_tree(
         real_git_path, cwd, prefix, subcommand, args
     ):
-        return True, "isolated prospective merge-tree probe"
-    if _is_isolated_routines_publisher(real_git_path, cwd, prefix, subcommand):
-        return True, "isolated routines publisher mutation"
-    if subcommand == "worktree" and _is_linked_worktree_remove_for_canonical(
+        result = True, "isolated prospective merge-tree probe"
+    elif _is_isolated_routines_publisher(real_git_path, cwd, prefix, subcommand):
+        result = True, "isolated routines publisher mutation"
+    elif subcommand == "worktree" and _is_linked_worktree_remove_for_canonical(
         real_git_path, cwd, prefix, args
     ):
-        return True, "linked-worktree removal for canonical repository"
-    if subcommand == "clone":
-        if _is_clone_outside_canonical(
+        result = True, "linked-worktree removal for canonical repository"
+    elif subcommand == "clone":
+        allowed = is_clone_outside_canonical(
             real_git_path, cwd, prefix, args, check_unresolved
-        ):
-            return True, "clone to an explicit destination outside canonical checkouts"
-        return False, (
+        )
+        reason = (
+            "clone to an explicit destination outside canonical checkouts"
+            if allowed else
             "clone requires an explicit absent or empty destination outside canonical "
             "checkouts and safe options; clone into a path outside this checkout "
             "(the workspace layout in reference/repo-organization.md), "
             "or run it from that path's parent"
         )
-    if _is_allowed_canonical(subcommand, args):
-        return True, "read-only canonical operation or linked-worktree creation"
-    return False, f"canonical worktree mutation via 'git {subcommand}'"
+        result = allowed, reason
+    elif _is_allowed_canonical(subcommand, args):
+        result = True, "read-only canonical operation or linked-worktree creation"
+    return result
 
 
 def classify_git_argv(
@@ -414,6 +304,6 @@ def classify_git_argv(
             result = True, "linked worktree or non-repository target"
         else:
             result = _classify_canonical_operation(
-                real_git_path, effective_cwd, prefix, subcommand, args, check_unresolved
+                real_git_path, effective_cwd, prefix, (subcommand, args), check_unresolved
             )
     return result
