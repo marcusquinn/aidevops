@@ -277,6 +277,74 @@ GH_AUDIT_LOG_FILE="$HANDOFF_LOG" _gh_audit_record_op \
 jq -e 'select(.number == 28) | .flags.pr_review_handoff_verified == "v1-current-state"' "$HANDOFF_LOG" >/dev/null ||
 	fail "verified full-loop handoff did not produce audit proof"
 
+# GH#34614: exercise the actual managed-write CLI dispatch and safe-edit audit,
+# not just a synthetic caller string. Only remote transport/privacy is stubbed.
+CLI_HANDOFF_LOG="${TEST_ROOT}/cli-handoff-audit.log"
+(
+	CLI_SCRIPT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	# shellcheck source=../shared-gh-wrappers.sh
+	source "${CLI_SCRIPT_DIR}/shared-gh-wrappers.sh"
+	# Source the real CLI harmlessly to load its entrypoint and dispatch functions.
+	# shellcheck source=../gh-write-helper.sh
+	source "${CLI_SCRIPT_DIR}/gh-write-helper.sh" help >/dev/null
+	export GH_AUDIT_LOG_FILE="$CLI_HANDOFF_LOG"
+	HANDOFF_STAGE="status:in-progress"
+	HANDOFF_CASE="valid"
+	handoff_issue_json() {
+		jq -n --arg status "$HANDOFF_STAGE" --arg scenario "$HANDOFF_CASE" '
+			{state: (if $scenario == "closed" then "closed" else "open" end),
+			 title: "Owned issue", body: "Preserved body",
+			 assignees: [{login: (if $scenario == "unowned" then "other" else "runner" end)}],
+			 labels: [{name: $status}]}'
+		return 0
+	}
+	gh_issue_view() { handoff_issue_json; return 0; }
+	_gh_guard_public_write_args() { return 0; }
+	gh() {
+		local command="$1" resource="${2:-}"
+		[[ "$HANDOFF_CASE" != "unavailable" ]] || return 1
+		case "${command}:${resource}" in
+		api:user) printf '%s\n' runner ;;
+		api:repos/example/repo/issues/29) handoff_issue_json ;;
+		pr:view)
+			jq -n --arg scenario "$HANDOFF_CASE" --arg stage "$HANDOFF_STAGE" '
+				{state: (if $scenario == "merged" then "MERGED" else "OPEN" end),
+				 isDraft: ($scenario == "draft" or ($scenario == "race" and $stage == "status:in-review")),
+				 author: {login: (if $scenario == "other-author" then "other" else "runner" end)},
+				 closingIssuesReferences: [{number: (if $scenario == "unlinked" then 99 else 29 end),
+				 repository: {owner: {login: (if $scenario == "cross-repo" then "other" else "example" end)}, name: "repo"}}]}'
+			;;
+		issue:edit) HANDOFF_STAGE="status:in-review" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	main issue review-handoff 29 --repo example/repo --pr 30 || fail "real CLI handoff failed"
+	jq -e '.caller_function == "_issue_review_handoff" and
+		.flags.pr_review_handoff_verified == "v2-owned-pr-current-state"' "$CLI_HANDOFF_LOG" >/dev/null ||
+		fail "real CLI handoff did not emit live verified provenance"
+	for HANDOFF_CASE in draft merged unlinked cross-repo unowned other-author closed unavailable; do
+		HANDOFF_STAGE="status:in-progress"
+		if main issue review-handoff 29 --repo example/repo --pr 30; then
+			fail "unsafe CLI handoff accepted: $HANDOFF_CASE"
+		fi
+		[[ "$HANDOFF_STAGE" == "status:in-progress" ]] || fail "failed preflight mutated labels"
+	done
+	HANDOFF_CASE="race"
+	HANDOFF_STAGE="status:in-progress"
+	main issue review-handoff 29 --repo example/repo --pr 30 || fail "race fixture mutation failed"
+	HANDOFF_CASE="valid"
+	HANDOFF_STAGE="status:in-progress"
+	_GH_REVIEW_HANDOFF_PR=30 main issue edit 29 --repo example/repo \
+		--remove-label status:in-progress --add-label status:in-review || fail "generic edit fixture failed"
+	jq -e -s 'length == 3 and .[1].flags == {} and .[2].flags == {}' "$CLI_HANDOFF_LOG" >/dev/null ||
+		fail "race or generic edit acquired verified provenance"
+)
+cli_output=$(GH_AUDIT_LOG_FILE="$CLI_HANDOFF_LOG" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/cli-state.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
+[[ "$cli_output" == *"**Anomalies found:** 2"* ]] ||
+	fail "scanner did not exclude exactly the verified real-path handoff"
+
 gh_issue_view() {
 	printf '%s\n' '{"title":"REST issue snapshot","body":"Protected body","labels":[{"name":"monitoring"}]}'
 	return 0

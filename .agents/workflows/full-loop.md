@@ -262,7 +262,13 @@ gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$MERGE_SUMMARY_FILE"
 
 Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length'` must return `1`.
 
-**4.3 Managed Label `status:in-review` (t1343):** `commit-and-pr` handles this. For managed manual PRs: check issue is `OPEN` first.
+**4.3 Managed Label `status:in-review` (t1343):** `commit-and-pr` handles automatic status bookkeeping. Workers and managed manual PRs that still need a progress-to-review handoff must use the explicit verified path after the PR is non-draft:
+
+```bash
+gh-write-helper.sh issue review-handoff "$ISSUE_NUMBER" --repo "$REPO" --pr "$PR_NUMBER"
+```
+
+This requires an open issue assigned to the current actor with `status:in-progress`, and an open non-draft PR authored by that actor whose closing references include this issue in the same repository. It changes only the two status labels and independently rechecks live PR ownership and issue state before recording verified audit provenance. Missing ownership, linkage, or API evidence fails closed; do not fall back to generic `issue edit` to obtain an exemption. Generic edits remain audited and reportable. Draft checkpoints are not review handoffs.
 
 **4.4 Review Bot Gate (t1382 + GH#17541 — CODE-ENFORCED for maintained merges):**
 

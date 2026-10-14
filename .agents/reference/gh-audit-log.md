@@ -315,12 +315,25 @@ The scanner:
 2. Filters entries with `suspicious[] | length > 0`, excluding only exact,
    fully comparable expected transitions: verified issue/PR approval removal of
    `needs-maintainer-review`, independently revalidated trusted-author NMR
-   normalization, and worker permission blocking that replaces active lifecycle
+   normalization, verified PR-review handoffs that replace only
+   `status:in-progress` with `status:in-review` without content-length changes,
+   and worker permission blocking that replaces active lifecycle
    labels with `needs-maintainer-permissions` (the original audit entry remains
    unchanged)
 3. Redacts source repository names unless GitHub confirms they are public (or
    they match the destination repository), failing closed on lookup errors
 4. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when anomalies are found
+
+The explicit handoff command is `gh-write-helper.sh issue review-handoff <issue>
+--repo <owner/repo> --pr <pr>`. Its `_issue_review_handoff` provenance requires
+`flags.pr_review_handoff_verified == "v2-owned-pr-current-state"`: the current
+actor is assigned to the open issue and authored an open, non-draft PR with a
+same-repository closing reference to it. The audit independently rechecks that
+PR and the live issue (open, in-review, not in-progress). Legacy full-loop caller
+paths retain the `v1-current-state` proof. Generic `issue edit` / `main` is not
+exempt, even with a PR identifier in the environment. Unavailable reads, changed
+ownership, draft/unlinked PRs, or additional destructive signals remain
+reportable. Historical audit entries are never rewritten or backfilled.
 
 Alerts are labelled `monitoring` and `no-auto-dispatch` (GH#34499). The evidence
 is in the producing runner's local `gh-audit.log`, so the review owner is the
