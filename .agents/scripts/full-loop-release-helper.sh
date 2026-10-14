@@ -203,11 +203,17 @@ _full_loop_resolve_requested_release_source() {
 	local release_path="$3"
 	local resolver="$4"
 	local expected_sources="${5:-}"
+	local resolution_mode="${6:-snapshot}"
 	local blocked_pr_json=""
 	local blocked_merge=""
 	local blocked_head=""
 	[[ -x "$resolver" ]] || return 1
-	local resolver_args=(resolve-source --snapshot --source-pr "$source_pr" --repo "$repo" --branch main)
+	local resolver_args=(resolve-source --source-pr "$source_pr" --repo "$repo" --branch main)
+	case "$resolution_mode" in
+	snapshot) resolver_args+=(--snapshot) ;;
+	aggregate) ;; # Signed-tag recovery requires the exact-tip trailer resolver.
+	*) return 1 ;;
+	esac
 	[[ -n "$expected_sources" ]] && resolver_args+=(--expected-sources "$expected_sources")
 	if ! _FULL_LOOP_RESOLVED_SOURCE_JSON=$(cd "$release_path" && bash "$resolver" "${resolver_args[@]}"); then
 		blocked_pr_json=$(gh pr view "$source_pr" --repo "$repo" --json state,mergedAt,mergeCommit,baseRefName 2>/dev/null || true)
