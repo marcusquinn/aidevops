@@ -67,8 +67,14 @@ source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
 REPO_ROOT="$ROOT/repo"
 history_calls=0
 lane_calls=0
-_full_loop_release_ensure_full_history() { history_calls=$((history_calls + 1)); return 0; }
-_full_loop_release_guard_competing_lane() { lane_calls=$((lane_calls + 1)); return 0; }
+_full_loop_release_ensure_full_history() {
+	history_calls=$((history_calls + 1))
+	return 0
+}
+_full_loop_release_guard_competing_lane() {
+	lane_calls=$((lane_calls + 1))
+	return 0
+}
 if _full_loop_release_start_new test/repo 123 patch incremental '' 2>/dev/null; then
 	printf 'FAIL release lane accepted unregistered signer\n'
 	exit 1
