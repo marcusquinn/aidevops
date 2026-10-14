@@ -39,6 +39,7 @@ LIBRECRAWL_DEFAULT_TIMEOUT_MIN=60
 # Tier reported by the last successful probe (admin = local mode)
 LIBRECRAWL_TIER=""
 _LIBRECRAWL_ACCOUNT=false
+_LIBRECRAWL_ACCOUNT_CONFIGURED=false
 
 # Options that only the LibreCrawl engine implements (set by librecrawl_store_opt)
 LIBRECRAWL_OPT_RENDER_JS=false
@@ -156,16 +157,16 @@ _librecrawl_login() {
 	local login_json info_json username password body="" endpoint="/api/guest-login"
 	LIBRECRAWL_TIER=""
 	_LIBRECRAWL_ACCOUNT=false
+	_LIBRECRAWL_ACCOUNT_CONFIGURED=false
 	username=$(_librecrawl_secret LIBRECRAWL_USERNAME)
 	if [[ -n "$username" ]]; then
+		_LIBRECRAWL_ACCOUNT_CONFIGURED=true
 		# Refuse sending an account password over non-local plaintext HTTP.
-		case "$LIBRECRAWL_URL" in
-		https://* | http://127.0.0.1:* | http://localhost:* | http://127.0.0.1 | http://localhost) ;;
-		*)
+		# Match the entire authority: localhost:port@remote is not loopback.
+		if [[ "$LIBRECRAWL_URL" != https://* && ! "$LIBRECRAWL_URL" =~ ^http://(localhost|127[.]0[.]0[.]1)(:[0-9]+)?$ ]]; then
 			print_error "LibreCrawl account sign-in requires HTTPS (except loopback)"
 			return 1
-			;;
-		esac
+		fi
 		password=$(_librecrawl_secret LIBRECRAWL_PASSWORD)
 		[[ -n "$password" ]] || {
 			print_error "LibreCrawl sign-in needs LIBRECRAWL_PASSWORD"

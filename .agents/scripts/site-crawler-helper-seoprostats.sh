@@ -34,7 +34,7 @@ _seoprostats_ssh() (
 		return 1
 	}
 	# Private remote files are removed on success, copy/import failure or interruption.
-	trap 'ssh "${ssh_args[@]}" "rm -rf -- $(_seoprostats_quote "$remote")" >/dev/null || true' EXIT
+	trap 'if ! ssh "${ssh_args[@]}" "rm -rf -- $(_seoprostats_quote "$remote")" >/dev/null; then print_error "Could not remove remote import files in $remote"; exit 1; fi' EXIT
 	trap 'exit 130' INT TERM
 	command="wp seoprostats crawl import"
 	for file in "$@"; do
@@ -140,6 +140,11 @@ _seoprostats_rest() (
 		fi
 		sleep 2
 		remaining=$((deadline - $(date +%s)))
+		# curl interprets --max-time 0 as unlimited; recheck after scheduling delays.
+		if [[ "$remaining" -le 0 ]]; then
+			print_error "SEO Pro Stats import $id timed out; it may still finish on the server"
+			return 1
+		fi
 		_seoprostats_request "${temp}/auth" "$response" "$remaining" "$endpoint" || return 1
 	done
 )

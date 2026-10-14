@@ -228,7 +228,7 @@ _do_crawl_select_engine() {
 			engine="$ENGINE_LIBRECRAWL"
 			return 0
 		fi
-		if [[ "$wants_librecrawl" == true || -n "$LIBRECRAWL_ONLY_FLAGS" ]]; then
+		if [[ "$wants_librecrawl" == true || -n "$LIBRECRAWL_ONLY_FLAGS" || "$_LIBRECRAWL_ACCOUNT_CONFIGURED" == true ]]; then
 			[[ -n "$LIBRECRAWL_ONLY_FLAGS" ]] && print_error "${LIBRECRAWL_ONLY_FLAGS}: needs the LibreCrawl engine"
 			print_error "No usable LibreCrawl session at ${LIBRECRAWL_URL}${LIBRECRAWL_TIER:+ (tier: ${LIBRECRAWL_TIER})} (use local mode or an account)"
 			_librecrawl_local_mode_help
