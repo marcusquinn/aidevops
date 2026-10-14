@@ -82,6 +82,7 @@ api.perplexity.ai
 api-beta.quickfile.co.uk
 api.quickfile.co.uk
 api.replicate.com
+api.runpod.ai
 api.sandbox.namecheap.com
 api.securitytrails.com
 api.semrush.com
@@ -227,6 +228,7 @@ console.aws.amazon.com
 console.cloud.google.com
 console.groq.com
 console.hetzner.cloud
+console.runpod.io
 console.twilio.com
 context7.com
 context7.io
@@ -311,6 +313,7 @@ docs.crawl4ai.com
 docs.crewai.com
 docs.dataforseo.com
 docs.daytona.io
+docs.dev.runwayml.com
 docs.digitalocean.com
 docs.docker.com
 docs.factory.ai
@@ -339,6 +342,7 @@ docs.orbstack.dev
 docs.perplexity.ai
 docs.pipecat.ai
 docs.pydantic.dev
+docs.runpod.io
 docs.sentry.io
 docs.skyvern.com
 docs.snyk.io
@@ -767,6 +771,7 @@ vault.yourdomain.com
 vercel.com
 verify.twilio.com
 via.placeholder.com
+videorouter.sh
 warmupinbox.com
 warp.dev
 wave.webaim.org

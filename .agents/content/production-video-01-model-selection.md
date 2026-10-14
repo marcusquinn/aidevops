@@ -27,6 +27,11 @@ Content Type?
 | **Sora 2 Pro** | Authentic UGC, fast (<2 min), lower cost, natural movement | Max 10s, less cinematography control, 1080p native | TikTok, Reels, Shorts, testimonials |
 | **Veo 3.1** | Cinematic quality, character consistency, 8K, precise control | Slower (5-10 min), higher cost, complex prompting | Commercials, brand content, character series |
 | **Higgsfield** | 100+ models via single API, Kling/Seedance/DOP, webhook support | API-based only, model availability varies | Automated pipelines, batch generation, A/B testing |
+| **MiniMax H3** (Hailuo) | Very low cost per second, strong motion, lipsync and camera-control variants | Less cinematic polish than Veo/Gen-4.5 | Drafts, volume social content, previsualisation |
+
+Newer models (Gen-4.5, Kling 3.0/O3, Seedance 2.5, Wan 3.0) and need-based
+recommendations live in `media-generation-providers.md` "Recommendations by
+Need"; use its cost method before choosing a route for a batch.
 
 ## Content Type Presets
 

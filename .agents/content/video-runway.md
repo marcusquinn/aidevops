@@ -1,5 +1,5 @@
 ---
-description: "Runway API - AI video, image, and audio generation (Gen-4, Veo 3, Act Two, ElevenLabs)"
+description: "Runway API - AI video, image, and audio generation (Gen-4.5, Aleph 2, Act Two, Veo, Kling, H3, ElevenLabs, Model Routers)"
 mode: subagent
 tools:
   read: true
@@ -49,6 +49,36 @@ SDKs read `RUNWAYML_API_SECRET` automatically.
 | `POST /v1/uploads` | Upload ephemeral file | -- | -- |
 | `GET /v1/organization` | Org info + credits | -- | -- |
 | `POST /v1/organization/usage` | Credit usage query | -- | -- |
+
+## Current Catalog and Model Routers (verified 2026-10-14)
+
+The table above predates Runway's wider catalog. Before building a request,
+read `https://docs.dev.runwayml.com/guides/models/` for the exact endpoint and
+fields of each model, and `https://docs.dev.runwayml.com/guides/pricing/` for
+live rates. Representative credits per output second (1 credit = $0.01):
+
+| Model | Credits/s | Notes |
+|-------|-----------|-------|
+| `gen4.5` | 12 | Runway flagship video model; ProRes/HDR surcharges available |
+| `aleph2` | 28 (56 min) | Video-to-video editing; supersedes `gen4_aleph` |
+| `gen4_turbo`, `act_two` | 5 | Fast I2V; character performance |
+| `veo3.1` / `veo3.1_fast` | 40/20 or 15/10 (audio/no audio) | Google Veo resold |
+| `kling3.0_pro`, `klingO3_pro` | 12-17 | Kling 3.0 and O3 |
+| `seedance2_5` | 20-68 by resolution (80 min) | Plus input/reference video seconds |
+| `h3_max` | 5 (480p), 8 (768p) | MiniMax Hailuo H3 Max |
+| `wan3`, `wan3_prime` | 5-28 by resolution | Alibaba Wan 3.0 |
+| `ruby` | 20 (40 above 4MP) | SDR to HDR conversion |
+
+**Model Routers**: create a named router in the Developer Portal (optimise for
+cost, latency or quality, with an optional per-generation price cap), then call
+`/v1/generate/video`, `/v1/generate/image` or `/v1/generate/audio` with its
+config ID. Router requests use `aspectRatio` (e.g. `16:9`), not the
+direct-model `ratio` (e.g. `1280:720`). Responses report the model that ran
+and its credit cost. See `https://docs.dev.runwayml.com/model-routers/`.
+
+Choose Runway over a gateway for Runway-only models, professional output
+formats, Model Router price caps, or an enterprise contract; compare third-party
+model prices with `content/media-generation-providers.md` first.
 
 ## Image-to-Video (Gen-4 Turbo)
 

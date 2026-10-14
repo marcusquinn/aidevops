@@ -29,7 +29,7 @@ Deploy GPU-intensive AI models (voice, vision, LLMs) when local hardware is insu
 
 | Provider | GPUs | Pricing | Best For |
 |----------|------|---------|----------|
-| [RunPod](https://www.runpod.io/) | B200, H200, H100, A100, L40S, RTX 4090 | Per-second, $0.40-8.64/hr | General purpose, serverless |
+| [Runpod](https://www.runpod.io/) | B200, H200, H100, A100, L40S, RTX 4090 (30+ SKUs, 31 regions) | Per-second, $0.40-8.64/hr; Public Endpoints per output | General purpose, serverless, hosted media models (`content/video-runpod.md`) |
 | [Vast.ai](https://vast.ai/) | Consumer+datacenter, 10k+ | Auction+fixed, 5-6x cheaper | Budget, experimentation |
 | [Lambda](https://lambdalabs.com/) | GB300, B200, H200, H100 | Per-hour, reserved discounts | Research, training, enterprise |
 | [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/) | A100, H100 (DGX) | Per-hour, enterprise | Official NVIDIA stack |
@@ -157,6 +157,8 @@ Never expose model APIs without auth -- use SSH tunnels or VPN. Store keys: `aid
 
 ## See Also
 
+- `content/video-runpod.md` -- Runpod Public Endpoints, Hub and bring-your-own media models
+- `content/media-generation-providers.md` -- API vs rented-GPU media cost comparison (`media-gen-cost-helper.sh`)
 - `tools/infrastructure/fireworks.md` -- managed inference, fine-tuning, and model hosting (Fireworks AI)
 - `tools/infrastructure/nearai.md` -- TEE-backed private inference (NEAR AI Cloud)
 - `tools/voice/speech-to-speech.md` -- voice pipeline with cloud GPU
