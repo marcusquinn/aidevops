@@ -118,13 +118,24 @@ This is an **opt-in operator installation**, not part of automatic setup:
    (replace `operator` with that user):
 
    ```text
-   operator ALL=(root) NOPASSWD: /usr/local/libexec/aidevops-worktree-cwd-inspect [1-9]*
+   operator ALL=(root) NOPASSWD: /usr/local/libexec/aidevops-worktree-cwd-inspect
    ```
 
-   Sudoers wildcards can match more than digits; the executable independently
-   rejects extra or malformed arguments and refuses cross-user process reads.
-   Do not grant a generic `readlink`, shell, Python interpreter, or broad sudo
-   command instead. Keep `SUDO_UID` managed by sudo, not caller-provided.
+   With no argument list, both sudo.ws and sudo-rs allow any arguments; the
+   executable is the argument validator. It requires exactly one
+   `[1-9][0-9]*` PID and refuses cross-user process reads. Do not add an
+   argument pattern such as `[1-9]*`: sudo-rs (the default `sudo` on Ubuntu
+   25.10+ and 26.04 LTS) rejects wildcards in command arguments and ignores
+   the whole line, and sudo.ws wildcards match more than digits anyway (GH#34621).
+   Do not use `""` either, which permits no arguments. Do not grant a generic
+   `readlink`, shell, Python interpreter, or broad sudo command instead. Keep
+   `SUDO_UID` managed by sudo, not caller-provided.
+
+   Validate the file with the target host's own implementation before relying
+   on it: `visudo -c -f <file>` must report it parsed OK with no warnings.
+   `sudo --version` names `sudo-rs` when that implementation is active (on
+   Ubuntu, `readlink -f /etc/alternatives/sudo` also resolves to
+   `/usr/lib/cargo/bin/sudo`).
 3. Verify an authorized protected same-user PID via
    `sudo -n -- /usr/local/libexec/aidevops-worktree-cwd-inspect <pid>` and
    verify a foreign PID fails. Avoid sharing CWD output if it contains private
