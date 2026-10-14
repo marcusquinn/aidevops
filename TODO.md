@@ -5272,4 +5272,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18693 Add VideoRouter, Runpod and H3 media-generation provider awareness with cost comparison #feat #interactive ref:GH#34700
 
-- [ ] t18694 Record GenAIPro API review: verified contract, do not route (pooled consumer accounts) #feat #interactive ref:GH#34713
+- [x] t18694 Record GenAIPro API review: verified contract, do not route (pooled consumer accounts) #feat #interactive ref:GH#34713 pr:#34714 completed:2026-10-14
