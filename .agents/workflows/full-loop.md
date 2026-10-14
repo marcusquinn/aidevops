@@ -133,6 +133,8 @@ Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"`. Add 
 
 Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 
+Before investigating a non-task blocker, run `prework-discovery-helper.sh --blocker "<symptom keywords>" --repo <owner/repo>`; if a matching issue is already claimed, add new evidence there within your issue-write authority and continue your own task instead of duplicating the investigation.
+
 **Completion criteria (ALL required):**
 1. Requirements implemented; applicable existing/required tests pass; lint/shellcheck/type-check clean. Do not add test code merely to satisfy this criterion; follow `reference/ci-gate-policy.md`. For React/TypeScript ESLint, a `0` exit with warnings is not clean; use `lint-warning-helper.sh run -- <lint command>` or an equivalent `--max-warnings=0` gate and track/fix warnings such as `react-hooks/exhaustive-deps`.
 2. **README gate (t099):** update if user-facing features change; skip for refactor/bugfix.
