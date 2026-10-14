@@ -85,8 +85,9 @@ generate_subagents_block() {
 	fi
 
 	# Single find + awk pipeline: no shell loops, no per-file reads
+	# Use byte ordering regardless of the caller's locale to avoid index churn.
 	# shellcheck disable=SC2086
-	find $search_dirs -name "*.md" -type f 2>/dev/null | sort | awk -v agents_dir="$agents_dir" '
+	find $search_dirs -name "*.md" -type f 2>/dev/null | LC_ALL=C sort | awk -v agents_dir="$agents_dir" '
     BEGIN { count = 0 }
     {
         # Extract filename without .md
