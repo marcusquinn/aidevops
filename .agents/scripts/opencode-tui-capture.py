@@ -91,7 +91,17 @@ def capture(args, data_dir):
     env.update(TERM="xterm-256color", XDG_DATA_HOME=str(data_dir),
                AIDEVOPS_OPENCODE_ISOLATED_DB="1")
     if args.tui_config:
-        env["OPENCODE_TUI_CONFIG"] = str(Path(args.tui_config).resolve(strict=True))
+        tui_config = Path(args.tui_config).resolve(strict=True)
+        if args.isolated_config:
+            # Keep global same-ID plugins out of the child without editing any
+            # live config. The capture's temporary directory owns this copy.
+            config_home = data_dir / "config"
+            isolated_tui = config_home / "opencode" / "tui.json"
+            isolated_tui.parent.mkdir(parents=True)
+            shutil.copyfile(tui_config, isolated_tui)
+            env["XDG_CONFIG_HOME"] = str(config_home)
+            tui_config = isolated_tui
+        env["OPENCODE_TUI_CONFIG"] = str(tui_config)
     args.binary = shutil.which(args.binary)
     if not args.binary:
         raise ValueError("renderer binary not found")
@@ -164,6 +174,8 @@ def main():
     parser.add_argument("--cwd", default=os.getcwd())
     parser.add_argument("--data-dir", required=True, help="Source launcher XDG data directory")
     parser.add_argument("--tui-config", help="Temporary TUI config overlay (never edited)")
+    parser.add_argument("--isolated-config", action="store_true",
+                        help="Use the TUI overlay as child-only global config; use absolute plugin paths")
     parser.add_argument("--seconds", type=positive_seconds, default=20)
     parser.add_argument("--cols", type=terminal_size, default=200)
     parser.add_argument("--rows", type=terminal_size, default=50)
@@ -176,6 +188,8 @@ def main():
             inherited_tui = os.environ.get("OPENCODE_TUI_CONFIG")
             if inherited_tui:
                 args.tui_config = str(Path(args.cwd) / inherited_tui)
+        if args.isolated_config and not args.tui_config:
+            parser.error("--isolated-config requires --tui-config or OPENCODE_TUI_CONFIG")
         source = Path(args.data_dir).resolve() / "opencode" / "opencode.db"
         output = validate_output(args, source)
         if not source.is_file():
