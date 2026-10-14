@@ -30,6 +30,9 @@ destination's parent. Auxiliary template and separate-Git-directory paths must
 also remain outside canonical checkouts and be absent or empty. The allowance
 accepts a conservative set of clone options; unknown options and Git
 configuration or environment overrides stay blocked from a canonical checkout.
+GitHub CLI's credential resets and root-controlled `gh auth git-credential`
+helpers are allowed so the documented `gh repo clone` command works; arbitrary
+shell credential helpers are not.
 
 Normalize new owner directory names to lowercase. Repository names retain their
 upstream spelling. Configure personal aliases per Git host in `repos.json`; do

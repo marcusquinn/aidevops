@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import tempfile
 from pathlib import Path
+
+from trusted_executable import trusted_executable
 
 from canonical_git_invocation import (
     clone_paths,
@@ -246,15 +249,51 @@ def _is_linked_worktree_remove_for_canonical(
     return allowed
 
 
+def _gh_credential_executable(helper: str) -> str:
+    """Extract only the absolute executable from an exact gh auth helper."""
+    if not helper.startswith("!"):
+        return ""
+    try:
+        command = shlex.split(helper[1:])
+    except ValueError:
+        return ""
+    if len(command) != 3 or command[1:] != ["auth", "git-credential"]:
+        return ""
+    executable = command[0]
+    name = os.path.basename(executable)
+    if name not in {"gh", ".gh-wrapped"} or not os.path.isabs(executable):
+        return ""
+    return executable
+
+
+def _is_clone_credential_config(value: str) -> bool:
+    """Accept GitHub CLI credential resets/helpers, never arbitrary shell helpers."""
+    key, separator, helper = value.partition("=")
+    if not separator or not re.fullmatch(r"credential(?:\.https://[^\s/]+)?\.helper", key):
+        return False
+    if not helper:
+        return True
+    executable = _gh_credential_executable(helper)
+    if not executable:
+        return False
+    name = os.path.basename(executable)
+    trusted = trusted_executable(name, os.path.dirname(executable))
+    return bool(trusted and os.path.realpath(executable) == os.path.realpath(trusted))
+
+
 def _clone_cwd(cwd: str, prefix: list[str]) -> Path | None:
-    """Resolve only exact -C pairs; reject configuration/repository overrides."""
+    """Resolve -C pairs and permit only GitHub CLI's trusted credential config."""
     clone_cwd = Path(cwd)
     index = 0
     while index < len(prefix):
-        if prefix[index] != "-C" or index + 1 >= len(prefix):
+        option = prefix[index]
+        if option not in {"-C", "-c"} or index + 1 >= len(prefix):
             return None
         value = prefix[index + 1]
-        if value:
+        if option == "-c":
+            if not _is_clone_credential_config(value):
+                return None
+        elif value:
             clone_cwd = (clone_cwd / value).resolve()
         index += 2
     return clone_cwd
