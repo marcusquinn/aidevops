@@ -101,9 +101,11 @@ instruction_override:
     description: "System prompt injection marker"
     pattern: '(?i)\bsystem\s+prompt\s*(:|=|override)'
 
+  # GH#34571: bare "new task(s)/objective/mission" is ordinary planning prose;
+  # require second-person framing ("your new task") or a header colon.
   - severity: HIGH
     description: "Attempts to set new instructions"
-    pattern: '(?i)\b(this\s+is\s+)?(your\s+)?new\s+(instructions?|task|objective|mission|directive)'
+    pattern: '(?i)\b(this\s+is\s+)?(your\s+)?new\s+(instructions?|directive)|\byour\s+new\s+(tasks?|objectives?|missions?)\b|\bnew\s+(tasks?|objectives?|missions?)\s*:'
 
   - severity: HIGH
     description: "Redefine behavior going forward"
