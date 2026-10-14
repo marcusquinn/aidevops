@@ -121,21 +121,7 @@ if [[ "\$1" == "api" ]]; then
 		jq -s '.' "${FIXTURE_TIMELINE_JSON}" 2>/dev/null || exit 1
 		exit 0
 	fi
-	if [[ " \$* " == *"/collaborators/"*"/permission "* ]]; then
-		permission=\$(<"${FIXTURE_PERMISSION}")
-		[[ "\$permission" == "fail" ]] && exit 1
-		if [[ "\$2" == "-i" ]]; then
-			if [[ "\$permission" == "404" ]]; then
-				printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
-				exit 1
-			fi
-			printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "\$permission"
-			exit 0
-		fi
-		[[ "\$permission" == "404" ]] && exit 1
-		printf '%s\n' "\$permission"
-		exit 0
-	fi
+	[[ " \$* " == *"/collaborators/"*"/permission "* ]] && exec "${STUB_DIR}/gh-permission" "\$@"
 	if [[ "\$2" == "repos/"*"/pulls/"* ]]; then
 		if [[ "\$2" == "repos/owner/repo/pulls/41" ]]; then
 			cat "${FIXTURE_EARLY_PR_JSON}" 2>/dev/null || exit 1
@@ -196,6 +182,30 @@ fi
 exit 0
 STUB
 	chmod +x "${STUB_DIR}/gh"
+	write_stub_gh_permission
+	return 0
+}
+
+# Collaborator permission endpoint, both the shared `gh api -i` lookup form
+# and the bare `--jq .permission` fallback form (GH#34598).
+write_stub_gh_permission() {
+	cat >"${STUB_DIR}/gh-permission" <<STUB
+#!/usr/bin/env bash
+permission=\$(<"${FIXTURE_PERMISSION}")
+[[ "\$permission" == "fail" ]] && exit 1
+if [[ "\$2" == "-i" ]]; then
+	if [[ "\$permission" == "404" ]]; then
+		printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
+		exit 1
+	fi
+	printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "\$permission"
+	exit 0
+fi
+[[ "\$permission" == "404" ]] && exit 1
+printf '%s\n' "\$permission"
+exit 0
+STUB
+	chmod +x "${STUB_DIR}/gh-permission"
 	return 0
 }
 
