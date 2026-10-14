@@ -37,7 +37,9 @@ cat >"$fixture" <<'JSON'
     {"number":15,"repo":"owner/repo","updatedAt":9900},
     {"number":16,"repo":"owner/repo","updatedAt":9900,"recovery_comment_at":9000,"subsequent_action_at":8000,"recovery_attempt":5},
     {"number":17,"repo":"owner/repo","updatedAt":9900,"recovery_comment_at":9000,"subsequent_action_at":8000,"recovery_attempt":6},
-    {"number":18,"repo":"owner/repo","updatedAt":9900,"labels":["status:done"]}
+    {"number":18,"repo":"owner/repo","updatedAt":9900,"labels":["status:done"]},
+    {"number":19,"repo":"owner/repo","updatedAt":1000,"labels":[{"name":"persistent"},{"name":"quality-review"}]},
+    {"number":20,"repo":"owner/repo","updatedAt":1000,"labels":["routine-tracking","status:available"]}
   ],
   "prs": [],
   "merged_lookup": "|15=150|"
@@ -49,6 +51,7 @@ AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$TMP_DIR/missing-evidence.jsonl" \
 	"$HELPER" derive --repo owner/repo --input "$fixture" --now 10000 --ttl 3600 >"$derived"
 
 jq -e 'length == 18' "$derived" >/dev/null || fail "all objective fixtures must be derived"
+jq -e '[.[] | select(.number == 19 or .number == 20)] | length == 0' "$derived" >/dev/null || fail "GH#34589: persistent monitoring issues are not objectives"
 jq -e '.[] | select(.number == 1 and .objective_state == "actionable" and .next_action == "dispatch_objective" and .assumption_expired == true)' "$derived" >/dev/null || fail "queued objective classification"
 jq -e '.[] | select(.number == 2 and .objective_state == "actively owned" and .next_action == "monitor_worker")' "$derived" >/dev/null || fail "active ownership classification"
 jq -e '.[] | select(.number == 3 and .objective_state == "under review" and .next_action == "monitor_pr")' "$derived" >/dev/null || fail "review classification"
@@ -215,5 +218,14 @@ AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$large_evidence_file" \
 jq -e '.source == "attempt_outcome" and .effective_outcome == "success" and
 	.raw_result == "recovered"' "$disposition" >/dev/null ||
 	fail "large evidence disposition must avoid argv limits"
+
+# GH#34589: derive/reconcile stream evidence too, and drop stale non-task rows.
+large_state="$TMP_DIR/large-state.json"
+printf '%s\n' '{"objectives":[{"repo":"owner/repo","number":19,"objective_state":"actionable","next_action":"dispatch_objective","assumption_expired":true}]}' >"$large_state"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$large_evidence_file" \
+	"$HELPER" reconcile --repo owner/repo --input "$fixture" --state-file "$large_state" \
+	--now 10000 --ttl 3600 >/dev/null || fail "large evidence reconcile must avoid argv limits"
+jq -e '(.objectives | length) == 18 and ([.objectives[] | select(.number == 19)] | length) == 0' \
+	"$large_state" >/dev/null || fail "reconcile must drop stale persistent objectives"
 
 printf 'PASS objective-reconciliation\n'

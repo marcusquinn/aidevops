@@ -30,6 +30,11 @@ OBJECTIVE_STATE_IMPOSSIBLE="impossible"
 OBJECTIVE_STATE_REVIEW="under review"
 OBJECTIVE_JSON_TYPE_OBJECT="object"
 OBJECTIVE_EMPTY_STATE='{"objectives":[]}'
+# GH#34589: persistent monitoring surfaces (dashboards, supervisor/contributor
+# trackers, routine logs) are never objectives. This is the monitoring subset of
+# NON_TASK_LABELS in shared-gh-wrappers.sh; authority, blocked and hold labels
+# stay modelled as objective states below.
+OBJECTIVE_NON_TASK_LABELS_JSON='["persistent","supervisor","contributor","quality-review","routine-tracking"]'
 
 _objective_usage() {
 	cat <<'EOF'
@@ -301,9 +306,15 @@ _objective_attach_durable_evidence() {
 	fi
 	local evidence_json="[]"
 	evidence_json=$(_objective_read_evidence "$evidence_file" "$evidence_limit")
-	jq -nc --arg repo "$repo" --argjson input "$input_json" --argjson evidence "$evidence_json" \
+	# GH#34589: the evidence tail routinely exceeds ARG_MAX (and Linux
+	# MAX_ARG_STRLEN); stream both documents instead of passing them via argv.
+	jq -nc --arg repo "$repo" \
+		--slurpfile input_file <(printf '%s\n' "$input_json") \
+		--slurpfile evidence_file <(printf '%s\n' "$evidence_json") \
 		--arg event_completed "$OBJECTIVE_EVENT_COMPLETED" --arg event_failed "$OBJECTIVE_EVENT_FAILED" \
 		--arg event_deferred "$OBJECTIVE_EVENT_DEFERRED" '
+		($input_file[0] // []) as $input |
+		($evidence_file[0] // []) as $evidence |
 		def evidence_epoch: (.evidence_timestamp // .timestamp // .ts // 0) | tonumber? // 0;
 		def epoch_key:
 			((.attempt_started_at // evidence_epoch) | tostring) as $raw |
@@ -343,10 +354,12 @@ _objective_attach_durable_evidence() {
 _objective_derive_json() {
 	local input_json="$1" repo="$2" now_epoch="$3" ttl_secs="$4"
 	printf '%s' "$input_json" | jq -c --arg repo "$repo" --argjson now "$now_epoch" --argjson ttl "$ttl_secs" \
+		--argjson non_task_labels "$OBJECTIVE_NON_TASK_LABELS_JSON" \
 		--arg state_completed "$OBJECTIVE_STATE_COMPLETED" --arg state_cancelled "$OBJECTIVE_STATE_CANCELLED" --arg state_impossible "$OBJECTIVE_STATE_IMPOSSIBLE" --arg state_review "$OBJECTIVE_STATE_REVIEW" --arg action_none "$OBJECTIVE_SOURCE_NONE" --arg outcome_failed "$OBJECTIVE_OUTCOME_FAILED" --arg object_type "$OBJECTIVE_JSON_TYPE_OBJECT" '
 		def labels: [(.labels // [])[] | if type == $object_type then .name else . end] | map(select(type == "string"));
 		def has_label($name): labels | index($name) != null;
 		def has_status($name): has_label("status:" + $name);
+		def non_task: any(labels[]; . as $label | $non_task_labels | index($label) != null);
 		def action_resume: "resume_session"; def action_recover_branch: "recover_branch"; def action_repair_pr: "repair_pr"; def action_redispatch: "narrow_redispatch";
 		def evidence_epoch:
 			(.evidence_timestamp // .evidence_at // .updatedAt // .updated_at // $now) as $value |
@@ -374,7 +387,7 @@ _objective_derive_json() {
 			elif $action == $action_none then $action_none
 			else "pulse-dispatch" end;
 		(.issues // (if type == "array" then . else [] end)) as $issues | (.prs // []) as $prs | (.merged_lookup // "") as $merged_lookup |
-		[$issues[] |
+		[$issues[] | select(non_task | not) |
 			. as $issue |
 			labels as $labels |
 			issue_number as $number |
@@ -459,8 +472,10 @@ _objective_merge_state() {
 		--arg repo "$repo" \
 		--argjson now "$now_epoch" \
 		--argjson max "$max_repairs" \
-		--argjson previous "$previous" \
-		--argjson current "$derived_json" '
+		--slurpfile previous_file <(printf '%s\n' "$previous") \
+		--slurpfile current_file <(printf '%s\n' "$derived_json") '
+		($previous_file[0] // {objectives:[]}) as $previous |
+		($current_file[0] // []) as $current |
 		def plan: {objective_state, execution_path_state, evidence_timestamp, assumption_expires_at, next_action, trigger_at, responsible_component, attempt_id, run_id, raw_result, effective_outcome, preservation};
 		($previous.objectives // []) as $old |
 		[$current[] | . as $item | select(([$old[] | select(.repo == $item.repo and .number == $item.number) | plan] | first // null) != ($item | plan))] as $changed |
