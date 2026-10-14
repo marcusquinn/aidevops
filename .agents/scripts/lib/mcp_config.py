@@ -120,6 +120,16 @@ def _register_playwriter(config, bun_path):
     config['tools']['playwriter_*'] = False
 
 
+def _is_legacy_outscraper_command(command):
+    """Return whether command is the unpinned bash wrapper generated before GH#34620."""
+    if not isinstance(command, list) or len(command) != 3:
+        return False
+    if command[:2] != ["bash", "-c"]:
+        return False
+    script = command[2]
+    return isinstance(script, str) and script.endswith(" " + LEGACY_OUTSCRAPER_UV_RUN)
+
+
 def _register_outscraper(config):
     """Register outscraper MCP (business intelligence)."""
     if 'outscraper' not in config['mcp']:
@@ -132,9 +142,7 @@ def _register_outscraper(config):
         print("  Added outscraper MCP (lazy load - @outscraper subagent only)")
     elif isinstance(config['mcp']['outscraper'], dict):
         command = config['mcp']['outscraper'].get('command')
-        if (isinstance(command, list) and len(command) == 3
-                and command[:2] == ["bash", "-c"] and isinstance(command[2], str)
-                and command[2].endswith(" " + LEGACY_OUTSCRAPER_UV_RUN)):
+        if _is_legacy_outscraper_command(command):
             command[2] = command[2][:-len(LEGACY_OUTSCRAPER_UV_RUN)] + OUTSCRAPER_UV_RUN
             print("  Pinned outscraper MCP command to mcp<2 (GH#34620)")
     if 'outscraper_*' not in config['tools']:
