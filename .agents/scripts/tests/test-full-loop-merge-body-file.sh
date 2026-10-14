@@ -76,8 +76,10 @@ capture_rest_body_field() {
 gh() {
 	local command="${1:-}"
 	local subcommand="${2:-}"
-	if [[ "$command" == "api" && "$subcommand" == "repos/testorg/testrepo/git/commits/fixture-head-sha" ]]; then
-		printf '%s\n' "$TEST_HEAD_COMMIT_MESSAGE"
+	if [[ "$command" == "api" && "$subcommand" == "repos/testorg/testrepo/pulls/42/commits?per_page=100" ]]; then
+		[[ "$*" == *"--paginate --slurp"* ]] || return 1
+		jq -n --arg message "$TEST_HEAD_COMMIT_MESSAGE" \
+			'[[{sha:"fixture-head-sha", commit:{message:$message}}]]'
 		return 0
 	fi
 	if [[ "$command" == "pr" && "$subcommand" == "view" && "$*" == *"--json title,commits"* ]]; then

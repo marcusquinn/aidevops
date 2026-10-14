@@ -1074,21 +1074,37 @@ _merge_release_aggregation_manifest() {
 }
 
 # Bind an aggregation merge body to the immutable manifest on the exact PR
-# head verified by the pre-merge gate. Reading the commit by SHA avoids trusting
-# a mutable local branch or a later branch-head lookup.
+# head verified by the pre-merge gate. Select that SHA from the PR commit read
+# surface: Git database reads require Contents authority that a PR reader need
+# not have. Keep the same repo-routed identity, with no credential fallback.
 _merge_validate_verified_head_aggregation_binding() {
 	local pr_number="$1"
 	local repo="$2"
 	local verified_head_sha="$3"
 	local merge_body_file="${4:-}"
+	local commit_pages=""
 	local head_message=""
 	local head_manifest=""
 	local body_content=""
 	local body_manifest=""
 
-	head_message=$(_flm_gh_read gh api "repos/${repo}/git/commits/${verified_head_sha}" \
-		--jq '.message // empty') || {
+	commit_pages=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}/commits?per_page=100" \
+		--paginate --slurp) || {
 		print_error "Merge blocked: unable to inspect the exact verified PR head commit for a release-aggregation manifest; refresh remote evidence and retry."
+		return 1
+	}
+	# A moved PR, truncated list, ambiguous match or malformed response is not
+	# evidence of an absent manifest. Never substitute the latest commit/message.
+	head_message=$(jq -er --arg sha "$verified_head_sha" '
+		if type != "array" or any(.[]; type != "array") then
+			error("invalid PR commit pages")
+		else
+			[.[][] | select(.sha == $sha)] |
+			if length == 1 and (.[0].commit.message | type) == "string" then
+				.[0].commit.message
+			else error("missing or ambiguous verified PR head message") end
+		end' <<<"$commit_pages") || {
+		print_error "Merge blocked: PR commit evidence does not identify one exact verified head message; refresh remote evidence and retry."
 		return 1
 	}
 	head_manifest=$(_merge_release_aggregation_manifest "$head_message") || return 1
