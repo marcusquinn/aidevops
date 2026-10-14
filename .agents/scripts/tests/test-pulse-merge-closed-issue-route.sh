@@ -117,10 +117,20 @@ printf 'PASS: partial hold retries without duplicate comment\n'
 
 PR_LABELS="origin:worker"
 COMMENTS=0 WRITES=0
-COMMENT_JSON='[{"body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHAabc123repairsha -->","user":{"login":"automation"},"author_association":"NONE"}]'
+COMMENT_JSON='[{"body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHAabc123repairsha -->","user":{"login":"someone-else"},"author_association":"MEMBER"}]'
 route conflict
 [[ "$COMMENTS" == "1" ]]
-printf 'PASS: untrusted copied receipt cannot suppress terminal comment\n'
+printf 'PASS: receipt copied by another login cannot suppress terminal comment\n'
+
+# GH#34600: App read auth reports the runner's own comments as CONTRIBUTOR.
+PR_LABELS="origin:worker"
+COMMENTS=0 WRITES=0
+COMMENT_JSON='[{"body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHAabc123repairsha -->","user":{"login":"automation"},"author_association":"CONTRIBUTOR"}]'
+route conflict
+route conflict
+[[ "$COMMENTS" == "0" && "$WRITES" == "1" && "$PR_LABELS" == *"hold-for-review"* ]]
+printf 'PASS: own receipt read back as CONTRIBUTOR suppresses duplicate comment\n'
+
 
 STATE="open"
 WRITES=0 DISPATCHES=0
@@ -185,3 +195,17 @@ _feedback_route_guard_closed_issue 100 owner/repo 42 conflict || rc=$?
 AFTER_HOLD_HEAD=""
 route conflict
 printf 'PASS: head drift at both write boundaries reclassifies before terminal success\n'
+
+# GH#34600: automation-hold provenance shares the actor-pinned filter, so it
+# must match the runner's own login under CONTRIBUTOR and nobody else's.
+HOLD_COMMENTS='[[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"x<!-- m -->","user":{"login":"automation"},"author_association":"CONTRIBUTOR"},{"id":2,"created_at":"2026-01-01T00:00:01Z","body":"x<!-- m -->","user":{"login":"someone-else"},"author_association":"MEMBER"}]]'
+gh() {
+	[[ "$1" == "api" ]] || return 1
+	printf '%s\n' "$HOLD_COMMENTS"
+	return 0
+}
+hold_ids=$(_feedback_route_automation_hold_comments 42 owner/repo "<!-- m" " -->" automation | jq -c '[.[].id]')
+[[ "$hold_ids" == "[1]" ]]
+hold_ids=$(_feedback_route_automation_hold_comments 42 owner/repo "<!-- m" " -->" "" | jq -c '[.[].id]')
+[[ "$hold_ids" == "[]" ]]
+printf 'PASS: automation-hold comments match own login only, regardless of association\n'

@@ -323,14 +323,14 @@ _feedback_route_automation_hold_comments() {
 	local endpoint=""
 	endpoint=$(_feedback_route_comments_endpoint "$linked_issue" "$repo_slug") || return 1
 	local comments_json=""
-	# #aidevops:trust-boundary — copied hold markers from untrusted comments do
-	# not authorize automated removal of a maintainer-created hold.
+	# #aidevops:trust-boundary — copied hold markers from any other login do
+	# not authorize automated removal of a maintainer-created hold. The login is
+	# pinned to the authenticated actor; author_association is not checked
+	# because GitHub App read auth reports org members as CONTRIBUTOR (GH#34600).
 	# shellcheck disable=SC2016 # $marker_prefix is a jq variable supplied below.
 	local filter='[
 		(if type == $array_type and ((.[0]? | type) == $array_type) then .[] else . end)[]?
-		| select((.author_association // "") as $association
-			| $trusted | index($association))
-		| select((.user.login // "") == $automation_actor)
+		| select($automation_actor != "" and (.user.login // "") == $automation_actor)
 		| select((.body // "") | contains($marker_prefix) and contains($marker_suffix))
 		| {id, created_at}
 	] | sort_by([.created_at, .id])'
@@ -341,7 +341,6 @@ _feedback_route_automation_hold_comments() {
 		comments_json=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
 	fi
 	printf '%s' "$comments_json" | jq -c --arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" \
-		--argjson trusted "$PULSE_FEEDBACK_ROUTE_TRUSTED_ASSOCIATIONS" \
 		--arg marker_prefix "$marker_prefix" \
 		--arg marker_suffix "$marker_suffix" --arg automation_actor "$automation_actor" "$filter" 2>/dev/null
 	return $?
@@ -658,10 +657,11 @@ _feedback_route_closed_issue_receipt() {
 	local comments="" found=""
 	comments=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	#aidevops:trust-boundary — copied markers cannot satisfy the terminal receipt.
-	found=$(printf '%s' "$comments" | jq -r --arg marker "$marker" --arg actor "$actor" \
-		--argjson trusted "$PULSE_FEEDBACK_ROUTE_TRUSTED_ASSOCIATIONS" '
+	# Login is pinned to the authenticated actor; author_association is not checked
+	# because GitHub App read auth reports org members as CONTRIBUTOR (GH#34600).
+	found=$(printf '%s' "$comments" | jq -r --arg marker "$marker" --arg actor "$actor" '
 		(if (.[0]? | type) == "array" then add else . end) |
-		any(.[]; .user.login == $actor and (.author_association as $a | $trusted | index($a)) != null
+		any(.[]; $actor != "" and .user.login == $actor
 			and ((.body // "") | contains($marker)))') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	[[ "$found" != "true" ]] || return 0
 	[[ "$found" == "false" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
