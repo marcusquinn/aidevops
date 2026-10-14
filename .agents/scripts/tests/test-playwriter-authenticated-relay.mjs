@@ -10,16 +10,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  cleanupPrivateRuntime,
   createPrivateRuntime,
   privateRuntimeParent,
   probeAuthenticatedRelay,
-  processGroupAlive,
   reconcileStaleRelays,
-  terminateProcessGroup,
   validatePlaywriterCommand,
   withTelemetryOptOut,
 } from "../playwriter-authenticated-relay.mjs";
+import {
+  cleanupPrivateRuntime,
+  processGroupAlive,
+  terminateProcessGroup,
+} from "../playwriter-relay-lifecycle.mjs";
 
 const POSIX = process.platform !== "win32";
 const GUARDIAN_ARGS = ["--aidevops-relay-guardian", "npx", "-y", "playwriter@0.8.0"];
