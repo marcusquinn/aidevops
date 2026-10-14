@@ -24,7 +24,7 @@ class InspectCwdTests(unittest.TestCase):
             mock.patch.object(inspector.os, "geteuid", return_value=0),
             mock.patch.object(inspector.sys, "argv", ["inspector", "123"]),
             mock.patch.dict(inspector.os.environ, {"SUDO_UID": "1002"}),
-            mock.patch.object(inspector, "owner_uid", return_value=uid),
+            mock.patch.object(inspector, "owned_by_invoker", return_value=uid == 1002),
             mock.patch.object(
                 inspector.os,
                 "stat",
@@ -54,10 +54,25 @@ class InspectCwdTests(unittest.TestCase):
         with mock.patch.object(inspector.os, "geteuid", return_value=1002):
             self.assertEqual(inspector.main(), 1)
 
-    def test_uid_fields_must_agree(self):
-        with mock.patch("builtins.open", mock.mock_open(read_data="Uid:\t1002\t0\t1002\t1002\n")):
+    def test_uid_fields_reject_foreign_or_malformed_identity(self):
+        for values, sudo_uid in (
+            (["1002", "0", "1002", "1002"], 1003),
+            (["0", "0", "0", "0"], 1002),
+            (["1002", "1003", "1002", "1002"], 1002),
+            (["1002", "invalid", "1002", "1002"], 1002),
+            (["1002", "1002", "1002"], 1002),
+            ([], 1002),
+        ):
+            with self.subTest(values=values, sudo_uid=sudo_uid):
+                self.assertFalse(inspector.uid_fields_accepted(values, sudo_uid))
+
+    def test_uid_fields_accept_same_user_setuid_root(self):
+        self.assertTrue(inspector.uid_fields_accepted(["1002", "0", "0", "1002"], 1002))
+
+    def test_missing_uid_line_is_rejected(self):
+        with mock.patch("builtins.open", mock.mock_open(read_data="Name:\tprocess\n")):
             with self.assertRaises(ValueError):
-                inspector.owner_uid("123")
+                inspector.owned_by_invoker("123", 1002)
 
 
 if __name__ == "__main__":
