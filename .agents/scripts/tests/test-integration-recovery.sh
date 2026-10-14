@@ -30,10 +30,25 @@ if _feedback_route_owner_allows 31265 owner/repo; then
 	printf 'FAIL: remote interactive repair owner was displaced\n' >&2
 	exit 1
 fi
+# GH#34605: non-positive associations resolve through the permission API.
+mock_permission_rc=1
+_is_collaborator_author() { return "$mock_permission_rc"; }
 mock_comments=$(jq '.[0].author_association = "NONE"' <<<"$mock_comments")
 _feedback_route_owner_allows 31265 owner/repo
+mock_comments=$(jq '.[0].author_association = "CONTRIBUTOR"' <<<"$mock_comments")
+mock_permission_rc=0
+if _feedback_route_owner_allows 31265 owner/repo; then
+	printf 'FAIL: write collaborator read back as CONTRIBUTOR was displaced\n' >&2
+	exit 1
+fi
+mock_permission_rc=2
+if _feedback_route_owner_allows 31265 owner/repo; then
+	printf 'FAIL: permission lookup failure did not fail closed\n' >&2
+	exit 1
+fi
 mock_comments=$(jq '.[0].author_association = "OWNER" | .[0].user.login = "foreign"' <<<"$mock_comments")
 _feedback_route_owner_allows 31265 owner/repo
+unset -f _is_collaborator_author
 printf 'PASS: local and remote owners fenced; foreign claims do not manufacture ownership\n'
 
 TEST_ROOT=$(mktemp -d)
@@ -75,7 +90,7 @@ source "${SCRIPT_DIR}/headless-runtime-result.sh"
 role=worker session_key=issue-31265 discovered_session="" selected_model=fixture work_dir="$TEST_ROOT"
 output_file="${TEST_ROOT}/output.jsonl"
 write_request() {
-	local reason="${1:-adjacent_integration}"
+	local reason="adjacent_integration"
 	jq -nc --arg reason "$reason" '
 		{schema:1,issue:31265,pr:31269,reason:$reason,files:["src/claim.sh"],
 		evidence:"actual caller requires shared claim integration",verification:["bash existing-checkpoint-fixture.sh"]} |

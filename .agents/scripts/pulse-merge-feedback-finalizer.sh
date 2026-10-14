@@ -19,8 +19,8 @@ PULSE_FEEDBACK_ROUTE_WORKER_TAKEOVER_LABEL="origin:worker-takeover"
 PULSE_FEEDBACK_ROUTE_WORKER_ORIGIN_LABEL="origin:worker"
 PULSE_FEEDBACK_ROUTE_INTERACTIVE_ORIGIN_LABEL="origin:interactive"
 PULSE_FEEDBACK_ROUTE_MARKER_OPEN="<!--"
-PULSE_FEEDBACK_ROUTE_TRUSTED_ASSOCIATIONS='["OWNER","MEMBER","COLLABORATOR"]'
 PULSE_FEEDBACK_ROUTE_REVIEW_STATUS="status:in-review"
+PULSE_FEEDBACK_ROUTE_CONVERGE_DELETE_LIMIT=20
 
 _PULSE_FEEDBACK_ROUTE_CONTEXT_KIND=""
 _PULSE_FEEDBACK_ROUTE_CONTEXT_HEAD=""
@@ -39,6 +39,9 @@ _feedback_route_owner_allows() {
 	local linked_issue="$1"
 	local repo_slug="$2"
 	local metadata="" comments="" endpoint=""
+	local issue_state=""
+	local candidates=""
+	local trusted=""
 	if ! declare -F _interactive_claim_fence_blocks_dispatch >/dev/null 2>&1; then
 		# shellcheck source=interactive-claim-fence.sh
 		source "${BASH_SOURCE[0]%/*}/interactive-claim-fence.sh"
@@ -47,25 +50,105 @@ _feedback_route_owner_allows() {
 		return 1
 	fi
 	metadata=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || return 1
+	issue_state=$(printf '%s' "$metadata" | jq -r '.state // empty' 2>/dev/null) || return 1
+	[[ "$issue_state" == "open" ]] || return 1
 	endpoint=$(_feedback_route_comments_endpoint "$linked_issue" "$repo_slug") || return 1
 	comments=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
 	#aidevops:trust-boundary — a forged claim comment cannot fence another owner.
-	# Match trusted comment authors to current assignees, not text attribution.
-	jq -en --argjson issue "$metadata" --argjson pages "$comments" \
-		--argjson trusted "$PULSE_FEEDBACK_ROUTE_TRUSTED_ASSOCIATIONS" \
+	# Match comment authors to current assignees, not text attribution, then
+	# verify authority independently of the reading token (GH#34605).
+	candidates=$(jq -cn --argjson issue "$metadata" --argjson pages "$comments" \
 		--arg review_status "$PULSE_FEEDBACK_ROUTE_REVIEW_STATUS" '
 		($issue.assignees | map(.login)) as $owners |
 		($pages | if (.[0]? | type) == "array" then add else . end) as $comments |
-		($issue.state == "open") and
-		([$comments[]?
-		 | select(.author_association as $a | $trusted | index($a))
+		[$comments[]?
 		 | select(.user.login as $u | $owners | index($u))
 		 | select(.user.login as $u | (.body // "") | contains("Interactive session claimed by @" + $u))
 		 | select(($issue.labels | map(.name) | index($review_status)) != null)
 		 | select((.created_at | fromdateiso8601) as $at | now - $at >= 0 and now - $at < 7200)
-		] | length == 0)
-	' >/dev/null 2>&1
+		 | {id, created_at, login: .user.login, association: (.author_association // "")}]
+	' 2>/dev/null) || return 1
+	# An author whose authority cannot be verified still fences: fail closed.
+	trusted=$(_feedback_route_trusted_entries "$repo_slug" <<<"$candidates") || return 1
+	printf '%s' "$trusted" | jq -e 'length == 0' >/dev/null 2>&1
 	return $?
+}
+
+#######################################
+# Decide whether a comment author is a trusted repository writer, independently
+# of the token that read the comment (GH#34605). GitHub only reports OWNER,
+# MEMBER or COLLABORATOR when that relationship is visible, but App installation
+# reads report org members as CONTRIBUTOR, so every other association is
+# resolved through the cached collaborator-permission API.
+# Args: $1=repo_slug, $2=author login, $3=author_association
+# Returns: 0=trusted, 1=confirmed untrusted, 2=unknown (callers fail closed).
+#######################################
+_feedback_route_author_trusted() {
+	local repo_slug="$1"
+	local login="$2"
+	local association="${3:-}"
+	local rc=0
+	#aidevops:trust-boundary — positive associations are authoritative; absent
+	# or downgraded associations require the live permission API.
+	case "$association" in
+	OWNER | MEMBER | COLLABORATOR) return 0 ;;
+	esac
+	_feedback_route_actor_is_valid "$login" || return 1
+	if ! declare -F _is_collaborator_author >/dev/null 2>&1; then
+		# shellcheck source=pulse-merge-author-checks.sh
+		source "${BASH_SOURCE[0]%/*}/pulse-merge-author-checks.sh" >/dev/null 2>&1 || return 2
+		declare -F _is_collaborator_author >/dev/null 2>&1 || return 2
+	fi
+	_is_collaborator_author "$login" "$repo_slug" || rc=$?
+	case "$rc" in
+	0 | 1) return "$rc" ;;
+	esac
+	return 2
+}
+
+#######################################
+# Keep only trusted entries from a JSON array of comment summaries.
+# Entries carry {login, association} and optionally own=true for this runner's
+# own comments (matched by numeric user ID), which need no lookup.
+# Args: $1=repo_slug; stdin: JSON array
+# Output: JSON array of trusted entries, in input order.
+# Returns: 0=all authors resolved, 2=at least one author was unknown (excluded).
+#######################################
+_feedback_route_trusted_entries() {
+	local repo_slug="$1"
+	local entries="" index="" login="" association="" own="" rc=0
+	local keep="" unknown=0 verdicts="|"
+	entries=$(cat)
+	[[ -n "$entries" ]] || entries='[]'
+	# Unit separator, not tab: IFS whitespace would collapse an empty login.
+	while IFS=$'\x1f' read -r index login association own; do
+		[[ "$index" =~ ^[0-9]+$ ]] || continue
+		if [[ "$own" == "true" ]]; then
+			keep="${keep},${index}"
+			continue
+		fi
+		# Memoize per author so one call costs at most one lookup per login.
+		if [[ "$verdicts" == *"|${login}:${association}="* ]]; then
+			rc="${verdicts#*"|${login}:${association}="}"
+			rc="${rc%%|*}"
+		else
+			rc=0
+			_feedback_route_author_trusted "$repo_slug" "$login" "$association" || rc=$?
+			verdicts="${verdicts}${login}:${association}=${rc}|"
+		fi
+		case "$rc" in
+		0) keep="${keep},${index}" ;;
+		2) unknown=1 ;;
+		esac
+	done < <(printf '%s' "$entries" | jq -r 'to_entries[]
+		| [(.key | tostring), (.value.login // ""), (.value.association // ""),
+		   ((.value.own // false) | tostring)]
+		| map(gsub("[\u001f\n]"; "")) | join("\u001f")' 2>/dev/null)
+	printf '%s' "$entries" | jq -c --arg keep "${keep#,}" '
+		($keep | split(",") | map(select(length > 0) | tonumber)) as $kept
+		| [to_entries[] | select(.key as $k | $kept | index($k)) | .value]' 2>/dev/null || printf '[]\n'
+	[[ "$unknown" -eq 0 ]] || return 2
+	return 0
 }
 
 _feedback_route_gh_write() {
@@ -168,15 +251,16 @@ _feedback_route_release_comments() {
 	local endpoint=""
 	endpoint=$(_feedback_route_comments_endpoint "$linked_issue" "$repo_slug") || return 1
 	local comments_json=""
+	local candidates=""
 	# #aidevops:trust-boundary — only trusted automation comments can satisfy or
 	# win release-marker convergence; copied markers from untrusted users do not.
+	# Authority is verified independently of the reading token (GH#34605);
+	# authors that cannot be verified are excluded.
 	# shellcheck disable=SC2016 # $marker is a jq variable supplied below.
 	local filter='[
 		(if type == $array_type and ((.[0]? | type) == $array_type) then .[] else . end)[]?
-		| select((.author_association // "") as $association
-			| $trusted | index($association))
 		| select((.body // "") | startswith("CLAIM_RELEASED reason=feedback_route_") and contains($marker))
-		| {id, created_at}
+		| {id, created_at, login: (.user.login // ""), association: (.author_association // "")}
 	] | sort_by([.created_at, .id])'
 
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
@@ -184,10 +268,10 @@ _feedback_route_release_comments() {
 	else
 		comments_json=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
 	fi
-	printf '%s' "$comments_json" | jq -c --arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" \
-		--argjson trusted "$PULSE_FEEDBACK_ROUTE_TRUSTED_ASSOCIATIONS" \
-		--arg marker "$marker" "$filter" 2>/dev/null
-	return $?
+	candidates=$(printf '%s' "$comments_json" | jq -c --arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" \
+		--arg marker "$marker" "$filter" 2>/dev/null) || return 1
+	_feedback_route_trusted_entries "$repo_slug" <<<"$candidates" || true
+	return 0
 }
 
 _feedback_route_release_exists() {
@@ -272,6 +356,44 @@ _feedback_route_authenticated_actor() {
 	fi
 	_feedback_route_actor_is_valid "$actor" || return 1
 	printf '%s' "$actor"
+	return 0
+}
+
+#######################################
+# Resolve the writer identity used to recognise this runner's own comments.
+# `gh api user` names no repository, so Pulse App read routing
+# (github_auth_routing.py) keeps it on the original credential, which also
+# performs writes. AIDEVOPS_PULSE_REPO is cleared so an ambient repo context
+# cannot scope it to an installation token. If /user still fails, callers must
+# not write (fail closed, never a comment loop).
+# Output: "<numeric user id>\t<login>"
+# Returns: 0=resolved, 1=unresolved.
+#######################################
+_feedback_route_authenticated_identity() {
+	local identity="" user_id="" login=""
+	local jq_identity='[(.id | tostring), (.login // "")] | @tsv'
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		identity=$(AIDEVOPS_PULSE_REPO="" _gh_with_timeout read gh api user --jq "$jq_identity" 2>/dev/null) || return 1
+	else
+		identity=$(AIDEVOPS_PULSE_REPO="" gh api user --jq "$jq_identity" 2>/dev/null) || return 1
+	fi
+	IFS=$'\t' read -r user_id login <<<"$identity"
+	[[ "$user_id" =~ ^[0-9]+$ ]] || return 1
+	_feedback_route_actor_is_valid "$login" || return 1
+	printf '%s\t%s\n' "$user_id" "$login"
+	return 0
+}
+
+# Attribution only, never trust: which runner posted a marker (GH#34605).
+# Hashes the host name so no host or path detail is published.
+_feedback_route_runner_id() {
+	local runner_id="${AIDEVOPS_PULSE_RUNNER_ID:-}"
+	if [[ ! "$runner_id" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+		runner_id=$(uname -n 2>/dev/null | cksum 2>/dev/null) || runner_id=""
+		runner_id="${runner_id%% *}"
+	fi
+	[[ "$runner_id" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || runner_id="unknown"
+	printf '%s' "$runner_id"
 	return 0
 }
 
@@ -652,20 +774,81 @@ _feedback_route_hold_for_maintainer() {
 	return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
 }
 
+# List the authorized receipts for one closed-issue hold generation, oldest
+# first. Any Pulse runner's receipt counts, so several runners (servers or
+# accounts) share one comment (GH#34605).
+# Args: $1=pr_number, $2=repo_slug, $3=marker core (no terminator), $4=self user id
+# Output: JSON array of {id, created_at, login, association, own}
+# Returns: 0=listed, 1=read/parse failure.
+_feedback_route_closed_issue_receipts() {
+	local pr_number="$1" repo_slug="$2" marker_core="$3" self_id="$4"
+	local comments=""
+	local candidates=""
+	comments=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	#aidevops:trust-boundary — a copied marker counts only when written by this
+	# runner's own user ID or by a verified repository writer (another runner).
+	# The marker core is terminated (legacy close, current RUNNER field) so a
+	# head SHA prefix cannot match a longer SHA.
+	candidates=$(printf '%s' "$comments" | jq -c --arg self_id "$self_id" \
+		--arg legacy "${marker_core} -->" --arg current "${marker_core}:RUNNER" \
+		--arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" '
+		(if (.[0]? | type) == $array_type then add else . end)
+		| [.[]?
+			| select((.body // "") as $body
+				| ($body | contains($legacy)) or ($body | contains($current)))
+			| {id, created_at, login: (.user.login // ""), association: (.author_association // ""),
+				own: ($self_id != "" and ((.user.id // "") | tostring) == $self_id)}]
+		| sort_by([.created_at, .id])' 2>/dev/null) || return 1
+	_feedback_route_trusted_entries "$repo_slug" <<<"$candidates" || true
+	return 0
+}
+
+# Converge duplicate receipts: the oldest authorized receipt wins and this
+# runner deletes only its own later copies, bounded per call so a historical
+# comment storm drains over several cycles.
+_feedback_route_converge_closed_issue_receipts() {
+	local repo_slug="$1" receipts="$2"
+	local duplicate_id="" deleted=0
+	while IFS= read -r duplicate_id; do
+		[[ "$duplicate_id" =~ ^[0-9]+$ ]] || continue
+		[[ "$deleted" -lt "$PULSE_FEEDBACK_ROUTE_CONVERGE_DELETE_LIMIT" ]] || break
+		_feedback_route_gh_write api "repos/${repo_slug}/issues/comments/${duplicate_id}" \
+			--method DELETE >/dev/null 2>&1 || true
+		deleted=$((deleted + 1))
+	done < <(printf '%s' "$receipts" | jq -r '.[1:][]? | select(.own == true) | .id' 2>/dev/null)
+	return 0
+}
+
+# Returns: 0=receipt present (duplicates converged), 1=absent, 75=unverifiable.
 _feedback_route_closed_issue_receipt() {
-	local pr_number="$1" repo_slug="$2" marker="$3" actor="$4"
-	local comments="" found=""
-	comments=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-	#aidevops:trust-boundary — copied markers cannot satisfy the terminal receipt.
-	# Login is pinned to the authenticated actor; author_association is not checked
-	# because GitHub App read auth reports org members as CONTRIBUTOR (GH#34600).
-	found=$(printf '%s' "$comments" | jq -r --arg marker "$marker" --arg actor "$actor" '
-		(if (.[0]? | type) == "array" then add else . end) |
-		any(.[]; $actor != "" and .user.login == $actor
-			and ((.body // "") | contains($marker)))') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-	[[ "$found" != "true" ]] || return 0
-	[[ "$found" == "false" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-	return 1
+	local pr_number="$1" repo_slug="$2" marker_core="$3" self_id="$4"
+	local receipts="" count=""
+	receipts=$(_feedback_route_closed_issue_receipts "$pr_number" "$repo_slug" "$marker_core" "$self_id") \
+		|| return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	count=$(printf '%s' "$receipts" | jq 'length' 2>/dev/null) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	[[ "$count" =~ ^[0-9]+$ ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	[[ "$count" -gt 0 ]] || return 1
+	_feedback_route_converge_closed_issue_receipts "$repo_slug" "$receipts"
+	return 0
+}
+
+# Local write fuse: once this runner has posted a generation's hold comment it
+# never posts it again, even when the GitHub read-back cannot see it. This
+# bounds the worst case to one comment per runner (GH#34600, GH#34605).
+_feedback_route_closed_issue_fuse_path() {
+	local repo_slug="$1" pr_number="$2" linked_issue="$3" head="$4"
+	local fuse_dir="${AIDEVOPS_PULSE_FEEDBACK_FUSE_DIR:-${HOME}/.aidevops/state/pulse-feedback-route-fuse}"
+	local key=""
+	key=$(printf '%s_PR%s_ISSUE%s_SHA%s' "$repo_slug" "$pr_number" "$linked_issue" "$head" | tr -c '[:alnum:]._-' '_')
+	printf '%s/closed-issue-%s' "$fuse_dir" "$key"
+	return 0
+}
+
+_feedback_route_closed_issue_record_fuse() {
+	local fuse_path="$1"
+	mkdir -p "${fuse_path%/*}" 2>/dev/null || return 1
+	: >"$fuse_path" 2>/dev/null || return 1
+	return 0
 }
 
 _feedback_route_closed_issue_current_labels() {
@@ -686,7 +869,7 @@ _feedback_route_guard_closed_issue() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" kind="$4"
 	local expected_head="${5:-}"
 	local metadata="" state="" reason="" snapshot="" pr_state="" head="" labels=""
-	local marker="" actor="" body="" receipt_rc=0
+	local marker_core="" identity="" self_id="" actor="" body="" fuse_path="" receipt_rc=0
 
 	# Review evidence routing retains its existing lifecycle policy.
 	[[ "$kind" == "conflict" || "$kind" == "ci" ]] || return 0
@@ -706,17 +889,24 @@ _feedback_route_guard_closed_issue() {
 		then "orphaned (not planned or consolidated)"
 		elif .state_reason == "completed" then "prematurely completed with an open unmerged PR"
 		else "closed with an open unmerged PR" end') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-	marker="<!-- feedback-route:closed-issue:PR${pr_number}:ISSUE${linked_issue}:SHA${head} -->"
-	actor=$(_feedback_route_authenticated_actor) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-	[[ -n "$actor" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-	_feedback_route_closed_issue_receipt "$pr_number" "$repo_slug" "$marker" "$actor" || receipt_rc=$?
+	marker_core="<!-- feedback-route:closed-issue:PR${pr_number}:ISSUE${linked_issue}:SHA${head}"
+	identity=$(_feedback_route_authenticated_identity) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	IFS=$'\t' read -r self_id actor <<<"$identity"
+	[[ "$self_id" =~ ^[0-9]+$ && -n "$actor" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	fuse_path=$(_feedback_route_closed_issue_fuse_path "$repo_slug" "$pr_number" "$linked_issue" "$head")
+	_feedback_route_closed_issue_receipt "$pr_number" "$repo_slug" "$marker_core" "$self_id" || receipt_rc=$?
 	[[ "$receipt_rc" -le 1 ]] || return "$receipt_rc"
-	# Persist the comment first: a failed hold write retries without another comment.
-	if [[ "$receipt_rc" -eq 1 ]]; then
-		body="${marker}
+	if [[ "$receipt_rc" -eq 1 && -e "$fuse_path" ]]; then
+		# Already posted by this runner but not visible: never repost.
+		echo "[pulse-wrapper] feedback finalizer: closed-issue hold comment for PR #${pr_number} in ${repo_slug} was already posted by this runner but is not visible; not reposting (write fuse)" >>"$LOGFILE"
+	elif [[ "$receipt_rc" -eq 1 ]]; then
+		# Persist the comment first: a failed hold write retries without another comment.
+		body="${marker_core}:RUNNER$(_feedback_route_runner_id) -->
 Holding this ${kind} repair PR for maintainer review: linked issue #${linked_issue} is ${reason}. The closed issue is unchanged; no repair worker will be dispatched. Review the linked issue's closing rationale before resolving this hold."
 		_feedback_route_gh_write pr comment "$pr_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
-		_feedback_route_closed_issue_receipt "$pr_number" "$repo_slug" "$marker" "$actor" || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+		_feedback_route_closed_issue_record_fuse "$fuse_path" \
+			|| echo "[pulse-wrapper] feedback finalizer: could not record closed-issue write fuse for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		_feedback_route_closed_issue_receipt "$pr_number" "$repo_slug" "$marker_core" "$self_id" || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	fi
 	# Revalidate the receipt's generation and ownership at the label boundary.
 	labels=$(_feedback_route_closed_issue_current_labels "$pr_number" "$repo_slug" "$head") || return $?
