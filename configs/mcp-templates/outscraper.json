@@ -1,7 +1,7 @@
 {
   "_comment": "Outscraper MCP configuration snippets for various AI tools",
   "_documentation": "https://github.com/outscraper/outscraper-mcp",
-  "_install": "pip install outscraper-mcp-server OR uvx outscraper-mcp-server",
+  "_install": "uv tool install --with 'mcp<2' outscraper-mcp-server OR uvx --with 'mcp<2' outscraper-mcp-server (0.1.2 breaks on mcp 2.x)",
   "_api_key": "https://auth.outscraper.com/profile",
 
   "opencode": {
@@ -10,7 +10,7 @@
     "_note": "OpenCode uses bash wrapper pattern for env vars, not 'env' key",
     "outscraper": {
       "type": "local",
-      "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
+      "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run --with 'mcp<2' outscraper-mcp-server"],
       "enabled": true
     }
   },
@@ -20,7 +20,7 @@
     "mcpServers": {
       "outscraper": {
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "env": {
           "OUTSCRAPER_API_KEY": "your_api_key_here"
         }
@@ -28,7 +28,7 @@
     }
   },
 
-  "claude_code_command": "claude mcp add-json outscraper --scope user '{\"type\":\"stdio\",\"command\":\"uvx\",\"args\":[\"outscraper-mcp-server\"],\"env\":{\"OUTSCRAPER_API_KEY\":\"your_api_key_here\"}}'",
+  "claude_code_command": "claude mcp add-json outscraper --scope user '{\"type\":\"stdio\",\"command\":\"uvx\",\"args\":[\"--with\",\"mcp<2\",\"outscraper-mcp-server\"],\"env\":{\"OUTSCRAPER_API_KEY\":\"your_api_key_here\"}}'",
 
   "smithery_command": "npx -y @smithery/cli install outscraper-mcp-server --client claude",
 
@@ -37,7 +37,7 @@
     "mcpServers": {
       "outscraper": {
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "env": {
           "OUTSCRAPER_API_KEY": "your_api_key_here"
         }
@@ -50,7 +50,7 @@
     "mcpServers": {
       "outscraper": {
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "env": {
           "OUTSCRAPER_API_KEY": "your_api_key_here"
         }
@@ -63,7 +63,7 @@
     "mcpServers": {
       "outscraper": {
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "env": {
           "OUTSCRAPER_API_KEY": "your_api_key_here"
         }
@@ -77,7 +77,7 @@
       "outscraper": {
         "type": "stdio",
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "env": {
           "OUTSCRAPER_API_KEY": "your_api_key_here"
         }
@@ -90,7 +90,7 @@
     "mcpServers": {
       "outscraper": {
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "type": "stdio",
         "disabled": false,
         "env": {
@@ -106,7 +106,7 @@
     "mcpServers": {
       "outscraper": {
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "disabled": false,
         "env": {
           "OUTSCRAPER_API_KEY": "your_api_key_here"
@@ -116,14 +116,14 @@
     }
   },
 
-  "droid_command": "droid mcp add outscraper \"uvx\" outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here",
+  "droid_command": "droid mcp add outscraper \"uvx\" --with 'mcp<2' outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here",
 
   "raycast": {
     "_note": "Configure in Raycast MCP settings",
     "mcpServers": {
       "outscraper": {
         "command": "uvx",
-        "args": ["outscraper-mcp-server"],
+        "args": ["--with", "mcp<2", "outscraper-mcp-server"],
         "env": {
           "OUTSCRAPER_API_KEY": "your_api_key_here"
         }

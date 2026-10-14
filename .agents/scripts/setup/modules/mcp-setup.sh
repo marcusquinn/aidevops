@@ -72,6 +72,32 @@ _install_mcp_packages_node() {
 	return 0
 }
 
+# outscraper-mcp-server 0.1.2 imports mcp.server.fastmcp, removed in mcp 2.x,
+# and does not constrain mcp itself (GH#34620). Drop the pin once upstream
+# supports mcp 2.x.
+OUTSCRAPER_MCP_CONSTRAINT='mcp<2'
+
+_install_outscraper_mcp_server() {
+	# Install with the constraint recorded in the uv receipt. Re-running install
+	# is a no-op for a pinned tool and migrates an existing unpinned install;
+	# the subsequent upgrade keeps the receipt constraint.
+	print_info "Installing/updating outscraper-mcp-server via uv..."
+	if ! uv tool install --with "$OUTSCRAPER_MCP_CONSTRAINT" outscraper-mcp-server >/dev/null 2>&1; then
+		print_warning "Failed to install outscraper-mcp-server"
+		return 0
+	fi
+	uv tool upgrade outscraper-mcp-server >/dev/null 2>&1 || true
+
+	local tool_dir tool_python
+	tool_dir=$(uv tool dir 2>/dev/null) || tool_dir=""
+	tool_python="${tool_dir}/outscraper-mcp-server/bin/python"
+	if [[ -n "$tool_dir" && -x "$tool_python" ]] &&
+		! "$tool_python" -c "import outscraper_mcp_server" >/dev/null 2>&1; then
+		print_warning "outscraper-mcp-server is installed but fails to import; reinstall with: uv tool install --force --with '${OUTSCRAPER_MCP_CONSTRAINT}' outscraper-mcp-server"
+	fi
+	return 0
+}
+
 _install_mcp_packages_python() {
 	# Install/update Python MCP packages via pipx and uv.
 	if command -v pipx &>/dev/null; then
@@ -84,12 +110,7 @@ _install_mcp_packages_python() {
 	fi
 
 	if command -v uv &>/dev/null && uv tool --help &>/dev/null; then
-		print_info "Installing/updating outscraper-mcp-server via uv..."
-		if command -v outscraper-mcp-server &>/dev/null; then
-			uv tool upgrade outscraper-mcp-server >/dev/null 2>&1 || true
-		else
-			uv tool install outscraper-mcp-server >/dev/null 2>&1 || print_warning "Failed to install outscraper-mcp-server"
-		fi
+		_install_outscraper_mcp_server
 	elif command -v uv &>/dev/null; then
 		print_warning "uv is installed but too old to support 'tool' subcommand — skipping outscraper-mcp-server"
 		print_info "Update uv with: curl -LsSf https://astral.sh/uv/install.sh | sh"

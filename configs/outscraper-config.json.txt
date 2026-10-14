@@ -12,9 +12,10 @@
   },
 
   "installation": {
-    "uvx": "uvx outscraper-mcp-server",
-    "uv": "uv add outscraper-mcp-server",
-    "pip": "pip install outscraper-mcp-server",
+    "_note": "outscraper-mcp-server 0.1.2 breaks on mcp 2.x; keep the mcp<2 constraint",
+    "uvx": "uvx --with 'mcp<2' outscraper-mcp-server",
+    "uv": "uv tool install --with 'mcp<2' outscraper-mcp-server",
+    "pip": "pip install outscraper-mcp-server 'mcp<2'",
     "smithery": "npx -y @smithery/cli install outscraper-mcp-server --client claude"
   },
 
@@ -39,7 +40,7 @@
       "_note": "OpenCode uses bash wrapper pattern for env vars",
       "outscraper": {
         "type": "local",
-        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
+        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run --with 'mcp<2' outscraper-mcp-server"],
         "enabled": true
       }
     },
@@ -48,7 +49,7 @@
       "mcpServers": {
         "outscraper": {
           "command": "uvx",
-          "args": ["outscraper-mcp-server"],
+          "args": ["--with", "mcp<2", "outscraper-mcp-server"],
           "env": {
             "OUTSCRAPER_API_KEY": "your_api_key_here"
           }
@@ -60,7 +61,7 @@
       "mcpServers": {
         "outscraper": {
           "command": "uvx",
-          "args": ["outscraper-mcp-server"],
+          "args": ["--with", "mcp<2", "outscraper-mcp-server"],
           "env": {
             "OUTSCRAPER_API_KEY": "your_api_key_here"
           }
@@ -72,7 +73,7 @@
       "mcpServers": {
         "outscraper": {
           "command": "uvx",
-          "args": ["outscraper-mcp-server"],
+          "args": ["--with", "mcp<2", "outscraper-mcp-server"],
           "env": {
             "OUTSCRAPER_API_KEY": "your_api_key_here"
           }

@@ -41,12 +41,14 @@ tools:
 
 ## Installation
 
-Python 3.10+ required. `uv` recommended.
+Python 3.10+ required. `uv` recommended. Keep the `mcp<2` constraint:
+`outscraper-mcp-server` 0.1.2 imports `mcp.server.fastmcp`, which mcp 2.x removed,
+and does not pin `mcp` itself (GH#34620). `setup.sh` installs it pinned.
 
 ```bash
-uvx outscraper-mcp-server          # run via uvx (recommended)
-uv add outscraper-mcp-server       # install permanently
-pip install outscraper-mcp-server  # or via pip
+uvx --with 'mcp<2' outscraper-mcp-server                 # run via uvx (recommended)
+uv tool install --with 'mcp<2' outscraper-mcp-server     # install permanently (upgrade keeps the pin)
+pip install outscraper-mcp-server 'mcp<2'                # or via pip
 ```
 
 ## MCP Server Config
@@ -57,7 +59,7 @@ pip install outscraper-mcp-server  # or via pip
 claude mcp add-json outscraper --scope user '{
   "type": "stdio",
   "command": "uvx",
-  "args": ["outscraper-mcp-server"],
+  "args": ["--with", "mcp<2", "outscraper-mcp-server"],
   "env": {"OUTSCRAPER_API_KEY": "your_api_key_here"}
 }'
 ```
@@ -69,7 +71,7 @@ claude mcp add-json outscraper --scope user '{
   "mcpServers": {
     "outscraper": {
       "command": "uvx",
-      "args": ["outscraper-mcp-server"],
+      "args": ["--with", "mcp<2", "outscraper-mcp-server"],
       "env": { "OUTSCRAPER_API_KEY": "your_api_key_here" }
     }
   }
@@ -86,7 +88,7 @@ Config file locations:
 | VS Code | `.vscode/mcp.json` (use `"type": "stdio"` wrapper) |
 | Kilo Code | MCP server icon > Edit Global MCP (`"alwaysAllow": ["google_maps_search", "google_search"]`) |
 | Kiro | Cmd+Shift+P > "Kiro: Open user MCP config" (`"autoApprove"` instead of `"alwaysAllow"`) |
-| Droid | `droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here` |
+| Droid | `droid mcp add outscraper "uvx" --with 'mcp<2' outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here` |
 | Smithery | `npx -y @smithery/cli install outscraper-mcp-server --client claude` |
 
 **OpenCode** (`~/.config/opencode/opencode.json`) — `"env"` key not supported, use bash wrapper:
@@ -94,7 +96,7 @@ Config file locations:
 ```json
 "outscraper": {
   "type": "local",
-  "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
+  "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run --with 'mcp<2' outscraper-mcp-server"],
   "enabled": true
 }
 ```
@@ -222,7 +224,8 @@ client.google_maps_reviews(
 | `uvx: command not found` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Connection refused / timeout | Check key at <https://auth.outscraper.com/profile>; verify connectivity |
 | Tool not found | Ensure MCP server enabled; restart AI tool; check agent has `outscraper_*: true` |
-| `uvx` conflicts | Use `uv tool run outscraper-mcp-server` instead |
+| `uvx` conflicts | Use `uv tool run --with 'mcp<2' outscraper-mcp-server` instead |
+| `No module named 'mcp.server.fastmcp'` | mcp 2.x resolved; `uv tool install --force --with 'mcp<2' outscraper-mcp-server` |
 | Python version errors | `brew install python@3.12` (macOS) |
 
 ## Related

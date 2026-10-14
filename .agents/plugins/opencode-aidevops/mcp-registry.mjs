@@ -248,7 +248,7 @@ export function getMcpRegistry() {
       command: [
         "bash",
         "-c",
-        "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server",
+        "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run --with 'mcp<2' outscraper-mcp-server",
       ],
       eager: false,
       toolPattern: "outscraper_*",
