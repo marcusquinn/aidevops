@@ -5271,3 +5271,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18639 GH#34180 Leaf B: durable owner-approved policy for frozen JavaScript worktree installs #auto-dispatch #enhancement tier:thinking ref:GH#34200 pr:#34271 completed:2026-10-10
 
 - [ ] t18693 Add VideoRouter, Runpod and H3 media-generation provider awareness with cost comparison #feat #interactive ref:GH#34700
+
+- [ ] t18694 Record GenAIPro API review: verified contract, do not route (pooled consumer accounts) #feat #interactive ref:GH#34713
