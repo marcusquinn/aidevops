@@ -23,10 +23,12 @@ const VERSION_POLL_MS = 5000;
 function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
   const [open, setOpen] = createSignal(true);
   const theme = () => props.api.theme.current;
-  const rows = createMemo(() => safeCall(() => extractPromptRows(
-    props.api.state.session.messages(props.sessionID),
-    (id: string) => props.api.state.part(id),
-  ), []));
+  const rows = createMemo(() =>
+    safeCall(() => extractPromptRows(
+      props.api.state.session.messages(props.sessionID),
+      (id: string) => props.api.state.part(id),
+    ), []),
+  );
   const timeline = () => safeCall(() => props.api.keymap.dispatchCommand?.("session.timeline"), undefined);
   return (
     <Show when={rows().length > 0}>
@@ -207,14 +209,17 @@ const tui: TuiPlugin = async (api) => {
   api.lifecycle.onDispose(() => clearInterval(timer));
 
   if (isPromptsEnabled()) {
-    safeCall(() => api.slots.register({
-      order: 50,
-      slots: {
-        sidebar_content(_ctx, props) {
-          return <PromptsView api={api} sessionID={props.session_id} />;
+    safeCall(
+      () => api.slots.register({
+        order: 50,
+        slots: {
+          sidebar_content(_ctx, props) {
+            return <PromptsView api={api} sessionID={props.session_id} />;
+          },
         },
-      },
-    }), undefined);
+      }),
+      undefined,
+    );
   }
 
   // Same order as the built-ins so the sidebar layout does not move.

@@ -183,6 +183,17 @@ export function isPromptsEnabled(env = process.env) {
   return !["false", "0", "none"].includes(String(env.AIDEVOPS_TUI_PROMPTS ?? "").trim().toLowerCase());
 }
 
+function promptText(message, partsFor) {
+  if ((message?.type ?? message?.role) !== "user" || message.synthetic || message.ignored) return "";
+  if (typeof partsFor !== "function") return typeof message.text === "string" ? message.text : "";
+  const parts = safeCall(() => partsFor(message.id), []);
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((part) => part?.type === "text" && !part.synthetic && !part.ignored && typeof part.text === "string")
+    .map((part) => part.text)
+    .join(" ");
+}
+
 // Both stores list messages chronologically. V1 uses role + text parts; V2
 // uses type + text and represents synthetic messages as a separate type.
 export function extractPromptRows(messages, partsFor, { limit = 8, width = 34 } = {}) {
@@ -190,23 +201,21 @@ export function extractPromptRows(messages, partsFor, { limit = 8, width = 34 } 
   if (!Array.isArray(messages)) return rows;
   for (let i = messages.length - 1; i >= 0 && rows.length < limit; i -= 1) {
     const message = messages[i];
-    if (!message || (message.type ?? message.role) !== "user" || message.synthetic || message.ignored) continue;
-    const parts = typeof partsFor === "function" ? safeCall(() => partsFor(message.id), []) : undefined;
-    const raw = parts === undefined
-      ? message.text
-      : parts.filter((part) => part.type === "text" && !part.synthetic && !part.ignored).map((part) => part.text).join(" ");
-    const text = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+    const text = promptText(message, partsFor).replace(/\s+/g, " ").trim();
     if (!text) continue;
     const chars = Array.from(text);
-    rows.push({ id: message.id, text: chars.length > width ? `${chars.slice(0, Math.max(0, width - 1)).join("")}…` : text });
+    rows.push({
+      id: message.id,
+      text: chars.length > width ? `${chars.slice(0, Math.max(0, width - 1)).join("")}…` : text,
+    });
   }
   return rows;
 }
 
 function renderPrompts(solid, solidJs, api, props) {
-  const rows = solidJs.createMemo(() => safeCall(
-    () => extractPromptRows(api.data.session.message.list(props.sessionID)), [],
-  ));
+  const rows = solidJs.createMemo(() =>
+    safeCall(() => extractPromptRows(api.data.session.message.list(props.sessionID)), []),
+  );
   const [open, setOpen] = solidJs.createSignal(true);
   const timeline = () => safeCall(() => api.keymap.dispatch("session.timeline"), undefined);
   const section = solid.createElement("box");
@@ -217,9 +226,12 @@ function renderPrompts(solid, solidJs, api, props) {
     solid.setProp(node, "wrapMode", "none");
     solid.setProp(node, "onMouseUp", onMouseUp);
     solid.effect(() => {
-      const color = safeCall(() => muted
-        ? api.theme?.text?.subdued ?? themeColor(api.theme)
-        : api.theme?.text?.default ?? api.theme?.text?.base, undefined);
+      const color = safeCall(
+        () => muted
+          ? api.theme?.text?.subdued ?? themeColor(api.theme)
+          : api.theme?.text?.default ?? api.theme?.text?.base,
+        undefined,
+      );
       if (color !== undefined) solid.setProp(node, "fg", color);
     });
     solid.insert(node, label);
@@ -241,10 +253,13 @@ export function setupPromptsSlot(
   let unregister;
   const ready = Promise.all([loadSolid(), loadSolidJs()]).then(([solid, solidJs]) => {
     if (disposed) return;
-    unregister = safeCall(() => api.ui.slot({
-      prepend: "sidebar.content",
-      render: (props) => safeCall(() => renderPrompts(solid, solidJs, api, props), undefined),
-    }), undefined);
+    unregister = safeCall(
+      () => api.ui.slot({
+        prepend: "sidebar.content",
+        render: (props) => safeCall(() => renderPrompts(solid, solidJs, api, props), undefined),
+      }),
+      undefined,
+    );
   }).catch(() => {
     // A missing renderer must leave the rest of the sidebar usable.
   });

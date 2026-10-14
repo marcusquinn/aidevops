@@ -68,6 +68,8 @@ V2 session titles double as tab labels, so the `· AIDevOps <version>` suffix is
 
 OpenCode 1.x matches this: setup registers `plugins/opencode-aidevops/v1-tui/tui.tsx` in `~/.config/opencode/tui.json` and disables the built-ins it replaces (`internal:sidebar-mcp`, `internal:sidebar-footer`). The sidebar footer reads `OpenCode <version> · AIDevOps <version>`, and the MCP section starts collapsed. The V1 session-title suffix is paused; set `AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX=true` to restore it. To revert the sidebar, set `aidevops-tui` to `false` and both built-ins to `true` under `plugin_enabled` in `tui.json`.
 
+Both runtimes add an expanded **Prompts** section immediately below the session title, ahead of context and MCP content. It lists the latest eight real user-text prompts, newest first, on truncated single lines; synthetic/ignored text and file-only or compaction messages are omitted. Click **Prompts** to collapse/expand, or a prompt row (or the collapsed count) to open the native **Jump to message** timeline dialog. Empty sessions hide the section. Set `AIDEVOPS_TUI_PROMPTS=false` (also `0` or `none`) before launch to opt out without changing other sidebar features. Restart the TUI after plugin or environment changes. To roll back only this addition in either runtime, use that opt-out or revert its implementation commit; V1's full-sidebar revert remains the `plugin_enabled` procedure above.
+
 ## Shell Integration
 
 | Shell | Config file | Hook |

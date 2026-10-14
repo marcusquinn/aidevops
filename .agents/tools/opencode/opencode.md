@@ -266,6 +266,12 @@ and only its own MCP re-allowed (rules are last-match-wins). Verify with
 
 **Tab**: cycle agents. **@agent-name**: invoke subagent (one per message).
 
+### Navigating Long Sessions
+
+Use `/timeline` or `<leader>g` to open **Jump to message**, choose a prompt, and scroll the transcript to it. The aidevops **Prompts** sidebar section in OpenCode 1.x and V2 makes this discoverable: up to eight recent user prompts appear newest first, with long text truncated. Click a row or the collapsed count to open the same native dialog; click the heading to collapse/expand. Synthetic/ignored text and messages without user text are excluded. Set `AIDEVOPS_TUI_PROMPTS=false` before starting OpenCode to hide just this section.
+
+Optional navigation bindings in `tui.json` are `messages_last_user`, `messages_previous`, and `messages_next` (V1), or `session.message.user.previous` and `session.message.user.next` (V2). These are unbound by default; aidevops does not change user keybinds. Restart the TUI after changing bindings, environment settings, or plugins.
+
 ### Workflow Order
 
 | Phase | Agents | Execution |
