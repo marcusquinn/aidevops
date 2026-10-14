@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { writeCurrentDirectory, writeSessionRecoveryMarker } from "../session-recovery-marker.mjs";
 import { readAidevopsVersion, withAidevopsTitleSuffix } from "../session-title-suffix.mjs";
 import { sanitizeTerminalTitle, withTerminalTitleStatus } from "../terminal-title.mjs";
+import { setupPromptsSlot } from "../tui-prompts.mjs";
 
 // Distinct from the server plugin id so TUI and server registries never collide.
 export const AIDEVOPS_V2_TUI_PLUGIN_ID = "aidevops-tui";
@@ -52,7 +53,7 @@ export function isTerminalTitleOwnedByAidevops(env = process.env) {
   );
 }
 
-export function safeCall(fn, fallback) {
+function safeCall(fn, fallback) {
   try {
     const value = fn();
     return value === undefined || value === null ? fallback : value;
@@ -177,99 +178,6 @@ export function formatSlotLabel(slot, version, opencodeVersion = "") {
 
 function themeColor(theme) {
   return safeCall(() => theme?.text?.muted ?? theme?.text?.base, undefined);
-}
-
-export function isPromptsEnabled(env = process.env) {
-  return !["false", "0", "none"].includes(String(env.AIDEVOPS_TUI_PROMPTS ?? "").trim().toLowerCase());
-}
-
-function promptText(message, partsFor) {
-  if ((message?.type ?? message?.role) !== "user" || message.synthetic || message.ignored) return "";
-  if (typeof partsFor !== "function") return typeof message.text === "string" ? message.text : "";
-  const parts = safeCall(() => partsFor(message.id), []);
-  if (!Array.isArray(parts)) return "";
-  return parts
-    .filter((part) => part?.type === "text" && !part.synthetic && !part.ignored && typeof part.text === "string")
-    .map((part) => part.text)
-    .join(" ");
-}
-
-// Both stores list messages chronologically. V1 uses role + text parts; V2
-// uses type + text and represents synthetic messages as a separate type.
-export function extractPromptRows(messages, partsFor, { limit = 8, width = 34 } = {}) {
-  const rows = [];
-  if (!Array.isArray(messages)) return rows;
-  for (let i = messages.length - 1; i >= 0 && rows.length < limit; i -= 1) {
-    const message = messages[i];
-    const text = promptText(message, partsFor).replace(/\s+/g, " ").trim();
-    if (!text) continue;
-    const chars = Array.from(text);
-    rows.push({
-      id: message.id,
-      text: chars.length > width ? `${chars.slice(0, Math.max(0, width - 1)).join("")}…` : text,
-    });
-  }
-  return rows;
-}
-
-function renderPrompts(solid, solidJs, api, props) {
-  const rows = solidJs.createMemo(() =>
-    safeCall(() => extractPromptRows(api.data.session.message.list(props.sessionID)), []),
-  );
-  const [open, setOpen] = solidJs.createSignal(true);
-  const timeline = () => safeCall(() => api.keymap.dispatch("session.timeline"), undefined);
-  const section = solid.createElement("box");
-  const header = solid.createElement("box");
-  solid.setProp(header, "flexDirection", "row");
-  const text = (label, onMouseUp, muted = false) => {
-    const node = solid.createElement("text");
-    solid.setProp(node, "wrapMode", "none");
-    solid.setProp(node, "onMouseUp", onMouseUp);
-    solid.effect(() => {
-      const color = safeCall(
-        () => muted
-          ? api.theme?.text?.subdued ?? themeColor(api.theme)
-          : api.theme?.text?.default ?? api.theme?.text?.base,
-        undefined,
-      );
-      if (color !== undefined) solid.setProp(node, "fg", color);
-    });
-    solid.insert(node, label);
-    return node;
-  };
-  solid.insert(header, text(() => `${open() ? "▼" : "▶"} Prompts`, () => setOpen((value) => !value)));
-  solid.insert(header, () => open() ? undefined : text(() => ` (${rows().length})`, timeline, true));
-  solid.insert(section, header);
-  solid.insert(section, () => open() ? rows().map((row) => text(row.text, timeline)) : []);
-  return () => rows().length > 0 ? section : undefined;
-}
-
-export function setupPromptsSlot(
-  api,
-  { env = process.env, loadSolid = () => import("@opentui/solid"), loadSolidJs = () => import("solid-js") } = {},
-) {
-  if (!isPromptsEnabled(env) || typeof api?.ui?.slot !== "function") return undefined;
-  let disposed = false;
-  let unregister;
-  const ready = Promise.all([loadSolid(), loadSolidJs()]).then(([solid, solidJs]) => {
-    if (disposed) return;
-    unregister = safeCall(
-      () => api.ui.slot({
-        prepend: "sidebar.content",
-        render: (props) => safeCall(() => renderPrompts(solid, solidJs, api, props), undefined),
-      }),
-      undefined,
-    );
-  }).catch(() => {
-    // A missing renderer must leave the rest of the sidebar usable.
-  });
-  const cleanup = () => {
-    disposed = true;
-    if (typeof unregister === "function") safeCall(unregister, undefined);
-    unregister = undefined;
-  };
-  cleanup.ready = ready;
-  return cleanup;
 }
 
 // Builds `<text fg={muted}>AIDevOps x.y.z</text>` with the @opentui/solid

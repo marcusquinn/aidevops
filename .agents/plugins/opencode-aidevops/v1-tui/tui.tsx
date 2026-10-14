@@ -15,7 +15,8 @@
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { homedir } from "node:os";
-import { createVersionReader, extractPromptRows, formatVersionLabel, isPromptsEnabled, safeCall } from "../v2-plugin/tui.mjs";
+import { createVersionReader, formatVersionLabel } from "../v2-plugin/tui.mjs";
+import { extractPromptRows, isPromptsEnabled, openPromptsTimeline } from "../tui-prompts.mjs";
 
 export const AIDEVOPS_V1_TUI_PLUGIN_ID = "aidevops-tui";
 const VERSION_POLL_MS = 5000;
@@ -23,13 +24,14 @@ const VERSION_POLL_MS = 5000;
 function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
   const [open, setOpen] = createSignal(true);
   const theme = () => props.api.theme.current;
+  // extractPromptRows tolerates a missing store and swallows part-read errors.
   const rows = createMemo(() =>
-    safeCall(() => extractPromptRows(
-      props.api.state.session.messages(props.sessionID),
+    extractPromptRows(
+      props.api.state?.session?.messages?.(props.sessionID),
       (id: string) => props.api.state.part(id),
-    ), []),
+    ),
   );
-  const timeline = () => safeCall(() => props.api.keymap.dispatchCommand?.("session.timeline"), undefined);
+  const timeline = () => openPromptsTimeline(props.api.keymap);
   return (
     <Show when={rows().length > 0}>
       <box>
@@ -209,17 +211,15 @@ const tui: TuiPlugin = async (api) => {
   api.lifecycle.onDispose(() => clearInterval(timer));
 
   if (isPromptsEnabled()) {
-    safeCall(
-      () => api.slots.register({
-        order: 50,
-        slots: {
-          sidebar_content(_ctx, props) {
-            return <PromptsView api={api} sessionID={props.session_id} />;
-          },
+    // Ahead of every built-in sidebar_content section (orders 100-500).
+    api.slots.register({
+      order: 50,
+      slots: {
+        sidebar_content(_ctx, props) {
+          return <PromptsView api={api} sessionID={props.session_id} />;
         },
-      }),
-      undefined,
-    );
+      },
+    });
   }
 
   // Same order as the built-ins so the sidebar layout does not move.
