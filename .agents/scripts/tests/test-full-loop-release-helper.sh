@@ -14,11 +14,16 @@ export LANE_HEAD_FILE="$ROOT/lane-head"
 export LANE_STATE_FILE="$ROOT/lane-state.json"
 : >"$ROOT/repo/aidevops.sh"
 : >"$ROOT/repo/.agents/scripts/version-manager.sh"
+ssh-keygen -q -t ed25519 -N '' -f "$ROOT/signing-key"
+SIGNING_PUB_KEY=$(<"$ROOT/signing-key.pub")
+export SIGNING_PUB_KEY
 
 cat >"$ROOT/bin/git" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GIT_CALL_LOG:?}"
 case "$*" in
+*config\ --get\ gpg.format*) printf 'ssh\n' ;;
+*config\ --get\ user.signingkey*) printf 'key::%s\n' "${SIGNING_PUB_KEY:?}" ;;
 *rev-parse\ --show-toplevel*) printf '%s\n' "${FAKE_REPO_ROOT:?}" ;;
 *show\ *:VERSION*) printf '2.9.9\n' ;;
 *rev-parse\ refs/tags/v3.0.0*) printf '%040d\n' 0 ;;
@@ -61,6 +66,10 @@ chmod +x "$ROOT/bin/git"
 
 cat >"$ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
+if [[ "$*" == 'api --paginate --slurp user/ssh_signing_keys' ]]; then
+	jq -nc --arg key "${SIGNING_PUB_KEY:?}" '[[{key:$key}]]'
+	exit 0
+fi
 if [[ "${1:-}" == "api" ]]; then
 	endpoint=""
 	for api_arg in "$@"; do
@@ -480,6 +489,7 @@ printf 'PASS persisted intent normalizes PR-only retries and rejects conflicting
 	persisted_sources=48@0000000000000000000000000000000000000000
 	recovery_calls=0
 	run_calls=0
+	release_signing_preflight() { return 0; }
 	_full_loop_release_guard_competing_lane() { return 0; }
 	_full_loop_read_release_authorization() { printf '%s\n' "$persisted_sources"; }
 	_full_loop_snapshot_retry_eligible() { return 0; }
@@ -724,6 +734,7 @@ printf 'PASS a failed unshallow fetch blocks with RELEASE_SHALLOW_STORE action=f
 	export AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops
 	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
 	guard_calls=0
+	release_signing_preflight() { return 0; }
 	_full_loop_release_ensure_full_history() { return 1; }
 	_full_loop_release_guard_competing_lane() {
 		guard_calls=$((guard_calls + 1))

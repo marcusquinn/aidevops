@@ -393,4 +393,39 @@ tag_pushes_after=$({ grep -c 'push origin refs/tags/v1.2.3:refs/tags/v1.2.3' "$F
 [[ "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" == "aggregation-required" ]]
 printf 'PASS repeated aggregation-required reconciliation is idempotent\n'
 
+# A real SSH signature with no local trusted principal is a signer failure,
+# not a reason to replace a correctly snapshot-bound immutable release tag.
+ssh-keygen -q -t ed25519 -N '' -f "$TEST_ROOT/snapshot-key"
+"$REAL_GIT" -C "$REPO" config gpg.format ssh
+"$REAL_GIT" -C "$REPO" config user.signingkey "$TEST_ROOT/snapshot-key"
+: >"$TEST_ROOT/allowed_signers"
+"$REAL_GIT" -C "$REPO" config gpg.ssh.allowedSignersFile "$TEST_ROOT/allowed_signers"
+snapshot_source=$("$REAL_GIT" -C "$REPO" rev-parse "${RELEASE_COMMIT}^1")
+"$REAL_GIT" -C "$REPO" tag -s v1.2.4 "$RELEASE_COMMIT" -m "Release snapshot
+
+Aidevops-Snapshot-Base: $snapshot_source
+Aidevops-Source-Merge: $snapshot_source"
+snapshot_object=$("$REAL_GIT" -C "$REPO" rev-parse refs/tags/v1.2.4)
+if _version_manager_publish_reachable_tag v1.2.4 >"$TEST_ROOT/untrusted.log" 2>&1; then
+	printf 'FAIL untrusted snapshot signature permitted publication\n'
+	exit 1
+fi
+[[ "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" == signer-untrusted ]]
+grep -q 'SHA256:' "$TEST_ROOT/untrusted.log"
+if grep -q 'Create a newly reviewed exact-tip aggregation release' "$TEST_ROOT/untrusted.log"; then
+	printf 'FAIL signer trust failure recommended aggregation\n'
+	exit 1
+fi
+[[ "$("$REAL_GIT" -C "$REPO" rev-parse refs/tags/v1.2.4)" == "$snapshot_object" ]]
+[[ -z "$("$REAL_GIT" ls-remote --tags "$REMOTE" refs/tags/v1.2.4)" ]]
+printf 'PASS untrusted SSH snapshot preserves its tag and reports signer-untrusted with fingerprint\n'
+
+printf 'test@example.invalid %s\n' "$(<"$TEST_ROOT/snapshot-key.pub")" >"$TEST_ROOT/allowed_signers"
+_version_manager_is_signed_snapshot v1.2.4
+[[ "$_VERSION_MANAGER_SNAPSHOT_SIGNATURE_UNTRUSTED" -eq 0 ]]
+_version_manager_publish_reachable_tag v1.2.4
+[[ "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" == tag-pushed ]]
+[[ "$("$REAL_GIT" ls-remote --tags "$REMOTE" refs/tags/v1.2.4)" == "$snapshot_object"$'\trefs/tags/v1.2.4' ]]
+printf 'PASS restoring signer trust publishes the exact preserved snapshot despite main drift\n'
+
 exit 0

@@ -6,7 +6,7 @@
 release_signing_preflight() {
 	local repo_root="$1"
 	local format="" key="" keys="" fingerprint="" registered="" candidate=""
-	local program="" key_ids=""
+	local program="" key_ids="" exact="" selector=""
 	format=$(git -C "$repo_root" config --get gpg.format) || format="openpgp"
 	key=$(git -C "$repo_root" config --get user.signingkey) || key=""
 	case "$format" in
@@ -19,6 +19,7 @@ release_signing_preflight() {
 			fingerprint=$(printf '%s\n' "${key#key::}" | ssh-keygen -E sha256 -lf /dev/stdin 2>/dev/null) || return 1
 		else
 			key="${key/#\~\//$HOME/}"
+			[[ "$key" == /* ]] || key="${repo_root}/${key}"
 			fingerprint=$(ssh-keygen -E sha256 -lf "$key" 2>/dev/null) || {
 				printf 'Release signing preflight: cannot fingerprint configured SSH signing key\n' >&2
 				return 1
@@ -41,13 +42,29 @@ release_signing_preflight() {
 		return 1
 		;;
 	openpgp)
-		[[ -n "$key" ]] || key=$(git -C "$repo_root" config --get user.email) || return 1
+		if [[ -z "$key" ]]; then
+			printf 'Release signing preflight: configure an explicit user.signingkey; implicit OpenPGP signer selection cannot be verified before tagging\n' >&2
+			return 1
+		fi
 		program=$(git -C "$repo_root" config --get gpg.openpgp.program) ||
 			program=$(git -C "$repo_root" config --get gpg.program) || program="gpg"
-		key_ids=$("$program" --batch --with-colons --list-secret-keys "${key%!}" 2>/dev/null |
-			awk -F: '$1 == "sec" || $1 == "ssb" {print toupper($5)}') || return 1
+		[[ "$key" != *'!' ]] || exact=1
+		selector=$(printf '%s' "${key%!}" | tr '[:lower:]' '[:upper:]')
+		selector="${selector#0X}"
+		key_ids=$("$program" --batch --with-colons --fingerprint --list-secret-keys "${key%!}" 2>/dev/null |
+			awk -F: -v exact="$exact" -v selector="$selector" '
+				BEGIN {key_id_field = 5; fingerprint_field = 10}
+				/^(sec|ssb):/ {id = toupper($key_id_field); if (!exact) print id}
+				/^fpr:/ && exact && (id == selector || toupper($fingerprint_field) == selector) {print id}
+			') || {
+			printf 'Release signing preflight: cannot resolve configured OpenPGP signing key\n' >&2
+			return 1
+		}
 		# Ambiguous selectors must not approve a different key from the one Git uses.
-		[[ -n "$key_ids" ]] || return 1
+		if [[ -z "$key_ids" ]]; then
+			printf 'Release signing preflight: configured OpenPGP key has no resolvable secret signing key\n' >&2
+			return 1
+		fi
 		keys=$(gh api --paginate --slurp user/gpg_keys) || {
 			printf 'Release signing preflight: cannot read authenticated GitHub GPG keys; check gh authentication and key-read permission\n' >&2
 			return 1

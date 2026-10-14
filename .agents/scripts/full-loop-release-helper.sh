@@ -133,6 +133,8 @@ source "${SCRIPT_DIR}/full-loop-release-reconcile.sh"
 source "${SCRIPT_DIR}/full-loop-release-aggregate-recovery.sh"
 # shellcheck source=./full-loop-release-snapshot-migration.sh
 source "${SCRIPT_DIR}/full-loop-release-snapshot-migration.sh"
+# shellcheck source=./release-signing-helper.sh
+source "${SCRIPT_DIR}/release-signing-helper.sh"
 
 _FULL_LOOP_RESOLVED_SOURCE_JSON=""
 _FULL_LOOP_RESOLVED_SOURCE_PR=""
@@ -755,8 +757,6 @@ _full_loop_release_start_new() {
 	local preparing_recovery_rc=0
 	# Before history recovery or any lane write, prove this host can produce a
 	# GitHub-verifiable signature. Existing-tag reconciliation does not use this path.
-	# shellcheck source=./release-signing-helper.sh
-	source "${SCRIPT_DIR}/release-signing-helper.sh"
 	release_signing_preflight "$REPO_ROOT" || return 1
 	_FULL_LOOP_RESERVED_RECOVERY_COMPLETED=false
 	_FULL_LOOP_RESERVED_RECOVERY_FAILED_PREPUBLICATION=false
