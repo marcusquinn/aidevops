@@ -86,6 +86,16 @@ Supported per-site overrides can use `.htaccess` `php_value` inside `<IfModule l
 
 Dated uploads directories returned 403 in this observation. Verify directory-listing protection per site rather than assuming it applies to every account. For the read-only baseline, worker/memory sizing, OPcache assessment, host boundaries, and safe directory-listing remediation, read `tools/runtime/php-server-admin.md`.
 
+### Read-only audit notes
+
+Observed on shared hosting on **2026-10-14**; recheck per account rather than treating these as universal plan defaults.
+
+- **Jailed shell**: No `/dev/fd`; Bash process substitution (`< <(...)`) fails with `/dev/fd/62: No such file or directory`. Use pipes or variables in scripts copied to the host.
+- **Missing commands**: `crontab` and `rpm` are unavailable. Cron jobs live in hPanel; package patch levels (including later Ghostscript fixes) cannot be read over SSH.
+- **Disabled PHP functions**: Both `shell_exec()` and `proc_open()` are disabled. The latter already prevents `wp db query`; calling either in `wp eval` ends in WordPress's “critical error” message.
+- **Shared image library**: Every available PHP build (5.2–8.5) loads the same ImageMagick library (7.1.2-31 observed). Switching PHP does not change it; only Hostinger can update it. Customers can disable `imagick` per website in hPanel's PHP Configuration (**exact control wording unverified**). WordPress then uses GD; the observed GD builds on PHP 8.1+ support WebP and AVIF. Ghostscript 9.27 is on PATH and used through Imagick for PDF thumbnails.
+- **CLI versus web PHP**: WP-CLI uses PHP CLI with `memory_limit=12288M`, no time limit and OPcache off; it cannot report web-request OPcache use. Read stored web-request data from options with `wp eval-file --skip-plugins --skip-themes`, or inspect an admin page.
+
 ### WordPress multisite cron and update readiness
 
 During a WordPress multisite migration, setup, or health check, audit cron coverage
