@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 import tempfile
 from pathlib import Path
 
@@ -251,17 +250,16 @@ def _is_linked_worktree_remove_for_canonical(
 
 def _gh_credential_executable(helper: str) -> str:
     """Extract only the absolute executable from an exact gh auth helper."""
-    if not helper.startswith("!"):
+    match = re.fullmatch(
+        r'!(?:"(?P<quoted>/[A-Za-z0-9_./+ -]+)"|(?P<plain>/[A-Za-z0-9_./+-]+))'
+        r' auth git-credential',
+        helper,
+    )
+    if not match:
         return ""
-    try:
-        command = shlex.split(helper[1:])
-    except ValueError:
-        return ""
-    if len(command) != 3 or command[1:] != ["auth", "git-credential"]:
-        return ""
-    executable = command[0]
+    executable = match.group("quoted") or match.group("plain")
     name = os.path.basename(executable)
-    if name not in {"gh", ".gh-wrapped"} or not os.path.isabs(executable):
+    if name not in {"gh", ".gh-wrapped"}:
         return ""
     return executable
 

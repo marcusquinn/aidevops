@@ -148,6 +148,24 @@ assert_allowed "allows gh credential reset prefix" "$REPO" "git -c credential.ht
 assert_blocked "blocks arbitrary credential helper prefix" "git -c credential.helper='!sh -c unsafe' clone '$REPO' '$TEST_ROOT/new-clone'"
 assert_blocked "blocks credential helper shell suffix" "git -c credential.helper='!gh auth git-credential; true' clone '$REPO' '$TEST_ROOT/new-clone'"
 assert_blocked "blocks untrusted gh credential executable" "git -c credential.helper='!$TEST_ROOT/gh auth git-credential' clone '$REPO' '$TEST_ROOT/new-clone'"
+if python3 - "$SCRIPT_DIR" <<'PY'; then
+import sys
+sys.path.insert(0, sys.argv[1])
+from canonical_git_policy import _gh_credential_executable
+
+assert _gh_credential_executable('!"/usr/bin/gh" auth git-credential') == '/usr/bin/gh'
+for helper in (
+    '!"/usr/bin/gh"\nauth git-credential',
+    '!"/usr/bin/gh" auth git-credential; true',
+    '!"/usr/bin/$(command)/gh" auth git-credential',
+    '!gh auth git-credential',
+):
+    assert not _gh_credential_executable(helper), helper
+PY
+	pass "gh credential grammar rejects shell control syntax before trust checks"
+else
+	fail "gh credential grammar rejects shell control syntax before trust checks"
+fi
 assert_blocked "blocks clone without explicit destination" "git clone '$REPO'"
 assert_blocked "blocks clone within canonical checkout" "git clone '$REPO' nested"
 assert_blocked "blocks clone within another canonical checkout" "git clone '$REPO' '$MARKED_REPO/nested'"
