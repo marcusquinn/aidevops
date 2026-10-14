@@ -53,6 +53,7 @@ define_functions_under_test() {
 		/^_route_pr_issue_supplies_worker_origin\(\) \{/,/^}$/ { print }
 		/^_route_pr_log_unroutable\(\) \{/,/^}$/ { print }
 		/^_route_pr_has_linked_issue\(\) \{/,/^}$/ { print }
+		/^_route_pr_resolve_work_issue\(\) \{/,/^}$/ { print }
 		/^_route_pr_issue_labels_for_dispatch\(\) \{/,/^}$/ { print }
 		/^_route_pr_feedback_terminal_guard\(\) \{/,/^}$/ { print }
 		/^_route_pr_preserve_deferred_retry\(\) \{/,/^}$/ { print }
@@ -88,6 +89,8 @@ install_stubs() {
 	UPDATE_BRANCH_RC=0
 	# The closed-issue guard has its own isolated runtime regression suite.
 	_feedback_route_guard_closed_issue() { return 0; }
+	# Conflict routing resolves the work issue separately from PR label context.
+	_extract_pr_work_issue() { printf '456\n'; return 0; }
 	gh() {
 		local arg1="${1:-}"
 		local arg2="${2:-}"
