@@ -111,6 +111,21 @@ _run_result_is_issue_worker() {
 	return 1
 }
 
+# GH#34681: never infer handoff from PR existence alone, or override an
+# explicit (even unsupported) blocker reason. Use the exact-head verifier.
+_run_result_reconcile_unknown_blocker() {
+	local blocker_reason="$1"
+	[[ "$blocker_reason" == unknown && "${AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON:-}" == false ]] || return 1
+	declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 || return 1
+	_worker_post_pr_handoff_confirmed "$session_key" "$work_dir" || return 1
+	_run_result_label="post_pr_handoff"
+	_run_failure_reason=""
+	_run_classification_source="verified_pr_handoff"
+	_run_classification_pattern="unknown_blocker_ready_pr"
+	rm -f "$output_file"
+	return 0
+}
+
 _handle_run_result_success_output() {
 	if _run_result_requires_task_complete && ! _private_output_has_task_complete "$output_file"; then
 		local incomplete_label="private_incomplete"
@@ -174,19 +189,7 @@ _handle_run_result_success_output() {
 				terminal_blocker_capture_output "$output_file" || true
 				local blocker_reason=""
 				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
-				# GH#34681: an unclassified prose BLOCKED exit may simply be a
-				# ready PR waiting on asynchronous gates. Never infer this from PR
-				# existence alone or override an explicit (even unsupported) reason.
-				if [[ "$blocker_reason" == unknown && "${AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON:-}" == false ]] &&
-					declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 &&
-					_worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
-					_run_result_label="post_pr_handoff"
-					_run_failure_reason=""
-					_run_classification_source="verified_pr_handoff"
-					_run_classification_pattern="unknown_blocker_ready_pr"
-					rm -f "$output_file"
-					return 0
-				fi
+				_run_result_reconcile_unknown_blocker "$blocker_reason" && return 0
 				case "$blocker_reason" in
 				push_policy_timeout | network_policy_timeout)
 					_run_failure_reason="$blocker_reason"
