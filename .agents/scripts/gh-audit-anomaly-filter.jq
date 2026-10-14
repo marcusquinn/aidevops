@@ -79,12 +79,16 @@ def expected_full_loop_review_transition:
   comparable_state
   and .op == $issue_edit
   and (
+    (.flags.pr_review_handoff_verified == "v1-current-state" and (
     (.caller_function == "_label_issue_in_review"
       and framework_script($full_loop_commit_script))
     or (.caller_function == "main"
       and framework_script($full_loop_script))
+    ))
+    or (.caller_function == "_issue_review_handoff"
+      and framework_script("gh-write-helper.sh")
+      and .flags.pr_review_handoff_verified == "v2-owned-pr-current-state")
   )
-  and .flags.pr_review_handoff_verified == "v1-current-state"
   and .suspicious == ["protected_label_removed:status:in-progress"]
   and (.delta.labels_removed // []) == ["status:in-progress"]
   and (.delta.labels_added // []) == ["status:in-review"]

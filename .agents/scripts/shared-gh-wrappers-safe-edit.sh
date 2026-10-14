@@ -313,6 +313,15 @@ _gh_audit_record_op() {
 		_gh_audit_verify_full_loop_review_transition "$repo" "$number" "$before_json" "$after_json"; then
 		flags_json='{"pr_review_handoff_verified":"v1-current-state"}'
 	fi
+	# aidevops:trust-boundary — the explicit CLI path must additionally prove an
+	# open, non-draft closing PR and current actor ownership, never just a hint.
+	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" && "$caller_function" == "_issue_review_handoff" ]] &&
+		[[ "$caller_script" == */agents/scripts/gh-write-helper.sh ||
+			"$caller_script" == */.agents/scripts/gh-write-helper.sh ]] &&
+		_gh_audit_verify_full_loop_review_transition "$repo" "$number" "$before_json" "$after_json" &&
+		_gh_verify_owned_review_handoff_pr "$repo" "$number" "${_GH_REVIEW_HANDOFF_PR:-}"; then
+		flags_json='{"pr_review_handoff_verified":"v2-owned-pr-current-state"}'
+	fi
 	# aidevops:trust-boundary — planning publication may remove its temporary
 	# manual hold only after preserving publication:pending. Require an exact,
 	# content-preserving transition and re-read the current issue so a generic
@@ -337,6 +346,33 @@ _gh_audit_record_op() {
 		--flags-json "$flags_json" \
 		2>/dev/null || true
 
+	return 0
+}
+
+#######################################
+# Independently verify the explicit handoff's closing PR and current owner.
+# Args: repo, issue number, PR number. Fail closed on unavailable live reads.
+#######################################
+_gh_verify_owned_review_handoff_pr() {
+	local repo="$1" number="$2" pr="$3"
+	local actor="" issue_json="" pr_json=""
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
+		"$number" =~ ^[1-9][0-9]*$ && "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	actor=$(gh api user --jq '.login' 2>/dev/null) || return 1
+	[[ -n "$actor" && "$actor" != "null" ]] || return 1
+	issue_json=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || return 1
+	printf '%s\n' "$issue_json" | jq -e --arg actor "$actor" '
+		(.state | ascii_upcase) == "OPEN" and .pull_request == null
+		and ([.assignees[]?.login] | index($actor) != null)
+	' >/dev/null 2>&1 || return 1
+	pr_json=$(gh pr view "$pr" --repo "$repo" \
+		--json state,isDraft,author,closingIssuesReferences 2>/dev/null) || return 1
+	printf '%s\n' "$pr_json" | jq -e --arg actor "$actor" --arg repo "$repo" --argjson number "$number" '
+		.state == "OPEN" and .isDraft == false and .author.login == $actor
+		and any(.closingIssuesReferences[]?;
+			.number == $number
+			and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))
+	' >/dev/null 2>&1 || return 1
 	return 0
 }
 
