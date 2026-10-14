@@ -958,6 +958,11 @@ setup_shellcheck_wrapper() {
 	local wrapper_path="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"
 
 	_shellcheck_wrapper_verify "$wrapper_path" || return 0
+	# Keep the original executable on PATH for the wrapper's real-binary lookup.
+	# Never replace it, even when writable: package ownership is not permission
+	# to mutate it. Existing .real installations remain supported by the wrapper.
+	print_info "Configuring user-local ShellCheck wrapper; original binary is preserved"
+	print_info "Absolute-path ShellCheck callers bypass the shim; use SHELLCHECK_PATH where supported"
 
 	local env_line
 	# shellcheck disable=SC2016 # env_line is written to rc files; must expand at shell startup

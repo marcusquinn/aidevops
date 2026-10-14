@@ -213,6 +213,111 @@ PY
 	return 0
 }
 
+test_shellcheck_wrapper_preserves_executable() {
+	# Extend the existing isolated setup fixture without touching the host store.
+	python3 - "$REPO_ROOT" <<'PY'
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+root = pathlib.Path(sys.argv[1]).resolve()
+# PATH may already contain the aidevops wrapper: prefer a declared real path
+# or a legacy .real executable before copying the candidate.
+candidates = [os.environ.get("SHELLCHECK_REAL_PATH"), shutil.which("shellcheck.real"),
+              shutil.which("shellcheck.real", path=os.defpath),
+              shutil.which("shellcheck", path=os.defpath), shutil.which("shellcheck")]
+native = next((p for p in candidates if p and pathlib.Path(p).read_bytes()[:2] != b"#!"), None)
+if not native:
+    raise SystemExit("Native ShellCheck is required for the setup wrapper fixture")
+modules = root / ".agents/scripts/setup/modules"
+setup = (root / "setup.sh").read_text()
+assert setup.index('source "${SETUP_IMPL_MODULES_DIR}/shell-env.sh"') < setup.index(
+    'source "${SETUP_IMPL_MODULES_DIR}/tool-install.sh"'
+)
+assert "setup_shellcheck_wrapper()" not in (modules / "tool-install-discovery.sh").read_text()
+script = r'''
+set -euo pipefail
+print_info() { printf '%s\n' "$*"; return 0; }
+print_success() { printf '%s\n' "$*"; return 0; }
+print_warning() { printf '%s\n' "$*"; return 0; }
+record_mutation() { printf '%s\n' "$*" >>"$MUTATION_LOG"; return 0; }
+# Block mutations as well as recording them: a regressed setup must never
+# reach the host Nix store, even with our simulated absolute resolution.
+mv() { record_mutation "mv $*"; return 1; }
+cp() { record_mutation "cp $*"; return 1; }
+chmod() { record_mutation "chmod $*"; return 1; }
+sudo() { record_mutation "sudo $*"; return 1; }
+realpath() {
+    local target="$1"
+    if [[ "$FIXTURE_KIND" == nix && "$target" == "$FIXTURE_BIN/shellcheck" ]]; then
+        printf '%s\n' /nix/store/fixture-shellcheck/bin/shellcheck
+        return 0
+    fi
+    command realpath "$target"
+    return 0
+}
+source "$MODULES/shell-env.sh"
+source "$MODULES/tool-install.sh"
+setup_shellcheck_wrapper
+[[ "$(command -v shellcheck)" == "$HOME/.aidevops/bin/shellcheck" ]]
+shellcheck --version
+bash -x "$SHELLCHECK_PATH" --version
+# Idempotency with the shim already first on PATH must not recurse.
+setup_shellcheck_wrapper
+shellcheck --version
+'''
+temp_parent = pathlib.Path(os.environ.get("AIDEVOPS_TEMP_DIR", pathlib.Path.home() / ".aidevops/.agent-workspace/tmp"))
+temp_parent.mkdir(parents=True, exist_ok=True)
+with tempfile.TemporaryDirectory(prefix="setup-shellcheck-", dir=temp_parent) as temp:
+    base = pathlib.Path(temp)
+    for kind in ("nix", "user", "legacy"):
+        case = base / kind
+        home = case / "home"
+        deployed = home / ".aidevops/agents/scripts/shellcheck-wrapper.sh"
+        deployed.parent.mkdir(parents=True)
+        shutil.copy2(root / ".agents/scripts/shellcheck-wrapper.sh", deployed)
+        bindir = case / "nix/store/fixture-shellcheck/bin" if kind == "nix" else home / ".local/bin"
+        bindir.mkdir(parents=True)
+        executable = bindir / "shellcheck"
+        shutil.copy2(native, executable)
+        if kind == "legacy":
+            executable.rename(bindir / "shellcheck.real")
+            shutil.copy2(deployed, executable)
+        before = {p: (p.read_bytes(), p.stat().st_mode) for p in bindir.iterdir()}
+        log = case / "mutations"
+        log.touch()
+        env = os.environ.copy()
+        # Inherited overrides must not hide the simulated PATH executable.
+        for key in ("SHELLCHECK_REAL_PATH", "SHELLCHECK_PATH", "_SHELLCHECK_WRAPPER_ACTIVE"):
+            env.pop(key, None)
+        env.update(HOME=str(home), PATH=f"{bindir}:/usr/bin:/bin", PLATFORM_MACOS="false",
+                   MODULES=str(modules), INSTALL_DIR=str(root), FIXTURE_KIND=kind,
+                   FIXTURE_BIN=str(bindir), MUTATION_LOG=str(log), SHELL="/bin/bash")
+        # Explicit forwarding isolates the fixture from host .real installs,
+        # which the production wrapper intentionally searches before PATH.
+        forwarded = bindir / "shellcheck.real" if kind == "legacy" else executable
+        env["SHELLCHECK_REAL_PATH"] = str(forwarded)
+        result = subprocess.run(["bash", "-c", script], env=env, text=True, capture_output=True)
+        assert result.returncode == 0, f"{kind}: {result.stdout}\n{result.stderr}"
+        after = {p: (p.read_bytes(), p.stat().st_mode) for p in bindir.iterdir()}
+        assert before == after, f"{kind}: original executable changed"
+        mutations = log.read_text()
+        assert str(bindir) not in mutations and "/nix/store/" not in mutations, mutations
+        assert "sudo" not in mutations and "sudo" not in result.stdout, result.stdout
+        assert "Absolute-path ShellCheck callers bypass the shim" in result.stdout
+        assert result.stdout.count("ShellCheck - shell script analysis tool") == 3
+        assert f"+ {forwarded} --version" in result.stderr, "wrapper bypassed fixture executable"
+        assert (home / ".aidevops/bin/shellcheck").resolve() == deployed
+        print(f"verified {kind}: original preserved, shim forwards, repeated setup works")
+PY
+	local rc=$?
+	print_result "ShellCheck setup preserves Nix, user-local and legacy executables" "$rc"
+	return 0
+}
+
 test_setup_version_substitution_keeps_syntax() {
 	local tmp_dir=""
 	tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-setup-version-test.XXXXXX") || {
@@ -322,6 +427,7 @@ PY
 main() {
 	test_setup_stage_contract
 	test_linked_worktree_checkout_contract
+	test_shellcheck_wrapper_preserves_executable
 	test_setup_version_substitution_keeps_syntax
 	test_cli_scope_contract
 	test_gui_desktop_package_contract
