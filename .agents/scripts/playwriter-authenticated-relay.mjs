@@ -19,7 +19,7 @@ import {
   removePrivateRuntime,
   terminateChild,
 } from "./playwriter-relay-lifecycle.mjs";
-import { inspectProcess, reconcileOwnedRelays } from "./playwriter-relay-reconcile.mjs";
+import { guardianStartTime, reconcileOwnedRelays } from "./playwriter-relay-reconcile.mjs";
 
 // Reviewed pin (GH#34549). Bump only after re-proving the /version, token
 // challenge, loopback and telemetry opt-out contract against the release.
@@ -188,15 +188,6 @@ export function reconcileStaleRelays(parent, options = {}) {
   return reconcileOwnedRelays(parent, RELAY_CONTRACT, options);
 }
 
-function guardianStartTime(child, command) {
-  const leader = inspectProcess(child.pid);
-  const expected = [...RELAY_CONTRACT.guardianArgv, ...command];
-  const matches = leader?.groupId === child.pid
-    && leader.argv?.length === expected.length
-    && expected.every((part, index) => leader.argv[index] === part);
-  return matches ? leader.startTime : null;
-}
-
 async function ensureRelay(command, environment, runtime, token) {
   const existing = await probeAuthenticatedRelay({ token });
   if (existing.ready) return { child: null, owned: false };
@@ -207,7 +198,7 @@ async function ensureRelay(command, environment, runtime, token) {
   const child = spawnGuardian(GUARDIAN, command, environment, runtime);
   // Capture the spawned guardian, not a later occupant of its PID after the
   // asynchronous readiness probe. An unreadable identity stays unproven.
-  const relayStartTime = guardianStartTime(child, command);
+  const relayStartTime = guardianStartTime(child.pid, RELAY_CONTRACT, command);
   const proof = await waitForRelay(token, child);
   if (!proof.ready) {
     await stopGuardian(child);

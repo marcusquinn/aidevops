@@ -63,6 +63,7 @@ async function startSyntheticGroup(t, extraArgs = [], realGuardian = false) {
   }
   const leader = spawn(process.execPath, args, {
     detached: true,
+    env: { ...process.env, AIDEVOPS_PLAYWRITER_AUTHENTICATED_RELAY: "1" },
     stdio: ["ignore", "pipe", "ignore", "ipc"],
   });
   t.after(() => {

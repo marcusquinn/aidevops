@@ -59,6 +59,15 @@ function inspectLinuxProcess(pid) {
   }
 }
 
+export function guardianStartTime(pid, contract, command) {
+  const leader = inspectProcess(pid);
+  const expected = [...contract.guardianArgv, ...command];
+  const matches = leader?.groupId === pid
+    && leader.argv?.length === expected.length
+    && expected.every((part, index) => leader.argv[index] === part);
+  return matches ? leader.startTime : null;
+}
+
 function isRegular(stats, kind) {
   return Boolean(stats?.[kind]()) && !stats.isSymbolicLink();
 }
