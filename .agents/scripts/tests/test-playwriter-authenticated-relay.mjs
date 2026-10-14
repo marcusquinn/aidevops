@@ -8,7 +8,9 @@ import { createServer } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { inspectProcess } from "../playwriter-relay-reconcile.mjs";
 import {
   createPrivateRuntime,
   privateRuntimeParent,
@@ -25,6 +27,13 @@ import {
 
 const POSIX = process.platform !== "win32";
 const GUARDIAN_ARGS = ["--aidevops-relay-guardian", "npx", "-y", "playwriter@0.8.0"];
+const LAUNCHER = fileURLToPath(new URL("../playwriter-authenticated-relay.mjs", import.meta.url));
+
+function inspectSyntheticGuardian(pid) {
+  const leader = inspectProcess(pid);
+  if (!GUARDIAN_ARGS.every((part, index) => leader?.argv.at(-GUARDIAN_ARGS.length + index) === part)) return leader;
+  return { ...leader, argv: [process.execPath, LAUNCHER, ...GUARDIAN_ARGS] };
+}
 
 // A package-runner stand-in: the group leader starts a loopback listener on an
 // OS-assigned port that ignores SIGTERM, like a relay that outlives `npm exec`.
@@ -73,6 +82,7 @@ function writeSession(parent, supervisorPid, state) {
     version: "0.8.0",
     supervisorPid,
     owned: true,
+    relayStartTime: inspectProcess(state.relayGroupId)?.startTime,
     ...state,
   })}\n`, { mode: 0o600 });
   return { name, directory };
@@ -160,7 +170,7 @@ test("reconciles an owned relay left by a dead supervisor", { skip: !POSIX }, as
   const { groupId, descendantPid } = await startSyntheticGroup(t, GUARDIAN_ARGS);
   const session = writeSession(parent, deadPid(), { relayGroupId: groupId });
 
-  assert.deepEqual(await reconcileStaleRelays(parent), [session.name]);
+  assert.deepEqual(await reconcileStaleRelays(parent, { inspect: inspectSyntheticGuardian }), [session.name]);
   assert.equal(processGroupAlive(groupId), false);
   assert.equal(alive(descendantPid), false);
   assert.equal(existsSync(session.directory), false);
@@ -185,4 +195,55 @@ test("never stops a relay without proven stale ownership", { skip: !POSIX }, asy
   }
   assert.equal(existsSync(foreignSession.directory), true);
   assert.equal(existsSync(liveSession.directory), true);
+});
+
+test("preserves substring impostors and mismatched or missing start identities", { skip: !POSIX }, async (t) => {
+  const parent = privateRuntimeParent(mkdtempSync(join(tmpdir(), "aidevops-playwriter-relay-")));
+  // These strings occur inside one argument, not a reviewed guardian argv.
+  const impostor = await startSyntheticGroup(t, [GUARDIAN_ARGS.join(" ")]);
+  const impostorSession = writeSession(parent, deadPid(), { relayGroupId: impostor.groupId });
+  assert.deepEqual(await reconcileStaleRelays(parent), []);
+  assert.equal(processGroupAlive(impostor.groupId), true);
+  assert.equal(existsSync(impostorSession.directory), true);
+
+  for (const relayStartTime of ["different-process-start", null, undefined]) {
+    const group = await startSyntheticGroup(t, GUARDIAN_ARGS);
+    const session = writeSession(parent, deadPid(), { relayGroupId: group.groupId, relayStartTime });
+    assert.deepEqual(await reconcileStaleRelays(parent, { inspect: inspectSyntheticGuardian }), []);
+    assert.equal(processGroupAlive(group.groupId), true);
+    assert.equal(alive(group.descendantPid), true);
+    assert.equal(existsSync(session.directory), true);
+  }
+});
+
+test("requires the exact guardian executable, launcher, flag and reviewed runner", { skip: !POSIX }, async (t) => {
+  const parent = privateRuntimeParent(mkdtempSync(join(tmpdir(), "aidevops-playwriter-relay-")));
+  const group = await startSyntheticGroup(t, GUARDIAN_ARGS);
+  const session = writeSession(parent, deadPid(), { relayGroupId: group.groupId });
+  const expected = [process.execPath, LAUNCHER, ...GUARDIAN_ARGS];
+  for (const index of [0, 1, 2, 3, 4, 5]) {
+    const argv = expected.map((part, position) => position === index ? `${part}-foreign` : part);
+    const inspect = (pid) => ({ ...inspectProcess(pid), argv });
+    assert.deepEqual(await reconcileStaleRelays(parent, { inspect }), []);
+    assert.equal(processGroupAlive(group.groupId), true);
+    assert.equal(existsSync(session.directory), true);
+  }
+});
+
+test("keeps legacy v1 reconciliation with exact package and relay argument tokens", { skip: !POSIX }, async (t) => {
+  const parent = privateRuntimeParent(mkdtempSync(join(tmpdir(), "aidevops-playwriter-relay-")));
+  const group = await startSyntheticGroup(t);
+  const session = writeSession(parent, group.groupId, {
+    schema: "aidevops-playwriter-relay/v1", relayPid: group.groupId,
+  });
+  // v1's dead supervisor led the still-live relay group; emulate its absence
+  // with a short-lived leader and a descendant surviving in that group.
+  process.kill(group.groupId, "SIGKILL");
+  await new Promise((resolvePromise) => {
+    const check = () => alive(group.groupId) ? setTimeout(check, 10) : resolvePromise();
+    check();
+  });
+  const inspect = () => ({ groupId: group.groupId, argv: ["npx", "playwriter@0.8.0", "serve", "--host", "127.0.0.1"] });
+  assert.deepEqual(await reconcileStaleRelays(parent, { inspect }), [session.name]);
+  assert.equal(alive(group.descendantPid), false);
 });

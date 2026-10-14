@@ -20,14 +20,32 @@ import {
 const LEGACY_STATE_SCHEMA = "aidevops-playwriter-relay/v1";
 const SESSION_DIRECTORY = /^session-(\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
-function inspectProcess(pid) {
-  const result = spawnSync("ps", ["-o", "pgid=", "-o", "command=", "-p", String(pid)], {
+export function inspectProcess(pid) {
+  const result = spawnSync("ps", ["-ww", "-o", "pgid=", "-o", "lstart=", "-o", "command=", "-p", String(pid)], {
     encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
     shell: false,
     timeout: 2_000,
   });
-  const match = result.status === 0 ? /^\s*(\d+)\s+([\s\S]+)$/.exec(result.stdout.trim()) : null;
-  return match ? { groupId: Number(match[1]), command: match[2] } : null;
+  const match = result.status === 0
+    ? /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+([^\n]+)$/.exec(result.stdout.trim()) : null;
+  if (!match) return null;
+  const startTime = match[2].replace(/\s+/g, " ");
+  try {
+    // Linux exposes actual argv boundaries and a boot-relative start tick,
+    // avoiding both ps rendering ambiguity and same-second PID reuse.
+    if (process.platform === "linux") {
+      const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+      if (argv.pop() !== "") return null;
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const ticks = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+      if (!/^\d+$/.test(ticks)) return null;
+      return { groupId: Number(match[1]), argv, startTime: `${startTime}:${ticks}` };
+    }
+    return { groupId: Number(match[1]), argv: match[3].split(/\s+/), startTime };
+  } catch {
+    return null;
+  }
 }
 
 function isRegular(stats, kind) {
@@ -70,11 +88,28 @@ function staleRelayGroup(state, contract, inspect) {
   if (!validIds || !sameRelay) return undefined;
   if (!processGroupAlive(groupId)) return null;
   const leader = inspect(leaderPid);
-  const shape = legacy ? contract.legacyShape : contract.guardianShape;
   const matches = leader?.groupId === groupId
-    && leader.command.includes(contract.packageName)
-    && leader.command.includes(shape);
+    && matchesRelayArgv(leader.argv, contract, legacy)
+    // Older v2 state has no process identity: preserve it as unproven.
+    && (legacy || (typeof state.relayStartTime === "string"
+      && state.relayStartTime === leader.startTime));
   return matches ? groupId : undefined;
+}
+
+function matchesRelayArgv(argv, contract, legacy) {
+  if (!Array.isArray(argv)) return false;
+  if (legacy) {
+    const tail = contract.legacyArgs;
+    return argv.includes(contract.packageName)
+      && tail.every((part, index) => argv[argv.length - tail.length + index] === part);
+  }
+  if (!contract.guardianArgv.every((part, index) => argv[index] === part)) return false;
+  try {
+    contract.validateCommand(argv.slice(contract.guardianArgv.length));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function reconcileSession(directory, sessionPid, contract, inspect) {
@@ -94,7 +129,7 @@ async function reconcileSession(directory, sessionPid, contract, inspect) {
  * process group whose leader matches the reviewed relay command; a listener on
  * the relay port is never enough.
  * @param {{version: string, port: number, packageName: string,
- *   legacyShape: string, guardianShape: string}} contract
+ *   legacyArgs: string[], guardianArgv: string[], validateCommand: Function}} contract
  * @returns {Promise<string[]>} names of the session directories removed
  */
 export async function reconcileOwnedRelays(parent, contract, { inspect = inspectProcess } = {}) {

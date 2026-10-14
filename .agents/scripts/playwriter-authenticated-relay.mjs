@@ -19,7 +19,7 @@ import {
   removePrivateRuntime,
   terminateChild,
 } from "./playwriter-relay-lifecycle.mjs";
-import { reconcileOwnedRelays } from "./playwriter-relay-reconcile.mjs";
+import { inspectProcess, reconcileOwnedRelays } from "./playwriter-relay-reconcile.mjs";
 
 // Reviewed pin (GH#34549). Bump only after re-proving the /version, token
 // challenge, loopback and telemetry opt-out contract against the release.
@@ -39,8 +39,9 @@ const RELAY_CONTRACT = Object.freeze({
   version: PLAYWRITER_VERSION,
   port: RELAY_PORT,
   packageName: PLAYWRITER_PACKAGE,
-  legacyShape: RELAY_ARGS.join(" "),
-  guardianShape: GUARDIAN_FLAG,
+  legacyArgs: RELAY_ARGS,
+  guardianArgv: [process.execPath, GUARDIAN.scriptPath, GUARDIAN_FLAG],
+  validateCommand: validatePlaywriterCommand,
 });
 
 function fixedError(message) {
@@ -215,6 +216,7 @@ function writeState(runtime, relay) {
     version: PLAYWRITER_VERSION,
     supervisorPid: process.pid,
     relayGroupId: relay.owned ? relay.child.pid : null,
+    relayStartTime: relay.owned ? inspectProcess(relay.child.pid)?.startTime ?? null : null,
     owned: relay.owned,
   };
   writeFileSync(runtime.statePath, `${JSON.stringify(state)}\n`, { flag: "wx", mode: 0o600 });
