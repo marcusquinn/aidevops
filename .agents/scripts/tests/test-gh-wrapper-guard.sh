@@ -288,6 +288,55 @@ else
 	_fail "check --base should detect violations in diff" "rc=$rc output=$output"
 fi
 
+# Scan a pushed head that is not checked out (the new file is absent locally).
+head_sha=$(cd "$TMPGIT" && git rev-parse HEAD)
+(cd "$TMPGIT" && git branch main "$base_sha" && git checkout -q --detach "$base_sha")
+output=$(cd "$TMPGIT" && bash "$GUARD" check --base "$base_sha" --head "$head_sha" 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 1 && "$output" == *"gh issue create"* ]]; then
+	_pass "check --head scans committed files absent from the checkout"
+else
+	_fail "check --head should detect the pushed violation" "rc=$rc output=$output"
+fi
+
+HOOK="$SCRIPT_DIR/../../hooks/gh-wrapper-guard-pre-push.sh"
+zero_sha="0000000000000000000000000000000000000000"
+output=$(cd "$TMPGIT" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$head_sha" "$base_sha" | bash "$HOOK" 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 1 && "$output" == *"gh issue create"* ]]; then
+	_pass "pre-push blocks violations in a pushed head different from HEAD"
+else
+	_fail "pre-push should block the pushed violation" "rc=$rc output=$output"
+fi
+output=$(cd "$TMPGIT" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$head_sha" "$zero_sha" | bash "$HOOK" 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 1 && "$output" == *"gh issue create"* ]]; then
+	_pass "pre-push computes new-branch merge base from the pushed head"
+else
+	_fail "pre-push should block a new feature branch violation" "rc=$rc output=$output"
+fi
+
+# Construct orphan commits without changing the checkout or bypassing hooks.
+orphan_base=$(cd "$TMPGIT" && git commit-tree "$base_sha^{tree}" -m "orphan counter base")
+orphan_head=$(cd "$TMPGIT" && git commit-tree "$base_sha^{tree}" -p "$orphan_base" -m "orphan counter update")
+(cd "$TMPGIT" && git checkout -q --detach "$head_sha")
+SECONDS=0
+output=$(cd "$TMPGIT" && printf 'refs/heads/task-id-counter %s refs/heads/task-id-counter %s\n' "$orphan_head" "$orphan_base" | bash "$HOOK" 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 && "$SECONDS" -lt 5 ]]; then
+	_pass "pre-push scans orphan counter updates in under five seconds despite checkout violations"
+else
+	_fail "orphan counter update should pass quickly" "rc=$rc seconds=$SECONDS output=$output"
+fi
+output=$(cd "$TMPGIT" && printf 'refs/heads/task-id-counter %s refs/heads/task-id-counter %s\n' "$orphan_head" "$zero_sha" | GH_WRAPPER_GUARD_DEBUG=1 bash "$HOOK" 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 && "$output" == *"cannot determine base"* ]]; then
+	_pass "pre-push skips new orphan branches with no main merge base"
+else
+	_fail "new orphan branch should skip unrelated history" "rc=$rc output=$output"
+fi
+output=$(cd "$TMPGIT" && printf 'refs/heads/feature %s refs/heads/feature %s\n' "$head_sha" "$orphan_base" | GH_WRAPPER_GUARD_DEBUG=1 bash "$HOOK" 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 && "$output" == *"unrelated histories"* ]]; then
+	_pass "pre-push skips refs with unrelated remote histories"
+else
+	_fail "unrelated remote history should skip with a debug trace" "rc=$rc output=$output"
+fi
+
 # -----------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------

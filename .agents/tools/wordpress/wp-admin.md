@@ -150,3 +150,25 @@ Before bulk operations:
 3. **Security scan** — run `@mainwp` security scan after changes
 4. **Audit log** — document significant changes
 5. **Directory listing** — check an existing dated `wp-content/uploads/<year>/` folder returns 403/404, not an `Index of` page; assess server-level protection with `tools/runtime/php-server-admin.md` (empty `index.php` files protect only their own folder).
+
+### Image-library advisories: who can reach it
+
+Read-only audit method observed with WordPress 7.1.3 in October 2026; recheck installed plugin versions, settings and call paths. Only the host can patch shared ImageMagick/Ghostscript libraries; see [Hostinger's shared image library notes](../../services/hosting/hostinger.md#read-only-audit-notes).
+
+1. **Trace processing, not storage**: ImageMagick is reached when the selected image editor uses Imagick: core sub-sizes (`wp_generate_attachment_metadata()`, `wp_create_image_subsizes()`), `media_handle_upload()`, `media_handle_sideload()`, REST media uploads, or plugin calls to `wp_get_image_editor()`/`Imagick`. A file stored outside the Media Library without these processing calls does not reach ImageMagick. Search each active plugin (including network-active plugins), then trace callers:
+
+   ```bash
+   grep -rEn --include='*.php' 'wp_get_image_editor|wp_generate_attachment_metadata|wp_create_image_subsizes|media_handle_upload|media_handle_sideload|new \\?Imagick' wp-content/plugins/<slug>
+   ```
+
+2. **Account entry and capabilities**: read `users_can_register`, `default_role` and multisite network `registration`; check the resulting role's `upload_files`, not just whether registration is enabled.
+   - **WooCommerce**: read `woocommerce_enable_myaccount_registration` and `woocommerce_enable_signup_and_login_from_checkout`. Users without `edit_posts`, `manage_woocommerce` or `view_admin_dashboard` are redirected away from wp-admin; uploads confined to its profile screen do not reach those customers, but front-end paths may.
+   - **Ultimate Multisite**: read network `wp-ultimo_v2_settings` → `enable_registration`, `enable_email_verification`, `default_role` (new site owner; administrator/editor can upload), plus `upload_filetypes` (`pdf` exposes Ghostscript thumbnail processing) and `fileupload_maxk`. Check public sign-up page availability; inspect `wu_customers` dates/email domains to distinguish real sign-ups from team tests, keeping evidence private.
+3. **Front-end paths observed** (absence of calls is version-specific evidence, not a permanent safety guarantee):
+   - **Tutor LMS 4.1.2**: profile/cover photos enter the Media Library with sub-sizes for any logged-in user (`classes/User.php`). Its registration requires `users_can_register` (`classes/Student.php`), but WooCommerce/other sign-ups still grant access.
+   - **Fluent Forms Pro**: `src/Uploader.php` → `copyToWpMedia()` invokes the editor only for the "Media Library" upload location, not the default location; record the installed version when rechecking.
+   - **AI Engine**: inspect each bot's `fileUpload`/`imageUpload` in `mwai_chatbots`, then trace enabled upload handling in the installed version.
+   - **Webmention 5.10.1**: remote avatars resize only with `webmention_avatar_store_enable=1` (`includes/class-webmention.php`); `webmention_avatars` only controls display.
+   - **No editor calls found** in audited Bookly Files, Ninja Job Board, Kadence form uploads, Fluent Support or Fluent Booking app code; the latter two's vendored WPFluent `Media` helper was unused. Record installed versions and verify callers before relying on this finding.
+4. **Evidence of use**: inspect image/PDF attachments whose authors lack `upload_files`. Author 0 images are usually imports; inspect attachment meta (such as a source-URL key) to establish origin rather than assuming public uploads.
+5. **Mitigate the reachable path**: while awaiting the host's fix, disable the specific upload/registration setting rather than switching every site to GD. Follow the [GD trade-off](../../services/hosting/hostinger.md#read-only-audit-notes): lost PDF thumbnails, HEIC conversion and embedded colour profiles.
