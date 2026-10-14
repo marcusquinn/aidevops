@@ -116,9 +116,15 @@ _release_lane_remote_head() {
 		printf '%s\n' "$head"
 		return 0
 	}
-	response=$(gh api --include --silent "$endpoint" 2>/dev/null || true)
+	response=$(gh api --include --silent "$endpoint" 2>&1 || true)
 	status_line="${response%%$'\n'*}"
 	status_code=$(printf '%s' "$status_line" | cut -d ' ' -f 2)
+	# The governed gh transport can omit stdout on HTTP errors. Native gh still
+	# reports an explicit status on stderr; do not confuse unknown/auth failures
+	# or local cooldowns with a missing ref, and never forward the response body.
+	if [[ ! "$status_code" =~ ^[0-9]{3}$ && "$response" =~ \(HTTP[[:space:]]([0-9]{3})\) ]]; then
+		status_code="${BASH_REMATCH[1]}"
+	fi
 	[[ "$status_code" == "404" ]] && return 2
 	if [[ "$status_code" == 5[0-9][0-9] ]]; then
 		printf 'RELEASE_LANE_WRITE step=lane-head status=%s retryable=true\n' "$status_code" >&2

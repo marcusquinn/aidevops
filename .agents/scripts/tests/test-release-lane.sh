@@ -238,11 +238,17 @@ run_http_classification_test() (
 		if [[ " $* " != *" --include "* ]]; then
 			return 1
 		fi
-		if [[ "$mode" == "missing" ]]; then
-			printf 'HTTP/2.0 404 Not Found\n\n'
-		else
-			printf 'HTTP/2.0 401 Unauthorized\n\n'
-		fi
+		case "$mode" in
+		missing) printf 'HTTP/2.0 404 Not Found\n\n' ;;
+		unauthorized) printf 'HTTP/2.0 401 Unauthorized\n\n' ;;
+		stderr-missing) printf 'gh: Not Found (HTTP 404)\n' >&2 ;;
+		stderr-unauthorized) printf 'gh: Bad credentials (HTTP 401)\n' >&2 ;;
+		stderr-forbidden) printf 'gh: Forbidden (HTTP 403)\n' >&2 ;;
+		stderr-server-error) printf 'gh: Service Unavailable (HTTP 503)\n' >&2 ;;
+		cooldown) printf '[gh-cooldown] secondary-rate-limit active=true skip=read\n' >&2 ;;
+		unknown) printf 'gh: connection unavailable\n' >&2 ;;
+		*) return 1 ;;
+		esac
 		return 1
 	}
 	_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
@@ -250,8 +256,21 @@ run_http_classification_test() (
 	mode="unauthorized"
 	rc=0
 	_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
-	[[ "$rc" -eq 1 ]]
-	return $?
+	[[ "$rc" -eq 1 ]] || return 1
+	mode="stderr-missing"
+	rc=0
+	_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 2 ]] || return 1
+	for mode in stderr-unauthorized stderr-forbidden cooldown unknown; do
+		rc=0
+		_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 1 ]] || return 1
+	done
+	mode="stderr-server-error"
+	rc=0
+	_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 75 ]] || return 1
+	return 0
 )
 
 run_legacy_and_api_failure_test() (
