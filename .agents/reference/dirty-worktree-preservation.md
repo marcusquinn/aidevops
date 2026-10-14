@@ -228,6 +228,27 @@ Restore preserved state only to a clean checkout on the recorded branch:
   --confirm RESTORE_DIRTY_WORKTREE_BACKUP
 ```
 
+## Worktree cleanup archives
+
+Closed-issue worktree cleanup preserves a dirty linked worktree with the same
+non-mutating `backup` command (operation ID `worktree-cleanup`) before native
+`git worktree remove --force`; the backup ID is recorded as `dirty_backup=` in
+the cleanup audit log. Cleanup refuses locked or unreadable worktrees before
+archiving, and an unchanged worktree whose removal is refused reuses its
+verified backup on later runs, so archives never accumulate (GH#34572). To
+restore, re-create the worktree at its recorded path on the preserved branch,
+then run `restore` with the logged backup ID.
+
+Before GH#34572, cleanup wrote `aidevops worktree cleanup archive` entries to
+`git stash` and could repeat them every run. Report, then drop, only exact
+duplicates (same base, worktree, index, and untracked trees as a newer kept
+archive); distinct archives and other stashes are never touched:
+
+```bash
+.agents/scripts/stash-audit-helper.sh dedupe-archives --repo /path/to/repo
+.agents/scripts/stash-audit-helper.sh dedupe-archives --repo /path/to/repo --apply
+```
+
 ## Backup retention
 
 Backups live under:

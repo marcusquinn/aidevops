@@ -17,6 +17,8 @@
 #   clean [--repo PATH]        Drop safe-to-drop stashes (interactive)
 #   auto-clean [--repo PATH]   Drop safe-to-drop stashes (non-interactive)
 #   list [--repo PATH]         List all stashes with details
+#   dedupe-archives [--repo PATH] [--apply]
+#                              Report/drop exact duplicate cleanup archives
 #   help                       Show this help
 #
 # Classification:
@@ -37,6 +39,8 @@ set -euo pipefail
 
 [[ -z "${RESET+x}" ]] && RESET="$NC" # Alias for NC from shared-constants.sh
 readonly STASH_AGE_THRESHOLD=30      # days
+# Message written by the pre-GH#34572 worktree cleanup stash archive path.
+STASH_CLEANUP_ARCHIVE_MARKER="aidevops worktree cleanup archive"
 
 # Color constants are defined in shared-constants.sh
 
@@ -61,6 +65,9 @@ Commands:
   clean [--repo PATH]        Drop safe-to-drop stashes (interactive)
   auto-clean [--repo PATH]   Drop safe-to-drop stashes (non-interactive)
   list [--repo PATH]         List all stashes with details
+  dedupe-archives [--repo PATH] [--apply]
+                             Report (default) or drop exact duplicate
+                             "aidevops worktree cleanup archive" stashes
   help                       Show this help
 
 Classification:
@@ -78,6 +85,8 @@ Safety:
   - Interactive mode asks for confirmation before dropping
   - Auto-clean only drops stashes classified as safe-to-drop
   - Dry-run available via audit command
+  - dedupe-archives drops only archives whose base, worktree, index, and
+    untracked trees all match a newer kept archive
 EOF
 	return 0
 }
@@ -460,6 +469,157 @@ cmd_auto_clean() {
 }
 
 #######################################
+# Print the exact content identity of a stash commit: base commit, worktree
+# tree, index tree, and untracked tree ("none" when the stash has no ^3).
+# Arguments:
+#   $1 - Stash commit OID
+# Returns:
+#   0 on success, 1 when any required object is unreadable
+#######################################
+stash_content_identity() {
+	local stash_oid="$1"
+	local base_oid=""
+	local worktree_tree=""
+	local index_tree=""
+	local untracked_tree="none"
+
+	base_oid=$(git rev-parse --verify --quiet "${stash_oid}^1") || return 1
+	worktree_tree=$(git rev-parse --verify --quiet "${stash_oid}^{tree}") || return 1
+	index_tree=$(git rev-parse --verify --quiet "${stash_oid}^2^{tree}") || return 1
+	if git rev-parse --verify --quiet "${stash_oid}^3" >/dev/null; then
+		untracked_tree=$(git rev-parse --verify --quiet "${stash_oid}^3^{tree}") || return 1
+	fi
+	printf '%s:%s:%s:%s\n' "$base_oid" "$worktree_tree" "$index_tree" "$untracked_tree"
+	return 0
+}
+
+#######################################
+# Drop exact duplicate worktree-cleanup archive stashes (GH#34572).
+# Only stashes whose message contains STASH_CLEANUP_ARCHIVE_MARKER are
+# considered. A stash is a duplicate only when its base commit and its
+# worktree, index, and untracked trees all equal a newer kept archive, so
+# dropping it loses no content. Distinct archives are always kept.
+# Arguments:
+#   $1 - Optional repo path
+#   $2 - "true" to drop; anything else is a dry run
+# Returns:
+#   0 on success, 1 on failure
+#######################################
+cmd_dedupe_archives() {
+	local repo_path="${1:-$(pwd)}"
+	local apply="${2:-false}"
+	local repo_root=""
+	if ! repo_root=$(get_repo_root "$repo_path"); then
+		return 1
+	fi
+	cd "$repo_root" || return 1
+
+	local stash_entries=""
+	stash_entries=$(git stash list --format='%gd%x09%H%x09%gs' 2>/dev/null) || return 1
+	# seen_keys holds "<identity> <kept-oid>" lines, newest archive first.
+	local seen_keys=""
+	local duplicates=""
+	local archive_count=0
+	local duplicate_count=0
+	local stash_ref="" stash_oid="" stash_subject="" identity="" keeper_oid=""
+	while IFS=$'\t' read -r stash_ref stash_oid stash_subject; do
+		[[ -n "$stash_ref" ]] || continue
+		case "$stash_subject" in
+		*"$STASH_CLEANUP_ARCHIVE_MARKER"*) ;;
+		*) continue ;;
+		esac
+		archive_count=$((archive_count + 1))
+		if ! identity=$(stash_content_identity "$stash_oid"); then
+			log_warn "Keeping unreadable archive: $stash_ref"
+			continue
+		fi
+		case $'\n'"$seen_keys" in
+		*$'\n'"$identity "*)
+			keeper_oid="${seen_keys#*"$identity "}"
+			keeper_oid="${keeper_oid%%$'\n'*}"
+			duplicates="${stash_ref}"$'\t'"${stash_oid}"$'\t'"${keeper_oid}"$'\n'"${duplicates}"
+			duplicate_count=$((duplicate_count + 1))
+			[[ "$apply" == "true" ]] || echo "  duplicate: $stash_ref: $stash_subject"
+			;;
+		*)
+			seen_keys="${seen_keys}${identity} ${stash_oid}"$'\n'
+			;;
+		esac
+	done <<<"$stash_entries"
+
+	log_info "Cleanup archives: $archive_count; exact duplicates: $duplicate_count; distinct kept: $((archive_count - duplicate_count))"
+	if [[ "$duplicate_count" -eq 0 ]]; then
+		return 0
+	fi
+	if [[ "$apply" != "true" ]]; then
+		log_info "Dry run; re-run with --apply to drop the exact duplicates"
+		return 0
+	fi
+
+	# `duplicates` is ordered oldest (highest index) first, so each drop leaves
+	# the indices of the remaining entries unchanged.
+	local dropped=0
+	while IFS=$'\t' read -r stash_ref stash_oid keeper_oid; do
+		[[ -n "$stash_ref" ]] || continue
+		drop_duplicate_archive "$stash_ref" "$stash_oid" "$keeper_oid" || return 1
+		dropped=$((dropped + 1))
+	done <<<"$duplicates"
+	log_success "Dropped $dropped exact duplicate cleanup archive(s)"
+	return 0
+}
+
+#######################################
+# Drop one duplicate archive losslessly. Refuses when the kept copy is gone or
+# the index no longer names the expected OID; if a concurrent stash change
+# still makes `git stash drop` remove a different entry, that entry is
+# re-stored with its original message before stopping.
+# Arguments:
+#   $1 - Stash reference (e.g., stash@{4})
+#   $2 - Expected duplicate stash OID
+#   $3 - OID of the kept archive with identical content
+# Returns:
+#   0 when exactly the expected duplicate was dropped, 1 otherwise
+#######################################
+drop_duplicate_archive() {
+	local stash_ref="$1"
+	local expected_oid="$2"
+	local keeper_oid="$3"
+	local current_oids=""
+	local drop_output=""
+	local dropped_oid=""
+	local dropped_message=""
+
+	current_oids=$(git stash list --format='%H' 2>/dev/null) || return 1
+	case $'\n'"$current_oids"$'\n' in
+	*$'\n'"$keeper_oid"$'\n'*) ;;
+	*)
+		log_error "Kept archive $keeper_oid is gone; refusing to drop $stash_ref"
+		return 1
+		;;
+	esac
+	if [[ "$(git rev-parse --verify --quiet "$stash_ref" 2>/dev/null || true)" != "$expected_oid" ]]; then
+		log_error "Stash list changed during dedupe; stopping at $stash_ref"
+		return 1
+	fi
+	if ! drop_output=$(git stash drop "$stash_ref" 2>/dev/null); then
+		log_error "Failed to drop: $stash_ref"
+		return 1
+	fi
+	dropped_oid="${drop_output##*(}"
+	dropped_oid="${dropped_oid%%)*}"
+	if [[ "$dropped_oid" == "$expected_oid" ]]; then
+		return 0
+	fi
+	dropped_message=$(git log -1 --format=%B "$dropped_oid" 2>/dev/null || true)
+	if git stash store -m "${dropped_message:-restored by stash-audit-helper}" "$dropped_oid" 2>/dev/null; then
+		log_error "Stash list changed during dedupe; re-stored $dropped_oid and stopped"
+	else
+		log_error "Stash list changed during dedupe; re-store failed, recover with: git stash store $dropped_oid"
+	fi
+	return 1
+}
+
+#######################################
 # Main entry point
 # Arguments:
 #   $@ - Command and options
@@ -476,6 +636,7 @@ main() {
 	shift
 
 	local repo_path=""
+	local apply="false"
 
 	# Parse common options
 	while [[ $# -gt 0 ]]; do
@@ -483,6 +644,10 @@ main() {
 		--repo)
 			repo_path="$2"
 			shift 2
+			;;
+		--apply)
+			apply="true"
+			shift
 			;;
 		*)
 			log_error "Unknown option: $1"
@@ -503,6 +668,9 @@ main() {
 		;;
 	list)
 		cmd_list "$repo_path"
+		;;
+	dedupe-archives)
+		cmd_dedupe_archives "$repo_path" "$apply"
 		;;
 	help | --help | -h)
 		show_help

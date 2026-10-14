@@ -992,7 +992,8 @@ _WT_CLEAN_OUTCOME_SKIPPED="skipped"
 _WT_CLEAN_OUTCOME_FAILED="failed"
 _WT_CLEAN_OUTCOME_REMOVED="removed"
 _WT_CLEAN_LAST_REMOVAL_OUTCOME="$_WT_CLEAN_OUTCOME_SKIPPED"
-_WT_CLEAN_STASH_ARCHIVE_SEQUENCE=0
+_WT_CLEAN_ARCHIVE_OPERATION_ID="worktree-cleanup"
+_WT_CLEAN_LAST_ARCHIVE_ID=""
 _WT_CLEAN_LAST_PRESERVE_BRANCH="${_WT_CLEAN_LAST_PRESERVE_BRANCH:-$_WT_CLEAN_BOOL_FALSE}"
 
 _clean_protected_mark() {
@@ -1060,38 +1061,84 @@ _clean_issue_is_closed() {
 	return 0
 }
 
-_clean_archive_dirty_worktree_stash() {
+# Preserve dirty state with the non-mutating dirty-worktree backup helper.
+# GH#34572: a stable operation ID makes the backup ID content-addressed
+# (`<worktree>-<branch>-worktree-cleanup-<fingerprint>`), so a worktree that
+# survives a refused removal reuses its verified backup on later cleanup runs
+# instead of adding another archive. Backups live under
+# refs/aidevops/dirty-worktree-backups/, never in the human `git stash list`,
+# and the worktree is never modified, so a surviving worktree keeps its
+# tracked, staged, and untracked files. Edits made after the final match and
+# before forced native removal are not preserved (same window as the former
+# stash push/apply design).
+_clean_dirty_backup_helper() {
+	printf '%s\n' "${_WT_CLEAN_DIRTY_BACKUP_HELPER:-${SCRIPT_DIR}/dirty-worktree-backup-helper.sh}"
+	return 0
+}
+
+_clean_archive_dirty_worktree() {
 	local wt_path="$1"
 	local wt_branch="$2"
-	local archive_token=""
-	local candidate_oid=""
-	local candidate_subject=""
-	local match_count=0
-	local stash_entries=""
-	local stash_oid=""
+	local backup_helper=""
+	local real_git=""
+	local backup_output=""
+	local backup_id=""
+	local backup_dir=""
+	_WT_CLEAN_LAST_ARCHIVE_ID=""
 	if ! worktree_has_changes "$wt_path"; then
 		return 0
 	fi
-	_WT_CLEAN_STASH_ARCHIVE_SEQUENCE=$((_WT_CLEAN_STASH_ARCHIVE_SEQUENCE + 1))
-	archive_token="aidevops-stash-archive:$$:${_WT_CLEAN_STASH_ARCHIVE_SEQUENCE}:${RANDOM}"
-	git -C "$wt_path" stash push -u \
-		-m "aidevops worktree cleanup archive [${archive_token}]: ${wt_branch:-detached}" \
-		>/dev/null 2>&1 || return 1
-	stash_entries=$(git -C "$wt_path" stash list --format='%H%x09%gs' 2>/dev/null) || return 1
-	while IFS=$'\t' read -r candidate_oid candidate_subject; do
-		case "$candidate_subject" in
-		*"$archive_token"*)
-			stash_oid="$candidate_oid"
-			match_count=$((match_count + 1))
-			;;
-		esac
-	done <<<"$stash_entries"
-	[[ "$match_count" -eq 1 && -n "$stash_oid" ]] || return 1
-	git -C "$wt_path" cat-file -e "${stash_oid}^{commit}" 2>/dev/null || return 1
-	# Keep the immutable stash while restoring the exact dirty worktree before
-	# final native Git removal. If a preservation lock wins, the surviving
-	# worktree retains its tracked, staged, and untracked files.
-	git -C "$wt_path" stash apply --index "$stash_oid" >/dev/null 2>&1 || return 1
+	backup_helper=$(_clean_dirty_backup_helper)
+	[[ -f "$backup_helper" ]] || return 1
+	real_git=$(_worktree_cleanup_real_git) || return 1
+	backup_output=$(AIDEVOPS_REAL_GIT_BIN="$real_git" bash "$backup_helper" backup \
+		--repo "$wt_path" \
+		--reason "aidevops worktree cleanup archive: ${wt_branch:-detached}" \
+		--operation-id "$_WT_CLEAN_ARCHIVE_OPERATION_ID" --machine 2>/dev/null) || return 1
+	if [[ "$backup_output" != *"|"* ]]; then
+		# The worktree became clean after the dirty check; there is nothing to
+		# preserve, and the final match step re-checks it before removal.
+		return 0
+	fi
+	IFS='|' read -r backup_id backup_dir <<<"${backup_output##*$'\n'}"
+	[[ -n "$backup_id" && -d "$backup_dir" ]] || return 1
+	_WT_CLEAN_LAST_ARCHIVE_ID="$backup_id"
+	return 0
+}
+
+# Final content check, run after the removal guard and immediately before
+# native removal: the worktree must still byte-match the verified backup (or
+# still be clean when no backup was needed). This narrows, but cannot close,
+# the window before the forced native removal.
+_clean_archive_still_matches() {
+	local wt_path="$1"
+	local backup_helper=""
+	local real_git=""
+	if [[ -z "$_WT_CLEAN_LAST_ARCHIVE_ID" ]]; then
+		worktree_has_changes "$wt_path" && return 1
+		return 0
+	fi
+	backup_helper=$(_clean_dirty_backup_helper)
+	real_git=$(_worktree_cleanup_real_git) || return 1
+	AIDEVOPS_REAL_GIT_BIN="$real_git" bash "$backup_helper" matches \
+		--repo "$wt_path" --backup "$_WT_CLEAN_LAST_ARCHIVE_ID" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Refuse before archiving when native Git would refuse removal anyway, so a
+# persistently locked or unreadable worktree is never re-archived per pass.
+_clean_worktree_git_state_is_clear() {
+	local wt_path="$1"
+	local audit_context="$2"
+	local wt_path_real=""
+	local git_state=""
+	wt_path_real=$(cd "$wt_path" 2>/dev/null && pwd -P) || wt_path_real="$wt_path"
+	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
+		git_state="$_WT_GIT_STATE_UNREADABLE"
+	if [[ "$git_state" != "$_WT_GIT_STATE_CLEAR" ]]; then
+		_worktree_log_git_refusal "$wt_path" "$_WTAR_WH_CALLER" "$git_state" "$audit_context"
+		return 1
+	fi
 	return 0
 }
 
@@ -1100,9 +1147,17 @@ _clean_remove_preserving_branch() {
 	local wt_branch="$2"
 	local audit_context="$3"
 
-	_clean_archive_dirty_worktree_stash "$wt_path" "$wt_branch" || return 1
+	# GH#34572: check native Git removability before archiving. The caller has
+	# already passed the removal guard; it is re-checked after the archive
+	# because archiving takes time, then content is re-matched last.
+	_clean_worktree_git_state_is_clear "$wt_path" "$audit_context" || return 1
+	_clean_archive_dirty_worktree "$wt_path" "$wt_branch" || return 1
+	if [[ -n "$_WT_CLEAN_LAST_ARCHIVE_ID" ]]; then
+		audit_context="${audit_context} dirty_backup=${_WT_CLEAN_LAST_ARCHIVE_ID}"
+	fi
 	worktree_removal_guard "$wt_path" "$_WTAR_WH_CALLER" \
 		"$_WT_CLEAN_REASON_CLOSED_ISSUE_ARCHIVE" || return 1
+	_clean_archive_still_matches "$wt_path" || return 1
 	_worktree_remove_with_native_git "$wt_path" "$_WTAR_WH_CALLER" "$audit_context" "true" || return 1
 	return 0
 }
@@ -1563,6 +1618,9 @@ _clean_remove_classified_worktree() {
 			removed="$_WT_CLEAN_BOOL_TRUE"
 			audit_reason="$_WT_CLEAN_REASON_CLOSED_ISSUE_ARCHIVE"
 			completed_mode="$_WT_CLEAN_MODE_BRANCH_PRESERVED"
+			if [[ -n "$_WT_CLEAN_LAST_ARCHIVE_ID" ]]; then
+				audit_context="${audit_context} dirty_backup=${_WT_CLEAN_LAST_ARCHIVE_ID}"
+			fi
 		fi
 	else
 		local remove_flag=""
