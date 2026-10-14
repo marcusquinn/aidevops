@@ -12,6 +12,100 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 export REPO_ROOT="$TEST_ROOT"
 source "${SCRIPT_DIR}/full-loop-release-aggregate-recovery.sh"
 
+# Exercise the real preparation and resolver, not the orchestration stubs below.
+(
+	# shellcheck source=../full-loop-release-helper.sh
+	source "${SCRIPT_DIR}/full-loop-release-helper.sh" help >/dev/null
+	export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+	fixture="${TEST_ROOT}/protected-main"
+	remote="${TEST_ROOT}/protected-main.git"
+	git init -q --bare "$remote"
+	git clone -q "$remote" "$fixture"
+	git -C "$fixture" switch -q -c main
+	git -C "$fixture" config user.name Test
+	git -C "$fixture" config user.email test@example.invalid
+	mkdir -p "$fixture/.agents"
+	ln -s "$SCRIPT_DIR" "$fixture/.agents/scripts"
+	git -C "$fixture" add .agents
+	git -C "$fixture" commit -q -m baseline
+	git -C "$fixture" tag -a v1.2.2 -m 'published baseline'
+	git -C "$fixture" push -q origin v1.2.2
+	git -C "$fixture" commit -q --allow-empty -m 'source 42'
+	export FIXTURE_SOURCE_42
+	FIXTURE_SOURCE_42=$(git -C "$fixture" rev-parse HEAD)
+	git -C "$fixture" commit -q --allow-empty -m 'protected release commit'
+	ssh-keygen -q -t ed25519 -N '' -f "$TEST_ROOT/recovery-signing-key"
+	printf 'test@example.invalid %s\n' "$(<"$TEST_ROOT/recovery-signing-key.pub")" >"$TEST_ROOT/allowed-signers"
+	git -C "$fixture" config gpg.format ssh
+	git -C "$fixture" config user.signingkey "$TEST_ROOT/recovery-signing-key"
+	git -C "$fixture" config gpg.ssh.allowedSignersFile "$TEST_ROOT/allowed-signers"
+	git -C "$fixture" tag -s v1.2.3 -m 'unpublished signed release'
+	git -C "$fixture" verify-tag v1.2.3
+	git -C "$fixture" commit -q --allow-empty -m 'source 43'
+	export FIXTURE_SOURCE_43 FIXTURE_AGGREGATE FIXTURE_PARENT
+	FIXTURE_SOURCE_43=$(git -C "$fixture" rev-parse HEAD)
+	FIXTURE_PARENT="$FIXTURE_SOURCE_43"
+	git -C "$fixture" commit -q --allow-empty -m "reviewed aggregate
+
+Aidevops-Release-Aggregator-PR: 99
+Aidevops-Release-Aggregates: 42@${FIXTURE_SOURCE_42}
+Aidevops-Release-Aggregates: 43@${FIXTURE_SOURCE_43}"
+	FIXTURE_AGGREGATE=$(git -C "$fixture" rev-parse HEAD)
+	git -C "$fixture" push -q -u origin main
+	[[ "$(git -C "$fixture" describe --tags --match 'v[0-9]*' --abbrev=0 HEAD)" == v1.2.3 ]]
+	[[ -z "$(git -C "$fixture" ls-remote origin refs/tags/v1.2.3)" ]]
+	git -C "$fixture" merge-base --is-ancestor 'v1.2.3^{commit}' HEAD
+	gh() {
+		local command="$1"
+		local target="$2"
+		local pr="${3:-}"
+		local merge=""
+		if [[ "$command" == pr && "$target" == view ]]; then
+			case "$pr" in
+			42) merge="$FIXTURE_SOURCE_42" ;;
+			43) merge="$FIXTURE_SOURCE_43" ;;
+			99) merge="$FIXTURE_AGGREGATE" ;;
+			*) return 1 ;;
+			esac
+			jq -cn --arg merge "$merge" --arg head "$FIXTURE_AGGREGATE" \
+				'{state:"MERGED",mergedAt:"2026-10-14T00:00:00Z",baseRefName:"main",headRefOid:$head,mergeCommit:{oid:$merge}}'
+		elif [[ "$command" == api && "$target" == repos/test/repo/compare/* ]]; then
+			jq -cn --arg head "$FIXTURE_AGGREGATE" --arg parent "$FIXTURE_PARENT" \
+				'{base_commit:{sha:$head},merge_base_commit:{sha:$parent},ahead_by:0,status:"behind"}'
+		else
+			# Tag API reads fail: recovery must not need the unpublished tag.
+			return 1
+		fi
+		return 0
+	}
+	export -f gh
+	REPO_ROOT="$fixture"
+	AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT"
+	_FULL_LOOP_RESOLVED_EXPECTED_SOURCES=""
+	manifest="42@${FIXTURE_SOURCE_42},43@${FIXTURE_SOURCE_43}"
+	_full_loop_recovery_prepare_aggregate test/repo 42 "$manifest"
+	[[ "$(jq -r '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON")" == aggregate ]]
+	[[ "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" == "$FIXTURE_AGGREGATE" ]]
+	[[ "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" == "$manifest" ]]
+	resolver="$_FULL_LOOP_RELEASE_PATH/.agents/scripts/release-provenance-helper.sh"
+	(
+		cd "$_FULL_LOOP_RELEASE_PATH"
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources 42 >/dev/null 2>&1; then
+			exit 1
+		fi
+		# Default release resolution still uses snapshots and fails on the local-only tag.
+		_full_loop_write_release_failure_evidence() { return 0; }
+		if _full_loop_resolve_requested_release_source test/repo 42 "$PWD" "$resolver" "$manifest" >/dev/null 2>&1; then
+			exit 1
+		fi
+		git update-ref refs/remotes/origin/main "$FIXTURE_PARENT"
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" >/dev/null 2>&1; then
+			exit 1
+		fi
+	)
+)
+printf 'PASS real aggregate preparation ignores an unpublished signed ancestor tag and retains manifest and exact-tip fences\n'
+
 CHANNEL_MODE="absent"
 
 _full_loop_recovery_verify_all_remote_tags_absent() {

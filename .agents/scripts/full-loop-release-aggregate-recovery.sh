@@ -673,7 +673,11 @@ _full_loop_recovery_prepare_aggregate() {
 	git -C "$REPO_ROOT" worktree add --detach "$_FULL_LOOP_RELEASE_PATH" origin/main >/dev/null || return 1
 	trap 'cleanup_release_worktree' EXIT
 	resolver="$_FULL_LOOP_RELEASE_PATH/.agents/scripts/release-provenance-helper.sh"
-	_full_loop_resolve_requested_release_source "$repo" "$source_pr" "$_FULL_LOOP_RELEASE_PATH" "$resolver" "$expected_sources" || return 1
+	# The provisional local tag may already be an ancestor of protected main.
+	# Do not discover a snapshot baseline via that unpublished tag; validate the
+	# reviewed exact-tip aggregate and its immutable manifest instead.
+	_full_loop_resolve_requested_release_source "$repo" "$source_pr" "$_FULL_LOOP_RELEASE_PATH" \
+		"$resolver" "$expected_sources" aggregate || return 1
 	[[ "$(jq -r '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON")" == "aggregate" ]] || return 1
 	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$_FULL_LOOP_RESOLVED_EXPECTED_SOURCES"
 	return 0
