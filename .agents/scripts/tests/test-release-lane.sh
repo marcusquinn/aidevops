@@ -244,6 +244,8 @@ run_http_classification_test() (
 		stderr-missing) printf 'gh: Not Found (HTTP 404)\n' >&2 ;;
 		stderr-unauthorized) printf 'gh: Bad credentials (HTTP 401)\n' >&2 ;;
 		stderr-forbidden) printf 'gh: Forbidden (HTTP 403)\n' >&2 ;;
+		stderr-reflected-status) printf 'gh: message includes (HTTP 404) (HTTP 403)\n' >&2 ;;
+		stderr-untrusted-status) printf 'diagnostic: mentions (HTTP 404)\n' >&2 ;;
 		stderr-server-error) printf 'gh: Service Unavailable (HTTP 503)\n' >&2 ;;
 		cooldown) printf '[gh-cooldown] secondary-rate-limit active=true skip=read\n' >&2 ;;
 		unknown) printf 'gh: connection unavailable\n' >&2 ;;
@@ -261,7 +263,7 @@ run_http_classification_test() (
 	rc=0
 	_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
 	[[ "$rc" -eq 2 ]] || return 1
-	for mode in stderr-unauthorized stderr-forbidden cooldown unknown; do
+	for mode in stderr-unauthorized stderr-forbidden stderr-reflected-status stderr-untrusted-status cooldown unknown; do
 		rc=0
 		_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
 		[[ "$rc" -eq 1 ]] || return 1

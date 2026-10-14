@@ -122,7 +122,8 @@ _release_lane_remote_head() {
 	# The governed gh transport can omit stdout on HTTP errors. Native gh still
 	# reports an explicit status on stderr; do not confuse unknown/auth failures
 	# or local cooldowns with a missing ref, and never forward the response body.
-	if [[ ! "$status_code" =~ ^[0-9]{3}$ && "$response" =~ \(HTTP[[:space:]]([0-9]{3})\) ]]; then
+	# Match the terminal CLI status, not status-like text inside a server message.
+	if [[ ! "$status_code" =~ ^[0-9]{3}$ && "$status_line" =~ ^gh:.*\(HTTP[[:space:]]([0-9]{3})\)$ ]]; then
 		status_code="${BASH_REMATCH[1]}"
 	fi
 	[[ "$status_code" == "404" ]] && return 2
