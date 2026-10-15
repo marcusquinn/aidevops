@@ -1683,7 +1683,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18687 fix(pulse): preflight prefetch times out on every cycle for large repo sets #auto-dispatch #bug ref:GH#34527 pr:#34530 completed:2026-10-13
 
-- [ ] t18695 Credential registry: record account, reach, owner, expiry and explicit provider defaults #feat ref:GH#34717
+- [x] t18695 Credential registry: record account, reach, owner, expiry and explicit provider defaults #feat ref:GH#34717 pr:#34726 completed:2026-10-15
 
 - [ ] t18696 Credential aliases and explicit provider defaults resolve at secret injection #feat ref:GH#34718
 
@@ -5288,4 +5288,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18694 Record GenAIPro API review: verified contract, do not route (pooled consumer accounts) #feat #interactive ref:GH#34713 pr:#34714 completed:2026-10-14
 
-- [ ] t18702 Remove GenAIPro from media-generation provider guidance #feat #interactive ref:GH#34729
+- [x] t18702 Remove GenAIPro from media-generation provider guidance #feat #interactive ref:GH#34729 pr:#34730 completed:2026-10-15
