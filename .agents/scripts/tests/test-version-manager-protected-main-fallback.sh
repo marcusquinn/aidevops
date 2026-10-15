@@ -234,7 +234,13 @@ if grep -Eq ' rebase | commit --amend| tag -(d|s) ' "$FAKE_GIT_LOG"; then
 fi
 printf 'PASS recovery branch preserves the original release commit and tag object\n'
 
-[[ "$("$REAL_GIT" ls-remote "$REMOTE" refs/aidevops/release-tags/v1.2.3 | cut -f1)" == "$TAG_OBJECT" ]]
+# GH#34753: GitHub refuses tag objects outside refs/tags, so the staging ref is
+# a commit envelope whose `tag` blob hashes back to the exact signed object.
+STAGED_ENVELOPE=$("$REAL_GIT" ls-remote "$REMOTE" refs/aidevops/release-tags/v1.2.3 | cut -f1)
+[[ "$("$REAL_GIT" --git-dir="$REMOTE" cat-file -t "$STAGED_ENVELOPE")" == "commit" ]]
+[[ "$("$REAL_GIT" --git-dir="$REMOTE" rev-parse "${STAGED_ENVELOPE}^1")" == "$RELEASE_COMMIT" ]]
+[[ "$("$REAL_GIT" --git-dir="$REMOTE" cat-file blob "${STAGED_ENVELOPE}:tag" |
+	"$REAL_GIT" --git-dir="$REMOTE" hash-object -t tag --stdin)" == "$TAG_OBJECT" ]]
 printf 'PASS protected PR queue first preserves the exact tag on a fetchable staging ref\n'
 
 # GH#34434: release-tool pushes run in dependency-free worktrees, so each one
