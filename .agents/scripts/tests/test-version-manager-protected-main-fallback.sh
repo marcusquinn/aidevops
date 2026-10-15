@@ -428,4 +428,43 @@ _version_manager_publish_reachable_tag v1.2.4
 [[ "$("$REAL_GIT" ls-remote --tags "$REMOTE" refs/tags/v1.2.4)" == "$snapshot_object"$'\trefs/tags/v1.2.4' ]]
 printf 'PASS restoring signer trust publishes the exact preserved snapshot despite main drift\n'
 
+# GH#34710: a recovery-pinned aggregate may trail main only when its signed pin
+# is the direct release parent and that parent names the same aggregator PR.
+pinned_aggregate=$("$REAL_GIT" -C "$REPO" commit-tree "${RELEASE_COMMIT}^{tree}" -p "$RELEASE_COMMIT" \
+	-m "reviewed aggregate" -m "Aidevops-Release-Aggregator-PR: 77
+Aidevops-Release-Aggregates: 76@${RELEASE_COMMIT}")
+pinned_release=$("$REAL_GIT" -C "$REPO" commit-tree "${pinned_aggregate}^{tree}" -p "$pinned_aggregate" \
+	-m "chore(release): bump version to 1.2.5")
+_pinned_tag() {
+	local tag="$1" source_pr="$2" pin="$3"
+	"$REAL_GIT" -C "$REPO" tag -s "$tag" "$pinned_release" -m "Release $tag
+
+Aidevops-Source-PR: $source_pr
+Aidevops-Source-Merge: $pinned_aggregate
+Aidevops-Aggregate-Pin: $pin
+Aidevops-Aggregated-Source: 76@${RELEASE_COMMIT}"
+	return 0
+}
+_pinned_tag v1.2.5 77 "$pinned_aggregate"
+_version_manager_is_signed_snapshot v1.2.5
+_pinned_tag v1.2.6 78 "$pinned_aggregate"
+if _version_manager_is_signed_snapshot v1.2.6 >/dev/null 2>&1; then
+	printf 'FAIL pinned tag accepted a source PR that is not the aggregator identity\n'
+	exit 1
+fi
+_pinned_tag v1.2.7 77 "$RELEASE_COMMIT"
+if _version_manager_is_signed_snapshot v1.2.7 >/dev/null 2>&1; then
+	printf 'FAIL pinned tag accepted a pin that is not its direct release parent\n'
+	exit 1
+fi
+"$REAL_GIT" -C "$REPO" tag -s v1.2.8 "$pinned_release" -m "Release v1.2.8
+
+Aidevops-Source-PR: 77
+Aidevops-Source-Merge: $pinned_aggregate"
+if _version_manager_is_signed_snapshot v1.2.8 >/dev/null 2>&1; then
+	printf 'FAIL unpinned aggregate tag was allowed to trail main\n'
+	exit 1
+fi
+printf 'PASS signed aggregate pin permits main drift only for its exact reviewed aggregate parent\n'
+
 exit 0

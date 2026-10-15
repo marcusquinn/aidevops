@@ -204,14 +204,22 @@ _full_loop_resolve_requested_release_source() {
 	local resolver="$4"
 	local expected_sources="${5:-}"
 	local resolution_mode="${6:-snapshot}"
+	local pinned_aggregate="${7:-}"
 	local blocked_pr_json=""
 	local blocked_merge=""
 	local blocked_head=""
 	[[ -x "$resolver" ]] || return 1
 	local resolver_args=(resolve-source --source-pr "$source_pr" --repo "$repo" --branch main)
 	case "$resolution_mode" in
-	snapshot) resolver_args+=(--snapshot) ;;
-	aggregate) ;; # Signed-tag recovery requires the exact-tip trailer resolver.
+	snapshot)
+		[[ -z "$pinned_aggregate" ]] || return 1
+		resolver_args+=(--snapshot)
+		;;
+	aggregate)
+		# Signed-tag recovery requires the trailer resolver: exact tip by default,
+		# or an explicitly pinned reviewed aggregate ancestor (GH#34710).
+		[[ -z "$pinned_aggregate" ]] || resolver_args+=(--pinned-aggregate "$pinned_aggregate")
+		;;
 	*) return 1 ;;
 	esac
 	[[ -n "$expected_sources" ]] && resolver_args+=(--expected-sources "$expected_sources")
@@ -340,7 +348,7 @@ Usage:
   aidevops release reconcile SOURCE_PR
   aidevops release recover-reservation SOURCE_PR
   aidevops release refresh-aggregate STALE_AGGREGATION_PR
-  aidevops release recover-aggregate SOURCE_PR --tag TAG --expected-sources PR[,PR...]
+  aidevops release recover-aggregate SOURCE_PR --tag TAG --expected-sources PR[,PR...] [--aggregate-commit SHA]
   aidevops release authorization-gap SOURCE_PR --tag TAG --expected-sources PR@SHA[,PR@SHA...] --reason TEXT
 
 Release publication is provenance-bound and normally unattended. `status` and
@@ -353,6 +361,9 @@ newest matching signed tag, queues an idempotent recovery workflow when needed,
 and finalizes local release receipts
 only after GitHub, npm, and Homebrew all converge. A published stale tag can be
 settled only by verified post-publication supersession; it is never redispatched.
+`recover-aggregate --aggregate-commit` pins the merge commit of a reviewed
+aggregation PR that later ordinary merges have passed; it must remain in main
+history and its immutable manifest must authorize the expected sources.
 EOF
 	return 0
 }
@@ -825,6 +836,39 @@ _full_loop_release_preview_sources() {
 	return $?
 }
 
+_full_loop_release_cmd_recover_aggregate() {
+	local source_pr="$1"
+	local tag_name="$2"
+	local expected_sources="$3"
+	local aggregate_commit="$4"
+	local recovery_repo=""
+	[[ "$source_pr" =~ ^[0-9]+$ && "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && -n "$expected_sources" ]] || {
+		_full_loop_release_usage >&2
+		return 1
+	}
+	_full_loop_release_bind_repo_context || return 1
+	recovery_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	_FULL_LOOP_AGGREGATE_RECOVERY_PIN="$aggregate_commit"
+	_full_loop_release_recover_aggregate "$recovery_repo" "$source_pr" "$tag_name" "$expected_sources"
+	return $?
+}
+
+_full_loop_release_cmd_authorization_gap() {
+	local source_pr="$1"
+	local tag_name="$2"
+	local expected_sources="$3"
+	local gap_reason="$4"
+	local gap_repo=""
+	[[ "$source_pr" =~ ^[0-9]+$ && -n "$tag_name" && -n "$expected_sources" && -n "$gap_reason" ]] || {
+		_full_loop_release_usage >&2
+		return 1
+	}
+	_full_loop_release_bind_repo_context || return 1
+	gap_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	_full_loop_release_record_authorization_gap "$gap_repo" "$source_pr" "$tag_name" "$expected_sources" "$gap_reason"
+	return $?
+}
+
 main() {
 	local release_type="${1:-patch}"
 	local source_pr="${2:-}"
@@ -832,6 +876,7 @@ main() {
 	local expected_sources="${AIDEVOPS_RELEASE_EXPECTED_SOURCES:-}"
 	local tag_name=""
 	local gap_reason=""
+	local aggregate_commit=""
 	if [[ $# -ge 2 ]]; then
 		shift 2
 	else
@@ -858,9 +903,15 @@ main() {
 			[[ -n "$gap_reason" ]] || return 1
 			shift 2
 			;;
+		--aggregate-commit)
+			aggregate_commit="${2:-}"
+			[[ "$aggregate_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+			shift 2
+			;;
 		*) return 1 ;;
 		esac
 	done
+	[[ -z "$aggregate_commit" || "$release_type" == "recover-aggregate" ]] || return 1
 	case "$release_type" in
 	help | --help | -h)
 		_full_loop_release_usage
@@ -892,25 +943,11 @@ main() {
 		return $?
 		;;
 	recover-aggregate)
-		[[ "$source_pr" =~ ^[0-9]+$ && "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && -n "$expected_sources" ]] || {
-			_full_loop_release_usage >&2
-			return 1
-		}
-		_full_loop_release_bind_repo_context || return 1
-		local recovery_repo=""
-		recovery_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
-		_full_loop_release_recover_aggregate "$recovery_repo" "$source_pr" "$tag_name" "$expected_sources"
+		_full_loop_release_cmd_recover_aggregate "$source_pr" "$tag_name" "$expected_sources" "$aggregate_commit"
 		return $?
 		;;
 	authorization-gap)
-		[[ "$source_pr" =~ ^[0-9]+$ && -n "$tag_name" && -n "$expected_sources" && -n "$gap_reason" ]] || {
-			_full_loop_release_usage >&2
-			return 1
-		}
-		_full_loop_release_bind_repo_context || return 1
-		local gap_repo=""
-		gap_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
-		_full_loop_release_record_authorization_gap "$gap_repo" "$source_pr" "$tag_name" "$expected_sources" "$gap_reason"
+		_full_loop_release_cmd_authorization_gap "$source_pr" "$tag_name" "$expected_sources" "$gap_reason"
 		return $?
 		;;
 	esac

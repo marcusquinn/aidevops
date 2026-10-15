@@ -3,6 +3,26 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # Read-only release signing preflight; never registers keys or changes trust.
 
+# Print the authenticated GitHub user's registered keys of one kind
+# (ssh_signing_keys or gpg_keys) as slurped pages. The private endpoint needs
+# a key-read token scope; the public per-login listing returns the same keys,
+# so fall back to it for the same authenticated login rather than failing.
+_release_signing_registered_keys() {
+	local kind="$1"
+	local login=""
+	case "$kind" in
+	ssh_signing_keys | gpg_keys) ;;
+	*) return 1 ;;
+	esac
+	if gh api --paginate --slurp "user/${kind}" 2>/dev/null; then
+		return 0
+	fi
+	login=$(gh api user --jq '.login' 2>/dev/null) || return 1
+	[[ "$login" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+	gh api --paginate --slurp "users/${login}/${kind}"
+	return $?
+}
+
 release_signing_preflight() {
 	local repo_root="$1"
 	local format="" key="" keys="" fingerprint="" registered="" candidate=""
@@ -26,7 +46,7 @@ release_signing_preflight() {
 			}
 		fi
 		fingerprint=$(awk '{print $2}' <<<"$fingerprint")
-		keys=$(gh api --paginate --slurp user/ssh_signing_keys) || {
+		keys=$(_release_signing_registered_keys ssh_signing_keys) || {
 			printf 'Release signing preflight: cannot read authenticated GitHub SSH signing keys; check gh authentication and key-read permission\n' >&2
 			return 1
 		}
@@ -70,7 +90,7 @@ release_signing_preflight() {
 			printf 'Release signing preflight: ambiguous forced OpenPGP key; configure the full signing fingerprint\n' >&2
 			return 1
 		fi
-		keys=$(gh api --paginate --slurp user/gpg_keys) || {
+		keys=$(_release_signing_registered_keys gpg_keys) || {
 			printf 'Release signing preflight: cannot read authenticated GitHub GPG keys; check gh authentication and key-read permission\n' >&2
 			return 1
 		}

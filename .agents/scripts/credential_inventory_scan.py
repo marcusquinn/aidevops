@@ -19,6 +19,7 @@ import subprocess  # nosec B404 -- absolute git/crontab, list argv, never a shel
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from xml.parsers.expat import ExpatError
 
 MAX_HITS = 500
 MAX_FILE_BYTES = 1_000_000
@@ -131,6 +132,14 @@ def grep_worktree(path: Path, needles: Needles, timeout: int) -> tuple[list[dict
     return hits, None
 
 
+def plist_as_xml(data: bytes) -> str | None:
+    """XML text for a parseable plist, or None so callers fall back to raw text."""
+    try:
+        return plistlib.dumps(plistlib.loads(data), fmt=plistlib.FMT_XML).decode("utf-8", "replace")
+    except (plistlib.InvalidFileException, ExpatError, ValueError, TypeError, OverflowError):
+        return None
+
+
 def read_text(path: Path) -> str | None:
     """Readable text (XML for binary plists); "" for binary, None if unscanned."""
     try:
@@ -140,10 +149,9 @@ def read_text(path: Path) -> str | None:
     except OSError:
         return None
     if path.suffix == ".plist":
-        try:
-            return plistlib.dumps(plistlib.loads(data), fmt=plistlib.FMT_XML).decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 - malformed plist falls back to raw text
-            pass
+        xml_text = plist_as_xml(data)
+        if xml_text is not None:
+            return xml_text
     if b"\0" in data[:4096]:
         return ""  # binary, skipped like `git grep -I`
     return data.decode("utf-8", "replace")
