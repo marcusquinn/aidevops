@@ -25,7 +25,7 @@ tools:
 - **Type**: Cloud VPS, dedicated servers, storage
 - **API**: REST at `https://api.hetzner.cloud/v1`
 - **Auth**: Bearer token per project (stored in `~/.config/aidevops/credentials.sh`)
-- **Token format**: `HCLOUD_TOKEN_{PROJECT}` (e.g. `HCLOUD_TOKEN_MYPROJECT`)
+- **Token names**: new tokens `HCLOUD_<PROJECT>_TOKEN` (e.g. `HCLOUD_MYPROJECT_TOKEN`), per `tools/credentials/credential-inventory.md` "Naming new credentials"; existing `HCLOUD_TOKEN_<PROJECT>` names stay valid
 - **Locations**: Germany (fsn1, nbg1), Finland (hel1), USA (ash, hil)
 - **Server types**: CX/CPX (shared x86), CAX (shared ARM), CCX (dedicated vCPU); verify current catalogue before provisioning
 - **Docs**: https://docs.hetzner.cloud/
@@ -132,11 +132,13 @@ for i in json.load(sys.stdin)['images']:
 
 ## Multi-Project Setup
 
-Each Hetzner Cloud project gets its own API token. Store in `~/.config/aidevops/credentials.sh`:
+Each Hetzner Cloud project gets its own API token. Store each one with its project recorded (value entered at the hidden prompt):
 
 ```bash
-export HCLOUD_TOKEN_PROJECTA="hc_..."
-export HCLOUD_TOKEN_PROJECTB="hc_..."
+aidevops secret account add hetzner-projecta --provider hetzner --name "Project A"
+aidevops secret set HCLOUD_PROJECTA_TOKEN --provider hetzner --account hetzner-projecta
+aidevops secret account add hetzner-projectb --provider hetzner --name "Project B"
+aidevops secret set HCLOUD_PROJECTB_TOKEN --provider hetzner --account hetzner-projectb
 ```
 
 To get a token:

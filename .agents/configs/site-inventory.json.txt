@@ -9,7 +9,7 @@
       "ssh_host": "ssh.example.com",
       "ssh_port": 65002,
       "ssh_user": "u123456789",
-      "credential_env": "HOSTING_SSH_PASSWORD_SHARED_ACCOUNT",
+      "credential_env": "HOSTINGER_SHARED_SSH_PASSWORD",
       "last_verified": "2026-01-01T00:00:00Z"
     }
   },

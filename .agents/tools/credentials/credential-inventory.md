@@ -27,6 +27,7 @@ tools:
 - **Before renaming, rotating or revoking**: run `aidevops secret dependents NAME`; never treat a name as unused unless it reports `complete: true`.
 - **Never stored**: secret values, raw provider account IDs. Store the *name* of the secret that holds an account ID (`account_id_env`). Free-text fields that look like secrets are refused.
 - **Rule for sessions**: whenever you store a credential, record its account, **even for the operator's first and only account at that provider**: `aidevops secret set NAME --provider P --account REF --purpose "..."`.
+- **Naming new secrets**: `<PROVIDER>_<ACCOUNT>_<KIND>` (see "Naming new credentials"). Never store the bare conventional variable (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`) as an implicit default.
 
 <!-- AI-CONTEXT-END -->
 
@@ -65,6 +66,29 @@ aidevops secret resolve cloudflare       # prints default; exit 3 = explicitly n
 ```
 
 Consumers must use `resolve`: never infer a default from an unlabelled variable, and never create one implicitly.
+
+## Naming new credentials
+
+This is the single convention for new secret names; other credential docs point here.
+
+```text
+<PROVIDER>_<ACCOUNT>[_<PURPOSE>]_<KIND>
+```
+
+| Part | Rule | Examples |
+|------|------|----------|
+| `PROVIDER` | The provider's conventional prefix | `CLOUDFLARE`, `GITHUB`, `HCLOUD`, `OPENAI`, `AWS` |
+| `ACCOUNT` | Short account tag; matches the `account add` ref (`cloudflare-acme` → `ACME`). Use one **even for the first and only account** | `ACME`, `PERSONAL`, `WORK`, `PROJECT_A` |
+| `PURPOSE` | Optional, when one account has several tokens. Add a developer/device discriminator (`DEV_B`, `LAPTOP_2`) here when a shared store holds several | `DNS`, `PRODUCTS_SYNC`, `PRODUCTS_SYNC_DEV_B` |
+| `KIND` | Last, so the variable reads naturally | `API_TOKEN`, `TOKEN`, `API_KEY`, `ACCOUNT_ID`, `ACCESS_TOKEN` / `TOKEN_NAME` (sensitive value / non-sensitive provider label pair) |
+
+Use SCREAMING_SNAKE_CASE; tags must not reveal private repositories, private customers or local paths. Examples: `CLOUDFLARE_ACME_API_TOKEN`, `CLOUDFLARE_ACME_ACCOUNT_ID`, `GITHUB_WORK_TOKEN`, `HCLOUD_PROJECT_A_TOKEN`, `PROVIDER_ORG_PRODUCTS_SYNC_ACCESS_TOKEN` with `..._TOKEN_NAME`.
+
+- **Record identity at creation**: `aidevops secret set NAME --provider P --account REF --purpose "..."`. The name helps humans; the registry is the source of truth.
+- **The bare conventional variable is never stored directly.** `CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN` etc. resolve at injection only through an explicit `aidevops secret default PROVIDER NAME` (see "Resolution at injection").
+- **Provider dashboard token label**: `aidevops-<account>-<purpose>` (e.g. `aidevops-acme-dns`); record the same purpose with `--purpose`.
+- **Existing names stay valid.** Do not rename working secrets to match; describe them with `record`, and if a new name is wanted use `alias NEW OLD` plus `dependents` before retiring the old one.
+- Names a specific tool requires verbatim (for example `OPENAI_IMAGE_API_KEY_<ALIAS>` in `api-key-setup.md`) follow that tool's documentation.
 
 ## Aliases instead of renames
 

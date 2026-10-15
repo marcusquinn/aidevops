@@ -63,7 +63,7 @@ tools:
 ### 1. Create Token
 
 1. Dashboard > My Profile > API Tokens > Create Token > Custom token
-2. **Name**: `AI-Assistant-DevOps-[AccountName]`
+2. **Name**: `aidevops-<account>-<purpose>` (e.g. `aidevops-acme-dns`); store it as `CLOUDFLARE_<ACCOUNT>_API_TOKEN` with `--provider cloudflare --account cloudflare-<account> --purpose "<purpose>"`. Naming: `tools/credentials/credential-inventory.md` "Naming new credentials"
 3. **Permissions**:
 
 ```text
@@ -122,7 +122,7 @@ Edit the config:
 
 ## Security Best Practices
 
-- **Separate tokens** per Cloudflare account with descriptive names
+- **Separate tokens** per Cloudflare account, named `CLOUDFLARE_<ACCOUNT>_API_TOKEN` with the account recorded; declare a default only explicitly (`aidevops secret default cloudflare NAME`)
 - **Minimum permissions** scoped to specific zones (not all zones)
 - **IP restrictions** and **expiration dates** always set
 - **Never commit** tokens to git; use env vars for CI/CD

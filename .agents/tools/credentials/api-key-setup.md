@@ -25,7 +25,8 @@ tools:
 - **Plaintext fallback**: `~/.config/aidevops/credentials.sh` (600 permissions)
 - **Setup**: `bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup`
 - **Multi-tenant**: `credential-helper.sh` — see `multi-tenant.md`
-- **Common Services**: codacy-project-token, sonar-token, coderabbit-api-key, hcloud-token-*, openai-api-key
+- **Common Services**: `codacy-project-token`, `sonar-token`, `coderabbit-api-key`, `hcloud-<project>-token`, `openai-<account>-api-key`
+- **Naming provider credentials**: `<PROVIDER>_<ACCOUNT>[_<PURPOSE>]_<KIND>` plus recorded account — `credential-inventory.md`
 
 **Security**: NEVER accept secret values in AI conversation. Instruct users to run `aidevops secret set NAME` at their terminal.
 
@@ -77,11 +78,11 @@ bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set <service-name> Y
 | Codacy | `codacy-project-token` | https://app.codacy.com/account/api-tokens |
 | SonarCloud | `sonar-token` | https://sonarcloud.io/account/security |
 | CodeRabbit | `coderabbit-api-key` | https://app.coderabbit.ai/settings |
-| Hetzner Cloud | `hcloud-token-<project>` | https://console.hetzner.cloud/projects/*/security/tokens |
-| OpenAI | `openai-api-key` | https://platform.openai.com/api-keys |
+| Hetzner Cloud | `hcloud-<project>-token` | https://console.hetzner.cloud/projects/*/security/tokens |
+| OpenAI | `openai-<account>-api-key` | https://platform.openai.com/api-keys |
 | Daytona | `daytona-api-key` | https://app.daytona.io/settings/api-keys |
 
-**Multi-account naming**: When you hold credentials for several accounts on the same provider at once (personal + work GitHub, multiple OpenAI projects, several Hetzner projects), suffix the bare name with `-<account>` / `_<ACCOUNT>` — e.g. `github-token-personal` and `github-token-work`, or `hcloud-token-project-a` and `hcloud-token-project-b`. The bare provider name remains the default for the single-account case. Full convention: `gopass.md` "Naming with multiple accounts".
+**Naming provider credentials**: for account-scoped providers (GitHub, OpenAI, Hetzner, Cloudflare, AWS …) name new secrets `<PROVIDER>_<ACCOUNT>[_<PURPOSE>]_<KIND>` — e.g. `GITHUB_WORK_TOKEN`, `HCLOUD_PROJECT_A_TOKEN` — with an account tag even for the first and only account, and record the account: `aidevops secret set NAME --provider P --account REF`. Do not store the bare provider variable (`GITHUB_TOKEN`, `OPENAI_API_KEY`) as an implicit default; declare one with `aidevops secret default`. Existing names stay valid. Full convention: `credential-inventory.md` "Naming new credentials".
 
 **GPT Image 2 accounts**: OpenCode image generation deliberately uses a more
 specific key namespace so Platform billing identities cannot be confused with
@@ -98,7 +99,7 @@ The non-secret `AIDEVOPS_OPENAI_IMAGE_ACCOUNT` setting may define a deliberate
 default alias, but API billing still requires explicit `auth: "api"`. The tool
 never falls back to `OPENAI_API_KEY` or silently chooses among named keys.
 
-**Provider token label + value pairs**: Secure backends (via `aidevops secret set <NAME>`, preferring `gopass` over plaintext) and the plaintext fallback both store only one value per name. If a provider has a non-sensitive local token label and a sensitive access token value, keep them separate: `<PROVIDER>_<ORG>_<PURPOSE>_TOKEN_NAME` for the label and `<PROVIDER>_<ORG>_<PURPOSE>_ACCESS_TOKEN` for the value. Add a developer or device discriminator, such as `_DEV_A` or `_LAPTOP_2`, before `TOKEN_NAME` / `ACCESS_TOKEN` when a shared store or workstation holds tokens for multiple developers or devices. Never document token values; token labels may be documented only when they are non-sensitive.
+**Provider token label + value pairs**: Secure backends (via `aidevops secret set <NAME>`, preferring `gopass` over plaintext) and the plaintext fallback both store only one value per name. If a provider has a non-sensitive local token label and a sensitive access token value, keep them separate: `<PROVIDER>_<ACCOUNT>_<PURPOSE>_TOKEN_NAME` for the label and `<PROVIDER>_<ACCOUNT>_<PURPOSE>_ACCESS_TOKEN` for the value. Add a developer or device discriminator, such as `_DEV_A` or `_LAPTOP_2`, before `TOKEN_NAME` / `ACCESS_TOKEN` when a shared store or workstation holds tokens for multiple developers or devices. Never document token values; token labels may be documented only when they are non-sensitive.
 
 ### 4. Verify
 

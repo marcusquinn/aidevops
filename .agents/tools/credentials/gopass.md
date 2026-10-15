@@ -65,41 +65,30 @@ aidevops secret import-credentials  # Migrate from credentials.sh
 Run in your own terminal — never paste values into AI chat:
 
 ```bash
-aidevops secret set GITHUB_TOKEN     # Enter raw value at hidden prompt
-aidevops secret set OPENAI_API_KEY
+# Enter the raw value at the hidden prompt; record which account it opens
+aidevops secret account add github-work --provider github --name "Work org"
+aidevops secret set GITHUB_WORK_TOKEN --provider github --account github-work
 ```
 
-Verify with `aidevops secret list`.
+Verify with `aidevops secret list` and `aidevops secret describe`.
 
-### Naming with multiple accounts
+### Naming secrets
 
-When you hold credentials for multiple accounts on the same provider **at once** (personal + work GitHub, multiple OpenAI projects, several Hetzner projects, prod + staging AWS), suffix the canonical env var with a short account tag. Convention: `<PROVIDER>_<KIND>_<ACCOUNT>`, SCREAMING_SNAKE_CASE, account tag **last** so prefix-grep still groups by provider:
-
-```bash
-aidevops secret set GITHUB_TOKEN_PERSONAL
-aidevops secret set GITHUB_TOKEN_WORK
-aidevops secret set OPENAI_API_KEY_PERSONAL
-aidevops secret set OPENAI_API_KEY_CLIENT_ACME
-aidevops secret set HCLOUD_TOKEN_PROJECT_A
-aidevops secret set HCLOUD_TOKEN_PROJECT_B
-aidevops secret set AWS_ACCESS_KEY_ID_PROD
-aidevops secret set AWS_ACCESS_KEY_ID_STAGING
-```
-
-The bare provider name (`GITHUB_TOKEN`, `OPENAI_API_KEY`) remains the default for the single-account case — only suffix when you actually need to disambiguate. If you instead need one account active **at a time** and want to switch sets between projects, use `multi-tenant.md`.
+Name new secrets `<PROVIDER>_<ACCOUNT>[_<PURPOSE>]_<KIND>` (e.g. `GITHUB_WORK_TOKEN`, `CLOUDFLARE_ACME_API_TOKEN`, `HCLOUD_PROJECT_A_TOKEN`), with an account tag **even for the first and only account**, and record the account at creation. Never store the bare conventional variable (`GITHUB_TOKEN`, `OPENAI_API_KEY`) as an implicit single-account default; it resolves only through an explicit `aidevops secret default`. Existing names stay valid: use `aidevops secret alias` rather than renaming. Full convention: `credential-inventory.md` "Naming new credentials". If you instead need one account active **at a time** and want to switch sets between projects, use `multi-tenant.md`.
 
 ### Naming provider token labels and token values
 
 `aidevops secret set <NAME>` stores exactly one value under one environment-style
 name. When a provider exposes both a local token label/name and a sensitive token
-value, store or document those as separate names:
+value, store or document those as separate names (`KIND` suffixes of the same
+convention):
 
-- `<PROVIDER>_<ORG>_<PURPOSE>_TOKEN_NAME` — non-sensitive provider token label.
-- `<PROVIDER>_<ORG>_<PURPOSE>_ACCESS_TOKEN` — sensitive token value, stored with
+- `<PROVIDER>_<ACCOUNT>_<PURPOSE>_TOKEN_NAME` — non-sensitive provider token label.
+- `<PROVIDER>_<ACCOUNT>_<PURPOSE>_ACCESS_TOKEN` — sensitive token value, stored with
   `aidevops secret set` and never written in documentation, issues, PRs, logs, or
   chat.
 
-Use stable, generic organisation and purpose tags that do not reveal private
+Use stable, generic account and purpose tags that do not reveal private
 repositories, private customers, or local private paths. Agents may record known
 non-sensitive provider token labels when that helps humans identify which token to
 rotate, but must never record the token value.
@@ -118,7 +107,7 @@ aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_B_ACCESS_TOKEN
 ```
 
 When a shared store or a single device stores tokens for multiple developers or
-devices under the same organisation and purpose, add a short developer or device
+devices under the same account and purpose, add a short developer or device
 discriminator before the final field:
 
 ```bash
