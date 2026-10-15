@@ -40,6 +40,17 @@ AGGREGATE_MERGE=$(git -C "$REPO" rev-parse HEAD)
 git -C "$REPO" push -q -u origin main
 git -C "$REPO" worktree add -q --detach "$RECOVERY" origin/main
 
+# Release signing preflight (GH#34664) fails closed without an explicit signer
+# registered with the account; configure a throwaway SSH key and stub the API.
+ssh-keygen -q -t ed25519 -N '' -f "${TEST_ROOT}/signing-key"
+git -C "$REPO" config gpg.format ssh
+git -C "$REPO" config user.signingkey "${TEST_ROOT}/signing-key"
+gh() {
+	[[ "$*" == 'api --paginate --slurp user/ssh_signing_keys' ]] || return 1
+	jq -nc --arg key "$(<"${TEST_ROOT}/signing-key.pub")" '[[{key:$key}]]'
+	return 0
+}
+
 print_error() { return 0; }
 print_info() { return 0; }
 print_warning() { return 0; }
