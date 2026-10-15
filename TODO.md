@@ -1691,9 +1691,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18698 Default-aware credential consumers: onboarding and MCP validation honour the declared provider default #feat ref:GH#34720 pr:#34735 completed:2026-10-15
 
-- [ ] t18699 Consolidate credential naming guidance into one convention with registry metadata #documentation ref:GH#34721
+- [x] t18699 Consolidate credential naming guidance into one convention with registry metadata #documentation ref:GH#34721 pr:#34739 completed:2026-10-15
 
-- [ ] t18700 Read-only Cloudflare credential verification, drift report and resource ownership lookup #feat ref:GH#34722
+- [x] t18700 Read-only Cloudflare credential verification, drift report and resource ownership lookup #feat ref:GH#34722 pr:#34741 completed:2026-10-15
 
 - [ ] t18701 aidevops secret organise: plan-first cleanup of inconsistent credentials without renames #feat ref:GH#34723
 
