@@ -14,7 +14,7 @@ never claims "unused" without evidence.
 from __future__ import annotations
 
 import json
-import subprocess
+import subprocess  # nosec B404 -- exception classes only; commands run via credential_inventory_scan.run_tool
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any

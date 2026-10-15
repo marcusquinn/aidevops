@@ -15,7 +15,7 @@ import os
 import plistlib
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- absolute git/crontab, list argv, never a shell
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
