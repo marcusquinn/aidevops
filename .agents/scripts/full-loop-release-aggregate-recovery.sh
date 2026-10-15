@@ -1660,71 +1660,196 @@ _full_loop_release_refresh_aggregate() {
 	local branch_message=""
 	local final_commit=""
 	local payload=""
-	[[ "$stale_pr" =~ ^[0-9]+$ ]] || return 1
-	git -C "$REPO_ROOT" fetch origin main --quiet || return 1
-	base_sha=$(git -C "$REPO_ROOT" rev-parse origin/main) || return 1
-	stale_json=$(gh api "repos/${repo}/pulls/${stale_pr}" 2>/dev/null) || return 1
+	local merge_sha=""
+	[[ "$stale_pr" =~ ^[0-9]+$ ]] || {
+		printf 'Successor aggregation refused: stale PR number must be numeric\n' >&2
+		return 1
+	}
+	git -C "$REPO_ROOT" fetch origin main --quiet || {
+		printf 'Successor aggregation refused: cannot fetch origin/main\n' >&2
+		return 1
+	}
+	base_sha=$(git -C "$REPO_ROOT" rev-parse origin/main) || {
+		printf 'Successor aggregation refused: cannot resolve origin/main\n' >&2
+		return 1
+	}
+	stale_json=$(gh api "repos/${repo}/pulls/${stale_pr}" 2>/dev/null) || {
+		printf 'Successor aggregation refused: cannot read stale PR #%s\n' "$stale_pr" >&2
+		return 1
+	}
+	if jq -e '.merged_at != null' <<<"$stale_json" >/dev/null 2>&1; then
+		merge_sha=$(jq -r '.merge_commit_sha // "unknown"' <<<"$stale_json")
+		printf 'Successor aggregation refused: #%s already merged as %s; open a successor from that merge commit\x27s trailers at the current main tip\n' "$stale_pr" "$merge_sha" >&2
+		return 1
+	fi
+	jq -e '.state == "open"' <<<"$stale_json" >/dev/null 2>&1 || {
+		printf 'Successor aggregation refused: stale PR #%s is not open (closed unmerged or state unavailable)\n' "$stale_pr" >&2
+		return 1
+	}
+	jq -e --arg main "$_FULL_LOOP_AGGREGATE_RECOVERY_MAIN_BRANCH" '.base.ref == $main' <<<"$stale_json" >/dev/null || {
+		printf 'Successor aggregation refused: stale PR #%s does not target main\n' "$stale_pr" >&2
+		return 1
+	}
 	jq -e --argjson stale "$stale_pr" --arg main "$_FULL_LOOP_AGGREGATE_RECOVERY_MAIN_BRANCH" '
 		.number == $stale and .state == "open" and .base.ref == $main
 		and (.head.sha | test("^[0-9a-f]{40}$"))
-	' <<<"$stale_json" >/dev/null || return 1
-	stale_body=$(jq -er '.body // ""' <<<"$stale_json") || return 1
-	stale_head=$(jq -er '.head.sha' <<<"$stale_json") || return 1
-	[[ "$stale_head" != "$base_sha" ]] || return 1
-	stale_manifest=$(_full_loop_successor_manifest_from_body "$stale_pr" "$stale_body") || return 1
-	release_lane_read "$repo" || return 1
-	lane_manifest=$(jq -er '.expected_sources' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	' <<<"$stale_json" >/dev/null || {
+		printf 'Successor aggregation refused: stale PR identity or head SHA is invalid\n' >&2
+		return 1
+	}
+	stale_body=$(jq -er '.body // ""' <<<"$stale_json") || {
+		printf 'Successor aggregation refused: cannot read stale PR body\n' >&2
+		return 1
+	}
+	stale_head=$(jq -er '.head.sha' <<<"$stale_json") || {
+		printf 'Successor aggregation refused: cannot read stale PR head\n' >&2
+		return 1
+	}
+	[[ "$stale_head" != "$base_sha" ]] || {
+		printf 'Successor aggregation refused: stale head already equals the current main tip\n' >&2
+		return 1
+	}
+	stale_manifest=$(_full_loop_successor_manifest_from_body "$stale_pr" "$stale_body") || {
+		printf 'Successor aggregation refused: stale PR body has no valid source manifest\n' >&2
+		return 1
+	}
+	release_lane_read "$repo" || {
+		printf 'Successor aggregation refused: cannot read release lane\n' >&2
+		return 1
+	}
+	lane_manifest=$(jq -er '.expected_sources' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || {
+		printf 'Successor aggregation refused: cannot read release lane source manifest\n' >&2
+		return 1
+	}
 	lane_manifest=$(_full_loop_recovery_resolve_lane_authorization "$lane_manifest" "$stale_manifest") || {
 		printf 'Successor aggregation refused: reserved lane intent does not match the reviewed source manifest\n' >&2
 		return 1
 	}
 	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED=$(_full_loop_successor_complete_manifest \
-		"$repo" "$stale_head" "$stale_manifest" "$lane_manifest") || return 1
-	release_authorization_subset "$lane_manifest" "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" || return 1
+		"$repo" "$stale_head" "$stale_manifest" "$lane_manifest") || {
+		printf 'Successor aggregation refused: cannot resolve complete source manifest\n' >&2
+		return 1
+	}
+	release_authorization_subset "$lane_manifest" "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" || {
+		printf 'Successor aggregation refused: source manifest does not contain lane authorization\n' >&2
+		return 1
+	}
 	branch_name="release/aggregate-successor-${stale_pr}-${base_sha:0:12}"
 	release_lane_begin_aggregate_successor "$repo" "$stale_pr" "$base_sha" \
-		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" "$branch_name" || return 1
+		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" "$branch_name" || {
+		printf 'Successor aggregation refused: cannot claim successor release lane\n' >&2
+		return 1
+	}
 	branch_head=$(_full_loop_successor_branch_head "$repo" "$branch_name") || branch_head_rc=$?
-	[[ "$branch_head_rc" -eq 0 || "$branch_head_rc" -eq 2 ]] || return 1
+	[[ "$branch_head_rc" -eq 0 || "$branch_head_rc" -eq 2 ]] || {
+		printf 'Successor aggregation refused: cannot resolve successor branch head\n' >&2
+		return 1
+	}
 	if [[ "$branch_head_rc" -eq 2 ]]; then
 		initial_commit=$(_full_loop_successor_create_commit "$repo" "$base_sha" \
-			"chore(release): open successor aggregation for #${stale_pr}") || return 1
-		payload=$(jq -cn --arg ref "refs/heads/${branch_name}" --arg sha "$initial_commit" '{ref:$ref,sha:$sha}') || return 1
-		gh api "repos/${repo}/git/refs" --method POST --input - <<<"$payload" >/dev/null 2>&1 || return 1
+			"chore(release): open successor aggregation for #${stale_pr}") || {
+			printf 'Successor aggregation refused: cannot create initial successor commit\n' >&2
+			return 1
+		}
+		payload=$(jq -cn --arg ref "refs/heads/${branch_name}" --arg sha "$initial_commit" '{ref:$ref,sha:$sha}') || {
+			printf 'Successor aggregation refused: cannot encode successor branch payload\n' >&2
+			return 1
+		}
+		gh api "repos/${repo}/git/refs" --method POST --input - <<<"$payload" >/dev/null 2>&1 || {
+			printf 'Successor aggregation refused: cannot create successor branch ref\n' >&2
+			return 1
+		}
 		branch_head="$initial_commit"
 	fi
-	git -C "$REPO_ROOT" fetch origin "$branch_name" --quiet || return 1
-	git -C "$REPO_ROOT" merge-base --is-ancestor "$base_sha" FETCH_HEAD || return 1
-	[[ "$(git -C "$REPO_ROOT" rev-parse "${base_sha}^{tree}")" == "$(git -C "$REPO_ROOT" rev-parse 'FETCH_HEAD^{tree}')" ]] || return 1
-	successor_json=$(gh api "repos/${repo}/pulls?state=open&head=${owner}:${branch_name}&base=main" 2>/dev/null) || return 1
-	jq -e 'length <= 1' <<<"$successor_json" >/dev/null || return 1
+	git -C "$REPO_ROOT" fetch origin "$branch_name" --quiet || {
+		printf 'Successor aggregation refused: cannot fetch successor branch\n' >&2
+		return 1
+	}
+	git -C "$REPO_ROOT" merge-base --is-ancestor "$base_sha" FETCH_HEAD || {
+		printf 'Successor aggregation refused: successor branch fails main ancestry fence\n' >&2
+		return 1
+	}
+	[[ "$(git -C "$REPO_ROOT" rev-parse "${base_sha}^{tree}")" == "$(git -C "$REPO_ROOT" rev-parse 'FETCH_HEAD^{tree}')" ]] || {
+		printf 'Successor aggregation refused: successor branch tree differs from main\n' >&2
+		return 1
+	}
+	successor_json=$(gh api "repos/${repo}/pulls?state=open&head=${owner}:${branch_name}&base=main" 2>/dev/null) || {
+		printf 'Successor aggregation refused: cannot look up successor PR\n' >&2
+		return 1
+	}
+	jq -e 'length <= 1' <<<"$successor_json" >/dev/null || {
+		printf 'Successor aggregation refused: successor PR lookup is ambiguous or malformed\n' >&2
+		return 1
+	}
 	successor_pr=$(jq -er 'if length == 1 then .[0].number else empty end' <<<"$successor_json" 2>/dev/null || true)
 	if [[ -z "$successor_pr" ]]; then
 		payload=$(jq -cn --arg title "chore(release): refresh aggregation after #${stale_pr}" \
 			--arg head "$branch_name" --arg main "$_FULL_LOOP_AGGREGATE_RECOVERY_MAIN_BRANCH" \
-			'{title:$title,head:$head,base:$main,draft:true,body:"Successor allocation pending immutable trailer commit."}') || return 1
+			'{title:$title,head:$head,base:$main,draft:true,body:"Successor allocation pending immutable trailer commit."}') || {
+			printf 'Successor aggregation refused: cannot encode successor PR payload\n' >&2
+			return 1
+		}
 		successor_pr=$(gh api "repos/${repo}/pulls" --method POST --input - --jq '.number // empty' \
-			<<<"$payload" 2>/dev/null) || return 1
+			<<<"$payload" 2>/dev/null) || {
+			printf 'Successor aggregation refused: cannot create successor PR\n' >&2
+			return 1
+		}
 	else
 		jq -e --arg main "$_FULL_LOOP_AGGREGATE_RECOVERY_MAIN_BRANCH" \
-			'.[0].draft == true and .[0].base.ref == $main' <<<"$successor_json" >/dev/null || return 1
+			'.[0].draft == true and .[0].base.ref == $main' <<<"$successor_json" >/dev/null || {
+			printf 'Successor aggregation refused: existing successor PR must be draft and target main\n' >&2
+			return 1
+		}
 	fi
-	[[ "$successor_pr" =~ ^[0-9]+$ ]] || return 1
-	release_lane_bind_aggregate_successor_pr "$repo" "$successor_pr" || return 1
+	[[ "$successor_pr" =~ ^[0-9]+$ ]] || {
+		printf 'Successor aggregation refused: successor PR number is invalid\n' >&2
+		return 1
+	}
+	release_lane_bind_aggregate_successor_pr "$repo" "$successor_pr" || {
+		printf 'Successor aggregation refused: cannot bind successor PR to release lane\n' >&2
+		return 1
+	}
 	body=$(_full_loop_successor_body "$stale_pr" "$base_sha" "$successor_pr" \
-		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED") || return 1
+		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED") || {
+		printf 'Successor aggregation refused: cannot build successor PR body\n' >&2
+		return 1
+	}
 	final_message=$(_full_loop_successor_final_message "$successor_pr" \
-		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED") || return 1
-	branch_message=$(gh api "repos/${repo}/git/commits/${branch_head}" --jq '.message // empty' 2>/dev/null) || return 1
+		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED") || {
+		printf 'Successor aggregation refused: cannot build final trailer commit message\n' >&2
+		return 1
+	}
+	branch_message=$(gh api "repos/${repo}/git/commits/${branch_head}" --jq '.message // empty' 2>/dev/null) || {
+		printf 'Successor aggregation refused: cannot read successor branch commit message\n' >&2
+		return 1
+	}
 	if [[ "$branch_message" != "$final_message" ]]; then
-		final_commit=$(_full_loop_successor_create_commit "$repo" "$branch_head" "$final_message") || return 1
-		payload=$(jq -cn --arg sha "$final_commit" '{sha:$sha,force:false}') || return 1
-		gh api "repos/${repo}/git/refs/heads/${branch_name}" --method PATCH --input - <<<"$payload" >/dev/null 2>&1 || return 1
+		final_commit=$(_full_loop_successor_create_commit "$repo" "$branch_head" "$final_message") || {
+			printf 'Successor aggregation refused: cannot create final trailer commit\n' >&2
+			return 1
+		}
+		payload=$(jq -cn --arg sha "$final_commit" '{sha:$sha,force:false}') || {
+			printf 'Successor aggregation refused: cannot encode final branch update\n' >&2
+			return 1
+		}
+		gh api "repos/${repo}/git/refs/heads/${branch_name}" --method PATCH --input - <<<"$payload" >/dev/null 2>&1 || {
+			printf 'Successor aggregation refused: cannot advance successor branch ref\n' >&2
+			return 1
+		}
 		branch_head="$final_commit"
 	fi
-	payload=$(jq -cn --arg body "$body" '{body:$body}') || return 1
-	gh api "repos/${repo}/pulls/${successor_pr}" --method PATCH --input - <<<"$payload" >/dev/null 2>&1 || return 1
-	release_lane_finish_aggregate_successor "$repo" "$successor_pr" "$branch_head" || return 1
+	payload=$(jq -cn --arg body "$body" '{body:$body}') || {
+		printf 'Successor aggregation refused: cannot encode successor PR body update\n' >&2
+		return 1
+	}
+	gh api "repos/${repo}/pulls/${successor_pr}" --method PATCH --input - <<<"$payload" >/dev/null 2>&1 || {
+		printf 'Successor aggregation refused: cannot update successor PR body\n' >&2
+		return 1
+	}
+	release_lane_finish_aggregate_successor "$repo" "$successor_pr" "$branch_head" || {
+		printf 'Successor aggregation refused: cannot finish successor release lane transaction\n' >&2
+		return 1
+	}
 	printf 'release:aggregate-successor draft_pr=%s stale_pr=%s exact_tip=%s\n' \
 		"$successor_pr" "$stale_pr" "$base_sha"
 	printf 'Review and guarded merge remain explicit; no release or publication was authorized.\n'

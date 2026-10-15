@@ -26,6 +26,13 @@ merge, signing, tagging, and publication are separate explicit operations. If
 `main` advances again, run the same command against the now-stale successor; the
 ancestry/tree fence is not bypassed.
 
+Refusals exit 1 with a `Successor aggregation refused: <reason>` diagnostic on
+stderr. A merged stale aggregation PR is not accepted as successor input: the
+diagnostic names its merge SHA and directs recovery to open a successor from
+that merge commit's trailers at the current main tip. This refusal happens
+before any release-lane read or mutation; it does not adopt a merged PR or relax
+the existing authorization and ancestry/tree fences.
+
 Use this path only when a protected-main release created a signed local tag but
 publication stopped before the tag reached any remote or package channel. It is
 not a remote-tag rewrite mechanism.
