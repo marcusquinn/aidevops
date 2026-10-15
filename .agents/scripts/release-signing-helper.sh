@@ -9,12 +9,15 @@
 # so fall back to it for the same authenticated login rather than failing.
 _release_signing_registered_keys() {
 	local kind="$1"
-	local login=""
+	local login="" keys=""
 	case "$kind" in
 	ssh_signing_keys | gpg_keys) ;;
 	*) return 1 ;;
 	esac
-	if gh api --paginate --slurp "user/${kind}" 2>/dev/null; then
+	# Failed gh requests can emit error JSON on stdout. Do not concatenate it
+	# (or partial pagination output) with the successful public fallback pages.
+	if keys=$(gh api --paginate --slurp "user/${kind}" 2>/dev/null); then
+		printf '%s\n' "$keys"
 		return 0
 	fi
 	login=$(gh api user --jq '.login' 2>/dev/null) || return 1

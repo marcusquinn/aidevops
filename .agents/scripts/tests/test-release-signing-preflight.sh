@@ -20,7 +20,12 @@ gh() {
 	if [[ "$PUBLIC_ONLY" -eq 1 ]]; then
 		case "$*" in
 		'api user --jq .login') printf 'operator\n' ;;
-		'api --paginate --slurp users/operator/ssh_signing_keys') printf '%s\n' "$KEY_JSON" ;;
+		'api --paginate --slurp users/operator/ssh_signing_keys' | 'api --paginate --slurp users/operator/gpg_keys') printf '%s\n' "$KEY_JSON" ;;
+		'api --paginate --slurp user/ssh_signing_keys' | 'api --paginate --slurp user/gpg_keys')
+			# gh emits error JSON on stdout even when the request fails.
+			printf '{"message":"Resource not accessible by integration","status":"403"}\n'
+			return 1
+			;;
 		*) return 1 ;;
 		esac
 		return 0
@@ -54,7 +59,11 @@ if release_signing_preflight "$ROOT/repo" 2>/dev/null; then
 fi
 API_FAIL=0
 PUBLIC_ONLY=1
-release_signing_preflight "$ROOT/repo"
+release_signing_preflight "$ROOT/repo" 2>"$ROOT/err"
+if [[ -s "$ROOT/err" ]]; then
+	printf 'FAIL successful public SSH fallback emitted diagnostics\n'
+	exit 1
+fi
 KEY_JSON=$(jq -nc --arg key "$(<"$ROOT/other.pub")" '[[{key:$key}]]')
 if release_signing_preflight "$ROOT/repo" 2>/dev/null; then
 	printf 'FAIL public-listing fallback accepted a different key\n'
@@ -112,6 +121,13 @@ git -C "$ROOT/repo" config gpg.format openpgp
 git -C "$ROOT/repo" config user.signingkey 0123456789ABCDEF
 KEY_JSON='[[{"key_id":"0123456789ABCDEF","subkeys":[{"key_id":"FEDCBA9876543210"}]}]]'
 release_signing_preflight "$ROOT/repo"
+PUBLIC_ONLY=1
+release_signing_preflight "$ROOT/repo" 2>"$ROOT/err"
+if [[ -s "$ROOT/err" ]]; then
+	printf 'FAIL successful public GPG fallback emitted diagnostics\n'
+	exit 1
+fi
+PUBLIC_ONLY=0
 KEY_JSON='[[{"key_id":"AAAAAAAAAAAAAAAA","subkeys":[]}]]'
 if release_signing_preflight "$ROOT/repo" 2>/dev/null; then
 	printf 'FAIL unregistered GPG key accepted\n'
