@@ -30,6 +30,13 @@ export function assertBrowserTaskTransport(input, output) {
   if (envelope.browser_transport === "playwright") {
     capabilityBlocker("standalone Playwright requires a transport-only runner; native Task roles cannot enforce that ceiling");
   }
+  assertMcpTaskEnvelope(args, envelope);
+  // Keep the full envelope intact for the child, including target, action budget,
+  // cleanup, authorization and challenge stop conditions in the parent's prompt.
+  // This validates supplied readiness, not live readiness or site authority.
+}
+
+function assertMcpTaskEnvelope(args, envelope) {
   if (args.subagent_type !== "playwright" || args.task_id) {
     capabilityBlocker("MCP envelope requires a fresh canonical playwright child");
   }
@@ -44,7 +51,4 @@ export function assertBrowserTaskTransport(input, output) {
   if (typeof envelope.prompt !== "string" || !envelope.prompt.trim()) {
     capabilityBlocker("bounded browser instructions are missing");
   }
-  // Keep the full envelope intact for the child, including target, action budget,
-  // cleanup, authorization and challenge stop conditions in the parent's prompt.
-  // This validates supplied readiness, not live readiness or site authority.
 }
