@@ -1200,13 +1200,50 @@ _full_loop_recovery_expand_reserved_authorization() {
 	return 0
 }
 
+# Rebuild an absent per-PR authorization record from the fenced release lane
+# (GH#34746). A lane reserved by another host or an older tool can reach
+# remote-publication without this host's authorization file; the lane's
+# expected_sources is the same resolved authorization, under the same trust.
+# Only an active remote-publication lane for this exact source and tag, with no
+# terminal receipt and a set the reviewed aggregate fully covers, qualifies.
+_full_loop_recovery_reconstruct_authorization() {
+	local repo="$1"
+	local source_pr="$2"
+	local tag_name="$3"
+	local lane_expected=""
+	release_lane_read "$repo" || return 1
+	jq -e --argjson pr "$source_pr" --arg tag "$tag_name" '
+		.active == true and .phase == "remote-publication" and .source_pr == $pr
+		and .tag == $tag and .terminal_receipt == null
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || {
+		printf 'Aggregate recovery refused: no release authorization for PR #%s and the lane is not a matching remote-publication lane\n' "$source_pr" >&2
+		return 1
+	}
+	lane_expected=$(jq -er '.expected_sources' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	release_authorization_subset "$lane_expected" "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" || {
+		printf 'Aggregate recovery refused: lane authorization for PR #%s is not covered by the reviewed aggregate\n' "$source_pr" >&2
+		return 1
+	}
+	_full_loop_persist_release_authorization "$repo" "$source_pr" "$lane_expected" || return 1
+	printf 'Rebuilt absent release authorization for PR #%s from the fenced %s release lane\n' \
+		"$source_pr" "$tag_name" >&2
+	return 0
+}
+
 _full_loop_recovery_begin_state_transaction() {
 	local repo="$1"
 	local source_pr="$2"
 	local tag_name="$3"
 	local lane_expected=""
 	local existing=""
-	existing=$(_full_loop_read_release_authorization "$repo" "$source_pr") || return 1
+	local read_rc=0
+	existing=$(_full_loop_read_release_authorization "$repo" "$source_pr") || read_rc=$?
+	if [[ "$read_rc" -eq 2 ]]; then
+		_full_loop_recovery_reconstruct_authorization "$repo" "$source_pr" "$tag_name" || return 1
+		read_rc=0
+		existing=$(_full_loop_read_release_authorization "$repo" "$source_pr") || read_rc=$?
+	fi
+	[[ "$read_rc" -eq 0 ]] || return 1
 	if [[ "$existing" == "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" ]]; then
 		_full_loop_recovery_load_existing_state_transaction "$repo" "$source_pr" "$tag_name" && return 0
 		if _full_loop_read_release_authorization_recovery_snapshot "$repo" "$source_pr" >/dev/null 2>&1; then
