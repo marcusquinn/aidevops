@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -37,9 +38,13 @@ def emit_json(payload: Any) -> None:
 def stored_secret_names() -> list[str] | None:
     """Names-only listing from secret-helper.sh inventory; None if unavailable."""
     helper = SCRIPT_DIR / "secret-helper.sh"
+    bash = shutil.which("bash")
+    if not bash:
+        return None
     try:
-        result = subprocess.run(
-            ["bash", str(helper), "inventory"],
+        # Absolute bash, repository-owned helper, fixed argv, no shell.
+        result = subprocess.run(  # nosec B603
+            [bash, str(helper), "inventory"],
             capture_output=True, text=True, timeout=30, check=False,
         )
         if result.returncode != 0:
