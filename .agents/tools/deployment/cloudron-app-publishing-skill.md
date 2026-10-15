@@ -22,7 +22,8 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 
 - **Docs**: [docs.cloudron.io/packaging/publishing](https://docs.cloudron.io/packaging/publishing)
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-publishing`)
-- **Prerequisite**: App must be built with `cloudron build` (local or build service) — on-server builds cannot be published
+- **Prerequisite**: Each version needs a registry-hosted image, normally built with `cloudron builder login` → `cloudron builder build`; on-server builds cannot be published
+- **Last upstream review**: `74e455bd03f5`; adopted registry builder and explicit version-image selection guidance
 - **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
 - **Listing**: [Cloudron Community Apps](https://ca.cloudron.io) accepts a public versions URL after the catalog contains a tested release; listing is optional
 - **Forum**: [App Packaging & Development](https://forum.cloudron.io/category/96/app-packaging-development)
@@ -37,8 +38,9 @@ does not authorize any later state.
 
 ```bash
 cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
-cloudron build          # build and push image (first run prompts for Docker repository, e.g. registry/username/myapp)
-cloudron versions add --state testing  # add the registry image without exposing it as stable
+cloudron builder login  # authenticate with the Container registry app
+cloudron builder build  # build and push image; remembers the repository
+cloudron versions add --last-build --state testing  # record the last builder image without exposing it as stable
 cloudron versions update --version=1.0.0 --state=published
 # host CloudronVersions.json at a public URL
 ```
@@ -49,7 +51,7 @@ cloudron versions update --version=1.0.0 --state=published
 
 Commit these before the first registry build:
 
-- `CloudronVersions.json` initialized as `{ "stable": true, "versions": {} }`; never fabricate an entry before `cloudron build` records a real registry image.
+- `CloudronVersions.json` initialized as `{ "stable": true, "versions": {} }`; never fabricate an entry before a real registry image exists.
 - `CloudronManifest.json` publishing metadata: `id`, `title`, `author`, `description`, `tagline`, `version`, `website`, `contactEmail`, `iconUrl`, `packagerName`, `packagerUrl`, non-empty `tags`, non-empty `mediaLinks`, `changelog`, and `minBoxVersion` of at least `9.1.0`. Add `packageUrl` when the listing must link to the package source repository; this requires `minBoxVersion` 10.0.0.
 - A local square 256×256 PNG icon (`icon` normally points to it) and at least one privacy-reviewed product screenshot or hero. `mediaLinks` must use public HTTPS URLs; Cloudron recommends 3:1 images such as 1200×400.
 - A Cloudron-format changelog file when using `file://`: each release heading must be exactly `[X.Y.Z]`, because `cloudron versions add` does not parse Keep a Changelog headings such as `## [X.Y.Z]`.
@@ -60,32 +62,30 @@ Commit these before the first registry build:
 
 Use package-controlled, stable asset URLs where possible. If an upstream asset is used temporarily, preserve a reviewed local copy and replace the remote reference before the upstream URL becomes unstable. Check every URL for an HTTPS 200 response and an image content type before publishing.
 
-## Build Commands
+## Registry Builder
 
 | Command | Purpose |
 |---------|---------|
-| `cloudron build` | Build and push image (local or remote) |
-| `cloudron build --no-cache` | Rebuild without Docker cache |
-| `cloudron build --no-push` | Build but skip push |
-| `cloudron build -f Dockerfile.cloudron` | Use specific Dockerfile |
-| `cloudron build --build-arg KEY=VALUE` | Pass Docker build args |
-| `cloudron build reset` | Clear saved repository, image, and build info |
-| `cloudron build info` | Show current build config |
-| `cloudron build login` / `logout` | Authenticate with remote build service |
-| `cloudron build logs --id <id>` | Stream logs for a remote build |
-| `cloudron build push --id <id>` | Push a remote build to a registry |
-| `cloudron build status --id <id>` | Check status of a remote build |
+| `cloudron builder login` | Authenticate with the Container registry app (registry URL, username, app password) |
+| `cloudron builder build` | Build from the package directory and push a registry image |
+| `cloudron builder reset` | Clear the remembered repository |
 
-Build behavior depends on whether a build service is configured:
+The current CLI no longer has `cloudron build`. Do not mechanically carry its
+old flags or subcommands over to `cloudron builder`; inspect the installed CLI's
+`cloudron builder --help` and `cloudron builder build --help` first.
 
-- **No build service configured** — `cloudron build` uses the local Docker daemon. Requires Docker and registry auth.
-- **Build service configured** — `cloudron build` sends source to a remote builder, normally the [Container registry](https://docs.cloudron.io/packages/container-registry/) app; a legacy [Docker Builder](https://docs.cloudron.io/packages/docker-builder/) installation also works.
+`cloudron versions add` uses the last builder image and asks for confirmation on
+a TTY. `--last-build` selects it without the prompt; `--image <registry-image>`
+records a specific real image without a prompt. Never use either option to invent
+an unbuilt image. Private repositories must be made public or configured in the
+Cloudron server's private-registry settings before installation.
 
 ## Versions Commands
 
 | Command | Purpose |
 |---------|---------|
-| `cloudron versions add` | Add current version (reads manifest + last built image) |
+| `cloudron versions add --last-build` | Add current version (reads manifest + last builder image, no prompt) |
+| `cloudron versions add --image <registry-image>` | Add current version with an explicit existing registry image |
 | `cloudron versions list` | List all versions with date, image, and publish state |
 | `cloudron versions update --version=1.0.0 --state=published` | Change publish state |
 | `cloudron versions revoke` | Mark latest published version as revoked |
@@ -97,10 +97,10 @@ Typical release cycle:
 ```bash
 # 1. Edit code, bump version in CloudronManifest.json
 # 2. Build and push
-cloudron build
+cloudron builder build
 
 # 3. Add to catalog as a test candidate
-cloudron versions add --state testing
+cloudron versions add --last-build --state testing
 
 # 4. Host the catalog and test a clean install/upgrade via its public URL
 cloudron versions list

@@ -27,6 +27,7 @@ tools:
 - **App targeting**: `--app` accepts FQDN, subdomain, or app ID; auto-detected from `CloudronManifest.json`
 - **Global flags**: `--server`, `--token`, `--allow-selfsigned`, `--no-wait`
 - **Also see**: `cloudron-helper.sh` for multi-server management via API
+- **Last upstream review**: `74e455bd03f5`; upstream server-ops skill unchanged in this delta; aligned install/update notes with the packaging skill's registry builder migration
 - **SSH recovery boundary**: With authorised root SSH, inspect the installed Cloudron version and `cloudron-support --help` before choosing a documented recovery flow; older developer-login endpoints may not exist. Keep support output and any temporary credential private, validate TLS origin and PKCE state, preserve an active ghost/support login, and revoke the temporary session when finished. Missing SSH, authority, or compatible installed support tooling means this route stops safely and ordinary login remains the fallback. Never reset owner passwords, write raw tokens to storage, bypass authentication, or disable host-key checking.
 
 <!-- AI-CONTEXT-END -->
@@ -46,8 +47,8 @@ cloudron inspect               # raw JSON of the Cloudron server
 ### App Lifecycle
 
 ```bash
-cloudron install               # install app (on-server build or --image)
-cloudron update --app <app>    # update app (rebuilds or uses --image)
+cloudron install               # install app (on-server build, last builder image, or --image)
+cloudron update --app <app>    # update app with the same image selection
 cloudron uninstall --app <app>
 cloudron repair --app <app>    # reconfigure without changing image
 cloudron clone --app <app> --location new-location
@@ -61,6 +62,15 @@ Flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomai
 cloudron install --location myapp   # upload source, build on server, install
 cloudron update --app myapp         # upload source, rebuild, update
 ```
+
+For registry builds, run `cloudron builder login` then `cloudron builder build`
+from the package directory. Install/update can select the last builder image
+(confirmation on a TTY); for automation, pass the verified image explicitly with
+`--image`. The old `cloudron build` command no longer exists in the current CLI.
+On-server builds do not produce publishable registry images. See
+`cloudron-app-packaging-skill.md` and `cloudron-app-publishing-skill.md` for the
+build/publication workflow; building and pushing still require the appropriate
+authority. Configure private-registry access before installing private images.
 
 ### Run State and Logs
 

@@ -26,14 +26,14 @@ Cloudron apps are Docker images plus `CloudronManifest.json`. The platform provi
 - **Upstream**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-packaging`) | [docs.cloudron.io/packaging](https://docs.cloudron.io/packaging/)
 - **Reference files**: `cloudron-app-packaging-skill/manifest-ref.md`, `cloudron-app-packaging-skill/addons-ref.md`
 - **Also see**: `cloudron-app-packaging.md` (native aidevops guide: helpers, local dev, Dockerfile/start.sh patterns, pre-packaging checks) and `cloudron-app-publishing-skill.md` (required version catalog, public metadata, keyless image/catalog provenance, visual assets, and publication lifecycle)
-- **Last upstream review**: `f35dab45cc31` ("backupCommand, restoreCommand skill"); adopted current base-image, Node PATH, PHP, builder, and backup/restore lifecycle guidance.
+- **Last upstream review**: `74e455bd03f5` ("Document cloudron/base 6.0.0, node-base, and python-base."); adopted the `cloudron builder` command migration and runtime guidance while retaining the reviewed image allowlist below. Python child images need a separate policy review before helper-managed use.
 
 ```bash
 npm install -g cloudron
 cloudron login my.example.com
 cloudron init                    # creates CloudronManifest.json and Dockerfile
-cloudron install                 # uploads source, builds on server, installs app
-cloudron update                  # re-uploads, rebuilds, updates running app
+cloudron install                 # on-server build, or last cloudron builder image
+cloudron update                  # same image selection for an existing app
 # For any independently distributed package, initialize and maintain
 # CloudronVersions.json and keyless release provenance using
 # cloudron-app-publishing-skill.md.
@@ -62,8 +62,14 @@ them. See the native packaging guide's **Managed Package Lifecycle** section.
 | Method | Command | Notes |
 |--------|---------|-------|
 | On-server (default) | `cloudron install` / `cloudron update` | Uploads source, builds on server, and rebuilds from backed-up source on restore |
-| Local Docker | `cloudron build` → `cloudron install` / `cloudron update` | Requires `docker login` |
-| Build service | `cloudron build login` → `cloudron build` | Sends source to a remote builder |
+| Registry builder | `cloudron builder login` → `cloudron builder build` → `cloudron install` / `cloudron update` | Builds via the Container registry app and remembers the last image |
+
+The current CLI uses `cloudron builder`, not the removed `cloudron build` command.
+Run `cloudron builder build` from the package directory. `cloudron builder reset`
+clears the remembered repository. Install/update can use the last builder image
+(with a confirmation prompt on a TTY); use an explicit `--image` in automation.
+Private images require the registry in the server's private-registry settings,
+unless the repository is public. Registry pushes require publication authority.
 
 ## Dockerfile & `start.sh`
 
@@ -79,6 +85,20 @@ Use `Dockerfile`, `Dockerfile.cloudron`, or `cloudron/Dockerfile`. See `cloudron
 | PHP 8.4 | `cloudron/php-base:8.4-20260920@sha256:e9352b5fba7ad0a231b8a9e454034400a3a34a7fe1800425f634d32ffcae4a52` | Use when the app is not ready for PHP 8.5. |
 
 Reviewed 2026-10-08 against the official [base-image source](https://git.cloudron.io/platform/docker-base-image) and Docker Hub. Runtime child images now use immutable series-date tags; do not reuse the stale floating PHP `8.4`/`8.5` tags. Review the tags and verify digests periodically rather than silently floating to a newer image.
+
+Upstream also documents dated `cloudron/python-base` images for Python 3.11–3.14.
+These are not yet in the helper's reviewed image allowlist; do not substitute
+them without an explicit policy review. For uv/conda applications, upstream uses
+`cloudron/base` with an application-managed interpreter. Node/PHP apps needing a
+Python sidecar can install `python3-venv` in their runtime image (not reinstall it).
+Apps needing a Node major other than 24 install their own runtime on the base image.
+
+Apache is supplied by `php-base`, not the general base; static Apache apps must
+install it. For PHP-FPM, disable the Apache PHP module with `a2dismod php8.5` and
+enable `php8.5-fpm` with `a2enconf` (use 8.4 paths on that series). Ghostscript for
+Imagick PDF is supplied by `php-base`; other images must install it if needed.
+No base image includes `mongosh`: packages requiring it must install a reviewed
+official tarball rather than copying from `cloudron/mongotools`.
 
 Official 6.0.0 packages (RustFS and SeaweedFS) declare `minBoxVersion: "9.1.0"`; qualify migrations on that recommended baseline and check package-specific platform requirements. This observation does not establish a universal technical minimum for every base-image consumer. During transition the exact legacy 5.1.0 digest is release-compatible, but compatibility audits produce one upgrade finding. See the native guide's **Base Image** section.
 
