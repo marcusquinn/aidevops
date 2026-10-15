@@ -45,10 +45,7 @@ def registered_repos(home: Path) -> list[tuple[str, Path]]:
 def worktrees(repo: Path) -> list[Path]:
     """Existing worktree paths (main checkout included) for a repo."""
     try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
-            capture_output=True, text=True, timeout=GREP_TIMEOUT, check=False,
-        )
+        result = scan.run_tool("git", ["-C", str(repo), "worktree", "list", "--porcelain"], GREP_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return [repo]
     paths = [Path(line[9:]) for line in result.stdout.splitlines() if line.startswith("worktree ")]
@@ -71,7 +68,7 @@ def local_files(home: Path) -> dict[str, list[Path]]:
 def crontab_hits(needles: scan.Needles) -> tuple[list[dict], str | None]:
     """Scan `crontab -l`; no crontab is an empty result, not a gap."""
     try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10, check=False)
+        result = scan.run_tool("crontab", ["-l"], 10)
     except FileNotFoundError:
         return [], None
     except (OSError, subprocess.SubprocessError):

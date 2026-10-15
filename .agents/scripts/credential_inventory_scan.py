@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import plistlib
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,13 +96,24 @@ def scan_lines(lines: Iterable[str], needles: Needles) -> list[dict]:
     return hits
 
 
+def run_tool(tool: str, args: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run a fixed system tool by absolute path; FileNotFoundError if absent."""
+    executable = shutil.which(tool)
+    if not executable:
+        raise FileNotFoundError(tool)
+    # Absolute executable, list argv (no shell); args are paths and fixed-string needles.
+    return subprocess.run(  # nosec B603
+        [executable, *args], capture_output=True, text=True, errors="replace", timeout=timeout, check=False,
+    )
+
+
 def grep_worktree(path: Path, needles: Needles, timeout: int) -> tuple[list[dict], str | None]:
     """git grep a worktree (tracked + untracked, honouring .gitignore)."""
-    cmd = ["git", "-C", str(path), "grep", "-I", "-n", "--null", "--untracked", "-F"]
+    args = ["-C", str(path), "grep", "-I", "-n", "--null", "--untracked", "-F"]
     for pattern in needles.patterns:
-        cmd += ["-e", pattern]
+        args += ["-e", pattern]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout, check=False)
+        result = run_tool("git", args, timeout)
     except subprocess.TimeoutExpired:
         return [], "timeout"
     except OSError:
