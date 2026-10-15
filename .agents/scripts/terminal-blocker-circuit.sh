@@ -253,6 +253,12 @@ PY
 	fi
 	fingerprint=$(_terminal_blocker_hash "v2:${normalized}") || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint"
+	_terminal_blocker_log_capture "$captured" "$normalized" "$fingerprint"
+	return 0
+}
+
+_terminal_blocker_log_capture() {
+	local captured="$1" normalized="$2" fingerprint="$3"
 	# Retain only final-assistant classification evidence before the runtime deletes
 	# its transient output. The existing logger redacts and bounds this private log.
 	# This is historical evidence, not proof of a currently blocked issue.
