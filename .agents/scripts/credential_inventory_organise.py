@@ -11,67 +11,12 @@ stay proposals. `apply_drafts` writes only unconfirmed draft metadata.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import credential_inventory_drift as drift
 import credential_inventory_store as store
 from credential_inventory_fields import DEFAULT_ENV, InventoryError, now_iso
-
-# Known name prefixes; first match wins, so longer prefixes come first.
-PROVIDER_PREFIXES = (
-    ("CLOUDFLARE_", "cloudflare"), ("CF_", "cloudflare"),
-    ("GITHUB_", "github"), ("GH_", "github"),
-    ("HCLOUD_", "hetzner"), ("HETZNER_", "hetzner"),
-    ("OPENAI_", "openai"), ("ANTHROPIC_", "anthropic"), ("VERCEL_", "vercel"),
-    ("GITLAB_", "gitlab"), ("AWS_", "aws"), ("DIGITALOCEAN_", "digitalocean"),
-    ("STRIPE_", "stripe"), ("SENTRY_", "sentry"), ("POSTHOG_", "posthog"),
-    ("COOLIFY_", "coolify"), ("HOSTINGER_", "hostinger"), ("BACKBLAZE_", "backblaze"),
-)
-KIND_SUFFIXES = (
-    ("_API_TOKEN", "api_token"), ("_ACCESS_TOKEN", "access_token"), ("_API_KEY", "api_key"),
-    ("_ACCOUNT_ID", "account_id"), ("_TOKEN_NAME", "token_name"), ("_TOKEN", "token"),
-    ("_SECRET", "secret"), ("_PASSWORD", "password"), ("_KEY", "key"),
-)
-
-
-def infer(name: str) -> dict[str, Any] | None:
-    """Provider, kind and account tag implied by a name; None if unrecognised."""
-    for prefix, provider in PROVIDER_PREFIXES:
-        if name.startswith(prefix):
-            break
-    else:
-        return None
-    rest = name[len(prefix):]
-    kind = next((kind for suffix, kind in KIND_SUFFIXES if ("_" + rest).endswith(suffix)), None)
-    suffix = next((suffix for suffix, k in KIND_SUFFIXES if k == kind), "")
-    middle = ("_" + rest)[: -len(suffix)].strip("_") if suffix else ""
-    tag = middle.split("_")[0].lower() if middle else None
-    return {"provider": provider, "kind": kind, "tag": tag, "evidence": f"name prefix {prefix}"}
-
-
-def slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "account"
-
-
-def draft_for(data: dict[str, Any], name: str) -> dict[str, Any] | None:
-    """A draft record for an undescribed stored secret."""
-    guess = infer(name)
-    if guess is None:
-        return None
-    draft = {"name": name, "provider": guess["provider"], "kind": guess["kind"], "confirmed": False,
-             "evidence": guess["evidence"]}
-    if name == DEFAULT_ENV.get(guess["provider"]):
-        draft["note"] = "bare conventional variable stored directly; it is used as-is; record its account"
-        return draft
-    ref = f"{guess['provider']}-{guess['tag']}" if guess["tag"] else None
-    account = (data.get("provider_accounts") or {}).get(ref or "")
-    if account and account.get("provider") == guess["provider"]:
-        draft["account_ref"] = ref
-        draft["evidence"] += f"; account tag {guess['tag'].upper()} matches account {ref}"
-    elif guess["tag"]:
-        draft["account_hint"] = guess["tag"].upper()
-    return draft
+from credential_inventory_organise_infer import draft_for, slug
 
 
 def account_proposals(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -205,74 +150,3 @@ def apply_drafts(result: dict[str, Any]) -> dict[str, list[str]]:
             record["draft"] = {"confirmed": False, "evidence": draft["evidence"], "drafted_at": now_iso()}
             written["credentials"].append(draft["name"])
     return written
-
-
-def _used(counts: dict[str, dict] | None, name: str) -> str:
-    if counts is None:
-        return ""
-    item = counts.get(name) or {}
-    dynamic = f", {item['possible_dynamic']} possible-dynamic" if item.get("possible_dynamic") else ""
-    return f"  [{item.get('literal', 0)} reference(s){dynamic}]"
-
-
-def _render_drafts(result: dict[str, Any], counts: dict | None) -> list[str]:
-    if not result["drafts"]:
-        return []
-    lines = [f"\nDraft records ({len(result['drafts'])}, unconfirmed; write with --apply-drafts):"]
-    for draft in result["drafts"]:
-        account = draft.get("account_ref") or (f"tag {draft['account_hint']}?" if draft.get("account_hint") else "unknown")
-        lines.append(f"  {draft['name']}  -> {draft['provider']}, kind {draft['kind'] or '?'}, account {account}{_used(counts, draft['name'])}")
-        if draft.get("note"):
-            lines.append(f"      note {draft['note']}")
-    return lines
-
-
-def _render_aliases(result: dict[str, Any], counts: dict | None) -> list[str]:
-    if not result["aliases"]:
-        return []
-    lines = ["\nDuplicate or overlapping tokens (aliases, never renames):"]
-    for item in result["aliases"]:
-        if item["action"] != "alias":
-            lines.append(f"  review {' / '.join(item['credentials'])}  -> overlapping reach {item['shared']}")
-            continue
-        lines.append(f"  keep {item['keep']}{_used(counts, item['keep'])}, retire {item['retire']}"
-                     f"{_used(counts, item['retire'])}; identical reach {item['shared']}")
-        lines += [f"      {number}. {step}" for number, step in enumerate(item["steps"], 1)]
-    return lines
-
-
-def _render_defaults(result: dict[str, Any]) -> list[str]:
-    if not result["defaults"]:
-        return []
-    lines = ["\nDefault decisions needed:"]
-    for item in result["defaults"]:
-        bare = " (bare variable stored directly)" if item["stored_bare_variable"] else ""
-        lines.append(f"  {item['provider']} ({item['variable']}){bare}, choose one:")
-        lines += [f"      {command}" for command in item["commands"]]
-    return lines
-
-
-def _render_recorded(result: dict[str, Any], counts: dict | None) -> list[str]:
-    if counts is None:
-        return []
-    drafted = {draft["name"] for draft in result["drafts"]}
-    lines = ["\nRecorded credentials:"] + [f"  {name}{_used(counts, name)}" for name in sorted(counts) if name not in drafted]
-    if not result["dependents_complete"]:
-        lines.append("  (some sources were skipped; run `aidevops secret dependents NAME` before changing any name)")
-    return lines
-
-
-def render(result: dict[str, Any]) -> str:
-    counts = result["dependents"]
-    lines = ["Credential organisation plan (nothing is renamed, deleted or re-pointed)"]
-    lines += _render_drafts(result, counts)
-    if result["unrecognised"]:
-        lines.append("\nUnrecognised (record manually): " + ", ".join(result["unrecognised"]))
-    if result["accounts"]:
-        lines.append("\nAccount refs from verified account names:")
-        lines += [f"  {item['credential']}  -> {item['account_ref']} ({item['account_name']}{', exists' if item['exists'] else ', new'})"
-                  for item in result["accounts"]]
-    lines += _render_aliases(result, counts) + _render_defaults(result) + _render_recorded(result, counts)
-    if result["stored_listing"] != "ok":
-        lines.append("\nStored-secret listing unavailable; undescribed secrets were not checked.")
-    return "\n".join(lines)

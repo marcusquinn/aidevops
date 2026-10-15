@@ -190,6 +190,7 @@ def cmd_owner(args: argparse.Namespace) -> int:
 def cmd_organise(args: argparse.Namespace) -> int:
     """Plan-first cleanup proposals; --apply-drafts writes unconfirmed drafts only (GH#34723)."""
     import credential_inventory_organise as organise
+    from credential_inventory_organise_render import render
 
     result = organise.plan(store.load(), view.stored_secret_names(), with_dependents=not args.no_dependents)
     if args.apply_drafts:
@@ -198,7 +199,7 @@ def cmd_organise(args: argparse.Namespace) -> int:
     if args.json:
         emit_json(result)
         return 0
-    print(organise.render(result))
+    print(render(result))
     if args.apply_drafts:
         written = result["written"]
         print(f"\nWrote {len(written['credentials'])} draft record(s) and {len(written['accounts'])} account(s), all unconfirmed. "
