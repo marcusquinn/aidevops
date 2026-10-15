@@ -72,6 +72,14 @@ def alias_owner(data: dict[str, Any], alias: str) -> str | None:
     return None
 
 
+def related_names(data: dict[str, Any], name: str) -> list[str]:
+    """Canonical name first, then its declared aliases (works from an alias too)."""
+    check_name("secret name", name)
+    canonical = alias_owner(data, name) or name
+    record = (data.get("credentials") or {}).get(canonical) or {}
+    return [canonical, *sorted(set(record.get("aliases") or []) - {canonical})]
+
+
 def add_alias(data: dict[str, Any], name: str, alias: str) -> None:
     """Declare `alias` as another name for recorded credential `name`."""
     check_name("secret name", name)

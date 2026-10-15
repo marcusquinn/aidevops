@@ -150,6 +150,18 @@ def cmd_validate(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dependents(args: argparse.Namespace) -> int:
+    """Local, read-only search for what uses a credential (GH#34719)."""
+    import credential_inventory_dependents as dependents
+
+    result = dependents.find_dependents(names.related_names(store.load(), args.name))
+    if args.json:
+        emit_json(result)
+    else:
+        print(dependents.render(result))
+    return 0
+
+
 # --------------------------------------------------------------------------
 # parser
 # --------------------------------------------------------------------------
@@ -211,6 +223,10 @@ def add_simple_parsers(sub: argparse._SubParsersAction) -> None:
     resolve_name = sub.add_parser("resolve-name", help="source credential for an alias or default variable")
     resolve_name.add_argument("name")
     resolve_name.set_defaults(func=cmd_resolve_name)
+    dependents = sub.add_parser("dependents", help="find what uses a credential before rename/rotation")
+    dependents.add_argument("name")
+    dependents.add_argument("--json", action="store_true")
+    dependents.set_defaults(func=cmd_dependents)
 
 
 def build_parser() -> argparse.ArgumentParser:

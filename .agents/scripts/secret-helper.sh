@@ -1396,6 +1396,7 @@ cmd_help() {
 	echo "  alias NAME OLD_NAME               Keep a retired name working (no rename)"
 	echo "  resolve PROVIDER                  Print default name (exit 3 none, 4 undeclared)"
 	echo "  validate                          Check the credential registry file"
+	echo "  dependents NAME [--json]          What uses NAME (+aliases) before rename/rotation"
 	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
@@ -1464,7 +1465,7 @@ main() {
 	inventory)
 		cmd_inventory "$@"
 		;;
-	describe | record | account | default | alias | resolve | validate)
+	describe | record | account | default | alias | resolve | validate | dependents)
 		run_credential_inventory "$command" "$@" || return $?
 		;;
 	run)

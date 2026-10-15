@@ -23,7 +23,8 @@ tools:
 
 - **Purpose**: answer, without live API calls, which account a credential opens, what it reaches, who it is for, when it expires, and which credential is each provider's default.
 - **File**: `~/.config/aidevops/credential-inventory.json` (600; override with `AIDEVOPS_CREDENTIAL_INVENTORY`). Template: `configs/credential-inventory.json.txt`.
-- **Commands**: `aidevops secret describe|record|account|default|alias|resolve` (`secret-helper.sh` delegates to `credential_inventory.py`).
+- **Commands**: `aidevops secret describe|record|account|default|alias|resolve|validate|dependents` (`secret-helper.sh` delegates to `credential_inventory.py`).
+- **Before renaming, rotating or revoking**: run `aidevops secret dependents NAME`; never treat a name as unused unless it reports `complete: true`.
 - **Never stored**: secret values, raw provider account IDs. Store the *name* of the secret that holds an account ID (`account_id_env`). Free-text fields that look like secrets are refused.
 - **Rule for sessions**: whenever you store a credential, record its account, **even for the operator's first and only account at that provider**: `aidevops secret set NAME --provider P --account REF --purpose "..."`.
 
@@ -81,3 +82,16 @@ When a requested name is **not itself stored**, `aidevops secret NAME -- CMD`, `
 A stored name always wins. With no default, or `--none`, the conventional variable stays unavailable exactly as before. `run` (inject all) also adds aliases and conventional defaults for injected credentials. Without a registry file nothing changes. Inspect the mapping with `python3 ~/.aidevops/agents/scripts/credential_inventory.py injection-map`.
 
 To retire a name safely: store the new name, `alias NEW OLD`, move consumers to `NEW`, then delete the old stored entry; until it is deleted, the stored `OLD` value still wins.
+
+## Dependents
+
+`aidevops secret dependents NAME [--json]` is a local, read-only search for the name and its declared aliases. It makes no network calls and outputs locations only, never line text, so values in scanned files cannot leak.
+
+| Source | How |
+|--------|-----|
+| Repos in `~/.config/aidevops/repos.json` and all their linked worktrees | `git grep -F --untracked` (honours `.gitignore`), bounded per worktree |
+| `~/.aidevops/agents/custom/` | bounded file walk |
+| `~/.config/aidevops/*.json\|conf\|toml\|yaml` (e.g. `site-inventory.json` `credential_env`) | file scan; the registry itself is excluded |
+| `~/Library/LaunchAgents/*.plist`, `~/.config/systemd/user/*`, `crontab -l` | file/command scan (binary plists decoded) |
+
+Lines that build the name dynamically (e.g. `"CLOUDFLARE_${ACCOUNT}_API_TOKEN"`, concatenation, f-strings, `%s`) are reported as `possible-dynamic`. They, timeouts, truncation and unreadable files all set `complete: false`. Only a complete result with no matches prints "No references found"; remote-only consumers (CI secrets, deployed servers) are outside this search.
