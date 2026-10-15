@@ -57,6 +57,24 @@ def hold_shaped:
   (.body // "") | test("(?m)^CLAIM_RELEASED reason=blocked |aidevops:terminal-blocker-(observation|circuit) ");
 '
 
+# A dispatch claim supersedes earlier blocked attempts, never later lease noise.
+# Reuse hold_shaped so audit and both unblockers share the producer vocabulary.
+terminal_blocker_has_current_hold() {
+	local comments_json="$1"
+	local self_login=""
+	self_login=$(_terminal_blocker_self_login)
+	jq -e --arg self "$self_login" --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		"${_TBC_HOLD_EVIDENCE_JQ}"'
+		map(select(hold_evidence($authoritative; $self)))
+		| sort_by([.created_at // "", .id // 0]) | to_entries
+		| ([.[] | select(.value | hold_shaped) | .key] | max // -1) as $hold
+		| ([.[] | select((.value.body // "")
+		    | test("(?m)^DISPATCH_CLAIM ")) | .key] | max // -1) as $claim
+		| $hold >= 0 and $hold > $claim
+	' <<<"$comments_json" >/dev/null 2>&1
+	return $?
+}
+
 # Callers set TERMINAL_BLOCKER_SELF_LOGIN to the login that posts this runner's
 # releases. Anything that is not a plain GitHub user login is ignored.
 _terminal_blocker_self_login() {
@@ -147,12 +165,14 @@ _terminal_blocker_input_owner() {
 # can also be established from the current brief, without interpreting prose.
 terminal_blocker_capture_output() {
 	local output_file="$1"
+	local live_blocked="${2:-false}"
 	local normalized="" fingerprint="" issue_json="" captured=""
 	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
+	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
 	[[ -f "$output_file" ]] || return 1
 	captured=$(
-		python3 - "$output_file" <<'PY'
+		python3 - "$output_file" "$live_blocked" <<'PY'
 import json
 import re
 import sys
@@ -178,7 +198,7 @@ for raw_line in raw.splitlines():
 
 marker = re.compile(r"(^|\n)\s*BLOCKED(?:\s*:|\s*$)", re.IGNORECASE)
 candidate = parts[-1] if parts else (raw if not raw.lstrip().startswith('{') else '')
-if not marker.search(candidate):
+if not marker.search(candidate) and sys.argv[2] != 'true':
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
@@ -186,7 +206,14 @@ allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker',
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
 def emit(value):
-    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'detail': candidate[:2000]}))
+    # Only explicit name declarations from final assistant text, never values
+    # or tool output. Bounded and validated before any public projection.
+    declarations = re.findall(r'^TERMINAL_BLOCKER_MISSING_SECRETS=([A-Z0-9_, ]+)$', candidate, re.M)
+    names = re.split(r'[, ]+', declarations[0]) if len(declarations) == 1 else []
+    if len(names) > 32 or not all(re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', n) for n in names):
+        names = []
+    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons),
+                     'missing_secrets': sorted(set(names)), 'detail': candidate[:2000]}))
 
 if reason == 'affected_host_reproduction_unavailable':
     # GH#34259: legacy workers named the missing affected-runner prerequisite
@@ -206,6 +233,7 @@ PY
 	[[ -n "$captured" ]] || return 1
 	normalized=$(printf '%s' "$captured" | jq -r '.reason') || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=$(printf '%s' "$captured" | jq -r '.explicit_reason') || return 1
+	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=$(jq -r '.missing_secrets[]' <<<"$captured") || return 1
 	[[ -n "$normalized" ]] || return 1
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.

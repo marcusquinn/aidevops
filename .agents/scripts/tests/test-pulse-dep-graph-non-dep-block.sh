@@ -237,6 +237,16 @@ jq -cn --arg body 'CLAIM_RELEASED reason=worker_complete runner=maintainer ts=20
 got=$(_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
 assert_eq 'trusted non-blocked claim release does not defer' '__no_defer__' "$got"
 
+jq -cn '[{author_association:"OWNER",body:"DISPATCH_CLAIM nonce=first"},
+    {author_association:"OWNER",body:"CLAIM_RELEASED reason=blocked runner=maintainer "}]
+    + [range(12) | {author_association:"OWNER",body:"DISPATCH_LEASE nonce=noise"}]' >"$GH_STUB_COMMENTS"
+got=$(_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
+assert_eq 'blocked release survives more than ten lease comments' 'comment-marker' "$got"
+jq '. + [{author_association:"OWNER",body:"DISPATCH_CLAIM nonce=next"}]' "$GH_STUB_COMMENTS" >"$STUB_DIR/new-claim.json"
+export GH_STUB_COMMENTS="$STUB_DIR/new-claim.json"
+got=$(_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
+assert_eq 'new dispatch supersedes previous blocked attempt' '__no_defer__' "$got"
+
 printf '\n'
 printf 'Results: %d passed, %d failed\n' "$pass_count" "$fail_count"
 

@@ -77,6 +77,17 @@ printf 'PRIVATE_ERROR\n' >&2
     check('brief requirement defers', {'body': 'requires-secrets: MISSING'}, success=False,
           reason='secret_missing name=MISSING')
     check('brief comma/space names proceed', {'body': 'requires-secrets: GOOD, GOOD'})
+    check('label requirement defers', {'labels': ['needs-secret:MISSING']}, success=False,
+          reason='secret_missing name=MISSING')
+    check('label never replaces brief requirements',
+          {'labels': [{'name': 'needs-secret:GOOD'}], 'body': 'requires-secrets: MISSING'},
+          success=False, reason='secret_missing name=MISSING')
+    check('label never replaces body marker requirements',
+          {'labels': ['needs-secret:GOOD'], 'body': '<!-- aidevops:needs-secrets MISSING -->'},
+          success=False, reason='secret_missing name=MISSING')
+    check('body never replaces label requirements',
+          {'labels': ['needs-secret:MISSING'], 'body': 'requires-secrets: GOOD'},
+          success=False, reason='secret_missing name=MISSING')
     check('brief and class combine', dict(issue, body='requires-secrets: MISSING'),
           {'publish': {'secrets': ['GOOD']}}, False, 'secret_missing name=MISSING')
     check('multiple classes combine', {'labels': ['dispatch-class:publish', 'dispatch-class:data']},

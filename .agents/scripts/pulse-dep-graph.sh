@@ -40,6 +40,8 @@ source "${_pulse_dep_graph_dir}/task-identity-lib.sh"
 source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
 # shellcheck source=./dependency-supersession-lib.sh
 source "${_pulse_dep_graph_dir}/dependency-supersession-lib.sh"
+# shellcheck source=./terminal-blocker-circuit.sh
+source "${_pulse_dep_graph_dir}/terminal-blocker-circuit.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
 DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
 DEP_GRAPH_BLOCKED_BY_VALUE_AWK="${_pulse_dep_graph_dir}/blocked-by-value.awk"
@@ -471,17 +473,22 @@ _should_defer_auto_unblock() {
 	# across all repos), so the cost is well-bounded. Silently tolerate fetch
 	# failures (fail-open on API error → behave as before, preserving the t1935
 	# auto-unblock path when network is flaky).
-	local recent_bodies=""
-	recent_bodies=$(set -o pipefail; gh api \
+	local recent_bodies="" comments_json=""
+	comments_json=$(set -o pipefail; gh api \
 		"repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null |
-		jq -r '
+		jq -c 'if (type == "array" and ((.[0]? | type) == "array")) then add else . end') || comments_json='[]'
+	if terminal_blocker_has_current_hold "$comments_json"; then
+		printf 'comment-marker\n'
+		return 0
+	fi
+	recent_bodies=$(jq -r "${_TBC_HOLD_EVIDENCE_JQ}"'
 			def trusted_association:
 				. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
-			(if (type == "array" and ((.[0]? | type) == "array")) then add else . end)
-			| .[-10:]
+			.[-10:]
+			| map(select(hold_shaped | not))
 			| map(select((.author_association // "") | trusted_association) | (.body // "") | gsub("aidevops:brief-hold"; "expired-brief-hold"))
 			| join("\n---\n")
-		') || recent_bodies=""
+		' <<<"$comments_json") || recent_bodies=""
 
 	if [[ -n "$recent_bodies" ]]; then
 		if printf '%s' "$recent_bodies" | grep -qE "$_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS"; then

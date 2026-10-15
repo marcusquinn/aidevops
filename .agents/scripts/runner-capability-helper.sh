@@ -226,6 +226,12 @@ try:
     issue = json.loads(sys.argv[2])
     requirements = class_requirements(root, issue)
     # Issue text can name secrets, never executable commands.
+    for label in issue.get('labels', []):
+        name = label.get('name', '') if isinstance(label, dict) else label
+        if name.startswith('needs-secret:'):
+            requirements.append({'secrets': [name.partition(':')[2]]})
+    for names in re.findall(r'<!-- aidevops:needs-secrets ([A-Za-z_0-9 ]+) -->', issue.get('body', '')):
+        requirements.append({'secrets': names.split()})
     for line in issue.get('body', '').splitlines():
         if line.startswith('requires-secrets:'):
             names = re.split(r'[,\s]+', line.partition(':')[2].strip())
