@@ -649,19 +649,76 @@ _version_manager_publish_reachable_tag() {
 	return 0
 }
 
+# GH#34753: GitHub rejects annotated tag objects at non-refs/tags refs
+# ("fatal error in commit_refs"). The signed tag therefore travels as the exact
+# raw bytes in blob `tag` of an unsigned commit envelope whose only parent is
+# the tagged release commit. Content addressing keeps the guarantee: recovery
+# accepts only bytes whose tag hash equals the pinned provenance object.
+_version_manager_build_staged_tag_envelope() {
+	local tag_object="$1"
+	local release_commit="$2"
+	local bytes_file="" blob="" tree="" commit_time=""
+
+	_VERSION_MANAGER_STAGED_TAG_ENVELOPE=""
+	bytes_file=$(mktemp) || return 1
+	if ! git -C "$REPO_ROOT" cat-file tag "$tag_object" >"$bytes_file" ||
+		! blob=$(git -C "$REPO_ROOT" hash-object -w "$bytes_file"); then
+		rm -f "$bytes_file"
+		return 1
+	fi
+	rm -f "$bytes_file"
+	tree=$(printf '100644 blob %s\ttag\n' "$blob" | git -C "$REPO_ROOT" mktree) || return 1
+	commit_time=$(git -C "$REPO_ROOT" log -1 --format=%ct "$release_commit") || return 1
+	# Fixed identity and time make the envelope reproducible across hosts.
+	_VERSION_MANAGER_STAGED_TAG_ENVELOPE=$(GIT_AUTHOR_NAME="aidevops release staging" \
+		GIT_AUTHOR_EMAIL="release-staging@aidevops.invalid" \
+		GIT_AUTHOR_DATE="${commit_time} +0000" \
+		GIT_COMMITTER_NAME="aidevops release staging" \
+		GIT_COMMITTER_EMAIL="release-staging@aidevops.invalid" \
+		GIT_COMMITTER_DATE="${commit_time} +0000" \
+		git -C "$REPO_ROOT" commit-tree --no-gpg-sign -p "$release_commit" \
+		-m "aidevops release tag staging ${tag_object}" "$tree") || return 1
+	return 0
+}
+
+# Restore the tag carried by a fetched staging envelope; callers must compare
+# _VERSION_MANAGER_STAGED_TAG_OBJECT with their pinned provenance object.
+_version_manager_decode_staged_tag() {
+	local envelope="$1"
+	local bytes_file=""
+
+	_VERSION_MANAGER_STAGED_TAG_OBJECT=""
+	[[ "$(git -C "$REPO_ROOT" cat-file -t "$envelope" 2>/dev/null)" == "commit" ]] || return 1
+	bytes_file=$(mktemp) || return 1
+	if ! git -C "$REPO_ROOT" cat-file blob "${envelope}:tag" >"$bytes_file" 2>/dev/null ||
+		! _VERSION_MANAGER_STAGED_TAG_OBJECT=$(git -C "$REPO_ROOT" hash-object -t tag -w "$bytes_file"); then
+		rm -f "$bytes_file"
+		_VERSION_MANAGER_STAGED_TAG_OBJECT=""
+		return 1
+	fi
+	rm -f "$bytes_file"
+	return 0
+}
+
 _version_manager_stage_protected_tag() {
 	local tag_name="$1"
 	local tag_object="$2"
-	local staging_ref="refs/aidevops/release-tags/${tag_name}" existing=""
+	local staging_ref="refs/aidevops/release-tags/${tag_name}" existing="" fetched=""
+	local release_commit=""
 	existing=$(git -C "$REPO_ROOT" ls-remote origin "$staging_ref") || return 1
 	if [[ -n "$existing" ]]; then
-		[[ "$existing" == "$tag_object"$'\t'"$staging_ref" ]]
+		git -C "$REPO_ROOT" fetch --no-tags origin "$staging_ref" --quiet || return 1
+		fetched=$(git -C "$REPO_ROOT" rev-parse FETCH_HEAD) || return 1
+		_version_manager_decode_staged_tag "$fetched" || return 1
+		[[ "$_VERSION_MANAGER_STAGED_TAG_OBJECT" == "$tag_object" ]]
 		return $?
 	fi
+	release_commit=$(git -C "$REPO_ROOT" rev-parse "${tag_object}^{commit}") || return 1
+	_version_manager_build_staged_tag_envelope "$tag_object" "$release_commit" || return 1
 	_version_manager_require_aggregate_fence || return 1
 	# The empty lease is create-only CAS, not permission to replace an object.
-	AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$REPO_ROOT" push \
-		--force-with-lease="${staging_ref}:" origin "${tag_object}:${staging_ref}" || return 1
+	AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$REPO_ROOT" push --force-with-lease="${staging_ref}:" \
+		origin "${_VERSION_MANAGER_STAGED_TAG_ENVELOPE}:${staging_ref}" || return 1
 	return 0
 }
 

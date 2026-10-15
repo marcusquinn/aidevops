@@ -417,6 +417,9 @@ _full_loop_release_recover_lane_tag() {
 	if [[ -n "$staging_ref" ]]; then
 		git -C "$REPO_ROOT" fetch --no-tags origin "refs/aidevops/release-tags/${tag_name}" --quiet || return 1
 		fetched_object=$(git -C "$REPO_ROOT" rev-parse FETCH_HEAD) || return 1
+		# GH#34753: the ref holds a commit envelope carrying the raw tag bytes.
+		_version_manager_decode_staged_tag "$fetched_object" || return 1
+		fetched_object="$_VERSION_MANAGER_STAGED_TAG_OBJECT"
 	else
 		# Older protected PRs have no staging ref. GitHub retains the signed
 		# payload; restore only bytes hashing to the PR's pinned object. Its
