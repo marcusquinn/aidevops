@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-"""Offline drift report and resource-ownership lookup (GH#34722).
+"""Offline drift report (GH#34722); ownership lookup is credential_inventory_owner.
 
 Works only from the registry and its cached verifications: no network, no
 secret values. Findings are facts about recorded or cached data; anything
@@ -138,37 +138,6 @@ def drift(data: dict[str, Any], stored: list[str] | None, now: datetime | None =
     return {"findings": findings, "stored_listing": "ok" if stored is not None else "unavailable"}
 
 
-def owner(data: dict[str, Any], resource: str) -> dict[str, Any]:
-    """Which account/credentials hold a zone or resource, from cache/records only."""
-    resource = resource.strip().lower().rstrip(".")
-    matches: dict[tuple, dict] = {}
-    for name, record in sorted((data.get("credentials") or {}).items()):
-        cache = record.get("verification") or {}
-        labels = {item["fingerprint"]: item.get("name") for item in cache.get("accounts") or []}
-        hits = [(zone["name"], zone["account"], "zone") for zone in cache.get("zones") or []
-                if resource == zone["name"] or resource.endswith("." + zone["name"])]
-        hits += [(f"{item['type']}:{item['name']}", item["account"], item["type"]) for item in cache.get("resources") or []
-                 if resource in (item["name"].lower(), f"{item['type']}:{item['name']}".lower())]
-        for matched, account, kind in hits:
-            entry = matches.setdefault((matched, account), {
-                "matched": matched, "type": kind, "account_fingerprint": account,
-                "account_name": labels.get(account), "credentials": [], "source": "observed",
-                "verified_at": cache.get("verified_at")})
-            entry["credentials"].append(name)
-        if not cache and resource in zones_of(record)[0]:
-            ref = record.get("account_ref")
-            account = (data.get("provider_accounts") or {}).get(ref or "") or {}
-            entry = matches.setdefault((resource, ref), {
-                "matched": resource, "type": "zone", "account_ref": ref, "account_name": account.get("name"),
-                "credentials": [], "source": "recorded"})
-            entry["credentials"].append(name)
-    if not matches:
-        return {"resource": resource, "status": "unknown"}
-    found = list(matches.values())
-    accounts = {entry.get("account_fingerprint") or entry.get("account_ref") for entry in found}
-    return {"resource": resource, "status": "ambiguous" if len(accounts) > 1 else "found", "matches": found}
-
-
 def render_drift(report: dict[str, Any]) -> str:
     findings = report["findings"]
     if not findings:
@@ -181,14 +150,4 @@ def render_drift(report: dict[str, Any]) -> str:
         lines.append(f"  {item['check']:26} {subject}{other}{detail}")
     if report["stored_listing"] != "ok":
         lines.append("  (stored-secret listing unavailable; undescribed secrets not checked)")
-    return "\n".join(lines)
-
-
-def render_owner(result: dict[str, Any]) -> str:
-    if result["status"] == "unknown":
-        return f"{result['resource']}: unknown (not in cached verifications or recorded reach)"
-    lines = [f"{result['resource']}: {result['status']}"]
-    for entry in result["matches"]:
-        account = entry.get("account_name") or entry.get("account_fingerprint") or entry.get("account_ref")
-        lines.append(f"  {entry['matched']}  account: {account}  credentials: {', '.join(entry['credentials'])}  [{entry['source']}]")
     return "\n".join(lines)

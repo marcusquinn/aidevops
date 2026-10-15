@@ -177,13 +177,13 @@ def cmd_drift(args: argparse.Namespace) -> int:
 
 def cmd_owner(args: argparse.Namespace) -> int:
     """Which account/credentials hold a zone or resource; never guesses."""
-    import credential_inventory_drift as drift
+    import credential_inventory_owner as ownership
 
-    result = drift.owner(store.load(), args.resource)
+    result = ownership.owner(store.load(), args.resource)
     if args.json:
         emit_json(result)
     else:
-        print(drift.render_owner(result))
+        print(ownership.render_owner(result))
     return 0 if result["status"] != "unknown" else 1
 
 
