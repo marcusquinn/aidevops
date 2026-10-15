@@ -68,3 +68,16 @@ Consumers must use `resolve`: never infer a default from an unlabelled variable,
 ## Aliases instead of renames
 
 `aidevops secret alias NAME OLD_NAME` records that `OLD_NAME` is a retired name for `NAME`, so you can describe the current name without breaking anything that still uses the old one.
+
+## Resolution at injection
+
+When a requested name is **not itself stored**, `aidevops secret NAME -- CMD`, `run`, `get` and `check` resolve it through the registry and inject the source value under the requested name (output stays redacted):
+
+| Requested | Resolves to |
+|-----------|-------------|
+| A declared alias (`OLD_NAME`) | the credential that declares it |
+| A provider's conventional variable (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`, `HCLOUD_TOKEN`, `VERCEL_TOKEN`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | `defaults.<provider>` — **only when explicitly set** |
+
+A stored name always wins. With no default, or `--none`, the conventional variable stays unavailable exactly as before. `run` (inject all) also adds aliases and conventional defaults for injected credentials. Without a registry file nothing changes. Inspect the mapping with `python3 ~/.aidevops/agents/scripts/credential_inventory.py injection-map`.
+
+To retire a name safely: store the new name, `alias NEW OLD`, move consumers to `NEW`, then delete the old stored entry; until it is deleted, the stored `OLD` value still wins.

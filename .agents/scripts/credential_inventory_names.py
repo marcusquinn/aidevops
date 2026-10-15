@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from credential_inventory_fields import InventoryError, check_name, check_ref
+from credential_inventory_fields import DEFAULT_ENV, InventoryError, check_name, check_ref
 
 
 def set_default(data: dict[str, Any], provider: str, name: str | None) -> None:
@@ -34,6 +34,34 @@ def resolve_default(data: dict[str, Any], provider: str) -> tuple[str, str | Non
         return "undeclared", None
     name = defaults[provider]
     return ("none", None) if name is None else ("set", name)
+
+
+def injection_map(data: dict[str, Any], names: list[str] | None = None) -> list[tuple[str, str]]:
+    """Return (requested, source) name pairs that injection may satisfy.
+
+    Declared aliases map to their credential; a provider's conventional
+    variable maps to its explicitly declared default only. Undeclared or
+    explicitly-none defaults never produce a pair (GH#34718). Callers apply
+    a pair only when the requested name is not itself stored.
+    """
+    pairs: dict[str, str] = {}
+    for provider, env_name in sorted(DEFAULT_ENV.items()):
+        status, default = resolve_default(data, provider)
+        if status == "set" and default and default != env_name:
+            pairs[env_name] = default
+    for name, record in sorted((data.get("credentials") or {}).items()):
+        for alias in (record or {}).get("aliases") or []:
+            pairs[alias] = name
+    wanted = set(names) if names else None
+    return [(req, src) for req, src in sorted(pairs.items()) if wanted is None or req in wanted]
+
+
+def resolve_name(data: dict[str, Any], name: str) -> str | None:
+    """Return the stored source name for an alias or conventional default variable."""
+    for requested, source in injection_map(data, [name]):
+        if requested == name:
+            return source
+    return None
 
 
 def alias_owner(data: dict[str, Any], alias: str) -> str | None:

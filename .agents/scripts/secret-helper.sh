@@ -662,6 +662,110 @@ run_credential_inventory() {
 	return "$exit_code"
 }
 
+# True only when a registry file exists and its helper can run. Installs
+# without a registry never invoke python, so injection is unchanged.
+has_credential_inventory() {
+	local inventory_file="${AIDEVOPS_CREDENTIAL_INVENTORY:-}"
+	if [[ -z "$inventory_file" ]]; then
+		inventory_file="${HOME}/.config/aidevops/credential-inventory.json"
+	else
+		inventory_file="${inventory_file/#\~/$HOME}"
+	fi
+	[[ -f "$inventory_file" ]] || return 1
+	command -v python3 >/dev/null 2>&1 || return 1
+	[[ -f "${SCRIPT_DIR}/credential_inventory.py" ]] || return 1
+	return 0
+}
+
+# True when NAME is stored in gopass or a credential file (no decryption).
+secret_name_stored() {
+	local name="$1"
+	if has_gopass && gopass_owns_secret "$name"; then
+		return 0
+	fi
+	local cred_file
+	local assignment="export ${name}="
+	while IFS= read -r cred_file; do
+		[[ -z "$cred_file" ]] && continue
+		if grep -q "^${assignment}" "$cred_file" 2>/dev/null; then
+			return 0
+		fi
+	done < <(resolve_credential_files)
+	return 1
+}
+
+# Print the stored source for a requested name that is not itself stored:
+# a declared alias, or a provider's conventional variable with an explicit
+# default (GH#34718). Returns 1 when nothing applies; defaults are never inferred.
+resolve_injection_source() {
+	local name="$1"
+	has_credential_inventory || return 1
+	secret_name_stored "$name" && return 1
+	local source_name=""
+	source_name=$(run_credential_inventory resolve-name "$name" 2>/dev/null) || return 1
+	[[ "$source_name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
+	printf '%s\n' "$source_name"
+	return 0
+}
+
+# Append NAME=value records for REQUESTED SOURCE pairs to a NUL-delimited env
+# file, copying the value of SOURCE when it is present and REQUESTED is not.
+append_alias_records() {
+	local env_file="$1"
+	shift
+	[[ $# -ge 2 ]] || return 0
+	local -a pairs=("$@")
+	local -a keys=()
+	local -a values=()
+	local record=""
+	while IFS= read -r -d '' record; do
+		[[ "$record" == *=* ]] || continue
+		keys+=("${record%%=*}")
+		values+=("${record#*=}")
+	done <"$env_file"
+	local -a additions=()
+	local i=0
+	while [[ $i -lt ${#pairs[@]} ]]; do
+		local requested="${pairs[$i]}"
+		local source_name="${pairs[$((i + 1))]}"
+		i=$((i + 2))
+		local j=0 have_requested=false source_index=-1
+		while [[ $j -lt ${#keys[@]} ]]; do
+			[[ "${keys[$j]}" == "$requested" ]] && have_requested=true
+			[[ "${keys[$j]}" == "$source_name" ]] && source_index=$j
+			j=$((j + 1))
+		done
+		if [[ "$have_requested" == false && $source_index -ge 0 ]]; then
+			additions+=("${requested}=${values[$source_index]}")
+			keys+=("$requested")
+			values+=("${values[$source_index]}")
+		fi
+	done
+	[[ ${#additions[@]} -gt 0 ]] || return 0
+	for record in "${additions[@]}"; do
+		printf '%s\0' "$record" >>"$env_file"
+	done
+	return 0
+}
+
+# For `run` (inject all): add declared aliases and explicit provider defaults.
+append_registry_aliases() {
+	local env_file="$1"
+	has_credential_inventory || return 0
+	local mapping=""
+	mapping=$(run_credential_inventory injection-map) || return 0
+	[[ -n "$mapping" ]] || return 0
+	local -a pairs=()
+	local requested="" source_name=""
+	while IFS=$'\t' read -r requested source_name; do
+		[[ -n "$requested" && -n "$source_name" ]] || continue
+		pairs+=("$requested" "$source_name")
+	done <<<"$mapping"
+	[[ ${#pairs[@]} -gt 0 ]] || return 0
+	append_alias_records "$env_file" "${pairs[@]}"
+	return 0
+}
+
 # Parse `set` options after SECRET_NAME into SET_SOURCE_FILE and
 # SET_RECORD_ARGS (globals keep Bash 3.2 compatibility without namerefs).
 parse_set_options() {
@@ -812,6 +916,13 @@ cmd_get() {
 
 	local value
 	value=$(get_secret_value "$name")
+	if [[ -z "$value" ]]; then
+		# Declared alias or explicit provider default (GH#34718)
+		local source_name=""
+		if source_name=$(resolve_injection_source "$name"); then
+			value=$(get_secret_value "$source_name")
+		fi
+	fi
 
 	if [[ -z "$value" ]]; then
 		print_error "Secret not found: $name" >&2
@@ -831,13 +942,20 @@ cmd_get() {
 cmd_check() {
 	local name="${1:-}"
 	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
+	# Resolve aliases/explicit defaults exactly as injection does (GH#34718)
+	local source_name=""
+	if source_name=$(resolve_injection_source "$name" 2>/dev/null); then
+		name="$source_name"
+	fi
 	if has_gopass && gopass_owns_secret "$name"; then
 		local value=""
 		value=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" </dev/null 2>/dev/null) || return 3
 		[[ -n "$value" ]] || return 3
 		return 0
 	fi
-	cmd_get "$name" >/dev/null 2>&1 || return 1
+	local plain_value=""
+	plain_value=$(get_secret_value "$name" 2>/dev/null) || return 1
+	[[ -n "$plain_value" ]] || return 1
 	return 0
 }
 
@@ -1020,6 +1138,7 @@ cmd_run() {
 	trap "rm -f '$env_file'" EXIT
 
 	build_secret_env >"$env_file"
+	append_registry_aliases "$env_file"
 	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output
@@ -1071,9 +1190,25 @@ cmd_run_specific() {
 	# shellcheck disable=SC2064
 	trap "rm -f '$env_file'" EXIT
 
-	if ! build_secret_env "${secret_names[@]}" >"$env_file"; then
+	# Requested names that are not stored may resolve to a declared alias
+	# source or an explicit provider default (GH#34718).
+	local -a source_names=()
+	local -a alias_pairs=()
+	local requested_name=""
+	for requested_name in ${secret_names[@]+"${secret_names[@]}"}; do
+		local source_name=""
+		if source_name=$(resolve_injection_source "$requested_name"); then
+			source_names+=("$source_name")
+			alias_pairs+=("$requested_name" "$source_name")
+		else
+			source_names+=("$requested_name")
+		fi
+	done
+
+	if ! build_secret_env ${source_names[@]+"${source_names[@]}"} >"$env_file"; then
 		return 1
 	fi
+	append_alias_records "$env_file" ${alias_pairs[@]+"${alias_pairs[@]}"}
 	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output

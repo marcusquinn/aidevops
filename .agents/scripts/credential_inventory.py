@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,6 +22,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import credential_inventory_fields as rules  # noqa: E402
 import credential_inventory_names as names  # noqa: E402
 import credential_inventory_store as store  # noqa: E402
+import credential_inventory_view as view  # noqa: E402
 
 EXIT_INVALID = 2
 EXIT_DEFAULT_NONE = 3
@@ -34,93 +34,6 @@ def emit_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def stored_secret_names() -> list[str] | None:
-    """Names-only listing from secret-helper.sh inventory; None if unavailable."""
-    helper = SCRIPT_DIR / "secret-helper.sh"
-    try:
-        result = subprocess.run(
-            ["bash", str(helper), "inventory"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-        if result.returncode != 0:
-            return None
-        return sorted(item["name"] for item in json.loads(result.stdout).get("secrets", []))
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
-
-
-# --------------------------------------------------------------------------
-# describe
-# --------------------------------------------------------------------------
-
-
-def summary(data: dict[str, Any], stored: list[str] | None) -> dict[str, Any]:
-    """Whole-registry view, grouped by provider, with undescribed secrets."""
-    providers: dict[str, dict[str, Any]] = {}
-    for name in sorted(data["credentials"]):
-        record = names.describe(data, name)
-        group = providers.setdefault(record["provider"], {"credentials": []})
-        group["credentials"].append(record)
-    for provider, group in providers.items():
-        status, default = names.resolve_default(data, provider)
-        group["default"] = {"status": status, "name": default}
-    known = set(data["credentials"])
-    for record in data["credentials"].values():
-        known.update(record.get("aliases") or [])
-    result: dict[str, Any] = {"providers": providers, "provider_accounts": data["provider_accounts"]}
-    if stored is None:
-        result["undescribed"] = None
-        result["stored_listing"] = "unavailable"
-    else:
-        result["undescribed"] = [name for name in stored if name not in known]
-    return result
-
-
-def format_account(account: dict[str, Any] | None) -> str:
-    """Short human label for an account record."""
-    if not account:
-        return "account: unrecorded"
-    ownership = account.get("ownership") or {}
-    tags = [ownership.get("type") or "ownership unknown"]
-    if ownership:
-        tags.append("confirmed" if ownership.get("confirmed") else "unconfirmed")
-    return f"account: {account.get('name')} ({', '.join(tags)})"
-
-
-def format_record(record: dict[str, Any]) -> str:
-    """One human-readable line for a credential."""
-    reach = record.get("reach") or {}
-    parts = [
-        record["name"] + ("  [default]" if record.get("is_default") else ""),
-        format_account(record.get("account")),
-        "reach: " + (", ".join(reach.get("zones", []) + reach.get("resources", [])) or "unrecorded"),
-        "expires: " + (record.get("expires_at") or "unrecorded"),
-    ]
-    if record.get("purpose"):
-        parts.append("purpose: " + record["purpose"])
-    if record.get("aliases"):
-        parts.append("aliases: " + ", ".join(record["aliases"]))
-    return "  " + "\n      ".join(parts)
-
-
-def print_summary(view: dict[str, Any]) -> None:
-    """Text rendering of the whole registry."""
-    labels = {"set": "{name}", "none": "explicitly none", "undeclared": "undeclared"}
-    if not view["providers"]:
-        print("No credentials described yet. Record one with: aidevops secret record NAME --provider PROVIDER --account REF")
-    for provider, group in sorted(view["providers"].items()):
-        default = group["default"]
-        print(f"{provider}  (default: {labels[default['status']].format(name=default['name'])})")
-        for record in group["credentials"]:
-            print(format_record(record))
-    undescribed = view.get("undescribed")
-    if undescribed:
-        print(f"\nUndescribed stored secrets ({len(undescribed)}): " + ", ".join(undescribed))
-        print("Describe them with: aidevops secret record NAME --provider PROVIDER --account REF")
-    elif undescribed is None:
-        print("\nStored-secret listing unavailable; undescribed secrets not checked.")
-
-
 def cmd_describe(args: argparse.Namespace) -> int:
     data = store.load()
     if args.name:
@@ -128,13 +41,13 @@ def cmd_describe(args: argparse.Namespace) -> int:
         if args.json:
             emit_json(record)
         else:
-            print(format_record(record))
+            print(view.format_record(record))
         return 0
-    view = summary(data, stored_secret_names())
+    summary = view.summary(data, view.stored_secret_names())
     if args.json:
-        emit_json(view)
+        emit_json(summary)
     else:
-        print_summary(view)
+        view.print_summary(summary)
     return 0
 
 
@@ -215,6 +128,22 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return EXIT_DEFAULT_NONE if status == "none" else EXIT_DEFAULT_UNDECLARED
 
 
+def cmd_injection_map(args: argparse.Namespace) -> int:
+    """Print tab-separated REQUESTED SOURCE name pairs (names only, never values)."""
+    for requested, source in names.injection_map(store.load(), args.names or None):
+        print(f"{requested}\t{source}")
+    return 0
+
+
+def cmd_resolve_name(args: argparse.Namespace) -> int:
+    """Print the source credential for an alias/conventional default; exit 1 if none."""
+    source = names.resolve_name(store.load(), args.name)
+    if source is None:
+        return 1
+    print(source)
+    return 0
+
+
 def cmd_validate(_args: argparse.Namespace) -> int:
     store.load()
     print("Credential registry is valid")
@@ -276,6 +205,12 @@ def add_simple_parsers(sub: argparse._SubParsersAction) -> None:
     resolve.set_defaults(func=cmd_resolve)
     validate = sub.add_parser("validate", help="validate the registry file")
     validate.set_defaults(func=cmd_validate)
+    injection = sub.add_parser("injection-map", help="alias/default name pairs used at injection")
+    injection.add_argument("names", nargs="*")
+    injection.set_defaults(func=cmd_injection_map)
+    resolve_name = sub.add_parser("resolve-name", help="source credential for an alias or default variable")
+    resolve_name.add_argument("name")
+    resolve_name.set_defaults(func=cmd_resolve_name)
 
 
 def build_parser() -> argparse.ArgumentParser:
