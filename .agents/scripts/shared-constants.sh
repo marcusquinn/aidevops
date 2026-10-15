@@ -1546,6 +1546,8 @@ issue_brief_hold_blocks_auto_release() {
 #   $1 — issue number
 #   $2 — repo slug (owner/repo)
 #   $3 — worker login to remove as assignee (optional; empty = no assignee change)
+#   $4 — open-draft projection (optional; "blocked" default, or "available"
+#        for runner-local releases that a capable runner continues, GH#34758)
 #
 # Returns:
 #   0 on success, including idempotent no-ops
@@ -1558,10 +1560,12 @@ clear_active_status_on_release() {
 	local issue_num="$1"
 	local repo_slug="$2"
 	local worker_login="${3:-}"
+	local draft_projection="${4:-blocked}"
 
 	if [[ -z "$issue_num" || -z "$repo_slug" ]]; then
 		return 0
 	fi
+	[[ "$draft_projection" == available ]] || draft_projection="blocked"
 
 	# The release event alone does not identify a review-ready PR. Read the
 	# current linked PR state before writing: drafts project as blocked partial
@@ -1573,13 +1577,13 @@ clear_active_status_on_release() {
 	linked_prs_json=$(gh pr list --repo "$repo_slug" --state all \
 		--search "#${issue_num} in:body" \
 		--json number,state,isDraft,reviewDecision,body --limit 20 2>/dev/null) || return 1
-	projection=$(printf '%s' "$linked_prs_json" | jq -r --arg num "$issue_num" '
+	projection=$(printf '%s' "$linked_prs_json" | jq -r --arg num "$issue_num" --arg draft "$draft_projection" '
 		def available: "available";
 		[.[] | select((.body // "") | test("(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]*#" + $num + "\\b"; "i"))]
 		| if length == 0 then available
 		elif ([.[] | select(.state == "OPEN")] | length) != 0 and
 			([.[] | select(.state == "OPEN")] | length) != 1 then "ambiguous"
-		elif any(.state == "OPEN" and .isDraft == true) then "blocked"
+		elif any(.state == "OPEN" and .isDraft == true) then $draft
 		elif any(.state == "OPEN" and .reviewDecision == "CHANGES_REQUESTED") then available
 		elif any(.state == "OPEN" and .isDraft == false) then "in-review"
 		elif any(.state == "MERGED") then "done"

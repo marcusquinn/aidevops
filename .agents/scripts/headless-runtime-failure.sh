@@ -817,8 +817,16 @@ _hrff_project_post_release_state() {
 	# claim, blocking re-dispatch. Preserves terminal states (done, blocked)
 	# set by authoritative paths. Defensive skip if origin:interactive.
 	# Non-fatal: failure does not block the release comment path.
+	# GH#34758: a runner-capability release is runner-local. Its open draft
+	# stays available so a capable runner's exact-head continuation can run,
+	# matching the "Projected state: status:available" recovery text.
+	local draft_projection="blocked"
+	if [[ "$reason" == blocked ]] && declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
+		[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
+		draft_projection="available"
+	fi
 	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection" \
 			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
 	fi
 	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"

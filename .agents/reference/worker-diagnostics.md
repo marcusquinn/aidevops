@@ -97,7 +97,11 @@ A missing verification tool, or a forbidden dependency install, is not a
 permission boundary (GH#34110). Workers first check repository-declared tools
 (`.aidevops.json` `.verify`, worktree `.venv/bin/<tool>`), then report
 `runner_capability_unmet`, which releases to a capable runner without a global
-hold. `repo-verify-pre-push.sh` labels missing Python tools as tooling, not
+hold. A missing static linter that CI also runs (ShellCheck, markdownlint) is a
+CI handoff, not this class (GH#34758). A capability release keeps an open draft
+`status:available`, and `pr-checkpoint-continuation-helper.sh dispatch-stalled`
+continues that exact head once per head before posting attention.
+`repo-verify-pre-push.sh` labels missing Python tools as tooling, not
 source defects. Terminal-only reports create no progress-blocker events;
 `pulse-diagnose-helper.sh issue` shows a separate "Terminal blocker" section and
 JSON `terminal_blocker`. That section says whether a permission request exists

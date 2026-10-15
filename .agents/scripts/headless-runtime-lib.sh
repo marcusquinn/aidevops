@@ -1066,7 +1066,12 @@ permissions, uncertain availability or a trigger that is already satisfied.
 A tool absent from PATH is not yet proof it is uninstalled (GH#34110). First
 check only what the repository declares: `.aidevops.json` `.verify` commands and
 a worktree-local `.venv/bin/<tool>`; never scan host directories or install.
-If a required verification tool is still unavailable on this runner, use:
+A missing static linter whose check the PR's CI also runs (for example
+ShellCheck or markdownlint in `.github/workflows/`) is not a blocker (GH#34758):
+run every other verification, name the unavailable tool and the CI job that
+covers it in the PR body, mark the PR ready and hand off to CI. Repair any CI
+failure it reports. Only a tool with no CI equivalent (runtime tests,
+interpreters, secrets, local data) that is still unavailable on this runner uses:
 TERMINAL_BLOCKER_REASON=runner_capability_unmet
 Name the missing tool, interpreter and checked declarations in the dossier.
 For an evidenced unresolved permission boundary, including a continued session

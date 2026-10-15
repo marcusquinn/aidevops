@@ -188,12 +188,16 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 	[[ "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 1
 	# A blocked release requires the revised envelope regardless of provenance.
 	# It must not fall back to legacy eligibility by dropping origin:interactive.
-	if jq -e '
+	# GH#34758: the released-issue continuation path accepts only the runner-local
+	# capability class, which needs a capable runner rather than a brief change.
+	if jq -e --argjson allow_released "$allow_released" '
 		(if (.[0]? | type) == "array" then [.[][]] else . end) |
 		[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")] as $trusted |
 		($trusted | any((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))) or
 		([$trusted[] | select((.body // "") | test("(^|\\n)(CLAIM_RELEASED reason=|DISPATCH_CLAIM |Dispatching worker|Interactive session claimed)"))] |
-		sort_by(.created_at,.id) | last | (.body // "") | test("(^|\\n)CLAIM_RELEASED reason=blocked "))
+		sort_by(.created_at,.id) | last | (.body // "") |
+		test("(^|\\n)CLAIM_RELEASED reason=blocked ") and
+		(($allow_released and test("(^|\\n)Terminal blocker: reason=runner_capability_unmet ")) | not))
 	' <<<"$comments_json" >/dev/null 2>&1; then
 		return 1
 	fi

@@ -39,8 +39,11 @@ _PCC_ATTENTION_MARKER="aidevops:blocked-checkpoint-attention"
 _PCC_STALL_ATTENTION_MARKER="aidevops:stalled-checkpoint-attention"
 # Stall/timeout release reasons (worker-activity-failure-families.jq
 # "watchdog-stall" plus kill-site timeout classes) eligible for one automatic
-# exact-head continuation. `blocked` and every other reason are excluded.
+# exact-head continuation. Every other reason is excluded, except a `blocked`
+# release whose runtime recovery line names the runner-local capability class
+# (GH#34758): it needs no brief change or approval, only a capable runner.
 _PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
@@ -304,7 +307,10 @@ PR title: ${safe_title}
 2. Preserve valuable existing work. Compare the implementation against the
    linked issue's acceptance criteria and finish only the missing in-scope work.
 3. Run focused lint/tests for every changed area. Hand-apply fixes; never apply
-   AI-review suggestions verbatim or weaken required checks.
+   AI-review suggestions verbatim or weaken required checks. A static linter
+   unavailable on this runner whose check the PR's CI also runs (for example
+   ShellCheck or markdownlint) is delegated to CI, not a blocker: name the tool
+   and covering CI job in the PR body (GH#34758).
 4. Before pushing, run the exact-target fence:
    \`"${ownership_helper}" verify-pr-checkpoint-target "${repair_number_ref}" "${repo_slug_ref}" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA" "\$AIDEVOPS_PR_REPAIR_HEAD_REF" "${linked_issue_ref}" "${issue_assignee_ref}" "${PCC_CHECKPOINT_ASSIGNEE}"\`.
    Stop without pushing if it no longer reports PR_CHECKPOINT_TARGET_VALID.
@@ -728,10 +734,13 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 #######################################
 _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
-	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" "${_PCC_JQ_RELEASE_DEFS}"'
+	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
+		--arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
 		def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 		def release_reason: ([body_lines | select(is_release)] | first // "") | field("reason");
-		def stall_release: release_reason | (length > 0 and test($pattern));
+		def capability_release: release_reason == "blocked" and
+			any(body_lines; startswith($capability));
+		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
 		($head_date | epoch) as $head_epoch
 		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
