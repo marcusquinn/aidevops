@@ -14,6 +14,7 @@ source "${SCRIPT_DIR}/release-snapshot-helper.sh"
 _RELEASE_PROVENANCE_TAG_REF_PREFIX="refs/tags/"
 _RELEASE_PROVENANCE_SCOPE_REMOTE="remote"
 _RELEASE_PROVENANCE_SCOPE_LOCAL_SOURCE="local-source"
+_RELEASE_PROVENANCE_CMD_RESOLVE_SOURCE="resolve-source"
 
 _release_provenance_error() {
 	local message="$1"
@@ -29,13 +30,15 @@ Usage:
   release-provenance-helper.sh resolve-authorization --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR[,PR...]]
   release-provenance-helper.sh resolve-tag-authorization --tag TAG --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR@SHA[,PR@SHA...]]
   release-provenance-helper.sh resolve-tag-expected-sources --tag TAG --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR@SHA[,PR@SHA...]]
-  release-provenance-helper.sh resolve-source --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR[,PR...]]
+  release-provenance-helper.sh resolve-source --source-pr PR --repo OWNER/REPO [--branch BRANCH] [--expected-sources PR[,PR...]] [--pinned-aggregate SHA]
   release-provenance-helper.sh preview-sources --source-pr PR --repo OWNER/REPO [--branch BRANCH]
 
 Verifies that a release tag is signed, version-consistent, reachable from the
 canonical branch, and bound to a merged source PR through immutable tag trailers.
 The local-source mode omits remote-tag and canonical-branch reachability checks;
 callers must pair it with exact protected-release PR and ancestry verification.
+--pinned-aggregate (aggregate recovery only) accepts a checkout at that exact
+reviewed aggregate commit when it is an ancestor of the canonical branch.
 USAGE
 	return 0
 }
@@ -369,11 +372,53 @@ _release_provenance_resolve_tag_expected_sources() {
 	return $?
 }
 
+# Print the validated source checkout: the exact canonical tip, or (GH#34710)
+# an explicitly pinned reviewed aggregate that ordinary merges have since
+# passed. A pin must be this exact checkout, remain in protected-main history,
+# and carry the immutable aggregate manifest; the caller still applies every
+# manifest, PR-record and reviewed-base check.
+_release_provenance_source_head() {
+	local requested_pr="$1"
+	local repo_slug="$2"
+	local branch_name="$3"
+	local pinned_aggregate="$4"
+	local release_head=""
+	[[ "$requested_pr" =~ ^[0-9]+$ ]] || {
+		_release_provenance_error "source PR is not numeric"
+		return 1
+	}
+	[[ "$repo_slug" =~ ^[^/]+/[^/]+$ && "$branch_name" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+		_release_provenance_error "invalid repository or canonical branch"
+		return 1
+	}
+	release_head=$(git rev-parse HEAD 2>/dev/null) || return 1
+	if [[ -n "$pinned_aggregate" ]]; then
+		[[ "$pinned_aggregate" =~ ^[0-9a-f]{40}$ && "$release_head" == "$pinned_aggregate" ]] || {
+			_release_provenance_error "release checkout is not the pinned aggregate commit"
+			return 1
+		}
+		git merge-base --is-ancestor "$release_head" "origin/${branch_name}" 2>/dev/null || {
+			_release_provenance_error "pinned aggregate is not an ancestor of origin/${branch_name}"
+			return 1
+		}
+		[[ -n "$(_release_provenance_trailer_values_at_commit "$release_head" "Aidevops-Release-Aggregator-PR")" ]] || {
+			_release_provenance_error "pinned commit is not an explicit release-aggregation PR"
+			return 1
+		}
+	elif [[ "$release_head" != "$(git rev-parse "origin/${branch_name}" 2>/dev/null)" ]]; then
+		_release_provenance_error "release checkout is not the exact origin/${branch_name} tip"
+		return 1
+	fi
+	printf '%s\n' "$release_head"
+	return 0
+}
+
 _release_provenance_resolve_source() {
 	local requested_pr="$1"
 	local repo_slug="$2"
 	local branch_name="$3"
 	local expected_sources_raw="${4:-}"
+	local pinned_aggregate="${5:-}"
 	local release_head=""
 	local requested_json=""
 	local requested_merge=""
@@ -388,19 +433,8 @@ _release_provenance_resolve_source() {
 	local source_result_json=""
 	local observed_sources_json=""
 
-	[[ "$requested_pr" =~ ^[0-9]+$ ]] || {
-		_release_provenance_error "source PR is not numeric"
-		return 1
-	}
-	[[ "$repo_slug" =~ ^[^/]+/[^/]+$ && "$branch_name" =~ ^[A-Za-z0-9._/-]+$ ]] || {
-		_release_provenance_error "invalid repository or canonical branch"
-		return 1
-	}
-	release_head=$(git rev-parse HEAD 2>/dev/null) || return 1
-	[[ "$release_head" == "$(git rev-parse "origin/${branch_name}" 2>/dev/null)" ]] || {
-		_release_provenance_error "release checkout is not the exact origin/${branch_name} tip"
-		return 1
-	}
+	release_head=$(_release_provenance_source_head "$requested_pr" "$repo_slug" "$branch_name" \
+		"$pinned_aggregate") || return 1
 	expected_sources_json=$(_release_provenance_expected_sources "$requested_pr" "$expected_sources_raw" \
 		"$repo_slug" "$branch_name" "$release_head") || return 1
 	requested_json=$(_release_provenance_pr_json "$repo_slug" "$requested_pr") || return 1
@@ -807,6 +841,7 @@ main() {
 	local source_pr=""
 	local expected_sources=""
 	local snapshot_mode=false
+	local pinned_aggregate=""
 
 	case "$command" in
 	verify | verify-local-source | resolve-authorization | resolve-tag-authorization | resolve-tag-expected-sources | resolve-source | preview-sources) ;;
@@ -826,6 +861,11 @@ main() {
 		case "$option" in
 		--snapshot)
 			snapshot_mode=true
+			;;
+		--pinned-aggregate)
+			pinned_aggregate="${1:-}"
+			[[ "$pinned_aggregate" =~ ^[0-9a-f]{40}$ ]] || return 1
+			shift || true
 			;;
 		--tag)
 			tag_name="${1:-}"
@@ -852,6 +892,8 @@ main() {
 	done
 
 	[[ -n "$repo_slug" && -n "$branch_name" ]] || return 1
+	# The pin is a recovery-only relaxation of the exact-tip source resolver.
+	[[ -z "$pinned_aggregate" || ("$command" == "$_RELEASE_PROVENANCE_CMD_RESOLVE_SOURCE" && "$snapshot_mode" == false) ]] || return 1
 	if [[ "$command" == "preview-sources" ]]; then
 		[[ "$source_pr" =~ ^[0-9]+$ && -z "$expected_sources" && -z "$tag_name" && "$snapshot_mode" == false ]] || return 1
 		# Preview the locally fetched remote tip, never the worker's feature HEAD.
@@ -862,11 +904,25 @@ main() {
 		return $?
 	fi
 	if [[ "$snapshot_mode" == true ]]; then
-		[[ "$command" == "resolve-source" || "$command" == "resolve-authorization" ]] || return 1
+		[[ "$command" == "$_RELEASE_PROVENANCE_CMD_RESOLVE_SOURCE" || "$command" == "resolve-authorization" ]] || return 1
 		[[ "$source_pr" =~ ^[0-9]+$ ]] || return 1
 		_release_provenance_resolve_snapshot "$source_pr" "$repo_slug" "$branch_name" "$expected_sources"
 		return $?
 	fi
+	_release_provenance_dispatch "$command" "$tag_name" "$source_pr" "$expected_sources" \
+		"$repo_slug" "$branch_name" "$pinned_aggregate"
+	return $?
+}
+
+# Dispatch non-snapshot commands after main() has parsed and validated options.
+_release_provenance_dispatch() {
+	local command="$1"
+	local tag_name="$2"
+	local source_pr="$3"
+	local expected_sources="$4"
+	local repo_slug="$5"
+	local branch_name="$6"
+	local pinned_aggregate="$7"
 	if [[ "$command" == "resolve-authorization" ]]; then
 		[[ -n "$source_pr" ]] || return 1
 		_release_provenance_resolve_authorization "$source_pr" "$expected_sources" "$repo_slug" "$branch_name"
@@ -882,9 +938,10 @@ main() {
 		_release_provenance_resolve_tag_expected_sources "$tag_name" "$source_pr" "$expected_sources" "$repo_slug" "$branch_name"
 		return $?
 	fi
-	if [[ "$command" == "resolve-source" ]]; then
+	if [[ "$command" == "$_RELEASE_PROVENANCE_CMD_RESOLVE_SOURCE" ]]; then
 		[[ -n "$source_pr" ]] || return 1
-		_release_provenance_resolve_source "$source_pr" "$repo_slug" "$branch_name" "$expected_sources"
+		_release_provenance_resolve_source "$source_pr" "$repo_slug" "$branch_name" "$expected_sources" \
+			"$pinned_aggregate"
 		return $?
 	fi
 	[[ -n "$tag_name" ]] || return 1

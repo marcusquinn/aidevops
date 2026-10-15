@@ -332,6 +332,11 @@ _release_tag_message() {
 			[[ "$VERSION_MANAGER_SNAPSHOT_BASE" =~ ^[0-9a-f]{40}$ ]] || return 1
 			printf 'Aidevops-Snapshot-Base: %s\n' "$VERSION_MANAGER_SNAPSHOT_BASE"
 		fi
+		if [[ -n "${VERSION_MANAGER_AGGREGATE_PIN:-}" ]]; then
+			# GH#34710: signed opt-in that this aggregate release may trail main.
+			[[ "$VERSION_MANAGER_AGGREGATE_PIN" == "$source_merge" ]] || return 1
+			printf 'Aidevops-Aggregate-Pin: %s\n' "$VERSION_MANAGER_AGGREGATE_PIN"
+		fi
 		while IFS= read -r aggregated_source; do
 			[[ -n "$aggregated_source" ]] || continue
 			printf 'Aidevops-Aggregated-Source: %s\n' "$aggregated_source"
