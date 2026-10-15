@@ -529,11 +529,17 @@ _version_manager_create_or_reuse_protected_pr() {
 }
 
 # Snapshot publication may lag main, but only for a cryptographically verified
-# tag explicitly binding the immutable range and direct release parent.
+# tag explicitly binding the immutable range and direct release parent. A
+# recovery-pinned aggregate (GH#34710) binds its reviewed aggregate merge the
+# same way: the signed pin must equal the direct parent and the source PR must
+# be that commit's immutable aggregator identity.
 _version_manager_is_signed_snapshot() {
 	local tag_name="$1"
 	local base=""
 	local source=""
+	local source_pr=""
+	local pin=""
+	local aggregator_pr=""
 	local verification=""
 	local tagger=""
 	local tag_ref="refs/tags/$tag_name"
@@ -542,9 +548,22 @@ _version_manager_is_signed_snapshot() {
 		awk '/^Aidevops-Snapshot-Base: / {print $2}') || return 1
 	source=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "$tag_ref" |
 		awk '/^Aidevops-Source-Merge: / {print $2}') || return 1
-	[[ "$base" =~ ^[0-9a-f]{40}$ && "$source" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ "$source" =~ ^[0-9a-f]{40}$ ]] || return 1
 	[[ "$(git -C "$REPO_ROOT" rev-parse "${tag_ref}^{commit}^1")" == "$source" ]] || return 1
-	git -C "$REPO_ROOT" merge-base --is-ancestor "$base" "$source" || return 1
+	if [[ -n "$base" ]]; then
+		[[ "$base" =~ ^[0-9a-f]{40}$ ]] || return 1
+		git -C "$REPO_ROOT" merge-base --is-ancestor "$base" "$source" || return 1
+	else
+		pin=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "$tag_ref" |
+			awk '/^Aidevops-Aggregate-Pin: / {print $2}') || return 1
+		source_pr=$(git -C "$REPO_ROOT" for-each-ref --format='%(contents:body)' "$tag_ref" |
+			awk '/^Aidevops-Source-PR: / {print $2}') || return 1
+		[[ "$pin" == "$source" && "$source_pr" =~ ^[0-9]+$ ]] || return 1
+		aggregator_pr=$(git -C "$REPO_ROOT" log -1 --format='%B' "$source" |
+			git -C "$REPO_ROOT" interpret-trailers --parse |
+			awk '/^Aidevops-Release-Aggregator-PR: / {print $2}') || return 1
+		[[ "$aggregator_pr" == "$source_pr" ]] || return 1
+	fi
 	if ! verification=$(git -C "$REPO_ROOT" verify-tag "$tag_name" 2>&1); then
 		_VERSION_MANAGER_SNAPSHOT_SIGNATURE_UNTRUSTED=1
 		print_error "Snapshot ${tag_name} is signature-unverified on this host (signer-untrusted)"

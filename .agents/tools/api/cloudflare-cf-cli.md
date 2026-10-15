@@ -63,6 +63,8 @@ Keep `cf cli search` queries anonymous: describe the action and resource type on
 aidevops secret <NAME> -- sh -c 'CLOUDFLARE_API_TOKEN="$<NAME>" cf zones list --per-page 5 | jq length'
 ```
 
+**Choosing the token**: with several Cloudflare accounts, pick one deliberately. `aidevops secret describe` shows which account and zones each stored token opens; `aidevops secret resolve cloudflare` prints the declared default (exit 3 = explicitly none, 4 = undeclared). Only when a default is declared does `aidevops secret CLOUDFLARE_API_TOKEN -- cf ...` inject that token as `CLOUDFLARE_API_TOKEN`; otherwise name the account-specific secret as above. Never create a default implicitly. See `tools/credentials/credential-inventory.md`.
+
 Interactive users can instead run `cf auth login` (OAuth device flow) and bind per-directory profiles with `cf auth create <name>` + `cf auth activate <name> [dir]`. Token scoping and rotation: `services/hosting/cloudflare.md`.
 
 ## Projects

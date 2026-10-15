@@ -102,9 +102,57 @@ Aidevops-Release-Aggregates: 43@${FIXTURE_SOURCE_43}"
 		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" >/dev/null 2>&1; then
 			exit 1
 		fi
+		# GH#34710: a pin never survives main being rewritten behind it.
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" \
+			--pinned-aggregate "$FIXTURE_AGGREGATE" >/dev/null 2>&1; then
+			exit 1
+		fi
 	)
+	# GH#34710: ordinary merges after the reviewed aggregate starve exact-tip
+	# recovery; only an explicit pin to that aggregate ancestor still resolves.
+	git -C "$fixture" fetch -q origin
+	git -C "$fixture" commit -q --allow-empty -m 'ordinary merge after aggregate'
+	git -C "$fixture" push -q origin main
+	(
+		cd "$_FULL_LOOP_RELEASE_PATH"
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" >/dev/null 2>&1; then
+			exit 1
+		fi
+		pinned=$(bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" \
+			--pinned-aggregate "$FIXTURE_AGGREGATE")
+		[[ "$(jq -r '.mode + " " + .source_merge' <<<"$pinned")" == "aggregate $FIXTURE_AGGREGATE" ]]
+		# The pin must name this exact checkout and an explicit aggregation commit.
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" \
+			--pinned-aggregate "$FIXTURE_SOURCE_43" >/dev/null 2>&1; then
+			exit 1
+		fi
+		git checkout -q --detach "$FIXTURE_SOURCE_43"
+		if bash "$resolver" resolve-source --source-pr 43 --repo test/repo \
+			--pinned-aggregate "$FIXTURE_SOURCE_43" >/dev/null 2>&1; then
+			exit 1
+		fi
+		git checkout -q --detach "$FIXTURE_AGGREGATE"
+		# Pins are recovery-only: never combined with snapshot or tag resolution.
+		if bash "$resolver" resolve-source --snapshot --source-pr 42 --repo test/repo \
+			--pinned-aggregate "$FIXTURE_AGGREGATE" >/dev/null 2>&1; then
+			exit 1
+		fi
+	)
+	_FULL_LOOP_AGGREGATE_RECOVERY_PIN="$FIXTURE_AGGREGATE"
+	_full_loop_recovery_prepare_aggregate test/repo 43 "$manifest"
+	[[ "$(git -C "$_FULL_LOOP_RELEASE_PATH" rev-parse HEAD)" == "$FIXTURE_AGGREGATE" ]]
+	[[ "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" == "$FIXTURE_AGGREGATE" ]]
+	[[ "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" == "$manifest" ]]
+	git -C "$fixture" worktree remove --force "$_FULL_LOOP_RELEASE_PATH"
+	# An unmerged side commit is never accepted as a pin, whatever its trailers.
+	_FULL_LOOP_AGGREGATE_RECOVERY_PIN=$(git -C "$fixture" commit-tree "${FIXTURE_AGGREGATE}^{tree}" \
+		-p "$FIXTURE_AGGREGATE" -F <(git -C "$fixture" log -1 --format=%B "$FIXTURE_AGGREGATE"))
+	if _full_loop_recovery_prepare_aggregate test/repo 43 "$manifest" >/dev/null 2>&1; then
+		exit 1
+	fi
 )
 printf 'PASS real aggregate preparation ignores an unpublished signed ancestor tag and retains manifest and exact-tip fences\n'
+printf 'PASS pinned aggregate recovery resolves only a reviewed aggregate ancestor of main\n'
 
 CHANNEL_MODE="absent"
 
@@ -316,6 +364,85 @@ printf 'PASS lane uncertainty blocks authorization expansion before mutation\n'
 	[[ "$authorization" == "$old_authorization" && "$lane_phase" == "remote-publication" ]]
 )
 printf 'PASS initial recovery fences the lane before authorization and restores pre-write failures\n'
+
+# GH#34746: a lane reserved elsewhere can reach remote-publication without this
+# host's per-PR authorization record; rebuild it only from a matching lane.
+(
+	transaction_log="${TEST_ROOT}/absent-authorization.log"
+	lane_authorization='42@2222222222222222222222222222222222222222'
+	expanded_authorization="${lane_authorization},43@3333333333333333333333333333333333333333"
+	authorization=""
+	# Not "read_rc": the production caller's local of that name would shadow it.
+	absent_read_status=2
+	lane_phase="remote-publication"
+	lane_tag="v1.2.3"
+	covered=true
+	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$expanded_authorization"
+	_FULL_LOOP_AGGREGATE_RECOVERY_OLD_TAG_OBJECT=1111111111111111111111111111111111111111
+	_full_loop_read_release_authorization() {
+		[[ -n "$authorization" ]] || return "$absent_read_status"
+		printf '%s\n' "$authorization"
+		return 0
+	}
+	_full_loop_read_release_authorization_recovery_snapshot() { return 1; }
+	release_authorization_subset() {
+		[[ "$covered" == true && "$1" == "$lane_authorization" && "$2" == "$expanded_authorization" ]]
+		return $?
+	}
+	_full_loop_persist_release_authorization() {
+		[[ "$1" == "test/repo" && "$2" == "42" && "$3" == "$lane_authorization" ]] || return 1
+		printf 'persist\n' >>"$transaction_log"
+		authorization="$3"
+		return 0
+	}
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON=$(jq -cn --arg phase "$lane_phase" --arg tag "$lane_tag" \
+			--arg sources "$lane_authorization" \
+			'{schema_version:1,active:true,source_pr:42,tag:$tag,phase:$phase,terminal_receipt:null,expected_sources:$sources}')
+		return 0
+	}
+	release_lane_begin_aggregate_recovery() {
+		[[ "$5" == "$lane_authorization" && "$6" == "$expanded_authorization" ]] || return 1
+		printf 'fence\n' >>"$transaction_log"
+		_AIDEVOPS_RELEASE_LANE_RECOVERY_SNAPSHOT='{}'
+		return 0
+	}
+	_full_loop_expand_release_authorization_for_aggregate() {
+		printf 'authorize\n' >>"$transaction_log"
+		authorization="$expanded_authorization"
+		return 0
+	}
+	release_lane_finish_aggregate_refresh() {
+		printf 'finish\n' >>"$transaction_log"
+		return 0
+	}
+	release_lane_restore_aggregate_recovery() { return 0; }
+	: >"$transaction_log"
+	_full_loop_recovery_begin_state_transaction test/repo 42 v1.2.3 2>/dev/null
+	[[ "$(tr '\n' ' ' <"$transaction_log")" == "persist fence authorize finish " ]]
+	[[ "$authorization" == "$expanded_authorization" ]]
+
+	for mismatch in tag phase coverage read-error; do
+		authorization=""
+		absent_read_status=2
+		lane_phase="remote-publication"
+		lane_tag="v1.2.3"
+		covered=true
+		case "$mismatch" in
+		tag) lane_tag="v9.9.9" ;;
+		phase) lane_phase="reserved" ;;
+		coverage) covered=false ;;
+		read-error) absent_read_status=1 ;;
+		esac
+		: >"$transaction_log"
+		if _full_loop_recovery_begin_state_transaction test/repo 42 v1.2.3 2>/dev/null; then
+			printf 'FAIL absent authorization rebuilt despite %s mismatch\n' "$mismatch"
+			exit 1
+		fi
+		[[ ! -s "$transaction_log" && -z "$authorization" ]]
+	done
+)
+printf 'PASS absent authorization rebuilds only from a matching, covered remote-publication lane\n'
 
 _FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="42@2222222222222222222222222222222222222222,43@3333333333333333333333333333333333333333"
 _full_loop_read_release_authorization() {

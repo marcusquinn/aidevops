@@ -867,6 +867,10 @@ main() {
 	if ! _version_manager_guard_headless_release_scope "$action" "${@:2}"; then
 		return 0
 	fi
+	# GH#34710: a pinned aggregate behind main is honoured only by recovery.
+	if [[ "$action" != "$_VERSION_MANAGER_ACTION_RECOVER_AGGREGATE" ]]; then
+		unset AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA
+	fi
 
 	case "$action" in
 	"get")
