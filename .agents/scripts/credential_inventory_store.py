@@ -147,6 +147,14 @@ def record_credential(data: dict[str, Any], name: str, provider: str, **fields: 
     return record
 
 
+def set_verification(data: dict[str, Any], name: str, observation: dict[str, Any]) -> None:
+    """Cache a provider verification on a recorded credential (GH#34722)."""
+    record = data["credentials"].get(name)
+    if record is None:
+        raise InventoryError(f"{name} is not recorded; record it first with: aidevops secret record {name} --provider PROVIDER")
+    record["verification"] = observation
+
+
 def _apply_account(data: dict[str, Any], record: dict[str, Any], provider: str, ref: str | None) -> None:
     if not ref:
         return

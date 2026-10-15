@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from credential_inventory_fields import NAME_RE, OWNERSHIP_TYPES, REF_RE, SCHEMA_VERSION
+
+FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{16}$")
 
 
 def _validate_accounts(data: dict[str, Any], errors: list[str]) -> None:
@@ -44,6 +47,19 @@ def _validate_credentials(data: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"credential {name} references unknown account {ref}")
         if not all(NAME_RE.match(str(alias)) for alias in record.get("aliases") or []):
             errors.append(f"credential {name} has an invalid alias")
+        if not _verification_ok(record.get("verification")):
+            errors.append(f"credential {name} has an invalid verification cache")
+
+
+def _verification_ok(cache: Any) -> bool:
+    """Cached observations may reference accounts only by fingerprint (GH#34722)."""
+    if cache is None:
+        return True
+    if not isinstance(cache, dict):
+        return False
+    refs = [account.get("fingerprint") for account in cache.get("accounts") or []]
+    refs += [item.get("account") for key in ("zones", "resources", "unreadable") for item in cache.get(key) or []]
+    return all(isinstance(ref, str) and FINGERPRINT_RE.match(ref) for ref in refs)
 
 
 def _validate_defaults(data: dict[str, Any], errors: list[str]) -> None:

@@ -6,6 +6,29 @@
 set -euo pipefail
 
 readonly INVENTORY_PATH="${AIDEVOPS_SITE_INVENTORY:-${HOME}/.config/aidevops/site-inventory.json}"
+readonly CREDENTIAL_REGISTRY_PATH="${AIDEVOPS_CREDENTIAL_INVENTORY:-${HOME}/.config/aidevops/credential-inventory.json}"
+
+# Non-secret account view from the credential registry (GH#34722), keyed by
+# account ref; used only for dns.account_ref values absent from dns_accounts.
+# Prints {} when the registry is absent or unreadable.
+registry_accounts() {
+	local path="${CREDENTIAL_REGISTRY_PATH/#\~/$HOME}"
+	if [[ ! -f "$path" ]]; then
+		printf '{}\n'
+		return 0
+	fi
+	jq -c '
+		(.credentials // {}) as $creds | (.defaults // {}) as $defaults
+		| (.provider_accounts // {}) | with_entries(.key as $ref | .value |= (
+			. as $account
+			| [$creds | to_entries[] | select(.value.account_ref == $ref) | .key] as $own
+			| ($defaults[$account.provider] // null) as $default
+			| {name, account_id_env, provider, source:"credential-registry", credentials:$own,
+				credential_env:(if ($own | length) == 1 then $own[0] elif ($default != null and ($own | index($default)) != null) then $default else null end),
+				last_verified:([$creds[$own[]].verification.verified_at // empty] | max)}))
+	' "$path" 2>/dev/null || printf '{}\n'
+	return 0
+}
 
 usage() {
 	printf 'Usage: %s <lookup|readiness|discover|validate> [hostname]\n' "${0##*/}"
@@ -29,7 +52,9 @@ require_inventory() {
 }
 
 validate_inventory() {
-	jq -e '
+	local registry
+	registry=$(registry_accounts)
+	jq -e --argjson registry "$registry" '
 		def valid_metadata($accounts):
 			(if has("ownership") then
 				.ownership | type == "object"
@@ -37,7 +62,7 @@ validate_inventory() {
 				and (if has("confirmed") then .confirmed | type == "boolean" else true end)
 			else true end)
 			and (if (.dns // {} | has("account_ref")) then
-				.dns.account_ref as $ref | ($ref | type == "string") and ($accounts | has($ref))
+				.dns.account_ref as $ref | ($ref | type == "string") and (($accounts | has($ref)) or ($registry | has($ref)))
 			else true end);
 		(.dns_accounts // {}) as $accounts
 		| (.version | type == "number") and (.sites | type == "object")
@@ -51,13 +76,17 @@ validate_inventory() {
 
 lookup_record() {
 	local hostname="$1"
-	jq -ce --arg hostname "$hostname" '
+	local registry
+	registry=$(registry_accounts)
+	jq -ce --arg hostname "$hostname" --argjson registry "$registry" '
 		def selected: to_entries[] | select(.key == $hostname or .value.canonical_hostname == $hostname or (.value.aliases // [] | index($hostname)) or (.value.children // {} | to_entries[]? | select(.value.hostname == $hostname or (.value.aliases // [] | index($hostname)))));
 		(.sites | selected) as $match
 		| ([($match.value.children // {} | to_entries[]? | select(.value.hostname == $hostname or (.value.aliases // [] | index($hostname))) | .value)][0] // null) as $child
 		| (.hosting_accounts[$match.value.hosting.account_ref] // {}) as $account
 		| ($child.dns // $match.value.dns) as $dns
-		| (if $dns.account_ref != null then $dns + {account:(.dns_accounts[$dns.account_ref] | {name, credential_env, account_id_env, last_verified})} else $dns end) as $resolved_dns
+		| (if $dns.account_ref == null then $dns
+			elif (.dns_accounts // {} | has($dns.account_ref)) then $dns + {account:(.dns_accounts[$dns.account_ref] | {name, credential_env, account_id_env, last_verified})}
+			else $dns + {account:($registry[$dns.account_ref] // null)} end) as $resolved_dns
 		| {status:"found", matched_hostname:$hostname, site_id:$match.key, name:$match.value.name, canonical_hostname:$match.value.canonical_hostname, platform:$match.value.platform, environment:$match.value.environment, dns:$resolved_dns, hosting:($match.value.hosting + {deployment_path:($child.deployment_path // $match.value.hosting.deployment_path), ssh_host:$account.ssh_host, ssh_port:$account.ssh_port, ssh_user:$account.ssh_user, credential_env:$account.credential_env, last_verified:$account.last_verified}), child:$child, provenance:$match.value.provenance, last_verified:$match.value.last_verified}
 		+ (if ($child.purpose // $match.value.purpose) != null then {purpose:($child.purpose // $match.value.purpose)} else {} end)
 		+ (if ($child.ownership // $match.value.ownership) != null then {ownership:($child.ownership // $match.value.ownership)} else {} end)

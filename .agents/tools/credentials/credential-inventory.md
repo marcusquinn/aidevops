@@ -23,7 +23,8 @@ tools:
 
 - **Purpose**: answer, without live API calls, which account a credential opens, what it reaches, who it is for, when it expires, and which credential is each provider's default.
 - **File**: `~/.config/aidevops/credential-inventory.json` (600; override with `AIDEVOPS_CREDENTIAL_INVENTORY`). Template: `configs/credential-inventory.json.txt`.
-- **Commands**: `aidevops secret describe|record|account|default|alias|resolve|validate|dependents` (`secret-helper.sh` delegates to `credential_inventory.py`).
+- **Commands**: `aidevops secret describe|record|account|default|alias|resolve|validate|dependents|drift|owner` (`secret-helper.sh` delegates to `credential_inventory.py`); `aidevops secret verify cloudflare [NAME...]` is the only command that calls a provider, and only when invoked.
+- **Which account holds a zone or resource?** `aidevops secret owner RESOURCE`; `unknown` means verify first, never guess.
 - **Before renaming, rotating or revoking**: run `aidevops secret dependents NAME`; never treat a name as unused unless it reports `complete: true`.
 - **Never stored**: secret values, raw provider account IDs. Store the *name* of the secret that holds an account ID (`account_id_env`). Free-text fields that look like secrets are refused.
 - **Rule for sessions**: whenever you store a credential, record its account, **even for the operator's first and only account at that provider**: `aidevops secret set NAME --provider P --account REF --purpose "..."`.
@@ -119,3 +120,27 @@ To retire a name safely: store the new name, `alias NEW OLD`, move consumers to 
 | `~/Library/LaunchAgents/*.plist`, `~/.config/systemd/user/*`, `crontab -l` | file/command scan (binary plists decoded) |
 
 Lines that build the name dynamically (e.g. `"CLOUDFLARE_${ACCOUNT}_API_TOKEN"`, concatenation, f-strings, `%s`) are reported as `possible-dynamic`. They, timeouts, truncation and unreadable files all set `complete: false`. Only a complete result with no matches prints "No references found"; remote-only consumers (CI secrets, deployed servers) are outside this search.
+
+## Verify, drift and owner
+
+`aidevops secret verify cloudflare [NAME...]` checks recorded Cloudflare credentials, or every one when no names are given. Unrecorded names are refused. Each token is injected through the normal `NAME -- CMD` path (environment only, output redacted), then `credential_inventory_cloudflare.py` makes **GET-only** calls:
+
+- token verification (user tokens, with a fallback for account tokens);
+- accounts and paginated zones;
+- best-effort Workers scripts, Pages projects and R2 buckets.
+
+A 403 response is cached as `unreadable`, not as absent. The result is cached in `credentials.<NAME>.verification`: `verified_at`, token status and expiry, account names, zones with their status, and resources. Accounts appear only as `sha256:` fingerprints (16 hex digits), never raw IDs; the registry schema rejects anything else.
+
+`aidevops secret drift [--json]` runs offline from the registry and that cache. It reports these checks:
+
+| Check | Meaning |
+|-------|---------|
+| `expiry-unknown` / `never-expires` | Expiry is not recorded or reported, or it is `never` |
+| `expiring-soon` / `expired` | The recorded or provider-reported expiry is within 30 days or has passed |
+| `identical-reach` / `overlapping-reach` | Same-provider credentials share zones (observed zones if verified, else recorded zones) |
+| `zone-in-multiple-accounts` / `zone-not-active` | A zone is seen under two accounts, or a status such as `moved` |
+| `account-mismatch` | The recorded account name is not among the accounts the token sees |
+| `unverified` / `stale-verification` | A verifiable credential was never verified, or was verified more than 30 days ago |
+| `undescribed` / `default-undeclared` | A stored secret has no record, or a provider has no `defaults` key |
+
+`aidevops secret owner RESOURCE [--json]` matches a zone, subdomain, resource name, or `type:name`. Observed cache entries come first; recorded `reach` zones are used only for unverified credentials. The result is `found`, `ambiguous` (several accounts), or `unknown` (exit 1). Re-run `verify` rather than guessing.

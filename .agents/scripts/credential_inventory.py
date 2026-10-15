@@ -162,6 +162,45 @@ def cmd_dependents(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_drift(args: argparse.Namespace) -> int:
+    """Offline drift report from the registry and cached verifications (GH#34722)."""
+    import credential_inventory_drift as drift
+
+    report = drift.drift(store.load(), view.stored_secret_names())
+    if args.json:
+        emit_json(report)
+    else:
+        print(drift.render_drift(report))
+    return 0
+
+
+def cmd_owner(args: argparse.Namespace) -> int:
+    """Which account/credentials hold a zone or resource; never guesses."""
+    import credential_inventory_drift as drift
+
+    result = drift.owner(store.load(), args.resource)
+    if args.json:
+        emit_json(result)
+    else:
+        print(drift.render_owner(result))
+    return 0 if result["status"] != "unknown" else 1
+
+
+def cmd_verify_targets(args: argparse.Namespace) -> int:
+    """Recorded credentials for a provider (or the given names, aliases resolved)."""
+    data = store.load()
+    credentials = data["credentials"]
+    wanted = [names.alias_owner(data, name) or name for name in args.names] or sorted(credentials)
+    targets = [name for name in wanted if (credentials.get(name) or {}).get("provider") == args.provider]
+    for name in sorted(set(wanted) - set(targets)) if args.names else []:
+        print(f"ERROR: {name} is not recorded for {args.provider}; record it first with: "
+              f"aidevops secret record {name} --provider {args.provider} --account REF", file=sys.stderr)
+    if args.names and len(targets) != len(wanted):
+        return EXIT_INVALID
+    print("\n".join(dict.fromkeys(targets)))
+    return 0 if targets else 1
+
+
 # --------------------------------------------------------------------------
 # parser
 # --------------------------------------------------------------------------
@@ -227,6 +266,21 @@ def add_simple_parsers(sub: argparse._SubParsersAction) -> None:
     dependents.add_argument("name")
     dependents.add_argument("--json", action="store_true")
     dependents.set_defaults(func=cmd_dependents)
+    add_drift_parsers(sub)
+
+
+def add_drift_parsers(sub: argparse._SubParsersAction) -> None:
+    drift = sub.add_parser("drift", help="offline expiry/overlap/ownership/freshness report")
+    drift.add_argument("--json", action="store_true")
+    drift.set_defaults(func=cmd_drift)
+    owner = sub.add_parser("owner", help="which account and credentials hold a zone or resource")
+    owner.add_argument("resource")
+    owner.add_argument("--json", action="store_true")
+    owner.set_defaults(func=cmd_owner)
+    targets = sub.add_parser("verify-targets", help="recorded credentials to verify for a provider")
+    targets.add_argument("provider", choices=["cloudflare"])
+    targets.add_argument("names", nargs="*")
+    targets.set_defaults(func=cmd_verify_targets)
 
 
 def build_parser() -> argparse.ArgumentParser:

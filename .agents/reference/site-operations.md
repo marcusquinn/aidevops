@@ -46,8 +46,15 @@ parent's when present; absent values inherit from the parent, without merging
 individual ownership fields.
 
 Top-level `dns_accounts` holds reusable DNS account metadata. The effective `dns`
-record's optional `account_ref` must name a key in that map. Lookup resolves it into
-`dns.account` with `name`, `credential_env`, `account_id_env`, and `last_verified`.
+record's optional `account_ref` must name a key in that map or, failing that, a
+`provider_accounts` ref in the credential registry
+(`tools/credentials/credential-inventory.md`). Lookup resolves it into
+`dns.account` with `name`, `credential_env`, `account_id_env`, and `last_verified`;
+`dns_accounts` always wins. A registry-resolved account adds
+`source: "credential-registry"` and its recorded `credentials`. It sets
+`credential_env` only when the choice is unambiguous: either one credential is
+recorded for that account, or the provider default belongs to it. `last_verified`
+comes from `aidevops secret verify`.
 A child's own DNS record is selected before resolving the account reference; it
 does not merge fields from parent DNS. Store only secret variable names in
 `credential_env` and `account_id_env`, never tokens or secret account IDs. These

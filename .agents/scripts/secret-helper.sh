@@ -1228,6 +1228,40 @@ cmd_run_specific() {
 	return "$exit_code"
 }
 
+# Explicit, read-only provider verification (GH#34722). Each token reaches
+# the verifier only through cmd_run_specific (environment, never argv; output
+# redacted); the verifier caches value-free observations in the registry.
+cmd_verify() {
+	local provider="${1:-}"
+	if [[ "$provider" != "cloudflare" ]]; then
+		print_error "Usage: aidevops secret verify cloudflare [NAME...]"
+		return 1
+	fi
+	shift
+	local targets=""
+	local targets_rc=0
+	targets=$(run_credential_inventory verify-targets "$provider" "$@") || targets_rc=$?
+	if [[ "$targets_rc" -ne 0 ]]; then
+		[[ "$targets_rc" -eq 1 ]] && print_error "No recorded $provider credentials; record them with: aidevops secret record NAME --provider $provider --account REF"
+		return 1
+	fi
+	local -a names=()
+	local name=""
+	while IFS= read -r name; do
+		[[ -n "$name" ]] && names+=("$name")
+	done <<<"$targets"
+	local verifier="${SCRIPT_DIR}/credential_inventory_${provider}.py"
+	local failures=0
+	for name in "${names[@]}"; do
+		cmd_run_specific "$name" -- python3 "$verifier" verify "$name" </dev/null || failures=$((failures + 1))
+	done
+	if [[ "$failures" -gt 0 ]]; then
+		print_warning "$failures of ${#names[@]} $provider credential(s) did not verify as active"
+		return 1
+	fi
+	return 0
+}
+
 # Import a single credential file to gopass, with optional tenant prefix
 # Args: $1=file_path, $2=tenant_name (empty for non-tenant)
 # Sets: imported, skipped (caller's variables via nameref)
@@ -1397,6 +1431,9 @@ cmd_help() {
 	echo "  resolve PROVIDER                  Print default name (exit 3 none, 4 undeclared)"
 	echo "  validate                          Check the credential registry file"
 	echo "  dependents NAME [--json]          What uses NAME (+aliases) before rename/rotation"
+	echo "  verify cloudflare [NAME...]       Read-only provider check; caches accounts/zones"
+	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"
+	echo "  owner RESOURCE [--json]           Which account/credentials hold a zone or resource"
 	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
@@ -1465,8 +1502,11 @@ main() {
 	inventory)
 		cmd_inventory "$@"
 		;;
-	describe | record | account | default | alias | resolve | validate | dependents)
+	describe | record | account | default | alias | resolve | validate | dependents | drift | owner)
 		run_credential_inventory "$command" "$@" || return $?
+		;;
+	verify)
+		cmd_verify "$@" || return $?
 		;;
 	run)
 		cmd_run "$@"
