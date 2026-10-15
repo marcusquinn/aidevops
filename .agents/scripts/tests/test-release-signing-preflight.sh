@@ -22,8 +22,9 @@ gh() {
 		'api user --jq .login') printf 'operator\n' ;;
 		'api --paginate --slurp users/operator/ssh_signing_keys' | 'api --paginate --slurp users/operator/gpg_keys') printf '%s\n' "$KEY_JSON" ;;
 		'api --paginate --slurp user/ssh_signing_keys' | 'api --paginate --slurp user/gpg_keys')
-			# gh emits error JSON on stdout even when the request fails.
-			printf '{"message":"Resource not accessible by integration","status":"403"}\n'
+			# Real gh (GH#34762) exits 1 but still writes the slurped error body
+			# to stdout; concatenated with fallback pages it broke `.[][] | .key`.
+			printf '[{"message":"Not Found","status":"404"}]\n'
 			return 1
 			;;
 		*) return 1 ;;
