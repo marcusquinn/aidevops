@@ -1661,6 +1661,18 @@ _full_loop_release_refresh_aggregate() {
 	local final_commit=""
 	local payload=""
 	local merge_sha=""
+	# Phase helpers share these caller-local transaction values via Bash scope.
+	# Each phase reports its own refusal before returning failure.
+	_full_loop_successor_prepare_refresh "$repo" "$stale_pr" || return 1
+	_full_loop_successor_allocate_refresh "$repo" "$stale_pr" || return 1
+	_full_loop_successor_finish_refresh "$repo" "$stale_pr"
+	return $?
+}
+
+# Populate the caller-local stale manifest and exact main tip without mutation.
+_full_loop_successor_prepare_refresh() {
+	local repo="$1"
+	local stale_pr="$2"
 	[[ "$stale_pr" =~ ^[0-9]+$ ]] || {
 		printf 'Successor aggregation refused: stale PR number must be numeric\n' >&2
 		return 1
@@ -1734,6 +1746,13 @@ _full_loop_release_refresh_aggregate() {
 		printf 'Successor aggregation refused: source manifest does not contain lane authorization\n' >&2
 		return 1
 	}
+	return 0
+}
+
+# Preserve allocation order and publish the branch/PR identities to the caller.
+_full_loop_successor_allocate_refresh() {
+	local repo="$1"
+	local stale_pr="$2"
 	branch_name="release/aggregate-successor-${stale_pr}-${base_sha:0:12}"
 	release_lane_begin_aggregate_successor "$repo" "$stale_pr" "$base_sha" \
 		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" "$branch_name" || {
@@ -1809,6 +1828,13 @@ _full_loop_release_refresh_aggregate() {
 		printf 'Successor aggregation refused: cannot bind successor PR to release lane\n' >&2
 		return 1
 	}
+	return 0
+}
+
+# Finish the same caller-local transaction only after its PR number is bound.
+_full_loop_successor_finish_refresh() {
+	local repo="$1"
+	local stale_pr="$2"
 	body=$(_full_loop_successor_body "$stale_pr" "$base_sha" "$successor_pr" \
 		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED") || {
 		printf 'Successor aggregation refused: cannot build successor PR body\n' >&2
