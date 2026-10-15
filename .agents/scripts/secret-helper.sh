@@ -1260,6 +1260,7 @@ cmd_help() {
 	echo "  default PROVIDER [NAME|--none]    Show or declare the provider default"
 	echo "  alias NAME OLD_NAME               Keep a retired name working (no rename)"
 	echo "  resolve PROVIDER                  Print default name (exit 3 none, 4 undeclared)"
+	echo "  validate                          Check the credential registry file"
 	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
@@ -1328,7 +1329,7 @@ main() {
 	inventory)
 		cmd_inventory "$@"
 		;;
-	describe | record | account | default | alias | resolve)
+	describe | record | account | default | alias | resolve | validate)
 		run_credential_inventory "$command" "$@" || return $?
 		;;
 	run)

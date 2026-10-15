@@ -20,6 +20,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+import credential_inventory_fields as rules  # noqa: E402
+import credential_inventory_names as names  # noqa: E402
 import credential_inventory_store as store  # noqa: E402
 
 EXIT_INVALID = 2
@@ -56,11 +58,11 @@ def summary(data: dict[str, Any], stored: list[str] | None) -> dict[str, Any]:
     """Whole-registry view, grouped by provider, with undescribed secrets."""
     providers: dict[str, dict[str, Any]] = {}
     for name in sorted(data["credentials"]):
-        record = store.describe(data, name)
+        record = names.describe(data, name)
         group = providers.setdefault(record["provider"], {"credentials": []})
         group["credentials"].append(record)
     for provider, group in providers.items():
-        status, default = store.resolve_default(data, provider)
+        status, default = names.resolve_default(data, provider)
         group["default"] = {"status": status, "name": default}
     known = set(data["credentials"])
     for record in data["credentials"].values():
@@ -122,7 +124,7 @@ def print_summary(view: dict[str, Any]) -> None:
 def cmd_describe(args: argparse.Namespace) -> int:
     data = store.load()
     if args.name:
-        record = store.describe(data, args.name)
+        record = names.describe(data, args.name)
         if args.json:
             emit_json(record)
         else:
@@ -150,9 +152,9 @@ def record_fields(args: argparse.Namespace) -> dict[str, Any]:
         "expires_at": args.expires,
     }
     if args.zones is not None:
-        fields["zones"] = store.split_csv(args.zones)
+        fields["zones"] = rules.split_csv(args.zones)
     if args.resources is not None:
-        fields["resources"] = store.split_csv(args.resources)
+        fields["resources"] = rules.split_csv(args.resources)
     return fields
 
 
@@ -186,26 +188,26 @@ def cmd_account(args: argparse.Namespace) -> int:
 
 def cmd_default(args: argparse.Namespace) -> int:
     if args.name is None and not args.none:
-        status, name = store.resolve_default(store.load(), args.provider)
+        status, name = names.resolve_default(store.load(), args.provider)
         print({"set": name, "none": "explicitly none", "undeclared": "undeclared"}[status])
         return 0
     if args.name and args.none:
-        raise store.InventoryError("give either NAME or --none, not both")
+        raise rules.InventoryError("give either NAME or --none, not both")
     with store.locked() as data:
-        store.set_default(data, args.provider, None if args.none else args.name)
+        names.set_default(data, args.provider, None if args.none else args.name)
     print(f"Default for {args.provider}: " + ("explicitly none" if args.none else args.name))
     return 0
 
 
 def cmd_alias(args: argparse.Namespace) -> int:
     with store.locked() as data:
-        store.add_alias(data, args.name, args.alias)
+        names.add_alias(data, args.name, args.alias)
     print(f"{args.alias} is now an alias of {args.name}")
     return 0
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
-    status, name = store.resolve_default(store.load(), args.provider)
+    status, name = names.resolve_default(store.load(), args.provider)
     if status == "set":
         print(name)
         return 0
@@ -246,7 +248,7 @@ def add_account_parser(sub: argparse._SubParsersAction) -> None:
     add.add_argument("--provider", required=True)
     add.add_argument("--name", required=True, help="human account name")
     add.add_argument("--account-id-env", help="secret NAME holding the account ID (never the ID)")
-    add.add_argument("--ownership-type", choices=store.OWNERSHIP_TYPES)
+    add.add_argument("--ownership-type", choices=rules.OWNERSHIP_TYPES)
     add.add_argument("--owner")
     add.add_argument("--evidence")
     add.add_argument("--confirmed", action="store_true", default=None)
@@ -289,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except store.InventoryError as exc:
+    except rules.InventoryError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return EXIT_INVALID
 
