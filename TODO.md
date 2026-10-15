@@ -1695,7 +1695,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18700 Read-only Cloudflare credential verification, drift report and resource ownership lookup #feat ref:GH#34722 pr:#34741 completed:2026-10-15
 
-- [ ] t18701 aidevops secret organise: plan-first cleanup of inconsistent credentials without renames #feat ref:GH#34723
+- [x] t18701 aidevops secret organise: plan-first cleanup of inconsistent credentials without renames #feat ref:GH#34723 pr:#34742 completed:2026-10-15
 
 ## In Progress
 
