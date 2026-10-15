@@ -12,6 +12,8 @@ _FULL_LOOP_AGGREGATE_RECOVERY_PREVIOUS_AUTH=""
 _FULL_LOOP_AGGREGATE_RECOVERY_LANE_SNAPSHOT=""
 _FULL_LOOP_AGGREGATE_RECOVERY_TAG_SOURCE_JSON=""
 _FULL_LOOP_AGGREGATE_RECOVERY_EXISTING_CONTEXT="none"
+# Optional reviewed aggregate merge commit behind main (GH#34710); empty = exact tip.
+_FULL_LOOP_AGGREGATE_RECOVERY_PIN="${_FULL_LOOP_AGGREGATE_RECOVERY_PIN:-}"
 _FULL_LOOP_FAILED_PREPUBLICATION_SOURCE_PR=""
 _FULL_LOOP_FAILED_PREPUBLICATION_SOURCE_MERGE=""
 _FULL_LOOP_FAILED_PREPUBLICATION_TAG=""
@@ -670,23 +672,47 @@ _full_loop_recovery_refresh_state_transaction() {
 	return 0
 }
 
+# Exact-tip recovery runs the release checkout's own tooling. A pinned aggregate
+# can predate pin support, so it runs the operator's installed tooling against
+# the pinned checkout instead; the checkout still supplies every release input.
+_full_loop_recovery_tool_dir() {
+	if [[ -n "${_FULL_LOOP_AGGREGATE_RECOVERY_PIN:-}" ]]; then
+		printf '%s\n' "$SCRIPT_DIR"
+	else
+		printf '%s\n' "$_FULL_LOOP_RELEASE_PATH/.agents/scripts"
+	fi
+	return 0
+}
+
 _full_loop_recovery_prepare_aggregate() {
 	local repo="$1"
 	local source_pr="$2"
 	local expected_sources="$3"
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
 	local resolver=""
+	local checkout_ref="origin/main"
+	local pin="${_FULL_LOOP_AGGREGATE_RECOVERY_PIN:-}"
 	[[ -d "$worktree_base" ]] || return 1
 	git -C "$REPO_ROOT" fetch origin main >/dev/null || return 1
+	if [[ -n "$pin" ]]; then
+		# A pinned aggregate stays valid while ordinary merges advance main,
+		# never when main is rewritten past it (GH#34710).
+		[[ "$pin" =~ $_FULL_LOOP_AGGREGATE_RECOVERY_SHA40_REGEX ]] || return 1
+		git -C "$REPO_ROOT" merge-base --is-ancestor "$pin" origin/main || {
+			printf 'Aggregate recovery refused: pinned commit %s is not in origin/main history\n' "$pin" >&2
+			return 1
+		}
+		checkout_ref="$pin"
+	fi
 	_FULL_LOOP_RELEASE_PATH="${worktree_base}/aidevops-release-aggregate-recovery-${source_pr}-$$"
-	git -C "$REPO_ROOT" worktree add --detach "$_FULL_LOOP_RELEASE_PATH" origin/main >/dev/null || return 1
+	git -C "$REPO_ROOT" worktree add --detach "$_FULL_LOOP_RELEASE_PATH" "$checkout_ref" >/dev/null || return 1
 	trap 'cleanup_release_worktree' EXIT
-	resolver="$_FULL_LOOP_RELEASE_PATH/.agents/scripts/release-provenance-helper.sh"
+	resolver="$(_full_loop_recovery_tool_dir)/release-provenance-helper.sh"
 	# The provisional local tag may already be an ancestor of protected main.
 	# Do not discover a snapshot baseline via that unpublished tag; validate the
-	# reviewed exact-tip aggregate and its immutable manifest instead.
+	# reviewed exact-tip (or pinned) aggregate and its immutable manifest instead.
 	_full_loop_resolve_requested_release_source "$repo" "$source_pr" "$_FULL_LOOP_RELEASE_PATH" \
-		"$resolver" "$expected_sources" aggregate || return 1
+		"$resolver" "$expected_sources" aggregate "$pin" || return 1
 	[[ "$(jq -r '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON")" == "aggregate" ]] || return 1
 	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$_FULL_LOOP_RESOLVED_EXPECTED_SOURCES"
 	return 0
@@ -1344,11 +1370,13 @@ _full_loop_recovery_run_version_manager() {
 	local repo="$1"
 	local source_pr="$2"
 	local tag_name="$3"
-	local version_manager="$_FULL_LOOP_RELEASE_PATH/.agents/scripts/version-manager.sh"
+	local version_manager=""
 	local recovery_rc=0
+	version_manager="$(_full_loop_recovery_tool_dir)/version-manager.sh"
 	(
 		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
-		AIDEVOPS_RELEASE_INTENT_TRUSTED=1 \
+		AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA="${_FULL_LOOP_AGGREGATE_RECOVERY_PIN:-}" \
+			AIDEVOPS_RELEASE_INTENT_TRUSTED=1 \
 			AIDEVOPS_RELEASE_LANE_REPOSITORY="$repo" \
 			AIDEVOPS_RELEASE_LANE_SOURCE_PR="$source_pr" \
 			AIDEVOPS_RELEASE_LANE_TAG="$tag_name" \

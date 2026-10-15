@@ -98,9 +98,11 @@ verify_remote_sync() {
 	fi
 
 	if [[ "$local_sha" != "$remote_sha" ]]; then
-		# A canonical snapshot remains valid as main advances, never as it is
-		# rewritten. The pin must still identify this exact isolated checkout.
-		if [[ "${AIDEVOPS_RELEASE_SNAPSHOT_SHA:-}" != "$local_sha" ]] ||
+		# A canonical snapshot or recovery-pinned aggregate (GH#34710) remains
+		# valid as main advances, never as it is rewritten. The pin must still
+		# identify this exact isolated checkout.
+		if [[ "${AIDEVOPS_RELEASE_SNAPSHOT_SHA:-}" != "$local_sha" &&
+			"${AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA:-}" != "$local_sha" ]] ||
 			! git merge-base --is-ancestor "$local_sha" "$remote_sha"; then
 			print_error "Release checkout is neither current main nor its pinned snapshot"
 			return 1
@@ -152,10 +154,17 @@ verify_release_source_pr() {
 	local resolver="${AIDEVOPS_RELEASE_SOURCE_RESOLVER:-${SCRIPT_DIR}/release-provenance-helper.sh}"
 	local source_json=""
 	local resolver_args=(resolve-source --source-pr "$source_pr" --repo "$repo_slug" --branch "$branch")
+	VERSION_MANAGER_AGGREGATE_PIN=""
 	if [[ -n "${AIDEVOPS_RELEASE_SNAPSHOT_SHA:-}" ]]; then
+		[[ -z "${AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA:-}" ]] || return 1
 		[[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$AIDEVOPS_RELEASE_SNAPSHOT_SHA" ]] || return 1
 		resolver_args+=(--snapshot)
+	elif [[ -n "${AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA:-}" ]]; then
+		[[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA" ]] || return 1
+		resolver_args+=(--pinned-aggregate "$AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA")
+		VERSION_MANAGER_AGGREGATE_PIN="$AIDEVOPS_RELEASE_PINNED_AGGREGATE_SHA"
 	fi
+	export VERSION_MANAGER_AGGREGATE_PIN
 	[[ -x "$resolver" ]] || {
 		print_error "Release source provenance resolver is unavailable"
 		return 1
@@ -546,7 +555,12 @@ _create_aggregate_recovery_bump_commit() {
 	[[ "$expected_parent" =~ ^[0-9a-f]{40}$ ]] || return 1
 	current_head=$(git rev-parse HEAD 2>/dev/null) || return 1
 	remote_head=$(git rev-parse origin/main 2>/dev/null) || return 1
-	[[ "$current_head" == "$expected_parent" && "$remote_head" == "$expected_parent" ]] || return 1
+	[[ "$current_head" == "$expected_parent" ]] || return 1
+	if [[ "$remote_head" != "$expected_parent" ]]; then
+		# GH#34710: only a verified recovery pin may trail protected main.
+		[[ "${VERSION_MANAGER_AGGREGATE_PIN:-}" == "$expected_parent" ]] || return 1
+		git merge-base --is-ancestor "$expected_parent" "$remote_head" || return 1
+	fi
 	git diff --quiet && git diff --cached --quiet || return 1
 	commit_subject=$(_bump_commit_subject "$version") || return 1
 	git commit --allow-empty --no-verify -m "$commit_subject" >/dev/null || return 1
