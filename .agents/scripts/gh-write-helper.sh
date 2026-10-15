@@ -76,7 +76,41 @@ main() {
 	done
 	case "${resource}:${action}" in
 	issue:create) gh_create_issue "$@" ;;
-	issue:edit) gh_issue_edit_safe "$@" ;;
+	issue:edit)
+		local edit_target="" skip_value=0 target_arg=""
+		for target_arg in "$@"; do
+			if [[ "$skip_value" == 1 ]]; then
+				skip_value=0
+				continue
+			fi
+			case "$target_arg" in
+			--*=* | --) continue ;;
+			-*) skip_value=1 ;;
+			*) edit_target="${target_arg##*/issues/}"; break ;;
+			esac
+		done
+		if [[ -n "${WORKER_ISSUE_NUMBER:-}" && "$edit_target" == "$WORKER_ISSUE_NUMBER" ]]; then
+			local label_arg="" label_value="" previous=""
+			for label_arg in "$@"; do
+				label_value=""
+				case "$label_arg" in
+				--add-label=* | --remove-label=*) label_value="${label_arg#*=}" ;;
+				*)
+					if [[ "$previous" == --add-label || "$previous" == --remove-label ]]; then
+						label_value="$label_arg"
+					fi
+					;;
+				esac
+				if [[ ",$label_value" =~ ,[[:space:]]*status: ]]; then
+					# shellcheck disable=SC2016 # Literal worker signal, not shell code.
+					printf 'emit `BLOCKED: <reason>`; the runtime projects lifecycle state\n' >&2
+					return 2
+				fi
+				previous="$label_arg"
+			done
+		fi
+		gh_issue_edit_safe "$@"
+		;;
 	issue:review-handoff) _issue_review_handoff "$@" ;;
 	issue:comment) gh_issue_comment "$@" ;;
 	pr:create) gh_create_pr "$@" ;;

@@ -462,4 +462,69 @@ jq -e '
 	and .suspicious == ["state_capture_unavailable:before", "state_capture_unavailable:after"]
 ' "$MISSING_CAPTURE_LOG" >/dev/null || fail "omitted snapshots became synthetic empty state"
 
-printf 'PASS: expected approval transitions are retained in the log but excluded from alerts\n'
+# GH#34775: live release verification and exact-shape filtering, including the
+# mixed-version generic main path which must remain actionable.
+BLOCKED_LOG="${TEST_ROOT}/blocked-audit.log"
+(
+	export GH_AUDIT_LOG_FILE="$BLOCKED_LOG"
+	BLOCKED_CASE=valid
+	gh() {
+		local command="$1" endpoint="${2:-}"
+		[[ "$command" == api && "$BLOCKED_CASE" != unavailable ]] || return 1
+		case "$endpoint" in
+		user) printf 'runner\n' ;;
+		repos/example/repo/issues/80)
+			jq -cn --arg scenario "$BLOCKED_CASE" '{state:"open",labels:
+				([{name:"status:blocked"}] + if $scenario == "active" then [{name:"status:queued"}] else [] end)}'
+			;;
+		repos/example/repo/issues/80/comments*)
+			jq -cn --arg scenario "$BLOCKED_CASE" '[[
+				{id:1,author_association:"OWNER",body:"DISPATCH_CLAIM nonce=first"},
+				{id:2,author_association:(if $scenario == "untrusted" then "NONE" else "OWNER" end),
+				 body:"CLAIM_RELEASED reason=blocked runner=runner \n<!-- aidevops:terminal-blocker-observation revision=abc -->"}
+			] + if $scenario == "stale" then [{id:3,author_association:"OWNER",body:"DISPATCH_CLAIM nonce=next"}] else [] end]'
+			;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	for BLOCKED_CASE in valid stale untrusted active unavailable; do
+		_gh_audit_record_op issue_edit example/repo 80 \
+			'{"capture_status":"ok","title_len":10,"body_len":10,"labels":["status:in-progress"]}' \
+			'{"capture_status":"ok","title_len":10,"body_len":10,"labels":["status:blocked"]}' \
+			"$(cd "${SCRIPT_DIR}/.." && pwd)/headless-runtime-failure.sh" _hrff_project_blocked_exit 1
+	done
+	jq -se '.[0].flags.worker_blocked_exit_verified == "v1-release-persisted" and all(.[1:4][]; .flags == {})' "$BLOCKED_LOG" >/dev/null ||
+		fail 'blocked exit provenance did not fail closed'
+	jq -c 'select(.flags.worker_blocked_exit_verified) |
+		(.caller_function="main" | .flags={}),
+		(.delta.title_delta_pct=10), (.delta.body_delta_pct=10),
+		(.delta.labels_added += ["extra-label"])' "$BLOCKED_LOG" >"${TEST_ROOT}/blocked-negatives"
+	cat "${TEST_ROOT}/blocked-negatives" >>"$BLOCKED_LOG"
+)
+blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/blocked-state.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
+[[ "$blocked_output" == *'**Anomalies found:** 8'* ]] || fail 'blocked exact-shape filter hid a generic or mutated edit'
+(
+	CLI_SCRIPT_DIR="${SCRIPT_DIR}/.."
+	# shellcheck source=../gh-write-helper.sh
+	source "${CLI_SCRIPT_DIR}/gh-write-helper.sh" help >/dev/null
+	WORKER_ISSUE_NUMBER=80
+	gh_issue_edit_safe() { return 0; }
+	for label_args in '--add-label=status:blocked' '--remove-label=bug,status:in-progress'; do
+		rc=0
+		main issue edit 80 --repo example/repo "$label_args" 2>"${TEST_ROOT}/guard-output" || rc=$?
+		[[ "$rc" == 2 ]] || fail 'worker status edit was accepted'
+	done
+	rc=0
+	main issue edit 80 --remove-label status:in-progress --add-label status:blocked 2>"${TEST_ROOT}/guard-output" || rc=$?
+	[[ "$rc" == 2 ]] || fail 'separate status args were accepted'
+	rc=0
+	main issue edit --repo example/repo 80 --add-label status:blocked 2>"${TEST_ROOT}/guard-output" || rc=$?
+	[[ "$rc" == 2 ]] || fail 'options-first status edit was accepted'
+	grep -q 'runtime projects lifecycle state' "${TEST_ROOT}/guard-output" || fail 'guard pointer missing'
+	main issue edit 80 --add-label needs-secret:CONFIG_NAME || fail 'non-status label edit blocked'
+	main issue edit 81 --add-label status:blocked || fail 'non-worker target changed by guard'
+)
+
+printf 'PASS: expected approval and blocked transitions are retained in the log but excluded from alerts\n'

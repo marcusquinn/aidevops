@@ -312,6 +312,7 @@ assert_hold 1 "On hold for maintainer | release manager" "" "status:blocked" "di
 assert_hold 1 "" "Worker result: **BLOCKED** and cannot proceed safely" "status:blocked" "direct classifier preserves worker escalation comments"
 assert_hold 1 "" "Worker Watchdog Kill" "status:blocked" "direct classifier preserves watchdog escalation comments"
 assert_hold 1 "" "Terminal blocker detected" "status:blocked" "direct classifier preserves terminal blocker comments"
+assert_hold 1 "" "CLAIM_RELEASED reason=blocked runner=maintainer ts=2026-10-13T04:15:00Z" "status:blocked" "structured blocked release is a hold without prose"
 assert_hold 1 "" "ACTION REQUIRED" "status:blocked" "direct classifier preserves action-required comments"
 assert_hold 1 "" "HUMAN_UNBLOCK_REQUIRED" "status:blocked" "direct classifier preserves human-unblock markers"
 assert_hold 1 "The labels are mentioned descriptively." "" "status:blocked,hold-for-review" "direct classifier preserves exact hold-for-review labels"

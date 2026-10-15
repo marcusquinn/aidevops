@@ -159,7 +159,9 @@ routine uncertainty into `#no-auto-dispatch`.
 
   Credential-dependent execution on a configured runner is eligible when the
   issue declares required **names** via `needs-secret:NAME` labels or the body
-  marker `<!-- aidevops:needs-secrets NAME1 NAME2 -->` (labels win). The pulse
+  marker `<!-- aidevops:needs-secrets NAME1 NAME2 -->`. The claim-time capability
+  gate uses the union of labels, body markers, `requires-secrets:` lines and
+  dispatch-class declarations; a runtime-added label never drops body requirements. The pulse
   compares names against `aidevops secret list` locally before claim and again
   at the claim boundary. Missing names yield without a worker attempt; after
   `AIDEVOPS_SECRET_STARVATION_SECONDS` (default 86400), a single marked notice

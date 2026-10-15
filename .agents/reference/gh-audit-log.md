@@ -317,6 +317,9 @@ The scanner:
    `needs-maintainer-review`, independently revalidated trusted-author NMR
    normalization, verified PR-review handoffs that replace only
    `status:in-progress` with `status:in-review` without content-length changes,
+   runtime-owned blocked exits replacing only `status:in-progress` with
+   `status:blocked` with `worker_blocked_exit_verified: v1-release-persisted`
+   (live blocked state and a trusted blocked release newer than the last claim),
    and worker permission blocking that replaces active lifecycle
    labels with `needs-maintainer-permissions` (the original audit entry remains
    unchanged)

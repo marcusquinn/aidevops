@@ -139,6 +139,22 @@ _run_result_reconcile_unknown_blocker() {
 	return 0
 }
 
+# Legacy prose checkpoints may accompany a merged non-closing PR. Live blocked
+# state takes precedence over PR reconciliation; finish owns the release write.
+_run_result_capture_live_blocker() {
+	local issue_number="${WORKER_ISSUE_NUMBER:-${session_key#issue-}}" live_issue=""
+	[[ "$issue_number" =~ ^[0-9]+$ && -n "${DISPATCH_REPO_SLUG:-}" ]] || return 1
+	live_issue=$(gh api "repos/${DISPATCH_REPO_SLUG}/issues/${issue_number}" 2>/dev/null) || return 1
+	jq -e '.state == "open" and .pull_request == null
+		and ([.labels[]?.name] | index("status:blocked") != null)
+		and ([.labels[]?.name | select(. == "status:in-review" or . == "status:in-progress" or . == "status:queued" or . == "status:claimed")] | length == 0)
+	' <<<"$live_issue" >/dev/null 2>&1 || return 1
+	if declare -F terminal_blocker_capture_output >/dev/null 2>&1; then
+		terminal_blocker_capture_output "$output_file" true || true
+	fi
+	return 0
+}
+
 _handle_run_result_success_output() {
 	if _run_result_requires_task_complete && ! _private_output_has_task_complete "$output_file"; then
 		local incomplete_label="private_incomplete"
@@ -157,6 +173,13 @@ _handle_run_result_success_output() {
 		_store_headless_session_if_allowed "$provider" "$session_key" "$discovered_session" "$selected_model" "$role"
 	fi
 	if _run_result_is_issue_worker; then
+		if _run_result_capture_live_blocker; then
+			_run_result_label="$_RUN_RESULT_BLOCKED"
+			_run_failure_reason="$_RUN_RESULT_BLOCKED"
+			_run_classification_source="live_issue_blocked_backstop"
+			rm -f "$output_file"
+			return 83
+		fi
 		if output_has_post_pr_handoff_signal "$output_file"; then
 			_run_result_label="post_pr_handoff"
 			rm -f "$output_file"

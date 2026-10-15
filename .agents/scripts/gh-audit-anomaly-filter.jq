@@ -99,6 +99,20 @@ def expected_full_loop_review_transition:
   and ((.after.labels // []) | index("status:in-progress") == null)
   and ((.after.labels // []) | index("status:in-review") != null);
 
+def expected_worker_blocked_exit_transition:
+  comparable_state
+  and .op == $issue_edit
+  and .caller_function == "_hrff_project_blocked_exit"
+  and framework_script("headless-runtime-failure.sh")
+  and .flags.worker_blocked_exit_verified == "v1-release-persisted"
+  and .suspicious == ["protected_label_removed:status:in-progress"]
+  and (.delta.labels_removed // []) == ["status:in-progress"]
+  and (.delta.labels_added // []) == ["status:blocked"]
+  and .delta.title_delta_pct == 0
+  and .delta.body_delta_pct == 0
+  and ((.before.labels // []) | index("status:in-progress") != null)
+  and ((.after.labels // []) | index("status:blocked") != null);
+
 def expected_feedback_redispatch_transition:
   comparable_state
   and .op == $issue_edit
@@ -162,6 +176,7 @@ select(try ((.suspicious | length) > 0) catch true)
   or expected_permission_block_transition
   or expected_trusted_author_nmr_transition
   or expected_full_loop_review_transition
+  or expected_worker_blocked_exit_transition
   or expected_feedback_redispatch_transition
   or expected_planning_publication_transition
   or unavailable_capture_only

@@ -28,6 +28,7 @@
 _SHARED_GH_WRAPPERS_SAFE_EDIT_LIB_LOADED=1
 _GH_AUDIT_ISSUE_EDIT_OP="issue_edit"
 _GH_AUDIT_NMR_LABEL="needs-maintainer-review"
+_GH_AUDIT_OPEN_STATE="open"
 
 # Resolve this module's dependencies from its own location. Do not inherit a
 # caller-owned SCRIPT_DIR from an interactive recovery shell.
@@ -322,6 +323,14 @@ _gh_audit_record_op() {
 		_gh_verify_owned_review_handoff_pr "$repo" "$number" "${_GH_REVIEW_HANDOFF_PR:-}"; then
 		flags_json='{"pr_review_handoff_verified":"v2-owned-pr-current-state"}'
 	fi
+	# aidevops:trust-boundary — only the runtime projection after a persisted,
+	# trusted blocked release may attest this transition; re-read GitHub.
+	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" && "$caller_function" == "_hrff_project_blocked_exit" ]] &&
+		[[ "$caller_script" == */agents/scripts/headless-runtime-failure.sh ||
+			"$caller_script" == */.agents/scripts/headless-runtime-failure.sh ]] &&
+		_gh_audit_verify_worker_blocked_exit "$repo" "$number"; then
+		flags_json='{"worker_blocked_exit_verified":"v1-release-persisted"}'
+	fi
 	# aidevops:trust-boundary — planning publication may remove its temporary
 	# manual hold only after preserving publication:pending. Require an exact,
 	# content-preserving transition and re-read the current issue so a generic
@@ -391,7 +400,7 @@ _gh_audit_verify_full_loop_review_transition() {
 	local active_status="status:in-progress"
 	local review_status="status:in-review"
 	local capture_ok="ok"
-	local open_state="open"
+	local open_state="$_GH_AUDIT_OPEN_STATE"
 
 	[[ -n "$repo" && "$number" =~ ^[0-9]+$ ]] || return 1
 	jq -e -n --arg active "$active_status" --arg review "$review_status" --arg capture_ok "$capture_ok" \
@@ -413,6 +422,26 @@ _gh_audit_verify_full_loop_review_transition() {
 	return 0
 }
 
+_gh_audit_verify_worker_blocked_exit() {
+	local repo="$1" number="$2"
+	local issue_json="" comments_json="" actor=""
+	[[ -n "$repo" && "$number" =~ ^[0-9]+$ ]] || return 1
+	issue_json=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || return 1
+	jq -e --arg open "$_GH_AUDIT_OPEN_STATE" '.state == $open and .pull_request == null
+		and ([.labels[]?.name] | index("status:blocked") != null)
+		and ([.labels[]?.name | select(. == "status:in-progress" or . == "status:queued" or . == "status:claimed")] | length == 0)
+	' <<<"$issue_json" >/dev/null 2>&1 || return 1
+	comments_json=$(gh api "repos/${repo}/issues/${number}/comments?per_page=100" --paginate --slurp 2>/dev/null |
+		jq -ce 'add | arrays') || return 1
+	actor=$(gh api user --jq .login 2>/dev/null) || return 1
+	# shellcheck source=./terminal-blocker-circuit.sh
+	source "${BASH_SOURCE[0]%/*}/terminal-blocker-circuit.sh"
+	# Circuit markers alone do not prove that CLAIM_RELEASED was persisted.
+	comments_json=$(jq -c 'map(select((.body // "") | test("(?m)^CLAIM_RELEASED reason=blocked |^DISPATCH_CLAIM ")))' <<<"$comments_json") || return 1
+	TERMINAL_BLOCKER_SELF_LOGIN="$actor" terminal_blocker_has_current_hold "$comments_json"
+	return $?
+}
+
 #######################################
 # Verify that planning publication released only its temporary manual hold.
 # Args: repo, issue number, before JSON, after JSON
@@ -428,7 +457,7 @@ _gh_audit_verify_planning_publication_transition() {
 	local manual_hold="no-auto-dispatch"
 	local publication_hold="publication:pending"
 	local auto_dispatch="auto-dispatch"
-	local open_state="open"
+	local open_state="$_GH_AUDIT_OPEN_STATE"
 
 	[[ -n "$repo" && "$number" =~ ^[0-9]+$ ]] || return 1
 	jq -e -n --arg manual "$manual_hold" --arg publication "$publication_hold" \

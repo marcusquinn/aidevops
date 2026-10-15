@@ -61,6 +61,7 @@ readonly _HRFF_RETRY_CLASS_INFRASTRUCTURE="retryable_infrastructure"
 readonly _HRFF_RETRY_CLASS_MAINTAINER_GATE="maintainer_gate"
 readonly _HRFF_RETRY_CLASS_REMEDIATION="meaningful_remediation"
 readonly _HRFF_RETRY_CLASS_UNKNOWN="unknown"
+readonly _HRFF_OPEN_ISSUE_STATE="open"
 readonly _HRFF_SESSION_COUNT_QUERY_PREFIX="SELECT count(*) FROM session WHERE time_created >= "
 
 #######################################
@@ -624,6 +625,11 @@ _hrff_hold_terminal_blocker_circuit() {
 	local -a hold_args=()
 
 	runner_name=$(_hrff_resolve_release_runner_login)
+	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
+		_hrff_project_blocked_exit "$issue_number" "$repo_slug" "$runner_name" || return 1
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+		return 0
+	fi
 	[[ -z "$runner_name" ]] || hold_args+=(--remove-assignee "$runner_name")
 	if declare -F set_issue_status >/dev/null 2>&1; then
 		set_issue_status "$issue_number" "$repo_slug" blocked \
@@ -649,12 +655,12 @@ _hrff_handle_terminal_blocker_release() {
 		fi
 		print_info "Opened unchanged terminal-blocker circuit on #${issue_number}"
 		_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
-		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug"
+		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug" || return 11
 		return 10
 		;;
 	open)
 		print_info "Unchanged terminal-blocker circuit already active on #${issue_number}; suppressing duplicate release diagnostics"
-		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug"
+		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug" || return 11
 		return 10
 		;;
 	esac
@@ -719,6 +725,10 @@ _release_dispatch_claim() {
 	fi
 
 	runner_name=$(_hrff_resolve_release_runner_login)
+	if [[ "$reason" == blocked ]] && _hrff_blocked_release_persisted "$issue_number" "$repo_slug" "$runner_name"; then
+		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+		return $?
+	fi
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
 	local terminal_blocker_fragment=""
 	case "$reason" in
@@ -771,6 +781,15 @@ _hrff_project_post_release_state() {
 	local runner_name="$3"
 	local reason="$4"
 
+	# Older standalone consumers without safe-edit retain their existing cleanup;
+	# only the full runtime's named safe-edit path can produce verified provenance.
+	if [[ "$reason" == blocked ]] && declare -F gh_issue_edit_safe >/dev/null 2>&1 &&
+		[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||
+			-n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]]; then
+		_hrff_project_blocked_exit "$issue_number" "$repo_slug" "$runner_name" || return 1
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+		return 0
+	fi
 	if [[ "$reason" == worker_merged_partial_no_progress ]]; then
 		_hrff_project_merged_no_progress "$issue_number" "$repo_slug" "$runner_name"
 		return $?
@@ -833,6 +852,55 @@ _hrff_project_post_release_state() {
 	return 0
 }
 
+# Runtime-only projection, called only after CLAIM_RELEASED persistence.
+_hrff_blocked_release_persisted() {
+	local issue_number="$1" repo_slug="$2" runner_name="$3"
+	local comments_json=""
+	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 1
+	comments_json=$(jq -c 'map(select((.body // "")
+		| test("(?m)^CLAIM_RELEASED reason=blocked |^DISPATCH_CLAIM ")))' <<<"$comments_json") || return 1
+	# Without an attempt boundary, historical releases cannot deduplicate this
+	# attempt. Legacy consumers still use the existing circuit retry semantics.
+	jq -e 'any(.[]; (.body // "")
+		| test("(?m)^DISPATCH_CLAIM "))' <<<"$comments_json" >/dev/null 2>&1 || return 1
+	TERMINAL_BLOCKER_SELF_LOGIN="$runner_name" terminal_blocker_has_current_hold "$comments_json"
+	return $?
+}
+
+_hrff_project_blocked_exit() {
+	local issue_number="$1" repo_slug="$2" runner_name="$3"
+	local issue_json="" status="" issue_endpoint=""
+	local -a edit_args=()
+	printf -v issue_endpoint 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
+	issue_json=$(gh api "$issue_endpoint" 2>/dev/null) || return 1
+	jq -e --arg open "$_HRFF_OPEN_ISSUE_STATE" '.state == $open and .pull_request == null' <<<"$issue_json" >/dev/null 2>&1 || return 1
+	# Origin is authorship, not ownership: preserve another live assignee, not
+	# every task that was originally briefed by an interactive session.
+	if jq -e --arg runner "$runner_name" 'any(.assignees[]?; .login != $runner)
+		or ([.labels[]?.name] | any(. == "status:in-review" or . == "status:done"))' <<<"$issue_json" >/dev/null; then
+		return 0
+	fi
+	_hrff_apply_missing_secret_gates "$issue_number" "$repo_slug" || return 1
+	while IFS= read -r status; do
+		[[ -z "$status" ]] || edit_args+=(--remove-label "$status")
+	done < <(jq -r '.labels[]?.name | select(startswith("status:") and . != "status:blocked")' <<<"$issue_json")
+	[[ -z "$runner_name" ]] || edit_args+=(--remove-assignee "$runner_name")
+	gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --add-label status:blocked \
+		${edit_args[@]+"${edit_args[@]}"} || return 1
+	return 0
+}
+
+_hrff_apply_missing_secret_gates() {
+	local issue_number="$1" repo_slug="$2"
+	local name=""
+	for name in ${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}; do
+		[[ "$name" =~ ^[A-Z][A-Z0-9_]{0,127}$ ]] || return 1
+		gh label create "needs-secret:${name}" --repo "$repo_slug" --color D93F0B >/dev/null 2>&1 || true
+		gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --add-label "needs-secret:${name}" || return 1
+	done
+	return 0
+}
+
 # Preserve terminal closure and concurrent ownership when a partial repeats.
 # A no-progress hold is deliberately sticky: only brief-owner reconciliation
 # may release it, so new delivery cannot erase an unrelated existing blocker.
@@ -844,9 +912,9 @@ _hrff_project_merged_no_progress() {
 	local issue_endpoint=""
 	printf -v issue_endpoint 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
 	issue_json=$(gh api "$issue_endpoint" 2>/dev/null) || return 1
-	projection=$(printf '%s' "$issue_json" | jq -er --arg runner "$runner_name" '
+	projection=$(printf '%s' "$issue_json" | jq -er --arg runner "$runner_name" --arg open "$_HRFF_OPEN_ISSUE_STATE" '
 		if .state == "closed" then "done"
-		elif .state != "open" then empty
+		elif .state != $open then empty
 		elif any(.assignees[]?; .login != $runner) then "preserve"
 		else "blocked" end') || return 1
 	[[ "$projection" != preserve ]] || return 0

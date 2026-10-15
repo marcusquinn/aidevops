@@ -56,6 +56,14 @@ gh() {
 			printf 'api-login\n'
 			return 0
 		fi
+		if [[ "$path" == 'repos/owner/repo/issues/12345' && -n "${GH_LIVE_ISSUE:-}" ]]; then
+			printf '%s\n' "$GH_LIVE_ISSUE"
+			return 0
+		fi
+		if [[ "$path" == *'/comments?per_page=100' && -n "${GH_RELEASE_COMMENTS:-}" ]]; then
+			printf '%s\n' "$GH_RELEASE_COMMENTS"
+			return 0
+		fi
 		if [[ "$path" == repos/*/issues/* && "${GH_ISSUE_LABELS:-}" != "" ]]; then
 			printf '%s\n' "$GH_ISSUE_LABELS"
 			return 0
@@ -306,6 +314,62 @@ else
 	printf 'FAIL auto-dispatch claim release reopened conversation\n'
 	exit 1
 fi
+
+# GH#34775: legacy prose BLOCKED + worker-set label + merged For #N checkpoint
+# must enter the blocked release path before completion/PR reconciliation.
+(
+	unset GH_ISSUE_LABELS
+	GH_LIVE_ISSUE='{"state":"open","body":"### Files Scope","assignees":[{"login":"assigned-bot"}],"labels":[{"name":"status:blocked"},{"name":"origin:interactive"}]}'
+	GH_RELEASE_COMMENTS='[]'
+	# shellcheck source=../headless-runtime-result.sh
+	source "${SCRIPT_DIR}/headless-runtime-result.sh"
+	_headless_private_workload_enabled() { return 1; }
+	gh_issue_edit_safe() { printf 'EDIT %s\n' "$*" >>"$CALL_LOG"; return 0; }
+	_hrff_prepare_terminal_blocker_release() {
+		_HRFF_TERMINAL_BLOCKER_MODE=normal
+		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$'\n<!-- aidevops:terminal-blocker-observation revision=aaaaaaaaaaaaaaaaaaaaaaaa blocker=bbbbbbbbbbbbbbbbbbbbbbbb -->\n'
+		return 0
+	}
+	role=worker session_key=issue-12345 discovered_session="" selected_model=fixture
+	_run_failure_reason=""
+	output_file="${TMP_HOME}/legacy-output"
+	printf '## Checkpoint: BLOCKED\nMerged For #12345 checkpoint PR; missing runner config\nTERMINAL_BLOCKER_MISSING_SECRETS=RUNNER_CONFIG,SECOND_CONFIG\n' >"$output_file"
+	rc=0
+	_handle_run_result_success_output || rc=$?
+	[[ "$rc" == 83 && "$_run_failure_reason" == blocked && ! -e "$output_file" ]]
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS" == $'RUNNER_CONFIG\nSECOND_CONFIG' ]]
+	: >"$CALL_LOG"
+	rm -f "${TMP_HOME}/comment-attempts"
+	if GH_COMMENT_FAILURES_BEFORE_SUCCESS=3 AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=1 \
+		_release_dispatch_claim issue-12345 blocked; then
+		printf 'FAIL blocked release accepted unpersisted comment\n'; exit 1
+	fi
+	if grep -q '^EDIT ' "$CALL_LOG"; then
+		printf 'FAIL unpersisted blocked release mutated labels\n'; exit 1
+	fi
+	: >"$CALL_LOG"
+	rm -f "${TMP_HOME}/comment-attempts"
+	_release_dispatch_claim issue-12345 blocked
+	[[ "$(grep -c 'CLAIM_RELEASED reason=blocked' "$CALL_LOG")" == 1 ]]
+	grep -q 'aidevops:terminal-blocker-observation' "$CALL_LOG"
+	grep -q -- '--add-label needs-secret:RUNNER_CONFIG' "$CALL_LOG"
+	grep -q -- '--add-label needs-secret:SECOND_CONFIG' "$CALL_LOG"
+	grep -q -- '--add-label status:blocked' "$CALL_LOG"
+	post_line=$(grep -n '^API method=POST' "$CALL_LOG" | cut -d: -f1)
+	edit_line=$(grep -n '^EDIT ' "$CALL_LOG" | sed -n '1s/:.*//p')
+	[[ "$post_line" -lt "$edit_line" ]]
+	GH_RELEASE_COMMENTS='[{"id":1,"author_association":"OWNER","body":"DISPATCH_CLAIM nonce=first"},{"id":2,"author_association":"OWNER","body":"CLAIM_RELEASED reason=blocked runner=assigned-bot "}]'
+	_release_dispatch_claim issue-12345 blocked
+	[[ "$(grep -c 'CLAIM_RELEASED reason=blocked' "$CALL_LOG")" == 1 ]]
+	printf 'PASS legacy live-blocked checkpoint releases exactly once before projection and gates missing names\n'
+	: >"$CALL_LOG"
+	GH_LIVE_ISSUE='{"state":"open","assignees":[{"login":"other-owner"}],"labels":[{"name":"status:claimed"}]}'
+	_hrff_project_blocked_exit 12345 owner/repo assigned-bot
+	if grep -q '^EDIT ' "$CALL_LOG"; then
+		printf 'FAIL blocked projection changed concurrent ownership\n'; exit 1
+	fi
+	printf 'PASS blocked projection preserves concurrent owner without publishing secret gates\n'
+)
 
 : >"$CALL_LOG"
 GH_UNLOCK_MODE=success _unlock_issue_after_dispatch_release "004" "owner/repo"

@@ -107,6 +107,7 @@ Lifecycle integration must retain the canonical projection: `status:claimed` or
 structured reason/action, `status:available` is an executable continuation, and
 `status:in-review` requires a current open non-draft PR. Never use this scope
 recovery to weaken trust, hold, exact-head, or assignment-plus-active-state gates.
+On blocked exits, emit `BLOCKED: <reason>` instead of editing lifecycle labels: the runtime persists the release before projecting state. Declare missing runner secret/config **names** only as `TERMINAL_BLOCKER_MISSING_SECRETS=NAME1,NAME2`; never include values.
 
 An explicit hard boundary, another live owner, or genuinely new authority goes to
 the authorized AI brief owner/coordinator with exact issue/PR/checkpoint, brief
