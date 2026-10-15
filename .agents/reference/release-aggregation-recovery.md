@@ -42,6 +42,28 @@ aidevops release recover-aggregate <original-source-pr> --tag <vX.Y.Z> \
 The original source PR must own the active release lane. Every expected source
 must appear once in the aggregate commit trailers at its verified merge SHA.
 
+### Pinned aggregate (GH#34710)
+
+Ordinary merges are not frozen during recovery, so an exact-tip aggregate can go
+stale while its own CI runs. When a reviewed aggregation PR has merged but `main`
+has since advanced, pin its merge commit instead of chasing the tip:
+
+```bash
+aidevops release recover-aggregate <original-source-pr> --tag <vX.Y.Z> \
+  --expected-sources <pr[,pr...]> --aggregate-commit <aggregate-merge-sha>
+```
+
+The pin must be an ancestor of `origin/main` and carry the
+`Aidevops-Release-Aggregator-PR` and `Aidevops-Release-Aggregates` trailers; the
+aggregator PR record, reviewed-base comparison and full manifest checks still
+apply. The release worktree is checked out at the pin and recovery runs the
+operator's installed tooling, because the pin may predate pin support. The
+replacement tag adds a signed `Aidevops-Aggregate-Pin` trailer equal to its direct
+parent; only that trailer, a matching aggregator PR and a locally verified
+signature let publication proceed when protected `main` has a different tree.
+Pins are honoured only by `recover-aggregate`; normal releases stay exact-tip or
+snapshot-bound. Later merges ship in the next release.
+
 ## Preconditions
 
 - The existing tag is an annotated, locally verifiable signed tag for the same
@@ -49,7 +71,7 @@ must appear once in the aggregate commit trailers at its verified merge SHA.
 - The tag is absent from every remote, GitHub Releases, npm, and the Homebrew tap.
 - No terminal release receipt exists.
 - `origin/main` is the reviewed aggregation merge itself, not an arbitrary
-  descendant.
+  descendant, unless that merge is passed explicitly with `--aggregate-commit`.
 - The persisted authorization is an exact subset of the reviewed aggregate.
 - The lane is in `remote-publication` or `reconcile-required` for the same source
   and tag, or it contains one valid interrupted `aggregation-recovery` or
@@ -64,8 +86,8 @@ Any unavailable channel read is uncertainty, not absence, and blocks recovery.
 1. Verify the provisional tag and all channel-absence evidence.
 2. Resolve the exact aggregate and normalize every source to `PR@MERGE_SHA`.
    Signed-tag recovery uses the non-snapshot aggregate resolver: its immutable
-   trailers must identify the reviewed exact `origin/main` tip and complete
-   authorized manifest. It does not rediscover a baseline with `git describe`,
+   trailers must identify the reviewed exact `origin/main` tip (or the explicit
+   pinned ancestor) and complete authorized manifest. It does not rediscover a baseline with `git describe`,
    which could select the unpublished local tag already merged on protected main.
    Normal releases and tagless prepublication retries retain snapshot resolution.
 3. Rotate the release-lane token into `aggregation-recovery-refresh`, fencing the
@@ -162,8 +184,9 @@ Once that release commit reaches `main`, recovery enters normal reconciliation.
 If `main` advanced before the provisional tag changed, a newer reviewed exact-tip
 aggregate may refresh the fenced transaction. The refresh must be a strict
 authorization superset, preserve the original snapshots, and rotate the lane
-token without nesting recovery state. Ordinary merges remain blocked during
-every recovery and committing phase. Inconsistent state fails closed.
+token without nesting recovery state. Ordinary merges are not blocked during
+recovery (the lane merge guard is a no-op since #31472); use a pinned aggregate
+when they outpace aggregate CI. Inconsistent state fails closed.
 
 The recovery command never force-pushes, rewrites a remote tag, increments the
 version, or infers publication authority from commit ancestry.
