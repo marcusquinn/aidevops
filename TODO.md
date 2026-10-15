@@ -1685,11 +1685,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18695 Credential registry: record account, reach, owner, expiry and explicit provider defaults #feat ref:GH#34717 pr:#34726 completed:2026-10-15
 
-- [ ] t18696 Credential aliases and explicit provider defaults resolve at secret injection #feat ref:GH#34718
+- [x] t18696 Credential aliases and explicit provider defaults resolve at secret injection #feat ref:GH#34718 pr:#34732 completed:2026-10-15
 
-- [ ] t18697 aidevops secret dependents: show what uses a credential before rename, rotation or revocation #feat ref:GH#34719
+- [x] t18697 aidevops secret dependents: show what uses a credential before rename, rotation or revocation #feat ref:GH#34719 pr:#34733 completed:2026-10-15
 
-- [ ] t18698 Default-aware credential consumers: onboarding and MCP validation honour the declared provider default #feat ref:GH#34720
+- [x] t18698 Default-aware credential consumers: onboarding and MCP validation honour the declared provider default #feat ref:GH#34720 pr:#34735 completed:2026-10-15
 
 - [ ] t18699 Consolidate credential naming guidance into one convention with registry metadata #documentation ref:GH#34721
 
