@@ -72,7 +72,12 @@ snapshot-bound. Later merges ship in the next release.
 - No terminal release receipt exists.
 - `origin/main` is the reviewed aggregation merge itself, not an arbitrary
   descendant, unless that merge is passed explicitly with `--aggregate-commit`.
-- The persisted authorization is an exact subset of the reviewed aggregate.
+- The persisted authorization is an exact subset of the reviewed aggregate. If
+  this host has no per-PR authorization record (the lane was reserved by another
+  host or older tooling), recovery rebuilds it from the lane's `expected_sources`.
+  It does so only for an active `remote-publication` lane with the same source
+  and tag, no terminal receipt, and a set the reviewed aggregate fully covers
+  (GH#34746).
 - The lane is in `remote-publication` or `reconcile-required` for the same source
   and tag, or it contains one valid interrupted `aggregation-recovery` or
   `aggregation-recovery-refresh` transaction, or an owned
