@@ -39,7 +39,8 @@ Commands:
   tui-capture --session ID --out FILE [options]
                                Capture TUI text; repeat --expect TEXT to assert
                                Options: --cwd DIR, --data-dir DIR, --seconds 20,
-                               --tui-config FILE, --cols 200, --rows 50,
+                               --tui-config FILE, --isolated-config,
+                               --cols 200, --rows 50,
                                --binary opencode (opencode2: best effort)
   
 Examples:
