@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import type { GuiSecretReference, GuiVaultStatusData } from "../../gui-shared/src";
 import { readVaultSummary } from "./status-vault";
@@ -21,7 +21,9 @@ export function readSecretInventory(repoRoot: string, vault: GuiVaultStatusData)
   if (!isAuthoritativelyUnlocked(vault)) return EMPTY_INVENTORY;
   const helperPath = join(repoRoot, ".agents", "scripts", "secret-helper.sh");
   if (!isTrustedHelper(helperPath)) return EMPTY_INVENTORY;
-  const result = spawnSync("/bin/bash", [helperPath, "inventory"], {
+  // Keep interpreter selection independent of the caller's PATH.
+  const bashPath = existsSync("/bin/bash") ? "/bin/bash" : "/run/current-system/sw/bin/bash";
+  const result = spawnSync(bashPath, [helperPath, "inventory"], {
     encoding: "utf8",
     env: inventoryEnvironment(),
     maxBuffer: 65_536,
@@ -78,7 +80,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function inventoryEnvironment(): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/run/current-system/sw/bin" };
   for (const name of ["HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "AIDEVOPS_VAULT_DIR", "AIDEVOPS_VAULT_RUNTIME_DIR", "AIDEVOPS_VAULT_PYTHON"]) {
     const value = process.env[name];
     if (value !== undefined) environment[name] = value;

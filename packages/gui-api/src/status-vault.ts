@@ -85,7 +85,9 @@ function readVaultCommand<T extends VaultProbeValue>(
   command: VaultCommand,
   isAllowed: (value: string) => value is T,
 ): T | null {
-  const result = spawnSync("/bin/bash", [helperPath, command], {
+  // NixOS exposes system tools through a root-managed profile, not /bin.
+  const bashPath = existsSync("/bin/bash") ? "/bin/bash" : "/run/current-system/sw/bin/bash";
+  const result = spawnSync(bashPath, [helperPath, command], {
     encoding: "utf8",
     env: vaultProbeEnvironment(),
     stdio: ["ignore", "pipe", "ignore"],
@@ -98,7 +100,7 @@ function readVaultCommand<T extends VaultProbeValue>(
 }
 
 function vaultProbeEnvironment(): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/run/current-system/sw/bin" };
   for (const name of ["HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "AIDEVOPS_VAULT_DIR", "AIDEVOPS_VAULT_RUNTIME_DIR", "AIDEVOPS_VAULT_PYTHON"]) {
     const value = process.env[name];
     if (value !== undefined) environment[name] = value;

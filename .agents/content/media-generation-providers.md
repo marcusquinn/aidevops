@@ -113,12 +113,6 @@ media-gen-cost-helper.sh compare --clips 200 --secs-per-clip 6 --takes 3 \
 5. Choose on quality fit first, then cost. A cheap model that needs 3x more
    takes is not cheap. Re-check prices before each large batch.
 
-## Reviewed and Not Routed
-
-| Service | Verified (first-party, 2026-10-15) | Status |
-|---------|------------------------------------|--------|
-| **GenAIPro** (`genaipro.io`) | OpenAPI 3.1 spec at `docs.genaipro.io/openapi.yaml`: bearer auth on `https://genaipro.io/api`; TTS on ElevenLabs model IDs (`eleven_multilingual_v2`…`eleven_v4`) plus Nova/Lyra/Sirius/Vega voices with cloning; Veo text/frames/ingredients-to-video and `omni_flash`; Nano Banana Pro/2 images; "ChatGPT Image". Credit packages, async tasks with webhook/WebSocket, files deleted after ~7 days | **Do not route.** The public `GET /api/packages` sells "ChatGPT Plus" day-to-month access with "Free choice of ChatGPT account". The site bundle has admin views for pooled ChatGPT and Veo (Ultra/Pro) accounts, Hotmail and proxies. Veo bills 1 credit per request, whatever the number of videos. Capacity appears to come from shared consumer subscriptions, so outputs carry upstream-terms, ban, continuity and data-handling risk. |
-
 ## Decision Checks
 
 - **Reject consumer-subscription resale.** Do not route to a gateway whose

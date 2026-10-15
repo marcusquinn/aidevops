@@ -102,9 +102,57 @@ Aidevops-Release-Aggregates: 43@${FIXTURE_SOURCE_43}"
 		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" >/dev/null 2>&1; then
 			exit 1
 		fi
+		# GH#34710: a pin never survives main being rewritten behind it.
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" \
+			--pinned-aggregate "$FIXTURE_AGGREGATE" >/dev/null 2>&1; then
+			exit 1
+		fi
 	)
+	# GH#34710: ordinary merges after the reviewed aggregate starve exact-tip
+	# recovery; only an explicit pin to that aggregate ancestor still resolves.
+	git -C "$fixture" fetch -q origin
+	git -C "$fixture" commit -q --allow-empty -m 'ordinary merge after aggregate'
+	git -C "$fixture" push -q origin main
+	(
+		cd "$_FULL_LOOP_RELEASE_PATH"
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" >/dev/null 2>&1; then
+			exit 1
+		fi
+		pinned=$(bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" \
+			--pinned-aggregate "$FIXTURE_AGGREGATE")
+		[[ "$(jq -r '.mode + " " + .source_merge' <<<"$pinned")" == "aggregate $FIXTURE_AGGREGATE" ]]
+		# The pin must name this exact checkout and an explicit aggregation commit.
+		if bash "$resolver" resolve-source --source-pr 42 --repo test/repo --expected-sources "$manifest" \
+			--pinned-aggregate "$FIXTURE_SOURCE_43" >/dev/null 2>&1; then
+			exit 1
+		fi
+		git checkout -q --detach "$FIXTURE_SOURCE_43"
+		if bash "$resolver" resolve-source --source-pr 43 --repo test/repo \
+			--pinned-aggregate "$FIXTURE_SOURCE_43" >/dev/null 2>&1; then
+			exit 1
+		fi
+		git checkout -q --detach "$FIXTURE_AGGREGATE"
+		# Pins are recovery-only: never combined with snapshot or tag resolution.
+		if bash "$resolver" resolve-source --snapshot --source-pr 42 --repo test/repo \
+			--pinned-aggregate "$FIXTURE_AGGREGATE" >/dev/null 2>&1; then
+			exit 1
+		fi
+	)
+	_FULL_LOOP_AGGREGATE_RECOVERY_PIN="$FIXTURE_AGGREGATE"
+	_full_loop_recovery_prepare_aggregate test/repo 43 "$manifest"
+	[[ "$(git -C "$_FULL_LOOP_RELEASE_PATH" rev-parse HEAD)" == "$FIXTURE_AGGREGATE" ]]
+	[[ "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" == "$FIXTURE_AGGREGATE" ]]
+	[[ "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" == "$manifest" ]]
+	git -C "$fixture" worktree remove --force "$_FULL_LOOP_RELEASE_PATH"
+	# An unmerged side commit is never accepted as a pin, whatever its trailers.
+	_FULL_LOOP_AGGREGATE_RECOVERY_PIN=$(git -C "$fixture" commit-tree "${FIXTURE_AGGREGATE}^{tree}" \
+		-p "$FIXTURE_AGGREGATE" -F <(git -C "$fixture" log -1 --format=%B "$FIXTURE_AGGREGATE"))
+	if _full_loop_recovery_prepare_aggregate test/repo 43 "$manifest" >/dev/null 2>&1; then
+		exit 1
+	fi
 )
 printf 'PASS real aggregate preparation ignores an unpublished signed ancestor tag and retains manifest and exact-tip fences\n'
+printf 'PASS pinned aggregate recovery resolves only a reviewed aggregate ancestor of main\n'
 
 CHANNEL_MODE="absent"
 

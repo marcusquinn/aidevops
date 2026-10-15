@@ -14,7 +14,17 @@ git -C "$ROOT/repo" config gpg.format ssh
 git -C "$ROOT/repo" config user.signingkey "$ROOT/key"
 KEY_JSON='[[]]'
 API_FAIL=0
+PUBLIC_ONLY=0
 gh() {
+	# Tokens without a key-read scope can still read the same login's public keys.
+	if [[ "$PUBLIC_ONLY" -eq 1 ]]; then
+		case "$*" in
+		'api user --jq .login') printf 'operator\n' ;;
+		'api --paginate --slurp users/operator/ssh_signing_keys') printf '%s\n' "$KEY_JSON" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	fi
 	[[ "$*" == 'api --paginate --slurp user/ssh_signing_keys' || "$*" == 'api --paginate --slurp user/gpg_keys' ]] || return 1
 	[[ "$API_FAIL" -eq 0 ]] || return 1
 	printf '%s\n' "$KEY_JSON"
@@ -43,8 +53,16 @@ if release_signing_preflight "$ROOT/repo" 2>/dev/null; then
 	exit 1
 fi
 API_FAIL=0
+PUBLIC_ONLY=1
+release_signing_preflight "$ROOT/repo"
+KEY_JSON=$(jq -nc --arg key "$(<"$ROOT/other.pub")" '[[{key:$key}]]')
+if release_signing_preflight "$ROOT/repo" 2>/dev/null; then
+	printf 'FAIL public-listing fallback accepted a different key\n'
+	exit 1
+fi
+PUBLIC_ONLY=0
 KEY_JSON='[[]]'
-printf 'PASS SSH registration preflight rejects absent/wrong keys and API errors, accepts paginated and inline keys\n'
+printf 'PASS SSH registration preflight rejects absent/wrong keys and API errors, accepts paginated, inline and public-listing keys\n'
 
 # Execute the production standalone tag path: failure must precede even tag
 # inspection, bump verification, tag creation, or output announcing creation.
