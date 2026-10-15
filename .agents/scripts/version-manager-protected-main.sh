@@ -317,6 +317,7 @@ _version_manager_prepare_protected_release_head() {
 	local stale_head=""
 	local repo=""
 	local pulls_json=""
+	local ancestry_rc=0
 	local -a push_options=()
 
 	git -C "$REPO_ROOT" fetch origin main --quiet || return 1
@@ -335,8 +336,9 @@ _version_manager_prepare_protected_release_head() {
 		fi
 		# Only a previous attempt without the current release commit is stale.
 		# Other invalid topology must still fail closed, not be overwritten.
-		if git -C "$REPO_ROOT" merge-base --is-ancestor "$release_commit" \
-			"$_VERSION_MANAGER_PROTECTED_RELEASE_HEAD"; then
+		git -C "$REPO_ROOT" merge-base --is-ancestor "$release_commit" \
+			"$_VERSION_MANAGER_PROTECTED_RELEASE_HEAD" || ancestry_rc=$?
+		if [[ "$ancestry_rc" -ne 1 ]]; then
 			print_error "Existing protected release branch has incompatible provenance"
 			return 1
 		fi
@@ -390,7 +392,7 @@ _version_manager_prepare_protected_release_head() {
 	_version_manager_require_aggregate_fence || return 1
 	# GH#34434: release-tool push; skip only the dependency-bound repo-verify guard.
 	if push_output=$(AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$REPO_ROOT" push origin \
-		"${push_options[@]}" \
+		${push_options[@]+"${push_options[@]}"} \
 		"${_VERSION_MANAGER_PROTECTED_RELEASE_HEAD}:refs/heads/${branch_name}" 2>&1); then
 		return 0
 	fi

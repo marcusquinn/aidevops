@@ -53,6 +53,9 @@ cat >"${BIN}/git" <<'STUB'
 set -u
 printf '%s\n' "$*" >>"${FAKE_GIT_LOG:?}"
 args=" $* "
+if [[ "$args" == *" merge-base --is-ancestor ${RELEASE_COMMIT:?} ${STALE_BRANCH_HEAD:-unset} "* && "${STALE_ANCESTRY_ERROR:-0}" == 1 ]]; then
+	exit 128
+fi
 if [[ "$args" == *" push "* ]]; then
 	printf 'repo_verify=%s %s\n' "${AIDEVOPS_PREPUSH_REPO_VERIFY:-unset}" "$*" >>"${FAKE_PUSH_ENV_LOG:?}"
 fi
@@ -243,6 +246,17 @@ for stale_pr_mode in open merged api-failure; do
 	[[ "$("$REAL_GIT" --git-dir="$REMOTE" rev-parse "refs/heads/${RECOVERY_BRANCH}")" == "$STALE_BRANCH_HEAD" ]]
 done
 printf 'PASS open and merged PR ownership and failed API lookup prevent stale replacement\n'
+
+if (
+	export STALE_ANCESTRY_ERROR=1
+	_version_manager_prepare_protected_release_head 1.2.3 "$RELEASE_COMMIT" \
+		"$RELEASE_PARENT" "$RECOVERY_BRANCH" >/dev/null 2>&1
+); then
+	printf 'FAIL ancestry query error authorized stale branch replacement\n'
+	exit 1
+fi
+[[ "$("$REAL_GIT" --git-dir="$REMOTE" rev-parse "refs/heads/${RECOVERY_BRANCH}")" == "$STALE_BRANCH_HEAD" ]]
+printf 'PASS ancestry query errors cannot authorize stale branch replacement\n'
 
 if (
 	_version_manager_require_aggregate_fence() { return 1; }
