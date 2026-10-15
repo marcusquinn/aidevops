@@ -252,5 +252,61 @@ else
 		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
 fi
 
+# GH#34731: exercise the real permission helpers, not the collaborator stub.
+# A bot must reach lifecycle reconciliation even when the user API would fail.
+PERMISSION_CALLS="${TEST_ROOT}/permission-calls.log"
+_gh_collaborator_permission_lookup() {
+	printf '%s\n' "$*" >>"$PERMISSION_CALLS"
+	return 1
+}
+# shellcheck source=../pulse-merge-author-checks.sh
+source "${SCRIPT_DIR}/../pulse-merge-author-checks.sh"
+: >"$PERMISSION_CALLS"
+for author in app/dependabot 'dependabot[bot]' app/other 'other[bot]'; do
+	_PULSE_AUTHOR_PERMISSION_VALUE="admin"
+	permission_rc=0
+	_is_collaborator_author "$author" owner/repo || permission_rc=$?
+	owner_rc=0
+	_is_owner_or_member_author "$author" owner/repo || owner_rc=$?
+	if [[ "$permission_rc" -eq 1 && "$owner_rc" -eq 1 &&
+		"$_PULSE_AUTHOR_PERMISSION_VALUE" == "none" && ! -s "$PERMISSION_CALLS" ]]; then
+		print_result "$author is external without collaborator API access" 0
+	else
+		print_result "$author is external without collaborator API access" 1
+	fi
+done
+
+FIXTURE_DEPENDABOT_TRUSTED=1
+for author in app/dependabot 'dependabot[bot]'; do
+	FIXTURE_CRYPTO_APPROVED=0
+	: >"$DEPENDABOT_ROUTE_CALLS"
+	: >"$LOGFILE"
+	result=$(run_gate head-current "$author")
+	if [[ "$result" -eq 1 && ! -s "$PERMISSION_CALLS" ]] &&
+		grep -qF "950 owner/repo $author head-current policy-ineligible" "$DEPENDABOT_ROUTE_CALLS"; then
+		print_result "$author reaches lifecycle routing with real permission helpers" 0
+	else
+		print_result "$author reaches lifecycle routing with real permission helpers" 1
+	fi
+	FIXTURE_CRYPTO_APPROVED=1
+	result=$(run_gate head-current "$author")
+	if [[ "$result" -eq 0 && ! -s "$PERMISSION_CALLS" ]]; then
+		print_result "$author with current-head approval passes author gate" 0
+	else
+		print_result "$author with current-head approval passes author gate" 1
+	fi
+done
+
+# Even crypto approval must not turn a human's transient API failure into trust.
+: >"$DEPENDABOT_ROUTE_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current human-author)
+if [[ "$result" -eq 1 && -s "$PERMISSION_CALLS" && ! -s "$DEPENDABOT_ROUTE_CALLS" ]] &&
+	grep -qF "permission check failed for author human-author" "$LOGFILE"; then
+	print_result "human permission API failure remains fail-closed" 0
+else
+	print_result "human permission API failure remains fail-closed" 1
+fi
+
 printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

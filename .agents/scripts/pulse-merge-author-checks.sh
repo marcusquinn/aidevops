@@ -141,6 +141,23 @@ _pulse_author_permission_lookup() {
 	local cache_rc="" cache_state="" cache_http="" cache_value="" cache_reason=""
 	local lookup_rc=0 lookup_value=""
 
+	# #aidevops:trust-boundary — App identities are not user collaborators.
+	# Classify both GraphQL and REST bot logins before cache/API access so a
+	# malformed app/<name> REST route cannot strand Dependabot reconciliation.
+	# This grants no trust: provenance and current-head approval gates still apply.
+	case "$author" in
+	app/* | *'[bot]')
+		lookup_value="none"
+		_pulse_author_permission_state_set "ok" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN" "$lookup_value" "bot-author"
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$lookup_value"
+		else
+			printf '%s\n' "$lookup_value"
+		fi
+		return 0
+		;;
+	esac
+
 	if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
 		cache_key=$(_pulse_author_permission_cache_key "$repo_slug" "$author")
 		cache_file="${cache_dir}/${cache_key}"
