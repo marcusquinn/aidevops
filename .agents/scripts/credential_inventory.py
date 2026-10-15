@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- fixed argv to the repository-owned secret-helper.sh, never a shell
 import sys
 from pathlib import Path
 from typing import Any
