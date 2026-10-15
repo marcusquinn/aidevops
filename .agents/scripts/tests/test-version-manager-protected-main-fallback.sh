@@ -56,6 +56,10 @@ args=" $* "
 if [[ "$args" == *" push "* ]]; then
 	printf 'repo_verify=%s %s\n' "${AIDEVOPS_PREPUSH_REPO_VERIFY:-unset}" "$*" >>"${FAKE_PUSH_ENV_LOG:?}"
 fi
+if [[ "$args" == *" --force-with-lease="* && "${STALE_BRANCH_RACE:-0}" == 1 ]]; then
+	"${REAL_GIT:?}" --git-dir="${REMOTE:?}" update-ref \
+		refs/heads/chore/release-v1.2.3-provenance "${CURRENT_MAIN:?}"
+fi
 if [[ "$args" == *" push --atomic origin HEAD:refs/heads/main --tags "* ]]; then
 	count=0
 	if [[ -f "${DIRECT_PUSH_COUNT:?}" ]]; then
@@ -77,6 +81,17 @@ cat >"${BIN}/gh" <<'STUB'
 set -u
 printf '%s\n' "$*" >>"${FAKE_GH_LOG:?}"
 if [[ "${1:-}" == "api" && " $* " == *" repos/test/repo/pulls "* ]]; then
+	if [[ -n "${STALE_BRANCH_PR_MODE:-}" ]]; then
+		[[ "$STALE_BRANCH_PR_MODE" != api-failure ]] || exit 1
+		# An older blocking PR on page one must not be hidden by a newer closed PR.
+		jq -nc --arg mode "$STALE_BRANCH_PR_MODE" --arg head "${STALE_BRANCH_HEAD:?}" '[{
+			number: 70, state: (if $mode == "open" then "open" else "closed" end),
+			merged_at: (if $mode == "merged" then "2026-08-01T00:00:00Z" else null end),
+			head: {sha: $head}, base: {ref: "other-base"}
+		}]'
+		printf '[{"number":71,"state":"closed","merged_at":null}]\n'
+		exit 0
+	fi
 	if [[ -f "${STALE_PR_FILE:?}" && ! -f "${PR_RECREATED_FILE:?}" ]]; then
 		jq -nc --arg stale_head "${STALE_PR_HEAD:?}" '[{
 			number: 76,
@@ -209,6 +224,50 @@ fi
 unset -f _version_manager_verify_preserved_lane_fence
 printf 'PASS preserved-tag fence refuses branch and PR mutation\n'
 
+# GH#34756: model the orphan from an earlier retry with a different commit SHA.
+RECOVERY_BRANCH='chore/release-v1.2.3-provenance'
+RELEASE_PARENT=$("$REAL_GIT" -C "$REPO" rev-parse "${RELEASE_COMMIT}^1")
+STALE_BRANCH_HEAD=$("$REAL_GIT" -C "$REPO" commit-tree "${RELEASE_COMMIT}^{tree}" \
+	-p "$RELEASE_PARENT" -m 'previous failed release attempt')
+export STALE_BRANCH_HEAD CURRENT_MAIN
+"$REAL_GIT" -C "$REPO" push -q origin "${STALE_BRANCH_HEAD}:refs/heads/${RECOVERY_BRANCH}"
+for stale_pr_mode in open merged api-failure; do
+	if (
+		export STALE_BRANCH_PR_MODE="$stale_pr_mode"
+		_version_manager_prepare_protected_release_head 1.2.3 "$RELEASE_COMMIT" \
+			"$RELEASE_PARENT" "$RECOVERY_BRANCH" >/dev/null 2>&1
+	); then
+		printf 'FAIL stale branch was replaced despite PR mode %s\n' "$stale_pr_mode"
+		exit 1
+	fi
+	[[ "$("$REAL_GIT" --git-dir="$REMOTE" rev-parse "refs/heads/${RECOVERY_BRANCH}")" == "$STALE_BRANCH_HEAD" ]]
+done
+printf 'PASS open and merged PR ownership and failed API lookup prevent stale replacement\n'
+
+if (
+	_version_manager_require_aggregate_fence() { return 1; }
+	_version_manager_prepare_protected_release_head 1.2.3 "$RELEASE_COMMIT" \
+		"$RELEASE_PARENT" "$RECOVERY_BRANCH" >/dev/null 2>&1
+); then
+	printf 'FAIL stale branch replacement bypassed the aggregate fence\n'
+	exit 1
+fi
+[[ "$("$REAL_GIT" --git-dir="$REMOTE" rev-parse "refs/heads/${RECOVERY_BRANCH}")" == "$STALE_BRANCH_HEAD" ]]
+printf 'PASS stale branch replacement requires the aggregate fence\n'
+
+if (
+	export STALE_BRANCH_RACE=1
+	_version_manager_prepare_protected_release_head 1.2.3 "$RELEASE_COMMIT" \
+		"$RELEASE_PARENT" "$RECOVERY_BRANCH" >/dev/null 2>&1
+); then
+	printf 'FAIL stale branch lease overwrote a concurrent remote update\n'
+	exit 1
+fi
+[[ "$("$REAL_GIT" --git-dir="$REMOTE" rev-parse "refs/heads/${RECOVERY_BRANCH}")" == "$CURRENT_MAIN" ]]
+"$REAL_GIT" --git-dir="$REMOTE" update-ref "refs/heads/${RECOVERY_BRANCH}" "$STALE_BRANCH_HEAD"
+"$REAL_GIT" -C "$REPO" update-ref "refs/remotes/origin/${RECOVERY_BRANCH}" "$STALE_BRANCH_HEAD"
+printf 'PASS stale branch lease preserves a concurrent remote update\n'
+
 push_rc=0
 push_output=$(push_changes 1.2.3 2>&1) || push_rc=$?
 if [[ "$push_rc" -ne 8 ]]; then
@@ -233,6 +292,9 @@ if grep -Eq ' rebase | commit --amend| tag -(d|s) ' "$FAKE_GIT_LOG"; then
 	exit 1
 fi
 printf 'PASS recovery branch preserves the original release commit and tag object\n'
+grep -q -- "--force-with-lease=refs/heads/${RECOVERY_BRANCH}:${STALE_BRANCH_HEAD}" "$FAKE_GIT_LOG"
+[[ "$RECOVERY_HEAD" != "$STALE_BRANCH_HEAD" ]]
+printf 'PASS stale PR-less branch is replaced using the observed-head lease\n'
 
 # GH#34753: GitHub refuses tag objects outside refs/tags, so the staging ref is
 # a commit envelope whose `tag` blob hashes back to the exact signed object.
@@ -246,7 +308,7 @@ printf 'PASS protected PR queue first preserves the exact tag on a fetchable sta
 # GH#34434: release-tool pushes run in dependency-free worktrees, so each one
 # skips only the repo-verify guard for that command.
 grep -q 'push --atomic origin HEAD:refs/heads/main --tags' "$FAKE_PUSH_ENV_LOG"
-grep -q "push origin ${RECOVERY_HEAD}:refs/heads/${RECOVERY_BRANCH}" "$FAKE_PUSH_ENV_LOG"
+grep -q "push origin --force-with-lease=refs/heads/${RECOVERY_BRANCH}:${STALE_BRANCH_HEAD} ${RECOVERY_HEAD}:refs/heads/${RECOVERY_BRANCH}" "$FAKE_PUSH_ENV_LOG"
 if grep -qv '^repo_verify=0 ' "$FAKE_PUSH_ENV_LOG"; then
 	printf 'FAIL a release push ran the dependency-bound repo-verify guard\n'
 	exit 1

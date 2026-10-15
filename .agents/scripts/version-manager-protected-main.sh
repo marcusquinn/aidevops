@@ -174,8 +174,9 @@ _version_manager_remote_branch_head() {
 _version_manager_fetch_recovery_branch() {
 	local branch_name="$1"
 
+	# Mirror lease-replaced remote heads locally; provenance is checked by callers.
 	if ! git -C "$REPO_ROOT" fetch origin \
-		"refs/heads/${branch_name}:refs/remotes/origin/${branch_name}" --quiet; then
+		"+refs/heads/${branch_name}:refs/remotes/origin/${branch_name}" --quiet; then
 		return 1
 	fi
 	return 0
@@ -313,6 +314,10 @@ _version_manager_prepare_protected_release_head() {
 	local release_parent="$3"
 	local branch_name="$4"
 	local push_output=""
+	local stale_head=""
+	local repo=""
+	local pulls_json=""
+	local -a push_options=()
 
 	git -C "$REPO_ROOT" fetch origin main --quiet || return 1
 	if ! git -C "$REPO_ROOT" merge-base --is-ancestor "$release_parent" origin/main; then
@@ -328,8 +333,15 @@ _version_manager_prepare_protected_release_head() {
 			"$release_parent" "$(git -C "$REPO_ROOT" rev-parse origin/main)"; then
 			return 0
 		fi
-		print_error "Existing protected release branch has incompatible provenance"
-		return 1
+		# Only a previous attempt without the current release commit is stale.
+		# Other invalid topology must still fail closed, not be overwritten.
+		if git -C "$REPO_ROOT" merge-base --is-ancestor "$release_commit" \
+			"$_VERSION_MANAGER_PROTECTED_RELEASE_HEAD"; then
+			print_error "Existing protected release branch has incompatible provenance"
+			return 1
+		fi
+		stale_head="$_VERSION_MANAGER_PROTECTED_RELEASE_HEAD"
+		push_options=("--force-with-lease=refs/heads/${branch_name}:${stale_head}")
 	fi
 
 	if git -C "$REPO_ROOT" merge-base --is-ancestor "$release_commit" origin/main; then
@@ -360,14 +372,30 @@ _version_manager_prepare_protected_release_head() {
 		return 1
 	fi
 
+	if [[ -n "$stale_head" ]]; then
+		repo=$(_version_manager_protected_repo_slug) || return 1
+		# Inspect every PR, not just the latest or those targeting main. An open
+		# PR owns the branch; a merged PR owns its immutable historical head.
+		pulls_json=$(gh api --method GET "repos/${repo}/pulls" --paginate \
+			-f "head=${repo%%/*}:${branch_name}" -f state=all -F per_page=100 2>/dev/null) || return 1
+		if ! jq -e -s --arg head "$stale_head" '
+			length > 0 and all(.[]; type == "array") and
+			all(.[][]; .state != "open" and
+				((.merged_at // "") == "" or .head.sha != $head))
+		' <<<"$pulls_json" >/dev/null; then
+			print_error "Existing protected release branch is owned by an open or merged PR"
+			return 1
+		fi
+	fi
 	_version_manager_require_aggregate_fence || return 1
 	# GH#34434: release-tool push; skip only the dependency-bound repo-verify guard.
 	if push_output=$(AIDEVOPS_PREPUSH_REPO_VERIFY=0 git -C "$REPO_ROOT" push origin \
+		"${push_options[@]}" \
 		"${_VERSION_MANAGER_PROTECTED_RELEASE_HEAD}:refs/heads/${branch_name}" 2>&1); then
 		return 0
 	fi
 	# A concurrent creator may have won the branch race. Reuse only an exact,
-	# provenance-preserving remote head; never force-update release recovery.
+	# provenance-preserving remote head; never retry a rejected stale-head lease.
 	_version_manager_remote_branch_head "$branch_name" || return 1
 	if [[ -n "$_VERSION_MANAGER_PROTECTED_RELEASE_HEAD" ]]; then
 		_version_manager_fetch_recovery_branch "$branch_name" || return 1
