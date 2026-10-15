@@ -136,8 +136,36 @@ test_api_connectivity() {
 		run_test "Cloudflare API connectivity" "curl -s -H 'Authorization: Bearer $CLOUDFLARE_API_TOKEN' https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
 		print_success "Cloudflare API credentials configured"
 	else
-		print_warning "Cloudflare API credentials not configured (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID)"
+		test_cloudflare_registry_default
 	fi
+	return 0
+}
+
+# Cloudflare via the credential registry's declared default (GH#34720).
+# The token is injected by secret-helper.sh as CLOUDFLARE_API_TOKEN for the
+# child command only; it is never exported here, and curl reads the header
+# from stdin (`-H @-`) so the value never appears in any process argv.
+test_cloudflare_registry_default() {
+	local secret_helper="${SCRIPT_DIR}/secret-helper.sh"
+	local default_name="" resolve_rc=0
+	if [[ -f "$secret_helper" ]]; then
+		default_name=$(bash "$secret_helper" resolve cloudflare 2>/dev/null) || resolve_rc=$?
+	else
+		resolve_rc=127
+	fi
+	case "$resolve_rc" in
+	0)
+		print_info "Cloudflare: using declared default $default_name"
+		run_test "Cloudflare API connectivity (default: $default_name)" \
+			"bash '$secret_helper' CLOUDFLARE_API_TOKEN -- sh -c 'printf \"Authorization: Bearer %s\\n\" \"\$CLOUDFLARE_API_TOKEN\" | curl -fsS -H @- https://api.cloudflare.com/client/v4/user/tokens/verify'" || true
+		;;
+	3)
+		print_warning "Cloudflare: explicitly no default declared; tools must name an account-specific token"
+		;;
+	*)
+		print_warning "Cloudflare API credentials not configured (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID) and no registry default declared (aidevops secret default cloudflare NAME)"
+		;;
+	esac
 	return 0
 }
 

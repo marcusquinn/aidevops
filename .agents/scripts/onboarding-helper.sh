@@ -216,6 +216,52 @@ check_git_platforms() {
 	return 0
 }
 
+# Count Cloudflare credentials: registered in the credential registry plus
+# stored-but-undescribed CLOUDFLARE_* token/key names (names only; GH#34720).
+_cloudflare_credential_count() {
+	local secret_helper="$1"
+	local describe_json
+	describe_json=$(bash "$secret_helper" describe --json 2>/dev/null) || {
+		echo 0
+		return 0
+	}
+	jq -r '((.providers.cloudflare.credentials // []) | length)
+		+ ((.undescribed // []) | map(select(test("^CLOUDFLARE_.*(TOKEN|KEY)$"))) | length)' \
+		<<<"$describe_json" 2>/dev/null || echo 0
+	return 0
+}
+
+# Cloudflare status as "STATUS<TAB>DETAIL". An exported CLOUDFLARE_API_TOKEN
+# keeps the historical result; otherwise report the registry's declared
+# default, or its explicit absence, rather than assuming one unlabelled token.
+_cloudflare_status() {
+	if is_configured "CLOUDFLARE_API_TOKEN"; then
+		printf 'ready\tAPI token configured\n'
+		return 0
+	fi
+	local secret_helper="${SCRIPT_DIR}/secret-helper.sh"
+	if [[ ! -f "$secret_helper" ]] || ! command -v jq >/dev/null 2>&1; then
+		printf 'needs-setup\tCLOUDFLARE_API_TOKEN not set\n'
+		return 0
+	fi
+	local default_name="" resolve_rc=0 count
+	default_name=$(bash "$secret_helper" resolve cloudflare 2>/dev/null) || resolve_rc=$?
+	if [[ "$resolve_rc" -eq 0 && -n "$default_name" ]]; then
+		printf 'ready\tdefault: %s\n' "$default_name"
+		return 0
+	fi
+	count=$(_cloudflare_credential_count "$secret_helper")
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	if [[ "$count" -eq 0 ]]; then
+		printf 'needs-setup\tno Cloudflare credential stored\n'
+	elif [[ "$resolve_rc" -eq 3 ]]; then
+		printf 'ready\t%s stored, explicitly no default\n' "$count"
+	else
+		printf 'partial\t%s stored, no default declared (aidevops secret default cloudflare NAME)\n' "$count"
+	fi
+	return 0
+}
+
 # Check hosting providers
 check_hosting() {
 	echo -e "${BLUE}Hosting Providers${NC}"
@@ -234,11 +280,9 @@ check_hosting() {
 		print_service "Hetzner Cloud" "needs-setup" "HCLOUD_TOKEN_* not set"
 	fi
 
-	if is_configured "CLOUDFLARE_API_TOKEN"; then
-		print_service "Cloudflare" "ready" "API token configured"
-	else
-		print_service "Cloudflare" "needs-setup" "CLOUDFLARE_API_TOKEN not set"
-	fi
+	local cf_status cf_detail
+	IFS=$'\t' read -r cf_status cf_detail < <(_cloudflare_status)
+	print_service "Cloudflare" "$cf_status" "$cf_detail"
 
 	if is_configured "COOLIFY_API_TOKEN"; then
 		print_service "Coolify" "ready" "API token configured"
@@ -878,7 +922,12 @@ _guide_cloudflare() {
 	echo "2. Go to: My Profile -> API Tokens"
 	echo "3. Create token with Zone:Read, DNS:Edit permissions"
 	echo "4. Store token:"
-	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set CLOUDFLARE_API_TOKEN \"your-token\""
+	echo "   (record the account, then use an account-specific name)"
+	echo "   aidevops secret account add cloudflare-<account> --provider cloudflare --name \"<Account name>\""
+	echo "   aidevops secret set CLOUDFLARE_<ACCOUNT>_API_TOKEN --provider cloudflare --account cloudflare-<account>"
+	echo "5. Optional: choose what CLOUDFLARE_API_TOKEN resolves to at injection:"
+	echo "   aidevops secret default cloudflare CLOUDFLARE_<ACCOUNT>_API_TOKEN   (or: --none)"
+	echo "   Without a declared default, tools must name the account-specific token."
 	return 0
 }
 
@@ -1129,12 +1178,14 @@ _json_git_platforms() {
 }
 
 _json_hosting() {
-	local cf coolify vercel
-	is_configured "CLOUDFLARE_API_TOKEN" && cf=true || cf=false
+	local cf coolify vercel cf_status cf_detail
+	IFS=$'\t' read -r cf_status cf_detail < <(_cloudflare_status)
+	[[ "$cf_status" != "needs-setup" ]] && cf=true || cf=false
 	is_configured "COOLIFY_API_TOKEN" && coolify=true || coolify=false
 	is_configured "VERCEL_TOKEN" && vercel=true || vercel=false
-	jq -n --argjson cf "$cf" --argjson co "$coolify" --argjson ve "$vercel" \
-		'{"hosting":{"cloudflare":{"configured":$cf},"coolify":{"configured":$co},"vercel":{"configured":$ve}}}'
+	jq -n --argjson cf "$cf" --arg cs "$cf_status" --arg cd "$cf_detail" \
+		--argjson co "$coolify" --argjson ve "$vercel" \
+		'{"hosting":{"cloudflare":{"configured":$cf,"status":$cs,"detail":$cd},"coolify":{"configured":$co},"vercel":{"configured":$ve}}}'
 	return 0
 }
 
