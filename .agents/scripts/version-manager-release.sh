@@ -439,9 +439,21 @@ replace_unpublished_aggregate_tag() {
 	tag_ref=$(_version_manager_tag_ref "$tag_name") || return 1
 	[[ "$original_object" =~ ^[0-9a-f]{40}$ ]] || return 1
 	observed_object=$(git rev-parse "$tag_ref" 2>/dev/null) || return 1
-	[[ "$observed_object" == "$original_object" ]] || return 1
-	git verify-tag "$tag_name" >/dev/null 2>&1 || return 1
-	_version_manager_tag_absent_from_all_remotes "$tag_ref" || return 1
+	[[ "$observed_object" == "$original_object" ]] || {
+		print_error "Provisional ${tag_name} moved from its fenced object; refusing replacement"
+		return 1
+	}
+	# GH#34749: the provisional is only deleted and kept for restore, never
+	# trusted or published, so bind it by fenced object identity. A collaborator
+	# host may have signed it with a key this host's allowed signers lack.
+	[[ "$(git cat-file -t "$original_object" 2>/dev/null)" == "tag" ]] || {
+		print_error "Provisional ${tag_name} is not an annotated tag object; refusing replacement"
+		return 1
+	}
+	_version_manager_tag_absent_from_all_remotes "$tag_ref" || {
+		print_error "Provisional ${tag_name} is visible on a remote; refusing replacement"
+		return 1
+	}
 	git update-ref -d "$tag_ref" "$original_object" || return 1
 	if ! create_git_tag "$version"; then
 		_restore_unpublished_release_tag "$tag_name" "$original_object" || true

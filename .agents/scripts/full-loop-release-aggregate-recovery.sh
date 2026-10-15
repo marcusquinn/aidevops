@@ -1814,7 +1814,14 @@ _full_loop_release_recover_aggregate() {
 		return $?
 		;;
 	transaction)
-		if _full_loop_recovery_tag_is_bound_to_current_aggregate "$tag_name"; then
+		current_tag_object=$(git -C "$REPO_ROOT" rev-parse \
+			"${_FULL_LOOP_AGGREGATE_RECOVERY_TAG_REF_PREFIX}${tag_name}") || return 1
+		if [[ "$current_tag_object" == "$_FULL_LOOP_AGGREGATE_RECOVERY_OLD_TAG_OBJECT" ]]; then
+			# GH#34749: the fenced transaction never replaced its provisional
+			# tag, so rerun the idempotent prepare/version-manager path.
+			printf 'Retrying fenced aggregate recovery for PR #%s: %s is still the provisional tag\n' \
+				"$source_pr" "$tag_name" >&2
+		elif _full_loop_recovery_tag_is_bound_to_current_aggregate "$tag_name"; then
 			transition_rc=0
 			_full_loop_recovery_transition_durable_publication "$repo" "$source_pr" "$tag_name" || transition_rc=$?
 			if [[ "$transition_rc" -eq 0 ]]; then
@@ -1822,23 +1829,19 @@ _full_loop_release_recover_aggregate() {
 				return $?
 			fi
 			[[ "$transition_rc" -eq 8 ]] || return 1
-			current_tag_object=$(git -C "$REPO_ROOT" rev-parse \
-				"${_FULL_LOOP_AGGREGATE_RECOVERY_TAG_REF_PREFIX}${tag_name}") || return 1
-			if [[ "$current_tag_object" != "$_FULL_LOOP_AGGREGATE_RECOVERY_OLD_TAG_OBJECT" ]]; then
-				transition_rc=0
-				_full_loop_recovery_resume_committing_queue "$repo" "$source_pr" "$tag_name" || transition_rc=$?
-				case "$transition_rc" in
-				0)
-					_full_loop_recovery_resume_publication "$repo" "$source_pr" "$tag_name"
-					return $?
-					;;
-				8)
-					_full_loop_recovery_report_pending_commit "$source_pr" "$tag_name"
-					return $?
-					;;
-				*) return 1 ;;
-				esac
-			fi
+			transition_rc=0
+			_full_loop_recovery_resume_committing_queue "$repo" "$source_pr" "$tag_name" || transition_rc=$?
+			case "$transition_rc" in
+			0)
+				_full_loop_recovery_resume_publication "$repo" "$source_pr" "$tag_name"
+				return $?
+				;;
+			8)
+				_full_loop_recovery_report_pending_commit "$source_pr" "$tag_name"
+				return $?
+				;;
+			*) return 1 ;;
+			esac
 		fi
 		;;
 	none) ;;
