@@ -25,6 +25,7 @@ tools:
 - **File**: `~/.config/aidevops/credential-inventory.json` (600; override with `AIDEVOPS_CREDENTIAL_INVENTORY`). Template: `configs/credential-inventory.json.txt`.
 - **Commands**: `aidevops secret describe|record|account|default|alias|resolve|validate|dependents|drift|owner` (`secret-helper.sh` delegates to `credential_inventory.py`); `aidevops secret verify cloudflare [NAME...]` is the only command that calls a provider, and only when invoked.
 - **Which account holds a zone or resource?** `aidevops secret owner RESOURCE`; `unknown` means verify first, never guess.
+- **Already inconsistent?** `aidevops secret organise` plans the cleanup; `--apply-drafts` writes only unconfirmed drafts (see "Organise").
 - **Before renaming, rotating or revoking**: run `aidevops secret dependents NAME`; never treat a name as unused unless it reports `complete: true`.
 - **Never stored**: secret values, raw provider account IDs. Store the *name* of the secret that holds an account ID (`account_id_env`). Free-text fields that look like secrets are refused.
 - **Rule for sessions**: whenever you store a credential, record its account, **even for the operator's first and only account at that provider**: `aidevops secret set NAME --provider P --account REF --purpose "..."`.
@@ -142,5 +143,21 @@ A 403 response is cached as `unreadable`, not as absent. The result is cached in
 | `account-mismatch` | The recorded account name is not among the accounts the token sees |
 | `unverified` / `stale-verification` | A verifiable credential was never verified, or was verified more than 30 days ago |
 | `undescribed` / `default-undeclared` | A stored secret has no record, or a provider has no `defaults` key |
+
+## Organise
+
+`aidevops secret organise [--json] [--apply-drafts] [--no-dependents]` is the guided path for an install whose credentials are already inconsistent. It combines the names-only stored listing, the registry and the verification cache, and proposes:
+
+| Proposal | From |
+|----------|------|
+| Draft record per undescribed secret | Known name prefix (`CLOUDFLARE_`, `CF_`, `GITHUB_`, `HCLOUD_`, …) gives provider and kind; an account tag matching an existing `<provider>-<tag>` ref links that account; otherwise it is only a hint. Unrecognised names are listed for manual recording. |
+| Account ref | A recorded credential with no account whose verified token sees exactly one account name |
+| Alias, never rename | Identical reach: keep the account-tagged, more-referenced name; the steps are dependents → move consumers → delete the old entry → `alias`. Overlapping reach: review only. |
+| Default decision | Each provider without a `defaults` key: the candidate `default` commands plus `--none` |
+| Dependents count | One local scan for all names (`dependents NAME` remains the per-credential check before any change) |
+
+Nothing is renamed, deleted, aliased or made default automatically, because those change what gets injected. `--apply-drafts` writes only draft metadata: records for undescribed secrets, account refs from verified names, and new accounts with `ownership.confirmed: false`. Each written record carries `draft: {confirmed: false, evidence}` and shows as `[draft, unconfirmed]` in `describe`. Secret names and values are never touched. Confirm a draft by running `aidevops secret record NAME --provider P --account REF`, which clears the draft flag.
+
+## Owner lookup
 
 `aidevops secret owner RESOURCE [--json]` matches a zone, subdomain, resource name, or `type:name`. Observed cache entries come first; recorded `reach` zones are used only for unverified credentials. The result is `found`, `ambiguous` (several accounts), or `unknown` (exit 1). Re-run `verify` rather than guessing.

@@ -76,7 +76,8 @@ def format_record(record: dict[str, Any]) -> str:
     """One human-readable line for a credential."""
     reach = record.get("reach") or {}
     parts = [
-        record["name"] + ("  [default]" if record.get("is_default") else ""),
+        record["name"] + ("  [default]" if record.get("is_default") else "")
+        + ("  [draft, unconfirmed]" if record.get("draft") else ""),
         format_account(record.get("account")),
         "reach: " + (", ".join(reach.get("zones", []) + reach.get("resources", [])) or "unrecorded"),
         "expires: " + (record.get("expires_at") or "unrecorded"),

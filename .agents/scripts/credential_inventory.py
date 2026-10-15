@@ -74,6 +74,7 @@ def record_fields(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_record(args: argparse.Namespace) -> int:
     with store.locked(write=not args.check) as data:
         record = store.record_credential(data, args.name, args.provider, **record_fields(args))
+        record.pop("draft", None)  # an explicit record confirms an organise draft (GH#34723)
     if args.check:
         return 0
     print(f"Recorded {args.name} ({record['provider']}" + (f", account {record['account_ref']})" if record.get("account_ref") else ", account unrecorded)"))
@@ -186,6 +187,25 @@ def cmd_owner(args: argparse.Namespace) -> int:
     return 0 if result["status"] != "unknown" else 1
 
 
+def cmd_organise(args: argparse.Namespace) -> int:
+    """Plan-first cleanup proposals; --apply-drafts writes unconfirmed drafts only (GH#34723)."""
+    import credential_inventory_organise as organise
+
+    result = organise.plan(store.load(), view.stored_secret_names(), with_dependents=not args.no_dependents)
+    if args.apply_drafts:
+        result["written"] = organise.apply_drafts(result)
+        result["applied"] = True
+    if args.json:
+        emit_json(result)
+        return 0
+    print(organise.render(result))
+    if args.apply_drafts:
+        written = result["written"]
+        print(f"\nWrote {len(written['credentials'])} draft record(s) and {len(written['accounts'])} account(s), all unconfirmed. "
+              "Confirm each with: aidevops secret record NAME --provider P --account REF")
+    return 0
+
+
 def cmd_verify_targets(args: argparse.Namespace) -> int:
     """Recorded credentials for a provider (or the given names, aliases resolved)."""
     data = store.load()
@@ -277,6 +297,11 @@ def add_drift_parsers(sub: argparse._SubParsersAction) -> None:
     owner.add_argument("resource")
     owner.add_argument("--json", action="store_true")
     owner.set_defaults(func=cmd_owner)
+    organise = sub.add_parser("organise", aliases=["organize"], help="plan-first cleanup of undescribed or duplicate credentials")
+    organise.add_argument("--json", action="store_true")
+    organise.add_argument("--apply-drafts", action="store_true", help="write unconfirmed draft records only")
+    organise.add_argument("--no-dependents", action="store_true", help="skip the local dependents scan")
+    organise.set_defaults(func=cmd_organise)
     targets = sub.add_parser("verify-targets", help="recorded credentials to verify for a provider")
     targets.add_argument("provider", choices=["cloudflare"])
     targets.add_argument("names", nargs="*")

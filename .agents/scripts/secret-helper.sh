@@ -1434,6 +1434,7 @@ cmd_help() {
 	echo "  verify cloudflare [NAME...]       Read-only provider check; caches accounts/zones"
 	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"
 	echo "  owner RESOURCE [--json]           Which account/credentials hold a zone or resource"
+	echo "  organise [--json] [--apply-drafts] Plan cleanup; drafts only, never renames/deletes"
 	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
@@ -1502,7 +1503,7 @@ main() {
 	inventory)
 		cmd_inventory "$@"
 		;;
-	describe | record | account | default | alias | resolve | validate | dependents | drift | owner)
+	describe | record | account | default | alias | resolve | validate | dependents | drift | owner | organise | organize)
 		run_credential_inventory "$command" "$@" || return $?
 		;;
 	verify)
