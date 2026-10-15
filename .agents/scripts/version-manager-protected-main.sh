@@ -308,6 +308,28 @@ _version_manager_verify_protected_pr_identity() {
 	return 0
 }
 
+_version_manager_require_unowned_release_branch() {
+	local branch_name="$1"
+	local stale_head="$2"
+	local repo=""
+	local pulls_json=""
+
+	repo=$(_version_manager_protected_repo_slug) || return 1
+	# Inspect every PR, not just the latest or those targeting main. An open
+	# PR owns the branch; a merged PR owns its immutable historical head.
+	pulls_json=$(gh api --method GET "repos/${repo}/pulls" --paginate \
+		-f "head=${repo%%/*}:${branch_name}" -f state=all -F per_page=100 2>/dev/null) || return 1
+	if ! jq -e -s --arg head "$stale_head" '
+		length > 0 and all(.[]; type == "array") and
+		all(.[][]; .state != "open" and
+			((.merged_at // "") == "" or .head.sha != $head))
+	' <<<"$pulls_json" >/dev/null; then
+		print_error "Existing protected release branch is owned by an open or merged PR"
+		return 1
+	fi
+	return 0
+}
+
 _version_manager_prepare_protected_release_head() {
 	local version="$1"
 	local release_commit="$2"
@@ -315,8 +337,6 @@ _version_manager_prepare_protected_release_head() {
 	local branch_name="$4"
 	local push_output=""
 	local stale_head=""
-	local repo=""
-	local pulls_json=""
 	local ancestry_rc=0
 	local -a push_options=()
 
@@ -375,19 +395,7 @@ _version_manager_prepare_protected_release_head() {
 	fi
 
 	if [[ -n "$stale_head" ]]; then
-		repo=$(_version_manager_protected_repo_slug) || return 1
-		# Inspect every PR, not just the latest or those targeting main. An open
-		# PR owns the branch; a merged PR owns its immutable historical head.
-		pulls_json=$(gh api --method GET "repos/${repo}/pulls" --paginate \
-			-f "head=${repo%%/*}:${branch_name}" -f state=all -F per_page=100 2>/dev/null) || return 1
-		if ! jq -e -s --arg head "$stale_head" '
-			length > 0 and all(.[]; type == "array") and
-			all(.[][]; .state != "open" and
-				((.merged_at // "") == "" or .head.sha != $head))
-		' <<<"$pulls_json" >/dev/null; then
-			print_error "Existing protected release branch is owned by an open or merged PR"
-			return 1
-		fi
+		_version_manager_require_unowned_release_branch "$branch_name" "$stale_head" || return 1
 	fi
 	_version_manager_require_aggregate_fence || return 1
 	# GH#34434: release-tool push; skip only the dependency-bound repo-verify guard.
