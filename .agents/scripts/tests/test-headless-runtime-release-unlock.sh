@@ -369,6 +369,25 @@ fi
 		printf 'FAIL blocked projection changed concurrent ownership\n'; exit 1
 	fi
 	printf 'PASS blocked projection preserves concurrent owner without publishing secret gates\n'
+	# A mixed-version dispatch may reach a circuit opened by an older attempt.
+	_hrff_prepare_terminal_blocker_release() { _HRFF_TERMINAL_BLOCKER_MODE=open; return 0; }
+	GH_LIVE_ISSUE='{"state":"open","labels":[{"name":"status:in-progress"}]}'
+	GH_RELEASE_COMMENTS='[{"id":1,"author_association":"OWNER","body":"CLAIM_RELEASED reason=blocked runner=assigned-bot "},{"id":2,"author_association":"OWNER","body":"DISPATCH_CLAIM nonce=new"}]'
+	: >"$CALL_LOG"
+	rm -f "${TMP_HOME}/comment-attempts"
+	if GH_COMMENT_FAILURES_BEFORE_SUCCESS=3 AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=1 \
+		_release_dispatch_claim issue-12345 blocked; then
+		printf 'FAIL open circuit accepted unpersisted current release\n'; exit 1
+	fi
+	if grep -qE '^EDIT |^UNLOCK ' "$CALL_LOG"; then
+		printf 'FAIL old circuit mutated or unlocked without current release\n'; exit 1
+	fi
+	: >"$CALL_LOG"
+	rm -f "${TMP_HOME}/comment-attempts"
+	_release_dispatch_claim issue-12345 blocked
+	[[ "$(grep -c 'CLAIM_RELEASED reason=blocked' "$CALL_LOG")" == 1 ]]
+	grep -q -- '--remove-label status:in-progress' "$CALL_LOG"
+	printf 'PASS old open circuit persists current release before projecting blocked\n'
 )
 
 : >"$CALL_LOG"

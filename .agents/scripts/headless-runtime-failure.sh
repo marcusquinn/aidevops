@@ -660,6 +660,13 @@ _hrff_handle_terminal_blocker_release() {
 		;;
 	open)
 		print_info "Unchanged terminal-blocker circuit already active on #${issue_number}; suppressing duplicate release diagnostics"
+		# A circuit from an older attempt is not this attempt's release receipt.
+		# Keep prose deduplication, but persist the current release before mutation.
+		if declare -F gh_issue_edit_safe >/dev/null 2>&1 &&
+			! _hrff_blocked_release_persisted "$issue_number" "$repo_slug" "$(_hrff_resolve_release_runner_login)"; then
+			_hrff_post_claim_released_comment "$issue_number" "$repo_slug" \
+				"$machine_readable_part" || return 11
+		fi
 		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug" || return 11
 		return 10
 		;;
