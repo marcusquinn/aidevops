@@ -65,7 +65,25 @@ cannot select the target. Under the canonical recovery lock it:
 3. removes only structurally canonical ownership rows without signalling PIDs;
 4. preserves divergent/local-only commits at an audited recovery ref;
 5. compare-and-swaps the local ref and updates the worktree to the pinned tip;
-6. verifies branch, HEAD, remote ref, worktree cleanliness, and the audit chain.
+6. verifies branch, HEAD, remote ref, worktree cleanliness, and the audit chain;
+7. reinstates preserved untracked files on top of the new tip without
+   overwriting anything.
+
+`fast-forward-current` uses the same preservation and reinstatement for
+untracked-only state; tracked or staged changes still block it. Reinstatement
+never overwrites or writes through links: a path that now exists, or sits under
+a new non-directory or symlinked directory, stays in the backup and is reported as an
+`UNTRACKED_LEFT_IN_BACKUP=` line next to `UNTRACKED_RESTORED=<n>`. The backup is
+acknowledged (so retention can prune it) only when every untracked path was
+reinstated and it held no tracked edits, or on the routine-update route. Tracked
+and staged edits remain only in the backup.
+
+`RESTORE_COMMAND` is a full pre-operation rollback: it restores the captured
+HEAD, index, worktree and untracked state, so it also undoes the
+synchronization. Use it to roll back, not to recover a file. It accepts a
+checkout whose only state is untracked files reinstated, byte-identical, from
+the same backup, and refuses if any backed-up path now differs, including a
+path the new tip ignores.
 
 A clean canonical checkout whose resolved default branch is still unborn is a
 supported bootstrap input for `sync-mirror` only. The helper requires symbolic

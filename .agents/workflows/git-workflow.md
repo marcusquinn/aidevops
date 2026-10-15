@@ -59,9 +59,10 @@ the helper by name keeps the command portable and parseable by command policy.
 The asserted branch must equal the branch resolved from registered config,
 committed project config, or `origin/HEAD`. The helper refuses arbitrary branch
 names, linked/detached checkouts, divergence, concurrent recovery, stale refs,
-and audit failures.
+and audit failures. Untracked-only state is allowed: it is backed up, then
+non-colliding files are reinstated after the verified fast-forward.
 
-If unexpected tracked, staged, untracked, or local-commit state exists, use the
+If unexpected tracked, staged, or local-commit state exists, use the
 lossless route instead of waiting, stashing, resetting, or cleaning:
 
 ```bash

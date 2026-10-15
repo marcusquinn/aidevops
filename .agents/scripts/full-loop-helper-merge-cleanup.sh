@@ -316,7 +316,9 @@ _merge_fast_forward_canonical() {
 	[[ "$merge_sha" =~ ^[0-9a-f]{40}$ && "$issue_number" =~ ^[0-9]+$ ]] || return 2
 	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
 	[[ -n "$current_branch" && "$current_branch" == "$default_branch" ]] || return 2
-	status_output=$(git -C "$canonical_dir" status --porcelain 2>/dev/null) || return 2
+	# Untracked-only state is eligible: the helper preserves it and reinstates
+	# non-colliding files after the verified fast-forward (GH#34770).
+	status_output=$(git -C "$canonical_dir" status --porcelain --untracked-files=no 2>/dev/null) || return 2
 	[[ -z "$status_output" ]] || return 2
 	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
 	[[ -n "$canonical_head" ]] || return 2
@@ -413,7 +415,7 @@ _merge_report_canonical_sync_state() {
 	local remote_head="$FULL_LOOP_CANONICAL_REMOTE_HEAD"
 	local fast_forward_candidate=0
 	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
-	clean=$(git -C "$canonical_dir" status --porcelain 2>/dev/null || true)
+	clean=$(git -C "$canonical_dir" status --porcelain --untracked-files=no 2>/dev/null || true)
 	local_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
 	[[ -n "$remote_head" ]] || remote_head=$(git -C "$canonical_dir" rev-parse "origin/${default_branch}" 2>/dev/null || true)
 	if [[ "$current_branch" == "$default_branch" && -z "$clean" && -n "$local_head" && -n "$remote_head" ]]; then

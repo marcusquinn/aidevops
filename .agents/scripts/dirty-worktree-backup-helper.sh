@@ -46,7 +46,9 @@ Commands:
   recover-clean --repo PATH --backup ID --confirm RECOVER_DIRTY_WORKTREE_CLEAN
       Resume rollback after an interrupted clean, restoring the pre-clean state.
   restore --repo PATH --backup ID --confirm RESTORE_DIRTY_WORKTREE_BACKUP
-      Restore the original HEAD, index, worktree, and untracked state.
+      Restore the original HEAD, index, worktree, and untracked state. This is a
+      full pre-operation rollback: it also rewinds the branch to the captured
+      HEAD. Untracked files already reinstated from the same backup are accepted.
   acknowledge --backup ID --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP
       Mark an open backup eligible for retention pruning.
   list
@@ -916,6 +918,76 @@ cmd_recover_clean() {
 	return 0
 }
 
+# Accept a restore target whose only state is untracked files reinstated from
+# this backup: tracked/index state must be clean, every visible untracked file
+# must be listed in the backup inventory, and every existing untracked
+# inventory path (including ones the current tip ignores) must be byte-, type-
+# and mode-identical to its preserved copy, so restore can lose nothing
+# (GH#34770).
+untracked_state_is_backup_copy() {
+	local repo_path="$1"
+	local backup_dir="$2"
+	local tracked_status=""
+	local visible_path=""
+	local tracked_path=""
+	tracked_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1 --untracked-files=no) || return 1
+	[[ -z "$tracked_status" ]] || return 1
+	visible_path=$(mktemp) || return 1
+	tracked_path=$(mktemp) || {
+		rm -f "$visible_path"
+		return 1
+	}
+	if ! "$REAL_GIT" -C "$repo_path" ls-files --others --exclude-standard -z >"$visible_path" ||
+		! "$REAL_GIT" -C "$repo_path" ls-files --cached -z >"$tracked_path"; then
+		rm -f "$visible_path" "$tracked_path"
+		return 1
+	fi
+	local check_rc=0
+	python3 - "$repo_path" "$backup_dir/untracked" "$backup_dir/$UNTRACKED_LIST_NAME" "$visible_path" "$tracked_path" 2>/dev/null <<'PY' || check_rc=$?
+import filecmp
+import os
+import pathlib
+import stat
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+source_root = pathlib.Path(sys.argv[2]).resolve()
+inventory_path = pathlib.Path(sys.argv[3])
+inventory = set()
+if inventory_path.exists():
+    inventory = {raw for raw in inventory_path.read_bytes().split(b"\0") if raw}
+visible = {raw for raw in pathlib.Path(sys.argv[4]).read_bytes().split(b"\0") if raw}
+tracked = {raw for raw in pathlib.Path(sys.argv[5]).read_bytes().split(b"\0") if raw}
+if not visible <= inventory:
+    raise SystemExit(1)
+for raw in sorted(inventory - tracked):
+    relative = pathlib.Path(os.fsdecode(raw))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise SystemExit(1)
+    if not os.path.lexists(root / relative):
+        continue
+    current = root / relative
+    preserved = source_root / relative
+    current_meta = current.lstat()
+    preserved_meta = preserved.lstat()
+    if stat.S_IFMT(current_meta.st_mode) != stat.S_IFMT(preserved_meta.st_mode):
+        raise SystemExit(1)
+    if stat.S_ISLNK(current_meta.st_mode):
+        if os.readlink(current) != os.readlink(preserved):
+            raise SystemExit(1)
+        continue
+    if not stat.S_ISREG(current_meta.st_mode):
+        raise SystemExit(1)
+    if stat.S_IMODE(current_meta.st_mode) != stat.S_IMODE(preserved_meta.st_mode):
+        raise SystemExit(1)
+    if not filecmp.cmp(current, preserved, shallow=False):
+        raise SystemExit(1)
+PY
+	rm -f "$visible_path" "$tracked_path"
+	[[ "$check_rc" -eq 0 ]] || return 1
+	return 0
+}
+
 rollback_restore() {
 	local repo_path="$1"
 	local branch_ref="$2"
@@ -936,7 +1008,7 @@ cmd_restore() {
 	local backup_dir=""
 	backup_dir=$(resolve_backup_dir "$PARSED_BACKUP_ID") || return 1
 	verify_backup_dir "$repo_path" "$backup_dir" || return 1
-	[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain=v1)" ]] || return 1
+	untracked_state_is_backup_copy "$repo_path" "$backup_dir" || return 1
 	local branch=""
 	branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 	[[ "$branch" == "$(manifest_value "$backup_dir/manifest.tsv" branch)" ]] || return 1

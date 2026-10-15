@@ -851,6 +851,24 @@ test_interactive_merge_fast_forwards_canonical_through_helper() {
 	return 0
 }
 
+# GH#34770: untracked-only state must not divert the merge to sync-mirror.
+test_untracked_only_canonical_fast_forwards_through_helper() {
+	make_fast_forward_fixture "untracked"
+	printf 'local image\n' >"${FF_CANONICAL}/image.txt"
+	local output=""
+	local sync_rc=0
+	local rc=0
+	output=$(run_interactive_sync_report 2>&1) || sync_rc=$?
+	[[ "$sync_rc" -eq 0 ]] || rc=1
+	[[ "$output" == *"LIFECYCLE_STATE=CANONICAL_SYNCED sha=${FF_TIP}"* ]] || rc=1
+	[[ "$output" != *"sync-mirror"* ]] || rc=1
+	[[ "$(git -C "$FF_CANONICAL" rev-parse HEAD)" == "$FF_TIP" ]] || rc=1
+	[[ -f "${FF_CANONICAL}/image.txt" ]] || rc=1
+	grep -qF -- "fast-forward-current --repo ${FF_CANONICAL} --branch main --issue 33013" "$FF_HELPER_LOG" || rc=1
+	print_result "untracked-only canonical fast-forwards through the audited helper" "$rc" "$output"
+	return 0
+}
+
 assert_sync_report_does_not_mutate() {
 	local label="$1"
 	local expected_next="$2"
@@ -972,6 +990,7 @@ main() {
 	setup_subject
 	test_refresh_canonical_reports_pending_without_mutation
 	test_interactive_merge_fast_forwards_canonical_through_helper
+	test_untracked_only_canonical_fast_forwards_through_helper
 	test_canonical_fast_forward_exclusions
 	test_canonical_guard_denial_is_reported
 	test_planning_reconcile_waits_for_canonical_sync

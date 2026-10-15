@@ -665,24 +665,92 @@ ffl_block() {
 	return 1
 }
 
-# Restore the preserved untracked files after a local fast-forward without
-# overwriting anything that now exists at the same path.
-ffl_restore_untracked() {
+# Reinstate preserved untracked files after a verified fast-forward or mirror
+# synchronization without overwriting anything that now exists at the same
+# path. Paths that collide with the new tip or sit under a new non-directory
+# or symlink ancestor stay in the backup and are reported as
+# UNTRACKED_LEFT_IN_BACKUP= lines. Returns 0 when every path was reinstated,
+# 3 when at least one path was left in the backup, and 1 on error (GH#34770).
+restore_untracked_noclobber() {
 	local repo="$1"
 	local backup_dir="$2"
 	local list_file="${backup_dir}/untracked-files.nul"
-	local rel=""
-	[[ -f "$list_file" ]] || return 0
-	while IFS= read -r -d '' rel; do
-		[[ -n "$rel" && "$rel" != /* && "/${rel}/" != *"/../"* ]] || return 1
-		if [[ -e "${repo}/${rel}" || -L "${repo}/${rel}" ]]; then
-			printf 'WARNING: preserved untracked path already exists, left in backup: %s\n' "$rel" >&2
-			continue
-		fi
-		mkdir -p "$(dirname "${repo}/${rel}")" || return 1
-		cp -a "${backup_dir}/untracked/${rel}" "${repo}/${rel}" || return 1
-	done <"$list_file"
-	return 0
+	[[ -f "$list_file" ]] || {
+		printf 'UNTRACKED_RESTORED=0\n'
+		return 0
+	}
+	python3 - "$repo" "${backup_dir}/untracked" "$list_file" <<'PY'
+import os
+import pathlib
+import shutil
+import stat
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+source_root = pathlib.Path(sys.argv[2]).resolve()
+paths = pathlib.Path(sys.argv[3]).read_bytes().split(b"\0")
+
+
+def inside(base, candidate):
+    return os.path.commonpath((str(base), str(candidate))) == str(base)
+
+
+restored = 0
+left = []
+for raw in paths:
+    if not raw:
+        continue
+    relative = pathlib.Path(os.fsdecode(raw))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise SystemExit("invalid restore inventory")
+    source_parent = (source_root / relative.parent).resolve(strict=False)
+    if not inside(source_root, source_parent):
+        raise SystemExit("untracked backup escaped payload root")
+    source = source_parent / relative.name
+    metadata = source.lstat()
+    if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
+        raise SystemExit("unsupported untracked backup file type")
+    # Walk parents without following symlinks: an incoming tracked symlink or
+    # file at any ancestor is a collision, never a destination to write through.
+    target_parent = root
+    collided = False
+    for part in relative.parent.parts:
+        target_parent = target_parent / part
+        try:
+            parent_meta = target_parent.lstat()
+        except FileNotFoundError:
+            try:
+                target_parent.mkdir()
+            except OSError:
+                collided = True
+                break
+            continue
+        if not stat.S_ISDIR(parent_meta.st_mode):
+            collided = True
+            break
+    if collided:
+        left.append(raw)
+        continue
+    target = target_parent / relative.name
+    try:
+        if stat.S_ISLNK(metadata.st_mode):
+            os.symlink(os.readlink(source), target)
+        else:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(target, flags, 0o600)
+            with os.fdopen(descriptor, "wb") as destination, source.open("rb") as payload:
+                shutil.copyfileobj(payload, destination)
+            shutil.copystat(source, target, follow_symlinks=False)
+    except FileExistsError:
+        left.append(raw)
+        continue
+    restored += 1
+for raw in left:
+    print("UNTRACKED_LEFT_IN_BACKUP=" + raw.decode("utf-8", "backslashreplace"))
+print(f"UNTRACKED_RESTORED={restored}")
+sys.exit(3 if left else 0)
+PY
+	return $?
 }
 
 # Three-way re-apply of preserved tracked edits onto the new tip. Prints
@@ -900,7 +968,10 @@ fast_forward_local() {
 			printf 'BLOCKED: preserved edits conflict with the new tip; they remain in backup %s\n' "$backup_id" >&2
 			return 1
 		fi
-		ffl_restore_untracked "$repo" "$backup_dir" || { ffl_block "preserved untracked files could not be restored (backup ${backup_id})"; return 1; }
+		local restore_rc=0
+		restore_untracked_noclobber "$repo" "$backup_dir" || restore_rc=$?
+		[[ "$restore_rc" -eq 0 || "$restore_rc" -eq 3 ]] ||
+			{ ffl_block "preserved untracked files could not be restored (backup ${backup_id})"; return 1; }
 	fi
 	[[ "$("$REAL_GIT" -C "$repo" rev-parse --verify "${local_ref}^{commit}")" == "$new_sha" ]] ||
 		{ ffl_block "default ref does not match the source tip after fast-forward"; return 1; }
@@ -1090,7 +1161,18 @@ if [[ "$cmd" == "$LOCAL_FAST_FORWARD_CMD" ]]; then
 	fast_forward_local "$repo_path" "$from_branch" "$task_id"
 	exit $?
 fi
-if [[ "$cmd" != "$SYNC_MIRROR_CMD" && "$cmd" != "$VERIFY_BOOTSTRAP_CMD" ]] &&
+if [[ "$cmd" == "$FAST_FORWARD_CMD" ]]; then
+	# GH#34770: a fast-forward accepts untracked-only state. It is preserved and
+	# cleaned below, then reinstated without overwriting after verification.
+	ff_tracked_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1 --untracked-files=no) || {
+		printf 'BLOCKED: canonical tracked/index state cannot be read safely\n' >&2
+		exit 1
+	}
+	[[ -z "$ff_tracked_status" ]] || {
+		printf 'BLOCKED: canonical worktree is not clean\n' >&2
+		exit 1
+	}
+elif [[ "$cmd" != "$SYNC_MIRROR_CMD" && "$cmd" != "$VERIFY_BOOTSTRAP_CMD" ]] &&
 	[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
 	printf 'BLOCKED: canonical worktree is not clean\n' >&2
 	exit 1
@@ -1405,24 +1487,45 @@ if [[ "$cmd" == "$CLEAR_STALE_REBASE_CMD" || "$cmd" == "$CLEAR_ABANDONED_REBASE_
 	fi
 fi
 
+# A fast-forward must refuse divergence before any preservation clean so a
+# refused run never moves untracked files out of the checkout (GH#34770).
+if [[ "$local_state" == "$LOCAL_STATE_BORN" && "$cmd" == "$FAST_FORWARD_CMD" ]] &&
+	! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
+	printf 'BLOCKED: local %s has diverged from %s/%s\n' \
+		"$target_branch" "$canonical_remote" "$target_branch" >&2
+	exit 1
+fi
+
 sync_backup_id=""
 sync_backup_dir=""
-if [[ "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
+sync_tracked_dirty=false
+if [[ "$cmd" == "$SYNC_MIRROR_CMD" || "$cmd" == "$FAST_FORWARD_CMD" ]]; then
 	canonical_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1) || {
 		printf 'BLOCKED: canonical worktree status cannot be read safely\n' >&2
 		exit 1
 	}
 	if [[ -n "$canonical_status" ]]; then
+		tracked_dirty_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1 --untracked-files=no) || {
+			printf 'BLOCKED: canonical tracked/index state cannot be read safely\n' >&2
+			exit 1
+		}
+		[[ -z "$tracked_dirty_status" ]] || sync_tracked_dirty=true
 		backup_helper="${SCRIPT_DIR}/dirty-worktree-backup-helper.sh"
 		[[ -f "$backup_helper" ]] || {
 			printf 'BLOCKED: dirty-worktree backup helper is unavailable\n' >&2
 			exit 1
 		}
 		backup_operation_key="${issue_number:-$maintenance_reason}"
+		backup_reason="canonical mirror synchronization"
+		backup_operation_prefix="canonical-sync"
+		if [[ "$cmd" == "$FAST_FORWARD_CMD" ]]; then
+			backup_reason="canonical fast-forward"
+			backup_operation_prefix="canonical-ff"
+		fi
 		backup_output=$(AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" backup \
-			--repo "$repo_path" --reason "canonical mirror synchronization" \
+			--repo "$repo_path" --reason "$backup_reason" \
 			--issue "$issue_number" \
-			--operation-id "canonical-sync-${backup_operation_key}-${target_sha}" --machine) || {
+			--operation-id "${backup_operation_prefix}-${backup_operation_key}-${target_sha}" --machine) || {
 			printf 'BLOCKED: canonical dirty state could not be preserved\n' >&2
 			exit 1
 		}
@@ -1463,35 +1566,33 @@ if [[ "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		}
 	fi
 
-	# shellcheck source=shared-constants.sh
-	source "${SCRIPT_DIR}/shared-constants.sh"
-	if ! declare -F remove_canonical_worktree_owner >/dev/null 2>&1 ||
-		! remove_canonical_worktree_owner "$repo_path"; then
-		printf 'BLOCKED: invalid canonical ownership could not be cleared safely\n' >&2
-		exit 1
+	if [[ "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
+		# shellcheck source=shared-constants.sh
+		source "${SCRIPT_DIR}/shared-constants.sh"
+		if ! declare -F remove_canonical_worktree_owner >/dev/null 2>&1 ||
+			! remove_canonical_worktree_owner "$repo_path"; then
+			printf 'BLOCKED: invalid canonical ownership could not be cleared safely\n' >&2
+			exit 1
+		fi
 	fi
-	current_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-	[[ "$target_branch" == "$current_branch" ]] || {
-		printf 'BLOCKED: canonical branch changed during preservation\n' >&2
-		exit 1
-	}
-	verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" || {
-		printf 'BLOCKED: canonical local ref changed during preservation\n' >&2
-		exit 1
-	}
-	[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]] || {
-		printf 'BLOCKED: canonical worktree remains dirty after preservation\n' >&2
-		exit 1
-	}
+	if [[ "$cmd" == "$SYNC_MIRROR_CMD" || -n "$sync_backup_id" ]]; then
+		current_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+		[[ "$target_branch" == "$current_branch" ]] || {
+			printf 'BLOCKED: canonical branch changed during preservation\n' >&2
+			exit 1
+		}
+		verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" || {
+			printf 'BLOCKED: canonical local ref changed during preservation\n' >&2
+			exit 1
+		}
+		[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]] || {
+			printf 'BLOCKED: canonical worktree remains dirty after preservation\n' >&2
+			exit 1
+		}
+	fi
 fi
 
 preservation_ref=""
-if [[ "$local_state" == "$LOCAL_STATE_BORN" && "$cmd" == "$FAST_FORWARD_CMD" ]] &&
-	! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
-	printf 'BLOCKED: local %s has diverged from %s/%s\n' \
-		"$target_branch" "$canonical_remote" "$target_branch" >&2
-	exit 1
-fi
 if [[ "$local_state" == "$LOCAL_STATE_BORN" && "$cmd" != "$FAST_FORWARD_CMD" ]] &&
 	! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
 	preservation_ref="refs/aidevops/canonical-recovery/issue-${issue_number}/${local_sha}"
@@ -1929,19 +2030,33 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		printf 'WARNING: exact release tag for the updated VERSION is not available from %s\n' \
 			"$canonical_remote" >&2
 	fi
-	if [[ "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
-		if [[ "$maintenance_reason" == "$AIDEVOPS_UPDATE_REASON" && -n "$sync_backup_id" ]]; then
-			retention_days="${AIDEVOPS_DIRTY_BACKUP_RETENTION_DAYS:-30}"
-			[[ "$retention_days" =~ ^[0-9]+$ ]] || retention_days=30
+	# GH#34770: reinstate preserved untracked files on top of the verified new
+	# tip. Colliding paths stay in the backup, which then stays open so it is
+	# never acknowledged or pruned while it holds the only copy.
+	if [[ -n "$sync_backup_id" ]]; then
+		untracked_restore_rc=0
+		restore_untracked_noclobber "$repo_path" "$sync_backup_dir" || untracked_restore_rc=$?
+		if [[ "$untracked_restore_rc" -ne 0 && "$untracked_restore_rc" -ne 3 ]]; then
+			printf 'WARNING: preserved untracked files could not be reinstated; they remain in backup %s\n' \
+				"$sync_backup_id" >&2
+		fi
+		if [[ "$untracked_restore_rc" -eq 0 ]] &&
+			[[ "$maintenance_reason" == "$AIDEVOPS_UPDATE_REASON" || "$sync_tracked_dirty" != "$BOOLEAN_TRUE" ]]; then
 			if ! AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" acknowledge \
 				--backup "$sync_backup_id" --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP >/dev/null; then
 				printf 'WARNING: synchronized backup remains open and requires manual acknowledgement: %s\n' \
 					"$sync_backup_id" >&2
-			elif ! AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" prune \
-				--force --retention-days "$retention_days" >/dev/null; then
-				printf 'WARNING: synchronized mirror succeeded but expired backup pruning failed\n' >&2
+			elif [[ "$maintenance_reason" == "$AIDEVOPS_UPDATE_REASON" ]]; then
+				retention_days="${AIDEVOPS_DIRTY_BACKUP_RETENTION_DAYS:-30}"
+				[[ "$retention_days" =~ ^[0-9]+$ ]] || retention_days=30
+				if ! AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" prune \
+					--force --retention-days "$retention_days" >/dev/null; then
+					printf 'WARNING: synchronized mirror succeeded but expired backup pruning failed\n' >&2
+				fi
 			fi
 		fi
+	fi
+	if [[ "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		printf 'SYNCHRONIZED_CANONICAL_MIRROR=true\n'
 		printf 'OLD_STATE=%s\n' "$local_state"
 		printf 'OLD_SHA=%s\n' "${local_sha:-none}"

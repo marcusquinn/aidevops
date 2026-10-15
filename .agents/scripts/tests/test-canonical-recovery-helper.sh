@@ -445,13 +445,13 @@ else
 	exit 1
 fi
 
-printf 'dirty\n' >"${REPO}/DIRTY.md"
+printf 'tracked dirt\n' >>"${REPO}/README.md"
 if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
-	printf 'FAIL current-branch fast-forward accepted a dirty canonical worktree\n'
+	printf 'FAIL current-branch fast-forward accepted a tracked-dirty canonical worktree\n'
 	exit 1
 fi
-rm "${REPO}/DIRTY.md"
-printf 'PASS current-branch fast-forward refuses a dirty canonical worktree\n'
+/usr/bin/git -C "$REPO" checkout -q -- README.md
+printf 'PASS current-branch fast-forward refuses a tracked-dirty canonical worktree\n'
 
 /usr/bin/git -C "$REPO" switch -q --detach
 if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
@@ -467,16 +467,19 @@ develop_local_tip=$(/usr/bin/git -C "$REPO" rev-parse HEAD)
 printf 'remote develop divergence\n' >>"${UPDATER}/README.md"
 /usr/bin/git -C "$UPDATER" commit -q -am 'remote develop divergence'
 /usr/bin/git -C "$UPDATER" push -q origin develop
+printf 'untracked during divergence\n' >"${REPO}/diverge-untracked.txt"
 if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward accepted divergence\n'
 	exit 1
 elif [[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "develop" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]]; then
-	printf 'PASS current-branch fast-forward refuses divergence without changing refs\n'
+	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]] &&
+	[[ "$(<"${REPO}/diverge-untracked.txt")" == "untracked during divergence" ]]; then
+	printf 'PASS current-branch fast-forward refuses divergence without changing refs or moving untracked files\n'
 else
-	printf 'FAIL divergence refusal changed current branch or local tip\n'
+	printf 'FAIL divergence refusal changed current branch, local tip, or untracked state\n'
 	exit 1
 fi
+rm "${REPO}/diverge-untracked.txt"
 /usr/bin/git -C "$UPDATER" switch -q main
 
 unset AIDEVOPS_REPOS_CONFIG
@@ -1093,7 +1096,7 @@ if [[ "$sync_output" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
 	[[ -z "$(/usr/bin/git -C "$SYNC_REPO" status --porcelain=v1)" ]]; then
 	printf 'PASS safe retry converges the canonical mirror to the exact resolved remote tip\n'
 else
-	printf 'FAIL safe retry did not converge to the exact remote tip\n'
+	printf 'FAIL safe retry did not converge to the exact remote tip\n%s\n' "$sync_output"
 	exit 1
 fi
 
@@ -1130,6 +1133,18 @@ if [[ "$sync_retry_output" == *"PRESERVED_BACKUP_ID=${sync_backup_id}"* ]] &&
 	printf 'PASS repeated synchronization reuses durable evidence and remains auditable\n'
 else
 	printf 'FAIL repeated synchronization duplicated evidence or lost auditability\n'
+	exit 1
+fi
+if [[ -z "$(/usr/bin/git -C "$SYNC_REPO" status --porcelain=v1 --untracked-files=no)" ]] &&
+	[[ ! -e "${SYNC_REPO}/staged.txt" ]] &&
+	[[ "$(<"${SYNC_REPO}/todo/tasks/recovery.md")" == "untracked state" ]] &&
+	[[ -f "${SYNC_REPO}/local-state/runtime/nested/payload.bin" ]] &&
+	[[ "$(readlink "${SYNC_REPO}/local-state/runtime/nested/payload-link")" == "payload.bin" ]] &&
+	[[ "$sync_retry_output" == *"UNTRACKED_RESTORED="* ]] &&
+	[[ "$(awk -F '\t' '$1 == "state" { print $2 }' "${SYNC_BACKUPS}/${sync_backup_id}/manifest.tsv")" == "open" ]]; then
+	printf 'PASS synchronization reinstates untracked files while tracked edits stay only in the unacknowledged backup\n'
+else
+	printf 'FAIL synchronization did not reinstate untracked files or changed tracked-edit backup state\n%s\n' "$sync_retry_output"
 	exit 1
 fi
 
@@ -1353,7 +1368,8 @@ update_backup_dir="${UPDATE_BACKUPS}/${update_backup_id}"
 if [[ "$update_output" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
 	[[ "$update_output" == *"RESTORE_COMMAND="* ]] &&
 	[[ "$(/usr/bin/git -C "$UPDATE_REPO" rev-parse HEAD)" == "$update_remote_tip" ]] &&
-	[[ -z "$(/usr/bin/git -C "$UPDATE_REPO" status --porcelain=v1)" ]] &&
+	[[ "$(/usr/bin/git -C "$UPDATE_REPO" status --porcelain=v1)" == "?? current-untracked.txt" ]] &&
+	[[ "$update_output" == *"UNTRACKED_RESTORED=1"* ]] &&
 	[[ "$(awk -F '\t' '$1 == "state" { print $2 }' "$update_backup_dir/manifest.tsv")" == "acknowledged" ]] &&
 	[[ ! -d "$old_backup_dir" ]]; then
 	printf 'PASS routine update preserves untracked state, acknowledges reusable evidence, and prunes backups older than 30 days\n'
@@ -1371,5 +1387,208 @@ if [[ -f "${UPDATE_REPO}/current-untracked.txt" ]] &&
 	printf 'PASS routine update backup remains byte-restorable during the retention window\n'
 else
 	printf 'FAIL routine update backup did not restore the original untracked state\n'
+	exit 1
+fi
+
+# GH#34770: untracked-only canonical state must not block or be lost by a
+# post-merge fast-forward or mirror synchronization.
+backup_id_from_output() {
+	local output="$1"
+	local line=""
+	while IFS= read -r line; do
+		case "$line" in
+		PRESERVED_BACKUP_ID=*)
+			printf '%s\n' "${line#PRESERVED_BACKUP_ID=}"
+			return 0
+			;;
+		esac
+	done <<<"$output"
+	return 1
+}
+
+backup_state() {
+	local backups="$1"
+	local backup_id="$2"
+	awk -F '\t' '$1 == "state" { print $2 }' "${backups}/${backup_id}/manifest.tsv"
+	return 0
+}
+
+UNT_REMOTE="${ROOT}/untracked-remote.git"
+UNT_REPO="${ROOT}/untracked-repo"
+UNT_PEER="${ROOT}/untracked-peer"
+UNT_BACKUPS="${ROOT}/untracked-backups"
+mkdir -p "$UNT_REPO"
+/usr/bin/git init -q --bare "$UNT_REMOTE"
+/usr/bin/git -C "$UNT_REPO" init -q -b main
+/usr/bin/git -C "$UNT_REPO" config user.name Test
+/usr/bin/git -C "$UNT_REPO" config user.email test@example.invalid
+/usr/bin/git -C "$UNT_REPO" config commit.gpgsign false
+UNT_URL="ssh://git@github.com:22/Example/Untracked-Sync.git"
+/usr/bin/git -C "$UNT_REPO" config "url.${UNT_REMOTE}.insteadOf" "$UNT_URL"
+printf 'untracked seed\n' >"${UNT_REPO}/README.md"
+/usr/bin/git -C "$UNT_REPO" add README.md
+/usr/bin/git -C "$UNT_REPO" commit -q -m seed
+/usr/bin/git -C "$UNT_REPO" remote add origin "$UNT_URL"
+/usr/bin/git -C "$UNT_REPO" push -q -u origin main
+/usr/bin/git -C "$UNT_REMOTE" symbolic-ref HEAD refs/heads/main
+/usr/bin/git -C "$UNT_REPO" remote set-head origin main
+/usr/bin/git clone -q "$UNT_REMOTE" "$UNT_PEER"
+/usr/bin/git -C "$UNT_PEER" config user.name Test
+/usr/bin/git -C "$UNT_PEER" config user.email test@example.invalid
+export AIDEVOPS_REPOS_CONFIG="${ROOT}/untracked-repos.json"
+printf '{"initialized_repos":[{"slug":"example/untracked-sync","path":"%s"}]}\n' \
+	"$UNT_REPO" >"$AIDEVOPS_REPOS_CONFIG"
+
+unt_push_peer_commit() {
+	local file_name="$1"
+	local content="$2"
+	printf '%s\n' "$content" >"${UNT_PEER}/${file_name}"
+	/usr/bin/git -C "$UNT_PEER" add "$file_name"
+	/usr/bin/git -C "$UNT_PEER" commit -q -m "peer adds ${file_name}"
+	/usr/bin/git -C "$UNT_PEER" push -q origin main
+	return 0
+}
+
+# 1. Untracked-only fast-forward succeeds and leaves the file in place.
+mkdir -p "${UNT_REPO}/assets"
+printf 'local image bytes\n' >"${UNT_REPO}/assets/image.txt"
+unt_push_peer_commit merged.txt 'merged change'
+unt_tip=$(/usr/bin/git -C "$UNT_REMOTE" rev-parse refs/heads/main)
+unt_ff_rc=0
+unt_ff_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
+	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unt_ff_rc=$?
+unt_ff_backup=$(backup_id_from_output "$unt_ff_output" || true)
+if [[ "$unt_ff_rc" -eq 0 ]] &&
+	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
+	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]] &&
+	[[ "$(/usr/bin/git -C "$UNT_REPO" status --porcelain=v1)" == "?? assets/" ]] &&
+	[[ "$unt_ff_output" == *"UNTRACKED_RESTORED=1"* ]] &&
+	[[ -n "$unt_ff_backup" && "$(backup_state "$UNT_BACKUPS" "$unt_ff_backup")" == "acknowledged" ]]; then
+	printf 'PASS untracked-only fast-forward-current converges and keeps the untracked file in place\n'
+else
+	printf 'FAIL untracked-only fast-forward-current did not converge with the file in place\n%s\n' "$unt_ff_output"
+	exit 1
+fi
+
+# 2. A colliding incoming path is never overwritten; the local copy stays in an open backup.
+printf 'local collide\n' >"${UNT_REPO}/collide.txt"
+unt_push_peer_commit collide.txt 'remote collide'
+unt_tip=$(/usr/bin/git -C "$UNT_REMOTE" rev-parse refs/heads/main)
+unt_collide_rc=0
+unt_collide_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
+	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unt_collide_rc=$?
+unt_collide_backup=$(backup_id_from_output "$unt_collide_output" || true)
+if [[ "$unt_collide_rc" -eq 0 ]] &&
+	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
+	[[ "$(<"${UNT_REPO}/collide.txt")" == "remote collide" ]] &&
+	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]] &&
+	[[ "$unt_collide_output" == *"UNTRACKED_LEFT_IN_BACKUP=collide.txt"* ]] &&
+	[[ -n "$unt_collide_backup" && "$(backup_state "$UNT_BACKUPS" "$unt_collide_backup")" == "open" ]] &&
+	[[ "$(<"${UNT_BACKUPS}/${unt_collide_backup}/untracked/collide.txt")" == "local collide" ]]; then
+	printf 'PASS colliding untracked path is left in an open backup without overwriting the new tip\n'
+else
+	printf 'FAIL colliding untracked path was overwritten, lost, or acknowledged\n%s\n' "$unt_collide_output"
+	exit 1
+fi
+
+# 3. sync-mirror reinstates the file; RESTORE_COMMAND still rolls back the full pre-sync snapshot.
+unt_pre_sync=$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)
+unt_push_peer_commit synced.txt 'synced change'
+unt_tip=$(/usr/bin/git -C "$UNT_REMOTE" rev-parse refs/heads/main)
+unt_sync_rc=0
+unt_sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
+	bash "$HELPER" sync-mirror --repo "$UNT_REPO" --issue 34770 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unt_sync_rc=$?
+unt_sync_backup=$(backup_id_from_output "$unt_sync_output" || true)
+if [[ "$unt_sync_rc" -eq 0 ]] &&
+	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
+	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]] &&
+	[[ -n "$unt_sync_backup" ]]; then
+	printf 'PASS sync-mirror reinstates untracked files on the synchronized tip without a manual restore\n'
+else
+	printf 'FAIL sync-mirror did not reinstate untracked files on the synchronized tip\n%s\n' "$unt_sync_output"
+	exit 1
+fi
+if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	bash "$DIRTY_HELPER" restore --repo "$UNT_REPO" --backup "$unt_sync_backup" \
+	--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null &&
+	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_pre_sync" ]] &&
+	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]]; then
+	printf 'PASS restore accepts reinstated copies and remains a full pre-sync rollback\n'
+else
+	printf 'FAIL restore refused reinstated copies or did not roll back to the pre-sync snapshot\n'
+	exit 1
+fi
+
+# 4. Restore refuses when a reinstated file was edited after reinstatement.
+AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
+	bash "$HELPER" sync-mirror --repo "$UNT_REPO" --issue 34770 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR >/dev/null 2>&1
+printf 'edited after reinstatement\n' >"${UNT_REPO}/assets/image.txt"
+if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	bash "$DIRTY_HELPER" restore --repo "$UNT_REPO" --backup "$unt_sync_backup" \
+	--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1; then
+	printf 'FAIL restore overwrote an untracked file edited after reinstatement\n'
+	exit 1
+elif [[ "$(<"${UNT_REPO}/assets/image.txt")" == "edited after reinstatement" ]] &&
+	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]]; then
+	printf 'PASS restore refuses to overwrite an untracked file edited after reinstatement\n'
+else
+	printf 'FAIL refused restore changed canonical state\n'
+	exit 1
+fi
+rm "${UNT_REPO}/assets/image.txt"
+
+# 5. A reinstated file that the new tip ignores is still protected from restore.
+printf 'local scratch\n' >"${UNT_REPO}/scratch.txt"
+printf 'scratch.txt\n' >"${UNT_PEER}/.gitignore"
+/usr/bin/git -C "$UNT_PEER" pull -q --ff-only origin main
+/usr/bin/git -C "$UNT_PEER" add .gitignore
+/usr/bin/git -C "$UNT_PEER" commit -q -m 'peer ignores scratch'
+/usr/bin/git -C "$UNT_PEER" push -q origin main
+unt_ignore_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
+	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || true
+unt_ignore_backup=$(backup_id_from_output "$unt_ignore_output" || true)
+printf 'edited while ignored\n' >"${UNT_REPO}/scratch.txt"
+if [[ -n "$unt_ignore_backup" ]] &&
+	[[ -z "$(/usr/bin/git -C "$UNT_REPO" status --porcelain=v1)" ]] &&
+	! AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+		bash "$DIRTY_HELPER" restore --repo "$UNT_REPO" --backup "$unt_ignore_backup" \
+		--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 &&
+	[[ "$(<"${UNT_REPO}/scratch.txt")" == "edited while ignored" ]]; then
+	printf 'PASS restore refuses to overwrite an edited reinstated file the new tip ignores\n'
+else
+	printf 'FAIL restore overwrote an edited reinstated file hidden by a new ignore rule\n%s\n' "$unt_ignore_output"
+	exit 1
+fi
+rm "${UNT_REPO}/scratch.txt"
+
+# 6. An incoming tracked directory symlink is a collision, not a destination.
+mkdir -p "${UNT_REPO}/linked"
+printf 'local linked\n' >"${UNT_REPO}/linked/note.txt"
+mkdir -p "${UNT_PEER}/actual"
+printf 'tracked\n' >"${UNT_PEER}/actual/tracked.txt"
+ln -s actual "${UNT_PEER}/linked"
+/usr/bin/git -C "$UNT_PEER" add actual linked
+/usr/bin/git -C "$UNT_PEER" commit -q -m 'peer adds directory symlink'
+/usr/bin/git -C "$UNT_PEER" push -q origin main
+unt_link_rc=0
+unt_link_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
+	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unt_link_rc=$?
+unt_link_backup=$(backup_id_from_output "$unt_link_output" || true)
+if [[ "$unt_link_rc" -eq 0 ]] &&
+	[[ -L "${UNT_REPO}/linked" ]] &&
+	[[ ! -e "${UNT_REPO}/actual/note.txt" ]] &&
+	[[ "$unt_link_output" == *"UNTRACKED_LEFT_IN_BACKUP=linked/note.txt"* ]] &&
+	[[ -n "$unt_link_backup" && "$(backup_state "$UNT_BACKUPS" "$unt_link_backup")" == "open" ]]; then
+	printf 'PASS reinstatement never writes through an incoming tracked directory symlink\n'
+else
+	printf 'FAIL reinstatement wrote through an incoming tracked directory symlink\n%s\n' "$unt_link_output"
 	exit 1
 fi
