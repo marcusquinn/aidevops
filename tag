@@ -1,0 +1,60 @@
+object a4e1255c88644b07a101025a5bd12f892df7fb2b
+type commit
+tag v3.39.32
+tagger marcusquinn <6428977+marcusquinn@users.noreply.github.com> 1792038251 +0100
+
+Release v3.39.32 - AI DevOps Framework
+
+Aidevops-Version: 3.39.32
+Aidevops-Source-PR: 34547
+Aidevops-Source-Merge: f2f97d4a4d8bce7bd86a44fd483880f5404eaca0
+Aidevops-Snapshot-Base: 4942e52809a4507c66e3650abdfc1c387e3f387a
+Aidevops-Aggregated-Source: 34547@f2f97d4a4d8bce7bd86a44fd483880f5404eaca0
+Aidevops-Aggregated-Source: 34578@5db1d3c940ffc1c8d4918b03955b15f8db365ba7
+Aidevops-Aggregated-Source: 34618@5f7e9bccb54cf3c106789c6f14a4fc426d65cb89
+Aidevops-Aggregated-Source: 34641@ea954d14d10c94739553f35cf739368400280589
+Aidevops-Aggregated-Source: 34678@3a17014aa8330d8e667dd426868928fa773e1eab
+Aidevops-Aggregated-Source: 34689@c730991d6f1757523ea55965f4059e5a0be420c5
+Aidevops-Aggregated-Source: 34691@c1db70b11dbb4b5041b283d183187a334fec3243
+Aidevops-Aggregated-Source: 34692@1f3f70f9c71c455c857313e849809f212d1a2fd8
+Aidevops-Aggregated-Source: 34695@ccf3073d5c9d361402e46a03935f013e50a1d2c8
+Aidevops-Aggregated-Source: 34699@cf6811ef5909266b882810b3b55390de2180ebf1
+Aidevops-Aggregated-Source: 34702@fac8d3e15534d2645e60b504c73978ccbedbb569
+Aidevops-Aggregated-Source: 34706@a03b878d5df29852fa6fadd4b7ddb9ad45cb6b92
+Aidevops-Aggregated-Source: 34707@ea5f3784118055bec1f5f38191a17a7667cefc7c
+Aidevops-Aggregated-Source: 34708@8f10c4f7655eeee6627c6ff6de38a5c1539073f9
+Aidevops-Aggregated-Source: 34714@96b134c68a33979c6906d9b7079eddb958f02d3e
+Aidevops-Aggregated-Source: 34716@d877b59497e2797bbb408bea6eafc4f671df21f7
+Aidevops-Aggregated-Source: 34724@a5064f4f621d638ff52b35e3d32ec6a5cd779e81
+Aidevops-Aggregated-Source: 34725@b7c34a2585345771cbb8ab382609a406edc03063
+Aidevops-Aggregated-Source: 34726@d5de9d11509c5cb7a7e2a576cc717304b48c4cad
+Aidevops-Aggregated-Source: 34728@048907a8395bacbe26f7db0fda4c29f60e5ed24f
+Aidevops-Aggregated-Source: 34730@c0b570204205f24994eb9ad6aac603b90675d3db
+Aidevops-Aggregated-Source: 34732@f49cf89a08fa7415dfc458e160241a0f218ad764
+Aidevops-Aggregated-Source: 34733@7feecf49de915c191351cc92034584398eba8fe3
+Aidevops-Aggregated-Source: 34734@12b3bfe81c9287b626f69f8c956a9f157afb732e
+Aidevops-Aggregated-Source: 34735@c304f69d601e706e1e8179689034b9927dd66043
+Aidevops-Aggregated-Source: 34737@ee14e9bd86e9553b2155e3755a30e710c1f55557
+Aidevops-Aggregated-Source: 34738@f151952f64eea8ea4c3e1a407087c02f08cb0f9b
+Aidevops-Aggregated-Source: 34739@473be7449bad48c9aeecd0683728bdbfb332d5b6
+Aidevops-Aggregated-Source: 34740@d6075e8391a280c7e6a7a082269ea1f20ab29926
+Aidevops-Aggregated-Source: 34741@d2a34f3aa7b54c39cabcc8ba0f2a035793b2c89b
+Aidevops-Aggregated-Source: 34742@902c769e43113e35fe6bcb1908b6d20b7d590f62
+Aidevops-Aggregated-Source: 34743@5fd72dfb9844b296c8d1836e8c63efc001f86e1f
+Aidevops-Aggregated-Source: 34744@af4f77fc29a05ed8e873ec7603da4c0279d69391
+Aidevops-Aggregated-Source: 34745@b5fced38306921ea47e51843b57b2e1e72abb7a4
+Aidevops-Aggregated-Source: 34747@202ef29043897665b20eed6768b1a0ddb9963db8
+Aidevops-Aggregated-Source: 34748@db0cac3453eba674aaabc31710517416ea64aae9
+Aidevops-Aggregated-Source: 34750@3d6bba1a1eb8fc2938af043fdc36be3a5156f275
+Aidevops-Aggregated-Source: 34751@9a729891ab3e2d506b5a601150482158094feb47
+Aidevops-Aggregated-Source: 34752@fa5f2bf1d6e0bb5b2543db64bed4e7f0b085ca65
+Aidevops-Aggregated-Source: 34754@e49bb3f83d1ff698e9199f6d09e6b6d50c96466d
+Aidevops-Aggregated-Source: 34755@396f8d0c1679cab82f06d64cdecb8f7fad5a3f9d
+Aidevops-Aggregated-Source: 34757@046ab52362b61827e61114ad769378bd16b8f059
+Aidevops-Aggregated-Source: 34759@6bb6a35800b14023461ea67020ec54f45c6b1efa
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg5IliwL42sBxfqQz9UN/AwvOgBI
+tXO/S10O+PgxbPV78AAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQM6jjOYvS+aHQYloeUy/pgEfrKTGslqdAk4p9EqNSEIeWSiKB3boPbMaaatXlD0lET
+2sMEK4b8mjuNw2vY0Ajww=
+-----END SSH SIGNATURE-----
