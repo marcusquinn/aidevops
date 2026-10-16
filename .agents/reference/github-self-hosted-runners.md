@@ -89,7 +89,6 @@ removed implicitly. Completed ephemeral jobs are replaced after the
 
 Pulse cancels queued workflow runs older than `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` (default 8h), at most hourly per repository, via `.agents/scripts/pulse-stale-queued-runs.sh`; job-less, log-less ghost runs are deleted. Settings, outcomes, ghost handling and verification: `reference/github-runner-stale-queued-watchdog.md`.
 
-
 The launch script supports the enabled service instance numbers only:
 
 | Instances | CPU | Memory | Runner label | Intended jobs |
