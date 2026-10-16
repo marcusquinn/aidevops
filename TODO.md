@@ -535,7 +535,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t18704 Guard V2 MCP adapter output against the OpenCode V2 Mcp config schema shape #enhancement #opencode #interactive #auto-dispatch tier:standard ~40m ref:GH#34794 logged:2026-10-16 -> [todo/tasks/t18704-brief.md]
+- [x] t18704 Guard V2 MCP adapter output against the OpenCode V2 Mcp config schema shape #enhancement #opencode #interactive #auto-dispatch tier:standard ~40m ref:GH#34794 pr:#34795 logged:2026-10-16 -> [todo/tasks/t18704-brief.md] completed:2026-10-16
 
 - [ ] Reusable protected repository metrics rollout checklist and live validation #docs #plan #deferred #interactive logged:2026-10-12 -> [todo/tasks/tasks-protected-metrics-rollout.md] — Saved brief only; no worker dispatch or downstream changes authorized.
 
