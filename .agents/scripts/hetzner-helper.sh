@@ -378,15 +378,218 @@ list_images() {
     return 0
 }
 
+# Resolve the credentials.sh path (never sourced; parsed as data)
+hz_credentials_file() {
+    printf '%s' "${AIDEVOPS_CREDENTIALS_FILE:-$HOME/.config/aidevops/credentials.sh}"
+    return 0
+}
+
+# Read NAME from credentials.sh without sourcing it. Prints value or nothing.
+hz_read_credentials_value() {
+    local name="$1"
+    local file
+    file="$(hz_credentials_file)"
+    [[ -r "$file" ]] || return 0
+    local line
+    line=$(grep -E "^[[:space:]]*(export[[:space:]]+)?${name}=" "$file" | tail -n 1) || true
+    [[ -n "$line" ]] || return 0
+    local value="${line#*=}"
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    printf '%s' "$value"
+    return 0
+}
+
+# Resolve an API token for a project. Order: JSON config, then
+# HCLOUD_TOKEN_<PROJECT_UPPER> from env, credentials.sh, `aidevops secret get`.
+# The token is returned on stdout only for internal capture; never printed to users.
+hz_resolve_token() {
+    local project="$1"
+    local token=""
+    if [[ -f "$CONFIG_FILE" ]] && jq empty "$CONFIG_FILE" 2>/dev/null; then
+        token=$(jq -r --arg p "$project" '(.projects[$p].api_token // .accounts[$p].api_token // empty)' "$CONFIG_FILE" 2>/dev/null) || token=""
+    fi
+    if [[ -z "$token" || "$token" == "null" ]]; then
+        local key
+        key="HCLOUD_TOKEN_$(printf '%s' "$project" | tr '[:lower:]-' '[:upper:]_')"
+        token="${!key:-}"
+        if [[ -z "$token" ]]; then
+            token=$(hz_read_credentials_value "$key")
+        fi
+        if [[ -z "$token" ]] && command -v aidevops >/dev/null 2>&1; then
+            token=$(aidevops secret get "$key" </dev/null 2>/dev/null) || token=""
+        fi
+    fi
+    if [[ -z "$token" || "$token" == "null" ]]; then
+        return 1
+    fi
+    printf '%s' "$token"
+    return 0
+}
+
+# Authenticated API call; token is passed via curl config on stdin so it never
+# appears in the process list or output. Usage: hz_api <project> <method> <url> [json-body]
+hz_api() {
+    local project="$1"
+    local method="$2"
+    local url="$3"
+    local body="${4:-}"
+    local token
+    if ! token=$(hz_resolve_token "$project"); then
+        print_error "No token for project '$project' (config api_token or HCLOUD_TOKEN_$(printf '%s' "$project" | tr '[:lower:]-' '[:upper:]_'))"
+        return 1
+    fi
+    local args=(-sS --fail-with-body -X "$method" -K - -H "Content-Type: application/json")
+    if [[ -n "$body" ]]; then
+        args+=(-d "$body")
+    fi
+    printf 'header = "%s %s"\n' "$AUTH_BEARER_PREFIX" "$token" | curl "${args[@]}" "$url"
+    return $?
+}
+
+# Create a snapshot: snapshot-create <project> <server> <description> [label=value]
+snapshot_create() {
+    local project="${1:-}"
+    local server="${2:-}"
+    local description="${3:-}"
+    local label="${4:-}"
+    if [[ -z "$project" || -z "$server" || -z "$description" ]]; then
+        print_error "Usage: snapshot-create <project> <server> <description> [label=value]"
+        return 1
+    fi
+    local server_id
+    server_id=$(hz_server_id "$project" "$server") || return 1
+    local body
+    if [[ -n "$label" ]]; then
+        if [[ "$label" != *=* ]]; then
+            print_error "Label must be key=value"
+            return 1
+        fi
+        body=$(jq -nc --arg d "$description" --arg k "${label%%=*}" --arg v "${label#*=}" \
+            '{type:"snapshot",description:$d,labels:{($k):$v}}')
+    else
+        body=$(jq -nc --arg d "$description" '{type:"snapshot",description:$d}')
+    fi
+    hz_api "$project" POST "$HETZNER_API_SERVERS/$server_id/actions/create_image" "$body" |
+        jq -r '"Image: \(.image.id // "?")  Action: \(.action.id // "?")  Status: \(.action.status // "?")"'
+    return "${PIPESTATUS[0]}"
+}
+
+# Resolve a server name or numeric ID to an ID
+hz_server_id() {
+    local project="$1"
+    local server="$2"
+    if [[ "$server" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$server"
+        return 0
+    fi
+    local id
+    id=$(hz_api "$project" GET "$HETZNER_API_SERVERS?name=$server" | jq -r '.servers[0].id // empty') || return 1
+    if [[ -z "$id" ]]; then
+        print_error "Server '$server' not found in project '$project'"
+        return 1
+    fi
+    printf '%s' "$id"
+    return 0
+}
+
+# List snapshots: snapshot-list <project> [label-selector]
+snapshot_list() {
+    local project="${1:-}"
+    local selector="${2:-}"
+    if [[ -z "$project" ]]; then
+        print_error "Usage: snapshot-list <project> [label-selector]"
+        return 1
+    fi
+    local url="https://api.hetzner.cloud/v1/images?type=snapshot"
+    if [[ -n "$selector" ]]; then
+        url="$url&label_selector=$(jq -rn --arg s "$selector" '$s|@uri')"
+    fi
+    hz_api "$project" GET "$url" |
+        jq -r '.images[]? | "\(.id)\t\(.status)\t\(.created)\t\(.description // "")"'
+    return "${PIPESTATUS[0]}"
+}
+
+# Delete snapshot: snapshot-delete <project> <image-id> --confirm
+snapshot_delete() {
+    local project="${1:-}"
+    local image_id="${2:-}"
+    local confirm="${3:-}"
+    if [[ -z "$project" || -z "$image_id" ]]; then
+        print_error "Usage: snapshot-delete <project> <image-id> --confirm"
+        return 1
+    fi
+    if [[ ! "$image_id" =~ ^[0-9]+$ ]]; then
+        print_error "Image ID must be numeric"
+        return 1
+    fi
+    if [[ "$confirm" != "--confirm" ]]; then
+        print_error "Destructive: re-run with --confirm to delete image $image_id"
+        return 1
+    fi
+    hz_api "$project" DELETE "https://api.hetzner.cloud/v1/images/$image_id" >/dev/null || return 1
+    print_info "Deleted image $image_id"
+    return 0
+}
+
+# Action status: action-status <project> <action-id>
+action_status() {
+    local project="${1:-}"
+    local action_id="${2:-}"
+    if [[ -z "$project" || ! "$action_id" =~ ^[0-9]+$ ]]; then
+        print_error "Usage: action-status <project> <action-id>"
+        return 1
+    fi
+    hz_api "$project" GET "https://api.hetzner.cloud/v1/actions/$action_id" |
+        jq -r '.action | "\(.id)\t\(.command)\t\(.status)\t\(.progress)%\t\(.error.message // "")"'
+    return "${PIPESTATUS[0]}"
+}
+
+# Metrics: metrics <project> <server> [minutes=30]
+server_metrics() {
+    local project="${1:-}"
+    local server="${2:-}"
+    local minutes="${3:-30}"
+    if [[ -z "$project" || -z "$server" || ! "$minutes" =~ ^[0-9]+$ ]]; then
+        print_error "Usage: metrics <project> <server> [minutes]"
+        return 1
+    fi
+    local server_id
+    server_id=$(hz_server_id "$project" "$server") || return 1
+    local end start
+    end=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    start=$(date -u -d "-${minutes} minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-"${minutes}"M +%Y-%m-%dT%H:%M:%SZ)
+    hz_api "$project" GET "$HETZNER_API_SERVERS/$server_id/metrics?type=cpu,disk&start=$start&end=$end&step=60" |
+        jq -r '.metrics.time_series | to_entries[] | .key as $k | "\($k): last=\(.value.values[-1][1] // "n/a") max=\([.value.values[][1] | tonumber] | max)"'
+    return "${PIPESTATUS[0]}"
+}
+
+# Network info: server-net <project> <server>
+server_net() {
+    local project="${1:-}"
+    local server="${2:-}"
+    if [[ -z "$project" || -z "$server" ]]; then
+        print_error "Usage: server-net <project> <server>"
+        return 1
+    fi
+    local server_id
+    server_id=$(hz_server_id "$project" "$server") || return 1
+    hz_api "$project" GET "$HETZNER_API_SERVERS/$server_id" |
+        jq -r '.server.public_net | "ipv4: \(.ipv4.ip // "none")\nipv6: \(.ipv6.ip // "none")"'
+    return "${PIPESTATUS[0]}"
+}
+
 # Main function
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local param2="$2"
-    local param3="$3"
-    local param4="$4"
-    local param5="$5"
-    local param6="$6"
+    local param2="${2:-}"
+    local param3="${3:-}"
+    local param4="${4:-}"
+    local param5="${5:-}"
+    local param6="${6:-}"
 
     # Main command handler
     case "$command" in
@@ -417,6 +620,24 @@ main() {
     "generate-ssh-configs")
         generate_ssh_configs
         ;;
+    "snapshot-create")
+        snapshot_create "$param2" "$param3" "$param4" "$param5"
+        ;;
+    "snapshot-list")
+        snapshot_list "$param2" "$param3"
+        ;;
+    "snapshot-delete")
+        snapshot_delete "$param2" "$param3" "$param4"
+        ;;
+    "action-status")
+        action_status "$param2" "$param3"
+        ;;
+    "metrics")
+        server_metrics "$param2" "$param3" "$param4"
+        ;;
+    "server-net")
+        server_net "$param2" "$param3"
+        ;;
     "help"|"-h"|"--help"|"")
         echo "Hetzner Helper Script"
         echo "$USAGE_COMMAND_OPTIONS"
@@ -431,6 +652,13 @@ main() {
         echo "  list-locations [project]          - List available locations"
         echo "  list-images [project]             - List available OS images"
         echo "  generate-ssh-configs              - Generate SSH configurations"
+        echo "  snapshot-create <proj> <srv> <desc> [k=v] - Create snapshot"
+        echo "  snapshot-list <proj> [label-selector]     - List snapshots"
+        echo "  snapshot-delete <proj> <image-id> --confirm - Delete snapshot"
+        echo "  action-status <proj> <action-id>  - Show action status"
+        echo "  metrics <proj> <srv> [minutes]    - CPU/disk metrics (default 30)"
+        echo "  server-net <proj> <srv>           - Show public IPv4/IPv6"
+        echo "  (tokens: config api_token, else HCLOUD_TOKEN_<PROJECT> env/credentials.sh/aidevops secret)"
         echo "  help                              - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"

@@ -113,6 +113,19 @@ curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
   https://api.hetzner.cloud/v1/servers/{id}/actions/create_image
 ```
 
+### Helper Commands (`hetzner-helper.sh`)
+
+Token resolution per project: JSON config `api_token`, then `HCLOUD_TOKEN_<PROJECT_UPPER>` (dashes become underscores) from the environment, `~/.config/aidevops/credentials.sh` (parsed, never sourced) or `aidevops secret get`. Tokens are never printed.
+
+```bash
+hetzner-helper.sh snapshot-create <project> <server> <description> [label=value]
+hetzner-helper.sh snapshot-list <project> [label-selector]
+hetzner-helper.sh snapshot-delete <project> <image-id> --confirm   # destructive
+hetzner-helper.sh action-status <project> <action-id>
+hetzner-helper.sh metrics <project> <server> [minutes]   # CPU/disk; useful while SSH is down
+hetzner-helper.sh server-net <project> <server>          # public IPv4 / IPv6 /64
+```
+
 ### Output Formatters
 
 ```bash
