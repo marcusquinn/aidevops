@@ -27,6 +27,7 @@ tools:
 - **App targeting**: `--app` accepts FQDN, subdomain, or app ID; auto-detected from `CloudronManifest.json`
 - **Global flags**: `--server`, `--token`, `--allow-selfsigned`, `--no-wait`
 - **Also see**: `cloudron-helper.sh` for multi-server management via API
+- **Host OS upgrade (Ubuntu 22.04 -> 24.04 -> 26.04)**: `tools/deployment/cloudron-os-upgrade.md` (GRUB, network, API and agent-safety traps)
 - **Last upstream review**: `74e455bd03f5`; upstream server-ops skill unchanged in this delta; aligned install/update notes with the packaging skill's registry builder migration
 - **SSH recovery boundary**: With authorised root SSH, inspect the installed Cloudron version and `cloudron-support --help` before choosing a documented recovery flow; older developer-login endpoints may not exist. Keep support output and any temporary credential private, validate TLS origin and PKCE state, preserve an active ghost/support login, and revoke the temporary session when finished. Missing SSH, authority, or compatible installed support tooling means this route stops safely and ordinary login remains the fallback. Never reset owner passwords, write raw tokens to storage, bypass authentication, or disable host-key checking.
 
