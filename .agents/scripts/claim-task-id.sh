@@ -1219,7 +1219,8 @@ _main_resolve_allocation() {
 			local _pre_reconcile_rc=0
 			_cas_reconcile_counter_branch "$REPO_PATH" "${DEFAULT_BRANCH:-main}" >/dev/null || _pre_reconcile_rc=$?
 			if [[ $_pre_reconcile_rc -ne 0 && $_pre_reconcile_rc -ne 2 ]]; then
-				return 1
+				# Preserve the explicit stale-branch setup error (GH#34791).
+				return "$_pre_reconcile_rc"
 			fi
 		fi
 

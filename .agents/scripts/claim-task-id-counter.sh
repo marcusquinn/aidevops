@@ -1141,6 +1141,9 @@ _cas_reconcile_counter_branch() {
 	local branch_counter=""
 	branch_counter=$(_cas_read_counter_file_from_ref "$pinned_sha" "$repo_path")
 
+	# Reconciliation must not silently repair an explicitly stale selection.
+	_cas_validate_explicit_counter_branch "$pinned_sha" "$branch_counter" || return $?
+
 	local default_counter="0"
 	default_counter=$(_cas_read_default_counter_for_reconcile "$default_branch")
 
@@ -1658,7 +1661,7 @@ _cas_validate_explicit_counter_branch() {
 			ref="${REMOTE_NAME}/${branch}"
 		fi
 		value=$(_counter_git show "${ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
-		if [[ "$value" =~ ^[0-9]+$ ]] && ((10#$value > 10#$leading_value)); then
+		if [[ "$branch" == "$dedicated" && "$value" =~ ^[0-9]+$ ]] && ((10#$value > 10#$leading_value)); then
 			leading_value="$value"
 			leading_branch="$branch"
 		fi
