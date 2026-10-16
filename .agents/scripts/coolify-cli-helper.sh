@@ -419,6 +419,40 @@ add_context() {
     return 0
 }
 
+# Parse: NAME URL [--token-secret NAME] [--default]; positional tokens are rejected.
+add_context_from_args() {
+    local ctx_name="${1:-}"
+    local ctx_url="${2:-}"
+    local secret_name="COOLIFY_API_TOKEN"
+    local set_default="false"
+    shift $(( $# < 2 ? $# : 2 ))
+    while [[ $# -gt 0 ]]; do
+        local opt_arg="${1:-}"
+        case "$opt_arg" in
+            --token-secret)
+                secret_name="${2:-}"
+                shift $(( $# < 2 ? $# : 2 ))
+                ;;
+            --default)
+                set_default="true"
+                shift
+                ;;
+            *)
+                print_error "Unexpected argument: tokens are no longer accepted on the command line"
+                print_info "Usage: add-context NAME URL [--token-secret NAME] [--default]"
+                print_info "Store the token: aidevops secret set COOLIFY_API_TOKEN"
+                return 1
+                ;;
+        esac
+    done
+    if [[ -z "$ctx_name" || -z "$ctx_url" ]]; then
+        print_error "Usage: add-context NAME URL [--token-secret NAME] [--default]"
+        return 1
+    fi
+    add_context "$ctx_name" "$ctx_url" "$secret_name" "$set_default"
+    return $?
+}
+
 # ------------------------------------------------------------------------------
 # BUILD FUNCTIONS
 # ------------------------------------------------------------------------------
@@ -628,35 +662,7 @@ main() {
             list_contexts
             ;;
         "add-context")
-            local ctx_name="${2:-}"
-            local ctx_url="${3:-}"
-            local token_secret="COOLIFY_API_TOKEN"
-            local set_default="false"
-            shift $(( $# < 3 ? $# : 3 ))
-            while [[ $# -gt 0 ]]; do
-                local opt_arg="${1:-}"
-                case "$opt_arg" in
-                    --token-secret)
-                        token_secret="${2:-}"
-                        shift $(( $# < 2 ? $# : 2 ))
-                        ;;
-                    --default)
-                        set_default="true"
-                        shift
-                        ;;
-                    *)
-                        print_error "Unexpected argument: tokens are no longer accepted on the command line"
-                        print_info "Usage: add-context NAME URL [--token-secret NAME] [--default]"
-                        print_info "Store the token: aidevops secret set COOLIFY_API_TOKEN"
-                        return 1
-                        ;;
-                esac
-            done
-            if [[ -z "$ctx_name" || -z "$ctx_url" ]]; then
-                print_error "Usage: add-context NAME URL [--token-secret NAME] [--default]"
-                return 1
-            fi
-            add_context "$ctx_name" "$ctx_url" "$token_secret" "$set_default"
+            add_context_from_args "${@:2}"
             ;;
         "use-context")
             local context_name="$target"
