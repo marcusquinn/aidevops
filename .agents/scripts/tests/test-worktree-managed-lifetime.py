@@ -157,6 +157,18 @@ class LifetimeTests(unittest.TestCase):
                 connection.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, task_id TEXT, owner_session TEXT)")
             helper = [sys.executable, str(HELPER)]
             run([*helper, "enroll", str(worktree)])
+            # A failed submission remains a cleanup candidate, but classification
+            # must not cancel admission or manufacture a durable removal proof.
+            cancelled = root / "cancelled"
+            run([git, "-C", str(repo), "worktree", "add", "-b", "cancelled", str(cancelled)])
+            run([*helper, "enroll", str(cancelled)])
+            run([*helper, "reserve", str(cancelled), "aidevops-worker-unsubmitted-fixture"])
+            run([*helper, "cleanup-ready", str(cancelled)])
+            self.assertEqual(json.loads(run([*helper, "status", str(cancelled)]).stdout)["state"], "reserved")
+            self.assertNotEqual(run([*helper, "proof", str(cancelled)], check=False).returncode, 0)
+            run([*helper, "seal", str(cancelled)])
+            run([*helper, "proof", str(cancelled)])
+            run([git, "-C", str(repo), "worktree", "remove", str(cancelled)])
             try:
                 # Exercise the real dispatcher wrapper, including registry propagation.
                 # Parent exits after readiness; a setsid descendant outlives it.
@@ -175,6 +187,7 @@ class LifetimeTests(unittest.TestCase):
                 self.assertEqual(record["state"], "running")
                 unit = record["launches"][-1]["unit"]
                 time.sleep(2)
+                self.assertNotEqual(run([*helper, "cleanup-ready", str(worktree)], check=False).returncode, 0)
                 self.assertNotEqual(run([*helper, "seal", str(worktree)], check=False).returncode, 0)
                 guard = str(HELPER.parent / "audit-worktree-removal-helper.sh")
                 removal = run(["bash", "-c", 'source "$1"; _worktree_remove_with_native_git "$2" fixture fixture false',

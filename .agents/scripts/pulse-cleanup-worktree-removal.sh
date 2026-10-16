@@ -162,6 +162,8 @@ PY
 _pc_thirdparty_candidate() {
 	local candidate="$1" canonical="$2" cache="$3" apply="$4" branch="" pr="" state="" unique="" activity="" age="" slug="" url="" archive="" snapshot="" head=""
 	[[ -f "$candidate/.git" && ! -L "$candidate/.git" ]] || return 1
+	# The missing-canonical branch below also bypasses native Git removal.
+	worktree_managed_require_removal_proof "$candidate" || return 1
 	_pc_unattributed_archive_policy_clear "$candidate" >/dev/null || return 1
 	_worktree_owner_alive "$candidate" "" && return 1
 	_pc_fixture_process_clear "$candidate" || return 1
@@ -1285,7 +1287,7 @@ _pc_classify_removal_visibility() {
 	[[ "$guard_status" -ne 0 ]] || return 0
 	[[ "$guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]] || return 1
 	# Classification must not seal an open-PR tree just because its worker ended.
-	if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-managed-lifetime.py" ready "$wt_path" >/dev/null 2>&1; then
+	if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-managed-lifetime.py" cleanup-ready "$wt_path" >/dev/null 2>&1; then
 		_pcdo_quarantine_degraded_worktree "$wt_path" "$wt_branch" "$now_epoch" || true
 		return 1
 	fi

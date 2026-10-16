@@ -190,17 +190,50 @@ def proof(record: dict, source_inode: str) -> None:
             require(launch["invocation"] is None, "admitted work cannot be cancelled")
             continue
         snapshot = launch.get("quiescence", {})
-        require(snapshot.get("InvocationID") == launch["invocation"] and bool(launch["invocation"])
-                and snapshot.get("MainPID") == "0" and not snapshot.get("Job")
-                and snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
-                and snapshot.get("Restart") == "no"
-                and (snapshot.get("ActiveState"), snapshot.get("SubState")) in
+        require(snapshot.get("InvocationID") == launch["invocation"] and bool(launch["invocation"]),
+                "invalid receipt invocation")
+        require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "receipt has pending work")
+        require(snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
+                and snapshot.get("Restart") == "no", "invalid receipt lifetime contract")
+        require((snapshot.get("ActiveState"), snapshot.get("SubState")) in
                 (("active", "exited"), ("failed", "failed")), "invalid descendant receipt")
+
+
+def inspect_record(record: dict, path: Path, operation: str, extra: list[str]) -> None:
+    if operation == "status":
+        print(json.dumps(record, sort_keys=True))
+        return
+    if operation == "proof":
+        require(len(extra) <= 1, "invalid source identity")
+        if not extra:
+            verify_identity(record, path)
+        proof(record, extra[0] if extra else inode(path))
+        return
+    verify_identity(record, path)
+    if operation == "cleanup-ready":
+        # Dry-run only: do not persist a seal before policy and owner checks.
+        seal(record)
+        return
+    require(record["state"] in ("created", "running"), "worktree cannot be reused")
+    if record["launches"]:
+        drain(record["launches"][-1])
+
+
+def mutate_record(record: dict, path: Path, operation: str, extra: list[str]) -> None:
+    verify_identity(record, path)
+    if operation == "reserve":
+        require(len(extra) == 1, "unit required")
+        reserve(record, extra[0])
+    elif operation == "bind-exec":
+        require(bool(extra), "worker command required")
+        bind(record)
+    else:
+        seal(record)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("enroll", "reserve", "bind-exec", "seal", "proof", "status", "ready"))
+    parser.add_argument("operation", choices=("enroll", "reserve", "bind-exec", "seal", "proof", "status", "ready", "cleanup-ready"))
     parser.add_argument("path")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -210,7 +243,7 @@ def main() -> int:
     try:
         require(path.is_absolute() and str(path) == os.path.realpath(path), "canonical absolute path required")
         require(Path(db).is_file() and not Path(db).is_symlink(), "registry unavailable")
-        readonly = args.operation in ("proof", "status", "ready")
+        readonly = args.operation in ("proof", "status", "ready", "cleanup-ready")
         uri = Path(db).resolve().as_uri() + ("?mode=ro" if readonly else "?mode=rw")
         with closing(sqlite3.connect(uri, uri=True, timeout=10, isolation_level=None)) as connection:
             connection.execute("BEGIN" if readonly else "BEGIN IMMEDIATE")
@@ -219,28 +252,10 @@ def main() -> int:
                 enroll(connection, path)
             else:
                 record = load(connection, str(path))
-                if args.operation == "proof":
-                    require(len(args.extra) <= 1, "invalid source identity")
-                    if not args.extra:
-                        verify_identity(record, path)
-                    proof(record, args.extra[0] if args.extra else inode(path))
-                elif args.operation == "status":
-                    print(json.dumps(record, sort_keys=True))
-                elif args.operation == "ready":
-                    verify_identity(record, path)
-                    require(record["state"] in ("created", "running"), "worktree cannot be reused")
-                    if record["launches"]:
-                        drain(record["launches"][-1])
+                if readonly:
+                    inspect_record(record, path, args.operation, args.extra)
                 else:
-                    verify_identity(record, path)
-                    if args.operation == "reserve":
-                        require(len(args.extra) == 1, "unit required")
-                        reserve(record, args.extra[0])
-                    elif args.operation == "bind-exec":
-                        require(bool(args.extra), "worker command required")
-                        bind(record)
-                    else:
-                        seal(record)
+                    mutate_record(record, path, args.operation, args.extra)
                     save(connection, record)
             connection.execute("COMMIT")
         # Do not stop units by name after sampling: systemd has no atomic
