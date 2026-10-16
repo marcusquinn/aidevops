@@ -275,6 +275,8 @@ def main() -> int:
         if args.operation == "bind-exec":
             os.environ["AIDEVOPS_MANAGED_WORKTREE"] = "pulse-cgroup-v1"
             # Intentional dispatcher-command execution, only after committed admission.
+            # Local dispatcher argv, not issue content; no shell or privilege elevation.
+            # nosemgrep: python.lang.security.audit.dangerous-os-exec-tainted-env-args.dangerous-os-exec-tainted-env-args
             os.execvp(args.extra[0], args.extra)  # nosec B606
         return 0
     except NotEnrolled:
