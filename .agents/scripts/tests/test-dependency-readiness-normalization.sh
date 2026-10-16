@@ -159,6 +159,14 @@ _test_preserved_repo_freshness() (
 	}
 	refresh_blocked_status_from_graph
 	assert_eq "normalization skips expired preserved repos" 'owner/healthy ' "$refreshed"
+	printf '%s\n' '{"repos":{"owner/legacy":{"blocked_by":{}}}}' >"$DEP_GRAPH_CACHE_FILE"
+	refreshed=""
+	refresh_blocked_status_from_graph
+	assert_eq "fresh legacy cache remains eligible for normalization" 'owner/legacy ' "$refreshed"
+	touch -t 200001010000 "$DEP_GRAPH_CACHE_FILE"
+	refreshed=""
+	refresh_blocked_status_from_graph
+	assert_eq "expired legacy cache cannot normalize status" '' "$refreshed"
 	# Compiler diagnostics must be observable without polluting graph stdout.
 	local DEP_GRAPH_REDUCE_FILTER="${TMP_ROOT}/invalid-filter.jq"
 	printf '%s\n' 'reduce (' >"$DEP_GRAPH_REDUCE_FILTER"

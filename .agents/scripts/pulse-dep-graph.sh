@@ -269,7 +269,11 @@ _dep_graph_reduce_issues_json() {
 	local issues_json="$1"
 	[[ -f "$DEP_GRAPH_REDUCE_FILTER" ]] || return 1
 	# Keep compiler/runtime diagnostics in the pulse log, not silently discarded.
-	printf '%s' "$issues_json" | jq -c -f "$DEP_GRAPH_REDUCE_FILTER" 2>>"${LOGFILE:-/dev/stderr}" || return 1
+	if [[ -n "${LOGFILE:-}" ]]; then
+		printf '%s' "$issues_json" | jq -c -f "$DEP_GRAPH_REDUCE_FILTER" 2>>"$LOGFILE" || return 1
+	else
+		printf '%s' "$issues_json" | jq -c -f "$DEP_GRAPH_REDUCE_FILTER" || return 1
+	fi
 	return 0
 }
 
@@ -941,16 +945,18 @@ refresh_blocked_status_from_graph() {
 	local budget_secs="${DEP_GRAPH_REFRESH_BUDGET_SECS:-30}"
 	[[ "$max_candidates" =~ ^[1-9][0-9]{0,5}$ ]] || max_candidates=10
 	[[ "$budget_secs" =~ ^[1-9][0-9]{0,5}$ ]] || budget_secs=30
+	local cache_mtime=""
+	cache_mtime=$(date -r "$cache_file" +%s 2>/dev/null || echo 0)
 	local slugs="" slug="" entry_count="" repo_data="" active_left=0 share_secs=1 started="$SECONDS"
 	# t18663: only repos with dependency entries can spend time, so the budget
 	# is shared among them alone (a fixed split across every configured repo
 	# rounded each share down to 1s). Smallest backlogs run first and unused
 	# time rolls forward, so the largest backlog receives what remains.
 	# Exclude expired preserved data before allocating any refresh budget.
-	slugs=$(printf '%s' "$graph_json" | jq -r --argjson now "$(date +%s)" \
-		--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" '.repos | to_entries
-		| map(select(.value.built_at == null or
-			((.value.built_at | type) == "number" and $now - .value.built_at < $max_age)))
+	slugs=$(printf '%s' "$graph_json" | jq -r --argjson mtime "$cache_mtime" \
+		--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" 'now as $now | .repos | to_entries
+		| map(select(if .value.built_at == null then $now - $mtime < $max_age
+			else (.value.built_at | type) == "number" and $now - .value.built_at < $max_age end))
 		| map([((.value.blocked_by // {}) | if type == "object" then length else 0 end), .key])
 		| sort | .[] | "\(.[0])\t\(.[1])"' 2>/dev/null) || slugs=""
 	[[ -n "$slugs" ]] || return 0
