@@ -1663,6 +1663,80 @@ _merge_parse_command_args() {
 	return 0
 }
 
+# GH#34790: ci-gate-policy rule 14 requires a PR-body note when a qlty check is
+# skipped as out of credits on a limited repository. The note is written after
+# the merge so the body edit cannot retrigger `edited` workflows behind
+# required checks before the merge write. Best-effort: never changes the
+# merge outcome.
+_merge_read_qlty_billing_skips() {
+	local pr_number="$1"
+	local repo="$2"
+	"${SCRIPT_DIR}/gh-checks-wait-helper.sh" qlty-skips "$pr_number" --repo "$repo" 2>/dev/null
+	return $?
+}
+
+# Print the body with the skipped-check note inserted, or return 1 when the
+# note marker is already present. Lines go under an existing
+# "## Skipped checks" heading, else in a new section just before the
+# signature footer, else at the end of the body.
+_merge_body_with_qlty_skips() {
+	local body="$1"
+	local skips="$2"
+	local marker='<!-- aidevops:skipped-check:qlty-out-of-credits -->'
+	grep -Fq -- "$marker" <<<"$body" && return 1
+	local lines="$marker" name="" link=""
+	while IFS=$'\t' read -r name link; do
+		[[ -n "$name" ]] || continue
+		lines+=$'\n'"- \`${name}\`: skipped, Qlty is out of credits on this limited repository (\`reference/ci-gate-policy.md\` rule 14).${link:+ ${link}}"
+	done <<<"$skips"
+	printf '%s\n' "$body" | QLTY_SKIP_LINES="$lines" awk '
+		BEGIN {
+			lines = ENVIRON["QLTY_SKIP_LINES"]
+			section = "\n## Skipped checks\n\n" lines "\n"
+		}
+		{ row[NR] = $0 }
+		$0 == "## Skipped checks" && !heading { heading = NR }
+		$0 == "<!-- aidevops:sig -->" && !sig { sig = NR }
+		END {
+			for (i = 1; i <= NR; i++) {
+				if (!heading && sig && i == sig) printf "%s\n", section
+				print row[i]
+				if (heading && i == heading) printf "\n%s\n", lines
+			}
+			if (!heading && !sig) printf "%s", section
+		}'
+	return 0
+}
+
+_merge_record_qlty_billing_skips() {
+	local pr_number="$1"
+	local repo="$2"
+	local skips="" body="" new_body="" body_file=""
+	skips=$(_merge_read_qlty_billing_skips "$pr_number" "$repo") || {
+		print_warning "Could not observe qlty credit status for PR #${pr_number}; skipped-check note not recorded"
+		return 0
+	}
+	[[ -n "$skips" ]] || return 0
+	body=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body --jq '.body // ""') || {
+		print_warning "Could not read PR #${pr_number} body; skipped-check note not recorded"
+		return 0
+	}
+	new_body=$(_merge_body_with_qlty_skips "$body" "$skips") || {
+		print_info "QLTY_SKIP_NOTE=present pr=${pr_number}"
+		return 0
+	}
+	body_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-qlty-skip-body.XXXXXX") || return 0
+	printf '%s\n' "$new_body" >"$body_file"
+	if declare -F gh_pr_edit_safe >/dev/null 2>&1 &&
+		gh_pr_edit_safe "$pr_number" --repo "$repo" --body-file "$body_file" >/dev/null; then
+		print_info "QLTY_SKIP_NOTE=recorded pr=${pr_number} (ci-gate-policy rule 14; policy-decided, not a user ask)"
+	else
+		print_warning "Could not record the qlty skipped-check note in PR #${pr_number} body"
+	fi
+	rm -f "$body_file"
+	return 0
+}
+
 _merge_report_pre_merge_gate_failure() {
 	case "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" in
 	github-api-cooldown)
@@ -1799,6 +1873,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	_merge_record_qlty_billing_skips "$pr_number" "$repo"
 	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
 		_full_loop_record_phase "postflight" "$pr_number" || return 1

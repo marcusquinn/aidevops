@@ -24,6 +24,9 @@ usage() {
 	cat <<'EOF'
 Usage:
   gh-checks-wait-helper.sh wait PR_NUMBER [options]
+  gh-checks-wait-helper.sh qlty-skips PR_NUMBER [--repo OWNER/REPO]
+      Print "name<TAB>link" for each qlty check skipped as out of credits
+      under ci-gate-policy rule 14 (nothing when none; exit 2 if unobservable).
 
 Options:
   --repo OWNER/REPO          Repository (auto-detected when omitted)
@@ -690,11 +693,47 @@ cmd_wait() {
 	return $?
 }
 
+# GH#34790: one observation of every check at the current PR head. Prints a
+# "name<TAB>link" line for each qlty status the repository credit policy turns
+# into an out-of-credits skip; prints nothing when there is none. Exit 2 when
+# the checks or head cannot be observed, so callers never infer a skip.
+cmd_qlty_skips() {
+	local pr_number="${1:-}"
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || {
+		log_error "qlty-skips requires a numeric PR number"
+		return 1
+	}
+	shift
+	local repo=""
+	while [[ $# -gt 0 ]]; do
+		local opt="$1"
+		case "$opt" in
+		--repo) local repo_value="${2:-}"; repo="$repo_value"; shift 2 ;;
+		*) log_error "Unknown qlty-skips option: $opt"; return 1 ;;
+		esac
+	done
+	repo=$(resolve_repo "$repo") || {
+		log_error "Cannot resolve repository; pass --repo OWNER/REPO"
+		return 2
+	}
+	local head="" raw="" current="" policy=""
+	head=$(verified_head_sha "$pr_number" "$repo" 'before qlty credit classification') || return 2
+	raw=$(fetch_checks "$pr_number" "$repo" 0 1 "$head") || return 2
+	current=$(canonicalize_checks "$raw") || return 2
+	current=$(apply_qlty_billing_policy "$current" unknown) || return 2
+	printf '%s' "$current" | jq -e 'any(.[]; .qlty_billing == true)' >/dev/null || return 0
+	policy=$(read_qlty_credit_policy "$repo")
+	current=$(apply_qlty_billing_policy "$current" "$policy") || return 2
+	printf '%s' "$current" | jq -r '.[] | select(.qlty_billing == true and .bucket == "skipping") | [.name, .link] | @tsv'
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	shift || true
 	case "$command" in
 	wait) cmd_wait "$@" ;;
+	qlty-skips) cmd_qlty_skips "$@" ;;
 	help | --help | -h) usage ;;
 	*) log_error "Unknown command: $command"; usage; return 1 ;;
 	esac

@@ -218,6 +218,55 @@ test_protected_release_merge_reconciles_matching_lane() {
 	return 0
 }
 
+test_qlty_billing_skip_note_is_idempotent() {
+	local rc=0
+	(
+		SCRIPT_DIR="${SCRIPT_DIR}/.."
+		# shellcheck source=../full-loop-helper-merge.sh
+		source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+		body_store="${TEST_ROOT}/qlty-skip-body.md"
+		edit_log="${TEST_ROOT}/qlty-skip-edits.log"
+		printf 'Summary\n\n<!-- aidevops:sig -->\n---\nfooter\n' >"$body_store"
+		: >"$edit_log"
+		fixture_skips=$'qlty check\thttps://example.invalid/qlty'
+		print_info() { return 0; }
+		print_warning() { return 0; }
+		_merge_read_qlty_billing_skips() {
+			printf '%s\n' "$fixture_skips"
+			return 0
+		}
+		_flm_gh_read() {
+			cat "$body_store"
+			return 0
+		}
+		gh_pr_edit_safe() {
+			local -a args=("$@")
+			cp "${args[4]}" "$body_store"
+			printf 'edit\n' >>"$edit_log"
+			return 0
+		}
+		_merge_record_qlty_billing_skips 77 test/repo >/dev/null || exit 1
+		_merge_record_qlty_billing_skips 77 test/repo >/dev/null || exit 1
+		[[ "$(wc -l <"$edit_log")" -eq 1 ]] || exit 1
+		[[ "$(grep -c 'aidevops:skipped-check:qlty-out-of-credits' "$body_store")" -eq 1 ]] || exit 1
+		[[ "$(grep -c '^## Skipped checks$' "$body_store")" -eq 1 ]] || exit 1
+		grep -q '^- .qlty check.: skipped.*rule 14).*https://example.invalid/qlty$' "$body_store" || exit 1
+		[[ "$(tail -n 1 "$body_store")" == footer ]] || exit 1
+		# An existing heading is reused rather than duplicated.
+		printf 'Summary\n\n## Skipped checks\n\n- other\n' >"$body_store"
+		_merge_record_qlty_billing_skips 77 test/repo >/dev/null || exit 1
+		[[ "$(grep -c '^## Skipped checks$' "$body_store")" -eq 1 ]] || exit 1
+		grep -q 'aidevops:skipped-check:qlty-out-of-credits' "$body_store" || exit 1
+		# No skip, no edit.
+		fixture_skips=""
+		: >"$edit_log"
+		_merge_record_qlty_billing_skips 78 test/repo >/dev/null || exit 1
+		[[ ! -s "$edit_log" ]] || exit 1
+	) || rc=$?
+	print_result "qlty out-of-credits skip is recorded once in the PR body (GH#34790)" "$rc"
+	return 0
+}
+
 # shellcheck source=./test-full-loop-merge-cases.sh
 # shellcheck disable=SC1091  # Sibling test module resolved at runtime.
 source "${SCRIPT_DIR}/test-full-loop-merge-cases.sh"
@@ -242,6 +291,7 @@ main() {
 	test_late_review_blocks_every_merge_transport
 	test_graphql_rate_limit_rest_fallback
 	test_protected_release_merge_reconciles_matching_lane
+	test_qlty_billing_skip_note_is_idempotent
 	test_graphql_rate_limit_cmd_merge_phase_autofile
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback

@@ -89,6 +89,9 @@ Rules:
   file an issue, add a follow-up, or check something the agent can do; never
   ask "shall I…?" about safe in-scope work. Decide scope/policy questions the
   repo already answers (for example the test policy) instead of asking.
+  A check skipped by policy (for example qlty out of credits,
+  `reference/ci-gate-policy.md` rule 14) is a reported fact, not an ask: never
+  ask whether to top up, rerun or remove the tool.
   If one path is blocked for the session (for example canonical-checkout
   edits), use the sanctioned helper or worktree route rather than handing the
   step to the user. If a check was skipped ("didn't check which items

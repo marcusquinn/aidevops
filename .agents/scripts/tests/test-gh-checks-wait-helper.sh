@@ -268,6 +268,32 @@ billing_note_count=$(printf '%s\n' "$billing_transition_output" | grep -c '^SKIP
 assert_eq "billing skip is printed once across polls" 1 "$billing_note_count"
 assert_contains "other pending checks must finish" '+ Lint: pending -> pass' "$billing_transition_output"
 
+# GH#34790: qlty-skips names only policy-classified skips, for the merge note.
+for repo_kind in organisation personal; do
+	set +e
+	skips_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=qlty-billing GH_TEST_REPO_KIND="$repo_kind" \
+		AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 "$HELPER" qlty-skips 123 --repo example/repo 2>/dev/null)
+	skips_rc=$?
+	set -e
+	assert_eq "$repo_kind qlty-skips exits successfully" 0 "$skips_rc"
+	if [[ "$repo_kind" == organisation ]]; then
+		assert_eq "organisation qlty-skips names check and link" $'qlty check\thttps://example.invalid/qlty' "$skips_output"
+	else
+		assert_eq "personal qlty-skips reports no skip" "" "$skips_output"
+	fi
+done
+set +e
+skips_findings_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=qlty-billing GH_TEST_REPO_KIND=organisation \
+	GH_TEST_DESCRIPTION='Lint violations found' AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 "$HELPER" qlty-skips 123 --repo example/repo 2>/dev/null)
+set -e
+assert_eq "qlty findings are never reported as skips" "" "$skips_findings_output"
+set +e
+PATH="${live_bin}:$PATH" GH_TEST_MODE=api-error AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+	"$HELPER" qlty-skips 123 --repo example/repo >/dev/null 2>&1
+skips_error_rc=$?
+set -e
+assert_eq "unobservable checks make qlty-skips indeterminate" 2 "$skips_error_rc"
+
 live_no_required_output=$(PATH="${live_bin}:$PATH" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
 assert_contains "canonical no-required message is explicit terminal success" "PASS: verified no required checks; optional checks were not evaluated" "$live_no_required_output"

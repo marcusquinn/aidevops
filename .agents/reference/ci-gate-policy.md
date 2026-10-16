@@ -161,7 +161,8 @@ run those directly too, without `-k` (they do not provide unittest filtering).
     check that fails because the credits ran out (for example "Qlty did not
     run because you are out of minutes"). It is billing, not a code result: do
     not rerun it, change code, file an issue or wait for it. Merge when the
-    other checks pass, and note the skipped check in the PR body. A qlty
+    other checks pass, and note the skipped check in the PR body
+    (`full-loop-helper.sh merge` records it automatically). A qlty
     failure with real findings still counts, and an out-of-credits failure on
     a public personal-account repository is unexpected: report it. The free
     minutes return monthly, so keep the app installed (it is not a reason to
