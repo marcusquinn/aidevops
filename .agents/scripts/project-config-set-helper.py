@@ -9,15 +9,20 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 
+GIT = shutil.which("git")
+
 
 def git(repo, *args):
-    return subprocess.check_output(
-        ["git", "-C", str(repo), *args], text=True, stderr=subprocess.PIPE
+    if not GIT:
+        raise ValueError("Git executable is unavailable")
+    return subprocess.check_output(  # nosec B603 -- resolved Git; fixed internal subcommands and data-only path argv
+        [GIT, "-C", str(repo), *args], text=True, stderr=subprocess.PIPE
     ).strip()
 
 
@@ -32,8 +37,8 @@ def safe_file(path):
 def ignored_config(repo):
     if git(repo, "ls-files", "--", ".aidevops.json"):
         raise ValueError("Tracked config requires a linked-worktree migration")
-    if subprocess.run(
-        ["git", "-C", str(repo), "check-ignore", "-q", "--", ".aidevops.json"],
+    if subprocess.run(  # nosec B603 -- resolved Git; fixed check-ignore argv, path is data
+        [GIT, "-C", str(repo), "check-ignore", "-q", "--", ".aidevops.json"],
         check=False,
     ).returncode != 0:
         raise ValueError("Config must be ignored by Git before setting a timeout")
@@ -47,11 +52,14 @@ def repository_paths():
     if not first.startswith("worktree "):
         raise ValueError("Cannot resolve canonical checkout")
     canonical = Path(first[len("worktree "):])
-    if (not canonical.is_absolute() or canonical.resolve() != canonical
-            or canonical.stat().st_uid != os.getuid()
-            or Path(git(canonical, "rev-parse", "--path-format=absolute", "--git-dir")).resolve() != common
-            or Path(git(canonical, "rev-parse", "--show-toplevel")).resolve() != canonical):
-        raise ValueError("Canonical checkout identity or owner changed")
+    if not canonical.is_absolute() or canonical.resolve() != canonical:
+        raise ValueError("Canonical checkout path is unsafe")
+    if canonical.stat().st_uid != os.getuid():
+        raise ValueError("Canonical checkout owner changed")
+    if Path(git(canonical, "rev-parse", "--path-format=absolute", "--git-dir")).resolve() != common:
+        raise ValueError("Canonical Git directory identity changed")
+    if Path(git(canonical, "rev-parse", "--show-toplevel")).resolve() != canonical:
+        raise ValueError("Canonical checkout root changed")
     ignored_config(root)
     ignored_config(canonical)
     return root, common, canonical
