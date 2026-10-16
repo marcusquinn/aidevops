@@ -315,7 +315,7 @@ load_lib () {
     local SCRIPT_DIR
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     source "${SCRIPT_DIR}/shared-constants.sh"
-}
+ }
 load_lib')
 output=$(bash "$CHECKER" --scan-files "$fixture" 2>&1)
 rc=$?
