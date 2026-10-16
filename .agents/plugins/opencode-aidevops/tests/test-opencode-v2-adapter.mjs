@@ -30,43 +30,45 @@ import { addV1ToolsToV2Editor, toV2ToolResult } from "../v2-tool-adapter.mjs";
 // disable the whole plugin; unrelated excess keys are ignored by Effect Schema.
 function assertV2McpConfigShape(name, server) {
   const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const isString = (value) => typeof value === "string";
+  const isBoolean = (value) => typeof value === "boolean";
   const isStringRecord = (value) => isObject(value)
-    && Object.values(value).every((entry) => typeof entry === "string");
+    && Object.values(value).every(isString);
+  const isCommand = (value) => Array.isArray(value) && value.every(isString);
+  const isPositiveInt = (value) => Number.isInteger(value) && value > 0;
+  const isPort = (value) => Number.isInteger(value) && value >= 1 && value <= 65535;
+  const fields = (path, value, validators) => {
+    assert.ok(isObject(value), path);
+    for (const [key, validate] of Object.entries(validators)) {
+      if (value[key] !== undefined) assert.ok(validate(value[key]), `${path}.${key}`);
+    }
+    return true;
+  };
   assert.ok(isObject(server), `${name}.config`);
-  assert.ok(server.type === "local" || server.type === "remote", `${name}.type`);
-  if (server.type === "local") {
-    assert.ok(Array.isArray(server.command)
-      && server.command.every((part) => typeof part === "string"), `${name}.command`);
-    if (server.cwd !== undefined) assert.equal(typeof server.cwd, "string", `${name}.cwd`);
-    if (server.environment !== undefined) assert.ok(isStringRecord(server.environment), `${name}.environment`);
-  } else {
-    assert.equal(typeof server.url, "string", `${name}.url`);
-    if (server.headers !== undefined) assert.ok(isStringRecord(server.headers), `${name}.headers`);
-    if (server.oauth !== undefined && server.oauth !== false) {
-      assert.ok(isObject(server.oauth), `${name}.oauth`);
-      for (const key of ["client_id", "client_secret", "scope", "redirect_uri"]) {
-        if (server.oauth[key] !== undefined) assert.equal(typeof server.oauth[key], "string", `${name}.oauth.${key}`);
-      }
-      if (server.oauth.callback_port !== undefined) {
-        assert.ok(Number.isInteger(server.oauth.callback_port)
-          && server.oauth.callback_port >= 1 && server.oauth.callback_port <= 65535, `${name}.oauth.callback_port`);
-      }
-    }
-  }
-  for (const key of ["disabled", "codemode"]) {
-    if (server[key] !== undefined) assert.equal(typeof server[key], "boolean", `${name}.${key}`);
-  }
-  if (server.timeout !== undefined) {
-    assert.ok(isObject(server.timeout), `${name}.timeout`);
-    for (const key of ["startup", "catalog", "execution"]) {
-      if (server.timeout[key] !== undefined) {
-        assert.ok(Number.isInteger(server.timeout[key]) && server.timeout[key] > 0, `${name}.timeout.${key}`);
-      }
-    }
-  }
-  for (const key of ["enabled", "env"]) {
-    assert.equal(key in server, false, `${name}.${key} is V1-only`);
-  }
+  assert.ok(["local", "remote"].includes(server.type), `${name}.type`);
+  const required = { local: "command", remote: "url" }[server.type];
+  assert.notEqual(server[required], undefined, `${name}.${required}`);
+  const transportFields = {
+    local: { command: isCommand, cwd: isString, environment: isStringRecord },
+    remote: {
+      url: isString,
+      headers: isStringRecord,
+      oauth: (value) => fields(`${name}.oauth`, value === false ? {} : value, {
+        client_id: isString, client_secret: isString, scope: isString,
+        redirect_uri: isString, callback_port: isPort,
+      }),
+    },
+  };
+  fields(name, server, {
+    ...transportFields[server.type],
+    disabled: isBoolean,
+    codemode: isBoolean,
+    timeout: (value) => fields(`${name}.timeout`, value, {
+      startup: isPositiveInt, catalog: isPositiveInt, execution: isPositiveInt,
+    }),
+  });
+  assert.equal("enabled" in server, false, `${name}.enabled is V1-only`);
+  assert.equal("env" in server, false, `${name}.env is V1-only`);
 }
 
 test("package exposes released V1 and V2 plugin entrypoints", () => {
