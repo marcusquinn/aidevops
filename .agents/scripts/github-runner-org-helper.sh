@@ -97,6 +97,41 @@ _ro_api() {
 
 # ---------------------------------------------------------------- status
 
+# GitHub's runner API cannot expose inner daemon settings. Inspect only the
+# current Docker context's local pool; never infer missing mirrors from API data.
+_ro_registry_mirrors() {
+	printf 'Registry mirrors (current Docker context; not filtered by GitHub group):\n'
+	if ! command -v docker >/dev/null 2>&1; then
+		printf '  UNKNOWN: Docker CLI unavailable; run status on the runner host.\n'
+		return 0
+	fi
+	local runners runner mirrors display
+	if ! runners=$(docker ps --filter name=github-runner-dind- --format '{{.Names}}' 2>/dev/null); then
+		printf '  UNKNOWN: cannot query Docker; check context and host access.\n'
+		return 0
+	fi
+	if [[ -z "$runners" ]]; then
+		printf '  UNKNOWN: no running DinD pool containers in this Docker context.\n'
+		return 0
+	fi
+	while IFS= read -r runner; do
+		[[ "$runner" =~ ^github-runner-dind-[0-9]+$ ]] || continue
+		if ! mirrors=$(docker exec "$runner" docker info --format '{{json .RegistryConfig.Mirrors}}' 2>/dev/null) ||
+			! printf '%s' "$mirrors" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
+			printf '  %s\tUNKNOWN: inner daemon unavailable or unreadable.\n' "$runner"
+			continue
+		fi
+		if [[ $(printf '%s' "$mirrors" | jq 'length') == 0 ]]; then
+			printf '  %s\tWARNING: no registry mirror; anonymous Docker Hub pulls risk 429.\n' "$runner"
+		else
+			# Never display userinfo, query strings or other potential credentials.
+			display=$(printf '%s' "$mirrors" | jq -r 'map(if test("^https?://[A-Za-z0-9.:-]+/?$") then . else "<configured; endpoint redacted>" end) | join(", ")')
+			printf '  %s\tmirrors=%s (configured; reachability not verified)\n' "$runner" "$display"
+		fi
+	done <<<"$runners"
+	return 0
+}
+
 cmd_status() {
 	local org="" group=""
 	while [[ $# -gt 0 ]]; do
@@ -146,6 +181,7 @@ cmd_status() {
 			--jq '.runners[] | "  \(.name)\tstatus=\(.status)\tbusy=\(.busy)\tlabels=\([.labels[].name] | join(","))"' || return 1
 		printf '\n'
 	fi
+	_ro_registry_mirrors
 	return 0
 }
 
@@ -495,7 +531,8 @@ Commands:
   push-key --secret NAME --host USER@HOST --dest PATH
       Stream the key over ssh stdin to PATH (mode 600) and compare public-key SHA-256.
   status --org ORG [--group NAME]
-      Read-only: runner groups and runners.
+      Read-only: runner groups, runners, and inner registry mirrors in the
+      current Docker context (run on the pool host; no remote host discovery).
   help
 
 The key is read from the env var NAME injected by `aidevops secret NAME -- ...`

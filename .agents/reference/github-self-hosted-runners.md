@@ -222,6 +222,83 @@ than starting Docker as a child or background process. This lets systemd deliver
 stop signals to the Docker client directly and reduces the risk of orphaned
 runner containers, restart loops, or later container-name conflicts.
 
+## Registry mirror
+
+Each ephemeral inner `dockerd` starts with an empty image store. Concurrent jobs
+behind one public address can exhaust Docker Hub's anonymous pull limit before
+tests start (`429 Too Many Requests`, often Docker exit code 125). Retrying the
+same workflow does not fix that shared limit.
+
+The operator can run one persistent pull-through cache on the runner host. For
+example, adapt this host-side launch to the approved private network:
+
+```bash
+docker volume create github-runner-registry-cache
+docker run -d --restart unless-stopped --name github-runner-registry-cache \
+  -p <PRIVATE_HOST_IP>:5000:5000 \
+  -v github-runner-registry-cache:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
+  registry:2
+```
+
+Replace placeholders before running. Restrict port 5000 to the runner network
+with host firewall rules; never publish this cache to the internet. For plain
+HTTP, use a dedicated trusted private network and explicitly configure the inner
+daemon's insecure registry policy if required by its Docker version. Prefer TLS
+with a trusted certificate outside that network. The cache address must be
+reachable **from inside every runner container**; `localhost` there is the runner,
+not the host. Do not bind-mount the host Docker socket or share inner Docker data
+directories to implement caching.
+
+In `/usr/local/sbin/github-runner-dind-start`, pass the cache address to the
+**inner daemon**, retaining the existing storage driver and other flags. The
+following is the inner-daemon invocation fragment, not an argument to the outer
+`docker run` (adapt the runner image's entrypoint/daemon-argument wiring):
+
+```bash
+dockerd --storage-driver=overlay2 --registry-mirror=https://<CACHE_HOST>:<TLS_PORT>
+```
+
+Use `http://<PRIVATE_HOST_IP>:5000` instead for the private HTTP example above.
+Changing only the host daemon does not configure the inner daemons. Canary one
+idle service instance, verify it, then rotate the remaining idle instances
+gradually as described under Operations; do not interrupt active jobs.
+
+The first cache miss still pulls from Docker Hub and can hit its upstream limit.
+Optionally authenticate the cache upstream with a read-only Docker Hub token
+stored via `aidevops secret set DOCKERHUB_READ_TOKEN`. Inject the token through
+the approved secret-backed service configuration as `REGISTRY_PROXY_PASSWORD`
+with `REGISTRY_PROXY_USERNAME`; do not put it in argv, mirror URLs, committed
+files or logs. A cache with upstream credentials can serve content accessible to
+that account: restrict clients and use an account without private-image access.
+Monitor cache disk usage and use registry-supported maintenance, not deletion of
+live cache files.
+
+Verify from a canary workflow job, so the commands address its inner daemon:
+
+```bash
+docker info --format '{{json .RegistryConfig.Mirrors}}'
+docker pull mariadb:10.6
+```
+
+On the pool host, `github-runner-org-helper.sh status --org <ORG> --group <GROUP>`
+also reads each running `github-runner-dind-N` container's inner daemon mirror
+list using `docker exec ... docker info`. This uses the current Docker context,
+is not filtered by GitHub group, and does not discover or SSH to remote hosts.
+It warns for a verified empty mirror list and reports `UNKNOWN` for missing
+Docker access, absent containers or unreadable daemons. Configured does not mean
+healthy: confirm requests in the cache's access logs, then pull the same image
+from a fresh runner to verify cache reuse. Finally run a workflow pulling at
+least ten images across its jobs and check that it completes without 429s.
+
+Alternative: authenticate each job's pulls using `docker login --password-stdin`
+with a read-only token supplied by the secret store. This raises the upstream
+limit, but every fresh daemon still downloads every image; a shared mirror avoids
+repeated upstream downloads. Neither option guarantees unlimited pulls. Mirrors
+cover Docker Hub images, not arbitrary registries or separate BuildKit daemons;
+configure those separately if used. Provisioning the cache, secret injection and
+rolling runner restarts remain operator-owned, not actions performed by `status`.
+
 ## Health checks
 
 Use read-only commands first:
@@ -404,6 +481,7 @@ capacity incident, not ordinary job latency.
 | Service restarts repeatedly | `systemctl show ... NRestarts ExecMainStatus` | Check image entrypoint, registration token freshness, and network access. |
 | Runner registers, then logs `Runner version vX is deprecated and cannot receive messages` | Runner image tag and embedded `actions/runner` release | Rebuild and publish the runner image with the current upstream runner version, then canary one instance before rotating the pool; do not treat this as a token or network failure. |
 | Docker commands fail inside workflow | Container process list for inner `dockerd` | Confirm the runner container is privileged and inner Docker daemon started. |
+| `429 Too Many Requests` from `registry-1.docker.io` before tests start | Inner `docker info` mirror list, cache reachability/access logs and upstream quota | Configure or repair the shared registry mirror, or use authenticated pulls with a read-only token; repeated reruns can exhaust the same shared limit. |
 | Builds are slow or disk-heavy | Inner Docker storage driver and job cache usage | Confirm `overlay2` is active for the inner daemon; migrate off `vfs`, then clean stale job artifacts and review image layers. |
 | Container name conflict | `docker ps -a --filter name=github-runner-dind-N` | Startup should fail before replacing the container; inspect whether a job is still running, then remove only verified stale containers manually. |
 
