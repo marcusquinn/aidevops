@@ -327,6 +327,82 @@ run_invalid_case unzip legacy ""
 [[ ! -f "${INVALID_DIR}/.restore-deferred" ]]
 grep -q 'phase=extraction' "${INVALID_DIR}.err"
 
+# HTTP metadata uses the original read; bodies, other headers and malformed fields
+# must never reach either output stream. These fixtures perform no network calls.
+mkdir -p "${test_root}/http-bin"
+cat >"${test_root}/http-bin/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_CALL_LOG"
+if [[ "$*" == "--version" ]]; then
+	[[ "$GH_HTTP_MODE" != "unknown" ]] || { printf 'SECRET-VERSION\n'; exit 0; }
+	printf 'gh version 2.92.0 (2026-04-29)\nSECRET-VERSION-EXTRA\n'
+	exit 0
+fi
+if [[ "$*" == *"/zip" ]]; then
+	[[ "$*" != *"--include"* ]] || exit 64
+	printf 'fixture archive'
+	exit 0
+fi
+[[ "$*" == "api --include repos/owner/repo/actions/artifacts?"* ]] || exit 65
+if [[ "$GH_HTTP_MODE" == "legacy-error" && "$*" == *"?name="* ]]; then
+	printf 'HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n{"artifacts":[]}\n'
+	exit 0
+fi
+if [[ "$GH_HTTP_MODE" == "no-headers" ]]; then
+	printf 'gh: unexpected end of JSON input SECRET-ERROR\n' >&2
+	exit 1
+fi
+if [[ "$GH_HTTP_MODE" == "multiple" ]]; then
+	printf 'HTTP/1.1 100 Continue\r\nX-GitHub-Request-Id: DEAD:BEEF\r\n\r\n'
+fi
+if [[ "$GH_HTTP_MODE" == "unknown" ]]; then
+	printf 'HTTP/2.0 SECRET-STATUS\nCoNtEnT-TyPe: SECRET-TYPE\nX-GitHub-Request-Id: SECRET-ID\n\n'
+elif [[ "$GH_HTTP_MODE" == *"error" ]]; then
+	printf 'HTTP/2.0 502 Bad Gateway\r\nContent-Type: text/html; charset=utf-8\r\nX-GitHub-Request-Id: ABCD:1234:DEAD:BEEF\r\nAuthorization: Bearer SECRET-AUTH\r\nSet-Cookie: SECRET-COOKIE\r\nLocation: https://example.invalid/?token=SECRET-URL\r\n\r\nSECRET-BODY'
+	printf 'gh: unexpected end of JSON input SECRET-ERROR\n' >&2
+	exit 1
+else
+	printf 'HTTP/2.0 200 OK\r\nCoNtEnT-TyPe: Application/JSON; charset=utf-8\r\nX-GitHub-Request-Id: ABCD:1234:DEAD:BEEF\r\nSet-Cookie: SECRET-COOKIE\r\n\r\n'
+fi
+[[ "$GH_HTTP_MODE" != "empty" ]] || exit 0
+printf '{"artifacts":[{"id":24,"name":"forge-coordinator-R_1","expired":false}],"ignored":"SECRET-BODY"}\n'
+GH
+chmod +x "${test_root}/http-bin/gh"
+for http_mode in success multiple unknown empty no-headers exact-error legacy-error; do
+	http_dir="${test_root}/http-${http_mode}"
+	mkdir -p "$http_dir"
+	printf 'original-db\n' >"${http_dir}/tasks.db"
+	GH_HTTP_MODE="$http_mode" GH_CALL_LOG="${http_dir}.log" \
+		PATH="${test_root}/http-bin:${test_root}/bin:${jq_dir}:/usr/bin:/bin" \
+		bash "$STATE_HELPER" restore "$http_dir" owner/repo R_1 >"${http_dir}.out" 2>"${http_dir}.err"
+	[[ ! -s "${http_dir}.out" ]]
+	if grep -q 'SECRET-' "${http_dir}.err"; then
+		printf 'FAIL HTTP diagnostics leaked a non-allowlisted field (%s)\n' "$http_mode" >&2
+		exit 1
+	fi
+	[[ ! -f "${http_dir}/.restore-empty-init" && ! -f "${http_dir}/state.zip" ]]
+	case "$http_mode" in
+	success | multiple | unknown)
+		[[ "$(<"${http_dir}/tasks.db")" == "durable-db" ]]
+		[[ ! -f "${http_dir}/.restore-deferred" ]]
+		[[ "$(grep -c '^api ' "${http_dir}.log")" -eq 2 ]]
+		;;
+	*)
+		[[ "$(<"${http_dir}/tasks.db")" == "original-db" ]]
+		[[ -f "${http_dir}/.restore-deferred" ]]
+		[[ "$(grep -c '^api ' "${http_dir}.log")" -eq "$([[ "$http_mode" == "legacy-error" ]] && printf 2 || printf 1)" ]]
+		! grep -q '/zip' "${http_dir}.log"
+		;;
+	esac
+done
+grep -q 'gh_version=2.92.0 gh_exit=0 http_status=200 content_type=json request_id=ABCD:1234:DEAD:BEEF captured_body_bytes=97$' "${test_root}/http-success.err"
+grep -q 'http_status=200 content_type=json request_id=ABCD:1234:DEAD:BEEF' "${test_root}/http-multiple.err"
+grep -q 'gh_version=unknown gh_exit=0 http_status=unknown content_type=unknown request_id=unknown' "${test_root}/http-unknown.err"
+grep -q 'gh_exit=0 http_status=200 content_type=json request_id=ABCD:1234:DEAD:BEEF captured_body_bytes=0$' "${test_root}/http-empty.err"
+grep -q 'gh_exit=1 http_status=unknown content_type=unknown request_id=unknown captured_body_bytes=0$' "${test_root}/http-no-headers.err"
+grep -q 'phase=exact-name-inventory gh_version=2.92.0 gh_exit=1 http_status=502 content_type=html request_id=ABCD:1234:DEAD:BEEF captured_body_bytes=11$' "${test_root}/http-exact-error.err"
+grep -q 'phase=legacy-inventory gh_version=2.92.0 gh_exit=1 http_status=502 content_type=html request_id=ABCD:1234:DEAD:BEEF captured_body_bytes=11$' "${test_root}/http-legacy-error.err"
+
 # Cleanup plans are read-only. Apply keeps the protected checkpoint and newest
 # fallback, deleting only older exact-name artifacts.
 mkdir -p "${test_root}/cleanup-bin"

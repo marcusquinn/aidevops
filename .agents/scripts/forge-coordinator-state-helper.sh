@@ -8,6 +8,7 @@ readonly RESTORE_DEFERRED_MARKER=".restore-deferred"
 readonly RESTORE_EMPTY_INIT_MARKER=".restore-empty-init"
 readonly PHASE_EXACT_INVENTORY="exact-name-inventory"
 readonly PHASE_LEGACY_INVENTORY="legacy-inventory"
+readonly INVENTORY_DIAGNOSTIC_UNKNOWN="unknown"
 
 print_error_file() {
 	local error_file="$1"
@@ -95,6 +96,93 @@ defer_invalid_inventory() {
 	return 0
 }
 
+# Temporary investigation metadata. Remove after the inventory failure is diagnosed;
+# never enable HTTP debug logging or publish the captured headers/body.
+inventory_cli_version() {
+	local output=""
+	output=$(gh --version 2>/dev/null) || output=""
+	if [[ "$output" =~ ^gh[[:space:]]version[[:space:]]([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})([[:space:]]|$) ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+	else
+		printf '%s' "$INVENTORY_DIAGNOSTIC_UNKNOWN"
+	fi
+	return 0
+}
+
+inventory_header_value() {
+	local headers="$1"
+	local wanted="$2"
+	local line="" key="" value="" examined=0
+	while IFS= read -r line; do
+		examined=$((examined + 1))
+		((examined <= 64)) || break
+		line="${line%$'\r'}"
+		[[ "$line" == *:* ]] || continue
+		key=$(printf '%s' "${line%%:*}" | tr '[:upper:]' '[:lower:]')
+		[[ "$key" == "$wanted" ]] || continue
+		value="${line#*:}"
+		value="${value#"${value%%[![:space:]]*}"}"
+		value="${value%"${value##*[![:space:]]}"}"
+		printf '%s' "$value"
+		return 0
+	done <<<"$headers"
+	return 0
+}
+
+report_inventory_http() {
+	local phase="$1" headers="$2" body="$3" gh_exit="$4"
+	local status="$INVENTORY_DIAGNOSTIC_UNKNOWN" kind="$INVENTORY_DIAGNOSTIC_UNKNOWN" request_id="$INVENTORY_DIAGNOSTIC_UNKNOWN" bytes="" value=""
+	local status_line="${headers%%$'\n'*}"
+	if [[ "$status_line" =~ ^HTTP/[0-9.]+[[:space:]]+([1-5][0-9][0-9])([[:space:]]|$) ]]; then
+		status="${BASH_REMATCH[1]}"
+	fi
+	value=$(inventory_header_value "$headers" content-type | tr '[:upper:]' '[:lower:]')
+	case "$value" in
+	application/json | application/json\;* | application/vnd.github+json | application/vnd.github+json\;*) kind="json" ;;
+	text/html | text/html\;*) kind="html" ;;
+	text/plain | text/plain\;*) kind="text" ;;
+	esac
+	value=$(inventory_header_value "$headers" x-github-request-id)
+	if [[ "$value" =~ ^[[:xdigit:]]{1,16}(:[[:xdigit:]]{1,16}){1,7}$ ]]; then
+		request_id="$value"
+	fi
+	# Captured text only: this is not Content-Length or the wire payload size.
+	bytes=$(printf '%s' "$body" | wc -c | tr -d '[:space:]')
+	printf '::notice title=Coordinator inventory HTTP diagnostics::phase=%s gh_version=%s gh_exit=%s http_status=%s content_type=%s request_id=%s captured_body_bytes=%s\n' \
+		"$phase" "$(inventory_cli_version)" "$gh_exit" "$status" "$kind" "$request_id" "$bytes" >&2
+	return 0
+}
+
+read_restore_inventory() {
+	local phase="$1" endpoint="$2" error_file="$3"
+	local response="" headers="" gh_exit=0 blocks=0
+	# --include exposes response metadata on this SAME read, never an extra probe.
+	# A sentinel preserves the header separator and body size for empty responses.
+	response=$(
+		gh api --include "$endpoint" 2>"$error_file" || gh_exit=$?
+		printf '\036'
+		exit "$gh_exit"
+	) || gh_exit=$?
+	response="${response%$'\036'}"
+	while [[ "$response" == HTTP/* ]] && ((blocks < 4)); do
+		if [[ "$response" == *$'\r\n\r\n'* ]]; then
+			headers="${response%%$'\r\n\r\n'*}"
+			response="${response#*$'\r\n\r\n'}"
+		elif [[ "$response" == *$'\n\n'* ]]; then
+			headers="${response%%$'\n\n'*}"
+			response="${response#*$'\n\n'}"
+		else
+			break
+		fi
+		blocks=$((blocks + 1))
+	done
+	report_inventory_http "$phase" "$headers" "$response" "$gh_exit"
+	# Only the original caller consumes this body via command substitution.
+	printf '%s' "$response"
+	((gh_exit == 0)) || return 1
+	return 0
+}
+
 restore_state() {
 	local state_dir="$1"
 	local repository="$2"
@@ -108,7 +196,7 @@ restore_state() {
 
 	# New checkpoints use one stable name, allowing GitHub to filter server-side.
 	# This replaces the former --paginate scan across every repository artifact.
-	if ! artifact_json=$(gh api "repos/${repository}/actions/artifacts?name=${artifact_name}&per_page=1" 2>"$error_file"); then
+	if ! artifact_json=$(read_restore_inventory "$PHASE_EXACT_INVENTORY" "repos/${repository}/actions/artifacts?name=${artifact_name}&per_page=1" "$error_file"); then
 		if handle_gh_restore_failure "$state_dir" "$repository" "$error_file" "$PHASE_EXACT_INVENTORY"; then
 			rm -f "$error_file"
 			return 0
@@ -129,7 +217,7 @@ restore_state() {
 
 	# One bounded legacy page migrates checkpoints written with run-ID suffixes.
 	if [[ -z "$artifact_id" ]]; then
-		if ! artifact_json=$(gh api "repos/${repository}/actions/artifacts?per_page=100" 2>"$error_file"); then
+		if ! artifact_json=$(read_restore_inventory "$PHASE_LEGACY_INVENTORY" "repos/${repository}/actions/artifacts?per_page=100" "$error_file"); then
 			if handle_gh_restore_failure "$state_dir" "$repository" "$error_file" "$PHASE_LEGACY_INVENTORY"; then
 				rm -f "$error_file"
 				return 0
