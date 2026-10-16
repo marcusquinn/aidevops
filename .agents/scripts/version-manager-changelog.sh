@@ -263,6 +263,15 @@ _classify_commit_to_category() {
 	return 0
 }
 
+# Escape "<" outside backtick code spans so commit subjects containing
+# placeholders (e.g. TOKEN_<NAME>) are not parsed as inline HTML (MD033).
+# Arguments: text. Output: escaped text.
+_escape_changelog_html() {
+	local text="$1"
+	printf '%s\n' "$text" | awk 'BEGIN{bs=sprintf("%c",92)}{n=split($0,p,"`");o="";for(i=1;i<=n;i++){s=p[i];if(i%2==1){m=split(s,q,"<");s=q[1];for(j=2;j<=m;j++)s=s bs "<" q[j]}o=o s;if(i<n)o=o "`"}print o}'
+	return 0
+}
+
 # Function to generate changelog content from commits (cleaner format)
 generate_changelog_content() {
 	local prev_tag
@@ -287,6 +296,7 @@ generate_changelog_content() {
 		[[ "$commit" == "chore: bump version to "* ]] && continue
 
 		local category entry classified
+		commit=$(_escape_changelog_html "$commit")
 		classified=$(_classify_commit_to_category "$commit")
 		[[ -z "$classified" ]] && continue
 

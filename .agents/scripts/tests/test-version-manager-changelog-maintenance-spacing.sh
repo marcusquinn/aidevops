@@ -24,6 +24,24 @@ print_success() {
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/version-manager-changelog.sh"
 
+# Angle-bracket placeholders in commit subjects must be escaped (MD033).
+GIT_REPO="$(mktemp -d)"
+(
+	cd "$GIT_REPO" || exit 1
+	git init -q . && git config user.email t@example.com && git config user.name t
+	git config commit.gpgsign false
+	git commit -q --allow-empty -m "chore: init" && git update-ref refs/tags/v0.0.1 HEAD
+	# shellcheck disable=SC2016
+	git commit -q --allow-empty -m 'feat: support TOKEN_<NAME> and `<kept>` override'
+	generate_changelog_content
+) >"${GIT_REPO}/out.md"
+if ! rg -qF 'TOKEN_\<NAME> and `<kept>` override' "${GIT_REPO}/out.md"; then
+	printf 'FAIL angle-bracket token not escaped\n' >&2
+	cat "${GIT_REPO}/out.md" >&2
+	exit 1
+fi
+rm -rf "$GIT_REPO"
+
 generate_changelog_content() {
 	return 0
 }
