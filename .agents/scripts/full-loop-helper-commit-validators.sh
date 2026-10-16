@@ -295,7 +295,8 @@ _run_scoped_node_checks() {
 # The orchestrator's selected config is inherited by scoped checks. Keep the
 # durable remedy alongside the env hint, which cannot override a project value.
 _validator_timeout_remedy() {
-	print_error "[validators] Set validator_timeout_seconds to a larger positive integer in ${validator_config:-.aidevops.json} (durable project setting; takes precedence over the environment)"
+	print_error "[validators] Run: aidevops project-config set validator_timeout_seconds <n> (larger positive integer; audited durable canonical setting: ${validator_config:-.aidevops.json})"
+	print_error "[validators] A worktree-local .aidevops.json overrides the canonical setting; update a local override inside the linked worktree if present"
 	print_error "[validators] Set AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun if no project timeout is configured; do not skip checks"
 	return 0
 }

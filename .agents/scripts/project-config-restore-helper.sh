@@ -8,10 +8,19 @@ umask 077
 
 usage() {
 	printf '%s\n' 'Usage: aidevops project-config restore <registered-slug> [--backup FILE] [--apply]' \
+		'       aidevops project-config set validator_timeout_seconds <positive-integer>' \
 		'Preview by default. --apply requires an attached terminal and typing the registered path.' \
 		'Without a backup, only explicitly enabled registry features and a valid init_scope are recovered.'
 	return 0
 }
+
+# The setter has a separate, narrow noninteractive contract; restore keeps its
+# existing terminal confirmation and never becomes an arbitrary config editor.
+if [[ "${1:-}" == "set" ]]; then
+	shift
+	script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P) || exit 1
+	exec python3 "${script_dir}/project-config-set-helper.py" "$@"
+fi
 
 [[ "${1:-}" == "restore" ]] || { usage; exit 2; }
 shift

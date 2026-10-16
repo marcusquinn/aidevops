@@ -410,10 +410,11 @@ print_result "local config without timeout uses environment rather than canonica
 canonical_remedy_rc=$?
 if [[ "$canonical_remedy_rc" -ne 0 ]] &&
 	grep -q 'TIMEOUT after 900s' "${TEST_ROOT}/canonical-remedy.log" &&
+	grep -q 'aidevops project-config set validator_timeout_seconds <n>' "${TEST_ROOT}/canonical-remedy.log" &&
 	grep -q "validator_timeout_seconds.*${CANONICAL_REPO}/.aidevops.json" "${TEST_ROOT}/canonical-remedy.log"; then
-	print_result "timeout remedy identifies canonical durable configuration" 0
+	print_result "timeout remedy identifies audited setter and canonical durable configuration" 0
 else
-	print_result "timeout remedy identifies canonical durable configuration" 1
+	print_result "timeout remedy identifies audited setter and canonical durable configuration" 1
 fi
 printf '%s\n' '{"validator_timeout_seconds":0}' >"$CANONICAL_REPO/.aidevops.json"
 (
