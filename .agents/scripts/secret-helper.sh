@@ -18,6 +18,7 @@
 #   secret-helper.sh NAME [NAME...] -- CMD # Inject specific secrets, redact output
 #   secret-helper.sh init                  # Initialize gopass store
 #   secret-helper.sh import-credentials    # Migrate from credentials.sh to gopass
+#   secret-helper.sh migrate-loader        # Move tenant-loader exports into the active tenant
 #   secret-helper.sh status                # Show backend status
 #   secret-helper.sh help                  # Show help
 #
@@ -60,24 +61,65 @@ is_tenant_loader() {
 	[[ -f "$CREDENTIALS_FILE" ]] && grep -q 'AIDEVOPS_ACTIVE_TENANT=' "$CREDENTIALS_FILE" 2>/dev/null
 }
 
-# Resolve actual credential files to process.
-# Returns the direct credentials.sh if it contains exports, or all
-# tenant credential files if multi-tenant is active.
+# Active tenant for plaintext custody (GH#34806): the tenant the loader sources
+# (its AIDEVOPS_ACTIVE_TENANT marker), then the active-tenant file, then
+# "default". Parsed as text only; the loader is never sourced.
+active_tenant_name() {
+	local tenant="" marker=""
+	local marker_re='^(export[[:space:]]+)?AIDEVOPS_ACTIVE_TENANT="?([A-Za-z0-9][A-Za-z0-9_-]*)"?[[:space:]]*$'
+	marker=$(grep -m 1 -E '^(export[[:space:]]+)?AIDEVOPS_ACTIVE_TENANT=' "$CREDENTIALS_FILE" 2>/dev/null) || marker=""
+	if [[ "$marker" =~ $marker_re ]]; then
+		tenant="${BASH_REMATCH[2]}"
+	fi
+	if [[ -z "$tenant" && -f "$CONFIG_DIR/active-tenant" ]]; then
+		tenant=$(tr -d '[:space:]' <"$CONFIG_DIR/active-tenant" 2>/dev/null) || tenant=""
+		[[ "$tenant" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || tenant=""
+	fi
+	printf '%s\n' "${tenant:-default}"
+	return 0
+}
+
+# File that plaintext `secret set` writes: the active tenant's credentials in
+# tenant-loader mode, otherwise the single credentials.sh.
+credential_store_file() {
+	if is_tenant_loader; then
+		printf '%s/%s/credentials.sh\n' "$TENANTS_DIR" "$(active_tenant_name)"
+	else
+		printf '%s\n' "$CREDENTIALS_FILE"
+	fi
+	return 0
+}
+
+# Resolve actual credential files to process, in precedence order.
+# Single mode: credentials.sh. Tenant-loader mode: the active tenant's file
+# first, then the other tenant files in name order, so the active tenant wins
+# for duplicate names. The loader itself is never a store (GH#34806).
 # Output: one file path per line
 resolve_credential_files() {
 	if is_tenant_loader; then
-		# Multi-tenant: return all tenant credential files
+		local active_file=""
+		active_file=$(credential_store_file)
+		[[ -f "$active_file" ]] && printf '%s\n' "$active_file"
 		local tenant_dir
 		for tenant_dir in "$TENANTS_DIR"/*/; do
 			[[ -d "$tenant_dir" ]] || continue
-			local cred_file="$tenant_dir/credentials.sh"
-			if [[ -f "$cred_file" ]]; then
-				echo "$cred_file"
+			local cred_file="${tenant_dir%/}/credentials.sh"
+			if [[ -f "$cred_file" && "$cred_file" != "$active_file" ]]; then
+				printf '%s\n' "$cred_file"
 			fi
 		done
 	elif [[ -f "$CREDENTIALS_FILE" ]]; then
 		echo "$CREDENTIALS_FILE"
 	fi
+	return 0
+}
+
+# Names exported directly in a tenant loader (stranded by earlier writers).
+# Names only; the loader marker is excluded.
+stranded_loader_names() {
+	is_tenant_loader || return 0
+	sed -n -E 's/^export[[:space:]]+([A-Z_][A-Z0-9_]*)=.*/\1/p' "$CREDENTIALS_FILE" 2>/dev/null |
+		grep -vx 'AIDEVOPS_ACTIVE_TENANT' || true
 	return 0
 }
 
@@ -207,9 +249,8 @@ collect_secret_values() {
 		[[ -z "$cred_file" ]] && continue
 		while IFS= read -r line; do
 			if [[ "$line" =~ ^export[[:space:]]+[A-Z_][A-Z0-9_]*= ]]; then
-				local val="${line#*=}"
-				val="${val#\"}"
-				val="${val%\"}"
+				local val=""
+				val=$(decode_credential_value "${line#*=}")
 				val="${val#\'}"
 				val="${val%\'}"
 				local name="${line%%=*}"
@@ -350,6 +391,36 @@ emit_secret_env_record() {
 	return 0
 }
 
+# Value of a fallback `export NAME=VALUE` right-hand side. Double-quoted values
+# undo the writer's \\ and \" escaping in one left-to-right pass, so injection
+# and redaction see the stored value, as `get` does (GH#34806).
+decode_credential_value() {
+	local raw="$1"
+	if [[ "$raw" != \"*\" || ${#raw} -lt 2 ]]; then
+		raw="${raw#\"}"
+		printf '%s' "${raw%\"}"
+		return 0
+	fi
+	raw="${raw:1:${#raw}-2}"
+	if [[ "$raw" != *\\* ]]; then
+		printf '%s' "$raw"
+		return 0
+	fi
+	local out="" char="" next="" i=0
+	while ((i < ${#raw})); do
+		char="${raw:i:1}"
+		next="${raw:i+1:1}"
+		if [[ "$char" == "\\" && ("$next" == "\\" || "$next" == '"') ]]; then
+			char="$next"
+			i=$((i + 1))
+		fi
+		out+="$char"
+		i=$((i + 1))
+	done
+	printf '%s' "$out"
+	return 0
+}
+
 # Build a NUL-delimited environment from gopass secrets.
 build_secret_env() {
 	local -a specific_names=("$@")
@@ -408,9 +479,8 @@ build_secret_env() {
 		while IFS= read -r line; do
 			if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*) ]]; then
 				local name="${BASH_REMATCH[1]}"
-				local val="${BASH_REMATCH[2]}"
-				val="${val#\"}"
-				val="${val%\"}"
+				local val=""
+				val=$(decode_credential_value "${BASH_REMATCH[2]}")
 				# Only add if not already set by gopass
 				if [[ -n "$val" ]] && ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
 					emit_secret_env_record "$name" "$val"
@@ -562,14 +632,72 @@ release_credentials_lock() {
 	return 0
 }
 
+# Print NAME's first `export NAME=` line in FILE; exit 1 when absent.
+credential_assignment() {
+	local file="$1"
+	local name="$2"
+	grep -m 1 -- "$(printf '^export %s=' "$name")" "$file" 2>/dev/null
+	return $?
+}
+
+# Atomically rewrite FILE without NAME's assignment, appending LINE when given.
+# The caller holds the credentials lock. The result is mode 600.
+rewrite_credential_file() {
+	local file="$1"
+	local name="$2"
+	local line="${3:-}"
+	local filter_status=0
+	local tmp_file=""
+	local previous_umask=""
+
+	previous_umask=$(umask)
+	umask 077
+	if ! tmp_file=$(mktemp "${file}.tmp.XXXXXX"); then
+		umask "$previous_umask"
+		return 1
+	fi
+	umask "$previous_umask"
+
+	grep -v -- "$(printf '^export %s=' "$name")" "$file" >"$tmp_file" || filter_status=$?
+	if [[ "$filter_status" -gt 1 ]] ||
+		{ [[ -n "$line" ]] && ! printf '%s\n' "$line" >>"$tmp_file"; } ||
+		! chmod 600 "$tmp_file" ||
+		! mv -f "$tmp_file" "$file"; then
+		rm -f "$tmp_file" || true
+		return 1
+	fi
+	return 0
+}
+
+# Create the active tenant's credentials file (dir 700, file 600). A symlinked
+# target is refused rather than replaced, preserving explicit custody.
+prepare_tenant_store() {
+	local store_file="$1"
+	local store_dir="${store_file%/*}"
+	local previous_umask=""
+	if [[ -L "$store_file" || -L "$store_dir" ]]; then
+		return 1
+	fi
+	previous_umask=$(umask)
+	umask 077
+	if ! mkdir -p "$store_dir"; then
+		umask "$previous_umask"
+		return 1
+	fi
+	umask "$previous_umask"
+	chmod 700 "$store_dir" || return 1
+	return 0
+}
+
 # Atomically replace one fallback credential while preserving every other entry.
+# Tenant-loader mode writes the active tenant's file and removes any stale
+# loader assignment for the same name, which would otherwise shadow it (GH#34806).
 update_fallback_credential() {
 	local name="$1"
 	local escaped_value="$2"
-	local filter_status=0
 	local lock_dir=""
-	local tmp_file=""
-	local previous_umask=""
+	local store_file=""
+	store_file=$(credential_store_file)
 
 	# The lock lives beside the credentials file, so its parent must exist before
 	# acquisition. File creation remains inside the lock to avoid truncation races.
@@ -582,33 +710,83 @@ update_fallback_credential() {
 		return 1
 	fi
 
-	if ! ensure_credentials_file "$CREDENTIALS_FILE"; then
+	if [[ "$store_file" != "$CREDENTIALS_FILE" ]] && ! prepare_tenant_store "$store_file"; then
+		release_credentials_lock "$lock_dir"
+		print_error "Unable to prepare the active tenant credentials file (symlinks are refused)"
+		return 1
+	fi
+
+	if ! ensure_credentials_file "$store_file"; then
 		release_credentials_lock "$lock_dir"
 		return 1
 	fi
 
-	previous_umask=$(umask)
-	umask 077
-	if ! tmp_file=$(mktemp "${CREDENTIALS_FILE}.tmp.XXXXXX"); then
-		umask "$previous_umask"
+	if ! rewrite_credential_file "$store_file" "$name" "export ${name}=\"${escaped_value}\""; then
 		release_credentials_lock "$lock_dir"
-		print_error "Unable to create temporary credentials file"
+		print_error "Unable to update credentials file"
 		return 1
 	fi
-	umask "$previous_umask"
 
-	grep -v "^export ${name}=" "$CREDENTIALS_FILE" >"$tmp_file" || filter_status=$?
-	if [[ "$filter_status" -gt 1 ]] ||
-		! printf 'export %s="%s"\n' "$name" "$escaped_value" >>"$tmp_file" ||
-		! chmod 600 "$tmp_file" ||
-		! mv -f "$tmp_file" "$CREDENTIALS_FILE"; then
-		rm -f "$tmp_file" || true
-		release_credentials_lock "$lock_dir"
-		print_error "Unable to update credentials.sh"
-		return 1
+	if [[ "$store_file" != "$CREDENTIALS_FILE" ]] &&
+		credential_assignment "$CREDENTIALS_FILE" "$name" >/dev/null &&
+		! rewrite_credential_file "$CREDENTIALS_FILE" "$name"; then
+		print_warning "Stored $name, but its stale loader entry remains; run: aidevops secret migrate-loader"
 	fi
 
 	release_credentials_lock "$lock_dir"
+	return 0
+}
+
+# Move stranded loader exports into the active tenant (GH#34806). Lines move
+# byte-for-byte; a name already in the tenant with a different line stays in
+# the loader and is reported by name. Never prints values.
+cmd_migrate_loader() {
+	if ! is_tenant_loader; then
+		print_info "credentials.sh is not a tenant loader; nothing to migrate"
+		return 0
+	fi
+	local store_file="" lock_dir="" name="" line="" existing="" names=""
+	local -a moved=() conflicts=()
+	store_file=$(credential_store_file)
+	if ! lock_dir=$(acquire_credentials_lock); then
+		return 1
+	fi
+	names=$(stranded_loader_names)
+	if ! prepare_tenant_store "$store_file" || ! ensure_credentials_file "$store_file"; then
+		release_credentials_lock "$lock_dir"
+		print_error "Unable to prepare the active tenant credentials file (symlinks are refused)"
+		return 1
+	fi
+	while IFS= read -r name; do
+		[[ -n "$name" ]] || continue
+		line=$(credential_assignment "$CREDENTIALS_FILE" "$name") || continue
+		existing=$(credential_assignment "$store_file" "$name") || existing=""
+		if [[ -n "$existing" && "$existing" != "$line" ]]; then
+			conflicts+=("$name")
+			continue
+		fi
+		# Write the tenant copy before removing the loader copy: a failure
+		# leaves a duplicate, never a loss.
+		if { [[ -z "$existing" ]] && ! rewrite_credential_file "$store_file" "$name" "$line"; } ||
+			! rewrite_credential_file "$CREDENTIALS_FILE" "$name"; then
+			release_credentials_lock "$lock_dir"
+			print_error "Unable to move $name; no entry was removed before its tenant copy existed"
+			return 1
+		fi
+		moved+=("$name")
+	done <<<"$names"
+	release_credentials_lock "$lock_dir"
+
+	print_info "Active tenant: $(active_tenant_name)"
+	if [[ ${#moved[@]} -gt 0 ]]; then
+		print_success "Moved ${#moved[@]} name(s) into the active tenant: ${moved[*]}"
+	fi
+	if [[ ${#conflicts[@]} -gt 0 ]]; then
+		print_warning "Kept ${#conflicts[@]} name(s) in the loader; the tenant already holds a different value: ${conflicts[*]}"
+		print_info "Choose the value with: aidevops secret set NAME (writes the tenant and removes the loader entry)"
+		return 1
+	fi
+	[[ ${#moved[@]} -gt 0 ]] || print_info "No stranded loader entries"
 	return 0
 }
 
@@ -818,6 +996,10 @@ cmd_set() {
 		print_error "Secret name must be a valid environment variable name"
 		return 1
 	fi
+	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
+		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
+		return 1
+	fi
 	if [[ ${#record_args[@]} -gt 0 ]] && ! run_credential_inventory record "$name" "${record_args[@]}" --check; then
 		print_error "Credential metadata rejected; nothing was stored"
 		return 1
@@ -876,7 +1058,11 @@ cmd_set() {
 		if ! update_fallback_credential "$name" "$escaped_value"; then
 			return 1
 		fi
-		print_success "Stored $name in credentials.sh"
+		if is_tenant_loader; then
+			print_success "Stored $name in tenant '$(active_tenant_name)' credentials"
+		else
+			print_success "Stored $name in credentials.sh"
+		fi
 		print_info "Recommend: aidevops secret init (to enable encrypted storage)"
 		print_info "Do not run concurrent refreshes for the same rotating refresh token"
 	fi
@@ -1386,8 +1572,18 @@ cmd_status() {
 		echo -e "  GPG:          ${YELLOW}not installed${NC}"
 	fi
 
-	# credentials.sh status
-	if [[ -f "$CREDENTIALS_FILE" ]]; then
+	# credentials.sh status (names and counts only)
+	if is_tenant_loader; then
+		local store_file="" key_count=0 stranded=""
+		store_file=$(credential_store_file)
+		[[ -f "$store_file" ]] && key_count=$(safe_grep_count "^export " "$store_file" 2>/dev/null)
+		echo -e "  credentials:  tenant loader; active tenant '$(active_tenant_name)' has ${GREEN}$key_count key(s)${NC}"
+		stranded=$(stranded_loader_names | tr '\n' ' ')
+		if [[ -n "$stranded" ]]; then
+			echo -e "  ${YELLOW}stranded:${NC}     ${stranded}(exported in the loader, outside any tenant)"
+			echo -e "                Move: aidevops secret migrate-loader (tenant switch rewrites the loader)"
+		fi
+	elif [[ -f "$CREDENTIALS_FILE" ]]; then
 		local key_count
 		key_count=$(safe_grep_count "^export " "$CREDENTIALS_FILE" 2>/dev/null)
 		echo -e "  credentials:  ${GREEN}$key_count key(s)${NC} in $CREDENTIALS_FILE"
@@ -1439,6 +1635,7 @@ cmd_help() {
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
 	echo "  import-credentials                Import from credentials.sh to gopass"
+	echo "  migrate-loader                    Move exports stranded in a tenant loader into the active tenant"
 	echo ""
 	print_info "Examples:"
 	echo ""
@@ -1475,6 +1672,8 @@ cmd_help() {
 	echo "  - All command output is automatically redacted (secret values -> [REDACTED])"
 	echo "  - gopass encrypts secrets at rest with GPG"
 	echo "  - credentials.sh is plaintext fallback (chmod 600)"
+	echo "  - With a tenant loader, plaintext writes go to the active tenant; reads try"
+	echo "    the active tenant first, then other tenants"
 	echo ""
 	return 0
 }
@@ -1514,6 +1713,9 @@ main() {
 		;;
 	import-credentials | import)
 		cmd_import_credentials "$@"
+		;;
+	migrate-loader)
+		cmd_migrate_loader "$@"
 		;;
 	status)
 		cmd_status "$@"

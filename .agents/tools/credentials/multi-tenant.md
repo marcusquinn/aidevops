@@ -107,6 +107,12 @@ credential-helper.sh copy default client-acme   # copy all
 
 **MCP** (`api-keys` tool): `action:list` reads active tenant; `action:set service:KEY_NAME` sets in active tenant.
 
+**`aidevops secret` plaintext fallback** (no gopass; GH#34806):
+
+- **Writes**: `secret set` stores in the tenant named by the loader's `AIDEVOPS_ACTIVE_TENANT` marker (else `active-tenant`, else `default`) and removes any same-name `export` line from the loader, which would otherwise shadow it. The `.aidevops-tenant` project override does not change where `secret set` writes.
+- **Reads** (`check`, `list`, `get`, injection): the active tenant first, then other tenants in name order, so the active tenant wins for duplicate names. The loader is parsed as text, never sourced, and is not a store. gopass entries still take precedence and fail closed when locked.
+- **Stranded exports**: `secret status` lists names exported directly in the loader (values are never shown). `credential-helper.sh switch` rewrites the loader and drops them, so move them first with `aidevops secret migrate-loader`. Names whose tenant entry differs stay in the loader and are reported; resolve each with `aidevops secret set NAME`.
+
 ## Security
 
 - Tenant dirs: `700`; credential files: `600`

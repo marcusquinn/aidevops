@@ -693,6 +693,95 @@ EOF
 	return 0
 }
 
+# Tenant-loader fixture with plaintext fallback only (GH#34806): loader for
+# tenant "first", plus an inactive "second" tenant. Extra loader lines are $1.
+write_tenant_loader_fixture() {
+	local loader_extra="${1:-}"
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	mkdir -p "$config_dir/tenants/first" "$config_dir/tenants/second"
+	cat >"$config_dir/credentials.sh" <<'EOF'
+#!/bin/bash
+AIDEVOPS_ACTIVE_TENANT="first"
+export AIDEVOPS_ACTIVE_TENANT
+if [[ -f "$HOME/.config/aidevops/tenants/first/credentials.sh" ]]; then
+    source "$HOME/.config/aidevops/tenants/first/credentials.sh"
+fi
+EOF
+	[[ -z "$loader_extra" ]] || printf '%s\n' "$loader_extra" >>"$config_dir/credentials.sh"
+	printf '%s\n' 'export FIRST_ONLY="first-only-value"' >"$config_dir/tenants/first/credentials.sh"
+	printf '%s\n' 'export TENANT_KEY="inactive-tenant-value"' 'export SECOND_ONLY="second-only-value"' \
+		>"$config_dir/tenants/second/credentials.sh"
+	chmod 600 "$config_dir/credentials.sh" "$config_dir/tenants/first/credentials.sh" \
+		"$config_dir/tenants/second/credentials.sh"
+	return 0
+}
+
+test_tenant_loader_set_is_discoverable() {
+	local test_name="tenant-loader set writes the active tenant and is checked, listed and injected"
+	setup
+	trap 'teardown' RETURN
+	write_tenant_loader_fixture 'export TENANT_KEY="stale-loader-value"'
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	local first="$config_dir/tenants/first/credentials.sh"
+	local set_rc=0 check_rc=0 unset_rc=0 inject_rc=0 list_output="" inject_output=""
+	# Synthetic value with a double quote and a backslash to prove round-trip.
+	printf '%s\n' 'tenant"quoted\value-0123456789' |
+		HOME="$TEST_DIR/home" bash "$HELPER" set TENANT_KEY >/dev/null 2>&1 || set_rc=$?
+	HOME="$TEST_DIR/home" bash "$HELPER" check TENANT_KEY >/dev/null 2>&1 || check_rc=$?
+	HOME="$TEST_DIR/home" bash "$HELPER" check UNSET_KEY >/dev/null 2>&1 || unset_rc=$?
+	list_output=$(HOME="$TEST_DIR/home" bash "$HELPER" list 2>&1) || true
+	inject_output=$(HOME="$TEST_DIR/home" bash "$HELPER" TENANT_KEY FIRST_ONLY SECOND_ONLY -- bash -c '
+[[ "$TENANT_KEY" == "tenant\"quoted\\value-0123456789" && "$FIRST_ONLY" == "first-only-value" &&
+	"$SECOND_ONLY" == "second-only-value" ]] && printf "%s" "child-ok"' 2>&1) || inject_rc=$?
+	if [[ "$set_rc" -eq 0 && "$check_rc" -eq 0 && "$unset_rc" -eq 1 && "$inject_rc" -eq 0 &&
+		"$inject_output" == "child-ok" && "$(_file_perms "$first")" == "600" ]] &&
+		[[ $(grep -c '^export TENANT_KEY=' "$first") -eq 1 ]] &&
+		grep -Fqx 'export TENANT_KEY="tenant\"quoted\\value-0123456789"' "$first" &&
+		! grep -q '^export TENANT_KEY=' "$config_dir/credentials.sh" &&
+		grep -qx 'AIDEVOPS_ACTIVE_TENANT="first"' "$config_dir/credentials.sh" &&
+		grep -qx 'export TENANT_KEY="inactive-tenant-value"' "$config_dir/tenants/second/credentials.sh" &&
+		[[ "$list_output" == *"  TENANT_KEY"* && "$list_output" != *"value"* &&
+			"$list_output" != *"AIDEVOPS_ACTIVE_TENANT"* && ! -d "$config_dir/credentials.sh.lock" ]]; then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "set=$set_rc check=$check_rc unset=$unset_rc inject=$inject_rc"
+	fi
+	return 0
+}
+
+test_migrate_loader_moves_stranded_names() {
+	local test_name="status reports stranded loader names and migrate-loader moves them without values"
+	setup
+	trap 'teardown' RETURN
+	write_tenant_loader_fixture "$(printf '%s\n' 'export MOVE_KEY="move-value"' \
+		'export FIRST_ONLY="first-only-value"' 'export CONFLICT_KEY="loader-value"')"
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	local first="$config_dir/tenants/first/credentials.sh"
+	printf '%s\n' 'export CONFLICT_KEY="tenant-value"' >>"$first"
+	local status_output="" migrate_output="" migrate_rc=0
+	status_output=$(HOME="$TEST_DIR/home" bash "$HELPER" status 2>&1) || true
+	migrate_output=$(HOME="$TEST_DIR/home" bash "$HELPER" migrate-loader 2>&1) || migrate_rc=$?
+	if [[ "$status_output" == *"MOVE_KEY FIRST_ONLY CONFLICT_KEY"* && "$status_output" == *"migrate-loader"* &&
+		"$status_output" != *"-value"* && "$migrate_rc" -eq 1 && "$migrate_output" == *"MOVE_KEY"* &&
+		"$migrate_output" == *"CONFLICT_KEY"* && "$migrate_output" != *"-value"* &&
+		"$(_file_perms "$first")" == "600" && "$(_file_perms "$config_dir/credentials.sh")" == "600" ]] &&
+		[[ $(grep -c '^export MOVE_KEY=' "$first") -eq 1 && $(grep -c '^export FIRST_ONLY=' "$first") -eq 1 ]] &&
+		grep -qx 'export CONFLICT_KEY="tenant-value"' "$first" &&
+		grep -qx 'export CONFLICT_KEY="loader-value"' "$config_dir/credentials.sh" &&
+		! grep -Eq '^export (MOVE_KEY|FIRST_ONLY)=' "$config_dir/credentials.sh" &&
+		grep -qx 'export AIDEVOPS_ACTIVE_TENANT' "$config_dir/credentials.sh"; then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "migrate=$migrate_rc"
+	fi
+	return 0
+}
+
 test_concurrent_fallback_sets_preserve_all_credentials() {
 	setup
 	trap 'teardown' RETURN
@@ -953,6 +1042,8 @@ main() {
 	test_set_rejects_command_literal_input
 	test_fallback_set_creates_credentials_store
 	test_concurrent_fallback_sets_preserve_all_credentials
+	test_tenant_loader_set_is_discoverable
+	test_migrate_loader_moves_stranded_names
 	test_run_redacts_sed_significant_literal_values
 	test_run_skips_short_value_and_masks_long_value
 	test_run_streams_safe_output_before_child_exit
