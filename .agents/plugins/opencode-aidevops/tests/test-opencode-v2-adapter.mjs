@@ -25,6 +25,50 @@ import { createV2McpRuntime, toV2McpConfig } from "../v2-mcp-adapter.mjs";
 import { createV2ProviderAuthRuntime } from "../v2-provider-auth.mjs";
 import { addV1ToolsToV2Editor, toV2ToolResult } from "../v2-tool-adapter.mjs";
 
+// Pinned from OpenCode V2 2.0.3 Mcp.LocalConfig / Mcp.RemoteConfig (GH#34785),
+// including Mcp.TimeoutConfig and Mcp.OAuthConfig. Wrong known-field types can
+// disable the whole plugin; unrelated excess keys are ignored by Effect Schema.
+function assertV2McpConfigShape(name, server) {
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const isStringRecord = (value) => isObject(value)
+    && Object.values(value).every((entry) => typeof entry === "string");
+  assert.ok(isObject(server), `${name}.config`);
+  assert.ok(server.type === "local" || server.type === "remote", `${name}.type`);
+  if (server.type === "local") {
+    assert.ok(Array.isArray(server.command)
+      && server.command.every((part) => typeof part === "string"), `${name}.command`);
+    if (server.cwd !== undefined) assert.equal(typeof server.cwd, "string", `${name}.cwd`);
+    if (server.environment !== undefined) assert.ok(isStringRecord(server.environment), `${name}.environment`);
+  } else {
+    assert.equal(typeof server.url, "string", `${name}.url`);
+    if (server.headers !== undefined) assert.ok(isStringRecord(server.headers), `${name}.headers`);
+    if (server.oauth !== undefined && server.oauth !== false) {
+      assert.ok(isObject(server.oauth), `${name}.oauth`);
+      for (const key of ["client_id", "client_secret", "scope", "redirect_uri"]) {
+        if (server.oauth[key] !== undefined) assert.equal(typeof server.oauth[key], "string", `${name}.oauth.${key}`);
+      }
+      if (server.oauth.callback_port !== undefined) {
+        assert.ok(Number.isInteger(server.oauth.callback_port)
+          && server.oauth.callback_port >= 1 && server.oauth.callback_port <= 65535, `${name}.oauth.callback_port`);
+      }
+    }
+  }
+  for (const key of ["disabled", "codemode"]) {
+    if (server[key] !== undefined) assert.equal(typeof server[key], "boolean", `${name}.${key}`);
+  }
+  if (server.timeout !== undefined) {
+    assert.ok(isObject(server.timeout), `${name}.timeout`);
+    for (const key of ["startup", "catalog", "execution"]) {
+      if (server.timeout[key] !== undefined) {
+        assert.ok(Number.isInteger(server.timeout[key]) && server.timeout[key] > 0, `${name}.timeout.${key}`);
+      }
+    }
+  }
+  for (const key of ["enabled", "env"]) {
+    assert.equal(key in server, false, `${name}.${key} is V1-only`);
+  }
+}
+
 test("package exposes released V1 and V2 plugin entrypoints", () => {
   const packageDocument = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(packageDocument.exports["./v1"], "./index.mjs");
@@ -452,9 +496,9 @@ test("V2 MCP toggles reuse one transform and apply the latest override", async (
   };
   transforms[0](editor);
   assert.equal(values.get("posthog").disabled, true);
-  // Every managed server must match the V2 Mcp.TimeoutConfig object shape.
+  // Validate every managed server emitted through the production V2 transform.
   for (const [name, server] of values) {
-    if (server.timeout !== undefined) assert.equal(typeof server.timeout, "object", `${name} timeout`);
+    assertV2McpConfigShape(name, server);
   }
   assert.deepEqual(values.get("seo-utils").timeout, { execution: 900_000 });
 
