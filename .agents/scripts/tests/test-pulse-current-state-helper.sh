@@ -500,6 +500,23 @@ AIDEVOPS_RUNTIME_AGENTS_PATH="$TMP_DIR/runtime-agents" \
 	"$HELPER" --log-dir "$TMP_DIR" --repo-path "$runtime_repo" --window 15m --json >"$equivalent_json"
 jq -e --arg deployed "$deployed_sha" '.runtime_freshness.status == "current" and .runtime_freshness.stale == false and .runtime_freshness.deployed_sha == $deployed' "$equivalent_json" >/dev/null
 
+mkdir -p "$runtime_repo/.agents/configs"
+printf 'prospecting dependency change\n' >"$runtime_repo/.agents/configs/prospecting-requirements.txt"
+git -C "$runtime_repo" add .agents/configs/prospecting-requirements.txt
+git -C "$runtime_repo" commit -q -m "prospecting dependencies only"
+non_runtime_json="$TMP_DIR/runtime-non-runtime-drift.json"
+for baseline_sha in "$deployed_sha" "$(git -C "$runtime_repo" rev-parse HEAD^)"; do
+	# Cover both combined TODO/config drift and a config-only commit.
+	printf 'git_sha=%s\n' "$baseline_sha" >"$TMP_DIR/runtime-agents/.bundle-manifest"
+	AIDEVOPS_RUNTIME_AGENTS_PATH="$TMP_DIR/runtime-agents" \
+		AIDEVOPS_ACTIVE_RUNTIME_MANIFEST_FILE="$TMP_DIR/no-active-manifest" \
+		AIDEVOPS_DEPLOYED_SHA_FILE="$TMP_DIR/no-deployed-stamp" \
+		AIDEVOPS_RUNTIME_UPSTREAM_REF=HEAD \
+		"$HELPER" --log-dir "$TMP_DIR" --repo-path "$runtime_repo" --window 15m --json >"$non_runtime_json"
+	jq -e '.runtime_freshness.status == "current" and .runtime_freshness.stale == false' "$non_runtime_json" >/dev/null
+done
+printf 'git_sha=%s\n' "$deployed_sha" >"$TMP_DIR/runtime-agents/.bundle-manifest"
+
 printf 'runtime change\n' >>"$runtime_repo/runtime-input.sh"
 git -C "$runtime_repo" add runtime-input.sh
 git -C "$runtime_repo" commit -q -m "runtime change"
@@ -510,5 +527,20 @@ AIDEVOPS_RUNTIME_AGENTS_PATH="$TMP_DIR/runtime-agents" \
 	AIDEVOPS_RUNTIME_UPSTREAM_REF=HEAD \
 	"$HELPER" --log-dir "$TMP_DIR" --repo-path "$runtime_repo" --window 15m --json >"$stale_runtime_json"
 jq -e '.runtime_freshness.status == "deployed_behind_canonical" and .runtime_freshness.stale == true' "$stale_runtime_json" >/dev/null
+
+mkdir -p "$runtime_repo/.agents/scripts" "$runtime_repo/.agents/prompts"
+for runtime_path in .agents/scripts/pulse.sh .agents/prompts/worker.md .agents/configs/pulse.conf .agents/AGENTS.md setup.sh; do
+	# Start each check from a current deployment to prove this path alone is stale.
+	printf 'git_sha=%s\n' "$(git -C "$runtime_repo" rev-parse HEAD)" >"$TMP_DIR/runtime-agents/.bundle-manifest"
+	printf 'runtime change\n' >"$runtime_repo/$runtime_path"
+	git -C "$runtime_repo" add "$runtime_path"
+	git -C "$runtime_repo" commit -q -m "change $runtime_path"
+	AIDEVOPS_RUNTIME_AGENTS_PATH="$TMP_DIR/runtime-agents" \
+		AIDEVOPS_ACTIVE_RUNTIME_MANIFEST_FILE="$TMP_DIR/no-active-manifest" \
+		AIDEVOPS_DEPLOYED_SHA_FILE="$TMP_DIR/no-deployed-stamp" \
+		AIDEVOPS_RUNTIME_UPSTREAM_REF=HEAD \
+		"$HELPER" --log-dir "$TMP_DIR" --repo-path "$runtime_repo" --window 15m --json >"$stale_runtime_json"
+	jq -e '.runtime_freshness.status == "deployed_behind_canonical" and .runtime_freshness.stale == true' "$stale_runtime_json" >/dev/null
+done
 
 printf 'PASS pulse-current-state-helper\n'

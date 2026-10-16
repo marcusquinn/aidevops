@@ -72,14 +72,22 @@ _runtime_commits_share_tree() {
 	return $?
 }
 
-_runtime_commits_differ_only_by_todo() {
+_runtime_commits_differ_only_by_non_runtime_paths() {
 	local repo_path="$1"
 	local deployed_sha="$2"
 	local upstream_sha="$3"
-	local changed_paths=""
-	changed_paths=$(git -C "$repo_path" diff --name-only "$deployed_sha" "$upstream_sha" 2>/dev/null) || return 1
-	[[ "$changed_paths" == "TODO.md" ]]
-	return $?
+	local changed_paths="" path=""
+	# Keep this allowlist exact: unrecognized paths may affect the runtime.
+	# Disable rename detection so moving a runtime file to an exempt path is stale.
+	changed_paths=$(git -C "$repo_path" diff --no-renames --name-only "$deployed_sha" "$upstream_sha" 2>/dev/null) || return 1
+	[[ -n "$changed_paths" ]] || return 1
+	while IFS= read -r path; do
+		case "$path" in
+		TODO.md | .agents/configs/prospecting-requirements.txt) ;;
+		*) return 1 ;;
+		esac
+	done <<<"$changed_paths"
+	return 0
 }
 
 _runtime_deployment_relation() {
@@ -92,7 +100,7 @@ _runtime_deployment_relation() {
 		printf '%s' "$CURRENT_STATUS"
 	elif git -C "$repo_path" merge-base --is-ancestor "$deployed_sha" "$upstream_sha" 2>/dev/null; then
 		if _runtime_commits_share_tree "$repo_path" "$deployed_sha" "$upstream_sha" ||
-			_runtime_commits_differ_only_by_todo "$repo_path" "$deployed_sha" "$upstream_sha"; then
+			_runtime_commits_differ_only_by_non_runtime_paths "$repo_path" "$deployed_sha" "$upstream_sha"; then
 			printf '%s' "$CURRENT_STATUS"
 		else
 			printf '%s' "behind"
