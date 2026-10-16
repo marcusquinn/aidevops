@@ -18,6 +18,7 @@ _CLOUDRON_MONITOR_JSON_TYPE_ARRAY=array
 _CLOUDRON_MONITOR_JSON_TYPE_STRING=string
 _CLOUDRON_MONITOR_JSON_TYPE_OBJECT=object
 _CLOUDRON_MONITOR_SOURCE_TAGS=tags
+_CLOUDRON_MONITOR_SOURCE_COMMITS=commits
 _CLOUDRON_MONITOR_GH_TIMEOUT_DEFAULT=90
 
 _cloudron_monitor_error() {
@@ -472,6 +473,43 @@ _cloudron_monitor_apply_finding() {
 	return $?
 }
 
+# Commit mode: follow a branch head for upstreams that publish no releases or
+# tags. The manifest upstreamVersion is a hex SHA prefix (>= 7 characters).
+_cloudron_monitor_commit_entry() {
+	local entry="$1" apply="$2" slug="$3" upstream_slug="$4" package_title="$5"
+	local remote_commit_sha="$6" remote_manifest="$7" manifest_rel="$8" repo_path="$9"
+	local current_version="" branch="" head_json="" head_sha="" head_date="" head_msg=""
+	current_version=$(jq -r '.upstreamVersion // empty' <<<"$remote_manifest") || return 1
+	[[ "$current_version" =~ ^[0-9a-fA-F]{7,40}$ ]] ||
+		_cloudron_monitor_error "upstreamVersion for $slug must be a hex commit SHA prefix of at least 7 characters when upstream_source is commits." || return 1
+	branch=$(jq -r '.cloudron_package.upstream_branch // empty' <<<"$entry") || return 1
+	if [[ -z "$branch" ]]; then
+		head_json=$(gh api "/repos/${upstream_slug}") ||
+			_cloudron_monitor_error "Could not resolve the default branch for $upstream_slug." || return 1
+		branch=$(jq -r '.default_branch // empty' <<<"$head_json") || return 1
+	fi
+	[[ "$branch" =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ && "$branch" != *..* ]] ||
+		_cloudron_monitor_error "Invalid upstream branch for $upstream_slug." || return 1
+	head_json=$(gh api "/repos/${upstream_slug}/commits/${branch}") ||
+		_cloudron_monitor_error "Could not read the ${branch} head commit for $upstream_slug." || return 1
+	head_sha=$(jq -er --arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" '.sha | select(type == $string_type and test("^[0-9a-fA-F]{40}$"))' <<<"$head_json") ||
+		_cloudron_monitor_error "Upstream head SHA is invalid for $upstream_slug." || return 1
+	head_sha=$(printf '%s' "$head_sha" | tr 'A-F' 'a-f')
+	current_version=$(printf '%s' "$current_version" | tr 'A-F' 'a-f')
+	[[ "$head_sha" != "$current_version"* ]] || return 0
+	head_date=$(jq -r '.commit.committer.date // .commit.author.date // "unknown date"' <<<"$head_json") || return 1
+	head_msg=$(jq -r '.commit.message // "" | split("\n")[0]' <<<"$head_json") || return 1
+	local fingerprint="upstream-commit-${head_sha}"
+	local title="${package_title} upstream commit ${head_sha:0:7} is available"
+	local summary="" verification=""
+	# shellcheck disable=SC2016 # literal Markdown backticks
+	printf -v summary 'Upstream `%s` branch `%s` head is `%s` (%s): %s. Remote default-branch manifest commit `%s` records `%s`.' \
+		"$upstream_slug" "$branch" "$head_sha" "$head_date" "$head_msg" "$remote_commit_sha" "$current_version"
+	printf -v verification "Run \`cloudron-package-helper.sh preflight-release v<package-version>\` after updating and testing the package."
+	_cloudron_monitor_apply_finding "$apply" "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path"
+	return $?
+}
+
 _cloudron_monitor_upstream_entry() {
 	local entry="$1"
 	local apply="$2"
@@ -489,7 +527,7 @@ _cloudron_monitor_upstream_entry() {
 	monitor_enabled=$(jq -r 'if (.cloudron_package.monitor_upstream | type) == "boolean" then .cloudron_package.monitor_upstream else ((.cloudron_package.upstream_slug // "") != "") end' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
 	upstream_source=$(jq -r '.cloudron_package.upstream_source // "releases"' <<<"$entry") || return 1
-	[[ "$upstream_source" == releases || "$upstream_source" == "$_CLOUDRON_MONITOR_SOURCE_TAGS" ]] || _cloudron_monitor_error "cloudron_package.upstream_source for $slug must be releases or tags." || return 1
+	[[ "$upstream_source" == releases || "$upstream_source" == "$_CLOUDRON_MONITOR_SOURCE_TAGS" || "$upstream_source" == "$_CLOUDRON_MONITOR_SOURCE_COMMITS" ]] || _cloudron_monitor_error "cloudron_package.upstream_source for $slug must be releases, tags or commits." || return 1
 	[[ "$slug" == */* && "$upstream_slug" == */* ]] || _cloudron_monitor_error "Cloudron upstream monitoring requires target and upstream slugs." || return 1
 	[[ "$manifest_rel" != /* && "$manifest_rel" != *..* ]] || _cloudron_monitor_error "Unsafe manifest path configured for $slug." || return 1
 	repo_path="${repo_path/#\~/$HOME}"
@@ -503,6 +541,10 @@ _cloudron_monitor_upstream_entry() {
 	if ! package_title=$(jq -er --arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" \
 		'.title | select(type == $string_type and test("\\S"))' <<<"$remote_manifest"); then
 		_cloudron_monitor_error "Manifest title is missing or blank for registered Cloudron package $slug." || return 1
+	fi
+	if [[ "$upstream_source" == "$_CLOUDRON_MONITOR_SOURCE_COMMITS" ]]; then
+		_cloudron_monitor_commit_entry "$entry" "$apply" "$slug" "$upstream_slug" "$package_title" "$remote_commit_sha" "$remote_manifest" "$manifest_rel" "$repo_path"
+		return $?
 	fi
 	tag_prefixes=$(jq -c '.cloudron_package.upstream_tag_prefixes as $prefixes | if $prefixes == null then ["v", ""] else $prefixes end' <<<"$entry") || return 1
 	jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" --arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" \

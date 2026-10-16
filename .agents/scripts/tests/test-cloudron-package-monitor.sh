@@ -183,6 +183,21 @@ SOURCE
 	return 0
 }
 
+write_fake_commit_source_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'COMMITS'
+if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/upstream" ]]; then
+    printf '%s\n' '{"default_branch":"trunk"}'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/upstream/commits/${MONITOR_EXPECT_BRANCH:-trunk}" ]]; then
+    printf '{"sha":"%s","commit":{"committer":{"date":"2026-10-16T01:02:03Z"},"message":"Fix crawler\\n\\nbody"}}\n' "${MONITOR_UPSTREAM_HEAD}"
+    exit 0
+fi
+COMMITS
+	return 0
+}
+
 write_fake_issue_wrapper() {
 	local bin_dir="$1"
 	cat >"${bin_dir}/gh_create_issue" <<'WRAPPER'
@@ -433,6 +448,52 @@ test_monitor_selects_tag_source() {
 	if output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" bash "$HELPER" upstream 2>&1); then rc=0; else rc=$?; fi
 	assert_equal 1 "$rc" "invalid upstream source fails closed"
 	[[ "$output" == *"cloudron_package.upstream_source"* ]] && assert_equal true true "invalid source reports diagnostic" || assert_equal true false "invalid source reports diagnostic"
+	return 0
+}
+
+test_monitor_follows_commit_source() {
+	local home_dir="${TEST_ROOT}/commits-home" repo_dir="${TEST_ROOT}/commits-package" bin_dir="${TEST_ROOT}/commits-bin"
+	local log_file="${TEST_ROOT}/commits-issues.log" config_tmp="${TEST_ROOT}/commits-repos.json" output="" rc=0
+	local pin="05a1372" head_equal="05a1372aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" head_new="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	write_fake_commands "$bin_dir"
+	write_fake_commit_source_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	jq '.initialized_repos[0].cloudron_package.upstream_source = "commits"' \
+		"${home_dir}/.config/aidevops/repos.json" >"$config_tmp"
+	mv "$config_tmp" "${home_dir}/.config/aidevops/repos.json"
+
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_REMOTE_VERSION="$pin" \
+		MONITOR_UPSTREAM_HEAD="$head_equal" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" \
+		bash "$HELPER" upstream --apply >/dev/null && rc=0 || rc=$?
+	assert_equal 0 "$rc" "commit source exits 0 when head matches the pin"
+	[[ ! -f "$log_file" ]] && assert_equal true true "commit source files no finding when head matches the pin" || assert_equal true false "commit source files no finding when head matches the pin"
+
+	local run=0
+	for run in 1 2; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_REMOTE_VERSION="$pin" \
+			MONITOR_UPSTREAM_HEAD="$head_new" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" \
+			bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 1 "$(grep -c '^CALL exampleorg/example-package$' "$log_file")" "moved head creates one deduplicated finding across reruns"
+	grep -Fq "upstream-commit-${head_new}" "$log_file" && assert_equal true true "commit finding fingerprints the head SHA" || assert_equal true false "commit finding fingerprints the head SHA"
+	grep -Fq 'Fix crawler' "$log_file" && grep -Fq '2026-10-16T01:02:03Z' "$log_file" && assert_equal true true "commit finding records head date and message" || assert_equal true false "commit finding records head date and message"
+
+	jq '.initialized_repos[0].cloudron_package.upstream_branch = "release/x"' \
+		"${home_dir}/.config/aidevops/repos.json" >"$config_tmp"
+	mv "$config_tmp" "${home_dir}/.config/aidevops/repos.json"
+	rm -f "$log_file"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_REMOTE_VERSION="$pin" MONITOR_EXPECT_BRANCH="release/x" \
+		MONITOR_UPSTREAM_HEAD="$head_new" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" \
+		bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^CALL exampleorg/example-package$' "$log_file")" "explicit upstream_branch is honoured"
+
+	rm -f "$log_file"
+	if output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_REMOTE_VERSION="1.2.3" \
+		MONITOR_EXPECT_BRANCH="release/x" MONITOR_UPSTREAM_HEAD="$head_new" \
+		CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply 2>&1); then rc=0; else rc=$?; fi
+	assert_equal 1 "$rc" "non-SHA upstreamVersion fails closed in commit mode"
+	[[ "$output" == *"hex commit SHA prefix"* ]] && assert_equal true true "non-SHA upstreamVersion reports diagnostic" || assert_equal true false "non-SHA upstreamVersion reports diagnostic"
+	[[ ! -f "$log_file" ]] && assert_equal true true "non-SHA upstreamVersion creates no issue" || assert_equal true false "non-SHA upstreamVersion creates no issue"
 	return 0
 }
 
@@ -743,6 +804,7 @@ main() {
 	test_monitor_rejects_invalid_release_timeout
 	test_monitor_selects_configured_stream
 	test_monitor_selects_tag_source
+	test_monitor_follows_commit_source
 	test_monitor_rejects_malformed_prefixes
 	test_monitor_rejects_control_characters_in_prefixes
 	test_monitor_fails_closed_on_release_api_error
