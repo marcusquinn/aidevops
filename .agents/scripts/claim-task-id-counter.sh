@@ -1619,6 +1619,61 @@ _cas_build_and_push() {
 # Allocation Functions
 # =============================================================================
 
+# Validate explicit selections against freshly fetched canonical task state.
+# Run on every CAS attempt, using the pinned selected tip even if another
+# process updates its remote-tracking ref. Counters store the NEXT free ID.
+_cas_validate_explicit_counter_branch() {
+	local pinned_sha="$1"
+	local current_value="$2"
+	local dedicated="${AIDEVOPS_DEDICATED_COUNTER_BRANCH:-task-id-counter}"
+	local default_branch="${DEFAULT_BRANCH:-main}"
+	local branch="" ref="" value="" todo_seed="0"
+	local leading_value="$current_value" leading_branch="$COUNTER_BRANCH"
+	local fetch_rc=0 probe_rc=0
+	local depth_args=()
+
+	[[ "${_COUNTER_BRANCH_SET:-false}" == "true" ]] || return 0
+	_counter_context_is_isolated && depth_args=(--depth=1)
+	for branch in "$default_branch" "$dedicated"; do
+		[[ -n "$branch" ]] || continue
+		ref="$pinned_sha"
+		if [[ "$branch" != "$COUNTER_BRANCH" ]]; then
+			fetch_rc=0
+			_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+				fetch -q "${depth_args[@]}" --no-tags "$REMOTE_NAME" \
+				"+refs/heads/${branch}:refs/remotes/${REMOTE_NAME}/${branch}" >/dev/null || fetch_rc=$?
+			if [[ $fetch_rc -ne 0 ]]; then
+				probe_rc=0
+				_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+					ls-remote --exit-code --heads "$REMOTE_NAME" "refs/heads/${branch}" >/dev/null || probe_rc=$?
+				# Only the dedicated branch is optional. Never trust cached refs
+				# after an indeterminate fetch or a failed default-branch read.
+				if [[ "$branch" != "$default_branch" && $probe_rc -eq 2 ]]; then
+					continue
+				fi
+				log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to validate explicit ${COUNTER_BRANCH} against ${REMOTE_NAME}/${branch}"
+				_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "explicit_counter_branch_discovery_failed"
+				return "$CAS_PROTECTED_BRANCH_RC"
+			fi
+			ref="${REMOTE_NAME}/${branch}"
+		fi
+		value=$(_counter_git show "${ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+		if [[ "$value" =~ ^[0-9]+$ ]] && ((10#$value > 10#$leading_value)); then
+			leading_value="$value"
+			leading_branch="$branch"
+		fi
+		if [[ "$branch" == "$default_branch" ]]; then
+			todo_seed=$(_cas_todo_seed_from_ref "$ref")
+		fi
+	done
+	if ((10#$current_value < 10#$leading_value || 10#$current_value < 10#$todo_seed)); then
+		log_error "COUNTER_BRANCH_STALE: explicit ${REMOTE_NAME}/${COUNTER_BRANCH} counter=${current_value}, leading branch=${leading_branch} counter=${leading_value}, default TODO seed=${todo_seed}; switch --counter-branch to the leading branch or run --sync-counter-branch before allocating"
+		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_stale"
+		return "$CAS_PROTECTED_BRANCH_RC"
+	fi
+	return 0
+}
+
 # Atomic CAS allocation: fetch → read → increment → commit → push
 # Returns 0 on success, 1 on hard error, 2 on retriable conflict, and
 # CAS_PROTECTED_BRANCH_RC when repository policy rejects direct pushes.
@@ -1632,6 +1687,8 @@ allocate_counter_cas() {
 	local pinned_sha current_value
 	pinned_sha="${pin_result%% *}"
 	current_value="${pin_result##* }"
+
+	_cas_validate_explicit_counter_branch "$pinned_sha" "$current_value" || return $?
 
 	local first_id="$current_value"
 	local last_id=$((current_value + count - 1))

@@ -656,6 +656,73 @@ test_develop_default_branch_sync_and_claim() {
 	return 0
 }
 
+# GH#34791: explicit config and CLI selections must not bypass freshness checks.
+test_explicit_counter_freshness() {
+	local tmpdir="$1"
+	local case_dir="${tmpdir}/explicit-freshness"
+	local work_dir="" bin_dir="" output="" before="" after="" rc=0
+	local name="explicit counter freshness"
+	mkdir -p "$case_dir" || return 1
+	work_dir=$(setup_develop_default_remote "$case_dir") || return 1
+	bin_dir=$(setup_open_policy_stub "$case_dir") || return 1
+	printf '%s\n' '{"counter_branch":"develop"}' >"${work_dir}/.aidevops.json"
+
+	output=$(PATH="${bin_dir}:${PATH}" CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --title "fresh explicit config" --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	if [[ $rc -eq 0 && "$output" == *'task_id=t2000'* ]]; then
+		pass "$name: up-to-date config allocates normally"
+	else
+		fail "$name" "fresh config rc=${rc}: $output"
+		return 0
+	fi
+
+	# Advance the dedicated branch independently of the configured default.
+	git -C "${case_dir}/seed" checkout -b leading origin/task-id-counter >/dev/null 2>&1 || return 1
+	printf '2500\n' >"${case_dir}/seed/.task-counter"
+	git -C "${case_dir}/seed" add .task-counter || return 1
+	git -C "${case_dir}/seed" commit -m "advance dedicated counter" >/dev/null 2>&1 || return 1
+	git -C "${case_dir}/seed" push origin leading:task-id-counter >/dev/null 2>&1 || return 1
+	before=$(git --git-dir="${case_dir}/remote.git" show-ref --heads)
+	rc=0
+	output=$(PATH="${bin_dir}:${PATH}" CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --title "stale explicit config" --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	after=$(git --git-dir="${case_dir}/remote.git" show-ref --heads)
+	if [[ $rc -eq 4 && "$output" == *'counter_branch_stale'* && "$before" == "$after" && "$output" != *'task_id='* ]]; then
+		pass "$name: stale config exits 4 without any remote update or ID"
+	else
+		fail "$name" "stale config rc=${rc}, remote unchanged=$([[ "$before" == "$after" ]] && printf yes): $output"
+	fi
+
+	# CLI override switches to the leading branch and remains usable.
+	rc=0
+	output=$(PATH="${bin_dir}:${PATH}" CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --counter-branch task-id-counter --title "leading explicit CLI" --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	if [[ $rc -eq 0 && "$output" == *'task_id=t2500'* ]]; then
+		pass "$name: explicit CLI selects leading branch"
+	else
+		fail "$name" "leading CLI rc=${rc}: $output"
+	fi
+
+	# A remote TODO entry must be considered even when the local TODO is old.
+	git -C "${case_dir}/seed" checkout develop >/dev/null 2>&1 || return 1
+	git -C "${case_dir}/seed" pull --ff-only origin develop >/dev/null 2>&1 || return 1
+	printf '# Tasks\n\n- [x] t2600 published task\n' >"${case_dir}/seed/TODO.md"
+	git -C "${case_dir}/seed" add TODO.md || return 1
+	git -C "${case_dir}/seed" commit -m "publish higher task ID" >/dev/null 2>&1 || return 1
+	git -C "${case_dir}/seed" push origin develop >/dev/null 2>&1 || return 1
+	before=$(git --git-dir="${case_dir}/remote.git" show-ref --heads)
+	rc=0
+	output=$(PATH="${bin_dir}:${PATH}" CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --counter-branch task-id-counter --title "stale versus remote TODO" --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	after=$(git --git-dir="${case_dir}/remote.git" show-ref --heads)
+	if [[ $rc -eq 4 && "$output" == *'counter_branch_stale'* && "$output" == *'TODO seed=2601'* && "$before" == "$after" ]]; then
+		pass "$name: default-branch remote TODO prevents reuse without pushing"
+	else
+		fail "$name" "remote TODO rc=${rc}: $output"
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir=""
 	local work_dir=""
@@ -689,6 +756,7 @@ main() {
 	test_canonical_implicit_counter_discovery "$tmpdir" "$bin_dir"
 	test_canonical_context_setup_failure "$tmpdir" "$bin_dir"
 	test_develop_default_branch_sync_and_claim "$tmpdir"
+	test_explicit_counter_freshness "$tmpdir" || fail "explicit counter freshness" "fixture failed"
 	rm -rf "$tmpdir"
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ "$FAIL" -eq 0 ]] || return 1
