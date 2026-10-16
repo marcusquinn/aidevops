@@ -439,17 +439,17 @@ uninstall_app() {
 # Placeholders: __UNITS__ (space-separated systemd units).
 # shellcheck disable=SC2016 # runs remotely; expansion must not happen locally
 readonly CLOUDRON_HEALTH_PROBE='
-for u in __UNITS__; do echo "unit.$u=$(systemctl is-active "$u" 2>&1 | head -n1)"; done
+for u in __UNITS__; do echo "unit.$u=$(systemctl is-active "$u" 2>&1 | sed -n 1p)"; done
 echo "failed_units=$(systemctl --failed --no-legend --plain 2>/dev/null | cut -d" " -f1 | paste -sd, -)"
 echo "disk_pct=$(df -P / | tail -n1 | tr -s " " | cut -d" " -f5 | tr -d %)"
-echo "dpkg_audit=$(dpkg --audit 2>&1 | head -n 5 | tr "\n" " ")"
+echo "dpkg_audit=$(dpkg --audit 2>&1 | sed -n 1,5p | tr "\n" " ")"
 if command -v cloudron-support >/dev/null 2>&1; then
   timeout 120 cloudron-support --check-db-migrations >/dev/null 2>&1; echo "db_migrations_rc=$?"
   timeout 120 cloudron-support --check-services >/dev/null 2>&1; echo "services_rc=$?"
 else
   echo "db_migrations_rc=missing"; echo "services_rc=missing"
 fi
-echo "backup_age_hours=$(mysql -uroot -ppassword box -N -B -e "SELECT IFNULL(TIMESTAMPDIFF(HOUR, MAX(creationTime), NOW()), -1) FROM backups WHERE state=\"normal\"" 2>/dev/null | head -n1)"
+echo "backup_age_hours=$(mysql -uroot -ppassword box -N -B -e "SELECT IFNULL(TIMESTAMPDIFF(HOUR, MAX(creationTime), NOW()), -1) FROM backups WHERE state=\"normal\"" 2>/dev/null | sed -n 1p)"
 echo "api_version=$(curl -fsS -m 10 http://127.0.0.1:3000/api/v1/cloudron/status 2>/dev/null | jq -r ".version // empty" 2>/dev/null)"
 '
 
@@ -538,7 +538,7 @@ health_evaluate() {
 	_hf_val() {
 		local key="$1"
 		local line
-		line=$(printf '%s\n' "$out" | grep -m1 "^${key}=" || true)
+		line=$(printf '%s\n' "$out" | grep "^${key}=" | sed -n 1p || true)
 		printf '%s' "${line#"${key}="}"
 		return 0
 	}
