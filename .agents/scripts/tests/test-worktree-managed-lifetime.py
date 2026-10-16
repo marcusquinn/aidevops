@@ -35,7 +35,7 @@ class LifetimeTests(unittest.TestCase):
             MODULE.initialize(connection)
             with self.assertRaises(MODULE.NotEnrolled):
                 MODULE.load(connection, "/fixture")
-            connection.execute(f"INSERT INTO {MODULE.TABLE} VALUES (?, ?)", ("/fixture", "{}"))
+            connection.execute("INSERT INTO worktree_managed_lifetimes VALUES (?, ?)", ("/fixture", "{}"))
             with self.assertRaises(ValueError) as error:
                 MODULE.load(connection, "/fixture")
             self.assertNotIsInstance(error.exception, MODULE.NotEnrolled)
@@ -147,7 +147,8 @@ class LifetimeTests(unittest.TestCase):
             env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
 
             def run(argv, check=True):
-                return subprocess.run(argv, env=env, text=True, capture_output=True, timeout=30, check=check)
+                # Fixture-owned argv and disposable paths only; no shell interpolation.
+                return subprocess.run(argv, env=env, text=True, capture_output=True, timeout=30, check=check)  # nosec B603
 
             run([git, "init", str(repo)])
             run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",

@@ -36,7 +36,8 @@ def require(condition: bool, reason: str) -> None:
 
 
 def command(argv: list[str]) -> str:
-    return subprocess.check_output(argv, text=True, stderr=subprocess.DEVNULL, timeout=10).strip()
+    # Internal git/systemctl argv only; paths and unit names are validated, no shell.
+    return subprocess.check_output(argv, text=True, stderr=subprocess.DEVNULL, timeout=10).strip()  # nosec B603
 
 
 def inode(path: Path) -> str:
@@ -56,16 +57,27 @@ def identity(path: Path) -> dict:
 
 def initialize(connection: sqlite3.Connection) -> None:
     # Same database/transaction boundary as claim/transfer/remove; no second lease store.
-    connection.execute(f"CREATE TABLE IF NOT EXISTS {TABLE} (path TEXT PRIMARY KEY, record TEXT NOT NULL)")
-    for operation in ("INSERT", "UPDATE"):
-        connection.execute(f"""CREATE TRIGGER IF NOT EXISTS managed_lifetime_fence_{operation.lower()}
-            BEFORE {operation} ON worktree_owners
-            WHEN EXISTS (SELECT 1 FROM {TABLE} WHERE path = NEW.worktree_path
+    connection.execute("CREATE TABLE IF NOT EXISTS worktree_managed_lifetimes (path TEXT PRIMARY KEY, record TEXT NOT NULL)")
+    # Static SQL identifiers; only record values are passed through parameters.
+    for statement in (
+        """CREATE TRIGGER IF NOT EXISTS managed_lifetime_fence_insert
+            BEFORE INSERT ON worktree_owners
+            WHEN EXISTS (SELECT 1 FROM worktree_managed_lifetimes WHERE path = NEW.worktree_path
                          AND json_extract(record, '$.state') = 'sealed')
                  AND NOT (COALESCE(NEW.task_id, '') = 'worktree-removal'
                           AND COALESCE(NEW.owner_session, '') GLOB 'cleanup:[0-9]*'
                           AND substr(NEW.owner_session, 9) NOT GLOB '*[^0-9]*')
-            BEGIN SELECT RAISE(ABORT, 'managed worktree sealed for cleanup'); END""")
+            BEGIN SELECT RAISE(ABORT, 'managed worktree sealed for cleanup'); END""",
+        """CREATE TRIGGER IF NOT EXISTS managed_lifetime_fence_update
+            BEFORE UPDATE ON worktree_owners
+            WHEN EXISTS (SELECT 1 FROM worktree_managed_lifetimes WHERE path = NEW.worktree_path
+                         AND json_extract(record, '$.state') = 'sealed')
+                 AND NOT (COALESCE(NEW.task_id, '') = 'worktree-removal'
+                          AND COALESCE(NEW.owner_session, '') GLOB 'cleanup:[0-9]*'
+                          AND substr(NEW.owner_session, 9) NOT GLOB '*[^0-9]*')
+            BEGIN SELECT RAISE(ABORT, 'managed worktree sealed for cleanup'); END""",
+    ):
+        connection.execute(statement)
 
 
 def load(connection: sqlite3.Connection, path: str) -> dict:
@@ -73,7 +85,7 @@ def load(connection: sqlite3.Connection, path: str) -> dict:
             is not None, "ownership registry schema unavailable")
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone():
         raise NotEnrolled("managed registry table absent")
-    row = connection.execute(f"SELECT record FROM {TABLE} WHERE path = ?", (path,)).fetchone()
+    row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path = ?", (path,)).fetchone()
     if row is None:
         raise NotEnrolled("worktree is not enrolled")
     record = json.loads(row[0])
@@ -83,7 +95,7 @@ def load(connection: sqlite3.Connection, path: str) -> dict:
 
 
 def save(connection: sqlite3.Connection, record: dict) -> None:
-    connection.execute(f"INSERT OR REPLACE INTO {TABLE} VALUES (?, ?)",
+    connection.execute("INSERT OR REPLACE INTO worktree_managed_lifetimes VALUES (?, ?)",
                        (record["identity"]["path"], json.dumps(record, sort_keys=True)))
 
 
@@ -110,7 +122,7 @@ def verify_identity(record: dict, path: Path) -> None:
 
 def enroll(connection: sqlite3.Connection, path: Path) -> None:
     observed = identity(path)
-    require(connection.execute(f"SELECT 1 FROM {TABLE} WHERE path = ?", (str(path),)).fetchone() is None,
+    require(connection.execute("SELECT 1 FROM worktree_managed_lifetimes WHERE path = ?", (str(path),)).fetchone() is None,
             "existing provenance cannot be overwritten")
     save(connection, {"schema": 1, "manager": "pulse", "generation": uuid.uuid4().hex,
                       "identity": observed, "state": "created", "launches": [], "created_at": time.time()})
@@ -262,7 +274,8 @@ def main() -> int:
         # invocation-conditional StopUnit, so a replacement could be targeted.
         if args.operation == "bind-exec":
             os.environ["AIDEVOPS_MANAGED_WORKTREE"] = "pulse-cgroup-v1"
-            os.execvp(args.extra[0], args.extra)
+            # Intentional dispatcher-command execution, only after committed admission.
+            os.execvp(args.extra[0], args.extra)  # nosec B606
         return 0
     except NotEnrolled:
         return 3
