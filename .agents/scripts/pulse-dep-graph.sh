@@ -268,7 +268,8 @@ _dep_graph_build_repo_data_reference() {
 _dep_graph_reduce_issues_json() {
 	local issues_json="$1"
 	[[ -f "$DEP_GRAPH_REDUCE_FILTER" ]] || return 1
-	printf '%s' "$issues_json" | jq -c -f "$DEP_GRAPH_REDUCE_FILTER" 2>/dev/null || return 1
+	# Keep compiler/runtime diagnostics in the pulse log, not silently discarded.
+	printf '%s' "$issues_json" | jq -c -f "$DEP_GRAPH_REDUCE_FILTER" 2>>"${LOGFILE:-/dev/stderr}" || return 1
 	return 0
 }
 
@@ -288,7 +289,10 @@ _dep_graph_build_repo_data() {
 	fi
 
 	local parsed_repo_data=""
-	parsed_repo_data=$(_dep_graph_reduce_issues_json "$issues_json") || return 1
+	if ! parsed_repo_data=$(_dep_graph_reduce_issues_json "$issues_json"); then
+		echo "[pulse-wrapper] dep-graph-cache: reducer failed for ${slug}; see jq diagnostics above" >>"$LOGFILE"
+		return 1
+	fi
 	_dep_graph_prune_circular_edges "$parsed_repo_data" || return 1
 	return 0
 }
@@ -305,6 +309,7 @@ _dep_graph_build_repo_data() {
 #   "built_at": "<ISO timestamp>",
 #   "repos": {
 #     "owner/repo": {
+#       "built_at": <epoch seconds of last successful repo build>,
 #       "open_issues": [<number>, ...],
 #       "task_to_issue": { "tNNN": <number>, ... },
 #       "blocked_by": {
@@ -370,12 +375,16 @@ build_dependency_graph_cache() {
 		# 100-line complexity gate).
 		local repo_data
 		if ! repo_data=$(_dep_graph_build_repo_data "$slug") || [[ -z "$repo_data" ]]; then
-			repo_data=$(printf '%s' "$old_graph_json" | jq -c --arg s "$slug" '.repos[$s] // empty' 2>/dev/null) || repo_data=""
+			# Legacy data has unknown freshness: never promote it to freshly built.
+			repo_data=$(printf '%s' "$old_graph_json" | jq -c --arg s "$slug" \
+				'.repos[$s] // empty | .built_at //= 0' 2>/dev/null) || repo_data=""
 			if [[ -z "$repo_data" ]]; then
 				echo "[pulse-wrapper] dep-graph-cache: no previous repo cache for ${slug}; omitting failed repo from this cache build" >>"$LOGFILE"
 				continue
 			fi
 			echo "[pulse-wrapper] dep-graph-cache: preserved previous repo cache for ${slug} after fetch/build failure" >>"$LOGFILE"
+		else
+			repo_data=$(printf '%s' "$repo_data" | jq -c --argjson now "$build_start" '.built_at = $now') || continue
 		fi
 
 		# Merge repo data into graph
@@ -947,6 +956,13 @@ refresh_blocked_status_from_graph() {
 	while IFS=$'\t' read -r entry_count slug; do
 		[[ -n "$slug" ]] || continue
 		repo_data=$(printf '%s' "$graph_json" | jq -c --arg s "$slug" '.repos[$s]' 2>/dev/null) || continue
+		# A rewritten file mtime cannot make a preserved repository fresh.
+		if ! printf '%s' "$repo_data" | jq -e --argjson now "$(date +%s)" \
+			--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" \
+			'.built_at == null or ((.built_at | type) == "number" and $now - .built_at < $max_age)' >/dev/null 2>&1; then
+			echo "[pulse-wrapper] dep-graph-cache: skipping stale repo ${slug} during blocked-status refresh" >>"$LOGFILE"
+			continue
+		fi
 		share_secs=1
 		if [[ "$entry_count" =~ ^[1-9][0-9]*$ && "$active_left" -gt 0 ]]; then
 			share_secs=$(((budget_secs - (SECONDS - started)) / active_left))
@@ -1217,8 +1233,14 @@ _blocked_by_load_cache() {
 		return 0
 	fi
 
-	printf '%s' "$graph_json" | jq -c --arg s "$repo_slug" '
-		if .repos[$s] == null then
+	printf '%s' "$graph_json" | jq -c --arg s "$repo_slug" \
+		--argjson now "$(date +%s)" --argjson cache_age "$cache_age" \
+		--argjson max_age "$((DEP_GRAPH_CACHE_TTL_SECS * 2))" '
+		.repos[$s] as $repo
+		| (if $repo.built_at == null then $cache_age
+		   elif ($repo.built_at | type) == "number" then $now - $repo.built_at
+		   else $max_age end) as $repo_age
+		| if $repo == null or $repo_age >= $max_age then
 			{"use_cache":false,"open_i\u0073sues":[],"task_to_issue":{}}
 		else
 			{"use_cache":true,"open_is\u0073ues":(.repos[$s].open_issues // []),"task_to_issue":(.repos[$s].task_to_issue // {})}

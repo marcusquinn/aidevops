@@ -76,14 +76,14 @@ def blocker_value_line:
       | ($m.value | blocker_value_tokens) as $toks
       | if ($toks | length) == 0 or ($toks[0] | blocker_negation_token) then $label
         else
-          (reduce range(0; $toks | length) as $i ({out: [], done: false, skip: false};
+          ((reduce range(0; $toks | length) as $i ({out: [], done: false, skip: false};
             if .done then .
             elif .skip then .skip = false
             elif ($toks[$i] | blocker_ref_token) then .out += [$toks[$i]]
             elif ($toks[$i] | blocker_slug_token) and (($toks[$i + 1] // "") | blocker_issue_token) then
               .out += [$toks[$i] + $toks[$i + 1]] | .skip = true
             else .done = true end
-          ).out) as $refs
+          )) | .out) as $refs
           | if ($refs | length) == 0 then $line else $label + " " + ($refs | join(", ")) end
         end
     end;

@@ -118,6 +118,60 @@ assert_eq "parent-only consolidation has no blocker entry" 'false' \
 assert_eq "ordinary child still depends on parent" '["20"]' \
 	"$(printf '%s' "$consolidation_graph" | jq -c '.blocked_by["32"].issue_nums')"
 
+# GH#34783: failed rebuilds must not refresh the age of preserved repo data.
+_test_preserved_repo_freshness() (
+	local initial_fail="$fail"
+	export HOME="${TMP_ROOT}/cache-home"
+	mkdir -p "${HOME}/.config/aidevops"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/stale","pulse":true},{"slug":"owner/healthy","pulse":true},{"slug":"owner/legacy","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+	local DEP_GRAPH_CACHE_FILE="${TMP_ROOT}/dep-cache.json"
+	local DEP_GRAPH_CACHE_TTL_SECS=100
+	local PULSE_DEP_GRAPH_FORCE_REBUILD=1
+	local old_epoch=""
+	old_epoch=$(($(date +%s) - 1000))
+	jq -n --argjson old "$old_epoch" \
+		'{repos:{"owner/stale":{built_at:$old,open_issues:[2],blocked_by:{}},"owner/legacy":{open_issues:[2],blocked_by:{}}}}' >"$DEP_GRAPH_CACHE_FILE"
+	gh_issue_list() {
+		local args="$*"
+		[[ "$args" == *"owner/healthy"* ]] || return 1
+		printf '%s\n' '[]'
+		return 0
+	}
+	build_dependency_graph_cache
+	assert_eq "failed repo retains successful build timestamp" "$old_epoch" \
+		"$(jq -r '.repos["owner/stale"].built_at' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "fresh file does not revive stale repo" false \
+		"$(_blocked_by_load_cache owner/stale | jq -r '.use_cache')"
+	assert_eq "successful repo in mixed rebuild remains usable" true \
+		"$(_blocked_by_load_cache owner/healthy | jq -r '.use_cache')"
+	assert_eq "preserved legacy repo has unknown age" 0 \
+		"$(jq -r '.repos["owner/legacy"].built_at' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "preserved legacy repo falls back to live lookup" false \
+		"$(_blocked_by_load_cache owner/legacy | jq -r '.use_cache')"
+	build_dependency_graph_cache
+	assert_eq "repeated failures never reset repo age" "$old_epoch" \
+		"$(jq -r '.repos["owner/stale"].built_at' "$DEP_GRAPH_CACHE_FILE")"
+	local refreshed=""
+	_refresh_graph_repo() {
+		local slug="$1"
+		refreshed="${refreshed}${slug} "
+		return 0
+	}
+	refresh_blocked_status_from_graph
+	assert_eq "normalization skips expired preserved repos" 'owner/healthy ' "$refreshed"
+	# Compiler diagnostics must be observable without polluting graph stdout.
+	local DEP_GRAPH_REDUCE_FILTER="${TMP_ROOT}/invalid-filter.jq"
+	printf '%s\n' 'reduce (' >"$DEP_GRAPH_REDUCE_FILTER"
+	if _dep_graph_build_repo_data owner/healthy >/dev/null; then
+		assert_eq "invalid reducer fails repo build" failure success
+	fi
+	assert_true "reducer compiler reason is logged" grep -q 'jq: error:' "$LOGFILE"
+	assert_true "reducer failure identifies repo" grep -q 'reducer failed for owner/healthy' "$LOGFILE"
+	[[ "$fail" -eq "$initial_fail" ]] || return 1
+	return 0
+)
+assert_true "per-repo freshness and reducer diagnostics" _test_preserved_repo_freshness
+
 entry='{"task_ids":["t10"],"issue_nums":["11"]}'
 assert_true "closed roadmap predecessors resolve" \
 	_refresh_all_blockers_resolved "$entry" '{"t10":10}' '[10,11]' '[10,11,20]'
