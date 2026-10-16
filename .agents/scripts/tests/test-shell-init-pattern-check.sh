@@ -15,6 +15,7 @@
 # (g) banned set is exactly RED/GREEN/YELLOW/BLUE/PURPLE/CYAN/WHITE/NC
 #
 # shell-init-check:disable — this file embeds violation patterns as test fixtures
+# shellcheck disable=SC2016  # fixtures are literal shell source, not expansions
 
 set -uo pipefail
 
@@ -261,6 +262,67 @@ if [[ $rc -eq 0 ]]; then
 	print_result "file with shell-init-check:disable directive passes" 0
 else
 	print_result "file with shell-init-check:disable directive passes" 1 "(rc=$rc output='$output')"
+fi
+
+# =============================================================================
+# Test (o): source "${SCRIPT_DIR}/..." before SCRIPT_DIR= — must FAIL
+# =============================================================================
+fixture=$(make_fixture "bad_source_before_script_dir.sh" '#!/usr/bin/env bash
+set -euo pipefail
+source "${SCRIPT_DIR}/shared-constants.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo hello')
+output=$(bash "$CHECKER" --scan-files "$fixture" 2>&1)
+rc=$?
+if [[ $rc -eq 1 && "$output" == *"before its top-level assignment"* ]]; then
+	print_result "source SCRIPT_DIR before assignment fails" 0
+else
+	print_result "source SCRIPT_DIR before assignment fails" 1 "(rc=$rc output='$output')"
+fi
+
+# Guarded form (`[[ -f ... ]] && source ...`) before assignment — must FAIL
+fixture=$(make_fixture "bad_guarded_source_before_script_dir.sh" '#!/usr/bin/env bash
+set -euo pipefail
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"')
+output=$(bash "$CHECKER" --scan-files "$fixture" 2>&1)
+rc=$?
+if [[ $rc -eq 1 ]]; then
+	print_result "guarded source SCRIPT_DIR before assignment fails" 0
+else
+	print_result "guarded source SCRIPT_DIR before assignment fails" 1 "(rc=$rc output='$output')"
+fi
+
+# =============================================================================
+# Test (p): assignment first, or SCRIPT_DIR only inside a function — must PASS
+# =============================================================================
+fixture=$(make_fixture "good_script_dir_first.sh" '#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/shared-constants.sh"
+echo hello')
+output=$(bash "$CHECKER" --scan-files "$fixture" 2>&1)
+rc=$?
+if [[ $rc -eq 0 ]]; then
+	print_result "SCRIPT_DIR assigned before source passes" 0
+else
+	print_result "SCRIPT_DIR assigned before source passes" 1 "(rc=$rc output='$output')"
+fi
+
+fixture=$(make_fixture "good_script_dir_in_function.sh" '#!/usr/bin/env bash
+set -euo pipefail
+load_lib () {
+    local SCRIPT_DIR
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "${SCRIPT_DIR}/shared-constants.sh"
+}
+load_lib')
+output=$(bash "$CHECKER" --scan-files "$fixture" 2>&1)
+rc=$?
+if [[ $rc -eq 0 ]]; then
+	print_result "SCRIPT_DIR defined/used inside function passes" 0
+else
+	print_result "SCRIPT_DIR defined/used inside function passes" 1 "(rc=$rc output='$output')"
 fi
 
 # =============================================================================

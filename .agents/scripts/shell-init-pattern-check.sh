@@ -89,6 +89,52 @@ _is_indented() {
 	return 1
 }
 
+# Directory variables checked for source-before-assignment (GH#34834)
+readonly DIR_VARS='SCRIPT_DIR script_dir LIB_DIR'
+
+# _track_dir_var_order <line> <file> <line_num> — for an unindented line,
+# remembers a `source`/`.` of an unassigned DIR_VAR in _PENDING_DIR_USES and,
+# when that variable is later assigned at top level, prints the remembered
+# uses as violations (adds to _ORDER_COUNT). A variable never assigned in the
+# file is a library relying on its caller, so it is not reported.
+_track_dir_var_order() {
+	local _line="$1"
+	local _file="$2"
+	local _num="$3"
+	local _var
+	local _entry
+
+	# Fast path: most lines never mention a tracked variable
+	case "$_line" in
+	*SCRIPT_DIR* | *script_dir* | *LIB_DIR*) ;;
+	*) return 0 ;;
+	esac
+
+	# Comments are never code
+	if [[ "$_line" =~ ^[[:space:]]*# ]]; then
+		return 0
+	fi
+
+	for _var in $DIR_VARS; do
+		[[ "$_line" == *"$_var"* ]] || continue
+		[[ "$_ASSIGNED_DIR_VARS" != *" ${_var} "* ]] || continue
+		# Source usage is evaluated before this line's own assignment is recorded
+		if [[ "$_line" =~ (^|[[:space:];\&\|])(source|\.)[[:space:]]+[\"\']?\$\{?${_var}([^A-Za-z0-9_:-]|$) ]]; then
+			_PENDING_DIR_USES="${_PENDING_DIR_USES}${_var}|${_num}"$'\n'
+		fi
+		if [[ "$_line" =~ ^((export|readonly)[[:space:]]+|declare[[:space:]]+-[a-zA-Z]+[[:space:]]+)?${_var}= ]]; then
+			_ASSIGNED_DIR_VARS="${_ASSIGNED_DIR_VARS}${_var} "
+			while IFS= read -r _entry; do
+				[[ "${_entry%%|*}" == "$_var" ]] || continue
+				printf '%s:%d: source of $%s before its top-level assignment at line %d (unbound under set -u; assign %s first)\n' \
+					"$_file" "${_entry#*|}" "$_var" "$_num" "$_var"
+				_ORDER_COUNT=$((_ORDER_COUNT + 1))
+			done <<<"$_PENDING_DIR_USES"
+		fi
+	done
+	return 0
+}
+
 # ── scan_file ────────────────────────────────────────────────────────
 
 # _has_disable_directive <filepath> — returns 0 if file contains
@@ -111,6 +157,12 @@ scan_file() {
 	local _violations=0
 	local _line_num=0
 	local _line
+	# Space-delimited list of dir variables already assigned at top level
+	_ASSIGNED_DIR_VARS=" "
+	_PENDING_DIR_USES=""
+	_ORDER_COUNT=0
+	# Display name for violation output (distinct from the file being read)
+	local _label="$_file"
 
 	if [[ ! -f "$_file" ]]; then
 		log "File not found: $_file"
@@ -134,6 +186,10 @@ scan_file() {
 		if _is_indented "$_line"; then
 			continue
 		fi
+
+		# Check banned pattern 3: top-level source of "${SCRIPT_DIR}/..." before
+		# the first top-level SCRIPT_DIR= assignment (fails under set -u)
+		_track_dir_var_order "$_line" "$_label" "$_line_num"
 
 		# Skip guarded lines (Pattern B)
 		if _is_guarded_line "$_line"; then
@@ -159,6 +215,7 @@ scan_file() {
 		fi
 	done <"$_file"
 
+	_violations=$((_violations + _ORDER_COUNT))
 	if [[ "$_violations" -gt 0 ]]; then
 		return 1
 	fi
@@ -238,6 +295,7 @@ cmd_scan_all() {
 }
 
 # cmd_fix_hint — print remediation snippets per violation
+# shellcheck disable=SC2016  # remediation snippets are literal text
 cmd_fix_hint() {
 	printf 'Remediation patterns for shell init violations:\n\n'
 	printf '=== Pattern A (preferred) — source shared-constants.sh ===\n'
