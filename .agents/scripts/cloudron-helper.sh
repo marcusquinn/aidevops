@@ -502,6 +502,33 @@ health_check() {
 		out=""
 	fi
 
+	local findings
+	findings=$(health_evaluate "$out" "$units" "$extra_units" "$backup_max" "$disk_warn" "$disk_crit")
+
+	local crit warn status exit_code=0
+	crit=$(jq '[.[] | select(.severity=="critical")] | length' <<<"$findings")
+	warn=$(jq '[.[] | select(.severity=="warn")] | length' <<<"$findings")
+	status=ok
+	((warn > 0)) && status=warn
+	if ((crit > 0)); then
+		status=critical
+		exit_code=2
+	fi
+
+	if [[ "$format" == "text" ]]; then
+		print_info "Cloudron health for $server: $status ($crit critical, $warn warn)"
+		jq -r '.[] | "  [\(.severity)] \(.check): \(.message)"' <<<"$findings"
+	else
+		jq -n --arg s "$server" --arg st "$status" --argjson f "$findings" \
+			'{server:$s,status:$st,findings:$f}'
+	fi
+	return "$exit_code"
+}
+
+# Evaluate probe output into a JSON findings array on stdout.
+# Args: probe-output units extra-units backup-max-hours disk-warn disk-crit
+health_evaluate() {
+	local out="$1" units="$2" extra_units="$3" backup_max="$4" disk_warn="$5" disk_crit="$6"
 	local findings="[]"
 	_hf_add() {
 		local sev="$1" check="$2" msg="$3"
@@ -554,25 +581,8 @@ health_check() {
 		ver=$(_hf_val api_version)
 		[[ -z "$ver" ]] && _hf_add critical api "Local /api/v1/cloudron/status returned no version"
 	fi
-
-	local crit warn status exit_code=0
-	crit=$(jq '[.[] | select(.severity=="critical")] | length' <<<"$findings")
-	warn=$(jq '[.[] | select(.severity=="warn")] | length' <<<"$findings")
-	status=ok
-	((warn > 0)) && status=warn
-	if ((crit > 0)); then
-		status=critical
-		exit_code=2
-	fi
-
-	if [[ "$format" == "text" ]]; then
-		print_info "Cloudron health for $server: $status ($crit critical, $warn warn)"
-		jq -r '.[] | "  [\(.severity)] \(.check): \(.message)"' <<<"$findings"
-	else
-		jq -n --arg s "$server" --arg st "$status" --argjson f "$findings" \
-			'{server:$s,status:$st,findings:$f}'
-	fi
-	return "$exit_code"
+	printf '%s' "$findings"
+	return 0
 }
 
 # Assign positional parameters to local variables
