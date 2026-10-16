@@ -627,17 +627,24 @@ _gh_pr_body_negated_closing_ref() {
 # Returns: 0 clean or no body, 1 rejected (stderr + _GH_EDIT_REJECTION_REASON)
 #######################################
 _gh_validate_pr_closing_keywords() {
-	local -a args=("$@")
-	local i=0 body_text="" has_body=0 body_file=""
-	while [[ $i -lt ${#args[@]} ]]; do
-		case "${args[i]}" in
-		--body) has_body=1; body_text="${args[i + 1]:-}"; i=$((i + 1)) ;;
-		--body=*) has_body=1; body_text="${args[i]#--body=}" ;;
-		--body-file) body_file="${args[i + 1]:-}"; i=$((i + 1)) ;;
-		--body-file=*) body_file="${args[i]#--body-file=}" ;;
+	local arg="" pending="" body_text="" has_body=0 body_file=""
+	for arg in "$@"; do
+		if [[ "$pending" == "body" ]]; then
+			body_text="$arg"
+			pending=""
+			continue
+		elif [[ "$pending" == "body-file" ]]; then
+			body_file="$arg"
+			pending=""
+			continue
+		fi
+		case "$arg" in
+		--body) has_body=1; body_text=""; pending="body" ;;
+		--body=*) has_body=1; body_text="${arg#--body=}" ;;
+		--body-file) pending="body-file" ;;
+		--body-file=*) body_file="${arg#--body-file=}" ;;
 		*) ;;
 		esac
-		i=$((i + 1))
 	done
 	if [[ "$has_body" -eq 0 && -n "$body_file" && -f "$body_file" && -r "$body_file" ]]; then
 		body_text=$(<"$body_file")
