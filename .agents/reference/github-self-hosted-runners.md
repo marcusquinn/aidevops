@@ -224,13 +224,11 @@ runner containers, restart loops, or later container-name conflicts.
 
 ## Registry mirror
 
-Each ephemeral inner `dockerd` starts with an empty image store. Concurrent jobs
-behind one public address can exhaust Docker Hub's anonymous pull limit before
-tests start (`429 Too Many Requests`, often Docker exit code 125). Retrying the
-same workflow does not fix that shared limit.
+Each ephemeral inner `dockerd` starts empty. Concurrent jobs sharing a public address can exhaust
+Docker Hub's anonymous pull limit before tests start (`429 Too Many Requests`, Docker exit code 125).
+Retrying the same workflow does not fix that shared limit.
 
-The operator can run one persistent pull-through cache on the runner host. For
-example, adapt this host-side launch to the approved private network:
+The operator can run a persistent pull-through cache on the runner host, on the approved private network:
 
 ```bash
 docker volume create github-runner-registry-cache
@@ -250,10 +248,9 @@ reachable **from inside every runner container**; `localhost` there is the runne
 not the host. Do not bind-mount the host Docker socket or share inner Docker data
 directories to implement caching.
 
-In `/usr/local/sbin/github-runner-dind-start`, pass the cache address to the
-**inner daemon**, retaining the existing storage driver and other flags. The
-following is the inner-daemon invocation fragment, not an argument to the outer
-`docker run` (adapt the runner image's entrypoint/daemon-argument wiring):
+In `/usr/local/sbin/github-runner-dind-start`, pass the cache address to the **inner daemon**,
+retaining existing flags. This is the inner-daemon invocation fragment, not an outer `docker run`
+argument (adapt the runner image's entrypoint/daemon-argument wiring):
 
 ```bash
 dockerd --storage-driver=overlay2 --registry-mirror=https://<CACHE_HOST>:<TLS_PORT>
@@ -281,23 +278,18 @@ docker info --format '{{json .RegistryConfig.Mirrors}}'
 docker pull mariadb:10.6
 ```
 
-On the pool host, `github-runner-org-helper.sh status --org <ORG> --group <GROUP>`
-also reads each running `github-runner-dind-N` container's inner daemon mirror
-list using `docker exec ... docker info`. This uses the current Docker context,
-is not filtered by GitHub group, and does not discover or SSH to remote hosts.
-It warns for a verified empty mirror list and reports `UNKNOWN` for missing
-Docker access, absent containers or unreadable daemons. Configured does not mean
-healthy: confirm requests in the cache's access logs, then pull the same image
-from a fresh runner to verify cache reuse. Finally run a workflow pulling at
-least ten images across its jobs and check that it completes without 429s.
+On the pool host, `github-runner-org-helper.sh status --org <ORG> --group <GROUP>` reads running
+`github-runner-dind-N` containers' inner mirror lists using `docker exec ... docker info`.
+It uses the current Docker context, is not group-filtered, and does not discover or SSH to hosts.
+It warns for verified empty lists; missing Docker access, containers or readable daemons yield `UNKNOWN`.
+Configured does not mean healthy: confirm cache access logs, then pull the same image from a fresh
+runner to verify reuse. Finally run a workflow pulling at least ten images across its jobs without 429s.
 
-Alternative: authenticate each job's pulls using `docker login --password-stdin`
-with a read-only token supplied by the secret store. This raises the upstream
-limit, but every fresh daemon still downloads every image; a shared mirror avoids
-repeated upstream downloads. Neither option guarantees unlimited pulls. Mirrors
-cover Docker Hub images, not arbitrary registries or separate BuildKit daemons;
-configure those separately if used. Provisioning the cache, secret injection and
-rolling runner restarts remain operator-owned, not actions performed by `status`.
+Alternative: authenticate each job with `docker login --password-stdin` and a secret-store read-only token.
+This raises the limit, but fresh daemons still download every image; mirrors avoid repeated upstream downloads.
+Neither guarantees unlimited pulls. Mirrors cover Docker Hub, not arbitrary registries or separate BuildKit
+daemons; configure those separately. Cache provisioning, secret injection and rolling runner restarts remain
+operator-owned, not actions performed by `status`.
 
 ## Health checks
 
