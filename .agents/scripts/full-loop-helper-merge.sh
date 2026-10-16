@@ -1784,6 +1784,32 @@ _merge_pre_merge_gate_once() {
 	return 1
 }
 
+# A protected release PR already merged by native auto-merge skips the open-PR
+# readiness gate, verifies the merge, and runs the same source-lane reconcile
+# as a helper-driven merge. Returns 0 handled, 1 handled-but-failed, 2 not
+# applicable (ordinary PRs keep failing closed on state != OPEN).
+_merge_handle_already_merged_provenance() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json="" head_ref=""
+	pr_json=$(_flm_gh_read gh api "$(_merge_pr_api_path "$repo" "$pr_number")" 2>/dev/null) || return 2
+	#aidevops:trust-boundary
+	jq -e --arg repo "$repo" '.merged == true and .head.repo.full_name == $repo
+		and .base.repo.full_name == $repo and .base.ref == "main"' <<<"$pr_json" >/dev/null 2>&1 || return 2
+	head_ref=$(jq -r '.head.ref // ""' <<<"$pr_json") || return 2
+	[[ "$head_ref" =~ ^chore/release-v[0-9]+\.[0-9]+\.[0-9]+-provenance$ ]] || return 2
+	if ! _merge_verify_completed_state "$pr_number" "$repo"; then
+		print_error "PR #${pr_number} is a release provenance PR but GitHub has not reported a merge SHA"
+		return 1
+	fi
+	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA} (already merged; no merge write)"
+	_merge_reconcile_provenance_release "$pr_number" "$repo" || {
+		print_error "Protected release reconciliation failed for already-merged PR #${pr_number}; inspect with aidevops release status"
+		return 1
+	}
+	return 0
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -1814,6 +1840,12 @@ cmd_merge() {
 	fi
 
 	repo=$(_merge_resolve_repo "$repo") || return 1
+
+	local _already_merged_rc=0
+	_merge_handle_already_merged_provenance "$pr_number" "$repo" || _already_merged_rc=$?
+	if [[ "$_already_merged_rc" -ne 2 ]]; then
+		return "$_already_merged_rc"
+	fi
 
 	# Gate: enforce review-bot-gate before merge.
 	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {

@@ -811,7 +811,9 @@ test_review_gate_failure_blocks_rest_fallback() {
 	print_result "review gate failure: gh pr merge not called" "$merge_called"
 
 	local rest_called=0
-	[[ -f "${TEST_ROOT}/logs/gh-api-calls.txt" ]] && rest_called=1
+	# Read-only release-provenance probes are allowed; only a merge write is not.
+	[[ -f "${TEST_ROOT}/logs/gh-api-calls.txt" ]] &&
+		grep -q "/merge" "${TEST_ROOT}/logs/gh-api-calls.txt" && rest_called=1
 	print_result "review gate failure: REST fallback not called" "$rest_called"
 
 	return 0
