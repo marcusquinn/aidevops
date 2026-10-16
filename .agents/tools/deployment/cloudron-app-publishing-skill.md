@@ -26,7 +26,7 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 - **Last upstream review**: `74e455bd03f5`; adopted registry builder and explicit version-image selection guidance
 - **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
 - **Listing**: [Cloudron Community Apps](https://ca.cloudron.io) accepts a public versions URL after the catalog contains a tested release; listing is optional
-- **Forum**: [App Packaging & Development](https://forum.cloudron.io/category/96/app-packaging-development)
+- **Forum**: announce published community packages in [Community Apps (220)](https://forum.cloudron.io/category/220/community-apps); ask packaging questions in [App Packaging & Development (96)](https://forum.cloudron.io/category/96/app-packaging-development)
 
 ## Workflow
 
@@ -134,7 +134,7 @@ replace both. Full workflow and verification pattern:
 
 - **Dashboard**: add `CloudronVersions.json` URL under Community apps in dashboard settings — updates appear automatically
 - **CLI**: `cloudron install --versions-url <url>`
-- **Community listing**: sign in to [Cloudron Community Apps](https://ca.cloudron.io), open the publisher's apps, add the same versions URL, and confirm the imported title, icon, screenshot, changelog, and install URL. The listing is optional and does not host the catalog.
+- **Community listing**: sign in to [Cloudron Community Apps](https://ca.cloudron.io), open the publisher's apps, add the same versions URL, and confirm the imported title, icon, screenshot, changelog, and install URL. The listing is optional and does not host the catalog. Both the listing and forum announcement are publication actions that require explicit authorization. Then announce it in the forum's [Community Apps category](https://forum.cloudron.io/category/220/community-apps).
 
 ## Community Packages (9.1+)
 
