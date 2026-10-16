@@ -64,7 +64,7 @@ check_dependencies() {
         *)
             if ! coolify context list &> /dev/null; then
                 print_error "$ERROR_NOT_CONFIGURED"
-                print_info "Add a context: coolify context add <name> <url> <token>"
+                print_info "Add a context: aidevops secret COOLIFY_API_TOKEN -- <helper> add-context <name> <url>"
                 print_info "Or use local development commands: dev, build, init"
                 exit 1
             fi
@@ -375,12 +375,28 @@ list_contexts() {
 add_context() {
     local context_name="$1"
     local url="$2"
-    local token="$3"
-    local set_default="${4:-false}"
+    local token_secret="$3"
+    local set_default="$4"
+
+    if [[ ! "$token_secret" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        print_error "Invalid secret name: $token_secret"
+        return 1
+    fi
+
+    # Token comes from the environment (inject with: aidevops secret NAME -- <helper> ...)
+    local token="${!token_secret:-}"
+    if [[ -z "$token" ]]; then
+        print_error "Secret $token_secret is not set in the environment"
+        print_info "Store it: aidevops secret set $token_secret"
+        print_info "Run it:   aidevops secret $token_secret -- <helper> add-context NAME URL --token-secret $token_secret"
+        return 1
+    fi
 
     print_info "Adding Coolify context: $context_name"
     print_info "URL: $url"
 
+    # NOTE: coolify-cli takes the token only as an argv value, so it is visible
+    # in the child process table (ps) while 'coolify context add' runs.
     local context_args=("$context_name" "$url" "$token")
 
     if [[ "$set_default" == "true" ]]; then
@@ -498,7 +514,7 @@ COMMANDS:
 
   Context Management:
     list-contexts                             - List configured contexts
-    add-context [name] [url] [token] [default] - Add Coolify context
+    add-context NAME URL [--token-secret NAME] [--default] - Add context (token from env secret, default COOLIFY_API_TOKEN)
     use-context [name]                        - Switch to context
 
   General:
@@ -519,7 +535,8 @@ EXAMPLES:
   $0 build local ./my-app
 
   # Coolify operations (requires context)
-  $0 add-context production https://coolify.example.com your-api-token true
+  aidevops secret set COOLIFY_API_TOKEN
+  aidevops secret COOLIFY_API_TOKEN -- $0 add-context production https://coolify.example.com --default
   $0 list-apps production
   $0 deploy production my-application
   $0 create-db production postgresql server-uuid project-uuid main mydb true
@@ -611,11 +628,35 @@ main() {
             list_contexts
             ;;
         "add-context")
-            local context_name="$target"
-            local url="$options"
-            local token="${5:-}"
-            local set_default="${6:-false}"
-            add_context "$context_name" "$url" "$token" "$set_default"
+            local ctx_name="${2:-}"
+            local ctx_url="${3:-}"
+            local token_secret="COOLIFY_API_TOKEN"
+            local set_default="false"
+            shift $(( $# < 3 ? $# : 3 ))
+            while [[ $# -gt 0 ]]; do
+                local opt_arg="${1:-}"
+                case "$opt_arg" in
+                    --token-secret)
+                        token_secret="${2:-}"
+                        shift $(( $# < 2 ? $# : 2 ))
+                        ;;
+                    --default)
+                        set_default="true"
+                        shift
+                        ;;
+                    *)
+                        print_error "Unexpected argument: tokens are no longer accepted on the command line"
+                        print_info "Usage: add-context NAME URL [--token-secret NAME] [--default]"
+                        print_info "Store the token: aidevops secret set COOLIFY_API_TOKEN"
+                        return 1
+                        ;;
+                esac
+            done
+            if [[ -z "$ctx_name" || -z "$ctx_url" ]]; then
+                print_error "Usage: add-context NAME URL [--token-secret NAME] [--default]"
+                return 1
+            fi
+            add_context "$ctx_name" "$ctx_url" "$token_secret" "$set_default"
             ;;
         "use-context")
             local context_name="$target"

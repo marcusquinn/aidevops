@@ -47,10 +47,13 @@ tools:
 ```bash
 cp configs/coolify-cli-config.json.txt configs/coolify-cli-config.json
 
-./.agents/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com your-api-token true
-./.agents/scripts/coolify-cli-helper.sh add-context staging https://staging.coolify.example.com staging-token
+aidevops secret set COOLIFY_API_TOKEN
+aidevops secret COOLIFY_API_TOKEN -- ./.agents/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com --default
+aidevops secret COOLIFY_STAGING_TOKEN -- ./.agents/scripts/coolify-cli-helper.sh add-context staging https://staging.coolify.example.com --token-secret COOLIFY_STAGING_TOKEN
 ./.agents/scripts/coolify-cli-helper.sh list-contexts
 ```
+
+The token is read from the named secret (default `COOLIFY_API_TOKEN`), never argv; a positional token is rejected. Residual exposure: `coolify context add` is only known to accept the token as an argument, so it is visible in `ps` while that child runs (stdin/env support not verified; `coolify` is not installed here).
 
 Config structure (`configs/coolify-cli-config.json`):
 
