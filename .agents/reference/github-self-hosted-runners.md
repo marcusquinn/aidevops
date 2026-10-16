@@ -87,48 +87,8 @@ removed implicitly. Completed ephemeral jobs are replaced after the
 
 ### Stale queued workflow watchdog
 
-Pulse runs `.agents/scripts/pulse-stale-queued-runs.sh` as a bounded optional
-stage, at most once per hour per Pulse-managed repository. It skips local-only,
-maintenance-disabled and contributor repositories and verifies repository write
-permission before touching Actions runs. The token must also have Actions write
-permission; denied API calls are non-fatal and raw responses are never logged.
+Pulse cancels queued workflow runs older than `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` (default 8h), at most hourly per repository, via `.agents/scripts/pulse-stale-queued-runs.sh`; job-less, log-less ghost runs are deleted. Settings, outcomes, ghost handling and verification: `reference/github-runner-stale-queued-watchdog.md`.
 
-| Setting | Default | Behaviour |
-|---------|---------|-----------|
-| `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Minimum queued age in whole hours; `0` disables the stage. |
-| `AIDEVOPS_STALE_QUEUED_RUN_DELETE_EMPTY` | `1` | Deletes ghosts (409 from both cancellation endpoints) only when a fresh read shows zero jobs and the logs endpoint returns 404/410; logged as `deleted-empty-ghost`. Any API error keeps the run. `0` disables. |
-| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` allows deletion of stale ghosts that return HTTP 409 from both cancellation endpoints and have jobs or logs. |
-
-Each scan requests one page (up to 100 stale queued runs), rechecks status and
-age before writes, requests cancellation, and tries force-cancellation if the
-first request returns 409 or leaves the run queued. Logs contain run ID, workflow
-name, age in seconds and outcome. A successful request is not reported as a
-confirmed cancellation until a subsequent read observes a cancelled conclusion;
-a run that started meanwhile is reported as `no-longer-queued` instead.
-Cancellation can be asynchronous; `cancellation-pending` is retried next hour.
-Reruns (`run_attempt > 1`) are excluded: their original creation timestamp does
-not establish the current attempt's queue age. Age is conservatively based on
-the original run's `created_at`, not runner capacity or job count.
-
-Unkillable ghosts are logged once per repository/run ID and left alone by default,
-except job-less runs with no logs, which hold no work and are deleted.
-Deleting runs with jobs or logs removes history: enable it only deliberately. Cadence and
-ghost records live under `~/.aidevops/.agent-workspace/pulse/stale-queued-runs/`.
-The stage respects Pulse stop/rate-limit flags, the circuit breaker, REST budget
-admission and the wrapper's stage timeout. Standalone execution uses the same
-quota guard:
-
-```bash
-bash .agents/scripts/pulse-stale-queued-runs.sh
-```
-
-For operational verification, compare queued Actions runs before and after an
-hourly scan and inspect watchdog outcomes. `pulse-wrapper.sh --dry-run` does not
-cancel or delete runs. A scan is limited to 100 candidates; additional old runs
-are handled by rotating through up to ten pages (GitHub's 1,000-result filtered
-search limit) on later scans, even if the first page contains permanent ghosts.
-The owner-PID lock is released on normal exit or stage termination and a dead
-owner is reclaimed on the next scan.
 
 The launch script supports the enabled service instance numbers only:
 
@@ -224,72 +184,8 @@ runner containers, restart loops, or later container-name conflicts.
 
 ## Registry mirror
 
-Each ephemeral inner `dockerd` starts empty. Concurrent jobs sharing a public address can exhaust
-Docker Hub's anonymous pull limit before tests start (`429 Too Many Requests`, Docker exit code 125).
-Retrying the same workflow does not fix that shared limit.
+Ephemeral inner `dockerd` instances start empty and can hit Docker Hub anonymous pull limits (`429 Too Many Requests`, Docker exit code 125). A private pull-through cache passed to the inner daemon with `--registry-mirror` avoids this. Setup, secrets, verification and the `github-runner-org-helper.sh status` mirror check: `reference/github-runner-registry-mirror.md`.
 
-The operator can run a persistent pull-through cache on the runner host, on the approved private network:
-
-```bash
-docker volume create github-runner-registry-cache
-docker run -d --restart unless-stopped --name github-runner-registry-cache \
-  -p <PRIVATE_HOST_IP>:5000:5000 \
-  -v github-runner-registry-cache:/var/lib/registry \
-  -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
-  registry:2
-```
-
-Replace placeholders before running. Restrict port 5000 to the runner network
-with host firewall rules; never publish this cache to the internet. For plain
-HTTP, use a dedicated trusted private network and explicitly configure the inner
-daemon's insecure registry policy if required by its Docker version. Prefer TLS
-with a trusted certificate outside that network. The cache address must be
-reachable **from inside every runner container**; `localhost` there is the runner,
-not the host. Do not bind-mount the host Docker socket or share inner Docker data
-directories to implement caching.
-
-In `/usr/local/sbin/github-runner-dind-start`, pass the cache address to the **inner daemon**,
-retaining existing flags. This is the inner-daemon invocation fragment, not an outer `docker run`
-argument (adapt the runner image's entrypoint/daemon-argument wiring):
-
-```bash
-dockerd --storage-driver=overlay2 --registry-mirror=https://<CACHE_HOST>:<TLS_PORT>
-```
-
-Use `http://<PRIVATE_HOST_IP>:5000` instead for the private HTTP example above.
-Changing only the host daemon does not configure the inner daemons. Canary one
-idle service instance, verify it, then rotate the remaining idle instances
-gradually as described under Operations; do not interrupt active jobs.
-
-The first cache miss still pulls from Docker Hub and can hit its upstream limit.
-Optionally authenticate the cache upstream with a read-only Docker Hub token
-stored via `aidevops secret set DOCKERHUB_READ_TOKEN`. Inject the token through
-the approved secret-backed service configuration as `REGISTRY_PROXY_PASSWORD`
-with `REGISTRY_PROXY_USERNAME`; do not put it in argv, mirror URLs, committed
-files or logs. A cache with upstream credentials can serve content accessible to
-that account: restrict clients and use an account without private-image access.
-Monitor cache disk usage and use registry-supported maintenance, not deletion of
-live cache files.
-
-Verify from a canary workflow job, so the commands address its inner daemon:
-
-```bash
-docker info --format '{{json .RegistryConfig.Mirrors}}'
-docker pull mariadb:10.6
-```
-
-On the pool host, `github-runner-org-helper.sh status --org <ORG> --group <GROUP>` reads running
-`github-runner-dind-N` containers' inner mirror lists using `docker exec ... docker info`.
-It uses the current Docker context, is not group-filtered, and does not discover or SSH to hosts.
-It warns for verified empty lists; missing Docker access, containers or readable daemons yield `UNKNOWN`.
-Configured does not mean healthy: confirm cache access logs, then pull the same image from a fresh
-runner to verify reuse. Finally run a workflow pulling at least ten images across its jobs without 429s.
-
-Alternative: authenticate each job with `docker login --password-stdin` and a secret-store read-only token.
-This raises the limit, but fresh daemons still download every image; mirrors avoid repeated upstream downloads.
-Neither guarantees unlimited pulls. Mirrors cover Docker Hub, not arbitrary registries or separate BuildKit
-daemons; configure those separately. Cache provisioning, secret injection and rolling runner restarts remain
-operator-owned, not actions performed by `status`.
 
 ## Health checks
 
