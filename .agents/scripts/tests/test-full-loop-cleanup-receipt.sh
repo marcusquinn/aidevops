@@ -70,6 +70,45 @@ _full_loop_receipt_lock_release
 [[ ! -e "$receipt_lock_dir" ]]
 printf 'PASS dead numeric receipt lock owner is reclaimed\n'
 
+# GH#34808: a lock taken inside $(...) and abandoned by a SIGKILLed subshell
+# must be reclaimable while the parent shell is still alive.
+subshell_pidfile="${TEST_ROOT}/subshell-holder.pid"
+(
+	_full_loop_receipt_lock_acquire
+	_full_loop_receipt_self_pid >"$subshell_pidfile"
+	sleep 30
+) &
+subshell_holder=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	[[ -s "$subshell_pidfile" ]] && break
+	sleep 0.1
+done
+[[ -s "$subshell_pidfile" ]]
+kill -9 "$(<"$subshell_pidfile")" 2>/dev/null || true
+wait "$subshell_holder" 2>/dev/null || true
+[[ -f "${receipt_lock_dir}/owner" ]]
+_full_loop_receipt_lock_acquire
+_full_loop_receipt_lock_release
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS killed subshell receipt lock holder is reclaimed\n'
+
+# A live holder is named, with its hold age, in the timeout reason.
+mkdir -p "$receipt_lock_dir"
+live_holder=$$
+printf '%s\n' "$live_holder" >"${receipt_lock_dir}/owner"
+holder_reason=$(
+	sleep() { return 0; }
+	_full_loop_receipt_lock_acquire && exit 1
+	printf '%s\n' "$_FULL_LOOP_RECEIPT_LOCK_FAILURE"
+)
+[[ "$holder_reason" == "receipt-lock-timeout (holder ${live_holder}, held "*"s)" ]] || {
+	printf 'FAIL timeout reason missing holder: %s\n' "$holder_reason"
+	exit 1
+}
+rm -f "${receipt_lock_dir}/owner"
+rmdir "$receipt_lock_dir"
+printf 'PASS timeout names holder\n'
+
 mkdir -p "$receipt_lock_dir"
 touch -t 202001010000 "$receipt_lock_dir"
 (

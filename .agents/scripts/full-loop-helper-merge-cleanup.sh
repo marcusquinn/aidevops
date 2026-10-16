@@ -557,7 +557,7 @@ _merge_record_deferred_cleanup_owner() {
 			break
 		fi
 		attempt=$((attempt + 1))
-		if [[ "$attempt" -lt 2 && "${_FULL_LOOP_CLEANUP_FAILURE_REASON:-}" == "receipt-lock-timeout" ]]; then
+		if [[ "$attempt" -lt 2 && "${_FULL_LOOP_CLEANUP_FAILURE_REASON:-}" == "receipt-lock-timeout"* ]]; then
 			continue
 		fi
 		_merge_cleanup_owner_fail "${_FULL_LOOP_CLEANUP_FAILURE_REASON:-receipt-write-failed}"

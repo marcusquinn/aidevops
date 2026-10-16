@@ -451,7 +451,38 @@ _full_loop_receipt_reclaim_stale_ownerless_lock() {
 	return 0
 }
 
+# Real PID of the current (sub)shell. $$ is the top-level shell inside $(...),
+# which hides dead subshell holders; `sh -c 'echo $PPID'` is portable to Bash 3.2.
+_full_loop_receipt_self_pid() {
+	sh -c 'echo "$PPID"'
+	return 0
+}
+
+_full_loop_receipt_pid_start() {
+	local pid="$1"
+	local start=""
+	start=$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null) || start=""
+	start="${start//[[:space:]]/_}"
+	printf '%s\n' "$start"
+	return 0
+}
+
+# Succeeds when the recorded owner ("pid[ start]") is still the live process.
+_full_loop_receipt_owner_alive() {
+	local pid="$1"
+	local recorded_start="$2"
+	local current_start=""
+	kill -0 "$pid" 2>/dev/null || return 1
+	[[ -n "$recorded_start" ]] || return 0
+	current_start=$(_full_loop_receipt_pid_start "$pid")
+	[[ -z "$current_start" || "$current_start" == "$recorded_start" ]]
+}
+
 _full_loop_receipt_lock_acquire() {
+	local owner_start=""
+	local holder_age=0
+	local holder_mtime=""
+	local self_pid=""
 	local receipt_dir=""
 	local lock_dir=""
 	local owner_pid=""
@@ -464,7 +495,12 @@ _full_loop_receipt_lock_acquire() {
 	lock_dir="${receipt_dir}/.mutation.lock.d"
 	while [[ "$attempt" -lt 200 ]]; do
 		if mkdir "$lock_dir" 2>/dev/null; then
-			printf '%s\n' "$$" >"${lock_dir}/owner" || {
+			# Redirect straight to the owner file: a $(...) here would make sh's
+			# parent a throwaway subshell instead of the real holder.
+			_full_loop_receipt_self_pid >"${lock_dir}/owner" || true
+			IFS= read -r self_pid <"${lock_dir}/owner" || self_pid=""
+			[[ "$self_pid" =~ ^[0-9]+$ ]] || self_pid="$$"
+			printf '%s %s\n' "$self_pid" "$(_full_loop_receipt_pid_start "$self_pid")" >"${lock_dir}/owner" || {
 				rmdir "$lock_dir" 2>/dev/null || true
 				_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-owner-write-failed"
 				return 1
@@ -479,8 +515,9 @@ _full_loop_receipt_lock_acquire() {
 			return 0
 		fi
 		owner_pid=""
-		[[ -f "${lock_dir}/owner" ]] && IFS= read -r owner_pid <"${lock_dir}/owner" || true
-		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+		owner_start=""
+		[[ -f "${lock_dir}/owner" ]] && IFS=' ' read -r owner_pid owner_start <"${lock_dir}/owner" || true
+		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! _full_loop_receipt_owner_alive "$owner_pid" "$owner_start"; then
 			rm -f "${lock_dir}/owner" 2>/dev/null || true
 			rmdir "$lock_dir" 2>/dev/null || true
 			continue
@@ -491,6 +528,14 @@ _full_loop_receipt_lock_acquire() {
 		sleep 0.05
 		attempt=$((attempt + 1))
 	done
+	if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+		holder_mtime=$(_file_mtime_epoch "$lock_dir" 2>/dev/null) || holder_mtime=""
+		if [[ "$holder_mtime" =~ ^[0-9]+$ ]]; then
+			holder_age=$(($(date '+%s') - holder_mtime))
+			[[ "$holder_age" -lt 0 ]] && holder_age=0
+		fi
+		_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-timeout (holder ${owner_pid}, held ${holder_age}s)"
+	fi
 	return 1
 }
 
