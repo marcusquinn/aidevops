@@ -946,7 +946,11 @@ refresh_blocked_status_from_graph() {
 	# is shared among them alone (a fixed split across every configured repo
 	# rounded each share down to 1s). Smallest backlogs run first and unused
 	# time rolls forward, so the largest backlog receives what remains.
-	slugs=$(printf '%s' "$graph_json" | jq -r '.repos | to_entries
+	# Exclude expired preserved data before allocating any refresh budget.
+	slugs=$(printf '%s' "$graph_json" | jq -r --argjson now "$(date +%s)" \
+		--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" '.repos | to_entries
+		| map(select(.value.built_at == null or
+			((.value.built_at | type) == "number" and $now - .value.built_at < $max_age)))
 		| map([((.value.blocked_by // {}) | if type == "object" then length else 0 end), .key])
 		| sort | .[] | "\(.[0])\t\(.[1])"' 2>/dev/null) || slugs=""
 	[[ -n "$slugs" ]] || return 0
@@ -956,13 +960,6 @@ refresh_blocked_status_from_graph() {
 	while IFS=$'\t' read -r entry_count slug; do
 		[[ -n "$slug" ]] || continue
 		repo_data=$(printf '%s' "$graph_json" | jq -c --arg s "$slug" '.repos[$s]' 2>/dev/null) || continue
-		# A rewritten file mtime cannot make a preserved repository fresh.
-		if ! printf '%s' "$repo_data" | jq -e --argjson now "$(date +%s)" \
-			--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" \
-			'.built_at == null or ((.built_at | type) == "number" and $now - .built_at < $max_age)' >/dev/null 2>&1; then
-			echo "[pulse-wrapper] dep-graph-cache: skipping stale repo ${slug} during blocked-status refresh" >>"$LOGFILE"
-			continue
-		fi
 		share_secs=1
 		if [[ "$entry_count" =~ ^[1-9][0-9]*$ && "$active_left" -gt 0 ]]; then
 			share_secs=$(((budget_secs - (SECONDS - started)) / active_left))
