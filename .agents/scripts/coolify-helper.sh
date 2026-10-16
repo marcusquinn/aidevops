@@ -164,9 +164,12 @@ open_coolify() {
     local coolify_url
 
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        local instances
+        local instances first_instance
         instances=$(registry_instances) || instances=""
-        coolify_url=$(printf '%s\n' "$instances" | head -n 1 | cut -f2)
+        # Fields: NAME<TAB>URL<TAB>ACCOUNT; take URL from the first line.
+        first_instance="${instances%%$'\n'*}"
+        first_instance="${first_instance#*$'\t'}"
+        coolify_url="${first_instance%%$'\t'*}"
         if [[ -z "$coolify_url" ]]; then
             print_config_guidance
             return 1
