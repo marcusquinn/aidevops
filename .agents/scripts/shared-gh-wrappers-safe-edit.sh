@@ -251,6 +251,31 @@ _gh_audit_fetch_pr_state_json() {
 }
 
 #######################################
+# Print an absolute form of a caller's BASH_SOURCE entry.
+# A helper started by relative path (for example `.agents/scripts/x.sh` from a
+# worktree root) reports that relative path in BASH_SOURCE, so the anchored
+# `*/agents/scripts/<name>` provenance patterns below and in the anomaly
+# filter never match it (GH#34821). Resolve it against the current directory
+# only when it still names an existing file; otherwise keep the original.
+# Provenance stays a hint: every exemption still re-verifies live GitHub state.
+# Args: $1=caller_script
+#######################################
+_gh_audit_absolute_caller_script() {
+	local caller_script="$1"
+	local caller_dir=""
+	if [[ -n "$caller_script" && "$caller_script" != /* && -f "$caller_script" ]]; then
+		caller_dir="$(dirname "$caller_script")"
+		caller_dir="$(cd "$caller_dir" 2>/dev/null && pwd)" || caller_dir=""
+		if [[ -n "$caller_dir" ]]; then
+			printf '%s/%s\n' "$caller_dir" "$(basename "$caller_script")"
+			return 0
+		fi
+	fi
+	printf '%s\n' "$caller_script"
+	return 0
+}
+
+#######################################
 # Write one audit record via gh-audit-log-helper.sh record.
 # Non-blocking: silently returns 0 on any failure.
 # Args:
@@ -272,6 +297,7 @@ _gh_audit_record_op() {
 	# Skip audit when number is unavailable or not an integer
 	[[ -z "$number" || ! "$number" =~ ^[0-9]+$ ]] && return 0
 	[[ -z "$repo" ]] && return 0
+	caller_script="$(_gh_audit_absolute_caller_script "$caller_script")"
 
 	local audit_helper
 	audit_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-audit-log-helper.sh"

@@ -42,7 +42,7 @@ Each log line is a compact JSON object (NDJSON):
 | `op` | string | Operation type (see below) |
 | `repo` | string | `owner/repo` slug |
 | `number` | integer | Issue or PR number |
-| `caller_script` | string | `BASH_SOURCE` of the code that called the safe wrapper |
+| `caller_script` | string | `BASH_SOURCE` of the code that called the safe wrapper; relative paths that still name an existing file are made absolute so provenance patterns match (GH#34821) |
 | `caller_function` | string | `FUNCNAME` of the calling function |
 | `caller_line` | integer | `BASH_LINENO` of the call site |
 | `pid` | integer | Process ID of the caller |
