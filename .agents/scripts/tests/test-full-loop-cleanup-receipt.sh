@@ -313,6 +313,50 @@ IFS= read -r lookup_count <"$lookup_counter"
 [[ "$selected_receipt" == "$migrated_receipt" && "$lookup_count" -eq 1 ]]
 printf 'PASS receipt lookup scans all valid receipts with one jq process\n'
 
+# Exercise the contention-sized set without a timing-sensitive CI assertion.
+# Both validation scans must use a constant number of jq processes.
+(
+	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/bulk-receipts"
+	mkdir -p "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"
+	for ((receipt_index = 0; receipt_index < 3000; receipt_index++)); do
+		printf '{"worktree":"other","resource_cleanup_state":"CLEANED"}\n' \
+			>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/${receipt_index}.json"
+	done
+	printf '{"worktree":"target","resource_cleanup_state":"CLEANED"}\n' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/target.json"
+	printf '0\n' >"$lookup_counter"
+	export AIDEVOPS_TEST_LOOKUP_JQ_COUNTER="$lookup_counter"
+	export AIDEVOPS_TEST_REAL_JQ="$real_jq"
+	export PATH="${lookup_bin}:${PATH}"
+	[[ "$(_full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR")" -eq 3001 ]]
+	_full_loop_active_recreated_receipts_are_cleaned "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target
+	IFS= read -r lookup_count <"$lookup_counter"
+	[[ "$lookup_count" -eq 2 ]]
+	export PATH="$lookup_original_path"
+	printf '{"worktree":"target","resource_cleanup_state":"CLEANUP_DEFERRED"}\n' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/active.json"
+	if _full_loop_active_recreated_receipts_are_cleaned "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target; then
+		exit 1
+	fi
+	for invalid_json in '{bad' '[]' ''; do
+		printf '%s' "$invalid_json" >"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
+		if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
+			exit 1
+		fi
+	done
+	# An extra object in a different file must not mask an empty receipt.
+	printf '{}\n{}\n' >"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/multiple.json"
+	if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
+		exit 1
+	fi
+	rm "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
+	ln -s "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/target.json" "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/linked.json"
+	if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
+		exit 1
+	fi
+)
+printf 'PASS 3000-receipt validation uses two jq processes and rejects unsafe evidence\n'
+
 invalid_receipt="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
 printf '%s\n' '{invalid-json' >"$invalid_receipt"
 selected_receipt=$(full_loop_cleanup_receipt_for_worktree "${TEST_ROOT}/worktree-one")

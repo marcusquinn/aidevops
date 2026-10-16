@@ -747,8 +747,11 @@ _full_loop_valid_receipt_file_count() {
 	fi
 	# Validate the entire set with one process, still failing closed on malformed
 	# JSON, non-objects and empty files rather than skipping lifecycle evidence.
-	jq -es --argjson count "$receipt_file_count" '
-		if length == $count and all(.[]; type == ({} | type))
+	jq -ne --argjson count "$receipt_file_count" '
+		reduce inputs as $receipt ({files: {}, valid: true};
+			.files[input_filename] = true
+			| .valid = (.valid and ($receipt | type == ({} | type))))
+		| if (.files | length) == $count and .valid
 		then $count else error("invalid receipt set") end
 	' "$receipt_dir"/*.json 2>/dev/null || return 1
 	return 0
