@@ -535,6 +535,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t18704 Guard V2 MCP adapter output against the OpenCode V2 Mcp config schema shape #enhancement #opencode #interactive #auto-dispatch tier:standard ~40m ref:GH#34794 logged:2026-10-16 -> [todo/tasks/t18704-brief.md]
+
 - [ ] Reusable protected repository metrics rollout checklist and live validation #docs #plan #deferred #interactive logged:2026-10-12 -> [todo/tasks/tasks-protected-metrics-rollout.md] — Saved brief only; no worker dispatch or downstream changes authorized.
 
 - [x] t18583 Reusable Hostinger fleet onboarding and drift sync — phased: inventory/plan/drift PR #34379, readiness PR #34445, provisioning PR #34447, layout-move wrapper PR #34448. #enhancement #hosting #interactive tier:standard ref:GH#33811 logged:2026-10-03 -> [todo/tasks/t18583-brief.md] pr:#34448 completed:2026-10-11
