@@ -554,6 +554,9 @@ _handle_loop_mode_on_protected() {
 		[[ -z "$_wt_ahead" ]] || echo "WORKTREE_AHEAD=$_wt_ahead"
 		[[ -z "$_wt_behind" ]] || echo "WORKTREE_BEHIND=$_wt_behind"
 		echo "ACTION_REQUIRED=${_wt_failure_action:-inspect_existing_task_branch}"
+		# Preserve the branch as an explicit continuation target. Never delete it:
+		# another process may have added commits since worktree creation failed.
+		printf 'CONTINUATION_COMMAND: worktree-helper.sh add %q\n' "${_wt_actual_branch:-$_wt_branch_name}"
 		_print_loop_worktree_failure_next_step "$_wt_failure_action"
 		exit 2 # Special exit code for "create worktree"
 	fi

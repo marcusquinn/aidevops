@@ -739,10 +739,18 @@ _full_loop_valid_receipt_file_count() {
 	for receipt_path in "$receipt_dir"/*.json; do
 		[[ -f "$receipt_path" ]] || continue
 		[[ ! -L "$receipt_path" ]] || return 1
-		_full_loop_receipt_file_is_json_object "$receipt_path" || return 1
 		receipt_file_count=$((receipt_file_count + 1))
 	done
-	printf '%s\n' "$receipt_file_count"
+	if [[ "$receipt_file_count" -eq 0 ]]; then
+		printf '0\n'
+		return 0
+	fi
+	# Validate the entire set with one process, still failing closed on malformed
+	# JSON, non-objects and empty files rather than skipping lifecycle evidence.
+	jq -es --argjson count "$receipt_file_count" '
+		if length == $count and all(.[]; type == ({} | type))
+		then $count else error("invalid receipt set") end
+	' "$receipt_dir"/*.json 2>/dev/null || return 1
 	return 0
 }
 
@@ -767,23 +775,13 @@ _full_loop_recreated_worktree_identity_matches() {
 _full_loop_active_recreated_receipts_are_cleaned() {
 	local receipt_dir="$1"
 	local worktree="$2"
-	local receipt_path=""
-	local state=""
-	local matching_count=0
 
-	for receipt_path in "$receipt_dir"/*.json; do
-		[[ -f "$receipt_path" ]] || continue
-		if ! jq -e --arg worktree "$worktree" --arg superseded "$_FULL_LOOP_RECEIPT_PATH_RECREATED" '
-			.worktree == $worktree
-			and ((.receipt_disposition.state // "") != $superseded)
-		' "$receipt_path" >/dev/null 2>&1; then
-			continue
-		fi
-		state=$(jq -r '.resource_cleanup_state // empty' "$receipt_path" 2>/dev/null) || return 1
-		[[ "$state" == "$_FULL_LOOP_CLEANUP_CLEANED" ]] || return 1
-		matching_count=$((matching_count + 1))
-	done
-	[[ "$matching_count" -gt 0 ]] || return 1
+	jq -es --arg worktree "$worktree" --arg superseded "$_FULL_LOOP_RECEIPT_PATH_RECREATED" \
+		--arg cleaned "$_FULL_LOOP_CLEANUP_CLEANED" '
+		[.[] | select(.worktree == $worktree
+			and ((.receipt_disposition.state // "") != $superseded))]
+		| length > 0 and all(.[]; .resource_cleanup_state == $cleaned)
+	' "$receipt_dir"/*.json >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -869,22 +867,27 @@ _full_loop_prepare_recreated_receipt_transaction() {
 	local generation_id="${head_sha}:${owner_pid}:${now}"
 	local transaction_dir=""
 	local receipt_path=""
+	local receipt_json=""
+	local matching_paths=""
 	local matching_count=0
 
+	# Select in bulk too: scanning each unrelated receipt here would restore the
+	# same lock-time bottleneck whenever an old path actually needs superseding.
+	# Keep filenames JSON-encoded until each selected entry is decoded.
+	matching_paths=$(jq -nc --arg worktree "$worktree" --arg cleaned "$_FULL_LOOP_CLEANUP_CLEANED" \
+		--arg superseded "$_FULL_LOOP_RECEIPT_PATH_RECREATED" '
+		inputs | select(.worktree == $worktree
+			and .resource_cleanup_state == $cleaned
+			and ((.receipt_disposition.state // "") != $superseded))
+		| input_filename
+	' "$receipt_dir"/*.json) || return 1
 	transaction_dir=$(_full_loop_initialize_recreated_receipt_transaction "$receipt_dir") || return 1
-	for receipt_path in "$receipt_dir"/*.json; do
-		[[ -f "$receipt_path" ]] || continue
-		if [[ -L "$receipt_path" ]]; then
+	while IFS= read -r receipt_json; do
+		[[ -n "$receipt_json" ]] || continue
+		receipt_path=$(jq -r '.' <<<"$receipt_json") || return 1
+		if [[ ! -f "$receipt_path" || -L "$receipt_path" ]]; then
 			_full_loop_remove_recreated_receipt_transaction "$receipt_dir" "$transaction_dir" >/dev/null 2>&1 || true
 			return 1
-		fi
-		if ! jq -e --arg worktree "$worktree" --arg cleaned "$_FULL_LOOP_CLEANUP_CLEANED" \
-			--arg superseded "$_FULL_LOOP_RECEIPT_PATH_RECREATED" '
-			.worktree == $worktree
-			and .resource_cleanup_state == $cleaned
-			and ((.receipt_disposition.state // "") != $superseded)
-		' "$receipt_path" >/dev/null 2>&1; then
-			continue
 		fi
 		if ! _full_loop_stage_recreated_receipt_file "$receipt_path" "$transaction_dir" \
 			"$worktree" "$branch" "$head_sha" "$owner_pid" "$owner_session" "$now" "$generation_id"; then
@@ -892,7 +895,7 @@ _full_loop_prepare_recreated_receipt_transaction() {
 			return 1
 		fi
 		matching_count=$((matching_count + 1))
-	done
+	done <<<"$matching_paths"
 	if [[ "$matching_count" -eq 0 ]] ||
 		! _full_loop_validate_recreated_receipt_transaction "$receipt_dir" "$transaction_dir"; then
 		_full_loop_remove_recreated_receipt_transaction "$receipt_dir" "$transaction_dir" >/dev/null 2>&1 || true
