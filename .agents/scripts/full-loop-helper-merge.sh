@@ -1810,6 +1810,25 @@ _merge_handle_already_merged_provenance() {
 	return 0
 }
 
+# Verify release-lane PR identity and guard; sets _release_lane_head_ref in the
+# caller (dynamic scope) for the provenance merge-method check.
+_merge_release_lane_check() {
+	local pr_number="$1"
+	local repo="$2"
+	[[ "$repo" == "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] || return 0
+	local pr_refs="" base_ref=""
+	pr_refs=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '[.base.ref, .head.ref] | @tsv') || {
+		print_error "Merge blocked: cannot verify release-lane PR identity"
+		return 1
+	}
+	IFS=$'\t' read -r base_ref _release_lane_head_ref <<<"$pr_refs"
+	release_lane_merge_guard "$repo" "$pr_number" "$base_ref" "$_release_lane_head_ref" || {
+		print_error "Merge deferred by active exact-tip release lane"
+		return 1
+	}
+	return 0
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -1853,20 +1872,7 @@ cmd_merge() {
 		return 1
 	}
 	local _release_lane_head_ref=""
-	if [[ "$repo" == "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]]; then
-		local _release_lane_pr_refs=""
-		local _release_lane_base_ref=""
-		local _release_lane_pr_endpoint="repos/${repo}/pulls"
-		_release_lane_pr_refs=$(_flm_gh_read gh api "${_release_lane_pr_endpoint}/${pr_number}" --jq '[.base.ref, .head.ref] | @tsv') || {
-			print_error "Merge blocked: cannot verify release-lane PR identity"
-			return 1
-		}
-		IFS=$'\t' read -r _release_lane_base_ref _release_lane_head_ref <<<"$_release_lane_pr_refs"
-		release_lane_merge_guard "$repo" "$pr_number" "$_release_lane_base_ref" "$_release_lane_head_ref" || {
-			print_error "Merge deferred by active exact-tip release lane"
-			return 1
-		}
-	fi
+	_merge_release_lane_check "$pr_number" "$repo" || return 1
 	merge_method=$(_merge_release_provenance_method "$pr_number" "$repo" "$merge_method" "$_release_lane_head_ref") || return 1
 	local _cleanup_target=""
 	local _cleanup_worktree=""
