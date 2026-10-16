@@ -25,7 +25,8 @@ tools:
 - **Host OS**: Prefer Rocky Linux where the target release/install path is supported; [OS selection](../../reference/os-selection.md) separates Coolify's OS/ARM64 list from narrower installer guidance and application-image compatibility
 - **Install**: `curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`
 - **Access**: `https://server-ip:8000`
-- **Config**: `configs/coolify-config.json`
+- **Config**: `$COOLIFY_CONFIG_FILE`, repo `configs/coolify-config.json`, or `~/.aidevops/configs/coolify-config.json`; without it, `list`/`open` use the credential registry
+- **Find the instance before asking**: see [Instance discovery](#instance-discovery)
 - **Commands**: `coolify-helper.sh [list|connect|open|status|apps|exec] [server] [args]`
 - **Features**: Auto SSL, GitHub/GitLab/Bitbucket integration, PostgreSQL/MySQL/MongoDB/Redis
 - **SSH**: Ed25519 keys recommended
@@ -71,6 +72,24 @@ Multi-server config (`configs/coolify-config.json`):
 ```
 
 Add additional entries under `servers` for staging/prod environments.
+
+### Instance discovery
+
+Do not ask the owner for the Coolify URL until these checks fail:
+
+1. `coolify-helper.sh list` — reads the JSON config, or falls back to the credential registry.
+2. `aidevops secret describe COOLIFY_API_TOKEN` and `aidevops secret resolve coolify` — the token's account and `instance:<host>` reach.
+3. The project's own infrastructure files and sibling infra/ops repositories (runbooks, `.env.example`, deploy configs) — search for the host with `rg -i coolify`.
+
+When the URL is found, record it so the next session does not search again (names and metadata only; the token value is never read):
+
+```bash
+aidevops secret account add coolify-main --provider coolify --name "Main Coolify"
+aidevops secret record COOLIFY_API_TOKEN --provider coolify --account coolify-main \
+  --resources instance:coolify.yourdomain.com
+```
+
+Account refs are lower-case slugs, so the host goes in `--resources instance:<host>`; helpers assume `https://`.
 
 ## Usage
 

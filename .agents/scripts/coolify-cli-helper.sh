@@ -13,10 +13,10 @@ set -euo pipefail
 # CONFIGURATION & CONSTANTS
 # ------------------------------------------------------------------------------
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/shared-constants.sh"
-
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR="$script_dir"
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 repo_root="$(dirname "$SCRIPT_DIR")"
 readonly REPO_ROOT="$repo_root"
@@ -636,6 +636,13 @@ main() {
 
     return 0
 }
+
+# Help needs no CLI, context, or config (GH#34817).
+help_pattern='^(help|-h|--help)$'
+if [[ "${1:-help}" =~ $help_pattern ]]; then
+    show_help
+    exit 0
+fi
 
 # Initialize
 check_dependencies "${1:-help}"

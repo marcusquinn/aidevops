@@ -33,9 +33,9 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/shared-constants.sh"
-
 readonly SCRIPT_DIR="$script_dir"
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 repo_root="$(dirname "$SCRIPT_DIR")"
 readonly REPO_ROOT="$repo_root"

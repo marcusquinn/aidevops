@@ -14,15 +14,16 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/shared-constants.sh"
-
 readonly SCRIPT_DIR="$script_dir"
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 repo_root="$(dirname "$SCRIPT_DIR")"
 readonly REPO_ROOT="$repo_root"
 readonly CONFIG_FILE="$REPO_ROOT/configs/gitea-cli-config.json"
 
 # Common constants
+readonly HELP_SHOW_MESSAGE="Show this help"
 # Error Messages
 readonly ERROR_CONFIG_MISSING="Configuration file not found at $CONFIG_FILE"
 readonly ERROR_TEA_NOT_INSTALLED="Gitea CLI (tea) is required but not installed"
@@ -702,6 +703,13 @@ main() {
 
 	return 0
 }
+
+# Help needs no CLI, auth, or config (GH#34817).
+help_pattern='^(help|-h|--help)$'
+if [[ "${1:-help}" =~ $help_pattern ]]; then
+	show_help
+	exit 0
+fi
 
 # Initialize
 check_dependencies

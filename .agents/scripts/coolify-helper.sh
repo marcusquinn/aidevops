@@ -15,15 +15,50 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 [command] [options]"
 readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
-# Configuration file
-CONFIG_FILE="../configs/coolify-config.json"
+# Configuration file: explicit override, repo/deployed configs/ (SCRIPT_DIR/../../
+# is the repo root or ~/.aidevops), then ~/.aidevops/configs. Never CWD-relative.
+DEFAULT_CONFIG_FILE="${HOME}/.aidevops/configs/coolify-config.json"
+CONFIG_FILE="$DEFAULT_CONFIG_FILE"
+for config_candidate in "${COOLIFY_CONFIG_FILE:-}" \
+    "${SCRIPT_DIR}/../../configs/coolify-config.json" "$DEFAULT_CONFIG_FILE"; do
+    if [[ -n "$config_candidate" && -f "$config_candidate" ]]; then
+        CONFIG_FILE="$config_candidate"
+        break
+    fi
+done
+unset config_candidate
 
-# Function to print colored output
+# Credential-registry fallback (GH#34817): the stored token's metadata names the
+# instance as `instance:<host>` reach. Token values are never read or printed.
+COOLIFY_SECRET_NAME="${COOLIFY_SECRET_NAME:-COOLIFY_API_TOKEN}"
+REGISTRY_RECORD_HINT="aidevops secret record ${COOLIFY_SECRET_NAME} --provider coolify --account REF --resources instance:coolify.example.com"
+
+# Print "NAME<TAB>https://HOST<TAB>ACCOUNT" for the registry's Coolify credential.
+registry_instances() {
+    local inventory="${SCRIPT_DIR}/credential_inventory.py"
+    local name record
+    if ! command -v python3 >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || [[ ! -f "$inventory" ]]; then
+        return 1
+    fi
+    name=$(python3 "$inventory" resolve coolify 2>/dev/null) || name="$COOLIFY_SECRET_NAME"
+    record=$(python3 "$inventory" describe "$name" --json 2>/dev/null) || return 1
+    jq -r --arg name "$name" '(.account.name // .account_ref // "account unrecorded") as $account
+        | .reach.resources[]? | select(startswith("instance:"))
+        | [$name, ("https://" + sub("^instance:"; "")), $account] | @tsv' <<<"$record"
+    return 0
+}
+
+print_config_guidance() {
+    print_error "Configuration file not found: $CONFIG_FILE"
+    print_info "Copy and customize: cp configs/coolify-config.json.txt $DEFAULT_CONFIG_FILE"
+    print_info "Or record the API token's instance: $REGISTRY_RECORD_HINT"
+    return 0
+}
+
 # Check if config file exists
 check_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
-        print_info "Copy and customize: cp ../configs/coolify-config.json.txt $CONFIG_FILE"
+        print_config_guidance
         exit 1
     fi
 
@@ -35,16 +70,41 @@ check_config() {
     return 0
 }
 
+# List instances recorded in the credential registry (no JSON config needed)
+list_registry_instances() {
+    local instances
+    instances=$(registry_instances) || instances=""
+    if [[ -z "$instances" ]]; then
+        print_config_guidance
+        return 1
+    fi
+    print_info "Coolify instances from the credential registry (no $CONFIG_FILE):"
+    local name url account
+    while IFS=$'\t' read -r name url account; do
+        echo "  - $url"
+        echo "    API token: $name (value not shown)"
+        echo "    Account: $account"
+        echo ""
+    done <<<"$instances"
+    print_info "SSH commands (connect/exec/status) still need $CONFIG_FILE"
+    return 0
+}
+
 # List all Coolify servers
 list_servers() {
-    check_config
-    print_info "Available Coolify servers:"
-    
     if ! command -v jq >/dev/null 2>&1; then
         print_error "jq is required for JSON parsing. Install with: brew install jq"
         return 1
     fi
-    
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        list_registry_instances
+        return $?
+    fi
+
+    check_config
+    print_info "Available Coolify servers:"
+
     servers=$(jq -r '.servers | keys[]' "$CONFIG_FILE")
     for server in $servers; do
         name=$(jq -r ".servers.$server.name" "$CONFIG_FILE")
@@ -101,11 +161,20 @@ connect_server() {
 # Open Coolify web interface
 open_coolify() {
     local server="${1:-coolify-main}"
-    
-    check_config
-    
     local coolify_url
-    coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        local instances
+        instances=$(registry_instances) || instances=""
+        coolify_url=$(printf '%s\n' "$instances" | head -n 1 | cut -f2)
+        if [[ -z "$coolify_url" ]]; then
+            print_config_guidance
+            return 1
+        fi
+    else
+        check_config
+        coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
+    fi
     
     if [[ "$coolify_url" == "null" ]]; then
         print_error "Coolify URL not found for server '$server'"
