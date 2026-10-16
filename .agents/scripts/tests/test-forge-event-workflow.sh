@@ -250,6 +250,83 @@ if grep -q '/zip' "${test_root}/api.log"; then
 	exit 1
 fi
 
+# Invalid-JSON failures and invalid inventory shapes defer without touching state.
+mkdir -p "${test_root}/invalid-bin"
+cat >"${test_root}/invalid-bin/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_CALL_LOG"
+phase="exact"
+[[ "$*" == *"per_page=100"* ]] && phase="legacy"
+[[ "$*" == *"/zip"* ]] && phase="zip"
+if [[ "${GH_INVALID_PHASE:-}" == "$phase" ]]; then
+	case "${GH_INVALID_MODE:-}" in
+	cli-json) printf 'gh: unexpected end of JSON input SECRET-BODY\n' >&2; exit 1 ;;
+	cli-auth) printf 'gh: Bad credentials (HTTP 401)\n' >&2; exit 1 ;;
+	empty) exit 0 ;;
+	notjson) printf '<html>oops</html>\n'; exit 0 ;;
+	wrongshape) printf '{"artifacts":"nope"}\n'; exit 0 ;;
+	esac
+fi
+case "$phase" in
+exact) printf '{"artifacts":[]}\n' ;;
+legacy) printf '{"total_count":1,"artifacts":[{"id":23,"name":"forge-coordinator-R_1-new","created_at":"2026-02-01T00:00:00Z","expired":false}]}\n' ;;
+zip) printf 'partial' ;;
+esac
+GH
+chmod +x "${test_root}/invalid-bin/gh"
+run_invalid_case() {
+	local name="$1" phase="$2" mode="$3"
+	local dir="${test_root}/invalid-${name}"
+	mkdir -p "$dir"
+	printf 'durable-db\n' >"${dir}/tasks.db"
+	: >"${dir}.log"
+	local rc=0
+	GH_INVALID_PHASE="$phase" GH_INVALID_MODE="$mode" GH_CALL_LOG="${dir}.log" \
+		PATH="${test_root}/invalid-bin:${test_root}/bin-unzip-fail:${jq_dir}:/usr/bin:/bin" \
+		bash "$STATE_HELPER" restore "$dir" owner/repo R_1 2>"${dir}.err" || rc=$?
+	INVALID_RC=$rc
+	INVALID_DIR=$dir
+	[[ "$(<"${dir}/tasks.db")" == "durable-db" ]]
+	[[ ! -f "${dir}/.restore-empty-init" ]]
+	[[ ! -f "${dir}/state.zip" ]]
+	if grep -q 'SECRET-BODY' "${dir}.err"; then
+		printf 'FAIL diagnostics leaked response body (%s)\n' "$name" >&2
+		exit 1
+	fi
+	return 0
+}
+mkdir -p "${test_root}/bin-unzip-fail"
+printf '#!/usr/bin/env bash\nexit 9\n' >"${test_root}/bin-unzip-fail/unzip"
+chmod +x "${test_root}/bin-unzip-fail/unzip"
+for case_spec in "exact-cli:exact:cli-json:exact-name-inventory" "legacy-cli:legacy:cli-json:legacy-inventory" "zip-cli:zip:cli-json:zip-download" \
+	"exact-empty:exact:empty:exact-name-inventory" "exact-notjson:exact:notjson:exact-name-inventory" "exact-shape:exact:wrongshape:exact-name-inventory" \
+	"legacy-empty:legacy:empty:legacy-inventory" "legacy-shape:legacy:wrongshape:legacy-inventory"; do
+	IFS=: read -r c_name c_phase c_mode c_label <<<"$case_spec"
+	run_invalid_case "$c_name" "$c_phase" "$c_mode"
+	[[ "$INVALID_RC" -eq 0 ]]
+	[[ -f "${INVALID_DIR}/.restore-deferred" ]]
+	grep -q "phase=${c_label}" "${INVALID_DIR}.err"
+	grep -q 'Coordinator restore deferred' "${INVALID_DIR}.err"
+	case "$c_phase" in
+	exact) [[ "$(grep -c 'actions/artifacts' "${INVALID_DIR}.log")" -eq 1 ]] ;;
+	legacy) [[ "$(grep -c 'actions/artifacts' "${INVALID_DIR}.log")" -eq 2 ]] ;;
+	esac
+	if [[ "$c_phase" != "zip" ]] && grep -q '/zip' "${INVALID_DIR}.log"; then
+		printf 'FAIL invalid inventory reached the download endpoint (%s)\n' "$c_name" >&2
+		exit 1
+	fi
+done
+
+# Authorization failures and extraction failures remain explicit failures.
+run_invalid_case auth exact cli-auth
+[[ "$INVALID_RC" -ne 0 ]]
+[[ ! -f "${INVALID_DIR}/.restore-deferred" ]]
+grep -q 'phase=exact-name-inventory category=gh_failure' "${INVALID_DIR}.err"
+run_invalid_case unzip legacy ""
+[[ "$INVALID_RC" -ne 0 ]]
+[[ ! -f "${INVALID_DIR}/.restore-deferred" ]]
+grep -q 'phase=extraction' "${INVALID_DIR}.err"
+
 # Cleanup plans are read-only. Apply keeps the protected checkpoint and newest
 # fallback, deleting only older exact-name artifacts.
 mkdir -p "${test_root}/cleanup-bin"

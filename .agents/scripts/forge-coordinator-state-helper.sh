@@ -6,6 +6,8 @@ set -euo pipefail
 
 readonly RESTORE_DEFERRED_MARKER=".restore-deferred"
 readonly RESTORE_EMPTY_INIT_MARKER=".restore-empty-init"
+readonly PHASE_EXACT_INVENTORY="exact-name-inventory"
+readonly PHASE_LEGACY_INVENTORY="legacy-inventory"
 
 print_error_file() {
 	local error_file="$1"
@@ -40,6 +42,59 @@ defer_rate_limited_restore() {
 	return 0
 }
 
+is_invalid_json_failure() {
+	local error_file="$1"
+	grep -qiE 'unexpected end of JSON input' "$error_file" && return 0
+	return 1
+}
+
+# Fixed phase/category diagnostics only; never response bodies, URLs or tokens.
+report_restore_phase() {
+	local phase="$1"
+	local category="$2"
+	printf '::notice title=Coordinator restore phase::phase=%s category=%s\n' "$phase" "$category" >&2
+	return 0
+}
+
+# Classify a failed gh call. Returns 0 when deferred (rate limit or invalid
+# JSON response), 1 when it is a hard failure the caller must propagate.
+handle_gh_restore_failure() {
+	local state_dir="$1"
+	local repository="$2"
+	local error_file="$3"
+	local phase="$4"
+	if is_github_rate_limited "$error_file"; then
+		report_restore_phase "$phase" "rate_limited"
+		defer_rate_limited_restore "$state_dir" "$repository" "$error_file" || return 1
+		return 0
+	fi
+	if is_invalid_json_failure "$error_file"; then
+		report_restore_phase "$phase" "invalid_json_response"
+		defer_restore "$state_dir" "$repository" "GitHub returned an empty or malformed response during ${phase}" || return 1
+		return 0
+	fi
+	report_restore_phase "$phase" "gh_failure"
+	print_error_file "$error_file"
+	return 1
+}
+
+# A successful inventory must be non-empty JSON with an artifacts array.
+inventory_is_valid() {
+	local inventory="$1"
+	[[ -n "$inventory" ]] || return 1
+	jq -e '(.artifacts | type) == "array"' >/dev/null 2>&1 <<<"$inventory" || return 1
+	return 0
+}
+
+defer_invalid_inventory() {
+	local state_dir="$1"
+	local repository="$2"
+	local phase="$3"
+	report_restore_phase "$phase" "invalid_inventory_shape"
+	defer_restore "$state_dir" "$repository" "GitHub returned an empty or malformed artifact inventory during ${phase}" || return 1
+	return 0
+}
+
 restore_state() {
 	local state_dir="$1"
 	local repository="$2"
@@ -54,16 +109,20 @@ restore_state() {
 	# New checkpoints use one stable name, allowing GitHub to filter server-side.
 	# This replaces the former --paginate scan across every repository artifact.
 	if ! artifact_json=$(gh api "repos/${repository}/actions/artifacts?name=${artifact_name}&per_page=1" 2>"$error_file"); then
-		if is_github_rate_limited "$error_file"; then
-			defer_rate_limited_restore "$state_dir" "$repository" "$error_file"
+		if handle_gh_restore_failure "$state_dir" "$repository" "$error_file" "$PHASE_EXACT_INVENTORY"; then
 			rm -f "$error_file"
 			return 0
 		fi
-		print_error_file "$error_file"
 		rm -f "$error_file"
 		return 1
 	fi
+	if ! inventory_is_valid "$artifact_json"; then
+		defer_invalid_inventory "$state_dir" "$repository" "$PHASE_EXACT_INVENTORY"
+		rm -f "$error_file"
+		return 0
+	fi
 	artifact_id=$(jq -r --arg name "$artifact_name" '[.artifacts[]? | select((.name == $name) and ((.expired // false) == false))] | sort_by([.created_at, .id]) | last | .id // empty' <<<"$artifact_json") || {
+		report_restore_phase "$PHASE_EXACT_INVENTORY" "metadata_validation_failed"
 		rm -f "$error_file"
 		return 1
 	}
@@ -71,16 +130,20 @@ restore_state() {
 	# One bounded legacy page migrates checkpoints written with run-ID suffixes.
 	if [[ -z "$artifact_id" ]]; then
 		if ! artifact_json=$(gh api "repos/${repository}/actions/artifacts?per_page=100" 2>"$error_file"); then
-			if is_github_rate_limited "$error_file"; then
-				defer_rate_limited_restore "$state_dir" "$repository" "$error_file"
+			if handle_gh_restore_failure "$state_dir" "$repository" "$error_file" "$PHASE_LEGACY_INVENTORY"; then
 				rm -f "$error_file"
 				return 0
 			fi
-			print_error_file "$error_file"
 			rm -f "$error_file"
 			return 1
 		fi
+		if ! inventory_is_valid "$artifact_json"; then
+			defer_invalid_inventory "$state_dir" "$repository" "$PHASE_LEGACY_INVENTORY"
+			rm -f "$error_file"
+			return 0
+		fi
 		artifact_id=$(jq -r --arg prefix "${artifact_name}-" '[.artifacts[]? | select((.name | startswith($prefix)) and ((.expired // false) == false))] | sort_by([.created_at, .id]) | last | .id // empty' <<<"$artifact_json") || {
+			report_restore_phase "$PHASE_LEGACY_INVENTORY" "metadata_validation_failed"
 			rm -f "$error_file"
 			return 1
 		}
@@ -105,6 +168,7 @@ restore_state() {
 		return 0
 	fi
 	if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ ]]; then
+		report_restore_phase "metadata-validation" "invalid_artifact_id"
 		printf 'Invalid coordinator artifact ID returned for repository %s: %q\n' "$repository" "$artifact_id" >&2
 		rm -f "$error_file"
 		return 1
@@ -112,16 +176,15 @@ restore_state() {
 	archive="${state_dir}/state.zip"
 	if ! gh api "repos/${repository}/actions/artifacts/${artifact_id}/zip" >"$archive" 2>"$error_file"; then
 		rm -f "$archive"
-		if is_github_rate_limited "$error_file"; then
-			defer_rate_limited_restore "$state_dir" "$repository" "$error_file"
+		if handle_gh_restore_failure "$state_dir" "$repository" "$error_file" "zip-download"; then
 			rm -f "$error_file"
 			return 0
 		fi
-		print_error_file "$error_file"
 		rm -f "$error_file"
 		return 1
 	fi
 	if ! unzip -oq "$archive" -d "$state_dir"; then
+		report_restore_phase "extraction" "unzip_failed"
 		rm -f "$archive" "$error_file"
 		return 1
 	fi
