@@ -750,6 +750,90 @@ test_circuit_hold_projects_blocked_and_releases() {
 	return 0
 }
 
+# GH#34846: a runtime-owned first files_scope_excluded observation projects
+# status:blocked (and says so), is queued for the recovery owner, stays held
+# for an unchanged brief and is released to status:available exactly once
+# after a brief revision.
+test_first_observation_scope_hold_releases_on_revision() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		# The fixture name must not shadow callee locals such as `comments`.
+		local fingerprint="" issue_body="### Files Scope\n- helper.sh"
+		local posted="" edits="" enqueued=0 projected="" tb_fixture_comments='[]' queue_file="" pending_out=""
+		fingerprint=$(_terminal_blocker_hash 'v2:files_scope_excluded')
+		export DISPATCH_REPO_SLUG=owner/repo WORKER_ISSUE_NUMBER=42
+		export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$TEST_ROOT" AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint"
+		issue_json() {
+			jq -nc --arg body "$(printf '%b' "$issue_body")" --arg labels "$1" \
+				'{state:"open",title:"Fix integration",body:$body,assignees:[{login:"runner-one"}],
+				  labels:($labels | split(",") | map({name:.}))}'
+			return 0
+		}
+		gh() {
+			[[ "$1" == api && "$2" == repos/owner/repo/issues/42 ]] || return 1
+			issue_json "${TEST_ISSUE_LABELS:-status:in-progress}"
+			return 0
+		}
+		gh_issue_edit_safe() { edits+="$*;"; return 0; }
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_fixture_comments"; return 0; }
+		_hrff_release_repo_state_is_managed() { return 0; }
+		_hrff_resolve_release_runner_login() { printf 'runner-one\n'; return 0; }
+		_unlock_issue_after_dispatch_release() { return 0; }
+		_hrff_enqueue_blocker_recovery() { enqueued=$((enqueued + 1)); return 0; }
+		_hrff_post_claim_released_comment() {
+			posted="$3"
+			tb_fixture_comments=$(jq -nc --arg body "$3" '[{id:7,body:$body,author:"runner-one",author_association:"MEMBER",created_at:"2026-10-16T23:32:17Z"}]')
+			return 0
+		}
+		# Release path: the projected state matches the label actually applied.
+		_release_dispatch_claim issue-42 blocked || exit 1
+		[[ "$posted" == *'reason=files_scope_excluded owner=brief-author'* &&
+			"$posted" == *'Projected state: status:blocked.'* ]] || exit 1
+		[[ "$edits" == *'--add-label status:blocked'* && "$edits" == *'--remove-label status:in-progress'* ]] || exit 1
+		[[ "$enqueued" -eq 1 ]] || exit 1
+		# Runner-local capability gaps stay available and are never queued.
+		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:runner_capability_unmet') \
+			_hrff_blocked_exit_holds && exit 1
+		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:target_code_blocker') \
+			_hrff_enqueue_observation_recovery 42 owner/repo
+		[[ "$enqueued" -eq 1 ]] || exit 1
+		# Seed backfill: only this runner's observation of a re-armed class.
+		local raw=""
+		raw=$(jq -nc --argjson c "$tb_fixture_comments" '[$c | map(. + {user:{login:.author}})]')
+		[[ "$(_tbr_seed_reason "$raw" runner-one)" == files_scope_excluded ]] || exit 1
+		_tbr_seed_reason "$raw" other-runner >/dev/null && exit 1
+		_tbr_seed_reason "$(printf '%s' "$raw" | jq -c '.[0][0].body |= sub("files_scope_excluded owner=brief-author"; "target_code_blocker owner=target-maintainer")')" \
+			runner-one >/dev/null && exit 1
+		# Recovery owner: unchanged brief stays held, revised brief releases once.
+		TBR_ROOT="${TEST_ROOT}/recovery" TBR_EXCERPT_DIR="${TEST_ROOT}/no-excerpts" TBR_REPOS_JSON="${TEST_ROOT}/no-repos.json"
+		set_issue_status() { projected+="${3};"; return 0; }
+		export TEST_ISSUE_LABELS=status:blocked
+		tbr_enqueue owner/repo 42 files_scope_excluded || exit 1
+		queue_file="${TBR_ROOT}/queue/owner--repo--42.json"
+		terminal_blocker_observation_hold_active "$tb_fixture_comments" "$(issue_json status:blocked)" owner/repo 42 "" >/dev/null || exit 1
+		pending_out=$(_tbr_check_entry "$queue_file") || exit 1
+		[[ "$pending_out" == *'"reason":"files_scope_excluded"'* && -f "$queue_file" && -z "$projected" ]] || exit 1
+		issue_body="### Files Scope\n- helper.sh\n- adjacent.sh"
+		terminal_blocker_observation_hold_active "$tb_fixture_comments" "$(issue_json status:blocked)" owner/repo 42 "" >/dev/null && exit 1
+		_tbr_check_entry "$queue_file" && exit 1
+		[[ "$projected" == 'available;' && ! -f "$queue_file" ]] || exit 1
+		date +%s >"${TBR_ROOT}/last_seed_epoch"
+		tbr_pending >/dev/null || exit 1
+		[[ "$projected" == 'available;' ]] || exit 1
+		# A trusted retry after the observation also re-arms an unchanged brief.
+		issue_body="### Files Scope\n- helper.sh"
+		tb_fixture_comments=$(printf '%s' "$tb_fixture_comments" | jq -c '. + [{id:8,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-16T23:40:00Z"}]')
+		terminal_blocker_observation_hold_active "$tb_fixture_comments" "$(issue_json status:blocked)" owner/repo 42 "" >/dev/null && exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "first files_scope_excluded hold projects blocked and releases once on brief revision" "$status"
+	return 0
+}
+
 test_blocked_backoff_cli() {
 	local result="" status=0
 	result=$(
@@ -979,6 +1063,7 @@ main() {
 	test_self_authored_collaborator_evidence
 	test_collaborator_runner_release_opens_circuit
 	test_circuit_hold_projects_blocked_and_releases
+	test_first_observation_scope_hold_releases_on_revision
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

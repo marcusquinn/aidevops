@@ -115,7 +115,9 @@ revision, missing paths, protected evidence, proposed verification and wake
 condition. The worker cannot approve its own authority expansion. Use
 `TERMINAL_BLOCKER_REASON=files_scope_excluded`; unrelated base commits must not
 re-arm it. The owner reviews and records a corrected brief or a precise human-only
-decision. Never silently clear a hold or restart from a replacement PR.
+decision. Never silently clear a hold or restart from a replacement PR. The
+corrected brief is the whole action: the recovery owner returns the issue to
+`status:available` (see "Terminal-blocker recovery" below).
 
 This delegation covers implementation choices, not credentials, runtime
 permissions, new expenditure, destructive/external actions, publication, trust
@@ -185,11 +187,24 @@ unclassified blockers retain bounded backoff rather than a permanent circuit.
 
 `input_required` (GH#33332) needs a standalone
 `TERMINAL_BLOCKER_INPUT_OWNER=user|contributor|maintainer|admin` line; without
-it the evidence stays `unknown`. Like every known class, the first observation
-keeps one independent verification attempt and only a second identical result
-opens the circuit, so one worker cannot defer work on its own. Its revision
-tracks the brief and dependencies: supplying the input in the issue body
-re-arms dispatch. It adds no label or review gate beyond the circuit hold.
+it the evidence stays `unknown`. Its revision tracks the brief and
+dependencies: supplying the input in the issue body re-arms dispatch. It adds
+no label or review gate beyond the blocked-exit hold below.
+
+Blocked-exit labels (GH#34775, GH#34846): the runtime releases a known-class
+`BLOCKED` exit as `status:blocked`, and the release comment's `Projected
+state:` names that label. Runner-local classes (`runner_capability_unmet`
+without missing secret names, policy timeouts) stay `status:available`. A
+second identical result for the same revision opens the circuit. The
+revision-re-armed classes are `missing_files_scope`, `files_scope_excluded`,
+`input_required`, `external_trigger_pending` and `source_access_blocked`. For
+them, the producing runner queues the first observation as well as the
+circuit. Its recovery pass returns the issue to `status:available` exactly
+once, when the task revision differs from the observed one or a trusted retry
+follows the observation. That happens within the pass interval below, and the
+brief owner changes no label. For any other sanctioned manual transition use
+`gh-write-helper.sh issue status <N> --repo <owner/repo> available`, never a
+raw label edit.
 
 An open `TERMINAL_BLOCKER_CIRCUIT` stops redispatch but is not an owner. The
 runner that opened it queues the issue (`terminal-blocker-recovery-helper.sh`;

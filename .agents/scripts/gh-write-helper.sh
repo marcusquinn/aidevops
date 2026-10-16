@@ -15,6 +15,8 @@ usage() {
 	printf '       gh-write-helper.sh {issue|pr} edit <number-or-url> [gh edit options]\n'
 	printf '       gh-write-helper.sh {issue|pr} comment <number-or-url> [gh comment options]\n'
 	printf '       gh-write-helper.sh issue review-handoff <number> --repo <owner/repo> --pr <number>\n'
+	printf '       gh-write-helper.sh issue status <number> --repo <owner/repo> <status>\n'
+	printf '         (status: available|queued|claimed|in-progress|in-review|done|blocked)\n'
 	printf '       gh-write-helper.sh batch MANIFEST.json\n'
 	printf 'Bodies may use --body-file - to read stdin once through the safe wrapper.\n'
 	return 0
@@ -48,6 +50,33 @@ _issue_review_handoff() {
 	return 0
 }
 
+# GH#34846: policy-compatible CLI for set_issue_status, the sanctioned status
+# transition (exactly one core status label). Workers still may not change
+# their own dispatched issue's lifecycle: the runtime projects it.
+_issue_status() {
+	local number="${1:-}"
+	local repo="" status=""
+	[[ "$number" =~ ^[1-9][0-9]*$ ]] || return 2
+	shift
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		case "$option" in
+		--repo) repo="${2:-}"; [[ $# -ge 2 ]] || return 2; shift 2 ;;
+		--repo=*) repo="${option#--repo=}"; shift ;;
+		-*) return 2 ;;
+		*) [[ -z "$status" ]] || return 2; status="${option#status:}"; shift ;;
+		esac
+	done
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && -n "$status" ]] || return 2
+	if [[ -n "${WORKER_ISSUE_NUMBER:-}" && "$number" == "$WORKER_ISSUE_NUMBER" ]]; then
+		# shellcheck disable=SC2016 # Literal worker signal, not shell code.
+		printf 'emit `BLOCKED: <reason>`; the runtime projects lifecycle state\n' >&2
+		return 2
+	fi
+	set_issue_status "$number" "$repo" "$status" || return $?
+	return 0
+}
+
 main() {
 	local resource="${1:-}"
 	local action="${2:-}"
@@ -62,7 +91,8 @@ main() {
 		gh_write_batch "$@"
 		return $?
 	fi
-	if [[ "$action" != "create" && "$action" != "edit" && "$action" != "comment" && "$action" != "review-handoff" ]]; then
+	if [[ "$action" != "create" && "$action" != "edit" && "$action" != "comment" &&
+		"$action" != "review-handoff" && "$action" != "status" ]]; then
 		usage >&2
 		return 2
 	fi
@@ -112,6 +142,7 @@ main() {
 		gh_issue_edit_safe "$@"
 		;;
 	issue:review-handoff) _issue_review_handoff "$@" ;;
+	issue:status) _issue_status "$@" ;;
 	issue:comment) gh_issue_comment "$@" ;;
 	pr:create) gh_create_pr "$@" ;;
 	pr:edit) gh_pr_edit_safe "$@" ;;

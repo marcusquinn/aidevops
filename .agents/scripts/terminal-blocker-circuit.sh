@@ -19,6 +19,11 @@ _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
 _TBC_SOURCE_ACCESS='source_access_blocked'
 _TBC_RUNNER_RECOVERY_OWNER='runner-recovery'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
+# GH#34846: classes whose task revision tracks only the brief (plus linked
+# dependencies for some), never default-branch HEAD. A runtime-owned blocked
+# exit holds these from the first observation; a relevant revision or trusted
+# retry is the wake condition, so unrelated merges cannot churn them.
+_TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked '
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
 # Legacy/malformed IDs never let a tied retry clear evidence. For selection,
@@ -459,19 +464,63 @@ terminal_blocker_release_mode() {
 	return 0
 }
 
+# Args: task_revision blocker_fingerprint [release_mode] [projected_state]
+# The release path passes the label it will actually apply (GH#34846).
 terminal_blocker_observation_fragment() {
 	local task_revision="$1"
 	local blocker_fingerprint="$2"
 	local release_mode="${3:-first}"
+	local projected_state="${4:-}"
 	printf '\n<!-- %s revision=%s blocker=%s -->\n\n' \
 		"$_TBC_OBSERVATION_MARKER" "$task_revision" "$blocker_fingerprint"
-	_terminal_blocker_recovery "$blocker_fingerprint" "$release_mode"
+	_terminal_blocker_recovery "$blocker_fingerprint" "$release_mode" "$projected_state"
+	return 0
+}
+
+# True for classes whose hold re-arms on a brief/dependency revision only.
+terminal_blocker_rearms_on_revision() {
+	local reason="$1"
+	[[ -n "$reason" && "$_TBC_REVISION_REARM_REASONS" == *" ${reason} "* ]]
+	return $?
+}
+
+# GH#34846: a runtime-owned blocked exit projects status:blocked from the first
+# observation, which has no circuit for the recovery owner to re-arm. Report
+# whether the newest trusted observation still holds a revision-re-armed class.
+# Returns 0 (prints a summary) while the observed task revision is current and
+# no later OWNER/MEMBER retry exists; 1 when re-armed or not applicable; 2 when
+# the current revision cannot be computed (fail closed: keep the hold).
+terminal_blocker_observation_hold_active() {
+	local comments_json="$1"
+	local issue_json="$2"
+	local repo_slug="$3"
+	local issue_number="$4"
+	local repo_path="$5"
+	local fingerprint=""
+	local observation="" marker="" observed_revision="" reason="" retry="" current_revision=""
+	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=") || observation=""
+	[[ -n "$observation" ]] || return 1
+	marker=$(printf '%s' "$observation" | jq -r --arg marker "$_TBC_OBSERVATION_MARKER" '
+		.body | capture("<!-- " + $marker + " revision=(?<revision>[a-f0-9]{24}) blocker=(?<blocker>[a-f0-9]{24}) -->")
+		| "\(.revision) \(.blocker)"' 2>/dev/null) || return 1
+	read -r observed_revision fingerprint <<<"$marker"
+	[[ "$observed_revision" =~ ^[a-f0-9]{24}$ && "$fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 1
+	reason=$(_terminal_blocker_reason "$fingerprint")
+	terminal_blocker_rearms_on_revision "$reason" || return 1
+	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
+	if _terminal_blocker_retry_after "$retry" "$observation"; then
+		return 1
+	fi
+	current_revision=$(terminal_blocker_task_revision "$issue_json" "$repo_slug" "$issue_number" "$repo_path" "$reason") || return 2
+	[[ "$current_revision" == "$observed_revision" ]] || return 1
+	printf 'TERMINAL_BLOCKER_OBSERVATION_HOLD reason=%s task_revision=%s\n' "$reason" "$current_revision"
 	return 0
 }
 
 _terminal_blocker_recovery() {
 	local fingerprint="$1"
 	local release_mode="${2:-first}"
+	local requested_state="${3:-}"
 	local reason="" owner="" action="" attempt="" issue="${WORKER_ISSUE_NUMBER:-unknown}"
 	local projected_state="status:blocked"
 	reason=$(_terminal_blocker_reason "$fingerprint")
@@ -522,11 +571,14 @@ _terminal_blocker_recovery() {
 		;;
 	esac
 	[[ "$issue" =~ ^[0-9]+$ ]] || issue="$_TBC_UNKNOWN"
-	# GH#33294: the first observation runs one free verification retry before
-	# the circuit opens — the release already restores status:available, so
-	# the projected state must match instead of claiming a hold that is not
-	# in effect. Only an actual circuit/open release keeps the issue held.
+	# GH#33294: a legacy first observation restores status:available, so the
+	# projected state must not claim a hold that is not in effect.
+	# GH#34846: the full runtime holds most first observations as
+	# status:blocked (GH#34775); its release path passes the applied state.
 	[[ "$release_mode" == "first" ]] && projected_state="status:available"
+	case "$requested_state" in
+	status:blocked | status:available) projected_state="$requested_state" ;;
+	esac
 	# Correlate attempts without publishing runner names or arbitrary env text.
 	attempt=$(_terminal_blocker_hash "${AIDEVOPS_ATTEMPT_ID:-${WORKER_SESSION_KEY:-unknown}}") || attempt="$_TBC_UNKNOWN"
 	printf 'Terminal blocker: reason=%s owner=%s task=%s attempt=%s.\nProjected state: %s.\nNext action: %s\nRaw evidence remains in protected worker telemetry.\n' \

@@ -10,10 +10,15 @@
 # issue stayed status:available until a human noticed. This helper keeps a
 # private queue of circuits opened by THIS runner (where the protected failure
 # excerpts live) so the pulse supervisor can act as the AI brief owner.
+# GH#34846: it also queues held first observations of classes that re-arm on
+# a brief/dependency revision, and returns them to status:available once the
+# revision changes or a trusted retry lands.
 #
-# Queue records are evidence, never authority. This helper never edits issues,
-# posts retry directives, changes labels/assignees or grants permissions. The
-# supervisor applies reference/worker-discipline.md "Terminal-blocker recovery".
+# Queue records are evidence, never authority. Its only issue write is the
+# re-armed status:blocked → status:available release (GH#33138); it never
+# edits bodies, posts retry directives, changes assignees or grants
+# permissions. The supervisor applies reference/worker-discipline.md
+# "Terminal-blocker recovery".
 #
 # Usage:
 #   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason]
@@ -102,7 +107,9 @@ tbr_enqueue() {
 
 #######################################
 # Backfill open circuits authored by this runner (GitHub search on the
-# circuit marker). Rate-limited by TBR_SEED_INTERVAL unless --force.
+# circuit marker) and, GH#34846, held first observations of revision-re-armed
+# classes (status:blocked issues with a recovery observation). Rate-limited by
+# TBR_SEED_INTERVAL unless --force.
 #######################################
 tbr_seed() {
 	local force="${1:-}"
@@ -114,25 +121,58 @@ tbr_seed() {
 	if [[ "$force" != "--force" && $((now - last)) -lt "$TBR_SEED_INTERVAL" ]]; then
 		return 0
 	fi
-	local self="" slug="" issue="" comments=""
+	local self="" slug="" issue="" comments="" reason=""
 	self=$(_tbr_self_login) || return 1
+	# shellcheck source=terminal-blocker-circuit.sh
+	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		while IFS= read -r issue; do
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
 			comments=$(gh api "repos/${slug}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || continue
-			# Only circuits this runner opened: the protected dossier lives here.
-			if printf '%s' "$comments" | jq -e --arg self "$self" --arg marker "$TBR_CIRCUIT_MARKER" '
-				[flatten[] | select((.user.login // "") == $self and ((.body // "") | contains($marker)))] | length > 0
-			' >/dev/null 2>&1; then
-				tbr_enqueue "$slug" "$issue" "$(_tbr_reason_from_comments "$comments")" || true
-			fi
-		done < <(gh api -X GET search/issues \
-			-f q="repo:${slug} is:issue is:open \"TERMINAL_BLOCKER_CIRCUIT\" in:comments" \
-			--jq '.items[].number' 2>/dev/null)
+			reason=$(_tbr_seed_reason "$comments" "$self") || continue
+			tbr_enqueue "$slug" "$issue" "$reason" || true
+		done < <(_tbr_seed_candidates "$slug")
 	done < <(jq -r '.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug' \
 		"$TBR_REPOS_JSON" 2>/dev/null)
 	printf '%s\n' "$now" >"$stamp"
+	return 0
+}
+
+# Candidate issue numbers for one repo: open circuits, plus open blocked
+# issues carrying a terminal-blocker observation. Deduplicated.
+_tbr_seed_candidates() {
+	local slug="$1"
+	local query=""
+	for query in "\"TERMINAL_BLOCKER_CIRCUIT\" in:comments" \
+		"label:\"status:blocked\" \"Terminal blocker\" in:comments"; do
+		gh api -X GET search/issues -f q="repo:${slug} is:issue is:open ${query}" \
+			--jq '.items[].number' 2>/dev/null || true
+	done | sort -un
+	return 0
+}
+
+# Print the queue reason when this runner owns recovery for the issue: a
+# circuit it opened, or (GH#34846) its newest observation of a class that
+# re-arms on a brief/dependency revision. Only this runner's evidence counts:
+# the protected dossier lives here. Returns 1 when not eligible.
+_tbr_seed_reason() {
+	local comments="$1"
+	local self="$2"
+	local reason=""
+	if printf '%s' "$comments" | jq -e --arg self "$self" --arg marker "$TBR_CIRCUIT_MARKER" '
+		[flatten[] | select((.user.login // "") == $self and ((.body // "") | contains($marker)))] | length > 0
+	' >/dev/null 2>&1; then
+		_tbr_reason_from_comments "$comments"
+		return 0
+	fi
+	reason=$(printf '%s' "$comments" | jq -r --arg self "$self" '
+		[flatten[] | select((.user.login // "") == $self) | (.body // "")
+		| select(contains("aidevops:terminal-blocker-observation revision="))
+		| capture("Terminal blocker: reason=(?<r>[a-z_]+) ")? | .r] | last // ""
+	' 2>/dev/null) || reason=""
+	terminal_blocker_rearms_on_revision "$reason" || return 1
+	printf '%s\n' "$reason"
 	return 0
 }
 
@@ -157,9 +197,10 @@ _tbr_decision_active() {
 }
 
 #######################################
-# GH#33138: a circuit this runner opened projects status:blocked. When the
-# circuit re-arms (trusted retry, relevant revision or backoff expiry), return
-# the issue to status:available exactly once. Never releases brief holds,
+# GH#33138: a circuit this runner opened projects status:blocked; GH#34846:
+# so does a runtime-owned first observation. When the hold re-arms (trusted
+# retry, relevant revision or backoff expiry), return the issue to
+# status:available exactly once. Never releases brief holds,
 # dependency blocks, permission-helper holds or maintainer holds: only a plain
 # status:blocked issue with no other hold label is touched.
 # Args: repo issue issue_json comments_json. Always returns 0 (best-effort).
@@ -225,12 +266,21 @@ _tbr_check_entry() {
 	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo") || return 1
 	brief=$(printf '%s' "$issue_json" | jq -c '{title: (.title // ""), body: (.body // "")}')
 	repo_path=$(_tbr_repo_path "$repo")
+	local hold_rc=0
 	if ! terminal_blocker_circuit_active "$comments" "$brief" "$repo" "$issue" "$repo_path" >/dev/null 2>&1; then
+		# GH#34846: a held first observation (no circuit) re-arms on the same
+		# relevant revision or trusted retry; an unreadable revision keeps it.
+		terminal_blocker_observation_hold_active "$comments" "$brief" "$repo" "$issue" "$repo_path" \
+			>/dev/null 2>&1 || hold_rc=$?
+	fi
+	if [[ "$hold_rc" -eq 1 ]]; then
 		# Brief revision, retry directive or backoff expiry re-armed dispatch.
 		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments"
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
 	fi
+	# Indeterminate revision: keep the entry for the next pass, report nothing.
+	[[ "$hold_rc" -eq 0 ]] || return 1
 	_tbr_decision_active "$key" && return 1
 	local excerpts=""
 	excerpts=$(find "$TBR_EXCERPT_DIR" -maxdepth 1 -type f -name "*-${issue}-*.log" 2>/dev/null | sort | tail -3 |
@@ -300,7 +350,7 @@ tbr_main() {
 	pending) tbr_pending "$@" ;;
 	record) tbr_record "$@" ;;
 	help | --help | -h)
-		sed -n '4,28p' "${BASH_SOURCE[0]}"
+		sed -n '4,33p' "${BASH_SOURCE[0]}"
 		;;
 	*) return 2 ;;
 	esac
