@@ -435,6 +435,146 @@ uninstall_app() {
 	return 0
 }
 
+# Remote probe for health checks. Emits key=value lines only (no secrets).
+# Placeholders: __UNITS__ (space-separated systemd units).
+# shellcheck disable=SC2016 # runs remotely; expansion must not happen locally
+readonly CLOUDRON_HEALTH_PROBE='
+for u in __UNITS__; do echo "unit.$u=$(systemctl is-active "$u" 2>&1 | head -n1)"; done
+echo "failed_units=$(systemctl --failed --no-legend --plain 2>/dev/null | cut -d" " -f1 | paste -sd, -)"
+echo "disk_pct=$(df -P / | tail -n1 | tr -s " " | cut -d" " -f5 | tr -d %)"
+echo "dpkg_audit=$(dpkg --audit 2>&1 | head -n 5 | tr "\n" " ")"
+if command -v cloudron-support >/dev/null 2>&1; then
+  timeout 120 cloudron-support --check-db-migrations >/dev/null 2>&1; echo "db_migrations_rc=$?"
+  timeout 120 cloudron-support --check-services >/dev/null 2>&1; echo "services_rc=$?"
+else
+  echo "db_migrations_rc=missing"; echo "services_rc=missing"
+fi
+echo "backup_age_hours=$(mysql -uroot -ppassword box -N -B -e "SELECT IFNULL(TIMESTAMPDIFF(HOUR, MAX(creationTime), NOW()), -1) FROM backups WHERE state=\"normal\"" 2>/dev/null | head -n1)"
+echo "api_version=$(curl -fsS -m 10 http://127.0.0.1:3000/api/v1/cloudron/status 2>/dev/null | jq -r ".version // empty" 2>/dev/null)"
+'
+
+# Fleet health check: detects a dead Cloudron platform even if the dashboard looks up.
+# Usage: health <server> [--format json|text] [--backup-max-hours N]
+#        [--disk-warn N] [--disk-crit N] [--extra-unit NAME]
+# Exit: 0 = ok/warn only, 2 = critical finding, 1 = usage/connection error.
+health_check() {
+	local server="${1:-}"
+	shift || true
+	local format="json" backup_max=48 disk_warn=85 disk_crit=95 extra_units=""
+
+	if [[ -z "$server" ]]; then
+		print_error "$ERROR_SERVER_NAME_REQUIRED"
+		return 1
+	fi
+	while [[ $# -gt 0 ]]; do
+		local opt="$1"
+		case "$opt" in
+		--format) format="${2:-json}"; shift 2 ;;
+		--backup-max-hours) backup_max="${2:-48}"; shift 2 ;;
+		--disk-warn) disk_warn="${2:-85}"; shift 2 ;;
+		--disk-crit) disk_crit="${2:-95}"; shift 2 ;;
+		--extra-unit) extra_units="${extra_units} ${2:-}"; shift 2 ;;
+		*) print_error "Unknown health option: $opt"; return 1 ;;
+		esac
+	done
+	if [[ ! "$backup_max$disk_warn$disk_crit" =~ ^[0-9]+$ ]]; then
+		print_error "Thresholds must be integers"
+		return 1
+	fi
+	if [[ ! "$extra_units" =~ ^[A-Za-z0-9@._:\ -]*$ ]]; then
+		print_error "Invalid --extra-unit value"
+		return 1
+	fi
+
+	check_config
+	local ip ssh_port
+	ip=$(jq -r ".servers.\"$server\".ip" "$CONFIG_FILE")
+	ssh_port=$(jq -r ".servers.\"$server\".ssh_port // 22" "$CONFIG_FILE")
+	if [[ "$ip" == null ]]; then
+		print_error "$ERROR_SERVER_NOT_FOUND"
+		return 1
+	fi
+
+	local units="box mysql docker nginx unbound${extra_units}"
+	local probe="${CLOUDRON_HEALTH_PROBE//__UNITS__/$units}"
+	local out
+	if ! out=$(ssh -p "$ssh_port" -o BatchMode=yes -o ConnectTimeout=15 "root@${ip}" "$probe" 2>/dev/null); then
+		out=""
+	fi
+
+	local findings="[]"
+	_hf_add() {
+		local sev="$1" check="$2" msg="$3"
+		findings=$(jq -c --arg s "$sev" --arg c "$check" --arg m "$msg" '. + [{severity:$s,check:$c,message:$m}]' <<<"$findings")
+		return 0
+	}
+	_hf_val() {
+		local key="$1"
+		local line
+		line=$(printf '%s\n' "$out" | grep -m1 "^${key}=" || true)
+		printf '%s' "${line#"${key}="}"
+		return 0
+	}
+
+	if [[ -z "$out" ]]; then
+		_hf_add critical connectivity "SSH probe failed or returned nothing"
+	else
+		local u state sev
+		for u in $units; do
+			state=$(_hf_val "unit.$u")
+			[[ "$state" == "active" ]] && continue
+			sev=critical
+			[[ "$u" == "unbound" ]] && sev=warn
+			[[ " ${extra_units} " == *" $u "* ]] && sev=critical
+			_hf_add "$sev" "unit:$u" "systemctl is-active reports '${state:-unknown}'"
+		done
+		local failed disk dpkg_out dbm svc bage ver
+		failed=$(_hf_val failed_units)
+		[[ -n "$failed" ]] && _hf_add warn systemd-failed "Failed units: $failed"
+		disk=$(_hf_val disk_pct)
+		if [[ ! "$disk" =~ ^[0-9]+$ ]]; then
+			_hf_add warn disk "Could not read root filesystem usage"
+		elif ((disk >= disk_crit)); then
+			_hf_add critical disk "Root filesystem ${disk}% used (critical >= ${disk_crit}%)"
+		elif ((disk >= disk_warn)); then
+			_hf_add warn disk "Root filesystem ${disk}% used (warn >= ${disk_warn}%)"
+		fi
+		dpkg_out=$(_hf_val dpkg_audit)
+		[[ -n "${dpkg_out// /}" ]] && _hf_add warn dpkg "dpkg --audit reports half-configured packages: ${dpkg_out}"
+		dbm=$(_hf_val db_migrations_rc)
+		[[ "$dbm" != "0" ]] && _hf_add warn db-migrations "cloudron-support --check-db-migrations result: ${dbm:-unknown}"
+		svc=$(_hf_val services_rc)
+		[[ "$svc" != "0" ]] && _hf_add warn services "cloudron-support --check-services result: ${svc:-unknown}"
+		bage=$(_hf_val backup_age_hours)
+		if [[ ! "$bage" =~ ^-?[0-9]+$ || "$bage" == "-1" ]]; then
+			_hf_add critical backup "No successful backup found or backups unreadable"
+		elif ((bage > backup_max)); then
+			_hf_add critical backup "Newest successful backup is ${bage}h old (max ${backup_max}h)"
+		fi
+		ver=$(_hf_val api_version)
+		[[ -z "$ver" ]] && _hf_add critical api "Local /api/v1/cloudron/status returned no version"
+	fi
+
+	local crit warn status exit_code=0
+	crit=$(jq '[.[] | select(.severity=="critical")] | length' <<<"$findings")
+	warn=$(jq '[.[] | select(.severity=="warn")] | length' <<<"$findings")
+	status=ok
+	((warn > 0)) && status=warn
+	if ((crit > 0)); then
+		status=critical
+		exit_code=2
+	fi
+
+	if [[ "$format" == "text" ]]; then
+		print_info "Cloudron health for $server: $status ($crit critical, $warn warn)"
+		jq -r '.[] | "  [\(.severity)] \(.check): \(.message)"' <<<"$findings"
+	else
+		jq -n --arg s "$server" --arg st "$status" --argjson f "$findings" \
+			'{server:$s,status:$st,findings:$f}'
+	fi
+	return "$exit_code"
+}
+
 # Assign positional parameters to local variables
 # Main function
 main() {
@@ -481,6 +621,10 @@ main() {
 	"wait-ready")
 		wait_ready "$param2" "$param3" "${4:-300}"
 		;;
+	"health" | "fleet-health")
+		shift || true
+		health_check "$@"
+		;;
 	"help" | "-h" | "--help" | "")
 		echo "Cloudron Helper Script"
 		echo "$USAGE_COMMAND_OPTIONS"
@@ -497,6 +641,8 @@ main() {
 		echo "  install-app [server] [id] [sub] [dom]   - Install app (domain optional)"
 		echo "  uninstall-app [server] [app-id]         - Uninstall app"
 		echo "  wait-ready [server] [app-id] [timeout]  - Wait for app to be ready"
+		echo "  health [server] [--format json|text] [--backup-max-hours N] [--disk-warn N] [--disk-crit N] [--extra-unit U]"
+		echo "                                          - Fleet health; exit 2 on critical findings"
 		echo "  help                          - $HELP_SHOW_MESSAGE"
 		echo ""
 		echo "Examples:"

@@ -265,6 +265,28 @@ cloudron-helper.sh users production
 cloudron-helper.sh add-user production newuser@domain.com
 ```
 
+## Fleet Health Check
+
+A Cloudron host can have `box`/`mysql` failed for weeks while the mail container runs and the dashboard serves an nginx error page. `health` probes each server over SSH and reports JSON:
+
+```bash
+cloudron-helper.sh health production                 # JSON, exit 0 ok/warn, 2 critical, 1 usage/config error
+cloudron-helper.sh health production --format text --backup-max-hours 36 --disk-warn 80
+cloudron-helper.sh health production --extra-unit cron   # drill: a stopped unit name forces a critical exit
+```
+
+Checks: `systemctl is-active` for box/mysql/docker/nginx/unbound plus `systemctl --failed`; root disk (warn 85%, critical 95%); `dpkg --audit` (warn); `cloudron-support --check-db-migrations` / `--check-services` (warn); newest `normal` backup age (critical above `--backup-max-hours`, default 48); local `/api/v1/cloudron/status` returns a version. Output never includes credentials.
+
+Manual drill: in a maintenance window `systemctl stop box`, confirm exit 2, then `systemctl start box`.
+
+Routine example (`TODO.md`, see `reference/routines.md`):
+
+```text
+- [x] r950 Cloudron fleet health repeat:daily(@06:00) ~2m run:scripts/cloudron-helper.sh health production
+```
+
+Complement, not replacement: add an external HTTP monitor on `https://my.<domain>/api/v1/cloudron/status` expecting JSON with a `version` field; an nginx error page then counts as down.
+
 ## What's New in 9.1
 
 Source: [forum.cloudron.io/topic/14976](https://forum.cloudron.io/topic/14976/what-s-coming-in-9-1) (released to unstable 2026-03-01)
