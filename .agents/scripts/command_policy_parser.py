@@ -65,6 +65,10 @@ def _validate_shell_character(
 def _validate_unquoted_character(
     command: str, index: int, char: str, next_char: str
 ) -> None:
+    brace_reason = (
+        "unquoted braces are unsupported (brace expansion or grouping); "
+        "quote literal braces such as '@{u}' or 'repos/{owner}/{repo}'"
+    )
     invalid = {
         "`": "dynamic shell expansion is unsupported",
         "$": "dynamic shell expansion is unsupported",
@@ -72,8 +76,8 @@ def _validate_unquoted_character(
         ">": "shell redirection is unsupported",
         "(": "shell grouping and subshell syntax are unsupported",
         ")": "shell grouping and subshell syntax are unsupported",
-        "{": "shell grouping and subshell syntax are unsupported",
-        "}": "shell grouping and subshell syntax are unsupported",
+        "{": brace_reason,
+        "}": brace_reason,
         "*": "unquoted shell glob syntax is unsupported",
         "[": "unquoted shell glob syntax is unsupported",
     }
