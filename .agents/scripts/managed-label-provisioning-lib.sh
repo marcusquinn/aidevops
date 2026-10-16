@@ -24,13 +24,21 @@ _MANAGED_APPROVAL_HOLD_LABEL_SPECS=(
 	"needs-maintainer-review" "Requires maintainer approval before automated dispatch" "E4007C"
 )
 
+_MANAGED_AUTO_DISPATCH_LABEL_SPECS=(
+	"auto-dispatch" "Eligible for autonomous worker dispatch" "0E8A16"
+)
+
 _MANAGED_APPROVAL_ISSUE_LABEL_SPECS=(
 	"${_MANAGED_APPROVAL_HOLD_LABEL_SPECS[@]}"
-	"auto-dispatch" "Eligible for autonomous worker dispatch" "0E8A16"
+	"${_MANAGED_AUTO_DISPATCH_LABEL_SPECS[@]}"
 	"no-auto-dispatch" "Opt-out: block all auto-dispatch on this issue" "EDEDED"
 )
 
 _MANAGED_DEPENDABOT_INTAKE_LABEL_SPECS=(
+	"${_MANAGED_AUTO_DISPATCH_LABEL_SPECS[@]}"
+	# Reuse the origin:worker entry, without provisioning unrelated origins.
+	"${_MANAGED_ORIGIN_LABEL_SPECS[@]:0:3}"
+	"tier:standard" "Standard workload: implementation, bug fixes, refactors" "1D76DB"
 	"dependencies" "Pull requests that update a dependency file" "0366D6"
 )
 

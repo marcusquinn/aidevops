@@ -134,7 +134,9 @@ gh_create_issue() {
 	done
 	[[ -n "$body_file" && -f "$body_file" ]] || return 1
 	if [[ "$CREATE_ISSUE_FAIL" -eq 1 ]]; then
-		printf 'could not add label: dependencies not found\nsecond line\n'
+		printf '  [INFO] auto-dispatch label present; skipping self-assignment per t2157\n'
+		printf 'could not add label: tier:standard not found\n\n'
+		printf '  [INFO] wrapper cleanup complete\n'
 		return 1
 	fi
 	cp "$body_file" "${TEST_ROOT}/created-body"
@@ -194,18 +196,21 @@ test_provisions_missing_dependencies_label() {
 	OPEN_ISSUES_JSON="[]"
 	CLOSED_ISSUES_JSON="[]"
 	AUTHENTIC=1
-	LABEL_SNAPSHOT="origin:worker"
+	LABEL_SNAPSHOT=""
 	LABEL_CREATE_FAIL=0
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"
 	[[ -f "${TEST_ROOT}/create-args" ]] || return 1
 	assert_file_contains "missing dependencies label is created once" "${TEST_ROOT}/label-create-calls" "owner/repo dependencies"
-	[[ "$(wc -l <"${TEST_ROOT}/label-create-calls" | tr -d ' ')" == "1" ]] || return 1
+	assert_file_contains "missing standard tier uses canonical colour" "${TEST_ROOT}/label-create-calls" "owner/repo tier:standard Standard workload: implementation, bug fixes, refactors 1D76DB"
+	assert_file_contains "missing dispatch label is created" "${TEST_ROOT}/label-create-calls" "owner/repo auto-dispatch"
+	assert_file_contains "missing worker origin is created" "${TEST_ROOT}/label-create-calls" "owner/repo origin:worker"
+	[[ "$(wc -l <"${TEST_ROOT}/label-create-calls" | tr -d ' ')" == "4" ]] || return 1
 	return 0
 }
 
 test_existing_dependencies_label_skips_create() {
 	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/label-create-calls"
-	LABEL_SNAPSHOT=$'origin:worker\ndependencies'
+	LABEL_SNAPSHOT=$'origin:worker\ndependencies\nauto-dispatch\ntier:standard'
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"
 	[[ -f "${TEST_ROOT}/create-args" && ! -e "${TEST_ROOT}/label-create-calls" ]]
 	return $?
@@ -220,7 +225,7 @@ test_label_provisioning_failure_creates_no_issue() {
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
 	LABEL_CREATE_FAIL=0
 	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" ]] || return 1
-	assert_file_contains "label failure is logged" "$LOGFILE" "dependencies label unavailable"
+	assert_file_contains "label failure is logged" "$LOGFILE" "intake labels unavailable"
 	# Lock must be released: a subsequent route succeeds.
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"
 	[[ -f "${TEST_ROOT}/create-args" ]]
@@ -235,8 +240,8 @@ test_create_failure_logs_reason() {
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
 	CREATE_ISSUE_FAIL=0
 	[[ "$route_rc" -ne 0 ]] || return 1
-	assert_file_contains "create failure log has one-line reason" "$LOGFILE" "worker issue creation failed: could not add label: dependencies not found"
-	if grep -qF "second line" "$LOGFILE"; then
+	assert_file_contains "create failure log has gh error instead of INFO" "$LOGFILE" "worker issue creation failed: could not add label: tier:standard not found"
+	if grep -qF "[INFO]" "$LOGFILE"; then
 		return 1
 	fi
 	return 0
