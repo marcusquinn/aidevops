@@ -1502,6 +1502,47 @@ _worktree_guard_path_is_usable() {
 # Returns 0 for complete no-match, 2 for degraded no-match (recoverable path
 # required), and 1 for every hard refusal or unusable snapshot.
 # =============================================================================
+worktree_managed_lifetime_proof() {
+	local wt_path="$1"
+	shift
+	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
+	[[ -f "$helper" ]] || return 1
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" proof "$wt_path" "$@" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+worktree_managed_require_removal_proof() {
+	local wt_path="$1"
+	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
+	local managed_status=0
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
+	[[ "$managed_status" -ne 3 ]] || return 0
+	# Even a complete negative CWD scan cannot replace managed descendants.
+	worktree_managed_lifetime_proof "$wt_path" || return 1
+	return 0
+}
+
+worktree_managed_prepare_removal() {
+	local wt_path="$1"
+	local branch="$2"
+	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
+	local managed_status=0
+	# Only confirmed absence uses legacy guards; unavailable evidence refuses.
+	[[ -f "$helper" ]] || return 1
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
+	[[ "$managed_status" -ne 3 ]] || return 0
+	[[ "$managed_status" -eq 0 ]] || return 1
+	worktree_managed_lifetime_proof "$wt_path" && return 0
+	declare -F claim_worktree_ownership >/dev/null 2>&1 || return 1
+	claim_worktree_ownership "$wt_path" "$branch" --owner-pid "$$" \
+		--session "cleanup:$$" --task worktree-removal >/dev/null 2>&1 || return 1
+	if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" seal "$wt_path"; then
+		unregister_worktree_if_owner_contract "$wt_path" "$$" "cleanup:$$" worktree-removal >/dev/null 2>&1 || true
+		return 1
+	fi
+	return 0
+}
+
 worktree_removal_guard() {
 	local wt_path="$1"
 	local caller="$2"
@@ -1580,6 +1621,12 @@ worktree_removal_guard() {
 		return 1
 	fi
 	if [[ "$cwd_match_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]]; then
+		# Only a sealed, explicitly enrolled Pulse generation can replace the
+		# unknown part of a scan. Readable positive matches above always veto.
+		if worktree_managed_lifetime_proof "$wt_path_real"; then
+			WORKTREE_REMOVAL_GUARD_VISIBILITY="managed-lifetime"
+			return 0
+		fi
 		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
 		WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
@@ -1636,6 +1683,7 @@ _worktree_remove_with_native_git() {
 		_worktree_log_git_refusal "$wt_path" "$caller" "$_WT_GIT_STATE_UNREADABLE" "$context"
 		return 1
 	fi
+	worktree_managed_require_removal_proof "$wt_path_real" || return 1
 	if [[ -n "$archive_path" ]] && ! _worktree_archive_source_matches "$wt_path" "$archive_path"; then
 		_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
 		return 1

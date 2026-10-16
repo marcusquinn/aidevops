@@ -201,6 +201,19 @@ _dlw_exec_systemd_user_service() {
 
 	local unit_name=""
 	unit_name=$(_dlw_systemd_unit_name "$unit_prefix" "$issue_number")
+	local -a lifetime_properties=(--collect)
+	if [[ "${_DLW_MANAGED_WORKTREE:-0}" == "1" ]]; then
+		local generation_suffix=""
+		generation_suffix=$(python3 -c 'import uuid; print(uuid.uuid4().hex)') || return 1
+		unit_name="${unit_name}-${generation_suffix}"
+		# Retain exited units until the cleanup reader durably records quiescence.
+		# A wrapper exit alone is not a descendant-lifetime receipt.
+		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" reserve "$_DLW_WORKTREE_PATH" "$unit_name" || return 1
+		lifetime_properties=(--property=Type=exec --property=ExitType=cgroup
+			--property=RemainAfterExit=yes --property=Restart=no --property=KillMode=control-group)
+		set -- env "WORKTREE_REGISTRY_DB=${WORKTREE_REGISTRY_DB:-${HOME}/.aidevops/.agent-workspace/worktree-registry.db}" \
+			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" bind-exec "$_DLW_WORKTREE_PATH" "$@"
+	fi
 	# Persist ownership before submission, including when the manager reply is
 	# lost. Failure to retain that identity must prevent an untracked launch.
 	printf 'Unit=%s\nLaunchState=submitting\n' "$unit_name" >"$state_file" || return 1
@@ -216,7 +229,7 @@ _dlw_exec_systemd_user_service() {
 		_dlw_systemd_child "$@"
 	'
 
-	if ! systemd-run --user --unit="$unit_name" --collect --quiet \
+	if ! systemd-run --user --unit="$unit_name" "${lifetime_properties[@]}" --quiet \
 		--description="aidevops worker ${issue_number:-unknown}" \
 		/usr/bin/env bash -lc "$runner_script" _ "$pid_file" "$worker_log" "$@" \
 		>/dev/null 2>>"$LOGFILE"; then

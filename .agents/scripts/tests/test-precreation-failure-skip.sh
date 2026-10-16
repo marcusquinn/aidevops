@@ -22,6 +22,10 @@
 
 set -uo pipefail
 
+# These mocked trees have no Git identity or lifecycle registry. Exercise the
+# detached compatibility route; native managed creation has its own real fixture.
+export AIDEVOPS_WORKER_BACKEND=detached
+
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
 
@@ -66,6 +70,10 @@ mkdir -p "$AIDEVOPS_TEMP_DIR"
 export LOGFILE="${TMP}/test-pulse.log"
 export SCRIPT_DIR="$TMP"
 export PULSE_STATS_FILE="${TMP}/pulse-stats.json"
+# These legacy fixtures have a readable registry with no managed enrollment.
+export WORKTREE_REGISTRY_DB="${TMP}/registry.db"
+python3 -c 'import sqlite3, sys; db = sqlite3.connect(sys.argv[1]); db.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, task_id TEXT, owner_session TEXT)"); db.close()' "$WORKTREE_REGISTRY_DB"
+cp "${SCRIPTS_DIR}/worktree-managed-lifetime.py" "${TMP}/worktree-managed-lifetime.py"
 
 # Seed pulse-stats.json with minimal valid structure
 printf '{"counters":{}}\n' >"$PULSE_STATS_FILE"

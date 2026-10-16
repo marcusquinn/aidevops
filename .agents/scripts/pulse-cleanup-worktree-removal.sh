@@ -223,6 +223,7 @@ _pc_thirdparty_candidate() {
 	[[ "$(git -C "$candidate" rev-parse HEAD 2>/dev/null)" == "$head" &&
 		"$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)" == "$snapshot" ]] || return 1
 	worktree_removal_guard "$candidate" "$_WTAR_PC_CALLER" 'thirdparty-cleanup' || return 1
+	worktree_managed_require_removal_proof "$candidate" || return 1
 	git -C "$canonical" worktree remove --force "$candidate" 2>>"${LOGFILE:-/dev/null}" || return 1
 	[[ -n "$archive" ]] && printf 'archived-removed\n' || printf 'removed\n'
 	return 0
@@ -403,6 +404,7 @@ _pc_remove_local_commit_worktree_preserving_branch() {
 	local guard_status=0
 
 	[[ -n "$rp_age" && -n "$wt_path_age" ]] || return 1
+	worktree_managed_prepare_removal "$wt_path_age" "$wt_branch_age" || return 1
 	if worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "local-commits-branch-preserved"; then
 		guard_status=0
 	else
@@ -520,6 +522,7 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 			"$policy_reason" "$_PC_REMOVAL_SKIPPED" "$audit_context"
 		return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	fi
+	worktree_managed_prepare_removal "$wt_path_age" "$wt_branch_age" || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	if ! archive_dir=$(_pc_archive_worktree_compactly "$rp_age" "$wt_path_age" \
 		"$target_number" "$repo_slug_age" "$archive_reason"); then
 		CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$((${CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT:-0} + 1))
@@ -1221,6 +1224,7 @@ _pc_permanently_remove_eligible_orphan() {
 	local repo_name_age="$7"
 	local audit_context="$8"
 
+	worktree_managed_prepare_removal "$wt_path_age" "$wt_branch_age" || return 1
 	echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
 	if [[ "$reason" == *"crashed worker"* && -n "$wt_branch_age" && -n "$repo_slug_age" ]]; then
 		_record_orphan_crash_classification "$wt_branch_age" "$dirty_count" "$repo_slug_age"
@@ -1274,6 +1278,20 @@ _pc_read_worktree_status_or_skip() {
 #   $6 - main_branch:   name of the default branch (e.g. "main")
 # Returns: 0 if worktree was removed, 1 if skipped
 #######################################
+_pc_classify_removal_visibility() {
+	local wt_path="$1" wt_branch="$2" now_epoch="$3"
+	local guard_status=0
+	worktree_removal_guard "$wt_path" "$_WTAR_PC_CALLER" "$_PC_REASON_AGE_ELIGIBLE" || guard_status=$?
+	[[ "$guard_status" -ne 0 ]] || return 0
+	[[ "$guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]] || return 1
+	# Classification must not seal an open-PR tree just because its worker ended.
+	if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-managed-lifetime.py" ready "$wt_path" >/dev/null 2>&1; then
+		_pcdo_quarantine_degraded_worktree "$wt_path" "$wt_branch" "$now_epoch" || true
+		return 1
+	fi
+	return 0
+}
+
 _cleanup_single_worktree() {
 	local rp_age="$1"
 	local wt_path_age="$2"
@@ -1299,20 +1317,7 @@ _cleanup_single_worktree() {
 	if [[ -n "$status_out" ]]; then
 		dirty_count=$(printf '%s\n' "$status_out" | wc -l | tr -d ' ') || return 1
 	fi
-	local removal_guard_status=0
-	if worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "$_PC_REASON_AGE_ELIGIBLE"; then
-		removal_guard_status=0
-	else
-		removal_guard_status=$?
-	fi
-	if [[ "$removal_guard_status" -ne 0 &&
-		"$removal_guard_status" -ne "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
-		return 1
-	fi
-	if [[ "$removal_guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
-		_pcdo_quarantine_degraded_worktree "$wt_path_age" "$wt_branch_age" "$now_epoch" || true
-		return 1
-	fi
+	_pc_classify_removal_visibility "$wt_path_age" "$wt_branch_age" "$now_epoch" || return 1
 	_pcdo_clear_quarantine_state "$wt_path_age"
 
 	local repo_name_age

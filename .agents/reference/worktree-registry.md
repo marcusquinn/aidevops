@@ -13,6 +13,7 @@ worktree is unused, and a successful read is not permission to archive or delete
 | `scripts/shared-worktree-registry-platform.py` | Path normalization, conservative PID absence and process-time comparison |
 | `scripts/worktree-owner-contract-remove.py` | Existing exact-owner transaction around native Git removal |
 | `scripts/worktree-process-policy.sh` and `worktree-process-providers.sh` | Platform selection and process observations, separate from registry queries |
+| `scripts/worktree-managed-lifetime.py` | Pulse creation provenance, user-systemd admission and durable descendant-quiescence evidence in the same SQLite database |
 | `scripts/pulse-cleanup-worktree-removal.sh` | Cleanup policy; retains its uncertainty and ownership guards |
 
 Do not add another registry, a service daemon, or a generic persistence layer for
@@ -72,9 +73,42 @@ removal entry point must enforce the same scope check before mutation. Provenanc
 is necessary but not sufficient: active work and uncertain descendant state still
 block cleanup of Pulse-owned trees.
 
-This boundary is the implementation target; the current reader/continuation
-changes do not yet add persistent creator provenance or enforce it across all
-Pulse cleanup paths.
+New Linux systemd-dispatched worktrees record persistent provenance. Existing
+trees are not enrolled retroactively; their existing visibility and ownership
+guards remain in force. This does not establish provenance for every historical
+Pulse cleanup path or authorize removal of user-created trees.
+
+### Managed Linux lifetime contract
+
+`worktree-managed-lifetime.py` stores generation, source/admin inode identities,
+boot ID, unit name and invocation in `worktree_managed_lifetimes` beside the
+existing owner table. Creation enrolls before launch; reservation and the in-unit
+binder commit under `BEGIN IMMEDIATE` before the worker executes. An enrolled
+generation cannot switch to the detached backend. Missing/corrupt evidence is a
+refusal; status `3` means confirmed absence, not a read failure.
+
+The native user service uses `ExitType=cgroup`, `Restart=no` and
+`RemainAfterExit=yes`. Cleanup first acquires existing ownership, then seals
+admission and records quiescence of the whole cgroup. SQLite triggers reject new
+worker claims after sealing but permit exact cleanup retry contracts. A delayed
+unbound launch cannot execute work once its admission has been cancelled.
+Readable positive CWD matches still veto removal; only matching sealed evidence
+can replace the unknown portion of a degraded process scan. Archive identity,
+content, publication and retention guards are not bypassed.
+
+This is a **cooperative** contract: managed workers must not transfer work or
+worktree access to an external service, container, separate systemd unit, or
+another shell outside their cgroup. Creation skips automatic external preview
+services. Arbitrary external same-user processes are not proven absent. Missing
+units or reboot before recording quiescence remain unknown. Retained exited units
+are not automatically stopped by name: systemd has no invocation-conditional
+stop, and a check followed by stop could target a replacement. They contain no
+remaining worker processes; automatic unit-object retirement is not implemented.
+
+Run `AIDEVOPS_TEST_SYSTEMD=1 python3 scripts/tests/test-worktree-managed-lifetime.py`
+on a host with a working user-systemd manager. The opt-in fixture exercises the
+production launch wrapper, a surviving `setsid` child, the removal guard and
+archive/native removal while retaining an unsaved file. No root is required.
 
 ## Lifecycle audit and removal prerequisites
 

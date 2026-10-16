@@ -635,7 +635,7 @@ _worktree_recovery_plan_claim_state() {
 
 _worktree_recovery_plan_process_state() {
 	local identity_json="$1"
-	local source_path="" archive_path="" bucket_path="" snapshot=""
+	local source_path="" archive_path="" bucket_path="" snapshot="" source_inode=""
 	local snapshot_rc=0
 
 	source_path=$(printf '%s\n' "$identity_json" | jq -r '.source_path') || return 1
@@ -651,6 +651,12 @@ _worktree_recovery_plan_process_state() {
 		_worktree_cwd_snapshot_contains_path "$bucket_path" "$bucket_path" "$snapshot"; then
 		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_ACTIVE"
 	elif [[ "$snapshot_rc" -eq 0 ]]; then
+		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR"
+	elif [[ "$snapshot_rc" -eq 2 ]] &&
+		source_inode=$(printf '%s\n' "$identity_json" | jq -er '.source_inode') &&
+		worktree_managed_lifetime_proof "$source_path" "$source_inode"; then
+		# The archive is still subject to content, publication, identity and
+		# source-removal checks. This replaces only unrelated unreadable CWDs.
 		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR"
 	else
 		printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"

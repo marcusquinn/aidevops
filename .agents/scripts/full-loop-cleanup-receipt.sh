@@ -501,6 +501,9 @@ _full_loop_receipt_lock_acquire() {
 			IFS= read -r self_pid <"${lock_dir}/owner" || self_pid=""
 			[[ "$self_pid" =~ ^[0-9]+$ ]] || self_pid="$$"
 			printf '%s %s\n' "$self_pid" "$(_full_loop_receipt_pid_start "$self_pid")" >"${lock_dir}/owner" || {
+				# ENOSPC can leave an empty owner file. rmdir alone cannot remove
+				# that file, permanently blocking subsequent cleanup leases.
+				rm -f "${lock_dir}/owner" 2>/dev/null || true
 				rmdir "$lock_dir" 2>/dev/null || true
 				_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-owner-write-failed"
 				return 1

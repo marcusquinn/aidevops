@@ -200,6 +200,18 @@ _clean_acquire_removal_lease() {
 	claim_worktree_ownership "$wt_path" "$wt_branch" \
 		--owner-pid "$$" --session "$_WT_CLEAN_REMOVAL_LEASE_SESSION" \
 		--task "$_WT_CLEAN_REMOVAL_LEASE_TASK" >/dev/null 2>&1 || return 1
+	local lifetime_helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
+	local managed_status=0
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
+	if [[ "$managed_status" -eq 0 ]]; then
+		if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" seal "$wt_path"; then
+			_clean_release_removal_lease "$wt_path" || true
+			return 1
+		fi
+	elif [[ "$managed_status" -ne 3 ]]; then
+		_clean_release_removal_lease "$wt_path" || true
+		return 1
+	fi
 	local receipt_path=""
 	if declare -F full_loop_cleanup_receipt_for_worktree >/dev/null 2>&1; then
 		receipt_path=$(full_loop_cleanup_receipt_for_worktree "$wt_path" 2>/dev/null || true)

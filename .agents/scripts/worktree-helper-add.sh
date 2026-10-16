@@ -28,6 +28,7 @@
 # Include guard
 [[ -n "${_WORKTREE_ADD_LIB_LOADED:-}" ]] && return 0
 _WORKTREE_ADD_LIB_LOADED=1
+_WORKTREE_ADD_CGROUP_MANAGER="pulse-cgroup-v1"
 
 # GH#22238: node_modules restore is useful for interactive worktrees but can
 # saturate CPU when many pulse precreations run concurrently. Serialize the
@@ -595,6 +596,8 @@ _bootstrap_worktree_js_deps() {
 	local helper="${SCRIPT_DIR}/worktree-js-readiness-helper.sh"
 	local lock_dir="" output="" line="" rc=0
 
+	# Defer installs/lifecycle scripts until the worker has entered its cgroup.
+	[[ "${AIDEVOPS_WORKTREE_MANAGER:-}" != "$_WORKTREE_ADD_CGROUP_MANAGER" ]] || return 0
 	[[ "$AIDEVOPS_WORKTREE_JS_BOOTSTRAP_ENABLED" == "1" ]] || return 0
 	if _worktree_is_aidevops_js_repo "$wt_path"; then
 		_bootstrap_aidevops_worktree_js_deps "$wt_path"
@@ -1498,6 +1501,15 @@ _cmd_add_prepare_worktree_deps() {
 	return 0
 }
 
+_cmd_add_preview_routes() {
+	local branch="$1"
+	# Managed creation must not start preview services outside its lifetime cgroup.
+	[[ "${AIDEVOPS_WORKTREE_MANAGER:-}" != "$_WORKTREE_ADD_CGROUP_MANAGER" ]] || return 0
+	localdev_auto_branch "$branch"
+	preview_proxy_auto_allocate "$branch"
+	return 0
+}
+
 # --- cmd_add ---
 
 cmd_add() {
@@ -1566,6 +1578,10 @@ cmd_add() {
 	# Register ownership before retiring historical cleanup receipts. The
 	# transaction helper verifies the exact row and compensates on failure.
 	_cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1
+	if [[ "${AIDEVOPS_WORKTREE_MANAGER:-}" == "$_WORKTREE_ADD_CGROUP_MANAGER" ]]; then
+		# Enroll only after native creation succeeds, before any worker launch.
+		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" enroll "$path" || return 1
+	fi
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
 	_cmd_add_prepare_worktree_deps "$path"
@@ -1589,11 +1605,7 @@ cmd_add() {
 	_ADD_COLLISION_PATH="$path"
 	_cmd_add_print_collision_provenance
 
-	# Localdev integration (t1224.8): auto-create branch subdomain route
-	localdev_auto_branch "$branch"
-
-	# Preview proxy integration (GH#21560): allocate port + register proxy route
-	preview_proxy_auto_allocate "$branch"
+	_cmd_add_preview_routes "$branch"
 
 	return 0
 }

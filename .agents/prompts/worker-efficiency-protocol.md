@@ -9,6 +9,11 @@ Maximise output per token. Compress prose, not results.
 expansion, grouping/subshell syntax, background execution, and unquoted globs.**
 Split blocked operations into separate calls and use file tools for persisted content.
 
+When `AIDEVOPS_MANAGED_WORKTREE=pulse-cgroup-v1`, keep all worktree processes
+inside the inherited cgroup: no handoff to external services, containers or
+separate systemd units. If required, report the unsupported handoff instead of
+escaping containment. See `reference/worktree-registry.md` for the lifetime contract.
+
 ## 1. Ship early, keep the audit trail intact
 
 - Start with `TodoWrite`: 3-7 subtasks, exactly one `in_progress`, last subtask `gh pr ready`.

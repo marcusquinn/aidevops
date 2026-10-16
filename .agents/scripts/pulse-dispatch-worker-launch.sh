@@ -28,6 +28,7 @@
 _PULSE_DISPATCH_WORKER_LAUNCH_LOADED=1
 readonly _DLW_STANDARD_TIER="standard"
 readonly _DLW_UNKNOWN_VALUE="unknown"
+readonly _DLW_SYSTEMD_BACKEND="systemd"
 
 _DLW_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 # shellcheck source=lib/descriptor-safe-log.sh
@@ -922,6 +923,7 @@ _dlw_reset_precreated_worktree_state() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	_DLW_MANAGED_WORKTREE=0
 	_DLW_PRECREATE_FAILURE_REASON=""
 	_DLW_REFUSING_OWNER_PID=""
 	_DLW_REFUSING_OWNER_START=""
@@ -940,6 +942,16 @@ _dlw_resume_existing_worktree() {
 	_DLW_WORKTREE_PATH="$worktree_path"
 	_DLW_WORKTREE_BRANCH="$branch"
 	_DLW_WORKTREE_REUSED=1
+	local managed_status=0
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" status "$worktree_path" >/dev/null 2>&1 || managed_status=$?
+	if [[ "$managed_status" -eq 0 ]]; then
+		# An enrolled generation must never silently switch to unmanaged launch.
+		[[ "$(_dlw_select_worker_backend)" == "$_DLW_SYSTEMD_BACKEND" ]] || return 1
+		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" ready "$worktree_path" >/dev/null || return 1
+		_DLW_MANAGED_WORKTREE=1
+	elif [[ "$managed_status" -ne 3 ]]; then
+		return 1
+	fi
 	local has_continuation_owner=0 owner_snapshot_status=0
 	_dlw_capture_reused_worktree_owner "$issue_number" "$worktree_path" || owner_snapshot_status=$?
 	if [[ "$owner_snapshot_status" -eq 0 ]]; then
@@ -998,11 +1010,17 @@ _dlw_precreate_worktree() {
 	#   3. Reuse check above on subsequent dispatches for the same issue
 	# Without it, orphaned worktrees are untraceable and accumulate (57
 	# observed on one machine in 24h, 2.2 GB wasted).
-	local _branch _wt_output=""
+	local _branch _wt_output="" _managed_create=""
+	[[ "$(_dlw_select_worker_backend)" != "$_DLW_SYSTEMD_BACKEND" ]] || _managed_create="pulse-cgroup-v1"
 	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
+	# Enrollment is only permitted for this creation, never an existing branch.
+	if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$_branch"; then
+		return 1
+	fi
 	# Run from repo_path (pulse cwd is typically /); GH#34233: a resolved seed SHA is the branch base.
 	_wt_output=$(cd "$repo_path" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
+		AIDEVOPS_WORKTREE_MANAGER="$_managed_create" \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
 		AIDEVOPS_WORKTREE_BASE="${_DLW_SEED_OID:-${AIDEVOPS_WORKTREE_BASE:-}}" \
@@ -1029,6 +1047,10 @@ _dlw_precreate_worktree() {
 		else
 			echo "[dispatch_with_dedup] Worktree registry helper unavailable for #${issue_number}; dispatch will be skipped" >>"$LOGFILE"
 			return 1
+		fi
+		if [[ -n "$_managed_create" ]]; then
+			WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" status "$_DLW_WORKTREE_PATH" >/dev/null || return 1
+			_DLW_MANAGED_WORKTREE=1
 		fi
 		# Restore gitignored deps (node_modules) that git doesn't track
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
@@ -1285,7 +1307,7 @@ _dlw_exec_detached() {
 
 	local worker_pid backend=""
 	backend=$(_dlw_select_worker_backend) || return 1
-	if [[ "$backend" == "systemd" ]]; then
+	if [[ "$backend" == "$_DLW_SYSTEMD_BACKEND" ]]; then
 		worker_pid=$(_dlw_launch_systemd_worker "$worker_log" "$issue_number" "${worker_command[@]}") || return 1
 	fi
 
