@@ -420,6 +420,12 @@ test("V1 MCP enablement maps to V2 disabled semantics", () => {
     environment: { MODE: "test" },
     disabled: true,
   });
+  // GH#34785: V2 rejects a scalar timeout; map it to the execution budget.
+  assert.deepEqual(toV2McpConfig({ type: "local", command: ["x"], timeout: 900_000 }).timeout,
+    { execution: 900_000 });
+  assert.equal("timeout" in toV2McpConfig({ type: "local", command: ["x"] }), false);
+  const structured = { startup: 10_000, catalog: 20_000, execution: 900_000 };
+  assert.deepEqual(toV2McpConfig({ type: "local", command: ["x"], timeout: structured }).timeout, structured);
 });
 
 test("V2 MCP toggles reuse one transform and apply the latest override", async () => {
@@ -446,6 +452,11 @@ test("V2 MCP toggles reuse one transform and apply the latest override", async (
   };
   transforms[0](editor);
   assert.equal(values.get("posthog").disabled, true);
+  // Every managed server must match the V2 Mcp.TimeoutConfig object shape.
+  for (const [name, server] of values) {
+    if (server.timeout !== undefined) assert.equal(typeof server.timeout, "object", `${name} timeout`);
+  }
+  assert.deepEqual(values.get("seo-utils").timeout, { execution: 900_000 });
 
   await runtime.client.connect({ path: { name: "posthog" } });
   transforms[0](editor);

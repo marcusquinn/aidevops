@@ -5,10 +5,15 @@ import { createMcpSessionRuntime, registerMcpServers } from "./mcp-registry.mjs"
 import { captureLocalOnlyMcpConfig } from "./local-only-policy.mjs";
 
 export function toV2McpConfig(config) {
-  const { enabled, env, ...rest } = config;
+  const { enabled, env, timeout, ...rest } = config;
   return {
     ...rest,
     ...(env ? { environment: env } : {}),
+    // V1 `timeout` is a scalar per-tool ms budget; V2 requires the
+    // Mcp.TimeoutConfig object, and a scalar disables the plugin (GH#34785).
+    ...(timeout !== undefined ? {
+      timeout: typeof timeout === "number" ? { execution: timeout } : timeout,
+    } : {}),
     disabled: enabled === false,
   };
 }
