@@ -41,6 +41,27 @@ run_test() {
 	return 0
 }
 
+# Bearer-token connectivity check (GH#34917). The token is read from the named
+# variable and piped to curl on stdin (-H @-) by the printf builtin, so it never
+# appears in any process argv. -f makes HTTP 4xx/5xx (e.g. a rejected key) fail.
+run_bearer_test() {
+	local test_name="$1"
+	local token_var="$2"
+	local url="$3"
+
+	((++total_tests))
+	print_info "Testing: $test_name"
+
+	if printf 'Authorization: Bearer %s\n' "${!token_var}" | curl -fsS -o /dev/null -H @- "$url" 2>/dev/null; then
+		print_success "$test_name: PASSED"
+		((++passed_tests))
+		return 0
+	fi
+	print_error "$test_name: FAILED"
+	((++failed_tests))
+	return 1
+}
+
 # Test Node.js and npm
 test_prerequisites() {
 	print_header "Testing Prerequisites"
@@ -117,15 +138,16 @@ test_api_connectivity() {
 
 	# Test Ahrefs API (env → credentials.sh → gopass aidevops/AHREFS_API_KEY, GH#34892)
 	if aidevops_load_secret AHREFS_API_KEY; then
-		run_test "Ahrefs API connectivity" "curl -s -H 'Authorization: Bearer $AHREFS_API_KEY' https://apiv2.ahrefs.com/v2/subscription_info"
+		run_bearer_test "Ahrefs API connectivity" AHREFS_API_KEY "https://apiv2.ahrefs.com/v2/subscription_info" || true
 		print_success "Ahrefs API key configured"
 	else
 		print_warning "Ahrefs API key not configured (AHREFS_API_KEY)"
 	fi
 
-	# Test Perplexity API
-	if [[ -n "${PERPLEXITY_API_KEY:-}" ]]; then
-		run_test "Perplexity API connectivity" "curl -s -H 'Authorization: Bearer $PERPLEXITY_API_KEY' https://api.perplexity.ai/chat/completions"
+	# Test Perplexity API (env → credentials.sh → gopass, GH#34917). GET on the
+	# authenticated async-request listing validates the key without generation.
+	if aidevops_load_secret PERPLEXITY_API_KEY; then
+		run_bearer_test "Perplexity API connectivity" PERPLEXITY_API_KEY "https://api.perplexity.ai/v1/async/sonar" || true
 		print_success "Perplexity API key configured"
 	else
 		print_warning "Perplexity API key not configured (PERPLEXITY_API_KEY)"
@@ -133,7 +155,7 @@ test_api_connectivity() {
 
 	# Test Cloudflare API
 	if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-		run_test "Cloudflare API connectivity" "curl -s -H 'Authorization: Bearer $CLOUDFLARE_API_TOKEN' https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+		run_bearer_test "Cloudflare API connectivity" CLOUDFLARE_API_TOKEN "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID" || true
 		print_success "Cloudflare API credentials configured"
 	else
 		test_cloudflare_registry_default
