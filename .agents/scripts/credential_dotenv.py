@@ -15,7 +15,8 @@ from credential_process import run
 
 REGISTRY = '.config/aidevops/repos.json'
 SKIP_DIRS = frozenset(('.git', 'node_modules', '.venv'))
-TEMPLATES = frozenset(('.env.example', '.env.sample', '.env.template'))
+# Committed templates (.env.example, .env.local.template, ...) are expected and skipped.
+TEMPLATE_SUFFIXES = ('.example', '.sample', '.template', '.dist')
 ASSIGNMENT = re.compile(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)')
 QUOTED = re.compile(r'''('[^']*'|"(?:\\.|[^"\\])*")\s*(?:#.*)?''')
 UNSAFE_BARE = re.compile(r'''[$`'"\x00]''')
@@ -54,7 +55,7 @@ def registered_roots(home):
 
 
 def is_env_name(name):
-    return (name == '.env' or name.startswith('.env.')) and name not in TEMPLATES
+    return (name == '.env' or name.startswith('.env.')) and not name.endswith(TEMPLATE_SUFFIXES)
 
 
 def walk_root(root, budget):
