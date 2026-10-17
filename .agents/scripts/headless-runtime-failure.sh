@@ -538,13 +538,29 @@ _hrff_post_claim_released_comment() {
 	return 1
 }
 
+#######################################
+# GH#34846: single decision for the post-release projection of a `blocked`
+# exit, shared by the observation's "Projected state:" line and the label edit.
+# The full runtime (named safe-edit path) holds verified blocked exits
+# (GH#34775); a runner-local capability gap without missing secret names stays
+# available for a capable runner (GH#34758). Legacy consumers clear to
+# available. Returns 0 when the exit projects status:blocked.
+#######################################
+_hrff_blocked_exit_holds() {
+	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
+	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||
+		-n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] || return 1
+	return 0
+}
+
 _hrff_prepare_terminal_blocker_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local machine_readable_part="$3"
+	local release_reason="${4:-blocked}"
 	local repo_path="${AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH:-}"
 	local blocker_fingerprint="${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}"
-	local issue_json="" comments_json="" task_revision="" mode=""
+	local issue_json="" comments_json="" task_revision="" mode="" projected_state="status:available"
 	_HRFF_TERMINAL_BLOCKER_MODE="normal"
 	_HRFF_TERMINAL_BLOCKER_FRAGMENT=""
 	_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=""
@@ -560,8 +576,11 @@ _hrff_prepare_terminal_blocker_release() {
 		terminal_blocker_release_mode "$comments_json" "$task_revision" "$blocker_fingerprint") || return 0
 	case "$mode" in
 	first)
+		if [[ "$release_reason" == blocked ]] && _hrff_blocked_exit_holds; then
+			projected_state="status:blocked"
+		fi
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$(terminal_blocker_observation_fragment \
-			"$task_revision" "$blocker_fingerprint" "$mode") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
+			"$task_revision" "$blocker_fingerprint" "$mode" "$projected_state") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
 		;;
 	circuit)
 		_HRFF_TERMINAL_BLOCKER_MODE="circuit"
@@ -640,11 +659,29 @@ _hrff_hold_terminal_blocker_circuit() {
 	return 0
 }
 
+#######################################
+# GH#34846: a held first observation of a revision-re-armed class has no
+# circuit, so queue it for the runner-local recovery owner, which returns the
+# issue to status:available once a relevant revision or trusted retry lands.
+# Call only after the observation release is persisted and projected.
+#######################################
+_hrff_enqueue_observation_recovery() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	[[ -n "${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}" ]] || return 0
+	declare -F terminal_blocker_rearms_on_revision >/dev/null 2>&1 || return 0
+	terminal_blocker_rearms_on_revision "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" || return 0
+	_hrff_blocked_exit_holds || return 0
+	_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
+	return 0
+}
+
 _hrff_handle_terminal_blocker_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local machine_readable_part="$3"
-	_hrff_prepare_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part"
+	local release_reason="${4:-blocked}"
+	_hrff_prepare_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" "$release_reason"
 	_hrff_apply_terminal_permission_hold "$issue_number" "$repo_slug" || return 11
 	case "${_HRFF_TERMINAL_BLOCKER_MODE:-normal}" in
 	circuit)
@@ -741,7 +778,7 @@ _release_dispatch_claim() {
 	case "$reason" in
 	blocked | push_policy_timeout | network_policy_timeout)
 		local terminal_blocker_rc=0
-		_hrff_handle_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" || terminal_blocker_rc=$?
+		_hrff_handle_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" "$reason" || terminal_blocker_rc=$?
 		[[ "$terminal_blocker_rc" -eq 10 ]] && return 0
 		[[ "$terminal_blocker_rc" -eq 11 ]] && return 1
 		terminal_blocker_fragment="${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}"
@@ -767,6 +804,7 @@ ${machine_readable_part}${terminal_blocker_fragment}
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
 	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" || return 1
+	[[ "$reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
 	return 0
 }
 
@@ -790,9 +828,7 @@ _hrff_project_post_release_state() {
 
 	# Older standalone consumers without safe-edit retain their existing cleanup;
 	# only the full runtime's named safe-edit path can produce verified provenance.
-	if [[ "$reason" == blocked ]] && declare -F gh_issue_edit_safe >/dev/null 2>&1 &&
-		[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||
-			-n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]]; then
+	if [[ "$reason" == blocked ]] && _hrff_blocked_exit_holds; then
 		_hrff_project_blocked_exit "$issue_number" "$repo_slug" "$runner_name" || return 1
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		return 0
