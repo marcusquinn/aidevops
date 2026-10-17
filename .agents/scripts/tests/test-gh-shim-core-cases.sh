@@ -495,6 +495,11 @@ elif [[ ! -s "$STUB_GH_LOG" ]]; then
 else
 	_fail "universal linked issue policy" "native call unexpectedly reached transport"
 fi
+if grep -qF 'sync-workflows' "$TMP/pr-linked-universal.err"; then
+	_fail "explicit scope diagnostic unchanged" "legacy remedy unexpectedly printed"
+else
+	_pass "explicit scope diagnostic unchanged"
+fi
 
 printf '%s\n' '<!-- aidevops:issue-first-pr:start -->' \
 	'Issue-first; include For #NNN.' \
@@ -508,6 +513,25 @@ elif [[ ! -s "$STUB_GH_LOG" ]] && grep -q 'scope is universal' "$TMP/pr-linked-a
 	_pass "ambiguous policy fails closed as universal"
 else
 	_fail "ambiguous linked issue policy" "native call or diagnostic mismatch"
+fi
+if grep -qF 'predates the scope marker' "$TMP/pr-linked-ambiguous.err" &&
+	grep -qF 'aidevops sync-workflows --workflow linked-issue-check --apply --repo example/policy-repo --issue <N>' "$TMP/pr-linked-ambiguous.err"; then
+	_pass "legacy managed block provides conditional policy refresh remedy"
+else
+	_fail "legacy managed block remedy" "missing reason or refresh command"
+fi
+
+printf '%s\n' 'Issue-first; include For #NNN.' >"$policy_repo/CONTRIBUTING.md"
+_reset_log
+if (cd "$policy_repo" && env STUB_GH_PERMISSION=write "$SHIM_RUN" pr create \
+	--repo example/policy-repo --title "plan: unmanaged prose" --body "Planning publication" \
+	2>"$TMP/pr-linked-prose.err"); then
+	_fail "unmanaged prose policy" "verified write actor unexpectedly passed"
+elif [[ ! -s "$STUB_GH_LOG" ]] && grep -q 'scope is universal' "$TMP/pr-linked-prose.err" &&
+	! grep -qF 'sync-workflows' "$TMP/pr-linked-prose.err"; then
+	_pass "unmanaged prose remains universal without legacy remedy"
+else
+	_fail "unmanaged prose policy" "native call or diagnostic mismatch"
 fi
 
 printf '%s\n' '<!-- aidevops:issue-first-pr:start -->' \
@@ -524,6 +548,11 @@ elif [[ ! -s "$STUB_GH_LOG" ]] && grep -q 'scope is universal' "$TMP/pr-linked-m
 	_pass "malformed structured scope overrides exemption and fails closed"
 else
 	_fail "malformed linked issue scope" "native call or diagnostic mismatch"
+fi
+if grep -qF 'sync-workflows' "$TMP/pr-linked-malformed.err"; then
+	_fail "malformed scope diagnostic unchanged" "legacy remedy unexpectedly printed"
+else
+	_pass "malformed scope diagnostic unchanged"
 fi
 
 _reset_log

@@ -383,6 +383,32 @@ _assert_contains "GH#27725 → maintainer-gate dry-run names selected workflow" 
 	"$OUT_12_MAINTAINER" '"detail":"refresh → .github/workflows/maintainer-gate.yml'
 rm -rf "$TMPDIR_12_MAINTAINER"
 
+# GH#34872: identify policy refresh separately from workflow-only drift.
+TMPDIR_POLICY="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_POLICY"
+for POLICY_CASE in legacy current; do
+	mkdir -p "$TMPDIR_POLICY/$POLICY_CASE/.github/workflows"
+	cp "$SCRIPT_DIR/../../templates/workflows/linked-issue-check-caller.yml" \
+		"$TMPDIR_POLICY/$POLICY_CASE/.github/workflows/linked-issue-check.yml"
+	printf '\n# workflow drift\n' >>"$TMPDIR_POLICY/$POLICY_CASE/.github/workflows/linked-issue-check.yml"
+	cp "$SCRIPT_DIR/../../templates/issue-first-pr-contributing.md" \
+		"$TMPDIR_POLICY/$POLICY_CASE/CONTRIBUTING.md"
+done
+# Remove only the scope declaration, matching the original managed rollout.
+grep -v 'aidevops:issue-first-pr:scope=' \
+	"$TMPDIR_POLICY/current/CONTRIBUTING.md" >"$TMPDIR_POLICY/legacy/CONTRIBUTING.md"
+_write_repos_json "$TMPDIR_POLICY" \
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_POLICY/legacy\",\"slug\":\"owner/policy-legacy\"},{\"path\":\"$TMPDIR_POLICY/current\",\"slug\":\"owner/policy-current\"}]}"
+OUT_POLICY=$(HOME="$TMPDIR_POLICY" bash "$HELPER" --workflow linked-issue-check --json 2>&1)
+_assert_exit "GH#34872 policy dry run succeeds" 0 "$?"
+DETAIL_LEGACY=$(printf '%s\n' "$OUT_POLICY" | jq -r 'select(.slug == "owner/policy-legacy") | .detail')
+DETAIL_CURRENT=$(printf '%s\n' "$OUT_POLICY" | jq -r 'select(.slug == "owner/policy-current") | .detail')
+_assert_contains "GH#34872 legacy block refresh is visible" "$DETAIL_LEGACY" \
+	'CONTRIBUTING.md (managed block refresh)'
+_assert_contains "GH#34872 current policy shows workflow-only drift" "$DETAIL_CURRENT" \
+	'refresh → .github/workflows/linked-issue-check.yml at ref'
+rm -rf "$TMPDIR_POLICY"
+
 # ─── Test 13: GH#24520 — apply renders configured reusable repo/ref ─────────
 TMPDIR_13="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_13"
