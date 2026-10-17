@@ -1548,6 +1548,8 @@ _migrate_outscraper_credentials() {
 		any(.[] | objects; has("OUTSCRAPER_API_KEY"))' "$config" >/dev/null 2>&1; then
 		return 0
 	fi
+	# Expand HOME in the MCP process at launch, not while writing its config.
+	# shellcheck disable=SC2016
 	local launcher='source "$HOME/.aidevops/agents/scripts/outscraper-credentials.sh" && outscraper_load_credentials && exec uv tool run --with '\''mcp<2'\'' outscraper-mcp-server'
 	local tmp_config
 	tmp_config=$(mktemp) || return 1
