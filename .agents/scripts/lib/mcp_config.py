@@ -12,6 +12,12 @@ import os
 import platform
 import sys
 
+from mcp_outscraper import (
+    LEGACY_OUTSCRAPER_UV_RUN,
+    OUTSCRAPER_UV_RUN,
+    register_outscraper as _register_outscraper,
+)
+
 
 # =============================================================================
 # MCP LOADING POLICY
@@ -37,10 +43,6 @@ PLAYWRITER_MCP_PACKAGE = 'playwriter@0.8.0'
 LEGACY_PLAYWRITER_MCP_PACKAGES = ('playwriter@latest', 'playwriter@0.5.0')
 # Playwriter >= 0.8.0 relays send usage telemetry unless opted out (GH#34549).
 PLAYWRITER_TELEMETRY_OPT_OUT = {'PLAYWRITER_TELEMETRY': '0', 'DO_NOT_TRACK': '1'}
-# outscraper-mcp-server 0.1.2 imports mcp.server.fastmcp, removed in mcp 2.x,
-# without constraining mcp (GH#34620). Drop the pin once upstream supports 2.x.
-OUTSCRAPER_UV_RUN = "uv tool run --with 'mcp<2' outscraper-mcp-server"
-LEGACY_OUTSCRAPER_UV_RUN = "uv tool run outscraper-mcp-server"
 
 
 def _is_generated_playwriter_command(command, packages):
@@ -118,50 +120,6 @@ def _register_playwriter(config, bun_path):
             _apply_playwriter_telemetry_opt_out(playwriter_config)
         playwriter_config['enabled'] = False
     config['tools']['playwriter_*'] = False
-
-
-def _is_generated_outscraper_command(command):
-    """Recognize previously generated binary and pinned/unpinned bash launchers."""
-    if not isinstance(command, list):
-        return False
-    if len(command) == 1 and isinstance(command[0], str):
-        return os.path.basename(command[0]) == 'outscraper-mcp-server'
-    if len(command) != 3:
-        return False
-    if command[:2] != ["bash", "-c"]:
-        return False
-    script = command[2]
-    suffixes = (" " + LEGACY_OUTSCRAPER_UV_RUN, " " + OUTSCRAPER_UV_RUN)
-    return isinstance(script, str) and script.endswith(suffixes)
-
-
-def _register_outscraper(config):
-    """Register outscraper MCP (business intelligence)."""
-    launcher = ["bash", "-c",
-                'source "$HOME/.aidevops/agents/scripts/outscraper-credentials.sh" && '
-                'outscraper_load_credentials && exec ' + OUTSCRAPER_UV_RUN]
-    if 'outscraper' not in config['mcp']:
-        config['mcp']['outscraper'] = {
-            "type": "local",
-            "command": launcher,
-            "enabled": False
-        }
-        print("  Added outscraper MCP (lazy load - @outscraper subagent only)")
-    elif isinstance(config['mcp']['outscraper'], dict):
-        entry = config['mcp']['outscraper']
-        command = entry.get('command')
-        has_key = any(isinstance(entry.get(field), dict) and
-                      'OUTSCRAPER_API_KEY' in entry[field]
-                      for field in ('env', 'environment'))
-        if has_key or _is_generated_outscraper_command(command):
-            entry['command'] = launcher
-            for field in ('env', 'environment'):
-                if isinstance(entry.get(field), dict):
-                    entry[field].pop('OUTSCRAPER_API_KEY', None)
-                    if not entry[field]:
-                        del entry[field]
-    if 'outscraper_*' not in config['tools']:
-        config['tools']['outscraper_*'] = False
 
 
 def _register_dataforseo(config, pkg_runner):
