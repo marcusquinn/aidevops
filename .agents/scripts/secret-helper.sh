@@ -1448,92 +1448,158 @@ cmd_verify() {
 	return 0
 }
 
-# Import a single credential file to gopass, with optional tenant prefix
-# Args: $1=file_path, $2=tenant_name (empty for non-tenant)
-# Sets: imported, skipped (caller's variables via nameref)
-_import_credential_file() {
-	local file="$1"
-	local tenant="$2"
-
-	while IFS= read -r line; do
-		if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*) ]]; then
-			local name="${BASH_REMATCH[1]}"
-			local val="${BASH_REMATCH[2]}"
-			val="${val#\"}"
-			val="${val%\"}"
-			val="${val#\'}"
-			val="${val%\'}"
-
-			# Skip empty/placeholder values
-			if [[ -z "$val" || "$val" == "YOUR_"* || "$val" == "CHANGE_ME"* ]]; then
-				((++skipped))
-				continue
-			fi
-
-			# Build gopass path: aidevops/NAME or aidevops/tenants/TENANT/NAME
-			local gopass_path="${GOPASS_PREFIX}/${name}"
-			if [[ -n "$tenant" ]]; then
-				gopass_path="${GOPASS_PREFIX}/tenants/${tenant}/${name}"
-			fi
-
-			# Check if already in gopass
-			if gopass show -o "$gopass_path" &>/dev/null; then
-				print_info "Skipping $name (already in gopass${tenant:+ [$tenant]})"
-				((++skipped))
-				continue
-			fi
-
-			# Import to gopass
-			echo "$val" | gopass insert --force "$gopass_path"
-			((++imported))
-			print_success "Imported $name${tenant:+ (tenant: $tenant)}"
-		fi
-	done <"$file"
-
-	return 0
-}
-
-# Import credentials from credentials.sh (or tenant files) to gopass
-cmd_import_credentials() {
+# Migrate only the active plaintext store into the resolver's flat namespace.
+# Both operations share the writer lock and a conservative literal-only parser.
+credential_migration() (
+	local operation="$1"
+	local dry_run="${2:-false}"
 	if ! has_gopass; then
 		print_error "gopass not initialized. Run: aidevops secret init"
 		return 1
 	fi
-
-	if [[ ! -f "$CREDENTIALS_FILE" ]] && [[ ! -d "$TENANTS_DIR" ]]; then
-		print_info "No credentials.sh found to import"
+	local file="" lock_dir=""
+	file=$(credential_store_file)
+	if [[ ! -e "$file" && ! -L "$file" ]]; then
+		print_info "No active credentials file found"
 		return 0
 	fi
+	lock_dir=$(acquire_credentials_lock) || return 1
+	trap 'release_credentials_lock "$lock_dir"' EXIT
+	python3 - "$file" "$operation" "$dry_run" "${SCRIPT_DIR}/secret-helper.sh" <<'PY'
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
 
-	local imported=0
-	local skipped=0
+path, operation, dry_run, helper = sys.argv[1:]
 
-	if is_tenant_loader; then
-		# Multi-tenant mode: import from each tenant's credential file
-		print_info "Multi-tenant credentials detected"
-		local tenant_dir
-		for tenant_dir in "$TENANTS_DIR"/*/; do
-			[[ -d "$tenant_dir" ]] || continue
-			local tenant_name
-			tenant_name=$(basename "$tenant_dir")
-			local cred_file="$tenant_dir/credentials.sh"
-			if [[ -f "$cred_file" ]]; then
-				print_info "Importing tenant: $tenant_name"
-				_import_credential_file "$cred_file" "$tenant_name"
-			fi
-		done
-	elif [[ -f "$CREDENTIALS_FILE" ]]; then
-		# Single-mode: import directly from credentials.sh
-		_import_credential_file "$CREDENTIALS_FILE" ""
+def run(args, data=None):
+    return subprocess.run(args, input=data, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, timeout=5, check=False)
+
+def literal(raw):
+    # Never evaluate shell code. Only forms that injection and shell sourcing
+    # interpret identically are eligible; leave everything else untouched.
+    if raw.startswith('"') and raw.endswith('"'):
+        raw = raw[1:-1]
+        if re.search(r'(?<!\\)["$`]|\\(?![\\"])', raw):
+            return None
+        return re.sub(r'\\([\\"])', r'\1', raw)
+    if re.fullmatch(r'[A-Za-z0-9_./:@%+,=-]+', raw):
+        return raw
+    return None
+
+def migrate():
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'r', encoding='utf-8', newline='') as source:
+        info = os.fstat(source.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077):
+            raise ValueError('unsafe source')
+        original = source.read()
+    listing = run(['gopass', 'ls', '--flat', 'aidevops/'])
+    if listing.returncode:
+        raise ValueError('unavailable listing')
+    owned = set(listing.stdout.decode().splitlines())
+    lines = original.splitlines(keepends=True)
+    assignments = []
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r'export ([A-Z_][A-Z0-9_]*)=(.*)', line.rstrip('\n'))
+        if match:
+            assignments.append((index, match[1], match[2]))
+    counts = {}
+    for _, name, _ in assignments:
+        counts[name] = counts.get(name, 0) + 1
+    removed = set()
+    for index, name, raw in assignments:
+        # Positive secret-name classification keeps configuration (including
+        # project IDs, key-file paths and provider allowlists) in plaintext.
+        if not re.search(r'(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIALS?)$', name):
+            continue
+        value = literal(raw)
+        if counts[name] != 1 or not value or value.startswith(('YOUR_', 'CHANGE_ME')):
+            print(f'Keeping {name} (ambiguous, empty or unsupported assignment)')
+            continue
+        target = 'aidevops/' + name
+        if target in owned:
+            stored = run(['gopass', 'show', '-n', target])
+            equal = stored.returncode == 0 and stored.stdout.rstrip(b'\n') == value.encode()
+            if operation == 'import':
+                state = 'value-equal' if equal else 'differing or unreadable'
+                print(f'Skipping {name} (already in gopass; {state})')
+            elif equal and run(['bash', helper, 'check', name]).returncode == 0:
+                removed.add(index)
+                print(f'{"Would prune" if dry_run == "true" else "Pruning"} {name}')
+            else:
+                print(f'Keeping {name} (gopass differs or is unreadable)')
+        elif operation == 'import':
+            # No --force: an entry created concurrently must not be overwritten.
+            result = run(['gopass', 'insert', target], (value + '\n').encode())
+            if result.returncode:
+                raise ValueError('insert failed')
+            owned.add(target)
+            print(f'Imported {name}')
+        else:
+            print(f'Keeping {name} (not owned by gopass)')
+    if removed and dry_run != 'true':
+        current = os.stat(path, follow_symlinks=False)
+        if (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size) != (
+                info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size):
+            raise ValueError('source changed')
+        fd, temporary = tempfile.mkstemp(prefix='.credentials-prune-', dir=os.path.dirname(path))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='') as output:
+                output.write(''.join(line for index, line in enumerate(lines) if index not in removed))
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+try:
+    migrate()
+except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+    print('Credential migration failed safely; source must be a private regular file and gopass must be readable', file=sys.stderr)
+    sys.exit(1)
+PY
+	return $?
+)
+
+cmd_import_credentials() {
+	credential_migration import || return 1
+	print_info "Env-only helpers must run via: aidevops secret NAME -- cmd"
+	print_info "Keep plaintext until callers use injection; preview with: aidevops secret prune-plaintext --dry-run"
+	return 0
+}
+
+cmd_prune_plaintext() {
+	local dry_run=false
+	local option="${1:-}"
+	if [[ $# -eq 1 && "$option" == "--dry-run" ]]; then
+		dry_run=true
+	elif [[ $# -ne 0 ]]; then
+		print_error "Usage: aidevops secret prune-plaintext [--dry-run]"
+		return 1
 	fi
+	print_info "Env-only helpers must run via: aidevops secret NAME -- cmd"
+	credential_migration prune "$dry_run" || return 1
+	return 0
+}
 
-	print_success "Imported $imported secret(s), skipped $skipped"
-
-	if [[ $imported -gt 0 ]]; then
-		print_info "Verify with: aidevops secret list"
-		print_info "You can now remove plaintext values from credentials.sh"
-	fi
-
+# Names/permissions only: old copies remain plaintext even after pruning.
+warn_credential_backups() {
+	local backup="" permissions=""
+	for backup in "$CONFIG_DIR"/credentials.sh.bak-* "$TENANTS_DIR"/*/credentials.sh.bak-*; do
+		[[ -e "$backup" || -L "$backup" ]] || continue
+		permissions=$(_file_perms "$backup" 2>/dev/null) || permissions="unknown"
+		print_warning "Plaintext credentials.sh.bak-* backup remains (mode $permissions); review under your secure-deletion policy"
+		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
+			print_warning "Credential backup may be group/world-readable or unsafe"
+		fi
+	done
 	return 0
 }
 
@@ -1591,6 +1657,7 @@ cmd_status() {
 		echo -e "  credentials:  ${DIM}no file${NC}"
 	fi
 
+	warn_credential_backups
 	echo ""
 	return 0
 }
@@ -1635,6 +1702,7 @@ cmd_help() {
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
 	echo "  import-credentials                Import from credentials.sh to gopass"
+	echo "  prune-plaintext [--dry-run]        Remove matching active-store secrets; keep config"
 	echo "  migrate-loader                    Move exports stranded in a tenant loader into the active tenant"
 	echo ""
 	print_info "Examples:"
@@ -1713,6 +1781,9 @@ main() {
 		;;
 	import-credentials | import)
 		cmd_import_credentials "$@"
+		;;
+	prune-plaintext)
+		cmd_prune_plaintext "$@"
 		;;
 	migrate-loader)
 		cmd_migrate_loader "$@"
