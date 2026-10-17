@@ -23,26 +23,30 @@ def run(args, data=None):
 def literal(raw):
     """Keep the migration parser's deliberately conservative eligibility rules."""
     if raw.startswith('"') and raw.endswith('"'):
-        if len(raw) < 2:
-            return None
-        raw = raw[1:-1]
-        result = []
-        index = 0
-        while index < len(raw):
-            char = raw[index]
-            if char == '\\':
-                index += 1
-                if index == len(raw) or raw[index] not in '\\"':
-                    return None
-                char = raw[index]
-            elif char in '"$`':
-                return None
-            result.append(char)
-            index += 1
-        return ''.join(result)
+        return quoted_literal(raw)
     if re.fullmatch(r'[A-Za-z0-9_./:@%+,=-]+', raw):
         return raw
     return None
+
+
+def quoted_literal(raw):
+    if len(raw) < 2:
+        return None
+    raw = raw[1:-1]
+    result = []
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char == '\\':
+            index += 1
+            if index == len(raw) or raw[index] not in '\\"':
+                return None
+            char = raw[index]
+        elif char in '"$`':
+            return None
+        result.append(char)
+        index += 1
+    return ''.join(result)
 
 
 def finding(path, line, name, category, **extra):
@@ -63,22 +67,30 @@ def parse(original, path):
         match = EXPORT.fullmatch(line.rstrip('\n'))
         name = match[1] if match else ''
         raw = match[2] if match else ''
-        category = None
-        if '\r' in line:
-            category = 'crlf'
-        elif re.search(r'export\s+[A-Z_][A-Z0-9_]*=', raw):
-            category = 'glued-exports'
-        elif not match or any(char in line for char in '\0\v\f\x1c\x1d\x1e\x85\u2028\u2029'):
-            category = 'unsupported-structure'
-        elif '$' in raw or '`' in raw:
-            category = 'shell-expansion'
-        elif raw and literal(raw) is None:
-            category = 'inner-quote' if '"' in raw[1:-1] else 'unsupported-structure'
+        category = line_category(line, match, raw)
         if category:
             findings.append(finding(path, index + 1, name, category))
         else:
             assignments.append((index, name, raw))
     return assignments, findings
+
+
+def line_category(line, match, raw):
+    if '\r' in line:
+        return 'crlf'
+    if re.search(r'export\s+[A-Z_][A-Z0-9_]*=', raw):
+        return 'glued-exports'
+    if not match or any(char in line for char in '\0\v\f\x1c\x1d\x1e\x85\u2028\u2029'):
+        return 'unsupported-structure'
+    return value_category(raw)
+
+
+def value_category(raw):
+    if '$' in raw or '`' in raw:
+        return 'shell-expansion'
+    if raw and literal(raw) is None:
+        return 'inner-quote' if '"' in raw[1:-1] else 'unsupported-structure'
+    return None
 
 
 def read_source(path, private=False):
@@ -104,80 +116,6 @@ def compare(name, value, owned, helper):
     if stored.stdout.rstrip(b'\n') != value.encode():
         return 'drift'
     return 'prunable' if run(['bash', helper, 'check', name]).returncode == 0 else 'backend-unavailable'
-
-
-def audit(files, loader, helper):
-    try:
-        listing = run(['gopass', 'ls', '--flat'])
-        owned = set(listing.stdout.decode().splitlines()) if not listing.returncode else None
-    except (OSError, UnicodeError, subprocess.SubprocessError):
-        owned = None
-    for path in dict.fromkeys(files):
-        if not os.path.lexists(path):
-            continue
-        info = os.lstat(path)
-        mode = stat.S_IMODE(info.st_mode)
-        if mode != 0o600:
-            yield finding(path, 0, '', 'insecure-perms', mode=f'{mode:03o}')
-        if info.st_uid != os.getuid():
-            yield finding(path, 0, '', 'unsafe-owner', uid=info.st_uid)
-        try:
-            original, _ = read_source(path)
-        except (OSError, UnicodeError, ValueError):
-            yield finding(path, 0, '', 'unreadable-source')
-            continue
-        if path == loader:
-            # Loader shell structure is intentional; only direct exports strand secrets.
-            for number, line in enumerate(physical_lines(original), 1):
-                match = EXPORT.fullmatch(line.rstrip('\n'))
-                if match and match[1] != 'AIDEVOPS_ACTIVE_TENANT':
-                    yield finding(path, number, match[1], 'stranded-loader')
-            continue
-        assignments, errors = parse(original, path)
-        yield from errors
-        counts = {}
-        for _, name, _ in assignments:
-            counts[name] = counts.get(name, 0) + 1
-        for index, name, raw in assignments:
-            value = literal(raw)
-            if not SECRET_NAME.search(name) or not value or value.startswith(('YOUR_', 'CHANGE_ME')):
-                continue
-            if counts[name] != 1:
-                yield finding(path, index + 1, name, 'ambiguous-assignment')
-                continue
-            try:
-                category = compare(name, value, owned, helper)
-            except (OSError, UnicodeError, subprocess.SubprocessError):
-                category = 'backend-unavailable'
-            yield finding(path, index + 1, name, category)
-    for directory in sorted({str(Path(path).parent) for path in files}):
-        for pattern in ('credentials.sh.bak*', '.credentials-prune-*', '.credentials-repair-*'):
-            for backup in sorted(Path(directory).glob(pattern)):
-                mode = stat.S_IMODE(backup.lstat().st_mode)
-                yield finding(backup, 0, '', 'leftover', mode=f'{mode:03o}')
-
-
-def mcp_findings(path):
-    try:
-        original, _ = read_source(path)
-        config = json.loads(original)
-        for key in ('mcp', 'mcpServers'):
-            servers = config.get(key, {})
-            if not isinstance(servers, dict):
-                continue
-            for server, entry in servers.items():
-                if not isinstance(entry, dict):
-                    continue
-                for block in ('env', 'environment'):
-                    env = entry.get(block, {})
-                    if not isinstance(env, dict):
-                        continue
-                    for name, value in env.items():
-                        if (SECRET_NAME.search(name) and isinstance(value, str) and value
-                                and not re.fullmatch(r'\{(?:env|file):[^{}]+\}', value)):
-                            yield finding(path, 0, name, 'mcp-literal', server=server, block=block)
-    except (OSError, ValueError, UnicodeError, AttributeError):
-        yield finding(path, 0, '', 'mcp-unreadable')
 
 
 def describe(record):
@@ -254,14 +192,7 @@ def _migrate_outscraper_locked(path, scripts):
     return True
 
 
-def fix(scripts):
-    if (not sys.stdin.isatty() or not sys.stdout.isatty()
-            or os.environ.get('AIDEVOPS_HEADLESS') in ('1', 'true')
-            or os.environ.get('FULL_LOOP_HEADLESS') == 'true'
-            or os.environ.get('WORKER_ISSUE_NUMBER') or os.environ.get('AIDEVOPS_HEADLESS_SESSION')):
-        print('security fix requires an interactive terminal; use aidevops secret audit-credentials.', file=sys.stderr)
-        return 1
-    helper = ['bash', str(scripts / 'secret-helper.sh')]
+def load_fix_records(scripts, helper):
     records = []
     for args in (helper + ['audit-credentials'],
                  ['bash', str(scripts / 'secret-hygiene-helper.sh'), 'audit-mcp']):
@@ -271,13 +202,12 @@ def fix(scripts):
                                 timeout=120, check=False)
         if result.returncode:
             print('Audit unavailable; no fixes applied.', file=sys.stderr)
-            return 1
+            return None
         records.extend(json.loads(line) for line in result.stdout.splitlines())
-    for record in records:
-        print(describe(record))
-    if any(r['category'] in ('mcp-unreadable', 'unreadable-source') for r in records):
-        print('Incomplete audit; unreadable sources retained and no fixes applied.', file=sys.stderr)
-        return 1
+    return records
+
+
+def fix_permissions(records, scripts):
     for record in records:
         if record['category'] != 'insecure-perms':
             continue
@@ -291,6 +221,9 @@ def fix(scripts):
         finally:
             os.close(fd)
         log_fix(scripts, 'insecure-perms', [])
+
+
+def import_active(records, scripts, helper):
     active = [r for r in records if r.get('active')]
     if any(r['category'] == 'not-in-gopass' for r in active):
         if subprocess.run(helper + ['import-credentials'], check=False).returncode == 0:
@@ -298,35 +231,84 @@ def fix(scripts):
             refreshed = subprocess.run(helper + ['audit-credentials'], stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL, timeout=120, check=True)
             active = [json.loads(line) for line in refreshed.stdout.splitlines() if json.loads(line).get('active')]
+    return active
+
+
+def prune_active(active, scripts, helper):
     if any(r['category'] == 'prunable' for r in active):
         if subprocess.run(helper + ['prune-plaintext', '--dry-run'], check=False).returncode == 0 and confirm('prunable'):
             if subprocess.run(helper + ['prune-plaintext'], check=False).returncode == 0:
                 log_fix(scripts, 'prune-plaintext', [r['name'] for r in active if r['category'] == 'prunable'])
+
+
+def trash_leftovers(records, scripts):
     leftovers = [r for r in records if r['category'] == 'leftover']
-    if leftovers and confirm('leftover backups/temp files (move to trash)'):
-        import shutil
-        backend = ['trash'] if shutil.which('trash') else ['gio', 'trash'] if shutil.which('gio') else None
-        if backend is None:
-            print('No trash backend available; backups retained.')
-        else:
-            for record in leftovers:
-                # No recursive directory removal and no permanent-deletion fallback.
-                if not stat.S_ISREG(os.lstat(record['file']).st_mode):
-                    continue
-                subprocess.run(backend + [record['file']], check=True)
-                log_fix(scripts, 'leftover-trashed', [])
+    if not leftovers or not confirm('leftover backups/temp files (move to trash)'):
+        return
+    backend = trash_backend()
+    if backend is None:
+        print('No trash backend available; backups retained.')
+        return
+    for record in leftovers:
+        # No recursive directory removal and no permanent-deletion fallback.
+        if stat.S_ISREG(os.lstat(record['file']).st_mode):
+            subprocess.run(backend + [record['file']], check=True)
+            log_fix(scripts, 'leftover-trashed', [])
+
+
+def trash_backend():
+    import shutil
+    if shutil.which('trash'):
+        return ['trash']
+    if shutil.which('gio'):
+        return ['gio', 'trash']
+    return None
+
+
+def fix_mcp(records, scripts):
     literals = [r for r in records if r['category'] == 'mcp-literal']
     if literals and confirm('MCP literal secret migration'):
         for path in dict.fromkeys(r['file'] for r in literals if r['server'] == 'outscraper'):
             if migrate_outscraper(path, scripts):
                 log_fix(scripts, 'mcp-migrated', ['OUTSCRAPER_API_KEY'])
         print('Other MCP literals: use dataforseo-credentials.sh / outscraper-credentials.sh launch-time loaders; never embed values.')
+
+
+def interactive_fix_allowed():
+    markers = (os.environ.get('AIDEVOPS_HEADLESS') in ('1', 'true'),
+               os.environ.get('FULL_LOOP_HEADLESS') == 'true',
+               os.environ.get('WORKER_ISSUE_NUMBER'), os.environ.get('AIDEVOPS_HEADLESS_SESSION'))
+    return sys.stdin.isatty() and sys.stdout.isatty() and not any(markers)
+
+
+def fix(scripts):
+    if not interactive_fix_allowed():
+        print('security fix requires an interactive terminal; use aidevops secret audit-credentials.', file=sys.stderr)
+        return 1
+    helper = ['bash', str(scripts / 'secret-helper.sh')]
+    records = load_fix_records(scripts, helper)
+    if records is None:
+        return 1
+    for record in records:
+        print(describe(record))
+    if any(r['category'] in ('mcp-unreadable', 'unreadable-source') for r in records):
+        print('Incomplete audit; unreadable sources retained and no fixes applied.', file=sys.stderr)
+        return 1
+    fix_permissions(records, scripts)
+    active = import_active(records, scripts, helper)
+    prune_active(active, scripts, helper)
+    trash_leftovers(records, scripts)
+    fix_mcp(records, scripts)
     print('Drift: choose explicitly with aidevops secret set NAME. Unparseable lines are unchanged.')
     print('Import/prune operate on the active store only; review other tenants separately. No provider probes performed.')
     return 0
 
 
 def main():
+    # Backend custody operations share these parsing primitives without a
+    # module-import cycle; only CLI execution imports the backend.
+    from credential_migration import audit, mcp_findings
+
     command, *args = sys.argv[1:]
     if command == 'audit':
         helper, loader, active, *files = args
