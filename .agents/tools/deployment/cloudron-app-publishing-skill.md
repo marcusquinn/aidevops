@@ -114,6 +114,28 @@ git add CloudronVersions.json && git commit -m "release 1.1.0" && git push
 
 Before promotion, verify fresh install, upgrade from the previous published version, restart, backup/restore, health checks, and the public icon/media URLs. Image push, catalog promotion, catalog hosting, and Community Apps submission are publication actions and require explicit authorization.
 
+### Catalog Updates Versus Source Rebuilds
+
+`cloudron update --app <app>` run in a package checkout whose manifest has no
+`dockerImage` uploads that source and builds a server-side `local/...` image. It
+does not exercise the catalog, so it is not evidence for an upgrade from a
+published version. Keep it labelled as development iteration in package docs.
+
+To test a published upgrade, install the previous version with
+`cloudron install --versions-url <url>`, then either update from the dashboard
+or run `cloudron update --app <app>` in a scratch directory holding only the
+catalog's `.versions["X.Y.Z"].manifest` (which carries the digest-pinned
+`dockerImage`). Confirm `cloudron status --app <app>` reports that digest.
+
+### Pre-Merge CLI Dry Run
+
+Publisher tests that stub the CLI cannot catch changelog or `file://` parsing
+errors; those then fail in the post-merge publish job. On pull requests, copy the
+manifest, catalog, and every `file://` reference to a scratch directory, run the
+pinned real CLI's `cloudron versions add --state testing --image
+registry.invalid/dry-run@sha256:<64 zeros>` and `cloudron versions verify`, and
+discard the result. Skip when the manifest version is already in the catalog.
+
 ## Keyless Publication Provenance
 
 For aidevops-packaged community apps, GitHub Actions OIDC/Sigstore provenance is
