@@ -621,18 +621,67 @@ _pulse_stale_blocked_repo_fresh() {
 # every cycle — leaving the largest backlog one stale-block visit per cycle.
 # Give each repo a minimum share (capped at the sweep deadline); repos that
 # finish are stamped fresh and drop out, so the due set converges.
-# Args: now_epoch sweep_deadline repos_left. Prints the repo deadline epoch.
+# GH#34939: use the previous pass's remaining candidate count as a weight,
+# without reordering the rotating queue. Unknown backlogs have weight one.
+# Args: now_epoch sweep_deadline weight_left [repo_weight]. Prints deadline.
 _pulse_stale_blocked_repo_deadline() {
 	local now_epoch="$1" sweep_deadline="$2" repos_left="$3"
+	local repo_weight="${4:-1}"
 	local min_share="${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}" share=0 deadline=0
 	[[ "$min_share" =~ ^[0-9]+$ ]] || min_share=5
 	[[ "$repos_left" =~ ^[1-9][0-9]*$ ]] || repos_left=1
-	share=$(((sweep_deadline - now_epoch) / repos_left))
+	share=$(((sweep_deadline - now_epoch) * repo_weight / repos_left))
 	[[ "$share" -ge "$min_share" ]] || share="$min_share"
 	deadline=$((now_epoch + share))
 	[[ "$deadline" -le "$sweep_deadline" ]] || deadline="$sweep_deadline"
 	printf '%s\n' "$deadline"
 	return 0
+}
+
+# Bounded, best-effort scheduling hint, never an unblock verdict. Ignore stale
+# backlog hints once the stale pass is fresh (only partial continuation is due).
+_pulse_stale_blocked_repo_weight() {
+	local repo="$1" interval="$2" now_epoch="$3" weight=""
+	local file="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}"
+	if ! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" && [[ -f "$file" ]]; then
+		IFS= read -r weight <"$file" 2>/dev/null || true
+	fi
+	[[ "$weight" =~ ^[1-9][0-9]{0,5}$ ]] || weight=1
+	printf '%s\n' "$weight"
+	return 0
+}
+
+# Keep the reconciler's diagnostics in the normal log and persist its remaining
+# backlog for the next sweep. Capture only this invocation, never scan a growing
+# Pulse log. A missing summary or failed cache write leaves scheduling fail-open.
+_pulse_stale_blocked_run_and_measure() {
+	local repo="$1" repo_deadline="$2" sweep_deadline="$3" rc=0 diagnostic="" weight=""
+	local file="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}"
+	if ! mkdir -p "${file%/*}" 2>/dev/null || ! diagnostic=$(mktemp "${file}.XXXXXX" 2>/dev/null); then
+		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
+			reconcile_stale_blocked_issues "$repo" 2>>"$LOGFILE" || rc=$?
+		return "$rc"
+	fi
+	DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
+		reconcile_stale_blocked_issues "$repo" 2>"$diagnostic" || rc=$?
+	cat "$diagnostic" >>"$LOGFILE"
+	weight=$(awk '/^\[dependency-reconciler\] stale sweep / {
+		pending = visited = prefiltered = 0
+		for (i = 1; i <= NF; i++) {
+			split($i, field, "=")
+			if (field[2] !~ /^[0-9]+$/) continue
+			if (field[1] == "pending") pending = field[2]
+			if (field[1] == "visited") visited = field[2]
+			if (field[1] == "prefiltered_open_blocker") prefiltered = field[2]
+		}
+		remaining = pending - visited - prefiltered
+		print (remaining > 0 ? remaining : 1)
+	}' "$diagnostic")
+	if [[ "$weight" =~ ^[1-9][0-9]{0,5}$ ]]; then
+		printf '%s\n' "$weight" >"$diagnostic" && mv -f "$diagnostic" "$file" 2>/dev/null || true
+	fi
+	rm -f "$diagnostic"
+	return "$rc"
 }
 
 # Best effort: a stamp that cannot be written only keeps the repo due.
@@ -669,8 +718,7 @@ _pulse_stale_blocked_sweep_repo() {
 	local repo="$1" repo_deadline="$2" sweep_deadline="$3" interval="$4" now_epoch="$5"
 	local partial_rc="${DER_SWEEP_PARTIAL:-3}" rc=0 pass_rc=0
 	if ! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch"; then
-		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
-			reconcile_stale_blocked_issues "$repo" 2>>"$LOGFILE" || pass_rc=$?
+		_pulse_stale_blocked_run_and_measure "$repo" "$repo_deadline" "$sweep_deadline" || pass_rc=$?
 		if [[ "$pass_rc" -eq 0 ]]; then
 			_pulse_stale_blocked_repo_mark_complete "$repo"
 		else
@@ -696,9 +744,9 @@ _pulse_reconcile_stale_blocked_if_due() {
 	local interval="${PULSE_STALE_BLOCKED_RECONCILE_INTERVAL:-1800}"
 	local now_epoch="" stamp_epoch="" age_s="" repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local repo_slug="" failures=0 partial=0 rc=0 index=0 repo_count=0 sweep_deadline="" repo_deadline="" start_offset=0 position=0
-	local partial_rc="${DER_SWEEP_PARTIAL:-3}" due_count=0 fresh=0
+	local partial_rc="${DER_SWEEP_PARTIAL:-3}" due_count=0 fresh=0 weight=0 weight_left=0
 	local next_repo_file="${HOME}/.aidevops/cache/pulse-stale-blocked-next-repo"
-	local repos=() due=()
+	local repos=() due=() weights=()
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
 	if [[ -f "$sentinel" ]]; then
@@ -713,7 +761,7 @@ _pulse_reconcile_stale_blocked_if_due() {
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null || true)
 	repo_count="${#repos[@]}"
 	sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
-	# Each due repo gets a fair share of the remaining budget; unused time
+	# Each due repo gets a backlog-weighted share of the remaining budget; unused time
 	# rolls forward, and each repo's cursor resumes partial passes. Once the
 	# sweep deadline passes, remaining due repos are deferred as partial rather
 	# than started. The persisted next-repo position advances before each
@@ -734,6 +782,9 @@ _pulse_reconcile_stale_blocked_if_due() {
 			continue
 		fi
 		due+=("$position")
+		weight=$(_pulse_stale_blocked_repo_weight "${repos[position]}" "$interval" "$now_epoch")
+		weights+=("$weight")
+		weight_left=$((weight_left + weight))
 	done
 	due_count="${#due[@]}"
 	for ((index = 0; index < due_count; index++)); do
@@ -744,7 +795,8 @@ _pulse_reconcile_stale_blocked_if_due() {
 		fi
 		position="${due[index]}"
 		printf '%s\n' "$(((position + 1) % repo_count))" >"$next_repo_file" 2>/dev/null || true
-		repo_deadline=$(_pulse_stale_blocked_repo_deadline "$now_epoch" "$sweep_deadline" "$((due_count - index))")
+		repo_deadline=$(_pulse_stale_blocked_repo_deadline "$now_epoch" "$sweep_deadline" "$weight_left" "${weights[index]}")
+		weight_left=$((weight_left - weights[index]))
 		rc=0
 		# GH#34432: this bounded per-repo cadence also revisits partial merges
 		# whose lease was still live at merge time. Only a clean, complete pass
