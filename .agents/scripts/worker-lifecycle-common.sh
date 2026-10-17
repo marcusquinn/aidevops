@@ -293,7 +293,7 @@ _emit_worker_runtime_event() {
 			local lease_helper="${BASH_SOURCE[0]%/*}/dispatch-claim-helper.sh"
 			"$lease_helper" transition terminal "$WORKER_ISSUE_NUMBER" \
 				"${DISPATCH_REPO_SLUG:-$WORKER_REPO_SLUG}" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
-				"${_invoke_session_key:-issue-${WORKER_ISSUE_NUMBER}}" 0 >/dev/null 2>&1 || true
+				"${AIDEVOPS_DISPATCH_LEASE_SESSION:-${_invoke_session_key:-issue-${WORKER_ISSUE_NUMBER}}}" 0 >/dev/null 2>&1 || true
 		fi
 		;;
 	esac
