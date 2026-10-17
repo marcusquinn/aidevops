@@ -108,18 +108,9 @@ is_model_available() {
 	esac
 
 	if [[ -n "$key_var" ]]; then
-		# Try env first
-		if [[ -n "${!key_var:-}" ]]; then
+		# Presence only: env, credentials.sh, then gopass listing (GH#34892)
+		if aidevops_secret_available "$key_var"; then
 			return 0
-		fi
-		# Try credentials.sh
-		local creds_file="${HOME}/.config/aidevops/credentials.sh"
-		if [[ -f "$creds_file" ]]; then
-			# shellcheck disable=SC1090
-			source "$creds_file"
-			if [[ -n "${!key_var:-}" ]]; then
-				return 0
-			fi
 		fi
 		[[ "$quiet" != "true" ]] && print_warning "No API key for provider: $provider ($key_var)" >&2
 		return 1

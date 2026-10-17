@@ -115,8 +115,8 @@ test_playwright() {
 test_api_connectivity() {
 	print_header "Testing API Connectivity"
 
-	# Test Ahrefs API
-	if [[ -n "${AHREFS_API_KEY:-}" ]]; then
+	# Test Ahrefs API (env → credentials.sh → gopass aidevops/AHREFS_API_KEY, GH#34892)
+	if aidevops_load_secret AHREFS_API_KEY; then
 		run_test "Ahrefs API connectivity" "curl -s -H 'Authorization: Bearer $AHREFS_API_KEY' https://apiv2.ahrefs.com/v2/subscription_info"
 		print_success "Ahrefs API key configured"
 	else

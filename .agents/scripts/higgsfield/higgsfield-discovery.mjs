@@ -3,8 +3,7 @@
 // Extracted from higgsfield-common.mjs (t2127 file-complexity decomposition).
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { resolveSecret } from '../secret-resolver.mjs';
 import {
   debugScreenshot,
   dismissAllModals,
@@ -23,16 +22,12 @@ import {
 // ---------------------------------------------------------------------------
 
 export function loadCredentials() {
-  const credFile = join(homedir(), '.config', 'aidevops', 'credentials.sh');
-  if (!existsSync(credFile)) {
-    console.error('ERROR: Credentials file not found at', credFile);
-    process.exit(1);
-  }
-  const content = readFileSync(credFile, 'utf-8');
-  const user = content.match(/HIGGSFIELD_USER="([^"]+)"/)?.[1];
-  const pass = content.match(/HIGGSFIELD_PASS="([^"]+)"/)?.[1];
+  // env → credentials.sh → gopass aidevops/NAME (GH#34892)
+  const user = resolveSecret('HIGGSFIELD_USER');
+  const pass = resolveSecret('HIGGSFIELD_PASS');
   if (!user || !pass) {
-    console.error('ERROR: HIGGSFIELD_USER or HIGGSFIELD_PASS not found in credentials.sh');
+    console.error('ERROR: HIGGSFIELD_USER or HIGGSFIELD_PASS not configured');
+    console.error('Set with: aidevops secret set HIGGSFIELD_USER && aidevops secret set HIGGSFIELD_PASS');
     process.exit(1);
   }
   return { user, pass };

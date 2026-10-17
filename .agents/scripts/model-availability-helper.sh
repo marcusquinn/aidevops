@@ -350,21 +350,16 @@ resolve_api_key() {
 			fi
 		done
 
-		# Source 2: gopass (if available)
-		if command -v gopass &>/dev/null; then
-			for var_name in "${var_names[@]}"; do
-				local gopass_path="aidevops/${var_name}"
-				if gopass show "$gopass_path" &>/dev/null; then
-					local key_val
-					key_val=$(gopass show "$gopass_path" 2>/dev/null)
-					if [[ -n "$key_val" ]]; then
-						RESOLVED_API_KEY_SOURCE="gopass:${var_name}"
-						echo "$key_val"
-						return 0
-					fi
-				fi
-			done
-		fi
+		# Source 2: gopass aidevops/NAME — one bounded scalar decrypt via the
+		# shared resolver (GH#34892); order unchanged for existing installs.
+		for var_name in "${var_names[@]}"; do
+			local key_val=""
+			if key_val=$(aidevops_gopass_secret "$var_name"); then
+				RESOLVED_API_KEY_SOURCE="gopass:${var_name}"
+				echo "$key_val"
+				return 0
+			fi
+		done
 
 		# Source 3: credentials.sh (plaintext fallback)
 		local creds_file="${HOME}/.config/aidevops/credentials.sh"

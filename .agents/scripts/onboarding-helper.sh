@@ -77,6 +77,9 @@ is_configured() {
 	local value="${!var_name:-}"
 
 	if [[ -z "$value" ]]; then
+		# Not in env/credentials.sh: a gopass aidevops/NAME entry counts as
+		# configured; listed only, never decrypted (GH#34892).
+		aidevops_secret_available "$var_name" && return 0
 		return 1
 	fi
 
