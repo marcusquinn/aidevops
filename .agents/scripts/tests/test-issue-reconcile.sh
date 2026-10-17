@@ -112,6 +112,20 @@ repo_allows_pulse_write_actions() {
 	[[ "$repo_slug" == "owner/testrepo" ]]
 	return $?
 }
+# set_issue_status fails closed when the repo status-label contract cannot be
+# verified; the gh stubs here do not answer label lookups, so stub the check.
+ensure_status_labels_exist() {
+	local repo_slug="${1:-}"
+	[[ -n "$repo_slug" || -z "$repo_slug" ]]
+	return 0
+}
+# The stale-reset guard fails closed when authoritative open-PR linkage cannot
+# be read; the gh stubs do not model that lookup, so report "no linked open PR".
+_normalize_stale_find_open_pr() {
+	local issue_number="${1:-}"
+	[[ -n "$issue_number" || -z "$issue_number" ]]
+	return 0
+}
 
 # =============================================================================
 # Part 1 — _normalize_reassign_self: self-assigns orphaned active issues
