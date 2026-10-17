@@ -1465,131 +1465,21 @@ credential_migration() (
 	fi
 	lock_dir=$(acquire_credentials_lock) || return 1
 	trap 'release_credentials_lock "$lock_dir"' EXIT
-	python3 - "$file" "$operation" "$dry_run" "${SCRIPT_DIR}/secret-helper.sh" <<'PY'
-import os
-import re
-import stat
-import subprocess
-import sys
-import tempfile
-
-path, operation, dry_run, helper = sys.argv[1:]
-
-def run(args, data=None):
-    return subprocess.run(args, input=data, stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL, timeout=5, check=False)
-
-def literal(raw):
-    # Never evaluate shell code. Only forms that injection and shell sourcing
-    # interpret identically are eligible; leave everything else untouched.
-    if raw.startswith('"') and raw.endswith('"'):
-        if len(raw) < 2:
-            return None
-        raw = raw[1:-1]
-        result = []
-        index = 0
-        while index < len(raw):
-            char = raw[index]
-            if char == '\\':
-                index += 1
-                if index == len(raw) or raw[index] not in '\\"':
-                    return None
-                char = raw[index]
-            elif char in '"$`':
-                return None
-            result.append(char)
-            index += 1
-        return ''.join(result)
-    if re.fullmatch(r'[A-Za-z0-9_./:@%+,=-]+', raw):
-        return raw
-    return None
-
-def migrate():
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, 'r', encoding='utf-8', newline='') as source:
-        info = os.fstat(source.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or info.st_mode & 0o077):
-            raise ValueError('unsafe source')
-        original = source.read()
-    # The prefix may not exist yet in a newly initialized store; listing the
-    # root distinguishes that normal case from a genuine listing failure.
-    listing = run(['gopass', 'ls', '--flat'])
-    if listing.returncode:
-        raise ValueError('unavailable listing')
-    owned = set(listing.stdout.decode().splitlines())
-    lines = original.splitlines(keepends=True)
-    assignments = []
-    for index, line in enumerate(lines):
-        if not line.strip() or line.lstrip().startswith('#'):
-            continue
-        match = re.fullmatch(r'export ([A-Z_][A-Z0-9_]*)=(.*)', line.rstrip('\n'))
-        # Validate the entire file BEFORE any writes. Otherwise an apparent
-        # export could actually be text inside a multiline quote or heredoc.
-        if not match or '\0' in line or (match[2] and literal(match[2]) is None):
-            raise ValueError('unsupported shell structure')
-        assignments.append((index, match[1], match[2]))
-    counts = {}
-    for _, name, _ in assignments:
-        counts[name] = counts.get(name, 0) + 1
-    removed = set()
-    for index, name, raw in assignments:
-        # Positive secret-name classification keeps configuration (including
-        # project IDs, key-file paths and provider allowlists) in plaintext.
-        if not re.search(r'(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIALS?)$', name):
-            continue
-        value = literal(raw)
-        if counts[name] != 1 or not value or value.startswith(('YOUR_', 'CHANGE_ME')):
-            print(f'Keeping {name} (ambiguous, empty or unsupported assignment)')
-            continue
-        target = 'aidevops/' + name
-        if target in owned:
-            stored = run(['gopass', 'show', '-n', target])
-            # Match Bash command substitution in the runtime resolver: embedded
-            # newlines remain significant, trailing newlines are normalized.
-            equal = stored.returncode == 0 and stored.stdout.rstrip(b'\n') == value.encode()
-            if operation == 'import':
-                state = 'value-equal' if equal else 'differing or unreadable'
-                print(f'Skipping {name} (already in gopass; {state})')
-            elif equal and run(['bash', helper, 'check', name]).returncode == 0:
-                removed.add(index)
-                print(f'{"Would prune" if dry_run == "true" else "Pruning"} {name}')
-            else:
-                print(f'Keeping {name} (gopass differs or is unreadable)')
-        elif operation == 'import':
-            # Piped insert without --force refuses existing entries (verified
-            # against gopass 1.16.1 insert's IsStdin/Exists branch).
-            result = run(['gopass', 'insert', target], (value + '\n').encode())
-            if result.returncode:
-                raise ValueError('insert failed')
-            owned.add(target)
-            print(f'Imported {name}')
-        else:
-            print(f'Keeping {name} (not owned by gopass)')
-    if removed and dry_run != 'true':
-        fd, temporary = tempfile.mkstemp(prefix='.credentials-prune-', dir=os.path.dirname(path))
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8', newline='') as output:
-                output.write(''.join(line for index, line in enumerate(lines) if index not in removed))
-                output.flush()
-                os.fsync(output.fileno())
-            current = os.stat(path, follow_symlinks=False)
-            if (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size) != (
-                    info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size):
-                raise ValueError('source changed')
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-
-try:
-    migrate()
-except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
-    print('Credential migration failed safely; use a private regular file containing only comments and simple one-line literal exports, with readable gopass', file=sys.stderr)
-    sys.exit(1)
-PY
+	python3 "${SCRIPT_DIR}/credential_migration.py" "$file" "$operation" "$dry_run" "${SCRIPT_DIR}/secret-helper.sh"
 	return $?
 )
+
+# JSON Lines, names only. File resolution stays shared with the runtime resolver.
+cmd_audit_credentials() {
+	local loader="" file=""
+	local -a files=("$CREDENTIALS_FILE")
+	is_tenant_loader && loader="$CREDENTIALS_FILE"
+	while IFS= read -r file; do
+		[[ -n "$file" ]] && files+=("$file")
+	done < <(resolve_credential_files)
+	python3 "${SCRIPT_DIR}/credential_audit.py" audit "${SCRIPT_DIR}/secret-helper.sh" "$loader" "$(credential_store_file)" "${files[@]}" || return 1
+	return 0
+}
 
 cmd_import_credentials() {
 	credential_migration import || return 1
@@ -1703,6 +1593,7 @@ cmd_help() {
 	echo "  check <NAME>                      Resolve by name; exit status only, no output"
 	echo "  list                              List secret names (never values)"
 	echo "  inventory                         Names-only structured local inventory"
+	echo "  audit-credentials                 Names-only JSON Lines hygiene audit (offline)"
 	echo "  status                            Show backend status"
 	echo ""
 	print_info "Credential registry (non-secret; which account each secret opens):"
@@ -1792,6 +1683,9 @@ main() {
 		;;
 	inventory)
 		cmd_inventory "$@"
+		;;
+	audit-credentials)
+		cmd_audit_credentials "$@" || return $?
 		;;
 	drift)
 		warn_credential_backups

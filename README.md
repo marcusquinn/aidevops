@@ -434,8 +434,17 @@ aidevops secret set NAME
 aidevops security
 aidevops security status
 aidevops security scan
+aidevops secret audit-credentials  # Names-only JSON Lines, including tenant stores
+aidevops security fix             # Separate interactive terminal only
 aidevops source-access status
 ```
+
+Credential hygiene scans report parser errors, gopass drift, prune candidates,
+unsafe permissions, leftover backups and literal MCP environment secrets without
+printing values. Interactive fixes delegate to secret import/prune commands,
+confirm pruning and trash moves, and leave drift and malformed lines unchanged.
+Import and prune target only the active tenant. Scans do not probe provider APIs;
+an opt-in `--probe` may be added later.
 
 ### Vault
 

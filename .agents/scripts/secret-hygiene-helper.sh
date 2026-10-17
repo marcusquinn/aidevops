@@ -7,8 +7,8 @@
 # checks for Python supply chain attack indicators (.pth files), and reports
 # findings with remediation guidance.
 #
-# CRITICAL: This script NEVER reads, prints, or exposes secret VALUES.
-#           It only reports file existence, permissions, and key NAMES.
+# CRITICAL: This script NEVER prints or exposes secret VALUES.
+#           Audits parse/compare privately and report only metadata and NAMES.
 #           All remediation commands must be run in a SEPARATE TERMINAL,
 #           never inside an AI chat session.
 #
@@ -104,9 +104,9 @@ report_finding() {
 	low) color="$BLUE" ;;
 	esac
 
-	echo -e "  ${color}[${severity_upper}]${NC} ${BOLD}${location}${NC}"
-	echo -e "    ${description}"
-	echo -e "    Fix (run in separate terminal): ${remediation}"
+	printf '  %b[%s]%b %b%s%b\n' "$color" "$severity_upper" "$NC" "$BOLD" "$location" "$NC"
+	printf '    %s\n' "$description"
+	printf '    Fix (run in separate terminal): %s\n' "$remediation"
 	echo ""
 	return 0
 }
@@ -118,19 +118,17 @@ get_perms() {
 
 # Scan aidevops credentials.sh (check 1)
 _scan_aidevops_creds() {
-	local creds="$HOME/.config/aidevops/credentials.sh"
-	[[ -f "$creds" ]] || return 0
-	local perms
-	perms=$(get_perms "$creds")
-	if [[ "$perms" != "600" ]]; then
-		report_finding "high" "$creds" \
-			"Plaintext credentials with insecure permissions ($perms)" \
-			"chmod 600 $creds && migrate to gopass: aidevops secret init"
-	else
-		report_finding "medium" "$creds" \
-			"Plaintext credentials file (600 perms — OK but still plaintext on disk)" \
-			"Migrate to gopass: aidevops secret init"
+	local location="" detail="" records=""
+	if ! records=$(bash "${SCRIPT_DIR}/secret-helper.sh" audit-credentials |
+		python3 "${SCRIPT_DIR}/credential_audit.py" display); then
+		report_finding "high" "credentials audit" "Audit failed; results incomplete" "aidevops secret audit-credentials"
+		return 1
 	fi
+	while IFS=$'\t' read -r location detail; do
+		[[ -n "$location" ]] || continue
+		report_finding "high" "$location" "$detail" \
+			"aidevops security fix (interactive); drift: aidevops secret set NAME; parser errors: review the named line"
+	done <<<"$records"
 	return 0
 }
 
@@ -447,29 +445,71 @@ scan_unpinned_deps() {
 # MCP SERVER DEPENDENCY AUDIT
 # ============================================================
 
-scan_mcp_configs() {
-	echo -e "${BOLD}MCP Server Dependency Audit${NC}"
-	echo "==========================="
-	echo ""
-
-	local found_risk=0
-
+_mcp_config_paths() {
 	# Build config list from registry (t1665.5), fallback to hardcoded
 	local -a _sh_configs=()
 	if type rt_detect_configured &>/dev/null; then
-		local _sh_rt_id _sh_cfg
+		local _sh_rt_id _sh_cfg configured="" detect_rc=0
+		configured=$(rt_detect_configured) || detect_rc=$?
+		# Registry status 1 with no output means no configured runtimes.
+		[[ "$detect_rc" -le 1 ]] || return 1
+		[[ "$detect_rc" -eq 0 || -z "$configured" ]] || return 1
 		while IFS= read -r _sh_rt_id; do
-			_sh_cfg=$(rt_config_path "$_sh_rt_id") || continue
+			[[ -n "$_sh_rt_id" ]] || continue
+			_sh_cfg=$(rt_config_path "$_sh_rt_id") || return 1
 			[[ -n "$_sh_cfg" && -f "$_sh_cfg" ]] && _sh_configs+=("$_sh_cfg")
-		done < <(rt_detect_configured)
+		done <<<"$configured"
 	fi
-	# Fallback if registry not loaded or no configs found
-	if [[ ${#_sh_configs[@]} -eq 0 ]]; then
-		[[ -f "$HOME/.config/Claude/claude_desktop_config.json" ]] && _sh_configs+=("$HOME/.config/Claude/claude_desktop_config.json")
-		[[ -f "$HOME/.cursor/mcp.json" ]] && _sh_configs+=("$HOME/.cursor/mcp.json")
+	# MCP config files may be distinct from the runtime's primary config.
+	[[ -f "$HOME/.config/Claude/claude_desktop_config.json" ]] && _sh_configs+=("$HOME/.config/Claude/claude_desktop_config.json")
+	[[ -f "$HOME/.cursor/mcp.json" ]] && _sh_configs+=("$HOME/.cursor/mcp.json")
+	[[ -f "$HOME/.config/opencode/opencode.json" ]] && _sh_configs+=("$HOME/.config/opencode/opencode.json")
+	[[ -f "$HOME/.claude.json" ]] && _sh_configs+=("$HOME/.claude.json")
+	if [[ ${#_sh_configs[@]} -gt 0 ]]; then
+		printf '%s\n' "${_sh_configs[@]}" | sort -u || return 1
 	fi
-	for config in "${_sh_configs[@]}"; do
+	return 0
+}
+
+audit_mcp_configs() {
+	local config="" paths=""
+	paths=$(_mcp_config_paths) || return 1
+	while IFS= read -r config; do
+		[[ -n "$config" ]] || continue
+		python3 "${SCRIPT_DIR}/credential_audit.py" mcp "$config" || return 1
+	done <<<"$paths"
+	return 0
+}
+
+_scan_mcp_env_literals() {
+	local config="$1" location="" detail="" records=""
+	if ! records=$(python3 "${SCRIPT_DIR}/credential_audit.py" mcp "$config" |
+		python3 "${SCRIPT_DIR}/credential_audit.py" display); then
+		report_finding "high" "$config" "MCP audit failed; results incomplete" "Review runtime configuration"
+		return 1
+	fi
+	while IFS=$'\t' read -r location detail; do
+		[[ -n "$location" ]] || continue
+		report_finding "high" "$location" "$detail" \
+			"aidevops security fix; use dataforseo-credentials.sh / outscraper-credentials.sh launch-time loaders, not literal env values"
+	done <<<"$records"
+	return 0
+}
+
+scan_mcp_configs() {
+	echo -e "${BOLD}MCP Server Dependency and Credential Audit${NC}"
+	echo "==========================="
+	echo ""
+	local found_risk=0 config="" before=0 paths=""
+	if ! paths=$(_mcp_config_paths); then
+		report_finding "high" "MCP configuration discovery" "Audit failed; results incomplete" "Review runtime registry"
+		return 1
+	fi
+	while IFS= read -r config; do
 		[[ -f "$config" ]] || continue
+		before=$FINDINGS_TOTAL
+		_scan_mcp_env_literals "$config"
+		[[ "$FINDINGS_TOTAL" -gt "$before" ]] && found_risk=1
 
 		local uvx_count=0 npx_count=0
 		uvx_count=$(grep -c '"uvx"' "$config" 2>/dev/null) || uvx_count=0
@@ -488,10 +528,10 @@ scan_mcp_configs() {
 				"Pin versions or use locally installed packages"
 			found_risk=1
 		fi
-	done
+	done <<<"$paths"
 
 	if [[ "$found_risk" -eq 0 ]]; then
-		echo -e "  ${GREEN}[OK]${NC} No auto-downloading MCP server configurations found"
+		echo -e "  ${GREEN}[OK]${NC} No risky MCP server configurations found"
 	fi
 
 	echo ""
@@ -620,6 +660,17 @@ cmd_startup_check() {
 		return 1
 	fi
 
+	local hygiene_count=0 audits=""
+	if ! audits=$(bash "${SCRIPT_DIR}/secret-helper.sh" audit-credentials && audit_mcp_configs); then
+		echo "Secret hygiene: audit incomplete. Run in your terminal: aidevops security scan"
+		return 1
+	fi
+	[[ -n "$audits" ]] && hygiene_count=$(printf '%s\n' "$audits" | wc -l | tr -d ' ')
+	if [[ "$hygiene_count" -gt 0 ]]; then
+		echo "Secret hygiene: $hygiene_count credential/MCP finding(s). Run in your terminal: aidevops security scan"
+		return 1
+	fi
+
 	if [[ "$plaintext_count" -gt 0 ]]; then
 		echo "Secret hygiene: $plaintext_count high-risk plaintext credential location(s). Run in your terminal: aidevops security"
 		return 1
@@ -705,6 +756,7 @@ Run ALL remediation commands in a SEPARATE TERMINAL, not in AI chat.
 Commands:
   aidevops security              Full scan (posture + secrets + supply chain)
   aidevops security scan         Secret hygiene & supply chain scan
+  aidevops security fix          Interactive credential remediation (never headless)
   aidevops security scan-pth     Python .pth file audit only (supply chain IoC)
   aidevops security scan-secrets Plaintext secret locations only
   aidevops security scan-deps    Unpinned dependency check only
@@ -750,6 +802,9 @@ main() {
 		;;
 	scan-remotes)
 		scan_remote_urls "$@"
+		;;
+	audit-mcp)
+		audit_mcp_configs
 		;;
 	startup-check)
 		cmd_startup_check "$@"

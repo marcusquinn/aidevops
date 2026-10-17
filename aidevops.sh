@@ -1278,6 +1278,7 @@ _help_security_sections() {
 	echo "  aidevops security posture    # Interactive security posture setup (gopass, gh, SSH)"
 	echo "  aidevops security status     # Combined posture + hygiene summary"
 	echo "  aidevops security scan       # Secret hygiene & supply chain scan"
+	echo "  aidevops security fix        # Interactive credential hygiene remediation"
 	echo "  aidevops security scan-pth   # Python .pth file audit (supply chain IoC)"
 	echo "  aidevops security scan-secrets # Plaintext credential locations"
 	echo "  aidevops security scan-deps  # Unpinned dependency check"
@@ -1776,6 +1777,9 @@ _cmd_security() {
 		;;
 	scan | scan-secrets | scan-pth | scan-deps)
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
+		;;
+	fix)
+		_dispatch_helper "security-fix-helper.sh" "security-fix-helper.sh" || return $?
 		;;
 	dismiss)
 		if [[ "${2:-}" == "tanstack-minishaihulud-2026-05" ]]; then
