@@ -1,0 +1,35 @@
+object 2d51d7d6a402cebcacdde5caa87d8bb8c68f5b3d
+type commit
+tag v3.39.39
+tagger marcusquinn <6428977+marcusquinn@users.noreply.github.com> 1792262871 +0100
+
+Release v3.39.39 - AI DevOps Framework
+
+Aidevops-Version: 3.39.39
+Aidevops-Source-PR: 34912
+Aidevops-Source-Merge: 12ebb7a95c614017ac2be267654c9da26011bd34
+Aidevops-Snapshot-Base: 11a8ad434c9ecfb23e9e28434d850d2337f1566a
+Aidevops-Aggregated-Source: 34876@873bec4d0679b6dca7a2dc5f43211d2ffeb5ecc3
+Aidevops-Aggregated-Source: 34878@5c7023150d1c828f71bf0beac78604b8e5366147
+Aidevops-Aggregated-Source: 34879@f927b71621526216dbff16d81757e5ef5260eab9
+Aidevops-Aggregated-Source: 34881@e9dd8ee0ac4bfb4fd5a7134cedd8d4b51228f407
+Aidevops-Aggregated-Source: 34882@74d885ccbed9106ab911f5e904f56ad0f5a57339
+Aidevops-Aggregated-Source: 34884@8d095b7ec3fe5b3f015496edfa33769fbceeb34c
+Aidevops-Aggregated-Source: 34886@517eae633596651e0e0e50f178191b2a177b6ae4
+Aidevops-Aggregated-Source: 34887@e603c2c1c803bb462fd2279aceb2c10a105539ce
+Aidevops-Aggregated-Source: 34890@c364350a7e88af9ece425d1044fa973af1a887fd
+Aidevops-Aggregated-Source: 34895@3d0d4f52596d8687c867d8016fac1eb8311b5687
+Aidevops-Aggregated-Source: 34899@6bd2a1e4d3936a305e83339a4eaee717cf4cbced
+Aidevops-Aggregated-Source: 34900@bee7a0d7044c7084edf36578504775f94f0fd265
+Aidevops-Aggregated-Source: 34902@3fb3ea9a20050760897afd883d91479435a1264e
+Aidevops-Aggregated-Source: 34903@18ba854b87d06c877c185fb14a7b50d386535959
+Aidevops-Aggregated-Source: 34906@82c71a624573835e931701de6291a8aea983331b
+Aidevops-Aggregated-Source: 34908@f861d0eda50f1b4b9368a03576c67a8bbed11ec9
+Aidevops-Aggregated-Source: 34911@55e31b1cd1d3c05b9ea92883bcc7311194f3ecb2
+Aidevops-Aggregated-Source: 34912@12ebb7a95c614017ac2be267654c9da26011bd34
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg5IliwL42sBxfqQz9UN/AwvOgBI
+tXO/S10O+PgxbPV78AAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQGbd+nNanC3MsJEaWJ/kJOTJDcE+iJyGUpq5qiP49uTms49AfNIaIVE2uz/L1zmfSO
+qgDi/MNAgnWPc/sMAvzgY=
+-----END SSH SIGNATURE-----
