@@ -14,6 +14,8 @@ _der_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_der_dir" == "${BASH_SOURCE[0]}" ]] && _der_dir="."
 : "${DER_WORKER_BLOCKER_LOGGER:=${_der_dir}/worker-blocker-log.mjs}"
 DER_BLOCKED_BY_VALUE_AWK="${_der_dir}/blocked-by-value.awk"
+# shellcheck source=./issue-hold-marker-lib.sh
+source "${_der_dir}/issue-hold-marker-lib.sh"
 # shellcheck source=./task-identity-lib.sh
 source "${_der_dir}/task-identity-lib.sh"
 # shellcheck source=./dependency-supersession-lib.sh
@@ -124,117 +126,6 @@ _der_text_has_strong_hold() {
 	return 1
 }
 
-_der_normalize_hold_line() {
-	local line="$1"
-	local prefix=""
-	local count=0
-	local quote_re='^>[[:space:]]*'
-	local list_re='^([-+*]|[0-9]+[.)])[[:space:]]+'
-	local checkbox_re='^\[[ xX]\][[:space:]]+'
-	local heading_re='^#{1,6}[[:space:]]+'
-	local emphasis_re='^(\*\*|__|\*|_)'
-
-	while [[ "$count" -lt 8 ]]; do
-		prefix=""
-		if [[ "$line" =~ ^[[:space:]]+ ]]; then
-			prefix="${BASH_REMATCH[0]}"
-		elif [[ "$line" =~ $quote_re ]]; then
-			prefix="${BASH_REMATCH[0]}"
-		elif [[ "$line" =~ $list_re ]]; then
-			prefix="${BASH_REMATCH[0]}"
-		elif [[ "$line" =~ $checkbox_re ]]; then
-			prefix="${BASH_REMATCH[0]}"
-		elif [[ "$line" =~ $heading_re ]]; then
-			prefix="${BASH_REMATCH[0]}"
-		elif [[ "$line" =~ $emphasis_re ]]; then
-			prefix="${BASH_REMATCH[0]}"
-		else
-			break
-		fi
-		line="${line#"$prefix"}"
-		count=$((count + 1))
-	done
-	printf '%s\n' "$line"
-	return 0
-}
-
-_der_line_is_operational_hold() {
-	local line="$1"
-	local normalized=""
-	local without_pipes=""
-	local pipe_count=0
-	normalized=$(_der_normalize_hold_line "$line") || return 1
-	[[ -n "$normalized" ]] || return 1
-	without_pipes="${normalized//|/}"
-	pipe_count=$((${#normalized} - ${#without_pipes}))
-	[[ "$normalized" != \|* && "$normalized" != *\| && "$pipe_count" -lt 2 ]] || return 1
-	printf '%s\n' "$normalized" |
-		grep -qiE '^(defer[[:space:]]+until|do[-[:space:]]+not[-[:space:]]+dispatch|on[-[:space:]]+hold|hold[[:space:]]+for|paused)([[:space:]:]|$)'
-	return $?
-}
-
-_der_fence_marker() {
-	local line="$1"
-	local backtick_re='^(`{3,})'
-	local tilde_re='^(~{3,})'
-	if [[ "$line" =~ $backtick_re || "$line" =~ $tilde_re ]]; then
-		printf '%s\n' "${BASH_REMATCH[1]}"
-		return 0
-	fi
-	return 1
-}
-
-_der_fence_closes() {
-	local line="$1"
-	local opener="$2"
-	local candidate=""
-	local remainder=""
-	candidate=$(_der_fence_marker "$line") || return 1
-	[[ "${candidate:0:1}" == "${opener:0:1}" && "${#candidate}" -ge "${#opener}" ]] || return 1
-	remainder="${line#"$candidate"}"
-	[[ "$remainder" =~ ^[[:space:]]*$ ]]
-	return $?
-}
-
-_der_text_has_operational_hold() {
-	local text="$1"
-	local line=""
-	local before_comment=""
-	local comment_tail=""
-	local normalized=""
-	local in_comment=false
-	local fence_marker=""
-
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		normalized=$(_der_normalize_hold_line "$line") || return 1
-		if [[ -n "$fence_marker" ]]; then
-			_der_fence_closes "$normalized" "$fence_marker" && fence_marker=""
-			continue
-		fi
-		if [[ "$in_comment" == "true" ]]; then
-			[[ "$line" == *"-->"* ]] || continue
-			line="${line#*-->}"
-			in_comment=false
-		fi
-		while [[ "$line" == *"<!--"* ]]; do
-			before_comment="${line%%<!--*}"
-			comment_tail="${line#*<!--}"
-			if [[ "$comment_tail" == *"-->"* ]]; then
-				line="${before_comment}${comment_tail#*-->}"
-			else
-				line="$before_comment"
-				in_comment=true
-				break
-			fi
-		done
-		normalized=$(_der_normalize_hold_line "$line") || return 1
-		fence_marker=$(_der_fence_marker "$normalized" || true)
-		[[ -z "$fence_marker" ]] || continue
-		_der_line_is_operational_hold "$line" && return 0
-	done <<<"$text"
-	return 1
-}
-
 _der_has_hold() {
 	local body="$1"
 	local comments="$2"
@@ -246,7 +137,7 @@ _der_has_hold() {
 		comments="${comments//aidevops:brief-hold/expired-brief-hold}"
 	fi
 	local text="${body}"$'\n'"${comments}"
-	_der_labels_have_hold "$labels" || _der_text_has_strong_hold "$text" "$comments" || _der_text_has_operational_hold "$text"
+	_der_labels_have_hold "$labels" || _der_text_has_strong_hold "$text" "$comments" || issue_hold_text_has_operational_hold "$text"
 	return $?
 }
 

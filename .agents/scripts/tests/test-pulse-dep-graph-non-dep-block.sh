@@ -60,10 +60,10 @@ source "$HOLD_MARKER_LIB"
 printf '\n== Body defer marker detection ==\n'
 
 assert_eq 'defer until phrase' 'true' "$(issue_body_has_defer_marker 'Defer until Phase 1-6 are working end-to-end @alexey')"
-assert_eq 'do not dispatch' 'true' "$(issue_body_has_defer_marker 'Please do not dispatch this yet.')"
-assert_eq 'do-not-dispatch' 'true' "$(issue_body_has_defer_marker 'Tagged do-not-dispatch until owner reviews.')"
-assert_eq 'on-hold hyphenated' 'true' "$(issue_body_has_defer_marker 'This task is on-hold.')"
-assert_eq 'on hold spaced' 'true' "$(issue_body_has_defer_marker 'This task is on hold.')"
+assert_eq 'do not dispatch' 'true' "$(issue_body_has_defer_marker 'Do not dispatch this yet.')"
+assert_eq 'do-not-dispatch' 'true' "$(issue_body_has_defer_marker '- do-not-dispatch until owner reviews.')"
+assert_eq 'on-hold hyphenated' 'true' "$(issue_body_has_defer_marker 'On-hold until review.')"
+assert_eq 'on hold spaced' 'true' "$(issue_body_has_defer_marker '> On hold pending review.')"
 assert_eq 'ON HOLD uppercase' 'true' "$(issue_body_has_defer_marker 'ON HOLD: waiting for legal.')"
 assert_eq 'HUMAN_UNBLOCK_REQD' 'true' "$(issue_body_has_defer_marker 'HUMAN_UNBLOCK_REQUIRED — see comment thread.')"
 assert_eq 'hold for trailing' 'true' "$(issue_body_has_defer_marker 'hold for Q2 release cycle')"
@@ -76,6 +76,9 @@ assert_eq 'blocked-by only' 'false' "$(issue_body_has_defer_marker 'blocked-by:t
 assert_eq 'word defer in prose' 'false' "$(issue_body_has_defer_marker 'We should not defer this; ship it now.')"
 assert_eq 'dispatch without prefix' 'false' "$(issue_body_has_defer_marker 'Dispatch the worker once ready.')"
 assert_eq 'hold without for' 'false' "$(issue_body_has_defer_marker 'please hold this comment until later')"
+assert_eq 'mid-sentence hold for' 'false' "$(issue_body_has_defer_marker 'Other rows belong to other parts; neither is a hold for this part.')"
+assert_eq 'mid-sentence on hold' 'false' "$(issue_body_has_defer_marker 'This task may be on hold for review.')"
+assert_eq 'hold inside fence' 'false' "$(issue_body_has_defer_marker $'```\nOn hold\n```')"
 
 ###############################################################################
 # Part 2: non-dep BLOCKED comment marker detection (pure regex)
