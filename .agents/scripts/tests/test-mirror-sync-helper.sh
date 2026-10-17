@@ -111,8 +111,63 @@ jq '.initialized_repos[0].mirror_upstream_url = "/nonexistent/mirror-upstream.gi
 mv "$CONFIG.tmp" "$CONFIG"
 if bash "$SCRIPT" sync >"$ROOT/result"; then printf 'expected auth/fetch failure\n' >&2; exit 1; fi
 assert_state FAIL
+grep -q 'upstream authentication or discovery failed: ' "$ROOT/result"
+[[ "$(jq -r '.["private/mirror"].detail' "$STATE")" != 'upstream authentication or discovery failed' ]]
 [[ "$(git --git-dir="$ORIGIN" rev-parse main)" == "$BEFORE" ]]
 assert_untouched
+
+# Inject deterministic network diagnostics while retaining real local git setup.
+# Both discovery's command substitution and direct fetch calls must retain errors.
+git() {
+	if [[ " $* " == *' ls-remote '* || ( "${FAIL_FETCH:-0}" == 1 && " $* " == *' fetch '* ) ]]; then
+		if [[ "${FAIL_FETCH:-0}" == 1 && " $* " == *' ls-remote '* ]]; then
+			printf 'ref: refs/heads/main\tHEAD\n'
+			return 0
+		fi
+		if [[ "${EMPTY_ERROR:-0}" == 1 ]]; then return 1; fi
+		printf 'earlier error must not be selected\n' >&2
+		if [[ " $* " == *'credential.helper=!gh auth git-credential'* ]]; then
+			printf 'fatal: retry https://user:secret@example.invalid/repo ghp_fakeToken github_pat_fakeToken\n\n' >&2
+		else
+			printf 'fatal: initial https://user:secret@example.invalid/repo gho_fakeToken\n\n' >&2
+		fi
+		return 1
+	fi
+	command git "$@"
+	return $?
+}
+gh() {
+	[[ "${GH_AUTH_OK:-0}" == 1 ]] && return 0
+	return 1
+}
+export -f git gh
+jq '.initialized_repos[0].mirror_upstream_url = "https://github.com/vendor/source.git"' "$CONFIG" >"$CONFIG.tmp"
+mv "$CONFIG.tmp" "$CONFIG"
+for GH_AUTH_OK in 0 1; do
+	export GH_AUTH_OK
+	if bash "$SCRIPT" sync >"$ROOT/result" 2>"$ROOT/stderr"; then printf 'expected injected failure\n' >&2; exit 1; fi
+	assert_state FAIL
+	bash "$SCRIPT" status >"$ROOT/status"
+	if [[ "$GH_AUTH_OK" == 1 ]]; then
+		grep -q 'failed: fatal: retry https://\[REDACTED\]@example.invalid/repo \[REDACTED\] \[REDACTED\]' "$ROOT/result"
+		if grep -q 'initial' "$ROOT/result"; then exit 1; fi
+	else
+		grep -q 'gh fallback skipped (gh auth status failed); fatal: initial' "$ROOT/result"
+	fi
+	if grep -Eq 'user:secret@|gh[pousr]_fakeToken|github_pat_fakeToken|earlier error' "$ROOT/result" "$ROOT/stderr" "$ROOT/status" "$STATE"; then
+		printf 'unsafe or stale diagnostic escaped\n' >&2
+		exit 1
+	fi
+done
+export FAIL_FETCH=1
+if bash "$SCRIPT" sync >"$ROOT/result"; then printf 'expected injected fetch failure\n' >&2; exit 1; fi
+grep -q 'remote fetch failed: fatal: retry' "$ROOT/result"
+unset FAIL_FETCH
+export EMPTY_ERROR=1
+if bash "$SCRIPT" sync >"$ROOT/result"; then printf 'expected empty-stderr failure\n' >&2; exit 1; fi
+grep -q 'git command failed without stderr' "$ROOT/result"
+unset EMPTY_ERROR GH_AUTH_OK
+unset -f git gh
 
 # Exercise setup's selection and legacy-label collision decisions without
 # installing a real user scheduler or modifying the operator's HOME.
