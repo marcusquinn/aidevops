@@ -42,6 +42,9 @@
 #                              counter, the TODO.md seed), then exits without
 #                              allocating. Use when resolve_implicit_counter_branch
 #                              refused a stale dedicated branch.
+#   --repair-counter-branch    Repair only a stale default-branch config pin to
+#                              a validated leading dedicated branch. Preserves
+#                              other keys, mode and owner; no allocation/push.
 #   --skip-label-validation    Skip pre-flight label existence check (useful for
 #                              bulk --count N allocation or when gh is rate-limited)
 #   --no-blocked-by            Suppress auto-detection of predecessor references
@@ -428,8 +431,8 @@ _validate_and_normalize_args() {
 		exit 1
 	fi
 
-	# Title is required unless batch mode or a no-allocation --sync-counter-branch run
-	if [[ -z "$TASK_TITLE" ]] && [[ "$ALLOC_COUNT" -eq 1 ]] && [[ "$SYNC_COUNTER_BRANCH" != "true" ]]; then
+	# Maintenance actions never allocate, so do not require a task title.
+	if [[ -z "$TASK_TITLE" && "$ALLOC_COUNT" -eq 1 && "$SYNC_COUNTER_BRANCH" != "true" && "$REPAIR_COUNTER_BRANCH" != "true" ]]; then
 		log_error "Missing required argument: --title (or use --count N for bulk allocation)"
 		exit 1
 	fi
@@ -1868,6 +1871,7 @@ _warn_dispatch_path_auto_dispatch() {
 _main_handle_namespaced_mode() {
 	_CLAIM_NAMESPACED_HANDLED=false
 	_CLAIM_NAMESPACED_RC=0
+	[[ "$REPAIR_COUNTER_BRANCH" != "true" ]] || return 0
 	[[ "${AIDEVOPS_TASK_COORDINATOR_MODE:-legacy}" == "namespaced" ]] || return 0
 	_CLAIM_NAMESPACED_HANDLED=true
 
