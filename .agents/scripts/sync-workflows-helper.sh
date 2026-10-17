@@ -695,8 +695,9 @@ _read_runner_from_file() {
 
 # _needs_runner_sync <slug> <workflow_file>
 # Returns 0 (true) when the on-disk runner does not match the repos.json
-# `runner` field for this slug — i.e. the runner needs to be added, changed,
-# or removed by `--apply`. Returns 1 (false) when they already match.
+# `runner` field for this slug — i.e. the runner needs to be added or changed
+# by `--apply`. An absent registry runner has no opinion: keep the caller's
+# choice. Returns 1 (false) when no registry override needs applying.
 #
 # This is the gap the comparator deliberately leaves: `_normalize_wf_for_compare`
 # strips `runner:` lines before byte-comparison so a runner-only change does
@@ -708,8 +709,12 @@ _needs_runner_sync() {
 	local _workflow_file="$2"
 	local _expected _actual
 	_expected=$(_read_runner_field "$_slug")
+	[[ -n "$_expected" ]] || return 1
 	_actual=$(_read_runner_from_file "$_workflow_file")
-	[[ "$_expected" != "$_actual" ]]
+	if [[ "$_expected" != "$_actual" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # Returns 0 when the issue-first managed block needs an update, 1 when current,
@@ -1320,18 +1325,22 @@ _sync_open_pr() {
 	return 0
 }
 
-# _render_sync_target <template> <target-repo> <effective-ref> <slug> <workflow-name>
+# _render_sync_target <template> <target-repo> <effective-ref> <slug> <workflow-name> <workflow-file>
 _render_sync_target() {
 	local _template="$1"
 	local _target_repo="$2"
 	local _effective_ref="$3"
 	local _slug="$4"
 	local _workflow_name="$5"
+	local _workflow_file="$6"
 	local _content
 	_content=$(_render_template_with_target \
 		"$_template" "$_target_repo" "$_effective_ref" "$_workflow_name") || return 1
 	local _runner_override
 	_runner_override=$(_read_runner_field "$_slug")
+	if [[ -z "$_runner_override" ]]; then
+		_runner_override=$(_read_runner_from_file "$_workflow_file")
+	fi
 	if [[ -n "$_runner_override" ]]; then
 		_content=$(_inject_runner_in_content "$_content" "$_runner_override")
 	fi
@@ -1470,7 +1479,7 @@ _sync_one_repo() {
 	local _effective_ref
 	_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
 	local _target_content
-	if ! _target_content=$(_render_sync_target "$_template" "$_target_repo" "$_effective_ref" "$_slug" "$_workflow_name"); then
+	if ! _target_content=$(_render_sync_target "$_template" "$_target_repo" "$_effective_ref" "$_slug" "$_workflow_name" "$_workflow"); then
 		printf '%s\t%s\t%s\ttemplate render failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
 	fi

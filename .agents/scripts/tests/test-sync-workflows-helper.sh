@@ -306,24 +306,25 @@ _setup_fake_home "$TMPDIR_11"
 mkdir -p \
 	"$TMPDIR_11/repo-runneradd/.github/workflows" \
 	"$TMPDIR_11/repo-runnerchange/.github/workflows" \
-	"$TMPDIR_11/repo-runnerremove/.github/workflows"
+	"$TMPDIR_11/repo-runnerkeep/.github/workflows"
 # Canonical caller — no runner: line.
 printf '%s\n' "$CANONICAL_CALLER_CONTENT" >"$TMPDIR_11/repo-runneradd/.github/workflows/issue-sync.yml"
-# Canonical callers with stale runner values exercise change and removal.
+# Canonical callers with existing runner values exercise change and preservation.
 RUNNER_CONTENT_11=$(printf '%s\n' "$CANONICAL_CALLER_CONTENT" \
 	| sed -E 's|^(    with:)$|\1\n      runner: ubuntu-old|')
 printf '%s\n' "$RUNNER_CONTENT_11" >"$TMPDIR_11/repo-runnerchange/.github/workflows/issue-sync.yml"
-printf '%s\n' "$RUNNER_CONTENT_11" >"$TMPDIR_11/repo-runnerremove/.github/workflows/issue-sync.yml"
-# repos.json adds, changes, and removes runner overrides across the fixtures.
+printf '%s\n' "$RUNNER_CONTENT_11" >"$TMPDIR_11/repo-runnerkeep/.github/workflows/issue-sync.yml"
+# repos.json adds and changes overrides, but absence preserves the caller choice.
 _write_repos_json "$TMPDIR_11" \
-	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_11/repo-runneradd\",\"slug\":\"owner/repo-runneradd\",\"runner\":\"ubuntu-latest-arm64\"},{\"path\":\"$TMPDIR_11/repo-runnerchange\",\"slug\":\"owner/repo-runnerchange\",\"runner\":\"ubuntu-new\"},{\"path\":\"$TMPDIR_11/repo-runnerremove\",\"slug\":\"owner/repo-runnerremove\"}]}"
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_11/repo-runneradd\",\"slug\":\"owner/repo-runneradd\",\"runner\":\"ubuntu-latest-arm64\"},{\"path\":\"$TMPDIR_11/repo-runnerchange\",\"slug\":\"owner/repo-runnerchange\",\"runner\":\"ubuntu-new\"},{\"path\":\"$TMPDIR_11/repo-runnerkeep\",\"slug\":\"owner/repo-runnerkeep\"}]}"
 OUT_11=$(HOME="$TMPDIR_11" bash "$HELPER" --json 2>/dev/null)
 _assert_contains "GH#21897 → CURRENT/CALLER + repos.json runner is actionable" "$OUT_11" '"slug":"owner/repo-runneradd"'
 _assert_contains "GH#21897 → planned outcome on runner add" "$OUT_11" '"outcome":"PLANNED"'
 _assert_contains "GH#21897 → CURRENT/CALLER classification preserved" "$OUT_11" '"classification":"CURRENT/CALLER"'
 _assert_contains "GH#27725 → runner-add dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runneradd","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
 _assert_contains "GH#27725 → runner-change dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runnerchange","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
-_assert_contains "GH#27725 → runner-removal dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runnerremove","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
+_assert_exit "GH#34873 → caller-only runner has no registry drift" 0 \
+	"$(printf '%s\n' "$OUT_11" | jq '[.[] | select(.slug == "owner/repo-runnerkeep")] | length')"
 rm -rf "$TMPDIR_11"
 
 # ─── Test 12: GH#21897 — CURRENT/CALLER + matching runner already injected → no work ───
