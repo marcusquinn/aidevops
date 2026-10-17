@@ -266,17 +266,6 @@ _scan_ssh_and_env() {
 		fi
 	fi
 
-	# .env files in Git repos
-	local env_count=0
-	if command -v fd &>/dev/null; then
-		env_count=$(fd -g ".env" "$HOME/Git/" --max-depth 3 --type f 2>/dev/null | wc -l | tr -d ' ') || env_count=0
-	fi
-	if [[ "${env_count:-0}" -gt 0 ]]; then
-		report_finding "medium" "$HOME/Git/**/.env" \
-			"$env_count .env file(s) found in Git project directories" \
-			"Ensure .env is in .gitignore; migrate secrets to gopass: aidevops secret set NAME"
-	fi
-
 	# Stripe CLI config
 	local stripe_config="$HOME/.config/stripe"
 	if [[ -d "$stripe_config" ]]; then
@@ -284,6 +273,40 @@ _scan_ssh_and_env() {
 			"Stripe CLI config directory (may contain API keys)" \
 			"stripe login (refreshes token via browser)"
 	fi
+	return 0
+}
+
+_scan_env_audit() {
+	local kind="$1"
+	local records=""
+	local severity=""
+	local location=""
+	local detail=""
+	if ! records=$(python3 "${SCRIPT_DIR}/credential_audit.py" "$kind" |
+		python3 "${SCRIPT_DIR}/credential_audit.py" display-env); then
+		report_finding "high" "$kind" "Environment audit incomplete" "Review the named source in a separate terminal"
+		return 1
+	fi
+	while IFS=$'\t' read -r severity location detail; do
+		[[ -n "$severity" ]] || continue
+		report_finding "$severity" "$location" "$detail" \
+			"Review names only; missing-mcp-env-link: shells will not load credentials; aidevops security fix offers safe link/permission fixes; project env and plist contents are report-only"
+	done <<<"$records"
+	return 0
+}
+
+_scan_mcp_env_link() {
+	_scan_env_audit "mcp-env"
+	return 0
+}
+
+_scan_plist_env_overrides() {
+	_scan_env_audit "plist-env"
+	return 0
+}
+
+_scan_env_files() {
+	_scan_env_audit "env-files"
 	return 0
 }
 
@@ -296,6 +319,9 @@ scan_plaintext_secrets() {
 	echo ""
 
 	_scan_aidevops_creds
+	_scan_mcp_env_link
+	_scan_plist_env_overrides
+	_scan_env_files
 	_scan_cloud_credentials
 	_scan_infra_credentials
 	_scan_dev_credentials
