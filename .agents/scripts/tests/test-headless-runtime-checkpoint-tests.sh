@@ -619,19 +619,19 @@ test_post_pr_handoff_after_merge_completes_closed_issue() {
 			gh() {
 				local args="$*"
 				case "$args" in
-				*"api --paginate"*"/issues/458/comments"*)
+				(*"api --paginate"*"/issues/458/comments"*)
 					if [[ "$fixture_summary_count" -eq 1 ]]; then
 						printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
 					else
 						printf '%s' '[[]]'
 					fi
 					;;
-				*"api repos/"*"/pulls/458"*) printf '%s' "$fixture_pr_body" ;;
-				*"api repos/"*"/issues/99999"*)
+				(*"api repos/"*"/pulls/458"*) printf '%s' "$fixture_pr_body" ;;
+				(*"api repos/"*"/issues/99999"*)
 					[[ "$fixture_issue_state" != "api_failure" ]] || return 1
 					printf '%s' "$fixture_issue_state"
 					;;
-				*) return 1 ;;
+				(*) return 1 ;;
 				esac
 				return 0
 			}
