@@ -673,7 +673,7 @@ fi
 
 # A future-dated start stamp (clock skew) never pushes a pass to the back.
 printf '%s\n' "$(($(date +%s) + 3600))" >"${PASS_STATE_DIR}/label_invariants"
-FIRST_PASS=$(_normalize_pass_order "$PASS_STATE_DIR" "$(date +%s)" | head -n 1)
+FIRST_PASS=$(_normalize_pass_order "$PASS_STATE_DIR" "$(date +%s)" | awk 'NR == 1 { print }')
 if [[ "$FIRST_PASS" == "label_invariants" ]]; then
 	print_result "future-dated normalize pass stamp sorts first" 0
 else
