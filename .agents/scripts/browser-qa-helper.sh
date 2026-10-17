@@ -387,6 +387,14 @@ Common Options:
   --output-dir DIR    Directory for screenshots and reports
   --max-dim PX        Resize screenshots to this max dimension (default: 4000, Anthropic hard limit: 8000)
 
+Screenshot-specific Options:
+  --full-page         Capture the whole page (never for AI review; use --scroll-to)
+  --color-schemes S   Comma-separated light,dark,no-preference: one capture per scheme
+  --scroll-to SEL     Centre the first match in the viewport before capturing
+  --measure-file FILE JavaScript function expression run in the page after capture
+  --label NAME        Filename prefix ([A-Za-z0-9._-]+) so before/after runs share a directory
+  Every result records httpStatus and consoleErrors.
+
 Stability-specific Options:
   --reloads N         Number of reloads per page (default: 3, minimum: 1)
   --poll-interval MS  Quiescence poll interval in milliseconds (default: 500)
@@ -411,6 +419,8 @@ Examples:
   browser-qa-helper.sh stability --url http://localhost:3000 --pages "/ /dashboard" --reloads 5
   browser-qa-helper.sh stability --url http://localhost:3000 --format markdown --reloads 3
   browser-qa-helper.sh journey --config journey.json --environment staging
+  browser-qa-helper.sh screenshot --url http://127.0.0.1:3000 --pages / --color-schemes light,dark \
+    --scroll-to '#pricing' --measure-file measure.js --label after --max-dim 1568
 
 Prerequisites:
   - Node.js and npm installed

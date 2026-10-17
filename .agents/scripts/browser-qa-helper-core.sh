@@ -361,8 +361,20 @@ wait_for_url() {
 # =============================================================================
 
 # Generate the Playwright screenshot script file.
-# Args: $1=script_file $2=safe_url $3=viewport_array $4=pages_array $5=safe_output_dir $6=timeout $7=full_page
+# Args: $1=script_file $2=safe_url $3=viewport_array $4=pages_array $5=safe_output_dir
+#       $6=timeout $7=full_page $8=pages_default (true)
+#       $9=schemes_array (null: browser default) $10=safe_scroll_to
+#       $11=safe_measure_file $12=safe_label (all empty: no scroll, measure or label)
 _generate_screenshot_script() {
+	local script_file="$1"
+	_generate_screenshot_setup "$@"
+	_generate_screenshot_capture "$script_file"
+	return 0
+}
+
+# Shell-supplied constants and URL resolution. Nothing here may use import or
+# top-level await: the generator test evaluates this prefix in a bare vm context.
+_generate_screenshot_setup() {
 	local script_file="$1"
 	local safe_url="$2"
 	local viewport_array="$3"
@@ -371,6 +383,10 @@ _generate_screenshot_script() {
 	local timeout="$6"
 	local full_page="$7"
 	local pages_default="${8:-true}"
+	local schemes_array="${9:-null}"
+	local safe_scroll_to="${10:-}"
+	local safe_measure_file="${11:-}"
+	local safe_label="${12:-}"
 
 	cat >"$script_file" <<SCRIPT
 const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
@@ -384,40 +400,122 @@ const pages = [${pages_array}];
 const outputDir = '${safe_output_dir}';
 const timeout = ${timeout};
 const fullPage = ${full_page};
+const schemes = [${schemes_array}];
+const scrollTo = '${safe_scroll_to}';
+const measureFile = '${safe_measure_file}';
+const label = '${safe_label}';
 
+SCRIPT
+	return 0
+}
+
+# Capture loop: one context per viewport and colour scheme, one result per page.
+_generate_screenshot_capture() {
+	local script_file="$1"
+	cat >>"$script_file" <<'SCRIPT'
 async function run() {
+  let measureSource = null;
+  if (measureFile) {
+    const { readFile } = await import('node:fs/promises');
+    measureSource = await readFile(measureFile, 'utf8');
+    // Function expressions only: no module imports/exports. This is trusted operator code.
+    if (typeof (0, eval)(`(${measureSource}\n)`) !== 'function') throw new Error('--measure-file must contain a function expression');
+  }
   const launchOptions = { headless: true };
   if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) launchOptions.executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
   const browser = await chromium.launch(launchOptions);
   const results = [];
 
   for (const vp of viewports) {
-    const context = await browser.newContext({
-      viewport: { width: vp.width, height: vp.height },
-    });
-    const page = await context.newPage();
-
-    for (const pagePath of pages) {
-      const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
-      const safeName = pagePath.replace(/\\//g, '_').replace(/^_/, '') || 'index';
-      const filename = \`\${safeName}-\${vp.name}-\${vp.width}x\${vp.height}.png\`;
-      const filepath = \`\${outputDir}/\${filename}\`;
-
-      try {
-        await page.goto(url, { waitUntil: 'load', timeout });
-        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-        await page.screenshot({ path: filepath, fullPage });
-        results.push({ page: pagePath, viewport: vp.name, file: filepath, status: 'ok' });
-      } catch (err) {
-        results.push({ page: pagePath, viewport: vp.name, file: filepath, status: 'error', error: err.message });
+    for (const scheme of schemes) {
+      const context = await browser.newContext({
+        viewport: { width: vp.width, height: vp.height },
+        ...(scheme ? { colorScheme: scheme } : {}),
+      });
+      const page = await context.newPage();
+      const watch = watchPage(page);
+      for (const pagePath of pages) {
+        results.push(await capturePage(page, watch, vp, scheme, pagePath, measureSource));
       }
+      await context.close();
     }
-
-    await context.close();
   }
 
   await browser.close();
   console.log(JSON.stringify(results, null, 2));
+}
+
+// Console errors (smoke's { text, location } shape), uncaught page errors and in-flight requests.
+function watchPage(page) {
+  const watch = { errors: [], inflight: 0 };
+  page.on('console', msg => { if (msg.type() === 'error') watch.errors.push({ text: msg.text(), location: msg.location() }); });
+  page.on('pageerror', err => watch.errors.push({ text: err.message }));
+  page.on('request', () => { watch.inflight += 1; });
+  const done = () => { watch.inflight = Math.max(0, watch.inflight - 1); };
+  page.on('requestfinished', done);
+  page.on('requestfailed', done);
+  return watch;
+}
+
+// Filename: [label-]page-viewport[-scheme]-WxH.png. Measure after capture so it cannot change the image.
+async function capturePage(page, watch, vp, scheme, pagePath, measureSource) {
+  const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
+  const safeName = pagePath.replace(/\//g, '_').replace(/^_/, '') || 'index';
+  const parts = [label, safeName, vp.name, scheme, `${vp.width}x${vp.height}`].filter(Boolean);
+  const filepath = `${outputDir}/${parts.join('-')}.png`;
+  const result = { page: pagePath, viewport: vp.name, file: filepath, status: 'ok' };
+  if (label) result.label = label;
+  if (scheme) result.colorScheme = scheme;
+  watch.errors = [];
+  result.httpStatus = null;
+  result.consoleErrors = watch.errors;
+  try {
+    const response = await page.goto(url, { waitUntil: 'load', timeout });
+    result.httpStatus = response ? response.status() : null;
+    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+    if (scrollTo) await scrollToTarget(page, watch, result);
+    await page.screenshot({ path: filepath, fullPage });
+  } catch (err) {
+    result.status = 'error';
+    result.error = err.message;
+    return result;
+  }
+  if (measureSource) {
+    try {
+      const value = await page.evaluate(`(${measureSource}\n)()`);
+      result.measurement = value === undefined ? null : value;
+    } catch (err) {
+      result.measureError = String(err.message || err).split('\n')[0];
+    }
+  }
+  return result;
+}
+
+// Centre the first match; a missing match still captures, with found: false.
+async function scrollToTarget(page, watch, result) {
+  let target = null;
+  try {
+    target = await page.$(scrollTo);
+  } catch (err) {
+    result.scrollError = err.message;
+  }
+  result.found = Boolean(target);
+  if (target) {
+    await target.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await settle(page, watch);
+  }
+  result.scrollY = await page.evaluate(() => window.scrollY);
+}
+
+// Wait for 500 ms without in-flight requests (lazy images), capped at 5 s like the load wait.
+async function settle(page, watch) {
+  const deadline = Date.now() + 5000;
+  let quietSince = Date.now();
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    if (watch.inflight > 0) quietSince = Date.now();
+    else if (Date.now() - quietSince >= 500) return;
+  }
 }
 
 run().catch(err => {
@@ -428,63 +526,138 @@ SCRIPT
 	return 0
 }
 
+# Parse cmd_screenshot arguments into caller-scope _ss_* variables.
+# Args: all original $@ from cmd_screenshot
+_parse_screenshot_args() {
+	_ss_url=""
+	_ss_pages="/"
+	_ss_pages_default=true
+	_ss_viewports="$BROWSER_QA_DEFAULT_VIEWPORTS"
+	_ss_output_dir="$SCREENSHOTS_DIR"
+	_ss_timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
+	_ss_full_page="false"
+	_ss_max_dim=""
+	_ss_color_schemes=""
+	_ss_scroll_to=""
+	_ss_measure_file=""
+	_ss_label=""
+
+	while [[ $# -gt 0 ]]; do
+		local opt="$1"
+		case "$opt" in
+		--full-page)
+			_ss_full_page="true"
+			shift
+			continue
+			;;
+		--url | --pages | --viewports | --output-dir | --timeout | --max-dim | --color-schemes | --scroll-to | --measure-file | --label) ;;
+		*)
+			log_error "Unknown option: $opt"
+			return 1
+			;;
+		esac
+		if [[ $# -lt 2 ]]; then
+			log_error "$opt needs a value"
+			return 1
+		fi
+		local value="$2"
+		case "$opt" in
+		--url) _ss_url="$value" ;;
+		--pages)
+			_ss_pages="$value"
+			_ss_pages_default=false
+			;;
+		--viewports) _ss_viewports="$value" ;;
+		--output-dir) _ss_output_dir="$value" ;;
+		--timeout) _ss_timeout="$value" ;;
+		--max-dim) _ss_max_dim="$value" ;;
+		--color-schemes) _ss_color_schemes="$value" ;;
+		--scroll-to) _ss_scroll_to="$value" ;;
+		--measure-file) _ss_measure_file="$value" ;;
+		--label) _ss_label="$value" ;;
+		esac
+		shift 2
+	done
+	return 0
+}
+
+# Validate the screenshot evidence options before anything is written.
+# Reads: _ss_color_schemes _ss_label _ss_measure_file _ss_scroll_to
+_validate_screenshot_args() {
+	if [[ -n "$_ss_color_schemes" ]]; then
+		local scheme
+		local -a schemes=()
+		IFS=',' read -r -a schemes <<<"$_ss_color_schemes"
+		[[ ${#schemes[@]} -gt 0 ]] || schemes=("")
+		for scheme in "${schemes[@]}"; do
+			case "$scheme" in
+			light | dark | no-preference) ;;
+			*)
+				log_error "Unknown colour scheme '${scheme}': use light, dark or no-preference"
+				return 1
+				;;
+			esac
+		done
+	fi
+	if [[ -n "$_ss_label" && ! "$_ss_label" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		log_error "--label must match [A-Za-z0-9._-]+"
+		return 1
+	fi
+	if [[ -n "$_ss_measure_file" && ! (-f "$_ss_measure_file" && -r "$_ss_measure_file") ]]; then
+		log_error "--measure-file is not a readable file: $_ss_measure_file"
+		return 1
+	fi
+	return 0
+}
+
+# Build the JS schemes array: quoted validated schemes, or null for the browser default.
+# Args: $1 = comma-separated schemes (may be empty)
+_build_schemes_js_array() {
+	local list="$1"
+	if [[ -z "$list" ]]; then
+		printf 'null'
+		return 0
+	fi
+	local scheme out=""
+	local -a schemes=()
+	IFS=',' read -r -a schemes <<<"$list"
+	for scheme in "${schemes[@]}"; do
+		out+="${out:+,}'${scheme}'"
+	done
+	printf '%s' "$out"
+	return 0
+}
+
 # Capture screenshots of pages at specified viewports using Playwright.
 # Args: --url URL --pages "/ /about /dashboard" --viewports "desktop,mobile" --output-dir DIR
 # Output: Screenshot file paths, one per line
 cmd_screenshot() {
-	local url=""
-	local pages="/"
-	local pages_default=true
-	local viewports="$BROWSER_QA_DEFAULT_VIEWPORTS"
-	local output_dir="$SCREENSHOTS_DIR"
-	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
-	local full_page="false"
-	local max_dim=""
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--url)
-			url="$2"
-			shift 2
-			;;
-		--pages)
-			pages="$2"
-			pages_default=false
-			shift 2
-			;;
-		--viewports)
-			viewports="$2"
-			shift 2
-			;;
-		--output-dir)
-			output_dir="$2"
-			shift 2
-			;;
-		--timeout)
-			timeout="$2"
-			shift 2
-			;;
-		--full-page)
-			full_page="true"
-			shift
-			;;
-		--max-dim)
-			max_dim="$2"
-			shift 2
-			;;
-		*)
-			log_error "Unknown option: $1"
-			return 1
-			;;
-		esac
-	done
+	local _ss_url _ss_pages _ss_pages_default _ss_viewports _ss_output_dir _ss_timeout
+	local _ss_full_page _ss_max_dim _ss_color_schemes _ss_scroll_to _ss_measure_file _ss_label
+	_parse_screenshot_args "$@" || return 1
+	local url="$_ss_url"
+	local pages="$_ss_pages"
+	local pages_default="$_ss_pages_default"
+	local viewports="$_ss_viewports"
+	local output_dir="$_ss_output_dir"
+	local timeout="$_ss_timeout"
+	local full_page="$_ss_full_page"
+	local max_dim="$_ss_max_dim"
 
 	if [[ -z "$url" ]]; then
 		log_error "URL is required. Use --url http://localhost:3000"
 		return 1
 	fi
 
+	_validate_screenshot_args || return 1
+	local measure_file="$_ss_measure_file"
+	if [[ -n "$measure_file" && "$measure_file" != /* ]]; then
+		measure_file="$(pwd)/${measure_file}"
+	fi
+
 	max_dim=$(resolve_max_image_dim "$max_dim")
+	local created_output_dir=false
+	[[ -d "$output_dir" ]] || created_output_dir=true
 	mkdir -p "$output_dir"
 
 	# t2997: node ESM requires exact .mjs extension; use mktemp -d for a unique
@@ -501,8 +674,14 @@ cmd_screenshot() {
 	local safe_url safe_output_dir
 	safe_url=$(js_escape_string "$url")
 	safe_output_dir=$(js_escape_string "$output_dir")
+	local schemes_array safe_scroll_to safe_measure_file safe_label
+	schemes_array=$(_build_schemes_js_array "$_ss_color_schemes")
+	safe_scroll_to=$(js_escape_string "$_ss_scroll_to")
+	safe_measure_file=$(js_escape_string "$measure_file")
+	safe_label=$(js_escape_string "$_ss_label")
 
-	_generate_screenshot_script "$script_file" "$safe_url" "$viewport_array" "$pages_array" "$safe_output_dir" "$timeout" "$full_page" "$pages_default"
+	_generate_screenshot_script "$script_file" "$safe_url" "$viewport_array" "$pages_array" "$safe_output_dir" "$timeout" "$full_page" "$pages_default" \
+		"$schemes_array" "$safe_scroll_to" "$safe_measure_file" "$safe_label"
 
 	log_info "Capturing screenshots for ${pages} at viewports: ${viewports}"
 	local exit_code=0
@@ -510,6 +689,10 @@ cmd_screenshot() {
 	rm -rf "$script_dir"
 
 	if [[ "$exit_code" -ne 0 ]]; then
+		# A run that failed before capturing leaves no empty directory it created.
+		if [[ "$created_output_dir" == true ]]; then
+			rmdir "$output_dir" 2>/dev/null || true
+		fi
 		return "$exit_code"
 	fi
 

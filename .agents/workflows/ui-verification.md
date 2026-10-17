@@ -45,7 +45,15 @@ For an authenticated read-only path, prefer the repository's existing E2E suite.
 browser-qa-helper.sh smoke --url "$DEV_URL" --pages "$AFFECTED_PATHS"
 browser-qa-helper.sh screenshot --url "$DEV_URL" \
   --pages "$AFFECTED_PATHS" --viewports desktop,mobile --max-dim 1568
+# Theme-sensitive change: both schemes, the changed element in view, computed styles,
+# labelled so before/after runs share a directory
+browser-qa-helper.sh screenshot --url "$DEV_URL" \
+  --pages "$AFFECTED_PATHS" --viewports desktop,mobile --max-dim 1568 \
+  --color-schemes light,dark --scroll-to "$CHANGED_SELECTOR" \
+  --measure-file measure.js --label after
 ```
+
+Each result records `httpStatus` and `consoleErrors`; options and the measure-file contract: `tools/browser/browser-qa.md` "Step 3: Screenshot Capture".
 
 Do not turn these commands into a committed one-off script. If the helper or an existing project workflow cannot cover a material uncertainty, explain the gap before proposing new browser-test infrastructure.
 

@@ -419,10 +419,15 @@ test_generated_page_urls() {
 	local pages_default generator
 	local result=0
 	for pages_default in true false; do
-		for generator in screenshot smoke stability a11y; do
+		for generator in screenshot screenshot-evidence smoke stability a11y; do
 			local script_file="${script_dir}/${generator}.mjs"
 			case "$generator" in
 			screenshot) _generate_screenshot_script "$script_file" "$safe_url" "{name:'desktop',width:1440,height:900}" "'/'" "$script_dir" 30000 false "$pages_default" ;;
+			screenshot-evidence)
+				_generate_screenshot_script "$script_file" "$safe_url" "{name:'desktop',width:1440,height:900}" "'/'" "$script_dir" 30000 false "$pages_default" \
+					"$(_build_schemes_js_array "light,dark")" "$(js_escape_string "[data-name='it\`s \$x']")" \
+					"$(js_escape_string "${script_dir}/measure.js")" "$(js_escape_string "after")"
+				;;
 			smoke) _generate_smoke_script "$script_file" "$safe_url" "'/'" 30000 "$pages_default" ;;
 			stability) _generate_stability_script "$script_file" "$safe_url" "'/'" 1 30000 500 10000 "$pages_default" ;;
 			a11y) _generate_a11y_script "$script_file" "$safe_url" "'/'" "$pages_default" ;;

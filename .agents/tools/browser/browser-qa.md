@@ -180,6 +180,27 @@ See `tools/vision/image-understanding.md` for per-provider limits.
 
 **What to look for**: layout breaks, missing images/icons, text truncation, mobile hamburger menu, footer positioning, form alignment.
 
+**Evidence options** (one page load per capture):
+
+| Option | Effect |
+|--------|--------|
+| `--color-schemes light,dark` | One context per viewport and scheme (`light`, `dark`, `no-preference`). Adds the scheme to the filename and a `colorScheme` field. |
+| `--scroll-to SELECTOR` | Centres the first match before capture, so below-the-fold elements need no `--full-page`. Adds `found` and `scrollY`; no match still captures, with `found: false`. |
+| `--measure-file FILE` | A function expression (same contract as `transition`) run in the page after capture. Adds `measurement` or `measureError`. |
+| `--label NAME` | Prefixes filenames (`[A-Za-z0-9._-]+`), e.g. `after-index-desktop-dark-1440x900.png`, and adds a `label` field. |
+
+Every result also has `httpStatus` (`null` without a response) and `consoleErrors` (console errors as `{ text, location }` plus uncaught page errors). Invalid schemes, labels or measure files fail before the browser launches.
+
+```javascript
+// measure.js: computed-style evidence for a theme-sensitive border
+() => {
+  const el = document.querySelector('#pricing');
+  const s = getComputedStyle(el);
+  return { border: `${s.borderTopWidth} ${s.borderTopStyle} ${s.borderTopColor}`, radius: s.borderRadius,
+    size: [el.offsetWidth, el.offsetHeight], background: getComputedStyle(document.body).backgroundColor };
+}
+```
+
 ### Step 4: Broken Link Detection
 
 ```bash
@@ -246,6 +267,17 @@ compare -metric RMSE baseline-m1/index-desktop-1440x900.png current-m2/index-des
 ```
 
 Pixel-perfect comparison is brittle (font rendering, animation timing). Use for detecting major layout shifts only. Diff > 5% RMSE warrants investigation.
+
+Theme-sensitive change, before and after in one directory:
+
+```bash
+evidence=(--pages "/" --viewports desktop,mobile --color-schemes light,dark
+  --scroll-to '#pricing' --measure-file measure.js --output-dir shots --max-dim 1568)
+browser-qa-helper.sh screenshot --url "$DEV_URL" "${evidence[@]}" --label before
+# ...deploy the change...
+browser-qa-helper.sh screenshot --url "$DEV_URL" "${evidence[@]}" --label after
+compare -metric RMSE shots/before-index-desktop-dark-1440x900.png shots/after-index-desktop-dark-1440x900.png diff.png
+```
 
 ## Related
 
