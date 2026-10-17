@@ -486,6 +486,122 @@ PRE_ROOT_HEADING
 	return 0
 }
 
+# Exercise each launcher from a shell that exits before the agent finishes.
+_test_detached_agent() {
+	local tmpdir="$1"
+	local mode="$2"
+	local expected="$3"
+	local root="${tmpdir}/agent-${mode}-${expected}"
+	local attempt=0
+	local parent_pgid="" agent_pgid="" captured=""
+	mkdir -p "$root"
+	if (
+		export ROUTINE_TEST_ROOT="$root" ROUTINE_TEST_MODE="$mode" ROUTINE_TEST_STATUS="$expected"
+		export HEADLESS_RUNTIME_HELPER="$root/headless.sh" ROUTINE_LOG_HELPER="$root/lifecycle.sh"
+		export LOGFILE="$root/pulse.log" ROUTINE_STATE_FILE="$root/state.json"
+		cat >"$HEADLESS_RUNTIME_HELPER" <<'AGENT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ROUTINE_TEST_ROOT/invocations"
+ps -o pgid= -p "$$" >"$ROUTINE_TEST_ROOT/agent-pgid"
+for ((attempt = 0; attempt < 100; attempt++)); do
+    [[ ! -f "$ROUTINE_TEST_ROOT/release" ]] || break
+    sleep 0.1
+done
+[[ "$ROUTINE_TEST_STATUS" == success ]] || exit 7
+exit 0
+AGENT
+		cat >"$ROUTINE_LOG_HELPER" <<'LIFECYCLE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ROUTINE_TEST_ROOT/lifecycle"
+LIFECYCLE
+		chmod +x "$HEADLESS_RUNTIME_HELPER" "$ROUTINE_LOG_HELPER"
+		bash -c '
+            source "$1"
+            command() {
+                if [[ "${1:-}" == -v ]]; then
+                    case "$ROUTINE_TEST_MODE:${2:-}" in
+                    perl:setsid|job-control:setsid|job-control:perl) return 1 ;;
+                    esac
+                fi
+                builtin command "$@"
+                return $?
+            }
+            ps -o pgid= -p "$$" >"$ROUTINE_TEST_ROOT/parent-pgid"
+            _routine_dispatch_agent r-agent "Detached agent" Build+ "$ROUTINE_TEST_ROOT"
+        ' _ "$PULSE_ROUTINES" || exit 1
+		# The dispatching shell has exited, but the helper is held open.
+		while [[ "$attempt" -lt 100 && ! -s "$root/agent-pgid" ]]; do
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		parent_pgid=$(tr -d '[:space:]' <"$root/parent-pgid")
+		agent_pgid=$(tr -d '[:space:]' <"$root/agent-pgid")
+		[[ -n "$agent_pgid" && "$parent_pgid" != "$agent_pgid" ]] || exit 1
+		_routine_retry_blocked r-agent || exit 1
+		# A synchronous duplicate attempts exactly the same lock acquisition.
+		bash -c 'source "$1"; _routine_run_detached_agent r-agent Duplicate Build+ "$2"' \
+			_ "$PULSE_ROUTINES" "$root" || exit 1
+		[[ "$(wc -l <"$root/invocations" | tr -d '[:space:]')" == 1 ]] || exit 1
+		: >"$root/release"
+		attempt=0
+		while [[ "$attempt" -lt 100 ]]; do
+			if [[ ! -d "${ROUTINE_STATE_FILE}.r-agent.runner" ]] &&
+				jq -e --arg status "$expected" '."r-agent".last_status == $status' "$ROUTINE_STATE_FILE" >/dev/null 2>&1; then
+				break
+			fi
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		[[ "$attempt" -lt 100 ]] || exit 1
+		captured=$(<"$root/lifecycle")
+		[[ "$captured" == *"--status running"*"--session-key routine-r-agent"* &&
+			"$captured" == *"--status $expected"*"--session-key routine-r-agent"* ]] || exit 1
+	); then
+		pass "GH#34867: $mode agent survives parent exit, isolates PGID, excludes duplicates and records $expected"
+	else
+		fail "GH#34867: $mode detached agent $expected" "see $root"
+	fi
+	return 0
+}
+
+_test_stale_agent_recovery() {
+	local tmpdir="$1"
+	local root="${tmpdir}/stale-agent"
+	mkdir -p "$root"
+	if (
+		ROUTINE_STATE_FILE="$root/state.json"
+		LOGFILE="$root/pulse.log"
+		ROUTINE_LOG_HELPER="$root/missing-helper"
+		AIDEVOPS_ROUTINE_NOW_EPOCH=$(date +%s)
+		_routine_update_state r-stale running
+		local lock_dir="${ROUTINE_STATE_FILE}.r-stale.runner"
+		mkdir "$lock_dir"
+		: >"$lock_dir/pid-2147483647"
+		# A recently created dead lock is protected by the launch grace.
+		_routine_retry_blocked r-stale || exit 1
+		[[ "$(jq -r '."r-stale".last_status' "$ROUTINE_STATE_FILE")" == running ]] || exit 1
+		touch -t 200001010000 "$lock_dir"
+		_routine_retry_blocked r-stale || exit 1
+		jq -e '."r-stale".last_status == "failure" and ."r-stale".consecutive_failures == 1' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		[[ ! -d "$lock_dir" ]] || exit 1
+		AIDEVOPS_ROUTINE_NOW_EPOCH=$((AIDEVOPS_ROUTINE_NOW_EPOCH + 901))
+		! _routine_retry_blocked r-stale || exit 1
+		# An old but live runner remains blocked, even beyond the running timeout.
+		_routine_update_state r-stale running
+		mkdir "$lock_dir"
+		: >"$lock_dir/pid-$$"
+		touch -t 200001010000 "$lock_dir"
+		AIDEVOPS_ROUTINE_NOW_EPOCH=$((AIDEVOPS_ROUTINE_NOW_EPOCH + 21601))
+		_routine_retry_blocked r-stale || exit 1
+		[[ "$(jq -r '."r-stale".last_status' "$ROUTINE_STATE_FILE")" == running ]]
+	); then
+		pass "GH#34867: dead running lock respects grace then uses failure backoff; live lock stays protected"
+	else
+		fail "GH#34867: stale running recovery" "see $root"
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir
 	tmpdir=$(mktemp -d) || {
@@ -501,6 +617,13 @@ main() {
 	_test_canonical_section_boundaries "$tmpdir"
 	_test_supervisor_self_recursion_guard "$tmpdir"
 	_test_generated_routines_repository_contract "$tmpdir"
+	local mode="" expected=""
+	for mode in setsid perl job-control; do
+		for expected in success failure; do
+			_test_detached_agent "$tmpdir" "$mode" "$expected"
+		done
+	done
+	_test_stale_agent_recovery "$tmpdir"
 
 	# === Summary ===
 	printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
