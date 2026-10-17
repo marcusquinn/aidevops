@@ -17,8 +17,9 @@ export GIT_CONFIG_NOSYSTEM=1
 
 # Fixture setup uses disposable repositories; helper subprocesses still resolve
 # the guarded Git shim from PATH because shell functions are not exported.
+# Allow runners without /usr/bin/git to select their system Git for fixtures.
 git() {
-	/usr/bin/git "$@"
+	"${TEST_GIT_BINARY:-/usr/bin/git}" "$@"
 	return $?
 }
 
@@ -124,6 +125,14 @@ fi
 
 if [[ "${1:-}" == "api" ]]; then
 	exit 1
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+	case "$*" in
+	*"--jq .state") printf 'MERGED\n' ;;
+	*"--jq .mergedAt") printf '2026-10-17T00:00:00Z\n' ;;
+	esac
+	exit 0
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "create" ]]; then
@@ -552,6 +561,88 @@ test_unprotected_default_from_linked_branch_publishes_default() {
 	return 0
 }
 
+test_complete_from_linked_branch() {
+	local protected_default="$1"
+	local name="complete from linked branch publishes completion (protected=$protected_default)"
+	local tmpdir fake_bin work_dir output rc remote_todo head_branch before_head remote_branch
+	tmpdir=$(mktemp -d) || {
+		fail "$name" "mktemp failed"
+		return 0
+	}
+	fake_bin="${tmpdir}/bin"
+	write_fake_gh "$fake_bin" || return 0
+	# Seed the open task on the remote before enabling branch protection.
+	work_dir=$(setup_repo "$tmpdir" false) || return 0
+	append_planning_change "$work_dir" "t34880" "34880"
+	git -C "$work_dir" add TODO.md todo/ &&
+		git -C "$work_dir" commit -m "plan: seed open task" >/dev/null 2>&1 &&
+		git -C "$work_dir" push origin fixture-default >/dev/null 2>&1 &&
+		git -C "$work_dir" switch -c fixture-linked >/dev/null 2>&1 || {
+		fail "$name" "task setup failed"
+		return 0
+	}
+	before_head=$(git -C "$work_dir" rev-parse HEAD)
+	: >"${tmpdir}/gh.log"
+	rc=0
+	output=$(cd "$work_dir" && PATH="${fake_bin}:$PATH" \
+		GH_STUB_LOG="${tmpdir}/gh.log" GH_STUB_BODY="${tmpdir}/body" \
+		GH_STUB_HEAD="${tmpdir}/head" GH_STUB_TITLE="${tmpdir}/title" \
+		AIDEVOPS_PLANNING_FORCE_PR_FALLBACK="$protected_default" AIDEVOPS_PLANNING_PR_REPO_SLUG="example/repo" \
+		"$PLANNING_HELPER" complete t34880 --pr 42 2>&1) || rc=$?
+	remote_branch=$(git --git-dir="${tmpdir}/remote.git" for-each-ref --format='%(refname)' refs/heads/fixture-linked)
+	if [[ "$rc" -ne 0 || -n "$remote_branch" || "$(git -C "$work_dir" rev-parse HEAD)" != "$before_head" ]]; then
+		fail "$name" "rc=$rc source branch pushed or HEAD changed; output=$output"
+		rm -rf "$tmpdir"
+		return 0
+	fi
+	remote_todo=$(git --git-dir="${tmpdir}/remote.git" show fixture-default:TODO.md)
+	if [[ "$protected_default" == "1" ]]; then
+		head_branch=$(<"${tmpdir}/head")
+		if [[ "$head_branch" != planning/* || "$remote_todo" != *"- [ ] t34880 "* ||
+			"$output" != *"Task completion submitted via planning PR: https://github.com/example/repo/pull/1"* ]]; then
+			fail "$name" "missing planning PR or default changed; output=$output"
+			rm -rf "$tmpdir"
+			return 0
+		fi
+		remote_todo=$(git --git-dir="${tmpdir}/remote.git" show "${head_branch}:TODO.md")
+	elif [[ "$output" != *"AIDEVOPS_PLANNING_COMMIT_RESULT=direct"* ||
+		"$output" != *"Task completion committed and pushed"* ]]; then
+		fail "$name" "missing direct result; output=$output"
+		rm -rf "$tmpdir"
+		return 0
+	fi
+	if [[ "$remote_todo" == *"- [x] t34880 "* && "$remote_todo" == *"pr:#42 completed:"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "remote destination does not contain completion: $remote_todo"
+	fi
+	rm -rf "$tmpdir"
+	return 0
+}
+
+test_complete_verified_without_tty_fails_before_edit() {
+	local name="complete --verified without a TTY fails before editing TODO.md"
+	local tmpdir work_dir before_todo output rc
+	tmpdir=$(mktemp -d) || {
+		fail "$name" "mktemp failed"
+		return 0
+	}
+	work_dir=$(setup_repo "$tmpdir" false fixture-linked) || return 0
+	append_planning_change "$work_dir" "t34880" "34880"
+	before_todo=$(git -C "$work_dir" hash-object TODO.md)
+	rc=0
+	# Even a piped 'y' must not substitute for interactive confirmation.
+	output=$(cd "$work_dir" && printf 'y\n' | "$PLANNING_HELPER" complete t34880 --verified 2>&1) || rc=$?
+	if [[ "$rc" -ne 0 && "$before_todo" == "$(git -C "$work_dir" hash-object TODO.md)" &&
+		"$output" == *"--verified requires interactive confirmation on a TTY"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=$rc output=$output"
+	fi
+	rm -rf "$tmpdir"
+	return 0
+}
+
 test_pr_unavailable_fails_before_commit() {
 	local name="PR fallback unavailable fails before local commit"
 	local tmpdir work_dir before_head after_head output rc status
@@ -609,6 +700,9 @@ main() {
 	test_unprotected_default_keeps_direct_push
 	test_protected_default_from_linked_branch_creates_planning_pr
 	test_unprotected_default_from_linked_branch_publishes_default
+	test_complete_from_linked_branch 0
+	test_complete_from_linked_branch 1
+	test_complete_verified_without_tty_fails_before_edit
 	test_pr_unavailable_fails_before_commit
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ "$FAIL" -eq 0 ]] || return 1

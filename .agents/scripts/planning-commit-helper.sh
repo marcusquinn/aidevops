@@ -164,8 +164,13 @@ _complete_task_validate_pr() {
 # Returns 0 if confirmed, 1 if cancelled.
 _complete_task_confirm_verified() {
 	log_warning "Using --verified mode (no PR proof)"
+	if [[ ! -t 0 ]]; then
+		log_error "--verified requires interactive confirmation on a TTY; use --pr <number> for non-interactive completion"
+		return 1
+	fi
+	local confirmation=""
 	echo -n "Are you sure this task is complete and verified? [y/N] "
-	read -r confirmation
+	read -r confirmation || return 1
 	if [[ "$confirmation" != "y" ]] && [[ "$confirmation" != "Y" ]]; then
 		log_info "Cancelled"
 		return 1
@@ -283,7 +288,7 @@ complete_task() {
 
 	# Require explicit confirmation for --verified
 	if [[ "$verified_mode" == "true" ]]; then
-		_complete_task_confirm_verified || return 0
+		_complete_task_confirm_verified || return 1
 	fi
 
 	# Canonical checkouts are read-only service mirrors. Refuse before touching
@@ -313,7 +318,7 @@ complete_task() {
 	fi
 
 	log_info "Committing: $commit_msg"
-	if todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"; then
+	if commit_planning_files "$commit_msg"; then
 		if [[ "${TODO_COMMIT_PUSH_RESULT:-}" == "pr" ]]; then
 			log_success "Task completion submitted via planning PR: ${TODO_COMMIT_PUSH_PR_URL:-created}"
 		else
@@ -667,7 +672,7 @@ main() {
 		echo "Commands:"
 		echo "  next-id --title \"...\"              Allocate next task ID (via claim-task-id.sh)"
 		echo "  complete <task_id> --pr <number>   Mark task complete with PR proof"
-		echo "  complete <task_id> --verified      Mark task complete with manual verification"
+		echo "  complete <task_id> --verified      Mark task complete with manual verification (TTY confirmation required)"
 		echo ""
 		echo "Options:"
 		echo "  --check                            Check if planning files have changes"
