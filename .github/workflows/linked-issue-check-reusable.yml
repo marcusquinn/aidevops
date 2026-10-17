@@ -80,11 +80,30 @@ jobs:
               return;
             }
 
-            // CONTRIBUTOR is intentionally external even after prior merges.
+            // Prior merges alone do not grant trust. Private organisation members
+            // can have a CONTRIBUTOR/NONE payload association despite write access.
             const trustedRoles = ['OWNER', 'MEMBER', 'COLLABORATOR'];
             const hasTaskPrefix = /^(t\d+(\.\d+)*|GH#\d+)[:\s]/.test(title);
-            // #aidevops:trust-boundary GH#17671/GH#28567
-            if (trustedRoles.includes(pr.author_association)) {
+            // #aidevops:trust-boundary GH#17671/GH#28567/GH#24546
+            let authorIsTrusted = trustedRoles.includes(pr.author_association);
+            if (['CONTRIBUTOR', 'NONE'].includes(pr.author_association)) {
+              try {
+                const permissionResponse = await github.request(
+                  'GET /repos/{owner}/{repo}/collaborators/{username}/permission',
+                  {
+                    owner: repo.owner,
+                    repo: repo.repo,
+                    username: pr.user.login
+                  }
+                );
+                authorIsTrusted = ['admin', 'maintain', 'write'].includes(
+                  permissionResponse.data.permission
+                );
+              } catch (error) {
+                core.warning(`Unable to verify repository permission for ${pr.user.login}; preserving linked-issue policy: ${error.message}`);
+              }
+            }
+            if (authorIsTrusted) {
               const reason = hasTaskPrefix
                 ? 'Trusted task-ID prefix — issue linkage via task system'
                 : 'Trusted repository author — external policy not applicable';
