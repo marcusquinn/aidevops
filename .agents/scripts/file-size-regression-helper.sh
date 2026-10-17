@@ -42,8 +42,8 @@
 # See: reference/large-file-split.md §4.1 for override semantics.
 #
 # Design notes:
-# - scan-ref uses `git show <ref>:<path> | wc -l` per file. No worktrees needed.
-#   Slightly slower than worktrees for large repos but avoids tree disturbance.
+# - scan-ref reads tree entries and batches blob reads through git cat-file.
+#   No checkout, filters, temporary directories or worktree registrations needed.
 # - All subcommands are Bash 3.2 compatible (macOS default shell).
 # - Paths in TSV output are relative to the dir/ref root for portability.
 # - docs-only detection: caller passes --docs-only; the gate exits 0 immediately.
@@ -169,26 +169,14 @@ scan_violations_tracked_worktree() {
 # ---------------------------------------------------------------------------
 # scan_violations_ref <ref> <limit>
 # Scan a git ref for non-README .md files with more than <limit> lines.
-# Uses a temporary git worktree so wc -l runs on local files (fast for
-# repos with 1000+ scripts). Worktree is always removed via trap.
+# Reads Git blobs without creating resources that can leak after interruption.
 # Outputs TSV: git-path TAB line-count  (sorted by path).
 # ---------------------------------------------------------------------------
 scan_violations_ref() {
 	local _ref="$1"
 	local _limit="$2"
-	local _worktree
-	_worktree=$(mktemp -d)
-	# shellcheck disable=SC2064
-	trap "git worktree remove --force '$_worktree' >/dev/null 2>&1; rm -rf '$_worktree'" RETURN
-
-	if ! git worktree add --detach "$_worktree" "$_ref" > /dev/null 2>&1; then
-		log "WARN: could not create worktree for $_ref — scan skipped"
-		return 0
-	fi
-
-	# scan_violations_dir outputs paths relative to the worktree root.
-	# Git paths use the same relative structure, so output is directly usable.
-	scan_violations_dir "$_worktree" "$_limit"
+	local _reader="${BASH_SOURCE[0]%/*}/file-size-ref-scan.py"
+	python3 "$_reader" "$_ref" "$_limit" "$FILE_SIZE_ROOT_LIMIT" "$FILE_SIZE_DEFAULT_LIMIT" || return 1
 	return 0
 }
 
@@ -451,7 +439,7 @@ cmd_scan_ref() {
 	fi
 
 	local _result
-	_result=$(scan_violations_ref "$_ref" "$_limit")
+	_result=$(scan_violations_ref "$_ref" "$_limit") || die "scan-ref: object scan failed"
 	if [ -n "$_output" ]; then
 		printf '%s\n' "$_result" > "$_output"
 	else
@@ -620,7 +608,7 @@ cmd_check_scan_head() {
 		_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root="."
 		scan_violations_tracked_worktree "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
 	else
-		scan_violations_ref "$_head_ref" "$_limit" > "$_head_tsv" 2>/dev/null || true
+		scan_violations_ref "$_head_ref" "$_limit" > "$_head_tsv" || return 1
 	fi
 	return 0
 }
@@ -701,9 +689,9 @@ cmd_check() {
 	_head_sha=$(git rev-parse --short "$FILE_SIZE_CHECK_HEAD_REF" 2>/dev/null) || _head_sha="$FILE_SIZE_CHECK_HEAD_REF"
 	log "comparing refs: base=${_base_ref} (${_base_sha}) head=${FILE_SIZE_CHECK_HEAD_REF} (${_head_sha})"
 	log "scanning base ($_base_sha)"
-	scan_violations_ref "$_comparison_base_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" 2>/dev/null || true
+	scan_violations_ref "$_comparison_base_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" || die "check: base object scan failed"
 	log "scanning head ($_head_sha)"
-	cmd_check_scan_head "$FILE_SIZE_CHECK_HEAD_REF" "$FILE_SIZE_CHECK_LIMIT" "$_head_tsv"
+	cmd_check_scan_head "$FILE_SIZE_CHECK_HEAD_REF" "$FILE_SIZE_CHECK_LIMIT" "$_head_tsv" || die "check: head object scan failed"
 	cmd_check_run_diff "$_base_tsv" "$_head_tsv" "$_base_sha" "$_head_sha" \
 		"$FILE_SIZE_CHECK_OUTPUT_MD" "$FILE_SIZE_CHECK_ALLOW_INCREASE"
 	return $?

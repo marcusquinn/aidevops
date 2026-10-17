@@ -438,6 +438,31 @@ test_tracked_oversized_markdown_blocks_with_path() {
 	return 0
 }
 
+test_ref_scan_leaves_no_worktrees() {
+	setup
+	local _repo="$TEST_ROOT/repo" _scratch="$TEST_ROOT/scratch"
+	mkdir -p "$_repo" "$_scratch"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email "test@example.invalid"
+	git -C "$_repo" config user.name "Aidevops Test"
+	git -C "$_repo" config commit.gpgsign false
+	make_doc_file "$_repo/docs/large.md" 501
+	git -C "$_repo" add .
+	git -C "$_repo" commit -qm fixture
+	local _before _after _result _failed=0 _attempt
+	_before=$(git -C "$_repo" worktree list --porcelain)
+	for _attempt in 1 2 3; do
+		_result=$(cd "$_repo" && TMPDIR="$_scratch" "$HELPER" scan-ref HEAD) || _failed=1
+		[[ "$_result" == $'docs/large.md\t501' ]] || _failed=1
+	done
+	_after=$(git -C "$_repo" worktree list --porcelain)
+	[[ "$_before" == "$_after" ]] || _failed=1
+	[[ -z "$(find "$_scratch" -mindepth 1 -print -quit)" ]] || _failed=1
+	print_result "ref-scan: repeated runs leave no checkout directories or registrations" "$_failed"
+	teardown
+	return 0
+}
+
 # ===========================================================================
 # Main
 # ===========================================================================
@@ -459,6 +484,7 @@ main() {
 	test_scan_exclusions
 	test_check_tracked_only
 	test_tracked_oversized_markdown_blocks_with_path
+	test_ref_scan_leaves_no_worktrees
 
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 
