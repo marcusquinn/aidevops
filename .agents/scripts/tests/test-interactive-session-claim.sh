@@ -767,7 +767,7 @@ for worker_status in queued in-progress; do
 		if [[ $worker_rc -eq 1 && ! -f "${claim_dir}/regress-test-56013.json" &&
 			"$worker_before" == "$(jq -c . "${STUB_STATE_DIR}/56013.json")" ]] &&
 			! grep -Eq 'issue (edit|comment)|api .* (POST|PATCH|DELETE) ' "$STUB_LOG" &&
-			printf '%s' "$worker_out" | grep -q 'worker ownership under @testuser; refusing interactive claim'; then
+			[[ "$worker_out" == *'worker ownership under @testuser; refusing interactive claim'* ]]; then
 			print_result "GH#34915: same-login $worker_status $worker_claim_mode claim stays write-free" 0
 		else
 			print_result "GH#34915: same-login $worker_status $worker_claim_mode claim stays write-free" 1 \
