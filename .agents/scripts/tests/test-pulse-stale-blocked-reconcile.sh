@@ -397,5 +397,25 @@ unset -f _pm_reconcile_partial_continuations
 		[[ "$(_pulse_stale_blocked_repo_weight owner/large 1800 1000)" == 1 ]] || exit 1
 	done
 	[[ "$(_pulse_stale_blocked_repo_deadline 1000 1003 413 410)" == 1003 ]] || exit 1
+	# Even a weighted repo overrunning the whole sweep cannot starve admission.
+	printf '410\n' >"$HOME/.aidevops/cache/stale-blocked-weight/owner__large"
+	printf '0\n' >"$HOME/.aidevops/cache/pulse-stale-blocked-next-repo"
+	STARTED=""
+	reconcile_stale_blocked_issues() {
+		local repo="$1"
+		STARTED="${STARTED}${repo} "
+		FAKE_NOW=$DER_STALE_BLOCKED_STOP_EPOCH
+		return 3
+	}
+	for sweep in 1 2 3 4; do
+		FAKE_NOW=1000
+		rm -rf "$SENTINEL" "$STAMP_DIR"
+		PULSE_STAGE_DEADLINE_EPOCH=1060 PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS=15 \
+			_pulse_reconcile_stale_blocked_if_due
+	done
+	[[ "$STARTED" == "owner/large owner/fast1 owner/fast2 owner/fast3 " ]] || {
+		printf 'FAIL: weighted overrun starved rotating admission: %s\n' "$STARTED"
+		exit 1
+	}
 ) || exit 1
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'
