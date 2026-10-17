@@ -63,10 +63,27 @@ local commits, dirty patches, bounded untracked state, and available failure
 context remain restorable. Audit rows use `mode=compact-archive`, and async
 cleanup reports removed, archived, and failed-archive totals.
 
-Unattributed worktrees with no open head PR are retained for at least
-`WORKTREE_UNATTRIBUTED_RETENTION_DAYS` (default 14) before verified compact
-archival and removal. Their archives are stored under an `unattributed` target
-rather than being falsely assigned to an issue or PR.
+Unattributed worktrees with no open head PR are retained for 14 days of
+confirmed idle by default before verified compact archival and removal. Their
+archives are stored under an `unattributed` target rather than being falsely
+assigned to an issue or PR.
+
+Archive candidacy windows count confirmed idle time: the newest of the worktree
+`.git`, admin `HEAD` and HEAD reflog mtimes; missing evidence preserves. Set them
+in `~/.config/aidevops/config.jsonc` (hours, minimum 24) or with the environment
+overrides, which take precedence:
+
+| Config key (`storage.`) | Default | Env override |
+|---|---|---|
+| `worktree_local_commit_archive_hours` | 168 | `ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS` (seconds) |
+| `worktree_generated_dirty_archive_hours` | 168 | `ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS` (seconds) |
+| `worktree_unattributed_archive_hours` | 336 | `WORKTREE_UNATTRIBUTED_RETENTION_DAYS` (days) |
+
+For example, `aidevops config set storage.worktree_unattributed_archive_hours 24`.
+Malformed or sub-24-hour values fall back to the default. A shorter window only
+makes a worktree an archive candidate sooner; owner, open-PR, process, lock,
+preservation-marker and archive-verification guards still decide removal, and
+compact-archive expiry stays in `dry-run` unless separately enabled.
 
 Full worktrees remain required for live owners/sessions/processes, recent worker
 metrics, security or forensics markers/labels, repeated zero-session failures,

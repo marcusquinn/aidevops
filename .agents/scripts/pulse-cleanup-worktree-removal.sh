@@ -546,19 +546,50 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 }
 
 #######################################
+# Resolve a user-configurable confirmed-idle archive threshold (GH#34943).
+#
+# Precedence: environment override (in its historical unit) > user
+# config.jsonc hours (storage.<key>) > shipped default. Explicit values may be
+# as low as 24 hours; malformed or sub-floor values use the shipped default,
+# so a typo never shortens retention. Thresholds only make a worktree an
+# archive candidate: owner, open-PR, process, lock, marker and archive
+# verification guards still decide removal.
+#
+# Args: env_value env_unit_secs config_key default_secs
+# Returns 0 always; prints a validated integer number of seconds.
+#######################################
+_pc_configured_archive_secs() {
+	local env_value="$1"
+	local env_unit_secs="$2"
+	local config_key="$3"
+	local default_secs="$4"
+	local floor_secs=86400
+	local value="" secs=""
+
+	if [[ -n "$env_value" ]]; then
+		[[ "$env_value" =~ ^[0-9]{1,12}$ ]] && secs=$((10#$env_value * env_unit_secs))
+	elif declare -F config_get >/dev/null 2>&1; then
+		value=$(config_get "storage.${config_key}" "" 2>/dev/null) || value=""
+		[[ "$value" =~ ^[0-9]{1,7}$ ]] && secs=$((10#$value * 3600))
+	fi
+	if [[ -z "$secs" || "$secs" -lt "$floor_secs" ]]; then
+		secs="$default_secs"
+	fi
+	printf '%s\n' "$secs"
+	return 0
+}
+
+#######################################
 # Return the stale-local-commit worktree archive threshold in seconds.
 #
-# Environment:
-#   ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS — default 604800 (7 days), minimum 86400.
+# Environment / config:
+#   ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS, else
+#   storage.worktree_local_commit_archive_hours — default 7 days, minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_local_commit_archive_secs() {
-	local archive_secs="${ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS:-604800}"
-	archive_secs="${archive_secs//[!0-9]/}"
-	if [[ -z "$archive_secs" || "$archive_secs" -lt 86400 ]]; then
-		archive_secs=604800
-	fi
-	printf '%s\n' "$archive_secs"
+	_pc_configured_archive_secs "${ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS:-}" 1 \
+		"worktree_local_commit_archive_hours" 604800
 	return 0
 }
 
@@ -590,27 +621,28 @@ _pc_generated_clean_archive_secs() {
 # Dirty generated worktrees may contain useful failed-worker artifacts. Keep
 # them longer than clean generated cruft, then stash and preserve the branch.
 #
-# Environment:
-#   ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS — default 604800 (7d), minimum 86400.
+# Environment / config:
+#   ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS, else
+#   storage.worktree_generated_dirty_archive_hours — default 7 days, minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_generated_dirty_archive_secs() {
-	local archive_secs="${ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS:-604800}"
-	archive_secs="${archive_secs//[!0-9]/}"
-	if [[ -z "$archive_secs" || "$archive_secs" -lt 86400 ]]; then
-		archive_secs=604800
-	fi
-	printf '%s\n' "$archive_secs"
+	_pc_configured_archive_secs "${ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS:-}" 1 \
+		"worktree_generated_dirty_archive_hours" 604800
 	return 0
 }
 
+#######################################
+# Return the unattributed no-open-PR worktree archive threshold in seconds.
+#
+# Environment / config:
+#   WORKTREE_UNATTRIBUTED_RETENTION_DAYS (days), else
+#   storage.worktree_unattributed_archive_hours — default 14 days, minimum 24h.
+# Returns 0 always; prints a validated integer.
+#######################################
 _pc_unattributed_archive_secs() {
-	local retention_days="${WORKTREE_UNATTRIBUTED_RETENTION_DAYS:-14}"
-	retention_days="${retention_days//[!0-9]/}"
-	if [[ -z "$retention_days" || "$retention_days" -lt 14 ]]; then
-		retention_days=14
-	fi
-	printf '%s\n' "$((retention_days * 86400))"
+	_pc_configured_archive_secs "${WORKTREE_UNATTRIBUTED_RETENTION_DAYS:-}" 86400 \
+		"worktree_unattributed_archive_hours" 1209600
 	return 0
 }
 

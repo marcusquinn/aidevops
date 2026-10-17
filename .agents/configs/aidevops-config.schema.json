@@ -529,6 +529,38 @@
       "additionalProperties": false
     },
 
+    "storage": {
+      "type": "object",
+      "description": "Worktree archive candidacy and compact-archive retention. Thresholds are hours of confirmed idle; they never bypass owner, open-PR, process, lock, marker or archive-verification guards.",
+      "properties": {
+        "worktree_archive_retention_mode": {
+          "type": "string",
+          "enum": ["off", "dry-run", "apply"],
+          "default": "dry-run",
+          "description": "Compact-archive expiry mode. dry-run reports only; apply deletes expired archives. Env: AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE"
+        },
+        "worktree_local_commit_archive_hours": {
+          "type": "integer",
+          "minimum": 24,
+          "default": 168,
+          "description": "Confirmed-idle hours before an abandoned worktree with local commits may be archived. Env (seconds): ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS"
+        },
+        "worktree_generated_dirty_archive_hours": {
+          "type": "integer",
+          "minimum": 24,
+          "default": 168,
+          "description": "Confirmed-idle hours before a dirty generated auto/review worktree may be archived. Env (seconds): ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS"
+        },
+        "worktree_unattributed_archive_hours": {
+          "type": "integer",
+          "minimum": 24,
+          "default": 336,
+          "description": "Confirmed-idle hours before an unattributed worktree with no open head PR may be archived. Env (days): WORKTREE_UNATTRIBUTED_RETENTION_DAYS"
+        }
+      },
+      "additionalProperties": false
+    },
+
     "paths": {
       "type": "object",
       "description": "Directory and file path configuration. Supports ~ for home directory.",

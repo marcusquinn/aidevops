@@ -451,6 +451,33 @@
   },
 
   // ---------------------------------------------------------------------------
+  // storage — Worktree archive candidacy and compact-archive retention
+  // ---------------------------------------------------------------------------
+  // Thresholds are hours of confirmed idle (worktree .git, admin HEAD and HEAD
+  // reflog all older than the window) before guarded Pulse cleanup may make a
+  // verified compact archive and remove the full worktree. They never bypass
+  // owner, open-PR, process, lock, preservation-marker or archive-verification
+  // guards. Minimum 24; smaller or malformed values use the shipped default.
+  "storage": {
+    // Compact-archive expiry: "dry-run" reports only, "apply" deletes expired
+    // archives, "off" disables the pass.
+    // Env override: AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE
+    "worktree_archive_retention_mode": "dry-run",
+
+    // Abandoned worktrees with local commits (7 days).
+    // Env override (seconds): ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS
+    "worktree_local_commit_archive_hours": 168,
+
+    // Dirty generated auto/review worktrees (7 days).
+    // Env override (seconds): ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS
+    "worktree_generated_dirty_archive_hours": 168,
+
+    // Unattributed worktrees with no open head PR (14 days).
+    // Env override (days): WORKTREE_UNATTRIBUTED_RETENTION_DAYS
+    "worktree_unattributed_archive_hours": 336
+  },
+
+  // ---------------------------------------------------------------------------
   // paths — Directory and file path configuration
   // ---------------------------------------------------------------------------
   "paths": {
