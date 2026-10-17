@@ -67,9 +67,25 @@ Pass that name with `--base-branch`. Pass the already-observed commit with `--ba
 
 Restore never overwrites an existing path. If restoration stops after creating a worktree, preserve it for inspection and use normal guarded worktree cleanup after resolving the cause.
 
+### Ignore rules and secrets
+
+Untracked capture uses Git's standard ignore rules (`git ls-files --others --exclude-standard`), not a second cache allowlist. Ignored dependencies and build caches are rebuilt from tracked manifests/lockfiles. Keep `.env.example` tracked with placeholders; supply real values from a persistent protected config or secret store at launch, rather than duplicating them in every worktree archive. A worktree does not automatically inherit the canonical checkout's `.env`. Before removing legacy worktrees or full recovery copies, check for unique ignored data and move any needed values to their durable owner without printing them. Archive directories are private (0700).
+
 ## Retention
 
-The recommended policy is `--older-than 14d --max-total-size 20G`. `prune` selects every archive older than the age limit, then oldest remaining archives until retained size is at or below the cap. It ignores malformed directories rather than deleting unverified data. Always inspect `--dry-run` output before using `--apply` in a manual operation.
+The recommended policy is `--older-than 14d --max-total-size 20G`. `prune` selects verified archives older than the age limit, then oldest remaining eligible archives until their retained size is at or below the cap. This is irreversible expiry: it can destroy the last copy of unpublished work. Always inspect `--dry-run` output before using `--apply` in a manual operation.
+
+Create `.aidevops-archive-pin` inside an archive directory to retain it regardless of age or size. Remove the marker only when expiry is appropriate. Pinned, corrupt, incomplete, unknown-content, invalid-date and symlinked archives are kept with a diagnostic; these protected bytes are outside the eligible-size cap and require investigation rather than forced deletion. Verification requires the complete artifact inventory, mandatory patches and untracked inventory, matching hashes, and no symlinked artifacts. Apply rechecks verification, manifest, pin and directory identity, using no-follow directory descriptors to anchor removal inside the selected store. Platforms without symlink-resistant removal fail closed.
+
+Archives are immutable after publication. Set pins before retention claims an archive: apply atomically moves the selected directory into a private `.prune-<id>/archive` transaction, revalidates it there, then removes it. A replacement created at its old name is never deleted. A failed/interrupted transaction is retained outside normal retention selection and reported for recovery inspection; it is not silently considered successfully pruned. Do not modify a claimed transaction concurrently. Pin and manifest changes observed during final verification preserve that transaction.
+
+After successful asynchronous worktree cleanup, Pulse runs compact retention once under the existing cleanup lock and a 120-second budget. It defaults to **dry-run**, not irreversible deletion. Explicitly enable expiry with `storage.worktree_archive_retention_mode: "apply"` in the normal aidevops user config; `"off"` disables the pass. `AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE` overrides config (`off`, `dry-run`, `apply`); `AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS` and `AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE` override 14 days and 20G. Invalid policy preserves archives. Outcomes and failures appear as `compact-retention mode=... rc=...` in `cleanup_worktrees.log`; a retention failure does not block independent worktree cleanup.
+
+### Lifecycle verification
+
+Completed worktrees end either in verified deletion with no unique data, or in a verified compact archive followed by source removal. Active ownership, open work and safety blockers are temporary states, not permission for unconditional deletion. Full recovery copies are a separate store: compact retention never deletes or migrates them. Migration must account for ignored files, Git administrative state and base-object availability before discarding the full copy.
+
+Run `bash .agents/scripts/tests/test-worktree-archive-helper.sh` and `python3 .agents/scripts/tests/test-worktree-archive-lifecycle.py`. The latter restores 33 local commits including a merge into a repository containing only the `develop` base, after removing the original fixture worktree. It compares HEAD, parent topology, index, binary staged/unstaged patches, status, executable modes, symlinks and untracked contents, and checks retention preview/apply, age/size limits, pins and unsafe/corrupt archives. Ignored files are deliberately excluded; the common repository's base objects must remain available. `test-cleanup-worktrees-async.sh` covers scheduling policy and failure isolation.
 
 ## Pulse cleanup integration
 

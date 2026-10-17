@@ -264,7 +264,8 @@ archive_worktree() {
 	repo_path="${repo//\//__}"
 	archive_dir="${output_root%/}/${repo_path}/${issue}/${timestamp}"
 	if [[ -e "$archive_dir" ]]; then archive_dir="${archive_dir}-$$"; fi
-	mkdir -p "$archive_dir" || return 1
+	mkdir -p "${archive_dir%/*}" || return 1
+	mkdir -m 700 "$archive_dir" || return 1
 	git -C "$worktree" diff --binary >"$archive_dir/diff.patch" || return 1
 	git -C "$worktree" diff --cached --binary >"$archive_dir/staged.patch" || return 1
 	commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
@@ -304,12 +305,28 @@ import tarfile
 archive = pathlib.Path(sys.argv[1]).resolve()
 manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
 required = ('repo', 'issue', "reason", 'created_at', "source_worktree", "branch", "head_sha", "base_branch", "base_sha", "default_branch", "remote_branch_state", "dirty_state", 'artifacts', "restore_instructions")
+if not isinstance(manifest, dict):
+    raise SystemExit("manifest must be an object")
 missing = [key for key in required if key not in manifest]
 if manifest.get('schema') != sys.argv[2] or missing:
     raise SystemExit("invalid manifest schema or missing fields: " + ", ".join(missing))
+artifacts = manifest['artifacts']
+if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in artifacts):
+    raise SystemExit("invalid artifact inventory")
+names = [item.get('name') for item in artifacts]
+mandatory = {'diff.patch', 'staged.patch', 'untracked-files.txt'}
+allowed = mandatory | {'commits.bundle', 'untracked.tar.gz', 'failure.log'}
+if (not all(isinstance(name, str) and name in allowed for name in names) or
+        len(set(names)) != len(names) or not mandatory.issubset(names)):
+    raise SystemExit("incomplete or unsafe artifact inventory")
+actual = {path.name for path in archive.iterdir()}
+if actual - {'manifest.json', '.aidevops-archive-pin'} != set(names):
+    raise SystemExit("unlisted or missing archive contents")
+if (archive / 'manifest.json').is_symlink():
+    raise SystemExit("symlinked manifest")
 for artifact in manifest['artifacts']:
     path = archive / artifact['name']
-    if path.parent != archive or not path.is_file():
+    if path.parent != archive or path.is_symlink() or not path.is_file():
         raise SystemExit("missing or unsafe artifact: " + artifact['name'])
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
@@ -365,7 +382,7 @@ PY
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	if [[ -f "$archive_dir/untracked.tar.gz" ]]; then
-		python3 - "$archive_dir/untracked.tar.gz" "$target" <<'PY'
+		python3 - "$archive_dir/untracked.tar.gz" "$target" <<'PY' || return 1
 import pathlib
 import os
 import posixpath
@@ -374,32 +391,54 @@ import sys
 import tarfile
 source = pathlib.Path(sys.argv[1])
 target = pathlib.Path(sys.argv[2]).resolve()
+
+def open_parent(parts):
+    descriptor = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for name in parts:
+            try:
+                os.mkdir(name, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
 with tarfile.open(source, "r:gz") as payload:
     for member in payload.getmembers():
         path = pathlib.PurePosixPath(member.name)
         link = pathlib.PurePosixPath(member.linkname) if member.issym() else None
         resolved_link = pathlib.PurePosixPath(posixpath.normpath(str(path.parent / link))) if link else None
-        if (path.is_absolute() or ".." in path.parts or member.isdev() or
+        if (not path.parts or path.parts[0] == '.git' or
+                path.is_absolute() or ".." in path.parts or member.isdev() or
                 member.islnk() or (link and link.is_absolute()) or
                 (resolved_link and ".." in resolved_link.parts)):
             raise SystemExit("unsafe untracked archive member")
-        destination = target.joinpath(*path.parts)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if os.path.commonpath((str(target), str(destination.parent.resolve()))) != str(target):
-            raise SystemExit("untracked archive escaped restore target")
-        if member.isdir():
-            destination.mkdir(exist_ok=True)
-        elif member.issym():
-            destination.symlink_to(member.linkname)
-        elif member.isfile():
-            source_file = payload.extractfile(member)
-            if source_file is None:
-                raise SystemExit("missing untracked file payload")
-            with destination.open("wb") as output:
-                shutil.copyfileobj(source_file, output)
-            destination.chmod(member.mode & 0o777)
-        else:
-            raise SystemExit("unsupported untracked archive member")
+        parent = open_parent(path.parts[:-1])
+        try:
+            name = path.parts[-1]
+            if member.isdir():
+                os.mkdir(name, dir_fd=parent)
+            elif member.issym():
+                os.symlink(member.linkname, name, dir_fd=parent)
+            elif member.isfile():
+                source_file = payload.extractfile(member)
+                if source_file is None:
+                    raise SystemExit("missing untracked file payload")
+                descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                                     os.O_NOFOLLOW, 0o600, dir_fd=parent)
+                with os.fdopen(descriptor, 'wb') as output:
+                    shutil.copyfileobj(source_file, output)
+                    os.fchmod(output.fileno(), member.mode & 0o777)
+            else:
+                raise SystemExit("unsupported untracked archive member")
+        finally:
+            os.close(parent)
 PY
 	fi
 	printf '%s\n' "$target"
@@ -454,47 +493,8 @@ prune_archives() {
 	[[ "$older_than" =~ ^[1-9][0-9]*d$ ]] || { die "--older-than must use positive day syntax such as 14d"; return 1; }
 	[[ "$max_total" =~ ^[1-9][0-9]*([KMGTP])?$ ]] || { die "invalid --max-total-size"; return 1; }
 	[[ -n "$mode" ]] || { die "prune requires --dry-run or --apply"; return 1; }
-	python3 - "$output_root" "${older_than%d}" "$max_total" "$mode" "$ARCHIVE_SCHEMA" <<'PY'
-import datetime
-import json
-import pathlib
-import shutil
-import sys
-
-root = pathlib.Path(sys.argv[1]).resolve()
-days = int(sys.argv[2])
-raw_limit = sys.argv[3]
-mode = sys.argv[4]
-units = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4, "P": 1024**5}
-limit = int(raw_limit[:-1]) * units[raw_limit[-1]] if raw_limit[-1] in units else int(raw_limit)
-now = datetime.datetime.now(datetime.timezone.utc)
-entries = []
-if root.is_dir():
-    for manifest_path in root.glob("*/*/*/manifest.json"):
-        directory = manifest_path.parent
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-            if manifest.get('schema') != sys.argv[5]:
-                continue
-            created = datetime.datetime.fromisoformat(manifest['created_at'].replace("Z", "+00:00"))
-        except (OSError, ValueError, KeyError):
-            continue
-        size = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
-        entries.append([created, size, directory, (now - created).days >= days])
-total = sum(entry[1] for entry in entries)
-selected = {entry[2] for entry in entries if entry[3]}
-remaining = sorted((entry for entry in entries if entry[2] not in selected), key=lambda item: item[0])
-remaining_total = total - sum(entry[1] for entry in entries if entry[2] in selected)
-for entry in remaining:
-    if remaining_total <= limit:
-        break
-    selected.add(entry[2])
-    remaining_total -= entry[1]
-for directory in sorted(selected):
-    print(f"{mode}\t{directory}")
-    if mode == "apply":
-        shutil.rmtree(directory)
-PY
+	python3 "${SCRIPT_DIR}/worktree_archive_prune.py" "$output_root" "${older_than%d}" \
+		"$max_total" "$mode" "${SCRIPT_DIR}/worktree-archive-helper.sh"
 	return $?
 }
 

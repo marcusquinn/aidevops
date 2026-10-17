@@ -27,6 +27,9 @@
 #   CLEANUP_WORKTREES_ASYNC_CADENCE_MIN — min minutes between runs (default 10)
 #   DIRTY_WORKTREE_BACKUP_RETENTION_DAYS — stale dirty-backup retention (default 30)
 #   AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_ENABLED — automatic terminal-archive maintenance (default 1)
+#   AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE — off|dry-run|apply (default dry-run)
+#   AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS — compact archive age (default 14)
+#   AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE — eligible archive cap (default 20G)
 #   AIDEVOPS_LOG_DIR — explicit log directory override (required if HOME unset)
 #
 # Observability (for pulse-diagnose-helper.sh):
@@ -224,6 +227,35 @@ _maintain_worktree_recovery() {
 	return 0
 }
 
+# Retention is separately opted into: cleanup consent alone does not authorize
+# destroying the last recovery copy. Share the async lock and bounded runner.
+_maintain_compact_archives() {
+	local mode="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE:-}"
+	local days="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS:-14}"
+	local maximum="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE:-20G}"
+	local helper="${SCRIPT_DIR}/worktree-archive-helper.sh"
+	local rc=0
+
+	if [[ -z "$mode" ]] && declare -F config_get >/dev/null 2>&1; then
+		mode=$(config_get "storage.worktree_archive_retention_mode" "dry-run")
+	fi
+	mode="${mode:-dry-run}"
+	[[ "$mode" != "off" ]] || return 0
+	if [[ "$mode" != "dry-run" && "$mode" != "apply" ]] ||
+		[[ ! "$days" =~ ^[1-9][0-9]*$ || ! "$maximum" =~ ^[1-9][0-9]*([KMGTP])?$ ]]; then
+		echo "[cleanup-worktrees-async] compact-retention invalid policy; preserving archives" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ ! -f "$helper" ]] || ! declare -F timeout_sec >/dev/null 2>&1; then
+		echo "[cleanup-worktrees-async] compact-retention helper or bounded runner unavailable; skipping" >>"$LOGFILE"
+		return 0
+	fi
+	timeout_sec 120 bash "$helper" prune --older-than "${days}d" \
+		--max-total-size "$maximum" "--${mode}" >>"$LOGFILE" 2>&1 || rc=$?
+	printf '[cleanup-worktrees-async] compact-retention mode=%s rc=%s\n' "$mode" "$rc" >>"$LOGFILE"
+	return 0
+}
+
 # Print the current repo plus every repos.json repository path, once each.
 _missing_metadata_repo_paths() {
 	local repos_json="${HOME:+${HOME}/.config/aidevops/repos.json}"
@@ -347,6 +379,7 @@ main() {
 		echo "[cleanup-worktrees-async] cleanup_worktrees skipped by safety gate — last-run NOT updated" >>"$LOGFILE"
 	elif [[ "$rc" -eq 0 ]]; then
 		_maintain_worktree_recovery
+		_maintain_compact_archives
 		_update_last_run
 		echo "[cleanup-worktrees-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
 	else

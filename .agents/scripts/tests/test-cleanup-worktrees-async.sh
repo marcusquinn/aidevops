@@ -83,6 +83,20 @@ run_helper_in_isolation() {
 	# Stub shared-constants.sh — defines nothing, just marks it was sourced
 	cat >"${stub_dir}/shared-constants.sh" <<'STUB'
 # stub shared-constants.sh
+timeout_sec() {
+	local seconds="$1"
+	shift
+	[[ "$seconds" == "120" ]] || return 1
+	"$@" || return 1
+	return 0
+}
+config_get() {
+	local key="$1"
+	local fallback="$2"
+	[[ "$key" == "storage.worktree_archive_retention_mode" ]] || return 1
+	printf '%s\n' "${MOCK_RETENTION_CONFIG_MODE:-$fallback}"
+	return 0
+}
 STUB
 
 	# Stub pulse-cleanup.sh — defines mock cleanup_worktrees.
@@ -161,6 +175,11 @@ printf 'MAINTENANCE_RAN\\n' >>"${maintenance_ran_file}"
 printf '%s\\n' '${maintenance_result}'
 STUB
 	chmod +x "${stub_dir}/worktree-recovery-maintenance-helper.sh"
+	cat >"${stub_dir}/worktree-archive-helper.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >>"${TEST_DIR}/compact-retention-ran"
+exit "\${MOCK_ARCHIVE_RETENTION_EXIT:-0}"
+STUB
 	cat >"${stub_dir}/audit-worktree-removal-helper.sh" <<STUB
 prune_missing_worktree_metadata() {
 	local repo_arg="\$1"
@@ -662,6 +681,64 @@ test_missing_metadata_prune_runs_when_cleanup_skipped() {
 	return 0
 }
 
+test_compact_retention_policy() {
+	local policy=""
+	local marker=""
+	for policy in dry-run apply off invalid; do
+		teardown
+		setup
+		marker="${TEST_DIR}/compact-retention-ran"
+		AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE="$policy" run_helper_in_isolation
+		if [[ "$policy" == "dry-run" || "$policy" == "apply" ]]; then
+			if grep -q -- "prune --older-than 14d --max-total-size 20G --${policy}" "$marker"; then
+				print_result "compact-retention: ${policy} forwards bounded policy" 0
+			else
+				print_result "compact-retention: ${policy} forwards bounded policy" 1
+			fi
+		elif [[ ! -e "$marker" ]]; then
+			print_result "compact-retention: ${policy} never deletes" 0
+		else
+			print_result "compact-retention: ${policy} never deletes" 1
+		fi
+	done
+	return 0
+}
+
+test_compact_retention_defaults_config_and_failure() {
+	AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE="" run_helper_in_isolation
+	if grep -q -- '--dry-run' "${TEST_DIR}/compact-retention-ran"; then
+		print_result "compact-retention: default is non-destructive preview" 0
+	else
+		print_result "compact-retention: default is non-destructive preview" 1
+	fi
+	teardown
+	setup
+	AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE="" MOCK_RETENTION_CONFIG_MODE=apply run_helper_in_isolation
+	if grep -q -- '--apply' "${TEST_DIR}/compact-retention-ran"; then
+		print_result "compact-retention: persisted operator opt-in is read" 0
+	else
+		print_result "compact-retention: persisted operator opt-in is read" 1
+	fi
+	teardown
+	setup
+	MOCK_ARCHIVE_RETENTION_EXIT=1 run_helper_in_isolation
+	if [[ -f "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.last-run" ]] &&
+		grep -q 'compact-retention mode=dry-run rc=1' "${TEST_DIR}/.aidevops/logs/cleanup_worktrees.log"; then
+		print_result "compact-retention: failure is logged without blocking other cleanup" 0
+	else
+		print_result "compact-retention: failure is logged without blocking other cleanup" 1
+	fi
+	teardown
+	setup
+	MOCK_CLEANUP_SKIPPED=1 run_helper_in_isolation
+	if [[ ! -e "${TEST_DIR}/compact-retention-ran" ]]; then
+		print_result "compact-retention: safety-skipped cleanup never applies retention" 0
+	else
+		print_result "compact-retention: safety-skipped cleanup never applies retention" 1
+	fi
+	return 0
+}
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -750,6 +827,13 @@ main() {
 	teardown
 	setup
 	test_missing_metadata_prune_runs_when_cleanup_skipped
+
+	teardown
+	setup
+	test_compact_retention_policy
+	teardown
+	setup
+	test_compact_retention_defaults_config_and_failure
 
 	echo ""
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
