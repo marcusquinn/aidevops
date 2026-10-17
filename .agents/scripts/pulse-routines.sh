@@ -155,12 +155,19 @@ _routine_launchd_cannot_start() {
 		arg="${BASH_REMATCH[1]}"
 		rest="${rest#*\""$arg"\"}"
 		if [[ "$expect_cmd" -eq 1 ]]; then
-			if [[ "$arg" =~ (/[^[:space:]\"\'\;\|\&]+) ]]; then
-				cmd_path="${BASH_REMATCH[1]}"
-				if [[ ! -e "$cmd_path" ]]; then
-					printf 'script %s missing' "$cmd_path"
-					return 0
-				fi
+			# Only the command's first word (after one optional `exec`) is a
+			# script path; assignments, builtins and substitutions stay owned.
+			cmd_path="${arg#"${arg%%[![:space:]]*}"}"
+			if [[ "$cmd_path" == exec[[:space:]]* ]]; then
+				cmd_path="${cmd_path#exec}"
+				cmd_path="${cmd_path#"${cmd_path%%[![:space:]]*}"}"
+			fi
+			cmd_path="${cmd_path%%[[:space:]]*}"
+			cmd_path="${cmd_path#[\"\']}"
+			cmd_path="${cmd_path%[\"\']}"
+			if [[ "$cmd_path" == /* && ! -e "$cmd_path" ]]; then
+				printf 'script %s missing' "$cmd_path"
+				return 0
 			fi
 			expect_cmd=0
 		elif [[ "$first_arg" -eq 1 && "$arg" == /* && -z "$program" && ! -e "$arg" ]]; then
@@ -216,7 +223,9 @@ _routine_platform_owned() {
 	label="${label:-sh.aidevops.${name}}"
 	if command -v launchctl >/dev/null 2>&1; then
 		local candidate="" launchd_info="" reason=""
-		for candidate in "$label" "sh.aidevops.${name}"; do
+		local candidates="$label"
+		[[ "$label" == "sh.aidevops.${name}" ]] || candidates="${label} sh.aidevops.${name}"
+		for candidate in $candidates; do
 			launchd_info=$(launchctl list "$candidate" 2>/dev/null) || continue
 			reason=$(_routine_launchd_cannot_start "$launchd_info")
 			if [[ -z "$reason" ]]; then

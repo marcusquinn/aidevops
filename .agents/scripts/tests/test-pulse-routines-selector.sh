@@ -755,6 +755,15 @@ _test_platform_scheduler_ownership() {
 		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
 		job_info='{ "LastExitStatus" = 0; "Program" = "/nonexistent/prog"; };'
 		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		# shellcheck disable=SC2016  # literal $PATH in launchctl output
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "PATH=/opt/homebrew/bin:$PATH /bin/true ok"; ); };'
+		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "cd /tmp && /bin/true ok"; ); };'
+		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "'"'"'/nonexistent/x.sh'"'"' check"; ); };'
+		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "exec /nonexistent/x.sh check"; ); };'
+		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
 		job_info=""
 		! _routine_platform_owned r916 'scripts/cloudron-package-monitor-helper.sh upstream --apply' || exit 1
 	); then
