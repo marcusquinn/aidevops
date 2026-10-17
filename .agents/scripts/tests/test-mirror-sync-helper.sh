@@ -12,6 +12,30 @@ mkdir -p "$HOME" "$AIDEVOPS_TEMP_DIR" "$ROOT/work"
 ORIGIN="$ROOT/origin.git"
 UPSTREAM="$ROOT/upstream.git"
 CANONICAL="$ROOT/canonical"
+# Export this wrapper only for the diagnostic cases below; local setup continues
+# to use real git, and the function is defined before any calls for ShellCheck.
+git() {
+	if [[ " $* " == *' ls-remote '* || ( "${FAIL_FETCH:-0}" == 1 && " $* " == *' fetch '* ) ]]; then
+		if [[ "${FAIL_FETCH:-0}" == 1 && " $* " == *' ls-remote '* ]]; then
+			printf 'ref: refs/heads/main\tHEAD\n'
+			return 0
+		fi
+		if [[ "${EMPTY_ERROR:-0}" == 1 ]]; then return 1; fi
+		if [[ "${LONG_ERROR:-0}" == 1 ]]; then
+			printf '%0300d\n' 0 >&2
+			return 1
+		fi
+		printf 'earlier error must not be selected\n' >&2
+		if [[ " $* " == *'credential.helper=!gh auth git-credential'* ]]; then
+			printf 'fatal: retry https://user:\rsecret@example.invalid/repo ghp_\rfakeToken github_pat_\rfakeToken\n\n' >&2
+		else
+			printf 'fatal: initial https://user:secret@example.invalid/repo gho_fakeToken\n\n' >&2
+		fi
+		return 1
+	fi
+	command git "$@"
+	return $?
+}
 git init -q --bare "$ORIGIN"
 git init -q --bare "$UPSTREAM"
 git -C "$ROOT/work" init -q -b main
@@ -118,28 +142,6 @@ assert_untouched
 
 # Inject deterministic network diagnostics while retaining real local git setup.
 # Both discovery's command substitution and direct fetch calls must retain errors.
-git() {
-	if [[ " $* " == *' ls-remote '* || ( "${FAIL_FETCH:-0}" == 1 && " $* " == *' fetch '* ) ]]; then
-		if [[ "${FAIL_FETCH:-0}" == 1 && " $* " == *' ls-remote '* ]]; then
-			printf 'ref: refs/heads/main\tHEAD\n'
-			return 0
-		fi
-		if [[ "${EMPTY_ERROR:-0}" == 1 ]]; then return 1; fi
-		if [[ "${LONG_ERROR:-0}" == 1 ]]; then
-			printf '%0300d\n' 0 >&2
-			return 1
-		fi
-		printf 'earlier error must not be selected\n' >&2
-		if [[ " $* " == *'credential.helper=!gh auth git-credential'* ]]; then
-			printf 'fatal: retry https://user:\rsecret@example.invalid/repo ghp_\rfakeToken github_pat_\rfakeToken\n\n' >&2
-		else
-			printf 'fatal: initial https://user:secret@example.invalid/repo gho_fakeToken\n\n' >&2
-		fi
-		return 1
-	fi
-	command git "$@"
-	return $?
-}
 gh() {
 	[[ "${GH_AUTH_OK:-0}" == 1 ]] && return 0
 	return 1
