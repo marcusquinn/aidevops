@@ -672,9 +672,9 @@ test_post_pr_handoff_after_merge_completes_closed_issue() {
 			return 0
 		)
 	)
-	if [[ "$result" == *"release=worker_complete" &&
-		"$result" == *"rc=0|terminal=success" &&
-		"$result" == *"open-class=merged_checkpoint" &&
+	if [[ "$result" == *"release=worker_complete"* &&
+		"$result" == *"rc=0|terminal=success"* &&
+		"$result" == *"open-class=merged_checkpoint"* &&
 		"$result" != *"unexpected-"* ]]; then
 		print_result "merged POST_PR_HANDOFF completes closed issue without fast-fail or escalation" 0
 	else
