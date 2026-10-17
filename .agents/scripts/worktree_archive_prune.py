@@ -138,12 +138,10 @@ def select_expired(entries, days, limit):
     return selected
 
 
-def prune_selected(root, root_identity, entries, selected, helper, mode):
+def prune_selected(root, root_identity, entries, helper, mode):
     """Apply or preview the selection, reporting failures without dropping guards."""
     failed = False
     for entry in entries:
-        if entry[2] not in selected:
-            continue
         try:
             if mode == "apply":
                 remove_verified(root, root_identity, entry, helper)
@@ -167,7 +165,8 @@ def main():
     root_identity = identity(root)
     entries = verified_entries(root, helper)
     selected = select_expired(entries, days, limit)
-    return prune_selected(root, root_identity, entries, selected, helper, mode)
+    selected_entries = (entry for entry in entries if entry[2] in selected)
+    return prune_selected(root, root_identity, selected_entries, helper, mode)
 
 
 if __name__ == "__main__":
