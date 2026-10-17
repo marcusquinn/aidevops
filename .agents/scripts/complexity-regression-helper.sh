@@ -1155,8 +1155,32 @@ _log_file_size_remediation() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _changed_applicable_paths <base_sha> <head_sha> <working_tree>
+#
+# Print applicable changed paths (root-relative, newline-separated). With
+# <working_tree>=1, compare base with the working tree plus untracked files.
+# core.quotePath=false keeps non-ASCII names unquoted so they match the
+# extension filter and the literal pathspecs used for snapshots.
+# ---------------------------------------------------------------------------
+_changed_applicable_paths() {
+	local _base_sha="$1"
+	local _head_sha="$2"
+	local _working_tree="$3"
+	if [ "$_working_tree" -eq 1 ]; then
+		{
+			git -c core.quotePath=false diff --name-only "$_base_sha" -- 2>/dev/null || true
+			git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null || true
+		} | grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" | sort -u || true
+	else
+		git -c core.quotePath=false diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null |
+			grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" || true
+	fi
+	return 0
+}
+
 # _check_regression <base_sha> <head_sha> <output_md> <allow_increase> [<metric>]
-# Scan base+head via worktrees, compute diff, optionally write report.
+# Scan base+head via snapshots, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
 #
 # Diff-scoped optimisation (t2827): computes applicable source and Markdown
@@ -1174,19 +1198,8 @@ _check_regression() {
 	local _metric="${5:-function-complexity}"
 	local _working_tree="${6:-0}"
 
-	# Resolve applicable changed files before materializing snapshots.
-	# core.quotePath=false keeps non-ASCII names unquoted so they match the
-	# extension filter and the literal pathspecs used for snapshots.
 	local _changed_source
-	if [ "$_working_tree" -eq 1 ]; then
-		_changed_source=$({
-			git -c core.quotePath=false diff --name-only "$_base_sha" -- 2>/dev/null || true
-			git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null || true
-		} | grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" | sort -u || true)
-	else
-		_changed_source=$(git -c core.quotePath=false diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null |
-			grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" || true)
-	fi
+	_changed_source=$(_changed_applicable_paths "$_base_sha" "$_head_sha" "$_working_tree")
 	if [ -z "$_changed_source" ]; then
 		log "[$_metric] no applicable changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
 		# Write a clean "no applicable changes" report so any previously-posted
