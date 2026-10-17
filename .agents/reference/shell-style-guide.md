@@ -551,6 +551,28 @@ ShellCheck passes a bare multi-variable `read`; it cannot prove the caller's run
 
 GH#34558: `team-interface-buzz-worktree.sh` set strict IFS before sourcing `runtime-env.sh`, making trusted-tool resolution reject trusted executables. The merged fix pins `IFS=' ' read -r uid mode <<<"$metadata"` in `aidevops_resolve_trusted_tool`, `aidevops_dir_chain_is_trusted`, and `aidevops_physical_path`. Keep every two-variable metadata read pinned; the existing `tests/test-runtime-env.sh` and `tests/test-team-interface-buzz-worktree.mjs` cover the resolver and its strict-IFS caller.
 
+## Dynamic-scope shadowing in stubs and fixtures (GH#34846)
+
+Stub and fixture state that may share a name with locals in code under test must use a test-unique prefix (for example, `tb_fixture_comments`). Alternatively, pass the value through an exported environment variable with a unique prefix. Never use bare names such as `comments`, `issue_json`, `body`, or `labels` for fixture state when called helpers may declare locals of the same name.
+
+```bash
+# Banned: fetch resolves comments to the innermost local in its caller
+local comments='[]'
+fetch() { printf '%s\n' "$comments"; }
+
+# Allowed: fixture state cannot collide with common helper locals
+local tb_fixture_comments='[]'
+fetch() { printf '%s\n' "$tb_fixture_comments"; }
+```
+
+### Why the failure is silent
+
+Bash uses dynamic scoping: a variable read by a stub resolves to the innermost `local` of that name in the active call stack, not the scope where the stub was defined. ShellCheck cannot detect this. The stub can therefore return the callee's empty value, leaving an assertion to fail far from the cause. Diagnose with `set -x` and look for the stub printing an unexpected empty value immediately after a callee's `local <name>=` line.
+
+### Originating incident
+
+GH#34846 / PR #34849: `.agents/scripts/tests/test-terminal-blocker-circuit.sh` test `test_first_observation_scope_hold_releases_on_revision` used `comments` for fixture state. `_tbr_check_entry` in `.agents/scripts/terminal-blocker-recovery-helper.sh` declares `local comments=""` before calling the stub, so the stub printed an empty string. The fix renamed the fixture to `tb_fixture_comments`.
+
 ## Watchdog self-write anti-pattern (t3058 / t3071)
 
 If a script monitors file `X` for activity as a **stall signal** (byte-delta, line-count, or mtime polling), the SAME script MUST NOT write status markers to `X`. Self-writes register as "progress" and silently neuter the timeout — the very condition the marker was meant to instrument becomes unreachable. There is no log line, no exit code, no alert when this happens; the watchdog simply never trips.
