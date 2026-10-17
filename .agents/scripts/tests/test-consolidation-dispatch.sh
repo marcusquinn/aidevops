@@ -1683,7 +1683,8 @@ test_non_consolidating_comment_call_budget() {
 	export GH_API_COMMENTS_JSON
 	local rc=0 calls=0
 	_issue_needs_consolidation 123 owner/repo '{"labels":[]}' || rc=$?
-	calls=$(wc -l <"$GH_LOG")
+	# BSD wc pads the count with spaces; strip them so macOS matches GNU (GH#34861).
+	calls=$(wc -l <"$GH_LOG" | tr -d '[:space:]')
 	if [[ "$rc" == 1 && "$calls" == 1 ]] &&
 		grep -q '^api repos/owner/repo/issues/123/comments ' "$GH_LOG"; then
 		print_result "ordinary empty thread uses one live comment read, no child/ownership/PR ceremony" 0
