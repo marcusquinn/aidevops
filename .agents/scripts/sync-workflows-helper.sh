@@ -1049,7 +1049,7 @@ _resolve_effective_ref() {
 	return 0
 }
 
-# _sync_dryrun_emit <slug> <status> <effective_ref> <workflow-relpath> <sync-contributing> [workflow-file]
+# _sync_dryrun_emit <slug> <status> <effective_ref> <workflow-relpath> <sync-contributing> [workflow-file] [repo-path]
 _sync_dryrun_emit() {
 	local _slug="$1"
 	local _status="$2"
@@ -1057,8 +1057,13 @@ _sync_dryrun_emit() {
 	local _workflow_relpath="${4:-.github/workflows/issue-sync.yml}"
 	local _sync_contributing="${5:-0}"
 	local _workflow_file="${6:-}"
+	local _repo_path="${7:-}"
+	local _refresh_contributing=0
+	if [[ "$_sync_contributing" -eq 1 ]] && _contributing_policy_needs_sync "$_repo_path"; then
+		_refresh_contributing=1
+	fi
 	local _action
-	if [[ "$_sync_contributing" -eq 1 ]]; then
+	if [[ "$_refresh_contributing" -eq 1 ]]; then
 		_action="install policy"
 	else
 		case "$_status" in
@@ -1074,7 +1079,7 @@ _sync_dryrun_emit() {
 		esac
 	fi
 	local _targets="$_workflow_relpath"
-	[[ "$_sync_contributing" -eq 1 ]] && _targets="${_targets} + CONTRIBUTING.md"
+	[[ "$_refresh_contributing" -eq 1 ]] && _targets="${_targets} + CONTRIBUTING.md (managed block refresh)"
 	printf '%s\t%s\t%s\t%s → %s at ref %s\n' \
 		"$_slug" "$_status" "$_STATUS_PLANNED" "$_action" \
 		"$_targets" "$_effective_ref"
@@ -1429,7 +1434,7 @@ _sync_one_repo() {
 		local _effective_ref
 		_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
 		_sync_dryrun_emit \
-			"$_slug" "$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_workflow"
+			"$_slug" "$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_workflow" "$_path"
 		return 0
 	fi
 

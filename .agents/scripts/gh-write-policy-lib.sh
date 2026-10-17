@@ -1011,6 +1011,7 @@ _shim_target_matches_local_checkout() {
 _shim_file_issue_first_scope() {
 	local file_path="$1"
 	local content="${2:-}"
+	local include_reason="${3:-0}"
 	local marker_lines=""
 	local marker_count=0
 	local scope=""
@@ -1038,7 +1039,13 @@ _shim_file_issue_first_scope() {
 	# attempting to infer exemptions from human language.
 	if [[ "$marker_count" -gt 1 ]] ||
 		grep -Eqi 'aidevops:issue-first-pr:(start|scope=)|issue-first|linked issue|every human-authored pr' <<<"$content"; then
-		printf 'universal\n'
+		if [[ "$include_reason" == 1 ]] &&
+			grep -qF 'aidevops:issue-first-pr:start' <<<"$content" &&
+			! grep -qF 'aidevops:issue-first-pr:scope=' <<<"$content"; then
+			printf 'universal:legacy-managed\n'
+		else
+			printf 'universal\n'
+		fi
 		return 0
 	fi
 	return 1
@@ -1077,6 +1084,7 @@ _shim_file_declared_issue_first_scope() {
 }
 
 _shim_local_issue_first_scope() {
+	local include_reason="${1:-0}"
 	local root=""
 	local tmpl=""
 	local scope=""
@@ -1112,10 +1120,10 @@ _shim_local_issue_first_scope() {
 	# remains universal until a managed scope declaration is added.
 	for tmpl in "${policy_files[@]}"; do
 		[[ -f "$tmpl" ]] || continue
-		scope=$(_shim_file_issue_first_scope "$tmpl" 2>/dev/null || true)
+		scope=$(_shim_file_issue_first_scope "$tmpl" "" "$include_reason" 2>/dev/null || true)
 		[[ -n "$scope" ]] || continue
-		if [[ "$scope" == "universal" ]]; then
-			printf 'universal\n'
+		if [[ "${scope%%:*}" == "universal" ]]; then
+			printf '%s\n' "$scope"
 			return 0
 		fi
 		selected_scope="$scope"
@@ -1127,9 +1135,10 @@ _shim_local_issue_first_scope() {
 
 _shim_repo_issue_first_scope() {
 	local repo_slug="$1"
+	local include_reason="${2:-0}"
 	local scope=""
 	if _shim_target_matches_local_checkout "$repo_slug"; then
-		scope=$(_shim_local_issue_first_scope 2>/dev/null || true)
+		scope=$(_shim_local_issue_first_scope "$include_reason" 2>/dev/null || true)
 		if [[ -n "$scope" ]]; then
 			printf '%s\n' "$scope"
 			return 0
@@ -1180,12 +1189,16 @@ _shim_block_pr_create_without_linked_issue_if_needed() {
 
 	local repo_slug=""
 	local policy_scope=""
+	local policy_reason=""
 	local title=""
 	local body=""
 	repo_slug=$(_shim_target_repo_slug "${_modified_args[@]}" 2>/dev/null || true)
 	[[ -n "$repo_slug" ]] || return 0
-	policy_scope=$(_shim_repo_issue_first_scope "$repo_slug" 2>/dev/null || true)
+	# Opt into reason metadata; ordinary scope callers retain their exact output.
+	policy_scope=$(_shim_repo_issue_first_scope "$repo_slug" 1 2>/dev/null || true)
 	[[ -n "$policy_scope" ]] || return 0
+	[[ "$policy_scope" == *:* ]] && policy_reason="${policy_scope#*:}"
+	policy_scope="${policy_scope%%:*}"
 
 	title=$(_shim_pr_create_get_title 2>/dev/null || true)
 	body=$(_shim_pr_create_get_body 2>/dev/null || true)
@@ -1203,6 +1216,9 @@ _shim_block_pr_create_without_linked_issue_if_needed() {
 		printf '  GitHub could not verify admin, maintain, or write permission for the authenticated actor; the exemption fails closed.\n' >&2
 	fi
 	printf '  Task-prefixed titles such as GH#NNN: or tNNN: are also accepted when they map to the project task system.\n' >&2
+	if [[ "$policy_reason" == "legacy-managed" ]]; then
+		printf '  The managed issue-first block predates the scope marker; if repository policy is external-only, refresh it with: aidevops sync-workflows --workflow linked-issue-check --apply --repo %s --issue <N>\n' "$repo_slug" >&2
+	fi
 	return 1
 }
 # shellcheck disable=SC2154  # body indexes are initialized by the shim before use
