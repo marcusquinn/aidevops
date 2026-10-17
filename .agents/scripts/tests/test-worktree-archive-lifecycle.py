@@ -48,8 +48,9 @@ class ArchiveLifecycle(unittest.TestCase):
         self.issue = 0
 
     def run_command(self, *args, check=True):
-        result = subprocess.run([str(arg) for arg in args], env=self.env,
-                                capture_output=True, timeout=60, check=False)
+        result = subprocess.run(  # nosec B603 -- fixture-owned Git/Bash argv, no shell expansion
+            [str(arg) for arg in args], env=self.env,
+            capture_output=True, timeout=60, check=False)
         if check:
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
         return result

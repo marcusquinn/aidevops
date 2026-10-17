@@ -14,6 +14,8 @@ import uuid
 
 
 PIN = ".aidevops-archive-pin"
+RETENTION_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError,
+                    subprocess.TimeoutExpired)
 
 
 def identity(path):
@@ -22,9 +24,13 @@ def identity(path):
 
 
 def verify(helper, directory):
-    result = subprocess.run(["bash", str(helper), "verify", str(directory)],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                            timeout=60, check=False)
+    bash = shutil.which("bash")
+    if bash is None:
+        raise FileNotFoundError("archive verification requires bash")
+    # The caller supplies the local helper; archive data is only a path argument.
+    result = subprocess.run(  # nosec B603 -- resolved Bash, operator-owned helper, argv only
+        [str(Path(bash).absolute()), str(helper), "verify", str(directory)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, check=False)
     if result.returncode:
         raise ValueError("archive verification failed")
 
@@ -106,6 +112,48 @@ def remove_verified(root, root_identity, entry, helper):
             os.close(descriptor)
 
 
+def verified_entries(root, helper):
+    """Collect eligible archives while retaining every unverifiable entry."""
+    entries = []
+    for manifest_path in root.glob("*/*/*/manifest.json"):
+        try:
+            entries.append(inspect(root, manifest_path.parent, helper))
+        except RETENTION_ERRORS as error:
+            print(f"kept\t{manifest_path.parent}\t{error}", file=sys.stderr)
+    return entries
+
+
+def select_expired(entries, days, limit):
+    """Select expired entries, then oldest survivors exceeding the size cap."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    selected = {entry[2] for entry in entries if (now - entry[0]).days >= days}
+    remaining = sorted((entry for entry in entries if entry[2] not in selected),
+                       key=lambda entry: (entry[0], str(entry[2])))
+    remaining_total = sum(entry[1] for entry in remaining)
+    for entry in remaining:
+        if remaining_total <= limit:
+            break
+        selected.add(entry[2])
+        remaining_total -= entry[1]
+    return selected
+
+
+def prune_selected(root, root_identity, entries, selected, helper, mode):
+    """Apply or preview the selection, reporting failures without dropping guards."""
+    failed = False
+    for entry in entries:
+        if entry[2] not in selected:
+            continue
+        try:
+            if mode == "apply":
+                remove_verified(root, root_identity, entry, helper)
+            print(f"{mode}\t{entry[2]}")
+        except RETENTION_ERRORS as error:
+            failed = True
+            print(f"kept\t{entry[2]}\t{error}", file=sys.stderr)
+    return int(failed)
+
+
 def main():
     root = Path(sys.argv[1]).resolve()
     days, raw_limit, mode = int(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -117,35 +165,9 @@ def main():
     if not root.is_dir():
         return 0
     root_identity = identity(root)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    entries = []
-    errors = (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired)
-    for manifest_path in root.glob("*/*/*/manifest.json"):
-        try:
-            entries.append(inspect(root, manifest_path.parent, helper))
-        except errors as error:
-            print(f"kept\t{manifest_path.parent}\t{error}", file=sys.stderr)
-    selected = {entry[2] for entry in entries if (now - entry[0]).days >= days}
-    remaining = sorted((entry for entry in entries if entry[2] not in selected),
-                       key=lambda entry: (entry[0], str(entry[2])))
-    remaining_total = sum(entry[1] for entry in remaining)
-    for entry in remaining:
-        if remaining_total <= limit:
-            break
-        selected.add(entry[2])
-        remaining_total -= entry[1]
-    failed = False
-    for entry in entries:
-        if entry[2] not in selected:
-            continue
-        try:
-            if mode == "apply":
-                remove_verified(root, root_identity, entry, helper)
-            print(f"{mode}\t{entry[2]}")
-        except errors as error:
-            failed = True
-            print(f"kept\t{entry[2]}\t{error}", file=sys.stderr)
-    return int(failed)
+    entries = verified_entries(root, helper)
+    selected = select_expired(entries, days, limit)
+    return prune_selected(root, root_identity, entries, selected, helper, mode)
 
 
 if __name__ == "__main__":
