@@ -324,7 +324,7 @@ _assert_contains "GH#21897 → CURRENT/CALLER classification preserved" "$OUT_11
 _assert_contains "GH#27725 → runner-add dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runneradd","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
 _assert_contains "GH#27725 → runner-change dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runnerchange","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
 _assert_exit "GH#34873 → caller-only runner has no registry drift" 0 \
-	"$(printf '%s\n' "$OUT_11" | jq '[.[] | select(.slug == "owner/repo-runnerkeep")] | length')"
+	"$(printf '%s\n' "$OUT_11" | jq -s '[.[] | select(.slug == "owner/repo-runnerkeep")] | length')"
 rm -rf "$TMPDIR_11"
 
 # ─── Test 12: GH#21897 — CURRENT/CALLER + matching runner already injected → no work ───
@@ -687,6 +687,80 @@ OUT_19_RUNNER=$(HOME="$TMPDIR_19" bash "$HELPER" --workflow issue-sync --json 2>
 _assert_contains "GH#34095 → runner-only sync preserves the tag pin" "$OUT_19_RUNNER" \
 	'"outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml at ref @v3.0.0'
 rm -rf "$TMPDIR_19"
+
+# ─── Test 20: GH#34873 — apply preserves caller runners unless overridden ───
+# Force a real rewrite with unrelated permissions drift, then inspect the pushed
+# workflow in a local bare remote. Cover both a template with an existing with:
+# block (issue-sync) and one without it (linked-issue-check).
+_test_runner_preservation() {
+	local _workflow_name="$1"
+	local _caller_runner="$2"
+	local _registry_runner="$3"
+	local _expected_runner="$4"
+	local _tmpdir _repo _bare _template _caller _registry_field _applied _expected
+	_tmpdir=$(mktemp -d) || return 1
+	_setup_fake_home "$_tmpdir"
+	_setup_mock_gh "$_tmpdir"
+	_repo="$_tmpdir/repo"
+	_bare="$_tmpdir/bare.git"
+	_template=$(cat "$SCRIPT_DIR/../../templates/workflows/${_workflow_name}-caller.yml")
+	_caller=$(printf '%s\n' "$_template" | sed 's/issues: write/issues: read/')
+	if [[ -n "$_caller_runner" ]]; then
+		_caller=$(printf '%s\n' "$_caller" | sed -E \
+			"s|^(    uses:.*)$|\1\n    with:\n      runner: ${_caller_runner}|")
+		# issue-sync already has a with: block: inject there instead.
+		if [[ "$_template" == *'    with:'* ]]; then
+			_caller=$(printf '%s\n' "$_template" | sed -E \
+				-e 's/issues: write/issues: read/' \
+				-e "s|^(    with:)$|\1\n      runner: ${_caller_runner}|")
+		fi
+	fi
+	mkdir -p "$_repo/.github/workflows"
+	git init --bare -q "$_bare"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email test@example.com
+	git -C "$_repo" config user.name Test
+	git -C "$_repo" checkout -q -b main
+	printf '%s\n' "$_caller" >"$_repo/.github/workflows/${_workflow_name}.yml"
+	git -C "$_repo" add -A
+	git -C "$_repo" commit -q -m "caller with unrelated drift"
+	git -C "$_repo" remote add origin "$_bare"
+	git -C "$_repo" push -q -u origin main
+	git --git-dir="$_bare" symbolic-ref HEAD refs/heads/main
+	git -C "$_repo" remote set-head origin main
+	_registry_field=""
+	[[ -n "$_registry_runner" ]] && _registry_field=",\"runner\":\"$_registry_runner\""
+	_write_repos_json "$_tmpdir" \
+		"{\"initialized_repos\":[{\"path\":\"$_repo\",\"slug\":\"owner/repo\"${_registry_field}}]}"
+	# As in Test 10, PR creation may fail in this offline fixture after the
+	# workflow commit is pushed. Assert the actual pushed artifact, not gh output.
+	HOME="$_tmpdir" PATH="$_tmpdir/bin:$PATH" \
+		GH_CALL_LOG="$_tmpdir/gh-calls.log" \
+		AIDEVOPS_WORKTREE_BASE_DIR="$_tmpdir/worktrees" \
+		bash "$HELPER" --apply --repo owner/repo --workflow "$_workflow_name" \
+		--branch chore/test-runner-preservation >/dev/null 2>&1 || true
+	_applied=$(git --git-dir="$_bare" show \
+		"refs/heads/chore/test-runner-preservation:.github/workflows/${_workflow_name}.yml" 2>/dev/null)
+	_expected="$_template"
+	if [[ -n "$_expected_runner" ]]; then
+		if [[ "$_template" == *'    with:'* ]]; then
+			_expected=$(printf '%s\n' "$_template" | sed -E \
+				"s|^(    with:)$|\1\n      runner: ${_expected_runner}|")
+		else
+			_expected=$(printf '%s\n' "$_template" | sed -E \
+				"s|^(    uses:.*)$|\1\n    with:\n      runner: ${_expected_runner}|")
+		fi
+	fi
+	_assert_exit "GH#34873 ${_workflow_name} caller=${_caller_runner:-none} registry=${_registry_runner:-none} pushed caller matches expected template" \
+		"$_expected" "$_applied"
+	rm -rf "$_tmpdir"
+	return 0
+}
+for RUNNER_WORKFLOW in issue-sync linked-issue-check; do
+	_test_runner_preservation "$RUNNER_WORKFLOW" 1cpu-2gb "" 1cpu-2gb
+	_test_runner_preservation "$RUNNER_WORKFLOW" 1cpu-2gb ubuntu-new ubuntu-new
+	_test_runner_preservation "$RUNNER_WORKFLOW" "" "" ""
+done
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'
