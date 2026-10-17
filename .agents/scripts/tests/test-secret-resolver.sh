@@ -60,10 +60,13 @@ show)
 esac
 exit 1
 EOF
-	# curl double: records argv so the test can see which key was sent.
+	# curl double: records argv and explicitly requested stdin separately.
 	cat >"$TEST_DIR/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >>"${AIDEVOPS_TEST_DIR}/curl_args"
+case " $* " in
+*' -H @- '*|*' -K - '*) cat >>"${AIDEVOPS_TEST_DIR}/curl_stdin" ;;
+esac
 case "$*" in
 *updown.io*) printf '[]\n200' ;;
 *api.ahrefs.com*) printf '{"keywords":[{"keyword":"k","url":"https://example.com/","traffic":1,"volume":10,"position":1,"difficulty":2}],"domain_rating":{"domain_rating":50}}' ;;
@@ -199,6 +202,107 @@ test_keyword_research_ahrefs_uses_gopass() {
 	return 0
 }
 
+# Exercise every public credential consumer in a genuinely empty environment.
+run_webmaster_requests() {
+	# shellcheck disable=SC2016  # positional args expand in the child bash
+	env -i PATH="$PATH" HOME="$TEST_DIR/home" AIDEVOPS_TEST_DIR="$TEST_DIR" "$@" bash -euc '
+		source "$1/shared-constants.sh"
+		source "$1/keyword-research-helper-webmaster.sh"
+		gsc_request sites/example/searchAnalytics/query "{}"
+		gsc_list_sites
+		bing_request GetQueryStats "https://example.com/?a=1&b=2"
+		bing_keyword "https://example.com/" "a & b" 2026-10-01 2026-10-17
+		bing_related_keywords "https://example.com/" "a & b" 2026-10-01 2026-10-17
+		bing_page_query_stats "https://example.com/" "https://example.com/a?b=c&d=e"
+		bing_list_sites
+	' _ "$SCRIPTS"
+	return $?
+}
+
+test_webmaster_credentials() {
+	setup
+	store_gopass GSC_ACCESS_TOKEN "gsc-gopass-value"
+	store_gopass BING_WEBMASTER_API_KEY "bing-gopass-value"
+	local rc=0
+	run_webmaster_requests >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]] &&
+		[[ $(grep -c '^Authorization: Bearer gsc-gopass-value$' "$TEST_DIR/curl_stdin") -eq 2 ]] &&
+		[[ $(grep -c '^data-urlencode = "apikey=bing-gopass-value"$' "$TEST_DIR/curl_stdin") -eq 5 ]] &&
+		! grep -Eq 'gsc-gopass-value|bing-gopass-value|apikey=' "$TEST_DIR/curl_args" &&
+		grep -Fxq 'query=a & b' "$TEST_DIR/curl_args" &&
+		grep -Fxq 'siteUrl=https://example.com/?a=1&b=2' "$TEST_DIR/curl_args" &&
+		grep -Fxq 'page=https://example.com/a?b=c&d=e' "$TEST_DIR/curl_args"; then
+		print_result "all webmaster consumers resolve gopass credentials through stdin, never argv" 0
+	else
+		print_result "all webmaster consumers resolve gopass credentials through stdin, never argv" 1 "rc=$rc"
+	fi
+	store_plaintext 'export GSC_ACCESS_TOKEN="gsc-plain-value"'
+	store_plaintext 'export BING_WEBMASTER_API_KEY="bing-plain-value"'
+	: >"$TEST_DIR/curl_stdin"
+	rc=0
+	run_webmaster_requests >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]] && grep -q 'gsc-plain-value' "$TEST_DIR/curl_stdin" &&
+		grep -q 'bing-plain-value' "$TEST_DIR/curl_stdin" && ! grep -q 'gopass-value' "$TEST_DIR/curl_stdin"; then
+		print_result "webmaster credentials.sh values precede gopass" 0
+	else
+		print_result "webmaster credentials.sh values precede gopass" 1 "rc=$rc"
+	fi
+	: >"$TEST_DIR/curl_stdin"
+	rc=0
+	run_webmaster_requests GSC_ACCESS_TOKEN=gsc-env-value BING_WEBMASTER_API_KEY=bing-env-value >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]] && grep -q 'gsc-env-value' "$TEST_DIR/curl_stdin" &&
+		grep -q 'bing-env-value' "$TEST_DIR/curl_stdin" && ! grep -Eq 'plain-value|gopass-value' "$TEST_DIR/curl_stdin"; then
+		print_result "webmaster environment values precede credentials.sh and gopass" 0
+	else
+		print_result "webmaster environment values precede credentials.sh and gopass" 1 "rc=$rc"
+	fi
+	teardown
+	return 0
+}
+
+test_webmaster_gcloud_and_missing() {
+	setup
+	cat >"$TEST_DIR/bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == 'auth application-default print-access-token' ]] || exit 1
+printf '%s\n' 'gsc-gcloud-value'
+EOF
+	chmod +x "$TEST_DIR/bin/gcloud"
+	: >"$TEST_DIR/service-account.json"
+	store_gopass BING_WEBMASTER_API_KEY "bing-gopass-value"
+	local rc=0
+	run_webmaster_requests GOOGLE_APPLICATION_CREDENTIALS="$TEST_DIR/service-account.json" >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]] && [[ $(grep -c '^Authorization: Bearer gsc-gcloud-value$' "$TEST_DIR/curl_stdin") -eq 2 ]] &&
+		! grep -q 'gsc-gcloud-value' "$TEST_DIR/curl_args"; then
+		print_result "GSC service-account gcloud fallback keeps token out of argv" 0
+	else
+		print_result "GSC service-account gcloud fallback keeps token out of argv" 1 "rc=$rc"
+	fi
+	teardown
+	setup
+	# shellcheck disable=SC2016  # positional args expand in the child bash
+	env -i PATH="$PATH" HOME="$TEST_DIR/home" AIDEVOPS_TEST_DIR="$TEST_DIR" bash -euc '
+		source "$1/shared-constants.sh"
+		source "$1/keyword-research-helper-webmaster.sh"
+		if gsc_request sites "{}"; then exit 1; fi
+		if gsc_list_sites; then exit 1; fi
+		if bing_request GetQueryStats example; then exit 1; fi
+		if bing_keyword example query start end; then exit 1; fi
+		if bing_related_keywords example query start end; then exit 1; fi
+		if bing_page_query_stats example page; then exit 1; fi
+		if bing_list_sites; then exit 1; fi
+	' _ "$SCRIPTS" >"$TEST_DIR/errors" 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 && ! -f "$TEST_DIR/curl_args" ]] &&
+		grep -q 'aidevops secret set GSC_ACCESS_TOKEN' "$TEST_DIR/errors" &&
+		grep -q 'aidevops secret set BING_WEBMASTER_API_KEY' "$TEST_DIR/errors"; then
+		print_result "missing webmaster credentials fail with secret-set hints and no curl request" 0
+	else
+		print_result "missing webmaster credentials fail with secret-set hints and no curl request" 1 "rc=$rc"
+	fi
+	teardown
+	return 0
+}
+
 test_node_resolver_and_higgsfield_client() {
 	setup
 	command -v node >/dev/null 2>&1 || {
@@ -282,6 +386,8 @@ main() {
 	test_updown_uses_gopass
 	test_seo_export_ahrefs_uses_gopass
 	test_keyword_research_ahrefs_uses_gopass
+	test_webmaster_credentials
+	test_webmaster_gcloud_and_missing
 	test_node_resolver_and_higgsfield_client
 	test_node_parser_matches_bash_assignments
 	test_onboarding_reports_gopass_names
