@@ -592,19 +592,22 @@ _pulse_stale_blocked_sweep_deadline() {
 	return 0
 }
 
-# t18663: per-repo completion stamp for the stale-blocked sweep.
+# t18663: per-repo completion stamp for one pass of the stale-blocked cadence.
+# Pass kinds: stale-blocked-complete (default) and partial-continuation-complete
+# (the GH#34432 revisit that shares this cadence).
 _pulse_stale_blocked_repo_stamp() {
-	local repo="$1"
-	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
-	printf '%s/.aidevops/cache/stale-blocked-complete/%s\n' "$HOME" "${repo//\//__}"
+	local repo="$1" kind="${2:-stale-blocked-complete}"
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$kind" =~ ^[a-z-]+$ ]] || return 1
+	printf '%s/.aidevops/cache/%s/%s\n' "$HOME" "$kind" "${repo//\//__}"
 	return 0
 }
 
 # Returns 0 when the repo finished a clean pass within the cadence interval.
 # A missing, unreadable or future-dated stamp makes the repo due again.
+# Args: repo interval now_epoch [pass kind]
 _pulse_stale_blocked_repo_fresh() {
-	local repo="$1" interval="$2" now_epoch="$3" stamp="" stamp_epoch=""
-	stamp=$(_pulse_stale_blocked_repo_stamp "$repo") || return 1
+	local repo="$1" interval="$2" now_epoch="$3" kind="${4:-stale-blocked-complete}" stamp="" stamp_epoch=""
+	stamp=$(_pulse_stale_blocked_repo_stamp "$repo" "$kind") || return 1
 	[[ -f "$stamp" ]] || return 1
 	stamp_epoch=$(_file_mtime_epoch "$stamp")
 	[[ "$stamp_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ ]] || return 1
@@ -633,12 +636,58 @@ _pulse_stale_blocked_repo_deadline() {
 }
 
 # Best effort: a stamp that cannot be written only keeps the repo due.
+# Args: repo [pass kind]
 _pulse_stale_blocked_repo_mark_complete() {
-	local repo="$1" stamp=""
-	stamp=$(_pulse_stale_blocked_repo_stamp "$repo") || return 0
+	local repo="$1" kind="${2:-stale-blocked-complete}" stamp=""
+	stamp=$(_pulse_stale_blocked_repo_stamp "$repo" "$kind") || return 0
 	mkdir -p "${stamp%/*}" 2>/dev/null || return 0
 	touch "$stamp" 2>/dev/null || true
 	return 0
+}
+
+# Returns 0 when every pass run on this cadence is fresh for the repo.
+_pulse_stale_blocked_repo_all_fresh() {
+	local repo="$1" interval="$2" now_epoch="$3"
+	_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" || return 1
+	if declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1; then
+		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" partial-continuation-complete || return 1
+	fi
+	return 0
+}
+
+# Run the due passes for one repo within its deadline. The stale-blocked sweep
+# runs first: dependency unblocking feeds dispatch directly, while the GH#34432
+# partial-continuation revisit reads a paginated timeline per in-review issue
+# and, run first, consumed whole shares (large repos logged visited=0). Each
+# pass keeps its own stamp, so one pass's remaining pages (rc 3) never hide the
+# other's completion; previously every repo with a full in-review page stayed
+# partial forever (fresh_repos=0).
+# Args: repo repo_deadline sweep_deadline interval now_epoch
+# Returns: 0 when all passes are complete, DER_SWEEP_PARTIAL when any pass needs
+#          more time, another non-zero code when a pass failed (failure wins)
+_pulse_stale_blocked_sweep_repo() {
+	local repo="$1" repo_deadline="$2" sweep_deadline="$3" interval="$4" now_epoch="$5"
+	local partial_rc="${DER_SWEEP_PARTIAL:-3}" rc=0 pass_rc=0
+	if ! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch"; then
+		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
+			reconcile_stale_blocked_issues "$repo" 2>>"$LOGFILE" || pass_rc=$?
+		if [[ "$pass_rc" -eq 0 ]]; then
+			_pulse_stale_blocked_repo_mark_complete "$repo"
+		else
+			rc="$pass_rc"
+		fi
+	fi
+	if declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1 &&
+		! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" partial-continuation-complete; then
+		pass_rc=0
+		_pm_reconcile_partial_continuations "$repo" "$repo_deadline" 2>>"$LOGFILE" || pass_rc=$?
+		if [[ "$pass_rc" -eq 0 ]]; then
+			_pulse_stale_blocked_repo_mark_complete "$repo" partial-continuation-complete
+		elif [[ "$rc" -eq 0 || "$rc" -eq "$partial_rc" ]]; then
+			rc="$pass_rc"
+		fi
+	fi
+	return "$rc"
 }
 
 _pulse_reconcile_stale_blocked_if_due() {
@@ -680,7 +729,7 @@ _pulse_reconcile_stale_blocked_if_due() {
 	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
 	for ((index = 0; index < repo_count; index++)); do
 		position=$(((start_offset + index) % repo_count))
-		if _pulse_stale_blocked_repo_fresh "${repos[position]}" "$interval" "$now_epoch"; then
+		if _pulse_stale_blocked_repo_all_fresh "${repos[position]}" "$interval" "$now_epoch"; then
 			fresh=$((fresh + 1))
 			continue
 		fi
@@ -697,23 +746,15 @@ _pulse_reconcile_stale_blocked_if_due() {
 		printf '%s\n' "$(((position + 1) % repo_count))" >"$next_repo_file" 2>/dev/null || true
 		repo_deadline=$(_pulse_stale_blocked_repo_deadline "$now_epoch" "$sweep_deadline" "$((due_count - index))")
 		rc=0
-		# GH#34432: use this existing bounded per-repo cadence to revisit
-		# partial merges whose lease was still live at merge time.
-		if declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1; then
-			_pm_reconcile_partial_continuations "${repos[position]}" "$repo_deadline" 2>>"$LOGFILE" || rc=$?
-		fi
-		local blocked_rc=0
-		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
-			reconcile_stale_blocked_issues "${repos[position]}" 2>>"$LOGFILE" || blocked_rc=$?
-		[[ "$blocked_rc" -eq 0 ]] || rc="$blocked_rc"
+		# GH#34432: this bounded per-repo cadence also revisits partial merges
+		# whose lease was still live at merge time. Only a clean, complete pass
+		# stamps its own cadence; partial and failed passes stay due.
+		_pulse_stale_blocked_sweep_repo "${repos[position]}" "$repo_deadline" \
+			"$sweep_deadline" "$interval" "$now_epoch" || rc=$?
 		if [[ "$rc" -eq "$partial_rc" ]]; then
 			partial=$((partial + 1))
 		elif [[ "$rc" -ne 0 ]]; then
 			failures=$((failures + 1))
-		else
-			# Only a clean, complete pass starts this repo's own cadence;
-			# partial and failed passes stay due for the next sweep.
-			_pulse_stale_blocked_repo_mark_complete "${repos[position]}"
 		fi
 	done
 	# The cadence sentinel marks a complete traversal; partial passes resume

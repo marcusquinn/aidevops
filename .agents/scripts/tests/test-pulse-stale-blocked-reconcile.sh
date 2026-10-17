@@ -265,4 +265,70 @@ share_deadline=$(_pulse_stale_blocked_repo_deadline 1000 1060 2)
 	printf 'FAIL: fair share above the minimum changed: %s\n' "$share_deadline"
 	exit 1
 }
+
+# Regression: the GH#34432 partial-continuation pass ran before the stale
+# sweep and its rc 3 masked a complete stale pass, so no repo was ever stamped
+# fresh and large repos logged visited=0. The stale sweep now runs first and
+# each pass keeps its own stamp.
+PC_STAMP_DIR="$HOME/.aidevops/cache/partial-continuation-complete"
+rm -rf "$SENTINEL" "$STAMP_DIR" "$PC_STAMP_DIR"
+_file_mtime_epoch() {
+	date +%s
+	return 0
+}
+ORDER=""
+PC_RC=3
+reconcile_stale_blocked_issues() {
+	ORDER="${ORDER}stale:${1} "
+	return 0
+}
+_pm_reconcile_partial_continuations() {
+	ORDER="${ORDER}pc:${1} "
+	[[ "$PC_RC" -ne 0 ]] || return 0
+	return "$PC_RC"
+}
+_pulse_reconcile_stale_blocked_if_due
+[[ "$ORDER" == "stale:owner/one pc:owner/one stale:owner/two pc:owner/two " ||
+	"$ORDER" == "stale:owner/two pc:owner/two stale:owner/one pc:owner/one " ]] || {
+	printf 'FAIL: stale sweep did not run before partial continuation: %s\n' "$ORDER"
+	exit 1
+}
+[[ -f "$STAMP_DIR/owner__one" && -f "$STAMP_DIR/owner__two" && ! -d "$PC_STAMP_DIR" && ! -f "$SENTINEL" ]] || {
+	printf 'FAIL: partial continuation pages hid the complete stale pass or were stamped\n'
+	exit 1
+}
+grep -q 'failures=0 partial_repos=2 repos=2 fresh_repos=0' "$LOGFILE" || {
+	printf 'FAIL: pending partial-continuation pages were not reported partial\n'
+	exit 1
+}
+ORDER=""
+PC_RC=0
+_pulse_reconcile_stale_blocked_if_due
+[[ "$ORDER" == *"pc:owner/one "* && "$ORDER" == *"pc:owner/two "* && "$ORDER" != *stale:* ]] || {
+	printf 'FAIL: fresh stale pass re-ran or partial continuation was skipped: %s\n' "$ORDER"
+	exit 1
+}
+[[ -f "$PC_STAMP_DIR/owner__one" && -f "$PC_STAMP_DIR/owner__two" && -f "$SENTINEL" ]] || {
+	printf 'FAIL: completed partial continuation did not stamp its cadence\n'
+	exit 1
+}
+rm -f "$SENTINEL"
+ORDER=""
+_pulse_reconcile_stale_blocked_if_due
+[[ -z "$ORDER" ]] && grep -q 'partial_repos=0 repos=2 fresh_repos=2' "$LOGFILE" || {
+	printf 'FAIL: repos with both passes fresh were re-listed: %s\n' "$ORDER"
+	exit 1
+}
+# A failure in either pass wins over the other pass's partial result.
+rm -rf "$SENTINEL" "$STAMP_DIR" "$PC_STAMP_DIR"
+reconcile_stale_blocked_issues() {
+	return 3
+}
+PC_RC=1
+_pulse_reconcile_stale_blocked_if_due
+grep -q 'failures=2 partial_repos=0 repos=2 fresh_repos=0' "$LOGFILE" || {
+	printf 'FAIL: partial-continuation failure did not win over a partial stale pass\n'
+	exit 1
+}
+unset -f _pm_reconcile_partial_continuations
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'
