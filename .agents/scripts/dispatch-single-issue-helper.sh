@@ -894,6 +894,8 @@ _dsi_run_dedup_check() {
 	local retry_number=0
 	local classification=""
 	local retry_delay=""
+	local hydration_waited=0
+	local hydration_wait=""
 
 	_DSI_DEDUP_ATTEMPTS=0
 	while ((_DSI_DEDUP_ATTEMPTS < 3)); do
@@ -912,6 +914,21 @@ _dsi_run_dedup_check() {
 			_DSI_DEDUP_STATE="error"
 		fi
 
+		# GH#34922: a fresh issue inside the label-hydration window is not owned
+		# by anyone. A real dispatch waits out the remainder once and re-checks
+		# with refreshed metadata, so the operator's first attempt succeeds.
+		if [[ "$_DSI_DEDUP_STATE" == "blocked" && "$hydration_waited" -eq 0 && "${_DSI_ARG_DRYRUN:-0}" -ne 1 ]] &&
+			hydration_wait=$(_dsi_hydration_wait_seconds "$_DSI_DEDUP_RESULT"); then
+			hydration_waited=1
+			_dsi_info "Issue #${issue_number} is inside the label-hydration window; waiting ${hydration_wait}s for creation-time labels"
+			sleep "$hydration_wait"
+			if ! _dsi_load_issue_meta "$issue_number" "$repo_slug"; then
+				_DSI_DEDUP_RESULT="${_DSI_DEDUP_RESULT} metadata-refresh-failed"
+				return 0
+			fi
+			_DSI_DEDUP_ATTEMPTS=$((_DSI_DEDUP_ATTEMPTS - 1))
+			continue
+		fi
 		[[ "$_DSI_DEDUP_STATE" == "$_DSI_STATE_RECOVERING" ]] || return 0
 		((_DSI_DEDUP_ATTEMPTS < 3)) || return 0
 		classification=$("$_DSI_BACKOFF_HELPER" classify-lookup-failure "$_DSI_DEDUP_RESULT" 2>/dev/null || printf 'unknown')
@@ -962,6 +979,53 @@ _dsi_capture_claim_lease() {
 }
 
 #######################################
+# GH#34922: extract the claim helper's outcome reason (the last
+# `CLAIM_<STATE>:` line: LOST, BLOCKED, SKIPPED, STALE_SELF, REVOKED, ERROR).
+# Output is reduced to printable characters and bounded; the claim helper
+# emits only logins, issue/comment ids, timestamps and reason codes.
+# Args: $1 - claim helper output (stdout+stderr)
+# Output: reason line, or empty when none was emitted
+#######################################
+_dsi_claim_reason_line() {
+	local claim_output="$1"
+	local reason=""
+	reason=$(printf '%s\n' "$claim_output" | awk '/^CLAIM_[A-Z_]+: / {line=$0} END {print line}' || true)
+	reason=$(printf '%s' "$reason" | tr -cd '[:print:]' | cut -c1-400)
+	if [[ "$reason" == CLAIM_LOST:* ]] && [[ "$claim_output" == *own_claim_not_visible* ]]; then
+		reason="${reason} (own claim not yet visible on re-read)"
+	fi
+	printf '%s' "$reason"
+	return 0
+}
+
+#######################################
+# GH#34922: seconds to wait out the issue-age label-hydration window
+# (dispatch-dedup-assignment.sh HYDRATION_WINDOW signal) before retrying.
+# A brand-new issue is refused for DISPATCH_HYDRATION_WINDOW_S seconds so
+# creation-time labels (parent-task, no-auto-dispatch, ...) can land first.
+# Manual dispatch waits for the remainder instead of failing; waits longer
+# than AIDEVOPS_DSI_HYDRATION_MAX_WAIT (default 60s) are not attempted.
+# Args: $1 - guard/claim output text
+# Output: wait seconds on stdout
+# Returns: 0 when a bounded wait applies, 1 otherwise
+#######################################
+_dsi_hydration_wait_seconds() {
+	local signal_text="$1"
+	local max_wait="${AIDEVOPS_DSI_HYDRATION_MAX_WAIT:-60}"
+	local pattern='HYDRATION_WINDOW \(issue=[^ ]* repo=[^ ]* age=(-?[0-9]+)s window=([0-9]+)s'
+	local age="" window="" wait_s=0
+	[[ "$max_wait" =~ ^[0-9]+$ ]] || max_wait=60
+	[[ "$signal_text" =~ $pattern ]] || return 1
+	age="${BASH_REMATCH[1]}"
+	window="${BASH_REMATCH[2]}"
+	wait_s=$((window - age + 1))
+	[[ "$wait_s" -ge 1 ]] || wait_s=1
+	[[ "$wait_s" -le "$max_wait" ]] || return 1
+	printf '%s\n' "$wait_s"
+	return 0
+}
+
+#######################################
 # Extend the claim's prelaunch lease to cover manual preparation (worktree,
 # credentials, conversation lock, canary) before the worker renews it and
 # publishes phase=ready. The claim helper never shortens an existing lease.
@@ -1005,6 +1069,16 @@ _dsi_acquire_consensus_claim() {
 		return 1
 	fi
 	claim_output=$("$_DSI_DEDUP_HELPER" claim "$issue_number" "$repo_slug" "$self_login" 2>&1) || claim_rc=$?
+	# GH#34922: a just-created issue is refused by the label-hydration window
+	# (rc 1, no claim posted). Wait out the remainder once and claim again
+	# instead of reporting a nonexistent competing runner.
+	local hydration_wait=""
+	if [[ "$claim_rc" -eq 1 ]] && hydration_wait=$(_dsi_hydration_wait_seconds "$claim_output"); then
+		_dsi_info "Issue #${issue_number} is inside the label-hydration window; waiting ${hydration_wait}s before claiming again"
+		sleep "$hydration_wait"
+		claim_rc=0
+		claim_output=$("$_DSI_DEDUP_HELPER" claim "$issue_number" "$repo_slug" "$self_login" 2>&1) || claim_rc=$?
+	fi
 	case "$claim_rc" in
 	0)
 		_DSI_CLAIM_WON=1
@@ -1021,7 +1095,17 @@ _dsi_acquire_consensus_claim() {
 		return 0
 		;;
 	1)
-		_dsi_warn "Consensus claim lost for #${issue_number}; another runner won"
+		local claim_reason=""
+		claim_reason=$(_dsi_claim_reason_line "$claim_output")
+		case "$claim_reason" in
+		CLAIM_LOST:*)
+			_dsi_warn "Consensus claim lost for #${issue_number}; another runner won"
+			;;
+		*)
+			_dsi_warn "Consensus claim refused for #${issue_number}; no worker launched"
+			;;
+		esac
+		_dsi_info "  Reason: ${claim_reason:-unclassified (claim helper gave no reason line)}"
 		return 1
 		;;
 	*)
