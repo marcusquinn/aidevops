@@ -90,4 +90,81 @@ assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'skipping immed
 assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'infrastructure wait — GitHub API quota exhausted' "review status reports infrastructure wait truthfully"
 assert_not_contains ".github/workflows/review-bot-gate-reusable.yml" 'sleep 5 && gh api' "review gate removed blind status retry"
 
+# Execute the actual github-script body: string guards alone cannot prove that
+# permission errors or below-write responses preserve the issue requirement.
+node - "$REPO_ROOT" <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const workflow = fs.readFileSync(`${process.argv[2]}/.github/workflows/linked-issue-check-reusable.yml`, 'utf8');
+const script = workflow.split('          script: |\n')[1];
+assert.ok(script, 'github-script body exists');
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const run = new AsyncFunction('github', 'context', 'core', 'console', script);
+const trustedReason = 'Trusted repository author — external policy not applicable';
+const taskReason = 'Trusted task-ID prefix — issue linkage via task system';
+const missingReason = 'No linked issue — add Closes/Fixes/Resolves/For #NNN to PR body';
+let cases = 0;
+
+async function check({association = 'CONTRIBUTOR', permission = 'none', error = false,
+  title = 'Routine update', body = '', bot = false, fork = false,
+  state = 'failure', reason = missingReason, lookup = true}) {
+  const statuses = [];
+  const warnings = [];
+  let lookups = 0;
+  const github = {
+    request: async (route, params) => {
+      lookups++;
+      assert.equal(route, 'GET /repos/{owner}/{repo}/collaborators/{username}/permission');
+      assert.deepEqual(params, {owner: 'base', repo: 'repo', username: 'author'});
+      if (error) throw new Error('permission lookup unavailable');
+      return {data: {permission}};
+    },
+    rest: {
+      repos: {createCommitStatus: async status => statuses.push(status)},
+      issues: {get: async params => {
+        assert.equal(params.issue_number, 123);
+        return {data: {number: 123}};
+      }}
+    }
+  };
+  await run(github, {repo: {owner: 'base', repo: 'repo'}, payload: {pull_request: {
+    author_association: association, title, body,
+    user: {login: 'author', type: bot ? 'Bot' : 'User'},
+    head: {sha: 'head', repo: {full_name: fork ? 'fork/repo' : 'base/repo'}},
+    base: {repo: {full_name: 'base/repo'}}
+  }}}, {warning: message => warnings.push(message)}, {log() {}});
+  assert.equal(lookups, lookup ? 1 : 0);
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0].state, state);
+  assert.equal(statuses[0].description, reason);
+  if (error) assert.ok(warnings.some(message => message.includes('preserving linked-issue policy')));
+  cases++;
+}
+
+(async () => {
+  for (const association of ['CONTRIBUTOR', 'NONE']) {
+    for (const permission of ['admin', 'maintain', 'write']) {
+      for (const title of ['Routine update', 't123: update', 'GH#123: update']) {
+        await check({association, permission, title, state: 'success',
+          reason: title === 'Routine update' ? trustedReason : taskReason});
+      }
+    }
+    for (const permission of ['read', 'triage', 'none', undefined, 'unexpected']) {
+      await check({association, permission, title: 't123: update'});
+    }
+    await check({association, error: true});
+    await check({association, error: true, body: 'Resolves #123',
+      state: 'success', reason: 'Linked issue found — #123'});
+  }
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    await check({association, lookup: false, state: 'success', reason: trustedReason});
+    await check({association, title: 'GH#123: update', lookup: false, state: 'success', reason: taskReason});
+  }
+  await check({association: 'FIRST_TIME_CONTRIBUTOR', permission: 'admin', lookup: false});
+  await check({bot: true, lookup: false, state: 'success', reason: 'Bot PR — exempt from linked-issue requirement'});
+  await check({bot: true, fork: true, lookup: false, state: 'success', reason: 'External bot PR — skipped'});
+  console.log(`PASS: linked issue JavaScript behavior (${cases} cases)`);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+NODE
+
 exit 0
