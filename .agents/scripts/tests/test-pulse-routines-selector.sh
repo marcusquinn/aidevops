@@ -420,6 +420,7 @@ SCHEDULE_SCRIPT
 
 	_make_todo "$repo_dir" \
 		"- [x] r901 Supervisor pulse repeat:cron(*/2 * * * *) ~1m run:scripts/pulse-wrapper.sh" \
+		"- [x] r908 Profile update repeat:cron(0 * * * *) ~1m run:scripts/profile-readme-helper.sh update" \
 		"- [x] r-downstream-monitor Downstream monitor repeat:daily(@07:10) ~1m run:scripts/downstream.sh"
 	printf '{"initialized_repos":[{"slug":"example/routines","path":"%s","pulse":true,"local_only":true}]}\n' \
 		"$repo_dir" >"$repos_json"
@@ -440,12 +441,17 @@ SCHEDULE_SCRIPT
 		source "$PULSE_ROUTINES"
 		# shellcheck source=../routines/core-routines.sh
 		source "$CORE_ROUTINES"
+		launchctl() {
+			[[ "$*" == 'list sh.aidevops.profile-readme-update' ]]
+			return $?
+		}
 		get_core_routine_entries | grep -q '^r901|x|.*|repeat:persistent|.*|scripts/pulse-wrapper.sh|script$' &&
 			evaluate_routines &&
 			_wait_for_detached_routine_success "$state_file" "r-downstream-monitor" &&
 			[[ ! -e "$self_marker" ]] &&
 			[[ -e "$downstream_marker" ]] &&
-			jq -e '."r-downstream-monitor".last_status == "success" and (.r901 | not)' "$state_file" >/dev/null &&
+			jq -e '."r-downstream-monitor".last_status == "success" and (.r901 | not) and (.r908 | not)' "$state_file" >/dev/null &&
+			grep -q 'routine r908: skipping platform-owned routine' "$log_file" &&
 			grep -q 'routine r901: skipping self-recursive supervisor target scripts/pulse-wrapper.sh (GH#28544)' "$log_file"
 	); then
 		pass "Case 9/11 (GH#28544/GH#30592): local-only repo executes safe downstream routine"
@@ -698,6 +704,51 @@ LIFECYCLE
 	return 0
 }
 
+_test_platform_scheduler_ownership() {
+	if (
+		local owner="" cron_line=""
+		launchctl() {
+			[[ "$*" == "list $owner" ]]
+			return $?
+		}
+		systemctl() {
+			[[ "$*" == "--user is-enabled $owner" || "$*" == "--user is-active $owner" ]]
+			return $?
+		}
+		crontab() {
+			printf '%s\n' "$cron_line"
+			return 0
+		}
+		owner=sh.aidevops.profile-readme-update
+		_routine_platform_owned r908 'scripts/profile-readme-helper.sh update' || exit 1
+		! _routine_platform_owned r-custom 'scripts/profile-readme-helper.sh update' || exit 1
+		! _routine_platform_owned r908 'custom/profile-readme-helper.sh update' || exit 1
+		! _routine_platform_owned r908 'scripts/custom/profile-readme-helper.sh update' || exit 1
+		owner=aidevops-profile-readme-update.timer
+		_routine_platform_owned r908 'scripts/profile-readme-helper.sh update' || exit 1
+		owner=""
+		# shellcheck disable=SC2016 # Keep HOME as a portable crontab placeholder.
+		cron_line='0 * * * * "$HOME/.aidevops/agents/scripts/profile-readme-helper.sh" update # aidevops: profile-readme-update'
+		_routine_platform_owned r908 'scripts/profile-readme-helper.sh update' || exit 1
+		cron_line="# $cron_line"
+		! _routine_platform_owned r908 'scripts/profile-readme-helper.sh update' || exit 1
+		cron_line=""
+		! _routine_platform_owned r908 'scripts/profile-readme-helper.sh update' || exit 1
+		owner=sh.aidevops.repo-sync
+		_routine_platform_owned r906 bin/aidevops-repo-sync || exit 1
+		owner=sh.aidevops.repo-aidevops-health
+		_routine_platform_owned r914 'scripts/repo-aidevops-health-helper.sh run' || exit 1
+		owner=sh.aidevops.mirror-sync
+		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		! _routine_platform_owned r916 'scripts/cloudron-package-monitor-helper.sh upstream --apply' || exit 1
+	); then
+		pass 'GH#34888: platform ownership, custom isolation, and Pulse fallback'
+	else
+		fail 'GH#34888: platform ownership' 'core scheduler detection mismatch'
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir
 	tmpdir=$(mktemp -d) || {
@@ -708,6 +759,7 @@ main() {
 	trap "rm -rf '$tmpdir'" EXIT
 
 	_test_selector_cases "$tmpdir"
+	_test_platform_scheduler_ownership
 	_test_metachar_guard
 	_test_markdown_escaped_cron
 	_test_e2e_discovery "$tmpdir"

@@ -96,12 +96,17 @@ _routine_deferred_until() {
 #######################################
 _routine_last_run_epoch() {
 	local routine_id="$1"
-	if [[ ! -f "$ROUTINE_STATE_FILE" ]]; then
-		printf '0'
-		return 0
+	local epoch="" platform_epoch=""
+	if [[ -f "$ROUTINE_STATE_FILE" ]]; then
+		epoch=$(jq -r --arg id "$routine_id" '.[$id].last_run // ""' "$ROUTINE_STATE_FILE" 2>/dev/null) || epoch=""
 	fi
-	local epoch
-	epoch=$(jq -r --arg id "$routine_id" '.[$id].last_run // ""' "$ROUTINE_STATE_FILE" 2>/dev/null) || epoch=""
+	# Platform wrappers log to per-routine tracking state, not Pulse's state.
+	# Read both successful boundaries without introducing competing writers.
+	local tracking_file="${HOME}/.aidevops/.agent-workspace/cron/${routine_id}/routine-state.json"
+	if [[ -f "$tracking_file" ]]; then
+		platform_epoch=$(jq -r '.last_success // (if .last_status == "success" then .last_run else "" end) // ""' "$tracking_file" 2>/dev/null) || platform_epoch=""
+		[[ "$platform_epoch" > "$epoch" ]] && epoch="$platform_epoch"
+	fi
 	if [[ -z "$epoch" ]]; then
 		printf '0'
 		return 0
@@ -111,6 +116,65 @@ _routine_last_run_epoch() {
 	epoch_num=$(date -d "$epoch" +%s 2>/dev/null) || epoch_num=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$epoch" +%s 2>/dev/null) || epoch_num=0
 	printf '%s' "$epoch_num"
 	return 0
+}
+
+# Only the canonical core ID/target pair can inherit platform ownership. A
+# custom routine reusing a core ID must not disappear from the evaluator.
+_routine_platform_owned() {
+	local routine_id="$1"
+	local run_command="$2"
+	local target="${run_command%% *}"
+	local name="" label=""
+	# Accept only top-level framework scripts/binaries, not nested custom paths.
+	local relative_target="${target#"${HOME}/.aidevops/agents/"}"
+	case "$relative_target" in
+	scripts/* | bin/*)
+		[[ "${relative_target#*/}" != */* ]] || return 1
+		;;
+	*) return 1 ;;
+	esac
+	case "${routine_id}:${target##*/}" in
+	r902:aidevops-auto-update)
+		name=auto-update
+		label=com.aidevops.aidevops-auto-update
+		;;
+	r903:process-guard-helper.sh) name=process-guard ;;
+	r904:worker-watchdog.sh) name=worker-watchdog ;;
+	r905:memory-pressure-monitor.sh) name=memory-pressure-monitor ;;
+	r906:aidevops-repo-sync)
+		name=repo-sync
+		label=com.aidevops.aidevops-repo-sync
+		;;
+	r907:contribution-watch-helper.sh) name=contribution-watch ;;
+	r908:profile-readme-helper.sh) name=profile-readme-update ;;
+	r909:screen-time-helper.sh) name=screen-time-snapshot ;;
+	r910:aidevops-skills-sync) name=skills-sync ;;
+	r911:oauth-pool-helper.sh) name=token-refresh ;;
+	r913:opencode-db-maintenance-helper.sh) name=opencode-db-maintenance ;;
+	r914:repo-aidevops-health-helper.sh) name=repo-aidevops-health ;;
+	r915:pulse-check-helper.sh) name=pulse-check ;;
+	r919:mirror-sync-helper.sh) name=mirror-sync ;;
+	r920:memory-audit-pulse.sh) name=memory-audit ;;
+	*) return 1 ;;
+	esac
+	label="${label:-sh.aidevops.${name}}"
+	if command -v launchctl >/dev/null 2>&1; then
+		if launchctl list "$label" >/dev/null 2>&1 ||
+			launchctl list "sh.aidevops.${name}" >/dev/null 2>&1; then
+			return 0
+		fi
+	fi
+	if command -v systemctl >/dev/null 2>&1; then
+		if systemctl --user is-enabled "aidevops-${name}.timer" >/dev/null 2>&1 ||
+			systemctl --user is-active "aidevops-${name}.timer" >/dev/null 2>&1; then
+			return 0
+		fi
+	fi
+	if command -v crontab >/dev/null 2>&1 &&
+		crontab -l 2>/dev/null | grep -v '^[[:space:]]*#' | grep -F 'aidevops' | grep -F "${target##*/}" >/dev/null; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################
@@ -1038,6 +1102,10 @@ evaluate_routines() {
 			# guard for stale generated TODO files that predate GH#28544.
 			if _routine_targets_supervisor "$_RPL_RUN"; then
 				echo "[pulse-wrapper] routine ${_RPL_ID}: skipping self-recursive supervisor target ${_RPL_RUN%% *} (GH#28544)" >>"$LOGFILE"
+				continue
+			fi
+			if _routine_platform_owned "$_RPL_ID" "$_RPL_RUN"; then
+				echo "[pulse-wrapper] routine ${_RPL_ID}: skipping platform-owned routine" >>"$LOGFILE"
 				continue
 			fi
 

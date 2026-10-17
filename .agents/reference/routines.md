@@ -112,6 +112,22 @@ Only routines explicitly documented as persistent or externally scheduled use a
 dedicated platform unit. Generated routine descriptions name that unit when one
 exists; do not derive a service label from the routine title or ID.
 
+For core routines with dedicated units, Pulse is a fallback scheduler: it skips
+the canonical core ID/target pair when its launchd job is loaded, its systemd user
+timer is enabled or active, or an uncommented aidevops crontab entry runs that
+target. A plist or unit file alone is not ownership evidence. Removing/disabling
+the platform scheduler restores Pulse evaluation; Pulse-only routines (including
+r916–r918) and custom targets are unaffected. This applies equally to r906,
+r908, r914 and r919; their platform execution failures still need diagnosis in
+their own service logs rather than duplicate Pulse retries.
+
+Platform wrappers retain per-routine tracking state under
+`~/.aidevops/.agent-workspace/cron/<id>/routine-state.json`. Successful updates
+persist `last_success`; Pulse reads the newer of that boundary and its shared
+`routine-state.json` successful `last_run`. Failed attempts never advance the
+successful calendar boundary. Legacy successful tracking entries use `last_run`
+until their first updated run.
+
 Framework-managed routines have no `TODO.md` line; `pulse-routines.sh` evaluates
 them through the same schedule, retry and REST-budget path:
 
