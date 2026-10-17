@@ -4,118 +4,14 @@
 """Literal-only credential parsing and value-free hygiene findings. Never source shell."""
 import json
 import os
-import re
 import stat
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
+from subprocess import SubprocessError  # nosec B404
 
-SECRET_NAME = re.compile(r'(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIALS?)$')
-EXPORT = re.compile(r'export ([A-Z_][A-Z0-9_]*)=(.*)')
-
-
-def run(args, data=None):
-    return subprocess.run(args, input=data, stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL, timeout=5, check=False)
-
-
-def literal(raw):
-    """Keep the migration parser's deliberately conservative eligibility rules."""
-    if raw.startswith('"') and raw.endswith('"'):
-        return quoted_literal(raw)
-    if re.fullmatch(r'[A-Za-z0-9_./:@%+,=-]+', raw):
-        return raw
-    return None
-
-
-def quoted_literal(raw):
-    if len(raw) < 2:
-        return None
-    raw = raw[1:-1]
-    result = []
-    index = 0
-    while index < len(raw):
-        char = raw[index]
-        if char == '\\':
-            index += 1
-            if index == len(raw) or raw[index] not in '\\"':
-                return None
-            char = raw[index]
-        elif char in '"$`':
-            return None
-        result.append(char)
-        index += 1
-    return ''.join(result)
-
-
-def finding(path, line, name, category, **extra):
-    return dict(file=str(path), line=line, name=name, category=category, **extra)
-
-
-def physical_lines(original):
-    # Shell terminates lines only at LF, not Python's broader Unicode separators.
-    parts = original.split('\n')
-    return [part + '\n' for part in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
-
-
-def parse(original, path):
-    assignments, findings = [], []
-    for index, line in enumerate(physical_lines(original)):
-        if not line.strip() or line.lstrip().startswith('#'):
-            continue
-        match = EXPORT.fullmatch(line.rstrip('\n'))
-        name = match[1] if match else ''
-        raw = match[2] if match else ''
-        category = line_category(line, match, raw)
-        if category:
-            findings.append(finding(path, index + 1, name, category))
-        else:
-            assignments.append((index, name, raw))
-    return assignments, findings
-
-
-def line_category(line, match, raw):
-    if '\r' in line:
-        return 'crlf'
-    if re.search(r'export\s+[A-Z_][A-Z0-9_]*=', raw):
-        return 'glued-exports'
-    if not match or any(char in line for char in '\0\v\f\x1c\x1d\x1e\x85\u2028\u2029'):
-        return 'unsupported-structure'
-    return value_category(raw)
-
-
-def value_category(raw):
-    if '$' in raw or '`' in raw:
-        return 'shell-expansion'
-    if raw and literal(raw) is None:
-        return 'inner-quote' if '"' in raw[1:-1] else 'unsupported-structure'
-    return None
-
-
-def read_source(path, private=False):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, 'r', encoding='utf-8', newline='') as source:
-        info = os.fstat(source.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > 4 * 1024 * 1024:
-            raise ValueError('unsafe source')
-        if private and (info.st_uid != os.getuid() or info.st_mode & 0o077):
-            raise ValueError('unsafe source')
-        return source.read(), info
-
-
-def compare(name, value, owned, helper):
-    if owned is None:
-        return 'backend-unavailable'
-    target = 'aidevops/' + name
-    if target not in owned:
-        return 'not-in-gopass'
-    stored = run(['gopass', 'show', '-n', target])
-    if stored.returncode:
-        return 'backend-unavailable'
-    if stored.stdout.rstrip(b'\n') != value.encode():
-        return 'drift'
-    return 'prunable' if run(['bash', helper, 'check', name]).returncode == 0 else 'backend-unavailable'
+from credential_findings import audit
+from credential_mcp import mcp_findings, migrate_outscraper
+from credential_process import run, trash_backend
 
 
 def describe(record):
@@ -128,68 +24,9 @@ def confirm(category):
 
 def log_fix(scripts, category, names):
     # Names only; never source content, values, or config snippets in the log.
-    subprocess.run(['bash', str(scripts / 'audit-log-helper.sh'), 'log',
-                    'security.event', 'security-fix ' + category + ': ' + ','.join(names)], check=True)
-
-
-def migrate_outscraper(path, scripts):
-    import fcntl
-
-    # Serialize cooperating fix invocations. Other config writers may not honor
-    # this lock, so retain the revision check and require the runtime be closed.
-    print('Close the runtime/config editors before migrating its configuration.')
-    if not confirm('Outscraper migration with runtime/config editors closed'):
-        return False
-    lock_path = str(path) + '.security-fix.lock'
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-            raise ValueError('unsafe lock')
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return _migrate_outscraper_locked(path, scripts)
-    finally:
-        os.close(fd)
-
-
-def _migrate_outscraper_locked(path, scripts):
-    from lib.mcp_outscraper import register_outscraper
-
-    original, info = read_source(path)
-    if info.st_uid != os.getuid():
-        return False
-    config = json.loads(original)
-    entry = config.get('mcp', {}).get('outscraper')
-    if not isinstance(entry, dict):
-        return False  # Other runtime schemas need their own launcher adaptation.
-    values = [entry[key]['OUTSCRAPER_API_KEY'] for key in ('env', 'environment')
-              if isinstance(entry.get(key), dict) and 'OUTSCRAPER_API_KEY' in entry[key]]
-    if not values:
-        return False
-    stored = run(['gopass', 'show', '-n', 'aidevops/OUTSCRAPER_API_KEY'])
-    if (stored.returncode or any(not isinstance(value, str) or
-                                stored.stdout.rstrip(b'\n') != value.encode() for value in values)
-            or run(['bash', str(scripts / 'secret-helper.sh'), 'check', 'OUTSCRAPER_API_KEY']).returncode):
-        print('Retained MCP literals: store/choose the matching OUTSCRAPER_API_KEY with aidevops secret set first.')
-        return False
-    # Reuse the setup migration; do not build a second launcher implementation.
-    register_outscraper({'mcp': config['mcp'], 'tools': config.setdefault('tools', {})})
-    fd, temporary = tempfile.mkstemp(prefix='.mcp-migrate-', dir=str(Path(path).parent))
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as output:
-            json.dump(config, output, indent=2)
-            output.write('\n')
-            output.flush()
-            os.fsync(output.fileno())
-        current = os.stat(path, follow_symlinks=False)
-        if (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size) != (
-                info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size):
-            raise ValueError('config changed')
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    return True
+    run(['bash', str(scripts / 'audit-log-helper.sh'), 'log',
+         'security.event', 'security-fix ' + category + ': ' + ','.join(names)],
+        check=True, capture=False, timeout=30)
 
 
 def load_fix_records(scripts, helper):
@@ -198,8 +35,7 @@ def load_fix_records(scripts, helper):
                  ['bash', str(scripts / 'secret-hygiene-helper.sh'), 'audit-mcp']):
         # Each backend operation is individually bounded. The complete audit
         # can legitimately take more than one backend's five-second timeout.
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                timeout=120, check=False)
+        result = run(args, timeout=120)
         if result.returncode:
             print('Audit unavailable; no fixes applied.', file=sys.stderr)
             return None
@@ -226,18 +62,17 @@ def fix_permissions(records, scripts):
 def import_active(records, scripts, helper):
     active = [r for r in records if r.get('active')]
     if any(r['category'] == 'not-in-gopass' for r in active):
-        if subprocess.run(helper + ['import-credentials'], check=False).returncode == 0:
+        if run(helper + ['import-credentials'], capture=False, timeout=120).returncode == 0:
             log_fix(scripts, 'import-credentials', [r['name'] for r in active if r['category'] == 'not-in-gopass'])
-            refreshed = subprocess.run(helper + ['audit-credentials'], stdout=subprocess.PIPE,
-                                       stderr=subprocess.DEVNULL, timeout=120, check=True)
+            refreshed = run(helper + ['audit-credentials'], timeout=120, check=True)
             active = [json.loads(line) for line in refreshed.stdout.splitlines() if json.loads(line).get('active')]
     return active
 
 
 def prune_active(active, scripts, helper):
     if any(r['category'] == 'prunable' for r in active):
-        if subprocess.run(helper + ['prune-plaintext', '--dry-run'], check=False).returncode == 0 and confirm('prunable'):
-            if subprocess.run(helper + ['prune-plaintext'], check=False).returncode == 0:
+        if run(helper + ['prune-plaintext', '--dry-run'], capture=False, timeout=120).returncode == 0 and confirm('prunable'):
+            if run(helper + ['prune-plaintext'], capture=False, timeout=120).returncode == 0:
                 log_fix(scripts, 'prune-plaintext', [r['name'] for r in active if r['category'] == 'prunable'])
 
 
@@ -252,24 +87,15 @@ def trash_leftovers(records, scripts):
     for record in leftovers:
         # No recursive directory removal and no permanent-deletion fallback.
         if stat.S_ISREG(os.lstat(record['file']).st_mode):
-            subprocess.run(backend + [record['file']], check=True)
+            run(backend + [record['file']], check=True, capture=False, timeout=30)
             log_fix(scripts, 'leftover-trashed', [])
-
-
-def trash_backend():
-    import shutil
-    if shutil.which('trash'):
-        return ['trash']
-    if shutil.which('gio'):
-        return ['gio', 'trash']
-    return None
 
 
 def fix_mcp(records, scripts):
     literals = [r for r in records if r['category'] == 'mcp-literal']
     if literals and confirm('MCP literal secret migration'):
         for path in dict.fromkeys(r['file'] for r in literals if r['server'] == 'outscraper'):
-            if migrate_outscraper(path, scripts):
+            if migrate_outscraper(path, scripts, confirm):
                 log_fix(scripts, 'mcp-migrated', ['OUTSCRAPER_API_KEY'])
         print('Other MCP literals: use dataforseo-credentials.sh / outscraper-credentials.sh launch-time loaders; never embed values.')
 
@@ -305,10 +131,6 @@ def fix(scripts):
 
 
 def main():
-    # Backend custody operations share these parsing primitives without a
-    # module-import cycle; only CLI execution imports the backend.
-    from credential_migration import audit, mcp_findings
-
     command, *args = sys.argv[1:]
     if command == 'audit':
         helper, loader, active, *files = args
@@ -326,7 +148,7 @@ def main():
     elif command == 'fix':
         try:
             sys.exit(fix(Path(args[0])))
-        except (OSError, ValueError, EOFError, subprocess.SubprocessError):
+        except (OSError, ValueError, EOFError, SubprocessError):
             print('Security fix stopped safely; inspect the names-only audit before retrying.', file=sys.stderr)
             sys.exit(1)
     else:

@@ -7,16 +7,23 @@ import json
 import os
 import pty
 import select
-import subprocess
+import shutil
+# Isolated runtime tests execute repository helpers with argv-only calls.
+import subprocess  # nosec B404
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('credential_audit', SCRIPTS / 'credential_audit.py')
+sys.path.insert(0, str(SCRIPTS))
+spec = importlib.util.spec_from_file_location('credential_literals', SCRIPTS / 'credential_literals.py')
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
+BASH = shutil.which('bash')
+if BASH is None:
+    raise RuntimeError('These runtime checks require bash')
 
 
 class CredentialAuditTests(unittest.TestCase):
@@ -62,7 +69,8 @@ else:
         path.chmod(mode)
 
     def cmd(self, script, *args):
-        return subprocess.run(['bash', str(SCRIPTS / script), *args], env=self.env,
+        # B603: repository helper argv with an isolated HOME and synthetic backend.
+        return subprocess.run([BASH, str(SCRIPTS / script), *args], env=self.env,  # nosec B603
                               capture_output=True, text=True, timeout=30)
 
     def records(self):
@@ -78,11 +86,11 @@ else:
     def tenant_fixture(self):
         self.write(self.creds, 'AIDEVOPS_ACTIVE_TENANT="default"\nsource "ignored-loader"\n')
         tenant = self.creds.parent / 'tenants/default/credentials.sh'
-        self.write(tenant, 'export GLUED_TOKEN="fixture-glued-34921"export OTHER_TOKEN="hidden"\n'
+        self.write(tenant, f'export GLUED_TOKEN="{self.values[4]}"export OTHER_TOKEN="bad"\n'
                    'export EXPAND_KEY="$HOME/not-a-value"\n'
                    'export EQUAL_KEY="fixture-equal-34921"\n'
-                   'export DRIFT_TOKEN="fixture-old-34921"\n'
-                   'export MISSING_SECRET="fixture-missing-34921"\n', 0o644)
+                   f'export DRIFT_TOKEN="{self.values[1]}"\n'
+                   f'export MISSING_SECRET="{self.values[3]}"\n', 0o644)
         self.write(self.store / 'EQUAL_KEY', self.values[0])
         self.write(self.store / 'DRIFT_TOKEN', self.values[2])
         self.write(tenant.parent / 'credentials.sh.bak-old', 'never print backup', 0o644)
@@ -100,7 +108,8 @@ else:
                                 and r['line'] == line and r['file'] == str(tenant) for r in records))
         self.assertTrue(any(r['category'] == 'leftover' and r['mode'] == '644' for r in records))
         self.assertTrue(any(r['category'] == 'insecure-perms' and r['file'] == str(tenant) for r in records))
-        result = subprocess.run(['bash', str(SCRIPTS.parents[1] / 'aidevops.sh'), 'security', 'scan'],
+        # B603: fixed repository CLI and literal arguments, no shell interpolation.
+        result = subprocess.run([BASH, str(SCRIPTS.parents[1] / 'aidevops.sh'), 'security', 'scan'],  # nosec B603
                                 env=self.env, capture_output=True, text=True, timeout=30)
         for category in ('glued-exports', 'shell-expansion', 'prunable', 'drift', 'not-in-gopass', 'leftover'):
             self.assertIn(category, result.stdout)
@@ -137,10 +146,13 @@ else:
             self.assertEqual((assignments, errors), ([], []))
 
     def test_mcp_both_schemas_and_environment_keys(self):
+        # These are configuration references, not embedded credential values.
+        env_reference = '{env:FIXTURE_KEY}'
+        file_reference = '{file:fixture}'
         for filename, key in [('.config/opencode/opencode.json', 'mcp'), ('.claude.json', 'mcpServers')]:
             path = self.home / filename
             self.write(path, json.dumps({key: {'fixture': {'env': {'SERVICE_API_KEY': self.values[-1],
-                        'REF_TOKEN': '{env:X}', 'FILE_SECRET': '{file:private}', 'EMPTY_KEY': ''},
+                        'REF_TOKEN': env_reference, 'FILE_SECRET': file_reference, 'EMPTY_KEY': ''},
                         'environment': {'OTHER_TOKEN': self.values[-1]}}}}))
         result = self.cmd('secret-hygiene-helper.sh', 'audit-mcp')
         records = [json.loads(line) for line in result.stdout.splitlines()]
@@ -156,7 +168,8 @@ rt_detect_configured() { printf '%s\\n' fixture; return 0; }
 rt_config_path() { return 1; }
 audit_mcp_configs
 '''
-        result = subprocess.run(['bash', '-c', script, 'fixture', str(SCRIPTS / 'secret-hygiene-helper.sh')],
+        # B603: the shell program above is a fixed test fixture, not external input.
+        result = subprocess.run([BASH, '-c', script, 'fixture', str(SCRIPTS / 'secret-hygiene-helper.sh')],  # nosec B603
                                 env=self.env, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
@@ -165,7 +178,8 @@ audit_mcp_configs
         result = self.cmd('security-fix-helper.sh')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('interactive terminal', result.stderr)
-        cli = subprocess.run(['bash', str(SCRIPTS.parents[1] / 'aidevops.sh'), 'security', 'fix'],
+        # B603: fixed repository CLI and literal arguments, isolated test environment.
+        cli = subprocess.run([BASH, str(SCRIPTS.parents[1] / 'aidevops.sh'), 'security', 'fix'],  # nosec B603
                              env=self.env, capture_output=True, text=True, timeout=30)
         self.assertNotEqual(cli.returncode, 0)
         self.assertIn('interactive terminal', cli.stderr)
@@ -175,7 +189,8 @@ audit_mcp_configs
         env = dict(self.env)
         if headless:
             env['AIDEVOPS_HEADLESS'] = 'true'
-        child = subprocess.Popen(['bash', str(SCRIPTS / 'security-fix-helper.sh')],
+        # B603: fixed repository helper under a pseudo-terminal, no external command.
+        child = subprocess.Popen([BASH, str(SCRIPTS / 'security-fix-helper.sh')],  # nosec B603
                                  env=env, stdin=slave, stdout=slave, stderr=slave)
         os.close(slave)
         output = b''
@@ -205,8 +220,8 @@ audit_mcp_configs
 
     def fix_fixture(self):
         self.write(self.creds, 'export EQUAL_KEY="fixture-equal-34921"\n'
-                   'export DRIFT_TOKEN="fixture-old-34921"\n'
-                   'export MISSING_SECRET="fixture-missing-34921"\n', 0o644)
+                   f'export DRIFT_TOKEN="{self.values[1]}"\n'
+                   f'export MISSING_SECRET="{self.values[3]}"\n', 0o644)
         self.write(self.store / 'EQUAL_KEY', self.values[0])
         self.write(self.store / 'DRIFT_TOKEN', self.values[2])
         backup = self.creds.parent / 'credentials.sh.bak-old'
@@ -272,7 +287,7 @@ audit_mcp_configs
     def test_other_tenants_and_symlinks(self):
         self.tenant_fixture()
         other = self.creds.parent / 'tenants/other/credentials.sh'
-        self.write(other, 'export OTHER_SECRET="fixture-missing-34921"\n')
+        self.write(other, f'export OTHER_SECRET="{self.values[3]}"\n')
         records = self.records()
         self.assertTrue(any(r['name'] == 'OTHER_SECRET' and not r['active'] for r in records))
         other.unlink()
