@@ -132,19 +132,36 @@ def _is_legacy_outscraper_command(command):
 
 def _register_outscraper(config):
     """Register outscraper MCP (business intelligence)."""
+    launcher = ["bash", "-c",
+                'source "$HOME/.aidevops/agents/scripts/outscraper-credentials.sh" && '
+                'outscraper_load_credentials && exec ' + OUTSCRAPER_UV_RUN]
     if 'outscraper' not in config['mcp']:
         config['mcp']['outscraper'] = {
             "type": "local",
-            "command": ["bash", "-c",
-                        "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY " + OUTSCRAPER_UV_RUN],
+            "command": launcher,
             "enabled": False
         }
         print("  Added outscraper MCP (lazy load - @outscraper subagent only)")
     elif isinstance(config['mcp']['outscraper'], dict):
-        command = config['mcp']['outscraper'].get('command')
-        if _is_legacy_outscraper_command(command):
-            command[2] = command[2][:-len(LEGACY_OUTSCRAPER_UV_RUN)] + OUTSCRAPER_UV_RUN
-            print("  Pinned outscraper MCP command to mcp<2 (GH#34620)")
+        entry = config['mcp']['outscraper']
+        command = entry.get('command')
+        has_key = any(isinstance(entry.get(field), dict) and
+                      'OUTSCRAPER_API_KEY' in entry[field]
+                      for field in ('env', 'environment'))
+        pinned_wrapper = (isinstance(command, list) and len(command) == 3 and
+                          command[:2] == ['bash', '-c'] and
+                          isinstance(command[2], str) and
+                          command[2].endswith(' ' + OUTSCRAPER_UV_RUN))
+        direct_binary = (isinstance(command, list) and len(command) == 1 and
+                         isinstance(command[0], str) and
+                         os.path.basename(command[0]) == 'outscraper-mcp-server')
+        if has_key or _is_legacy_outscraper_command(command) or pinned_wrapper or direct_binary:
+            entry['command'] = launcher
+            for field in ('env', 'environment'):
+                if isinstance(entry.get(field), dict):
+                    entry[field].pop('OUTSCRAPER_API_KEY', None)
+                    if not entry[field]:
+                        del entry[field]
     if 'outscraper_*' not in config['tools']:
         config['tools']['outscraper_*'] = False
 
