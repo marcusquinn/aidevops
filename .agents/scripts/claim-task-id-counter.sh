@@ -539,6 +539,16 @@ _claim_apply_detected_default_branch() {
 	return 0
 }
 
+# Never sync an obsolete default-branch pin. Validate before building a commit.
+_counter_validate_sync_target() {
+	local target_branch="$1" default_branch="$2" target_counter="$3"
+	if [[ "$target_branch" == "$default_branch" ]]; then
+		local COUNTER_BRANCH="$target_branch" _COUNTER_BRANCH_SET=true
+		_cas_validate_explicit_counter_branch "${REMOTE_NAME}/${target_branch}" "$target_counter" || return $?
+	fi
+	return 0
+}
+
 # Explicit, audited fast-forward catch-up for a counter branch (GH#33152 gap
 # 4): sets it to max(its own counter, the default branch's counter, the
 # TODO.md seed) instead of resolve_implicit_counter_branch's silent refusal
@@ -579,13 +589,7 @@ sync_counter_branch() {
 	[[ "$default_counter" =~ ^[0-9]+$ ]] || default_counter="0"
 	todo_seed=$(_compute_counter_seed "$repo_path")
 
-	# Never use sync to perpetuate an obsolete integration-branch counter pin.
-	# This validation is read-only and fails closed before building/pushing a commit.
-	if [[ "$target_branch" == "$default_branch" ]]; then
-		local COUNTER_BRANCH="$target_branch" _COUNTER_BRANCH_SET=true
-		_cas_validate_explicit_counter_branch "${REMOTE_NAME}/${target_branch}" "$target_counter" || return $?
-	fi
-
+	_counter_validate_sync_target "$target_branch" "$default_branch" "$target_counter" || return $?
 	sync_target="$target_counter"
 	((10#$default_counter > 10#$sync_target)) && sync_target="$default_counter"
 	((10#$todo_seed > 10#$sync_target)) && sync_target="$todo_seed"
