@@ -707,9 +707,11 @@ LIFECYCLE
 _test_platform_scheduler_ownership() {
 	if (
 		local owner="" cron_line=""
+		local job_info=""
 		launchctl() {
-			[[ "$*" == "list $owner" ]]
-			return $?
+			[[ "$*" == "list $owner" ]] || return 1
+			printf '%s\n' "$job_info"
+			return 0
 		}
 		systemctl() {
 			[[ "$*" == "--user is-enabled $owner" || "$*" == "--user is-active $owner" ]]
@@ -740,6 +742,20 @@ _test_platform_scheduler_ownership() {
 		_routine_platform_owned r914 'scripts/repo-aidevops-health-helper.sh run' || exit 1
 		owner=sh.aidevops.mirror-sync
 		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		# Dead platform jobs fall back to Pulse; healthy and ordinary-failure jobs stay owned.
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "LastExitStatus" = 256; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/nonexistent/mirror-sync-helper.sh check"; ); };'
+		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "LastExitStatus" = 32512; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info='{ "LastExitStatus" = 0; "Program" = "/nonexistent/prog"; };'
+		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
+		job_info=""
 		! _routine_platform_owned r916 'scripts/cloudron-package-monitor-helper.sh upstream --apply' || exit 1
 	); then
 		pass 'GH#34888: platform ownership, custom isolation, and Pulse fallback'
