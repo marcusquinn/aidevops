@@ -720,6 +720,15 @@ test_explicit_counter_freshness() {
 	else
 		fail "$name" "remote TODO rc=${rc}: $output"
 	fi
+	rc=0
+	output=$(PATH="${bin_dir}:${PATH}" "$CLAIM_SCRIPT" --repair-counter-branch --repo-path "$work_dir" 2>&1) || rc=$?
+	after=$(git --git-dir="${case_dir}/remote.git" show-ref --heads)
+	if [[ $rc -eq 4 && "$output" == *'TODO seed=2601'* && "$before" == "$after" ]] &&
+		jq -e '.counter_branch == "develop"' "${work_dir}/.aidevops.json" >/dev/null; then
+		pass "$name: repair refuses a dedicated branch behind remote TODO"
+	else
+		fail "$name" "repair ignored remote TODO: rc=${rc}: $output"
+	fi
 	return 0
 }
 
@@ -768,7 +777,7 @@ test_stale_pin_repair() {
 			continue
 		fi
 		repaired=$(git hash-object "$config")
-		output=$(PATH="${bin_dir}:${PATH}" "$CLAIM_SCRIPT" --repair-counter-branch --repo-path "$work_dir" 2>&1) || return 1
+		output=$(PATH="${bin_dir}:${PATH}" AIDEVOPS_TASK_COORDINATOR_MODE=namespaced "$CLAIM_SCRIPT" --repair-counter-branch --repo-path "$work_dir" 2>&1) || return 1
 		if [[ "$(git hash-object "$config")" != "$repaired" ]]; then
 			fail "$name mode=$mode" "repeated repair changed the config"
 			continue
