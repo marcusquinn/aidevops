@@ -55,10 +55,10 @@ gsc_request() {
 
 	printf 'Authorization: Bearer %s\n' "$GSC_ACCESS_TOKEN" |
 		curl -s -X POST \
-		"https://searchconsole.googleapis.com/webmasters/v3/$endpoint" \
-		-H @- \
-		-H "Content-Type: application/json" \
-		-d "$data"
+			"https://searchconsole.googleapis.com/webmasters/v3/$endpoint" \
+			-H @- \
+			-H "Content-Type: application/json" \
+			-d "$data"
 	return 0
 }
 
@@ -149,8 +149,8 @@ gsc_list_sites() {
 	_gsc_load_token || return 1
 	printf 'Authorization: Bearer %s\n' "$GSC_ACCESS_TOKEN" |
 		curl -s -X GET \
-		"https://searchconsole.googleapis.com/webmasters/v3/sites" \
-		-H @-
+			"https://searchconsole.googleapis.com/webmasters/v3/sites" \
+			-H @-
 	return 0
 }
 
