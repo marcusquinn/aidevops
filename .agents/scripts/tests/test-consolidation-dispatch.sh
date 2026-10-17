@@ -1300,6 +1300,43 @@ test_worker_checkpoint_not_substantive() {
 	return 0
 }
 
+# GH#34851: operational notices must not turn one scope comment into two.
+test_checkpoint_variants_preserve_scope_threshold() {
+	setup_gh_stub
+	local prefix comments count
+	for prefix in 'Implementation checkpoint:' '## Implementation checkpoint — verification blocked' \
+		'# Implementation checkpoint' '###### Implementation checkpoint:' 'Brief repaired:'; do
+		comments=$(fixture_two_substantive_comments | jq --arg prefix "$prefix" \
+			'.[1].body = ($prefix + "\nUpdated the helper and synced the implementation details into the issue body. Verification and handoff remain operational progress, not a new scope requirement.")')
+		count=$(_consolidation_filter_substantive_comments "$comments" | jq 'length')
+		GH_API_COMMENTS_JSON="$comments"
+		export GH_API_COMMENTS_JSON
+		if [[ "$count" -eq 1 ]] && ! _issue_needs_consolidation 123 owner/repo; then
+			print_result "GH#34851: one scope comment plus $prefix stays below threshold" 0
+		else
+			print_result "GH#34851: one scope comment plus $prefix stays below threshold" 1 "count=${count}"
+		fi
+	done
+
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments)
+	export GH_API_COMMENTS_JSON
+	if _issue_needs_consolidation 123 owner/repo; then
+		print_result "GH#34851: two genuine scope comments still trigger consolidation" 0
+	else
+		print_result "GH#34851: two genuine scope comments still trigger consolidation" 1
+	fi
+	# A longer word sharing the prefix is not an operational checkpoint.
+	comments=$(fixture_two_substantive_comments | jq '.[1].body = ("Implementation checkpoints need a new persistence format and recovery contract. " + .[1].body)')
+	count=$(_consolidation_filter_substantive_comments "$comments" | jq 'length')
+	if [[ "$count" -eq 2 ]]; then
+		print_result "GH#34851: checkpoint word boundary preserves genuine discussion" 0
+	else
+		print_result "GH#34851: checkpoint word boundary preserves genuine discussion" 1 "count=${count}"
+	fi
+	teardown_gh_stub
+	return 0
+}
+
 # t2161 A2 regression: _dispatch_issue_consolidation must short-circuit
 # when an in-flight PR resolves the parent — even when no consolidation
 # child exists yet. Covers the path where _backfill_stale_consolidation_labels
@@ -1692,6 +1729,7 @@ main() {
 	test_terminal_breaker_skips_automation_only_thread
 	test_terminal_breaker_skips_permission_boundary
 	test_worker_checkpoint_not_substantive
+	test_checkpoint_variants_preserve_scope_threshold
 
 	# t2161 regression suite
 	test_resolving_pr_helper_detects_closing_keyword

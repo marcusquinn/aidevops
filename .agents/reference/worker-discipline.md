@@ -116,6 +116,9 @@ condition. The worker cannot approve its own authority expansion. Use
 `TERMINAL_BLOCKER_REASON=files_scope_excluded`; unrelated base commits must not
 re-arm it. The owner reviews and records a corrected brief or a precise human-only
 decision. Never silently clear a hold or restart from a replacement PR.
+After syncing the corrected brief into the issue body, start the revision notice
+with `Brief repaired:` so consolidation does not count the already-integrated
+decision as an unmerged scope comment.
 
 This delegation covers implementation choices, not credentials, runtime
 permissions, new expenditure, destructive/external actions, publication, trust
