@@ -629,6 +629,58 @@ fi
 export PATH="$OLD_PATH"
 
 # =============================================================================
+# Pass rotation — a stage timeout inside one pass must not starve the others.
+# Before the fix the watchdog killed every cycle inside Pass 1, so the stale,
+# stampless and label-invariant passes never ran.
+# =============================================================================
+PASS_LOG="${TEST_ROOT}/normalize-pass-order.log"
+PASS_STATE_DIR="${HOME}/.aidevops/cache/normalize-pass-started"
+rm -rf "$PASS_STATE_DIR" "$PASS_LOG"
+run_normalize_with_kill_in() {
+	local kill_pass="$1"
+	(
+		gh() {
+			[[ "$1 $2" == "api user" ]] || return 1
+			printf 'testrunner\n'
+			return 0
+		}
+		_normalize_reap_dead_stamps() { return 0; }
+		record_pass() {
+			printf '%s ' "$1" >>"$PASS_LOG"
+			# Simulate the stage watchdog killing the whole stage mid-pass.
+			[[ "$1" != "$kill_pass" ]] || exit 0
+			return 0
+		}
+		_normalize_reassign_self() { record_pass reassign_self; return 0; }
+		_normalize_unassign_stale() { record_pass unassign_stale; return 0; }
+		_normalize_unassign_stampless_interactive() { record_pass unassign_stampless_interactive; return 0; }
+		_normalize_label_invariants() { record_pass label_invariants; return 0; }
+		normalize_active_issue_assignments
+	)
+	printf '| ' >>"$PASS_LOG"
+	return 0
+}
+run_normalize_with_kill_in reassign_self
+run_normalize_with_kill_in unassign_stale
+run_normalize_with_kill_in none
+EXPECTED_PASS_LOG="reassign_self | unassign_stale | unassign_stampless_interactive label_invariants reassign_self unassign_stale | "
+if [[ "$(cat "$PASS_LOG" 2>/dev/null)" == "$EXPECTED_PASS_LOG" ]]; then
+	print_result "normalize passes rotate after a stage timeout instead of starving later passes" 0
+else
+	print_result "normalize passes rotate after a stage timeout instead of starving later passes" 1 \
+		"(order: $(cat "$PASS_LOG" 2>/dev/null))"
+fi
+
+# A future-dated start stamp (clock skew) never pushes a pass to the back.
+printf '%s\n' "$(($(date +%s) + 3600))" >"${PASS_STATE_DIR}/label_invariants"
+FIRST_PASS=$(_normalize_pass_order "$PASS_STATE_DIR" "$(date +%s)" | head -n 1)
+if [[ "$FIRST_PASS" == "label_invariants" ]]; then
+	print_result "future-dated normalize pass stamp sorts first" 0
+else
+	print_result "future-dated normalize pass stamp sorts first" 1 "(first: ${FIRST_PASS})"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo

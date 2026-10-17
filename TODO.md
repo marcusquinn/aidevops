@@ -1703,6 +1703,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18707 fix(pulse): run stale-blocked sweep before partial-continuation revisit and stamp each pass separately #bug ref:GH#34894 pr:#34895 completed:2026-10-17
 
+- [ ] t18710 fix(pulse): rotate normalize passes so stage timeouts stop starving stale-claim recovery #bug ref:GH#34933
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

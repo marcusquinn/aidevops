@@ -604,6 +604,45 @@ _normalize_log_timing() {
 	return 0
 }
 
+# Normalization passes in canonical order. Each pass lists open issues per
+# pulse repo, so a full sweep exceeds the remaining ownership budget on large
+# fleets: with a fixed order the stage watchdog killed every cycle inside
+# Pass 1 and Passes 2/2b/3 never ran (stale assignments and stampless
+# interactive claims stayed dispatch-blocked for days).
+_NORMALIZE_PASSES="reassign_self unassign_stale unassign_stampless_interactive label_invariants"
+
+#######################################
+# Print normalization passes least-recently-started first so a stage timeout
+# never starves a pass. Missing, unreadable or future-dated start stamps sort
+# first; ties keep the canonical order.
+# Args: $1 state_dir, $2 now_epoch
+# Stdout: one pass name per line
+# Returns: 0 always
+#######################################
+_normalize_pass_order() {
+	local state_dir="$1" now_epoch="$2" pass="" started=0 index=0
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	for pass in $_NORMALIZE_PASSES; do
+		started=0
+		if [[ -f "${state_dir}/${pass}" ]]; then
+			read -r started <"${state_dir}/${pass}" 2>/dev/null || started=0
+		fi
+		[[ "$started" =~ ^[0-9]+$ && "$started" -le "$now_epoch" ]] || started=0
+		printf '%s %s %s\n' "$started" "$index" "$pass"
+		index=$((index + 1))
+	done | sort -n -k1,1 -k2,2 | awk '{ print $3 }'
+	return 0
+}
+
+# Best effort: an unwritable stamp only makes the pass sort first again.
+_normalize_mark_pass_started() {
+	local state_dir="$1" pass="$2" now_epoch=""
+	now_epoch=$(date +%s 2>/dev/null) || return 0
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	printf '%s\n' "$now_epoch" >"${state_dir}/${pass}" 2>/dev/null || true
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -905,17 +944,11 @@ normalize_active_issue_assignments() {
 	# Default max runtime for cross-runner time-based expiry (3h, matches worker-watchdog.sh default)
 	local cross_runner_max_runtime="${WORKER_MAX_RUNTIME:-10800}"
 
-	# Pass 1: assign runner to orphaned active issues (active label, no assignee)
-	_phase_start=$SECONDS
-	_normalize_reassign_self "$runner_user" "$repos_json" "$dedup_helper"
-	_normalize_log_timing "substage:normalize/reassign_self" "$_phase_start" 0
-
-	# Pass 2: reset stale assignments (active label, assignee present, no running worker)
-	_phase_start=$SECONDS
-	_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
-	_normalize_log_timing "substage:normalize/unassign_stale" "$_phase_start" 0
-
-	# Pass 2b (t2148): recover aged stampless origin:interactive claims.
+	# Pass 1 (reassign_self): assign runner to orphaned active issues (active
+	# label, no assignee).
+	# Pass 2 (unassign_stale): reset stale assignments (active label, assignee
+	# present, no running worker).
+	# Pass 2b (unassign_stampless_interactive, t2148): recover aged stampless origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
 	# (per t1970) but the interactive session never runs the formal
 	# claim flow, leaving an `origin:interactive + assignee` pair that
@@ -928,17 +961,36 @@ normalize_active_issue_assignments() {
 	# Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
 	# (set to 86400 to restore the original 24h behaviour from t2148).
 	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-3600}"
-	_phase_start=$SECONDS
-	_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
-	_normalize_log_timing "substage:normalize/unassign_stampless_interactive" "$_phase_start" 0
-
-	# Pass 3 (t2040): enforce label invariants (at most one status:*, at most one tier:*).
-	# Runs unconditionally on every cycle — the cost is bounded by
-	# PULSE_QUEUED_SCAN_LIMIT per repo, and a clean backlog is a no-op
-	# beyond the single gh issue list call.
-	_phase_start=$SECONDS
-	_normalize_label_invariants "$runner_user" "$repos_json"
-	_normalize_log_timing "substage:normalize/label_invariants" "$_phase_start" 0
+	# Pass 3 (label_invariants, t2040): enforce label invariants (at most one
+	# status:*, at most one tier:*); bounded by PULSE_QUEUED_SCAN_LIMIT per repo.
+	#
+	# Passes are independent; each re-lists its own issues. Run them
+	# least-recently-started first and stamp the start before running, so a
+	# pass interrupted by the stage watchdog yields first place next cycle.
+	local pass_state_dir="${HOME}/.aidevops/cache/normalize-pass-started"
+	local pass="" pass_order=""
+	# Resolve the order up front: passes read their own stdin streams.
+	pass_order=$(_normalize_pass_order "$pass_state_dir" "$now_epoch")
+	for pass in $pass_order; do
+		_normalize_mark_pass_started "$pass_state_dir" "$pass"
+		_phase_start=$SECONDS
+		case "$pass" in
+		reassign_self)
+			_normalize_reassign_self "$runner_user" "$repos_json" "$dedup_helper"
+			;;
+		unassign_stale)
+			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
+			;;
+		unassign_stampless_interactive)
+			_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
+			;;
+		label_invariants)
+			_normalize_label_invariants "$runner_user" "$repos_json"
+			;;
+		*) continue ;;
+		esac
+		_normalize_log_timing "substage:normalize/${pass}" "$_phase_start" 0
+	done
 
 	return 0
 }
