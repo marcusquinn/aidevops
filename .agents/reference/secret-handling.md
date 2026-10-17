@@ -52,8 +52,9 @@ or ambiguous entries are kept. The rewrite is atomic, uses the credential writer
 lock, preserves other lines and creates a mode-600 result; it does not create
 another plaintext backup. Neither operation sources the credential file.
 
-`secret status` warns about `credentials.sh.bak-*` in the main configuration
-directory and tenant stores, including unsafe permissions. These backups are
+`secret status` and `secret drift` warn about `credentials.sh.bak-*` in the main
+configuration directory and tenant stores, including unsafe permissions. Drift
+warnings go to stderr, preserving `--json` output. These backups are
 not removed by pruning. Review and restrict/delete them under your local
 secure-deletion policy; ordinary removal cannot erase snapshots or SSD copies.
 

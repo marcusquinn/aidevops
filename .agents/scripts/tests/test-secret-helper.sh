@@ -1101,6 +1101,13 @@ EOF
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" status 2>&1)
 	[[ "$output" == *'credentials.sh.bak-'* && "$output" == *'group/world-readable'* && "$output" != *'differing-fixture'* ]] && result=0 || result=1
 	print_result "status warns about readable plaintext backups without values" "$result"
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" drift --json 2>"$TEST_DIR/drift-warnings")
+	if python3 -c 'import json,sys; json.load(sys.stdin)' <<<"$output" &&
+		grep -q 'group/world-readable' "$TEST_DIR/drift-warnings"; then
+		print_result "drift warns on stderr while preserving JSON stdout" 0
+	else
+		print_result "drift warns on stderr while preserving JSON stdout" 1
+	fi
 	return 0
 }
 

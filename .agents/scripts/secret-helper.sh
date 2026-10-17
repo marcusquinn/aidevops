@@ -1793,7 +1793,11 @@ main() {
 	inventory)
 		cmd_inventory "$@"
 		;;
-	describe | record | account | default | alias | resolve | validate | dependents | drift | owner | organise | organize)
+	drift)
+		warn_credential_backups
+		run_credential_inventory "$command" "$@" || return $?
+		;;
+	describe | record | account | default | alias | resolve | validate | dependents | owner | organise | organize)
 		run_credential_inventory "$command" "$@" || return $?
 		;;
 	verify)
