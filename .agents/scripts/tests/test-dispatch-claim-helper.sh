@@ -152,32 +152,16 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 		new_body=""
 	fi
 
-	# GH#34922: simulate read-after-write lag — the first N reads after our
-	# POST do not yet include the new claim comment.
-	hide_new=0
-	if [[ -f "$post_body_file" && "${MOCK_HIDE_NEW_CLAIM_READS:-0}" =~ ^[0-9]+$ ]]; then
-		hidden_file="${local_state_dir}/hidden_reads.txt"
-		hidden=0
-		if [[ -f "$hidden_file" ]]; then
-			hidden=$(<"$hidden_file")
-		fi
-		if [[ "$hidden" -lt "${MOCK_HIDE_NEW_CLAIM_READS:-0}" ]]; then
-			printf '%s' "$((hidden + 1))" >"$hidden_file"
-			hide_new=1
-		fi
-	fi
-
 	jq -n \
 		--arg runner "${MOCK_OLD_CLAIM_RUNNER:?}" \
 		--arg old_ts "${MOCK_OLD_CLAIM_CREATED_AT:?}" \
 		--arg new_body "$new_body" \
 		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
-		--argjson hide_new "$hide_new" \
+		--argjson hide_new "$("${0%/*}/mock-hide-new-claim")" \
 		'[
 			{id: 1, body: ("DISPATCH_CLAIM nonce=old-nonce runner=" + $runner + " ts=" + $old_ts + " max_age_s=120" + (if env.MOCK_OLD_CLAIM_DEVICE then " lease_token=old-nonce device=" + env.MOCK_OLD_CLAIM_DEVICE + " session=issue-42 phase=prelaunch expires_at=4102444800" else "" end)), created_at: $old_ts},
 			{id: 999, body: $new_body, created_at: $new_ts, user:{login:($new_body | capture("runner=(?<login>[^ ]+)").login)}, author_association:"MEMBER"}
-		] | map(. + {user:{login:(.user.login // (.body | capture("runner=(?<login>[^ ]+)").login))}, author_association:(.author_association // "MEMBER")})
-		| if $hide_new == 1 then map(select(.id != 999)) else . end'
+		] | map(. + {user:{login:(.user.login // (.body | capture("runner=(?<login>[^ ]+)").login))}, author_association:(.author_association // "MEMBER")}) | if $hide_new == 1 then map(select(.id != 999)) else . end'
 	exit 0
 fi
 
@@ -190,7 +174,35 @@ fi
 exit 1
 EOF
 	chmod +x "${mock_bin_dir}/gh"
+	write_mock_hide_new_claim "$mock_bin_dir"
 	printf '%s' "$mock_bin_dir"
+	return 0
+}
+
+#######################################
+# GH#34922: helper for create_mock_gh simulating read-after-write lag.
+# Prints 1 (hide our new claim) for the first MOCK_HIDE_NEW_CLAIM_READS
+# comment reads after the claim POST, else 0.
+# Args: $1 = mock bin dir
+#######################################
+write_mock_hide_new_claim() {
+	local mock_bin_dir="$1"
+	cat >"${mock_bin_dir}/mock-hide-new-claim" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${MOCK_GH_STATE_DIR:?}"
+limit="${MOCK_HIDE_NEW_CLAIM_READS:-0}"
+hidden_file="${state_dir}/hidden_reads.txt"
+hidden=0
+[[ -f "$hidden_file" ]] && hidden=$(<"$hidden_file")
+if [[ -f "${state_dir}/post_body.txt" && "$limit" =~ ^[0-9]+$ && "$hidden" -lt "$limit" ]]; then
+	printf '%s' "$((hidden + 1))" >"$hidden_file"
+	printf '1\n'
+	exit 0
+fi
+printf '0\n'
+EOF
+	chmod +x "${mock_bin_dir}/mock-hide-new-claim"
 	return 0
 }
 
