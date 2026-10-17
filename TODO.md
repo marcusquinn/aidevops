@@ -1699,6 +1699,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18701 aidevops secret organise: plan-first cleanup of inconsistent credentials without renames #feat ref:GH#34723 pr:#34742 completed:2026-10-15
 
+- [ ] t18706 docs(cloudron): separate catalog updates from source rebuilds; add pre-merge CLI dry run #documentation ref:GH#34864
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
