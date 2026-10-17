@@ -447,6 +447,11 @@ test_ref_scan_leaves_no_worktrees() {
 	git -C "$_repo" config user.name "Aidevops Test"
 	git -C "$_repo" config commit.gpgsign false
 	make_doc_file "$_repo/docs/large.md" 501
+	make_doc_file "$_repo/ROOT.md" 1000
+	make_doc_file "$_repo/docs/boundary.md" 500
+	make_doc_file "$_repo/vendor/excluded.md" 1200
+	make_doc_file "$_repo/docs/README.md" 1200
+	ln -s large.md "$_repo/docs/link.md"
 	git -C "$_repo" add .
 	git -C "$_repo" commit -qm fixture
 	local _before _after _result _failed=0 _attempt
@@ -455,6 +460,11 @@ test_ref_scan_leaves_no_worktrees() {
 		_result=$(cd "$_repo" && TMPDIR="$_scratch" "$HELPER" scan-ref HEAD) || _failed=1
 		[[ "$_result" == $'docs/large.md\t501' ]] || _failed=1
 	done
+	_result=$(cd "$_repo" && TMPDIR="$_scratch" "$HELPER" scan-ref HEAD --limit 500) || _failed=1
+	[[ "$_result" == $'ROOT.md\t1000\ndocs/large.md\t501' ]] || _failed=1
+	if (cd "$_repo" && TMPDIR="$_scratch" "$HELPER" scan-ref refs/heads/missing >/dev/null 2>&1); then
+		_failed=1
+	fi
 	_after=$(git -C "$_repo" worktree list --porcelain)
 	[[ "$_before" == "$_after" ]] || _failed=1
 	[[ -z "$(find "$_scratch" -mindepth 1 -print -quit)" ]] || _failed=1

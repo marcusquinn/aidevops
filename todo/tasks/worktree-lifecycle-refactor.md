@@ -71,11 +71,56 @@ Independent inference reviews supply advice only; no delegated implementation.
 
 ## Evidence and progress
 
-- Confirmed producer defect by source inspection: `scan_violations_ref` installs
-  a RETURN worktree cleanup trap; nested `scan_violations_dir` replaces that trap.
-  Runtime reproduction still required; no source implementation edits yet.
+- W1 scanner defect reproduced: `scan_violations_ref` installed a RETURN worktree
+  cleanup trap; nested `scan_violations_dir` replaced it. The repeated-scan test
+  failed before the change and passed after switching to Git object reads.
+- Checkout-free scanner committed as `ef4e14a34`. Its 10 tests pass, including
+  repeated scans, root/nested limits, explicit limit override, exclusions,
+  symlink exclusion and a missing ref. ShellCheck and Python compilation pass.
 - Observed existing temporary detached worktrees and stale prunable registrations.
   Neither observation is deletion authorization.
 - Independent architecture review completed; destructive rollout requires the
   safety/coverage refinements above, not a promise of universally perfect cleanup.
 - Implementation environment reports uid 1000. Rootless remains an acceptance gate.
+
+### W2 foundation implemented, not connected to automatic removal
+
+- `worktree_lifetime_idle.py` stores a versioned idle observation inside the
+  existing managed-lifetime record, using boot ID, generation, ownership epoch,
+  wall time and monotonic time. Both elapsed clocks must reach 24 hours.
+- `observe-idle` confirms managed descendant quiescence without sealing; failed
+  observations durably invalidate previous evidence. `idle-ready` is advisory.
+  `seal-idle` rechecks ownership, interval and quiescence in a writer transaction.
+- Ownership insert/update/delete triggers reset idle even for sealed records.
+  Reservation and binding also invalidate idle. Pending admission, live or
+  inaccessible owners, corrupt timestamps and stale boot evidence fail closed.
+- Independent safety review found rollback preserving old idle, sealed-owner
+  mutation exemptions and missing readiness ownership checks. All three were
+  fixed and covered by focused regression tests.
+- `AIDEVOPS_TEST_SYSTEMD=1 python3 .agents/scripts/tests/test-worktree-managed-lifetime.py`
+  passed 20 tests without skips at UID 1000, including real user-systemd child
+  lifetime, guard, archive/native removal and rejection of premature idle expiry.
+  This exercises the existing full-copy recovery path, NOT a new compact archive
+  restore verifier or the still-unimplemented idle cleanup integration.
+
+### Initial producer inventory and next safe action
+
+Literal production call-site search (`git grep 'worktree[[:space:]]+add'`)
+identified remaining checkout producers. This is not a complete dynamic-call audit:
+
+- Temporary analysis: `complexity-regression-helper.sh`,
+  `markdownlint-diff-helper.sh` and review bootstrap paths.
+- Publication/maintenance: release aggregate/reconcile helpers, profile README,
+  shared TODO commits, workflow sync, skill update and branch cleanup helpers.
+- Worker/interactive creation: `worktree-helper-add.sh`, dirty-PR sweep,
+  quality-debt, repository initialization and WordPress plugin creation.
+- Recovery: `worktree-archive-helper.sh restore` creates a real linked worktree.
+
+Continue by tracing creation intent and cleanup ownership for these producers,
+then integrate idle eligibility into ordinary cleanup without age-based fallback.
+Do not connect deletion until archive restore verification, source revalidation
+and generation-bound cleanup authorization are implemented. Cleanup ownership
+itself invalidates idle, so a separate durable operation receipt is necessary;
+generic `proof` or an old `seal` is not 24-hour idle authorization. W3–W5,
+independent final review, remote CI and merge remain outstanding. No archive
+expiry, legacy deletion or deployment has been enabled by these changes.
