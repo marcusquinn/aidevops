@@ -166,6 +166,7 @@ _isc_claim_ownership_class() {
 	printf '%s' "$metadata" | jq -r --arg user "$user" --argjson now "$now_epoch" '
 		(.state // "" | ascii_downcase) as $state |
 		([.labels[]?.name] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review")) as $active |
+		([.labels[]?.name] | any(. == "status:queued" or . == "status:in-progress")) as $worker |
 		[.assignees[]?.login] as $assignees |
 		[.comments[]?
 			| select((.body // "") | contains("Interactive session claimed by @"))
@@ -180,8 +181,7 @@ _isc_claim_ownership_class() {
 		if $state != "open" then "invalid-state"
 		elif ($active | not) and $live_foreign_claim != null
 		then "foreign-interactive:" + $live_foreign_claim.author.login
-		elif ($assignees | length) == 1 and $assignees[0] == $user and
-			any(.labels[]?; .name == "status:queued" or .name == "status:in-progress")
+		elif ($assignees | length) == 1 and $assignees[0] == $user and $worker
 		then "own-worker"
 		elif ($active | not) then "unclaimed"
 		elif ($assignees | length) == 1 and $assignees[0] == $user then "own"
