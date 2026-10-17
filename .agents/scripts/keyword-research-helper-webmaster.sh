@@ -13,7 +13,7 @@
 #   - shared-constants.sh (print_error, print_info, print_success, print_warning, etc.)
 #   - keyword-research-helper-providers.sh (dataforseo_keyword_suggestions)
 #   - get_location_code, get_language_code (from orchestrator)
-#   - Credentials in ~/.config/aidevops/credentials.sh
+#   - aidevops_load_secret (env → credentials.sh → gopass, via shared-constants.sh)
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -36,35 +36,29 @@ fi
 # Google Search Console API Functions
 # =============================================================================
 
+_gsc_load_token() {
+	aidevops_load_secret GSC_ACCESS_TOKEN && return 0
+	if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
+		GSC_ACCESS_TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null || true)
+		[[ -n "$GSC_ACCESS_TOKEN" ]] && return 0
+		print_error "Failed to get GSC access token. Run: gcloud auth application-default login"
+		return 1
+	fi
+	print_error "GSC credentials not configured. Set via: aidevops secret set GSC_ACCESS_TOKEN (or GOOGLE_APPLICATION_CREDENTIALS)"
+	return 1
+}
+
 gsc_request() {
 	local endpoint="$1"
 	local data="$2"
+	_gsc_load_token || return 1
 
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
-	# Check for service account credentials
-	if [[ -z "${GSC_ACCESS_TOKEN:-}" ]]; then
-		# Try to get access token from service account
-		if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] && [[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
-			# Use gcloud or manual JWT flow
-			local token
-			token=$(gcloud auth application-default print-access-token 2>/dev/null || echo "")
-			if [[ -z "$token" ]]; then
-				print_error "Failed to get GSC access token. Run: gcloud auth application-default login"
-				return 1
-			fi
-			GSC_ACCESS_TOKEN="$token"
-		else
-			print_error "GSC credentials not configured. Set GOOGLE_APPLICATION_CREDENTIALS or GSC_ACCESS_TOKEN"
-			return 1
-		fi
-	fi
-
-	curl -s -X POST \
-		"https://searchconsole.googleapis.com/webmasters/v3/$endpoint" \
-		-H "Authorization: Bearer $GSC_ACCESS_TOKEN" \
-		-H "Content-Type: application/json" \
-		-d "$data"
+	printf 'Authorization: Bearer %s\n' "$GSC_ACCESS_TOKEN" |
+		curl -s -X POST \
+			"https://searchconsole.googleapis.com/webmasters/v3/$endpoint" \
+			-H @- \
+			-H "Content-Type: application/json" \
+			-d "$data"
 	return 0
 }
 
@@ -152,26 +146,11 @@ EOF
 
 # List verified sites
 gsc_list_sites() {
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
-	if [[ -z "${GSC_ACCESS_TOKEN:-}" ]]; then
-		if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] && [[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
-			local token
-			token=$(gcloud auth application-default print-access-token 2>/dev/null || echo "")
-			if [[ -z "$token" ]]; then
-				print_error "Failed to get GSC access token"
-				return 1
-			fi
-			GSC_ACCESS_TOKEN="$token"
-		else
-			print_error "GSC credentials not configured"
-			return 1
-		fi
-	fi
-
-	curl -s -X GET \
-		"https://searchconsole.googleapis.com/webmasters/v3/sites" \
-		-H "Authorization: Bearer $GSC_ACCESS_TOKEN"
+	_gsc_load_token || return 1
+	printf 'Authorization: Bearer %s\n' "$GSC_ACCESS_TOKEN" |
+		curl -s -X GET \
+			"https://searchconsole.googleapis.com/webmasters/v3/sites" \
+			-H @-
 	return 0
 }
 
@@ -179,23 +158,35 @@ gsc_list_sites() {
 # Bing Webmaster Tools API Functions
 # =============================================================================
 
-bing_request() {
+# Pass the API key through curl config on stdin, never through process argv.
+_bing_get() {
 	local endpoint="$1"
-	local site_url="$2"
-
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
-	if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
-		print_error "BING_WEBMASTER_API_KEY not configured in ~/.config/aidevops/credentials.sh"
+	shift
+	if ! aidevops_load_secret BING_WEBMASTER_API_KEY; then
+		print_error "BING_WEBMASTER_API_KEY not found. Set via: aidevops secret set BING_WEBMASTER_API_KEY"
 		return 1
 	fi
 
-	# URL encode the site URL
-	local encoded_url
-	encoded_url=$(echo -n "$site_url" | jq -sRr @uri)
+	local -a query_args=()
+	local pair
+	for pair in "$@"; do
+		query_args+=(--data-urlencode "$pair")
+	done
+	# Escape curl's quoted config syntax before inserting the key.
+	local key="$BING_WEBMASTER_API_KEY"
+	key="${key//\\/\\\\}"
+	key="${key//\"/\\\"}"
+	key="${key//$'\r'/\\r}"
+	key="${key//$'\n'/\\n}"
+	printf 'data-urlencode = "apikey=%s"\n' "$key" |
+		curl -s -G -K - "${query_args[@]}" "https://ssl.bing.com/webmaster/api.svc/json/$endpoint"
+	return 0
+}
 
-	curl -s -X GET \
-		"https://ssl.bing.com/webmaster/api.svc/json/$endpoint?siteUrl=$encoded_url&apikey=$BING_WEBMASTER_API_KEY"
+bing_request() {
+	local endpoint="$1"
+	local site_url="$2"
+	_bing_get "$endpoint" "siteUrl=$site_url" || return 1
 	return 0
 }
 
@@ -214,20 +205,7 @@ bing_keyword() {
 	local start_date="$3"
 	local end_date="$4"
 
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
-	if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
-		print_error "BING_WEBMASTER_API_KEY not configured"
-		return 1
-	fi
-
-	local encoded_url
-	encoded_url=$(echo -n "$site_url" | jq -sRr @uri)
-	local encoded_query
-	encoded_query=$(echo -n "$query" | jq -sRr @uri)
-
-	curl -s -X GET \
-		"https://ssl.bing.com/webmaster/api.svc/json/GetKeyword?siteUrl=$encoded_url&query=$encoded_query&startDate=$start_date&endDate=$end_date&apikey=$BING_WEBMASTER_API_KEY"
+	_bing_get GetKeyword "siteUrl=$site_url" "query=$query" "startDate=$start_date" "endDate=$end_date" || return 1
 	return 0
 }
 
@@ -238,20 +216,7 @@ bing_related_keywords() {
 	local start_date="$3"
 	local end_date="$4"
 
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
-	if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
-		print_error "BING_WEBMASTER_API_KEY not configured"
-		return 1
-	fi
-
-	local encoded_url
-	encoded_url=$(echo -n "$site_url" | jq -sRr @uri)
-	local encoded_query
-	encoded_query=$(echo -n "$query" | jq -sRr @uri)
-
-	curl -s -X GET \
-		"https://ssl.bing.com/webmaster/api.svc/json/GetRelatedKeywords?siteUrl=$encoded_url&query=$encoded_query&startDate=$start_date&endDate=$end_date&apikey=$BING_WEBMASTER_API_KEY"
+	_bing_get GetRelatedKeywords "siteUrl=$site_url" "query=$query" "startDate=$start_date" "endDate=$end_date" || return 1
 	return 0
 }
 
@@ -260,20 +225,7 @@ bing_page_query_stats() {
 	local site_url="$1"
 	local page_url="$2"
 
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
-	if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
-		print_error "BING_WEBMASTER_API_KEY not configured"
-		return 1
-	fi
-
-	local encoded_site
-	encoded_site=$(echo -n "$site_url" | jq -sRr @uri)
-	local encoded_page
-	encoded_page=$(echo -n "$page_url" | jq -sRr @uri)
-
-	curl -s -X GET \
-		"https://ssl.bing.com/webmaster/api.svc/json/GetPageQueryStats?siteUrl=$encoded_site&page=$encoded_page&apikey=$BING_WEBMASTER_API_KEY"
+	_bing_get GetPageQueryStats "siteUrl=$site_url" "page=$page_url" || return 1
 	return 0
 }
 
@@ -287,15 +239,7 @@ bing_rank_traffic() {
 
 # List user sites
 bing_list_sites() {
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
-	if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
-		print_error "BING_WEBMASTER_API_KEY not configured"
-		return 1
-	fi
-
-	curl -s -X GET \
-		"https://ssl.bing.com/webmaster/api.svc/json/GetUserSites?apikey=$BING_WEBMASTER_API_KEY"
+	_bing_get GetUserSites || return 1
 	return 0
 }
 
