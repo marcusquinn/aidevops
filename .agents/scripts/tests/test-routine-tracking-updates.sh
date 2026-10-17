@@ -661,7 +661,8 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 		return $?
 	}
 	cat() {
-		"$real_cat" "$@"
+		# The plist heredoc uses stdin only; keep cat available with the restricted PATH.
+		"$real_cat"
 		return $?
 	}
 	uname() {
