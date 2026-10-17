@@ -10,7 +10,10 @@
 # interrupted, timed-out or SIGKILLed scan can never leave a registered
 # worktree behind; removing the caller's temp directory is the whole cleanup.
 #
-# Public function: _materialize_ref_paths <commit> <dest> <paths>
+# Public functions:
+#   _materialize_ref_paths <commit> <dest> <paths>  — selected files only
+#   _materialize_ref_tree  <commit> <dest>          — whole tree, checkout-equivalent
+# Callers must pass a fresh <dest> inside a private temporary directory.
 
 [[ -n "${_GIT_REF_SNAPSHOT_LIB_LOADED:-}" ]] && return 0
 _GIT_REF_SNAPSHOT_LIB_LOADED=1
@@ -175,5 +178,32 @@ _materialize_ref_paths() {
 	_top=$(git rev-parse --show-toplevel) || return 1
 	GIT_INDEX_FILE="$_index" git -C "$_top" read-tree "$_commit" || return 1
 	GIT_INDEX_FILE="$_index" git -C "$_top" checkout-index -q -z --stdin --prefix="${_dest}/" <"$_files" || return 1
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _materialize_ref_tree <commit> <dest>
+#
+# Write every tracked file of <commit> into the new, empty, absolute directory
+# <dest>: the same file tree `git worktree add` would produce (symlinks
+# included, as checkout writes them), but unregistered and without a .git
+# entry (GH#34905). Use when a tool's behaviour depends on files beyond the
+# scanned set (config `extends`, nested configs, ignore files). A private
+# temporary index (<dest>.index) keeps the repository index untouched.
+# ---------------------------------------------------------------------------
+_materialize_ref_tree() {
+	local _commit="$1"
+	local _dest="$2"
+	local _index="${_dest}.index"
+	local _top
+	case "$_dest" in
+	/*) ;;
+	*) return 1 ;;
+	esac
+	[ ! -e "$_dest" ] || return 1
+	mkdir -p "$_dest" || return 1
+	_top=$(git rev-parse --show-toplevel) || return 1
+	GIT_INDEX_FILE="$_index" git -C "$_top" read-tree "$_commit" || return 1
+	GIT_INDEX_FILE="$_index" git -C "$_top" checkout-index -q -a --prefix="${_dest}/" || return 1
 	return 0
 }

@@ -273,24 +273,6 @@ write_markdownlint_report() {
 
 # --- biome mode ---------------------------------------------------------------
 
-# _biome_config_candidates <changed-files>
-# Print root and ancestor-directory biome.json/biome.jsonc paths for the
-# newline-separated changed files, so a base snapshot carries every config
-# that applies to them (absent paths are skipped by the materializer).
-_biome_config_candidates() {
-	local _files="$1"
-	local _f _dir
-	printf 'biome.json\nbiome.jsonc\n'
-	while IFS= read -r _f; do
-		_dir="$_f"
-		while [[ "$_dir" == */* ]]; do
-			_dir="${_dir%/*}"
-			printf '%s/biome.json\n%s/biome.jsonc\n' "$_dir" "$_dir"
-		done
-	done <<<"$_files"
-	return 0
-}
-
 run_biome() {
 	local _base="$1"
 	local _head="$2"
@@ -311,14 +293,13 @@ run_biome() {
 	TMP_DIR=$(mktemp -d) && [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ] ||
 		die "cannot create temporary directory"
 
-	# Baseline: only the changed files plus applicable biome configs, read
-	# from the object store into an unregistered snapshot (GH#34905). No
-	# `git worktree add`, so an interrupted run cannot leak a registration.
+	# Baseline: the full base tree (so biome `extends`, nested configs and
+	# ignore files resolve exactly as in a checkout) written into an
+	# unregistered snapshot (GH#34905). No `git worktree add`, so an
+	# interrupted or killed run cannot leak a registration.
 	BASE_TREE="${TMP_DIR}/base-tree"
 	log "Materializing base snapshot at ${_base:0:7}..."
-	local _snapshot_paths
-	_snapshot_paths=$(printf '%s\n' "$_changed_files"; _biome_config_candidates "$_changed_files")
-	_materialize_ref_paths "$_base" "$BASE_TREE" "$(printf '%s\n' "$_snapshot_paths" | sort -u)" ||
+	_materialize_ref_tree "$_base" "$BASE_TREE" ||
 		die "Failed to materialize base snapshot at $_base"
 
 	# Count violations at base (only in changed files that exist at base)

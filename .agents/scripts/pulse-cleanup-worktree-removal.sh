@@ -1262,7 +1262,7 @@ _pc_read_worktree_status_or_skip() {
 # Per-worktree age-based orphan cleanup decision and removal.
 #
 # Thin orchestrator over four private helpers:
-#   1. _worktree_idle_since_epoch        — confirmed-idle time from .git + admin HEAD/HEAD-reflog mtimes (GH#34905)
+#   1. _worktree_idle_since_epoch        — confirmed-idle time: .git, admin HEAD and HEAD reflog (GH#34905)
 #   2. _worktree_owner_alive             — pgrep + registry ownership check
 #   3. _evaluate_worktree_removal        — age/commit/PR threshold decision
 #   4. _pc_assert_no_uncommitted_work    — dirty + reflog-only WIP guard (GH#23677)
