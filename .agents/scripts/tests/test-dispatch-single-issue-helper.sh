@@ -1138,7 +1138,19 @@ if [[ "${1:-}" != "claim" ]]; then
 fi
 case "${MOCK_CLAIM_RESULT:-win}" in
 win) printf '%s\n' 'CLAIM_WON: comment_id=123'; exit 0 ;;
-loss) printf '%s\n' 'CLAIM_LOST'; exit 1 ;;
+loss) printf '%s\n' 'CLAIM_LOST: runner=runner-self lost to peer on issue #123 winner_claim_ts=2026-10-17T00:00:00Z winner_age=9s'; exit 1 ;;
+blocked) printf '%s\n' 'CLAIM_BLOCKED: active_assignment issue=#123 repo=owner/repo runner=runner-self signal=PARENT_TASK_BLOCKED'; exit 1 ;;
+hydrate)
+	calls_file="${MOCK_CLAIM_CALLS_FILE:?}"
+	calls=$(($(cat "$calls_file" 2>/dev/null || printf '0') + 1))
+	printf '%s\n' "$calls" >"$calls_file"
+	if [[ "$calls" -eq 1 ]]; then
+		printf '%s\n' 'CLAIM_BLOCKED: active_assignment issue=#123 repo=owner/repo runner=runner-self signal=HYDRATION_WINDOW (issue=123 repo=owner/repo age=29s window=30s — labels may not be synced yet)'
+		exit 1
+	fi
+	printf '%s\n' 'CLAIM_WON: comment_id=123'
+	exit 0
+	;;
 error) printf '%s\n' 'CLAIM_ERROR'; exit 2 ;;
 esac
 exit 2
@@ -1147,11 +1159,29 @@ EOF
 	local original_dedup_helper="$_DSI_DEDUP_HELPER"
 	_DSI_DEDUP_HELPER="$helper"
 
-	local rc=0
-	MOCK_CLAIM_RESULT=loss _dsi_acquire_consensus_claim 123 owner/repo runner-self >/dev/null 2>&1 || rc=$?
+	local rc=0 out="" out_file="${test_dir}/claim.out"
+	MOCK_CLAIM_RESULT=loss _dsi_acquire_consensus_claim 123 owner/repo runner-self >"$out_file" 2>&1 || rc=$?
+	out=$(<"$out_file")
 	local loss_ok=1
-	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 ]] && loss_ok=0
-	print_result "manual dispatch blocks a lost consensus claim" "$loss_ok" "rc=$rc won=$_DSI_CLAIM_WON"
+	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 && "$out" == *"another runner won"* && "$out" == *"lost to peer"*"winner_claim_ts="* ]] && loss_ok=0
+	print_result "manual dispatch blocks a lost consensus claim and names the winner" "$loss_ok" "rc=$rc won=$_DSI_CLAIM_WON out=$out"
+
+	# GH#34922: a refused (not lost) claim reports the helper's reason.
+	rc=0
+	MOCK_CLAIM_RESULT=blocked _dsi_acquire_consensus_claim 123 owner/repo runner-self >"$out_file" 2>&1 || rc=$?
+	out=$(<"$out_file")
+	local blocked_ok=1
+	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 && "$out" != *"another runner won"* && "$out" == *"Reason: CLAIM_BLOCKED: active_assignment"* ]] && blocked_ok=0
+	print_result "manual dispatch reports the concrete claim refusal reason" "$blocked_ok" "rc=$rc out=$out"
+
+	# GH#34922: a fresh issue inside the hydration window waits once and wins.
+	rc=0
+	MOCK_CLAIM_RESULT=hydrate MOCK_CLAIM_CALLS_FILE="${test_dir}/calls" \
+		_dsi_acquire_consensus_claim 123 owner/repo runner-self >"$out_file" 2>&1 || rc=$?
+	out=$(<"$out_file")
+	local hydrate_ok=1
+	[[ "$rc" -eq 0 && "$_DSI_CLAIM_WON" -eq 1 && "$(cat "${test_dir}/calls")" == "2" && "$out" == *"label-hydration window; waiting 2s"* ]] && hydrate_ok=0
+	print_result "manual dispatch waits out the hydration window instead of reporting a lost claim" "$hydrate_ok" "rc=$rc won=$_DSI_CLAIM_WON out=$out"
 
 	rc=0
 	MOCK_CLAIM_RESULT=error _dsi_acquire_consensus_claim 123 owner/repo runner-self >/dev/null 2>&1 || rc=$?

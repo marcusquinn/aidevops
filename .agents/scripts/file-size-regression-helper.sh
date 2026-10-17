@@ -42,8 +42,9 @@
 # See: reference/large-file-split.md §4.1 for override semantics.
 #
 # Design notes:
-# - scan-ref uses `git show <ref>:<path> | wc -l` per file. No worktrees needed.
-#   Slightly slower than worktrees for large repos but avoids tree disturbance.
+# - scan-ref counts lines straight from the object store (`git grep -c ''`).
+#   It never creates a checkout or worktree registration, so interrupted or
+#   killed scans cannot leak temporary worktrees (GH#34905).
 # - All subcommands are Bash 3.2 compatible (macOS default shell).
 # - Paths in TSV output are relative to the dir/ref root for portability.
 # - docs-only detection: caller passes --docs-only; the gate exits 0 immediately.
@@ -103,10 +104,6 @@ scan_violations_dir() {
 	local _limit="$2"
 	local _dir_abs
 	_dir_abs=$(cd "$_dir" && pwd) || die "directory not found: $_dir"
-	local _tmp
-	_tmp=$(mktemp)
-	# shellcheck disable=SC2064
-	trap "rm -f '$_tmp'" RETURN
 
 	find "$_dir_abs" -type f -name "*.md" | sort | while IFS= read -r _f; do
 		local _rel="${_f#"${_dir_abs}"/}"
@@ -124,8 +121,7 @@ scan_violations_dir() {
 		if [ "$_lc" -gt "$_path_limit" ]; then
 			printf '%s\t%d\n' "$_rel" "$_lc"
 		fi
-	done | sort -k1,1 > "$_tmp"
-	awk '{print}' "$_tmp"
+	done | sort -k1,1
 	return 0
 }
 
@@ -139,10 +135,6 @@ scan_violations_dir() {
 scan_violations_tracked_worktree() {
 	local _repo_root="$1"
 	local _limit="$2"
-	local _tmp
-	_tmp=$(mktemp)
-	# shellcheck disable=SC2064
-	trap "rm -f '$_tmp'" RETURN
 
 	git -C "$_repo_root" ls-files -z -- '*.md' | while IFS= read -r -d '' _path; do
 		if ! path_is_scannable_markdown "$_path"; then
@@ -161,34 +153,57 @@ scan_violations_tracked_worktree() {
 		if [ "$_lc" -gt "$_path_limit" ]; then
 			printf '%s\t%d\n' "$_path" "$_lc"
 		fi
-	done | sort -k1,1 > "$_tmp"
-	awk '{print}' "$_tmp"
+	done | sort -k1,1
 	return 0
 }
 
 # ---------------------------------------------------------------------------
 # scan_violations_ref <ref> <limit>
 # Scan a git ref for non-README .md files with more than <limit> lines.
-# Uses a temporary git worktree so wc -l runs on local files (fast for
-# repos with 1000+ scripts). Worktree is always removed via trap.
+# Reads blobs from the object store with one `git grep -c ''` pass, so no
+# checkout, temporary directory or worktree registration is ever created
+# (GH#34905: the former temporary worktree leaked when its RETURN trap was
+# replaced by a nested function's trap or the process was killed).
+# Counts match `wc -l` (newline count): a final line without a trailing
+# newline is not counted, as for the working-tree scans.
 # Outputs TSV: git-path TAB line-count  (sorted by path).
 # ---------------------------------------------------------------------------
 scan_violations_ref() {
 	local _ref="$1"
 	local _limit="$2"
-	local _worktree
-	_worktree=$(mktemp -d)
-	# shellcheck disable=SC2064
-	trap "git worktree remove --force '$_worktree' >/dev/null 2>&1; rm -rf '$_worktree'" RETURN
-
-	if ! git worktree add --detach "$_worktree" "$_ref" > /dev/null 2>&1; then
-		log "WARN: could not create worktree for $_ref — scan skipped"
+	local _commit
+	_commit=$(git rev-parse --verify --quiet "${_ref}^{commit}" 2>/dev/null) || _commit=""
+	if [ -z "$_commit" ]; then
+		log "WARN: could not resolve $_ref — scan skipped"
 		return 0
 	fi
 
-	# scan_violations_dir outputs paths relative to the worktree root.
-	# Git paths use the same relative structure, so output is directly usable.
-	scan_violations_dir "$_worktree" "$_limit"
+	local _prefix="${_commit}:"
+	git -c grep.lineNumber=false -c grep.column=false \
+		grep --no-color --full-name -c -z -e '' "$_commit" -- ':(top)*.md' 2>/dev/null |
+		while IFS= read -r -d '' _name && IFS= read -r _lc; do
+			local _rel="${_name#"$_prefix"}"
+			if ! path_is_scannable_markdown "$_rel"; then
+				continue
+			fi
+			_lc=${_lc//[^0-9]/}
+			_lc=${_lc:-0}
+			local _path_limit="${_limit:-$FILE_SIZE_DEFAULT_LIMIT}"
+			if [[ "$_rel" != */* && -z "$_limit" ]]; then
+				_path_limit="$FILE_SIZE_ROOT_LIMIT"
+			fi
+			[ "$_lc" -gt "$_path_limit" ] || continue
+			# git grep counts an unterminated final line; wc -l does not.
+			local _last_nl
+			_last_nl=$(git cat-file blob "${_commit}:${_rel}" 2>/dev/null | tail -c 1 | wc -l) || _last_nl=1
+			_last_nl=${_last_nl//[^0-9]/}
+			if [ "${_last_nl:-1}" -eq 0 ]; then
+				_lc=$((_lc - 1))
+			fi
+			if [ "$_lc" -gt "$_path_limit" ]; then
+				printf '%s\t%d\n' "$_rel" "$_lc"
+			fi
+		done | sort -k1,1
 	return 0
 }
 
@@ -252,7 +267,8 @@ cmd_diff_finish() {
 	local _base_count _head_count _new_paths _new_count _regression_paths
 	_base_count=$(count_tsv_lines "$_base_file")
 	_head_count=$(count_tsv_lines "$_head_file")
-	_new_paths=$(find_new_violations "$_base_file" "$_head_file")
+	_new_paths=$(find_new_violations "$_base_file" "$_head_file") ||
+		die "cannot compare violations: temporary file creation failed"
 	_new_count=$(printf '%s' "$_new_paths" | grep -c '.' 2>/dev/null || true)
 	_new_count=${_new_count//[^0-9]/}
 	_new_count=${_new_count:-0}
@@ -296,10 +312,13 @@ find_new_violations() {
 	local _base="$1"
 	local _head="$2"
 	local _base_paths _head_paths
-	_base_paths=$(mktemp)
-	_head_paths=$(mktemp)
-	# shellcheck disable=SC2064
-	trap "rm -f '$_base_paths' '$_head_paths'" RETURN
+	# Explicit removal rather than a RETURN trap: RETURN traps are global and
+	# are replaced by, or leak into, other functions (GH#34905).
+	_base_paths=$(mktemp) || return 1
+	_head_paths=$(mktemp) || {
+		rm -f "$_base_paths"
+		return 1
+	}
 
 	if [ -s "$_base" ]; then
 		awk -F'\t' '{print $1}' "$_base" | sort > "$_base_paths"
@@ -314,6 +333,7 @@ find_new_violations() {
 
 	# Lines in head_paths not present in base_paths
 	awk 'NR==FNR{a[$0]=1; next} !a[$0]{print}' "$_base_paths" "$_head_paths"
+	rm -f "$_base_paths" "$_head_paths"
 	return 0
 }
 
@@ -665,9 +685,14 @@ cmd_check() {
 	local _base_ref
 	_base_ref=$(cmd_check_detect_base_ref "$FILE_SIZE_CHECK_BASE_REF")
 	local _tmp_dir
-	_tmp_dir=$(mktemp -d)
+	_tmp_dir=$(mktemp -d) || die "cannot create temporary directory"
+	[ -n "$_tmp_dir" ] && [ -d "$_tmp_dir" ] || die "cannot create temporary directory"
 	# shellcheck disable=SC2064
 	trap "rm -rf '$_tmp_dir'" EXIT
+	# Bash skips the EXIT trap on fatal signals; exit so cleanup still runs.
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 
 	local _head_tsv="$_tmp_dir/head.tsv"
 	if [ "$FILE_SIZE_CHECK_DRY_RUN" -eq 1 ]; then

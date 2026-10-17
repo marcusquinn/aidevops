@@ -157,10 +157,11 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 		--arg old_ts "${MOCK_OLD_CLAIM_CREATED_AT:?}" \
 		--arg new_body "$new_body" \
 		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
+		--argjson hide_new "$("${0%/*}/mock-hide-new-claim")" \
 		'[
 			{id: 1, body: ("DISPATCH_CLAIM nonce=old-nonce runner=" + $runner + " ts=" + $old_ts + " max_age_s=120" + (if env.MOCK_OLD_CLAIM_DEVICE then " lease_token=old-nonce device=" + env.MOCK_OLD_CLAIM_DEVICE + " session=issue-42 phase=prelaunch expires_at=4102444800" else "" end)), created_at: $old_ts},
 			{id: 999, body: $new_body, created_at: $new_ts, user:{login:($new_body | capture("runner=(?<login>[^ ]+)").login)}, author_association:"MEMBER"}
-		] | map(. + {user:{login:(.user.login // (.body | capture("runner=(?<login>[^ ]+)").login))}, author_association:(.author_association // "MEMBER")})'
+		] | map(. + {user:{login:(.user.login // (.body | capture("runner=(?<login>[^ ]+)").login))}, author_association:(.author_association // "MEMBER")}) | if $hide_new == 1 then map(select(.id != 999)) else . end'
 	exit 0
 fi
 
@@ -173,7 +174,35 @@ fi
 exit 1
 EOF
 	chmod +x "${mock_bin_dir}/gh"
+	write_mock_hide_new_claim "$mock_bin_dir"
 	printf '%s' "$mock_bin_dir"
+	return 0
+}
+
+#######################################
+# GH#34922: helper for create_mock_gh simulating read-after-write lag.
+# Prints 1 (hide our new claim) for the first MOCK_HIDE_NEW_CLAIM_READS
+# comment reads after the claim POST, else 0.
+# Args: $1 = mock bin dir
+#######################################
+write_mock_hide_new_claim() {
+	local mock_bin_dir="$1"
+	cat >"${mock_bin_dir}/mock-hide-new-claim" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${MOCK_GH_STATE_DIR:?}"
+limit="${MOCK_HIDE_NEW_CLAIM_READS:-0}"
+hidden_file="${state_dir}/hidden_reads.txt"
+hidden=0
+[[ -f "$hidden_file" ]] && hidden=$(<"$hidden_file")
+if [[ -f "${state_dir}/post_body.txt" && "$limit" =~ ^[0-9]+$ && "$hidden" -lt "$limit" ]]; then
+	printf '%s' "$((hidden + 1))" >"$hidden_file"
+	printf '1\n'
+	exit 0
+fi
+printf '0\n'
+EOF
+	chmod +x "${mock_bin_dir}/mock-hide-new-claim"
 	return 0
 }
 
@@ -657,6 +686,68 @@ test_claim_retries_transient_post_failure() {
 		print_result "claim POST retry count recorded" 1 "attempts=${attempts} output: $output"
 	fi
 
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Run one claim with read-after-write lag simulation (GH#34922).
+# Args: $1 state dir, $2 old claim age seconds, $3 hidden reads
+# Sets: _VIS_OUTPUT, _VIS_RC
+#######################################
+_run_claim_with_hidden_reads() {
+	local tmp_dir="$1"
+	local old_age="$2"
+	local hidden_reads="$3"
+	local mock_path=""
+	mock_path=$(create_mock_gh "$tmp_dir")
+	_VIS_RC=0
+	_VIS_OUTPUT=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$(iso_seconds_ago "$old_age")" \
+		MOCK_NEW_CLAIM_CREATED_AT="$(iso_seconds_ago 1)" \
+		MOCK_OLD_CLAIM_RUNNER="other-runner" \
+		MOCK_HIDE_NEW_CLAIM_READS="$hidden_reads" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_CLAIM_VISIBILITY_RETRY_DELAY=0 \
+		OPENCODE_VERSION=1.14.33 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1) || _VIS_RC=$?
+	return 0
+}
+
+#######################################
+# Test: GH#34922 own claim not yet visible is re-read, not reported as lost;
+# a genuine older competing claim still loses and names the winner.
+#######################################
+test_claim_rereads_until_own_claim_visible() {
+	local tmp_dir=""
+
+	tmp_dir=$(mktemp -d)
+	_run_claim_with_hidden_reads "$tmp_dir" 600 2
+	if [[ "$_VIS_RC" -eq 0 && "$_VIS_OUTPUT" == *"CLAIM_WON:"* && "$(<"${tmp_dir}/hidden_reads.txt")" == "2" ]]; then
+		print_result "lagging own claim is re-read and wins" 0
+	else
+		print_result "lagging own claim is re-read and wins" 1 "rc=$_VIS_RC output: $_VIS_OUTPUT"
+	fi
+	rm -rf "$tmp_dir"
+
+	tmp_dir=$(mktemp -d)
+	_run_claim_with_hidden_reads "$tmp_dir" 600 9
+	if [[ "$_VIS_RC" -eq 2 && "$_VIS_OUTPUT" == *"own_claim_not_visible"* && "$_VIS_OUTPUT" != *"CLAIM_WON:"* ]]; then
+		print_result "never-visible own claim fails closed with own_claim_not_visible" 0
+	else
+		print_result "never-visible own claim fails closed with own_claim_not_visible" 1 "rc=$_VIS_RC output: $_VIS_OUTPUT"
+	fi
+	rm -rf "$tmp_dir"
+
+	tmp_dir=$(mktemp -d)
+	_run_claim_with_hidden_reads "$tmp_dir" 10 1
+	if [[ "$_VIS_RC" -eq 1 && "$_VIS_OUTPUT" == *"CLAIM_LOST: runner=mockrunner lost to other-runner"*"winner_claim_ts="* ]]; then
+		print_result "older competing claim still loses and names the winner" 0
+	else
+		print_result "older competing claim still loses and names the winner" 1 "rc=$_VIS_RC output: $_VIS_OUTPUT"
+	fi
 	rm -rf "$tmp_dir"
 	return 0
 }
@@ -2110,6 +2201,7 @@ main() {
 	test_claim_ignore_filter_preserves_self_claim
 	test_claim_structured_override_preserves_self_claim
 	test_claim_retries_transient_post_failure
+	test_claim_rereads_until_own_claim_visible
 	test_claim_post_error_fallback_avoids_tmp
 	test_claim_marks_stale_worker_takeover
 	test_claim_marks_paginated_stale_worker_takeover

@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.40] - 2026-10-17
+
+### Changed
+
+- Maintenance: mark t18707 complete (pr:#34895 completed:2026-10-17) (#34898)
+
+### Fixed
+
+- GH#34922 stop false 'consensus claim lost' on freshly created issues (#34925)
+- GH#34917: keep API keys out of argv in validate-mcp-integrations connectivity tests
+- replace dead legacy bash -c/-lc mirror-sync LaunchAgent in setup_mirror_sync (#34914)
+
 ## [3.39.39] - 2026-10-17
 
 ### Changed

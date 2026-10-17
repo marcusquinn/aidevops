@@ -28,8 +28,10 @@ _dsi_load_issue_meta() {
 	local repo_slug="$2"
 	local meta_json
 
+	# GH#34922: include createdAt so the pre-claim dedup check sees the same
+	# label-hydration window as the claim-time guard (it fails open without it).
 	meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,url 2>/dev/null) || meta_json=""
+		--json number,title,state,labels,assignees,url,createdAt 2>/dev/null) || meta_json=""
 
 	if [[ -z "$meta_json" ]]; then
 		_dsi_err "Cannot fetch issue #${issue_number} from ${repo_slug} (not found, no permission, or network error)"

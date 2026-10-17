@@ -42,7 +42,9 @@
 #
 #   check --base <sha> [--head <sha> | --working-tree] [--output-md <file>]
 #         [--allow-increase] [--dry-run] [--metric <name>]
-#         Full regression check using git worktrees. Main entry point.
+#         Full regression check. Main entry point. Changed files are read
+#         from the object store into unregistered temp snapshots; no Git
+#         worktree is created (GH#34905).
 #
 # Exit codes:
 #   0 — no new violations (or --allow-increase / --dry-run)
@@ -58,29 +60,27 @@ HEAD_WORKTREE=""
 COMPLEXITY_APPLICABLE_EXTENSIONS="sh py rb md"
 COMPLEXITY_APPLICABLE_EXTENSION_REGEX="\\.(${COMPLEXITY_APPLICABLE_EXTENSIONS// /|})$"
 
+# Base/head snapshots are plain directories inside TMP_DIR with no Git
+# worktree registration (GH#34905), so removing TMP_DIR is the whole cleanup.
 cleanup() {
-	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
-		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
-		if [[ "$BASE_WORKTREE" != */base-worktree ]]; then
-			log "WARN: Path '$BASE_WORKTREE' does not match fixture pattern — skipping remove"
-		else
-			git worktree remove --force "$BASE_WORKTREE" >/dev/null 2>&1 || true
-		fi
-	fi
-	if [ -n "$HEAD_WORKTREE" ] && [ -d "$HEAD_WORKTREE" ]; then
-		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
-		if [[ "$HEAD_WORKTREE" != */head-worktree ]]; then
-			log "WARN: Path '$HEAD_WORKTREE' does not match fixture pattern — skipping remove"
-		else
-			git worktree remove --force "$HEAD_WORKTREE" >/dev/null 2>&1 || true
-		fi
-	fi
 	if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
 	fi
 	return 0
 }
 trap cleanup EXIT
+# Bash skips the EXIT trap when a fatal signal terminates it; exit explicitly
+# so timeouts and interrupts still remove TMP_DIR.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Create TMP_DIR or die: a failed mktemp must never yield root-relative paths.
+_init_tmp_dir() {
+	TMP_DIR=$(mktemp -d) && [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ] ||
+		die "cannot create temporary directory"
+	return 0
+}
 
 log() {
 	local _msg="$1"
@@ -202,6 +202,168 @@ _filter_to_abs_paths() {
 	done <<<"$_filter"
 
 	[ -n "$_output" ] && printf '%s\n' "$_output"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _normalize_rel_path <path>
+#
+# Print <path> with '.', empty and '..' components resolved. Fails when the
+# result is empty or would escape the repository root.
+# ---------------------------------------------------------------------------
+_normalize_rel_path() {
+	local _rest="$1/"
+	local _out="" _part=""
+	while [ -n "$_rest" ]; do
+		_part="${_rest%%/*}"
+		_rest="${_rest#*/}"
+		case "$_part" in
+		"" | .) ;;
+		..)
+			[ -n "$_out" ] || return 1
+			case "$_out" in
+			*/*) _out="${_out%/*}" ;;
+			*) _out="" ;;
+			esac
+			;;
+		*) _out="${_out:+${_out}/}${_part}" ;;
+		esac
+	done
+	[ -n "$_out" ] || return 1
+	printf '%s\n' "$_out"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _ref_tree_entry <commit> <path>
+#
+# Print "<mode> <type> <oid>" for exactly <path> in <commit>; fail if absent.
+# ---------------------------------------------------------------------------
+_ref_tree_entry() {
+	local _commit="$1"
+	local _path="$2"
+	local _tab _entry=""
+	_tab=$(printf '\t')
+	_entry=$(git --literal-pathspecs ls-tree --full-tree "$_commit" -- "$_path" 2>/dev/null) || return 1
+	[ -n "$_entry" ] || return 1
+	[ "${_entry#*"$_tab"}" = "$_path" ] || return 1
+	printf '%s\n' "${_entry%%"$_tab"*}"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _resolve_ref_file <commit> <path> <mode> <oid>
+#
+# Print "<path> <oid>" of the regular file that a tree entry provides, as a
+# checkout would: regular files resolve to themselves; tracked symlinks are
+# followed (at most 8 hops) to a regular file inside the same commit. Absolute,
+# escaping, dangling and non-file targets fail and are skipped by callers.
+# ---------------------------------------------------------------------------
+_resolve_ref_file() {
+	local _commit="$1"
+	local _path="$2"
+	local _mode="$3"
+	local _oid="$4"
+	local _hops=0 _target="" _dir="" _meta="" _rest=""
+	while :; do
+		case "$_mode" in
+		100644 | 100755)
+			printf '%s %s\n' "$_path" "$_oid"
+			return 0
+			;;
+		120000) ;;
+		*) return 1 ;;
+		esac
+		_hops=$((_hops + 1))
+		[ "$_hops" -le 8 ] || return 1
+		_target=$(git cat-file blob "$_oid" 2>/dev/null) || return 1
+		case "$_target" in
+		"" | /*) return 1 ;;
+		esac
+		_dir=""
+		case "$_path" in
+		*/*) _dir="${_path%/*}/" ;;
+		esac
+		_path=$(_normalize_rel_path "${_dir}${_target}") || return 1
+		_meta=$(_ref_tree_entry "$_commit" "$_path") || return 1
+		_mode="${_meta%% *}"
+		_rest="${_meta#* }"
+		[ "${_rest%% *}" = "blob" ] || return 1
+		_oid="${_rest#* }"
+	done
+}
+
+# ---------------------------------------------------------------------------
+# _materialize_ref_paths <commit> <dest> <paths>
+#
+# Write the files named by the newline-separated repo-relative <paths> at
+# <commit> into the plain directory <dest>. Diff-scoped scans read only those
+# files, so no checkout or `git worktree add` registration is needed and an
+# interrupted or killed run cannot leave a registered worktree (GH#34905).
+# Regular files are written in one `git checkout-index` pass from a private
+# temporary index, so Git's own path validation and checkout filters (smudge,
+# eol, working-tree-encoding) apply and the repository index is untouched.
+# Symlinks are written as the regular file they resolve to inside <commit>
+# (`git cat-file --filters`), never as links. Paths absent at <commit>,
+# submodules and unresolvable symlinks are skipped, matching the scanners'
+# regular-file existence check. Unsafe tree paths are rejected, so every write
+# stays inside <dest>.
+# ---------------------------------------------------------------------------
+_materialize_ref_paths() {
+	local _commit="$1"
+	local _dest="$2"
+	local _paths="$3"
+	local _listing="${_dest}.ls-tree"
+	local _files="${_dest}.files"
+	local _index="${_dest}.index"
+	local _tab _p _entry _meta _rest _path _mode _oid _resolved _src_path _src_oid
+	local _have_files=0
+	local -a _args=()
+	_tab=$(printf '\t')
+
+	mkdir -p "$_dest" || return 1
+	: >"$_files" || return 1
+	while IFS= read -r _p; do
+		[ -n "$_p" ] && _args+=("$_p")
+	done <<<"$_paths"
+	[ "${#_args[@]}" -gt 0 ] || return 0
+
+	git --literal-pathspecs ls-tree -r -z --full-tree "$_commit" -- "${_args[@]}" >"$_listing" || return 1
+	while IFS= read -r -d '' _entry; do
+		_meta="${_entry%%"$_tab"*}"
+		_path="${_entry#*"$_tab"}"
+		_mode="${_meta%% *}"
+		_rest="${_meta#* }"
+		[ "${_rest%% *}" = "blob" ] || continue
+		_oid="${_rest#* }"
+		# Git refuses to check out these paths; never write them either.
+		case "/${_path}/" in
+		*/./* | */../* | *//*) continue ;;
+		esac
+		case "$_mode" in
+		100644 | 100755)
+			printf '%s\0' "$_path" >>"$_files" || return 1
+			_have_files=1
+			;;
+		120000)
+			_resolved=$(_resolve_ref_file "$_commit" "$_path" "$_mode" "$_oid") || continue
+			_src_path="${_resolved% *}"
+			_src_oid="${_resolved##* }"
+			case "$_path" in
+			*/*) mkdir -p "${_dest}/${_path%/*}" || return 1 ;;
+			esac
+			git cat-file --filters --path="$_src_path" "$_src_oid" >"${_dest}/${_path}" || return 1
+			;;
+		esac
+	done <"$_listing"
+
+	[ "$_have_files" -eq 1 ] || return 0
+	# checkout-index reads paths relative to the cwd; listing paths are
+	# root-relative, so run it from the top level.
+	local _top
+	_top=$(git rev-parse --show-toplevel) || return 1
+	GIT_INDEX_FILE="$_index" git -C "$_top" read-tree "$_commit" || return 1
+	GIT_INDEX_FILE="$_index" git -C "$_top" checkout-index -q -z --stdin --prefix="${_dest}/" <"$_files" || return 1
 	return 0
 }
 
@@ -927,7 +1089,7 @@ cmd_diff() {
 	[ -f "$_base_file" ] || die "diff: base-file not found: $_base_file"
 	[ -f "$_head_file" ] || die "diff: head-file not found: $_head_file"
 
-	TMP_DIR=$(mktemp -d)
+	_init_tmp_dir
 	local _new_file="$TMP_DIR/new-violations.tsv"
 
 	local _new_count _base_total _head_total
@@ -965,7 +1127,7 @@ cmd_diff() {
 # ---------------------------------------------------------------------------
 _check_dry_run() {
 	local _metric="${1:-function-complexity}"
-	TMP_DIR=$(mktemp -d)
+	_init_tmp_dir
 	local _head_scan="$TMP_DIR/head.tsv"
 	log "[$_metric] dry-run: scanning current tree"
 	scan_dir "." "$_head_scan" "$_metric"
@@ -993,8 +1155,32 @@ _log_file_size_remediation() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _changed_applicable_paths <base_sha> <head_sha> <working_tree>
+#
+# Print applicable changed paths (root-relative, newline-separated). With
+# <working_tree>=1, compare base with the working tree plus untracked files.
+# core.quotePath=false keeps non-ASCII names unquoted so they match the
+# extension filter and the literal pathspecs used for snapshots.
+# ---------------------------------------------------------------------------
+_changed_applicable_paths() {
+	local _base_sha="$1"
+	local _head_sha="$2"
+	local _working_tree="$3"
+	if [ "$_working_tree" -eq 1 ]; then
+		{
+			git -c core.quotePath=false diff --name-only "$_base_sha" -- 2>/dev/null || true
+			git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null || true
+		} | grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" | sort -u || true
+	else
+		git -c core.quotePath=false diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null |
+			grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" || true
+	fi
+	return 0
+}
+
 # _check_regression <base_sha> <head_sha> <output_md> <allow_increase> [<metric>]
-# Scan base+head via worktrees, compute diff, optionally write report.
+# Scan base+head via snapshots, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
 #
 # Diff-scoped optimisation (t2827): computes applicable source and Markdown
@@ -1012,17 +1198,8 @@ _check_regression() {
 	local _metric="${5:-function-complexity}"
 	local _working_tree="${6:-0}"
 
-	# Resolve applicable changed files before creating worktrees.
 	local _changed_source
-	if [ "$_working_tree" -eq 1 ]; then
-		_changed_source=$({
-			git diff --name-only "$_base_sha" -- 2>/dev/null || true
-			git ls-files --others --exclude-standard 2>/dev/null || true
-		} | grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" | sort -u || true)
-	else
-		_changed_source=$(git diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null |
-			grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" || true)
-	fi
+	_changed_source=$(_changed_applicable_paths "$_base_sha" "$_head_sha" "$_working_tree")
 	if [ -z "$_changed_source" ]; then
 		log "[$_metric] no applicable changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
 		# Write a clean "no applicable changes" report so any previously-posted
@@ -1045,15 +1222,15 @@ _check_regression() {
 	_changed_count=$(printf '%s\n' "$_changed_source" | wc -l | tr -d ' ')
 	log "[$_metric] diff-scoped: ${_changed_count} applicable file(s) changed — scanning only those"
 
-	TMP_DIR=$(mktemp -d)
+	_init_tmp_dir
 	local _base_scan="$TMP_DIR/base.tsv"
 	local _head_scan="$TMP_DIR/head.tsv"
 	local _new_file="$TMP_DIR/new-violations.tsv"
 
-	BASE_WORKTREE="$TMP_DIR/base-worktree"
-	log "[$_metric] creating base worktree at ${_base_sha:0:7}"
-	if ! git worktree add --detach --force "$BASE_WORKTREE" "$_base_sha" >/dev/null 2>&1; then
-		die "failed to create base worktree for $_base_sha"
+	BASE_WORKTREE="$TMP_DIR/base-snapshot"
+	log "[$_metric] materializing changed files at base ${_base_sha:0:7}"
+	if ! _materialize_ref_paths "$_base_sha" "$BASE_WORKTREE" "$_changed_source" 2>/dev/null; then
+		die "failed to materialize base snapshot for $_base_sha"
 	fi
 	log "[$_metric] scanning base (${_base_sha:0:7})"
 	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_changed_source"
@@ -1062,10 +1239,10 @@ _check_regression() {
 		log "[$_metric] scanning current working tree"
 		scan_dir "." "$_head_scan" "$_metric" "$_changed_source"
 	else
-		HEAD_WORKTREE="$TMP_DIR/head-worktree"
-		log "[$_metric] creating head worktree at ${_head_sha:0:7}"
-		if ! git worktree add --detach --force "$HEAD_WORKTREE" "$_head_sha" >/dev/null 2>&1; then
-			die "failed to create head worktree for $_head_sha"
+		HEAD_WORKTREE="$TMP_DIR/head-snapshot"
+		log "[$_metric] materializing changed files at head ${_head_sha:0:7}"
+		if ! _materialize_ref_paths "$_head_sha" "$HEAD_WORKTREE" "$_changed_source" 2>/dev/null; then
+			die "failed to materialize head snapshot for $_head_sha"
 		fi
 		log "[$_metric] scanning head (${_head_sha:0:7})"
 		scan_dir "$HEAD_WORKTREE" "$_head_scan" "$_metric" "$_changed_source"
