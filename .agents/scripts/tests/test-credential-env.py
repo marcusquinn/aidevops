@@ -9,11 +9,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
-import credential_audit
+import credential_dotenv
 import credential_env
 
 
@@ -112,26 +111,30 @@ else: sys.exit(1)
         path = self.config / 'mcp-env.sh'
         self.write(self.config / 'credentials.sh', '')
         records = [{'file': str(path), 'category': 'missing-mcp-env-link'}]
-        with patch.object(credential_audit, 'confirm', return_value=False):
-            credential_audit.fix_env_links(records, SCRIPTS)
-        self.assertFalse(path.exists())
-        with patch.object(credential_audit, 'confirm', return_value=True), patch.object(credential_audit, 'log_fix'):
-            credential_audit.fix_env_links(records, SCRIPTS)
+        logged = []
+        credential_env.fix_missing_links(records, lambda _category: False, lambda: logged.append(1))
+        self.assertFalse(os.path.lexists(path))
+        credential_env.fix_missing_links(records, lambda _category: True, lambda: logged.append(1))
         self.assertEqual(os.readlink(path), 'credentials.sh')
+        self.assertEqual(logged, [1])
         path.unlink()
         self.write(path, self.value)
-        with patch.object(credential_audit, 'confirm', return_value=True):
-            credential_audit.fix_env_links(records, SCRIPTS)
+        credential_env.fix_missing_links(records, lambda _category: True, lambda: logged.append(1))
         self.assertEqual(path.read_text(), self.value)
+        self.assertEqual(logged, [1])
 
     def test_dotenv_unquoted_spaces_are_literal(self):
-        self.assertEqual(credential_env.dotenv_literal('two words # comment'), 'two words')
-        self.assertEqual(credential_env.dotenv_literal('punctuation!@%'), 'punctuation!@%')
-        self.assertIsNone(credential_env.dotenv_literal('${REFERENCE}'))
+        self.assertEqual(credential_dotenv.dotenv_literal('two words # comment'), 'two words')
+        self.assertEqual(credential_dotenv.dotenv_literal('punctuation!@%'), 'punctuation!@%')
+        self.assertIsNone(credential_dotenv.dotenv_literal('${REFERENCE}'))
 
     def test_depth_and_malformed_sources(self):
         self.write(self.home / 'Git/a/b/c/.env', f'DEEP_KEY={self.value}\n')
         self.assertEqual(self.records('env-files'), [])
+        # Outside any work tree there is no Git exposure to classify; names are still listed.
+        loose = self.write(self.home / 'Git/loose/.env', f'LOOSE_KEY={self.value}\n')
+        self.assertEqual([(r['file'], r['category']) for r in self.records('env-files')],
+                         [(str(loose), 'env-literal')])
         self.write(self.config / 'plist-env-overrides.json', '{invalid')
         self.assertTrue(any(r['category'] == 'unreadable-plist' for r in self.records('plist-env')))
 

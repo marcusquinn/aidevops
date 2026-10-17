@@ -12,7 +12,7 @@ from subprocess import SubprocessError  # nosec B404
 from credential_findings import audit
 from credential_mcp import mcp_findings, migrate_outscraper
 from credential_process import run, trash_backend
-from credential_env import findings as env_findings
+from credential_env import AUDITS as ENV_AUDITS, confirmed_permissions, findings as env_findings, fix_missing_links
 
 
 def describe(record):
@@ -48,8 +48,6 @@ def load_fix_records(scripts, helper):
 def fix_permissions(records, scripts):
     for record in records:
         if record['category'] != 'insecure-perms':
-            continue
-        if record.get('env_source') == 'mcp' and not confirm('mcp-env.sh chmod 600'):
             continue
         # Never follow symlinks or change a foreign owner's file.
         fd = os.open(record['file'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -104,18 +102,6 @@ def fix_mcp(records, scripts):
         print('Other MCP literals: use dataforseo-credentials.sh / outscraper-credentials.sh launch-time loaders; never embed values.')
 
 
-def fix_env_links(records, scripts):
-    for record in records:
-        if record['category'] != 'missing-mcp-env-link':
-            continue
-        path = Path(record['file'])
-        sibling = path.parent / 'credentials.sh'
-        if sibling.is_file() and not os.path.lexists(path) and confirm('recreate mcp-env.sh symlink'):
-            # Creation is exclusive; never replace a regular file or existing link.
-            path.symlink_to('credentials.sh')
-            log_fix(scripts, 'mcp-env-link', [])
-
-
 def interactive_fix_allowed():
     markers = (os.environ.get('AIDEVOPS_HEADLESS') in ('1', 'true'),
                os.environ.get('FULL_LOOP_HEADLESS') == 'true',
@@ -136,8 +122,8 @@ def fix(scripts):
     if any(r['category'] in ('mcp-unreadable', 'unreadable-source') for r in records):
         print('Incomplete audit; unreadable sources retained and no fixes applied.', file=sys.stderr)
         return 1
-    fix_permissions(records, scripts)
-    fix_env_links(records, scripts)
+    fix_permissions(confirmed_permissions(records, confirm), scripts)
+    fix_missing_links(records, confirm, lambda: log_fix(scripts, 'mcp-env-link', []))
     active = import_active(records, scripts, helper)
     prune_active(active, scripts, helper)
     trash_leftovers(records, scripts)
@@ -147,23 +133,28 @@ def fix(scripts):
     return 0
 
 
+def display(with_severity):
+    for line in sys.stdin:
+        record = json.loads(line)
+        # JSON quoting prevents control characters in config keys/paths becoming terminal commands.
+        location = json.dumps(record['file'], ensure_ascii=True) + ':' + str(record['line'])
+        detail = json.dumps({k: v for k, v in record.items() if k not in ('file', 'line')})
+        # display-env prepends the severity column consumed by secret-hygiene-helper.sh.
+        columns = [record.get('severity', 'medium'), location, detail][int(not with_severity):]
+        print('\t'.join(columns))
+
+
 def main():
     command, *args = sys.argv[1:]
     if command == 'audit':
         helper, loader, active, *files = args
         records = (dict(record, active=record['file'] == active) for record in audit(files, loader, helper))
-    elif command in ('mcp-env', 'plist-env', 'env-files'):
+    elif command in ENV_AUDITS:
         records = env_findings(command, Path.home(), Path(__file__).parent / 'secret-helper.sh')
     elif command == 'mcp':
         records = (record for path in args for record in mcp_findings(path))
     elif command in ('display', 'display-env'):
-        for line in sys.stdin:
-            record = json.loads(line)
-            # JSON quoting prevents control characters in config keys/paths becoming terminal commands.
-            location = json.dumps(record['file'], ensure_ascii=True) + ':' + str(record['line'])
-            detail = json.dumps({k: v for k, v in record.items() if k not in ('file', 'line')})
-            prefix = record.get('severity', 'medium') + '\t' if command == 'display-env' else ''
-            print(prefix + location + '\t' + detail)
+        display(command == 'display-env')
         return
     elif command == 'fix':
         try:
