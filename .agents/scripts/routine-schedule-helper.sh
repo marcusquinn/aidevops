@@ -227,12 +227,29 @@ _calendar_shift_month() {
 }
 
 #######################################
+# Undo Markdown-formatter rewrites inside cron(...) expressions.
+# Prettier escapes a lone '*' as '\*' and rewrites '*' pairs that can form
+# emphasis ('*/15 *') as '_'. Neither '\' nor '_' is valid in any schedule.
+#######################################
+_unescape_markdown_cron() {
+	local expr="$1"
+	if [[ "$expr" =~ ^cron\(.*\)$ ]]; then
+		expr="${expr//\\\*/*}"
+		expr="${expr//_/*}"
+	fi
+	printf '%s' "$expr"
+	return 0
+}
+
+#######################################
 # Parse a schedule expression into normalised fields
 #
 # Returns: type hour minute [day_of_week|day_of_month] or cron fields
 #######################################
 _parse_expression() {
-	local expr="$1"
+	local raw_expr="$1"
+	local expr
+	expr=$(_unescape_markdown_cron "$raw_expr")
 
 	# Phase C defensive guard (t2423): detect regex metacharacters that indicate
 	# a caller has passed a pattern string instead of a schedule expression.
@@ -295,16 +312,6 @@ _parse_expression() {
 			printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "cron expression must have 5 fields, got $field_count" >&2
 			return 1
 		fi
-		# Warn about escaped asterisks (\*) that won't match as wildcards.
-		# In TODO.md, authors sometimes write cron(\* \* \*) for Markdown rendering,
-		# but the backslash is literal in bash and _cron_field_matches sees "\*" not "*".
-		local _field
-		for _field in "${_cron_fields[@]}"; do
-			if [[ "$_field" == '\*' ]]; then
-				printf '%s\n' "WARNING: cron field '\\*' (escaped asterisk) does not match as wildcard — use '*' in repeat: expressions (t2423)" >&2
-				break
-			fi
-		done
 		printf 'cron %s' "$cron_expr"
 		return 0
 	fi

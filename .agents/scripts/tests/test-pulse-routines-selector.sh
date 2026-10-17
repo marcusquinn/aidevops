@@ -196,6 +196,53 @@ _test_metachar_guard() {
 	return 0
 }
 
+# _test_markdown_escaped_cron: Markdown-formatter rewrites of cron(...) are
+# restored to '*'; non-'\*' backslashes still hit the t2423 guard.
+_test_markdown_escaped_cron() {
+	local out rc
+	out=$("$SCHEDULE_HELPER" parse 'cron(15 2 \* \* \*)' 2>&1)
+	if [[ "$out" == *"type=cron fields=15 2 * * *"* ]]; then
+		pass "Case MD1: escaped asterisks are unescaped"
+	else
+		fail "Case MD1: escaped asterisks are unescaped" "out='$out'"
+	fi
+	out=$("$SCHEDULE_HELPER" parse 'cron(_/15 _ \* \* \*)' 2>&1)
+	if [[ "$out" == *"type=cron fields=*/15 * * * *"* ]]; then
+		pass "Case MD2: underscore emphasis rewrite is restored (*/15)"
+	else
+		fail "Case MD2: underscore emphasis rewrite is restored (*/15)" "out='$out'"
+	fi
+	out=$("$SCHEDULE_HELPER" parse 'cron(0 _/6 _ \* \*)' 2>&1)
+	if [[ "$out" == *"type=cron fields=0 */6 * * *"* ]]; then
+		pass "Case MD3: underscore emphasis rewrite is restored (*/6)"
+	else
+		fail "Case MD3: underscore emphasis rewrite is restored (*/6)" "out='$out'"
+	fi
+	rc=0
+	"$SCHEDULE_HELPER" is-due 'cron(_/15 _ \* \* \*)' 0 >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "Case MD4: is-due accepts rewritten step cron"
+	else
+		fail "Case MD4: is-due accepts rewritten step cron" "rc=$rc"
+	fi
+	rc=0
+	out=$("$SCHEDULE_HELPER" parse 'cron(0 7 \d \* \*)' 2>&1) || rc=$?
+	if [[ "$rc" -eq 2 ]] && [[ "$out" == *"regex metacharacters"* ]]; then
+		pass "Case MD5: other backslashes still hit the t2423 guard"
+	else
+		fail "Case MD5: other backslashes still hit the t2423 guard" "rc=$rc out='$out'"
+	fi
+	out=$("$SCHEDULE_HELPER" parse 'cron(15 2 * * *)' 2>&1)
+	local out_daily
+	out_daily=$("$SCHEDULE_HELPER" parse 'daily(@06:00)' 2>&1)
+	if [[ "$out" == *"type=cron fields=15 2 * * *"* ]] && [[ "$out_daily" == *"type=daily hour=6 minute=0"* ]]; then
+		pass "Case MD6: clean expressions parse unchanged"
+	else
+		fail "Case MD6: clean expressions parse unchanged" "cron='$out' daily='$out_daily'"
+	fi
+	return 0
+}
+
 # _test_e2e_discovery: case 6 — Phase D end-to-end simulation (t2423)
 _test_e2e_discovery() {
 	local tmpdir="$1"
@@ -662,6 +709,7 @@ main() {
 
 	_test_selector_cases "$tmpdir"
 	_test_metachar_guard
+	_test_markdown_escaped_cron
 	_test_e2e_discovery "$tmpdir"
 	_test_canonical_section_boundaries "$tmpdir"
 	_test_supervisor_self_recursion_guard "$tmpdir"

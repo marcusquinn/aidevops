@@ -60,6 +60,8 @@ a local diagnostic.
 | `monthly(N@HH:MM)` | `monthly(1@09:00)` | Day N of each month |
 | `cron(expr)` | `cron(15 2 * * *)` | Complex schedules only |
 
+Markdown formatters can rewrite `*` in `TODO.md`. Prettier writes `\*`, or `_` where two asterisks could form emphasis. The scheduler reads both as `*`; check a routine's effective schedule with `routine-schedule-helper.sh parse '<expression>'`.
+
 Calendar expressions use this precedence: the routine's optional `timezone:`
 field, global `AIDEVOPS_SCHEDULE_TIMEZONE`, the inherited `TZ`, then the host
 timezone. A per-routine field therefore provides a version-controlled exception

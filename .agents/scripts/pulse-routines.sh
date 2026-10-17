@@ -895,12 +895,17 @@ _routine_schedule_is_due() {
 	local expression="$1"
 	local last_run_epoch="$2"
 	local timezone="$3"
+	local routine_id="${4:-unknown}"
+	local rc=0
 	if [[ -n "$timezone" ]]; then
-		AIDEVOPS_SCHEDULE_TIMEZONE="$timezone" "$ROUTINE_SCHEDULE_HELPER" is-due "$expression" "$last_run_epoch"
-		return $?
+		AIDEVOPS_SCHEDULE_TIMEZONE="$timezone" "$ROUTINE_SCHEDULE_HELPER" is-due "$expression" "$last_run_epoch" || rc=$?
+	else
+		"$ROUTINE_SCHEDULE_HELPER" is-due "$expression" "$last_run_epoch" || rc=$?
 	fi
-	"$ROUTINE_SCHEDULE_HELPER" is-due "$expression" "$last_run_epoch"
-	return $?
+	if [[ "$rc" -eq 2 ]]; then
+		echo "[pulse-wrapper] routine ${routine_id}: schedule '${expression}' could not be evaluated (exit 2) — not dispatched" >>"$LOGFILE"
+	fi
+	return "$rc"
 }
 
 #######################################
@@ -933,7 +938,7 @@ _evaluate_session_miner_routine() {
 		return 0
 	fi
 	last_epoch=$(_routine_last_run_epoch "$routine_id")
-	if ! _routine_schedule_is_due "$schedule" "$last_epoch" ""; then
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" "" "$routine_id"; then
 		return 0
 	fi
 	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
@@ -962,7 +967,7 @@ _evaluate_issue_archive_routine() {
 		return 0
 	fi
 	last_epoch=$(_routine_last_run_epoch "$routine_id")
-	if ! _routine_schedule_is_due "$schedule" "$last_epoch" ""; then
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" "" "$routine_id"; then
 		return 0
 	fi
 	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
@@ -1048,7 +1053,7 @@ evaluate_routines() {
 			last_epoch=$(_routine_last_run_epoch "$_RPL_ID")
 			timezone_context="${_RPL_TIMEZONE:-inherited}"
 
-			if _routine_schedule_is_due "$_RPL_REPEAT" "$last_epoch" "$_RPL_TIMEZONE"; then
+			if _routine_schedule_is_due "$_RPL_REPEAT" "$last_epoch" "$_RPL_TIMEZONE" "$_RPL_ID"; then
 				if ! _routine_rest_core_allows_next "routine_execute:${_RPL_ID}"; then
 					return 0
 				fi
