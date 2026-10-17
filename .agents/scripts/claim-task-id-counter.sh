@@ -579,6 +579,13 @@ sync_counter_branch() {
 	[[ "$default_counter" =~ ^[0-9]+$ ]] || default_counter="0"
 	todo_seed=$(_compute_counter_seed "$repo_path")
 
+	# Never use sync to perpetuate an obsolete integration-branch counter pin.
+	# This validation is read-only and fails closed before building/pushing a commit.
+	if [[ "$target_branch" == "$default_branch" ]]; then
+		local COUNTER_BRANCH="$target_branch" _COUNTER_BRANCH_SET=true
+		_cas_validate_explicit_counter_branch "${REMOTE_NAME}/${target_branch}" "$target_counter" || return $?
+	fi
+
 	sync_target="$target_counter"
 	((10#$default_counter > 10#$sync_target)) && sync_target="$default_counter"
 	((10#$todo_seed > 10#$sync_target)) && sync_target="$todo_seed"
@@ -1670,10 +1677,69 @@ _cas_validate_explicit_counter_branch() {
 		fi
 	done
 	if ((10#$current_value < 10#$leading_value || 10#$current_value < 10#$todo_seed)); then
-		log_error "COUNTER_BRANCH_STALE: explicit ${REMOTE_NAME}/${COUNTER_BRANCH} counter=${current_value}, leading branch=${leading_branch} counter=${leading_value}, default TODO seed=${todo_seed}; switch --counter-branch to the leading branch or run --sync-counter-branch before allocating"
+		log_error "COUNTER_BRANCH_STALE: explicit ${REMOTE_NAME}/${COUNTER_BRANCH} counter=${current_value}, leading branch=${leading_branch} counter=${leading_value}, default TODO seed=${todo_seed}; switch --counter-branch to the leading dedicated branch or use --repair-counter-branch to repair the config first; --sync-counter-branch against a default-branch pin pushes directly to that branch and is refused while stale"
 		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_stale"
 		return "$CAS_PROTECTED_BRANCH_RC"
 	fi
+	return 0
+}
+
+# GH#34856: opt-in, idempotent repair of an obsolete local default-branch pin.
+# Reuse discovery and explicit freshness validation; neither path allocates IDs.
+repair_counter_branch_config() {
+	local repo_path="$1"
+	local config_file="${repo_path}/.aidevops.json"
+	local candidate="" current="" value="" selected=""
+	local _COUNTER_BRANCH_SET=false
+	local COUNTER_BRANCH="${DEFAULT_BRANCH:-main}"
+
+	command -v python3 >/dev/null 2>&1 || { log_error "Config repair requires python3"; return 1; }
+	current=$(jq -er '.counter_branch | select(type == "string")' "$config_file") || return 1
+	if [[ "$current" != "$DEFAULT_BRANCH" ]]; then
+		log_info "COUNTER_BRANCH_REPAIR_NOOP: config is not pinned to the default branch"
+		return 0
+	fi
+	resolve_implicit_counter_branch "$repo_path" || return $?
+	candidate="$COUNTER_BRANCH"
+	selected=$(_counter_git show "${REMOTE_NAME}/${DEFAULT_BRANCH}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	value=$(_counter_git show "${REMOTE_NAME}/${candidate}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	if [[ "$candidate" == "$DEFAULT_BRANCH" || ! "$selected" =~ ^[0-9]+$ || ! "$value" =~ ^[0-9]+$ ]]; then
+		log_info "COUNTER_BRANCH_REPAIR_NOOP: no validated leading dedicated counter"
+		return 0
+	fi
+	if ((10#$value <= 10#$selected)); then
+		log_info "COUNTER_BRANCH_REPAIR_NOOP: default-branch pin is up to date"
+		return 0
+	fi
+	_COUNTER_BRANCH_SET=true
+	_cas_validate_explicit_counter_branch "${REMOTE_NAME}/${candidate}" "$value" || return $?
+	# Keep the same inode, mode and owner. Lock and recheck the expected pin before
+	# writing, refusing symlinks and concurrent config changes rather than clobbering.
+	python3 - "$config_file" "$current" "$candidate" <<'PY' || return 1
+import fcntl
+import json
+import os
+import stat
+import sys
+
+path, expected, target = sys.argv[1:]
+fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(fd, "r+", encoding="utf-8") as config:
+    if not stat.S_ISREG(os.fstat(config.fileno()).st_mode):
+        raise SystemExit("Config repair requires a regular file")
+    fcntl.flock(config, fcntl.LOCK_EX)
+    data = json.load(config)
+    if data.get("counter_branch") != expected:
+        raise SystemExit("Config changed during repair; retry discovery")
+    data["counter_branch"] = target
+    updated = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    config.seek(0)
+    config.write(updated)
+    config.truncate()
+    config.flush()
+    os.fsync(config.fileno())
+PY
+	log_info "COUNTER_BRANCH_CONFIG_REPAIRED: counter_branch ${current} -> ${candidate}; no counter push or allocation"
 	return 0
 }
 

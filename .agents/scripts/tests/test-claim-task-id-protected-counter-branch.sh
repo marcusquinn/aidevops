@@ -723,6 +723,67 @@ test_explicit_counter_freshness() {
 	return 0
 }
 
+# GH#34856: exercise the public maintenance flag against a real sandbox remote.
+test_stale_pin_repair() {
+	local tmpdir="$1"
+	local mode="" case_dir="" work_dir="" bin_dir="" output="" before="" rc=0
+	local name="stale default pin repair" config="" metadata="" repaired=""
+	for mode in 600 644; do
+		case_dir="${tmpdir}/repair-${mode}"
+		mkdir -p "$case_dir" || return 1
+		work_dir=$(setup_develop_default_remote "$case_dir") || return 1
+		bin_dir=$(setup_open_policy_stub "$case_dir") || return 1
+		config="${work_dir}/.aidevops.json"
+		printf '%s\n' '{"counter_branch":"develop","other":{"keep":[1,"two"]}}' >"$config"
+		chmod "$mode" "$config" || return 1
+		# Fresh explicit default pins must remain byte-for-byte unchanged.
+		before=$(git hash-object "$config")
+		rc=0
+		output=$(PATH="${bin_dir}:${PATH}" "$CLAIM_SCRIPT" --repair-counter-branch --repo-path "$work_dir" 2>&1) || rc=$?
+		if [[ $rc -ne 0 || "$(git hash-object "$config")" != "$before" ]]; then
+			fail "$name mode=$mode" "up-to-date pin changed: $output"
+			continue
+		fi
+		git -C "${case_dir}/seed" checkout -b leading origin/task-id-counter >/dev/null 2>&1 || return 1
+		printf '2500\n' >"${case_dir}/seed/.task-counter"
+		git -C "${case_dir}/seed" add .task-counter || return 1
+		git -C "${case_dir}/seed" commit -m "advance dedicated counter" >/dev/null 2>&1 || return 1
+		git -C "${case_dir}/seed" push origin leading:task-id-counter >/dev/null 2>&1 || return 1
+		before=$(git --git-dir="${case_dir}/remote.git" show-ref --heads)
+		metadata=$(python3 -c 'import os,sys; s=os.stat(sys.argv[1]); print(s.st_mode,s.st_uid,s.st_gid,s.st_ino)' "$config")
+		rc=0
+		output=$(PATH="${bin_dir}:${PATH}" "$CLAIM_SCRIPT" --sync-counter-branch --repo-path "$work_dir" 2>&1) || rc=$?
+		if [[ $rc -ne 4 || "$output" != *'--repair-counter-branch'*'--sync-counter-branch'* ||
+			"$(git --git-dir="${case_dir}/remote.git" show-ref --heads)" != "$before" ]]; then
+			fail "$name mode=$mode" "sync did not refuse stale default pin without pushing: $output"
+			continue
+		fi
+		rc=0
+		output=$(PATH="${bin_dir}:${PATH}" "$CLAIM_SCRIPT" --repair-counter-branch --repo-path "$work_dir" 2>&1) || rc=$?
+		if [[ $rc -ne 0 || "$output" != *'COUNTER_BRANCH_CONFIG_REPAIRED'* || "$output" == *'task_id='* ]] ||
+			! jq -e '. == {counter_branch:"task-id-counter",other:{keep:[1,"two"]}}' "$config" >/dev/null ||
+			[[ "$(python3 -c 'import os,sys; s=os.stat(sys.argv[1]); print(s.st_mode,s.st_uid,s.st_gid,s.st_ino)' "$config")" != "$metadata" ||
+			"$(git --git-dir="${case_dir}/remote.git" show-ref --heads)" != "$before" ]]; then
+			fail "$name mode=$mode" "repair mutated metadata/other keys/remote or failed: $output"
+			continue
+		fi
+		repaired=$(git hash-object "$config")
+		output=$(PATH="${bin_dir}:${PATH}" "$CLAIM_SCRIPT" --repair-counter-branch --repo-path "$work_dir" 2>&1) || return 1
+		if [[ "$(git hash-object "$config")" != "$repaired" ]]; then
+			fail "$name mode=$mode" "repeated repair changed the config"
+			continue
+		fi
+		output=$(PATH="${bin_dir}:${PATH}" "$CLAIM_SCRIPT" --title "claim after config repair" --no-issue --repo-path "$work_dir" 2>&1) || return 1
+		if [[ "$output" != *'task_id=t2500'* ||
+			"$(git --git-dir="${case_dir}/remote.git" rev-parse develop)" != "$(git -C "$work_dir" rev-parse HEAD)" ]]; then
+			fail "$name mode=$mode" "claim failed or changed develop: $output"
+			continue
+		fi
+		pass "$name mode=$mode: metadata and other keys preserved; idempotent; claim leaves develop untouched"
+	done
+	return 0
+}
+
 main() {
 	local tmpdir=""
 	local work_dir=""
@@ -757,6 +818,7 @@ main() {
 	test_canonical_context_setup_failure "$tmpdir" "$bin_dir"
 	test_develop_default_branch_sync_and_claim "$tmpdir"
 	test_explicit_counter_freshness "$tmpdir" || fail "explicit counter freshness" "fixture failed"
+	test_stale_pin_repair "$tmpdir" || fail "stale pin repair" "fixture failed"
 	rm -rf "$tmpdir"
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ "$FAIL" -eq 0 ]] || return 1
