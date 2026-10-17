@@ -192,6 +192,7 @@ _launchd_install_if_changed() { INSTALLS=$((INSTALLS + 1)); return 0; }
 _resolve_modern_bash() { command -v bash; return 0; }
 _xml_escape() { printf '%s' "$1"; return 0; }
 print_warning() { printf 'warning: %s\n' "$1" >&2; return 0; }
+print_info() { printf 'info: %s\n' "$1" >&2; return 0; }
 uname() { printf 'Linux\n'; return 0; }
 jq '.initialized_repos = [{slug:"private/marker",mirror_upstream:true}]' "$CONFIG" >"$HOME/.config/aidevops/repos.json"
 setup_mirror_sync
@@ -214,4 +215,37 @@ setup_mirror_sync
 touch "$ROOT/legacy-missing.sh"
 setup_mirror_sync
 [[ "$INSTALLS" -eq 2 ]]
+rm -f "$ROOT/legacy-missing.sh"
+
+# Legacy `bash -c/-lc "<script> check"` wrappers: judge the script token.
+TEST_BASH=$(command -v bash)
+plutil() {
+	local field="$2"
+	case "$field" in
+	ProgramArguments.0) printf '%s\n' "$TEST_BASH" ;;
+	ProgramArguments.1) printf '%s\n' "$WRAP_FLAG" ;;
+	ProgramArguments.2) printf '%s\n' "$WRAP_CMD" ;;
+	esac
+	return 0
+}
+WRAP_FLAG=-lc
+WRAP_CMD="$ROOT/legacy-missing.sh check"
+setup_mirror_sync 2>"$ROOT/wrap-log"
+[[ "$INSTALLS" -eq 3 ]]
+grep -q "sh.aidevops.mirror-sync.*$ROOT/legacy-missing.sh" "$ROOT/wrap-log"
+WRAP_FLAG=-c
+setup_mirror_sync 2>/dev/null
+[[ "$INSTALLS" -eq 4 ]]
+touch "$ROOT/legacy-missing.sh"
+setup_mirror_sync 2>/dev/null
+[[ "$INSTALLS" -eq 4 ]]
+rm -f "$ROOT/legacy-missing.sh"
+WRAP_FLAG=-lc
+WRAP_CMD='relative-script.sh check'
+setup_mirror_sync 2>/dev/null
+[[ "$INSTALLS" -eq 4 ]]
+WRAP_FLAG=-x
+WRAP_CMD="$ROOT/legacy-missing.sh check"
+setup_mirror_sync 2>/dev/null
+[[ "$INSTALLS" -eq 4 ]]
 printf 'mirror sync tests passed\n'
