@@ -1031,10 +1031,148 @@ EOF
 	return 0
 }
 
+test_active_tenant_import_and_prune() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir/tenants/active" "$config_dir/tenants/other"
+	printf '%s\n' 'export AIDEVOPS_ACTIVE_TENANT="active"' >"$config_dir/credentials.sh"
+	local active="$config_dir/tenants/active/credentials.sh"
+	cat >"$active" <<'EOF'
+# Preserve this comment and configuration.
+export MIGRATION_KEY="migration-fixture-value"
+export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="example"
+export GCP_PROJECT_ID="project-fixture"
+export GCP_SA_KEY_FILE="/fixture/service.json"
+EOF
+	printf '%s\n' 'export OTHER_KEY="other-fixture-value"' >"$config_dir/tenants/other/credentials.sh"
+	chmod 600 "$config_dir/credentials.sh" "$active" "$config_dir/tenants/other/credentials.sh"
+	export AIDEVOPS_TEST_STORED=true
+	local output="" result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" import-credentials) || result=$?
+	if [[ "$result" -eq 0 && "$(<"$TEST_DIR/stored_path")" == 'aidevops/MIGRATION_KEY' &&
+		"$output" == *'Imported MIGRATION_KEY'* && "$output" != *'Imported OTHER_KEY'* &&
+		"$output" != *'migration-fixture-value'* ]]; then
+		print_result "import targets flat namespace for active tenant only and skips config" 0
+	else
+		print_result "import targets flat namespace for active tenant only and skips config" 1
+	fi
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" import-credentials)
+	[[ "$output" == *'value-equal'* ]] && result=0 || result=1
+	print_result "reimport reports equal existing value without overwrite" "$result"
+	local before=""
+	before=$(<"$active")
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext --dry-run)
+	if [[ "$output" == *'Would prune MIGRATION_KEY'* && "$(<"$active")" == "$before" &&
+		"$output" != *'Would prune GCP_'* && "$output" != *'migration-fixture-value'* ]]; then
+		print_result "prune dry-run lists only matching secrets without modifying source" 0
+	else
+		print_result "prune dry-run lists only matching secrets without modifying source" 1
+	fi
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext)
+	result=0
+	HOME="$TEST_DIR/home" bash "$HELPER" check MIGRATION_KEY || result=$?
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" MIGRATION_KEY -- printenv MIGRATION_KEY) || result=$?
+	if [[ "$result" -eq 0 && "$output" == '[REDACTED]' ]] &&
+		! grep -q '^export MIGRATION_KEY=' "$active" &&
+		grep -q '^export GCP_SA_KEY_FILE=' "$active" &&
+		grep -q '^# Preserve' "$active" && [[ "$(_file_perms "$active")" == '600' ]]; then
+		print_result "pruned tenant secret still checks and injects from gopass; config survives" 0
+	else
+		print_result "pruned tenant secret still checks and injects from gopass; config survives" 1
+	fi
+	printf '%s\n' 'export MIGRATION_KEY="differing-fixture"' >>"$active"
+	before=$(<"$active")
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" import-credentials)
+	[[ "$output" == *'differing or unreadable'* ]] && result=0 || result=1
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext)
+	if [[ "$result" -eq 0 && "$output" == *'Keeping MIGRATION_KEY'* && "$(<"$active")" == "$before" ]]; then
+		print_result "differing gopass entry is never overwritten or pruned" 0
+	else
+		print_result "differing gopass entry is never overwritten or pruned" 1
+	fi
+	printf '%s\n' 'export MIGRATION_KEY="differing-fixture"' >>"$active"
+	before=$(<"$active")
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext)
+	[[ "$(<"$active")" == "$before" && "$output" == *'ambiguous'* ]] && result=0 || result=1
+	print_result "duplicate assignments are retained" "$result"
+	cp "$active" "$config_dir/credentials.sh.bak-fixture"
+	chmod 644 "$config_dir/credentials.sh.bak-fixture"
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" status 2>&1)
+	[[ "$output" == *'credentials.sh.bak-'* && "$output" == *'group/world-readable'* && "$output" != *'differing-fixture'* ]] && result=0 || result=1
+	print_result "status warns about readable plaintext backups without values" "$result"
+	return 0
+}
+
+test_prune_refuses_unsafe_or_ambiguous_sources() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir"
+	local file="$config_dir/credentials.sh"
+	cat >"$file" <<'EOF'
+export MIGRATION_KEY="a\\"b\\"c"
+export MISSING_TOKEN="missing-fixture"
+export EXPANSION_SECRET="$(touch unsafe-sourced)"
+export QUOTED_PASSWORD='single-quoted-fixture'
+EOF
+	chmod 600 "$file"
+	local before="" output="" result=0
+	before=$(<"$file")
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" import-credentials 2>&1) || result=$?
+	[[ "$result" -ne 0 && ! -e "$TEST_DIR/stored_path" ]] && result=0 || result=1
+	print_result "import refuses shell expressions and ambiguous escaped quotes" "$result"
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext 2>&1) || result=$?
+	[[ "$result" -ne 0 && "$(<"$file")" == "$before" && "$output" != *'Pruning '* ]] && result=0 || result=1
+	print_result "prune retains missing and unsupported assignments without evaluation" "$result"
+	chmod 644 "$file"
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext 2>&1) || result=$?
+	[[ "$result" -ne 0 && "$(<"$file")" == "$before" ]] && result=0 || result=1
+	print_result "prune rejects non-private sources without mutation" "$result"
+	chmod 600 "$file"
+	mv "$file" "$config_dir/target"
+	ln -s "$config_dir/target" "$file"
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext 2>&1) || result=$?
+	[[ "$result" -ne 0 && -L "$file" && "$(<"$config_dir/target")" == "$before" ]] && result=0 || result=1
+	print_result "prune rejects symlink sources without mutation" "$result"
+	rm "$file"
+	cat >"$file" <<'EOF'
+export OUTER_SECRET="first line
+export INNER_TOKEN=interior-fixture
+last line"
+EOF
+	chmod 600 "$file"
+	before=$(<"$file")
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" import-credentials 2>&1) || result=$?
+	[[ "$result" -ne 0 && ! -e "$TEST_DIR/stored_path" ]] && result=0 || result=1
+	print_result "import rejects apparent exports inside multiline values" "$result"
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext 2>&1) || result=$?
+	[[ "$result" -ne 0 && "$(<"$file")" == "$before" ]] && result=0 || result=1
+	print_result "prune preserves multiline values byte-for-byte" "$result"
+	cat >"$file" <<'EOF'
+cat <<'END'
+export INNER_TOKEN=interior-fixture
+END
+EOF
+	before=$(<"$file")
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext 2>&1) || result=$?
+	[[ "$result" -ne 0 && "$(<"$file")" == "$before" ]] && result=0 || result=1
+	print_result "prune refuses heredoc bodies without evaluation" "$result"
+	return 0
+}
+
 main() {
 	echo "Running secret-helper regression tests..."
 	echo ""
 
+	test_active_tenant_import_and_prune
+	test_prune_refuses_unsafe_or_ambiguous_sources
 	test_set_uses_provided_stdin_value
 	test_multiline_set_file_and_stdin
 	test_multiline_terminal_and_fallback

@@ -9,6 +9,56 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `A
 
 ---
 
+## Migrating plaintext credentials safely
+
+`aidevops secret import-credentials` imports **only the active tenant's store**
+(or the single `credentials.sh`) into the flat `aidevops/NAME` namespace used
+by `check`, `get` and subprocess injection. Other tenants are not merged into
+that shared namespace. Existing entries are never overwritten: the report
+distinguishes value-equal entries from differing/unreadable entries without
+printing values. Earlier `aidevops/tenants/TENANT/NAME` imports are not resolver
+entries; reimport from retained plaintext and reconcile conflicts privately.
+
+Import and pruning accept private, owned, regular non-symlink files and simple
+literal exports only. Names ending in `_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD`,
+`_PASS`, `_CREDENTIAL` or `_CREDENTIALS` (or those words alone) are candidates.
+Other names are retained as configuration, including
+`AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`, `GCP_PROJECT_ID` and `GCP_SA_KEY_FILE`.
+Duplicate assignments and placeholders are kept. Files containing shell
+expressions, single-quoted values, multiline values, heredocs or any syntax
+other than comments, blank lines and simple literal exports are rejected as a
+whole before any migration writes. This prevents mistaking text inside a
+multiline value for a top-level export; reconcile such files privately.
+
+**Import does not replace shell environment loading.** Shell startup files and
+env-only helpers that source `credentials.sh` do not automatically read gopass.
+Before removing plaintext, change those callers to run through
+`aidevops secret NAME -- cmd` (or `aidevops secret run cmd`). Prefer explicit names
+to minimize injected credentials. Existing shells may still hold old exported
+values; restart them after changing the callers. Never print secrets to verify.
+
+Preview the separate, opt-in removal step:
+
+```bash
+aidevops secret prune-plaintext --dry-run
+aidevops secret prune-plaintext
+aidevops secret check NAME
+```
+
+Pruning removes an eligible active-store export only when the flat gopass entry
+is readable, has exactly the same complete value (trailing newlines follow the
+injection contract), and `secret check NAME` succeeds. Missing, locked, differing
+or ambiguous entries are kept. The rewrite is atomic, uses the credential writer
+lock, preserves other lines and creates a mode-600 result; it does not create
+another plaintext backup. Neither operation sources the credential file.
+
+`secret status` warns about `credentials.sh.bak-*` in the main configuration
+directory and tenant stores, including unsafe permissions. These backups are
+not removed by pruning. Review and restrict/delete them under your local
+secure-deletion policy; ordinary removal cannot erase snapshots or SSD copies.
+
+---
+
 ## Storing multi-line secrets
 
 Run secret setup in your own terminal, never paste secret values into AI chat.

@@ -1484,9 +1484,20 @@ def literal(raw):
     # interpret identically are eligible; leave everything else untouched.
     if raw.startswith('"') and raw.endswith('"'):
         raw = raw[1:-1]
-        if re.search(r'(?<!\\)["$`]|\\(?![\\"])', raw):
-            return None
-        return re.sub(r'\\([\\"])', r'\1', raw)
+        result = []
+        index = 0
+        while index < len(raw):
+            char = raw[index]
+            if char == '\\':
+                index += 1
+                if index == len(raw) or raw[index] not in '\\"':
+                    return None
+                char = raw[index]
+            elif char in '"$`':
+                return None
+            result.append(char)
+            index += 1
+        return ''.join(result)
     if re.fullmatch(r'[A-Za-z0-9_./:@%+,=-]+', raw):
         return raw
     return None
@@ -1499,16 +1510,23 @@ def migrate():
                 or info.st_mode & 0o077):
             raise ValueError('unsafe source')
         original = source.read()
-    listing = run(['gopass', 'ls', '--flat', 'aidevops/'])
+    # The prefix may not exist yet in a newly initialized store; listing the
+    # root distinguishes that normal case from a genuine listing failure.
+    listing = run(['gopass', 'ls', '--flat'])
     if listing.returncode:
         raise ValueError('unavailable listing')
     owned = set(listing.stdout.decode().splitlines())
     lines = original.splitlines(keepends=True)
     assignments = []
     for index, line in enumerate(lines):
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
         match = re.fullmatch(r'export ([A-Z_][A-Z0-9_]*)=(.*)', line.rstrip('\n'))
-        if match:
-            assignments.append((index, match[1], match[2]))
+        # Validate the entire file BEFORE any writes. Otherwise an apparent
+        # export could actually be text inside a multiline quote or heredoc.
+        if not match or '\0' in line or (match[2] and literal(match[2]) is None):
+            raise ValueError('unsupported shell structure')
+        assignments.append((index, match[1], match[2]))
     counts = {}
     for _, name, _ in assignments:
         counts[name] = counts.get(name, 0) + 1
@@ -1525,6 +1543,8 @@ def migrate():
         target = 'aidevops/' + name
         if target in owned:
             stored = run(['gopass', 'show', '-n', target])
+            # Match Bash command substitution in the runtime resolver: embedded
+            # newlines remain significant, trailing newlines are normalized.
             equal = stored.returncode == 0 and stored.stdout.rstrip(b'\n') == value.encode()
             if operation == 'import':
                 state = 'value-equal' if equal else 'differing or unreadable'
@@ -1535,7 +1555,8 @@ def migrate():
             else:
                 print(f'Keeping {name} (gopass differs or is unreadable)')
         elif operation == 'import':
-            # No --force: an entry created concurrently must not be overwritten.
+            # Piped insert without --force refuses existing entries (verified
+            # against gopass 1.16.1 insert's IsStdin/Exists branch).
             result = run(['gopass', 'insert', target], (value + '\n').encode())
             if result.returncode:
                 raise ValueError('insert failed')
@@ -1544,16 +1565,16 @@ def migrate():
         else:
             print(f'Keeping {name} (not owned by gopass)')
     if removed and dry_run != 'true':
-        current = os.stat(path, follow_symlinks=False)
-        if (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size) != (
-                info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size):
-            raise ValueError('source changed')
         fd, temporary = tempfile.mkstemp(prefix='.credentials-prune-', dir=os.path.dirname(path))
         try:
             with os.fdopen(fd, 'w', encoding='utf-8', newline='') as output:
                 output.write(''.join(line for index, line in enumerate(lines) if index not in removed))
                 output.flush()
                 os.fsync(output.fileno())
+            current = os.stat(path, follow_symlinks=False)
+            if (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size) != (
+                    info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size):
+                raise ValueError('source changed')
             os.replace(temporary, path)
         finally:
             if os.path.exists(temporary):
@@ -1562,7 +1583,7 @@ def migrate():
 try:
     migrate()
 except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
-    print('Credential migration failed safely; source must be a private regular file and gopass must be readable', file=sys.stderr)
+    print('Credential migration failed safely; use a private regular file containing only comments and simple one-line literal exports, with readable gopass', file=sys.stderr)
     sys.exit(1)
 PY
 	return $?
