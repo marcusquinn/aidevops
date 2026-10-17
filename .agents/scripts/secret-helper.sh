@@ -1483,6 +1483,8 @@ def literal(raw):
     # Never evaluate shell code. Only forms that injection and shell sourcing
     # interpret identically are eligible; leave everything else untouched.
     if raw.startswith('"') and raw.endswith('"'):
+        if len(raw) < 2:
+            return None
         raw = raw[1:-1]
         result = []
         index = 0

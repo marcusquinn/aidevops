@@ -1164,6 +1164,20 @@ EOF
 	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext 2>&1) || result=$?
 	[[ "$result" -ne 0 && "$(<"$file")" == "$before" ]] && result=0 || result=1
 	print_result "prune refuses heredoc bodies without evaluation" "$result"
+	printf '%s\n' 'export OUTER_SECRET="' 'export INNER_TOKEN=interior-fixture' '# closing quote"' >"$file"
+	before=$(<"$file")
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" import-credentials 2>&1) || result=$?
+	[[ "$result" -ne 0 && ! -e "$TEST_DIR/stored_path" ]] && result=0 || result=1
+	print_result "a lone quote cannot masquerade as an empty literal on import" "$result"
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext --dry-run 2>&1) || result=$?
+	[[ "$result" -ne 0 && "$(<"$file")" == "$before" ]] && result=0 || result=1
+	print_result "prune dry-run rejects a lone quote before scanning embedded exports" "$result"
+	result=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" prune-plaintext 2>&1) || result=$?
+	[[ "$result" -ne 0 && "$(<"$file")" == "$before" ]] && result=0 || result=1
+	print_result "prune rejects a lone quote without changing the multiline value" "$result"
 	return 0
 }
 
