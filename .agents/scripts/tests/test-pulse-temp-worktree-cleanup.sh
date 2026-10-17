@@ -39,17 +39,23 @@ teardown() {
 	return 0
 }
 
+# GH#34905: orphan cleanup measures confirmed idle time, so a linked
+# worktree's admin HEAD and HEAD reflog are aged alongside its .git file.
 age_gitfile() {
 	local gitfile="$1"
 	local hours_ago="$2"
-	if touch -d "${hours_ago} hours ago" "$gitfile" 2>/dev/null; then
-		return 0
-	fi
-	local old_ts=""
+	local old_ts="" gitdir_line="" admin_dir="" signal=""
 	old_ts=$(date -v-"${hours_ago}"H +%Y%m%d%H%M 2>/dev/null \
 		|| date -d "${hours_ago} hours ago" +%Y%m%d%H%M 2>/dev/null) || return 1
-	touch -t "$old_ts" "$gitfile"
-	return $?
+	touch -t "$old_ts" "$gitfile" || return 1
+	[[ -f "$gitfile" ]] && IFS= read -r gitdir_line <"$gitfile" 2>/dev/null
+	[[ "$gitdir_line" == "gitdir: "* ]] || return 0
+	admin_dir="${gitdir_line#gitdir: }"
+	for signal in "$admin_dir/HEAD" "$admin_dir/logs/HEAD"; do
+		[[ -e "$signal" ]] || continue
+		touch -t "$old_ts" "$signal" || return 1
+	done
+	return 0
 }
 
 setup_subject() {
