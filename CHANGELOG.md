@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.39] - 2026-10-17
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#34902)
+
+### Fixed
+
+- env-only helpers fall back to gopass via shared secret resolver
+- pulse-routines launchd liveness checks only the command's first word (GH#34909) (#34911)
+- block merge that would close parent-task issue with open sub-issues (GH#34904) (#34908)
+- hand manual dispatch claim lease to its worker so remote stale recovery sees the ready lease (#34903)
+- avoid duplicate core routine dispatch; dead platform jobs fall back to Pulse (GH#34888) (#34900)
+- run stale-blocked sweep before partial-continuation revisit
+- accept Markdown-escaped cron in routine schedules and log unevaluable schedules (GH#34863) (#34887)
+- line-anchor issue_body_has_defer_marker via shared operational-hold classifier (GH#34885) (#34886)
+- verify compact archive retention and restore safety
+- explain legacy issue-first policy refresh
+- recover lockless running routines and finalize on runner signals (GH#34877) (#34878)
+
 ## [3.39.38] - 2026-10-17
 
 ### Added

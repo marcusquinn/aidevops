@@ -149,19 +149,20 @@ check_credentials() {
 
 	case "$provider" in
 	"dataforseo" | "both")
-		if [[ -z "${DATAFORSEO_USERNAME:-}" ]] || [[ -z "${DATAFORSEO_PASSWORD:-}" ]]; then
+		# shellcheck source=dataforseo-credentials.sh
+		source "$SCRIPT_DIR/dataforseo-credentials.sh"
+		if ! dataforseo_load_credentials; then
 			print_error "DataForSEO credentials not found."
-			echo "  Set via: aidevops secret set DATAFORSEO_USERNAME <username>"
-			echo "  Set via: aidevops secret set DATAFORSEO_PASSWORD <password>"
-			echo "  Or add to ~/.config/aidevops/credentials.sh"
+			echo "  Set via: aidevops secret set DATAFORSEO_API_LOGIN"
+			echo "  Set via: aidevops secret set DATAFORSEO_API_PASSWORD"
 			return 1
 		fi
 		;;
 	"serper")
-		if [[ -z "${SERPER_API_KEY:-}" ]]; then
+		# env → credentials.sh → gopass aidevops/SERPER_API_KEY (GH#34892)
+		if ! aidevops_load_secret SERPER_API_KEY; then
 			print_error "Serper API key not found."
-			echo "  Set via: aidevops secret set SERPER_API_KEY <key>"
-			echo "  Or add to ~/.config/aidevops/credentials.sh"
+			echo "  Set via: aidevops secret set SERPER_API_KEY"
 			return 1
 		fi
 		;;
@@ -177,10 +178,10 @@ check_credentials() {
 		# serp-compare checks each provider individually and skips missing ones
 		;;
 	"ahrefs")
-		if [[ -z "${AHREFS_API_KEY:-}" ]]; then
+		# env → credentials.sh → gopass aidevops/AHREFS_API_KEY (GH#34892)
+		if ! aidevops_load_secret AHREFS_API_KEY; then
 			print_error "Ahrefs API key not found."
-			echo "  Set via: aidevops secret set AHREFS_API_KEY <key>"
-			echo "  Or add to ~/.config/aidevops/credentials.sh"
+			echo "  Set via: aidevops secret set AHREFS_API_KEY"
 			return 1
 		fi
 		;;

@@ -1387,6 +1387,19 @@ test_profile_update_lock_is_bounded() {
 			printf '%s\n' overlap-accepted
 			return 0
 		fi
+		# Public CLI commands skip benign overlap successfully, without entering
+		# publication or changing the existing owner's lock.
+		local action
+		for action in update update-contributions; do
+			if ! HOME="$HOME" bash "$SOURCE_HELPER" "$action" >/dev/null 2>&1; then
+				printf '%s\n' overlap-recorded-as-failure
+				return 0
+			fi
+			[[ "$(_profile_lock_owner "$(_profile_update_lock_dir)")" == "$owner_token|"* ]] || {
+				printf '%s\n' overlap-changed-owner
+				return 0
+			}
+		done
 		PROFILE_UPDATE_LOCK_TOKEN="not-the-owner"
 		if _release_profile_update_lock 2>/dev/null; then
 			printf '%s\n' non-owner-released

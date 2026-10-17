@@ -92,6 +92,7 @@ load_functions() {
 	extract_function _issue_json_has_trusted_pr_only_contract
 	extract_function _issue_pr_only_contract_state
 	extract_function _merge_headless_pr_only_scope_clear
+	extract_function _merge_parent_task_open_children_clear
 	extract_function _apply_pr_only_hold
 	extract_function _merge_authority_metadata_valid
 	extract_function _merge_collect_external_authority_gaps

@@ -80,18 +80,16 @@ setup() {
         (cd "${HIGGSFIELD_DIR}" && npx playwright install chromium 2>/dev/null) || true
     fi
 
-    # Check credentials
-    local cred_file="${HOME}/.config/aidevops/credentials.sh"
-    if [[ -f "${cred_file}" ]]; then
-        if grep -q "HIGGSFIELD_USER" "${cred_file}" && grep -q "HIGGSFIELD_PASS" "${cred_file}"; then
-            print_success "Higgsfield credentials found"
-        else
-            print_warning "Higgsfield credentials not found in ${cred_file}"
-            print_info "Add HIGGSFIELD_USER and HIGGSFIELD_PASS to credentials.sh"
-        fi
+    # Check credentials: env, credentials.sh, or gopass aidevops/NAME (GH#34892)
+    if ! declare -F aidevops_secret_available >/dev/null 2>&1; then
+        # shellcheck source=./secret-resolver.sh
+        source "${SCRIPT_DIR}/secret-resolver.sh" || return 1
+    fi
+    if aidevops_secret_available HIGGSFIELD_USER && aidevops_secret_available HIGGSFIELD_PASS; then
+        print_success "Higgsfield credentials found"
     else
-        print_error "Credentials file not found: ${cred_file}"
-        return 1
+        print_warning "Higgsfield credentials not configured"
+        print_info "Set with: aidevops secret set HIGGSFIELD_USER && aidevops secret set HIGGSFIELD_PASS"
     fi
 
     print_success "Setup complete"

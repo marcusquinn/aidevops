@@ -1113,6 +1113,12 @@ setup_mirror_sync() {
 			local existing_program existing_script
 			existing_program=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null) || existing_program=""
 			existing_script=$(plutil -extract ProgramArguments.1 raw -o - "$plist" 2>/dev/null) || existing_script=""
+			# Shell wrappers (bash -c/-lc "<script> args"): judge the script token.
+			if [[ "$existing_script" == -c || "$existing_script" == -lc ]]; then
+				local shell_command
+				shell_command=$(plutil -extract ProgramArguments.2 raw -o - "$plist" 2>/dev/null) || shell_command=""
+				existing_script="${shell_command%%[[:space:]]*}"
+			fi
 			# Unparseable or non-absolute arguments are ambiguous: fail closed.
 			if [[ "$existing_program" != /* ]] ||
 				{ [[ -e "$existing_program" ]] &&
@@ -1120,6 +1126,7 @@ setup_mirror_sync() {
 				print_warning "Mirror sync label collision: existing program is live; leaving it unchanged"
 				return 0
 			fi
+			print_info "Replacing dead legacy ${label} LaunchAgent (missing script: ${existing_script:-unknown})"
 		fi
 		local content
 		content=$(_mirror_sync_plist_content "$label" "$script" "$log_dir")

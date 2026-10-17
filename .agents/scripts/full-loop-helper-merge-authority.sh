@@ -146,6 +146,39 @@ _merge_headless_pr_only_scope_clear() {
 	return 0
 }
 
+# GH#34904: a merge must never close a parent-task issue that still has open
+# sub-issues. Labels and sub-issues are read live; an unreadable verdict fails
+# closed. Issues without the parent-task label are unaffected.
+_merge_parent_task_open_children_clear() {
+	local issue_numbers="$1"
+	local repo="$2"
+	local issue_number="" labels="" subs="" open_count=""
+
+	while IFS= read -r issue_number; do
+		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
+		labels=$(_flm_gh_read gh issue view "$issue_number" --repo "$repo" \
+			--json labels --jq '[.labels[].name] | join(",")') || {
+			print_error "Merge blocked: unable to read labels of linked issue #${issue_number}"
+			return 1
+		}
+		[[ ",${labels}," == *",parent-task,"* ]] || continue
+		subs=$(_flm_gh_read gh api "repos/${repo}/issues/${issue_number}/sub_issues?per_page=100") || {
+			print_error "Merge blocked: unable to read sub-issues of parent-task #${issue_number}"
+			return 1
+		}
+		open_count=$(printf '%s' "$subs" | jq -r '[.[] | select(.state == "open")] | length') || open_count=""
+		if [[ ! "$open_count" =~ ^[0-9]+$ ]]; then
+			print_error "Merge blocked: malformed sub-issue data for parent-task #${issue_number}"
+			return 1
+		fi
+		if [[ "$open_count" -gt 0 ]]; then
+			print_error "Merge blocked: PR would close parent-task #${issue_number} with ${open_count} open sub-issue(s); reference it with 'For #${issue_number}' and remove the closing link"
+			return 1
+		fi
+	done <<<"$issue_numbers"
+	return 0
+}
+
 _merge_is_trusted_issue_sync_pr() {
 	local pr_number="$1"
 	local repo="$2"
@@ -375,6 +408,7 @@ _merge_collect_external_authority_gaps() {
 	}
 
 	_merge_headless_pr_only_scope_clear "$issue_numbers" "$repo" || return 1
+	_merge_parent_task_open_children_clear "$issue_numbers" "$repo" || return 1
 	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" "$cross_repo_refs" "$diagnostic_only" || return 1
 	if [[ "$trusted_dependabot" -eq 1 || "$trusted_issue_sync" -eq 1 || "$treat_as_external" -eq 0 ]]; then
 		return 0

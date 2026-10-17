@@ -1993,8 +1993,10 @@ _hrw_renew_dispatch_prelaunch_lease() {
 	if [[ -z "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" || -z "${WORKER_ISSUE_NUMBER:-}" || -z "${WORKER_REPO_SLUG:-}" ]]; then
 		return 0
 	fi
+	# GH#34901: manual dispatch runs as manual-cli-* but its claim lease
+	# session is issue-N; the dispatcher names that lease session explicitly.
 	"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$WORKER_ISSUE_NUMBER" \
-		"$WORKER_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$session_key" \
+		"$WORKER_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}" \
 		"${AIDEVOPS_DISPATCH_CLAIM_ORPHAN_GRACE:-120}" 2>/dev/null || return 1
 	return 0
 }

@@ -70,6 +70,7 @@ _DSI_HEADLESS="${_DSI_SCRIPT_DIR}/headless-runtime-helper.sh"
 _DSI_LEDGER_HELPER="${_DSI_SCRIPT_DIR}/dispatch-ledger-helper.sh"
 _DSI_WORKTREE_HELPER="${_DSI_SCRIPT_DIR}/worktree-helper.sh"
 _DSI_DEDUP_HELPER="${_DSI_SCRIPT_DIR}/dispatch-dedup-helper.sh"
+_DSI_CLAIM_HELPER="${_DSI_SCRIPT_DIR}/dispatch-claim-helper.sh"
 _DSI_VALIDATOR_HELPER="${_DSI_SCRIPT_DIR}/pre-dispatch-validator-helper.sh"
 _DSI_BACKOFF_HELPER="${_DSI_SCRIPT_DIR}/dispatch-backoff-helper.sh"
 _DSI_APPROVAL_HELPER="${_DSI_SCRIPT_DIR}/approval-helper.sh"
@@ -82,6 +83,12 @@ _DSI_JSON_TRUE="true"
 _DSI_VERIFIED="VERIFIED"
 _DSI_DEFAULT_CANARY_TIMEOUT_SECONDS=180
 _DSI_READY_PREPARATION_ALLOWANCE_SECONDS=60
+# Manual preparation before launch: worktree, credentials, conversation lock.
+_DSI_PRELAUNCH_PREPARATION_SECONDS=600
+# Claim/lease marker field carrying the dispatch lease identity (GH#34901).
+_DSI_LEASE_FIELD="lease_token"
+_DSI_LEASE_ID=""
+_DSI_LEASE_DEVICE=""
 _DSI_CLAIM_WON=0
 _DSI_RESUME_MODE=0
 _DSI_RESUME_SESSION=""
@@ -467,13 +474,21 @@ _dsi_register_ledger() {
 	local repo_slug="$2"
 	local session_key="$3"
 	local worker_pid="$4"
+	local -a lease_args=()
 
+	# GH#34901: the worker registered this session with its lease identity;
+	# the same identity keeps this registration idempotent instead of
+	# appending an unleased prelaunch row over the worker's ready lease.
+	if [[ -n "$_DSI_LEASE_ID" ]]; then
+		lease_args=(--lease-token "$_DSI_LEASE_ID" --device-id "$_DSI_LEASE_DEVICE")
+	fi
 	"$_DSI_LEDGER_HELPER" register \
 		--session-key "$session_key" \
 		--issue "$issue_number" \
 		--repo "$repo_slug" \
 		--pid "$worker_pid" \
 		--worktree "${_DSI_WORKTREE_PATH:-}" \
+		${lease_args[@]+"${lease_args[@]}"} \
 		>/dev/null 2>&1 || _dsi_warn "Dispatch ledger registration failed (non-fatal)"
 	return 0
 }
@@ -640,6 +655,17 @@ _dsi_launch_worker() {
 		GITHUB_REPOSITORY="$repo_slug"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
+	# GH#34901: hand the claim lease to the worker exactly as pulse does. The
+	# claim records session=issue-N while the runtime session is manual-cli-*,
+	# so lease transitions use the claim's session explicitly.
+	if [[ -n "$_DSI_LEASE_ID" ]]; then
+		local lease_env_name="AIDEVOPS_DISPATCH_LEASE_TOKEN"
+		cmd+=(
+			"${lease_env_name}=${_DSI_LEASE_ID}"
+			AIDEVOPS_DISPATCH_LEASE_DEVICE="$_DSI_LEASE_DEVICE"
+			AIDEVOPS_DISPATCH_LEASE_SESSION="issue-${issue_number}"
+		)
+	fi
 	if [[ -n "$_DSI_GIT_AUTH_TOKEN_FILE" ]]; then
 		cmd+=(
 			AIDEVOPS_GIT_AUTH_TOKEN_FILE="$_DSI_GIT_AUTH_TOKEN_FILE"
@@ -904,6 +930,65 @@ _dsi_run_dedup_check() {
 	return 0
 }
 
+#######################################
+# Capture the lease identity from a winning CLAIM_WON line (GH#34901).
+# Pulse hands the same identity to its worker, which publishes the
+# DISPATCH_LEASE phase=ready transition that remote stale recovery honours.
+# Only the exact CLAIM_WON line is trusted; malformed values are dropped and
+# dispatch falls back to the legacy unleased launch.
+# Args: $1 - claim helper output
+#######################################
+_dsi_capture_claim_lease() {
+	local claim_output="$1"
+	local won_line="" word="" key="" value="" lease_id="" device=""
+	local -a words=()
+	won_line=$(printf '%s\n' "$claim_output" | awk '/^CLAIM_WON: / && !f {print; f=1}' || true)
+	read -r -a words <<<"$won_line"
+	for word in "${words[@]}"; do
+		key="${word%%=*}"
+		value="${word#*=}"
+		case "$key" in
+		"$_DSI_LEASE_FIELD") lease_id="$value" ;;
+		device) device="$value" ;;
+		esac
+	done
+	if [[ "$lease_id" =~ ^[A-Za-z0-9._:-]{1,128}$ && "$device" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+		_DSI_LEASE_ID="$lease_id"
+		_DSI_LEASE_DEVICE="$device"
+		return 0
+	fi
+	_dsi_warn "Claim output carried no usable lease identity; worker will run without a dispatch lease"
+	return 0
+}
+
+#######################################
+# Extend the claim's prelaunch lease to cover manual preparation (worktree,
+# credentials, conversation lock, canary) before the worker renews it and
+# publishes phase=ready. The claim helper never shortens an existing lease.
+# Args: $1 - issue_number, $2 - repo_slug
+# Returns: 0 renewed or no lease to renew, 1 renewal denied/failed
+#######################################
+_dsi_renew_prelaunch_lease() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local lease_ttl="${AIDEVOPS_DSI_PRELAUNCH_LEASE_TTL:-}"
+	local renew_stderr="" renew_rc=0 reason=""
+
+	[[ -n "$_DSI_LEASE_ID" ]] || return 0
+	if ! [[ "$lease_ttl" =~ ^[0-9]+$ ]]; then
+		lease_ttl=$(($(_dsi_ready_timeout_seconds) + _DSI_PRELAUNCH_PREPARATION_SECONDS))
+	fi
+	renew_stderr=$(AIDEVOPS_DEVICE_ID="$_DSI_LEASE_DEVICE" \
+		"$_DSI_CLAIM_HELPER" transition prelaunch "$issue_number" "$repo_slug" \
+		"$_DSI_LEASE_ID" "issue-${issue_number}" "$lease_ttl" 2>&1 >/dev/null) || renew_rc=$?
+	if [[ "$renew_rc" -ne 0 ]]; then
+		reason=$(printf '%s\n' "$renew_stderr" | sed -n 's/^DISPATCH_LEASE_TRANSITION_DENIED reason=\([a-z_]*\)$/\1/p' | tail -n 1)
+		_dsi_err "Dispatch prelaunch lease renewal failed for #${issue_number} (reason=${reason:-unclassified})"
+		return 1
+	fi
+	return 0
+}
+
 _dsi_acquire_consensus_claim() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -913,6 +998,8 @@ _dsi_acquire_consensus_claim() {
 
 	_DSI_CLAIM_WON=0
 	_DSI_CLAIM_COMMENT_ID=""
+	_DSI_LEASE_ID=""
+	_DSI_LEASE_DEVICE=""
 	if [[ -z "$self_login" ]]; then
 		_dsi_err "Cannot resolve runner login for consensus claim; refusing dispatch"
 		return 1
@@ -922,7 +1009,15 @@ _dsi_acquire_consensus_claim() {
 	0)
 		_DSI_CLAIM_WON=1
 		_DSI_CLAIM_COMMENT_ID=$(printf '%s' "$claim_output" | sed -n 's/.*comment_id=\([0-9][0-9]*\).*/\1/p')
+		_dsi_capture_claim_lease "$claim_output"
 		_dsi_info "Consensus claim won for #${issue_number}"
+		# GH#34901: keep the claim lease alive through manual preparation so
+		# the worker can renew it and publish the phase=ready lease, as pulse
+		# workers do. A denied renewal would fail the worker's own renewal.
+		if ! _dsi_renew_prelaunch_lease "$issue_number" "$repo_slug"; then
+			_dsi_release_consensus_claim "$issue_number" "$repo_slug" "$self_login" "prelaunch_lease_renewal_failed" || true
+			return 1
+		fi
 		return 0
 		;;
 	1)

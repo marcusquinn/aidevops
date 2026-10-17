@@ -1236,6 +1236,12 @@ if [[ -r "${_shared_constants_dir}/pulse-temp-helper.sh" ]]; then
 	# shellcheck source=pulse-temp-helper.sh
 	source "${_shared_constants_dir}/pulse-temp-helper.sh"
 fi
+# aidevops_resolve_secret / aidevops_load_secret / aidevops_secret_available:
+# env → credentials.sh → gopass aidevops/NAME (GH#34892).
+if [[ -r "${_shared_constants_dir}/secret-resolver.sh" ]]; then
+	# shellcheck source=secret-resolver.sh
+	source "${_shared_constants_dir}/secret-resolver.sh"
+fi
 unset _shared_constants_dir
 
 # =============================================================================

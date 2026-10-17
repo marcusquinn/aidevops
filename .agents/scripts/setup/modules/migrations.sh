@@ -1535,23 +1535,35 @@ _migrate_mcp_npx_to_binary() {
 		fi
 	done
 
-	# Migrate outscraper from bash -c wrapper to full binary path
-	if jq -e '.mcp.outscraper.command | join(" ") | test("bash.*outscraper")' "$tmp_config" >/dev/null 2>&1; then
-		local outscraper_path
-		outscraper_path=$(resolve_mcp_binary_path "outscraper-mcp-server")
-		if [[ -n "$outscraper_path" ]]; then
-			# Source the API key and set it in environment
-			local outscraper_key=""
-			if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
-				# shellcheck source=/dev/null
-				outscraper_key=$(source "$HOME/.config/aidevops/credentials.sh" && echo "${OUTSCRAPER_API_KEY:-}")
-			fi
-			jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((++_cleanup_count))
-		fi
-	fi
+	# Outscraper must retain its launch-time credential resolver and mcp<2 pin.
 
 	return 0
+}
+
+# Remove legacy inline credentials on every setup run, even after the old
+# cleanup sentinel was written. Do not back up this redundant plaintext copy.
+_migrate_outscraper_credentials() {
+	local config="$1"
+	if ! jq -e '[.mcp.outscraper.env, .mcp.outscraper.environment] |
+		any(.[] | objects; has("OUTSCRAPER_API_KEY"))' "$config" >/dev/null 2>&1; then
+		return 0
+	fi
+	# Expand HOME in the MCP process at launch, not while writing its config.
+	# shellcheck disable=SC2016
+	local launcher='source "$HOME/.aidevops/agents/scripts/outscraper-credentials.sh" && outscraper_load_credentials && exec uv tool run --with '\''mcp<2'\'' outscraper-mcp-server'
+	local tmp_config
+	tmp_config=$(mktemp) || return 1
+	if jq --arg launcher "$launcher" '
+		.mcp.outscraper.command = ["bash", "-c", $launcher] |
+		del(.mcp.outscraper.env.OUTSCRAPER_API_KEY, .mcp.outscraper.environment.OUTSCRAPER_API_KEY) |
+		if .mcp.outscraper.env == {} then del(.mcp.outscraper.env) else . end |
+		if .mcp.outscraper.environment == {} then del(.mcp.outscraper.environment) else . end
+	' "$config" >"$tmp_config" && mv "$tmp_config" "$config"; then
+		print_info "Migrated Outscraper MCP to launch-time credentials"
+		return 0
+	fi
+	rm -f "$tmp_config"
+	return 1
 }
 
 # Remove deprecated MCP entries from supported app configs.
@@ -1569,6 +1581,10 @@ cleanup_deprecated_mcps() {
 
 	local opencode_config=""
 	opencode_config=$(find_opencode_config) || true
+
+	if [[ -n "$opencode_config" && -f "$opencode_config" ]]; then
+		_migrate_outscraper_credentials "$opencode_config" || return 1
+	fi
 
 	# One-time cleanup: remove deprecated MCPs and migrate npx→binary paths.
 	# Sentinel version must be bumped whenever new deprecated MCPs are added.

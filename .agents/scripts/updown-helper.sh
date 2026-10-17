@@ -43,7 +43,7 @@ check_dependencies() {
 load_config() {
     local api_key
     
-    # First try environment variable (preferred - set via credentials.sh)
+    # First try environment variable
     api_key="${UPDOWN_API_KEY:-}"
     
     # Fallback to config file if env var not set
@@ -51,9 +51,14 @@ load_config() {
         api_key=$(jq -r '.api_key // empty' "$CONFIG_FILE" 2>/dev/null)
     fi
 
+    # Then credentials.sh, then gopass aidevops/UPDOWN_API_KEY (GH#34892)
+    if [[ -z "$api_key" ]]; then
+        api_key=$(aidevops_resolve_secret UPDOWN_API_KEY) || api_key=""
+    fi
+
     if [[ -z "$api_key" ]]; then
         print_error "$ERROR_API_KEY_MISSING"
-        print_error "Set UPDOWN_API_KEY in ~/.config/aidevops/credentials.sh"
+        print_error "Set it with: aidevops secret set UPDOWN_API_KEY"
         return 1
     fi
 
