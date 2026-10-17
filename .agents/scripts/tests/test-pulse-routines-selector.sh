@@ -593,11 +593,60 @@ _test_stale_agent_recovery() {
 		touch -t 200001010000 "$lock_dir"
 		AIDEVOPS_ROUTINE_NOW_EPOCH=$((AIDEVOPS_ROUTINE_NOW_EPOCH + 21601))
 		_routine_retry_blocked r-stale || exit 1
-		[[ "$(jq -r '."r-stale".last_status' "$ROUTINE_STATE_FILE")" == running ]]
+		[[ "$(jq -r '."r-stale".last_status' "$ROUTINE_STATE_FILE")" == running ]] || exit 1
+		# A running state with no lock is a dead runner once past the grace.
+		rm -f -- "$lock_dir/pid-$$"
+		rmdir "$lock_dir" || exit 1
+		AIDEVOPS_ROUTINE_NOW_EPOCH=$(date +%s)
+		_routine_update_state r-nolock running
+		_routine_retry_blocked r-nolock || exit 1
+		[[ "$(jq -r '."r-nolock".last_status' "$ROUTINE_STATE_FILE")" == running ]] || exit 1
+		AIDEVOPS_ROUTINE_NOW_EPOCH=$((AIDEVOPS_ROUTINE_NOW_EPOCH + 61))
+		_routine_retry_blocked r-nolock || exit 1
+		jq -e '."r-nolock".last_status == "failure" and ."r-nolock".consecutive_failures == 1' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		[[ ! -d "${ROUTINE_STATE_FILE}.r-nolock.runner" ]]
 	); then
-		pass "GH#34867: dead running lock respects grace then uses failure backoff; live lock stays protected"
+		pass "GH#34867: dead running lock respects grace then uses failure backoff; live lock stays protected; lockless running recovers"
 	else
 		fail "GH#34867: stale running recovery" "see $root"
+	fi
+	return 0
+}
+
+_test_sigterm_agent_runner() {
+	local tmpdir="$1"
+	local root="${tmpdir}/sigterm-agent"
+	mkdir -p "$root"
+	if (
+		export ROUTINE_TEST_ROOT="$root"
+		export HEADLESS_RUNTIME_HELPER="$root/headless.sh" ROUTINE_LOG_HELPER="$root/lifecycle.sh"
+		export LOGFILE="$root/pulse.log" ROUTINE_STATE_FILE="$root/state.json"
+		cat >"$HEADLESS_RUNTIME_HELPER" <<'AGENT'
+#!/usr/bin/env bash
+: >"$ROUTINE_TEST_ROOT/started"
+sleep 30
+AGENT
+		cat >"$ROUTINE_LOG_HELPER" <<'LIFECYCLE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ROUTINE_TEST_ROOT/lifecycle"
+LIFECYCLE
+		chmod +x "$HEADLESS_RUNTIME_HELPER" "$ROUTINE_LOG_HELPER"
+		bash -c 'source "$1"; _routine_run_detached_agent r-term Term Build+ "$2"' _ "$PULSE_ROUTINES" "$root" &
+		local runner_pid=$! attempt=0
+		while [[ "$attempt" -lt 100 && ! -f "$root/started" ]]; do
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		[[ -f "$root/started" ]] || exit 1
+		kill -TERM "$runner_pid"
+		wait "$runner_pid" 2>/dev/null || true
+		jq -e '."r-term".last_status == "failure"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		[[ ! -d "${ROUTINE_STATE_FILE}.r-term.runner" ]] || exit 1
+		[[ "$(<"$root/lifecycle")" == *"--status failure"*"--session-key routine-r-term"* ]]
+	); then
+		pass "GH#34877: SIGTERM during agent wait records terminal failure and releases the lock"
+	else
+		fail "GH#34877: SIGTERM agent runner" "see $root"
 	fi
 	return 0
 }
@@ -624,6 +673,7 @@ main() {
 		done
 	done
 	_test_stale_agent_recovery "$tmpdir"
+	_test_sigterm_agent_runner "$tmpdir"
 
 	# === Summary ===
 	printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"

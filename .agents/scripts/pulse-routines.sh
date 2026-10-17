@@ -188,7 +188,12 @@ _routine_retry_blocked() {
 	[[ -n "$attempt_iso" ]] || return 1
 	attempt_epoch=$(date -d "$attempt_iso" +%s 2>/dev/null) || attempt_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$attempt_iso" +%s 2>/dev/null) || return 1
 	now_epoch=$(_routine_now_epoch)
-	if [[ "$status" == "running" && -d "${ROUTINE_STATE_FILE}.${routine_id}.runner" ]]; then
+	# A live runner always holds its lock while state is running, so a running
+	# state without a lock (signal kill, pre-lock upgrade) is a dead runner once
+	# past the 60-second launch grace.
+	if [[ "$status" == "running" ]] && {
+		[[ -d "${ROUTINE_STATE_FILE}.${routine_id}.runner" ]] || [[ $((now_epoch - attempt_epoch)) -ge 60 ]]
+	}; then
 		# Claim only dead locks older than the launch grace. This also serializes
 		# recovery against detached runners and another scheduler's recovery.
 		local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
@@ -301,35 +306,92 @@ _routine_run_detached_agent() {
 	local exit_code=0
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	_routine_claim_runner_lock "$lock_dir" || return 0
-	# shellcheck disable=SC2064 # Expand function-local paths before EXIT.
-	trap "rm -f -- $(printf '%q' "$pid_file"); rmdir -- $(printf '%q' "$lock_dir") 2>/dev/null || true" EXIT
 	[[ -n "$agent_name" ]] || agent_name="Build+"
 	started_epoch=$(date +%s)
+	_routine_runner_arm_traps "$routine_id" "$started_epoch" "$session_key" "$pid_file" "$lock_dir"
 	_routine_update_state "$routine_id" "running"
 	_routine_record_lifecycle "$routine_id" "running" 0 "$session_key"
 	if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 		echo "[pulse-wrapper] routine ${routine_id}: headless runtime helper unavailable" >>"$LOGFILE"
+		_ROUTINE_RUNNER_FINALIZED=true
 		_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$started_epoch" "$session_key"
 		return 1
 	fi
 	echo "[pulse-wrapper] routine ${routine_id}: dispatching agent '${agent_name}' for '${description}'" >>"$LOGFILE"
+	# Run in the background and wait so a TERM/INT/HUP trap fires immediately.
 	"$HEADLESS_RUNTIME_HELPER" run \
 		--role worker \
 		--session-key "$session_key" \
 		--dir "$dispatch_dir" \
 		--agent "$agent_name" \
 		--title "Routine ${routine_id}: ${description}" \
-		--prompt "Execute routine ${routine_id}: ${description}" >>"$LOGFILE" 2>&1 || exit_code=$?
+		--prompt "Execute routine ${routine_id}: ${description}" >>"$LOGFILE" 2>&1 &
+	_ROUTINE_RUNNER_CHILD_PID=$!
+	wait "$_ROUTINE_RUNNER_CHILD_PID" || exit_code=$?
+	_ROUTINE_RUNNER_CHILD_PID=""
 	if [[ "$exit_code" -ne 0 ]]; then
 		status="$_ROUTINE_STATUS_FAILURE"
 		echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
 	else
 		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully" >>"$LOGFILE"
 	fi
+	_ROUTINE_RUNNER_FINALIZED=true
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key"
 	rm -f -- "$pid_file"
 	rmdir -- "$lock_dir" 2>/dev/null || true
-	trap - EXIT
+	trap - EXIT TERM INT HUP
+	return 0
+}
+
+#######################################
+# Detached-runner trap support. Each runner is its own process, so module
+# globals carry the state the EXIT trap needs after the function frame is gone.
+# An unfinalized exit (signal, unexpected error) records a terminal failure
+# with the real end time, then releases the PID marker and lock.
+#######################################
+_ROUTINE_RUNNER_ID=""
+_ROUTINE_RUNNER_STARTED=0
+_ROUTINE_RUNNER_SESSION=""
+_ROUTINE_RUNNER_PID_FILE=""
+_ROUTINE_RUNNER_LOCK_DIR=""
+_ROUTINE_RUNNER_FINALIZED=false
+_ROUTINE_RUNNER_CHILD_PID=""
+
+_routine_runner_arm_traps() {
+	local routine_id="$1"
+	local started_epoch="$2"
+	local session_key="$3"
+	local pid_file="$4"
+	local lock_dir="$5"
+	_ROUTINE_RUNNER_ID="$routine_id"
+	_ROUTINE_RUNNER_STARTED="$started_epoch"
+	_ROUTINE_RUNNER_SESSION="$session_key"
+	_ROUTINE_RUNNER_PID_FILE="$pid_file"
+	_ROUTINE_RUNNER_LOCK_DIR="$lock_dir"
+	_ROUTINE_RUNNER_FINALIZED=false
+	_ROUTINE_RUNNER_CHILD_PID=""
+	trap '_routine_runner_on_exit' EXIT
+	trap '_routine_runner_on_signal 143' TERM
+	trap '_routine_runner_on_signal 130' INT
+	trap '_routine_runner_on_signal 129' HUP
+	return 0
+}
+
+_routine_runner_on_signal() {
+	local code="$1"
+	if [[ -n "$_ROUTINE_RUNNER_CHILD_PID" ]]; then
+		kill "$_ROUTINE_RUNNER_CHILD_PID" 2>/dev/null || true
+	fi
+	exit "$code"
+}
+
+_routine_runner_on_exit() {
+	if [[ "$_ROUTINE_RUNNER_FINALIZED" != true && -n "$_ROUTINE_RUNNER_ID" ]]; then
+		_ROUTINE_RUNNER_FINALIZED=true
+		_routine_finalize_terminal "$_ROUTINE_RUNNER_ID" "$_ROUTINE_STATUS_FAILURE" "$_ROUTINE_RUNNER_STARTED" "$_ROUTINE_RUNNER_SESSION"
+	fi
+	rm -f -- "$_ROUTINE_RUNNER_PID_FILE"
+	rmdir -- "$_ROUTINE_RUNNER_LOCK_DIR" 2>/dev/null || true
 	return 0
 }
 
@@ -404,16 +466,18 @@ _routine_run_detached_script() {
 	local deferred_until=0
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
 	_routine_claim_runner_lock "$lock_dir" || return 0
-	# Expand the path now: the function-local variable is gone at shell EXIT.
-	# shellcheck disable=SC2064
-	trap "rm -f -- $(printf '%q' "$pid_file"); rmdir -- $(printf '%q' "$lock_dir") 2>/dev/null || true" EXIT
+	_routine_runner_arm_traps "$routine_id" "$started_epoch" "" "$pid_file" "$lock_dir"
 	_routine_update_state "$routine_id" "running"
 	_routine_record_lifecycle "$routine_id" "running" 0
+	# Background + wait so a TERM/INT/HUP trap fires immediately.
 	if [[ "$#" -gt 0 ]]; then
-		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 || exit_code=$?
+		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 &
 	else
-		(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 || exit_code=$?
+		(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 &
 	fi
+	_ROUTINE_RUNNER_CHILD_PID=$!
+	wait "$_ROUTINE_RUNNER_CHILD_PID" || exit_code=$?
+	_ROUTINE_RUNNER_CHILD_PID=""
 	if [[ "$exit_code" -eq "$_ROUTINE_TEMPFAIL_EXIT" ]]; then
 		status="$_ROUTINE_STATUS_DEFERRED"
 		deferred_until=$(_routine_deferred_until "$routine_id")
@@ -424,10 +488,11 @@ _routine_run_detached_script() {
 	else
 		echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
 	fi
+	_ROUTINE_RUNNER_FINALIZED=true
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
 	rm -f -- "$pid_file"
 	rmdir -- "$lock_dir" 2>/dev/null || true
-	trap - EXIT
+	trap - EXIT TERM INT HUP
 	return 0
 }
 
