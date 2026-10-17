@@ -141,7 +141,10 @@ scan_violations_tracked_worktree() {
 			continue
 		fi
 		local _file="$_repo_root/$_path"
-		[ -f "$_file" ] || continue
+		# A tracked symlink is not a Markdown document of its own: ref scans
+		# see only its target-path blob and directory scans use `find -type
+		# f`, so following it here reported unchanged links as new (GH#34943).
+		[ -f "$_file" ] && [ ! -L "$_file" ] || continue
 		local _lc
 		_lc=$(wc -l < "$_file") || _lc=0
 		_lc=${_lc//[^0-9]/}
@@ -158,6 +161,29 @@ scan_violations_tracked_worktree() {
 }
 
 # ---------------------------------------------------------------------------
+# ref_filtered_markdown_paths <commit>
+# Print a leading newline, then one line per .md path at <commit> that
+# carries a checkout `filter` attribute (callers restore the final newline).
+# Attributes come from the current checkout, which is also what `git
+# cat-file --filters` applies. Prints only the wrapper when there are none.
+# ---------------------------------------------------------------------------
+ref_filtered_markdown_paths() {
+	local _commit="$1"
+	local _path="" _attr="" _value=""
+	printf '\n'
+	git ls-tree -r -z --name-only --full-tree "$_commit" 2>/dev/null |
+		git check-attr -z --stdin filter 2>/dev/null |
+		while IFS= read -r -d '' _path && IFS= read -r -d '' _attr && IFS= read -r -d '' _value; do
+			case "$_path" in *.md) ;; *) continue ;; esac
+			case "$_value" in
+			unspecified | unset | "") ;;
+			*) printf '%s\n' "$_path" ;;
+			esac
+		done
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # scan_violations_ref <ref> <limit>
 # Scan a git ref for non-README .md files with more than <limit> lines.
 # Reads blobs from the object store with one `git grep -c ''` pass, so no
@@ -165,7 +191,10 @@ scan_violations_tracked_worktree() {
 # (GH#34905: the former temporary worktree leaked when its RETURN trap was
 # replaced by a nested function's trap or the process was killed).
 # Counts match `wc -l` (newline count): a final line without a trailing
-# newline is not counted, as for the working-tree scans.
+# newline is not counted, as for the working-tree scans. Paths with a
+# checkout `filter` attribute are counted after smudging, as a checkout and
+# the working-tree head scan see them (GH#34943). Symlink blobs hold only a
+# target path, so links are never counted (their targets are, as files).
 # Outputs TSV: git-path TAB line-count  (sorted by path).
 # ---------------------------------------------------------------------------
 scan_violations_ref() {
@@ -179,6 +208,10 @@ scan_violations_ref() {
 	fi
 
 	local _prefix="${_commit}:"
+	local _filtered
+	# Command substitution drops the trailing newline the membership test needs.
+	_filtered="$(ref_filtered_markdown_paths "$_commit")
+"
 	git -c grep.lineNumber=false -c grep.column=false \
 		grep --no-color --full-name -c -z -e '' "$_commit" -- ':(top)*.md' 2>/dev/null |
 		while IFS= read -r -d '' _name && IFS= read -r _lc; do
@@ -192,6 +225,16 @@ scan_violations_ref() {
 			if [[ "$_rel" != */* && -z "$_limit" ]]; then
 				_path_limit="$FILE_SIZE_ROOT_LIMIT"
 			fi
+			case "$_filtered" in
+			*"
+${_rel}
+"*)
+				_lc=$(git cat-file --filters "${_commit}:${_rel}" 2>/dev/null | wc -l) || _lc=0
+				_lc=${_lc//[^0-9]/}
+				[ "${_lc:-0}" -gt "$_path_limit" ] && printf '%s\t%d\n' "$_rel" "$_lc"
+				continue
+				;;
+			esac
 			[ "$_lc" -gt "$_path_limit" ] || continue
 			# git grep counts an unterminated final line; wc -l does not.
 			local _last_nl

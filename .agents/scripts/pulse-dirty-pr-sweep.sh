@@ -877,42 +877,72 @@ _dps_rebase_in_ephemeral() {
 		return 1
 	fi
 
+	# GH#34943: the rebase and push run in a subshell whose EXIT trap removes
+	# the ephemeral worktree and branch, and INT/TERM/HUP exit through it. A
+	# watchdog TERM mid-rebase previously skipped cleanup and leaked a
+	# registered named-branch checkout that the detached temp-worktree sweep
+	# never matches. SIGKILL still cannot run traps.
 	local rebase_ok=1
-	if git -C "$ephemeral" rebase -X union "origin/${default_branch}" >/dev/null 2>&1; then
+	if (
+		trap '_dps_remove_ephemeral "$repo_path" "$ephemeral" "$ephemeral_branch" "$pr_number" "$repo_slug"' EXIT
+		trap 'exit 129' HUP
+		trap 'exit 130' INT
+		trap 'exit 143' TERM
+		_dps_rebase_and_push "$ephemeral" "$head_ref" "$default_branch" "$pr_number" "$repo_slug"
+	); then
 		rebase_ok=0
-	else
-		git -C "$ephemeral" rebase --abort >/dev/null 2>&1 || true
-		_dps_log "PR #$pr_number ($repo_slug): rebase -X union failed — conflicts outside TODO.md"
-	fi
-
-	if [[ "$rebase_ok" -eq 0 ]]; then
-		# Force-push with lease so we never clobber a human-pushed commit.
-		if ! git -C "$ephemeral" push --force-with-lease=refs/heads/"$head_ref":origin/"$head_ref" \
-			origin "HEAD:refs/heads/${head_ref}" >/dev/null 2>&1; then
-			_dps_log "PR #$pr_number ($repo_slug): force-push failed — possibly clobber protected"
-			rebase_ok=1
-		fi
-	fi
-
-	# Cleanup ephemeral worktree regardless of outcome.
-	# t2976 / GH#21699: canonical guard before destructive removal. The
-	# ephemeral path is created via mktemp under /tmp and can never legitimately
-	# match a registered canonical repo — so a hit here means a refactor or
-	# environment override has redirected the path. Skip + audit instead of
-	# destroying, and log the skip so the unexpected state is visible.
-	if is_registered_canonical "$ephemeral"; then
-		_dps_log "PR #$pr_number ($repo_slug): refusing to remove canonical path $ephemeral — registry hit"
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "canonical-skip" "skipped"
-	else
-		git -C "$repo_path" worktree remove --force "$ephemeral" >/dev/null 2>&1 || true
-		git -C "$repo_path" branch -D "$ephemeral_branch" >/dev/null 2>&1 || true
-		rm -rf "$ephemeral" 2>/dev/null || true
-		log_worktree_removal_event "$_WTAR_FIXTURE_REMOVED" "$_WTAR_DPS_CALLER" "$ephemeral" "fixture" "fixture"
 	fi
 
 	if [[ "$rebase_ok" -ne 0 ]]; then
 		return 1
 	fi
+	return 0
+}
+
+# Rebase the ephemeral checkout onto the default branch with the union
+# strategy and force-push with lease. Returns 0 only when both succeed.
+_dps_rebase_and_push() {
+	local ephemeral="$1"
+	local head_ref="$2"
+	local default_branch="$3"
+	local pr_number="$4"
+	local repo_slug="$5"
+
+	if ! git -C "$ephemeral" rebase -X union "origin/${default_branch}" >/dev/null 2>&1; then
+		git -C "$ephemeral" rebase --abort >/dev/null 2>&1 || true
+		_dps_log "PR #$pr_number ($repo_slug): rebase -X union failed — conflicts outside TODO.md"
+		return 1
+	fi
+	# Force-push with lease so we never clobber a human-pushed commit.
+	if ! git -C "$ephemeral" push --force-with-lease=refs/heads/"$head_ref":origin/"$head_ref" \
+		origin "HEAD:refs/heads/${head_ref}" >/dev/null 2>&1; then
+		_dps_log "PR #$pr_number ($repo_slug): force-push failed — possibly clobber protected"
+		return 1
+	fi
+	return 0
+}
+
+# Remove the ephemeral worktree and its throwaway branch regardless of
+# outcome. t2976 / GH#21699: canonical guard before destructive removal. The
+# ephemeral path is created via mktemp and can never legitimately match a
+# registered canonical repo — a hit means a refactor or environment override
+# redirected the path. Skip + audit instead of destroying.
+_dps_remove_ephemeral() {
+	local repo_path="$1"
+	local ephemeral="$2"
+	local ephemeral_branch="$3"
+	local pr_number="$4"
+	local repo_slug="$5"
+
+	if is_registered_canonical "$ephemeral"; then
+		_dps_log "PR #$pr_number ($repo_slug): refusing to remove canonical path $ephemeral — registry hit"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "canonical-skip" "skipped"
+		return 0
+	fi
+	git -C "$repo_path" worktree remove --force "$ephemeral" >/dev/null 2>&1 || true
+	git -C "$repo_path" branch -D "$ephemeral_branch" >/dev/null 2>&1 || true
+	rm -rf "$ephemeral" 2>/dev/null || true
+	log_worktree_removal_event "$_WTAR_FIXTURE_REMOVED" "$_WTAR_DPS_CALLER" "$ephemeral" "fixture" "fixture"
 	return 0
 }
 

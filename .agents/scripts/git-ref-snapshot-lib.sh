@@ -13,10 +13,39 @@
 # Public functions:
 #   _materialize_ref_paths <commit> <dest> <paths>  — selected files only
 #   _materialize_ref_tree  <commit> <dest>          — whole tree, checkout-equivalent
+#   _nul_paths_to_lines                             — NUL list on stdin → raw lines
 # Callers must pass a fresh <dest> inside a private temporary directory.
 
 [[ -n "${_GIT_REF_SNAPSHOT_LIB_LOADED:-}" ]] && return 0
 _GIT_REF_SNAPSHOT_LIB_LOADED=1
+
+# ---------------------------------------------------------------------------
+# _nul_paths_to_lines
+#
+# Read NUL-delimited paths (`git diff --name-only -z`, `git ls-files -z`) on
+# stdin and print each raw, unquoted, on its own line (GH#34943). Git's
+# newline-delimited output C-quotes names containing tabs, double quotes,
+# backslashes or control characters; a quoted name matches no literal
+# pathspec and silently drops out of a scan. A path containing a newline
+# cannot be represented in the line-oriented lists scanners use, so it is
+# reported on stderr and skipped rather than split into two bogus paths.
+# ---------------------------------------------------------------------------
+_nul_paths_to_lines() {
+	local _p=""
+	local _nl='
+'
+	while IFS= read -r -d '' _p; do
+		[ -n "$_p" ] || continue
+		case "$_p" in
+		*"$_nl"*)
+			printf '[git-ref-snapshot] WARN: skipping path containing a newline: %q\n' "$_p" >&2
+			continue
+			;;
+		esac
+		printf '%s\n' "$_p"
+	done
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # _normalize_rel_path <path>

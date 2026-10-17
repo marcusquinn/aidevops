@@ -1003,8 +1003,9 @@ _log_file_size_remediation() {
 #
 # Print applicable changed paths (root-relative, newline-separated). With
 # <working_tree>=1, compare base with the working tree plus untracked files.
-# core.quotePath=false keeps non-ASCII names unquoted so they match the
-# extension filter and the literal pathspecs used for snapshots.
+# Discovery is NUL-delimited (GH#34943), so names with non-ASCII, tabs,
+# quotes or backslashes stay raw and match the extension filter and the
+# literal pathspecs used for snapshots; newline names are reported, skipped.
 # ---------------------------------------------------------------------------
 _changed_applicable_paths() {
 	local _base_sha="$1"
@@ -1012,11 +1013,11 @@ _changed_applicable_paths() {
 	local _working_tree="$3"
 	if [ "$_working_tree" -eq 1 ]; then
 		{
-			git -c core.quotePath=false diff --name-only "$_base_sha" -- 2>/dev/null || true
-			git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null || true
-		} | grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" | sort -u || true
+			git diff --name-only -z "$_base_sha" -- 2>/dev/null || true
+			git ls-files -z --others --exclude-standard 2>/dev/null || true
+		} | _nul_paths_to_lines | grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" | sort -u || true
 	else
-		git -c core.quotePath=false diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null |
+		git diff --name-only -z "$_base_sha" "$_head_sha" 2>/dev/null | _nul_paths_to_lines |
 			grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" || true
 	fi
 	return 0
