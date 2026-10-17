@@ -1701,7 +1701,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18706 docs(cloudron): separate catalog updates from source rebuilds; add pre-merge CLI dry run #documentation ref:GH#34864 pr:#34865 completed:2026-10-17
 
-- [ ] t18707 fix(pulse): run stale-blocked sweep before partial-continuation revisit and stamp each pass separately #bug ref:GH#34894
+- [x] t18707 fix(pulse): run stale-blocked sweep before partial-continuation revisit and stamp each pass separately #bug ref:GH#34894 pr:#34895 completed:2026-10-17
 
 ## In Progress
 
