@@ -102,6 +102,11 @@ Enabled `repeat:` routines in registered repositories are normally evaluated by
 the shared supervisor Pulse. Their schedule definition and enabled state live in
 the repository `TODO.md`; they do not receive a dedicated launchd or systemd unit.
 Check the Pulse service plus the routine state file when diagnosing a missed run.
+Pulse-owned routines start at the first `evaluate_routines` pass after their
+scheduled slot, so they may be late by up to one full pulse cycle on a busy
+host. Treat a run as missed only if a pass after the slot did not mark it due;
+check `rg "Stage start: evaluate_routines|routine <id> is due" ~/.aidevops/logs/pulse.log`.
+Platform-unit routines (launchd/systemd) are not affected.
 
 Only routines explicitly documented as persistent or externally scheduled use a
 dedicated platform unit. Generated routine descriptions name that unit when one
