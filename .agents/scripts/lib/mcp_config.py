@@ -120,14 +120,19 @@ def _register_playwriter(config, bun_path):
     config['tools']['playwriter_*'] = False
 
 
-def _is_legacy_outscraper_command(command):
-    """Return whether command is the unpinned bash wrapper generated before GH#34620."""
-    if not isinstance(command, list) or len(command) != 3:
+def _is_generated_outscraper_command(command):
+    """Recognize previously generated binary and pinned/unpinned bash launchers."""
+    if not isinstance(command, list):
+        return False
+    if len(command) == 1 and isinstance(command[0], str):
+        return os.path.basename(command[0]) == 'outscraper-mcp-server'
+    if len(command) != 3:
         return False
     if command[:2] != ["bash", "-c"]:
         return False
     script = command[2]
-    return isinstance(script, str) and script.endswith(" " + LEGACY_OUTSCRAPER_UV_RUN)
+    suffixes = (" " + LEGACY_OUTSCRAPER_UV_RUN, " " + OUTSCRAPER_UV_RUN)
+    return isinstance(script, str) and script.endswith(suffixes)
 
 
 def _register_outscraper(config):
@@ -148,14 +153,7 @@ def _register_outscraper(config):
         has_key = any(isinstance(entry.get(field), dict) and
                       'OUTSCRAPER_API_KEY' in entry[field]
                       for field in ('env', 'environment'))
-        pinned_wrapper = (isinstance(command, list) and len(command) == 3 and
-                          command[:2] == ['bash', '-c'] and
-                          isinstance(command[2], str) and
-                          command[2].endswith(' ' + OUTSCRAPER_UV_RUN))
-        direct_binary = (isinstance(command, list) and len(command) == 1 and
-                         isinstance(command[0], str) and
-                         os.path.basename(command[0]) == 'outscraper-mcp-server')
-        if has_key or _is_legacy_outscraper_command(command) or pinned_wrapper or direct_binary:
+        if has_key or _is_generated_outscraper_command(command):
             entry['command'] = launcher
             for field in ('env', 'environment'):
                 if isinstance(entry.get(field), dict):
