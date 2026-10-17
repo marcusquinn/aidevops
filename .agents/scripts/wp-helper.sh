@@ -11,6 +11,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/wp-helper-change-plan.sh"
 
 set -euo pipefail
 
@@ -669,6 +670,9 @@ Commands:
   --config                            Show active config file and tenant
   --all <wp-cli-command>              Run command on ALL sites
   --category <cat> <wp-cli-command>   Run command on sites in category
+  --change-plan <site> PLAN.json [apply | restore BACKUP.json] [--user=<id>]
+                                      Dry run (default), apply or restore a reviewed
+                                      change plan (tools/wordpress/wp-change-plan.md)
   <site> <wp-cli-command>             Run command on specific site
   help                                Show this help
 
@@ -843,6 +847,10 @@ main() {
 		fi
 		shift 2
 		run_on_category "$category" "$@"
+		;;
+	--change-plan)
+		shift
+		cmd_change_plan "$@" || return $?
 		;;
 	help | --help | -h)
 		show_help

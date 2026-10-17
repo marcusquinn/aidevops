@@ -47,7 +47,10 @@ wp-helper.sh --list                          # List all sites
 wp-helper.sh production plugin list          # Run on specific site
 wp-helper.sh --category client core version  # Run on category
 wp-helper.sh --all plugin update --all       # Run on ALL sites
+wp-helper.sh --change-plan production plan.json  # Reviewed post/term changes (dry run)
 ```
+
+**Reviewed content changes:** for field-level edits to live posts and terms, use a change plan (dry run, backup, read-back, restore): `wp-change-plan.md`.
 
 **SSH Access by Hosting Type**:
 

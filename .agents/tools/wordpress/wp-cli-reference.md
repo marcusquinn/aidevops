@@ -249,6 +249,8 @@ wp search-replace 'https://old.com' 'https://new.com' [--dry-run]
 wp cache flush && wp rewrite flush
 ```
 
+For reviewed field-level changes to posts and terms on live sites (titles, slugs, meta, ACF/SCF fields, terms, term deletions), use `wp-helper.sh --change-plan`. It does a dry run, a JSON backup, read-back and conditional restore: see `wp-change-plan.md`.
+
 ## Security
 
 ```bash
