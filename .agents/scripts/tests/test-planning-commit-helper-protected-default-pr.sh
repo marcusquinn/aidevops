@@ -119,7 +119,11 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo" ]]; then
 fi
 
 if [[ "${1:-}" == "api" && "${2:-}" == "/repos/example/repo/issues/1" ]]; then
-	printf 'origin:interactive\n'
+	if grep -q '<!-- aidevops:origin:worker -->' "${GH_STUB_BODY:?}"; then
+		printf 'origin:worker\n'
+	else
+		printf 'origin:interactive\n'
+	fi
 	exit 0
 fi
 
