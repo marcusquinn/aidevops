@@ -24,6 +24,7 @@ tools:
 - **Recommended config**: `git config --global merge.conflictstyle diff3` (or zdiff3 on Git 2.35+) + `git config --global rerere.enabled true`
 - **Conflict markers**: `<<<<<<<` (ours), `|||||||` (base, with diff3), `=======`, `>>>>>>>` (theirs)
 - **Strategy options**: `-Xours` (our side wins conflicts), `-Xtheirs` (their side wins), `-Xignore-space-change`
+- **Rebase swaps sides**: during `git rebase` (including `git pull --rebase`), `ours` (`--ours`, `-Xours`) is the upstream plus commits already replayed, and `theirs` (`--theirs`, `-Xtheirs`) is your commit being replayed. Merge and cherry-pick keep the usual meaning (`ours` = current `HEAD`).
 - **Resolution rules**: Diff is truth, surgical resolution, structure vs values, check migrations, escalate ambiguity
 
 **Decision Tree** — when you hit a conflict:
@@ -36,13 +37,14 @@ Conflict detected
   |
   +-- Single file, clear which side wins?
   |     YES --> git checkout --ours/--theirs <file> && git add <file>
+  |             (rebase: --ours = upstream, --theirs = your commit)
   |
   +-- Code conflict needing both changes?
   |     YES --> Edit file manually, combine both intents, git add <file>
   |
   +-- Binary or lock file?
         YES --> git checkout --ours/--theirs <file> && git add <file>
-               (regenerate lock file if needed)
+               (regenerate lock file if needed; rebase swaps --ours/--theirs)
 ```
 
 **Quick commands**:
@@ -55,8 +57,8 @@ git log --left-right HEAD...MERGE_HEAD  # commits on each side
 git diff --ours/--theirs/--base     # compare vs each side
 git ls-files -u                     # list unmerged files with stage numbers
 git checkout --conflict=diff3 <f>   # re-show markers with base version
-git checkout --ours <file>          # take our version
-git checkout --theirs <file>        # take their version
+git checkout --ours <file>          # take our version (rebase: upstream)
+git checkout --theirs <file>        # take their version (rebase: your commit)
 git add <file>                      # mark as resolved
 git merge --continue                # finish merge (or rebase/cherry-pick --continue)
 ```
@@ -85,11 +87,13 @@ git checkout --conflict=diff3 <file>            # re-generate markers on already
 
 **Important**: `-Xours` (strategy option) differs from `-s ours` (strategy). The strategy discards the other branch entirely; the option only resolves conflicts in your favor while still merging non-conflicting changes.
 
+**Rebase reverses the table**: `git rebase -Xours` lets the upstream side win; `git rebase -Xtheirs` lets your replayed commits win. The "When to use" column describes merges.
+
 ### Per-file resolution
 
 ```bash
-git checkout --ours <file>          # keep your version
-git checkout --theirs <file>        # keep their version
+git checkout --ours <file>          # merge: keep your version; rebase: keep upstream
+git checkout --theirs <file>        # merge: keep their version; rebase: keep your commit
 git add <file>
 
 # Manual 3-way merge (extract all versions)
@@ -114,7 +118,7 @@ git add <resolved-files> && git merge --continue
 
 ### Rebase
 
-Rebase replays commits one at a time — you may resolve multiple conflicts.
+Rebase replays commits one at a time — you may resolve multiple conflicts. Sides are swapped while rebasing: `--ours` is the upstream plus commits already replayed, and `--theirs` is the commit being replayed. Keep your change with `git checkout --theirs <file>`; keep upstream with `git checkout --ours <file>`.
 
 ```bash
 git rebase main
@@ -162,7 +166,7 @@ When `gh pr update-branch` cannot resolve a worker PR, `pulse-merge-feedback.sh`
 | `LOCKFILE` | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb` | Accept one side, regenerate with the package manager. Never hand-merge. |
 | `I18N_JSON` | `*/translations/*/*.json` | Union-merge with `jq -s '.[0] * .[1]'`. |
 | `GENERATED` | `*_snapshot.json`, `*.generated.ts`, `*.generated.graphql` | Delete and regenerate via the project toolchain. |
-| `ADD_ADD_NEW_FILE` | `git status --porcelain` reports `AA` | During rebase, `git checkout --ours <path> && git add <path> && git rebase --continue`; append unique additions later. Never cherry-pick the same add/add conflict. |
+| `ADD_ADD_NEW_FILE` | `git status --porcelain` reports `AA` | During rebase, `git checkout --ours <path> && git add <path> && git rebase --continue` keeps the default branch's copy (`--ours` is the upstream while rebasing); append your unique additions in a follow-up commit. Never cherry-pick the same add/add conflict. |
 | `CODE` | Everything else | Semantic hand-resolution; no pattern block emitted. |
 
 Add a pattern by editing `.agents/configs/conflict-patterns.conf`, adding a case to `.agents/scripts/tests/test-conflict-pattern-detection.sh`, then running that test plus `shellcheck .agents/scripts/pulse-merge-feedback.sh`.
