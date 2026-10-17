@@ -31,9 +31,10 @@ git_network_attempt() {
 		return 0
 	fi
 	LC_ALL=C sed -E \
-		-e 's|([[:alpha:]][[:alnum:]+.-]*://)[^/@[:space:]]+@|\1[REDACTED]@|g' \
+		-e 's/[[:cntrl:]]//g' \
+		-e 's|([[:alpha:]][[:alnum:]+.-]*://)[^/[:space:]]+@|\1[REDACTED]@|g' \
 		-e 's/(gh[pousr]_[[:alnum:]_]+|github_pat_[[:alnum:]_]+)/[REDACTED]/g' \
-		-e 's/[[:cntrl:]]//g' "$directory/network-stderr" |
+		"$directory/network-stderr" |
 		awk 'NF {last=$0} END {print substr(last == "" ? "git command failed without stderr" : last, 1, 200)}' >"$directory/network-reason"
 	rm -f "$directory/network-stderr"
 	return 1

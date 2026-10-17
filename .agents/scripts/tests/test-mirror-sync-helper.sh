@@ -125,9 +125,13 @@ git() {
 			return 0
 		fi
 		if [[ "${EMPTY_ERROR:-0}" == 1 ]]; then return 1; fi
+		if [[ "${LONG_ERROR:-0}" == 1 ]]; then
+			printf '%0300d\n' 0 >&2
+			return 1
+		fi
 		printf 'earlier error must not be selected\n' >&2
 		if [[ " $* " == *'credential.helper=!gh auth git-credential'* ]]; then
-			printf 'fatal: retry https://user:secret@example.invalid/repo ghp_fakeToken github_pat_fakeToken\n\n' >&2
+			printf 'fatal: retry https://user:\rsecret@example.invalid/repo ghp_\rfakeToken github_pat_\rfakeToken\n\n' >&2
 		else
 			printf 'fatal: initial https://user:secret@example.invalid/repo gho_fakeToken\n\n' >&2
 		fi
@@ -166,8 +170,13 @@ unset FAIL_FETCH
 export EMPTY_ERROR=1
 if bash "$SCRIPT" sync >"$ROOT/result"; then printf 'expected empty-stderr failure\n' >&2; exit 1; fi
 grep -q 'git command failed without stderr' "$ROOT/result"
-unset EMPTY_ERROR GH_AUTH_OK
+unset EMPTY_ERROR
+export LONG_ERROR=1
+if bash "$SCRIPT" sync >"$ROOT/result"; then printf 'expected long-stderr failure\n' >&2; exit 1; fi
+jq -e '.["private/mirror"].detail | split(": ")[1] | length == 200' "$STATE" >/dev/null
+unset LONG_ERROR GH_AUTH_OK
 unset -f git gh
+printf 'mirror sync and diagnostic assertions passed\n'
 
 # Exercise setup's selection and legacy-label collision decisions without
 # installing a real user scheduler or modifying the operator's HOME.
