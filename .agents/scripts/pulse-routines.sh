@@ -188,6 +188,27 @@ _routine_retry_blocked() {
 	[[ -n "$attempt_iso" ]] || return 1
 	attempt_epoch=$(date -d "$attempt_iso" +%s 2>/dev/null) || attempt_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$attempt_iso" +%s 2>/dev/null) || return 1
 	now_epoch=$(_routine_now_epoch)
+	if [[ "$status" == "running" && -d "${ROUTINE_STATE_FILE}.${routine_id}.runner" ]]; then
+		# Claim only dead locks older than the launch grace. This also serializes
+		# recovery against detached runners and another scheduler's recovery.
+		local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
+		if _routine_claim_runner_lock "$lock_dir"; then
+			# A finishing runner may have removed its lock since our state read.
+			if ! jq -e --arg id "$routine_id" --arg ts "$attempt_iso" \
+				'.[$id].last_status == "running" and .[$id].last_attempt == $ts' "$ROUTINE_STATE_FILE" >/dev/null; then
+				rm -f -- "$lock_dir/pid-${BASHPID:-$$}"
+				rmdir -- "$lock_dir" 2>/dev/null || true
+				return 0
+			fi
+			_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$attempt_epoch" "routine-${routine_id}"
+			rm -f -- "$lock_dir/pid-${BASHPID:-$$}"
+			rmdir -- "$lock_dir" 2>/dev/null || true
+			status="$_ROUTINE_STATUS_FAILURE"
+			attempt_epoch="$now_epoch"
+		else
+			return 0
+		fi
+	fi
 	case "$status" in
 	running) [[ $((now_epoch - attempt_epoch)) -lt "$running_seconds" ]] ;;
 	failure)
@@ -240,11 +261,48 @@ _routine_finalize_terminal() {
 
 _routine_dispatch_agent() {
 	local routine_id="$1"
+	local module_path="${BASH_SOURCE[0]}"
+	local runner_log="${LOGFILE}.routine-${routine_id}.log"
+	mkdir -p "$(dirname "$ROUTINE_STATE_FILE")" || return 1
+	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER HEADLESS_RUNTIME_HELPER
+	if command -v setsid >/dev/null 2>&1; then
+		# shellcheck disable=SC2016 # Expand positional arguments in the child.
+		setsid nohup bash -c 'source "$1" && shift && _routine_run_detached_agent "$@"' \
+			_ "$module_path" "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	elif command -v perl >/dev/null 2>&1; then
+		perl -MPOSIX -e 'POSIX::setsid() >= 0 or exit 126; exec @ARGV or exit 127' nohup bash -c \
+			'source "$1" && shift && _routine_run_detached_agent "$@"' \
+			_ "$module_path" "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		# Job control gives the child its own process group even without setsid.
+		local monitor_was_enabled=false
+		[[ "$-" != *m* ]] || monitor_was_enabled=true
+		set -m
+		# shellcheck disable=SC2016 # Expand positional arguments in the child.
+		nohup bash -c 'source "$1" && shift && _routine_run_detached_agent "$@"' \
+			_ "$module_path" "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		[[ "$monitor_was_enabled" == true ]] || set +m
+	fi
+	local runner_pid=$!
+	disown "$runner_pid" 2>/dev/null || true
+	echo "[pulse-wrapper] routine ${routine_id}: detached agent runner pid ${runner_pid}" >>"$LOGFILE"
+	return 0
+}
+
+_routine_run_detached_agent() {
+	local routine_id="$1"
 	local description="$2"
 	local agent_name="$3"
 	local dispatch_dir="$4"
 	local session_key="routine-${routine_id}"
 	local started_epoch=0
+	local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
+	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
+	local exit_code=0
+	local status="$_ROUTINE_STATUS_SUCCESS"
+	_routine_claim_runner_lock "$lock_dir" || return 0
+	# shellcheck disable=SC2064 # Expand function-local paths before EXIT.
+	trap "rm -f -- $(printf '%q' "$pid_file"); rmdir -- $(printf '%q' "$lock_dir") 2>/dev/null || true" EXIT
 	[[ -n "$agent_name" ]] || agent_name="Build+"
 	started_epoch=$(date +%s)
 	_routine_update_state "$routine_id" "running"
@@ -255,25 +313,23 @@ _routine_dispatch_agent() {
 		return 1
 	fi
 	echo "[pulse-wrapper] routine ${routine_id}: dispatching agent '${agent_name}' for '${description}'" >>"$LOGFILE"
-	(
-		local exit_code=0
-		local status="$_ROUTINE_STATUS_SUCCESS"
-		"$HEADLESS_RUNTIME_HELPER" run \
-			--role worker \
-			--session-key "$session_key" \
-			--dir "$dispatch_dir" \
-			--agent "$agent_name" \
-			--title "Routine ${routine_id}: ${description}" \
-			--prompt "Execute routine ${routine_id}: ${description}" >>"$LOGFILE" 2>&1 || exit_code=$?
-		if [[ "$exit_code" -ne 0 ]]; then
-			status="$_ROUTINE_STATUS_FAILURE"
-			echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully" >>"$LOGFILE"
-		fi
-		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key"
-		return 0
-	) &
+	"$HEADLESS_RUNTIME_HELPER" run \
+		--role worker \
+		--session-key "$session_key" \
+		--dir "$dispatch_dir" \
+		--agent "$agent_name" \
+		--title "Routine ${routine_id}: ${description}" \
+		--prompt "Execute routine ${routine_id}: ${description}" >>"$LOGFILE" 2>&1 || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]]; then
+		status="$_ROUTINE_STATUS_FAILURE"
+		echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully" >>"$LOGFILE"
+	fi
+	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key"
+	rm -f -- "$pid_file"
+	rmdir -- "$lock_dir" 2>/dev/null || true
+	trap - EXIT
 	return 0
 }
 
@@ -302,10 +358,39 @@ _routine_acquire_runner_lock() {
 }
 
 #######################################
-# Run one validated script routine outside Pulse's process group, then record
-# its terminal lifecycle state. Only the child that acquires the per-routine
-# directory lock records `running`; duplicate dispatches leave state untouched.
+# Claim a runner lock, reclaiming dead owners only after the launch grace.
 #######################################
+_routine_claim_runner_lock() {
+	local lock_dir="$1"
+	local owner_pid=""
+	local owner_file=""
+	local lock_epoch=0
+	local now_epoch=0
+
+	if [[ -e "$lock_dir" ]] || ! _routine_acquire_runner_lock "$lock_dir"; then
+		for owner_file in "$lock_dir"/pid-*; do
+			[[ -f "$owner_file" ]] || continue
+			owner_pid="${owner_file##*/pid-}"
+			if [[ ! "$owner_pid" =~ ^[1-9][0-9]*$ ]] || kill -0 "$owner_pid" 2>/dev/null; then
+				return 1
+			fi
+		done
+		lock_epoch=$(_file_mtime_epoch "$lock_dir") || lock_epoch=0
+		now_epoch=$(date +%s)
+		# Fail closed when age cannot be determined; allow the mkdir-to-PID gap.
+		if [[ ! "$lock_epoch" =~ ^[0-9]+$ || "$lock_epoch" -eq 0 || $((now_epoch - lock_epoch)) -lt 60 ]]; then
+			return 1
+		fi
+		# PID-specific names prevent a losing reclaimer from unlinking a new
+		# owner's marker. rmdir refuses any populated replacement lock.
+		[[ -z "$owner_pid" ]] || rm -f -- "$lock_dir/pid-$owner_pid"
+		if ! _routine_acquire_runner_lock "$lock_dir"; then
+			return 1
+		fi
+	fi
+	return 0
+}
+
 _routine_run_detached_script() {
 	local routine_id="$1"
 	local script_path="$2"
@@ -317,35 +402,8 @@ _routine_run_detached_script() {
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local exit_code=0
 	local deferred_until=0
-	local owner_pid=""
-	local owner_file=""
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
-	local lock_epoch=0
-	local now_epoch=0
-
-	if [[ -e "$lock_dir" ]] || ! _routine_acquire_runner_lock "$lock_dir"; then
-		for owner_file in "$lock_dir"/pid-*; do
-			[[ -f "$owner_file" ]] || continue
-			owner_pid="${owner_file##*/pid-}"
-			if [[ ! "$owner_pid" =~ ^[1-9][0-9]*$ ]] || kill -0 "$owner_pid" 2>/dev/null; then
-				echo "[pulse-wrapper] routine ${routine_id}: detached runner already active" >>"$LOGFILE"
-				return 0
-			fi
-		done
-		lock_epoch=$(_file_mtime_epoch "$lock_dir") || lock_epoch=0
-		now_epoch=$(date +%s)
-		# Fail closed when age cannot be determined; allow the mkdir-to-PID gap.
-		if [[ ! "$lock_epoch" =~ ^[0-9]+$ || "$lock_epoch" -eq 0 || $((now_epoch - lock_epoch)) -lt 60 ]]; then
-			return 0
-		fi
-		# PID-specific names prevent a losing reclaimer from unlinking a new
-		# owner's marker. rmdir refuses any populated replacement lock.
-		[[ -z "$owner_pid" ]] || rm -f -- "$lock_dir/pid-$owner_pid"
-		if ! _routine_acquire_runner_lock "$lock_dir"; then
-			return 0
-		fi
-		echo "[pulse-wrapper] routine ${routine_id}: reclaimed stale runner lock" >>"$LOGFILE"
-	fi
+	_routine_claim_runner_lock "$lock_dir" || return 0
 	# Expand the path now: the function-local variable is gone at shell EXIT.
 	# shellcheck disable=SC2064
 	trap "rm -f -- $(printf '%q' "$pid_file"); rmdir -- $(printf '%q' "$lock_dir") 2>/dev/null || true" EXIT
