@@ -942,7 +942,7 @@ _dsi_capture_claim_lease() {
 	local claim_output="$1"
 	local won_line="" word="" key="" value="" lease_id="" device=""
 	local -a words=()
-	won_line=$(printf '%s\n' "$claim_output" | grep -m1 '^CLAIM_WON: ' || true)
+	won_line=$(printf '%s\n' "$claim_output" | awk '/^CLAIM_WON: / && !f {print; f=1}' || true)
 	read -r -a words <<<"$won_line"
 	for word in "${words[@]}"; do
 		key="${word%%=*}"
