@@ -98,7 +98,7 @@ if unregistered_output=$(AIDEVOPS_REPOS_CONFIG="${ROOT}/missing-repos.json" AIDE
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL unregistered GitHub recovery was accepted\n'
 	exit 1
-elif [[ "$unregistered_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
+elif [[ "$unregistered_output" == *"BLOCKED: repository is not registered in repos.json; register it with: aidevops repos add --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY"* ]] &&
 	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS ordinary recovery rejects an unregistered GitHub repository\n'
 else

@@ -1197,6 +1197,10 @@ else
 		printf 'BLOCKED: registered canonical repository identity is invalid or ambiguous\n' >&2
 		exit 1
 	}
+	if [[ -z "$registered_slug" ]]; then
+		printf 'BLOCKED: repository is not registered in repos.json; register it with: aidevops repos add --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY\n' >&2
+		exit 1
+	fi
 	expected_slug="$registered_slug"
 fi
 if ! canonical_remote=$(resolve_github_remote \
