@@ -21,7 +21,7 @@ on:
     secrets:
       SYNC_PAT:
         description: Owner-authorised token for stargazer history and protected pushes
-        required: true
+        required: false
 
 jobs:
   update:
@@ -34,21 +34,27 @@ jobs:
       contents: write
     steps:
       - name: Require owner-authorised repository token
+        id: token
         env:
           SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::error::SYNC_PAT is required because GitHub restricts timestamped stargazer history to repository collaborators."
-            exit 1
+            echo "present=false" >>"$GITHUB_OUTPUT"
+            echo "::warning::Star History skipped: SYNC_PAT is not set. GitHub restricts timestamped stargazer history to repository collaborators. Fix: create a fine-grained PAT limited to this repository with Contents read/write and store it as the SYNC_PAT repository secret (see: aidevops --help sync-pat)."
+            echo "Star History skipped: SYNC_PAT repository secret is not set. Create a fine-grained PAT (this repository only, Contents read/write) and store it as SYNC_PAT; see aidevops --help sync-pat." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          echo "present=true" >>"$GITHUB_OUTPUT"
 
       - name: Checkout repository
+        if: steps.token.outputs.present == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           token: ${{ secrets.SYNC_PAT }}
           fetch-depth: 1
 
       - name: Checkout aidevops chart generator
+        if: steps.token.outputs.present == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository }}
@@ -57,6 +63,7 @@ jobs:
           fetch-depth: 1
 
       - name: Generate static Star History chart
+        if: steps.token.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
@@ -65,6 +72,7 @@ jobs:
             --output docs/assets/star-history.svg
 
       - name: Commit changed chart
+        if: steps.token.outputs.present == 'true'
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |

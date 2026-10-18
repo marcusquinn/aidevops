@@ -53,6 +53,18 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local name="$1"
+	local file="$2"
+	local pattern="$3"
+	if grep -Fq -- "$pattern" "$file"; then
+		fail "$name" "unexpected pattern: $pattern"
+		return 0
+	fi
+	pass "$name"
+	return 0
+}
+
 test_deterministic_chart() {
 	local temp_dir="$1"
 	local fixture="$temp_dir/history.json"
@@ -114,7 +126,18 @@ test_workflow_contract() {
 	assert_contains "workflow requires owner-authorised token" "$WORKFLOW" "$token_contract"
 	assert_contains "workflow generates only the static asset" "$WORKFLOW" "docs/assets/star-history.svg"
 	assert_contains "reusable workflow uses caller repository identity" "$REUSABLE_WORKFLOW" 'GITHUB_REPOSITORY'
-	assert_contains "reusable workflow requires SYNC_PAT" "$REUSABLE_WORKFLOW" 'required: true'
+	assert_contains "reusable workflow declares optional SYNC_PAT" "$REUSABLE_WORKFLOW" 'required: false'
+	assert_not_contains "reusable workflow no longer requires SYNC_PAT" "$REUSABLE_WORKFLOW" 'required: true'
+	assert_contains "missing SYNC_PAT emits a warning" "$REUSABLE_WORKFLOW" '::warning::Star History skipped: SYNC_PAT is not set'
+	assert_not_contains "missing SYNC_PAT is not an error" "$REUSABLE_WORKFLOW" '::error::SYNC_PAT'
+	assert_contains "token probe exposes presence output" "$REUSABLE_WORKFLOW" 'present=false'
+	local gated
+	gated=$(grep -c "if: steps.token.outputs.present == 'true'" "$REUSABLE_WORKFLOW" || true)
+	if [[ "$gated" -eq 4 ]]; then
+		pass "all four token-using steps are gated on token presence"
+	else
+		fail "all four token-using steps are gated on token presence" "found $gated gated steps"
+	fi
 	assert_contains "caller schedules weekly refresh" "$CALLER_TEMPLATE" "cron: '17 3 * * 0'"
 	assert_contains "caller maps owner-authorised token" "$CALLER_TEMPLATE" "$caller_token_contract"
 	assert_contains "docs sync watches chart updates" "$DOCS_WORKFLOW" "'docs/assets/star-history.svg'"
