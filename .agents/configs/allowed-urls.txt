@@ -69,6 +69,7 @@ api.infraforge.ai
 api.instantly.ai
 api.leadsforge.ai
 api.linkedin.com
+api.linkup.so
 api.linode.com
 api.machines.dev
 api.manyreach.com
@@ -122,6 +123,7 @@ app.factory.ai
 app.heygen.com
 app.langwatch.ai
 app.leadsforge.ai
+app.linkup.so
 app.neuronwriter.com
 app.outscraper.com
 app.revenuecat.com
@@ -316,7 +318,9 @@ docs.daytona.io
 docs.dev.runwayml.com
 docs.digitalocean.com
 docs.docker.com
+docs.exa.ai
 docs.factory.ai
+docs.firecrawl.dev
 docs.fireworks.ai
 docs.gitea.io
 docs.github.com
@@ -328,6 +332,7 @@ docs.higgsfield.ai
 docs.jj-vcs.dev
 docs.langflow.org
 docs.langwatch.ai
+docs.linkup.so
 docs.litellm.ai
 docs.maestro.dev
 docs.manyreach.com
@@ -350,6 +355,7 @@ docs.socket.dev
 docs.sonarcloud.io
 docs.sonarqube.org
 docs.stagehand.dev
+docs.tavily.com
 docs.together.ai
 docs.unstract.com
 docs.urbit.org
@@ -505,6 +511,7 @@ mcp.cloudflare.com
 mcp.context7.com
 mcp.grep.app
 mcp.linear.app
+mcp.linkup.so
 mcp.provider.com
 mcp.sentry.dev
 mcp.socket.dev

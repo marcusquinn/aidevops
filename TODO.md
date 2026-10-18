@@ -1707,6 +1707,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18713 fix(dirty-pr-sweep): TODO.md-only auto-rebase never succeeds — -X union is not a strategy option #auto-dispatch #bug ref:GH#34947 pr:#34962 completed:2026-10-18
 
+- [ ] t18716 Add Linkup web search API docs and AI web search API comparison (Tavily, Exa, Firecrawl) #auto-dispatch #feat ref:GH#34989 -> [todo/tasks/t18716-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
