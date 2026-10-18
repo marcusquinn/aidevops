@@ -393,9 +393,11 @@ test_late_write_after_compact_archive_preserves_worktree() {
 		fi
 		return 1
 	}
+	# The guard also runs before the archive; append so the call after the
+	# archive changes content (an identical rewrite loses nothing).
 	worktree_removal_guard() {
 		local guarded_path="$1"
-		printf 'late owner write\n' >"${guarded_path}/late-owner.txt"
+		printf 'late owner write\n' >>"${guarded_path}/late-owner.txt"
 		return 0
 	}
 
@@ -980,6 +982,12 @@ test_stale_dirty_attributed_worker_archives_before_removal() {
 	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "8 days ago" || return 1
 	git -C "$wt_path" reset -q --hard main || return 1
 	printf 'unfinished dirty worker state\n' >"$wt_path/unfinished.txt"
+	# The reset rewrites HEAD and its reflog, which is real idle-clock
+	# activity (GH#34905); restore the 8-day idle evidence afterwards.
+	local idle_stamp
+	idle_stamp=$(date -u -v-8d +%Y%m%d%H%M 2>/dev/null ||
+		date -u -d "8 days ago" +%Y%m%d%H%M) || return 1
+	backdate_worktree_activity "$wt_path" "$idle_stamp" || return 1
 	source_pulse_cleanup_with_stubs || return 1
 
 	local now_epoch
@@ -1318,8 +1326,18 @@ test_stale_profile_publication_intent_is_removed() {
 
 TEST_ROOT=$(mktemp -d)
 trap teardown EXIT
+# Git reports canonical worktree paths and the managed-lifetime fence refuses
+# any other form, so resolve macOS /var -> /private/var like production does.
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs"
+# Production always has an ownership registry; without one the managed
+# lifetime fence fails closed before any archive is attempted. A subshell
+# keeps the registry library from replacing this file's stubs.
+(
+	# shellcheck source=../shared-worktree-registry.sh
+	source "${SCRIPT_DIR}/../shared-worktree-registry.sh" && _init_registry_db
+) || exit 1
 
 echo "=== test-pulse-cleanup-worker-owned-no-pr.sh ==="
 test_recent_metric_blocks_local_commit_no_pr_removal

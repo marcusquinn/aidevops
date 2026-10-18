@@ -31,6 +31,9 @@ print_result() {
 setup() {
 	TEST_DIR=$(mktemp -d)
 	trap teardown EXIT
+	# Git reports canonical worktree paths and the managed-lifetime fence
+	# refuses any other form, so resolve macOS /var -> /private/var.
+	TEST_DIR=$(cd "$TEST_DIR" && pwd -P) || return 1
 	# Maintenance runs must never write session advisories outside the fixture.
 	export AIDEVOPS_ADVISORIES_DIR="${TEST_DIR}/advisories"
 	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
