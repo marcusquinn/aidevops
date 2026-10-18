@@ -139,6 +139,17 @@ source_pulse_cleanup_with_stubs() {
 	source "${SCRIPT_DIR}/../portable-stat.sh"
 	# shellcheck source=../pulse-cleanup.sh
 	source "$PULSE_CLEANUP"
+	# This suite isolates branch/PR policy, not host-wide process visibility.
+	# Real degraded visibility and managed descendants are exercised by the native
+	# managed-lifetime test. Never require sudo to reach the policy under test.
+	capture_worktree_process_cwds() { return 0; }
+	export WORKTREE_REGISTRY_DB="${TEST_ROOT}/registry.db"
+	python3 - "$WORKTREE_REGISTRY_DB" <<'PY'
+import sqlite3
+import sys
+with sqlite3.connect(sys.argv[1]) as connection:
+    connection.execute("CREATE TABLE IF NOT EXISTS worktree_owners (worktree_path TEXT PRIMARY KEY, owner_pid INTEGER, task_id TEXT, owner_session TEXT)")
+PY
 	return 0
 }
 
@@ -554,11 +565,7 @@ test_local_commit_no_pr_skips_without_recent_metric() {
 	local rc=0
 	[[ "$cleanup_rc" -eq 1 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-skipped.*local-commits-no-pr.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'owner_guard=clear' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'process_guard=clear' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'pr_state=none' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'recovery_path=branch-preserved-after-' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q "${wt_path}.*idle-unverified-or-pending.*idle_window_secs=86400" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	print_result "local commits/no PR skip without safety proof" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
@@ -583,10 +590,8 @@ test_young_local_commit_logs_not_age_eligible() {
 	local rc=0
 	[[ "$cleanup_rc" -eq 1 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-skipped.*not-age-eligible.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'pr_state=generated-retention' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'commits=1' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "young local commit logs not-age-eligible skip" "$rc" \
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "young local commit requires confirmed idle" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -634,18 +639,12 @@ test_stale_local_commit_no_pr_removes_worktree_preserves_branch() {
 	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
 
 	local rc=0
-	[[ "$cleanup_rc" -eq 0 ]] || rc=1
-	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$cleanup_rc" -eq 1 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
 	[[ "$branch_exists" -eq 0 ]] || rc=1
-	local archive_manifest=""
-	for archive_manifest in "$HOME"/.aidevops/recovery/archives/testowner__testrepo/23076/*/manifest.json; do
-		[[ -f "$archive_manifest" ]] || archive_manifest=""
-	done
-	[[ -n "$archive_manifest" ]] || rc=1
-	[[ -z "$archive_manifest" ]] || [[ -s "${archive_manifest%/manifest.json}/commits.bundle" ]] || rc=1
-	grep -q 'worktree-removed.*archived-failed-worker.*mode=compact-archive' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'recovery_path=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "stale local commits/no PR removes folder while preserving branch" "$rc" \
+	[[ ! -d "$HOME/.aidevops/recovery/archives/testowner__testrepo/23076" ]] || rc=1
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "old local commits remain without confirmed idle" "$rc" \
 		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -679,10 +678,9 @@ test_stale_detached_review_cruft_removes_without_branch() {
 	local cleanup_rc=$?
 
 	local rc=0
-	[[ "$cleanup_rc" -eq 0 ]] || rc=1
-	[[ ! -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-removed.*archived-failed-worker.*mode=compact-archive' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "stale clean detached review worktree is removed as cruft" "$rc" \
+	[[ "$cleanup_rc" -ne 0 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	print_result "detached review name and age do not authorize removal" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -706,12 +704,11 @@ test_stale_clean_auto_worktree_removes_folder_preserves_branch() {
 	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
 
 	local rc=0
-	[[ "$cleanup_rc" -eq 0 ]] || rc=1
-	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$cleanup_rc" -eq 1 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
 	[[ "$branch_exists" -eq 0 ]] || rc=1
-	grep -q 'worktree-removed.*archived-failed-worker.*mode=compact-archive' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'pr_state=generated-clean-cruft' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "stale clean auto worktree removes folder while preserving branch" "$rc" \
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "old generated name does not authorize removal" "$rc" \
 		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -738,8 +735,8 @@ test_clean_generated_worktree_waits_for_archive_threshold() {
 	local rc=0
 	[[ "$cleanup_rc" -ne 0 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-skipped.*not-age-eligible.*pr_state=generated-retention' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "clean generated worker waits for compact archive threshold" "$rc" \
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "clean generated worker waits for confirmed idle" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -763,7 +760,7 @@ test_dirty_auto_under_seven_days_is_preserved() {
 	local rc=0
 	[[ "$cleanup_rc" -eq 1 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-skipped.*local-commits-no-pr.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	print_result "dirty generated auto worktree under 7 days is preserved" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
@@ -771,8 +768,8 @@ test_dirty_auto_under_seven_days_is_preserved() {
 
 test_dirty_auto_over_seven_days_compacts_and_preserves_branch() {
 	local repo_dir="${TEST_ROOT}/repo-dirty-auto-stale"
-	local wt_path="${TEST_ROOT}/aidevops-feature-auto-20260507-190808-gh23082"
-	local branch_name="feature/auto-20260507-190808-gh23082"
+	local wt_path="${TEST_ROOT}/aidevops-feature-auto-20260507-190808-gh23092"
+	local branch_name="feature/auto-20260507-190808-gh23092"
 	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "8 days ago" || return 1
 	printf 'dirty work\n' >"$wt_path/dirty.txt"
 	source_pulse_cleanup_with_stubs || return 1
@@ -788,18 +785,17 @@ test_dirty_auto_over_seven_days_compacts_and_preserves_branch() {
 	local branch_exists=1
 	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
 	local archive_manifest=""
-	for archive_manifest in "$HOME"/.aidevops/recovery/archives/testowner__testrepo/23082/*/manifest.json; do
+	for archive_manifest in "$HOME"/.aidevops/recovery/archives/testowner__testrepo/23092/*/manifest.json; do
 		[[ -f "$archive_manifest" ]] || archive_manifest=""
 	done
 
 	local rc=0
-	[[ "$cleanup_rc" -eq 0 ]] || rc=1
-	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$cleanup_rc" -eq 1 ]] || rc=1
+	[[ -f "$wt_path/dirty.txt" ]] || rc=1
 	[[ "$branch_exists" -eq 0 ]] || rc=1
-	[[ -n "$archive_manifest" ]] || rc=1
-	[[ -z "$archive_manifest" ]] || jq -e '.reason == "failed-worker" and .dirty_state == "dirty"' "$archive_manifest" >/dev/null || rc=1
-	grep -q 'worktree-removed.*archived-failed-worker.*mode=compact-archive' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "dirty generated auto worktree over 7 days is compacted and removed" "$rc" \
+	[[ -z "$archive_manifest" ]] || rc=1
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "old dirty generated worktree remains without confirmed idle" "$rc" \
 		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists archive=$archive_manifest pulse=$(cat "$LOGFILE" 2>/dev/null) log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -817,7 +813,11 @@ test_preserve_forensics_marker_blocks_compact_cleanup() {
 	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-forensics-metrics.jsonl"
 	export AIDEVOPS_HEADLESS_METRICS_FILE
 
-	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	# Isolate this prerequisite stub so it cannot affect subsequent cases.
+	(
+		_pc_confirmed_idle_archive_ready() { return 0; }
+		_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main"
+	) >/dev/null 2>&1
 	local cleanup_rc=$?
 	local rc=0
 	[[ "$cleanup_rc" -ne 0 ]] || rc=1
@@ -845,8 +845,8 @@ test_unclear_archive_attribution_preserves_worktree() {
 	local rc=0
 	[[ "$cleanup_rc" -ne 0 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-skipped.*not-age-eligible.*pr_state=unattributed-retention' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "unattributed worktree waits for long retention" "$rc" \
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "unattributed worktree requires confirmed idle" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -873,10 +873,9 @@ test_old_unattributed_worktree_is_archived_and_removed() {
 		[[ -f "$archive_manifest" ]] || archive_manifest=""
 	done
 	local rc=0
-	[[ "$cleanup_rc" -eq 0 && ! -d "$wt_path" && -n "$archive_manifest" ]] || rc=1
-	[[ -z "$archive_manifest" ]] || jq -e '.issue == null and .reason == "unattributed-worktree"' "$archive_manifest" >/dev/null || rc=1
-	grep -q 'worktree-removed.*archived-unattributed-worktree.*mode=compact-archive' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "old unattributed worktree is compacted and removed" "$rc" \
+	[[ "$cleanup_rc" -ne 0 && -d "$wt_path" && -z "$archive_manifest" ]] || rc=1
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "thirty-day age alone does not authorize archival" "$rc" \
 		"cleanup_rc=$cleanup_rc archive=$archive_manifest"
 	return 0
 }
@@ -904,7 +903,10 @@ test_security_label_blocks_compact_cleanup() {
 	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-security-metrics.jsonl"
 	export AIDEVOPS_HEADLESS_METRICS_FILE
 
-	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	(
+		_pc_confirmed_idle_archive_ready() { return 0; }
+		_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main"
+	) >/dev/null 2>&1
 	local cleanup_rc=$?
 	local rc=0
 	[[ "$cleanup_rc" -ne 0 ]] || rc=1
@@ -936,13 +938,11 @@ test_stale_dirty_attributed_worker_archives_before_removal() {
 		[[ -f "$archive_manifest" ]] || archive_manifest=""
 	done
 	local rc=0
-	[[ "$cleanup_rc" -eq 0 ]] || rc=1
-	[[ ! -d "$wt_path" ]] || rc=1
-	[[ -n "$archive_manifest" ]] || rc=1
-	[[ -z "$archive_manifest" ]] || jq -e '.reason == "failed-worker" and .dirty_state == "dirty"' "$archive_manifest" >/dev/null || rc=1
-	[[ -z "$archive_manifest" ]] || [[ -s "${archive_manifest%/manifest.json}/untracked.tar.gz" ]] || rc=1
-	grep -q 'worktree-removed.*archived-failed-worker.*mode=compact-archive' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "stale dirty attributable worker archives before removal" "$rc" \
+	[[ "$cleanup_rc" -eq 1 ]] || rc=1
+	[[ -f "$wt_path/unfinished.txt" ]] || rc=1
+	[[ -z "$archive_manifest" ]] || rc=1
+	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "attributed dirty work remains without confirmed idle" "$rc" \
 		"cleanup_rc=$cleanup_rc archive=$archive_manifest log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }

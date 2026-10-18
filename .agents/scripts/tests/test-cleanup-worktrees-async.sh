@@ -86,7 +86,7 @@ run_helper_in_isolation() {
 timeout_sec() {
 	local seconds="$1"
 	shift
-	[[ "$seconds" == "120" ]] || return 1
+	case "$seconds" in 90 | 120) ;; *) return 1 ;; esac
 	"$@" || return 1
 	return 0
 }
@@ -175,6 +175,11 @@ printf 'MAINTENANCE_RAN\\n' >>"${maintenance_ran_file}"
 printf '%s\\n' '${maintenance_result}'
 STUB
 	chmod +x "${stub_dir}/worktree-recovery-maintenance-helper.sh"
+	cat >"${stub_dir}/dirty-worktree-backup-helper.sh" <<STUB
+#!/usr/bin/env bash
+printf 'DIRTY_PRUNE_RAN\n' >>"${TEST_DIR}/dirty-prune-ran"
+STUB
+	chmod +x "${stub_dir}/dirty-worktree-backup-helper.sh"
 	cat >"${stub_dir}/worktree-archive-helper.sh" <<STUB
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >>"${TEST_DIR}/compact-retention-ran"
@@ -214,12 +219,12 @@ STUB
 			PATH="$helper_path_prefix" \
 			AIDEVOPS_LOG_DIR="${AIDEVOPS_LOG_DIR:-${TEST_DIR}/custom-logs}" \
 			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || true
 	else
 		env HOME="$TEST_DIR" \
 			PATH="$helper_path_prefix" \
 			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" "$@" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -743,6 +748,26 @@ test_compact_retention_defaults_config_and_failure() {
 # MAIN
 # ============================================================
 
+test_lifecycle_only_never_expires_recovery() {
+	mkdir -p "${TEST_DIR}/scripts"
+	cat >"${TEST_DIR}/scripts/worktree_lifecycle_status.py" <<PY
+from pathlib import Path
+import sys
+assert sys.argv[1:] == ["reconcile", "--max-attempts", "5"]
+Path("${TEST_DIR}/receipt-reconcile-ran").touch()
+print('{"completed": 0}')
+PY
+	AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE=apply run_helper_in_isolation --lifecycle-only
+	if [[ -f "${TEST_DIR}/mock-ran" && -f "${TEST_DIR}/receipt-reconcile-ran" &&
+		! -e "${TEST_DIR}/maintenance-ran" && ! -e "${TEST_DIR}/compact-retention-ran" &&
+		! -e "${TEST_DIR}/dirty-prune-ran" ]]; then
+		print_result "lifecycle-only: reconcile and cleanup run without any recovery expiry" 0
+	else
+		print_result "lifecycle-only: reconcile and cleanup run without any recovery expiry" 1
+	fi
+	return 0
+}
+
 main() {
 	echo "Running cleanup-worktrees-async-helper.sh tests"
 	echo "================================================"
@@ -820,20 +845,15 @@ main() {
 	setup
 	test_archive_outcome_summary_is_logged
 
-	teardown
-	setup
-	test_missing_metadata_prune_runs_after_success
-
-	teardown
-	setup
-	test_missing_metadata_prune_runs_when_cleanup_skipped
-
-	teardown
-	setup
-	test_compact_retention_policy
-	teardown
-	setup
-	test_compact_retention_defaults_config_and_failure
+	local test_case
+	for test_case in test_missing_metadata_prune_runs_after_success \
+		test_missing_metadata_prune_runs_when_cleanup_skipped \
+		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
+		test_lifecycle_only_never_expires_recovery; do
+		teardown
+		setup
+		"$test_case"
+	done
 
 	echo ""
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"

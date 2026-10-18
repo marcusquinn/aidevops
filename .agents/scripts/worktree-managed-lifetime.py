@@ -237,6 +237,13 @@ def inspect_record(record: dict, path: Path, operation: str, extra: list[str], c
         if not extra:
             verify_identity(record, path)
         proof(record, extra[0] if extra else inode(path))
+        if "archive_operation" in record:
+            from worktree_lifetime_archive import require_verified
+            require(record["archive_operation"]["phase"] in ("verified", "removed"),
+                    "archive operation is not removal-ready")
+            if not extra:
+                idle_policy.owner_clear(connection, str(path))
+            require_verified(record, source=not extra)
         return
     verify_identity(record, path)
     if operation in ("cleanup-ready", "idle-ready"):

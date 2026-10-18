@@ -104,6 +104,69 @@ test_restore_commits_dirty_and_untracked() {
 	return 0
 }
 
+test_self_contained_restore() {
+	local paths canonical worktree archive target head_sha rc=0
+	local expected actual snapshotter="${SCRIPT_DIR}/../worktree_archive_snapshot.py"
+	paths=$(setup_repo independent) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	printf 'committed\000binary\n' >"$worktree/binary.dat"
+	git -C "$worktree" add binary.dat || return 1
+	git -C "$worktree" commit -qm binary || return 1
+	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
+	printf 'staged\000binary\n' >"$worktree/binary.dat"
+	chmod +x "$worktree/binary.dat"
+	git -C "$worktree" add binary.dat || return 1
+	printf 'unstaged\000binary\n' >"$worktree/binary.dat"
+	printf 'unusual filename\n' >"$worktree/line"$'\n'"break.txt"
+	ln -s binary.dat "$worktree/local-link"
+	expected=$(python3 "$snapshotter" "$worktree") || return 1
+	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 14 \
+		--reason failed-worker --base-branch main --self-contained \
+		--output-root "$TEST_ROOT/independent-archives") || return 1
+	# Neither the source common repository nor its remote is available to restore.
+	mv "$canonical" "${canonical}-unavailable" || return 1
+	mv "$TEST_ROOT/independent.git" "$TEST_ROOT/independent-unavailable.git" || return 1
+	bash "$HELPER" verify "$archive" >/dev/null || rc=1
+	target="$TEST_ROOT/independent-restored"
+	bash "$HELPER" restore "$archive" --target "$target" >/dev/null || return 1
+	[[ "$(git -C "$target" rev-parse HEAD)" == "$head_sha" ]] || rc=1
+	[[ "$(git -C "$target" ls-files --stage binary.dat)" == 100755* ]] || rc=1
+	cmp "$worktree/binary.dat" "$target/binary.dat" || rc=1
+	cmp "$worktree/line"$'\n'"break.txt" "$target/line"$'\n'"break.txt" || rc=1
+	[[ -L "$target/local-link" && "$(readlink "$target/local-link")" == binary.dat ]] || rc=1
+	[[ ! -e "$target/.git/objects/info/alternates" ]] || rc=1
+	git -C "$target" fsck --full >/dev/null 2>&1 || rc=1
+	actual=$(python3 "$snapshotter" "$target") || return 1
+	[[ "$actual" == "$expected" ]] || rc=1
+	result "self-contained restore needs no source repository and preserves binary data, modes and unusual names" "$rc"
+	return 0
+}
+
+test_snapshot_protects_unsupported_content() {
+	local paths canonical worktree baseline changed rc=0
+	local snapshotter="${SCRIPT_DIR}/../worktree_archive_snapshot.py"
+	paths=$(setup_repo snapshot) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	baseline=$(python3 "$snapshotter" "$worktree") || return 1
+	printf 'changed\n' >>"$worktree/file.txt"
+	changed=$(python3 "$snapshotter" "$worktree") || return 1
+	[[ "$changed" != "$baseline" ]] || rc=1
+	printf '.env\n' >"$worktree/.gitignore"
+	printf 'fixture-not-a-secret\n' >"$worktree/.env"
+	if python3 "$snapshotter" "$worktree" >/dev/null 2>&1; then rc=1; fi
+	rm "$worktree/.env" "$worktree/.gitignore"
+	printf 'file.txt filter=fixture\n' >"$worktree/.gitattributes"
+	if python3 "$snapshotter" "$worktree" >/dev/null 2>&1; then rc=1; fi
+	rm "$worktree/.gitattributes"
+	mkdir "$worktree/empty"
+	if python3 "$snapshotter" "$worktree" >/dev/null 2>&1; then rc=1; fi
+	rmdir "$worktree/empty"
+	git -C "$worktree" update-index --assume-unchanged file.txt || return 1
+	if python3 "$snapshotter" "$worktree" >/dev/null 2>&1; then rc=1; fi
+	result "snapshot detects changes and protects ignored data, filters, empty directories and special index flags" "$rc"
+	return 0
+}
+
 test_verify_detects_tamper() {
 	local paths canonical worktree archive rc=0
 	paths=$(setup_repo verify) || return 1
@@ -155,6 +218,8 @@ test_invalid_arguments() {
 
 test_clean_archive
 test_restore_commits_dirty_and_untracked
+test_self_contained_restore || result "self-contained fixture setup" 1
+test_snapshot_protects_unsupported_content || result "snapshot fixture setup" 1
 test_verify_detects_tamper
 test_prune_modes
 test_invalid_arguments

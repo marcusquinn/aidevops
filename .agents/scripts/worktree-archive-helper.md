@@ -12,12 +12,13 @@
 worktree-archive-helper.sh archive <worktree-path> \
   --repo owner/repo --issue 123 --reason failed-worker \
   --base-branch develop [--base-sha <commit>] \
-  [--output-root <directory>] [--failure-log <file>]
+  [--output-root <directory>] [--failure-log <file>] [--self-contained]
 
 # Verify the manifest, artifact hashes, bundle, and untracked payload safety.
 worktree-archive-helper.sh verify <archive-directory>
 
-# Restore to a new linked worktree path. The target must not exist.
+# Restore to a new path. Self-contained archives create an independent repository;
+# incremental archives create a linked worktree. The target must not exist.
 worktree-archive-helper.sh restore <archive-directory> \
   --target <new-worktree-path>
 
@@ -48,6 +49,12 @@ The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
 
 The manifest records the repository, issue, reason, creation time, source worktree, source Git common directory, branch, `HEAD`, base branch and exact base SHA, default branch, remote branch state, dirty state, artifacts, and restore instructions. `verify` rejects missing, changed, or unsafe artifacts.
 
+`--self-contained` always includes a complete `HEAD` ancestry bundle, including
+when HEAD equals the base. Verification checks it in an empty repository rather
+than borrowing source objects. Restoration needs neither the source repository
+nor its remote and creates no linked-worktree registration. This costs more space
+than an incremental archive; it is not a backup of unrelated branches or refs.
+
 ## Base selection
 
 The caller must select the semantic base in this order:
@@ -61,11 +68,44 @@ Pass that name with `--base-branch`. Pass the already-observed commit with `--ba
 ## Restore workflow
 
 1. Run `verify <archive-directory>` before trusting the archive.
-2. Ensure the source repository named by `source_git_common_dir` still exists. Incremental commit bundles deliberately depend on that repository's base objects.
+2. For incremental archives, ensure the source repository named by `source_git_common_dir` still exists. Their bundles deliberately depend on that repository's base objects. Self-contained archives have no such dependency.
 3. Run `restore ... --target <new-path>`. The helper imports bundled commits, creates a uniquely named linked branch at the archived `HEAD`, applies the staged patch to the index, applies the unstaged patch, and safely expands the untracked payload.
 4. Inspect `git status`, compare the restored `HEAD` and `base_sha`, and publish a branch/PR before deleting either recovery copy.
 
 Restore never overwrites an existing path. If restoration stops after creating a worktree, preserve it for inspection and use normal guarded worktree cleanup after resolving the cause.
+
+### Restore-verified idle archive receipts
+
+`worktree_lifetime_archive.py` adds verification phases to the existing managed
+lifetime record; it does not create a second registry or remove source trees.
+It requires a sealed, generation-bound 24-hour idle authorization, creates a
+self-contained archive, restores it independently, and compares source and
+restored HEAD, index, file contents, modes and symlinks. Native removal proofs
+reject incomplete operations and recheck the archive and source snapshot.
+
+Artifacts and their directory ancestry are fsynced before the durable SQLite
+restore receipt is committed. Filesystems without the required fsync semantics
+are unsupported. Interrupted construction retains one reservation and the source,
+without allocating duplicate copies. A completed restore receipt permits retrying
+identity-checked scratch cleanup. Archive expiry remains a separate opt-in policy.
+The manifest digest is captured before restoration and checked again after
+durability flushing; the receipt refers to that same verified archive.
+
+The capacity preflight includes compressed Git objects, expanded HEAD and index
+contents, and current dirty/untracked file sizes, with conservative working-space
+overhead and a 1 GiB free-space reserve. Insufficient or unavailable capacity
+prevents a new reservation; it never authorizes deleting protected recovery data.
+Concurrent disk consumption can still cause ENOSPC, which preserves the source.
+
+The automatic verifier has a deliberately narrow Git working-tree contract, not
+a full filesystem-backup contract. It preserves standard 0644/0755 files, 0755
+directories and symlink targets owned by the current UID/GID; timestamps are not
+preserved. It protects rather than discards ignored data, ACLs/xattrs, special
+permissions, foreign ownership, hard links, empty directories, nested repositories,
+Git filters/LFS, private worktree refs, reflog-only history, unfinished operations,
+intent-to-add index entries, per-worktree config and uncommitted message drafts. Missing inspection evidence
+also prevents authorization. The cooperative ownership/cgroup fence is required:
+a fingerprint by itself cannot exclude arbitrary unregistered same-user writers.
 
 ### Ignore rules and secrets
 
@@ -89,12 +129,13 @@ Run `bash .agents/scripts/tests/test-worktree-archive-helper.sh` and `python3 .a
 
 ## Pulse cleanup integration
 
-Pulse uses compact archives before removing stale failed workers, terminal
-issue/PR worktrees, and generated auto/review worktrees that have reached their
-cleanup age. Clean local-only commits are bundled as well as dirty tracked,
-staged, and bounded untracked state. The latest retained worker-failure excerpt
-is included when available. Pulse runs `verify` before guarded removal and keeps
-an attached branch as an additional recovery path.
+Ordinary worktrees require 24 hours of confirmed idle in the managed-lifetime
+registry, followed by the independent restoration checks above. Directory age,
+generated branch names, detached HEADs and absent registry rows never substitute
+for idle evidence. Terminal issue/PR worktrees retain their separate existing
+policy path. Clean local-only commits are bundled as well as dirty tracked,
+staged, and bounded untracked state. Pulse verifies recovery before guarded
+removal and keeps an attached branch as an additional recovery path.
 
 Cleanup requires exact repository and issue/PR attribution. It fails closed
 rather than falling back to an in-repository stash when attribution or remote

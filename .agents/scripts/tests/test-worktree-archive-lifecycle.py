@@ -4,6 +4,7 @@
 """Exercise the real compact archive CLI in disposable local Git repositories."""
 
 import datetime
+from contextlib import closing
 import hashlib
 import importlib.util
 import io
@@ -11,7 +12,9 @@ import json
 import os
 from pathlib import Path
 import stat
+import sqlite3
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -19,6 +22,10 @@ from unittest.mock import patch
 
 
 HELPER = Path(__file__).resolve().parents[1] / "worktree-archive-helper.sh"
+sys.path.insert(0, str(HELPER.parent))
+
+import worktree_lifetime_archive as lifecycle
+import worktree_lifecycle_status as lifecycle_status
 
 
 class ArchiveLifecycle(unittest.TestCase):
@@ -301,6 +308,264 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertFalse((target / "cache.ignored").exists())
         self.assertNotEqual(self.helper("restore", archive, "--target", target,
                                        check=False).returncode, 0)
+
+
+    def managed_fixture(self):
+        database = self.root / "registry.db"
+        self.env.update(WORKTREE_REGISTRY_DB=str(database),
+                        AIDEVOPS_WORKTREE_ARCHIVE_ROOT=str(self.archives),
+                        AIDEVOPS_CLEANUP_LOG=str(self.root / "cleanup.log"))
+        managed = lifecycle.managed_module()
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, owner_pid INTEGER, task_id TEXT, owner_session TEXT)")
+            managed.initialize(connection)
+            managed.enroll(connection, self.work)
+            record = managed.load(connection, str(self.work))
+            record["idle"] = {"policy": 1, "since": 100000, "monotonic_since": 100000,
+                              "boot_id": managed.boot_id(), "generation": record["generation"],
+                              "ownership_epoch": 0}
+            managed.save(connection, record)
+            connection.commit()
+        return managed
+
+    def prepare_managed(self, managed):
+        arguments = lifecycle.argparse.Namespace(repo="fixture/repo", issue="1", base="develop")
+        with patch.dict(os.environ, self.env, clear=True), \
+                patch.object(lifecycle.time, "time", return_value=186401), \
+                patch.object(lifecycle.time, "monotonic", return_value=186401):
+            return Path(lifecycle.prepare(managed, self.work, arguments))
+
+    def managed_record(self, managed):
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            return managed.load(connection, str(self.work))
+
+    def test_managed_archive_restores_before_authorizing_removal(self):
+        managed = self.managed_fixture()
+        (self.work / "mixed.txt").write_text("unique dirty work\n")
+        archive = self.prepare_managed(managed)
+        record = self.managed_record(managed)
+        operation = record["archive_operation"]
+        self.assertEqual(operation["phase"], "verified")
+        self.assertFalse((Path(operation["directory"]) / "restore").exists())
+        self.assertTrue(self.work.is_dir())
+        # Reusing verified recovery does not require space for another archive.
+        usage = lifecycle.shutil.disk_usage(self.root)._replace(free=0)
+        with patch.object(lifecycle.shutil, "disk_usage", return_value=usage):
+            self.assertEqual(self.prepare_managed(managed), archive)
+        self.assertEqual(len(list((self.archives / ".lifecycle").iterdir())), 1)
+        proof = HELPER.with_name("worktree-managed-lifetime.py")
+        self.run_command(sys.executable, proof, "proof", self.work)
+        (self.work / "mixed.txt").write_text("changed after verification\n")
+        self.assertNotEqual(self.run_command(sys.executable, proof, "proof", self.work, check=False).returncode, 0)
+        self.assertTrue(self.work.is_dir())
+        (self.work / "mixed.txt").write_text("unique dirty work\n")
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            connection.execute("INSERT INTO worktree_owners VALUES (?, ?, 'worktree-removal', ?)",
+                               (str(self.work), os.getpid(), f"cleanup:{os.getpid()}"))
+            connection.commit()
+        result = self.run_command(sys.executable, proof, "proof", self.work, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"owner remains alive", result.stderr)
+        result = self.run_command(sys.executable, HELPER.with_name("worktree_lifetime_archive.py"),
+                                  "ready", self.work, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"owner remains alive", result.stderr)
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(self.work),))
+            connection.commit()
+        # Only remote policy is stubbed. Receipt reuse, source comparisons,
+        # rootless native removal and final durable receipt use production paths.
+        script = ('source "$1/pulse-cleanup.sh"; LOGFILE="$2"; '
+                  '_pc_branch_archive_pr_state_clear() { return 0; }; '
+                  '_pc_compact_archive_policy_clear() { return 0; }; '
+                  'unregister_worktree() { return 0; }; '
+                  '_pc_handle_confirmed_idle_archive "$3" "$4" feature/fixture 1 0 1 86401 fixture fixture/repo')
+        self.run_command("bash", "-c", script, "_", HELPER.parent, self.root / "pulse.log", self.repo, self.work)
+        self.assertFalse(self.work.exists())
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "removed")
+        self.run_command(sys.executable, HELPER.with_name("worktree_lifetime_archive.py"), "removed", self.work)
+        recovered = self.root / "recovered-after-removal"
+        self.helper("restore", archive, "--target", recovered)
+        self.assertEqual((recovered / "mixed.txt").read_text(), "unique dirty work\n")
+
+    def test_missing_repository_is_not_a_completed_removal_receipt(self):
+        managed = self.managed_fixture()
+        self.prepare_managed(managed)
+        self.git(self.repo, "worktree", "remove", "--force", self.work)
+        offline = self.root / "offline-repository"
+        self.repo.rename(offline)
+        command = (sys.executable, HELPER.with_name("worktree_lifetime_archive.py"), "removed", self.work)
+        try:
+            result = self.run_command(*command, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"repository unavailable", result.stderr)
+            self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "verified")
+        finally:
+            offline.rename(self.repo)
+        self.run_command(*command)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "removed")
+
+    def test_lifecycle_report_is_read_only_and_not_authorization(self):
+        self.managed_fixture()
+        database = Path(self.env["WORKTREE_REGISTRY_DB"])
+        before = database.read_bytes()
+        with patch.dict(os.environ, self.env, clear=True):
+            observed = lifecycle_status.records(10)
+        self.assertEqual(observed["status"], "available")
+        self.assertEqual(observed["total"], 1)
+        self.assertEqual(observed["entries"][0]["source"], "present")
+        self.assertEqual(observed["entries"][0]["evidence"], "recorded-not-revalidated")
+        self.assertEqual(database.read_bytes(), before)
+
+    def test_lifecycle_reconcile_only_finalizes_verified_absent_sources(self):
+        managed = self.managed_fixture()
+        archived = self.prepare_managed(managed)
+        with patch.dict(os.environ, self.env, clear=True):
+            self.assertEqual(lifecycle_status.reconcile(10, 5)["attempted"], 0)
+        self.assertTrue(self.work.is_dir())
+        self.git(self.repo, "worktree", "remove", "--force", self.work)
+        with patch.dict(os.environ, self.env, clear=True):
+            result = lifecycle_status.reconcile(10, 5)
+            repeated = lifecycle_status.reconcile(10, 5)
+        self.assertEqual(result["completed"], 1)
+        self.assertEqual(result["deferred"], 0)
+        self.assertEqual(repeated["attempted"], 0)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "removed")
+        self.assertTrue(archived.is_dir())
+
+    def test_missing_registry_report_does_not_create_evidence(self):
+        missing = self.root / "missing-registry.db"
+        with patch.dict(os.environ, {"WORKTREE_REGISTRY_DB": str(missing)}):
+            observed = lifecycle_status.records(10)
+            result = lifecycle_status.reconcile(10, 5)
+        self.assertEqual(observed["status"], "unavailable")
+        self.assertEqual(result["attempted"], 0)
+        self.assertFalse(missing.exists())
+
+    def test_pr_opened_after_archive_preserves_source(self):
+        managed = self.managed_fixture()
+        archive = self.prepare_managed(managed)
+        marker = self.root / "fresh-policy-observed"
+        script = ('source "$1/pulse-cleanup.sh"; LOGFILE="$2"; checks=0; marker="$5"; '
+                  '_pc_branch_archive_pr_state_clear() { checks=$((checks + 1)); '
+                  'if [[ "$checks" -eq 1 ]]; then return 0; fi; '
+                  'if [[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == 1 && '
+                  '"${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == 1 ]]; then touch "$marker"; fi; return 1; }; '
+                  '_pc_compact_archive_policy_clear() { return 0; }; '
+                  '_pc_handle_confirmed_idle_archive "$3" "$4" feature/fixture 1 0 0 86401 fixture fixture/repo')
+        result = self.run_command("bash", "-c", script, "_", HELPER.parent, self.root / "pulse.log",
+                                  self.repo, self.work, marker, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(marker.is_file())
+        self.assertTrue(self.work.is_dir())
+        self.assertTrue(archive.is_dir())
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "verified")
+
+    def test_interrupted_managed_archive_retains_one_attempt_and_source(self):
+        managed = self.managed_fixture()
+        original = lifecycle.helper
+
+        def interrupted(*arguments):
+            if arguments[0] == "restore":
+                raise KeyboardInterrupt("simulated process loss before restore")
+            return original(*arguments)
+
+        with patch.object(lifecycle, "helper", side_effect=interrupted), self.assertRaises(KeyboardInterrupt):
+            self.prepare_managed(managed)
+        operation = self.managed_record(managed)["archive_operation"]
+        self.assertEqual(operation["phase"], "building")
+        with self.assertRaisesRegex(ValueError, "no duplicate allocation"):
+            self.prepare_managed(managed)
+        self.assertEqual(len(list((self.archives / ".lifecycle").iterdir())), 1)
+        self.assertTrue(self.work.is_dir())
+        proof = HELPER.with_name("worktree-managed-lifetime.py")
+        self.assertNotEqual(self.run_command(sys.executable, proof, "proof", self.work, check=False).returncode, 0)
+
+    def test_verified_scratch_cleanup_failure_is_resumable(self):
+        managed = self.managed_fixture()
+        with patch.object(lifecycle.shutil, "rmtree", side_effect=OSError("scratch cleanup unavailable")), self.assertRaises(OSError):
+            self.prepare_managed(managed)
+        operation = self.managed_record(managed)["archive_operation"]
+        self.assertEqual(operation["phase"], "restore-verified")
+        self.assertTrue((Path(operation["directory"]) / "restore").exists())
+        proof = HELPER.with_name("worktree-managed-lifetime.py")
+        self.assertNotEqual(self.run_command(sys.executable, proof, "proof", self.work, check=False).returncode, 0)
+        archive = self.prepare_managed(managed)
+        self.assertEqual(str(archive), operation["archive"])
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "verified")
+        self.assertFalse((Path(operation["directory"]) / "restore").exists())
+        self.assertTrue(self.work.is_dir())
+
+    def test_failed_durability_never_publishes_removal_receipt(self):
+        managed = self.managed_fixture()
+        with patch.object(lifecycle, "durable_archive", side_effect=OSError("fsync unavailable")), self.assertRaises(OSError):
+            self.prepare_managed(managed)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "blocked")
+        self.assertTrue(self.work.is_dir())
+
+    def test_manifest_change_after_restore_blocks_receipt(self):
+        managed = self.managed_fixture()
+        original = lifecycle.durable_archive
+
+        def changed_manifest(archive):
+            self.update_manifest(archive, reason="changed-after-restore")
+            original(archive)
+
+        with patch.object(lifecycle, "durable_archive", side_effect=changed_manifest), self.assertRaises(ValueError):
+            self.prepare_managed(managed)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "blocked")
+        self.assertTrue(self.work.is_dir())
+
+    def test_intent_to_add_is_preserved_before_sealing(self):
+        managed = self.managed_fixture()
+        (self.work / "intent.txt").write_text("unfinished staging intent\n")
+        self.git(self.work, "add", "--intent-to-add", "intent.txt")
+        with self.assertRaisesRegex(ValueError, "intent-to-add"):
+            self.prepare_managed(managed)
+        self.assertNotIn("archive_operation", self.managed_record(managed))
+        self.assertTrue((self.work / "intent.txt").exists())
+
+    def test_capacity_counts_untracked_payload_before_reservation(self):
+        managed = self.managed_fixture()
+        (self.work / "large-untracked.bin").write_bytes(b"x" * (2 * 1024 ** 2))
+        usage = lifecycle.shutil.disk_usage(self.root)._replace(free=1024 ** 3 + 1024 ** 2)
+        with patch.object(lifecycle.shutil, "disk_usage", return_value=usage), self.assertRaisesRegex(ValueError, "capacity"):
+            self.prepare_managed(managed)
+        self.assertNotIn("archive_operation", self.managed_record(managed))
+        self.assertTrue((self.work / "large-untracked.bin").exists())
+
+    def test_special_metadata_is_protected_before_sealing(self):
+        managed = self.managed_fixture()
+        target = self.work / "mixed.txt"
+        target.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "permissions"):
+            self.prepare_managed(managed)
+        target.chmod(0o644)
+        os.link(target, self.work / "hard-link")
+        with self.assertRaisesRegex(ValueError, "hard links"):
+            self.prepare_managed(managed)
+        self.assertEqual(self.managed_record(managed)["state"], "created")
+        self.assertNotIn("archive_operation", self.managed_record(managed))
+
+    def test_reflog_only_work_is_protected(self):
+        managed = self.managed_fixture()
+        (self.work / "mixed.txt").write_text("unpublished commit\n")
+        self.git(self.work, "commit", "-qam", "unpublished")
+        self.git(self.work, "reset", "--hard", "HEAD~1")
+        with self.assertRaisesRegex(ValueError, "reflog-only"):
+            self.prepare_managed(managed)
+        self.assertNotIn("archive_operation", self.managed_record(managed))
+
+    def test_managed_archive_failure_blocks_native_removal(self):
+        managed = self.managed_fixture()
+        with patch.object(lifecycle, "helper", side_effect=OSError("injected ENOSPC")), self.assertRaises(OSError):
+            self.prepare_managed(managed)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "blocked")
+        guard = HELPER.with_name("audit-worktree-removal-helper.sh")
+        result = self.run_command("bash", "-c", 'source "$1"; _worktree_remove_with_native_git "$2" fixture fixture true',
+                                  "_", guard, self.work, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.work.is_dir())
 
 
 if __name__ == "__main__":

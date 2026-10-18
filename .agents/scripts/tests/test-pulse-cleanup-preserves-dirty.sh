@@ -158,10 +158,9 @@ test_dirty_worktree_past_grace_skips_removal() {
 	return 0
 }
 
-# Scenario 2: even past 6h, a dirty worktree must be REFUSED permanent
-# removal by the _cleanup_single_worktree defence-in-depth check. The 6h
-# rule used to discard dirty workers; we now treat dirty as "could be an
-# editor session that pgrep missed" and leave the directory alone.
+# Scenario 2: even past 6h, dirty content must survive. Confirmed-idle and
+# rootless visibility guards may refuse the candidate before the older
+# dirty-content guard; no particular guard ordering authorizes data loss.
 test_dirty_worktree_past_6h_still_skips() {
 	local repo_dir="${TEST_ROOT}/repo-dirty-old"
 	local wt_path="${TEST_ROOT}/wt-dirty-old"
@@ -186,7 +185,9 @@ test_dirty_worktree_past_6h_still_skips() {
 	[[ "$cleanup_rc" -eq 1 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
 	[[ -f "$wt_path/slow-edit.txt" ]] || rc=1
-	grep -q 'dirty-content-protect' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -qx 'long-running uncommitted edits' "$wt_path/slow-edit.txt" 2>/dev/null || rc=1
+	grep -F "$wt_path" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null |
+		grep -qE 'dirty-content-protect|idle-unverified-or-pending|cwd-visibility-degraded|degraded-cwd-in-place-quarantine' || rc=1
 	print_result "dirty worktree past 6h refused by defence-in-depth" "$rc" \
 		"cleanup_rc=$cleanup_rc dir_exists=$([[ -d "$wt_path" ]] && echo y || echo n) log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0

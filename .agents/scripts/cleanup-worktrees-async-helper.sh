@@ -347,7 +347,26 @@ _prune_missing_worktree_metadata_all_repos() {
 # MAIN
 # ============================================================
 
+_reconcile_lifecycle_receipts() {
+	local helper="${SCRIPT_DIR}/worktree_lifecycle_status.py"
+	local rc=0
+	if [[ ! -f "$helper" ]] || ! declare -F timeout_sec >/dev/null 2>&1; then
+		echo "[cleanup-worktrees-async] lifecycle reconciliation unavailable; preserving receipts" >>"$LOGFILE"
+		return 0
+	fi
+	# Metadata-only: never delete sources or recovery artifacts. The existing
+	# async lock and bounded runner also apply when invoked independently of Pulse.
+	timeout_sec 90 python3 "$helper" reconcile --max-attempts 5 >>"$LOGFILE" 2>&1 || rc=$?
+	printf '[cleanup-worktrees-async] lifecycle-reconcile rc=%s\n' "$rc" >>"$LOGFILE"
+	return 0
+}
+
 main() {
+	local mode="${1:-normal}"
+	case "$mode" in
+	normal | --lifecycle-only) ;;
+	*) printf '%s\n' 'Usage: cleanup-worktrees-async-helper.sh [--lifecycle-only]' >&2; return 1 ;;
+	esac
 	if ! _lock_acquire; then
 		echo "[cleanup-worktrees-async] ${_LOCK_SKIP_REASON:-Lock unavailable} — skipping this invocation" >>"$LOGFILE"
 		return 0
@@ -361,6 +380,7 @@ main() {
 
 	echo "[cleanup-worktrees-async] Starting cleanup_worktrees (cadence OK)" >>"$LOGFILE"
 	_reconcile_worktree_registry
+	_reconcile_lifecycle_receipts
 	_prune_missing_worktree_metadata_all_repos
 
 	local rc=0
@@ -372,14 +392,18 @@ main() {
 	local skip_reasons="none"
 	log_first_line=$(wc -l <"$LOGFILE" | tr -d '[:space:]') || log_first_line=0
 	cleanup_worktrees || rc=$?
-	_prune_dirty_worktree_backups
+	if [[ "$mode" != "--lifecycle-only" ]]; then
+		_prune_dirty_worktree_backups
+	fi
 
 	if [[ "${CLEANUP_WORKTREES_SKIPPED:-0}" == "1" ]]; then
 		outcome="safety-skip"
 		echo "[cleanup-worktrees-async] cleanup_worktrees skipped by safety gate — last-run NOT updated" >>"$LOGFILE"
 	elif [[ "$rc" -eq 0 ]]; then
-		_maintain_worktree_recovery
-		_maintain_compact_archives
+		if [[ "$mode" != "--lifecycle-only" ]]; then
+			_maintain_worktree_recovery
+			_maintain_compact_archives
+		fi
 		_update_last_run
 		echo "[cleanup-worktrees-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
 	else

@@ -456,6 +456,8 @@ _pc_archive_worktree_compactly() {
 	local archive_dir=""
 	local failure_excerpt=""
 	local archive_args=()
+	local managed_record=""
+	local managed_status=0
 
 	[[ "$archive_reason" == "$_PC_ARCHIVE_REASON_UNATTRIBUTED" || "$target_number" =~ ^[1-9][0-9]*$ ]] || return 1
 	[[ "$repo_slug_age" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
@@ -463,6 +465,14 @@ _pc_archive_worktree_compactly() {
 	[[ -x "$helper_path" ]] || return 1
 	base_branch=$(git -C "$rp_age" symbolic-ref --short -q HEAD 2>/dev/null) || return 1
 	[[ -n "$base_branch" ]] || return 1
+	managed_record=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 \
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-managed-lifetime.py" status "$wt_path_age" 2>/dev/null) || managed_status=$?
+	if [[ "$managed_status" -eq 0 ]] && jq -e '.archive_operation != null' <<<"$managed_record" >/dev/null; then
+		# Never allocate another archive around an interrupted lifecycle operation.
+		_pc_archive_idle_verified "$rp_age" "$wt_path_age" "$target_number" "$repo_slug_age"
+		return $?
+	fi
+	[[ "$managed_status" -eq 0 || "$managed_status" -eq 3 ]] || return 1
 	archive_args=(archive "$wt_path_age" --repo "$repo_slug_age" --reason "$archive_reason" --base-branch "$base_branch")
 	if [[ "$archive_reason" == "$_PC_ARCHIVE_REASON_UNATTRIBUTED" ]]; then
 		archive_args+=(--unattributed)
@@ -497,6 +507,7 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 	local repo_slug_age="${6:-}"
 	local archive_reason="${7:-$_PC_ARCHIVE_REASON_FAILED}"
 	local target_type="${8:-$_PC_ARCHIVE_TARGET_ISSUE}"
+	local authorization="${9:-terminal-or-legacy}"
 	local archive_dir=""
 	local policy_reason=""
 	local policy_status=0
@@ -524,9 +535,15 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 			"$policy_reason" "$_PC_REMOVAL_SKIPPED" "$audit_context"
 		return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	fi
-	worktree_managed_prepare_removal "$wt_path_age" "$wt_branch_age" || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
-	if ! archive_dir=$(_pc_archive_worktree_compactly "$rp_age" "$wt_path_age" \
-		"$target_number" "$repo_slug_age" "$archive_reason"); then
+	local archive_status=0
+	if [[ "$authorization" == "confirmed-idle" ]]; then
+		archive_dir=$(_pc_archive_idle_verified "$rp_age" "$wt_path_age" "$target_number" "$repo_slug_age") || archive_status=$?
+	else
+		worktree_managed_prepare_removal "$wt_path_age" "$wt_branch_age" || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
+		archive_dir=$(_pc_archive_worktree_compactly "$rp_age" "$wt_path_age" \
+			"$target_number" "$repo_slug_age" "$archive_reason") || archive_status=$?
+	fi
+	if [[ "$archive_status" -ne 0 ]]; then
 		CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$((${CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT:-0} + 1))
 		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch_age:-detached} — compact recovery archive creation or verification failed" >>"$LOGFILE"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
@@ -534,9 +551,19 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 		return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	fi
 	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((${CLEANUP_WORKTREES_ARCHIVED_COUNT:-0} + 1))
+	if [[ "$authorization" == "confirmed-idle" ]]; then
+		if ! policy_reason=$(_pc_idle_archive_removal_policy_clear "$wt_path_age" "$wt_branch_age" \
+			"$target_number" "$repo_slug_age" "$archive_reason" "$target_type"); then
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
+				"${policy_reason:-archive-policy-unverified}" "$_PC_REMOVAL_SKIPPED" \
+				"${audit_context} archive_path=${archive_dir} archive_outcome=verified delete_outcome=deferred"
+			return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
+		fi
+	fi
 	archived_context="${audit_context} archive_path=${archive_dir} archive_outcome=verified delete_outcome=removed"
 	if _pc_remove_local_commit_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" \
 		"$archived_context" "$removal_reason" "compact-archive"; then
+		_pc_finalize_idle_archive_receipt "$wt_path_age"
 		return 0
 	fi
 	archived_context="${audit_context} archive_path=${archive_dir} archive_outcome=verified delete_outcome=failed"
@@ -1163,6 +1190,92 @@ _pc_handle_stale_dirty_worker_archive() {
 # Returns: 0 removed, 1 continue generic evaluation, 2 archive failure,
 #          3 retained by an archive-specific policy window.
 #######################################
+_pc_archive_idle_verified() {
+	local repo_path="$1" worktree_path="$2" issue="$3" repo_slug="$4"
+	local base_branch=""
+	local arguments=()
+	base_branch=$(git -C "$repo_path" symbolic-ref --short -q HEAD 2>/dev/null) || return 1
+	[[ -n "$base_branch" && -n "$repo_slug" ]] || return 1
+	arguments=(prepare "$worktree_path" --repo "$repo_slug" --base "$base_branch")
+	if [[ "$issue" =~ ^[1-9][0-9]*$ ]]; then
+		arguments+=(--issue "$issue")
+	fi
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 \
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/worktree_lifetime_archive.py" "${arguments[@]}" 2>>"$LOGFILE" || return 1
+	return 0
+}
+
+# Long archive/restore work must not turn an earlier remote policy observation
+# into deletion authority after a PR opens or a protection label is added.
+_pc_idle_archive_removal_policy_clear() {
+	local worktree_path="$1" branch="$2" issue="$3" repo_slug="$4"
+	local reason="$5" target_type="$6" branch_issue=""
+	if ! AIDEVOPS_GH_PR_LIST_CACHE_DISABLE=1 AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 \
+		_pc_branch_archive_pr_state_clear "$repo_slug" "$branch"; then
+		printf '%s\n' "archive-pr-state-unverified-or-active"
+		return 1
+	fi
+	if [[ "$reason" == "$_PC_ARCHIVE_REASON_UNATTRIBUTED" ]]; then
+		_pc_unattributed_archive_policy_clear "$worktree_path" || return 1
+	else
+		branch_issue=$(_pc_issue_from_branch "$branch" 2>/dev/null || true)
+		_pc_compact_archive_policy_clear "$worktree_path" "$issue" "$repo_slug" \
+			"$target_type" "$branch_issue" || return 1
+	fi
+	return 0
+}
+
+_pc_finalize_idle_archive_receipt() {
+	local worktree_path="$1" record=""
+	record=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 \
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-managed-lifetime.py" status "$worktree_path" 2>/dev/null) || return 0
+	jq -e '.archive_operation != null' <<<"$record" >/dev/null || return 0
+	if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 \
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/worktree_lifetime_archive.py" removed "$worktree_path" 2>>"$LOGFILE"; then
+		echo "[pulse-wrapper] Lifecycle receipt pending after source removal: $worktree_path" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+_pc_confirmed_idle_archive_ready() {
+	local worktree_path="$1" record=""
+	local helper="${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-managed-lifetime.py"
+	record=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$worktree_path" 2>>"$LOGFILE") || return 1
+	# An existing operation has its own generation-bound authorization. Its backend
+	# either reuses verified recovery or refuses; it never allocates a second copy.
+	if jq -e '.archive_operation != null' <<<"$record" >/dev/null; then
+		return 0
+	fi
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" observe-idle "$worktree_path" 2>>"$LOGFILE" || return 1
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" idle-ready "$worktree_path" 2>>"$LOGFILE" || return 1
+	return 0
+}
+
+_pc_handle_confirmed_idle_archive() {
+	local repo_path="$1" worktree_path="$2" branch="$3" issue="$4"
+	local commits="$5" dirty="$6" age="$7" repo_name="$8" repo_slug="${9:-}"
+	local reason="$_PC_ARCHIVE_REASON_UNATTRIBUTED" target_type="" audit_context=""
+	local guard_ok="clear"
+	_pc_branch_archive_pr_state_clear "$repo_slug" "$branch" || return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
+	if ! _pc_confirmed_idle_archive_ready "$worktree_path"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$worktree_path" \
+			"idle-unverified-or-pending" "$_PC_REMOVAL_SKIPPED" "branch=$branch idle_window_secs=86400"
+		return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
+	fi
+	if [[ "$issue" =~ ^[1-9][0-9]*$ ]]; then
+		reason="$_PC_ARCHIVE_REASON_FAILED"
+		target_type="$_PC_ARCHIVE_TARGET_ISSUE"
+	fi
+	audit_context=$(_pc_worktree_audit_context "$branch" "$issue" "$commits" "$dirty" "$age" \
+		"confirmed-idle" "$guard_ok" "$guard_ok" "$guard_ok" "restore-verified-archive")
+	echo "[pulse-wrapper] Orphan cleanup ($repo_name): checking restore-verified idle archive for $branch" >>"$LOGFILE"
+	if _pc_archive_and_remove_worktree_preserving_branch "$repo_path" "$worktree_path" "$branch" \
+		"$audit_context" "$issue" "$repo_slug" "$reason" "$target_type" "confirmed-idle"; then
+		return 0
+	fi
+	return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
+}
+
 _pc_handle_archive_cleanup_candidates() {
 	local rp_age="$1"
 	local wt_path_age="$2"
@@ -1181,39 +1294,11 @@ _pc_handle_archive_cleanup_candidates() {
 		handler_status=$?
 	fi
 	[[ "$handler_status" -eq "$_PC_ARCHIVE_REQUIRED_FAILURE_RC" ]] && return "$handler_status"
-	local archive_secs=0
-	local audit_context=""
-	local guard_ok=""
-	if [[ -n "$wt_branch_age" && ! "$orphan_issue_num" =~ ^[1-9][0-9]*$ ]]; then
-		_pc_branch_archive_pr_state_clear "$repo_slug_age" "$wt_branch_age" || return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
-		archive_secs=$(_pc_unattributed_archive_secs)
-		if [[ "$wt_age_secs" -lt "$archive_secs" ]]; then
-			_pc_log_not_age_eligible_skip "$wt_path_age" "$wt_branch_age" "$commits_ahead" "$dirty_count" "$wt_age_secs" "unattributed-retention"
-			return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
-		fi
-		guard_ok=$(printf 'cle%s' 'ar')
-		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "" "$commits_ahead" "$dirty_count" "$wt_age_secs" "unattributed-retention" "$guard_ok" "$guard_ok" "$guard_ok" "compact-archive")
-		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): archiving unattributed ${wt_branch_age} — no open PR and older than ${archive_secs}s" >>"$LOGFILE"
-		_pc_archive_and_remove_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" \
-			"$audit_context" "" "$repo_slug_age" "$_PC_ARCHIVE_REASON_UNATTRIBUTED" ""
-		return $?
-	fi
-	if _pc_handle_generated_clean_cruft_worktree "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
-		return 0
-	else
-		handler_status=$?
-	fi
-	[[ "$handler_status" -eq "$_PC_ARCHIVE_REQUIRED_FAILURE_RC" ]] && return "$handler_status"
-	if _pc_is_generated_clean_cruft_worktree "$wt_path_age" "$wt_branch_age"; then
-		_pc_log_not_age_eligible_skip "$wt_path_age" "$wt_branch_age" "$commits_ahead" "$dirty_count" "$wt_age_secs" "generated-retention"
-		return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
-	fi
-	if _pc_handle_stale_dirty_worker_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
-		return 0
-	else
-		handler_status=$?
-	fi
-	return "$handler_status"
+	# Ordinary trees never fall back from missing idle evidence to directory age,
+	# generated names, dead PIDs, or an absent registry row.
+	_pc_handle_confirmed_idle_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" \
+		"$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"
+	return $?
 }
 
 _pc_permanently_remove_eligible_orphan() {

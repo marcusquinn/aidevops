@@ -20,7 +20,7 @@ Usage: worktree-archive-helper.sh <command> [options]
 Commands:
   archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
 	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
-      [--base-sha SHA] [--output-root DIR] [--failure-log FILE]
+      [--base-sha SHA] [--output-root DIR] [--failure-log FILE] [--self-contained]
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
@@ -171,7 +171,8 @@ write_manifest() {
 	local remote_state="${12}"
 	local dirty_state="${13}"
 	local git_common_dir="${14}"
-	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" <<'PY'
+	local self_contained="${15:-0}"
+	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" "$self_contained" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -194,6 +195,7 @@ manifest = {
     "created_at": sys.argv[5],
     "source_worktree": sys.argv[6],
     'source_git_common_dir': sys.argv[14],
+    'self_contained': sys.argv[16] == '1',
     "branch": sys.argv[7],
     "head_sha": sys.argv[8],
     "base_branch": sys.argv[9],
@@ -213,6 +215,7 @@ archive_worktree() {
 	local worktree="${1:-}"
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
+	local self_contained=0
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir commit_count
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
@@ -225,6 +228,7 @@ archive_worktree() {
 		--base-sha) require_value "$1" "${2:-}" || return 1; base_sha="$2"; shift 2 ;;
 		--output-root) require_value "$1" "${2:-}" || return 1; output_root="$2"; shift 2 ;;
 		--failure-log) require_value "$1" "${2:-}" || return 1; failure_log="$2"; shift 2 ;;
+		--self-contained) self_contained=1; shift ;;
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
 	done
@@ -266,10 +270,12 @@ archive_worktree() {
 	if [[ -e "$archive_dir" ]]; then archive_dir="${archive_dir}-$$"; fi
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	git -C "$worktree" diff --binary >"$archive_dir/diff.patch" || return 1
-	git -C "$worktree" diff --cached --binary >"$archive_dir/staged.patch" || return 1
+	git -C "$worktree" diff --binary --no-ext-diff --no-textconv >"$archive_dir/diff.patch" || return 1
+	git -C "$worktree" diff --cached --binary --no-ext-diff --no-textconv >"$archive_dir/staged.patch" || return 1
 	commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
-	if [[ "$commit_count" -gt 0 ]]; then
+	if [[ "$self_contained" -eq 1 ]]; then
+		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD || return 1
+	elif [[ "$commit_count" -gt 0 ]]; then
 		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 	fi
 	capture_untracked "$worktree" "$archive_dir" || return 1
@@ -285,7 +291,7 @@ with source.open("rb") as handle:
     target.write_bytes(handle.read())
 PY
 	fi
-	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" || return 1
+	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$self_contained" || return 1
 	printf '%s\n' "$archive_dir"
 	return 0
 }
@@ -301,6 +307,7 @@ import posixpath
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 archive = pathlib.Path(sys.argv[1]).resolve()
 manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
@@ -331,7 +338,16 @@ for artifact in manifest['artifacts']:
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
 bundle = archive / "commits.bundle"
-if bundle.exists():
+if manifest.get('self_contained') is True:
+    if not bundle.is_file():
+        raise SystemExit("self-contained archive requires a bundle")
+    # Verify without borrowing any objects from the source repository. Scratch
+    # metadata stays beside the archive, never in a host /tmp worktree.
+    with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
+        subprocess.run(["git", "init", "--bare", "--quiet", temporary], check=True)
+        subprocess.run(["git", f"--git-dir={temporary}", "bundle", "verify", str(bundle)],
+                       check=True, stdout=subprocess.DEVNULL)
+elif bundle.exists():
     common_dir = manifest.get('source_git_common_dir', "")
     command = ["git"]
     if common_dir and pathlib.Path(common_dir).is_dir():
@@ -357,7 +373,7 @@ PY
 restore_archive() {
 	local archive_dir="${1:-}"
 	shift || true
-	local target="" common_dir head_sha branch restore_branch
+	local target="" common_dir head_sha branch restore_branch self_contained
 	validate_archive_dir "$archive_dir" || return 1
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -367,18 +383,26 @@ restore_archive() {
 	done
 	[[ -n "$target" && ! -e "$target" ]] || { die "restore target must not exist"; return 1; }
 	verify_archive "$archive_dir" >/dev/null || return 1
-	IFS=$'\t' read -r common_dir head_sha branch < <(python3 - "$archive_dir/manifest.json" <<'PY'
+	IFS=$'\t' read -r common_dir head_sha branch self_contained < <(python3 - "$archive_dir/manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1], encoding='utf-8'))
-print(m.get('source_git_common_dir', ""), m["head_sha"], m["branch"], sep=chr(9))
+print(m.get('source_git_common_dir', ""), m["head_sha"], m["branch"],
+      int(m.get('self_contained') is True), sep=chr(9))
 PY
 	)
-	[[ -d "$common_dir" ]] || { die "source Git repository is unavailable: $common_dir"; return 1; }
-	if [[ -f "$archive_dir/commits.bundle" ]]; then
-		git --git-dir="$common_dir" fetch "$archive_dir/commits.bundle" HEAD >/dev/null || return 1
+	if [[ "$self_contained" -eq 1 ]]; then
+		# Independent recovery: no alternates, source refs or linked registration.
+		git -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null \
+			clone --quiet --no-checkout -- "$archive_dir/commits.bundle" "$target" || return 1
+		git -C "$target" -c core.hooksPath=/dev/null checkout --quiet --detach "$head_sha" || return 1
+	else
+		[[ -d "$common_dir" ]] || { die "source Git repository is unavailable: $common_dir"; return 1; }
+		if [[ -f "$archive_dir/commits.bundle" ]]; then
+			git --git-dir="$common_dir" fetch "$archive_dir/commits.bundle" HEAD >/dev/null || return 1
+		fi
+		restore_branch="archive-restore-$(date -u '+%Y%m%d%H%M%S')-$$"
+		git --git-dir="$common_dir" worktree add -b "$restore_branch" "$target" "$head_sha" >/dev/null || return 1
 	fi
-	restore_branch="archive-restore-$(date -u '+%Y%m%d%H%M%S')-$$"
-	git --git-dir="$common_dir" worktree add -b "$restore_branch" "$target" "$head_sha" >/dev/null || return 1
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	if [[ -f "$archive_dir/untracked.tar.gz" ]]; then

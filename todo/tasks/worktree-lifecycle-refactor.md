@@ -124,3 +124,66 @@ itself invalidates idle, so a separate durable operation receipt is necessary;
 generic `proof` or an old `seal` is not 24-hour idle authorization. W3–W5,
 independent final review, remote CI and merge remain outstanding. No archive
 expiry, legacy deletion or deployment has been enabled by these changes.
+
+### W3 integration and local verification (2026-10-17)
+
+- Ordinary cleanup now routes through confirmed idle and a generation-bound
+  archive operation; missing evidence cannot fall back to directory age. Terminal
+  issue/PR cleanup keeps its separate existing policy path.
+- Self-contained bundles restore independently of the source repository. The
+  controller compares source/restored snapshots, fsyncs recovery artifacts and
+  directory ancestry, and commits the restore receipt before native deletion.
+- Interrupted construction retains one operation rather than allocating another
+  copy. Verified scratch cleanup is resumable; successful native removal records
+  the final receipt. Source mutation and late owners reject removal.
+- Independent review prompted intent-to-add rejection, binding the receipt to the
+  manifest digest observed before restoration, and an ownership check for `ready`.
+- After archive creation, ordinary removal rechecks remote PR state without the
+  PR list/view caches and rechecks preservation policy. A newly opened PR retains
+  both source and verified archive.
+- Capacity estimation now includes expanded HEAD/index, working files and Git
+  objects, with conservative overhead and a 1 GiB reserve. Its regression confirms
+  that insufficient space for untracked payloads prevents reservation.
+- Rootless shell fixtures isolate process visibility only where testing branch
+  policy/removal mechanics. Real degraded visibility remains protected; the native
+  managed-lifetime suite still exercises user-systemd. Unregister fixtures now use
+  their own registry and test the approved-removal primitive instead of assuming
+  old age alone authorizes deletion. Dirty-content checks verify retained payload.
+
+Observed checks at UID 1000:
+
+- `test-pulse-cleanup-worker-owned-no-pr.sh`: 39/39.
+- `test-worktree-archive-lifecycle.py`: 22/22 after capacity and late-PR fixes.
+- `AIDEVOPS_TEST_SYSTEMD=1 ...test-worktree-managed-lifetime.py`: 20/20, no skips.
+- `test-worktree-archive-helper.sh`: 7/7; checkout-free scanner suite: 10/10.
+- `test-pulse-cleanup-preserves-dirty.sh`: 5/5.
+- `test-pulse-cleanup-unregister.sh` and `test-pulse-cleanup-non-git-cwd.sh`: passed.
+- `test-cleanup-worktrees-async.sh`: 32/32.
+- Subsequent receipt/capacity follow-up: 3/3 focused tests passed. A missing common
+  repository no longer permits completion of a removal receipt; restoring its
+  availability permits reconciliation. Reusing verified recovery no longer
+  requires the free-space budget for allocating a fresh archive. The complete
+  archive suite now contains 23 tests and needs its final aggregate rerun.
+- Scoped ShellCheck, Python compilation and diff whitespace checks passed.
+- NixOS shell fixtures use `AIDEVOPS_TEST_GIT_BIN=/run/current-system/sw/bin/git`;
+  the hard-coded `/usr/bin/git` default is unavailable on this verification host.
+
+### Remaining acceptance work and continuation
+
+This is not completion of issue #34905. W3 changes remain uncommitted; no new PR,
+merge, deployment, legacy deletion or expiry activation has occurred.
+
+1. Complete W2 producer/admission tracing; the literal inventory above is not proof
+   that every producer has durable creation intent.
+2. Implement W4 using the existing asynchronous cleanup lock/routines and generic
+   user scheduler, not another supervisor. Report managed operation phases and
+   hidden lifecycle archive locations, space, protected/unknown states and failures.
+3. Wire the verified `finish_removal` boundary into bounded reconciliation of
+   interrupted final receipts. Unavailable parents/common repositories remain
+   protected. Keep status observation separate from authorization; recorded idle
+   is not fresh process evidence and a successful report is not cleanup completion.
+4. Finish the interruption/reboot/concurrency acceptance matrix, remaining scoped
+   cleanup regressions and an independent final review of all deletion paths.
+5. Reconcile with current upstream, run exact-head required checks and remote CI,
+   then deliver through the agreed PR lifecycle. W5 remains read-only until each
+   legacy migration has demonstrated safety; existing inventory is not authority.

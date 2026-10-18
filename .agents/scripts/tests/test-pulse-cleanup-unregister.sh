@@ -4,7 +4,7 @@
 #
 # Regression coverage for pulse cleanup permanent removal guards:
 # - current-cwd worktrees are skipped before deletion
-# - eligible orphan worktrees are removed permanently and unregistered
+# - policy-approved removal primitives unregister only after native success
 
 set -euo pipefail
 
@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 
 LOGFILE="${TEST_ROOT}/pulse.log"
 export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup_worktrees.log"
@@ -28,6 +30,7 @@ git() {
 
 # shellcheck source=../shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+_init_registry_db
 
 is_worktree_owned_by_others() { return 1; }
 unregister_worktree() {
@@ -90,13 +93,18 @@ test_orphan_removal_unregisters() {
 	local wt_path="${TEST_ROOT}/wt-remove"
 	make_repo_with_worktree "$repo_path" "$wt_path" "feature/remove"
 
-	_cleanup_single_worktree "$repo_path" "$wt_path" "feature/remove" "$(date +%s)" "" "main" \
-		|| fail "eligible orphan worktree was not removed"
+	# Exercise removal/unregister, not the ordinary-tree idle policy. These isolated
+	# fixtures have no external actors; native cgroup evidence has its own suite.
+	(
+		capture_worktree_process_cwds() { return 0; }
+		_pc_permanently_remove_eligible_orphan "$repo_path" "$wt_path" "feature/remove" \
+			"fixture-policy-approved" 0 "" "fixture" "fixture"
+	) || fail "policy-approved fixture was not removed"
 
 	[[ ! -e "$wt_path" ]] || fail "eligible orphan worktree still exists"
 	grep -Fxq "$wt_path" "$UNREGISTER_LOG" || fail "worktree unregister was not called"
 	grep -q 'age-eligible.*mode=permanent' "$AIDEVOPS_CLEANUP_LOG" || fail "permanent removal was not audited"
-	pass "pulse cleanup permanently removes and unregisters eligible orphan"
+	pass "pulse removal primitive unregisters a policy-approved fixture"
 	return 0
 }
 
@@ -133,7 +141,7 @@ test_late_write_before_permanent_remove_is_preserved() {
 	local metadata=""
 	local wt_root=""
 	make_repo_with_worktree "$repo_path" "$wt_path" "feature/late-write"
-	wt_root=$(/usr/bin/git -C "$wt_path" rev-parse --show-toplevel) || fail "late-write root became unreadable"
+	wt_root=$("$GIT_BIN" -C "$wt_path" rev-parse --show-toplevel) || fail "late-write root became unreadable"
 	cat >"$wrapper_path" <<'LATE_WRITE_GIT'
 #!/usr/bin/env bash
 if [[ "$*" == *"worktree remove"* && ! -e "${LATE_WRITE_MARKER:?}" ]]; then
@@ -144,14 +152,17 @@ exec "${REAL_GIT:?}" "$@"
 LATE_WRITE_GIT
 	chmod +x "$wrapper_path"
 
-	if REAL_GIT="$GIT_BIN" LATE_WRITE_MARKER="$marker_path" \
-		LATE_WRITE_WORKTREE="$wt_path" AIDEVOPS_REAL_GIT_BIN="$wrapper_path" \
-		_cleanup_single_worktree "$repo_path" "$wt_path" "feature/late-write" \
-		"$(date +%s)" "" "main"; then
+	if (
+		capture_worktree_process_cwds() { return 0; }
+		REAL_GIT="$GIT_BIN" LATE_WRITE_MARKER="$marker_path" \
+			LATE_WRITE_WORKTREE="$wt_path" AIDEVOPS_REAL_GIT_BIN="$wrapper_path" \
+			_pc_permanently_remove_eligible_orphan "$repo_path" "$wt_path" "feature/late-write" \
+			"fixture-policy-approved" 0 "" "fixture" "fixture"
+	); then
 		fail "late-write permanent cleanup was reported as complete"
 	fi
 	[[ -f "$wt_path/late-write.txt" && -e "$marker_path" ]] || fail "late write or source was removed"
-	metadata=$(/usr/bin/git -C "$repo_path" worktree list --porcelain) || fail "late-write metadata became unreadable"
+	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || fail "late-write metadata became unreadable"
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || fail "late-write registration was removed"
 	printf '%s\n' "$metadata" | grep -Fqx "branch refs/heads/feature/late-write" || fail "late-write branch identity was removed"
 	if [[ -f "$UNREGISTER_LOG" ]] && grep -Fxq "$wt_path" "$UNREGISTER_LOG"; then
@@ -174,7 +185,7 @@ test_degraded_orphan_is_quarantined_with_bounded_retry() {
 	local metadata=""
 	local wt_root=""
 	make_repo_with_worktree "$repo_path" "$wt_path" "feature/degraded"
-	wt_root=$(/usr/bin/git -C "$wt_path" rev-parse --show-toplevel) || fail "degraded root became unreadable"
+	wt_root=$("$GIT_BIN" -C "$wt_path" rev-parse --show-toplevel) || fail "degraded root became unreadable"
 	export PULSE_STATE_DIR="${TEST_ROOT}/pulse-state"
 	export AIDEVOPS_DEGRADED_CWD_RETRY_INITIAL_SECONDS=60
 	export AIDEVOPS_DEGRADED_CWD_RETRY_MAX_SECONDS=120
@@ -225,7 +236,7 @@ test_degraded_orphan_is_quarantined_with_bounded_retry() {
 		<<<"$state_json" >/dev/null || fail "degraded retry did not persist bounded backoff"
 	[[ "$(wc -l <"$guard_log" | tr -d ' ')" -eq 2 ]] || fail "due retry did not collect fresh process evidence"
 	[[ ! -e "$api_log" ]] || fail "due degraded retry performed a GitHub API query"
-	metadata=$(/usr/bin/git -C "$repo_path" worktree list --porcelain) || fail "degraded metadata became unreadable"
+	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || fail "degraded metadata became unreadable"
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || fail "degraded worktree registration was removed"
 	if [[ -f "$UNREGISTER_LOG" ]] && grep -Fxq "$wt_path" "$UNREGISTER_LOG"; then
 		fail "degraded quarantine unregistered the worktree"
