@@ -821,6 +821,48 @@ assertion_rc=1
 if [[ "$sum_output" == "1200000|3" ]]; then assertion_rc=0; fi
 print_result "unreadable PR mention is skipped without failing open" "$assertion_rc" "(got: '$sum_output')"
 
+# =============================================================================
+# t18729 — repository budget override from a committed
+# .aidevops/dispatch-cost-budgets.conf (parsed as data, clamped, never sourced)
+# =============================================================================
+printf '[]' >"$FIXTURE_TIMELINE_JSON"
+BUDGET_REPO="${TEST_ROOT}/repos/budgeted"
+BUDGET_MARKER="${TEST_ROOT}/sourced-marker"
+mkdir -p "${BUDGET_REPO}/.aidevops"
+jq -n --arg path "$BUDGET_REPO" \
+	'{initialized_repos: [{slug: "owner/budgeted", path: $path}]}' \
+	>"${HOME}/.config/aidevops/repos.json"
+cat >"${BUDGET_REPO}/.aidevops/dispatch-cost-budgets.conf" <<CONF
+# Repository budget override
+COST_BUDGET_STANDARD=2000000
+COST_BUDGET_THINKING=1; touch ${BUDGET_MARKER}
+COST_BUDGET_SIMPLE=5
+CONF
+
+write_fixture_issue '[{"name":"tier:standard"}]'
+write_fixture_comments "500000,400000"
+run_check_cost_budget 18101 "owner/budgeted" "standard"
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "repository override raises standard budget (900K < 2M)" "$assertion_rc" "(rc=$rc output='$output')"
+
+run_check_cost_budget 18102 "owner/repo" "standard"
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=800K"* ]]; then assertion_rc=0; fi
+print_result "repository without override keeps 800K budget" "$assertion_rc" "(rc=$rc output='$output')"
+
+run_check_cost_budget 18103 "owner/budgeted" "thinking"
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=800K"* && ! -e "$BUDGET_MARKER" ]]; then assertion_rc=0; fi
+print_result "malformed override line is ignored and never executed" "$assertion_rc" "(rc=$rc output='$output' marker=$([[ -e "$BUDGET_MARKER" ]] && printf present || printf absent))"
+
+write_fixture_comments "150000"
+run_check_cost_budget 18104 "owner/budgeted" "simple"
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=100K"* ]]; then assertion_rc=0; fi
+print_result "override below the minimum is clamped to 100K" "$assertion_rc" "(rc=$rc output='$output')"
+printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
+
 export PATH="$OLD_PATH"
 
 # =============================================================================

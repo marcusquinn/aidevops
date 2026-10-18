@@ -45,12 +45,70 @@ _DISPATCH_DEDUP_COST_LOADED=1
 #######################################
 
 #######################################
-# Look up the per-tier cost budget from .agents/configs/dispatch-cost-budgets.conf.
+# Bounds for repository budget overrides (t18729). A typo in a repository file
+# can neither disable the breaker nor make it fire on the first attempt.
+#######################################
+_COST_REPO_BUDGET_MIN=100000
+_COST_REPO_BUDGET_MAX=20000000
+
+#######################################
+# Resolve a registered repository's checkout path from repos.json.
+# Args: $1 = repo slug (owner/repo)
+# Stdout: checkout path, or nothing when unregistered/unreadable
+#######################################
+_cost_repo_path_for_slug() {
+	local repo_slug="$1"
+	local repos_file="${AIDEVOPS_REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
+	[[ -n "$repo_slug" && -f "$repos_file" ]] || return 0
+	jq -r --arg slug "$repo_slug" '
+		[.initialized_repos[]?
+		 | select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase))
+		 | .path // empty][0] // empty
+	' "$repos_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Print validated repository budget overrides as KEY=VALUE lines (t18729).
+# The repository file is data, never sourced: only exact
+# COST_BUDGET_(SIMPLE|STANDARD|THINKING|DEFAULT)=<digits> lines are accepted,
+# and values are clamped to [_COST_REPO_BUDGET_MIN, _COST_REPO_BUDGET_MAX].
+# Args: $1 = repo slug (owner/repo)
+#######################################
+_cost_repo_budget_overrides() {
+	local repo_slug="$1"
+	local repo_path conf line key value
+	repo_path=$(_cost_repo_path_for_slug "$repo_slug")
+	[[ -n "$repo_path" ]] || return 0
+	repo_path="${repo_path/#\~/$HOME}"
+	conf="${repo_path}/.aidevops/dispatch-cost-budgets.conf"
+	[[ -f "$conf" ]] || return 0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line="${line%$'\r'}"
+		[[ "$line" =~ ^(COST_BUDGET_(SIMPLE|STANDARD|THINKING|DEFAULT))=([0-9]{1,9})$ ]] || continue
+		key="${BASH_REMATCH[1]}"
+		value=$((10#${BASH_REMATCH[3]}))
+		if [[ "$value" -lt "$_COST_REPO_BUDGET_MIN" ]]; then
+			value="$_COST_REPO_BUDGET_MIN"
+		elif [[ "$value" -gt "$_COST_REPO_BUDGET_MAX" ]]; then
+			value="$_COST_REPO_BUDGET_MAX"
+		fi
+		printf '%s=%s\n' "$key" "$value"
+	done <"$conf"
+	return 0
+}
+
+#######################################
+# Look up the per-tier cost budget from .agents/configs/dispatch-cost-budgets.conf,
+# overridden by the target repository's committed
+# .aidevops/dispatch-cost-budgets.conf when present (t18729).
 # Args: $1 = tier label or short name (simple|standard|thinking|tier:simple|...)
+#       $2 = (optional) repo slug (owner/repo) for the repository override
 # Stdout: integer token budget
 #######################################
 _get_cost_budget_for_tier() {
 	local tier="$1"
+	local repo_slug="${2:-}"
 	local _conf="${SCRIPT_DIR}/../configs/dispatch-cost-budgets.conf"
 	# Defaults match the documented tier sizing (see dispatch-cost-budgets.conf)
 	local COST_BUDGET_SIMPLE=800000
@@ -60,6 +118,20 @@ _get_cost_budget_for_tier() {
 	if [[ -f "$_conf" ]]; then
 		# shellcheck source=/dev/null
 		source "$_conf"
+	fi
+
+	local _override _key _value
+	if [[ -n "$repo_slug" ]]; then
+		while IFS= read -r _override; do
+			_key="${_override%%=*}"
+			_value="${_override#*=}"
+			case "$_key" in
+			COST_BUDGET_SIMPLE) COST_BUDGET_SIMPLE="$_value" ;;
+			COST_BUDGET_STANDARD) COST_BUDGET_STANDARD="$_value" ;;
+			COST_BUDGET_THINKING) COST_BUDGET_THINKING="$_value" ;;
+			COST_BUDGET_DEFAULT) COST_BUDGET_DEFAULT="$_value" ;;
+			esac
+		done < <(_cost_repo_budget_overrides "$repo_slug")
 	fi
 
 	# Strip "tier:" prefix if present
@@ -516,7 +588,7 @@ _check_cost_budget() {
 	fi
 
 	local budget
-	budget=$(_get_cost_budget_for_tier "$tier")
+	budget=$(_get_cost_budget_for_tier "$tier" "$repo_slug")
 	if [[ -z "$budget" ]] || ! [[ "$budget" =~ ^[0-9]+$ ]]; then
 		return 1
 	fi
