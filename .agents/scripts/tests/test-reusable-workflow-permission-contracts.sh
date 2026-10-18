@@ -12,7 +12,10 @@ python3 - "$REPO_ROOT" <<'PYEOF'
 from __future__ import annotations
 
 import pathlib
+import os
 import re
+import shlex
+import subprocess
 import sys
 import tempfile
 
@@ -32,9 +35,15 @@ LOCAL_USES_PATTERN = re.compile(r"^\./\.github/workflows/([^/]+\.ya?ml)$")
 LEVELS = {"none": 0, "read": 1, "write": 2}
 
 
-def load_mapping(path: pathlib.Path) -> dict:
-    with path.open(encoding="utf-8") as handle:
-        value = yaml.safe_load(handle)
+def load_mapping(path: pathlib.Path, revision: str | None = None) -> dict:
+    if revision is None:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    else:
+        result = subprocess.run(
+            ["git", "show", f"{revision}:{path.relative_to(ROOT).as_posix()}"],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+        value = yaml.safe_load(result.stdout)
     if not isinstance(value, dict):
         raise ValueError(f"{path}: workflow root must be a mapping")
     return value
@@ -78,13 +87,14 @@ def reusable_permission_union(
     workflow_path: pathlib.Path,
     reusable_dir: pathlib.Path = REUSABLE_DIR,
     active: set[pathlib.Path] | None = None,
+    revision: str | None = None,
 ) -> dict[str, str]:
     resolved_path = workflow_path.resolve()
     active = set() if active is None else active
     if resolved_path in active:
         raise ValueError(f"{workflow_path}: recursive reusable-workflow cycle")
     active.add(resolved_path)
-    workflow = load_mapping(workflow_path)
+    workflow = load_mapping(workflow_path, revision)
     context = str(workflow_path)
     top = (
         explicit_permissions(workflow["permissions"], f"{context}: top level")
@@ -109,7 +119,7 @@ def reusable_permission_union(
                 nested_path = reusable_path_for_uses(uses, reusable_dir)
                 if nested_path is not None:
                     nested_required = reusable_permission_union(
-                        nested_path, reusable_dir, active
+                        nested_path, reusable_dir, active, revision
                     )
                     if permissions != nested_required:
                         raise ValueError(
@@ -188,10 +198,119 @@ def assert_discovery_contract() -> None:
             raise AssertionError("insufficient intermediate permissions were accepted")
 
 
+def permission_increased(before: dict[str, str], after: dict[str, str]) -> bool:
+    return any(LEVELS[level] > LEVELS.get(before.get(key, "none"), 0)
+               for key, level in after.items())
+
+
+def names_rollout(body: str, name: str) -> bool:
+    # Parse only text; PR bodies are untrusted data, never shell input.
+    for line in body.splitlines():
+        try:
+            words = shlex.split(line.replace("`", " "))
+        except ValueError:
+            continue
+        for index, word in enumerate(words):
+            if pathlib.PurePosixPath(word).name not in (
+                "sync-workflows", "sync-workflows-helper.sh"
+            ):
+                continue
+            args = words[index + 1:]
+            if "--apply" in args and any(
+                arg == "--workflow" and offset + 1 < len(args)
+                and args[offset + 1] == name
+                for offset, arg in enumerate(args)
+            ):
+                return True
+    return False
+
+
+def rollout_failures(name: str, callers: list[str], changed: set[str], body: str) -> list[str]:
+    failures = [f"{name}: permission increase requires updating {caller}"
+                for caller in callers if caller not in changed]
+    if not callers:
+        failures.append(f"{name}: permission increase has no matching caller template")
+    if not names_rollout(body, name):
+        failures.append(
+            f"{name}: permission increase requires a named rollout in the PR body: "
+            f"aidevops sync-workflows --apply --workflow {name}"
+        )
+    return failures
+
+
+def assert_rollout_contract() -> None:
+    caller = ".agents/templates/workflows/fixture-caller.yml"
+    command = "`aidevops sync-workflows --apply --workflow fixture`"
+    assert permission_increased({"contents": "read"}, {"contents": "write"})
+    assert permission_increased({}, {"actions": "read"})
+    assert not permission_increased({"contents": "write"}, {"contents": "read"})
+    assert not rollout_failures("fixture", [caller], {caller}, command)
+    assert rollout_failures("fixture", [caller], set(), command)
+    assert rollout_failures("fixture", [caller], {caller}, "roll out later")
+    assert rollout_failures("fixture", [caller], {caller}, command.replace("fixture", "other"))
+    assert rollout_failures("fixture", [caller], {caller}, command.replace("--apply", "--json"))
+    assert names_rollout("sync-workflows-helper.sh --workflow fixture --apply", "fixture")
+
+
+def check_permission_rollouts() -> list[str]:
+    base = os.environ.get("BASE_SHA", "")
+    head = os.environ.get("HEAD_SHA", "")
+    if not base and not head:
+        print("SKIP permission rollout diff (BASE_SHA/HEAD_SHA not supplied)")
+        return []
+    if not all(re.fullmatch(r"[0-9a-fA-F]{40}", ref) for ref in (base, head)):
+        return ["permission rollout diff requires full BASE_SHA and HEAD_SHA commit IDs"]
+    changed = set(subprocess.run(
+        ["git", "diff", "--name-only", base, head, "--"], cwd=ROOT,
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines())
+    base_paths = set(subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", base, "--", ".github/workflows"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    ).stdout.splitlines())
+    failures: list[str] = []
+    for path in sorted(REUSABLE_DIR.glob("*-reusable.y*ml")):
+        relative = path.relative_to(ROOT).as_posix()
+        if relative not in base_paths:
+            continue  # New workflows have no installed callers to migrate.
+        before = reusable_permission_union(path, revision=base)
+        after = reusable_permission_union(path, revision=head)
+        increased = permission_increased(before, after)
+        # A job can gain permissions already used by another job, leaving the
+        # overall union unchanged. That still requires an explicit rollout plan.
+        old = load_mapping(path, base)
+        new = load_mapping(path, head)
+        for job_name, job in new["jobs"].items():
+            old_job = old["jobs"].get(job_name, {})
+            old_permissions = explicit_permissions(
+                old_job.get("permissions", old.get("permissions", {})), relative
+            )
+            new_permissions = explicit_permissions(
+                job.get("permissions", new.get("permissions", {})), relative
+            )
+            increased = increased or permission_increased(old_permissions, new_permissions)
+        if not increased:
+            continue
+        callers = []
+        for caller in sorted(CALLER_DIR.glob("*-caller.y*ml")):
+            jobs = load_mapping(caller, head).get("jobs", {}) or {}
+            if any(reusable_path_for_uses(job.get("uses", "")) == path
+                   for job in jobs.values() if isinstance(job, dict)):
+                callers.append(caller.relative_to(ROOT).as_posix())
+        name = path.stem.removesuffix("-reusable")
+        failures.extend(rollout_failures(name, callers, changed, os.environ.get("PR_BODY", "")))
+    return failures
+
+
 def main() -> int:
     checked = 0
     failures: list[str] = []
     assert_discovery_contract()
+    assert_rollout_contract()
+    try:
+        failures.extend(check_permission_rollouts())
+    except (OSError, ValueError, subprocess.CalledProcessError, yaml.YAMLError) as exc:
+        failures.append(f"permission rollout diff: {exc}")
     caller_paths = discover_caller_paths(CALLER_DIR, REUSABLE_DIR)
     for caller_path in caller_paths:
         try:

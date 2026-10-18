@@ -10,7 +10,9 @@
 #   - issue-sync.yml         (template: issue-sync-caller.yml)
 #   - review-bot-gate.yml    (template: review-bot-gate-caller.yml, GH#20727)
 #   - maintainer-gate.yml    (template: maintainer-gate-caller.yml, GH#21154)
+#   - loc-badge.yml          (template: loc-badge-caller.yml)
 #   - linked-issue-check.yml (template: linked-issue-check-caller.yml, GH#28844)
+#   - release-verify.yml     (template: release-verify-caller.yml)
 #
 # Classifies each (repo × workflow) as:
 #

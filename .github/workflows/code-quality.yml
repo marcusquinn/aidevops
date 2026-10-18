@@ -454,6 +454,10 @@ jobs:
     # required check to finish on most PRs.
 
     - name: Reusable Workflow and Maintenance Scope Contracts (GH#28862)
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_BODY: ${{ github.event.pull_request.body }}
       run: |
         python3 -m pip install --disable-pip-version-check --no-input PyYAML==6.0.3
         bash .agents/scripts/tests/test-loc-badge-reusable-install.sh
