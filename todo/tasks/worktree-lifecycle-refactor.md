@@ -45,7 +45,7 @@ Invariants:
   (`storage.worktree_archive_retention_mode`); irreversible expiry is not activated.
 - Process guards are not weakened.
 
-## Timing policy (unresolved; maintainer decision required)
+## Timing policy (resolved: keep current defaults)
 
 Requested target: archive candidacy after 24 hours of confirmed idle for
 ordinary worktrees. Current enforced defaults, now user-configurable in
@@ -58,10 +58,13 @@ malformed values fall back to the default):
 | Dirty generated auto/review | `worktree_generated_dirty_archive_hours` | 168 (7 d) |
 | Unattributed, no open head PR | `worktree_unattributed_archive_hours` | 336 (14 d) |
 
-Configurability does not resolve the policy. Shipped defaults stay unchanged
-until the maintainer records a decision here.
+Configurability does not resolve the policy on its own; the maintainer
+decision below does.
 
-Decision: _pending_.
+Decision (maintainer, 2026-10-18): keep the current defaults — 168 h for
+local-commit and dirty generated worktrees, 336 h for unattributed. The
+24-hour target is not adopted as a shipped default. Operators who want shorter
+windows set the `storage` keys above; the 24-hour floor still applies.
 
 ## Producer inventory
 
@@ -271,5 +274,6 @@ union` does not resolve TODO.md conflicts. `union` is a merge driver, not a
 strategy option, and no `merge=union` attribute applies, so the TODO-only
 auto-rebase never succeeds. Filed as GH#34947 (t18713).
 
-Outstanding: NixOS execution, concurrent cleaners and late owners,
-interrupted creation/removal, the timing decision, and exact-head CI.
+Delivered in #34948 (exact-head CI green). Outstanding: NixOS execution, a
+test for the `worktree-helper-add.sh` create→register window, and a dedicated
+boot-ID test.
