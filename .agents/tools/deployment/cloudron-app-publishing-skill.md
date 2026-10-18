@@ -53,14 +53,19 @@ Commit these before the first registry build:
 
 - `CloudronVersions.json` initialized as `{ "stable": true, "versions": {} }`; never fabricate an entry before a real registry image exists.
 - `CloudronManifest.json` publishing metadata: `id`, `title`, `author`, `description`, `tagline`, `version`, `website`, `contactEmail`, `iconUrl`, `packagerName`, `packagerUrl`, non-empty `tags`, non-empty `mediaLinks`, `changelog`, and `minBoxVersion` of at least `9.1.0`. Add `packageUrl` when the listing must link to the package source repository; this requires `minBoxVersion` 10.0.0.
-- A local square 256×256 PNG icon (`icon` normally points to it) and at least one privacy-reviewed product screenshot or hero. `mediaLinks` must use public HTTPS URLs; Cloudron recommends 3:1 images such as 1200×400.
+- A local square 256×256 PNG icon (`icon` normally points to it) and at least one privacy-reviewed product screenshot or hero. `mediaLinks` must use public HTTPS URLs; Cloudron recommends a 3:1 layout such as 1200×400, rendered at 2× (2400×800) for high-density screens.
 - A Cloudron-format changelog file when using `file://`: each release heading must be exactly `[X.Y.Z]`, because `cloudron versions add` does not parse Keep a Changelog headings such as `## [X.Y.Z]`. One file is enough: the aidevops release validator and preparation helper read the repository-relative `file://` path from the manifest's `changelog` field and preserve its heading format. Without a `file://` value, they fall back to `CHANGELOG.md`.
 - A short publishing runbook that records the canonical catalog URL, registry/repository ownership, asset provenance, test install, rollback, and Community Apps listing steps without storing credentials.
 - A managed GitHub Actions release workflow that creates and verifies keyless provenance for the immutable image digest and exact generated `CloudronVersions.json`; use `reference/release-artifact-provenance.md` before the first publication.
 
 `packageUrl` controls the package-source link in Community Apps and should point to the package repository. It requires `minBoxVersion` 10.0.0. Keep `packagerUrl` pointed at the package maintainer; do not repurpose it as the repository link. Packages that need Cloudron 9.1 compatibility should omit `packageUrl`, while packages that require a repository link should raise the minimum explicitly. `author` and `contactEmail` are deprecated in the manifest reference but are still required by the current CLI version-catalog validator.
 
-Use package-controlled, stable asset URLs where possible. If an upstream asset is used temporarily, preserve a reviewed local copy and replace the remote reference before the upstream URL becomes unstable. Check every URL for an HTTPS 200 response and an image content type before publishing.
+Use package-controlled, stable asset URLs where possible. The CLI copies the manifest into each catalog entry, freezing `iconUrl` and `mediaLinks` per published version; pin assets to `raw.githubusercontent.com/<owner>/<repo>/<full commit SHA>/<path>`, not a branch.
+Keep the pinned commit reachable from the default branch: use a merge commit, not a squash merge, or re-pin to the merged `main` SHA before publishing. Squashing does not retain the original pinned commit in default-branch history; after the PR branch is deleted, that commit may eventually be garbage-collected.
+Unauthenticated `raw.githubusercontent.com` URLs for catalogs, icons and media in private repositories return 404. Make the repository public or host these files elsewhere before URL checks and Community Apps import.
+If an upstream asset is used temporarily, preserve a reviewed local copy and replace the remote reference before the upstream URL becomes unstable. Check every asset URL for an HTTPS 200 response and an image content type before publishing; check the catalog URL separately for valid JSON.
+
+Keep a reproducible slide renderer (HTML template + headless-browser script) and original screenshots in the repository; record provenance, including the upstream commit and licence, in `DESIGN.md`. Upstream documentation screenshots under a permissive licence are an acceptable source when product screenshots require login. Review every slide for credentials, private host names and unverified claims before publishing.
 
 ## Registry Builder
 
