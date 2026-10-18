@@ -189,7 +189,8 @@ violation_location() {
 		esac
 	done <<<"$_changed_files"
 	if [ -z "$_vfile" ]; then
-		printf '%s' "$_violation" | grep -qE '^[^:]+:[0-9]+' || return 1
+		local _loc_re='^[^:]+:[0-9]+'
+		[[ "$_violation" =~ $_loc_re ]] || return 1
 		_vfile=$(printf '%s' "$_violation" | cut -d: -f1)
 		_vline=$(printf '%s' "$_violation" | cut -d: -f2)
 	fi
