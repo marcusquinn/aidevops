@@ -372,4 +372,3 @@ test_cache_retrofit_resumes_interrupted_move() {
 		"Expected a journaled cache-root move to resume without touching protected archive content"
 	return 0
 }
-

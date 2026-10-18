@@ -460,4 +460,3 @@ test_apply_handles_attributable_legacy_root_transaction() {
 		"Expected one locked journal to stage and clean an exact candidate in an attributable legacy root"
 	return 0
 }
-

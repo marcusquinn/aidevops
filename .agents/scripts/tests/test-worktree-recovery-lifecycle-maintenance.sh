@@ -964,4 +964,3 @@ PY
 		"Expected indexed ordering, incomplete/staged totals, invalidation and replaced/symlink hints to remain non-authoritative"
 	return 0
 }
-

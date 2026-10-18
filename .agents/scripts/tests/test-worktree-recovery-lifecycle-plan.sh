@@ -885,10 +885,22 @@ test_active_claim_short_circuits_later_probes() {
 				source_removal_outcome:"removed",branch:"refs/heads/feature/auto-20260830",head:"abc123"}'
 			return $?
 		}
-		_worktree_recovery_plan_git_state() { printf 'clear\n'; return 0; }
-		_worktree_recovery_plan_worktree_reference_state() { printf 'clear\n'; return 0; }
-		_worktree_recovery_plan_registry_state() { printf 'clear\n'; return 0; }
-		_worktree_recovery_plan_claim_state() { printf 'active\n'; return 0; }
+		_worktree_recovery_plan_git_state() {
+			printf 'clear\n'
+			return 0
+		}
+		_worktree_recovery_plan_worktree_reference_state() {
+			printf 'clear\n'
+			return 0
+		}
+		_worktree_recovery_plan_registry_state() {
+			printf 'clear\n'
+			return 0
+		}
+		_worktree_recovery_plan_claim_state() {
+			printf 'active\n'
+			return 0
+		}
 		_worktree_recovery_plan_process_state() {
 			printf 'called\n' >"$probe_path"
 			return 1
@@ -1163,4 +1175,3 @@ test_manual_plan_deadline_emits_continuation() {
 		"Expected deadline exhaustion to stop new classification and preserve a continuation offset"
 	return 0
 }
-
