@@ -115,6 +115,18 @@ class EvidenceTests(unittest.TestCase):
                 self.verify()
             published[key] = original
 
+    def test_binary_icon_reference_stays_verbatim(self):
+        # The CLI keeps icon as a file reference; it must not be fetched or decoded.
+        self.manifest["icon"] = "file://logo.png"
+        published = self.after["versions"]["2.0.12"]["manifest"]
+        published["icon"] = "file://logo.png"
+        self.assertTrue(self.verify())
+        for changed in ("file://other.png", "iVBORw0KGgo=", None):
+            with self.subTest(changed=changed):
+                published["icon"] = changed
+                with self.assertRaisesRegex(MODULE.EvidenceError, "changes source settings"):
+                    self.verify()
+
     def test_unsafe_file_references_fail_before_fetch(self):
         for path in ("", "../x", "docs/../x", "/etc/x", "//etc/x"):
             with self.subTest(path=path), patch.object(self.proof, "content") as fetch:

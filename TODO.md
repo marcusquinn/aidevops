@@ -1724,6 +1724,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18729 feat(dispatch): per-repository cost budget override for the cost circuit breaker #feat #priority:high ref:GH#35049 pr:#35051 completed:2026-10-18
 
+- [ ] t18735 fix(cloudron): release evidence rejects manifests with a binary file:// icon #bug ref:GH#35091
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

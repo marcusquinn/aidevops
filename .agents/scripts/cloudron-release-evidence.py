@@ -17,6 +17,10 @@ import tempfile
 
 CATALOG = "CloudronVersions.json"
 SOURCE_REF = "refs/heads/main"
+# The Cloudron CLI inlines changelog and text references (description,
+# postInstallMessage) but keeps the binary icon reference unchanged; listings
+# use iconUrl. These keys must therefore match the source manifest verbatim.
+UNRESOLVED_FILE_REF_KEYS = frozenset({"changelog", "icon"})
 
 
 class EvidenceError(Exception):
@@ -41,10 +45,10 @@ def decode_json(value):
 
 
 def resolve_file_refs(source_manifest, fetch):
-    """Expand top-level source references without interpreting changelog sections."""
+    """Expand top-level text references the CLI inlines; changelog and icon stay verbatim."""
     expanded = {}
     for key, value in source_manifest.items():
-        if key == "changelog" or not isinstance(value, str) or not value.startswith("file://"):
+        if key in UNRESOLVED_FILE_REF_KEYS or not isinstance(value, str) or not value.startswith("file://"):
             continue
         path = value[len("file://"):]
         # aidevops:trust-boundary — only repository-relative files at the source
