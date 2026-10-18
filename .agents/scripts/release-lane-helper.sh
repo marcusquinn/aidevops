@@ -34,6 +34,7 @@ _AIDEVOPS_RELEASE_LANE_RECLAIM_CONTRACT="same-source-reclaim/v1"
 _AIDEVOPS_RELEASE_LANE_HISTORY_LIMIT=32
 _AIDEVOPS_RELEASE_LANE_SHA_PATTERN='^[0-9a-f]{40}$'
 _AIDEVOPS_RELEASE_LANE_TRUE="true"
+_AIDEVOPS_RELEASE_LANE_UNKNOWN="unknown"
 
 _AIDEVOPS_RELEASE_LANE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=release-lane-liveness.sh
@@ -83,13 +84,50 @@ _release_lane_cache_read() {
 	return 0
 }
 
+# Exit 76 distinguishes quota exhaustion from permission errors (1) and safe
+# server-error deferrals (75). Never retry here or forward response text.
+_release_lane_rate_limited() {
+	local step="$1"
+	local status_code="$2"
+	local response="$3"
+	local text="" retry_after="$_AIDEVOPS_RELEASE_LANE_UNKNOWN" seconds="" now=""
+	text=$(printf '%s' "$response" | tr '[:upper:]' '[:lower:]')
+	if [[ "$text" == *"[gh-cooldown]"* && "$text" == *"active=true"* ]]; then
+		:
+	elif [[ "$status_code" == "403" || "$status_code" == "429" ]]; then
+		[[ "$status_code" == "429" || "$text" == *"rate limit"* ||
+			"$text" =~ x-ratelimit-remaining:[[:blank:]]*0([[:space:]]|$) ]] || return 1
+	else
+		return 1
+	fi
+	if [[ "$text" =~ retry_at=([0-9]+) ]]; then
+		retry_after="${BASH_REMATCH[1]}"
+	elif [[ "$text" =~ x-ratelimit-reset:[[:blank:]]*([0-9]+) ]]; then
+		retry_after="${BASH_REMATCH[1]}"
+	elif [[ "$text" =~ retry-after:[[:blank:]]*([0-9]+) ]]; then
+		seconds="${BASH_REMATCH[1]}"
+		now=$(date +%s) || return 1
+		# Bound arithmetic to avoid overflow from malformed server metadata.
+		if [[ ${#seconds} -le 8 ]]; then
+			retry_after=$((now + 10#$seconds))
+		fi
+	fi
+	printf 'RELEASE_LANE_WRITE step=%s status=%s rate_limited=true retry_after=%s\n' "$step" "$status_code" "$retry_after" >&2
+	if [[ "$retry_after" == "unknown" ]]; then
+		printf 'GitHub API quota exhausted; rerun after the GitHub cooldown expires (reset time unavailable)\n' >&2
+	else
+		printf 'GitHub API quota exhausted; rerun after epoch %s\n' "$retry_after" >&2
+	fi
+	return 0
+}
+
 # Capture errors without ever forwarding GitHub's body or the lane payload.
 # Only failures before a ref mutation are safe to defer automatically.
 _release_lane_api() {
 	local step="$1"
 	local safe_to_retry="$2"
 	shift 2
-	local response="" status_code="unknown" retryable="false"
+	local response="" status_code="$_AIDEVOPS_RELEASE_LANE_UNKNOWN" retryable="false"
 	if response=$(gh api "$@" 2>&1); then
 		printf '%s\n' "$response"
 		return 0
@@ -97,6 +135,7 @@ _release_lane_api() {
 	if [[ "$response" =~ HTTP[^[:space:]]*[[:space:]]+([0-9]{3}) ]]; then
 		status_code="${BASH_REMATCH[1]}"
 	fi
+	_release_lane_rate_limited "$step" "$status_code" "$response" && return 76
 	if [[ "$status_code" == 5[0-9][0-9] && "$safe_to_retry" == "$_AIDEVOPS_RELEASE_LANE_TRUE" ]]; then
 		retryable="$_AIDEVOPS_RELEASE_LANE_TRUE"
 	fi
@@ -112,10 +151,15 @@ _release_lane_remote_head() {
 	local response=""
 	local status_line=""
 	local status_code=""
-	head=$(gh api "$endpoint" --jq '.object.sha // empty' 2>/dev/null) && {
+	head=$(gh api "$endpoint" --jq '.object.sha // empty' 2>&1) && {
 		printf '%s\n' "$head"
 		return 0
 	}
+	status_code="$_AIDEVOPS_RELEASE_LANE_UNKNOWN"
+	if [[ "$head" =~ HTTP[^[:space:]]*[[:space:]]+([0-9]{3}) ]]; then
+		status_code="${BASH_REMATCH[1]}"
+	fi
+	_release_lane_rate_limited lane-head "$status_code" "$head" && return 76
 	response=$(gh api --include --silent "$endpoint" 2>&1 || true)
 	status_line="${response%%$'\n'*}"
 	status_code=$(printf '%s' "$status_line" | cut -d ' ' -f 2)
@@ -126,12 +170,13 @@ _release_lane_remote_head() {
 	if [[ ! "$status_code" =~ ^[0-9]{3}$ && "$status_line" =~ ^gh:.*\(HTTP[[:space:]]([0-9]{3})\)$ ]]; then
 		status_code="${BASH_REMATCH[1]}"
 	fi
+	[[ "$status_code" =~ ^[0-9]{3}$ ]] || status_code="$_AIDEVOPS_RELEASE_LANE_UNKNOWN"
+	_release_lane_rate_limited lane-head "$status_code" "$response" && return 76
 	[[ "$status_code" == "404" ]] && return 2
 	if [[ "$status_code" == 5[0-9][0-9] ]]; then
 		printf 'RELEASE_LANE_WRITE step=lane-head status=%s retryable=true\n' "$status_code" >&2
 		return 75
 	fi
-	[[ "$status_code" =~ ^[0-9]{3}$ ]] || status_code="unknown"
 	printf 'RELEASE_LANE_WRITE step=lane-head status=%s retryable=false\n' "$status_code" >&2
 	return 1
 }

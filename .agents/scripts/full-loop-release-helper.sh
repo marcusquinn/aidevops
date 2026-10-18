@@ -627,6 +627,7 @@ _full_loop_release_existing_with_lane() {
 		fi
 		;;
 	2) ;;
+	76) return 76 ;; # Quota diagnostic is already emitted by release_lane_read.
 	*)
 		printf 'Cannot verify repository release lane\n' >&2
 		return "$lane_read_rc"

@@ -234,6 +234,7 @@ run_merge_guard_api_uncertainty_test() (
 run_http_classification_test() (
 	local mode="missing"
 	local rc=0
+	local output="" operation=""
 	gh() {
 		if [[ " $* " != *" --include "* ]]; then
 			return 1
@@ -248,6 +249,10 @@ run_http_classification_test() (
 		stderr-untrusted-status) printf 'diagnostic: mentions (HTTP 404)\n' >&2 ;;
 		stderr-server-error) printf 'gh: Service Unavailable (HTTP 503)\n' >&2 ;;
 		cooldown) printf '[gh-cooldown] secondary-rate-limit active=true skip=read\n' >&2 ;;
+		primary-cooldown) printf '[gh-cooldown] primary-core active=true retry_at=1900000000\n' >&2 ;;
+		quota) printf 'gh: API rate limit exceeded SECRET_BODY (HTTP 403)\n' >&2 ;;
+		headers) printf 'HTTP/2.0 403 Forbidden\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: 1900000000\n\nSECRET_BODY\n' ;;
+		secondary) printf 'HTTP/2.0 429 Too Many Requests\nRetry-After: 60\n\nSECRET_BODY\n' ;;
 		unknown) printf 'gh: connection unavailable\n' >&2 ;;
 		*) return 1 ;;
 		esac
@@ -263,7 +268,7 @@ run_http_classification_test() (
 	rc=0
 	_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
 	[[ "$rc" -eq 2 ]] || return 1
-	for mode in stderr-unauthorized stderr-forbidden stderr-reflected-status stderr-untrusted-status cooldown unknown; do
+	for mode in stderr-unauthorized stderr-forbidden stderr-reflected-status stderr-untrusted-status unknown; do
 		rc=0
 		_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
 		[[ "$rc" -eq 1 ]] || return 1
@@ -272,6 +277,31 @@ run_http_classification_test() (
 	rc=0
 	_release_lane_remote_head test/repo >/dev/null 2>&1 || rc=$?
 	[[ "$rc" -eq 75 ]] || return 1
+	for mode in cooldown primary-cooldown quota headers secondary; do
+		for operation in head read write; do
+			rc=0
+			case "$operation" in
+			head) output=$(_release_lane_remote_head test/repo 2>&1) || rc=$? ;;
+			read) output=$(_release_lane_api state-read true --include test/endpoint 2>&1) || rc=$? ;;
+			write) output=$(_release_lane_api ref-update false --include test/endpoint 2>&1) || rc=$? ;;
+			esac
+			[[ "$rc" -eq 76 && "$output" == *"rate_limited=true"* &&
+				"$output" == *"GitHub API quota exhausted; rerun after"* &&
+				"$output" != *"SECRET_BODY"* && "$output" != *"retryable=false"* ]] || return 1
+			if [[ "$mode" == "headers" || "$mode" == "primary-cooldown" ]]; then
+				[[ "$output" == *"retry_after=1900000000"* ]] || return 1
+			fi
+		done
+	done
+	# Quota on the first request must stop without issuing a second request.
+	gh() {
+		[[ " $* " != *" --include "* ]] || return 1
+		printf 'gh: API rate limit exceeded (HTTP 403)\n' >&2
+		return 1
+	}
+	rc=0
+	output=$(_release_lane_remote_head test/repo 2>&1) || rc=$?
+	[[ "$rc" -eq 76 && "$output" == *"rate_limited=true"* ]] || return 1
 	return 0
 )
 
