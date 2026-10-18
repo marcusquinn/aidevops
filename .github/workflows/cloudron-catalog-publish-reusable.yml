@@ -87,7 +87,8 @@ jobs:
           image=${REQUESTED_IMAGE:-ghcr.io/${GITHUB_REPOSITORY,,}}
           [[ "$image" =~ ^ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]
           jq -e '.versions | type == "object"' CloudronVersions.json
-          cloudron versions verify
+          # The real CLI rejects the documented empty initial catalog.
+          if [[ "$(jq '.versions | length' CloudronVersions.json)" -gt 0 ]]; then cloudron versions verify; fi
           exists=$(jq -r --arg v "$version" '.versions | has($v)' CloudronVersions.json)
           if [[ "$exists" == false ]]; then
             scratch=$(mktemp -d)
