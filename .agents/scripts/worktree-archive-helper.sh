@@ -22,6 +22,7 @@ Commands:
   archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
 	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
       [--base-sha SHA] [--output-root DIR] [--failure-log FILE] [--self-contained]
+      [--include-ignored]
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
@@ -128,7 +129,8 @@ resolve_base_sha() {
 # closed. Unreadable entries raise, which also fails closed.
 source_fingerprint() {
 	local worktree="$1"
-	python3 - "$worktree" <<'PY'
+	local include_ignored="${2:-0}"
+	python3 - "$worktree" "$include_ignored" <<'PY'
 import hashlib
 import json
 import os
@@ -137,6 +139,7 @@ import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1]).resolve()
+include_ignored = sys.argv[2] == '1'
 
 
 def git(*args):
@@ -154,9 +157,12 @@ try:
 except subprocess.CalledProcessError:
     branch = "detached"
 untracked = hashlib.sha256()
-for raw in listed("--others", "--exclude-standard"):
+capture_options = () if include_ignored else ("--exclude-standard",)
+for raw in listed("--others", *capture_options):
     target = root.joinpath(os.fsdecode(raw))
     untracked.update(raw + b"\0")
+    if include_ignored:
+        untracked.update(str(target.lstat().st_mode).encode() + b"\0")
     if target.is_symlink():
         untracked.update(b"L" + os.fsencode(os.readlink(target)))
     elif target.is_file():
@@ -197,11 +203,21 @@ source_matches() {
 	local archive_dir="${1:-}"
 	local worktree="${2:-}"
 	local current=""
+	local include_ignored=""
 	[[ -n "$archive_dir" && -n "$worktree" ]] || { usage >&2; return 1; }
 	validate_archive_dir "$archive_dir" || return 1
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
 	worktree=$(cd "$worktree" && pwd -P) || return 1
-	current=$(source_fingerprint "$worktree") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	include_ignored=$(python3 - "$archive_dir/manifest.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    value = json.load(handle).get('include_ignored', False)
+if not isinstance(value, bool):
+    raise SystemExit('invalid ignored capture policy')
+print(int(value))
+PY
+	) || return 1
+	current=$(source_fingerprint "$worktree" "$include_ignored") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	python3 - "$archive_dir" "$worktree" "$current" <<'PY'
 import json
 import pathlib
@@ -223,8 +239,13 @@ PY
 capture_untracked() {
 	local worktree="$1"
 	local archive_dir="$2"
+	local include_ignored="${3:-0}"
 	local inventory="$archive_dir/untracked-files.nul"
-	git -C "$worktree" ls-files --others --exclude-standard -z >"$inventory" || return 1
+	if [[ "$include_ignored" == "1" ]]; then
+		git -C "$worktree" ls-files --others -z >"$inventory" || return 1
+	else
+		git -C "$worktree" ls-files --others --exclude-standard -z >"$inventory" || return 1
+	fi
 	python3 - "$worktree" "$inventory" "$archive_dir" "$MAX_UNTRACKED_FILES" "$MAX_UNTRACKED_BYTES" <<'PY'
 import os
 import pathlib
@@ -242,7 +263,7 @@ total = 0
 paths = []
 for raw in raw_paths:
     rel = pathlib.PurePosixPath(os.fsdecode(raw))
-    if rel.is_absolute() or ".." in rel.parts:
+    if rel.is_absolute() or ".." in rel.parts or '.git' in rel.parts:
         raise SystemExit("unsafe untracked path")
     target = root.joinpath(*rel.parts)
     if not target.is_file() and not target.is_symlink():
@@ -279,7 +300,8 @@ write_manifest() {
 	local git_common_dir="${14}"
 	local source_fingerprint_json="${15}"
 	local self_contained="${16:-0}"
-	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" "$source_fingerprint_json" "$self_contained" <<'PY'
+	local include_ignored="${17:-0}"
+	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" "$source_fingerprint_json" "$self_contained" "$include_ignored" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -303,6 +325,7 @@ manifest = {
     "source_worktree": sys.argv[6],
     'source_git_common_dir': sys.argv[14],
     'self_contained': sys.argv[17] == '1',
+    'include_ignored': sys.argv[18] == '1',
     "branch": sys.argv[7],
     "head_sha": sys.argv[8],
     "base_branch": sys.argv[9],
@@ -323,7 +346,7 @@ archive_worktree() {
 	local worktree="${1:-}"
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
-	local self_contained=0
+	local self_contained=0 include_ignored=0
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir commit_count
 	local fingerprint_before="" fingerprint_after=""
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
@@ -338,6 +361,7 @@ archive_worktree() {
 		--output-root) require_value "$1" "${2:-}" || return 1; output_root="$2"; shift 2 ;;
 		--failure-log) require_value "$1" "${2:-}" || return 1; failure_log="$2"; shift 2 ;;
 		--self-contained) self_contained=1; shift ;;
+		--include-ignored) include_ignored=1; shift ;;
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
 	done
@@ -353,7 +377,7 @@ archive_worktree() {
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
 	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }
 	worktree=$(cd "$worktree" && pwd -P) || return 1
-	fingerprint_before=$(source_fingerprint "$worktree") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	fingerprint_before=$(source_fingerprint "$worktree" "$include_ignored") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
 	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
 	branch=$(git -C "$worktree" symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
@@ -388,7 +412,7 @@ archive_worktree() {
 	elif [[ "$commit_count" -gt 0 ]]; then
 		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 	fi
-	capture_untracked "$worktree" "$archive_dir" || return 1
+	capture_untracked "$worktree" "$archive_dir" "$include_ignored" || return 1
 	if [[ -n "$failure_log" ]]; then
 		[[ -f "$failure_log" ]] || { die "failure log does not exist"; return 1; }
 		python3 - "$failure_log" "$archive_dir/failure.log" <<'PY'
@@ -402,12 +426,12 @@ with source.open("rb") as handle:
 PY
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
-	fingerprint_after=$(source_fingerprint "$worktree") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	fingerprint_after=$(source_fingerprint "$worktree" "$include_ignored") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
 		die "worktree changed during archive capture: $worktree"
 		return 1
 	fi
-	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" "$self_contained" || return 1
+	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" "$self_contained" "$include_ignored" || return 1
 	printf '%s\n' "$archive_dir"
 	return 0
 }
@@ -433,6 +457,8 @@ if not isinstance(manifest, dict):
 missing = [key for key in required if key not in manifest]
 if manifest.get('schema') != sys.argv[2] or missing:
     raise SystemExit("invalid manifest schema or missing fields: " + ", ".join(missing))
+if not isinstance(manifest.get('include_ignored', False), bool):
+    raise SystemExit("invalid ignored capture policy")
 artifacts = manifest['artifacts']
 if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in artifacts):
     raise SystemExit("invalid artifact inventory")

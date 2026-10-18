@@ -75,6 +75,41 @@ class ArchiveLifecycle(unittest.TestCase):
                                 "--base-branch", "develop", "--output-root",
                                 self.archives, *extra).stdout.decode().strip())
 
+    def test_ignored_capture_is_explicit_and_restores_independently(self):
+        ignored = self.work / "local.ignored"
+        content = b"private fixture data\0\xff\n"
+        ignored.write_bytes(content)
+        ignored.chmod(0o600)
+        (self.work / "link.ignored").symlink_to("local.ignored")
+        default_archive = self.archive("--self-contained")
+        self.assertFalse(json.loads((default_archive / "manifest.json").read_text())["include_ignored"])
+        self.assertFalse((default_archive / "untracked.tar.gz").exists())
+        archive = self.archive("--self-contained", "--include-ignored")
+        self.assertTrue(json.loads((archive / "manifest.json").read_text())["include_ignored"])
+        self.helper("verify", archive)
+        self.helper("source-matches", archive, self.work)
+        ignored.write_bytes(b"changed")
+        self.assertNotEqual(self.helper("source-matches", archive, self.work, check=False).returncode, 0)
+        # The restore must not borrow Git objects from the original repository.
+        self.repo.rename(self.root / "unavailable-repo")
+        restored = self.root / "independent-restore"
+        self.helper("restore", archive, "--target", restored)
+        self.assertEqual((restored / "local.ignored").read_bytes(), content)
+        self.assertEqual(stat.S_IMODE((restored / "local.ignored").stat().st_mode), 0o600)
+        self.assertEqual(os.readlink(restored / "link.ignored"), "local.ignored")
+
+    def test_ignored_capture_respects_payload_bounds(self):
+        (self.work / "large.ignored").write_bytes(b"over budget")
+        self.env["AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES"] = "1"
+        result = self.helper("archive", self.work, "--repo", "fixture/repo",
+                             "--issue", "1", "--reason", "failed-worker",
+                             "--base-branch", "develop", "--output-root", self.archives,
+                             "--self-contained", "--include-ignored", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"payload exceeds configured limit", result.stderr)
+        self.assertFalse(list(self.archives.rglob("manifest.json")))
+        self.assertTrue((self.work / "large.ignored").exists())
+
     @staticmethod
     def update_manifest(archive, **changes):
         path = archive / "manifest.json"

@@ -145,6 +145,22 @@ unverified archives remain deferred; reconciliation never removes source data.
 
 Untracked capture uses Git's standard ignore rules (`git ls-files --others --exclude-standard`), not a second cache allowlist. Ignored dependencies and build caches are rebuilt from tracked manifests/lockfiles. Keep `.env.example` tracked with placeholders; supply real values from a persistent protected config or secret store at launch, rather than duplicating them in every worktree archive. A worktree does not automatically inherit the canonical checkout's `.env`. Before removing legacy worktrees or full recovery copies, check for unique ignored data and move any needed values to their durable owner without printing them. Archive directories are private (0700).
 
+Explicit preservation can use `archive ... --self-contained --include-ignored`.
+This includes ignored regular files and symlinks in the existing
+`untracked.tar.gz` artifact, under the same file-count and byte limits. The
+manifest records `include_ignored`; source matching uses that capture policy
+and hashes captured contents and modes. Default capture remains unchanged.
+Ignored payloads may contain secrets: keep archives private and do not publish
+them. Restore preserves regular-file permission bits, including mode 0600.
+
+This option is a preservation building block, **not** legacy migration or
+permission to retire a full recovery bucket. It does not preserve empty
+directories, ACLs/xattrs, special files, Git administration or reflog-only
+history. Existing lifecycle snapshots continue rejecting unsupported content,
+including ignored data; no producer or removal guard opts into this flag.
+Independent restore comparison and valid ownership/process evidence remain
+mandatory before replacing any original copy. Archive expiry is separate.
+
 ## Retention
 
 The recommended policy is `--older-than 14d --max-total-size 20G`. `prune` selects verified archives older than the age limit, then oldest remaining eligible archives until their retained size is at or below the cap. This is irreversible expiry: it can destroy the last copy of unpublished work. Always inspect `--dry-run` output before using `--apply` in a manual operation.
