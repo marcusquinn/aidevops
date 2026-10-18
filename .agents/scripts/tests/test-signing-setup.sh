@@ -160,6 +160,34 @@ if [[ "$failed_output" != *"[ERROR] Could not load headless signing key"* ]] || 
 	exit 1
 fi
 
+# Exercise real ssh-add against an isolated agent. A sentinel identity keeps the
+# existing agent reusable even before the target key has been loaded.
+ssh-keygen -t ed25519 -N '' -q -f "${TEST_ROOT}/sentinel"
+ssh-agent bash -s -- "$TEST_HOME" "$SCRIPT_DIR" "$TEST_ROOT" <<'EOF'
+set -euo pipefail
+export HOME="$1"
+script_dir="$2"
+test_root="$3"
+export SSH_ASKPASS_REQUIRE=force SSH_ASKPASS=/bin/false
+ssh-add "${test_root}/sentinel" >/dev/null 2>&1
+printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
+	"$SSH_AUTH_SOCK" "$SSH_AGENT_PID" >"${HOME}/.ssh/agent.env"
+if output=$("${script_dir}/signing-setup.sh" agent-start </dev/null); then
+	printf 'FAIL real ssh-add accepted an encrypted key without a passphrase\n'
+	exit 1
+fi
+[[ "$output" == *"[ERROR] Could not load headless signing key"* ]]
+[[ "$output" == *"aidevops signing headless-setup"* ]]
+[[ "$output" != *"[OK] Loaded"* ]]
+mv "${test_root}/unencrypted" "${HOME}/.ssh/id_ed25519_signing"
+mv "${test_root}/unencrypted.pub" "${HOME}/.ssh/id_ed25519_signing.pub"
+output=$("${script_dir}/signing-setup.sh" agent-start </dev/null)
+[[ "$output" == *"[OK] Loaded signing key into ssh-agent:"* ]]
+output=$("${script_dir}/signing-setup.sh" agent-start </dev/null)
+[[ "$output" == *"Signing key already loaded in ssh-agent"* ]]
+printf 'PASS real ssh-agent rejects encrypted keys and loads passphrase-less keys idempotently\n'
+EOF
+
 printf 'PASS encrypted keys warn and failed/unconfirmed loads return errors with remediation\n'
 printf 'PASS passphrase-less keys pass the probe and confirmed loads report success\n'
 printf 'PASS signing check sources persisted agent state and matches public keys\n'
