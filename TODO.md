@@ -1715,6 +1715,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18721 feat(badges): worktree-safe badges sync --apply and scheduled drift remediation #auto-dispatch #feat ref:GH#35020 -> [todo/tasks/t18721-brief.md]
 - [ ] t18723 fix(badges): derive owned repos from repos.json instead of hard-coded org allowlist #auto-dispatch #bug ref:GH#35032 -> [todo/tasks/t18723-brief.md]
 
+- [ ] t18729 feat(dispatch): per-repository cost budget override for the cost circuit breaker #feat #priority:high ref:GH#35049
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
