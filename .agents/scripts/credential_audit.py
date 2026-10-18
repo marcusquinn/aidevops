@@ -120,7 +120,13 @@ def fix(scripts):
     fix_mcp(records, scripts)
     print('Drift: choose explicitly with aidevops secret set NAME. Unparseable lines are unchanged.')
     if any(r['category'].startswith('ssh-') for r in records):
-        print('SSH: add passphrases with ssh-keygen -p -f <key>; ~/.ssh mode and directives are report-only.')
+        print('SSH: ~/.ssh mode and directives are report-only.')
+    if any(r['category'] == 'ssh-key-no-passphrase' for r in records):
+        print('SSH: add passphrases with ssh-keygen -p -f <key> only for reported ssh-key-no-passphrase keys; '
+              'never add a passphrase to the designated headless signing key.')
+    if any(r['category'] == 'ssh-headless-signing-encrypted' for r in records):
+        print('SSH: the designated headless signing key must be passphrase-less for unattended commits; '
+              'restore it with aidevops signing headless-setup.')
     print('Import/prune operate on the active store only; review other tenants separately. No provider probes performed.')
     return 0
 
