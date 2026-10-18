@@ -27,7 +27,7 @@ class SshConfigAuditTests(unittest.TestCase):
         self.ssh = self.home / '.ssh'
         self.ssh.mkdir(mode=0o700)
         self.marker = self.home / 'match-exec-ran'
-        self.secret_arg = 'synthetic-34950-proxy-argument'
+        self.canary_arg = 'synthetic-34950-proxy-argument'
         self.env = dict(os.environ, HOME=str(self.home))
 
     def key(self, path, passphrase='', extra=('-t', 'ed25519')):
@@ -46,7 +46,7 @@ class SshConfigAuditTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(SCRIPTS / 'credential_audit.py'), 'ssh-config'],
                                 env=self.env, capture_output=True, text=True, timeout=60)  # nosec B603
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn(self.secret_arg, result.stdout + result.stderr)
+        self.assertNotIn(self.canary_arg, result.stdout + result.stderr)
         return [json.loads(line) for line in result.stdout.splitlines()]
 
     def test_identityfile_keys_via_include_and_loopback(self):
@@ -73,7 +73,7 @@ class SshConfigAuditTests(unittest.TestCase):
     def test_directives_report_keywords_without_running_match_exec(self):
         self.write(self.ssh / 'config', f'StrictHostKeyChecking no\nHost *\n  ForwardAgent yes\n'
                    f'  UserKnownHostsFile=/dev/null\nHost bastion\n  ForwardAgent yes\n'
-                   f'  ProxyCommand nc {self.secret_arg} %h %p\nMatch host x exec "touch {self.marker}"\n'
+                   f'  ProxyCommand nc {self.canary_arg} %h %p\nMatch host x exec "touch {self.marker}"\n'
                    '  ProxyCommand none\nInclude config\n')
         records = self.records()
         self.assertFalse(self.marker.exists())
@@ -88,7 +88,7 @@ class SshConfigAuditTests(unittest.TestCase):
         scan = subprocess.run(['bash', str(SCRIPTS / 'secret-hygiene-helper.sh'), 'scan-secrets'],
                               env=self.env, capture_output=True, text=True, timeout=120)  # nosec B603 B607
         self.assertIn('ssh-hostkey-check-disabled', scan.stdout)
-        self.assertNotIn(self.secret_arg, scan.stdout + scan.stderr)
+        self.assertNotIn(self.canary_arg, scan.stdout + scan.stderr)
         self.assertFalse(self.marker.exists())
 
     def test_loose_unencrypted_pem_and_repeated_include_scopes(self):
