@@ -617,6 +617,7 @@ previsible.io
 privatebin.info
 privatebin.net
 project.pages.dev
+prompt.linkup.so
 provenance-ping.marcusquinn.workers.dev
 proxycheck.io
 pttrns.com
