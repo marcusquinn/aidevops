@@ -261,7 +261,10 @@ finding 3 for ordinary writes. It is metadata comparison, not content
 verification: a writer that preserves mode, inode, size, mtime and ctime would
 evade it, which ordinary tools cannot do for ctime. The second re-review
 also found finding 1 failing open on an unresolvable branch tip; that is
-now fixed. A final re-review of that last change was not run.
+now fixed. The third re-review returned APPROVE-WITH-NOTES with finding 1
+closed. Its notes: a reflog subject names an operation type, not an
+invocation, so a concurrent foreign rebase or a forged subject is not
+excluded; and the final check-to-removal race remains.
 
 Found while probing, and outside this scope (identical on `main`): `rebase -X
 union` does not resolve TODO.md conflicts. `union` is a merge driver, not a
@@ -269,5 +272,4 @@ strategy option, and no `merge=union` attribute applies, so the TODO-only
 auto-rebase never succeeds. Filed as GH#34947 (t18713).
 
 Outstanding: NixOS execution, concurrent cleaners and late owners,
-interrupted creation/removal, the timing decision, a re-review of the fixes,
-and exact-head CI.
+interrupted creation/removal, the timing decision, and exact-head CI.
