@@ -14,6 +14,7 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `actions` | string | Missing/`"available"` = normal remote CI. `"unavailable"` = run configured local checks from the start; full-loop requires trusted exact-head local evidence instead of polling Actions. |
 | `actions_reason` | string | Optional operator explanation for unavailable Actions, for example billing or spending blocked. Not a classifier or authority grant. |
 | `local_only` | bool | No remote; skip all `gh` operations |
+| `badges` | bool | Missing/`true` = README badge block managed by `aidevops badges`. `false` = README is hand-maintained; `badges check` reports `OPTED-OUT` and `badges sync` never writes. Repos with a string `mirror_upstream` (`owner/repo`) are always treated as opted out (`MIRROR`); boolean `mirror_upstream` is a privacy marker only. |
 | `priority` | string | `"tooling"` (infrastructure), `"product"` (user-facing), `"profile"` (docs-only) |
 | `maintainer` | string | GitHub username. Auto-detected from `gh api user`; falls back to slug owner |
 | `role` | string | `"maintainer"` or `"contributor"`. Controls which pulse scanners run |

@@ -1716,6 +1716,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18723 fix(badges): derive owned repos from repos.json instead of hard-coded org allowlist #auto-dispatch #bug ref:GH#35032 -> [todo/tasks/t18723-brief.md] pr:#35033 completed:2026-10-18
 - [x] t18730 docs(readme): put languages chart on its own line in README badge row #bug ref:GH#35058 -> [todo/tasks/t18730-brief.md] pr:#35061 completed:2026-10-18
 - [x] t18731 fix(qlty): qlty-cli.sh runs locally without credentials and in linked worktrees #bug ref:GH#35064 -> [todo/tasks/t18731-brief.md] pr:#35066 completed:2026-10-18
+- [ ] t18732 fix(badges): repos opt out with badges:false; never sync upstream mirrors #bug ref:GH#35079 -> [todo/tasks/t18732-brief.md]
 
 - [-] t18727 fix: test-release-snapshot-migration.sh exits 1 silently in _full_loop_release_start_new block #auto-dispatch #bug ref:GH#35045 declined:2026-10-18
 

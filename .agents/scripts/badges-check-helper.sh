@@ -16,6 +16,8 @@
 #   NO-README   — no README.md found in the repo directory
 #   NO-BLOCK    — README exists but no aidevops:badges:start/end markers
 #   LOCAL-ONLY  — repo has `local_only: true`, skip
+#   MIRROR      — repo has `mirror_upstream`; README must stay identical to upstream
+#   OPTED-OUT   — repo has `badges: false`; README is hand-maintained without a block
 #   EXTERNAL    — repo is in a non-owned org or contributed: true (read-only info)
 #
 # Check (drift detection) enumerates maintained non-local-only repos by default.
@@ -33,7 +35,7 @@
 #   -h, --help          Show usage and exit 0
 #
 # Exit codes:
-#   0  — all checked repos are CURRENT, NO-README, NO-BLOCK, or LOCAL-ONLY
+#   0  — no checked repo is DRIFTED or METRICS-MISSING
 #   1  — one or more repos are DRIFTED or METRICS-MISSING
 #   2  — configuration or IO error (repos.json missing, jq unavailable)
 #
@@ -167,7 +169,8 @@ _usage() {
 
 # ─── Repo iteration ─────────────────────────────────────────────────────────
 
-# Emit one "path|local_only|contributed|role|maintenance|slug|maintainer" TSV line per registered repo.
+# Emit one "path|local_only|contributed|role|maintenance|optout|slug|maintainer" TSV line per registered repo.
+# optout is never empty (tab IFS collapses empty fields): mirror, opted-out or none.
 _iterate_repos() {
 	if [[ ! -f "$REPOS_JSON" ]]; then
 		_die "repos.json not found at $REPOS_JSON — aidevops may not be initialised"
@@ -184,6 +187,10 @@ _iterate_repos() {
 			(.contributed // false | tostring),
 			(.role // "maintainer"),
 			((if .maintenance == false then false else true end) | tostring),
+			# Boolean mirror_upstream is a privacy marker only, not a mirror.
+			(if ((.mirror_upstream | type) == "string" and .mirror_upstream != "") then "mirror"
+			 elif .badges == false then "opted-out"
+			 else "none" end),
 			(.slug // ""),
 			(.maintainer // "")
 		]
@@ -194,7 +201,7 @@ _iterate_repos() {
 
 # ─── Classification ─────────────────────────────────────────────────────────
 
-# _classify_badges_repo <path> <local_only> <contributed> <role> <slug> <badges_helper> [maintainer]
+# _classify_badges_repo <path> <local_only> <contributed> <role> <slug> <badges_helper> [maintainer] [optout]
 # Emits: class\tnote
 _classify_badges_repo() {
 	local _path="$1"
@@ -204,11 +211,24 @@ _classify_badges_repo() {
 	local _slug="$5"
 	local _badges_helper="$6"
 	local _maintainer="${7:-}"
+	local _optout="${8:-none}"
 
 	if [[ "$_local_only" == "true" ]]; then
 		printf 'LOCAL-ONLY\t\n'
 		return 0
 	fi
+
+	# Registry opt-outs win before any README inspection: never actionable.
+	case "$_optout" in
+	mirror)
+		printf 'MIRROR\tupstream mirror; README kept identical to upstream\n'
+		return 0
+		;;
+	opted-out)
+		printf 'OPTED-OUT\tbadges: false in repos.json\n'
+		return 0
+		;;
+	esac
 
 	# Classify scope: EXTERNAL if contributed or org not in owned list
 	local _org="${_slug%%/*}"
@@ -298,7 +318,7 @@ _render_row_human() {
 		CURRENT) _colour=$'\e[32m' ;;          # green
 		DRIFTED | METRICS-MISSING) _colour=$'\e[33m' ;; # yellow
 		NO-README | NO-BLOCK) _colour=$'\e[31m' ;; # red
-		LOCAL-ONLY | EXTERNAL | STARTER-OWNED) _colour=$'\e[90m' ;; # grey
+		LOCAL-ONLY | EXTERNAL | STARTER-OWNED | MIRROR | OPTED-OUT) _colour=$'\e[90m' ;; # grey
 		esac
 	else
 		_colour_reset=''
@@ -374,7 +394,7 @@ _process_repos() {
 	fi
 
 	local _any_failure=0
-	local _total=0 _current=0 _drifted=0 _metrics_missing=0 _no_readme=0 _no_block=0 _local_only=0 _external=0 _starter_owned=0
+	local _total=0 _current=0 _drifted=0 _metrics_missing=0 _no_readme=0 _no_block=0 _local_only=0 _external=0 _starter_owned=0 _opted_out=0
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
 		printf '\n  %-50s %-12s %s\n' "REPO" "STATUS" "NOTE"
@@ -384,8 +404,8 @@ _process_repos() {
 	local _rows
 	_rows=$(_iterate_repos) || exit $?
 
-	local _path _local_only_flag _contributed_flag _role _maintenance_flag _slug _maintainer
-	while IFS=$'\t' read -r _path _local_only_flag _contributed_flag _role _maintenance_flag _slug _maintainer; do
+	local _path _local_only_flag _contributed_flag _role _maintenance_flag _optout _slug _maintainer
+	while IFS=$'\t' read -r _path _local_only_flag _contributed_flag _role _maintenance_flag _optout _slug _maintainer; do
 		[[ -z "$_slug" && -z "$_path" ]] && continue
 		local _label="${_slug:-$(basename "$_path")}"
 		[[ -n "$_filter_slug" && "$_slug" != "$_filter_slug" ]] && continue
@@ -396,10 +416,11 @@ _process_repos() {
 
 		local _class _note
 		IFS=$'\t' read -r _class _note < <(_classify_badges_repo \
-			"$_path" "$_local_only_flag" "$_contributed_flag" "$_role" "$_slug" "$_badges_helper" "$_maintainer")
+			"$_path" "$_local_only_flag" "$_contributed_flag" "$_role" "$_slug" "$_badges_helper" "$_maintainer" "$_optout")
 
 		case "$_class" in
 		LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
+		MIRROR | OPTED-OUT) _opted_out=$((_opted_out + 1)) ;;
 		EXTERNAL) _external=$((_external + 1)) ;;
 		STARTER-OWNED) _starter_owned=$((_starter_owned + 1)) ;;
 		NO-README) _no_readme=$((_no_readme + 1)) ;;
@@ -439,8 +460,8 @@ _process_repos() {
 	done <<<"$_rows"
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-		printf '\n  Summary: %d entries — %d current, %d drifted, %d metrics-missing, %d no-block, %d no-readme, %d starter-owned, %d external, %d local-only\n\n' \
-			"$_total" "$_current" "$_drifted" "$_metrics_missing" "$_no_block" "$_no_readme" "$_starter_owned" "$_external" "$_local_only"
+		printf '\n  Summary: %d entries — %d current, %d drifted, %d metrics-missing, %d no-block, %d no-readme, %d starter-owned, %d mirror/opted-out, %d external, %d local-only\n\n' \
+			"$_total" "$_current" "$_drifted" "$_metrics_missing" "$_no_block" "$_no_readme" "$_starter_owned" "$_opted_out" "$_external" "$_local_only"
 		((_any_failure == 1)) && printf '  Exit code 1 — see DRIFTED or METRICS-MISSING entries above.\n\n'
 	fi
 

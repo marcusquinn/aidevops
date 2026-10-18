@@ -473,6 +473,18 @@ _repo_is_contributor() {
 	return $?
 }
 
+# Upstream mirrors (string mirror_upstream; boolean is a privacy marker only) and
+# explicit `badges: false` registrations never get badge writes.
+_repo_badges_opted_out() {
+	local _slug="$1"
+	[[ -f "$REPOS_JSON" ]] || return 1
+	jq -e --arg slug "$_slug" \
+		'first(.initialized_repos[]? | select(.slug == $slug)) |
+		 (((.mirror_upstream | type) == "string" and .mirror_upstream != "") or .badges == false)' \
+		"$REPOS_JSON" >/dev/null 2>&1
+	return $?
+}
+
 # _apply_repo runs as an isolated transaction. Failures retain the worktree and
 # branch for recovery; successful/no-op runs request guarded removal, never force.
 _apply_repo() (
@@ -577,6 +589,12 @@ _process_rows() {
 		[[ "$_slug" == "marcusquinn/aidevops" ]] && continue
 		if _repo_is_contributor "$_slug"; then
 			local _result="${_slug}	${_STATUS_SKIPPED}	contributor role — sync is read-only"
+			_print_result_row "$_json_out" "$_result"
+			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
+			continue
+		fi
+		if _repo_badges_opted_out "$_slug"; then
+			local _result="${_slug}	${_STATUS_SKIPPED}	upstream mirror or badges: false — README left alone"
 			_print_result_row "$_json_out" "$_result"
 			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
 			continue
