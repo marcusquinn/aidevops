@@ -166,6 +166,7 @@ _isc_claim_ownership_class() {
 	printf '%s' "$metadata" | jq -r --arg user "$user" --argjson now "$now_epoch" '
 		(.state // "" | ascii_downcase) as $state |
 		([.labels[]?.name] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review")) as $active |
+		([.labels[]?.name] | any(. == "status:queued" or . == "status:in-progress")) as $worker |
 		[.assignees[]?.login] as $assignees |
 		[.comments[]?
 			| select((.body // "") | contains("Interactive session claimed by @"))
@@ -180,6 +181,8 @@ _isc_claim_ownership_class() {
 		if $state != "open" then "invalid-state"
 		elif ($active | not) and $live_foreign_claim != null
 		then "foreign-interactive:" + $live_foreign_claim.author.login
+		elif ($assignees | length) == 1 and $assignees[0] == $user and $worker
+		then "own-worker"
 		elif ($active | not) then "unclaimed"
 		elif ($assignees | length) == 1 and $assignees[0] == $user then "own"
 		elif $live_claim != null then "foreign-interactive:" + $live_claim.author.login
@@ -262,6 +265,15 @@ _isc_handle_existing_claim_ownership() {
 		return 1
 	fi
 	case "$ownership_class" in
+	own-worker)
+		# Shared login is not shared session ownership. Refuse even with
+		# --implementing: relabeling queued work trips the runtime fence, while
+		# refreshing an in-progress claim writes a misleading interactive stamp.
+		# Do not rely on local PID visibility; the worker may be on another host.
+		_isc_err "claim: #$issue in $slug has queued/in-progress worker ownership under @$user; refusing interactive claim (including --implementing); no labels or stamps changed"
+		_isc_err "claim: continue the dispatched worker session; recover stale worker ownership explicitly before claiming interactively"
+		return 1
+		;;
 	own)
 		_isc_info "claim: #$issue already belongs to $user — refreshing stamp"
 		_isc_refresh_existing_claim "$issue" "$slug" "$worktree_path" "$user" "$defer_comment"

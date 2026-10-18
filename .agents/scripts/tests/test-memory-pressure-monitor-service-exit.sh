@@ -72,6 +72,20 @@ case "${MEMPRESS_TEST_SCENARIO:-ok}" in
 esac
 FAKE_PS
 	chmod +x "${TEST_ROOT}/bin/ps"
+	# Emulate BSD awk's rejection of literal newlines in -v values on Linux too.
+	REAL_AWK=$(command -v awk)
+	export REAL_AWK
+	cat >"${TEST_ROOT}/bin/awk" <<'FAKE_AWK'
+#!/usr/bin/env bash
+for arg in "$@"; do
+	if [[ "$arg" == patterns=* && "$arg" == *$'\n'* ]]; then
+		printf '%s\n' 'awk: newline in string' >&2
+		exit 2
+	fi
+done
+exec "$REAL_AWK" "$@"
+FAKE_AWK
+	chmod +x "${TEST_ROOT}/bin/awk"
 	return 0
 }
 
@@ -167,6 +181,11 @@ main() {
 	test_ok_service_exit_zero || true
 	test_warning_service_exit_zero_and_logs || true
 	test_critical_service_exit_nonzero_and_logs || true
+	if grep -q 'awk:.*newline in string' "$TEST_ROOT/ok.out" "$TEST_ROOT/warning.out" "$TEST_ROOT/critical.out"; then
+		print_result 'multiline process patterns avoid BSD awk diagnostics' 1
+	else
+		print_result 'multiline process patterns avoid BSD awk diagnostics' 0
+	fi
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then

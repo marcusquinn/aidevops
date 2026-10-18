@@ -44,6 +44,20 @@ teardown() {
 	return 0
 }
 
+# GH#34905: cleanup age is confirmed idle time, so backdate every activity
+# signal pulse reads (.git file plus admin HEAD and HEAD reflog).
+backdate_worktree_activity() {
+	local wt_path="$1"
+	local stamp="$2"
+	local admin_dir="" signal=""
+	admin_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir) || return 1
+	for signal in "$wt_path/.git" "$admin_dir/HEAD" "$admin_dir/logs/HEAD"; do
+		[[ -e "$signal" ]] || continue
+		touch -t "$stamp" "$signal" || return 1
+	done
+	return 0
+}
+
 setup_repo_with_worker_worktree() {
 	local repo_dir="$1"
 	local wt_path="$2"
@@ -76,7 +90,7 @@ setup_repo_with_worker_worktree() {
 			|| date -u -d "$age_spec" +%Y%m%d%H%M 2>/dev/null \
 			|| printf '202601010000\n')
 	fi
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	return 0
 }
 
@@ -105,7 +119,7 @@ setup_repo_with_detached_review_worktree() {
 	old_ts=$(date -u -v-2d +%Y%m%d%H%M 2>/dev/null \
 		|| date -u -d "$age_spec" +%Y%m%d%H%M 2>/dev/null \
 		|| printf '202601010000\n')
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	return 0
 }
 
@@ -370,6 +384,51 @@ test_closed_issue_dirty_worktree_compacts_and_preserves_branch() {
 	grep -q 'recovery_path=branch-preserved-closed-issue' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	print_result "closed issue dirty worktree compacts and preserves branch" "$rc" \
 		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists archive=$archive_manifest pulse=$(cat "$LOGFILE" 2>/dev/null) log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
+# GH#34943: a late owner that writes after the compact archive was verified
+# must keep its worktree. The managed-lifetime probe override simulates that
+# write landing inside native removal, after its lock and common-dir probes
+# (the probe only runs there, so the archive itself is unaffected).
+test_late_write_after_compact_archive_preserves_worktree() {
+	local repo_dir="${TEST_ROOT}/repo-late-writer"
+	local wt_path="${TEST_ROOT}/worker-wt-late-writer"
+	local branch_name="feature/auto-20260507-190809-gh23089"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
+	printf 'dirty edit\n' >>"${wt_path}/worker.txt"
+	source_pulse_cleanup_with_stubs || return 1
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" == "23089" ]]; then
+			printf '%s\n' "CLOSED"
+			return 0
+		fi
+		return 1
+	}
+	worktree_managed_require_removal_proof() {
+		local guarded_path="$1"
+		printf 'late owner write\n' >>"${guarded_path}/late-owner.txt"
+		return 0
+	}
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-late-writer-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local branch_exists=1 rc=0
+	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
+	[[ "$cleanup_rc" -ne 0 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	grep -q 'late owner write' "${wt_path}/late-owner.txt" 2>/dev/null || rc=1
+	grep -q 'dirty edit' "${wt_path}/worker.txt" 2>/dev/null || rc=1
+	grep -q 'worktree-skipped.*compact-archive-source-changed' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "late write after compact archive preserves worktree" "$rc" \
+		"cleanup_rc=$cleanup_rc worktree_exists=$([[ -d "$wt_path" ]] && printf yes || printf no) branch_exists=$branch_exists pulse=$(cat "$LOGFILE" 2>/dev/null) log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
 
@@ -722,7 +781,7 @@ test_clean_generated_worktree_waits_for_archive_threshold() {
 	old_ts=$(date -u -v-4H +%Y%m%d%H%M 2>/dev/null ||
 		date -u -d "4 hours ago" +%Y%m%d%H%M 2>/dev/null ||
 		printf '202601010000\n')
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	source_pulse_cleanup_with_stubs || return 1
 
 	local now_epoch
@@ -858,7 +917,7 @@ test_old_unattributed_worktree_is_archived_and_removed() {
 	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "30 days ago" || return 1
 	local old_ts
 	old_ts=$(date -u -v-30d +%Y%m%d%H%M 2>/dev/null || date -u -d "30 days ago" +%Y%m%d%H%M) || return 1
-	touch -t "$old_ts" "$wt_path/.git" || return 1
+	backdate_worktree_activity "$wt_path" "$old_ts" || return 1
 	source_pulse_cleanup_with_stubs || return 1
 
 	local now_epoch
@@ -924,6 +983,12 @@ test_stale_dirty_attributed_worker_archives_before_removal() {
 	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "8 days ago" || return 1
 	git -C "$wt_path" reset -q --hard main || return 1
 	printf 'unfinished dirty worker state\n' >"$wt_path/unfinished.txt"
+	# The reset rewrites HEAD and its reflog, which is real idle-clock
+	# activity (GH#34905); restore the 8-day idle evidence afterwards.
+	local idle_stamp
+	idle_stamp=$(date -u -v-8d +%Y%m%d%H%M 2>/dev/null ||
+		date -u -d "8 days ago" +%Y%m%d%H%M) || return 1
+	backdate_worktree_activity "$wt_path" "$idle_stamp" || return 1
 	source_pulse_cleanup_with_stubs || return 1
 
 	local now_epoch
@@ -1099,7 +1164,7 @@ test_abandoned_profile_publication_is_archived_recoverably() {
 		{schema:"aidevops-profile-publication/v1",producer:"profile-readme",worktree_path:$path,canonical_common_dir:$common,canonical_head:$head,created_epoch:1}
 	' >"${git_dir}/aidevops-profile-publication.json"
 	old_ts=$(date -u -v-3H +%Y%m%d%H%M 2>/dev/null || date -u -d '3 hours ago' +%Y%m%d%H%M)
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
 	ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS=7200
@@ -1157,7 +1222,7 @@ setup_profile_publication_worktree() {
 	git -C "$repo_dir" worktree add -q --detach "$wt_path" main
 	local old_ts=""
 	old_ts=$(date -u -v-3H +%Y%m%d%H%M 2>/dev/null || date -u -d '3 hours ago' +%Y%m%d%H%M)
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	return 0
 }
 
@@ -1260,8 +1325,18 @@ test_stale_profile_publication_intent_is_removed() {
 
 TEST_ROOT=$(mktemp -d)
 trap teardown EXIT
+# Git reports canonical worktree paths and the managed-lifetime fence refuses
+# any other form, so resolve macOS /var -> /private/var like production does.
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs"
+# Production always has an ownership registry; without one the managed
+# lifetime fence fails closed before any archive is attempted. A subshell
+# keeps the registry library from replacing this file's stubs.
+(
+	# shellcheck source=../shared-worktree-registry.sh
+	source "${SCRIPT_DIR}/../shared-worktree-registry.sh" && _init_registry_db
+) || exit 1
 
 echo "=== test-pulse-cleanup-worker-owned-no-pr.sh ==="
 test_recent_metric_blocks_local_commit_no_pr_removal
@@ -1274,6 +1349,7 @@ test_open_ci_repair_dirty_worktree_is_preserved
 test_open_head_pr_outranks_embedded_terminal_reference
 test_merged_branch_pr_removes_before_age_threshold
 test_closed_issue_dirty_worktree_compacts_and_preserves_branch
+test_late_write_after_compact_archive_preserves_worktree
 test_failed_compact_archive_preserves_dirty_worktree
 test_terminal_worktree_respects_live_owner_signal
 test_terminal_worktree_respects_recent_worker_metric

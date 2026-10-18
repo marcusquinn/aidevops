@@ -581,7 +581,7 @@ _derive_worker_failure_evidence() {
 }
 
 #######################################
-# Return success when a hard-killed worker already handed off an open PR.
+# Return success when a worker already handed off a durable PR.
 #
 # This guards worker-failure metrics before the later claim-release recovery path
 # runs. A watchdog hard-kill after PR creation is a monitoring handoff when the
@@ -591,7 +591,8 @@ _derive_worker_failure_evidence() {
 # Args:
 #   $1 - session key
 #   $2 - work dir
-# Returns: 0 when an exact-head, non-draft open PR has a merge summary.
+# Returns: 0 for an exact-head, linked, summarised ready PR, or a merged PR
+#          with the same evidence whose issue is confirmed closed.
 #######################################
 _worker_post_pr_handoff_confirmed() {
 	local session_key="$1"
@@ -614,8 +615,19 @@ _worker_post_pr_handoff_confirmed() {
 	local handoff_state=""
 	handoff_state=$(_pr_handoff_state_for_branch_or_issue \
 		"$branch_name" "$issue_number" "$repo_slug" "head-only" "$local_head" "1") || return 1
-	[[ "${handoff_state%%|*}" == "ready" ]]
-	return $?
+	case "${handoff_state%%|*}" in
+	ready) return 0 ;;
+	merged)
+		# GH#34931: a worker may merge its own PR before emitting POST_PR_HANDOFF.
+		# Reopened/open issues remain merged checkpoints, never completion.
+		local issue_state=""
+		issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
+			--jq '.state | ascii_downcase' 2>/dev/null) || return 1
+		[[ "$issue_state" == "closed" ]] || return 1
+		return 0
+		;;
+	esac
+	return 1
 }
 
 #######################################

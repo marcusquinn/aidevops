@@ -536,12 +536,14 @@ _collect_monitored_processes() {
 	local -a seen_pids=()
 	local -a matched_rows=()
 	local pid rss_mb cmd_name cmd
+	# BSD awk rejects literal newlines in -v assignments; ENVIRON also preserves
+	# regex backslashes without awk command-line escape interpretation.
 	while IFS=$'\1' read -r pid rss_mb cmd_name cmd; do
 		seen_pids+=("$pid")
 		matched_rows+=("${pid}"$'\1'"${rss_mb}"$'\1'"${cmd_name}"$'\1'"${cmd}")
-	done < <(ps -U "$process_user" -ww -o pid=,rss=,command= 2>/dev/null | awk -v patterns="$patterns" -v script_name="$SCRIPT_NAME" -v excluded_name=grep '
+	done < <(ps -U "$process_user" -ww -o pid=,rss=,command= 2>/dev/null | MEMPRESS_PATTERNS="$patterns" awk -v script_name="$SCRIPT_NAME" -v excluded_name=grep '
 		BEGIN {
-			count = split(tolower(patterns), pattern, "\n")
+			count = split(tolower(ENVIRON["MEMPRESS_PATTERNS"]), pattern, "\n")
 			for (i = 1; i <= count; i++)
 				regex[i] = index(pattern[i], ".*") > 0
 		}

@@ -42,8 +42,9 @@
 # See: reference/large-file-split.md §4.1 for override semantics.
 #
 # Design notes:
-# - scan-ref reads tree entries and batches blob reads through git cat-file.
-#   No checkout, filters, temporary directories or worktree registrations needed.
+# - scan-ref counts lines straight from the object store (`git grep -c ''`).
+#   It never creates a checkout or worktree registration, so interrupted or
+#   killed scans cannot leak temporary worktrees (GH#34905).
 # - All subcommands are Bash 3.2 compatible (macOS default shell).
 # - Paths in TSV output are relative to the dir/ref root for portability.
 # - docs-only detection: caller passes --docs-only; the gate exits 0 immediately.
@@ -103,10 +104,6 @@ scan_violations_dir() {
 	local _limit="$2"
 	local _dir_abs
 	_dir_abs=$(cd "$_dir" && pwd) || die "directory not found: $_dir"
-	local _tmp
-	_tmp=$(mktemp)
-	# shellcheck disable=SC2064
-	trap "rm -f '$_tmp'" RETURN
 
 	find "$_dir_abs" -type f -name "*.md" | sort | while IFS= read -r _f; do
 		local _rel="${_f#"${_dir_abs}"/}"
@@ -124,8 +121,7 @@ scan_violations_dir() {
 		if [ "$_lc" -gt "$_path_limit" ]; then
 			printf '%s\t%d\n' "$_rel" "$_lc"
 		fi
-	done | sort -k1,1 > "$_tmp"
-	awk '{print}' "$_tmp"
+	done | sort -k1,1
 	return 0
 }
 
@@ -139,17 +135,16 @@ scan_violations_dir() {
 scan_violations_tracked_worktree() {
 	local _repo_root="$1"
 	local _limit="$2"
-	local _tmp
-	_tmp=$(mktemp)
-	# shellcheck disable=SC2064
-	trap "rm -f '$_tmp'" RETURN
 
 	git -C "$_repo_root" ls-files -z -- '*.md' | while IFS= read -r -d '' _path; do
 		if ! path_is_scannable_markdown "$_path"; then
 			continue
 		fi
 		local _file="$_repo_root/$_path"
-		[ -f "$_file" ] || continue
+		# A tracked symlink is not a Markdown document of its own: ref scans
+		# see only its target-path blob and directory scans use `find -type
+		# f`, so following it here reported unchanged links as new (GH#34943).
+		[ -f "$_file" ] && [ ! -L "$_file" ] || continue
 		local _lc
 		_lc=$(wc -l < "$_file") || _lc=0
 		_lc=${_lc//[^0-9]/}
@@ -161,22 +156,102 @@ scan_violations_tracked_worktree() {
 		if [ "$_lc" -gt "$_path_limit" ]; then
 			printf '%s\t%d\n' "$_path" "$_lc"
 		fi
-	done | sort -k1,1 > "$_tmp"
-	awk '{print}' "$_tmp"
+	done | sort -k1,1
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# ref_filtered_markdown_paths <commit>
+# Print a leading newline, then one line per .md path at <commit> that
+# carries a checkout `filter` attribute (callers restore the final newline).
+# Attributes come from the current checkout, which is also what `git
+# cat-file --filters` applies. Prints only the wrapper when there are none.
+# ---------------------------------------------------------------------------
+ref_filtered_markdown_paths() {
+	local _commit="$1"
+	local _path="" _attr="" _value=""
+	printf '\n'
+	git ls-tree -r -z --name-only --full-tree "$_commit" 2>/dev/null |
+		git check-attr -z --stdin filter 2>/dev/null |
+		while IFS= read -r -d '' _path && IFS= read -r -d '' _attr && IFS= read -r -d '' _value; do
+			case "$_path" in *.md) ;; *) continue ;; esac
+			case "$_value" in
+			unspecified | unset | "") ;;
+			*) printf '%s\n' "$_path" ;;
+			esac
+		done
 	return 0
 }
 
 # ---------------------------------------------------------------------------
 # scan_violations_ref <ref> <limit>
 # Scan a git ref for non-README .md files with more than <limit> lines.
-# Reads Git blobs without creating resources that can leak after interruption.
+# Reads blobs from the object store with one `git grep -c ''` pass, so no
+# checkout, temporary directory or worktree registration is ever created
+# (GH#34905: the former temporary worktree leaked when its RETURN trap was
+# replaced by a nested function's trap or the process was killed).
+# Counts match `wc -l` (newline count): a final line without a trailing
+# newline is not counted, as for the working-tree scans. Paths with a
+# checkout `filter` attribute are counted after smudging, as a checkout and
+# the working-tree head scan see them (GH#34943). Symlink blobs hold only a
+# target path, so links are never counted (their targets are, as files).
 # Outputs TSV: git-path TAB line-count  (sorted by path).
 # ---------------------------------------------------------------------------
 scan_violations_ref() {
 	local _ref="$1"
 	local _limit="$2"
-	local _reader="${BASH_SOURCE[0]%/*}/file-size-ref-scan.py"
-	python3 "$_reader" "$_ref" "$_limit" "$FILE_SIZE_ROOT_LIMIT" "$FILE_SIZE_DEFAULT_LIMIT" || return 1
+	local _commit
+	_commit=$(git rev-parse --verify --quiet "${_ref}^{commit}" 2>/dev/null) || _commit=""
+	if [ -z "$_commit" ]; then
+		log "WARN: could not resolve $_ref — scan skipped"
+		return 0
+	fi
+
+	local _prefix="${_commit}:"
+	local _filtered
+	# Command substitution drops the trailing newline the membership test needs.
+	_filtered="$(ref_filtered_markdown_paths "$_commit")
+"
+	git -c grep.lineNumber=false -c grep.column=false \
+		grep --no-color --full-name -c -z -e '' "$_commit" -- ':(top)*.md' 2>/dev/null |
+		while IFS= read -r -d '' _name && IFS= read -r _lc; do
+			local _rel="${_name#"$_prefix"}"
+			if ! path_is_scannable_markdown "$_rel"; then
+				continue
+			fi
+			_lc=${_lc//[^0-9]/}
+			_lc=${_lc:-0}
+			local _path_limit="${_limit:-$FILE_SIZE_DEFAULT_LIMIT}"
+			if [[ "$_rel" != */* && -z "$_limit" ]]; then
+				_path_limit="$FILE_SIZE_ROOT_LIMIT"
+			fi
+			case "$_filtered" in
+			*"
+${_rel}
+"*)
+				# pipefail exposes a failed smudge; the unfiltered blob
+				# count then stands, with a warning, instead of zero.
+				local _flc=""
+				if _flc=$(set -o pipefail; git cat-file --filters "${_commit}:${_rel}" 2>/dev/null | wc -l); then
+					_lc=${_flc//[^0-9]/}
+					[ "${_lc:-0}" -gt "$_path_limit" ] && printf '%s\t%d\n' "$_rel" "$_lc"
+					continue
+				fi
+				log "WARN: checkout filter failed for $_rel at $_ref — counted the unfiltered blob"
+				;;
+			esac
+			[ "$_lc" -gt "$_path_limit" ] || continue
+			# git grep counts an unterminated final line; wc -l does not.
+			local _last_nl
+			_last_nl=$(git cat-file blob "${_commit}:${_rel}" 2>/dev/null | tail -c 1 | wc -l) || _last_nl=1
+			_last_nl=${_last_nl//[^0-9]/}
+			if [ "${_last_nl:-1}" -eq 0 ]; then
+				_lc=$((_lc - 1))
+			fi
+			if [ "$_lc" -gt "$_path_limit" ]; then
+				printf '%s\t%d\n' "$_rel" "$_lc"
+			fi
+		done | sort -k1,1
 	return 0
 }
 
@@ -240,7 +315,8 @@ cmd_diff_finish() {
 	local _base_count _head_count _new_paths _new_count _regression_paths
 	_base_count=$(count_tsv_lines "$_base_file")
 	_head_count=$(count_tsv_lines "$_head_file")
-	_new_paths=$(find_new_violations "$_base_file" "$_head_file")
+	_new_paths=$(find_new_violations "$_base_file" "$_head_file") ||
+		die "cannot compare violations: temporary file creation failed"
 	_new_count=$(printf '%s' "$_new_paths" | grep -c '.' 2>/dev/null || true)
 	_new_count=${_new_count//[^0-9]/}
 	_new_count=${_new_count:-0}
@@ -284,10 +360,13 @@ find_new_violations() {
 	local _base="$1"
 	local _head="$2"
 	local _base_paths _head_paths
-	_base_paths=$(mktemp)
-	_head_paths=$(mktemp)
-	# shellcheck disable=SC2064
-	trap "rm -f '$_base_paths' '$_head_paths'" RETURN
+	# Explicit removal rather than a RETURN trap: RETURN traps are global and
+	# are replaced by, or leak into, other functions (GH#34905).
+	_base_paths=$(mktemp) || return 1
+	_head_paths=$(mktemp) || {
+		rm -f "$_base_paths"
+		return 1
+	}
 
 	if [ -s "$_base" ]; then
 		awk -F'\t' '{print $1}' "$_base" | sort > "$_base_paths"
@@ -302,6 +381,7 @@ find_new_violations() {
 
 	# Lines in head_paths not present in base_paths
 	awk 'NR==FNR{a[$0]=1; next} !a[$0]{print}' "$_base_paths" "$_head_paths"
+	rm -f "$_base_paths" "$_head_paths"
 	return 0
 }
 
@@ -653,9 +733,14 @@ cmd_check() {
 	local _base_ref
 	_base_ref=$(cmd_check_detect_base_ref "$FILE_SIZE_CHECK_BASE_REF")
 	local _tmp_dir
-	_tmp_dir=$(mktemp -d)
+	_tmp_dir=$(mktemp -d) || die "cannot create temporary directory"
+	[ -n "$_tmp_dir" ] && [ -d "$_tmp_dir" ] || die "cannot create temporary directory"
 	# shellcheck disable=SC2064
 	trap "rm -rf '$_tmp_dir'" EXIT
+	# Bash skips the EXIT trap on fatal signals; exit so cleanup still runs.
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 
 	local _head_tsv="$_tmp_dir/head.tsv"
 	if [ "$FILE_SIZE_CHECK_DRY_RUN" -eq 1 ]; then

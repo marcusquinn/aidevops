@@ -50,6 +50,15 @@ setup_subject() {
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
 	mkdir -p "${HOME}/.config/aidevops" "${HOME}/.aidevops/logs" "${TEST_ROOT}/Git"
+	# Fixture-owned ownership registry (GH#34943): the managed-lifetime fence
+	# fails closed without one, and the host registry must never be touched.
+	# A subshell keeps the registry library from replacing the stubs below.
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	(
+		# shellcheck source=../shared-worktree-registry.sh
+		source "${SCRIPT_DIR}/../shared-worktree-registry.sh" && _init_registry_db
+	) || return 1
 
 	is_registered_canonical() { return 1; }
 	unregister_worktree() { local wt_path="$1"; : "$wt_path"; return 0; }
@@ -218,6 +227,11 @@ test_thirdparty_apply_guards() {
 	[[ "$decision" == skipped && -d "$wt" ]] || rc=1
 	_pc_archive_worktree_compactly() { printf '%s\n' "${TEST_ROOT}/verified-archive"; return 0; }
 	worktree_removal_guard() { return 0; }
+	# GH#34943: an archive whose source fingerprint cannot be confirmed
+	# (here: no manifest at all) vetoes the forced removal.
+	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || decision=skipped
+	[[ "$decision" == skipped && -f "$wt/dirty.txt" ]] || rc=1
+	_worktree_compact_source_matches() { return 0; }
 	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || rc=1
 	[[ "$decision" == archived-removed && ! -d "$wt" ]] || rc=1
 	git -C "$repo" worktree add -q -b old-feature "$wt" main || rc=1

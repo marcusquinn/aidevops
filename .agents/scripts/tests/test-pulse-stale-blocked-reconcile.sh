@@ -331,4 +331,91 @@ grep -q 'failures=2 partial_repos=0 repos=2 fresh_repos=0' "$LOGFILE" || {
 	exit 1
 }
 unset -f _pm_reconcile_partial_continuations
+
+# GH#34939: learn a large repo's remaining backlog from the prior pass, then
+# exercise every rotating start position with several fast repos and a fake
+# clock. The large repo gets substantially more than the 5s minimum, while
+# fast repos still finish and each pass retains its own completion stamp.
+(
+	rm -rf "$SENTINEL" "$STAMP_DIR" "$PC_STAMP_DIR"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/large","pulse":true},{"slug":"owner/fast1","pulse":true},{"slug":"owner/fast2","pulse":true},{"slug":"owner/fast3","pulse":true}]}' >"$REPOS_JSON"
+	FAKE_NOW=1000
+	date() {
+		printf '%s\n' "$FAKE_NOW"
+		return 0
+	}
+	_file_mtime_epoch() {
+		printf '%s\n' "$FAKE_NOW"
+		return 0
+	}
+	reconcile_stale_blocked_issues() {
+		local repo="$1"
+		if [[ "$repo" == owner/large ]]; then
+			printf '[dependency-reconciler] stale sweep repo=%s pending=420 visited=2 prefiltered_open_blocker=8 complete=false\n' "$repo" >&2
+			return 3
+		fi
+		return 0
+	}
+	_pulse_stale_blocked_run_and_measure owner/large 1005 1045
+	weight=$(_pulse_stale_blocked_repo_weight owner/large 1800 1000)
+	[[ "$weight" == 410 ]] || {
+		printf 'FAIL: remaining backlog was not persisted: %s\n' "$weight"
+		exit 1
+	}
+	grep -q 'pending=420 visited=2' "$LOGFILE" || exit 1
+	reconcile_stale_blocked_issues() {
+		local repo="$1"
+		STARTED="${STARTED}${repo} "
+		if [[ "$repo" == owner/large ]]; then
+			LARGE_SHARE=$((DER_STALE_BLOCKED_DEADLINE_EPOCH - FAKE_NOW))
+			[[ "$DER_STALE_BLOCKED_DEADLINE_EPOCH" -le "$DER_STALE_BLOCKED_STOP_EPOCH" ]] || exit 1
+			# Remain partial, but return unused time to the later fast repos.
+			FAKE_NOW=$((FAKE_NOW + 30))
+			return 3
+		fi
+		FAKE_NOW=$((FAKE_NOW + 1))
+		return 0
+	}
+	for offset in 0 1 2 3; do
+		rm -rf "$SENTINEL" "$STAMP_DIR"
+		printf '%s\n' "$offset" >"$HOME/.aidevops/cache/pulse-stale-blocked-next-repo"
+		FAKE_NOW=1000 STARTED="" LARGE_SHARE=0
+		PULSE_STAGE_DEADLINE_EPOCH=1060 PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS=15 \
+			_pulse_reconcile_stale_blocked_if_due
+		[[ "$LARGE_SHARE" -ge 40 && "$STARTED" == *owner/fast1* && "$STARTED" == *owner/fast2* && "$STARTED" == *owner/fast3* ]] || {
+			printf 'FAIL: rotating weighted sweep lost progress: offset=%s share=%s started=%s\n' "$offset" "$LARGE_SHARE" "$STARTED"
+			exit 1
+		}
+		[[ ! -f "$SENTINEL" && ! -f "$STAMP_DIR/owner__large" && -f "$STAMP_DIR/owner__fast1" ]] || exit 1
+	done
+	# A fresh stale pass must not hoard time for a partial-continuation revisit.
+	touch "$STAMP_DIR/owner__large"
+	[[ "$(_pulse_stale_blocked_repo_weight owner/large 1800 "$FAKE_NOW")" == 1 ]] || exit 1
+	rm -f "$STAMP_DIR/owner__large"
+	for invalid_weight in 0 -1 invalid 999999999999999999999 08; do
+		printf '%s\n' "$invalid_weight" >"$HOME/.aidevops/cache/stale-blocked-weight/owner__large"
+		[[ "$(_pulse_stale_blocked_repo_weight owner/large 1800 1000)" == 1 ]] || exit 1
+	done
+	[[ "$(_pulse_stale_blocked_repo_deadline 1000 1003 413 410)" == 1003 ]] || exit 1
+	# Even a weighted repo overrunning the whole sweep cannot starve admission.
+	printf '410\n' >"$HOME/.aidevops/cache/stale-blocked-weight/owner__large"
+	printf '0\n' >"$HOME/.aidevops/cache/pulse-stale-blocked-next-repo"
+	STARTED=""
+	reconcile_stale_blocked_issues() {
+		local repo="$1"
+		STARTED="${STARTED}${repo} "
+		FAKE_NOW=$DER_STALE_BLOCKED_STOP_EPOCH
+		return 3
+	}
+	for sweep in 1 2 3 4; do
+		FAKE_NOW=1000
+		rm -rf "$SENTINEL" "$STAMP_DIR"
+		PULSE_STAGE_DEADLINE_EPOCH=1060 PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS=15 \
+			_pulse_reconcile_stale_blocked_if_due
+	done
+	[[ "$STARTED" == "owner/large owner/fast1 owner/fast2 owner/fast3 " ]] || {
+		printf 'FAIL: weighted overrun starved rotating admission: %s\n' "$STARTED"
+		exit 1
+	}
+) || exit 1
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'

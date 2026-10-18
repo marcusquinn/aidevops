@@ -21,28 +21,66 @@ report() {
 	fi
 }
 
+# Keep the reason in the private scratch directory: discovery runs in a command
+# substitution, so a shell variable would not survive back to sync_one.
+git_network_attempt() {
+	local directory="$1"
+	shift
+	if "$@" 2>"$directory/network-stderr"; then
+		rm -f "$directory/network-stderr" "$directory/network-reason"
+		return 0
+	fi
+	LC_ALL=C sed -E \
+		-e 's/[[:cntrl:]]//g' \
+		-e 's|([[:alpha:]][[:alnum:]+.-]*://)[^/[:space:]]+@|\1[REDACTED]@|g' \
+		-e 's/(gh[pousr]_[[:alnum:]_]+|github_pat_[[:alnum:]_]+)/[REDACTED]/g' \
+		"$directory/network-stderr" |
+		awk 'NF {last=$0} END {print substr(last == "" ? "git command failed without stderr" : last, 1, 200)}' >"$directory/network-reason"
+	rm -f "$directory/network-stderr"
+	return 1
+}
+
+report_remote_failure() {
+	local slug="$1" detail="$2" directory="$3" reason
+	IFS= read -r reason <"$directory/network-reason"
+	report "$slug" FAIL "$detail: $reason"
+	return 0
+}
+
 # gh is only used as a transient credential provider, never for upstream writes.
 git_remote() {
 	local directory="$1" remote="$2" url="$3"
 	shift 3
 	local -a args=("$@")
-	if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git -C "$directory" "${args[@]}" 2>/dev/null; then
+	if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git_network_attempt "$directory" git -C "$directory" "${args[@]}"; then
 		return 0
 	fi
 	# Retry SSH GitHub remotes through HTTPS only when gh is authenticated.
-	if [[ "$url" =~ ^git@github\.com:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(\.git)?$ ]] &&
-		command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-		local https_url="https://github.com/${BASH_REMATCH[1]}.git"
-		git -C "$directory" remote set-url "$remote" "$https_url"
-		GIT_TERMINAL_PROMPT=0 git -C "$directory" -c credential.helper= \
-			-c 'credential.helper=!gh auth git-credential' "${args[@]}" 2>/dev/null
-	elif [[ "$url" == https://github.com/* ]] && command -v gh >/dev/null 2>&1 &&
-		gh auth status >/dev/null 2>&1; then
-		GIT_TERMINAL_PROMPT=0 git -C "$directory" -c credential.helper= \
-			-c 'credential.helper=!gh auth git-credential' "${args[@]}" 2>/dev/null
-	else
+	local https_url="" skipped="" reason
+	if [[ "$url" =~ ^git@github\.com:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(\.git)?$ ]]; then
+		https_url="https://github.com/${BASH_REMATCH[1]}.git"
+	elif [[ "$url" != https://github.com/* ]]; then
 		return 1
 	fi
+	if ! command -v gh >/dev/null 2>&1; then
+		skipped='gh not on PATH'
+	elif ! gh auth status >/dev/null 2>&1; then
+		skipped='gh auth status failed'
+	fi
+	if [[ -n "$skipped" ]]; then
+		IFS= read -r reason <"$directory/network-reason"
+		reason="gh fallback skipped ($skipped); $reason"
+		printf '%.200s\n' "$reason" >"$directory/network-reason"
+		return 1
+	fi
+	if [[ -n "$https_url" ]]; then
+		git_network_attempt "$directory" git -C "$directory" remote set-url "$remote" "$https_url" || return 1
+	fi
+	if GIT_TERMINAL_PROMPT=0 git_network_attempt "$directory" git -C "$directory" -c credential.helper= \
+		-c 'credential.helper=!gh auth git-credential' "${args[@]}"; then
+		return 0
+	fi
+	return 1
 }
 
 sync_one() (
@@ -56,7 +94,7 @@ sync_one() (
 	# Discover the upstream default branch without consulting a mutable canonical ref.
 	local remote_head
 	remote_head=$(git_remote "$directory" upstream "$upstream_url" ls-remote --symref upstream HEAD) || {
-		report "$slug" FAIL 'upstream authentication or discovery failed'
+		report_remote_failure "$slug" 'upstream authentication or discovery failed' "$directory"
 		return 1
 	}
 	branch=$(printf '%s\n' "$remote_head" | awk '$1 == "ref:" {sub("refs/heads/", "", $2); print $2; exit}')
@@ -66,7 +104,7 @@ sync_one() (
 	fi
 	if ! git_remote "$directory" upstream "$upstream_url" fetch --no-tags upstream "+refs/heads/${branch}:refs/remotes/upstream/${branch}" ||
 		! git_remote "$directory" origin "$origin_url" fetch --no-tags origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"; then
-		report "$slug" FAIL 'remote fetch failed'
+		report_remote_failure "$slug" 'remote fetch failed' "$directory"
 		return 1
 	fi
 	origin_tip=$(git -C "$directory" rev-parse "refs/remotes/origin/${branch}")
@@ -85,7 +123,7 @@ sync_one() (
 			report "$slug" OK "fast-forwarded $count commits"
 			return 0
 		fi
-		report "$slug" FAIL 'fast-forward push rejected (origin changed or protected)'
+		report_remote_failure "$slug" 'fast-forward push rejected (origin changed or protected)' "$directory"
 		return 1
 	fi
 	if [[ "$MODE" == check ]]; then
@@ -109,13 +147,13 @@ sync_one() (
 	# A pre-existing dated branch must not be overwritten. The merge commit remains
 	# reachable only if the branch creation succeeds; never force-update either ref.
 	if ! git_remote "$directory" origin "$origin_url" push origin "HEAD:refs/heads/${sync_branch}"; then
-		report "$slug" FAIL 'sync branch push rejected'
+		report_remote_failure "$slug" 'sync branch push rejected' "$directory"
 		return 1
 	fi
 	if git_remote "$directory" origin "$origin_url" push origin "HEAD:refs/heads/${branch}"; then
 		report "$slug" OK "merged on ${sync_branch}"
 	else
-		report "$slug" FAIL 'default branch fast-forward rejected'
+		report_remote_failure "$slug" 'default branch fast-forward rejected' "$directory"
 		return 1
 	fi
 )

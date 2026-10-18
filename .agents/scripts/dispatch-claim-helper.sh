@@ -1226,13 +1226,14 @@ _resolve_claim_race_result() {
 	local claim_count=""
 	claim_count=$(printf '%s' "$claims" | jq 'length' 2>/dev/null) || claim_count=0
 	if [[ "$claim_count" -eq 0 ]]; then
-		echo "CLAIM_ERROR: no claims found after posting — blocking dispatch (fail-closed)" >&2
+		echo "CLAIM_ERROR: own_claim_not_visible no claims found after posting — blocking dispatch (fail-closed)" >&2
 		return 2
 	fi
 
-	local oldest_nonce oldest_runner oldest_age_seconds oldest_device our_device lease_expires_at now_epoch
+	local oldest_nonce oldest_runner oldest_ts oldest_age_seconds oldest_device our_device lease_expires_at now_epoch
 	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
 	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
+	oldest_ts=$(printf '%s' "$claims" | jq -r '.[0].ts // ""' 2>/dev/null) || oldest_ts=""
 	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
 	oldest_device=$(printf '%s' "$claims" | jq -r --arg fallback "$LEGACY_DEVICE_MARKER" '.[0].device // $fallback' 2>/dev/null) || oldest_device="$LEGACY_DEVICE_MARKER"
 	our_device=$(_resolve_device_id)
@@ -1259,9 +1260,52 @@ _resolve_claim_race_result() {
 	_handle_close_window_loss "$issue_number" "$repo_slug" "$runner" "$nonce" \
 		"$oldest_runner" "$claims" || true
 	_delete_losing_claim_comment "$repo_slug" "$comment_id"
-	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (losing claim removed)\n' \
-		"$runner" "$oldest_runner" "$issue_number"
+	# GH#34922: name the winning claim (runner + claim time) so callers can
+	# report the concrete competitor instead of a generic "another runner won".
+	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s winner_claim_ts=%s winner_age=%ss — backing off (losing claim removed)\n' \
+		"$runner" "$oldest_runner" "$issue_number" "${oldest_ts:-n/a}" "$oldest_age_seconds"
 	return 1
+}
+
+#######################################
+# GH#34922: fetch active claims, re-reading while our own claim is not yet
+# visible. The issue-comments endpoint can lag the POST that created our
+# claim; without a re-read that gap reads as "no claims" (fail-closed error)
+# or as a loss to a younger competitor, so the first dispatch on a fresh
+# issue fails although nobody else holds a claim. An older competing claim
+# still wins once our claim is visible; after the bounded retries the
+# existing resolution runs unchanged (fail-closed).
+# Args: $1 issue number, $2 repo slug, $3 runner, $4 our nonce
+# Output: claims JSON on stdout
+# Returns: 0 on fetch success, 1 on fetch failure
+#######################################
+_fetch_claims_until_own_visible() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner="$3"
+	local nonce="$4"
+	local retries="${DISPATCH_CLAIM_VISIBILITY_RETRIES:-3}"
+	local delay="${DISPATCH_CLAIM_VISIBILITY_RETRY_DELAY:-2}"
+	local attempt=0
+	local claims=""
+	[[ "$retries" =~ ^[0-9]+$ ]] || retries=3
+	[[ "$delay" =~ ^[0-9]+$ ]] || delay=2
+
+	while true; do
+		claims=$(_fetch_claims "$issue_number" "$repo_slug" "$runner") || return 1
+		if printf '%s' "$claims" | jq -e --arg nonce "$nonce" 'any(.[]?; .nonce == $nonce)' >/dev/null 2>&1; then
+			break
+		fi
+		if [[ "$attempt" -ge "$retries" ]]; then
+			printf 'CLAIM_VISIBILITY: own_claim_not_visible issue=#%s reads=%s\n' \
+				"$issue_number" "$((attempt + 1))" >&2
+			break
+		fi
+		attempt=$((attempt + 1))
+		_dch_timed claim_visibility_retry sleep "$delay"
+	done
+	printf '%s' "$claims"
+	return 0
 }
 
 #######################################
@@ -1332,9 +1376,9 @@ cmd_claim() {
 	# Step 2: Wait consensus window
 	_dch_timed consensus_window sleep "$DISPATCH_CLAIM_WINDOW"
 
-	# Step 3: Fetch all claims
+	# Step 3: Fetch all claims (re-read while our own claim is not yet visible)
 	local claims
-	claims=$(_fetch_claims "$issue_number" "$repo_slug" "$runner") || {
+	claims=$(_fetch_claims_until_own_visible "$issue_number" "$repo_slug" "$runner" "$nonce") || {
 		echo "CLAIM_ERROR: failed to fetch claims — blocking dispatch (fail-closed)" >&2
 		return 2
 	}

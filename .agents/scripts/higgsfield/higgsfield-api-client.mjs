@@ -2,11 +2,11 @@
 // Holds: credential loading, fetch + retry, file upload/download, status polling.
 // High-level commands live in higgsfield-api.mjs.
 
-import { createWriteStream, existsSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, extname, join } from 'node:path';
+import { createWriteStream, readFileSync, statSync } from 'node:fs';
+import { basename, extname } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { resolveSecret } from '../secret-resolver.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -21,21 +21,18 @@ export const API_POLL_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes max wait
 // ---------------------------------------------------------------------------
 
 export function loadApiCredentials() {
-  const credFile = join(homedir(), '.config', 'aidevops', 'credentials.sh');
-  if (!existsSync(credFile)) return null;
-  const content = readFileSync(credFile, 'utf-8');
-  const apiKey = content.match(/HF_API_KEY\s*=\s*["']([^"']+)["']/)?.[1];
-  const apiSecret = content.match(/HF_API_SECRET\s*=\s*["']([^"']+)["']/)?.[1];
+  // env → credentials.sh → gopass aidevops/NAME (GH#34892)
+  const apiKey = resolveSecret('HF_API_KEY');
+  const apiSecret = resolveSecret('HF_API_SECRET');
   if (!apiKey || !apiSecret) return null;
   return { apiKey, apiSecret };
 }
 
 export function requireApiCredentials() {
   const creds = loadApiCredentials();
-  if (!creds) throw new Error('API credentials not configured (HF_API_KEY/HF_API_SECRET in credentials.sh)');
+  if (!creds) throw new Error('API credentials not configured (aidevops secret set HF_API_KEY && aidevops secret set HF_API_SECRET)');
   return creds;
 }
-
 // ---------------------------------------------------------------------------
 // Core HTTP helpers
 // ---------------------------------------------------------------------------

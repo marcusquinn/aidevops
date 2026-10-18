@@ -11,7 +11,8 @@
 #
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, etc.)
-#   - DataForSEO via dataforseo-credentials.sh; other providers via credentials.sh
+#   - DataForSEO via dataforseo-credentials.sh; Serper and Ahrefs via
+#     secret-resolver.sh (aidevops_load_secret); SerpApi via serpapi_load_key
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -224,7 +225,11 @@ serper_request() {
 	local endpoint="$1"
 	local data="$2"
 
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
+	# env → credentials.sh → gopass aidevops/SERPER_API_KEY (GH#34892)
+	if ! aidevops_load_secret SERPER_API_KEY; then
+		print_error "Serper API key not found. Set via: aidevops secret set SERPER_API_KEY"
+		return 1
+	fi
 
 	curl -s -X POST \
 		"https://google.serper.dev/$endpoint" \
@@ -379,7 +384,11 @@ ahrefs_request() {
 	local endpoint="$1"
 	local params="$2"
 
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
+	# env → credentials.sh → gopass aidevops/AHREFS_API_KEY (GH#34892)
+	if ! aidevops_load_secret AHREFS_API_KEY; then
+		print_error "Ahrefs API key not found. Set via: aidevops secret set AHREFS_API_KEY"
+		return 1
+	fi
 
 	curl -s -X GET \
 		"https://api.ahrefs.com/v3/$endpoint?$params" \

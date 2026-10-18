@@ -750,6 +750,32 @@ else
 		"(stub log: $(tr '\n' '|' <"$STUB_LOG"))"
 fi
 
+# GH#34915: a shared login must not turn worker ownership into an interactive
+# claim, even when --implementing is explicit. Exercise the real CLI with the
+# existing stub transport and assert no remote mutation or local stamp write.
+for worker_status in queued in-progress; do
+	for worker_claim_mode in default implementing; do
+		rm -f "${claim_dir}"/*.json 2>/dev/null || true
+		: >"$STUB_LOG"
+		worker_flags=()
+		[[ "$worker_claim_mode" == "implementing" ]] && worker_flags+=(--implementing)
+		printf '{"state":"OPEN","labels":[{"name":"status:%s"}],"assignees":[{"login":"testuser"}],"comments":[]}\n' \
+			"$worker_status" >"${STUB_STATE_DIR}/56013.json"
+		worker_before=$(jq -c . "${STUB_STATE_DIR}/56013.json")
+		worker_out=$("$HELPER_PATH" claim 56013 regress/test "${worker_flags[@]}" 2>&1)
+		worker_rc=$?
+		if [[ $worker_rc -eq 1 && ! -f "${claim_dir}/regress-test-56013.json" &&
+			"$worker_before" == "$(jq -c . "${STUB_STATE_DIR}/56013.json")" ]] &&
+			! grep -Eq 'issue (edit|comment)|api .* (POST|PATCH|DELETE) ' "$STUB_LOG" &&
+			[[ "$worker_out" == *'worker ownership under @testuser; refusing interactive claim'* ]]; then
+			print_result "GH#34915: same-login $worker_status $worker_claim_mode claim stays write-free" 0
+		else
+			print_result "GH#34915: same-login $worker_status $worker_claim_mode claim stays write-free" 1 \
+				"(rc=$worker_rc out=${worker_out:0:200})"
+		fi
+	done
+done
+
 # --- GH#33420: active status labels alone do not establish ownership ---
 for orphan_status in claimed in-progress in-review; do
 	rm -f "${claim_dir}"/*.json 2>/dev/null || true

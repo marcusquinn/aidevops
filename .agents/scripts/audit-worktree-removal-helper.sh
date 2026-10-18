@@ -1644,12 +1644,34 @@ worktree_removal_guard() {
 	return 0
 }
 
+# Succeed only when WT_PATH still matches the source fingerprint recorded in
+# COMPACT_DIR by worktree-archive-helper.sh (GH#34943). Any failure, including
+# an unavailable helper, preserves the worktree.
+_worktree_compact_source_matches() {
+	local wt_path="$1"
+	local compact_dir="$2"
+	local caller="$3"
+	local context="$4"
+	local helper="${AIDEVOPS_WORKTREE_ARCHIVE_HELPER:-${BASH_SOURCE[0]%/*}/worktree-archive-helper.sh}"
+
+	if "$helper" source-matches "$compact_dir" "$wt_path" >/dev/null 2>&1; then
+		return 0
+	fi
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+		"compact-archive-source-changed" "$_WTAR_MODE_SKIPPED" "$context"
+	return 1
+}
+
+# Args: $1=worktree, $2=caller, $3=context, $4=force, $5=recovery archive
+# (optional), $6=compact archive dir (optional; its source fingerprint is
+# re-checked after every other probe, immediately before native removal).
 _worktree_remove_with_native_git() {
 	local wt_path="$1"
 	local caller="$2"
 	local context="$3"
 	local force_remove="$4"
 	local archive_path="${5:-}"
+	local compact_dir="${6:-}"
 	local real_git=""
 	local common_dir=""
 	local wt_path_real="$wt_path"
@@ -1686,6 +1708,12 @@ _worktree_remove_with_native_git() {
 	worktree_managed_require_removal_proof "$wt_path_real" || return 1
 	if [[ -n "$archive_path" ]] && ! _worktree_archive_source_matches "$wt_path" "$archive_path"; then
 		_worktree_log_identity_refusal "$wt_path" "$caller" "$context"
+		return 1
+	fi
+	# Last content check: only the native removal itself follows. A write
+	# landing after this point is the residual, unavoidable race window.
+	if [[ -n "$compact_dir" ]] &&
+		! _worktree_compact_source_matches "$wt_path_real" "$compact_dir" "$caller" "$context"; then
 		return 1
 	fi
 

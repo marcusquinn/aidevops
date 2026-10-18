@@ -31,6 +31,16 @@ print_result() {
 setup() {
 	TEST_DIR=$(mktemp -d)
 	trap teardown EXIT
+	# Git reports canonical worktree paths and the managed-lifetime fence
+	# refuses any other form, so resolve macOS /var -> /private/var.
+	TEST_DIR=$(cd "$TEST_DIR" && pwd -P) || return 1
+	# Use a fixture-owned ownership registry: the managed-lifetime fence fails
+	# closed without one, and the host registry must never be read or written.
+	export WORKTREE_REGISTRY_DIR="${TEST_DIR}/registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	declare -F _init_registry_db >/dev/null 2>&1 || return 1
+	_init_registry_db || return 1
+	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 1
 	# Maintenance runs must never write session advisories outside the fixture.
 	export AIDEVOPS_ADVISORIES_DIR="${TEST_DIR}/advisories"
 	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"

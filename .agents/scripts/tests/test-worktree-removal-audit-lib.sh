@@ -67,7 +67,46 @@ print_result() {
 setup() {
 	TEST_DIR=$(mktemp -d)
 	trap teardown EXIT
+	# Git reports canonical worktree paths and the managed-lifetime fence
+	# refuses any other form, so resolve macOS /var -> /private/var.
+	TEST_DIR=$(cd "$TEST_DIR" && pwd -P) || return 1
 	export AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery"
+	# Fixture-owned ownership registry: the managed-lifetime fence fails closed
+	# without one, and the host registry must never be read or written. Tests
+	# that need a different registry still override these per subshell.
+	export WORKTREE_REGISTRY_DIR="${TEST_DIR}/registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	(
+		# shellcheck source=../shared-worktree-registry.sh
+		source "$REGISTRY_HELPER" && _init_registry_db
+	) || return 1
+	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 1
+	strip_git_shims_from_path || return 1
+	return 0
+}
+
+# Race tests inject a non-native AIDEVOPS_REAL_GIT_BIN wrapper. A deployed
+# aidevops git shim on PATH correctly rejects such overrides, which would make
+# the helper fail closed before the race; shim behaviour has its own tests.
+strip_git_shims_from_path() {
+	local entry="" kept="" old_ifs="$IFS"
+	local -a entries=()
+	IFS=':'
+	read -r -a entries <<<"${PATH:-}"
+	IFS="$old_ifs"
+	for entry in "${entries[@]}"; do
+		[[ -n "$entry" ]] || continue
+		if [[ -e "${entry}/git" ]] && (
+			AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY=1
+			# shellcheck source=../runtime-env.sh
+			source "${SCRIPT_DIR}/../runtime-env.sh" && aidevops_is_git_shim "${entry}/git"
+		); then
+			continue
+		fi
+		kept="${kept:+${kept}:}${entry}"
+	done
+	[[ -n "$kept" ]] || return 1
+	export PATH="$kept"
 	return 0
 }
 
@@ -995,7 +1034,10 @@ test_manual_degraded_recheck_requires_live_exact_lease() {
 		source "$CLEAN_HELPER"
 		sleep 30 &
 		local runtime_pid=$!
-		trap 'kill "$runtime_pid" 2>/dev/null || true' EXIT
+		# Expand now: Bash 3.2 runs a subshell EXIT trap after function locals
+		# are gone, so a deferred "$runtime_pid" is unbound under set -u.
+		# shellcheck disable=SC2064
+		trap "kill ${runtime_pid} 2>/dev/null || true" EXIT
 		export OPENCODE_PID="$runtime_pid"
 		worktree_has_changes() { return 1; }
 		_branch_has_active_interactive_claim() { return 1; }

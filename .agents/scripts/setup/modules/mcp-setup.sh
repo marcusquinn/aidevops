@@ -919,24 +919,20 @@ setup_seo_mcps() {
 		print_info "DataForSEO: aidevops secret set DATAFORSEO_API_LOGIN and DATAFORSEO_API_PASSWORD"
 	fi
 
-	# Check other SEO providers' credentials.
-	if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
-		# shellcheck source=/dev/null
-		source "$HOME/.config/aidevops/credentials.sh"
-
-		if [[ -n "${SERPER_API_KEY:-}" ]]; then
-			print_success "Serper API key configured"
-		else
-			print_info "Serper: set SERPER_API_KEY in credentials.sh"
-		fi
-
-		if [[ -n "${AHREFS_API_KEY:-}" ]]; then
-			print_success "Ahrefs API key configured"
-		else
-			print_info "Ahrefs: set AHREFS_API_KEY in credentials.sh"
-		fi
+	# Check other SEO providers' credentials: env, credentials.sh, or gopass
+	# aidevops/NAME. Presence only; nothing is decrypted (GH#34892).
+	# shellcheck source=../../secret-resolver.sh
+	source "${INSTALL_DIR}/.agents/scripts/secret-resolver.sh"
+	if aidevops_secret_available SERPER_API_KEY; then
+		print_success "Serper API key configured"
 	else
-		print_info "Configure SEO API credentials in ~/.config/aidevops/credentials.sh"
+		print_info "Serper: aidevops secret set SERPER_API_KEY"
+	fi
+
+	if aidevops_secret_available AHREFS_API_KEY; then
+		print_success "Ahrefs API key configured"
+	else
+		print_info "Ahrefs: aidevops secret set AHREFS_API_KEY"
 	fi
 
 	# GSC uses MCP (OAuth2 complexity warrants it)

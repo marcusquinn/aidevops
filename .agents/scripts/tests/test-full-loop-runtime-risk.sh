@@ -233,6 +233,11 @@ mixed_critical_body=$(cd "$MIXED_REPO" && _build_pr_body \
 	"$mixed_base")
 assert_contains "critical runtime hunk remains Critical in a mixed diff" "$mixed_critical_body" "**Risk level:** Critical"
 
+todo_data_risk=$(_derive_runtime_risk "" "todo/x/specs/a.json,todo/x/log/r/2026-10-18/a.jsonl,todo/x/a.md" "Add planning data about payments")
+assert_contains "todo data files mentioning payments derive Low" "$todo_data_risk" "Low"
+todo_runtime_risk=$(_derive_runtime_risk "" "todo/x/specs/a.json,src/billing.ts" "Add planning data about payments")
+assert_contains "runtime file beside todo data still derives Critical" "$todo_runtime_risk" "Critical"
+
 runtime_risk=""
 testing_level=""
 issue_number=""

@@ -440,6 +440,8 @@ test_tracked_oversized_markdown_blocks_with_path() {
 
 test_ref_scan_leaves_no_worktrees() {
 	setup
+	local LC_ALL=C
+	export LC_ALL
 	local _repo="$TEST_ROOT/repo" _scratch="$TEST_ROOT/scratch"
 	mkdir -p "$_repo" "$_scratch"
 	git -C "$_repo" init -q

@@ -1074,6 +1074,9 @@ failure it reports. Only a tool with no CI equivalent (runtime tests,
 interpreters, secrets, local data) that is still unavailable on this runner uses:
 TERMINAL_BLOCKER_REASON=runner_capability_unmet
 Name the missing tool, interpreter and checked declarations in the dossier.
+A runner-local account or credential that this runner lacks or the service
+rejects (for example a staging sign-in returning HTTP 401) is the same class,
+not permission_required; another runner may hold it (GH#34901).
 For an evidenced unresolved permission boundary, including a continued session
 whose prior protected-source denial has no changed exact-context grant, use the
 next class; never for missing tooling or forbidden dependency installation:

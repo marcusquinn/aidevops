@@ -65,17 +65,11 @@ EOF
 # Resolve a secret value by name: environment, credentials.sh, then gopass aidevops/NAME.
 resolve_secret() {
 	local name="$1"
-	local value="${!name:-}"
-	if [[ -z "$value" ]]; then
-		# shellcheck disable=SC1091
-		source "${HOME}/.config/aidevops/credentials.sh" 2>/dev/null || true
-		value="${!name:-}"
+	if ! declare -F aidevops_resolve_secret >/dev/null 2>&1; then
+		# shellcheck source=./secret-resolver.sh
+		source "${SCRIPT_DIR}/secret-resolver.sh"
 	fi
-	if [[ -z "$value" ]] && command -v gopass >/dev/null 2>&1; then
-		value="$(gopass show -o "aidevops/${name}" 2>/dev/null || true)"
-	fi
-	[[ -n "$value" ]] || return 1
-	printf '%s' "$value"
+	aidevops_resolve_secret "$name" || return 1
 	return 0
 }
 

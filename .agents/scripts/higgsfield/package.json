@@ -4,6 +4,9 @@
   "description": "Higgsfield AI UI automation via Playwright",
   "type": "module",
   "private": true,
+  "scripts": {
+    "lint": "for f in *.mjs; do node --check \"$f\" || exit 1; done"
+  },
   "dependencies": {
     "playwright": "^1.58.2"
   }

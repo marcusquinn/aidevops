@@ -41,17 +41,16 @@ readonly IMPRESSION_VOLUME_MULTIPLIER=10
 # Ahrefs API Functions
 # =============================================================================
 
-# Get API key from environment
+# Get API key: env → credentials.sh → gopass aidevops/AHREFS_API_KEY (GH#34892)
 get_api_key() {
-    source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
-    
-    if [[ -z "${AHREFS_API_KEY:-}" ]]; then
+    local api_key=""
+    if ! api_key=$(aidevops_resolve_secret AHREFS_API_KEY); then
         print_error "AHREFS_API_KEY not configured"
-        print_error "Set it in ~/.config/aidevops/credentials.sh"
+        print_error "Set it with: aidevops secret set AHREFS_API_KEY"
         return 1
     fi
     
-    echo "$AHREFS_API_KEY"
+    printf '%s\n' "$api_key"
     return 0
 }
 
@@ -236,12 +235,12 @@ Data Fields:
     - difficulty: Keyword difficulty (0-100)
 
 Requirements:
-    - AHREFS_API_KEY set in ~/.config/aidevops/credentials.sh
+    - AHREFS_API_KEY in the environment, credentials.sh, or gopass (aidevops secret)
 
 API Key Setup:
     1. Go to https://app.ahrefs.com/user/api
     2. Generate API key
-    3. Add to credentials.sh: export AHREFS_API_KEY="your_key"
+    3. Store it: aidevops secret set AHREFS_API_KEY
 
 EOF
     return 0

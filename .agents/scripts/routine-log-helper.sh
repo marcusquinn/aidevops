@@ -615,7 +615,9 @@ _update_state_after_run() {
 		--arg nr "$next_run" \
 		--arg tc "$new_total_cost" \
 		--arg sk "$session_key" \
-		'.last_run = $lr | .last_status = $ls | .last_duration = $ld | .next_run = $nr | .total_cost = $tc
+		'if .last_success == null and .last_status == "success" then .last_success = .last_run else . end
+		 | .last_run = $lr | .last_status = $ls | .last_duration = $ld | .next_run = $nr | .total_cost = $tc
+		 | if $ls == "success" then .last_success = $lr else . end
 		 | .last_session_key = (if $sk == "" then (.last_session_key // null) else $sk end)')
 	_write_state "$routine_id" "$state"
 

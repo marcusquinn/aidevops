@@ -28,7 +28,8 @@
 # previously-silent continue paths that now emit diagnostic log entries.
 #
 # GH#18704 refactor: split _cleanup_single_worktree() (125 lines) into three
-# focused private helpers: _worktree_creation_epoch(),
+# focused private helpers: _worktree_creation_epoch() (GH#34905: now
+# _worktree_idle_since_epoch(), measuring confirmed idle time),
 # _evaluate_worktree_removal(), and _record_orphan_crash_classification().
 # The orchestrator now reads as a linear five-step pipeline instead of a
 # single flat function. Preserves identical behaviour including the GH#18346

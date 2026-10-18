@@ -595,6 +595,94 @@ test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed() {
 	return 0
 }
 
+# GH#34931: merged exact-head delivery is completion only with a closed issue.
+# Exercise the real handoff classifier, including linkage and summary probes.
+test_post_pr_handoff_after_merge_completes_closed_issue() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-handoff-merged"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	local expected_head=""
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
+	local result=""
+	result=$(
+		(
+			DISPATCH_REPO_SLUG="test-owner/test-repo"
+			_run_result_label="post_pr_handoff"
+			_HRW_TERMINAL_OUTCOME="unset"
+			local fixture_issue_state="closed" remote_head="$expected_head"
+			local fixture_pr_body="Resolves #99999" fixture_summary_count=1
+			gh_pr_list() {
+				printf '[{"number":458,"state":"MERGED","isDraft":false,"mergedAt":"2026-10-17T18:39:00Z","headRefOid":"%s","labels":[{"name":"origin:worker"}]}]' "$remote_head"
+				return 0
+			}
+			gh() {
+				local args="$*"
+				case "$args" in
+				(*"api --paginate"*"/issues/458/comments"*)
+					if [[ "$fixture_summary_count" -eq 1 ]]; then
+						printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+					else
+						printf '%s' '[[]]'
+					fi
+					;;
+				(*"api repos/"*"/pulls/458"*) printf '%s' "$fixture_pr_body" ;;
+				(*"api repos/"*"/issues/99999"*)
+					[[ "$fixture_issue_state" != "api_failure" ]] || return 1
+					printf '%s' "$fixture_issue_state"
+					;;
+				(*) return 1 ;;
+				esac
+				return 0
+			}
+			# Same output as the production classifier for closed:merged. Keep
+			# fail-open pr_exists distinct by requiring the real verifier above.
+			_worker_produced_output() { printf 'pr_exists'; return 0; }
+			_hrw_pr_less_terminal_complete() { return 1; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			_report_failure_to_fast_fail() { printf 'unexpected-fast-fail\n'; return 0; }
+			_escalate_worker_tier() { printf 'unexpected-escalation\n'; return 0; }
+
+			_hrw_finish_success_run "issue-99999" "$work_dir"
+			printf 'rc=%s|terminal=%s\n' "$?" "$_HRW_TERMINAL_OUTCOME"
+			for fixture_issue_state in open unknown api_failure; do
+				if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+					printf 'unexpected-accepted-issue=%s\n' "$fixture_issue_state"
+				fi
+				# The open-issue merged checkpoint route must remain unchanged.
+				if [[ "$fixture_issue_state" == "open" ]]; then
+					printf 'open-class=%s\n' "$(_hrw_merged_pr_output_class merged "$DISPATCH_REPO_SLUG" 99999)"
+				fi
+			done
+			fixture_issue_state="closed"
+			fixture_summary_count=0
+			if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+				printf 'unexpected-accepted-missing-summary\n'
+			fi
+			fixture_summary_count=1
+			fixture_pr_body="For #99999"
+			if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+				printf 'unexpected-accepted-partial-linkage\n'
+			fi
+			fixture_pr_body="Resolves #99999"
+			remote_head="different-head"
+			if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+				printf 'unexpected-accepted-mismatched-head\n'
+			fi
+			return 0
+		)
+	)
+	if [[ "$result" == *"release=worker_complete"* &&
+		"$result" == *"rc=0|terminal=success"* &&
+		"$result" == *"open-class=merged_checkpoint"* &&
+		"$result" != *"unexpected-"* ]]; then
+		print_result "merged POST_PR_HANDOFF completes closed issue without fast-fail or escalation" 0
+	else
+		print_result "merged POST_PR_HANDOFF completes closed issue without fast-fail or escalation" 1 "$result"
+	fi
+	return 0
+}
+
 test_failed_ci_ready_pr_is_durable_handoff() {
 	local pr_json result
 	pr_json='[{"number":457,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"abc123","labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"name":"tests","conclusion":"FAILURE"},{"name":"tests","conclusion":"SUCCESS"}]}]'
@@ -923,6 +1011,7 @@ test_pr_checkpoint_lifecycle_cases() {
 	test_ready_missing_summary_preserves_in_review_handoff
 	test_ready_missing_linkage_preserves_in_review_handoff
 	test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed
+	test_post_pr_handoff_after_merge_completes_closed_issue
 	test_failed_ci_ready_pr_is_durable_handoff
 	test_closed_unmerged_pr_is_failed_not_completed
 	test_merged_partial_pr_is_deferred_continuation_not_draft

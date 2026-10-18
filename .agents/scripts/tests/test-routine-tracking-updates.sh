@@ -80,6 +80,37 @@ restore_scheduler_helper_mocks() {
 	return 0
 }
 
+test_platform_success_calendar_boundary() {
+	if (
+		export HOME="$TEST_DIR/platform-state"
+		# shellcheck source=../routine-log-helper.sh
+		source "$ROUTINE_LOG_HELPER_SH"
+		# shellcheck source=../pulse-routines.sh
+		source "$PULSE_ROUTINES_SH"
+		ROUTINE_STATE_FILE="$HOME/pulse-state.json"
+		_compute_next_run() {
+			printf '%s' never
+			return 0
+		}
+		_update_state_after_run r908 '{"last_status":"success","last_run":"2020-01-01T00:00:00Z"}' failure 1 0 'cron(0 * * * *)' >/dev/null
+		_read_state r908 | jq -e '.last_success == "2020-01-01T00:00:00Z"' >/dev/null || exit 1
+		_update_state_after_run r908 '{}' success 1 0 'cron(0 * * * *)' >/dev/null
+		local state boundary
+		state=$(_read_state r908)
+		boundary=$(_routine_last_run_epoch r908)
+		[[ "$boundary" -gt 0 ]] || exit 1
+		_update_state_after_run r908 "$state" failure 1 0 'cron(0 * * * *)' >/dev/null
+		[[ "$(_routine_last_run_epoch r908)" == "$boundary" ]] || exit 1
+		printf '%s\n' '{"r908":{"last_run":"2099-01-01T00:00:00Z"}}' >"$ROUTINE_STATE_FILE"
+		[[ "$(_routine_last_run_epoch r908)" -gt "$boundary" ]] || exit 1
+	); then
+		print_result 'platform success advances calendar boundary; failure preserves it; newer Pulse wins' 0
+	else
+		print_result 'platform success calendar boundary' 1
+	fi
+	return 0
+}
+
 test_core_routine_logged_command_shape() {
 	local command_text
 	command_text=$(_core_routine_logged_command "r908" "'$TEST_DIR/profile-readme-helper.sh' update")
@@ -621,8 +652,17 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 		printf '%s\n' "$value"
 		return $?
 	}
+	local real_mkdir
+	real_mkdir=$(command -v mkdir)
+	local real_cat
+	real_cat=$(command -v cat)
 	mkdir() {
-		/bin/mkdir "$@"
+		"$real_mkdir" "$@"
+		return $?
+	}
+	cat() {
+		# The plist heredoc uses stdin only; keep cat available with the restricted PATH.
+		"$real_cat"
 		return $?
 	}
 	uname() {
@@ -637,13 +677,15 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 	setup_opencode_db_archive
 	HOME="$orig_home"
 	PATH="$orig_path"
-	unset -f uname mkdir
+	unset -f uname mkdir cat
 	restore_scheduler_helper_mocks
 
 	local body
 	body=$(<"$SCHEDULERS_PLATFORM_SH")
-	# shellcheck disable=SC2016 # Match the literal safe expansion used in generated launchd PATH construction.
-	if [[ "$captured_plist" != *"/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:/bin:/usr/bin"* ]] || [[ "$body" != *'${PATH:+:${PATH}}'* ]]; then
+	# The shared daemon-PATH helper now owns normalization; assert delegation
+	# and its returned value, not the obsolete inline fallback expression.
+	# shellcheck disable=SC2016 # Match the literal helper call in generated launchd PATH construction.
+	if [[ "$captured_plist" != *'<string>/bin:/usr/bin</string>'* ]] || [[ "$body" != *'aidevops_launchd_sanitized_path "${PATH}"'* ]]; then
 		print_result "opencode archive launchd uses safe PATH expansion" 1 "$captured_plist"
 		return 0
 	fi
@@ -714,6 +756,7 @@ main() {
 	setup
 	load_scheduler_helpers
 	test_core_routine_logged_command_shape
+	test_platform_success_calendar_boundary
 	test_core_routine_shell_quote_escapes_single_quotes
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration

@@ -88,11 +88,11 @@ _acquire_profile_update_lock() {
 	age=$((now - mtime_before))
 	if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
 		echo "Profile README update already running; skipping overlapping refresh" >&2
-		return 1
+		return 2
 	fi
 	if [[ -z "$owner_before" || ! "$lock_created" =~ ^[0-9]+$ ]] && [[ "$age" -lt "$PROFILE_UPDATE_LOCK_GRACE_SECONDS" ]]; then
 		echo "Profile README lock is being initialized; skipping overlapping refresh" >&2
-		return 1
+		return 2
 	fi
 
 	# Revalidate immediately before the atomic rename. A changed owner/mtime means
@@ -101,7 +101,7 @@ _acquire_profile_update_lock() {
 	mtime_after=$(_profile_lock_mtime "$lock_dir")
 	if [[ "$owner_before" != "$owner_after" || "$mtime_before" != "$mtime_after" ]]; then
 		echo "Profile README lock changed during stale-owner validation" >&2
-		return 1
+		return 2
 	fi
 	local stale_dir="${lock_dir}.stale.${token}"
 	if ! mv "$lock_dir" "$stale_dir" 2>/dev/null; then
@@ -110,8 +110,9 @@ _acquire_profile_update_lock() {
 	fi
 	rm -rf "$stale_dir"
 	if ! mkdir "$lock_dir" 2>/dev/null; then
+		[[ -d "$lock_dir" ]] || return 1
 		echo "Profile README update already running; skipping overlapping refresh" >&2
-		return 1
+		return 2
 	fi
 	local owner_tmp="${lock_dir}/owner.${token}"
 	printf '%s|%s|%s\n' "$token" "$$" "$now" >"$owner_tmp" || return 1
@@ -397,7 +398,8 @@ _ensure_profile_update_lock() {
 	if [[ "${AIDEVOPS_PROFILE_UPDATE_LOCK_HELD:-0}" == "1" ]]; then
 		return 0
 	fi
-	_acquire_profile_update_lock || return 1
+	# 2 means benign contention, 1 remains an actual lock/setup error.
+	_acquire_profile_update_lock || return $?
 	export AIDEVOPS_PROFILE_UPDATE_LOCK_HELD=1
 	trap _profile_update_exit_cleanup EXIT
 	return 0
@@ -2124,7 +2126,10 @@ cmd_update() {
 		_cmd_update_in_repo "$@"
 		return $?
 	fi
-	_ensure_profile_update_lock || return 1
+	local lock_status=0
+	_ensure_profile_update_lock || lock_status=$?
+	[[ "$lock_status" -ne 2 ]] || return 0
+	[[ "$lock_status" -eq 0 ]] || return "$lock_status"
 	_profile_run_in_worktree update "$@"
 	return $?
 }
@@ -2135,7 +2140,10 @@ cmd_update_contributions() {
 		_cmd_update_contributions_in_repo "$@"
 		return $?
 	fi
-	_ensure_profile_update_lock || return 1
+	local lock_status=0
+	_ensure_profile_update_lock || lock_status=$?
+	[[ "$lock_status" -ne 2 ]] || return 0
+	[[ "$lock_status" -eq 0 ]] || return "$lock_status"
 	_profile_run_in_worktree update-contributions "$@"
 	return $?
 }

@@ -25,7 +25,7 @@ token efficiency, and quality control built in.**
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-3.39.38-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.39.41-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 
@@ -434,8 +434,17 @@ aidevops secret set NAME
 aidevops security
 aidevops security status
 aidevops security scan
+aidevops secret audit-credentials  # Names-only JSON Lines, including tenant stores
+aidevops security fix             # Separate interactive terminal only
 aidevops source-access status
 ```
+
+Credential hygiene scans report parser errors, gopass drift, prune candidates,
+unsafe permissions, leftover backups and literal MCP environment secrets without
+printing values. Interactive fixes delegate to secret import/prune commands,
+confirm pruning and trash moves, and leave drift and malformed lines unchanged.
+Import and prune target only the active tenant. Scans do not probe provider APIs;
+an opt-in `--probe` may be added later.
 
 ### Vault
 

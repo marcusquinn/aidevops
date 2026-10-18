@@ -28,24 +28,28 @@
 set -uo pipefail
 
 SCRIPT_NAME=$(basename "$0")
+# shellcheck source=git-ref-snapshot-lib.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-ref-snapshot-lib.sh" || {
+	printf '[%s] ERROR: cannot load git-ref-snapshot-lib.sh\n' "$SCRIPT_NAME" >&2
+	exit 2
+}
 TMP_DIR=""
-BASE_WORKTREE=""
+BASE_TREE=""
 
+# The biome baseline is an unregistered snapshot inside TMP_DIR (GH#34905),
+# so removing TMP_DIR is the whole cleanup.
 cleanup() {
-	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
-		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
-		if [[ "$BASE_WORKTREE" != */base-tree ]]; then
-			log "WARN: Path '$BASE_WORKTREE' does not match fixture pattern — skipping remove"
-		else
-			git worktree remove --force "$BASE_WORKTREE" >/dev/null 2>&1 || true
-		fi
-	fi
 	if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
 	fi
 	return 0
 }
 trap cleanup EXIT
+# Bash skips the EXIT trap when a fatal signal terminates it; exit explicitly
+# so timeouts and interrupts still remove TMP_DIR.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 log() {
 	local _msg="$1"
@@ -66,44 +70,69 @@ usage() {
 
 # --- changed-range parsing ----------------------------------------------------
 
-# get_changed_ranges <base> <head> <glob-pattern>
-# Outputs lines of "file:start:end" for each changed hunk in the diff.
+# changed_files <base> <head> <pathspec>...
+# Print changed (added/copied/modified) paths, raw and one per line. Uses
+# NUL-delimited discovery (GH#34943): newline output C-quotes names with
+# tabs, quotes or backslashes, so they would match no file and drop out.
+changed_files() {
+	local _base="$1"
+	local _head="$2"
+	shift 2
+	git diff --name-only -z --diff-filter=ACM "$_base" "$_head" -- "$@" 2>/dev/null |
+		_nul_paths_to_lines
+	return 0
+}
+
+# lint_path_arg <path>
+# Print <path> as a markdownlint-cli2 argument. Arguments are globs, which
+# keeps config `ignores` in force; names a glob would misread (backslash is
+# rewritten to '/', leading '!'/'#' negate, '-' prefixes, and globby
+# metacharacters * ? [ ] { } ( ) that would match other names) use the ':'
+# literal form instead (GH#34943).
+lint_path_arg() {
+	local _path="$1"
+	case "$_path" in
+	*\\* | '!'* | '#'* | -* | *[][*?{}\(\)]*) printf ':%s\n' "$_path" ;;
+	*) printf '%s\n' "$_path" ;;
+	esac
+	return 0
+}
+
+# get_changed_ranges <base> <head> <changed-files>
+# Outputs "start:end:file" for each added/modified hunk of each file in the
+# newline-separated <changed-files>. Each file is diffed with one literal
+# pathspec (GH#34943; quoting per GH#33595): parsing "+++ b/<path>" headers
+# missed names Git C-quotes, and a file-first record split names containing
+# ':'. The file is the last field, so it may itself contain ':'.
 get_changed_ranges() {
 	local _base="$1"
 	local _head="$2"
-	local _pattern="$3"
+	local _files="$3"
+	local _file="" _line="" _plus_part="" _start="" _count="" _end=""
 
-	local _diff_output
-	# GH#33595: pass one quoted pathspec. Embedded quote characters or shell
-	# globbing against the working directory would make git match nothing.
-	_diff_output=$(git diff --unified=0 "$_base" "$_head" -- "$_pattern" 2>/dev/null) || true
-
-	local _current_file=""
-	{
+	while IFS= read -r _file; do
+		[ -n "$_file" ] || continue
 		while IFS= read -r _line; do
-			# Match "+++ b/path/to/file"
 			case "$_line" in
-			"+++ b/"*)
-				_current_file="${_line#'+++ b/'}"
-				;;
 			"@@ "*)
 				# Parse @@ -old +new_start,new_count @@ or @@ -old +new_start @@
-				local _plus_part _start _count _end
 				_plus_part=$(printf '%s' "$_line" | grep -oE '\+[0-9]+(,[0-9]+)?' | head -1)
 				_start="${_plus_part#+}"
 				_count=1
-				if printf '%s' "$_start" | grep -q ','; then
+				case "$_start" in
+				*,*)
 					_count="${_start#*,}"
 					_start="${_start%%,*}"
-				fi
+					;;
+				esac
 				# Skip deletion-only hunks (count=0)
 				[ "$_count" -eq 0 ] 2>/dev/null && continue
 				_end=$((_start + _count - 1))
-				printf '%s:%d:%d\n' "$_current_file" "$_start" "$_end"
+				printf '%d:%d:%s\n' "$_start" "$_end" "$_file"
 				;;
 			esac
-		done
-	} <<< "$_diff_output"
+		done < <(git diff --unified=0 "$_base" "$_head" -- ":(literal)${_file}" 2>/dev/null || true)
+	done <<<"$_files"
 	return 0
 }
 
@@ -123,10 +152,10 @@ is_in_changed_range() {
 		while IFS= read -r _range; do
 			[ -n "$_range" ] || continue
 			local _rfile _rest _rstart _rend
-			_rfile="${_range%%:*}"
+			_rstart="${_range%%:*}"
 			_rest="${_range#*:}"
-			_rstart="${_rest%%:*}"
-			_rend="${_rest#*:}"
+			_rend="${_rest%%:*}"
+			_rfile="${_rest#*:}"
 
 			if [ "$_file" = "$_rfile" ] &&
 				[ "$_line" -ge "$_rstart" ] 2>/dev/null &&
@@ -140,6 +169,35 @@ is_in_changed_range() {
 
 # --- markdownlint mode --------------------------------------------------------
 
+# violation_location <violation> <changed-files>
+# Print the file, a newline, then the line number of a markdownlint-cli2
+# "<path>:<line>[:<col>] ..." record; return 1 for non-violation lines.
+# Known changed paths match as prefixes (longest wins) so names containing ':'
+# resolve (GH#34943); otherwise the generic path:number parse applies.
+violation_location() {
+	local _violation="$1"
+	local _changed_files="$2"
+	local _vfile="" _vline="" _vrest="" _cf=""
+	while IFS= read -r _cf; do
+		[ -n "$_cf" ] && [ "${#_cf}" -gt "${#_vfile}" ] || continue
+		case "$_violation" in
+		"${_cf}:"[0-9]*)
+			_vrest="${_violation#"${_cf}:"}"
+			_vline="${_vrest%%[!0-9]*}"
+			_vfile="$_cf"
+			;;
+		esac
+	done <<<"$_changed_files"
+	if [ -z "$_vfile" ]; then
+		local _loc_re='^[^:]+:[0-9]+'
+		[[ "$_violation" =~ $_loc_re ]] || return 1
+		_vfile=$(printf '%s' "$_violation" | cut -d: -f1)
+		_vline=$(printf '%s' "$_violation" | cut -d: -f2)
+	fi
+	printf '%s\n%s' "$_vfile" "$_vline"
+	return 0
+}
+
 run_markdownlint() {
 	local _base="$1"
 	local _head="$2"
@@ -147,7 +205,7 @@ run_markdownlint() {
 
 	# Get changed MD files
 	local _changed_files
-	_changed_files=$(git diff --name-only --diff-filter=ACM "$_base" "$_head" -- '*.md')
+	_changed_files=$(changed_files "$_base" "$_head" '*.md')
 
 	if [ -z "$_changed_files" ]; then
 		log "No markdown files changed — skipping"
@@ -156,7 +214,7 @@ run_markdownlint() {
 
 	# Get changed line ranges
 	local _ranges
-	_ranges=$(get_changed_ranges "$_base" "$_head" '*.md')
+	_ranges=$(get_changed_ranges "$_base" "$_head" "$_changed_files")
 
 	if [ -z "$_ranges" ]; then
 		log "No line changes detected in markdown files"
@@ -166,11 +224,15 @@ run_markdownlint() {
 	log "Changed markdown files: $(echo "$_changed_files" | wc -l | tr -d ' ')"
 	log "Changed hunks: $(echo "$_ranges" | wc -l | tr -d ' ')"
 
-	# Run markdownlint on changed files — capture output (exits non-zero on violations)
-	local _lint_output _file_list
-	_file_list=$(echo "$_changed_files" | tr '\n' ' ')
-	# shellcheck disable=SC2086
-	_lint_output=$(npx --yes markdownlint-cli2@0.22.0 $_file_list 2>&1) || true
+	# Run markdownlint on changed files — capture output (exits non-zero on
+	# violations). One argument per path: word-splitting broke names with
+	# spaces and let the shell glob them (GH#34943).
+	local _lint_output _f
+	local -a _lint_args=()
+	while IFS= read -r _f; do
+		[ -n "$_f" ] && _lint_args+=("$(lint_path_arg "$_f")")
+	done <<<"$_changed_files"
+	_lint_output=$(npx --yes markdownlint-cli2@0.22.0 "${_lint_args[@]}" 2>&1) || true
 
 	if [ -z "$_lint_output" ]; then
 		log "No markdownlint violations found"
@@ -186,16 +248,13 @@ run_markdownlint() {
 	{
 		while IFS= read -r _violation; do
 			[ -n "$_violation" ] || continue
+			local _vloc="" _vfile="" _vline=""
 			# Skip non-violation lines (info headers, blank lines, etc.)
-			# Violations match: path:number or path:number:number
-			printf '%s' "$_violation" | grep -qE '^[^:]+:[0-9]+' || continue
+			_vloc=$(violation_location "$_violation" "$_changed_files") || continue
+			_vfile="${_vloc%$'\n'*}"
+			_vline="${_vloc##*$'\n'}"
 
 			_total_count=$((_total_count + 1))
-
-			# Extract file and line number
-			local _vfile _vline
-			_vfile=$(printf '%s' "$_violation" | cut -d: -f1)
-			_vline=$(printf '%s' "$_violation" | cut -d: -f2)
 
 			if is_in_changed_range "$_vfile" "$_vline" "$_ranges"; then
 				_new_violations="${_new_violations}${_violation}
@@ -276,8 +335,8 @@ run_biome() {
 
 	# Get changed biome-eligible files
 	local _changed_files
-	_changed_files=$(git diff --name-only --diff-filter=ACM "$_base" "$_head" -- \
-		'*.ts' '*.tsx' '*.js' '*.jsx' '*.json' '*.jsonc' '*.css' '*.graphql' 2>/dev/null)
+	_changed_files=$(changed_files "$_base" "$_head" \
+		'*.ts' '*.tsx' '*.js' '*.jsx' '*.json' '*.jsonc' '*.css' '*.graphql')
 
 	if [ -z "$_changed_files" ]; then
 		log "No biome-eligible files changed — skipping"
@@ -286,33 +345,36 @@ run_biome() {
 
 	log "Changed biome files: $(echo "$_changed_files" | wc -l | tr -d ' ')"
 
-	TMP_DIR=$(mktemp -d)
+	TMP_DIR=$(mktemp -d) && [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ] ||
+		die "cannot create temporary directory"
 
-	# Create a worktree at the base ref for baseline comparison
-	BASE_WORKTREE="${TMP_DIR}/base-tree"
-	log "Creating base worktree at ${_base:0:7}..."
-	git worktree add --quiet "$BASE_WORKTREE" "$_base" 2>/dev/null || {
-		# Fallback: detached HEAD
-		git worktree add --detach --quiet "$BASE_WORKTREE" "$_base" 2>/dev/null || {
-			die "Failed to create base worktree at $_base"
-		}
-	}
+	# Baseline: the full base tree (so biome `extends`, nested configs and
+	# ignore files resolve exactly as in a checkout) written into an
+	# unregistered snapshot (GH#34905). No `git worktree add`, so an
+	# interrupted or killed run cannot leak a registration.
+	BASE_TREE="${TMP_DIR}/base-tree"
+	log "Materializing base snapshot at ${_base:0:7}..."
+	_materialize_ref_tree "$_base" "$BASE_TREE" ||
+		die "Failed to materialize base snapshot at $_base"
 
-	# Count violations at base (only in changed files that exist at base)
-	local _base_count=0
-	local _base_file_list=""
+	# Count violations at base (only in changed files that exist at base).
+	# One argument per path (GH#34943): word-splitting broke names with
+	# spaces; './' keeps a leading '-' from being read as an option.
+	local _base_count=0 _f=""
+	local -a _base_files=() _head_files=()
 	{
 		while IFS= read -r _f; do
 			[ -n "$_f" ] || continue
-			[ -f "${BASE_WORKTREE}/${_f}" ] && _base_file_list="${_base_file_list} ${_f}"
+			case "$_f" in -*) _f="./${_f}" ;; esac
+			[ -f "${BASE_TREE}/${_f}" ] && _base_files+=("$_f")
+			[ -f "$_f" ] && _head_files+=("$_f")
 		done
 	} <<< "$_changed_files"
 
-	if [ -n "$_base_file_list" ]; then
+	if [ "${#_base_files[@]}" -gt 0 ]; then
 		local _base_output
-		# shellcheck disable=SC2086
-		_base_output=$(cd "$BASE_WORKTREE" && npx --yes @biomejs/biome@2.4.12 lint \
-			--reporter=github --max-diagnostics=9999 $_base_file_list 2>&1) || true
+		_base_output=$(cd "$BASE_TREE" && npx --yes @biomejs/biome@2.4.12 lint \
+			--reporter=github --max-diagnostics=9999 "${_base_files[@]}" 2>&1) || true
 		# t2376: use `|| true` not `|| echo "0"` — grep -c always outputs a
 		# count (including "0" for no matches) and exits 1 when no matches.
 		# The old `|| echo "0"` appended a second "0" on no-match, producing
@@ -323,19 +385,10 @@ run_biome() {
 
 	# Count violations at head
 	local _head_count=0
-	local _head_file_list=""
-	{
-		while IFS= read -r _f; do
-			[ -n "$_f" ] || continue
-			[ -f "$_f" ] && _head_file_list="${_head_file_list} ${_f}"
-		done
-	} <<< "$_changed_files"
-
-	if [ -n "$_head_file_list" ]; then
+	if [ "${#_head_files[@]}" -gt 0 ]; then
 		local _head_output
-		# shellcheck disable=SC2086
 		_head_output=$(npx --yes @biomejs/biome@2.4.12 lint \
-			--reporter=github --max-diagnostics=9999 $_head_file_list 2>&1) || true
+			--reporter=github --max-diagnostics=9999 "${_head_files[@]}" 2>&1) || true
 		# t2376: see matching comment on _base_count above.
 		_head_count=$(printf '%s' "$_head_output" | grep -c '^::error' 2>/dev/null || true)
 		_head_count="${_head_count:-0}"
