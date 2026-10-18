@@ -27,10 +27,12 @@ tools:
 - **API**: `https://api.linkup.so/v1` — `POST /search`, `POST /fetch`,
   `POST /research` + `GET /research/{id}`, `POST /tasks` (batch),
   `GET /credits/balance`. `POST /extract` is in closed beta.
-- **Auth**: `Authorization: Bearer $LINKUP_API_KEY`; store with
-  `aidevops secret set LINKUP_API_KEY`
+- **Auth**: `Authorization: Bearer <key>`. Store an account-scoped secret, e.g.
+  `aidevops secret set LINKUP_PERSONAL_API_KEY --provider linkup --account <ref>`
+  (naming: `tools/credentials/credential-inventory.md`). Never store bare
+  `LINKUP_API_KEY`.
 - **CLI**: `npm install -g linkup-search-cli` (Node 22+), command `linkup`; reads
-  `LINKUP_API_KEY`
+  `LINKUP_API_KEY`, so map the stored name to it at injection (see Commands)
 - **MCP**: hosted `https://mcp.linkup.so/mcp`, or local `npx -y linkup-mcp-server`
 - **Docs**: <https://docs.linkup.so> · index <https://docs.linkup.so/llms.txt> ·
   OpenAPI <https://api.linkup.so/v1/openapi.json>
@@ -76,25 +78,33 @@ Shared search filters: `includeDomains` (max 100), `excludeDomains`,
 
 ## Commands
 
-The key is injected only into the child process. Use `sh -c` with single quotes
-so the parent shell does not expand the variable:
+Examples use `LINKUP_PERSONAL_API_KEY`; substitute your stored name (existing
+names stay valid). The key is injected only into the child process. Use `sh -c`
+with single quotes so the parent shell does not expand the variable. These calls
+were verified live on 2026-10-18 (search and fetch each under 1 s, billed $0.005
+and $0.001):
 
 ```bash
-aidevops secret LINKUP_API_KEY -- sh -c 'curl -sS https://api.linkup.so/v1/search \
-  -H "Authorization: Bearer ${LINKUP_API_KEY}" -H "Content-Type: application/json" \
+aidevops secret LINKUP_PERSONAL_API_KEY -- sh -c 'curl -sS https://api.linkup.so/v1/credits/balance \
+  -H "Authorization: Bearer ${LINKUP_PERSONAL_API_KEY}"'   # free
+
+aidevops secret LINKUP_PERSONAL_API_KEY -- sh -c 'curl -sS https://api.linkup.so/v1/search \
+  -H "Authorization: Bearer ${LINKUP_PERSONAL_API_KEY}" -H "Content-Type: application/json" \
   -d "{\"q\":\"Linkup search API pricing\",\"depth\":\"fast\",\"outputType\":\"searchResults\",\"maxResults\":5}"'
 
-aidevops secret LINKUP_API_KEY -- sh -c 'curl -sS https://api.linkup.so/v1/fetch \
-  -H "Authorization: Bearer ${LINKUP_API_KEY}" -H "Content-Type: application/json" \
+aidevops secret LINKUP_PERSONAL_API_KEY -- sh -c 'curl -sS https://api.linkup.so/v1/fetch \
+  -H "Authorization: Bearer ${LINKUP_PERSONAL_API_KEY}" -H "Content-Type: application/json" \
   -d "{\"url\":\"https://docs.linkup.so\",\"mode\":\"standard\"}"'
 ```
 
-The official CLI reads the variable directly:
+The official CLI reads `LINKUP_API_KEY`, so set it from the stored name inside
+the child shell:
 
 ```bash
-aidevops secret LINKUP_API_KEY -- linkup --json search "query" --depth fast --output search-results --max-results 5
-aidevops secret LINKUP_API_KEY -- linkup --json fetch https://example.com --render-js
-aidevops secret LINKUP_API_KEY -- linkup --json research "question" --mode answer --reasoning-depth S --wait
+aidevops secret LINKUP_PERSONAL_API_KEY -- sh -c 'LINKUP_API_KEY="$LINKUP_PERSONAL_API_KEY" \
+  linkup --json search "query" --depth fast --output search-results --max-results 5'
+aidevops secret LINKUP_PERSONAL_API_KEY -- sh -c 'LINKUP_API_KEY="$LINKUP_PERSONAL_API_KEY" \
+  linkup --json fetch https://example.com --render-js'
 ```
 
 Prefer `aidevops secret` over `linkup setup`, which stores the key in plain text

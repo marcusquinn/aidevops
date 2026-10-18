@@ -55,12 +55,14 @@ published by these vendors are their own claims, not independent results.
 | Search cost | $0.005 (`deep` $0.05) | $0.008 basic, $0.016 advanced | $0.004-0.015 per request | 2 credits per 10 results |
 | Fetch cost | $0.001-0.011 | 1 credit per 5 URLs ($0.0016/URL) | $0.001 per page | 1 credit per page |
 | Free tier | $20/month credit (work email) | 1,000 credits/month | $10/month credit | 1,000 credits/month |
-| Key env var | `LINKUP_API_KEY` | `TAVILY_API_KEY` | `EXA_API_KEY` | `FIRECRAWL_API_KEY` |
+| Variable read by SDK/CLI | `LINKUP_API_KEY` | `TAVILY_API_KEY` | `EXA_API_KEY` | `FIRECRAWL_API_KEY` |
 | Official MCP | `linkup-mcp-server`, hosted | `tavily-mcp` | `exa-mcp-server`, hosted | `firecrawl-mcp` |
 | Self-host | No (enterprise bring-your-own-cloud) | No | No (MCP only) | Yes, core AGPL-3.0 |
 | Docs | [docs.linkup.so](https://docs.linkup.so) | [docs.tavily.com](https://docs.tavily.com) | [docs.exa.ai](https://docs.exa.ai) | [docs.firecrawl.dev](https://docs.firecrawl.dev) |
 
-All four use `Authorization: Bearer <key>`; Exa also accepts `x-api-key`.
+All four use `Authorization: Bearer <key>`; Exa also accepts `x-api-key`. Store
+keys under account-scoped names such as `TAVILY_PERSONAL_API_KEY`, not the bare
+variable, and map them at injection (`tools/credentials/credential-inventory.md`).
 
 ### When each provider fits
 

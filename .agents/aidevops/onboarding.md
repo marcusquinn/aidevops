@@ -84,7 +84,7 @@ The two workflows compose: `/onboarding` first (you need `gh` to be authenticate
 | SEO | SerpApi | `SERPAPI_API_KEY` | https://serpapi.com/ (account → API key) |
 | SEO | Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard |
 | Data | GetAnyAPI | `ANYAPI_API_KEY` | https://getanyapi.com/dashboard |
-| Data | Linkup (web search/fetch) | `LINKUP_API_KEY` | https://app.linkup.so |
+| Data | Linkup (web search/fetch) | `LINKUP_<ACCOUNT>_API_KEY` | https://app.linkup.so |
 | SEO | Google Search Console | OAuth via MCP | https://search.google.com/search-console |
 | Context | Context7 | MCP config only | — |
 | Browser | Playwright | `npx playwright install` | — |
