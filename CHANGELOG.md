@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.42] - 2026-10-18
+
+### Changed
+
+- Maintenance: mark t18710 complete (pr:#34936 completed:2026-10-17) (#34938)
+- Tests: repair test-issue-reconcile.sh fixtures for fail-closed guards (#34941)
+- Maintenance: sync GitHub issue refs to TODO.md (#34940)
+
+### Fixed
+
+- treat todo/ JSON data files as low runtime risk (#34946)
+- weight stale-blocked sweep by remaining backlog
+- checkout-free biome baseline and confirmed-idle worktree age
+- rotate normalize passes so stage timeouts stop starving stale-claim recovery
+- GH#34931 confirm merged worker handoff for closed issues (#34932)
+
 ## [3.39.41] - 2026-10-17
 
 ### Added

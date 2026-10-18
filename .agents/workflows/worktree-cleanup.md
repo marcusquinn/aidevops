@@ -63,8 +63,9 @@ local commits, dirty patches, bounded untracked state, and available failure
 context remain restorable. Audit rows use `mode=compact-archive`, and async
 cleanup reports removed, archived, and failed-archive totals.
 
-Ordinary managed worktrees require at least 24 hours of confirmed idle by
-default before independent restore verification and guarded removal. Unattributed
+Ordinary managed worktrees require at least 24 hours of confirmed idle; the shipped
+class defaults remain 7 or 14 days. Independent restore verification precedes
+guarded removal. Unattributed
 archives are stored under an `unattributed` target rather than being falsely
 assigned to an issue or PR.
 
@@ -77,9 +78,9 @@ overrides, which take precedence:
 
 | Config key (`storage.`) | Default | Env override |
 |---|---|---|
-| `worktree_local_commit_archive_hours` | 24 | `ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS` (seconds) |
-| `worktree_generated_dirty_archive_hours` | 24 | `ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS` (seconds) |
-| `worktree_unattributed_archive_hours` | 24 | `WORKTREE_UNATTRIBUTED_RETENTION_DAYS` (days) |
+| `worktree_local_commit_archive_hours` | 168 | `ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS` (seconds) |
+| `worktree_generated_dirty_archive_hours` | 168 | `ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS` (seconds) |
+| `worktree_unattributed_archive_hours` | 336 | `WORKTREE_UNATTRIBUTED_RETENTION_DAYS` (days) |
 
 For example, `aidevops config set storage.worktree_unattributed_archive_hours 24`.
 Malformed or sub-24-hour values fall back to the default. A shorter window only

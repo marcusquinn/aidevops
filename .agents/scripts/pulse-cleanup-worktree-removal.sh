@@ -624,12 +624,12 @@ _pc_configured_archive_secs() {
 #
 # Environment / config:
 #   ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS, else
-#   storage.worktree_local_commit_archive_hours — default/minimum 24h.
+#   storage.worktree_local_commit_archive_hours — default 7 days, minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_local_commit_archive_secs() {
 	_pc_configured_archive_secs "${ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS:-}" 1 \
-		"worktree_local_commit_archive_hours" 86400
+		"worktree_local_commit_archive_hours" 604800
 	return 0
 }
 
@@ -663,12 +663,12 @@ _pc_generated_clean_archive_secs() {
 #
 # Environment / config:
 #   ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS, else
-#   storage.worktree_generated_dirty_archive_hours — default/minimum 24h.
+#   storage.worktree_generated_dirty_archive_hours — default 7 days, minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_generated_dirty_archive_secs() {
 	_pc_configured_archive_secs "${ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS:-}" 1 \
-		"worktree_generated_dirty_archive_hours" 86400
+		"worktree_generated_dirty_archive_hours" 604800
 	return 0
 }
 
@@ -677,12 +677,12 @@ _pc_generated_dirty_archive_secs() {
 #
 # Environment / config:
 #   WORKTREE_UNATTRIBUTED_RETENTION_DAYS (days), else
-#   storage.worktree_unattributed_archive_hours — default/minimum 24h.
+#   storage.worktree_unattributed_archive_hours — default 14 days, minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_unattributed_archive_secs() {
 	_pc_configured_archive_secs "${WORKTREE_UNATTRIBUTED_RETENTION_DAYS:-}" 86400 \
-		"worktree_unattributed_archive_hours" 86400
+		"worktree_unattributed_archive_hours" 1209600
 	return 0
 }
 

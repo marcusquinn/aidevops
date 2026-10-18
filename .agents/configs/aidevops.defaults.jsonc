@@ -464,17 +464,17 @@
     // Env override: AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE
     "worktree_archive_retention_mode": "dry-run",
 
-    // Abandoned worktrees with local commits (24 hours).
+    // Abandoned worktrees with local commits (7 days).
     // Env override (seconds): ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS
-    "worktree_local_commit_archive_hours": 24,
+    "worktree_local_commit_archive_hours": 168,
 
-    // Dirty generated auto/review worktrees (24 hours).
+    // Dirty generated auto/review worktrees (7 days).
     // Env override (seconds): ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS
-    "worktree_generated_dirty_archive_hours": 24,
+    "worktree_generated_dirty_archive_hours": 168,
 
-    // Unattributed worktrees with no open head PR (24 hours).
+    // Unattributed worktrees with no open head PR (14 days).
     // Env override (days): WORKTREE_UNATTRIBUTED_RETENTION_DAYS
-    "worktree_unattributed_archive_hours": 24
+    "worktree_unattributed_archive_hours": 336
   },
 
   // ---------------------------------------------------------------------------
