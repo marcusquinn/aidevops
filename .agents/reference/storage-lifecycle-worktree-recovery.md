@@ -343,10 +343,16 @@ instead reports `outcome:"operator-intervention-required"` with the fixed
 `unsupported-process-visibility` condition. A minority of process-visibility
 observations no longer overrides a larger blocker such as detached or dirty
 archives. The result includes only a bounded
-scan-observation count and fixed guidance: inspect the read-only plan locally,
-stop affected same-user processes through their normal process or service
-controls, optionally install the opt-in read-only inspector described in
-`reference/worktree-cwd-visibility.md`, and rerun planning. It never reports process names, command lines,
+scan-observation count and fixed guidance: inspect the read-only plan locally
+and check saved managed-lifetime evidence before diagnosing process visibility.
+The classifier already accepts a sealed generation matching the archived source
+path and inode as the rootless alternative to a degraded CWD scan. Check
+`worktree-lifecycle-helper.sh report --summary` and the source's
+`worktree-managed-lifetime.py status` record; do not confuse missing enrollment,
+unfinished sealing or invalid receipts with a requirement for sudo. Repair the
+owning lifecycle transition without fabricating receipts. See
+`reference/worktree-cwd-visibility.md` for the proof contract and limitations.
+The result never reports process names, command lines,
 CWDs, usernames, or archive paths. The one operator-invoked exception is
 `worktree-helper.sh recovery unreadable-processes` (GH#32853): run manually on
 a `/proc` host, it prints `<pid>\t<comm>\t<remedy>` for each live, non-zombie
@@ -354,13 +360,16 @@ process that is not provably foreign-UID and whose CWD neither a direct read
 nor the opt-in inspector can read. These are exactly the entries that make
 visibility degraded. `<remedy>` is `inspector` when the inspector's UID rule
 (real UID is the caller; other UIDs are the caller or root) accepts the process
-and `stop-only` otherwise (GH#32871). It is read-only, prints to the terminal
+and `stop-only` otherwise on supported non-NixOS Linux (GH#32871). NixOS reports
+`unprivileged-review` and never invokes that inspector. These labels are not
+instructions to stop login/session services. It is read-only, prints to the terminal
 only, and is never called by automatic maintenance, advisories, logs, or plans;
 the escalation advisory names the command but never its output. Names are identification
 aids, never exemptions. Platforms without `/proc` exit 3 because `lsof` does not
-identify denied processes. If complete visibility remains unavailable,
-automatic permanent deletion is explicitly unsupported and the archives remain
-retained. This diagnostic outcome grants no deletion authority, does not trust
+identify denied processes. If neither complete visibility nor a valid managed
+lifetime proof is available, the affected archives remain retained. Degraded
+visibility alone does not prohibit cleanup of every archive on the host.
+This diagnostic outcome grants no deletion authority, does not trust
 process names, and does not require root access or weaker kernel process
 protections. A readable CWD match remains a positive live-reference block, and
 every other candidacy and apply invariant above remains unchanged.

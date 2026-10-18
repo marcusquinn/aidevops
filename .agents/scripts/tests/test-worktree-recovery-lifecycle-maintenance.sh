@@ -548,6 +548,9 @@ test_automatic_maintenance_reports_unsupported_process_visibility() {
 		(.unsupported_condition.guidance | length) == 4 and
 		any(.unsupported_condition.guidance[]; contains("reference/worktree-cwd-visibility.md")) and
 		any(.unsupported_condition.guidance[]; contains("recovery unreadable-processes")) and
+		any(.unsupported_condition.guidance[]; contains("sealed generation") and contains("without root")) and
+		any(.unsupported_condition.guidance[]; contains("NixOS adapter never invokes")) and
+		all(.unsupported_condition.guidance[]; contains("stop them through") | not) and
 		.escalation.required == true and .escalation.reason == "unsupported-process-visibility" and
 		.escalation.dominant_reason == "process_evidence_unavailable" and
 		.escalation.authority == "read-only" and
@@ -617,6 +620,9 @@ test_automatic_maintenance_advisory_tracks_escalation() {
 	AIDEVOPS_ADVISORIES_DIR="$advisory_dir" _worktree_recovery_maintenance_update_advisory \
 		"$(printf '%s\n' "$result" | jq -c '.outcome = "operator-intervention-required"')" || rc=1
 	grep -qF 'worktree-helper.sh recovery unreadable-processes' "$advisory_path" || rc=1
+	grep -qF 'worktree-lifecycle-helper.sh report --summary' "$advisory_path" || rc=1
+	grep -qF 'rootless managed-lifetime proof' "$advisory_path" || rc=1
+	grep -qF 'Do not stop session services or seek sudo' "$advisory_path" || rc=1
 	AIDEVOPS_ADVISORIES_DIR="$advisory_dir" \
 		_worktree_recovery_maintenance_update_advisory '{"escalation":{"required":false}}' || rc=1
 	[[ ! -e "$advisory_path" ]] || rc=1

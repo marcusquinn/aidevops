@@ -1443,10 +1443,10 @@ _worktree_recovery_maintenance_no_candidates_json() {
 			code:"unsupported-process-visibility",deletion_authority:false,
 			blocked_archive_observations:process_visibility_count,
 			guidance:[
-				"Run the read-only recovery plan and inspect process-evidence-unavailable entries locally.",
-				"Identify affected same-user processes locally with worktree-helper.sh recovery unreadable-processes, stop them through their normal process or service controls, then rerun the plan.",
-				"Where protected same-user processes hide their CWDs, an administrator may install the opt-in read-only inspector described in reference/worktree-cwd-visibility.md.",
-				"If complete process visibility cannot be restored, retain the archives; automatic permanent deletion is unsupported in this environment."
+				"Run the read-only recovery plan and inspect process-evidence-unavailable entries locally. See reference/worktree-cwd-visibility.md for the rootless proof contract.",
+				"Inspect saved managed-lifetime evidence first with worktree-lifecycle-helper.sh report --summary and python3 <scripts-dir>/worktree-managed-lifetime.py status <source-path>; a sealed generation matching the recorded source inode can satisfy degraded process visibility without root.",
+				"Use worktree-helper.sh recovery unreadable-processes only to diagnose the observer. Do not stop login/session services or change process permissions merely to clear this warning; the NixOS adapter never invokes the optional inspector.",
+				"Retain entries without complete process visibility or a valid managed-lifetime proof. Repair missing enrollment or finalization at the owning lifecycle transition; never fabricate or backdate a receipt. Readable CWD matches and all other removal checks still block."
 			]
 		} else null end),
 		escalation:(if process_visibility_intervention then {
@@ -1565,9 +1565,11 @@ _worktree_recovery_maintenance_update_advisory() {
 		"Review the read-only plan (it grants no deletion authority):\n\n" +
 		"  " + (.escalation.command | join(" ")) + "\n\n" +
 		(if .outcome == "operator-intervention-required"
-		then "Process visibility is incomplete. List the blocking processes and their remedy with:\n\n" +
+		then "Process visibility is incomplete and selected entries lack a valid alternative lifetime proof. Inspect saved lifecycle evidence first:\n\n" +
+			"  worktree-lifecycle-helper.sh report --summary\n\n" +
+			"The observer can be diagnosed separately with:\n\n" +
 			"  worktree-helper.sh recovery unreadable-processes\n\n" +
-			"See reference/worktree-cwd-visibility.md for the opt-in inspector.\n\n"
+			"See reference/worktree-cwd-visibility.md for rootless managed-lifetime proof. Do not stop session services or seek sudo merely to clear this warning.\n\n"
 		else "" end) +
 		"Details: reference/storage-lifecycle-worktree-recovery.md\n" +
 		"This advisory clears automatically once maintenance reclaims space or pressure ends."

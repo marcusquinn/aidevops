@@ -4,7 +4,10 @@ The worktree removal guard must prove that no live process has its working
 directory inside the candidate. On Linux, same-user `gpg-agent`, `sshd`, and
 `sd-pam` processes can deny unprivileged `/proc/<pid>/cwd` reads. Their name,
 parent, or apparent daemon role is not proof of their working directory. The
-guard therefore fails closed with `cwd-visibility-degraded`.
+process observer therefore reports degraded visibility. This is **not a global
+cleanup prohibition**: the removal guard also accepts the candidate's validated,
+sealed managed-lifetime receipt as described below. Without that alternative
+evidence it fails closed with `cwd-visibility-degraded`.
 
 To see which processes currently cause this, run
 `worktree-helper.sh recovery unreadable-processes`. It lists the PID, `comm`
@@ -12,7 +15,61 @@ and remedy of each process that still blocks visibility after the inspector
 below has been tried. The remedy is `inspector` when the inspector's UID rule
 accepts the process, so installing or repairing the inspector clears it, and
 `stop-only` when only stopping the process through its normal controls clears
-it. The listing is read-only and is for manual review only.
+it. These labels describe the optional inspector's capabilities, not permission
+to stop a service. On NixOS the label is `unprivileged-review` and the inspector
+is never invoked. The listing is read-only and is for manual review only.
+
+## Saved lifetime evidence: the rootless cleanup path
+
+Diagnose the candidate's lifecycle **before** considering process permissions.
+Managed workers persist their worktree identity and generation, boot identity,
+systemd user unit, cgroup, invocation ID and completion evidence in the existing
+worktree registry. The contract uses `ExitType=cgroup`, `RemainAfterExit=yes` and
+`Restart=no`; completion must account for descendants, not just the main PID.
+Sealing closes admission to that generation. A PID, process name, old start time,
+or a merely present registry row is not a substitute for this contract.
+
+Read-only entrypoints:
+
+```bash
+bash .agents/scripts/worktree-lifecycle-helper.sh report --summary
+python3 .agents/scripts/worktree-managed-lifetime.py status /absolute/worktree
+python3 .agents/scripts/worktree-managed-lifetime.py proof /absolute/worktree
+```
+
+`status` displays recorded evidence; `proof` validates it. Status exit 3 means
+not enrolled, not idle. `no matching sealed generation` means the recorded state
+or source identity does not meet the proof contract; it does **not** mean `/proc`
+permissions must be changed. Do not manually mark a record sealed, backdate idle
+evidence, or enroll a legacy tree retroactively to manufacture removal proof.
+
+Two consumers already use this rootless alternative:
+
+- `audit-worktree-removal-helper.sh`, `worktree_removal_guard`: after checking
+  readable positive CWD matches, accepts `worktree_managed_lifetime_proof` when
+  the remaining visibility is degraded.
+- `worktree-recovery-lifecycle-helper.sh`,
+  `_worktree_recovery_plan_process_state`: checks source, archive and bucket CWD
+  matches first, then accepts the saved source-path/inode lifetime proof. The
+  source may already be absent; its recorded physical identity must still match.
+
+`worktree_lifetime_proof.py` owns receipt validation. A recorded `sealed` state
+alone is not proof: invocation/completion evidence and, when present, the
+restore-verified archive operation are also checked. An unusable scan is not
+the supported degraded-scan fallback. A readable positive match always blocks.
+
+For ordinary idle archival, the configured confirmed-idle window and independent
+restoration checks remain separate gates. `running` is a registry lifecycle
+state, not a claim that a process is currently consuming CPU. Inspect its launch
+receipts and idle evidence instead of inferring activity from that label.
+Legacy or unenrolled paths retain their existing conservative guards. Fix
+missing producer enrollment or incomplete finalization at its owning lifecycle
+transition; do not weaken the global process observer.
+
+The provider may therefore continue reporting degraded visibility while eligible
+managed worktrees are safely cleaned. Success means verified preservation and
+removal for the candidate, not making every protected process CWD readable.
+See `scripts/worktree-archive-helper.md` for archive and idle-window contracts.
 
 ## Unprivileged NixOS adapter
 
@@ -102,7 +159,9 @@ read, rejects control-character/non-absolute output, and neither edits files nor
 authorizes deletion. The ordinary guard still checks the candidate, Git
 registration/locks, ownership, process CWDs, and recovery requirements.
 
-This is an **opt-in operator installation**, not part of automatic setup:
+This is an **opt-in operator installation on supported non-NixOS Linux**, not
+part of automatic setup and not a prerequisite for managed-lifetime cleanup.
+Do not propose this installation when the operator has no privilege authority:
 
 1. Review the inspector from a trusted release. Copy it to
    `/usr/local/libexec/aidevops-worktree-cwd-inspect` as root, with root
@@ -142,7 +201,7 @@ This is an **opt-in operator installation**, not part of automatic setup:
    paths. Retry the **normal guarded remover**, not `git worktree remove
    --force` or direct filesystem deletion.
 
-The guard invokes the inspector only after a normal CWD read fails and the
+On supported non-NixOS Linux, the guard invokes the inspector only after a normal CWD read fails and the
 process cannot be proved foreign or zombie. Uninstalled, rejected, timed-out,
 or empty privileged reads retain `cwd-visibility-degraded`. No global `/proc`
 permission or ptrace setting changes are needed. Revoke the sudoers rule and
