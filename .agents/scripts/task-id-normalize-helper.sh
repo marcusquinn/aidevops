@@ -31,7 +31,12 @@ parser.add_argument("--repo", default=".", help="Repository root (default: curre
 args = parser.parse_args()
 root = Path(subprocess.check_output(["git", "-C", args.repo, "rev-parse", "--show-toplevel"], text=True).strip())
 # Whole tokens only: exclude branch names, URLs, namespaced IDs and malformed suffixes.
-task_pattern = re.compile(r"(?<![\w./-])t[0-9]+(?:\.[0-9]+)*(?![\w./-])")
+# A compound joins task tokens with "-" or "/" (t038.24-t038.25, t065/t066, chains)
+# and allows a numeric range end (t004.1-5). Every task member of one compound is
+# rewritten together, so ranges are never left half-normalised (GH#34969). A
+# sentence-final "." is punctuation; ".md"/".html"/".5x" suffixes still exclude.
+task_member = re.compile(r"t[0-9]+(?:\.[0-9]+)*")
+task_pattern = re.compile(r"(?<![\w./-])t[0-9]+(?:\.[0-9]+)*(?:[-/](?:t[0-9]+(?:\.[0-9]+)*|[0-9]+))*(?![\w/-]|\.\w)")
 brief_ref = re.compile(r"(?<![\w/])todo/tasks/(t[0-9]+(?:\.[0-9]+)*)-brief\.md(?![\w./-])")
 canonical = re.compile(r"t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17}){0,8}\Z")
 task_line = re.compile(r"^\s*-\s+\[[ x>\-]\]\s+t[0-9]")
@@ -42,13 +47,32 @@ def unpad(value):
     result = "t" + ".".join(part.lstrip("0") or "0" for part in value[1:].split("."))
     return result if canonical.fullmatch(result) else value
 
+html_open = re.compile(r"<!--(?!/?TOON:)")
+
+def comment_continues(line, start=0):
+    # True when the last non-TOON "<!--" on the line is not closed by a later "-->".
+    opens = [m.start() for m in html_open.finditer(line, start)]
+    return bool(opens) and opens[-1] > line.rfind("-->")
+
 def active_lines(text, plans=False):
     toon = False
     paired_toon = False
     archived = False
     archive_level = 0
     fence = ""
+    comment = False
     for line in text.splitlines(keepends=True):
+        # Multi-line HTML comments hold documentation and format examples, never
+        # live tasks (GH#17804 template); match issue-sync's strip_html_comments.
+        if comment:
+            close = line.find("-->")
+            comment = close < 0 or comment_continues(line, close)
+            yield line, False
+            continue
+        if not toon and not fence and comment_continues(line):
+            comment = True
+            yield line, False
+            continue
         marker = re.match(r"^\s*(`{3,}|~{3,})", line)
         if marker:
             if not fence:
@@ -75,8 +99,15 @@ def active_lines(text, plans=False):
             toon = False
             paired_toon = False
 
+def members(text):
+    # Individual task IDs from every compound, for conflict and counter checks.
+    return [member for m in task_pattern.finditer(text) for member in task_member.findall(m[0])]
+
+def normalize_compound(match):
+    return task_member.sub(lambda member: unpad(member[0]), match[0])
+
 def ids(line):
-    return [m[0] for m in task_pattern.finditer(line)] + [m[1] for m in brief_ref.finditer(line)]
+    return members(line) + [m[1] for m in brief_ref.finditer(line)]
 
 todo = root / "TODO.md"
 if args.advisory:
@@ -100,7 +131,7 @@ for relative in ("TODO.md", "todo/PLANS.md"):
     for line, active in active_lines(text, relative == "todo/PLANS.md"):
         if active:
             seen.update(ids(line))
-            new = task_pattern.sub(lambda m: unpad(m[0]), line)
+            new = task_pattern.sub(normalize_compound, line)
             new = brief_ref.sub(lambda m: "todo/tasks/" + unpad(m[1]) + brief_suffix, new)
             if new != line:
                 print(relative + ": " + line.rstrip() + " -> " + new.rstrip())
@@ -146,7 +177,7 @@ if conflicts:
 
 def seed(text):
     # Same decimal high-water semantics as _compute_counter_seed, including padded input.
-    return max([0] + [int(m[0][1:].split(".")[0]) for m in task_pattern.finditer(text)]) + 1
+    return max([0] + [int(member[1:].split(".")[0]) for member in members(text)]) + 1
 
 counter = root / ".task-counter"
 counter_before = counter.read_bytes() if counter.exists() else None
