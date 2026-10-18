@@ -138,7 +138,7 @@ assert_help_only "help after options" --issue 42 --repo owner/repo --help --task
 ) || fail "canonical-rooted issue start failed"
 
 assert_log_line "claim cwd=${canonical_root} marker=1 args=claim 42 owner/repo --implementing --defer-comment"
-assert_log_line "pre-edit cwd=${canonical_root} args=--loop-mode --task local fix"
+assert_log_line "pre-edit cwd=${canonical_root} args=--loop-mode --issue 42 --task local fix"
 assert_log_line "claim cwd=${canonical_root} marker=1 args=claim 42 owner/repo --implementing --worktree ${linked_worktree}"
 assert_log_line "full-loop cwd=${linked_worktree} marker=1 args=start GH#42 local fix"
 

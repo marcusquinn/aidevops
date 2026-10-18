@@ -218,7 +218,7 @@ _interactive_start_prepare_sources() {
 		return 1
 	fi
 	local pre_edit_output=""
-	pre_edit_output=$(pre-edit-check.sh --loop-mode --task "$_INTERACTIVE_START_TASK" 2>&1) || {
+	pre_edit_output=$(pre-edit-check.sh --loop-mode --issue "$_INTERACTIVE_START_ISSUE" --task "$_INTERACTIVE_START_TASK" 2>&1) || {
 		printf '%s\n' "$pre_edit_output" >&2
 		return 1
 	}
@@ -319,7 +319,7 @@ main() {
 
 	local pre_edit_output=""
 	local pre_edit_rc=0
-	pre_edit_output=$(pre-edit-check.sh --loop-mode --task "$task" 2>&1) || pre_edit_rc=$?
+	pre_edit_output=$(pre-edit-check.sh --loop-mode --issue "$issue" --task "$task" 2>&1) || pre_edit_rc=$?
 	[[ -z "$pre_edit_output" ]] || printf '%s\n' "$pre_edit_output"
 	if [[ "$pre_edit_rc" -ne 0 ]]; then
 		return "$pre_edit_rc"

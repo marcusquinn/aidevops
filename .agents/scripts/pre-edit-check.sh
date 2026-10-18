@@ -64,6 +64,7 @@ source "${SCRIPT_DIR}/task-identity-lib.sh"
 
 LOOP_MODE=false
 TASK_DESC=""
+EXPLICIT_ISSUE=""
 CHECK_COMMAND=""
 VERIFY_OP=""
 TARGET_FILE=""
@@ -78,6 +79,11 @@ while [[ $# -gt 0 ]]; do
 	--task)
 		TASK_DESC="$2"
 		shift 2
+		;;
+	--issue)
+		shift
+		EXPLICIT_ISSUE="${1:-}"
+		[[ $# -eq 0 ]] || shift
 		;;
 	--file)
 		TARGET_FILE="$2"
@@ -498,19 +504,23 @@ _handle_loop_mode_on_protected() {
 	local _wt_branch_name=""
 	local _wt_task_desc="${TASK_DESC:-}"
 	local _wt_issue_num=""
-	if [[ -n "$_wt_task_desc" ]]; then
+	if [[ "${EXPLICIT_ISSUE:-}" =~ ^[1-9][0-9]*$ ]]; then
+		# Explicit --issue wins over task-text parsing (GH#34956)
+		_wt_issue_num="$EXPLICIT_ISSUE"
+	elif [[ -n "$_wt_task_desc" ]]; then
 		# Extract issue number if present (e.g., "Implement issue #17642")
 		_wt_issue_num=$(printf '%s' "$_wt_task_desc" | grep -oE '#[0-9]+|issue[/ ]*([0-9]+)' | grep -oE '[0-9]+' | head -1) || _wt_issue_num=""
-		if [[ -n "$_wt_issue_num" ]]; then
-			# Slugify the task title for the branch name
-			local _wt_slug=""
-			_wt_slug=$(printf '%s' "$_wt_task_desc" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-40) || _wt_slug="task"
-			_wt_branch_name="bugfix/gh${_wt_issue_num}-${_wt_slug}"
-		fi
 	fi
-	# Fallback: timestamp-based branch name
+	if [[ -n "$_wt_issue_num" ]]; then
+		# Slugify the task title for the branch name
+		local _wt_slug=""
+		_wt_slug=$(printf '%s' "$_wt_task_desc" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-40) || _wt_slug="task"
+		[[ -n "$_wt_slug" ]] || _wt_slug="task"
+		_wt_branch_name="bugfix/gh${_wt_issue_num}-${_wt_slug}"
+	fi
+	# Fallback: timestamp-based branch name; PID suffix avoids same-second collisions
 	if [[ -z "$_wt_branch_name" ]]; then
-		_wt_branch_name="feature/auto-$(date +%Y%m%d-%H%M%S)"
+		_wt_branch_name="feature/auto-$(date +%Y%m%d-%H%M%S)-$$"
 	fi
 
 	_create_loop_task_worktree "$_wt_branch_name" "$_wt_issue_num" || true
