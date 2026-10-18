@@ -37,7 +37,7 @@
 #                   what would happen (dry-run is the default).
 #   --repo SLUG     Limit to a single repo.
 #   --json          Emit one JSON object per repo.
-#   --branch NAME   Branch name for PRs (default: chore/badges-sync-YYYYMMDD).
+#   --branch NAME   Branch prefix for PRs (default: chore/badges-sync).
 #   --no-workflow   Skip loc-badge workflow installation; only sync README blocks.
 #   -h, --help      Show this help.
 #
@@ -174,7 +174,7 @@ Options:
                 what would happen (dry-run is the default for safety).
   --repo SLUG   Limit to a single repo. Example: --repo owner/repo.
   --json        Emit one JSON object per repo describing outcome.
-  --branch NAME Branch name prefix (default: chore/badges-sync-YYYYMMDD).
+  --branch NAME Branch name prefix (default: chore/badges-sync).
   --no-workflow Skip repo metrics workflow installation; only sync README blocks and local metrics.
   -h, --help    Show this help.
 
@@ -226,7 +226,7 @@ _sync_preflight() {
 
 # ─── README sync ────────────────────────────────────────────────────────────
 
-# _sync_readme <slug> <path> <apply> <branch_name> <default_branch>
+# _sync_readme <slug> <path> <apply>
 # Injects/updates the canonical badge block in README.md.
 # Emits: slug\tstatus\tdetail
 _sync_readme() {
@@ -254,9 +254,13 @@ _sync_readme() {
 		return 0
 	fi
 
-	# Avoid timestamp-only metrics churn when the remote default is already current.
-	if bash "$_BADGES_HELPER" check "$_readme" "$_slug" >/dev/null 2>&1 &&
-		[[ -f "$_path/docs/metrics/repo-metrics.json" ]]; then
+	# Avoid timestamp-only churn only when every managed metrics artifact exists.
+	local _metrics_current=1 _artifact
+	for _artifact in repo-metrics.json repo-metrics.md badges/loc.svg badges/languages.svg badges/dependencies.svg; do
+		[[ -f "$_path/docs/metrics/$_artifact" ]] || _metrics_current=0
+	done
+	if [[ "$_metrics_current" -eq 1 ]] &&
+		bash "$_BADGES_HELPER" check "$_readme" "$_slug" >/dev/null 2>&1; then
 		return 0
 	fi
 	if ! bash "$_BADGES_HELPER" inject "$_readme" "$_slug" >/dev/null; then
@@ -308,7 +312,7 @@ _find_metrics_caller() {
 	return 1
 }
 
-# _install_workflow <slug> <path> <apply> <branch_name> <default_branch>
+# _install_workflow <slug> <path> <apply>
 # Installs the repo metrics caller into .github/workflows/loc-badge.yml.
 _install_workflow() {
 	local _slug="$1"
@@ -427,6 +431,7 @@ _apply_repo() (
 	trap 'rmdir "$_lock"' EXIT
 	# Query failures must not be interpreted as absence of an existing PR.
 	_prs=$(gh pr list --repo "$_slug" --state open --limit 100 \
+		--search '"chore: aidevops badge sync" in:title' \
 		--json headRefName,title,url) || return 1
 	local _existing
 	_existing=$(printf '%s\n' "$_prs" | jq -r --arg prefix "$_prefix" \
@@ -461,11 +466,13 @@ _apply_repo() (
 
 _publish_worktree() {
 	local _slug="$1" _path="$2" _branch="$3" _default="$4"
-	local _paths=("README.md") _candidate
-	for _candidate in docs/metrics .github/badges .github/workflows/loc-badge.yml; do
+	local _paths=() _candidate
+	for _candidate in README.md docs/metrics .github/badges .github/workflows/loc-badge.yml; do
 		[[ ! -e "$_path/$_candidate" ]] || _paths+=("$_candidate")
 	done
-	git -C "$_path" add -- "${_paths[@]}" || return 1
+	if [[ ${#_paths[@]} -gt 0 ]]; then
+		git -C "$_path" add -- "${_paths[@]}" || return 1
+	fi
 	if git -C "$_path" diff --cached --quiet; then
 		printf '%s\t%s\tremote badge block and metrics already current\n' "$_slug" "$_STATUS_SKIPPED"
 		return 0
@@ -483,16 +490,16 @@ _list_actionable_repos() {
 	local _check_args=(--json)
 	[[ -n "$_filter_slug" ]] && _check_args+=(--repo "$_filter_slug")
 
-	local _json
-	_json=$("$_CHECK_HELPER" "${_check_args[@]}" 2>/dev/null || true)
-	if [[ -z "$_json" ]]; then
-		return 1
-	fi
+	local _json _check_rc=0
+	_json=$("$_CHECK_HELPER" "${_check_args[@]}") || _check_rc=$?
+	# Exit 1 means detected drift, not an unavailable detector.
+	[[ "$_check_rc" -le 1 ]] || return 1
+	[[ -n "$_json" ]] || return "$_check_rc"
 
-		# Filter to DRIFTED, METRICS-MISSING, and NO-BLOCK (actionable); carry slug, path, status
+	# Filter to DRIFTED, METRICS-MISSING, and NO-BLOCK (actionable); carry slug, path, status
 	printf '%s\n' "$_json" | jq -r \
 		'select((.classification == "DRIFTED") or (.classification == "METRICS-MISSING") or (.classification == "NO-BLOCK"))
-		| [.slug, .path, .classification] | @tsv' 2>/dev/null
+		| [.slug, .path, .classification] | @tsv' || return 1
 	return 0
 }
 
@@ -662,6 +669,7 @@ main() {
 	command -v jq >/dev/null 2>&1 || _die "jq required — install via Homebrew/apt"
 	[[ -f "$_CHECK_HELPER" ]] || _die "badges-check-helper.sh not found at $_CHECK_HELPER — run: aidevops update"
 	[[ -f "$_BADGES_HELPER" ]] || _die "readme-badges-helper.sh not found at $_BADGES_HELPER — run: aidevops update"
+	[[ -f "$_METRICS_HELPER" ]] || _die "repo-metrics-helper.sh not found at $_METRICS_HELPER — run: aidevops update"
 
 	if [[ -z "$_OPT_BRANCH_NAME" ]]; then
 		_OPT_BRANCH_NAME="chore/badges-sync"
@@ -669,8 +677,8 @@ main() {
 
 	local _tsv
 	if ! _tsv=$(_list_actionable_repos "$_OPT_FILTER_SLUG"); then
-		_info "no actionable repos (all CURRENT or not classified)."
-		return 0
+		_warn "badge detector failed; refusing to report successful remediation"
+		return 1
 	fi
 	if [[ -z "$_tsv" ]]; then
 		_info "no actionable repos (all badge blocks current)."
