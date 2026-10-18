@@ -130,6 +130,7 @@ def unsafe_credential_file(value):
 
 
 def is_mcp_literal(name, value):
+    if is_credential_file_reference(name, value):
+        return False
     return bool(SECRET_NAME.search(name) and isinstance(value, str) and value
-                and not is_credential_file_reference(name, value)
                 and not re.fullmatch(r'\{(?:env|file):[^{}]+\}', value))
