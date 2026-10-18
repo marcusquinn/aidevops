@@ -260,6 +260,10 @@ def check_permission_rollouts() -> list[str]:
         return []
     if not all(re.fullmatch(r"[0-9a-fA-F]{40}", ref) for ref in (base, head)):
         return ["permission rollout diff requires full BASE_SHA and HEAD_SHA commit IDs"]
+    base = subprocess.run(
+        ["git", "merge-base", base, head], cwd=ROOT,
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
     changed = set(subprocess.run(
         ["git", "diff", "--name-only", base, head, "--"], cwd=ROOT,
         check=True, capture_output=True, text=True,
@@ -268,8 +272,17 @@ def check_permission_rollouts() -> list[str]:
         ["git", "ls-tree", "-r", "--name-only", base, "--", ".github/workflows"],
         cwd=ROOT, check=True, capture_output=True, text=True,
     ).stdout.splitlines())
+    head_paths = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", head, "--",
+         ".github/workflows", ".agents/templates/workflows"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    reusables = [ROOT / path for path in head_paths
+                 if re.fullmatch(r"\.github/workflows/[^/]+-reusable\.ya?ml", path)]
+    templates = [ROOT / path for path in head_paths
+                 if re.fullmatch(r"\.agents/templates/workflows/[^/]+-caller\.ya?ml", path)]
     failures: list[str] = []
-    for path in sorted(REUSABLE_DIR.glob("*-reusable.y*ml")):
+    for path in reusables:
         relative = path.relative_to(ROOT).as_posix()
         if relative not in base_paths:
             continue  # New workflows have no installed callers to migrate.
@@ -292,7 +305,7 @@ def check_permission_rollouts() -> list[str]:
         if not increased:
             continue
         callers = []
-        for caller in sorted(CALLER_DIR.glob("*-caller.y*ml")):
+        for caller in templates:
             jobs = load_mapping(caller, head).get("jobs", {}) or {}
             if any(reusable_path_for_uses(job.get("uses", "")) == path
                    for job in jobs.values() if isinstance(job, dict)):
