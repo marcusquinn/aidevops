@@ -190,10 +190,11 @@ else:
         result = self.cmd('secret-hygiene-helper.sh', 'audit-mcp')
         self.assertEqual(result.returncode, 0, result.stderr)
         records = [json.loads(line) for line in result.stdout.splitlines()]
+        literal_category = 'mcp-literal'
         expected = {'PUBLIC_CREDENTIALS': 'mcp-credential-file',
                     'LINK_FILE': 'mcp-credential-file', 'DIRECTORY_PATH': 'mcp-credential-file',
-                    'RELATIVE_CREDENTIALS': 'mcp-literal', 'DEMO_API_KEY': 'mcp-literal',
-                    'PATH_TOKEN': 'mcp-literal'}
+                    'RELATIVE_CREDENTIALS': literal_category, 'DEMO_API_KEY': literal_category,
+                    'PATH_TOKEN': literal_category}
         self.assertEqual(len(records), 2 * len(expected))
         for server, block in [('gsc', 'env'), ('google-analytics-mcp', 'environment')]:
             self.assertEqual({r['name']: r['category'] for r in records
