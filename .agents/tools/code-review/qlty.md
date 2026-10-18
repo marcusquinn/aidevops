@@ -22,6 +22,8 @@ tools:
 ## Quick Reference
 
 - Qlty: Universal code quality for 40+ languages, 70+ tools
+- Local use is free and needs no account or credentials: once a repo has `.qlty/qlty.toml`, `check`, `fmt` and `smells` run offline and use no GitHub App minutes. Without the config Qlty refuses to run; `qlty-cli.sh init` (or `qlty init --yes`) creates it, also in linked worktrees. To keep it local-only, add `.qlty/` to `.git/info/exclude` instead of committing it
+- Credentials below are optional and only for Qlty Cloud features (coverage upload, `--ai` fixes)
 - Credential priority: Account API Key (`qltp_...`) > Coverage Token (`qltcw_...`) > Workspace ID (UUID)
 - Store credentials: `bash .agents/scripts/setup-local-api-keys.sh set qlty-account-api-key KEY`
 - Organization-specific: `set qlty-ORGNAME TOKEN`, `set qlty-ORGNAME-workspace-id UUID`

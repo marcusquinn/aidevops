@@ -13,6 +13,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# The official installer puts qlty in ~/.qlty/bin; non-login shells may lack it on PATH.
+if [[ -d "$HOME/.qlty/bin" && ":$PATH:" != *":$HOME/.qlty/bin:"* ]]; then
+	export PATH="$HOME/.qlty/bin:$PATH"
+fi
+
 # Common constants
 print_header() {
 	local _arg1="$1"
@@ -62,12 +67,14 @@ load_api_config() {
 		return 0
 
 	else
-		# No credentials found
-		print_warning "No Qlty credentials found"
-		print_info "Add to ~/.config/aidevops/credentials.sh:"
+		# No credentials: the CLI still runs every local check, fmt and smells
+		# analysis. Credentials are only needed for Qlty Cloud features
+		# (coverage upload, --ai fixes), so absence must not abort under set -e.
+		print_info "No Qlty credentials found; running locally (no Qlty Cloud account needed)"
+		print_info "Optional, for Qlty Cloud features only, add to ~/.config/aidevops/credentials.sh:"
 		print_info "  export QLTY_ACCOUNT_API_KEY=\"your-key\""
 		print_info "  export QLTY_WORKSPACE_ID=\"your-workspace-id\""
-		return 1
+		return 0
 	fi
 	return 0
 }
@@ -120,7 +127,8 @@ install_qlty() {
 init_qlty() {
 	print_header "Initializing Qlty in Repository"
 
-	if [[ ! -d ".git" ]]; then
+	# `.git` is a file in linked worktrees, so ask Git instead of testing -d.
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		print_error "Not in a Git repository. Qlty requires a Git repository."
 		return 1
 	fi
@@ -131,7 +139,12 @@ init_qlty() {
 	fi
 
 	print_info "Initializing Qlty configuration..."
-	qlty init
+	# --yes accepts the detected plugins so agents and scripts never block on a prompt.
+	# init ends with a sample check that exits non-zero when it finds issues;
+	# success is judged by the config file below, not by that exit code.
+	if ! qlty init --yes; then
+		print_warning "qlty init exited non-zero (its sample check may have found issues)"
+	fi
 
 	if [[ -f ".qlty/qlty.toml" ]]; then
 		print_success "Qlty initialized successfully"
@@ -270,7 +283,10 @@ show_help() {
 	echo "  🚨 Security: SAST, SCA, secret detection"
 	echo "  ⚡ Performance: Fast, concurrent execution"
 	echo ""
-	echo "Qlty Credential Management:"
+	echo "Local use needs no Qlty account: init, check, fmt and smells run offline"
+	echo "and use no GitHub App analysis minutes."
+	echo ""
+	echo "Qlty Credential Management (optional, Qlty Cloud features only):"
 	echo "  Add to ~/.config/aidevops/credentials.sh:"
 	echo "    export QLTY_ACCOUNT_API_KEY=\"qltp_...\""
 	echo "    export QLTY_API_KEY=\"qltcw_...\""
