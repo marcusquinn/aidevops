@@ -367,33 +367,46 @@ terminal_blocker_task_revision() {
 	return $?
 }
 
+# Optional $3: this runner's authenticated login. Its own comments are kept
+# whatever association GitHub reports (see the observation epoch below).
 terminal_blocker_fetch_trusted_comments() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local self_login="${3:-}"
 	local raw=""
+	[[ "$self_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || self_login=""
 	raw=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 1
-	printf '%s' "$raw" | jq -c '
+	printf '%s' "$raw" | jq -c --arg self "$self_login" '
 		def trusted: . == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
 		[(if type == "array" and ((.[0]? | type) == "array") then .[] else . end)[]
 		| {id: .id, author: (.user.login // ""), body: (.body // ""), created_at: .created_at,
 		   author_association: (.author_association // "")}
-		| select(.author_association | trusted)]
+		| select((.author_association | trusted) or ($self != "" and .author == $self))]
 	' 2>/dev/null || return 1
 	return 0
 }
 
 # GH#35037: return the original observation time, never a refreshed timestamp.
-# aidevops:trust-boundary — only this authenticated runner's latest trusted
+# aidevops:trust-boundary — only this authenticated runner's latest
 # observation may suppress local dispatch; other runners remain eligible.
+# GH#35090: GitHub authenticates user.login, so the runner's own comment is
+# self-evidence whatever association it reports. App-routed or private-org
+# reads label org members CONTRIBUTOR/NONE (GH#34598, GH#34703); requiring
+# OWNER/MEMBER/COLLABORATOR here dropped the observation and the same login
+# redispatched an unchanged brief every cycle. Suppression stays login-local
+# and clearing it (retry) still requires OWNER/MEMBER.
 terminal_blocker_runner_capability_observation_epoch() {
 	local comments_json="$1" issue_json="$2" repo="$3" issue="$4"
 	local self='' observation='' revision='' blocker='' retry=''
 	self=$(_terminal_blocker_self_login)
 	[[ -n "$self" ]] || return 1
-	observation=$(jq -c --arg self "$self" \
-		'map(select((.author // .user.login // "") == $self))' <<<"$comments_json") || return 1
-	observation=$(_terminal_blocker_latest_marker "$observation" "$_TBC_OBSERVATION_MARKER revision=") || return 1
+	observation=$(jq -c --arg self "$self" --arg marker "$_TBC_OBSERVATION_MARKER revision=" "${_TBC_ORDER_JQ}"'
+		[.[] | select((.author // .user.login // "") == $self)
+		| select((.body // "") | contains($marker))]
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty
+	' <<<"$comments_json" 2>/dev/null) || return 1
+	[[ -n "$observation" ]] || return 1
 	revision=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "" "$_TBC_RUNNER_CAPABILITY") || return 1
 	blocker=$(_terminal_blocker_hash "v2:${_TBC_RUNNER_CAPABILITY}") || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""

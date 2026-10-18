@@ -1036,6 +1036,30 @@ $fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_
 	return 0
 }
 
+# GH#35090 replay: a later lease/label write bumps updatedAt, and App-routed
+# private-org reads report the runner's own comments as CONTRIBUTOR/NONE. The
+# live gate must re-import its own observation; another login's comment cools
+# nobody else. Runs inside test_worker_capability_cooldown's subshell and uses
+# its candidate, fixture_comments, login and gh stub through dynamic scope.
+_capability_cooldown_own_contributor_replay() {
+	local trusted_comments="$fixture_comments" bumped="" association="" before="" after=""
+	bumped=$(jq -c '.updatedAt = "2026-10-18T12:05:00Z"' <<<"$candidate") || return 1
+	for association in CONTRIBUTOR NONE; do
+		fixture_comments=$(jq -c --arg a "$association" 'map(.author_association = $a)' <<<"$trusted_comments")
+		rm -f "$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42"
+		before=$(rg -c 'runner_capability_unmet cooldown active' "$LOGFILE" || true)
+		_dispatch_skip_for_capability_cooldown "$bumped" 42 owner/repo '' || return 1
+		after=$(rg -c 'runner_capability_unmet cooldown active' "$LOGFILE" || true)
+		((${after:-0} == ${before:-0} + 1)) || return 1
+		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$bumped]")" == '[]' ]] || return 1
+		login=runner-two
+		_dispatch_skip_for_capability_cooldown "$bumped" 42 owner/repo '' && return 1
+		login=runner-one
+	done
+	fixture_comments="$trusted_comments"
+	return 0
+}
+
 test_worker_capability_cooldown() {
 	local status=0
 	if ! (
@@ -1086,12 +1110,17 @@ test_worker_capability_cooldown() {
 		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
 		login=runner-one
 		fixture_reads=true
-		# Selection rejects a different runner, untrusted author, edited brief,
-		# later different blocker, and explicit retry without a global hold.
+		_capability_cooldown_own_contributor_replay || exit 1
+		# Selection rejects a different runner, edited brief, later different
+		# blocker, and explicit retry without a global hold; it accepts the
+		# runner's own comment whatever association GitHub reports.
 		fixture_comments=$(jq -c 'map(.author = .user.login)' <<<"$fixture_comments")
 		TERMINAL_BLOCKER_SELF_LOGIN=runner-two terminal_blocker_runner_capability_observation_epoch \
 			"$fixture_comments" "$fixture_issue" owner/repo 42 && exit 1
 		changed=$(jq -c 'map(.author_association="CONTRIBUTOR")' <<<"$fixture_comments")
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
+			"$changed" "$fixture_issue" owner/repo 42 >/dev/null || exit 1
+		changed=$(jq -c 'map(.author_association="CONTRIBUTOR" | .author="runner-two")' <<<"$fixture_comments")
 		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
 			"$changed" "$fixture_issue" owner/repo 42 && exit 1
 		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \

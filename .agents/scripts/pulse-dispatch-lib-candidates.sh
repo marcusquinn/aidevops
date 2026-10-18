@@ -1180,7 +1180,9 @@ _dispatch_capability_cooldown_from_observation() {
 	declare -F terminal_blocker_runner_capability_observation_epoch >/dev/null || return 0
 	self=$(gh api user --jq '.login' 2>/dev/null) || return 0
 	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 0
-	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo") || return 0
+	# GH#35090: keep this login's own comments even when the read reports them
+	# as CONTRIBUTOR/NONE; otherwise the import never finds its observation.
+	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo" "$self") || return 0
 	stamp=$(TERMINAL_BLOCKER_SELF_LOGIN="$self" terminal_blocker_runner_capability_observation_epoch \
 		"$comments" "$issue_json" "$repo" "$issue") || return 0
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 0
