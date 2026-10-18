@@ -48,6 +48,8 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 # shellcheck source=./task-identity-lib.sh
 source "${SCRIPT_DIR}/task-identity-lib.sh"
+# shellcheck source=./scratch-worktree-helper.sh
+source "${SCRIPT_DIR}/scratch-worktree-helper.sh"
 if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
@@ -1124,10 +1126,10 @@ _worktree_fetch_origin_branch() {
 }
 
 # Refresh an origin branch from linked-worktree context so the canonical Git
-# guard remains intact. If no linked worktree exists yet, create a short-lived
-# detached bootstrap worktree from HEAD, fetch from there, then remove it from
-# that linked context. HEAD remains available when the remote-tracking ref has
-# not been created locally yet.
+# guard remains intact. If no linked worktree exists yet, create an owned,
+# locked scratch worktree from HEAD (scratch-worktree-helper.sh, GH#35024),
+# fetch from there, then remove it only while the lock is still ours. HEAD
+# remains available when the remote-tracking ref has not been created locally.
 # Args: branch name
 #######################################
 _worktree_refresh_origin_branch() {
@@ -1163,20 +1165,18 @@ _worktree_refresh_origin_branch() {
 
 	if [[ -z "$fetch_cwd" ]]; then
 		local base_dir="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
-		local repo_name=""
-		repo_name=$(basename "$current_root")
-		mkdir -p "$base_dir" || return 1
-		bootstrap_path="${base_dir}/.${repo_name}-fetch-$$"
-		if ! git worktree add -q --detach "$bootstrap_path" HEAD; then
+		if ! scratch_worktree_add "$current_root" "$base_dir" fetch HEAD; then
+			print_warning "Could not create an owned scratch worktree for the fresh-base fetch."
 			return 1
 		fi
+		bootstrap_path="$SCRATCH_WORKTREE_PATH"
 		fetch_cwd="$bootstrap_path"
 	fi
 
 	local fetch_rc=0
 	_worktree_fetch_origin_branch "$fetch_cwd" "$branch" || fetch_rc=$?
 	if [[ -n "$bootstrap_path" ]]; then
-		git -C "$fetch_cwd" worktree remove --force "$bootstrap_path" >/dev/null 2>&1 || true
+		scratch_worktree_remove "$bootstrap_path" "${_WTAR_WH_CALLER:-worktree-helper.sh}" || true
 	fi
 	return "$fetch_rc"
 }

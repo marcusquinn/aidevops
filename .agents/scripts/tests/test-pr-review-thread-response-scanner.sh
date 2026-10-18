@@ -1472,6 +1472,8 @@ source "${TEST_SCRIPT_DIR}/../shared-constants.sh"
 SHARED_CONSTANTS
 	cp "${TEST_SCRIPT_DIR}/../worker-attempt-observability.sh" \
 		"$(dirname "$bundled_scanner")/worker-attempt-observability.sh"
+	cp "${TEST_SCRIPT_DIR}/../scratch-worktree-helper.sh" \
+		"$(dirname "$bundled_scanner")/scratch-worktree-helper.sh"
 	chmod +x "$bundled_scanner"
 	"$bundled_scanner" dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true

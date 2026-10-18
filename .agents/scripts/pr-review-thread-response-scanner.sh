@@ -33,6 +33,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 [[ -f "${SCRIPT_DIR}/worker-attempt-observability.sh" ]] && source "${SCRIPT_DIR}/worker-attempt-observability.sh"
 # shellcheck source=pr-review-thread-response-rereview.sh
 [[ -f "${SCRIPT_DIR}/pr-review-thread-response-rereview.sh" ]] && source "${SCRIPT_DIR}/pr-review-thread-response-rereview.sh"
+# shellcheck source=scratch-worktree-helper.sh
+source "${SCRIPT_DIR}/scratch-worktree-helper.sh"
 
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pr-review-thread-response-scanner.log}"
 STATE_DIR="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
@@ -1947,7 +1949,6 @@ _prrts_fetch_exact_worker_head() {
 	local worktree_path=""
 	local resolved_path=""
 	local bootstrap_path=""
-	local repo_name=""
 	local fetch_rc=0
 
 	canonical_root=$(cd "$repo_path" 2>/dev/null && pwd -P) || canonical_root=""
@@ -1965,24 +1966,20 @@ _prrts_fetch_exact_worker_head() {
 	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
 
 	if [[ -z "$fetch_cwd" ]]; then
-		repo_name="$(basename "$repo_path")"
-		mkdir -p "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" 2>/dev/null || {
-			PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
-			return 1
-		}
-		bootstrap_path="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR}/.${repo_name}-fetch-$$"
-		if ! git -C "$repo_path" worktree add -q --detach "$bootstrap_path" HEAD >/dev/null 2>&1; then
+		# GH#35024: owned, locked scratch context; removed only while still ours.
+		if ! scratch_worktree_add "$repo_path" "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" fetch HEAD; then
 			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not create a linked PR head fetch context"
 			PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
 			return 1
 		fi
+		bootstrap_path="$SCRATCH_WORKTREE_PATH"
 		fetch_cwd="$bootstrap_path"
 	fi
 
 	git -C "$fetch_cwd" fetch --no-tags --quiet origin \
 		"+refs/heads/${head_ref}:refs/remotes/origin/${head_ref}" >/dev/null 2>&1 || fetch_rc=$?
 	if [[ -n "$bootstrap_path" ]]; then
-		git -C "$fetch_cwd" worktree remove --force "$bootstrap_path" >/dev/null 2>&1 || true
+		scratch_worktree_remove "$bootstrap_path" "pr-review-thread-response-scanner.sh" || true
 	fi
 	if [[ "$fetch_rc" -ne 0 ]]; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head fetch failed from linked-worktree context"

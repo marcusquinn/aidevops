@@ -46,6 +46,9 @@ if [[ -f "$SELF_DIR/shared-constants.sh" ]]; then
 	source "$SELF_DIR/shared-constants.sh"
 fi
 
+# shellcheck source=./scratch-worktree-helper.sh
+source "$SELF_DIR/scratch-worktree-helper.sh"
+
 # shellcheck source=/dev/null
 # gh wrappers inject signature footers and route around GraphQL rate limits.
 # Mandatory — this script ships as part of aidevops so the wrappers are
@@ -261,8 +264,9 @@ _worktree_for_branch() {
 }
 
 # Refresh a canonical repository's remote-tracking branch from linked-worktree
-# context so the canonical Git guard remains intact. Bootstrap a short-lived
-# detached worktree when the repository has no linked worktree yet.
+# context so the canonical Git guard remains intact. Bootstrap an owned, locked
+# scratch worktree (scratch-worktree-helper.sh, GH#35024) when the repository
+# has no linked worktree yet.
 _refresh_remote_from_linked_context() {
 	local _repo_path="$1"
 	local _remote="$2"
@@ -285,13 +289,9 @@ _refresh_remote_from_linked_context() {
 
 	local _bootstrap_path=""
 	if [[ -z "$_fetch_path" ]]; then
-		local _safe_slug
-		_safe_slug=$(printf '%s' "$_slug" | sed 's|[^A-Za-z0-9._-]|-|g')
-		mkdir -p "$_base_dir" || return 1
-		_bootstrap_path="${_base_dir}/.${_safe_slug}-workflow-sync-fetch-$$"
-		[[ ! -e "$_bootstrap_path" ]] || return 1
-		git -C "$_repo_path" worktree add -q --detach \
-			"$_bootstrap_path" HEAD >/dev/null 2>&1 || return 1
+		: "$_slug" # retained for caller compatibility; the helper names by repo
+		scratch_worktree_add "$_repo_path" "$_base_dir" workflow-sync-fetch HEAD || return 1
+		_bootstrap_path="$SCRATCH_WORKTREE_PATH"
 		_fetch_path="$_bootstrap_path"
 	fi
 
@@ -301,8 +301,7 @@ _refresh_remote_from_linked_context() {
 		"+refs/heads/${_default_branch}:refs/remotes/${_remote}/${_default_branch}" \
 		>/dev/null 2>&1 || _fetch_rc=$?
 	if [[ -n "$_bootstrap_path" ]]; then
-		git -C "$_fetch_path" worktree remove --force "$_bootstrap_path" \
-			>/dev/null 2>&1 || _cleanup_rc=$?
+		scratch_worktree_remove "$_bootstrap_path" "$SCRIPT_NAME" || _cleanup_rc=$?
 	fi
 	[[ "$_fetch_rc" -eq 0 && "$_cleanup_rc" -eq 0 ]] || return 1
 	return 0
