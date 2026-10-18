@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from subprocess import SubprocessError  # nosec B404
 
+from credential_chmod import fix_owned_permissions
 from credential_findings import audit
 from credential_mcp import mcp_findings, migrate_outscraper
 from credential_process import run, trash_backend
@@ -46,31 +47,8 @@ def load_fix_records(scripts, helper):
     return records
 
 
-def chmod_owned(path):
-    """chmod 600 one owned regular file; never follow symlinks or change a foreign owner's file."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-            return False
-        os.fchmod(fd, 0o600)
-        return True
-    finally:
-        os.close(fd)
-
-
 def fix_permissions(records, scripts):
-    for record in records:
-        if record['category'] != 'insecure-perms':
-            continue
-        try:
-            changed = chmod_owned(record['file'])
-        except OSError:
-            # Unreadable, replaced by a symlink, or removed since the audit: skip this file only.
-            print('Permission fix skipped: ' + json.dumps(record['file'], ensure_ascii=True))
-            continue
-        if changed:
-            log_fix(scripts, 'insecure-perms', [])
+    fix_owned_permissions(records, lambda: log_fix(scripts, 'insecure-perms', []))
 
 
 def import_active(records, scripts, helper):

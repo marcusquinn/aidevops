@@ -15,7 +15,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import credential_audit
 import credential_env
-import credential_ssh
+import credential_sshrules as credential_ssh
 
 
 @unittest.skipUnless(shutil.which('ssh-keygen'), 'ssh-keygen required')
