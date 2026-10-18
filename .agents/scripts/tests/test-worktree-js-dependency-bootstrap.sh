@@ -8,6 +8,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 ADD_HELPER="${TEST_DIR}/../worktree-helper-add.sh"
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
+# Snapshot validation rejects symlink components, including macOS /var ->
+# /private/var in TMPDIR. Give the fixture physical paths, as real admission does.
+ROOT=$(cd "$ROOT" && pwd -P) || exit 1
 
 print_info() { return 0; }
 print_success() { return 0; }
