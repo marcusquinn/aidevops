@@ -56,7 +56,7 @@ Commit these before the first registry build:
 - A local square 256×256 PNG icon (`icon` normally points to it) and at least one privacy-reviewed product screenshot or hero. `mediaLinks` must use public HTTPS URLs; Cloudron recommends a 3:1 layout such as 1200×400, rendered at 2× (2400×800) for high-density screens.
 - A Cloudron-format changelog file when using `file://`: each release heading must be exactly `[X.Y.Z]`, because `cloudron versions add` does not parse Keep a Changelog headings such as `## [X.Y.Z]`. One file is enough: the aidevops release validator and preparation helper read the repository-relative `file://` path from the manifest's `changelog` field and preserve its heading format. Without a `file://` value, they fall back to `CHANGELOG.md`.
 - A short publishing runbook that records the canonical catalog URL, registry/repository ownership, asset provenance, test install, rollback, and Community Apps listing steps without storing credentials.
-- A managed GitHub Actions release workflow that creates and verifies keyless provenance for the immutable image digest and exact generated `CloudronVersions.json`; use `reference/release-artifact-provenance.md` before the first publication.
+- A managed GitHub Actions release workflow that creates and verifies keyless provenance for the immutable image digest and exact generated `CloudronVersions.json`; use `templates/workflows/cloudron-catalog-publish-caller.yml` and review `reference/release-artifact-provenance.md` before the first publication.
 
 `packageUrl` controls the package-source link in Community Apps and should point to the package repository. It requires `minBoxVersion` 10.0.0. Keep `packagerUrl` pointed at the package maintainer; do not repurpose it as the repository link. Packages that need Cloudron 9.1 compatibility should omit `packageUrl`, while packages that require a repository link should raise the minimum explicitly. `author` and `contactEmail` are deprecated in the manifest reference but are still required by the current CLI version-catalog validator.
 
@@ -132,6 +132,24 @@ or run `cloudron update --app <app>` in a scratch directory holding only the
 catalog's `.versions["X.Y.Z"].manifest` (which carries the digest-pinned
 `dockerImage`). Confirm `cloudron status --app <app>` reports that digest.
 
+### Moving a source-built install to a catalog-linked install
+
+Only `cloudron install --versions-url <url>` links an app to a catalog; `cloudron
+update` has no `--versions-url` option. Updating from a scratch manifest can
+select the catalog's pinned image, but does not link the installed app for future
+catalog updates. On Cloudron CLI 8.2.6, install calls the community-app endpoint
+with the versions URL. To switch, back up the old app, install a new copy with
+`cloudron install --versions-url <catalog-url> --location <temporary-location>`,
+and keep the old app until the new one is verified. Move required data using the
+Cloudron dashboard's export/import flow (check the installed CLI's `cloudron
+export --help` and `cloudron import --help` before using CLI flags), or start
+fresh if the old app was only a test. Locations can hold only one app: use a
+temporary location, then move it after uninstalling the old app, or uninstall
+the old app first only when its backup and downtime are acceptable. Verify app
+health, sign-in, and stored credentials before uninstalling the old app. Confirm
+the new app is catalog-linked in the dashboard and reports the catalog image via
+`cloudron status --app <new-app>`.
+
 ### Pre-Merge CLI Dry Run
 
 Publisher tests that stub the CLI cannot catch changelog or `file://` parsing
@@ -140,6 +158,68 @@ manifest, catalog, and every `file://` reference to a scratch directory, run the
 pinned real CLI's `cloudron versions add --state testing --image
 registry.invalid/dry-run@sha256:<64 zeros>` and `cloudron versions verify`, and
 discard the result. Skip when the manifest version is already in the catalog.
+
+### Managed Catalog Workflow
+
+New `aidevops init` Cloudron projects receive both the legacy tag-release caller
+and the pinned catalog caller. Existing packages opt in by copying
+`templates/workflows/cloudron-catalog-publish-caller.yml` to
+`.github/workflows/cloudron-catalog-publish.yml`, or running
+`cloudron-package-helper.sh scaffold catalog`. Existing callers are never
+overwritten. The caller pins the reusable workflow by immutable commit SHA;
+`aidevops_ref` must match that pin and constrains attestation signer verification.
+Keep the original pin available when reconciling catalogs signed by that revision;
+updating a caller does not authorize an older signer automatically.
+
+The caller grants the permission ceiling (`contents`, `packages`, `attestations`
+write and OIDC); each reusable job narrows its permissions. Only preflight runs
+on PRs: static manifest/Dockerfile checks, ShellCheck, optional `package_checks`
+(set this input to the package's static checks and pinned-upstream patch check),
+and the real CLI catalog dry run above. No publication credential is exposed to
+those commands. The CLI version and npm sha512 integrity are pinned together;
+the registry metadata and installed lockfile integrity must both match, and
+lifecycle scripts are disabled. Override both CLI inputs together after review.
+This pins the CLI package, not its entire transitive npm dependency graph; it is
+not a reproducible dependency closure. The dry run also exercises state promotion
+with an explicit image, which a stateless runner needs even for `versions update`.
+
+Publication is disabled until the repository **variable**
+`CLOUDRON_PUBLICATION_ENABLED` equals `true`. Even then, only `push` or
+`workflow_dispatch` runs on `refs/heads/main` may publish (including no
+`pull_request_target` exception). Add the explicitly passed repository **secret**
+`CLOUDRON_RELEASE_PAT`: a fine-grained PAT restricted to this package repository,
+with Contents write access for its catalog commit and tag. Grant only any
+additional access required by the repository's existing branch policy; this
+workflow never changes or bypasses that policy. The normal job token pushes to
+GHCR. Review protection, Actions permissions, package checks and credentials
+before enabling the variable. Do not test publication against a real catalog.
+
+The build is `linux/amd64`, checked out at the exact validated SHA. An existing
+version in the catalog is never rebuilt or retagged: the reconciliation path
+only verifies the existing tag/catalog provenance and repairs a missing GitHub
+release. A pushed image without a catalog entry is reused only when its
+attestation verifies for the same source SHA and reusable workflow. If the first
+GHCR push creates a private package, make that package public and rerun the same
+source revision. Anonymous image inspection must succeed before catalog
+publication. A tag with absent or mismatched provenance fails closed; investigate
+it rather than deleting or overwriting it automatically.
+
+The generated catalog is attested and its exact bundle verified before a
+catalog-only commit and tag are pushed atomically. Concurrent changes to `main`
+reject the push; rerun against the new revision after review. Caller concurrency
+serializes main runs and never cancels an in-flight publication. Existing
+catalogs without this workflow's attestations require an owner-reviewed
+provenance adoption before release reconciliation; it never fabricates evidence.
+
+The catalog workflow creates the GitHub release itself, from the tagged
+catalog's embedded version changelog, after checking tag ancestry, public image
+access and catalog provenance. **Do not depend on the legacy tag caller for
+catalog-published versions:** the catalog commit's skip-CI marker also suppresses
+its tag-push workflow. The legacy caller remains for packages without catalog
+automation. Only the generated catalog commit may contain the literal skip-CI
+marker; describe it in prose elsewhere, because GitHub matches it anywhere in a
+head commit message. No image/catalog/deployment publication is performed by the
+legacy caller.
 
 ## Keyless Publication Provenance
 

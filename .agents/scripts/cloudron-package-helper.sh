@@ -177,6 +177,7 @@ cmd_init() {
 	[[ ! -f "start.sh" ]] && _init_create_start_sh
 	[[ ! -f "Dockerfile" ]] && _init_create_dockerfile
 	[[ ! -f ".gitignore" ]] && _init_create_gitignore
+	scaffold_catalog_workflow || return 1
 
 	log_success "Cloudron app package initialized"
 	log_info "Next steps:"
@@ -406,10 +407,32 @@ cmd_test() {
 }
 
 # Generate boilerplate for specific app types
+scaffold_catalog_workflow() {
+	local target_root="${1:-.}"
+	local template_path="${SCRIPT_DIR}/../templates/workflows/cloudron-catalog-publish-caller.yml"
+	local workflow_path="${target_root}/.github/workflows/cloudron-catalog-publish.yml"
+	[[ -f "${target_root}/CloudronManifest.json" ]] || return 0
+	if [[ -e "$workflow_path" ]]; then
+		log_info "Cloudron catalog caller already present; preserving it"
+		return 0
+	fi
+	if [[ ! -f "$template_path" ]]; then
+		log_error "Cloudron catalog caller template is unavailable"
+		return 1
+	fi
+	mkdir -p "${target_root}/.github/workflows"
+	cp "$template_path" "$workflow_path"
+	log_success "Installed Cloudron catalog caller (publication remains opt-in)"
+	return 0
+}
+
 cmd_scaffold() {
 	local app_type="${1:-}"
 
 	case "$app_type" in
+	catalog)
+		scaffold_catalog_workflow "${2:-.}"
+		;;
 	php)
 		scaffold_php
 		;;
@@ -430,10 +453,11 @@ cmd_scaffold() {
 		;;
 	*)
 		log_error "Usage: cloudron-package-helper.sh scaffold <type>"
-		echo "Types: php, node, python, go, static, multi-process"
+		echo "Types: php, node, python, go, static, multi-process, catalog"
 		return 1
 		;;
 	esac
+	return 0
 }
 
 scaffold_php() {
@@ -1063,7 +1087,7 @@ Commands:
   debug [app]           Enable debug mode
   debug-off [app]       Disable debug mode
   test [app]            Show validation checklist
-  scaffold <type>       Generate boilerplate (php|node|python|go|static|multi-process)
+  scaffold <type>       Generate boilerplate (php|node|python|go|static|multi-process|catalog)
   prepare-release <package-version> <upstream-version> <notes-file>
                         Update manifest/changelog without publishing
   check-release <tag>   Validate package, changelog, and vX.Y.Z tag

@@ -1,0 +1,337 @@
+name: Cloudron Catalog Publication (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      aidevops_ref:
+        description: 'Full immutable commit matching the caller uses pin; also pins attestation signer policy'
+        required: true
+        type: string
+      image_repository:
+        description: 'Optional ghcr.io/owner/package override; defaults to the calling repository'
+        type: string
+        default: ''
+      cli_version:
+        type: string
+        default: '9.0.3'
+      cli_integrity:
+        description: 'Reviewed npm dist.integrity for the exact CLI version'
+        type: string
+        default: 'sha512-KgZQ5GvGjkmY0kNcGH4BUkMrwvIIQlRgwnGhM5QaEpxG/fFalWOO+ViLvq42XzEkrnKaeC6BaWb1lPgIUgbUuQ=='
+      package_checks:
+        description: 'Optional trusted static/patch-application checks, executed without publication credentials'
+        type: string
+        default: ''
+    secrets:
+      CLOUDRON_RELEASE_PAT:
+        description: 'Optional until publication is enabled; repository-scoped Contents write credential'
+        required: false
+
+permissions: {}
+
+env:
+  AIDEVOPS_REF: ${{ inputs.aidevops_ref }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      version: ${{ steps.plan.outputs.version }}
+      image: ${{ steps.plan.outputs.image }}
+      publish: ${{ steps.plan.outputs.publish }}
+      reconcile: ${{ steps.plan.outputs.reconcile }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install integrity-checked CLI without lifecycle scripts
+        env:
+          CLI_VERSION: ${{ inputs.cli_version }}
+          CLI_INTEGRITY: ${{ inputs.cli_integrity }}
+        run: |
+          set -euo pipefail
+          [[ "$AIDEVOPS_REF" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CLI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$CLI_INTEGRITY" == sha512-* ]]
+          test "$(npm view "cloudron@$CLI_VERSION" dist.integrity)" = "$CLI_INTEGRITY"
+          npm install --prefix "$RUNNER_TEMP/cloudron-cli" --ignore-scripts --no-audit --no-fund "cloudron@$CLI_VERSION"
+          test "$(jq -r '.packages["node_modules/cloudron"].integrity' "$RUNNER_TEMP/cloudron-cli/package-lock.json")" = "$CLI_INTEGRITY"
+          echo "$RUNNER_TEMP/cloudron-cli/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Static and package-specific checks
+        env:
+          PACKAGE_CHECKS: ${{ inputs.package_checks }}
+        run: |
+          set -euo pipefail
+          test -f Dockerfile
+          jq -e '.manifestVersion == 2 and (.version | type == "string")' CloudronManifest.json
+          git ls-files -z -- '*.sh' | xargs -0 -r shellcheck
+          if [[ -n "$PACKAGE_CHECKS" ]]; then bash -euo pipefail -c "$PACKAGE_CHECKS"; fi
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
+      - name: Plan and dry-run the catalog
+        id: plan
+        env:
+          ENABLED: ${{ vars.CLOUDRON_PUBLICATION_ENABLED }}
+          REQUESTED_IMAGE: ${{ inputs.image_repository }}
+        run: |
+          set -euo pipefail
+          version=$(jq -er '.version' CloudronManifest.json)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          image=${REQUESTED_IMAGE:-ghcr.io/${GITHUB_REPOSITORY,,}}
+          [[ "$image" =~ ^ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]
+          jq -e '.versions | type == "object"' CloudronVersions.json
+          # The real CLI rejects the documented empty initial catalog.
+          if [[ "$(jq '.versions | length' CloudronVersions.json)" -gt 0 ]]; then cloudron versions verify; fi
+          exists=$(jq -r --arg v "$version" '.versions | has($v)' CloudronVersions.json)
+          if [[ "$exists" == false ]]; then
+            scratch=$(mktemp -d)
+            export CATALOG_SCRATCH="$scratch"
+            python3 - <<'PY'
+          import json, os, pathlib, shutil
+          root = pathlib.Path.cwd().resolve()
+          dest = pathlib.Path(os.environ['CATALOG_SCRATCH'])
+          manifest = json.loads((root / 'CloudronManifest.json').read_text())
+          def copy_refs(value):
+              if isinstance(value, dict):
+                  for item in value.values():
+                      copy_refs(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      copy_refs(item)
+              elif isinstance(value, str) and value.startswith('file://'):
+                  relative = pathlib.Path(value[7:])
+                  source = (root / relative).resolve()
+                  if relative.is_absolute() or '..' in relative.parts or not source.is_relative_to(root):
+                      raise SystemExit('Manifest file reference escapes package checkout')
+                  target = dest / relative
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source, target)
+          copy_refs(manifest)
+          for filename in ('CloudronManifest.json', 'CloudronVersions.json'):
+              shutil.copyfile(root / filename, dest / filename)
+          PY
+            (
+              cd "$scratch"
+              printf -v digest '%064d' 0
+              cloudron versions add --state testing --image "registry.invalid/dry-run@sha256:$digest"
+              cloudron versions update --version="$version" --state=published --image "registry.invalid/dry-run@sha256:$digest"
+              cloudron versions verify
+              jq -e --arg v "$version" '.versions[$v].manifest.changelog | type == "string" and length > 0' CloudronVersions.json
+            )
+          fi
+          publish=false
+          reconcile=false
+          # aidevops:trust-boundary — PRs and non-main refs never authorize publication.
+          if [[ ( "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ) && "$GITHUB_REF" == refs/heads/main && "$ENABLED" == true ]]; then
+            if [[ "$exists" == true ]]; then reconcile=true; else publish=true; fi
+          fi
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "version=$version"
+            echo "image=$image"
+            echo "publish=$publish"
+            echo "reconcile=$reconcile"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: preflight
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Build or resume the exact source image
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
+          IMAGE: ${{ needs.preflight.outputs.image }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}' 2>/dev/null); then
+            # Never reuse a mutable tag without same-source, same-workflow evidence.
+            gh attestation verify "oci://$IMAGE@$digest" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
+              --source-ref refs/heads/main --source-digest "$SOURCE_SHA" --signer-digest "$AIDEVOPS_REF"
+          else
+            docker buildx build --platform linux/amd64 --push --tag "$IMAGE:$VERSION" --metadata-file "$RUNNER_TEMP/image.json" .
+            digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/image.json")
+          fi
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Attest immutable image
+        id: attest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ needs.preflight.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Verify exact image bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.preflight.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: |
+          gh attestation verify "oci://$IMAGE@$DIGEST" --bundle "$BUNDLE" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
+            --source-ref refs/heads/main --source-digest "$SOURCE_SHA" --signer-digest "$AIDEVOPS_REF"
+
+  publish:
+    needs: [preflight, build]
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Install integrity-checked CLI without lifecycle scripts
+        env:
+          CLI_VERSION: ${{ inputs.cli_version }}
+          CLI_INTEGRITY: ${{ inputs.cli_integrity }}
+        run: |
+          set -euo pipefail
+          [[ "$CLI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$CLI_INTEGRITY" == sha512-* ]]
+          test "$(npm view "cloudron@$CLI_VERSION" dist.integrity)" = "$CLI_INTEGRITY"
+          npm install --prefix "$RUNNER_TEMP/cloudron-cli" --ignore-scripts --no-audit --no-fund "cloudron@$CLI_VERSION"
+          test "$(jq -r '.packages["node_modules/cloudron"].integrity' "$RUNNER_TEMP/cloudron-cli/package-lock.json")" = "$CLI_INTEGRITY"
+          echo "$RUNNER_TEMP/cloudron-cli/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Require public image and generate catalog
+        env:
+          IMAGE: ${{ needs.preflight.outputs.image }}@${{ needs.build.outputs.digest }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p "$RUNNER_TEMP/anonymous-docker"
+          if ! DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker" docker buildx imagetools inspect "$IMAGE"; then
+            echo '::error::Make the GHCR package public, then rerun this workflow; the attested image will be reused.'
+            exit 1
+          fi
+          cloudron versions add --state testing --image "$IMAGE"
+          cloudron versions update --version="$VERSION" --state=published --image "$IMAGE"
+          cloudron versions verify
+          jq -e --arg v "$VERSION" --arg image "$IMAGE" \
+            '.versions[$v].manifest | .dockerImage == $image and (.changelog | type == "string" and length > 0)' CloudronVersions.json
+          git show "$SOURCE_SHA:CloudronVersions.json" > "$RUNNER_TEMP/original-catalog.json"
+          jq -e --slurpfile old "$RUNNER_TEMP/original-catalog.json" --arg v "$VERSION" \
+            '(del(.versions) == ($old[0] | del(.versions))) and ((.versions | del(.[$v])) == $old[0].versions)' CloudronVersions.json
+      - name: Attest exact catalog bytes
+        id: catalog
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: CloudronVersions.json
+      - name: Verify catalog before atomic publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.catalog.outputs.bundle-path }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: |
+          gh attestation verify CloudronVersions.json --bundle "$BUNDLE" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
+            --source-ref refs/heads/main --source-digest "$SOURCE_SHA" --signer-digest "$AIDEVOPS_REF"
+      - name: Commit catalog and push tag atomically
+        env:
+          RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_PAT" || { echo '::error::CLOUDRON_RELEASE_PAT is required for the protected-branch push'; exit 1; }
+          git diff --exit-code "$SOURCE_SHA" -- . ':!CloudronVersions.json'
+          test -z "$(git ls-files --others --exclude-standard)"
+          git add -- CloudronVersions.json
+          test "$(git diff --cached --name-only)" = CloudronVersions.json
+          git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+            commit -m "chore: publish Cloudron package $VERSION [skip ci]"
+          git tag "v$VERSION"
+          # aidevops:trust-boundary — only this push receives the repository-scoped PAT.
+          auth=$(printf 'x-access-token:%s' "$RELEASE_PAT" | base64 -w0)
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+
+  release:
+    needs: [preflight, publish]
+    if: always() && needs.preflight.result == 'success' && (needs.publish.result == 'success' || needs.preflight.outputs.reconcile == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Verify existing tag, public image and catalog; repair release only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          git merge-base --is-ancestor "$tag^{commit}" origin/main
+          # The catalog-only commit is a direct child of the attested build source.
+          test "$(git rev-list --parents -n 1 "$tag" | wc -w)" -eq 2
+          source_sha=$(git rev-parse "$tag^1")
+          test "$(git diff-tree --no-commit-id --name-only -r "$tag")" = CloudronVersions.json
+          # Verify the exact catalog committed at the tag, not a later main revision.
+          git show "$tag:CloudronVersions.json" > "$RUNNER_TEMP/CloudronVersions.json"
+          catalog="$RUNNER_TEMP/CloudronVersions.json"
+          image=$(jq -er --arg v "$VERSION" '.versions[$v].manifest.dockerImage' "$catalog")
+          [[ "$image" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/anonymous-docker"
+          DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker" docker buildx imagetools inspect "$image" || {
+            echo '::error::Make the GHCR package public before retrying release reconciliation'
+            exit 1
+          }
+          gh attestation verify "$catalog" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
+            --source-ref refs/heads/main --source-digest "$source_sha" --signer-digest "$AIDEVOPS_REF"
+          gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
+            --source-ref refs/heads/main --source-digest "$source_sha" --signer-digest "$AIDEVOPS_REF"
+          jq -er --arg v "$VERSION" '.versions[$v].manifest.changelog | select(type == "string" and length > 0)' \
+            "$catalog" > "$RUNNER_TEMP/release-notes.md"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi

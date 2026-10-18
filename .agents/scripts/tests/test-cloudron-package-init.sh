@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 INSTALL_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 AGENTS_DIR="${INSTALL_DIR}/.agents"
 CLOUDRON_CALLER_FRAMEWORK_REF="22a6b4b29087ce2fcf3857596a40ff7b2c436482"
+CLOUDRON_CATALOG_FRAMEWORK_REF="c3f8b562466f9528601bfcbc516c346598026b75"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
@@ -54,15 +55,26 @@ test_cloudron_workflow_scaffolding() {
 	assert_equal false "$(grep -Eq '@main|aidevops_ref:[[:space:]]+main' "$workflow" && printf true || printf false)" "caller contains no mutable main ref"
 	assert_equal true "$(git -C "$INSTALL_DIR" cat-file -e "${CLOUDRON_CALLER_FRAMEWORK_REF}:.github/workflows/cloudron-package-release-reusable.yml" 2>/dev/null && printf true || printf false)" "pinned commit contains reusable workflow"
 	assert_equal true "$(git -C "$INSTALL_DIR" cat-file -e "${CLOUDRON_CALLER_FRAMEWORK_REF}:.agents/scripts/cloudron-package-helper.sh" 2>/dev/null && printf true || printf false)" "pinned commit contains release validator"
+	local catalog="${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	assert_equal true "$([[ -f "$catalog" ]] && printf true || printf false)" "catalog caller scaffolded"
+	assert_equal "$(cksum "${AGENTS_DIR}/templates/workflows/cloudron-catalog-publish-caller.yml" | awk '{ print $1, $2 }')" "$(cksum "$catalog" | awk '{ print $1, $2 }')" "catalog caller matches template"
+	assert_equal true "$(grep -Fq "cloudron-catalog-publish-reusable.yml@${CLOUDRON_CATALOG_FRAMEWORK_REF}" "$catalog" && printf true || printf false)" "catalog caller pins workflow"
+	assert_equal true "$(grep -Fq "aidevops_ref: ${CLOUDRON_CATALOG_FRAMEWORK_REF}" "$catalog" && printf true || printf false)" "catalog signer policy matches workflow pin"
+	assert_equal true "$(git -C "$INSTALL_DIR" cat-file -e "${CLOUDRON_CATALOG_FRAMEWORK_REF}:.github/workflows/cloudron-catalog-publish-reusable.yml" 2>/dev/null && printf true || printf false)" "catalog pin contains workflow"
+	assert_equal false "$(grep -Eq '@main|aidevops_ref:[[:space:]]+main|secrets:[[:space:]]+inherit' "$catalog" && printf true || printf false)" "catalog has no mutable pin or inherited secrets"
 	local before=""
 	before=$(cksum "$workflow")
 	_init_scaffold_cloudron_release_workflow "$repo_dir"
 	assert_equal "$before" "$(cksum "$workflow")" "Cloudron caller scaffolding is idempotent"
+	printf 'custom catalog\n' >"$catalog"
+	_init_scaffold_cloudron_release_workflow "$repo_dir"
+	assert_equal 'custom catalog' "$(tr -d '\n' <"$catalog")" "existing catalog caller is never overwritten"
 
 	local generic_dir="${TEST_ROOT}/generic"
 	mkdir -p "$generic_dir"
 	_init_scaffold_cloudron_release_workflow "$generic_dir"
 	assert_equal false "$([[ -e "${generic_dir}/.github/workflows/cloudron-package-release.yml" ]] && printf true || printf false)" "non-Cloudron repo receives no caller"
+	assert_equal false "$([[ -e "${generic_dir}/.github/workflows/cloudron-catalog-publish.yml" ]] && printf true || printf false)" "non-Cloudron repo receives no catalog caller"
 
 	local existing_dir="${TEST_ROOT}/existing"
 	mkdir -p "${existing_dir}/.github/workflows"
@@ -70,6 +82,7 @@ test_cloudron_workflow_scaffolding() {
 	printf 'custom\n' >"${existing_dir}/.github/workflows/cloudron-package-release.yml"
 	_init_scaffold_cloudron_release_workflow "$existing_dir"
 	assert_equal custom "$(tr -d '\n' <"${existing_dir}/.github/workflows/cloudron-package-release.yml")" "existing caller is never overwritten"
+	assert_equal true "$([[ -f "${existing_dir}/.github/workflows/cloudron-catalog-publish.yml" ]] && printf true || printf false)" "catalog installed alongside existing legacy caller"
 	return 0
 }
 

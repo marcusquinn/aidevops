@@ -1721,6 +1721,9 @@ _init_offer_release_verification() {
 _init_scaffold_cloudron_release_workflow() {
 	local target_root="$1"
 	[[ -f "${target_root}/CloudronManifest.json" ]] || return 0
+	# Both callers are installed, but catalog publication is disabled by default.
+	# Preserve the legacy tag caller for packages not adopting catalog automation.
+	bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$target_root" || return 1
 	local template_path="${AGENTS_DIR}/templates/workflows/cloudron-package-release-caller.yml"
 	local workflow_path="${target_root}/.github/workflows/cloudron-package-release.yml"
 	if [[ -f "$workflow_path" ]]; then
