@@ -107,6 +107,87 @@ test_prepare_and_validate_release() {
 	return 0
 }
 
+test_cloudron_changelog() {
+	local repo_dir="${TEST_ROOT}/cloudron"
+	local manifest_path="${repo_dir}/CloudronManifest.json"
+	local changelog_path="${repo_dir}/CHANGELOG"
+	local manifest_before=""
+	local changelog_before=""
+	make_fixture "$repo_dir"
+	jq '.changelog = "file://CHANGELOG"' "$manifest_path" >"${manifest_path}.tmp"
+	mv "${manifest_path}.tmp" "$manifest_path"
+	rm "${repo_dir}/CHANGELOG.md"
+	printf '[1.0.0]\n\n- Initial package.\n' >"$changelog_path"
+	run_helper "$repo_dir" check-release v1.0.0 >/dev/null && pass "manifest Cloudron changelog validates without CHANGELOG.md" || fail "manifest Cloudron changelog validates without CHANGELOG.md"
+	chmod 640 "$changelog_path"
+	run_helper "$repo_dir" prepare-release 1.2.0 4.5.6 release-notes.md >/dev/null && pass "Cloudron preparation succeeds" || fail "Cloudron preparation succeeds"
+	grep -Fxq '[1.2.0]' "$changelog_path" && pass "Cloudron heading has no prefix or date" || fail "Cloudron heading has no prefix or date"
+	grep -Fxq '[1.0.0]' "$changelog_path" && pass "existing Cloudron section preserved" || fail "existing Cloudron section preserved"
+	[[ ! -f "${repo_dir}/CHANGELOG.md" ]] && pass "prepare does not create a second changelog" || fail "prepare does not create a second changelog"
+	run_helper "$repo_dir" check-release v1.2.0 >/dev/null && pass "prepared Cloudron notes validate" || fail "prepared Cloudron notes validate"
+	manifest_before=$(cksum "$manifest_path")
+	changelog_before=$(cksum "$changelog_path")
+	if run_helper "$repo_dir" prepare-release 1.2.0 4.5.6 release-notes.md >/dev/null 2>&1; then
+		fail "duplicate Cloudron version rejected"
+	else
+		pass "duplicate Cloudron version rejected"
+	fi
+	assert_equal "$manifest_before" "$(cksum "$manifest_path")" "duplicate preserves manifest"
+	assert_equal "$changelog_before" "$(cksum "$changelog_path")" "duplicate preserves Cloudron changelog"
+	printf '[1.2.0]\n\n## [1.0.0] - 2026-01-01\n\n- Older notes.\n' >"$changelog_path"
+	if run_helper "$repo_dir" check-release v1.2.0 >/dev/null 2>&1; then
+		fail "empty Cloudron section cannot borrow Markdown notes"
+	else
+		pass "empty Cloudron section cannot borrow Markdown notes"
+	fi
+	printf '## [1.2.0]\n\n[1.0.0]\n\n- Older notes.\n' >"$changelog_path"
+	if run_helper "$repo_dir" check-release v1.2.0 >/dev/null 2>&1; then
+		fail "empty Markdown section cannot borrow Cloudron notes"
+	else
+		pass "empty Markdown section cannot borrow Cloudron notes"
+	fi
+	printf 'Mention [1.2.0]\n[1x2x0]\n\n- Not this version.\n' >"$changelog_path"
+	if run_helper "$repo_dir" check-release v1.2.0 >/dev/null 2>&1; then
+		fail "headings require literal version at line start"
+	else
+		pass "headings require literal version at line start"
+	fi
+	return 0
+}
+
+test_changelog_paths() {
+	local repo_dir="${TEST_ROOT}/paths"
+	local manifest_path="${repo_dir}/CloudronManifest.json"
+	local changelog=""
+	local manifest_before=""
+	local changelog_before=""
+	make_fixture "$repo_dir"
+	for changelog in 'file://' 'file:///CHANGELOG' 'file://../CHANGELOG' 'file://notes/../CHANGELOG' 'file://notes/..'; do
+		jq --arg changelog "$changelog" '.changelog = $changelog' "$manifest_path" >"${manifest_path}.tmp"
+		mv "${manifest_path}.tmp" "$manifest_path"
+		manifest_before=$(cksum "$manifest_path")
+		changelog_before=$(cksum "${repo_dir}/CHANGELOG.md")
+		if run_helper "$repo_dir" prepare-release 1.2.0 4.5.6 release-notes.md >/dev/null 2>&1; then
+			fail "unsafe changelog path rejected: $changelog"
+		else
+			pass "unsafe changelog path rejected: $changelog"
+		fi
+		assert_equal "$manifest_before" "$(cksum "$manifest_path")" "unsafe path preserves manifest"
+		assert_equal "$changelog_before" "$(cksum "${repo_dir}/CHANGELOG.md")" "unsafe path preserves fallback"
+	done
+	jq '.changelog = "https://example.com/changelog"' "$manifest_path" >"${manifest_path}.tmp"
+	mv "${manifest_path}.tmp" "$manifest_path"
+	run_helper "$repo_dir" check-release v1.0.0 >/dev/null && pass "non-file changelog falls back to CHANGELOG.md" || fail "non-file changelog falls back to CHANGELOG.md"
+	mkdir "${repo_dir}/release notes"
+	mv "${repo_dir}/CHANGELOG.md" "${repo_dir}/release notes/CHANGELOG"
+	jq '.changelog = "file://release notes/CHANGELOG"' "$manifest_path" >"${manifest_path}.tmp"
+	mv "${manifest_path}.tmp" "$manifest_path"
+	run_helper "$repo_dir" prepare-release 1.2.0 4.5.6 release-notes.md >/dev/null && pass "nested manifest path with spaces prepares" || fail "nested manifest path with spaces prepares"
+	grep -Eq '^## \[1\.2\.0\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$' "${repo_dir}/release notes/CHANGELOG" && pass "manifest Markdown file keeps dated format" || fail "manifest Markdown file keeps dated format"
+	run_helper "$repo_dir" check-release v1.2.0 >/dev/null && pass "nested manifest path validates" || fail "nested manifest path validates"
+	return 0
+}
+
 test_release_preflight_validates_immutable_sources() {
 	local repo_dir="${TEST_ROOT}/preflight"
 	local bin_dir="${TEST_ROOT}/preflight-bin"
@@ -204,6 +285,8 @@ main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_prepare_and_validate_release
+	test_cloudron_changelog
+	test_changelog_paths
 	test_invalid_prepare_is_non_mutating
 	test_release_gate_rejects_package_defects
 	test_release_preflight_validates_immutable_sources

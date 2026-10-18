@@ -194,19 +194,43 @@ cloudron_package_compatibility_findings() {
 	return 1
 }
 
+_cloudron_release_changelog_path() {
+	local repo_path="$1"
+	local changelog=""
+	changelog=$(jq -r '.changelog | if type == "string" then . else empty end' "${repo_path}/CloudronManifest.json") || return 1
+	if [[ "$changelog" == file://* ]]; then
+		changelog="${changelog#file://}"
+		case "$changelog" in
+		"" | /* | .. | ../* | */../* | */..)
+			_cloudron_release_error "Changelog must be a repository-relative path without '..' components."
+			return 1
+			;;
+		esac
+	else
+		changelog="CHANGELOG.md"
+	fi
+	printf '%s/%s\n' "$repo_path" "$changelog"
+	return 0
+}
+
 _cloudron_release_changelog_has_version() {
 	local changelog_path="$1"
 	local package_version="$2"
-	grep -Fq "## [${package_version}]" "$changelog_path"
+	awk -v bare="[${package_version}]" -v markdown="## [${package_version}]" '
+		$0 == bare || $0 == markdown ||
+		index($0, markdown " - ") == 1 { found = 1; exit }
+		END { exit(found ? 0 : 1) }
+	' "$changelog_path"
 	return $?
 }
 
 _cloudron_release_changelog_has_notes() {
 	local changelog_path="$1"
 	local package_version="$2"
-	awk -v version="$package_version" '
-		index($0, "## [" version "]") == 1 { in_release = 1; next }
-		in_release && /^## / { exit }
+	awk -v bare="[${package_version}]" -v markdown="## [${package_version}]" '
+		$0 == bare || $0 == markdown ||
+		index($0, markdown " - ") == 1 { in_release = 1; next }
+		in_release && /^(## )?\[/ { exit }
 		in_release && /[^[:space:]]/ { found = 1; exit }
 		END { exit(found ? 0 : 1) }
 	' "$changelog_path"
@@ -220,22 +244,28 @@ _cloudron_release_write_changelog() {
 	local notes_file="$4"
 	local release_date="$5"
 	local first_line=""
+	local heading="## [${package_version}] - ${release_date}"
+	local format=""
+	format=$(awk '/^(## )?\[[0-9]+\.[0-9]+\.[0-9]+[^]]*\]/ { print (substr($0, 1, 1) == "[" ? "cloudron" : "markdown"); exit }' "$changelog_path") || return 1
+	if [[ "$format" == cloudron ]]; then
+		printf -v heading '[%s]' "$package_version"
+	fi
 
 	{
 		if IFS= read -r first_line; then
 			if [[ "$first_line" == "# Changelog"* ]]; then
-				printf '%s\n\n## [%s] - %s\n\n' "$first_line" "$package_version" "$release_date"
+				printf '%s\n\n%s\n\n' "$first_line" "$heading"
 				cat "$notes_file"
 				printf '\n\n'
 				cat
 			else
-				printf '## [%s] - %s\n\n' "$package_version" "$release_date"
+				printf '%s\n\n' "$heading"
 				cat "$notes_file"
 				printf '\n\n%s\n' "$first_line"
 				cat
 			fi
 		else
-			printf '## [%s] - %s\n\n' "$package_version" "$release_date"
+			printf '%s\n\n' "$heading"
 			cat "$notes_file"
 			printf '\n'
 		fi
@@ -243,7 +273,7 @@ _cloudron_release_write_changelog() {
 	return $?
 }
 
-# Atomically prepare CloudronManifest.json and CHANGELOG.md without publishing.
+# Atomically prepare CloudronManifest.json and its changelog without publishing.
 # Usage: cloudron_package_prepare_release <package-version> <upstream-version> <notes-file> [repo-path]
 cloudron_package_prepare_release() {
 	local package_version="${1:-}"
@@ -258,14 +288,15 @@ cloudron_package_prepare_release() {
 	grep -q '[^[:space:]]' "$notes_file" || _cloudron_release_error "Release notes must not be empty." || return 1
 
 	local manifest_path="${repo_path}/CloudronManifest.json"
-	local changelog_path="${repo_path}/CHANGELOG.md"
+	local changelog_path=""
 	[[ -f "$manifest_path" ]] || _cloudron_release_error "CloudronManifest.json not found." || return 1
-	[[ -f "$changelog_path" ]] || _cloudron_release_error "CHANGELOG.md not found." || return 1
+	changelog_path=$(_cloudron_release_changelog_path "$repo_path") || return 1
+	[[ -f "$changelog_path" ]] || _cloudron_release_error "Changelog not found: $changelog_path" || return 1
 	if ! cloudron_package_compatibility_findings "$repo_path" "CloudronManifest.json" release >/dev/null; then
 		_cloudron_release_error "Package compatibility validation failed before release preparation." || return 1
 	fi
 	if _cloudron_release_changelog_has_version "$changelog_path" "$package_version"; then
-		_cloudron_release_error "CHANGELOG.md already contains package version $package_version." || return 1
+		_cloudron_release_error "Changelog already contains package version $package_version: $changelog_path" || return 1
 	fi
 
 	local manifest_tmp=""
@@ -323,7 +354,7 @@ cloudron_package_check_release() {
 	local release_tag="${1:-${GITHUB_REF_NAME:-}}"
 	local repo_path="${2:-.}"
 	local manifest_path="${repo_path}/CloudronManifest.json"
-	local changelog_path="${repo_path}/CHANGELOG.md"
+	local changelog_path=""
 	local findings=""
 
 	if [[ ! "$release_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
@@ -338,9 +369,10 @@ cloudron_package_check_release() {
 	if [[ "$release_tag" != "v${package_version}" ]]; then
 		_cloudron_release_error "Tag $release_tag does not match manifest version $package_version." || return 1
 	fi
-	[[ -f "$changelog_path" ]] || _cloudron_release_error "CHANGELOG.md not found." || return 1
-	_cloudron_release_changelog_has_version "$changelog_path" "$package_version" || _cloudron_release_error "CHANGELOG.md has no section for $package_version." || return 1
-	_cloudron_release_changelog_has_notes "$changelog_path" "$package_version" || _cloudron_release_error "CHANGELOG.md section for $package_version is empty." || return 1
+	changelog_path=$(_cloudron_release_changelog_path "$repo_path") || return 1
+	[[ -f "$changelog_path" ]] || _cloudron_release_error "Changelog not found: $changelog_path" || return 1
+	_cloudron_release_changelog_has_version "$changelog_path" "$package_version" || _cloudron_release_error "Changelog has no section for $package_version: $changelog_path" || return 1
+	_cloudron_release_changelog_has_notes "$changelog_path" "$package_version" || _cloudron_release_error "Changelog section for $package_version is empty: $changelog_path" || return 1
 	printf 'Cloudron release validation passed for %s.\n' "$release_tag"
 	return 0
 }
