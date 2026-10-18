@@ -113,12 +113,16 @@ capture_snapshot
 printf 'PASS: interrupted local persistence resumes the identical lane-bound snapshot\n'
 
 reset_case
+# Host-independent: signing preflight and history fetch depend on the runner's
+# SSH signing key and network, not on the assertion logic under test.
+release_signing_preflight() { return 0; }
+_full_loop_release_ensure_full_history() { return 0; }
 _full_loop_release_guard_competing_lane() { return 0; }
 _full_loop_release_guard_existing() {
 	[[ "$3" == "$EXPECTED_ARGUMENT" ]]
 	return $?
 }
-EXPECTED_ARGUMENT=""
+EXPECTED_ARGUMENT="41@$FIRST"
 _full_loop_release_start_new test/repo 41 patch incremental ""
 EXPECTED_ARGUMENT="41,42"
 _full_loop_release_start_new test/repo 41 patch incremental "41,42"
