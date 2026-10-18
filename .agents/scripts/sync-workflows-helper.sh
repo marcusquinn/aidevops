@@ -49,6 +49,9 @@ fi
 # shellcheck source=./scratch-worktree-helper.sh
 source "$SELF_DIR/scratch-worktree-helper.sh"
 
+# shellcheck source=./workflow-release-ref.sh
+source "$SELF_DIR/workflow-release-ref.sh"
+
 # shellcheck source=/dev/null
 # gh wrappers inject signature footers and route around GraphQL rate limits.
 # Mandatory — this script ships as part of aidevops so the wrappers are
@@ -1429,6 +1432,17 @@ _sync_one_repo() {
 	_workflow_name=$(basename "$_workflow_relpath" .yml)
 	local _sync_contributing=0
 	[[ "$_workflow_name" == "$LINKED_ISSUE_WORKFLOW_NAME" ]] && _sync_contributing=1
+	# Only fresh metrics installs acquire a release default. Explicit CLI/registry
+	# refs and all existing caller/force-ref semantics remain operator-owned.
+	if [[ "$_status" == "NO-WORKFLOW" && "$_workflow_name" == "loc-badge" &&
+		-z "${_OPT_TARGET_REF:-}" &&
+		-z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
+		if ! _target_ref=$(workflow_release_ref "$_target_repo"); then
+			printf '%s\t%s\t%s\tcannot resolve latest release SHA\n' "$_slug" "$_status" "$_STATUS_FAILED"
+			return 1
+		fi
+		_target_ref="@$_target_ref"
+	fi
 	if [[ "$_apply" -eq 0 ]]; then
 		local _effective_ref
 		_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")

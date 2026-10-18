@@ -52,6 +52,9 @@ set -uo pipefail
 SCRIPT_NAME="$(basename "$0")"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=./workflow-release-ref.sh
+source "$SELF_DIR/workflow-release-ref.sh"
+
 # shellcheck source=/dev/null
 if [[ -f "$SELF_DIR/shared-constants.sh" ]]; then
 	source "$SELF_DIR/shared-constants.sh"
@@ -382,9 +385,25 @@ _install_workflow() {
 		return 0
 	fi
 
+	local _ref _escaped_ref
+	_ref=$(jq -r --arg s "$_slug" '
+		([.initialized_repos[]? | select(.slug == $s) | .workflow_reusable_ref // empty] | first // "") as $ref
+		| if $ref != "" then $ref else (.workflow_reusable_ref // "") end
+	' "$REPOS_JSON") || return 1
+	if [[ -z "$_ref" ]]; then
+		if ! _ref=$(workflow_release_ref); then
+			printf '%s\t%s\tcannot resolve latest release SHA\n' "$_slug" "$_STATUS_FAILED"
+			return 1
+		fi
+	fi
+	_ref="${_ref#@}"
+	_escaped_ref=$(printf '%s' "$_ref" | sed 's/[&|\\]/\\&/g')
 	mkdir -p "$_path/.github/workflows" || return 1
-	if ! cp "$_template" "$_target"; then
-		printf '%s\t%s\tcp template failed\n' "$_slug" "$_STATUS_FAILED"
+	if ! sed -E \
+		-e 's|^([[:space:]]*uses:.*loc-badge-reusable.yml)@[^[:space:]]+.*$|\1@'"$_escaped_ref"'|' \
+		-e 's|^(      aidevops_ref:).*$|\1 '"$_escaped_ref"'|' \
+		"$_template" >"$_target"; then
+		printf '%s\t%s\trender template failed\n' "$_slug" "$_STATUS_FAILED"
 		return 1
 	fi
 	return 0
