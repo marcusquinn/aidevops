@@ -113,7 +113,7 @@ untracked files untouched, including dirty or off-default checkouts.
 
 Weekly core routine **r921** runs `badges-sync-helper.sh --apply --json` on
 Sunday at 08:10 through pulse. It uses the detector's maintained-repo selector
-and owned-org allowlist (`~/.config/aidevops/badge-orgs.conf`), excludes local-only,
+and derived ownership (`repos.json` `maintainer` equals the slug owner or authenticated user; `~/.config/aidevops/badge-orgs.conf` adds orgs), excludes local-only,
 contributed/contributor and starter-owned repos, and skips existing open sync
 PRs. Current repositories produce no PR. Each repository is locked during sync;
 failed worktrees are retained for recovery, while successful runs request guarded

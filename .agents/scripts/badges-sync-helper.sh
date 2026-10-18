@@ -12,7 +12,8 @@
 #   - install: copies the repo metrics caller workflow into .github/workflows/
 #
 # Sync/install operations are restricted to owned-org repos
-# (marcusquinn, essentials-com, wpallstars, or ~/.config/aidevops/badge-orgs.conf).
+# (repos.json maintainer equals the slug owner or authenticated user, or the org
+# is listed in ~/.config/aidevops/badge-orgs.conf).
 # contributor-role/contributed repos and non-owned orgs are skipped with a
 # SKIPPED/EXTERNAL note.
 #
@@ -93,35 +94,72 @@ _BADGES_HELPER="$( _resolve_helper "readme-badges-helper.sh" || printf '%s' "$SE
 _METRICS_HELPER="$( _resolve_helper "repo-metrics-helper.sh" || printf '%s' "$SELF_DIR/repo-metrics-helper.sh")"
 readonly _CHECK_HELPER _BADGES_HELPER _METRICS_HELPER
 
-# ─── Owned-orgs allowlist ───────────────────────────────────────────────────
+# ─── Ownership ──────────────────────────────────────────────────────────────
 
-readonly _DEFAULT_OWNED_ORGS=("marcusquinn" "essentials-com" "wpallstars")
+# Ownership is derived from facts in repos.json, not a shipped org list.
+# ~/.config/aidevops/badge-orgs.conf (one org per line) is an additive override.
 
 _load_owned_orgs() {
 	local _conf="$HOME/.config/aidevops/badge-orgs.conf"
-	if [[ -f "$_conf" ]]; then
-		while IFS= read -r _org; do
-			[[ -z "$_org" || "${_org:0:1}" == "#" ]] && continue
-			printf '%s\n' "$_org"
-		done <"$_conf"
-		return 0
-	fi
-	local _o
-	for _o in "${_DEFAULT_OWNED_ORGS[@]}"; do
-		printf '%s\n' "$_o"
-	done
+	[[ -f "$_conf" ]] || return 0
+	local _org
+	while IFS= read -r _org || [[ -n "$_org" ]]; do
+		[[ -z "$_org" || "${_org:0:1}" == "#" ]] && continue
+		printf '%s\n' "$_org"
+	done <"$_conf"
 	return 0
 }
 
+# _is_owned_org <org>
+# Returns 0 if org is listed in badge-orgs.conf, 1 otherwise.
 _is_owned_org() {
 	local _org="$1"
-	local _owned_orgs
-	_owned_orgs=$(_load_owned_orgs)
 	local _o
 	while IFS= read -r _o; do
 		[[ "$_o" == "$_org" ]] && return 0
-	done <<<"$_owned_orgs"
+	done < <(_load_owned_orgs)
 	return 1
+}
+
+# _auth_user — authenticated GitHub login (cached; empty when unavailable).
+_AUTH_USER_CACHE=""
+_AUTH_USER_LOADED=0
+_auth_user() {
+	if [[ "$_AUTH_USER_LOADED" -eq 0 ]]; then
+		_AUTH_USER_LOADED=1
+		if command -v gh >/dev/null 2>&1; then
+			_AUTH_USER_CACHE=$(gh api user --jq .login 2>/dev/null) || _AUTH_USER_CACHE=""
+		fi
+	fi
+	printf '%s\n' "$_AUTH_USER_CACHE"
+	return 0
+}
+
+# _is_owned_repo <slug> <maintainer>
+# Owned when the repos.json maintainer equals the slug owner or the
+# authenticated user, or the slug org is listed in badge-orgs.conf.
+# Callers exclude contributed/contributor repos before calling this.
+_is_owned_repo() {
+	local _slug="$1"
+	local _maintainer="$2"
+	local _org="${_slug%%/*}"
+	[[ -n "$_org" ]] || return 1
+	if [[ -n "$_maintainer" ]]; then
+		[[ "$_maintainer" == "$_org" ]] && return 0
+		[[ "$_maintainer" == "$(_auth_user)" ]] && return 0
+	fi
+	_is_owned_org "$_org" && return 0
+	return 1
+}
+
+# _repo_maintainer <slug> — repos.json maintainer for a slug (empty if unset).
+_repo_maintainer() {
+	local _slug="$1"
+	[[ -f "$REPOS_JSON" ]] || return 0
+	jq -r --arg s "$_slug" \
+		'[.initialized_repos[]? | select(.slug == $s) | (.maintainer // "")] | first // ""' \
+		"$REPOS_JSON" 2>/dev/null || true
+	return 0
 }
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -526,8 +564,9 @@ _process_rows() {
 		fi
 
 		# Enforce owned-org filter at write time
-		local _org="${_slug%%/*}"
-		if ! _is_owned_org "$_org"; then
+		local _maintainer
+		_maintainer=$(_repo_maintainer "$_slug")
+		if ! _is_owned_repo "$_slug" "$_maintainer"; then
 			local _result="${_slug}	${_STATUS_SKIPPED}	external org — sync restricted to owned orgs"
 			_print_result_row "$_json_out" "$_result"
 			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))

@@ -37,9 +37,10 @@
 #   1  — one or more repos are DRIFTED or METRICS-MISSING
 #   2  — configuration or IO error (repos.json missing, jq unavailable)
 #
-# Owned-orgs allowlist (used for informational EXTERNAL classification):
-#   marcusquinn, essentials-com, wpallstars
-#   Override by creating ~/.config/aidevops/badge-orgs.conf with one org per line.
+# Ownership (EXTERNAL classification) is derived from repos.json: a repo is owned
+# unless contributed/role=contributor, and its maintainer equals the slug owner or
+# the authenticated GitHub user. ~/.config/aidevops/badge-orgs.conf (one org per
+# line) additively marks further orgs as owned.
 
 set -uo pipefail
 
@@ -65,39 +66,61 @@ _resolve_badges_helper() {
 	return 1
 }
 
-# ─── Owned-orgs allowlist ───────────────────────────────────────────────────
+# ─── Ownership ──────────────────────────────────────────────────────────────
 
-# Default owned orgs — expanded via ~/.config/aidevops/badge-orgs.conf if present.
-readonly _DEFAULT_OWNED_ORGS=("marcusquinn" "essentials-com" "wpallstars")
+# Ownership is derived from facts in repos.json, not a shipped org list.
+# ~/.config/aidevops/badge-orgs.conf (one org per line) is an additive override.
 
 _load_owned_orgs() {
 	local _conf="$HOME/.config/aidevops/badge-orgs.conf"
-	if [[ -f "$_conf" ]]; then
-		# Read non-blank, non-comment lines
-		while IFS= read -r _org; do
-			[[ -z "$_org" || "${_org:0:1}" == "#" ]] && continue
-			printf '%s\n' "$_org"
-		done <"$_conf"
-		return 0
-	fi
-	# Fall back to defaults
-	local _o
-	for _o in "${_DEFAULT_OWNED_ORGS[@]}"; do
-		printf '%s\n' "$_o"
-	done
+	[[ -f "$_conf" ]] || return 0
+	local _org
+	while IFS= read -r _org || [[ -n "$_org" ]]; do
+		[[ -z "$_org" || "${_org:0:1}" == "#" ]] && continue
+		printf '%s\n' "$_org"
+	done <"$_conf"
 	return 0
 }
 
 # _is_owned_org <org>
-# Returns 0 if org is in the owned-orgs list, 1 otherwise.
+# Returns 0 if org is listed in badge-orgs.conf, 1 otherwise.
 _is_owned_org() {
 	local _org="$1"
-	local _owned_orgs
-	_owned_orgs=$(_load_owned_orgs)
 	local _o
 	while IFS= read -r _o; do
 		[[ "$_o" == "$_org" ]] && return 0
-	done <<<"$_owned_orgs"
+	done < <(_load_owned_orgs)
+	return 1
+}
+
+# _auth_user — authenticated GitHub login (cached; empty when unavailable).
+_AUTH_USER_CACHE=""
+_AUTH_USER_LOADED=0
+_auth_user() {
+	if [[ "$_AUTH_USER_LOADED" -eq 0 ]]; then
+		_AUTH_USER_LOADED=1
+		if command -v gh >/dev/null 2>&1; then
+			_AUTH_USER_CACHE=$(gh api user --jq .login 2>/dev/null) || _AUTH_USER_CACHE=""
+		fi
+	fi
+	printf '%s\n' "$_AUTH_USER_CACHE"
+	return 0
+}
+
+# _is_owned_repo <slug> <maintainer>
+# Owned when the repos.json maintainer equals the slug owner or the
+# authenticated user, or the slug org is listed in badge-orgs.conf.
+# Callers exclude contributed/contributor repos before calling this.
+_is_owned_repo() {
+	local _slug="$1"
+	local _maintainer="$2"
+	local _org="${_slug%%/*}"
+	[[ -n "$_org" ]] || return 1
+	if [[ -n "$_maintainer" ]]; then
+		[[ "$_maintainer" == "$_org" ]] && return 0
+		[[ "$_maintainer" == "$(_auth_user)" ]] && return 0
+	fi
+	_is_owned_org "$_org" && return 0
 	return 1
 }
 
@@ -144,7 +167,7 @@ _usage() {
 
 # ─── Repo iteration ─────────────────────────────────────────────────────────
 
-# Emit one "path|local_only|contributed|role|maintenance|slug" TSV line per registered repo.
+# Emit one "path|local_only|contributed|role|maintenance|slug|maintainer" TSV line per registered repo.
 _iterate_repos() {
 	if [[ ! -f "$REPOS_JSON" ]]; then
 		_die "repos.json not found at $REPOS_JSON — aidevops may not be initialised"
@@ -161,7 +184,8 @@ _iterate_repos() {
 			(.contributed // false | tostring),
 			(.role // "maintainer"),
 			((if .maintenance == false then false else true end) | tostring),
-			(.slug // "")
+			(.slug // ""),
+			(.maintainer // "")
 		]
 		| @tsv
 	' "$REPOS_JSON"
@@ -170,7 +194,7 @@ _iterate_repos() {
 
 # ─── Classification ─────────────────────────────────────────────────────────
 
-# _classify_badges_repo <path> <local_only> <contributed> <role> <slug> <badges_helper>
+# _classify_badges_repo <path> <local_only> <contributed> <role> <slug> <badges_helper> [maintainer]
 # Emits: class\tnote
 _classify_badges_repo() {
 	local _path="$1"
@@ -179,6 +203,7 @@ _classify_badges_repo() {
 	local _role="$4"
 	local _slug="$5"
 	local _badges_helper="$6"
+	local _maintainer="${7:-}"
 
 	if [[ "$_local_only" == "true" ]]; then
 		printf 'LOCAL-ONLY\t\n'
@@ -190,7 +215,7 @@ _classify_badges_repo() {
 	local _is_external=0
 	if [[ "$_contributed" == "true" || "$_role" == "contributor" ]]; then
 		_is_external=1
-	elif [[ -n "$_org" ]] && ! _is_owned_org "$_org"; then
+	elif [[ -n "$_org" ]] && ! _is_owned_repo "$_slug" "$_maintainer"; then
 		_is_external=1
 	fi
 
@@ -359,8 +384,8 @@ _process_repos() {
 	local _rows
 	_rows=$(_iterate_repos) || exit $?
 
-	local _path _local_only_flag _contributed_flag _role _maintenance_flag _slug
-	while IFS=$'\t' read -r _path _local_only_flag _contributed_flag _role _maintenance_flag _slug; do
+	local _path _local_only_flag _contributed_flag _role _maintenance_flag _slug _maintainer
+	while IFS=$'\t' read -r _path _local_only_flag _contributed_flag _role _maintenance_flag _slug _maintainer; do
 		[[ -z "$_slug" && -z "$_path" ]] && continue
 		local _label="${_slug:-$(basename "$_path")}"
 		[[ -n "$_filter_slug" && "$_slug" != "$_filter_slug" ]] && continue
@@ -371,7 +396,7 @@ _process_repos() {
 
 		local _class _note
 		IFS=$'\t' read -r _class _note < <(_classify_badges_repo \
-			"$_path" "$_local_only_flag" "$_contributed_flag" "$_role" "$_slug" "$_badges_helper")
+			"$_path" "$_local_only_flag" "$_contributed_flag" "$_role" "$_slug" "$_badges_helper" "$_maintainer")
 
 		case "$_class" in
 		LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
