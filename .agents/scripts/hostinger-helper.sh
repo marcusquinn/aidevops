@@ -245,6 +245,45 @@ fleet_command() {
     esac
 }
 
+# hPanel cron jobs via the Hostinger API (hosting_cron.py). SSH has no crontab on
+# shared hosting, so this is the supported way to inspect and change jobs.
+cron_command() {
+    local subcommand="${1:-help}"
+    local engine="${SCRIPT_DIR}/hosting_cron.py"
+    local status=0
+
+    case "$subcommand" in
+    list | create | delete | output)
+        if [[ -z "${HOSTINGER_API_TOKEN:-}" ]] &&
+            command -v aidevops >/dev/null 2>&1 &&
+            aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
+            aidevops secret HOSTINGER_API_TOKEN -- python3 "$engine" "$@" || status=$?
+            return "$status"
+        fi
+        python3 "$engine" "$@" || status=$?
+        return "$status"
+        ;;
+    help | -h | --help)
+        echo "Usage: $0 cron <list|create|delete|output> --ssh ALIAS [options]"
+        echo ""
+        echo "  list   --ssh ALIAS [--json]"
+        echo "  create --ssh ALIAS --time 'CRON' --command 'CMD' [--apply]"
+        echo "  delete --ssh ALIAS --uid UID [--apply]"
+        echo "  output --ssh ALIAS --uid UID"
+        echo ""
+        echo "create/delete preview unless --apply is given. Each change snapshots the"
+        echo "job list (0600) to ~/.aidevops/.agent-workspace/work/hostinger-cron/ and"
+        echo "prints the list afterwards. A failed change lists live jobs; never retry blindly."
+        echo "Details: services/hosting/hostinger-wordpress-cron.md"
+        return 0
+        ;;
+    *)
+        print_error "Unknown cron command: $subcommand"
+        return 1
+        ;;
+    esac
+}
+
 # Main function
 main() {
     # Assign positional parameters to local variables
@@ -283,6 +322,11 @@ main() {
         fleet_command "$@"
         return $?
         ;;
+    "cron")
+        shift
+        cron_command "$@"
+        return $?
+        ;;
     "help"|"-h"|"--help"|"")
         echo "Hostinger Helper Script"
         echo "Usage: $0 [command] [options]"
@@ -293,6 +337,7 @@ main() {
         echo "  exec [site] [cmd] - Execute command on site"
         echo "  api [endpoint]    - Make API call to Hostinger"
         echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
+        echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
         echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"

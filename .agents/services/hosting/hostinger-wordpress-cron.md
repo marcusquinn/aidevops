@@ -40,6 +40,11 @@ API shapes use `GET` and `POST` on
 `/{uid}`, and `GET` on `/{uid}/output`; the observed `POST` fields are `time` and
 `command`. These observations are not a substitute for current API documentation.
 
+Use `hostinger-helper.sh cron list|create|delete|output --ssh <alias>` to inspect and
+change jobs. A missing SSH `crontab` is expected on Hostinger shared hosting and is not
+a blocker. The helper previews by default, needs `--apply` to mutate, and snapshots the
+job list privately before each change.
+
 Before a mutation, privately snapshot exact job IDs, commands, and schedules. Use
 placeholders and securely injected credentials in any procedure. After a partial
 create or delete response, inspect live IDs before retrying; never blindly recreate

@@ -49,6 +49,19 @@ aidevops secret HOSTINGER_SSH_PASSWORD_ACCOUNT_1 -- \
 
 Only request another SSH credential when API inventory, the hosting panel, or a failed authenticated probe shows a genuinely different account/server.
 
+### hPanel cron jobs
+
+SSH on shared hosting has no `crontab`; that is expected, not a blocker. Use the API-backed helper:
+
+```bash
+hostinger-helper.sh cron list   --ssh <account-alias> [--json]
+hostinger-helper.sh cron create --ssh <account-alias> --time '<cron>' --command '<cmd>' [--apply]
+hostinger-helper.sh cron delete --ssh <account-alias> --uid <uid> [--apply]
+hostinger-helper.sh cron output --ssh <account-alias> --uid <uid>
+```
+
+The account name comes from `ssh <alias> whoami` and the token is injected from the secret store. `create` and `delete` preview unless `--apply` is given. Each change first writes a 0600 snapshot of the job list to `~/.aidevops/.agent-workspace/work/hostinger-cron/` and then prints the list again. `delete` removes only the given UID. After a failed or partial response the live list is printed; inspect it before any retry. Home paths are masked in output. See `hostinger-wordpress-cron.md`.
+
 ### Fleet inventory and drift
 
 `hostinger-helper.sh fleet` is read-only, except `fleet provision --apply`: it never changes hosting, and nothing else changes GitHub, repositories or `repos.json`. It writes private (0600) JSON to `~/.aidevops/.agent-workspace/work/hostinger-fleet/`, and the API token is injected from the secret store automatically.
