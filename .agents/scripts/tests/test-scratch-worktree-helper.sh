@@ -55,8 +55,11 @@ if [[ -d "$created" && "$(lock_reason_of "$created")" == "$SCRATCH_WORKTREE_REAS
 else
 	fail "scratch worktree lock token"
 fi
-if scratch_worktree_remove "$created" test && [[ ! -e "$created" ]] &&
-	! git -C "$REPO" worktree list --porcelain | grep -qF "worktree ${created}"; then
+removed_ok=0
+scratch_worktree_remove "$created" test && removed_ok=1
+porcelain=$(git -C "$REPO" worktree list --porcelain)
+if [[ "$removed_ok" -eq 1 && ! -e "$created" ]] &&
+	! grep -qF -- "worktree ${created}" <<<"$porcelain"; then
 	pass "owned clean scratch worktree is removed"
 else
 	fail "owned clean scratch worktree removal"
