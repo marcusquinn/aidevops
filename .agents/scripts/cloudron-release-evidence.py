@@ -40,6 +40,21 @@ def decode_json(value):
     return json.loads(value, object_pairs_hook=unique_object)
 
 
+def resolve_file_refs(source_manifest, fetch):
+    """Expand top-level source references without interpreting changelog sections."""
+    expanded = {}
+    for key, value in source_manifest.items():
+        if key == "changelog" or not isinstance(value, str) or not value.startswith("file://"):
+            continue
+        path = value[len("file://"):]
+        # aidevops:trust-boundary — only repository-relative files at the source
+        # commit may justify differences in the generated manifest.
+        require(path and not path.startswith("/") and ".." not in path.split("/"),
+                "file reference must be a non-empty repository-relative path")
+        expanded[key] = fetch(path).decode("utf-8")
+    return expanded
+
+
 def gh(*args):
     executable = shutil.which("gh")
     require(executable is not None, "GitHub CLI is unavailable")
@@ -114,6 +129,10 @@ class CatalogEvidence:
         comparable = dict(manifest)
         del comparable["dockerImage"]
         comparable["changelog"] = source_manifest["changelog"]
+        for key, expected in resolve_file_refs(source_manifest, lambda path: self.content(path, self.source)).items():
+            require(key in manifest and manifest[key] == expected,
+                    "published file reference differs from the source file")
+            comparable[key] = source_manifest[key]
         require(comparable == source_manifest, "generated manifest changes source settings")
         changelog = self.content("CHANGELOG", self.source).decode("utf-8")
         section = re.search(r"(?m)^\[" + re.escape(self.version) + r"\]\s*\n(.*?)(?=^\[|\Z)", changelog, re.S)

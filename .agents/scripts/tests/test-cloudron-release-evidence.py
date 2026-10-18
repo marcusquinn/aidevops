@@ -41,6 +41,7 @@ class EvidenceTests(unittest.TestCase):
                     "repository": {"full_name": self.repo}, "head_repository": {"full_name": self.repo}}
         self.attest_mutation = lambda result, image: None
         self.extra_runs = []
+        self.source_files = {}
 
     def api_content(self, path, value):
         data = value.encode() if isinstance(value, str) else json.dumps(value).encode()
@@ -59,6 +60,8 @@ class EvidenceTests(unittest.TestCase):
                 "contents/CHANGELOG?ref=" + self.source: self.api_content("CHANGELOG", "[2.0.12]\n* Fix startup.\n\n[2.0.11]\n* Earlier.\n"),
                 "actions/workflows/publish.yml/runs?event=push&status=success&per_page=100": {"workflow_runs": [self.run, *self.extra_runs]},
             }
+            mapping.update({"contents/" + path + "?ref=" + self.source: self.api_content(path, content)
+                            for path, content in self.source_files.items()})
             return copy.deepcopy(mapping[endpoint])
         self.assertEqual(args[:2], ("attestation", "verify"))
         self.assertEqual(args[3:], ("--repo", self.repo, "--signer-workflow", self.repo + "/.github/workflows/publish.yml",
@@ -91,6 +94,39 @@ class EvidenceTests(unittest.TestCase):
         self.image = "ghcr.io/" + self.repo + ":2.0.12@sha256:" + "3" * 64
         self.after["versions"]["2.0.12"]["manifest"]["dockerImage"] = self.image
         self.assertTrue(self.verify())
+
+    def test_exact_source_file_references(self):
+        self.source_files = {"DESCRIPTION.md": "# Description — café\r\n\n", "docs/POSTINSTALL.md": "  Welcome!\n"}
+        fields = {"description": "DESCRIPTION.md", "postInstallMessage": "docs/POSTINSTALL.md"}
+        published = self.after["versions"]["2.0.12"]["manifest"]
+        for key, path in fields.items():
+            self.manifest[key] = "file://" + path
+            published[key] = self.source_files[path]
+        self.assertTrue(self.verify())
+        for key in fields:
+            original = published[key]
+            for changed in (original + "x", original.rstrip(), self.manifest[key], None):
+                with self.subTest(key=key, changed=changed):
+                    published[key] = changed
+                    with self.assertRaisesRegex(MODULE.EvidenceError, "differs from the source file"):
+                        self.verify()
+            del published[key]
+            with self.subTest(key=key, missing=True), self.assertRaises(MODULE.EvidenceError):
+                self.verify()
+            published[key] = original
+
+    def test_unsafe_file_references_fail_before_fetch(self):
+        for path in ("", "../x", "docs/../x", "/etc/x", "//etc/x"):
+            with self.subTest(path=path), patch.object(self.proof, "content") as fetch:
+                with self.assertRaises(MODULE.EvidenceError):
+                    MODULE.resolve_file_refs({"description": "file://" + path}, fetch)
+                fetch.assert_not_called()
+
+    def test_file_reference_fetch_and_decode_fail_closed(self):
+        for error in (MODULE.EvidenceError("source unavailable"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid")):
+            with self.subTest(error=error), patch.object(self.proof, "content", side_effect=error):
+                with self.assertRaises((MODULE.EvidenceError, UnicodeDecodeError)):
+                    MODULE.resolve_file_refs({"description": "file://DESCRIPTION.md"}, self.proof.content)
 
     def test_generated_commit_boundaries(self):
         cases = [
