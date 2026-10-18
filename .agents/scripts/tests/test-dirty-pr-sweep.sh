@@ -680,8 +680,8 @@ test_union_rebase() (
 	after_head=$(git -C "$repo" rev-parse refs/remotes/origin/pr)
 	if [[ "$scenario" == todo ]]; then
 		[[ "$rc" -eq 0 && "$before_head" != "$after_head" ]]
-		git -C "$repo" show origin/pr:TODO.md | grep -qx 'pr task'
-		git -C "$repo" show origin/pr:TODO.md | grep -qx 'main task'
+		git -C "$repo" show origin/pr:TODO.md | grep -x 'pr task' >/dev/null
+		git -C "$repo" show origin/pr:TODO.md | grep -x 'main task' >/dev/null
 		git -C "$repo" merge-base --is-ancestor origin/main origin/pr
 		[[ "$(git --git-dir="${fixture}/origin.git" rev-parse pr)" == "$after_head" ]]
 	else
