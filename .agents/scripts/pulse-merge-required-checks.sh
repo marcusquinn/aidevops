@@ -337,18 +337,34 @@ _required_contexts_for_default_branch_uncached() {
 			classic_unavailable_reason="private-plan unavailable (HTTP 403)"
 		fi
 		if [[ -n "$classic_unavailable_reason" ]]; then
-			local ruleset_contexts_unavailable=""
-			ruleset_contexts_unavailable=$(_required_contexts_from_rulesets_for_default_branch "$repo_slug" "$default_branch") || return 1
-			if [[ -n "$ruleset_contexts_unavailable" ]]; then
-				aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: no classic branch protection on ${repo_slug} (${classic_unavailable_reason}), but active rulesets require contexts (GH#23019, GH#28864)"
-				printf '%s\n' "$ruleset_contexts_unavailable"
-				return 0
-			fi
-			aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: no classic branch protection or required ruleset contexts on ${repo_slug} default branch (${classic_unavailable_reason}) — empty contexts (t3193, GH#23019, GH#28864)"
-			return 0
+			# Settings may be hidden from a collaborator even on a protected branch.
+			# Rulesets alone cannot prove classic requirements are absent (GH#34965).
+			local branch_resp=""
+			branch_resp=$(_pmrc_gh_read gh api "repos/${repo_slug}/branches/${default_branch}" 2>&1) || {
+				_pmrc_emit_local_deferral "$branch_resp"
+				aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch metadata unavailable for ${repo_slug} — caller will fail closed (GH#34965)"
+				return 1
+			}
+			protection_resp=$(printf '%s' "$branch_resp" | jq -ce \
+				--arg array "$PMRC_JSON_ARRAY" --arg obj "$PMRC_JSON_OBJECT" --arg string "$PMRC_JSON_STRING" '
+				if type != $obj then error("invalid branch")
+				elif .protected == false then {contexts: []}
+				elif .protected == true then
+					.protection.required_status_checks |
+					if type == $obj and
+						((.contexts | type == $array) or (.checks | type == $array)) and
+						((.contexts // []) | type == $array and all(.[]; type == $string and length > 0)) and
+						((.checks // []) | type == $array and all(.[]; type == $obj and (.context | type == $string and length > 0)))
+					then . else error("unknown classic requirements") end
+				else error("unknown protection state") end
+			' 2>/dev/null) || {
+				aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch metadata cannot resolve classic requirements for ${repo_slug} — caller will fail closed (GH#34965)"
+				return 1
+			}
+		else
+			aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch protection API failed for ${repo_slug} (exit ${protection_rc}) — caller will fail closed (t2922)"
+			return 1
 		fi
-		aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: branch protection API failed for ${repo_slug} (exit ${protection_rc}) — caller will fail closed (t2922)"
-		return 1
 	fi
 
 	local classic_contexts="" ruleset_contexts=""
