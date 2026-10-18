@@ -394,6 +394,8 @@ _pc_assert_no_uncommitted_work() {
 #   $4 - audit_context: structured audit context
 #   $5 - removal reason (optional)
 #   $6 - removal mode (optional)
+#   $7 - compact archive dir (optional): when set, removal requires the
+#        source to still match the archive's captured fingerprint
 # Returns: 0 if the worktree directory was removed, 1 otherwise
 #######################################
 _pc_remove_local_commit_worktree_preserving_branch() {
@@ -403,6 +405,8 @@ _pc_remove_local_commit_worktree_preserving_branch() {
 	local audit_context="$4"
 	local removal_reason="${5:-local-commits-branch-preserved}"
 	local removal_mode="${6:-branch-preserved}"
+	local compact_archive_dir="${7:-}"
+	local helper_path="${AIDEVOPS_WORKTREE_ARCHIVE_HELPER:-${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-archive-helper.sh}"
 	local guard_status=0
 
 	[[ -n "$rp_age" && -n "$wt_path_age" ]] || return 1
@@ -413,6 +417,17 @@ _pc_remove_local_commit_worktree_preserving_branch() {
 		guard_status=$?
 	fi
 	[[ "$guard_status" -eq 0 || "$guard_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || return 1
+
+	# GH#34943: source stability. The compact archive was verified earlier,
+	# but a late owner may have written since; `remove --force` would discard
+	# that work. Re-check last, after the slower ownership/CWD guards.
+	if [[ -n "$compact_archive_dir" ]] &&
+		! "$helper_path" source-matches "$compact_archive_dir" "$wt_path_age" >/dev/null 2>>"$LOGFILE"; then
+		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch_age:-detached} — source changed after compact archive ${compact_archive_dir}" >>"$LOGFILE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
+			"compact-archive-source-changed" "$_PC_REMOVAL_SKIPPED" "$audit_context"
+		return 1
+	fi
 
 	if _worktree_remove_with_native_git "$wt_path_age" "$_WTAR_PC_CALLER" \
 		"$audit_context" "$_WTAR_BOOL_TRUE"; then
@@ -536,7 +551,7 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((${CLEANUP_WORKTREES_ARCHIVED_COUNT:-0} + 1))
 	archived_context="${audit_context} archive_path=${archive_dir} archive_outcome=verified delete_outcome=removed"
 	if _pc_remove_local_commit_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" \
-		"$archived_context" "$removal_reason" "compact-archive"; then
+		"$archived_context" "$removal_reason" "compact-archive" "$archive_dir"; then
 		return 0
 	fi
 	archived_context="${audit_context} archive_path=${archive_dir} archive_outcome=verified delete_outcome=failed"

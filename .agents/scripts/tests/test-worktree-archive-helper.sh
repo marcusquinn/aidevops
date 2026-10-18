@@ -117,6 +117,50 @@ test_verify_detects_tamper() {
 	return 0
 }
 
+# GH#34943: removal must refuse when a late writer changed the source after
+# capture. Each mutation class runs against a fresh archive of the same state.
+test_source_matches_detects_late_writes() {
+	local paths canonical worktree root archive mutation issue=20 rc=0
+	paths=$(setup_repo stability) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	root="$TEST_ROOT/stability-archives"
+	printf 'dirty\n' >>"$worktree/file.txt"
+	printf 'note\n' >"$worktree/note.txt"
+	for mutation in none tracked staged untracked-new untracked-edit commit; do
+		# Distinct issue per archive: same-second timestamps cannot collide.
+		issue=$((issue + 1))
+		if ! archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue "$issue" \
+			--reason failed-worker --base-branch main --output-root "$root"); then
+			printf '  archive failed before mutation: %s\n' "$mutation"
+			rc=1
+			continue
+		fi
+		case "$mutation" in
+		tracked) printf 'late\n' >>"$worktree/file.txt" ;;
+		staged) git -C "$worktree" add file.txt ;;
+		untracked-new) printf 'late\n' >"$worktree/late.txt" ;;
+		untracked-edit) printf 'late\n' >>"$worktree/note.txt" ;;
+		commit) git -C "$worktree" add -A && git -C "$worktree" commit -qm late ;;
+		esac
+		if [[ "$mutation" == none ]]; then
+			bash "$HELPER" source-matches "$archive" "$worktree" >/dev/null 2>&1 || rc=1
+		elif bash "$HELPER" source-matches "$archive" "$worktree" >/dev/null 2>&1; then
+			printf '  source-matches accepted mutation: %s\n' "$mutation"
+			rc=1
+		fi
+	done
+	python3 - "$archive/manifest.json" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+m = json.loads(p.read_text(encoding="utf-8"))
+del m["source_fingerprint"]
+p.write_text(json.dumps(m), encoding="utf-8")
+PY
+	if bash "$HELPER" source-matches "$archive" "$worktree" >/dev/null 2>&1; then rc=1; fi
+	result "source-matches refuses late writes and fingerprint-less archives" "$rc"
+	return 0
+}
+
 test_prune_modes() {
 	local paths canonical worktree root archive old_archive rc=0
 	paths=$(setup_repo prune) || return 1
@@ -156,6 +200,7 @@ test_invalid_arguments() {
 test_clean_archive
 test_restore_commits_dirty_and_untracked
 test_verify_detects_tamper
+test_source_matches_detects_late_writes
 test_prune_modes
 test_invalid_arguments
 

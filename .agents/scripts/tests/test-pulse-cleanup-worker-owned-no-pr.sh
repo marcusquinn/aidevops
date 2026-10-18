@@ -376,6 +376,50 @@ test_closed_issue_dirty_worktree_compacts_and_preserves_branch() {
 	return 0
 }
 
+# GH#34943: a late owner that writes after the compact archive was verified
+# must keep its worktree. The guard override simulates that write landing
+# between archive verification and native removal.
+test_late_write_after_compact_archive_preserves_worktree() {
+	local repo_dir="${TEST_ROOT}/repo-late-writer"
+	local wt_path="${TEST_ROOT}/worker-wt-late-writer"
+	local branch_name="feature/auto-20260507-190809-gh23089"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
+	printf 'dirty edit\n' >>"${wt_path}/worker.txt"
+	source_pulse_cleanup_with_stubs || return 1
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" == "23089" ]]; then
+			printf '%s\n' "CLOSED"
+			return 0
+		fi
+		return 1
+	}
+	worktree_removal_guard() {
+		local guarded_path="$1"
+		printf 'late owner write\n' >"${guarded_path}/late-owner.txt"
+		return 0
+	}
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-late-writer-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local branch_exists=1 rc=0
+	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
+	[[ "$cleanup_rc" -ne 0 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	grep -q 'late owner write' "${wt_path}/late-owner.txt" 2>/dev/null || rc=1
+	grep -q 'dirty edit' "${wt_path}/worker.txt" 2>/dev/null || rc=1
+	grep -q 'worktree-skipped.*compact-archive-source-changed' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "late write after compact archive preserves worktree" "$rc" \
+		"cleanup_rc=$cleanup_rc worktree_exists=$([[ -d "$wt_path" ]] && printf yes || printf no) branch_exists=$branch_exists pulse=$(cat "$LOGFILE" 2>/dev/null) log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
 test_failed_compact_archive_preserves_dirty_worktree() {
 	local repo_dir="${TEST_ROOT}/repo-compact-failure"
 	local wt_path="${TEST_ROOT}/worker-wt-compact-failure"
@@ -1288,6 +1332,7 @@ test_open_ci_repair_dirty_worktree_is_preserved
 test_open_head_pr_outranks_embedded_terminal_reference
 test_merged_branch_pr_removes_before_age_threshold
 test_closed_issue_dirty_worktree_compacts_and_preserves_branch
+test_late_write_after_compact_archive_preserves_worktree
 test_failed_compact_archive_preserves_dirty_worktree
 test_terminal_worktree_respects_live_owner_signal
 test_terminal_worktree_respects_recent_worker_metric

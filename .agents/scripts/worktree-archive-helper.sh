@@ -12,6 +12,7 @@ ARCHIVE_ROOT="${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archi
 MAX_UNTRACKED_FILES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES:-10000}"
 MAX_UNTRACKED_BYTES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES:-1073741824}"
 ARCHIVE_SCHEMA="aidevops-worktree-archive-v1"
+FINGERPRINT_UNAVAILABLE="worktree fingerprint unavailable"
 
 usage() {
 	cat <<'USAGE'
@@ -24,6 +25,7 @@ Commands:
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
+  source-matches ARCHIVE_DIR WORKTREE   Exit 0 only if WORKTREE is unchanged since capture
   prune --older-than 14d --max-total-size 20G [--dry-run|--apply]
       [--output-root DIR]
 
@@ -114,6 +116,88 @@ resolve_base_sha() {
 	return 0
 }
 
+# Print a one-line JSON fingerprint of the recoverable source state: HEAD,
+# branch, unstaged and staged binary diffs, and every untracked path with its
+# type and content (GH#34943). Compact archives record it so removal can
+# prove nothing changed between capture and deletion. Ignored files and
+# skip-worktree/assume-unchanged edits are not covered (documented limits).
+source_fingerprint() {
+	local worktree="$1"
+	python3 - "$worktree" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", str(root), *args], check=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+
+
+try:
+    branch = git("symbolic-ref", "--short", "-q", "HEAD").decode().strip()
+except subprocess.CalledProcessError:
+    branch = "detached"
+untracked = hashlib.sha256()
+for raw in sorted(p for p in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if p):
+    target = root.joinpath(os.fsdecode(raw))
+    untracked.update(raw + b"\0")
+    if target.is_symlink():
+        untracked.update(b"L" + os.fsencode(os.readlink(target)))
+    elif target.is_file():
+        untracked.update(b"F")
+        with target.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1048576), b""):
+                untracked.update(chunk)
+    else:
+        untracked.update(b"?")
+    untracked.update(b"\0")
+print(json.dumps({
+    "head": git("rev-parse", "--verify", "HEAD").decode().strip(),
+    'branch': branch,
+    "diff_sha256": hashlib.sha256(git("diff", "--no-ext-diff", "--binary")).hexdigest(),
+    "staged_sha256": hashlib.sha256(git("diff", "--no-ext-diff", "--cached", "--binary")).hexdigest(),
+    "untracked_sha256": untracked.hexdigest(),
+}, sort_keys=True))
+PY
+	return $?
+}
+
+# Succeed only when WORKTREE is the archive's recorded source and its current
+# fingerprint equals the one captured at archive time. Missing fingerprints
+# (older archives) or any unreadable evidence fail closed so callers preserve.
+source_matches() {
+	local archive_dir="${1:-}"
+	local worktree="${2:-}"
+	local current=""
+	[[ -n "$archive_dir" && -n "$worktree" ]] || { usage >&2; return 1; }
+	validate_archive_dir "$archive_dir" || return 1
+	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
+	worktree=$(cd "$worktree" && pwd -P) || return 1
+	current=$(source_fingerprint "$worktree") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	python3 - "$archive_dir" "$worktree" "$current" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads((pathlib.Path(sys.argv[1]) / "manifest.json").read_text(encoding="utf-8"))
+recorded = manifest.get('source_fingerprint')
+if not isinstance(recorded, dict) or not recorded:
+    raise SystemExit("archive has no recorded fingerprint")
+if manifest.get('source_worktree') != sys.argv[2]:
+    raise SystemExit("archive worktree path mismatch")
+if json.loads(sys.argv[3]) != recorded:
+    raise SystemExit("worktree changed since archive capture")
+print("worktree matches archive")
+PY
+	return $?
+}
+
 capture_untracked() {
 	local worktree="$1"
 	local archive_dir="$2"
@@ -171,7 +255,8 @@ write_manifest() {
 	local remote_state="${12}"
 	local dirty_state="${13}"
 	local git_common_dir="${14}"
-	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" <<'PY'
+	local source_fingerprint_json="${15}"
+	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" "$source_fingerprint_json" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -201,6 +286,7 @@ manifest = {
     "default_branch": sys.argv[11],
     "remote_branch_state": sys.argv[12],
     "dirty_state": sys.argv[13],
+    'source_fingerprint': json.loads(sys.argv[16]),
     "artifacts": artifacts,
     "restore_instructions": f"worktree-archive-helper.sh restore {archive} --target <new-worktree-path>",
 }
@@ -214,6 +300,7 @@ archive_worktree() {
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir commit_count
+	local fingerprint_before="" fingerprint_after=""
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -240,6 +327,7 @@ archive_worktree() {
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
 	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }
 	worktree=$(cd "$worktree" && pwd -P) || return 1
+	fingerprint_before=$(source_fingerprint "$worktree") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
 	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
 	branch=$(git -C "$worktree" symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
@@ -285,7 +373,13 @@ with source.open("rb") as handle:
     target.write_bytes(handle.read())
 PY
 	fi
-	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" || return 1
+	# GH#34943: a capture that raced a late writer is not a faithful copy.
+	fingerprint_after=$(source_fingerprint "$worktree") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
+		die "worktree changed during archive capture: $worktree"
+		return 1
+	fi
+	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" || return 1
 	printf '%s\n' "$archive_dir"
 	return 0
 }
@@ -506,6 +600,7 @@ main() {
 	restore) restore_archive "$@" ;;
 	list) list_archives "$@" ;;
 	verify) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$1" ;;
+	source-matches) [[ $# -eq 2 ]] || { usage >&2; return 1; }; source_matches "$@" ;;
 	prune) prune_archives "$@" ;;
 	help|-h|--help) usage ;;
 	*) usage >&2; return 1 ;;
