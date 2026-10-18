@@ -122,9 +122,11 @@ resolve_base_sha() {
 # type and content (GH#34943). Compact archives record it so removal can
 # prove nothing changed between capture and deletion. Index entries flagged
 # skip-worktree or assume-unchanged hide edits from the diffs, so they fail
-# closed. Ignored files are not archived; each one's lstat stamp (mode,
+# closed. Ignored files are excluded by default; each one's lstat stamp (mode,
 # inode, size, mtime_ns, ctime_ns, as Git's own index stat check) is
-# fingerprinted so a late ignored write still blocks removal. More than
+# fingerprinted so a late ignored write still blocks removal. Explicit ignored
+# capture additionally hashes their contents and modes with the untracked data.
+# More than
 # AIDEVOPS_WORKTREE_FINGERPRINT_MAX_IGNORED (default 200000) files fails
 # closed. Unreadable entries raise, which also fails closed.
 source_fingerprint() {
