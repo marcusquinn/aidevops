@@ -305,6 +305,43 @@ run_http_classification_test() (
 	return 0
 )
 
+run_reconcile_quota_test() (
+	# Source the production caller through its existing help-only entry point.
+	# shellcheck source=../full-loop-release-helper.sh
+	source "${SCRIPT_DIR}/full-loop-release-helper.sh" help >/dev/null || return 1
+	# Earlier ownership cases replace release_lane_read; restore production code
+	# within this subshell before exercising the real caller and transport path.
+	unset _AIDEVOPS_RELEASE_LANE_LOADED
+	# shellcheck source=../release-lane-helper.sh
+	source "${SCRIPT_DIR}/release-lane-helper.sh" || return 1
+	local mode="quota" output="" rc=0
+	_full_loop_resolve_repo() {
+		printf 'test/repo\n'
+		return 0
+	}
+	gh() {
+		case "$mode" in
+		quota) printf 'gh: API rate limit exceeded PRIVATE_BODY (HTTP 403)\n' >&2 ;;
+		cooldown) printf '[gh-cooldown] primary-core active=true retry_at=1900000000\n' >&2 ;;
+		permission) printf 'gh: Forbidden PRIVATE_BODY (HTTP 403)\n' >&2 ;;
+		esac
+		return 1
+	}
+	for mode in quota cooldown permission; do
+		rc=0
+		output=$(_full_loop_release_existing_with_lane reconcile 101 2>&1) || rc=$?
+		[[ "$output" != *"PRIVATE_BODY"* ]] || return 1
+		if [[ "$mode" == "permission" ]]; then
+			[[ "$rc" -eq 1 && "$output" == *"retryable=false"* &&
+				"$output" == *"Cannot verify repository release lane"* ]] || return 1
+		else
+			[[ "$rc" -eq 76 && "$output" == *"GitHub API quota exhausted"* &&
+				"$output" != *"Cannot verify repository release lane"* ]] || return 1
+		fi
+	done
+	return 0
+)
+
 run_legacy_and_api_failure_test() (
 	local mode="absent"
 	local output=""
@@ -952,6 +989,7 @@ if run_setup_guard_cache_fallback_test; then assert_result 'setup uses only vali
 if run_merge_guard_test; then assert_result 'publisher lane never blocks ordinary merges' true; else assert_result 'publisher lane never blocks ordinary merges' false; fi
 if run_merge_guard_api_uncertainty_test; then assert_result 'unavailable publisher lane does not freeze merges' true; else assert_result 'unavailable publisher lane does not freeze merges' false; fi
 if run_http_classification_test; then assert_result 'only verified HTTP 404 is classified as an absent lane' true; else assert_result 'only verified HTTP 404 is classified as an absent lane' false; fi
+if run_reconcile_quota_test; then assert_result 'reconcile distinguishes quota and cooldown from genuine permission failures' true; else assert_result 'reconcile distinguishes quota and cooldown from genuine permission failures' false; fi
 if run_legacy_and_api_failure_test; then assert_result 'legacy absent lane remains compatible while API uncertainty permits only generic setup' true; else assert_result 'legacy absent lane remains compatible while API uncertainty permits only generic setup' false; fi
 if run_default_stale_boundary_and_fencing_test; then assert_result 'default stale recovery adopts at 299s, reclaims at 300s, and fences the prior owner' true; else assert_result 'default stale recovery adopts at 299s, reclaims at 300s, and fences the prior owner' false; fi
 if run_stale_reclamation_guard_test; then assert_result 'preparing, tagged, and receipted lanes remain reconcile-only' true; else assert_result 'preparing, tagged, and receipted lanes remain reconcile-only' false; fi
