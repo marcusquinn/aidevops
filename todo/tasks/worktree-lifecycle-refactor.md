@@ -218,9 +218,12 @@ All four were confirmed in the code and fixed:
 1. Dirty-PR ephemeral cleanup ignored a refused `worktree remove` and then ran
    `rm -rf` and an unconditional `branch -D`. Now native removal is the only
    remover: a refusal (lock, unregistered path) preserves the directory and
-   branch. The branch is deleted with `update-ref -d <ref> <captured-oid>`,
-   and only when it is not checked out elsewhere. Pre-add failure paths use
-   `rmdir`.
+   branch. Removal also needs invocation-owned evidence: a random owner token
+   written into the worktree's admin directory at creation, and a branch tip
+   this run produced (the creation tip or its own rebase result). Anything else
+   preserves both the worktree and the branch. The branch is then deleted with
+   `update-ref -d <ref> <that-tip>` (compare-and-swap), and only when it is not
+   checked out elsewhere. Pre-add failure paths use `rmdir`.
 2. `source-matches` ran before native removal's lock, common-dir and
    managed-lifetime probes. It now runs inside `_worktree_remove_with_native_git`
    (new 6th argument) after every probe, immediately before `remove --force`.
@@ -228,18 +231,36 @@ All four were confirmed in the code and fixed:
    snapshot, gets the same check. The late-write test now injects the write at
    the managed-lifetime probe. The residual race is the native removal call itself.
 3. The fingerprint now fails closed on skip-worktree or assume-unchanged index
-   entries and covers the collapsed ignored-path inventory (type, size, mtime).
-   Writes deep inside a pre-existing ignored directory remain undetected. This
-   is a documented limit; ignored content is never archived.
+   entries. It also covers every ignored file's lstat stamp (mode, inode, size,
+   mtime_ns, ctime_ns), the same stat check Git uses for its own index. A late
+   write anywhere in ignored content therefore blocks removal. More than
+   `AIDEVOPS_WORKTREE_FINGERPRINT_MAX_IGNORED` (default 200000) ignored files,
+   or any unreadable entry, fails closed.
 4. A failed checkout filter in `scan-ref` was counted as zero lines. It now warns
    with the path and counts the unfiltered blob.
 
 Also, as non-blocking: markdownlint arguments that contain glob metacharacters
 now use the `:` literal form. `test-pulse-cleanup-centralize-worktrees.sh`
 failed 3/6 on unchanged `main` because it had no fixture registry; it now has a
-fixture-owned registry and passes 6/6. The ad-hoc probe (locked ephemeral, moved
-branch, skip-worktree, assume-unchanged, late ignored file, failing smudge
-filter) passed 9/9 on Bash 5.3 and 3.2. The review was not re-run on the fixes.
+fixture-owned registry and passes 6/6.
+
+An ad-hoc probe passed 13/13 on Bash 5.3 and 3.2. It covered: locked
+ephemeral, mismatched or empty owner token, a foreign commit before cleanup, a
+branch advanced during cleanup, owned removal, skip-worktree, assume-unchanged,
+a new ignored file, a same-size overwrite deep in an ignored directory, the
+ignored-file cap, and a failing smudge filter. An end-to-end probe of
+`_dps_rebase_in_ephemeral` against a local bare origin also passed: success with
+push, conflict, and TERM mid-rebase each left zero worktrees and zero
+`dirty-pr-sweep/*` branches.
+
+The first re-review closed findings 2 and 4 and left 1 and 3 open
+(cleanup-time tip adopted as ownership; collapsed ignored inventory). Both were
+reworked as described above.
+
+Found while probing, and outside this scope (identical on `main`): `rebase -X
+union` does not resolve TODO.md conflicts. `union` is a merge driver, not a
+strategy option, and no `merge=union` attribute applies, so the TODO-only
+auto-rebase never succeeds. Filed as a follow-up.
 
 Outstanding: NixOS execution, concurrent cleaners and late owners,
 interrupted creation/removal, the timing decision, a re-review of the fixes,

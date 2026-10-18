@@ -121,9 +121,11 @@ resolve_base_sha() {
 # type and content (GH#34943). Compact archives record it so removal can
 # prove nothing changed between capture and deletion. Index entries flagged
 # skip-worktree or assume-unchanged hide edits from the diffs, so they fail
-# closed. Ignored paths are not archived; their collapsed inventory (type,
-# size, mtime) is fingerprinted so a late ignored write still blocks removal.
-# Writes deep inside a pre-existing ignored directory remain undetected.
+# closed. Ignored files are not archived; each one's lstat stamp (mode,
+# inode, size, mtime_ns, ctime_ns, as Git's own index stat check) is
+# fingerprinted so a late ignored write still blocks removal. More than
+# AIDEVOPS_WORKTREE_FINGERPRINT_MAX_IGNORED (default 200000) files fails
+# closed. Unreadable entries raise, which also fails closed.
 source_fingerprint() {
 	local worktree="$1"
 	python3 - "$worktree" <<'PY'
@@ -169,9 +171,13 @@ for entry in listed("-v"):
     if entry[:1] == b"S" or entry[:1].islower():
         raise SystemExit("index has skip-worktree/assume-unchanged entries")
 ignored = hashlib.sha256()
-for raw in listed("--others", "--ignored", "--exclude-standard", "--directory"):
+ignored_paths = listed("--others", "--ignored", "--exclude-standard")
+if len(ignored_paths) > int(os.environ.get("AIDEVOPS_WORKTREE_FINGERPRINT_MAX_IGNORED", "200000")):
+    raise SystemExit("too many ignored files to fingerprint")
+for raw in ignored_paths:
     info = os.lstat(root.joinpath(os.fsdecode(raw.rstrip(b"/"))))
-    ignored.update(raw + b"\0" + ("%o:%d:%d" % (info.st_mode, info.st_size, info.st_mtime_ns)).encode() + b"\0")
+    stamp = "%o:%d:%d:%d:%d" % (info.st_mode, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    ignored.update(raw + b"\0" + stamp.encode() + b"\0")
 print(json.dumps({
     "head": git("rev-parse", "--verify", "HEAD").decode().strip(),
     'branch': branch,

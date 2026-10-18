@@ -169,6 +169,34 @@ is_in_changed_range() {
 
 # --- markdownlint mode --------------------------------------------------------
 
+# violation_location <violation> <changed-files>
+# Print the file, a newline, then the line number of a markdownlint-cli2
+# "<path>:<line>[:<col>] ..." record; return 1 for non-violation lines.
+# Known changed paths match as prefixes (longest wins) so names containing ':'
+# resolve (GH#34943); otherwise the generic path:number parse applies.
+violation_location() {
+	local _violation="$1"
+	local _changed_files="$2"
+	local _vfile="" _vline="" _vrest="" _cf=""
+	while IFS= read -r _cf; do
+		[ -n "$_cf" ] && [ "${#_cf}" -gt "${#_vfile}" ] || continue
+		case "$_violation" in
+		"${_cf}:"[0-9]*)
+			_vrest="${_violation#"${_cf}:"}"
+			_vline="${_vrest%%[!0-9]*}"
+			_vfile="$_cf"
+			;;
+		esac
+	done <<<"$_changed_files"
+	if [ -z "$_vfile" ]; then
+		printf '%s' "$_violation" | grep -qE '^[^:]+:[0-9]+' || return 1
+		_vfile=$(printf '%s' "$_violation" | cut -d: -f1)
+		_vline=$(printf '%s' "$_violation" | cut -d: -f2)
+	fi
+	printf '%s\n%s' "$_vfile" "$_vline"
+	return 0
+}
+
 run_markdownlint() {
 	local _base="$1"
 	local _head="$2"
@@ -219,26 +247,11 @@ run_markdownlint() {
 	{
 		while IFS= read -r _violation; do
 			[ -n "$_violation" ] || continue
-			# Violations are "<path>:<line>[:<col>] ...". Match the known
-			# changed paths as prefixes (longest wins) so names containing ':'
-			# resolve (GH#34943); otherwise keep the generic path:number parse.
-			local _vfile="" _vline="" _vrest="" _cf=""
-			while IFS= read -r _cf; do
-				[ -n "$_cf" ] && [ "${#_cf}" -gt "${#_vfile}" ] || continue
-				case "$_violation" in
-				"${_cf}:"[0-9]*)
-					_vrest="${_violation#"${_cf}:"}"
-					_vline="${_vrest%%[!0-9]*}"
-					_vfile="$_cf"
-					;;
-				esac
-			done <<<"$_changed_files"
-			if [ -z "$_vfile" ]; then
-				# Skip non-violation lines (info headers, blank lines, etc.)
-				printf '%s' "$_violation" | grep -qE '^[^:]+:[0-9]+' || continue
-				_vfile=$(printf '%s' "$_violation" | cut -d: -f1)
-				_vline=$(printf '%s' "$_violation" | cut -d: -f2)
-			fi
+			local _vloc="" _vfile="" _vline=""
+			# Skip non-violation lines (info headers, blank lines, etc.)
+			_vloc=$(violation_location "$_violation" "$_changed_files") || continue
+			_vfile="${_vloc%$'\n'*}"
+			_vline="${_vloc##*$'\n'}"
 
 			_total_count=$((_total_count + 1))
 
