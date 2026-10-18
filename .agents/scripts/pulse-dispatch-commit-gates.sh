@@ -469,8 +469,12 @@ _has_committed_to_main_cache_label() {
 # both the explicit auto-dispatch handoff and the canonical body marker.
 # Review/CI feedback specs remain dispatchable through their source labels.
 #
+# Shared by dispatch_with_dedup and the pre-ranking candidate filter
+# (_dispatch_filter_consolidated_candidates, GH#35038), so .labels may be
+# GitHub objects ({name}) or the normalized string names of candidate JSON.
+#
 # Args:
-#   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
+#   $1 - issue_meta_json (pre-fetched JSON with a .labels array and .body)
 #
 # Exit codes:
 #   0 - consolidated label is present
@@ -479,8 +483,8 @@ _has_committed_to_main_cache_label() {
 _has_consolidated_label() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
-	if printf '%s' "$issue_meta_json" | jq -e --arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" '
-		(.labels | map(.name)) as $labels
+	if printf '%s' "$issue_meta_json" | jq -e --arg auto_dispatch_label "${_PULSE_DISPATCH_AUTO_LABEL:-auto-dispatch}" '
+		(.labels | map(.name? // .)) as $labels
 		| (
 			(($labels | index($auto_dispatch_label)) != null)
 			and ((.body // "") | test("(^|\\n)_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\\._(\\n|$)"))

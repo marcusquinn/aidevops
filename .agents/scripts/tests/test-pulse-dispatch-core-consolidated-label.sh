@@ -163,6 +163,99 @@ test_empty_or_invalid_meta_returns_nonzero() {
 	return 0
 }
 
+test_string_label_candidates_use_same_predicate() {
+	local blocked='{"number":1,"labels":["status:available","consolidated"]}'
+	local spec='{"number":2,"body":"_Supersedes #1 — this issue is the consolidated spec._","labels":["consolidated","auto-dispatch"]}'
+	if _has_consolidated_label "$blocked" && ! _has_consolidated_label "$spec"; then
+		print_result "normalized string labels use the same predicate" 0
+		return 0
+	fi
+	print_result "normalized string labels use the same predicate" 1 \
+		"Expected candidate-shaped string labels to match object-label results"
+	return 0
+}
+
+# GH#35038: the candidate projection keeps consolidated bodies, and the
+# pre-ranking filter drops exactly what dispatch_with_dedup would reject,
+# surfacing a stranded draft checkpoint once without relabelling.
+test_projection_and_prerank_filter_match_gate() {
+	local test_root="" status=0
+	test_root=$(mktemp -d) || {
+		print_result "projection and pre-ranking filter match the dispatch gate" 1 "mktemp failed"
+		return 0
+	}
+	(
+		set +e
+		SCRIPT_DIR="${SCRIPT_DIR}/.."
+		# shellcheck source=../pulse-repo-meta.sh
+		source "${SCRIPT_DIR}/pulse-repo-meta.sh"
+		# shellcheck source=../pulse-dispatch-commit-gates.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-commit-gates.sh"
+		# shellcheck source=../pulse-dispatch-lib-candidates.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh"
+		HOME="${test_root}/home"
+		LOGFILE="${test_root}/pulse.log"
+		GH_CALLS="${test_root}/gh-calls.log"
+		: >"$LOGFILE"
+		: >"$GH_CALLS"
+		_dispatch_stats_increment() { return 0; }
+		gh() {
+			printf '%s\n' "$*" >>"$GH_CALLS"
+			case "$*" in
+			"api repos/owner/repo/issues/106 --jq"*)
+				printf '%s\n' '_Supersedes #99 — this issue is the consolidated spec._'
+				;;
+			"pr list"*)
+				printf '%s\n' '[{"number":501,"title":"t18726: draft","body":"For #101","isDraft":true,"headRefOid":"0123456789abcdef0123456789abcdef01234567"}]'
+				;;
+			"api --paginate"*) printf '[]\n' ;;
+			"api repos/owner/repo/issues/101/comments --method POST"*) printf '{}\n' ;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		local spec='_Supersedes #99 — this issue is the consolidated spec._'
+		local raw="" projected="" filtered="" second="" plain="" number=""
+		raw=$(jq -nc --arg spec "$spec" '[
+			{number:101,title:"stranded",url:"u",body:$spec,labels:[{name:"status:available"},{name:"consolidated"}],assignees:[]},
+			{number:102,title:"spec",url:"u",body:$spec,labels:[{name:"consolidated"},{name:"auto-dispatch"}],assignees:[]},
+			{number:103,title:"no marker",url:"u",body:"Hand-written body.",labels:[{name:"consolidated"},{name:"auto-dispatch"}],assignees:[]},
+			{number:104,title:"plain",url:"u",body:"Plain body.",labels:[{name:"auto-dispatch"}],assignees:[]},
+			{number:105,title:"feedback",url:"u",body:"x",labels:[{name:"consolidated"},{name:"source:review-feedback"}],assignees:[]},
+			{number:106,title:"live shape",url:"u",labels:[{name:"consolidated"},{name:"auto-dispatch"}],assignees:[]}
+		]')
+		projected=$(_filter_dispatchable_issue_candidates_json "$raw") || exit 2
+		jq -e 'map(select(.number == 102))[0].body | test("consolidated spec")' <<<"$projected" >/dev/null || exit 3
+		jq -e 'map(select(.number == 104))[0] | has("body") | not' <<<"$projected" >/dev/null || exit 4
+		# Every excluded candidate is one the dispatch-time gate rejects.
+		for number in 101 103; do
+			_has_consolidated_label "$(jq -c --argjson n "$number" '.[] | select(.number == $n)' <<<"$raw")" || exit 5
+		done
+		filtered=$(_dispatch_filter_consolidated_candidates owner/repo "$projected")
+		[[ "$(jq -c 'map(.number)' <<<"$filtered")" == '[102,104,105,106]' ]] || exit 6
+		jq -e 'all(.[]; has("body") | not)' <<<"$filtered" >/dev/null || exit 7
+		[[ "$(grep -c 'consolidated management-label gate skipped #101 #103' "$LOGFILE")" == 1 ]] || exit 8
+		grep -q 'CONSOLIDATED_CHECKPOINT_ATTENTION_POSTED #101 (owner/repo) draft PR #501' "$LOGFILE" || exit 9
+		[[ "$(grep -c -- '--method POST' "$GH_CALLS")" == 1 ]] || exit 10
+		grep -q 'issues/101/comments --method POST' "$GH_CALLS" || exit 11
+		# Attention never relabels (auto-dispatch is not re-added) or edits state.
+		grep -qE '^(issue|pr) (edit|close)|/labels|--method (PATCH|PUT|DELETE)' "$GH_CALLS" && exit 12
+		# A fresh attention stamp suppresses repeat PR/comment lookups.
+		: >"$GH_CALLS"
+		second=$(_dispatch_filter_consolidated_candidates owner/repo "$projected")
+		[[ "$second" == "$filtered" ]] || exit 13
+		grep -q 'pr list' "$GH_CALLS" && exit 14
+		# Without consolidated candidates the input passes through unchanged.
+		plain='[{"number":7,"labels":["auto-dispatch"]}]'
+		[[ "$(_dispatch_filter_consolidated_candidates owner/repo "$plain")" == "$plain" ]] || exit 15
+		exit 0
+	) || status=$?
+	rm -rf "$test_root"
+	print_result "projection and pre-ranking filter match the dispatch gate" "$status" \
+		"Assertion ${status} failed: expected #101/#103 filtered, #102/#104/#105/#106 kept and one attention post"
+	return 0
+}
+
 main() {
 	if ! define_helper_under_test; then
 		printf 'FATAL: helper extraction failed\n' >&2
@@ -179,6 +272,8 @@ main() {
 	test_instructional_marker_text_does_not_bypass
 	test_partial_label_name_does_not_match
 	test_empty_or_invalid_meta_returns_nonzero
+	test_string_label_candidates_use_same_predicate
+	test_projection_and_prerank_filter_match_gate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

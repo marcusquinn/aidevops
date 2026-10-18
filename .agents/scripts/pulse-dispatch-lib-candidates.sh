@@ -1215,6 +1215,171 @@ _dispatch_skip_for_capability_cooldown() {
 }
 
 #######################################
+# GH#35038: consolidated issues that the dispatch management-label gate
+# (_has_consolidated_label in pulse-dispatch-commit-gates.sh) always rejects
+# cost a full 12-21s dispatch_with_dedup attempt every cycle. The pre-ranking
+# filter applies that same shared predicate; dispatch_with_dedup keeps the
+# gate as defense-in-depth. Candidate JSON carries .body only when the issue
+# snapshot fetched it, so a consolidated candidate that has the auto-dispatch
+# handoff but no body gets one bounded REST body read. Every read or parse
+# failure keeps the candidate (fail-open to the dispatch-time gate).
+#######################################
+_DISPATCH_CONSOLIDATED_BODY_READ_MAX="${AIDEVOPS_DISPATCH_CONSOLIDATED_BODY_READ_MAX:-5}"
+[[ "$_DISPATCH_CONSOLIDATED_BODY_READ_MAX" =~ ^[0-9]+$ ]] || _DISPATCH_CONSOLIDATED_BODY_READ_MAX=5
+_DISPATCH_CONSOLIDATED_ATTENTION_MAX="${AIDEVOPS_DISPATCH_CONSOLIDATED_ATTENTION_MAX:-3}"
+[[ "$_DISPATCH_CONSOLIDATED_ATTENTION_MAX" =~ ^[0-9]+$ ]] || _DISPATCH_CONSOLIDATED_ATTENTION_MAX=3
+_DISPATCH_CONSOLIDATED_ATTENTION_TTL_SECONDS="${AIDEVOPS_DISPATCH_CONSOLIDATED_ATTENTION_TTL_SECONDS:-21600}"
+[[ "$_DISPATCH_CONSOLIDATED_ATTENTION_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_CONSOLIDATED_ATTENTION_TTL_SECONDS=21600
+_DISPATCH_CONSOLIDATED_ATTENTION_MARKER="aidevops:consolidated-checkpoint-attention"
+# jq: true when the candidate's labels contain $label (object or string names).
+# shellcheck disable=SC2016  # $label is jq program syntax, not a shell expansion
+_DISPATCH_HAS_LABEL_JQ='((.labels // []) | map(.name? // .) | index($label)) != null'
+
+# Runner-local stamp path for the consolidated checkpoint attention lookup.
+_dispatch_consolidated_attention_stamp_path() {
+	local repo="$1" issue="$2"
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+	printf '%s/.aidevops/logs/dispatch-consolidated-attention/%s--%s--%s\n' \
+		"$HOME" "${repo%%/*}" "${repo##*/}" "$issue"
+	return 0
+}
+
+# Returns 0 while this issue's attention lookup ran within the TTL (skip it).
+_dispatch_consolidated_attention_fresh() {
+	local repo="$1" issue="$2"
+	local stamp_file='' stamp='' now=''
+	[[ "$_DISPATCH_CONSOLIDATED_ATTENTION_TTL_SECONDS" -gt 0 ]] || return 0
+	stamp_file=$(_dispatch_consolidated_attention_stamp_path "$repo" "$issue") || return 0
+	[[ -f "$stamp_file" && ! -L "$stamp_file" ]] || return 1
+	read -r stamp <"$stamp_file" || return 1
+	now=$(date +%s)
+	[[ "$stamp" =~ ^[0-9]+$ ]] && ((now >= stamp && now - stamp < _DISPATCH_CONSOLIDATED_ATTENTION_TTL_SECONDS)) && return 0
+	return 1
+}
+
+#######################################
+# Surface one stranded draft checkpoint on a consolidated issue that lost its
+# auto-dispatch handoff (GH#35038). Posts at most one trusted attention comment
+# per draft PR head; it never changes labels (auto-dispatch is not re-added),
+# assignees or PR state, and never dispatches. A runner-local TTL stamp bounds
+# the PR/comment lookups to one per issue per TTL (the caller checks it with
+# _dispatch_consolidated_attention_fresh). Best-effort: all output goes to
+# LOGFILE so the caller's candidate JSON stdout stays clean.
+# Arguments: repo slug, issue number
+#######################################
+_dispatch_consolidated_checkpoint_attention() {
+	local repo="$1" issue="$2"
+	local stamp_file='' prs='' draft='' pr='' head='' key=''
+	local comments='' body='' ref_pattern=''
+	stamp_file=$(_dispatch_consolidated_attention_stamp_path "$repo" "$issue") || return 0
+	prs=$(gh pr list --repo "$repo" --state open --search "#${issue} draft:true" \
+		--json number,title,body,isDraft,headRefOid --limit 20 2>/dev/null) || return 0
+	# Same explicit-reference rule as the dispatch draft-checkpoint lookup:
+	# bare prose mentions are context, not checkpoint ownership.
+	ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue}|GH#${issue})([^[:alnum:]_]|$)"
+	draft=$(jq -r --arg pattern "$ref_pattern" '
+		[.[]? | select(.isDraft == true and ((.headRefOid // "") | test("^[0-9a-fA-F]{40,64}$")) and
+			(((.title // "") | test($pattern; "i")) or ((.body // "") | test($pattern; "i"))))]
+		| .[0] // empty | "\(.number) \(.headRefOid)"' <<<"$prs" 2>/dev/null) || return 0
+	if [[ -n "$draft" ]]; then
+		read -r pr head <<<"$draft"
+		[[ "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ ^[0-9a-fA-F]{40,64}$ ]] || return 0
+		key="${_DISPATCH_CONSOLIDATED_ATTENTION_MARKER} pr=${pr} head=${head}"
+		comments=$(gh api --paginate "repos/${repo}/issues/${issue}/comments?per_page=100" 2>/dev/null) || return 0
+		if jq -se --arg key "$key" 'flatten | any(.[];
+			((.author_association // "") as $a | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR") and
+			((.body // "") | contains($key)))' <<<"$comments" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Dispatch enumeration: CONSOLIDATED_CHECKPOINT_ATTENTION_EXISTS #${issue} (${repo}) draft PR #${pr} head=${head}" >>"$LOGFILE"
+		else
+			body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${key} -->
+CONSOLIDATED_CHECKPOINT_ATTENTION pr=${pr} head=${head}
+
+This \`consolidated\` issue has no \`auto-dispatch\` label while draft PR #${pr} remains open at head \`${head}\`. The dispatch management-label gate rejects consolidated issues without the explicit \`auto-dispatch\` handoff, so Pulse skips this issue during candidate enumeration and nothing resumes or retires the checkpoint automatically. This record changes no labels and grants no continuation or approval.
+
+Next action for the brief owner (write access required), one of:
+
+1. If this is the canonical consolidated spec (its body keeps the \`_Supersedes #N — this issue is the consolidated spec._\` line) and work should continue, re-add \`auto-dispatch\`; ordinary draft-checkpoint handling then resumes.
+2. Recover or finish the exact draft head through the guarded continuation workflow in \`reference/checkpoint-revision-recovery.md\`.
+3. If the work landed elsewhere or is no longer planned, close draft PR #${pr} and this issue with a pointer to the verified outcome.
+
+Posted once per draft PR head.
+<!-- ops:end -->"
+			gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$body" >/dev/null 2>&1 || {
+				echo "[pulse-wrapper] Dispatch enumeration: consolidated checkpoint attention post failed for #${issue} (${repo}) draft PR #${pr}; retrying next cycle" >>"$LOGFILE"
+				return 0
+			}
+			echo "[pulse-wrapper] Dispatch enumeration: CONSOLIDATED_CHECKPOINT_ATTENTION_POSTED #${issue} (${repo}) draft PR #${pr} head=${head}" >>"$LOGFILE"
+			_dispatch_stats_increment "dispatch_consolidated_checkpoint_attention_posted"
+		fi
+	fi
+	mkdir -p "${stamp_file%/*}" 2>/dev/null || return 0
+	date +%s >"$stamp_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Enumeration filter: drop consolidated candidates that dispatch_with_dedup
+# would always reject, logging one summary line per repository (GH#35038).
+# Stranded draft checkpoints on excluded issues without auto-dispatch are
+# surfaced through _dispatch_consolidated_checkpoint_attention.
+#
+# Arguments: repo slug, candidates JSON array
+# Stdout: filtered JSON array (input unchanged when nothing is consolidated)
+#######################################
+_dispatch_filter_consolidated_candidates() {
+	local repo_slug="$1" candidates_json="$2"
+	local auto_label="${_PULSE_DISPATCH_AUTO_LABEL:-auto-dispatch}"
+	local candidate='' meta='' issue='' body='' skipped='' filtered=''
+	local body_reads=0 attention_checks=0
+	local -a stranded=()
+	if ! declare -F _has_consolidated_label >/dev/null 2>&1 ||
+		! jq -e --arg label consolidated "any(.[]?; ${_DISPATCH_HAS_LABEL_JQ})" <<<"$candidates_json" >/dev/null 2>&1; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	while IFS= read -r candidate; do
+		issue=$(jq -r '.number // ""' <<<"$candidate" 2>/dev/null) || continue
+		[[ "$issue" =~ ^[1-9][0-9]*$ ]] || continue
+		meta="$candidate"
+		if jq -e --arg label "$auto_label" "(has(\"body\") | not) and (${_DISPATCH_HAS_LABEL_JQ})" <<<"$candidate" >/dev/null 2>&1; then
+			# Only a canonical body marker can make this one dispatchable.
+			[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || continue
+			((body_reads < _DISPATCH_CONSOLIDATED_BODY_READ_MAX)) || continue
+			body_reads=$((body_reads + 1))
+			body=$(gh api "repos/${repo_slug}/issues/${issue}" --jq '.body // ""' 2>/dev/null) || continue
+			meta=$(jq -c --arg body "$body" '. + {body: $body}' <<<"$candidate" 2>/dev/null) || continue
+		fi
+		_has_consolidated_label "$meta" || continue
+		skipped="${skipped:+${skipped},}${issue}"
+		if ! jq -e --arg label "$auto_label" "$_DISPATCH_HAS_LABEL_JQ" <<<"$candidate" >/dev/null 2>&1; then
+			stranded+=("$issue")
+		fi
+	done < <(jq -c --arg label consolidated ".[]? | select(${_DISPATCH_HAS_LABEL_JQ})" <<<"$candidates_json" 2>/dev/null)
+	if [[ -z "$skipped" ]]; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	if ! filtered=$(jq -c --arg skipped "$skipped" \
+		'($skipped | split(",") | map(tonumber)) as $excluded | map(select((.number as $n | $excluded | index($n)) == null) | del(.body))' \
+		<<<"$candidates_json" 2>/dev/null); then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	echo "[pulse-wrapper] Dispatch enumeration: ${repo_slug} consolidated management-label gate skipped #${skipped//,/ #} (blocked:consolidated would always reject; GH#35038)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_candidate_consolidated_filtered"
+	# Stranded checkpoints: excluded issues that lost the auto-dispatch handoff.
+	for issue in ${stranded[@]+"${stranded[@]}"}; do
+		_dispatch_consolidated_attention_fresh "$repo_slug" "$issue" && continue
+		((attention_checks < _DISPATCH_CONSOLIDATED_ATTENTION_MAX)) || break
+		attention_checks=$((attention_checks + 1))
+		_dispatch_consolidated_checkpoint_attention "$repo_slug" "$issue"
+	done
+	printf '%s\n' "$filtered"
+	return 0
+}
+
+#######################################
 # Enumeration filter: drop this repository's cooled-down candidates before
 # ranking, so a repository whose candidates are all cooled down is not the
 # first wave's "first nonempty" repository (GH#33647). Fails open: any
@@ -1227,7 +1392,8 @@ _dispatch_filter_capability_cooled_candidates() {
 	local repo_slug="$1" repo_path="$2" candidates_json="$3"
 	local dir="" config_fp="" rows="" issue="" skipped="" filtered=""
 	local updated='' classes='' fingerprint=''
-	# Keep the engine's existing pre-ranking filter entrypoint for both reasons.
+	# Keep the engine's existing pre-ranking filter entrypoint for every reason.
+	candidates_json=$(_dispatch_filter_consolidated_candidates "$repo_slug" "$candidates_json")
 	candidates_json=$(_dispatch_filter_checkpoint_cooled_candidates "$repo_slug" "$candidates_json")
 	dir=$(_dispatch_capability_cooldown_dir)
 	if [[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -eq 0 || ! -d "$dir" ||

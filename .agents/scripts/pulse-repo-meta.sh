@@ -609,7 +609,7 @@ _filter_dispatchable_issue_candidates_json() {
 			select((($labels | index("status:in-review")) == null) or $has_auto_dispatch) |
 			select((($labels | index("status:claimed")) == null) or $has_auto_dispatch) |
 			select(($labels | index("status:done")) == null) |
-			{
+			({
 				number,
 				title,
 				url,
@@ -617,7 +617,12 @@ _filter_dispatchable_issue_candidates_json() {
 				updatedAt,
 				labels: $labels,
 				assignees: $assignees
-			}
+			} +
+			# GH#35038: keep a fetched body only for consolidated issues, so
+			# the pre-ranking consolidated filter can recognize canonical
+			# successor specs without carrying every body through ranking.
+			(if (($labels | index("consolidated")) != null) and has("body")
+				then {body: (.body // "")} else {} end))
 		]
 	'
 	printf '%s' "$issue_json" | jq -c --arg auto_dispatch_label 'auto-dispatch' \
