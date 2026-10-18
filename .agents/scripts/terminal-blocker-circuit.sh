@@ -19,11 +19,14 @@ _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
 _TBC_SOURCE_ACCESS='source_access_blocked'
 _TBC_RUNNER_RECOVERY_OWNER='runner-recovery'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
-# GH#34846: classes whose task revision tracks only the brief (plus linked
-# dependencies for some), never default-branch HEAD. A runtime-owned blocked
-# exit holds these from the first observation; a relevant revision or trusted
-# retry is the wake condition, so unrelated merges cannot churn them.
-_TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked '
+# GH#34846: classes whose first-observation hold re-arms on a changed task
+# revision or a trusted retry. Most track only the brief (plus linked
+# dependencies), never default-branch HEAD, so unrelated merges cannot churn
+# them. GH#35095: target_code_blocker is the deliberate exception: its task
+# revision includes the default-branch HEAD, so any target-code change re-arms
+# it (any-merge granularity was chosen over a narrower signal because the
+# defect lives in code outside the brief and no linked-fix marker is reliable).
+_TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked target_code_blocker '
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
 # Legacy/malformed IDs never let a tied retry clear evidence. For selection,

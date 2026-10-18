@@ -798,13 +798,19 @@ test_first_observation_scope_hold_releases_on_revision() {
 			_hrff_blocked_exit_holds && exit 1
 		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:target_code_blocker') \
 			_hrff_enqueue_observation_recovery 42 owner/repo
-		[[ "$enqueued" -eq 1 ]] || exit 1
-		# Seed backfill: only this runner's observation of a re-armed class.
-		local raw=""
+		# GH#35095: target_code_blocker first observations are queued too.
+		[[ "$enqueued" -eq 2 ]] || exit 1
+		# Seed backfill: any trusted runner's observation of a re-armed class.
+		local raw="" target_raw=""
 		raw=$(jq -nc --argjson c "$tb_fixture_comments" '[$c | map(. + {user:{login:.author}})]')
 		[[ "$(_tbr_seed_reason "$raw" runner-one)" == files_scope_excluded ]] || exit 1
-		_tbr_seed_reason "$raw" other-runner >/dev/null && exit 1
-		_tbr_seed_reason "$(printf '%s' "$raw" | jq -c '.[0][0].body |= sub("files_scope_excluded owner=brief-author"; "target_code_blocker owner=target-maintainer")')" \
+		[[ "$(_tbr_seed_reason "$raw" other-runner)" == files_scope_excluded ]] || exit 1
+		# An untrusted foreign commenter never seeds.
+		_tbr_seed_reason "$(printf '%s' "$raw" | jq -c '.[0][0].author_association = "NONE"')" other-runner >/dev/null && exit 1
+		target_raw=$(printf '%s' "$raw" | jq -c '.[0][0].body |= sub("files_scope_excluded owner=brief-author"; "target_code_blocker owner=target-maintainer")')
+		[[ "$(_tbr_seed_reason "$target_raw" runner-one)" == target_code_blocker ]] || exit 1
+		# Classes outside the re-arm set stay unseeded.
+		_tbr_seed_reason "$(printf '%s' "$raw" | jq -c '.[0][0].body |= sub("files_scope_excluded owner=brief-author"; "runner_capability_unmet owner=runner-recovery")')" \
 			runner-one >/dev/null && exit 1
 		# Recovery owner: unchanged brief stays held, revised brief releases once.
 		TBR_ROOT="${TEST_ROOT}/recovery" TBR_EXCERPT_DIR="${TEST_ROOT}/no-excerpts" TBR_REPOS_JSON="${TEST_ROOT}/no-repos.json"
@@ -1161,7 +1167,44 @@ test_verification_environment_alias() {
 	return 0
 }
 
+test_target_code_blocker_observation_rearms() {
+	local status=0 issue='{"title":"Fix helper","body":"### Files Scope\n- helper.sh"}'
+	local fingerprint="" revision="" comments="" held=0
+	fingerprint=$(_terminal_blocker_hash 'v2:target_code_blocker')
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" target_code_blocker) || status=1
+	comments=$(jq -nc --arg body "Terminal blocker: reason=target_code_blocker owner=target-maintainer
+<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{id:5,body:$body,author_association:"MEMBER",created_at:"2026-10-16T23:00:00Z"}]')
+	# Same target revision: still held.
+	terminal_blocker_observation_hold_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	# Target code changed: re-armed.
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	terminal_blocker_observation_hold_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	# Trusted OWNER retry after the observation re-arms an unchanged revision.
+	terminal_blocker_observation_hold_active "$(jq -c '. + [{id:6,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-16T23:30:00Z"}]' <<<"$comments")" \
+		"$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	# An unreadable target revision fails closed (rc 2), never releases.
+	TEST_TARGET_REVISION=unavailable
+	terminal_blocker_observation_hold_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || held=$?
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	[[ "$held" -eq 2 ]] || status=1
+	# Other hold labels keep the release helper from touching the issue.
+	(
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local touched=""
+		set_issue_status() { touched="x"; return 0; }
+		_tbr_release_circuit_hold owner/repo 42 '{"labels":[{"name":"status:blocked"},{"name":"needs-maintainer-review"}]}' "$comments"
+		_tbr_release_circuit_hold owner/repo 42 '{"labels":[{"name":"status:blocked"},{"name":"needs-maintainer-permissions"}]}' "$comments"
+		[[ -z "$touched" ]]
+	) || status=1
+	print_result "target_code_blocker first observation holds at same revision, re-arms on target change or retry" "$status"
+	return 0
+}
+
 main() {
+	test_target_code_blocker_observation_rearms
 	test_worker_capability_cooldown
 	test_verification_environment_alias
 	test_unknown_blocker_ready_pr_replay
