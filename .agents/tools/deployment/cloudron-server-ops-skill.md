@@ -55,7 +55,7 @@ cloudron repair --app <app>    # reconfigure without changing image
 cloudron clone --app <app> --location new-location
 ```
 
-Flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>` / `--memory-limit <bytes>`. `--versions-url <url>` is install-only; use it with `cloudron install` to link an app to a catalog, not with `cloudron update`.
+Flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>` / `--memory-limit <bytes>`. `--versions-url <url>` installs from a community catalog; on CLI 9.0+ `cloudron update --app <app> --versions-url <url> --force` also switches an existing source-built app to that catalog in place (see `cloudron-app-publishing-skill.md`).
 
 **On-server build (9.1+)** — directory with `CloudronManifest.json` + `Dockerfile`:
 

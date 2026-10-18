@@ -134,21 +134,26 @@ catalog's `.versions["X.Y.Z"].manifest` (which carries the digest-pinned
 
 ### Moving a source-built install to a catalog-linked install
 
-Only `cloudron install --versions-url <url>` links an app to a catalog; `cloudron
-update` has no `--versions-url` option. Updating from a scratch manifest can
-select the catalog's pinned image, but does not link the installed app for future
-catalog updates. On Cloudron CLI 8.2.6, install calls the community-app endpoint
-with the versions URL. To switch, back up the old app, install a new copy with
-`cloudron install --versions-url <catalog-url> --location <temporary-location>`,
-and keep the old app until the new one is verified. Move required data using the
-Cloudron dashboard's export/import flow (check the installed CLI's `cloudron
-export --help` and `cloudron import --help` before using CLI flags), or start
-fresh if the old app was only a test. Locations can hold only one app: use a
-temporary location, then move it after uninstalling the old app, or uninstall
-the old app first only when its backup and downtime are acceptable. Verify app
-health, sign-in, and stored credentials before uninstalling the old app. Confirm
-the new app is catalog-linked in the dashboard and reports the catalog image via
-`cloudron status --app <new-app>`.
+Switch the existing app in place. It keeps its app ID, data, database, location
+and mailbox (verified on Cloudron 10.1.5 with CLI 9.0.3):
+
+```bash
+cloudron --version   # needs 9.0+; otherwise prefix the commands below with npx -y cloudron@9
+cloudron update --app <app> --versions-url <catalog-url> --force
+cloudron status --app <app>   # Source: <catalog-url>; Docker image: the catalog digest
+```
+
+`--force` permits the source-type change. The update backs up first unless
+`--no-backup` is passed, then replaces the `local/...` image with the catalog's
+pinned image. Afterwards check health and sign-in, and that persistent secrets in
+`/app/data` were reused, not regenerated. CLI 8.x has no `update --versions-url`,
+and updating from a scratch manifest selects the pinned image without linking the
+app for catalog updates. `npx` uses the same `~/.cloudron.json` login.
+
+Avoid the reinstall route (back up, `cloudron install --versions-url` at a
+temporary location, then `cloudron import`): CLI 8.2.6 and 9.0.3 send
+`backupFormat`, which Cloudron 10 rejects with `400 format must be string`. Use
+it only through the dashboard's import, or for a fresh start from a test app.
 
 ### Pre-Merge CLI Dry Run
 
