@@ -430,11 +430,11 @@ _apply_repo() (
 	fi
 	trap 'rmdir "$_lock"' EXIT
 	# Query failures must not be interpreted as absence of an existing PR.
-	_prs=$(gh pr list --repo "$_slug" --state open --limit 100 \
-		--search '"chore: aidevops badge sync" in:title' \
-		--json headRefName,title,url) || return 1
+	# Use the authoritative, paginated list rather than the delayed search index.
+	_prs=$(gh api "repos/$_slug/pulls?state=open&per_page=100" --paginate \
+		--jq '.[] | {headRefName:.head.ref, title:.title, url:.html_url}') || return 1
 	local _existing
-	_existing=$(printf '%s\n' "$_prs" | jq -r --arg prefix "$_prefix" \
+	_existing=$(printf '%s\n' "$_prs" | jq -sr --arg prefix "$_prefix" \
 		'[.[] | select((.headRefName | startswith($prefix)) or
 		 (.title | startswith("chore: aidevops badge sync")))][0].url // empty') || return 1
 	if [[ -n "$_existing" ]]; then

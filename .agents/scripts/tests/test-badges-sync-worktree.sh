@@ -41,7 +41,7 @@ cat >"$ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -eu
 case "$1 $2" in
-'pr list') [[ "${FAIL_QUERY:-0}" != 1 ]]; cat "$PR_STATE" ;;
+'api repos/'*'/pulls?'*) [[ "${FAIL_QUERY:-0}" != 1 ]]; jq '.[]' "$PR_STATE" ;;
 'api repos/'*) printf 'trunk\n' ;;
 *) exit 1 ;;
 esac
