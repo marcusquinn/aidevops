@@ -1705,7 +1705,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18710 fix(pulse): rotate normalize passes so stage timeouts stop starving stale-claim recovery #bug ref:GH#34933 pr:#34936 completed:2026-10-17
 
-- [ ] t18713 fix(dirty-pr-sweep): TODO.md-only auto-rebase never succeeds — -X union is not a strategy option #auto-dispatch #bug ref:GH#34947
+- [x] t18713 fix(dirty-pr-sweep): TODO.md-only auto-rebase never succeeds — -X union is not a strategy option #auto-dispatch #bug ref:GH#34947 pr:#34962 completed:2026-10-18
 
 ## In Progress
 
