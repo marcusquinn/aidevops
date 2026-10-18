@@ -147,7 +147,12 @@ CLOUDRON_MAIL_TO_DOMAIN
 
 ## email
 
-Full email (SMTP + IMAP + ManageSieve). For webmail apps. Accept self-signed certs for internal IMAP/Sieve connections.
+Full email (SMTP + IMAP + ManageSieve). For webmail apps.
+
+- Keep TLS certificate verification enabled on internal mail connections: Cloudron 9.1 was verified to present its public certificate on internal ports. Dial the addon-provided internal host, but set the TLS SNI and certificate verification name to `CLOUDRON_EMAIL_SERVER_HOST` (the public mail FQDN).
+  - The same applies to `recvmail` IMAP connections using TLS: dial `CLOUDRON_MAIL_IMAP_SERVER` on the appropriate addon port and verify against the configured public mail FQDN; do not assume the `email` addon's env vars exist for `recvmail`.
+- Check implicit TLS with `openssl s_client -connect <internal host>:<port> -servername <mail FQDN> -verify_hostname <mail FQDN> -verify_return_error`; for STARTTLS ports, also add `-starttls imap`, `-starttls smtp`, or `-starttls sieve` as appropriate. SNI alone does not verify the hostname.
+- Only consider disabling verification as an explicit operator fallback if this check fails on an older or differently configured installation; record the certificate/error evidence and scope the exception to that internal connection, never all mail hosts.
 
 ```text
 CLOUDRON_EMAIL_SMTP_SERVER

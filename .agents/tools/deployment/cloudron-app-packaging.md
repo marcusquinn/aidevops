@@ -156,6 +156,15 @@ workers=$(( workers < 1 ? 1 : workers ))    # floor at 1
 
 ## Dockerfile Patterns
 
+**Mail-handling apps** (helpdesks, CRMs, ticketing): see [email addon TLS guidance](cloudron-app-packaging-skill/addons-ref.md#email).
+
+- Keep SSRF guards for all user-supplied IMAP/SMTP hosts; add only an operator-pinned exception for an exact match to the Cloudron public mail host on the approved IMAPS, SMTPS, or submission ports.
+- For that host/port pair only, dial the addon-provided internal `mail` service/port instead of the public IP; public-IP hairpin routing may be unavailable. Never turn this into a general private-address allowlist.
+- In `start.sh`, capture trusted addon env before reading `/app/data/env`, then recompute and overwrite the pinned host, allowed ports, internal destination, and TLS name afterward so user config cannot override them. Refresh on every start; absent addon values mean no exception.
+- Keep TLS verification enabled against the public mail FQDN, including SNI, even when dialing internally; use STARTTLS for submission as appropriate.
+- Hide upstream inbound-only features that require an internet-reachable SMTP listener on port 25 or an unprovisioned webhook relay (for example, forwarding to a token address); these do not work on a standard Cloudron install without that extra infrastructure.
+- Mark IMAP with the mailbox password as the recommended working path, and document unsupported inbound features in the package README's limits section.
+
 ```dockerfile
 FROM cloudron/php-base:8.5-20260920@sha256:a59a4334fbf50ebfdf8f6cc5527e099e4586349a1aefc546e85f7401ea366d65
 
