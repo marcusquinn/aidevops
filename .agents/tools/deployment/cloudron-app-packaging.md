@@ -401,6 +401,26 @@ actions and require explicit authorization.
 [ ] Auto-updater disabled; logs stream to stdout/stderr
 ```
 
+### Qualifying Tailscale-compatible packages
+
+For Headscale or any package exposing a Tailscale `--login-server`, prove real
+client behaviour on a Cloudron test install with
+`.agents/scripts/tailscale-client-qa-helper.sh`:
+
+```bash
+tailscale-client-qa-helper.sh run <app-location>                 # direct paths
+tailscale-client-qa-helper.sh run <app-location> --force-derp    # relay-only
+tailscale-client-qa-helper.sh cleanup [<app-location>]           # manual teardown
+```
+
+It starts two disposable official Tailscale containers (`hs-qa-a`, `hs-qa-b`),
+registers them with an ephemeral 30-minute pre-auth key (never printed), then
+prints `PASS:`/`FAIL:` lines for registration, server view, netcheck, peer ping
+and DERP, exiting non-zero on failure. Containers and the `qa` user's nodes are
+removed on exit. Override the server CLI with
+`--server-cmd 'ssh host headscale'` for non-Cloudron servers. Needs `docker`
+and `jq`. Attach the output to release evidence for each package update.
+
 ## Publishing
 
 Independent/community packages publish registry images through a hosted
