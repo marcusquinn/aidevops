@@ -199,6 +199,39 @@ workflow never changes or bypasses that policy. The normal job token pushes to
 GHCR. Review protection, Actions permissions, package checks and credentials
 before enabling the variable. Do not test publication against a real catalog.
 
+**Repository protection:** before enabling publication, a maintainer should
+deliberately apply these two repository rulesets with `enforcement: active` and
+no bypass actors:
+
+| Ruleset name | Target and ref pattern | Rule types |
+|--------------|------------------------|------------|
+| Protect default branch | Branch: `~DEFAULT_BRANCH` | `non_fast_forward`, `deletion` |
+| Protect package release tags | Tag: `refs/tags/v*` | `update`, `deletion` |
+
+In GitHub, open the package repository's **Settings → Rules → Rulesets** and
+review existing rulesets first; edit a same-named ruleset rather than creating a
+duplicate. Create a branch ruleset targeting the default branch, enable **Block
+force pushes** and **Restrict deletions**, and set enforcement to **Active** with
+an empty bypass list. Create a tag ruleset targeting `v*` (API ref pattern
+`refs/tags/v*`), enable **Restrict updates** and **Restrict deletions**, and use
+the same enforcement and bypass settings. Leave **Restrict creations** disabled:
+the publishing workflow must be able to create new version tags. Review any
+other applicable rulesets too; these settings do not override stricter rules.
+
+This baseline permits the catalog workflow's atomic fast-forward push to `main`
+and creation of a new `v*` tag, but prevents rewriting or deleting an existing
+release tag. Metrics and Star History also only fast-forward the default branch;
+the metrics helper's force-with-lease push targets its own PR branch, outside
+`~DEFAULT_BRANCH`. No protection bypass is needed for these operations.
+
+Requiring pull requests and required checks is a separate, optional policy, not
+part of this baseline. It blocks these workflows' direct pushes to `main` unless
+the owner is an authorized bypass actor and the pushes authenticate with owner
+PATs (`CLOUDRON_RELEASE_PAT` for catalog publication, `SYNC_PAT` for sync
+workflows). This bypass path is **untested with fine-grained PATs**; do not
+recommend or enable it without separately verifying the token permissions,
+bypass configuration and affected workflows.
+
 The build is `linux/amd64`, checked out at the exact validated SHA. An existing
 version in the catalog is never rebuilt or retagged: the reconciliation path
 only verifies the existing tag/catalog provenance and repairs a missing GitHub

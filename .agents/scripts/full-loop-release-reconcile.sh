@@ -36,6 +36,8 @@ _FULL_LOOP_RELEASE_TIMESTAMP_REGEX='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2
 
 # shellcheck source=./version-manager-protected-main.sh
 source "${SCRIPT_DIR}/version-manager-protected-main.sh"
+# shellcheck source=./full-loop-release-worktree-lib.sh
+source "${SCRIPT_DIR}/full-loop-release-worktree-lib.sh"
 
 _full_loop_release_epoch_seconds() {
 	date +%s 2>/dev/null
@@ -1268,11 +1270,11 @@ _full_loop_release_prepare_tag_worktree() {
 	fi
 	git -C "$REPO_ROOT" worktree add --detach "$release_path" "$tag_name" >/dev/null || return 1
 	checkout_commit=$(git -C "$release_path" rev-parse HEAD 2>/dev/null) || {
-		git -C "$REPO_ROOT" worktree remove "$release_path" >/dev/null 2>&1 || true
+		_full_loop_release_remove_worktree "$release_path" release-tag-unverified || true
 		return 1
 	}
 	if [[ "$checkout_commit" != "$tag_commit" ]]; then
-		git -C "$REPO_ROOT" worktree remove "$release_path" >/dev/null 2>&1 || true
+		_full_loop_release_remove_worktree "$release_path" release-tag-mismatch || true
 		return 1
 	fi
 	_FULL_LOOP_RELEASE_PATH="$release_path"
@@ -1286,7 +1288,7 @@ _full_loop_release_reset_tag_worktree() {
 	[[ -n "$release_path" ]] || return 0
 	[[ -z "$control_path" || "$release_path" != "$control_path" ]] || return 1
 	if [[ -d "$release_path" ]]; then
-		git -C "$REPO_ROOT" worktree remove "$release_path" >/dev/null 2>&1 || return 1
+		_full_loop_release_remove_worktree "$release_path" release-tag-reset || return 1
 	fi
 	_FULL_LOOP_RELEASE_PATH=""
 	return 0

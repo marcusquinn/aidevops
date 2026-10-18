@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # exec preserves $$ but does not run the EXIT cleanup trap.
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./full-loop-release-worktree-lib.sh
+source "${SCRIPT_DIR}/full-loop-release-worktree-lib.sh"
 
 _full_loop_release_valid_repo_root() {
 	local candidate_root="$1"
@@ -44,19 +46,21 @@ _FULL_LOOP_RELEASE_PATH=""
 _FULL_LOOP_RELEASE_CONTROL_PATH=""
 _FULL_LOOP_RELEASE_PREPARATION_PATH=""
 
+# Release-owned removals use _full_loop_release_remove_worktree (audited fence,
+# full-loop-release-worktree-lib.sh, GH#35024).
 cleanup_release_worktree() {
 	local exit_status="$?"
 	local release_path="${_FULL_LOOP_RELEASE_PATH:-}"
 	local control_path="${_FULL_LOOP_RELEASE_CONTROL_PATH:-}"
 	if [[ -n "$release_path" && "$release_path" != "$control_path" && -d "$release_path" ]]; then
 		if [[ "$exit_status" -eq 0 || "$release_path" != "${_FULL_LOOP_RELEASE_PREPARATION_PATH:-}" ]]; then
-			git -C "$REPO_ROOT" worktree remove "$release_path" >/dev/null 2>&1 || true
+			_full_loop_release_remove_worktree "$release_path" release-exit || true
 		else
 			printf 'Release preparation retained for guarded recovery (exit %s).\n' "$exit_status" >&2
 		fi
 	fi
 	if [[ -n "$control_path" && -d "$control_path" ]]; then
-		git -C "$control_path" worktree remove "$control_path" >/dev/null 2>&1 || true
+		_full_loop_release_remove_worktree "$control_path" release-control-exit || true
 	fi
 	return 0
 }
@@ -80,7 +84,9 @@ _full_loop_release_reap_stale_control_worktrees() {
 		kill -0 "$stale_pid" 2>/dev/null && continue
 		idle_match=$(find "$stale_path" -maxdepth 0 -mmin +30 2>/dev/null || true)
 		[[ -n "$idle_match" ]] || continue
-		git -C "$repository_root" worktree remove --force "$stale_path" >/dev/null 2>&1 || true
+		# Non-force via the audited fence: a dirty or busy snapshot is preserved.
+		: "$repository_root"
+		_full_loop_release_remove_worktree "$stale_path" release-control-stale || true
 	done
 	return 0
 }
@@ -99,7 +105,7 @@ _full_loop_release_prepare_control_worktree() {
 	git -C "$repository_root" worktree add --detach "$control_path" "$source_commit" >/dev/null || return 1
 	checkout_commit=$(git -C "$control_path" rev-parse HEAD 2>/dev/null || true)
 	if [[ ! -f "$control_path/.git" || "$checkout_commit" != "$source_commit" ]]; then
-		git -C "$control_path" worktree remove "$control_path" >/dev/null 2>&1 || true
+		_full_loop_release_remove_worktree "$control_path" release-control-unverified || true
 		return 1
 	fi
 	_FULL_LOOP_RELEASE_CONTROL_PATH="$control_path"

@@ -10,6 +10,25 @@ trap 'rm -rf "$ROOT"' EXIT
 mkdir -p "$ROOT/bin" "$ROOT/repo/linked-branch" "$ROOT/repo/.agents/scripts" \
 	"$ROOT/repo/.git" "$ROOT/worktrees" "$ROOT/cleanup" "$ROOT/state"
 export AIDEVOPS_STATE_DIR="$ROOT/state"
+# GH#35024: release worktree removal runs through the audited fence, which
+# resolves native Git via AIDEVOPS_REAL_GIT_BIN. Pin it to the stub so an
+# operator-exported real Git cannot bypass the fixture, and keep the fence's
+# audit log and registry inside the fixture (the managed-lifetime check fails
+# closed without a registry; the host registry must never be touched).
+export AIDEVOPS_REAL_GIT_BIN="$ROOT/bin/git"
+export HOME="$ROOT/home"
+export AIDEVOPS_CLEANUP_LOG="$ROOT/cleanup.log"
+export WORKTREE_REGISTRY_DIR="$ROOT/registry"
+export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/worktree-registry.db"
+mkdir -p "$HOME"
+(
+	# shellcheck source=../shared-worktree-registry.sh
+	source "$SCRIPT_DIR/shared-worktree-registry.sh" && _init_registry_db
+)
+[[ -f "$WORKTREE_REGISTRY_DB" ]] || {
+	printf 'FAIL fixture worktree registry was not initialised\n'
+	exit 1
+}
 export LANE_HEAD_FILE="$ROOT/lane-head"
 export LANE_STATE_FILE="$ROOT/lane-state.json"
 : >"$ROOT/repo/aidevops.sh"
@@ -21,10 +40,32 @@ export SIGNING_PUB_KEY
 cat >"$ROOT/bin/git" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GIT_CALL_LOG:?}"
+wt_ctx=""
+[[ "${1:-}" == "-C" ]] && wt_ctx="${2:-}"
+wt_parent="${FAKE_CONTROL_PARENT:-${AIDEVOPS_WORKTREE_BASE_DIR:-/nonexistent}}"
 case "$*" in
+*rev-parse\ --show-toplevel* | *rev-parse\ --git-common-dir* | *worktree\ list\ --porcelain*)
+	# Answer the audited removal fence's probes like Git does for an
+	# unlocked, detached linked release worktree (one with a .git marker).
+	case "$wt_ctx" in
+	"$wt_parent"/aidevops-release-*)
+		case "$*" in
+		*--show-toplevel*) printf '%s\n' "$wt_ctx" ;;
+		*--git-common-dir*) printf '%s/.git\n' "${FAKE_REPO_ROOT:?}" ;;
+		*)
+			printf 'worktree %s\0HEAD %040d\0branch refs/heads/main\0\0' "${FAKE_REPO_ROOT:?}" 0
+			for listed in "$wt_parent"/aidevops-release-*; do
+				[[ -d "$listed" && -e "$listed/.git" ]] || continue
+				printf 'worktree %s\0HEAD %040d\0detached\0\0' "$listed" 0
+			done
+			;;
+		esac
+		;;
+	*) [[ "$*" == *--show-toplevel* ]] && printf '%s\n' "${FAKE_REPO_ROOT:?}" ;;
+	esac
+	;;
 *config\ --get\ gpg.format*) printf 'ssh\n' ;;
 *config\ --get\ user.signingkey*) printf 'key::%s\n' "${SIGNING_PUB_KEY:?}" ;;
-*rev-parse\ --show-toplevel*) printf '%s\n' "${FAKE_REPO_ROOT:?}" ;;
 *show\ *:VERSION*) printf '2.9.9\n' ;;
 *rev-parse\ refs/tags/v3.0.0*) printf '%040d\n' 0 ;;
 *rev-parse\ HEAD*) printf '%040d\n' 0 ;;
@@ -223,6 +264,12 @@ if compgen -G "$ROOT/worktrees/aidevops-release-42-*" >/dev/null; then
 	printf 'FAIL detached release worktree was not removed\n'
 	exit 1
 fi
+if ! grep -Eq "worktree-removed: ${ROOT}/worktrees/aidevops-release-42-[0-9]+ .*release_worktree=release-exit" "$AIDEVOPS_CLEANUP_LOG" ||
+	! grep -Eq "worktree-removed: ${ROOT}/worktrees/aidevops-release-control-[0-9]+ .*release_worktree=release-control-exit" "$AIDEVOPS_CLEANUP_LOG"; then
+	printf 'FAIL release worktree removal bypassed the audited fence\n'
+	exit 1
+fi
+printf 'PASS release and control worktree removals are audited (GH#35024)\n'
 printf 'PASS detached release runner persists publication receipt after successful gates\n'
 if grep -q 'fetch --unshallow' "$ROOT/git.log"; then
 	printf 'FAIL full-depth store attempted an unnecessary unshallow fetch\n'
@@ -586,6 +633,7 @@ for temporary_kind in aggregate reconcile; do
 		export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
 		source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
 		mkdir -p "$temporary_path"
+		: >"$temporary_path/.git"
 		_FULL_LOOP_RELEASE_PATH="$temporary_path"
 		trap 'cleanup_release_worktree' EXIT
 		exit 7

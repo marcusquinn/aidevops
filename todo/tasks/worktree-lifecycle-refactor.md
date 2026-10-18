@@ -269,22 +269,22 @@ cleanup is not guaranteed and SIGKILL is never covered.
 
 | Site | Kind | Registry | Cleanup | Signal | Sweep |
 |---|---|---|---|---|---|
-| `worktree-helper-add.sh:1170` | detached fetch bootstrap | none | end-of-function raw remove | no | P |
+| `worktree-helper-add.sh:1168` | detached fetch bootstrap via `scratch-worktree-helper.sh` (GH#35024) | owner-token Git lock | audited native non-force remove | SIGKILL leaves a locked, attributable worktree; reaped by the next `scratch_worktree_add` | P (locked ⇒ skip) |
 | `worktree-helper-add.sh:1273,1288,1301` | named | register + conditional enroll + claim | persistent; `worktree-helper.sh remove` (audited archive-first) | n/a | P |
-| `pr-review-thread-response-scanner.sh:1974` | detached fetch bootstrap | none | end-of-function raw remove | no | P |
+| `pr-review-thread-response-scanner.sh:1970` | detached fetch bootstrap via `scratch-worktree-helper.sh` (GH#35024) | owner-token Git lock | audited native non-force remove | as above | P (locked ⇒ skip) |
 | `profile-readme-helper.sh:2068` | detached | registered | end + EXIT; audited archive fallback | EXIT | P |
 | `wp-plugin-new-helper.sh:441` | named | none | persistent PR worktree | n/a | P if managed |
 | `aidevops-cli/aidevops-repos-lib.sh:1045` | named fallback | none | handed to user | n/a | P if managed |
-| `full-loop-release-reconcile.sh:1269` | detached | none | EXIT raw remove | EXIT | P |
+| `full-loop-release-reconcile.sh:1269` | detached | none | EXIT audited remove via `full-loop-release-worktree-lib.sh` (GH#35024) | EXIT | P |
 | `shared-todo-commit.sh:524` | detached | none | finalizer raw remove | no | P |
 | `pulse-quality-debt.sh:66` | named canonical sibling | none | worker/PR lifecycle | n/a | P, orphan-sibling relocation |
 | `remote-branch-cleanup-helper.sh:241` | detached transport | none | EXIT raw remove | EXIT | P |
 | `local-branch-cleanup-helper.sh:247` | detached no-checkout | none | EXIT raw remove | EXIT | P (eligibility unverified) |
 | `full-loop-release-aggregate-recovery.sh:708,733` | detached | none | EXIT raw remove | EXIT | P |
 | `full-loop-release-aggregate-recovery.sh:780` | detached reconstruction | none | retained as evidence | no | P |
-| `full-loop-release-helper.sh:99,459` | detached | none | EXIT raw remove; failed prep retained | EXIT | P |
+| `full-loop-release-helper.sh:99,459` | detached | none | EXIT and stale-reaper audited remove via `full-loop-release-worktree-lib.sh` (GH#35024); failed prep retained | EXIT | P |
 | `worktree-archive-helper.sh` `restore` | named restore | none | intentionally retained | n/a | P if managed |
-| `sync-workflows-helper.sh:293` | detached fetch bootstrap | none | end-of-function raw remove | no | P |
+| `sync-workflows-helper.sh:293` | detached fetch bootstrap via `scratch-worktree-helper.sh` (GH#35024) | owner-token Git lock | audited native non-force remove | as above | P (locked ⇒ skip) |
 | `sync-workflows-helper.sh:357` | named | best-effort register | persistent | n/a | P |
 | `skill-update-pr-lib.sh:432,437` | named sibling | registered | audited permanent removal on failure | no | P |
 | `pulse-dirty-pr-sweep.sh:874` | named ephemeral | none | EXIT/INT/TERM/HUP trap (this branch) | yes | P |
@@ -294,13 +294,14 @@ cleanup is not guaranteed and SIGKILL is never covered.
 Read-only scanners (file-size, complexity, markdownlint/biome baseline) create no
 worktrees: they use unregistered `git-ref-snapshot-lib.sh` snapshots (#34926, #34935).
 
-### Gaps (follow-up candidates; not changed here)
+### Gaps (follow-up candidates)
 
-1. Fetch bootstraps (`worktree-helper-add.sh:1170`, scanner `:1974`,
-   `sync-workflows-helper.sh:293`) lack signal cleanup and audited removal; a
-   shared owned scratch-worktree helper would cover all three.
-2. Release helpers use raw `git worktree remove` in EXIT traps and their own
-   stale reaper, bypassing the audit fence.
+1. **Closed (GH#35024):** fetch bootstraps share `scratch-worktree-helper.sh`
+   (owner-token lock, verified-owner non-force removal, audit, stale reaping);
+   `test-scratch-worktree-helper.sh` 10/10 (Bash 5, 3.2), fresh-base, scanner suites.
+2. **Closed (GH#35024):** release control/run/stale/reconcile-tag removals use
+   `remove_worktree_path_permanently` via `full-loop-release-worktree-lib.sh`;
+   release helper and reconcile suites pass. Aggregate recovery is out of scope.
 3. Hook self-test fixtures are named branches under `mktemp`, outside every sweep
    (temp sweep requires detached).
 4. Unregistered named producers (`pulse-quality-debt.sh`, `wp-plugin-new-helper.sh`,
@@ -352,7 +353,7 @@ alike (Linux process-identity evidence; pre-existing).
 | Repeated scans, SIGTERM/SIGKILL | #34926/#34935 scratch-clone runs; dirty-PR SIGTERM row above |
 | Timeout | recovery `cache_retrofit_honors_shared_deadline_before_mutation` |
 | Interrupted removal | recovery `apply_resumes_move_and_delete_crash_windows`, `apply_resumes_transaction_initialization_crashes`, `cache_retrofit_resumes_interrupted_{move,delete}`, `automatic_maintenance_resumes_interrupted_apply` |
-| Interrupted creation | managed `never_admitted_creation_can_be_closed`; **gap**: `worktree-helper-add.sh` create→register window has no test |
+| Interrupted creation | managed `never_admitted_creation_can_be_closed`; `tests/test-worktree-add-register-interruption.sh` (GH#35024) SIGKILLs `worktree-helper.sh add` between `git worktree add` and registration: unregistered generation preserved by `clean --auto` past grace, no fetch scratch leak, rerun reuses it (6/6, Bash 5 and 3.2; macOS only) |
 | Live descendants | managed `live_descendants_and_reused_invocation_refuse`, `kernel_populated_veto`, `native_child_lifetime_and_guard` |
 | Concurrent cleaners | recovery `shared_producer_lock_fails_closed_and_reclaims_stale`, `receipt_reservation_blocks_conflicting_plan`; audit `recoverable_archive_honours_shared_producer_lock`; managed `trigger_fences_claims_but_allows_cleanup_retry` |
 | Late owners / locks | audit `recoverable_cleanup_preserves_lease_loss_after_archive`, `manual_degraded_recheck_requires_live_exact_lease`, `permanent_helper_preserves_lock_acquired_after_guard`, `recoverable_archive_preserves_late_lock`; lifecycle `pin_added_during_verification_preserves_claimed_archive` |
@@ -469,6 +470,7 @@ auto-rebase never succeeds. Filed as GH#34947 (t18713).
 
 Delivered in #34948 (exact-head CI green). At that checkpoint, outstanding:
 NixOS execution, a `worktree-helper-add.sh` create→register test, and a boot-ID test.
+The create→register test was added by GH#35024; NixOS and boot-ID remain open.
 
 ## Integration checkpoint (2026-10-18)
 
