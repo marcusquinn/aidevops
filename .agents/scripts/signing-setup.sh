@@ -54,6 +54,16 @@ _source_signing_agent_env() {
 	return 0
 }
 
+_headless_signing_key_unencrypted() {
+	ssh-keygen -y -P "" -f "$SSH_KEY_HEADLESS" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+_print_headless_signing_remediation() {
+	echo "Regenerate with: aidevops signing headless-setup; or load once interactively with: ssh-add \"$SSH_KEY_HEADLESS\""
+	return 0
+}
+
 _headless_signing_key_loaded() {
 	[[ -r "$SSH_KEY_HEADLESS_PUB" ]] || return 1
 	local expected_key=""
@@ -124,7 +134,12 @@ cmd_check() {
 	echo ""
 	echo "Headless worker signing key:"
 	if [[ -f "$SSH_KEY_HEADLESS" ]]; then
-		_print_ok "Passphrase-less signing key exists: $SSH_KEY_HEADLESS"
+		if _headless_signing_key_unencrypted; then
+			_print_ok "Passphrase-less signing key exists: $SSH_KEY_HEADLESS"
+		else
+			_print_warn "Headless signing key is encrypted or unreadable: $SSH_KEY_HEADLESS"
+			_print_headless_signing_remediation
+		fi
 		_source_signing_agent_env
 		# Check if key is loaded in ssh-agent
 		if _headless_signing_key_loaded; then
@@ -337,7 +352,16 @@ cmd_agent_start() {
 	# Load the headless signing key if not already loaded. ssh-add -l reports a
 	# fingerprint/comment, not the source path, so compare the exported public key.
 	if ! _headless_signing_key_loaded; then
-		ssh-add "$SSH_KEY_HEADLESS" 2>/dev/null
+		if ! ssh-add "$SSH_KEY_HEADLESS" 2>/dev/null; then
+			_print_error "Could not load headless signing key into ssh-agent (it may be encrypted or unreadable)"
+			_print_headless_signing_remediation
+			return 1
+		fi
+		if ! _headless_signing_key_loaded; then
+			_print_error "Headless signing key is not present in ssh-agent after ssh-add"
+			_print_headless_signing_remediation
+			return 1
+		fi
 		_print_ok "Loaded signing key into ssh-agent: $SSH_KEY_HEADLESS"
 	else
 		_print_info "Signing key already loaded in ssh-agent"
