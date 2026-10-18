@@ -1086,6 +1086,39 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 	return 0
 }
 
+test_stale_snapshot_does_not_revert_parent_tasks() {
+	local name="refuses stale TODO snapshot that reverts parent task lines (GH#35062)"
+	local root="" repo="" rival="" before="" after="" rc=0
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || { fail "$name" setup; return 0; }
+	repo="${root}/work"
+	rival="${root}/rival"
+	printf -- '- [ ] t100 first\n' >"${repo}/TODO.md"
+	git -C "$repo" add TODO.md
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "$repo" -c commit.gpgsign=false commit -qm 'seed task'
+	git -C "$repo" push -q origin main
+	git clone -q "${root}/remote.git" "$rival"
+	printf -- '- [x] t100 first pr:#1\n- [ ] t101 second\n' >"${rival}/TODO.md"
+	git -C "$rival" add TODO.md
+	GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid \
+		git -C "$rival" -c commit.gpgsign=false commit -qm 'complete t100, add t101'
+	git -C "$rival" push -q origin main
+	# Local HEAD is fresh, but the edited working copy came from the stale snapshot.
+	git -C "$repo" pull -q --ff-only origin main
+	printf -- '- [ ] t100 first\n- [ ] t102 new\n' >"${repo}/TODO.md"
+	before=$(git --git-dir="${root}/remote.git" rev-parse main)
+	run_publish "$repo" || rc=$?
+	after=$(git --git-dir="${root}/remote.git" rev-parse main)
+	if [[ "$rc" -ne 0 && "$before" == "$after" ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=$rc"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 main() {
 	test_git_binary_availability_is_validated
 	test_state_allowlist_and_idempotence
@@ -1107,6 +1140,7 @@ main() {
 	test_absent_remote_branch_creation_contention
 	test_parent_branch_replay_is_idempotent
 	test_parent_todo_merge_and_conflict
+	test_stale_snapshot_does_not_revert_parent_tasks
 	test_explicit_git_capability_preserves_guarded_checkout
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ $FAIL -eq 0 ]] || return 1
