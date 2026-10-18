@@ -549,6 +549,8 @@ _mirror_supports_helper_provenance() {
 	local _ref="$3"
 	local _path _reusable_path _reusable_content
 	local -a _reusable_paths
+	# YAML release comments are display metadata, not part of the Git object name.
+	_ref="${_ref%% #*}"
 	_path=$(jq -r --arg s "$_repo" \
 		'.initialized_repos[]? | select(.slug == $s) | .path // empty' \
 		"$REPOS_JSON" 2>/dev/null | head -n 1)

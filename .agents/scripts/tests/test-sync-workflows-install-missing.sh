@@ -6,6 +6,9 @@
 
 set -uo pipefail
 
+# Keep the mocked provenance readback independent of the host worker runtime.
+export AIDEVOPS_SESSION_ORIGIN=interactive
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/../sync-workflows-helper.sh"
 CHECK_HELPER="$SCRIPT_DIR/../check-workflows-helper.sh"
@@ -301,6 +304,50 @@ else
 	printf 'FAIL idempotent apply opened %s PRs\n' "$pr_create_count" >&2
 	FAIL=$((FAIL + 1))
 fi
+
+# Each install starts from the unchanged remote default branch, using the real
+# worktree/commit/push path and only mocking GitHub metadata (GH#35068).
+for ref_case in release cli registry global; do
+	ref_args=()
+	expected_ref='0123456789abcdef0123456789abcdef01234567 # v3.39.45'
+	case "$ref_case" in
+	cli) ref_args=(--ref @main); expected_ref=main ;;
+	registry)
+		jq '.initialized_repos[0].workflow_reusable_ref = "@custom/ref"' \
+			"$test_root/.config/aidevops/repos.json" >"$test_root/registry.json"
+		cp "$test_root/registry.json" "$test_root/.config/aidevops/repos.json"
+		expected_ref=custom/ref
+		;;
+	global)
+		jq 'del(.initialized_repos[0].workflow_reusable_ref) | .workflow_reusable_ref = "main"' \
+			"$test_root/.config/aidevops/repos.json" >"$test_root/registry.json"
+		cp "$test_root/registry.json" "$test_root/.config/aidevops/repos.json"
+		expected_ref=main
+		;;
+	esac
+	metrics_output=$(HOME="$test_root" PATH="$safe_path" \
+		GH_CALL_LOG="$test_root/gh.log" AIDEVOPS_TEMP_DIR="$test_root/agent-tmp" \
+		AIDEVOPS_WORKTREE_BASE_DIR="$test_root/worktrees" \
+		AIDEVOPS_TEST_GIT_BIN="$real_git" CANONICAL_GIT_REPO="$apply_repo" \
+		CANONICAL_GIT_GUARD_LOG="$test_root/canonical-git-guard.log" bash "$HELPER" \
+		--apply --repo fake/apply --workflow loc-badge --install-missing \
+		--branch "chore/metrics-$ref_case" "${ref_args[@]}" 2>&1)
+	assert_exit "metrics $ref_case install succeeds" 0 "$?"
+	metrics_caller=$("$real_git" --git-dir="$apply_bare" show \
+		"chore/metrics-$ref_case:.github/workflows/loc-badge.yml")
+	assert_contains "metrics $ref_case uses expected ref" "$metrics_caller" \
+		"loc-badge-reusable.yml@$expected_ref"
+	assert_contains "metrics $ref_case helper matches ref" "$metrics_caller" \
+		"aidevops_ref: $expected_ref"
+done
+
+jq 'del(.workflow_reusable_ref)' "$test_root/.config/aidevops/repos.json" >"$test_root/registry.json"
+cp "$test_root/registry.json" "$test_root/.config/aidevops/repos.json"
+bad_release=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
+	GH_CALL_LOG="$test_root/gh.log" RELEASE_SHA=invalid bash "$HELPER" \
+	--repo fake/apply --workflow loc-badge --install-missing 2>&1)
+assert_exit "invalid release SHA fails instead of falling back to main" 1 "$?"
+assert_contains "release lookup failure is explicit" "$bad_release" 'cannot resolve target release SHA'
 
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"

@@ -120,7 +120,7 @@ register_repo() {
 	local slug="$1" extra="${2:-}"
 	[[ -n "$extra" ]] || extra='{}'
 	jq -n --arg slug "$slug" --arg path "$CANONICAL" --argjson extra "$extra" \
-		'{initialized_repos: [({slug:$slug,path:$path,maintenance:true} + $extra)]}' >"$HOME/.config/aidevops/repos.json"
+		'{initialized_repos: [({slug:$slug,path:$path,maintenance:true,maintainer:"marcusquinn"} + $extra)]}' >"$HOME/.config/aidevops/repos.json"
 	return 0
 }
 
@@ -224,10 +224,14 @@ printf '[]\n' >"$PR_STATE"
 git -C "$ROOT/upstream" rm -q README.md .github/workflows/loc-badge.yml
 git -C "$ROOT/upstream" commit -qm missing-readme
 git -C "$ROOT/upstream" push -q
+register_repo marcusquinn/test '{"workflow_reusable_ref":"@main"}'
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
 head="$(jq -r '.[0].headRefName' "$PR_STATE")"
 git -C "$CANONICAL" cat-file -e "$head:.github/workflows/loc-badge.yml"
+caller="$(git -C "$CANONICAL" show "$head:.github/workflows/loc-badge.yml")"
+[[ "$caller" == *'loc-badge-reusable.yml@main'* ]]
+[[ "$caller" == *'aidevops_ref: main'* ]]
 [[ "$(snapshot)" == "$before" ]]
 printf 'PASS workflow-only publication tolerates missing remote README\n'
 
