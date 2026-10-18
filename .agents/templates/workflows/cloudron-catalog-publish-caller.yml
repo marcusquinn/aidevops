@@ -1,0 +1,27 @@
+name: Cloudron Catalog Publication
+
+# Managed opt-in caller. Keep publication disabled until checks, GHCR visibility,
+# branch policy and the explicitly passed repository-scoped PAT are reviewed.
+# Add package_checks below for package static checks and pinned-upstream patches.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cloudron-catalog-${{ github.event.pull_request.number || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  catalog:
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@c3f8b562466f9528601bfcbc516c346598026b75
+    with:
+      aidevops_ref: c3f8b562466f9528601bfcbc516c346598026b75
+    secrets:
+      CLOUDRON_RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}

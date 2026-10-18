@@ -144,7 +144,9 @@ and the pinned catalog caller. Existing packages opt in by copying
 `.github/workflows/cloudron-catalog-publish.yml`, or running
 `cloudron-package-helper.sh scaffold catalog`. Existing callers are never
 overwritten. The caller pins the reusable workflow by immutable commit SHA;
-retain that commit when vendoring or updating the caller.
+`aidevops_ref` must match that pin and constrains attestation signer verification.
+Keep the original pin available when reconciling catalogs signed by that revision;
+updating a caller does not authorize an older signer automatically.
 
 The caller grants the permission ceiling (`contents`, `packages`, `attestations`
 write and OIDC); each reusable job narrows its permissions. Only preflight runs
@@ -154,10 +156,14 @@ and the real CLI catalog dry run above. No publication credential is exposed to
 those commands. The CLI version and npm sha512 integrity are pinned together;
 the registry metadata and installed lockfile integrity must both match, and
 lifecycle scripts are disabled. Override both CLI inputs together after review.
+This pins the CLI package, not its entire transitive npm dependency graph; it is
+not a reproducible dependency closure. The dry run also exercises state promotion
+with an explicit image, which a stateless runner needs even for `versions update`.
 
 Publication is disabled until the repository **variable**
-`CLOUDRON_PUBLICATION_ENABLED` equals `true`. Even then, only non-PR runs on
-`refs/heads/main` may publish. Add the explicitly passed repository **secret**
+`CLOUDRON_PUBLICATION_ENABLED` equals `true`. Even then, only `push` or
+`workflow_dispatch` runs on `refs/heads/main` may publish (including no
+`pull_request_target` exception). Add the explicitly passed repository **secret**
 `CLOUDRON_RELEASE_PAT`: a fine-grained PAT restricted to this package repository,
 with Contents write access for its catalog commit and tag. Grant only any
 additional access required by the repository's existing branch policy; this
