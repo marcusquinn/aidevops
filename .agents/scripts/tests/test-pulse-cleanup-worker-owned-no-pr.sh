@@ -624,7 +624,7 @@ test_local_commit_no_pr_skips_without_recent_metric() {
 	local rc=0
 	[[ "$cleanup_rc" -eq 1 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
-	grep -q "${wt_path}.*idle-unverified-or-pending.*idle_window_secs=86400" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q "${wt_path}.*idle-unverified-or-pending.*idle_window_secs=604800" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	print_result "local commits/no PR skip without safety proof" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
