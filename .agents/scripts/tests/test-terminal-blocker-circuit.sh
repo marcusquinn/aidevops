@@ -1036,7 +1036,105 @@ $fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_
 	return 0
 }
 
+test_worker_capability_cooldown() {
+	local status=0
+	if ! (
+		# shellcheck source=../pulse-dispatch-lib-candidates.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh"
+		HOME="$TEST_ROOT/capability-home"
+		LOGFILE="$TEST_ROOT/capability-pulse.log"
+		_DISPATCH_ELIGIBILITY_INELIGIBLE=ineligible
+		_DISPATCH_VALUE_UNKNOWN=unknown
+		_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS=21600
+		_dispatch_stats_increment() { return 0; }
+		local fixture_issue='{"title":"Fix native test","body":"### Files Scope\n- helper.sh"}'
+		local candidate='{"number":42,"repo_slug":"owner/repo","repo_path":"","updatedAt":"2026-10-18T12:00:00Z","labels":[]}'
+		local revision="" fingerprint="" fragment="" fixture_comments="" login=runner-one now="" filtered="" changed=""
+		local fixture_reads=true
+		now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		revision=$(terminal_blocker_task_revision "$fixture_issue" owner/repo 42 '' runner_capability_unmet)
+		fingerprint=$(_terminal_blocker_hash v2:runner_capability_unmet)
+		fragment=$(terminal_blocker_observation_fragment "$revision" "$fingerprint" first)
+		fixture_comments=$(jq -nc --arg body "$fragment" --arg now "$now" \
+			'[{id:1,user:{login:"runner-one"},author_association:"COLLABORATOR",body:$body,created_at:$now}]')
+		gh() {
+			local operation="$1" endpoint="$2"
+			[[ "$operation" == api ]] || return 1
+			[[ "$endpoint" == user || "$fixture_reads" == true ]] || return 1
+			case "$endpoint" in
+			user) printf '%s\n' "$login" ;;
+			repos/owner/repo/issues/42) printf '%s\n' "$fixture_issue" ;;
+			repos/owner/repo/issues/42/comments*) printf '%s\n' "$fixture_comments" ;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' || exit 1
+		filtered=$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")
+		[[ "$filtered" == '[]' ]] || exit 1
+		rg -q 'runner_capability_unmet cooldown recorded signal=worker_observation' "$LOGFILE" || exit 1
+		# Cached passes only verify the login, not refetch issues/comments or
+		# refresh the observation TTL.
+		local original="" retained=""
+		original=$(<"$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42")
+		fixture_reads=false
+		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' || exit 1
+		retained=$(<"$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42")
+		[[ "$original" == "$retained" ]] || exit 1
+		login=runner-two
+		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")" == "[$candidate]" ]] || exit 1
+		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
+		login=runner-one
+		fixture_reads=true
+		# Selection rejects a different runner, untrusted author, edited brief,
+		# later different blocker, and explicit retry without a global hold.
+		fixture_comments=$(jq -c 'map(.author = .user.login)' <<<"$fixture_comments")
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-two terminal_blocker_runner_capability_observation_epoch \
+			"$fixture_comments" "$fixture_issue" owner/repo 42 && exit 1
+		changed=$(jq -c 'map(.author_association="CONTRIBUTOR")' <<<"$fixture_comments")
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
+			"$changed" "$fixture_issue" owner/repo 42 && exit 1
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
+			"$fixture_comments" '{"title":"Fix native test","body":"changed"}' owner/repo 42 && exit 1
+		changed=$(jq -c --arg blocker "$(_terminal_blocker_hash v2:target_code_blocker)" \
+			'. + [ (.[0] | .id=2 | .body |= sub("blocker=[a-f0-9]{24}"; "blocker=" + $blocker)) ]' <<<"$fixture_comments")
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
+			"$changed" "$fixture_issue" owner/repo 42 && exit 1
+		changed=$(jq -c '. + [{id:2,author:"maintainer",author_association:"OWNER",created_at:.[0].created_at,body:"terminal-blocker-circuit:retry"}]' <<<"$fixture_comments")
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
+			"$changed" "$fixture_issue" owner/repo 42 && exit 1
+		changed=$(jq -c '. + [(.[0] | .id=2 | .author="runner-two" | .author_association="OWNER")]' <<<"$fixture_comments")
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
+			"$changed" "$fixture_issue" owner/repo 42 >/dev/null || exit 1
+		HOME="$TEST_ROOT/other-runner"
+		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")" == "[$candidate]" ]] || exit 1
+		fixture_comments=$(jq -c 'map(.created_at="2020-01-01T00:00:00Z")' <<<"$fixture_comments")
+		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
+		fixture_comments=$(jq -c 'map(.created_at="2999-01-01T00:00:00Z")' <<<"$fixture_comments")
+		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "worker observation cools only its own runner and enumeration reuses bounded trusted evidence" "$status"
+	return 0
+}
+
+test_verification_environment_alias() {
+	local output="$TEST_ROOT/environment-alias.jsonl" status=0
+	printf '%s\n' '{"type":"text","text":"BLOCKED: native test binary absent\nTERMINAL_BLOCKER_REASON=verification_environment_missing_prerequisites"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == runner_capability_unmet ]] || status=1
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unknown\nTERMINAL_BLOCKER_REASON=some_other_environment_problem"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	print_result "only exact allowlisted environment alias becomes runner capability" "$status"
+	return 0
+}
+
 main() {
+	test_worker_capability_cooldown
+	test_verification_environment_alias
 	test_unknown_blocker_ready_pr_replay
 	test_terminal_evidence_retention
 	test_affected_host_reproduction_alias

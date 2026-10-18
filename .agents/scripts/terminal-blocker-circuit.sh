@@ -220,7 +220,10 @@ def emit(value):
     print(json.dumps({'reason': value, 'explicit_reason': bool(reasons),
                      'missing_secrets': sorted(set(names)), 'detail': candidate[:2000]}))
 
-if reason == 'affected_host_reproduction_unavailable':
+if reason == 'verification_environment_missing_prerequisites':
+    # GH#35037: exact legacy spelling, not a prose/substring classifier.
+    emit('runner_capability_unmet')
+elif reason == 'affected_host_reproduction_unavailable':
     # GH#34259: legacy workers named the missing affected-runner prerequisite
     # directly. Treat it as maintainer-owned input, not an unknown code blocker
     # that unrelated merges can re-arm. Use the existing fingerprint so a prior
@@ -326,11 +329,6 @@ terminal_blocker_task_revision() {
 	local reason="${5:-}"
 	local task_json="" dependency_signature="" target_revision="" canonical=""
 	[[ -n "$reason" ]] || reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
-	# Runner-local prerequisites never need a repository/dependency revision hold.
-	if [[ "$reason" == "$_TBC_RUNNER_CAPABILITY" ]]; then
-		_terminal_blocker_hash "v2:${reason}:${repo_slug}:${issue_number}"
-		return $?
-	fi
 	# A brief edit, unrelated merge or GraphQL outage cannot satisfy a permission
 	# prerequisite. Explicit retry only schedules a new check; it grants nothing.
 	if [[ "$reason" == "permission_required" ]]; then
@@ -339,6 +337,11 @@ terminal_blocker_task_revision() {
 		return $?
 	fi
 	task_json=$(printf '%s' "$issue_json" | jq -c '{title: (.title // ""), body: (.body // "")}' 2>/dev/null) || return 1
+	# Runner-local prerequisites re-arm on a changed brief, not unrelated merges.
+	if [[ "$reason" == "$_TBC_RUNNER_CAPABILITY" ]]; then
+		_terminal_blocker_hash "v3:${reason}:${repo_slug}:${issue_number}:${task_json}"
+		return $?
+	fi
 	if [[ "$reason" == "$_TBC_MISSING_SCOPE" || "$reason" == "files_scope_excluded" ]]; then
 		_terminal_blocker_hash "v2:${reason}:${task_json}"
 		return $?
@@ -378,6 +381,29 @@ terminal_blocker_fetch_trusted_comments() {
 		| select(.author_association | trusted)]
 	' 2>/dev/null || return 1
 	return 0
+}
+
+# GH#35037: return the original observation time, never a refreshed timestamp.
+# aidevops:trust-boundary — only this authenticated runner's latest trusted
+# observation may suppress local dispatch; other runners remain eligible.
+terminal_blocker_runner_capability_observation_epoch() {
+	local comments_json="$1" issue_json="$2" repo="$3" issue="$4"
+	local self='' observation='' revision='' blocker='' retry=''
+	self=$(_terminal_blocker_self_login)
+	[[ -n "$self" ]] || return 1
+	observation=$(jq -c --arg self "$self" \
+		'map(select((.author // .user.login // "") == $self))' <<<"$comments_json") || return 1
+	observation=$(_terminal_blocker_latest_marker "$observation" "$_TBC_OBSERVATION_MARKER revision=") || return 1
+	revision=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "" "$_TBC_RUNNER_CAPABILITY") || return 1
+	blocker=$(_terminal_blocker_hash "v2:${_TBC_RUNNER_CAPABILITY}") || return 1
+	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
+	_terminal_blocker_retry_after "$retry" "$observation" && return 1
+	jq -er --arg self "$self" --arg marker "<!-- $_TBC_OBSERVATION_MARKER revision=${revision} blocker=${blocker} -->" '
+		select((.author // .user.login // "") == $self)
+		| select((.body // "") | contains($marker))
+		| .created_at | fromdateiso8601 | select(. > 0)
+	' <<<"$observation" 2>/dev/null
+	return $?
 }
 
 _terminal_blocker_latest_marker() {

@@ -6,6 +6,9 @@
 [[ -n "${_PULSE_DISPATCH_CANDIDATES_LIB_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CANDIDATES_LIB_LOADED=1
 
+# shellcheck source=terminal-blocker-circuit.sh
+source "${BASH_SOURCE[0]%/*}/terminal-blocker-circuit.sh"
+
 # Names-only credential admission. Return 0 only when every declared name is
 # present; 1 means this runner must yield. The issue JSON is never evaluated.
 _dispatch_secret_missing_names() {
@@ -1118,15 +1121,21 @@ _dispatch_capability_fingerprint() {
 _dispatch_capability_cooldown_active() {
 	local issue="$1" repo="$2" fingerprint="$3"
 	local file="" stamp="" cached="" signal="" now=""
+	local owner='' self="${4:-}"
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 ]] || return 1
 	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 1
 	[[ -f "$file" && ! -L "$file" ]] || return 1
-	IFS=$'\t' read -r stamp cached signal <"$file" || return 1
+	IFS=$'\t' read -r stamp cached signal owner <"$file" || return 1
 	now=$(date +%s)
 	if [[ ! "$stamp" =~ ^[0-9]+$ || "$cached" != "$fingerprint" ]] ||
 		((now < stamp || now - stamp >= _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS)); then
 		rm -f "$file" 2>/dev/null || true
 		return 1
+	fi
+	# Worker evidence is login-bound even if two identities share this HOME.
+	if [[ -n "$owner" ]]; then
+		[[ -n "$self" ]] || self=$(gh api user --jq '.login' 2>/dev/null) || return 1
+		[[ "$self" == "$owner" ]] || return 1
 	fi
 	return 0
 }
@@ -1136,6 +1145,8 @@ _dispatch_capability_cooldown_active() {
 #            labels), this attempt's candidate-scoped log lines
 _dispatch_capability_cooldown_record() {
 	local candidate="$1" recent_lines="$2"
+	local stamp="${3:-$(date +%s)}"
+	local owner="${4:-}"
 	local fields="" issue="" repo="" repo_path="" signal="" file="" tmp=""
 	local updated='' classes='' fingerprint=''
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 && -n "$candidate" ]] || return 0
@@ -1152,7 +1163,7 @@ _dispatch_capability_cooldown_record() {
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	if printf '%s\t%s\t%s\n' "$(date +%s)" "$fingerprint" "$signal" >"$tmp" && mv -f "$tmp" "$file"; then
+	if printf '%s\t%s\t%s\t%s\n' "$stamp" "$fingerprint" "$signal" "$owner" >"$tmp" && mv -f "$tmp" "$file"; then
 		echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) runner_capability_unmet cooldown recorded signal=${signal} ttl=${_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS}s" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_capability_cooldown_recorded"
 	else
@@ -1161,21 +1172,42 @@ _dispatch_capability_cooldown_record() {
 	return 0
 }
 
+# Import worker-discovered gaps at the live candidate gate. Subsequent passes
+# use the existing pre-ranking cache filter, without repeating worker launches.
+_dispatch_capability_cooldown_from_observation() {
+	local candidate="$1" issue="$2" repo="$3"
+	local self='' issue_json='' comments='' stamp='' now=''
+	declare -F terminal_blocker_runner_capability_observation_epoch >/dev/null || return 0
+	self=$(gh api user --jq '.login' 2>/dev/null) || return 0
+	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 0
+	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo") || return 0
+	stamp=$(TERMINAL_BLOCKER_SELF_LOGIN="$self" terminal_blocker_runner_capability_observation_epoch \
+		"$comments" "$issue_json" "$repo" "$issue") || return 0
+	[[ "$stamp" =~ ^[0-9]+$ ]] || return 0
+	now=$(date +%s)
+	((now >= stamp && now - stamp < _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS)) || return 0
+	_dispatch_capability_cooldown_record "$candidate" \
+		'DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=worker_observation cooldown=eligible' "$stamp" "$self"
+	return 0
+}
+
 # Dispatch-time check for candidates taken from a short-lived ranked snapshot
 # captured before the record was written. Returns 0 to skip.
 _dispatch_skip_for_capability_cooldown() {
 	local candidate="$1" issue="$2" repo="$3" repo_path="$4"
-	local fields="" number="" file=""
+	local fields="" number=""
 	local updated='' classes='' fingerprint=''
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 ]] || return 1
-	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 1
-	[[ -f "$file" ]] || return 1
+	_dispatch_capability_cooldown_path "$issue" "$repo" >/dev/null || return 1
 	fields=$(jq -r "$_DISPATCH_CAPABILITY_FIELDS_JQ" <<<"$candidate" 2>/dev/null) || return 1
 	IFS=$'\t' read -r number updated classes <<<"$fields"
 	[[ "$number" == "$issue" && "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" \
 		"$(_dispatch_capability_config_fingerprint "$repo_path")") || return 1
-	_dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" || return 1
+	if ! _dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint"; then
+		_dispatch_capability_cooldown_from_observation "$candidate" "$issue" "$repo"
+		_dispatch_capability_cooldown_active "$issue" "$repo" "$fingerprint" || return 1
+	fi
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — runner_capability_unmet cooldown active (requirements unchanged)" >>"$LOGFILE"
 	_dispatch_stats_increment "dispatch_candidate_skipped_capability_cooldown"
