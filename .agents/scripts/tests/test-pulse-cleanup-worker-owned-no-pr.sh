@@ -44,6 +44,20 @@ teardown() {
 	return 0
 }
 
+# GH#34905: cleanup age is confirmed idle time, so backdate every activity
+# signal pulse reads (.git file plus admin HEAD and HEAD reflog).
+backdate_worktree_activity() {
+	local wt_path="$1"
+	local stamp="$2"
+	local admin_dir="" signal=""
+	admin_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir) || return 1
+	for signal in "$wt_path/.git" "$admin_dir/HEAD" "$admin_dir/logs/HEAD"; do
+		[[ -e "$signal" ]] || continue
+		touch -t "$stamp" "$signal" || return 1
+	done
+	return 0
+}
+
 setup_repo_with_worker_worktree() {
 	local repo_dir="$1"
 	local wt_path="$2"
@@ -76,7 +90,7 @@ setup_repo_with_worker_worktree() {
 			|| date -u -d "$age_spec" +%Y%m%d%H%M 2>/dev/null \
 			|| printf '202601010000\n')
 	fi
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	return 0
 }
 
@@ -105,7 +119,7 @@ setup_repo_with_detached_review_worktree() {
 	old_ts=$(date -u -v-2d +%Y%m%d%H%M 2>/dev/null \
 		|| date -u -d "$age_spec" +%Y%m%d%H%M 2>/dev/null \
 		|| printf '202601010000\n')
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	return 0
 }
 
@@ -725,7 +739,7 @@ test_clean_generated_worktree_waits_for_archive_threshold() {
 	old_ts=$(date -u -v-4H +%Y%m%d%H%M 2>/dev/null ||
 		date -u -d "4 hours ago" +%Y%m%d%H%M 2>/dev/null ||
 		printf '202601010000\n')
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	source_pulse_cleanup_with_stubs || return 1
 
 	local now_epoch
@@ -858,7 +872,7 @@ test_old_unattributed_worktree_is_archived_and_removed() {
 	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "30 days ago" || return 1
 	local old_ts
 	old_ts=$(date -u -v-30d +%Y%m%d%H%M 2>/dev/null || date -u -d "30 days ago" +%Y%m%d%H%M) || return 1
-	touch -t "$old_ts" "$wt_path/.git" || return 1
+	backdate_worktree_activity "$wt_path" "$old_ts" || return 1
 	source_pulse_cleanup_with_stubs || return 1
 
 	local now_epoch
@@ -1099,7 +1113,7 @@ test_abandoned_profile_publication_is_archived_recoverably() {
 		{schema:"aidevops-profile-publication/v1",producer:"profile-readme",worktree_path:$path,canonical_common_dir:$common,canonical_head:$head,created_epoch:1}
 	' >"${git_dir}/aidevops-profile-publication.json"
 	old_ts=$(date -u -v-3H +%Y%m%d%H%M 2>/dev/null || date -u -d '3 hours ago' +%Y%m%d%H%M)
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
 	ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS=7200
@@ -1157,7 +1171,7 @@ setup_profile_publication_worktree() {
 	git -C "$repo_dir" worktree add -q --detach "$wt_path" main
 	local old_ts=""
 	old_ts=$(date -u -v-3H +%Y%m%d%H%M 2>/dev/null || date -u -d '3 hours ago' +%Y%m%d%H%M)
-	touch -t "$old_ts" "$wt_path/.git"
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	return 0
 }
 

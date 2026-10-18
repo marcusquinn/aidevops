@@ -52,6 +52,20 @@ pass() {
 	return 0
 }
 
+# GH#34905: cleanup age is confirmed idle time, so backdate every activity
+# signal pulse reads (.git file plus admin HEAD and HEAD reflog).
+backdate_worktree_activity() {
+	local wt_path="$1"
+	local stamp="$2"
+	local admin_dir="" signal=""
+	admin_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir) || return 1
+	for signal in "$wt_path/.git" "$admin_dir/HEAD" "$admin_dir/logs/HEAD"; do
+		[[ -e "$signal" ]] || continue
+		touch -t "$stamp" "$signal" || return 1
+	done
+	return 0
+}
+
 make_repo_with_worktree() {
 	local repo_path="$1"
 	local wt_path="$2"
@@ -63,7 +77,7 @@ make_repo_with_worktree() {
 	git -C "$repo_path" add README.md
 	git -C "$repo_path" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m init
 	git -C "$repo_path" worktree add -q -b "$branch" "$wt_path" main
-	touch -t 202001010000 "${wt_path}/.git"
+	backdate_worktree_activity "${wt_path}" 202001010000
 	return 0
 }
 

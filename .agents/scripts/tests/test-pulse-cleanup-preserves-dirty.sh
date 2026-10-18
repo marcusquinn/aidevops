@@ -57,6 +57,20 @@ teardown() {
 	return 0
 }
 
+# GH#34905: cleanup age is confirmed idle time, so backdate every activity
+# signal pulse reads (.git file plus admin HEAD and HEAD reflog).
+backdate_worktree_activity() {
+	local wt_path="$1"
+	local stamp="$2"
+	local admin_dir="" signal=""
+	admin_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir) || return 1
+	for signal in "$wt_path/.git" "$admin_dir/HEAD" "$admin_dir/logs/HEAD"; do
+		[[ -e "$signal" ]] || continue
+		touch -t "$stamp" "$signal" || return 1
+	done
+	return 0
+}
+
 # Create a repo + worktree with the .git file mtime aged to N hours ago so
 # the cleanup logic considers it past the 30m grace period.
 setup_repo_with_worktree_aged() {
@@ -77,15 +91,12 @@ setup_repo_with_worktree_aged() {
 		git worktree add -q -b "$branch_name" "$wt_path" main
 	)
 	# touch -t reads local time, so date must also produce local time
-	# (no -u flag). GNU touch -d accepts free-form relative offsets;
-	# BSD touch needs the -t form. Try -d first, fall back to -t.
-	if ! touch -d "${hours_ago} hours ago" "$wt_path/.git" 2>/dev/null; then
-		local old_ts
-		old_ts=$(date -v-"${hours_ago}"H +%Y%m%d%H%M 2>/dev/null \
-			|| date -d "${hours_ago} hours ago" +%Y%m%d%H%M 2>/dev/null \
-			|| printf '202601010000\n')
-		touch -t "$old_ts" "$wt_path/.git"
-	fi
+	# (no -u flag). BSD date uses -v, GNU date uses -d.
+	local old_ts
+	old_ts=$(date -v-"${hours_ago}"H +%Y%m%d%H%M 2>/dev/null \
+		|| date -d "${hours_ago} hours ago" +%Y%m%d%H%M 2>/dev/null \
+		|| printf '202601010000\n')
+	backdate_worktree_activity "$wt_path" "$old_ts"
 	return 0
 }
 

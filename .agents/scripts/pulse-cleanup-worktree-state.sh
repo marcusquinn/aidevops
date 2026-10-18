@@ -833,35 +833,79 @@ _worktree_owner_alive() {
 }
 
 #######################################
-# Get worktree creation epoch from the .git file's mtime.
+# Resolve a linked worktree's private Git admin directory from its .git file.
 #
-# Uses _file_mtime_epoch from portable-stat.sh. Writes 0 to stdout
-# when the .git file is missing or stat fails, and logs a diagnostic in
-# that case (GH#18346: this path was previously a silent continue).
+# Args:
+#   $1 - wt_path: absolute worktree path
+# Outputs: admin directory path on stdout
+# Returns: 0 when the gitdir line resolves to an existing directory, 1 otherwise
+#######################################
+_worktree_admin_dir() {
+	local wt_path="$1"
+	local gitdir_line="" admin_dir=""
+	[[ -f "$wt_path/.git" && ! -L "$wt_path/.git" ]] || return 1
+	IFS= read -r gitdir_line <"$wt_path/.git" 2>/dev/null || [[ -n "$gitdir_line" ]] || return 1
+	[[ "$gitdir_line" == "gitdir: "* ]] || return 1
+	admin_dir="${gitdir_line#gitdir: }"
+	[[ "$admin_dir" == /* ]] || admin_dir="${wt_path}/${admin_dir}"
+	[[ -d "$admin_dir" ]] || return 1
+	printf '%s\n' "$admin_dir"
+	return 0
+}
+
+#######################################
+# Get the epoch since which a worktree has been confirmed idle (GH#34905).
+#
+# Age thresholds measure inactivity, not creation: the newest mtime of the
+# worktree's .git file and its admin-dir HEAD and HEAD reflog. Commits,
+# checkouts, resets and rebases all append to the HEAD reflog, so an old but
+# recently used worktree is never treated as abandoned. Git appends to an
+# existing reflog even with core.logAllRefUpdates=false; a worktree created
+# with reflogs off has no logs/HEAD and is therefore preserved below.
+# The index is deliberately not a signal: plain `git status` (including
+# pulse's own dirty checks) rewrites it, which would keep every worktree
+# permanently "active". Staged-but-uncommitted work is protected by the
+# separate dirty-worktree guards instead. The value is never older than the
+# previous creation-epoch measure, which keeps every threshold at least as
+# conservative as before.
+#
+# Unknown evidence preserves: every signal is mandatory. When the .git file,
+# a resolvable admin directory, its HEAD or its HEAD reflog is missing or
+# unstattable (including removal mid-check), prints 0 and logs the reason so
+# the caller skips the worktree (GH#18346: never a silent continue).
 #
 # Args:
 #   $1 - wt_path: absolute worktree path
 #   $2 - wt_branch: branch name (for log context; "" = detached)
-# Outputs: epoch seconds on stdout (0 on failure)
+# Outputs: epoch seconds on stdout (0 when idleness cannot be confirmed)
 # Returns: 0 always (caller inspects the printed value)
 #######################################
-_worktree_creation_epoch() {
+_worktree_idle_since_epoch() {
 	local wt_path="$1"
 	local wt_branch="${2:-}"
-	local wt_created=0
+	local idle_since=0 admin_dir="" candidate="" mtime=0
 
-	if [[ -f "$wt_path/.git" ]]; then
-		wt_created=$(_file_mtime_epoch "$wt_path/.git")
+	if admin_dir=$(_worktree_admin_dir "$wt_path"); then
+		for candidate in "$wt_path/.git" "$admin_dir/HEAD" "$admin_dir/logs/HEAD"; do
+			mtime=0
+			[[ -f "$candidate" ]] && mtime=$(_file_mtime_epoch "$candidate")
+			if [[ ! "$mtime" =~ ^[0-9]+$ || "$mtime" -eq 0 || ! -f "$candidate" ]]; then
+				idle_since=0
+				break
+			fi
+			[[ "$mtime" -gt "$idle_since" ]] && idle_since="$mtime"
+		done
 	fi
 
-	if [[ "$wt_created" -eq 0 ]]; then
+	if [[ "$idle_since" -eq 0 ]]; then
 		# GH#18346: previously a silent skip — now logs the reason
-		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch:-detached} ($wt_path) — stat on .git failed (wt_created=0)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch:-detached} ($wt_path) — idle evidence unavailable (.git, admin HEAD or HEAD reflog missing)" >>"$LOGFILE"
 	fi
 
-	echo "$wt_created"
+	echo "$idle_since"
 	return 0
 }
+
 #######################################
 # Decide whether a worktree is eligible for orphan cleanup.
 #

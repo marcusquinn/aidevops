@@ -1262,7 +1262,7 @@ _pc_read_worktree_status_or_skip() {
 # Per-worktree age-based orphan cleanup decision and removal.
 #
 # Thin orchestrator over four private helpers:
-#   1. _worktree_creation_epoch          — creation time from .git mtime
+#   1. _worktree_idle_since_epoch        — confirmed-idle time: .git, admin HEAD and HEAD reflog (GH#34905)
 #   2. _worktree_owner_alive             — pgrep + registry ownership check
 #   3. _evaluate_worktree_removal        — age/commit/PR threshold decision
 #   4. _pc_assert_no_uncommitted_work    — dirty + reflog-only WIP guard (GH#23677)
@@ -1303,13 +1303,14 @@ _cleanup_single_worktree() {
 	local main_branch="$6"
 	_pcdo_retry_backoff_allows_scan "$wt_path_age" "$wt_branch_age" "$now_epoch" || return 1
 
-	local wt_created
-	wt_created=$(_worktree_creation_epoch "$wt_path_age" "$wt_branch_age")
-	if [[ "$wt_created" -eq 0 ]]; then
+	# GH#34905: "age" is confirmed idle time, not time since creation.
+	local wt_idle_since
+	wt_idle_since=$(_worktree_idle_since_epoch "$wt_path_age" "$wt_branch_age")
+	if [[ "$wt_idle_since" -eq 0 ]]; then
 		_pc_log_stat_unavailable_skip "$wt_path_age" "$wt_branch_age"
 		return 1
 	fi
-	local wt_age_secs=$((now_epoch - wt_created))
+	local wt_age_secs=$((now_epoch - wt_idle_since))
 
 	local commits_ahead=0
 	commits_ahead=$(_pc_commits_ahead_from_default "$rp_age" "$wt_path_age" "$main_branch") || return 1

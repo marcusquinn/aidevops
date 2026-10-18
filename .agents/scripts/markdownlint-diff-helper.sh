@@ -28,24 +28,28 @@
 set -uo pipefail
 
 SCRIPT_NAME=$(basename "$0")
+# shellcheck source=git-ref-snapshot-lib.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-ref-snapshot-lib.sh" || {
+	printf '[%s] ERROR: cannot load git-ref-snapshot-lib.sh\n' "$SCRIPT_NAME" >&2
+	exit 2
+}
 TMP_DIR=""
-BASE_WORKTREE=""
+BASE_TREE=""
 
+# The biome baseline is an unregistered snapshot inside TMP_DIR (GH#34905),
+# so removing TMP_DIR is the whole cleanup.
 cleanup() {
-	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
-		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
-		if [[ "$BASE_WORKTREE" != */base-tree ]]; then
-			log "WARN: Path '$BASE_WORKTREE' does not match fixture pattern — skipping remove"
-		else
-			git worktree remove --force "$BASE_WORKTREE" >/dev/null 2>&1 || true
-		fi
-	fi
 	if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
 	fi
 	return 0
 }
 trap cleanup EXIT
+# Bash skips the EXIT trap when a fatal signal terminates it; exit explicitly
+# so timeouts and interrupts still remove TMP_DIR.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 log() {
 	local _msg="$1"
@@ -286,17 +290,17 @@ run_biome() {
 
 	log "Changed biome files: $(echo "$_changed_files" | wc -l | tr -d ' ')"
 
-	TMP_DIR=$(mktemp -d)
+	TMP_DIR=$(mktemp -d) && [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ] ||
+		die "cannot create temporary directory"
 
-	# Create a worktree at the base ref for baseline comparison
-	BASE_WORKTREE="${TMP_DIR}/base-tree"
-	log "Creating base worktree at ${_base:0:7}..."
-	git worktree add --quiet "$BASE_WORKTREE" "$_base" 2>/dev/null || {
-		# Fallback: detached HEAD
-		git worktree add --detach --quiet "$BASE_WORKTREE" "$_base" 2>/dev/null || {
-			die "Failed to create base worktree at $_base"
-		}
-	}
+	# Baseline: the full base tree (so biome `extends`, nested configs and
+	# ignore files resolve exactly as in a checkout) written into an
+	# unregistered snapshot (GH#34905). No `git worktree add`, so an
+	# interrupted or killed run cannot leak a registration.
+	BASE_TREE="${TMP_DIR}/base-tree"
+	log "Materializing base snapshot at ${_base:0:7}..."
+	_materialize_ref_tree "$_base" "$BASE_TREE" ||
+		die "Failed to materialize base snapshot at $_base"
 
 	# Count violations at base (only in changed files that exist at base)
 	local _base_count=0
@@ -304,14 +308,14 @@ run_biome() {
 	{
 		while IFS= read -r _f; do
 			[ -n "$_f" ] || continue
-			[ -f "${BASE_WORKTREE}/${_f}" ] && _base_file_list="${_base_file_list} ${_f}"
+			[ -f "${BASE_TREE}/${_f}" ] && _base_file_list="${_base_file_list} ${_f}"
 		done
 	} <<< "$_changed_files"
 
 	if [ -n "$_base_file_list" ]; then
 		local _base_output
 		# shellcheck disable=SC2086
-		_base_output=$(cd "$BASE_WORKTREE" && npx --yes @biomejs/biome@2.4.12 lint \
+		_base_output=$(cd "$BASE_TREE" && npx --yes @biomejs/biome@2.4.12 lint \
 			--reporter=github --max-diagnostics=9999 $_base_file_list 2>&1) || true
 		# t2376: use `|| true` not `|| echo "0"` — grep -c always outputs a
 		# count (including "0" for no matches) and exits 1 when no matches.

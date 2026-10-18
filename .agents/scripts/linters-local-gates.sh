@@ -257,6 +257,7 @@ _linters_local_gate_key() {
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-gates.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-analysis.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/complexity-regression-helper.sh"
+		_linters_local_file_checksum "${SCRIPT_DIR}/git-ref-snapshot-lib.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/../configs/complexity-thresholds.conf"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-ratchet.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-validators.sh"
