@@ -5,7 +5,17 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT=$(mktemp -d)
-trap 'rm -rf "$ROOT"' EXIT
+finish_test() {
+	local status="$1"
+	local line="$2"
+	local command="$3"
+	if [[ "$status" -ne 0 ]]; then
+		printf 'FAIL: migration test line %s (status %s): %s\n' "$line" "$status" "$command" >&2
+	fi
+	rm -rf "$ROOT"
+	return 0
+}
+trap 'finish_test "$?" "$LINENO" "$BASH_COMMAND"' EXIT
 # shellcheck source=../full-loop-release-helper.sh
 source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
 
@@ -126,4 +136,4 @@ EXPECTED_ARGUMENT="41@$FIRST"
 _full_loop_release_start_new test/repo 41 patch incremental ""
 EXPECTED_ARGUMENT="41,42"
 _full_loop_release_start_new test/repo 41 patch incremental "41,42"
-printf 'PASS: start preserves explicit assertions without promoting an implicit legacy subset\n'
+printf 'PASS: start preserves explicit assertions and reuses persisted authorization on implicit retries\n'
