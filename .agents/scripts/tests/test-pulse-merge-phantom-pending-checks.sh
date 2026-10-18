@@ -39,7 +39,7 @@
 # extract _check_required_checks_passing from pulse-merge-process.sh, eval it,
 # and exercise against a mock `gh` stub keyed on MOCK_*_MODE env vars.
 #
-# The mock handles seven gh invocations (post GH#21799 migration):
+# The mock handles eight gh invocations (post GH#21799 migration):
 #   1. gh api repos/SLUG                              → default branch
 #   2. gh api repos/SLUG/branches/.../protection/...  → required_status_checks
 #   3. gh api repos/SLUG/rulesets                    → repository ruleset list
@@ -49,6 +49,7 @@
 #   7. gh api repos/SLUG/commits/SHA/status          → legacy status contexts
 #      (t3250: includes `Maintainer Review & Assignee Gate` alias for repos
 #      whose branch protection still requires the pre-reusable workflow name)
+#   8. gh api repos/SLUG/branches/BRANCH             → branch protection metadata
 #
 # Mode variables:
 #   MOCK_REPO_MODE     — controls gh api repos/<slug> response
@@ -267,6 +268,14 @@ if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 		;;
 	esac
 	apply_jq "$local_json" "$@"
+	exit 0
+fi
+
+# Match: gh api repos/SLUG/branches/BRANCH (GH#34965 fallback).
+# These ruleset-only scenarios have no classic branch protection. Model that
+# explicitly rather than letting the new metadata lookup return empty output.
+if [[ "$1" == "api" && "$2" == repos/*/branches/* && "$2" != */protection/* ]]; then
+	apply_jq '{"name":"main","protected":false}' "$@"
 	exit 0
 fi
 
@@ -505,7 +514,7 @@ test_rulesets_required_on_branch_protection_404_block() {
 	export MOCK_RULESETS_MODE="active_required"
 	export MOCK_ROLLUP_MODE="one_required_failing"
 	assert_returns 1 "branch protection 404 + failing ruleset-required check → blocked"
-	assert_log_contains "active rulesets require contexts" \
+	assert_log_contains "active rulesets add required contexts" \
 		"rulesets_404_block: ruleset context logged"
 	assert_log_contains "required context(s) not passing" \
 		"rulesets_404_block: block message logged"
@@ -525,7 +534,7 @@ test_rulesets_required_on_branch_protection_404_pass() {
 	export MOCK_RULESETS_MODE="active_required"
 	export MOCK_ROLLUP_MODE="all_required_pass"
 	assert_returns 0 "branch protection 404 + passing ruleset-required check → allowed"
-	assert_log_contains "active rulesets require contexts" \
+	assert_log_contains "active rulesets add required contexts" \
 		"rulesets_404_pass: ruleset context logged"
 	assert_log_contains "all required contexts passing" \
 		"rulesets_404_pass: pass message logged"
@@ -539,7 +548,7 @@ test_rulesets_required_with_simple_glob() {
 	export MOCK_RULESETS_MODE="active_required_star"
 	export MOCK_ROLLUP_MODE="one_required_failing"
 	assert_returns 1 "branch protection 404 + simple '*' ruleset glob → blocked"
-	assert_log_contains "active rulesets require contexts" \
+	assert_log_contains "active rulesets add required contexts" \
 		"rulesets_star_glob: ruleset context logged"
 	assert_log_contains "required context(s) not passing" \
 		"rulesets_star_glob: block message logged"
@@ -553,7 +562,7 @@ test_rulesets_required_with_plain_branch() {
 	export MOCK_RULESETS_MODE="active_required_plain_branch"
 	export MOCK_ROLLUP_MODE="one_required_failing"
 	assert_returns 1 "branch protection 404 + plain default-branch ruleset → blocked"
-	assert_log_contains "active rulesets require contexts" \
+	assert_log_contains "active rulesets add required contexts" \
 		"rulesets_plain_branch: ruleset context logged"
 	assert_log_contains "required context(s) not passing" \
 		"rulesets_plain_branch: block message logged"
@@ -567,7 +576,7 @@ test_rulesets_excludes_default_branch() {
 	export MOCK_RULESETS_MODE="active_required_excluded_default"
 	export MOCK_ROLLUP_MODE="one_required_failing"
 	assert_returns 0 "branch protection 404 + ruleset excluding default branch → allowed"
-	assert_log_contains "no classic branch protection or required ruleset contexts" \
+	assert_log_contains "no branch/ruleset contexts" \
 		"rulesets_excluded_default: empty-context message logged"
 	return 0
 }
@@ -579,7 +588,7 @@ test_rulesets_non_matching_branch_ignored() {
 	export MOCK_RULESETS_MODE="active_required_other_branch"
 	export MOCK_ROLLUP_MODE="one_required_failing"
 	assert_returns 0 "branch protection 404 + non-default ruleset → allowed"
-	assert_log_contains "no classic branch protection or required ruleset contexts" \
+	assert_log_contains "no branch/ruleset contexts" \
 		"rulesets_non_default: empty-context message logged"
 	return 0
 }
@@ -611,9 +620,12 @@ test_private_plan_unavailable_without_required_rulesets() {
 	export MOCK_BP_MODE="private_plan_unavailable"
 	export MOCK_RULESETS_MODE="none"
 	assert_returns 0 "private-plan classic protection unavailable + no required rulesets → allowed"
-	assert_log_contains "private-plan unavailable (HTTP 403)" \
-		"private-plan unavailable: classified narrowly"
-	assert_log_contains "empty contexts" \
+	if grep -Fxq 'api repos/marcusquinn/aidevops/branches/main' "$GH_CALL_LOG"; then
+		print_result "private-plan unavailable: branch metadata queried" 0
+	else
+		print_result "private-plan unavailable: branch metadata queried" 1
+	fi
+	assert_log_contains "no branch/ruleset contexts" \
 		"private-plan unavailable: successful ruleset lookup proves no configured checks"
 	return 0
 }
