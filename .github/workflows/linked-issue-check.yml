@@ -7,7 +7,10 @@
 name: Linked Issue Check
 
 on:
-  pull_request_target:
+  # pull_request_target is needed to post a status on fork PRs. Reviewed safe:
+  # the reusable workflow reads PR metadata only and never checks out or runs
+  # PR-head code, and this caller grants no contents permission.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened, edited, synchronize, reopened]
 
 permissions:
