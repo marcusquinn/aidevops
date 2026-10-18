@@ -105,10 +105,31 @@ def mcp_entry(path, server, entry):
         if not isinstance(env, dict):
             continue
         for name, value in env.items():
-            if is_mcp_literal(name, value):
+            if is_credential_file_reference(name, value):
+                if unsafe_credential_file(value):
+                    yield finding(path, 0, name, 'mcp-credential-file', server=server, block=block)
+            elif is_mcp_literal(name, value):
                 yield finding(path, 0, name, 'mcp-literal', server=server, block=block)
+
+
+def is_credential_file_reference(name, value):
+    return (name.endswith(('_CREDENTIALS', '_FILE', '_PATH'))
+            and isinstance(value, str) and (os.path.isabs(value) or value.startswith('~/')))
+
+
+def unsafe_credential_file(value):
+    # Metadata only: never read the credential or include its path in findings.
+    try:
+        info = os.lstat(os.path.expanduser(value))
+    except FileNotFoundError:
+        return False  # A missing reference is not a secret leak.
+    except (OSError, ValueError):
+        return True  # Uninspectable references must not silently pass.
+    return (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or bool(info.st_mode & 0o077))
 
 
 def is_mcp_literal(name, value):
     return bool(SECRET_NAME.search(name) and isinstance(value, str) and value
+                and not is_credential_file_reference(name, value)
                 and not re.fullmatch(r'\{(?:env|file):[^{}]+\}', value))

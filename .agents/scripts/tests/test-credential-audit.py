@@ -15,9 +15,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import credential_mcp  # noqa: E402 - repository module needs the scripts path
+
 spec = importlib.util.spec_from_file_location('credential_literals', SCRIPTS / 'credential_literals.py')
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
@@ -161,6 +164,55 @@ else:
         scan = self.cmd('secret-hygiene-helper.sh', 'scan')
         self.assertIn('mcp-literal', scan.stdout)
         self.assert_no_values(result.stdout + scan.stdout + scan.stderr)
+
+    def test_mcp_credential_file_references_are_value_free(self):
+        private = self.home / 'private-reference.json'
+        public = self.home / 'public-reference.json'
+        self.write(private, 'synthetic credential')
+        self.write(public, 'synthetic credential', 0o644)
+        link = self.home / 'linked-reference.json'
+        link.symlink_to(private)
+        references = {
+            'GOOGLE_APPLICATION_CREDENTIALS': str(private),
+            'TILDE_CREDENTIALS': '~/private-reference.json',
+            'PUBLIC_CREDENTIALS': str(public),
+            'LINK_FILE': str(link),
+            'DIRECTORY_PATH': str(self.store),
+            'MISSING_CREDENTIALS': str(self.home / 'missing-reference.json'),
+            'RELATIVE_CREDENTIALS': 'relative-reference.json',
+            'DEMO_API_KEY': self.values[-1],
+            'PATH_TOKEN': str(private),
+        }
+        path = self.home / '.config/opencode/opencode.json'
+        self.write(path, json.dumps({'mcp': {
+            'gsc': {'env': references}, 'google-analytics-mcp': {'environment': references},
+        }}))
+        result = self.cmd('secret-hygiene-helper.sh', 'audit-mcp')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = [json.loads(line) for line in result.stdout.splitlines()]
+        expected = {'PUBLIC_CREDENTIALS': 'mcp-credential-file',
+                    'LINK_FILE': 'mcp-credential-file', 'DIRECTORY_PATH': 'mcp-credential-file',
+                    'RELATIVE_CREDENTIALS': 'mcp-literal', 'DEMO_API_KEY': 'mcp-literal',
+                    'PATH_TOKEN': 'mcp-literal'}
+        self.assertEqual(len(records), 2 * len(expected))
+        for server, block in [('gsc', 'env'), ('google-analytics-mcp', 'environment')]:
+            self.assertEqual({r['name']: r['category'] for r in records
+                              if r['server'] == server and r['block'] == block}, expected)
+        for value in references.values():
+            self.assertNotIn(value, result.stdout + result.stderr)
+
+    def test_mcp_credential_file_owner_and_inspection_errors(self):
+        path = self.home / 'owner-reference.json'
+        self.write(path, 'synthetic credential')
+        entry = {'env': {'GOOGLE_APPLICATION_CREDENTIALS': str(path)}}
+        with patch('credential_mcp.os.getuid', return_value=os.getuid() + 1):
+            records = list(credential_mcp.mcp_entry('config.json', 'gsc', entry))
+        self.assertEqual(records, [dict(file='config.json', line=0,
+                         name='GOOGLE_APPLICATION_CREDENTIALS', category='mcp-credential-file',
+                         server='gsc', block='env')])
+        with patch('credential_mcp.os.lstat', side_effect=PermissionError):
+            self.assertEqual(list(credential_mcp.mcp_entry('config.json', 'gsc', entry)), records)
+        self.assertFalse(credential_mcp.is_mcp_literal('GOOGLE_APPLICATION_CREDENTIALS', str(path)))
 
     def test_registry_failures_propagate(self):
         script = '''source "$1" help >/dev/null
