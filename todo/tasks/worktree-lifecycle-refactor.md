@@ -220,8 +220,10 @@ All four were confirmed in the code and fixed:
    remover: a refusal (lock, unregistered path) preserves the directory and
    branch. Removal also needs invocation-owned evidence: a random owner token
    written into the worktree's admin directory at creation, and a branch tip
-   this run produced (the creation tip or its own rebase result). Anything else
-   preserves both the worktree and the branch. The branch is then deleted with
+   this run produced (the creation tip, or its rebase result taken from the
+   branch's own `rebase (finish)` reflog entry so a later commit is never
+   adopted). Anything else preserves both the worktree and the branch,
+   including an unresolvable branch tip while the checkout still exists. The branch is then deleted with
    `update-ref -d <ref> <that-tip>` (compare-and-swap), and only when it is not
    checked out elsewhere. Pre-add failure paths use `rmdir`.
 2. `source-matches` ran before native removal's lock, common-dir and
@@ -244,18 +246,22 @@ now use the `:` literal form. `test-pulse-cleanup-centralize-worktrees.sh`
 failed 3/6 on unchanged `main` because it had no fixture registry; it now has a
 fixture-owned registry and passes 6/6.
 
-An ad-hoc probe passed 13/13 on Bash 5.3 and 3.2. It covered: locked
-ephemeral, mismatched or empty owner token, a foreign commit before cleanup, a
-branch advanced during cleanup, owned removal, skip-worktree, assume-unchanged,
-a new ignored file, a same-size overwrite deep in an ignored directory, the
-ignored-file cap, and a failing smudge filter. An end-to-end probe of
-`_dps_rebase_in_ephemeral` against a local bare origin also passed: success with
-push, conflict, and TERM mid-rebase each left zero worktrees and zero
-`dirty-pr-sweep/*` branches.
+An ad-hoc probe passed 14/14 on Bash 5.3 and 3.2. It covered: locked
+ephemeral, mismatched or empty owner token, a foreign commit before cleanup, an
+unresolvable branch tip with a live checkout, a branch advanced during cleanup,
+owned removal, skip-worktree, assume-unchanged, a new ignored file, a same-size
+overwrite deep in an ignored directory, the ignored-file cap, and a failing
+smudge filter. An end-to-end probe of `_dps_rebase_in_ephemeral` against a
+local bare origin also passed under Bash 5: success with push, conflict, and
+TERM mid-rebase each left zero worktrees and zero `dirty-pr-sweep/*` branches.
+The `/bin/bash` invocation re-execs into modern Bash, so it is not 3.2 evidence.
 
-The first re-review closed findings 2 and 4 and left 1 and 3 open
-(cleanup-time tip adopted as ownership; collapsed ignored inventory). Both were
-reworked as described above.
+Review rounds: the first re-review closed findings 2 and 4. The second closed
+finding 3 for ordinary writes. It is metadata comparison, not content
+verification: a writer that preserves mode, inode, size, mtime and ctime would
+evade it, which ordinary tools cannot do for ctime. The second re-review
+also found finding 1 failing open on an unresolvable branch tip; that is
+now fixed. A final re-review of that last change was not run.
 
 Found while probing, and outside this scope (identical on `main`): `rebase -X
 union` does not resolve TODO.md conflicts. `union` is a merge driver, not a

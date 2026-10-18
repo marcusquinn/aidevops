@@ -887,11 +887,11 @@ _dps_rebase_in_ephemeral() {
 	# worktree's admin dir proves the registration at this path is ours, and
 	# the creation tip seeds the set of branch tips this invocation produced.
 	# Missing evidence leaves the token empty, so cleanup preserves.
-	local owner_token="" owner_admin=""
+	local owner_mark="" owner_admin=""
 	_DPS_EPHEMERAL_TIPS=$(git -C "$ephemeral" rev-parse --verify HEAD 2>/dev/null) || _DPS_EPHEMERAL_TIPS=""
 	if owner_admin=$(git -C "$ephemeral" rev-parse --absolute-git-dir 2>/dev/null) &&
 		printf '%s-%s-%s-%s\n' "$$" "$ephemeral_branch_ts" "$RANDOM" "$RANDOM" >"${owner_admin}/${_DPS_OWNER_FILE}" 2>/dev/null; then
-		IFS= read -r owner_token <"${owner_admin}/${_DPS_OWNER_FILE}" || owner_token=""
+		IFS= read -r owner_mark <"${owner_admin}/${_DPS_OWNER_FILE}" || owner_mark=""
 	fi
 
 	# GH#34943: the rebase and push run in a subshell whose EXIT trap removes
@@ -902,7 +902,7 @@ _dps_rebase_in_ephemeral() {
 	# _DPS_EPHEMERAL_TIPS late, so tips recorded inside the subshell count.
 	local rebase_ok=1
 	if (
-		trap '_dps_remove_ephemeral "$repo_path" "$ephemeral" "$ephemeral_branch" "$pr_number" "$repo_slug" "$owner_token" "$_DPS_EPHEMERAL_TIPS"' EXIT
+		trap '_dps_remove_ephemeral "$repo_path" "$ephemeral" "$ephemeral_branch" "$pr_number" "$repo_slug" "$owner_mark" "$_DPS_EPHEMERAL_TIPS"' EXIT
 		trap 'exit 129' HUP
 		trap 'exit 130' INT
 		trap 'exit 143' TERM
@@ -932,9 +932,18 @@ _dps_rebase_and_push() {
 		return 1
 	fi
 	# Record the tip this invocation produced (see _dps_remove_ephemeral).
-	local rebased_tip=""
-	rebased_tip=$(git -C "$ephemeral" rev-parse --verify HEAD 2>/dev/null) &&
-		_DPS_EPHEMERAL_TIPS="${_DPS_EPHEMERAL_TIPS} ${rebased_tip}"
+	# Read it from the branch's newest reflog entry, and only when that entry
+	# is the rebase's own finish record: a commit landing after the rebase is
+	# then never adopted as ours. A no-op rebase leaves the creation tip.
+	local branch_ref="" reflog_top="" rebased_tip=""
+	branch_ref=$(git -C "$ephemeral" symbolic-ref -q HEAD 2>/dev/null) || branch_ref=""
+	if [[ -n "$branch_ref" ]] &&
+		reflog_top=$(git -C "$ephemeral" log -g -1 --format='%H %gs' "$branch_ref" 2>/dev/null); then
+		rebased_tip="${reflog_top%% *}"
+		case "${reflog_top#* }" in
+		"rebase (finish):"*) _DPS_EPHEMERAL_TIPS="${_DPS_EPHEMERAL_TIPS} ${rebased_tip}" ;;
+		esac
+	fi
 	# Force-push with lease so we never clobber a human-pushed commit.
 	if ! git -C "$ephemeral" push --force-with-lease=refs/heads/"$head_ref":origin/"$head_ref" \
 		origin "HEAD:refs/heads/${head_ref}" >/dev/null 2>&1; then
@@ -958,7 +967,7 @@ _dps_remove_ephemeral() {
 	local ephemeral_branch="$3"
 	local pr_number="$4"
 	local repo_slug="$5"
-	local owner_token="${6:-}"
+	local owner_mark="${6:-}"
 	local expected_tips="${7:-}"
 	local preserve_msg="PR #$pr_number ($repo_slug): preserving $ephemeral and branch $ephemeral_branch"
 
@@ -968,23 +977,25 @@ _dps_remove_ephemeral() {
 		return 0
 	fi
 	if [[ -e "$ephemeral" ]]; then
-		local admin="" found_token=""
+		local admin="" found_mark=""
 		admin=$(git -C "$ephemeral" rev-parse --absolute-git-dir 2>/dev/null) || admin=""
 		if [[ -n "$admin" && -f "${admin}/${_DPS_OWNER_FILE}" ]]; then
-			IFS= read -r found_token <"${admin}/${_DPS_OWNER_FILE}" || found_token=""
+			IFS= read -r found_mark <"${admin}/${_DPS_OWNER_FILE}" || found_mark=""
 		fi
-		if [[ -z "$owner_token" || "$found_token" != "$owner_token" ]]; then
+		if [[ -z "$owner_mark" || "$found_mark" != "$owner_mark" ]]; then
 			_dps_log "${preserve_msg} — ownership token absent or mismatched"
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "ownership-unproven" "$_DPS_MODE_SKIPPED"
 			return 0
 		fi
 	fi
-	# The branch tip must be one this invocation produced; a commit added by
-	# anyone else keeps both the branch and the worktree.
+	# The branch tip must resolve and be one this invocation produced; a
+	# commit added by anyone else, or an unresolvable tip while the checkout
+	# still exists, keeps both the branch and the worktree.
 	local branch_oid=""
 	branch_oid=$(git -C "$repo_path" rev-parse --verify --quiet "refs/heads/${ephemeral_branch}" 2>/dev/null) || branch_oid=""
-	if [[ -n "$branch_oid" && " ${expected_tips} " != *" ${branch_oid} "* ]]; then
-		_dps_log "${preserve_msg} — branch tip ${branch_oid} not produced by this run"
+	if [[ -z "$branch_oid" && -e "$ephemeral" ]] ||
+		[[ -n "$branch_oid" && " ${expected_tips} " != *" ${branch_oid} "* ]]; then
+		_dps_log "${preserve_msg} — branch tip '${branch_oid}' unresolved or not produced by this run"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "foreign-branch-tip" "$_DPS_MODE_SKIPPED"
 		return 0
 	fi
