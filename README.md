@@ -31,6 +31,7 @@ token efficiency, and quality control built in.**
 
 [![Lines of code](docs/metrics/badges/loc.svg)](docs/metrics/repo-metrics.md)
 [![Dependencies](docs/metrics/badges/dependencies.svg)](docs/metrics/repo-metrics.md)
+
 [![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
 
 ## The Aim

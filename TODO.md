@@ -1711,8 +1711,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18717 Linkup docs: use account-scoped secret name per credential naming convention #auto-dispatch #bug ref:GH#35007 -> [todo/tasks/t18717-brief.md] pr:#35008 completed:2026-10-18
 - [x] t18719 Linkup agent doc: add official query-writing, endpoint best practices and agent guidance #auto-dispatch #feat ref:GH#35013 -> [todo/tasks/t18719-brief.md] pr:#35016 completed:2026-10-18
 - [x] t18718 fix(badges): enforce README badge layout and require helper-managed blocks in /readme #auto-dispatch #bug ref:GH#35012 -> [todo/tasks/t18718-brief.md] pr:#35015 completed:2026-10-18
-- [x] t18720 fix(badges): drift detector misreports DRIFTED repos; Actions badge picks metrics caller #auto-dispatch #bug ref:GH#35019 -> [todo/tasks/t18720-brief.md] pr:#35033 completed:2026-10-18
+- [x] t18720 fix(badges): drift detector misreports DRIFTED repos; Actions badge picks metrics caller #auto-dispatch #bug ref:GH#35019 -> [todo/tasks/t18720-brief.md] pr:#35021 completed:2026-10-18
 - [x] t18721 feat(badges): worktree-safe badges sync --apply and scheduled drift remediation #auto-dispatch #feat ref:GH#35020 -> [todo/tasks/t18721-brief.md] pr:#35036 completed:2026-10-18
+- [ ] t18723 fix(badges): derive owned repos from repos.json instead of hard-coded org allowlist #auto-dispatch #bug ref:GH#35032 -> [todo/tasks/t18723-brief.md]
+- [ ] t18730 docs(readme): put languages chart on its own line in README badge row #bug ref:GH#35058 -> [todo/tasks/t18730-brief.md]
 
 - [ ] t18727 fix: test-release-snapshot-migration.sh exits 1 silently in _full_loop_release_start_new block #auto-dispatch #bug ref:GH#35045
 
