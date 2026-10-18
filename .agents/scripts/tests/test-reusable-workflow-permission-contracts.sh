@@ -310,8 +310,14 @@ def check_permission_rollouts() -> list[str]:
             if any(reusable_path_for_uses(job.get("uses", "")) == path
                    for job in jobs.values() if isinstance(job, dict)):
                 callers.append(caller.relative_to(ROOT).as_posix())
-        name = path.stem.removesuffix("-reusable")
-        failures.extend(rollout_failures(name, callers, changed, os.environ.get("PR_BODY", "")))
+        # Roll out the installed caller, not an internal reusable filename
+        # (issue-sync also calls issue-sync-artifact-maintenance-reusable).
+        body = os.environ.get("PR_BODY", "")
+        if not callers:
+            failures.extend(rollout_failures(path.stem.removesuffix("-reusable"), [], changed, body))
+        for caller in callers:
+            name = pathlib.PurePosixPath(caller).stem.removesuffix("-caller")
+            failures.extend(rollout_failures(name, [caller], changed, body))
     return failures
 
 
