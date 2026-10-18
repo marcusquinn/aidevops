@@ -377,8 +377,9 @@ test_closed_issue_dirty_worktree_compacts_and_preserves_branch() {
 }
 
 # GH#34943: a late owner that writes after the compact archive was verified
-# must keep its worktree. The guard override simulates that write landing
-# between archive verification and native removal.
+# must keep its worktree. The managed-lifetime probe override simulates that
+# write landing inside native removal, after its lock and common-dir probes
+# (the probe only runs there, so the archive itself is unaffected).
 test_late_write_after_compact_archive_preserves_worktree() {
 	local repo_dir="${TEST_ROOT}/repo-late-writer"
 	local wt_path="${TEST_ROOT}/worker-wt-late-writer"
@@ -393,9 +394,7 @@ test_late_write_after_compact_archive_preserves_worktree() {
 		fi
 		return 1
 	}
-	# The guard also runs before the archive; append so the call after the
-	# archive changes content (an identical rewrite loses nothing).
-	worktree_removal_guard() {
+	worktree_managed_require_removal_proof() {
 		local guarded_path="$1"
 		printf 'late owner write\n' >>"${guarded_path}/late-owner.txt"
 		return 0

@@ -119,8 +119,11 @@ resolve_base_sha() {
 # Print a one-line JSON fingerprint of the recoverable source state: HEAD,
 # branch, unstaged and staged binary diffs, and every untracked path with its
 # type and content (GH#34943). Compact archives record it so removal can
-# prove nothing changed between capture and deletion. Ignored files and
-# skip-worktree/assume-unchanged edits are not covered (documented limits).
+# prove nothing changed between capture and deletion. Index entries flagged
+# skip-worktree or assume-unchanged hide edits from the diffs, so they fail
+# closed. Ignored paths are not archived; their collapsed inventory (type,
+# size, mtime) is fingerprinted so a late ignored write still blocks removal.
+# Writes deep inside a pre-existing ignored directory remain undetected.
 source_fingerprint() {
 	local worktree="$1"
 	python3 - "$worktree" <<'PY'
@@ -139,12 +142,17 @@ def git(*args):
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
 
 
+def listed(*args):
+    """Sorted, NUL-delimited `git ls-files` output."""
+    return sorted(p for p in git("ls-files", "-z", *args).split(b"\0") if p)
+
+
 try:
     branch = git("symbolic-ref", "--short", "-q", "HEAD").decode().strip()
 except subprocess.CalledProcessError:
     branch = "detached"
 untracked = hashlib.sha256()
-for raw in sorted(p for p in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if p):
+for raw in listed("--others", "--exclude-standard"):
     target = root.joinpath(os.fsdecode(raw))
     untracked.update(raw + b"\0")
     if target.is_symlink():
@@ -157,12 +165,20 @@ for raw in sorted(p for p in git("ls-files", "--others", "--exclude-standard", "
     else:
         untracked.update(b"?")
     untracked.update(b"\0")
+for entry in listed("-v"):
+    if entry[:1] == b"S" or entry[:1].islower():
+        raise SystemExit("index has skip-worktree/assume-unchanged entries")
+ignored = hashlib.sha256()
+for raw in listed("--others", "--ignored", "--exclude-standard", "--directory"):
+    info = os.lstat(root.joinpath(os.fsdecode(raw.rstrip(b"/"))))
+    ignored.update(raw + b"\0" + ("%o:%d:%d" % (info.st_mode, info.st_size, info.st_mtime_ns)).encode() + b"\0")
 print(json.dumps({
     "head": git("rev-parse", "--verify", "HEAD").decode().strip(),
     'branch': branch,
     "diff_sha256": hashlib.sha256(git("diff", "--no-ext-diff", "--binary")).hexdigest(),
     "staged_sha256": hashlib.sha256(git("diff", "--no-ext-diff", "--cached", "--binary")).hexdigest(),
     "untracked_sha256": untracked.hexdigest(),
+    "ignored_sha256": ignored.hexdigest(),
 }, sort_keys=True))
 PY
 	return $?

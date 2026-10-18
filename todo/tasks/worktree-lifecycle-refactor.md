@@ -210,6 +210,37 @@ Also pre-existing on unchanged `main` (identical on Linux new and base):
   live PID with hidden identity" and "orphan cleanup compares against
   origin/main when local main is stale".
 
+## Independent safety review
+
+A static review over staged branch files returned BLOCK with four findings.
+All four were confirmed in the code and fixed:
+
+1. Dirty-PR ephemeral cleanup ignored a refused `worktree remove` and then ran
+   `rm -rf` and an unconditional `branch -D`. Now native removal is the only
+   remover: a refusal (lock, unregistered path) preserves the directory and
+   branch. The branch is deleted with `update-ref -d <ref> <captured-oid>`,
+   and only when it is not checked out elsewhere. Pre-add failure paths use
+   `rmdir`.
+2. `source-matches` ran before native removal's lock, common-dir and
+   managed-lifetime probes. It now runs inside `_worktree_remove_with_native_git`
+   (new 6th argument) after every probe, immediately before `remove --force`.
+   The pre-existing third-party removal path, which used only a porcelain
+   snapshot, gets the same check. The late-write test now injects the write at
+   the managed-lifetime probe. The residual race is the native removal call itself.
+3. The fingerprint now fails closed on skip-worktree or assume-unchanged index
+   entries and covers the collapsed ignored-path inventory (type, size, mtime).
+   Writes deep inside a pre-existing ignored directory remain undetected. This
+   is a documented limit; ignored content is never archived.
+4. A failed checkout filter in `scan-ref` was counted as zero lines. It now warns
+   with the path and counts the unfiltered blob.
+
+Also, as non-blocking: markdownlint arguments that contain glob metacharacters
+now use the `:` literal form. `test-pulse-cleanup-centralize-worktrees.sh`
+failed 3/6 on unchanged `main` because it had no fixture registry; it now has a
+fixture-owned registry and passes 6/6. The ad-hoc probe (locked ephemeral, moved
+branch, skip-worktree, assume-unchanged, late ignored file, failing smudge
+filter) passed 9/9 on Bash 5.3 and 3.2. The review was not re-run on the fixes.
+
 Outstanding: NixOS execution, concurrent cleaners and late owners,
-interrupted creation/removal, the timing decision, an independent safety
-review, and exact-head CI.
+interrupted creation/removal, the timing decision, a re-review of the fixes,
+and exact-head CI.

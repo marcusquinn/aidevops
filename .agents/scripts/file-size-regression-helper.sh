@@ -229,10 +229,15 @@ scan_violations_ref() {
 			*"
 ${_rel}
 "*)
-				_lc=$(git cat-file --filters "${_commit}:${_rel}" 2>/dev/null | wc -l) || _lc=0
-				_lc=${_lc//[^0-9]/}
-				[ "${_lc:-0}" -gt "$_path_limit" ] && printf '%s\t%d\n' "$_rel" "$_lc"
-				continue
+				# pipefail exposes a failed smudge; the unfiltered blob
+				# count then stands, with a warning, instead of zero.
+				local _flc=""
+				if _flc=$(set -o pipefail; git cat-file --filters "${_commit}:${_rel}" 2>/dev/null | wc -l); then
+					_lc=${_flc//[^0-9]/}
+					[ "${_lc:-0}" -gt "$_path_limit" ] && printf '%s\t%d\n' "$_rel" "$_lc"
+					continue
+				fi
+				log "WARN: checkout filter failed for $_rel at $_ref — counted the unfiltered blob"
 				;;
 			esac
 			[ "$_lc" -gt "$_path_limit" ] || continue

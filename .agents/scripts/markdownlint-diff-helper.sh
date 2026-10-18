@@ -86,12 +86,13 @@ changed_files() {
 # lint_path_arg <path>
 # Print <path> as a markdownlint-cli2 argument. Arguments are globs, which
 # keeps config `ignores` in force; names a glob would misread (backslash is
-# rewritten to '/', leading '!'/'#' negate, '-' prefixes) use the ':' literal
-# form instead (GH#34943).
+# rewritten to '/', leading '!'/'#' negate, '-' prefixes, and globby
+# metacharacters * ? [ ] { } ( ) that would match other names) use the ':'
+# literal form instead (GH#34943).
 lint_path_arg() {
 	local _path="$1"
 	case "$_path" in
-	*\\* | '!'* | '#'* | -*) printf ':%s\n' "$_path" ;;
+	*\\* | '!'* | '#'* | -* | *[][*?{}\(\)]*) printf ':%s\n' "$_path" ;;
 	*) printf '%s\n' "$_path" ;;
 	esac
 	return 0

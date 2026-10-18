@@ -862,18 +862,20 @@ _dps_rebase_in_ephemeral() {
 	# Refresh origin/<default_branch> and origin/<head_ref> before anything else.
 	git -C "$repo_path" fetch --quiet origin "${default_branch}:refs/remotes/origin/${default_branch}" || {
 		_dps_log "PR #$pr_number ($repo_slug): fetch of origin/${default_branch} failed — skipping rebase"
-		rm -rf "$ephemeral" || true
+		rmdir "$ephemeral" 2>/dev/null || true
 		return 1
 	}
 	git -C "$repo_path" fetch --quiet origin "${head_ref}:refs/remotes/origin/${head_ref}" 2>/dev/null || {
 		_dps_log "PR #$pr_number ($repo_slug): fetch of origin/${head_ref} failed — skipping rebase"
-		rm -rf "$ephemeral" 2>/dev/null || true
+		rmdir "$ephemeral" 2>/dev/null || true
 		return 1
 	}
 
+	# GH#34943: `worktree add` into the empty mktemp directory either
+	# registers it or leaves it empty; rmdir never deletes content.
 	if ! git -C "$repo_path" worktree add -b "$ephemeral_branch" "$ephemeral" "origin/${head_ref}" >/dev/null 2>&1; then
 		_dps_log "PR #$pr_number ($repo_slug): worktree add failed — skipping rebase"
-		rm -rf "$ephemeral" 2>/dev/null || true
+		rmdir "$ephemeral" 2>/dev/null || true
 		return 1
 	fi
 
@@ -939,9 +941,28 @@ _dps_remove_ephemeral() {
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "canonical-skip" "skipped"
 		return 0
 	fi
-	git -C "$repo_path" worktree remove --force "$ephemeral" >/dev/null 2>&1 || true
-	git -C "$repo_path" branch -D "$ephemeral_branch" >/dev/null 2>&1 || true
-	rm -rf "$ephemeral" 2>/dev/null || true
+	# GH#34943: capture the throwaway branch tip first so deletion is a
+	# compare-and-swap; a commit added by anyone else keeps the branch.
+	local branch_oid=""
+	branch_oid=$(git -C "$repo_path" rev-parse --verify --quiet "refs/heads/${ephemeral_branch}" 2>/dev/null) || branch_oid=""
+	# Native Git is the only remover: it refuses unregistered paths and
+	# locked worktrees (single --force), so a failure preserves the
+	# directory instead of falling back to raw deletion.
+	if [[ -e "$ephemeral" ]] && ! git -C "$repo_path" worktree remove --force "$ephemeral" >/dev/null 2>&1; then
+		_dps_log "PR #$pr_number ($repo_slug): native removal of $ephemeral refused — preserving it and branch $ephemeral_branch"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "native-remove-refused" "skipped"
+		return 0
+	fi
+	git -C "$repo_path" worktree prune >/dev/null 2>&1 || true
+	# update-ref does not refuse a checked-out branch, so check that first.
+	local wt_line="" checked_out=0
+	while IFS= read -r wt_line; do
+		[[ "$wt_line" == "branch refs/heads/${ephemeral_branch}" ]] && checked_out=1
+	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null || printf 'branch refs/heads/%s\n' "$ephemeral_branch")
+	if [[ -n "$branch_oid" ]] && { [[ "$checked_out" -eq 1 ]] ||
+		! git -C "$repo_path" update-ref -d "refs/heads/${ephemeral_branch}" "$branch_oid" >/dev/null 2>&1; }; then
+		_dps_log "PR #$pr_number ($repo_slug): branch $ephemeral_branch moved or is checked out elsewhere — preserved"
+	fi
 	log_worktree_removal_event "$_WTAR_FIXTURE_REMOVED" "$_WTAR_DPS_CALLER" "$ephemeral" "fixture" "fixture"
 	return 0
 }
