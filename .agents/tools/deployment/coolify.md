@@ -107,7 +107,8 @@ Account refs are lower-case slugs, so the host goes in `--resources instance:<ho
 ```bash
 # App listing and SSH setup
 ./.agents/scripts/coolify-helper.sh apps main_server
-./.agents/scripts/coolify-helper.sh generate-ssh-configs && ssh coolify-main
+./.agents/scripts/coolify-helper.sh generate-ssh-configs  # writes ~/.ssh/coolify_config (0600)
+# once: add `Include ~/.ssh/coolify_config` to ~/.ssh/config, then: ssh coolify-main
 
 # Container operations
 ./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps -a'
