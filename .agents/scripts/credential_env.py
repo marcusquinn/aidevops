@@ -10,8 +10,11 @@ from pathlib import Path
 from credential_dotenv import env_files
 from credential_findings import audit
 from credential_literals import SECRET_NAME, finding, read_source
+from credential_ssh import ssh_findings
 
 CONFIG = '.config/aidevops'
+# chmod 600 sources that need their own confirmation before security fix applies them.
+CONFIRMED_CHMOD = {'mcp': 'mcp-env.sh chmod 600', 'ssh': 'SSH config/key chmod 600'}
 RC_FILES = ('.zshrc', '.bashrc', '.bash_profile', '.profile')
 SCALARS = (str, int, float, bool)
 
@@ -104,10 +107,10 @@ def plist_env(home):
 
 
 def confirmed_permissions(records, confirm):
-    """Legacy mcp-env.sh chmod needs its own confirmation; other records pass through unchanged."""
+    """Legacy mcp-env.sh and SSH chmods need their own confirmation; other records pass through."""
     return [record for record in records
-            if record['category'] != 'insecure-perms' or record.get('env_source') != 'mcp'
-            or confirm('mcp-env.sh chmod 600')]
+            if record['category'] != 'insecure-perms' or record.get('env_source') not in CONFIRMED_CHMOD
+            or confirm(CONFIRMED_CHMOD[record['env_source']] + ' ' + json.dumps(record['file'], ensure_ascii=True))]
 
 
 def fix_missing_links(records, confirm, log):
@@ -126,6 +129,7 @@ AUDITS = {
     'mcp-env': mcp_env,
     'plist-env': lambda home, _helper: plist_env(home),
     'env-files': env_files,
+    'ssh-config': lambda home, _helper: ssh_findings(home),
 }
 
 

@@ -244,27 +244,12 @@ _scan_dev_credentials() {
 	return 0
 }
 
-# Scan SSH keys, .env files, and Stripe CLI config (checks 11–13)
+# Scan SSH config/keys and Stripe CLI config (checks 11–13)
 _scan_ssh_and_env() {
-	# SSH keys without passphrase
-	local ssh_dir="$HOME/.ssh"
-	if [[ -d "$ssh_dir" ]]; then
-		local unprotected=0
-		for key in "$ssh_dir"/id_*; do
-			[[ -f "$key" ]] || continue
-			[[ "$key" == *.pub ]] && continue
-			# Check if key has a passphrase — ssh-keygen -y -P "" succeeds only
-			# if the key has no passphrase. The if guards against set -e.
-			if ssh-keygen -y -f "$key" -P "" >/dev/null 2>&1; then
-				unprotected=$((unprotected + 1))
-			fi
-		done
-		if [[ "$unprotected" -gt 0 ]]; then
-			report_finding "high" "$ssh_dir/id_*" \
-				"$unprotected SSH private key(s) without passphrase protection" \
-				"ssh-keygen -p -f <key_file> (adds passphrase to existing key)"
-		fi
-	fi
+	# ~/.ssh/config (+ Include files) is parsed literally: id_* and IdentityFile keys
+	# without passphrases, permissions, and risky directives. Never ssh -G (runs Match exec).
+	_scan_env_audit "ssh-config" \
+		"ssh-key-no-passphrase: ssh-keygen -p -f <key_file>; insecure-perms: aidevops security fix (confirmed chmod 600); ssh-dir-perms: chmod 700 ~/.ssh; directives: review the named line"
 
 	# Stripe CLI config
 	local stripe_config="$HOME/.config/stripe"
@@ -278,6 +263,7 @@ _scan_ssh_and_env() {
 
 _scan_env_audit() {
 	local kind="$1"
+	local remediation="${2:-Review names only; missing-mcp-env-link: shells will not load credentials; aidevops security fix offers safe link/permission fixes; project env and plist contents are report-only}"
 	local records=""
 	local severity=""
 	local location=""
@@ -289,8 +275,7 @@ _scan_env_audit() {
 	fi
 	while IFS=$'\t' read -r severity location detail; do
 		[[ -n "$severity" ]] || continue
-		report_finding "$severity" "$location" "$detail" \
-			"Review names only; missing-mcp-env-link: shells will not load credentials; aidevops security fix offers safe link/permission fixes; project env and plist contents are report-only"
+		report_finding "$severity" "$location" "$detail" "$remediation"
 	done <<<"$records"
 	return 0
 }

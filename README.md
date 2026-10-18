@@ -444,7 +444,12 @@ unsafe permissions, leftover backups and literal MCP environment secrets without
 printing values. Interactive fixes delegate to secret import/prune commands,
 confirm pruning and trash moves, and leave drift and malformed lines unchanged.
 Import and prune target only the active tenant. Scans do not probe provider APIs;
-an opt-in `--probe` may be added later.
+an opt-in `--probe` may be added later. SSH checks parse `~/.ssh/config` and its
+`Include` files as text (never `ssh -G`, which runs `Match exec`): passphrase-less
+`id_*` and `IdentityFile` keys, loose key/config/`~/.ssh` permissions, and
+risky directives such as disabled host-key checking, global agent forwarding and
+command hooks, reported by keyword and line only. Fixes offer a per-file
+confirmed `chmod 600` for owned regular files, never through a symlinked target.
 
 ### Vault
 
