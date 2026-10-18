@@ -76,12 +76,14 @@ def observe(connection, record, boot, seal):
     record["idle"].update(observed_at=wall, source="managed-lifetime-quiescence")
 
 
-def require_elapsed(record, boot):
+def require_elapsed(record, boot, minimum=IDLE_SECONDS):
+    if type(minimum) is not int or minimum < IDLE_SECONDS:
+        raise ValueError("idle window must be at least 86400 seconds")
     wall, monotonic = time.time(), time.monotonic()
     if not interval_valid(record, boot, wall, monotonic):
         raise ValueError("confirmed idle evidence unavailable")
     idle = record["idle"]
     # A forward wall-clock jump cannot accelerate expiry; a backward jump cannot
     # turn unknown time into eligibility. Sleep may conservatively extend the wait.
-    if min(wall - idle["since"], monotonic - idle["monotonic_since"]) < IDLE_SECONDS:
-        raise ValueError("24-hour confirmed idle window incomplete")
+    if min(wall - idle["since"], monotonic - idle["monotonic_since"]) < minimum:
+        raise ValueError(f"confirmed idle window incomplete ({minimum}s required)")

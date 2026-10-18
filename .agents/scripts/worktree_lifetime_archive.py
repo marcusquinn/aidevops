@@ -136,21 +136,27 @@ def capacity(path, baseline):
     return 1024 ** 3 + 3 * (objects + head_bytes + index_bytes + baseline["bytes"])
 
 
-def initialize(managed, path, root, required_capacity):
+def initialize(managed, path, root, required_capacity, idle_seconds=86400):
+    require(type(idle_seconds) is int and idle_seconds >= managed.idle_policy.IDLE_SECONDS,
+            "idle window must be at least 86400 seconds")
     with transaction() as connection:
         record = managed.load(connection, str(path))
         managed.verify_identity(record, path)
         managed.idle_policy.owner_clear(connection, str(path))
         if "archive_operation" in record:
+            authorized_window = operation(record).get("idle_window_seconds", 86400)
+            require(type(authorized_window) is int and idle_seconds <= authorized_window,
+                    "stricter idle window requires a new preservation decision; existing recovery retained")
             return record, False
         require(shutil.disk_usage(root).free >= required_capacity,
                 "insufficient archive capacity; no cleanup authorization issued")
-        managed.idle_policy.require_elapsed(record, managed.boot_id())
+        managed.idle_policy.require_elapsed(record, managed.boot_id(), idle_seconds)
         managed.idle_quiescence(record)
         identifier = uuid.uuid4().hex
         record["archive_operation"] = {
             "schema": 1, "id": identifier, "generation": record["generation"],
             "identity": record["identity"], "authorized_idle": record["idle"],
+            "idle_window_seconds": idle_seconds,
             "directory": str(root / identifier), "phase": "reserved",
             "owner_pid": os.getpid(), "owner_boot": managed.boot_id(), "started_at": time.time(),
         }
@@ -259,7 +265,7 @@ def prepare(managed, path, arguments):
     root = root.resolve(strict=True)
     baseline = snapshot(path)  # Unsupported contents must not seal the source.
     required_capacity = capacity(path, baseline)
-    record, fresh = initialize(managed, path, root, required_capacity)
+    record, fresh = initialize(managed, path, root, required_capacity, getattr(arguments, "idle_seconds", 86400))
     value = operation(record)
     if fresh:
         try:
@@ -301,6 +307,7 @@ def main():
     parser.add_argument("--repo")
     parser.add_argument("--issue")
     parser.add_argument("--base")
+    parser.add_argument("--idle-seconds", type=int, default=86400)
     arguments = parser.parse_args()
     managed = managed_module()
     path = Path(arguments.path)

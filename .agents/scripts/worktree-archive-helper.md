@@ -78,7 +78,7 @@ Restore never overwrites an existing path. If restoration stops after creating a
 
 `worktree_lifetime_archive.py` adds verification phases to the existing managed
 lifetime record; it does not create a second registry or remove source trees.
-It requires a sealed, generation-bound 24-hour idle authorization, creates a
+It requires a sealed, generation-bound idle authorization (at least 24 hours), creates a
 self-contained archive, restores it independently, and compares source and
 restored HEAD, index, file contents, modes and symlinks. Native removal proofs
 reject incomplete operations and recheck the archive and source snapshot.
@@ -103,9 +103,43 @@ directories and symlink targets owned by the current UID/GID; timestamps are not
 preserved. It protects rather than discards ignored data, ACLs/xattrs, special
 permissions, foreign ownership, hard links, empty directories, nested repositories,
 Git filters/LFS, private worktree refs, reflog-only history, unfinished operations,
-intent-to-add index entries, per-worktree config and uncommitted message drafts. Missing inspection evidence
+intent-to-add index entries, per-worktree config, squash/message drafts and unknown
+worktree administrative entries. Missing inspection evidence
 also prevents authorization. The cooperative ownership/cgroup fence is required:
 a fingerprint by itself cannot exclude arbitrary unregistered same-user writers.
+
+### Rootless reporting and reconciliation
+
+```bash
+# Read recorded state, archive locations, available space and scheduler status.
+bash .agents/scripts/worktree-lifecycle-helper.sh report --summary
+
+# Complete verified receipts only when source and Git registration are absent.
+bash .agents/scripts/worktree-lifecycle-helper.sh reconcile
+
+# Run guarded cleanup under its existing lock and cadence, without recovery expiry.
+bash .agents/scripts/worktree-lifecycle-helper.sh run
+
+# Optional, after deploying the framework: install a Linux user-systemd timer.
+bash .agents/scripts/worktree-lifecycle-helper.sh install-scheduler
+```
+
+The timer runs independently of Pulse every ten minutes. It uses the existing
+generic scheduler installer, a 900-second service limit and control-group cleanup;
+no sudo, system service or second supervisor is involved. Installation is explicit,
+not a side effect of reporting. Unsupported user-systemd environments fail closed.
+
+Reports label records `recorded-not-revalidated`: they are not removal authority.
+Unavailable sizes remain unknown, not zero. `cleanup_last_success` is the shared
+cleanup timestamp, not proof every candidate completed. Managed archives live
+under `<archive-root>/.lifecycle/<operation-id>/archives/`; use the reported path
+for verification/restoration. Automatic archive expiry does not select this store.
+
+Reconciliation updates only receipts and a rotating traversal cursor in the same
+ownership database. It reserves a bounded batch before checking it, so failed and
+ineligible rows cannot monopolize later runs. Interruptions defer that batch until
+wraparound. Missing repositories, changed identities, unavailable evidence and
+unverified archives remain deferred; reconciliation never removes source data.
 
 ### Ignore rules and secrets
 
@@ -129,8 +163,12 @@ Run `bash .agents/scripts/tests/test-worktree-archive-helper.sh` and `python3 .a
 
 ## Pulse cleanup integration
 
-Ordinary worktrees require 24 hours of confirmed idle in the managed-lifetime
-registry, followed by the independent restoration checks above. Directory age,
+Ordinary worktrees require at least 24 hours of confirmed idle in the managed-lifetime
+registry, or a longer configured window, followed by the independent restoration
+checks above. Each attempt captures its configured window at entry; overlapping
+classes use the longest applicable window. A later attempt requesting a window
+beyond the operation's authorization retains source and recovery for a new
+preservation decision. Directory age,
 generated branch names, detached HEADs and absent registry rows never substitute
 for idle evidence. Terminal issue/PR worktrees retain their separate existing
 policy path. Clean local-only commits are bundled as well as dirty tracked,

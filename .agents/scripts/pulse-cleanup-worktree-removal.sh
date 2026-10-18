@@ -548,8 +548,9 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 		return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	fi
 	local archive_status=0
+	local idle_window_secs="${10:-86400}"
 	if [[ "$authorization" == "confirmed-idle" ]]; then
-		archive_dir=$(_pc_archive_idle_verified "$rp_age" "$wt_path_age" "$target_number" "$repo_slug_age") || archive_status=$?
+		archive_dir=$(_pc_archive_idle_verified "$rp_age" "$wt_path_age" "$target_number" "$repo_slug_age" "$idle_window_secs") || archive_status=$?
 	else
 		worktree_managed_prepare_removal "$wt_path_age" "$wt_branch_age" || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 		archive_dir=$(_pc_archive_worktree_compactly "$rp_age" "$wt_path_age" \
@@ -623,12 +624,12 @@ _pc_configured_archive_secs() {
 #
 # Environment / config:
 #   ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS, else
-#   storage.worktree_local_commit_archive_hours — default 7 days, minimum 24h.
+#   storage.worktree_local_commit_archive_hours — default/minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_local_commit_archive_secs() {
 	_pc_configured_archive_secs "${ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS:-}" 1 \
-		"worktree_local_commit_archive_hours" 604800
+		"worktree_local_commit_archive_hours" 86400
 	return 0
 }
 
@@ -662,12 +663,12 @@ _pc_generated_clean_archive_secs() {
 #
 # Environment / config:
 #   ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS, else
-#   storage.worktree_generated_dirty_archive_hours — default 7 days, minimum 24h.
+#   storage.worktree_generated_dirty_archive_hours — default/minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_generated_dirty_archive_secs() {
 	_pc_configured_archive_secs "${ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS:-}" 1 \
-		"worktree_generated_dirty_archive_hours" 604800
+		"worktree_generated_dirty_archive_hours" 86400
 	return 0
 }
 
@@ -676,12 +677,12 @@ _pc_generated_dirty_archive_secs() {
 #
 # Environment / config:
 #   WORKTREE_UNATTRIBUTED_RETENTION_DAYS (days), else
-#   storage.worktree_unattributed_archive_hours — default 14 days, minimum 24h.
+#   storage.worktree_unattributed_archive_hours — default/minimum 24h.
 # Returns 0 always; prints a validated integer.
 #######################################
 _pc_unattributed_archive_secs() {
 	_pc_configured_archive_secs "${WORKTREE_UNATTRIBUTED_RETENTION_DAYS:-}" 86400 \
-		"worktree_unattributed_archive_hours" 1209600
+		"worktree_unattributed_archive_hours" 86400
 	return 0
 }
 
@@ -1236,11 +1237,12 @@ _pc_handle_stale_dirty_worker_archive() {
 #######################################
 _pc_archive_idle_verified() {
 	local repo_path="$1" worktree_path="$2" issue="$3" repo_slug="$4"
+	local idle_window_secs="${5:-86400}"
 	local base_branch=""
 	local arguments=()
 	base_branch=$(git -C "$repo_path" symbolic-ref --short -q HEAD 2>/dev/null) || return 1
 	[[ -n "$base_branch" && -n "$repo_slug" ]] || return 1
-	arguments=(prepare "$worktree_path" --repo "$repo_slug" --base "$base_branch")
+	arguments=(prepare "$worktree_path" --repo "$repo_slug" --base "$base_branch" --idle-seconds "$idle_window_secs")
 	if [[ "$issue" =~ ^[1-9][0-9]*$ ]]; then
 		arguments+=(--issue "$issue")
 	fi
@@ -1281,8 +1283,31 @@ _pc_finalize_idle_archive_receipt() {
 	return 0
 }
 
+_pc_ordinary_idle_window() {
+	local issue="$1" commits="$2" dirty="$3"
+	local window=86400 candidate=0
+	[[ "$commits" =~ ^[0-9]+$ && "$dirty" =~ ^[0-9]+$ ]] || return 1
+	if [[ ! "$issue" =~ ^[1-9][0-9]*$ ]]; then
+		window=$(_pc_unattributed_archive_secs)
+	fi
+	if [[ "$commits" -gt 0 ]]; then
+		candidate=$(_pc_local_commit_archive_secs)
+		if [[ "$candidate" -gt "$window" ]]; then window="$candidate"; fi
+	fi
+	if [[ "$dirty" -gt 0 ]]; then
+		candidate=$(_pc_generated_dirty_archive_secs)
+		if [[ "$candidate" -gt "$window" ]]; then window="$candidate"; fi
+	elif [[ "$commits" -eq 0 ]]; then
+		candidate=$(_pc_generated_clean_archive_secs)
+		if [[ "$candidate" -gt "$window" ]]; then window="$candidate"; fi
+	fi
+	printf '%s\n' "$window"
+	return 0
+}
+
 _pc_confirmed_idle_archive_ready() {
 	local worktree_path="$1" record=""
+	local idle_window_secs="${2:-86400}"
 	local helper="${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-managed-lifetime.py"
 	record=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$worktree_path" 2>>"$LOGFILE") || return 1
 	# An existing operation has its own generation-bound authorization. Its backend
@@ -1291,7 +1316,7 @@ _pc_confirmed_idle_archive_ready() {
 		return 0
 	fi
 	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" observe-idle "$worktree_path" 2>>"$LOGFILE" || return 1
-	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" idle-ready "$worktree_path" 2>>"$LOGFILE" || return 1
+	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" idle-ready "$worktree_path" "$idle_window_secs" 2>>"$LOGFILE" || return 1
 	return 0
 }
 
@@ -1300,10 +1325,12 @@ _pc_handle_confirmed_idle_archive() {
 	local commits="$5" dirty="$6" age="$7" repo_name="$8" repo_slug="${9:-}"
 	local reason="$_PC_ARCHIVE_REASON_UNATTRIBUTED" target_type="" audit_context=""
 	local guard_ok="clear"
+	local idle_window_secs=""
+	idle_window_secs=$(_pc_ordinary_idle_window "$issue" "$commits" "$dirty") || return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
 	_pc_branch_archive_pr_state_clear "$repo_slug" "$branch" || return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
-	if ! _pc_confirmed_idle_archive_ready "$worktree_path"; then
+	if ! _pc_confirmed_idle_archive_ready "$worktree_path" "$idle_window_secs"; then
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$worktree_path" \
-			"idle-unverified-or-pending" "$_PC_REMOVAL_SKIPPED" "branch=$branch idle_window_secs=86400"
+			"idle-unverified-or-pending" "$_PC_REMOVAL_SKIPPED" "branch=$branch idle_window_secs=$idle_window_secs"
 		return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
 	fi
 	if [[ "$issue" =~ ^[1-9][0-9]*$ ]]; then
@@ -1314,7 +1341,7 @@ _pc_handle_confirmed_idle_archive() {
 		"confirmed-idle" "$guard_ok" "$guard_ok" "$guard_ok" "restore-verified-archive")
 	echo "[pulse-wrapper] Orphan cleanup ($repo_name): checking restore-verified idle archive for $branch" >>"$LOGFILE"
 	if _pc_archive_and_remove_worktree_preserving_branch "$repo_path" "$worktree_path" "$branch" \
-		"$audit_context" "$issue" "$repo_slug" "$reason" "$target_type" "confirmed-idle"; then
+		"$audit_context" "$issue" "$repo_slug" "$reason" "$target_type" "confirmed-idle" "$idle_window_secs"; then
 		return 0
 	fi
 	return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"

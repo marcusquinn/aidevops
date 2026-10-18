@@ -249,8 +249,9 @@ def inspect_record(record: dict, path: Path, operation: str, extra: list[str], c
     if operation in ("cleanup-ready", "idle-ready"):
         # Dry-run only: do not persist a seal before policy and owner checks.
         if operation == "idle-ready":
+            require(len(extra) <= 1, "at most one idle window is accepted")
             idle_policy.owner_clear(connection, str(path))
-            idle_policy.require_elapsed(record, boot_id())
+            idle_policy.require_elapsed(record, boot_id(), int(extra[0]) if extra else idle_policy.IDLE_SECONDS)
             idle_quiescence(record)
         seal(record)
         return
@@ -283,8 +284,9 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
         observe_idle(connection, record)
     else:
         if operation == "seal-idle":
+            require(len(extra) <= 1, "at most one idle window is accepted")
             idle_policy.owner_clear(connection, str(path))
-            idle_policy.require_elapsed(record, boot_id())
+            idle_policy.require_elapsed(record, boot_id(), int(extra[0]) if extra else idle_policy.IDLE_SECONDS)
             idle_quiescence(record)
         seal(record)
 

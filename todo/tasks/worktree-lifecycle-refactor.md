@@ -472,8 +472,21 @@ interrupted creation/removal, the timing decision, and exact-head CI.
 - Extension commit `0b8c1c7ec` passed changed-file gates and commit hooks.
 - Before integrating upstream: archive helper 7/7, async cleanup 33/33,
   archive lifecycle 26/26 passed at UID 1000 on NixOS.
-- Preserve upstream checkout-free scanners and final native-removal fingerprint
-  checks, while adding independent restore verification and final receipts.
-- Remaining review items: unknown worktree administrative state, bounded receipt
-  reconciliation fairness, scheduler validation, and combined regression checks.
+- Upstream integrated in `9a2cf1ded`, preserving checkout-free scanners and final
+  native-removal fingerprint checks. Merge hooks passed without bypasses.
+- Unknown administrative state and squash drafts now preserve the source. A
+  keyset cursor in the same registry prevents receipt starvation. Their regression
+  tests failed before repair; four focused checks then passed, including isolated
+  user-systemd unit generation and native archive/removal/restoration.
+- Operator-authorized ordinary default is 24 hours. Longer configured windows are
+  enforced on both clocks; overlapping classes take the maximum. Stricter later
+  attempts preserve existing recovery rather than reusing weaker authorization.
+- Latest scoped checks: managed lifetime 21/21 with real user-systemd, worker
+  cleanup 40/40, dirty preservation 5/5, async cleanup 33/33, configured-window
+  integration 3/3. Defaults parse correctly; no local JSON Schema validator is
+  installed. Changed-file quality gates pass; full archive rerun is pending.
+- Independent final advisory found no blocking issue in supplied policy propagation
+  and reconciliation paths; its scope excludes arbitrary same-user writers.
+- Producer gaps documented above remain protected, not claimed migrated. Aggregate
+  verification, exact-head remote CI and PR delivery remain outstanding.
 - No expiry, legacy deletion, deployment, push or PR merge is claimed here.

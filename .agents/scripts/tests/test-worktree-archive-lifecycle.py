@@ -314,7 +314,11 @@ class ArchiveLifecycle(unittest.TestCase):
         database = self.root / "registry.db"
         self.env.update(WORKTREE_REGISTRY_DB=str(database),
                         AIDEVOPS_WORKTREE_ARCHIVE_ROOT=str(self.archives),
-                        AIDEVOPS_CLEANUP_LOG=str(self.root / "cleanup.log"))
+                        AIDEVOPS_CLEANUP_LOG=str(self.root / "cleanup.log"),
+                        ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS="86400",
+                        ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS="86400",
+                        ORPHAN_GENERATED_CLEAN_ARCHIVE_SECS="86400",
+                        WORKTREE_UNATTRIBUTED_RETENTION_DAYS="1")
         managed = lifecycle.managed_module()
         with closing(sqlite3.connect(database)) as connection:
             connection.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, owner_pid INTEGER, task_id TEXT, owner_session TEXT)")
@@ -328,8 +332,8 @@ class ArchiveLifecycle(unittest.TestCase):
             connection.commit()
         return managed
 
-    def prepare_managed(self, managed):
-        arguments = lifecycle.argparse.Namespace(repo="fixture/repo", issue="1", base="develop")
+    def prepare_managed(self, managed, idle_seconds=86400):
+        arguments = lifecycle.argparse.Namespace(repo="fixture/repo", issue="1", base="develop", idle_seconds=idle_seconds)
         with patch.dict(os.environ, self.env, clear=True), \
                 patch.object(lifecycle.time, "time", return_value=186401), \
                 patch.object(lifecycle.time, "monotonic", return_value=186401):
@@ -338,6 +342,25 @@ class ArchiveLifecycle(unittest.TestCase):
     def managed_record(self, managed):
         with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
             return managed.load(connection, str(self.work))
+
+    def test_stricter_configured_window_preserves_source_and_existing_recovery(self):
+        managed = self.managed_fixture()
+        with self.assertRaisesRegex(ValueError, "window incomplete"):
+            self.prepare_managed(managed, 172800)
+        self.assertNotIn("archive_operation", self.managed_record(managed))
+        archived = self.prepare_managed(managed)
+        with self.assertRaisesRegex(ValueError, "stricter idle window"):
+            self.prepare_managed(managed, 172800)
+        self.assertTrue(self.work.is_dir())
+        self.assertTrue(archived.is_dir())
+
+    def test_overlapping_archive_classes_honor_the_longest_configured_window(self):
+        self.env.update(ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS="172800",
+                        ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS="345600",
+                        WORKTREE_UNATTRIBUTED_RETENTION_DAYS="3")
+        script = 'source "$1/pulse-cleanup.sh"; _pc_ordinary_idle_window "" 1 1'
+        result = self.run_command("bash", "-c", script, "_", HELPER.parent)
+        self.assertEqual(result.stdout.strip(), b"345600")
 
     def test_managed_archive_restores_before_authorizing_removal(self):
         managed = self.managed_fixture()

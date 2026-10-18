@@ -542,19 +542,19 @@
         "worktree_local_commit_archive_hours": {
           "type": "integer",
           "minimum": 24,
-          "default": 168,
+          "default": 24,
           "description": "Confirmed-idle hours before an abandoned worktree with local commits may be archived. Env (seconds): ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS"
         },
         "worktree_generated_dirty_archive_hours": {
           "type": "integer",
           "minimum": 24,
-          "default": 168,
+          "default": 24,
           "description": "Confirmed-idle hours before a dirty generated auto/review worktree may be archived. Env (seconds): ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS"
         },
         "worktree_unattributed_archive_hours": {
           "type": "integer",
           "minimum": 24,
-          "default": 336,
+          "default": 24,
           "description": "Confirmed-idle hours before an unattributed worktree with no open head PR may be archived. Env (days): WORKTREE_UNATTRIBUTED_RETENTION_DAYS"
         }
       },

@@ -453,9 +453,9 @@
   // ---------------------------------------------------------------------------
   // storage — Worktree archive candidacy and compact-archive retention
   // ---------------------------------------------------------------------------
-  // Thresholds are hours of confirmed idle (worktree .git, admin HEAD and HEAD
-  // reflog all older than the window) before guarded Pulse cleanup may make a
-  // verified compact archive and remove the full worktree. They never bypass
+  // Thresholds are hours of boot-scoped, registry-confirmed idle before guarded
+  // Pulse cleanup may restore-verify a self-contained archive and remove the
+  // full worktree. Git metadata age alone is not authority. They never bypass
   // owner, open-PR, process, lock, preservation-marker or archive-verification
   // guards. Minimum 24; smaller or malformed values use the shipped default.
   "storage": {
@@ -464,17 +464,17 @@
     // Env override: AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE
     "worktree_archive_retention_mode": "dry-run",
 
-    // Abandoned worktrees with local commits (7 days).
+    // Abandoned worktrees with local commits (24 hours).
     // Env override (seconds): ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS
-    "worktree_local_commit_archive_hours": 168,
+    "worktree_local_commit_archive_hours": 24,
 
-    // Dirty generated auto/review worktrees (7 days).
+    // Dirty generated auto/review worktrees (24 hours).
     // Env override (seconds): ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS
-    "worktree_generated_dirty_archive_hours": 168,
+    "worktree_generated_dirty_archive_hours": 24,
 
-    // Unattributed worktrees with no open head PR (14 days).
+    // Unattributed worktrees with no open head PR (24 hours).
     // Env override (days): WORKTREE_UNATTRIBUTED_RETENTION_DAYS
-    "worktree_unattributed_archive_hours": 336
+    "worktree_unattributed_archive_hours": 24
   },
 
   // ---------------------------------------------------------------------------

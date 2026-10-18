@@ -265,6 +265,18 @@ class IdlePolicyTests(unittest.TestCase):
         self.assertEqual(self.record["idle"]["since"], 100000)
         self.elapsed(186400, 186400)
 
+    def test_configured_window_cannot_shorten_floor_or_bypass_either_clock(self):
+        self.observe()
+        with patch.object(self.policy.time, "time", return_value=272800), \
+                patch.object(self.policy.time, "monotonic", return_value=186400):
+            self.policy.require_elapsed(self.record, "boot", 86400)
+            for minimum in (0, 86399, True, 172800):
+                with self.subTest(minimum=minimum), self.assertRaises(ValueError):
+                    self.policy.require_elapsed(self.record, "boot", minimum)
+        with patch.object(self.policy.time, "time", return_value=272800), \
+                patch.object(self.policy.time, "monotonic", return_value=272800):
+            self.policy.require_elapsed(self.record, "boot", 172800)
+
     def test_clock_jumps_and_reboot_cannot_accelerate_expiry(self):
         self.observe()
         for wall, monotonic, boot in ((900000, 100001, "boot"),
