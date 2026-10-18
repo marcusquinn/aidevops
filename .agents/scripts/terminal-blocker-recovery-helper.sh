@@ -154,8 +154,9 @@ _tbr_seed_candidates() {
 
 # Print the queue reason when this runner owns recovery for the issue: a
 # circuit it opened, or (GH#34846) its newest observation of a class that
-# re-arms on a brief/dependency revision. Only this runner's evidence counts:
-# the protected dossier lives here. Returns 1 when not eligible.
+# re-arms on a revision (or, GH#35095, target_code_blocker). Circuits seed only
+# for the runner that opened them; observations seed from any trusted runner.
+# Returns 1 when not eligible.
 _tbr_seed_reason() {
 	local comments="$1"
 	local self="$2"
@@ -166,8 +167,14 @@ _tbr_seed_reason() {
 		_tbr_reason_from_comments "$comments"
 		return 0
 	fi
+	# GH#35095: the release decision needs only public markers plus the task
+	# revision, so any runner's observation seeds re-arm evaluation (an offline
+	# observing runner must not strand the hold). #aidevops:trust-boundary
+	# Other logins count only as OWNER/MEMBER/COLLABORATOR; own login always.
 	reason=$(printf '%s' "$comments" | jq -r --arg self "$self" '
-		[flatten[] | select((.user.login // "") == $self) | (.body // "")
+		[flatten[] | select((.user.login // "") == $self or
+			((.author_association // "") | . == "OWNER" or . == "MEMBER" or . == "COLLABORATOR"))
+		| (.body // "")
 		| select(contains("aidevops:terminal-blocker-observation revision="))
 		| capture("Terminal blocker: reason=(?<r>[a-z_]+) ")? | .r] | last // ""
 	' 2>/dev/null) || reason=""
