@@ -153,11 +153,11 @@ qa_wait_running() {
 qa_user_id() {
 	local id
 	id="$(hs users list -o json 2>/dev/null |
-		jq -r --arg u "$QA_USER" '.[] | select(.name == $u) | .id' | head -n 1)"
+		jq -r --arg u "$QA_USER" '[.[] | select(.name == $u) | .id][0] // empty')"
 	if [[ -z "$id" ]]; then
 		hs users create "$QA_USER" >/dev/null 2>&1 || true
 		id="$(hs users list -o json 2>/dev/null |
-			jq -r --arg u "$QA_USER" '.[] | select(.name == $u) | .id' | head -n 1)"
+			jq -r --arg u "$QA_USER" '[.[] | select(.name == $u) | .id][0] // empty')"
 	fi
 	if [[ -z "$id" ]]; then
 		return 1
@@ -184,7 +184,7 @@ qa_ping_peer() {
 	local to="$2"
 	local force_derp="$3"
 	local peer_ip
-	peer_ip="$(docker exec "$to" tailscale ip -4 2>/dev/null | head -n 1)"
+	peer_ip="$(docker exec "$to" tailscale ip -4 2>/dev/null | sed -n '1p')"
 	if [[ -z "$peer_ip" ]]; then
 		qa_fail "no tailnet IPv4 for ${to}"
 		return 1
@@ -197,7 +197,7 @@ qa_ping_peer() {
 	fi
 	printf '%s\n' "$out"
 	if [[ "$force_derp" -eq 1 ]]; then
-		if printf '%s\n' "$out" | grep -q 'via DERP'; then
+		if [[ "$out" == *'via DERP'* ]]; then
 			qa_pass "peer ping ${from} -> ${to} relayed via DERP"
 			return 0
 		fi
