@@ -106,6 +106,20 @@ wp --user=<admin-id> eval 'var_export(\MainWP\Dashboard\MainWP_Manage_Sites_Hand
 
 Expect `removed_site => true` (plus `deactivated => true` when the child responded). Confirm with `wp mainwp sites`. When retiring the whole site, remove it from MainWP before deleting hosting so the child plugin can be deactivated.
 
+## Incident Timing: When Did Each Site Install a Version?
+
+When a vendor reports that downloads of a version were compromised during a time window, having that version installed is not enough to establish exposure. Compare each site's installation history with the download window, accounting for any delay between download and installation. MainWP Child records install and update history on the child site in `{prefix}mainwp_stream`. Plugin updates use `connector = 'installer'`, `action = 'updated'`, and `created` is UTC.
+
+```bash
+# On each child site; replace <plugin name>. Read-only.
+wp eval 'global $wpdb; foreach ($wpdb->get_results($wpdb->prepare("SELECT created, action, summary FROM {$wpdb->prefix}mainwp_stream WHERE connector = %s AND summary LIKE %s ORDER BY created DESC LIMIT 10", "installer", "%" . $wpdb->esc_like("<plugin name>") . "%")) as $r) { echo "$r->created UTC | $r->action | $r->summary\n"; }' --skip-plugins --skip-themes
+```
+
+- Compare each `created` time with the vendor's window and check the version in `summary`. An install before the window, followed by a clean update after it, supports non-exposure only when the history is complete and no intervening install occurred. The query shows only the latest ten matching events; increase the limit or narrow the search for older incidents.
+- Cross-check with the plugin main file's modification time (`TZ=UTC stat -c '%y' wp-content/plugins/<slug>/<main>.php` on GNU/Linux). On macOS/BSD, use `TZ=UTC stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S %Z' wp-content/plugins/<slug>/<main>.php`. Where the stream table is missing, file times are only a fallback clue: archives, restores, and later changes can preserve or alter them. Missing rows are not proof that an update never happened.
+- An install time is not a download time. A zip downloaded earlier and uploaded by hand records only the installation. Find out where any hand-installed copy came from; a copy downloaded inside the window can be installed after it.
+- Timing evidence narrows the risk; it does not prove a site is clean. Also check the vendor's published indicators.
+
 ## Troubleshooting
 
 ```bash
