@@ -97,5 +97,11 @@ PY
 			PULSE_TODO_SYNC_STALE_CLEANUP_MODE="${PULSE_TODO_SYNC_STALE_CLEANUP_MODE:-delete}" \
 			_ptsw_sweep_stale_workspaces >/dev/null || true
 	fi
+	helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sensitive-temp-helper.sh"
+	if [[ -f "$helper" ]]; then
+		# shellcheck source=sensitive-temp-helper.sh
+		source "$helper"
+		aidevops_sensitive_temp_sweep_stale >/dev/null 2>&1 || true
+	fi
 	return 0
 }

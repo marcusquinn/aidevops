@@ -137,13 +137,20 @@ _cleanup_headless_runtime_temp_paths() {
 	local managed_temp_root=""
 	local cleanup_failed=0
 	local retained_paths=""
+	local suffix=""
+	local path_cleanup_failed=0
 	managed_temp_root=$(aidevops_sensitive_temp_root) || return 1
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || continue
 		case "$path" in
 		"$managed_temp_root"/aidevops-headless-* | "$tmp_root"/aidevops-* | /tmp/aidevops-* | /var/folders/*/T/*/aidevops-*)
-			rm -rf -- "$path" 2>/dev/null || cleanup_failed=1
-			if [[ -e "$path" || -L "$path" ]]; then
+			path_cleanup_failed=0
+			rm -rf -- "$path" 2>/dev/null || path_cleanup_failed=1
+			for suffix in wait_status kill_reason watchdog_killed watchdog_stall_killed rate_limit_fast; do
+				rm -f -- "${path}.${suffix}" 2>/dev/null || path_cleanup_failed=1
+				[[ ! -e "${path}.${suffix}" && ! -L "${path}.${suffix}" ]] || path_cleanup_failed=1
+			done
+			if [[ -e "$path" || -L "$path" || "$path_cleanup_failed" -ne 0 ]]; then
 				cleanup_failed=1
 				retained_paths="${retained_paths}${path}"$'\n'
 				print_warning "[lifecycle] headless_runtime_temp_cleanup_failed guardian=retained"

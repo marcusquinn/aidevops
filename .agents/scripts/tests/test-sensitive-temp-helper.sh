@@ -230,6 +230,27 @@ if aidevops_sensitive_temp_cleanup "$traversal_path" 2>/dev/null; then
 fi
 [[ -d "${TEST_ROOT}/outside" ]] || fail "cleanup traversal removed an outside directory"
 
+# All sweep fixtures live in the isolated managed root, never the runner root.
+mkdir -p "${MANAGED_ROOT}/aidevops-stale-dir/nested" "${MANAGED_ROOT}/aidevops-active-dir"
+touch "${MANAGED_ROOT}/aidevops-stale-file" "${MANAGED_ROOT}/other-stale-file" \
+	"${MANAGED_ROOT}/aidevops-stale-dir/nested/old"
+touch -t 202601010000 "${MANAGED_ROOT}/aidevops-stale-file" "${MANAGED_ROOT}/other-stale-file" \
+	"${MANAGED_ROOT}/aidevops-stale-dir/nested/old" "${MANAGED_ROOT}/aidevops-stale-dir/nested" \
+	"${MANAGED_ROOT}/aidevops-stale-dir"
+touch "${MANAGED_ROOT}/aidevops-fresh-file" "${MANAGED_ROOT}/aidevops-active-dir/fresh"
+touch -t 202601010000 "${MANAGED_ROOT}/aidevops-active-dir"
+touch "${TEST_ROOT}/outside/untouched"
+ln -s "${TEST_ROOT}/outside" "${MANAGED_ROOT}/aidevops-stale-link"
+touch -h -t 202601010000 "${MANAGED_ROOT}/aidevops-stale-link"
+sweep_output=$(HEADLESS_RUNTIME_TEMP_MAX_AGE_SECONDS=invalid aidevops_sensitive_temp_sweep_stale)
+[[ -z "$sweep_output" ]] || fail "sweep printed artifact names"
+[[ ! -e "${MANAGED_ROOT}/aidevops-stale-file" && ! -e "${MANAGED_ROOT}/aidevops-stale-dir" ]] || \
+	fail "sweep retained stale managed entries"
+[[ -e "${MANAGED_ROOT}/aidevops-fresh-file" && -e "${MANAGED_ROOT}/other-stale-file" && \
+	-e "${MANAGED_ROOT}/aidevops-active-dir/fresh" ]] || fail "sweep removed retained entries"
+[[ -L "${MANAGED_ROOT}/aidevops-stale-link" && -e "${TEST_ROOT}/outside/untouched" ]] || \
+	fail "sweep followed or removed a symlink"
+
 sleep 5 &
 owner_pid=$!
 owner_exit_dir=$(aidevops_sensitive_temp_create_dir "test-owner-exit") || \

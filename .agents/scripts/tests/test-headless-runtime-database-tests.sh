@@ -1248,9 +1248,12 @@ test_registered_prompt_temp_cleanup_removes_dir() {
 	_prepare_runtime_prompt_transport "opencode" "$prompt"
 	local prompt_file="$_HEADLESS_RUN_PROMPT_FILE"
 	local prompt_dir="${prompt_file%/*}"
+	: >"${prompt_dir}.wait_status"
+	: >"${prompt_dir}.kill_reason"
 	_cleanup_headless_runtime_temp_paths
 
-	if [[ -n "$prompt_dir" && ! -e "$prompt_dir" ]]; then
+	if [[ -n "$prompt_dir" && ! -e "$prompt_dir" &&
+		! -e "${prompt_dir}.wait_status" && ! -e "${prompt_dir}.kill_reason" ]]; then
 		if [[ -n "$old_threshold" ]]; then
 			HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
 		else

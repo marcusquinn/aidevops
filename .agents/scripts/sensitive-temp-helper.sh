@@ -317,3 +317,66 @@ aidevops_sensitive_temp_cleanup() {
 	[[ ! -e "$guarded_path" && ! -L "$guarded_path" ]] || return 1
 	return 0
 }
+
+# Backstop guardians lost to reboot: only expire framework entries after at
+# least a day, and retain directories with fresh content or any symlink.
+aidevops_sensitive_temp_sweep_stale() {
+	local root=""
+	local max_age_seconds="${HEADLESS_RUNTIME_TEMP_MAX_AGE_SECONDS:-25200}"
+	local exclusion=""
+	root=$(aidevops_sensitive_temp_root) || return 0
+	if [[ "$(uname -s)" == "Darwin" ]] && command -v tmutil >/dev/null 2>&1; then
+		exclusion=$(tmutil isexcluded "$root" 2>/dev/null) || exclusion=""
+		case "$exclusion" in
+		"[Included]"*) tmutil addexclusion "$root" >/dev/null 2>&1 || true ;;
+		esac
+	fi
+	command -v python3 >/dev/null 2>&1 || return 0
+	[[ "$max_age_seconds" =~ ^[0-9]+$ ]] || max_age_seconds=25200
+	python3 - "$root" "$max_age_seconds" <<'PY' 2>/dev/null || true
+import os
+import shutil
+import stat
+import sys
+import time
+
+root = sys.argv[1]
+cutoff = time.time() - max(86400, 2 * int(sys.argv[2]))
+
+def walk_error(error):
+    raise error
+
+def stale(path):
+    info = os.lstat(path)
+    return not stat.S_ISLNK(info.st_mode) and info.st_mtime < cutoff
+
+try:
+    names = os.listdir(root)
+except OSError:
+    names = []
+for name in names:
+    if not name.startswith("aidevops-"):
+        continue
+    path = os.path.join(root, name)
+    try:
+        if not stale(path):
+            continue
+        if stat.S_ISDIR(os.lstat(path).st_mode):
+            old_tree = True
+            for parent, dirs, files in os.walk(path, followlinks=False, onerror=walk_error):
+                if not stale(parent) or any(
+                    not stale(os.path.join(parent, child)) for child in dirs + files
+                ):
+                    old_tree = False
+                    break
+            if old_tree:
+                shutil.rmtree(path)
+        else:
+            os.unlink(path)
+    except FileNotFoundError:
+        pass  # A guardian or another sweep removed it first.
+    except OSError:
+        pass  # Best effort; retry on the next pulse launch.
+PY
+	return 0
+}
