@@ -55,11 +55,18 @@ _bootstrap_aidevops_worktree_js_deps "$WORKTREE"
 printf 'PASS aidevops worktree bootstraps locked dependencies without lifecycle scripts\n'
 
 cp "${FAKE_BIN}/bun" "$FAKE_HOME/.bun/bin/bun"
+# Keep the fallback case independent of host filesystem layout (e.g. NixOS),
+# while ensuring bun itself is absent from PATH.
+FALLBACK_BIN="${ROOT}/fallback-bin"
+mkdir -p "$FALLBACK_BIN"
+for tool in bash mkdir chmod grep; do
+	ln -s "$(command -v "$tool")" "${FALLBACK_BIN}/${tool}"
+done
 printf '{ "name": "aidevops", "devDependencies": { "typescript": "^5.0.0" } }\n' >"${HOME_WORKTREE}/package.json"
 printf '{}\n' >"${HOME_WORKTREE}/bun.lock"
 printf '#!/usr/bin/env bash\n' >"${HOME_WORKTREE}/aidevops.sh"
 rm -f "$BUN_ARGS_LOG"
-HOME="$FAKE_HOME" PATH="/usr/bin:/bin" _bootstrap_aidevops_worktree_js_deps "$HOME_WORKTREE"
+HOME="$FAKE_HOME" PATH="$FALLBACK_BIN" _bootstrap_aidevops_worktree_js_deps "$HOME_WORKTREE"
 [[ -x "${HOME_WORKTREE}/node_modules/.bin/tsc" ]] || {
 	printf 'FAIL fixed HOME Bun path did not bootstrap tsc when bun was absent from PATH\n'
 	exit 1
