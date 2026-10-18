@@ -13,7 +13,7 @@ Prefer coordination you control and peer-to-peer data paths. Avoid third-party c
 |------|--------------|-----------|----------|----------|
 | **Nostr VPN** (`nvpn`) | None central: admin-signed roster; discovery via Nostr relays and bootstrap peers unless `direct-only` | Direct UDP; FIPS transit peers as fallback | Experimental, security audit pending | `services/networking/nostr-vpn.md`, `nostr-vpn-helper.sh` |
 | **NetBird**, self-hosted | Your management server (AGPL) | Direct WireGuard; your relay as fallback | Production | `services/networking/netbird.md` |
-| **Headscale** + Tailscale clients | Your server (open-source control plane) | Direct WireGuard; DERP relays you choose | Mature | Not documented in aidevops yet; use transport `ssh` |
+| **Headscale** + Tailscale clients | Self-hosted: Cloudron package or any Headscale server | Direct WireGuard; Cloudron package: embedded DERP plus Tailscale public relays as fallback | Mature | Join below; transport `ssh` over the tailnet |
 | **Plain WireGuard** or **SSH** | None | Direct only; you manage keys, IPs, NAT/port forwards | Mature | Transport `wireguard` / `ssh` |
 | **Tailscale** (hosted) | Vendor control plane | Direct WireGuard; vendor DERP | Mature | Transport `tailscale`; avoid when third-party control is unacceptable |
 
@@ -24,6 +24,29 @@ Two meshes side by side (for example NetBird plus Nostr VPN) give independent pa
 - **Nostr VPN**: install the app on each device, then run `nostr-vpn-helper.sh update`, `setup-admin` on the first device, `join` on the others, and `approve` on the admin. Each command prints the next one. Then `aliases` and `dns-check <alias>` for `<alias>.nvpn` names. Use `direct-only` to drop third-party bootstrap and relay discovery when devices share a LAN or have reachable endpoints.
 - **NetBird**: enrol with a setup key into an `ai-workers` group, and allow only TCP 22 from your controller group.
 - Confirm reachability: `ping <peer>` over the mesh address or name.
+
+### Headscale
+
+Install the official Tailscale client on each machine. For server setup, see the [Headscale Cloudron package README](https://github.com/marcusquinn/cloudron-headscale-app/blob/main/README.md); an existing Headscale server also works. The commands below match Headscale 0.29.5.
+
+**Interactive machines:** run `tailscale up --login-server https://<headscale-domain>` and open the printed sign-in link (Cloudron SSO with the package). On macOS, iOS and Windows, the Tailscale app also offers an alternate coordination server option; the server's `/apple` and `/windows` pages explain setup. Headscale replaces the sign-in link every 15 minutes while the client is waiting. If an old link shows **Gone: Your session has expired**, rerun `tailscale up` with the same login server and open the fresh link promptly.
+
+**Headless workers:** in the Headscale server's terminal, list users and create a short-lived pre-auth key for the intended user's numeric ID:
+
+```bash
+headscale users list
+headscale preauthkeys create --user <ID> --expiration 1h
+```
+
+The user must already exist (Cloudron SSO creates it at first sign-in); for a local user, create one with `headscale users create <name>`. Add `--reusable` to the key creation command only when enrolling several machines; `--ephemeral` is available for nodes that should disappear after going offline. Never paste keys into issues or chat; keep them in secure storage and avoid retaining them in shell history. On the worker, supply the key locally:
+
+```bash
+tailscale up --login-server https://<headscale-domain> --authkey <key>
+```
+
+Use the peer's MagicDNS name or assigned mesh address (for example `100.64.x.x`) as the SSH alias's `HostName` in step 2, then verify reachability. Register dispatch targets with `remote-dispatch-helper.sh add <name> <peer-mesh-address> --user <user> --transport ssh`. Specify `ssh` explicitly: automatic detection can select `tailscale` for a known CGNAT peer, and that transport invokes `tailscale ssh`, not ordinary SSH. Custom login-server enrollment alone does not establish compatibility with Tailscale SSH. Keep SSH keys, host-key checks and SSH access policy as the authorization boundary.
+
+**NetBird overlap:** Headscale defaults to `100.64.0.0/10`; [NetBird uses the same range](../services/networking/netbird.md#remote-opencode-workers). Running both on one machine can cause conflicting routes, even when individual node addresses differ. Run one at a time on each machine unless you have explicitly designed and verified non-overlapping mesh routing. Do not move Headscale outside the Tailscale client's supported CGNAT range as a workaround.
 
 ## 2. SSH key and alias
 
@@ -74,3 +97,5 @@ Closing SSH can leave the server running: `ssh mini-nvpn 'pkill -f "opencode ser
 | `.nvpn` name doesn't resolve | `nostr-vpn-helper.sh dns-check <alias>`: missing aliases (layer 1) or macOS resolver not re-read (layer 2; cycle the network, not mDNSResponder) |
 | nvpn peer `pending` | `nostr-vpn-helper.sh conflicts` (port clash); in direct-only mode, endpoints must be LAN, public or DNS, not NetBird/Tailscale |
 | NetBird peer Idle | Lazy connections wake on traffic; `netbird status -d` and check policies allow TCP 22 |
+| Headscale node not appearing | Run `headscale nodes list` on the server; confirm enrollment used the intended `--login-server` and an unexpired sign-in link or pre-auth key |
+| Headscale paths remain relay-only | Check UDP reachability between peers; enable the Cloudron package's STUN UDP port (3480 by default) and allow it through any provider firewall. Some NATs still require DERP |
