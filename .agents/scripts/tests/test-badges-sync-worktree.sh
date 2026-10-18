@@ -136,7 +136,7 @@ bash "$SCRIPTS/badges-sync-helper.sh" --apply --repo marcusquinn/test --json >"$
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
 [[ "$(snapshot)" == "$before" ]]
 head="$(jq -r '.[0].headRefName' "$PR_STATE")"
-git -C "$CANONICAL" show "$head:README.md" | grep -q CURRENT
+git -C "$CANONICAL" show "$head:README.md" | grep CURRENT >/dev/null
 git -C "$CANONICAL" cat-file -e "$head:docs/metrics/repo-metrics.json"
 git -C "$CANONICAL" cat-file -e "$head:.github/workflows/loc-badge.yml"
 [[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 1 ]]
@@ -227,6 +227,6 @@ printf 'PASS workflow-only publication tolerates missing remote README\n'
 # Routine wiring uses the same no-filter selector exercised above.
 # shellcheck source=../routines/core-routines.sh
 source "$SCRIPT_DIR/../routines/core-routines.sh"
-get_core_routine_entries | grep -qF 'r921|x|README badges — remediate managed repo drift|repeat:weekly(sun@08:10)|~5m|scripts/badges-sync-helper.sh --apply --json|script'
-describe_r921 linux | grep -q 'maintained-repository selector'
+get_core_routine_entries | grep -F 'r921|x|README badges — remediate managed repo drift|repeat:weekly(sun@08:10)|~5m|scripts/badges-sync-helper.sh --apply --json|script' >/dev/null
+describe_r921 linux | grep 'maintained-repository selector' >/dev/null
 printf 'PASS weekly pulse routine is enabled and documented\n'
