@@ -90,6 +90,15 @@ list_registry_instances() {
     return 0
 }
 
+# Read one field of a server entry. Keys are passed via --arg so hyphenated
+# names such as coolify-main are not parsed by jq as subtraction.
+_coolify_server_field() {
+    local server="$1"
+    local field="$2"
+    jq -r --arg s "$server" --arg f "$field" '.servers[$s][$f]' "$CONFIG_FILE"
+    return $?
+}
+
 # List all Coolify servers
 list_servers() {
     if ! command -v jq >/dev/null 2>&1; then
@@ -107,10 +116,10 @@ list_servers() {
 
     servers=$(jq -r '.servers | keys[]' "$CONFIG_FILE")
     for server in $servers; do
-        name=$(jq -r ".servers.$server.name" "$CONFIG_FILE")
-        host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
-        coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
-        description=$(jq -r ".servers.$server.description" "$CONFIG_FILE")
+        name=$(_coolify_server_field "$server" name)
+        host=$(_coolify_server_field "$server" host)
+        coolify_url=$(_coolify_server_field "$server" coolify_url)
+        description=$(_coolify_server_field "$server" description)
         
         echo "  - $server: $name"
         echo "    Host: $host"
@@ -134,13 +143,13 @@ connect_server() {
     check_config
     
     local host
-    host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
+    host=$(_coolify_server_field "$server" host)
     local port
-    port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
+    port=$(_coolify_server_field "$server" port)
     local username
-    username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
+    username=$(_coolify_server_field "$server" username)
     local ssh_key
-    ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
+    ssh_key=$(_coolify_server_field "$server" ssh_key)
     
     if [[ "$host" == "null" ]]; then
         print_error "Server '$server' not found in configuration"
@@ -176,7 +185,7 @@ open_coolify() {
         fi
     else
         check_config
-        coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
+        coolify_url=$(_coolify_server_field "$server" coolify_url)
     fi
     
     if [[ "$coolify_url" == "null" ]]; then
@@ -207,7 +216,7 @@ list_apps() {
     print_info "Applications on $server:"
     
     local apps
-    apps=$(jq -r ".applications.${server}[]?.name" "$CONFIG_FILE" 2>/dev/null)
+    apps=$(jq -r --arg s "$server" '.applications[$s][]?.name' "$CONFIG_FILE" 2>/dev/null)
     if [[ -z "$apps" ]]; then
         print_warning "No applications configured for server '$server'"
         return 1
@@ -216,11 +225,11 @@ list_apps() {
     echo "$apps" | while read -r app; do
         if [[ -n "$app" ]]; then
             local type
-            type=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .type" "$CONFIG_FILE")
+            type=$(jq -r --arg s "$server" --arg app "$app" '.applications[$s][] | select(.name == $app) | .type' "$CONFIG_FILE")
             local domain
-            domain=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .domain" "$CONFIG_FILE")
+            domain=$(jq -r --arg s "$server" --arg app "$app" '.applications[$s][] | select(.name == $app) | .domain' "$CONFIG_FILE")
             local branch
-            branch=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .branch" "$CONFIG_FILE")
+            branch=$(jq -r --arg s "$server" --arg app "$app" '.applications[$s][] | select(.name == $app) | .branch' "$CONFIG_FILE")
             
             echo "  - $app ($type)"
             echo "    Domain: $domain"
@@ -244,13 +253,13 @@ exec_command() {
     check_config
     
     local host
-    host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
+    host=$(_coolify_server_field "$server" host)
     local port
-    port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
+    port=$(_coolify_server_field "$server" port)
     local username
-    username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
+    username=$(_coolify_server_field "$server" username)
     local ssh_key
-    ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
+    ssh_key=$(_coolify_server_field "$server" ssh_key)
     
     if [[ "$host" == "null" ]]; then
         print_error "Server '$server' not found in configuration"
@@ -274,9 +283,9 @@ check_status() {
     check_config
 
     local host
-    host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
+    host=$(_coolify_server_field "$server" host)
     local coolify_url
-    coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
+    coolify_url=$(_coolify_server_field "$server" coolify_url)
 
     if [[ "$host" == "null" ]]; then
         print_error "Server '$server' not found in configuration"
