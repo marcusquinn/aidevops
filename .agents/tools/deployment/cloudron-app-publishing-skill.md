@@ -132,6 +132,24 @@ or run `cloudron update --app <app>` in a scratch directory holding only the
 catalog's `.versions["X.Y.Z"].manifest` (which carries the digest-pinned
 `dockerImage`). Confirm `cloudron status --app <app>` reports that digest.
 
+### Moving a source-built install to a catalog-linked install
+
+Only `cloudron install --versions-url <url>` links an app to a catalog; `cloudron
+update` has no `--versions-url` option. Updating from a scratch manifest can
+select the catalog's pinned image, but does not link the installed app for future
+catalog updates. On Cloudron CLI 8.2.6, install calls the community-app endpoint
+with the versions URL. To switch, back up the old app, install a new copy with
+`cloudron install --versions-url <catalog-url> --location <temporary-location>`,
+and keep the old app until the new one is verified. Move required data using the
+Cloudron dashboard's export/import flow (check the installed CLI's `cloudron
+export --help` and `cloudron import --help` before using CLI flags), or start
+fresh if the old app was only a test. Locations can hold only one app: use a
+temporary location, then move it after uninstalling the old app, or uninstall
+the old app first only when its backup and downtime are acceptable. Verify app
+health, sign-in, and stored credentials before uninstalling the old app. Confirm
+the new app is catalog-linked in the dashboard and reports the catalog image via
+`cloudron status --app <new-app>`.
+
 ### Pre-Merge CLI Dry Run
 
 Publisher tests that stub the CLI cannot catch changelog or `file://` parsing
