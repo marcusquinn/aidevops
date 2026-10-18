@@ -134,6 +134,24 @@ GH
 	chmod +x "${bin_dir}/gh"
 }
 
+# Label inventory/create stubs, appended to the gh-source file the gh stub sources.
+write_fake_label_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'LABELS'
+if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/labels\?per_page=100 ]]; then
+    printf 'LABEL_LIST %s\n' "${2}" >>"${MONITOR_LABEL_LOG:-/dev/null}"
+    printf '%s\n' ${MONITOR_LABELS-type:maintenance}
+    exit 0
+fi
+if [[ "${1:-}" == "label" && "${2:-}" == "create" ]]; then
+    printf 'LABEL_CREATE %s\n' "$*" >>"${MONITOR_LABEL_LOG:-/dev/null}"
+    [[ "${MONITOR_LABEL_CREATE_FAIL:-false}" != true ]] || exit 1
+    exit 0
+fi
+LABELS
+	return 0
+}
+
 write_fake_source_commands() {
 	local bin_dir="$1"
 	cat >"${bin_dir}/gh-source" <<'SOURCE'
@@ -254,6 +272,7 @@ else
 fi
 DOCKER
 	write_fake_source_commands "$bin_dir"
+	write_fake_label_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh_create_issue" "${bin_dir}/gh_issue_comment" "${bin_dir}/docker"
 	return 0
 }
@@ -796,6 +815,46 @@ test_monitor_reports_withdrawn_docker_sources() {
 	return 0
 }
 
+test_monitor_ensures_maintenance_label() {
+	local home_dir="${TEST_ROOT}/label-home"
+	local repo_dir="${TEST_ROOT}/label-package"
+	local bin_dir="${TEST_ROOT}/label-bin"
+	local log_file="${TEST_ROOT}/label-issues.log"
+	local label_log="${TEST_ROOT}/label-writes.log"
+	local output=""
+	local rc=0
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+
+	# Label present: read-only, finding filed.
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_LOG="$label_log" \
+		CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^CALL exampleorg/example-package$' "$log_file")" "finding filed when label exists"
+	assert_equal 0 "$(grep -c '^LABEL_CREATE' "$label_log")" "no label write when type:maintenance exists"
+
+	# Label missing: created, then finding filed.
+	rm -f "$log_file" "$label_log"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_LOG="$label_log" MONITOR_LABELS="bug" \
+		CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^LABEL_CREATE label create type:maintenance --repo exampleorg/example-package' "$label_log")" "missing label is created"
+	assert_equal 1 "$(grep -c '^CALL exampleorg/example-package$' "$log_file")" "finding filed after label creation"
+
+	# Label creation fails: error, non-zero, no unlabelled issue.
+	rm -f "$log_file" "$label_log"
+	if output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_LOG="$label_log" MONITOR_LABELS="bug" \
+		MONITOR_LABEL_CREATE_FAIL=true CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply 2>&1); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_equal 1 "$rc" "failed label creation fails the run"
+	[[ "$output" == *"Could not create label type:maintenance in exampleorg/example-package"* ]] &&
+		assert_equal true true "label failure names repo and label" ||
+		assert_equal true false "label failure names repo and label"
+	[[ ! -f "$log_file" ]] && assert_equal true true "no unlabelled issue after label failure" || assert_equal true false "no unlabelled issue after label failure"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -813,6 +872,7 @@ main() {
 	test_monitor_rejects_blank_package_title
 	test_monitor_waits_for_release_parent_image_and_rearms_once
 	test_monitor_reports_withdrawn_docker_sources
+	test_monitor_ensures_maintenance_label
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0

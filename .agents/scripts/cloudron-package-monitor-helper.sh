@@ -387,6 +387,24 @@ _cloudron_monitor_files_scope() {
 	return 0
 }
 
+# Ensure the finding label exists in the package repo. gh_create_issue only
+# provisions its own managed labels, so type:maintenance is created here.
+# Read-first: a repo that already has the label sees no write.
+_cloudron_monitor_ensure_label() {
+	local slug="$1"
+	local label_name="${2:-type:maintenance}"
+	local label_description="${3:-Upstream or platform maintenance}"
+	local snapshot=""
+	snapshot=$(_gh_managed_label_names_snapshot "$slug" 2>/dev/null) ||
+		_cloudron_monitor_error "Could not list labels in ${slug}; not filing a finding without label ${label_name}." || return 1
+	if _gh_managed_label_snapshot_has "$snapshot" "$label_name"; then
+		return 0
+	fi
+	_gh_managed_label_create_runner "$slug" "$label_name" "$label_description" "ededed" ||
+		_cloudron_monitor_error "Could not create label ${label_name} in ${slug}; not filing the finding without it." || return 1
+	return 0
+}
+
 _cloudron_monitor_create_issue() {
 	local slug="$1"
 	local title="$2"
@@ -400,6 +418,7 @@ _cloudron_monitor_create_issue() {
 	local body_file=""
 	local issue_wrapper="${CLOUDRON_PACKAGE_ISSUE_WRAPPER:-gh_create_issue}"
 	command -v "$issue_wrapper" >/dev/null 2>&1 || _cloudron_monitor_error "gh_create_issue wrapper is required for managed issue writes." || return 1
+	_cloudron_monitor_ensure_label "$slug" "type:maintenance" || return 1
 	mkdir -p "$body_dir"
 	body_file=$(mktemp "${body_dir}/cloudron-package-monitor.XXXXXX") || return 1
 	files_scope=$(_cloudron_monitor_files_scope "$manifest_rel" "$repo_path")
