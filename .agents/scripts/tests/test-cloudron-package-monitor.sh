@@ -107,16 +107,6 @@ if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/conten
     printf '\n'
     exit 0
 fi
-if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/labels\?per_page=100 ]]; then
-    printf 'LABEL_LIST %s\n' "${2}" >>"${MONITOR_LABEL_LOG:-/dev/null}"
-    printf '%s\n' ${MONITOR_LABELS-type:maintenance}
-    exit 0
-fi
-if [[ "${1:-}" == "label" && "${2:-}" == "create" ]]; then
-    printf 'LABEL_CREATE %s\n' "$*" >>"${MONITOR_LABEL_LOG:-/dev/null}"
-    [[ "${MONITOR_LABEL_CREATE_FAIL:-false}" != true ]] || exit 1
-    exit 0
-fi
 source "${0%/*}/gh-source"
 if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
     printf '%s\n' 'ADMIN'
@@ -142,6 +132,24 @@ exit 1
 GH
 	write_fake_issue_wrapper "$bin_dir"
 	chmod +x "${bin_dir}/gh"
+}
+
+# Label inventory/create stubs, appended to the gh-source file the gh stub sources.
+write_fake_label_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'LABELS'
+if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/labels\?per_page=100 ]]; then
+    printf 'LABEL_LIST %s\n' "${2}" >>"${MONITOR_LABEL_LOG:-/dev/null}"
+    printf '%s\n' ${MONITOR_LABELS-type:maintenance}
+    exit 0
+fi
+if [[ "${1:-}" == "label" && "${2:-}" == "create" ]]; then
+    printf 'LABEL_CREATE %s\n' "$*" >>"${MONITOR_LABEL_LOG:-/dev/null}"
+    [[ "${MONITOR_LABEL_CREATE_FAIL:-false}" != true ]] || exit 1
+    exit 0
+fi
+LABELS
+	return 0
 }
 
 write_fake_source_commands() {
@@ -264,6 +272,7 @@ else
 fi
 DOCKER
 	write_fake_source_commands "$bin_dir"
+	write_fake_label_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh_create_issue" "${bin_dir}/gh_issue_comment" "${bin_dir}/docker"
 	return 0
 }
