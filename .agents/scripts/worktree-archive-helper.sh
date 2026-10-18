@@ -132,7 +132,7 @@ resolve_base_sha() {
 source_fingerprint() {
 	local worktree="$1"
 	local include_ignored="${2:-0}"
-	python3 - "$worktree" "$include_ignored" <<'PY'
+	python3 - "$worktree" "$include_ignored" "$MAX_UNTRACKED_FILES" "$MAX_UNTRACKED_BYTES" <<'PY'
 import hashlib
 import json
 import os
@@ -160,7 +160,19 @@ except subprocess.CalledProcessError:
     branch = "detached"
 untracked = hashlib.sha256()
 capture_options = () if include_ignored else ("--exclude-standard",)
-for raw in listed("--others", *capture_options):
+untracked_paths = listed("--others", *capture_options)
+payload_limit_error = "untracked payload exceeds configured limit"
+max_payload_bytes = int(sys.argv[4])
+if include_ignored:
+    # Refuse oversized ignored trees before reading their file contents.
+    if len(untracked_paths) > int(sys.argv[3]):
+        raise SystemExit(payload_limit_error)
+    payload_bytes = sum(root.joinpath(os.fsdecode(raw)).lstat().st_size
+                        for raw in untracked_paths)
+    if payload_bytes > max_payload_bytes:
+        raise SystemExit(payload_limit_error)
+hashed_bytes = 0
+for raw in untracked_paths:
     target = root.joinpath(os.fsdecode(raw))
     untracked.update(raw + b"\0")
     if include_ignored:
@@ -171,6 +183,9 @@ for raw in listed("--others", *capture_options):
         untracked.update(b"F")
         with target.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1048576), b""):
+                hashed_bytes += len(chunk)
+                if include_ignored and hashed_bytes > max_payload_bytes:
+                    raise SystemExit(payload_limit_error)
                 untracked.update(chunk)
     else:
         untracked.update(b"?")
