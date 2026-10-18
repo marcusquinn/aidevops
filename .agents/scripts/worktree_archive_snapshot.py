@@ -5,6 +5,8 @@
 
 This is read-only evidence, not permission to remove a worktree. Callers must
 still establish ownership/quiescence and compare again immediately before removal.
+Sampling is not atomic: cooperating-writer exclusion must cover verification and
+removal; fingerprints do not fence arbitrary same-user writers.
 """
 
 import hashlib
@@ -29,9 +31,10 @@ def git(root, *args, data=None):
 def supported_state(root):
     admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     pending = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
-               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG", "index.lock", "config.worktree")
+               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG", "index.lock", "config.worktree", "SQUASH_MSG")
     if any((admin / name).exists() for name in pending):
         raise ValueError("unfinished Git operation is not supported for automatic archival")
+    supported_administration(root, admin)
     if git(root, "rev-parse", "--is-shallow-repository").strip() != b"false":
         raise ValueError("shallow history is not self-contained")
     if git(root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"):
@@ -45,6 +48,28 @@ def supported_state(root):
     if visible != invisible:
         raise ValueError("intent-to-add index entries require separate preservation")
     supported_history(root, admin)
+
+
+def supported_administration(root, admin):
+    common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
+    if admin.resolve() == common.resolve():
+        # Independent restores are full repositories. Managed source enrollment
+        # separately refuses canonical repositories; only linked admin is removed.
+        return
+    allowed = {"HEAD", "index", "commondir", "gitdir", "ORIG_HEAD", "COMMIT_EDITMSG", "logs", "refs"}
+    for entry in admin.iterdir():
+        if entry.name not in allowed or entry.is_symlink():
+            raise ValueError(f"unknown Git administrative state requires separate preservation: {entry.name!r}")
+        if entry.name == "logs":
+            if not entry.is_dir() or any(child.name != "HEAD" or child.is_symlink()
+                                         or not child.is_file() for child in entry.iterdir()):
+                raise ValueError("unknown Git administrative log requires separate preservation")
+        elif entry.name == "refs":
+            # Recent Git creates this empty directory for a new linked worktree.
+            if not entry.is_dir() or any(entry.iterdir()):
+                raise ValueError("private Git references require separate preservation")
+        elif not entry.is_file():
+            raise ValueError("unsupported Git administrative entry")
 
 
 def supported_history(root, admin):

@@ -442,6 +442,52 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertEqual(result["attempted"], 0)
         self.assertFalse(missing.exists())
 
+    def test_reconcile_rotates_past_ineligible_rows_and_failed_candidates(self):
+        managed = self.managed_fixture()
+        self.prepare_managed(managed)
+        self.git(self.repo, "worktree", "remove", "--force", self.work)
+        failed = self.managed_record(managed)
+        failed["identity"]["path"] = str(self.root / "a-invalid-generation")
+        # Deliberately leave the operation's identity unchanged: this receipt
+        # must fail validation, without monopolizing subsequent bounded runs.
+        inactive = json.loads(json.dumps(failed))
+        inactive["identity"]["path"] = str(self.root / "z-newer-inactive")
+        inactive.pop("archive_operation")
+        inactive["state"] = "created"
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            for record in (failed, inactive):
+                managed.save(connection, record)
+            connection.commit()
+        with patch.dict(os.environ, self.env, clear=True):
+            results = [lifecycle_status.reconcile(1, 1) for _ in range(3)]
+        self.assertEqual(sum(result["completed"] for result in results), 1)
+        self.assertEqual(results[0]["deferred"], 1)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "removed")
+
+    def test_standalone_scheduler_uses_user_units_and_bounded_cleanup(self):
+        home = self.root / "scheduler-home"
+        deployed = home / ".aidevops/agents/scripts/worktree-lifecycle-helper.sh"
+        deployed.parent.mkdir(parents=True)
+        deployed.touch()
+        self.env.update(HOME=str(home), AIDEVOPS_LOG_DIR=str(home / "logs"))
+        script = ('systemctl() { case "$*" in "--user status"|"--user daemon-reload"|'
+                  '"--user enable --now aidevops-worktree-lifecycle.timer") return 0;; '
+                  '*) return 1;; esac; }; source "$1" install-scheduler')
+        result = self.run_command("bash", "-c", script, "_",
+                                  HELPER.with_name("worktree-lifecycle-helper.sh"), check=False)
+        units = home / ".config/systemd/user"
+        if os.geteuid() == 0:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(units.exists())
+            return
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        service = (units / "aidevops-worktree-lifecycle.service").read_text()
+        timer = (units / "aidevops-worktree-lifecycle.timer").read_text()
+        self.assertIn("worktree-lifecycle-helper.sh run", service)
+        self.assertIn("TimeoutStartSec=900", service)
+        self.assertIn("KillMode=control-group", service)
+        self.assertIn("OnUnitActiveSec=600", timer)
+
     def test_pr_opened_after_archive_preserves_source(self):
         managed = self.managed_fixture()
         archive = self.prepare_managed(managed)
@@ -546,6 +592,21 @@ class ArchiveLifecycle(unittest.TestCase):
             self.prepare_managed(managed)
         self.assertEqual(self.managed_record(managed)["state"], "created")
         self.assertNotIn("archive_operation", self.managed_record(managed))
+
+    def test_unknown_git_administration_and_squash_drafts_are_preserved(self):
+        managed = self.managed_fixture()
+        admin = Path(self.git(self.work, "rev-parse", "--absolute-git-dir").decode().strip())
+        for name in ("SQUASH_MSG", "private-draft"):
+            with self.subTest(name=name):
+                draft = admin / name
+                draft.write_text("irreplaceable draft\n")
+                try:
+                    with self.assertRaises(ValueError):
+                        self.prepare_managed(managed)
+                    self.assertNotIn("archive_operation", self.managed_record(managed))
+                    self.assertEqual(draft.read_text(), "irreplaceable draft\n")
+                finally:
+                    draft.unlink()
 
     def test_reflog_only_work_is_protected(self):
         managed = self.managed_fixture()

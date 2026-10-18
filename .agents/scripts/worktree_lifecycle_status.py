@@ -37,7 +37,7 @@ def presence(path):
         return "unavailable"
 
 
-def records(limit):
+def records(limit, selected_paths=None):
     database = registry_path()
     result = {"status": "unavailable", "entries": [], "truncated": False}
     try:
@@ -49,8 +49,9 @@ def records(limit):
                 result["status"] = "not-enrolled"
                 return result
             total = connection.execute("SELECT COUNT(*) FROM worktree_managed_lifetimes").fetchone()[0]
-            paths = connection.execute("SELECT path FROM worktree_managed_lifetimes ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
-            result.update(status="available", total=total, truncated=total > limit)
+            paths = (connection.execute("SELECT path FROM worktree_managed_lifetimes ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
+                     if selected_paths is None else [(name,) for name in selected_paths])
+            result.update(status="available", total=total, truncated=total > len(paths))
             for (name,) in paths:
                 entry = {"path": name, "evidence": "recorded-not-revalidated"}
                 try:
@@ -124,13 +125,48 @@ def report(limit):
             }}
 
 
+def reserve_scan(limit):
+    """Advance a keyset cursor in the existing registry before attempting work.
+
+    This is traversal metadata, not ownership or deletion evidence. Advancing
+    across every reserved row prevents failures and ineligible records from
+    monopolizing a bounded run. Concurrent callers reserve serially; crashes
+    defer their batch until wraparound without changing any lifecycle receipt.
+    """
+    with archive.transaction() as connection:
+        for table in ("worktree_managed_lifetimes", "worktree_owners"):
+            archive.require(connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone(),
+                            "managed registry unavailable")
+        connection.execute("CREATE TABLE IF NOT EXISTS worktree_lifecycle_reconcile_cursor "
+                           "(singleton INTEGER PRIMARY KEY CHECK(singleton=1), after_path TEXT NOT NULL)")
+        previous = connection.execute("SELECT after_path FROM worktree_lifecycle_reconcile_cursor WHERE singleton=1").fetchone()
+        after = previous[0] if previous else ""
+        archive.require(isinstance(after, str), "invalid reconciliation cursor")
+        rows = connection.execute("SELECT path FROM worktree_managed_lifetimes WHERE path > ? ORDER BY path LIMIT ?",
+                                  (after, limit)).fetchall()
+        if not rows and after:
+            rows = connection.execute("SELECT path FROM worktree_managed_lifetimes ORDER BY path LIMIT ?", (limit,)).fetchall()
+        if rows:
+            archive.require(all(isinstance(row[0], str) for row in rows), "invalid registry path")
+            connection.execute("INSERT OR REPLACE INTO worktree_lifecycle_reconcile_cursor VALUES (1, ?)", (rows[-1][0],))
+        return [row[0] for row in rows]
+
+
 def reconcile(limit, maximum):
-    observed = records(limit)
+    observed = records(limit, selected_paths=[])
     result = {"schema": "aidevops.worktree-lifecycle-reconcile/v1", "registry": observed["status"],
-              "truncated": observed["truncated"], "attempted": 0, "completed": 0, "deferred": 0}
+              "truncated": observed["truncated"], "examined": 0, "attempted": 0, "completed": 0, "deferred": 0}
+    if observed["status"] != "available":
+        return result
+    try:
+        paths = reserve_scan(min(limit, maximum))
+        observed = records(limit, selected_paths=paths)
+        result.update(registry=observed["status"], truncated=observed["truncated"], examined=len(paths))
+    except (OSError, ValueError, sqlite3.Error) as error:
+        result.update(registry="unavailable", error=type(error).__name__)
+        return result
     candidates = [entry for entry in observed["entries"]
                   if entry.get("phase") == "verified" and entry.get("source") == "absent"]
-    candidates.sort(key=lambda entry: (entry.get("last_reconcile_at") or 0, entry["path"]))
     managed = archive.managed_module()
     for entry in candidates[:maximum]:
         path = Path(entry["path"])
