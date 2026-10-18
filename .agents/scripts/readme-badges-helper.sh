@@ -340,15 +340,21 @@ expand_repo_path() {
 	return 0
 }
 
-# Succeed for aidevops-managed refresh callers (repo metrics, Star History).
-# Their status reflects a scheduled data refresh, not the project's build, so
-# they never back the Actions badge (GH#35019).
-is_managed_refresh_workflow() {
+# Succeed for aidevops-managed callers whose status is not a project build:
+# data refreshes (repo metrics, Star History), PR/issue governance gates
+# (linked-issue check, maintainer gate, review-bot gate, issue sync) and
+# release-event verification. None of these back the Actions badge
+# (GH#35019). Cloudron package release/catalog callers stay eligible because
+# they build and validate the package.
+is_non_build_managed_workflow() {
 	local _workflow="$1"
-	case "${_workflow##*/}" in
-	loc-badge.yml | loc-badge.yaml | star-history.yml | star-history.yaml) return 0 ;;
+	local _base="${_workflow##*/}"
+	_base="${_base%.yml}"
+	_base="${_base%.yaml}"
+	case "$_base" in
+	loc-badge | star-history | linked-issue-check | maintainer-gate | review-bot-gate | issue-sync | release-verify) return 0 ;;
 	esac
-	if grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^#[:space:]]*(loc-badge|star-history)-reusable\.ya?ml' "$_workflow" 2>/dev/null; then
+	if grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^#[:space:]]*(loc-badge|star-history|linked-issue-check|maintainer-gate|review-bot-gate|issue-sync|issue-sync-artifact-maintenance|release-verify)-reusable\.ya?ml' "$_workflow" 2>/dev/null; then
 		return 0
 	fi
 	return 1
@@ -386,7 +392,7 @@ detect_workflow_in_path() {
 	local _count=0
 	for _candidate in "$_workflow_dir"/*.yml "$_workflow_dir"/*.yaml; do
 		[[ -f "$_candidate" ]] || continue
-		is_managed_refresh_workflow "$_candidate" && continue
+		is_non_build_managed_workflow "$_candidate" && continue
 		_count=$((_count + 1))
 		_found="${_candidate##*/}"
 	done
