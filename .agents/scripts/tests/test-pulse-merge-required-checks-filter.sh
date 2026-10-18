@@ -137,6 +137,9 @@ apply_jq() {
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
 	branch_identity='"id":101,"target":"branch","enforcement":"active"'
 	case "${MOCK_GH_MODE:-all_pass}" in
+	classic404_union)
+		apply_jq "{${branch_identity},\"conditions\":{\"ref_name\":{\"include\":[\"refs/heads/main\"]}},\"rules\":[{\"type\":\"required_status_checks\",\"parameters\":{\"required_status_checks\":[{\"context\":\"required-c\"}]}}]}" "$@"
+		;;
 	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error | ruleset_review_local_deferral)
 		apply_jq "{${branch_identity},\"conditions\":{\"ref_name\":{\"include\":[\"refs/heads/main\"]}},\"rules\":[{\"type\":\"pull_request\",\"parameters\":{\"required_approving_review_count\":1,\"dismiss_stale_reviews_on_push\":false,\"require_last_push_approval\":false}}]}" "$@"
 		;;
@@ -167,6 +170,9 @@ fi
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
+	classic404_union)
+		apply_jq '[{"id":101,"enforcement":"active","target":"branch"}]' "$@"
+		;;
 	rulesets_private_plan_unavailable)
 		printf '%s\n' 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2
 		exit 1
@@ -237,6 +243,14 @@ fi
 
 if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
+	classic404_*)
+		if [[ "${MOCK_CLASSIC_PRIVATE_PLAN:-false}" == true ]]; then
+			printf '%s\n' 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)' >&2
+		else
+			printf '%s\n' 'gh: HTTP 404: Not Found' >&2
+		fi
+		exit 1
+		;;
 	empty_required | empty_required_pending_fallback | empty_required_stale_maintainer_gate_fallback | empty_required_current_pending_maintainer_gate_fallback)
 		apply_jq '{"contexts":[]}' "$@"
 		exit 0
@@ -252,6 +266,22 @@ if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 	esac
 fi
 
+if [[ "$1" == "api" && "$2" == repos/*/branches/main ]]; then
+	case "${MOCK_GH_MODE:-all_pass}" in
+	classic404_unprotected) apply_jq '{"protected":false}' "$@" ;;
+	classic404_unknown) apply_jq '{"protected":true}' "$@" ;;
+	classic404_malformed) apply_jq '{"protected":true,"protection":{"required_status_checks":{"contexts":"required-a"}}}' "$@" ;;
+	classic404_false_contexts) apply_jq '{"protected":true,"protection":{"required_status_checks":{"contexts":false,"checks":[]}}}' "$@" ;;
+	classic404_false_checks) apply_jq '{"protected":true,"protection":{"required_status_checks":{"contexts":[],"checks":false}}}' "$@" ;;
+	classic404_checks_only) apply_jq '{"protected":true,"protection":{"required_status_checks":{"checks":[{"context":"required-b"}]}}}' "$@" ;;
+	classic404_unavailable)
+		printf '%s\n' 'gh: HTTP 503: Service Unavailable' >&2
+		exit 1 ;;
+	classic404_*) apply_jq '{"protected":true,"protection":{"required_status_checks":{"contexts":["required-a"],"checks":[{"context":"required-b","app_id":1}]}}}' "$@" ;;
+	esac
+	exit 0
+fi
+
 if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"headRefOid"* ]]; then
 	apply_jq '{"headRefOid":"abc123def456789000000000000000000000abcd"}' "$@"
 	exit 0
@@ -260,7 +290,7 @@ fi
 if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 	local_json=""
 	case "${MOCK_GH_MODE:-all_pass}" in
-	all_pass | empty_required)
+	all_pass | empty_required | classic404_pass)
 		local_json='{"check_runs":[
 			{"name":"required-a","conclusion":"success","status":"completed"},
 			{"name":"required-b","conclusion":"success","status":"completed"},
@@ -273,7 +303,7 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
-	one_fail)
+	one_fail | classic404_fail)
 		local_json='{"check_runs":[
 			{"name":"required-a","conclusion":"success","status":"completed"},
 			{"name":"required-b","conclusion":"failure","status":"completed"}
@@ -291,7 +321,7 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 			{"name":"required-b","conclusion":"action_required","status":"completed"}
 		]}'
 		;;
-	pending_only)
+	pending_only | classic404_pending)
 		local_json='{"check_runs":[
 			{"name":"required-a","conclusion":null,"status":"in_progress"},
 			{"name":"required-b","conclusion":"success","status":"completed"}
@@ -1021,6 +1051,72 @@ test_rulesets_generic_forbidden_fails_closed() {
 	return 0
 }
 
+test_classic_settings_404_branch_evidence() {
+	local mode="" contexts="" rc=0 expected="" expected_rc=0 first="" second=""
+	for mode in pass pending fail union checks_only unprotected unknown malformed false_contexts false_checks unavailable; do
+		export MOCK_GH_MODE="classic404_${mode}"
+		rc=0
+		contexts=$(_required_contexts_for_default_branch "owner/repo") || rc=$?
+		expected_rc=0
+		case "$mode" in
+		pass | pending | fail) expected=$'required-a\nrequired-b' ;;
+		union) expected=$'required-a\nrequired-b\nrequired-c' ;;
+		checks_only) expected="required-b" ;;
+		unprotected) expected="" ;;
+		*) expected=""; expected_rc=1 ;;
+		esac
+		if [[ "$contexts" == "$expected" && "$rc" -eq "$expected_rc" ]]; then
+			print_result "classic settings 404: ${mode} preserves branch evidence" 0
+		else
+			print_result "classic settings 404: ${mode} preserves branch evidence" 1 "rc=${rc} contexts=${contexts}"
+		fi
+	done
+	export MOCK_GH_MODE="classic404_pass"
+	assert_passing_check_returns 0 "protected branch with settings 404 and passing checks allows merge"
+	export MOCK_GH_MODE="classic404_pending"
+	assert_passing_check_returns 1 "protected branch with settings 404 and pending checks blocks merge"
+	export MOCK_GH_MODE="classic404_fail"
+	assert_passing_check_returns 1 "protected branch with settings 404 and failing checks blocks merge"
+
+	mkdir -p "${TEST_ROOT}/contexts-cache"
+	export AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="${TEST_ROOT}/contexts-cache"
+	for mode in unknown malformed false_contexts false_checks unavailable; do
+		export MOCK_GH_MODE="classic404_${mode}"
+		rc=0
+		contexts=$(_required_contexts_for_default_branch "owner/repo") || rc=$?
+		if [[ "$rc" -eq 1 && ! -f "${AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR}/owner_repo.rc" ]]; then
+			print_result "${mode} classic requirements are not cached as empty success" 0
+		else
+			print_result "${mode} classic requirements are not cached as empty success" 1
+		fi
+	done
+	export MOCK_GH_MODE="classic404_pass"
+	first=$(_required_contexts_for_default_branch "owner/repo")
+	export MOCK_GH_MODE="classic404_unavailable"
+	second=$(_required_contexts_for_default_branch "owner/repo")
+	if [[ "$first" == $'required-a\nrequired-b' && "$second" == "$first" ]]; then
+		print_result "cached fallback retains nonempty protected-branch requirements" 0
+	else
+		print_result "cached fallback retains nonempty protected-branch requirements" 1
+	fi
+	unset AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR
+	export MOCK_CLASSIC_PRIVATE_PLAN=true
+	for mode in pass unprotected unknown; do
+		export MOCK_GH_MODE="classic404_${mode}"
+		rc=0
+		contexts=$(_required_contexts_for_default_branch "owner/repo") || rc=$?
+		if [[ "$mode" == pass && "$rc" -eq 0 && "$contexts" == $'required-a\nrequired-b' ]] ||
+			[[ "$mode" == unprotected && "$rc" -eq 0 && -z "$contexts" ]] ||
+			[[ "$mode" == unknown && "$rc" -eq 1 && -z "$contexts" ]]; then
+			print_result "private-plan settings 403 preserves ${mode} branch evidence" 0
+		else
+			print_result "private-plan settings 403 preserves ${mode} branch evidence" 1
+		fi
+	done
+	unset MOCK_CLASSIC_PRIVATE_PLAN
+	return 0
+}
+
 test_gh_api_error_fails_closed() {
 	# gh exits 1 → the function MUST return 1 (fail-closed). A bubbling
 	# gh error must never auto-merge when --admin would bypass branch
@@ -1080,6 +1176,7 @@ main() {
 	test_rulesets_empty_list_resolves_empty
 	test_rulesets_private_plan_unavailable_resolves_empty
 	test_rulesets_generic_forbidden_fails_closed
+	test_classic_settings_404_branch_evidence
 	test_gh_api_error_fails_closed
 	test_required_checks_gh_reads_are_timeout_wrapped
 	test_empty_required_stale_maintainer_gate_fallback_allows_merge

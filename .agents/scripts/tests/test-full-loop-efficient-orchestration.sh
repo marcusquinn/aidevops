@@ -125,6 +125,10 @@ gh() {
 		printf '%s\n' '{"contexts":["required"]}'
 		return 0
 	fi
+	if [[ "$1" == "api" && "$2" == "repos/owner/repo/branches/main" ]]; then
+		printf '%s\n' '{"protected":false}'
+		return 0
+	fi
 	if [[ "$1" == "api" && "$2" == "repos/owner/repo/rulesets" ]]; then
 		printf '%s\n' '[]'
 		return 0

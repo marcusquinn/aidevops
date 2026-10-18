@@ -67,11 +67,19 @@ if [[ "${1:-}" == "api" && "${2:-}" == *"/protection/required_status_checks" ]];
 		printf '%s\n' 'gh: HTTP 403: branch protection unavailable' >&2
 		exit 1
 	fi
-	if [[ "${GH_TEST_MODE:-pass}" == "no-required" ]]; then
+	if [[ "${GH_TEST_MODE:-pass}" == "no-required" || "${GH_TEST_MODE:-pass}" == protected404-* ]]; then
 		printf '%s\n' 'gh: HTTP 404: Not Found' >&2
 		exit 1
 	fi
 	printf '%s\n' '{"contexts":["required-ci"]}'
+	exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/testrepo/branches/main" ]]; then
+	if [[ "${GH_TEST_MODE:-pass}" == "no-required" ]]; then
+		printf '%s\n' '{"protected":false}'
+	else
+		printf '%s\n' '{"protected":true,"protection":{"required_status_checks":{"contexts":["required-ci"]}}}'
+	fi
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/testrepo/rulesets" ]]; then
@@ -161,7 +169,7 @@ gh_pr_checks_exact_json() {
 			printf '%s\n' '[{"name":"required-ci","state":"CANCELLED","bucket":"cancel"}]'
 			return 0
 			;;
-		required-failure)
+		required-failure | protected404-failure)
 			printf '%s\n' '[{"name":"required-ci","state":"FAILURE","bucket":"fail"}]'
 			return 0
 			;;
@@ -181,7 +189,7 @@ gh_pr_checks_exact_json() {
 			printf '%s\n' '[{"name":"required-ci","state":"SKIPPED","bucket":"skipping"},{"name":"required-pending","state":"IN_PROGRESS","bucket":"pending"}]'
 			return 8
 			;;
-		pending)
+		pending | protected404-pending)
 			printf '%s\n' '[{"name":"required-ci","state":"IN_PROGRESS","bucket":"pending"}]'
 			return 8
 			;;
@@ -226,6 +234,7 @@ gh_pr_checks_exact_json() {
 gate_rc=0
 cmd_pre_merge_gate 42 testorg/testrepo || gate_rc=\$?
 printf 'CHECK_STATUS=%s\n' "\${FULL_LOOP_PR_CHECK_STATUS:-unset}"
+printf 'CHECK_EVIDENCE=%s\n' "\${FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE:-unset}"
 exit "\$gate_rc"
 RUNNER
 	chmod +x "$runner"
@@ -274,6 +283,27 @@ run_gate cli-no-required || {
 	exit 1
 }
 printf 'PASS canonical CLI no-required-checks evidence survives unavailable branch protection\n'
+
+for mode in protected404-pass protected404-pending protected404-failure; do
+	fallback_rc=0
+	fallback_output=$(run_gate "$mode" visible 2>&1) || fallback_rc=$?
+	expected_status="terminal-success"
+	case "$mode" in
+	protected404-pending) expected_status="pending" ;;
+	protected404-failure) expected_status="terminal-failure" ;;
+	esac
+	if [[ "$fallback_output" == *"CHECK_EVIDENCE=required-checks-pass"* &&
+		"$fallback_output" == *"CHECK_STATUS=${expected_status}"* &&
+		"$fallback_output" != *"no required checks are configured"* ]] && {
+		[[ "$mode" == protected404-pass && "$fallback_rc" -eq 0 ]] ||
+			[[ "$mode" != protected404-pass && "$fallback_rc" -ne 0 ]];
+	}; then
+		printf 'PASS settings 404 preserves full-loop check evidence: %s\n' "$mode"
+	else
+		printf 'FAIL settings 404 lost check evidence: %s rc=%s output=%s\n' "$mode" "$fallback_rc" "$fallback_output"
+		exit 1
+	fi
+done
 
 for mode in draft pending required-cancelled required-failure skipped-unknown-state skipped-missing-state skipped-wrong-bucket changes closed api-error changed-wording malformed empty-array readiness-missing-cost readiness-errors; do
 	if run_gate "$mode"; then

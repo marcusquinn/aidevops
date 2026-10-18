@@ -353,8 +353,8 @@ _required_contexts_for_default_branch_uncached() {
 					.protection.required_status_checks |
 					if type == $obj and
 						((.contexts | type == $array) or (.checks | type == $array)) and
-						((.contexts // []) | type == $array and all(.[]; type == $string and length > 0)) and
-						((.checks // []) | type == $array and all(.[]; type == $obj and (.context | type == $string and length > 0)))
+						(.contexts == null or (.contexts | type == $array and all(.[]; type == $string and length > 0))) and
+						(.checks == null or (.checks | type == $array and all(.[]; type == $obj and (.context | type == $string and length > 0))))
 					then . else error("unknown classic requirements") end
 				else error("unknown protection state") end
 			' 2>/dev/null) || {
