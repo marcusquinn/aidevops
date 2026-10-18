@@ -1250,10 +1250,19 @@ test_registered_prompt_temp_cleanup_removes_dir() {
 	local prompt_dir="${prompt_file%/*}"
 	: >"${prompt_dir}.wait_status"
 	: >"${prompt_dir}.kill_reason"
+	: >"${prompt_dir}.watchdog_killed"
+	: >"${prompt_dir}.watchdog_stall_killed"
+	: >"${prompt_dir}.rate_limit_fast"
+	# Attempts usually delete their base sentinel before final cleanup.
+	local missing_base="${prompt_dir}.missing"
+	_register_headless_runtime_temp_path "$missing_base"
+	: >"${missing_base}.wait_status"
 	_cleanup_headless_runtime_temp_paths
 
 	if [[ -n "$prompt_dir" && ! -e "$prompt_dir" &&
-		! -e "${prompt_dir}.wait_status" && ! -e "${prompt_dir}.kill_reason" ]]; then
+		! -e "${prompt_dir}.wait_status" && ! -e "${prompt_dir}.kill_reason" &&
+		! -e "${prompt_dir}.watchdog_killed" && ! -e "${prompt_dir}.watchdog_stall_killed" &&
+		! -e "${prompt_dir}.rate_limit_fast" && ! -e "${missing_base}.wait_status" ]]; then
 		if [[ -n "$old_threshold" ]]; then
 			HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
 		else
@@ -1277,7 +1286,8 @@ test_registered_temp_cleanup_failure_is_reported_and_retained() {
 	local managed_root=""
 	managed_root=$(aidevops_sensitive_temp_root)
 	local temp_path="${managed_root}/aidevops-headless-cleanup-failure"
-	mkdir -p "$temp_path"
+	# A retained sidecar alone must fail and preserve registration for retry.
+	: >"${temp_path}.kill_reason"
 	_HEADLESS_RUNTIME_TEMP_PATHS=""
 	_register_headless_runtime_temp_path "$temp_path"
 
@@ -1295,7 +1305,7 @@ test_registered_temp_cleanup_failure_is_reported_and_retained() {
 			"${_HEADLESS_RUNTIME_TEMP_PATHS:-}"
 	)
 	_HEADLESS_RUNTIME_TEMP_PATHS=""
-	command rm -rf "$temp_path"
+	command rm -f "${temp_path}.kill_reason"
 
 	if [[ "$state" == *"headless_runtime_temp_cleanup_failed"* &&
 		"$state" == *"status=1 retained=${temp_path}"* ]]; then

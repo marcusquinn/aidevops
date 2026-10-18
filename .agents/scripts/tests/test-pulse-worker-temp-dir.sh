@@ -93,6 +93,10 @@ test_cleanup_removes_only_old_pulse_logs() {
 	: >"$old_log"
 	: >"$new_log"
 	: >"$other_file"
+	local sensitive_root="${HOME}/.aidevops-private/tmp"
+	mkdir -p "$sensitive_root"
+	: >"${sensitive_root}/aidevops-stale-fixture"
+	touch -t 202601010000 "${sensitive_root}/aidevops-stale-fixture"
 	python3 - "$old_log" <<'PY'
 import os
 import sys
@@ -104,6 +108,7 @@ PY
 	[[ ! -e "$old_log" ]] || return 1
 	[[ -e "$new_log" ]] || return 1
 	[[ -e "$other_file" ]] || return 1
+	[[ ! -e "${sensitive_root}/aidevops-stale-fixture" ]] || return 1
 	return 0
 }
 

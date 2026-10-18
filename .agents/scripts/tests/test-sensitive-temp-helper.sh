@@ -251,6 +251,41 @@ sweep_output=$(HEADLESS_RUNTIME_TEMP_MAX_AGE_SECONDS=invalid aidevops_sensitive_
 [[ -L "${MANAGED_ROOT}/aidevops-stale-link" && -e "${TEST_ROOT}/outside/untouched" ]] || \
 	fail "sweep followed or removed a symlink"
 
+mkdir -p "${MANAGED_ROOT}/aidevops-linked-dir"
+ln -s "${TEST_ROOT}/outside" "${MANAGED_ROOT}/aidevops-linked-dir/link"
+touch -h -t 202601010000 "${MANAGED_ROOT}/aidevops-linked-dir/link"
+touch -t 202601010000 "${MANAGED_ROOT}/aidevops-linked-dir"
+touch "${MANAGED_ROOT}/aidevops-age-window"
+python3 - "${MANAGED_ROOT}/aidevops-age-window" <<'PY'
+import os
+import sys
+import time
+old = time.time() - 90000
+os.utime(sys.argv[1], (old, old))
+PY
+HEADLESS_RUNTIME_TEMP_MAX_AGE_SECONDS=50000 aidevops_sensitive_temp_sweep_stale
+[[ -e "${MANAGED_ROOT}/aidevops-age-window" ]] || fail "sweep ignored raised guardian limit"
+HEADLESS_RUNTIME_TEMP_MAX_AGE_SECONDS=25200 aidevops_sensitive_temp_sweep_stale
+[[ ! -e "${MANAGED_ROOT}/aidevops-age-window" ]] || fail "sweep ignored minimum day window"
+[[ -L "${MANAGED_ROOT}/aidevops-linked-dir/link" ]] || fail "sweep removed a nested symlink"
+
+# Exercise macOS dispatch without touching real backup settings on any platform.
+uname() { printf 'Darwin\n'; return 0; }
+tmutil() {
+	local operation="$1"
+	local root="$2"
+	[[ "$root" == "$MANAGED_ROOT" ]] || return 1
+	case "$operation" in
+	isexcluded) printf '[Included] fixture\n' ;;
+	addexclusion) touch "${TEST_ROOT}/backup-excluded" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+aidevops_sensitive_temp_sweep_stale
+[[ -e "${TEST_ROOT}/backup-excluded" ]] || fail "sweep did not exclude the macOS temp root"
+unset -f uname tmutil
+
 sleep 5 &
 owner_pid=$!
 owner_exit_dir=$(aidevops_sensitive_temp_create_dir "test-owner-exit") || \
