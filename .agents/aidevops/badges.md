@@ -105,8 +105,22 @@ so it cannot overwrite a newer metrics snapshot.
 
 ## Add badges to a repo (manual flow)
 
-This is the manual flow that works today. Phase 2 wraps it in
-`aidevops badges sync`.
+Use `aidevops badges sync --apply` (optionally `--repo owner/repo`) to prepare
+README, metrics and workflow changes in one PR. The default without `--apply`
+is a read-only preview. Sync uses a linked worktree from the remote default
+branch and leaves canonical branch, HEAD, staged changes, working files and
+untracked files untouched, including dirty or off-default checkouts.
+
+Weekly core routine **r921** runs `badges-sync-helper.sh --apply --json` on
+Sunday at 08:10 through pulse. It uses the detector's maintained-repo selector
+and owned-org allowlist (`~/.config/aidevops/badge-orgs.conf`), excludes local-only,
+contributed/contributor and starter-owned repos, and skips existing open sync
+PRs. Current repositories produce no PR. Each repository is locked during sync;
+failed worktrees are retained for recovery, while successful runs request guarded
+cleanup. A retained lock after interruption must be inspected before removal.
+Sync opens PRs only; normal review and merge gates still apply.
+
+The equivalent manual steps below must also be run in a linked worktree:
 
 ```bash
 # 1. Generate local metrics immediately

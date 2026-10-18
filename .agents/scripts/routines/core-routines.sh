@@ -36,6 +36,7 @@ r917|x|Cloudron packages — audit compatibility|repeat:weekly(sun@07:40)|~5m|sc
 r918|x|Observability retention — archive bounded runtime evidence|repeat:daily(@03:10)|~2m|scripts/observability-helper.sh retention-maintenance --apply --max-partitions 20 --max-duration-seconds 120|script
 r919|x|Private mirror upstream sync|repeat:daily(@20:00)|~5m|scripts/mirror-sync-helper.sh sync|script
 r920|x|Memory audit — mine actionable learning patterns|repeat:daily(@04:00)|~2m|scripts/memory-audit-pulse.sh run --quiet|script
+r921|x|README badges — remediate managed repo drift|repeat:weekly(sun@08:10)|~5m|scripts/badges-sync-helper.sh --apply --json|script
 ENTRIES
 	return 0
 }
@@ -1029,6 +1030,43 @@ the version-controlled \`repeat:\` expression; r917 has no dedicated platform un
 - Audits local package files without building or executing upstream content.
 - Creates issues only after target-local deduplication and authority checks.
 - Never acknowledges a finding when GitHub/API operations fail.
+$(_pulse_diag_commands "$os")
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r921() {
+	local os="${1:-}"
+	[[ -n "$os" ]] || os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	cat <<EOF
+# r921: README badge drift remediation
+
+## Overview
+
+Runs \`badges-check-helper.sh --json\` through the badge sync helper's existing
+maintained-repository selector, then opens one combined sync PR per actionable
+owned-org repository. Current repositories produce no PR.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Weekly on Sunday at 08:10 |
+| Type | script |
+| Expected duration | ~5 minutes |
+| Script | \`scripts/badges-sync-helper.sh --apply --json\` |
+$(_scheduler_row_pulse "repeat:weekly(sun@08:10)")
+
+## Safety rails
+
+- Honors \`badge-orgs.conf\`, maintenance opt-outs, local-only, contributed and
+  contributor-role exclusions, and starter-owned badge blocks.
+- Uses linked worktrees based on the remote default branch; canonical checkout
+  branch, HEAD, index and working files remain unchanged even when dirty.
+- Deduplicates open sync PRs and serializes each repository with a lock.
+- Failed transactions retain their worktree for recovery; successful runs request
+  guarded cleanup without forcing removal or merging the PR.
 $(_pulse_diag_commands "$os")
 $(_platform_footnote "$os")
 EOF

@@ -21,8 +21,8 @@
 #
 # Design invariants:
 #   - Never push directly to main. Always via PR.
-#   - Skip repos with uncommitted changes.
-#   - Skip repos that aren't on their default branch.
+#   - Never change a canonical checkout's branch, HEAD, index or working tree.
+#   - Prepare all changes in one linked worktree, even for dirty/off-default repos.
 #   - Each repo gets its own commit + PR — no cross-repo atomicity.
 #   - aidevops repo itself is never touched by install (loc-badge runs natively there).
 #   - Idempotent: running twice produces no second diff.
@@ -207,7 +207,7 @@ _resolve_loc_badge_template() {
 # ─── Preflight ──────────────────────────────────────────────────────────────
 
 # _sync_preflight <slug> <path>
-# Validates clean-tree and on-default-branch; sets _PREFLIGHT_DEFAULT_BRANCH.
+# Validates repository availability without changing canonical state.
 # Returns 0=proceed, 1=fail, 2=skip.
 _sync_preflight() {
 	local _slug="$1"
@@ -221,21 +221,6 @@ _sync_preflight() {
 		printf '%s\t%s\tnot a git repo: %s\n' "$_slug" "$_STATUS_FAILED" "$_path"
 		return 1
 	fi
-	local _default_branch
-	_default_branch=$(git -C "$_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-	[[ -z "$_default_branch" ]] && _default_branch="$_BRANCH_DEFAULT_NAME"
-	if ! git -C "$_path" diff-index --quiet HEAD -- 2>/dev/null; then
-		printf '%s\t%s\tworking tree not clean; skipping\n' "$_slug" "$_STATUS_SKIPPED"
-		return 2
-	fi
-	local _current_branch
-	_current_branch=$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null || echo "DETACHED")
-	if [[ "$_current_branch" != "$_default_branch" ]]; then
-		printf '%s\t%s\ton %s, expected %s; skipping\n' \
-			"$_slug" "$_STATUS_SKIPPED" "$_current_branch" "$_default_branch"
-		return 2
-	fi
-	_PREFLIGHT_DEFAULT_BRANCH="$_default_branch"
 	return 0
 }
 
@@ -248,8 +233,6 @@ _sync_readme() {
 	local _slug="$1"
 	local _path="$2"
 	local _apply="$3"
-	local _branch_name="$4"
-	local _default_branch="$5"
 	local _readme="$_path/README.md"
 
 	if [[ ! -f "$_readme" ]]; then
@@ -271,18 +254,13 @@ _sync_readme() {
 		return 0
 	fi
 
-	# Apply: inject badge block
-	if ! git -C "$_path" pull --ff-only origin "$_default_branch" >/dev/null 2>&1; then
-		_warn "$_slug: pull --ff-only failed"
+	# Avoid timestamp-only metrics churn when the remote default is already current.
+	if bash "$_BADGES_HELPER" check "$_readme" "$_slug" >/dev/null 2>&1 &&
+		[[ -f "$_path/docs/metrics/repo-metrics.json" ]]; then
+		return 0
 	fi
-	if ! git -C "$_path" checkout -q -B "$_branch_name" "$_default_branch"; then
-		printf '%s\t%s\tbranch create/reset failed\n' "$_slug" "$_STATUS_FAILED"
-		return 1
-	fi
-
-	if ! bash "$_BADGES_HELPER" inject "$_readme" "$_slug" 2>/dev/null; then
+	if ! bash "$_BADGES_HELPER" inject "$_readme" "$_slug" >/dev/null; then
 		printf '%s\t%s\treadme-badges-helper.sh inject failed\n' "$_slug" "$_STATUS_FAILED"
-		git -C "$_path" checkout -q "$_default_branch" || true
 		return 1
 	fi
 
@@ -299,39 +277,15 @@ _sync_readme() {
 			${_legacy_badge_args[@]+"${_legacy_badge_args[@]}"} \
 			"$_path" >/dev/null 2>&1; then
 			printf '%s\t%s\trepo metrics generation failed\n' "$_slug" "$_STATUS_FAILED"
-			git -C "$_path" checkout -q "$_default_branch" || true
 			return 1
 		fi
 	fi
 
-	local _changes
-	local _sync_paths=("README.md" "docs/metrics")
-	[[ ! -d "$_path/.github/badges" ]] || _sync_paths+=(".github/badges")
-	_changes=$(git -C "$_path" status --porcelain -- "${_sync_paths[@]}" 2>/dev/null || true)
-	if [[ -z "$_changes" ]]; then
-		git -C "$_path" checkout -q "$_default_branch" || true
-		printf '%s\t%s\tbadge block and repo metrics already current\n' "$_slug" "$_STATUS_SKIPPED"
-		return 0
-	fi
-
-	git -C "$_path" add -- "${_sync_paths[@]}" >/dev/null 2>&1
-	if ! git -C "$_path" diff --cached --quiet; then
-		local _commit_msg="chore: refresh aidevops README badges and repo metrics"
-		if ! git -C "$_path" commit -q -m "$_commit_msg"; then
-			printf '%s\t%s\tgit commit failed\n' "$_slug" "$_STATUS_FAILED"
-			git -C "$_path" checkout -q "$_default_branch" || true
-			return 1
-		fi
-	fi
-
-	if ! git -C "$_path" push -u origin "$_branch_name" >/dev/null 2>&1; then
-		printf '%s\t%s\tgit push failed\n' "$_slug" "$_STATUS_FAILED"
+	if ! bash "$_BADGES_HELPER" check "$_readme" "$_slug" >/dev/null; then
+		printf '%s\t%s\tpost-injection badge check failed\n' "$_slug" "$_STATUS_FAILED"
 		return 1
 	fi
-
-	# Open PR
-	_open_pr "$_slug" "$_path" "$_branch_name" "$_default_branch" "badge block injection"
-	return $?
+	return 0
 }
 
 # ─── Workflow install ────────────────────────────────────────────────────────
@@ -360,8 +314,6 @@ _install_workflow() {
 	local _slug="$1"
 	local _path="$2"
 	local _apply="$3"
-	local _branch_name="$4"
-	local _default_branch="$5"
 	local _target="$_path/.github/workflows/loc-badge.yml"
 
 	local _template
@@ -388,38 +340,12 @@ _install_workflow() {
 		return 0
 	fi
 
-	if ! git -C "$_path" pull --ff-only origin "$_default_branch" >/dev/null 2>&1; then
-		_warn "$_slug: pull --ff-only failed"
-	fi
-	if ! git -C "$_path" checkout -q -B "$_branch_name" "$_default_branch"; then
-		printf '%s\t%s\tbranch create/reset failed\n' "$_slug" "$_STATUS_FAILED"
-		return 1
-	fi
-
-	mkdir -p "$_path/.github/workflows"
+	mkdir -p "$_path/.github/workflows" || return 1
 	if ! cp "$_template" "$_target"; then
 		printf '%s\t%s\tcp template failed\n' "$_slug" "$_STATUS_FAILED"
-		git -C "$_path" checkout -q "$_default_branch" || true
 		return 1
 	fi
-
-	git -C "$_path" add ".github/workflows/loc-badge.yml" >/dev/null 2>&1
-	if ! git -C "$_path" diff --cached --quiet; then
-		local _commit_msg="chore: install repo metrics refresh workflow (via aidevops badges sync)"
-		if ! git -C "$_path" commit -q -m "$_commit_msg"; then
-			printf '%s\t%s\tgit commit failed\n' "$_slug" "$_STATUS_FAILED"
-			git -C "$_path" checkout -q "$_default_branch" || true
-			return 1
-		fi
-	fi
-
-	if ! git -C "$_path" push -u origin "$_branch_name" >/dev/null 2>&1; then
-		printf '%s\t%s\tgit push failed\n' "$_slug" "$_STATUS_FAILED"
-		return 1
-	fi
-
-	_open_pr "$_slug" "$_path" "$_branch_name" "$_default_branch" "repo metrics workflow install"
-	return $?
+	return 0
 }
 
 # ─── PR creation ────────────────────────────────────────────────────────────
@@ -464,13 +390,12 @@ _open_pr() {
 	if ! _pr_url=$(gh_create_pr \
 		--repo "$_slug" \
 		--title "$_pr_title" \
-		--body "$_pr_body" \
+		--body-file - \
 		--head "$_branch_name" \
-		--base "$_default_branch" 2>&1); then
+		--base "$_default_branch" 2>&1 <<<"$_pr_body"); then
 		printf '%s\t%s\tgh_create_pr failed: %s\n' "$_slug" "$_STATUS_FAILED" "$_pr_url"
 		return 1
 	fi
-	git -C "$_path" checkout "$_default_branch" >/dev/null 2>&1 || true
 	printf '%s\t%s\tPR: %s\n' "$_slug" "$_STATUS_APPLIED" "$_pr_url"
 	return 0
 }
@@ -481,8 +406,73 @@ _repo_is_contributor() {
 	local _slug="$1"
 	[[ -f "$REPOS_JSON" ]] || return 1
 	jq -e --arg slug "$_slug" \
-		'first(.initialized_repos[]? | select(.slug == $slug)) | .role == "contributor"' \
+		'first(.initialized_repos[]? | select(.slug == $slug)) |
+		 (.role == "contributor" or .contributed == true or .local_only == true)' \
 		"$REPOS_JSON" >/dev/null 2>&1
+	return $?
+}
+
+# _apply_repo runs as an isolated transaction. Failures retain the worktree and
+# branch for recovery; successful/no-op runs request guarded removal, never force.
+_apply_repo() (
+	local _slug="$1" _canonical="$2" _prefix="$3"
+	local _no_workflow="$4" _workflow_only="$5"
+	local _common _lock _prs _default _helper _worktree _branch
+	_common=$(git -C "$_canonical" rev-parse --path-format=absolute --git-common-dir) || return 1
+	_lock="$_common/aidevops-badges-sync.lock"
+	if ! mkdir "$_lock" 2>/dev/null; then
+		printf '%s\t%s\tsync already running; lock retained for recovery\n' "$_slug" "$_STATUS_SKIPPED"
+		return 0
+	fi
+	trap 'rmdir "$_lock"' EXIT
+	# Query failures must not be interpreted as absence of an existing PR.
+	_prs=$(gh pr list --repo "$_slug" --state open --limit 100 \
+		--json headRefName,title,url) || return 1
+	local _existing
+	_existing=$(printf '%s\n' "$_prs" | jq -r --arg prefix "$_prefix" \
+		'[.[] | select((.headRefName | startswith($prefix)) or
+		 (.title | startswith("chore: aidevops badge sync")))][0].url // empty') || return 1
+	if [[ -n "$_existing" ]]; then
+		printf '%s\t%s\topen sync PR: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_existing"
+		return 0
+	fi
+	_default=$(gh api "repos/$_slug" --jq '.default_branch') || return 1
+	[[ -n "$_default" && "$_default" != "null" ]] || return 1
+	_helper=$(_resolve_helper worktree-helper.sh) || return 1
+	_branch="${_prefix}-$(date +%Y%m%d%H%M%S)-$$-${RANDOM}"
+	git check-ref-format --branch "$_branch" >/dev/null || return 1
+	_worktree="${AIDEVOPS_WORKTREE_BASE_DIR:-$HOME/Git/_worktrees}/${_slug//\//-}-${_branch//\//-}"
+	(cd "$_canonical" && bash "$_helper" add "$_branch" "$_worktree" --base "origin/$_default") >&2 || return 1
+	if bash "$_BADGES_HELPER" starter-owned "$_worktree/README.md" >/dev/null 2>&1; then
+		printf '%s\t%s\tstarter-owned badge block left alone\n' "$_slug" "$_STATUS_SKIPPED"
+	else
+		if [[ "$_workflow_only" -eq 0 ]]; then
+			_sync_readme "$_slug" "$_worktree" 1 >&2 || return 1
+		fi
+		if [[ "$_no_workflow" -eq 0 ]]; then
+			_install_workflow "$_slug" "$_worktree" 1 >&2 || return 1
+		fi
+		_publish_worktree "$_slug" "$_worktree" "$_branch" "$_default" || return 1
+	fi
+	(cd "$_canonical" && bash "$_helper" remove "$_worktree") >&2 ||
+		_warn "$_slug: guarded cleanup deferred; worktree retained at $_worktree"
+	return 0
+)
+
+_publish_worktree() {
+	local _slug="$1" _path="$2" _branch="$3" _default="$4"
+	local _paths=("README.md") _candidate
+	for _candidate in docs/metrics .github/badges .github/workflows/loc-badge.yml; do
+		[[ ! -e "$_path/$_candidate" ]] || _paths+=("$_candidate")
+	done
+	git -C "$_path" add -- "${_paths[@]}" || return 1
+	if git -C "$_path" diff --cached --quiet; then
+		printf '%s\t%s\tremote badge block and metrics already current\n' "$_slug" "$_STATUS_SKIPPED"
+		return 0
+	fi
+	git -C "$_path" commit -q -m "chore: refresh aidevops badges, metrics and workflow" || return 1
+	git -C "$_path" push -u origin "$_branch" >&2 || return 1
+	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow"
 	return $?
 }
 
@@ -541,7 +531,6 @@ _process_rows() {
 		local _rpath="${_path/#\~/$HOME}"
 
 		# Preflight
-		_PREFLIGHT_DEFAULT_BRANCH=""
 		local _pf_rc=0
 		local _pf_out
 		_pf_out=$(_sync_preflight "$_slug" "$_rpath") || _pf_rc=$?
@@ -557,13 +546,27 @@ _process_rows() {
 			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
 			continue
 		fi
-		local _default_branch="$_PREFLIGHT_DEFAULT_BRANCH"
+		if [[ "$_apply" -eq 1 ]]; then
+			local _apply_result _apply_rc=0
+			_apply_result=$(_apply_repo "$_slug" "$_rpath" "$_branch_name" "$_no_workflow" "$_workflow_only_arg") || _apply_rc=$?
+			if [[ "$_apply_rc" -ne 0 ]]; then
+				_apply_result="${_slug}	${_STATUS_FAILED}	sync failed; any created worktree retained for recovery"
+				_any_failed=1
+				_COUNT_FAILED=$((_COUNT_FAILED + 1))
+			elif [[ "$_apply_result" == *"${_STATUS_APPLIED}"* ]]; then
+				_COUNT_APPLIED=$((_COUNT_APPLIED + 1))
+			else
+				_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
+			fi
+			_print_result_row "$_json_out" "$_apply_result"
+			continue
+		fi
 
 		# Sync README badge block (skip when --workflow-only)
 		local _workflow_only="$_workflow_only_arg"
 		if [[ "$_workflow_only" -eq 0 ]]; then
 			local _readme_result
-			_readme_result=$(_sync_readme "$_slug" "$_rpath" "$_apply" "$_branch_name" "$_default_branch")
+			_readme_result=$(_sync_readme "$_slug" "$_rpath" 0)
 			_print_result_row "$_json_out" "$_readme_result"
 			local _readme_outcome
 			_readme_outcome=$(printf '%s' "$_readme_result" | awk -F'\t' '{print $2}')
@@ -578,7 +581,7 @@ _process_rows() {
 		# Install repo metrics workflow if not suppressed
 		if [[ "$_no_workflow" -eq 0 ]]; then
 			local _wf_result
-			_wf_result=$(_install_workflow "$_slug" "$_rpath" "$_apply" "$_branch_name" "$_default_branch")
+			_wf_result=$(_install_workflow "$_slug" "$_rpath" 0)
 			_print_result_row "$_json_out" "$_wf_result"
 			local _wf_outcome
 			_wf_outcome=$(printf '%s' "$_wf_result" | awk -F'\t' '{print $2}')
@@ -661,7 +664,7 @@ main() {
 	[[ -f "$_BADGES_HELPER" ]] || _die "readme-badges-helper.sh not found at $_BADGES_HELPER — run: aidevops update"
 
 	if [[ -z "$_OPT_BRANCH_NAME" ]]; then
-		_OPT_BRANCH_NAME="chore/badges-sync-$(date +%Y%m%d)"
+		_OPT_BRANCH_NAME="chore/badges-sync"
 	fi
 
 	local _tsv
@@ -686,9 +689,7 @@ main() {
 	fi
 
 	local _any_failed=0
-	while IFS=$'\t' read -r _row_slug _row_path _row_status; do
-		printf '%s\t%s\t%s\n' "$_row_slug" "$_row_path" "$_row_status"
-	done <<<"$_tsv" | _process_rows "$_OPT_APPLY" "$_OPT_BRANCH_NAME" "$_OPT_NO_WORKFLOW" "$_OPT_JSON" "$_OPT_WORKFLOW_ONLY" || _any_failed=1
+	_process_rows "$_OPT_APPLY" "$_OPT_BRANCH_NAME" "$_OPT_NO_WORKFLOW" "$_OPT_JSON" "$_OPT_WORKFLOW_ONLY" <<<"$_tsv" || _any_failed=1
 
 	if [[ "$_OPT_JSON" -eq 0 ]]; then
 		printf '\n'
