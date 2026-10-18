@@ -346,8 +346,8 @@ cutoff = time.time() - max(86400, 2 * int(sys.argv[2]))
 def walk_error(error):
     raise error
 
-def stale(path):
-    info = os.lstat(path)
+def stale(path, directory_fd=None):
+    info = os.stat(path, dir_fd=directory_fd, follow_symlinks=False)
     return not stat.S_ISLNK(info.st_mode) and info.st_mtime < cutoff
 
 try:
@@ -362,10 +362,16 @@ for name in names:
         if not stale(path):
             continue
         if stat.S_ISDIR(os.lstat(path).st_mode):
+            # fwalk is the descriptor-relative, no-follow variant of walk:
+            # a directory replaced by a symlink cannot redirect the scan.
+            if not shutil.rmtree.avoids_symlink_attacks:
+                continue
             old_tree = True
-            for parent, dirs, files in os.walk(path, followlinks=False, onerror=walk_error):
-                if not stale(parent) or any(
-                    not stale(os.path.join(parent, child)) for child in dirs + files
+            for _parent, dirs, files, directory_fd in os.fwalk(
+                path, follow_symlinks=False, onerror=walk_error
+            ):
+                if not stale(".", directory_fd) or any(
+                    not stale(child, directory_fd) for child in dirs + files
                 ):
                     old_tree = False
                     break
