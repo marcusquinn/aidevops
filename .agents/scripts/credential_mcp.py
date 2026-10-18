@@ -72,13 +72,23 @@ def _migrate_outscraper_locked(path, scripts):
     return True
 
 
+def parse_config(path, original):
+    if str(path).endswith('.toml'):
+        # Codex CLI uses TOML; tomllib is stdlib from Python 3.11. Older
+        # interpreters raise ImportError and stay fail-closed as unreadable.
+        import tomllib
+        return tomllib.loads(original)
+    return json.loads(original)
+
+
 def mcp_findings(path):
     try:
         original, _ = read_source(path)
-        config = json.loads(original)
-        for key in ('mcp', 'mcpServers'):
+        config = parse_config(path, original)
+        # OpenCode: mcp; Claude/Cursor: mcpServers; Codex: mcp_servers.
+        for key in ('mcp', 'mcpServers', 'mcp_servers'):
             yield from mcp_servers(path, config.get(key, {}))
-    except (OSError, ValueError, UnicodeError, AttributeError):
+    except (OSError, ValueError, UnicodeError, AttributeError, ImportError):
         yield finding(path, 0, '', 'mcp-unreadable')
 
 
