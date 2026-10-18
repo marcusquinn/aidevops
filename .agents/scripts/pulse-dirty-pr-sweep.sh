@@ -842,7 +842,7 @@ ${body}"
 }
 
 # Perform the actual rebase in an ephemeral worktree.
-# Creates a throwaway worktree, fetches refs, rebases with union strategy,
+# Creates a throwaway worktree, fetches refs, rebases with a TODO.md union driver,
 # force-pushes, and cleans up. Returns 0 on success, 1 on any failure.
 _dps_rebase_in_ephemeral() {
 	local pr_number="$1"
@@ -917,8 +917,8 @@ _dps_rebase_in_ephemeral() {
 	return 0
 }
 
-# Rebase the ephemeral checkout onto the default branch with the union
-# strategy and force-push with lease. Returns 0 only when both succeed.
+# Rebase the ephemeral checkout with a TODO.md-only union driver and
+# force-push with lease. Returns 0 only when both succeed.
 _dps_rebase_and_push() {
 	local ephemeral="$1"
 	local head_ref="$2"
@@ -926,9 +926,19 @@ _dps_rebase_and_push() {
 	local pr_number="$4"
 	local repo_slug="$5"
 
-	if ! git -C "$ephemeral" rebase -X union "origin/${default_branch}" >/dev/null 2>&1; then
+	local attributes_file="" rebase_ok=1
+	# Never write common-dir info/attributes: it also affects other worktrees.
+	# In-tree attributes take precedence, so verify the effective driver first.
+	if attributes_file=$(mktemp -t "dirty-pr-sweep-attributes.XXXXXX") &&
+		printf '/TODO.md merge=union\n' >"$attributes_file" &&
+		[[ "$(git -c core.attributesFile="$attributes_file" -C "$ephemeral" check-attr merge -- TODO.md)" == "TODO.md: merge: union" ]] &&
+		git -c core.attributesFile="$attributes_file" -C "$ephemeral" rebase "origin/${default_branch}" >/dev/null 2>&1; then
+		rebase_ok=0
+	fi
+	[[ -z "$attributes_file" ]] || rm -f "$attributes_file"
+	if [[ "$rebase_ok" -ne 0 ]]; then
 		git -C "$ephemeral" rebase --abort >/dev/null 2>&1 || true
-		_dps_log "PR #$pr_number ($repo_slug): rebase -X union failed — conflicts outside TODO.md"
+		_dps_log "PR #$pr_number ($repo_slug): TODO.md union rebase failed — unresolved conflicts, attribute override, or Git error"
 		return 1
 	fi
 	# Record the tip this invocation produced (see _dps_remove_ephemeral).
@@ -1031,7 +1041,7 @@ _dps_rebase_post_comment() {
 	local key="$5"
 
 	local comment_body
-	comment_body="**Auto-rebase**: this PR was DIRTY with only \`TODO.md\` conflicting, so the pulse rebased it onto \`origin/${default_branch}\` with the \`union\` merge strategy and force-pushed.
+	comment_body="**Auto-rebase**: this PR was DIRTY with only \`TODO.md\` conflicting, so the pulse rebased it onto \`origin/${default_branch}\` with a rebase-scoped \`union\` merge driver for \`TODO.md\` and force-pushed.
 
 - If CI now passes, the merge pass will take it from here.
 - If this rebase was wrong, revert with \`git push --force-with-lease origin ${head_ref}\` from your local copy.
@@ -1046,7 +1056,7 @@ _Triggered by \`pulse-dirty-pr-sweep.sh\` (t2350 / GH#19948). Action cooldown: $
 	return 0
 }
 
-# Rebase action: attempt `git rebase origin/<default_branch> -X union` in an
+# Rebase action: attempt a TODO.md-only union-driver rebase in an
 # ephemeral worktree and force-push. If anything fails, abort cleanly and
 # return 1 (the PR remains DIRTY for re-classification on the next cycle).
 # Delegates the ephemeral-worktree work to _dps_rebase_in_ephemeral() and
@@ -1233,7 +1243,7 @@ _dirty_pr_action_notify() {
 Reason: \`${reason}\`
 
 Options:
-- Rebase manually: \`git fetch origin && git rebase origin/\$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's|origin/||')\` (or \`--strategy-option=union\` when TODO.md is the culprit).
+- Rebase manually: \`git fetch origin && git rebase origin/\$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's|origin/||')\`, then resolve any conflicts before continuing.
 - Close as superseded: \`gh pr close ${pr_number} --delete-branch\`.
 - Opt out of future sweeps: add the \`do-not-close\` label.
 

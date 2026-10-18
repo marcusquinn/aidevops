@@ -638,6 +638,69 @@ fi
 export PATH="$PATH_ORIG"
 
 # =============================================================================
+# Test 11: real Git rebases use union only for root TODO.md and clean up
+# =============================================================================
+
+test_union_rebase() (
+	local scenario="$1"
+	local fixture="${TEST_ROOT}/rebase-${scenario}"
+	local repo="${fixture}/repo"
+	local before_head after_head rc=0
+	set -e
+	mkdir -p "$fixture"
+	git init --bare --quiet "${fixture}/origin.git"
+	git init --quiet -b main "$repo"
+	git -C "$repo" config user.name 'Sweep Test'
+	git -C "$repo" config user.email 'sweep@example.invalid'
+	git -C "$repo" remote add origin "${fixture}/origin.git"
+	printf 'base\n' >"${repo}/TODO.md"
+	printf 'base\n' >"${repo}/other.txt"
+	if [[ "$scenario" == override ]]; then
+		printf '/TODO.md -merge\n' >"${repo}/.gitattributes"
+	fi
+	git -C "$repo" add .
+	git -C "$repo" commit --quiet -m base
+	git -C "$repo" switch --quiet -c pr
+	printf 'pr task\n' >>"${repo}/TODO.md"
+	if [[ "$scenario" == non-todo ]]; then
+		printf 'pr change\n' >"${repo}/other.txt"
+	fi
+	git -C "$repo" commit --quiet -am pr
+	git -C "$repo" push --quiet origin pr
+	before_head=$(git -C "$repo" rev-parse pr)
+	git -C "$repo" switch --quiet main
+	printf 'main task\n' >>"${repo}/TODO.md"
+	if [[ "$scenario" == non-todo ]]; then
+		printf 'main change\n' >"${repo}/other.txt"
+	fi
+	git -C "$repo" commit --quiet -am main
+	git -C "$repo" push --quiet origin main
+
+	_dps_rebase_in_ephemeral 34947 test/repo "$repo" pr main || rc=$?
+	after_head=$(git -C "$repo" rev-parse refs/remotes/origin/pr)
+	if [[ "$scenario" == todo ]]; then
+		[[ "$rc" -eq 0 && "$before_head" != "$after_head" ]]
+		git -C "$repo" show origin/pr:TODO.md | grep -qx 'pr task'
+		git -C "$repo" show origin/pr:TODO.md | grep -qx 'main task'
+		git -C "$repo" merge-base --is-ancestor origin/main origin/pr
+		[[ "$(git --git-dir="${fixture}/origin.git" rev-parse pr)" == "$after_head" ]]
+	else
+		[[ "$rc" -eq 1 && "$before_head" == "$after_head" ]]
+		[[ "$(git --git-dir="${fixture}/origin.git" rev-parse pr)" == "$before_head" ]]
+	fi
+	[[ "$(git -C "$repo" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]]
+	[[ -z "$(git -C "$repo" for-each-ref --format='%(refname)' refs/heads/dirty-pr-sweep/)" ]]
+	[[ ! -e "${repo}/.git/info/attributes" ]]
+	[[ -z "$(git -C "$repo" config --local --get core.attributesFile)" ]]
+	return 0
+)
+
+for scenario in todo non-todo override; do
+	test_union_rebase "$scenario"
+	print_result "real union rebase: ${scenario} (push safety and cleanup)" "$?"
+done
+
+# =============================================================================
 # Summary
 # =============================================================================
 
