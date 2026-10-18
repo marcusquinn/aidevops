@@ -581,6 +581,52 @@ _planning_publish_verify_index() {
 	return 0
 }
 
+# List "<task-id> <state-char>" for each checklist task line of a blob.
+_planning_publish_task_states() {
+	local repo_path="$1"
+	local blob="$2"
+	[[ "$blob" != "-" ]] || return 0
+	_planning_git -C "$repo_path" cat-file blob "$blob" |
+		sed -nE 's/^[[:space:]]*- \[(.)\] (t[0-9]+(\.[0-9]+)*)([^0-9.].*)?$/\2 \1/p'
+	return 0
+}
+
+# Fail closed when a TODO.md publication would delete or un-complete a task line
+# present on the parent that the publication did not name in its commit message.
+# Guards against stale snapshots clobbering newer parent state (GH#35062).
+_planning_publish_guard_task_regression() {
+	local repo_path="$1"
+	local parent_sha="$2"
+	local resolved_file="$3"
+	local commit_msg="${4:-}"
+	local operation="" origin_sha="" blob_sha="" merged_sha="" path=""
+	local parent_blob="" parent_states="" merged_states="" task_id="" state="" new_state=""
+	local violations=""
+	while IFS=$'\t' read -r operation origin_sha blob_sha merged_sha path; do
+		[[ "$(basename "$path")" == "TODO.md" ]] || continue
+		parent_blob=$(_planning_git -C "$repo_path" rev-parse "${parent_sha}:${path}" 2>/dev/null) || parent_blob="-"
+		[[ "$parent_blob" != "$merged_sha" ]] || continue
+		parent_states=$(_planning_publish_task_states "$repo_path" "$parent_blob") || return 1
+		merged_states=$(_planning_publish_task_states "$repo_path" "$merged_sha") || return 1
+		while read -r task_id state; do
+			[[ -n "$task_id" ]] || continue
+			new_state=$(printf '%s\n' "$merged_states" | awk -v id="$task_id" '$1 == id { print $2; exit }')
+			if [[ -z "$new_state" ]] || { [[ "$state" == "x" ]] && [[ "$new_state" != "x" ]]; }; then
+				# Named tasks in the commit message are intentional edits.
+				if printf '%s\n' "$commit_msg" | grep -Eq "(^|[^0-9A-Za-z.])${task_id//./\\.}([^0-9]|\$)"; then
+					continue
+				fi
+				violations="${violations} ${task_id}"
+			fi
+		done <<<"$parent_states"
+	done <"$resolved_file"
+	if [[ -n "$violations" ]]; then
+		_planning_publish_log error "Refusing to publish: would delete or un-complete task lines not named in the publication:${violations}. The TODO.md snapshot is likely stale; refresh from the default branch and re-apply the intended change."
+		return 1
+	fi
+	return 0
+}
+
 _planning_publish_validate() {
 	local repo_path="$1"
 	local parent_sha="$2"
@@ -974,6 +1020,10 @@ planning_publish() {
 		publication_id=$(_planning_git -C "$repo_path" hash-object "$resolved_file") || return 1
 		PLANNING_PUBLICATION_ID="$publication_id"
 		_planning_publish_verify_index "$repo_path" "$latest_sha" "$resolved_file" "$index_file" || {
+			rm -rf "$temp_dir"
+			return 1
+		}
+		_planning_publish_guard_task_regression "$repo_path" "$latest_sha" "$resolved_file" "$commit_msg" || {
 			rm -rf "$temp_dir"
 			return 1
 		}
