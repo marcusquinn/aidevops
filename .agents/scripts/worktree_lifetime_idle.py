@@ -56,10 +56,25 @@ def interval_valid(record, boot, wall, monotonic):
     idle = record.get("idle", {})
     if not isinstance(idle, dict) or not record.get("generation"):
         return False
-    return (idle.get("policy") == 1 and idle.get("boot_id") == boot and idle.get("generation") == record["generation"]
-            and idle.get("ownership_epoch") == record.get("ownership_epoch", 0)
-            and timestamp_valid(idle.get("since"), wall)
-            and timestamp_valid(idle.get("monotonic_since"), monotonic))
+    return all((idle.get("policy") == 1,
+                idle.get("boot_id") == boot,
+                idle.get("generation") == record["generation"],
+                idle.get("ownership_epoch") == record.get("ownership_epoch", 0),
+                timestamp_valid(idle.get("since"), wall),
+                timestamp_valid(idle.get("monotonic_since"), monotonic)))
+
+
+def quiescence(record, boot_id, drain, seal):
+    # Revalidate even a previously sealed record; old receipts alone must not
+    # establish a fresh idle interval after reboot or unit replacement.
+    for launch in record["launches"]:
+        if launch["boot_id"] != boot_id():
+            raise ValueError("idle boot generation unavailable")
+        if launch["invocation"] is not None:
+            drain(launch)
+        elif launch.get("admission_cancelled") is not True:
+            raise ValueError("unresolved admission")
+    seal(record)
 
 
 def observe(connection, record, boot, seal):

@@ -23,6 +23,7 @@ import time
 import uuid
 
 import worktree_lifetime_idle as idle_policy
+import worktree_lifetime_proof as lifetime_proof
 
 
 TABLE = "worktree_managed_lifetimes"
@@ -196,36 +197,11 @@ def seal(record: dict) -> None:
     record.update(state="sealed", sealed_at=time.time())
 
 
-def proof(record: dict, source_inode: str) -> None:
-    require(record["state"] == "sealed" and record["identity"]["source_inode"] == source_inode,
-            "no matching sealed generation")
-    require(record.get("sealed_at", 0) > 0, "missing sealing receipt")
-    if not record["launches"]:
-        require(record.get("admission_cancelled") is True, "missing admission cancellation")
-    for launch in record["launches"]:
-        if launch.get("admission_cancelled") is True:
-            require(launch["invocation"] is None, "admitted work cannot be cancelled")
-            continue
-        snapshot = launch.get("quiescence", {})
-        require(snapshot.get("InvocationID") == launch["invocation"] and bool(launch["invocation"]),
-                "invalid receipt invocation")
-        require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "receipt has pending work")
-        require(snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
-                and snapshot.get("Restart") == "no", "invalid receipt lifetime contract")
-        require((snapshot.get("ActiveState"), snapshot.get("SubState")) in
-                (("active", "exited"), ("failed", "failed")), "invalid descendant receipt")
+proof = lifetime_proof.proof
 
 
 def idle_quiescence(record: dict) -> None:
-    # Revalidate even a previously sealed record; old receipts alone must not
-    # establish a fresh idle interval after reboot or unit replacement.
-    for launch in record["launches"]:
-        require(launch["boot_id"] == boot_id(), "idle boot generation unavailable")
-        if launch["invocation"] is not None:
-            drain(launch)
-        else:
-            require(launch.get("admission_cancelled") is True, "unresolved admission")
-    seal(record)
+    idle_policy.quiescence(record, boot_id, drain, seal)
 
 
 def inspect_record(record: dict, path: Path, operation: str, extra: list[str], connection=None) -> None:
@@ -233,17 +209,7 @@ def inspect_record(record: dict, path: Path, operation: str, extra: list[str], c
         print(json.dumps(record, sort_keys=True))
         return
     if operation == "proof":
-        require(len(extra) <= 1, "invalid source identity")
-        if not extra:
-            verify_identity(record, path)
-        proof(record, extra[0] if extra else inode(path))
-        if "archive_operation" in record:
-            from worktree_lifetime_archive import require_verified
-            require(record["archive_operation"]["phase"] in ("verified", "removed"),
-                    "archive operation is not removal-ready")
-            if not extra:
-                idle_policy.owner_clear(connection, str(path))
-            require_verified(record, source=not extra)
+        lifetime_proof.inspect(record, path, extra, connection, verify_identity)
         return
     verify_identity(record, path)
     if operation in ("cleanup-ready", "idle-ready"):
