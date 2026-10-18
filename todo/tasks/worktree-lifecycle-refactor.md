@@ -139,6 +139,35 @@ Python 3.12.3. "base" is unchanged `origin/main` run in the same container.
 | `test-dirty-pr-sweep.sh` | pass | 23/0 | 23/0 |
 | dirty-PR SIGTERM, group + parent kill | — | 0 leaked registrations/branches | 1 leaked registration + 1 branch per run |
 
+Bash 3.2 (macOS `/bin/bash` 3.2.57 runs each suite's top-level shell; nested
+`bash` children still resolve to PATH Bash 5): file-size 9/9, complexity 17/17,
+markdownlint gate, archive helper, recovery lifecycle 59/0, worker-owned 40/40
+and dirty-PR sweep 23/0 all pass. The same three pre-existing failures appear as
+under Bash 5. The audit suite exposed one test-only 3.2 defect: an EXIT trap
+deferred-expanded a function local after it was unset under `set -u`. It is
+fixed by expanding at trap definition. `test-pulse-temp-worktree-cleanup.sh`
+"TODO-sync … hidden identity" passes on macOS and fails on Linux new and base
+alike (Linux process-identity evidence; pre-existing).
+
+### Fault matrix → existing coverage (all passed on macOS and Linux new)
+
+| Scenario | Evidence |
+|---|---|
+| Repeated scans, SIGTERM/SIGKILL | #34926/#34935 scratch-clone runs; dirty-PR SIGTERM row above |
+| Timeout | recovery `cache_retrofit_honors_shared_deadline_before_mutation` |
+| Interrupted removal | recovery `apply_resumes_move_and_delete_crash_windows`, `apply_resumes_transaction_initialization_crashes`, `cache_retrofit_resumes_interrupted_{move,delete}`, `automatic_maintenance_resumes_interrupted_apply` |
+| Interrupted creation | managed `never_admitted_creation_can_be_closed`; **gap**: `worktree-helper-add.sh` create→register window has no test |
+| Live descendants | managed `live_descendants_and_reused_invocation_refuse`, `kernel_populated_veto`, `native_child_lifetime_and_guard` |
+| Concurrent cleaners | recovery `shared_producer_lock_fails_closed_and_reclaims_stale`, `receipt_reservation_blocks_conflicting_plan`; audit `recoverable_archive_honours_shared_producer_lock`; managed `trigger_fences_claims_but_allows_cleanup_retry` |
+| Late owners / locks | audit `recoverable_cleanup_preserves_lease_loss_after_archive`, `manual_degraded_recheck_requires_live_exact_lease`, `permanent_helper_preserves_lock_acquired_after_guard`, `recoverable_archive_preserves_late_lock`; lifecycle `pin_added_during_verification_preserves_claimed_archive` |
+| Reboot / unknown evidence | managed `absence_is_distinct_from_invalid_evidence`; audit `unreadable_process_listing_matches_degraded_visibility`; recovery `plan_records_malformed_bucket_unknown`; boot-ID check in `drain()` is code-enforced, **no dedicated test** |
+| Source mutation | archive `source_matches_detects_late_writes`; worker-owned `late_write_after_compact_archive_preserves_worktree`; audit `recoverable_archive_refuses_late_unarchived_write_without_force` |
+| Corrupt archives | lifecycle `corrupt_and_unknown_archives_are_preserved` |
+| Missing Git prerequisites | audit `permanent_helper_fails_closed_on_{unreadable,ambiguous}_git_metadata`; missing git binary: **unknown** |
+| Unsupported recovery states | recovery `automatic_maintenance_reports_unsupported_process_visibility`; audit `recovery_inventory_reports_legacy_buckets_fail_closed` |
+| Capacity exhaustion | recovery `automatic_maintenance_checks_capacity_before_aggregate_size`; lifecycle `size_pressure_evicts_oldest_unpinned`; audit `recovery_store_permission_preflight` |
+| Recovered contents/state | audit `recovery_archive_preserves_index_and_dirty_files`, `recovery_archive_preserves_detached_head_identity`; lifecycle `roundtrip_many_commits_merge_and_dirty_state_from_base_only` |
+
 Base-only failures come from non-hermetic fixtures (host registry, `/var` vs
 `/private/var`, host git shim), not product behaviour. Identical failures on new
 and base are pre-existing (see below).

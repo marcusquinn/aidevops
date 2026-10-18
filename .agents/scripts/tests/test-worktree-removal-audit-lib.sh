@@ -1034,7 +1034,10 @@ test_manual_degraded_recheck_requires_live_exact_lease() {
 		source "$CLEAN_HELPER"
 		sleep 30 &
 		local runtime_pid=$!
-		trap 'kill "$runtime_pid" 2>/dev/null || true' EXIT
+		# Expand now: Bash 3.2 runs a subshell EXIT trap after function locals
+		# are gone, so a deferred "$runtime_pid" is unbound under set -u.
+		# shellcheck disable=SC2064
+		trap "kill ${runtime_pid} 2>/dev/null || true" EXIT
 		export OPENCODE_PID="$runtime_pid"
 		worktree_has_changes() { return 1; }
 		_branch_has_active_interactive_claim() { return 1; }
