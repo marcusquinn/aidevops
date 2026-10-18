@@ -12,6 +12,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+# Git reports canonical worktree paths; resolve macOS /var -> /private/var.
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
+# Fixture-owned ownership registry: the managed-lifetime fence fails closed
+# without one, and the host registry must never be read or written. A subshell
+# keeps the registry library from replacing the stubs defined below.
+export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+(
+	# shellcheck source=../shared-worktree-registry.sh
+	source "${SCRIPT_DIR}/shared-worktree-registry.sh" && _init_registry_db
+)
 
 LOGFILE="${TEST_ROOT}/pulse.log"
 export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup_worktrees.log"
