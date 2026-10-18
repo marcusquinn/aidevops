@@ -340,6 +340,20 @@ expand_repo_path() {
 	return 0
 }
 
+# Succeed for aidevops-managed refresh callers (repo metrics, Star History).
+# Their status reflects a scheduled data refresh, not the project's build, so
+# they never back the Actions badge (GH#35019).
+is_managed_refresh_workflow() {
+	local _workflow="$1"
+	case "${_workflow##*/}" in
+	loc-badge.yml | loc-badge.yaml | star-history.yml | star-history.yaml) return 0 ;;
+	esac
+	if grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^#[:space:]]*(loc-badge|star-history)-reusable\.ya?ml' "$_workflow" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
 detect_workflow_in_path() {
 	local _repo_path="$1"
 	[[ -n "$_repo_path" ]] || return 1
@@ -372,6 +386,7 @@ detect_workflow_in_path() {
 	local _count=0
 	for _candidate in "$_workflow_dir"/*.yml "$_workflow_dir"/*.yaml; do
 		[[ -f "$_candidate" ]] || continue
+		is_managed_refresh_workflow "$_candidate" && continue
 		_count=$((_count + 1))
 		_found="${_candidate##*/}"
 	done

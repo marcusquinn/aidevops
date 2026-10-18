@@ -236,9 +236,10 @@ _classify_badges_repo() {
 	fi
 
 	# Run check against rendered canonical block
+	# check prints its drift diff on stdout; it must not leak into this row
+	# (GH#35019: the diff header was being read as the classification).
 	local _check_rc=0
-	bash "$_badges_helper" check "$_readme" "$_slug" 2>/dev/null
-	_check_rc=$?
+	bash "$_badges_helper" check "$_readme" "$_slug" >/dev/null 2>&1 || _check_rc=$?
 
 	if [[ "$_check_rc" -eq 0 ]]; then
 		local _metrics_note
