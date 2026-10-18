@@ -3,13 +3,16 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """GH#34950 isolated HOME ~/.ssh/config audit; synthetic keys and configs only."""
 import json
+import io
 import os
 import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -29,6 +32,7 @@ class SshConfigAuditTests(unittest.TestCase):
         self.marker = self.home / 'match-exec-ran'
         self.canary_arg = 'synthetic-34950-proxy-argument'
         self.env = dict(os.environ, HOME=str(self.home))
+        self.env.pop('AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY', None)
 
     def key(self, path, passphrase='', extra=('-t', 'ed25519')):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +94,50 @@ class SshConfigAuditTests(unittest.TestCase):
         self.assertIn('ssh-hostkey-check-disabled', scan.stdout)
         self.assertNotIn(self.canary_arg, scan.stdout + scan.stderr)
         self.assertFalse(self.marker.exists())
+
+    def test_headless_signing_default_and_override(self):
+        default = self.key(self.ssh / 'id_ed25519_signing')
+        ordinary = self.key(self.ssh / 'id_ed25519')
+        default.chmod(0o644)
+        found = {(r['file'], r['category']): r for r in self.records()}
+        self.assertNotIn((str(default), 'ssh-key-no-passphrase'), found)
+        self.assertEqual(found[(str(default), 'insecure-perms')]['severity'], 'high')
+        self.assertEqual(found[(str(ordinary), 'ssh-key-no-passphrase')]['severity'], 'high')
+        override = self.key(self.home / 'keys/unattended')
+        self.env['AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY'] = str(override) + '.pub'
+        found = {(r['file'], r['category']): r for r in self.records()}
+        self.assertNotIn((str(override), 'ssh-key-no-passphrase'), found)
+        self.assertEqual(found[(str(default), 'ssh-key-no-passphrase')]['severity'], 'high')
+
+    def test_encrypted_headless_signing_default_and_override(self):
+        default = self.key(self.ssh / 'id_ed25519_signing', 'synthetic-passphrase')
+        override = self.key(self.home / 'keys/unattended', 'synthetic-passphrase')
+        for public, designated in ((None, default), (str(override) + '.pub', override)):
+            with self.subTest(public=public):
+                if public:
+                    self.env['AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY'] = public
+                records = self.records()
+                encrypted = [r for r in records if r['category'] == 'ssh-headless-signing-encrypted']
+                self.assertEqual(len(encrypted), 1)
+                self.assertEqual(encrypted[0]['file'], str(designated))
+                self.assertEqual(encrypted[0]['severity'], 'medium')
+                self.assertNotIn('synthetic-passphrase', json.dumps(records))
+                self.assertFalse(any(r['category'] == 'ssh-key-no-passphrase' for r in records))
+
+    def test_fix_advice_is_category_specific(self):
+        for category in ('ssh-headless-signing-encrypted', 'ssh-key-no-passphrase', 'ssh-dir-perms'):
+            with self.subTest(category=category), patch.object(credential_audit, 'interactive_fix_allowed',
+                                                             return_value=True), \
+                    patch.object(credential_audit, 'load_fix_records', return_value=[{
+                        'category': category, 'file': str(self.ssh / 'id_ed25519_signing')}]), \
+                    redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(credential_audit.fix(SCRIPTS), 0)
+                text = output.getvalue()
+                self.assertEqual('ssh-keygen -p -f <key>' in text, category == 'ssh-key-no-passphrase')
+                self.assertEqual('aidevops signing headless-setup' in text,
+                                 category == 'ssh-headless-signing-encrypted')
+                if category == 'ssh-key-no-passphrase':
+                    self.assertIn('never add a passphrase to the designated headless signing key', text)
 
     def test_loose_unencrypted_pem_and_repeated_include_scopes(self):
         # ssh-keygen -y refuses 0644 keys; format inspection must still flag them.
