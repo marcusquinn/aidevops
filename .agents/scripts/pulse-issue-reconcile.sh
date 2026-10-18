@@ -85,6 +85,7 @@ fi
 [[ -n "${_PIR_REMOVE_ASSIGNEE_FLAG+x}" ]] || _PIR_REMOVE_ASSIGNEE_FLAG=--remove-assignee
 [[ -n "${_PIR_BOOL_TRUE+x}" ]] || _PIR_BOOL_TRUE=true
 [[ -n "${_PIR_BOOL_FALSE+x}" ]] || _PIR_BOOL_FALSE=false
+[[ -n "${_PIR_ORIGIN_INTERACTIVE+x}" ]] || _PIR_ORIGIN_INTERACTIVE="origin:interactive"
 [[ -n "${_PIR_AUTO_DISPATCH_LABEL+x}" ]] || _PIR_AUTO_DISPATCH_LABEL="auto-dispatch"
 [[ -n "${_PIR_NMR_LABEL+x}" ]] || _PIR_NMR_LABEL="needs-maintainer-review"
 [[ -n "${_PIR_PERSISTENT_LABEL+x}" ]] || _PIR_PERSISTENT_LABEL="persistent"
@@ -719,6 +720,16 @@ _normalize_reassign_self() {
 				fi
 			fi
 
+			# Do not fabricate ownership for origin:interactive issues without an
+			# interactive stamp: the stampless-release pass would unassign this
+			# runner again, producing an assign/unassign loop.
+			local _is_interactive=""
+			_is_interactive=$(printf '%s' "$issue_rows_json" | jq -r --argjson n "$issue_number" --arg oi "$_PIR_ORIGIN_INTERACTIVE" '[.[] | select(.number == $n) | .labels[].name] | index($oi) != null' 2>/dev/null) || _is_interactive=""
+			if [[ "$_is_interactive" == "true" && ! -f "${HOME}/.aidevops/.agent-workspace/interactive-claims/${slug//\//-}-${issue_number}.json" ]]; then
+				total_skipped_claimed=$((total_skipped_claimed + 1))
+				continue
+			fi
+
 			_repo_gh_calls=$((_repo_gh_calls + 1))
 			if gh issue edit "$issue_number" --repo "$slug" --add-assignee "$runner_user" >/dev/null 2>&1; then
 				total_assigned=$((total_assigned + 1))
@@ -877,6 +888,12 @@ _normalize_unassign_stampless_interactive() {
 				fi
 				if set_issue_status "$issue_num" "$slug" "available" --remove-assignee "$runner_user" >/dev/null 2>&1; then
 					echo "[pulse-wrapper] Stampless interactive auto-release: reset status:in-review #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp, no open PR)" >>"$LOGFILE"
+					total_released=$((total_released + 1))
+				fi
+			elif [[ "$labels_csv" == *"$_PIR_STATUS_IN_PROGRESS"* || "$labels_csv" == *"$_PIR_STATUS_QUEUED"* ]]; then
+				# Reset lifecycle state too, otherwise the reassign pass re-claims it.
+				if set_issue_status "$issue_num" "$slug" "available" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+					echo "[pulse-wrapper] Stampless interactive auto-release: reset active status #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
 					total_released=$((total_released + 1))
 				fi
 			elif gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
@@ -1190,7 +1207,7 @@ _lia_author_authority() {
 _lia_apply_labels() {
 	local slug="$1" issue_num="$2" body_tags="$3"
 	local is_external="$4" reported_origin="$5"
-	local origin_interactive="origin:interactive" origin_worker="origin:worker"
+	local origin_interactive="$_PIR_ORIGIN_INTERACTIVE" origin_worker="origin:worker"
 	local -a add_args
 	if [[ "$is_external" == "$_PIR_BOOL_TRUE" ]]; then
 		add_args=("$_PIR_ADD_LABEL_FLAG" "$_PIR_NMR_LABEL"
@@ -1277,7 +1294,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	# it may represent read/triage access.
 	# GitHub PRs share the Issues API namespace; labelless backfill must never bless them as origin:worker/tier:standard.
 	local assoc=""
-	local origin_interactive="origin:interactive" origin_worker="origin:worker"
+	local origin_interactive="$_PIR_ORIGIN_INTERACTIVE" origin_worker="origin:worker"
 	local reported_origin=""
 	local is_external="$_PIR_BOOL_TRUE"
 	_lia_author_authority "$slug" "$issue_num" "$issue_body" || return 1

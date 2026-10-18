@@ -191,6 +191,55 @@ else
 fi
 
 # =============================================================================
+# Part 2b — origin:interactive + status:in-progress, no assignee, no stamp:
+# reassign_self must not assign it (avoids assign/unassign churn).
+# =============================================================================
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":43,"assignees":[],"labels":[{"name":"origin:interactive"},{"name":"status:in-progress"}]}]'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+rm -f "${HOME}/.aidevops/.agent-workspace/interactive-claims/owner-testrepo-43.json"
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_reassign_self "testrunner" "$REPOS_JSON" "/nonexistent/dispatch-dedup-helper.sh"
+if [[ ! -f "$GH_EDIT_ARGS_FILE" ]] || ! grep -q -- "--add-assignee" "$GH_EDIT_ARGS_FILE"; then
+	print_result "_normalize_reassign_self skips stampless origin:interactive issue" 0
+else
+	print_result "_normalize_reassign_self skips stampless origin:interactive issue" 1 \
+		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null))"
+fi
+
+# Stampless aged release of an in-progress issue resets it to available.
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":43,"updatedAt":"2020-01-01T00:00:00Z","labels":[{"name":"origin:interactive"},{"name":"status:in-progress"}]}]'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$(date +%s)" "86400"
+if [[ -f "$GH_EDIT_ARGS_FILE" ]] && grep -q -- "--add-label status:available" "$GH_EDIT_ARGS_FILE"; then
+	print_result "stampless release resets in-progress issue to status:available" 0
+else
+	print_result "stampless release resets in-progress issue to status:available" 1 \
+		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
+fi
+
+# =============================================================================
 # Part 3 — _normalize_clear_status_labels: emits correct gh flags
 # =============================================================================
 rm -f "$GH_EDIT_ARGS_FILE"
