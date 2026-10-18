@@ -620,9 +620,15 @@ _workflow_reusable_ref_for_slug() {
 # an explicit --ref wins, otherwise the repos.json/default reusable ref.
 _sync_target_ref_for_slug() {
 	local _slug="$1"
+	local _status="${2:-}" _workflow_name="${3:-}"
 	local _ref
 	if [[ -n "${_OPT_TARGET_REF:-}" ]]; then
 		_ref="${_OPT_TARGET_REF#@}"
+	elif [[ "$_status" == "NO-WORKFLOW" && "$_workflow_name" == "loc-badge" &&
+		-z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
+		local _repo
+		_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
+		_ref=$(workflow_release_ref "$_repo") || return 1
 	else
 		_ref=$(_workflow_reusable_ref_for_slug "$_slug") || return 1
 	fi
@@ -1432,17 +1438,6 @@ _sync_one_repo() {
 	_workflow_name=$(basename "$_workflow_relpath" .yml)
 	local _sync_contributing=0
 	[[ "$_workflow_name" == "$LINKED_ISSUE_WORKFLOW_NAME" ]] && _sync_contributing=1
-	# Only fresh metrics installs acquire a release default. Explicit CLI/registry
-	# refs and all existing caller/force-ref semantics remain operator-owned.
-	if [[ "$_status" == "NO-WORKFLOW" && "$_workflow_name" == "loc-badge" &&
-		-z "${_OPT_TARGET_REF:-}" &&
-		-z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
-		if ! _target_ref=$(workflow_release_ref "$_target_repo"); then
-			printf '%s\t%s\t%s\tcannot resolve latest release SHA\n' "$_slug" "$_status" "$_STATUS_FAILED"
-			return 1
-		fi
-		_target_ref="@$_target_ref"
-	fi
 	if [[ "$_apply" -eq 0 ]]; then
 		local _effective_ref
 		_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
@@ -1651,7 +1646,11 @@ _process_rows() {
 		_target_repo=$(_workflow_reusable_repo_for_slug "$_slug")
 
 		local _result _effective_ref _target_ref_arg
-		_target_ref_arg=$(_sync_target_ref_for_slug "$_slug")
+		if ! _target_ref_arg=$(_sync_target_ref_for_slug "$_slug" "$_status" "$_workflow_name"); then
+			_warn "$_slug: cannot resolve target release SHA"
+			_any_failed=1
+			continue
+		fi
 		_effective_ref=$(_resolve_effective_ref \
 			"$_status" "$_path/$_workflow_relpath" "$_target_ref_arg" "$_OPT_FORCE_REF")
 		if [[ "$_target_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] && \

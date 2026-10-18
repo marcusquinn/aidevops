@@ -15,7 +15,8 @@ mkdir -p "$SCRIPTS" "$HOME/.config/aidevops" "$ROOT/bin" "$AIDEVOPS_WORKTREE_BAS
 export PATH="$ROOT/bin:$PATH"
 printf '[]\n' >"$PR_STATE"
 touch "$CALLS"
-cp "$SCRIPT_DIR/../badges-sync-helper.sh" "$SCRIPT_DIR/../badges-check-helper.sh" "$SCRIPTS/"
+cp "$SCRIPT_DIR/../badges-sync-helper.sh" "$SCRIPT_DIR/../badges-check-helper.sh" \
+	"$SCRIPT_DIR/../workflow-release-ref.sh" "$SCRIPTS/"
 chmod +x "$SCRIPTS/"*.sh
 
 # Production orchestration calls these public helper interfaces. Worktrees and
@@ -41,6 +42,8 @@ cat >"$ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -eu
 case "$1 $2" in
+'api repos/marcusquinn/aidevops/releases/latest') printf 'v3.39.45\n' ;;
+'api repos/marcusquinn/aidevops/commits/v3.39.45') printf '%040d\n' 1 ;;
 'api repos/'*'/pulls?'*) [[ "${FAIL_QUERY:-0}" != 1 ]]; jq '.[]' "$PR_STATE" ;;
 'api repos/'*) printf 'trunk\n' ;;
 *) exit 1 ;;
@@ -91,7 +94,8 @@ touch "$out/repo-metrics.md" "$badges/loc.svg" "$badges/languages.svg" "$badges/
 STUB
 chmod +x "$ROOT/bin/gh" "$SCRIPTS/"*.sh
 mkdir -p "$HOME/.aidevops/agents/templates/workflows"
-printf 'jobs: {}\n' >"$HOME/.aidevops/agents/templates/workflows/loc-badge-caller.yml"
+cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
+	"$HOME/.aidevops/agents/templates/workflows/loc-badge-caller.yml"
 
 git init -q --bare "$ROOT/remote.git"
 git init -q -b trunk "$ROOT/canonical"
@@ -139,6 +143,9 @@ head="$(jq -r '.[0].headRefName' "$PR_STATE")"
 git -C "$CANONICAL" show "$head:README.md" | grep CURRENT >/dev/null
 git -C "$CANONICAL" cat-file -e "$head:docs/metrics/repo-metrics.json"
 git -C "$CANONICAL" cat-file -e "$head:.github/workflows/loc-badge.yml"
+caller="$(git -C "$CANONICAL" show "$head:.github/workflows/loc-badge.yml")"
+[[ "$caller" == *'loc-badge-reusable.yml@0000000000000000000000000000000000000001 # v3.39.45'* ]]
+[[ "$caller" == *'aidevops_ref: 0000000000000000000000000000000000000001 # v3.39.45'* ]]
 [[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 1 ]]
 printf 'PASS dirty/off-default canonical preserved; README, metrics and workflow published together; worktree removed\n'
 
