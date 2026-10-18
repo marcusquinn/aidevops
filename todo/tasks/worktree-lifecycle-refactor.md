@@ -260,7 +260,7 @@ reworked as described above.
 Found while probing, and outside this scope (identical on `main`): `rebase -X
 union` does not resolve TODO.md conflicts. `union` is a merge driver, not a
 strategy option, and no `merge=union` attribute applies, so the TODO-only
-auto-rebase never succeeds. Filed as a follow-up.
+auto-rebase never succeeds. Filed as GH#34947 (t18713).
 
 Outstanding: NixOS execution, concurrent cleaners and late owners,
 interrupted creation/removal, the timing decision, a re-review of the fixes,
