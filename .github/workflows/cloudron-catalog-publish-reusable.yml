@@ -121,7 +121,7 @@ jobs:
               cd "$scratch"
               printf -v digest '%064d' 0
               cloudron versions add --state testing --image "registry.invalid/dry-run@sha256:$digest"
-              cloudron versions update --version="$version" --state=published
+              cloudron versions update --version="$version" --state=published --image "registry.invalid/dry-run@sha256:$digest"
               cloudron versions verify
               jq -e --arg v "$version" '.versions[$v].manifest.changelog | type == "string" and length > 0' CloudronVersions.json
             )
@@ -129,7 +129,7 @@ jobs:
           publish=false
           reconcile=false
           # aidevops:trust-boundary — PRs and non-main refs never authorize publication.
-          if [[ "$GITHUB_EVENT_NAME" != pull_request && "$GITHUB_REF" == refs/heads/main && "$ENABLED" == true ]]; then
+          if [[ ( "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ) && "$GITHUB_REF" == refs/heads/main && "$ENABLED" == true ]]; then
             if [[ "$exists" == true ]]; then reconcile=true; else publish=true; fi
           fi
           {
@@ -244,10 +244,13 @@ jobs:
             exit 1
           fi
           cloudron versions add --state testing --image "$IMAGE"
-          cloudron versions update --version="$VERSION" --state=published
+          cloudron versions update --version="$VERSION" --state=published --image "$IMAGE"
           cloudron versions verify
           jq -e --arg v "$VERSION" --arg image "$IMAGE" \
             '.versions[$v].manifest | .dockerImage == $image and (.changelog | type == "string" and length > 0)' CloudronVersions.json
+          git show "$SOURCE_SHA:CloudronVersions.json" > "$RUNNER_TEMP/original-catalog.json"
+          jq -e --slurpfile old "$RUNNER_TEMP/original-catalog.json" --arg v "$VERSION" \
+            '(del(.versions) == ($old[0] | del(.versions))) and ((.versions | del(.[$v])) == $old[0].versions)' CloudronVersions.json
       - name: Attest exact catalog bytes
         id: catalog
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
