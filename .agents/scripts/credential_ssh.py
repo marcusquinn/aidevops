@@ -16,7 +16,16 @@ from credential_sshkey import UNREADABLE, key_state
 from credential_sshrules import config_severity, owned_perms
 
 
-def passphrase(path, loopback):
+def headless_signing_key(home=None):
+    """Resolve only the designated headless key, not every signing-looking filename."""
+    public = os.environ.get('AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY') or str(
+        Path(home) / '.ssh/id_ed25519_signing.pub' if home is not None
+        else Path.home() / '.ssh/id_ed25519_signing.pub')
+    private = public[:-4] if public.endswith('.pub') else public
+    return os.path.abspath(os.path.expanduser(private))
+
+
+def passphrase(path, loopback, home=None):
     try:
         state = key_state(path)
     except UNREADABLE:
@@ -26,6 +35,10 @@ def passphrase(path, loopback):
         yield finding(path, 0, '', 'ssh-key-unchecked', severity='low')
         return
     unencrypted, hardware = state
+    if os.path.abspath(path) == headless_signing_key(home):
+        if not unencrypted:
+            yield finding(path, 0, '', 'ssh-headless-signing-encrypted', severity='medium')
+        return
     if not unencrypted:
         return
     # FIDO sk- keys still need the hardware token; loopback-only keys reach local VMs only.
@@ -34,7 +47,7 @@ def passphrase(path, loopback):
                   severity='low' if hardware or loopback else 'high', **extra)
 
 
-def audit_key(path, loopback):
+def audit_key(path, loopback, home=None):
     try:
         info = os.stat(path)
     except OSError:
@@ -44,7 +57,7 @@ def audit_key(path, loopback):
     perms = owned_perms(path, info, 'high')
     if perms:
         yield perms
-    yield from passphrase(path, loopback)
+    yield from passphrase(path, loopback, home)
 
 
 def ssh_dir(home):
@@ -65,8 +78,11 @@ def collect(home):
         yield from audit.config(str(config), True, 0)
     if audit.truncated:
         yield finding(config, 0, '', 'ssh-config-incomplete', severity='medium')
-    for path, loopback in audit.key_paths().items():
-        yield from audit_key(path, loopback)
+    keys = audit.key_paths()
+    # An override may live outside ~/.ssh and need not appear in IdentityFile.
+    keys[headless_signing_key(audit.home)] = False
+    for path, loopback in keys.items():
+        yield from audit_key(path, loopback, audit.home)
 
 
 def ssh_findings(home):

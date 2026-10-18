@@ -44,9 +44,9 @@ The `containerPort` is the port inside the container. `defaultValue` is the sugg
 | `website` | URL | App website |
 | `contactEmail` | email | Bug report / support email |
 | `icon` | local file ref | Square 256x256 icon (e.g. `file://icon.png`) |
-| `iconUrl` | URL | Remote icon URL |
+| `iconUrl` | URL | Remote icon URL; pin to a commit SHA; frozen per published version |
 | `tags` | string array | Filterable tags: `blog`, `chat`, `git`, `email`, `sync`, `gallery`, `notes`, `project`, `hosting`, `wiki` |
-| `mediaLinks` | URL array | Screenshot URLs (3:1 aspect ratio, HTTPS) |
+| `mediaLinks` | URL array | Screenshot URLs (3:1 aspect ratio, HTTPS); pin to a commit SHA; frozen per published version |
 | `packagerName` | string | Name of package maintainer |
 | `packagerUrl` | URL | Package maintainer URL |
 | `packageUrl` | URL | Package source repository URL. Requires `minBoxVersion: 10.0.0` |
