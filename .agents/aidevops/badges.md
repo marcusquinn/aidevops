@@ -156,19 +156,30 @@ in rendered Markdown:
 <!-- managed by aidevops badges; edit the template, not this block -->
 [![GitHub Actions](...)](...)
 [![License](...)](...)
+
 [![Lines of code](docs/metrics/badges/loc.svg)](docs/metrics/repo-metrics.md)
-[![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
 [![Dependencies](docs/metrics/badges/dependencies.svg)](docs/metrics/repo-metrics.md)
-...
+
+[![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
 <!-- aidevops:badges:end -->
 ```
 
 `readme-badges-helper.sh inject` replaces everything between the markers
 idempotently. If the markers don't exist, the block is inserted after
-the first H1 (or at the top of the file when there's no H1).
+the first H1 (or at the top of the file when there's no H1). Never write or
+edit the block by hand; README create/update flows run `inject` then `check`.
 
 `readme-badges-helper.sh check` compares the existing block to what would
 be rendered and exits 3 on drift — Phase 2's CI gate uses this.
+
+### Layout rule
+
+The language chart (`languages.svg`) is a wide panel, not a badge. GitHub
+renders all images in one Markdown paragraph inline, so a chart that shares a
+paragraph with badges bottom-aligns the badges against it. Keep it in its own
+paragraph after the badge rows (blank line or whole-line HTML comment before
+and after). `render`/`inject` exit 4 when a template breaks this rule, and
+`check` names the fault on an existing block before reporting drift.
 
 ## Template authoring
 

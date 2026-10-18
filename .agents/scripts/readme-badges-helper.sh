@@ -73,11 +73,18 @@
 #                          GitHub licence/releases); use local files only
 #   -h, --help             Show usage
 #
+# Layout rule (GH#35012): the language chart is a wide panel, not a badge.
+# It must sit in its own Markdown paragraph after the badge rows; GitHub
+# renders a paragraph's images inline, so a shared paragraph bottom-aligns the
+# small badges against the chart. render/inject refuse a template that breaks
+# this rule and check reports it on an existing block.
+#
 # Exit codes:
 #   0 — success
 #   1 — runtime error
 #   2 — usage error
 #   3 — drift detected (check subcommand only)
+#   4 — rendered block violates the layout rule (template error)
 
 set -euo pipefail
 
@@ -892,6 +899,39 @@ extract_existing_block() {
 	return 0
 }
 
+# Wide images that must occupy their own Markdown paragraph (see "Layout rule").
+WIDE_BADGE_PATH='docs/metrics/badges/languages.svg'
+
+# Print one diagnostic per layout fault and return 1 when the wide chart shares
+# a paragraph with other content: another image on its line, or a neighbouring
+# line that is neither blank nor a whole-line HTML comment (comments end an
+# HTML block, so they separate paragraphs).
+lint_block_layout() {
+	local _block="$1"
+	if printf '%s\n' "$_block" | awk -v wide="$WIDE_BADGE_PATH" '
+		function separator(s) {
+			return s ~ /^[[:space:]]*$/ || s ~ /^[[:space:]]*<!--.*-->[[:space:]]*$/
+		}
+		{ line[NR] = $0 }
+		END {
+			bad = 0
+			for (i = 1; i <= NR; i++) {
+				if (index(line[i], wide) == 0) continue
+				rest = line[i]
+				images = gsub(/!\[/, "", rest)
+				if (images > 1 || (i > 1 && !separator(line[i - 1])) || (i < NR && !separator(line[i + 1]))) {
+					printf "layout: line %d puts %s in a paragraph with other badges; give it its own paragraph (blank line before and after)\n", i, wide
+					bad = 1
+				}
+			}
+			exit bad
+		}
+	'; then
+		return 0
+	fi
+	return 1
+}
+
 # Replace the badge block in a README with the rendered output.
 # If markers are absent, insert after first H1 (or at line 1 if no H1).
 #
@@ -999,6 +1039,7 @@ check_drift() {
 		return 0
 	fi
 
+	lint_block_layout "$_existing" >&2 || log "existing block breaks the layout rule; run inject to re-render it"
 	log "drift detected in $_readme"
 	# Show a unified diff for human readability.
 	if command -v diff >/dev/null 2>&1; then
@@ -1019,6 +1060,9 @@ main() {
 
 	local _rendered
 	_rendered=$(render_full_block)
+	if ! lint_block_layout "$_rendered" >&2; then
+		die "rendered badge block breaks the layout rule; fix the badge template (--template, the repo's $REPO_TEMPLATE_RELPATH, or the canonical template), not the README" 4
+	fi
 
 	case "$CMD" in
 		render)

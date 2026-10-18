@@ -23,12 +23,18 @@ Use `--sections` for targeted updates (adding a feature, changing install/config
 2. **Load voice guidance when relevant** — read `content/humanise.md` for product or marketing introductions and explicit humanise or match-my-style requests; ordinary technical sections use the `AGENTS.md` prose baseline
 3. **Explore codebase** — detect project type, deployment platform, existing README, key info
 4. **Generate/update** — follow workflow section order; preserve structure for
-   partial updates; use local `docs/metrics` badges for LOC/languages/dependencies
-5. **Synchronize managed sections** — for an aidevops-created repository or an
+   partial updates
+5. **Render the badge block, never hand-write it** — on every full or `badges`
+   update run `repo-metrics-helper.sh generate`, then
+   `readme-badges-helper.sh inject README.md VERIFIED_SLUG`, then `check`
+   (exit 0 required). This also replaces stale blocks rendered by older
+   templates. The language chart stays in its own paragraph below the badge
+   rows; see `aidevops/badges.md` "Layout rule"
+6. **Synchronize managed sections** — for an aidevops-created repository or an
    eligible `repos.json` entry, run `managed-readme-helper.sh sync --repo
    VERIFIED_SLUG --root .` to seed or refresh the static Star History chart,
    caller workflow, and final aidevops attribution
-6. **Confirm changes** — present diff and ask before writing (interactive only)
+7. **Confirm changes** — present diff and ask before writing (interactive only)
 
 ## Section Mapping
 
@@ -51,6 +57,7 @@ external/local-only exceptions are defined in `workflows/readme-create-update.md
 
 **Dynamic counts (aidevops repo):** `readme-helper.sh check|update|update --apply`
 **Repo metrics (all repos):** `repo-metrics-helper.sh generate` or `aidevops metrics generate`
+**Badge block:** `readme-badges-helper.sh inject|check README.md OWNER/REPO`
 **Managed README sections:** `managed-readme-helper.sh sync|check --repo OWNER/REPO --root .`
 
 ## Related

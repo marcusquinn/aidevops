@@ -1710,6 +1710,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18716 Add Linkup web search API docs and AI web search API comparison (Tavily, Exa, Firecrawl) #auto-dispatch #feat ref:GH#34989 -> [todo/tasks/t18716-brief.md] pr:#34990 completed:2026-10-18
 - [x] t18717 Linkup docs: use account-scoped secret name per credential naming convention #auto-dispatch #bug ref:GH#35007 -> [todo/tasks/t18717-brief.md] pr:#35008 completed:2026-10-18
 - [x] t18719 Linkup agent doc: add official query-writing, endpoint best practices and agent guidance #auto-dispatch #feat ref:GH#35013 -> [todo/tasks/t18719-brief.md] pr:#35016 completed:2026-10-18
+- [ ] t18718 fix(badges): enforce README badge layout and require helper-managed blocks in /readme #auto-dispatch #bug ref:GH#35012 -> [todo/tasks/t18718-brief.md]
 
 ## In Progress
 
