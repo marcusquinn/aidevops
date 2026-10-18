@@ -261,6 +261,8 @@ Choose method based on what exists:
 - `media_and_motion` → §7 Components, §9 Responsive
 - `brand_positioning` → §1 Overview, §10 Agent Prompt Guide
 
+For every creation method, §7 Components/forms records the form placeholder policy (field names by default, unless the project or task specifies an exception) and the placeholder colour token or derivation for light and dark modes. Follow `product/ui-design.md` → Forms: keep visible labels, record format-hint exceptions, and use a visibly lighter placeholder than typed text while maintaining at least 4.5:1 against the field background.
+
 ## Using a DESIGN.md
 
 **For coding agents:** Drop `DESIGN.md` in project root. Tell the agent: `"Build a landing page following DESIGN.md"`. The agent reads YAML tokens for exact values and prose for rationale — specific, reproducible output. During UI work, agents should treat existing DESIGN.md rules as constraints, cite the canonical examples they followed, and update DESIGN.md only when the session proves a durable repo-wide preference.

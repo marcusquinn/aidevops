@@ -63,6 +63,13 @@ tools:
 - **Content width**: Max 600px for readability. Card padding: 16px minimum.
 - **Safe areas**: Respect notch, home indicator, status bar on mobile.
 
+### Forms
+
+- **Placeholder default**: Unless the project's `DESIGN.md` or task specifies otherwise, text, email, phone, message (textarea), and each part of a name field use the field's name as placeholder text. Keep a visible label above the field; a placeholder never replaces it. Omit "(optional)" and required markers from placeholders: use "Approximate budget", not "Approximate budget (optional)".
+- **Format hints**: Prefer a hint where it helps more than the name: "https://" for a URL, "Search services" for a searchable multi-select, or an example date format. Selects keep their own empty-choice text.
+- **Placeholder colour**: Visibly lighter (lower emphasis, towards the field background) than typed text, so empty fields never look filled in; maintain at least 4.5:1 against the field background in both light and dark modes. Start with `color-mix(in srgb, <text> 75%, <field>)` — 75% input text colour and 25% field background — then measure and adjust each theme to meet the contrast floor. Account for browser placeholder opacity when checking the rendered colour. Do not start from a decorative/muted token that already fails 4.5:1 or routinely assign the typed text's own colour; retain plain text colour only as a contrast-safe fallback for browsers without `color-mix()`.
+- **Record the choice**: In `DESIGN.md` §7 Components/forms, document the default or exception and the placeholder colour token/derivation.
+
 ### Icons
 
 **Product icon**: Distinctive at all sizes, no text, simple silhouette, matches palette. Test against competitor icons in search results.
@@ -125,6 +132,7 @@ Full catalogue (60+ resources): `tools/design/design-inspiration.md`. Design int
 ## Accessibility Checklist
 
 - [ ] Colour contrast ≥ 4.5:1 (text), ≥ 3:1 (large text)
+- [ ] Placeholders are lighter than typed text and at least 4.5:1; labels stay visible
 - [ ] All interactive elements have accessibility labels
 - [ ] Screen reader navigation order is logical
 - [ ] Touch/click targets ≥ 44×44pt
