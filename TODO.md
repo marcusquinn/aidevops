@@ -1714,7 +1714,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18720 fix(badges): drift detector misreports DRIFTED repos; Actions badge picks metrics caller #auto-dispatch #bug ref:GH#35019 -> [todo/tasks/t18720-brief.md] pr:#35033 completed:2026-10-18
 - [x] t18721 feat(badges): worktree-safe badges sync --apply and scheduled drift remediation #auto-dispatch #feat ref:GH#35020 -> [todo/tasks/t18721-brief.md] pr:#35036 completed:2026-10-18
 
-- [ ] t18727 fix: test-release-snapshot-migration.sh exits 1 silently in _full_loop_release_start_new block #auto-dispatch #bug ref:GH#35045
+- [-] t18727 fix: test-release-snapshot-migration.sh exits 1 silently in _full_loop_release_start_new block #auto-dispatch #bug ref:GH#35045 declined:2026-10-18
 
 - [ ] t18728 fix: exact cmd_add owner contract no longer provisions node_modules in test-worktree-js-dependency-bootstrap.sh #auto-dispatch #bug ref:GH#35047
 
