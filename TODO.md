@@ -1708,7 +1708,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18713 fix(dirty-pr-sweep): TODO.md-only auto-rebase never succeeds — -X union is not a strategy option #auto-dispatch #bug ref:GH#34947 pr:#34962 completed:2026-10-18
 
 - [x] t18716 Add Linkup web search API docs and AI web search API comparison (Tavily, Exa, Firecrawl) #auto-dispatch #feat ref:GH#34989 -> [todo/tasks/t18716-brief.md] pr:#34990 completed:2026-10-18
-- [ ] t18717 Linkup docs: use account-scoped secret name per credential naming convention #auto-dispatch #bug ref:GH#35007 -> [todo/tasks/t18717-brief.md]
+- [x] t18717 Linkup docs: use account-scoped secret name per credential naming convention #auto-dispatch #bug ref:GH#35007 -> [todo/tasks/t18717-brief.md] pr:#35008 completed:2026-10-18
 
 ## In Progress
 
