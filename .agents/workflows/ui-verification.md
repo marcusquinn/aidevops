@@ -37,6 +37,8 @@ Record the decision before screenshots: breakpoints covered, navigation orientat
 
 > **NEVER `fullPage: true`** for AI vision review — exceeds 8000px, hard-crashes session. Viewport-sized only. See `reference/screenshot-limits.md` and AGENTS.md "Screenshot Size Limits".
 
+Native Playwright MCP screenshot tools: omit `filename` (or use an absolute path inside the reported output dir) unless the launcher strips MCP roots; verify with `git status --porcelain` before/after a browser child (GH#35159, `tools/browser/browser-automation.md`).
+
 Use the existing `browser-qa-helper.sh` or the repository's already configured browser workflow. For routine UI work, check only the affected page at desktop and one relevant mobile viewport. Capture a before baseline only when it will change the implementation/review decision. Broaden to tablet, landscape, theme, or additional edge viewports only for responsive-critical changes, new layout systems, or release readiness.
 
 For an authenticated read-only path, prefer the repository's existing E2E suite. Use `browser-qa-helper.sh journey` only where no suitable suite exists and the project can supply its exact origin, secret-backed credential variable names, explicit login/logout endpoints, and declarative read-only checks; it is not a general browser automation or write-test mechanism. Schema, write boundary and limits: `tools/browser/browser-qa.md` "Authenticated Read-only Journeys".

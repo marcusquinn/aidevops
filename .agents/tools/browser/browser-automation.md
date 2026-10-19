@@ -162,6 +162,8 @@ A browser check reports what the target did, not that the script ended. Exit 0 p
 
 The same contract applies to Stagehand's adaptive actions; it changes neither routing nor auth handling. Playwright recipe: `playwright.md` "Bounded Completion Checks".
 
+> **Native tool `filename` (GH#35159)**: `@playwright/mcp@0.0.79` resolves `filename` against the MCP client root (the project directory, often a canonical checkout), not `--output-dir`. The aidevops launchers strip the roots capability so it falls back to the private artifact cwd. On a custom/older launcher, omit `filename` or pass an absolute path inside the reported output dir. After any browser child returns, compare `git status --porcelain` of the session directory before/after; a child that "cannot find" its screenshot must check the project directory first.
+>
 > **Screenshot limit**: Never `fullPage: true` for AI vision — can exceed 8000px (hard-rejected). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `reference/screenshot-limits.md`.
 
 <!-- AI-CONTEXT-END -->

@@ -644,6 +644,58 @@ parse_backup_args() {
 	return 0
 }
 
+agent_artifact_paths() {
+	# GH#35159: list untracked paths that look like agent-generated artifacts.
+	local nul_path="$1"
+	tr '\0' '\n' <"$nul_path" | grep -E '(^|/)\.playwright-mcp(/|$)|\.(png|jpe?g|webp|pdf|webm)$' || true
+	return 0
+}
+
+# GH#35159: find an open/acknowledged backup of the same repo that holds a
+# byte-identical untracked payload and no tracked/staged changes. A canonical
+# fast-forward changes HEAD each time, so the full fingerprint never matches;
+# one stray file therefore produced a new backup per merge, silently.
+find_identical_untracked_backup() {
+	local repo_path="$1"
+	local capture_dir="$2"
+	local candidate="" state=""
+	[[ -s "$capture_dir/tracked.patch" || -s "$capture_dir/staged.patch" ]] && return 1
+	[[ -s "$capture_dir/$UNTRACKED_LIST_NAME" && -n "${CAPTURE_UNTRACKED_HASH:-}" ]] || return 1
+	[[ -d "$BACKUP_ROOT" ]] || return 1
+	for candidate in "$BACKUP_ROOT"/*/; do
+		candidate="${candidate%/}"
+		[[ -f "$candidate/manifest.tsv" ]] || continue
+		[[ "$(manifest_value "$candidate/manifest.tsv" repo_path)" == "$repo_path" ]] || continue
+		state=$(manifest_value "$candidate/manifest.tsv" state)
+		[[ "$state" == "open" || "$state" == "acknowledged" ]] || continue
+		[[ "$(manifest_value "$candidate/manifest.tsv" untracked_payload_sha256)" == "$CAPTURE_UNTRACKED_HASH" ]] || continue
+		[[ -s "$candidate/tracked.patch" || -s "$candidate/staged.patch" ]] && continue
+		printf '%s\n' "$candidate"
+		return 0
+	done
+	return 1
+}
+
+# Emit one owner notice per reused backup, then record it in the manifest.
+notify_stray_untracked() {
+	local repo_path="$1"
+	local backup_dir="$2"
+	local capture_dir="$3"
+	local manifest_path="$backup_dir/manifest.tsv"
+	[[ -z "$(manifest_value "$manifest_path" stray_notice_at)" ]] || return 0
+	local backup_id="" likely=""
+	backup_id=$(manifest_value "$manifest_path" backup_id)
+	likely=$(agent_artifact_paths "$capture_dir/$UNTRACKED_LIST_NAME")
+	print_warning "Identical untracked files in $repo_path were already backed up in $backup_id and have reappeared; they are not cleaned automatically."
+	if [[ -n "$likely" ]]; then
+		print_warning "Likely agent artifacts (screenshots/PDFs/.playwright-mcp) at a canonical root:"
+		printf '%s\n' "$likely" | sed 's/^/  /' >&2
+	fi
+	print_warning "Remove them (verified backup exists) with: $0 clean --repo $repo_path --backup $backup_id --confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP"
+	manifest_set "$manifest_path" stray_notice_at "$(iso_utc)" || return 1
+	return 0
+}
+
 cmd_backup() {
 	parse_backup_args "$@" || return 1
 	[[ "$PARSED_BACKUP_HELP" == true ]] && return 0
@@ -690,6 +742,14 @@ cmd_backup() {
 		capture_dir=""
 		[[ "$machine" == true ]] && printf '%s|%s\n' "$backup_id" "$backup_dir" || printf '%s\n' "$backup_dir"
 		return 0
+	fi
+	# GH#35159: the same stray untracked payload re-appearing across tip moves
+	# is surfaced to the owner once. A new backup is still created because
+	# clean/matches/restore are bound to the HEAD captured in the backup.
+	local existing_dir=""
+	existing_dir=$(find_identical_untracked_backup "$repo_path" "$capture_dir" || true)
+	if [[ -n "$existing_dir" ]]; then
+		notify_stray_untracked "$repo_path" "$existing_dir" "$capture_dir" || true
 	fi
 	local backup_ref="refs/aidevops/dirty-worktree-backups/${backup_id}"
 	"$REAL_GIT" check-ref-format "$backup_ref" >/dev/null 2>&1 || return 1
