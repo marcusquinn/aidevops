@@ -459,6 +459,31 @@ permission_targets_canonical_checkout() {
 	return $?
 }
 
+permission_write_pending_marker() {
+	local work_dir="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local session_key="$4"
+	local request_id="$5"
+	[[ -n "$work_dir" && -d "$work_dir" ]] || return 0
+	local git_dir="" pending_file=""
+	if ! git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null); then
+		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
+			"git_directory_lookup_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
+			"Permission pending marker location could not be resolved"
+		return 1
+	fi
+	pending_file="${git_dir}/aidevops-permission-pending"
+	if ! jq -cn --arg request "$request_id" --arg issue "$issue_number" --arg session "$session_key" \
+		'{request_id: $request, issue: ($issue | tonumber), session: $session}' >"$pending_file"; then
+		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
+			"pending_marker_write_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
+			"Permission pending marker could not be persisted"
+		return 1
+	fi
+	return 0
+}
+
 cmd_request() {
 	local capture_file="" issue_number="" repo_slug="" session_key="" work_dir="" durability=""
 	local request_id="" capability_json="" permission="" tool="" risk_level="" grantable=""
@@ -542,23 +567,7 @@ cmd_request() {
 			"Maintainer permission blocker label could not be persisted"
 		return 1
 	fi
-	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
-		local git_dir="" pending_file=""
-		if ! git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null); then
-			permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
-				"git_directory_lookup_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
-				"Permission pending marker location could not be resolved"
-			return 1
-		fi
-		pending_file="${git_dir}/aidevops-permission-pending"
-		if ! jq -cn --arg request "$request_id" --arg issue "$issue_number" --arg session "$session_key" \
-			'{request_id: $request, issue: ($issue | tonumber), session: $session}' >"$pending_file"; then
-			permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
-				"pending_marker_write_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
-				"Permission pending marker could not be persisted"
-			return 1
-		fi
-	fi
+	permission_write_pending_marker "$work_dir" "$issue_number" "$repo_slug" "$session_key" "$request_id" || return 1
 	permission_record_blocker "permission_awaiting_approval" "$PERMISSION_BLOCKER_STATUS" \
 		"needs_maintainer_permissions" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
 		"Worker paused until the exact scoped permission request is approved" \

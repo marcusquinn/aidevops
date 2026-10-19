@@ -5,9 +5,10 @@ import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
-import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
+import { recordPermissionBlocker } from "./permission-broker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
 import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
+import { isReadOnlyRootRead } from "./permission-broker-read-only-root.mjs";
 
 const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
@@ -15,10 +16,6 @@ const MAX_INTENT_LENGTH = 500;
 const MAX_REQUESTS = 20;
 const PATTERN_CAPABLE_PERMISSIONS = new Set(["bash", "external_directory"]);
 const FORBIDDEN_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube)(?:\/|$)|\/(?:\.config\/(?:gh|gcloud|glab-cli|hub)|\.docker)(?:\/|$)|\/(?:\.netrc|\.npmrc|\.pypirc|\.git-credentials)(?:$|\*)|\/etc\/npmrc(?:$|\*)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
-// Home-relative toolchain roots workers may read (never write) without a
-// maintainer. Extend deliberately; FORBIDDEN_PATTERN still applies.
-const READ_ONLY_ROOTS = ["~/.nvm"];
-const READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list"]);
 const HIGH_RISK_PATTERN = /(?:\.config\/opencode|node_modules\/@opencode-ai\/plugin|(?:^|\/)\.git(?:\/|$))/i;
 
 function redactSecrets(value) {
@@ -126,28 +123,6 @@ function impossibleExternalRead(context, raw) {
   return classifyImpossibleRead(context, raw, FORBIDDEN_PATTERN);
 }
 
-function normalizeAbsolute(value) {
-  return typeof value === "string" ? value.replaceAll("\\", "/").replace(/\/+$/, "") : "";
-}
-
-function isReadOnlyRootRead(context, raw) {
-  const permission = raw?.permission || raw?.type || "";
-  const callID = raw?.tool?.callID || raw?.callID || "";
-  if (permission !== "external_directory") return false;
-  if (!READ_ONLY_TOOLS.has(context.toolCalls.get(callID)?.tool)) return false;
-  const input = raw?.patterns ?? raw?.pattern;
-  const patterns = Array.isArray(input) ? input : input == null ? [] : [input];
-  if (patterns.length === 0 || patterns.length > 20) return false;
-  const home = normalizeAbsolute(context.home);
-  const roots = READ_ONLY_ROOTS.map((root) => normalizeAbsolute(root.startsWith("~/") ? `${home}/${root.slice(2)}` : root));
-  return patterns.every((pattern) => {
-    const value = normalizeAbsolute(pattern);
-    if (!value || FORBIDDEN_PATTERN.test(value)) return false;
-    if (value.split("/").includes("..")) return false;
-    return roots.some((root) => value === root || value.startsWith(`${root}/`));
-  });
-}
-
 function recordReadOnlyRootAllow(context, raw) {
   const patterns = normalizePatterns(raw?.patterns ?? raw?.pattern, { home: context.home });
   const callID = raw?.tool?.callID || raw?.callID || "";
@@ -168,29 +143,6 @@ function recordReadOnlyRootAllow(context, raw) {
     status: "allowed",
     blocking: false,
   });
-}
-
-function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, capture, request, event, reason, detail, status = "blocked", blocking = true }) {
-  const dedupeKey = `${event}:${request?.request_id || "unknown"}`;
-  if (loggedEvents.has(dedupeKey)) return;
-  loggedEvents.add(dedupeKey);
-  while (loggedEvents.size > 100) loggedEvents.delete(loggedEvents.values().next().value);
-  appendWorkerBlockerEvent({
-    event,
-    status,
-    reason,
-    blocking,
-    source: "opencode-permission-broker",
-    issue_number: capture?.issue || process.env.WORKER_ISSUE_NUMBER || "",
-    repo_slug: capture?.repo || process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "",
-    session_key: capture?.worker_session || process.env.WORKER_SESSION_KEY || "",
-    request_id: request?.request_id || "",
-    permission: request?.permission || "",
-    tool: request?.tool || "",
-    risk_level: request?.risk?.level || "",
-    grantable: request?.risk?.grantable,
-    detail,
-  }, { home, logPath: blockerLogPath });
 }
 
 function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, raw) {
@@ -280,7 +232,7 @@ async function handlePermissionEvent(context, input) {
   }
   if (isManagedToolOutputRead(toolCalls, request, dataHome)
     && await replyPermissionRequest(client, request, "once")) return;
-  if (isReadOnlyRootRead(context, request) && await replyPermissionRequest(client, request, "once")) {
+  if (isReadOnlyRootRead(context, request, FORBIDDEN_PATTERN) && await replyPermissionRequest(client, request, "once")) {
     recordReadOnlyRootAllow(context, request);
     return;
   }
@@ -301,7 +253,7 @@ function handlePermissionAsk(context, input, output) {
     output.status = "allow";
     return;
   }
-  if (isReadOnlyRootRead(context, input)) {
+  if (isReadOnlyRootRead(context, input, FORBIDDEN_PATTERN)) {
     output.status = "allow";
     recordReadOnlyRootAllow(context, input);
     return;
