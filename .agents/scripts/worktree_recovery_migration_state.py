@@ -10,8 +10,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
-import subprocess
+import subprocess  # nosec B404 -- resolved du, argv only; see allocated_bytes
 import tempfile
 
 from worktree_archive_snapshot import snapshot
@@ -110,7 +111,12 @@ def source_state(identity):
 
 
 def allocated_bytes(path):
-    result = subprocess.run(["du", "-sk", str(path)], check=True, capture_output=True, timeout=60)
+    du = shutil.which("du")
+    require(du is not None, "migration:du-unavailable")
+    require(path.is_absolute(), "migration:noncanonical-size-path")
+    result = subprocess.run(  # nosec B603 -- resolved du and an absolute path, argv only
+        [str(Path(du).absolute()), "-sk", str(path)],
+        check=True, capture_output=True, timeout=60)
     return int(result.stdout.split(b"\t", 1)[0]) * 1024
 
 

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
-import subprocess
+import subprocess  # nosec B404 -- fixed framework helper, argv only; see archive_command
 import sys
 
 from worktree_lifetime_archive import capacity, durable_archive, inode, require
@@ -32,7 +32,10 @@ def archive_command(lock, *arguments):
         environment.pop(name, None)
     # Keep the operation locked if this Python parent dies while Bash is still
     # capturing/restoring. A competing invocation must not start a second copy.
-    result = subprocess.run(["bash", str(SCRIPTS / "worktree-archive-helper.sh"),
+    bash = shutil.which("bash")
+    require(bash is not None, "migration:bash-unavailable")
+    result = subprocess.run(  # nosec B603 -- resolved Bash, framework helper, argv only
+                            [str(Path(bash).absolute()), str(SCRIPTS / "worktree-archive-helper.sh"),
                              *map(str, arguments)], env=environment, pass_fds=(lock,),
                             capture_output=True, text=True, check=True, timeout=600)
     return result.stdout.strip()
@@ -44,9 +47,10 @@ def reserve(directory, output, identity, arguments):
     if journal.exists() or journal.is_symlink():
         record = load(journal)
         require(record["source"] == current, "migration:source-drift")
-        require(record["directory_inode"] == inode(directory)
-                and record["output"] == str(output) and record["output_inode"] == inode(output)
-                and record["repo"] == arguments.repo and record["base"] == arguments.base_branch,
+        expected = {"directory_inode": inode(directory), "output": str(output),
+                    "output_inode": inode(output), "repo": arguments.repo,
+                    "base": arguments.base_branch}
+        require({key: record[key] for key in expected} == expected,
                 "migration:reservation-changed")
         return record
     require(not any(output.iterdir()), "migration:unrecorded-capture")
