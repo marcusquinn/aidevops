@@ -14,6 +14,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -35,16 +36,44 @@ def rejection_state():
     info = directory.lstat()
     if directory.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise OSError('unsafe rejection directory')
-    with private_open(directory / 'state.json') as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        content = handle.read()
+    # Lock a stable inode; atomically replace the data, never the lock.
+    with private_open(directory / 'state.lock') as lock:
+        acquire_lock(lock)
+        with private_open(directory / 'state.json') as handle:
+            content = handle.read()
         state = json.loads(content) if content else {}
+        if not isinstance(state, dict):
+            raise ValueError('invalid rejection state')
+        original = json.dumps(state, sort_keys=True)
         yield state
-        handle.seek(0)
-        json.dump(state, handle)
-        handle.truncate()
-        handle.flush()
-        os.fsync(handle.fileno())
+        if json.dumps(state, sort_keys=True) == original:
+            return
+        fd, temporary = tempfile.mkstemp(dir=directory, prefix='.state-')
+        try:
+            with os.fdopen(fd, 'w') as handle:
+                json.dump(state, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, directory / 'state.json')
+            directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+
+
+def acquire_lock(lock):
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise OSError('rejection state busy') from None
+            time.sleep(0.05)
 
 
 def value_hash(name):
@@ -86,28 +115,71 @@ def notice(name):
         handle.truncate()
 
 
-def process_names(action, names):
-    if not names or len(names) > 32 or not all(re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', n) for n in names):
-        raise ValueError('invalid secret names')
+def active_marker(state, name):
+    marker = state.get(name)
+    if marker and time.time() - marker['time'] >= ttl_seconds():
+        state.pop(name)
+        return None
+    return marker
+
+
+def update_marker(action, name, digest):
     rejected = ''
     with rejection_state() as state:
-        for name in sorted(set(names)):
-            marker = state.get(name)
-            now = time.time()
-            if marker and now - marker['time'] >= ttl_seconds():
-                state.pop(name)
-                marker = None
-            if action == 'check' and not marker:
-                continue
-            digest = value_hash(name)
-            if action == 'record':
-                if not marker or marker['hash'] != digest:
-                    notice(name)
-                    state[name] = {'time': now, 'hash': digest}
-            elif marker['hash'] != digest:
+        marker = active_marker(state, name)
+        if action == 'record':
+            if not marker or marker['hash'] != digest:
+                state[name] = {'time': time.time(), 'hash': digest, 'notified': False}
+        elif marker:
+            if marker['hash'] != digest:
                 state.pop(name)
             else:
-                rejected = rejected or name
+                rejected = name
+    return rejected
+
+
+def notify_marker(name, digest):
+    # Only notify after the marker is durable. A failed advisory is retried
+    # on the next record without resetting the cooldown's timestamp.
+    with rejection_state() as state:
+        marker = state.get(name)
+        if marker and marker['hash'] == digest and not marker.get('notified'):
+            notice(name)
+            marker['notified'] = True
+
+
+def process_name(action, name):
+    # Never decrypt while holding the host-wide lock. Re-read state afterwards
+    # so concurrent records and removals cannot be overwritten by stale copies.
+    with rejection_state() as state:
+        if action == 'check' and not active_marker(state, name):
+            return ''
+    digest = value_hash(name)
+    rejected = update_marker(action, name, digest)
+    if action == 'record':
+        notify_marker(name, digest)
+    return rejected
+
+
+def validate_names(names):
+    if not names or len(names) > 32 or not all(re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', n) for n in names):
+        raise ValueError('invalid secret names')
+
+
+def process_names(action, names):
+    validate_names(names)
+    rejected = ''
+    failed = False
+    for name in sorted(set(names)):
+        try:
+            result = process_name(action, name)
+            rejected = rejected or result
+        except OSError:
+            if action != 'record':
+                raise
+            failed = True
+    if failed:
+        raise OSError('some secret lookups unavailable')
     return rejected
 
 

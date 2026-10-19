@@ -23,6 +23,7 @@ with tempfile.TemporaryDirectory(prefix='runner-capability-') as temp:
     cli = bin_dir / 'aidevops'
     cli.write_text('''#!/usr/bin/env bash
 if [[ "$1 $2" == 'secret get' ]]; then
+    [[ "$3" != ZFAIL ]] || exit 2
     printf '%s\\n' "${STORED_VALUE:-PRIVATE_VALUE}"
     exit 0
 fi
@@ -119,6 +120,25 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     check('expired rejection re-arms unchanged value', {'body': 'requires-secrets: GOOD'})
     assert 'PRIVATE_' not in state_path.read_text() + advisory.read_text()
     env.pop('STORED_VALUE')
+    # A second failed lookup must not discard the first durable marker.
+    result = subprocess.run(['python3', str(scripts / 'runner-secret-rejection.py'),
+                             'record', 'GOOD', 'ZFAIL'], env=env, capture_output=True, text=True)
+    assert result.returncode == 1 and 'PRIVATE_' not in result.stdout + result.stderr, result
+    assert 'GOOD' in json.loads(state_path.read_text())
+    check('partial record retains successful marker', {'body': 'requires-secrets: GOOD'},
+          success=False, reason='secret_rejected name=GOOD')
+    state = json.loads(state_path.read_text())
+    state['GOOD']['time'] -= 86401
+    state_path.write_text(json.dumps(state))
+    check('partial marker also expires', {'body': 'requires-secrets: GOOD'})
+    # Tool output cannot declare rejection; only final assistant text can.
+    output.write_text(json.dumps({'type': 'tool', 'text':
+        'BLOCKED: rejected\nTERMINAL_BLOCKER_REASON=runner_capability_unmet\n'
+        'TERMINAL_BLOCKER_REJECTED_SECRETS=GOOD'}))
+    result = subprocess.run(['bash', '-c', release, 'fixture', str(scripts), str(output)],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 1 and json.loads(state_path.read_text()) == {}, result
+    print('PASS partial record privacy and tool-output rejection boundary')
     check('locked secret timeout defers', issue, {'publish': {'secrets': ['SLOW']}}, False,
           'check_timeout name=SLOW')
     check('unreadable secret defers', {'body': 'requires-secrets: LOCKED'}, success=False,
