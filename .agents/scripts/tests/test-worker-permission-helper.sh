@@ -206,7 +206,7 @@ if grep -q -- 'needs-maintainer-permissions' "$gh_call_log"; then
 	exit 1
 fi
 # shellcheck disable=SC2088 # Literal tilde patterns mirror captured requests.
-for unsafe_pattern in '~/Git/repo/**' '~/.ssh/**' '~/.cache/../.ssh/id' '~/.aws/tmp/credentials'; do
+for unsafe_pattern in '~/projects/app/src/**' '~/.ssh/**' '~/.cache/../.ssh/id' '~/.aws/tmp/credentials'; do
 	jq --arg p "$unsafe_pattern" '.requests[0].patterns = [$p]' "$temp_capture" >"${temp_capture}.n"
 	if permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
 		printf 'non-temp external write misclassified as recovery: %s\n' "$unsafe_pattern" >&2
