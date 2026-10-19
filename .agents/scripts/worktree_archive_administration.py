@@ -8,7 +8,10 @@ import os
 from pathlib import Path
 import subprocess
 
-from worktree_archive_readiness import READINESS_ADMIN_FILES, read_admin_bytes, validate_readiness_payload
+from worktree_archive_readiness import (
+    OPAQUE_ADMIN_FILES, READINESS_ADMIN_FILES as READINESS_ADMIN_FILES,
+    read_admin_bytes, validate_readiness_payload,
+)
 
 
 def git(root, *args, data=None):
@@ -21,10 +24,25 @@ def git(root, *args, data=None):
                           check=True, timeout=60).stdout
 
 
-ADMIN_FILES = {"HEAD", "index", "ORIG_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG", "MERGE_MSG", "config.worktree", "logs/HEAD"} | READINESS_ADMIN_FILES
+ADMIN_FILES = {"HEAD", "index", "ORIG_HEAD", "FETCH_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG", "MERGE_MSG", "config.worktree", "logs/HEAD"} | OPAQUE_ADMIN_FILES
 PRIVATE_PREFIXES = ("refs/worktree/", "refs/bisect/", "refs/rewritten/")
 OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
+
+
+def fetch_head_roots(encoded):
+    """Preserve all fetched objects, including not-for-merge entries, as bundle tips."""
+    roots = []
+    for line in bytes.fromhex(encoded).splitlines():
+        fields = line.split(b"\t", 2)
+        if len(fields) != 3 or fields[1] not in (b"", b"not-for-merge"):
+            raise ValueError("git_admin:invalid_FETCH_HEAD")
+        oid = fields[0]
+        if (len(oid) not in (40, 64) or not oid.strip(b"0")
+                or any(byte not in b"0123456789abcdef" for byte in oid)):
+            raise ValueError("git_admin:invalid_FETCH_HEAD_oid")
+        roots.append(oid.decode("ascii"))
+    return roots
 
 
 def admin_path_allowed(name):
@@ -80,6 +98,7 @@ def administration(root):
     admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
     files = administration_files(admin, admin, admin.resolve() != common.resolve())
+    fetch_head_roots(files.get("FETCH_HEAD", ""))
     if git(root, "rev-parse", "--shared-index-path").strip():
         raise ValueError("git_admin:split_index:index")
     validate_admin_config(root, admin)
@@ -107,6 +126,7 @@ def load_administration(archive):
             raise ValueError("git_admin:unsafe_path")
         validate_readiness_payload(name, value)
         bytes.fromhex(value)
+    fetch_head_roots(state["files"].get("FETCH_HEAD", ""))
     for name, oid in state["refs"].items():
         if (not any(name.startswith(prefix) for prefix in PRIVATE_PREFIXES)
                 or ".." in Path(name).parts or Path(name).is_absolute()):

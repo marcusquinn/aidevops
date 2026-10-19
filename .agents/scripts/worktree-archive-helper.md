@@ -175,13 +175,26 @@ mandatory before replacing any original copy. Archive expiry is separate.
 
 `archive ... --self-contained --preserve-git-admin` records
 `git_admin_policy: "preserve-v1"` and a hashed `git-admin.json` artifact. It
-preserves byte contents of HEAD, the index (including intent-to-add), ORIG_HEAD,
+preserves byte contents of HEAD, the index (including intent-to-add), ORIG_HEAD, FETCH_HEAD,
 HEAD's reflog, COMMIT_EDITMSG, SQUASH_MSG, MERGE_MSG and config.worktree, plus
 private `refs/worktree/*`, `refs/bisect/*` and `refs/rewritten/*`. The complete
-bundle includes both old/new reflog endpoints, ORIG_HEAD, private ref objects,
+bundle includes both old/new reflog endpoints, ORIG_HEAD, all FETCH_HEAD objects
+(including `not-for-merge` entries), private ref objects,
 and index-only blobs. Scratch refs are created only in a temporary repository;
 capture never writes source refs or objects. Source matching is bound to this
 policy and detects changed admin bytes as well as ordinary working-tree changes.
+FETCH_HEAD records must contain a valid SHA-1/SHA-256 object ID and Git's tab-separated
+merge marker/description fields. Malformed records and unavailable objects block
+preservation; the file is never silently discarded. Its descriptions are retained
+as data, not used as remote addresses or commands.
+
+Capture traverses the objects reachable from the required history roots once.
+Index and resolve-undo objects receive extra preservation refs only if that graph
+does not already cover them; a clean index needs no separate per-file refs.
+The remaining refs are written in one `update-ref --stdin` call after object-ID
+validation. Verification still checks every required admin/index object, not
+just the reduced set of bundle tips. This changes neither the archive format nor
+the requirement for independent restoration.
 
 The same artifact preserves the known readiness records
 `aidevops/js-readiness.json`, `aidevops/js-restore.json`,
@@ -192,6 +205,12 @@ Other entries under `aidevops/` remain unsupported; the
 `aidevops/js-install-partial` marker blocks capture as an unfinished operation.
 Symlinks and oversized readiness records fail closed during capture, and the
 artifact reader also enforces the size limit before restoring them.
+
+The known `aidevops-profile-publication.json` record is also preserved as opaque
+bytes under the same 1 MiB limit. It is historical metadata, not fresh publication
+or removal authority; restore does not rewrite its original path bindings.
+Special working-file permissions (for example, a tracked file with mode 0600)
+remain unsupported and block migration rather than being normalized or discarded.
 
 Verification imports the bundle into an empty repository and checks all admin
 and index object dependencies. Restore imports preservation refs, reconstructs

@@ -14,13 +14,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 
 from worktree_archive_filesystem import fingerprint, supported_directories
 from worktree_archive_administration import (
-    ADMIN_FILES, administration, git, load_administration,
+    ADMIN_FILES, administration, fetch_head_roots, git, load_administration,
     OPERATIONS as OPERATIONS,
 )
 from worktree_archive_state import inventories, supported_state
@@ -33,9 +34,10 @@ def administration_digest(state):
     return hashlib.sha256(payload).hexdigest()
 
 
-def administration_roots(root, state):
+def administration_roots(root, state, include_index=True):
     roots = {git(root, "rev-parse", "HEAD").strip().decode("ascii")}
     roots.update(state["refs"].values())
+    roots.update(fetch_head_roots(state["files"].get("FETCH_HEAD", "")))
     for name, encoded in state["files"].items():
         data = bytes.fromhex(encoded)
         if name == "logs/HEAD":
@@ -43,13 +45,27 @@ def administration_roots(root, state):
                 roots.update(part.decode("ascii") for part in line.split()[:2] if set(part) != {48})
         elif name == "ORIG_HEAD":
             roots.add(data.strip().decode("ascii"))
-    for inventory in ('--stage', '--resolve-undo'):
+    for inventory in (('--stage', '--resolve-undo') if include_index else ()):
         for entry in git(root, "ls-files", inventory, "-z").split(b"\0"):
             if entry:
                 oid = entry.split(b"\t", 1)[0].split()[1]
                 if set(oid) != {48}:
                     roots.add(oid.decode("ascii"))
+    for oid in roots:
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid):
+            raise ValueError("git_admin:invalid_object_id")
     return sorted(roots)
+
+
+def bundle_roots(root, state):
+    """Add index dependencies only when the required history does not cover them."""
+    history = administration_roots(root, state, include_index=False)
+    extra = set(administration_roots(root, state)) - set(history)
+    if extra:
+        reachable = git(root, 'rev-list', '--objects', '--no-object-names', '--stdin',
+                        data=('\n'.join(history) + '\n').encode('ascii'))
+        extra.difference_update(oid.decode('ascii') for oid in reachable.splitlines())
+    return sorted(set(history) | extra)
 
 
 def capture_administration(root, archive, include_ignored):
@@ -64,8 +80,9 @@ def capture_administration(root, archive, include_ignored):
         git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}')
         objects = git(root, "rev-parse", "--path-format=absolute", "--git-path", "objects").rstrip(b"\n")
         (scratch / "objects/info/alternates").write_bytes(objects + b"\n")
-        for number, oid in enumerate(administration_roots(root, state)):
-            git(scratch, "update-ref", f"refs/archive/{number}", oid)
+        updates = ''.join(f'update refs/archive/{number} {oid}\n'
+                          for number, oid in enumerate(bundle_roots(root, state)))
+        git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
         git(scratch, "update-ref", "refs/heads/archive-head", git(root, "rev-parse", "HEAD").strip().decode("ascii"))
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all")
     (archive / "git-admin.json").write_text(json.dumps(state, sort_keys=True) + "\n", encoding="ascii")

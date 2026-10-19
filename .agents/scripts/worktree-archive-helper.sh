@@ -133,6 +133,7 @@ source_fingerprint() {
 	local worktree="$1"
 	local include_ignored="${2:-0}"
 	local preserve_git_admin="${3:-0}"
+	local -x GIT_OPTIONAL_LOCKS=0
 	python3 - "$worktree" "$include_ignored" "$MAX_UNTRACKED_FILES" "$MAX_UNTRACKED_BYTES" "$preserve_git_admin" "$SCRIPT_DIR" <<'PY'
 import hashlib
 import json
@@ -146,7 +147,7 @@ include_ignored = sys.argv[2] == '1'
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", str(root), *args], check=True,
+    return subprocess.run(["git", "-c", "diff.autoRefreshIndex=false", "-C", str(root), *args], check=True,
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
 
 

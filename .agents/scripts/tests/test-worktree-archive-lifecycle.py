@@ -478,12 +478,12 @@ class ArchiveLifecycle(unittest.TestCase):
 
     def test_git_administration_round_trip_without_source_objects(self):
         import worktree_archive_snapshot as snapshots
-        from worktree_archive_administration import READINESS_ADMIN_FILES
+        from worktree_archive_readiness import OPAQUE_ADMIN_FILES
 
         self.env['GIT_OPTIONAL_LOCKS'] = '0'
         admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
         (admin / 'aidevops').mkdir()
-        for name in READINESS_ADMIN_FILES:
+        for name in OPAQUE_ADMIN_FILES:
             (admin / name).write_bytes(b'opaque readiness state\x00\xff\n')
         # Both endpoints of the reflog can be otherwise unreachable.
         self.git(self.work, 'commit', '--allow-empty', '-qm', 'reflog only one')
@@ -495,6 +495,11 @@ class ArchiveLifecycle(unittest.TestCase):
         previous = self.git(self.work, 'commit-tree', tree, '-m', 'ORIG_HEAD only').strip()
         private = self.git(self.work, 'commit-tree', tree, '-m', 'private ref only').strip()
         (admin / 'ORIG_HEAD').write_bytes(previous + b'\n')
+        fetched = self.git(self.work, 'commit-tree', tree, '-m', 'FETCH_HEAD only').strip()
+        fetched_unmerged = self.git(self.work, 'commit-tree', tree, '-m', 'unmerged fetch only').strip()
+        (admin / 'FETCH_HEAD').write_bytes(
+            fetched + b"\t\tbranch 'one' of fixture\n" +
+            fetched_unmerged + b"\tnot-for-merge\tbranch 'two' of fixture\n")
         for prefix in ('worktree', 'bisect', 'rewritten'):
             self.git(self.work, 'update-ref', f'refs/{prefix}/saved', private.decode())
         for name in ('COMMIT_EDITMSG', 'SQUASH_MSG', 'MERGE_MSG'):
@@ -548,13 +553,17 @@ class ArchiveLifecycle(unittest.TestCase):
         self.helper('verify', archive)
         restored = self.root / 'restored-admin'
         self.helper('restore', archive, '--target', restored)
+        # Even a rejected comparison must not refresh the restored raw index.
+        self.env['GIT_OPTIONAL_LOCKS'] = '1'
+        self.assertNotEqual(self.helper('source-matches', archive, restored, check=False).returncode, 0)
+        self.env['GIT_OPTIONAL_LOCKS'] = '0'
         self.assertEqual(self.git(restored, 'status', '--porcelain=v2'), status)
         self.assertEqual(self.git(restored, 'ls-files', '--stage', '-z'), index)
         self.assertEqual(snapshots.administration(restored), state)
         self.assertEqual(snapshots.snapshot(restored, True, True), expected)
         restored_admin = Path(self.git(restored, 'rev-parse', '--absolute-git-dir').decode().strip())
         self.assertEqual(stat.S_IMODE((restored_admin / 'aidevops').stat().st_mode), 0o700)
-        for oid in (first, second, previous, private):
+        for oid in (first, second, previous, private, fetched, fetched_unmerged):
             self.assertEqual(self.git(restored, 'cat-file', '-t', oid.decode()), b'commit\n')
         self.assertEqual(self.git(restored, 'config', '--worktree', 'archive.fixture'), b'preserved\n')
         self.assertEqual(self.git(restored, 'ls-files', '--resolve-undo', '-z'), undo)
@@ -568,6 +577,63 @@ class ArchiveLifecycle(unittest.TestCase):
         artifact.update(size=bundle.stat().st_size, sha256=hashlib.sha256(bundle.read_bytes()).hexdigest())
         self.update_manifest(archive, **manifest)
         self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
+
+    def test_git_administration_bundle_omits_reachable_index_objects(self):
+        from worktree_archive_snapshot import administration, administration_roots, bundle_roots
+
+        state = administration(self.work)
+        history = set(administration_roots(self.work, state, include_index=False))
+        self.assertEqual(set(bundle_roots(self.work, state)), history)
+        self.assertGreater(len(administration_roots(self.work, state)), len(history))
+
+        (self.work / 'mixed.txt').write_text('unique staged contents\n')
+        self.git(self.work, 'add', 'mixed.txt')
+        staged = self.git(self.work, 'rev-parse', ':mixed.txt').decode().strip()
+        self.assertEqual(set(bundle_roots(self.work, administration(self.work))), history | {staged})
+        archive = self.archive('--self-contained', '--preserve-git-admin')
+        tips = {line.split()[0].decode() for line in
+                self.git(self.work, 'bundle', 'list-heads', str(archive / 'commits.bundle')).splitlines()}
+        self.assertEqual(tips, history | {staged})
+
+        self.git(self.work, 'commit', '-qm', 'new contents')
+        # This blob now exists only in historical trees, not the current HEAD tree.
+        (self.work / 'historical-copy').write_text('base\n')
+        self.git(self.work, 'add', 'historical-copy')
+        state = administration(self.work)
+        history = set(administration_roots(self.work, state, include_index=False))
+        self.assertEqual(set(bundle_roots(self.work, state)), history)
+
+    def test_git_administration_fetch_head_validation(self):
+        from worktree_archive_administration import administration, fetch_head_roots, load_administration
+
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        self.assertEqual(fetch_head_roots(''), [])
+        self.assertEqual(fetch_head_roots((b'a' * 64 + b'\t\tSHA256 fixture\n').hex()), ['a' * 64])
+        payload = self.root / 'admin-payload'
+        payload.mkdir()
+        state = administration(self.work)
+        for data in (b'bad line\n', b'0' * 40 + b'\t\tzero\n',
+                     b'f' * 40 + b'\tunexpected\tflag\n', b'--option\t\tunsafe\n'):
+            with self.subTest(data=data):
+                (admin / 'FETCH_HEAD').write_bytes(data)
+                with self.assertRaisesRegex(ValueError, 'invalid_FETCH_HEAD'):
+                    administration(self.work)
+                state['files']['FETCH_HEAD'] = data.hex()
+                (payload / 'git-admin.json').write_text(json.dumps(state))
+                with self.assertRaisesRegex(ValueError, 'invalid_FETCH_HEAD'):
+                    load_administration(payload)
+
+    def test_git_administration_rejects_batch_command_injection(self):
+        from worktree_archive_snapshot import administration, administration_roots
+
+        state = administration(self.work)
+        head = self.git(self.work, 'rev-parse', 'HEAD').strip()
+        for suffix in (b'\nupdate refs/heads/injected ' + head,
+                       b'\x00delete refs/heads/archive-head'):
+            with self.subTest(suffix=suffix):
+                state['files']['ORIG_HEAD'] = (head + suffix).hex()
+                with self.assertRaisesRegex(ValueError, 'git_admin:invalid_object_id'):
+                    administration_roots(self.work, state)
 
     def test_git_administration_rejects_unknown_operations_and_locks(self):
         import worktree_archive_snapshot as snapshots
@@ -610,22 +676,24 @@ class ArchiveLifecycle(unittest.TestCase):
                 administration(self.work)
             self.assertEqual(path.read_bytes(), b'preserve this')
             path.unlink()
-        path = state_dir / 'js-readiness.json'
-        path.symlink_to(self.work / 'mixed.txt')
-        with self.assertRaisesRegex(ValueError, 'git_admin:symlink:'):
-            administration(self.work)
-        path.unlink()
-        path.write_bytes(b'x' * (MAX_READINESS_BYTES + 1))
-        with self.assertRaisesRegex(ValueError, 'git_admin:readiness_too_large:'):
-            administration(self.work)
-        path.write_bytes(b'bounded')
-        state = administration(self.work)
-        state['files']['aidevops/js-readiness.json'] = '00' * (MAX_READINESS_BYTES + 1)
         payload = self.root / 'malformed-admin'
         payload.mkdir()
-        (payload / 'git-admin.json').write_text(json.dumps(state))
-        with self.assertRaisesRegex(ValueError, 'git_admin:readiness_too_large:'):
-            load_administration(payload)
+        for name in ('aidevops/js-readiness.json', 'aidevops-profile-publication.json'):
+            with self.subTest(name=name):
+                path = admin / name
+                path.symlink_to(self.work / 'mixed.txt')
+                with self.assertRaisesRegex(ValueError, 'git_admin:symlink:'):
+                    administration(self.work)
+                path.unlink()
+                path.write_bytes(b'x' * (MAX_READINESS_BYTES + 1))
+                with self.assertRaisesRegex(ValueError, 'git_admin:readiness_too_large:'):
+                    administration(self.work)
+                path.write_bytes(b'bounded')
+                state = administration(self.work)
+                state['files'][name] = '00' * (MAX_READINESS_BYTES + 1)
+                (payload / 'git-admin.json').write_text(json.dumps(state))
+                with self.assertRaisesRegex(ValueError, 'git_admin:readiness_too_large:'):
+                    load_administration(payload)
 
     def test_git_administration_rejects_location_dependent_config(self):
         import worktree_archive_snapshot as snapshots
