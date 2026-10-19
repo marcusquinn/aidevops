@@ -54,5 +54,6 @@ Discovery: exact producer search found the existing central full-copy implementa
 - `.agents/scripts/worktree_recovery_migration_state.py`
 - `.agents/scripts/worktree_recovery_migration_scratch.py`
 - `.agents/scripts/tests/test-worktree-archive-lifecycle.py`
+- `.agents/scripts/tests/worktree_recovery_producer_cases.py` — focused cases imported by the existing suite; extracted after CI reported a file-complexity regression, with no new runner or fixture infrastructure
 
 Shared helper edits outside this scope require inspection and explicit scope expansion, not copying a parallel implementation. PR references this leaf with its closing keyword and uses `For #35110` / `For #35078` for the parents. Stop at the verified PR/merge boundary; no publication or installed-store operations.

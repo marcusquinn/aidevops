@@ -102,7 +102,7 @@ def reservation(source, root):
     return current, directory, output
 
 
-def reserve(source, current, directory, output, caller, context):
+def reserve(current, directory, output, caller, context):
     journal = directory / "journal.json"
     if os.path.lexists(journal):
         record = load(journal, SCHEMA)
@@ -111,6 +111,7 @@ def reserve(source, current, directory, output, caller, context):
                 and record["output_inode"] == inode(output), "producer:reservation-changed")
         return record
     require(not any(output.iterdir()), "producer:unrecorded-capture; retained for review")
+    source = Path(current["identity"]["path"])
     require(shutil.disk_usage(output).free >= capacity(source, current["snapshot"]), "producer:insufficient-capacity")
     repo, base = attribution(source, current["identity"])
     record = {"schema": SCHEMA, "phase": "reserved", "source": current,
@@ -174,7 +175,7 @@ def verify_archive(record, lock):
 def prepare(source, root, caller, context):
     current, directory, output = reservation(source, root)
     with operation_lock(directory) as lock:
-        record = reserve(source, current, directory, output, caller, context)
+        record = reserve(current, directory, output, caller, context)
         if record["phase"] in ("reserved", "capturing"):
             capture(directory, record, lock)
         if record["phase"] == "captured":
