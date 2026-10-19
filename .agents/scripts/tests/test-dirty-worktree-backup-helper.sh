@@ -9,6 +9,8 @@ TESTS_FAILED=0
 TEST_ROOT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../dirty-worktree-backup-helper.sh"
+# shellcheck source=.agents/scripts/portable-stat.sh
+source "${SCRIPT_DIR}/../portable-stat.sh"
 
 print_result() {
 	local name="$1"
@@ -190,8 +192,7 @@ test_ignored_descendants_and_clean_rollback() {
 	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
 	[[ "$(awk -F '\t' '$1 == "clean_state" { print $2 }' "$backup_dir/manifest.tsv")" == "rolled_back" ]] || rc=1
-	[[ "$(stat -f '%Lp' "$repo_dir/local-state/runtime/nested/payload.bin" 2>/dev/null ||
-		stat -c '%a' "$repo_dir/local-state/runtime/nested/payload.bin")" == "640" ]] || rc=1
+	[[ "$(_file_perms "$repo_dir/local-state/runtime/nested/payload.bin")" == "640" ]] || rc=1
 
 	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" clean --repo "$repo_dir" --backup "$backup_id" \
