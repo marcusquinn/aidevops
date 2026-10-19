@@ -27,6 +27,7 @@ if the final message is a closeout that asks for nothing (What next block or
 completion claim) while files this session's Edit/Write/MultiEdit/NotebookEdit
 calls changed remain uncommitted. Only those paths are checked with live
 `git status`; Bash-originated edits and unrelated dirty files are ignored.
+Logic lives in the companion session_capture_check.py.
 
 Installed by: install-hooks-helper.sh (setup.sh) and update-claude-settings.py
 Location: ~/.aidevops/hooks/session_continuation_stop.py
@@ -37,7 +38,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -80,24 +80,14 @@ NEEDED_FROM_YOU_RE = re.compile(r"Needed from you:[*_\s]*([^\n]*)", re.IGNORECAS
 NO_ASK_RE = re.compile(r"^(?:none|nothing|n/a)\b", re.IGNORECASE)
 CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 CODE_SPAN_RE = re.compile(r"`[^`]*`")
-# GH#35121: closeout detection, ported from session-continuation-utils.mjs
-# (isUnaskedCloseout / isExplicitCompletionClaim); keep both in sync.
-WHAT_NEXT_RE = re.compile(r"\bWhat next\b", re.IGNORECASE)
-NOT_DONE_RE = re.compile(
-    r"\b(?:not|isn't|is not|aren't|are not)\s+(?:done|complete|completed|finished)\b",
-    re.IGNORECASE,
-)
-COMPLETION_RE = re.compile(
-    r"(?:^|[.!?]\s+)(?:FULL_LOOP_COMPLETE\b"
-    r"|(?:the\s+)?(?:task|work|implementation|objective|issue|request)\s+(?:is|has been)\s+"
-    r"(?:now\s+)?(?:done|complete|completed|finished)"
-    r"|(?:all|everything)\s+(?:is|has been)\s+(?:done|complete|completed|finished))",
-    re.IGNORECASE | re.MULTILINE,
-)
-EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-MAX_EDITED_PATHS = 200
-MAX_GIT_ROOTS = 8
-GIT_TIMEOUT_SECONDS = 3
+
+# GH#35121: companion installed alongside this hook; an older install without
+# it simply skips the Capture Check (fail-open).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import session_capture_check as capture
+except ImportError:  # pragma: no cover - partial install
+    capture = None
 
 
 def _is_headless() -> bool:
@@ -128,18 +118,17 @@ def _scan_assistant(content, state: dict) -> None:
     if text.strip():
         state["assistant"] = text
     for block in content if isinstance(content, list) else []:
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
-            continue
-        tool_input = block.get("input")
-        if block.get("name") == "TodoWrite" and isinstance(tool_input, dict):
-            todos = tool_input.get("todos")
-            if isinstance(todos, list):
-                state["todos"] = todos
-        if block.get("name") in EDIT_TOOLS and isinstance(tool_input, dict):
-            path = tool_input.get("file_path") or tool_input.get("notebook_path")
-            edits = state["edits"]
-            if isinstance(path, str) and path.strip() and len(edits) < MAX_EDITED_PATHS:
-                edits.add(path.strip())
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            _scan_tool_use(block.get("name"), block.get("input"), state)
+
+
+def _scan_tool_use(name, tool_input, state: dict) -> None:
+    if name == "TodoWrite" and isinstance(tool_input, dict):
+        todos = tool_input.get("todos")
+        if isinstance(todos, list):
+            state["todos"] = todos
+    if capture is not None:
+        capture.record_edit(name, tool_input, state["edits"])
 
 
 def _scan_entry(entry, state: dict) -> None:
@@ -215,78 +204,17 @@ def _hands_back_to_user(text: str, open_count: int) -> bool:
     return open_count <= 1 and _reports_blocker(text)
 
 
-def _is_unasked_closeout(text: str) -> bool:
-    """GH#35121: a What next block or completion claim that asks for nothing."""
-    stripped = _without_code(text)
-    if not stripped.strip() or _hands_back_to_user(text, 0):
-        return False
-    if WHAT_NEXT_RE.search(stripped):
-        return True
-    return not NOT_DONE_RE.search(stripped) and bool(COMPLETION_RE.search(stripped))
-
-
-def _git(cwd: str, args: list) -> str:
-    return subprocess.run(
-        ["git", "-C", cwd, *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=GIT_TIMEOUT_SECONDS,
-    ).stdout
-
-
-def _dirty_edits(paths, cwd: str) -> list:
-    """GH#35121: live Git state for session-edited paths only.
-
-    Returns [(root, [relative paths])] for roots with uncommitted session
-    edits. Unrelated dirty files never count; paths outside a repository or
-    unreadable roots are skipped (fail-open).
-    """
-    by_root: dict = {}
-    root_for: dict = {}
-    for raw in sorted(paths):
-        path = Path(cwd or ".", raw).expanduser()
-        try:
-            directory = path.parent.resolve(strict=True)
-        except OSError:
-            continue
-        if directory not in root_for:
-            try:
-                root_for[directory] = _git(str(directory), ["rev-parse", "--show-toplevel"]).strip()
-            except (OSError, subprocess.SubprocessError):
-                root_for[directory] = ""
-        root = root_for[directory]
-        if not root:
-            continue
-        if root not in by_root:
-            if len(by_root) >= MAX_GIT_ROOTS:
-                continue
-            by_root[root] = []
-        by_root[root].append(os.path.relpath(directory / path.name, root))
-    dirty = []
-    for root, files in by_root.items():
-        try:
-            status = _git(root, ["status", "--porcelain=v1", "--untracked-files=all", "--", *files])
-        except (OSError, subprocess.SubprocessError):
-            continue
-        changed = [line[3:] for line in status.splitlines() if line.strip()]
-        if changed:
-            dirty.append((root, changed))
-    return dirty
-
-
-def _capture_reason(dirty: list) -> str:
-    """One-sentence Capture Check nudge naming each root and its changes."""
-    summary = "; ".join(
-        f"{root} ({', '.join(files[:5])}{', …' if len(files) > 5 else ''})"
-        for root, files in dirty
-    )
-    return (
-        f"Your closeout asks for nothing but files this session edited remain "
-        f"uncommitted in {summary}, so commit them if you hold commit authority, "
-        "otherwise ask for bounded commit/PR approval under Needed from you, "
-        "name each worktree's changes under Left to capture and keep Close at Not yet."
-    )
+def _stop_reason(state: dict, final_text: str, cwd: str):
+    """Block reason for open todos, or (GH#35121) for an unasked closeout that
+    leaves session-edited files uncommitted once every todo is terminal."""
+    open_todos = _open_todos(state["todos"])
+    if _hands_back_to_user(final_text, len(open_todos)):
+        return None
+    if open_todos:
+        return _block_reason(open_todos, final_text)
+    if capture is None:
+        return None
+    return capture.capture_block(state["edits"], _without_code(final_text), cwd)
 
 
 def _state_file(session_id: str) -> Path:
@@ -332,26 +260,15 @@ def decide(payload: dict):
     if blocks >= _max_blocks():
         return None
     state = _read_transcript(transcript_path)
-    open_todos = _open_todos(state["todos"])
     final_text = payload.get("last_assistant_message")
     if not isinstance(final_text, str) or not final_text.strip():
         final_text = state["assistant"]
-    if USER_STOP_RE.search(state["user"]):
-        return None
-    if not open_todos:
-        # GH#35121: all todos terminal (or none tracked) but the closeout asks
-        # for nothing while session-edited files remain uncommitted.
-        if not state["edits"] or not _is_unasked_closeout(final_text):
-            return None
-        dirty = _dirty_edits(state["edits"], str(payload.get("cwd") or ""))
-        if not dirty:
-            return None
+    reason = None
+    if not USER_STOP_RE.search(state["user"]):
+        reason = _stop_reason(state, final_text, str(payload.get("cwd") or ""))
+    if reason:
         _record_block(session_id, blocks + 1)
-        return _capture_reason(dirty)
-    if _hands_back_to_user(final_text, len(open_todos)):
-        return None
-    _record_block(session_id, blocks + 1)
-    return _block_reason(open_todos, final_text)
+    return reason
 
 
 def _block_reason(open_todos: list, final_text: str) -> str:

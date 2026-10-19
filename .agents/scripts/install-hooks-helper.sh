@@ -38,6 +38,7 @@ STRUCTURED_TEXT_PARSER_SCRIPT="$HOOKS_DIR/structured_text_parser.py"
 SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
 STOP_HOOK_SCRIPT="$HOOKS_DIR/session_continuation_stop.py"
+STOP_HOOK_CAPTURE_SCRIPT="$HOOKS_DIR/session_capture_check.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
@@ -828,6 +829,8 @@ install_hook() {
 	source_complexity_advisory_hook=$(find_source_hook "complexity_advisory_pre_edit.py") || return 1
 	local source_stop_hook
 	source_stop_hook=$(find_source_hook "session_continuation_stop.py") || return 1
+	local source_stop_hook_capture
+	source_stop_hook_capture=$(find_source_hook "session_capture_check.py") || return 1
 
 	# Pre-install validator dry-run (t2226): abort if validators fail HEAD state
 	_dry_run_validators "$source_hook" "$force_install" || return 1
@@ -859,6 +862,8 @@ install_hook() {
 	cp "$source_stop_hook" "$STOP_HOOK_SCRIPT"
 	chmod +x "$STOP_HOOK_SCRIPT"
 	print_success "Installed $STOP_HOOK_SCRIPT"
+	cp "$source_stop_hook_capture" "$STOP_HOOK_CAPTURE_SCRIPT"
+	print_success "Installed $STOP_HOOK_CAPTURE_SCRIPT"
 	_probe_hook_runtime "$HOOK_SCRIPT" || return 1
 
 	# Configure Claude Code settings.json
@@ -1168,6 +1173,10 @@ _uninstall_stop_hook() {
 	if [[ -f "$STOP_HOOK_SCRIPT" ]]; then
 		rm "$STOP_HOOK_SCRIPT"
 		print_success "Removed $STOP_HOOK_SCRIPT"
+	fi
+	if [[ -f "$STOP_HOOK_CAPTURE_SCRIPT" ]]; then
+		rm "$STOP_HOOK_CAPTURE_SCRIPT"
+		print_success "Removed $STOP_HOOK_CAPTURE_SCRIPT"
 	fi
 	[[ -f "$CLAUDE_SETTINGS" ]] || return 0
 	python3 - "$CLAUDE_SETTINGS" <<'PY' 2>/dev/null || print_warning "Could not remove Stop hook from $CLAUDE_SETTINGS"
