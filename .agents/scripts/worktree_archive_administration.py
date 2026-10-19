@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 
 from worktree_archive_readiness import (
-    OPAQUE_ADMIN_FILES, READINESS_ADMIN_FILES as READINESS_ADMIN_FILES,
+    OPAQUE_ADMIN_FILES,
     read_admin_bytes, validate_readiness_payload,
 )
 
