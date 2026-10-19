@@ -95,6 +95,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import signal
 import stat
 import subprocess
@@ -296,6 +297,10 @@ try:
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',
               file=sys.stderr)
     if secrets:
+        rejection = runpy.run_path(str(Path(sys.argv[5]).parent / 'runner-secret-rejection.py'))
+        rejected_name = rejection['process_names']('check', sorted(secrets))
+        if rejected_name:
+            unmet(f'secret_rejected name={rejected_name}')
         cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''
         with cycle_state(cycle) as (handle, state):
             cached_name = state.get('name', '')
