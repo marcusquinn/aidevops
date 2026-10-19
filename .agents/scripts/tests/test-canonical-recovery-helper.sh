@@ -1113,8 +1113,12 @@ if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS"
 	[[ "$(/usr/bin/git -C "$SYNC_REPO" ls-files --others --exclude-standard -- local-only.txt)" == "local-only.txt" ]] &&
 	[[ "$(<"${SYNC_REPO}/local-only.txt")" == "recreated local-only bytes" ]] &&
 	[[ "$(/usr/bin/git -C "$SYNC_REPO" check-ignore local-state/runtime/nested/payload.bin)" == "local-state/runtime/nested/payload.bin" ]] &&
-	[[ "$(stat -f '%Lp' "${SYNC_REPO}/local-state/runtime/nested/payload.bin" 2>/dev/null ||
-		stat -c '%a' "${SYNC_REPO}/local-state/runtime/nested/payload.bin")" == "640" ]]; then
+	# Select stat's format before capture: failed GNU stat -f can emit stdout.
+	[[ "$(if [[ "$(uname -s)" == "Darwin" ]]; then
+		stat -f '%Lp' "${SYNC_REPO}/local-state/runtime/nested/payload.bin"
+	else
+		stat -c '%a' "${SYNC_REPO}/local-state/runtime/nested/payload.bin"
+	fi)" == "640" ]]; then
 	printf 'PASS emitted backup ID restores byte-identical content and index state\n'
 else
 	printf 'FAIL backup restore did not reconstruct the original canonical state\n'
