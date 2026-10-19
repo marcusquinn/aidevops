@@ -300,7 +300,9 @@ cmd_analyze() {
 
 	# Run secretlint if available
 	echo -e "${CYAN}Running secret detection...${NC}"
+	local secret_stage="Secretlint unavailable (not run)"
 	if check_command secretlint || (check_command npx && npx secretlint --version &>/dev/null 2>&1); then
+		secret_stage="Secretlint ran"
 		local secretlint_cmd="secretlint"
 		if ! check_command secretlint; then
 			secretlint_cmd="npx secretlint"
@@ -314,8 +316,10 @@ cmd_analyze() {
 	fi
 
 	echo ""
-	echo -e "${GREEN}Analysis complete.${NC}"
-	echo -e "For AI-powered deep analysis, use the security-analysis subagent."
+	# GH#35120: report the scanner stage only; this is not a completed audit.
+	echo -e "${GREEN}Scanner stage finished:${NC} ${secret_stage}."
+	echo -e "${YELLOW}Not a security audit:${NC} no source-to-sink investigation or independent verification ran."
+	echo -e "For deep analysis, use the security-analysis subagent (tools/code-review/security-analysis.md)."
 
 	return 0
 }

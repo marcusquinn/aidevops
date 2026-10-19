@@ -28,7 +28,7 @@ mcp:
 - **Commands**: `analyze [diff|staged|branch|full]` | `scan-deps [path]` | `history [commits]` | `skill-scan` | `vt-scan [status|file|url|domain|skill] [target]` | `ferret` | `report [--format=sarif]`
 - **Workflow**: pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly (`analyze full`) → post-dep-change (`scan-deps`)
 - **Output**: `.security-analysis/` — `SECURITY_REPORT.md`, `security-report.json`, `security-report.sarif`
-- **Severity**: critical > high > medium > low > info
+- **Severity**: critical > high > medium > low > info; assigned only to `confirmed` records after independent verification (see below)
 - **Benchmarks**: 90% precision, 93% recall (OpenSSF CVE Benchmark)
 - **Integrations**: OSV-Scanner (deps), Secretlint (secrets), Ferret (AI configs), VirusTotal (file/URL/domain), Shannon (pentesting), Snyk/SonarCloud/CodeQL (optional)
 - **MCP**: `gemini-cli-security` — `find_line_numbers`, `get_audit_scope`, `run_poc`
@@ -42,6 +42,23 @@ mcp:
 **Pass 1 — Recon**: Fast scan; identify all untrusted input sources. Checklist example: `SAST Recon on src/auth/handler.ts → Investigate data flow from userId:15, userInput:42`.
 
 **Pass 2 — Trace**: For each source: (1) origin (req.body, req.query), (2) trace through calls/transforms, (3) sink (SQL query, HTML output, shell command), (4) verify sanitization.
+
+Record each traced candidate as `confirmed`, `needs_validation` (name the one missing fact) or `rejected`, with the evidence chain and impact-based severity defined in `tools/code-review/security-audit.md` "Finding Dispositions and Evidence". Checklist gaps without an exploit path are hardening notes, not findings.
+
+## Independent Verification
+
+The finder never verifies its own findings. Before reporting a record as `confirmed`:
+
+1. Build a neutral packet for each candidate: the evidence-chain fields plus the cited source excerpts at the reviewed ref. Leave out the finder's reasoning, confidence and severity argument.
+2. Ask a fresh-context reviewer to **refute** it against that source: find the control, unreachable path or false precondition that defeats it. Use the bounded roles and envelope in `reference/agent-routing.md` ("Focused domain delegation", "Blind acceptance review"; `specialist-advisor` for evidenced difficulty). The reviewer is inference-only: no tools, writes or network, and never runs target code.
+3. The parent keeps the disposition. Refuted → `rejected` with the reviewer's reason. A missing fact identified → `needs_validation`. Not refuted → `confirmed`, labelled `fresh-context advisory`.
+4. Any material upgrade after verification (new root cause, wider impact, higher severity) needs a fresh pass on the revised record.
+
+If no fresh-context route is available in the runtime, label the record `self-review` and state the limitation in the report. Do not present it as independently verified.
+
+## Stage Outcomes
+
+Report scanner availability and failures, investigation coverage, verification and blockers separately (template: `tools/code-review/security-audit.md` "Stage Outcomes"). A clean Secretlint/OSV run or a well-formed report shows that those tools ran, not that a security audit is complete. `security-helper.sh analyze` covers only the scanner stage.
 
 ## Integrations
 

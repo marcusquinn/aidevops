@@ -19,7 +19,7 @@ Target: $ARGUMENTS
 ## Workflow
 
 1. Parse `$ARGUMENTS` as a git-cloneable URL. If missing/invalid, return usage and stop.
-2. Read `tools/code-review/security-audit.md` — follow it as the source of truth for audit categories, report template, and severity model.
+2. Read `tools/code-review/security-audit.md` — follow it as the source of truth for audit categories, finding dispositions, report template, and severity model.
 3. Clone shallowly into the audit workspace (`~/.aidevops/.agent-workspace/tmp/security-audit/`). Use `security-helper.sh` and `secretlint-helper.sh`:
 
    ```bash
@@ -33,7 +33,7 @@ Target: $ARGUMENTS
 
 4. Detect stack indicators (`Cargo.toml`, `package.json`, `requirements.txt`, `go.mod`, `Dockerfile`, `.github/workflows/`, `*.sh`).
 5. Run all applicable audit categories from the methodology. Parallelize independent scans.
-6. Produce the final report using the methodology template and severity model.
+6. Disposition each candidate (`confirmed` / `needs_validation` / `rejected`, hardening notes kept separate), run the independent refutation pass for `confirmed` records, then produce the final report with stage outcomes using the methodology template.
 7. Cleanup: `rm -rf "$CLONE_DIR"`
 
 ## Related Commands

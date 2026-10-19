@@ -19,13 +19,13 @@ Target: $ARGUMENTS
 
 1. **Determine scope** from $ARGUMENTS: empty/`diff` → uncommitted changes; `staged` → staged only; `branch` → current branch vs main; `full` → entire codebase; path → specific directory.
 
-2. **Run analysis**: `./.agents/scripts/security-helper.sh analyze [$ARGUMENTS]`
+2. **Run the scanner stage**: `./.agents/scripts/security-helper.sh analyze [$ARGUMENTS]` (scanners only; not a completed analysis).
 
-3. **Review findings** by severity (critical > high > medium > low). For each: verify true positive, trace data flow source→sink, propose remediation with code fix.
+3. **Investigate and verify**: trace each candidate source→sink, record `confirmed` / `needs_validation` / `rejected`, and send `confirmed` records through the independent refutation pass. See `tools/code-review/security-analysis.md` "Independent Verification".
 
 4. **Generate report**: `./.agents/scripts/security-helper.sh report`
 
-5. **Output**: summary by severity; critical/high with file:line, CWE, remediation; prioritized recommendations; report path.
+5. **Output**: confirmed findings by severity with file:line, CWE, remediation and verification label; unresolved leads and hardening notes listed separately; stage outcomes; report path.
 
 ## Vulnerability Categories
 

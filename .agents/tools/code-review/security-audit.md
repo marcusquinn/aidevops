@@ -45,6 +45,8 @@ mcp:
 | 10 | Prompt injection patterns | AI/agent code present |
 | 11 | Security automation (Dependabot) | Always |
 
+**Findings contract** (see "Finding Dispositions and Evidence"): every candidate ends `confirmed`, `needs_validation`, or `rejected`; only `confirmed` records carry vulnerability severity; checklist gaps are hardening notes; each `confirmed` record gets a fresh-context refutation pass (`tools/code-review/security-analysis.md` "Independent Verification"). Scanner output alone is never a completed audit.
+
 <!-- AI-CONTEXT-END -->
 
 ## 1. Clone & Detect Stack
@@ -93,9 +95,9 @@ Cargo: `cargo audit` | npm: `npm audit --json` | pip: `pip audit -r requirements
 ### 2.4 GitHub Actions Supply Chain (`.github/workflows/` present)
 
 ```bash
-rg -n 'uses:\s+[^#]+@(v\d|main|master|latest)' --glob '*.{yml,yaml}' -g '.github/**'  # Unpinned (HIGH)
-rg -L '^permissions:' --glob '*.{yml,yaml}' -g '.github/**'                             # Missing permissions (HIGH)
-rg -n 'echo.*\$\{\{\s*secrets\.' --glob '*.{yml,yaml}' -g '.github/**'                 # Leaked secrets
+rg -n 'uses:\s+[^#]+@(v\d|main|master|latest)' --glob '*.{yml,yaml}' -g '.github/**'  # Unpinned (hardening)
+rg -L '^permissions:' --glob '*.{yml,yaml}' -g '.github/**'                             # Missing permissions (hardening)
+rg -n 'echo.*\$\{\{\s*secrets\.' --glob '*.{yml,yaml}' -g '.github/**'                 # Leaked secrets (candidate)
 rg -on 'uses:\s+([^/]+/[^@]+)@' --glob '*.{yml,yaml}' -g '.github/**' -r '$1' | \
   grep -v -E '^[^:]+:(actions|github)/' | sort -u                                       # Third-party actions
 ```
@@ -163,7 +165,58 @@ ls SECURITY.md .github/SECURITY.md 2>/dev/null
 
 Review: auth model (API keys/OAuth/JWT/session), authorization (RBAC/ABAC), input validation, error handling (no internal detail leakage), logging (no sensitive data), encryption (TLS enforced, data at rest).
 
-## 4. Cleanup
+## 4. Finding Dispositions and Evidence
+
+Scan matches in section 2 are **candidates**, not findings. Investigate each with the source-to-sink trace in `tools/code-review/security-analysis.md`, then record exactly one disposition. This applies the `reference/review-core.md` finding contract: a security finding describes a concrete, actionable exposure, not speculative hardening.
+
+| Disposition | Meaning | Counts toward |
+|-------------|---------|---------------|
+| `confirmed` | The evidence chain is complete and the independent refutation pass failed to disprove it | Vulnerability severity and overall rating |
+| `needs_validation` | Source-grounded lead missing **one named fact** (e.g., "is `/admin` reachable without the auth middleware in production config?") | Reported as unresolved; never severity |
+| `rejected` | Disproved by a control visible in the source, unreachable, or test-only. Record the reason in one line | Nothing; keep for traceability |
+
+Speculative ideas that cannot name the missing fact are dropped, not reported as `needs_validation`.
+
+**Evidence chain** (required for `confirmed`; record the known fields for `needs_validation`):
+
+- **Source ref**: commit SHA reviewed (and dirty state if not a clean clone)
+- **Principal**: the lower-trust actor (anonymous user, tenant, PR author, dependency)
+- **Entrypoint**: where that actor's input enters (`file:line`, route, workflow trigger)
+- **Propagation**: the path from entrypoint to sink, with `file:line` hops
+- **Sink / boundary**: what is crossed (shell, SQL, HTML, filesystem, secret, other tenant's data)
+- **Controls**: source-visible validation, auth or sandboxing on the path, and why they do not prevent it
+- **Impact**: the affected resource and the realistic result; mark it static-only, because target code is never executed (`tools/security/security-audit.md` rule 2)
+- **Remediation**: the narrowest effective fix at the owning boundary
+
+**Vulnerability severity** (`confirmed` only; based on demonstrated impact and realistic preconditions, not on pattern category):
+
+| Severity | Criteria |
+|----------|----------|
+| **CRITICAL** | Unauthenticated or low-precondition RCE, live credential exposure, auth bypass on sensitive data |
+| **HIGH** | Exploitable injection or privilege escalation that needs a plausible precondition (an account, a crafted PR on a `pull_request_target` workflow) |
+| **MEDIUM** | Exploitable but limited in impact or reach (information disclosure, a DoS needing auth) |
+| **LOW** | Exploitable only with unlikely preconditions or negligible impact |
+
+**Hardening notes** (checklist gaps with no demonstrated exploit path; they never receive vulnerability severity). Prioritize them separately:
+
+| Priority | Examples |
+|----------|----------|
+| **High** | Unpinned third-party GitHub Actions, missing workflow `permissions:`, Docker image runs as root (no `USER`), no rate limiting on auth endpoints |
+| **Medium** | No Dependabot/Renovate, wildcard CORS without credentials, `http://` URLs in production config, excessive `.unwrap()` |
+| **Low** | No `SECURITY.md`, single-stage Docker build, minor ShellCheck warnings |
+
+A hardening gap becomes a vulnerability only when a candidate is traced through it to a `confirmed` exploit path; for example, an unpinned action is a vulnerability only if the action can be compromised and receives secrets or write tokens.
+
+**Stage outcomes**: report each stage separately. Never infer one from another:
+
+- **Scanners**: which ran, which were unavailable, which failed
+- **Investigation**: candidates traced vs. not reached (and why)
+- **Verification**: `confirmed` records that passed the independent refutation pass, or `self-review` if none was available
+- **Blockers**: anything that leaves the audit partial (missing tool, budget, unreachable config)
+
+Methodology note: dispositions, impact-based severity, fresh-context verification and separate stage reporting are adapted from Cloudflare's [security-audit-skill](https://github.com/cloudflare/security-audit-skill) (MIT). No text or code is copied.
+
+## 5. Cleanup
 
 ```bash
 rm -rf "$CLONE_DIR"
@@ -174,38 +227,62 @@ rm -rf "$CLONE_DIR"
 ````markdown
 ## Security Audit Report: {repo-name}
 
-**Repository:** {url}  **Audit Date:** {ISO date}  **Languages:** {detected}
+**Repository:** {url}  **Source ref:** {commit SHA}  **Audit Date:** {ISO date}  **Languages:** {detected}
 **Overall Assessment:** {Excellent | Strong | Good | Needs Work | Critical Issues}
+**Audit completeness:** {complete | partial: blockers below}
 
-### Findings
+### Confirmed Vulnerabilities
 
-| Priority | Finding | Location | Category |
-|----------|---------|----------|----------|
-| HIGH | {description} | {file:line} | {category} |
+| Severity | Finding | Location | Principal → Sink | Verification |
+|----------|---------|----------|------------------|--------------|
+| HIGH | {description} | {file:line} | {principal} → {sink} | {fresh-context advisory \| self-review} |
+
+{Per finding: the evidence chain fields and remediation.}
+
+### Needs Validation
+
+| Lead | Location | Missing fact |
+|------|----------|--------------|
+| {description} | {file:line} | {the one fact that would confirm or reject it} |
+
+### Rejected Candidates
+
+| Candidate | Location | Reason |
+|-----------|----------|--------|
+| {scan match} | {file:line} | {control, unreachable, or test-only} |
+
+### Hardening Notes
+
+| Priority | Note | Location | Category |
+|----------|------|----------|----------|
+| High | {checklist gap} | {file or config} | {category} |
+
+### Stage Outcomes
+
+- Scanners: {ran / unavailable / failed}
+- Investigation: {candidates traced / not reached}
+- Verification: {independent / self-review}
+- Blockers: {none | list}
 
 ### Category Results
 
-Report PASS/FAIL/WARN/SKIP for each category from the audit categories table above.
+Report PASS/FAIL/WARN/SKIP for each category from the audit categories table above. Category status shows what was checked, not exhaustive coverage.
 
 ### Recommendations
 
-1. **{Priority}**: {actionable recommendation}
+1. **{Severity or hardening priority}**: {actionable recommendation}
 ````
 
-## Severity and Assessment
+## Overall Assessment
 
-| Severity | Criteria |
-|----------|----------|
-| **CRITICAL** | Active credential exposure, RCE, no auth on sensitive endpoints |
-| **HIGH** | Unpinned GitHub Actions, missing USER in Docker, eval with user input, no rate limiting on auth |
-| **MEDIUM** | Excessive `.unwrap()`, missing Dependabot, wildcard CORS, http:// in production code |
-| **LOW** | Missing SECURITY.md, no multi-stage Docker build, minor ShellCheck warnings |
-| **INFO** | Best practice suggestions, architecture notes |
+Vulnerability counts use `confirmed` records only. Hardening notes can lower a rating from Excellent to Good but can never produce Needs Work or Critical Issues.
 
 | Rating | Criteria |
 |--------|----------|
-| **Excellent** | 0 HIGH+, 0-2 MEDIUM, comprehensive security automation |
-| **Strong** | 0 HIGH+, 3-5 MEDIUM, some security automation |
-| **Good** | 0 CRITICAL, 1-2 HIGH, reasonable security practices |
-| **Needs Work** | 0 CRITICAL, 3+ HIGH or 10+ MEDIUM |
-| **Critical Issues** | Any CRITICAL finding, or 5+ HIGH findings |
+| **Excellent** | 0 confirmed vulnerabilities above LOW, at most 2 High hardening notes, comprehensive security automation |
+| **Strong** | 0 confirmed above LOW, 3+ High hardening notes or limited security automation |
+| **Good** | 0 confirmed CRITICAL/HIGH, and 1+ confirmed MEDIUM or 6+ High hardening notes |
+| **Needs Work** | 0 confirmed CRITICAL, 1-2 confirmed HIGH, or 3+ confirmed MEDIUM |
+| **Critical Issues** | Any confirmed CRITICAL, or 3+ confirmed HIGH |
+
+If the audit is partial, say so next to the rating; do not rate unaudited scope as clean.
