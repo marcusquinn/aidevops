@@ -7,47 +7,47 @@ description: Recovery archive evidence, planning, apply, and automatic maintenan
 
 # Recoverable Worktree Archives
 
-Maintenance failures emit JSON with `outcome: failed`, a stage, and a stable
-reason code, including when jq is unavailable. Async cleanup logs stdout on both
-success and failure together with the actual exit code; stderr remains in the
-same local log. No archive paths or raw errors are copied into reason codes.
+## Safety and recovery evidence
 
-Pending transactions receive one resume attempt per maintenance pass. After
-three failed attempts, maintenance moves the exact pending transaction into a
-unique `quarantined/pending.*` directory under its state directory, with a
-mode-0600 receipt recording the reason and attempt count, then continues fresh
-selection. Quarantine never deletes archives, reservations, completion files,
-or retention-trash journals, and does not grant new apply authority. Existing
-identity, journal, and lock checks still protect unfinished archive operations.
-Symlinked pending directories or retry metadata and non-regular retry files
-fail closed rather than being followed or overwritten. Invalid regular retry
-records exhaust the budget and are preserved unchanged in quarantine. Inspect retained
-quarantine receipts locally; repair requires the original plan and evidence.
+Recovery archives are safety snapshots, not generic discarded files. Age, size,
+disk pressure and session history never authorize deletion. Use the separate
+[migration](#explicit-compact-migration-no-retirement),
+[retirement](#confirmed-retirement-of-migrated-buckets),
+[planning](#inventory-and-retention-planning),
+[manual apply](#confirmation-bound-apply) and
+[automatic maintenance](#bounded-automatic-maintenance) contracts below.
 
-Recoverable worktree archives are coupled safety snapshots rather than generic
-discarded files. On macOS their default root remains `$HOME/.Trash`, where that
-path has OS Trash semantics. On Linux and other platforms the default is the
-framework-owned `$HOME/.aidevops/recovery/worktrees`; normal “Empty Trash” must
-not silently delete these recovery snapshots. Operators can continue to select
-an absolute root with `AIDEVOPS_WORKTREE_TRASH_ROOT` (or the legacy
-`AIDEVOPS_ORPHAN_TRASH_ROOT` fallback).
+Maintenance failures emit JSON with `outcome: failed`, stage and stable reason
+code even without jq. Async cleanup logs stdout, stderr and actual exit code
+locally on success and failure; reason codes contain no archive paths or raw errors.
 
-New buckets use the additive `aidevops-worktree-recovery-v2` evidence contract.
-Alongside stable Git identity, each records creation time, producer/context,
-optional runtime session identity, archive completion, source-removal outcome,
-`framework` ownership, the `recovery` safety class, and a `manual-review`
-policy. The completion marker is written only after archive integrity and source
-identity validation; successful native removal then atomically advances the
-source outcome from `pending` to `removed`.
+Resume pending transactions once per maintenance pass. After three failures, move
+the exact transaction into a unique `quarantined/pending.*` state directory with a
+mode-0600 reason/attempt-count receipt, then select fresh work. Quarantine neither
+deletes archives, reservations, completion files or retention-trash journals nor grants
+apply authority; existing identity, journal and lock checks protect unfinished work.
+Fail closed on symlinked pending directories/retry metadata or non-regular retry files.
+Invalid regular retry records exhaust the budget and remain unchanged in quarantine.
+Inspect receipts locally; repair requires the original plan and evidence.
 
-The bucket-level `manual-review` value is retained for v2 producer-format
-compatibility and grants no deletion authority. Manual confirmation or a
-separate policy-bound automatic plan must still revalidate the exact bucket.
+The default root is `$HOME/.Trash` on macOS (OS Trash semantics), but framework-owned
+`$HOME/.aidevops/recovery/worktrees` elsewhere: normal “Empty Trash” must not silently
+delete those snapshots. Select an absolute root with `AIDEVOPS_WORKTREE_TRASH_ROOT`
+or the legacy `AIDEVOPS_ORPHAN_TRASH_ROOT` fallback.
 
-Readers remain compatible with complete v1 buckets from the platform-storage
-transition and markerless legacy v1 buckets whose original Git recovery
-structure still validates. Partial v2 evidence is never reinterpreted as v1.
-Older readers reject v2 and therefore fail closed without damaging an archive.
+New buckets use additive `aidevops-worktree-recovery-v2` evidence: stable Git identity,
+creation time, producer/context, optional runtime session identity, archive completion,
+source-removal outcome, `framework` ownership, `recovery` safety class and
+`manual-review` policy. Write the completion marker only after archive integrity and
+source identity validation; successful native removal atomically advances the source
+outcome from `pending` to `removed`.
+
+`manual-review` remains for v2 producer-format compatibility, not deletion authority.
+Manual confirmation or a separate policy-bound automatic plan must revalidate the exact bucket.
+
+Readers accept complete platform-storage-transition v1 buckets and markerless legacy
+v1 buckets with valid original Git recovery structure. Never reinterpret partial v2
+evidence as v1. Older readers reject v2, failing closed without archive damage.
 
 Archive producers reserve one attempt per physical source identity before copying.
 An interrupted attempt remains explicitly reserved; retries do not create another
@@ -67,17 +67,15 @@ bash .agents/scripts/worktree-recovery-lifecycle-helper.sh migrate \
   --repo owner/repo --base-branch main
 ```
 
-This command holds the existing producer lock and creates one existing-format
-incremental archive with `--include-ignored --preserve-git-admin`, an exact
-merge-base SHA, separate staged/unstaged patches and only objects outside that
-base. No full repository history is copied into every archive. The existing
-common repository must retain the recorded base for the archive's lifetime.
-Verification imports only that base graph plus the delta into a separate repository
-without alternates, checks Git object integrity and compares the complete
-supported snapshot, including staged state and relevant administrative/history
-dependencies. It does **not** retire, rewrite or move the original bucket, update
-its reservation, or apply retention. Source removal needs a separate verified
-transition and the existing ownership/process/removal guards.
+Under the existing producer lock, create one existing-format incremental archive
+with `--include-ignored --preserve-git-admin`, exact merge-base SHA, separate
+staged/unstaged patches and only objects outside that base—not full repository history.
+The existing common repository must retain the recorded base for the archive's lifetime.
+Verification imports that base graph plus delta into a separate repository without
+alternates, checks Git object integrity and compares the complete supported snapshot,
+including staged state and relevant administrative/history dependencies. It does **not**
+retire, rewrite or move the original bucket, update its reservation or apply retention.
+Source removal needs a separate verified transition and existing ownership/process/removal guards.
 
 The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`.
 It binds physical identities, the source snapshot, opaque recovery provenance,
@@ -97,19 +95,17 @@ A replacement, late write or interrupted partial scratch removal is retained for
 review. This exclusion contract does not claim to fence arbitrary malicious
 same-user writers through content sampling alone.
 
-Retries reuse the reservation and a completed capture. Source drift, a changed
-manifest or invalid identity fails closed. An interrupted capture lacking a
-complete manifest remains explicitly incomplete; retry does not allocate another
-copy. Do not delete its journal or partial artifacts to force a retry. A complete
-capture can resume restoration/verification, and a completed receipt is reused
-only after fresh source/archive verification.
+Retries reuse the reservation and completed capture; source drift, changed manifest
+or invalid identity fails closed. Captures lacking a complete manifest stay incomplete:
+retry never allocates another copy. Do not delete journals or partial artifacts to
+force retry. Complete captures can resume restoration/verification; completed receipts
+require fresh source/archive verification before reuse.
 
-Unsupported inputs remain intact. The snapshot contract still rejects unusual
+Unsupported inputs remain intact: the unchanged snapshot contract rejects unusual
 permissions (including `0600` working files), ownership, ACLs/xattrs, hard links,
-empty directories and unsupported Git administration; migration does not weaken
-that contract. Missing source objects or incomplete completion/ownership metadata
-also prevent a verified receipt. Existing markerless v1 inventory compatibility
-does not make those buckets eligible for this migration command.
+empty directories and unsupported Git administration. Missing source objects or
+incomplete completion/ownership metadata prevent verified receipts. Markerless v1
+inventory compatibility does not confer migration eligibility.
 
 An existing migration reservation makes legacy planning and stale-plan
 revalidation return `compact-migration-protected`. Maintenance counts that reason
@@ -148,9 +144,9 @@ changed contents, missing transaction data or substituted identities remain
 incomplete and retained for review; absence alone never counts as retirement.
 Do not delete journals or alter receipts to force continuation.
 
-Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`. These are
-allocated-size observations, not proof of physical free-space gain on shared,
-compressed or snapshotting storage. Archive expiry remains separately authorized.
+Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`: allocated-size
+observations, not physical free-space proof on shared, compressed or snapshotting storage.
+Archive expiry remains separately authorized.
 
 ## Inventory and retention planning
 
@@ -194,39 +190,31 @@ aggregate byte totals remain unavailable when any entry is unsized, while
 independently exact entries retain their own evidence.
 
 Run `worktree-helper.sh recovery plan --output <absolute-path>` to persist a
-versioned `aidevops.worktree-recovery-plan/v2` JSON review artifact. The output
-path must be new, absolute, non-symlinked, and writable. The helper builds the
-complete document in a mode-0600 temporary file beside the destination and
-publishes it atomically without replacing an existing path. Plan generation is
-read-only for every recovery root and archive; it never moves, rewrites, or
-deletes a bucket.
+versioned `aidevops.worktree-recovery-plan/v2` JSON review artifact. The new, absolute,
+non-symlinked, writable output path is published atomically from a complete mode-0600
+temporary file beside it, never replacing an existing path. Generation is read-only
+for all recovery roots and archives: no bucket moves, rewrites or deletions.
 
-Manual planning classifies at most 100 entries per invocation by default. It
-first inventories archive structure without running an exact size probe for
-every bucket, then performs the full evidence and one final exact-size check
-only for the selected window. Use `--max-classify <1-1000>` to tune that bound
-and `--offset <non-negative-integer>` to continue from a prior plan's
-`next_classification_offset`. A 120-second between-entry deadline bounds each
-pass further; tune it with `--deadline-seconds <1-3600>`. Entries outside the
-window or beyond the deadline remain visible as `unknown` with
-`classification-deferred` or `classification-deadline-exhausted`; they gain no
-deletion authority. The plan records classification completeness,
-classified/deferred counts, deadline state, and both cursor offsets. Repeated
-bounded plans can therefore inspect or reclaim independent windows without an
-unbounded pass or an authoritative size cache.
+Manual planning inventories structure without exact-sizing every bucket, then checks
+full evidence and final exact size only within the selected window (default 100 entries).
+Tune with `--max-classify <1-1000>`; continue from `next_classification_offset` using
+`--offset <non-negative-integer>`. The between-entry deadline defaults to 120 seconds;
+tune with `--deadline-seconds <1-3600>`. Outside-window or timed-out entries remain
+`unknown` with `classification-deferred` or `classification-deadline-exhausted`, never
+deletion authority. Plans record completeness, classified/deferred counts, deadline
+state and both offsets, allowing independent inspection or reclamation windows
+without an unbounded pass or authoritative size cache.
 
-The envelope records its producer, generation time, deterministic plan ID,
-inventory completeness/error state, source roots, reconciled entry/byte totals,
-and ordered `candidate`, `protected`, and `unknown` entries. An incomplete global
-inventory produces no candidates; an entry-local sizing failure downgrades only
-that entry. Each attributable entry binds the exact physical bucket and
-archive paths to its format, Git HEAD/branch, source/admin/common identity,
-archive index and completion-marker digests, expected allocated bytes, observed
-local/remote evidence, disposition, and reason codes. Unchanged evidence yields
-the same entries and plan ID; the generation timestamp remains observational.
-The v2 confirmation token binds that plan ID to the exact candidate count,
-expected allocated bytes, schema, and permanent-delete action. Earlier or
-tokenless plan versions are never upgraded into destructive authorization.
+The envelope records producer, generation time, deterministic plan ID, inventory
+completeness/errors, source roots, reconciled entry/byte totals and ordered `candidate`,
+`protected` and `unknown` entries. Incomplete global inventory yields no candidates;
+local sizing failure downgrades only that entry. Each attributable entry binds physical
+bucket/archive paths, format, Git HEAD/branch, source/admin/common identity, archive
+index/completion-marker digests, expected allocated bytes, observed local/remote
+evidence, disposition and reason codes. Unchanged evidence yields identical entries
+and plan ID; generation time is observational. The v2 confirmation token binds plan ID,
+exact candidate count, expected allocated bytes, schema and permanent-delete action.
+Never upgrade earlier or tokenless plans into destructive authorization.
 
 Candidate status requires a valid complete archive, completed source removal,
 a clean tracked/untracked/user-ignored Git state, an exact terminal commit, no
@@ -243,6 +231,8 @@ validation, or sizing is `unknown`. Identity and allocated bytes are read again
 immediately before an entry is emitted, so concurrent drift downgrades only
 that entry. Age, size, and OpenCode or Claude session history never prove
 reclaimability. Plan files grant no deletion authority by themselves.
+
+### Terminal publication evidence
 
 Branch-backed archives prove terminal state through an exact merged PR head and
 a closed linked task. Detached archives have no branch-keyed claim or linked
@@ -275,6 +265,8 @@ an early evidence failure reports its owning stage (for example,
 an unsupported detached branch. Identity recognition grants no deletion
 authority: provenance and publication proof remain mandatory for candidacy.
 
+### Protected mixed archives
+
 Automatic maintenance may reclaim those same approved cache roots from an
 otherwise protected mixed archive without deleting the archive. This narrower
 path applies only when the archive is protected solely by a dirty Git state,
@@ -288,6 +280,8 @@ Ordinary recovery planning short-circuits once dirty; automatic maintenance comp
 downstream evidence, and cache apply repeats the snapshot. Terminal commit evidence
 must match the exact merged PR head OID, not only its branch; root sizing waits until eligible.
 
+## Confirmation-bound apply
+
 After reviewing a v2 plan, an operator may run:
 
 ```bash
@@ -297,32 +291,26 @@ worktree-helper.sh recovery apply \
   --confirm <manifest-token>
 ```
 
-Apply accepts only the exact supported producer manifest and its bound token.
-It rejects relative or symlinked inputs, existing mismatched receipts or
-reservations,
-unsupported schemas, duplicate paths or identities, candidates outside an
-attributable recovery root, and any summary or digest mismatch. Archive creation
-and apply contend on the same exclusive producer lock. The lock records PID,
-process start time, and an owner token; live, malformed, ambiguous, or
-unverifiable ownership blocks mutation, while only conclusively stale ownership
-may be reclaimed.
+Apply requires the exact supported producer manifest and bound token. Reject relative
+or symlinked inputs, mismatched existing receipts/reservations, unsupported schemas,
+duplicate paths/identities, candidates outside attributable recovery roots and summary
+or digest mismatches. Archive creation and apply share an exclusive producer lock
+recording PID, process start time and owner token. Live, malformed, ambiguous or
+unverifiable ownership blocks mutation; reclaim only conclusively stale ownership.
 
-Under the lock, apply first creates or validates a mode-0600, plan-bound
-`aidevops.worktree-recovery-apply-reservation/v1` at the requested receipt path.
-This reservation prevents a concurrent plan from deleting data and then losing
-its receipt to a path collision. The reservation binds a uniquely allocated
-mode-0600 completion file created before mutation; receipt publication never
-claims or removes a predictable adjacent path. An exact retry may resume an incomplete
-reservation; a different plan or replaced completion file fails before mutation. Apply then revalidates every
-candidate and all mutable evidence before moving any candidate. It rechecks each
-exact identity and allocated byte count immediately before a same-filesystem
-rename into that recovery root's `.retention-trash/<transaction-id>/` directory.
-An atomically replaced journal lists every permitted original and staged path;
-removal operates only on those journal entries, never a wildcard or a newly
-discovered archive. Empty initialization directories and deterministic
-journal-next files are recoverable, while any unrelated transaction artifact
-fails closed. Interrupted initialization, rename, journal update, or removal
-windows remain attributable and can resume only from the exact plan and journal.
+Under lock, create or validate a mode-0600, plan-bound
+`aidevops.worktree-recovery-apply-reservation/v1` at the requested receipt path,
+preventing post-deletion receipt loss to a concurrent plan's path collision. Bind a
+uniquely allocated mode-0600 completion file before mutation; publication never claims
+or removes predictable adjacent paths. Exact retries may resume incomplete reservations;
+different plans or replaced completion files fail before mutation. Revalidate every
+candidate and all mutable evidence before any move, then recheck exact identity and
+allocated bytes immediately before each same-filesystem rename into the root's
+`.retention-trash/<transaction-id>/`. An atomically replaced journal lists all permitted
+original/staged paths: remove only those entries, never wildcards or newly discovered
+archives. Empty initialization directories and deterministic journal-next files are
+recoverable; unrelated transaction artifacts fail closed. Interrupted initialization,
+rename, journal update or removal resumes only from the exact attributable plan/journal.
 
 Success atomically replaces the exact reservation with a mode-0600
 `aidevops.worktree-recovery-apply-receipt/v1` receipt containing the plan and
@@ -332,50 +320,43 @@ complete receipt is a no-op; a conflicting receipt or reservation fails closed. 
 unknown, unrelated Trash, and newly created content remain untouched. This
 explicit command remains the operator-reviewed apply path.
 
-Bounded automatic maintenance runs once after each successful asynchronous
-worktree cleanup cycle. It applies only to the default framework-owned recovery
-root on Linux and other non-macOS systems. macOS Trash, configured roots, and
-attributable legacy Trash buckets remain outside automatic mutation. The
-maintenance pass uses the same exact candidate classifier and apply transaction
-as the manual path; age or disk pressure only selects among candidates that have
-already satisfied every terminal, clean-state, identity, reference, and sizing
-requirement above.
+## Bounded automatic maintenance
 
-The default policy selects exact candidates after seven days, or earlier while
-the store exceeds 5 GiB, filesystem free space is below 10 GiB, or filesystem
-free space is below 10 percent. If bounded aggregate sizing times out, the pass
-enters conservative pressure mode with `aggregate-size-unavailable` rather than
-silently disabling the store limit; exact per-bucket sizing and all terminal
-evidence remain mandatory before deletion. One pass cheaply enumerates paths,
-then validates and classifies at most 50 rotating inventory entries inside a
-120-second deadline, and applies at most 20 candidates or 5 GiB. Expensive
-per-archive Git validation is limited to that cursor window and bounded by the
-same deadline. Evidence classification precedes whole-archive sizing: the
-classifier's candidate-only exact probe uses the remaining pass budget, and
-apply still revalidates identity and exact allocated bytes. Protected mixed
-archives can reach approved cache-root pruning without a whole-archive `du`.
+Run once after each successful asynchronous worktree cleanup cycle, only on the default
+framework-owned non-macOS recovery root. Exclude macOS Trash, configured roots and
+attributable legacy Trash buckets from automatic mutation. Use the manual path's exact
+classifier and apply transaction: age/pressure selects only candidates already meeting
+every terminal, clean-state, identity, reference and sizing requirement.
 
-The default framework store maintains mode-0600 advisory records in `.size-index`
-at archive completion and after exact candidate sizing. A bounded, separate
-backfill cursor advances even on sizing timeout, gradually indexing old stores.
-Fresh hints avoid a recursive aggregate scan; `store_size_source` distinguishes
-`indexed-estimate` from `exact` and `unavailable`, including when filesystem
-pressure is already active. Indexed totals estimate archive allocation, excluding
-small reservation/index overhead; they are not exact filesystem usage or deletion
-evidence. Incomplete indexing or root-level staged transactions fall back to
-bounded exact-store measurement, then conservative pressure if it is unavailable.
-Hints expire after 24 hours and completed maintenance transactions invalidate
-affected records, including resumed cache pruning. Missing/replaced buckets are
-excluded from the next census. A broken index never grants mutation authority.
+Default selection: after seven days, or earlier if the store exceeds 5 GiB or filesystem
+free space falls below 10 GiB or 10 percent. Aggregate-sizing timeout enables conservative
+`aggregate-size-unavailable` pressure mode, not a disabled store limit; deletion still
+requires exact per-bucket sizing and all terminal evidence. After cheap path enumeration,
+validate/classify at most 50 rotating entries within 120 seconds; apply at most 20
+candidates or 5 GiB. Expensive Git validation shares that cursor window and deadline.
+Classify evidence before whole-archive sizing; candidate-only exact probes use remaining
+pass budget, and apply revalidates identity/allocated bytes. Protected mixed archives
+can reach approved cache-root pruning without whole-archive `du`.
 
-Inventory is ordered largest-estimated-first before applying its rotating cursor;
-selected exact candidates are ordered largest-first. The coverage digest includes
-this scheduling order, so changed hints cannot falsely complete an old cycle.
-Rotation still reaches protected and unindexed entries instead of repeatedly
-probing only the largest protected archive. The seven-day retention and 5 GiB
-store limits remain evidence-gated soft bounds: unique, active, unreadable, or
-otherwise protected data cannot be deleted merely to enforce a hard byte quota.
-Operators may tune these soft limits with:
+### Advisory size index and selection limits
+
+The default framework store writes mode-0600 `.size-index` advisory records at archive
+completion and after exact candidate sizing. A separate bounded backfill cursor advances
+even on sizing timeout. Fresh hints avoid recursive aggregate scans; `store_size_source`
+distinguishes `indexed-estimate`, `exact` and `unavailable` even during filesystem pressure.
+Estimates exclude small reservation/index overhead and prove neither exact filesystem
+usage nor deletion eligibility. Incomplete indexing or root-level staged transactions
+fall back to bounded exact-store measurement, then conservative pressure if unavailable.
+Hints expire after 24 hours; completed transactions (including resumed cache pruning)
+invalidate affected records. Exclude missing/replaced buckets from the next census.
+A broken index never grants mutation authority.
+
+Order inventory largest-estimated-first before cursor rotation and selected exact
+candidates largest-first. Include scheduling order in the coverage digest so changed
+hints cannot falsely complete old cycles. Rotation still reaches protected/unindexed
+entries rather than only the largest protected archive. Seven-day retention and 5 GiB
+store limits are evidence-gated soft bounds, never hard quotas authorizing deletion of
+unique, active, unreadable or otherwise protected data. Tune with:
 
 - `AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_RETENTION_DAYS`
 - `AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MAX_SCAN`
@@ -410,6 +391,8 @@ non-reclamation accounting survives inventory churn. Once its scanned work
 reaches the current inventory size, it requests the same read-only operator
 plan even if no exact full-inventory cycle completed.
 
+### Cache-prune transactions
+
 When protected mixed archives contain approved cache roots, one pass selects at
 most 100 roots and 5 GiB by default inside the same scan and deadline budget.
 Cache pruning takes precedence over whole-bucket deletion for that pass and uses
@@ -433,18 +416,17 @@ filesystem free-space changes from concurrent `df` activity. Run outcomes report
 `cache-pruned` or `resumed-and-pruned`. User files and the protected archive
 remain untouched.
 
-When sustained pressure-active scanning finds zero candidates for at least one
-current-inventory's worth of bounded work, the result retains
-`outcome:"no-candidates"` and sets `escalation.required:true`. A stable full
-scan records `zero_candidate_cycle.completed_this_run:true`; inventory churn
-instead remains explicitly incomplete while its separate sustained accounting
-triggers the warning. Its fixed command array directs the operator to run
-`worktree-helper.sh recovery plan --output <absolute-new-path>`. Planning is the
-bounded, read-only remediation path described above; it grants no deletion
-authority. Protected and uncertain buckets remain untouched, and only a
-separately reviewed manual plan can proceed to the existing confirmation-bound
-apply path. A maintenance failure leaves the affected archive intact and does
-not turn a successful broader cleanup cycle into a failure.
+### Zero-candidate escalation
+
+After pressure-active zero-candidate scanning covers at least one current-inventory's
+worth of bounded work, retain `outcome:"no-candidates"` and set `escalation.required:true`.
+A stable full scan records `zero_candidate_cycle.completed_this_run:true`; churn leaves
+coverage explicitly incomplete while separate sustained accounting triggers the warning.
+The fixed command array directs operators to
+`worktree-helper.sh recovery plan --output <absolute-new-path>`: bounded, read-only
+remediation, not deletion authority. Retain protected/uncertain buckets; only separately
+reviewed manual plans can reach confirmation-bound apply. Maintenance failure preserves
+the affected archive and does not fail an otherwise successful broader cleanup cycle.
 
 The escalation records `dominant_reason` and `dominant_reason_count`: the
 fixed-cardinality retained reason with the highest count across this run and
@@ -455,6 +437,8 @@ inventory count, measured store size, dominant reason, and the read-only plan
 command. It contains no archive paths or process details, grants no deletion
 authority, and is removed automatically once a pass reclaims space or the
 escalation condition clears.
+
+### Process-visibility diagnostics
 
 If `process-evidence-unavailable` is that dominant reason, maintenance
 instead reports `outcome:"operator-intervention-required"` with the fixed
@@ -491,6 +475,8 @@ This diagnostic outcome grants no deletion authority, does not trust
 process names, and does not require root access or weaker kernel process
 protections. A readable CWD match remains a positive live-reference block, and
 every other candidacy and apply invariant above remains unchanged.
+
+## Session-history limitations
 
 An originating OpenCode or Claude session identifier is recovery guidance, not
 deletion proof. Session history can reconstruct text edits and intent but may be
