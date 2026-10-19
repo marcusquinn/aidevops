@@ -10,6 +10,12 @@
       "description": "JSON Schema reference for editor autocomplete and validation."
     },
 
+    "recovery_policy": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\\.md#[^#\\r\\n]+$",
+      "description": "Optional repo-relative Markdown path#Exact heading declaring enabled queue recovery actions. See reference/recovery-policy.md. Loaded only from the remote default branch with maintainer access; never grants permissions."
+    },
+
     "updates": {
       "type": "object",
       "description": "Auto-update behaviour for aidevops, skills, tools, and OpenClaw.",

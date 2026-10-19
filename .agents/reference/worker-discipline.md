@@ -219,6 +219,18 @@ when entries are pending (`trigger=blocker_recovery`, at most every
 GitHub and retires closed or re-armed ones. For each entry the supervisor is the
 AI brief owner:
 
+Repo-delegated queue policy: load `recovery-policy-helper.sh <repo>` before
+terminal-blocker or integration-recovery assessment. Only its enabled actions
+from the pinned remote default-branch section are authority; absent/invalid
+policy leaves existing behavior unchanged. Apply [Repo recovery policy](recovery-policy.md)
+for exhausted-outlier chain holds and independent dependant repoints,
+session-budget splits after a merged partial PR, and specifically pre-authorized
+brief repairs. Preserve all hard/security boundaries. Record holds with
+`wake=human_decision`, splits/repoints with `wake=dependency_change`, and brief
+repairs with `wake=brief_revision`. With valid enabled policy and maintainer
+access, intake also includes trusted circuits opened elsewhere; use only public
+issue/PR evidence for those, never another runner's protected logs.
+
 1. Read the public observation and the entry's `local_excerpts` (protected
    evidence; excerpts are matched by issue number, so confirm the repository).
    Classify the real cause; the reported class is often a symptom.
