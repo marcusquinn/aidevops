@@ -41,7 +41,7 @@ worktree-archive-helper.sh prune --older-than 14d --max-total-size 20G \
   [--dry-run|--apply] [--output-root <directory>]
 ```
 
-`--reason` accepts only `failed-worker` or `post-pr-cleanup`. Untracked capture defaults to at most 10,000 paths and 1 GiB; override those bounds with `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES` and `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES`. `AIDEVOPS_WORKTREE_ARCHIVE_ROOT` changes the default root.
+`--reason` accepts `failed-worker`, `post-pr-cleanup` or `unattributed-worktree`. Use `--unattributed` instead of `--issue` when no issue is proven. Untracked capture defaults to at most 10,000 paths and 1 GiB; override those bounds with `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES` and `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES`. `AIDEVOPS_WORKTREE_ARCHIVE_ROOT` changes the default root.
 
 ## Archive layout
 
@@ -55,6 +55,7 @@ The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
 | `staged.patch` | Binary-safe staged changes; present even when empty |
 | `untracked-files.txt` | Human-readable escaped inventory; present even when empty |
 | `untracked.tar.gz` | Bounded untracked regular files and symlinks, when any exist |
+| `git-admin.json` | Optional preserved Git administration under `--preserve-git-admin` |
 | `failure.log` | Optional final 256 KiB excerpt supplied with `--failure-log` |
 
 The manifest records the repository, issue, reason, creation time, source worktree, source Git common directory, branch, `HEAD`, base branch and exact base SHA, default branch, remote branch state, dirty state, artifacts, and restore instructions. `verify` rejects missing, changed, or unsafe artifacts.
@@ -64,6 +65,52 @@ when HEAD equals the base. Verification checks it in an empty repository rather
 than borrowing source objects. Restoration needs neither the source repository
 nor its remote and creates no linked-worktree registration. This costs more space
 than an incremental archive; it is not a backup of unrelated branches or refs.
+
+## Recoverable producer transactions
+
+`archive_worktree_path_recoverably` now creates verified compact evidence, not a
+new full recovery directory. Its four callers are manual removal in
+`worktree-helper-cmds.sh`, classified cleanup in `worktree-clean-lib.sh`, profile
+publication in `profile-readme-helper.sh`, and Pulse profile cleanup in
+`pulse-cleanup-worktree-removal-profile.sh`. Other managed-idle and legacy
+migration/retirement paths retain their own contracts.
+
+Producer root precedence is the first nonempty value of
+`AIDEVOPS_WORKTREE_ARCHIVE_ROOT`, `AIDEVOPS_WORKTREE_TRASH_ROOT`, then the legacy
+`AIDEVOPS_ORPHAN_TRASH_ROOT`; otherwise it is `$HOME/.aidevops/recovery/archives`
+on every platform. Roots must be absolute, host-local and outside the source and
+its Git administration. The archive CLI itself uses its archive-root override;
+when a producer uses a legacy override, pass that root explicitly to `list` with
+`--output-root`.
+
+One physical source identity reserves `<root>/.producer-transactions/<id>/journal.json`
+and captures beneath `<root>/.producer-archives/<id>/<owner>__<repo>/unattributed/<timestamp>/`.
+No issue is guessed from the path. Capture uses `--self-contained --include-ignored
+--preserve-git-admin`: supported staged, unstaged, untracked, ignored and Git-admin
+state survives without the original repository or remote. Independent restoration,
+comparison, durability and identity-checked scratch cleanup precede `phase: verified`.
+The journal binds the manifest digest and records source removal separately.
+
+Manual `worktree-helper.sh remove` prints `Recovery archive: <path>` after capture,
+including when a later guard refuses removal. That line is not proof of retirement;
+inspect `source_removal_outcome`. Run `worktree-archive-helper.sh verify <path>` and
+`python3 worktree_recovery_producer.py verify <path>` to check artifact and producer
+receipt evidence, then restore with `worktree-archive-helper.sh restore <path>
+--target <new-path>`. Keep archives private; ignored data or Git drafts may be sensitive.
+
+`list` discovers standalone and producer archives through their exact layouts and
+schema. It excludes transaction scratch, legacy full-copy directories and symlinked
+entries. Listing is discovery, not verification or removal authority. Legacy
+`worktree-helper.sh recovery` inventory remains a report of the separate full-copy store.
+Producer archives retain `.aidevops-archive-pin`; this discovery change does not
+expand retention selection, remove pins or enable automatic expiry.
+
+Retries reuse a valid reservation; drift, unsupported input or incomplete evidence
+preserves the source and existing artifacts without a full-copy fallback. Do not
+delete journals to force another capture. The producer's comparison policy still
+refuses special permissions such as 0600 working files. Profile writers preserve
+the README's existing mode; cleanup never changes user-selected permissions.
+Code delivery does not deploy these changes or migrate/retire installed recovery stores.
 
 ## Base selection
 
@@ -166,8 +213,8 @@ them. Restore preserves regular-file permission bits, including mode 0600.
 This option is a preservation building block, **not** legacy migration or
 permission to retire a full recovery bucket. It does not preserve empty
 directories, ACLs/xattrs, special files, Git administration or reflog-only
-history. Existing lifecycle snapshots continue rejecting unsupported content,
-including ignored data; no producer or removal guard opts into this flag.
+history. Ordinary idle-lifecycle snapshots still reject ignored data; the central
+recoverable producer explicitly combines this flag with Git-admin preservation.
 Independent restore comparison and valid ownership/process evidence remain
 mandatory before replacing any original copy. Archive expiry is separate.
 
@@ -270,6 +317,16 @@ After successful asynchronous worktree cleanup, Pulse runs compact retention onc
 Completed worktrees end either in verified deletion with no unique data, or in a verified compact archive followed by source removal. Active ownership, open work and safety blockers are temporary states, not permission for unconditional deletion. Full recovery copies are a separate store: compact retention never deletes or migrates them. Migration must account for ignored files, Git administrative state and base-object availability before discarding the full copy.
 
 Run `bash .agents/scripts/tests/test-worktree-archive-helper.sh` and `python3 .agents/scripts/tests/test-worktree-archive-lifecycle.py`. The latter restores 33 local commits including a merge into a repository containing only the `develop` base, after removing the original fixture worktree. It compares HEAD, parent topology, index, binary staged/unstaged patches, status, executable modes, symlinks and untracked contents, and checks retention preview/apply, age/size limits, pins and unsafe/corrupt archives. Ignored files are deliberately excluded; the common repository's base objects must remain available. `test-cleanup-worktrees-async.sh` covers scheduling policy and failure isolation.
+
+The separate producer CLI fixture includes ignored data and exact HEAD/index/draft
+bytes, removes its disposable source, then restores after making the original
+repository unavailable. It reports source, archive and transaction metadata allocated
+bytes separately (`du -sk` multiplied by 1024); these are not installed-store savings.
+Incomplete host CWD visibility produces an explicit skip with the source preserved.
+On Linux, an isolated user/PID namespace can exercise the native guard without
+changing observer policy: run the existing suite through
+`unshare --user --map-root-user --pid --fork --mount-proc`, with native tools on PATH.
+Never use namespace isolation to hide processes holding real operator worktrees.
 
 ## Pulse cleanup integration
 

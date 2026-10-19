@@ -30,12 +30,25 @@ Fail closed on symlinked pending directories/retry metadata or non-regular retry
 Invalid regular retry records exhaust the budget and remain unchanged in quarantine.
 Inspect receipts locally; repair requires the original plan and evidence.
 
-The default root is `$HOME/.Trash` on macOS (OS Trash semantics), but framework-owned
+## Current compact producers
+
+New recoverable captures from manual removal, classified cleanup, profile publication
+and Pulse profile cleanup use one verified compact transaction, not a full-copy bucket.
+The default is `$HOME/.aidevops/recovery/archives` on every platform; the archive-root
+override precedes explicit historical trash-root overrides. Use the archive CLI's
+`list --output-root <effective-root>` to discover them. Pins and removal safeguards
+are unchanged; neither listing nor verification grants deletion authority. See the
+[producer contract](../scripts/worktree-archive-helper.md#recoverable-producer-transactions)
+for exact root precedence, journal/receipt paths, independent restoration and retry behavior.
+
+## Legacy full recovery buckets
+
+The legacy default root is `$HOME/.Trash` on macOS (OS Trash semantics), but framework-owned
 `$HOME/.aidevops/recovery/worktrees` elsewhere: normal “Empty Trash” must not silently
 delete those snapshots. Select an absolute root with `AIDEVOPS_WORKTREE_TRASH_ROOT`
 or the legacy `AIDEVOPS_ORPHAN_TRASH_ROOT` fallback.
 
-New buckets use additive `aidevops-worktree-recovery-v2` evidence: stable Git identity,
+Historical v2 buckets use `aidevops-worktree-recovery-v2` evidence: stable Git identity,
 creation time, producer/context, optional runtime session identity, archive completion,
 source-removal outcome, `framework` ownership, `recovery` safety class and
 `manual-review` policy. Write the completion marker only after archive integrity and
@@ -49,7 +62,7 @@ Readers accept complete platform-storage-transition v1 buckets and markerless le
 v1 buckets with valid original Git recovery structure. Never reinterpret partial v2
 evidence as v1. Older readers reject v2, failing closed without archive damage.
 
-Archive producers reserve one attempt per physical source identity before copying.
+Historical full-copy producers reserved one attempt per physical source identity.
 An interrupted attempt remains explicitly reserved; retries do not create another
 bucket or erase the partial snapshot. Incomplete reservations require operator
 review, including proof that any discarded data is preserved elsewhere. A completed
@@ -171,14 +184,14 @@ without extra flags. Names are a policy convention, not lifecycle evidence.
 Raw-copy expiry is unchanged; recorded state is not a successful `proof`.
 Manual data and the final compact archive have no new expiry.
 
-Proven ignored, untracked cache roots are excluded before copy IO, including cache
+The historical copy path excluded proven ignored, untracked cache roots before IO, including cache
 roots nested below a broader ignored directory. Git evidence failures stop copying
 instead of falling back to a potentially enormous unfiltered copy. Tracked files,
 symlinks, and unknown ignored content remain protected. This prevents a bounded
 cleanup timeout from repeatedly materializing dependency trees before pruning them.
 
-Run `worktree-helper.sh recovery` for a read-only count/byte report with
-protected/unknown reasons. The same producer summary appears as one
+Run `worktree-helper.sh recovery` for a read-only legacy-bucket count/byte report with
+protected/unknown reasons. The same legacy summary appears as one
 `worktree-recovery` record in shared storage status; `reclaimable_bytes` remains
 zero because that aggregate report grants no deletion authority. On non-macOS systems, inventory also includes attributable
 legacy `$HOME/.Trash/aidevops-worktree-cleanup-*` buckets. Framework-owned
@@ -224,7 +237,7 @@ untracked directories with recognised regenerable-cache identities
 (`node_modules`, `.pnpm-store`, `.yarn/cache`, `.next/cache`, `.nuxt/cache`,
 `.turbo`, `.parcel-cache`, `.vite`, `__pycache__`, and `.pytest_cache` at any
 depth, plus `.codegraph` only at the repository root) do not make an otherwise
-clean archive dirty; new archives omit only those directory roots after proving
+clean legacy archive dirty; historical producers omitted those roots after proving
 they contain no tracked files. Other ignored content remains protected. Positive live or
 unfinished evidence is `protected`. Missing APIs, process visibility, identity,
 validation, or sizing is `unknown`. Identity and allocated bytes are read again

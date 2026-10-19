@@ -80,6 +80,19 @@ both original and claimed paths: a positive CWD match overrides a valid receipt,
 and missing/invalid receipts under degraded visibility keep the transaction intact.
 Neither planning nor retirement creates new lifetime enrollment.
 
+### Compact producer evidence does not relax process guards
+
+New recoverable captures use the [compact producer transaction](../scripts/worktree-archive-helper.md#recoverable-producer-transactions)
+for all four existing callers. A verified journal or printed archive path is recovery
+evidence, not proof that the source is idle or removed. Positive CWD matches, Git
+locks, ownership and exact lease/lifetime rechecks still precede native Git removal.
+`--force` does not bypass the process guard. Unsupported states retain the source;
+there is no full-copy fallback and no new privilege or enrollment path.
+
+Producer journals live under `.producer-transactions`, separately from historical
+full-copy reservations below. Neither kind may be deleted to force a fresh attempt.
+Code merge alone does not change deployed helpers or retire installed recovery data.
+
 ## Unprivileged NixOS adapter
 
 On Linux with exact `ID=nixos` in `/etc/os-release`, process observation does
@@ -124,7 +137,7 @@ CI/CD matrix or change the other platforms' runtime selection for this rollout.
 
 ### Recovery reservation failures are separate from process visibility
 
-On NixOS, a failed reservation emits `recovery-reservation-unavailable` with
+In the legacy full-copy path on NixOS, a failed reservation emits `recovery-reservation-unavailable` with
 `stage=reserve` in the cleanup audit log, before the existing aggregate archive
 failure. This distinguishes an archive prerequisite from an actual copy failure.
 External deletion of archive directories can leave retained attempt records

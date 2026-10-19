@@ -13,6 +13,6 @@ All four children have `origin:interactive`, linked native sub-issue relationshi
 
 Durable briefs are in `todo/tasks/gh35110-producer-transaction.md`, `gh35110-compact-removal-guards.md`, `gh35110-producer-cutover.md` and `gh35110-producer-acceptance.md` in the same directory. Each names the relevant functions, file scope, verification and negative cases.
 
-Current implementation evidence: an uncommitted draft of `worktree_recovery_producer.py` and a shared journal-loader adjustment exist; Python compilation passed. No production caller has switched, no runtime acceptance is claimed, and no live recovery data has been changed for this phase. The draft belongs to #35144 and must be tested/reviewed before delivery.
+Delivered: #35144 via PR #35148 (`827faf186`), #35145 via PR #35150 (`47c888871`), and #35146 via PR #35157 (`a7ec8207a`). The central producer and all four callers now use verified compact evidence. #35147 adds actual CLI restoration, safe list discovery and operator documentation; its measured fixture evidence and original-criteria coverage are recorded in `gh35110-producer-acceptance.md`. Only that final child's merge and parent reconciliation remain; no installed-store retirement or deployment is claimed.
 
 Completion contract: keep #35110 open until all four children are delivered and the original producer criteria have verified evidence. The broader #35078 has its own completion contract. This decomposition does not authorize release, deployment, real-source retirement or additional legacy cleanup.

@@ -480,6 +480,7 @@ _remove_cleanup_and_execute() {
 		return 1
 	fi
 	recoverable_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
+	printf 'Recovery archive: %s\n' "$recoverable_archive"
 	if [[ "$degraded_recovery" == "$_WT_BOOL_TRUE" ]] && ! _remove_degraded_fallback_allowed "$path_to_remove" "$$"; then
 		_clean_release_removal_lease "$path_to_remove" || true
 		printf '%s\n' "Cleanup stopped: the source remains intact and its archive was retained because merge or activity evidence changed." >&2

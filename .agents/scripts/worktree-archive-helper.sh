@@ -705,17 +705,42 @@ list_archives() {
 	done
 	[[ -z "$repo" ]] || validate_repo "$repo" || return 1
 	[[ -z "$issue" ]] || validate_issue "$issue" || return 1
-	python3 - "$output_root" "$repo" "$issue" <<'PY'
+	python3 - "$output_root" "$repo" "$issue" "$ARCHIVE_SCHEMA" <<'PY'
 import json
 import pathlib
+import re
 import sys
 root = pathlib.Path(sys.argv[1])
-repo_filter, issue_filter = sys.argv[2:]
+repo_filter, issue_filter, schema = sys.argv[2:]
 if root.is_dir():
-    for manifest_path in sorted(root.glob("*/*/*/manifest.json")):
+    candidates = list(root.glob("*/*/*/manifest.json"))
+    candidates.extend(root.glob(".producer-archives/*/*/*/*/manifest.json"))
+    for manifest_path in sorted(candidates):
+        parts = manifest_path.relative_to(root).parts
+        if len(parts) == 4:
+            if parts[0].startswith('.'):
+                continue
+        elif len(parts) != 6 or parts[0] != '.producer-archives' or not re.fullmatch(r'[0-9a-f]{64}', parts[1]):
+            continue
+        if any(root.joinpath(*parts[:n]).is_symlink() for n in range(1, len(parts) + 1)):
+            continue
+        if not manifest_path.is_file():
+            continue
         try:
             manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
+            continue
+        if not isinstance(manifest, dict) or manifest.get('schema') != schema:
+            continue
+        repo = manifest.get('repo')
+        issue = manifest.get('issue')
+        if not isinstance(repo, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+            continue
+        if issue is not None and (type(issue) is not int or issue < 1):
+            continue
+        if parts[-4] != repo.replace('/', '__'):
+            continue
+        if parts[-3] != ('unattributed' if issue is None else str(issue)):
             continue
         if repo_filter and manifest.get('repo') != repo_filter:
             continue

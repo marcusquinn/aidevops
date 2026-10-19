@@ -164,10 +164,10 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.git(self.repo, "worktree", "add", "-qb", "feature/fixture", self.work)
         self.issue = 0
 
-    def run_command(self, *args, check=True, input_data=None):
+    def run_command(self, *args, check=True, input_data=None, cwd=None):
         result = subprocess.run(  # nosec B603 -- fixture-owned Git/Bash argv, no shell expansion
             [str(arg) for arg in args], env=self.env,
-            capture_output=True, timeout=60, check=False, input=input_data)
+            capture_output=True, timeout=60, check=False, input=input_data, cwd=cwd)
         if check:
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
         return result
