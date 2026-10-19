@@ -22,7 +22,7 @@ _worktree_recovery_retirement_evidence() {
 		state=$(_worktree_recovery_plan_worktree_reference_state "$observed") || return 1
 		[[ "$state" == "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR" ]] || { printf 'worktree-reference-%s\n' "$state"; return 1; }
 	done
-	state=$(_worktree_recovery_plan_process_state "$identity") || return 1
+	state=$(_worktree_recovery_plan_process_state "$identity" "compact-then-retire") || return 1
 	[[ "$state" == "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR" ]] || { printf 'process-%s\n' "$state"; return 1; }
 	return 0
 }

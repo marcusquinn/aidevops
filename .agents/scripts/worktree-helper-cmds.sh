@@ -1005,6 +1005,10 @@ cmd_recovery() {
 		shift
 		_cmd_recovery_apply "$@" || return 1
 		;;
+	legacy-report)
+		shift
+		python3 "$SCRIPT_DIR/worktree_recovery_legacy_report.py" "$@" || return 1
+		;;
 	unreadable-processes)
 		[[ "$#" -eq 1 ]] || return 1
 		declare -F worktree_recovery_unreadable_processes >/dev/null 2>&1 || return 1

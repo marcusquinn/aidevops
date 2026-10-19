@@ -26,6 +26,112 @@ sys.path.insert(0, str(HELPER.parent))
 
 import worktree_lifetime_archive as lifecycle
 import worktree_lifecycle_status as lifecycle_status
+import worktree_recovery_legacy_report as legacy_report
+
+
+class LegacyRecoveryReport(unittest.TestCase):
+    def test_name_contract_uses_pulse_generator_and_worktree_slug(self):
+        producer = (HELPER.parent / "pulse-dispatch-worker-launch.sh").read_text()
+        assignment = next(line.strip() for line in producer.splitlines()
+                          if line.strip().startswith('_branch="feature/auto-'))
+        command = 'issue_number=123; ' + assignment + '; source "$1"; aidevops_branch_slug "$_branch"'
+        result = subprocess.run(  # nosec B603 -- local trusted generator assignment and path helper
+            ["bash", "-c", command, "name-contract", str(HELPER.parent / "worktree-paths.sh")],
+            capture_output=True, text=True, check=True, timeout=10)
+        source = "/fixture/repo-" + result.stdout.strip()
+        self.assertEqual(legacy_report.legacy_origin(source, "worktree-helper.sh", "recoverable-cleanup"), "pulse")
+
+    def test_name_contract_rejects_lookalikes_and_profile_sources(self):
+        valid = "/fixture/repo-feature-auto-20260101-120000-gh123"
+        for source in (valid + "-manual", valid + "/child", valid.replace("-gh123", ""),
+                       valid.replace("20260101", "20260231"), valid.replace("gh123", "gh-123"),
+                       valid.replace("-feature-auto-", "-fix-auto-"), "relative" + valid):
+            with self.subTest(source=source):
+                self.assertEqual(legacy_report.legacy_origin(source, "worktree-helper.sh", "recoverable-cleanup"), "unknown")
+        self.assertEqual(legacy_report.legacy_origin(valid, "profile-readme-helper.sh", "anything"), "profile")
+        self.assertEqual(legacy_report.legacy_origin(valid, "manual.sh", "recoverable-cleanup"), "unknown")
+
+    def test_legacy_policy_boundaries(self):
+        week = legacy_report.RETENTION_SECONDS
+        cases = [("pulse", week - 1, False, "within-retention"),
+                 ("pulse", week, False, "eligible-legacy-pulse"),
+                 ("pulse", None, False, "missing-timestamp"),
+                 ("pulse", -1, False, "missing-timestamp"),
+                 ("manual", week * 2, False, "manual-origin"),
+                 ("profile", week * 2, False, "non-pulse-profile"),
+                 ("unknown", week * 2, False, "unknown-origin"),
+                 ("pulse", week * 2, True, "lifecycle-path")]
+        for origin, age, managed, expected in cases:
+            with self.subTest(origin=origin, age=age, managed=managed):
+                self.assertEqual(legacy_report.legacy_decision(origin, age, managed), expected)
+
+    def test_legacy_report_never_promotes_dispatch_path_to_origin(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bucket = root / "aidevops-worktree-cleanup-fixture"
+            metadata = bucket / ".aidevops-worktree-recovery"
+            metadata.mkdir(parents=True)
+            values = {"format": "aidevops-worktree-recovery-v2",
+                      "archive-complete": "aidevops-worktree-recovery-v2",
+                      "source-removal-outcome": "removed", "source-real": "/fixture/source",
+                      "source-inode": "1:2", "producer": "worktree-helper.sh",
+                      "producer-context": "recoverable-cleanup", "created-at": "2020-01-01T00:00:00Z"}
+            for name, value in values.items():
+                (metadata / name).write_text(value + "\n")
+            ledger = root / "ledger.jsonl"
+            ledger.write_text(json.dumps({"worktree_path": "/fixture/source"}) + "\n")
+            registry = root / "registry.db"
+            with closing(sqlite3.connect(registry)) as db:
+                db.execute("CREATE TABLE worktree_managed_lifetimes(path TEXT, record TEXT)")
+            result = legacy_report.report(root, registry, ledger)
+            self.assertEqual(result["reasons"], {"unknown-origin": 1})
+            self.assertEqual(result["ages"], {"at-least-7-days": 1})
+            self.assertEqual(result["dispatch_path_matches_not_origin_proof"], 1)
+            self.assertEqual(result["eligible_legacy_pulse"], 0)
+            self.assertFalse(result["deletion_authorized"])
+            self.assertNotIn("entries", result)
+            entry = legacy_report.report(root, registry, ledger, details=True)["entries"][0]
+            self.assertEqual(entry["bucket"], str(bucket))
+            self.assertEqual(entry["source_path"], "/fixture/source")
+            self.assertEqual(entry["source_inode"], "1:2")
+            (metadata / "source-real").write_text("/fixture/repo-feature-auto-20191231-120000-gh123\n")
+            self.assertEqual(legacy_report.report(root, registry, ledger)["eligible_legacy_pulse"], 1)
+            (metadata / "source-real").write_text("/fixture/source\n")
+            record = {"schema": 1, "manager": "pulse", "state": "sealed",
+                      "identity": {"path": "/fixture/source", "source_inode": "1:2"}}
+            with closing(sqlite3.connect(registry)) as db:
+                db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?,?)",
+                           ("/fixture/source", json.dumps(record)))
+                db.commit()
+            self.assertEqual(legacy_report.report(root, registry, ledger)["reasons"], {"lifecycle-path": 1})
+            (metadata / "source-inode").write_text("1:3\n")
+            self.assertEqual(legacy_report.report(root, registry, ledger)["reasons"], {"lifecycle-path": 1})
+            with closing(sqlite3.connect(registry)) as db:
+                db.execute("DELETE FROM worktree_managed_lifetimes")
+                db.commit()
+            (metadata / "producer").write_text("profile-readme-helper.sh\n")
+            (metadata / "producer-context").write_text("recovery_path=profile-publication-archive profile_scratch=true\n")
+            self.assertEqual(legacy_report.report(root, registry, ledger)["reasons"], {"non-pulse-profile": 1})
+
+    def test_legacy_report_bounded_metadata_and_dates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "metadata"
+            path.write_bytes(b"x" * 8193)
+            with self.assertRaises(ValueError):
+                legacy_report.read_small(path)
+            link = root / "link"
+            link.symlink_to(path)
+            with self.assertRaises(OSError):
+                legacy_report.read_small(link)
+            fifo = root / "fifo"
+            os.mkfifo(fifo)
+            with self.assertRaises(ValueError):
+                legacy_report.read_small(fifo)
+            self.assertIsNone(legacy_report.age_seconds("not-a-date", 100))
+            self.assertIsNone(legacy_report.age_seconds("2100-01-01T00:00:00Z", 100))
+            self.assertEqual(legacy_report.registry_records(root / "missing.db")[1], "unavailable")
+            self.assertFalse((root / "missing.db").exists())
 
 
 class ArchiveLifecycle(unittest.TestCase):
@@ -91,13 +197,101 @@ class ArchiveLifecycle(unittest.TestCase):
                                   HELPER.parent / "worktree-recovery-lifecycle-helper.sh", self.work)
         return Path(result.stdout.decode().splitlines()[-1]).parent
 
-    def migrate_bucket(self, bucket, check=True):
+    def migrate_bucket(self, bucket, *extra, check=True):
         result = self.run_command("bash", HELPER.parent / "worktree-recovery-lifecycle-helper.sh",
                                   "migrate", "--bucket", bucket, "--repo", "fixture/repo",
-                                  "--base-branch", "develop", check=False)
+                                  "--base-branch", "develop", *extra, check=False)
         if check:
             self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode(errors="replace"))
         return result
+
+    def legacy_pulse_bucket(self):
+        self.git(self.repo, "remote", "add", "origin", "https://github.com/marcusquinn/aidevops.git")
+        named = self.root / "repo-feature-auto-20191231-000000-gh123"
+        self.git(self.repo, "worktree", "move", self.work, named)
+        self.work = named
+        bucket = self.legacy_bucket()
+        metadata = bucket / ".aidevops-worktree-recovery"
+        for name, value in {"created-at": "2020-01-01T00:00:00Z", "producer": "worktree-helper.sh",
+                            "producer-context": "recoverable-cleanup", "source-removal-outcome": "removed"}.items():
+            (metadata / name).write_text(value + "\n")
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            lifecycle.managed_module().initialize(connection)
+            connection.commit()
+        self.git(self.repo, "worktree", "remove", "--force", self.work)
+        return bucket
+
+    def test_legacy_pulse_retirement_without_restore_scratch(self):
+        (self.work / "mixed.txt").write_bytes(b"staged\n")
+        self.git(self.work, "add", "mixed.txt")
+        (self.work / "mixed.txt").write_bytes(b"unstaged\n")
+        (self.work / "local.ignored").write_bytes(b"retained ignored data")
+        bucket = self.legacy_pulse_bucket()
+        migration = json.loads(self.migrate_bucket(bucket).stdout)
+        journal = json.loads(Path(migration["receipt"]).read_text())
+        self.assertTrue(journal["legacy_pulse_compaction"])
+        self.assertEqual(journal["verification"], "archive-integrity-and-source-match")
+        self.assertNotIn("restore_inode", journal)
+        self.assertEqual(self.migrate_bucket(bucket).returncode, 0)
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        result = json.loads(self.retirement("retire", bucket, "--confirm", plan["confirmation_token"]).stdout)
+        self.assertTrue(result["retired"])
+        self.assertFalse(bucket.exists())
+        target = self.root / "test-only-restore"
+        self.helper("restore", migration["archive"], "--target", target)
+        self.assertEqual((target / "mixed.txt").read_bytes(), b"unstaged\n")
+        self.assertEqual(self.git(target, "show", ":mixed.txt"), b"staged\n")
+        self.assertEqual((target / "local.ignored").read_bytes(), b"retained ignored data")
+
+    def test_legacy_pulse_preflight_retains_active_source(self):
+        bucket = self.legacy_pulse_bucket()
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=bucket)
+        try:
+            result = self.migrate_bucket(bucket, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"process-active", result.stdout)
+            self.assertFalse(self.archives.exists())
+            self.assertTrue(bucket.exists())
+        finally:
+            child.terminate()
+            child.wait(timeout=10)
+
+    def test_legacy_pulse_policy_rejects_wrong_evidence(self):
+        from worktree_recovery_legacy_policy import validate
+        bucket = self.legacy_pulse_bucket()
+        metadata = bucket / ".aidevops-worktree-recovery"
+        identity = {"format": "aidevops-worktree-recovery-v2", "producer": "worktree-helper.sh",
+                    "producer_context": "recoverable-cleanup", "source_removal_outcome": "removed",
+                    "created_at": "2020-01-01T00:00:00Z", "common_path": str(self.repo / ".git"),
+                    "bucket_path": str(bucket), "source_path": str(self.work)}
+        with patch.dict(os.environ, self.env):
+            validate(identity)
+            for changes in ({"producer": "profile-readme-helper.sh"},
+                            {"source_path": "/fixture/manual-worktree"},
+                            {"created_at": "2100-01-01T00:00:00Z"},
+                            {"created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                            {"common_path": str(metadata)}):
+                with self.subTest(changes=changes), self.assertRaises(ValueError):
+                    validate(dict(identity, **changes))
+            with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as db:
+                db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?,?)", (str(self.work), "{}"))
+                db.commit()
+            with self.assertRaisesRegex(ValueError, "use-existing-lifecycle"):
+                validate(identity)
+
+    def test_legacy_pulse_only_relaxes_compaction_degraded_observation(self):
+        bucket = self.legacy_pulse_bucket()
+        command = ('source "$1"; capture_worktree_process_cwds() { return "$OBSERVATION_RC"; }; '
+                   'identity=$(_worktree_recovery_plan_identity_json "$2") || exit 1; '
+                   '_worktree_recovery_plan_process_state "$identity" "$3"')
+        for observation, operation, expected in ((2, "", "unavailable"), (1, "compact-then-retire", "unavailable"),
+                                                 (2, "compact-then-retire", "clear")):
+            self.env["OBSERVATION_RC"] = str(observation)
+            with self.subTest(observation=observation, operation=operation):
+                result = self.run_command("bash", "-c", command, "legacy-fixture",
+                                          HELPER.parent / "worktree-recovery-lifecycle-helper.sh",
+                                          bucket, operation)
+                self.assertEqual(result.stdout.decode().strip(), expected)
 
     def retirement_fixture(self):
         self.git(self.repo, "remote", "add", "origin", "https://github.com/marcusquinn/aidevops.git")

@@ -154,6 +154,27 @@ compressed or snapshotting storage. Archive expiry remains separately authorized
 
 ## Inventory and retention planning
 
+### Fast legacy Pulse eligibility statistics
+
+`worktree-helper.sh recovery legacy-report` (also available directly through the
+lifecycle helper) reads bounded metadata from the user's default recovery root.
+`--details` adds local bucket/source paths, source inode, creation date and reasons.
+`--root`, `--registry` and `--ledger` select other local evidence. No recursive
+sizing, source reads, Git/network calls, process scans, restores or mutations.
+Elapsed time excludes interpreter/shell startup; byte totals are not measured.
+
+Existing lifecycle records use the lifecycle path; unknown/profile origin is
+retained. Name-classified legacy Pulse requires a UTC creation time at least seven days
+old. This predicate is a prefilter, not verification or deletion authorization.
+
+**Provenance limitation:** `producer`, `producer-context` and `session-id` describe
+the archiver, not the creator. Dispatch path matches are counted separately: they
+do not bind a generation. Legacy classification uses the actual Pulse dispatcher
+name pattern, shared with [legacy Pulse compaction](legacy-pulse-compaction.md),
+without extra flags. Names are a policy convention, not lifecycle evidence.
+Raw-copy expiry is unchanged; recorded state is not a successful `proof`.
+Manual data and the final compact archive have no new expiry.
+
 Proven ignored, untracked cache roots are excluded before copy IO, including cache
 roots nested below a broader ignored directory. Git evidence failures stop copying
 instead of falling back to a potentially enormous unfiltered copy. Tracked files,

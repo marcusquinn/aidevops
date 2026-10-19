@@ -9,26 +9,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import stat
 import subprocess  # nosec B404 -- fixed local guard helper, argv only
 import sys
 
 from worktree_lifetime_archive import inode, require
 from worktree_recovery_migrate import verify_archive
+from worktree_recovery_legacy_policy import guards
 from worktree_recovery_migration_state import SCHEMA, allocated_bytes, load, publish
 from worktree_recovery_retirement_transaction import claim, fingerprint, remove_claimed
-
-
-def guards(identity, target, lock):
-    bash = shutil.which("bash")
-    require(bash is not None, "retirement:bash-unavailable")
-    helper = Path(__file__).with_name("worktree-recovery-lifecycle-helper.sh")
-    result = subprocess.run(  # nosec B603 -- resolved Bash, fixed framework helper, argv only
-        [str(Path(bash).absolute()), str(helper), "retirement-guard", str(target)],
-        input=json.dumps(identity), text=True, capture_output=True,
-        pass_fds=(lock,), timeout=120, check=False)
-    require(result.returncode == 0, "retirement:" + (result.stdout.strip() or "guard-unavailable"))
 
 
 def receipt_digest(path):

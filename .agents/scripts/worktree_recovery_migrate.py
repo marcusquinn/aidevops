@@ -15,6 +15,7 @@ import subprocess  # nosec B404 -- fixed framework helper, argv only; see archiv
 import sys
 
 from worktree_lifetime_archive import capacity, durable_archive, inode, require
+from worktree_recovery_legacy_policy import candidate, guards, has_lifecycle, validate
 from worktree_recovery_migration_scratch import finish_scratch, prepare_restore, verify_restore
 from worktree_recovery_migration_state import (
     SCHEMA, allocated_bytes, load, manifest_digest, private_directory,
@@ -60,7 +61,8 @@ def reserve(directory, output, identity, arguments):
               "directory_inode": inode(directory), "output": str(output),
               "output_inode": inode(output), "repo": arguments.repo,
               "base": arguments.base_branch, "source_retired": False,
-              "reclaimed_bytes": 0, "bucket_bytes": allocated_bytes(Path(identity["bucket_path"]))}
+               "reclaimed_bytes": 0, "bucket_bytes": allocated_bytes(Path(identity["bucket_path"]))}
+    record["legacy_pulse_compaction"] = getattr(arguments, "legacy_pulse_compaction", False)
     publish(journal, record)
     return record
 
@@ -123,7 +125,8 @@ def independent_restore(directory, record, lock):
 
 def finish(directory, record, lock):
     verify_archive(record, lock)
-    finish_scratch(directory, record)
+    if record["phase"] != "archive-verified":
+        finish_scratch(directory, record)
     record["phase"] = "verified"
     publish(directory / "journal.json", record)
 
@@ -134,8 +137,13 @@ def migrate(directory, output, identity, arguments, lock):
         capture(directory, record, lock)
     if record["phase"] == "captured":
         verify_archive(record, lock)
-        independent_restore(directory, record, lock)
-    if record["phase"] in ("restore-verified", "cleanup-pending"):
+        if record.get("legacy_pulse_compaction") is True:
+            record.update(phase="archive-verified", archive_bytes=allocated_bytes(Path(record["archive"])),
+                          verification="archive-integrity-and-source-match")
+            publish(directory / "journal.json", record)
+        else:
+            independent_restore(directory, record, lock)
+    if record["phase"] in ("restore-verified", "cleanup-pending", "archive-verified"):
         finish(directory, record, lock)
     require(record["phase"] == "verified", "migration:incomplete-phase")
     verify_archive(record, lock)
@@ -151,6 +159,11 @@ def main():
     arguments = parser.parse_args()
     identity = json.load(sys.stdin)
     bucket = Path(identity["bucket_path"])
+    arguments.legacy_pulse_compaction = candidate(identity) and not has_lifecycle(identity)
+    if arguments.legacy_pulse_compaction:
+        # Fail before allocating an archive when retirement is already blocked.
+        validate(identity)
+        guards(identity, bucket)
     private_directory(bucket.parent / ".compact-migrations")
     directory = bucket.parent / ".compact-migrations" / bucket.name
     private_directory(directory)

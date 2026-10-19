@@ -635,6 +635,7 @@ _worktree_recovery_plan_claim_state() {
 
 _worktree_recovery_plan_process_state() {
 	local identity_json="$1"
+	local operation="${2:-}"
 	local source_path="" archive_path="" bucket_path="" snapshot="" source_inode=""
 	local snapshot_rc=0
 
@@ -657,6 +658,10 @@ _worktree_recovery_plan_process_state() {
 		worktree_managed_lifetime_proof "$source_path" "$source_inode"; then
 		# The archive is still subject to content, publication, identity and
 		# source-removal checks. This replaces only unrelated unreadable CWDs.
+		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR"
+	elif [[ "$snapshot_rc" -eq 2 && "$operation" == "compact-then-retire" ]] &&
+		printf '%s\n' "$identity_json" | python3 "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree_recovery_legacy_policy.py"; then
+		# Only verified compaction may use name + age; raw-copy expiry cannot.
 		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR"
 	else
 		printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"
@@ -1520,6 +1525,7 @@ source "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree-recovery-retire-helper.sh"
 
 _worktree_recovery_lifecycle_usage() {
 	printf '%s\n' 'Usage: worktree-recovery-lifecycle-helper.sh [status|json|plan --output <absolute-path>|apply --plan <absolute-path> --receipt <absolute-new-path> --confirm <manifest-token>|unreadable-processes]'
+	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh legacy-report [--root PATH] [--registry PATH] [--ledger PATH]'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh migrate --bucket <absolute-path> --repo <owner/repo> --base-branch <branch>'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh retire-plan|retire-status --bucket <absolute-path>'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh retire --bucket <absolute-path> --confirm <confirmation-token>'
@@ -1556,6 +1562,10 @@ worktree_recovery_unreadable_processes() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	case "${1:-status}" in
 	json) worktree_recovery_lifecycle_json ;;
+	legacy-report)
+		shift
+		python3 "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree_recovery_legacy_report.py" "$@"
+		;;
 	retire-plan | retire | retire-status)
 		_worktree_recovery_retire_cli "$@"
 		;;
