@@ -134,10 +134,18 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertGreater(result["archive_bytes"], 0)
         self.assertFalse(bucket.exists())
         self.assertEqual(json.loads(self.retirement("retire-status", bucket).stdout), result)
-        self.repo.rename(self.root / "unavailable-repo")
         target = self.root / "retirement-restore"
         self.helper("restore", migration["archive"], "--target", target)
         self.assertEqual((target / "local.ignored").read_bytes(), b"retirement fixture")
+
+    def test_retirement_requires_available_base(self):
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement('retire-plan', bucket).stdout)
+        self.repo.rename(self.root / 'unavailable-base')
+        result = self.retirement('retire', bucket, '--confirm', plan['confirmation_token'], check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(bucket.is_dir())
+        self.assertTrue(Path(migration['archive']).is_dir())
 
     def test_retirement_rejects_drift_and_archive_damage(self):
         bucket, migration = self.retirement_fixture()
@@ -298,7 +306,6 @@ class ArchiveLifecycle(unittest.TestCase):
         self.run_command("bash", HELPER.parent / "worktree-recovery-lifecycle-helper.sh",
                          "plan", "--output", plan)
         self.assertIn("compact-migration-protected", plan.read_text())
-        self.repo.rename(self.root / "unavailable-repo")
         restored = self.root / "independent-migration-restore"
         self.helper("restore", result["archive"], "--target", restored)
         self.assertEqual((restored / "local.ignored").read_bytes(), b"unique ignored fixture")
@@ -306,6 +313,10 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertEqual((restored / "mixed.txt").read_bytes(), b"unstaged\n")
         self.assertEqual(self.git(restored, "show", ":mixed.txt"), b"staged\n")
         self.assertTrue(bucket.is_dir())
+        manifest = json.loads((Path(result['archive']) / 'manifest.json').read_text())
+        self.assertFalse(manifest['self_contained'])
+        self.repo.rename(self.root / 'unavailable-base')
+        self.assertNotEqual(self.helper('verify', result['archive'], check=False).returncode, 0)
 
     def test_legacy_migration_resumes_verification_and_rejects_drift(self):
         from worktree_recovery_migration_state import publish
@@ -344,10 +355,12 @@ class ArchiveLifecycle(unittest.TestCase):
         publish(receipt_path, receipt)
         manifest = Path(first["archive"]) / "manifest.json"
         manifest.rename(manifest.with_name("manifest.partial"))
+        before = sorted(path.relative_to(self.archives) for path in self.archives.rglob('*'))
         failure = self.migrate_bucket(bucket, check=False)
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn(b"capture-incomplete", failure.stdout)
-        self.assertEqual(len(list(self.archives.rglob("commits.bundle"))), 1)
+        self.assertEqual(sorted(path.relative_to(self.archives) for path in self.archives.rglob('*')), before)
+        self.assertEqual(len(list(self.archives.rglob('git-admin.json'))), 1)
         self.assertTrue(bucket.is_dir())
 
     def test_legacy_migration_keeps_unsupported_permissions(self):
@@ -477,6 +490,12 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertTrue((self.work / "large.ignored").exists())
 
     def test_git_administration_round_trip_without_source_objects(self):
+        self.check_git_administration_round_trip('--self-contained')
+
+    def test_git_administration_incremental_round_trip(self):
+        self.check_git_administration_round_trip()
+
+    def check_git_administration_round_trip(self, *options):
         import worktree_archive_snapshot as snapshots
         from worktree_archive_readiness import OPAQUE_ADMIN_FILES
 
@@ -540,7 +559,7 @@ class ArchiveLifecycle(unittest.TestCase):
         ignored.write_bytes(b'changed ignored data')
         self.assertNotEqual(snapshots.snapshot(self.work, True, True), expected)
         ignored.write_bytes(b'ignored recovery data\x00\xff')
-        archive = self.archive('--self-contained', '--preserve-git-admin', '--include-ignored')
+        archive = self.archive(*options, '--preserve-git-admin', '--include-ignored')
         manifest = json.loads((archive / 'manifest.json').read_text())
         self.assertEqual(manifest['git_admin_policy'], 'preserve-v1')
         self.assertEqual(len(manifest['source_fingerprint']['git_admin']), 64)
@@ -549,7 +568,8 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertNotEqual(self.helper('source-matches', archive, self.work, check=False).returncode, 0)
         (admin / 'MERGE_MSG').write_bytes(bytes.fromhex(state['files']['MERGE_MSG']))
         self.git(self.repo, 'worktree', 'remove', '--force', self.work)
-        self.repo.rename(self.root / 'unavailable-repo')
+        if '--self-contained' in options:
+            self.repo.rename(self.root / 'unavailable-repo')
         self.helper('verify', archive)
         restored = self.root / 'restored-admin'
         self.helper('restore', archive, '--target', restored)
@@ -577,6 +597,41 @@ class ArchiveLifecycle(unittest.TestCase):
         artifact.update(size=bundle.stat().st_size, sha256=hashlib.sha256(bundle.read_bytes()).hexdigest())
         self.update_manifest(archive, **manifest)
         self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
+
+    def test_git_administration_incremental_clean_has_no_bundle(self):
+        from worktree_archive_snapshot import snapshot
+
+        expected = snapshot(self.work, True, True)
+        self.git(self.repo, 'commit', '--allow-empty', '-qm', 'base branch advances')
+        archive = self.archive('--preserve-git-admin', '--include-ignored')
+        manifest = json.loads((archive / 'manifest.json').read_text())
+        self.assertFalse(manifest['self_contained'])
+        self.assertEqual(manifest['base_sha'], expected['head'])
+        self.assertFalse((archive / 'commits.bundle').exists())
+        restored = self.root / 'incremental-clean'
+        before_refs = self.git(self.repo, 'show-ref')
+        self.helper('restore', archive, '--target', restored)
+        self.assertEqual(snapshot(restored, True, True), expected)
+        self.assertEqual(self.git(self.repo, 'show-ref'), before_refs)
+        self.assertFalse((restored / '.git/objects/info/alternates').exists())
+        self.repo.rename(self.root / 'unavailable-base')
+        self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
+
+    def test_git_administration_incremental_staged_unstaged(self):
+        from worktree_archive_snapshot import snapshot
+
+        (self.work / 'mixed.txt').write_text('staged version\n')
+        self.git(self.work, 'add', 'mixed.txt')
+        (self.work / 'mixed.txt').write_text('unstaged version\n')
+        expected = snapshot(self.work, True, True)
+        archive = self.archive('--preserve-git-admin', '--include-ignored')
+        self.assertGreater((archive / 'staged.patch').stat().st_size, 0)
+        self.assertGreater((archive / 'diff.patch').stat().st_size, 0)
+        restored = self.root / 'incremental-dirty'
+        self.helper('restore', archive, '--target', restored)
+        self.assertEqual(self.git(restored, 'show', ':mixed.txt'), b'staged version\n')
+        self.assertEqual((restored / 'mixed.txt').read_bytes(), b'unstaged version\n')
+        self.assertEqual(snapshot(restored, True, True), expected)
 
     def test_git_administration_bundle_omits_reachable_index_objects(self):
         from worktree_archive_snapshot import administration, administration_roots, bundle_roots

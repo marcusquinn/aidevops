@@ -68,8 +68,12 @@ bash .agents/scripts/worktree-recovery-lifecycle-helper.sh migrate \
 ```
 
 This command holds the existing producer lock and creates one existing-format
-compact archive with `--self-contained --include-ignored --preserve-git-admin`.
-It restores independently, checks Git object integrity and compares the complete
+incremental archive with `--include-ignored --preserve-git-admin`, an exact
+merge-base SHA, separate staged/unstaged patches and only objects outside that
+base. No full repository history is copied into every archive. The existing
+common repository must retain the recorded base for the archive's lifetime.
+Verification imports only that base graph plus the delta into a separate repository
+without alternates, checks Git object integrity and compares the complete
 supported snapshot, including staged state and relevant administrative/history
 dependencies. It does **not** retire, rewrite or move the original bucket, update
 its reservation, or apply retention. Source removal needs a separate verified
@@ -124,7 +128,8 @@ with `worktree-recovery-lifecycle-helper.sh`. Inspect its JSON report, then run
 after the original bucket disappears. These commands use the configured recovery root.
 
 The migration must be verified, source identity/content unchanged, and the bound
-archive freshly verified against the recorded manifest. Existing registry,
+archive freshly verified against the recorded manifest and available base.
+Legacy self-contained archive receipts remain readable. Existing registry,
 interactive-claim, Git worktree-reference and process guards must be clear.
 Positive CWD matches always block; degraded visibility needs a valid saved
 managed-lifetime receipt. Missing evidence blocks, without sudo or new enrollment.

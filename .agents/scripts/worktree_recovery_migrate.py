@@ -73,7 +73,7 @@ def capture(directory, record, lock):
         publish(directory / "journal.json", record)
         archive_command(lock, "archive", worktree, "--repo", record["repo"],
                         "--base-branch", record["base"], "--unattributed",
-                        "--reason", "unattributed-worktree", "--self-contained",
+                        "--reason", "unattributed-worktree",
                         "--include-ignored", "--preserve-git-admin", "--output-root", output)
     manifests = list(output.glob("*/*/*/manifest.json"))
     require(len(manifests) == 1, "migration:capture-incomplete; retained without another allocation")
@@ -82,7 +82,7 @@ def capture(directory, record, lock):
     archive_command(lock, "verify", archive)
     archive_command(lock, "source-matches", archive, worktree)
     manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
-    require(manifest.get("self_contained") is True and manifest.get("include_ignored") is True
+    require(isinstance(manifest.get("self_contained"), bool) and manifest.get("include_ignored") is True
             and manifest.get("git_admin_policy") == "preserve-v1"
             and manifest.get("source_worktree") == worktree, "migration:wrong-archive-policy")
     pin = archive / ".aidevops-archive-pin"

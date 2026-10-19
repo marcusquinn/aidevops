@@ -73,7 +73,7 @@ The caller must select the semantic base in this order:
 2. dispatch metadata's target branch;
 3. the repository integration branch, or its default branch.
 
-Pass that name with `--base-branch`. Pass the already-observed commit with `--base-sha` whenever available. Without `--base-sha`, the helper resolves `origin/<base-branch>` first and then the local branch. It always stores the resolved commit, because the base is not necessarily `main` and a moving branch name is insufficient recovery evidence.
+Pass that name with `--base-branch`. Prefer the recorded fork commit via `--base-sha` when available. Otherwise the helper resolves `origin/<base-branch>` (falling back to the local branch) and records its unique merge-base with HEAD. Multiple merge bases require an explicit SHA. The manifest stores the exact commit, never just a moving branch name.
 
 ## Restore workflow
 
@@ -173,14 +173,15 @@ mandatory before replacing any original copy. Archive expiry is separate.
 
 ### Opt-in Git administration preservation
 
-`archive ... --self-contained --preserve-git-admin` records
+`archive ... --preserve-git-admin` records
 `git_admin_policy: "preserve-v1"` and a hashed `git-admin.json` artifact. It
 preserves byte contents of HEAD, the index (including intent-to-add), ORIG_HEAD, FETCH_HEAD,
 HEAD's reflog, COMMIT_EDITMSG, SQUASH_MSG, MERGE_MSG and config.worktree, plus
-private `refs/worktree/*`, `refs/bisect/*` and `refs/rewritten/*`. The complete
-bundle includes both old/new reflog endpoints, ORIG_HEAD, all FETCH_HEAD objects
+private `refs/worktree/*`, `refs/bisect/*` and `refs/rewritten/*`. Required objects
+include both old/new reflog endpoints, ORIG_HEAD, all FETCH_HEAD objects
 (including `not-for-merge` entries), private ref objects,
-and index-only blobs. Scratch refs are created only in a temporary repository;
+and index-only blobs. Only objects outside the recorded base graph are bundled;
+when the base covers everything, no bundle is created. Scratch refs are temporary;
 capture never writes source refs or objects. Source matching is bound to this
 policy and detects changed admin bytes as well as ordinary working-tree changes.
 FETCH_HEAD records must contain a valid SHA-1/SHA-256 object ID and Git's tab-separated
@@ -194,7 +195,9 @@ does not already cover them; a clean index needs no separate per-file refs.
 The remaining refs are written in one `update-ref --stdin` call after object-ID
 validation. Verification still checks every required admin/index object, not
 just the reduced set of bundle tips. This changes neither the archive format nor
-the requirement for independent restoration.
+the requirement for a verified restore. The existing separate `staged.patch`,
+`diff.patch` and untracked payload remain unchanged. `--self-contained` is an
+explicit full-history option, not required by metadata preservation or migration.
 
 The same artifact preserves the known readiness records
 `aidevops/js-readiness.json`, `aidevops/js-restore.json`,
@@ -212,12 +215,18 @@ or removal authority; restore does not rewrite its original path bindings.
 Special working-file permissions (for example, a tracked file with mode 0600)
 remain unsupported and block migration rather than being normalized or discarded.
 
-Verification imports the bundle into an empty repository and checks all admin
-and index object dependencies. Restore imports preservation refs, reconstructs
+Incremental verification imports only the recorded base graph from the existing
+common repository into an empty scratch repository, then imports the delta and
+checks all admin/index dependencies. Missing base evidence blocks verification,
+restore and retirement. Keep the base repository and commit available for the
+archive's lifetime; there is no new shared-base store or remote-fetch fallback.
+Metadata-preserving restore creates a separate repository from base plus delta,
+without changing source branches or borrowing source objects through alternates.
+It imports preservation refs, reconstructs
 the original branch/HEAD and private refs, and writes the saved admin bytes after
 applying patches and untracked files. `extensions.worktreeConfig` is enabled when
 needed. Preservation tips remain under `refs/archive/*` to keep recovery objects
-reachable. Restores do not depend on the original common repository. Config and
+reachable. Only explicit self-contained archives are independent of the base. Config and
 drafts may contain sensitive data; keep the archive's 0700 protection and review
 restored config before running tools in the recovered repository.
 

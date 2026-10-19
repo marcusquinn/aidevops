@@ -75,10 +75,22 @@ def bundle_roots(root, state):
     return sorted(set(history) | extra)
 
 
-def capture_administration(root, archive, include_ignored):
+def capture_administration(root, archive, include_ignored, base=''):
     supported_state(root, True, include_ignored)
     inventories(root)
     state = administration(root)
+    roots = set(bundle_roots(root, state))
+    if base:
+        if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', base):
+            raise ValueError('git_admin:invalid_base')
+        covered = git(root, 'rev-list', '--objects', '--no-object-names', base)
+        roots.difference_update(oid.decode('ascii') for oid in covered.splitlines())
+    if roots:
+        capture_bundle(root, archive, sorted(roots), base)
+    (archive / 'git-admin.json').write_text(json.dumps(state, sort_keys=True) + '\n', encoding='ascii')
+
+
+def capture_bundle(root, archive, roots, base):
     # Scratch refs make every root (including index-only blobs) a named bundle
     # tip. All writes go to scratch; the source object database is read-only.
     with tempfile.TemporaryDirectory(prefix=".admin-bundle-", dir=archive.parent) as temporary:
@@ -88,18 +100,47 @@ def capture_administration(root, archive, include_ignored):
         objects = git(root, "rev-parse", "--path-format=absolute", "--git-path", "objects").rstrip(b"\n")
         (scratch / "objects/info/alternates").write_bytes(objects + b"\n")
         updates = ''.join(f'update refs/archive/{number} {oid}\n'
-                          for number, oid in enumerate(bundle_roots(root, state)))
+                          for number, oid in enumerate(roots))
         git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
         git(scratch, "update-ref", "refs/heads/archive-head", git(root, "rev-parse", "HEAD").strip().decode("ascii"))
-        git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all")
-    (archive / "git-admin.json").write_text(json.dumps(state, sort_keys=True) + "\n", encoding="ascii")
+        exclusions = (f'^{base}',) if base else ()
+        git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
+
+
+def fetch_preservation(root, archive):
+    bundle = archive / 'commits.bundle'
+    if bundle.is_file():
+        git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
+            '+refs/archive/*:refs/archive/*')
+
+
+def seed_base(root, manifest):
+    """Import only the recorded base graph, never unrelated source objects."""
+    base = manifest['base_sha']
+    common = Path(manifest.get('source_git_common_dir', ''))
+    if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', base):
+        raise ValueError('git_admin:invalid_base')
+    if not common.is_absolute() or not common.is_dir():
+        raise ValueError('git_admin:base_repository_unavailable')
+    git(root, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags',
+        '--no-write-fetch-head', str(common), base)
+    git(root, 'update-ref', 'refs/archive/base', base)
+
+
+def prepare_incremental_restore(archive, target):
+    manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
+    target.mkdir(mode=0o755)
+    object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
+    git(target, 'init', '--quiet', f'--object-format={object_format}')
+    seed_base(target, manifest)
+    fetch_preservation(target, archive)
+    git(target, '-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', manifest['head_sha'])
 
 
 def restore_administration(root, archive):
     state = load_administration(archive)
     # Clone fetches branch tips only. Import all preservation tips explicitly.
-    git(root, "fetch", "--quiet", "--no-write-fetch-head", str(archive / "commits.bundle"),
-        "+refs/archive/*:refs/archive/*")
+    fetch_preservation(root, archive)
     admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     head = bytes.fromhex(state["files"]["HEAD"])
     if head.startswith(b"ref: "):
@@ -125,8 +166,7 @@ def verify_administration(archive, scratch, manifest):
     state = load_administration(archive)
     if administration_digest(state) != manifest.get('source_fingerprint', {}).get('git_admin'):
         raise ValueError('git_admin:fingerprint_mismatch')
-    git(scratch, 'fetch', '--quiet', '--no-write-fetch-head', str(archive / 'commits.bundle'),
-        '+refs/archive/*:refs/archive/*')
+    fetch_preservation(scratch, archive)
     git(scratch, 'update-ref', 'HEAD', manifest['head_sha'])
     (scratch / 'index').write_bytes(bytes.fromhex(state['files']['index']))
     roots = administration_roots(scratch, state)
@@ -156,13 +196,17 @@ def snapshot(path, preserve_git_admin=False, include_ignored=False):
 
 
 def main(argv):
-    if argv and argv[0] == "admin-capture" and len(argv) == 4:
-        capture_administration(Path(argv[1]), Path(argv[2]).resolve(), argv[3] == "1")
+    command = argv[0] if argv else ''
+    if command == "admin-capture" and len(argv) in (4, 5):
+        capture_administration(Path(argv[1]), Path(argv[2]).resolve(), argv[3] == "1", *argv[4:])
         return 0
-    if argv and argv[0] == "admin-restore" and len(argv) == 3:
+    if command == 'admin-prepare-restore' and len(argv) == 3:
+        prepare_incremental_restore(Path(argv[1]).resolve(), Path(argv[2]).resolve())
+        return 0
+    if command == "admin-restore" and len(argv) == 3:
         restore_administration(Path(argv[1]), Path(argv[2]).resolve())
         return 0
-    if argv and argv[0] == "admin-verify" and len(argv) == 2:
+    if command == "admin-verify" and len(argv) == 2:
         load_administration(Path(argv[1]))
         return 0
     parser = argparse.ArgumentParser(description=__doc__)
