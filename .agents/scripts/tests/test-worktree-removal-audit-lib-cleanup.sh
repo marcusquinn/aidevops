@@ -500,6 +500,125 @@ RACE_GIT
 # Forced recovery keeps a usable detached admin snapshot with the exact staged,
 # unstaged, and untracked state that existed before native source removal.
 # =============================================================================
+# Populate the caller's fixture paths; all mutations stay under TEST_DIR.
+create_compact_removal_fixture() {
+	local label="$1"
+	local output="${TEST_DIR}/${label}-archives"
+	local -a journals=()
+	repo_path="${TEST_DIR}/${label}-repo"
+	wt_path="${TEST_DIR}/${label}-worktree"
+	create_git_worktree_fixture "$repo_path" "$wt_path" feature/compact || return 1
+	printf 'staged\n' >"$wt_path/README.md" || return 1
+	"$GIT_BIN" -C "$wt_path" add README.md || return 1
+	printf 'unstaged\n' >"$wt_path/README.md" || return 1
+	printf '*.ignored\n' >"$wt_path/.gitignore" || return 1
+	printf 'unique ignored\n' >"$wt_path/unique.ignored" || return 1
+	archive_path=$(python3 "${SCRIPT_DIR}/../worktree_recovery_producer.py" \
+		capture "$wt_path" "$output" test.sh compact-guard-fixture) || return 1
+	journals=("$output/.producer-transactions/"*/journal.json)
+	[[ "${#journals[@]}" -eq 1 && -f "${journals[0]}" ]] || return 1
+	journal_path="${journals[0]}"
+	return 0
+}
+
+test_compact_archive_native_removal() {
+	local repo_path="" wt_path="" archive_path="" journal_path=""
+	local restored="${TEST_DIR}/compact-independent-restore"
+	local rc=0
+	create_compact_removal_fixture compact-success || return 1
+	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
+		"$wt_path" "$archive_path" test.sh compact-test "" false true || rc=1
+	[[ ! -e "$wt_path" ]] || rc=1
+	jq -e '.source_removal_outcome == "removed"' "$journal_path" >/dev/null || rc=1
+	_worktree_recovery_archive_is_valid "$archive_path" || rc=1
+	mv "$repo_path" "$repo_path-original" || rc=1
+	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+	[[ "$("$GIT_BIN" -C "$restored" show :README.md)" == staged ]] || rc=1
+	assert_file_contains "$restored/README.md" '^unstaged$' || rc=1
+	assert_file_contains "$restored/unique.ignored" '^unique ignored$' || rc=1
+	print_result compact_archive_native_removal "$rc" "Expected independently recoverable dirty state after native removal"
+	return 0
+}
+
+damage_compact_removal_fixture() {
+	local mode="$1"
+	local admin=""
+	case "$mode" in
+	source-write) printf 'late ignored\n' >"$wt_path/unique.ignored" || return 1 ;;
+	admin-replaced)
+		admin=$("$GIT_BIN" -C "$wt_path" rev-parse --absolute-git-dir) || return 1
+		mv "$admin" "$admin-original" || return 1
+		cp -a "$admin-original" "$admin" || return 1
+		;;
+	missing-receipt) mv "$journal_path" "$journal_path-missing" || return 1 ;;
+	corrupt-receipt) printf '{}\n' >"$journal_path" || return 1 ;;
+	corrupt-archive) printf '\n' >>"$archive_path/manifest.json" || return 1 ;;
+	current-cwd) cd "$wt_path" || return 1 ;;
+	invalid-proof)
+		python3 - "$WORKTREE_REGISTRY_DB" "$wt_path" <<'PY' || return 1
+from contextlib import closing
+import sqlite3
+import sys
+with closing(sqlite3.connect(sys.argv[1])) as db:
+    db.execute("CREATE TABLE IF NOT EXISTS worktree_managed_lifetimes (path TEXT PRIMARY KEY, record TEXT)")
+    db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?, ?)", (sys.argv[2], "{}"))
+    db.commit()
+PY
+		;;
+	esac
+	return 0
+}
+
+inject_compact_late_probe() {
+	local mode="$1"
+	case "$mode" in
+	late-write)
+		worktree_managed_require_removal_proof() {
+			local path="$1"
+			printf 'late data\n' >"$path/late.ignored" || return 1
+			return 0
+		}
+		;;
+	late-lock)
+		_worktree_archive_source_matches() {
+			local path="$1" archive="$2"
+			_worktree_recovery_producer_command 0 source-matches "$archive" "$path" || return 1
+			checks=$((checks + 1))
+			if [[ "$checks" -eq 2 ]]; then
+				"$GIT_BIN" -C "$path" worktree lock "$path" || return 1
+			fi
+			return 0
+		}
+		;;
+	esac
+	return 0
+}
+
+compact_removal_refusal_case() {
+	local mode="$1"
+	local repo_path="" wt_path="" archive_path="" journal_path=""
+	local checks=0
+	create_compact_removal_fixture "compact-$mode" || return 1
+	damage_compact_removal_fixture "$mode" || return 1
+	inject_compact_late_probe "$mode" || return 1
+	if AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
+		"$wt_path" "$archive_path" test.sh compact-test "" false true; then
+		return 1
+	fi
+	[[ -d "$wt_path" && -d "$archive_path" ]] || return 1
+	return 0
+}
+
+test_compact_removal_refusals() {
+	local mode="" rc=0
+	for mode in source-write admin-replaced missing-receipt corrupt-receipt corrupt-archive current-cwd invalid-proof late-write late-lock; do
+		rc=0
+		(compact_removal_refusal_case "$mode") || rc=$?
+		print_result "compact_removal_preserves_$mode" "$rc" "Expected the source and archive to remain"
+	done
+	return 0
+}
+
 test_recovery_archive_preserves_index_and_dirty_files() {
 	local repo_path="${TEST_DIR}/archive-dirty-repo"
 	local wt_path="${TEST_DIR}/archive-dirty-worktree"
@@ -519,6 +638,7 @@ test_recovery_archive_preserves_index_and_dirty_files() {
 	"$GIT_BIN" -C "$wt_path" add README.md || rc=1
 	printf 'unstaged state\n' >>"$wt_path/README.md" || rc=1
 	printf 'untracked state\n' >"$wt_path/untracked.txt" || rc=1
+	printf '{}\n' >"$wt_path/manifest.json" || rc=1
 	expected_status=$("$GIT_BIN" -C "$wt_path" status --porcelain=v1 --untracked-files=all) || rc=1
 	expected_head=$("$GIT_BIN" -C "$wt_path" rev-parse --verify HEAD) || rc=1
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \

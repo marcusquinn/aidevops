@@ -725,6 +725,22 @@ _worktree_recovery_dir_for_archive() {
 	return 0
 }
 
+# Dispatch only; the producer command validates the private receipt and artifact.
+# A legacy worktree may itself contain an application manifest.json.
+_worktree_recovery_is_compact() {
+	local archive_path="$1"
+	[[ -f "$archive_path/manifest.json" && ! -e "$archive_path/.git" && ! -L "$archive_path/.git" ]] || return 1
+	return 0
+}
+
+_worktree_recovery_producer_command() {
+	local deadline_epoch="$1"
+	shift
+	_worktree_recovery_run_before_epoch "$deadline_epoch" \
+		python3 "${BASH_SOURCE[0]%/*}/worktree_recovery_producer.py" "$@" || return $?
+	return 0
+}
+
 _worktree_recovery_format_is_supported() {
 	local format="$1"
 	case "$format" in
@@ -804,6 +820,11 @@ _worktree_recovery_record_source_outcome() {
 	"$_WT_RECOVERY_OUTCOME_PENDING" | "$_WT_RECOVERY_OUTCOME_REMOVED") ;;
 	*) return 1 ;;
 	esac
+	if _worktree_recovery_is_compact "$archive_path"; then
+		[[ "$outcome" == "$_WT_RECOVERY_OUTCOME_REMOVED" ]] || return 1
+		_worktree_recovery_producer_command 0 removed "$archive_path" || return 1
+		return 0
+	fi
 	recovery_dir=$(_worktree_recovery_dir_for_archive "$archive_path") || return 1
 	IFS= read -r format <"$recovery_dir/format" || return 1
 	[[ "$format" == "$_WT_RECOVERY_FORMAT_V2" ]] || return 0
@@ -859,6 +880,10 @@ _worktree_recovery_archive_is_valid() {
 	local actual_head=""
 	local real_git=""
 
+	if _worktree_recovery_is_compact "$archive_path"; then
+		_worktree_recovery_producer_command "$deadline_epoch" verify "$archive_path" || return $?
+		return 0
+	fi
 	recovery_dir=$(_worktree_recovery_dir_for_archive "$archive_path") || return 1
 	recovery_admin="${recovery_dir}/admin"
 	[[ -d "$archive_path" && -f "$archive_path/.git" && ! -L "$archive_path/.git" ]] || return 1
@@ -901,6 +926,11 @@ _worktree_archive_source_matches() {
 	local expected_head=""
 	local expected_branch=""
 
+	if _worktree_recovery_is_compact "$archive_path"; then
+		# Also called after the final mutable probes in native removal.
+		_worktree_recovery_producer_command 0 source-matches "$archive_path" "$wt_path" || return 1
+		return 0
+	fi
 	recovery_dir=$(_worktree_recovery_dir_for_archive "$archive_path") || return 1
 	IFS= read -r expected_source_real <"${recovery_dir}/source-real" || return 1
 	IFS= read -r expected_source_inode <"${recovery_dir}/source-inode" || return 1
