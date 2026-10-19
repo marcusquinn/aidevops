@@ -17,6 +17,7 @@ import uuid
 from worktree_archive_snapshot import git, snapshot
 from worktree_lifetime_archive import inode, require
 from worktree_recovery_migration_state import publish, sync_directory
+from worktree_recovery_retirement_transaction import fingerprint
 
 
 def slot_path(directory, record, key):
@@ -57,6 +58,11 @@ def verify_restore(restored, record):
     git(restored, "fsck", "--full", "--no-progress", "--no-dangling")
     require(snapshot(restored, preserve_git_admin=True, include_ignored=True) == record["source"]["snapshot"],
             "migration:scratch-changed; retained for review")
+    # New producers seal every physical entry, including unreachable Git objects.
+    # Existing migration receipts retain their historical compatibility contract.
+    if "restore_fingerprint" in record:
+        require(fingerprint(restored) == record["restore_fingerprint"],
+                "migration:scratch-content-drift; retained for review")
 
 
 def prepare_cleanup(directory, record):

@@ -57,7 +57,7 @@ def publish(path, value):
         Path(temporary).unlink(missing_ok=True)
 
 
-def load(path):
+def load(path, schema=SCHEMA):
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as handle:
         observed = os.fstat(handle.fileno())
@@ -66,7 +66,7 @@ def load(path):
         payload = handle.read(4 * 1024 * 1024 + 1)
     require(len(payload) <= 4 * 1024 * 1024, "migration:oversized-journal")
     value = json.loads(payload)
-    require(isinstance(value, dict) and value.get("schema") == SCHEMA, "migration:invalid-journal")
+    require(isinstance(value, dict) and value.get("schema") == schema, "migration:invalid-journal")
     return value
 
 
