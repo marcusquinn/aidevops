@@ -189,6 +189,35 @@ jq -e 'select(.event == "permission_awaiting_approval" and .reason == "needs_mai
   and .permission == "external_directory" and .tool == "read"
   and .risk_level == "medium" and .grantable == true)' \
 	"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" >/dev/null
+# GH#35128: temp/scratch writes are owned recovery; other external writes are not.
+temp_capture="${test_root}/temp-capture.json"
+jq '.requests = [.requests[0] | .permission = "external_directory" | .tool = "write" | .patterns = ["~/.aidevops-private/tmp/*"]]' \
+	"$capture_file" >"$temp_capture"
+permission_capture_is_temp_write_recovery "$temp_capture"
+: >"$gh_call_log"
+temp_rc=0
+temp_out=$(cmd_request --file "$temp_capture" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir") || temp_rc=$?
+if [[ "$temp_rc" -ne "$PERMISSION_OWNED_RECOVERY_RC" || "$temp_out" != *'AIDEVOPS_TEMP_DIR'* ]]; then
+	printf 'temp-path write was not classified as owned recovery\n' >&2
+	exit 1
+fi
+if grep -q -- 'needs-maintainer-permissions' "$gh_call_log"; then
+	printf 'temp-path write applied the maintainer permission hold\n' >&2
+	exit 1
+fi
+# shellcheck disable=SC2088 # Literal tilde patterns mirror captured requests.
+for unsafe_pattern in '~/projects/app/src/**' '~/.ssh/**' '~/.cache/../.ssh/id' '~/.aws/tmp/credentials'; do
+	jq --arg p "$unsafe_pattern" '.requests[0].patterns = [$p]' "$temp_capture" >"${temp_capture}.n"
+	if permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
+		printf 'non-temp external write misclassified as recovery: %s\n' "$unsafe_pattern" >&2
+		exit 1
+	fi
+done
+jq '.requests[0].tool = "read"' "$temp_capture" >"${temp_capture}.n"
+if permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
+	printf 'temp read misclassified as write recovery\n' >&2
+	exit 1
+fi
 permission_record_blocker "permission_capability_true_fixture" "blocked" "permission_required" "true" \
 	123 "owner/repo" "issue-123" "perm-true" "Boolean transport fixture" \
 	"external_directory" "read" "medium" "true"

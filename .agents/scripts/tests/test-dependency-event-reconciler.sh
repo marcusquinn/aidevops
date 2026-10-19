@@ -572,6 +572,76 @@ _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 \
 assert_eq 1 "$pass_rc" "unpersistable cursor reports failure instead of partial progress"
 rm -f "$visited_log"
 
+# GH#35130: dependants of a superseded original are repointed at the successor.
+# Stub world: #10 closed NOT_PLANNED "Superseded by #12" (open). #30 is blocked
+# only by #10; #31 is blocked by #10 and an open #40 and must be left alone.
+REPOINT_LOG=$(mktemp)
+_run_repoint_case() (
+	local dependant="$1"
+	gh() {
+		local arg="" jq_filter="" path="" json=""
+		[[ "$1" == "api" ]] || return 1
+		shift
+		for arg in "$@"; do
+			if [[ -n "$jq_filter" && "$jq_filter" == "?" ]]; then jq_filter="$arg"; fi
+			[[ "$arg" == "--jq" ]] && jq_filter="?"
+			[[ "$arg" == repos/* ]] && path="$arg"
+		done
+		[[ "$jq_filter" == "?" ]] && jq_filter=""
+		if [[ "$1" == "graphql" ]]; then
+			if [[ "$*" == *issueOrPullRequest* ]]; then
+				supersession_fixture "$@"
+				return 0
+			fi
+			if [[ "$*" == *"n=31"* ]]; then
+				printf '%s\n' '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"number":10,"state":"CLOSED","stateReason":"NOT_PLANNED","repository":{"nameWithOwner":"owner/repo"}},{"number":40,"state":"OPEN","stateReason":null,"repository":{"nameWithOwner":"owner/repo"}}],"pageInfo":{"hasNextPage":false}}}}}}'
+			else
+				printf '%s\n' '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[{"number":10,"state":"CLOSED","stateReason":"NOT_PLANNED","repository":{"nameWithOwner":"owner/repo"}}],"pageInfo":{"hasNextPage":false}}}}}}'
+			fi
+			return 0
+		fi
+		case "$path" in
+		*/dependencies/blocked_by)
+			if [[ "$*" == *"-X POST"* ]]; then
+				printf 'POST %s %s\n' "$path" "$*" >>"$REPOINT_LOG"
+				return 0
+			fi
+			printf '10\n'
+			return 0
+			;;
+		repos/owner/repo/issues/12) json='{"id":9912,"state":"open","body":""}' ;;
+		repos/owner/repo/issues/*) json='{"id":9930,"state":"open","body":"Intro #10 text\nBlocked by: #10 and #7\n"}' ;;
+		*) return 1 ;;
+		esac
+		if [[ -n "$jq_filter" ]]; then
+			printf '%s' "$json" | jq -r "$jq_filter"
+		else
+			printf '%s\n' "$json"
+		fi
+		return 0
+	}
+	local stub_dir=""
+	stub_dir=$(mktemp -d)
+	# shellcheck disable=SC2016 # The stub script body is written literally.
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\n[[ "$2" == "--repo" ]] || [[ "$3" == "--repo" ]]; for a in "$@"; do [[ -f "$a" ]] && cat "$a" >>"%s"; done\nexit 0\n' "$REPOINT_LOG" "$REPOINT_LOG" >"${stub_dir}/write-helper"
+	chmod +x "${stub_dir}/write-helper"
+	DSR_GH_WRITE_HELPER="${stub_dir}/write-helper"
+	dsr_repoint_if_superseded owner/repo "$dependant"
+	local rc=$?
+	rm -rf "$stub_dir"
+	return "$rc"
+)
+: >"$REPOINT_LOG"
+_run_repoint_case 30 >/dev/null 2>&1
+assert_eq 1 "$(grep -c '^POST .*issue_id=9912' "$REPOINT_LOG")" "superseded-only dependant gains a native edge to the successor"
+assert_eq 1 "$(grep -c 'Blocked by: #12 and #7' "$REPOINT_LOG")" "superseded-only dependant has its Blocked-by line rewritten"
+assert_eq 1 "$(grep -c 'Intro #10 text' "$REPOINT_LOG")" "non Blocked-by prose keeps the original reference"
+assert_eq 1 "$(grep -c 'superseded by #12' "$REPOINT_LOG")" "superseded-only dependant gets one pointer comment"
+: >"$REPOINT_LOG"
+_run_repoint_case 31 >/dev/null 2>&1
+assert_eq 0 "$(wc -c <"$REPOINT_LOG" | tr -d ' ')" "dependant with an open blocker is left alone"
+rm -f "$REPOINT_LOG"
+
 if grep -q 'issues(first:100,states:' "${SCRIPTS_DIR}/dependency-event-reconciler.sh"; then
 	fail "reconciler must not enumerate latest repository issues"
 else

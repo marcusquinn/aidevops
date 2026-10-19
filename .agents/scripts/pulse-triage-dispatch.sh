@@ -123,6 +123,8 @@ gh issue comment ${parent_num} --repo "${repo_slug}" \\
 gh issue edit ${parent_num} --repo "${repo_slug}" \\
   --add-label "consolidated" --remove-label "needs-consolidation"
 gh issue close ${parent_num} --repo "${repo_slug}" --reason "not planned"
+# Repoint open dependants' blockedBy edges and Blocked-by lines at the successor (GH#35130):
+~/.aidevops/agents/scripts/dependency-supersession-repoint-helper.sh repoint "${repo_slug}" ${parent_num} \$NEW_NUM
 \`\`\`
 
 5. **Close this consolidation-task issue** with a summary comment:
