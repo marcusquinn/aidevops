@@ -244,6 +244,27 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertIn(b"claimed-content-drift", result.stdout)
         self.assertEqual((target / "late-writer").read_bytes(), b"must survive")
 
+    def test_retirement_rechecks_git_state_after_unclaimed_interruption(self):
+        import worktree_recovery_retirement_transaction as transaction
+        from worktree_recovery_migration_state import load
+
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        directory = Path(migration["receipt"]).parent
+        record = load(directory / "retirement.json")
+        with patch.object(transaction.os, "rename", side_effect=InterruptedError):
+            with self.assertRaises(InterruptedError):
+                transaction.claim(directory, record, bucket)
+        self.assertEqual(load(directory / "retirement.json")["phase"], "claiming")
+        new_head = self.git(self.repo, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "late ref update").decode().strip()
+        # Legacy recovery copies have detached HEADs: change the copy itself,
+        # not the original branch, which is no longer its HEAD authority.
+        source = Path(load(Path(migration["receipt"]))["source"]["identity"]["archive_path"])
+        self.git(source, "update-ref", "HEAD", new_head)
+        result = self.retirement("retire", bucket, "--confirm", plan["confirmation_token"], check=False)
+        self.assertIn(b"source-drift", result.stdout)
+        self.assertTrue(bucket.is_dir())
+
     def test_legacy_migration_preserves_source_and_restores_independently(self):
         from worktree_recovery_migration_state import source_state
 

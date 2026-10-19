@@ -71,10 +71,10 @@ def retire(directory, migration, bucket, token, lock):
         return report(record)
     require(record["phase"] in ("planned", "claiming", "claimed", "removing"),
             "retirement:unknown-phase")
-    if record["phase"] == "planned":
-        verify_archive(migration, lock)
-    else:
-        verify_archive(migration, lock, check_source=False)
+    unclaimed = record["phase"] == "planned"
+    if record["phase"] == "claiming":
+        unclaimed = not os.path.lexists(Path(record["container"]) / "bucket")
+    verify_archive(migration, lock, check_source=unclaimed)
     guards(migration["source"]["identity"], bucket, lock)
     target = claim(directory, record, bucket)
     verify_archive(migration, lock, check_source=False)
