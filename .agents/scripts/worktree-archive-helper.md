@@ -174,6 +174,16 @@ and index-only blobs. Scratch refs are created only in a temporary repository;
 capture never writes source refs or objects. Source matching is bound to this
 policy and detects changed admin bytes as well as ordinary working-tree changes.
 
+The same artifact preserves the known readiness records
+`aidevops/js-readiness.json`, `aidevops/js-restore.json`,
+`aidevops/js-readiness-entry` and `aidevops/js-prepare.json`, as opaque bytes
+limited to 1 MiB per file. These records are not ownership, quiescence or removal
+authority. Restore creates their metadata directory privately (0700).
+Other entries under `aidevops/` remain unsupported; the
+`aidevops/js-install-partial` marker blocks capture as an unfinished operation.
+Symlinks and oversized readiness records fail closed during capture, and the
+artifact reader also enforces the size limit before restoring them.
+
 Verification imports the bundle into an empty repository and checks all admin
 and index object dependencies. Restore imports preservation refs, reconstructs
 the original branch/HEAD and private refs, and writes the saved admin bytes after
@@ -197,6 +207,16 @@ This option can combine with `--include-ignored`; it does not enable that policy
 implicitly. No-flag archives keep their existing representation, and manifests
 without `git_admin_policy` retain their existing verify/restore behavior.
 Automatic idle archival does **not** opt in; its narrow contract is unchanged.
+
+For read-only source/restore comparison, run
+`python3 worktree_archive_snapshot.py --preserve-git-admin --include-ignored WORKTREE`
+on each tree. The optional ignored-file inventory includes contents in the
+fingerprint and detects ignored-file drift. Without `--include-ignored`,
+snapshots still reject ignored data. All filesystem restrictions (including
+empty directories, unsupported permissions, ACLs/xattrs and hard links) remain
+enforced. Matching fingerprints do not establish quiescence or authorize
+retiring a recovery bucket; its preservation metadata and removal guards are
+separate requirements.
 
 ## Retention
 

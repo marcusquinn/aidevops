@@ -19,7 +19,12 @@ def git(root, *args, data=None):
                           check=True, timeout=60).stdout
 
 
-ADMIN_FILES = {"HEAD", "index", "ORIG_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG", "MERGE_MSG", "config.worktree", "logs/HEAD"}
+READINESS_ADMIN_FILES = {
+    "aidevops/js-readiness.json", "aidevops/js-restore.json",
+    "aidevops/js-readiness-entry", "aidevops/js-prepare.json",
+}
+MAX_READINESS_BYTES = 1024 * 1024
+ADMIN_FILES = {"HEAD", "index", "ORIG_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG", "MERGE_MSG", "config.worktree", "logs/HEAD"} | READINESS_ADMIN_FILES
 PRIVATE_PREFIXES = ("refs/worktree/", "refs/bisect/", "refs/rewritten/")
 OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
@@ -32,14 +37,14 @@ def admin_path_allowed(name):
 def validate_admin_entry(entry, name):
     if name == "index.lock":
         raise ValueError("git_admin:index_locked:index.lock")
-    if name in OPERATIONS:
+    if name in OPERATIONS or name == "aidevops/js-install-partial":
         raise ValueError(f"git_admin:unfinished_operation:{name}")
     if entry.is_symlink():
         raise ValueError(f"git_admin:symlink:{name}")
 
 
 def admin_directory_allowed(name):
-    return (name in {"logs", "refs", "refs/worktree", "refs/bisect", "refs/rewritten"}
+    return (name in {"logs", "refs", "refs/worktree", "refs/bisect", "refs/rewritten", "aidevops"}
             or any(name.startswith(prefix) for prefix in PRIVATE_PREFIXES))
 
 
@@ -53,7 +58,14 @@ def administration_files(admin, directory, linked):
         if entry.is_dir() and admin_directory_allowed(name):
             files.update(administration_files(admin, entry, linked))
         elif entry.is_file() and admin_path_allowed(name):
-            files[name] = entry.read_bytes().hex()
+            if name in READINESS_ADMIN_FILES:
+                with entry.open("rb") as handle:
+                    content = handle.read(MAX_READINESS_BYTES + 1)
+                if len(content) > MAX_READINESS_BYTES:
+                    raise ValueError(f"git_admin:readiness_too_large:{name}")
+            else:
+                content = entry.read_bytes()
+            files[name] = content.hex()
         elif not linked and (name == "logs/refs" or name.split("/")[0] in
                              {"objects", "refs", "config", "description", "hooks", "info", "packed-refs"}):
             # Independent restores contain ordinary repository infrastructure.
@@ -103,6 +115,8 @@ def load_administration(archive):
     for name, value in state["files"].items():
         if not admin_path_allowed(name) or ".." in Path(name).parts or Path(name).is_absolute():
             raise ValueError("git_admin:unsafe_path")
+        if name in READINESS_ADMIN_FILES and (not isinstance(value, str) or len(value) > MAX_READINESS_BYTES * 2):
+            raise ValueError(f"git_admin:readiness_too_large:{name}")
         bytes.fromhex(value)
     for name, oid in state["refs"].items():
         if (not any(name.startswith(prefix) for prefix in PRIVATE_PREFIXES)

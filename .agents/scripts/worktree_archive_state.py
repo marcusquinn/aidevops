@@ -9,7 +9,7 @@ from pathlib import Path
 from worktree_archive_administration import administration, git
 
 
-def inventories(root):
+def inventories(root, include_ignored=False):
     index = git(root, "ls-files", "--stage", "-z")
     paths = set()
     for entry in index.split(b"\0"):
@@ -24,7 +24,8 @@ def inventories(root):
     fields = attributes.split(b"\0")
     if any(value not in (b"unspecified", b"unset") for value in fields[2::3]):
         raise ValueError("Git filters, including local LFS payloads, require separate preservation")
-    paths.update(path for path in git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if path)
+    excludes = () if include_ignored else ("--exclude-standard",)
+    paths.update(path for path in git(root, "ls-files", "--others", *excludes, "-z").split(b"\0") if path)
     return index, sorted(paths)
 
 

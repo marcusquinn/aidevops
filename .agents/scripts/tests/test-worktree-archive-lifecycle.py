@@ -112,9 +112,13 @@ class ArchiveLifecycle(unittest.TestCase):
 
     def test_git_administration_round_trip_without_source_objects(self):
         import worktree_archive_snapshot as snapshots
+        from worktree_archive_administration import READINESS_ADMIN_FILES
 
         self.env['GIT_OPTIONAL_LOCKS'] = '0'
         admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        (admin / 'aidevops').mkdir()
+        for name in READINESS_ADMIN_FILES:
+            (admin / name).write_bytes(b'opaque readiness state\x00\xff\n')
         # Both endpoints of the reflog can be otherwise unreachable.
         self.git(self.work, 'commit', '--allow-empty', '-qm', 'reflog only one')
         first = self.git(self.work, 'rev-parse', 'HEAD').strip()
@@ -149,13 +153,23 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertTrue(undo)
         # Keep a blob reachable only through the index, not any commit.
         (self.work / 'mixed.txt').write_text('working contents\n')
+        ignored = self.work / 'saved.ignored'
+        ignored.write_bytes(b'ignored recovery data\x00\xff')
         status = self.git(self.work, 'status', '--porcelain=v2')
         state = snapshots.administration(self.work)
         index = self.git(self.work, 'ls-files', '--stage', '-z')
         with self.assertRaises(ValueError):
             snapshots.snapshot(self.work)
-        expected = snapshots.snapshot(self.work, True)
-        archive = self.archive('--self-contained', '--preserve-git-admin')
+        with self.assertRaisesRegex(ValueError, 'ignored content'):
+            snapshots.snapshot(self.work, True)
+        expected = snapshots.snapshot(self.work, True, True)
+        cli_snapshot = self.run_command(sys.executable, HELPER.with_name('worktree_archive_snapshot.py'),
+                                        '--preserve-git-admin', '--include-ignored', self.work)
+        self.assertEqual(json.loads(cli_snapshot.stdout), expected)
+        ignored.write_bytes(b'changed ignored data')
+        self.assertNotEqual(snapshots.snapshot(self.work, True, True), expected)
+        ignored.write_bytes(b'ignored recovery data\x00\xff')
+        archive = self.archive('--self-contained', '--preserve-git-admin', '--include-ignored')
         manifest = json.loads((archive / 'manifest.json').read_text())
         self.assertEqual(manifest['git_admin_policy'], 'preserve-v1')
         self.assertEqual(len(manifest['source_fingerprint']['git_admin']), 64)
@@ -171,7 +185,9 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertEqual(self.git(restored, 'status', '--porcelain=v2'), status)
         self.assertEqual(self.git(restored, 'ls-files', '--stage', '-z'), index)
         self.assertEqual(snapshots.administration(restored), state)
-        self.assertEqual(snapshots.snapshot(restored, True), expected)
+        self.assertEqual(snapshots.snapshot(restored, True, True), expected)
+        restored_admin = Path(self.git(restored, 'rev-parse', '--absolute-git-dir').decode().strip())
+        self.assertEqual(stat.S_IMODE((restored_admin / 'aidevops').stat().st_mode), 0o700)
         for oid in (first, second, previous, private):
             self.assertEqual(self.git(restored, 'cat-file', '-t', oid.decode()), b'commit\n')
         self.assertEqual(self.git(restored, 'config', '--worktree', 'archive.fixture'), b'preserved\n')
@@ -212,6 +228,37 @@ class ArchiveLifecycle(unittest.TestCase):
                     self.assertIn(b'git_admin:index_locked:index.lock', default.stderr)
                 path.unlink()
         self.assertFalse(list(self.archives.rglob('manifest.json')))
+
+    def test_readiness_administration_fails_closed(self):
+        from worktree_archive_administration import administration, load_administration, MAX_READINESS_BYTES
+
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        state_dir = admin / 'aidevops'
+        state_dir.mkdir()
+        for name, reason in [('ownership.json', 'unknown_entry'),
+                             ('js-install-partial', 'unfinished_operation')]:
+            path = state_dir / name
+            path.write_bytes(b'preserve this')
+            with self.assertRaisesRegex(ValueError, f'git_admin:{reason}:aidevops/{name}'):
+                administration(self.work)
+            self.assertEqual(path.read_bytes(), b'preserve this')
+            path.unlink()
+        path = state_dir / 'js-readiness.json'
+        path.symlink_to(self.work / 'mixed.txt')
+        with self.assertRaisesRegex(ValueError, 'git_admin:symlink:'):
+            administration(self.work)
+        path.unlink()
+        path.write_bytes(b'x' * (MAX_READINESS_BYTES + 1))
+        with self.assertRaisesRegex(ValueError, 'git_admin:readiness_too_large:'):
+            administration(self.work)
+        path.write_bytes(b'bounded')
+        state = administration(self.work)
+        state['files']['aidevops/js-readiness.json'] = '00' * (MAX_READINESS_BYTES + 1)
+        payload = self.root / 'malformed-admin'
+        payload.mkdir()
+        (payload / 'git-admin.json').write_text(json.dumps(state))
+        with self.assertRaisesRegex(ValueError, 'git_admin:readiness_too_large:'):
+            load_administration(payload)
 
     def test_git_administration_rejects_location_dependent_config(self):
         import worktree_archive_snapshot as snapshots

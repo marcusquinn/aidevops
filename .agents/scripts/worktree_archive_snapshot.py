@@ -9,6 +9,7 @@ Sampling is not atomic: cooperating-writer exclusion must cover verification and
 removal; fingerprints do not fence arbitrary same-user writers.
 """
 
+import argparse
 import hashlib
 import json
 import os
@@ -88,7 +89,8 @@ def restore_administration(root, archive):
         (admin / name).unlink(missing_ok=True)
     for name, value in state["files"].items():
         target = admin / name
-        target.parent.mkdir(parents=True, exist_ok=True)
+        # Newly reconstructed metadata directories may contain private state.
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target.write_bytes(bytes.fromhex(value))
     if "config.worktree" in state["files"]:
         git(root, "config", "--file", str(admin / "config"), "extensions.worktreeConfig", "true")
@@ -109,10 +111,10 @@ def verify_administration(archive, scratch, manifest):
         raise ValueError('git_admin:missing_object')
 
 
-def snapshot(path, preserve_git_admin=False):
+def snapshot(path, preserve_git_admin=False, include_ignored=False):
     root = Path(path).resolve(strict=True)
-    supported_state(root, preserve_git_admin)
-    index, paths = inventories(root)
+    supported_state(root, preserve_git_admin, include_ignored)
+    index, paths = inventories(root, include_ignored)
     supported_directories(root)
     head = git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii")
     contents = [[os.fsdecode(raw), fingerprint(root, raw)] for raw in paths]
@@ -121,9 +123,9 @@ def snapshot(path, preserve_git_admin=False):
         values.append(administration(root))
     payload = json.dumps(values, ensure_ascii=True, separators=(",", ":")).encode("ascii")
     # Git/index mutations during sampling are not a valid stable snapshot.
-    if inventories(root) != (index, paths) or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii") != head:
+    if inventories(root, include_ignored) != (index, paths) or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii") != head:
         raise ValueError("Git state changed while fingerprinting")
-    supported_state(root, preserve_git_admin)
+    supported_state(root, preserve_git_admin, include_ignored)
     working_bytes = sum(value[2] for _, value in contents if value[0] == "file")
     return {"schema": 1, "head": head, "files": len(paths), "bytes": working_bytes,
             "sha256": hashlib.sha256(payload).hexdigest()}
@@ -139,12 +141,12 @@ def main(argv):
     if argv and argv[0] == "admin-verify" and len(argv) == 2:
         load_administration(Path(argv[1]))
         return 0
-    if len(argv) == 2 and argv[0] == "--preserve-git-admin":
-        print(json.dumps(snapshot(argv[1], True), sort_keys=True))
-        return 0
-    if len(argv) != 1:
-        raise ValueError("usage: worktree_archive_snapshot.py WORKTREE")
-    print(json.dumps(snapshot(argv[0]), sort_keys=True))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preserve-git-admin", action="store_true")
+    parser.add_argument("--include-ignored", action="store_true")
+    parser.add_argument("worktree")
+    args = parser.parse_args(argv)
+    print(json.dumps(snapshot(args.worktree, args.preserve_git_admin, args.include_ignored), sort_keys=True))
     return 0
 
 
