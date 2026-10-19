@@ -171,17 +171,10 @@ _terminal_blocker_input_owner() {
 
 # Capture only final assistant text, not tool output. A missing canonical scope
 # can also be established from the current brief, without interpreting prose.
-terminal_blocker_capture_output() {
+_terminal_blocker_capture_json() {
 	local output_file="$1"
 	local live_blocked="${2:-false}"
-	local normalized="" fingerprint="" issue_json="" captured=""
-	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
-	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
-	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
-	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
-	[[ -f "$output_file" ]] || return 1
-	captured=$(
-		python3 - "$output_file" "$live_blocked" <<'PY'
+	python3 - "$output_file" "$live_blocked" <<'PY'
 import json
 import re
 import sys
@@ -247,7 +240,19 @@ elif reason == 'input_required':
 else:
     emit(reason if reason in allowed else 'unknown')
 PY
-	) || captured=""
+	return $?
+}
+
+terminal_blocker_capture_output() {
+	local output_file="$1"
+	local live_blocked="${2:-false}"
+	local normalized="" fingerprint="" issue_json="" captured=""
+	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
+	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
+	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
+	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
+	[[ -f "$output_file" ]] || return 1
+	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked") || captured=""
 	[[ -n "$captured" ]] || return 1
 	normalized=$(printf '%s' "$captured" | jq -r '.reason') || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=$(printf '%s' "$captured" | jq -r '.explicit_reason') || return 1
