@@ -880,8 +880,11 @@ cmd_clean() {
 	original_head=$(manifest_value "$backup_dir/manifest.tsv" head)
 	manifest_set "$backup_dir/manifest.tsv" clean_started_at "$(iso_utc)" || return 1
 	manifest_set "$backup_dir/manifest.tsv" clean_state in_progress || return 1
-	if ! "$REAL_GIT" -C "$repo_path" read-tree --reset -u "$original_head" ||
-		! remove_preserved_untracked "$repo_path" "$backup_dir"/"$UNTRACKED_LIST_NAME" ||
+	# Remove the captured inventory before reset can restore HEAD-tracked paths
+	# that were staged as deleted and recreated as untracked (GH#35149).
+	# rollback_restore uses the same ordering to avoid deleting restored files.
+	if ! remove_preserved_untracked "$repo_path" "$backup_dir"/"$UNTRACKED_LIST_NAME" ||
+		! "$REAL_GIT" -C "$repo_path" read-tree --reset -u "$original_head" ||
 		{ [[ -n "${AIDEVOPS_DIRTY_BACKUP_AFTER_REMOVE_HOOK:-}" ]] &&
 			! bash "$AIDEVOPS_DIRTY_BACKUP_AFTER_REMOVE_HOOK"; } ||
 		[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain=v1)" ]]; then

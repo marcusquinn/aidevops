@@ -55,7 +55,10 @@ test_round_trip_preserves_exact_state() {
 	setup_repo "$repo_dir" || return 1
 	printf 'staged\n' >"$repo_dir/staged.txt"
 	/usr/bin/git -C "$repo_dir" add staged.txt || return 1
-	printf 'unstaged\n' >>"$repo_dir/README.md"
+	printf 'unstaged\n' >>"$repo_dir/staged.txt"
+	# GH#35149: the original untracked inventory overlaps a HEAD-tracked path.
+	/usr/bin/git -C "$repo_dir" rm -q README.md || return 1
+	printf 'recreated untracked\n' >"$repo_dir/README.md"
 	mkdir -p "$repo_dir/todo/tasks"
 	printf 'brief\n' >"$repo_dir/todo/tasks/t1-brief.md"
 	ln -s ../../README.md "$repo_dir/todo/tasks/readme-link"
@@ -87,6 +90,8 @@ test_round_trip_preserves_exact_state() {
 		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
 	[[ -z "$(/usr/bin/git -C "$repo_dir" status --porcelain=v1)" ]] || rc=1
 	[[ ! -e "$repo_dir/todo/tasks/t1-brief.md" ]] || rc=1
+	[[ "$(<"$repo_dir/README.md")" == "base" ]] || rc=1
+	[[ "$(<"$backup_dir/untracked/README.md")" == "recreated untracked" ]] || rc=1
 
 	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
 		bash "$HELPER" restore --repo "$repo_dir" --backup "$backup_id" \
@@ -95,6 +100,9 @@ test_round_trip_preserves_exact_state() {
 		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
 	[[ -L "$repo_dir/todo/tasks/readme-link" ]] || rc=1
 	[[ "$(/usr/bin/git -C "$repo_dir" show :staged.txt)" == "staged" ]] || rc=1
+	[[ "$(/usr/bin/git -C "$repo_dir" diff --cached --name-only --diff-filter=D)" == "README.md" ]] || rc=1
+	[[ "$(<"$repo_dir/README.md")" == "recreated untracked" ]] || rc=1
+	[[ "$(/usr/bin/git -C "$repo_dir" ls-files --others --exclude-standard -- README.md)" == "README.md" ]] || rc=1
 
 	print_result "backup-clean-restore round trip preserves HEAD, index, tracked, untracked, and symlink state" "$rc" "backup_id=$backup_id"
 	return 0
@@ -137,6 +145,8 @@ test_ignored_descendants_and_clean_rollback() {
 	local rc=0
 
 	setup_repo "$repo_dir" || return 1
+	/usr/bin/git -C "$repo_dir" rm -q README.md || return 1
+	printf 'rollback overlap\n' >"$repo_dir/README.md"
 	mkdir -p "$repo_dir/local-state/runtime/nested"
 	printf 'runtime/\n' >"$repo_dir/local-state/.gitignore"
 	printf 'metadata\n' >"$repo_dir/local-state/metadata.txt"

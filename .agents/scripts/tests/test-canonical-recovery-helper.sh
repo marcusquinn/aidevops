@@ -985,6 +985,9 @@ printf 'accidental local commit\n' >"${SYNC_REPO}/local-only.txt"
 /usr/bin/git -C "$SYNC_REPO" add local-only.txt
 /usr/bin/git -C "$SYNC_REPO" commit -q -m 'accidental local commit'
 sync_local_tip=$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)
+# GH#35149: staged deletion plus recreated untracked bytes at the same path.
+/usr/bin/git -C "$SYNC_REPO" rm -q local-only.txt
+printf 'recreated local-only bytes\n' >"${SYNC_REPO}/local-only.txt"
 printf 'staged state\n' >"${SYNC_REPO}/staged.txt"
 /usr/bin/git -C "$SYNC_REPO" add staged.txt
 printf 'unstaged state\n' >>"${SYNC_REPO}/README.md"
@@ -1106,6 +1109,9 @@ AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 	bash "$DIRTY_HELPER" matches --repo "$SYNC_REPO" --backup "$sync_backup_id" >/dev/null &&
 	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_local_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$SYNC_REPO" diff --cached --name-only --diff-filter=D)" == "local-only.txt" ]] &&
+	[[ "$(/usr/bin/git -C "$SYNC_REPO" ls-files --others --exclude-standard -- local-only.txt)" == "local-only.txt" ]] &&
+	[[ "$(<"${SYNC_REPO}/local-only.txt")" == "recreated local-only bytes" ]] &&
 	[[ "$(/usr/bin/git -C "$SYNC_REPO" check-ignore local-state/runtime/nested/payload.bin)" == "local-state/runtime/nested/payload.bin" ]] &&
 	[[ "$(stat -f '%Lp' "${SYNC_REPO}/local-state/runtime/nested/payload.bin" 2>/dev/null ||
 		stat -c '%a' "${SYNC_REPO}/local-state/runtime/nested/payload.bin")" == "640" ]]; then
