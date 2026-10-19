@@ -5,6 +5,12 @@
 
 `worktree-archive-helper.sh` preserves recovery evidence without retaining a full worker worktree. Archives default to `~/.aidevops/recovery/archives/` and are recovery artifacts, not backups of remote GitHub state.
 
+For legacy full recovery buckets, use the explicit
+[migration transition](../reference/storage-lifecycle-worktree-recovery.md#explicit-compact-migration-no-retirement).
+It reuses this format, independently verifies restoration, preserves provenance in
+a durable journal and pins the resulting archive. It does not retire the source
+or change ordinary recovery producers.
+
 ## Commands
 
 ```bash

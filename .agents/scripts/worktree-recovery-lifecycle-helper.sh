@@ -1197,6 +1197,14 @@ _worktree_recovery_plan_attributed_entry_json() {
 	local bytes_after="" confidence_after="" measure_error_after="" stable=false
 	local classification_json="" disposition="" sizing_reason="sizing-unavailable"
 
+	# An in-progress or verified migration is not an expiry decision. This also
+	# rejects an old retention plan when apply revalidates under the producer lock.
+	if [[ -e "${bucket_path%/*}/.compact-migrations/${bucket_path##*/}" ||
+		-L "${bucket_path%/*}/.compact-migrations/${bucket_path##*/}" ]]; then
+		jq -cn --arg role "$role" --arg path "$bucket_path" --argjson bytes "$expected_bytes" \
+			'{role:$role,path:$path,archive_path:null,expected_allocated_bytes:$bytes,identity:null,evidence:null,disposition:"protected",reasons:["compact-migration-protected"]}'
+		return $?
+	fi
 	identity_before=$(_worktree_recovery_plan_identity_json "$bucket_path") || return 1
 	evidence_json=$(_worktree_recovery_plan_evidence_json \
 		"$identity_before" "$complete_dirty_evidence") || return 1
@@ -1505,8 +1513,12 @@ if [[ -f "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree-recovery-apply-helper.sh" ]]
 	source "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree-recovery-apply-helper.sh"
 fi
 
+# shellcheck source=worktree-recovery-migrate-helper.sh
+source "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree-recovery-migrate-helper.sh"
+
 _worktree_recovery_lifecycle_usage() {
 	printf '%s\n' 'Usage: worktree-recovery-lifecycle-helper.sh [status|json|plan --output <absolute-path>|apply --plan <absolute-path> --receipt <absolute-new-path> --confirm <manifest-token>|unreadable-processes]'
+	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh migrate --bucket <absolute-path> --repo <owner/repo> --base-branch <branch>'
 	return 0
 }
 
@@ -1540,6 +1552,10 @@ worktree_recovery_unreadable_processes() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	case "${1:-status}" in
 	json) worktree_recovery_lifecycle_json ;;
+	migrate)
+		shift
+		_worktree_recovery_migrate_cli "$@"
+		;;
 	plan)
 		[[ "$#" -eq 3 && "$2" == "--output" ]] || {
 			_worktree_recovery_lifecycle_usage >&2

@@ -57,6 +57,65 @@ attempt may be reused only after Git identity, current non-cache contents, and i
 comparison succeed. A changed source or unreadable comparison preserves both copies.
 Legacy markerless buckets remain unknown and are never automatically adopted.
 
+## Explicit compact migration (no retirement)
+
+For one complete, attributed bucket in the configured recovery root:
+
+```bash
+bash .agents/scripts/worktree-recovery-lifecycle-helper.sh migrate \
+  --bucket /absolute/recovery-root/aidevops-worktree-cleanup-example \
+  --repo owner/repo --base-branch main
+```
+
+This command holds the existing producer lock and creates one existing-format
+compact archive with `--self-contained --include-ignored --preserve-git-admin`.
+It restores independently, checks Git object integrity and compares the complete
+supported snapshot, including staged state and relevant administrative/history
+dependencies. It does **not** retire, rewrite or move the original bucket, update
+its reservation, or apply retention. Source removal needs a separate verified
+transition and the existing ownership/process/removal guards.
+
+The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`.
+It binds physical identities, the source snapshot, opaque recovery provenance,
+the archive manifest digest, the restoration outcome and allocated byte counts.
+The archive remains in the existing archive store, beneath
+`.legacy-migrations/<source-path-digest>/`, and is pinned against expiry.
+Path-bearing provenance is historical evidence, not live Git configuration or
+process ownership authority. Journals and archive artifacts are fsynced before
+completion is reported; only verified, identity-fenced restore scratch is removed.
+
+Restoration first reserves a randomized private container and journals its inode;
+an equivalent pre-existing repository is not adopted as owned scratch. All
+cooperating scratch writers inherit the operation lock. These private directories
+are not user workspaces. Cleanup journals a randomized quarantine name, renames
+the reserved container, then checks its identity and contents again before removal.
+A replacement, late write or interrupted partial scratch removal is retained for
+review. This exclusion contract does not claim to fence arbitrary malicious
+same-user writers through content sampling alone.
+
+Retries reuse the reservation and a completed capture. Source drift, a changed
+manifest or invalid identity fails closed. An interrupted capture lacking a
+complete manifest remains explicitly incomplete; retry does not allocate another
+copy. Do not delete its journal or partial artifacts to force a retry. A complete
+capture can resume restoration/verification, and a completed receipt is reused
+only after fresh source/archive verification.
+
+Unsupported inputs remain intact. The snapshot contract still rejects unusual
+permissions (including `0600` working files), ownership, ACLs/xattrs, hard links,
+empty directories and unsupported Git administration; migration does not weaken
+that contract. Missing source objects or incomplete completion/ownership metadata
+also prevent a verified receipt. Existing markerless v1 inventory compatibility
+does not make those buckets eligible for this migration command.
+
+An existing migration reservation makes legacy planning and stale-plan
+revalidation return `compact-migration-protected`. Maintenance counts that reason
+separately instead of treating migration as expiry authority. A receipt's
+`verified` phase is point-in-time evidence, never sufficient removal permission.
+The command reports `bucket_bytes`, `archive_bytes`, `source_retired: false` and
+`reclaimed_bytes: 0`; creating an archive alone does not reclaim disk space.
+
+## Inventory and retention planning
+
 Proven ignored, untracked cache roots are excluded before copy IO, including cache
 roots nested below a broader ignored directory. Git evidence failures stop copying
 instead of falling back to a potentially enormous unfiltered copy. Tracked files,

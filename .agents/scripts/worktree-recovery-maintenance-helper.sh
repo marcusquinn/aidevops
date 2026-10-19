@@ -314,7 +314,7 @@ _worktree_recovery_maintenance_zero_reason_counts_json() {
 		detached_or_unresolved_branch:0,detached_within_retention:0,
 		retention_evidence_unavailable:0,exact_commit_not_merged:0,exact_commit_not_published:0,
 		linked_task_not_closed:0,
-		protected_other:0,retention_policy:0,selection_limit:0}'
+		compact_migration_protected:0,protected_other:0,retention_policy:0,selection_limit:0}'
 	return $?
 }
 
@@ -354,6 +354,7 @@ _worktree_recovery_maintenance_record_reason() {
 	exact-commit-not-merged) safe_reason="exact_commit_not_merged" ;;
 	exact-commit-not-published) safe_reason="exact_commit_not_published" ;;
 	linked-task-not-closed) safe_reason="linked_task_not_closed" ;;
+	compact-migration-protected) safe_reason="compact_migration_protected" ;;
 	retention-policy) safe_reason="retention_policy" ;;
 	selection-limit) safe_reason="selection_limit" ;;
 	*)

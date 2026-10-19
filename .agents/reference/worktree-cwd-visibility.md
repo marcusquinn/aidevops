@@ -71,6 +71,10 @@ managed worktrees are safely cleaned. Success means verified preservation and
 removal for the candidate, not making every protected process CWD readable.
 See `scripts/worktree-archive-helper.md` for archive and idle-window contracts.
 
+Legacy compact migration only preserves and compares data; its journal does not
+clear degraded CWD visibility, manufacture lifetime evidence or authorize source
+retirement. See [the migration contract](storage-lifecycle-worktree-recovery.md#explicit-compact-migration-no-retirement).
+
 ## Unprivileged NixOS adapter
 
 On Linux with exact `ID=nixos` in `/etc/os-release`, process observation does

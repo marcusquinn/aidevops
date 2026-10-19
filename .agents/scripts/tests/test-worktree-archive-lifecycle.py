@@ -75,6 +75,206 @@ class ArchiveLifecycle(unittest.TestCase):
                                 "--base-branch", "develop", "--output-root",
                                 self.archives, *extra).stdout.decode().strip())
 
+    def legacy_bucket(self):
+        home = self.root / "home"
+        home.mkdir()
+        recovery = self.root / "recovery"
+        self.env.update(HOME=str(home), WORKTREE_REGISTRY_DIR=str(self.root / "registry"),
+                        WORKTREE_REGISTRY_DB=str(self.root / "registry/worktree-registry.db"),
+                        AIDEVOPS_WORKTREE_TRASH_ROOT=str(recovery),
+                        AIDEVOPS_WORKTREE_ARCHIVE_ROOT=str(self.archives),
+                        AIDEVOPS_CLEANUP_LOG=str(self.root / "cleanup.log"))
+        command = ('source "$1"; _init_registry_db || exit 1; '
+                   'archive_worktree_path_recoverably "$2" test.sh migration-test || exit 1; '
+                   'printf "%s\\n" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH"')
+        result = self.run_command("bash", "-c", command, "migration-fixture",
+                                  HELPER.parent / "worktree-recovery-lifecycle-helper.sh", self.work)
+        return Path(result.stdout.decode().splitlines()[-1]).parent
+
+    def migrate_bucket(self, bucket, check=True):
+        result = self.run_command("bash", HELPER.parent / "worktree-recovery-lifecycle-helper.sh",
+                                  "migrate", "--bucket", bucket, "--repo", "fixture/repo",
+                                  "--base-branch", "develop", check=False)
+        if check:
+            self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode(errors="replace"))
+        return result
+
+    def test_legacy_migration_preserves_source_and_restores_independently(self):
+        from worktree_recovery_migration_state import source_state
+
+        (self.work / "history-only.bin").write_bytes(b"reflog-only fixture")
+        self.git(self.work, "add", ".")
+        self.git(self.work, "commit", "-qm", "history only")
+        old = self.git(self.work, "rev-parse", "HEAD").decode().strip()
+        self.git(self.work, "reset", "--hard", "HEAD~1")
+        (self.work / "mixed.txt").write_bytes(b"staged\n")
+        self.git(self.work, "add", "mixed.txt")
+        (self.work / "mixed.txt").write_bytes(b"unstaged\n")
+        (self.work / "local.ignored").write_bytes(b"unique ignored fixture")
+        bucket = self.legacy_bucket()
+        (bucket / ".aidevops-worktree-recovery/worktree-gitfile").write_bytes(b"opaque extra provenance")
+        result = json.loads(self.migrate_bucket(bucket).stdout)
+        receipt = json.loads(Path(result["receipt"]).read_text())
+        self.assertEqual(receipt["source"]["provenance"]["worktree-gitfile"]["hex"],
+                         b"opaque extra provenance".hex())
+        self.assertIn("worktree/.git", receipt["source"]["provenance"])
+        self.assertEqual(receipt["source"], source_state(receipt["source"]["identity"]))
+        self.assertFalse(result["source_retired"])
+        self.assertEqual(result["reclaimed_bytes"], 0)
+        self.assertGreater(result["bucket_bytes"], 0)
+        self.assertGreater(result["archive_bytes"], 0)
+        self.assertEqual(json.loads(self.migrate_bucket(bucket).stdout), result)
+        self.assertEqual(len(list(self.archives.rglob("manifest.json"))), 1)
+        self.assertFalse(list(Path(result["receipt"]).parent.glob(".restore-*")))
+        self.assertFalse(list(Path(result["receipt"]).parent.glob(".cleanup-*")))
+        self.assertTrue((Path(result["archive"]) / ".aidevops-archive-pin").is_file())
+        plan = self.root / "plan.json"
+        self.run_command("bash", HELPER.parent / "worktree-recovery-lifecycle-helper.sh",
+                         "plan", "--output", plan)
+        self.assertIn("compact-migration-protected", plan.read_text())
+        self.repo.rename(self.root / "unavailable-repo")
+        restored = self.root / "independent-migration-restore"
+        self.helper("restore", result["archive"], "--target", restored)
+        self.assertEqual((restored / "local.ignored").read_bytes(), b"unique ignored fixture")
+        self.assertEqual(self.git(restored, "show", f"{old}:history-only.bin"), b"reflog-only fixture")
+        self.assertEqual((restored / "mixed.txt").read_bytes(), b"unstaged\n")
+        self.assertEqual(self.git(restored, "show", ":mixed.txt"), b"staged\n")
+        self.assertTrue(bucket.is_dir())
+
+    def test_legacy_migration_resumes_verification_and_rejects_drift(self):
+        from worktree_recovery_migration_state import publish
+
+        bucket = self.legacy_bucket()
+        first = json.loads(self.migrate_bucket(bucket).stdout)
+        receipt_path = Path(first["receipt"])
+        receipt = json.loads(receipt_path.read_text())
+        # Model interruption after capture but before independent verification;
+        # exercise the actual CLI again, without a fault-injection API.
+        receipt["phase"] = "captured"
+        for name in ("restore_slot", "restore_slot_inode", "restore_inode", "cleanup_slot"):
+            receipt.pop(name, None)
+        publish(receipt_path, receipt)
+        resumed = json.loads(self.migrate_bucket(bucket).stdout)
+        self.assertEqual(resumed, first)
+        self.assertEqual(len(list(self.archives.rglob("manifest.json"))), 1)
+        before = receipt_path.read_bytes()
+        worktree = Path(receipt["source"]["identity"]["archive_path"])
+        (worktree / "late.ignored").write_bytes(b"late writer")
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"source-drift", failure.stdout)
+        self.assertEqual(receipt_path.read_bytes(), before)
+        self.assertEqual((worktree / "late.ignored").read_bytes(), b"late writer")
+        self.assertEqual(len(list(self.archives.rglob("manifest.json"))), 1)
+
+    def test_legacy_migration_incomplete_capture_never_allocates_again(self):
+        from worktree_recovery_migration_state import publish
+
+        bucket = self.legacy_bucket()
+        first = json.loads(self.migrate_bucket(bucket).stdout)
+        receipt_path = Path(first["receipt"])
+        receipt = json.loads(receipt_path.read_text())
+        receipt["phase"] = "capturing"
+        publish(receipt_path, receipt)
+        manifest = Path(first["archive"]) / "manifest.json"
+        manifest.rename(manifest.with_name("manifest.partial"))
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"capture-incomplete", failure.stdout)
+        self.assertEqual(len(list(self.archives.rglob("commits.bundle"))), 1)
+        self.assertTrue(bucket.is_dir())
+
+    def test_legacy_migration_keeps_unsupported_permissions(self):
+        (self.work / "local.ignored").write_bytes(b"private fixture")
+        (self.work / "local.ignored").chmod(0o600)
+        bucket = self.legacy_bucket()
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"special permissions", failure.stdout)
+        self.assertFalse(list((bucket.parent / ".compact-migrations").rglob("journal.json")))
+        self.assertFalse(list(self.archives.rglob("manifest.json")))
+        self.assertTrue(bucket.is_dir())
+
+    def test_legacy_migration_keeps_changed_restore_scratch(self):
+        from worktree_recovery_migration_state import publish
+
+        bucket = self.legacy_bucket()
+        result = json.loads(self.migrate_bucket(bucket).stdout)
+        receipt_path = Path(result["receipt"])
+        record = json.loads(receipt_path.read_text())
+        slot = receipt_path.parent / record["restore_slot"]
+        slot.mkdir(mode=0o700)
+        scratch = slot / "worktree"
+        self.helper("restore", result["archive"], "--target", scratch)
+        record.update(phase="restore-verified", restore_inode=lifecycle.inode(scratch),
+                      restore_slot_inode=lifecycle.inode(slot))
+        publish(receipt_path, record)
+        (scratch / "late.ignored").write_bytes(b"unexpected late scratch write")
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"scratch-changed", failure.stdout)
+        self.assertEqual((scratch / "late.ignored").read_bytes(), b"unexpected late scratch write")
+        self.assertTrue(bucket.is_dir())
+
+    def test_legacy_migration_never_adopts_unowned_restore(self):
+        from worktree_recovery_migration_state import publish
+
+        bucket = self.legacy_bucket()
+        result = json.loads(self.migrate_bucket(bucket).stdout)
+        receipt_path = Path(result["receipt"])
+        record = json.loads(receipt_path.read_text())
+        for name in ("restore_slot", "restore_slot_inode", "restore_inode", "cleanup_slot"):
+            record.pop(name, None)
+        record["phase"] = "captured"
+        publish(receipt_path, record)
+        unowned = receipt_path.parent / "restore"
+        self.helper("restore", result["archive"], "--target", unowned)
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"unowned-scratch", failure.stdout)
+        self.assertEqual((unowned / "mixed.txt").read_bytes(), b"base\n")
+
+    def test_legacy_migration_retains_replaced_scratch_in_quarantine(self):
+        from worktree_recovery_migration_state import publish
+
+        bucket = self.legacy_bucket()
+        result = json.loads(self.migrate_bucket(bucket).stdout)
+        receipt_path = Path(result["receipt"])
+        record = json.loads(receipt_path.read_text())
+        slot = receipt_path.parent / record["restore_slot"]
+        slot.mkdir(mode=0o700)
+        self.helper("restore", result["archive"], "--target", slot / "worktree")
+        record.update(phase="cleanup-pending", restore_slot_inode=lifecycle.inode(slot),
+                      restore_inode=lifecycle.inode(slot / "worktree"), cleanup_slot=".cleanup-fixture")
+        publish(receipt_path, record)
+        slot.rename(self.root / "kept-original-scratch")
+        slot.mkdir(mode=0o700)
+        (slot / "unique-note").write_bytes(b"replacement data")
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"scratch-container-changed", failure.stdout)
+        quarantined = receipt_path.parent / record["cleanup_slot"]
+        self.assertEqual((quarantined / "unique-note").read_bytes(), b"replacement data")
+        self.assertTrue((self.root / "kept-original-scratch/worktree").is_dir())
+        self.assertTrue(bucket.is_dir())
+
+    def test_legacy_migration_rejects_incomplete_and_missing_base(self):
+        bucket = self.legacy_bucket()
+        marker = bucket / ".aidevops-worktree-recovery/archive-complete"
+        retained = marker.with_name("retained-marker")
+        marker.rename(retained)
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"completion-marker-unavailable", failure.stdout)
+        retained.rename(marker)
+        self.repo.rename(self.root / "unavailable-repo")
+        failure = self.migrate_bucket(bucket, check=False)
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn(b"git-recovery-unavailable", failure.stdout)
+        self.assertFalse(list(self.archives.rglob("manifest.json")))
+        self.assertTrue(marker.is_file())
+        self.assertTrue(bucket.is_dir())
+
     def test_ignored_capture_is_explicit_and_restores_independently(self):
         ignored = self.work / "local.ignored"
         content = b"private fixture data\0\xff\n"
