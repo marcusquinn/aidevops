@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -119,6 +120,72 @@ fi
   const claimCall = request("mixed");
   assert.equal(blockerGuard.injectSteering({ sessionID: "mixed" }, claimCall).kind, "completion");
   assert.match(claimCall.messages.at(-1).parts[0].text, /not yet valid/);
+
+  // GH#35121: a closeout that asks for nothing while files this session
+  // edited remain uncommitted is steered toward the Capture Check, across
+  // every touched repository. Read-only sessions, asks, committed edits and
+  // dirty files the session never edited are left alone.
+  const gitIn = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { stdio: "ignore" });
+  const makeRepo = (name) => {
+    const root = join(fixtureDir, name);
+    mkdirSync(root);
+    gitIn(root, "init", "-q");
+    gitIn(root, "config", "user.email", "fixture@example.invalid");
+    gitIn(root, "config", "user.name", "Fixture");
+    writeFileSync(join(root, "tracked.md"), "base\n");
+    writeFileSync(join(root, "user-owned.md"), "base\n");
+    gitIn(root, "add", ".");
+    gitIn(root, "-c", "commit.gpgSign=false", "commit", "-qm", "base");
+    return root;
+  };
+  const siteRepo = makeRepo("site");
+  const coordRepo = makeRepo("coordinating");
+  const captureGuard = createSessionContinuationGuard({ repository: siteRepo, checkpointAdapter: { load: () => null } });
+  const runTool = (sessionID, tool, args, callID) => {
+    captureGuard.beforeTool({ sessionID, tool, callID }, { args });
+    captureGuard.afterTool({ sessionID, tool, callID }, { output: "ok", metadata: { status: "completed" } });
+  };
+  const closeout = [
+    "Changes remain uncommitted and undeployed.",
+    "",
+    "### What next",
+    "- **Needed from you:** Nothing for this validation.",
+    "- **Left to capture:** Accessibility results.",
+    "- **Close readiness:** Not yet.",
+  ].join("\n");
+
+  writeFileSync(join(siteRepo, "tracked.md"), "session edit\n");
+  writeFileSync(join(siteRepo, "user-owned.md"), "user edit\n");
+  writeFileSync(join(coordRepo, "workflow.md"), "new workflow doc\n");
+  runTool("multi", "edit", { filePath: join(siteRepo, "tracked.md"), oldString: "base", newString: "session edit" }, "e1");
+  runTool("multi", "apply_patch", { patchText: `*** Begin Patch\n*** Add File: ${join(coordRepo, "workflow.md")}\n+new workflow doc\n*** End Patch` }, "e2");
+  runTool("multi", "todowrite", { todos: [{ content: "Validate", status: "completed" }] }, "e3");
+  const captureResult = captureGuard.completeText({ sessionID: "multi" }, { text: closeout });
+  assert.equal(captureResult.corrected, true, "unasked closeout with dirty session edits is steered");
+  assert.equal(captureResult.dirty.length, 2, "both touched repositories are reported");
+  const captureCall = request("multi");
+  assert.equal(captureGuard.injectSteering({ sessionID: "multi" }, captureCall).kind, "capture");
+  const captureText = captureCall.messages.at(-1).parts[0].text;
+  assert.match(captureText, /tracked\.md/);
+  assert.match(captureText, /workflow\.md/);
+  assert.doesNotMatch(captureText, /user-owned\.md/, "dirty files the session never edited are excluded");
+  assert.match(captureText, /Not yet/);
+  assert.equal(captureGuard.completeText({ sessionID: "multi" }, { text: closeout }).corrected, false, "an unchanged dirty set is steered once");
+
+  const askCloseout = closeout.replace("Nothing for this validation.", "\n  1. **Approve commit and PR for both worktrees?**");
+  assert.equal(captureGuard.completeText({ sessionID: "multi-ask" }, { text: askCloseout }).corrected, false, "closeouts with an ask are not steered");
+  runTool("multi-ask", "write", { filePath: join(siteRepo, "tracked.md"), content: "x" }, "e4");
+  assert.equal(captureGuard.completeText({ sessionID: "multi-ask" }, { text: askCloseout }).corrected, false, "a commit-approval ask satisfies the capture check");
+
+  assert.equal(captureGuard.completeText({ sessionID: "read-only" }, { text: closeout }).corrected, false, "read-only sessions acquire no Git ask");
+  runTool("read-only", "read", { filePath: join(siteRepo, "tracked.md") }, "e5");
+  assert.equal(captureGuard.completeText({ sessionID: "read-only" }, { text: closeout }).corrected, false, "reads are not edits");
+
+  gitIn(siteRepo, "add", "tracked.md");
+  gitIn(siteRepo, "-c", "commit.gpgSign=false", "commit", "-qm", "session edit");
+  gitIn(coordRepo, "add", "workflow.md");
+  gitIn(coordRepo, "-c", "commit.gpgSign=false", "commit", "-qm", "workflow");
+  assert.equal(captureGuard.completeText({ sessionID: "multi" }, { text: closeout }).corrected, false, "committed session edits are captured");
 } finally {
   rmSync(fixtureDir, { recursive: true, force: true });
 }

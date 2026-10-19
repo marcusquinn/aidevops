@@ -118,6 +118,31 @@ export function isPathBlockerYield(text) {
   return reportsBlocker(normalized);
 }
 
+// GH#35121: a closeout yield that asks the user for nothing. Uncommitted
+// session-owned edits contradict such a closeout (reference/session.md
+// Capture Check), so the guard verifies live Git state before accepting it.
+const WHAT_NEXT_RE = /\bWhat next\b/i;
+
+export function isUnaskedCloseout(text) {
+  const normalized = withoutCode(text);
+  if (!normalized.trim() || handsBackToUser(normalized)) return false;
+  return WHAT_NEXT_RE.test(normalized) || isExplicitCompletionClaim(text);
+}
+
+// File-editing tools whose successful calls create session-owned changes.
+// Bash-originated edits are not tracked (documented limitation).
+const EDIT_TOOLS = new Set(["edit", "write", "multiedit", "patch", "apply_patch", "notebookedit"]);
+const PATCH_FILE_RE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
+
+export function editedPaths(toolName, args) {
+  if (!EDIT_TOOLS.has(String(toolName || "").toLowerCase()) || !args || typeof args !== "object") return [];
+  const paths = [args.filePath, args.file_path, args.notebook_path, args.path]
+    .filter((value) => typeof value === "string" && value.trim());
+  const patch = [args.patchText, args.patch, args.input].find((value) => typeof value === "string");
+  if (patch) paths.push(...[...patch.matchAll(PATCH_FILE_RE)].map((match) => match[1].trim()));
+  return [...new Set(paths.map((value) => value.trim()))];
+}
+
 export function sessionId(input) {
   return String(input?.sessionID || input?.sessionId || input?.session?.id || "unknown-session");
 }

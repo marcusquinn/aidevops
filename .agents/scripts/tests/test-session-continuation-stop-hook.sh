@@ -177,6 +177,67 @@ test_hook_decisions() {
 	return 0
 }
 
+# write_capture_transcript <file> <edited_path_or_none> <final_text>
+# All todos completed; optionally one Edit tool_use for the given path.
+write_capture_transcript() {
+	local file="$1" edited="$2" final_text="$3"
+	python3 - "$file" "$edited" "$final_text" <<'PY'
+import json, sys
+path, edited, final_text = sys.argv[1:4]
+blocks = [{"type": "tool_use", "id": "t1", "name": "TodoWrite", "input": {"todos": [
+    {"content": "Validate", "status": "completed", "activeForm": "Validating"}]}}]
+if edited != "none":
+    blocks.append({"type": "tool_use", "id": "t2", "name": "Edit",
+                   "input": {"file_path": edited, "old_string": "base", "new_string": "edit"}})
+lines = [
+    {"type": "user", "message": {"role": "user", "content": "Correct the workflow docs"}},
+    {"type": "assistant", "message": {"role": "assistant", "content": blocks}},
+    {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": final_text}]}},
+]
+with open(path, "w") as handle:
+    for line in lines:
+        handle.write(json.dumps(line) + "\n")
+PY
+	return 0
+}
+
+# GH#35121: an unasked closeout with uncommitted session edits is blocked once.
+test_capture_check() {
+	local repo="$WORK_DIR/capture-repo" t="$WORK_DIR/capture.jsonl" out
+	mkdir -p "$repo"
+	git -C "$repo" init -q
+	git -C "$repo" config user.email fixture@example.invalid
+	git -C "$repo" config user.name Fixture
+	printf 'base\n' >"$repo/workflow.md"
+	printf 'base\n' >"$repo/user-owned.md"
+	git -C "$repo" add .
+	git -C "$repo" -c commit.gpgSign=false commit -qm base
+	printf 'edit\n' >"$repo/workflow.md"
+	printf 'user edit\n' >"$repo/user-owned.md"
+	local closeout=$'Changes remain uncommitted.\n\n### What next\n- **Needed from you:** Nothing for this validation.\n- **Close readiness:** Not yet.'
+	local ask=$'Changes remain uncommitted.\n\n### What next\n- **Needed from you:**\n  1. **Approve commit and PR for the worktree?**\n- **Close readiness:** Not yet.'
+
+	write_capture_transcript "$t" "$repo/workflow.md" "$closeout"
+	out=$(run_hook c-dirty "$t")
+	if [[ "$out" == *'"decision": "block"'* && "$out" == *"workflow.md"* && "$out" != *"user-owned.md"* && "$out" == *"Not yet"* ]]; then
+		print_result "unasked closeout with dirty session edit → capture block" 0
+	else
+		print_result "unasked closeout with dirty session edit → capture block" 1 "got: ${out:-<empty>}"
+	fi
+	expect_allow "capture block respects stop_hook_active" "$(run_hook c-dirty "$t" true)"
+	write_capture_transcript "$t" "$repo/workflow.md" "$ask"
+	expect_allow "closeout with commit-approval ask → allow" "$(run_hook c-ask "$t")"
+	write_capture_transcript "$t" "none" "$closeout"
+	expect_allow "read-only session (no edits) → allow" "$(run_hook c-readonly "$t")"
+	write_capture_transcript "$t" "$repo/workflow.md" "Updated the doc; continuing with the next step."
+	expect_allow "non-closeout progress text → allow" "$(run_hook c-progress "$t")"
+	git -C "$repo" -c commit.gpgSign=false commit -qam "session edit"
+	git -C "$repo" checkout -q -- . 2>/dev/null
+	write_capture_transcript "$t" "$repo/workflow.md" "$closeout"
+	expect_allow "committed session edits → allow" "$(run_hook c-committed "$t")"
+	return 0
+}
+
 test_settings_registration() {
 	local home="$WORK_DIR/home"
 	mkdir -p "$home/.claude"
@@ -205,6 +266,7 @@ print(sum(1 for r in d["hooks"].get("Stop", []) for h in r.get("hooks", [])
 main() {
 	echo "=== session_continuation_stop.py tests (GH#33143) ==="
 	test_hook_decisions
+	test_capture_check
 	test_settings_registration
 	echo ""
 	echo "Tests: $TESTS_RUN, failed: $TESTS_FAILED"

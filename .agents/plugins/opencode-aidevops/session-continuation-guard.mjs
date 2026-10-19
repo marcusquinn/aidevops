@@ -3,14 +3,17 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   activeTodos,
   boundedText,
   capMap,
   classifyToolOutcome,
+  editedPaths,
   isExplicitCompletionClaim,
   isPathBlockerYield,
+  isUnaskedCloseout,
   operationFingerprint,
   sessionId,
   toolOutcomeFailed,
@@ -19,6 +22,56 @@ import {
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const DEFAULT_MAX_SCOPES = 32;
 const STEERING_PREFIX = "[aidevops continuation guard]";
+const MAX_EDITED_PATHS = 200;
+const MAX_GIT_ROOTS = 8;
+const GIT_TIMEOUT_MS = 3000;
+
+function git(cwd, args) {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: GIT_TIMEOUT_MS,
+  });
+}
+
+// GH#35121: live Git state for the given session-edited paths only, so
+// unrelated or user-owned dirty files never count. Returns
+// [{ root, files: [relative paths] }] for roots with dirty session edits.
+// Fail-open: paths outside a repository or unreadable roots are skipped.
+function defaultDirtyEdits(paths) {
+  const byRoot = new Map();
+  const rootFor = new Map();
+  for (const path of paths) {
+    // Git reports canonical roots; canonicalise the directory too so symlinked
+    // prefixes (macOS /var -> /private/var) yield in-repository relative paths.
+    let directory = "";
+    try { directory = realpathSync(dirname(path)); } catch { continue; }
+    if (!rootFor.has(directory)) {
+      let root = "";
+      try { root = git(directory, ["rev-parse", "--show-toplevel"]).trim(); } catch { root = ""; }
+      rootFor.set(directory, root);
+    }
+    const root = rootFor.get(directory);
+    if (!root) continue;
+    if (!byRoot.has(root)) {
+      if (byRoot.size >= MAX_GIT_ROOTS) continue;
+      byRoot.set(root, []);
+    }
+    byRoot.get(root).push(relative(root, join(directory, basename(path))));
+  }
+  const dirty = [];
+  for (const [root, files] of byRoot) {
+    let status = "";
+    try {
+      status = git(root, ["status", "--porcelain=v1", "--untracked-files=all", "--", ...files]);
+    } catch {
+      continue;
+    }
+    const changed = status.split("\n").filter(Boolean).map((line) => line.slice(3));
+    if (changed.length > 0) dirty.push({ root, files: changed });
+  }
+  return dirty;
+}
 
 function defaultCheckpointAdapter(checkpointHelper, repository, qualityLog) {
   const helperPath = checkpointHelper ? resolve(checkpointHelper) : "";
@@ -117,6 +170,19 @@ function beforeTool(state, input, output) {
   capMap(state.calls, state.maxScopes * 4);
 }
 
+// GH#35121: remember which files this session's edit tools changed.
+function recordEdits(state, call) {
+  const paths = editedPaths(call.tool, call.args);
+  if (paths.length === 0) return;
+  const edits = state.edits.get(call.scope) || new Set();
+  for (const path of paths) {
+    if (edits.size >= MAX_EDITED_PATHS) break;
+    edits.add(resolve(state.repository, path));
+  }
+  state.edits.set(call.scope, edits);
+  capMap(state.edits, state.maxScopes);
+}
+
 function afterTool(state, input, output) {
   const callID = String(input?.callID || "");
   const call = state.calls.get(callID) || {
@@ -126,6 +192,8 @@ function afterTool(state, input, output) {
   };
   state.calls.delete(callID);
   const failed = toolOutcomeFailed(output);
+
+  if (!failed) recordEdits(state, call);
 
   if (!failed && call.tool.toLowerCase() === "todowrite") {
     const active = activeTodos(call.args?.todos);
@@ -206,7 +274,41 @@ function correctBlockerYield(state, input) {
   return { corrected: true, remaining, blocker: true };
 }
 
+// GH#35121: a closeout that asks the user for nothing must not leave files
+// this session edited uncommitted. Steer once per distinct dirty set toward
+// the Capture Check: commit with authority, otherwise ask for bounded
+// commit/PR approval and keep Close at Not yet. Never commits anything itself.
+function correctUncapturedCloseout(state, input, output) {
+  const scope = scopeFor(state, input);
+  const edits = state.edits.get(scope);
+  if (!edits || edits.size === 0 || !isUnaskedCloseout(output?.text)) return { corrected: false };
+  let dirty = [];
+  try {
+    dirty = state.dirtyEdits([...edits]);
+  } catch (error) {
+    state.qualityLog?.("WARN", `[session-continuation] capture check failed: ${boundedText(error?.message)}`);
+    return { corrected: false };
+  }
+  if (!Array.isArray(dirty) || dirty.length === 0) return { corrected: false };
+  const fingerprint = createHash("sha256").update(JSON.stringify(dirty)).digest("hex");
+  if (state.captureSteered.get(scope) === fingerprint) return { corrected: false };
+  state.captureSteered.set(scope, fingerprint);
+  capMap(state.captureSteered, state.maxScopes);
+  const summary = dirty
+    .map(({ root, files }) => `${root} (${files.length} file${files.length === 1 ? "" : "s"}: ${files.slice(0, 5).join(", ")}${files.length > 5 ? ", …" : ""})`)
+    .join("; ");
+  queueSteering(state, input, "capture", `Your closeout asks the user for nothing, but files this session edited remain uncommitted: ${summary}. Per the reference/session.md Capture Check, commit them now if you hold commit authority; otherwise ask for bounded commit/PR/merge approval under Needed from you, name each worktree and its changes under Left to capture, and keep Close at Not yet. Do not commit without authority.`);
+  state.qualityLog?.("WARN", `[session-continuation] queued uncommitted-edit capture steering for session ${sessionHashFor(input)}`);
+  return { corrected: true, capture: true, dirty };
+}
+
 function completeText(state, input, output) {
+  const result = correctTodoYield(state, input, output);
+  if (result.corrected) return result;
+  return correctUncapturedCloseout(state, input, output);
+}
+
+function correctTodoYield(state, input, output) {
   if (!isExplicitCompletionClaim(output?.text)) {
     if (isPathBlockerYield(output?.text)) return correctBlockerYield(state, input);
     return { corrected: false };
@@ -275,6 +377,9 @@ export function createSessionContinuationGuard(options = {}) {
     recoveries: new Map(),
     loadedScopes: new Set(),
     steering: new Map(),
+    edits: new Map(),
+    captureSteered: new Map(),
+    dirtyEdits: options.dirtyEdits || defaultDirtyEdits,
   };
 
   return {
