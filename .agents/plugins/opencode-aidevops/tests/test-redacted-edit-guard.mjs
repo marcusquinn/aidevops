@@ -10,6 +10,12 @@ import { test } from "node:test";
 import { checkRedactedEdit } from "../redacted-edit-guard.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
 
+// GH#35139: the worker write fence reads the ambient headless environment, and
+// this fixture writes outside any worker worktree. Run as an interactive session.
+for (const key of ["FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS", "GITHUB_ACTIONS", "WORKER_WORKTREE_PATH"]) {
+  delete process.env[key];
+}
+
 const TOKEN = "[redacted-credential]";
 const PEM_TOKEN = "[redacted-private-key]";
 
