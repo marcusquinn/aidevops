@@ -11,6 +11,11 @@ import {
 } from "./quality-hooks-command-policy.mjs";
 import { classifyFullLoopCommitAndPr } from "./quality-hooks-full-loop-trust.mjs";
 import {
+  assertWorkerGitTargets,
+  assertWorkerWritePaths,
+  patchTargetPaths,
+} from "./worker-write-fence.mjs";
+import {
   parsePolicyPayload,
   policyExecutionFailure,
   runPolicyHelper,
@@ -98,6 +103,9 @@ export function checkCanonicalWriteSafetyGate(
   cwd = process.cwd(),
   patchText = null,
 ) {
+  assertWorkerWritePaths(
+    patchText === null ? [filePath && resolve(cwd, filePath)] : patchTargetPaths(patchText, cwd),
+  );
   const helper = join(scriptsDir, "canonical-write-policy-helper.py");
   if (!existsSync(helper)) {
     throw new Error("BLOCKED: required canonical-write policy helper is missing");
@@ -135,6 +143,7 @@ export function checkCanonicalWriteSafetyGate(
 
 export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(), options = {}) {
   if (typeof command !== "string" || !command) return;
+  assertWorkerGitTargets(command, cwd);
   const helper = join(scriptsDir, "command-policy-helper.py");
   if (!existsSync(helper)) {
     throw new Error("BLOCKED: required command policy helper is missing");

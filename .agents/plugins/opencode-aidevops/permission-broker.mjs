@@ -14,7 +14,11 @@ const MAX_PATTERN_LENGTH = 500;
 const MAX_INTENT_LENGTH = 500;
 const MAX_REQUESTS = 20;
 const PATTERN_CAPABLE_PERMISSIONS = new Set(["bash", "external_directory"]);
-const FORBIDDEN_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube)(?:\/|$)|\/(?:\.config\/(?:gh|gcloud|glab-cli|hub)|\.docker)(?:\/|$)|\/(?:\.netrc|\.npmrc|\.pypirc|\.git-credentials)(?:$|\*)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
+const FORBIDDEN_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube)(?:\/|$)|\/(?:\.config\/(?:gh|gcloud|glab-cli|hub)|\.docker)(?:\/|$)|\/(?:\.netrc|\.npmrc|\.pypirc|\.git-credentials)(?:$|\*)|\/etc\/npmrc(?:$|\*)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
+// Home-relative toolchain roots workers may read (never write) without a
+// maintainer. Extend deliberately; FORBIDDEN_PATTERN still applies.
+const READ_ONLY_ROOTS = ["~/.nvm"];
+const READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list"]);
 const HIGH_RISK_PATTERN = /(?:\.config\/opencode|node_modules\/@opencode-ai\/plugin|(?:^|\/)\.git(?:\/|$))/i;
 
 function redactSecrets(value) {
@@ -122,16 +126,60 @@ function impossibleExternalRead(context, raw) {
   return classifyImpossibleRead(context, raw, FORBIDDEN_PATTERN);
 }
 
-function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, capture, request, event, reason, detail }) {
+function normalizeAbsolute(value) {
+  return typeof value === "string" ? value.replaceAll("\\", "/").replace(/\/+$/, "") : "";
+}
+
+function isReadOnlyRootRead(context, raw) {
+  const permission = raw?.permission || raw?.type || "";
+  const callID = raw?.tool?.callID || raw?.callID || "";
+  if (permission !== "external_directory") return false;
+  if (!READ_ONLY_TOOLS.has(context.toolCalls.get(callID)?.tool)) return false;
+  const input = raw?.patterns ?? raw?.pattern;
+  const patterns = Array.isArray(input) ? input : input == null ? [] : [input];
+  if (patterns.length === 0 || patterns.length > 20) return false;
+  const home = normalizeAbsolute(context.home);
+  const roots = READ_ONLY_ROOTS.map((root) => normalizeAbsolute(root.startsWith("~/") ? `${home}/${root.slice(2)}` : root));
+  return patterns.every((pattern) => {
+    const value = normalizeAbsolute(pattern);
+    if (!value || FORBIDDEN_PATTERN.test(value)) return false;
+    if (value.split("/").includes("..")) return false;
+    return roots.some((root) => value === root || value.startsWith(`${root}/`));
+  });
+}
+
+function recordReadOnlyRootAllow(context, raw) {
+  const patterns = normalizePatterns(raw?.patterns ?? raw?.pattern, { home: context.home });
+  const callID = raw?.tool?.callID || raw?.callID || "";
+  recordPermissionBlocker({
+    loggedEvents: context.loggedEvents,
+    home: context.home,
+    blockerLogPath: context.blockerLogPath,
+    capture: null,
+    request: {
+      request_id: `read-only-root-${createHash("sha256").update(`${callID}\n${patterns.join("\n")}`).digest("hex").slice(0, 16)}`,
+      permission: "external_directory",
+      tool: context.toolCalls.get(callID)?.tool || "",
+      risk: { level: "low", grantable: true },
+    },
+    event: "permission_read_only_root_allowed",
+    reason: "read_only_root",
+    detail: `Auto-allowed read-only access: ${patterns.join(", ").slice(0, 200)}`,
+    status: "allowed",
+    blocking: false,
+  });
+}
+
+function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, capture, request, event, reason, detail, status = "blocked", blocking = true }) {
   const dedupeKey = `${event}:${request?.request_id || "unknown"}`;
   if (loggedEvents.has(dedupeKey)) return;
   loggedEvents.add(dedupeKey);
   while (loggedEvents.size > 100) loggedEvents.delete(loggedEvents.values().next().value);
   appendWorkerBlockerEvent({
     event,
-    status: "blocked",
+    status,
     reason,
-    blocking: true,
+    blocking,
     source: "opencode-permission-broker",
     issue_number: capture?.issue || process.env.WORKER_ISSUE_NUMBER || "",
     repo_slug: capture?.repo || process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "",
@@ -232,6 +280,10 @@ async function handlePermissionEvent(context, input) {
   }
   if (isManagedToolOutputRead(toolCalls, request, dataHome)
     && await replyPermissionRequest(client, request, "once")) return;
+  if (isReadOnlyRootRead(context, request) && await replyPermissionRequest(client, request, "once")) {
+    recordReadOnlyRootAllow(context, request);
+    return;
+  }
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, request);
   await replyPermissionRequest(client, request, "reject");
 }
@@ -247,6 +299,11 @@ function handlePermissionAsk(context, input, output) {
   }
   if (isManagedToolOutputRead(toolCalls, input, dataHome)) {
     output.status = "allow";
+    return;
+  }
+  if (isReadOnlyRootRead(context, input)) {
+    output.status = "allow";
+    recordReadOnlyRootAllow(context, input);
     return;
   }
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, input || {});

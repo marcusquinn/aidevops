@@ -153,6 +153,46 @@ test("headless workers auto-approve only regular OpenCode tool-output reads", as
   rmSync(root, { recursive: true, force: true });
 });
 
+test("headless workers auto-allow read-only toolchain roots but never writes or credential files", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-permission-broker-")));
+  const requestFile = join(root, "request.json");
+  const blockerLog = join(root, "blockers.jsonl");
+  const previous = preserveWorkerEnvironment();
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  const replies = [];
+  const broker = createPermissionBroker({
+    client: { postSessionIdPermissionsPermissionId: async (value) => replies.push(value) },
+    isHeadless: () => true,
+    home: root,
+    dataHome: join(root, "xdg-data"),
+    blockerLogPath: blockerLog,
+  });
+  const ask = (id, tool, patterns) => {
+    broker.recordToolCall({ tool, callID: id }, { args: {} });
+    return broker.handleEvent({ event: { type: "permission.asked", properties: {
+      id, sessionID: "session-nvm", permission: "external_directory", patterns, tool: { callID: id },
+    } } });
+  };
+
+  await ask("nvm-read", "read", [`${root}/.nvm/versions/*`]);
+  assert.equal(replies.at(-1).body.response, "once");
+  assert.equal(existsSync(requestFile), false);
+  assert.match(readFileSync(blockerLog, "utf8"), /permission_read_only_root_allowed/);
+
+  await ask("nvm-write", "write", [`${root}/.nvm/*`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+  assert.equal(existsSync(requestFile), true);
+
+  await ask("nvm-npmrc", "read", [`${root}/.nvm/versions/node/v20/etc/npmrc`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+  assert.match(readFileSync(requestFile, "utf8"), /"grantable": false/);
+
+  await ask("nvm-escape", "read", [`${root}/.nvm/../.ssh/*`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+  restoreWorkerEnvironment(previous);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("tool-output read approval failure falls back to capture and rejection", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-permission-broker-")));
   const dataHome = join(root, "xdg-data");

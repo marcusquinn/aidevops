@@ -28,6 +28,12 @@ import { validateBashWorkingDirectory } from "../quality-hooks-workdir.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
 import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
 
+// GH#35139: the worker write fence reads the ambient headless environment.
+// Run the suite as an interactive session; the fence test opts back in.
+for (const key of ["FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS", "GITHUB_ACTIONS", "WORKER_WORKTREE_PATH"]) {
+  delete process.env[key];
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = join(here, "..", "..", "..", "scripts");
 const realGit = "/usr/bin/git";
@@ -997,6 +1003,52 @@ test("labels a repeated policy helper timeout as transient infrastructure", () =
       );
     });
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// GH#35139: headless workers read widely but write only in their own worktree.
+test("headless workers cannot write or run mutating git in sibling worktrees", () => {
+  const { root, repo, linked } = setupRepo();
+  const sibling = join(root, "sibling");
+  const keys = ["AIDEVOPS_HEADLESS", "WORKER_WORKTREE_PATH", "AIDEVOPS_TEMP_DIR"];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    execFileSync(realGit, ["worktree", "add", "-q", "-b", "feature/sibling", sibling], { cwd: repo });
+    process.env.AIDEVOPS_HEADLESS = "1";
+    process.env.WORKER_WORKTREE_PATH = linked;
+    process.env.AIDEVOPS_TEMP_DIR = join(root, "managed-tmp");
+
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(sibling, "README.md"), scriptsDir, linked),
+      /Sibling worktrees are read-only for workers/,
+    );
+    const siblingPatch = `*** Begin Patch\n*** Update File: ${join(sibling, "README.md")}\n@@\n-seed\n+x\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, siblingPatch),
+      /Sibling worktrees are read-only for workers/,
+    );
+    assert.doesNotThrow(() => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, linked));
+    assert.doesNotThrow(() => checkCanonicalWriteSafetyGate(join(root, "managed-tmp", "note.txt"), scriptsDir, linked));
+
+    assert.throws(
+      () => checkCommandSafetyGate(`git -C ${sibling} commit -m x`, scriptsDir, linked),
+      /Sibling worktrees are read-only for workers/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate(`cd ${sibling} && git add -A`, scriptsDir, linked),
+      /Sibling worktrees are read-only for workers/,
+    );
+    assert.doesNotThrow(() => checkCommandSafetyGate(`git -C ${sibling} status`, scriptsDir, linked));
+    assert.doesNotThrow(() => checkCommandSafetyGate(`git -C ${linked} add README.md`, scriptsDir, linked));
+
+    delete process.env.AIDEVOPS_HEADLESS;
+    assert.doesNotThrow(() => checkCanonicalWriteSafetyGate(join(sibling, "README.md"), scriptsDir, linked));
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });

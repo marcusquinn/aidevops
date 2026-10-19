@@ -207,4 +207,32 @@ jq -e '.progress_blockers.active_blockers[] | select(
   and .grantable == true
 )' <<<"$activity_summary" >/dev/null
 
+# Canonical-checkout requests get an owned redirect and no request record (GH#35139).
+canonical_repos="${test_root}/canonical-repos.json"
+printf '{"initialized_repos":[{"path":"%s/Git/example-repo","slug":"owner/repo"}]}\n' "$HOME" >"$canonical_repos"
+canonical_capture="${test_root}/canonical-capture.json"
+jq '.requests = [.requests[0] | .patterns = ["~/Git/example-repo/.agents/**"]]' "$capture_file" >"$canonical_capture"
+: >"$gh_call_log"
+rm -f "$posted_comment"
+redirect_rc=0
+redirect_out=$(AIDEVOPS_REPOS_FILE="$canonical_repos" cmd_request --file "$canonical_capture" --issue 123 \
+	--repo owner/repo --session issue-123 --work-dir "$repo_dir") || redirect_rc=$?
+if [[ "$redirect_rc" -ne "$PERMISSION_CANONICAL_REDIRECT_RC" || "$redirect_out" != *"own worktree"* ]]; then
+	printf 'canonical-checkout request did not return the owned redirect\n' >&2
+	exit 1
+fi
+if [[ -f "$posted_comment" ]] || grep -q -- 'needs-maintainer-permissions' "$gh_call_log"; then
+	printf 'canonical-checkout request created a maintainer request record\n' >&2
+	exit 1
+fi
+jq -e 'select(.event == "permission_request_redirected" and .blocking == false)' \
+	"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" >/dev/null
+# A sibling path that merely shares the canonical prefix is not canonical.
+sibling_capture="${test_root}/sibling-capture.json"
+jq '.requests[0].patterns = ["~/Git/example-repo-other/**"]' "$canonical_capture" >"$sibling_capture"
+if AIDEVOPS_REPOS_FILE="$canonical_repos" permission_targets_canonical_checkout "$sibling_capture"; then
+	printf 'prefix-sharing path was misclassified as a canonical checkout\n' >&2
+	exit 1
+fi
+
 printf 'worker permission helper tests passed\n'

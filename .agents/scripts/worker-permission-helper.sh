@@ -413,6 +413,29 @@ permission_apply_block() {
 	done
 }
 
+readonly PERMISSION_CANONICAL_REDIRECT_RC=3
+readonly PERMISSION_CANONICAL_REDIRECT_TEXT="Canonical checkouts are not grantable to workers. Read the same tracked path in your own worktree; install dependencies worktree-locally."
+
+# Succeeds when every captured pattern targets a registered canonical checkout
+# path from repos.json (GH#35139). Patterns are home-sanitized (~/...) in the
+# capture, so both sides are normalized to ~-relative form before comparing.
+permission_targets_canonical_checkout() {
+	local capture_file="$1"
+	local repos_file="${AIDEVOPS_REPOS_FILE:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
+	[[ -f "$repos_file" ]] || return 1
+	jq -e -n --arg home "$HOME" --slurpfile repos "$repos_file" --slurpfile capture "$capture_file" '
+		def norm: sub("^" + $home; "~") | sub("/(\\*+)?$"; "") | sub("/\\*+$"; "");
+		def canon: [($repos[0].initialized_repos // [])[] | .path | strings | norm | select(length > 1)];
+		canon as $roots
+		| [$capture[0].requests[].patterns[]?] as $patterns
+		| ($patterns | length) > 0
+		and all($patterns[]; . as $p | ($p | norm) as $n
+			| ($n | contains("/../") | not)
+			and any($roots[]; . as $r | $n == $r or ($n | startswith($r + "/"))))
+	' >/dev/null 2>&1
+	return $?
+}
+
 cmd_request() {
 	local capture_file="" issue_number="" repo_slug="" session_key="" work_dir="" durability=""
 	local request_id="" capability_json="" permission="" tool="" risk_level="" grantable=""
@@ -455,6 +478,13 @@ cmd_request() {
 			"capture_validation_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
 			"Captured permission request failed validation"
 		return 1
+	fi
+	if permission_targets_canonical_checkout "$capture_file"; then
+		permission_record_blocker "permission_request_redirected" "redirected" \
+			"canonical_checkout_redirect" "false" "$issue_number" "$repo_slug" "$session_key" "" \
+			"$PERMISSION_CANONICAL_REDIRECT_TEXT"
+		printf '%s\n' "$PERMISSION_CANONICAL_REDIRECT_TEXT"
+		return "$PERMISSION_CANONICAL_REDIRECT_RC"
 	fi
 	capability_json="$(permission_blocker_capability_json "$capture_file")" || return 1
 	permission="$(jq -r '.permission' <<<"$capability_json")"
