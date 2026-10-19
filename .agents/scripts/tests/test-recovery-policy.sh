@@ -173,6 +173,8 @@ unknown action|{"auto_merge": ${OUTLIER_ACTION}}
 outlier_hold without hold-for-review|{"outlier_hold": {"conditions":["x"],"issue_template":"t","labels":["blocked"]}}
 protected lifecycle label|{"brief_authority": {"conditions":["x"],"issue_template":"t","labels":["status:available"]}}
 protected trust label|{"brief_authority": {"conditions":["x"],"issue_template":"t","labels":["ai-approved"]}}
+mixed-case protected label|{"brief_authority": {"conditions":["x"],"issue_template":"t","labels":["AI-Approved"]}}
+mixed-case protected prefix|{"brief_authority": {"conditions":["x"],"issue_template":"t","labels":["Status:Available"]}}
 missing conditions|{"brief_authority": {"conditions":[],"issue_template":"t","labels":["auto-dispatch"]}}
 split without session budget|{"session_cap_split": {"conditions":["x"],"issue_template":"t","labels":["auto-dispatch"],"split_pattern":"p"}}
 invalid JSON|{"outlier_hold": 
@@ -191,6 +193,18 @@ EOF
 	status=1
 	[[ "$LOAD_RC" -eq 1 ]] && status=0
 	print_result "fails closed: two JSON blocks in one section" "$status"
+
+	# A json fence quoted as an example inside a longer or tilde fence is
+	# content, never an enabled policy.
+	local outer=""
+	for outer in '````' '~~~'; do
+		FIX_DOC=$(printf '## Queue recovery\n\n%stext\n%sjson\n{"actions": {"outlier_hold": %s}}\n%s\n%s\n' \
+			"$outer" "$fence" "$OUTLIER_ACTION" "$fence" "$outer")
+		_load
+		status=1
+		[[ "$LOAD_RC" -eq 1 && -z "$LOAD_OUT" ]] && status=0
+		print_result "fails closed: json example nested in ${outer} fence" "$status"
+	done
 
 	FIX_CONFIG='{"recovery_policy":"../secrets.md#Queue recovery"}'
 	_load

@@ -55,27 +55,37 @@ _recovery_policy_parse() {
 import json, re, sys
 repo, revision, path, heading = sys.argv[1:]
 lines = sys.stdin.read().splitlines()
-# Headings inside fenced code blocks are content, not structure.
-fenced, structural = False, []
+# One CommonMark-style fence scanner: a fence closes only with the same
+# character and at least the opening length. Headings and json blocks count
+# only at top level; anything inside another fence is example content.
+structural, blocks, fence, body = [], [], None, []
 for i, line in enumerate(lines):
-    if re.match(r"^ {0,3}(```|~~~)", line):
-        fenced = not fenced
+    m = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*(.*?)[ \t]*$", line)
+    if fence is None:
+        if m and not (m[1][0] == "`" and "`" in m[2]):
+            fence = (m[1][0], len(m[1]), m[2].split()[0].lower() if m[2] else "", i)
+            body = []
+            continue
+        h = re.fullmatch(r"(#{1,6}) +(.+?)(?: +#+)? *", line)
+        if h:
+            structural.append((i, len(h[1]), h[2]))
         continue
-    if not fenced:
-        m = re.fullmatch(r"(#{1,6}) +(.+?)(?: +#+)? *", line)
-        if m:
-            structural.append((i, len(m[1]), m[2]))
+    if m and not m[2] and m[1][0] == fence[0] and len(m[1]) >= fence[1]:
+        if fence[2] == "json":
+            blocks.append((fence[3], "\n".join(body)))
+        fence = None
+        continue
+    body.append(line)
 matches = [(i, level) for i, level, text in structural if text == heading]
 if len(matches) != 1:
     sys.exit("policy: heading must occur exactly once")
 start, level = matches[0]
 end = next((i for i, lvl, _ in structural if i > start and lvl <= level), len(lines))
-section = "\n".join(lines[start + 1:end])
-blocks = re.findall(r"^```json[ \t]*\n(.*?)\n```[ \t]*$", section, re.M | re.S)
-if len(blocks) != 1:
-    sys.exit("policy: section requires exactly one json fenced block")
+section_blocks = [text for i, text in blocks if start < i < end]
+if len(section_blocks) != 1:
+    sys.exit("policy: section requires exactly one top-level json fenced block")
 try:
-    policy = json.loads(blocks[0])
+    policy = json.loads(section_blocks[0])
 except ValueError as exc:
     sys.exit(f"policy: invalid JSON: {exc}")
 actions = policy.get("actions") if isinstance(policy, dict) else None
@@ -97,9 +107,11 @@ for name, action in actions.items():
         sys.exit(f"policy: {name} requires issue_template")
     if not (isinstance(labels, list) and labels and all(text(l) for l in labels)):
         sys.exit(f"policy: {name} requires non-empty labels")
-    if any(protected.match(l) for l in labels):
+    # GitHub label names are case-insensitive; compare case-folded, trimmed.
+    folded = [l.strip().casefold() for l in labels]
+    if any(protected.match(l) for l in folded):
         sys.exit(f"policy: {name} names a protected lifecycle/trust label")
-    if name == "outlier_hold" and "hold-for-review" not in labels:
+    if name == "outlier_hold" and "hold-for-review" not in folded:
         sys.exit("policy: outlier_hold must retain hold-for-review")
     if name == "session_cap_split" and not (
             type(action.get("session_budget")) is int and action["session_budget"] > 0 and

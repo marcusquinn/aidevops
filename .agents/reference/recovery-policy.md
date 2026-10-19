@@ -13,10 +13,11 @@ The fragment is the **exact heading text**, not a URL slug. The referenced Markd
 section must contain exactly one fenced `json` block with an `actions` object.
 Only keys present in that object are enabled; `{ "actions": {} }` enables none.
 Unknown actions, missing conditions/templates/labels, ambiguous headings, a
-declared but missing document or API failures fail closed. Headings inside
-fenced code blocks are ignored. Labels may not be lifecycle, origin or trust
-labels (`status:*`, `origin:*`, `ai-approved`, `needs-maintainer-review`,
-`external-contributor`); those stay with their guarded helpers. The config must
+declared but missing document or API failures fail closed. Headings and `json`
+blocks nested inside another fenced code block are example content and ignored.
+Labels may not be lifecycle, origin or trust labels (`status:*`, `origin:*`,
+`ai-approved`, `needs-maintainer-review`, `external-contributor`, compared
+case-insensitively); those stay with their guarded helpers. The config must
 be valid JSON for this remote reader.
 
 `bash ~/.aidevops/agents/scripts/recovery-policy-helper.sh <owner/repo>` checks
