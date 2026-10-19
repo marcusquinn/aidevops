@@ -26,6 +26,9 @@ set -euo pipefail
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# Canonical TODO parsing (strip_code_fences) shared with issue-sync (GH#35103).
+# shellcheck source=./issue-sync-lib-parse.sh
+source "${SCRIPT_DIR}/issue-sync-lib-parse.sh"
 
 readonly SCRIPT_DIR
 readonly MEMORY_HELPER="$SCRIPT_DIR/memory-helper.sh"
@@ -497,7 +500,10 @@ _distill_active_task_count() {
 	repository_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
 	for todo_file in "${repository_root}/TODO.md" "$(pwd)/TODO.md"; do
 		[[ -f "$todo_file" ]] || continue
-		count=$(grep -Ec '^[[:space:]]*-[[:space:]]+\[[[:space:]]\][[:space:]]+' "$todo_file" 2>/dev/null || true)
+		# Count live tasks only: HTML-commented and fenced format examples are
+		# not work (GH#17804 template, GH#35103).
+		count=$(strip_code_fences <"$todo_file" 2>/dev/null |
+			grep -Ec '^[[:space:]]*-[[:space:]]+\[[[:space:]]\][[:space:]]+' || true)
 		break
 	done
 	printf '%s\n' "${count:-0}"

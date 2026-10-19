@@ -66,7 +66,15 @@ while [[ "$iteration" -lt 100 ]]; do
 	long_task="${long_task} alpha beta gamma delta"
 	iteration=$((iteration + 1))
 done
+# GH#35103: commented and fenced format examples must not count as tasks.
 printf '%s\n' \
+	'<!-- Format examples, not tasks:' \
+	'- [ ] t90 commented example' \
+	'- [ ] t91 commented example' \
+	'-->' \
+	'```markdown' \
+	'- [ ] t92 fenced example' \
+	'```' \
 	"- [ ] t1 fixture task body FULL-CONTINUATION-MARKER${long_task}" \
 	"- [ ] t2 fixture task body${long_task}" \
 	"- [x] t3 completed fixture" >"$repository/TODO.md"
