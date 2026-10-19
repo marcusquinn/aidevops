@@ -54,10 +54,10 @@ class ArchiveLifecycle(unittest.TestCase):
         self.git(self.repo, "worktree", "add", "-qb", "feature/fixture", self.work)
         self.issue = 0
 
-    def run_command(self, *args, check=True):
+    def run_command(self, *args, check=True, input_data=None):
         result = subprocess.run(  # nosec B603 -- fixture-owned Git/Bash argv, no shell expansion
             [str(arg) for arg in args], env=self.env,
-            capture_output=True, timeout=60, check=False)
+            capture_output=True, timeout=60, check=False, input=input_data)
         if check:
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
         return result
@@ -141,9 +141,8 @@ class ArchiveLifecycle(unittest.TestCase):
             oid = self.git(self.work, 'hash-object', '-w', str(blob)).strip()
             conflicts.append(b'100644 ' + oid + f' {stage}\tmixed.txt\0'.encode())
         removal = b'0 ' + b'0' * len(oid) + b'\tmixed.txt\0'
-        subprocess.run(['git', '-C', str(self.work), 'update-index', '-z', '--index-info'],
-                       input=removal + b''.join(conflicts), env=self.env, capture_output=True,
-                       check=True, timeout=60)
+        self.run_command('git', '-C', self.work, 'update-index', '-z', '--index-info',
+                         input_data=removal + b''.join(conflicts))
         (self.work / 'mixed.txt').write_text('staged only\n')
         self.git(self.work, 'add', 'mixed.txt')
         undo = self.git(self.work, 'ls-files', '--resolve-undo', '-z')

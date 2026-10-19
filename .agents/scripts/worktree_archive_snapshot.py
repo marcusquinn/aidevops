@@ -126,39 +126,41 @@ def admin_path_allowed(name):
     return name in ADMIN_FILES or any(name.startswith(prefix) for prefix in PRIVATE_PREFIXES)
 
 
-def administration(root):
-    """Read only explicitly supported per-worktree administration, never common config."""
-    admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
-    common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
-    linked = admin.resolve() != common.resolve()
+def validate_admin_entry(entry, name):
+    if name == "index.lock":
+        raise ValueError("git_admin:index_locked:index.lock")
+    if name in OPERATIONS:
+        raise ValueError(f"git_admin:unfinished_operation:{name}")
+    if entry.is_symlink():
+        raise ValueError(f"git_admin:symlink:{name}")
+
+
+def admin_directory_allowed(name):
+    return (name in {"logs", "refs", "refs/worktree", "refs/bisect", "refs/rewritten"}
+            or any(name.startswith(prefix) for prefix in PRIVATE_PREFIXES))
+
+
+def administration_files(admin, directory, linked):
     files = {}
+    for entry in sorted(directory.iterdir()):
+        name = entry.relative_to(admin).as_posix()
+        validate_admin_entry(entry, name)
+        if name in {"commondir", "gitdir"} and linked and entry.is_file():
+            continue
+        if entry.is_dir() and admin_directory_allowed(name):
+            files.update(administration_files(admin, entry, linked))
+        elif entry.is_file() and admin_path_allowed(name):
+            files[name] = entry.read_bytes().hex()
+        elif not linked and (name == "logs/refs" or name.split("/")[0] in
+                             {"objects", "refs", "config", "description", "hooks", "info", "packed-refs"}):
+            # Independent restores contain ordinary repository infrastructure.
+            continue
+        else:
+            raise ValueError(f"git_admin:unknown_entry:{name}")
+    return files
 
-    def visit(directory):
-        for entry in sorted(directory.iterdir()):
-            name = entry.relative_to(admin).as_posix()
-            if name == "index.lock":
-                raise ValueError("git_admin:index_locked:index.lock")
-            if name in OPERATIONS:
-                raise ValueError(f"git_admin:unfinished_operation:{name}")
-            if entry.is_symlink():
-                raise ValueError(f"git_admin:symlink:{name}")
-            if name in {"commondir", "gitdir"} and linked and entry.is_file():
-                continue
-            if entry.is_dir() and (name in {"logs", "refs", "refs/worktree", "refs/bisect", "refs/rewritten"}
-                                   or any(name.startswith(prefix) for prefix in PRIVATE_PREFIXES)):
-                visit(entry)
-            elif entry.is_file() and admin_path_allowed(name):
-                files[name] = entry.read_bytes().hex()
-            elif not linked and (name == "logs/refs" or name.split("/")[0] in
-                                 {"objects", "refs", "config", "description", "hooks", "info", "packed-refs"}):
-                # Independent restores contain ordinary repository infrastructure.
-                continue
-            else:
-                raise ValueError(f"git_admin:unknown_entry:{name}")
 
-    visit(admin)
-    if git(root, "rev-parse", "--shared-index-path").strip():
-        raise ValueError("git_admin:split_index:index")
+def validate_admin_config(root, admin):
     config = admin / 'config.worktree'
     if config.exists():
         entries = git(root, 'config', '--file', str(config), '--no-includes', '--null', '--list')
@@ -166,6 +168,16 @@ def administration(root):
             key = entry.split(b'\n', 1)[0].lower()
             if key == b'core.worktree' or (key.startswith(b'include') and key.endswith(b'.path')):
                 raise ValueError('git_admin:location_dependent_config:' + key.decode('ascii'))
+
+
+def administration(root):
+    """Read only explicitly supported per-worktree administration, never common config."""
+    admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
+    files = administration_files(admin, admin, admin.resolve() != common.resolve())
+    if git(root, "rev-parse", "--shared-index-path").strip():
+        raise ValueError("git_admin:split_index:index")
+    validate_admin_config(root, admin)
     refs = git(root, "for-each-ref", "--format=%(refname) %(objectname) %(symref)", *PRIVATE_PREFIXES)
     head = bytes.fromhex(files['HEAD'])
     head_ref = os.fsdecode(head[5:].strip()) if head.startswith(b'ref: ') else None
