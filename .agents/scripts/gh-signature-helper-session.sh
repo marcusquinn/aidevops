@@ -268,6 +268,8 @@ _sum_session_tokens_for_session() {
 	local session_id="$2"
 	local since_ms="${3:-}"
 
+	local quoted_session
+	quoted_session=$(_sql_quote "$session_id")
 	local since_filter=""
 	if [[ -n "$since_ms" ]] && [[ "$since_ms" =~ ^[0-9]+$ ]] && [[ "$since_ms" -gt 0 ]]; then
 		since_filter="AND time_created >= ${since_ms}"
@@ -288,10 +290,32 @@ _sum_session_tokens_for_session() {
 			+ json_extract(data, '$.tokens.output')
 		), 0)
 		FROM message
-		WHERE session_id='${session_id}'
+		WHERE session_id=${quoted_session}
 		  AND json_extract(data, '$.tokens.input') > 0
 		  ${since_filter}
 	" 2>/dev/null || echo ""
+	return 0
+}
+
+# Workers can resume a historical session. Bound metrics to this attempt, not
+# the session's creation time (GH#35100). Observability emits epoch nanoseconds;
+# accept seconds/milliseconds/microseconds too, without overflowing arithmetic.
+# Interactive sessions deliberately retain their existing cumulative metrics.
+_worker_attempt_start_ms() {
+	local marker="${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
+	if [[ "$(_detect_explicit_session_type)" != "worker" ]] ||
+		[[ ! "$marker" =~ ^[1-9][0-9]+$ ]]; then
+		return 0
+	fi
+	case "${#marker}" in
+	10) marker="${marker}000" ;;
+	13) ;;
+	16 | 19) marker="${marker:0:13}" ;;
+	*) return 0 ;;
+	esac
+	if [[ $((marker / 1000)) -le "$(date +%s)" ]]; then
+		printf '%s' "$marker"
+	fi
 	return 0
 }
 
@@ -323,6 +347,11 @@ _detect_session_tokens_with_since() {
 	local since_ms=""
 	if [[ -n "$since_epoch" ]] && [[ "$since_epoch" =~ ^[0-9]+$ ]] && [[ "$since_epoch" -gt 0 ]]; then
 		since_ms=$((since_epoch * 1000))
+	fi
+	local attempt_ms
+	attempt_ms=$(_worker_attempt_start_ms)
+	if [[ -n "$attempt_ms" ]] && { [[ -z "$since_ms" ]] || [[ "$attempt_ms" -gt "$since_ms" ]]; }; then
+		since_ms="$attempt_ms"
 	fi
 
 	local total_tokens
@@ -612,9 +641,30 @@ _sum_child_tokens() {
 		return 0
 	fi
 
+	local attempt_ms db_path=""
+	attempt_ms=$(_worker_attempt_start_ms)
+	if [[ -n "$attempt_ms" ]] && _is_opencode_runtime && command -v sqlite3 &>/dev/null; then
+		db_path=$(_opencode_db_path)
+		[[ -r "$db_path" ]] || db_path=""
+	fi
+
 	local total=0
 	local child_id child_tokens epoch
 	while IFS=$'\t' read -r child_id child_tokens epoch; do
+		if [[ -n "$attempt_ms" ]]; then
+			# A resumed child can have a cumulative ledger entry. Prefer its
+			# message window, even if the ledger was recorded in an older attempt.
+			local quoted_child child_exists=""
+			quoted_child=$(_sql_quote "$child_id")
+			if [[ -n "$db_path" ]]; then
+				child_exists=$(sqlite3 "$db_path" "SELECT id FROM session WHERE id=${quoted_child};" 2>/dev/null || true)
+			fi
+			if [[ -n "$child_exists" ]]; then
+				child_tokens=$(_sum_session_tokens_for_session "$db_path" "$child_id" "$attempt_ms")
+			elif [[ ! "$epoch" =~ ^[0-9]+$ ]] || [[ "$epoch" -lt $((attempt_ms / 1000)) ]]; then
+				continue
+			fi
+		fi
 		# Skip empty lines and malformed entries
 		if [[ -n "$child_tokens" ]] && [[ "$child_tokens" =~ ^[0-9]+$ ]]; then
 			total=$((total + child_tokens))
@@ -657,9 +707,13 @@ _detect_session_time() {
 		return 0
 	fi
 
-	local session_seconds
+	local session_seconds attempt_ms start_expr="time_created"
+	attempt_ms=$(_worker_attempt_start_ms)
+	if [[ -n "$attempt_ms" ]]; then
+		start_expr="MAX(time_created, ${attempt_ms})"
+	fi
 	session_seconds=$(sqlite3 "$db_path" "
-		SELECT (strftime('%s','now') * 1000 - time_created) / 1000
+		SELECT (strftime('%s','now') * 1000 - ${start_expr}) / 1000
 		FROM session WHERE id='${session_id}'
 	" 2>/dev/null || echo "")
 
