@@ -16,6 +16,9 @@
 #     Verify that a PR's changed files overlap with files mentioned in the issue.
 #     Exit 0 = verified (safe to close), exit 1 = not verified (do NOT close)
 #
+#   verify-issue-close-helper.sh check-no-code <issue> <pr> <repo_slug> <parent>
+#     Verify premise-falsified no-code triage (merged For/Ref PR, trusted issue).
+#
 #   verify-issue-close-helper.sh extract-paths <issue_number> <repo_slug>
 #     Extract file paths mentioned in an issue body. Useful for debugging.
 #
@@ -428,9 +431,94 @@ check_pr_fixes_issue() {
 		"$issue_number" "$pr_number" "$issue_paths" "$pr_files"
 }
 
+#######################################
+# Verify a no-code (premise-falsified) disposition for a triage issue.
+#
+# A merged prerequisite PR that references the parent task with For/Ref is not
+# an implementation fix for the triage issue, so it has no file overlap and
+# `check` correctly rejects it. This separate verdict never satisfies `check`;
+# callers must record it as a no-code resolution and must not close the parent.
+#
+# Requirements (all independently fetched, none taken from caller claims):
+#   - the issue author is OWNER/MEMBER/COLLABORATOR (#aidevops:trust-boundary)
+#   - the issue body names the parent as #<parent>
+#   - the PR is merged and its body links the parent with For/Ref #<parent>
+#   - the PR does not use a closing keyword for the triage issue or the parent
+#
+# Args: $1 = issue_number, $2 = pr_number, $3 = repo_slug, $4 = parent_number
+# Returns: 0 = verified no-code premise, 1 = rejected
+#######################################
+check_no_code_prerequisite() {
+	local issue_number="$1"
+	local pr_number="$2"
+	local repo_slug="$3"
+	local parent_number="$4"
+
+	local association issue_body
+	association=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.author_association // ""' 2>/dev/null) || association=""
+	case "$association" in
+	OWNER | MEMBER | COLLABORATOR) ;;
+	*)
+		printf 'REJECTED-NO-CODE: issue #%s author association %s is not trusted\n' "$issue_number" "${association:-unknown}"
+		return 1
+		;;
+	esac
+
+	issue_body=$(_fetch_issue_body "$issue_number" "$repo_slug") || {
+		printf '%s\n' "$issue_body" >&2
+		return 1
+	}
+	if ! printf '%s' "$issue_body" | grep -Eq "(^|[^0-9A-Za-z])#${parent_number}([^0-9]|$)"; then
+		printf 'REJECTED-NO-CODE: issue #%s does not reference parent #%s\n' "$issue_number" "$parent_number"
+		return 1
+	fi
+
+	local pr_state pr_body
+	pr_state=$(gh api "repos/${repo_slug}/pulls/${pr_number}" --jq 'if .merged_at then "merged" else "unmerged" end' 2>/dev/null) || pr_state=""
+	if [[ "$pr_state" != "merged" ]]; then
+		printf 'REJECTED-NO-CODE: PR #%s is not merged\n' "$pr_number"
+		return 1
+	fi
+	pr_body=$(gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.body // ""' 2>/dev/null) || pr_body=""
+
+	if ! printf '%s' "$pr_body" | grep -Eiq "(^|[^[:alnum:]])(for|ref)[[:space:]]+#${parent_number}([^0-9]|$)"; then
+		printf 'REJECTED-NO-CODE: PR #%s does not link parent #%s with For/Ref\n' "$pr_number" "$parent_number"
+		return 1
+	fi
+	if printf '%s' "$pr_body" | grep -Eiq "(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#(${issue_number}|${parent_number})([^0-9]|$)"; then
+		printf 'REJECTED-NO-CODE: PR #%s uses a closing keyword for #%s or #%s\n' "$pr_number" "$issue_number" "$parent_number"
+		return 1
+	fi
+
+	printf 'VERIFIED-NO-CODE: merged PR #%s links parent #%s (For/Ref); issue #%s may be resolved as no-code only. Not an implementation fix; do NOT close parent #%s.\n' \
+		"$pr_number" "$parent_number" "$issue_number" "$parent_number"
+	log_info "Verified no-code prerequisite: PR #${pr_number} parent #${parent_number} issue #${issue_number}"
+	return 0
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
+
+cmd_check_no_code() {
+	local issue_number="${1:-}"
+	local pr_number="${2:-}"
+	local repo_slug="${3:-}"
+	local parent_number="${4:-}"
+
+	if [[ -z "$issue_number" || -z "$pr_number" || -z "$repo_slug" || -z "$parent_number" ]]; then
+		print_error "Usage: verify-issue-close-helper.sh check-no-code <issue_number> <pr_number> <repo_slug> <parent_number>"
+		return 1
+	fi
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ ! "$pr_number" =~ ^[0-9]+$ ]] || [[ ! "$parent_number" =~ ^[0-9]+$ ]]; then
+		print_error "Issue, PR and parent numbers must be numeric"
+		return 1
+	fi
+
+	check_no_code_prerequisite "$issue_number" "$pr_number" "$repo_slug" "$parent_number"
+	return $?
+}
 
 cmd_check() {
 	local issue_number="${1:-}"
@@ -488,6 +576,11 @@ COMMANDS
   check <issue> <pr> <slug>    Verify PR fixes issue (file overlap check)
                                Exit 0 = verified, exit 1 = rejected
 
+  check-no-code <issue> <pr> <slug> <parent>
+                               Verify a merged For/Ref prerequisite PR supports a
+                               no-code triage resolution (never an implementation
+                               close; parent stays open)
+
   extract-paths <issue> <slug> List file paths mentioned in an issue body
 
   help                         Show this message
@@ -512,6 +605,7 @@ main() {
 
 	case "$command" in
 	check) cmd_check "$@" ;;
+	check-no-code) cmd_check_no_code "$@" ;;
 	extract-paths) cmd_extract_paths "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)

@@ -33,6 +33,8 @@ When dispatched against an auto-generated issue body (review-followup, quality-d
 - **B. Premise correct + obvious fix → implement and PR** with normal lifecycle gate (`Resolves #<this-issue>`).
 - **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Link every file, line, PR, run or comment cited (GitHub permalinks from `gh browse --no-browser --commit=<sha> <path>:<line>`, URLs from `gh ... --json url`) so the reviewer can decide without searching. Then apply `hold-for-review` and stop. The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
 
+Outcome A against a merged prerequisite PR (`For`/`Ref` the parent) is not an implementation close: `verify-issue-close-helper.sh check` correctly rejects it for zero file overlap, and fake scope paths must never be added. Verify with `verify-issue-close-helper.sh check-no-code <issue> <pr> <slug> <parent>` (trusted issue author, merged PR, parent linked by For/Ref, no closing keyword), resolve only the triage issue as no-code, and leave the parent open.
+
 Ambiguity about scope or style is NOT Outcome C. Applying any review hold at issue creation time merely to punt analysis to a human is forbidden. Reasoning responsibility applies here too: you do the thinking.
 
 ## Worker scope enforcement (t1894)
