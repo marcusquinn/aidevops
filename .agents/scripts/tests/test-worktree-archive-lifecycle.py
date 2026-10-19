@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import sqlite3
 import subprocess
@@ -35,8 +36,10 @@ class LegacyRecoveryReport(unittest.TestCase):
         assignment = next(line.strip() for line in producer.splitlines()
                           if line.strip().startswith('_branch="feature/auto-'))
         command = 'issue_number=123; ' + assignment + '; source "$1"; aidevops_branch_slug "$_branch"'
+        bash = shutil.which("bash")
+        self.assertIsNotNone(bash)
         result = subprocess.run(  # nosec B603 -- local trusted generator assignment and path helper
-            ["bash", "-c", command, "name-contract", str(HELPER.parent / "worktree-paths.sh")],
+            [str(Path(bash).resolve()), "-c", command, "name-contract", str(HELPER.parent / "worktree-paths.sh")],
             capture_output=True, text=True, check=True, timeout=10)
         source = "/fixture/repo-" + result.stdout.strip()
         self.assertEqual(legacy_report.legacy_origin(source, "worktree-helper.sh", "recoverable-cleanup"), "pulse")
@@ -245,7 +248,8 @@ class ArchiveLifecycle(unittest.TestCase):
 
     def test_legacy_pulse_preflight_retains_active_source(self):
         bucket = self.legacy_pulse_bucket()
-        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=bucket)
+        child = subprocess.Popen(  # nosec B603 -- current interpreter, constant sleep code, disposable fixture cwd
+            [sys.executable, "-c", "import time; time.sleep(60)"], cwd=bucket)
         try:
             result = self.migrate_bucket(bucket, check=False)
             self.assertNotEqual(result.returncode, 0)

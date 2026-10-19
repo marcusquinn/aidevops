@@ -58,9 +58,7 @@ def legacy_decision(origin, age_seconds, has_lifecycle=False):
         return "manual-origin" if origin == "manual" else "unknown-origin"
     if age_seconds is None or age_seconds < 0:
         return "missing-timestamp"
-    if age_seconds < RETENTION_SECONDS:
-        return "within-retention"
-    return "eligible-legacy-pulse"
+    return "within-retention" if age_seconds < RETENTION_SECONDS else "eligible-legacy-pulse"
 
 
 def read_small(path, limit=8192):
