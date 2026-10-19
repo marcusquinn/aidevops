@@ -230,7 +230,8 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertFalse(list(self.archives.rglob('manifest.json')))
 
     def test_readiness_administration_fails_closed(self):
-        from worktree_archive_administration import administration, load_administration, MAX_READINESS_BYTES
+        from worktree_archive_administration import administration, load_administration
+        from worktree_archive_readiness import MAX_READINESS_BYTES
 
         admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
         state_dir = admin / 'aidevops'
