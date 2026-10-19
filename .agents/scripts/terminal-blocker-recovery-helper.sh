@@ -121,16 +121,23 @@ tbr_seed() {
 	if [[ "$force" != "--force" && $((now - last)) -lt "$TBR_SEED_INTERVAL" ]]; then
 		return 0
 	fi
-	local self="" slug="" issue="" comments="" reason=""
+	local self="" slug="" issue="" comments="" reason="" policy_enabled=""
 	self=$(_tbr_self_login) || return 1
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		policy_enabled=false
+		# Cross-runner intake needs committed repo authority and current write
+		# access. An absent/invalid policy preserves runner-local circuit intake.
+		if bash "${_TBR_SCRIPT_DIR}/recovery-policy-helper.sh" "$slug" 2>/dev/null |
+			jq -e '.actions | length > 0' >/dev/null; then
+			policy_enabled=true
+		fi
 		while IFS= read -r issue; do
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
 			comments=$(gh api "repos/${slug}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || continue
-			reason=$(_tbr_seed_reason "$comments" "$self") || continue
+			reason=$(_tbr_seed_reason "$comments" "$self" "$policy_enabled") || continue
 			tbr_enqueue "$slug" "$issue" "$reason" || true
 		done < <(_tbr_seed_candidates "$slug")
 	done < <(jq -r '.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug' \
@@ -160,11 +167,22 @@ _tbr_seed_candidates() {
 _tbr_seed_reason() {
 	local comments="$1"
 	local self="$2"
+	local policy_enabled="${3:-false}"
 	local reason=""
 	if printf '%s' "$comments" | jq -e --arg self "$self" --arg marker "$TBR_CIRCUIT_MARKER" '
 		[flatten[] | select((.user.login // "") == $self and ((.body // "") | contains($marker)))] | length > 0
 	' >/dev/null 2>&1; then
 		_tbr_reason_from_comments "$comments"
+		return 0
+	fi
+	#aidevops:trust-boundary — remote circuit markers must be collaborator
+	# authored; policy_enabled comes only from the pinned policy/access loader.
+	if [[ "$policy_enabled" == true ]] && printf '%s' "$comments" |
+		jq -e --arg marker "$TBR_CIRCUIT_MARKER" '[flatten[] |
+		select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) |
+		select((.body // "") | contains($marker))] | length > 0' >/dev/null; then
+		_tbr_reason_from_comments "$(printf '%s' "$comments" | jq '[flatten[] |
+			select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))]')"
 		return 0
 	fi
 	# GH#35095: the release decision needs only public markers plus the task
