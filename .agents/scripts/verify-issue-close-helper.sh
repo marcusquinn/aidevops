@@ -468,7 +468,7 @@ check_no_code_prerequisite() {
 		printf '%s\n' "$issue_body" >&2
 		return 1
 	}
-	if ! printf '%s' "$issue_body" | grep -Eq "(^|[^0-9A-Za-z])#${parent_number}([^0-9]|$)"; then
+	if ! grep -Eq "(^|[^0-9A-Za-z])#${parent_number}([^0-9]|$)" <<<"$issue_body"; then
 		printf 'REJECTED-NO-CODE: issue #%s does not reference parent #%s\n' "$issue_number" "$parent_number"
 		return 1
 	fi
@@ -481,11 +481,11 @@ check_no_code_prerequisite() {
 	fi
 	pr_body=$(gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.body // ""' 2>/dev/null) || pr_body=""
 
-	if ! printf '%s' "$pr_body" | grep -Eiq "(^|[^[:alnum:]])(for|ref)[[:space:]]+#${parent_number}([^0-9]|$)"; then
+	if ! grep -Eiq "(^|[^[:alnum:]])(for|ref)[[:space:]]+#${parent_number}([^0-9]|$)" <<<"$pr_body"; then
 		printf 'REJECTED-NO-CODE: PR #%s does not link parent #%s with For/Ref\n' "$pr_number" "$parent_number"
 		return 1
 	fi
-	if printf '%s' "$pr_body" | grep -Eiq "(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#(${issue_number}|${parent_number})([^0-9]|$)"; then
+	if grep -Eiq "(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#(${issue_number}|${parent_number})([^0-9]|$)" <<<"$pr_body"; then
 		printf 'REJECTED-NO-CODE: PR #%s uses a closing keyword for #%s or #%s\n' "$pr_number" "$issue_number" "$parent_number"
 		return 1
 	fi
