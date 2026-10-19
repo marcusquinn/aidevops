@@ -34,6 +34,17 @@ def administration_digest(state):
     return hashlib.sha256(payload).hexdigest()
 
 
+def index_roots(root):
+    roots = set()
+    for inventory in ('--stage', '--resolve-undo'):
+        for entry in git(root, "ls-files", inventory, "-z").split(b"\0"):
+            if entry:
+                oid = entry.split(b"\t", 1)[0].split()[1]
+                if set(oid) != {48}:
+                    roots.add(oid.decode("ascii"))
+    return roots
+
+
 def administration_roots(root, state, include_index=True):
     roots = {git(root, "rev-parse", "HEAD").strip().decode("ascii")}
     roots.update(state["refs"].values())
@@ -45,12 +56,8 @@ def administration_roots(root, state, include_index=True):
                 roots.update(part.decode("ascii") for part in line.split()[:2] if set(part) != {48})
         elif name == "ORIG_HEAD":
             roots.add(data.strip().decode("ascii"))
-    for inventory in (('--stage', '--resolve-undo') if include_index else ()):
-        for entry in git(root, "ls-files", inventory, "-z").split(b"\0"):
-            if entry:
-                oid = entry.split(b"\t", 1)[0].split()[1]
-                if set(oid) != {48}:
-                    roots.add(oid.decode("ascii"))
+    if include_index:
+        roots.update(index_roots(root))
     for oid in roots:
         if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid):
             raise ValueError("git_admin:invalid_object_id")
