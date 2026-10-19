@@ -816,6 +816,21 @@ _is_default_github_template() {
 	return 1
 }
 
+# Preserve the existing file mode when replacing a README with a mktemp file.
+# Do not turn an ordinary 0644 README into unsupported 0600 recovery state,
+# or normalize permissions deliberately selected by the operator.
+_profile_replace_readme() {
+	local candidate="$1"
+	local readme_path="$2"
+	[[ -f "$candidate" && ! -L "$candidate" && -f "$readme_path" && ! -L "$readme_path" ]] || return 1
+	if ! python3 -c 'import shutil, sys; shutil.copymode(sys.argv[2], sys.argv[1])' "$candidate" "$readme_path" ||
+		! mv "$candidate" "$readme_path"; then
+		rm -f "$candidate"
+		return 1
+	fi
+	return 0
+}
+
 # --- Inject aidevops markers into an existing README that lacks them ---
 # Preserves all existing content and appends marker blocks at the end.
 # This handles the case where a user has manually written their README
@@ -849,7 +864,7 @@ _inject_markers_into_readme() {
 		echo "<!-- UPDATED-END -->"
 	} >>"$tmp_file"
 
-	mv "$tmp_file" "$readme_path"
+	_profile_replace_readme "$tmp_file" "$readme_path" || return 1
 	return 0
 }
 
@@ -1009,7 +1024,7 @@ _ensure_commit_history_chart() {
 				rm -f "$migrate_tmp"
 				return 1
 			fi
-			mv "$migrate_tmp" "$readme_path" || {
+			_profile_replace_readme "$migrate_tmp" "$readme_path" || {
 				rm -f "$migrate_tmp"
 				return 1
 			}
@@ -1045,7 +1060,7 @@ _ensure_commit_history_chart() {
 			rm -f "$migrate_tmp"
 			return 1
 		fi
-		mv "$migrate_tmp" "$readme_path" || {
+		_profile_replace_readme "$migrate_tmp" "$readme_path" || {
 			rm -f "$migrate_tmp"
 			return 1
 		}
@@ -1427,7 +1442,7 @@ _update_inject_timestamp() {
 		}
 		!skip { print }
 	' "$file" >"$updated_tmp"
-	mv "$updated_tmp" "$file"
+	_profile_replace_readme "$updated_tmp" "$file" || return 1
 	return 0
 }
 
@@ -1449,7 +1464,7 @@ _update_inject_markers_if_needed() {
 			_generate_rich_readme "$gh_user" "$readme_path"
 		else
 			echo "Could not resolve username — injecting markers only..."
-			_inject_markers_into_readme "$readme_path"
+			_inject_markers_into_readme "$readme_path" || return 1
 		fi
 		return 0
 	fi
@@ -1459,7 +1474,7 @@ _update_inject_markers_if_needed() {
 	fi
 
 	echo "Markers missing from README — injecting them..."
-	_inject_markers_into_readme "$readme_path"
+	_inject_markers_into_readme "$readme_path" || return 1
 	return 0
 }
 
@@ -1548,7 +1563,7 @@ _cmd_update_in_repo() {
 	_profile_refresh_daily_contributions "$readme_path" "$dry_run"
 
 	# Ensure markers exist — inject or regenerate if missing
-	_update_inject_markers_if_needed "$profile_repo" "$readme_path"
+	_update_inject_markers_if_needed "$profile_repo" "$readme_path" || return 1
 
 	# Replace content between markers
 	local tmp_file
@@ -1600,7 +1615,7 @@ _cmd_update_in_repo() {
 	fi
 
 	# Update timestamp
-	_update_inject_timestamp "$tmp_file"
+	_update_inject_timestamp "$tmp_file" || return 1
 
 	if [[ "$dry_run" == true ]]; then
 		echo "--- DRY RUN: would write to $readme_path ---"
@@ -1610,7 +1625,7 @@ _cmd_update_in_repo() {
 	fi
 
 	# Apply changes and push
-	mv "$tmp_file" "$readme_path"
+	_profile_replace_readme "$tmp_file" "$readme_path" || return 1
 	echo "Profile README content changed — committing and pushing"
 	_update_push_with_recovery "$profile_repo" "chore: update profile stats ($(date -u +%Y-%m-%d))" || return 1
 	if [[ "$PROFILE_CONTRIBUTIONS_REFRESHED" == true ]]; then
@@ -1706,7 +1721,7 @@ _update_contributions_migrate_markers() {
 			rm -f "$normalize_tmp"
 			return 1
 		fi
-		mv "$normalize_tmp" "$readme_path"
+		_profile_replace_readme "$normalize_tmp" "$readme_path" || return 1
 		return 0
 		;;
 	absent) ;;
@@ -1748,7 +1763,7 @@ _update_contributions_migrate_markers() {
 		rm -f "$inject_tmp"
 		return 1
 	fi
-	mv "$inject_tmp" "$readme_path"
+	_profile_replace_readme "$inject_tmp" "$readme_path" || return 1
 	return 0
 }
 
@@ -1994,7 +2009,7 @@ _cmd_update_contributions_in_repo() {
 	fi
 
 	# Apply changes and push
-	if ! mv "$tmp_file" "$readme_path"; then
+	if ! _profile_replace_readme "$tmp_file" "$readme_path"; then
 		rm -f "$tmp_file"
 		return 1
 	fi

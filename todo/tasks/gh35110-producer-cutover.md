@@ -89,5 +89,12 @@ The fixture helper is proposed new code; other listed paths exist. Expand scope 
   Profile coverage includes supported 0644 and protected 0600 inputs. The format
   still refuses unsupported permissions; production cleanup never normalizes
   user permissions or falls back to a full copy.
+- `.agents/scripts/profile-readme-helper.sh`: replacing a README with a `mktemp`
+  file changed ordinary 0644 content to 0600. The first draft CI run confirmed
+  seven contribution-publication failures caused by that unsupported mode.
+  Preserve the existing README mode during each replacement instead of changing
+  permissions during cleanup. The supported recovery fixture no longer repairs
+  permissions; the refusal fixture alone introduces a private operator-selected
+  mode. Existing boundary and contributions fail-closed suites cover the paths.
 
 The operator documentation and archive-list discovery work remain in #35147.

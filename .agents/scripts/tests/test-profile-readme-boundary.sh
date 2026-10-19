@@ -402,9 +402,11 @@ IFS='|' read -r owner_pid _ _ owner_task _ owner_process_start <<<"$owner_snapsh
 [[ "$owner_pid" =~ ^[1-9][0-9]*$ && "$owner_task" == "profile-readme" && -n "$owner_process_start" ]]
 printf 'verified\n' >"$PROFILE_MARKER_EVIDENCE"
 printf '%s\n' "recoverable fixture state" >"${target}/.profile-publication-fixture"
-# Exercise both the compact format's supported mode and its protected 0600
-# refusal. Do not normalize permissions in the production cleanup path.
-chmod "$PROFILE_RECOVERY_FIXTURE_MODE" "${target}/README.md"
+# The normal publication must remain recoverable without fixture permission
+# repair. Only the refusal case introduces an operator-selected private mode.
+if [[ "$PROFILE_RECOVERY_FIXTURE_MODE" == "0600" ]]; then
+    chmod 0600 "${target}/README.md"
+fi
 exit 1
 EOF
 	chmod +x "$refusing_helper"
