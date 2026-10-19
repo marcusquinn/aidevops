@@ -26,6 +26,10 @@ const BROWSER_MCP_LAUNCHER = fileURLToPath(
   new URL("../../scripts/browser-mcp-launcher.sh", import.meta.url),
 );
 
+const MCP_ROOTS_FILTER = fileURLToPath(
+  new URL("../../scripts/mcp-roots-filter.mjs", import.meta.url),
+);
+
 function envFlagEnabled(name) {
   return ["1", "true", "yes"].includes((process.env[name] || "").toLowerCase());
 }
@@ -436,8 +440,10 @@ export function getMcpRegistry() {
     {
       name: "playwright",
       type: "local",
-      // Pin the verified CLI contract: --output-dir support and explicit
-      // relative output filenames remaining within that directory.
+      // Pin the verified CLI contract: --output-dir support. Native tool
+      // `filename`s resolve against the MCP client root (not --output-dir) in
+      // 0.0.79, so the launcher runs the server behind mcp-roots-filter.mjs,
+      // which strips the roots capability so they resolve against the private cwd.
       command: playwrightMcpCommand(),
       eager: false,
       toolPattern: "playwright_*",
@@ -779,7 +785,8 @@ function buildMcpConfigEntry(mcp, runtime) {
     'workspace="$1"',
     'output_dir="$2"',
     'marker_token="$3"',
-    "shift 3",
+    'roots_filter="$4"',
+    "shift 4",
     'marker="$workspace/.aidevops-mcp-workspace"',
     '[[ -d "$workspace" && ! -L "$workspace" ]]',
     '[[ -f "$marker" && ! -L "$marker" ]]',
@@ -788,7 +795,10 @@ function buildMcpConfigEntry(mcp, runtime) {
     'mkdir -p -- "$output_dir"',
     '[[ -d "$output_dir" && ! -L "$output_dir" ]]',
     'cd -- "$output_dir"',
-    'exec "$@" --output-dir "$output_dir"',
+    // GH#35159: native tool `filename`s resolve against the MCP client root;
+    // the filter strips the roots capability so they fall back to this cwd.
+    '[[ -f "$roots_filter" ]]',
+    'exec node "$roots_filter" -- "$@" --output-dir "$output_dir"',
   ].join("; ");
   return {
     type: "local",
@@ -800,6 +810,7 @@ function buildMcpConfigEntry(mcp, runtime) {
       workspace.directory,
       outputDir,
       workspace.markerToken,
+      MCP_ROOTS_FILTER,
       ...mcp.command,
     ],
     enabled: mcp.eager,

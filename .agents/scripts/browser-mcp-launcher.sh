@@ -61,7 +61,10 @@ main() {
 		_launcher_fail "missing MCP server command"
 		return 1
 	}
-	local root session_dir
+	local root session_dir filter script_dir
+	# Resolve before the cd into the private artifact directory.
+	script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || return 1
+	filter="$script_dir/mcp-roots-filter.mjs"
 	root=$(_launcher_artifact_root "$server")
 	if _launcher_inside_git_worktree "$root"; then
 		_launcher_fail "artifact root resolves inside a Git work tree; set AIDEVOPS_TEMP_DIR outside repositories"
@@ -87,7 +90,14 @@ main() {
 	}
 	cd -- "$session_dir" || return 1
 	if [[ "$server" == "playwright" ]]; then
-		exec "$@" --output-dir "$session_dir"
+		# GH#35159: native tool `filename`s resolve against the MCP client root
+		# (the project dir), not --output-dir. The filter strips the roots
+		# capability so the server falls back to this private cwd.
+		[[ -f "$filter" ]] || {
+			_launcher_fail "missing mcp-roots-filter.mjs next to launcher"
+			return 1
+		}
+		exec node "$filter" -- "$@" --output-dir "$session_dir"
 	fi
 	# GH#34549: Playwriter >= 0.8.0 relays (including ones the MCP auto-starts,
 	# which inherit this environment) send usage telemetry unless opted out.
