@@ -95,6 +95,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import signal
 import stat
 import subprocess
@@ -105,6 +106,12 @@ from pathlib import Path
 def unmet(reason=''):
     print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
+
+def check_rejections(names):
+    rejection = runpy.run_path(str(Path(sys.argv[5]).parent / 'runner-secret-rejection.py'))
+    rejected_name = rejection['process_names']('check', sorted(names))
+    if rejected_name:
+        unmet(f'secret_rejected name={rejected_name}')
 
 def run_check(argv, target, secret=False, cwd=None, timeout=5):
     # Bound descendants too: a locked pinentry or probe child must not survive.
@@ -296,6 +303,7 @@ try:
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',
               file=sys.stderr)
     if secrets:
+        check_rejections(secrets)
         cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''
         with cycle_state(cycle) as (handle, state):
             cached_name = state.get('name', '')

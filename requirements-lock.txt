@@ -83,5 +83,5 @@ typing_extensions==4.15.0
 tzdata==2026.2
 urllib3==2.8.0
 xxhash==3.7.1
-yarl==1.24.2
+yarl==1.25.1
 zipp==4.1.0

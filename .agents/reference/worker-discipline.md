@@ -111,6 +111,15 @@ structured reason/action, `status:available` is an executable continuation, and
 recovery to weaken trust, hold, exact-head, or assignment-plus-active-state gates.
 On blocked exits, emit `BLOCKED: <reason>` instead of editing lifecycle labels: the runtime persists the release before projecting state. Declare missing runner secret/config **names** only as `TERMINAL_BLOCKER_MISSING_SECRETS=NAME1,NAME2`; never include values.
 
+When a present credential is rejected by the service (for example HTTP 401), use
+`TERMINAL_BLOCKER_REASON=runner_capability_unmet` and declare names only with
+`TERMINAL_BLOCKER_REJECTED_SECRETS=NAME1,NAME2` in final assistant text. Do not
+declare rejection for a generic outage or missing secret. Runtime release records
+host-local value hashes and emits one runner-health advisory per marker. All
+issues requiring a matching name defer on that host until its stored value changes
+or the marker expires (24 hours; `AIDEVOPS_REJECTED_SECRET_TTL_SECONDS` can shorten
+this, bounded to 1–86400 seconds). Other runners and unrelated secrets are unaffected.
+
 An explicit hard boundary, another live owner, or genuinely new authority goes to
 the authorized AI brief owner/coordinator with exact issue/PR/checkpoint, brief
 revision, missing paths, protected evidence, proposed verification and wake

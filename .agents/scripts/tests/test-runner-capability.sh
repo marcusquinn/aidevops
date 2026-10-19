@@ -22,6 +22,11 @@ with tempfile.TemporaryDirectory(prefix='runner-capability-') as temp:
     bin_dir.mkdir()
     cli = bin_dir / 'aidevops'
     cli.write_text('''#!/usr/bin/env bash
+if [[ "$1 $2" == 'secret get' ]]; then
+    [[ "$3" != ZFAIL ]] || exit 2
+    printf '%s\\n' "${STORED_VALUE:-PRIVATE_VALUE}"
+    exit 0
+fi
 [[ "$1 $2" == 'secret check' ]] || exit 99
 [[ -z "${CHECK_CALLS:-}" ]] || printf '%s\\n' "$3" >>"$CHECK_CALLS"
 [[ "$3" != SLOW ]] || exec sleep 10
@@ -31,7 +36,7 @@ printf 'PRIVATE_ERROR\n' >&2
 [[ "$3" == GOOD ]]
 ''')
     cli.chmod(0o700)
-    env = dict(os.environ, PATH=str(bin_dir) + ':' + os.environ['PATH'],
+    env = dict(os.environ, HOME=str(root), PATH=str(bin_dir) + ':' + os.environ['PATH'],
                AIDEVOPS_TEMP_DIR=str(root / 'workspace-temp'),
                AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS='2')
     config = repo / '.aidevops.json'
@@ -70,6 +75,70 @@ printf 'PRIVATE_ERROR\n' >&2
     check('missing secret defers', issue, {'publish': {'secrets': ['MISSING']}}, False,
           'secret_missing name=MISSING')
     check('resolvable secret proceeds without output', issue, {'publish': {'secrets': ['GOOD']}})
+    # Exercise final-text capture and the real runtime release entry, without
+    # GitHub writes. A rejection on issue A must defer unrelated issue B too.
+    output = root / 'worker-output'
+    output.write_text('BLOCKED: sign-in rejected\n'
+                      'TERMINAL_BLOCKER_REASON=runner_capability_unmet\n'
+                      'TERMINAL_BLOCKER_REJECTED_SECRETS=GOOD\n')
+    release = '''
+source "$1/terminal-blocker-circuit.sh"
+source "$1/headless-runtime-failure.sh"
+terminal_blocker_capture_output "$2" || exit 1
+_hrff_prepare_terminal_blocker_release() { return 0; }
+_hrff_apply_terminal_permission_hold() { return 0; }
+_hrff_handle_terminal_blocker_release 1 owner/repo receipt
+'''
+    def record_rejection():
+        result = subprocess.run(['bash', '-c', release, 'fixture', str(scripts), str(output)],
+                                env=env, capture_output=True, text=True)
+        assert result.returncode == 0 and not result.stdout and not result.stderr, result
+
+    record_rejection()
+    state_path = root / '.aidevops/cache/secret-rejections/state.json'
+    advisory = root / '.aidevops/advisories/secret-rejected-GOOD.advisory'
+    first_state, first_notice = state_path.read_bytes(), advisory.stat().st_mtime_ns
+    record_rejection()
+    assert state_path.read_bytes() == first_state and advisory.stat().st_mtime_ns == first_notice
+    assert 'aidevops secret set GOOD' in advisory.read_text()
+    assert 'PRIVATE_VALUE' not in state_path.read_text() + advisory.read_text()
+    check('recorded rejection defers a different issue',
+          {'number': 2, 'body': 'requires-secrets: GOOD'}, success=False,
+          reason='secret_rejected name=GOOD')
+    check('unrelated secret is still admitted', {'body': ''})
+    # The unrelated name is present, so only its ordinary presence check runs.
+    cli_text = cli.read_text()
+    cli.write_text(cli_text.replace('[[ "$3" == GOOD ]]', '[[ "$3" == GOOD || "$3" == OTHER ]]'))
+    check('unrelated required secret is still admitted', {'body': 'requires-secrets: OTHER'})
+    env['STORED_VALUE'] = 'PRIVATE_REFRESHED_VALUE'
+    check('changed stored value re-arms rejection', {'body': 'requires-secrets: GOOD'})
+    assert json.loads(state_path.read_text()) == {}
+    record_rejection()
+    state = json.loads(state_path.read_text())
+    state['GOOD']['time'] -= 86401
+    state_path.write_text(json.dumps(state))
+    check('expired rejection re-arms unchanged value', {'body': 'requires-secrets: GOOD'})
+    assert 'PRIVATE_' not in state_path.read_text() + advisory.read_text()
+    env.pop('STORED_VALUE')
+    # A second failed lookup must not discard the first durable marker.
+    result = subprocess.run(['python3', str(scripts / 'runner-secret-rejection.py'),
+                             'record', 'GOOD', 'ZFAIL'], env=env, capture_output=True, text=True)
+    assert result.returncode == 1 and 'PRIVATE_' not in result.stdout + result.stderr, result
+    assert 'GOOD' in json.loads(state_path.read_text())
+    check('partial record retains successful marker', {'body': 'requires-secrets: GOOD'},
+          success=False, reason='secret_rejected name=GOOD')
+    state = json.loads(state_path.read_text())
+    state['GOOD']['time'] -= 86401
+    state_path.write_text(json.dumps(state))
+    check('partial marker also expires', {'body': 'requires-secrets: GOOD'})
+    # Tool output cannot declare rejection; only final assistant text can.
+    output.write_text(json.dumps({'type': 'tool', 'text':
+        'BLOCKED: rejected\nTERMINAL_BLOCKER_REASON=runner_capability_unmet\n'
+        'TERMINAL_BLOCKER_REJECTED_SECRETS=GOOD'}))
+    result = subprocess.run(['bash', '-c', release, 'fixture', str(scripts), str(output)],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 1 and json.loads(state_path.read_text()) == {}, result
+    print('PASS partial record privacy and tool-output rejection boundary')
     check('locked secret timeout defers', issue, {'publish': {'secrets': ['SLOW']}}, False,
           'check_timeout name=SLOW')
     check('unreadable secret defers', {'body': 'requires-secrets: LOCKED'}, success=False,

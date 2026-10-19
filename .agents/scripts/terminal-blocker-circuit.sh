@@ -171,16 +171,10 @@ _terminal_blocker_input_owner() {
 
 # Capture only final assistant text, not tool output. A missing canonical scope
 # can also be established from the current brief, without interpreting prose.
-terminal_blocker_capture_output() {
+_terminal_blocker_capture_json() {
 	local output_file="$1"
 	local live_blocked="${2:-false}"
-	local normalized="" fingerprint="" issue_json="" captured=""
-	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
-	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
-	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
-	[[ -f "$output_file" ]] || return 1
-	captured=$(
-		python3 - "$output_file" "$live_blocked" <<'PY'
+	python3 - "$output_file" "$live_blocked" <<'PY'
 import json
 import re
 import sys
@@ -220,8 +214,14 @@ def emit(value):
     names = re.split(r'[, ]+', declarations[0]) if len(declarations) == 1 else []
     if len(names) > 32 or not all(re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', n) for n in names):
         names = []
+    rejected = re.findall(r'^TERMINAL_BLOCKER_REJECTED_SECRETS=([A-Z0-9_, ]+)$', candidate, re.M)
+    rejected_names = re.split(r'[, ]+', rejected[0]) if len(rejected) == 1 else []
+    if (value != 'runner_capability_unmet' or len(rejected_names) > 32
+            or not all(re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', n) for n in rejected_names)):
+        rejected_names = []
     print(json.dumps({'reason': value, 'explicit_reason': bool(reasons),
-                     'missing_secrets': sorted(set(names)), 'detail': candidate[:2000]}))
+                     'missing_secrets': sorted(set(names)),
+                     'rejected_secrets': sorted(set(rejected_names)), 'detail': candidate[:2000]}))
 
 if reason == 'verification_environment_missing_prerequisites':
     # GH#35037: exact legacy spelling, not a prose/substring classifier.
@@ -240,11 +240,24 @@ elif reason == 'input_required':
 else:
     emit(reason if reason in allowed else 'unknown')
 PY
-	) || captured=""
+	return $?
+}
+
+terminal_blocker_capture_output() {
+	local output_file="$1"
+	local live_blocked="${2:-false}"
+	local normalized="" fingerprint="" issue_json="" captured=""
+	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
+	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=""
+	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=""
+	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
+	[[ -f "$output_file" ]] || return 1
+	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked") || captured=""
 	[[ -n "$captured" ]] || return 1
 	normalized=$(printf '%s' "$captured" | jq -r '.reason') || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON=$(printf '%s' "$captured" | jq -r '.explicit_reason') || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS=$(jq -r '.missing_secrets[]' <<<"$captured") || return 1
+	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=$(jq -r '.rejected_secrets[]' <<<"$captured") || return 1
 	[[ -n "$normalized" ]] || return 1
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.

@@ -681,6 +681,15 @@ _hrff_handle_terminal_blocker_release() {
 	local repo_slug="$2"
 	local machine_readable_part="$3"
 	local release_reason="${4:-blocked}"
+	if [[ -n "${AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS:-}" ]]; then
+		local -a rejected_names=()
+		local rejected_name=""
+		while IFS= read -r rejected_name; do
+			rejected_names+=("$rejected_name")
+		done <<<"$AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS"
+		python3 "${BASH_SOURCE[0]%/*}/runner-secret-rejection.py" record "${rejected_names[@]}" >/dev/null 2>&1 ||
+			print_warning "Could not persist runner-local rejected-secret cooldown"
+	fi
 	_hrff_prepare_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" "$release_reason"
 	_hrff_apply_terminal_permission_hold "$issue_number" "$repo_slug" || return 11
 	case "${_HRFF_TERMINAL_BLOCKER_MODE:-normal}" in
