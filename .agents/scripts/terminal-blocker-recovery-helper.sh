@@ -13,6 +13,9 @@
 # GH#34846: it also queues held first observations of classes that re-arm on
 # a brief/dependency revision, and returns them to status:available once the
 # revision changes or a trusted retry lands.
+# GH#35129: when the repo's pinned recovery policy enables an action, seed
+# also queues OWNER/MEMBER circuits opened by other runners (intake
+# policy_remote, public evidence only, no local excerpts).
 #
 # Queue records are evidence, never authority. Its only issue write is the
 # re-armed status:blocked → status:available release (GH#33138); it never
@@ -21,7 +24,7 @@
 # "Terminal-blocker recovery".
 #
 # Usage:
-#   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason]
+#   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason] [local|policy_remote]
 #   terminal-blocker-recovery-helper.sh seed [--force]
 #   terminal-blocker-recovery-helper.sh pending [--count]
 #   terminal-blocker-recovery-helper.sh record <owner/repo> <issue>   # JSON on stdin
@@ -89,15 +92,19 @@ tbr_enqueue() {
 	local repo="${1:-}"
 	local issue="${2:-}"
 	local reason="${3:-unknown}"
+	# GH#35129: `policy_remote` marks a circuit another runner opened, queued
+	# only under repo-delegated recovery policy; its evidence is public-only.
+	local intake="${4:-local}"
 	_tbr_valid_ref "$repo" "$issue" || return 1
 	[[ "$reason" =~ ^[a-z_]+$ ]] || reason="unknown"
+	[[ "$intake" == policy_remote ]] || intake="local"
 	_tbr_init_dirs || return 1
 	local file="" tmp=""
 	file="${TBR_ROOT}/queue/$(_tbr_key "$repo" "$issue").json"
 	tmp="${file}.tmp.$$"
 	jq -nc --arg repo "$repo" --argjson issue "$issue" --arg reason "$reason" \
-		--arg opened_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		'{repo:$repo, issue:$issue, reason:$reason, opened_at:$opened_at}' >"$tmp" || {
+		--arg opened_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg intake "$intake" \
+		'{repo:$repo, issue:$issue, reason:$reason, opened_at:$opened_at, intake:$intake}' >"$tmp" || {
 		rm -f "$tmp"
 		return 1
 	}
@@ -121,24 +128,24 @@ tbr_seed() {
 	if [[ "$force" != "--force" && $((now - last)) -lt "$TBR_SEED_INTERVAL" ]]; then
 		return 0
 	fi
-	local self="" slug="" issue="" comments="" reason="" policy_enabled=""
+	local self="" slug="" issue="" comments="" reason="" policy_enabled="" intake=""
 	self=$(_tbr_self_login) || return 1
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		policy_enabled=false
-		# Cross-runner intake needs committed repo authority and current write
-		# access. An absent/invalid policy preserves runner-local circuit intake.
-		if bash "${_TBR_SCRIPT_DIR}/recovery-policy-helper.sh" "$slug" 2>/dev/null |
-			jq -e '.actions | length > 0' >/dev/null; then
-			policy_enabled=true
-		fi
+		_tbr_policy_enabled "$slug" && policy_enabled=true
 		while IFS= read -r issue; do
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
 			comments=$(gh api "repos/${slug}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || continue
 			reason=$(_tbr_seed_reason "$comments" "$self" "$policy_enabled") || continue
-			tbr_enqueue "$slug" "$issue" "$reason" || true
+			intake=local
+			if ! _tbr_has_own_circuit "$comments" "$self" && [[ "$policy_enabled" == true ]] &&
+				_tbr_has_foreign_circuit "$comments" "$self"; then
+				intake=policy_remote
+			fi
+			tbr_enqueue "$slug" "$issue" "$reason" "$intake" || true
 		done < <(_tbr_seed_candidates "$slug")
 	done < <(jq -r '.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug' \
 		"$TBR_REPOS_JSON" 2>/dev/null)
@@ -169,20 +176,15 @@ _tbr_seed_reason() {
 	local self="$2"
 	local policy_enabled="${3:-false}"
 	local reason=""
-	if printf '%s' "$comments" | jq -e --arg self "$self" --arg marker "$TBR_CIRCUIT_MARKER" '
-		[flatten[] | select((.user.login // "") == $self and ((.body // "") | contains($marker)))] | length > 0
-	' >/dev/null 2>&1; then
+	if _tbr_has_own_circuit "$comments" "$self"; then
 		_tbr_reason_from_comments "$comments"
 		return 0
 	fi
-	#aidevops:trust-boundary — remote circuit markers must be collaborator
-	# authored; policy_enabled comes only from the pinned policy/access loader.
-	if [[ "$policy_enabled" == true ]] && printf '%s' "$comments" |
-		jq -e --arg marker "$TBR_CIRCUIT_MARKER" '[flatten[] |
-		select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) |
-		select((.body // "") | contains($marker))] | length > 0' >/dev/null; then
-		_tbr_reason_from_comments "$(printf '%s' "$comments" | jq '[flatten[] |
-			select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))]')"
+	# GH#35129: with an enabled repo recovery policy, a circuit another runner
+	# opened is queued here too, so an offline runner cannot strand it.
+	if [[ "$policy_enabled" == true ]] && _tbr_has_foreign_circuit "$comments" "$self"; then
+		_tbr_reason_from_comments "$(printf '%s' "$comments" | jq -c '[flatten[] |
+			select((.author_association // "") | IN("OWNER", "MEMBER"))]')"
 		return 0
 	fi
 	# GH#35095: the release decision needs only public markers plus the task
@@ -206,6 +208,51 @@ _tbr_reason_from_comments() {
 	printf '%s' "$comments" | jq -r '
 		[flatten[] | (.body // "") | capture("Terminal blocker: reason=(?<r>[a-z_]+)")? | .r] | last // "unknown"
 	' 2>/dev/null || printf 'unknown\n'
+	return 0
+}
+
+# True when this runner's own login posted an open circuit marker.
+_tbr_has_own_circuit() {
+	local comments="$1"
+	local self="$2"
+	printf '%s' "$comments" | jq -e --arg self "$self" --arg marker "$TBR_CIRCUIT_MARKER" '
+		[flatten[] | select((.user.login // "") == $self and ((.body // "") | contains($marker)))] | length > 0
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# True when another OWNER/MEMBER login posted a circuit marker.
+#aidevops:trust-boundary — matches terminal-blocker-circuit.sh's authoritative
+# associations: another runner's bare-COLLABORATOR circuit is never trusted
+# hold evidence, so it is never queued for policy recovery either.
+_tbr_has_foreign_circuit() {
+	local comments="$1"
+	local self="$2"
+	printf '%s' "$comments" | jq -e --arg self "$self" --arg marker "$TBR_CIRCUIT_MARKER" '
+		[flatten[] | select((.user.login // "") != $self) |
+		select((.author_association // "") | IN("OWNER", "MEMBER")) |
+		select((.body // "") | contains($marker))] | length > 0
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# GH#35129: true only when the repo's pinned default-branch recovery policy
+# loads and enables at least one action for this authenticated writer.
+# Cached per process so one pending/seed pass loads each repo once.
+_TBR_POLICY_CACHE=""
+_tbr_policy_enabled() {
+	local repo="$1"
+	case ";${_TBR_POLICY_CACHE};" in
+	*";${repo}=1;"*) return 0 ;;
+	*";${repo}=0;"*) return 1 ;;
+	esac
+	local enabled=0
+	if bash "${_TBR_SCRIPT_DIR}/recovery-policy-helper.sh" "$repo" 2>/dev/null |
+		jq -e '.actions | length > 0' >/dev/null 2>&1; then
+		enabled=1
+	fi
+	_TBR_POLICY_CACHE="${_TBR_POLICY_CACHE};${repo}=${enabled}"
+	[[ "$enabled" -eq 1 ]] || return 1
 	return 0
 }
 
@@ -268,7 +315,7 @@ _tbr_release_circuit_hold() {
 #######################################
 _tbr_check_entry() {
 	local file="$1"
-	local repo="" issue="" reason="" opened_at="" key=""
+	local repo="" issue="" reason="" opened_at="" key="" intake=""
 	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
 	issue=$(jq -r '.issue // ""' "$file" 2>/dev/null) || return 1
 	_tbr_valid_ref "$repo" "$issue" || {
@@ -277,7 +324,13 @@ _tbr_check_entry() {
 	}
 	reason=$(jq -r '.reason // "unknown"' "$file")
 	opened_at=$(jq -r '.opened_at // ""' "$file")
+	intake=$(jq -r '.intake // "local"' "$file")
 	key=$(_tbr_key "$repo" "$issue")
+	# GH#35129: cross-runner intake exists only while repo policy enables it.
+	if [[ "$intake" == policy_remote ]] && ! _tbr_policy_enabled "$repo"; then
+		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+		return 1
+	fi
 	local issue_json="" state=""
 	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 1
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""')
@@ -307,13 +360,17 @@ _tbr_check_entry() {
 	# Indeterminate revision: keep the entry for the next pass, report nothing.
 	[[ "$hold_rc" -eq 0 ]] || return 1
 	_tbr_decision_active "$key" && return 1
-	local excerpts=""
-	excerpts=$(find "$TBR_EXCERPT_DIR" -maxdepth 1 -type f -name "*-${issue}-*.log" 2>/dev/null | sort | tail -3 |
-		jq -R . | jq -sc .) || excerpts="[]"
+	local excerpts="[]"
+	# Another runner's circuit: public issue/PR evidence only. Same-number
+	# excerpts on this runner belong to a different attempt or repository.
+	if [[ "$intake" != policy_remote ]]; then
+		excerpts=$(find "$TBR_EXCERPT_DIR" -maxdepth 1 -type f -name "*-${issue}-*.log" 2>/dev/null | sort | tail -3 |
+			jq -R . | jq -sc .) || excerpts="[]"
+	fi
 	jq -nc --arg repo "$repo" --argjson issue "$issue" --arg reason "$reason" \
 		--arg opened_at "$opened_at" --arg title "$(printf '%s' "$issue_json" | jq -r '.title // ""')" \
-		--argjson excerpts "${excerpts:-[]}" \
-		'{repo:$repo, issue:$issue, title:$title, reason:$reason, opened_at:$opened_at, local_excerpts:$excerpts}'
+		--argjson excerpts "${excerpts:-[]}" --arg intake "$intake" \
+		'{repo:$repo, issue:$issue, title:$title, reason:$reason, opened_at:$opened_at, intake:$intake, local_excerpts:$excerpts}'
 	return 0
 }
 
@@ -375,7 +432,7 @@ tbr_main() {
 	pending) tbr_pending "$@" ;;
 	record) tbr_record "$@" ;;
 	help | --help | -h)
-		sed -n '4,33p' "${BASH_SOURCE[0]}"
+		sed -n '4,36p' "${BASH_SOURCE[0]}"
 		;;
 	*) return 2 ;;
 	esac

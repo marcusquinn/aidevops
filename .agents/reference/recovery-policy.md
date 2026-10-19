@@ -12,15 +12,23 @@ its `.aidevops.json`, for example `"recovery_policy": "docs/operations.md#Queue 
 The fragment is the **exact heading text**, not a URL slug. The referenced Markdown
 section must contain exactly one fenced `json` block with an `actions` object.
 Only keys present in that object are enabled; `{ "actions": {} }` enables none.
-Unknown actions, missing conditions/templates/labels, ambiguous headings or API
-failures fail closed. The config must be valid JSON for this remote reader.
+Unknown actions, missing conditions/templates/labels, ambiguous headings, a
+declared but missing document or API failures fail closed. Headings inside
+fenced code blocks are ignored. Labels may not be lifecycle, origin or trust
+labels (`status:*`, `origin:*`, `ai-approved`, `needs-maintainer-review`,
+`external-contributor`); those stay with their guarded helpers. The config must
+be valid JSON for this remote reader.
 
-`bash ~/.aidevops/agents/scripts/recovery-policy-helper.sh <owner/repo>` returns
-validated JSON with the repo, default-branch commit, document path, heading and
-actions. It checks authenticated write/maintain/admin access and reads both files
-at that same commit, without accessing managed repository directories. This is
-also the way the integration-recovery supervisor loads policy. Missing config or
-policy is normal: retain the existing recovery behavior, not a new blocker.
+`bash ~/.aidevops/agents/scripts/recovery-policy-helper.sh <owner/repo>` checks
+authenticated write/maintain/admin access and reads both files at one pinned
+default-branch commit, without accessing managed repository directories. The
+integration-recovery supervisor loads policy the same way.
+
+| Exit | Meaning | Supervisor behaviour |
+|------|---------|----------------------|
+| `0` | Valid policy; stdout JSON has `repo`, `revision`, `path`, `heading`, `actions` | Apply only the returned actions |
+| `3` | No `.aidevops.json` or no `recovery_policy` key | Existing recovery behaviour; not a blocker |
+| `1` | Invalid policy, insufficient access or API failure | Fail closed to existing behaviour; note a diagnostic |
 
 ## Declaration example
 
@@ -109,12 +117,16 @@ denials, trust or approval gates. Labels never authorize an action themselves.
 ## Cross-runner recovery
 
 Circuit seeding remains runner-local without a valid enabled policy. With one,
-any runner with authenticated maintainer-equivalent access may seed trusted
-OWNER/MEMBER/COLLABORATOR circuit comments from other runners. This is intake,
-not permission to act: the supervisor must still match an enabled action and all
-its conditions. Existing trusted observation/revision re-arm remains unchanged.
-For another runner's circuit, use **only public issue and PR evidence**. Never
-request its protected excerpts or infer missing facts from inaccessible logs.
+any runner with authenticated maintainer-equivalent access also queues circuits
+that another OWNER/MEMBER login opened, as `intake: "policy_remote"` entries
+with empty `local_excerpts`. Another runner's bare-COLLABORATOR circuit is not
+trusted hold evidence (`terminal-blocker-circuit.sh`), so it is never queued.
+`pending` retires `policy_remote` entries once the policy no longer enables an
+action. Intake is not permission to act: the supervisor must still match an
+enabled action and all its conditions. Existing trusted observation/revision
+re-arm remains unchanged. For another runner's circuit, use **only public issue
+and PR evidence**. Never request its protected excerpts or infer missing facts
+from inaccessible logs.
 An offline runner is not an owner. A live issue owner or signed continuation
 lease still is; defer to it. Local `record` receipts suppress repeated local
 assessment, while public markers/dependency links coordinate other runners.
@@ -124,6 +136,6 @@ assessment, while public markers/dependency links coordinate other runners.
 Run `.agents/scripts/tests/test-recovery-policy.sh` with Bash (mocked GitHub,
 no network writes), the existing `test-terminal-blocker-circuit.sh`, and ShellCheck
 on touched scripts. These exercise loading, action allowlisting, fail-closed
-behavior, cross-runner intake and the supervisor instruction contract. Semantic
+behavior, cross-runner intake and the supervisor prompt contract. Semantic
 chain independence and exhaustion decisions remain AI judgments and require
 verified current public evidence at application time, never keyword-only rules.
