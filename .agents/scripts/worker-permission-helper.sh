@@ -13,6 +13,9 @@ readonly PERMISSION_REQUEST_SCHEMA="aidevops-permission-request/v1"
 readonly PERMISSION_BLOCKER_STATUS="blocked"
 readonly PERMISSION_BLOCKER_TRUE="true"
 readonly PERMISSION_PERSISTENCE_FAILED_EVENT="permission_request_persistence_failed"
+# GH#35128: exit status of `request` when the capture is an owned temp-dir recovery.
+readonly PERMISSION_OWNED_RECOVERY_RC=3
+readonly PERMISSION_EXTERNAL_DIRECTORY="external_directory"
 
 permission_persistence_attempts() {
 	local attempts="${AIDEVOPS_PERMISSION_PERSISTENCE_ATTEMPTS:-3}"
@@ -135,6 +138,26 @@ permission_blocker_capability_json() {
 	return $?
 }
 
+# GH#35128: True when every captured request is an external_directory write to a
+# scratch/temp path (not a repo, credential, or secret location). Such requests
+# are redirected to AIDEVOPS_TEMP_DIR instead of a maintainer hold.
+permission_capture_is_temp_write_recovery() {
+	local capture_file="$1"
+	jq -e --arg perm "$PERMISSION_EXTERNAL_DIRECTORY" '
+		def scratch:
+			test("(^|/)(tmp|temp|[.]cache)(/|$)")
+			and (test("(^|/)([.]ssh|[.]gnupg|[.]aws|[.]git|[.]env[^/]*|credentials[^/]*|secrets?)(/|$)|[.][.]") | not);
+		(.requests | length > 0)
+		and all(.requests[];
+			.permission == $perm
+			and (.tool == "write" or .tool == "edit")
+			and (.patterns | length > 0)
+			and all(.patterns[]; scratch)
+		)
+	' "$capture_file" >/dev/null 2>&1
+	return $?
+}
+
 permission_changed_files_json() {
 	local work_dir="$1"
 	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
@@ -236,10 +259,10 @@ permission_issue_has_block() {
 
 permission_render_capabilities() {
 	local envelope_file="$1"
-	jq -r '.capabilities[] |
+	jq -r --arg perm "$PERMISSION_EXTERNAL_DIRECTORY" '.capabilities[] |
 		def safe: gsub("<"; "&lt;") | gsub(">"; "&gt;");
 		def avoidable_tool_bin_read:
-			.permission == "external_directory"
+			.permission == $perm
 			and .tool == "read"
 			and any(.patterns[]?; test("/[.](bun|qlty)/bin/[*][*]?$|/[.]local/bin/[*][*]?$"));
 		"- **" + .permission + "** via `" + .tool + "` — "
@@ -247,7 +270,7 @@ permission_render_capabilities() {
 		+ "\n  - Reason: " + (if .intent == "" then "No additional model rationale was available." else (.intent | safe) end)
 		+ "\n  - Risk: **" + .risk.level + "** — " + (.risk.reason | safe)
 		+ (if avoidable_tool_bin_read then "\n  - Recovery: Routine tool discovery should use `command -v TOOL`, `TOOL --version`, or a repository wrapper instead of reading the install directory." else "" end)
-		+ (if .permission == "external_directory" and .tool == "read"
+		+ (if .permission == $perm and .tool == "read"
 			and (.patterns | length > 0) and all(.patterns[]; contains("/node_modules/"))
 			then "\n  - Owned recovery: The AI controller should evaluate bounded in-worktree dependency provisioning (`reference/dispatch-blockers.md`). This is a candidate, not permission to read or copy the requested external path. Preserve this request, branch, PR and session; prove the original process terminal or transfer ownership before provisioning. The current signed permission-history contract has no unsigned supersession path: retain the hold and route this exact checkpoint to the existing AI brief owner/coordinator. Never retry the denied tool, clear the hold, or launch a replacement worker under an implied grant."
 			else "" end)
@@ -457,6 +480,15 @@ cmd_request() {
 		return 1
 	fi
 	capability_json="$(permission_blocker_capability_json "$capture_file")" || return 1
+	if permission_capture_is_temp_write_recovery "$capture_file"; then
+		permission_record_blocker "permission_temp_dir_recovery" "recovering" \
+			"use_aidevops_temp_dir" "false" "$issue_number" "$repo_slug" "$session_key" "" \
+			"Temp/scratch write redirected to AIDEVOPS_TEMP_DIR; no maintainer approval requested" \
+			"$PERMISSION_EXTERNAL_DIRECTORY" "write" "$(jq -r '.risk_level' <<<"$capability_json")" "false"
+		# shellcheck disable=SC2016 # Markdown backticks are intentional literals.
+		printf '%s\n' 'Recovery: use `AIDEVOPS_TEMP_DIR` (default `$HOME/.aidevops/.agent-workspace/tmp`) for temp artifacts. The requested path is not granted; no needs-maintainer-permissions hold applied.'
+		return "$PERMISSION_OWNED_RECOVERY_RC"
+	fi
 	permission="$(jq -r '.permission' <<<"$capability_json")"
 	tool="$(jq -r '.tool' <<<"$capability_json")"
 	risk_level="$(jq -r '.risk_level' <<<"$capability_json")"

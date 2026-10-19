@@ -2179,13 +2179,26 @@ _hrw_finish_permission_required_run() {
 		return 1
 	fi
 	durability=$(_hrw_secure_permission_work "$session_key" "$work_dir")
-	if ! "$helper" request \
+	local helper_rc=0
+	"$helper" request \
 		--file "$_run_permission_request_file" \
 		--issue "${WORKER_ISSUE_NUMBER:-}" \
 		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
 		--session "$session_key" \
 		--work-dir "$work_dir" \
-		--durability "$durability"; then
+		--durability "$durability" || helper_rc=$?
+	if [[ "$helper_rc" -eq 3 ]]; then
+		# GH#35128: temp/scratch write is an owned recovery (use AIDEVOPS_TEMP_DIR);
+		# no maintainer hold. Release the claim so the issue is redispatched.
+		_hrw_release_dispatch_claim "$session_key" "temp_dir_recovery"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="temp_dir_owned_recovery"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+		rm -f "$_run_permission_request_file" 2>/dev/null || true
+		return 0
+	fi
+	if [[ "$helper_rc" -ne 0 ]]; then
 		_hrw_record_permission_blocker_failure "$session_key" "permission_handoff_failed"
 		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
 		return 1
