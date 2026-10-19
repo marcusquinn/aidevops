@@ -166,3 +166,39 @@ dep_supersession_blocks() {
 	fi
 	return 0
 }
+
+#######################################
+# Resolve the live (OPEN) end of a trusted "Superseded by #S" chain (GH#35130).
+# Read-only; follows the same trust rule and hop limit as
+# dep_supersession_outstanding. Prints the open successor number.
+# Args: $1 - repo slug, $2 - closed blocker number, $3 - its stateReason
+# Returns: 0 and prints the number when an open successor exists; 1 otherwise
+#          (not superseded, chain unfinished, cycle, too long or unreadable).
+#######################################
+dep_supersession_open_successor() {
+	local repo="$1"
+	local number="$2"
+	local reason="${3:-}"
+	local max_hops="${DEP_SUPERSESSION_MAX_HOPS:-3}"
+	local hops=0 seen="," row="" state="" successor=""
+	dep_supersession_reason_applies "$reason" || return 1
+	[[ "$max_hops" =~ ^[1-9]$ ]] || max_hops=3
+	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ && "$number" =~ ^[1-9][0-9]*$ ]] || return 1
+	while [[ "$hops" -le "$max_hops" ]]; do
+		row=$(_dep_supersession_fetch "$repo" "$number") || return 1
+		IFS='|' read -r state reason successor <<<"$row"
+		if [[ "$state" == "OPEN" ]]; then
+			[[ "$hops" -gt 0 ]] || return 1
+			printf '%s\n' "$number"
+			return 0
+		fi
+		[[ "$state" == "CLOSED" ]] || return 1
+		dep_supersession_reason_applies "$reason" || return 1
+		[[ "$successor" =~ ^[1-9][0-9]*$ ]] || return 1
+		seen="${seen}${number},"
+		[[ "$seen" != *",${successor},"* ]] || return 1
+		number="$successor"
+		hops=$((hops + 1))
+	done
+	return 1
+}

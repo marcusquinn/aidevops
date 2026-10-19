@@ -20,6 +20,8 @@ source "${_der_dir}/issue-hold-marker-lib.sh"
 source "${_der_dir}/task-identity-lib.sh"
 # shellcheck source=./dependency-supersession-lib.sh
 source "${_der_dir}/dependency-supersession-lib.sh"
+# shellcheck source=./dependency-supersession-repoint-lib.sh
+source "${_der_dir}/dependency-supersession-repoint-lib.sh"
 unset _der_dir
 
 _der_reconcile_terminal_worker_blockers() {
@@ -638,6 +640,9 @@ reconcile_stale_blocked_issues() {
 			failed=$((failed + 1))
 			continue
 		}
+		# GH#35130: make the graph truthful when every native blocker is a closed,
+		# superseded original with an open successor. Best effort; never gates unblock.
+		dsr_repoint_if_superseded "$repo" "$issue_number" || true
 		if _der_try_unblock "$repo" "$issue_number" "$candidate"; then
 			reconciled=$((reconciled + 1))
 		elif [[ "$?" -eq "$DER_NOT_READY" ]]; then
