@@ -22,7 +22,7 @@ Commands:
   archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
 	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
       [--base-sha SHA] [--output-root DIR] [--failure-log FILE] [--self-contained]
-      [--include-ignored]
+      [--include-ignored] [--preserve-git-admin (requires --self-contained)]
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
@@ -132,7 +132,8 @@ resolve_base_sha() {
 source_fingerprint() {
 	local worktree="$1"
 	local include_ignored="${2:-0}"
-	python3 - "$worktree" "$include_ignored" "$MAX_UNTRACKED_FILES" "$MAX_UNTRACKED_BYTES" <<'PY'
+	local preserve_git_admin="${3:-0}"
+	python3 - "$worktree" "$include_ignored" "$MAX_UNTRACKED_FILES" "$MAX_UNTRACKED_BYTES" "$preserve_git_admin" "$SCRIPT_DIR" <<'PY'
 import hashlib
 import json
 import os
@@ -154,6 +155,9 @@ def listed(*args):
     return sorted(p for p in git("ls-files", "-z", *args).split(b"\0") if p)
 
 
+lock = os.fsdecode(git('rev-parse', '--path-format=absolute', '--git-path', 'index.lock').rstrip(b'\n'))
+if os.path.lexists(lock):
+    raise SystemExit('git_admin:index_locked:index.lock')
 try:
     branch = git("symbolic-ref", "--short", "-q", "HEAD").decode().strip()
 except subprocess.CalledProcessError:
@@ -201,14 +205,20 @@ for raw in ignored_paths:
     info = os.lstat(root.joinpath(os.fsdecode(raw.rstrip(b"/"))))
     stamp = "%o:%d:%d:%d:%d" % (info.st_mode, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
     ignored.update(raw + b"\0" + stamp.encode() + b"\0")
-print(json.dumps({
+result = {
     "head": git("rev-parse", "--verify", "HEAD").decode().strip(),
     'branch': branch,
     "diff_sha256": hashlib.sha256(git("diff", "--no-ext-diff", "--binary")).hexdigest(),
     "staged_sha256": hashlib.sha256(git("diff", "--no-ext-diff", "--cached", "--binary")).hexdigest(),
     "untracked_sha256": untracked.hexdigest(),
     "ignored_sha256": ignored.hexdigest(),
-}, sort_keys=True))
+}
+if sys.argv[5] == '1':
+    sys.path.insert(0, sys.argv[6])
+    from worktree_archive_snapshot import administration, administration_digest, supported_state
+    supported_state(root, True, include_ignored)
+    result['git_admin'] = administration_digest(administration(root))
+print(json.dumps(result, sort_keys=True))
 PY
 	return $?
 }
@@ -221,6 +231,7 @@ source_matches() {
 	local worktree="${2:-}"
 	local current=""
 	local include_ignored=""
+	local preserve_git_admin=""
 	[[ -n "$archive_dir" && -n "$worktree" ]] || { usage >&2; return 1; }
 	validate_archive_dir "$archive_dir" || return 1
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
@@ -234,7 +245,15 @@ if not isinstance(value, bool):
 print(int(value))
 PY
 	) || return 1
-	current=$(source_fingerprint "$worktree" "$include_ignored") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	preserve_git_admin=$(python3 - "$archive_dir/manifest.json" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding='utf-8')).get('git_admin_policy')
+if value not in (None, 'preserve-v1'):
+    raise SystemExit('invalid Git administration policy')
+print(int(value == 'preserve-v1'))
+PY
+	) || return 1
+	current=$(source_fingerprint "$worktree" "$include_ignored" "$preserve_git_admin") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	python3 - "$archive_dir" "$worktree" "$current" <<'PY'
 import json
 import pathlib
@@ -318,7 +337,8 @@ write_manifest() {
 	local source_fingerprint_json="${15}"
 	local self_contained="${16:-0}"
 	local include_ignored="${17:-0}"
-	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" "$source_fingerprint_json" "$self_contained" "$include_ignored" <<'PY'
+	local preserve_git_admin="${18:-0}"
+	python3 - "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$ARCHIVE_SCHEMA" "$source_fingerprint_json" "$self_contained" "$include_ignored" "$preserve_git_admin" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -354,6 +374,8 @@ manifest = {
     "artifacts": artifacts,
     "restore_instructions": f"worktree-archive-helper.sh restore {archive} --target <new-worktree-path>",
 }
+if sys.argv[19] == '1':
+    manifest['git_admin_policy'] = 'preserve-v1'
 (archive / 'manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding='utf-8')
 PY
 	return $?
@@ -363,7 +385,7 @@ archive_worktree() {
 	local worktree="${1:-}"
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
-	local self_contained=0 include_ignored=0
+	local self_contained=0 include_ignored=0 preserve_git_admin=0
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir commit_count
 	local fingerprint_before="" fingerprint_after=""
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
@@ -379,9 +401,14 @@ archive_worktree() {
 		--failure-log) require_value "$1" "${2:-}" || return 1; failure_log="$2"; shift 2 ;;
 		--self-contained) self_contained=1; shift ;;
 		--include-ignored) include_ignored=1; shift ;;
+		--preserve-git-admin) preserve_git_admin=1; shift ;;
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
 	done
+	if [[ "$preserve_git_admin" -eq 1 ]]; then
+		[[ "$self_contained" -eq 1 ]] || { die "--preserve-git-admin requires --self-contained"; return 1; }
+		local -x GIT_OPTIONAL_LOCKS=0
+	fi
 	validate_repo "$repo" || return 1
 	if [[ "$unattributed" == "true" ]]; then
 		[[ -z "$issue" && "$reason" == "unattributed-worktree" ]] || { die "unattributed archive cannot have an issue"; return 1; }
@@ -394,7 +421,7 @@ archive_worktree() {
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
 	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }
 	worktree=$(cd "$worktree" && pwd -P) || return 1
-	fingerprint_before=$(source_fingerprint "$worktree" "$include_ignored") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	fingerprint_before=$(source_fingerprint "$worktree" "$include_ignored" "$preserve_git_admin") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
 	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
 	branch=$(git -C "$worktree" symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
@@ -424,7 +451,9 @@ archive_worktree() {
 	git -C "$worktree" diff --binary --no-ext-diff --no-textconv >"$archive_dir/diff.patch" || return 1
 	git -C "$worktree" diff --cached --binary --no-ext-diff --no-textconv >"$archive_dir/staged.patch" || return 1
 	commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
-	if [[ "$self_contained" -eq 1 ]]; then
+	if [[ "$preserve_git_admin" -eq 1 ]]; then
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-capture "$worktree" "$archive_dir" "$include_ignored" || return 1
+	elif [[ "$self_contained" -eq 1 ]]; then
 		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD || return 1
 	elif [[ "$commit_count" -gt 0 ]]; then
 		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
@@ -443,12 +472,12 @@ with source.open("rb") as handle:
 PY
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
-	fingerprint_after=$(source_fingerprint "$worktree" "$include_ignored") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
+	fingerprint_after=$(source_fingerprint "$worktree" "$include_ignored" "$preserve_git_admin") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
 		die "worktree changed during archive capture: $worktree"
 		return 1
 	fi
-	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" "$self_contained" "$include_ignored" || return 1
+	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" "$self_contained" "$include_ignored" "$preserve_git_admin" || return 1
 	printf '%s\n' "$archive_dir"
 	return 0
 }
@@ -456,7 +485,7 @@ PY
 verify_archive() {
 	local archive_dir="$1"
 	validate_archive_dir "$archive_dir" || return 1
-	python3 - "$archive_dir" "$ARCHIVE_SCHEMA" <<'PY'
+	python3 - "$archive_dir" "$ARCHIVE_SCHEMA" "$SCRIPT_DIR" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -482,6 +511,12 @@ if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in
 names = [item.get('name') for item in artifacts]
 mandatory = {'diff.patch', 'staged.patch', 'untracked-files.txt'}
 allowed = mandatory | {'commits.bundle', 'untracked.tar.gz', 'failure.log'}
+policy = manifest.get('git_admin_policy')
+if policy is not None:
+    if policy != 'preserve-v1' or manifest.get('self_contained') is not True:
+        raise SystemExit('invalid Git administration policy')
+    mandatory.add('git-admin.json')
+    allowed.add('git-admin.json')
 if (not all(isinstance(name, str) and name in allowed for name in names) or
         len(set(names)) != len(names) or not mandatory.issubset(names)):
     raise SystemExit("incomplete or unsafe artifact inventory")
@@ -497,15 +532,25 @@ for artifact in manifest['artifacts']:
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
 bundle = archive / "commits.bundle"
+if policy is not None:
+    sys.path.insert(0, sys.argv[3])
+    from worktree_archive_snapshot import load_administration
+    load_administration(archive)
 if manifest.get('self_contained') is True:
     if not bundle.is_file():
         raise SystemExit("self-contained archive requires a bundle")
     # Verify without borrowing any objects from the source repository. Scratch
     # metadata stays beside the archive, never in a host /tmp worktree.
     with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
-        subprocess.run(["git", "init", "--bare", "--quiet", temporary], check=True)
+        init = ["git", "init", "--bare", "--quiet", temporary]
+        if policy is not None:
+            init.append('--object-format=' + ('sha256' if len(manifest['head_sha']) == 64 else 'sha1'))
+        subprocess.run(init, check=True)
         subprocess.run(["git", f"--git-dir={temporary}", "bundle", "verify", str(bundle)],
                        check=True, stdout=subprocess.DEVNULL)
+        if policy is not None:
+            from worktree_archive_snapshot import verify_administration
+            verify_administration(archive, pathlib.Path(temporary), manifest)
 elif bundle.exists():
     common_dir = manifest.get('source_git_common_dir', "")
     command = ["git"]
@@ -623,6 +668,9 @@ with tarfile.open(source, "r:gz") as payload:
         finally:
             os.close(parent)
 PY
+	fi
+	if [[ -f "$archive_dir/git-admin.json" ]]; then
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
 	fi
 	printf '%s\n' "$target"
 	return 0

@@ -110,6 +110,118 @@ class ArchiveLifecycle(unittest.TestCase):
         self.assertFalse(list(self.archives.rglob("manifest.json")))
         self.assertTrue((self.work / "large.ignored").exists())
 
+    def test_git_administration_round_trip_without_source_objects(self):
+        import worktree_archive_snapshot as snapshots
+
+        self.env['GIT_OPTIONAL_LOCKS'] = '0'
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        # Both endpoints of the reflog can be otherwise unreachable.
+        self.git(self.work, 'commit', '--allow-empty', '-qm', 'reflog only one')
+        first = self.git(self.work, 'rev-parse', 'HEAD').strip()
+        self.git(self.work, 'commit', '--allow-empty', '-qm', 'reflog only two')
+        second = self.git(self.work, 'rev-parse', 'HEAD').strip()
+        self.git(self.work, 'reset', '--hard', 'develop')
+        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').decode().strip()
+        previous = self.git(self.work, 'commit-tree', tree, '-m', 'ORIG_HEAD only').strip()
+        private = self.git(self.work, 'commit-tree', tree, '-m', 'private ref only').strip()
+        (admin / 'ORIG_HEAD').write_bytes(previous + b'\n')
+        for prefix in ('worktree', 'bisect', 'rewritten'):
+            self.git(self.work, 'update-ref', f'refs/{prefix}/saved', private.decode())
+        for name in ('COMMIT_EDITMSG', 'SQUASH_MSG', 'MERGE_MSG'):
+            (admin / name).write_bytes(b'unsaved draft\x00\xff\n')
+        self.git(self.repo, 'config', 'extensions.worktreeConfig', 'true')
+        self.git(self.work, 'config', '--worktree', 'archive.fixture', 'preserved')
+        (self.work / 'intent').write_text('intent contents\n')
+        self.git(self.work, 'add', '-N', 'intent')
+        # Resolve-undo stores old conflict blobs that current --stage omits.
+        conflicts = []
+        for stage in (1, 2, 3):
+            blob = self.root / f'conflict-{stage}'
+            blob.write_text(f'resolve-undo {stage}\n')
+            oid = self.git(self.work, 'hash-object', '-w', str(blob)).strip()
+            conflicts.append(b'100644 ' + oid + f' {stage}\tmixed.txt\0'.encode())
+        removal = b'0 ' + b'0' * len(oid) + b'\tmixed.txt\0'
+        subprocess.run(['git', '-C', str(self.work), 'update-index', '-z', '--index-info'],
+                       input=removal + b''.join(conflicts), env=self.env, capture_output=True,
+                       check=True, timeout=60)
+        (self.work / 'mixed.txt').write_text('staged only\n')
+        self.git(self.work, 'add', 'mixed.txt')
+        undo = self.git(self.work, 'ls-files', '--resolve-undo', '-z')
+        self.assertTrue(undo)
+        # Keep a blob reachable only through the index, not any commit.
+        (self.work / 'mixed.txt').write_text('working contents\n')
+        status = self.git(self.work, 'status', '--porcelain=v2')
+        state = snapshots.administration(self.work)
+        index = self.git(self.work, 'ls-files', '--stage', '-z')
+        with self.assertRaises(ValueError):
+            snapshots.snapshot(self.work)
+        expected = snapshots.snapshot(self.work, True)
+        archive = self.archive('--self-contained', '--preserve-git-admin')
+        manifest = json.loads((archive / 'manifest.json').read_text())
+        self.assertEqual(manifest['git_admin_policy'], 'preserve-v1')
+        self.assertEqual(len(manifest['source_fingerprint']['git_admin']), 64)
+        self.helper('source-matches', archive, self.work)
+        (admin / 'MERGE_MSG').write_text('late edit')
+        self.assertNotEqual(self.helper('source-matches', archive, self.work, check=False).returncode, 0)
+        (admin / 'MERGE_MSG').write_bytes(bytes.fromhex(state['files']['MERGE_MSG']))
+        self.git(self.repo, 'worktree', 'remove', '--force', self.work)
+        self.repo.rename(self.root / 'unavailable-repo')
+        self.helper('verify', archive)
+        restored = self.root / 'restored-admin'
+        self.helper('restore', archive, '--target', restored)
+        self.assertEqual(self.git(restored, 'status', '--porcelain=v2'), status)
+        self.assertEqual(self.git(restored, 'ls-files', '--stage', '-z'), index)
+        self.assertEqual(snapshots.administration(restored), state)
+        self.assertEqual(snapshots.snapshot(restored, True), expected)
+        for oid in (first, second, previous, private):
+            self.assertEqual(self.git(restored, 'cat-file', '-t', oid.decode()), b'commit\n')
+        self.assertEqual(self.git(restored, 'config', '--worktree', 'archive.fixture'), b'preserved\n')
+        self.assertEqual(self.git(restored, 'ls-files', '--resolve-undo', '-z'), undo)
+        self.git(restored, 'checkout', '-m', '--', 'mixed.txt')
+        self.assertEqual(self.git(restored, 'ls-files', '--unmerged', '-z'), undo)
+        # A valid HEAD-only bundle is insufficient even with a matching hash.
+        bundle = archive / 'commits.bundle'
+        bundle.unlink()
+        self.git(restored, 'bundle', 'create', str(bundle), 'HEAD')
+        artifact = next(item for item in manifest['artifacts'] if item['name'] == bundle.name)
+        artifact.update(size=bundle.stat().st_size, sha256=hashlib.sha256(bundle.read_bytes()).hexdigest())
+        self.update_manifest(archive, **manifest)
+        self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
+
+    def test_git_administration_rejects_unknown_operations_and_locks(self):
+        import worktree_archive_snapshot as snapshots
+
+        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
+        for name in sorted(snapshots.OPERATIONS | {'index.lock', 'unknown-entry'}):
+            with self.subTest(name=name):
+                path = admin / name
+                path.write_text('fixture')
+                result = self.helper('archive', self.work, '--repo', 'fixture/repo',
+                                     '--issue', '1', '--reason', 'failed-worker',
+                                     '--base-branch', 'develop', '--output-root', self.archives,
+                                     '--self-contained', '--preserve-git-admin', check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b'git_admin:', result.stderr)
+                self.assertIn(name.encode(), result.stderr)
+                self.assertTrue(path.exists())
+                if name == 'index.lock':
+                    default = self.helper('archive', self.work, '--repo', 'fixture/repo',
+                                          '--issue', '2', '--reason', 'failed-worker',
+                                          '--base-branch', 'develop', '--output-root', self.archives,
+                                          '--self-contained', check=False)
+                    self.assertNotEqual(default.returncode, 0)
+                    self.assertIn(b'git_admin:index_locked:index.lock', default.stderr)
+                path.unlink()
+        self.assertFalse(list(self.archives.rglob('manifest.json')))
+
+    def test_git_administration_rejects_location_dependent_config(self):
+        import worktree_archive_snapshot as snapshots
+
+        self.git(self.repo, 'config', 'extensions.worktreeConfig', 'true')
+        self.git(self.work, 'config', '--worktree', 'core.worktree', str(self.work))
+        with self.assertRaisesRegex(ValueError, 'git_admin:location_dependent_config:core.worktree'):
+            snapshots.administration(self.work)
+
     @staticmethod
     def update_manifest(archive, **changes):
         path = archive / "manifest.json"

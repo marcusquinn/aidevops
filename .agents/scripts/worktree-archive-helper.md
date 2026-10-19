@@ -12,7 +12,8 @@
 worktree-archive-helper.sh archive <worktree-path> \
   --repo owner/repo --issue 123 --reason failed-worker \
   --base-branch develop [--base-sha <commit>] \
-  [--output-root <directory>] [--failure-log <file>] [--self-contained]
+  [--output-root <directory>] [--failure-log <file>] [--self-contained] \
+  [--include-ignored] [--preserve-git-admin]
 
 # Verify the manifest, artifact hashes, bundle, and untracked payload safety.
 worktree-archive-helper.sh verify <archive-directory>
@@ -160,6 +161,42 @@ history. Existing lifecycle snapshots continue rejecting unsupported content,
 including ignored data; no producer or removal guard opts into this flag.
 Independent restore comparison and valid ownership/process evidence remain
 mandatory before replacing any original copy. Archive expiry is separate.
+
+### Opt-in Git administration preservation
+
+`archive ... --self-contained --preserve-git-admin` records
+`git_admin_policy: "preserve-v1"` and a hashed `git-admin.json` artifact. It
+preserves byte contents of HEAD, the index (including intent-to-add), ORIG_HEAD,
+HEAD's reflog, COMMIT_EDITMSG, SQUASH_MSG, MERGE_MSG and config.worktree, plus
+private `refs/worktree/*`, `refs/bisect/*` and `refs/rewritten/*`. The complete
+bundle includes both old/new reflog endpoints, ORIG_HEAD, private ref objects,
+and index-only blobs. Scratch refs are created only in a temporary repository;
+capture never writes source refs or objects. Source matching is bound to this
+policy and detects changed admin bytes as well as ordinary working-tree changes.
+
+Verification imports the bundle into an empty repository and checks all admin
+and index object dependencies. Restore imports preservation refs, reconstructs
+the original branch/HEAD and private refs, and writes the saved admin bytes after
+applying patches and untracked files. `extensions.worktreeConfig` is enabled when
+needed. Preservation tips remain under `refs/archive/*` to keep recovery objects
+reachable. Restores do not depend on the original common repository. Config and
+drafts may contain sensitive data; keep the archive's 0700 protection and review
+restored config before running tools in the recovered repository.
+
+Unfinished operations and unknown admin entries remain unsupported: errors have
+the stable form `git_admin:unfinished_operation:NAME` or
+`git_admin:unknown_entry:PATH`. `index.lock` always fails with
+`git_admin:index_locked:index.lock`. Symlinks and split indexes also fail closed.
+Location-dependent `core.worktree` and config includes are rejected with
+`git_admin:location_dependent_config:KEY`, rather than activating source paths
+in an independent restore. Private symbolic refs targeting unrelated shared refs
+fail with `git_admin:external_symbolic_ref:REF`; targets within the private ref
+namespaces or the original HEAD branch are supported.
+Special index flags, unmerged entries, submodules and filters remain unsupported.
+This option can combine with `--include-ignored`; it does not enable that policy
+implicitly. No-flag archives keep their existing representation, and manifests
+without `git_admin_policy` retain their existing verify/restore behavior.
+Automatic idle archival does **not** opt in; its narrow contract is unchanged.
 
 ## Retention
 
