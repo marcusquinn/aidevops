@@ -74,6 +74,11 @@ See `scripts/worktree-archive-helper.md` for archive and idle-window contracts.
 Legacy compact migration only preserves and compares data; its journal does not
 clear degraded CWD visibility, manufacture lifetime evidence or authorize source
 retirement. See [the migration contract](storage-lifecycle-worktree-recovery.md#explicit-compact-migration-no-retirement).
+The separate [confirmed retirement](storage-lifecycle-worktree-recovery.md#confirmed-retirement-of-migrated-buckets)
+transition reuses the existing process observer and saved lifetime proof. It checks
+both original and claimed paths: a positive CWD match overrides a valid receipt,
+and missing/invalid receipts under degraded visibility keep the transaction intact.
+Neither planning nor retirement creates new lifetime enrollment.
 
 ## Unprivileged NixOS adapter
 

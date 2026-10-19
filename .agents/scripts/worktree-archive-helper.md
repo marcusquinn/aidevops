@@ -10,6 +10,9 @@ For legacy full recovery buckets, use the explicit
 It reuses this format, independently verifies restoration, preserves provenance in
 a durable journal and pins the resulting archive. It does not retire the source
 or change ordinary recovery producers.
+Source retirement requires the separate operator-confirmed
+[verified retirement transition](../reference/storage-lifecycle-worktree-recovery.md#confirmed-retirement-of-migrated-buckets).
+Archive verification or migration success alone is still not removal authority.
 
 ## Commands
 

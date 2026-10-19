@@ -99,6 +99,151 @@ class ArchiveLifecycle(unittest.TestCase):
             self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode(errors="replace"))
         return result
 
+    def retirement_fixture(self):
+        self.git(self.repo, "remote", "add", "origin", "https://github.com/marcusquinn/aidevops.git")
+        bucket = self.legacy_bucket()
+        managed = lifecycle.managed_module()
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            managed.initialize(connection)
+            managed.enroll(connection, self.work)
+            record = managed.load(connection, str(self.work))
+            managed.seal(record)
+            managed.save(connection, record)
+            connection.commit()
+        self.git(self.repo, "worktree", "remove", "--force", self.work)
+        migration = json.loads(self.migrate_bucket(bucket).stdout)
+        return bucket, migration
+
+    def retirement(self, action, bucket, *extra, check=True):
+        result = self.run_command("bash", HELPER.parent / "worktree-recovery-lifecycle-helper.sh",
+                                  action, "--bucket", bucket, *extra, check=False)
+        if check:
+            self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode(errors="replace"))
+        return result
+
+    def test_retirement_confirmed_and_independent_restore(self):
+        (self.work / "local.ignored").write_bytes(b"retirement fixture")
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        failed = self.retirement("retire", bucket, "--confirm", "wrong", check=False)
+        self.assertIn(b"confirmation-mismatch", failed.stdout)
+        self.assertTrue(bucket.exists())
+        result = json.loads(self.retirement("retire", bucket, "--confirm", plan["confirmation_token"]).stdout)
+        self.assertTrue(result["retired"])
+        self.assertGreater(result["bucket_bytes"], 0)
+        self.assertGreater(result["archive_bytes"], 0)
+        self.assertFalse(bucket.exists())
+        self.assertEqual(json.loads(self.retirement("retire-status", bucket).stdout), result)
+        self.repo.rename(self.root / "unavailable-repo")
+        target = self.root / "retirement-restore"
+        self.helper("restore", migration["archive"], "--target", target)
+        self.assertEqual((target / "local.ignored").read_bytes(), b"retirement fixture")
+
+    def test_retirement_rejects_drift_and_archive_damage(self):
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        receipt = json.loads(Path(migration["receipt"]).read_text())
+        late = Path(receipt["source"]["identity"]["archive_path"]) / "late.ignored"
+        late.write_bytes(b"late unique data")
+        result = self.retirement("retire", bucket, "--confirm", plan["confirmation_token"], check=False)
+        self.assertIn(b"source-drift", result.stdout)
+        self.assertEqual(late.read_bytes(), b"late unique data")
+        late.unlink()
+        manifest = Path(migration["archive"]) / "manifest.json"
+        manifest.write_bytes(manifest.read_bytes() + b"\n")
+        result = self.retirement("retire", bucket, "--confirm", plan["confirmation_token"], check=False)
+        self.assertIn(b"manifest-changed", result.stdout)
+        self.assertTrue(bucket.is_dir())
+
+    def test_retirement_resumes_claim_without_deleting_replacement(self):
+        from worktree_recovery_migration_state import load
+        from worktree_recovery_retirement_transaction import claim
+
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        directory = Path(migration["receipt"]).parent
+        record = load(directory / "retirement.json")
+        target = claim(directory, record, bucket)
+        self.assertTrue(target.is_dir())
+        self.assertFalse(json.loads(self.retirement("retire-status", bucket).stdout)["retired"])
+        bucket.mkdir()
+        (bucket / "new-owner").write_bytes(b"must survive")
+        result = json.loads(self.retirement("retire", bucket, "--confirm", plan["confirmation_token"]).stdout)
+        self.assertTrue(result["retired"])
+        self.assertEqual((bucket / "new-owner").read_bytes(), b"must survive")
+        self.assertFalse(target.exists())
+
+    def test_retirement_rootless_and_positive_process_guards(self):
+        bucket, migration = self.retirement_fixture()
+        identity = json.loads(Path(migration["receipt"]).read_text())["source"]["identity"]
+        command = ('source "$1"; capture_worktree_process_cwds() { return 2; }; '
+                   '_worktree_recovery_retirement_guard "$2"')
+        args = ("bash", "-c", command, "retirement-fixture",
+                HELPER.parent / "worktree-recovery-lifecycle-helper.sh", bucket)
+        self.run_command(*args, input_data=json.dumps(identity).encode())
+        positive = command.replace('return 2;', 'printf "%s\\n" "$RETIREMENT_FIXTURE_PATH"; return 2;')
+        self.env["RETIREMENT_FIXTURE_PATH"] = str(bucket)
+        result = self.run_command("bash", "-c", positive, "retirement-fixture",
+                                  args[-2], bucket, input_data=json.dumps(identity).encode(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"process-active", result.stdout)
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            connection.execute("DELETE FROM worktree_managed_lifetimes")
+            connection.commit()
+        result = self.run_command(*args, input_data=json.dumps(identity).encode(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"process-unavailable", result.stdout)
+        self.assertTrue(bucket.is_dir())
+
+    def test_retirement_requires_migration_receipt(self):
+        bucket = self.legacy_bucket()
+        result = self.retirement("retire-plan", bucket, check=False)
+        self.assertIn(b"migration-receipt-missing", result.stdout)
+        self.assertTrue(bucket.is_dir())
+
+    def test_retirement_keeps_owned_or_registered_copy(self):
+        bucket, migration = self.retirement_fixture()
+        linked = self.root / "registered"
+        self.git(self.repo, "worktree", "add", linked, "feature/fixture")
+        result = self.retirement("retire-plan", bucket, check=False)
+        self.assertIn(b"worktree-reference-active", result.stdout)
+        self.git(self.repo, "worktree", "remove", linked)
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            connection.execute("INSERT INTO worktree_owners(worktree_path,owner_pid,task_id,owner_session) VALUES (?,?,?,?)",
+                               (str(bucket), os.getpid(), "fixture", "fixture"))
+            connection.commit()
+        result = self.retirement("retire-plan", bucket, check=False)
+        self.assertIn(b"registry-active", result.stdout)
+        self.assertTrue(bucket.is_dir())
+        self.assertTrue(Path(migration["archive"]).is_dir())
+
+    def test_retirement_killed_removal_retains_journal_and_late_data(self):
+        import signal
+        import worktree_recovery_retirement_transaction as transaction
+        from worktree_recovery_migration_state import load
+
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        directory = Path(migration["receipt"]).parent
+        record = load(directory / "retirement.json")
+        target = transaction.claim(directory, record, bucket)
+        child = os.fork()
+        if child == 0:
+            with patch.object(transaction.shutil, "rmtree", side_effect=lambda *args, **kwargs:
+                              os.kill(os.getpid(), signal.SIGKILL)):
+                transaction.remove_claimed(directory, record, target)
+            os._exit(99)
+        _, status = os.waitpid(child, 0)
+        self.assertTrue(os.WIFSIGNALED(status))
+        self.assertEqual(os.WTERMSIG(status), signal.SIGKILL)
+        report = json.loads(self.retirement("retire-status", bucket).stdout)
+        self.assertEqual(report["state"], "removing")
+        self.assertFalse(report["retired"])
+        (target / "late-writer").write_bytes(b"must survive")
+        result = self.retirement("retire", bucket, "--confirm", plan["confirmation_token"], check=False)
+        self.assertIn(b"claimed-content-drift", result.stdout)
+        self.assertEqual((target / "late-writer").read_bytes(), b"must survive")
+
     def test_legacy_migration_preserves_source_and_restores_independently(self):
         from worktree_recovery_migration_state import source_state
 

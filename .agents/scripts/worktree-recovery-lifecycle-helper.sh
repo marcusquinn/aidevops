@@ -1515,10 +1515,14 @@ fi
 
 # shellcheck source=worktree-recovery-migrate-helper.sh
 source "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree-recovery-migrate-helper.sh"
+# shellcheck source=worktree-recovery-retire-helper.sh
+source "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree-recovery-retire-helper.sh"
 
 _worktree_recovery_lifecycle_usage() {
 	printf '%s\n' 'Usage: worktree-recovery-lifecycle-helper.sh [status|json|plan --output <absolute-path>|apply --plan <absolute-path> --receipt <absolute-new-path> --confirm <manifest-token>|unreadable-processes]'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh migrate --bucket <absolute-path> --repo <owner/repo> --base-branch <branch>'
+	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh retire-plan|retire-status --bucket <absolute-path>'
+	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh retire --bucket <absolute-path> --confirm <confirmation-token>'
 	return 0
 }
 
@@ -1552,6 +1556,14 @@ worktree_recovery_unreadable_processes() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	case "${1:-status}" in
 	json) worktree_recovery_lifecycle_json ;;
+	retire-plan | retire | retire-status)
+		_worktree_recovery_retire_cli "$@"
+		;;
+	retirement-guard)
+		[[ "$#" -eq 2 ]] || exit 1
+		shift
+		_worktree_recovery_retirement_guard "$@"
+		;;
 	migrate)
 		shift
 		_worktree_recovery_migrate_cli "$@"

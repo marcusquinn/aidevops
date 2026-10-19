@@ -114,6 +114,39 @@ separately instead of treating migration as expiry authority. A receipt's
 The command reports `bucket_bytes`, `archive_bytes`, `source_retired: false` and
 `reclaimed_bytes: 0`; creating an archive alone does not reclaim disk space.
 
+## Confirmed retirement of migrated buckets
+
+Retirement is a separate manual operation, never a Pulse, timer, maintenance or
+automatic-apply action. First run `retire-plan --bucket <absolute-bucket-path>`
+with `worktree-recovery-lifecycle-helper.sh`. Inspect its JSON report, then run
+`retire --bucket <same-path> --confirm <confirmation_token>` using the exact token.
+`retire-status --bucket <same-path>` reports the durable transaction, including
+after the original bucket disappears. These commands use the configured recovery root.
+
+The migration must be verified, source identity/content unchanged, and the bound
+archive freshly verified against the recorded manifest. Existing registry,
+interactive-claim, Git worktree-reference and process guards must be clear.
+Positive CWD matches always block; degraded visibility needs a valid saved
+managed-lifetime receipt. Missing evidence blocks, without sudo or new enrollment.
+
+The operation holds producer and migration locks, journals a randomized private
+transaction, then renames the bucket into it. Physical content is compared again
+without rewriting relocated Git pointers. Archive and ownership/process evidence
+are rechecked before descriptor-anchored removal. A new bucket at the original
+name is never a deletion target. As with migration scratch, transaction directories
+exclude cooperating writers; content sampling cannot exclude malicious same-user writers.
+
+The journal is `.compact-migrations/<bucket>/retirement.json`; reservations and
+archive pins remain for audit/recovery, not automatic expiry. Interrupted claims
+can resume with the same confirmation token after revalidation. Partial removals,
+changed contents, missing transaction data or substituted identities remain
+incomplete and retained for review; absence alone never counts as retirement.
+Do not delete journals or alter receipts to force continuation.
+
+Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`. These are
+allocated-size observations, not proof of physical free-space gain on shared,
+compressed or snapshotting storage. Archive expiry remains separately authorized.
+
 ## Inventory and retention planning
 
 Proven ignored, untracked cache roots are excluded before copy IO, including cache

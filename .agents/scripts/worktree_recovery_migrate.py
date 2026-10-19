@@ -96,7 +96,7 @@ def capture(directory, record, lock):
     publish(directory / "journal.json", record)
 
 
-def verify_archive(record, lock):
+def verify_archive(record, lock, check_source=True):
     archive = Path(record["archive"])
     output = Path(record["output"])
     require(archive == archive.resolve(strict=True) and archive.is_relative_to(output)
@@ -106,7 +106,8 @@ def verify_archive(record, lock):
     require(manifest_digest(archive) == record["manifest_sha256"], "migration:manifest-changed")
     require((archive / ".aidevops-archive-pin").is_file()
             and not (archive / ".aidevops-archive-pin").is_symlink(), "migration:pin-missing")
-    require(source_state(record["source"]["identity"]) == record["source"], "migration:source-drift")
+    if check_source:
+        require(source_state(record["source"]["identity"]) == record["source"], "migration:source-drift")
 
 
 def independent_restore(directory, record, lock):
