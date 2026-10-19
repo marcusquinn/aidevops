@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import stat
@@ -81,9 +82,14 @@ def value_hash(name):
         timeout = int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS', '15'))
     except ValueError:
         timeout = 15
-    process = subprocess.Popen(['aidevops', 'secret', 'get', name],
-                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, start_new_session=True)
+    executable = shutil.which('aidevops')
+    if not executable:
+        raise OSError('secret CLI unavailable')
+    # Validated name is data-only argv; no shell or issue-selected command.
+    process = subprocess.Popen(  # nosec B603 -- resolved CLI, fixed subcommand, validated name
+        [str(Path(executable).resolve()), 'secret', 'get', name],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, start_new_session=True)
     try:
         value, _ = process.communicate(timeout=min(60, max(1, timeout)))
     except subprocess.TimeoutExpired:
