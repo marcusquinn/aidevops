@@ -487,7 +487,7 @@ _remove_cleanup_and_execute() {
 	fi
 
 	echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
-	# Copy first, then let native Git perform the final source removal. A lock
+	# Verify compact recovery first, then let native Git remove the source. A lock
 	# acquired at any point before that command keeps the registered source
 	# intact, while an interruption after it still leaves the archive.
 	if ! remove_archived_worktree_path "$path_to_remove" "$recoverable_archive" \

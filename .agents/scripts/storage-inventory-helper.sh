@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# An unavailable home is represented by an empty value throughout this read-only
+# report. Normalize before sourcing libraries that initialize defaults with HOME.
+HOME="${HOME:-}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 if [[ -f "$SCRIPT_DIR/shared-constants.sh" ]]; then
 	# shellcheck source=shared-constants.sh

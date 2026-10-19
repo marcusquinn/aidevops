@@ -391,6 +391,7 @@ archive_worktree() {
 	local self_contained=0 include_ignored=0 preserve_git_admin=0
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir commit_count
 	local fingerprint_before="" fingerprint_after=""
+	local -x GIT_OPTIONAL_LOCKS=0
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -408,9 +409,6 @@ archive_worktree() {
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
 	done
-	if [[ "$preserve_git_admin" -eq 1 ]]; then
-		local -x GIT_OPTIONAL_LOCKS=0
-	fi
 	validate_repo "$repo" || return 1
 	if [[ "$unattributed" == "true" ]]; then
 		[[ -z "$issue" && "$reason" == "unattributed-worktree" ]] || { die "unattributed archive cannot have an issue"; return 1; }
@@ -450,8 +448,10 @@ archive_worktree() {
 	if [[ -e "$archive_dir" ]]; then archive_dir="${archive_dir}-$$"; fi
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	git -C "$worktree" diff --binary --no-ext-diff --no-textconv >"$archive_dir/diff.patch" || return 1
-	git -C "$worktree" diff --cached --binary --no-ext-diff --no-textconv >"$archive_dir/staged.patch" || return 1
+	# diff can refresh the index despite GIT_OPTIONAL_LOCKS=0. Capture must not
+	# change the administration that its before/after fingerprints protect.
+	git -c diff.autoRefreshIndex=false -C "$worktree" diff --binary --no-ext-diff --no-textconv >"$archive_dir/diff.patch" || return 1
+	git -c diff.autoRefreshIndex=false -C "$worktree" diff --cached --binary --no-ext-diff --no-textconv >"$archive_dir/staged.patch" || return 1
 	commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
 	if [[ "$preserve_git_admin" -eq 1 ]]; then
 		local admin_base=""

@@ -194,11 +194,12 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
                         AIDEVOPS_WORKTREE_TRASH_ROOT=str(recovery),
                         AIDEVOPS_WORKTREE_ARCHIVE_ROOT=str(self.archives),
                         AIDEVOPS_CLEANUP_LOG=str(self.root / "cleanup.log"))
-        command = ('source "$1"; _init_registry_db || exit 1; '
-                   'archive_worktree_path_recoverably "$2" test.sh migration-test || exit 1; '
+        command = ('source "$1"; source "$3"; _init_registry_db || exit 1; '
+                   'create_legacy_worktree_recovery_fixture "$2" test.sh migration-test || exit 1; '
                    'printf "%s\\n" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH"')
         result = self.run_command("bash", "-c", command, "migration-fixture",
-                                  HELPER.parent / "worktree-recovery-lifecycle-helper.sh", self.work)
+                                  HELPER.parent / "worktree-recovery-lifecycle-helper.sh", self.work,
+                                  HELPER.parent / "tests/legacy-worktree-recovery-fixture.sh")
         return Path(result.stdout.decode().splitlines()[-1]).parent
 
     def migrate_bucket(self, bucket, *extra, check=True):

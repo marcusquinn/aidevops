@@ -15,6 +15,8 @@ AIDEVOPS_WORKTREE_TRASH_ROOT="$HOME/.aidevops/recovery/worktrees"
 export AIDEVOPS_WORKTREE_TRASH_ROOT
 # shellcheck source=../audit-worktree-removal-helper.sh
 source "$AUDIT_HELPER"
+# shellcheck source=./legacy-worktree-recovery-fixture.sh
+source "$SCRIPT_DIR/legacy-worktree-recovery-fixture.sh"
 
 cleanup() {
 	rm -rf "$TEST_ROOT"
@@ -63,7 +65,7 @@ make_recovery_fixture() {
 	"$GIT_BIN" -C "$repo_path" commit -q -m init || return 1
 	"$GIT_BIN" -C "$repo_path" worktree add -q -b feature/recovery-inventory \
 		"$worktree_path" main || return 1
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \
+	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" create_legacy_worktree_recovery_fixture \
 		"$worktree_path" "test-storage-inventory-helper.sh" "storage-inventory" || return 1
 	return 0
 }
@@ -162,7 +164,10 @@ printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$FAILING_DU"
 chmod +x "$FAILING_DU"
 report=$(AIDEVOPS_STORAGE_DU_COMMAND="$FAILING_DU" bash "$HELPER" json)
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .error')" == "sizing-failed" ]] || fail "sizing failure was not visible"
-[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "worktree-recovery") | .error')" == "sizing-failed" ]] || fail "worktree recovery sizing failure was not visible"
+# Recovery reports separate sizing failures from classification availability.
+printf '%s' "$report" | jq -e '.stores[] | select(.store_id == "worktree-recovery") |
+	.error == null and .sizing_error == "sizing-failed" and .sizing_confidence == "unavailable"
+	and .total_bytes == null and .reclaimable_bytes == 0' >/dev/null || fail "worktree recovery sizing failure was not visible"
 
 SLOW_DU="$TEST_ROOT/slow-du"
 printf '%s\n' '#!/usr/bin/env bash' 'sleep 5' >"$SLOW_DU"

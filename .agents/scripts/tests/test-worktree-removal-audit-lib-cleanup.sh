@@ -9,6 +9,9 @@
 [[ -n "${_TEST_WORKTREE_REMOVAL_AUDIT_CLEANUP_LOADED:-}" ]] && return 0
 _TEST_WORKTREE_REMOVAL_AUDIT_CLEANUP_LOADED=1
 
+# shellcheck source=./legacy-worktree-recovery-fixture.sh
+source "${BASH_SOURCE[0]%/*}/legacy-worktree-recovery-fixture.sh"
+
 # =============================================================================
 # Test 7: shared guard refuses current working directory removals
 # =============================================================================
@@ -308,8 +311,16 @@ test_recovery_store_selects_platform_semantics() {
 	actual=$(HOME="$fixture_home" AIDEVOPS_WORKTREE_TRASH_ROOT="$override_root" \
 		AIDEVOPS_ORPHAN_TRASH_ROOT="" _worktree_recovery_store_root "Linux") || rc=1
 	[[ "$actual" == "$override_root" ]] || rc=1
+	actual=$(HOME="$fixture_home" AIDEVOPS_WORKTREE_ARCHIVE_ROOT="" \
+		AIDEVOPS_WORKTREE_TRASH_ROOT="" AIDEVOPS_ORPHAN_TRASH_ROOT="" \
+		_worktree_recovery_producer_root) || rc=1
+	[[ "$actual" == "$fixture_home/.aidevops/recovery/archives" ]] || rc=1
+	actual=$(AIDEVOPS_WORKTREE_ARCHIVE_ROOT="$override_root" \
+		AIDEVOPS_WORKTREE_TRASH_ROOT="$fixture_home/old-trash" \
+		_worktree_recovery_producer_root) || rc=1
+	[[ "$actual" == "$override_root" ]] || rc=1
 	print_result "recovery_store_selects_platform_semantics" "$rc" \
-		"Expected Linux recovery ownership, macOS Trash, and explicit override precedence"
+		"Expected legacy platform roots, a common compact archive default, and explicit override precedence"
 	return 0
 }
 
@@ -355,20 +366,20 @@ test_recovery_inventory_reports_legacy_buckets_fail_closed() {
 	ln -s "$legacy_root" "$legacy_alias" || rc=1
 	create_git_worktree_fixture "$current_repo" "$current_worktree" "feature/current-inventory" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$current_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$current_worktree" "test.sh" "current-inventory" || rc=1
+		create_legacy_worktree_recovery_fixture "$current_worktree" "test.sh" "current-inventory" || rc=1
 	current_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	current_bucket="${current_archive%/*}"
 	create_git_worktree_fixture "$interrupted_repo" "$interrupted_worktree" \
 		"feature/interrupted-inventory" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$legacy_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$interrupted_worktree" "test.sh" \
+		create_legacy_worktree_recovery_fixture "$interrupted_worktree" "test.sh" \
 		"interrupted-inventory" || rc=1
 	interrupted_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	interrupted_bucket="${interrupted_archive%/*}"
 	rm -f "$interrupted_bucket/${_WT_RECOVERY_DIR_NAME}/${_WT_RECOVERY_COMPLETE_MARKER}" || rc=1
 	create_git_worktree_fixture "$compat_repo" "$compat_worktree" "feature/compat-v1-inventory" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$legacy_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$compat_worktree" "test.sh" "compat-v1-inventory" || rc=1
+		create_legacy_worktree_recovery_fixture "$compat_worktree" "test.sh" "compat-v1-inventory" || rc=1
 	compat_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	compat_bucket="${compat_archive%/*}"
 	recovery_dir="$compat_bucket/${_WT_RECOVERY_DIR_NAME}"
@@ -379,7 +390,7 @@ test_recovery_inventory_reports_legacy_buckets_fail_closed() {
 		"$recovery_dir/archive-outcome" "$recovery_dir/source-removal-outcome" || rc=1
 	create_git_worktree_fixture "$legacy_repo" "$legacy_worktree" "feature/legacy-inventory" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$legacy_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$legacy_worktree" "test.sh" "legacy-inventory" || rc=1
+		create_legacy_worktree_recovery_fixture "$legacy_worktree" "test.sh" "legacy-inventory" || rc=1
 	legacy_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	legacy_bucket="${legacy_archive%/*}"
 	recovery_dir="$legacy_bucket/${_WT_RECOVERY_DIR_NAME}"
@@ -415,25 +426,25 @@ test_recoverable_archive_then_native_remove() {
 	local archive_path=""
 	local wt_root=""
 	local metadata=""
+	local index_path="" index_before=""
 	local rc=0
 	local AIDEVOPS_WORKTREE_TRASH_ROOT="$trash_root"
 
 	create_git_worktree_fixture "$repo_path" "$wt_path" "feature/archive" || rc=1
 	wt_root=$("$GIT_BIN" -C "$wt_path" rev-parse --show-toplevel 2>/dev/null) || rc=1
+	index_path=$("$GIT_BIN" -C "$wt_path" rev-parse --path-format=absolute --git-path index) || rc=1
+	# Stat-only drift triggers git diff's auto-refresh unless explicitly disabled.
+	touch -t 202001010000 "$wt_path/README.md" || rc=1
+	index_before=$("$GIT_BIN" hash-object "$index_path") || rc=1
 	AIDEVOPS_SESSION_ID="ses_test_recovery" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \
 		"$wt_path" "test.sh" "archive-test" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	[[ -d "$wt_path" && -d "$archive_path" && -e "$archive_path/.git" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/format")" == "$_WT_RECOVERY_FORMAT_V2" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/storage-owner")" == "framework" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/storage-class")" == "recovery" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/storage-policy")" == "manual-review" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/producer")" == "test.sh" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/producer-context")" == "archive-test" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/session-id")" == "ses_test_recovery" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/archive-outcome")" == "complete" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/source-removal-outcome")" == "pending" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/${_WT_RECOVERY_COMPLETE_MARKER}")" == "$_WT_RECOVERY_FORMAT" ]] || rc=1
+	[[ "$("$GIT_BIN" hash-object "$index_path")" == "$index_before" ]] || rc=1
+	[[ -d "$wt_path" && -f "$archive_path/manifest.json" && ! -e "$archive_path/.git" ]] || rc=1
+	_worktree_recovery_archive_is_valid "$archive_path" || rc=1
+	jq -e '.phase == "verified" and .caller == "test.sh" and .context == "archive-test"
+		and .session_id == "ses_test_recovery" and .source_removal_outcome == "pending"' \
+		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
@@ -443,8 +454,9 @@ test_recoverable_archive_then_native_remove() {
 	if "$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fqx "worktree $wt_root"; then
 		rc=1
 	fi
-	[[ ! -e "$wt_path" && -d "$archive_path" && -e "$archive_path/.git" ]] || rc=1
-	[[ "$(<"${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/source-removal-outcome")" == "removed" ]] || rc=1
+	[[ ! -e "$wt_path" && -f "$archive_path/manifest.json" ]] || rc=1
+	jq -e '.source_removal_outcome == "removed"' \
+		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
 	print_result "recoverable_archive_then_native_remove" "$rc" \
 		"Expected archive retention after native source and metadata removal"
 	return 0
@@ -488,7 +500,7 @@ RACE_GIT
 		rc=1
 	fi
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
-	[[ -d "$wt_path" && -d "$archive_path" && -e "$archive_path/.git" && -e "$marker_path" ]] || rc=1
+	[[ -d "$wt_path" && -f "$archive_path/manifest.json" && -e "$marker_path" ]] || rc=1
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
 	printf '%s\n' "$metadata" | grep -Fxq "locked foreign-after-archive" || rc=1
 	print_result "recoverable_archive_preserves_late_lock" "$rc" \
@@ -624,7 +636,7 @@ test_recovery_archive_preserves_index_and_dirty_files() {
 	local wt_path="${TEST_DIR}/archive-dirty-worktree"
 	local trash_root="${TEST_DIR}/archive-dirty-trash"
 	local archive_path=""
-	local recovery_dir=""
+	local restored="${TEST_DIR}/archive-dirty-restored"
 	local expected_status=""
 	local actual_status=""
 	local expected_head=""
@@ -644,21 +656,19 @@ test_recovery_archive_preserves_index_and_dirty_files() {
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \
 		"$wt_path" "test.sh" "dirty-archive" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	recovery_dir=$(_worktree_recovery_dir_for_archive "$archive_path") || rc=1
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
 		"$wt_path" "$archive_path" "test.sh" "dirty-archive" \
 		"recovery_path=archive-first" "false" "true" || rc=1
-	actual_status=$("$GIT_BIN" -C "$archive_path" status --porcelain=v1 --untracked-files=all) || rc=1
-	actual_head=$("$GIT_BIN" -C "$archive_path" rev-parse --verify HEAD) || rc=1
-	IFS= read -r recorded_branch <"${recovery_dir}/branch" || rc=1
+	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+	actual_status=$("$GIT_BIN" -C "$restored" status --porcelain=v1 --untracked-files=all) || rc=1
+	actual_head=$("$GIT_BIN" -C "$restored" rev-parse --verify HEAD) || rc=1
+	recorded_branch=$(jq -r '.branch' "$archive_path/manifest.json") || rc=1
 	[[ ! -e "$wt_path" && "$actual_status" == "$expected_status" ]] || rc=1
 	[[ "$actual_head" == "$expected_head" ]] || rc=1
-	[[ "$recorded_branch" == "refs/heads/feature/archive-dirty" ]] || rc=1
-	if "$GIT_BIN" -C "$archive_path" symbolic-ref -q HEAD >/dev/null 2>&1; then
-		rc=1
-	fi
+	[[ "$recorded_branch" == "feature/archive-dirty" ]] || rc=1
+	[[ "$("$GIT_BIN" -C "$restored" symbolic-ref -q HEAD)" == "refs/heads/feature/archive-dirty" ]] || rc=1
 	print_result "recovery_archive_preserves_index_and_dirty_files" "$rc" \
-		"Expected a usable detached archive with exact index and file state"
+		"Expected independent restoration of the original branch, index, and dirty file state"
 	return 0
 }
 
@@ -667,7 +677,7 @@ test_recovery_archive_preserves_detached_head_identity() {
 	local wt_path="${TEST_DIR}/archive-detached-worktree"
 	local trash_root="${TEST_DIR}/archive-detached-trash"
 	local archive_path=""
-	local recovery_dir=""
+	local restored="${TEST_DIR}/archive-detached-restored"
 	local expected_head=""
 	local actual_head=""
 	local recorded_branch=""
@@ -680,14 +690,14 @@ test_recovery_archive_preserves_detached_head_identity() {
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" archive_worktree_path_recoverably \
 		"$wt_path" "test.sh" "detached-archive" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	recovery_dir=$(_worktree_recovery_dir_for_archive "$archive_path") || rc=1
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" with_complete_cwd_snapshot remove_archived_worktree_path \
 		"$wt_path" "$archive_path" "test.sh" "detached-archive" \
 		"recovery_path=archive-first" "false" "false" || rc=1
-	actual_head=$("$GIT_BIN" -C "$archive_path" rev-parse --verify HEAD) || rc=1
-	IFS= read -r recorded_branch <"${recovery_dir}/branch" || rc=1
+	bash "${SCRIPT_DIR}/../worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+	actual_head=$("$GIT_BIN" -C "$restored" rev-parse --verify HEAD) || rc=1
+	recorded_branch=$(jq -r '.branch' "$archive_path/manifest.json") || rc=1
 	[[ "$actual_head" == "$expected_head" && "$recorded_branch" == "detached" ]] || rc=1
-	if "$GIT_BIN" -C "$archive_path" symbolic-ref -q HEAD >/dev/null 2>&1; then
+	if "$GIT_BIN" -C "$restored" symbolic-ref -q HEAD >/dev/null 2>&1; then
 		rc=1
 	fi
 	print_result "recovery_archive_preserves_detached_head_identity" "$rc" \
@@ -846,7 +856,8 @@ test_manual_cleanup_archives_removes_and_prunes() {
 		rc=1
 	fi
 	[[ ! -e "$wt_path" && -d "$trash_destination" ]] || rc=1
-	compgen -G "${trash_destination}/aidevops-worktree-cleanup-*/manual-archive-worktree" >/dev/null || rc=1
+	jq -e '.phase == "verified" and .source_removal_outcome == "removed"' \
+		"$trash_destination"/.producer-transactions/*/journal.json >/dev/null || rc=1
 	if "$GIT_BIN" -C "$repo_path" worktree list --porcelain | grep -Fqx "worktree $wt_root"; then
 		rc=1
 	fi
@@ -1272,7 +1283,8 @@ test_recoverable_cleanup_preserves_lease_loss_after_archive() {
 	[[ -d "$wt_path" ]] || rc=1
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
 	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || rc=1
-	compgen -G "${trash_root}/aidevops-worktree-cleanup-*/recoverable-lease-race-worktree" >/dev/null || rc=1
+	jq -e '.phase == "verified" and .source_removal_outcome == "pending"' \
+		"$trash_root"/.producer-transactions/*/journal.json >/dev/null || rc=1
 	assert_file_contains "$log_file" "worktree-skipped.*cleanup-lease-changed-after-archive.*mode=skipped" || rc=1
 	print_result "recoverable_cleanup_preserves_lease_loss_after_archive" "$rc" \
 		"Expected source, metadata, and archive retention after cleanup lease replacement"
@@ -1582,17 +1594,17 @@ test_recoverable_archive_honours_shared_producer_lock() {
 		rc=1
 	fi
 	[[ -d "$wt_path" && -d "$lock_path" ]] || rc=1
+	[[ ! -e "$recovery_root/.producer-transactions" ]] || rc=1
 	if compgen -G "${recovery_root}/aidevops-worktree-cleanup-*" >/dev/null; then rc=1; fi
 	rm -f "$lock_path/pid" "$lock_path/lstart" "$lock_path/token" "$lock_path/initialized" || rc=1
 	rmdir "$lock_path" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
 		archive_worktree_path_recoverably "$wt_path" "test.sh" "producer-lock" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	[[ -d "$archive_path" &&
-		-f "${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}/${_WT_RECOVERY_COMPLETE_MARKER}" &&
-		! -e "$lock_path" ]] || rc=1
+	[[ -f "$archive_path/manifest.json" && ! -e "$lock_path" ]] || rc=1
+	_worktree_recovery_archive_is_valid "$archive_path" || rc=1
 	print_result "recoverable_archive_honours_shared_producer_lock" "$rc" \
-		"Expected a live apply-compatible lock to block archive publication through its completion marker"
+		"Expected a live apply-compatible lock to block compact capture through receipt verification"
 	return 0
 }
 

@@ -21,7 +21,7 @@ create_mixed_cache_archive() {
 	printf '/.codegraph/\nlogs/\nnested/.codegraph/\nbackend/__pycache__/\n' \
 		>>"${repo_path}/.git/info/exclude" || return 1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$worktree_path" "test.sh" "cache-retrofit" || return 1
+		create_legacy_worktree_recovery_fixture "$worktree_path" "test.sh" "cache-retrofit" || return 1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
 		"$worktree_path" "$archive_path" "test.sh" "cache-retrofit" \

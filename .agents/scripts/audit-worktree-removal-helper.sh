@@ -1341,19 +1341,48 @@ _worktree_recovery_release_producer_lock() {
 	return 0
 }
 
+# Prefer the compact archive override, retaining historical explicit store
+# overrides. Defaults now share the archive CLI's store on every platform.
+_worktree_recovery_producer_root() {
+	local root="${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${AIDEVOPS_WORKTREE_TRASH_ROOT:-${AIDEVOPS_ORPHAN_TRASH_ROOT:-}}}"
+	if [[ -z "$root" ]]; then
+		[[ -n "${HOME:-}" ]] || return 1
+		root="${HOME}/.aidevops/recovery/archives"
+	fi
+	_worktree_recovery_line_payload_is_valid "$root" || return 1
+	[[ "$root" == /* ]] || return 1
+	printf '%s\n' "$root"
+	return 0
+}
+
+# Resolve and reject overlapping stores before mkdir can modify the source or
+# Git administration. The permission probe still precedes all Git inspection.
+_worktree_recovery_resolve_producer_root() {
+	local wt_path="$1"
+	local root="$2"
+	local caller="$3"
+	local resolved=""
+	_worktree_recovery_store_preflight "$wt_path" "$root" "$caller" || return 1
+	_worktree_capture_git_identity "$wt_path" || return 1
+	resolved=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$root") || return 1
+	case "$resolved" in
+	"$_WT_ID_SOURCE_REAL" | "$_WT_ID_SOURCE_REAL"/* | "$_WT_ID_COMMON_REAL" | "$_WT_ID_COMMON_REAL"/*)
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+			"recovery-store-overlaps-source" "$_WTAR_MODE_SKIPPED"
+		return 1
+		;;
+	esac
+	printf '%s\n' "$resolved"
+	return 0
+}
+
 _archive_worktree_path_recoverably_under_lock() {
 	local wt_path="$1"
 	local caller="$2"
 	local context="${3:-}"
 	local wt_path_real="$wt_path"
-	local recovery_root=""
-	local recovery_root_real=""
-	local recovery_bucket=""
+	local recovery_root_real="$4"
 	local archive_path=""
-	local recovery_dir=""
-	local recovery_admin=""
-	local completion_marker_tmp=""
-	local worktree_basename=""
 	local git_state=""
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
@@ -1365,62 +1394,12 @@ _archive_worktree_path_recoverably_under_lock() {
 		_worktree_log_git_refusal "$wt_path" "$caller" "$git_state" "$context"
 		return 1
 	fi
-	recovery_root=$(_worktree_recovery_store_root) || return 1
-	mkdir -p "$recovery_root" 2>/dev/null || return 1
-	recovery_root_real=$(cd "$recovery_root" 2>/dev/null && pwd -P) || return 1
-	case "$recovery_root_real" in
-	"$wt_path_real" | "$wt_path_real"/*) return 1 ;;
-	esac
-	worktree_basename="${wt_path%/}"
-	worktree_basename="${worktree_basename##*/}"
-	[[ -n "$worktree_basename" && "$worktree_basename" != "." &&
-		"$worktree_basename" != "$_WT_RECOVERY_DIR_NAME" ]] || return 1
-	if ! recovery_bucket=$(_worktree_recovery_cache_policy "reserve" "$wt_path_real" \
-		"$recovery_root_real" "$_WT_ID_REAL_GIT"); then
-		if [[ "$(worktree_process_platform)" == nixos ]]; then
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
-				"recovery-reservation-unavailable" "$_WTAR_MODE_SKIPPED" \
-				"stage=reserve source_preserved=true operator_review=required"
-		fi
+	if ! archive_path=$(_worktree_recovery_producer_command 0 capture \
+		"$wt_path_real" "$recovery_root_real" "$caller" "$context"); then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+			"compact-recovery-capture-failed" "$_WTAR_MODE_SKIPPED" \
+			"source_preserved=true operator_review=required"
 		return 1
-	fi
-	archive_path="${recovery_bucket}/${worktree_basename}"
-	recovery_dir="${recovery_bucket}/${_WT_RECOVERY_DIR_NAME}"
-	recovery_admin="${recovery_dir}/admin"
-	# Reuse a completed snapshot only after the existing full identity/content
-	# checks pass. Never overwrite a previous attempt after source data drift.
-	if [[ -e "$archive_path" || -L "$archive_path" ]]; then
-		_worktree_recovery_archive_is_valid "$archive_path" || return 1
-		_worktree_archive_source_matches "$wt_path" "$archive_path" || return 1
-		_worktree_recovery_cache_policy "matching-copy" "$wt_path_real" "$archive_path" \
-			"$_WT_ID_REAL_GIT" || return 1
-		WORKTREE_RECOVERABLE_ARCHIVE_PATH="$archive_path"
-		return 0
-	fi
-	_worktree_recovery_cache_policy "copy" "$wt_path_real" "$archive_path" \
-		"$_WT_ID_REAL_GIT" || return 1
-	mkdir "$recovery_dir" 2>/dev/null || return 1
-	_worktree_copy_directory_once "$_WT_ID_ADMIN_REAL" "$recovery_admin" || return 1
-	_worktree_write_recovery_identity "$recovery_dir" || return 1
-	_worktree_write_recovery_v2_metadata "$recovery_dir" "$caller" "$context" || return 1
-	printf '%s\n' "$_WT_RECOVERY_STORAGE_OWNER" >"${recovery_dir}/storage-owner" || return 1
-	printf '%s\n' "recovery" >"${recovery_dir}/storage-class" || return 1
-	printf '%s\n' "manual-review" >"${recovery_dir}/storage-policy" || return 1
-	printf '%s\n' "$recovery_root_real" >"${recovery_dir}/storage-root" || return 1
-	printf '%s\n' "$_WT_ID_HEAD" >"${recovery_admin}/HEAD" || return 1
-	printf '%s\n' "$_WT_ID_COMMON_REAL" >"${recovery_admin}/commondir" || return 1
-	printf '%s\n' "${archive_path}/.git" >"${recovery_admin}/gitdir" || return 1
-	printf 'gitdir: %s\n' "$recovery_admin" >"${archive_path}/.git" || return 1
-	_worktree_recovery_archive_is_valid "$archive_path" || return 1
-	_worktree_archive_source_matches "$wt_path" "$archive_path" || return 1
-	completion_marker_tmp="${recovery_dir}/.${_WT_RECOVERY_COMPLETE_MARKER}.$$-${RANDOM}"
-	printf '%s\n' "$_WT_RECOVERY_FORMAT" >"$completion_marker_tmp" || return 1
-	mv "$completion_marker_tmp" "${recovery_dir}/${_WT_RECOVERY_COMPLETE_MARKER}" || return 1
-	# Scheduling telemetry is best-effort and never weakens archive validation.
-	if [[ "$recovery_root_real" == "${HOME}/.aidevops/recovery/worktrees" ]]; then
-		_worktree_recovery_run_before_epoch "$(($(date +%s) + 2))" \
-			python3 "$(dirname "${BASH_SOURCE[0]}")/worktree_recovery_size_index.py" \
-			record "$recovery_bucket" --budget 2 >/dev/null 2>&1 || true
 	fi
 	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
 		git_state="$_WT_GIT_STATE_UNREADABLE"
@@ -1484,16 +1463,15 @@ archive_worktree_path_recoverably() {
 	local hold_seconds="${AIDEVOPS_WORKTREE_RECOVERY_TEST_HOLD_LOCK_SECONDS:-0}"
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
-	recovery_root=$(_worktree_recovery_store_root) || return 1
-	_worktree_recovery_store_preflight "$wt_path" "$recovery_root" "$caller" || return 1
-	mkdir -p "$recovery_root" 2>/dev/null || return 1
-	recovery_root_real=$(cd "$recovery_root" 2>/dev/null && pwd -P) || return 1
+	recovery_root=$(_worktree_recovery_producer_root) || return 1
+	recovery_root_real=$(_worktree_recovery_resolve_producer_root "$wt_path" "$recovery_root" "$caller") || return 1
+	mkdir -p "$recovery_root_real" 2>/dev/null || return 1
 	_worktree_recovery_acquire_producer_lock "$recovery_root_real" || return 1
 	case "$hold_seconds" in
 	'' | *[!0-9]*) hold_seconds=0 ;;
 	esac
 	[[ "$hold_seconds" -eq 0 ]] || sleep "$hold_seconds"
-	_archive_worktree_path_recoverably_under_lock "$wt_path" "$caller" "$context" || archive_status=$?
+	_archive_worktree_path_recoverably_under_lock "$wt_path" "$caller" "$context" "$recovery_root_real" || archive_status=$?
 	_worktree_recovery_release_producer_lock || archive_status=1
 	return "$archive_status"
 }

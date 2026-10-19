@@ -82,7 +82,7 @@ create_archived_fixture() {
 
 	create_unarchived_fixture "$repo_path" "$worktree_path" "$branch_name" || return 1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$worktree_path" "test.sh" "recovery-plan" || return 1
+		create_legacy_worktree_recovery_fixture "$worktree_path" "test.sh" "recovery-plan" || return 1
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
 		"$worktree_path" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH" "test.sh" "recovery-plan" \
 		"recovery_path=archive-first" "false" "false" || return 1
@@ -220,6 +220,8 @@ source "${SCRIPT_DIR}/test-worktree-recovery-lifecycle-maintenance.sh"
 
 # shellcheck source=../audit-worktree-removal-helper.sh
 source "${SCRIPTS_DIR}/audit-worktree-removal-helper.sh"
+# shellcheck source=./legacy-worktree-recovery-fixture.sh
+source "${SCRIPT_DIR}/legacy-worktree-recovery-fixture.sh"
 # shellcheck source=../worktree-recovery-lifecycle-helper.sh
 source "${SCRIPTS_DIR}/worktree-recovery-lifecycle-helper.sh"
 # shellcheck source=../worktree-recovery-maintenance-helper.sh
@@ -234,7 +236,7 @@ run_all_tests() {
 	test_git_state_detects_recovery_data
 	test_cache_policy_recognises_python_and_root_codegraph_only
 	test_git_state_protects_tracked_regenerable_cache_roots
-	test_archive_prunes_only_regenerable_ignored_caches
+	test_compact_archive_preserves_ignored_payload
 	test_archive_pruning_preserves_tracked_codegraph_root
 	test_claim_state_uses_archive_repository
 	test_detached_claim_does_not_invent_active_owner

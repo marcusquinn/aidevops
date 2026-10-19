@@ -162,11 +162,12 @@ test_git_state_protects_tracked_regenerable_cache_roots() {
 	return 0
 }
 
-test_archive_prunes_only_regenerable_ignored_caches() {
+test_compact_archive_preserves_ignored_payload() {
 	local repo_path="${TEST_DIR}/cache-policy-repo"
 	local worktree_path="${TEST_DIR}/cache-policy-worktree"
 	local recovery_root="${TEST_DIR}/cache-policy-recovery"
-	local archive_path="" identity="" state=""
+	local restored="${TEST_DIR}/cache-policy-restored"
+	local archive_path=""
 	local rc=0
 
 	mkdir -p "$recovery_root" || rc=1
@@ -192,17 +193,19 @@ PY
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
 		archive_worktree_path_recoverably "$worktree_path" "test.sh" "cache-policy" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	[[ ! -e "${archive_path}/node_modules" ]] || rc=1
-	[[ ! -e "${archive_path}/backend/__pycache__" ]] || rc=1
-	[[ ! -e "${archive_path}/backend/.pytest_cache" ]] || rc=1
-	[[ ! -e "${archive_path}/.codegraph" ]] || rc=1
-	[[ -f "${archive_path}/nested/.codegraph/codegraph.db" ]] || rc=1
-	[[ -f "${archive_path}/private-artifact/user.bin" ]] || rc=1
-	identity=$(_worktree_recovery_plan_identity_json "${archive_path%/*}") || rc=1
-	state=$(_worktree_recovery_plan_git_state "$identity") || rc=1
-	[[ "$state" == "dirty" ]] || rc=1
-	print_result "archive_prunes_only_regenerable_ignored_caches" "$rc" \
-		"Expected large dependency caches to be omitted while ignored user evidence remains protected"
+	_worktree_recovery_producer_command 0 verify "$archive_path" || rc=1
+	bash "${SCRIPTS_DIR}/worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+	# Compact capture preserves ignored bytes rather than applying the legacy
+	# full-copy cache pruning policy. Verify the actual restored payload.
+	local relative=""
+	for relative in node_modules/package/large-cache.bin backend/__pycache__/module.pyc \
+		backend/.pytest_cache/state .codegraph/codegraph.db \
+		nested/.codegraph/codegraph.db private-artifact/user.bin; do
+		cmp "$worktree_path/$relative" "$restored/$relative" || rc=1
+	done
+	[[ ! -e "${archive_path}/.git" && -d "$worktree_path" ]] || rc=1
+	print_result "compact_archive_preserves_ignored_payload" "$rc" \
+		"Expected verified compact evidence with independently restored ignored payload and an intact source"
 	return 0
 }
 
@@ -438,7 +441,7 @@ test_profile_publication_detached_archive_plans_without_apply() {
 	"$GIT_BIN" -C "$repo_path" remote add origin 'https://github.com/example/profile.git' || rc=1
 	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$worktree_path" HEAD || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$worktree_path" 'profile-readme-helper.sh' \
+		create_legacy_worktree_recovery_fixture "$worktree_path" 'profile-readme-helper.sh' \
 		'recovery_path=profile-publication-archive profile_scratch=true' || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
@@ -447,7 +450,7 @@ test_profile_publication_detached_archive_plans_without_apply() {
 	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$dirty_worktree_path" HEAD || rc=1
 	printf 'unique unpublished data\n' >"${dirty_worktree_path}/unique.bin" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-		archive_worktree_path_recoverably "$dirty_worktree_path" 'profile-readme-helper.sh' \
+		create_legacy_worktree_recovery_fixture "$dirty_worktree_path" 'profile-readme-helper.sh' \
 		'recovery_path=profile-publication-archive profile_scratch=true' || rc=1
 	dirty_archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
@@ -667,7 +670,7 @@ test_generic_detached_archive_plans_and_applies() {
 	"$GIT_BIN" -C "$unpublished_path" commit -q -m 'unpublished detached work' || rc=1
 	for path in "$worktree_path" "$unpublished_path"; do
 		AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
-			archive_worktree_path_recoverably "$path" 'worktree-helper.sh' \
+			create_legacy_worktree_recovery_fixture "$path" 'worktree-helper.sh' \
 			'recovery_path=test-detached' || rc=1
 		if [[ "$path" == "$worktree_path" ]]; then
 			archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"

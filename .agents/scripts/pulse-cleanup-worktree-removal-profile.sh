@@ -216,6 +216,7 @@ _pc_handle_abandoned_profile_publication() {
 	archive_worktree_path_recoverably "$wt_path_age" "$_WTAR_PC_CALLER" "$context" || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	[[ -n "$archive_path" ]] || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
+	# Compact capture does not replace mutable ownership/provenance checks.
 	worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "$_PC_REASON_AGE_ELIGIBLE" || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	_worktree_owner_alive "$wt_path_age" "$wt_branch_age" && return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"
 	rechecked_mode=$(_pc_profile_publication_provenance_mode "$rp_age" "$wt_path_age") || return "$_PC_ARCHIVE_REQUIRED_FAILURE_RC"

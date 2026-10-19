@@ -70,3 +70,24 @@ Tier: thinking — this switches production cleanup paths. Exact searches found 
 - `.agents/scripts/tests/test-worktree-archive-lifecycle.py`
 
 The fixture helper is proposed new code; other listed paths exist. Expand scope if existing caller tests prove a missing owner; do not silently skip a failing test. PR closes only this leaf; parents remain open.
+
+## Implementation findings and bounded scope additions
+
+- `.agents/scripts/worktree-archive-helper.sh`: supported profile recovery exposed
+  index drift during capture. A stat-only change followed by `git diff` changed
+  the index hash even with `GIT_OPTIONAL_LOCKS=0`. Disable `diff.autoRefreshIndex`
+  for patch capture; the existing native-removal fixture now checks exact index
+  preservation after stat-only drift.
+- `.agents/scripts/storage-inventory-helper.sh`: its existing HOME-unset test
+  reproduced an import-time failure on unchanged main. Normalize unavailable
+  HOME to an empty value within this read-only report; retain unavailable store
+  classifications and zero deletion authority. Its sizing assertion now follows
+  the existing separate `sizing_error` contract rather than global `error`.
+- `.agents/scripts/tests/test-profile-readme-boundary.sh` and
+  `.agents/scripts/tests/test-worktree-managed-lifetime.py`: exercise compact
+  evidence and independent restoration instead of reading a full-copy directory.
+  Profile coverage includes supported 0644 and protected 0600 inputs. The format
+  still refuses unsupported permissions; production cleanup never normalizes
+  user permissions or falls back to a full copy.
+
+The operator documentation and archive-list discovery work remain in #35147.

@@ -225,7 +225,10 @@ class LifetimeTests(unittest.TestCase):
                                 'printf "%s\\n" "$archive"', "_", guard, str(worktree)])
                 archive = Path(archived.stdout.strip().splitlines()[-1])
                 self.assertFalse(worktree.exists())
-                self.assertEqual((archive / "unsaved.txt").read_text(), "preserve this user change\n")
+                restored = root / "restored"
+                run(["bash", str(HELPER.parent / "worktree-archive-helper.sh"),
+                     "restore", str(archive), "--target", str(restored)])
+                self.assertEqual((restored / "unsaved.txt").read_text(), "preserve this user change\n")
                 run([*helper, "proof", str(worktree), record["identity"]["source_inode"]])
             finally:
                 record = json.loads(run([*helper, "status", str(worktree)]).stdout)

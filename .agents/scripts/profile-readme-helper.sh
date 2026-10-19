@@ -349,7 +349,7 @@ _archive_and_remove_profile_publication_worktree() {
 	archive_worktree_path_recoverably "$worktree_path" "$caller" "$context" || return 1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	[[ -n "$archive_path" ]] || return 1
-	# Recheck after copying so a changed canonical checkout or newly claimed
+	# Recheck after compact verification so a changed canonical checkout or newly claimed
 	# worktree remains recoverable instead of being removed.
 	_profile_publication_worktree_recovery_is_safe "$worktree_path" || return 1
 	remove_archived_worktree_path "$worktree_path" "$archive_path" "$caller" \

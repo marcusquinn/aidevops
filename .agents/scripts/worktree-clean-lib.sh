@@ -1473,9 +1473,9 @@ _clean_scan_merged() {
 	return 1
 }
 
-# Copy a worktree to recoverable trash before any source removal. This is the
+# Capture verified compact recovery evidence before any source removal. This is the
 # only physical-removal preparation permitted when process-CWD visibility is
-# degraded, so interruption or a late lock always leaves a recoverable copy.
+# degraded, so interruption or a late lock always leaves a recoverable archive.
 _clean_archive_worktree_recoverably() {
 	local worktree_path="$1"
 	local caller="${2:-${_WTAR_WH_CALLER:-worktree-helper.sh}}"

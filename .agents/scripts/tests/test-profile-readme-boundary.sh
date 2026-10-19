@@ -360,7 +360,8 @@ test_update_preserves_manual_sections() {
 }
 
 test_update_recovers_dirty_profile_publication_worktree() {
-	local test_name="profile recovery preserves pre-existing canonical untracked files after guarded cleanup refusal"
+	local fixture_mode="${1:-0644}"
+	local test_name="profile recovery preserves canonical untracked files with fixture mode $fixture_mode"
 	TEST_DIR=$(mktemp -d)
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
@@ -372,6 +373,7 @@ test_update_recovers_dirty_profile_publication_worktree() {
 	local output_file="${TEST_DIR}/update-output"
 	local marker_evidence="${TEST_DIR}/marker-evidence"
 	local canonical_status_before=""
+	local update_rc=0
 
 	mkdir -p "$helper_dir" "$fixture_home"
 	install_helper_with_libs "$helper_dir"
@@ -400,24 +402,44 @@ IFS='|' read -r owner_pid _ _ owner_task _ owner_process_start <<<"$owner_snapsh
 [[ "$owner_pid" =~ ^[1-9][0-9]*$ && "$owner_task" == "profile-readme" && -n "$owner_process_start" ]]
 printf 'verified\n' >"$PROFILE_MARKER_EVIDENCE"
 printf '%s\n' "recoverable fixture state" >"${target}/.profile-publication-fixture"
+# Exercise both the compact format's supported mode and its protected 0600
+# refusal. Do not normalize permissions in the production cleanup path.
+chmod "$PROFILE_RECOVERY_FIXTURE_MODE" "${target}/README.md"
 exit 1
 EOF
 	chmod +x "$refusing_helper"
 
-	if ! HOME="$fixture_home" \
+	HOME="$fixture_home" \
 		PATH="${SOURCE_HELPER%/*}:${PATH}" \
 		AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
 		AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
 		AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" \
 		AIDEVOPS_PROFILE_WORKTREE_HELPER="$refusing_helper" \
 		PROFILE_MARKER_EVIDENCE="$marker_evidence" \
-		bash "$helper_path" update >"$output_file" 2>&1; then
+		PROFILE_RECOVERY_FIXTURE_MODE="$fixture_mode" \
+		bash "$helper_path" update >"$output_file" 2>&1 || update_rc=$?
+	if [[ "$fixture_mode" == "0600" ]]; then
+		if [[ "$update_rc" -eq 0 ]] ||
+			[[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "2" ]] ||
+			! compgen -G "$TEST_DIR/worktrees/*/.profile-publication-fixture" >/dev/null ||
+			compgen -G "$recovery_root/.producer-transactions/*/journal.json" >/dev/null ||
+			compgen -G "$recovery_root/aidevops-worktree-cleanup-*" >/dev/null ||
+			[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]]; then
+			print_helper_failure "$test_name" "unsupported state was not preserved without a full-copy fallback" "$output_file"
+			return 0
+		fi
+		print_result "$test_name" 0
+		return 0
+	fi
+	if [[ "$update_rc" -ne 0 ]]; then
 		print_helper_failure "$test_name" "helper update command failed" "$output_file"
 		return 0
 	fi
 
 	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "1" ]] ||
 		[[ ! -d "$recovery_root" ]] ||
+		! jq -e '.phase == "verified" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "removed"' \
+			"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
 		[[ "$(cat "$marker_evidence" 2>/dev/null)" != "verified" ]] ||
 		[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]] ||
 		[[ "$(cat "${fixture_repo}/unrelated-local-work")" != 'unrelated work must survive recovery' ]]; then
@@ -1643,6 +1665,8 @@ main() {
 		test_update_preserves_manual_sections
 		teardown
 		test_update_recovers_dirty_profile_publication_worktree
+		teardown
+		test_update_recovers_dirty_profile_publication_worktree 0600
 		teardown
 		test_update_dry_run_is_canonical_safe
 		teardown
