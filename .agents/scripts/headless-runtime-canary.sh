@@ -244,11 +244,14 @@ _execute_canary_probe() {
 		canary_attach_args=(--attach "$_canary_url" --password "$_canary_pass")
 	fi
 	local -a canary_run_args=(run "What is two plus two? Answer with the single word: Four" \
-		-m "$canary_model" --agent build)
+		-m "$canary_model")
 	if _headless_opencode_profile_is_v2; then
+		# The V2 plugin replaces host `build` with its default Build+ primary;
+		# without canonical agents the host default remains. Omitting --agent
+		# probes whichever default primary the worker runtime actually has.
 		canary_run_args+=(--standalone)
 	else
-		canary_run_args+=(--dir "${HOME}")
+		canary_run_args+=(--agent build --dir "${HOME}")
 		if [[ ${#canary_attach_args[@]} -gt 0 ]]; then
 			canary_run_args+=("${canary_attach_args[@]}")
 		fi

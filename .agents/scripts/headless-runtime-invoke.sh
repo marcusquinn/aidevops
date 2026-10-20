@@ -233,10 +233,13 @@ _invoke_opencode_prepare_child_command() {
 		local -a new_cmd=()
 		local inserted=0
 		local arg=""
+		# OpenCode V1 accepts only uppercase levels; V2 accepts only lowercase.
+		local log_level="WARN"
+		[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" != "v2" ]] || log_level="warn"
 		for arg in "${_oc_cmd[@]}"; do
 			new_cmd+=("$arg")
 			if [[ "$arg" == "run" && "$inserted" -eq 0 ]]; then
-				new_cmd+=("--print-logs" "--log-level" "WARN")
+				new_cmd+=("--print-logs" "--log-level" "$log_level")
 				inserted=1
 			fi
 		done
