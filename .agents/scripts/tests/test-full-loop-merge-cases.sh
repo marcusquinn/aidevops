@@ -1116,6 +1116,62 @@ test_final_head_sha_read_admission_recovery() {
 		' _ "$scripts_dir" "$scenario" || result=$?
 		print_result "final head SHA read admission recovery: $scenario" "$result"
 	done
+	test_head_sha_real_wrapper_replay
+	return 0
+}
+
+# GH#35194 integration brief: the real shared wrapper sits inside the admission
+# wrapper. Fault only its response replay, not transport or the outer replay.
+# This proves a synthetic loss boundary, not the original incident's root cause.
+test_head_sha_real_wrapper_replay() {
+	local scripts_dir="" scenario="" result=0
+	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	for scenario in function-success command-success function-replay command-replay function-partial command-partial function-transport command-transport; do
+		result=0
+		bash -c '
+			set -euo pipefail
+			source "$1/shared-constants.sh"
+			source "$1/full-loop-helper-merge.sh"
+			scenario="$2" rc=0
+			calls_file=$(mktemp) err_file=$(mktemp)
+			printf "0" >"$calls_file"
+			# Isolate admission/telemetry from runner state, retaining both real
+			# output-capture wrappers and their nested command substitutions.
+			_gh_timeout_cooldown_preflight() { return 0; }
+			_gh_record_timeout_if_needed() { return 0; }
+			_gh_record_cooldown_response_if_needed() { return 0; }
+			_head_transport() {
+				printf "%s" "$(( $(<"$calls_file") + 1 ))" >"$calls_file"
+				printf "%s\n" 0123456789abcdef0123456789abcdef01234567
+				[[ "$scenario" != *-transport ]] || return 23
+				return 0
+			}
+			gh() { _head_transport; return $?; }
+			if [[ "$scenario" == command-* ]]; then
+				unset -f gh
+				_gh_run_bounded_command() { _head_transport; return $?; }
+			fi
+			cat() {
+				local path="${1:-}"
+				if [[ "$path" == *aidevops-gh-response.* && "$scenario" != *-success ]]; then
+					[[ "$scenario" != *-partial ]] || printf "01234567"
+					return 74
+				fi
+				command cat "$@"
+				return $?
+			}
+			_merge_read_head_sha_with_admission_retry 42 testorg/testrepo 2>"$err_file" || rc=$?
+			calls=$(<"$calls_file") diagnostics=$(<"$err_file")
+			rm -f "$calls_file" "$err_file"
+			[[ "$calls" -eq 1 ]] || exit 1
+			case "$scenario" in
+			*-success) [[ "$rc" -eq 0 && "$FULL_LOOP_MERGE_READ_HEAD_SHA" == 0123456789abcdef0123456789abcdef01234567 ]] ;;
+			*-transport) [[ "$rc" -eq 23 && -z "$FULL_LOOP_MERGE_READ_HEAD_SHA" ]] ;;
+			*) [[ "$rc" -eq 74 && -z "$FULL_LOOP_MERGE_READ_HEAD_SHA" && "$diagnostics" == *"Could not replay captured GitHub transport output (exit 74)"* ]] ;;
+			esac
+		' _ "$scripts_dir" "$scenario" || result=$?
+		print_result "real transport wrapper head replay: $scenario" "$result"
+	done
 	return 0
 }
 
