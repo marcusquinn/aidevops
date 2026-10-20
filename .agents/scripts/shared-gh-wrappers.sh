@@ -586,6 +586,22 @@ _gh_timeout_budget_seconds() {
 	return 0
 }
 
+# GH#35194: a successful transport is not a successful read if local response
+# replay fails. Preserve failed transport status; never retry transport here.
+# Write status semantics remain unchanged to avoid replaying an applied mutation.
+_gh_replay_transport_output() {
+	local op_class="$1"
+	local transport_rc="$2"
+	local out_file="$3"
+	local replay_rc=0
+	cat "$out_file" 2>/dev/null || replay_rc=$?
+	if [[ "$op_class" == read && "$replay_rc" -ne 0 ]]; then
+		printf 'Could not replay captured GitHub transport output (exit %s)\n' "$replay_rc" >&2
+		[[ "$transport_rc" -ne 0 ]] || transport_rc="$replay_rc"
+	fi
+	return "$transport_rc"
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
@@ -617,7 +633,7 @@ _gh_with_timeout() {
 	local cmd="${1:-}"
 	local err_file=""
 	local out_file=""
-	local rc=0 replay_rc=0
+	local rc=0
 	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
 		err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || {
 			if [[ "$op_class" == "write" ]]; then
@@ -642,15 +658,7 @@ _gh_with_timeout() {
 			"$@" >"$out_file" 2>"$err_file" || rc=$?
 		fi
 		_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
-		cat "$out_file" 2>/dev/null || {
-			replay_rc=$?
-			# GH#35194: successful transport must not hide a lost/partial read.
-			# Preserve failed transport status and never retry transport here.
-			if [[ "$op_class" == read ]]; then
-				printf 'Could not replay captured GitHub transport output (exit %s)\n' "$replay_rc" >&2
-				[[ "$rc" -ne 0 ]] || rc="$replay_rc"
-			fi
-		}
+		_gh_replay_transport_output "$op_class" "$rc" "$out_file" || rc=$?
 		cat "$err_file" >&2 2>/dev/null || true
 		_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
@@ -676,13 +684,7 @@ _gh_with_timeout() {
 	fi
 	_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
-		cat "$out_file" 2>/dev/null || {
-			replay_rc=$?
-			if [[ "$op_class" == read ]]; then
-				printf 'Could not replay captured GitHub transport output (exit %s)\n' "$replay_rc" >&2
-				[[ "$rc" -ne 0 ]] || rc="$replay_rc"
-			fi
-		}
+		_gh_replay_transport_output "$op_class" "$rc" "$out_file" || rc=$?
 		cat "$err_file" >&2 2>/dev/null || true
 		_gh_record_transport_privacy_block "$op_class" "$rc" "$err_file"
 		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
