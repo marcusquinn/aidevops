@@ -384,6 +384,9 @@ _cloudron_monitor_files_scope() {
 	if [[ "$has_changelog" == false || -f "${repo_path}/CHANGELOG.md" ]]; then
 		printf -- "- ${tick}%s${tick}\n" "CHANGELOG.md"
 	fi
+	if [[ -n "$repo_path" && -f "${repo_path}/test/package-test.sh" ]]; then
+		printf -- "- ${tick}%s${tick}\n" "test/package-test.sh"
+	fi
 	return 0
 }
 
@@ -414,6 +417,7 @@ _cloudron_monitor_create_issue() {
 	local manifest_rel="${6:-CloudronManifest.json}"
 	local repo_path="${7:-}"
 	local files_scope=""
+	local package_test_note=""
 	local body_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local body_file=""
 	local issue_wrapper="${CLOUDRON_PACKAGE_ISSUE_WRAPPER:-gh_create_issue}"
@@ -422,6 +426,9 @@ _cloudron_monitor_create_issue() {
 	mkdir -p "$body_dir"
 	body_file=$(mktemp "${body_dir}/cloudron-package-monitor.XXXXXX") || return 1
 	files_scope=$(_cloudron_monitor_files_scope "$manifest_rel" "$repo_path")
+	if [[ -n "$repo_path" && -f "${repo_path}/test/package-test.sh" ]]; then
+		package_test_note="- \`test/package-test.sh\`: version and digest assertions that must track the bump."
+	fi
 	cat >"$body_file" <<EOF
 <!-- aidevops:cloudron-package-monitor ${fingerprint} -->
 <!-- aidevops:brief-schema=v2 -->
@@ -440,6 +447,7 @@ ${files_scope}
 - \`${manifest_rel}\`: package and upstream version metadata.
 - Dockerfile: final Cloudron base image and packaged upstream artifacts.
 - \`CHANGELOG\` (Cloudron format) and/or \`CHANGELOG.md\`: package release notes before any version bump.
+${package_test_note}
 
 ## Acceptance criteria
 

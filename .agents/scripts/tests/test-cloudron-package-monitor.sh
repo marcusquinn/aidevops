@@ -367,6 +367,35 @@ test_monitor_deduplicates_and_preserves_source() {
 	return 0
 }
 
+test_monitor_scopes_package_tests_when_present() {
+	local presence=""
+	local home_dir=""
+	local repo_dir=""
+	local bin_dir=""
+	local log_file=""
+	local expected=0
+	for presence in absent present; do
+		home_dir="${TEST_ROOT}/scope-${presence}-home"
+		repo_dir="${TEST_ROOT}/scope-${presence}-package"
+		bin_dir="${TEST_ROOT}/scope-${presence}-bin"
+		log_file="${TEST_ROOT}/scope-${presence}-issues.log"
+		write_fake_commands "$bin_dir"
+		write_fixture "$home_dir" "$repo_dir"
+		if [[ "$presence" == present ]]; then
+			mkdir -p "${repo_dir}/test"
+			printf '# Package version and digest assertions\n' >"${repo_dir}/test/package-test.sh"
+			expected=2
+		fi
+		printf 'FROM cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e\n' >"${repo_dir}/Dockerfile"
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
+		assert_equal 2 "$(grep -c '^CALL ' "$log_file")" "both finding types generated with package tests ${presence}"
+		assert_equal "$expected" "$(grep -c "^- \`test/package-test.sh\`$" "$log_file" || true)" "package tests ${presence}: exact scope path on its own line"
+		assert_equal "$expected" "$(grep -c "^- \`test/package-test.sh\`: version and digest assertions that must track the bump\.$" "$log_file" || true)" "package tests ${presence}: matching file note"
+	done
+	return 0
+}
+
 test_monitor_uses_remote_manifest_and_fails_closed() {
 	local home_dir="${TEST_ROOT}/remote-home"
 	local repo_dir="${TEST_ROOT}/remote-package"
@@ -859,6 +888,7 @@ main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_scopes_package_tests_when_present
 	test_monitor_uses_remote_manifest_and_fails_closed
 	test_monitor_rejects_invalid_release_timeout
 	test_monitor_selects_configured_stream
