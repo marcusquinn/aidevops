@@ -361,7 +361,7 @@ test_update_preserves_manual_sections() {
 
 test_update_recovers_dirty_profile_publication_worktree() {
 	local fixture_mode="${1:-0644}"
-	local test_name="profile recovery preserves canonical untracked files with fixture mode $fixture_mode"
+	local test_name="legacy profile recovery preserves canonical untracked files with fixture mode $fixture_mode"
 	TEST_DIR=$(mktemp -d)
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
@@ -416,6 +416,7 @@ EOF
 		AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
 		AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
 		AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" \
+		AIDEVOPS_WORKTREE_RECOVERY_POLICY="preserve-v1" \
 		AIDEVOPS_PROFILE_WORKTREE_HELPER="$refusing_helper" \
 		PROFILE_MARKER_EVIDENCE="$marker_evidence" \
 		PROFILE_RECOVERY_FIXTURE_MODE="$fixture_mode" \

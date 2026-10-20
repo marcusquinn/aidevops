@@ -135,6 +135,18 @@ not filesystem metadata. An unmerged index cannot be represented by two patches.
 The legacy full-preservation comparison still refuses unsupported filesystem state.
 Code delivery does not deploy these changes or migrate/retire installed recovery stores.
 
+### External regression test
+
+The archive regression test runs outside capture. It checks capture artifacts and
+then runs the real restore CLI, comparing HEAD, the index, staged/unstaged binary
+patches and file contents. Its disposable repository drops the archived commit
+before restoration to prove the bundle supplies it. Capture itself never invokes
+this test or a trial restore.
+
+```bash
+python3 .agents/scripts/tests/test-worktree-archive-lifecycle.py ArchiveLifecycle.test_git_only_capture_contains_commits_and_two_patches_without_verification
+```
+
 ### Stage timings
 
 Producer capture and explicit legacy migration append private, best-effort JSONL

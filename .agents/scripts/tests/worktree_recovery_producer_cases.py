@@ -65,12 +65,47 @@ class ProducerCases:
         commands = {row["stage"] for row in rows if row["stage"].startswith("archive-cli.")}
         self.assertEqual(commands, {"archive-cli.archive"})
         self.assertTrue(self.work.is_dir())
+        self.assert_git_only_roundtrip(archive, head, options, staged, unstaged)
         (self.work / "intent-only").write_bytes(b"not staged\n")
         self.git(self.work, "add", "-N", "intent-only")
         rejected = self.producer("capture", self.work, self.archives, "test.sh", "git-only", check=False)
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn(b"intent-to-add", rejected.stderr)
         self.assertTrue(self.work.is_dir())
+
+    def assert_git_only_roundtrip(self, archive, head, options, staged, unstaged):
+        # This is an external regression test, never part of archive capture.
+        expected_index = self.git(self.work, "ls-files", "--stage", "-z")
+        expected_status = self.git(self.work, "status", "--porcelain=v1", "--untracked-files=no")
+        home = self.root / "restore-home"
+        targets = self.root / "restore-worktrees"
+        home.mkdir()
+        targets.mkdir()
+        self.env.update(HOME=str(home), AIDEVOPS_WORKTREE_BASE_DIR=str(targets),
+                        AIDEVOPS_REPOS_FILE=str(home / "repos.json"),
+                        WORKTREE_REGISTRY_DIR=str(home / "registry"),
+                        WORKTREE_REGISTRY_DB=str(home / "registry/registry.db"))
+        # Only the disposable fixture is pruned: prove restore imports the saved
+        # commit from its bundle instead of borrowing an already-present object.
+        base = self.git(self.repo, "rev-parse", "develop").decode().strip()
+        self.git(self.repo, "update-ref", "refs/heads/feature/fixture", base)
+        self.git(self.repo, "reflog", "expire", "--expire=now", "--all")
+        self.git(self.repo, "gc", "--prune=now")
+        missing = self.run_command("git", "-C", self.repo, "cat-file", "-e", head.decode(), check=False)
+        self.assertNotEqual(missing.returncode, 0)
+        restored = targets / "repo-restored"
+        self.helper("restore", archive, "--target", restored)
+        self.assertEqual(self.git(restored, "rev-parse", "HEAD").strip(), head)
+        self.assertEqual(self.git(restored, "ls-files", "--stage", "-z"), expected_index)
+        self.assertEqual(self.git(restored, "diff", "--cached", *options), staged)
+        self.assertEqual(self.git(restored, "diff", *options), unstaged)
+        self.assertEqual(self.git(restored, "status", "--porcelain=v1", "--untracked-files=no"), expected_status)
+        for name in ("committed.txt", "mixed.txt", "binary.bin", "new-staged", "new-name", "run.sh"):
+            self.assertEqual((restored / name).read_bytes(), (self.work / name).read_bytes())
+        for name in ("staged-delete", "unstaged-delete", "old-name", "untracked", "cache.ignored"):
+            self.assertFalse((restored / name).exists())
+        self.assertEqual(self.git(restored, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+                         self.git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
 
     def test_manual_cli_removal_and_independent_restore(self):
         scripts = Path(producer_engine.__file__).parent

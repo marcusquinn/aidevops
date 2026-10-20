@@ -116,6 +116,27 @@ def operation(name):
     return decorate
 
 
+def parse_record(line):
+    row = json.loads(line)
+    if not isinstance(row, dict) or row.get("schema") != "aidevops.recovery-timing/v1":
+        raise ValueError("unknown record")
+    if not all(isinstance(row.get(key), str) for key in
+               ("attempt_id", "stage_id", "stage", "operation", "event")):
+        raise ValueError("invalid record identity")
+    identity = (row["attempt_id"], row["stage_id"])
+    if row["event"] == "start":
+        return identity, None
+    duration = row.get("duration_ms")
+    if row["event"] != "finish" or row.get("status") not in ("success", "failed"):
+        raise ValueError("invalid completion")
+    if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0:
+        raise ValueError("invalid completion")
+    repo = row.get("repo", "unknown")
+    if not isinstance(repo, str):
+        raise ValueError("invalid repository")
+    return identity, ((repo, row["operation"], row["stage"], row["status"]), duration)
+
+
 def summary(path):
     """Report measured completions only; incomplete and malformed records stay explicit."""
     groups = defaultdict(list)
@@ -135,27 +156,15 @@ def summary(path):
             if len(line) > 16384:
                 raise ValueError("oversized timing record")
             try:
-                row = json.loads(line)
-                if not isinstance(row, dict) or row.get("schema") != "aidevops.recovery-timing/v1":
-                    raise ValueError("unknown record")
-                if not all(isinstance(row.get(key), str) for key in
-                           ("attempt_id", "stage_id", "stage", "operation", "event")):
-                    raise ValueError("invalid record identity")
-                identity = (row["attempt_id"], row["stage_id"])
-                if row["event"] == "start":
+                identity, completion = parse_record(line)
+                if completion is None:
                     starts.add(identity)
                     continue
-                duration = row.get("duration_ms")
-                if (row["event"] != "finish" or row.get("status") not in ("success", "failed")
-                        or type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0):
-                    raise ValueError("invalid completion")
-                repo = row.get("repo", "unknown")
-                if not isinstance(repo, str):
-                    raise ValueError("invalid repository")
                 if identity in finishes:
                     raise ValueError("duplicate completion")
                 finishes.add(identity)
-                groups[(repo, row["operation"], row["stage"], row["status"])].append(duration)
+                key, duration = completion
+                groups[key].append(duration)
             except (ValueError, TypeError):
                 invalid += 1
         else:
