@@ -174,6 +174,11 @@ export function detectOpenCodeV2RuntimeVersion({ execPath = process.execPath, en
   return "";
 }
 
+function hostRuntimeVersion(ctx) {
+  const reported = ctx.app?.version;
+  return typeof reported === "string" && reported ? reported : detectOpenCodeV2RuntimeVersion();
+}
+
 function v1Model(model) {
   return {
     providerID: model?.providerID || "",
@@ -319,7 +324,7 @@ export async function setupAidevopsV2(ctx) {
   recordPluginHealthStage("imported", { runtime: "v2" });
   initObservability({
     aidevopsVersion: currentAidevopsVersion(),
-    runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+    runtimeVersion: hostRuntimeVersion(ctx),
     adapterId: "opencode-v2",
   });
 
@@ -397,7 +402,7 @@ export async function setupAidevopsV2(ctx) {
       shouldInjectGreeting,
       initializedAtMs,
       runtimeName: "OpenCode",
-      runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+      runtimeVersion: hostRuntimeVersion(ctx),
       // The V2 config AGENTS.md is the framework guide, not the V1 greeting
       // fallback, so the plugin block stays the greeting source (GH#32444, GH#32498).
       greetingEnabled,
@@ -453,7 +458,7 @@ export async function setupAidevopsV2(ctx) {
     // recent images, in front of the compaction checkpoint.
     const compactionReplay = createV2CompactionReplay({
       storeDir: join(WORKSPACE_DIR, "compaction-replay"),
-      hostVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+      hostVersion: hostRuntimeVersion(ctx),
       qualityLog,
     });
     await register(registrations, ctx.session.hook("prompt", async (event) => {
