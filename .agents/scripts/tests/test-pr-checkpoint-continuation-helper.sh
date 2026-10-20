@@ -561,6 +561,49 @@ else
 fi
 STUB_PR_JSON="$(valid_pr_json)"
 
+# GH#35174: an absent ready lease leaves the middle evidence field empty.
+# Keep these posts separate from the existing fixtures' fixed post counts.
+STUB_POST_DIR="${TEST_ROOT}/posts-no-attempt"
+mkdir -p "$STUB_POST_DIR"
+STUB_COMMENTS_JSON="$(blocked_comments | jq 'map(map(select(.id != 20)))')"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:* && "$(post_count)" == 1 ]] &&
+	grep -Fq 'release_comment=21 attempt=unknown' "${STUB_POST_DIR}/post-1" &&
+	grep -Fq 'approval-template owner/repo 42 123 21 attempt:<ORIGINAL_ID>' "${STUB_POST_DIR}/post-1"; then
+	print_result "blocked release without ready lease preserves the unknown attempt" 0
+else
+	print_result "blocked release without ready lease preserves the unknown attempt" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+posted_body="$(<"${STUB_POST_DIR}/post-1")"
+STUB_COMMENTS_JSON="$(jq --arg body "$posted_body" '. + [[
+	{id:22,author_association:"OWNER",user:{login:"pulse-runner"},body:$body}
+]]' <<<"$STUB_COMMENTS_JSON")"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == 1 ]]; then
+	print_result "blocked release without ready lease deduplicates the second pulse" 0
+else
+	print_result "blocked release without ready lease deduplicates the second pulse" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+for rearm in head release; do
+	if [[ "$rearm" == head ]]; then
+		STUB_PR_JSON="${STUB_PR_JSON//$blocked_head/2222222222222222222222222222222222222222}"
+	else
+		STUB_PR_JSON="$(valid_pr_json)"
+		STUB_COMMENTS_JSON="$(jq '. + [[
+			{id:23,author_association:"COLLABORATOR",user:{login:"worker-bot"},body:"CLAIM_RELEASED reason=blocked runner=worker-bot"}
+		]]' <<<"$STUB_COMMENTS_JSON")"
+	fi
+	before_posts="$(post_count)"
+	if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+		[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:* && "$(post_count)" == "$((before_posts + 1))" ]]; then
+		print_result "new ${rearm} re-arms blocked attention without ready lease" 0
+	else
+		print_result "new ${rearm} re-arms blocked attention without ready lease" 1 "output=${output:-missing}"
+	fi
+done
+STUB_POST_DIR="${TEST_ROOT}/posts"
+STUB_PR_JSON="$(valid_pr_json)"
+
 # GH#33839: production launchers close the released attempt's lease with a
 # terminal DISPATCH_LEASE after CLAIM_RELEASED. That is not new ownership.
 closing_lease_comments() {

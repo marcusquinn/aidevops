@@ -578,7 +578,7 @@ _pcc_approval_template() {
 # interactive claim) that would mean someone already owns the objective. The
 # released attempt's own closing terminal lease is not ownership (GH#33839).
 # Args: $1=comments JSON (paginated or flat), $2=runner login, $3=dedup key
-# Output: release_id<TAB>attempt<TAB>already_posted(true|false)
+# Output: release_id<TAB>attempt (or - when absent)<TAB>already_posted(true|false)
 # Returns: 0 when a blocked checkpoint release owns the draft, 1 otherwise
 #######################################
 _pcc_blocked_release_evidence() {
@@ -595,7 +595,7 @@ _pcc_blocked_release_evidence() {
 		| ([$c[] | select(.id < $release.id and login == $runner) | body_lines
 			| select(startswith("DISPATCH_LEASE ") and (field("phase") == "ready"))
 			| field("attempt_id") | select(startswith("attempt:"))] | last // "") as $attempt
-		| [($release.id | tostring), $attempt,
+		| [($release.id | tostring), (if $attempt == "" then "-" else $attempt end),
 			(any($c[]; (.body // "") | contains($key + " release=" + ($release.id | tostring))) | tostring)]
 		| @tsv
 	' <<<"$comments"
@@ -690,6 +690,8 @@ _pcc_blocked_attention() {
 		return 1
 	}
 	IFS=$'\t' read -r release_id attempt posted <<<"$evidence"
+	# IFS whitespace collapses empty TSV fields; decode the absent-attempt sentinel.
+	[[ "$attempt" != "-" ]] || attempt=""
 	[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || return 1
 	if [[ "$posted" == "true" ]]; then
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s\n' \
