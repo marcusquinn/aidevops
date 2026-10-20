@@ -19,9 +19,9 @@ import tempfile
 import time
 from typing import Set, Tuple
 
+from worktree_recovery_cache_identity import approved_root_directory
 from worktree_recovery_cache_policy_common import (
     git_output,
-    ordinary_directory,
     require,
     root_identity,
     safe_root,
@@ -61,7 +61,7 @@ def copy_without_caches(source: Path, destination: Path, git_bin: str) -> int:
             parts = (relative / name).parts
             if safe_root("/".join(parts)) != parts:
                 continue
-            if ordinary_directory(source, parts) is None:
+            if approved_root_directory(source, parts) is None:
                 continue
             if disposable_cache(source, "/".join(parts), git_bin):
                 excluded.add(parts)
@@ -134,7 +134,7 @@ def matching_copy(source: Path, archive: Path, git_bin: str) -> int:
                     continue
                 if (
                     safe_root("/".join(parts)) == parts
-                    and ordinary_directory(source, parts) is not None
+                    and approved_root_directory(source, parts) is not None
                     and disposable_cache(source, "/".join(parts), git_bin)
                 ):
                     dirs.remove(name)

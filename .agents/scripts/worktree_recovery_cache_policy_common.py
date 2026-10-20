@@ -32,21 +32,44 @@ SAFE_COMPONENTS = {
     ".vite",
     "__pycache__",
     ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
 }
 SAFE_CHAINS = {(".yarn", "cache"), (".next", "cache"), (".nuxt", "cache")}
-SAFE_REPOSITORY_ROOTS = {".codegraph"}
-SAFE_NESTED_ROOTS = SAFE_COMPONENTS | {"/".join(chain) for chain in SAFE_CHAINS}
+SAFE_REPOSITORY_ROOTS = {".codegraph", ".astro"}
+# Generic names are approved only when a tool-written identity file proves the
+# root's origin; the name alone is not evidence that the bytes are regenerable.
+MARKED_COMPONENTS = {".venv": "pyvenv.cfg", "venv": "pyvenv.cfg"}
+EGG_INFO_SUFFIX = ".egg-info"
+EGG_INFO_MARKER = "PKG-INFO"
+SAFE_NESTED_ROOTS = (
+    SAFE_COMPONENTS
+    | set(MARKED_COMPONENTS)
+    | {"/".join(chain) for chain in SAFE_CHAINS}
+)
 SAFE_ROOT_PATTERN = re.compile(
-    r"^(?P<root>(?:\.codegraph|(?:[^/]+/)*?(?:"
+    r"^(?P<root>(?:"
+    + "|".join(re.escape(root) for root in sorted(SAFE_REPOSITORY_ROOTS))
+    + r"|(?:[^/]+/)*?(?:"
     + "|".join(re.escape(root) for root in sorted(SAFE_NESTED_ROOTS))
+    + r"|[^/]+"
+    + re.escape(EGG_INFO_SUFFIX)
     + r")))(?:/|$)"
 )
 
 
-def safe_root(raw_path: str) -> Optional[Tuple[str, ...]]:
-    """Return the narrow recognised cache root containing a status path."""
+def relative_parts(raw_path: str) -> Optional[Tuple[str, ...]]:
+    """Split a repository-relative status path, rejecting escapes."""
     parts = PurePosixPath(raw_path.rstrip("/")).parts
     if not parts or parts[0] in {"/", ".", ".."} or ".." in parts:
+        return None
+    return parts
+
+
+def safe_root(raw_path: str) -> Optional[Tuple[str, ...]]:
+    """Return the narrow recognised cache root containing a status path."""
+    parts = relative_parts(raw_path)
+    if parts is None:
         return None
     match = SAFE_ROOT_PATTERN.match("/".join(parts))
     return tuple(match.group("root").split("/")) if match is not None else None

@@ -8,13 +8,18 @@ import shutil
 import time
 from typing import Optional, Set, Tuple
 
+from worktree_recovery_cache_identity import (
+    approved_root_directory,
+    framework_state_path,
+    ordinary_state_entry,
+)
 from worktree_recovery_cache_policy_common import (
     RootExpectation,
     allocated_bytes,
     exact_safe_root,
     git_output,
     ignored_untracked_root,
-    ordinary_directory,
+    relative_parts,
     require,
     root_identity,
     safe_root,
@@ -22,6 +27,25 @@ from worktree_recovery_cache_policy_common import (
 )
 
 CACHE_MANIFEST_SCHEMA = "aidevops.worktree-recovery-cache-manifest/v1"
+
+
+def regenerable_status_root(
+    state: bytes, relative_path: str, archive_root: Path
+) -> Optional[Tuple[str, ...]]:
+    """Return the checked root for an ignored regenerable path, else None."""
+    if state != b"!!":
+        return None
+    root_parts = safe_root(relative_path)
+    if (
+        root_parts is not None
+        and approved_root_directory(archive_root, root_parts) is not None
+    ):
+        return root_parts
+    if framework_state_path(relative_path) and ordinary_state_entry(
+        archive_root, relative_path
+    ):
+        return relative_parts(relative_path)
+    return None
 
 
 def status_bytes_have_user_data(
@@ -33,8 +57,8 @@ def status_bytes_have_user_data(
     """Return 0 for protected data, 1 for recognised caches only, 2 on uncertainty."""
     checked: Set[Tuple[str, ...]] = set()
     for state, relative_path in status_records(raw_status):
-        root_parts = safe_root(relative_path) if state == b"!!" else None
-        if root_parts is None or ordinary_directory(archive_root, root_parts) is None:
+        root_parts = regenerable_status_root(state, relative_path, archive_root)
+        if root_parts is None:
             return 0
         if root_parts in checked:
             continue
@@ -94,7 +118,7 @@ def manifest_candidate(
 ) -> Optional[dict]:
     """Build one candidate only after identity and Git safety proofs pass."""
     relative_root = "/".join(root_parts)
-    candidate = ordinary_directory(archive_root, root_parts)
+    candidate = approved_root_directory(archive_root, root_parts)
     try:
         require(candidate is not None, "cache root is not an ordinary directory")
         require(
@@ -203,7 +227,7 @@ def validate_original_root(
     try:
         require(root_parts is not None, "manifest path is not an exact safe root")
         require(time.time() < deadline_epoch, "validation deadline expired")
-        candidate = ordinary_directory(archive_root, root_parts)
+        candidate = approved_root_directory(archive_root, root_parts)
         require(candidate is not None, "cache root is not an ordinary directory")
         require(
             ignored_untracked_root(
@@ -304,7 +328,7 @@ def prune_cache_root(
         return 2
     if tracked:
         return 1
-    candidate = ordinary_directory(archive_root, root_parts)
+    candidate = approved_root_directory(archive_root, root_parts)
     if candidate is None:
         return 1
     try:
