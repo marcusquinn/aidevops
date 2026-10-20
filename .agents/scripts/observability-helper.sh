@@ -687,21 +687,37 @@ require_node() {
 	return 0
 }
 
-cmd_storage() {
+# Every retention subcommand prints exactly one JSON result. A successful exit
+# with no output means the CLI body never ran (GH#35206: a symlinked deploy
+# path defeated the entrypoint guard), so treat it as a failure.
+_run_retention_cli() {
+	local subcommand="$1"
+	shift
+	local output=""
+	local status=0
+
 	require_node || return 1
-	node "$RUNTIME_EVENTS_RETENTION" inventory --db "${OBS_DIR}/llm-requests.db" "$@"
+	output=$(node "$RUNTIME_EVENTS_RETENTION" "$subcommand" --db "${OBS_DIR}/llm-requests.db" "$@") || status=$?
+	if [[ "$status" -eq 0 && -z "$output" ]]; then
+		print_error "runtime-event retention ${subcommand} produced no result"
+		return 1
+	fi
+	[[ -z "$output" ]] || printf '%s\n' "$output"
+	return "$status"
+}
+
+cmd_storage() {
+	_run_retention_cli inventory "$@"
 	return $?
 }
 
 cmd_retention() {
-	require_node || return 1
-	node "$RUNTIME_EVENTS_RETENTION" archive --db "${OBS_DIR}/llm-requests.db" "$@"
+	_run_retention_cli archive "$@"
 	return $?
 }
 
 cmd_retention_maintenance() {
-	require_node || return 1
-	node "$RUNTIME_EVENTS_RETENTION" maintain --db "${OBS_DIR}/llm-requests.db" "$@"
+	_run_retention_cli maintain "$@"
 	return $?
 }
 

@@ -170,6 +170,14 @@ remain unknown; a verified archive or pinned state row is required before any
 byte is classified as protected, and source bytes are never called reclaimable
 before the archive transaction commits.
 
+Inventory aggregates scan the whole `runtime_events` table, so they use a
+separate 300-second budget (`AIDEVOPS_RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS`,
+1-3600). Failures report fixed reasons: `inventory-timeout`,
+`schema-unavailable`, or `inventory-unavailable`. A retention command that exits
+0 without a JSON result fails instead of passing silently. Node CLIs run through
+the symlinked deploy path use `entrypoint-guard.mjs`
+(`isDirectEntrypoint(import.meta.url)`), never a raw `argv[1]` comparison.
+
 Full-loop keeps authoritative resumable state in `.agents/loop-state/full-loop.local.state` and appends local transition evidence to `full-loop-events.jsonl`. Schema v2 records the run ID, state revision, phase status/start/end/attempt, terminal evidence, next safe action, observed executor status/PID/heartbeat, manual resumes, reused subagent units, and duplicate work avoided. Status must validate executor liveness instead of trusting a stale PID. These records drive lifecycle recovery; runtime events and plugin cost/tool data remain fail-open reporting evidence. Aggregate phase wall time, active compute, CI wait/repair, release/cleanup time, calls by tier, retries/outcomes, reuse, false-positive gates, and manual resumes when producing performance reports.
 
 ### Worker progress-blocker log

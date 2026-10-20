@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomUUID } from "node:crypto";
+import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
 import { runGuardian, spawnGuardian, stopGuardian } from "./playwriter-relay-guardian.mjs";
 import {
   MARKER_NAME,
@@ -315,8 +316,7 @@ export async function main(argv = process.argv.slice(2), environment = process.e
   return supervise(command, withRelayToken(withTelemetryOptOut(environment)));
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
-if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
+if (isDirectEntrypoint(import.meta.url)) {
   main()
     .then((code) => { process.exitCode = code; })
     .catch((error) => {

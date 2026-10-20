@@ -4,9 +4,9 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
+import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
 import {
   HIGGSFIELD_REAUTHORIZATION_MESSAGE,
   HiggsfieldTokenManager,
@@ -169,8 +169,7 @@ export async function runStdioProxy({
   return 0;
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
-if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
+if (isDirectEntrypoint(import.meta.url)) {
   runStdioProxy().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : "Higgsfield MCP proxy failed"}\n`);
     process.exitCode = 1;

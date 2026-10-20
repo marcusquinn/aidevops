@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
 
 /** Summarize observer records without interpreting untrusted text as a verdict. */
 export function summarize(records) {
@@ -206,7 +206,7 @@ export function summarizeRun(root) {
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isDirectEntrypoint(import.meta.url)) {
   try {
     if (process.argv.length === 4 && process.argv[2] === "--run") {
       console.log(JSON.stringify(summarizeRun(process.argv[3]), null, 2));

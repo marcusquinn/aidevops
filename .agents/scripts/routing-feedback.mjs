@@ -4,8 +4,7 @@
 
 /** Provider-neutral routing outcome analysis shared by plugins and shell flows. */
 
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
 import { runRoutingFeedbackCommand } from "./routing-feedback-cli.mjs";
 import { summarizeRoutingMetrics } from "./routing-feedback-summary.mjs";
 
@@ -180,8 +179,7 @@ export function runRoutingFeedbackCli(argv = process.argv.slice(2)) {
   });
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
-if (invokedPath === resolve(fileURLToPath(import.meta.url))) {
+if (isDirectEntrypoint(import.meta.url)) {
   const output = runRoutingFeedbackCli();
   if (output) process.stdout.write(`${output}\n`);
 }

@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import {resolve} from "node:path";
-import {pathToFileURL} from "node:url";
+import {isDirectEntrypoint} from "./entrypoint-guard.mjs";
 import {canonicalJson, TeamInterfaceError} from "./team-interface-common.mjs";
 import {diagnostic} from "./team-interface-diagnostics.mjs";
 import {runDetect, runDoctor, runPlan, runProviders, runStatus} from "./team-interface-runtime-commands.mjs";
@@ -55,12 +54,7 @@ export async function main(argumentsList = process.argv.slice(2)) {
   return runPlan(options);
 }
 
-function isDirectExecution() {
-  if (!process.argv[1]) return false;
-  return import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
-}
-
-if (isDirectExecution()) {
+if (isDirectEntrypoint(import.meta.url)) {
   try {
     const result = await main();
     process.stdout.write(`${canonicalJson(result)}\n`);

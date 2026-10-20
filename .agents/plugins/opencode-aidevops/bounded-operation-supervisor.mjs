@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
 
+import { isDirectEntrypoint } from "../../scripts/entrypoint-guard.mjs";
 import { createProcessTreeTracker, signalEach } from "./bounded-operation-process-tree.mjs";
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -196,6 +196,6 @@ export async function runSupervisor() {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isDirectEntrypoint(import.meta.url)) {
   process.exit(await runSupervisor());
 }

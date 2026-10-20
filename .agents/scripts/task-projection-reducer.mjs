@@ -4,6 +4,7 @@
 
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
 
 const TASK_ID = /^(?:t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17}){0,8}|to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17}){0,8})$/;
 const TARGET_CHECKBOX = new Map([
@@ -58,6 +59,6 @@ export function run(args = process.argv.slice(2)) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectEntrypoint(import.meta.url)) {
   try { process.exitCode = run(); } catch (error) { process.stderr.write(`task-projection-reducer: ${error.message}\n`); process.exitCode = 1; }
 }

@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
 import { runCli } from "./runtime-events-cli.mjs";
 import { normaliseEventType, normaliseIdentifier } from "./runtime-events-identifiers.mjs";
 import { validateObjectiveRuntimeEvent } from "./runtime-events-objectives.mjs";
@@ -269,7 +269,7 @@ export function appendProjectedState(input, mode = "auto", options = {}) {
   return null;
 }
 
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+if (isDirectEntrypoint(import.meta.url)) {
   runCli(process.argv.slice(2), {
     appendProjectedState,
     appendRuntimeEventSync,

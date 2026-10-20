@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
 import {
   commandAddCase,
   commandInit,
@@ -118,8 +118,7 @@ function printResult(result) {
   else process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMain) {
+if (isDirectEntrypoint(import.meta.url)) {
   try {
     printResult(runCLI());
   } catch (error) {
