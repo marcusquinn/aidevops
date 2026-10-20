@@ -21,7 +21,7 @@ WORKTREE_RECOVERY_APPLY_JSON_TYPE_STRING="string"
 WORKTREE_RECOVERY_APPLY_JSON_TYPE_ARRAY='array'
 WORKTREE_RECOVERY_APPLY_DIGEST_PATTERN='^sha256:[0-9a-f]{64}$'
 WORKTREE_RECOVERY_APPLY_TRASH_SEGMENT="/.retention-trash/"
-WORKTREE_RECOVERY_CACHE_PLAN_SCHEMA="aidevops.worktree-recovery-cache-prune-plan/v1"
+WORKTREE_RECOVERY_CACHE_PLAN_SCHEMA="aidevops.worktree-recovery-cache-prune-plan/v2"
 WORKTREE_RECOVERY_CACHE_POLICY_SCHEMA="aidevops.worktree-recovery-cache-prune-policy/v1"
 WORKTREE_RECOVERY_CACHE_POLICY_ID="approved-regenerable-roots-v1"
 WORKTREE_RECOVERY_CACHE_TRANSACTION_SCHEMA="aidevops.worktree-recovery-cache-prune-transaction/v1"
@@ -1314,9 +1314,10 @@ _worktree_recovery_cache_validate_plan_shape() {
 			($entry.evidence | type == $object_type) and $entry.evidence.git == "dirty" and
 			$entry.evidence.worktree == $clear and $entry.evidence.registry == $clear and
 			$entry.evidence.claim == $clear and $entry.evidence.process == $clear and
-			$entry.evidence.external.commit == "merged" and
 			$entry.evidence.external.open_pr == $clear and
-			$entry.evidence.external.task == "closed" and
+			($entry.retention.required_seconds | type == $number_type and . >= 86400 and . == floor) and
+			($entry.retention.age_seconds | type == $number_type and . >= $entry.retention.required_seconds and . == floor) and
+			($entry.retention.age_basis | type == $string_type and length > 0) and
 			$entry.reasons == ["approved-regenerable-cache-root"]) and
 		([.entries[].original_path] | length == (unique | length)) and
 		([.entries[].path_identity] | length == (unique | length))
@@ -1431,7 +1432,7 @@ _worktree_recovery_cache_transaction_entries() {
 			identity:{recovery:$entry.recovery_identity,path_identity:$entry.path_identity,
 				relative_path:$entry.relative_path,archive_path:$entry.archive_path},
 			evidence:$entry.evidence,reasons:$entry.reasons,
-			maintenance:{operation:"cache-prune",relative_path:$entry.relative_path},
+			maintenance:{operation:"cache-prune",relative_path:$entry.relative_path,retention:$entry.retention},
 			state:$planned,observed_allocated_bytes:null,post_delete_allocated_bytes:null,
 			staged_at:null,removal_started_at:null,removed_at:null,outcome:$pending})
 	'
@@ -1484,6 +1485,38 @@ _worktree_recovery_apply_run_function_before_epoch() {
 	return $?
 }
 
+# Same created-at/legacy bucket-mtime age contract as maintenance selection.
+# Bind the source as well as elapsed age so touching a legacy bucket invalidates authority.
+_worktree_recovery_cache_age_evidence() {
+	local entry_json="$1"
+	local bucket_path=""
+	local created_at=""
+
+	bucket_path=$(printf '%s\n' "$entry_json" | jq -r '.path') || return 1
+	created_at=$(printf '%s\n' "$entry_json" | jq -r '.identity.created_at // empty') || return 1
+	python3 - "$bucket_path" "$created_at" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+try:
+    bucket, raw = pathlib.Path(sys.argv[1]), sys.argv[2]
+    if raw:
+        created = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        basis = "created-at:" + raw
+    else:
+        stat = bucket.stat()
+        created = datetime.datetime.fromtimestamp(stat.st_mtime, datetime.timezone.utc)
+        basis = "bucket-mtime-ns:" + str(stat.st_mtime_ns)
+    age = max(0, int((datetime.datetime.now(datetime.timezone.utc) - created).total_seconds()))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(1)
+print(json.dumps({"age_seconds": age, "age_basis": basis}))
+PY
+	return $?
+}
+
 _worktree_recovery_cache_validate_mutable_evidence() {
 	local row_json="$1"
 	local deadline_epoch="$2"
@@ -1492,14 +1525,26 @@ _worktree_recovery_cache_validate_mutable_evidence() {
 	local current_identity=""
 	local current_evidence=""
 	local bucket_path=""
+	local retention_json=""
+	local current_age=""
 
 	bucket_path=$(printf '%s\n' "$row_json" | jq -r '.bucket_path // .identity.recovery.bucket_path') || return 1
+	# Cache-only plans must honor the same migration fence as whole archives.
+	[[ ! -e "${bucket_path%/*}/.compact-migrations/${bucket_path##*/}" &&
+		! -L "${bucket_path%/*}/.compact-migrations/${bucket_path##*/}" ]] || return 1
 	expected_identity=$(printf '%s\n' "$row_json" | jq -cS '.recovery_identity // .identity.recovery') || return 1
 	expected_evidence=$(printf '%s\n' "$row_json" | jq -cS '.evidence') || return 1
 	current_identity=$(_worktree_recovery_apply_run_function_before_epoch "$deadline_epoch" \
 		_worktree_recovery_plan_identity_json "$bucket_path") || return 1
 	current_identity=$(printf '%s\n' "$current_identity" | jq -cS '.') || return 1
 	[[ "$current_identity" == "$expected_identity" ]] || return 1
+	retention_json=$(printf '%s\n' "$row_json" | jq -c '.retention // .maintenance.retention') || return 1
+	current_age=$(_worktree_recovery_cache_age_evidence \
+		"$(jq -cn --arg path "$bucket_path" --argjson identity "$current_identity" \
+		'{path:$path,identity:$identity}')") || return 1
+	printf '%s\n' "$current_age" | jq -e --argjson bound "$retention_json" '
+		.age_basis == $bound.age_basis and .age_seconds >= $bound.age_seconds and
+		.age_seconds >= $bound.required_seconds' >/dev/null || return 1
 	current_evidence=$(AIDEVOPS_WORKTREE_RECOVERY_EVIDENCE_DEADLINE_EPOCH="$deadline_epoch" \
 		_worktree_recovery_apply_run_function_before_epoch "$deadline_epoch" \
 		_worktree_recovery_plan_evidence_json "$current_identity" true) || return 1
@@ -1517,7 +1562,7 @@ _worktree_recovery_cache_validate_plan_evidence() {
 		_worktree_recovery_cache_validate_mutable_evidence \
 			"$row_json" "$deadline_epoch" || return 1
 	done < <(printf '%s\n' "$plan_json" | jq -c \
-		'[.entries[] | {bucket_path,recovery_identity,evidence}] | unique_by(.bucket_path)[]')
+		'[.entries[] | {bucket_path,recovery_identity,evidence,retention}] | unique_by(.bucket_path)[]')
 	return 0
 }
 

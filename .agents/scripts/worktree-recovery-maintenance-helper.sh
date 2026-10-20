@@ -752,6 +752,8 @@ _worktree_recovery_maintenance_attributed_entry_before_epoch() {
 _worktree_recovery_maintenance_collect_cache_roots() {
 	local entry_json="$1"
 	local deadline_epoch="$2"
+	local retention_seconds="$3"
+	local retention_json=""
 	local remaining_roots=0
 	local remaining_bytes=0
 	local archive_path=""
@@ -775,9 +777,15 @@ _worktree_recovery_maintenance_collect_cache_roots() {
 		(.identity.branch | startswith("refs/heads/")) and
 		.evidence.git == "dirty" and .evidence.worktree == $clear and
 		.evidence.registry == $clear and .evidence.claim == $clear and
-		.evidence.process == $clear and .evidence.external.commit == "merged" and
-		.evidence.external.open_pr == $clear and .evidence.external.task == "closed"
+		.evidence.process == $clear and
+		.evidence.external.open_pr == $clear
 	' >/dev/null 2>&1 || return 0
+	# Cache-only authority never promotes the protected archive to a candidate.
+	retention_json=$(_worktree_recovery_cache_age_evidence "$entry_json") || return 0
+	printf '%s\n' "$retention_json" | jq -e --argjson required "$retention_seconds" \
+		'.age_seconds >= $required' >/dev/null || return 0
+	retention_json=$(printf '%s\n' "$retention_json" | jq -c --argjson required "$retention_seconds" \
+		'. + {required_seconds:$required}') || return 1
 	remaining_roots=$((WORKTREE_RECOVERY_MAINTENANCE_CACHE_MAX_ROOTS - WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED))
 	remaining_bytes=$((WORKTREE_RECOVERY_MAINTENANCE_CACHE_MAX_BYTES - WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED_BYTES))
 	if [[ "$remaining_roots" -le 0 || "$remaining_bytes" -le 0 ]]; then
@@ -823,11 +831,12 @@ _worktree_recovery_maintenance_collect_cache_roots() {
 	elif [[ "$selected" -gt 0 ]]; then
 		printf '%s\n' "$manifest_json" | jq -c \
 			--arg role "$role" --arg bucket_path "$bucket_path" --arg archive_path "$archive_path" \
-			--argjson recovery_identity "$identity_json" --argjson evidence "$evidence_json" '
+			--argjson recovery_identity "$identity_json" --argjson evidence "$evidence_json" \
+			--argjson retention "$retention_json" '
 			.entries[] | {role:$role,bucket_path:$bucket_path,archive_path:$archive_path,
 			relative_path:.relative_path,original_path:($archive_path + "/" + .relative_path),
 			expected_allocated_bytes:.expected_allocated_bytes,path_identity:.path_identity,
-			recovery_identity:$recovery_identity,evidence:$evidence,
+			recovery_identity:$recovery_identity,evidence:$evidence,retention:$retention,
 			reasons:["approved-regenerable-cache-root"]}
 		' >>"$WORKTREE_RECOVERY_MAINTENANCE_TEMP_CACHE_SELECTED" || return 1
 	fi
@@ -843,13 +852,14 @@ _worktree_recovery_maintenance_record_protected_entry() {
 	local entry_json="$1"
 	local deadline_epoch="$2"
 	local reasons_path="$3"
+	local retention_seconds="$4"
 	local primary_reason=""
 
 	WORKTREE_RECOVERY_MAINTENANCE_PROTECTED=$((WORKTREE_RECOVERY_MAINTENANCE_PROTECTED + 1))
 	WORKTREE_RECOVERY_MAINTENANCE_PROTECTED_EVIDENCE=$((WORKTREE_RECOVERY_MAINTENANCE_PROTECTED_EVIDENCE + 1))
 	primary_reason=$(printf '%s\n' "$entry_json" | jq -r '.reasons[0] // empty') || return 1
 	if [[ "$primary_reason" == "archive-worktree-dirty" ]]; then
-		_worktree_recovery_maintenance_collect_cache_roots "$entry_json" "$deadline_epoch" || return 1
+		_worktree_recovery_maintenance_collect_cache_roots "$entry_json" "$deadline_epoch" "$retention_seconds" || return 1
 	fi
 	_worktree_recovery_maintenance_record_reason "$reasons_path" \
 		"$WORKTREE_RECOVERY_PLAN_DISPOSITION_PROTECTED" "$primary_reason"
@@ -940,7 +950,7 @@ _worktree_recovery_maintenance_scan() {
 			continue
 		elif [[ "$disposition" != "$WORKTREE_RECOVERY_PLAN_DISPOSITION_CANDIDATE" ]]; then
 			_worktree_recovery_maintenance_record_protected_entry \
-				"$entry_json" "$deadline_epoch" "$reasons_path" || return 1
+				"$entry_json" "$deadline_epoch" "$reasons_path" "$retention_seconds" || return 1
 			continue
 		fi
 		bytes=$(printf '%s\n' "$entry_json" | jq -r '.expected_allocated_bytes') || return 1

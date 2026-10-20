@@ -282,16 +282,16 @@ authority: provenance and publication proof remain mandatory for candidacy.
 
 Automatic maintenance may reclaim those same approved cache roots from an
 otherwise protected mixed archive without deleting the archive. This narrower
-path applies only when the archive is protected solely by a dirty Git state,
-source removal is complete, and commit, task, pull-request, worktree, registry,
-claim, and process evidence is terminal and clear. Each selected root must be
+path requires a dirty archive, completed source removal, an elapsed maintenance
+retention period (default 7 days), and clear worktree, registry, claim, and process
+evidence. Unmerged commits and open tasks may remain; PR evidence must be clear. Each root must be
 an exact ignored and untracked approved directory with no symlink component,
 tracked path, or hard-linked regular file. A bounded manifest records its
 device/inode identity and allocated bytes; uncertainty, deadline exhaustion,
 Git output beyond the fixed capture ceiling, or drift preserves the root.
 Ordinary recovery planning short-circuits once dirty; automatic maintenance completes
-downstream evidence, and cache apply repeats the snapshot. Terminal commit evidence
-must match the exact merged PR head OID, not only its branch; root sizing waits until eligible.
+downstream evidence even for unmerged commits, and cache apply repeats the snapshot.
+Age uses created-at or legacy bucket mtime; unknown age retains roots. Whole-archive rules stay unchanged.
 
 ## Confirmation-bound apply
 
@@ -409,10 +409,10 @@ scanned work reaches the current inventory size, the read-only plan is requested
 When protected mixed archives contain approved cache roots, one pass selects at
 most 100 roots and 5 GiB by default inside the same scan and deadline budget.
 Cache pruning takes precedence over whole-bucket deletion for that pass and uses
-its own `aidevops.worktree-recovery-cache-prune-plan/v1` plan and
+its own `aidevops.worktree-recovery-cache-prune-plan/v2` plan (v1 is rejected) and
 `cache-automatic-sha256:` authority. Apply revalidates archive and root
 identities, ignored/untracked state, allocated bytes, symlink and hard-link
-safety, and all terminal claim, process, task, pull-request, and commit evidence
+safety, bound retention age/source, and all claim, process, task, PR, and commit evidence
 both before the transaction and immediately before each rename. The initial
 apply receives the scan's absolute deadline rather than starting a new budget;
 an exhausted pass defers every selected cache root without mutation. A pending

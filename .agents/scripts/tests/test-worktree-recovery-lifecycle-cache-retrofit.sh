@@ -34,6 +34,16 @@ import sys
 Path(sys.argv[1]).write_bytes(b"x" * 256 * 1024)
 PY
 	printf 'preserve user log\n' >"${archive_path}/logs/diagnostic.log" || return 1
+	# Full-copy fixtures carry v2 metadata; age both it and the legacy fallback.
+	printf '2020-01-01T00:00:00Z\n' >"${archive_path%/*}/.aidevops-worktree-recovery/created-at" || return 1
+	python3 - "${archive_path%/*}" <<'PY' || return 1
+import os
+import sys
+import time
+
+old = time.time() - 10 * 86400
+os.utime(sys.argv[1], (old, old))
+PY
 	printf '%s\n' "$archive_path"
 	return 0
 }
@@ -204,6 +214,7 @@ test_cache_retrofit_rejects_mutable_evidence_drift_before_mutation() {
 	local rc=0
 
 	archive_path=$(create_mixed_cache_archive "$home_path" "evidence-drift") || rc=1
+	mkdir -p "$state_dir" || return 1
 	install_cache_retrofit_evidence_stubs
 	if (
 		uname() {
@@ -212,7 +223,8 @@ test_cache_retrofit_rejects_mutable_evidence_drift_before_mutation() {
 		}
 		limits_json=$(_worktree_recovery_maintenance_limits_json \
 			"${home_path}/.aidevops/recovery/worktrees")
-		_worktree_recovery_maintenance_prepare_selection "$state_dir" "Linux" "$limits_json"
+		HOME="$home_path" _worktree_recovery_maintenance_prepare_selection "$state_dir" "Linux" "$limits_json" || exit 1
+		printf '%s\n' "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON" | jq -e '.candidate_count == 1' >/dev/null || exit 1
 		printf '%s\n' "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON" >"$plan_path"
 		_worktree_recovery_plan_claim_state() {
 			local ignored_identity="$1"
@@ -240,6 +252,7 @@ test_cache_retrofit_honors_shared_deadline_before_mutation() {
 	local rc=0
 
 	archive_path=$(create_mixed_cache_archive "$home_path" "shared-deadline") || rc=1
+	mkdir -p "$state_dir" || return 1
 	install_cache_retrofit_evidence_stubs
 	(
 		uname() {
@@ -248,7 +261,8 @@ test_cache_retrofit_honors_shared_deadline_before_mutation() {
 		}
 		limits_json=$(_worktree_recovery_maintenance_limits_json \
 			"${home_path}/.aidevops/recovery/worktrees")
-		_worktree_recovery_maintenance_prepare_selection "$state_dir" "Linux" "$limits_json"
+		HOME="$home_path" _worktree_recovery_maintenance_prepare_selection "$state_dir" "Linux" "$limits_json" || exit 1
+		printf '%s\n' "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON" | jq -e '.candidate_count == 1' >/dev/null || exit 1
 		printf '%s\n' "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON" >"$plan_path"
 	) || rc=1
 	expired_epoch=$(($(date +%s) - 1)) || rc=1
@@ -330,6 +344,7 @@ test_cache_retrofit_rejects_identity_drift_before_mutation() {
 	local rc=0
 
 	archive_path=$(create_mixed_cache_archive "$home_path" "cache-retrofit-identity-drift") || rc=1
+	mkdir -p "$state_dir" || return 1
 	recovery_dir="${archive_path%/*}/${_WT_RECOVERY_DIR_NAME}"
 	install_cache_retrofit_evidence_stubs
 	if (
@@ -339,7 +354,8 @@ test_cache_retrofit_rejects_identity_drift_before_mutation() {
 		}
 		limits_json=$(_worktree_recovery_maintenance_limits_json \
 			"${home_path}/.aidevops/recovery/worktrees")
-		_worktree_recovery_maintenance_prepare_selection "$state_dir" "Linux" "$limits_json"
+		HOME="$home_path" _worktree_recovery_maintenance_prepare_selection "$state_dir" "Linux" "$limits_json" || exit 1
+		printf '%s\n' "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON" | jq -e '.candidate_count == 1' >/dev/null || exit 1
 		printf '%s\n' "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON" >"$plan_path"
 		printf 'drifted-context\n' >"${recovery_dir}/producer-context"
 		HOME="$home_path" worktree_recovery_cache_prune_apply_automatic \
@@ -370,5 +386,95 @@ test_cache_retrofit_resumes_interrupted_move() {
 		-f "${archive_path}/logs/diagnostic.log" ]] || rc=1
 	print_result "cache_retrofit_resumes_interrupted_move" "$rc" \
 		"Expected a journaled cache-root move to resume without touching protected archive content"
+	return 0
+}
+
+test_cache_retrofit_unmerged_retention_and_liveness() {
+	local scenario=""
+	local rc=0
+
+	for scenario in old young open-pr unavailable-pr worktree registry claim process unknown-age; do
+		rc=0
+		if ! (
+			local home_path="${TEST_DIR}/cache-retention-${scenario}"
+			local archive_path="" output="" original_head=""
+			archive_path=$(create_mixed_cache_archive "$home_path" "retention-${scenario}") || exit 1
+			original_head=$("$GIT_BIN" -C "$archive_path" rev-parse HEAD) || exit 1
+			install_cache_retrofit_evidence_stubs
+			_worktree_recovery_plan_external_evidence_json() {
+				local pr_state="clear"
+				[[ "$scenario" != open-pr ]] || pr_state="active"
+				[[ "$scenario" != unavailable-pr ]] || pr_state="unavailable"
+				jq -cn --arg pr "$pr_state" '{commit:"unproven",open_pr:$pr,task:"open"}'
+				return 0
+			}
+			case "$scenario" in
+			young) date -u '+%Y-%m-%dT%H:%M:%SZ' >"${archive_path%/*}/.aidevops-worktree-recovery/created-at" ;;
+			unknown-age)
+				_worktree_recovery_cache_age_evidence() { return 1; }
+				;;
+			worktree|registry|claim|process)
+				# Override only the named existing evidence probe in this subshell.
+				case "$scenario" in
+				worktree) _worktree_recovery_plan_worktree_reference_state() { printf 'active\n'; return 0; } ;;
+				registry) _worktree_recovery_plan_registry_state() { printf 'active\n'; return 0; } ;;
+				claim) _worktree_recovery_plan_claim_state() { printf 'active\n'; return 0; } ;;
+				process) _worktree_recovery_plan_process_state() { printf 'active\n'; return 0; } ;;
+				esac
+				;;
+			esac
+			output=$(run_cache_retrofit_maintenance "$home_path" "$home_path/state") || exit 1
+			if [[ "$scenario" == old ]]; then
+				[[ "$(printf '%s\n' "$output" | jq -r '.outcome')" == cache-pruned &&
+					! -e "$archive_path/.codegraph" ]] || exit 1
+			else
+				[[ -d "$archive_path/.codegraph" ]] || exit 1
+			fi
+			[[ -f "$archive_path/logs/diagnostic.log" &&
+				"$("$GIT_BIN" -C "$archive_path" rev-parse HEAD)" == "$original_head" ]] || exit 1
+		); then rc=1; fi
+		print_result "cache_retention_${scenario}" "$rc" "Expected retention and every liveness gate to protect unmerged archives"
+	done
+	return 0
+}
+
+test_cache_retrofit_rejects_old_schema_and_age_drift() {
+	local mode=""
+	local rc=0
+
+	for mode in v1 age-drift migration; do
+		rc=0
+		if ! (
+			local home_path="${TEST_DIR}/cache-plan-${mode}"
+			local archive_path="" limits_json="" plan_json=""
+			local plan_path="${home_path}/plan.json"
+			archive_path=$(create_mixed_cache_archive "$home_path" "plan-${mode}") || exit 1
+			mkdir -p "$home_path/state" || exit 1
+			install_cache_retrofit_evidence_stubs
+			_worktree_recovery_plan_external_evidence_json() {
+				jq -cn '{commit:"unproven",open_pr:"clear",task:"open"}'
+				return 0
+			}
+			uname() { printf 'Linux\n'; return 0; }
+			limits_json=$(_worktree_recovery_maintenance_limits_json "$home_path/.aidevops/recovery/worktrees") || exit 1
+			HOME="$home_path" _worktree_recovery_maintenance_prepare_selection "$home_path/state" Linux "$limits_json" || exit 1
+			plan_json="$WORKTREE_RECOVERY_MAINTENANCE_CACHE_PLAN_JSON"
+			printf '%s\n' "$plan_json" | jq -e '.candidate_count == 1' >/dev/null || exit 1
+			if [[ "$mode" == v1 ]]; then
+				plan_json=$(printf '%s\n' "$plan_json" | jq -c '.schema = "aidevops.worktree-recovery-cache-prune-plan/v1"') || exit 1
+				if _worktree_recovery_cache_validate_plan_shape "$plan_json"; then exit 1; fi
+			elif [[ "$mode" == migration ]]; then
+				local bucket_path="${archive_path%/*}"
+				mkdir -p "${bucket_path%/*}/.compact-migrations/${bucket_path##*/}" || exit 1
+			else
+				date -u '+%Y-%m-%dT%H:%M:%SZ' >"${archive_path%/*}/.aidevops-worktree-recovery/created-at" || exit 1
+			fi
+			printf '%s\n' "$plan_json" >"$plan_path" || exit 1
+			if HOME="$home_path" worktree_recovery_cache_prune_apply_automatic \
+				"$plan_path" "$home_path/receipt.json" >/dev/null 2>&1; then exit 1; fi
+			[[ -d "$archive_path/.codegraph" && ! -e "$home_path/receipt.json" ]] || exit 1
+		); then rc=1; fi
+		print_result "cache_plan_${mode}" "$rc" "Expected stale schema or changed age source to fail before mutation"
+	done
 	return 0
 }
