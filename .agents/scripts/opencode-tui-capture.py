@@ -172,41 +172,29 @@ OWNER_FILE = "owner.pid"
 OWNERLESS_GRACE_SECONDS = 3600
 
 
-def pid_alive(pid):
+def owner_alive(path):
     try:
+        pid = int((path / OWNER_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # Legacy or just-created dir with no owner file yet: age-gated.
+        return time.time() - path.stat().st_mtime < OWNERLESS_GRACE_SECONDS
+    # EPERM means another user's process; rmtree then fails harmlessly.
+    with suppress(ProcessLookupError, PermissionError):
         os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
         return True
-    return True
+    return False
 
 
 def reap_stale_captures(temp_root):
     """Remove capture snapshots left by killed runs (SIGKILL skips cleanup)."""
     for path in temp_root.glob(CAPTURE_PREFIX + "*"):
-        try:
-            if path.is_symlink() or not path.is_dir():
-                continue
-            try:
-                pid = int((path / OWNER_FILE).read_text(encoding="utf-8").strip())
-                stale = not pid_alive(pid)
-            except (FileNotFoundError, ValueError):
-                # Legacy or just-created dir with no owner file yet: age-gated.
-                stale = time.time() - path.stat().st_mtime > OWNERLESS_GRACE_SECONDS
-            if stale:
-                shutil.rmtree(path, ignore_errors=True)
-        except OSError:
-            continue
+        if path.is_dir() and not path.is_symlink() and not owner_alive(path):
+            shutil.rmtree(path, ignore_errors=True)
 
 
-def install_cleanup_signals():
-    """Turn termination signals into SystemExit so temp-dir cleanup runs."""
-    def handler(signum, _frame):
-        raise SystemExit(128 + signum)
-    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
-        with suppress(AttributeError, ValueError, OSError):
-            signal.signal(getattr(signal, name), handler)
+def exit_on_signal(signum, _frame):
+    # SystemExit unwinds through TemporaryDirectory, removing the snapshot.
+    raise SystemExit(128 + signum)
 
 
 def main():
@@ -239,7 +227,8 @@ def main():
         temp_root = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
         temp_root.mkdir(parents=True, exist_ok=True)
         reap_stale_captures(temp_root)
-        install_cleanup_signals()
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(sig, exit_on_signal)
         with tempfile.TemporaryDirectory(prefix=CAPTURE_PREFIX, dir=temp_root) as temporary:
             data_dir = Path(temporary)
             (data_dir / OWNER_FILE).write_text(str(os.getpid()), encoding="utf-8")
