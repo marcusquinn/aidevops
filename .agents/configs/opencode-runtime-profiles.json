@@ -13,15 +13,15 @@
       "configAgentKey": "agent",
       "configPermissionKey": "permission",
       "minimumVersion": "1.18.29",
-      "testedVersion": "1.19.0",
-      "headlessPin": "1.19.0",
+      "testedVersion": "1.19.3",
+      "headlessPin": "1.19.3",
       "pinReason": "GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME",
       "pinPlatform": "Linux",
       "pinRuntimeMode": "headless",
       "introducedDate": "2026-07-30",
-      "lastCanaryDate": "2026-10-13",
-      "lastCanaryResult": "pass:1.19.0",
-      "reviewDeadline": "2026-10-20"
+      "lastCanaryDate": "2026-10-20",
+      "lastCanaryResult": "pass:1.19.3",
+      "reviewDeadline": "2026-10-27"
     },
     "v2": {
       "major": 2,
