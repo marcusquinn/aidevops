@@ -18,6 +18,7 @@ import { attachmentLabel, isMedia } from "./compaction-replay-collect.mjs";
 const STORE_VERSION = 1;
 const STORE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const PRUNED_REASON = "not replayed (only the most recent attachments are replayed)";
+const STORE_ELISION = "[Earlier user input omitted for the session store budget; retained input is not the complete session history.]";
 // Bound serialized prompt metadata/text as well as turn count. Inline media is
 // governed separately by pruneMedia(). Keep the initiating turn and newest tail.
 export const MAX_STORED_PROMPT_CHARS = 1_000_000;
@@ -27,23 +28,54 @@ function promptSize(entry) {
   return JSON.stringify({ ...entry, media: [] }).length;
 }
 
+function boundedText(text, budget) {
+  if (JSON.stringify(text).length <= budget) return text;
+  const marker = "\n[… input omitted for the session store budget …]\n";
+  const clipped = (cap) => text.slice(0, Math.ceil(cap * 2 / 3)) + marker + (cap >= 3 ? text.slice(-Math.floor(cap / 3)) : "");
+  let low = 0;
+  let high = Math.min(text.length, budget);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (JSON.stringify(clipped(mid)).length <= budget) low = mid;
+    else high = mid - 1;
+  }
+  return clipped(low);
+}
+
+function boundedNotes(notes = []) {
+  const kept = [];
+  let remaining = 32000;
+  for (const note of notes) {
+    const clipped = boundedText(note, Math.min(8000, remaining));
+    remaining -= JSON.stringify(clipped).length + 1;
+    kept.push(clipped);
+    if (remaining < 128) break;
+  }
+  if (kept.length < notes.length) kept.push(STORE_ELISION);
+  return kept;
+}
+
 function prunePromptText(store) {
   const first = store.prompts[0];
   if (!first) return;
-  // Bound a single oversized paste without silently losing its truncation.
+  // Measure JSON-encoded characters: control characters can expand sixfold.
+  // Bound attachment metadata too, so an oversized first turn cannot crowd out
+  // the newest turn. Normal host-generated IDs/timestamps are small.
   for (const entry of store.prompts) {
-    if (entry.text.length > MAX_STORED_PROMPT_CHARS / 4) {
-      entry.text = `${entry.text.slice(0, MAX_STORED_PROMPT_CHARS / 4 - 80)}\n[… text omitted for the session store budget …]`;
-    }
+    entry.text = boundedText(entry.text, 180000);
+    entry.notes = boundedNotes(entry.notes);
+    entry.inlineNotes = boundedNotes(entry.inlineNotes);
   }
-  let used = promptSize(first);
+  // Include the array envelope, commas and room for the store elision notice.
+  let used = 2 + promptSize(first) + 256;
   const tail = [];
   for (let i = store.prompts.length - 1; i >= 1 && tail.length < MAX_STORED_PROMPTS - 1; i--) {
-    const size = promptSize(store.prompts[i]);
+    const size = promptSize(store.prompts[i]) + 1;
     if (used + size > MAX_STORED_PROMPT_CHARS) break;
     used += size;
     tail.unshift(store.prompts[i]);
   }
+  if (tail.length < store.prompts.length - 1 && !first.notes.includes(STORE_ELISION)) first.notes.push(STORE_ELISION);
   store.prompts = [first, ...tail];
 }
 
@@ -73,7 +105,7 @@ export function promptEntry(event, now = Date.now()) {
   const id = String(event?.messageID || "");
   const text = String(event?.prompt?.text || "").trim();
   const files = Array.isArray(event?.prompt?.files) ? event.prompt.files : [];
-  if (!id || (!text && files.length === 0)) return null;
+  if (!id || id.length > 4096 || (!text && files.length === 0)) return null;
   return {
     id,
     created: now,

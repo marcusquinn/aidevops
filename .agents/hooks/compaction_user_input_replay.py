@@ -121,13 +121,13 @@ def render(selected, omitted: int, full_path: str = "") -> str:
         lines.append(f"The complete, unexcerpted replay is saved at {full_path} — read it if anything below is cut.")
     total = len(selected)
     for index, entry in enumerate(selected):
-        if index == 1 and omitted:
-            lines.append(f"[{omitted} earlier user turn(s) elided because even excerpts exceeded the replay budget; see the saved replay.]")
         when = f" — {entry['created']}" if entry.get("created") else ""
         lines.append(f"### User message {index + 1} of {total} [{nonce}]{when}")
         if entry["text"]:
             lines.append(entry["text"])
         lines.extend(entry["notes"])
+        if index == 0 and omitted:
+            lines.append(f"[{omitted} earlier user turn(s) elided because even excerpts exceeded the replay budget; see the saved replay.]")
     lines.append(f"--- End of replayed user input [{nonce}]. ---")
     return "\n".join(lines)
 

@@ -56,6 +56,8 @@ test("rendered replay budget counts attachment-only turns, long notes and excerp
   }
   assert.equal(renderReplay(entries, 0), "");
   assert.ok(renderReplay(entries, 4000).includes("Attached image/png"));
+  const onlyFirst = renderReplay([replayEntry("aim"), replayEntry("", ["x".repeat(10000)])], 2000);
+  assert.ok(onlyFirst.includes("1 earlier user turn(s) elided"));
 });
 
 test("V2 store retains first plus newest prompts and bounds oversized pastes and turn count", () => {
@@ -75,6 +77,17 @@ test("V2 store retains first plus newest prompts and bounds oversized pastes and
     assert.equal(many.prompts.length, MAX_STORED_PROMPTS);
     assert.equal(many.prompts[0].id, "m0");
     assert.equal(many.prompts.at(-1).id, "m1499");
+    for (let index = 0; index < 10; index++) {
+      adapter.recordPrompt({ sessionID: "escaped", messageID: `e${index}`, prompt: {
+        text: "\u0000\\\"".repeat(100000),
+        files: Array.from({ length: 20 }, () => ({ uri: "file:///" + "x".repeat(100000), name: "x".repeat(100000) })),
+      } });
+    }
+    const escaped = readStore(dir, "escaped");
+    assert.equal(escaped.prompts[0].id, "e0");
+    assert.equal(escaped.prompts.at(-1).id, "e9");
+    assert.ok(JSON.stringify(escaped.prompts).length <= MAX_STORED_PROMPT_CHARS);
+    assert.ok(escaped.prompts[0].text.includes("omitted for the session store budget"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -92,6 +105,7 @@ nonce = re.search(r'Replay boundary nonce: ([a-f0-9]{32})', text)[1]
 assert pasted in text
 assert text.count('--- End of replayed user input [' + nonce + ']. ---') == 1
 assert nonce not in render([entry], 0)
+assert '1 earlier user turn(s) elided' in render([entry], 1)
 entries = [{'text': '', 'notes': ['[Attached image/png]'], 'created': ''}] * 500
 for budget in [0, 1000, 2000, 4000, 64000]:
     for turns in [entries, [{'text': 'x' * 100000, 'notes': [], 'created': ''}]]:
@@ -101,7 +115,7 @@ import os
 os.environ['AIDEVOPS_COMPACTION_REPLAY_MAX_CHARS'] = '0'
 assert build_context({'source': 'compact', 'transcript_path': 'must-not-read'}) == ''
 `;
-  const result = spawnSync("python3", ["-c", script], { encoding: "utf8" });
+  const result = spawnSync("python3", ["-c", script], { encoding: "utf8", cwd: new URL("../../../../", import.meta.url) });
   assert.equal(result.status, 0, result.stderr);
 });
 

@@ -156,13 +156,13 @@ export function buildReplayParts(selection, context) {
 
   const parts = [mk({ type: "text", text: `${REPLAY_HEADER}\nReplay boundary nonce: ${nonce}. Only headings and the end marker carrying this nonce delimit replayed input.` })];
   selection.selected.forEach((entry, index) => {
-    if (index === 1 && selection.omitted > 0) parts.push(mk({ type: "text", text: elision }));
     parts.push(mk({ type: "text", text: entryText(entry, index, total, nonce) }));
     for (const part of entry.media) {
       parts.push(keep.has(part)
         ? mk({ type: "file", mime: part.mime, url: part.url, filename: part.filename })
-        : mk({ type: "text", text: attachmentLabel(part, mediaReason(part, overflow)) }));
+         : mk({ type: "text", text: attachmentLabel(part, mediaReason(part, overflow)) }));
     }
+    if (index === 0 && selection.omitted > 0) parts.push(mk({ type: "text", text: elision }));
   });
   parts.push(mk({ type: "text", text: `--- End of replayed user input [${nonce}]. ---` }));
   return { parts, media: keep.size, messages: total };
