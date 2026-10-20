@@ -98,9 +98,54 @@ test_confirmed_absence_allows_stale_evaluation() {
 	return 0
 }
 
+# GH#35218: one runner login on several devices. A recent dispatch from
+# another device must not be judged by this device's PID table or logs.
+test_same_login_other_device_is_cross_runner() {
+	: >"$LOGFILE"
+	_normalize_stale_find_open_pr() {
+		printf '%s' ''
+		return 0
+	}
+	_normalize_stale_get_dispatch_info() {
+		printf '%s\n%s\n%s\n%s\n' 4242 1970-01-01T00:16:40Z runner-bot device-remote
+		return 0
+	}
+	ps() { return 1; }
+	if AIDEVOPS_DEVICE_ID=device-local _normalize_stale_should_skip_reset 45 owner/repo 2000 10800 runner-bot &&
+		grep -q 'cross-runner guard' "$LOGFILE"; then
+		print_result "same-login dispatch on another device keeps its claim" 0
+	else
+		print_result "same-login dispatch on another device keeps its claim" 1 "$(<"$LOGFILE")"
+	fi
+	unset -f ps
+	return 0
+}
+
+test_same_login_same_device_dead_pid_resets() {
+	: >"$LOGFILE"
+	_normalize_stale_find_open_pr() {
+		printf '%s' ''
+		return 0
+	}
+	_normalize_stale_get_dispatch_info() {
+		printf '%s\n%s\n%s\n%s\n' 4242 1970-01-01T00:16:40Z runner-bot device-local
+		return 0
+	}
+	ps() { return 1; }
+	if AIDEVOPS_DEVICE_ID=device-local _normalize_stale_should_skip_reset 46 owner/repo 2000 10800 runner-bot; then
+		print_result "same-device dispatch with a dead PID still resets" 1 "$(<"$LOGFILE")"
+	else
+		print_result "same-device dispatch with a dead PID still resets" 0
+	fi
+	unset -f ps
+	return 0
+}
+
 test_open_pr_skips_stale_reset
 test_open_pr_lookup_failure_is_fail_closed
 test_confirmed_absence_allows_stale_evaluation
+test_same_login_other_device_is_cross_runner
+test_same_login_same_device_dead_pid_resets
 
 printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

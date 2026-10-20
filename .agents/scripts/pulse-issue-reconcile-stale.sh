@@ -53,17 +53,77 @@ _normalize_clear_status_labels() {
 }
 
 #######################################
+# GH#35218: post the release audit before any label/assignee mutation, so
+# every stale reset is attributable. Returns non-zero when the comment could
+# not be persisted; the caller then skips the reset (retried next cycle).
+#
+# Args:
+#   $1 issue_num   — numeric GitHub issue number
+#   $2 slug        — owner/repo
+#   $3 runner_user — GH login performing the reset
+#   $4 detail      — space-separated key=value tokens (no secrets)
+#######################################
+_normalize_stale_post_release() {
+	local issue_num="$1"
+	local slug="$2"
+	local runner_user="$3"
+	local detail="${4:-}"
+	local release_ts body
+	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=stale_assignment_reset runner=${runner_user} ts=${release_ts}${detail:+ ${detail}}
+<!-- ops:end -->"
+	gh api "repos/${slug}/issues/${issue_num}/comments" \
+		--method POST --field body="$body" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# GH#35218: this machine's dispatch device ID, read-only. Several hosts can
+# share one runner login, so the login alone does not prove a dispatch was
+# local. Prints nothing when no valid ID is configured (never creates one).
+#######################################
+_normalize_stale_local_device_id() {
+	local id="${AIDEVOPS_DEVICE_ID:-}"
+	local id_file="${AIDEVOPS_DEVICE_ID_FILE:-${HOME}/.aidevops/state/device-id}"
+	if [[ -z "$id" && -r "$id_file" ]]; then
+		id=$(tr -d '[:space:]' <"$id_file" 2>/dev/null || true)
+	fi
+	[[ "$id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]] || id=""
+	printf '%s' "$id"
+	return 0
+}
+
+#######################################
+# GH#35218: true when a same-login dispatch ran on this device. A dispatch
+# with no device (or the `legacy` placeholder) keeps the pre-device
+# behaviour. A recorded device that differs from, or cannot be compared with,
+# this device is treated as remote: its PID and log are not visible here.
+#######################################
+_normalize_stale_dispatch_is_local_device() {
+	local dispatch_device="$1"
+	[[ -z "$dispatch_device" || "$dispatch_device" == "legacy" ]] && return 0
+	local local_device
+	local_device=$(_normalize_stale_local_device_id)
+	[[ -n "$local_device" && "$local_device" == "$dispatch_device" ]] && return 0
+	return 1
+}
+
+#######################################
 # (Phase 12 helper) Read the Worker PID, dispatch timestamp, and owning
 # runner login from the most recent `Dispatching worker` comment on an issue.
 #
 # t2375: also parses the `**Runner**: <login>` field so the caller can gate
 # cross-machine detection on runner identity rather than local PID presence.
-# See pulse-dispatch-worker-launch.sh:463-470 for the comment format.
+# GH#35218: also parses `device=` from the `aidevops:dispatch` marker, since
+# one runner login can dispatch from several devices.
+# See pulse-dispatch-worker-gates.sh for the comment format.
 #
-# Outputs three lines to stdout: Worker PID, ISO-8601 created_at, runner
-# login. Each is blank if the field is missing from the comment (or no
-# dispatch comment exists). All three lines may legitimately be empty on
-# success — the caller distinguishes by checking which fields are populated.
+# Outputs four lines to stdout: Worker PID, ISO-8601 created_at, runner
+# login, dispatch device. Each is blank if the field is missing from the
+# comment (or no dispatch comment exists). All lines may legitimately be
+# empty on success — the caller distinguishes by checking which fields are
+# populated.
 #
 # Args:
 #   $1 slug       — owner/repo
@@ -82,7 +142,7 @@ _normalize_stale_get_dispatch_info() {
 	local gh_output
 	local gh_rc=0
 	gh_output=$(gh api "repos/${slug}/issues/${stale_num}/comments" \
-		--jq '[.[] | select(.body | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z")), (.body | capture("\\*\\*Runner\\*\\*: (?<runner>[A-Za-z0-9][A-Za-z0-9-]*)") // {runner: ""} | .runner)) else empty end' \
+		--jq '[.[] | select(.body | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z")), (.body | capture("\\*\\*Runner\\*\\*: (?<runner>[A-Za-z0-9][A-Za-z0-9-]*)") // {runner: ""} | .runner), (.body | capture("aidevops:dispatch [^>]*device=(?<device>[A-Za-z0-9][A-Za-z0-9._-]*)") // {device: ""} | .device)) else empty end' \
 		2>/dev/null) || gh_rc=$?
 
 	if [[ "$gh_rc" -ne 0 ]]; then
@@ -92,13 +152,15 @@ _normalize_stale_get_dispatch_info() {
 	local dispatch_pid=""
 	local dispatch_created_at=""
 	local dispatch_runner=""
+	local dispatch_device=""
 	{
 		IFS= read -r dispatch_pid
 		IFS= read -r dispatch_created_at
 		IFS= read -r dispatch_runner
+		IFS= read -r dispatch_device
 	} <<<"$gh_output"
 
-	printf '%s\n%s\n%s\n' "$dispatch_pid" "$dispatch_created_at" "$dispatch_runner"
+	printf '%s\n%s\n%s\n%s\n' "$dispatch_pid" "$dispatch_created_at" "$dispatch_runner" "$dispatch_device"
 	return 0
 }
 
@@ -206,10 +268,12 @@ _normalize_stale_should_skip_reset() {
 	local dispatch_pid=""
 	local dispatch_created_at=""
 	local dispatch_runner=""
+	local dispatch_device=""
 	{
 		IFS= read -r dispatch_pid
 		IFS= read -r dispatch_created_at
 		IFS= read -r dispatch_runner
+		IFS= read -r dispatch_device
 	} <<<"$dispatch_info"
 
 	local dispatch_comment_age=0
@@ -233,15 +297,17 @@ _normalize_stale_should_skip_reset() {
 			return 0
 		fi
 
-		if [[ "$dispatch_runner" != "$self_login" ]]; then
-			# t2375 cross-machine branch: dispatch came from another runner.
+		if [[ "$dispatch_runner" != "$self_login" ]] ||
+			! _normalize_stale_dispatch_is_local_device "$dispatch_device"; then
+			# t2375 cross-machine branch: dispatch came from another runner,
+			# or (GH#35218) from another device sharing this runner login.
 			# PID collision is meaningless across machines — skip `ps -p`
 			# and rely on time-based expiry against WORKER_MAX_RUNTIME.
 			if [[ "$dispatch_comment_age" -lt "$cross_runner_max_runtime" ]]; then
-				echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — runner=${dispatch_runner} != self=${self_login}, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+				echo "[pulse-wrapper] Stale assignment skip (cross-runner guard): #${stale_num} in ${slug} — runner=${dispatch_runner} device=${dispatch_device:-none} vs self=${self_login}, comment age ${dispatch_comment_age}s < max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
 				return 0
 			fi
-			echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — runner=${dispatch_runner} != self=${self_login}, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
+			echo "[pulse-wrapper] Stale assignment reset (cross-runner expired): #${stale_num} in ${slug} — runner=${dispatch_runner} device=${dispatch_device:-none} vs self=${self_login}, comment age ${dispatch_comment_age}s >= max_runtime ${cross_runner_max_runtime}s" >>"$LOGFILE"
 			# Fall through — reset fires (return 1 below unless Check 3 catches a stray local log).
 		else
 			# t1933 local branch: dispatch_runner == self_login. PID check
@@ -359,7 +425,16 @@ _normalize_unassign_stale() {
 				continue
 			fi
 
-			# No active worker and all guards passed — reset for re-dispatch
+			# No active worker and all guards passed — reset for re-dispatch.
+			# GH#35218: the release audit is persisted first; without it the
+			# reset is skipped so no claim is ever released silently.
+			local release_device
+			release_device=$(_normalize_stale_local_device_id)
+			if ! _normalize_stale_post_release "$stale_num" "$slug" "$runner_user" \
+				"device=${release_device:-unknown} stale_threshold_s=${_stale_threshold}"; then
+				echo "[pulse-wrapper] Stale assignment skip (CLAIM_RELEASED not persisted): #${stale_num} in ${slug}" >>"$LOGFILE"
+				continue
+			fi
 			echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
 			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
 			total_reset=$((total_reset + 1))
