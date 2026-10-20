@@ -1036,7 +1036,7 @@ test_shared_merge_read_admission_recovery() {
 test_final_head_sha_read_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	for scenario in success recovers persists drift empty http partial-failure read-status replay-failure head-replay-failure; do
+	for scenario in success recovers persists drift empty http partial-failure read-status capture-failure replay-failure head-replay-failure; do
 		result=0
 		bash -c '
 			set -euo pipefail
@@ -1050,6 +1050,14 @@ test_final_head_sha_read_admission_recovery() {
 			printf "0" >"$replays_file"
 			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
 			sleep() { local duration="$1"; elapsed=$((elapsed + duration)); SECONDS=$((SECONDS + duration)); return 0; }
+			mktemp() {
+				local template="${1:-}"
+				if [[ "$scenario" == capture-failure && "$template" == *merge-head-sha.* ]]; then
+					return 1
+				fi
+				command mktemp "$@"
+				return $?
+			}
 			cat() {
 				local path="${1:-}" replays=0
 				if [[ "$path" == *merge-admission-output.* ]]; then
@@ -1101,6 +1109,7 @@ test_final_head_sha_read_admission_recovery() {
 			empty) [[ "$rc" -eq 1 && "$out" == *"empty output after successful transport"* && "$out" == *"Could not retrieve"* && "$calls" -eq 1 ]] ;;
 			http|partial-failure) [[ "$rc" -eq 1 && "$out" == *"PR head read failed (exit "* && "$out" == *"Could not retrieve"* && "$out" != *"$FULL_LOOP_VERIFIED_PR_HEAD_SHA"* && "$calls" -eq 1 ]] ;;
 			read-status) [[ "$rc" -eq 23 && -z "$out" && "$calls" -eq 1 ]] ;;
+			capture-failure) [[ "$rc" -eq 1 && "$out" == *"Could not capture PR head read diagnostics"* && "$out" == *"Could not retrieve"* && "$calls" -eq 0 ]] ;;
 			replay-failure) [[ "$rc" -eq 74 && -z "$out" && "$calls" -eq 1 ]] ;;
 			head-replay-failure) [[ "$rc" -eq 1 && "$out" == *"Could not replay captured GitHub read output (exit 74)"* && "$out" == *"Could not retrieve"* && "$out" != *"head changed"* && "$calls" -eq 1 ]] ;;
 			esac
