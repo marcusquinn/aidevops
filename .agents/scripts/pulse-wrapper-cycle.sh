@@ -543,6 +543,9 @@ _pulse_prime_caches_if_stale() {
 # Fail-open: any internal error returns 0. Never blocks the pulse cycle.
 #######################################
 _pulse_check_runaway_log() {
+	# This existing preflight maintenance callback runs before dispatch. Keep
+	# artefact scans independent of the runaway-log detector's skip/sentinel.
+	_pulse_reclaim_idle_artefacts || true
 	[[ "${AIDEVOPS_SKIP_RUNAWAY_LOG_CHECK:-0}" == "1" ]] && return 0
 
 	local _detector_helper=""
@@ -571,6 +574,32 @@ _pulse_check_runaway_log() {
 		"$_detector_helper" check-and-heal 2>>"$WRAPPER_LOGFILE" || true
 		# Touch sentinel regardless of outcome (fail-open)
 		touch "$_detector_sentinel" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Daily, bounded dry run beside the preflight system-cleanup.sh scratch sweep.
+# Explicit PULSE_WORKTREE_ARTEFACT_FORCE=1 enables guarded reclamation.
+_pulse_reclaim_idle_artefacts() {
+	[[ "${AIDEVOPS_SKIP_WORKTREE_ARTEFACT_RECLAIM:-0}" == "1" ]] && return 0
+	local helper="${SCRIPT_DIR}/worktree-artefact-reclaim.sh"
+	local sentinel="${HOME}/.aidevops/cache/worktree-artefact-reclaim-last-run"
+	local budget="${PULSE_WORKTREE_ARTEFACT_MAX_SECONDS:-30}"
+	local now="" previous=0
+	local mode="--dry-run"
+	[[ -f "$helper" ]] || return 0
+	[[ "$budget" =~ ^[1-9][0-9]*$ ]] || budget=30
+	now=$(date +%s)
+	[[ ! -f "$sentinel" ]] || previous=$(_file_mtime_epoch "$sentinel")
+	[[ "$previous" =~ ^[0-9]+$ ]] || previous=0
+	((now - previous >= 86400)) || return 0
+	mkdir -p "${sentinel%/*}" || return 0
+	touch "$sentinel" || return 0
+	[[ "${PULSE_WORKTREE_ARTEFACT_FORCE:-0}" != "1" ]] || mode="--force"
+	if [[ "$mode" == "--force" ]]; then
+		bash "$helper" --force --max-seconds "$budget" >>"${WRAPPER_LOGFILE:-/dev/null}" 2>&1 || true
+	else
+		bash "$helper" --max-seconds "$budget" >>"${WRAPPER_LOGFILE:-/dev/null}" 2>&1 || true
 	fi
 	return 0
 }
