@@ -40,11 +40,18 @@ function launchedArgv(command) {
 // post_exit_descendants_terminated receipt field instead.
 export function detachingLauncherError(command) {
   const argv = launchedArgv(command);
-  if (argv.length === 0 || basename(argv[0]) !== "pulse-wrapper.sh") return "";
-  const commandIndex = argv.indexOf("--command");
-  const subcommand = commandIndex >= 0 ? argv[commandIndex + 1] : "";
-  if (!DETACHING_PULSE_COMMANDS.has(subcommand)) return "";
-  return `pulse-wrapper.sh --command ${subcommand} launches a detached worker that bounded operations would drain on exit; ` +
+  if (argv.length === 0) return "";
+  const program = basename(argv[0]);
+  let launcher;
+  if (program === "dispatch-single-issue-helper.sh" && argv[1] === "dispatch") {
+    launcher = `${program} dispatch`;
+  } else if (program === "pulse-wrapper.sh") {
+    const commandIndex = argv.indexOf("--command");
+    const subcommand = commandIndex >= 0 ? argv[commandIndex + 1] : "";
+    if (DETACHING_PULSE_COMMANDS.has(subcommand)) launcher = `${program} --command ${subcommand}`;
+  }
+  if (!launcher) return "";
+  return `${launcher} launches a detached worker that bounded operations would drain on exit; ` +
     "run it through the normal shell tool and verify liveness through the exact-attempt worker status, not the launch exit code";
 }
 
