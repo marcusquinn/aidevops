@@ -155,6 +155,10 @@ worktree-helper.sh clean
 
 `worktree-helper.sh clean` removes worktrees whose branches have been merged, archiving them recoverably first; add `--auto` to skip the confirmation prompt. Run from the canonical repo (on `main`). If unavailable: `git worktree prune` only removes stale metadata; never delete worktree directories manually.
 
+## Storage Cleanup Across All Stores
+
+`aidevops cleanup` prints a read-only size report for every aidevops-owned store (tmp, worktrees, OpenCode DBs, observability) with the cleaner that owns each one. `aidevops cleanup <store>` previews one store; `aidevops cleanup all --apply` runs every owning cleaner with its own safety gates. The default routine r922 Storage hygiene runs `all --apply` daily through a dedicated launchd/systemd job installed by `setup.sh`; the report shows whether it is installed. Implementation: `scripts/storage-cleanup-helper.sh`.
+
 ## Bulk Remote Branch Cleanup
 
 Use the aidevops CLI route when the remote has accumulated old worker/worktree branches:

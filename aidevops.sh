@@ -1231,7 +1231,7 @@ _help_commands() {
 	echo "  lint [cmd]         Audit/configure native repo lint, format, typecheck, and hooks"
 	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
 	echo "  keywords <cmd>     context/keywords.md search targets: scaffold, brief, sync, track, budget"
-	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
+	echo "  cleanup [cmd]      Storage report/reclaim (all --apply) and branch cleanup"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
 	echo "  gpt56-context <cmd> Manage the 300K GPT-5.6 OpenCode context cap (enable/disable/status)"
 	echo "  gpt6-context <cmd> Manage the default ~240K GPT-6 Sol/Luna compaction cap (enable/disable/status)"
@@ -2100,7 +2100,8 @@ _main_dispatch() {
 }
 
 _main_dispatch_cleanup() {
-	local cleanup_subcommand="${1:-help}"
+	local cleanup_subcommand="${1:-report}"
+	local storage_helper="storage-cleanup-helper.sh"
 	case "$cleanup_subcommand" in
 	branches | remote-branches)
 		shift || true
@@ -2110,22 +2111,33 @@ _main_dispatch_cleanup() {
 		shift || true
 		_dispatch_helper "local-branch-cleanup-helper.sh" "local-branch-cleanup-helper.sh" "$@"
 		;;
-	help | --help | -h | "")
-		echo "Usage: aidevops cleanup <branches|remote-branches|local-branches> [options]"
+	report | status | all | tmp | worktrees | opencode | observability)
+		# GH#35245: storage stores route to their existing owning cleaners.
+		_dispatch_helper "$storage_helper" "$storage_helper" "$@"
+		return $?
+		;;
+	help | --help | -h)
+		echo "Usage: aidevops cleanup [report|all|<store>|<branch-cmd>] [options]"
 		echo ""
-		echo "Cleanup commands:"
-		echo "  branches          Audit stale remote branches (dry-run default)"
+		echo "Storage (dry-run unless --apply):"
+		echo "  (no args), report Sizes of aidevops-owned stores and their cleaners"
+		echo "  all [--apply]     Preview or clean every store"
+		echo "  tmp|worktrees|opencode|observability [--apply]  One store"
+		echo "  Daily automatic run: routine r922 Storage hygiene (installed by setup)"
+		echo ""
+		echo "Branches (dry-run unless --apply):"
+		echo "  branches          Audit stale remote branches"
 		echo "  remote-branches   Alias for branches"
-		echo "  local-branches    Audit merged local branches (dry-run default)"
+		echo "  local-branches    Audit merged local branches"
 		echo ""
-		echo "Options:"
+		echo "Branch options:"
 		echo "  --repo PATH       Repository path (default: current directory)"
 		echo "  --remote NAME     Remote to audit (default: origin)"
 		echo "  --branch NAME     Single local branch (local-branches only)"
 		echo "  --apply           Delete safe candidates"
 		echo ""
 		;;
-	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try branches|remote-branches|local-branches|help)"; return 1 ;;
+	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try report|all|tmp|worktrees|opencode|observability|branches|local-branches|help)"; return 1 ;;
 	esac
 	return 0
 }

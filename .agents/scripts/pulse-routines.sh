@@ -218,6 +218,7 @@ _routine_platform_owned() {
 	r915:pulse-check-helper.sh) name=pulse-check ;;
 	r919:mirror-sync-helper.sh) name=mirror-sync ;;
 	r920:memory-audit-pulse.sh) name=memory-audit ;;
+	r922:storage-cleanup-helper.sh) name=storage-hygiene ;;
 	*) return 1 ;;
 	esac
 	label="${label:-sh.aidevops.${name}}"

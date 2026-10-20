@@ -135,8 +135,12 @@ timer is enabled or active, or an uncommented aidevops crontab entry runs that
 target. A plist or unit file alone is not ownership evidence. Removing/disabling
 the platform scheduler restores Pulse evaluation; Pulse-only routines (including
 r916–r918) and custom targets are unaffected. This applies equally to r906,
-r908, r914 and r919; their platform execution failures still need diagnosis in
+r908, r914, r919 and r922; their platform execution failures still need diagnosis in
 their own service logs rather than duplicate Pulse retries.
+
+r922 Storage hygiene is the scheduled form of `aidevops cleanup all --apply`
+(`scripts/storage-cleanup-helper.sh`); run `aidevops cleanup` for current store
+sizes and whether its scheduler is installed.
 
 Platform wrappers retain per-routine tracking state under
 `~/.aidevops/.agent-workspace/cron/<id>/routine-state.json`. Successful updates

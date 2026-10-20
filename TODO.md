@@ -1726,6 +1726,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18735 fix(cloudron): release evidence rejects manifests with a binary file:// icon #bug ref:GH#35091
 
+- [ ] t18743 aidevops cleanup: on-demand storage cleanup command and r922 storage hygiene routine #auto-dispatch #feat #interactive ref:GH#35245 assignee:marcusquinn started:2026-10-20 -> [todo/tasks/t18743-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

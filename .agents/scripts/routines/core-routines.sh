@@ -37,6 +37,7 @@ r918|x|Observability retention — archive bounded runtime evidence|repeat:daily
 r919|x|Private mirror upstream sync|repeat:daily(@20:00)|~5m|scripts/mirror-sync-helper.sh sync|script
 r920|x|Memory audit — mine actionable learning patterns|repeat:daily(@04:00)|~2m|scripts/memory-audit-pulse.sh run --quiet|script
 r921|x|README badges — remediate managed repo drift|repeat:weekly(sun@08:10)|~5m|scripts/badges-sync-helper.sh --apply --json|script
+r922|x|Storage hygiene — reclaim tmp, worktrees, OpenCode DBs, observability|repeat:daily(@05:30)|~10m|scripts/storage-cleanup-helper.sh all --apply|script
 ENTRIES
 	return 0
 }
@@ -1108,6 +1109,60 @@ dedicated launchd plist or systemd unit.
   remains for the next scheduled run.
 - Missing stores and empty candidate sets are successful no-ops.
 $(_pulse_diag_commands "$os")
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r922() {
+	local os="${1:-}"
+	[[ -n "$os" ]] || os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	cat <<EOF
+# r922: Storage hygiene
+
+## Overview
+
+Daily run of \`aidevops cleanup all --apply\`. It calls the existing owning
+cleaner for each aidevops store so disk usage stays bounded without anyone
+having to remember a manual cleanup:
+
+| Store | Cleaner |
+|-------|---------|
+| tmp | \`system-cleanup.sh --force\` (retention window, moves to Trash) |
+| worktrees | \`cleanup-worktrees-async-helper.sh\` (merged/closed, guarded removal) |
+| opencode | \`opencode-db-maintenance-helper.sh auto\` (idle DBs, layout backups) |
+| observability | \`observability-helper.sh retention-maintenance --apply\` |
+
+Run \`aidevops cleanup\` any time for a read-only size report, or
+\`aidevops cleanup <store>\` to preview one store.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Daily at 05:30 local |
+| Type | script |
+| Expected duration | ~10 minutes (bounded per store) |
+| Script | \`scripts/storage-cleanup-helper.sh all --apply\` |
+$(_scheduler_row_calendar "$os" "Hour=5, Minute=30" "sh.aidevops.storage-hygiene" "aidevops-storage-hygiene")
+
+The platform scheduler is installed by \`setup.sh\` and does not depend on the
+supervisor Pulse. Pulse runs r922 only as a fallback when that job is missing
+or cannot start.
+
+## Safety rails
+
+- Orchestrator only: it never deletes files itself, so each cleaner keeps its
+  own safety gates (live-DB skips, dirty-worktree archives, verified archives).
+- A single-runner lock prevents overlapping scheduled and manual runs.
+- A failed store does not stop the others; the run exits non-zero and names
+  the failed stores.
+
+## Diagnostics
+
+- \`aidevops cleanup\` — current sizes and whether r922 is installed
+- \`~/.aidevops/.agent-workspace/logs/storage-hygiene.log\` — scheduled output
+$(_diag_commands "$os" "sh.aidevops.storage-hygiene" "aidevops-storage-hygiene")
 $(_platform_footnote "$os")
 EOF
 	return 0
