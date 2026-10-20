@@ -409,11 +409,12 @@ _prepare_apply_worktree() {
 	[[ ! -e "$_worktree_path" ]] || return 1
 	_refresh_remote_from_linked_context \
 		"$_classified_path" "$_remote" "$_default_branch" "$_base_dir" "$_slug" || return 1
-	git -C "$_classified_path" worktree add -q -B "$_branch" \
-		"$_worktree_path" "$_default_ref" >/dev/null 2>&1 || return 1
-	if command -v register_worktree >/dev/null 2>&1; then
-		register_worktree "$_worktree_path" "$_branch" --task workflow-sync || true
-	fi
+	(
+		# shellcheck source=shared-worktree-create.sh
+		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
+		AIDEVOPS_WORKTREE_CREATE_TASK=workflow-sync worktree_create_registered \
+			"$_classified_path" "$_worktree_path" "$_default_ref" -q -B "$_branch"
+	) >/dev/null || return 1
 	printf '%s\n' "$_worktree_path"
 	return 0
 }

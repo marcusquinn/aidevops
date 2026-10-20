@@ -36,7 +36,7 @@ REG_SPEC.loader.exec_module(registry)
 
 
 class CreationProducerTests(unittest.TestCase):
-    def test_skill_fallback_registers_new_and_existing_branches_and_reuses_worktree(self):
+    def test_persistent_producers_register_new_branches_and_reuse_worktrees(self):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
         with tempfile.TemporaryDirectory(prefix="skill-creation-", dir=base) as directory:
             root = Path(directory)
@@ -65,9 +65,16 @@ class CreationProducerTests(unittest.TestCase):
                     path = command("bash", "-c", script, "fixture", SCRIPTS, root, branch)
                     self.assertEqual(path, str(root / ("repo-" + branch)))
                     self.assertTrue((Path(path) / ".git").is_file())
+            script = ('source "$1/pulse-quality-debt.sh"; '
+                      'create_quality_debt_worktree "$2/repo" 123 fixture')
+            for attempt in range(2):
+                with self.subTest(producer="quality-debt", attempt=attempt):
+                    path = command("bash", "-c", script, "fixture", SCRIPTS, root)
+                    self.assertEqual(path, str(root / "repo-bugfix-qd-123-fixture"))
+                    self.assertTrue((Path(path) / ".git").is_file())
             with closing(sqlite3.connect(env["WORKTREE_REGISTRY_DB"])) as db:
                 self.assertEqual(db.execute("SELECT branch FROM worktree_owners ORDER BY branch").fetchall(),
-                                 [("existing",), ("new",)])
+                                 [("bugfix/qd-123-fixture",), ("existing",), ("new",)])
 
 
 class RunnerControlTests(unittest.TestCase):

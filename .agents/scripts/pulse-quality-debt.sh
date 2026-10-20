@@ -63,7 +63,11 @@ create_quality_debt_worktree() {
 		parent_dir=$(dirname "$repo_path")
 		qd_wt_slug=$(printf '%s' "$qd_branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
 		qd_wt_path="${parent_dir}/${repo_name}-${qd_wt_slug}"
-		git -C "$repo_path" worktree add -b "$qd_branch" "$qd_wt_path" 2>/dev/null || {
+		(
+			# shellcheck source=shared-worktree-create.sh
+			source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
+			worktree_create_registered "$repo_path" "$qd_wt_path" HEAD -b "$qd_branch"
+		) >/dev/null || {
 			echo "[create_quality_debt_worktree] Failed to create worktree for #${issue_number}" >>"${LOGFILE:-/dev/null}"
 			return 1
 		}

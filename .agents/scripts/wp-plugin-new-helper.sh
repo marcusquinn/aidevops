@@ -438,7 +438,11 @@ _copy_starter() {
 		print_error "$P_WORKTREE already exists; preserve it and choose another slug"
 		return 1
 	}
-	git -C "$P_DEST" worktree add -b "$P_BRANCH" "$P_WORKTREE" HEAD || return 1
+	(
+		# shellcheck source=shared-worktree-create.sh
+		source "${SCRIPT_DIR}/shared-worktree-create.sh" || exit 1
+		worktree_create_registered "$P_DEST" "$P_WORKTREE" HEAD -b "$P_BRANCH"
+	) || return 1
 	if ! "$P_WORKTREE/scripts/rename-plugin.sh" --help | grep -q -- '--author-uri'; then
 		print_error "starter $P_TAG has no maker flags in scripts/rename-plugin.sh; release a newer starter first"
 		return 1

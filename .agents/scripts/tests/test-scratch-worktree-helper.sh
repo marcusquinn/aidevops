@@ -13,6 +13,8 @@ trap 'rm -rf "$ROOT"' EXIT
 HOME="${ROOT}/home"
 AIDEVOPS_CLEANUP_LOG="${ROOT}/cleanup.log"
 export HOME AIDEVOPS_CLEANUP_LOG
+export WORKTREE_REGISTRY_DIR="${ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/owners.db"
 REPO="${ROOT}/repo"
 BASE="${ROOT}/worktrees"
 FAILURES=0
@@ -130,11 +132,23 @@ make_stale "$dead_pid" "$dead_stale"
 make_stale "$live_pid" "$live_stale"
 make_stale "$dead_pid" "$fresh_dead"
 touch "$fresh_dead"
+managed_stale="${BASE}/.repo-fetch-managed"
+make_stale "$dead_pid" "$managed_stale"
+# An incomplete managed record must refuse on every platform, including Darwin.
+# Seed only the isolated fixture database; never synthesize completion evidence.
+python3 - "$WORKTREE_REGISTRY_DB" "$managed_stale" <<'PY'
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("INSERT INTO worktree_managed_lifetimes (path, record) VALUES (?, ?)",
+               (sys.argv[2], '{"manager":"owner-cgroup","state":"running"}'))
+PY
 scratch_worktree_reap_stale "$REPO"
 [[ ! -e "$dead_stale" ]] && pass "dead idle owner is reclaimed" || fail "dead idle owner not reclaimed"
 [[ -d "$live_stale" ]] && pass "live owner is preserved" || fail "live owner was reclaimed"
 [[ -d "$fresh_dead" ]] && pass "recently active scratch is preserved" || fail "recent scratch was reclaimed"
 [[ -d "$dirty" ]] && pass "dirty locked scratch is preserved by the reaper" || fail "dirty scratch was reaped"
+[[ -d "$managed_stale" && -n "$(lock_reason_of "$managed_stale")" ]] &&
+	pass "dead managed owner without completion proof stays locked" || fail "managed scratch lost protection"
 kill "$live_pid" 2>/dev/null || true
 wait "$live_pid" 2>/dev/null || true
 

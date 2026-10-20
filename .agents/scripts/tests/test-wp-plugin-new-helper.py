@@ -4,8 +4,10 @@
 """Exercise create with real scratch Git worktrees and offline service stubs."""
 
 import os
+from contextlib import closing
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +15,7 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
+GIT = os.environ.get("AIDEVOPS_TEST_GIT_BIN") or shutil.which("git")
 
 
 class PluginCreateTest(unittest.TestCase):
@@ -33,6 +36,9 @@ class PluginCreateTest(unittest.TestCase):
                 (self.scripts / dependency.name).symlink_to(dependency)
         self.env = dict(os.environ, HOME=str(self.root),
                         PATH=f"{self.bin}:{os.environ['PATH']}",
+                        FIXTURE_GIT=GIT,
+                        WORKTREE_REGISTRY_DIR=str(self.root / "registry"),
+                        WORKTREE_REGISTRY_DB=str(self.root / "registry/owners.db"),
                         AIDEVOPS_WORKTREE_BASE_DIR=str(self.root / "worktrees"),
                         GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                         GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
@@ -69,7 +75,7 @@ if "clone" in args:
 if "commit" in args and os.environ["INIT_MODE"] == "commit-fails":
     if "chore: initialize aidevops code-quality" in args:
         sys.exit(43)
-sys.exit(subprocess.call(["/usr/bin/git", *args]))
+sys.exit(subprocess.call([os.environ["FIXTURE_GIT"], *args]))
 ''')
         self.write_executable(self.bin / "gh", '''#!/usr/bin/env bash
 set -eu
@@ -110,7 +116,7 @@ cat > "$FIXTURE_ROOT/published-body"
     def git(self, path, *args):
         # Fixed Git executable and exclusively fixture-owned argv; no shell.
         return subprocess.check_output(  # nosec B603
-            ["/usr/bin/git", "-C", str(path), *args], env=self.env, text=True
+            [GIT, "-C", str(path), *args], env=self.env, text=True
         ).strip()
 
     def create(self, *options):
@@ -141,6 +147,10 @@ cat > "$FIXTURE_ROOT/published-body"
         self.assertEqual(self.git(self.root / "clone", "log", "-1", "--format=%s"),
                          "chore: starter")
         self.assertEqual(self.git(self.root / "clone", "status", "--porcelain"), "")
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as db:
+            self.assertEqual(db.execute("SELECT branch FROM worktree_owners WHERE worktree_path=?",
+                                        (str(self.worktree),)).fetchone(),
+                             ("chore/example-plugin-identity",))
 
     def test_clean_init_needs_no_empty_commit(self):
         self.env["INIT_MODE"] = "clean"
