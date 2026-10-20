@@ -165,11 +165,9 @@ def _save_full(session_id: str, entries) -> str:
 
 def build_context(payload: dict) -> str:
     """Return the additionalContext text, or '' when nothing applies."""
-    if os.environ.get("AIDEVOPS_COMPACTION_REPLAY", "").lower() in DISABLED_VALUES:
+    if os.environ.get("AIDEVOPS_COMPACTION_REPLAY", "").lower() in DISABLED_VALUES or _max_chars() == 0:
         return ""
     if payload.get("source") != "compact":
-        return ""
-    if _max_chars() == 0:
         return ""
     transcript_path = payload.get("transcript_path")
     if not isinstance(transcript_path, str) or not transcript_path:
