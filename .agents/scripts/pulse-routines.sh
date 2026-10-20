@@ -690,6 +690,15 @@ _routine_execute() {
 		local run_parts=()
 		IFS=' ' read -r -a run_parts <<<"$run_script"
 		local script_path="${agents_dir}/${run_parts[0]}"
+		# Missing host-private adapters identify non-owner hosts. Broken symlinks,
+		# traversal paths and installed but non-executable adapters remain errors.
+		if [[ "${run_parts[0]}" == custom/scripts/* && "${run_parts[0]}/" != */../* && ! -e "$script_path" && ! -L "$script_path" ]]; then
+			echo "[pulse-wrapper] routine ${routine_id}: owner adapter not installed on this host; skipping" >>"$LOGFILE"
+			# No execution occurred, so record host-local state only, not a lifecycle
+			# success or failure. Preserve the last successful calendar boundary.
+			_routine_update_state "$routine_id" "skipped_not_owner"
+			return 0
+		fi
 		if [[ ! -x "$script_path" ]]; then
 			echo "[pulse-wrapper] routine ${routine_id}: script not found or not executable: ${script_path}" >>"$LOGFILE"
 			_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$started_epoch"

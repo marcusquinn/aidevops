@@ -96,6 +96,23 @@ a long-lived retry process.
 
 Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or summarisation is needed.
 
+### Single-owner custom adapters
+
+For `run:custom/scripts/<name>.sh`, install the adapter only on its owner host.
+Other Pulse hosts sharing the registry skip an absent adapter and log
+`owner adapter not installed on this host; skipping`. Their local routine state
+records `last_status: skipped_not_owner` without increasing `consecutive_failures`
+or advancing the successful `last_run` boundary. Existing failure counts are
+preserved, not reset. The next due evaluation checks for the adapter again, so
+installing it allows normal execution without a state reset. No execution
+lifecycle success or failure is recorded for the skip, and no agent fallback runs.
+
+An installed but non-executable adapter, a broken symlink, or an adapter that
+executes and fails still records a failure. Missing scripts outside
+`custom/scripts/` (including paths containing `..`) also remain failures. This
+behavior does not verify host identity: a copy installed on another host will
+run there too. Do not install duplicate adapters for single-writer routines.
+
 ## Scheduler ownership
 
 Enabled `repeat:` routines in registered repositories are normally evaluated by
