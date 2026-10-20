@@ -229,21 +229,21 @@ and plan ID; generation time is observational. The v2 confirmation token binds p
 exact candidate count, expected allocated bytes, schema and permanent-delete action.
 Never upgrade earlier or tokenless plans into destructive authorization.
 
-Candidate status requires a valid complete archive, completed source removal,
-a clean tracked/untracked/user-ignored Git state, an exact terminal commit, no
-open pull request, no live Git
-worktree/registry/claim/process reference, and exact readable sizing. Ignored,
-untracked directories with recognised regenerable-cache identities
-(`node_modules`, `.pnpm-store`, `.yarn/cache`, `.next/cache`, `.nuxt/cache`,
-`.turbo`, `.parcel-cache`, `.vite`, `__pycache__`, and `.pytest_cache` at any
-depth, plus `.codegraph` only at the repository root) do not make an otherwise
-clean legacy archive dirty; historical producers omitted those roots after proving
-they contain no tracked files. Other ignored content remains protected. Positive live or
-unfinished evidence is `protected`. Missing APIs, process visibility, identity,
-validation, or sizing is `unknown`. Identity and allocated bytes are read again
-immediately before an entry is emitted, so concurrent drift downgrades only
-that entry. Age, size, and OpenCode or Claude session history never prove
-reclaimability. Plan files grant no deletion authority by themselves.
+Candidate status requires a valid complete archive, completed source removal, a clean tracked/untracked/user-ignored
+Git state, an exact terminal commit, no open pull request, no live Git worktree/registry/claim/process reference,
+and exact readable sizing. Ignored, untracked directories with recognised regenerable-cache identities
+(`node_modules`, `.pnpm-store`, `.yarn/cache`, `.next/cache`, `.nuxt/cache`, `.turbo`,
+`.parcel-cache`, `.vite`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, and `.ruff_cache`
+at any depth; `.venv`/`venv` only with a regular `pyvenv.cfg` and `*.egg-info` only with a
+regular `PKG-INFO`; `.codegraph` and `.astro` only at the repository root) do not make an
+otherwise clean legacy archive dirty. Ignored, untracked aidevops state at exact root paths
+(`.agents/loop-state/`, `.agents/tmp/`, `.agents/.full-loop-cleanup-deferred`,
+`todo/batches/*.json.lock`) is also not user data; it is removed only with its whole bucket.
+Generic `dist/` and `build/` lack identity evidence and stay protected. Positive live or
+unfinished evidence is `protected`. Missing APIs, process visibility, identity, validation, or sizing is `unknown`.
+Identity and allocated bytes are read again immediately before an entry is emitted, so concurrent drift downgrades
+only that entry. Age, size, and OpenCode or Claude session history never prove reclaimability. Plan files grant no
+deletion authority by themselves.
 
 ### Terminal publication evidence
 

@@ -162,7 +162,45 @@ test_git_state_protects_tracked_regenerable_cache_roots() {
 	return 0
 }
 
-test_compact_archive_preserves_ignored_payload() {
+test_git_state_accepts_marked_python_roots_and_framework_state() {
+	local repo_path="${TEST_DIR}/python-roots-repo"
+	local identity="" state="" manifest="" deadline_epoch=0
+	local rc=0
+
+	"$GIT_BIN" init -q -b main "$repo_path" || rc=1
+	printf '.venv/\nvenv/\n*.egg-info/\n.mypy_cache/\n.agents/loop-state/\ntodo/batches/*.lock\n' \
+		>>"${repo_path}/.git/info/exclude" || rc=1
+	mkdir -p "${repo_path}/.venv/lib" "${repo_path}/pkg.egg-info" "${repo_path}/.mypy_cache" \
+		"${repo_path}/.agents/loop-state" "${repo_path}/todo/batches" || rc=1
+	printf 'home = /usr\n' >"${repo_path}/.venv/pyvenv.cfg" || rc=1
+	printf 'site\n' >"${repo_path}/.venv/lib/site.py" || rc=1
+	printf 'Name: pkg\n' >"${repo_path}/pkg.egg-info/PKG-INFO" || rc=1
+	printf 'mypy\n' >"${repo_path}/.mypy_cache/state" || rc=1
+	printf '{}\n' >"${repo_path}/.agents/loop-state/loop.json" || rc=1
+	printf 'lock\n' >"${repo_path}/todo/batches/batch.json.lock" || rc=1
+	identity=$(jq -cn --arg archive_path "$repo_path" '{archive_path:$archive_path}') || rc=1
+	state=$(_worktree_recovery_plan_git_state "$identity") || rc=1
+	[[ "$state" == "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR" ]] || rc=1
+	deadline_epoch=$(($(date +%s) + 30)) || rc=1
+	manifest=$(_worktree_recovery_cache_policy_helper manifest "$repo_path" \
+		"$GIT_BIN" 10 10485760 "$deadline_epoch") || rc=1
+	printf '%s\n' "$manifest" | jq -e \
+		'[.entries[].relative_path] | sort == [".mypy_cache",".venv","pkg.egg-info"]' >/dev/null || rc=1
+	# Generic names without their tool-written identity file remain user data.
+	mkdir -p "${repo_path}/venv" || rc=1
+	printf 'user\n' >"${repo_path}/venv/notes.txt" || rc=1
+	state=$(_worktree_recovery_plan_git_state "$identity") || rc=1
+	[[ "$state" == "dirty" ]] || rc=1
+	rm -rf "${repo_path}/venv" "${repo_path}/.venv/pyvenv.cfg" || rc=1
+	ln -s "${repo_path}/.venv/lib/site.py" "${repo_path}/.venv/pyvenv.cfg" || rc=1
+	state=$(_worktree_recovery_plan_git_state "$identity") || rc=1
+	[[ "$state" == "dirty" ]] || rc=1
+	print_result "git_state_accepts_marked_python_roots_and_framework_state" "$rc" \
+		"Expected marked Python roots and framework state to be clear while unmarked or symlinked markers stay protected"
+	return 0
+}
+
+test_compact_archive_captures_git_only() {
 	local repo_path="${TEST_DIR}/cache-policy-repo"
 	local worktree_path="${TEST_DIR}/cache-policy-worktree"
 	local recovery_root="${TEST_DIR}/cache-policy-recovery"
@@ -194,18 +232,22 @@ PY
 		archive_worktree_path_recoverably "$worktree_path" "test.sh" "cache-policy" || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	_worktree_recovery_producer_command 0 verify "$archive_path" || rc=1
-	bash "${SCRIPTS_DIR}/worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
-	# Compact capture preserves ignored bytes rather than applying the legacy
-	# full-copy cache pruning policy. Verify the actual restored payload.
+	# Restore creates a durable worktree; keep it under a test-owned base.
+	AIDEVOPS_WORKTREE_BASE_DIR="$TEST_DIR" \
+		bash "${SCRIPTS_DIR}/worktree-archive-helper.sh" restore "$archive_path" --target "$restored" >/dev/null || rc=1
+	# GH#35172: captures are Git-only. Restore reproduces tracked content and
+	# never materialises ignored payload; the source keeps its own bytes.
+	jq -e '.capture_policy == "git-only"' "${archive_path}/manifest.json" >/dev/null || rc=1
+	cmp "$worktree_path/README.md" "$restored/README.md" || rc=1
 	local relative=""
 	for relative in node_modules/package/large-cache.bin backend/__pycache__/module.pyc \
 		backend/.pytest_cache/state .codegraph/codegraph.db \
 		nested/.codegraph/codegraph.db private-artifact/user.bin; do
-		cmp "$worktree_path/$relative" "$restored/$relative" || rc=1
+		[[ -f "$worktree_path/$relative" && ! -e "$restored/$relative" ]] || rc=1
 	done
 	[[ ! -e "${archive_path}/.git" && -d "$worktree_path" ]] || rc=1
-	print_result "compact_archive_preserves_ignored_payload" "$rc" \
-		"Expected verified compact evidence with independently restored ignored payload and an intact source"
+	print_result "compact_archive_captures_git_only" "$rc" \
+		"Expected verified Git-only evidence that restores tracked content without ignored payload and keeps the source intact"
 	return 0
 }
 
