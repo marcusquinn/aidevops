@@ -572,6 +572,7 @@ fi
 deployed_scripts="$SANDBOX/deployed-scripts"
 mkdir -p "$deployed_scripts"
 cp "$HELPER" "$deployed_scripts/opencode-db-maintenance-helper.sh"
+cp "${SCRIPT_DIR}/../opencode-db-inventory-lib.sh" "$deployed_scripts/"
 _test_copy_shared_deps "${SCRIPT_DIR}/.." "$deployed_scripts"
 sibling_pulse_log="$SANDBOX/sibling-pulse-lifecycle.log"
 cat >"$deployed_scripts/pulse-lifecycle-helper.sh" <<'MOCK_SIBLING_PULSE'
@@ -623,6 +624,7 @@ fi
 missing_scripts="$SANDBOX/missing-scripts"
 mkdir -p "$missing_scripts"
 cp "$HELPER" "$missing_scripts/opencode-db-maintenance-helper.sh"
+cp "${SCRIPT_DIR}/../opencode-db-inventory-lib.sh" "$missing_scripts/"
 _test_copy_shared_deps "${SCRIPT_DIR}/.." "$missing_scripts"
 chmod +x "$missing_scripts/opencode-db-maintenance-helper.sh"
 sqlite_dir=$(dirname "$(command -v sqlite3)")
@@ -657,6 +659,38 @@ fi
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
+
+isolated_root="$SANDBOX/isolated"
+mkdir -p "$isolated_root/project with spaces/opencode"
+isolated_db="$isolated_root/project with spaces/opencode/opencode.db"
+cp "$OPENCODE_DIR/opencode.db" "$isolated_db"
+out=$(OPENCODE_INTERACTIVE_ROOT="$isolated_root" _run_helper report 2>&1)
+if [[ "$out" == *"$isolated_db"* && "$out" == *"active / WAL / archive bytes"* ]]; then
+	_pass "report includes isolated DB sizes alongside the selected DB"
+else
+	_fail "isolated report mismatch: $out"
+fi
+# The default DB has a recent throttle record; the isolated DB must still get
+# its own maintenance pass and independent throttle record.
+out=$(OPENCODE_INTERACTIVE_ROOT="$isolated_root" _run_helper auto 2>&1)
+if [[ -f "${isolated_db%/*}/aidevops-maintenance/last-run.json" ]]; then
+	_pass "auto maintains isolated DB independently of the default DB throttle"
+else
+	_fail "isolated maintenance state missing: $out"
+fi
+
+cat >"$mock_bin/lsof" <<'MOCK_LSOF_ERROR'
+#!/usr/bin/env bash
+printf 'lsof: permission denied\n' >&2
+exit 1
+MOCK_LSOF_ERROR
+chmod +x "$mock_bin/lsof"
+out=$(PATH="$mock_bin:$PATH" AUTO_MIN_SECONDS_BETWEEN=0 OPENCODE_INTERACTIVE_ROOT="$isolated_root" _run_helper auto 2>&1)
+if [[ "$out" == *"currently active"* && "$out" != *"Starting maintenance"* ]]; then
+	_pass "inventory maintenance treats lsof inspection errors as protected skips"
+else
+	_fail "lsof inspection error was treated as idle: $out"
+fi
 
 echo
 printf 'Results: %d passed, %d failed\n' "$PASS" "$FAIL"

@@ -17,7 +17,7 @@
 #
 # Lifecycle:
 #   1. Acquire a mkdir-based single-runner lock (~/.aidevops/logs/opencode-db-archive.lock).
-#   2. Invoke opencode-db-archive.sh archive with the configured budget.
+#   2. Invoke opencode-db-archive.sh archive-all with the configured per-DB budget.
 #   3. Update ~/.aidevops/logs/opencode-db-archive.last-run on success.
 #   4. Release lock on EXIT/INT/TERM (trap).
 #
@@ -25,7 +25,7 @@
 #   opencode-db-archive-async-helper.sh
 #
 # Environment:
-#   OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC  — seconds per run (default 60; was 30 inline)
+#   OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC  — seconds per DB (default 60)
 #
 # Observability (for pulse-diagnose-helper.sh):
 #   ~/.aidevops/logs/opencode-db-archive.log      — progress log
@@ -47,7 +47,7 @@ readonly PID_FILE="${LOCK_DIR}/pid"
 readonly LAST_RUN_FILE="${LOG_DIR}/opencode-db-archive.last-run"
 readonly ARCHIVE_HELPER="${SCRIPT_DIR}/opencode-db-archive.sh"
 
-# Per-run time budget. Larger than the inline 30s default — async runs are not
+# Per-DB time budget. Larger than the inline 30s default — async runs are not
 # on the critical path, so we let each invocation make more progress.
 OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC="${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC:-60}"
 OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC="${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC//[!0-9]/}"
@@ -185,7 +185,7 @@ main() {
 	echo "[opencode-db-archive-async] Starting archive (budget=${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC}s)" >>"$LOGFILE"
 
 	local rc=0
-	"$ARCHIVE_HELPER" archive --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 || rc=$?
+	"$ARCHIVE_HELPER" archive-all --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 || rc=$?
 
 	if [[ "$rc" -eq 0 ]]; then
 		_update_last_run

@@ -92,9 +92,12 @@ fi
 # Paths and defaults
 # -----------------------------------------------------------------------------
 
+# shellcheck source=opencode-db-inventory-lib.sh
+source "${SCRIPT_DIR}/opencode-db-inventory-lib.sh"
+
 readonly OPENCODE_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode"
 readonly OPENCODE_DB="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${OPENCODE_DATA_DIR}/opencode.db}}"
-readonly OPENCODE_ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-${OPENCODE_DATA_DIR}/opencode-archive.db}"
+readonly OPENCODE_ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-${OPENCODE_DB%/*}/opencode-archive.db}"
 readonly OPENCODE_WAL="${OPENCODE_DB}-wal"
 readonly OPENCODE_SHM="${OPENCODE_DB}-shm"
 readonly MAINTENANCE_WINDOW_MODE="maintenance-window"
@@ -104,7 +107,7 @@ readonly PRAGMA_FREELIST_COUNT="freelist_count"
 readonly SESSION_PARENT_ID_COLUMN="parent_id"
 readonly SESSION_PROJECT_ID_COLUMN="project_id"
 
-readonly STATE_DIR="${HOME}/.aidevops/.agent-workspace/work/opencode-maintenance"
+readonly STATE_DIR="${OPENCODE_MAINTENANCE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/work/opencode-maintenance}"
 readonly STATE_FILE="${STATE_DIR}/last-run.json"
 readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 
@@ -203,6 +206,28 @@ _sqlite_available() {
 # Deduplicates by PID so a process matched by both methods is counted once.
 _opencode_process_count() {
 	local pids=""
+	# Inventory children target independent stores. A TUI using another project
+	# must not veto every idle DB; unavailable inspection still vetoes this DB.
+	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" == 1 ]]; then
+		if ! command -v lsof >/dev/null 2>&1; then
+			printf '1\n'
+			return 0
+		fi
+		local holder_rc=0
+		local files=("$OPENCODE_DB")
+		[[ ! -e "${OPENCODE_DB}-wal" ]] || files+=("${OPENCODE_DB}-wal")
+		[[ ! -e "${OPENCODE_DB}-shm" ]] || files+=("${OPENCODE_DB}-shm")
+		# Exit 1 also means no matches. Preserve diagnostics instead of treating
+		# permission/inspection errors as idle; omit absent sidecars to avoid
+		# generating our own missing-file errors during an ordinary idle check.
+		pids=$(lsof -t "${files[@]}" 2>&1) || holder_rc=$?
+		if [[ "$holder_rc" -gt 1 || ! "$pids" =~ ^[0-9[:space:]]*$ ]]; then
+			printf '1\n'
+			return 0
+		fi
+		printf '%s\n' "$pids" | awk 'NF' | sort -u | wc -l | tr -d ' '
+		return 0
+	fi
 	# shellcheck disable=SC2009
 	pids=$(pgrep -f '(^|/)\.?opencode($|[[:space:]])' 2>/dev/null || true)
 	if [[ -f "$OPENCODE_DB" ]] && command -v lsof >/dev/null 2>&1; then
@@ -211,6 +236,7 @@ _opencode_process_count() {
 		pids=$(printf '%s\n%s\n' "$pids" "$lsof_pids")
 	fi
 	printf '%s\n' "$pids" | awk 'NF' | sort -u | wc -l | tr -d ' '
+	return 0
 }
 
 # _db_size_bytes <path> — portable file-size getter
@@ -709,6 +735,15 @@ _report_print_wal_status() {
 }
 
 cmd_report() {
+	local inventory_db
+	printf '\nOpenCode DB inventory (active / WAL / archive bytes):\n'
+	while IFS= read -r -d '' inventory_db; do
+		printf '  %s: %s / %s / %s\n' "$inventory_db" \
+			"$(_db_size_bytes "$inventory_db")" "$(_db_size_bytes "${inventory_db}-wal")" \
+			"$(_db_size_bytes "${inventory_db%/*}/opencode-archive.db")"
+	done < <(opencode_db_inventory "$OPENCODE_DB")
+	# Inventory is still useful when the selected/default DB does not exist.
+	[[ -f "$OPENCODE_DB" ]] || return 0
 	if ! _opencode_installed; then
 		print_info "opencode not installed — nothing to report"
 		return 0
@@ -1172,6 +1207,22 @@ _prune_layout_backups() {
 }
 
 cmd_auto() {
+	# Children preserve the existing per-DB safety/throttle path, with independent
+	# state so a recent default-DB run cannot suppress isolated DB maintenance.
+	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" != 1 ]]; then
+		local db rc=0 result=0 state_dir
+		while IFS= read -r -d '' db; do
+			state_dir="$STATE_DIR"
+			if [[ ! "$db" -ef "$OPENCODE_DB" ]]; then state_dir="${db%/*}/aidevops-maintenance"; fi
+			print_info "Maintenance inventory: $db"
+			rc=0
+			OPENCODE_DB_PATH="$db" OPENCODE_MAINTENANCE_SINGLE_DB=1 \
+				OPENCODE_MAINTENANCE_STATE_DIR="$state_dir" \
+				bash "${BASH_SOURCE[0]}" auto "$@" || rc=$?
+			[[ "$rc" -eq 0 ]] || result="$rc"
+		done < <(opencode_db_inventory "$OPENCODE_DB")
+		return "$result"
+	fi
 	# Silent no-op if opencode not installed
 	if ! _opencode_installed; then
 		_log INFO "auto: opencode not installed — no-op"
@@ -1496,6 +1547,7 @@ Usage:
 Subcommands:
   check                  Preflight: DB exists, sqlite3 available, no locks
   report                 Human-readable DB stats (size, pages, free list, PRAGMAs)
+                         Includes active/WAL/archive sizes for isolated project DBs.
   maintain [--force]     Run maintenance. Aborts if opencode processes active
                          unless --force is passed (may cause session errors).
   maintenance-window     Disruptive off-hours mode: stop pulse/headless workers,
@@ -1503,6 +1555,7 @@ Subcommands:
                          Pass --force-opencode to continue with interactive TUIs open.
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
+                         Visits isolated project DBs too, skipping each live DB.
   install                macOS: install/refresh LaunchAgent (weekly Sun 04:00).
                          Linux: no-op (handled by .agents/scripts/setup/modules/schedulers.sh).
   uninstall              macOS: remove LaunchAgent. Idempotent.
@@ -1535,6 +1588,9 @@ Environment variables (advanced):
   OPENCODE_DB_MAINTENANCE_MODE  Scheduler mode: auto or maintenance-window
   OPENCODE_DB_PATH              Active DB override for sessions/maintenance
   OPENCODE_ARCHIVE_DB           Archive DB override for sessions lookup
+  OPENCODE_INTERACTIVE_ROOT     Fixed-depth isolated DB inventory root (default:
+                               ~/.aidevops/.agent-workspace/work/opencode-interactive)
+  OPENCODE_MAINTENANCE_STATE_DIR  Override maintenance state/log directory
 
 Session lookup examples:
   opencode-db-maintenance-helper.sh sessions --query "24396" --include-archive
@@ -1544,6 +1600,8 @@ Session lookup examples:
 State:
   ~/.aidevops/.agent-workspace/work/opencode-maintenance/last-run.json
   ~/.aidevops/.agent-workspace/work/opencode-maintenance/maintenance.log
+  Isolated inventory children keep independent state under the DB directory:
+  aidevops-maintenance/{last-run.json,maintenance.log}
 
 Exit codes:
   0   success (including auto no-op)

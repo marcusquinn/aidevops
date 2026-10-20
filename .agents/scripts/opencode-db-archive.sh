@@ -37,6 +37,9 @@ fi
 
 # --- Configuration -----------------------------------------------------------
 
+# shellcheck source=opencode-db-inventory-lib.sh
+source "${_oda_dir}/opencode-db-inventory-lib.sh"
+
 readonly SCRIPT_NAME="opencode-db-archive"
 if [[ -n "${XDG_DATA_HOME:-}" ]]; then
 	readonly DEFAULT_DATA_DIR="${XDG_DATA_HOME}/opencode"
@@ -782,6 +785,54 @@ _archive_candidate_filter() {
 
 # --- Archive command ----------------------------------------------------------
 
+cmd_archive_all() {
+	local db rc=0 result=0
+	while IFS= read -r -d '' db; do
+		print_info "Archive inventory: $db"
+		rc=0
+		OPENCODE_DB_PATH="$db" OPENCODE_ARCHIVE_DB="${db%/*}/opencode-archive.db" \
+			bash "${BASH_SOURCE[0]}" archive "$@" || rc=$?
+		# A protected skip is not a failure and must not prevent other DBs running.
+		if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then result="$rc"; fi
+	done < <(opencode_db_inventory "$ACTIVE_DB")
+	return "$result"
+}
+
+# Expire only archived event payloads, never the saved transcript graph. Freed
+# pages are reused by subsequent archive batches; this does not VACUUM archives.
+_archive_expire_events() {
+	local days="$1" dry_run="$2" max_duration="$3"
+	[[ "$days" -gt 0 && -f "$ARCHIVE_DB" ]] || return 0
+	if [[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
+		print_error "Archive event expiry refused — active and archive DB are the same file"
+		return 1
+	fi
+	local holders cutoff count start now
+	holders=$(_db_holder_count "$ARCHIVE_DB")
+	if [[ "$holders" == "$OPENCODE_DB_STATE_UNKNOWN" || "$holders" -gt 0 ]]; then
+		print_warning "Archive event expiry deferred — archive holder state is active or unknown"
+		return 2
+	fi
+	_wal_is_stable "$ARCHIVE_DB" || return 2
+	opencode_archive_schema_supported "$ARCHIVE_DB" required || return 3
+	_sqlite_has_table "$ARCHIVE_DB" event || return 0
+	cutoff=$(($(date +%s) * 1000 - days * 86400000))
+	if ((dry_run)); then
+		count=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COUNT(*) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE time_updated < $cutoff);") || return 1
+		print_info "DRY RUN — would expire $count archived events (inactive ${days}+ days)"
+		return 0
+	fi
+	start=$(date +%s)
+	while true; do
+		count=$(sqlite3 -cmd '.timeout 5000' "$ARCHIVE_DB" "DELETE FROM event WHERE rowid IN (SELECT e.rowid FROM event e JOIN session s ON s.id=e.aggregate_id WHERE s.time_updated < $cutoff LIMIT $ARCHIVE_BATCH_SIZE); SELECT changes();") || return 1
+		[[ "$count" -gt 0 ]] || break
+		now=$(date +%s)
+		if ((max_duration > 0 && now - start >= max_duration)); then break; fi
+	done
+	print_info "Archived event expiry pass complete (inactive ${days}+ days); transcripts preserved"
+	return 0
+}
+
 cmd_archive() {
 	local retention_days="$DEFAULT_RETENTION_DAYS"
 	local retention_enabled=1
@@ -790,6 +841,7 @@ cmd_archive() {
 	local keep_enabled=0
 	local dry_run=0
 	local max_duration="$DEFAULT_MAX_DURATION"
+	local event_retention_days="${OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS:-0}"
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -814,6 +866,15 @@ cmd_archive() {
 			dry_run=1
 			shift
 			;;
+		--apply)
+			dry_run=0
+			shift
+			;;
+		--archive-event-retention-days)
+			event_retention_days="$option_value"
+			[[ $# -ge 2 ]] || return 1
+			shift 2
+			;;
 		--max-duration-seconds)
 			max_duration="$option_value"
 			shift 2
@@ -831,6 +892,7 @@ cmd_archive() {
 	_validate_nonnegative_integer "$retention_days" "--retention-days" || return 1
 	_validate_nonnegative_integer "$keep_sessions" "--keep-sessions" || return 1
 	_validate_nonnegative_integer "$max_duration" "--max-duration-seconds" || return 1
+	_validate_nonnegative_integer "$event_retention_days" "--archive-event-retention-days" || return 1
 	_validate_nonnegative_integer "$ARCHIVE_BATCH_SIZE" "OPENCODE_DB_ARCHIVE_BATCH_SIZE" || return 1
 	if [[ "$ARCHIVE_BATCH_SIZE" -eq 0 ]]; then
 		print_error "OPENCODE_DB_ARCHIVE_BATCH_SIZE must be greater than zero."
@@ -865,6 +927,7 @@ cmd_archive() {
 	fi
 	print_info "Active DB: $ACTIVE_DB"
 	print_info "Archive DB: $ARCHIVE_DB"
+	_archive_expire_events "$event_retention_days" "$dry_run" "$max_duration" || return $?
 
 	# Get active worker sessions to exclude
 	local active_sessions
@@ -895,6 +958,7 @@ cmd_archive() {
 
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
+		((dry_run)) && return 0
 		_archive_compact_active_db
 		return $?
 	fi
@@ -1274,6 +1338,7 @@ opencode-db-archive.sh — Archive old OpenCode sessions
 
 COMMANDS:
   archive   Move old sessions from active DB to archive DB
+  archive-all  Archive selected/default DB and fixed-depth isolated project DBs
   stats     Show row counts and sizes (active + archive databases)
   help      Show this help message
 
@@ -1281,6 +1346,10 @@ ARCHIVE OPTIONS:
   --retention-days N        Sessions inactive for N days are archived (default: 30)
   --keep-sessions N         Keep newest N active sessions by last update; archive older sessions beyond the budget
   --dry-run                 Show what would be archived without doing it
+  --apply                   Explicitly apply changes (also the legacy default)
+  --archive-event-retention-days N  Expire archived event rows for sessions inactive N days
+                            (default 0: disabled). Keeps session/message/part.
+                            Runs before moving sessions; freed pages are reused.
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
 ENVIRONMENT:
@@ -1288,6 +1357,10 @@ ENVIRONMENT:
   OPENCODE_DB_PATH          Active DB path override used by aidevops/OpenCode helpers
   OPENCODE_DB               Active DB path override (fallback)
   OPENCODE_ARCHIVE_DB       Archive DB path (default: next to active opencode.db)
+  OPENCODE_INTERACTIVE_ROOT  Isolated DB root (default: aidevops work/opencode-interactive)
+  OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Optional archived event expiry, default 0
+                            archive-all always uses an archive beside each active DB;
+                            max-duration-seconds applies per DB, not to the inventory.
 
 EXAMPLES:
   # Show current stats
@@ -1316,6 +1389,9 @@ main() {
 	shift || true
 
 	case "$command" in
+	archive-all)
+		cmd_archive_all "$@" || rc=$?
+		;;
 	archive)
 		cmd_archive "$@" || rc=$?
 		;;
