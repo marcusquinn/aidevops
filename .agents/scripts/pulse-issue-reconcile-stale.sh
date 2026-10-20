@@ -68,7 +68,7 @@ _normalize_stale_post_release() {
 	local slug="$2"
 	local runner_user="$3"
 	local detail="${4:-}"
-	local release_ts body
+	local release_ts="" body=""
 	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 CLAIM_RELEASED reason=stale_assignment_reset runner=${runner_user} ts=${release_ts}${detail:+ ${detail}}
