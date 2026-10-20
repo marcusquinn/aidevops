@@ -8,15 +8,17 @@ import shutil
 import time
 from typing import Optional, Set, Tuple
 
+from worktree_recovery_cache_identity import (
+    approved_root_directory,
+    framework_state_path,
+    ordinary_state_entry,
+)
 from worktree_recovery_cache_policy_common import (
     RootExpectation,
     allocated_bytes,
-    approved_root_directory,
     exact_safe_root,
-    framework_state_path,
     git_output,
     ignored_untracked_root,
-    ordinary_state_entry,
     relative_parts,
     require,
     root_identity,

@@ -19,8 +19,8 @@ import tempfile
 import time
 from typing import Set, Tuple
 
+from worktree_recovery_cache_identity import approved_root_directory
 from worktree_recovery_cache_policy_common import (
-    approved_root_directory,
     git_output,
     require,
     root_identity,
