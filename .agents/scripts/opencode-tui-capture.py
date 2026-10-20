@@ -167,6 +167,48 @@ def check_render(text, expected, status):
         raise ValueError(f"renderer exited with status {exit_code}")
 
 
+CAPTURE_PREFIX = "tui-capture-"
+OWNER_FILE = "owner.pid"
+OWNERLESS_GRACE_SECONDS = 3600
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_stale_captures(temp_root):
+    """Remove capture snapshots left by killed runs (SIGKILL skips cleanup)."""
+    for path in temp_root.glob(CAPTURE_PREFIX + "*"):
+        try:
+            if path.is_symlink() or not path.is_dir():
+                continue
+            try:
+                pid = int((path / OWNER_FILE).read_text(encoding="utf-8").strip())
+                stale = not pid_alive(pid)
+            except (FileNotFoundError, ValueError):
+                # Legacy or just-created dir with no owner file yet: age-gated.
+                stale = time.time() - path.stat().st_mtime > OWNERLESS_GRACE_SECONDS
+            if stale:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def install_cleanup_signals():
+    """Turn termination signals into SystemExit so temp-dir cleanup runs."""
+    def handler(signum, _frame):
+        raise SystemExit(128 + signum)
+    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        with suppress(AttributeError, ValueError, OSError):
+            signal.signal(getattr(signal, name), handler)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session", required=True)
@@ -196,8 +238,11 @@ def main():
             raise ValueError("session database not found; specify the launcher --cwd or --data-dir")
         temp_root = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
         temp_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="tui-capture-", dir=temp_root) as temporary:
+        reap_stale_captures(temp_root)
+        install_cleanup_signals()
+        with tempfile.TemporaryDirectory(prefix=CAPTURE_PREFIX, dir=temp_root) as temporary:
             data_dir = Path(temporary)
+            (data_dir / OWNER_FILE).write_text(str(os.getpid()), encoding="utf-8")
             database = data_dir / "opencode" / "opencode.db"
             database.parent.mkdir()
             # SQLite backup includes committed WAL data; never open the source
