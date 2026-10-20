@@ -190,18 +190,22 @@ write_gh_stub_pr_issue_views() {
 
 	if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
 	if [[ "\$*" == *"--json title,commits"* ]]; then
+		echo 'GraphQL: Resource not accessible by integration (repository.pullRequest.commits.nodes.0)' >&2
+		exit 1
+	fi
+	if [[ "\$*" == *"--json title"* ]]; then
 		case "$mode" in
 		invalid-squash-title)
-			echo '{"title":"Document recovery","commits":[{"messageHeadline":"fix: document recovery"}]}'
+			echo '{"title":"Document recovery"}'
 			;;
 		gh-prefix-feature)
-			echo '{"title":"GH#29530: Add a Buzz-scoped OpenCode Tabby workspace profile","commits":[{"messageHeadline":"feat: add Buzz Tabby workspace profile"}]}'
+			echo '{"title":"GH#29530: Add a Buzz-scoped OpenCode Tabby workspace profile"}'
 			;;
-		gh-prefix-no-evidence)
-			echo '{"title":"GH#29530: Add a Buzz-scoped OpenCode Tabby workspace profile","commits":[{"messageHeadline":"wip: add Buzz Tabby workspace profile"}]}'
+		gh-prefix-no-evidence | metadata-mixed)
+			echo '{"title":"GH#29530: Add a Buzz-scoped OpenCode Tabby workspace profile"}'
 			;;
 		*)
-			echo '{"title":"GH#28721: fix: preserve reviewed squash subject","commits":[{"messageHeadline":"wip: document recovery"}]}'
+			echo '{"title":"GH#28721: fix: preserve reviewed squash subject"}'
 			;;
 		esac
 		exit 0
@@ -292,6 +296,18 @@ write_gh_stub_api() {
 
 if [[ "\$_gh_cmd" == "api" ]]; then
 	echo "gh api \$*" >> "${TEST_ROOT}/logs/gh-api-calls.txt"
+	if [[ "\${2:-}" == "repos/testorg/testrepo/pulls/42/commits?per_page=100" ]]; then
+		[[ "\$*" == *"--paginate --slurp"* ]] || exit 1
+		case "$mode" in
+		metadata-denied) echo 'HTTP 403 Resource not accessible by integration' >&2; exit 1 ;;
+		metadata-malformed) echo '[[{"sha":"fixture","commit":{"message":null}}]]'; exit 0 ;;
+		metadata-empty) echo '[[]]'; exit 0 ;;
+		gh-prefix-feature) echo '[[{"sha":"first","commit":{"message":"feat: add workspace\\n\\nBody"}}],[{"sha":"second","commit":{"message":"feat: refine workspace"}}]]' ;;
+		metadata-mixed) echo '[[{"sha":"first","commit":{"message":"feat: add workspace"}},{"sha":"second","commit":{"message":"fix: refine workspace"}}]]' ;;
+		*) echo '[[{"sha":"fixture","commit":{"message":"wip: document recovery"}}]]' ;;
+		esac
+		exit 0
+	fi
 	# Headless merge authority checks linked issues for trusted PR-only scope.
 	# Ordinary merge fixtures have an OWNER-authored brief without that marker.
 	if [[ "\${2:-}" =~ ^repos/testorg/testrepo/issues/[1-9][0-9]*$ ]]; then
@@ -1485,29 +1501,31 @@ test_gh_prefixed_feature_inherits_commit_category() {
 }
 
 test_gh_prefixed_prose_without_evidence_is_not_guessed() {
-	rm -f "${TEST_ROOT}/logs/"*.txt
-	create_gh_stub "gh-prefix-no-evidence"
-
-	local rc=0
-	run_merge_execute "42" "testorg/testrepo" "--squash" "1" "0" >/dev/null 2>&1 || rc=$?
+	local mode="" rc=0
 	local bare_subject='--subject GH#29530: Add a Buzz-scoped OpenCode Tabby workspace profile'
 	local bare_present=0 guessed_present=0
-	grep -q -- "$bare_subject" "${TEST_ROOT}/logs/gh-calls.txt" && bare_present=1
-	grep -q -- '--subject GH#29530: feat:' "${TEST_ROOT}/logs/gh-calls.txt" && guessed_present=1
-	print_result "squash subject: bare GH prose is not guessed without conventional evidence" "$((rc == 0 && bare_present == 1 && guessed_present == 0 ? 0 : 1))"
+	for mode in gh-prefix-no-evidence metadata-mixed; do
+		rm -f "${TEST_ROOT}/logs/"*.txt
+		create_gh_stub "$mode"
+		rc=0 bare_present=0 guessed_present=0
+		run_merge_execute "42" "testorg/testrepo" "--squash" "1" "0" >/dev/null 2>&1 || rc=$?
+		grep -q -- "$bare_subject" "${TEST_ROOT}/logs/gh-calls.txt" && bare_present=1
+		grep -q -- '--subject GH#29530: feat:' "${TEST_ROOT}/logs/gh-calls.txt" && guessed_present=1
+		print_result "squash subject: $mode is not guessed without conventional evidence" "$((rc == 0 && bare_present == 1 && guessed_present == 0 ? 0 : 1))"
+	done
 	return 0
 }
 
 test_invalid_squash_title_blocks_before_merge() {
-	rm -f "${TEST_ROOT}/logs/"*.txt
-	create_gh_stub "invalid-squash-title"
-
-	local rc=0
-	run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || rc=$?
-	local merge_calls=0
-	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
-	print_result "squash subject: invalid title fails closed" "$((rc == 0 ? 1 : 0))"
-	print_result "squash subject: invalid title blocks before mutation" "$((merge_calls == 0 ? 0 : 1))" "merge_calls=$merge_calls"
+	local mode="" rc=0 merge_calls=0
+	for mode in invalid-squash-title metadata-denied metadata-malformed metadata-empty; do
+		rm -f "${TEST_ROOT}/logs/"*.txt
+		create_gh_stub "$mode"
+		rc=0
+		run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || rc=$?
+		merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
+		print_result "squash subject: $mode fails closed before mutation" "$((rc != 0 && merge_calls == 0 ? 0 : 1))"
+	done
 	return 0
 }
 

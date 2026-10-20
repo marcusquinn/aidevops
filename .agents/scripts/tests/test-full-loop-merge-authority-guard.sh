@@ -204,6 +204,10 @@ _merge_run_bounded_write() {
 gh() {
 	local command="${1:-}"
 	local subcommand="${2:-}"
+	if [[ "$command" == "api" && "$subcommand" == "repos/owner/repo/pulls/900/commits?per_page=100" ]]; then
+		printf '%s\n' '[[{"sha":"head-current","commit":{"message":"fix: preserve exact-head merge authority"}}]]'
+		return 0
+	fi
 	if [[ "$FIXTURE_GH_MODE" == "merge" && "$command" == "pr" && "$subcommand" == "merge" ]]; then
 		printf '%s\n' "$*" >>"$MERGE_CALLS"
 		printf 'merged\n'
@@ -943,6 +947,10 @@ test_secondary_merge_transports_refresh_authority() {
 		local command="${1:-}"
 		local subcommand="${2:-}"
 		local merge_call_count=0
+		if [[ "$command" == "api" && "$subcommand" == "repos/owner/repo/pulls/900/commits?per_page=100" ]]; then
+			printf '%s\n' '[[{"sha":"head-current","commit":{"message":"fix: preserve exact-head merge authority"}}]]'
+			return 0
+		fi
 		if [[ "$command" == "pr" && "$subcommand" == "view" && "$*" == *"--json title"* ]]; then
 			printf '%s\n' '{"title":"GH#28622: preserve exact-head merge authority","commits":[{"messageHeadline":"fix: preserve exact-head merge authority"}]}'
 			return 0

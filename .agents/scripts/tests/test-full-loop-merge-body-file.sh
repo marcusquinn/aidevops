@@ -95,7 +95,7 @@ gh() {
 			'[[{sha:"fixture-head-sha", commit:{message:$message}}]]'
 		return 0
 	fi
-	if [[ "$command" == "pr" && "$subcommand" == "view" && "$*" == *"--json title,commits"* ]]; then
+	if [[ "$command" == "pr" && "$subcommand" == "view" && "$*" == *"--json title"* ]]; then
 		printf '%s\n' '{"title":"GH#29733: fix: preserve explicit merge bodies","commits":[{"messageHeadline":"fix: preserve explicit merge bodies"}]}'
 		return 0
 	fi

@@ -947,10 +947,14 @@ _merge_resolve_squash_subject() {
 	local subject=""
 	local task_body=""
 	local conventional_type=""
+	local commit_pages=""
 	local conventional_ere='^(feat|fix|docs|refactor|perf|test|chore|style|build|ci|security|plan)(\([^()[:cntrl:]]+\))?!?:[[:space:]]+[^[:space:]].*$'
 	local task_ere='^(t[0-9]+|GH#[0-9]+):[[:space:]]+[^[:space:]].*$'
 
-	pr_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json title,commits) || {
+	# GraphQL commit nodes can require Git database authority beyond PR read
+	# access. Use the same repo-routed PR surface as the exact-head guard below,
+	# without switching credentials or retrying a denied GraphQL read.
+	pr_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json title) || {
 		print_error "Could not retrieve PR #${pr_number} title and commit metadata for squash-subject validation"
 		return 1
 	}
@@ -960,6 +964,30 @@ _merge_resolve_squash_subject() {
 		print_error "Use a task-prefixed or conventional title before retrying."
 		return 1
 	fi
+	commit_pages=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}/commits?per_page=100" \
+		--paginate --slurp) || {
+		print_error "Could not retrieve PR #${pr_number} commit metadata for squash-subject validation"
+		return 1
+	}
+	# Incomplete/malformed evidence must not silently become an untyped history.
+	pr_json=$(jq -en --arg title "$subject" --argjson pages "$commit_pages" '
+		def is_array: [arrays] | length == 1;
+		def is_string: type == "string";
+		if ($pages | is_array | not) or ($pages | length) == 0
+			or any($pages[]; is_array | not) then
+			error("invalid PR commit pages")
+		else [$pages[][]] as $commits
+			| if ($commits | length) == 0 or any($commits[];
+				(.sha | is_string | not) or (.sha | length) == 0
+				or (.commit.message | is_string | not)) then
+				error("invalid PR commit metadata")
+			else {title: $title, commits: [$commits[] |
+				{messageHeadline: (.commit.message | split("\n")[0])}]}
+			end
+		end') || {
+		print_error "Invalid PR #${pr_number} commit metadata for squash-subject validation"
+		return 1
+	}
 	if [[ "$subject" =~ $task_ere ]]; then
 		task_body="${subject#*: }"
 		if [[ ! "$task_body" =~ $conventional_ere ]]; then
