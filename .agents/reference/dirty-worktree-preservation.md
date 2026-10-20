@@ -297,3 +297,23 @@ and `.keep` markers; `--dry-run` prints `Would remove` without mutation):
 .agents/scripts/dirty-worktree-backup-helper.sh delete \
   --backup <backup-id> --confirm DELETE_DIRTY_WORKTREE_BACKUP
 ```
+
+## Removing a dirty linked worktree
+
+`worktree-helper.sh remove <path>` refuses a worktree with uncommitted changes
+before any recovery archive or producer reservation is created, and names
+`--force`. Use `remove <path> --force` to archive the changes and remove it.
+
+If an earlier attempt was interrupted after the archive was reserved, and the
+tree was then cleaned or edited, a retry reports
+`producer:source-drift; existing archive retained`. The reservation pins the
+recorded source state. Recover by restoring that state, then forcing removal:
+
+```bash
+git -C <worktree> apply <archive>/diff.patch   # plus any recorded untracked files
+worktree-helper.sh remove <worktree> --force   # reuses the existing archive
+```
+
+The archive lives under the recovery root's `.producer-archives/`. Alternatively
+review the archive and retire the reservation through the recovery lifecycle
+helpers; never delete the archive by hand.

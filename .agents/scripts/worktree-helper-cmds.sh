@@ -372,6 +372,17 @@ _remove_validate_path() {
 		echo -e "${YELLOW}--force specified, proceeding with removal${NC}"
 	fi
 
+	# GH#35224: fail before any recovery archive or producer reservation exists.
+	# Without --force Git refuses a dirty tree only after the archive is made,
+	# and a later clean retry then hits permanent producer:source-drift.
+	if [[ "${WORKTREE_FORCE_REMOVE:-}" != "1" ]] && worktree_has_changes "$path_to_remove"; then
+		printf '%b\n' "${RED}Error: Worktree removal refused: ${path_to_remove}${NC}" >&2
+		printf '%s\n' "Reason: worktree has uncommitted changes; re-run with --force to archive and remove." >&2
+		printf '%s\n' "Recovery: commit or discard the changes, or run 'worktree-helper.sh remove <path> --force' to archive them and remove the worktree." >&2
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$path_to_remove" "dirty-requires-force" "skipped"
+		return 1
+	fi
+
 	return 0
 }
 

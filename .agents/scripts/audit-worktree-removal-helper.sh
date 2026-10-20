@@ -1376,6 +1376,27 @@ _worktree_recovery_resolve_producer_root() {
 	return 0
 }
 
+# Re-emit producer stderr and, for source-drift, print the recovery steps.
+# Args: $1=stderr capture file (may be empty), $2=recovery root
+# Deletes the capture file. Always returns 0.
+_worktree_report_capture_failure() {
+	local err_file="$1"
+	local recovery_root="$2"
+	local err_text=""
+
+	[[ -n "$err_file" && -f "$err_file" ]] || return 0
+	err_text=$(<"$err_file")
+	rm -f "$err_file"
+	[[ -z "$err_text" ]] || printf '%s\n' "$err_text" >&2
+	case "$err_text" in
+	*producer:source-drift*)
+		printf '%s\n' "Reason: the worktree changed after a previous removal attempt reserved its recovery archive (producer:source-drift)." >&2
+		printf '%s\n' "Recovery: restore the recorded state with 'git -C <worktree> apply <archive>/diff.patch' (plus any recorded untracked files) from the retained archive under ${recovery_root}/.producer-archives, then run 'worktree-helper.sh remove <worktree> --force'. Alternatively review and retire the reservation. See .agents/reference/dirty-worktree-preservation.md." >&2
+		;;
+	esac
+	return 0
+}
+
 _archive_worktree_path_recoverably_under_lock() {
 	local wt_path="$1"
 	local caller="$2"
@@ -1394,13 +1415,17 @@ _archive_worktree_path_recoverably_under_lock() {
 		_worktree_log_git_refusal "$wt_path" "$caller" "$git_state" "$context"
 		return 1
 	fi
+	local capture_err=""
+	capture_err=$(mktemp "${TMPDIR:-/tmp}/wt-capture-err.XXXXXX" 2>/dev/null) || capture_err=""
 	if ! archive_path=$(_worktree_recovery_producer_command 0 capture \
-		"$wt_path_real" "$recovery_root_real" "$caller" "$context"); then
+		"$wt_path_real" "$recovery_root_real" "$caller" "$context" 2>"${capture_err:-/dev/null}"); then
+		_worktree_report_capture_failure "$capture_err" "$recovery_root_real"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
 			"compact-recovery-capture-failed" "$_WTAR_MODE_SKIPPED" \
 			"source_preserved=true operator_review=required"
 		return 1
 	fi
+	[[ -z "$capture_err" ]] || rm -f "$capture_err"
 	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") ||
 		git_state="$_WT_GIT_STATE_UNREADABLE"
 	if [[ "$git_state" != "$_WT_GIT_STATE_CLEAR" ]]; then
