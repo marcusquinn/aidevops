@@ -106,12 +106,16 @@ HELPEREOF
 	(cd "$victim" && AGENTS_DIR="$fallback_agents" AIDEVOPS_PROTECTED_BRANCH_CHOICE=1 check_protected_branch chore fallback-init >/dev/null) || worktree_status=$?
 	assert_equal "0" "$worktree_status" "stale protected branch can select the safe worktree path"
 	assert_equal "$remote_tip" "$(git -C "${TEST_ROOT}/victim-chore-fallback-init" rev-parse HEAD)" "fallback worktree starts at the refreshed remote tip"
+	assert_equal "1" "$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT count(*) FROM worktree_owners WHERE branch='chore/fallback-init';")" \
+		"fallback worktree has registered ownership"
 	return 0
 }
 
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap 'rm -rf "$TEST_ROOT"' EXIT
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 	local remote="${TEST_ROOT}/remote.git" seed="${TEST_ROOT}/seed"
 	local victim="${TEST_ROOT}/victim" fresh="${TEST_ROOT}/fresh"
 	git init -q --bare "$remote"

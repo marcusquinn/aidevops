@@ -385,7 +385,7 @@ get_default_branch() {
 }
 
 # Create or reuse a worktree for a given branch name.
-# Uses worktree-helper.sh if available, falls back to direct git worktree add.
+# Uses worktree-helper.sh if available, otherwise the shared registered creator.
 # Arguments:
 #   $1 - branch name
 #   $2 - repo root path
@@ -428,18 +428,19 @@ _create_worktree_for_branch() {
 		else
 			log_info "Creating worktree at: $worktree_path"
 			local wt_add_output
-			if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
-				wt_add_output=$(git worktree add "$worktree_path" "$branch_name" 2>&1) || {
+			# shellcheck source=shared-worktree-create.sh
+			source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || return 1
+			if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
+				wt_add_output=$(worktree_create_registered "$repo_root" "$worktree_path" "$branch_name" 2>&1) || {
 					log_error "Failed to create worktree for $label: ${wt_add_output}"
 					return 1
 				}
 			else
-				wt_add_output=$(git worktree add -b "$branch_name" "$worktree_path" 2>&1) || {
+				wt_add_output=$(worktree_create_registered "$repo_root" "$worktree_path" HEAD -b "$branch_name" 2>&1) || {
 					log_error "Failed to create worktree for $label: ${wt_add_output}"
 					return 1
 				}
 			fi
-			register_worktree "$worktree_path" "$branch_name"
 		fi
 	fi
 

@@ -7,6 +7,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../worktree-archive-helper.sh"
 TEST_ROOT="$(mktemp -d)"
+export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -100,6 +102,7 @@ test_restore_commits_dirty_and_untracked() {
 	[[ "$(cat "$target/local/note.txt")" == "untracked" ]] || rc=1
 	[[ -L "$target/local/file-link" && "$(readlink "$target/local/file-link")" == "../file.txt" ]] || rc=1
 	[[ "$(git -C "$target" log -1 --format=%s)" == "local" ]] || rc=1
+	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" 'SELECT count(*) FROM worktree_owners;')" == "1" ]] || rc=1
 	result "restore recovers bundle commits, staged and unstaged patches, and untracked files" "$rc"
 	return 0
 }

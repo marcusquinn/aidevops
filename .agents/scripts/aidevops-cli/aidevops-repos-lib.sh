@@ -1042,7 +1042,12 @@ _protected_branch_create_worktree() {
 		fi
 	else
 		local worktree_base="${upstream:-HEAD}"
-		git worktree add -b "$suggested_branch" "$worktree_dir" "$worktree_base" || {
+		(
+			# Isolate shared registry globals from the interactive CLI.
+			# shellcheck source=../shared-worktree-create.sh
+			source "${BASH_SOURCE[0]%/*}/../shared-worktree-create.sh" || exit 1
+			worktree_create_registered . "$worktree_dir" "$worktree_base" -b "$suggested_branch"
+		) || {
 			print_error "Failed to create worktree"
 			return 1
 		}

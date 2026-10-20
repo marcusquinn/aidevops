@@ -666,7 +666,11 @@ PY
 			git --git-dir="$common_dir" fetch "$archive_dir/commits.bundle" HEAD >/dev/null || return 1
 		fi
 		restore_branch="archive-restore-$(date -u '+%Y%m%d%H%M%S')-$$"
-		git --git-dir="$common_dir" worktree add -b "$restore_branch" "$target" "$head_sha" >/dev/null || return 1
+		(
+			# shellcheck source=shared-worktree-create.sh
+			source "${SCRIPT_DIR}/shared-worktree-create.sh" || exit 1
+			worktree_create_registered "$common_dir" "$target" "$head_sha" -b "$restore_branch"
+		) >/dev/null || return 1
 	fi
 	return 0
 }

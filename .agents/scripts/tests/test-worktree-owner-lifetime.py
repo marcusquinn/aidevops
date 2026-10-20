@@ -35,6 +35,41 @@ registry = importlib.util.module_from_spec(REG_SPEC)
 REG_SPEC.loader.exec_module(registry)
 
 
+class CreationProducerTests(unittest.TestCase):
+    def test_skill_fallback_registers_new_and_existing_branches_and_reuses_worktree(self):
+        base = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
+        with tempfile.TemporaryDirectory(prefix="skill-creation-", dir=base) as directory:
+            root = Path(directory)
+            repo, home = root / "repo", root / "home"
+            home.mkdir()
+            git = os.environ.get("AIDEVOPS_TEST_GIT_BIN", shutil.which("git"))
+            env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root / "registry"),
+                       WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+            env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
+
+            def command(*args):
+                result = subprocess.run([str(arg) for arg in args], env=env, text=True,
+                                        capture_output=True, timeout=15, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout.strip()
+
+            command(git, "init", "-q", "-b", "main", repo)
+            command(git, "-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                    "commit", "--allow-empty", "-qm", "fixture")
+            command(git, "-C", repo, "branch", "existing")
+            script = ('source "$1/skill-update-pr-lib.sh"; WORKTREE_HELPER="$2/missing"; '
+                      'log_info() { return 0; }; log_error() { printf "%s\\n" "$*" >&2; return 0; }; '
+                      '_create_worktree_for_branch "$3" "$2/repo" fixture')
+            for branch in ("new", "existing", "new"):
+                with self.subTest(branch=branch):
+                    path = command("bash", "-c", script, "fixture", SCRIPTS, root, branch)
+                    self.assertEqual(path, str(root / ("repo-" + branch)))
+                    self.assertTrue((Path(path) / ".git").is_file())
+            with closing(sqlite3.connect(env["WORKTREE_REGISTRY_DB"])) as db:
+                self.assertEqual(db.execute("SELECT branch FROM worktree_owners ORDER BY branch").fetchall(),
+                                 [("existing",), ("new",)])
+
+
 class RunnerControlTests(unittest.TestCase):
     def test_macos_probe_never_invokes_systemd(self):
         with patch.object(sys, "platform", "darwin"), patch.object(runner.subprocess, "check_output") as call:
