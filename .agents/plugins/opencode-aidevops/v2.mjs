@@ -57,6 +57,7 @@ import {
   registerV2PrimaryProfiles,
 } from "./v2-agent-profiles.mjs";
 import { applyV2ContextBudget, readV2ContextBudget } from "./v2-context-budget.mjs";
+import { applyV2PermissionEvaluation } from "./v2-permission-evaluation.mjs";
 import { registerV2SubagentProfiles } from "./v2-subagent-profiles.mjs";
 import { registerV2OnDemandMcpAgents } from "./v2-on-demand-mcp-agents.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
@@ -65,6 +66,8 @@ import {
   applyLegacyToolOutput,
   legacyToolOutput,
 } from "./v2-tool-adapter.mjs";
+
+export { applyV2PermissionEvaluation };
 
 const HOME = homedir();
 const PLUGIN_ENTRY_PATH = fileURLToPath(import.meta.url);
@@ -292,24 +295,6 @@ export async function startEventLoop(ctx, handler) {
 export function defineAidevopsV2Adapter(setup) {
   if (typeof setup !== "function") throw new TypeError("OpenCode V2 adapter setup must be a function");
   return { id: "aidevops", setup };
-}
-
-/**
- * V2 fires `permission/evaluate` for every non-denied decision with the host's
- * computed effect ("allow" or "ask"). Only "ask" maps to V1 `permission.ask`;
- * brokering host "allow" denied every headless tool call (GH#35170). Credential
- * reads and worker write fencing stay enforced in `tool.execute.before`.
- */
-export function applyV2PermissionEvaluation(permissionBroker, event) {
-  if (event?.effect !== "ask") return;
-  const output = { status: "ask" };
-  permissionBroker.permissionAsk({
-    ...event,
-    type: event.action,
-    patterns: event.resources,
-  }, output);
-  if (output.status === "allow") event.effect = "allow";
-  if (output.status === "deny") event.effect = "deny";
 }
 
 async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations }) {
