@@ -365,7 +365,7 @@ export function compactionSummaryRules(host = "opencode1") {
     "",
     "Objective:",
     "- One bullet per user aim, oldest first: the initiating aim plus every aim the user later added, clarified, corrected, or redirected. Mark each `active`, `satisfied`, `superseded`, or `blocked`. Never drop an earlier active aim because recent work focused elsewhere; with several aims this overrides the one-or-two-sentence limit.",
-    "- Quote the user's defining words verbatim when short (a few lines): the initiating request, standing corrections and preferences, and explicit authorisations such as merge or release, each with its exact scope (which PR, issue, repository, or release) and whether it was used or still open. Otherwise paraphrase and mark `(paraphrased)`. The user's words, not an earlier summary's interpretation, define the aims. A satisfied aim needs one short line.",
+    "- Quote the user's defining words verbatim and in full for every aim: the initiating request, each later turn that adds or changes an aim, standing corrections and preferences, and explicit authorisations such as merge or release, each with its exact scope (which PR, issue, repository, or release) and whether it was used or still open. Never paraphrase an aim. Only for long pasted material (logs, files, specs) quote the sentences that state the aim and mark `(excerpt)`. Carry these quotes forward unchanged from any earlier summary. The user's words, not an earlier summary's interpretation, define the aims. A satisfied aim keeps its quote plus one short status line.",
     "- Tests, checks, logs, plans, and tooling are methods or evidence, not aims. If the user asked for one as a deliverable, record the outcome it serves.",
     "",
     `${details}:`,
