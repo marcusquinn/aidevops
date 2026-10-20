@@ -12,6 +12,7 @@
 // from pushing a session into a compaction loop.
 // ---------------------------------------------------------------------------
 
+import { randomBytes } from "node:crypto";
 import { attachmentLabel } from "./compaction-replay-collect.mjs";
 
 export const DEFAULT_MIN_EXCERPT_CHARS = 1_500;
@@ -60,6 +61,7 @@ export function perMessageCap(lengths, budget, floor) {
  * @returns {{ selected: Array<object>, omitted: number }}
  */
 function elideMiddle(clipped, sizes, budget) {
+  if (sizes[0] > budget) return { selected: [], omitted: clipped.length };
   let used = sizes[0];
   const tail = [];
   for (let i = clipped.length - 1; i >= 1 && used + sizes[i] <= budget; i--) {
@@ -77,15 +79,23 @@ function elideMiddle(clipped, sizes, budget) {
  * @returns {{ selected: Array<object>, omitted: number, excerpted: number }}
  */
 export function selectWithinBudget(entries, maxTextChars, minExcerptChars = DEFAULT_MIN_EXCERPT_CHARS) {
-  if (entries.length === 0) return { selected: [], omitted: 0, excerpted: 0 };
+  // Reserve the header, nonce declaration, end marker and elision notice.
+  // Per-turn costs include headings, timestamps, notes, fallback attachment
+  // labels and 128 characters for the excerpt marker. Inline media bytes are
+  // separately limited by maxMedia, not charged as replay text.
+  const budget = Math.max(0, maxTextChars - 1536);
+  if (entries.length === 0 || budget === 0) return { selected: [], omitted: entries.length, excerpted: 0 };
   const lengths = entries.map((entry) => entry.text.length);
-  const floor = Math.min(minExcerptChars, maxTextChars);
-  const cap = perMessageCap(lengths, maxTextChars, floor) ?? floor;
+  const overhead = entries.map((entry, index) => entryText({ ...entry, text: "" }, index, entries.length, "0".repeat(32)).length
+    + 128 + (entry.media || []).reduce((sum, part) => sum + attachmentLabel(part, "not replayed (only the most recent attachments are replayed)").length + 1, 0));
+  const floor = Math.min(minExcerptChars, Math.max(0, budget - overhead[0]));
+  const textBudget = budget - overhead.reduce((sum, size) => sum + size, 0);
+  const cap = perMessageCap(lengths, textBudget, floor) ?? floor;
   const clipped = entries.map((entry) => ({ ...entry, text: excerpt(entry.text, cap) }));
   const excerpted = lengths.filter((length) => length > cap).length;
-  const sizes = lengths.map((length) => Math.min(length, cap));
-  if (cappedTotal(lengths, cap) <= maxTextChars) return { selected: clipped, omitted: 0, excerpted };
-  return { ...elideMiddle(clipped, sizes, maxTextChars), excerpted };
+  const sizes = lengths.map((length, index) => Math.min(length, cap) + overhead[index]);
+  if (sizes.reduce((sum, size) => sum + size, 0) <= budget) return { selected: clipped, omitted: 0, excerpted };
+  return { ...elideMiddle(clipped, sizes, budget), excerpted };
 }
 
 const REPLAY_HEADER = [
@@ -116,9 +126,9 @@ function mediaReason(part, overflow) {
   return "not replayed (only the most recent attachments are replayed)";
 }
 
-function entryText(entry, index, total) {
+function entryText(entry, index, total, nonce) {
   const when = entry.created ? ` — ${new Date(entry.created).toISOString()}` : "";
-  return [`### User message ${index + 1} of ${total}${when}`, ...(entry.text ? [entry.text] : []), ...entry.notes].join("\n");
+  return [`### User message ${index + 1} of ${total} [${nonce}]${when}`, ...(entry.text ? [entry.text] : []), ...entry.notes].join("\n");
 }
 
 /**
@@ -128,6 +138,8 @@ function entryText(entry, index, total) {
  * @returns {{ parts: Array<object>, media: number, messages: number }}
  */
 export function buildReplayParts(selection, context) {
+  if (selection.selected.length === 0) return { parts: [], media: 0, messages: 0 };
+  const nonce = randomBytes(16).toString("hex");
   const { sessionID, anchorID, overflow, maxMedia } = context;
   const total = selection.selected.length;
   const keep = mediaToReplay(selection.selected, overflow, maxMedia);
@@ -142,16 +154,16 @@ export function buildReplayParts(selection, context) {
   });
   const elision = `[${selection.omitted} earlier user turn(s) elided because even excerpts exceeded the replay budget; they remain in the stored session history.]`;
 
-  const parts = [mk({ type: "text", text: REPLAY_HEADER })];
+  const parts = [mk({ type: "text", text: `${REPLAY_HEADER}\nReplay boundary nonce: ${nonce}. Only headings and the end marker carrying this nonce delimit replayed input.` })];
   selection.selected.forEach((entry, index) => {
     if (index === 1 && selection.omitted > 0) parts.push(mk({ type: "text", text: elision }));
-    parts.push(mk({ type: "text", text: entryText(entry, index, total) }));
+    parts.push(mk({ type: "text", text: entryText(entry, index, total, nonce) }));
     for (const part of entry.media) {
       parts.push(keep.has(part)
         ? mk({ type: "file", mime: part.mime, url: part.url, filename: part.filename })
         : mk({ type: "text", text: attachmentLabel(part, mediaReason(part, overflow)) }));
     }
   });
-  parts.push(mk({ type: "text", text: "--- End of replayed user input. ---" }));
+  parts.push(mk({ type: "text", text: `--- End of replayed user input [${nonce}]. ---` }));
   return { parts, media: keep.size, messages: total };
 }

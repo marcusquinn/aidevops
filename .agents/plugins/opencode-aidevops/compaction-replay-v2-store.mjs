@@ -18,6 +18,34 @@ import { attachmentLabel, isMedia } from "./compaction-replay-collect.mjs";
 const STORE_VERSION = 1;
 const STORE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const PRUNED_REASON = "not replayed (only the most recent attachments are replayed)";
+// Bound serialized prompt metadata/text as well as turn count. Inline media is
+// governed separately by pruneMedia(). Keep the initiating turn and newest tail.
+export const MAX_STORED_PROMPT_CHARS = 1_000_000;
+export const MAX_STORED_PROMPTS = 1000;
+
+function promptSize(entry) {
+  return JSON.stringify({ ...entry, media: [] }).length;
+}
+
+function prunePromptText(store) {
+  const first = store.prompts[0];
+  if (!first) return;
+  // Bound a single oversized paste without silently losing its truncation.
+  for (const entry of store.prompts) {
+    if (entry.text.length > MAX_STORED_PROMPT_CHARS / 4) {
+      entry.text = `${entry.text.slice(0, MAX_STORED_PROMPT_CHARS / 4 - 80)}\n[… text omitted for the session store budget …]`;
+    }
+  }
+  let used = promptSize(first);
+  const tail = [];
+  for (let i = store.prompts.length - 1; i >= 1 && tail.length < MAX_STORED_PROMPTS - 1; i--) {
+    const size = promptSize(store.prompts[i]);
+    if (used + size > MAX_STORED_PROMPT_CHARS) break;
+    used += size;
+    tail.unshift(store.prompts[i]);
+  }
+  store.prompts = [first, ...tail];
+}
 
 const isInlineUri = (file) => String(file?.uri || "").startsWith("data:");
 
@@ -131,6 +159,7 @@ export function readStore(storeDir, sessionID) {
  * @param {{ sessionID: string }} store
  */
 export function writeStore(storeDir, store) {
+  prunePromptText(store);
   mkdirSync(storeDir, { recursive: true, mode: 0o700 });
   const path = storeFile(storeDir, store.sessionID);
   const tmp = `${path}.${process.pid}.tmp`;

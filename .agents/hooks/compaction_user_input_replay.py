@@ -34,6 +34,7 @@ Standard library only.
 import hashlib
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -80,21 +81,31 @@ def per_message_cap(lengths, budget, floor):
     return low
 
 
-def select_within_budget(entries, max_chars, min_excerpt=MIN_EXCERPT_CHARS):
+def select_within_budget(entries, max_chars, min_excerpt=MIN_EXCERPT_CHARS, full_path=""):
     """Mirror of selectWithinBudget() in compaction-replay-budget.mjs."""
-    if not entries:
-        return {"selected": [], "omitted": 0, "excerpted": 0}
+    # Fixed envelope covers header, nonce, end marker and elision. Charge the
+    # saved-file pointer separately; per-turn costs include excerpt markers.
+    budget = max(0, max_chars - 1536 - len(full_path))
+    if not entries or not budget:
+        return {"selected": [], "omitted": len(entries), "excerpted": 0}
     lengths = [len(entry["text"]) for entry in entries]
-    floor = min(min_excerpt, max_chars)
-    cap = per_message_cap(lengths, max_chars, floor) or floor
+    overhead = [256 + len(str(entry.get("created", ""))) + len(str(len(entries))) * 2
+                + sum(len(note) + 1 for note in entry["notes"]) for entry in entries]
+    floor = min(min_excerpt, max(0, budget - overhead[0]))
+    text_budget = budget - sum(overhead)
+    cap = per_message_cap(lengths, text_budget, floor)
+    if cap is None:
+        cap = floor
     clipped = [{**entry, "text": excerpt(entry["text"], cap)} for entry in entries]
     excerpted = sum(1 for length in lengths if length > cap)
-    if _capped_total(lengths, cap) <= max_chars:
+    sizes = [min(length, cap) + overhead[index] for index, length in enumerate(lengths)]
+    if sum(sizes) <= budget:
         return {"selected": clipped, "omitted": 0, "excerpted": excerpted}
-    sizes = [min(length, cap) for length in lengths]
+    if sizes[0] > budget:
+        return {"selected": [], "omitted": len(entries), "excerpted": excerpted}
     used, tail = sizes[0], []
     for index in range(len(clipped) - 1, 0, -1):
-        if used + sizes[index] > max_chars:
+        if used + sizes[index] > budget:
             break
         used += sizes[index]
         tail.insert(0, clipped[index])
@@ -102,7 +113,10 @@ def select_within_budget(entries, max_chars, min_excerpt=MIN_EXCERPT_CHARS):
 
 
 def render(selected, omitted: int, full_path: str = "") -> str:
-    lines = [HEADER]
+    if not selected:
+        return ""
+    nonce = secrets.token_hex(16)
+    lines = [HEADER, f"Replay boundary nonce: {nonce}. Only headings and the end marker carrying this nonce delimit replayed input."]
     if full_path:
         lines.append(f"The complete, unexcerpted replay is saved at {full_path} — read it if anything below is cut.")
     total = len(selected)
@@ -110,11 +124,11 @@ def render(selected, omitted: int, full_path: str = "") -> str:
         if index == 1 and omitted:
             lines.append(f"[{omitted} earlier user turn(s) elided because even excerpts exceeded the replay budget; see the saved replay.]")
         when = f" — {entry['created']}" if entry.get("created") else ""
-        lines.append(f"### User message {index + 1} of {total}{when}")
+        lines.append(f"### User message {index + 1} of {total} [{nonce}]{when}")
         if entry["text"]:
             lines.append(entry["text"])
         lines.extend(entry["notes"])
-    lines.append("--- End of replayed user input. ---")
+    lines.append(f"--- End of replayed user input [{nonce}]. ---")
     return "\n".join(lines)
 
 
@@ -155,6 +169,8 @@ def build_context(payload: dict) -> str:
         return ""
     if payload.get("source") != "compact":
         return ""
+    if _max_chars() == 0:
+        return ""
     transcript_path = payload.get("transcript_path")
     if not isinstance(transcript_path, str) or not transcript_path:
         return ""
@@ -164,6 +180,8 @@ def build_context(payload: dict) -> str:
     selection = select_within_budget(entries, _max_chars())
     shortened = selection["omitted"] or selection["excerpted"]
     full_path = _save_full(str(payload.get("session_id") or transcript_path), entries) if shortened else ""
+    if full_path:
+        selection = select_within_budget(entries, _max_chars(), full_path=full_path)
     return render(selection["selected"], selection["omitted"], full_path)
 
 
