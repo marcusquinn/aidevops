@@ -196,6 +196,59 @@ _github_slug_from_remote_url() {
 	return 0
 }
 
+# GH#35162: sandboxed headless workers never receive SSH_AUTH_SOCK (GH#33064),
+# so a GitHub SSH remote fails authentication there even when the runner's gh
+# credential has access. Retry one SSH authentication failure over HTTPS with
+# that credential, scoped to the single command; the configured remote is
+# never rewritten. Same pattern as worktree-helper-add.sh
+# _worktree_fetch_origin_branch.
+_github_ssh_rewrite_prefix() {
+	local _url="$1"
+	case "$_url" in
+	git@github.com:*) printf 'git@github.com:\n' ;;
+	ssh://git@github.com/*) printf 'ssh://git@github.com/\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_is_ssh_auth_failure() {
+	local _stderr_text="$1"
+	case "$_stderr_text" in
+	*"ssh_askpass"* | *"Permission denied (publickey)"* | *"Could not read from remote repository"*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# _git_remote_network <path> <remote> <git-args...>
+# Run a fetch/push against <remote>; stdout is discarded, stderr is replayed
+# only when the command still fails.
+_git_remote_network() {
+	local _path="$1"
+	local _remote="$2"
+	shift 2
+	local _stderr="" _rc=0 _url="" _prefix=""
+	if _stderr=$(GIT_TERMINAL_PROMPT=0 git -C "$_path" "$@" 2>&1 >/dev/null); then
+		return 0
+	else
+		_rc=$?
+	fi
+	_url=$(git -C "$_path" remote get-url --push "$_remote" 2>/dev/null || true)
+	if _prefix=$(_github_ssh_rewrite_prefix "$_url") &&
+		_is_ssh_auth_failure "$_stderr" &&
+		command -v gh >/dev/null 2>&1 &&
+		gh auth status --hostname github.com >/dev/null 2>&1; then
+		GIT_TERMINAL_PROMPT=0 git -C "$_path" \
+			-c credential.helper= \
+			-c "credential.helper=!gh auth git-credential" \
+			-c "url.https://github.com/.insteadOf=${_prefix}" \
+			"$@" >/dev/null 2>&1
+		return $?
+	fi
+	[[ -n "$_stderr" ]] && printf '%s\n' "$_stderr" >&2
+	return "$_rc"
+}
+
 # Resolve the remote that represents the registry's GitHub repository. Prefer
 # an exact fetch+push URL identity match; retain origin only for local mirrors
 # where no configured remote is parseable as GitHub at all.
@@ -300,9 +353,9 @@ _refresh_remote_from_linked_context() {
 
 	local _fetch_rc=0
 	local _cleanup_rc=0
-	git -C "$_fetch_path" fetch --no-tags --quiet "$_remote" \
+	_git_remote_network "$_fetch_path" "$_remote" fetch --no-tags --quiet "$_remote" \
 		"+refs/heads/${_default_branch}:refs/remotes/${_remote}/${_default_branch}" \
-		>/dev/null 2>&1 || _fetch_rc=$?
+		2>/dev/null || _fetch_rc=$?
 	if [[ -n "$_bootstrap_path" ]]; then
 		scratch_worktree_remove "$_bootstrap_path" "$SCRIPT_NAME" || _cleanup_rc=$?
 	fi
@@ -1147,7 +1200,7 @@ _sync_refresh_checkout() {
 	local _remote="$4"
 	local _default_branch="$5"
 	local _branch_name="$6"
-	if ! git -C "$_path" fetch -q "$_remote" "$_default_branch" >/dev/null 2>&1; then
+	if ! _git_remote_network "$_path" "$_remote" fetch -q "$_remote" "$_default_branch" 2>/dev/null; then
 		printf '%s\t%s\t%s\tfetch failed; refusing stale classification\n' \
 			"$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
@@ -1260,7 +1313,7 @@ _sync_write_commit_push() {
 		git -C "$_path" checkout -q "$_default_branch" || true
 		return 1
 	fi
-	if ! git -C "$_path" push -u "$_remote" "$_branch_name" >/dev/null 2>&1; then
+	if ! _git_remote_network "$_path" "$_remote" push -u "$_remote" "$_branch_name" 2>/dev/null; then
 		printf '%s\t%s\t%s\tgit push failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
 	fi
