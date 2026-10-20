@@ -743,26 +743,27 @@ _test_platform_scheduler_ownership() {
 		owner=sh.aidevops.mirror-sync
 		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
 		# Dead platform jobs fall back to Pulse; healthy and ordinary-failure jobs stay owned.
-		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		# Use the running interpreter: /bin/bash and /bin/true need not exist (e.g. NixOS).
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "'"$BASH"' check"; ); };'
 		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
-		job_info='{ "LastExitStatus" = 256; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		job_info='{ "LastExitStatus" = 256; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "'"$BASH"' check"; ); };'
 		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
-		job_info='{ "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		job_info='{ "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "'"$BASH"' check"; ); };'
 		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
-		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/nonexistent/mirror-sync-helper.sh check"; ); };'
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "/nonexistent/mirror-sync-helper.sh check"; ); };'
 		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
-		job_info='{ "LastExitStatus" = 32512; "ProgramArguments" = ( "/bin/bash"; "-lc"; "/bin/true check"; ); };'
+		job_info='{ "LastExitStatus" = 32512; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "'"$BASH"' check"; ); };'
 		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
 		job_info='{ "LastExitStatus" = 0; "Program" = "/nonexistent/prog"; };'
 		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
 		# shellcheck disable=SC2016  # literal $PATH in launchctl output
-		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "PATH=/opt/homebrew/bin:$PATH /bin/true ok"; ); };'
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "PATH=/opt/homebrew/bin:$PATH '"$BASH"' ok"; ); };'
 		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
-		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "cd /tmp && /bin/true ok"; ); };'
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "cd /tmp && '"$BASH"' ok"; ); };'
 		_routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
-		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "'"'"'/nonexistent/x.sh'"'"' check"; ); };'
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "'"'"'/nonexistent/x.sh'"'"' check"; ); };'
 		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
-		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "/bin/bash"; "-lc"; "exec /nonexistent/x.sh check"; ); };'
+		job_info='{ "LastExitStatus" = 0; "ProgramArguments" = ( "'"$BASH"'"; "-lc"; "exec /nonexistent/x.sh check"; ); };'
 		! _routine_platform_owned r919 'scripts/mirror-sync-helper.sh sync' || exit 1
 		job_info=""
 		! _routine_platform_owned r916 'scripts/cloudron-package-monitor-helper.sh upstream --apply' || exit 1
