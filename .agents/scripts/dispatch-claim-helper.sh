@@ -43,6 +43,8 @@ _DCH_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 source "${_DCH_SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
 # shellcheck source=dispatch-claim-checkpoint.sh
 source "${_DCH_SCRIPT_DIR}/dispatch-claim-checkpoint.sh"
+# shellcheck source=dispatch-claim-trust.sh
+source "${_DCH_SCRIPT_DIR}/dispatch-claim-trust.sh"
 unset _DCH_SCRIPT_DIR
 
 # Consensus window — how long to wait after posting a claim before checking
@@ -575,33 +577,6 @@ _fetch_claim_marker_comments() {
 #   $2 = repo slug
 # Returns: JSON array on stdout, exit 0 on success, exit 1 on failure
 #######################################
-# Resolve ambiguous comment authors once per snapshot, never from body fields.
-_claim_permission_trusted_authors() {
-	local comments_json="$1"
-	local repo_slug="$2"
-	local candidates login association
-	local trusted='[]'
-	[[ -n "$repo_slug" ]] || { printf '[]'; return 0; }
-	if ! declare -F _gh_actor_has_repo_write_authority >/dev/null; then
-		# shellcheck source=shared-gh-collaborator-permission.sh
-		source "${DISPATCH_CLAIM_HELPER_DIR}/shared-gh-collaborator-permission.sh" || { printf '[]'; return 0; }
-	fi
-	candidates=$(printf '%s' "$comments_json" | jq -r '
-		[.[] | select(.author_association == "CONTRIBUTOR" or .author_association == "NONE")
-		 | {login:(.author // .user.login // ""), association:.author_association}
-		 | select(.login != "")] | unique_by(.login)[] | [.login, .association] | @tsv
-	') || { printf '[]'; return 0; }
-	while IFS=$'\t' read -r login association; do
-		[[ -n "$login" ]] || continue
-		#aidevops:trust-boundary -- only authenticated write authority elevates an author.
-		if _gh_actor_has_repo_write_authority "$repo_slug" "$login" "$association"; then
-			trusted=$(printf '%s' "$trusted" | jq -c --arg login "$login" '. + [$login]')
-		fi
-	done <<<"$candidates"
-	printf '%s' "$trusted"
-	return 0
-}
-
 _fetch_claims() {
 	local issue_number="$1"
 	local repo_slug="$2"

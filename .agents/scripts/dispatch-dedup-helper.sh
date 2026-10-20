@@ -845,9 +845,8 @@ _dd_fetch_trusted_issue_comments() {
 
 	raw_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 1
-	printf '%s' "$raw_comments" | jq -c '
-		def trusted_association:
-			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
+	local comments_json="" permission_trusted_authors=""
+	comments_json=$(printf '%s' "$raw_comments" | jq -c '
 		[ (
 			if (type == "array" and ((.[0]? | type) == "array")) then
 				.[]
@@ -863,7 +862,13 @@ _dd_fetch_trusted_issue_comments() {
 			author_association: (.author_association // ""),
 			created_at: .created_at
 		}
-		| select((.author_association // "") | trusted_association)]
+		]
+	' 2>/dev/null) || return 1
+	permission_trusted_authors=$(_claim_permission_trusted_authors "$comments_json" "$repo_slug") || return 1
+	printf '%s' "$comments_json" | jq -c --argjson permission_trusted_authors "$permission_trusted_authors" '
+		map(select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR"
+			or ((.author_association == "CONTRIBUTOR" or .author_association == "NONE")
+				and (.author as $login | $permission_trusted_authors | index($login) != null))))
 	' 2>/dev/null || return 1
 	return 0
 }
@@ -886,6 +891,7 @@ _dd_has_matching_terminal_lease() {
 	local dispatch_author="$4"
 	local dispatch_body="${5:-}"
 	local lease_filter="${SCRIPT_DIR}/dispatch-lease-claims.jq"
+	local repo_slug="${6:-}"
 	local claims_json="[]"
 	local parsed_claims="[]"
 	local now_epoch=""
@@ -897,9 +903,12 @@ _dd_has_matching_terminal_lease() {
 		2>/dev/null) || return 1
 	[[ "$claims_json" != "[]" ]] || return 1
 	now_epoch=$(date -u '+%s')
+	local permission_trusted_authors=""
+	permission_trusted_authors=$(_claim_permission_trusted_authors "$comments_json" "$repo_slug") || return 1
 	parsed_claims=$(printf '%s\n%s\n' "$claims_json" "$comments_json" | jq -nc \
 		--argjson now "$now_epoch" --argjson max_age 2147483647 \
 		--argjson include_terminal true \
+		--argjson permission_trusted_authors "$permission_trusted_authors" \
 		-f "$lease_filter" 2>/dev/null) || return 1
 
 	local marker_json=""
@@ -1054,7 +1063,7 @@ has_dispatch_comment() {
 	# A CLAIM_RELEASED write can fail after the worker has already emitted its
 	# structured terminal lease transition. Reconcile that authenticated
 	# transition as equivalent durable completion evidence (GH#28437).
-	if _dd_has_matching_terminal_lease "$comments_json" "$dispatch_created_at" "$dispatch_id" "$dispatch_author" "$dispatch_body"; then
+	if _dd_has_matching_terminal_lease "$comments_json" "$dispatch_created_at" "$dispatch_id" "$dispatch_author" "$dispatch_body" "$repo_slug"; then
 		return 1
 	fi
 

@@ -37,6 +37,8 @@ _DDS_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_DDS_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _DDS_SCRIPT_DIR="."
 # shellcheck source=pr-checkpoint-target-lib.sh
 source "${_DDS_SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
+# shellcheck source=dispatch-claim-trust.sh
+source "${_DDS_SCRIPT_DIR}/dispatch-claim-trust.sh"
 unset _DDS_SCRIPT_DIR
 
 #######################################
@@ -184,11 +186,13 @@ _stale_recovery_final_evidence_recheck() {
 	latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$pages")
 	[[ "$latest_dispatch_ts" == "$expected_dispatch_ts" ]] || return 1
 	now_epoch=$(date +%s)
-	local comments="" claims="" parsed=""
+	local comments="" claims="" parsed="" permission_trusted_authors=""
 	comments=$(printf '%s' "$pages" | jq -c '[.[] | .[]?]' 2>/dev/null) || return 1
+	permission_trusted_authors=$(_claim_permission_trusted_authors "$comments" "$repo_slug") || return 1
 	claims=$(printf '%s' "$comments" | jq -c '[.[] | select((.body // "") | contains("DISPATCH_CLAIM nonce="))]' 2>/dev/null) || return 1
 	parsed=$(printf '%s\n%s\n' "$claims" "$comments" | jq -nc --argjson now "$now_epoch" --argjson max_age 2147483647 \
 		--argjson include_terminal false \
+		--argjson permission_trusted_authors "$permission_trusted_authors" \
 		-f "${SCRIPT_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || return 1
 	if printf '%s' "$parsed" | jq -e 'any(.lease_phase == "ready")' >/dev/null 2>&1; then
 		return 1

@@ -91,4 +91,61 @@ PARSED=$(printf '%s\n%s\n' "$COMMENTS" "$EVENTS" | jq -nc \
 	--argjson permission_trusted_authors "$TRUSTED" -f "${SCRIPT_DIR}/../dispatch-lease-claims.jq")
 assert_json 'permission-backed lease and release events accepted' "$PARSED" \
 	'any(.runner == "admin" and .lease_phase == "ready") and any(.runner == "writer" and .lease_phase == "terminal")'
+
+# GH#35268: exercise the production readers, not just the jq trust argument.
+# Sourcing the CLI with help loads its libraries without invoking dispatch.
+# shellcheck source=../dispatch-dedup-helper.sh
+source "${SCRIPT_DIR}/../dispatch-dedup-helper.sh" help >/dev/null
+
+assert_status() {
+	local name="$1" expected="$2"
+	shift 2
+	local actual=0
+	"$@" || actual=$?
+	if [[ "$actual" != "$expected" ]]; then
+		printf 'FAIL %s: expected %s, got %s\n' "$name" "$expected" "$actual" >&2
+		return 1
+	fi
+	printf 'PASS %s\n' "$name"
+	return 0
+}
+
+NOW=$(date +%s)
+READY=$(printf '%s' "$EVENTS" | jq -c --argjson expires "$((NOW + 7200))" '
+	map(select(.author == "admin")) |
+	map(if .id == 50 then .body = ("DISPATCH_LEASE phase=ready lease_token=t device=d session=s expires_at=" + ($expires|tostring)) else . end) |
+	map(.user = {login:.author} | del(.author))')
+PAGES=$(printf '%s' "$READY" | jq -c '[.]')
+_stale_recovery_fetch_comments_pages() { printf '%s' "$PAGES"; return 0; }
+assert_status 'private-member ready lease vetoes stale recovery beyond claim TTL' 1 \
+	_stale_recovery_final_evidence_recheck 1 org/repo 2026-01-01T00:01:00Z
+
+# Read-only/unknown authors must not gain coordination authority.
+PAGES=$(printf '%s' "$READY" | jq -c '[map(.user.login="reader" | .body |= gsub("runner=admin"; "runner=reader"))]')
+assert_status 'read-only ready lease cannot veto recovery' 0 \
+	_stale_recovery_final_evidence_recheck 1 org/repo 2026-01-01T00:01:00Z
+
+# The fetch path must retain permission-backed authors before the lease parser.
+gh() { printf '%s' "$PAGES"; return 0; }
+PAGES=$(printf '%s' "$READY" | jq -c '[.]')
+FETCHED=$(_dd_fetch_trusted_issue_comments 1 org/repo)
+assert_json 'dedup fetch retains private-member coordination evidence' "$FETCHED" 'length == 3 and all(.author == "admin")'
+PAGES=$(printf '%s' "$READY" | jq -c '[map(.user.login="reader")]')
+FETCHED=$(_dd_fetch_trusted_issue_comments 1 org/repo)
+assert_json 'dedup fetch rejects read-only authors' "$FETCHED" 'length == 0'
+
+TERMINAL=$(printf '%s' "$READY" | jq -c '. + [
+	{id:60, user:{login:"admin"}, author_association:"CONTRIBUTOR", created_at:"2026-01-01T00:04:00Z",
+	 body:"CLAIM_RELEASED claim_id=1 nonce=n runner=admin"}]')
+assert_status 'dedup accepts matching permission-backed terminal generation' 0 \
+	_dd_has_matching_terminal_lease "$TERMINAL" 2026-01-01T00:01:00Z 21 admin '' org/repo
+PAGES=$(printf '%s' "$TERMINAL" | jq -c '[.]')
+assert_status 'matching release permits stale recovery' 0 \
+	_stale_recovery_final_evidence_recheck 1 org/repo 2026-01-01T00:01:00Z
+MISMATCHED=$(printf '%s' "$TERMINAL" | jq -c 'map(if .id == 60 then .body |= sub("nonce=n"; "nonce=wrong") else . end)')
+assert_status 'dedup rejects release for a different generation' 1 \
+	_dd_has_matching_terminal_lease "$MISMATCHED" 2026-01-01T00:01:00Z 21 admin '' org/repo
+PAGES=$(printf '%s' "$MISMATCHED" | jq -c '[.]')
+assert_status 'unmatched release still protects ready lease' 1 \
+	_stale_recovery_final_evidence_recheck 1 org/repo 2026-01-01T00:01:00Z
 printf 'All private-member claim tests passed\n'
