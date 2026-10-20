@@ -11,6 +11,7 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -314,6 +315,50 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         for path, expected in before_consumers.items():
             self.assertEqual(path.read_bytes(), expected)
         self.assertEqual(self._database_paths(self.database), {str(self.source)})
+
+    def test_prune_removes_expired_database_backups_and_blocks_rollback(self) -> None:
+        summary = self._plan()
+        applied = json.loads(
+            self._run("apply", "--plan", str(self.plan), "--confirm", summary["plan_sha256"]).stdout
+        )
+        receipt_id = applied["receipt_id"]
+        backups = self.state / receipt_id / "backups"
+        database_backups = sorted(backups.glob("opencode-*.db"))
+        self.assertTrue(database_backups)
+
+        fresh = json.loads(self._run("prune", "--state-dir", str(self.state)).stdout)
+        self.assertEqual(fresh["pruned"], [])
+
+        dry_run = json.loads(
+            self._run("prune", "--state-dir", str(self.state), "--retention-days", "0").stdout
+        )
+        self.assertEqual(dry_run["mode"], "dry-run")
+        self.assertEqual(len(dry_run["pruned"][0]["files"]), len(database_backups))
+        self.assertTrue(all(path.exists() for path in database_backups))
+
+        time.sleep(1.1)
+        pruned = json.loads(
+            self._run(
+                "prune", "--state-dir", str(self.state), "--retention-days", "0", "--apply"
+            ).stdout
+        )
+        self.assertTrue(pruned["pruned"][0]["applied"])
+        self.assertFalse(any(path.exists() for path in database_backups))
+        self.assertTrue((backups / "repos.json").exists())
+        status = self._receipt_status(receipt_id)
+        self.assertEqual(status["state"], "applied")
+        refused = self._run(
+            "rollback",
+            "--receipt",
+            receipt_id,
+            "--state-dir",
+            str(self.state),
+            "--confirm",
+            status["receipt_sha256"],
+            check=False,
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("database backups pruned", refused.stderr)
 
     def test_refusal_for_unapproved_registration_and_plan_drift(self) -> None:
         summary = self._plan(include_registered=False)
