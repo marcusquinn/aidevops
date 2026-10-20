@@ -34,7 +34,6 @@ export const RUNTIME_EVENT_ACTIVE_DAYS_DEFAULT = 30;
 export const RUNTIME_EVENT_ARCHIVE_MAX_ROWS_DEFAULT = 5000;
 export const RUNTIME_EVENT_MAINTENANCE_MAX_PARTITIONS_DEFAULT = 20;
 export const RUNTIME_EVENT_MAINTENANCE_MAX_DURATION_SECONDS_DEFAULT = 120;
-export const RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS_DEFAULT = 300;
 const SQLITE_OUTPUT_MAX_BYTES = 256 * 1024 * 1024;
 
 const ERROR_STATUS = new Set([
@@ -95,17 +94,6 @@ function normalizedMaxRows(value) {
     throw new TypeError("archive max rows must be an integer from 1 to 100000");
   }
   return parsed;
-}
-
-// Whole-table inventory aggregates scan every runtime event; large stores
-// (millions of rows) routinely exceed the 30 s statement budget used for
-// bounded archive work, so inventory gets its own, tunable budget.
-function inventoryTimeoutMs(value = process.env.AIDEVOPS_RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS) {
-  const parsed = Number.parseInt(String(value || ""), 10);
-  const seconds = Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 3600
-    ? parsed
-    : RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS_DEFAULT;
-  return seconds * 1000;
 }
 
 function sqlite(dbPath, sql, { json = false, readonly = false, timeoutMs = 30000 } = {}) {
@@ -409,7 +397,6 @@ export function maintainRuntimeEvents(options = {}) {
 export function runtimeEventRetentionInventory(options = {}) {
   return buildRuntimeEventRetentionInventory(options, {
     activeDaysDefault: RUNTIME_EVENT_ACTIVE_DAYS_DEFAULT,
-    aggregateTimeoutMs: inventoryTimeoutMs(),
     canonicalizeDbPath: canonicalizeSqliteDbPath,
     normalizedArchiveDir,
     normalizedCutoff,

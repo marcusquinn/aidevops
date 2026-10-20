@@ -57,6 +57,19 @@ function verifiedArchiveInventory(manifests, archiveStorage, archiveDir, verifyA
   return { error, verifiedArchiveBytes };
 }
 
+export const RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS_DEFAULT = 300;
+
+// Whole-table inventory aggregates scan every runtime event; large stores
+// (millions of rows) routinely exceed the 30 s statement budget used for
+// bounded archive work, so inventory gets its own, tunable budget (GH#35206).
+export function inventoryTimeoutMs(value = process.env.AIDEVOPS_RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  const seconds = Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 3600
+    ? parsed
+    : RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS_DEFAULT;
+  return seconds * 1000;
+}
+
 /** Map an inventory failure to a fixed, path-free reason code. */
 function inventoryErrorReason(error) {
   if (error?.message === "schema-unavailable") return "schema-unavailable";
@@ -65,7 +78,7 @@ function inventoryErrorReason(error) {
 }
 
 function runtimeDbInventory(dbPath, cutoffAt, archiveDir, archiveStorage, dependencies) {
-  const { aggregateTimeoutMs, sqlEscape, sqliteRows, verifyArchive } = dependencies;
+  const { sqlEscape, sqliteRows, verifyArchive } = dependencies;
   const empty = { candidateBytes: 0, error: null, protectedActiveBytes: 0, verifiedArchiveBytes: 0 };
   if (!existsSync(dbPath)) return empty;
   try {
@@ -81,7 +94,7 @@ function runtimeDbInventory(dbPath, cutoffAt, archiveDir, archiveStorage, depend
         COALESCE(SUM(CASE WHEN state_version IS NOT NULL THEN payload_bytes ELSE 0 END), 0)
           AS protected_active_bytes
       FROM runtime_events;
-    `, { readonly: true, ...(aggregateTimeoutMs ? { timeoutMs: aggregateTimeoutMs } : {}) })[0] || {};
+    `, { readonly: true, timeoutMs: inventoryTimeoutMs() })[0] || {};
     const hasArchiveTable = tables.some((row) => row.name === "runtime_event_archives");
     const manifests = hasArchiveTable
       ? sqliteRows(
@@ -111,7 +124,6 @@ function runtimeDbInventory(dbPath, cutoffAt, archiveDir, archiveStorage, depend
 export function buildRuntimeEventRetentionInventory(options, dependencies) {
   const {
     activeDaysDefault,
-    aggregateTimeoutMs,
     canonicalizeDbPath,
     normalizedArchiveDir,
     normalizedCutoff,
@@ -126,7 +138,6 @@ export function buildRuntimeEventRetentionInventory(options, dependencies) {
   const activeBytes = existsSync(dbPath) ? activeStoreBytes(dbPath) : 0;
   const archiveStorage = archiveDirectoryBytes(archiveDir);
   const dbInventory = runtimeDbInventory(dbPath, cutoffAt, archiveDir, archiveStorage, {
-    aggregateTimeoutMs,
     sqlEscape,
     sqliteRows,
     verifyArchive,
