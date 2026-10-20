@@ -119,14 +119,28 @@ _issue_pr_only_contract_state() {
 _merge_headless_pr_only_scope_clear() {
 	local issue_numbers="$1"
 	local repo="$2"
-	local issue_number="" state_rc=0 candidates=""
+	local issue_number="" state_rc=0
 
 	if declare -F detect_session_origin >/dev/null 2>&1; then
 		[[ "$(detect_session_origin)" == "worker" ]] || return 0
 	elif [[ "${FULL_LOOP_HEADLESS:-}" != "true" && "${AIDEVOPS_HEADLESS:-}" != "true" ]]; then
 		return 0
 	fi
-	candidates=$(printf '%s\n%s\n' "${WORKER_ISSUE_NUMBER:-}" "$issue_numbers" | sort -u)
+	# The dispatched task may belong to a different repository than the PR.
+	if [[ -n "${WORKER_ISSUE_NUMBER:-}" ]]; then
+		_issue_pr_only_contract_state "$WORKER_ISSUE_NUMBER" "${WORKER_REPO_SLUG:-$repo}" || state_rc=$?
+		case "$state_rc" in
+		0)
+			print_error "Merge blocked: dispatched issue #${WORKER_ISSUE_NUMBER} has a trusted PR-only completion contract; stop at the verified ready PR and emit POST_PR_HANDOFF"
+			return 1
+			;;
+		1) ;;
+		*)
+			print_error "Merge blocked: unable to verify PR-only completion scope for dispatched issue #${WORKER_ISSUE_NUMBER}"
+			return 1
+			;;
+		esac
+	fi
 	while IFS= read -r issue_number; do
 		[[ -n "$issue_number" ]] || continue
 		state_rc=0
@@ -142,7 +156,7 @@ _merge_headless_pr_only_scope_clear() {
 			return 1
 			;;
 		esac
-	done <<<"$candidates"
+	done <<<"$issue_numbers"
 	return 0
 }
 

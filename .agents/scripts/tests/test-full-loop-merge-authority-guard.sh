@@ -340,7 +340,7 @@ reset_fixture() {
 	FIXTURE_READINESS_RC=0
 	FIXTURE_CHECK_STATUS=""
 	FIXTURE_FAILURE_EVIDENCE=""
-	unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS WORKER_ISSUE_NUMBER
+	unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS WORKER_ISSUE_NUMBER WORKER_REPO_SLUG
 	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	AUTHORITY_GUARD_PASS=1
 	AUTHORITY_GUARD_FAIL_ON_CALL=0
@@ -678,6 +678,35 @@ test_pr_only_contract_guard() {
 	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
 	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42
 	expect_guard_result "headless merge refused via dispatched issue when PR lacks linkage" 1
+
+	# GH#35162: dispatch scope belongs to the source repo, not the PR target.
+	reset_fixture
+	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42 WORKER_REPO_SLUG=owner/a
+	expect_guard_result "cross-repo dispatched issue without PR-only scope permits merge" 0
+	if [[ "$(<"$ISSUE_API_CALLS")" == "repos/owner/a/issues/42" ]]; then
+		print_result "dispatched issue is queried only in its source repository" 0
+	else
+		print_result "dispatched issue is queried only in its source repository" 1 "$(<"$ISSUE_API_CALLS")"
+	fi
+
+	reset_fixture
+	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42 WORKER_REPO_SLUG=owner/a
+	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
+	expect_guard_result "cross-repo dispatched PR-only contract still blocks merge" 1
+
+	reset_fixture
+	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42 WORKER_REPO_SLUG=owner/a
+	FIXTURE_ISSUE_API_FAIL=1
+	expect_guard_result "cross-repo dispatched issue lookup failure still fails closed" 1
+
+	reset_fixture
+	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42
+	expect_guard_result "dispatched issue without source repo falls back to PR repository" 0
+	if [[ "$(<"$ISSUE_API_CALLS")" == "repos/owner/repo/issues/42" ]]; then
+		print_result "legacy dispatch queries the PR repository" 0
+	else
+		print_result "legacy dispatch queries the PR repository" 1 "$(<"$ISSUE_API_CALLS")"
+	fi
 
 	reset_fixture
 	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
