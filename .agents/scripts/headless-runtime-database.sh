@@ -543,26 +543,66 @@ _release_worker_db_replay_lock() {
 }
 
 #######################################
+# Quarantine confirmed corruption under the replay lock without changing evidence.
+# The original directory name and all artifacts remain together. Only a disposable
+# copy is opened by SQLite: even a read can checkpoint WAL or change SHM bytes.
+# Args: $1 = retained directory, $2 = recovery root.
+#######################################
+_quarantine_worker_db() {
+	local recovery_dir="$1"
+	local recovery_root="$2"
+	local quarantine_root="${recovery_root}/.quarantine"
+	local destination="${quarantine_root}/${recovery_dir##*/}"
+	[[ ! -e "$destination" ]] || return 1
+	mkdir -p "$quarantine_root" || return 1
+	chmod 700 "$quarantine_root" || return 1
+	if ! (
+		umask 077
+		printf 'classification=sqlite_corruption\noriginal_directory=%s\nclassified_at=%s\nnext_action=Inspect a separate copy privately; retain originals and sidecars. Requeue only a validated copy through the existing verified replay contract; never repair or import originals in place.\n' \
+			"$recovery_dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"${recovery_dir}/quarantine.txt"
+	); then
+		return 1
+	fi
+	mv "$recovery_dir" "$destination" || return 1
+	print_warning "[lifecycle] db_merge_recovery_quarantined path=${destination} reason=sqlite_corruption next_action=inspect_private_copy metadata=quarantine.txt"
+	return 0
+}
+
+#######################################
 # Replay retained worker DBs. Artifacts are deleted only after graph verification.
-# Returns 0 when every attempted artifact merged or no artifacts exist.
+# Confirmed corruption is retained outside the automatic retry queue. Other SQL
+# failures (locks, permissions, schema drift) remain retryable, not quarantined.
+# Returns 0 when every attempted artifact merged or was safely quarantined.
 #######################################
 _replay_preserved_worker_dbs() {
 	local recovery_root="${AIDEVOPS_WORKER_DB_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/work/worker-db-recovery}"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
 	local replay_lock="${recovery_root}/.replay.lock"
-	local recovery_db recovery_dir replay_dir replay_failed=0
+	local recovery_db recovery_dir replay_dir suffix check_result check_status copy_failed replay_failed=0
 	[[ -d "$recovery_root" && -f "$shared_db" ]] || return 0
 	_acquire_worker_db_replay_lock "$replay_lock" || return 0
 	for recovery_db in "$recovery_root"/*/opencode.db; do
 		[[ -f "$recovery_db" ]] || continue
 		recovery_dir="${recovery_db%/opencode.db}"
 		replay_dir=$(mktemp -d "${recovery_root}/.replay-XXXXXX") || { replay_failed=1; continue; }
-		if ! ln -s "$recovery_dir" "${replay_dir}/opencode" 2>/dev/null; then
+		copy_failed=0
+		mkdir "${replay_dir}/opencode" || copy_failed=1
+		for suffix in "" -wal -shm; do
+			[[ -f "${recovery_db}${suffix}" ]] || continue
+			cp -p "${recovery_db}${suffix}" "${replay_dir}/opencode/opencode.db${suffix}" || copy_failed=1
+		done
+		if [[ "$copy_failed" -ne 0 ]]; then
 			rm -rf "$replay_dir"
 			replay_failed=1
 			continue
 		fi
-		if _merge_worker_db "$replay_dir" && _verify_worker_db_merge "$recovery_db" "$shared_db"; then
+		check_status=0
+		check_result=$(sqlite3_with_timeout "${replay_dir}/opencode/opencode.db" 'PRAGMA quick_check(1);' 2>&1) || check_status=$?
+		if { [[ "$check_status" -eq 0 && "$check_result" != "ok" && -n "$check_result" ]]; } ||
+			[[ "$check_result" == *"database disk image is malformed"* || "$check_result" == *"file is not a database"* ]]; then
+			_quarantine_worker_db "$recovery_dir" "$recovery_root" || replay_failed=1
+		elif [[ "$check_status" -eq 0 && "$check_result" == "ok" ]] &&
+			_merge_worker_db "$replay_dir" && _verify_worker_db_merge "${replay_dir}/opencode/opencode.db" "$shared_db"; then
 			rm -f "$recovery_db" "${recovery_db}-wal" "${recovery_db}-shm"
 			rmdir "$recovery_dir" 2>/dev/null || true
 			print_info "[lifecycle] db_merge_recovery_replayed path=${recovery_db}"
