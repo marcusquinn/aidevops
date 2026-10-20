@@ -50,13 +50,28 @@ STORAGE_ARCHIVE="archive"
 STORAGE_PRODUCER_OPENCODE="opencode"
 STORAGE_NPM_CACHE_WARN_BYTES="${AIDEVOPS_NPM_CACHE_WARN_BYTES:-10737418240}"
 STORAGE_FIELD_NONE="__none__"
+STORAGE_PRODUCER_WORKTREE="worktree-helper"
+STORAGE_RECOVERY="recovery"
+STORAGE_STATE_DIR="${AIDEVOPS_STORAGE_STATE_DIR:-${HOME:+$HOME/.aidevops/.agent-workspace/storage-inventory}}"
 
 _storage_usage() {
 	cat <<'USAGE'
-Usage: storage-inventory-helper.sh [status|json|help]
+Usage: storage-inventory-helper.sh [status|json|check|help]
 
 Read-only inventory of explicitly registered aidevops-related stores.
 It never deletes data and reports unavailable classifications as unknown.
+
+check is a daily/Pulse entry point: it writes only inventory metadata, caches a
+scan for 86400 seconds, and emits one advisory per threshold-crossing episode.
+No scheduler is installed by this command. status/json remain read-only.
+Environment (bytes unless noted):
+  AIDEVOPS_STORAGE_HOME_SOFT_LIMIT_BYTES       default 107374182400 (100 GiB)
+  AIDEVOPS_STORAGE_WORKTREE_SOFT_LIMIT_BYTES   default 107374182400 (100 GiB)
+  AIDEVOPS_STORAGE_CHECK_INTERVAL_SECONDS     default 86400; 0 forces a scan
+  AIDEVOPS_STORAGE_CHECK_SIZE_TIMEOUT_TENTHS  default 100 per store
+  AIDEVOPS_STORAGE_STATE_DIR                 cache/advisory metadata directory
+Timed-out status/json rows may use the last check snapshot, explicitly marked
+cached with measured_at; cached bytes are never reported as reclaimable.
 USAGE
 	return 0
 }
@@ -282,6 +297,8 @@ _storage_emit_unavailable_opencode_records() {
 		"$STORAGE_UNKNOWN" "tool-output lifecycle is owned upstream" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
 	_storage_emit_measured_record "opencode-unclassified" "$STORAGE_PRODUCER_OPENCODE" "Other ${label_prefix} application data" "$STORAGE_UNKNOWN" \
 		"$STORAGE_UNKNOWN" "future and unclassified formats fail closed" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-db-backups" "$STORAGE_PRODUCER_OPENCODE" "OpenCode opencode.db.bak*" "none" \
+		"$STORAGE_UNKNOWN" "no retention owner" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
 	return 0
 }
 
@@ -309,6 +326,9 @@ _storage_opencode_records() {
 	local archive_disposition="$STORAGE_PROTECTED"
 	local archive_reason="archive retention and integrity require explicit OpenCode-aware verification"
 	local wal_reason="idle snapshot only; maintenance still requires holder and checkpoint evidence"
+	local backup_paths=()
+	local backup_path=""
+	local backup_measure=""
 
 	if [[ -z "$data_root" ]]; then
 		_storage_emit_unavailable_opencode_records
@@ -319,6 +339,18 @@ _storage_opencode_records() {
 		active_dir="."
 	fi
 	archive_db="${AIDEVOPS_OPENCODE_ARCHIVE_DB:-${OPENCODE_ARCHIVE_DB:-${active_dir}/opencode-archive.db}}"
+	# Fixed-depth expansion, never traverse a symlinked data root.
+	if [[ -d "$data_root" && ! -L "$data_root" ]]; then
+		for backup_path in "$data_root"/opencode.db.bak*; do
+			[[ -e "$backup_path" || -L "$backup_path" ]] || continue
+			backup_paths+=("$backup_path")
+		done
+	fi
+	if [[ -L "$data_root" || (-e "$data_root" && ! -r "$data_root") ]]; then
+		backup_measure=$(_storage_measure_path "$data_root")
+	else
+		backup_measure=$(_storage_measure_group "${backup_paths[@]+"${backup_paths[@]}"}")
+	fi
 	active_measure=$(_storage_measure_group "$active_db")
 	wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
 	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm")
@@ -326,7 +358,11 @@ _storage_opencode_records() {
 	tool_measure=$(_storage_measure_group "$tool_path")
 	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
 		"$active_db" "${active_db}-wal" "${active_db}-shm" \
-		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path")
+		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
+	_storage_emit_measured_record "opencode-db-backups" "$STORAGE_PRODUCER_OPENCODE" "OpenCode opencode.db.bak*" "none" \
+		"$STORAGE_UNKNOWN" "no retention owner; manual integrity review required" "$STORAGE_UNKNOWN" \
+		"backup provenance and restore integrity are unproved" \
+		"Review backup provenance with aidevops opencode-db report; no automatic deletion" "$backup_measure"
 
 	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
 		active_schema=$(opencode_db_schema_state "$active_db")
@@ -692,8 +728,8 @@ _storage_worktree_recovery_record() {
 	local display_path="${home_label}/.aidevops/recovery/worktrees and attributable legacy roots"
 
 	if ! declare -F worktree_recovery_lifecycle_json >/dev/null 2>&1; then
-		_storage_emit_measured_record "worktree-recovery" "worktree-helper" "$display_path" \
-			"$STORAGE_UNKNOWN" "recovery" "manual-review; no deletion authority" "$STORAGE_UNKNOWN" \
+		_storage_emit_measured_record "worktree-recovery" "$STORAGE_PRODUCER_WORKTREE" "$display_path" \
+			"$STORAGE_UNKNOWN" "$STORAGE_RECOVERY" "manual-review; no deletion authority" "$STORAGE_UNKNOWN" \
 			"producer inventory helper is unavailable" "Restore the deployed worktree recovery helper; leave archives untouched" \
 			"${STORAGE_JSON_NULL}|unavailable|classification-unavailable"
 		return 0
@@ -706,8 +742,8 @@ _storage_worktree_recovery_record() {
 		 (.total_bytes >= 0 and .protected_bytes >= 0 and .unknown_bytes >= 0 and
 		  .total_bytes == (.protected_bytes + .reclaimable_bytes + .unknown_bytes)))
 	' >/dev/null 2>&1; then
-		_storage_emit_measured_record "worktree-recovery" "worktree-helper" "$display_path" \
-			"$STORAGE_UNKNOWN" "recovery" "manual-review; no deletion authority" "$STORAGE_UNKNOWN" \
+		_storage_emit_measured_record "worktree-recovery" "$STORAGE_PRODUCER_WORKTREE" "$display_path" \
+			"$STORAGE_UNKNOWN" "$STORAGE_RECOVERY" "manual-review; no deletion authority" "$STORAGE_UNKNOWN" \
 			"producer inventory output is unavailable or invalid" "Run worktree-helper.sh recovery; leave archives untouched" \
 			"${STORAGE_JSON_NULL}|unavailable|classification-unavailable"
 		return 0
@@ -779,6 +815,11 @@ _storage_inventory_records() {
 	local active_writer_reason="active concurrent writer"
 	local protected_disposition="$STORAGE_DISPOSITION_PROTECTED"
 	local pulse_producer="$STORAGE_PRODUCER_PULSE"
+	local work_root="${AIDEVOPS_WORK_DIR:-${HOME:+$HOME/.aidevops/.agent-workspace/work}}"
+	_storage_emit_record "repo-layout-migrations" "repo-layout-migrate" "Repository layout migration evidence" "${work_root:+$work_root/repo-layout-migrations}" "$framework_owner" "$STORAGE_RECOVERY" "repo-layout migration retention (GH#35221); rollback evidence protected" "$protected_disposition" "migration recovery evidence" "Use repo-layout-migrate-helper.sh prune (dry run); never remove rollback evidence manually"
+	_storage_emit_record "opencode-interactive" "opencode-launcher" "Isolated OpenCode databases and archives" "${OPENCODE_INTERACTIVE_ROOT:-${work_root:+$work_root/opencode-interactive}}" "$STORAGE_JOINT" "$active_class" "opencode-db maintenance/archive (GH#35222); sessions retained" "$protected_disposition" "isolated live databases, WALs and session archives" "Use opencode-db-maintenance-helper.sh report and opencode-db-archive.sh archive --dry-run"
+	_storage_emit_record "workspace-tmp" "agent-tools" "Framework temporary workspace" "${AIDEVOPS_TEMP_DIR:-${HOME:+$HOME/.aidevops/.agent-workspace/tmp}}" "$framework_owner" "mixed" "system-cleanup.sh; TUI capture lifecycle (GH#35223)" "$protected_disposition" "temporary files may have active holders" "Use system-cleanup.sh --dry-run before producer-owned cleanup"
+	_storage_emit_record "worktree-base" "$STORAGE_PRODUCER_WORKTREE" "Linked worktrees and build output" "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}" "$framework_owner" "$active_class" "worktree-helper clean; build artefacts have no generic retention owner" "$protected_disposition" "live worktrees and uncommitted build output" "Use worktree-helper.sh clean; inspect build output with its producer"
 	_storage_emit_runtime_bundle_record
 	_storage_observability_record
 	_storage_worktree_recovery_record
@@ -797,15 +838,122 @@ _storage_inventory_records() {
 	return 0
 }
 
+_storage_scope() {
+	printf '%s\n' "$HOME" "${AIDEVOPS_WORK_DIR:-}" "${OPENCODE_INTERACTIVE_ROOT:-}" \
+		"${AIDEVOPS_TEMP_DIR:-}" "${AIDEVOPS_WORKTREE_BASE_DIR:-}" \
+		"${AIDEVOPS_OPENCODE_DATA_DIR:-}" "${AIDEVOPS_OPENCODE_DB_PATH:-${OPENCODE_DB_PATH:-${OPENCODE_DB:-}}}" \
+		"${AIDEVOPS_OPENCODE_ARCHIVE_DB:-${OPENCODE_ARCHIVE_DB:-}}" "${AIDEVOPS_NPM_CACHE_DIR:-}"
+	return 0
+}
+
 _storage_inventory_json() {
 	local records=""
 	local generated_at=""
+	local cache='{}'
+	local scope=""
+	scope=$(_storage_scope)
 	records=$(_storage_inventory_records)
 	generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	if [[ -n "$STORAGE_STATE_DIR" && -f "$STORAGE_STATE_DIR/last-scan.json" ]]; then
+		cache=$(jq -ce --arg scope "$scope" 'select(.scope == $scope and .schema_version == 2 and (.stores | type == "array"))' "$STORAGE_STATE_DIR/last-scan.json" 2>/dev/null) || cache='{}'
+	fi
 	printf '%s\n' "$records" | jq -s \
 		--argjson schema_version "$STORAGE_SCHEMA_VERSION" \
 		--arg generated_at "$generated_at" \
-		'{schema_version:$schema_version,generated_at:$generated_at,read_only:true,stores:.}'
+		--arg scope "$scope" \
+		--argjson cache "$cache" '
+		map(. as $current | if .error == "sizing-timeout" then
+			([$cache.stores[]? | select(.store_id == $current.store_id and .path == $current.path and
+				(.total_bytes | type == "number") and .total_bytes >= 0)] | first) as $old |
+			if $old != null then . + {total_bytes:$old.total_bytes, protected_bytes:0,
+				reclaimable_bytes:0, unknown_bytes:$old.total_bytes, sizing_confidence:"cached",
+				measured_at:($old.measured_at // $cache.generated_at)} else . end
+		else . + {measured_at:$generated_at} end) |
+		{schema_version:$schema_version,generated_at:$generated_at,scope:$scope,read_only:true,stores:.}' || return 1
+	return 0
+}
+
+# Only check writes metadata. A directory lock serializes daily/Pulse invocations;
+# an interrupted lock may be removed after confirming no check process is active.
+_storage_check() (
+	umask 077
+	[[ -n "$STORAGE_STATE_DIR" ]] || return 1
+	mkdir -p "$STORAGE_STATE_DIR" || return 1
+	if ! mkdir "$STORAGE_STATE_DIR/check.lock" 2>/dev/null; then
+		printf 'Storage check already locked; no duplicate advisory emitted\n' >&2
+		return 0
+	fi
+	trap 'rmdir "$STORAGE_STATE_DIR/check.lock"' EXIT
+	trap 'exit 1' HUP INT TERM
+	local result=0
+	_storage_check_locked || result=$?
+	return "$result"
+)
+
+_storage_check_locked() {
+	local home_limit="${AIDEVOPS_STORAGE_HOME_SOFT_LIMIT_BYTES:-107374182400}"
+	local worktree_limit="${AIDEVOPS_STORAGE_WORKTREE_SOFT_LIMIT_BYTES:-107374182400}"
+	local interval="${AIDEVOPS_STORAGE_CHECK_INTERVAL_SECONDS:-86400}"
+	local value=""
+	local now=""
+	local snapshot=""
+	local roots=""
+	local report=""
+	local advisory=""
+	local fingerprint=""
+	local previous=""
+	local pending=""
+	local scope=""
+	for value in "$home_limit" "$worktree_limit" "$interval"; do
+		[[ "$value" =~ ^(0|[1-9][0-9]{0,14})$ ]] || return 1
+	done
+	now=$(date +%s)
+	scope=$(_storage_scope)
+	if [[ -f "$STORAGE_STATE_DIR/last-scan.json" ]]; then
+		snapshot=$(jq -ce --arg scope "$scope" --argjson now "$now" --argjson interval "$interval" \
+			'select(.scope == $scope and .checked_at <= $now and ($now - .checked_at) < $interval and (.roots | length == 2) and ([.roots[].total_bytes != null] | all))' \
+			"$STORAGE_STATE_DIR/last-scan.json" 2>/dev/null) || snapshot=""
+	fi
+	if [[ -z "$snapshot" ]]; then
+		STORAGE_SIZE_TIMEOUT_TENTHS="${AIDEVOPS_STORAGE_CHECK_SIZE_TIMEOUT_TENTHS:-100}"
+		roots=$(
+			_storage_emit_record "aidevops-home" "$STORAGE_OWNER_FRAMEWORK" "~/.aidevops" "${HOME:+$HOME/.aidevops}" "$STORAGE_OWNER_FRAMEWORK" "$STORAGE_SAFETY_MIXED" "soft limit" "$STORAGE_PROTECTED" "aggregate; overlaps store rows" "Inspect largest stores and use their next_action"
+			_storage_emit_record "worktree-base" "$STORAGE_PRODUCER_WORKTREE" "Linked worktrees and build output" "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}" "$STORAGE_OWNER_FRAMEWORK" "$STORAGE_ACTIVE" "soft limit" "$STORAGE_PROTECTED" "live worktrees" "Use worktree-helper.sh clean"
+		)
+		if printf '%s\n' "$roots" | jq -se 'any(.total_bytes == null)' >/dev/null; then
+			printf 'Storage check incomplete: root sizing unavailable; previous measurements retained\n' >&2
+			return 1
+		fi
+		report=$(_storage_inventory_json) || return 1
+		snapshot=$(printf '%s\n' "$roots" | jq -s --argjson report "$report" --argjson now "$now" '$report + {roots:.,checked_at:$now}') || return 1
+		pending=$(mktemp "$STORAGE_STATE_DIR/scan.XXXXXX") || return 1
+		printf '%s\n' "$snapshot" >"$pending" || return 1
+		mv "$pending" "$STORAGE_STATE_DIR/last-scan.json" || return 1
+	fi
+	advisory=$(printf '%s\n' "$snapshot" | jq -c --argjson home "$home_limit" --argjson worktrees "$worktree_limit" '
+		[.roots[] | . + {soft_limit_bytes:(if .store_id == "aidevops-home" then $home else $worktrees end)} |
+		 select(.total_bytes != null and .total_bytes > .soft_limit_bytes)] as $exceeded |
+		{kind:"storage-soft-limit",scope:.scope,checked_at:.checked_at,exceeded:$exceeded,
+		 largest_stores:([.stores[] | select(.total_bytes != null)] | sort_by(-.total_bytes) | .[:5] |
+		 map({store_id,total_bytes,owner,next_action,sizing_confidence,measured_at})),
+		 unavailable_roots:[.roots[] | select(.total_bytes == null) | {store_id,error}]}') || return 1
+	# Missing measurements are not recovery evidence; retain the prior episode.
+	if printf '%s\n' "$advisory" | jq -e '.unavailable_roots | length > 0' >/dev/null; then
+		printf 'Storage check incomplete: root sizing unavailable; inspect last-scan.json\n' >&2
+		return 1
+	fi
+	# Bucket by breached roots and configured limits, not fluctuating byte counts.
+	fingerprint=$(printf '%s\n' "$advisory" | jq -c '[.exceeded[] | {store_id,soft_limit_bytes}]') || return 1
+	if [[ -f "$STORAGE_STATE_DIR/advisory.json" ]]; then
+		previous=$(jq -ce --arg scope "$scope" 'select(.scope == $scope) | [.exceeded[] | {store_id,soft_limit_bytes}]' "$STORAGE_STATE_DIR/advisory.json" 2>/dev/null) || previous=""
+	fi
+	# Keep one current advisory file, even when its updated sizes need no re-alert.
+	pending=$(mktemp "$STORAGE_STATE_DIR/advisory.XXXXXX") || return 1
+	printf '%s\n' "$advisory" >"$pending" || return 1
+	mv "$pending" "$STORAGE_STATE_DIR/advisory.json" || return 1
+	if [[ "$fingerprint" != "$previous" ]]; then
+		[[ "$fingerprint" == '[]' ]] || printf '%s\n' "$advisory"
+	fi
 	return 0
 }
 
@@ -839,11 +987,12 @@ _storage_status() {
 	local next_action=""
 	local error=""
 	local advisory=""
+	local measured_at=""
 	report=$(_storage_inventory_json)
 	printf 'Storage Inventory (read-only)\n'
 	printf '%-24s %-10s %-10s %12s %12s %12s %12s %-11s\n' "Store" "Owner" "Class" "Total" "Protected" "Reclaimable" "Unknown" "Confidence"
-	printf '%s\n' "$report" | jq -r --arg none "$STORAGE_FIELD_NONE" '.stores[] | [.store_id,.owner,.safety_class,(.total_bytes|tostring),(.protected_bytes|tostring),(.reclaimable_bytes|tostring),(.unknown_bytes|tostring),.sizing_confidence,.protection_reasons[0],.next_action,(.error // $none),(.advisory // $none)] | @tsv' |
-		while IFS=$'\t' read -r store_id owner safety_class total protected reclaimable unknown confidence reason next_action error advisory; do
+	printf '%s\n' "$report" | jq -r --arg none "$STORAGE_FIELD_NONE" '.stores[] | [.store_id,.owner,.safety_class,(.total_bytes|tostring),(.protected_bytes|tostring),(.reclaimable_bytes|tostring),(.unknown_bytes|tostring),.sizing_confidence,.protection_reasons[0],.next_action,(.error // $none),(.advisory // $none),(.measured_at // $none)] | @tsv' |
+		while IFS=$'\t' read -r store_id owner safety_class total protected reclaimable unknown confidence reason next_action error advisory measured_at; do
 			[[ "$error" == "$STORAGE_FIELD_NONE" ]] && error=""
 			[[ "$advisory" == "$STORAGE_FIELD_NONE" ]] && advisory=""
 			printf '%-24s %-10s %-10s %12s %12s %12s %12s %-11s\n' \
@@ -851,6 +1000,7 @@ _storage_status() {
 			printf '  reason: %s' "$reason"
 			[[ -n "$error" ]] && printf ' (%s)' "$error"
 			printf '\n'
+			[[ "$confidence" != "cached" ]] || printf '  cached measurement: %s\n' "$measured_at"
 			if [[ "$advisory" == "warning" ]]; then
 				printf '  WARNING: this external cache exceeds its advisory threshold\n'
 			fi
@@ -865,6 +1015,7 @@ main() {
 	case "$command_name" in
 	status) _storage_status ;;
 	json) _storage_inventory_json ;;
+	check) _storage_check ;;
 	help | --help | -h) _storage_usage ;;
 	*)
 		_storage_usage >&2

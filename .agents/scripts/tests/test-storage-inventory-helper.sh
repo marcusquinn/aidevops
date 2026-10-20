@@ -11,6 +11,9 @@ GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
 TEST_ROOT="$(mktemp -d -t aidevops-storage-inventory.XXXXXX)"
 HOME="$TEST_ROOT/home"
 export HOME
+# Never inventory worker/host paths inherited by this fixture process.
+unset AIDEVOPS_WORK_DIR AIDEVOPS_TEMP_DIR AIDEVOPS_WORKTREE_BASE_DIR OPENCODE_INTERACTIVE_ROOT
+unset AIDEVOPS_STORAGE_STATE_DIR AIDEVOPS_OPENCODE_DATA_DIR AIDEVOPS_NPM_CACHE_DIR
 AIDEVOPS_WORKTREE_TRASH_ROOT="$HOME/.aidevops/recovery/worktrees"
 export AIDEVOPS_WORKTREE_TRASH_ROOT
 # shellcheck source=../audit-worktree-removal-helper.sh
@@ -38,6 +41,10 @@ make_fixture() {
 		"$HOME/.aidevops/agents-backups/20260102_000001" \
 		"$HOME/.aidevops/logs/worker-failure-excerpts" \
 		"$HOME/.aidevops/logs/pulse-archive" \
+		"$HOME/.aidevops/.agent-workspace/work/repo-layout-migrations" \
+		"$HOME/.aidevops/.agent-workspace/work/opencode-interactive/project-a/opencode" \
+		"$HOME/.aidevops/.agent-workspace/tmp/tui-capture-example" \
+		"$HOME/Git/_worktrees/project/build" \
 		"$HOME/.local/share/opencode" \
 		"$HOME/.npm"
 	printf 'bundle-data\n' >"$HOME/.aidevops/runtime-bundles/bundle-a/data"
@@ -49,6 +56,11 @@ make_fixture() {
 	printf 'failure-b\n' >"$HOME/.aidevops/logs/worker-failure-excerpts/issue-1-20260101T000002Z-2.log"
 	printf 'runtime-data\n' >"$HOME/.local/share/opencode/opencode.db"
 	printf 'cache-data\n' >"$HOME/.npm/cache"
+	printf 'migration-data\n' >"$HOME/.aidevops/.agent-workspace/work/repo-layout-migrations/state.json"
+	printf 'isolated-db\n' >"$HOME/.aidevops/.agent-workspace/work/opencode-interactive/project-a/opencode/opencode.db"
+	printf 'capture-data\n' >"$HOME/.aidevops/.agent-workspace/tmp/tui-capture-example/snapshot"
+	printf 'build-data\n' >"$HOME/Git/_worktrees/project/build/output"
+	printf 'backup-db\n' >"$HOME/.local/share/opencode/opencode.db.bak-20261020"
 	return 0
 }
 
@@ -80,6 +92,11 @@ fixture_checksum() {
 		"$HOME/.aidevops/logs/worker-failure-excerpts/issue-1-20260101T000001Z-1.log" \
 		"$HOME/.aidevops/logs/worker-failure-excerpts/issue-1-20260101T000002Z-2.log" \
 		"$HOME/.local/share/opencode/opencode.db" \
+		"$HOME/.local/share/opencode/opencode.db.bak-20261020" \
+		"$HOME/.aidevops/.agent-workspace/work/repo-layout-migrations/state.json" \
+		"$HOME/.aidevops/.agent-workspace/work/opencode-interactive/project-a/opencode/opencode.db" \
+		"$HOME/.aidevops/.agent-workspace/tmp/tui-capture-example/snapshot" \
+		"$HOME/Git/_worktrees/project/build/output" \
 		"$HOME/.npm/cache"
 	return 0
 }
@@ -93,7 +110,15 @@ after_checksum=$(fixture_checksum)
 
 [[ "$(printf '%s' "$report" | jq -r '.schema_version')" == "2" ]] || fail "schema version missing"
 [[ "$(printf '%s' "$report" | jq -r '.read_only')" == "true" ]] || fail "read-only marker missing"
-[[ "$(printf '%s' "$report" | jq '.stores | length')" == "20" ]] || fail "expected explicit producer, metrics retention and split OpenCode stores"
+[[ "$(printf '%s' "$report" | jq '.stores | length')" == "25" ]] || fail "expected explicit producer, metrics retention and split OpenCode stores"
+printf '%s' "$report" | jq -e '
+	[.stores[] | select(.store_id == "repo-layout-migrations" or .store_id == "opencode-interactive" or
+	 .store_id == "workspace-tmp" or .store_id == "worktree-base" or .store_id == "opencode-db-backups") |
+	 (.total_bytes > 0 and (.producer | length > 0) and (.owner | length > 0) and
+	 (.policy | length > 0) and (.next_action | length > 0) and .reclaimable_bytes == 0)] |
+	 length == 5 and all
+' >/dev/null || fail "large stores missing sizes or ownership guidance"
+[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "opencode-db-backups") | .owner')" == "none" ]] || fail "backup retention owner was invented"
 printf '%s' "$report" | jq -e '
 	[.stores[] | select(.store_id == "headless-runtime-metrics" or .store_id == "resource-metrics" or .store_id == "pulse-cycle-index" or .store_id == "metrics-archive")]
 	| length == 4
@@ -115,7 +140,7 @@ printf '%s' "$report" | jq -e '
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "worktree-recovery") | .reclaimable_bytes')" == "0" ]] || fail "worktree recovery inventory granted deletion authority"
 
 home_unset_report=$(env -u HOME -u SUDO_USER -u AIDEVOPS_OPENCODE_DATA_DIR -u AIDEVOPS_OPENCODE_DB_PATH -u OPENCODE_DB_PATH -u OPENCODE_DB -u AIDEVOPS_NPM_CACHE_DIR bash "$HELPER" json)
-[[ "$(printf '%s' "$home_unset_report" | jq '.stores | length')" == "20" ]] || fail "HOME-unset inventory did not return every store"
+[[ "$(printf '%s' "$home_unset_report" | jq '.stores | length')" == "25" ]] || fail "HOME-unset inventory did not return every store"
 [[ "$(printf '%s' "$home_unset_report" | jq -r '[.stores[] | .error == "home-unavailable"] | all')" == "true" ]] || fail "HOME-unset stores did not fail closed"
 
 report=$(BACKUP_KEEP_COUNT=1 AIDEVOPS_WORKER_EXCERPT_KEEP_COUNT=1 bash "$HELPER" json)
@@ -174,6 +199,34 @@ printf '%s\n' '#!/usr/bin/env bash' 'sleep 5' >"$SLOW_DU"
 chmod +x "$SLOW_DU"
 report=$(AIDEVOPS_STORAGE_DU_COMMAND="$SLOW_DU" AIDEVOPS_STORAGE_SIZE_TIMEOUT_TENTHS=1 bash "$HELPER" json)
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .error')" == "sizing-timeout" ]] || fail "sizing timeout was not fail-closed"
+
+# Daily guard writes metadata only and deduplicates threshold-crossing episodes.
+before_guard_checksum=$(cksum "$HOME/.local/share/opencode/opencode.db.bak-20261020" "$HOME/Git/_worktrees/project/build/output")
+advisory=$(AIDEVOPS_STORAGE_HOME_SOFT_LIMIT_BYTES=1 AIDEVOPS_STORAGE_WORKTREE_SOFT_LIMIT_BYTES=1 bash "$HELPER" check)
+printf '%s' "$advisory" | jq -e '.kind == "storage-soft-limit" and (.exceeded | length == 2) and
+	(.largest_stores | length == 5) and ([.largest_stores[] | .next_action | length > 0] | all)' >/dev/null || fail "guard omitted actionable advisory"
+duplicate=$(AIDEVOPS_STORAGE_HOME_SOFT_LIMIT_BYTES=1 AIDEVOPS_STORAGE_WORKTREE_SOFT_LIMIT_BYTES=1 AIDEVOPS_STORAGE_DU_COMMAND="$FAILING_DU" bash "$HELPER" check)
+[[ -z "$duplicate" ]] || fail "unchanged daily guard emitted a duplicate advisory"
+duplicate=$(AIDEVOPS_STORAGE_HOME_SOFT_LIMIT_BYTES=1 AIDEVOPS_STORAGE_WORKTREE_SOFT_LIMIT_BYTES=1 AIDEVOPS_STORAGE_CHECK_INTERVAL_SECONDS=0 bash "$HELPER" check)
+[[ -z "$duplicate" ]] || fail "fresh scan emitted a duplicate advisory"
+state_dir="$HOME/.aidevops/.agent-workspace/storage-inventory"
+before_state=$(cksum "$state_dir/last-scan.json" "$state_dir/advisory.json")
+if AIDEVOPS_STORAGE_CHECK_INTERVAL_SECONDS=0 AIDEVOPS_STORAGE_DU_COMMAND="$FAILING_DU" bash "$HELPER" check >/dev/null 2>&1; then
+	fail "unavailable root sizing reported a healthy check"
+fi
+[[ "$before_state" == "$(cksum "$state_dir/last-scan.json" "$state_dir/advisory.json")" ]] || fail "failed check erased last successful measurements or advisory state"
+[[ ! -d "$state_dir/check.lock" ]] || fail "failed check leaked its lock"
+report=$(AIDEVOPS_STORAGE_DU_COMMAND="$SLOW_DU" AIDEVOPS_STORAGE_SIZE_TIMEOUT_TENTHS=1 bash "$HELPER" json)
+printf '%s' "$report" | jq -e '.stores[] | select(.store_id == "runtime-bundles") |
+	.sizing_confidence == "cached" and .total_bytes > 0 and .unknown_bytes == .total_bytes and
+	.reclaimable_bytes == 0 and (.measured_at | length > 0) and .error == "sizing-timeout"' >/dev/null || fail "timestamped sizing fallback did not fail closed"
+report=$(AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT/other-worktrees" AIDEVOPS_STORAGE_DU_COMMAND="$SLOW_DU" AIDEVOPS_STORAGE_SIZE_TIMEOUT_TENTHS=1 bash "$HELPER" json)
+printf '%s' "$report" | jq -e '[.stores[] | .sizing_confidence != "cached"] | all' >/dev/null || fail "cache reused measurements for changed storage roots"
+healthy=$(bash "$HELPER" check)
+[[ -z "$healthy" ]] || fail "healthy thresholds emitted an advisory"
+advisory=$(AIDEVOPS_STORAGE_HOME_SOFT_LIMIT_BYTES=1 bash "$HELPER" check)
+printf '%s' "$advisory" | jq -e '.exceeded | length == 1' >/dev/null || fail "guard did not re-arm after recovery"
+[[ "$before_guard_checksum" == "$(cksum "$HOME/.local/share/opencode/opencode.db.bak-20261020" "$HOME/Git/_worktrees/project/build/output")" ]] || fail "guard changed producer data"
 
 print_warning() {
 	local message="$1"
