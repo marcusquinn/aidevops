@@ -40,7 +40,10 @@ SC_SIZE_TIMEOUT="${STORAGE_CLEANUP_SIZE_TIMEOUT:-30}"
 [[ "$SC_SIZE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || SC_SIZE_TIMEOUT=30
 SC_TMP_MAX_SECONDS="${STORAGE_CLEANUP_TMP_MAX_SECONDS:-300}"
 [[ "$SC_TMP_MAX_SECONDS" =~ ^[0-9]+$ ]] || SC_TMP_MAX_SECONDS=300
-SC_LOCK_DIR="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}/storage-cleanup.lock"
+# Symlink lock: the link target is the holder PID, so the lock and its owner
+# are published in one atomic syscall (no empty-lock window).
+SC_LOCK="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}/storage-cleanup.lock"
+readonly SC_LOCK_BUSY=2
 
 # ---------------------------------------------------------------------------
 # Store metadata
@@ -187,8 +190,9 @@ cmd_report() {
 _sc_preview_tmp() {
 	local out="" rc=0 total=0 shown=5
 	out=$(bash "${SCRIPT_DIR}/system-cleanup.sh" --dry-run --max-seconds 60) || rc=$?
-	total=$(printf '%s\n' "$out" | grep -c '^\[dry-run\]') || total=0
-	printf '%s\n' "$out" | grep '^\[dry-run\]' | head -n "$shown"
+	total=$(grep -c '^\[dry-run\]' <<<"$out") || total=0
+	# awk reads all input (no early exit), so pipefail never sees SIGPIPE.
+	awk -v n="$shown" '/^\[dry-run\]/ { if (++c <= n) print }' <<<"$out"
 	if [[ "$total" -gt "$shown" ]]; then
 		printf '  ... %s more (full list: system-cleanup.sh --dry-run)\n' "$((total - shown))"
 	fi
@@ -197,25 +201,25 @@ _sc_preview_tmp() {
 }
 
 _sc_dry_run_store() {
-	local store="$1"
+	local store="$1" rc=0
 	case "$store" in
-	tmp) _sc_preview_tmp ;;
+	tmp) _sc_preview_tmp || rc=$? ;;
 	worktrees)
 		printf 'Linked worktrees: %s under %s\n' "$(_sc_worktree_count)" "$(aidevops_worktree_base_dir_configured)"
 		printf 'Apply removes only worktrees whose branches are merged or closed; dirty work is archived first.\n'
 		;;
 	opencode)
 		printf 'Superseded/expired layout-migration backups (dry run):\n'
-		bash "${SCRIPT_DIR}/repo-layout-migrate-helper.sh" prune
+		bash "${SCRIPT_DIR}/repo-layout-migrate-helper.sh" prune || rc=$?
 		printf 'Apply also checkpoints/optimizes each idle OpenCode DB (throttled to weekly).\n'
 		;;
 	observability)
 		bash "${SCRIPT_DIR}/observability-helper.sh" retention-maintenance --dry-run \
-			--max-partitions 20 --max-duration-seconds 120
+			--max-partitions 20 --max-duration-seconds 120 || rc=$?
 		;;
 	*) return 1 ;;
 	esac
-	return $?
+	return "$rc"
 }
 
 _sc_last_worktree_outcome() {
@@ -244,23 +248,48 @@ _sc_apply_store() {
 	return "$rc"
 }
 
+_sc_lock_release() {
+	# Remove the lock only while this process still owns it.
+	[[ "$(readlink "$SC_LOCK" 2>/dev/null)" == "$$" ]] && rm -f "$SC_LOCK"
+	return 0
+}
+
+# Returns 0 when acquired, SC_LOCK_BUSY when another live run holds it, 1 on
+# an operational lock error (the caller must not clean without a lock).
 _sc_lock_acquire() {
-	local holder=""
-	mkdir -p "${SC_LOCK_DIR%/*}" 2>/dev/null || return 1
-	if ! mkdir "$SC_LOCK_DIR" 2>/dev/null; then
-		holder=$(cat "${SC_LOCK_DIR}/pid" 2>/dev/null) || holder=""
+	local holder="" moved="" stale="${SC_LOCK}.stale.$$"
+	if ! mkdir -p "${SC_LOCK%/*}" 2>/dev/null; then
+		print_error "Cannot create lock directory ${SC_LOCK%/*}"
+		return 1
+	fi
+	if ! ln -s "$$" "$SC_LOCK" 2>/dev/null; then
+		holder=$(readlink "$SC_LOCK" 2>/dev/null) || holder=""
+		if [[ ! -L "$SC_LOCK" ]] && [[ -e "$SC_LOCK" ]]; then
+			print_error "Lock path is not a symlink: ${SC_LOCK}"
+			return 1
+		fi
 		if [[ "$holder" =~ ^[0-9]+$ ]] && ps -p "$holder" >/dev/null 2>&1; then
 			print_warning "Storage cleanup already running (PID ${holder}); skipping"
-			return 1
+			return "$SC_LOCK_BUSY"
 		fi
-		# Stale lock from a dead holder: take it over.
-		rm -rf "$SC_LOCK_DIR"
-		if ! mkdir "$SC_LOCK_DIR" 2>/dev/null; then
-			return 1
+		# Stale lock: rename (atomic) and confirm we moved the dead holder's
+		# link, not a lock a concurrent contender has just re-created.
+		if mv "$SC_LOCK" "$stale" 2>/dev/null; then
+			moved=$(readlink "$stale" 2>/dev/null) || moved=""
+			if [[ "$moved" != "$holder" ]]; then
+				ln -s "$moved" "$SC_LOCK" 2>/dev/null || true
+				rm -f "$stale"
+				print_warning "Storage cleanup lock changed hands; skipping"
+				return "$SC_LOCK_BUSY"
+			fi
+			rm -f "$stale"
+		fi
+		if ! ln -s "$$" "$SC_LOCK" 2>/dev/null; then
+			print_warning "Storage cleanup lock taken by another run; skipping"
+			return "$SC_LOCK_BUSY"
 		fi
 	fi
-	printf '%s\n' "$$" >"${SC_LOCK_DIR}/pid"
-	trap 'rm -rf "$SC_LOCK_DIR"' EXIT
+	trap '_sc_lock_release' EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
 	return 0
@@ -330,7 +359,13 @@ main() {
 			cmd_help
 			return 1
 		fi
-		if [[ "$mode" == "$SC_APPLY" ]]; then _sc_lock_acquire || return 0; fi
+		if [[ "$mode" == "$SC_APPLY" ]]; then
+			local lock_rc=0
+			_sc_lock_acquire || lock_rc=$?
+			# A concurrent run is a normal skip; any other lock error fails.
+			[[ "$lock_rc" -eq "$SC_LOCK_BUSY" ]] && return 0
+			[[ "$lock_rc" -eq 0 ]] || return 1
+		fi
 		if [[ "$subcommand" == "all" ]]; then
 			cmd_all "$mode"
 		else
