@@ -610,7 +610,7 @@ test_automatic_maintenance_advisory_tracks_escalation() {
 		_worktree_recovery_maintenance_update_advisory "$result" || rc=1
 	[[ -f "$advisory_path" ]] || rc=1
 	first_line=$(head -n 1 "$advisory_path" 2>/dev/null) || rc=1
-	[[ "$first_line" == '[WARN] Worktree recovery store is not reclaiming space under pressure (1717 archives, 106 GiB; dominant blocker: detached-or-unresolved-branch)' ]] || {
+	[[ "$first_line" == '[WARN] Worktree recovery store is not reclaiming enough space under pressure (1717 archives, 106 GiB; dominant blocker: detached-or-unresolved-branch)' ]] || {
 		printf '  advisory first line: %s\n' "$first_line"
 		rc=1
 	}
@@ -628,6 +628,64 @@ test_automatic_maintenance_advisory_tracks_escalation() {
 	[[ ! -e "$advisory_path" ]] || rc=1
 	print_result "automatic_maintenance_advisory_tracks_escalation" "$rc" \
 		"Expected a path-free session advisory while escalation holds and automatic clearing afterwards"
+	return 0
+}
+
+# One partial-coverage pass that selects a small removal (GH#35207).
+_run_small_removal_cycle_pass() {
+	local state_dir="$1"
+	local pressure_active="$2"
+
+	WORKTREE_RECOVERY_MAINTENANCE_PRESSURE_ACTIVE="$pressure_active"
+	_worktree_recovery_maintenance_load_cycle_state "$state_dir" || return 1
+	WORKTREE_RECOVERY_MAINTENANCE_SCANNED=2
+	WORKTREE_RECOVERY_MAINTENANCE_SELECTED=1
+	WORKTREE_RECOVERY_MAINTENANCE_SELECTED_BYTES=524288
+	WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED=0
+	WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED_BYTES=0
+	WORKTREE_RECOVERY_MAINTENANCE_REASON_COUNTS_JSON=$(
+		_worktree_recovery_maintenance_zero_reason_counts_json | jq -c '.unknown_archive = 2'
+	) || return 1
+	_worktree_recovery_maintenance_update_cycle_state "$state_dir" || return 1
+	_worktree_recovery_maintenance_success_json archive-remove "${state_dir}/completed/x" 524288 \
+		"$(_worktree_recovery_maintenance_diagnostics_json)" \
+		"{\"pressure_active\":${pressure_active},\"store_bytes\":104857600000}"
+	return $?
+}
+
+test_automatic_maintenance_small_removals_keep_sustained_escalation() {
+	local state_dir="${TEST_DIR}/small-removal-state"
+	local advisory_dir="${TEST_DIR}/small-removal-advisories"
+	local advisory_path="${advisory_dir}/worktree-recovery-retention.advisory"
+	local first="" second="" relieved=""
+	local rc=0
+
+	mkdir -p "$state_dir" || rc=1
+	(
+		WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT=4
+		WORKTREE_RECOVERY_MAINTENANCE_INVENTORY_DIGEST=$(printf '%064d' 0)
+		first=$(_run_small_removal_cycle_pass "$state_dir" true) || exit 1
+		printf '%s\n' "$first" | jq -e '.outcome == "removed" and .escalation.required == false and
+			.diagnostics.sustained_non_reclamation.scanned_count == 2' >/dev/null || exit 1
+		# A different digest models the inventory change caused by the removal.
+		WORKTREE_RECOVERY_MAINTENANCE_INVENTORY_DIGEST=$(printf '%064d' 1)
+		second=$(_run_small_removal_cycle_pass "$state_dir" true) || exit 1
+		printf '%s\n' "$second" | jq -e '
+			.escalation.required == true and
+			.escalation.reason == "pressure-sustained-insufficient-reclaim" and
+			.escalation.dominant_reason == "unknown_archive" and
+			.diagnostics.sustained_non_reclamation.scanned_count == 4 and
+			.diagnostics.sustained_non_reclamation.selected_bytes == 1048576' >/dev/null || exit 1
+		AIDEVOPS_ADVISORIES_DIR="$advisory_dir" _worktree_recovery_maintenance_update_advisory "$second" || exit 1
+		grep -qF 'selected only 1 MiB for reclaim' "$advisory_path" || exit 1
+		relieved=$(_run_small_removal_cycle_pass "$state_dir" false) || exit 1
+		printf '%s\n' "$relieved" | jq -e '.escalation.required == false' >/dev/null || exit 1
+		[[ ! -e "${state_dir}/zero-candidate-cycle.json" ]] || exit 1
+		AIDEVOPS_ADVISORIES_DIR="$advisory_dir" _worktree_recovery_maintenance_update_advisory "$relieved" || exit 1
+		[[ ! -e "$advisory_path" ]] || exit 1
+	) || rc=1
+	print_result "automatic_maintenance_small_removals_keep_sustained_escalation" "$rc" \
+		"Expected small removals under pressure to keep sustained accounting and clear only when pressure ends"
 	return 0
 }
 
@@ -730,12 +788,13 @@ test_automatic_maintenance_rejects_symlink_cycle_state() {
 	local recovery_root="${home_path}/.aidevops/recovery/worktrees"
 	local state_dir="${home_path}/maintenance-state"
 	local cycle_target="${home_path}/cycle-target"
+	local output=""
 	local rc=0
 
 	mkdir -p "$recovery_root" "$state_dir" || rc=1
 	printf 'preserve\n' >"$cycle_target" || rc=1
 	ln -s "$cycle_target" "${state_dir}/zero-candidate-cycle.json" || rc=1
-	if (
+	if output=$(
 		uname() {
 			printf 'Linux\n'
 			return 0
@@ -743,9 +802,12 @@ test_automatic_maintenance_rejects_symlink_cycle_state() {
 		HOME="$home_path" AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_STATE_DIR="$state_dir" \
 			AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MIN_FREE_KB=0 \
 			AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MIN_FREE_PERCENT=0 \
-			worktree_recovery_maintenance_run >/dev/null 2>&1
+			worktree_recovery_maintenance_run 2>/dev/null
 	); then rc=1; fi
 	[[ "$(<"$cycle_target")" == "preserve" && -L "${state_dir}/zero-candidate-cycle.json" ]] || rc=1
+	# GH#35207: preparation failures name the failing step.
+	printf '%s\n' "$output" | jq -e 'select(.reason == "preparation-failed") |
+		.stage == "selection" and .detail == "cycle-state-invalid"' >/dev/null || rc=1
 	print_result "automatic_maintenance_rejects_symlink_cycle_state" "$rc" \
 		"Expected completed-cycle diagnostics to fail closed without following a state symlink"
 	return 0

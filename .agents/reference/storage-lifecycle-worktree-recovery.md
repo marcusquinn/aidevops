@@ -399,10 +399,10 @@ limits without exposing archive paths. A private state record accumulates those
 counts across bounded cursor windows and resets if the inventory or pressure
 state changes. Exact-inventory coverage resets on inventory change, so it never
 claims that an old partial scan covered a new inventory. Separately, while
-pressure remains active and no safe candidate is selected, persistent sustained
-non-reclamation accounting survives inventory churn. Once its scanned work
-reaches the current inventory size, it requests the same read-only operator
-plan even if no exact full-inventory cycle completed.
+pressure remains active, persistent sustained accounting survives inventory
+churn and selected removals or cache prunes (it also totals their selected
+bytes); only an empty inventory or the end of pressure resets it. Once its
+scanned work reaches the current inventory size, the read-only plan is requested.
 
 ### Cache-prune transactions
 
@@ -431,8 +431,9 @@ remain untouched.
 
 ### Zero-candidate escalation
 
-After pressure-active zero-candidate scanning covers at least one current-inventory's
-worth of bounded work, retain `outcome:"no-candidates"` and set `escalation.required:true`.
+After pressure-active scanning covers at least one current-inventory's worth of bounded
+work, set `escalation.required:true`: reason `pressure-sustained-no-candidates` on
+`no-candidates`, or `pressure-sustained-insufficient-reclaim` on `removed`/`cache-pruned`.
 A stable full scan records `zero_candidate_cycle.completed_this_run:true`; churn leaves
 coverage explicitly incomplete while separate sustained accounting triggers the warning.
 The fixed command array directs operators to
@@ -441,15 +442,14 @@ remediation, not deletion authority. Retain protected/uncertain buckets; only se
 reviewed manual plans can reach confirmation-bound apply. Maintenance failure preserves
 the affected archive and does not fail an otherwise successful broader cleanup cycle.
 
-The escalation records `dominant_reason` and `dominant_reason_count`: the
-fixed-cardinality retained reason with the highest count across this run and
-the accumulated zero-candidate cycle (ties resolve by reason key). While an
-escalation is required, maintenance also writes the session advisory
-`~/.aidevops/advisories/worktree-recovery-retention.advisory` with the
-inventory count, measured store size, dominant reason, and the read-only plan
-command. It contains no archive paths or process details, grants no deletion
-authority, and is removed automatically once a pass reclaims space or the
-escalation condition clears.
+The escalation records `dominant_reason` and `dominant_reason_count`: the fixed-cardinality
+retained reason with the highest count across this run and the accumulated zero-candidate
+cycle (ties resolve by reason key). While an escalation is required, maintenance also writes
+`~/.aidevops/advisories/worktree-recovery-retention.advisory` with the inventory count,
+measured store size, dominant reason, and read-only plan command. It contains no archive
+paths or process details, grants no deletion authority, and is removed once escalation
+clears; a small reclaim under sustained pressure does not clear it. `preparation-failed`
+records add a fixed step `detail` (for example `cycle-state-invalid` or `scan-failed`).
 
 ### Process-visibility diagnostics
 
