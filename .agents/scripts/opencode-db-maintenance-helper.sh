@@ -214,8 +214,14 @@ _opencode_process_count() {
 			return 0
 		fi
 		local holder_rc=0
-		pids=$(lsof -t "$OPENCODE_DB" "${OPENCODE_DB}-wal" "${OPENCODE_DB}-shm" 2>/dev/null) || holder_rc=$?
-		if [[ "$holder_rc" -gt 1 ]]; then
+		local files=("$OPENCODE_DB")
+		[[ ! -e "${OPENCODE_DB}-wal" ]] || files+=("${OPENCODE_DB}-wal")
+		[[ ! -e "${OPENCODE_DB}-shm" ]] || files+=("${OPENCODE_DB}-shm")
+		# Exit 1 also means no matches. Preserve diagnostics instead of treating
+		# permission/inspection errors as idle; omit absent sidecars to avoid
+		# generating our own missing-file errors during an ordinary idle check.
+		pids=$(lsof -t "${files[@]}" 2>&1) || holder_rc=$?
+		if [[ "$holder_rc" -gt 1 || ! "$pids" =~ ^[0-9[:space:]]*$ ]]; then
 			printf '1\n'
 			return 0
 		fi
@@ -1527,6 +1533,7 @@ Usage:
 Subcommands:
   check                  Preflight: DB exists, sqlite3 available, no locks
   report                 Human-readable DB stats (size, pages, free list, PRAGMAs)
+                         Includes active/WAL/archive sizes for isolated project DBs.
   maintain [--force]     Run maintenance. Aborts if opencode processes active
                          unless --force is passed (may cause session errors).
   maintenance-window     Disruptive off-hours mode: stop pulse/headless workers,
@@ -1534,6 +1541,7 @@ Subcommands:
                          Pass --force-opencode to continue with interactive TUIs open.
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
+                         Visits isolated project DBs too, skipping each live DB.
   install                macOS: install/refresh LaunchAgent (weekly Sun 04:00).
                          Linux: no-op (handled by .agents/scripts/setup/modules/schedulers.sh).
   uninstall              macOS: remove LaunchAgent. Idempotent.
@@ -1566,6 +1574,9 @@ Environment variables (advanced):
   OPENCODE_DB_MAINTENANCE_MODE  Scheduler mode: auto or maintenance-window
   OPENCODE_DB_PATH              Active DB override for sessions/maintenance
   OPENCODE_ARCHIVE_DB           Archive DB override for sessions lookup
+  OPENCODE_INTERACTIVE_ROOT     Fixed-depth isolated DB inventory root (default:
+                               ~/.aidevops/.agent-workspace/work/opencode-interactive)
+  OPENCODE_MAINTENANCE_STATE_DIR  Override maintenance state/log directory
 
 Session lookup examples:
   opencode-db-maintenance-helper.sh sessions --query "24396" --include-archive
@@ -1575,6 +1586,8 @@ Session lookup examples:
 State:
   ~/.aidevops/.agent-workspace/work/opencode-maintenance/last-run.json
   ~/.aidevops/.agent-workspace/work/opencode-maintenance/maintenance.log
+  Isolated inventory children keep independent state under the DB directory:
+  aidevops-maintenance/{last-run.json,maintenance.log}
 
 Exit codes:
   0   success (including auto no-op)

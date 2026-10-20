@@ -5,8 +5,11 @@
 
 opencode_db_inventory() {
 	local selected_db="$1"
-	local root="${OPENCODE_INTERACTIVE_ROOT:-${HOME}/.aidevops/.agent-workspace/work/opencode-interactive}"
+	local root="${OPENCODE_INTERACTIVE_ROOT:-}"
 	local db
+	if [[ -z "$root" && -n "${HOME:-}" ]]; then
+		root="${HOME}/.aidevops/.agent-workspace/work/opencode-interactive"
+	fi
 	[[ ! -f "$selected_db" ]] || printf '%s\0' "$selected_db"
 	[[ -d "$root" && ! -L "$root" ]] || return 0
 	for db in "$root"/*/opencode/opencode.db; do

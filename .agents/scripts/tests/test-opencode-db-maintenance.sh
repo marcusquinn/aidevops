@@ -679,6 +679,19 @@ else
 	_fail "isolated maintenance state missing: $out"
 fi
 
+cat >"$mock_bin/lsof" <<'MOCK_LSOF_ERROR'
+#!/usr/bin/env bash
+printf 'lsof: permission denied\n' >&2
+exit 1
+MOCK_LSOF_ERROR
+chmod +x "$mock_bin/lsof"
+out=$(PATH="$mock_bin:$PATH" AUTO_MIN_SECONDS_BETWEEN=0 OPENCODE_INTERACTIVE_ROOT="$isolated_root" _run_helper auto 2>&1)
+if [[ "$out" == *"currently active"* && "$out" != *"Starting maintenance"* ]]; then
+	_pass "inventory maintenance treats lsof inspection errors as protected skips"
+else
+	_fail "lsof inspection error was treated as idle: $out"
+fi
+
 echo
 printf 'Results: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
