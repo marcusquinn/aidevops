@@ -26,6 +26,9 @@ from typing import Any, Iterable
 
 PLAN_SCHEMA = "aidevops-repo-layout-plan/v1"
 RECEIPT_SCHEMA = "aidevops-repo-layout-receipt/v1"
+PRUNED_KEY = "backups:database-pruned"
+DEFAULT_RETENTION_DAYS = 7
+RETENTION_ENV = "AIDEVOPS_REPO_LAYOUT_BACKUP_RETENTION_DAYS"
 REMOTE_RE = re.compile(
     r"^(?:(?:[a-z][a-z0-9+.-]*://)(?:[^/@]+@)?|[^@/]+@)?"
     r"(?P<host>[^/:]+)[:/](?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?$",
@@ -1811,7 +1814,7 @@ def validate_receipt_event_targets(
             raise MigrationError("Receipt contains an unsupported event")
         key = str(event.get("key", ""))
         base_key = key.removeprefix("rollback:")
-        if base_key in {"migration:complete", "migration:rolled-back"}:
+        if base_key in {"migration:complete", "migration:rolled-back", PRUNED_KEY}:
             continue
         target = expected.get(base_key)
         details = event.get("details")
@@ -2062,6 +2065,10 @@ def rollback_command(args: argparse.Namespace) -> int:
         if "migration:rolled-back" in completed:
             print(json.dumps(receipt_status(receipt_id, directory, journal), sort_keys=True))
             return 0
+        if PRUNED_KEY in completed:
+            raise MigrationError(
+                "database backups pruned; rollback is unavailable for this receipt"
+            )
         resume_arguments = [
             "aidevops",
             "repos",
@@ -2117,6 +2124,134 @@ def rollback_command(args: argparse.Namespace) -> int:
         release_lock(lock)
 
 
+def retention_days(value: int | None) -> int:
+    """Resolve the database-backup retention window in days."""
+    if value is not None:
+        days = value
+    else:
+        raw = os.environ.get(RETENTION_ENV, str(DEFAULT_RETENTION_DAYS))
+        try:
+            days = int(raw)
+        except ValueError as exc:
+            raise MigrationError(f"{RETENTION_ENV} must be a non-negative integer") from exc
+    if days < 0:
+        raise MigrationError("Retention days must be a non-negative integer")
+    return days
+
+
+def applied_receipts(root: Path) -> list[dict[str, Any]]:
+    """Return validated applied receipts below a state root, oldest first."""
+    found: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return found
+    for entry in sorted(root.iterdir()):
+        if not re.fullmatch(r"layout-[a-f0-9]{32}", entry.name) or entry.is_symlink():
+            continue
+        if not entry.is_dir():
+            continue
+        journal = entry / "receipt.jsonl"
+        plan, events = validate_receipt_bundle(entry.name, entry, journal)
+        completed = done_keys(events)
+        if "migration:complete" not in completed or "migration:rolled-back" in completed:
+            continue
+        finished = next(
+            int(event.get("timestamp", 0))
+            for event in reversed(events)
+            if event.get("event") == "completed" and event.get("key") == "migration:complete"
+        )
+        files = [
+            path
+            for path in sorted((entry / "backups").glob("opencode-*.db"))
+            if path.is_file() and not path.is_symlink()
+        ]
+        found.append(
+            {
+                "receipt_id": entry.name,
+                "directory": entry,
+                "journal": journal,
+                "plan": plan,
+                "finished": finished,
+                "pruned": PRUNED_KEY in completed,
+                "files": files,
+            }
+        )
+    found.sort(key=lambda item: (item["finished"], item["receipt_id"]))
+    return found
+
+
+def prune_reason(
+    item: dict[str, Any], newest: dict[str, Any], cutoff: int
+) -> str | None:
+    """Explain why a receipt's database backups are expendable, if they are."""
+    if item["receipt_id"] != newest["receipt_id"]:
+        return "superseded"
+    if item["finished"] < cutoff:
+        return "expired"
+    return None
+
+
+def prune_receipt(item: dict[str, Any], reason: str, apply: bool) -> dict[str, Any]:
+    """Report, and with apply remove, one receipt's database backups."""
+    sizes = [path.stat().st_size for path in item["files"]]
+    report = {
+        "receipt_id": item["receipt_id"],
+        "reason": reason,
+        "files": [str(path) for path in item["files"]],
+        "bytes": sum(sizes),
+        "applied": False,
+    }
+    if not apply:
+        return report
+    lock = acquire_lock(item["plan"], item["receipt_id"])
+    try:
+        if not item["pruned"]:
+            append_event(
+                item["journal"],
+                {
+                    "event": "completed",
+                    "key": PRUNED_KEY,
+                    "details": {"reason": reason, "rollback": "unavailable"},
+                },
+            )
+        for path in item["files"]:
+            path.unlink()
+    finally:
+        release_lock(lock)
+    report["applied"] = True
+    return report
+
+
+def prune_command(args: argparse.Namespace) -> int:
+    """Remove large database backups from superseded or expired applied receipts."""
+    root = (
+        expand_path(args.state_dir)
+        if args.state_dir
+        else Path.home() / ".aidevops/.agent-workspace/work/repo-layout-migrations"
+    )
+    days = retention_days(args.retention_days)
+    cutoff = int(time.time()) - days * 86400
+    receipts = applied_receipts(root)
+    results: list[dict[str, Any]] = []
+    if receipts:
+        newest = receipts[-1]
+        for item in receipts:
+            reason = prune_reason(item, newest, cutoff)
+            if reason and item["files"]:
+                results.append(prune_receipt(item, reason, args.apply))
+    print(
+        json.dumps(
+            {
+                "mode": "apply" if args.apply else "dry-run",
+                "retention_days": days,
+                "pruned": results,
+                "bytes": sum(result["bytes"] for result in results),
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the versioned command-line contract."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -2150,6 +2285,12 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--state-dir")
     status.add_argument("--discovery-lib", required=True)
     status.set_defaults(handler=status_command)
+    prune = subparsers.add_parser("prune")
+    prune.add_argument("--state-dir")
+    prune.add_argument("--retention-days", type=int)
+    prune.add_argument("--apply", action="store_true")
+    prune.add_argument("--discovery-lib")
+    prune.set_defaults(handler=prune_command)
     return parser
 
 

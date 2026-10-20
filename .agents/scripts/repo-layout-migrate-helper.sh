@@ -15,6 +15,12 @@ Usage:
   aidevops repos migrate-layout apply --plan PLAN.json --confirm PLAN_SHA256
   aidevops repos migrate-layout rollback --receipt ID --confirm RECEIPT_SHA256
   aidevops repos migrate-layout status --receipt ID
+  aidevops repos migrate-layout prune [--apply] [--retention-days N] [--state-dir PATH]
+
+Prune (dry-run unless --apply) removes the large backups/opencode-*.db files from
+applied receipts that are superseded by a newer applied receipt or older than the
+retention window (default 7 days; env AIDEVOPS_REPO_LAYOUT_BACKUP_RETENTION_DAYS).
+Pruned receipts keep their audit trail but rollback fails closed.
 
 Plan options:
   --source PATH              Select an exact source repository (repeatable)
@@ -41,7 +47,7 @@ main() {
 	local status=0
 
 	case "$command_name" in
-	plan | apply | rollback | status)
+	plan | apply | rollback | status | prune)
 		shift
 		python3 "$engine" "$command_name" --discovery-lib "$discovery_lib" "$@" || status=$?
 		return "$status"

@@ -1160,12 +1160,26 @@ cmd_maintenance_window() {
 # isn't installed (other users benefit from the routine being registered
 # without seeing errors).
 
+_prune_layout_backups() {
+	local helper="${SCRIPT_DIR}/repo-layout-migrate-helper.sh"
+	[[ -x "$helper" ]] || return 0
+	if "$helper" prune --apply >/dev/null 2>&1; then
+		_log INFO "auto: repo-layout migration backup prune complete"
+	else
+		_log WARN "auto: repo-layout migration backup prune failed (non-fatal)"
+	fi
+	return 0
+}
+
 cmd_auto() {
 	# Silent no-op if opencode not installed
 	if ! _opencode_installed; then
 		_log INFO "auto: opencode not installed — no-op"
 		return 0
 	fi
+
+	# Reclaim superseded/expired repo-layout migration DB backups (best-effort).
+	_prune_layout_backups
 
 	# Throttle: skip if last run was recent
 	if [[ -f "$STATE_FILE" ]]; then
