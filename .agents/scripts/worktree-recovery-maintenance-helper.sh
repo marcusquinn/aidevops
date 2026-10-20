@@ -26,6 +26,7 @@ WORKTREE_RECOVERY_MAINTENANCE_SELECTED_BYTES=0
 WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT=0
 WORKTREE_RECOVERY_MAINTENANCE_CURSOR_BEFORE=0
 WORKTREE_RECOVERY_MAINTENANCE_CURSOR_AFTER=0
+WORKTREE_RECOVERY_MAINTENANCE_SCAN_LIMIT=0
 WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_SECONDS=0
 WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_EPOCH=0
 WORKTREE_RECOVERY_MAINTENANCE_DEADLINE_EXHAUSTED=false
@@ -1150,13 +1151,40 @@ _worktree_recovery_maintenance_build_selection_plan() {
 	return 0
 }
 
+# Read the rotation cursor and bound this pass to the unscanned cycle remainder.
+_worktree_recovery_maintenance_load_cursor() {
+	local cursor_path="$1"
+	local bucket_count="$2"
+	local max_scan="$3"
+	local offset=0
+	local scan_limit="$max_scan"
+	local cycle_remaining=0
+
+	if [[ -e "$cursor_path" || -L "$cursor_path" ]]; then
+		[[ -f "$cursor_path" && ! -L "$cursor_path" ]] || return 1
+		IFS= read -r offset <"$cursor_path" || offset=0
+		[[ "$offset" =~ ^[0-9]+$ ]] || offset=0
+	fi
+	if [[ "$bucket_count" -gt 0 ]]; then
+		offset=$((offset % bucket_count))
+		cycle_remaining=$((bucket_count - WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_SCANNED))
+		[[ "$scan_limit" -le "$cycle_remaining" ]] || scan_limit="$cycle_remaining"
+	else
+		offset=0
+	fi
+	WORKTREE_RECOVERY_MAINTENANCE_CURSOR_BEFORE="$offset"
+	WORKTREE_RECOVERY_MAINTENANCE_CURSOR_AFTER=0
+	WORKTREE_RECOVERY_MAINTENANCE_SCAN_LIMIT="$scan_limit"
+	return 0
+}
+
 _worktree_recovery_maintenance_prepare_selection() {
 	local state_dir="$1"
 	local platform="$2"
 	local limits_json="$3"
 	local inventory_path="" ordered_path="" selected_path="" reasons_path=""
 	local cursor_path="${state_dir}/cursor"
-	local offset=0 bucket_count=0 scan_limit=0 cycle_remaining=0
+	local offset=0 bucket_count=0 scan_limit=0
 	local max_scan="" max_candidates="" max_bytes="" retention_days=""
 	local retention_seconds="" pressure_active="" deadline_seconds=""
 	WORKTREE_RECOVERY_MAINTENANCE_POLICY_JSON=""
@@ -1194,9 +1222,7 @@ _worktree_recovery_maintenance_prepare_selection() {
 	WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT="$bucket_count"
 	WORKTREE_RECOVERY_MAINTENANCE_FAILURE_DETAIL="inventory-order-failed"
 	_worktree_recovery_maintenance_order_inventory "$inventory_path" "$ordered_path" 0 || return 1
-	WORKTREE_RECOVERY_MAINTENANCE_INVENTORY_DIGEST=$(
-		_worktree_recovery_plan_sha256_file "$ordered_path"
-	) || {
+	WORKTREE_RECOVERY_MAINTENANCE_INVENTORY_DIGEST=$(_worktree_recovery_plan_sha256_file "$ordered_path") || {
 		_worktree_recovery_maintenance_cleanup_selection_temp_files || true
 		return 1
 	}
@@ -1207,22 +1233,12 @@ _worktree_recovery_maintenance_prepare_selection() {
 		return 1
 	fi
 	WORKTREE_RECOVERY_MAINTENANCE_FAILURE_DETAIL="cursor-invalid"
-	if [[ -e "$cursor_path" || -L "$cursor_path" ]]; then
-		if [[ ! -f "$cursor_path" || -L "$cursor_path" ]]; then
-			_worktree_recovery_maintenance_cleanup_selection_temp_files || true
-			return 1
-		fi
-		IFS= read -r offset <"$cursor_path" || offset=0
-		[[ "$offset" =~ ^[0-9]+$ ]] || offset=0
+	if ! _worktree_recovery_maintenance_load_cursor "$cursor_path" "$bucket_count" "$max_scan"; then
+		_worktree_recovery_maintenance_cleanup_selection_temp_files || true
+		return 1
 	fi
-	if [[ "$bucket_count" -gt 0 ]]; then offset=$((offset % bucket_count)); else offset=0; fi
-	WORKTREE_RECOVERY_MAINTENANCE_CURSOR_BEFORE="$offset"
-	WORKTREE_RECOVERY_MAINTENANCE_CURSOR_AFTER=0
-	scan_limit="$max_scan"
-	if [[ "$bucket_count" -gt 0 ]]; then
-		cycle_remaining=$((bucket_count - WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_SCANNED))
-		[[ "$scan_limit" -le "$cycle_remaining" ]] || scan_limit="$cycle_remaining"
-	fi
+	offset="$WORKTREE_RECOVERY_MAINTENANCE_CURSOR_BEFORE"
+	scan_limit="$WORKTREE_RECOVERY_MAINTENANCE_SCAN_LIMIT"
 	# Rotate the exact sorted snapshot whose digest was recorded, not fresh hints.
 	WORKTREE_RECOVERY_MAINTENANCE_FAILURE_DETAIL="scan-failed"
 	if ! _worktree_recovery_maintenance_rotate_inventory "$ordered_path" "$inventory_path" "$offset" ||
@@ -1233,9 +1249,7 @@ _worktree_recovery_maintenance_prepare_selection() {
 		return 1
 	fi
 	WORKTREE_RECOVERY_MAINTENANCE_FAILURE_DETAIL="reason-counts-failed"
-	WORKTREE_RECOVERY_MAINTENANCE_REASON_COUNTS_JSON=$(
-		_worktree_recovery_maintenance_reason_counts_json "$reasons_path"
-	) || {
+	WORKTREE_RECOVERY_MAINTENANCE_REASON_COUNTS_JSON=$(_worktree_recovery_maintenance_reason_counts_json "$reasons_path") || {
 		_worktree_recovery_maintenance_cleanup_selection_temp_files || true
 		return 1
 	}
