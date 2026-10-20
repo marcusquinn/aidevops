@@ -6,7 +6,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { loadV2PrimaryProfiles, registerV2PrimaryProfiles } from "../v2-agent-profiles.mjs";
+import {
+  loadV2PrimaryProfiles,
+  registerV2ManagedDirectoryPermissions,
+  registerV2PrimaryProfiles,
+} from "../v2-agent-profiles.mjs";
 
 function editor(initial = []) {
   const agents = new Map(initial.map((agent) => [agent.id, agent]));
@@ -15,6 +19,7 @@ function editor(initial = []) {
     agents,
     get selected() { return selected; },
     get: (id) => agents.get(id),
+    list: () => [...agents.values()],
     update(id, change) {
       if (!agents.has(id)) agents.set(id, { id, mode: "primary", hidden: false, permissions: [] });
       change(agents.get(id));
@@ -68,4 +73,24 @@ test("V2 preserves operator agents and restrictive canonical tool rules", () => 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("V2 agents receive V1 managed external-directory allows after existing rules (GH#35170)", () => {
+  const deny = { action: "*", resource: "*", effect: "deny" };
+  const target = editor([
+    { id: "Build+", permissions: [] },
+    { id: "explore", permissions: [deny] },
+  ]);
+  const home = join(tmpdir(), "v2-managed-home");
+  const env = { AIDEVOPS_WORKTREE_BASE_DIR: "/srv/worktrees" };
+  assert.equal(registerV2ManagedDirectoryPermissions(target, env, home), 2);
+  for (const id of ["Build+", "explore"]) {
+    const rules = target.get(id).permissions.filter((rule) => rule.action === "external_directory");
+    const resources = rules.map((rule) => rule.resource);
+    assert.ok(rules.every((rule) => rule.effect === "allow"));
+    assert.ok(resources.includes(join(home, ".aidevops/**")));
+    assert.ok(resources.includes("/srv/worktrees/**"));
+    assert.ok(resources.every((resource) => !resource.startsWith("~")));
+  }
+  assert.deepEqual(target.get("explore").permissions[0], deny);
 });

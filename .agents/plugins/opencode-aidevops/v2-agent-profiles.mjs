@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { managedExternalDirectories } from "./config-safety-guards.mjs";
 
 const SOURCE = /^([A-Za-z0-9 +.-]+),([a-z0-9-]+\.md),([^\n]*?),((?:simple|standard|thinking))(?:,|$)/;
 // Host releases differ (shell/bash, subagent/task); rules for unused aliases never match.
@@ -83,4 +85,24 @@ export function registerV2PrimaryProfiles(editor, profiles) {
   editor.default("Build+");
   editor.remove("build");
   return true;
+}
+
+/**
+ * V2 counterpart of V1 registerManagedDirectoryPermissions: allow the same
+ * managed external directories (deployed agents, aidevops config, worktree
+ * base, temp) on every agent. Rules are appended because V2 uses the last
+ * matching rule. Hosts that ask for external_directory by default would
+ * otherwise send every headless read of deployed workflows to the broker
+ * (GH#35170). Read/edit/write fencing remains per-action.
+ */
+export function registerV2ManagedDirectoryPermissions(editor, env = process.env, home = homedir()) {
+  const resources = managedExternalDirectories(env)
+    .map((path) => (path === "~" || path.startsWith("~/") ? `${home}${path.slice(1)}` : path));
+  const rules = resources.map((resource) => ({ action: "external_directory", resource, effect: "allow" }));
+  let updated = 0;
+  for (const agent of editor.list()) {
+    editor.update(agent.id, (draft) => draft.permissions.push(...rules.map((rule) => ({ ...rule }))));
+    updated++;
+  }
+  return updated;
 }

@@ -637,6 +637,22 @@ test("V2 permission evaluation maps SDK action/resources to broker input", () =>
   assert.equal("decision" in event, false);
 });
 
+test("V2 permission evaluation preserves host allow decisions (GH#35170)", () => {
+  let calls = 0;
+  const broker = {
+    permissionAsk(_input, output) {
+      calls += 1;
+      output.status = "deny";
+    },
+  };
+  for (const action of ["shell", "read", "edit", "skill", "external_directory"]) {
+    const event = { sessionID: "session-1", action, resources: ["*"], effect: "allow" };
+    applyV2PermissionEvaluation(broker, event);
+    assert.equal(event.effect, "allow");
+  }
+  assert.equal(calls, 0);
+});
+
 test("V2 pooled OpenAI requests preserve zstd bytes and transform only plain JSON", async () => {
   const account = { email: "pooled@example.com", access: "test-token", accountId: "test-account" };
   const runtime = createV2ProviderAuthRuntime({
