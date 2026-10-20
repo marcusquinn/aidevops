@@ -18,6 +18,8 @@ from pathlib import Path
 COMMAND_RE = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.DOTALL)
 COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 BASH_INPUT_RE = re.compile(r"^<bash-input>(.*?)</bash-input>\s*$", re.DOTALL)
+# Slash-command wrappers start the block; tags quoted mid-text stay verbatim.
+COMMAND_PREFIXES = ("<command-name>", "<command-message>")
 HOST_WRAPPER_PREFIXES = (
     "<local-command-stdout>",
     "<local-command-stderr>",
@@ -49,13 +51,13 @@ def _command_text(stripped: str) -> str:
 def _prompt_text(text: str) -> str:
     """Normalize host wrappers; return '' for host-generated output."""
     stripped = text.strip()
-    command = _command_text(stripped)
+    if stripped.startswith(HOST_WRAPPER_PREFIXES):
+        return ""
+    command = _command_text(stripped) if stripped.startswith(COMMAND_PREFIXES) else ""
     if command:
         return command
     bash = BASH_INPUT_RE.match(stripped)
-    if bash:
-        return f"! {bash.group(1).strip()}"
-    return "" if stripped.startswith(HOST_WRAPPER_PREFIXES) else stripped
+    return f"! {bash.group(1).strip()}" if bash else stripped
 
 
 def _image_note(block) -> str:
@@ -98,12 +100,18 @@ def _parse_line(raw: str):
 
 
 def collect_prompts(transcript_path: str) -> list:
-    """Every real user prompt in the transcript; consecutive repeats collapse."""
+    """Every real user prompt in the transcript, oldest first.
+
+    Consecutive identical prompts (same text and attachments) collapse: Claude
+    Code logs a resubmitted prompt again under a new uuid after an API error.
+    """
     entries = []
     with Path(transcript_path).expanduser().open("r", encoding="utf-8", errors="replace") as handle:
         for raw in handle:
             prompt = _parse_line(raw)
-            repeated = prompt and entries and prompt["text"] and entries[-1]["text"] == prompt["text"]
+            repeated = prompt and entries and prompt["text"] and (
+                (entries[-1]["text"], entries[-1]["notes"]) == (prompt["text"], prompt["notes"])
+            )
             if prompt and not repeated:
                 entries.append(prompt)
     return entries

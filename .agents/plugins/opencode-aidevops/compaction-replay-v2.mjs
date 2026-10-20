@@ -29,6 +29,7 @@ import {
   writeStore,
 } from "./compaction-replay-v2-store.mjs";
 import { initialMediaShape, observeMediaShape, toV2Part } from "./compaction-replay-v2-media.mjs";
+import { quotedIDs } from "./compaction-replay-v2-quotes.mjs";
 
 export const CHECKPOINT_PREFIX = "<conversation-checkpoint>";
 const MAX_CACHED_SESSIONS = 32;
@@ -70,8 +71,9 @@ export function findCheckpointIndex(messages) {
  */
 function hiddenEntries(store, messages, checkpointText) {
   const visible = new Set(messages.map((message) => message?.id).filter(Boolean));
-  const quoted = (entry) => entry.media.length === 0 && entry.text && checkpointText.includes(`[User]: ${entry.text}`);
-  return store.prompts.filter((entry) => !visible.has(entry.id) && !quoted(entry)).map((entry) => ({
+  const candidates = store.prompts.filter((entry) => !visible.has(entry.id));
+  const quoted = quotedIDs(candidates, checkpointText);
+  return candidates.filter((entry) => !quoted.has(entry.id)).map((entry) => ({
     id: entry.id,
     created: entry.created,
     text: entry.text,
@@ -88,12 +90,20 @@ function sessionStore(state, sessionID) {
   return store;
 }
 
+function log(state, level, message) {
+  try {
+    state.qualityLog?.(level, `[compaction-replay-v2] ${message}`);
+  } catch {
+    // Logging must never break the host hook.
+  }
+}
+
 function persist(state, store) {
   state.revision++;
   try {
     writeStore(state.storeDir, store);
   } catch (error) {
-    state.qualityLog?.("WARN", `[compaction-replay-v2] store write failed: ${errorText(error)}`);
+    log(state, "WARN", `store write failed: ${errorText(error)}`);
   }
 }
 
@@ -134,7 +144,7 @@ function replayParts(state, store, request, limits) {
     : { parts: [], messages: 0, media: 0 };
   const parts = built.parts.map((part) => toV2Part(part, state.media));
   boundedSet(state.cache, sessionID, { key, parts });
-  state.qualityLog?.("INFO", `[compaction-replay-v2] prepared ${built.messages} user turn(s), ${built.media} attachment(s), ${selection.excerpted} excerpted, ${selection.omitted} elided`);
+  log(state, "INFO", `prepared ${built.messages} user turn(s), ${built.media} attachment(s), ${selection.excerpted} excerpted, ${selection.omitted} elided`);
   return parts;
 }
 
@@ -203,7 +213,7 @@ export function createV2CompactionReplay(options) {
     try {
       return fn(state, event);
     } catch (error) {
-      state.qualityLog?.("WARN", `[compaction-replay-v2] ${label} skipped: ${errorText(error)}`);
+      log(state, "WARN", `${label} skipped: ${errorText(error)}`);
       return fallback;
     }
   };
