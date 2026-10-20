@@ -637,7 +637,7 @@ _cloudron_monitor_compatibility_entry() {
 	local verification=""
 	printf -v summary 'The weekly compatibility audit reported:\n\n%s' "$findings"
 	printf -v verification "Run \`cloudron-package-helper.sh check-compatibility\` and the package-specific test suite."
-	_cloudron_monitor_apply_finding "$apply" "$slug" "$title" "$fingerprint" "$summary" "$verification"
+	_cloudron_monitor_apply_finding "$apply" "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path"
 	return $?
 }
 
