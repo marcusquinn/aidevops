@@ -564,7 +564,12 @@ _quarantine_worker_db() {
 	); then
 		return 1
 	fi
-	mv "$recovery_dir" "$destination" || return 1
+	if ! mv "$recovery_dir" "$destination"; then
+		# Roll back only the metadata just created exclusively above, not evidence.
+		# Otherwise noclobber would prevent retry after a transient move failure.
+		rm -f "${recovery_dir}/quarantine.txt"
+		return 1
+	fi
 	print_warning "[lifecycle] db_merge_recovery_quarantined path=${destination} reason=sqlite_corruption next_action=inspect_private_copy metadata=quarantine.txt"
 	return 0
 }

@@ -692,6 +692,31 @@ test_quarantine_worker_db_preserves_existing_metadata() {
 	return 0
 }
 
+test_quarantine_worker_db_retries_failed_move() {
+	local recovery_root="${TEST_ROOT}/quarantine-move-retry"
+	local first_status=0 second_status=0 unchanged=1 suffix
+	mkdir -p "$recovery_root/evidence"
+	for suffix in "" -wal -shm; do
+		printf 'unchanged evidence\n' >"$recovery_root/evidence/opencode.db$suffix"
+		cp "$recovery_root/evidence/opencode.db$suffix" "$TEST_ROOT/move-expected.db$suffix"
+	done
+	(
+		mv() { return 1; }
+		_quarantine_worker_db "$recovery_root/evidence" "$recovery_root"
+	) || first_status=$?
+	[[ ! -e "$recovery_root/evidence/quarantine.txt" ]] || unchanged=0
+	_quarantine_worker_db "$recovery_root/evidence" "$recovery_root" || second_status=$?
+	for suffix in "" -wal -shm; do
+		cmp -s "$TEST_ROOT/move-expected.db$suffix" "$recovery_root/.quarantine/evidence/opencode.db$suffix" || unchanged=0
+	done
+	if [[ "$first_status" -eq 1 && "$second_status" -eq 0 && "$unchanged" -eq 1 ]]; then
+		print_result "quarantine retries a failed move without altering evidence" 0
+		return 0
+	fi
+	print_result "quarantine retries a failed move without altering evidence" 1
+	return 0
+}
+
 test_worker_db_replay_lock_recovers_stale_owner_and_waits_for_pid() {
 	local recovery_root="${TEST_ROOT}/replay-lock-recovery"
 	local replay_lock="${recovery_root}/.replay.lock"
