@@ -830,6 +830,9 @@ _storage_inventory_records() {
 	_storage_emit_runtime_bundle_record
 	_storage_observability_record
 	_storage_worktree_recovery_record
+	# The base also holds protected source; do not label its total reclaimable
+	# without the producer's bounded per-worktree eligibility checks.
+	_storage_emit_record "worktree-artefacts" "worktree-artefact-reclaim" "configured linked worktree base" "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}" "$framework_owner" "mixed" "14 idle days by default; ignored allowlist only; live cwd, ownership and recent edits veto reclamation" "unknown" "source and unverified artefacts are not reclaimable" "Run worktree-artefact-reclaim.sh --max-seconds 60 for a dry run; --force uses native cleaners or trash"
 	_storage_emit_retention_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME:+$HOME/.aidevops/agents-backups}" "$STORAGE_SAFETY_MIXED" "10 snapshots, 180 days, and 4 GiB soft limits" "newest verified rollback and retention trash" "Setup computes a dry run before confirmed producer-owned rotation" "_backup_retention_plan"
 	_storage_emit_retention_record "worker-failure-excerpts" "headless-runtime" "${home_label}/.aidevops/logs/worker-failure-excerpts" "${HOME:+$HOME/.aidevops/logs/worker-failure-excerpts}" "$STORAGE_SAFETY_MIXED" "64 KiB per excerpt; 3 excerpts, 30 days, and 192 KiB per session soft limits" "newest unresolved recovery evidence per session" "Headless runtime computes a dry run after each preserved failure" "_storage_worker_excerpt_plan"
 	_storage_emit_record "pulse-hot-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse.log" "${HOME:+$HOME/.aidevops/logs/pulse.log}" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
