@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { BoundedInteractiveOperationManager } from "./bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { compactingHook } from "./compaction.mjs";
+import { createV2CompactionReplay } from "./compaction-replay-v2.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { loadModelRouting } from "./model-routing.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
@@ -448,10 +449,21 @@ export async function setupAidevopsV2(ctx) {
     await register(registrations, ctx.shell.hook("create.before", async (event) => {
       await shellEnvHook(v1HookInput(event), event);
     }));
+    // GH#35189: record each user prompt verbatim; replay hidden turns, with
+    // recent images, in front of the compaction checkpoint.
+    const compactionReplay = createV2CompactionReplay({
+      storeDir: join(WORKSPACE_DIR, "compaction-replay"),
+      hostVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+      qualityLog,
+    });
+    await register(registrations, ctx.session.hook("prompt", async (event) => {
+      compactionReplay.recordPrompt(event);
+    }));
     // Released 2.0.3 dispatches these hooks separately on the base transcript.
     // Keep framework transformations identical before adding compaction's tail.
     const transformContext = async (event) => {
       assertLocalOnlyEgress(localOnlyPolicy, event, "context");
+      compactionReplay.inject(event);
       const input = v1HookInput(event);
       sessionModels.remember(event.sessionID, input.model.modelID);
       const legacy = { system: systemStrings(event.system), messages: event.messages };

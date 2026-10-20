@@ -7,6 +7,7 @@
 # Manages ~/.claude/settings.json:
 #   - Safety hooks (PreToolUse — git safety guard)
 #   - Session continuation (Stop — keep going while todos remain open)
+#   - Compaction replay (SessionStart compact — verbatim user input, GH#35189)
 #   - Tool permissions (allow/deny/ask rules per Claude Code syntax)
 #   - Preserves user customizations (model, etc.)
 #
@@ -71,6 +72,20 @@ stop_registered = any(
 )
 if not stop_registered:
     stop_rules.append({"hooks": [{"type": "command", "command": stop_hook_command}]})
+    changed = True
+
+# --- SessionStart (compact): replay verbatim user input (GH#35189) ---
+# Mirrors the OpenCode compaction replay so aims, standing instructions and
+# authorisations survive compaction as the user's own words.
+replay_hook_command = "$HOME/.aidevops/hooks/compaction_user_input_replay.py"
+start_rules = settings["hooks"].setdefault("SessionStart", [])
+replay_registered = any(
+    "compaction_user_input_replay" in h.get("command", "")
+    for rule in start_rules
+    for h in rule.get("hooks", [])
+)
+if not replay_registered:
+    start_rules.append({"matcher": "compact", "hooks": [{"type": "command", "command": replay_hook_command}]})
     changed = True
 
 # --- Tool permissions (allow / deny / ask) ---

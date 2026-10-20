@@ -305,6 +305,7 @@ for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycl
     "tool:execute.before",
     "tool:execute.after",
     "shell:create.before",
+    "session:prompt",
     "session:context",
     "session:compaction",
     "session:http.request",

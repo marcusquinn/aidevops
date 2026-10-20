@@ -39,6 +39,8 @@ SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
 STOP_HOOK_SCRIPT="$HOOKS_DIR/session_continuation_stop.py"
 STOP_HOOK_CAPTURE_SCRIPT="$HOOKS_DIR/session_capture_check.py"
+REPLAY_HOOK_SCRIPT="$HOOKS_DIR/compaction_user_input_replay.py"
+REPLAY_HOOK_TRANSCRIPT_SCRIPT="$HOOKS_DIR/compaction_replay_transcript.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
@@ -46,6 +48,7 @@ CREDENTIAL_SCRUB_COMMAND="\$HOME/.aidevops/hooks/credential-transcript-scrub.py"
 SECRET_READ_GUARD_COMMAND="\$HOME/.aidevops/hooks/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_COMMAND="\$HOME/.aidevops/hooks/complexity_advisory_pre_edit.py"
 STOP_HOOK_COMMAND="\$HOME/.aidevops/hooks/session_continuation_stop.py"
+REPLAY_HOOK_COMMAND="\$HOME/.aidevops/hooks/compaction_user_input_replay.py"
 
 # gh-wrapper-guard pre-push hook (t2113)
 GH_WRAPPER_GUARD_MARKER="# aidevops-gh-wrapper-guard"
@@ -797,6 +800,33 @@ _probe_hook_runtime() {
 	return 0
 }
 
+# Session-lifecycle hooks: the continuation Stop hook (GH#33143) and the
+# compaction replay SessionStart hook (GH#35189), each with a companion module.
+# Sources resolve before any install side effect so a missing file aborts early.
+_SESSION_HOOK_SOURCES=()
+_resolve_session_hook_sources() {
+	_SESSION_HOOK_SOURCES=()
+	local name source_path
+	for name in session_continuation_stop.py session_capture_check.py \
+		compaction_user_input_replay.py compaction_replay_transcript.py; do
+		source_path=$(find_source_hook "$name") || return 1
+		_SESSION_HOOK_SOURCES+=("$source_path")
+	done
+	return 0
+}
+
+_install_session_hook_files() {
+	local targets=("$STOP_HOOK_SCRIPT" "$STOP_HOOK_CAPTURE_SCRIPT" "$REPLAY_HOOK_SCRIPT" "$REPLAY_HOOK_TRANSCRIPT_SCRIPT")
+	local executable=(1 0 1 0)
+	local i
+	for i in 0 1 2 3; do
+		cp "${_SESSION_HOOK_SOURCES[$i]}" "${targets[$i]}"
+		[[ "${executable[$i]}" == "1" ]] && chmod +x "${targets[$i]}"
+		print_success "Installed ${targets[$i]}"
+	done
+	return 0
+}
+
 install_hook() {
 	local force_install="false"
 	local arg
@@ -827,10 +857,7 @@ install_hook() {
 	source_secret_read_guard_hook=$(find_source_hook "secret_file_read_guard.py") || return 1
 	local source_complexity_advisory_hook
 	source_complexity_advisory_hook=$(find_source_hook "complexity_advisory_pre_edit.py") || return 1
-	local source_stop_hook
-	source_stop_hook=$(find_source_hook "session_continuation_stop.py") || return 1
-	local source_stop_hook_capture
-	source_stop_hook_capture=$(find_source_hook "session_capture_check.py") || return 1
+	_resolve_session_hook_sources || return 1
 
 	# Pre-install validator dry-run (t2226): abort if validators fail HEAD state
 	_dry_run_validators "$source_hook" "$force_install" || return 1
@@ -859,11 +886,7 @@ install_hook() {
 	cp "$source_complexity_advisory_hook" "$COMPLEXITY_ADVISORY_SCRIPT"
 	chmod +x "$COMPLEXITY_ADVISORY_SCRIPT"
 	print_success "Installed $COMPLEXITY_ADVISORY_SCRIPT"
-	cp "$source_stop_hook" "$STOP_HOOK_SCRIPT"
-	chmod +x "$STOP_HOOK_SCRIPT"
-	print_success "Installed $STOP_HOOK_SCRIPT"
-	cp "$source_stop_hook_capture" "$STOP_HOOK_CAPTURE_SCRIPT"
-	print_success "Installed $STOP_HOOK_CAPTURE_SCRIPT"
+	_install_session_hook_files
 	_probe_hook_runtime "$HOOK_SCRIPT" || return 1
 
 	# Configure Claude Code settings.json
@@ -969,6 +992,17 @@ settings = {
                     }
                 ]
             }
+        ],
+        'SessionStart': [
+            {
+                'matcher': 'compact',
+                'hooks': [
+                    {
+                        'type': 'command',
+                        'command': '$REPLAY_HOOK_COMMAND'
+                    }
+                ]
+            }
         ]
     }
 }
@@ -1023,8 +1057,10 @@ for h in hooks.get('PostToolUse', []):
 
 has_stop = any('session_continuation_stop' in sub.get('command', '')
                for h in hooks.get('Stop', []) for sub in h.get('hooks', []))
+has_replay = any('compaction_user_input_replay' in sub.get('command', '')
+                 for h in hooks.get('SessionStart', []) for sub in h.get('hooks', []))
 
-if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop:
+if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop and has_replay:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -1150,6 +1186,11 @@ stop_entries = settings['hooks'].setdefault('Stop', [])
 if not has_hook(stop_entries, 'session_continuation_stop'):
     stop_entries.append({'hooks': [{'type': 'command', 'command': '$STOP_HOOK_COMMAND'}]})
 
+# SessionStart (compact): replay verbatim user input after compaction (GH#35189)
+start_entries = settings['hooks'].setdefault('SessionStart', [])
+if not has_hook(start_entries, 'compaction_user_input_replay'):
+    start_entries.append({'matcher': 'compact', 'hooks': [{'type': 'command', 'command': '$REPLAY_HOOK_COMMAND'}]})
+
 path = '$CLAUDE_SETTINGS'
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
 with os.fdopen(fd, 'w') as f:
@@ -1166,34 +1207,35 @@ os.rename(tmp, path)
 	return 0
 }
 
-# Remove the session-continuation Stop hook script and its settings entry
-# (GH#33143). Runs before the Stop-agnostic cleanup in uninstall_hook, which
-# drops the whole 'hooks' key once every framework entry is gone.
+# Remove the session-continuation Stop hook (GH#33143) and the compaction
+# replay SessionStart hook (GH#35189) scripts and settings entries. Runs before
+# the event-agnostic cleanup in uninstall_hook, which drops the whole 'hooks'
+# key once every framework entry is gone.
 _uninstall_stop_hook() {
-	if [[ -f "$STOP_HOOK_SCRIPT" ]]; then
-		rm "$STOP_HOOK_SCRIPT"
-		print_success "Removed $STOP_HOOK_SCRIPT"
-	fi
-	if [[ -f "$STOP_HOOK_CAPTURE_SCRIPT" ]]; then
-		rm "$STOP_HOOK_CAPTURE_SCRIPT"
-		print_success "Removed $STOP_HOOK_CAPTURE_SCRIPT"
-	fi
+	local script
+	for script in "$STOP_HOOK_SCRIPT" "$STOP_HOOK_CAPTURE_SCRIPT" "$REPLAY_HOOK_SCRIPT" "$REPLAY_HOOK_TRANSCRIPT_SCRIPT"; do
+		if [[ -f "$script" ]]; then
+			rm "$script"
+			print_success "Removed $script"
+		fi
+	done
 	[[ -f "$CLAUDE_SETTINGS" ]] || return 0
-	python3 - "$CLAUDE_SETTINGS" <<'PY' 2>/dev/null || print_warning "Could not remove Stop hook from $CLAUDE_SETTINGS"
+	python3 - "$CLAUDE_SETTINGS" <<'PY' 2>/dev/null || print_warning "Could not remove Stop/SessionStart hooks from $CLAUDE_SETTINGS"
 import json, os, sys, tempfile
 path = sys.argv[1]
 with open(path) as f:
     settings = json.load(f)
 hooks = settings.get('hooks', {})
-kept = []
-for rule in hooks.get('Stop', []):
-    rule['hooks'] = [s for s in rule.get('hooks', []) if 'session_continuation_stop' not in s.get('command', '')]
-    if rule['hooks']:
-        kept.append(rule)
-if kept:
-    hooks['Stop'] = kept
-else:
-    hooks.pop('Stop', None)
+for event, needle in (('Stop', 'session_continuation_stop'), ('SessionStart', 'compaction_user_input_replay')):
+    kept = []
+    for rule in hooks.get(event, []):
+        rule['hooks'] = [s for s in rule.get('hooks', []) if needle not in s.get('command', '')]
+        if rule['hooks']:
+            kept.append(rule)
+    if kept:
+        hooks[event] = kept
+    else:
+        hooks.pop(event, None)
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
 with os.fdopen(fd, 'w') as f:
     json.dump(settings, f, indent=2)
