@@ -65,6 +65,8 @@ sleep 2  # between dispatches
 # The dispatcher launches detached and reports its worktree, log, and session key.
 ```
 
+Run dispatch through the normal shell tool, never a bounded operation: its exit-time descendant drain would kill the detached worker.
+
 For non-issue headless jobs only, invoke `headless-runtime-helper.sh run`
 directly; it handles provider rotation, backoff, and session persistence.
 

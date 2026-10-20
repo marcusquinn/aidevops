@@ -77,6 +77,7 @@ async function terminalState(instance, operationID) {
 }
 
 const wrapper = "/installed/scripts/pulse-wrapper.sh";
+const dispatcher = "/installed/scripts/dispatch-single-issue-helper.sh";
 const dispatchArgs = ["--command", "dispatch", "123", "owner/repo", "title", "issue title", "login", "/repo", "prompt"];
 
 describe("bounded operation dispatch launcher guard (GH#34047)", () => {
@@ -88,6 +89,11 @@ describe("bounded operation dispatch launcher guard (GH#34047)", () => {
       ["/usr/bin/env", "-i", "-u", "HOME", "PATH=/usr/bin", "--", wrapper, ...dispatchArgs],
       ["bash", wrapper, "--command", "dispatch-foss", "owner/repo"],
       ["env", "PATH=/usr/bin", "bash", "pulse-wrapper.sh", "--command", "dispatch"],
+      [dispatcher, "dispatch", "1", "o/r"],
+      ["bash", dispatcher, "dispatch", "1", "o/r"],
+      ["env", "PATH=/usr/bin", dispatcher, "dispatch", "1", "o/r"],
+      ["/usr/bin/env", "-i", "-u", "HOME", "PATH=/usr/bin", "--", "bash", dispatcher, "dispatch", "1", "o/r"],
+      ["env", "PATH=/usr/bin", "bash", "dispatch-single-issue-helper.sh", "dispatch", "1", "o/r"],
     ];
     for (const command of rejected) {
       await assert.rejects(instance.start({ command, budgetMs: 1000 }, owner),
@@ -98,6 +104,11 @@ describe("bounded operation dispatch launcher guard (GH#34047)", () => {
       restorationCommand: ["env", "PATH=/usr/bin", wrapper, ...dispatchArgs],
       budgetMs: 1000,
     }, owner), /launches a detached worker/);
+    await assert.rejects(instance.start({
+      command: ["git", "--version"],
+      restorationCommand: ["bash", dispatcher, "dispatch", "1", "o/r"],
+      budgetMs: 1000,
+    }, owner), /dispatch-single-issue-helper\.sh dispatch launches a detached worker/);
     assert.equal(counter.spawns, 0, "a rejected launcher reached spawn");
   });
 
@@ -108,11 +119,15 @@ describe("bounded operation dispatch launcher guard (GH#34047)", () => {
       ["env", "PATH=/usr/bin", wrapper, "--command", "capacity"],
       ["/tmp/other-wrapper.sh", "--command", "dispatch"],
       ["bash", "-c", "echo pulse-wrapper.sh --command dispatch"],
+      [dispatcher, "status", "1", "o/r"],
+      ["env", "PATH=/usr/bin", "bash", dispatcher, "help"],
+      [dispatcher, "status", "dispatch"],
+      ["/tmp/other-helper.sh", "dispatch", "1", "o/r"],
     ]) {
       const started = await instance.start({ command, budgetMs: SUCCESS_BUDGET_MS }, owner);
       assert.equal(await terminalState(instance, started.operation_id), "succeeded", JSON.stringify(command));
     }
-    assert.equal(counter.spawns, 4);
+    assert.equal(counter.spawns, 8);
   });
 
   test("tool surface reports the rejection and documents it", async () => {
@@ -122,6 +137,10 @@ describe("bounded operation dispatch launcher guard (GH#34047)", () => {
     const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
     const response = JSON.parse(await tool.execute({ action: "start", command: [wrapper, ...dispatchArgs] }, owner));
     assert.match(response.error, /normal shell tool/);
+    const dispatchResponse = JSON.parse(await tool.execute({
+      action: "start", command: ["bash", dispatcher, "dispatch", "1", "o/r"],
+    }, owner));
+    assert.match(dispatchResponse.error, /dispatch-single-issue-helper\.sh dispatch.*normal shell tool/);
     assert.match(tool.description, /rejected before spawn/);
     assert.equal(counter.spawns, 0);
   });
