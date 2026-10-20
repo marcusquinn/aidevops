@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.51] - 2026-10-20
+
+### Changed
+
+- Maintenance: bump vite from 8.3.3 to 8.3.4 (#35217)
+
 ## [3.39.50] - 2026-10-20
 
 ### Changed

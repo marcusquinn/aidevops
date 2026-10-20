@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.39.50
+# Version: 3.39.51
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
