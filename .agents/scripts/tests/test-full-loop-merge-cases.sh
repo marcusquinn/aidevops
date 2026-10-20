@@ -195,13 +195,8 @@ write_gh_stub_pr_issue_views() {
 	fi
 	if [[ "\$*" == *"--json title"* ]]; then
 		case "$mode" in
-		invalid-squash-title)
-			echo '{"title":"Document recovery"}'
-			;;
-		gh-prefix-feature)
-			echo '{"title":"GH#29530: Add a Buzz-scoped OpenCode Tabby workspace profile"}'
-			;;
-		gh-prefix-no-evidence | metadata-mixed)
+		invalid-squash-title) echo '{"title":"Document recovery"}' ;;
+		gh-prefix-feature | gh-prefix-no-evidence | metadata-mixed)
 			echo '{"title":"GH#29530: Add a Buzz-scoped OpenCode Tabby workspace profile"}'
 			;;
 		*)
