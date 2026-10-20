@@ -898,6 +898,7 @@ _storage_check() (
 )
 
 _storage_check_locked() {
+	local home_label="~"
 	local home_limit="${AIDEVOPS_STORAGE_HOME_SOFT_LIMIT_BYTES:-107374182400}"
 	local worktree_limit="${AIDEVOPS_STORAGE_WORKTREE_SOFT_LIMIT_BYTES:-107374182400}"
 	local interval="${AIDEVOPS_STORAGE_CHECK_INTERVAL_SECONDS:-86400}"
@@ -924,7 +925,7 @@ _storage_check_locked() {
 	if [[ -z "$snapshot" ]]; then
 		STORAGE_SIZE_TIMEOUT_TENTHS="${AIDEVOPS_STORAGE_CHECK_SIZE_TIMEOUT_TENTHS:-100}"
 		roots=$(
-			_storage_emit_record "aidevops-home" "$STORAGE_OWNER_FRAMEWORK" "~/.aidevops" "${HOME:+$HOME/.aidevops}" "$STORAGE_OWNER_FRAMEWORK" "$STORAGE_SAFETY_MIXED" "soft limit" "$STORAGE_PROTECTED" "aggregate; overlaps store rows" "Inspect largest stores and use their next_action"
+			_storage_emit_record "aidevops-home" "$STORAGE_OWNER_FRAMEWORK" "${home_label}/.aidevops" "${HOME:+$HOME/.aidevops}" "$STORAGE_OWNER_FRAMEWORK" "$STORAGE_SAFETY_MIXED" "soft limit" "$STORAGE_PROTECTED" "aggregate; overlaps store rows" "Inspect largest stores and use their next_action"
 			_storage_emit_record "worktree-base" "$STORAGE_PRODUCER_WORKTREE" "Linked worktrees and build output" "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}" "$STORAGE_OWNER_FRAMEWORK" "$STORAGE_ACTIVE" "soft limit" "$STORAGE_PROTECTED" "live worktrees" "Use worktree-helper.sh clean"
 		)
 		if printf '%s\n' "$roots" | jq -se 'any(.total_bytes == null)' >/dev/null; then
