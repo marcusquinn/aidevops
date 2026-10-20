@@ -795,7 +795,7 @@ write_report() {
 
 		if [ "$_new_count" -gt 0 ]; then
 			printf '### New violations\n\n'
-			printf '%s' "$_headers"
+			printf '%s\n' "$_headers"
 			while IFS=$'\t' read -r _col1 _col2 _col3; do
 				[ -n "$_col1" ] || continue
 				# shellcheck disable=SC2016
@@ -812,7 +812,7 @@ write_report() {
 					_lines=$(_bash32_current_lines "$_head_dir" "$_col1" "$_col2")
 					if [ -n "$_lines" ]; then
 						# shellcheck disable=SC2016
-						printf '- `%s` %s: lines %s\n' "$_col1" "$_col2" "$_lines"
+						printf -- '- `%s` %s: lines %s\n' "$_col1" "$_col2" "$_lines"
 					fi
 				done <"$_new_file"
 				printf '\n</details>\n\n'
