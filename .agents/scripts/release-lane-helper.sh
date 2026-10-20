@@ -1267,6 +1267,17 @@ release_lane_defer_stale_runtime_recovery() {
 	return $?
 }
 
+# True when the cached lane is terminal for the source PR with the given receipt.
+_release_lane_is_terminal_for() {
+	local source_pr="$1"
+	local receipt="$2"
+	jq -e --argjson source_pr "$source_pr" --arg receipt "$receipt" '
+		.active == false and .source_pr == $source_pr
+		and .phase == "terminal" and .terminal_receipt == $receipt
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null
+	return $?
+}
+
 release_lane_finalize() {
 	local repo="$1"
 	local source_pr="$2"
@@ -1275,6 +1286,10 @@ release_lane_finalize() {
 	local write_rc=0
 	[[ -n "$_AIDEVOPS_RELEASE_LANE_TOKEN" ]] || return 1
 	release_lane_read "$repo" || return 1
+	# Idempotent: a lane already terminal for this source and receipt needs no second write.
+	if _release_lane_is_terminal_for "$source_pr" "$receipt"; then
+		return 0
+	fi
 	jq -e --argjson source_pr "$source_pr" --arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" \
 		'.active == true and .source_pr == $source_pr and .operation_token == $token' \
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
@@ -1286,11 +1301,7 @@ release_lane_finalize() {
 		# A compare-and-swap write can reach GitHub before its transport reports an
 		# error. Re-read the exact terminal state so a durable publication does not
 		# become a false reconciliation failure.
-		if release_lane_read "$repo" && jq -e --argjson source_pr "$source_pr" \
-			--arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" --arg receipt "$receipt" '
-			.active == false and .source_pr == $source_pr and .operation_token == $token
-			and .phase == "terminal" and .terminal_receipt == $receipt
-		' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
+		if release_lane_read "$repo" && _release_lane_is_terminal_for "$source_pr" "$receipt"; then
 			printf 'RELEASE_LANE_FINALIZE_RECONCILED source_pr=%s receipt=%s write_exit=%s\n' \
 				"$source_pr" "$receipt" "$write_rc" >&2
 			return 0

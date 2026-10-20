@@ -979,6 +979,48 @@ run_dead_preparing_refusal_test() (
 	return 0
 )
 
+run_finalize_idempotent_terminal_test() (
+	local terminal='{"schema_version":1,"repository":"test/repo","active":false,"source_pr":101,"phase":"terminal","tag":"v1.2.3","terminal_receipt":"published","operation_token":"token-old"}'
+	local active='{"schema_version":1,"repository":"test/repo","active":true,"source_pr":101,"phase":"remote-publication","tag":"v1.2.3","terminal_receipt":null,"operation_token":"token-old"}'
+	local remote="$terminal"
+	local writes=0
+	_AIDEVOPS_RELEASE_LANE_TOKEN="token-old"
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON="$remote"
+		_AIDEVOPS_RELEASE_LANE_HEAD="1111111111111111111111111111111111111111"
+		return 0
+	}
+	_release_lane_write() {
+		writes=$((writes + 1))
+		return 2
+	}
+	# Already terminal for the same source and receipt: no write, success.
+	release_lane_finalize test/repo 101 published >/dev/null 2>&1 || return 1
+	[[ "$writes" -eq 0 ]] || return 1
+	# Write returns 422 (rc 2) but remote became terminal meanwhile: success.
+	release_lane_read() {
+		if [[ "$writes" -eq 0 ]]; then
+			_AIDEVOPS_RELEASE_LANE_JSON="$active"
+		else
+			_AIDEVOPS_RELEASE_LANE_JSON="$terminal"
+		fi
+		_AIDEVOPS_RELEASE_LANE_HEAD="1111111111111111111111111111111111111111"
+		return 0
+	}
+	release_lane_finalize test/repo 101 published >/dev/null 2>&1 || return 1
+	# Write fails and remote is not terminal: still fails.
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON="$active"
+		_AIDEVOPS_RELEASE_LANE_HEAD="1111111111111111111111111111111111111111"
+		return 0
+	}
+	if release_lane_finalize test/repo 101 published >/dev/null 2>&1; then
+		return 1
+	fi
+	return 0
+)
+
+if run_finalize_idempotent_terminal_test; then assert_result 'finalize is idempotent when the remote lane is already terminal and still fails otherwise' true; else assert_result 'finalize is idempotent when the remote lane is already terminal and still fails otherwise' false; fi
 if run_competing_source_test; then assert_result 'competing source receives active lane and reconcile action' true; else assert_result 'competing source receives active lane and reconcile action' false; fi
 if run_same_source_adoption_test; then assert_result 'same source adopts durable lane without another bump' true; else assert_result 'same source adopts durable lane without another bump' false; fi
 if run_terminal_lane_reacquire_test; then assert_result 'terminal lane can be atomically reserved by a later source' true; else assert_result 'terminal lane can be atomically reserved by a later source' false; fi
