@@ -718,12 +718,13 @@ _merge_rest_fallback() {
 _merge_read_head_sha_with_admission_retry() {
 	local pr_number="$1"
 	local repo="$2"
-	local err_file=""
+	local err_file="" rc=0
 	FULL_LOOP_MERGE_READ_HEAD_SHA=""
 	FULL_LOOP_PRE_MERGE_BLOCKER_KIND=""
 	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=""
 	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-retry.XXXXXX") || return 1
-	if FULL_LOOP_MERGE_READ_HEAD_SHA=$(_merge_with_admission_retry _merge_fetch_head_sha_rest "$pr_number" "$repo" 2>"$err_file") && [[ -n "$FULL_LOOP_MERGE_READ_HEAD_SHA" ]]; then
+	FULL_LOOP_MERGE_READ_HEAD_SHA=$(_merge_with_admission_retry _merge_fetch_head_sha_rest "$pr_number" "$repo" 2>"$err_file") || rc=$?
+	if [[ "$rc" -eq 0 && -n "$FULL_LOOP_MERGE_READ_HEAD_SHA" ]]; then
 		cat "$err_file" >&2
 		rm -f "$err_file"
 		return 0
@@ -734,7 +735,9 @@ _merge_read_head_sha_with_admission_retry() {
 	fi
 	cat "$err_file" >&2
 	rm -f "$err_file"
-	return 1
+	# Preserve failed read status; empty success still fails closed.
+	[[ "$rc" -ne 0 ]] || rc=1
+	return "$rc"
 }
 
 # _merge_execute — attempt `gh pr merge` with optional --admin fallback on branch-protection errors.

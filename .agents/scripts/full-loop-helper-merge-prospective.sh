@@ -31,18 +31,25 @@ _merge_fetch_head_sha_rest() {
 	local pr_number="$1"
 	local repo="$2"
 	local head_sha="" err_file="" rc=0
-	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-sha.XXXXXX") || err_file="/dev/null"
+	err_file=$(mktemp "${TMPDIR:-/tmp}/merge-head-sha.XXXXXX") || {
+		printf 'Could not capture PR head read diagnostics; refusing read\n' >&2
+		return 1
+	}
 	head_sha=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>"$err_file") || rc=$?
 	if [[ "$rc" -ne 0 || -z "$head_sha" ]]; then
 		# Surface transport diagnostics (e.g. local-admission deferral) on stderr
-		# so the caller can distinguish pacing from a real failure.
-		if [[ "$err_file" != /dev/null ]]; then
-			cat "$err_file" >&2
-			rm -f "$err_file"
+		# and retain the status even when a failed transport emitted a partial SHA.
+		cat "$err_file" >&2
+		rm -f "$err_file"
+		if [[ "$rc" -eq 0 ]]; then
+			printf 'PR head read returned empty output after successful transport\n' >&2
+			rc=1
+		else
+			printf 'PR head read failed (exit %s); refusing captured output\n' "$rc" >&2
 		fi
-		return 1
+		return "$rc"
 	fi
-	[[ "$err_file" == /dev/null ]] || rm -f "$err_file"
+	rm -f "$err_file"
 	printf '%s\n' "$head_sha"
 	return 0
 }
@@ -477,4 +484,3 @@ _merge_create_prospective_object_context() {
 	printf '%s\n' "$object_repo"
 	return 0
 }
-

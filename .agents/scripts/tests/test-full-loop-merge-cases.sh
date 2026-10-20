@@ -1036,7 +1036,7 @@ test_shared_merge_read_admission_recovery() {
 test_final_head_sha_read_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	for scenario in success recovers persists drift empty http replay-failure head-replay-failure; do
+	for scenario in success recovers persists drift empty http partial-failure read-status replay-failure head-replay-failure; do
 		result=0
 		bash -c '
 			set -euo pipefail
@@ -1074,6 +1074,10 @@ test_final_head_sha_read_admission_recovery() {
 					printf "HTTP 502: Bad Gateway\n" >&2
 					return 1
 				fi
+				if [[ "$scenario" == partial-failure || "$scenario" == read-status ]]; then
+					printf "%s\n" 0123456789abcdef0123456789abcdef01234567
+					return 23
+				fi
 				printf "transport diagnostic\n" >&2
 				[[ "$scenario" == drift ]] && printf "%s\n" fedcba9876543210fedcba9876543210fedcba98 || printf "%s\n" 0123456789abcdef0123456789abcdef01234567
 				return 0
@@ -1081,6 +1085,9 @@ test_final_head_sha_read_admission_recovery() {
 			export FULL_LOOP_VERIFIED_PR_HEAD_SHA=0123456789abcdef0123456789abcdef01234567
 			if [[ "$scenario" == replay-failure ]]; then
 				out=$(_flm_gh_read gh api repos/testorg/testrepo/pulls/42) || rc=$?
+			elif [[ "$scenario" == read-status ]]; then
+				_merge_read_head_sha_with_admission_retry 42 testorg/testrepo || rc=$?
+				out="$FULL_LOOP_MERGE_READ_HEAD_SHA"
 			else
 				out=$(_merge_resolve_match_head 42 testorg/testrepo 2>&1) || rc=$?
 			fi
@@ -1091,7 +1098,9 @@ test_final_head_sha_read_admission_recovery() {
 			recovers) [[ "$rc" -eq 0 && "$out" == *"$FULL_LOOP_VERIFIED_PR_HEAD_SHA" && "$out" == *"waiting 2s"* && "$calls" -eq 2 ]] ;;
 			persists) [[ "$rc" -eq 1 && "$out" == *"retry_at=1002"* && "$out" != *"Could not retrieve"* ]] ;;
 			drift) [[ "$rc" -eq 1 && "$out" == *"head changed after remote verification"* && "$calls" -eq 1 ]] ;;
-			empty|http) [[ "$rc" -eq 1 && "$out" == *"Could not retrieve"* && "$calls" -eq 1 ]] ;;
+			empty) [[ "$rc" -eq 1 && "$out" == *"empty output after successful transport"* && "$out" == *"Could not retrieve"* && "$calls" -eq 1 ]] ;;
+			http|partial-failure) [[ "$rc" -eq 1 && "$out" == *"PR head read failed (exit "* && "$out" == *"Could not retrieve"* && "$out" != *"$FULL_LOOP_VERIFIED_PR_HEAD_SHA"* && "$calls" -eq 1 ]] ;;
+			read-status) [[ "$rc" -eq 23 && -z "$out" && "$calls" -eq 1 ]] ;;
 			replay-failure) [[ "$rc" -eq 74 && -z "$out" && "$calls" -eq 1 ]] ;;
 			head-replay-failure) [[ "$rc" -eq 1 && "$out" == *"Could not replay captured GitHub read output (exit 74)"* && "$out" == *"Could not retrieve"* && "$out" != *"head changed"* && "$calls" -eq 1 ]] ;;
 			esac
