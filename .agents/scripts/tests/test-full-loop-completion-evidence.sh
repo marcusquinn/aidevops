@@ -425,6 +425,14 @@ cp "$included_evidence" "${ROOT}/included-before.json"
 COMPLETION_RECORD_COMMAND=cmd_record_included_release bash "$published_record_runner" \
 	71 70 v3.0.0 testorg/manual --workflow release-verify.yml >/dev/null
 cmp -s "$included_evidence" "${ROOT}/included-before.json"
+# Catalog opt-in must still fail closed on an unproven descendant tag commit.
+if COMPLETION_RELEASE_MODE=wrong-tag-commit COMPLETION_RECORD_COMMAND=cmd_record_included_release \
+	bash "$published_record_runner" 71 70 v3.0.0 testorg/manual \
+	--workflow release-verify.yml --event release --generated-cloudron-catalog >/dev/null 2>&1; then
+	printf 'FAIL generated catalog inclusion accepted an unproven descendant tag\n'
+	exit 1
+fi
+cmp -s "$included_evidence" "${ROOT}/included-before.json"
 if COMPLETION_RECORD_COMMAND=cmd_record_included_release bash "$published_record_runner" \
 	71 58 v3.0.0 marcusquinn/aidevops >/dev/null 2>&1; then
 	printf 'FAIL manual inclusion replaced canonical signed aggregation\n'

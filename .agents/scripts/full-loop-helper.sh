@@ -447,8 +447,9 @@ Commands:
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
   record-no-release <PR> [REPO]  Verify merged evidence and record release:not-requested.
-  record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]
+  record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT] [--generated-cloudron-catalog]
                                   Verify inclusion in a published non-aidevops release.
+                                  --generated-cloudron-catalog re-verifies a catalog-only tag commit.
   record-published-release <PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]
                                    Verify a GitHub release and record release:published.
                                    Defaults to release-event evidence; repository-owned

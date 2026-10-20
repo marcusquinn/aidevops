@@ -350,6 +350,12 @@ Missing or mismatched proof leaves receipts unchanged. Python 3 and a `gh`
 version exposing verified attestation JSON are required. This command verifies
 an existing release; it never creates or republishes artifacts.
 
+Earlier feature PRs in the same catalog release use
+`record-included-release FEATURE_PR SOURCE_PR vX.Y.Z OWNER/REPO --workflow cloudron-catalog-publish.yml --event push --generated-cloudron-catalog`.
+It re-runs the same catalog-only verification against the source PR, then requires the
+feature merge commit to be an ancestor of the source merge. Without the flag, the tag
+must still equal the source merge commit.
+
 If a maintainer or merge queue merges the PR before the merge wrapper records its
 cleanup receipt, first establish terminal release evidence, then run
 `full-loop-helper.sh adopt-merged-receipt <PR> [REPO]` from the still-registered

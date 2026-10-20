@@ -1102,16 +1102,14 @@ cmd_record_included_release() {
 	local repo="" source_json="" feature_json="" source_merge="" feature_merge=""
 	local source_receipt="" receipt_path="" release_status="" compare_json=""
 	local workflow_file="" workflow_event="" evidence_path="" status=0
+	local generated_catalog="" tag_commit=""
 	if [[ $# -lt 3 || ! "$pr_number" =~ ^[1-9][0-9]*$ || ! "$source_pr" =~ ^[1-9][0-9]*$ || "$pr_number" == "$source_pr" || ! "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX ]]; then
-		print_error "Usage: record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]"
+		print_error "Usage: record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT] [--generated-cloudron-catalog]"
 		return 1
 	fi
 	shift 3
 	_full_loop_parse_published_release_options "$@" || return 1
-	[[ "$_FULL_LOOP_PARSED_GENERATED_CATALOG" == "$_FULL_LOOP_BOOL_FALSE" ]] || {
-		print_error "record-included-release does not support --generated-cloudron-catalog"
-		return 1
-	}
+	generated_catalog="$_FULL_LOOP_PARSED_GENERATED_CATALOG"
 	repo=$(_full_loop_resolve_repo "$_FULL_LOOP_PARSED_REPO_ARG") || {
 		print_error "Repository for included-release evidence could not be resolved"
 		return 1
@@ -1129,7 +1127,7 @@ cmd_record_included_release() {
 	feature_merge="$_FULL_LOOP_INCLUDED_FEATURE_MERGE"
 	# aidevops:trust-boundary — ancestry proves inclusion only AFTER independently
 	# verifying the published source receipt, exact source tag and successful run.
-	_full_loop_verify_published_release "$repo" "$tag_name" "$source_merge" "$workflow_file" "$workflow_event" || {
+	_full_loop_verify_published_release "$repo" "$tag_name" "$source_merge" "$workflow_file" "$workflow_event" "$generated_catalog" || {
 		print_error "Cannot record release:superseded: source PR #${source_pr} release evidence for ${tag_name} does not verify"
 		return 1
 	}
@@ -1145,10 +1143,17 @@ cmd_record_included_release() {
 		print_error "PR #${pr_number} merge commit is not an ancestor of source PR #${source_pr} merge commit"
 		return 1
 	}
-	[[ "$source_merge" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || {
-		print_error "Tag ${tag_name} does not point at source PR #${source_pr} merge commit"
+	tag_commit=$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name") || {
+		print_error "Tag ${tag_name} not found in ${repo} or does not resolve to a commit"
 		return 1
 	}
+	# aidevops:trust-boundary — a differing tag commit is acceptable only on the
+	# generated catalog path, which _full_loop_verify_published_release verified
+	# as a catalog-only direct child of the source merge with exact attestations.
+	if [[ "$tag_commit" != "$source_merge" && "$generated_catalog" != "$_FULL_LOOP_BOOL_TRUE" ]]; then
+		print_error "Tag ${tag_name} does not point at source PR #${source_pr} merge commit"
+		return 1
+	fi
 	_full_loop_acquire_transition_lock || return 1
 	# Recheck the linked receipt under the same lock used for destination writes.
 	IFS= read -r release_status <"$source_receipt" || status=1
@@ -1163,9 +1168,9 @@ cmd_record_included_release() {
 	"$_FULL_LOOP_RELEASE_SUPERSEDED")
 		evidence_path=$(_full_loop_superseded_release_evidence_path "$repo" "$pr_number") || status=1
 		if [[ "$status" -eq 0 ]]; then
-			jq -e --argjson source "$source_pr" --arg feature "$feature_merge" --arg merge "$source_merge" --arg tag "$tag_name" '
+			jq -e --argjson source "$source_pr" --arg feature "$feature_merge" --arg merge "$source_merge" --arg tag "$tag_name" --arg commit "$tag_commit" '
 				.aggregate_pr == $source and .source_merge == $feature and .aggregate_merge == $merge
-				and .release_tag == $tag and .release_commit == $merge
+				and .release_tag == $tag and .release_commit == $commit
 			' "$evidence_path" >/dev/null || status=1
 		fi
 		;;
@@ -1173,7 +1178,7 @@ cmd_record_included_release() {
 	esac
 	if [[ "$status" -eq 0 && "$release_status" != "$_FULL_LOOP_RELEASE_SUPERSEDED" ]]; then
 		_full_loop_write_superseded_release_receipt "$repo" "$pr_number" "$feature_merge" \
-			"$source_pr" "$source_merge" "$tag_name" "$source_merge" || status=1
+			"$source_pr" "$source_merge" "$tag_name" "$tag_commit" || status=1
 	elif [[ "$status" -eq 0 ]]; then
 		_full_loop_update_superseded_cleanup_receipt "$repo" "$pr_number" || status=1
 	fi
