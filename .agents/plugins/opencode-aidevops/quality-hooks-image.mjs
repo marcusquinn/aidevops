@@ -117,11 +117,11 @@ function rejectionText(originalBytes) {
  * @param {(level: string, message: string) => void} qualityLog
  * @returns {object} replacement content part
  */
-function guardOversizedPart(part, b64, sizeBytes, qualityLog) {
+function guardOversizedPart(part, b64, sizeBytes, qualityLog, v1 = null) {
   const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(1);
   qualityLog("WARN", `[image-size-guard] User image ${sizeMB} MB exceeds 4.5 MB — attempting downscale`);
 
-  const mediaType = part.source.media_type || "image/png";
+  const mediaType = v1 ? v1.mime : part.source.media_type || "image/png";
   const downscaled = tryDownscale(b64, mediaType);
 
   if (downscaled !== null) {
@@ -130,6 +130,7 @@ function guardOversizedPart(part, b64, sizeBytes, qualityLog) {
 
     if (newBytes <= IMAGE_BYTE_LIMIT) {
       qualityLog("INFO", `[image-size-guard] Image downscaled ${sizeMB} MB → ${newMB} MB`);
+      if (v1) return { ...part, url: `data:${mediaType};base64,${downscaled}` };
       return { ...part, source: { ...part.source, data: downscaled } };
     }
     qualityLog("WARN", `[image-size-guard] Post-downscale image still ${newMB} MB — replacing with notice`);
@@ -137,7 +138,36 @@ function guardOversizedPart(part, b64, sizeBytes, qualityLog) {
     qualityLog("WARN", `[image-size-guard] Downscale unavailable for ${sizeMB} MB image — replacing with notice`);
   }
 
+  if (v1) {
+    // Keep V1 part identity (id/sessionID/messageID); drop file-only fields.
+    const { mime: _m, url: _u, filename: _f, source: _s, ...rest } = part;
+    return { ...rest, type: "text", text: rejectionText(sizeBytes) };
+  }
   return { type: "text", text: rejectionText(sizeBytes) };
+}
+
+const V1_DATA_URL = /^data:([^;,]+)((?:;[^;,]+)*);base64,/i;
+
+/**
+ * Guard an OpenCode 1.x file part:
+ * { type: "file", mime: "image/*", url: "data:...;base64,..." }.
+ * @param {object} part
+ * @param {(level: string, message: string) => void} qualityLog
+ * @returns {object|null} replacement part, or null if no action needed
+ */
+function checkV1FilePart(part, qualityLog) {
+  if (part?.type !== "file" || typeof part.url !== "string") return null;
+  const match = V1_DATA_URL.exec(part.url);
+  if (!match) return null;
+  const mime = (part.mime || match[1] || "").toLowerCase();
+  if (!mime.startsWith("image/")) return null;
+
+  const b64 = part.url.slice(match[0].length);
+  if (!b64) return null;
+  const sizeBytes = base64ByteSize(b64);
+  if (sizeBytes <= IMAGE_BYTE_LIMIT) return null;
+
+  return guardOversizedPart(part, b64, sizeBytes, qualityLog, { mime });
 }
 
 /**
@@ -165,7 +195,16 @@ function checkImagePart(part, qualityLog) {
  * @param {(level: string, message: string) => void} qualityLog
  */
 function guardUserMessage(message, qualityLog) {
-  if (message.role !== "user" || !Array.isArray(message.content)) return;
+  // OpenCode 1.x stored shape: { info: { role }, parts: [...] }
+  if (message?.info?.role === "user" && Array.isArray(message.parts)) {
+    for (let i = 0; i < message.parts.length; i++) {
+      const replacement = checkV1FilePart(message.parts[i], qualityLog);
+      if (replacement !== null) message.parts[i] = replacement;
+    }
+    return;
+  }
+
+  if (message?.role !== "user" || !Array.isArray(message.content)) return;
 
   for (let i = 0; i < message.content.length; i++) {
     const replacement = checkImagePart(message.content[i], qualityLog);
