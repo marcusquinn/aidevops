@@ -477,23 +477,9 @@ register_worktree() {
 		return 1
 	fi
 
-	{
-		_wt_sqlite_set_owner_pid_param "$owner_pid"
-		printf '%s\n' "
-        INSERT OR REPLACE INTO worktree_owners
-			(worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_process_start, owner_dead_seen_at)
-        VALUES
-		 ('$(_wt_sql_escape "$wt_path")',
-		  '$(_wt_sql_escape "$branch")',
-		  :owner_pid,
-		  '$(_wt_sql_escape "$session_id")',
-		  '$(_wt_sql_escape "$batch_id")',
-		  '$(_wt_sql_escape "$task_id")',
-		  '$(_wt_sql_escape "$owner_comm")',
-		  '$(_wt_sql_escape "$owner_process_start")',
-		  '');
-    "
-	} | _wt_sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null || return 1
+	python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry-owner.py" register \
+		"$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" "$session_id" \
+		"$batch_id" "$task_id" "$owner_comm" "$owner_process_start" 0 || return 1
 	return 0
 }
 
@@ -1163,6 +1149,13 @@ _wt_is_worktree_owned_by_others_for_resolved_pid() {
 	# window so cleanup never treats one failed PID probe as immediate abandon.
 	if ! kill -0 "$owner_pid" 2>/dev/null; then
 		_wt_pid_is_definitely_absent "$owner_pid" || return 0
+		# A closed managed invocation proves descendant completion, unlike a PID
+		# probe. Release only the exact lease under the same registry transaction.
+		if python3 "${_WORKTREE_REGISTRY_SCRIPT_DIR}/shared-worktree-registry-owner.py" \
+			release-completed "$WORKTREE_REGISTRY_DB" "$wt_path" "$owner_pid" \
+			"$registered_process_start" "$registered_created_at"; then
+			return 1
+		fi
 		_wt_mark_owner_dead_seen "$wt_path"
 		if _wt_owner_dead_cooldown_expired "$wt_path"; then
 			if _wt_unregister_owner_if_generation_matches "$wt_path" "$owner_pid" \

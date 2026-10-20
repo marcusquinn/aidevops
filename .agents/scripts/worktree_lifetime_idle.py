@@ -8,6 +8,8 @@ import math
 import os
 import time
 
+import worktree_lifetime_owner as owner_lifetime
+
 
 IDLE_SECONDS = 24 * 60 * 60
 
@@ -68,6 +70,9 @@ def quiescence(record, boot_id, drain, seal):
     # Revalidate even a previously sealed record; old receipts alone must not
     # establish a fresh idle interval after reboot or unit replacement.
     for launch in record["launches"]:
+        if launch.get("kind") == owner_lifetime.KIND:
+            owner_lifetime.drain(launch)
+            continue
         if launch["boot_id"] != boot_id():
             raise ValueError("idle boot generation unavailable")
         if launch["invocation"] is not None:

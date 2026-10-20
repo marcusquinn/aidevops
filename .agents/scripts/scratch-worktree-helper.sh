@@ -165,11 +165,15 @@ scratch_worktree_add() {
 	reason="${_SCRATCH_WT_REASON_PREFIX} label=${safe_label} pid=$$ started=${started} nonce=${RANDOM}${RANDOM}"
 	scratch_path="${base_dir}/.${repo_name}-${safe_label}-$$-${RANDOM}${RANDOM}"
 	[[ ! -e "$scratch_path" && ! -L "$scratch_path" ]] || return 1
-	if ! git -C "$repo_path" worktree add -q --detach --lock --reason "$reason" \
-		"$scratch_path" "$commitish" >/dev/null 2>&1; then
+	# shellcheck source=shared-worktree-create.sh
+	source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || return 1
+	local AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$"
+	local AIDEVOPS_WORKTREE_CREATE_SESSION="$reason"
+	if ! worktree_create_registered "$repo_path" "$scratch_path" "$commitish" \
+		-q --detach --lock --reason "$reason" >/dev/null 2>&1; then
 		# Git < 2.36 lacks `add --reason`: create, then lock before any use.
 		[[ ! -e "$scratch_path" ]] || return 1
-		git -C "$repo_path" worktree add -q --detach "$scratch_path" "$commitish" >/dev/null 2>&1 || return 1
+		worktree_create_registered "$repo_path" "$scratch_path" "$commitish" -q --detach >/dev/null 2>&1 || return 1
 		if ! git -C "$scratch_path" worktree lock --reason "$reason" "$scratch_path" >/dev/null 2>&1; then
 			git -C "$scratch_path" worktree remove "$scratch_path" >/dev/null 2>&1 || true
 			return 1

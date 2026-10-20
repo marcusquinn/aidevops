@@ -4,9 +4,51 @@
 """Atomic ownership writes; caller validation and schema migration stay in Bash."""
 
 from contextlib import closing
+import json
 import os
+from pathlib import Path
+import re
 import sqlite3
+import subprocess
 import sys
+
+import worktree_lifetime_owner as owner_lifetime
+import worktree_lifetime_proof as lifetime_proof
+
+
+def release_completed(args: list[str]) -> int:
+    """Release an exact dead lease, never infer completion from PID absence."""
+    if len(args) != 5:
+        return 1
+    database, path, pid, start, created = args
+    try:
+        with closing(sqlite3.connect(database, isolation_level=None)) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
+            if not row:
+                return 1
+            record = json.loads(row[0])
+            if record.get("manager") != owner_lifetime.MANAGER:
+                return 1
+            identity = owner_lifetime.identity(Path(path))
+            if record.get("identity") != identity:
+                return 1
+            lifetime_proof.proof(record, identity["source_inode"])
+            try:
+                os.kill(int(pid), 0)
+            except ProcessLookupError:
+                pass
+            else:
+                return 1
+            cursor = connection.execute(
+                """DELETE FROM worktree_owners WHERE worktree_path=? AND owner_pid=?
+                   AND COALESCE(owner_process_start, '')=? AND COALESCE(created_at, '')=?""",
+                (path, int(pid), start, created))
+            connection.execute("COMMIT")
+            return 0 if cursor.rowcount == 1 else 1
+    except (sqlite3.Error, ValueError, OSError, KeyError, subprocess.SubprocessError):
+        return 1
 
 
 def owner_values(args: list[str]) -> tuple[str, int, str, str, str, str, str]:
@@ -72,21 +114,48 @@ def transfer(connection: sqlite3.Connection, args: list[str]) -> bool:
 
 
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] not in ("claim", "transfer"):
+    if argv and argv[0] == "release-completed":
+        return release_completed(argv[1:])
+    if not argv or argv[0] not in ("register", "claim", "transfer", "adopt"):
         return 1
     operation, args = argv[0], argv[1:]
-    if len(args) != (10 if operation == "claim" else 15):
+    if len(args) != (15 if operation in ("transfer", "adopt") else 10):
         return 1
     output = ""
     try:
         with closing(sqlite3.connect(args[0], isolation_level=None)) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
-                if operation == "claim":
+                owner_lifetime.check_admission(connection, args[1])
+                if operation == "register":
+                    connection.execute(
+                        """INSERT OR REPLACE INTO worktree_owners
+                        (worktree_path, branch, owner_pid, owner_session, owner_batch,
+                         task_id, owner_comm, owner_process_start, owner_dead_seen_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')""", (args[1], *owner_values(args)))
+                    matched = True
+                elif operation == "claim":
                     output = claim(connection, args)
                     matched = True
                 else:
+                    if operation == "adopt":
+                        try:
+                            os.kill(int(args[9]), 0)
+                        except ProcessLookupError:
+                            pass
+                        else:
+                            raise ValueError("previous owner remains alive")
+                        os.kill(int(args[3]), 0)
                     matched = transfer(connection, args)
+                if matched:
+                    final = connection.execute(
+                        "SELECT owner_pid, owner_session FROM worktree_owners WHERE worktree_path=?",
+                        (args[1],)).fetchone()
+                    cleanup = args[6] == "worktree-removal" and re.fullmatch(r"cleanup:[0-9]+", args[4])
+                    if final == (int(args[3]), args[4]) and not cleanup:
+                        creating = (os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and
+                                    os.environ.get("AIDEVOPS_WORKTREE_MANAGER") != "pulse-cgroup-v1")
+                        owner_lifetime.register(connection, args[1], final[0], final[1], creating)
                 connection.execute("COMMIT" if matched else "ROLLBACK")
             except Exception:
                 if connection.in_transaction:
@@ -95,7 +164,7 @@ def main(argv: list[str]) -> int:
         if output:
             print(output)
         return 0 if matched else 1
-    except (sqlite3.Error, ValueError, OSError):
+    except (sqlite3.Error, ValueError, OSError, KeyError, subprocess.SubprocessError):
         print("Worktree ownership transaction unavailable", file=sys.stderr)
         return 1
 

@@ -1267,10 +1267,13 @@ _cmd_add_create_worktree() {
 	local _branch="$1"
 	local _path="$2"
 	local _explicit_base="$3"
+	local AIDEVOPS_WORKTREE_CREATE_TASK="${4:-}"
+	# shellcheck source=shared-worktree-create.sh
+	source "${SCRIPT_DIR}/shared-worktree-create.sh" || return 1
 
 	if branch_exists "$_branch"; then
 		echo -e "${BLUE}Creating worktree for existing branch '$_branch'...${NC}"
-		git worktree add "$_path" "$_branch"
+		worktree_create_registered . "$_path" "$_branch" || return 1
 		return 0
 	fi
 
@@ -1285,7 +1288,7 @@ _cmd_add_create_worktree() {
 		_unmerged_remote_ref=$(_unmerged_remote_branch_ref "$_branch" 2>/dev/null || true)
 		if [[ -n "$_unmerged_remote_ref" ]]; then
 			echo -e "${BLUE}Creating worktree with new branch '$_branch' on unmerged remote '$_unmerged_remote_ref'...${NC}"
-			git worktree add -b "$_branch" "$_path" "$_unmerged_remote_ref" || return 1
+			worktree_create_registered . "$_path" "$_unmerged_remote_ref" -b "$_branch" || return 1
 			git -C "$_path" branch --set-upstream-to="$_unmerged_remote_ref" "$_branch" 2>/dev/null || true
 			return 0
 		fi
@@ -1298,7 +1301,7 @@ _cmd_add_create_worktree() {
 	_base_ref=$(_resolve_worktree_base_ref "$_explicit_base") || return 1
 	if [[ -n "$_base_ref" ]]; then
 		echo -e "${BLUE}Creating worktree with new branch '$_branch' based on '$_base_ref'...${NC}"
-		git worktree add -b "$_branch" "$_path" "$_base_ref"
+		worktree_create_registered . "$_path" "$_base_ref" -b "$_branch" || return 1
 		return 0
 	fi
 
@@ -1574,7 +1577,7 @@ cmd_add() {
 	fi
 
 	# Create worktree (existing branch → simple checkout; new branch → base-ref dance).
-	_cmd_add_create_worktree "$branch" "$path" "$explicit_base" || return 1
+	_cmd_add_create_worktree "$branch" "$path" "$explicit_base" "$explicit_issue" || return 1
 	# Register ownership before retiring historical cleanup receipts. The
 	# transaction helper verifies the exact row and compensates on failure.
 	_cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1

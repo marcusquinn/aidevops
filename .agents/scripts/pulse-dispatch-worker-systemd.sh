@@ -209,8 +209,12 @@ _dlw_exec_systemd_user_service() {
 		# Retain exited units until the cleanup reader durably records quiescence.
 		# A wrapper exit alone is not a descendant-lifetime receipt.
 		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" reserve "$_DLW_WORKTREE_PATH" "$unit_name" || return 1
-		lifetime_properties=(--property=Type=exec --property=ExitType=cgroup
-			--property=RemainAfterExit=yes --property=Restart=no --property=KillMode=control-group)
+		local properties="" property=""
+		properties=$(python3 "${SCRIPT_DIR}/worktree-managed-run.py" --print-properties) || return 1
+		lifetime_properties=()
+		while IFS= read -r property; do
+			lifetime_properties+=("$property")
+		done <<<"$properties"
 		set -- env "WORKTREE_REGISTRY_DB=${WORKTREE_REGISTRY_DB:-${HOME}/.aidevops/.agent-workspace/worktree-registry.db}" \
 			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" bind-exec "$_DLW_WORKTREE_PATH" "$@"
 	fi

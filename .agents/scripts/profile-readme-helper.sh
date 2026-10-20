@@ -211,8 +211,9 @@ _profile_write_publication_intent() {
 		--arg worktree_path "$resolved_worktree_path" \
 		--arg canonical_common_dir "$common_dir" \
 		--arg canonical_head "$canonical_head" \
+		--arg canonical_status "${PROFILE_PUBLICATION_CANONICAL_STATUS:-}" \
 		--argjson created_epoch "$(date +%s)" \
-		'{schema:$schema,producer:$producer,intent_id:$intent_id,worktree_path:$worktree_path,canonical_common_dir:$canonical_common_dir,canonical_head:$canonical_head,created_epoch:$created_epoch}' \
+		'{schema:$schema,producer:$producer,intent_id:$intent_id,worktree_path:$worktree_path,canonical_common_dir:$canonical_common_dir,canonical_head:$canonical_head,canonical_status:$canonical_status,created_epoch:$created_epoch}' \
 		>"$intent_tmp" || ! chmod 600 "$intent_tmp" || ! mv "$intent_tmp" "$intent_path"; then
 		rm -f "$intent_tmp"
 		return 1
@@ -346,9 +347,11 @@ _archive_and_remove_profile_publication_worktree() {
 	local context="recovery_path=profile-publication-archive profile_scratch=true"
 
 	_profile_publication_worktree_recovery_is_safe "$worktree_path" || return 1
+	printf '%s\n' 'Profile publication recovery: capturing completed worktree' >&2
 	archive_worktree_path_recoverably "$worktree_path" "$caller" "$context" || return 1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 	[[ -n "$archive_path" ]] || return 1
+	printf '%s\n' 'Profile publication recovery: checking guarded removal' >&2
 	# Recheck after compact verification so a changed canonical checkout or newly claimed
 	# worktree remains recoverable instead of being removed.
 	_profile_publication_worktree_recovery_is_safe "$worktree_path" || return 1
@@ -361,6 +364,11 @@ _archive_and_remove_profile_publication_worktree() {
 
 _cleanup_profile_publication_worktree() {
 	if [[ -z "$PROFILE_PUBLICATION_WORKTREE" ]]; then
+		return 0
+	fi
+	# The producer and all its descendants must finish before archival/removal.
+	# The common runner seals the invocation and calls cleanup-managed outside it.
+	if [[ "${AIDEVOPS_MANAGED_WORKTREE_RUN:-0}" == "1" ]]; then
 		return 0
 	fi
 	local worktree_path="$PROFILE_PUBLICATION_WORKTREE"
@@ -2080,10 +2088,19 @@ _profile_run_in_worktree() {
 		_profile_clear_publication_state
 		return 1
 	fi
-	if ! git -C "$canonical_repo" worktree add --detach "$worktree_path" HEAD >/dev/null; then
+	local owner_session="profile-readme-${PROFILE_UPDATE_LOCK_TOKEN:-$$}"
+	# shellcheck source=shared-worktree-create.sh
+	source "${SCRIPT_DIR}/shared-worktree-create.sh" || return 1
+	if ! AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
+		AIDEVOPS_WORKTREE_CREATE_SESSION="$owner_session" \
+		AIDEVOPS_WORKTREE_CREATE_TASK="$PROFILE_PUBLICATION_REGISTRY_TASK" \
+		worktree_create_registered "$canonical_repo" "$worktree_path" "$canonical_head_before" --detach >/dev/null; then
 		echo "Error: could not create profile publication worktree" >&2
-		_profile_remove_publication_intent || true
-		_profile_clear_publication_state
+		# A failed registration may leave a tree. Keep its intent for recovery.
+		if [[ ! -e "$worktree_path" ]]; then
+			_profile_remove_publication_intent || true
+			_profile_clear_publication_state
+		fi
 		return 1
 	fi
 	if ! _profile_write_publication_marker "$worktree_path" "$canonical_repo"; then
@@ -2091,13 +2108,6 @@ _profile_run_in_worktree() {
 		_cleanup_profile_publication_worktree || true
 		return 1
 	fi
-	local owner_session="profile-readme-${PROFILE_UPDATE_LOCK_TOKEN:-$$}"
-	if ! _profile_publication_registry_update register "$worktree_path" "$$" "$owner_session"; then
-		echo "Error: could not register profile publication worktree ownership" >&2
-		_cleanup_profile_publication_worktree || true
-		return 1
-	fi
-
 	local default_branch=""
 	default_branch=$(_profile_default_branch "$canonical_repo")
 	if ! git -C "$worktree_path" fetch --quiet origin "$default_branch" ||
@@ -2164,7 +2174,44 @@ cmd_update_contributions() {
 }
 
 # --- Main dispatch ---
+cmd_cleanup_managed() {
+	local path="$1"
+	local common=""
+	[[ -d "$path" && ! -L "$path" ]] || return 1
+	python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" proof "$path" || return 1
+	PROFILE_PUBLICATION_CANONICAL_REPO=$(_resolve_profile_repo) || return 1
+	PROFILE_PUBLICATION_WORKTREE=$(cd "$path" && pwd -P) || return 1
+	PROFILE_PUBLICATION_WORKTREE_BASE=$(cd "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}" && pwd -P) || return 1
+	PROFILE_PUBLICATION_INTENT_PATH=$(_profile_publication_intent_path \
+		"$PROFILE_PUBLICATION_CANONICAL_REPO" "$PROFILE_PUBLICATION_WORKTREE") || return 1
+	[[ -f "$PROFILE_PUBLICATION_INTENT_PATH" && ! -L "$PROFILE_PUBLICATION_INTENT_PATH" ]] || return 1
+	common=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse --path-format=absolute --git-common-dir) || return 1
+	jq -e --arg path "$PROFILE_PUBLICATION_WORKTREE" --arg common "$common" \
+		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
+		'.schema == "aidevops-profile-publication-intent/v1" and .producer == $producer and
+		 .worktree_path == $path and .canonical_common_dir == $common and
+		 (.canonical_status | type == "string")' "$PROFILE_PUBLICATION_INTENT_PATH" >/dev/null || return 1
+	PROFILE_PUBLICATION_CANONICAL_HEAD=$(jq -er '.canonical_head' "$PROFILE_PUBLICATION_INTENT_PATH") || return 1
+	PROFILE_PUBLICATION_CANONICAL_STATUS=$(jq -er '.canonical_status' "$PROFILE_PUBLICATION_INTENT_PATH") || return 1
+	_profile_publication_worktree_recovery_is_safe "$PROFILE_PUBLICATION_WORKTREE" || return 1
+	_cleanup_profile_publication_worktree || return 1
+	return 0
+}
+
+# Start before acquiring the publication lock. The child is the managed unit's
+# leader; the parent callback runs only after all descendants have drained.
+if [[ "${1:-}" == "update" || "${1:-}" == "update-contributions" ]] &&
+	[[ "${AIDEVOPS_MANAGED_WORKTREE_RUN:-0}" != "1" && "${AIDEVOPS_PROFILE_PUBLICATION_WORKTREE:-0}" != "1" ]]; then
+	exec python3 "${SCRIPT_DIR}/worktree-managed-run.py" \
+		--after bash --after "${SCRIPT_DIR}/profile-readme-helper.sh" --after cleanup-managed \
+		-- bash "${SCRIPT_DIR}/profile-readme-helper.sh" "$@"
+fi
+
 case "${1:-help}" in
+cleanup-managed)
+	shift
+	cmd_cleanup_managed "$@"
+	;;
 init) cmd_init ;;
 generate) cmd_generate ;;
 update)

@@ -8,6 +8,7 @@ set -euo pipefail
 TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 AGENT_SCRIPTS_DIR="${TEST_SCRIPT_DIR}/.."
 ORIGINAL_PATH="$PATH"
+FIXTURE_GIT="${AIDEVOPS_TEST_GIT_BIN:-$(command -v git)}"
 TEST_ROOT=""
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -75,7 +76,7 @@ teardown_test_env() {
 }
 
 fixture_git() {
-	if /usr/bin/git "$@"; then
+	if "$FIXTURE_GIT" "$@"; then
 		return 0
 	fi
 	return 1

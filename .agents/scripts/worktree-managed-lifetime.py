@@ -24,6 +24,7 @@ import uuid
 
 import worktree_lifetime_idle as idle_policy
 import worktree_lifetime_proof as lifetime_proof
+import worktree_lifetime_owner as owner_lifetime
 
 
 TABLE = "worktree_managed_lifetimes"
@@ -49,13 +50,7 @@ def inode(path: Path) -> str:
 
 
 def identity(path: Path) -> dict:
-    require(path.is_absolute() and not path.is_symlink(), "unsafe worktree path")
-    path = path.resolve(strict=True)
-    admin = Path(command(["git", "-C", str(path), "rev-parse", "--absolute-git-dir"]))
-    common = Path(command(["git", "-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir"]))
-    require(admin.resolve() != common.resolve(), "canonical repository cannot enroll")
-    return {"path": str(path), "source_inode": inode(path), "admin": str(admin.resolve()),
-            "admin_inode": inode(admin), "common": str(common.resolve())}
+    return owner_lifetime.identity(path)
 
 
 def initialize(connection: sqlite3.Connection) -> None:
@@ -93,7 +88,8 @@ def load(connection: sqlite3.Connection, path: str) -> dict:
     if row is None:
         raise NotEnrolled("worktree is not enrolled")
     record = json.loads(row[0])
-    require(record.get("schema") == 1 and record.get("manager") == "pulse", "invalid provenance")
+    require(record.get("schema") == 1 and record.get("manager") in ("pulse", owner_lifetime.MANAGER),
+            "invalid provenance")
     require(record["identity"]["path"] == path, "path mismatch")
     return record
 
@@ -104,16 +100,7 @@ def save(connection: sqlite3.Connection, record: dict) -> None:
 
 
 def unit_snapshot(unit: str) -> dict:
-    require(re.fullmatch(r"aidevops-worker-[A-Za-z0-9_-]+(?:\.service)?", unit) is not None,
-            "invalid worker unit")
-    properties = ["Id", "LoadState", "ActiveState", "SubState", "MainPID", "InvocationID",
-                  "ControlGroup", "ExitType", "RemainAfterExit", "Restart", "Result", "Job"]
-    output = command(["systemctl", "--user", "show", unit, *[f"--property={p}" for p in properties]])
-    snapshot = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-    require(snapshot.get("LoadState") == "loaded", "unit evidence unavailable")
-    require(snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
-            and snapshot.get("Restart") == "no", "unit lifetime contract mismatch")
-    return snapshot
+    return owner_lifetime.unit_snapshot(unit)
 
 
 def boot_id() -> str:
@@ -133,6 +120,7 @@ def enroll(connection: sqlite3.Connection, path: Path) -> None:
 
 
 def reserve(record: dict, unit: str) -> None:
+    require(record.get("manager") == "pulse", "owner-observed worktree cannot change admission mode")
     require(record["state"] in ("created", "running"), "launch already reserved or worktree sealed")
     if record["launches"]:
         drain(record["launches"][-1])
@@ -157,27 +145,20 @@ def bind(record: dict) -> None:
 
 
 def drain(launch: dict) -> None:
-    require(launch["boot_id"] == boot_id(), "boot generation unavailable")
-    snapshot = unit_snapshot(launch["unit"])
-    require(snapshot.get("InvocationID") == launch["invocation"], "invocation changed")
-    require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "unit still has work")
-    require((snapshot.get("ActiveState"), snapshot.get("SubState")) in
-            (("active", "exited"), ("failed", "failed")), "descendants have not drained")
-    # ExitType=cgroup retains running state until the entire subtree exits.
-    # Also check recursive kernel evidence when systemd has not removed the empty cgroup.
-    cgroup = launch["cgroup"]
-    require(cgroup.startswith("/") and ".." not in Path(cgroup).parts, "unsafe cgroup")
-    directory = Path("/sys/fs/cgroup") / cgroup.lstrip("/")
-    try:
-        events = dict(line.split() for line in (directory / "cgroup.events").read_text().splitlines())
-        require(events.get("populated") == "0", "cgroup remains populated")
-    except FileNotFoundError:
-        require(not directory.exists(), "cgroup evidence unavailable")
-    require(unit_snapshot(launch["unit"]) == snapshot, "unit changed while sampling")
-    launch["quiescence"] = snapshot
+    if launch.get("kind") == owner_lifetime.KIND:
+        owner_lifetime.drain(launch)
+        return
+    owner_lifetime.drain_unit(launch, boot_id, unit_snapshot)
 
 
 def seal(record: dict) -> None:
+    if record.get("manager") == owner_lifetime.MANAGER:
+        require(bool(record["launches"]), "missing owner admission evidence")
+        owner_lifetime.require_admission_observed(record)
+        for launch in record["launches"]:
+            owner_lifetime.drain(launch)
+        record.update(state="sealed", sealed_at=time.time())
+        return
     if record["state"] == "sealed":
         return
     if record["state"] == "created":

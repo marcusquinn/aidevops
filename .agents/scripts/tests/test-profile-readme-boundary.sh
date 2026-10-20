@@ -82,7 +82,7 @@ install_helper_with_libs() {
 	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
 	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
 	cp "${SOURCE_HELPER%/*}/profile-contribution-chart.py" "${helper_dir}/profile-contribution-chart.py"
-	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh || return 1
+	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh || return 1
 	cp "${SOURCE_HELPER%/*}/audit-worktree-removal-helper.sh" \
 		"${SOURCE_HELPER%/*}/shared-sqlite-backup.sh" \
 		"${SOURCE_HELPER%/*}/portable-stat.sh" \
@@ -397,9 +397,15 @@ jq -e --arg target "$resolved_target" '
 ' "$marker_path" >/dev/null
 # shellcheck source=../shared-constants.sh
 source "$(cd "$(dirname "$0")" && pwd)/shared-constants.sh"
-owner_snapshot=$(check_worktree_owner_snapshot "$target")
-IFS='|' read -r owner_pid _ _ owner_task _ owner_process_start <<<"$owner_snapshot"
-[[ "$owner_pid" =~ ^[1-9][0-9]*$ && "$owner_task" == "profile-readme" && -n "$owner_process_start" ]]
+if owner_snapshot=$(check_worktree_owner_snapshot "$target"); then
+    IFS='|' read -r owner_pid _ _ owner_task _ owner_process_start <<<"$owner_snapshot"
+    [[ "$owner_pid" =~ ^[1-9][0-9]*$ && "$owner_task" == "profile-readme" && -n "$owner_process_start" ]]
+else
+    [[ "$?" -eq 1 ]] || exit 1
+    # Managed cleanup releases the completed lease before invoking removal.
+    # Its durable receipt must still prove the original creation and completion.
+    python3 "$(dirname "$0")/worktree-managed-lifetime.py" proof "$target"
+fi
 printf 'verified\n' >"$PROFILE_MARKER_EVIDENCE"
 printf '%s\n' "recoverable fixture state" >"${target}/.profile-publication-fixture"
 # The normal publication must remain recoverable without fixture permission
@@ -412,7 +418,7 @@ EOF
 	chmod +x "$refusing_helper"
 
 	HOME="$fixture_home" \
-		PATH="${SOURCE_HELPER%/*}:${PATH}" \
+		PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
 		AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
 		AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
 		AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" \

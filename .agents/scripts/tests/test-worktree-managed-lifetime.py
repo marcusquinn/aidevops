@@ -141,7 +141,10 @@ class LifetimeTests(unittest.TestCase):
             root = Path(temporary)
             repo, worktree = root / "repo", root / "worktree"
             db = root / "registry.db"
-            env = dict(os.environ, WORKTREE_REGISTRY_DB=str(db),
+            home = root / "home"
+            home.mkdir()
+            env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root), WORKTREE_REGISTRY_DB=str(db),
+                       AIDEVOPS_WORKTREE_BASE_DIR=str(root),
                        AIDEVOPS_WORKTREE_TRASH_ROOT=str(root / "recovery"),
                        AIDEVOPS_CLEANUP_LOG=str(root / "cleanup.log"))
             git = os.environ.get("AIDEVOPS_TEST_GIT_BIN", "git")
@@ -149,14 +152,17 @@ class LifetimeTests(unittest.TestCase):
 
             def run(argv, check=True):
                 # Fixture-owned argv and disposable paths only; no shell interpolation.
-                return subprocess.run(argv, env=env, text=True, capture_output=True, timeout=30, check=check)  # nosec B603
+                result = subprocess.run(argv, env=env, text=True, capture_output=True, timeout=30, check=False)  # nosec B603
+                if check:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                return result
 
             run([git, "init", str(repo)])
             run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                  "commit", "--allow-empty", "-m", "fixture"])
             run([git, "-C", str(repo), "worktree", "add", "-b", "fixture", str(worktree)])
-            with closing(sqlite3.connect(db)) as connection:
-                connection.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, task_id TEXT, owner_session TEXT, owner_pid INTEGER)")
+            run(["bash", "-c", 'source "$1/shared-worktree-registry.sh" && _init_registry_db',
+                 "fixture", str(HELPER.parent)])
             helper = [sys.executable, str(HELPER)]
             run([*helper, "enroll", str(worktree)])
             # A failed submission remains a cleanup candidate, but classification
@@ -217,6 +223,8 @@ class LifetimeTests(unittest.TestCase):
                 self.assertNotEqual(active.returncode, 0)
                 self.assertNotEqual(run([*helper, "reserve", str(worktree), unit + "-again"], check=False).returncode, 0)
                 # Exercise the production archive/verify/native-remove path, not just a boolean proof.
+                (worktree / "saved.txt").write_text("preserve staged user work\n")
+                run([git, "-C", str(worktree), "add", "saved.txt"])
                 (worktree / "unsaved.txt").write_text("preserve this user change\n")
                 archived = run(["bash", "-c", 'set -e; source "$1"; '
                                 'archive_worktree_path_recoverably "$2" fixture fixture; '
@@ -228,7 +236,8 @@ class LifetimeTests(unittest.TestCase):
                 restored = root / "restored"
                 run(["bash", str(HELPER.parent / "worktree-archive-helper.sh"),
                      "restore", str(archive), "--target", str(restored)])
-                self.assertEqual((restored / "unsaved.txt").read_text(), "preserve this user change\n")
+                self.assertEqual((restored / "saved.txt").read_text(), "preserve staged user work\n")
+                self.assertFalse((restored / "unsaved.txt").exists(), "Git-only recovery excludes untracked files")
                 run([*helper, "proof", str(worktree), record["identity"]["source_inode"]])
             finally:
                 record = json.loads(run([*helper, "status", str(worktree)]).stdout)

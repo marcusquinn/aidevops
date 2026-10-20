@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Marcus Quinn
+"""Run worktree-producing commands in a retained rootless user-service lifetime.
+
+The command may create several worktrees through the shared creator. Completion
+seals only their matching invocation records; it never adopts historical trees.
+Optional post-seal callbacks run outside the completed unit, so archival does not
+mistake a still-running producer for completed work. No sudo or detached fallback.
+"""
+
+import argparse
+from contextlib import closing, contextmanager
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+import worktree_lifetime_owner as lifetime
+
+
+def inherited_environment():
+    # Forward values through systemd-run's inherited-variable form, not argv.
+    # Do not forward old invocation IDs or parent runtime PIDs into the new unit.
+    excluded = {"INVOCATION_ID", "SYSTEMD_EXEC_PID", "MANAGERPID", "NOTIFY_SOCKET",
+                "WATCHDOG_PID", "WATCHDOG_USEC", "LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES",
+                "JOURNAL_STREAM", "OPENCODE_PID", "CLAUDE_PID", "AIDEVOPS_WORKTREE_CREATING",
+                "AIDEVOPS_WORKTREE_MANAGER", "AIDEVOPS_MANAGED_WORKTREE_RUN", "AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT"}
+    names = {key for key in os.environ if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)} - excluded
+    return ["--setenv=" + key for key in sorted(names)]
+
+
+def invocation_worktrees(unit, invocation):
+    directory = Path(os.environ.get("WORKTREE_REGISTRY_DIR") or Path.home() / ".aidevops/.agent-workspace")
+    db = Path(os.environ.get("WORKTREE_REGISTRY_DB") or directory / "worktree-registry.db")
+    if not db.exists():
+        return []  # A command which did not create a worktree needs no sealing.
+    lifetime.require(db.is_file() and not db.is_symlink(), "unsafe worktree registry")
+    with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as connection:
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_managed_lifetimes'").fetchone():
+            return []
+        rows = connection.execute("""SELECT DISTINCT lifetimes.path, lifetimes.record
+            FROM worktree_managed_lifetimes AS lifetimes, json_each(lifetimes.record, '$.launches') AS launches
+            WHERE (json_extract(launches.value, '$.unit')=?
+              AND json_extract(launches.value, '$.invocation')=?)
+              OR json_extract(lifetimes.record, '$.creator_run')=?""", (unit, invocation, unit)).fetchall()
+    return [(path, json.loads(record)) for path, record in rows]
+
+
+def finalize(unit, snapshot, callback, deadline):
+    scripts = Path(__file__).resolve().parent
+    for path, record in invocation_worktrees(unit, snapshot["InvocationID"]):
+        lifetime.require(record.get("manager") == lifetime.MANAGER, "unexpected managed run provenance")
+        # Scratch trees may already have completed their guarded removal. Never
+        # create a replacement just to seal a missing source.
+        if not Path(path).exists():
+            continue
+        subprocess.run([sys.executable, str(scripts / "worktree-managed-lifetime.py"), "seal", path],
+                       check=True, timeout=30)
+        if callback:
+            remaining = min(300, int(deadline - time.monotonic()))
+            lifetime.require(remaining > 0, "post-seal budget exhausted; source retained")
+            status = run([*callback, path], [], remaining, producer=False)
+            lifetime.require(status == 0, "post-seal callback failed; inspect retained run")
+
+
+@contextmanager
+def isolated_service_io():
+    """A retained unit must never own the calling tool's stdout/stderr pipes.
+
+systemd-run --pipe passes its descriptors to the user manager. Even an exited
+RemainAfterExit unit can retain them. Relay regular files without waiting for
+    EOF; pread avoids changing the shared writer's file offset.
+    """
+    if all(stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr)):
+        yield {}, lambda: None, "--pty"
+        return
+    root = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
+    lifetime.require(not root.is_symlink(), "unsafe managed output directory")
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lifetime.require(root.stat().st_uid == os.getuid(), "managed output directory owner mismatch")
+    with tempfile.TemporaryFile(dir=root) as out, tempfile.TemporaryFile(dir=root) as err:
+        offsets = [0, 0]
+        def relay():
+            for index, (source, target) in enumerate(((out, sys.stdout), (err, sys.stderr))):
+                data = os.pread(source.fileno(), 65536, offsets[index])
+                if data:
+                    offsets[index] += len(data)
+                    target.buffer.write(data)
+                    target.buffer.flush()
+        try:
+            yield {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": err}, relay, "--pipe"
+        finally:
+            # Bound the final output drain independently of any retained descriptor.
+            for _ in range(16):
+                before = offsets.copy()
+                relay()
+                if offsets == before:
+                    break
+            if any(os.fstat(stream.fileno()).st_size > offsets[index]
+                   for index, stream in enumerate((out, err))):
+                print("Managed run output truncated at the bounded drain limit", file=sys.stderr)
+
+
+def wait_for_unit(unit, client, deadline, relay=lambda: None):
+    startup_deadline = min(deadline, time.monotonic() + 10)
+    invocation = None
+    next_progress = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        relay()
+        try:
+            snapshot = lifetime.unit_snapshot(unit)
+        except (ValueError, subprocess.SubprocessError):
+            if invocation is not None or time.monotonic() >= startup_deadline or client.poll() is not None:
+                raise
+            time.sleep(0.1)
+            continue
+        # A loaded transient unit may not yet have an invocation during startup.
+        # This is pending admission, not an invocation replacement.
+        if not invocation and not snapshot.get("InvocationID"):
+            lifetime.require(time.monotonic() < startup_deadline,
+                             "managed invocation did not start within its startup budget")
+            time.sleep(0.1)
+            continue
+        invocation = invocation or snapshot["InvocationID"]
+        lifetime.require(snapshot["InvocationID"] == invocation,
+                         "managed invocation changed")
+        if snapshot.get("MainPID") == "0" and not snapshot.get("Job") and (
+                snapshot.get("ActiveState"), snapshot.get("SubState")) in (
+                    ("active", "exited"), ("failed", "failed")):
+            return snapshot
+        if time.monotonic() >= next_progress:
+            print(f"Managed run {unit}: {snapshot.get('ActiveState')}/{snapshot.get('SubState')}; "
+                  f"budget remaining {max(0, int(deadline-time.monotonic()))}s", file=sys.stderr, flush=True)
+            next_progress = time.monotonic() + 10
+        time.sleep(0.2)
+    raise ValueError("managed run budget exhausted; RuntimeMaxSec bounds the owned unit")
+
+
+def close_client(client):
+    # The systemd-run --pipe/--pty client otherwise waits for a retained exited
+    # unit forever. Signal only our Popen child, never a service selected by name.
+    if client.poll() is None:
+        client.terminate()
+        try:
+            client.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            client.kill()
+            client.wait(timeout=2)
+
+
+def run(command, callback, timeout, producer=True):
+    lifetime.require(bool(command), "a command is required after --")
+    lifetime.require(shutil.which("systemd-run") and shutil.which("systemctl"),
+                     "rootless user-systemd is unavailable; no untracked fallback")
+    subprocess.run(["systemctl", "--user", "show", "--property=Version"],
+                   stdout=subprocess.DEVNULL, check=True, timeout=10)
+    unit = "aidevops-worker-session-" + uuid.uuid4().hex + ".service"
+    print(f"Managed worktree run: {unit}", file=sys.stderr, flush=True)
+    deadline = time.monotonic() + timeout
+    with isolated_service_io() as (stdio, relay, mode):
+        client = subprocess.Popen(
+            ["systemd-run", "--user", "--no-ask-password", "--quiet", "--unit=" + unit, mode,
+             *lifetime.SERVICE_PROPERTIES, "--property=RuntimeMaxSec=" + str(timeout),
+             "--property=TimeoutStopSec=5", "--expand-environment=no", *inherited_environment(),
+             "--setenv=AIDEVOPS_MANAGED_WORKTREE_RUN=" + ("1" if producer else "0"),
+             "--setenv=AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT=" + unit,
+             "--working-directory=" + os.getcwd(), "--", *command], **stdio)
+        try:
+            snapshot = wait_for_unit(unit, client, deadline, relay)
+        finally:
+            close_client(client)
+    finalize(unit, snapshot, callback, deadline)
+    # Retain the unit and its completion evidence. Never stop by name after a
+    # snapshot: systemd has no invocation-conditional StopUnit operation.
+    if snapshot.get("Result") == "success":
+        return 0
+    status = int(snapshot.get("ExecMainStatus") or "1")
+    return (status or 1) if snapshot.get("ExecMainCode") == "1" else min(255, 128 + status)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--after", action="append", default=[], metavar="ARG",
+                        help="post-seal callback argv (repeat per argument); worktree path is appended")
+    parser.add_argument("--timeout-seconds", type=int,
+                        default=os.environ.get("AIDEVOPS_WORKTREE_RUN_TIMEOUT_SECONDS", "300"))
+    parser.add_argument("--print-properties", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    if args.print_properties:
+        print("\n".join(lifetime.SERVICE_PROPERTIES))
+        return 0
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    try:
+        lifetime.require(args.timeout_seconds > 0, "timeout must be positive")
+        return run(command, args.after, args.timeout_seconds)
+    except (OSError, ValueError, KeyError, sqlite3.Error, subprocess.SubprocessError) as error:
+        # ValueError messages are fixed internal policy reasons. Never print
+        # CalledProcessError argv: a user command could contain credentials.
+        reason = str(error) if isinstance(error, ValueError) else type(error).__name__
+        print(f"Managed worktree run incomplete; sources and unit retained: {reason}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
