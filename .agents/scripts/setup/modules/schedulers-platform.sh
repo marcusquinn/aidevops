@@ -1059,8 +1059,11 @@ setup_storage_hygiene() {
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		local hygiene_label="sh.aidevops.storage-hygiene"
 		local hygiene_plist="$hygiene_home/Library/LaunchAgents/${hygiene_label}.plist"
-		local hygiene_plist_content
-		hygiene_plist_content=$(cat <<HYGIENE_PLIST
+		# read -d '' instead of $(cat <<...): Bash 3.2 cannot parse a heredoc
+		# inside command substitution (reference/bash-compat.md). read keeps
+		# the trailing newline, so strip it to match the installed-plist compare.
+		local hygiene_plist_content=""
+		IFS='' read -r -d '' hygiene_plist_content <<HYGIENE_PLIST || true
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1105,7 +1108,7 @@ setup_storage_hygiene() {
 </dict>
 </plist>
 HYGIENE_PLIST
-		)
+		hygiene_plist_content="${hygiene_plist_content%$'\n'}"
 		if _launchd_install_if_changed "$hygiene_label" "$hygiene_plist" "$hygiene_plist_content"; then
 			print_info "Storage hygiene enabled (launchd, daily ${hygiene_hour}:${hygiene_minute})"
 		else
