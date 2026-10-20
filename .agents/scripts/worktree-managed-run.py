@@ -26,6 +26,32 @@ import uuid
 import worktree_lifetime_owner as lifetime
 
 
+def backend_available():
+    """Probe without starting a service; absence selects legacy before creation."""
+    if sys.platform != "linux" or not Path("/sys/fs/cgroup/cgroup.controllers").is_file():
+        return False
+    if not all(shutil.which(tool) for tool in ("systemd-run", "systemctl", "busctl")):
+        return False
+    try:
+        # systemctl may use the private manager socket while systemd-run uses
+        # the session bus. Probe that bus, not just the manager's existence.
+        payload = subprocess.check_output(
+            ["busctl", "--user", "--json=short", "get-property", "org.freedesktop.systemd1",
+             "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "Version"],
+            text=True, stderr=subprocess.DEVNULL, timeout=3)
+        version = json.loads(payload).get("data")
+        if not isinstance(version, str):
+            return False
+        match = re.match(r"([0-9]+)", version)
+        if not match or int(match[1]) < 250:
+            return False
+        help_text = subprocess.check_output(
+            ["systemd-run", "--help"], text=True, stderr=subprocess.DEVNULL, timeout=3)
+        return "--expand-environment" in help_text
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        return False
+
+
 def inherited_environment():
     # Forward values through systemd-run's inherited-variable form, not argv.
     # Do not forward old invocation IDs or parent runtime PIDs into the new unit.
@@ -193,8 +219,12 @@ def main():
     parser.add_argument("--timeout-seconds", type=int,
                         default=os.environ.get("AIDEVOPS_WORKTREE_RUN_TIMEOUT_SECONDS", "300"))
     parser.add_argument("--print-properties", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--check-backend", action="store_true",
+                        help="check rootless managed-lifetime support without launching work")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.check_backend:
+        return 0 if backend_available() else 1
     if args.print_properties:
         print("\n".join(lifetime.SERVICE_PROPERTIES))
         return 0

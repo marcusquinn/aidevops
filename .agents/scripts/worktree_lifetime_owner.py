@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import uuid
 
@@ -185,6 +186,16 @@ def register(connection, path, pid, session, creating=False):
     row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
     if row is None and not creating:
         return  # Never manufacture provenance for an existing legacy worktree.
+    if row is None and (sys.platform == "darwin" or
+                        os.environ.get("AIDEVOPS_WORKTREE_MANAGER") == "legacy-guards"):
+        # Preserve the existing macOS/legacy guard contract, not a synthetic
+        # managed completion receipt. Existing managed rows NEVER take this path.
+        connection.execute("CREATE TABLE IF NOT EXISTS worktree_creation_backends (path TEXT PRIMARY KEY, record TEXT NOT NULL)")
+        record = {"schema": 1, "backend": "legacy-guards", "identity": identity(Path(path)),
+                  "created_at": time.time(), "generation": uuid.uuid4().hex}
+        connection.execute("INSERT OR REPLACE INTO worktree_creation_backends VALUES (?, ?)",
+                           (path, json.dumps(record, sort_keys=True)))
+        return
     initialize_admission(connection)
     if row:
         record = json.loads(row[0])

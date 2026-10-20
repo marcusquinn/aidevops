@@ -2202,9 +2202,14 @@ cmd_cleanup_managed() {
 # leader; the parent callback runs only after all descendants have drained.
 if [[ "${1:-}" == "update" || "${1:-}" == "update-contributions" ]] &&
 	[[ "${AIDEVOPS_MANAGED_WORKTREE_RUN:-0}" != "1" && "${AIDEVOPS_PROFILE_PUBLICATION_WORKTREE:-0}" != "1" ]]; then
-	exec python3 "${SCRIPT_DIR}/worktree-managed-run.py" \
-		--after bash --after "${SCRIPT_DIR}/profile-readme-helper.sh" --after cleanup-managed \
-		-- bash "${SCRIPT_DIR}/profile-readme-helper.sh" "$@"
+	if python3 "${SCRIPT_DIR}/worktree-managed-run.py" --check-backend; then
+		exec python3 "${SCRIPT_DIR}/worktree-managed-run.py" \
+			--after bash --after "${SCRIPT_DIR}/profile-readme-helper.sh" --after cleanup-managed \
+			-- bash "${SCRIPT_DIR}/profile-readme-helper.sh" "$@"
+	fi
+	# Choose before creation. macOS and hosts without user-systemd retain the
+	# original synchronous publication and guarded cleanup, with shared creation.
+	export AIDEVOPS_WORKTREE_MANAGER="legacy-guards"
 fi
 
 case "${1:-help}" in

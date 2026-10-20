@@ -20,6 +20,25 @@ here or imply that every derivative, architecture, or provider image was tested.
 | WSL2 (Ubuntu) | Full | systemd / cron | Recommended Windows path |
 | Windows (native) | Limited | — | Experimental `/optimise-windows-indexing-backups` only; use WSL2 for full support |
 
+## Worktree lifecycle backends
+
+Worktree creation and owner registration share `shared-worktree-create.sh`.
+macOS keeps the existing synchronous publication and legacy cleanup guards;
+it does not require systemd or a replacement launchd runner. New legacy creations
+record their backend and physical identity in `worktree_creation_backends`, not
+as managed descendant-completion receipts.
+
+Profile publication uses the managed runner only when Linux cgroup v2 and a
+reachable user-systemd version supporting `ExitType=cgroup` are available.
+`python3 scripts/worktree-managed-run.py --check-backend` probes that capability
+without starting a service. Other hosts select the legacy path **before** creating
+the worktree. A failure after managed execution starts is not retried as legacy.
+Existing managed records cannot be downgraded by a platform or backend change.
+
+These backends have different evidence: legacy cleanup retains its existing
+guards, while managed cleanup requires its cgroup completion receipts. Neither
+backend selection nor a dead owner PID is itself permission to delete a worktree.
+
 ## Command lookup (PATH only)
 
 Tools are resolved through PATH on every platform; there are no distro-specific
