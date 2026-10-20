@@ -678,7 +678,10 @@ test_pr_only_contract_guard() {
 	set_pr_only_issue OWNER "$PR_ONLY_MARKER"
 	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42
 	expect_guard_result "headless merge refused via dispatched issue when PR lacks linkage" 1
+	return 0
+}
 
+test_cross_repo_pr_only_dispatch() {
 	# GH#35162: dispatch scope belongs to the source repo, not the PR target.
 	reset_fixture
 	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42 WORKER_REPO_SLUG=owner/a
@@ -708,6 +711,19 @@ test_pr_only_contract_guard() {
 		print_result "legacy dispatch queries the PR repository" 1 "$(<"$ISSUE_API_CALLS")"
 	fi
 
+	reset_fixture
+	export FULL_LOOP_HEADLESS=true WORKER_ISSUE_NUMBER=42 WORKER_REPO_SLUG=owner/a
+	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
+	expect_guard_result "same-number linked issue remains scoped to PR repository" 0
+	if [[ "$(<"$ISSUE_API_CALLS")" == $'repos/owner/a/issues/42\nrepos/owner/repo/issues/42' ]]; then
+		print_result "dispatch and linked issue with same number query both repositories" 0
+	else
+		print_result "dispatch and linked issue with same number query both repositories" 1 "$(<"$ISSUE_API_CALLS")"
+	fi
+	return 0
+}
+
+test_pr_only_contract_enforcement() {
 	reset_fixture
 	set_pr_fixture maintainer '[]' false '[{"number":42}]' 'Resolves #42'
 	set_pr_only_issue CONTRIBUTOR "$PR_ONLY_MARKER"
@@ -1154,6 +1170,8 @@ main() {
 	test_cross_repo_closing_references
 	test_hold_for_review_guard
 	test_pr_only_contract_guard
+	test_cross_repo_pr_only_dispatch
+	test_pr_only_contract_enforcement
 	test_pre_merge_authority_preflight
 	test_pre_merge_authority_check_failure
 	test_all_merge_modes_use_guard
