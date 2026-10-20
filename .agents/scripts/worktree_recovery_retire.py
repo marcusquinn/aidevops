@@ -82,7 +82,8 @@ def execute(arguments):
     migration = load(directory / "journal.json")
     require(inode(directory) == migration["directory_inode"], "retirement:journal-directory-changed")
     require(migration["source"]["identity"]["bucket_path"] == str(bucket), "retirement:wrong-bucket")
-    require(migration["phase"] == "verified", "retirement:migration-not-verified")
+    git_only = migration["source"].get("capture_policy") == "git-only"
+    require(migration["phase"] == ("archived" if git_only else "verified"), "retirement:migration-incomplete")
     descriptor = os.open(directory / "lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         require(stat.S_ISREG(os.fstat(descriptor).st_mode), "retirement:unsafe-lock")

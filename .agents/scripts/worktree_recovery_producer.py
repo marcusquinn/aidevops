@@ -29,6 +29,7 @@ from worktree_recovery_migration_state import (
     allocated_bytes, load, manifest_digest, private_directory, publish,
 )
 from worktree_recovery_retirement_transaction import fingerprint
+from worktree_recovery_timing import context as timing_context, operation, phase, timed
 
 
 SCHEMA = "aidevops.worktree-recovery-producer/v1"
@@ -50,11 +51,15 @@ def identity(source):
             "admin_inode": inode(admin), "common": str(common), "common_inode": inode(common)}
 
 
-def source_state(source):
+@timed("source-snapshot")
+def source_state(source, policy="git-only"):
     observed = identity(source)
-    baseline = snapshot(source, preserve_git_admin=True, include_ignored=True)
+    baseline = snapshot(source, preserve_git_admin=True, include_ignored=True, git_only=policy == "git-only")
     require(identity(source) == observed, "producer:source-identity-changed")
-    return {"identity": observed, "snapshot": baseline}
+    state = {"identity": observed, "snapshot": baseline}
+    if policy == "git-only":
+        state["capture_policy"] = policy
+    return state
 
 
 def attribution(source, observed):
@@ -69,11 +74,15 @@ def attribution(source, observed):
     match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?", remote)
     if match:
         repo = match.group(1)
-    # Use an actual local branch as a display label, with an explicit HEAD base
-    # SHA. Full-history capture does not depend on this branch staying present.
-    branches = git(source, "for-each-ref", "--format=%(refname:short)", "refs/heads/").splitlines()
-    require(bool(branches), "producer:base-attribution-unavailable")
-    return repo, os.fsdecode(branches[0])
+    # Do not pick the first feature branch: cleanup may delete it immediately.
+    # Use the integration ref, or the canonical branch for local-only repositories.
+    try:
+        base = os.fsdecode(git(source, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").strip())
+        base = base.removeprefix("origin/")
+    except subprocess.CalledProcessError:
+        base = os.fsdecode(git(Path(observed["common"]), "symbolic-ref", "--short", "HEAD").strip())
+    require(bool(base), "producer:base-attribution-unavailable")
+    return repo, base
 
 
 @contextmanager
@@ -88,61 +97,86 @@ def operation_lock(directory):
         os.close(descriptor)
 
 
+@timed("reservation-preflight")
 def reservation(source, root):
-    current = source_state(source)
+    observed = identity(source)
     require(root.is_absolute() and root == root.resolve()
-            and not root.is_relative_to(source)
-            and not root.is_relative_to(Path(current["identity"]["common"])),
-            "producer:unsafe-storage-root")
-    identifier = hashlib.sha256(json.dumps(current["identity"], sort_keys=True).encode()).hexdigest()
+             and not root.is_relative_to(source)
+             and not root.is_relative_to(Path(observed["common"])),
+             "producer:unsafe-storage-root")
+    identifier = hashlib.sha256(json.dumps(observed, sort_keys=True).encode()).hexdigest()
     directory = root / ".producer-transactions" / identifier
     output = root / ".producer-archives" / identifier
     private_directory(directory)
     private_directory(output)
+    policy = os.environ.get("AIDEVOPS_WORKTREE_RECOVERY_POLICY", "git-only")
+    if os.path.lexists(directory / "journal.json"):
+        policy = load(directory / "journal.json", SCHEMA)["source"].get("capture_policy", "preserve-v1")
+    require(policy in ("git-only", "preserve-v1"), "producer:unknown-capture-policy")
+    if policy == "git-only" and not os.path.lexists(directory / "journal.json"):
+        current = {"identity": observed, "capture_policy": policy}
+    else:
+        current = source_state(source, policy)
     return current, directory, output
 
 
+@timed("reserve")
 def reserve(current, directory, output, caller, context):
     journal = directory / "journal.json"
     if os.path.lexists(journal):
         record = load(journal, SCHEMA)
-        require(record["source"] == current, "producer:source-drift; existing archive retained")
+        expected = dict(record["source"])
+        actual = dict(current)
+        if expected.get("capture_policy") == "git-only" and "snapshot" not in expected:
+            actual.pop("snapshot", None)
+        require(expected == actual, "producer:source-drift; existing archive retained")
         require(record["directory_inode"] == inode(directory) and record["output"] == str(output)
                 and record["output_inode"] == inode(output), "producer:reservation-changed")
         return record
     require(not any(output.iterdir()), "producer:unrecorded-capture; retained for review")
     source = Path(current["identity"]["path"])
-    require(shutil.disk_usage(output).free >= capacity(source, current["snapshot"]), "producer:insufficient-capacity")
+    git_only = current.get("capture_policy") == "git-only"
+    if not git_only:
+        require(shutil.disk_usage(output).free >= capacity(source, current["snapshot"]), "producer:insufficient-capacity")
     repo, base = attribution(source, current["identity"])
     record = {"schema": SCHEMA, "phase": "reserved", "source": current,
               "directory_inode": inode(directory), "output": str(output), "output_inode": inode(output),
               "repo": repo, "base": base, "caller": caller, "context": context,
               "session_id": os.environ.get("AIDEVOPS_SESSION_ID", ""),
-              "source_removal_outcome": "pending", "source_bytes": allocated_bytes(source)}
+              "source_removal_outcome": "pending", "source_bytes": None if git_only else allocated_bytes(source)}
     publish(journal, record)
     return record
 
 
+@timed("capture")
 def capture(directory, record, lock):
     output = Path(record["output"])
     source = record["source"]["identity"]["path"]
+    git_only = record["source"].get("capture_policy") == "git-only"
     if not any(output.iterdir()):
         record["phase"] = "capturing"
         publish(directory / "journal.json", record)
+        options = ["--git-only"] if git_only else [
+            "--base-sha", record["source"]["snapshot"]["head"], "--self-contained",
+            "--include-ignored", "--preserve-git-admin"]
         archive_command(lock, "archive", source, "--repo", record["repo"],
-                        "--base-branch", record["base"], "--base-sha", record["source"]["snapshot"]["head"],
-                        "--unattributed", "--reason", "unattributed-worktree", "--self-contained",
-                        "--include-ignored", "--preserve-git-admin", "--output-root", output)
+                        "--base-branch", record["base"], "--unattributed",
+                        "--reason", "unattributed-worktree", "--output-root", output, *options)
     manifests = list(output.glob("*/*/*/manifest.json"))
     require(len(manifests) == 1, "producer:capture-incomplete; retained without another allocation")
     archive = manifests[0].parent
     require(archive == archive.resolve(strict=True), "producer:archive-path-changed")
     manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
-    require(manifest.get("self_contained") is True and manifest.get("include_ignored") is True
-            and manifest.get("git_admin_policy") == "preserve-v1"
-            and manifest.get("source_worktree") == source, "producer:wrong-archive-policy")
-    archive_command(lock, "verify", archive)
-    archive_command(lock, "source-matches", archive, source)
+    if git_only:
+        require(manifest.get("capture_policy") == "git-only" and manifest.get("source_worktree") == source,
+                "producer:wrong-archive-policy")
+        record["source"]["snapshot"] = manifest["source_fingerprint"]
+    else:
+        require(manifest.get("self_contained") is True and manifest.get("include_ignored") is True
+                and manifest.get("git_admin_policy") == "preserve-v1"
+                and manifest.get("source_worktree") == source, "producer:wrong-archive-policy")
+        archive_command(lock, "verify", archive)
+        archive_command(lock, "source-matches", archive, source)
     require(journal_for_archive(archive) == directory / "journal.json", "producer:archive-layout-changed")
     pin = archive / ".aidevops-archive-pin"
     if not os.path.lexists(pin):
@@ -155,6 +189,7 @@ def capture(directory, record, lock):
     publish(directory / "journal.json", record)
 
 
+@timed("verify-archive")
 def verify_archive(record, lock):
     if record["phase"] in ("restore-verified", "cleanup-pending", "verified"):
         require(isinstance(record.get("restore_fingerprint"), str)
@@ -172,34 +207,49 @@ def verify_archive(record, lock):
     require(pin.is_file() and not pin.is_symlink(), "producer:pin-missing")
 
 
+@operation("producer-capture")
 def prepare(source, root, caller, context):
+    timing_context(source=str(source), caller=caller)
     current, directory, output = reservation(source, root)
     with operation_lock(directory) as lock:
         record = reserve(current, directory, output, caller, context)
+        timing_context(repo=record["repo"], resumed=record["phase"] != "reserved",
+                       receipt=str(directory / "journal.json"), source_bytes=record["source_bytes"])
         if record["phase"] in ("reserved", "capturing"):
             capture(directory, record, lock)
+        if record["source"].get("capture_policy") == "git-only":
+            require(record["phase"] in ("captured", "archived"), "producer:incomplete-phase")
+            record.update(phase="archived", archive_bytes=allocated_bytes(Path(record["archive"])))
+            publish(directory / "journal.json", record)
+            timing_context(archive=record["archive"], archive_bytes=record["archive_bytes"],
+                           capture_policy="git-only", source_removal_outcome=record["source_removal_outcome"])
+            return record["archive"]
         if record["phase"] == "captured":
             restored = prepare_restore(directory, record)
             # A previous process may have restored data but died before sealing
             # it. Never adopt that mutable tree as a new deletion baseline.
             require(not os.path.lexists(restored), "producer:unsealed-restore-retained; review required")
             archive_command(lock, "restore", record["archive"], "--target", restored)
-            verify_restore(restored, record)
+            with phase("compare-restoration"):
+                verify_restore(restored, record)
             verify_archive(record, lock)
-            require(source_state(source) == record["source"], "producer:source-drift")
+            require(source_state(source, "preserve-v1") == record["source"], "producer:source-drift")
             record.update(phase="restore-verified", restore_inode=inode(restored),
                           restore_fingerprint=fingerprint(restored),
                           archive_bytes=allocated_bytes(Path(record["archive"])))
             publish(directory / "journal.json", record)
         if record["phase"] in ("restore-verified", "cleanup-pending"):
             verify_archive(record, lock)
-            require(source_state(source) == record["source"], "producer:source-drift")
-            finish_scratch(directory, record)
+            require(source_state(source, "preserve-v1") == record["source"], "producer:source-drift")
+            with phase("cleanup-verification-scratch"):
+                finish_scratch(directory, record)
             record["phase"] = "verified"
             publish(directory / "journal.json", record)
         require(record["phase"] == "verified", "producer:incomplete-phase")
         verify_archive(record, lock)
-        require(source_state(source) == record["source"], "producer:source-drift")
+        require(source_state(source, "preserve-v1") == record["source"], "producer:source-drift")
+        timing_context(archive=record["archive"], archive_bytes=record["archive_bytes"],
+                       source_removal_outcome=record["source_removal_outcome"])
         return record["archive"]
 
 
@@ -210,11 +260,12 @@ def check(archive, source=None, removed=False):
     directory = journal.parent
     with operation_lock(directory) as lock:
         record = load(journal, SCHEMA)
+        git_only = record["source"].get("capture_policy") == "git-only"
         require(record["directory_inode"] == inode(directory) and record["archive"] == str(archive)
-                and record["phase"] == "verified", "producer:unverified-receipt")
+                 and record["phase"] == ("archived" if git_only else "verified"), "producer:incomplete-receipt")
         verify_archive(record, lock)
         if source is not None:
-            require(source_state(source) == record["source"], "producer:source-drift")
+            require(source_state(source, "git-only" if git_only else "preserve-v1") == record["source"], "producer:source-drift")
             archive_command(lock, "source-matches", archive, source)
         if removed:
             observed = record["source"]["identity"]

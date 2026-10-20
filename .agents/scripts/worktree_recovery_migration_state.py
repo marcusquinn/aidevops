@@ -100,14 +100,17 @@ def provenance(bucket, worktree):
     return values
 
 
-def source_state(identity):
+def source_state(identity, git_only=False):
     bucket = Path(identity["bucket_path"])
     worktree = Path(identity["archive_path"])
     require(bucket == bucket.resolve(strict=True) and worktree.parent == bucket
             and worktree == worktree.resolve(strict=True), "migration:source-path-changed")
-    return {"identity": identity, "bucket_inode": inode(bucket),
-            "worktree_inode": inode(worktree), "provenance": provenance(bucket, worktree),
-            "snapshot": snapshot(worktree, preserve_git_admin=True, include_ignored=True)}
+    state = {"identity": identity, "bucket_inode": inode(bucket),
+             "worktree_inode": inode(worktree), "provenance": provenance(bucket, worktree),
+             "snapshot": snapshot(worktree, preserve_git_admin=True, include_ignored=True, git_only=git_only)}
+    if git_only:
+        state["capture_policy"] = "git-only"
+    return state
 
 
 def allocated_bytes(path):

@@ -80,19 +80,19 @@ bash .agents/scripts/worktree-recovery-lifecycle-helper.sh migrate \
   --repo owner/repo --base-branch main
 ```
 
-Under the existing producer lock, create one existing-format incremental archive
-with `--include-ignored --preserve-git-admin`, exact merge-base SHA, separate
-staged/unstaged patches and only objects outside that base—not full repository history.
-The existing common repository must retain the recorded base for the archive's lifetime.
-Verification imports that base graph plus delta into a separate repository without
-alternates, checks Git object integrity and compares the complete supported snapshot,
-including staged state and relevant administrative/history dependencies. It does **not**
-retire, rewrite or move the original bucket, update its reservation or apply retention.
-Source removal needs a separate verified transition and existing ownership/process/removal guards.
+New migrations use [Git-only capture](../scripts/worktree-archive-helper.md#recoverable-producer-transactions):
+exact base/HEAD, incremental commits and staged/unstaged patches, with no untracked,
+ignored or raw administrative payload. Capture does not perform a trial restore or
+archive verification; it reports `archived`, not `verified`. The shared repository
+must retain the exact base. Source removal remains a separate operator-confirmed
+transition with the existing ownership/process/removal guards and external verification.
+Existing receipts retain their policy; `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1`
+explicitly selects the previous full-preservation behavior described below.
+Neither mode retires, rewrites or moves the original bucket during capture.
 
 The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`.
 It binds physical identities, the source snapshot, opaque recovery provenance,
-the archive manifest digest, the restoration outcome and allocated byte counts.
+the archive manifest digest, the capture outcome and available allocated byte counts.
 The archive remains in the existing archive store, beneath
 `.legacy-migrations/<source-path-digest>/`, and is pinned against expiry.
 Path-bearing provenance is historical evidence, not live Git configuration or
@@ -124,7 +124,7 @@ An existing migration reservation makes legacy planning and stale-plan
 revalidation return `compact-migration-protected`. Maintenance counts that reason
 separately instead of treating migration as expiry authority. A receipt's
 `verified` phase is point-in-time evidence, never sufficient removal permission.
-The command reports `bucket_bytes`, `archive_bytes`, `source_retired: false` and
+The command reports `bucket_bytes` (null when not measured), `archive_bytes`, `source_retired: false` and
 `reclaimed_bytes: 0`; creating an archive alone does not reclaim disk space.
 
 ## Confirmed retirement of migrated buckets

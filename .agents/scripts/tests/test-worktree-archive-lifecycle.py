@@ -145,6 +145,8 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.root = Path(self.temp.name)
         self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
                         GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+                        AIDEVOPS_RECOVERY_TIMING_LOG=str(self.root / "timing.jsonl"),
+                        AIDEVOPS_WORKTREE_RECOVERY_POLICY="preserve-v1",
                         GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
                         GIT_AUTHOR_EMAIL="fixture@example.invalid",
                         GIT_COMMITTER_EMAIL="fixture@example.invalid", LC_ALL="C")

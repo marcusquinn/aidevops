@@ -28,6 +28,21 @@ from worktree_archive_state import inventories, supported_state
 from worktree_archive_objects import administration_roots, bundle_roots
 
 
+def archive_policies(manifest):
+    """Validate policy declarations for explicit verification, not capture."""
+    if not isinstance(manifest.get('include_ignored', False), bool):
+        raise SystemExit('invalid ignored capture policy')
+    capture_policy = manifest.get('capture_policy')
+    if capture_policy not in (None, 'git-only'):
+        raise SystemExit('unknown capture policy')
+    if capture_policy == 'git-only' and (manifest.get('include_ignored') or manifest.get('git_admin_policy')):
+        raise SystemExit('inconsistent Git-only policy')
+    policy = manifest.get('git_admin_policy')
+    if policy is not None and (policy != 'preserve-v1' or not isinstance(manifest.get('self_contained'), bool)):
+        raise SystemExit('invalid Git administration policy')
+    return capture_policy, policy
+
+
 def administration_digest(state):
     # Keep fingerprints small enough for the existing shell/argv interface even
     # when a repository's raw index or reflog is many megabytes.
@@ -135,7 +150,43 @@ def verify_administration(archive, scratch, manifest):
         raise ValueError('git_admin:missing_object')
 
 
-def snapshot(path, preserve_git_admin=False, include_ignored=False):
+def git_index_state(path, head=None):
+    root = Path(path).resolve(strict=True)
+    index = git(root, "ls-files", "--stage", "-z")
+    entries = [entry.split(b"\t", 1) for entry in index.split(b"\0") if entry]
+    if any(metadata.split()[2] != b"0" for metadata, _ in entries):
+        raise ValueError("unmerged index cannot be represented by two patches")
+    # Index-only metadata reads, not a working-tree scan or restore verification.
+    options = ("--cached", "--raw", "-z", "--no-ext-diff", "--no-color")
+    if git(root, "diff", *options, "--ita-visible-in-index") != git(root, "diff", *options, "--ita-invisible-in-index"):
+        raise ValueError("intent-to-add index entries cannot be represented by two patches")
+    return {"head": head or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii"),
+            "index": hashlib.sha256(index).hexdigest(), "files": len(entries)}
+
+
+def git_snapshot(path, patches=None, metadata=None):
+    """Describe Git-visible state only; never enumerate untracked/ignored trees.
+
+    Capture passes its already-written patches, so describing the archive does
+    not repeat diffs or verify restoration. Comparison is a separate operation.
+    """
+    root = Path(path).resolve(strict=True)
+    metadata = metadata if metadata is not None else git_index_state(root)
+    options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+               "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short")
+    staged = (patches / "staged.patch").read_bytes() if patches else git(root, "diff", "--cached", *options)
+    unstaged = (patches / "diff.patch").read_bytes() if patches else git(root, "diff", *options)
+    head = metadata["head"]
+    values = [head, metadata["index"],
+              hashlib.sha256(staged).hexdigest(), hashlib.sha256(unstaged).hexdigest()]
+    return {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
+            "bytes": len(staged) + len(unstaged),
+            "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
+
+
+def snapshot(path, preserve_git_admin=False, include_ignored=False, git_only=False):
+    if git_only:
+        return git_snapshot(path)
     root = Path(path).resolve(strict=True)
     supported_state(root, preserve_git_admin, include_ignored)
     index, paths = inventories(root, include_ignored)

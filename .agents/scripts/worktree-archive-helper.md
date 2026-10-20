@@ -7,7 +7,7 @@
 
 For legacy full recovery buckets, use the explicit
 [migration transition](../reference/storage-lifecycle-worktree-recovery.md#explicit-compact-migration-no-retirement).
-It reuses this format, independently verifies restoration, preserves provenance in
+It reuses this format, records its capture policy, preserves provenance in
 a durable journal and pins the resulting archive. It does not retire the source
 or change ordinary recovery producers.
 Source retirement requires the separate operator-confirmed
@@ -22,7 +22,7 @@ worktree-archive-helper.sh archive <worktree-path> \
   --repo owner/repo --issue 123 --reason failed-worker \
   --base-branch develop [--base-sha <commit>] \
   [--output-root <directory>] [--failure-log <file>] [--self-contained] \
-  [--include-ignored] [--preserve-git-admin]
+  [--include-ignored] [--preserve-git-admin] [--git-only]
 
 # Verify the manifest, artifact hashes, bundle, and untracked payload safety.
 worktree-archive-helper.sh verify <archive-directory>
@@ -68,7 +68,7 @@ than an incremental archive; it is not a backup of unrelated branches or refs.
 
 ## Recoverable producer transactions
 
-`archive_worktree_path_recoverably` now creates verified compact evidence, not a
+`archive_worktree_path_recoverably` now creates Git-only compact recovery, not a
 new full recovery directory. Its four callers are manual removal in
 `worktree-helper-cmds.sh`, classified cleanup in `worktree-clean-lib.sh`, profile
 publication in `profile-readme-helper.sh`, and Pulse profile cleanup in
@@ -85,18 +85,41 @@ when a producer uses a legacy override, pass that root explicitly to `list` with
 
 One physical source identity reserves `<root>/.producer-transactions/<id>/journal.json`
 and captures beneath `<root>/.producer-archives/<id>/<owner>__<repo>/unattributed/<timestamp>/`.
-No issue is guessed from the path. Capture uses `--self-contained --include-ignored
---preserve-git-admin`: supported staged, unstaged, untracked, ignored and Git-admin
-state survives without the original repository or remote. Independent restoration,
-comparison, durability and identity-checked scratch cleanup precede `phase: verified`.
-The journal binds the manifest digest and records source removal separately.
+No issue is guessed from the path. New producer and migration transactions default
+to `--git-only`: exact base/HEAD, incremental commits, staged and unstaged binary
+patches. Git defines the inventory; untracked/ignored files and raw Git administration
+are outside recovery. There are no project-specific or directory-specific exclusions.
+The shared repository must retain the recorded base. An empty delta needs no bundle.
+Unmerged and intent-to-add index entries fail closed because two patches cannot
+preserve their index state. Patch output explicitly overrides color and path-prefix
+preferences so user Git display settings cannot make the archive unappliable.
+
+Capture writes artifacts and its durable receipt, then reports `phase: archived`.
+It does not invoke archive verification, a trial restore, or repeated whole-tree
+hashing. Its saved Git identity is captured before the patches, not sampled later
+and substituted as evidence for earlier data. The source must be quiescent during
+capture. Ownership and pre-removal guards remain outside the capture function;
+archive completion alone is not deletion authority or a claim of verified restoration.
+
+Git-only restore imports the bundle and calls `worktree-helper.sh add` with the
+saved HEAD SHA, a new branch and target path: the same creation/registration API
+called by Pulse. It then applies `staged.patch` with `git apply --index`, followed
+by `diff.patch` without updating the index. No worker is dispatched. Dependency
+provisioning is separate and must use the restored lockfiles, not the base versions.
+
+Existing receipts keep their original policy; retries never silently downgrade
+them. `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` explicitly retains the previous
+full-preservation transaction for compatibility. Its existing verification and
+scratch-cleanup contract remains unchanged. Direct legacy archive CLI options also
+remain supported; pass `--git-only` for the new contract. It cannot be combined with
+`--self-contained`, `--include-ignored`, or `--preserve-git-admin`.
 
 Manual `worktree-helper.sh remove` prints `Recovery archive: <path>` after capture,
 including when a later guard refuses removal. That line is not proof of retirement;
 inspect `source_removal_outcome`. Run `worktree-archive-helper.sh verify <path>` and
 `python3 worktree_recovery_producer.py verify <path>` to check artifact and producer
 receipt evidence, then restore with `worktree-archive-helper.sh restore <path>
---target <new-path>`. Keep archives private; ignored data or Git drafts may be sensitive.
+--target <new-path>`. Keep archives private; committed and patched data may be sensitive.
 
 `list` discovers standalone and producer archives through their exact layouts and
 schema. It excludes transaction scratch, legacy full-copy directories and symlinked
@@ -107,10 +130,46 @@ expand retention selection, remove pins or enable automatic expiry.
 
 Retries reuse a valid reservation; drift, unsupported input or incomplete evidence
 preserves the source and existing artifacts without a full-copy fallback. Do not
-delete journals to force another capture. The producer's comparison policy still
-refuses special permissions such as 0600 working files. Profile writers preserve
-the README's existing mode; cleanup never changes user-selected permissions.
+delete journals to force another capture. Git-only recovery preserves Git file modes,
+not filesystem metadata. An unmerged index cannot be represented by two patches.
+The legacy full-preservation comparison still refuses unsupported filesystem state.
 Code delivery does not deploy these changes or migrate/retire installed recovery stores.
+
+### Stage timings
+
+Producer capture and explicit legacy migration append private, best-effort JSONL
+events to `~/.aidevops/logs/worktree-recovery-timings.jsonl` (0600). Override the
+destination with `AIDEVOPS_RECOVERY_TIMING_LOG`. Logging failure warns once per
+attempt but does not replace or bypass archive safety checks.
+
+```bash
+python3 ~/.aidevops/agents/scripts/worktree_recovery_timing.py report
+# Read a separately retained timing log:
+python3 ~/.aidevops/agents/scripts/worktree_recovery_timing.py report --log <file>
+```
+
+Schema `aidevops.recovery-timing/v1` records UTC timestamps, monotonic durations,
+attempt/stage/parent IDs, operation, available repository/source context, success
+or failure, and known archive/receipt locations and sizes. It covers source
+snapshots, reservation, capture, archive CLI verification/restoration, comparison,
+and verification-scratch cleanup where those phases execute. Early failures may
+have an unknown repository. Interrupted attempts may have starts without finishes.
+
+The read-only report groups completed stage durations by repository, operation
+and status, with count/minimum/median/maximum. Malformed records and unmatched
+starts/finishes are counted explicitly; missing durations are not reported as zero.
+Report input is bounded to 64 MiB and fewer than 100,000 records; use a separately
+retained log when that bound is exceeded. This logger does not rotate or expire
+logs. Keep them private and manage retention separately.
+
+Durations are **inclusive**, so do not sum a parent and its children. `total`
+measures the Python transaction, not outer shell locking/preflight, subsequent
+native removal, or the whole scheduled cleanup pass. Managed-idle archives and
+permanent-removal paths are not instrumented by this logger. A successful capture
+is not proof of source removal or reclaimed bytes. Timing records are diagnostics,
+never restoration evidence, retirement authority, or replacements for durable
+manifests and journals. Legacy incremental and self-contained producer archives
+retain their distinct recovery dependencies and policies.
 
 ## Base selection
 
