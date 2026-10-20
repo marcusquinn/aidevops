@@ -6,6 +6,9 @@
 [[ -n "${_FULL_LOOP_RELEASE_AGGREGATE_RECOVERY_LOADED:-}" ]] && return 0
 _FULL_LOOP_RELEASE_AGGREGATE_RECOVERY_LOADED=1
 
+# shellcheck source=./shared-worktree-create.sh
+source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh"
+
 _FULL_LOOP_AGGREGATE_RECOVERY_OLD_TAG_OBJECT=""
 _FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED=""
 _FULL_LOOP_AGGREGATE_RECOVERY_PREVIOUS_AUTH=""
@@ -704,8 +707,9 @@ _full_loop_recovery_prepare_aggregate() {
 		}
 		checkout_ref="$pin"
 	fi
-	_FULL_LOOP_RELEASE_PATH="${worktree_base}/aidevops-release-aggregate-recovery-${source_pr}-$$"
-	git -C "$REPO_ROOT" worktree add --detach "$_FULL_LOOP_RELEASE_PATH" "$checkout_ref" >/dev/null || return 1
+	local release_path="${worktree_base}/aidevops-release-aggregate-recovery-${source_pr}-$$"
+	worktree_create_registered "$REPO_ROOT" "$release_path" "$checkout_ref" --detach >/dev/null || return 1
+	_FULL_LOOP_RELEASE_PATH="$release_path"
 	trap 'cleanup_release_worktree' EXIT
 	resolver="$(_full_loop_recovery_tool_dir)/release-provenance-helper.sh"
 	# The provisional local tag may already be an ancestor of protected main.
@@ -729,8 +733,9 @@ _full_loop_recovery_prepare_prepublication_source() {
 	local previous_preserve_evidence="${_FULL_LOOP_PRESERVE_PREPUBLICATION_FAILURE_EVIDENCE:-false}"
 	[[ -d "$worktree_base" ]] || return 1
 	git -C "$REPO_ROOT" fetch origin main >/dev/null || return 1
-	_FULL_LOOP_RELEASE_PATH="${worktree_base}/aidevops-release-prepublication-recovery-${source_pr}-$$"
-	git -C "$REPO_ROOT" worktree add --detach "$_FULL_LOOP_RELEASE_PATH" origin/main >/dev/null || return 1
+	local release_path="${worktree_base}/aidevops-release-prepublication-recovery-${source_pr}-$$"
+	worktree_create_registered "$REPO_ROOT" "$release_path" origin/main --detach >/dev/null || return 1
+	_FULL_LOOP_RELEASE_PATH="$release_path"
 	trap 'cleanup_release_worktree' EXIT
 	resolver="$_FULL_LOOP_RELEASE_PATH/.agents/scripts/release-provenance-helper.sh"
 	_FULL_LOOP_PRESERVE_PREPUBLICATION_FAILURE_EVIDENCE=true
@@ -777,7 +782,8 @@ _full_loop_recovery_restore_preparation() {
 	git -C "$REPO_ROOT" show-ref --verify --quiet "refs/tags/${attempted_tag}" || tag_rc=$?
 	[[ "$tag_rc" -eq 1 ]] || return 1
 	mkdir "$release_path" || return 1
-	if ! git -C "$REPO_ROOT" worktree add --detach "$release_path" "$snapshot" >/dev/null; then
+	if ! AIDEVOPS_WORKTREE_CREATE_RESERVED_PATH="$release_path" \
+		worktree_create_registered "$REPO_ROOT" "$release_path" "$snapshot" --detach >/dev/null; then
 		rmdir "$release_path" 2>/dev/null || true
 		return 1
 	fi

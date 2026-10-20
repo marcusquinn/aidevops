@@ -17,6 +17,9 @@ _FULL_LOOP_RELEASE_WORKTREE_LIB_LOADED=1
 # shellcheck source=./audit-worktree-removal-helper.sh
 source "${BASH_SOURCE[0]%/*}/audit-worktree-removal-helper.sh"
 
+# shellcheck source=./shared-worktree-create.sh
+source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh"
+
 _FULL_LOOP_RELEASE_CALLER="full-loop-release-helper.sh"
 
 # Args: $1=worktree path, $2=short audit reason

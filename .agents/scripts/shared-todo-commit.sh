@@ -381,6 +381,11 @@ _todo_remove_temp_worktree() {
 	local worktree_path="$2"
 	[[ -n "$worktree_path" ]] || return 0
 	if [[ -e "${worktree_path}/.git" ]]; then
+		(
+			# shellcheck source=audit-worktree-removal-helper.sh
+			source "${BASH_SOURCE[0]%/*}/audit-worktree-removal-helper.sh" || exit 1
+			worktree_managed_require_removal_proof "$worktree_path"
+		) || return 1
 		git -C "$repo_path" worktree remove --force "$worktree_path" >/dev/null 2>&1 || return 1
 	fi
 	[[ ! -e "$worktree_path" ]] || return 1
@@ -521,7 +526,11 @@ _todo_create_planning_worktree() {
 		return 1
 	fi
 
-	git -C "$repo_path" worktree add --detach "$worktree_path" "origin/${default_branch}" >/dev/null 2>>"$log_target" || {
+	(
+		# shellcheck source=shared-worktree-create.sh
+		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
+		worktree_create_registered "$repo_path" "$worktree_path" "origin/${default_branch}" --detach
+	) >/dev/null 2>>"$log_target" || {
 		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot create linked worktree" >>"$log_target"
 		return 1
 	}

@@ -234,6 +234,16 @@ active_branch() {
 
 cleanup_transport() {
 	[[ -n "$TRANSPORT" ]] || return 0
+	if ! (
+		# shellcheck source=audit-worktree-removal-helper.sh
+		source "${BASH_SOURCE[0]%/*}/audit-worktree-removal-helper.sh" || exit 1
+		worktree_managed_require_removal_proof "$TRANSPORT"
+	); then
+		printf 'Transport retained pending managed completion proof: %s\n' "$TRANSPORT" >&2
+		# Ref mutations are complete; deferred transport retirement is not a
+		# failed branch deletion and must not invite a misleading retry.
+		return 0
+	fi
 	repo_git worktree remove --force "$TRANSPORT" >/dev/null 2>&1 || return 1
 	TRANSPORT=""
 	return 0
@@ -244,7 +254,11 @@ prepare_transport() {
 	local path=""
 	path=$(aidevops_generate_worktree_path "$REPO_PATH" "local-branch-cleanup-$$") || return 1
 	[[ ! -e "$path" && ! -L "$path" ]] || return 1
-	repo_git worktree add --detach --no-checkout "$path" HEAD >/dev/null 2>&1 || return 1
+	(
+		# shellcheck source=shared-worktree-create.sh
+		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
+		worktree_create_registered "$REPO_PATH" "$path" HEAD --detach --no-checkout
+	) >/dev/null || return 1
 	TRANSPORT="$path"
 	return 0
 }

@@ -39,6 +39,21 @@ These backends have different evidence: legacy cleanup retains its existing
 guards, while managed cleanup requires its cgroup completion receipts. Neither
 backend selection nor a dead owner PID is itself permission to delete a worktree.
 
+The shared creator covers host CLI, profile, Pulse, release/recovery, branch
+cleanup, planning, workflow-sync, plugin and archive-restore producers. Test
+fixtures and the isolated Frontier benchmark guest bootstrap are separate from
+the host worktree lifecycle. Callers retain their base-ref, path and ownership
+policies; an explicitly reserved empty directory may be admitted without
+dropping its reservation. Registration failure preserves the new tree.
+
+Registration does not itself start a supervisor. Inside a managed run, generic
+producers bind to the invocation leader; outside one, unavailable Linux
+descendant-completion evidence remains unavailable. Temporary cleanup must
+preserve managed trees without closed proof, even after its synchronous Git
+commands finish. Branch-cleanup commands report deferred transport retirement
+separately from the result of their ref mutations. This is not a fallback to a
+full worktree copy or permission to downgrade the recorded backend.
+
 ## Command lookup (PATH only)
 
 Tools are resolved through PATH on every platform; there are no distro-specific

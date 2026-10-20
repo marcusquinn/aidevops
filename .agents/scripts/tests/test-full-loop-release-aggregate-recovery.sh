@@ -9,6 +9,8 @@ trap 'printf "FAIL unexpected test error at %s:%s (exit %s)\n" "${BASH_SOURCE[0]
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+export WORKTREE_REGISTRY_DIR="$TEST_ROOT/registry"
+export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/owners.db"
 export REPO_ROOT="$TEST_ROOT"
 source "${SCRIPT_DIR}/full-loop-release-aggregate-recovery.sh"
 
@@ -153,6 +155,15 @@ Aidevops-Release-Aggregates: 43@${FIXTURE_SOURCE_43}"
 )
 printf 'PASS real aggregate preparation ignores an unpublished signed ancestor tag and retains manifest and exact-tip fences\n'
 printf 'PASS pinned aggregate recovery resolves only a reviewed aggregate ancestor of main\n'
+
+# Remaining phases stub Git and isolate recovery orchestration. The real
+# registered creator is exercised above and in test-worktree-owner-lifetime.py.
+worktree_create_registered() {
+	local repo="$1" path="$2" ref="$3"
+	shift 3
+	git -C "$repo" worktree add "$@" "$path" "$ref"
+	return $?
+}
 
 CHANNEL_MODE="absent"
 
@@ -1275,6 +1286,12 @@ printf 'PASS failed pre-publication retry binds attempted version, absent channe
 	test_resolved_mode=direct
 	cleanup_release_worktree() { return 0; }
 	git() { return 0; }
+	worktree_create_registered() {
+		local repo="$1" path="$2" ref="$3" mode="$4"
+		[[ "$repo" == "$REPO_ROOT" && "$path" == "$TEST_ROOT/aidevops-release-prepublication-recovery-42-$$" &&
+			"$ref" == origin/main && "$mode" == --detach ]] || return 1
+		return 0
+	}
 	_full_loop_resolve_requested_release_source() {
 		local repo="$1"
 		local source_pr="$2"

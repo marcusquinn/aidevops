@@ -75,6 +75,96 @@ class CreationProducerTests(unittest.TestCase):
             with closing(sqlite3.connect(env["WORKTREE_REGISTRY_DB"])) as db:
                 self.assertEqual(db.execute("SELECT branch FROM worktree_owners ORDER BY branch").fetchall(),
                                  [("bugfix/qd-123-fixture",), ("existing",), ("new",)])
+            command(git, "clone", "--bare", "-q", repo, root / "origin.git")
+            command(git, "-C", repo, "remote", "add", "origin", str(root / "origin.git"))
+            script = ('source "$1/shared-todo-commit.sh"; '
+                      '_todo_create_planning_worktree "$2/repo" "plan: fixture" main '
+                      '0123456789abcdef "$2/planning.log" || exit 1; '
+                      'printf "%s\\n" "$_TODO_PLANNING_PR_WORKTREE"')
+            path = command("bash", "-c", script, "fixture", SCRIPTS, root)
+            self.assertTrue((Path(path) / ".git").is_file())
+            with closing(sqlite3.connect(env["WORKTREE_REGISTRY_DB"])) as db:
+                self.assertEqual(db.execute("SELECT branch FROM worktree_owners WHERE worktree_path=?",
+                                            (path,)).fetchone(), ("HEAD",))
+            cleanup = subprocess.run(["bash", "-c",
+                                      'source "$1/shared-todo-commit.sh"; _todo_remove_temp_worktree "$2" "$3"',
+                                      "fixture", str(SCRIPTS), str(repo), path], env=env,
+                                     text=True, capture_output=True, timeout=15)
+            legacy = sys.platform == "darwin" or env.get("AIDEVOPS_WORKTREE_MANAGER") == "legacy-guards"
+            self.assertEqual(cleanup.returncode == 0, legacy, cleanup.stderr)
+            self.assertEqual(Path(path).exists(), not legacy)
+            # Source release functions from a fixture linked checkout, so their
+            # bootstrap cannot create a control worktree in the real repository.
+            source = root / "repo-new"
+            (source / "aidevops.sh").touch()
+            (source / ".agents/scripts").mkdir(parents=True)
+            (source / ".agents/scripts/version-manager.sh").touch()
+            command(git, "-C", repo, "tag", "v1.0.0")
+            script = ('source "$1/full-loop-release-helper.sh" help >/dev/null; '
+                      '_full_loop_release_prepare_control_worktree "$2/repo" || exit 1; '
+                      '_full_loop_release_prepare_tag_worktree v1.0.0 || exit 1; '
+                      'tag_path="$_FULL_LOOP_RELEASE_PATH"; '
+                      'release_lane_pin_snapshot() { return 0; }; '
+                      '_full_loop_capture_release_authorization() { return 1; }; '
+                      'if _full_loop_release_prepare_new fixture/repo 1 "$2/release-prepare" unused 1; '
+                      'then exit 1; fi; '
+                      'trap - EXIT; printf "%s\\n%s\\n%s\\n" '
+                      '"$_FULL_LOOP_RELEASE_CONTROL_PATH" "$tag_path" "$_FULL_LOOP_RELEASE_PATH"')
+            result = subprocess.run(["bash", "-c", script, "fixture", str(SCRIPTS), str(root)],
+                                    cwd=source, env=dict(env, AIDEVOPS_WORKTREE_BASE_DIR=str(root),
+                                                         AIDEVOPS_STATE_DIR=str(root / "state")),
+                                    text=True, capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            paths = result.stdout.strip().splitlines()
+            self.assertEqual(len(paths), 3, result.stdout)
+            self.assertEqual(paths[-1], str(root / "release-prepare"))
+            with closing(sqlite3.connect(env["WORKTREE_REGISTRY_DB"])) as db:
+                for release_path in paths:
+                    self.assertTrue((Path(release_path) / ".git").is_file())
+                    self.assertEqual(db.execute("SELECT branch FROM worktree_owners WHERE worktree_path=?",
+                                                (release_path,)).fetchone(), ("HEAD",))
+
+    def test_reserved_paths_and_registration_failure_preserve_sources(self):
+        base = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
+        with tempfile.TemporaryDirectory(prefix="reserved-creation-", dir=base) as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            git = os.environ.get("AIDEVOPS_TEST_GIT_BIN") or shutil.which("git")
+            env = dict(os.environ, HOME=str(root), WORKTREE_REGISTRY_DIR=str(root / "registry"),
+                       WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+            env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
+            subprocess.run([git, "init", "-q", "-b", "main", str(repo)], env=env, check=True, timeout=10)
+            subprocess.run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c",
+                            "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                            "commit", "--allow-empty", "-qm", "fixture"], env=env, check=True, timeout=10)
+            script = ('source "$1/shared-worktree-create.sh"; '
+                      'worktree_create_registered "$2" "$3" HEAD --detach')
+
+            def create(path, **updates):
+                return subprocess.run(["bash", "-c", script, "fixture", str(SCRIPTS), str(repo), str(path)],
+                                      env=dict(env, **updates), capture_output=True, text=True, timeout=15)
+
+            reserved = root / "reserved"
+            reserved.mkdir()
+            self.assertNotEqual(create(reserved).returncode, 0)
+            result = create(reserved, AIDEVOPS_WORKTREE_CREATE_RESERVED_PATH=str(reserved))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((reserved / ".git").is_file())
+            nonempty = root / "nonempty"
+            nonempty.mkdir()
+            (nonempty / "keep").write_text("preserve")
+            self.assertNotEqual(create(nonempty, AIDEVOPS_WORKTREE_CREATE_RESERVED_PATH=str(nonempty)).returncode, 0)
+            self.assertEqual((nonempty / "keep").read_text(), "preserve")
+            link = root / "link"
+            link.symlink_to(nonempty, target_is_directory=True)
+            self.assertNotEqual(create(link, AIDEVOPS_WORKTREE_CREATE_RESERVED_PATH=str(link)).returncode, 0)
+            blocked = root / "blocked"
+            blocked.write_text("not a registry directory")
+            retained = root / "retained"
+            result = create(retained, WORKTREE_REGISTRY_DIR=str(blocked), WORKTREE_REGISTRY_DB=str(blocked / "db"))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue((retained / ".git").is_file(), result.stderr)
+            self.assertIn("Worktree retained", result.stderr)
 
 
 class RunnerControlTests(unittest.TestCase):
@@ -328,7 +418,6 @@ class NativeOwnerCycle(unittest.TestCase):
             # The production shared creator runs as the invocation leader's child.
             # Work stays in this real user-service cgroup, including a setsid child.
             script = ('set -eu; source "$1/shared-worktree-create.sh"; '
-                      'AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" '
                       'worktree_create_registered "$2" "$3" HEAD -b poc; '
                       'exec "$4" -c "$5" "$3"')
             workload = ("import pathlib,subprocess,sys,time,os; p=pathlib.Path(sys.argv[1]); "

@@ -218,6 +218,14 @@ print_candidate() {
 cleanup_delete_transport() {
 	local worktree="$DELETE_TRANSPORT_WORKTREE"
 	[[ -n "$worktree" ]] || return 0
+	if ! (
+		# shellcheck source=audit-worktree-removal-helper.sh
+		source "${BASH_SOURCE[0]%/*}/audit-worktree-removal-helper.sh" || exit 1
+		worktree_managed_require_removal_proof "$worktree"
+	); then
+		print_warning "Transport retained pending managed completion proof: $worktree"
+		return 0
+	fi
 	if repo_git worktree remove --force "$worktree" >/dev/null 2>&1; then
 		DELETE_TRANSPORT_WORKTREE=""
 		return 0
@@ -238,7 +246,11 @@ prepare_delete_transport() {
 		return 1
 	fi
 	DELETE_TRANSPORT_WORKTREE="$worktree"
-	if ! repo_git worktree add --detach "$worktree" HEAD >/dev/null 2>&1; then
+	if ! (
+		# shellcheck source=shared-worktree-create.sh
+		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
+		worktree_create_registered "$REPO_PATH" "$worktree" HEAD --detach
+	) >/dev/null; then
 		DELETE_TRANSPORT_WORKTREE=""
 		print_error "Unable to create an isolated linked worktree for remote-ref deletion"
 		return 1

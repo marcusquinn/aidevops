@@ -9,6 +9,8 @@ SCRIPTS_DIR="$(cd "${TEST_DIR}/.." && pwd)" || exit 1
 HELPER="${SCRIPTS_DIR}/remote-branch-cleanup-helper.sh"
 GIT_SHIM="${SCRIPTS_DIR}/git"
 TEST_ROOT="${PWD}/.agents/tmp/test-remote-branch-cleanup.$$"
+export WORKTREE_REGISTRY_DIR="$TEST_ROOT/registry"
+export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/owners.db"
 
 fail() {
 	local message="$1"
@@ -235,10 +237,19 @@ run_apply_assertions() {
 	assert_ref_exists "$repo" open-pr "apply preserves open PR branch"
 	assert_ref_exists "$repo" active-worktree "apply preserves active worktree branch"
 	assert_ref_exists "$repo" main "apply preserves default branch"
-	if git -C "$repo" worktree list --porcelain | grep -F "$worktree_base" >/dev/null 2>&1; then
-		fail "apply must remove its isolated deletion transport"
-	fi
-	pass "apply removes its isolated deletion transport"
+	case "${AIDEVOPS_WORKTREE_MANAGER:-}:$(uname -s)" in
+	legacy-guards:* | *:Darwin)
+		if git -C "$repo" worktree list --porcelain | grep -F "$worktree_base" >/dev/null 2>&1; then
+			fail "legacy apply must remove its isolated deletion transport"
+		fi
+		pass "legacy apply removes its isolated deletion transport"
+		;;
+	*)
+		git -C "$repo" worktree list --porcelain | grep -F "$worktree_base" >/dev/null 2>&1 ||
+			fail "managed transport without completion proof was removed"
+		pass "managed transport without completion proof is preserved"
+		;;
+	esac
 	return 0
 }
 

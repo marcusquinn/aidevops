@@ -96,6 +96,16 @@ git() {
 	return 0
 }
 
+ # Recovery-state unit fixtures use the existing fake Git boundary below.
+ # Native creator registration and retained failures have separate coverage.
+worktree_create_registered() {
+	local repo="$1" path="$2" ref="$3"
+	shift 3
+	[[ "${AIDEVOPS_WORKTREE_CREATE_RESERVED_PATH:-}" == "$path" ]] || return 1
+	git -C "$repo" worktree add "$@" "$path" "$ref"
+	return $?
+}
+
 release_lane_recover_dead_preparing() {
 	[[ "$1" == "test/repo" && "$2" == "101" && "$3" == "$EXPECTED" && "$4" == "v1.2.4" ]] || return 1
 	RECOVERY_CALLS=$((RECOVERY_CALLS + 1))

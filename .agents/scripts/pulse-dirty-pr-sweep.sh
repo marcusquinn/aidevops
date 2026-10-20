@@ -875,9 +875,14 @@ _dps_rebase_in_ephemeral() {
 		return 1
 	}
 
-	# GH#34943: `worktree add` into the empty mktemp directory either
-	# registers it or leaves it empty; rmdir never deletes content.
-	if ! git -C "$repo_path" worktree add -b "$ephemeral_branch" "$ephemeral" "origin/${head_ref}" >/dev/null 2>&1; then
+	# The exact empty directory is reserved by this invocation. Registration
+	# failure retains the created tree; rmdir below never deletes content.
+	if ! (
+		# shellcheck source=shared-worktree-create.sh
+		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
+		AIDEVOPS_WORKTREE_CREATE_RESERVED_PATH="$ephemeral" worktree_create_registered \
+			"$repo_path" "$ephemeral" "origin/${head_ref}" -b "$ephemeral_branch"
+	) >/dev/null; then
 		_dps_log "PR #$pr_number ($repo_slug): worktree add failed — skipping rebase"
 		rmdir "$ephemeral" 2>/dev/null || true
 		return 1
@@ -995,6 +1000,11 @@ _dps_remove_ephemeral() {
 		if [[ -z "$owner_mark" || "$found_mark" != "$owner_mark" ]]; then
 			_dps_log "${preserve_msg} — ownership token absent or mismatched"
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "ownership-unproven" "$_DPS_MODE_SKIPPED"
+			return 0
+		fi
+		if ! worktree_managed_require_removal_proof "$ephemeral"; then
+			_dps_log "${preserve_msg} — managed completion proof unavailable"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "managed-proof-unavailable" "$_DPS_MODE_SKIPPED"
 			return 0
 		fi
 	fi

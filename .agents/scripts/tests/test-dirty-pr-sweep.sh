@@ -54,6 +54,8 @@ print_result() {
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
+export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/owners.db"
 mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor" \
 	"${HOME}/.config/aidevops"
 # Minimal repos.json (empty initialized_repos array)
@@ -648,6 +650,8 @@ test_union_rebase() (
 	local before_head after_head rc=0
 	set -e
 	mkdir -p "$fixture"
+	# Retained managed worktrees remain inside this fixture's cleanup boundary.
+	export TMPDIR="$fixture"
 	git init --bare --quiet "${fixture}/origin.git"
 	git init --quiet -b main "$repo"
 	git -C "$repo" config user.name 'Sweep Test'
@@ -688,8 +692,16 @@ test_union_rebase() (
 		[[ "$rc" -eq 1 && "$before_head" == "$after_head" ]]
 		[[ "$(git --git-dir="${fixture}/origin.git" rev-parse pr)" == "$before_head" ]]
 	fi
-	[[ "$(git -C "$repo" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]]
-	[[ -z "$(git -C "$repo" for-each-ref --format='%(refname)' refs/heads/dirty-pr-sweep/)" ]]
+	case "${AIDEVOPS_WORKTREE_MANAGER:-}:$(uname -s)" in
+	legacy-guards:* | *:Darwin)
+		[[ "$(git -C "$repo" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]]
+		[[ -z "$(git -C "$repo" for-each-ref --format='%(refname)' refs/heads/dirty-pr-sweep/)" ]]
+		;;
+	*)
+		[[ "$(git -C "$repo" worktree list --porcelain | grep -c '^worktree ')" -eq 2 ]]
+		[[ -n "$(git -C "$repo" for-each-ref --format='%(refname)' refs/heads/dirty-pr-sweep/)" ]]
+		;;
+	esac
 	[[ ! -e "${repo}/.git/info/attributes" ]]
 	[[ -z "$(git -C "$repo" config --local --get core.attributesFile)" ]]
 	return 0

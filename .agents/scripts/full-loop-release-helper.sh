@@ -102,7 +102,7 @@ _full_loop_release_prepare_control_worktree() {
 	_full_loop_release_reap_stale_control_worktrees "$repository_root" "$worktree_base"
 	source_commit=$(git -C "$repository_root" rev-parse HEAD 2>/dev/null) || return 1
 	[[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
-	git -C "$repository_root" worktree add --detach "$control_path" "$source_commit" >/dev/null || return 1
+	worktree_create_registered "$repository_root" "$control_path" "$source_commit" --detach >/dev/null || return 1
 	checkout_commit=$(git -C "$control_path" rev-parse HEAD 2>/dev/null || true)
 	if [[ ! -f "$control_path/.git" || "$checkout_commit" != "$source_commit" ]]; then
 		_full_loop_release_remove_worktree "$control_path" release-control-unverified || true
@@ -462,7 +462,7 @@ _full_loop_release_prepare_new() {
 	export AIDEVOPS_RELEASE_SNAPSHOT_SHA AIDEVOPS_RELEASE_SNAPSHOT_BASE
 	export AIDEVOPS_RELEASE_SNAPSHOT_BASE_TAG AIDEVOPS_RELEASE_SNAPSHOT_BASE_OBJECT
 	phase_started=$(_full_loop_release_timing_start release-run-worktree-add)
-	if ! git -C "$REPO_ROOT" worktree add --detach "$release_path" "$snapshot" >/dev/null; then
+	if ! worktree_create_registered "$REPO_ROOT" "$release_path" "$snapshot" --detach >/dev/null; then
 		_full_loop_release_timing_finish release-run-worktree-add "$phase_started" failed
 		return 1
 	fi

@@ -6,6 +6,8 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${TEST_DIR}/../local-branch-cleanup-helper.sh"
 ROOT="${PWD}/.agents/tmp/test-local-branch-cleanup.$$"
+export WORKTREE_REGISTRY_DIR="$ROOT/registry"
+export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/owners.db"
 REPO="$ROOT/repo"
 BIN="$ROOT/bin"
 
@@ -100,9 +102,9 @@ git -C "$REPO" branch race
 cat >"$BIN/git" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$*" == *'update-ref -d refs/heads/race'* ]]; then
-  /usr/bin/git -C "$TEST_REPO" update-ref refs/heads/race "$TEST_NEW_SHA"
+  "${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}" -C "$TEST_REPO" update-ref refs/heads/race "$TEST_NEW_SHA"
 fi
-exec /usr/bin/git "$@"
+exec "${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}" "$@"
 STUB
 chmod +x "$BIN/git"
 test_commit advance
@@ -113,7 +115,14 @@ if result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO" --branch race --appl
 fi
 assert_has "$result" 'failed race ref changed after scan'
 [[ "$(git -C "$REPO" rev-parse refs/heads/race)" == "$TEST_NEW_SHA" ]] || fail 'moved ref lost'
-[[ "$(git -C "$REPO" worktree list --porcelain)" != *"$ROOT/transport"* ]] || fail 'transport left registered'
+case "${AIDEVOPS_WORKTREE_MANAGER:-}:$(uname -s)" in
+legacy-guards:* | *:Darwin)
+	[[ "$(git -C "$REPO" worktree list --porcelain)" != *"$ROOT/transport"* ]] || fail 'legacy transport left registered'
+	;;
+*)
+	[[ "$(git -C "$REPO" worktree list --porcelain)" == *"$ROOT/transport"* ]] || fail 'unproven managed transport was removed'
+	;;
+esac
 
 # local_only (no origin): local default-branch ancestry is merge evidence.
 rm -f "$BIN/git"

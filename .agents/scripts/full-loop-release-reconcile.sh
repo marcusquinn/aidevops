@@ -1268,7 +1268,7 @@ _full_loop_release_prepare_tag_worktree() {
 		[[ "$checkout_commit" == "$tag_commit" ]] || return 1
 		return 0
 	fi
-	git -C "$REPO_ROOT" worktree add --detach "$release_path" "$tag_name" >/dev/null || return 1
+	worktree_create_registered "$REPO_ROOT" "$release_path" "$tag_name" --detach >/dev/null || return 1
 	checkout_commit=$(git -C "$release_path" rev-parse HEAD 2>/dev/null) || {
 		_full_loop_release_remove_worktree "$release_path" release-tag-unverified || true
 		return 1
