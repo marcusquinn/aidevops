@@ -468,9 +468,7 @@ _runtime_evidence_is_substantive() {
 	case "$normalized" in
 	"" | none | n/a | na | self-assessed) return 1 ;;
 	esac
-	if [[ "$normalized" == *"no additional evidence"* ]] ||
-		[[ "$normalized" == *"no evidence"* ]] ||
-		[[ "$normalized" == *"no runtime evidence"* ]] ||
+	if [[ "$normalized" =~ ^no\ (runtime\ |additional\ )?evidence([[:space:][:punct:]]|$) ]] ||
 		[[ "$normalized" == *"not ${_full_loop_runtime_verified_marker}"* ]] ||
 		[[ "$normalized" == *"not runtime verified"* ]]; then
 		return 1

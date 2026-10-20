@@ -44,6 +44,19 @@ assert_rejected() {
 	return 0
 }
 
+assert_accepted() {
+	local name="$1"
+	shift
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if "$@" >/dev/null 2>&1; then
+		printf 'PASS %s\n' "$name"
+	else
+		printf 'FAIL %s\n' "$name"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	return 0
+}
+
 # shellcheck source=../full-loop-helper-risk.sh
 source "${SCRIPT_DIR_TEST}/full-loop-helper-risk.sh"
 # shellcheck source=../full-loop-helper-commit.sh
@@ -69,6 +82,10 @@ assert_rejected "explicit Low cannot bypass Critical runtime evidence" \
 	_build_pr_body "2" "Delete data" "self-assessed" "src/storage.sh" "" "Resolves" "Low" "self-assessed"
 assert_rejected "bare runtime marker is not evidence" \
 	_build_pr_body "2" "Credential rotation" "runtime-verified" "src/auth.sh" ""
+assert_rejected "bare no evidence is not evidence" \
+	_runtime_evidence_is_substantive "no evidence"
+assert_accepted "descriptive no evidence columns remains substantive" \
+	_runtime_evidence_is_substantive "runtime-verified with activity rows returned, with no evidence columns"
 assert_rejected "explicit runtime level still requires evidence" \
 	_build_pr_body "2" "Credential rotation" "" "src/auth.sh" "" "Resolves" "Critical" "runtime-verified"
 
