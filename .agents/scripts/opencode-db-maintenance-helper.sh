@@ -206,6 +206,22 @@ _sqlite_available() {
 # Deduplicates by PID so a process matched by both methods is counted once.
 _opencode_process_count() {
 	local pids=""
+	# Inventory children target independent stores. A TUI using another project
+	# must not veto every idle DB; unavailable inspection still vetoes this DB.
+	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" == 1 ]]; then
+		if ! command -v lsof >/dev/null 2>&1; then
+			printf '1\n'
+			return 0
+		fi
+		local holder_rc=0
+		pids=$(lsof -t "$OPENCODE_DB" "${OPENCODE_DB}-wal" "${OPENCODE_DB}-shm" 2>/dev/null) || holder_rc=$?
+		if [[ "$holder_rc" -gt 1 ]]; then
+			printf '1\n'
+			return 0
+		fi
+		printf '%s\n' "$pids" | awk 'NF' | sort -u | wc -l | tr -d ' '
+		return 0
+	fi
 	# shellcheck disable=SC2009
 	pids=$(pgrep -f '(^|/)\.?opencode($|[[:space:]])' 2>/dev/null || true)
 	if [[ -f "$OPENCODE_DB" ]] && command -v lsof >/dev/null 2>&1; then
@@ -214,6 +230,7 @@ _opencode_process_count() {
 		pids=$(printf '%s\n%s\n' "$pids" "$lsof_pids")
 	fi
 	printf '%s\n' "$pids" | awk 'NF' | sort -u | wc -l | tr -d ' '
+	return 0
 }
 
 # _db_size_bytes <path> — portable file-size getter

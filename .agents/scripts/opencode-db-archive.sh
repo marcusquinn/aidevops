@@ -803,12 +803,17 @@ cmd_archive_all() {
 _archive_expire_events() {
 	local days="$1" dry_run="$2" max_duration="$3"
 	[[ "$days" -gt 0 && -f "$ARCHIVE_DB" ]] || return 0
+	if [[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
+		print_error "Archive event expiry refused — active and archive DB are the same file"
+		return 1
+	fi
 	local holders cutoff count start now
 	holders=$(_db_holder_count "$ARCHIVE_DB")
 	if [[ "$holders" == "$OPENCODE_DB_STATE_UNKNOWN" || "$holders" -gt 0 ]]; then
 		print_warning "Archive event expiry deferred — archive holder state is active or unknown"
 		return 2
 	fi
+	_wal_is_stable "$ARCHIVE_DB" || return 2
 	opencode_archive_schema_supported "$ARCHIVE_DB" required || return 3
 	_sqlite_has_table "$ARCHIVE_DB" event || return 0
 	cutoff=$(($(date +%s) * 1000 - days * 86400000))

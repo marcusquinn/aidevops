@@ -807,6 +807,53 @@ else
 	_fail "archive VACUUM coordination mismatch: rc=${rc}, active=${active_quick_check}, archive=${archive_quick_check}, output=${out}"
 fi
 
+# Exercise the scheduled inventory against actual SQLite fixtures, including a
+# project path with spaces, an absent default DB, and a skipped live holder.
+isolated_root="$SANDBOX/isolated"
+mkdir -p "$isolated_root/project with spaces/opencode" "$isolated_root/project-b/opencode"
+cp "$ARCHIVE_DB" "$isolated_root/project with spaces/opencode/opencode.db"
+cp "$ARCHIVE_DB" "$isolated_root/project-b/opencode/opencode.db"
+out=$(OPENCODE_DB_PATH="$SANDBOX/missing.db" OPENCODE_INTERACTIVE_ROOT="$isolated_root" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive-all --dry-run --retention-days 0 2>&1)
+if [[ "$out" == *"project with spaces"* && "$out" == *"project-b"* && "$out" == *"Events:         1"* && ! -f "$isolated_root/project-b/opencode/opencode-archive.db" ]]; then
+	_pass "inventory dry run discovers isolated DBs without a default DB and preserves events"
+else
+	_fail "isolated dry-run mismatch: $out"
+fi
+out=$(OPENCODE_DB_PATH="$SANDBOX/missing.db" OPENCODE_INTERACTIVE_ROOT="$isolated_root" \
+	OPENCODE_DB_HOLDER_COMMAND="$mock_holder" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	"$HELPER" archive-all --apply --retention-days 0 2>&1)
+if [[ ! -f "$isolated_root/project-b/opencode/opencode-archive.db" && "$out" == *"hold the active DB open"* ]]; then
+	_pass "scheduled inventory skips live-held isolated DBs"
+else
+	_fail "isolated holder veto mismatch: $out"
+fi
+out=$(OPENCODE_DB_PATH="$SANDBOX/missing.db" OPENCODE_INTERACTIVE_ROOT="$isolated_root" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive-all --apply --retention-days 0 2>&1)
+isolated_db="$isolated_root/project-b/opencode/opencode.db"
+isolated_archive="$isolated_root/project-b/opencode/opencode-archive.db"
+if [[ "$(sqlite3 "$isolated_db" 'SELECT COUNT(*) FROM event;')" == 0 && "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 1 ]]; then
+	_pass "scheduled inventory moves isolated events into per-DB archives"
+else
+	_fail "isolated event move mismatch: $out"
+fi
+transcript_before=$(sqlite3 "$isolated_archive" 'SELECT (SELECT COUNT(*) FROM session) || (SELECT COUNT(*) FROM message) || (SELECT COUNT(*) FROM part);')
+out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	"$HELPER" archive --dry-run --archive-event-retention-days 1 2>&1)
+if [[ "$out" == *"would expire 1 archived events"* && "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 1 ]]; then
+	_pass "archived event expiry dry run never deletes rows with no active candidates"
+else
+	_fail "event expiry preview mismatch: $out"
+fi
+out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	"$HELPER" archive --apply --archive-event-retention-days 1 2>&1)
+transcript_after=$(sqlite3 "$isolated_archive" 'SELECT (SELECT COUNT(*) FROM session) || (SELECT COUNT(*) FROM message) || (SELECT COUNT(*) FROM part);')
+if [[ "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 0 && "$transcript_before" == "$transcript_after" ]]; then
+	_pass "opt-in archived event expiry preserves session/message/part rows"
+else
+	_fail "event expiry transcript mismatch: $out"
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
 	exit 1
