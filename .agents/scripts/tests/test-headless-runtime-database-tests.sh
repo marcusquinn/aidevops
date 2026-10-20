@@ -612,6 +612,86 @@ test_replay_preserved_worker_db_verifies_before_deletion() {
 	return 0
 }
 
+test_replay_corrupt_worker_db_quarantines_evidence_and_finalizes_healthy() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local recovery_root="${TEST_ROOT}/corrupt-replay-recovery"
+	local isolated_dir="${TEST_ROOT}/corrupt-replay-current"
+	local shared_db="${shared_dir}/opencode.db"
+	local first_output="" second_output="" suffix kind merged="" preserved=1
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode" "$recovery_root/healthy" "$recovery_root/not-database" "$recovery_root/malformed"
+	rm -f "$shared_db"
+	create_complete_opencode_test_schema "$shared_db"
+	create_complete_opencode_test_schema "${isolated_dir}/opencode/opencode.db"
+	create_complete_opencode_test_schema "$recovery_root/healthy/opencode.db"
+	sqlite3 "${isolated_dir}/opencode/opencode.db" "INSERT INTO project VALUES ('current', 'Current'); INSERT INTO session VALUES ('current', 'current', '/current', 'Current');"
+	sqlite3 "$recovery_root/healthy/opencode.db" "INSERT INTO project VALUES ('recovered', 'Recovered'); INSERT INTO session VALUES ('recovered', 'recovered', '/recovered', 'Recovered');"
+	printf 'not a database\n' >"$recovery_root/not-database/opencode.db"
+	# A valid SQLite header with an invalid schema btree page reproduces SQLITE_CORRUPT (11).
+	sqlite3 "$recovery_root/malformed/opencode.db" 'PRAGMA page_size=4096; CREATE TABLE broken (id TEXT);'
+	python3 -c 'import sys; f = open(sys.argv[1], "r+b"); f.seek(4096); f.write(b"\xff"); f.close()' "$recovery_root/malformed/opencode.db"
+	for kind in not-database malformed; do
+		printf 'retained WAL evidence\n' >"$recovery_root/$kind/opencode.db-wal"
+		printf 'retained SHM evidence\n' >"$recovery_root/$kind/opencode.db-shm"
+		for suffix in "" -wal -shm; do
+			cp "$recovery_root/$kind/opencode.db$suffix" "$TEST_ROOT/expected-$kind.db$suffix"
+		done
+	done
+	first_output=$(AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _finalize_isolated_runtime_data "$isolated_dir" worker 2>&1)
+	second_output=$(AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _replay_preserved_worker_dbs 2>&1)
+	for kind in not-database malformed; do
+		for suffix in "" -wal -shm; do
+			cmp -s "$TEST_ROOT/expected-$kind.db$suffix" "$recovery_root/.quarantine/$kind/opencode.db$suffix" || preserved=0
+		done
+		[[ -f "$recovery_root/.quarantine/$kind/quarantine.txt" && ! -d "$recovery_root/$kind" ]] || preserved=0
+	done
+	merged=$(sqlite3 "$shared_db" 'SELECT id FROM session ORDER BY id;')
+	if [[ "$preserved" -eq 1 && "$merged" == $'current\nrecovered' && ! -d "$isolated_dir" && ! -f "$recovery_root/healthy/opencode.db" && "$first_output" == *"db_merge_recovery_quarantined"* && "$first_output" != *"replay_incomplete"* && -z "$second_output" ]]; then
+		print_result "corrupt replay quarantines evidence once and finalizes healthy workers" 0
+		return 0
+	fi
+	print_result "corrupt replay quarantines evidence once and finalizes healthy workers" 1 \
+		"preserved=$preserved merged=$merged first=$first_output second=$second_output"
+	return 0
+}
+
+test_replay_schema_failure_remains_retryable_without_mutating_evidence() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local recovery_root="${TEST_ROOT}/schema-replay-recovery"
+	local shared_db="${shared_dir}/opencode.db"
+	local first_status=0 second_status=0 unchanged=0
+	mkdir -p "$shared_dir" "$recovery_root/schema-drift"
+	rm -f "$shared_db"
+	sqlite3 "$shared_db" 'CREATE TABLE project (id TEXT PRIMARY KEY); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, required_value TEXT NOT NULL);'
+	sqlite3 "$recovery_root/schema-drift/opencode.db" 'CREATE TABLE project (id TEXT PRIMARY KEY); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT);'
+	cp "$recovery_root/schema-drift/opencode.db" "$TEST_ROOT/expected-schema.db"
+	AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _replay_preserved_worker_dbs || first_status=$?
+	AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _replay_preserved_worker_dbs || second_status=$?
+	cmp -s "$TEST_ROOT/expected-schema.db" "$recovery_root/schema-drift/opencode.db" && unchanged=1
+	if [[ "$first_status" -eq 1 && "$second_status" -eq 1 && "$unchanged" -eq 1 && ! -d "$recovery_root/.quarantine" ]]; then
+		print_result "schema replay failure stays retryable and preserves original evidence" 0
+		return 0
+	fi
+	print_result "schema replay failure stays retryable and preserves original evidence" 1 \
+		"first=$first_status second=$second_status unchanged=$unchanged"
+	return 0
+}
+
+test_quarantine_worker_db_preserves_existing_metadata() {
+	local recovery_root="${TEST_ROOT}/metadata-collision-recovery"
+	local status=0 contents=""
+	mkdir -p "$recovery_root/evidence"
+	printf 'original provenance\n' >"$recovery_root/original.txt"
+	ln -s "$recovery_root/original.txt" "$recovery_root/evidence/quarantine.txt"
+	_quarantine_worker_db "$recovery_root/evidence" "$recovery_root" 2>/dev/null || status=$?
+	IFS= read -r contents <"$recovery_root/original.txt"
+	if [[ "$status" -eq 1 && "$contents" == 'original provenance' && -L "$recovery_root/evidence/quarantine.txt" && ! -d "$recovery_root/.quarantine/evidence" ]]; then
+		print_result "quarantine refuses existing metadata without following symlinks" 0
+		return 0
+	fi
+	print_result "quarantine refuses existing metadata without following symlinks" 1
+	return 0
+}
+
 test_worker_db_replay_lock_recovers_stale_owner_and_waits_for_pid() {
 	local recovery_root="${TEST_ROOT}/replay-lock-recovery"
 	local replay_lock="${recovery_root}/.replay.lock"

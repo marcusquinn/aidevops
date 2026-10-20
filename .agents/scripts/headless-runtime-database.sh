@@ -558,6 +558,7 @@ _quarantine_worker_db() {
 	chmod 700 "$quarantine_root" || return 1
 	if ! (
 		umask 077
+		set -C # Never overwrite existing provenance or follow a metadata symlink.
 		printf 'classification=sqlite_corruption\noriginal_directory=%s\nclassified_at=%s\nnext_action=Inspect a separate copy privately; retain originals and sidecars. Requeue only a validated copy through the existing verified replay contract; never repair or import originals in place.\n' \
 			"$recovery_dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"${recovery_dir}/quarantine.txt"
 	); then
