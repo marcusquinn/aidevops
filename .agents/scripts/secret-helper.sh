@@ -140,10 +140,24 @@ gopass_owns_secret() {
 # from gopass. Matches build_secret_env so `secret check` (the dispatch
 # capability gate) agrees with runtime injection (GH#33608).
 # Used only by cmd_get, which preserves the historical first-line contract.
+# Returns 3 when gopass owns NAME but `gopass show` fails (gpg/agent/pinentry/
+# store), matching cmd_check. Only then is gopass stderr forwarded: it is
+# diagnostic text, never the value. Success-path stderr stays hidden (GH#35265).
 get_secret_value() {
 	local name="$1"
 	if has_gopass && gopass_owns_secret "$name"; then
-		gopass show -o "${GOPASS_PREFIX}/${name}" 2>/dev/null || true
+		local err_file="" show_rc=0
+		if ! err_file=$(mktemp 2>/dev/null); then
+			gopass show -o "${GOPASS_PREFIX}/${name}" 2>/dev/null || return 3
+			return 0
+		fi
+		gopass show -o "${GOPASS_PREFIX}/${name}" 2>"$err_file" || show_rc=$?
+		if [[ "$show_rc" -ne 0 ]]; then
+			cat "$err_file" >&2
+			rm -f "$err_file"
+			return 3
+		fi
+		rm -f "$err_file"
 		return 0
 	fi
 	# Fallback to credential files (handles multi-tenant)
@@ -1100,14 +1114,21 @@ cmd_get() {
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
 
-	local value
-	value=$(get_secret_value "$name")
-	if [[ -z "$value" ]]; then
+	local value="" read_rc=0 read_name="$name"
+	value=$(get_secret_value "$name") || read_rc=$?
+	if [[ "$read_rc" -eq 0 && -z "$value" ]]; then
 		# Declared alias or explicit provider default (GH#34718)
 		local source_name=""
 		if source_name=$(resolve_injection_source "$name"); then
-			value=$(get_secret_value "$source_name")
+			read_name="$source_name"
+			value=$(get_secret_value "$source_name") || read_rc=$?
 		fi
+	fi
+
+	# Present but unreadable is not "not found": fail closed like cmd_check (GH#35265).
+	if [[ "$read_rc" -eq 3 ]]; then
+		print_error "Unable to read ${read_name} from gopass (decryption or store failure; check gpg-agent, pinentry and GNUPGHOME)" >&2
+		return 1
 	fi
 
 	if [[ -z "$value" ]]; then

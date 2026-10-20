@@ -343,6 +343,48 @@ sys.stdout.write(value)
 	return 0
 }
 
+# GH#35265: a listed entry that gopass cannot decrypt is not "not found".
+test_get_distinguishes_unreadable_from_missing() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+	ls) printf '%s\n' 'aidevops/BROKEN_KEY' 'aidevops/GOOD_KEY'; exit 0 ;;
+	show)
+		case "${3:-}" in
+			aidevops/GOOD_KEY) printf '%s' 'good-placeholder-value'; exit 0 ;;
+			*)
+				printf '%s\n' 'gpg: decryption failed: No secret key' >&2
+				exit 11
+				;;
+		esac
+		;;
+	*) exit 1 ;;
+esac
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	local get_tmp="$TEST_DIR/get-tmp"
+	mkdir -p "$get_tmp"
+	local broken_out="" broken_err="" broken_rc=0 missing_err="" missing_rc=0 good_out=""
+	broken_out=$(TMPDIR="$get_tmp" HOME="$TEST_DIR/home" bash "$HELPER" get BROKEN_KEY 2>"$TEST_DIR/broken.err") || broken_rc=$?
+	broken_err=$(<"$TEST_DIR/broken.err")
+	missing_err=$(HOME="$TEST_DIR/home" bash "$HELPER" get ABSENT_KEY 2>&1 >/dev/null) || missing_rc=$?
+	good_out=$(TMPDIR="$get_tmp" HOME="$TEST_DIR/home" bash "$HELPER" get GOOD_KEY 2>/dev/null)
+	if [[ "$broken_rc" -eq 1 && -z "$broken_out" &&
+		"$broken_err" == *"gpg: decryption failed: No secret key"* &&
+		"$broken_err" == *"Unable to read BROKEN_KEY from gopass"* &&
+		"$broken_err" != *"Secret not found"* &&
+		"$missing_rc" -eq 1 && "$missing_err" == *"Secret not found: ABSENT_KEY"* &&
+		"$good_out" == "good-placeholder-value" ]] && rmdir "$get_tmp"; then
+		print_result "get reports gopass read failures separately from missing secrets" 0
+	else
+		print_result "get reports gopass read failures separately from missing secrets" 1 \
+			"broken rc=$broken_rc missing rc=$missing_rc; expected gpg diagnostics, not-found only for absent names, and no temp leftovers"
+	fi
+	return 0
+}
+
 test_specific_injection_fails_closed() {
 	setup
 	trap 'teardown' RETURN
@@ -1209,6 +1251,7 @@ main() {
 	test_run_redacts_overlapping_secrets_split_across_writes
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines
+	test_get_distinguishes_unreadable_from_missing
 	test_specific_injection_fails_closed
 	test_empty_fallback_secret_fails_closed
 	test_locked_injection_exits_bounded
