@@ -185,7 +185,7 @@ main() {
 	echo "[opencode-db-archive-async] Starting archive (budget=${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC}s)" >>"$LOGFILE"
 
 	local rc=0
-	"$ARCHIVE_HELPER" archive --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 || rc=$?
+	"$ARCHIVE_HELPER" archive-all --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 || rc=$?
 
 	if [[ "$rc" -eq 0 ]]; then
 		_update_last_run

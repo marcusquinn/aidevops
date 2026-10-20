@@ -92,9 +92,12 @@ fi
 # Paths and defaults
 # -----------------------------------------------------------------------------
 
+# shellcheck source=opencode-db-inventory-lib.sh
+source "${SCRIPT_DIR}/opencode-db-inventory-lib.sh"
+
 readonly OPENCODE_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode"
 readonly OPENCODE_DB="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${OPENCODE_DATA_DIR}/opencode.db}}"
-readonly OPENCODE_ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-${OPENCODE_DATA_DIR}/opencode-archive.db}"
+readonly OPENCODE_ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-${OPENCODE_DB%/*}/opencode-archive.db}"
 readonly OPENCODE_WAL="${OPENCODE_DB}-wal"
 readonly OPENCODE_SHM="${OPENCODE_DB}-shm"
 readonly MAINTENANCE_WINDOW_MODE="maintenance-window"
@@ -104,7 +107,7 @@ readonly PRAGMA_FREELIST_COUNT="freelist_count"
 readonly SESSION_PARENT_ID_COLUMN="parent_id"
 readonly SESSION_PROJECT_ID_COLUMN="project_id"
 
-readonly STATE_DIR="${HOME}/.aidevops/.agent-workspace/work/opencode-maintenance"
+readonly STATE_DIR="${OPENCODE_MAINTENANCE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/work/opencode-maintenance}"
 readonly STATE_FILE="${STATE_DIR}/last-run.json"
 readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 
@@ -709,6 +712,15 @@ _report_print_wal_status() {
 }
 
 cmd_report() {
+	local inventory_db
+	printf '\nOpenCode DB inventory (active / WAL / archive bytes):\n'
+	while IFS= read -r -d '' inventory_db; do
+		printf '  %s: %s / %s / %s\n' "$inventory_db" \
+			"$(_db_size_bytes "$inventory_db")" "$(_db_size_bytes "${inventory_db}-wal")" \
+			"$(_db_size_bytes "${inventory_db%/*}/opencode-archive.db")"
+	done < <(opencode_db_inventory "$OPENCODE_DB")
+	# Inventory is still useful when the selected/default DB does not exist.
+	[[ -f "$OPENCODE_DB" ]] || return 0
 	if ! _opencode_installed; then
 		print_info "opencode not installed — nothing to report"
 		return 0
@@ -1161,6 +1173,22 @@ cmd_maintenance_window() {
 # without seeing errors).
 
 cmd_auto() {
+	# Children preserve the existing per-DB safety/throttle path, with independent
+	# state so a recent default-DB run cannot suppress isolated DB maintenance.
+	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" != 1 ]]; then
+		local db rc=0 result=0 state_dir
+		while IFS= read -r -d '' db; do
+			state_dir="$STATE_DIR"
+			if [[ ! "$db" -ef "$OPENCODE_DB" ]]; then state_dir="${db%/*}/aidevops-maintenance"; fi
+			print_info "Maintenance inventory: $db"
+			rc=0
+			OPENCODE_DB_PATH="$db" OPENCODE_MAINTENANCE_SINGLE_DB=1 \
+				OPENCODE_MAINTENANCE_STATE_DIR="$state_dir" \
+				bash "${BASH_SOURCE[0]}" auto "$@" || rc=$?
+			[[ "$rc" -eq 0 ]] || result="$rc"
+		done < <(opencode_db_inventory "$OPENCODE_DB")
+		return "$result"
+	fi
 	# Silent no-op if opencode not installed
 	if ! _opencode_installed; then
 		_log INFO "auto: opencode not installed — no-op"
