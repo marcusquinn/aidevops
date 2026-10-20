@@ -15,6 +15,8 @@ import { loadModelRouting } from "./model-routing.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import {
   createPoolTool,
+  selectOpenAIRequestAccount,
+  selectRuntimePoolAccount,
 } from "./oauth-pool.mjs";
 import {
   consumeV2Completion,
@@ -70,6 +72,22 @@ const AGENTS_DIR = CONVERSATION_ENVIRONMENT ? MODULE_AGENTS_DIR : ACTIVE_AGENTS_
 const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
 const LOGS_DIR = join(HOME, ".aidevops", "logs");
+// Preserve the runtime-native fetch for image requests, matching index.mjs, so
+// a later global fetch wrapper cannot reroute isolated image traffic.
+const IMAGE_FETCH = globalThis.fetch?.bind(globalThis);
+
+/**
+ * GH#35160: image OAuth options for OpenCode 2. Rotation selects the next pool
+ * account without applyOpenAIPoolAccount(), which would mutate provider env
+ * state that v2-provider-auth.mjs owns.
+ */
+export function v2ImageToolOptions() {
+  return {
+    imageFetch: IMAGE_FETCH,
+    imageOAuthAccountResolver: selectOpenAIRequestAccount,
+    imageOAuthAccountRotator: (skipEmail) => selectRuntimePoolAccount("openai", skipEmail),
+  };
+}
 
 export const OPENCODE_V2_CAPABILITIES = Object.freeze({
   tools: true,
@@ -327,6 +345,7 @@ export async function setupAidevopsV2(ctx) {
         aidevopsRun: runChecked,
         sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
         poolToolFactory: () => createPoolTool(client),
+        ...v2ImageToolOptions(),
         projectRoot: directory,
         mcpClient: mcpRuntime.client,
         mcpDirectory: directory,
