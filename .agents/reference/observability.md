@@ -143,12 +143,7 @@ delete guard, restores it, and appends an immutable `runtime_event_archives`
 manifest row. A failed/corrupt archive leaves source rows intact. Interruption
 after file verification is resumable and reuses the verified partition.
 
-Core routine `r918` runs producer-owned maintenance daily through the shared
-Pulse scheduler. It repeatedly applies the same verified partition primitive
-until the backlog is clear or the default 20-partition/120-second run bound is
-reached; any residual backlog is reported and left for the next run. It does
-not install a dedicated launchd plist or systemd unit. The one-partition
-`retention` command remains explicit and dry-run-first.
+Core routine `r918` runs producer-owned maintenance daily through the shared Pulse scheduler. It repeatedly applies the same verified partition primitive until the backlog is clear or the default 20-partition/120-second run bound is reached; any residual backlog is reported and left for the next run. It does not install a dedicated launchd plist or systemd unit. The one-partition `retention` command remains explicit and dry-run-first.
 
 ```bash
 # Physical and classified bytes; never prints raw payloads
@@ -164,19 +159,9 @@ observability-helper.sh retention --apply --max-rows 5000
 observability-helper.sh retention-maintenance --apply --max-partitions 20 --max-duration-seconds 120
 ```
 
-The shared storage inventory reports active, archive, protected, reclaimable,
-candidate, and unknown bytes. Unattributed files and unavailable verification
-remain unknown; a verified archive or pinned state row is required before any
-byte is classified as protected, and source bytes are never called reclaimable
-before the archive transaction commits.
+The shared storage inventory reports active, archive, protected, reclaimable, candidate, and unknown bytes. Unattributed files and unavailable verification remain unknown; a verified archive or pinned state row is required before any byte is classified as protected, and source bytes are never called reclaimable before the archive transaction commits.
 
-Inventory aggregates scan the whole `runtime_events` table, so they use a
-separate 300-second budget (`AIDEVOPS_RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS`,
-1-3600). Failures report fixed reasons: `inventory-timeout`,
-`schema-unavailable`, or `inventory-unavailable`. A retention command that exits
-0 without a JSON result fails instead of passing silently. Node CLIs run through
-the symlinked deploy path use `entrypoint-guard.mjs`
-(`isDirectEntrypoint(import.meta.url)`), never a raw `argv[1]` comparison.
+Inventory aggregates scan the whole `runtime_events` table, so they use a separate 300-second budget (`AIDEVOPS_RUNTIME_EVENT_INVENTORY_TIMEOUT_SECONDS`, 1-3600). Failures report fixed reasons: `inventory-timeout`, `schema-unavailable`, or `inventory-unavailable`. A retention command that exits 0 without a JSON result fails instead of passing silently. Node CLIs run through the symlinked deploy path use `entrypoint-guard.mjs` (`isDirectEntrypoint(import.meta.url)`), never a raw `argv[1]` comparison.
 
 Full-loop keeps authoritative resumable state in `.agents/loop-state/full-loop.local.state` and appends local transition evidence to `full-loop-events.jsonl`. Schema v2 records the run ID, state revision, phase status/start/end/attempt, terminal evidence, next safe action, observed executor status/PID/heartbeat, manual resumes, reused subagent units, and duplicate work avoided. Status must validate executor liveness instead of trusting a stale PID. These records drive lifecycle recovery; runtime events and plugin cost/tool data remain fail-open reporting evidence. Aggregate phase wall time, active compute, CI wait/repair, release/cleanup time, calls by tier, retries/outcomes, reuse, false-positive gates, and manual resumes when producing performance reports.
 
