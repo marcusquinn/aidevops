@@ -82,10 +82,16 @@ _merge_with_admission_retry() {
 		"$@" >"$out_file" 2>"$err_file" || rc=$?
 		diagnostics=$(<"$err_file")
 		if [[ "$rc" -eq 0 ]]; then
-			cat "$out_file"
+			# Transport success is not read success if the captured response cannot
+			# reach the caller. Preserve replay failures instead of returning an
+			# empty successful read (GH#35181); never retry the transport for this.
+			cat "$out_file" || rc=$?
+			if [[ "$rc" -ne 0 ]]; then
+				printf 'Could not replay captured GitHub read output (exit %s)\n' "$rc" >&2
+			fi
 			[[ -z "$diagnostics" ]] || printf '%s\n' "$diagnostics" >&2
 			rm -f "$err_file" "$out_file"
-			return 0
+			return "$rc"
 		fi
 		# Match the transport record, not unrelated text that mentions pacing.
 		if [[ "$diagnostics" != *"error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at="* ]]; then

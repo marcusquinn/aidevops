@@ -1036,35 +1036,63 @@ test_shared_merge_read_admission_recovery() {
 test_final_head_sha_read_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	for scenario in recovers persists drift; do
+	for scenario in success recovers persists drift empty http replay-failure; do
 		result=0
 		bash -c '
+			set -euo pipefail
 			source "$1/shared-constants.sh"
 			source "$1/full-loop-helper-merge.sh"
 			source "$1/full-loop-helper-readiness.sh"
 			scenario="$2" elapsed=0 out="" rc=0
 			calls_file="$(mktemp)"
+			replays_file="$(mktemp)"
 			printf "0" >"$calls_file"
+			printf "0" >"$replays_file"
 			date() { printf "%s\n" "$((1000 + elapsed))"; return 0; }
-			sleep() { elapsed=$((elapsed + $1)); SECONDS=$((SECONDS + $1)); return 0; }
-			_merge_fetch_head_sha_rest() {
-				# Runs in a command substitution; persist the call count in a file.
+			sleep() { local duration="$1"; elapsed=$((elapsed + duration)); SECONDS=$((SECONDS + duration)); return 0; }
+			cat() {
+				local path="${1:-}" replays=0
+				if [[ "$path" == *merge-admission-output.* ]]; then
+					replays=$(( $(<"$replays_file") + 1 ))
+					printf "%s" "$replays" >"$replays_file"
+					[[ "$scenario" != replay-failure ]] || return 74
+				fi
+				command cat "$@"
+				return $?
+			}
+			_gh_with_timeout() {
+				# Keep both production head helpers and admission wrappers real.
+				[[ "$1 $2 $3 $4" == "read gh api repos/testorg/testrepo/pulls/42" ]] || return 2
 				local calls=$(( $(<"$calls_file") + 1 ))
 				printf "%s" "$calls" >"$calls_file"
-				if [[ "$scenario" == persists || "$calls" -eq 1 ]]; then
+				if [[ "$scenario" == persists || ( "$scenario" == recovers && "$calls" -eq 1 ) ]]; then
 					printf "%s\n" "[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=1002 reason=pacing" >&2
 					return 1
 				fi
-				[[ "$scenario" == drift ]] && printf "%s\n" other456 || printf "%s\n" verified123
+				[[ "$scenario" != empty ]] || return 0
+				if [[ "$scenario" == http ]]; then
+					printf "HTTP 502: Bad Gateway\n" >&2
+					return 1
+				fi
+				printf "transport diagnostic\n" >&2
+				[[ "$scenario" == drift ]] && printf "%s\n" fedcba9876543210fedcba9876543210fedcba98 || printf "%s\n" 0123456789abcdef0123456789abcdef01234567
 				return 0
 			}
-			export FULL_LOOP_VERIFIED_PR_HEAD_SHA=verified123
-			out=$(_merge_resolve_match_head 42 testorg/testrepo 2>&1) || rc=$?
-			rm -f "$calls_file"
+			export FULL_LOOP_VERIFIED_PR_HEAD_SHA=0123456789abcdef0123456789abcdef01234567
+			if [[ "$scenario" == replay-failure ]]; then
+				out=$(_flm_gh_read gh api repos/testorg/testrepo/pulls/42) || rc=$?
+			else
+				out=$(_merge_resolve_match_head 42 testorg/testrepo 2>&1) || rc=$?
+			fi
+			calls=$(<"$calls_file") replays=$(<"$replays_file")
+			rm -f "$calls_file" "$replays_file"
 			case "$scenario" in
-			recovers) [[ "$rc" -eq 0 && "$out" == *verified123 && "$out" == *"waiting 2s"* ]] ;;
+			success) [[ "$rc" -eq 0 && "$out" == "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" && "$calls" -eq 1 && "$replays" -eq 1 ]] ;;
+			recovers) [[ "$rc" -eq 0 && "$out" == *"$FULL_LOOP_VERIFIED_PR_HEAD_SHA" && "$out" == *"waiting 2s"* && "$calls" -eq 2 ]] ;;
 			persists) [[ "$rc" -eq 1 && "$out" == *"retry_at=1002"* && "$out" != *"Could not retrieve"* ]] ;;
-			drift) [[ "$rc" -eq 1 && "$out" == *"head changed after remote verification"* ]] ;;
+			drift) [[ "$rc" -eq 1 && "$out" == *"head changed after remote verification"* && "$calls" -eq 1 ]] ;;
+			empty|http) [[ "$rc" -eq 1 && "$out" == *"Could not retrieve"* && "$calls" -eq 1 ]] ;;
+			replay-failure) [[ "$rc" -eq 74 && -z "$out" && "$calls" -eq 1 ]] ;;
 			esac
 		' _ "$scripts_dir" "$scenario" || result=$?
 		print_result "final head SHA read admission recovery: $scenario" "$result"
