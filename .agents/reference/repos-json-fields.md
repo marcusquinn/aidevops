@@ -190,7 +190,7 @@ Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidev
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `footprint_low_info_paths` | array of basenames | unset | Extra file basenames (case-insensitive) that never serialise dispatch when they are the only files two briefs share, e.g. `["README.md"]` for repos whose briefs append rows to a README table. Adds to the built-in list (`VERSION`, `CHANGELOG.md`, `CHANGES.md`, `HISTORY.md`, WordPress `changelog.txt`/`readme.txt`, …); a shared implementation file still blocks. Global override of the built-in list: `AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES`. Consumed by `dispatch-dedup-footprint.sh`. |
+| `footprint_low_info_paths` | array of basenames | unset | Extra file basenames (case-insensitive) that never serialise dispatch when they are the only files two briefs share, e.g. `["README.md"]` for repos whose briefs append rows to a README table. Adds to the built-in list (`VERSION`, `CHANGELOG.md`, `CHANGES.md`, `HISTORY.md`, WordPress `changelog.txt`/`readme.txt`, …); a shared implementation file still blocks. Global override of the built-in list: `AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES`. Consumed by `dispatch-dedup-footprint.sh`. Footprint entries containing `*` (glob patterns such as `data/log/*/*/*.jsonl` declared for uniquely named new files) never overlap, so template-generated batch issues need no per-runner setting for them. |
 
 ## Workflow Runner Configuration
 

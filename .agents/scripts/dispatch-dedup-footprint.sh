@@ -707,6 +707,9 @@ _footprint_find_overlap() {
 				base = value
 				sub(/.*\//, "", base)
 				if (tolower(base) in low) next
+				# GH#35237: a shared glob pattern (declared for uniquely named new
+				# files) is not a shared file; only concrete paths block.
+				if (index(value, "*") > 0) next
 				key = norm(value)
 				if (key in owner) {
 					files = files value ", "

@@ -897,6 +897,19 @@ cache_test_rc=0
 ) || cache_test_rc=1
 print_result "in-process cache: empty hits, live reservations, TTL, self exclusion and repo isolation" "$cache_test_rc"
 
+# GH#35237 — shared wildcard patterns do not overlap; concrete paths still do
+wild_inflight=$'data/log/*/*/*.jsonl|900\nsrc/shared.ts|900'
+if _footprint_find_overlap $'data/log/*/*/*.jsonl' "$wild_inflight" >/dev/null; then
+	print_result "find_overlap: shared wildcard pattern does not block" 1
+else
+	print_result "find_overlap: shared wildcard pattern does not block" 0
+fi
+if wild_out=$(_footprint_find_overlap $'data/log/*/*/*.jsonl\nsrc/shared.ts' "$wild_inflight") && [[ "$wild_out" == $'900\tsrc/shared.ts' ]]; then
+	print_result "find_overlap: concrete path still blocks beside wildcard" 0
+else
+	print_result "find_overlap: concrete path still blocks beside wildcard" 1 "(got: ${wild_out:-none})"
+fi
+
 echo ""
 echo "Tests: ${TESTS_RUN} run, ${TESTS_FAILED} failed"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
