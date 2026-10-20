@@ -46,6 +46,7 @@ import {
 } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
+import { createCompactionInputReplay } from "./compaction-pinned-input.mjs";
 import { capCompactionEffort } from "./compaction-routing.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
@@ -522,6 +523,8 @@ export async function AidevopsPlugin({ directory, client }) {
   });
   const permissionBroker = createPermissionBroker({ client, isHeadless });
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
+  // GH#35186: replay verbatim user input and images hidden by compaction.
+  const compactionInputReplay = createCompactionInputReplay(client, { qualityLog });
   const cancellationReceipt = createSubagentCancellationReceipt(client, {
     qualityLog,
     recordReceipt: recordSubagentCancellationReceipt,
@@ -590,10 +593,13 @@ export async function AidevopsPlugin({ directory, client }) {
     }
   };
 
-  // Composed messages transform: TTSR enforcement + image size guard (GH#21793).
-  // The image guard runs after TTSR so corrections are applied to the final
-  // message list. Fail-open — errors in the guard must not block the message.
+  // Composed messages transform: compaction input replay (GH#35186) + TTSR
+  // enforcement + image size guard (GH#21793). Replay runs first so later
+  // hooks see the final head of the request. The image guard runs after TTSR
+  // so corrections are applied to the final message list. Fail-open — errors
+  // in any step must not block the message.
   const messagesTransformHook = async (input, output) => {
+    await compactionInputReplay.inject(input, output);
     await ttsrMessagesTransformHook(input, output);
     continuationGuard.injectSteering(input, output);
     try {
