@@ -1036,7 +1036,7 @@ test_shared_merge_read_admission_recovery() {
 test_final_head_sha_read_admission_recovery() {
 	local scripts_dir="" scenario="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	for scenario in success recovers persists drift empty http replay-failure; do
+	for scenario in success recovers persists drift empty http replay-failure head-replay-failure; do
 		result=0
 		bash -c '
 			set -euo pipefail
@@ -1055,7 +1055,7 @@ test_final_head_sha_read_admission_recovery() {
 				if [[ "$path" == *merge-admission-output.* ]]; then
 					replays=$(( $(<"$replays_file") + 1 ))
 					printf "%s" "$replays" >"$replays_file"
-					[[ "$scenario" != replay-failure ]] || return 74
+					[[ "$scenario" != *replay-failure ]] || return 74
 				fi
 				command cat "$@"
 				return $?
@@ -1093,6 +1093,7 @@ test_final_head_sha_read_admission_recovery() {
 			drift) [[ "$rc" -eq 1 && "$out" == *"head changed after remote verification"* && "$calls" -eq 1 ]] ;;
 			empty|http) [[ "$rc" -eq 1 && "$out" == *"Could not retrieve"* && "$calls" -eq 1 ]] ;;
 			replay-failure) [[ "$rc" -eq 74 && -z "$out" && "$calls" -eq 1 ]] ;;
+			head-replay-failure) [[ "$rc" -eq 1 && "$out" == *"Could not replay captured GitHub read output (exit 74)"* && "$out" == *"Could not retrieve"* && "$out" != *"head changed"* && "$calls" -eq 1 ]] ;;
 			esac
 		' _ "$scripts_dir" "$scenario" || result=$?
 		print_result "final head SHA read admission recovery: $scenario" "$result"
