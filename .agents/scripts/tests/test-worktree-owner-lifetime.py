@@ -275,6 +275,50 @@ class OwnerEvidenceTests(unittest.TestCase):
                     count = db.execute("SELECT count(*) FROM worktree_owners").fetchone()[0]
                 self.assertEqual(count, 0 if case == "complete" else 1)
 
+    def test_rotation_requires_closed_distinct_generation_and_rolls_back(self):
+        cases = ("closed", "running", "missing-receipt", "unobserved", "same-source", "same-admin", "foreign")
+        for case in cases:
+            with self.subTest(case=case), closing(self.database()) as db:
+                previous = {"path": "/fixture", "source_inode": "1:2", "admin_inode": "1:3"}
+                current = dict(previous, source_inode="1:4", admin_inode="1:5")
+                snapshot = {"InvocationID": "invocation", "MainPID": "0", "Job": "",
+                            "ExitType": "cgroup", "RemainAfterExit": "yes", "Restart": "no",
+                            "ActiveState": "active", "SubState": "exited"}
+                record = {"manager": owner.MANAGER, "generation": "a" * 32, "state": "sealed",
+                          "sealed_at": time.time(), "identity": previous,
+                          "admission_epoch": 0, "observed_admission_epoch": 0,
+                          "launches": [{"kind": owner.KIND, "completion_evidence": "systemd-cgroup-v1",
+                                        "invocation": "invocation", "quiescence": snapshot}]}
+                if case == "running":
+                    record["state"] = "running"
+                elif case == "missing-receipt":
+                    record["launches"][0].pop("quiescence")
+                elif case == "unobserved":
+                    record["admission_epoch"] = 1
+                elif case == "same-source":
+                    current["source_inode"] = previous["source_inode"]
+                elif case == "same-admin":
+                    current["admin_inode"] = previous["admin_inode"]
+                elif case == "foreign":
+                    record["manager"] = "pulse-cgroup-v1"
+                encoded = json.dumps(record)
+                db.execute("CREATE TABLE worktree_managed_lifetimes (path TEXT PRIMARY KEY, record TEXT)")
+                db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?,?)", ("/fixture", encoded))
+                db.commit()
+                db.execute("BEGIN IMMEDIATE")
+                with patch.object(owner, "identity", return_value=current):
+                    if case == "closed":
+                        owner.prepare_creation(db, "/fixture")
+                        self.assertEqual(db.execute("SELECT record FROM worktree_lifetime_history").fetchone()[0], encoded)
+                        self.assertEqual(db.execute("SELECT count(*) FROM worktree_managed_lifetimes").fetchone()[0], 0)
+                    else:
+                        with self.assertRaises(ValueError):
+                            owner.prepare_creation(db, "/fixture")
+                # A failed replacement registration rolls the entire transaction back.
+                db.rollback()
+                self.assertEqual(db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0], encoded)
+                self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_lifetime_history'").fetchone())
+
     @staticmethod
     def database():
         db = sqlite3.connect(":memory:")
@@ -482,6 +526,18 @@ class NativeOwnerCycle(unittest.TestCase):
                 restored_record = json.loads(run(*helper, "status", restored).stdout)
                 self.assertEqual(restored_record["manager"], owner.MANAGER)
                 self.assertNotEqual(run(*helper, "proof", restored, check=False).returncode, 0)
+                previous = json.loads(run(*helper, "status", work).stdout)
+                run("bash", "-c", 'source "$1/shared-worktree-create.sh"; '
+                    'worktree_create_registered "$2" "$3" HEAD -b second',
+                    "recreate", SCRIPTS, repo, work)
+                replacement = json.loads(run(*helper, "status", work).stdout)
+                self.assertNotEqual(replacement["generation"], previous["generation"])
+                self.assertEqual(replacement["state"], "running")
+                self.assertNotEqual(run(*helper, "proof", work, check=False).returncode, 0)
+                with closing(sqlite3.connect(env["WORKTREE_REGISTRY_DB"])) as db:
+                    historical = db.execute("SELECT record FROM worktree_lifetime_history WHERE path=? AND generation=?",
+                                            (str(work), previous["generation"])).fetchone()
+                self.assertEqual(json.loads(historical[0]), previous)
             finally:
                 # Only this fixture's unique service; production/session services untouched.
                 match = re.search(r"Managed worktree run: (aidevops-worker-session-[a-f0-9]+\.service)",

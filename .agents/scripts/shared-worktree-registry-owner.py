@@ -126,6 +126,10 @@ def main(argv: list[str]) -> int:
         with closing(sqlite3.connect(args[0], isolation_level=None)) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                creating = (operation == "register" and os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and
+                            os.environ.get("AIDEVOPS_WORKTREE_MANAGER") != "pulse-cgroup-v1")
+                if creating:
+                    owner_lifetime.prepare_creation(connection, args[1])
                 owner_lifetime.check_admission(connection, args[1])
                 if operation == "register":
                     connection.execute(
@@ -153,8 +157,6 @@ def main(argv: list[str]) -> int:
                         (args[1],)).fetchone()
                     cleanup = args[6] == "worktree-removal" and re.fullmatch(r"cleanup:[0-9]+", args[4])
                     if final == (int(args[3]), args[4]) and not cleanup:
-                        creating = (os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and
-                                    os.environ.get("AIDEVOPS_WORKTREE_MANAGER") != "pulse-cgroup-v1")
                         owner_lifetime.register(connection, args[1], final[0], final[1], creating)
                 connection.execute("COMMIT" if matched else "ROLLBACK")
             except Exception:

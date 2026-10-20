@@ -149,6 +149,33 @@ def require_admission_observed(record):
             "ownership changed without process admission evidence")
 
 
+def prepare_creation(connection, path):
+    """Rotate a closed, physically replaced generation in the ownership transaction."""
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_managed_lifetimes'").fetchone():
+        return
+    row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
+    if row is None:
+        return
+    record = json.loads(row[0])
+    require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
+    current = identity(Path(path))
+    previous = record["identity"]
+    if current == previous:
+        return  # Ordinary admission/sealed-generation guards still apply.
+    from worktree_lifetime_proof import proof
+    proof(record, previous["source_inode"])
+    require(current["source_inode"] != previous["source_inode"] and
+            current["admin_inode"] != previous["admin_inode"], "ambiguous replacement identity")
+    require(re.fullmatch(r"[0-9a-f]{32}", record.get("generation", "")) is not None,
+            "missing generation identity")
+    connection.execute("""CREATE TABLE IF NOT EXISTS worktree_lifetime_history (
+        path TEXT NOT NULL, generation TEXT NOT NULL, record TEXT NOT NULL,
+        replaced_at REAL NOT NULL, PRIMARY KEY(path, generation))""")
+    connection.execute("INSERT INTO worktree_lifetime_history VALUES (?, ?, ?, ?)",
+                       (path, record["generation"], row[0], time.time()))
+    connection.execute("DELETE FROM worktree_managed_lifetimes WHERE path=?", (path,))
+
+
 def check_admission(connection, path):
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_managed_lifetimes'").fetchone():
         return
