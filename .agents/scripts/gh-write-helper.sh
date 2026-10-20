@@ -25,7 +25,7 @@ usage() {
 # Explicit, owned PR handoff; generic issue edits never acquire this provenance.
 _issue_review_handoff() {
 	local number="${1:-}"
-	local repo="" pr="" issue_json=""
+	local repo="" pr="" issue_json="" status=""
 	[[ "$number" =~ ^[1-9][0-9]*$ ]] || return 2
 	shift
 	while [[ $# -gt 0 ]]; do
@@ -36,13 +36,24 @@ _issue_review_handoff() {
 		*) return 2 ;;
 		esac
 	done
-	_gh_verify_owned_review_handoff_pr "$repo" "$number" "$pr" || return 1
-	issue_json=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || return 1
-	printf '%s\n' "$issue_json" | jq -e '
-		.state == "open" and .pull_request == null
-		and ([.labels[]?.name] | index("status:in-progress") != null)
-		and ([.labels[]?.name] | index("status:in-review") == null)
-	' >/dev/null || return 1
+	_gh_verify_owned_review_handoff_pr "$repo" "$number" "$pr" || return $?
+	issue_json=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || {
+		_gh_review_handoff_failure api-unavailable; return 3
+	}
+	status=$(printf '%s\n' "$issue_json" | jq -er '
+		if (.state | type) != "string" or (.labels | type) != "array" then "api-unavailable"
+		elif .state != "open" then "issue-not-open"
+		elif .pull_request != null then "issue-is-pr"
+		elif ([.labels[]?.name] | index("status:in-review")) != null then "already-in-review"
+		elif ([.labels[]?.name] | index("status:in-progress")) != null then "in-progress"
+		else "issue-not-in-progress" end
+	' 2>/dev/null) || status="api-unavailable"
+	if [[ "$status" == already-in-review ]]; then
+		# No write means no audit event or exemption is acquired.
+		printf 'REVIEW_HANDOFF=already-in-review\n'
+		return 0
+	fi
+	[[ "$status" == in-progress ]] || { _gh_review_handoff_failure "$status"; return 3; }
 	# Dynamically scoped PR identifier is only a hint; the audit rechecks GitHub.
 	local _GH_REVIEW_HANDOFF_PR="$pr"
 	gh_issue_edit_safe "$number" --repo "$repo" \
@@ -159,6 +170,10 @@ main() {
 # replayed before errexit can terminate the CLI. Preserve the original status.
 main "$@" || {
 	rc=$?
-	printf '[aidevops][gh-write-helper][ERROR] GitHub write failed (exit %s).\n' "$rc" >&2
+	if [[ "${1:-}:${2:-}" == issue:review-handoff && "$rc" == 3 ]]; then
+		printf '[aidevops][gh-write-helper][ERROR] Review handoff precondition failed (exit 3).\n' >&2
+	else
+		printf '[aidevops][gh-write-helper][ERROR] GitHub write failed (exit %s).\n' "$rc" >&2
+	fi
 	exit "$rc"
 }

@@ -387,27 +387,57 @@ _gh_audit_record_op() {
 #######################################
 # Independently verify the explicit handoff's closing PR and current owner.
 # Args: repo, issue number, PR number. Fail closed on unavailable live reads.
+# Precondition failures return 3, distinct from a failed write (1).
 #######################################
+_gh_review_handoff_failure() {
+	local reason="$1"
+	printf 'REVIEW_HANDOFF=%s\n' "$reason" >&2
+	return 3
+}
+
 _gh_verify_owned_review_handoff_pr() {
 	local repo="$1" number="$2" pr="$3"
-	local actor="" issue_json="" pr_json=""
+	local actor="" issue_json="" pr_json="" reason=""
+	local unavailable="api-unavailable"
 	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
-		"$number" =~ ^[1-9][0-9]*$ && "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
-	actor=$(gh api user --jq '.login' 2>/dev/null) || return 1
-	[[ -n "$actor" && "$actor" != "null" ]] || return 1
-	issue_json=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || return 1
-	printf '%s\n' "$issue_json" | jq -e --arg actor "$actor" '
-		(.state | ascii_upcase) == "OPEN" and .pull_request == null
-		and ([.assignees[]?.login] | index($actor) != null)
-	' >/dev/null 2>&1 || return 1
+		"$number" =~ ^[1-9][0-9]*$ && "$pr" =~ ^[1-9][0-9]*$ ]] || {
+		_gh_review_handoff_failure invalid-arguments; return 3
+	}
+	actor=$(gh api user --jq '.login' 2>/dev/null) || {
+		_gh_review_handoff_failure api-unavailable; return 3
+	}
+	[[ -n "$actor" && "$actor" != "null" ]] || {
+		_gh_review_handoff_failure api-unavailable; return 3
+	}
+	issue_json=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || {
+		_gh_review_handoff_failure api-unavailable; return 3
+	}
+	reason=$(jq -er --arg actor "$actor" --arg unavailable "$unavailable" --arg text_type string '
+		if (.state | type) != $text_type or (.assignees | type) != "array" then $unavailable
+		elif (.state | ascii_upcase) != "OPEN" then "issue-not-open"
+		elif .pull_request != null then "issue-is-pr"
+		elif ([.assignees[]?.login] | index($actor)) == null then "issue-not-assigned-to-actor"
+		else "ok" end
+	' <<<"$issue_json" 2>/dev/null) || reason="$unavailable"
+	[[ "$reason" == ok ]] || { _gh_review_handoff_failure "$reason"; return 3; }
 	pr_json=$(gh pr view "$pr" --repo "$repo" \
-		--json state,isDraft,author,closingIssuesReferences 2>/dev/null) || return 1
-	printf '%s\n' "$pr_json" | jq -e --arg actor "$actor" --arg repo "$repo" --argjson number "$number" '
-		.state == "OPEN" and .isDraft == false and .author.login == $actor
-		and any(.closingIssuesReferences[]?;
+		--json state,isDraft,author,closingIssuesReferences 2>/dev/null) || {
+		_gh_review_handoff_failure api-unavailable; return 3
+	}
+	reason=$(jq -er --arg actor "$actor" --arg repo "$repo" --argjson number "$number" \
+		--arg unavailable "$unavailable" --arg text_type string '
+		if (.state | type) != $text_type or (.isDraft | type) != "boolean"
+			or (.author.login | type) != $text_type or (.closingIssuesReferences | type) != "array"
+		then $unavailable
+		elif .state != "OPEN" then "pr-not-open"
+		elif .isDraft then "pr-draft"
+		elif .author.login != $actor then "pr-not-authored-by-actor"
+		elif any(.closingIssuesReferences[]?;
 			.number == $number
 			and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))
-	' >/dev/null 2>&1 || return 1
+		then "ok" else "pr-missing-closing-reference" end
+	' <<<"$pr_json" 2>/dev/null) || reason="$unavailable"
+	[[ "$reason" == ok ]] || { _gh_review_handoff_failure "$reason"; return 3; }
 	return 0
 }
 
