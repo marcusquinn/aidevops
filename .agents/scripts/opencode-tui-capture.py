@@ -25,7 +25,7 @@ import time
 
 def positive_seconds(value):
     seconds = float(value)
-    if not math.isfinite(seconds) or seconds <= 0:
+    if not 0 < seconds < math.inf:
         raise argparse.ArgumentTypeError("seconds must be finite and positive")
     return seconds
 
@@ -214,10 +214,9 @@ def main():
     args = parser.parse_args()
     try:
         args.cwd = str(Path(args.cwd).resolve(strict=True))
-        if not args.tui_config:
-            inherited_tui = os.environ.get("OPENCODE_TUI_CONFIG")
-            if inherited_tui:
-                args.tui_config = str(Path(args.cwd) / inherited_tui)
+        inherited_tui = os.environ.get("OPENCODE_TUI_CONFIG")
+        if not args.tui_config and inherited_tui:
+            args.tui_config = str(Path(args.cwd) / inherited_tui)
         if args.isolated_config and not args.tui_config:
             parser.error("--isolated-config requires --tui-config or OPENCODE_TUI_CONFIG")
         source = Path(args.data_dir).resolve() / "opencode" / "opencode.db"
