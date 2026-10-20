@@ -163,7 +163,6 @@ function checkV1FilePart(part, qualityLog) {
   if (!mime.startsWith("image/")) return null;
 
   const b64 = part.url.slice(match[0].length);
-  if (!b64) return null;
   const sizeBytes = base64ByteSize(b64);
   if (sizeBytes <= IMAGE_BYTE_LIMIT) return null;
 
