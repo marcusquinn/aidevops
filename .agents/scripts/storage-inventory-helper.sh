@@ -302,6 +302,22 @@ _storage_emit_unavailable_opencode_records() {
 	return 0
 }
 
+_storage_emit_opencode_backups() {
+	local data_root="$1"
+	shift
+	local measured=""
+	if [[ -L "$data_root" || (-e "$data_root" && ! -r "$data_root") ]]; then
+		measured=$(_storage_measure_path "$data_root")
+	else
+		measured=$(_storage_measure_group "$@")
+	fi
+	_storage_emit_measured_record "opencode-db-backups" "$STORAGE_PRODUCER_OPENCODE" "OpenCode opencode.db.bak*" "none" \
+		"$STORAGE_UNKNOWN" "no retention owner; manual integrity review required" "$STORAGE_UNKNOWN" \
+		"backup provenance and restore integrity are unproved" \
+		"Review backup provenance with aidevops opencode-db report; no automatic deletion" "$measured"
+	return 0
+}
+
 _storage_opencode_records() {
 	local data_root="${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME:+$HOME/.local/share/opencode}}"
 	local active_db="${AIDEVOPS_OPENCODE_DB_PATH:-${OPENCODE_DB_PATH:-${OPENCODE_DB:-${data_root}/opencode.db}}}"
@@ -328,7 +344,6 @@ _storage_opencode_records() {
 	local wal_reason="idle snapshot only; maintenance still requires holder and checkpoint evidence"
 	local backup_paths=()
 	local backup_path=""
-	local backup_measure=""
 
 	if [[ -z "$data_root" ]]; then
 		_storage_emit_unavailable_opencode_records
@@ -346,11 +361,6 @@ _storage_opencode_records() {
 			backup_paths+=("$backup_path")
 		done
 	fi
-	if [[ -L "$data_root" || (-e "$data_root" && ! -r "$data_root") ]]; then
-		backup_measure=$(_storage_measure_path "$data_root")
-	else
-		backup_measure=$(_storage_measure_group "${backup_paths[@]+"${backup_paths[@]}"}")
-	fi
 	active_measure=$(_storage_measure_group "$active_db")
 	wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
 	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm")
@@ -359,10 +369,7 @@ _storage_opencode_records() {
 	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
 		"$active_db" "${active_db}-wal" "${active_db}-shm" \
 		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
-	_storage_emit_measured_record "opencode-db-backups" "$STORAGE_PRODUCER_OPENCODE" "OpenCode opencode.db.bak*" "none" \
-		"$STORAGE_UNKNOWN" "no retention owner; manual integrity review required" "$STORAGE_UNKNOWN" \
-		"backup provenance and restore integrity are unproved" \
-		"Review backup provenance with aidevops opencode-db report; no automatic deletion" "$backup_measure"
+	_storage_emit_opencode_backups "$data_root" "${backup_paths[@]+"${backup_paths[@]}"}"
 
 	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
 		active_schema=$(opencode_db_schema_state "$active_db")
