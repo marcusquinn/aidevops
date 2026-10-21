@@ -12,6 +12,23 @@ from worktree_archive_filesystem import supported_git_metadata
 from worktree_archive_state import inventories, supported_history
 
 
+def archive_policies(manifest):
+    """Validate policy declarations for explicit verification, not capture."""
+    if not isinstance(manifest.get('include_ignored', False), bool):
+        raise SystemExit('invalid ignored capture policy')
+    capture_policy = manifest.get('capture_policy')
+    if capture_policy not in (None, 'git-only'):
+        raise SystemExit('unknown capture policy')
+    if capture_policy == 'git-only' and (manifest.get('include_ignored') or manifest.get('git_admin_policy')):
+        raise SystemExit('inconsistent Git-only policy')
+    if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') not in (2, 3):
+        raise SystemExit('unsupported Git changes fingerprint')
+    policy = manifest.get('git_admin_policy')
+    if policy is not None and (policy != 'preserve-v1' or not isinstance(manifest.get('self_contained'), bool)):
+        raise SystemExit('invalid Git administration policy')
+    return capture_policy, policy
+
+
 def git_index_state(path, head=None):
     root = Path(path).resolve(strict=True)
     lock = os.fsdecode(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock').rstrip(b'\n'))

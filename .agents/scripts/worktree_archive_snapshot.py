@@ -28,27 +28,12 @@ from worktree_archive_administration import (
     OPERATIONS as OPERATIONS,
 )
 from worktree_archive_state import inventories, supported_state
-from worktree_archive_index import git_index_state as git_index_state
+from worktree_archive_index import (
+    archive_policies as archive_policies, git_index_state as git_index_state,
+)
 from worktree_archive_objects import (
     administration_roots, bundle_roots, verify_git_objects as verify_git_objects,
 )
-
-
-def archive_policies(manifest):
-    """Validate policy declarations for explicit verification, not capture."""
-    if not isinstance(manifest.get('include_ignored', False), bool):
-        raise SystemExit('invalid ignored capture policy')
-    capture_policy = manifest.get('capture_policy')
-    if capture_policy not in (None, 'git-only'):
-        raise SystemExit('unknown capture policy')
-    if capture_policy == 'git-only' and (manifest.get('include_ignored') or manifest.get('git_admin_policy')):
-        raise SystemExit('inconsistent Git-only policy')
-    if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') not in (2, 3):
-        raise SystemExit('unsupported Git changes fingerprint')
-    policy = manifest.get('git_admin_policy')
-    if policy is not None and (policy != 'preserve-v1' or not isinstance(manifest.get('self_contained'), bool)):
-        raise SystemExit('invalid Git administration policy')
-    return capture_policy, policy
 
 
 def administration_digest(state):
