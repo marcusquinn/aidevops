@@ -15,7 +15,7 @@ from worktree_archive_administration import git
 from worktree_archive_snapshot import fetch_preservation
 
 
-def prepare(archive, target):
+def prepare(archive, target, verification=False):
     manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
     common = Path(manifest["source_git_common_dir"])
     if not common.is_absolute() or not common.is_dir() or os.path.lexists(target):
@@ -28,7 +28,9 @@ def prepare(archive, target):
             fetch_preservation(repository, archive)
         else:
             git(repository, "fetch", "--quiet", "--no-write-fetch-head", str(bundle), "HEAD")
-    environment = dict(os.environ, AIDEVOPS_SKIP_AUTO_CLAIM="1", WORKTREE_NODE_MODULES_RESTORE_ENABLED="0")
+    environment = dict(os.environ, AIDEVOPS_SKIP_AUTO_CLAIM="1", WORKTREE_NODE_MODULES_RESTORE_ENABLED="0",
+                       AIDEVOPS_WORKTREE_JS_BOOTSTRAP_ENABLED="0",
+                       GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.hooksPath", GIT_CONFIG_VALUE_0=os.devnull)
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
         environment.pop(name, None)
@@ -38,11 +40,144 @@ def prepare(archive, target):
     bash = shutil.which("bash")
     if bash is None:
         raise ValueError("Bash is unavailable")
+    if verification:
+        environment.update(AIDEVOPS_WORKTREE_CREATE_TASK="archive-verification",
+                           AIDEVOPS_WORKTREE_CREATE_OWNER_PID=str(os.getppid()),
+                           AIDEVOPS_WORKTREE_CREATE_SESSION="")
+        subprocess.run(  # nosec B603 -- fixed framework primitive, argv-only owned target
+            [str(Path(bash).absolute()), "-c",
+             'source "$1" && worktree_create_registered "$2" "$3" "$4" --detach',
+             "archive-verification", str(helper.with_name("shared-worktree-create.sh")),
+             str(repository), str(target), manifest["head_sha"]],
+            env=environment, stdout=sys.stderr, check=True, timeout=180)
+        return
     subprocess.run(  # nosec B603 -- resolved Bash and fixed framework helper
                    [str(Path(bash).absolute()), str(helper), "add", "recovery/" + uuid.uuid4().hex,
                     str(target), "--base", manifest["head_sha"]], cwd=repository,
                    env=environment, stdout=sys.stderr, check=True, timeout=180)
 
 
+class RestorationProof:
+    """Process-local proof, never reconstructed from a durable verified boolean.
+
+    The caller owns the admission/operation lock for this object's whole lifetime.
+    Public restore performs integrity and graph preparation exactly once. Subsequent
+    barriers hash the artifacts and physical base object store, not another fetch
+    into a temporary repository. This is intentionally NOT a cross-operation cache.
+    """
+
+    def __init__(self, directory, record, command, save):
+        from worktree_lifetime_archive import inode, require
+        from worktree_recovery_retirement_transaction import fingerprint
+        from worktree_recovery_timing import phase
+
+        self.pid = os.getpid()
+        self.archive = Path(record["archive"])
+        self.archive_inode = inode(self.archive)
+        self.archive_digest = fingerprint(self.archive)
+        self.manifest = json.loads((self.archive / "manifest.json").read_text(encoding="utf-8"))
+        require(self.manifest.get("capture_policy") == "git-only", "restore-proof:unsupported-policy")
+        require(self.manifest["source_fingerprint"] == record["source"]["snapshot"],
+                "restore-proof:snapshot-mismatch")
+        import hashlib
+        require(hashlib.sha256((self.archive / "manifest.json").read_bytes()).hexdigest()
+                == record["manifest_sha256"], "restore-proof:manifest-changed")
+        previous = record.get("canonical_restore")
+        if previous and previous.get("state") != "cleaned":
+            # A partial restore is not a new deletion baseline. A sealed copy can
+            # finish its owned cleanup, but fresh restoration is still mandatory.
+            self.cleanup(directory, previous, save, record)
+        import tempfile
+        slot = Path(tempfile.mkdtemp(prefix=".restore-", dir=directory))
+        receipt = {"schema": "canonical-restore/v1", "operation": uuid.uuid4().hex,
+                   "state": "restoring", "slot": slot.name, "slot_inode": inode(slot),
+                   "archive": str(self.archive), "archive_inode": self.archive_inode,
+                   "archive_digest": self.archive_digest, "manifest_sha256": record["manifest_sha256"],
+                   "source": record["source"], "base": self.manifest["base_sha"],
+                   "capture_schema": self.manifest["schema"], "policy": "git-only"}
+        record["canonical_restore"] = receipt
+        save(record)
+        target = slot / "worktree"
+        with phase("canonical-restore"):
+            command("restore", self.archive, "--target", target, "--verification-copy")
+        with phase("compare-restoration"):
+            from worktree_archive_snapshot import git_snapshot
+            require(git_snapshot(target) == record["source"]["snapshot"], "restore-proof:state-mismatch")
+        require(inode(self.archive) == self.archive_inode and fingerprint(self.archive) == self.archive_digest,
+                "restore-proof:archive-changed")
+        common = Path(self.manifest["source_git_common_dir"])
+        require(common.is_absolute() and common == common.resolve(strict=True), "restore-proof:unsafe-base")
+        self.common = common
+        self.common_inode = inode(common)
+        self.objects = common / "objects"
+        with phase("dependency-seal"):
+            self.objects_digest = fingerprint(self.objects)
+            git(common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
+        from worktree_lifetime_archive import managed_module, transaction
+        with transaction() as connection:
+            registered = managed_module().load(connection, str(target))
+            owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
+                                       (str(target),)).fetchone()
+            require(owner is not None, "restore-proof:owner-missing")
+        receipt.update(state="compared", target_inode=inode(target),
+                       registration=registered, owner=list(owner),
+                       base_inode=self.common_inode, objects_digest=self.objects_digest)
+        save(record)
+        with phase("cleanup-verification-scratch"):
+            self.cleanup(directory, receipt, save, record)
+        self.check()
+
+    def check(self):
+        from worktree_lifetime_archive import inode, require
+        from worktree_recovery_retirement_transaction import fingerprint
+        from worktree_recovery_timing import phase
+        require(os.getpid() == self.pid, "restore-proof:process-changed")
+        with phase("archive-and-dependency-stability"):
+            require(inode(self.archive) == self.archive_inode and fingerprint(self.archive) == self.archive_digest,
+                    "restore-proof:archive-changed")
+            require(inode(self.common) == self.common_inode and fingerprint(self.objects) == self.objects_digest,
+                    "restore-proof:base-changed")
+            git(self.common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
+
+    @staticmethod
+    def cleanup(directory, receipt, save, record):
+        from worktree_lifetime_archive import inode, managed_module, require, transaction
+        name = receipt["slot"]
+        require(Path(name).name == name and name.startswith(".restore-"), "restore-proof:unsafe-slot")
+        slot = directory / name
+        require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"],
+                "restore-proof:slot-changed")
+        require({entry.name for entry in slot.iterdir()} <= {"worktree"}, "restore-proof:unexpected-entry")
+        target = slot / "worktree"
+        require(receipt["state"] in ("compared", "cleanup-pending"),
+                "restore-proof:unsealed-copy-retained; inspect owned scratch")
+        receipt["state"] = "cleanup-pending"
+        save(record)
+        registered = receipt["registration"]
+        # The same SQLite transaction excludes cooperative ownership replacement
+        # across Git removal and registry cleanup. No manifest-supplied deletion path.
+        with transaction() as connection:
+            current = managed_module().load(connection, str(target))
+            owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
+                                       (str(target),)).fetchone()
+            require(current == registered and list(owner or ()) == receipt["owner"],
+                    "restore-proof:registration-changed")
+            common = Path(registered["identity"]["common"])
+            if os.path.lexists(target):
+                require(inode(target) == receipt["target_inode"] and not target.is_symlink(),
+                        "restore-proof:target-changed")
+                from worktree_archive_snapshot import git_snapshot
+                require(git_snapshot(target) == receipt["source"]["snapshot"], "restore-proof:scratch-drift")
+                git(common, "worktree", "remove", "--force", str(target))
+            require(not os.path.lexists(Path(registered["identity"]["admin"])),
+                    "restore-proof:administration-remains")
+            connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
+            connection.execute("DELETE FROM worktree_managed_lifetimes WHERE path = ?", (str(target),))
+        slot.rmdir()
+        receipt["state"] = "cleaned"
+        save(record)
+
+
 if __name__ == "__main__":
-    prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute())
+    prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
+            verification=sys.argv[3:] == ["--verification-copy"])

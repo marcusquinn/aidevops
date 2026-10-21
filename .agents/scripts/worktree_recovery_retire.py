@@ -14,7 +14,8 @@ import subprocess  # nosec B404 -- fixed local guard helper, argv only
 import sys
 
 from worktree_lifetime_archive import inode, require
-from worktree_recovery_migrate import verify_archive
+from worktree_recovery_migrate import archive_command, verify_archive
+from worktree_archive_restore import RestorationProof
 from worktree_recovery_legacy_policy import guards
 from worktree_recovery_migration_state import SCHEMA, allocated_bytes, load, publish
 from worktree_recovery_retirement_transaction import claim, fingerprint, remove_claimed
@@ -31,10 +32,35 @@ def report(record):
             "transaction": record.get("container"), "archive": record["archive"]}
 
 
-def make_plan(directory, migration, bucket, lock, automatic=False):
+def restoration(directory, migration, record, lock, proofs):
+    if migration["source"].get("capture_policy") != "git-only":
+        verify_archive(migration, lock, check_source=False)
+        return
+    key = migration["archive"]
+    if key not in proofs:
+        data = dict(migration, canonical_restore=record.get("canonical_restore"))
+
+        def save(value):
+            record["canonical_restore"] = value["canonical_restore"]
+            publish(directory / "retirement.json", record)
+
+        proofs[key] = RestorationProof(directory, data, lambda *args: archive_command(lock, *args), save)
+    proofs[key].check()
+
+
+def source_matches(migration):
+    from worktree_recovery_migration_state import source_state
+    require(source_state(migration["source"]["identity"],
+                         migration["source"].get("capture_policy") == "git-only",
+                         migration["source"]["snapshot"].get("schema")) == migration["source"],
+            "migration:source-drift")
+
+
+def make_plan(directory, migration, bucket, lock, automatic=False, proofs=None):
     path = directory / "retirement.json"
     require(not os.path.lexists(path), "retirement:plan-already-exists; inspect retire-status")
-    verify_archive(migration, lock)
+    proofs = {} if proofs is None else proofs
+    source_matches(migration)
     guards(migration["source"]["identity"], bucket, lock)
     record = {"schema": SCHEMA, "kind": "retirement", "phase": "planned",
               "bucket": str(bucket), "bucket_inode": inode(bucket),
@@ -42,7 +68,8 @@ def make_plan(directory, migration, bucket, lock, automatic=False):
               "bucket_bytes": allocated_bytes(bucket),
               "archive_bytes": allocated_bytes(Path(migration["archive"])),
               "migration_digest": receipt_digest(directory / "journal.json")}
-    verify_archive(migration, lock)
+    restoration(directory, migration, record, lock, proofs)
+    source_matches(migration)
     if automatic:
         automatic_policy(migration, bucket)
         record.update(authority="verified-git-changes/v1", confirmation_token=None)
@@ -54,7 +81,7 @@ def make_plan(directory, migration, bucket, lock, automatic=False):
     return report(record)
 
 
-def retire(directory, migration, bucket, token, lock):
+def retire(directory, migration, bucket, token, lock, proofs=None):
     record = load(directory / "retirement.json")
     automatic = token is None
     require((record.get("authority") == "verified-git-changes/v1") == automatic,
@@ -73,10 +100,13 @@ def retire(directory, migration, bucket, token, lock):
     unclaimed = record["phase"] == "planned"
     if record["phase"] == "claiming":
         unclaimed = not os.path.lexists(Path(record["container"]) / "bucket")
-    verify_archive(migration, lock, check_source=unclaimed)
+    proofs = {} if proofs is None else proofs
+    restoration(directory, migration, record, lock, proofs)
+    if unclaimed:
+        source_matches(migration)
     guards(migration["source"]["identity"], bucket, lock)
     target = claim(directory, record, bucket)
-    verify_archive(migration, lock, check_source=False)
+    restoration(directory, migration, record, lock, proofs)
     guards(migration["source"]["identity"], target, lock)
     remove_claimed(directory, record, target)
     return report(record)
@@ -96,9 +126,10 @@ def automatic_policy(migration, bucket):
 
 def automatic_retire(directory, migration, bucket, lock):
     automatic_policy(migration, bucket)
+    proofs = {}
     if not os.path.lexists(directory / "retirement.json"):
-        make_plan(directory, migration, bucket, lock, automatic=True)
-    return retire(directory, migration, bucket, None, lock)
+        make_plan(directory, migration, bucket, lock, automatic=True, proofs=proofs)
+    return retire(directory, migration, bucket, None, lock, proofs=proofs)
 
 
 def execute(arguments):

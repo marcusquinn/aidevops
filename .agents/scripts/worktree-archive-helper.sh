@@ -603,9 +603,9 @@ PY
 	if [[ "$git_only" -eq 1 && "$self_contained" -eq 1 ]]; then
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
 	elif [[ "$git_only" -eq 1 && "$verification_copy" -eq 1 ]]; then
-		# Private validation clone, not a user worktree: borrow only the recorded
-		# base graph and leave no registration or branch in the shared repository.
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+		# Same registered creation primitive as ordinary recovery, with an explicit
+		# purpose and detached HEAD; no issue claim or dependency bootstrap.
+		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy || return 1
 	elif [[ "$git_only" -eq 1 ]]; then
 		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" || return 1
 	elif [[ "$self_contained" -eq 1 ]]; then
