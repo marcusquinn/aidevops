@@ -58,11 +58,12 @@ run_publish() {
 	local repo="$1"
 	local validator="${2:-/usr/bin/true}"
 	local branch="${3:-main}"
+	local message="${4:-plan: test publication}"
 	(
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR="$validator" planning_publish "$repo" "plan: test publication" origin "$branch"
+		AIDEVOPS_PLANNING_VALIDATOR="$validator" planning_publish "$repo" "$message" origin "$branch"
 	)
 	return $?
 }
@@ -1040,7 +1041,9 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 	cp "${SCRIPT_DIR_TEST}/../git" \
 		"${SCRIPT_DIR_TEST}/../runtime-env.sh" \
 		"${SCRIPT_DIR_TEST}/../native_git.py" \
+		"${SCRIPT_DIR_TEST}/../trusted_executable.py" \
 		"${SCRIPT_DIR_TEST}/../canonical-git-command-guard.py" \
+		"${SCRIPT_DIR_TEST}/../canonical_git_clone.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_invocation.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_policy.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_readonly.py" \
@@ -1074,7 +1077,9 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 		return 0
 	}
 	after=$(state_digest "$repo")
-	guard_output=$(PATH="${shim_dir}:${PATH}" git -C "$repo" config user.name blocked-test 2>&1) || guard_rc=$?
+	# Temp-root markers are exempt; register this fixture to exercise the guard.
+	printf '{"initialized_repos":[{"path":"%s"}]}\n' "$repo" >"${root}/repos.json"
+	guard_output=$(AIDEVOPS_REPOS_FILE="${root}/repos.json" PATH="${shim_dir}:${PATH}" git -C "$repo" config user.name blocked-test 2>&1) || guard_rc=$?
 	count=$(git --git-dir="${root}/remote.git" show main:TODO.md | grep -c 'pr:#60 completed:2026-07-14' || true)
 	if [[ "$before" == "$after" && "$guard_rc" -eq 42 && "$count" -eq 1 ]] &&
 		git --git-dir="${root}/remote.git" show main:todo/PLANS.md | grep -q 'Status:\*\* Completed'; then
@@ -1119,6 +1124,97 @@ test_stale_snapshot_does_not_revert_parent_tasks() {
 	return 0
 }
 
+test_additive_todo_with_duplicate_ids_and_counter_on_main() {
+	local name="publishes additive TODO with open tasks, duplicate IDs and counter on main (GH#35302)"
+	local root="" repo="" linked="" counter_head="" expected="" actual="" i=0
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || { fail "$name" setup; return 0; }
+	repo="${root}/work"
+	linked="${root}/linked"
+	git -C "$repo" rm -q .aidevops.json
+	{
+		printf '# Tasks\n\n## Format\n- [ ] t001 template\n- [ ] t002 template\n'
+		printf '<!--\ntasks[2]{id,state}:\nt001,done\nt002,done\n-->\n'
+		for ((i = 3; i <= 61; i++)); do
+			printf -- '- [ ] t%s open task\n' "$i"
+		done
+		printf -- '- [x] t001 done\n- [x] t002 %03000d\n' 0
+	} >"${repo}/TODO.md"
+	git -C "$repo" add TODO.md
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "$repo" commit -qm 'seed duplicate task IDs'
+	git -C "$repo" push -q origin main
+	git -C "$repo" worktree add -q -b planning "$linked" || { fail "$name" worktree; return 0; }
+	# A counter-only main commit must be preserved when publishing from the worktree.
+	printf '63\n' >"${repo}/.task-counter"
+	git -C "$repo" add .task-counter
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "$repo" commit -qm 'chore: claim t63'
+	git -C "$repo" push -q origin main
+	counter_head=$(git -C "$repo" rev-parse HEAD)
+	printf '\n- [ ] t63 new task\n' >>"${linked}/TODO.md"
+	expected=$(git -C "$linked" hash-object TODO.md)
+	if run_publish "$linked"; then
+		actual=$(git --git-dir="${root}/remote.git" rev-parse main:TODO.md)
+		if [[ "$expected" == "$actual" && "$(git --git-dir="${root}/remote.git" rev-parse main^)" == "$counter_head" ]] &&
+			[[ "$(git --git-dir="${root}/remote.git" show main:.task-counter)" == 63 ]]; then
+			pass "$name"
+		else
+			fail "$name" 'published bytes or counter parent changed'
+		fi
+	else
+		fail "$name" publication
+	fi
+	rm -rf "$root"
+	return 0
+}
+
+test_duplicate_task_regressions_are_refused() {
+	local name="refuses unnamed deletions and un-completions even with duplicate task IDs"
+	local root="" repo="" before="" after="" mutation="" rc=0
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || { fail "$name" setup; return 0; }
+	repo="${root}/work"
+	printf '%s\n' '- [ ] t001 template' '- [x] t001 done' '- [ ] t002 open' >"${repo}/TODO.md"
+	git -C "$repo" add TODO.md
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "$repo" commit -qm 'seed task states'
+	git -C "$repo" push -q origin main
+	before=$(git --git-dir="${root}/remote.git" rev-parse main)
+	for mutation in delete_open delete_duplicate uncomplete_duplicate; do
+		case "$mutation" in
+		delete_open) printf '%s\n' '- [ ] t001 template' '- [x] t001 done' ;;
+		delete_duplicate) printf '%s\n' '- [x] t001 done' '- [ ] t002 open' ;;
+		uncomplete_duplicate) printf '%s\n' '- [ ] t001 template' '- [ ] t001 reopened' '- [ ] t002 open' ;;
+		esac >"${repo}/TODO.md"
+		rc=0
+		run_publish "$repo" || rc=$?
+		after=$(git --git-dir="${root}/remote.git" rev-parse main)
+		if [[ "$rc" -ne 0 && "$before" == "$after" ]]; then
+			pass "$name: $mutation"
+		else
+			fail "$name: $mutation" "rc=$rc"
+		fi
+	done
+	# A named child does not authorize reopening its parent ID.
+	rc=0
+	run_publish "$repo" /usr/bin/true main 'plan: complete t001.1' || rc=$?
+	after=$(git --git-dir="${root}/remote.git" rev-parse main)
+	if [[ "$rc" -ne 0 && "$before" == "$after" ]]; then
+		pass "$name: named child is not parent authorization"
+	else
+		fail "$name: named child is not parent authorization" "rc=$rc"
+	fi
+	if run_publish "$repo" /usr/bin/true main 'plan: reopen t001' &&
+		[[ "$(git --git-dir="${root}/remote.git" rev-parse main:TODO.md)" == "$(git -C "$repo" hash-object TODO.md)" ]]; then
+		pass 'allows an explicitly named task regression'
+	else
+		fail 'allows an explicitly named task regression' publication
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 main() {
 	test_git_binary_availability_is_validated
 	test_state_allowlist_and_idempotence
@@ -1141,6 +1237,8 @@ main() {
 	test_parent_branch_replay_is_idempotent
 	test_parent_todo_merge_and_conflict
 	test_stale_snapshot_does_not_revert_parent_tasks
+	test_additive_todo_with_duplicate_ids_and_counter_on_main
+	test_duplicate_task_regressions_are_refused
 	test_explicit_git_capability_preserves_guarded_checkout
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ $FAIL -eq 0 ]] || return 1

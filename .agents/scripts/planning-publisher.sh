@@ -600,7 +600,7 @@ _planning_publish_guard_task_regression() {
 	local resolved_file="$3"
 	local commit_msg="${4:-}"
 	local operation="" origin_sha="" blob_sha="" merged_sha="" path=""
-	local parent_blob="" parent_states="" merged_states="" task_id="" state="" new_state=""
+	local parent_blob="" parent_states="" merged_states="" task_id="" regressed_ids=""
 	local violations=""
 	while IFS=$'\t' read -r operation origin_sha blob_sha merged_sha path; do
 		[[ "$(basename "$path")" == "TODO.md" ]] || continue
@@ -608,17 +608,28 @@ _planning_publish_guard_task_regression() {
 		[[ "$parent_blob" != "$merged_sha" ]] || continue
 		parent_states=$(_planning_publish_task_states "$repo_path" "$parent_blob") || return 1
 		merged_states=$(_planning_publish_task_states "$repo_path" "$merged_sha") || return 1
-		while read -r task_id state; do
+		# A blank checkbox is a present open task, not a missing lookup result.
+		# Count duplicate IDs rather than taking the first (possibly template)
+		# occurrence: neither total occurrences nor completed ones may decrease.
+		regressed_ids=$(awk '
+			{ split($0, task); id = task[1]; state = task[2] }
+			FILENAME == ARGV[1] {
+				if (NF) { parent[id]++; if (state == "x") done[id]++ }
+				next
+			}
+			NF { merged[id]++; if (state == "x") completed[id]++ }
+			END {
+				for (id in parent)
+					if (merged[id] < parent[id] || completed[id] < done[id]) print id
+			}' <(printf '%s\n' "$parent_states") <(printf '%s\n' "$merged_states")) || return 1
+		while read -r task_id; do
 			[[ -n "$task_id" ]] || continue
-			new_state=$(printf '%s\n' "$merged_states" | awk -v id="$task_id" '$1 == id { print $2; exit }')
-			if [[ -z "$new_state" ]] || { [[ "$state" == "x" ]] && [[ "$new_state" != "x" ]]; }; then
-				# Named tasks in the commit message are intentional edits.
-				if printf '%s\n' "$commit_msg" | grep -Eq "(^|[^0-9A-Za-z.])${task_id//./\\.}([^0-9]|\$)"; then
-					continue
-				fi
-				violations="${violations} ${task_id}"
+			# Named tasks in the commit message are intentional edits.
+			if printf '%s\n' "$commit_msg" | grep -Eq "(^|[^[:alnum:].])${task_id//./\\.}([^[:alnum:].]|\$)"; then
+				continue
 			fi
-		done <<<"$parent_states"
+			violations="${violations} ${task_id}"
+		done <<<"$regressed_ids"
 	done <"$resolved_file"
 	if [[ -n "$violations" ]]; then
 		_planning_publish_log error "Refusing to publish: would delete or un-complete task lines not named in the publication:${violations}. The TODO.md snapshot is likely stale; refresh from the default branch and re-apply the intended change."
