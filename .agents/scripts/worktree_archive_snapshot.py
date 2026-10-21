@@ -200,29 +200,26 @@ def snapshot(path, preserve_git_admin=False, include_ignored=False, git_only=Fal
 
 def main(argv):
     command = argv[0] if argv else ''
-    if command == 'auto-merge-capture' and len(argv) == 4:
-        capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), argv[3])
-    elif command == 'merge-capture' and len(argv) == 3:
-        capture_merge(Path(argv[1]), Path(argv[2]).resolve())
-    elif command == 'merge-restore' and len(argv) == 3:
-        restore_merge(Path(argv[1]), Path(argv[2]).resolve())
-    elif command == 'auto-merge-restore' and len(argv) == 3:
-        restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve())
-    elif command == "admin-capture" and len(argv) in (4, 5):
-        capture_administration(Path(argv[1]), Path(argv[2]).resolve(), argv[3] == "1", *argv[4:])
-    elif command == 'admin-prepare-restore' and len(argv) == 3:
-        prepare_incremental_restore(Path(argv[1]).resolve(), Path(argv[2]).resolve())
-    elif command == "admin-restore" and len(argv) == 3:
-        restore_administration(Path(argv[1]), Path(argv[2]).resolve())
-    elif command == "admin-verify" and len(argv) == 2:
-        load_administration(Path(argv[1]))
-    else:
-        parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument("--preserve-git-admin", action="store_true")
-        parser.add_argument("--include-ignored", action="store_true")
-        parser.add_argument("worktree")
-        args = parser.parse_args(argv)
-        print(json.dumps(snapshot(args.worktree, args.preserve_git_admin, args.include_ignored), sort_keys=True))
+    handlers = {
+        'auto-merge-capture': ((4,), lambda: capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), argv[3])),
+        'merge-capture': ((3,), lambda: capture_merge(Path(argv[1]), Path(argv[2]).resolve())),
+        'merge-restore': ((3,), lambda: restore_merge(Path(argv[1]), Path(argv[2]).resolve())),
+        'auto-merge-restore': ((3,), lambda: restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve())),
+        'admin-capture': ((4, 5), lambda: capture_administration(Path(argv[1]), Path(argv[2]).resolve(), argv[3] == '1', *argv[4:])),
+        'admin-prepare-restore': ((3,), lambda: prepare_incremental_restore(Path(argv[1]).resolve(), Path(argv[2]).resolve())),
+        'admin-restore': ((3,), lambda: restore_administration(Path(argv[1]), Path(argv[2]).resolve())),
+        'admin-verify': ((2,), lambda: load_administration(Path(argv[1]))),
+    }
+    lengths, handler = handlers.get(command, ((), None))
+    if len(argv) in lengths:
+        handler()
+        return 0
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preserve-git-admin", action="store_true")
+    parser.add_argument("--include-ignored", action="store_true")
+    parser.add_argument("worktree")
+    args = parser.parse_args(argv)
+    print(json.dumps(snapshot(args.worktree, args.preserve_git_admin, args.include_ignored), sort_keys=True))
     return 0
 
 

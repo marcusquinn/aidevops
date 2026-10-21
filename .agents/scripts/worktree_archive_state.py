@@ -49,11 +49,7 @@ def merge_entries(root, option):
     return result
 
 
-def validate_merge(state):
-    if not isinstance(state, dict) or set(state) != {'schema', 'head', 'metadata', 'index', 'undo', 'working'} or state['schema'] != 1:
-        raise ValueError('merge:invalid_state')
-    merge_oid(state['head'])
-    metadata = state['metadata']
+def validate_merge_metadata(metadata):
     if not isinstance(metadata, dict) or not {'MERGE_HEAD', 'MERGE_MSG', 'ORIG_HEAD'}.issubset(metadata) or set(metadata) - MERGE_FILES:
         raise ValueError('merge:invalid_metadata')
     decoded = {name: bytes.fromhex(value) for name, value in metadata.items()}
@@ -68,20 +64,25 @@ def validate_merge(state):
         raise ValueError('merge:unsupported_mode')
     if 'AUTO_MERGE' in decoded:
         auto_merge_oid(decoded['AUTO_MERGE'])
+
+
+def validate_merge_index(entries, stages):
     paths = set()
-    for name, stages in (('index', {0, 1, 2, 3}), ('undo', {1, 2, 3})):
-        seen = {}
-        for path, mode, oid, stage in state[name]:
-            raw = merge_path(path)
-            if mode not in ('100644', '100755') or type(stage) is not int or stage not in stages:
-                raise ValueError('merge:unsupported_index_entry')
-            merge_oid(oid)
-            current = seen.setdefault(raw, set())
-            if stage in current or (current and (stage == 0 or 0 in current)):
-                raise ValueError('merge:duplicate_index_entry')
-            current.add(stage)
-            paths.add(path)
-    working = state['working']
+    seen = {}
+    for path, mode, oid, stage in entries:
+        raw = merge_path(path)
+        if mode not in ('100644', '100755') or not isinstance(stage, int) or isinstance(stage, bool) or stage not in stages:
+            raise ValueError('merge:unsupported_index_entry')
+        merge_oid(oid)
+        current = seen.setdefault(raw, set())
+        if stage in current or (current and (stage == 0 or 0 in current)):
+            raise ValueError('merge:duplicate_index_entry')
+        current.add(stage)
+        paths.add(path)
+    return paths
+
+
+def validate_merge_working(working, paths):
     if not isinstance(working, dict) or not paths.issubset(working):
         raise ValueError('merge:incomplete_working_files')
     for path, value in working.items():
@@ -92,6 +93,16 @@ def validate_merge(state):
             if not isinstance(value, list) or len(value) != 2 or value[0] not in (0o644, 0o755):
                 raise ValueError('merge:invalid_working_file')
             bytes.fromhex(value[1])
+
+
+def validate_merge(state):
+    if not isinstance(state, dict) or set(state) != {'schema', 'head', 'metadata', 'index', 'undo', 'working'} or state['schema'] != 1:
+        raise ValueError('merge:invalid_state')
+    merge_oid(state['head'])
+    validate_merge_metadata(state['metadata'])
+    paths = validate_merge_index(state['index'], {0, 1, 2, 3})
+    paths.update(validate_merge_index(state['undo'], {1, 2, 3}))
+    validate_merge_working(state['working'], paths)
     return state
 
 
@@ -123,9 +134,7 @@ def verify_merge_objects(root, state):
         raise ValueError('merge:missing_object')
 
 
-def merge_state(root):
-    """Capture a supported merge structurally; never copy a raw index or reflog."""
-    from worktree_archive_filesystem import fingerprint, open_parent
+def supported_merge_administration(root):
     state = administration(root, allow_merge=True)
     if state['refs'] or 'SQUASH_MSG' in state['files'] or 'config.worktree' in state['files']:
         raise ValueError('merge:unsupported_private_state')
@@ -136,16 +145,20 @@ def merge_state(root):
         raise ValueError('merge:uncommitted_message_draft')
     if state['files'].get('FETCH_HEAD'):
         raise ValueError('merge:unpreserved_fetch_head')
-    entries = merge_entries(root, '--stage')
-    undo = merge_entries(root, '--resolve-undo')
+    return state
+
+
+def supported_merge_index(root):
     flags = git(root, 'ls-files', '-v', '-z').split(b'\0')
     if any(entry and entry[:1] not in (b'H', b'M') for entry in flags):
         raise ValueError('merge:unsupported_index_flags')
     options = ('--cached', '--raw', '-z', '--no-ext-diff')
     if git(root, 'diff', *options, '--ita-visible-in-index') != git(root, 'diff', *options, '--ita-invisible-in-index'):
         raise ValueError('merge:intent_to_add')
-    head = git(root, 'rev-parse', 'HEAD').strip().decode('ascii')
-    paths = {entry[0] for entry in entries + undo}
+
+
+def merge_working_paths(root, head, entries):
+    paths = {entry[0] for entry in entries}
     for entry in git(root, 'ls-tree', '-r', '-z', head).split(b'\0'):
         if entry:
             metadata, path = entry.split(b'\t', 1)
@@ -155,28 +168,41 @@ def merge_state(root):
     attributes = git(root, 'check-attr', '-z', '--stdin', 'filter', data=b'\0'.join(bytes.fromhex(path) for path in sorted(paths)) + b'\0')
     if any(value not in (b'unspecified', b'unset') for value in attributes.split(b'\0')[2::3]):
         raise ValueError('merge:unsupported_filter')
-    working = {}
-    for path in sorted(paths):
-        raw = merge_path(path)
-        observed = fingerprint(root, raw)
-        if observed == ['missing']:
-            working[path] = None
-        elif observed[0] == 'file':
-            relative = Path(os.fsdecode(raw))
-            parent = open_parent(root, relative.parts[:-1])
-            try:
-                descriptor = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-                with os.fdopen(descriptor, 'rb') as stream:
-                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                        raise ValueError('merge:unsupported_file')
-                    content = stream.read()
-                if hashlib.sha256(content).hexdigest() != observed[3]:
-                    raise ValueError('merge:source_changed')
-                working[path] = [observed[1], content.hex()]
-            finally:
-                os.close(parent)
-        else:
-            raise ValueError('merge:symlink_not_supported')
+    return sorted(paths)
+
+
+def merge_working_file(root, path):
+    from worktree_archive_filesystem import fingerprint, open_parent
+    raw = merge_path(path)
+    observed = fingerprint(root, raw)
+    if observed == ['missing']:
+        return None
+    if observed[0] != 'file':
+        raise ValueError('merge:symlink_not_supported')
+    relative = Path(os.fsdecode(raw))
+    parent = open_parent(root, relative.parts[:-1])
+    try:
+        descriptor = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        with os.fdopen(descriptor, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError('merge:unsupported_file')
+            content = stream.read()
+        if hashlib.sha256(content).hexdigest() != observed[3]:
+            raise ValueError('merge:source_changed')
+        return [observed[1], content.hex()]
+    finally:
+        os.close(parent)
+
+
+def merge_state(root):
+    """Capture a supported merge structurally; never copy a raw index or reflog."""
+    state = supported_merge_administration(root)
+    supported_merge_index(root)
+    entries = merge_entries(root, '--stage')
+    undo = merge_entries(root, '--resolve-undo')
+    head = git(root, 'rev-parse', 'HEAD').strip().decode('ascii')
+    paths = merge_working_paths(root, head, entries + undo)
+    working = {path: merge_working_file(root, path) for path in paths}
     result = validate_merge({'schema': 1, 'head': head, 'metadata': {name: value for name, value in state['files'].items() if name in MERGE_FILES},
                              'index': entries, 'undo': undo, 'working': working})
     verify_merge_objects(root, result)
@@ -206,13 +232,7 @@ def capture_merge(root, archive):
     (archive / 'merge-state-v1.json').write_text(json.dumps(state, sort_keys=True) + '\n', encoding='ascii')
 
 
-def restore_merge(root, archive):
-    from worktree_archive_git import fetch_preservation
-    from worktree_archive_filesystem import open_parent
-    manifest = json.loads((archive / 'manifest.json').read_text(encoding='ascii'))
-    state = load_merge(archive, manifest)
-    fetch_preservation(root, archive)
-    verify_merge_objects(root, state)
+def restore_merge_index(root, state):
     # Rebuild REUC via Git's normal resolve operations, including staged deletes.
     git(root, 'read-tree', '--empty')
     unresolved = state['undo'] + [entry for entry in state['index'] if entry[3] != 0]
@@ -226,6 +246,39 @@ def restore_merge(root, archive):
     live = {entry[0] for entry in state['index']}
     for path in sorted({entry[0] for entry in state['undo']} - live):
         git(root, 'update-index', '--force-remove', '--', os.fsdecode(merge_path(path)))
+
+
+def write_merge_working(root, path, value):
+    from worktree_archive_filesystem import open_parent
+    relative = Path(os.fsdecode(merge_path(path)))
+    target = root / relative
+    if target.is_symlink():
+        raise ValueError('merge:symlink_target')
+    if value is not None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        parent = open_parent(root, relative.parts[:-1])
+    except FileNotFoundError:
+        if value is None:
+            return
+        raise
+    try:
+        if value is None:
+            try:
+                os.unlink(relative.name, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+        else:
+            descriptor = os.open(relative.name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                                 0o600, dir_fd=parent)
+            with os.fdopen(descriptor, 'wb') as stream:
+                stream.write(bytes.fromhex(value[1]))
+                os.fchmod(stream.fileno(), value[0])
+    finally:
+        os.close(parent)
+
+
+def restore_merge_working(root, archive, state):
     # Remove the clean checkout first, then create parents using no-follow file
     # descriptors. Symlinks and directory/file conflicts are deliberately refused.
     untracked = set()
@@ -235,32 +288,10 @@ def restore_merge(root, archive):
     for path, value in state['working'].items():
         if path in untracked:
             value = None  # The verified untracked payload owns these bytes.
-        relative = Path(os.fsdecode(merge_path(path)))
-        target = root / relative
-        if target.is_symlink():
-            raise ValueError('merge:symlink_target')
-        if value is not None:
-            target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            parent = open_parent(root, relative.parts[:-1])
-        except FileNotFoundError:
-            if value is None:
-                continue
-            raise
-        try:
-            if value is None:
-                try:
-                    os.unlink(relative.name, dir_fd=parent)
-                except FileNotFoundError:
-                    pass
-            else:
-                descriptor = os.open(relative.name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
-                                     0o600, dir_fd=parent)
-                with os.fdopen(descriptor, 'wb') as stream:
-                    stream.write(bytes.fromhex(value[1]))
-                    os.fchmod(stream.fileno(), value[0])
-        finally:
-            os.close(parent)
+        write_merge_working(root, path, value)
+
+
+def restore_merge_metadata(root, state):
     admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     for name in MERGE_FILES:
         target = admin / name
@@ -270,6 +301,17 @@ def restore_merge(root, archive):
             target.unlink()
         if name in state['metadata']:
             target.write_bytes(bytes.fromhex(state['metadata'][name]))
+
+
+def restore_merge(root, archive):
+    from worktree_archive_git import fetch_preservation
+    manifest = json.loads((archive / 'manifest.json').read_text(encoding='ascii'))
+    state = load_merge(archive, manifest)
+    fetch_preservation(root, archive)
+    verify_merge_objects(root, state)
+    restore_merge_index(root, state)
+    restore_merge_working(root, archive, state)
+    restore_merge_metadata(root, state)
 
 
 def inventories(root, include_ignored=False):
