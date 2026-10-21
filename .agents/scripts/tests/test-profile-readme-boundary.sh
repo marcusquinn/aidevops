@@ -422,7 +422,6 @@ EOF
 		AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
 		AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
 		AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" \
-		AIDEVOPS_WORKTREE_RECOVERY_POLICY="preserve-v1" \
 		AIDEVOPS_PROFILE_WORKTREE_HELPER="$refusing_helper" \
 		PROFILE_MARKER_EVIDENCE="$marker_evidence" \
 		PROFILE_RECOVERY_FIXTURE_MODE="$fixture_mode" \
@@ -431,7 +430,8 @@ EOF
 		if [[ "$update_rc" -eq 0 ]] ||
 			[[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "2" ]] ||
 			! compgen -G "$TEST_DIR/worktrees/*/.profile-publication-fixture" >/dev/null ||
-			compgen -G "$recovery_root/.producer-transactions/*/journal.json" >/dev/null ||
+			! jq -e '.phase == "capturing" and .source_removal_outcome == "pending"' \
+				"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
 			compgen -G "$recovery_root/aidevops-worktree-cleanup-*" >/dev/null ||
 			[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]]; then
 			print_helper_failure "$test_name" "unsupported state was not preserved without a full-copy fallback" "$output_file"
@@ -447,7 +447,7 @@ EOF
 
 	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "1" ]] ||
 		[[ ! -d "$recovery_root" ]] ||
-		! jq -e '.phase == "verified" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "removed"' \
+		! jq -e '.phase == "archived" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "removed"' \
 			"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
 		[[ "$(cat "$marker_evidence" 2>/dev/null)" != "verified" ]] ||
 		[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]] ||

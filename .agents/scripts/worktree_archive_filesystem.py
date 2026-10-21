@@ -4,9 +4,11 @@
 """Read-only filesystem evidence for independently restorable worktree archives."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
+import tarfile
 
 
 def unreadable_directory(error):
@@ -86,3 +88,53 @@ def fingerprint(root, raw):
         return regular_fingerprint(relative.name, parent)
     finally:
         os.close(parent)
+
+
+def supported_git_metadata(root, paths):
+    """Check Git-listed files without scanning ignored trees or rehashing tracked bytes."""
+    for raw in paths:
+        relative = Path(os.fsdecode(raw))
+        try:
+            parent = open_parent(root, relative.parts[:-1])
+        except FileNotFoundError:
+            continue
+        try:
+            observed = os.stat(relative.name, dir_fd=parent, follow_symlinks=False)
+            if not (stat.S_ISREG(observed.st_mode) or stat.S_ISLNK(observed.st_mode)):
+                raise ValueError('unsupported tracked filesystem object')
+            supported_metadata(observed, os.listxattr(root / relative, follow_symlinks=False))
+        except FileNotFoundError:
+            continue  # A tracked deletion is represented by its patch.
+        finally:
+            os.close(parent)
+
+
+def untracked_member_fingerprint(source, member):
+    if member.issym():
+        return ['symlink', member.linkname]
+    if not member.isfile():
+        raise ValueError('unsupported untracked archive member')
+    digest = hashlib.sha256()
+    with source.extractfile(member) as handle:
+        for chunk in iter(lambda: handle.read(1048576), b''):
+            digest.update(chunk)
+    return ['file', member.mode, member.size, digest.hexdigest()]
+
+
+def verify_untracked_payload(archive, manifest):
+    """Bind captured untracked bytes to the snapshot, not just the artifact inventory."""
+    saved = manifest.get('source_fingerprint', {})
+    if manifest.get('capture_policy') != 'git-only' or saved.get('schema') != 3:
+        return
+    contents = []
+    payload = archive / 'untracked.tar.gz'
+    if payload.exists():
+        with tarfile.open(payload, 'r:gz') as source:
+            members = source.getmembers()
+            if len({member.name for member in members}) != len(members):
+                raise ValueError('duplicate untracked archive path')
+            contents = [[member.name, untracked_member_fingerprint(source, member)]
+                        for member in sorted(members, key=lambda entry: os.fsencode(entry.name))]
+    digest = hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest()
+    if len(contents) != saved.get('untracked_files') or digest != saved.get('untracked_sha256'):
+        raise ValueError('untracked payload does not match captured source')

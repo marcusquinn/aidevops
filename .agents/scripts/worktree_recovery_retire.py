@@ -54,8 +54,9 @@ def make_plan(directory, migration, bucket, lock, automatic=False):
     return report(record)
 
 
-def retire(directory, migration, bucket, token, lock, automatic=False):
+def retire(directory, migration, bucket, token, lock):
     record = load(directory / "retirement.json")
+    automatic = token is None
     require((record.get("authority") == "verified-git-changes/v1") == automatic,
             "retirement:authority-mismatch")
     if automatic:
@@ -97,7 +98,7 @@ def automatic_retire(directory, migration, bucket, lock):
     automatic_policy(migration, bucket)
     if not os.path.lexists(directory / "retirement.json"):
         make_plan(directory, migration, bucket, lock, automatic=True)
-    return retire(directory, migration, bucket, None, lock, automatic=True)
+    return retire(directory, migration, bucket, None, lock)
 
 
 def execute(arguments):
