@@ -1,5 +1,5 @@
 ---
-description: Read-only local TLS trust-store canary checks
+description: Read-only local and inventoried fleet TLS trust-store canary checks
 mode: subagent
 ---
 
@@ -36,7 +36,6 @@ curl configuration files are ignored. No packages or trust stores are modified.
 an HTTPS URL as its first argument. It chooses curl, Node, Python, then wget,
 and prints exactly `client TRUSTED|REJECTED|UNKNOWN`. Local checks execute this
 same body with a selected client and executable, preventing classification drift.
-Fleet execution is a separate phase.
 
 ## Advisory verification
 
@@ -61,6 +60,61 @@ and displays the helper's TRUSTED rows and remediation hints. Other failures als
 retain the advisory. Session startup only displays the first-line summary; it
 never runs advisory checks or displays check metadata.
 
+## Fleet checks
+
+Run `aidevops security tls-trust fleet --format json`, or restrict the inventory
+name with `fleet --target NAME`. Fleet mode requires local Python 3; remote hosts
+need POSIX sh, not Python. JSON is an array; INFO messages and result counts go to
+stderr so stdout remains machine-readable. Empty inventories produce `[]`, not a
+claim that a fleet was verified. Missing inventory files are reported and skipped.
+
+Targets come only from `~/.cloudron.json` (`servers`),
+`~/.config/aidevops/remote-hosts.json` (`hosts`, SSH transport), and
+`~/.config/aidevops/site-inventory.json` (`hosting_accounts` with referenced
+`sites.*.hosting.deployment_path` and child deployment paths). The target option
+filters names; it never accepts an arbitrary SSH address. Inventory credentials
+are not read or printed. SSH uses existing key/agent authentication, BatchMode,
+a 15-second connection timeout and normal host-key verification. All connections
+are serial (at most one per shared-hosting account). Each target/canary execution
+has a 240-second budget; exhausted budgets and unreachable targets are UNKNOWN.
+
+Rows identify target, layer, artifact, client, canary, URL, incident and result:
+
+- `host`: installed curl, Node, Python and unsupported wget use the phase-1
+  probe body. `ca_certificates` records installed/candidate versions and available
+  mirror/security versions from the existing apt cache. Remote dpkg version
+  ordering flags `mirror_lag` / `MIRROR-LAG` when a version from
+  `security.ubuntu.com` in a `*-security` pocket is newer than all configured
+  mirror versions. No cache refresh or source edits occur. Missing cache data
+  cannot establish that mirrors are current.
+- `container-image`: probes each running container using `docker exec -i`, with
+  no sudo/password prompt. Node is preferred when present, to check bundled
+  roots rather than only a system curl store. Other containers use phase-1 client
+  selection. Images group observations while retaining each container ID/name;
+  exposure or uncertainty is never hidden by a rejecting sibling. Missing sh or
+  inaccessible Docker is UNKNOWN. TRUSTED Node results include the
+  `--use-openssl-ca` plus `SSL_CERT_FILE` workaround.
+- `wp-site`: inventoried paths with `wp-config.php` use WP-CLI `wp_remote_get`
+  with timeout 15 and redirects disabled. Outbound policy blocks and plugin
+  `pre_http_request` short-circuits are `BLOCKED-OUTBOUND`, not proof of TLS
+  rejection or exposure. Missing config/WP-CLI is UNKNOWN. SHA-256 bundle hashes
+  group identical `wp-includes/certificates/ca-bundle.crt` observations within a
+  target/canary; per-site results remain in `observations`. Missing hashes are
+  not grouped as identical bundles.
+- `php-binary`: `/opt/alt/php*/usr/bin/php` and PATH PHP each check raw curl
+  (without a CAINFO override) and HTTPS streams. JSON details record the access
+  level of `curl.cainfo` or `openssl.cafile`. Raw curl TRUSTED with access 4 is
+  `HOST-CONTROLLED`: ask the host to update the system CA store. Stream TRUSTED
+  with access 2 includes the per-site `.user.ini` `openssl.cafile` hint, which
+  fixes streams only. No PHP settings are changed.
+
+Only TRUSTED rows produce exit 2. HOST-CONTROLLED and BLOCKED-OUTBOUND remain
+visible in rows and the stderr summary but do not themselves change the exit
+code. UNKNOWN is never a clean-bill-of-health assertion. Grouped rows retain
+their individual observations because images and bundles can have different
+runtime overrides. Probes never remediate: they do not change packages, files,
+containers, WordPress settings or TLS verification.
+
 ## Incident lessons (2026-10-21)
 
 - Homebrew Node uses Homebrew OpenSSL roots: update `ca-certificates` and Node.
@@ -75,5 +129,5 @@ never runs advisory checks or displays check metadata.
 - Package mirrors may lag: compare CA package candidates with the upstream security
   pocket (observed with the Hetzner Ubuntu mirror versus `security.ubuntu.com`).
 - Shared-hosting PHP curl is host-controlled; request the provider's update.
-- Probes are read-only; never disable verification. Future fleet checks may target
+- Probes are read-only; never disable verification. Fleet checks may target
   only owned, inventoried hosts. Probe reports must contain no secrets.
