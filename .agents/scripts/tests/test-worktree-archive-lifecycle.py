@@ -28,7 +28,36 @@ sys.path.insert(0, str(HELPER.parent))
 import worktree_lifetime_archive as lifecycle
 import worktree_lifecycle_status as lifecycle_status
 import worktree_recovery_legacy_report as legacy_report
+from worktree_archive_administration import administration_files
 from worktree_recovery_producer_cases import ProducerCases
+
+
+class ArchiveAdministration(unittest.TestCase):
+    def test_legacy_branches_requires_empty_independent_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            admin = Path(temporary)
+            branches = admin / "branches"
+            branches.mkdir()
+            self.assertEqual(administration_files(admin, admin, False), {})
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, True)
+            child = branches / "origin"
+            child.write_text("legacy remote\n")
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, False)
+            child.unlink()
+            child.mkdir()
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, False)
+            child.rmdir()
+            branches.rmdir()
+            branches.write_text("not a directory\n")
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, False)
+            branches.unlink()
+            branches.symlink_to(admin, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "^git_admin:symlink:branches$"):
+                administration_files(admin, admin, False)
 
 
 class LegacyRecoveryReport(unittest.TestCase):
@@ -140,6 +169,7 @@ class LegacyRecoveryReport(unittest.TestCase):
 
 class ArchiveLifecycle(ProducerCases, unittest.TestCase):
     def setUp(self):
+        self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
