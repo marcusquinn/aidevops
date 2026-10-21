@@ -36,7 +36,30 @@ curl configuration files are ignored. No packages or trust stores are modified.
 an HTTPS URL as its first argument. It chooses curl, Node, Python, then wget,
 and prints exactly `client TRUSTED|REJECTED|UNKNOWN`. Local checks execute this
 same body with a selected client and executable, preventing classification drift.
-Fleet execution and advisory auto-dismissal are separate phases, not implemented here.
+Fleet execution is a separate phase.
+
+## Advisory verification
+
+An advisory's first line remains its human summary. An optional later line links
+it to a check, for example:
+
+```text
+# check: tls-trust local --canary emudhra-2026-10-direct
+```
+
+The no-argument `aidevops security` assessment checks each undismissed advisory
+with this metadata. Only `tls-trust local` and `tls-trust local --canary ID` are
+allowlisted, mapped to the fixed `tls-trust-helper.sh` helper. Arguments are literal
+whitespace-separated tokens, not shell code; quoting and expansion are unsupported.
+Unknown checks stay active. Advisories without metadata behave as before.
+
+Exit 0 appends the advisory ID to `~/.aidevops/advisories/dismissed.txt` and prints
+`auto-dismissed <id>: verified clean`. This follows the helper's **no TRUSTED client**
+contract, not proof that all clients were REJECTED: UNKNOWN results can still be
+present and must not be treated as evidence of safety. Exit 2 retains the advisory
+and displays the helper's TRUSTED rows and remediation hints. Other failures also
+retain the advisory. Session startup only displays the first-line summary; it
+never runs advisory checks or displays check metadata.
 
 ## Incident lessons (2026-10-21)
 

@@ -424,6 +424,8 @@ _check_advisories() {
 			continue
 		fi
 		local first_line
+		# Display only the human summary; optional # check: metadata is never
+		# displayed or executed here. Probes belong to aidevops security.
 		first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
 		if [[ -n "$first_line" ]]; then
 			local entry

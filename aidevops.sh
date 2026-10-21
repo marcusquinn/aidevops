@@ -1760,6 +1760,52 @@ _main_check_version() {
 	return 0
 }
 
+# Verify advisory metadata only during an explicit full security assessment.
+_security_check_advisories() {
+	local advisories_dir="$HOME/.aidevops/advisories"
+	local dismissed_file="$advisories_dir/dismissed.txt"
+	local tls_helper="tls-trust-helper.sh"
+	local advisory_file adv_id line check status
+	local -a check_args=()
+	for advisory_file in "$advisories_dir"/*.advisory; do
+		[[ -f "$advisory_file" ]] || continue
+		adv_id="${advisory_file##*/}"
+		adv_id="${adv_id%.advisory}"
+		if [[ -f "$dismissed_file" ]] && grep -qxF -- "$adv_id" "$dismissed_file"; then
+			continue
+		fi
+		check=""
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			if [[ "$line" == '# check: '* ]]; then
+				check="${line#\# check: }"
+				break
+			fi
+		done <"$advisory_file"
+		[[ -n "$check" ]] || continue
+		# Split literal whitespace only: no evaluation, expansion or shell quoting.
+		IFS=$' \t' read -r -a check_args <<<"$check"
+		# Allow only the checking subcommand, never help/probe-script (also exit 0).
+		if [[ "${check_args[0]:-}" != tls-trust || "${check_args[1]:-}" != local ]] ||
+			{ [[ ${#check_args[@]} -ne 2 ]] &&
+				! { [[ ${#check_args[@]} -eq 4 && "${check_args[2]:-}" == --canary && "${check_args[3]:-}" != -* ]]; }; }; then
+			printf 'Keeping %s: unsupported advisory check\n' "$adv_id"
+			continue
+		fi
+		status=0
+		_dispatch_helper "$tls_helper" "$tls_helper" "${check_args[@]:1}" || status=$?
+		if [[ "$status" -eq 0 ]]; then
+			if printf '%s\n' "$adv_id" >>"$dismissed_file"; then
+				printf 'auto-dismissed %s: verified clean\n' "$adv_id"
+			else
+				printf 'Keeping %s: could not record dismissal\n' "$adv_id" >&2
+			fi
+		else
+			printf 'Keeping %s: advisory check exited %s\n' "$adv_id" "$status"
+		fi
+	done
+	return 0
+}
+
 # Route 'aidevops security [subcommand]' to appropriate helpers
 _cmd_security() {
 	local tls_helper="tls-trust-helper.sh"
@@ -1777,6 +1823,7 @@ _cmd_security() {
 		_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" scan || true
 		echo ""
 		_dispatch_helper "$tls_helper" "$tls_helper" local || true
+		_security_check_advisories
 		;;
 	scan | scan-secrets | scan-pth | scan-deps)
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"

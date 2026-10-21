@@ -1,4 +1,5 @@
 [SECURITY ADVISORY] eMudhra intermediate CA keys compromised — update CA trust stores (curl, Node, Python, PHP/WordPress, Docker, servers)
+# check: tls-trust local --canary emudhra-2026-10-direct
 
   Disclosed: 2026-10-20. Private keys for eight eMudhra intermediate CAs were
   generated so they can be recovered from the certificates. Anyone can mint
