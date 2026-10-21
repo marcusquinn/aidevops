@@ -3,9 +3,11 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Select and validate existing archive dependencies without changing Git state."""
 
+from pathlib import Path
 import re
+import tempfile
 
-from worktree_archive_administration import fetch_head_roots, git
+from worktree_archive_administration import fetch_head_roots, git, load_administration
 
 
 def index_roots(root):
@@ -49,3 +51,40 @@ def bundle_roots(root, state):
                         data=('\n'.join(history) + '\n').encode('ascii'))
         extra.difference_update(oid.decode('ascii') for oid in reachable.splitlines())
     return sorted(set(history) | extra)
+
+
+def verify_object_graph(archive, scratch, manifest):
+    # Load restoration helpers only at verification time; snapshot construction
+    # also uses this module's dependency selectors.
+    from worktree_archive_snapshot import seed_base, verify_administration
+    bundle = archive / 'commits.bundle'
+    object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
+    git(scratch, 'init', '--bare', '--quiet', '--object-format=' + object_format)
+    if manifest.get('self_contained') is not True:
+        seed_base(scratch, manifest)
+    if bundle.is_file():
+        git(scratch, 'bundle', 'verify', str(bundle))
+    if manifest.get('git_admin_policy') is not None:
+        verify_administration(archive, scratch, manifest)
+    elif manifest.get('capture_policy') == 'git-only':
+        if bundle.is_file():
+            git(scratch, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle), 'HEAD:refs/archive/head')
+        git(scratch, 'cat-file', '-e', manifest['head_sha'] + '^{commit}')
+
+
+def verify_git_objects(archive, manifest):
+    """Verify against the recorded base graph, retaining legacy bundle readers."""
+    from worktree_archive_snapshot import archive_policies
+    capture_policy, policy = archive_policies(manifest)
+    bundle = archive / 'commits.bundle'
+    if policy is not None:
+        load_administration(archive)
+    if manifest.get('self_contained') is True or policy is not None or capture_policy == 'git-only':
+        if manifest.get('self_contained') is True and not bundle.is_file():
+            raise ValueError('self-contained archive requires a bundle')
+        with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
+            verify_object_graph(archive, Path(temporary), manifest)
+    elif bundle.exists():
+        common = Path(manifest.get('source_git_common_dir', ''))
+        root = common if common.is_dir() else archive
+        git(root, 'bundle', 'verify', str(bundle))

@@ -20,7 +20,7 @@ import sys
 import tempfile
 
 from worktree_archive_filesystem import (
-    fingerprint, supported_directories, supported_git_metadata,
+    fingerprint, supported_directories,
     verify_untracked_payload as verify_untracked_payload,
 )
 from worktree_archive_administration import (
@@ -28,7 +28,10 @@ from worktree_archive_administration import (
     OPERATIONS as OPERATIONS,
 )
 from worktree_archive_state import inventories, supported_state
-from worktree_archive_objects import administration_roots, bundle_roots
+from worktree_archive_index import git_index_state as git_index_state
+from worktree_archive_objects import (
+    administration_roots, bundle_roots, verify_git_objects as verify_git_objects,
+)
 
 
 def archive_policies(manifest):
@@ -46,39 +49,6 @@ def archive_policies(manifest):
     if policy is not None and (policy != 'preserve-v1' or not isinstance(manifest.get('self_contained'), bool)):
         raise SystemExit('invalid Git administration policy')
     return capture_policy, policy
-
-
-def verify_object_graph(archive, scratch, manifest):
-    bundle = archive / 'commits.bundle'
-    object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
-    git(scratch, 'init', '--bare', '--quiet', '--object-format=' + object_format)
-    if manifest.get('self_contained') is not True:
-        seed_base(scratch, manifest)
-    if bundle.is_file():
-        git(scratch, 'bundle', 'verify', str(bundle))
-    if manifest.get('git_admin_policy') is not None:
-        verify_administration(archive, scratch, manifest)
-    elif manifest.get('capture_policy') == 'git-only':
-        if bundle.is_file():
-            git(scratch, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle), 'HEAD:refs/archive/head')
-        git(scratch, 'cat-file', '-e', manifest['head_sha'] + '^{commit}')
-
-
-def verify_git_objects(archive, manifest):
-    """Verify against the recorded base graph, retaining legacy bundle readers."""
-    capture_policy, policy = archive_policies(manifest)
-    bundle = archive / 'commits.bundle'
-    if policy is not None:
-        load_administration(archive)
-    if manifest.get('self_contained') is True or policy is not None or capture_policy == 'git-only':
-        if manifest.get('self_contained') is True and not bundle.is_file():
-            raise ValueError('self-contained archive requires a bundle')
-        with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
-            verify_object_graph(archive, Path(temporary), manifest)
-    elif bundle.exists():
-        common = Path(manifest.get('source_git_common_dir', ''))
-        root = common if common.is_dir() else archive
-        git(root, 'bundle', 'verify', str(bundle))
 
 
 def administration_digest(state):
@@ -191,38 +161,6 @@ def verify_administration(archive, scratch, manifest):
     checked = git(scratch, 'cat-file', '--batch-check', data=('\n'.join(roots) + '\n').encode('ascii'))
     if len(checked.splitlines()) != len(roots) or any(line.endswith(b' missing') for line in checked.splitlines()):
         raise ValueError('git_admin:missing_object')
-
-
-def git_index_state(path, head=None):
-    root = Path(path).resolve(strict=True)
-    lock = os.fsdecode(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock').rstrip(b'\n'))
-    if os.path.lexists(lock):
-        raise ValueError('git_admin:index_locked:index.lock')
-    index = git(root, "ls-files", "--stage", "-z")
-    entries = [entry.split(b"\t", 1) for entry in index.split(b"\0") if entry]
-    if any(metadata.split()[2] != b"0" for metadata, _ in entries):
-        raise ValueError("unmerged index cannot be represented by two patches")
-    if any(metadata.split()[0] == b"160000" for metadata, _ in entries):
-        raise ValueError("submodule contents cannot be represented by two patches")
-    supported_git_metadata(root, (path for _, path in entries))
-    flags = git(root, "ls-files", "-v", "-z").split(b"\0")
-    if any(entry[:1] == b"S" or entry[:1].islower() for entry in flags if entry):
-        raise ValueError("index has skip-worktree/assume-unchanged entries")
-    # Index-only metadata reads, not a working-tree scan or restore verification.
-    options = ("--cached", "--raw", "-z", "--no-ext-diff", "--no-color")
-    if git(root, "diff", *options, "--ita-visible-in-index") != git(root, "diff", *options, "--ita-invisible-in-index"):
-        raise ValueError("intent-to-add index entries cannot be represented by two patches")
-    # Not copying raw administration does not authorize losing unique drafts,
-    # interrupted operations or commits reachable only through a worktree reflog.
-    administration(root)
-    from worktree_archive_state import supported_history
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
-    if (admin / 'SQUASH_MSG').exists():
-        raise ValueError('uncommitted squash draft requires separate preservation')
-    supported_history(root, admin)
-    inventories(root)  # Reuse the existing Git-filter/LFS preservation guard.
-    return {"head": head or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii"),
-            "index": hashlib.sha256(index).hexdigest(), "files": len(entries)}
 
 
 def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
