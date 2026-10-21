@@ -54,7 +54,10 @@ setTimeout(() => finish('UNKNOWN'), 15000);
 try {
   https.get(process.argv[2], response => finish('TRUSTED')).on('error', error => {
     const code = error.code || '';
-    finish(code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' ||
+    const certificateErrors = ['UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+      'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      'ERR_TLS_CERT_ALTNAME_INVALID', 'INVALID_PURPOSE'];
+    finish(certificateErrors.includes(code) ||
       code.startsWith('CERT_') || code.startsWith('SELF_SIGNED_') ? 'REJECTED' : 'UNKNOWN');
   });
 } catch (_) { finish('UNKNOWN'); }
@@ -117,16 +120,26 @@ remediation_hint() {
 	local client="$1"
 	local bin="$2"
 	local incident="$3"
+	local node_prefix
+	if [[ "$client" == node ]] && command -v brew >/dev/null 2>&1; then
+		node_prefix=$(brew --prefix node 2>/dev/null || true)
+		if [[ -n "$node_prefix" && "$bin" -ef "$node_prefix/bin/node" ]]; then
+			printf '%s' 'brew upgrade ca-certificates node'
+			return 0
+		fi
+	fi
 	case "$client:$bin" in
 	node:*brew* | node:/usr/local/Cellar/*)
-		printf '%s' 'brew upgrade ca-certificates node' ;;
+		printf '%s' 'brew upgrade ca-certificates node'
+		;;
 	node:*) printf '%s' 'Upgrade Node, or use --use-openssl-ca plus SSL_CERT_FILE pointing to a patched CA bundle (not --use-system-ca)' ;;
 	curl:/usr/bin/curl)
 		if [[ "$(uname -s)" == Darwin ]]; then
 			printf 'Apple curl trust store: see %s' "$incident"
 		else
 			printf '%s' 'Update system ca-certificates and curl'
-		fi ;;
+		fi
+		;;
 	curl:*brew* | curl:*/opt/curl/*) printf '%s' 'brew upgrade ca-certificates curl' ;;
 	python3:*) printf '%s' 'Update Python and its configured CA bundle; system updates may not cover bundled stores' ;;
 	php:*) printf '%s' 'Update PHP curl CA bundle; on shared hosting request the host-controlled update' ;;
@@ -137,38 +150,57 @@ remediation_hint() {
 
 cmd_local() {
 	local selected='' format=text
-	local option value
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		local value="${2:-}"
 		case "$option" in
 		--canary | --format)
-			[[ $# -ge 2 && -n "$value" ]] || { print_usage >&2; return 1; }
+			[[ $# -ge 2 && -n "$value" ]] || {
+				print_usage >&2
+				return 1
+			}
 			if [[ "$option" == --canary ]]; then selected="$value"; else format="$value"; fi
-			shift 2 ;;
-		*) print_usage >&2; return 1 ;;
+			shift 2
+			;;
+		*)
+			print_usage >&2
+			return 1
+			;;
 		esac
 	done
-	[[ "$format" == text || "$format" == json ]] || { print_usage >&2; return 1; }
+	[[ "$format" == text || "$format" == json ]] || {
+		print_usage >&2
+		return 1
+	}
 	if [[ "$format" == json ]] && ! command -v jq >/dev/null 2>&1; then
 		printf '%s\n' 'JSON output requires jq' >&2
 		return 1
 	fi
 	local clients=() bins=() path prefix client
-	if [[ -x /usr/bin/curl ]]; then clients+=(curl); bins+=(/usr/bin/curl); fi
+	if [[ -x /usr/bin/curl ]]; then
+		clients+=(curl)
+		bins+=(/usr/bin/curl)
+	fi
 	for client in curl node python3 php wget; do
 		path=$(command -v "$client" || true)
-		if [[ -n "$path" ]]; then clients+=("$client"); bins+=("$path"); fi
+		if [[ -n "$path" ]]; then
+			clients+=("$client")
+			bins+=("$path")
+		fi
 	done
 	if command -v brew >/dev/null 2>&1; then
 		prefix=$(brew --prefix 2>/dev/null || true)
 		if [[ -n "$prefix" && -x "$prefix/opt/curl/bin/curl" ]]; then
-			clients+=(curl); bins+=("$prefix/opt/curl/bin/curl")
+			clients+=(curl)
+			bins+=("$prefix/opt/curl/bin/curl")
 		fi
 	fi
 	local config="$SCRIPT_DIR/../configs/tls-trust-canaries.conf"
 	local id url incident added extra found=0 exposed=0 i result hint rows='' row
-	[[ -r "$config" ]] || { printf '%s\n' 'Cannot read canary config' >&2; return 1; }
+	[[ -r "$config" ]] || {
+		printf '%s\n' 'Cannot read canary config' >&2
+		return 1
+	}
 	# Validate the entire input before issuing any probes or partial JSON.
 	while IFS='|' read -r id url incident added extra || [[ -n "$id" ]]; do
 		[[ -z "$id" || "$id" == \#* ]] && continue
@@ -178,7 +210,10 @@ cmd_local() {
 		fi
 		[[ -z "$selected" || "$selected" == "$id" ]] && found=1
 	done <"$config"
-	[[ "$found" == 1 ]] || { printf '%s\n' 'No matching canary' >&2; return 1; }
+	[[ "$found" == 1 ]] || {
+		printf '%s\n' 'No matching canary' >&2
+		return 1
+	}
 	while IFS='|' read -r id url incident added extra || [[ -n "$id" ]]; do
 		[[ -z "$id" || "$id" == \#* ]] && continue
 		[[ -z "$selected" || "$selected" == "$id" ]] || continue
@@ -211,10 +246,19 @@ main() {
 	local command="${1:-local}"
 	[[ $# -eq 0 ]] || shift
 	case "$command" in
-	local) cmd_local "$@"; return $? ;;
-	probe-script) [[ $# -eq 0 ]] || return 1; cmd_probe_script ;;
+	local)
+		cmd_local "$@"
+		return $?
+		;;
+	probe-script)
+		[[ $# -eq 0 ]] || return 1
+		cmd_probe_script
+		;;
 	help | --help | -h) print_usage ;;
-	*) print_usage >&2; return 1 ;;
+	*)
+		print_usage >&2
+		return 1
+		;;
 	esac
 	return 0
 }
