@@ -70,6 +70,17 @@ NAMED_CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# scheme://user:password@host (any scheme); group 1 runs through the ":" before the password.
+URL_USERINFO_PATTERN = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9+.-]*://[^\s:@/\"'<>\\]+:)([^\s@/\"'<>\\]+)(?=@)"
+)
+
+# {"name":"X_PASSWORD","value":"secret"} where the secret name is a sibling field.
+NAME_VALUE_PAIR_PATTERN = re.compile(
+    r"(\\?\"(?:name|key|variable)\\?\"\s*:\s*\\?\"([^\"\\]*)\\?\"\s*,\s*\\?\"value\\?\"\s*:\s*\\?\")([^\"\\]+)(?=\\?\")",
+    re.IGNORECASE,
+)
+
 REDACTION_TOKEN = "[redacted-credential]"
 PEM_REDACTION_TOKEN = "[redacted-private-key]"
 PEM_BEGIN_MARKER = "-----BEGIN "
@@ -197,6 +208,25 @@ def scrub_credentials(text: str) -> tuple[str, int]:
         return redacted
 
     result, pem_count = scrub_private_keys(text)
+
+    def redact_pair(match: re.Match) -> str:
+        nonlocal named_count
+        prefix, name, value = match.groups()
+        if not is_sensitive_field_name(name) or is_placeholder_value(value):
+            return match.group(0)
+        named_count += 1
+        return f"{prefix}{REDACTION_TOKEN}"
+
+    def redact_url(match: re.Match) -> str:
+        nonlocal named_count
+        prefix, password = match.groups()
+        if is_placeholder_value(password):
+            return match.group(0)
+        named_count += 1
+        return f"{prefix}{REDACTION_TOKEN}"
+
+    result = NAME_VALUE_PAIR_PATTERN.sub(redact_pair, result)
+    result = URL_USERINFO_PATTERN.sub(redact_url, result)
     result = NAMED_CREDENTIAL_ASSIGNMENT_PATTERN.sub(redact_and_count, result)
     result, token_count = CREDENTIAL_PATTERN.subn(REDACTION_TOKEN, result)
     return result, pem_count + named_count + token_count

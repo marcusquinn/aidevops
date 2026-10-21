@@ -9,6 +9,11 @@ const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 const NAMED_CREDENTIAL_ASSIGNMENT_PATTERN =
   /(^|[^A-Za-z0-9_])((?:"[A-Za-z_][A-Za-z0-9_. -]*"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?:=|:)\s*)("(?:\\.|[^"\\])*"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)/gim;
+// scheme://user:password@host (any scheme); captures through the ":" before the password.
+const URL_USERINFO_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:@/"'<>\\]+:)([^\s@/"'<>\\]+)(?=@)/g;
+// {"name":"X_PASSWORD","value":"secret"} where the secret name is a sibling field.
+const NAME_VALUE_PAIR_PATTERN =
+  /(\\?"(?:name|key|variable)\\?"\s*:\s*\\?"([^"\\]*)\\?"\s*,\s*\\?"value\\?"\s*:\s*\\?")([^"\\]+)(?=\\?")/gi;
 const PEM_BEGIN_MARKER = "-----BEGIN ";
 const PEM_KEY_SUFFIX = "PRIVATE KEY-----";
 const PEM_LABEL_PATTERN = /^[A-Z0-9 ]*$/;
@@ -117,7 +122,17 @@ function redactAssignedValue(value) {
 function scrubPlainCredentials(text) {
   const { scrubbed: pemScrubbed, count: pemCount } = scrubPrivateKeys(text);
   let count = pemCount;
-  const namedScrubbed = pemScrubbed.replace(
+  const pairScrubbed = pemScrubbed.replace(NAME_VALUE_PAIR_PATTERN, (match, prefix, name, value) => {
+    if (!isSensitiveFieldName(name) || isPlaceholderValue(value)) return match;
+    count++;
+    return `${prefix}${REDACTION_TOKEN}`;
+  });
+  const urlScrubbed = pairScrubbed.replace(URL_USERINFO_PATTERN, (match, prefix, password) => {
+    if (isPlaceholderValue(password)) return match;
+    count++;
+    return `${prefix}${REDACTION_TOKEN}`;
+  });
+  const namedScrubbed = urlScrubbed.replace(
     NAMED_CREDENTIAL_ASSIGNMENT_PATTERN,
     (match, boundary, name, separator, value) => {
       if (!isSensitiveFieldName(name)) return match;

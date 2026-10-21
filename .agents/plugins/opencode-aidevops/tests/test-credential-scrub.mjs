@@ -27,6 +27,24 @@ function assertScrub(input, expected, expectedCount) {
   assert.equal(count, expectedCount);
 }
 
+describe("Cloudron addon log shapes", () => {
+  test("redacts non-http URL userinfo passwords and keeps host", () => {
+    assertScrub(
+      '"value":"postgres://appuser:s3cretPw@postgresql/appdb" mongodb+srv://u:p4ss@cluster/db',
+      `"value":"postgres://appuser:${REDACTION_TOKEN}@postgresql/appdb" mongodb+srv://u:${REDACTION_TOKEN}@cluster/db`,
+      2,
+    );
+  });
+
+  test("redacts sibling name/value pairs in plain log lines only for secret names", () => {
+    assertScrub(
+      'env [{"name":"CLOUDRON_POSTGRESQL_PASSWORD","value":"abcdef0123"},{"name":"CLOUDRON_POSTGRESQL_HOST","value":"postgresql"}] done',
+      `env [{"name":"CLOUDRON_POSTGRESQL_PASSWORD","value":"${REDACTION_TOKEN}"},{"name":"CLOUDRON_POSTGRESQL_HOST","value":"postgresql"}] done`,
+      1,
+    );
+  });
+});
+
 describe("credential transcript scrub boundary", () => {
   test("does not redact credential prefix embedded mid-word", () => {
     assertScrub("module task-syntheticfixture", "module task-syntheticfixture", 0);
