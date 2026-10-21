@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import re
-import stat
 import subprocess
 
 from worktree_archive_readiness import (
@@ -45,20 +44,6 @@ def validate_auto_merge(root, oid):
         raise ValueError("git_admin:missing_AUTO_MERGE_tree") from error
     if kind != b"tree":
         raise ValueError("git_admin:AUTO_MERGE_not_tree")
-
-
-def auto_merge(root):
-    path = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n"))) / "AUTO_MERGE"
-    if not os.path.lexists(path):
-        return None
-    validate_admin_entry(path, "AUTO_MERGE")
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, 'rb') as stream:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            raise ValueError('git_admin:AUTO_MERGE_not_regular')
-        oid = auto_merge_oid(stream.read(66))
-    validate_auto_merge(root, oid)
-    return oid
 
 
 def fetch_head_roots(encoded):

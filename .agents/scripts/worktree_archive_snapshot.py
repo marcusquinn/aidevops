@@ -24,15 +24,16 @@ from worktree_archive_filesystem import (
     verify_untracked_payload as verify_untracked_payload,
 )
 from worktree_archive_administration import (
-    ADMIN_FILES, administration, auto_merge, auto_merge_oid, git, load_administration, validate_auto_merge,
+    ADMIN_FILES, administration, git, load_administration,
     OPERATIONS as OPERATIONS,
 )
-from worktree_archive_state import inventories, supported_state
+from worktree_archive_state import auto_merge, inventories, supported_state
 from worktree_archive_index import (
     archive_policies as archive_policies, git_index_state as git_index_state,
 )
 from worktree_archive_objects import (
-    administration_roots, bundle_roots, verify_git_objects as verify_git_objects,
+    administration_roots, bundle_roots, capture_auto_merge, verify_auto_merge,
+    verify_git_objects as verify_git_objects,
 )
 
 
@@ -81,40 +82,6 @@ def fetch_preservation(root, archive):
     if bundle.is_file():
         git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
             '+refs/archive/*:refs/archive/*')
-
-
-def capture_auto_merge(root, archive, base):
-    oid = auto_merge(root)
-    if oid is None:
-        return
-    # Reuse the single bundle and exclude only objects durably covered by base.
-    covered = git(root, 'rev-list', '--objects', '--no-object-names', base).splitlines()
-    roots = [value for value in (git(root, 'rev-parse', 'HEAD').strip().decode('ascii'), oid)
-             if value.encode('ascii') not in covered]
-    if roots:
-        capture_bundle(root, archive, roots, base)
-    (archive / 'auto-merge-v1.json').write_text(
-        json.dumps({'schema': 1, 'tree': oid}) + '\n', encoding='ascii')
-
-
-def verify_auto_merge(root, archive, manifest):
-    oid = manifest.get('source_fingerprint', {}).get('auto_merge')
-    path = archive / 'auto-merge-v1.json'
-    if oid is None:
-        if path.exists():
-            raise ValueError('git_admin:unexpected_AUTO_MERGE_artifact')
-        return None
-    auto_merge_oid(oid.encode('ascii'))
-    if json.loads(path.read_text(encoding='ascii')) != {'schema': 1, 'tree': oid}:
-        raise ValueError('git_admin:AUTO_MERGE_metadata_mismatch')
-    validate_auto_merge(root, oid)
-    # rev-list traverses trees; batch-check additionally proves every blob exists.
-    closure = git(root, 'rev-list', '--objects', '--no-object-names', oid)
-    checked = git(root, 'cat-file', '--batch-check', data=closure)
-    if len(checked.splitlines()) != len(closure.splitlines()) or any(
-            line.endswith(b' missing') for line in checked.splitlines()):
-        raise ValueError('git_admin:missing_AUTO_MERGE_object')
-    return oid
 
 
 def restore_auto_merge(root, archive):
@@ -253,28 +220,23 @@ def main(argv):
     command = argv[0] if argv else ''
     if command == 'auto-merge-capture' and len(argv) == 4:
         capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), argv[3])
-        return 0
-    if command == 'auto-merge-restore' and len(argv) == 3:
+    elif command == 'auto-merge-restore' and len(argv) == 3:
         restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve())
-        return 0
-    if command == "admin-capture" and len(argv) in (4, 5):
+    elif command == "admin-capture" and len(argv) in (4, 5):
         capture_administration(Path(argv[1]), Path(argv[2]).resolve(), argv[3] == "1", *argv[4:])
-        return 0
-    if command == 'admin-prepare-restore' and len(argv) == 3:
+    elif command == 'admin-prepare-restore' and len(argv) == 3:
         prepare_incremental_restore(Path(argv[1]).resolve(), Path(argv[2]).resolve())
-        return 0
-    if command == "admin-restore" and len(argv) == 3:
+    elif command == "admin-restore" and len(argv) == 3:
         restore_administration(Path(argv[1]), Path(argv[2]).resolve())
-        return 0
-    if command == "admin-verify" and len(argv) == 2:
+    elif command == "admin-verify" and len(argv) == 2:
         load_administration(Path(argv[1]))
-        return 0
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preserve-git-admin", action="store_true")
-    parser.add_argument("--include-ignored", action="store_true")
-    parser.add_argument("worktree")
-    args = parser.parse_args(argv)
-    print(json.dumps(snapshot(args.worktree, args.preserve_git_admin, args.include_ignored), sort_keys=True))
+    else:
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--preserve-git-admin", action="store_true")
+        parser.add_argument("--include-ignored", action="store_true")
+        parser.add_argument("worktree")
+        args = parser.parse_args(argv)
+        print(json.dumps(snapshot(args.worktree, args.preserve_git_admin, args.include_ignored), sort_keys=True))
     return 0
 
 

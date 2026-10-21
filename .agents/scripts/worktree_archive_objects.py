@@ -3,11 +3,50 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Select and validate existing archive dependencies without changing Git state."""
 
+import json
 from pathlib import Path
 import re
 import tempfile
 
-from worktree_archive_administration import auto_merge_oid, fetch_head_roots, git, load_administration
+from worktree_archive_administration import (
+    auto_merge_oid, fetch_head_roots, git, load_administration, validate_auto_merge,
+)
+from worktree_archive_state import auto_merge
+
+
+def capture_auto_merge(root, archive, base):
+    from worktree_archive_snapshot import capture_bundle
+    oid = auto_merge(root)
+    if oid is None:
+        return
+    # Reuse the single bundle and exclude only objects durably covered by base.
+    covered = git(root, 'rev-list', '--objects', '--no-object-names', base).splitlines()
+    roots = [value for value in (git(root, 'rev-parse', 'HEAD').strip().decode('ascii'), oid)
+             if value.encode('ascii') not in covered]
+    if roots:
+        capture_bundle(root, archive, roots, base)
+    (archive / 'auto-merge-v1.json').write_text(
+        json.dumps({'schema': 1, 'tree': oid}) + '\n', encoding='ascii')
+
+
+def verify_auto_merge(root, archive, manifest):
+    oid = manifest.get('source_fingerprint', {}).get('auto_merge')
+    path = archive / 'auto-merge-v1.json'
+    if oid is None:
+        if path.exists():
+            raise ValueError('git_admin:unexpected_AUTO_MERGE_artifact')
+        return None
+    auto_merge_oid(oid.encode('ascii'))
+    if json.loads(path.read_text(encoding='ascii')) != {'schema': 1, 'tree': oid}:
+        raise ValueError('git_admin:AUTO_MERGE_metadata_mismatch')
+    validate_auto_merge(root, oid)
+    # rev-list traverses trees; batch-check additionally proves every blob exists.
+    closure = git(root, 'rev-list', '--objects', '--no-object-names', oid)
+    checked = git(root, 'cat-file', '--batch-check', data=closure)
+    if len(checked.splitlines()) != len(closure.splitlines()) or any(
+            line.endswith(b' missing') for line in checked.splitlines()):
+        raise ValueError('git_admin:missing_AUTO_MERGE_object')
+    return oid
 
 
 def index_roots(root):
@@ -58,7 +97,7 @@ def bundle_roots(root, state):
 def verify_object_graph(archive, scratch, manifest):
     # Load restoration helpers only at verification time; snapshot construction
     # also uses this module's dependency selectors.
-    from worktree_archive_snapshot import fetch_preservation, seed_base, verify_administration, verify_auto_merge
+    from worktree_archive_snapshot import fetch_preservation, seed_base, verify_administration
     bundle = archive / 'commits.bundle'
     object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
     git(scratch, 'init', '--bare', '--quiet', '--object-format=' + object_format)
