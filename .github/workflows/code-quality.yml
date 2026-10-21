@@ -1231,8 +1231,12 @@ jobs:
         set -euo pipefail
         sl_ver=$(node -p "require('./package.json').devDependencies.secretlint")
         preset_ver=$(node -p "require('./package.json').devDependencies['@secretlint/secretlint-rule-preset-recommend']")
-        npm install --no-save --no-package-lock --no-audit --no-fund \
+        # Global install: package.json uses workspace: specs that npm cannot
+        # install in-tree. configure_secretlint_command picks it up from PATH.
+        sl_prefix="${RUNNER_TEMP}/secretlint"
+        npm install -g --prefix "${sl_prefix}" --no-audit --no-fund \
           "secretlint@${sl_ver}" "@secretlint/secretlint-rule-preset-recommend@${preset_ver}"
+        echo "${sl_prefix}/bin" >> "$GITHUB_PATH"
 
     - name: Secretlint changed files
       env:
