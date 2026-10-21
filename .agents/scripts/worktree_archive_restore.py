@@ -12,6 +12,7 @@ import sys
 import uuid
 
 from worktree_archive_administration import git
+from worktree_archive_snapshot import fetch_preservation
 
 
 def prepare(archive, target):
@@ -23,7 +24,10 @@ def prepare(archive, target):
     repository = Path(os.fsdecode(next(entry[9:] for entry in entries if entry.startswith(b"worktree "))))
     bundle = archive / "commits.bundle"
     if bundle.is_file():
-        git(repository, "fetch", "--quiet", "--no-write-fetch-head", str(bundle), "HEAD")
+        if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
+            fetch_preservation(repository, archive)
+        else:
+            git(repository, "fetch", "--quiet", "--no-write-fetch-head", str(bundle), "HEAD")
     environment = dict(os.environ, AIDEVOPS_SKIP_AUTO_CLAIM="1", WORKTREE_NODE_MODULES_RESTORE_ENABLED="0")
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):

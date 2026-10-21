@@ -191,6 +191,205 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
                                 "--base-branch", "develop", "--output-root",
                                 self.archives, *extra).stdout.decode().strip())
 
+    def auto_merge_path(self):
+        return Path(os.fsdecode(self.git(self.work, "rev-parse", "--absolute-git-dir")).strip()) / "AUTO_MERGE"
+
+    def test_auto_merge_conflict_round_trip_without_source_objects(self):
+        self.git(self.repo, "checkout", "-qb", "other")
+        (self.repo / "mixed.txt").write_bytes(b"other side\n")
+        self.git(self.repo, "commit", "-qam", "other")
+        (self.work / "mixed.txt").write_bytes(b"our side\n")
+        self.git(self.work, "commit", "-qam", "ours")
+        result = self.run_command("git", "-C", self.work, "merge", "other", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        oid = self.auto_merge_path().read_bytes()
+        # Active conflict is still refused, with no source removal.
+        failed = self.helper("archive", self.work, "--repo", "fixture/repo", "--issue", "99",
+                             "--reason", "failed-worker", "--base-branch", "develop",
+                             "--output-root", self.archives, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertTrue(self.work.exists())
+        # Resolve and commit normally, then retain the genuine merge tree as a
+        # standalone diagnostic reference (not a promise of merge continuation).
+        (self.work / "mixed.txt").write_bytes(b"resolved\n")
+        self.git(self.work, "add", "mixed.txt")
+        self.git(self.work, "commit", "-qm", "resolved")
+        self.auto_merge_path().write_bytes(oid)
+        expected = self.git(self.work, "diff", "--binary", "AUTO_MERGE")
+        source_bytes = sum((self.work / os.fsdecode(name)).stat().st_size for name in
+                           self.git(self.work, 'ls-files', '-z').split(b'\0') if name)
+        self.auto_merge_path().unlink()
+        baseline_archive = self.archive()
+        baseline_bytes = sum(p.stat().st_size for p in baseline_archive.iterdir() if p.is_file())
+        self.auto_merge_path().write_bytes(oid)
+        objects = self.repo / '.git/objects'
+        objects_before = sum(p.stat().st_size for p in objects.rglob('*') if p.is_file())
+        archive = self.archive()
+        objects_after = sum(p.stat().st_size for p in objects.rglob('*') if p.is_file())
+        self.assertEqual(objects_before, objects_after)
+        archive_bytes = sum(p.stat().st_size for p in archive.iterdir() if p.is_file())
+        self.assertTrue((archive / "auto-merge-v1.json").is_file())
+        self.assertFalse((archive / "git-admin.json").exists())
+        self.helper("verify", archive)
+        # Keep only the recorded durable base; remove original repository and
+        # worktree, including every disposable object and reflog.
+        base = self.root / "retained-base.git"
+        self.run_command("git", "init", "--bare", "-q", base)
+        manifest = json.loads((archive / "manifest.json").read_text())
+        self.git(base, "fetch", "-q", self.repo, manifest["base_sha"] + ":refs/heads/base")
+        before = sum(p.stat().st_size for p in base.rglob("*") if p.is_file())
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.git(base, "gc", "--prune=now")
+        manifest["source_git_common_dir"] = str(base)
+        (archive / "manifest.json").write_text(json.dumps(manifest))
+        target = self.root / "independent-restore"
+        self.helper("restore", archive, "--target", target, "--verification-copy")
+        self.assertEqual(self.git(target, "rev-parse", "AUTO_MERGE"), oid)
+        self.assertEqual(self.git(target, "diff", "--binary", "AUTO_MERGE"), expected)
+        self.git(target, "gc", "--prune=now")
+        self.assertEqual(self.git(target, "diff", "--binary", "AUTO_MERGE"), expected)
+        self.assertEqual((target / "mixed.txt").read_bytes(), b"resolved\n")
+        print("AUTO_MERGE text storage:", json.dumps({
+            "archive_bytes": archive_bytes, "without_auto_merge_bytes": baseline_bytes,
+            "added_archive_bytes": archive_bytes - baseline_bytes,
+            "new_base_object_bytes": objects_after - objects_before, "base_bytes_before_gc": before,
+            "source_working_bytes": source_bytes}))
+
+    def test_auto_merge_binary_closure_shared_base_and_corruption(self):
+        content = b''.join(hashlib.sha256(str(i).encode()).digest() for i in range(32768))
+        blob = self.run_command('git', '-C', self.work, 'hash-object', '-w', '--stdin',
+                                input_data=content).stdout.strip()
+        nested = self.run_command('git', '-C', self.work, 'mktree',
+                                  input_data=b'100644 blob ' + blob + b'\tpayload.bin\n').stdout.strip()
+        base_tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').strip()
+        tree = self.run_command('git', '-C', self.work, 'mktree', input_data=(
+            b'040000 tree ' + nested + b'\tnested\n040000 tree ' + base_tree + b'\tshared-base\n')).stdout
+        path = self.auto_merge_path()
+        path.write_bytes(tree)
+        (self.work / 'binary.bin').write_bytes(content)
+        self.git(self.work, 'add', 'binary.bin')
+        (self.work / 'binary.bin').write_bytes(content + b'unstaged')
+        source_bytes = sum((self.work / os.fsdecode(name)).stat().st_size for name in
+                           self.git(self.work, 'ls-files', '-z').split(b'\0') if name)
+        expected = self.git(self.work, 'diff', '--binary', 'AUTO_MERGE')
+        objects = self.repo / '.git/objects'
+        before = sum(p.stat().st_size for p in objects.rglob('*') if p.is_file())
+        path.unlink()
+        baseline_archive = self.archive()
+        baseline_bytes = sum(p.stat().st_size for p in baseline_archive.iterdir() if p.is_file())
+        path.write_bytes(tree)
+        first = self.archive()
+        archive = self.archive()
+        after = sum(p.stat().st_size for p in objects.rglob('*') if p.is_file())
+        self.assertEqual(before, after)  # Capture is read-only on the shared base.
+        # Removing one independent archive cannot affect the other's closure.
+        shutil.rmtree(first)
+        path.unlink()
+        self.assertNotEqual(self.helper('source-matches', archive, self.work, check=False).returncode, 0)
+        self.git(self.repo, 'worktree', 'remove', '--force', self.work)
+        self.git(self.repo, 'gc', '--prune=now')
+        missing = self.run_command('git', '-C', self.repo, 'cat-file', '-e', tree.strip(), check=False)
+        self.assertNotEqual(missing.returncode, 0)
+        target = self.root / 'binary-restore'
+        self.helper('restore', archive, '--target', target)
+        self.assertEqual(self.git(target, 'rev-parse', 'AUTO_MERGE'), tree)
+        self.assertEqual(self.git(target, 'show', 'AUTO_MERGE:nested/payload.bin'), content)
+        self.assertEqual(self.git(target, 'diff', '--binary', 'AUTO_MERGE'), expected)
+        self.assertEqual((target / 'binary.bin').read_bytes(), content + b'unstaged')
+        self.assertEqual(self.git(target, 'show', ':binary.bin'), content)
+        self.git(self.repo, 'gc', '--prune=now')
+        self.helper('verify', archive)
+        manifest = json.loads((archive / 'manifest.json').read_text())
+        print('AUTO_MERGE binary storage:', json.dumps({
+            'archive_bytes': sum(p.stat().st_size for p in archive.iterdir() if p.is_file()),
+            'without_auto_merge_bytes': baseline_bytes,
+            'added_archive_bytes': sum(p.stat().st_size for p in archive.iterdir() if p.is_file()) - baseline_bytes,
+            'new_base_object_bytes': after - before, 'source_working_bytes': source_bytes,
+            'bundle_bytes': (archive / 'commits.bundle').stat().st_size}))
+        # Integrity checks catch corruption; even a recomputed checksum cannot
+        # make an unsupported metadata version or a missing object acceptable.
+        metadata = archive / 'auto-merge-v1.json'
+        metadata.write_text(json.dumps({'schema': 2, 'tree': tree.decode().strip()}))
+        self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
+        for artifact in manifest['artifacts']:
+            if artifact['name'] == metadata.name:
+                artifact.update(size=metadata.stat().st_size, sha256=hashlib.sha256(metadata.read_bytes()).hexdigest())
+        (archive / 'manifest.json').write_text(json.dumps(manifest))
+        self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
+
+    def test_auto_merge_already_in_base_needs_no_bundle(self):
+        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}')
+        self.auto_merge_path().write_bytes(tree)
+        archive = self.archive()
+        self.assertFalse((archive / 'commits.bundle').exists())
+        self.helper('verify', archive)
+        target = self.root / 'covered-restore'
+        self.helper('restore', archive, '--target', target, '--verification-copy')
+        self.assertEqual(self.git(target, 'rev-parse', 'AUTO_MERGE'), tree)
+
+    def test_auto_merge_missing_closure_retains_source(self):
+        tree = self.run_command('git', '-C', self.work, 'mktree', '--missing',
+                                input_data=b'100644 blob ' + b'1' * 40 + b'\tmissing\n').stdout
+        self.auto_merge_path().write_bytes(tree)
+        result = self.helper('archive', self.work, '--repo', 'fixture/repo', '--issue', '99',
+                             '--reason', 'failed-worker', '--base-branch', 'develop',
+                             '--output-root', self.archives, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.auto_merge_path().read_bytes(), tree)
+
+    def test_auto_merge_invalid_sources_are_retained(self):
+        path = self.auto_merge_path()
+        head = self.git(self.work, "rev-parse", "HEAD")
+        for content in (b"not an oid\n", b"0" * 40 + b"\n", head):
+            path.write_bytes(content)
+            with self.subTest(content=content):
+                result = self.helper("archive", self.work, "--repo", "fixture/repo", "--issue", "99",
+                                     "--reason", "failed-worker", "--base-branch", "develop",
+                                     "--output-root", self.archives, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(path.read_bytes(), content)
+        path.unlink()
+        path.symlink_to(self.work / "mixed.txt")
+        result = self.helper("archive", self.work, "--repo", "fixture/repo", "--issue", "99",
+                             "--reason", "failed-worker", "--base-branch", "develop",
+                             "--output-root", self.archives, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(path.is_symlink())
+
+    def test_auto_merge_capture_rejects_late_tracked_and_tree_writes(self):
+        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}')
+        empty = self.run_command('git', '-C', self.work, 'mktree', input_data=b'').stdout
+        for mutate in ('printf late > "$worktree/mixed.txt"',
+                       'printf "%s\\n" "$late_tree" > "$late_path"'):
+            self.auto_merge_path().write_bytes(tree)
+            (self.work / 'mixed.txt').write_bytes(b'base\n')
+            # Override only the final payload step to inject a deterministic late
+            # write, while exercising real capture and source comparison.
+            script = ('late_path="$4"; late_tree="$5"; source "$1" help >/dev/null; '
+                      'capture_untracked() { local worktree="$1"; local archive="$2"; '
+                      ': > "$archive/untracked-files.txt"; ' + mutate + '; return 0; }; '
+                      'archive_worktree "$2" --repo fixture/repo --issue 99 '
+                      '--reason failed-worker --base-branch develop --output-root "$3"')
+            result = self.run_command('bash', '-c', script, 'capture-race', HELPER, self.work,
+                                      self.archives, self.auto_merge_path(), empty.decode().strip(), check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'worktree changed during archive capture', result.stderr)
+            self.assertTrue(self.work.exists())
+
+    def test_auto_merge_verified_legacy_retirement(self):
+        tree = self.run_command('git', '-C', self.work, 'mktree', input_data=b'').stdout
+        self.auto_merge_path().write_bytes(tree)
+        bucket = self.legacy_pulse_bucket()
+        migration = json.loads(self.migrate_bucket(bucket).stdout)
+        plan = json.loads(self.retirement('retire-plan', bucket).stdout)
+        retired = json.loads(self.retirement('retire', bucket, '--confirm', plan['confirmation_token']).stdout)
+        self.assertTrue(retired['retired'])
+        self.assertFalse(bucket.exists())
+        target = self.root / 'retired-auto-merge-restore'
+        self.helper('restore', migration['archive'], '--target', target, '--verification-copy')
+        self.assertEqual(self.git(target, 'rev-parse', 'AUTO_MERGE'), tree)
+
     def legacy_bucket(self):
         home = self.root / "home"
         home.mkdir()

@@ -416,6 +416,7 @@ capture_archive_payload() {
 	if [[ "$commit_count" -gt 0 ]]; then
 		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 	fi
+	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
 	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then
 		[[ -f "$failure_log" ]] || { die "failure log does not exist"; return 1; }
@@ -488,7 +489,8 @@ archive_worktree() {
 		dirty_state="dirty"
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
-	fingerprint_after=$(source_fingerprint "$worktree" 0 0 1 "$archive_dir") || return 1
+	# Compare live diffs, not the saved patches: a late tracked write must fail.
+	fingerprint_after=$(source_fingerprint "$worktree" 0 0 1) || return 1
 	if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
 		die "worktree changed during archive capture: $worktree"
 		return 1
@@ -528,6 +530,9 @@ if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in
 names = [item.get('name') for item in artifacts]
 mandatory = {'diff.patch', 'staged.patch', 'untracked-files.txt'}
 allowed = mandatory | {'commits.bundle', 'untracked.tar.gz', 'failure.log'}
+if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
+    mandatory.add('auto-merge-v1.json')
+    allowed.add('auto-merge-v1.json')
 if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') == 2:
     allowed.discard('untracked.tar.gz')
     if (archive / 'untracked-files.txt').stat().st_size:
@@ -688,6 +693,7 @@ PY
 	if [[ -f "$archive_dir/git-admin.json" ]]; then
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
 	fi
+	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" || return 1
 	printf '%s\n' "$target"
 	return 0
 }

@@ -81,40 +81,41 @@ bash .agents/scripts/worktree-recovery-lifecycle-helper.sh migrate \
 ```
 
 New migrations use the [single compact format](../scripts/worktree-archive-helper.md#recoverable-producer-transactions):
-exact base/HEAD, incremental commits, staged/unstaged patches and ordinary untracked
-files. Git's standard ignore rules exclude ignored files; raw administrative payloads
-are not copied. Capture does not perform a trial restore or
-archive verification; it reports `archived`, not `verified`. The shared repository
-must retain the exact base. Source removal uses the guarded manual retirement
-transition or the automatic compaction policy below; capture alone cannot remove it.
-Existing receipts retain their policy. `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1`
-is no longer accepted for new capture; the former preservation format is read-only
-compatibility. Migration never retires, rewrites or moves the original bucket during capture.
+exact base/HEAD, incremental commits, staged/unstaged patches and ordinary untracked files. Git's standard ignore rules exclude ignored files; raw administrative payloads are not copied.
+Capture does not perform a trial restore or archive verification; it reports `archived`, not `verified`. The shared repository must retain the exact base.
+Source removal uses the guarded manual retirement transition or automatic compaction policy below; capture alone cannot remove it.
+Existing receipts retain their policy. `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` is no longer accepted for new capture; the former preservation format is read-only compatibility.
+Migration never retires, rewrites or moves the original bucket during capture.
 
 The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`.
-It binds physical identities, the source snapshot, opaque recovery provenance,
-the archive manifest digest, the capture outcome and available allocated byte counts.
-The archive remains in the existing archive store, beneath
-`.legacy-migrations/<source-path-digest>/`, and is pinned against expiry.
-Path-bearing provenance is historical evidence, not live Git configuration or
-process ownership authority. Journals and archive artifacts are fsynced before
-completion is reported; only verified, identity-fenced restore scratch is removed.
+It binds physical identities, the source snapshot, opaque recovery provenance, the archive manifest digest, capture outcome and available allocated byte counts.
+The archive remains in the existing archive store beneath `.legacy-migrations/<source-path-digest>/`, pinned against expiry.
+Path-bearing provenance is historical evidence, not live Git configuration or process ownership authority.
+Journals and archive artifacts are fsynced before completion is reported; only verified, identity-fenced restore scratch is removed.
 
 Legacy-preservation receipts reserve private scratch with a journaled inode and inherited writer lock; pre-existing repositories are never adopted. Cleanup journals a random quarantine name, renames the reserved container and rechecks identity/content before removal. Replacements, late writes and interrupted removal remain for review. These are not user workspaces; sampling cannot fence malicious same-user writers.
 
-Retries reuse the reservation and completed capture; source drift, changed manifest
-or invalid identity fails closed. Captures lacking a complete manifest stay incomplete:
-retry never allocates another copy. Do not delete journals or partial artifacts to
-force retry. Complete captures can resume restoration/verification; completed receipts
-require fresh source/archive verification before reuse.
+Retries reuse the reservation and completed capture; source drift, changed manifest or invalid identity fails closed.
+Captures lacking a complete manifest stay incomplete: retry never allocates another copy. Do not delete journals or partial artifacts to force retry.
+Complete captures can resume restoration/verification; completed receipts require fresh source/archive verification before reuse.
 
 Unsupported untracked metadata, unknown administrative state and unique reflog-only history remain protected; tracked changes use Git's modes.
 Missing objects or incomplete completion/ownership metadata block verification. Markerless v1 compatibility does not confer migration eligibility.
 
-An existing migration reservation makes legacy planning and stale-plan
-revalidation return `compact-migration-protected`. Maintenance counts that reason
-separately instead of treating migration as expiry authority. A receipt's
-`verified` phase is point-in-time evidence, never sufficient removal permission.
+### Standalone AUTO_MERGE preservation
+
+The unified format supports a standalone `AUTO_MERGE` diagnostic tree: a regular, non-symlink administrative file with a complete object ID referencing an existing tree.
+The source fingerprint's optional `auto_merge` binds required `auto-merge-v1.json` metadata (`schema: 1`, matching `tree`) in the normal artifact size/hash inventory.
+Older readers reject this unknown required artifact rather than restore incompletely. Archives without it retain their existing read path; no migration, backfill or alternate archive mode is needed.
+The existing `commits.bundle` retains recursive trees/blobs through named preservation tips, excluding objects reachable from the recorded base. Capture adds no shared-repository objects or refs.
+Independent verification imports only the retained base graph and bundle, checks tree type and complete object closure, and refuses unavailable dependencies.
+Restore imports preservation tips and writes `AUTO_MERGE` to actual target Git administration, never its working-file tree. Imported tips survive GC.
+Measure per-archive bundle bytes separately from base bytes. Pruning another archive cannot remove this bundle; the recorded base must remain available.
+This does **not** preserve resumable conflicts: `MERGE_HEAD`, conflict index stages and unsupported operations remain refused. Full `git merge --continue` needs separately scoped metadata/index preservation and continuation verification.
+Reflog/ORIG_HEAD, private-ref, process, source-drift and retirement guards remain enforced; AUTO_MERGE alone grants no removal authority.
+
+An existing migration reservation makes legacy planning and stale-plan revalidation return `compact-migration-protected`.
+Maintenance counts that reason separately instead of treating migration as expiry authority. A receipt's `verified` phase is point-in-time evidence, never sufficient removal permission.
 The command reports `bucket_bytes` (null when not measured), `archive_bytes`, `source_retired: false` and
 `reclaimed_bytes: 0`; creating an archive alone does not reclaim disk space.
 

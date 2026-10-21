@@ -6,6 +6,8 @@
 import json
 import os
 from pathlib import Path
+import re
+import stat
 import subprocess
 
 from worktree_archive_readiness import (
@@ -24,10 +26,39 @@ def git(root, *args, data=None):
                           check=True, timeout=60).stdout
 
 
-ADMIN_FILES = {"HEAD", "index", "ORIG_HEAD", "FETCH_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG", "MERGE_MSG", "config.worktree", "logs/HEAD"} | OPAQUE_ADMIN_FILES
+ADMIN_FILES = {"HEAD", "index", "AUTO_MERGE", "ORIG_HEAD", "FETCH_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG", "MERGE_MSG", "config.worktree", "logs/HEAD"} | OPAQUE_ADMIN_FILES
 PRIVATE_PREFIXES = ("refs/worktree/", "refs/bisect/", "refs/rewritten/")
 OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
+
+
+def auto_merge_oid(data):
+    if not re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\n?", data):
+        raise ValueError("git_admin:invalid_AUTO_MERGE")
+    return data.strip().decode("ascii")
+
+
+def validate_auto_merge(root, oid):
+    try:
+        kind = git(root, "cat-file", "-t", oid).strip()
+    except subprocess.SubprocessError as error:
+        raise ValueError("git_admin:missing_AUTO_MERGE_tree") from error
+    if kind != b"tree":
+        raise ValueError("git_admin:AUTO_MERGE_not_tree")
+
+
+def auto_merge(root):
+    path = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n"))) / "AUTO_MERGE"
+    if not os.path.lexists(path):
+        return None
+    validate_admin_entry(path, "AUTO_MERGE")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('git_admin:AUTO_MERGE_not_regular')
+        oid = auto_merge_oid(stream.read(66))
+    validate_auto_merge(root, oid)
+    return oid
 
 
 def fetch_head_roots(encoded):
@@ -99,6 +130,8 @@ def administration(root):
     common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
     files = administration_files(admin, admin, admin.resolve() != common.resolve())
     fetch_head_roots(files.get("FETCH_HEAD", ""))
+    if "AUTO_MERGE" in files:
+        validate_auto_merge(root, auto_merge_oid(bytes.fromhex(files["AUTO_MERGE"])))
     if git(root, "rev-parse", "--shared-index-path").strip():
         raise ValueError("git_admin:split_index:index")
     validate_admin_config(root, admin)
@@ -127,6 +160,8 @@ def load_administration(archive):
         validate_readiness_payload(name, value)
         bytes.fromhex(value)
     fetch_head_roots(state["files"].get("FETCH_HEAD", ""))
+    if "AUTO_MERGE" in state["files"]:
+        auto_merge_oid(bytes.fromhex(state["files"]["AUTO_MERGE"]))
     for name, oid in state["refs"].items():
         if (not any(name.startswith(prefix) for prefix in PRIVATE_PREFIXES)
                 or ".." in Path(name).parts or Path(name).is_absolute()):

@@ -24,7 +24,7 @@ from worktree_archive_filesystem import (
     verify_untracked_payload as verify_untracked_payload,
 )
 from worktree_archive_administration import (
-    ADMIN_FILES, administration, git, load_administration,
+    ADMIN_FILES, administration, auto_merge, auto_merge_oid, git, load_administration, validate_auto_merge,
     OPERATIONS as OPERATIONS,
 )
 from worktree_archive_state import inventories, supported_state
@@ -71,6 +71,7 @@ def capture_bundle(root, archive, roots, base):
                           for number, oid in enumerate(roots))
         git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
         git(scratch, "update-ref", "refs/heads/archive-head", git(root, "rev-parse", "HEAD").strip().decode("ascii"))
+        git(scratch, "symbolic-ref", "HEAD", "refs/heads/archive-head")
         exclusions = (f'^{base}',) if base else ()
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
 
@@ -80,6 +81,50 @@ def fetch_preservation(root, archive):
     if bundle.is_file():
         git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
             '+refs/archive/*:refs/archive/*')
+
+
+def capture_auto_merge(root, archive, base):
+    oid = auto_merge(root)
+    if oid is None:
+        return
+    # Reuse the single bundle and exclude only objects durably covered by base.
+    covered = git(root, 'rev-list', '--objects', '--no-object-names', base).splitlines()
+    roots = [value for value in (git(root, 'rev-parse', 'HEAD').strip().decode('ascii'), oid)
+             if value.encode('ascii') not in covered]
+    if roots:
+        capture_bundle(root, archive, roots, base)
+    (archive / 'auto-merge-v1.json').write_text(
+        json.dumps({'schema': 1, 'tree': oid}) + '\n', encoding='ascii')
+
+
+def verify_auto_merge(root, archive, manifest):
+    oid = manifest.get('source_fingerprint', {}).get('auto_merge')
+    path = archive / 'auto-merge-v1.json'
+    if oid is None:
+        if path.exists():
+            raise ValueError('git_admin:unexpected_AUTO_MERGE_artifact')
+        return None
+    auto_merge_oid(oid.encode('ascii'))
+    if json.loads(path.read_text(encoding='ascii')) != {'schema': 1, 'tree': oid}:
+        raise ValueError('git_admin:AUTO_MERGE_metadata_mismatch')
+    validate_auto_merge(root, oid)
+    # rev-list traverses trees; batch-check additionally proves every blob exists.
+    closure = git(root, 'rev-list', '--objects', '--no-object-names', oid)
+    checked = git(root, 'cat-file', '--batch-check', data=closure)
+    if len(checked.splitlines()) != len(closure.splitlines()) or any(
+            line.endswith(b' missing') for line in checked.splitlines()):
+        raise ValueError('git_admin:missing_AUTO_MERGE_object')
+    return oid
+
+
+def restore_auto_merge(root, archive):
+    manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
+    if manifest.get('source_fingerprint', {}).get('auto_merge') is None:
+        return
+    fetch_preservation(root, archive)
+    oid = verify_auto_merge(root, archive, manifest)
+    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    (admin / 'AUTO_MERGE').write_text(oid + '\n', encoding='ascii')
 
 
 def seed_base(root, manifest):
@@ -101,7 +146,8 @@ def prepare_incremental_restore(archive, target):
     object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
     git(target, 'init', '--quiet', f'--object-format={object_format}')
     seed_base(target, manifest)
-    if manifest.get('capture_policy') == 'git-only':
+    if (manifest.get('capture_policy') == 'git-only'
+            and manifest.get('source_fingerprint', {}).get('auto_merge') is None):
         if (archive / 'commits.bundle').is_file():
             git(target, 'fetch', '--quiet', '--no-write-fetch-head',
                 str(archive / 'commits.bundle'), 'HEAD:refs/archive/head')
@@ -166,6 +212,9 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     result = {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
               "bytes": len(staged) + len(unstaged),
               "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
+    oid = auto_merge(root)
+    if oid is not None:
+        result['auto_merge'] = oid
     if include_untracked:
         paths = sorted(filter(None, git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")))
         size = sum((root / os.fsdecode(raw)).lstat().st_size for raw in paths)
@@ -202,6 +251,12 @@ def snapshot(path, preserve_git_admin=False, include_ignored=False, git_only=Fal
 
 def main(argv):
     command = argv[0] if argv else ''
+    if command == 'auto-merge-capture' and len(argv) == 4:
+        capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), argv[3])
+        return 0
+    if command == 'auto-merge-restore' and len(argv) == 3:
+        restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve())
+        return 0
     if command == "admin-capture" and len(argv) in (4, 5):
         capture_administration(Path(argv[1]), Path(argv[2]).resolve(), argv[3] == "1", *argv[4:])
         return 0
