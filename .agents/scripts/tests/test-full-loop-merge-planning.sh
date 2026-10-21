@@ -656,6 +656,27 @@ test_prospective_todo_live_fetch_guard() {
 		"$([[ "$(<"$transfer_log")" == "checked" ]] && printf '0' || printf '1')" \
 		"log=$(<"$transfer_log")"
 
+	test_prospective_todo_stale_pull_ref "$fixture_dir" "$base_sha" "$head_sha" \
+		"$remote_url" "$supervisor_workspace" "$git_probe" "$transfer_log"
+
+	rc=0
+	cleanup_rc=0
+	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$(printf 'a%.0s' {1..40})" live "$remote_url" \
+		'testorg/testrepo' "$supervisor_workspace") || rc=$?
+	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
+	print_result "prospective TODO: absent pull ref with an unavailable pinned head fails closed" \
+		"$([[ "$rc" -ne 0 && "$cleanup_rc" -eq 0 && "$output" == *"unable to materialize pinned PR commits"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+	/usr/bin/git -C "$remote_url" update-ref refs/pull/42/head "$head_sha" || return 0
+	/usr/bin/git -C "$remote_url" update-ref -d refs/heads/pr-head-copy || return 0
+	return 0
+}
+
+# Reuses the live-fetch fixture while keeping each test function bounded.
+test_prospective_todo_stale_pull_ref() {
+	local fixture_dir="$1" base_sha="$2" head_sha="$3" remote_url="$4"
+	local supervisor_workspace="$5" git_probe="$6" transfer_log="$7"
+	local fixture_root="${fixture_dir%/caller}" output="" rc=0 cleanup_rc=0
 	# GH#35304: a successful pull-ref fetch can still return an older commit.
 	rc=0
 	cleanup_rc=0
@@ -681,17 +702,6 @@ test_prospective_todo_live_fetch_guard() {
 		"$([[ "$rc" -ne 0 && "$cleanup_rc" -eq 0 && "$output" == *"Stale pull ref head ${base_sha} differs from pinned head $(printf 'a%.0s' {1..40}); direct pinned-head fetch failed"* ]] && printf '0' || printf '1')" \
 		"rc=$rc output=$output"
 	/usr/bin/git -C "$remote_url" update-ref -d refs/pull/42/head || return 0
-
-	rc=0
-	cleanup_rc=0
-	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$(printf 'a%.0s' {1..40})" live "$remote_url" \
-		'testorg/testrepo' "$supervisor_workspace") || rc=$?
-	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
-	print_result "prospective TODO: absent pull ref with an unavailable pinned head fails closed" \
-		"$([[ "$rc" -ne 0 && "$cleanup_rc" -eq 0 && "$output" == *"unable to materialize pinned PR commits"* ]] && printf '0' || printf '1')" \
-		"rc=$rc output=$output"
-	/usr/bin/git -C "$remote_url" update-ref refs/pull/42/head "$head_sha" || return 0
-	/usr/bin/git -C "$remote_url" update-ref -d refs/heads/pr-head-copy || return 0
 	return 0
 }
 
