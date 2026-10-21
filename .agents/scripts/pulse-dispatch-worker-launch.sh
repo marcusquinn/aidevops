@@ -924,6 +924,7 @@ _dlw_reset_precreated_worktree_state() {
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
 	_DLW_MANAGED_WORKTREE=0
+	_DLW_WORKTREE_GENERATION=""
 	_DLW_PRECREATE_FAILURE_REASON=""
 	_DLW_REFUSING_OWNER_PID=""
 	_DLW_REFUSING_OWNER_START=""
@@ -981,26 +982,19 @@ _dlw_precreate_worktree() {
 		return 0
 	fi
 
-	# --- Reuse check: scan for an existing worktree for this issue ---
-	# Prevents accumulation of multiple dead worktrees when the same issue
-	# is dispatched repeatedly (GH#19042). Matches branch names containing
-	# gh<N> or gh-<N> (the pattern used by this function and cleanup regex).
-	local _existing_path="" _existing_branch=""
-	local _wt_line="" _wt_p="" _wt_b=""
-	while IFS= read -r _wt_line; do
-		_wt_p=$(printf '%s' "$_wt_line" | awk '{print $1}') || _wt_p=""
-		_wt_b=$(printf '%s' "$_wt_line" | awk '{print $3}' | sed 's/^\[//;s/\]$//') || _wt_b=""
-		if [[ "$_wt_b" =~ gh-?${issue_number}([^0-9]|$) && -d "$_wt_p" ]]; then
-			_existing_path="$_wt_p"
-			_existing_branch="$_wt_b"
-			break
-		fi
-	done < <(git -C "$repo_path" worktree list 2>/dev/null)
-
-	if [[ -n "$_existing_path" ]]; then
-		_dlw_resume_existing_worktree "$issue_number" "$repo_path" "$_existing_path" "$_existing_branch"
+	# --- Reuse check (GH#19042): branch gh<N>/gh-<N> nominates candidates; the
+	# shared selector requires exact enrolled task identity and refuses
+	# ambiguity instead of first-match (GH#35295). Pulse provenance is automatic.
+	_DLW_LAUNCH_ENTRYPOINT="pulse" _DLW_LAUNCH_TRIGGER="scheduled" _DLW_LAUNCH_TRIGGER_EVIDENCE="pulse-cycle"
+	_DLW_LAUNCH_TASK="$issue_number" _DLW_LAUNCH_REPO="${repo_slug:-}"
+	local _select_rc=0
+	_dlw_select_issue_worktree "$repo_path" "$issue_number" "${repo_slug:-}" || _select_rc=$?
+	if [[ "$_select_rc" -eq 0 ]]; then
+		_DLW_WORKTREE_GENERATION="$_DLW_REUSE_GENERATION"
+		_dlw_resume_existing_worktree "$issue_number" "$repo_path" "$_DLW_REUSE_PATH" "$_DLW_REUSE_BRANCH"
 		return $?
 	fi
+	[[ "$_select_rc" -eq 1 ]] || { _DLW_PRECREATE_FAILURE_REASON="$_DLW_REUSE_REFUSAL"; return 1; }
 
 	# --- Create new worktree with issue-linked branch name ---
 	# Format: feature/auto-YYYYMMDD-HHMMSS-gh<N>
@@ -1011,16 +1005,16 @@ _dlw_precreate_worktree() {
 	# Without it, orphaned worktrees are untraceable and accumulate (57
 	# observed on one machine in 24h, 2.2 GB wasted).
 	local _branch _wt_output="" _managed_create=""
-	[[ "$(_dlw_select_worker_backend)" != "$_DLW_SYSTEMD_BACKEND" ]] || _managed_create="pulse-cgroup-v1"
+	_dlw_managed_creation_env || return 1
+	_managed_create="$_DLW_MANAGED_CREATE_MODE"
 	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
 	# Enrollment is only permitted for this creation, never an existing branch.
 	if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$_branch"; then
 		return 1
 	fi
 	# Run from repo_path (pulse cwd is typically /); GH#34233: a resolved seed SHA is the branch base.
-	_wt_output=$(cd "$repo_path" && \
+	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
-		AIDEVOPS_WORKTREE_MANAGER="$_managed_create" \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
 		AIDEVOPS_WORKTREE_BASE="${_DLW_SEED_OID:-${AIDEVOPS_WORKTREE_BASE:-}}" \
@@ -1049,7 +1043,10 @@ _dlw_precreate_worktree() {
 			return 1
 		fi
 		if [[ -n "$_managed_create" ]]; then
-			WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" status "$_DLW_WORKTREE_PATH" >/dev/null || return 1
+			local _class=""
+			_class=$(_dlw_classify_reuse_candidate "$_DLW_WORKTREE_PATH" "$issue_number" "${repo_slug:-}") || return 1
+			[[ "$_class" == managed\ * ]] || return 1
+			_DLW_WORKTREE_GENERATION="${_class#managed }"
 			_DLW_MANAGED_WORKTREE=1
 		fi
 		# Restore gitignored deps (node_modules) that git doesn't track

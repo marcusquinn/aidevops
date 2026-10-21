@@ -887,6 +887,11 @@ test_manual_resume_reuses_dispatch_lifecycle() {
 		_dsi_check_runner_capability() { return 0; }
 		_dsi_guard_no_existing_dispatch() { return 0; }
 		_dsi_create_worktree() { return 1; }
+		# Hermetic: never read the operator's registry for the fixture path.
+		_dlw_classify_reuse_candidate() {
+			printf 'legacy\n'
+			return 0
+		}
 		_dsi_prepare_worker_git_auth() {
 			resume_auth=1
 			return 0
@@ -1509,28 +1514,53 @@ test_create_worktree_registers_dispatch_owner() {
 
 	local original_worktree_helper="$_DSI_WORKTREE_HELPER"
 	local positional_args_ref='$*'
+	local env_ref='manager=${AIDEVOPS_WORKTREE_MANAGER:-} entry=${AIDEVOPS_LAUNCH_ENTRYPOINT:-} task=${AIDEVOPS_LAUNCH_TASK:-} repo=${AIDEVOPS_LAUNCH_REPO:-}'
 	_DSI_WORKTREE_HELPER="${test_dir}/worktree-helper.sh"
 	{
 		printf '%s\n' '#!/usr/bin/env bash'
-		printf "printf 'worktree-helper %%s\\n' \"%s\" >>%q\n" "$positional_args_ref" "$MOCK_WORKTREE_HELPER_LOG"
+		printf "printf 'worktree-helper %%s %%s\\n' \"%s\" \"%s\" >>%q\n" "$positional_args_ref" "$env_ref" "$MOCK_WORKTREE_HELPER_LOG"
 		printf '%s\n' 'exit 0'
 	} >"$_DSI_WORKTREE_HELPER"
 	chmod +x "$_DSI_WORKTREE_HELPER"
 
+	# Legacy backend chosen before creation: no enrollment request.
 	local rc=0
-	_dsi_create_worktree 12345 owner/repo >/dev/null 2>&1 || rc=$?
+	AIDEVOPS_WORKER_BACKEND=detached _dsi_create_worktree 12345 owner/repo >/dev/null 2>&1 || rc=$?
 
 	local registered=""
 	registered=$(<"$REGISTER_WORKTREE_LOG")
 	local helper_call=""
 	helper_call=$(<"$MOCK_WORKTREE_HELPER_LOG")
-	rm -f "$REGISTER_WORKTREE_LOG" "$MOCK_WORKTREE_HELPER_LOG"
+	: >"$REGISTER_WORKTREE_LOG"
+	: >"$MOCK_WORKTREE_HELPER_LOG"
 	local passed=1
 	if [[ "$rc" -eq 0 && "$registered" == *"register_worktree ${MOCK_WORKTREE_PATH} ${MOCK_WORKTREE_BRANCH}"* &&
 		"$registered" == *"--task 12345"* && "$registered" == *"--session dispatch-precreate-12345"* &&
-		"$helper_call" == *"--base origin/develop"* && "$helper_call" == *"--issue 12345"* ]]; then
+		"$helper_call" == *"--base origin/develop"* && "$helper_call" == *"--issue 12345"* &&
+		"$helper_call" == *"manager= entry=dispatch-single-issue"* && "$_DSI_MANAGED_WORKTREE" == 0 ]]; then
 		passed=0
 	fi
+
+	# GH#35295: on the systemd backend manual dispatch enrolls exactly like
+	# Pulse and binds the created generation; missing enrollment fails closed.
+	local managed_result=0
+	(
+		_dlw_classify_reuse_candidate() {
+			printf '%s\n' "$MOCK_CLASSIFY_RESULT"
+			return 0
+		}
+		export AIDEVOPS_WORKER_BACKEND=systemd
+		MOCK_CLASSIFY_RESULT="managed gen-0123"
+		_dsi_create_worktree 12345 owner/repo >/dev/null 2>&1 || exit 1
+		[[ "$_DSI_MANAGED_WORKTREE" == 1 && "$_DLW_WORKTREE_GENERATION" == gen-0123 ]] || exit 1
+		grep -Fq "manager=pulse-cgroup-v1 entry=dispatch-single-issue task=12345 repo=owner/repo" "$MOCK_WORKTREE_HELPER_LOG" || exit 1
+		MOCK_CLASSIFY_RESULT="legacy"
+		if _dsi_create_worktree 12345 owner/repo >/dev/null 2>&1; then exit 1; fi
+		[[ "$_DSI_MANAGED_WORKTREE" == 0 ]] || exit 1
+		exit 0
+	) || managed_result=1
+	[[ "$managed_result" -eq 0 ]] || passed=1
+	rm -f "$REGISTER_WORKTREE_LOG" "$MOCK_WORKTREE_HELPER_LOG"
 
 	_DSI_WORKTREE_HELPER="$original_worktree_helper"
 	MOCK_GIT_WORKTREE_LIST="0"
@@ -1542,7 +1572,76 @@ test_create_worktree_registers_dispatch_owner() {
 	unset MOCK_WORKTREE_HELPER_LOG
 	MOCK_WORKTREE_HELPER_LOG=""
 	rm -rf "$test_dir"
-	print_result "worktree creation registers dispatch owner metadata" "$passed" "rc=$rc registered=$registered helper=$helper_call"
+	print_result "worktree creation registers dispatch owner metadata and selects the lifetime backend first" "$passed" "rc=$rc managed=$managed_result registered=$registered helper=$helper_call"
+	return 0
+}
+
+# GH#35295: resume and launch use the shared managed lifetime adapter.
+test_manual_lifetime_binding_and_managed_launch() {
+	local result=0 test_dir=""
+	test_dir=$(mktemp -d)
+	(
+		_DSI_WORKTREE_PATH="${test_dir}/wt"
+		_dlw_classify_reuse_candidate() {
+			printf '%s' "$MOCK_CLASSIFY_RESULT"
+			[[ -n "$MOCK_CLASSIFY_RESULT" ]] && printf '\n'
+			[[ "$MOCK_CLASSIFY_RESULT" != unavailable ]] || return 1
+			return 0
+		}
+		export AIDEVOPS_WORKER_BACKEND=systemd
+		# Resume: managed reuses the exact generation; legacy stays legacy;
+		# sealed, foreign-task and unavailable evidence all refuse.
+		MOCK_CLASSIFY_RESULT="managed gen-1"
+		_dsi_bind_worktree_lifetime 12345 owner/repo resume 2>/dev/null || exit 1
+		[[ "$_DSI_MANAGED_WORKTREE" == 1 && "$_DLW_WORKTREE_GENERATION" == gen-1 ]] || exit 1
+		MOCK_CLASSIFY_RESULT="legacy"
+		_dsi_bind_worktree_lifetime 12345 owner/repo resume >/dev/null 2>&1 || exit 1
+		[[ "$_DSI_MANAGED_WORKTREE" == 0 ]] || exit 1
+		local refused=""
+		for refused in sealed "" unavailable; do
+			MOCK_CLASSIFY_RESULT="$refused"
+			if _dsi_bind_worktree_lifetime 12345 owner/repo resume 2>/dev/null; then exit 1; fi
+		done
+		# An enrolled generation never downgrades to the legacy backend.
+		MOCK_CLASSIFY_RESULT="managed gen-1"
+		if AIDEVOPS_WORKER_BACKEND=detached _dsi_bind_worktree_lifetime 12345 owner/repo resume 2>/dev/null; then exit 1; fi
+
+		# Managed launch: shared reserve/bind launcher, no runtime --detach,
+		# no nohup fallback when admission fails.
+		_DSI_MANAGED_WORKTREE=1
+		_DSI_HEADLESS="${test_dir}/runtime"
+		_DSI_LOG_DIR="${test_dir}/logs"
+		_DSI_GIT_AUTH_TOKEN_FILE=""
+		printf '#!/usr/bin/env bash\nexit 0\n' >"$_DSI_HEADLESS"
+		chmod +x "$_DSI_HEADLESS"
+		_dlw_launch_systemd_worker() {
+			printf '%s\n' "$*" >"${test_dir}/launch-args"
+			printf '%s|%s|%s\n' "${_DLW_MANAGED_WORKTREE:-}" "${_DLW_WORKTREE_PATH:-}" "${_DLW_LAUNCH_ENTRYPOINT:-}" >"${test_dir}/launch-env"
+			[[ "$MOCK_ADMISSION" == ok ]] || return 1
+			printf '4242\n'
+			return 0
+		}
+		nohup() {
+			printf 'nohup\n' >"${test_dir}/nohup-called"
+			return 1
+		}
+		_DLW_LAUNCH_ENTRYPOINT=dispatch-single-issue
+		MOCK_ADMISSION=ok
+		local pid=""
+		pid=$(_dsi_launch_worker manual-cli-12345-1 "${test_dir}/wt" t p standard '' Build+ "${test_dir}/launch.log" 12345 owner/repo me 2>/dev/null) || exit 1
+		[[ "$pid" == 4242 ]] || exit 1
+		grep -Fq -- "--session-key manual-cli-12345-1" "${test_dir}/launch-args" || exit 1
+		! grep -Fq -- "--detach" "${test_dir}/launch-args" || exit 1
+		[[ "$(<"${test_dir}/launch-env")" == "1|${test_dir}/wt|dispatch-single-issue" ]] || exit 1
+		grep -Fq "Dispatched PID: 4242" "${test_dir}/launch.log" || exit 1
+		[[ "$(_dsi_detached_runtime_log "${test_dir}/launch.log")" == "${test_dir}/launch.log" ]] || exit 1
+		MOCK_ADMISSION=failed
+		if _dsi_launch_worker manual-cli-12345-2 "${test_dir}/wt" t p standard '' Build+ "${test_dir}/failed.log" 12345 owner/repo me 2>/dev/null; then exit 1; fi
+		[[ ! -e "${test_dir}/nohup-called" ]] || exit 1
+		exit 0
+	) || result=1
+	rm -rf "$test_dir"
+	print_result "manual resume binds exact managed generations and launches through the shared launcher without fallback" "$result"
 	return 0
 }
 
@@ -2029,6 +2128,7 @@ _run_tests() {
 	test_origin_identity_drift_prerequisite_and_repair
 	test_create_worktree_uses_target_repo_path
 	test_create_worktree_registers_dispatch_owner
+	test_manual_lifetime_binding_and_managed_launch
 	test_dispatch_base_ref_prefers_repo_configured_pr_base
 	test_dispatch_base_ref_prefers_explicit_env_ref
 	test_create_worktree_registration_fails_closed

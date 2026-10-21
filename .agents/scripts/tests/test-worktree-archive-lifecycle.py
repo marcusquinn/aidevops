@@ -1150,7 +1150,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "removed")
 
     def test_lifecycle_report_is_read_only_and_not_authorization(self):
-        self.managed_fixture()
+        managed = self.managed_fixture()
         database = Path(self.env["WORKTREE_REGISTRY_DB"])
         before = database.read_bytes()
         with patch.dict(os.environ, self.env, clear=True):
@@ -1159,6 +1159,12 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertEqual(observed["total"], 1)
         self.assertEqual(observed["entries"][0]["source"], "present")
         self.assertEqual(observed["entries"][0]["evidence"], "recorded-not-revalidated")
+        # GH#35295: launcher provenance is reported, never inferred; absent
+        # creation evidence stays unrecorded rather than human or scheduled.
+        reported = observed["entries"][0]["lifecycle"]
+        self.assertIn(reported["created_by"]["trigger"], ("unknown", "unrecorded"))
+        self.assertEqual((reported["generation"], reported["attempts"], reported["last_attempt_by"]),
+                         (self.managed_record(managed)["generation"], 0, None))
         self.assertEqual(database.read_bytes(), before)
 
     def test_lifecycle_reconcile_only_finalizes_verified_absent_sources(self):

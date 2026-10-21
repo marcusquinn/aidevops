@@ -482,7 +482,7 @@ only, and is never called by automatic maintenance, advisories, logs, or plans;
 the escalation advisory names the command but never its output. Names are identification
 aids, never exemptions. Platforms without `/proc` exit 3 because `lsof` does not
 identify denied processes. If neither complete visibility nor a valid managed
-lifetime proof is available, the affected archives remain retained. Degraded
+lifetime proof is available, the affected archives remain retained. Pulse/manual launch provenance: [shared launch](worktree-registry.md#shared-pulse-and-manual-launch-gh35295). Degraded
 visibility alone does not prohibit cleanup of every archive on the host.
 This diagnostic outcome grants no deletion authority, does not trust
 process names, and does not require root access or weaker kernel process

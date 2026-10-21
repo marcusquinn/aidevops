@@ -18,6 +18,111 @@
 
 [[ -n "${_PULSE_DISPATCH_WORKER_SYSTEMD_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED=1
+_DLW_SYSTEMD_MODULE_DIR="${BASH_SOURCE[0]%/*}"
+_DLW_MANAGED_WORKTREE_MANAGER="pulse-cgroup-v1"
+
+# Shared managed-launch contract (GH#35295). Automatic Pulse and manual
+# dispatch both use these adapters; each caller keeps its own task selection,
+# claims, prompt and runtime arguments. Callers set before creation/launch:
+#   _DLW_LAUNCH_ENTRYPOINT  pulse | dispatch-single-issue
+#   _DLW_LAUNCH_TRIGGER     scheduled | manual (needs _DLW_LAUNCH_TRIGGER_EVIDENCE)
+#   _DLW_LAUNCH_TASK/_REPO  issue number and owner/repo for exact reuse identity
+#   _DLW_WORKTREE_GENERATION  generation selected for reuse (reserve rechecks it)
+# Unknown or missing values are recorded as unknown, never as a human trigger.
+_dlw_lifetime_helper() {
+	local dir="${SCRIPT_DIR:-}"
+	# Sourcing entry points may own SCRIPT_DIR; fall back to this module's tree.
+	[[ -n "$dir" && -f "${dir}/worktree-managed-lifetime.py" ]] || dir="$_DLW_SYSTEMD_MODULE_DIR"
+	printf '%s/worktree-managed-lifetime.py\n' "$dir"
+	return 0
+}
+
+_dlw_launch_env() {
+	_DLW_LAUNCH_ENV=(
+		"AIDEVOPS_LAUNCH_ENTRYPOINT=${_DLW_LAUNCH_ENTRYPOINT:-unknown}"
+		"AIDEVOPS_LAUNCH_TRIGGER=${_DLW_LAUNCH_TRIGGER:-unknown}"
+		"AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE=${_DLW_LAUNCH_TRIGGER_EVIDENCE:-none}"
+		"AIDEVOPS_LAUNCH_TASK=${_DLW_LAUNCH_TASK:-}"
+		"AIDEVOPS_LAUNCH_REPO=${_DLW_LAUNCH_REPO:-}"
+	)
+	return 0
+}
+
+# Choose the lifetime backend BEFORE creating a generation. Sets
+# _DLW_MANAGED_CREATE_ENV for worktree-helper.sh add: managed enrollment on the
+# systemd backend, explicit legacy creation otherwise (never a later fallback).
+_dlw_managed_creation_env() {
+	local backend="" manager=""
+	backend=$(_dlw_select_worker_backend) || return 1
+	[[ "$backend" != "systemd" ]] || manager="$_DLW_MANAGED_WORKTREE_MANAGER"
+	_dlw_launch_env
+	_DLW_MANAGED_CREATE_ENV=("AIDEVOPS_WORKTREE_MANAGER=${manager}" "${_DLW_LAUNCH_ENV[@]}")
+	_DLW_MANAGED_CREATE_MODE="$manager"
+	return 0
+}
+
+# Classify one branch-nominated candidate. Echoes "managed <generation>",
+# "legacy", "sealed" or nothing (different enrolled task). Returns 1 when
+# evidence is unavailable: the caller must refuse, not guess.
+_dlw_classify_reuse_candidate() {
+	local wt_path="$1" issue_number="$2" repo_slug="$3"
+	local helper="" output="" rc=0
+	helper=$(_dlw_lifetime_helper)
+	output=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" match "$wt_path" "$issue_number" ${repo_slug:+"$repo_slug"} 2>/dev/null) || rc=$?
+	case "$rc" in
+	0) printf 'managed %s\n' "${output%% *}" ;;
+	3) printf 'legacy\n' ;;
+	4) ;;
+	5) printf 'sealed\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# Select the single reusable worktree for an issue. Branch names only nominate
+# candidates; enrolled generations must match the exact task. Never first-match.
+# Sets _DLW_REUSE_PATH, _DLW_REUSE_BRANCH, _DLW_REUSE_GENERATION ("" = legacy)
+# and _DLW_REUSE_REFUSAL. Returns 0 unique, 1 none, 2 refuse (ambiguous/unknown).
+_dlw_select_issue_worktree() {
+	local repo_path="$1" issue_number="$2" repo_slug="${3:-}"
+	local line="" wt_path="" wt_branch="" class="" count=0 unknown=0 sealed=0
+	_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION="" _DLW_REUSE_REFUSAL=""
+	while IFS= read -r line; do
+		wt_path=$(printf '%s' "$line" | awk '{print $1}') || wt_path=""
+		wt_branch=$(printf '%s' "$line" | awk '{print $3}' | sed 's/^\[//;s/\]$//') || wt_branch=""
+		[[ "$wt_branch" =~ gh-?${issue_number}([^0-9]|$) && -d "$wt_path" ]] || continue
+		if ! class=$(_dlw_classify_reuse_candidate "$wt_path" "$issue_number" "$repo_slug"); then
+			unknown=$((unknown + 1))
+			continue
+		fi
+		[[ -n "$class" ]] || continue
+		if [[ "$class" == "sealed" ]]; then
+			# A closed generation may still hold unpublished work for this
+			# task; do not start a parallel generation beside it.
+			sealed=$((sealed + 1))
+			continue
+		fi
+		count=$((count + 1))
+		_DLW_REUSE_PATH="$wt_path"
+		_DLW_REUSE_BRANCH="$wt_branch"
+		_DLW_REUSE_GENERATION=""
+		[[ "$class" != managed\ * ]] || _DLW_REUSE_GENERATION="${class#managed }"
+	done < <(git -C "$repo_path" worktree list 2>/dev/null)
+	if [[ "$unknown" -gt 0 ]]; then
+		_DLW_REUSE_REFUSAL="worktree_reuse_evidence_unavailable"
+	elif [[ "$sealed" -gt 0 ]]; then
+		_DLW_REUSE_REFUSAL="worktree_reuse_sealed_generation"
+	elif [[ "$count" -gt 1 ]]; then
+		_DLW_REUSE_REFUSAL="worktree_reuse_ambiguous"
+	fi
+	if [[ -n "$_DLW_REUSE_REFUSAL" ]]; then
+		echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
+		_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION=""
+		return 2
+	fi
+	[[ "$count" -eq 1 ]] && return 0
+	return 1
+}
 
 # Select lifecycle ownership before attempting a launch. Availability failures
 # must not silently move a systemd-owned worker into its parent's cgroup.
@@ -28,7 +133,7 @@ _dlw_select_worker_backend() {
 	systemd|detached) printf '%s\n' "$backend"; return 0 ;;
 	auto) ;;
 	*)
-		echo "[dispatch_worker_launch] ERROR: unsupported worker backend: ${backend}" >>"$LOGFILE"
+		echo "[dispatch_worker_launch] ERROR: unsupported worker backend: ${backend}" >>"${LOGFILE:-/dev/null}"
 		return 1
 		;;
 	esac
@@ -207,16 +312,21 @@ _dlw_exec_systemd_user_service() {
 		generation_suffix=$(python3 -c 'import uuid; print(uuid.uuid4().hex)') || return 1
 		unit_name="${unit_name}-${generation_suffix}"
 		# Retain exited units until the cleanup reader durably records quiescence.
-		# A wrapper exit alone is not a descendant-lifetime receipt.
-		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" reserve "$_DLW_WORKTREE_PATH" "$unit_name" || return 1
+		# A wrapper exit alone is not a descendant-lifetime receipt. The reserve
+		# rechecks the selected generation and appends this attempt's provenance.
+		local lifetime_helper=""
+		lifetime_helper=$(_dlw_lifetime_helper)
+		_dlw_launch_env
+		env "${_DLW_LAUNCH_ENV[@]}" "AIDEVOPS_EXPECTED_GENERATION=${_DLW_WORKTREE_GENERATION:-}" \
+			WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" reserve "$_DLW_WORKTREE_PATH" "$unit_name" || return 1
 		local properties="" property=""
-		properties=$(python3 "${SCRIPT_DIR}/worktree-managed-run.py" --print-properties) || return 1
+		properties=$(python3 "${lifetime_helper%/*}/worktree-managed-run.py" --print-properties) || return 1
 		lifetime_properties=()
 		while IFS= read -r property; do
 			lifetime_properties+=("$property")
 		done <<<"$properties"
 		set -- env "WORKTREE_REGISTRY_DB=${WORKTREE_REGISTRY_DB:-${HOME}/.aidevops/.agent-workspace/worktree-registry.db}" \
-			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" bind-exec "$_DLW_WORKTREE_PATH" "$@"
+			python3 "$lifetime_helper" bind-exec "$_DLW_WORKTREE_PATH" "$@"
 	fi
 	# Persist ownership before submission, including when the manager reply is
 	# lost. Failure to retain that identity must prevent an untracked launch.

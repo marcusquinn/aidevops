@@ -6,6 +6,13 @@
 Only newly created dispatcher worktrees enroll. No inference from branch names,
 missing owner rows, dead wrapper PIDs, or missing systemd units grants authority.
 Workers must not hand work to an untracked service or external process.
+
+One record is one worktree generation; each launch entry is one execution
+attempt (reserve -> bind-exec -> drained quiescence). Sealing is terminal for
+the generation and is never reopened. Sequential resume reserves another
+attempt only from running after the previous invocation drained. Provenance is
+launcher classification, not actor identity, and never deletion authority.
+Same-UID cgroup accounting is evidence, not a sandbox against hostile processes.
 """
 
 from __future__ import annotations
@@ -28,10 +35,49 @@ import worktree_lifetime_owner as owner_lifetime
 
 
 TABLE = "worktree_managed_lifetimes"
+# Launcher vocabulary shared by Pulse and manual dispatch. Values outside these
+# allowlists are recorded as unknown, never as a human or scheduled trigger.
+ENTRYPOINTS = ("pulse", "dispatch-single-issue")
+TRIGGERS = ("scheduled", "manual")
+TRIGGER_EVIDENCE = ("pulse-cycle", "interactive-terminal")
+BACKEND = "systemd-user-service"
 
 
 class NotEnrolled(ValueError):
     """Definitive absence, distinct from unavailable or corrupt evidence."""
+
+
+class TaskMismatch(ValueError):
+    """Enrolled generation belongs to a different repository task."""
+
+
+class SealedGeneration(ValueError):
+    """Closed lifetime: never reopened, so it cannot be a reuse candidate."""
+
+
+def allowed(name: str, values: tuple, fallback: str = "unknown") -> str:
+    value = os.environ.get(name, "")
+    return value if value in values else fallback
+
+
+def provenance() -> dict:
+    """Append-only launcher provenance; no actor, credential, prompt or host path."""
+    trigger = allowed("AIDEVOPS_LAUNCH_TRIGGER", TRIGGERS)
+    evidence = allowed("AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE", TRIGGER_EVIDENCE, "none")
+    if evidence == "none":
+        trigger = "unknown"  # A trigger without its evidence class is not attribution.
+    return {"entrypoint": allowed("AIDEVOPS_LAUNCH_ENTRYPOINT", ENTRYPOINTS), "trigger": trigger,
+            "trigger_evidence": evidence}
+
+
+def task_identity() -> dict | None:
+    issue = os.environ.get("AIDEVOPS_LAUNCH_TASK", "")
+    repo = os.environ.get("AIDEVOPS_LAUNCH_REPO", "")
+    if re.fullmatch(r"[1-9][0-9]{0,9}", issue) is None:
+        return None
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None:
+        repo = ""
+    return {"issue": issue, "repo": repo}
 
 
 def require(condition: bool, reason: str) -> None:
@@ -115,18 +161,39 @@ def enroll(connection: sqlite3.Connection, path: Path) -> None:
     observed = identity(path)
     require(connection.execute("SELECT 1 FROM worktree_managed_lifetimes WHERE path = ?", (str(path),)).fetchone() is None,
             "existing provenance cannot be overwritten")
+    # Additive fields: older readers ignore them; absence means "unrecorded",
+    # never a matching task or a known trigger.
     save(connection, {"schema": 1, "manager": "pulse", "generation": uuid.uuid4().hex,
-                      "identity": observed, "state": "created", "launches": [], "created_at": time.time()})
+                      "identity": observed, "state": "created", "launches": [], "created_at": time.time(),
+                      "created_by": provenance(), "task": task_identity()})
+
+
+def match_task(record: dict, issue: str, repo: str) -> str:
+    """Exact task identity for reuse; older enrolled records stay branch-matched."""
+    task = record.get("task")
+    if not task:
+        return "unrecorded"
+    if task.get("issue") != issue or (repo and task.get("repo") and task["repo"] != repo):
+        raise TaskMismatch("enrolled generation belongs to a different task")
+    return "exact"
 
 
 def reserve(record: dict, unit: str) -> None:
     require(record.get("manager") == "pulse", "owner-observed worktree cannot change admission mode")
+    expected = os.environ.get("AIDEVOPS_EXPECTED_GENERATION", "")
+    # The launcher selected one generation; a replacement must not inherit it.
+    require(not expected or expected == record.get("generation"), "worktree generation replaced since selection")
     require(record["state"] in ("created", "running"), "launch already reserved or worktree sealed")
-    if record["launches"]:
-        drain(record["launches"][-1])
+    previous = record["launches"][-1] if record["launches"] else None
+    if previous:
+        drain(previous)
     require(re.fullmatch(r"aidevops-worker-[A-Za-z0-9_-]+", unit) is not None, "invalid unit name")
     idle_policy.invalidate(record)
-    record["launches"].append({"unit": unit, "boot_id": boot_id(), "invocation": None})
+    # Attempt numbers and retry links describe sequence, not who triggered it.
+    record["launches"].append({"unit": unit, "boot_id": boot_id(), "invocation": None,
+                               "attempt": len(record["launches"]) + 1, "backend": BACKEND,
+                               "retry_of": previous.get("unit") if previous else None,
+                               "reserved_at": time.time(), "provenance": provenance()})
     record["state"] = "reserved"
 
 
@@ -139,7 +206,7 @@ def bind(record: dict) -> None:
     require(snapshot.get("InvocationID") == invocation and snapshot.get("MainPID") == str(os.getpid()),
             "worker does not own unit invocation")
     require(launch["boot_id"] == boot_id() and bool(snapshot.get("ControlGroup")), "missing cgroup identity")
-    launch.update(invocation=invocation, cgroup=snapshot["ControlGroup"])
+    launch.update(invocation=invocation, cgroup=snapshot["ControlGroup"], bound_at=time.time())
     idle_policy.invalidate(record)
     record["state"] = "running"
 
@@ -193,6 +260,16 @@ def inspect_record(record: dict, path: Path, operation: str, extra: list[str], c
         lifetime_proof.inspect(record, path, extra, connection, verify_identity)
         return
     verify_identity(record, path)
+    if operation == "match":
+        # Read-only reuse selection: exact task identity plus the generation the
+        # launcher must present at reservation. Sealed generations never match.
+        require(len(extra) in (1, 2), "issue and optional repository required")
+        if record["state"] == "sealed":
+            raise SealedGeneration("sealed generation awaits archive or cleanup")
+        require(record["state"] in ("created", "running"), "worktree cannot be reused")
+        evidence = match_task(record, extra[0], extra[1] if len(extra) == 2 else "")
+        print(f"{record['generation']} {evidence}")
+        return
     if operation in ("cleanup-ready", "idle-ready"):
         # Dry-run only: do not persist a seal before policy and owner checks.
         if operation == "idle-ready":
@@ -241,7 +318,7 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("enroll", "reserve", "bind-exec", "seal", "proof", "status", "ready", "cleanup-ready",
-                                             "observe-idle", "idle-ready", "seal-idle"))
+                                             "observe-idle", "idle-ready", "seal-idle", "match"))
     parser.add_argument("path")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -251,7 +328,7 @@ def main() -> int:
     try:
         require(path.is_absolute() and str(path) == os.path.realpath(path), "canonical absolute path required")
         require(Path(db).is_file() and not Path(db).is_symlink(), "registry unavailable")
-        readonly = args.operation in ("proof", "status", "ready", "cleanup-ready", "idle-ready")
+        readonly = args.operation in ("proof", "status", "ready", "cleanup-ready", "idle-ready", "match")
         uri = Path(db).resolve().as_uri() + ("?mode=ro" if readonly else "?mode=rw")
         with closing(sqlite3.connect(uri, uri=True, timeout=10, isolation_level=None)) as connection:
             connection.execute("BEGIN" if readonly else "BEGIN IMMEDIATE")
@@ -278,6 +355,12 @@ def main() -> int:
         return 0
     except NotEnrolled:
         return 3
+    except TaskMismatch as error:
+        print(f"managed-worktree: {error}", file=sys.stderr)
+        return 4
+    except SealedGeneration as error:
+        print(f"managed-worktree: {error}", file=sys.stderr)
+        return 5
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError) as error:
         reason = str(error) if isinstance(error, ValueError) else "evidence unavailable"
         print(f"managed-worktree: {type(error).__name__}: {reason}", file=sys.stderr)

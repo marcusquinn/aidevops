@@ -110,6 +110,35 @@ on a host with a working user-systemd manager. The opt-in fixture exercises the
 production launch wrapper, a surviving `setsid` child, the removal guard and
 archive/native removal while retaining an unsaved file. No root is required.
 
+### Shared Pulse and manual launch (GH#35295)
+
+Pulse and `dispatch-single-issue-helper.sh dispatch|resume` share the launcher in `pulse-dispatch-worker-systemd.sh`;
+each keeps its own task selection, claims, authorization, prompt and runtime arguments.
+
+- **Backend first:** `_dlw_managed_creation_env` chooses before creation. systemd hosts enroll with
+  `AIDEVOPS_WORKTREE_MANAGER=pulse-cgroup-v1`; others or `AIDEVOPS_WORKER_BACKEND=detached` create explicit legacy
+  worktrees. Failed managed admission never falls back to `nohup`/`--detach`.
+- **Admission:** enroll -> `reserve` (rechecks `AIDEVOPS_EXPECTED_GENERATION`) -> service -> `bind-exec` (invocation,
+  cgroup) -> drained quiescence -> `sealed`. Sealing is terminal and never reopened; sequential resume reserves another
+  attempt only from `running` after the previous invocation drained.
+- **Generation vs attempt:** a record is one generation; each `launches[]` entry is one attempt (`attempt`, `retry_of`,
+  `backend`, `reserved_at`, `bound_at`, invocation), numbered independently of the trigger.
+- **Provenance:** `created_by` and per-attempt `provenance` hold only allowlisted `entrypoint` (`pulse`,
+  `dispatch-single-issue`), `trigger` (`scheduled`, `manual`) and `trigger_evidence` (`pulse-cycle`,
+  `interactive-terminal`). Manual dispatch is `manual` only from an interactive non-headless, non-CI terminal; other
+  callers record `unknown`. No actor, credential, prompt or host path; provenance and names never authorize deletion.
+- **Reuse:** `gh<N>` branches only nominate. `worktree-managed-lifetime.py match <path> <issue> [owner/repo]` prints
+  `<generation> exact|unrecorded` (pre-contract record) or exits 3 not enrolled, 4 other task, 5 sealed. Refusals:
+  `worktree_reuse_ambiguous`, `worktree_reuse_sealed_generation`, `worktree_reuse_evidence_unavailable`. Legacy
+  worktrees stay legacy; nothing is enrolled retroactively.
+- **Archive lookup:** the retained record binds generation/source identity to `archive_operation` (ID, directory,
+  verification/removal phases); `worktree-lifecycle-helper.sh report` adds a `lifecycle` provenance summary.
+- **Naming:** `feature/auto-<date>-gh<N>` is unchanged; a future neutral name applies only to new generations with
+  readers accepting both forms. No bulk rename.
+
+Same-UID cgroup accounting is evidence, not a sandbox against equally privileged hostile processes. Native demo:
+`AIDEVOPS_TEST_SYSTEMD=1 python3 scripts/tests/test-worktree-managed-lifetime.py`.
+
 ## Lifecycle audit and removal prerequisites
 
 `headless-runtime-worker-prepare.sh` claims ownership before launch.
