@@ -135,10 +135,26 @@ _merge_fetch_pinned_commit_objects() {
 			print_info "Pull ref refs/pull/${pr_number}/head is absent; fetching the pinned head commit ${head_sha} directly" >&2
 			_merge_fetch_partial_objects "$real_git" "$object_repo" "" \
 				-- "$_MERGE_PROSPECTIVE_REMOTE" "$head_sha" || return 1
+		else
+			fetched_sha=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+				rev-parse FETCH_HEAD 2>/dev/null) || return 1
+			if [[ "$fetched_sha" != "$head_sha" ]]; then
+				# GH#35304: GitHub can serve a stale generated pull ref after a push.
+				_merge_is_pinned_object_id "$head_sha" || return 1
+				print_info "Pull ref refs/pull/${pr_number}/head is stale (${fetched_sha}); fetching the pinned head commit ${head_sha} directly" >&2
+				if ! _merge_fetch_partial_objects "$real_git" "$object_repo" "" \
+					-- "$_MERGE_PROSPECTIVE_REMOTE" "$head_sha"; then
+					print_error "Stale pull ref head ${fetched_sha} differs from pinned head ${head_sha}; direct pinned-head fetch failed" >&2
+					return 1
+				fi
+			fi
 		fi
 		fetched_sha=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
 			rev-parse FETCH_HEAD 2>/dev/null) || return 1
-		[[ "$fetched_sha" == "$head_sha" ]] || return 1
+		if [[ "$fetched_sha" != "$head_sha" ]]; then
+			print_error "Fetched head ${fetched_sha} differs from pinned head ${head_sha} after pinned-head fetch" >&2
+			return 1
+		fi
 	fi
 	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
 		cat-file -e "${base_sha}^{commit}" 2>/dev/null || return 1

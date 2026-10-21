@@ -656,6 +656,32 @@ test_prospective_todo_live_fetch_guard() {
 		"$([[ "$(<"$transfer_log")" == "checked" ]] && printf '0' || printf '1')" \
 		"log=$(<"$transfer_log")"
 
+	# GH#35304: a successful pull-ref fetch can still return an older commit.
+	rc=0
+	cleanup_rc=0
+	/usr/bin/git -C "$remote_url" update-ref refs/pull/42/head "$base_sha" || return 0
+	: >"$transfer_log"
+	output=$(AIDEVOPS_TEST_TRANSFER_LOG="$transfer_log" AIDEVOPS_TEST_UNRELATED_BLOBS="${fixture_root}/unrelated.blobs" \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
+		"$supervisor_workspace" "$git_probe") || rc=$?
+	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
+	print_result "prospective TODO: stale pull ref falls back to the pinned head commit" \
+		"$([[ "$rc" -eq 0 && "$cleanup_rc" -eq 0 && "$output" == *"is stale (${base_sha}); fetching the pinned head commit ${head_sha}"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+	print_result "prospective TODO: stale pull-ref fallback transfers no unrelated history blobs" \
+		"$([[ "$(<"$transfer_log")" == "checked" ]] && printf '0' || printf '1')" \
+		"log=$(<"$transfer_log")"
+
+	rc=0
+	cleanup_rc=0
+	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$(printf 'a%.0s' {1..40})" live "$remote_url" \
+		'testorg/testrepo' "$supervisor_workspace") || rc=$?
+	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
+	print_result "prospective TODO: stale pull ref with an unavailable pinned head reports both SHAs" \
+		"$([[ "$rc" -ne 0 && "$cleanup_rc" -eq 0 && "$output" == *"Stale pull ref head ${base_sha} differs from pinned head $(printf 'a%.0s' {1..40}); direct pinned-head fetch failed"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+	/usr/bin/git -C "$remote_url" update-ref -d refs/pull/42/head || return 0
+
 	rc=0
 	cleanup_rc=0
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$(printf 'a%.0s' {1..40})" live "$remote_url" \
