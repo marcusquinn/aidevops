@@ -28,6 +28,7 @@ tools:
 - Size concurrency from measured worker RSS and request duration, not from `memory_limit`; CLI configuration does not prove web configuration.
 - Check OPcache capacity and restarts before attributing slowness to application code. Avoid preload for self-updating applications.
 - Run conditional checks only when relevant; separate observations from hypotheses and record unavailable evidence.
+- PHP security release or CVE: follow "Security Releases" below — inventory web PHP everywhere, mitigate where it applies before request parsing, watch for patched builds, then remove mitigations.
 - Build+ owns authorized changes, backups, rollback, and post-change verification; never restart PHP or edit server configuration during assessment.
 
 <!-- AI-CONTEXT-END -->
@@ -129,6 +130,18 @@ Inspect existing `.user.ini` and `auto_prepend_file` directives only within auth
 Check an existing dated subfolder, for example `wp-content/uploads/<year>/`, using the verified site URL and an ordinary read-only request. Expect 403/404 rather than an `Index of` page. A 200 listing is exposure; a redirect, login page, custom 200 denial, or CDN response is inconclusive until the origin behavior is verified. A 404 alone does not prove protection if the directory does not exist.
 
 The durable fix is server-level: `Options -Indexes` for Apache/LiteSpeed **only** where `AllowOverride` permits it (otherwise an HTTP 500 can result), or `autoindex off;` in the relevant nginx configuration. Empty `index.php` files protect only their own folder, not descendants or future uploads directories. Propose the smallest authorized server-level change; do not write it during assessment.
+
+## Security Releases
+
+Applies to any PHP security release; the worked example is the 2026-10-21 unauthenticated RCE release (CVE-2026-109618/109619, advisory `php-rce-2026-10`). Updating is the only fix; mitigations only narrow the attack paths named by the vendor advisory. Read the current upstream advisory first and use its fixed versions and mitigation list, not these examples.
+
+1. **Inventory web PHP everywhere.** Record each site's web SAPI and version, every PHP container or app package, each shared-host build in use, and EOL branches. Probe containers (`docker exec <container> php -r 'echo PHP_VERSION;'`) instead of trusting an app-name list. Distro builds such as `8.1.2-1ubuntu2.x` may carry backports: check the vendor notice, not upstream numbering. mod_php was the highest-risk SAPI in 2026-10.
+2. **Classify the fix path per host.** Self-managed: distro/vendor packages or rebuilt images, then restart every worker. App platforms: a package update whose changelog names the patched base image (Cloudron: `services/hosting/cloudron.md` "PHP and runtime security releases"). Managed/shared hosting: the provider controls builds; check whether it already applied a global interim setting, then ask support (`services/hosting/hostinger.md` "Security releases").
+3. **Mitigate with owner authority.** Apply the advisory's settings where they take effect before request parsing (php.ini, FPM pool `php_admin_value`, server config, LiteSpeed `.htaccess` `php_value`), never `ini_set()` or FPM `.user.ini`, then restart every worker. 2026-10 settings: `session.upload_progress.enabled=0`, `fatal_error_backtraces=0` (8.5), `post_max_size=8M` (32M where uploads are needed) with `upload_max_filesize` below it. Before lowering upload limits, find each site's largest legitimate upload and exempt sites that need more. Back up each file and wrap the block in BEGIN/END markers naming the CVE so removal is exact.
+4. **Verify from the web.** Use the app's status page, or a temporary randomly named probe printing only `PHP_VERSION` and the changed `ini_get()` values, then delete it. A redirect or login page is not evidence.
+5. **Contain what cannot be patched or mitigated.** With approval, stop the app or restrict it to a VPN/IP allowlist; EOL runtimes first. Record what was stopped so it is restarted deliberately.
+6. **Watch until patched.** Run a private, read-only routine (for example every 2 hours via `TODO.md` `run:custom/scripts/<name>.sh`, installed only on the host with access) comparing each host's version with the fixed versions and listing pending package updates. Record errors as errors, never as patched, and never update automatically.
+7. **Close out.** Verify patched web versions, remove the marked blocks (keep lower upload limits only as a deliberate decision), restart intentionally stopped apps, disable the watch, and dismiss the advisory.
 
 ## Safety Invariants
 
