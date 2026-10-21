@@ -12,6 +12,11 @@ TESTS_FAILED=0
 TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
 TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${TEST_ROOT}/captured-blockers.jsonl"
+# GH#35310: isolate the recovery queue before any helper is sourced. Circuit
+# opens call _hrff_enqueue_blocker_recovery, which shells out to
+# terminal-blocker-recovery-helper.sh and would otherwise write owner/repo#42
+# into the live ~/.aidevops queue and consume the pulse recovery budget.
+export AIDEVOPS_BLOCKER_RECOVERY_DIR="${TEST_ROOT}/default-recovery-queue"
 
 cleanup() {
 	rm -rf "$TEST_ROOT"

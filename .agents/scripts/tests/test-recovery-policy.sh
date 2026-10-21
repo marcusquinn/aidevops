@@ -12,6 +12,8 @@ TESTS_RUN=0
 TESTS_FAILED=0
 FIX_SHA='0123456789abcdef0123456789abcdef01234567'
 GH_LOG="${TEST_ROOT}/gh-calls.log"
+# GH#35310: never let the recovery queue default to the live ~/.aidevops root.
+export AIDEVOPS_BLOCKER_RECOVERY_DIR="${TEST_ROOT}/default-recovery-queue"
 
 cleanup() {
 	rm -rf "$TEST_ROOT"
