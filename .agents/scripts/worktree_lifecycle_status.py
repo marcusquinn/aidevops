@@ -20,6 +20,7 @@ import subprocess
 import time
 
 import worktree_lifetime_archive as archive
+import worktree_lifetime_launch as launch_contract
 
 
 def registry_path():
@@ -72,7 +73,8 @@ def records(limit, selected_paths=None):
                                  failure=operation.get("failure"),
                                  idle_observed_since=idle.get("since"),
                                  last_reconcile_at=last_attempt,
-                                 reconcile_error=operation.get("reconcile_error"))
+                                 reconcile_error=operation.get("reconcile_error"),
+                                 lifecycle=launch_contract.summary(record))
                 except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
                     entry.update(state="unknown", error=type(error).__name__)
                 result["entries"].append(entry)

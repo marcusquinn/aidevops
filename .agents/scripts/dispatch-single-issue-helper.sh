@@ -91,6 +91,8 @@ _DSI_LEASE_ID=""
 _DSI_LEASE_DEVICE=""
 _DSI_CLAIM_WON=0
 _DSI_RESUME_MODE=0
+# 1 when the worktree is an enrolled managed generation (GH#35295).
+_DSI_MANAGED_WORKTREE=0
 _DSI_RESUME_SESSION=""
 _DSI_RESUME_REQUEST=""
 
@@ -224,6 +226,10 @@ _dsi_create_worktree() {
 
 	local attempt max_attempts
 	max_attempts=3
+	# GH#35295: select the lifetime backend before creating the generation,
+	# exactly as Pulse does; systemd hosts enroll a managed generation.
+	_dsi_set_launch_provenance "$issue_number" "$repo_slug"
+	_dlw_managed_creation_env || return 1
 
 	# Retry loop: handles .git/config lock contention under concurrent creation
 	# (GH#21469). git cleans up partial state on a failed add, so retrying the
@@ -231,7 +237,7 @@ _dsi_create_worktree() {
 	for attempt in 1 2 3; do
 		# worktree-helper.sh add: outputs creation messages to stderr; the
 		# branch name is what we passed in.
-		if (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 "$_DSI_WORKTREE_HELPER" add "$branch" \
+		if (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 env "${_DLW_MANAGED_CREATE_ENV[@]}" "$_DSI_WORKTREE_HELPER" add "$branch" \
 			--base "$dispatch_base_ref" --issue "$issue_number") >&2; then
 			# Query git for the actual worktree path. worktree-helper.sh uses its
 			# own slug logic (lowercases, parent dir from get_repo_root) — recomputing
@@ -252,7 +258,10 @@ _dsi_create_worktree() {
 					_dsi_err "Worktree registry helper unavailable; dispatch is unsafe"
 					return 1
 				fi
-				return 0
+				local bind_mode="created-legacy"
+				[[ -z "$_DLW_MANAGED_CREATE_MODE" ]] || bind_mode="created-managed"
+				_dsi_bind_worktree_lifetime "$issue_number" "$repo_slug" "$bind_mode"
+				return $?
 			fi
 			_dsi_warn "Worktree path unresolvable after add (attempt ${attempt}/${max_attempts}, branch=${branch})"
 		else
@@ -266,6 +275,102 @@ _dsi_create_worktree() {
 	_dsi_err "Failed to create worktree for branch ${branch} after ${max_attempts} attempts"
 	_dsi_info "  Inspect: git worktree list --porcelain | grep -A1 ${branch}"
 	return 1
+}
+
+#######################################
+# Classify this launcher's trigger for managed provenance (GH#35295). Only an
+# interactive terminal outside headless/unit contexts counts as a manual
+# trigger; automated callers of this CLI record unknown, never a human.
+# No actor identity is recorded. Args: $1 issue, $2 repo slug
+#######################################
+_dsi_set_launch_provenance() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	_DLW_LAUNCH_ENTRYPOINT="dispatch-single-issue"
+	_DLW_LAUNCH_TASK="$issue_number"
+	_DLW_LAUNCH_REPO="$repo_slug"
+	_DLW_LAUNCH_TRIGGER="unknown"
+	_DLW_LAUNCH_TRIGGER_EVIDENCE="none"
+	if [[ -t 0 && -t 2 && -z "${HEADLESS:-}${FULL_LOOP_HEADLESS:-}${INVOCATION_ID:-}${CI:-}" &&
+		"${AIDEVOPS_HEADLESS:-false}" != "$_DSI_JSON_TRUE" && "${AIDEVOPS_SESSION_ORIGIN:-}" != "worker" ]]; then
+		_DLW_LAUNCH_TRIGGER="manual"
+		_DLW_LAUNCH_TRIGGER_EVIDENCE="interactive-terminal"
+	fi
+	return 0
+}
+
+#######################################
+# Bind the prepared worktree to its lifetime contract before launch.
+# Args: $1 issue, $2 repo slug,
+#       $3 created-managed | created-legacy | resume
+# Sets _DSI_MANAGED_WORKTREE and _DLW_WORKTREE_GENERATION.
+# Returns 0 when launch may proceed; 1 refuses. A managed generation is never
+# downgraded to an unmanaged launch, and a sealed one is never reopened.
+#######################################
+_dsi_bind_worktree_lifetime() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local mode="$3"
+	local class="" backend=""
+	_DSI_MANAGED_WORKTREE=0
+	_DLW_WORKTREE_GENERATION=""
+	# The backend chose legacy before creation: nothing was enrolled.
+	[[ "$mode" != "created-legacy" ]] || return 0
+	if ! class=$(_dlw_classify_reuse_candidate "$_DSI_WORKTREE_PATH" "$issue_number" "$repo_slug"); then
+		_dsi_err "Managed lifetime evidence unavailable for ${_DSI_WORKTREE_PATH}; refusing launch (source retained)"
+		return 1
+	fi
+	case "$class" in
+	managed\ *)
+		backend=$(_dlw_select_worker_backend) || backend=""
+		if [[ "$backend" != "systemd" ]]; then
+			_dsi_err "Enrolled managed worktree requires the systemd worker backend; refusing unmanaged launch"
+			return 1
+		fi
+		_DLW_WORKTREE_GENERATION="${class#managed }"
+		_DSI_MANAGED_WORKTREE=1
+		return 0
+		;;
+	legacy)
+		if [[ "$mode" == "created-managed" ]]; then
+			_dsi_err "Managed enrollment missing for new worktree ${_DSI_WORKTREE_PATH}; refusing unmanaged launch (source retained)"
+			return 1
+		fi
+		_dsi_info "Legacy unenrolled worktree: using the legacy detached backend (no managed lifetime receipt)"
+		return 0
+		;;
+	sealed) _dsi_err "Worktree generation is sealed and never reopened; let cleanup archive it, then dispatch a new generation" ;;
+	*) _dsi_err "Worktree is enrolled for a different task; refusing reuse" ;;
+	esac
+	return 1
+}
+
+#######################################
+# Launch through the shared managed launcher (reserve -> systemd service ->
+# bind-exec), the same admission path Pulse uses. Never falls back to nohup.
+# Args: $1 worker_log, $2 issue, $3 worktree, $4.. worker command (no --detach)
+# Stdout: worker PID (the unit's MainPID)
+#######################################
+_dsi_launch_managed_worker() {
+	local worker_log="$1"
+	local issue_number="$2"
+	local worktree_path="$3"
+	shift 3
+	local worker_pid=""
+	# Shared launcher diagnostics land beside the worker output.
+	local LOGFILE="$worker_log"
+	# Readiness contract shared with headless --detach: this file is the
+	# runtime log because the service appends worker output here.
+	printf '[INFO] Detaching worker (log: %s)\n' "$worker_log" >>"$worker_log"
+	if ! worker_pid=$(_DLW_MANAGED_WORKTREE=1 _DLW_WORKTREE_PATH="$worktree_path" \
+		_dlw_launch_systemd_worker "$worker_log" "$issue_number" "$@"); then
+		_dsi_err "Managed worker admission failed; no unmanaged fallback was started"
+		_dsi_info "  Launcher log: ${worker_log}"
+		return 1
+	fi
+	printf '[INFO] Dispatched PID: %s backend=systemd-managed\n' "$worker_pid" >>"$worker_log"
+	printf '%s\n' "$worker_pid"
+	return 0
 }
 
 #######################################
@@ -686,8 +791,10 @@ _dsi_launch_worker() {
 		--tier "$tier"
 		--title "$title"
 		--prompt "$prompt"
-		--detach
 	)
+	# A managed unit owns the worker process itself; only the legacy backend
+	# asks the runtime to detach (GH#35295).
+	[[ "${_DSI_MANAGED_WORKTREE:-0}" == "1" ]] || cmd+=(--detach)
 	if [[ -n "$selected_model" ]]; then
 		cmd+=(--model "$selected_model")
 	fi
@@ -703,8 +810,13 @@ _dsi_launch_worker() {
 		_dsi_err "Worker Git authentication preflight rejected; evidence retained in launcher log"
 		return 1
 	fi
+	if [[ "${_DSI_MANAGED_WORKTREE:-0}" == "1" ]]; then
+		_dsi_launch_managed_worker "$worker_log" "$issue_number" "$worktree_path" "${cmd[@]}"
+		return $?
+	fi
 
-	# Run in background, redirect stdout/stderr to worker_log so caller
+	# Legacy backend only (explicitly selected before creation, or an
+	# unenrolled resume). Run in background, redirect stdout/stderr to worker_log so caller
 	# doesn't block. Capture launch PID (the env wrapper, which then
 	# exec's the helper).
 	nohup "${cmd[@]}" >>"$worker_log" 2>&1 &
@@ -845,6 +957,7 @@ _dsi_print_dryrun() {
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Base ref:     ${base_ref}"
+	_dsi_info "  Lifetime:     $([[ "$(_dlw_select_worker_backend 2>/dev/null)" == systemd ]] && printf 'managed systemd generation (shared Pulse launcher)' || printf 'legacy detached backend')"
 	if [[ "$prerequisite" == repository_* ]]; then
 		_dsi_info "  Repo path:    ${repo_path}"
 		_dsi_warn "  Origin:       UNMET (reason=${prerequisite}) — real dispatch would refuse before claim"
@@ -1410,6 +1523,13 @@ _dsi_dispatch_after_dedup_clear() {
 			[[ "$_DSI_RESUME_SESSION" != "$session_key" || "$_DSI_RESUME_REQUEST" != "$resume_request" ||
 				"$_DSI_WORKTREE_PATH" != "$resume_worktree" || "$_DSI_WORKTREE_BRANCH" != "$resume_branch" ]]; then
 			_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "resume_binding_changed"
+			return 1
+		fi
+		# Sequential resume: a managed generation needs a fresh reservation;
+		# sealed or foreign generations are refused, legacy stays legacy.
+		_dsi_set_launch_provenance "$issue_number" "$repo_slug"
+		if ! _dsi_bind_worktree_lifetime "$issue_number" "$repo_slug" resume; then
+			_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "resume_lifetime_refused"
 			return 1
 		fi
 	fi

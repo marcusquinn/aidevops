@@ -6,6 +6,13 @@
 Only newly created dispatcher worktrees enroll. No inference from branch names,
 missing owner rows, dead wrapper PIDs, or missing systemd units grants authority.
 Workers must not hand work to an untracked service or external process.
+
+One record is one worktree generation; each launch entry is one execution
+attempt (reserve -> bind-exec -> drained quiescence). Sealing is terminal for
+the generation and is never reopened. Sequential resume reserves another
+attempt only from running after the previous invocation drained. Provenance is
+launcher classification, not actor identity, and never deletion authority.
+Same-UID cgroup accounting is evidence, not a sandbox against hostile processes.
 """
 
 from __future__ import annotations
@@ -23,11 +30,15 @@ import time
 import uuid
 
 import worktree_lifetime_idle as idle_policy
+import worktree_lifetime_launch as launch_contract
 import worktree_lifetime_proof as lifetime_proof
 import worktree_lifetime_owner as owner_lifetime
 
 
 TABLE = "worktree_managed_lifetimes"
+BACKEND = launch_contract.BACKEND
+TaskMismatch = launch_contract.TaskMismatch
+SealedGeneration = launch_contract.SealedGeneration
 
 
 class NotEnrolled(ValueError):
@@ -115,18 +126,22 @@ def enroll(connection: sqlite3.Connection, path: Path) -> None:
     observed = identity(path)
     require(connection.execute("SELECT 1 FROM worktree_managed_lifetimes WHERE path = ?", (str(path),)).fetchone() is None,
             "existing provenance cannot be overwritten")
+    # Additive fields: older readers ignore them; absence means "unrecorded",
+    # never a matching task or a known trigger.
     save(connection, {"schema": 1, "manager": "pulse", "generation": uuid.uuid4().hex,
-                      "identity": observed, "state": "created", "launches": [], "created_at": time.time()})
+                      "identity": observed, "state": "created", "launches": [], "created_at": time.time(),
+                      "created_by": launch_contract.provenance(), "task": launch_contract.task_identity()})
 
 
 def reserve(record: dict, unit: str) -> None:
     require(record.get("manager") == "pulse", "owner-observed worktree cannot change admission mode")
+    launch_contract.check_generation(record)
     require(record["state"] in ("created", "running"), "launch already reserved or worktree sealed")
     if record["launches"]:
         drain(record["launches"][-1])
     require(re.fullmatch(r"aidevops-worker-[A-Za-z0-9_-]+", unit) is not None, "invalid unit name")
     idle_policy.invalidate(record)
-    record["launches"].append({"unit": unit, "boot_id": boot_id(), "invocation": None})
+    record["launches"].append(launch_contract.attempt(record["launches"], unit, boot_id()))
     record["state"] = "reserved"
 
 
@@ -139,7 +154,7 @@ def bind(record: dict) -> None:
     require(snapshot.get("InvocationID") == invocation and snapshot.get("MainPID") == str(os.getpid()),
             "worker does not own unit invocation")
     require(launch["boot_id"] == boot_id() and bool(snapshot.get("ControlGroup")), "missing cgroup identity")
-    launch.update(invocation=invocation, cgroup=snapshot["ControlGroup"])
+    launch.update(invocation=invocation, cgroup=snapshot["ControlGroup"], bound_at=time.time())
     idle_policy.invalidate(record)
     record["state"] = "running"
 
@@ -185,12 +200,27 @@ def idle_quiescence(record: dict) -> None:
     idle_policy.quiescence(record, boot_id, drain, seal)
 
 
+def print_status(record: dict, path: Path, extra: list[str], connection=None) -> None:
+    print(json.dumps(record, sort_keys=True))
+
+
+def print_proof(record: dict, path: Path, extra: list[str], connection=None) -> None:
+    lifetime_proof.inspect(record, path, extra, connection, verify_identity)
+
+
+def print_match(record: dict, path: Path, extra: list[str], connection=None) -> None:
+    # Generation the launcher must present at reservation; sealed never matches.
+    verify_identity(record, path)
+    print(launch_contract.match(record, extra))
+
+
+READERS = {"status": print_status, "proof": print_proof, "match": print_match}
+
+
 def inspect_record(record: dict, path: Path, operation: str, extra: list[str], connection=None) -> None:
-    if operation == "status":
-        print(json.dumps(record, sort_keys=True))
-        return
-    if operation == "proof":
-        lifetime_proof.inspect(record, path, extra, connection, verify_identity)
+    reader = READERS.get(operation)
+    if reader:
+        reader(record, path, extra, connection)
         return
     verify_identity(record, path)
     if operation in ("cleanup-ready", "idle-ready"):
@@ -241,7 +271,7 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("enroll", "reserve", "bind-exec", "seal", "proof", "status", "ready", "cleanup-ready",
-                                             "observe-idle", "idle-ready", "seal-idle"))
+                                             "observe-idle", "idle-ready", "seal-idle", "match"))
     parser.add_argument("path")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -251,7 +281,7 @@ def main() -> int:
     try:
         require(path.is_absolute() and str(path) == os.path.realpath(path), "canonical absolute path required")
         require(Path(db).is_file() and not Path(db).is_symlink(), "registry unavailable")
-        readonly = args.operation in ("proof", "status", "ready", "cleanup-ready", "idle-ready")
+        readonly = args.operation in ("proof", "status", "ready", "cleanup-ready", "idle-ready", "match")
         uri = Path(db).resolve().as_uri() + ("?mode=ro" if readonly else "?mode=rw")
         with closing(sqlite3.connect(uri, uri=True, timeout=10, isolation_level=None)) as connection:
             connection.execute("BEGIN" if readonly else "BEGIN IMMEDIATE")
@@ -281,7 +311,8 @@ def main() -> int:
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError) as error:
         reason = str(error) if isinstance(error, ValueError) else "evidence unavailable"
         print(f"managed-worktree: {type(error).__name__}: {reason}", file=sys.stderr)
-        return 1
+        # Reuse refusals keep stable codes: 4 different task, 5 sealed generation.
+        return getattr(error, "exit_code", 1)
 
 
 if __name__ == "__main__":

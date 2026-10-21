@@ -133,6 +133,60 @@ class LifetimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.seal(record)
 
+    # GH#35295: one launch contract for Pulse and manual dispatch.
+    def test_provenance_is_classification_not_attribution(self):
+        manual = {"AIDEVOPS_LAUNCH_ENTRYPOINT": "dispatch-single-issue", "AIDEVOPS_LAUNCH_TRIGGER": "manual",
+                  "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE": "interactive-terminal"}
+        with patch.dict(os.environ, manual, clear=False):
+            self.assertEqual(MODULE.launch_contract.provenance(), {"entrypoint": "dispatch-single-issue", "trigger": "manual",
+                                                   "trigger_evidence": "interactive-terminal"})
+        # A claimed trigger without its evidence class, or unknown vocabulary,
+        # is never recorded as a human or scheduled launch.
+        for values in ({"AIDEVOPS_LAUNCH_TRIGGER": "manual", "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE": ""},
+                       {"AIDEVOPS_LAUNCH_ENTRYPOINT": "operator-alex", "AIDEVOPS_LAUNCH_TRIGGER": "human",
+                        "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE": "pulse-cycle"}):
+            with self.subTest(values=values), patch.dict(os.environ, values, clear=False):
+                observed = MODULE.launch_contract.provenance()
+                self.assertIn(observed["trigger"], ("unknown",))
+                self.assertIn(observed["entrypoint"], MODULE.launch_contract.ENTRYPOINTS + ("unknown",))
+        with patch.dict(os.environ, {"AIDEVOPS_LAUNCH_TASK": "35295", "AIDEVOPS_LAUNCH_REPO": "owner/repo"}):
+            self.assertEqual(MODULE.launch_contract.task_identity(), {"issue": "35295", "repo": "owner/repo"})
+        with patch.dict(os.environ, {"AIDEVOPS_LAUNCH_TASK": "35295;rm", "AIDEVOPS_LAUNCH_REPO": "owner/repo"}):
+            self.assertIsNone(MODULE.launch_contract.task_identity())
+
+    def test_match_selects_exact_task_and_never_reopens_sealed(self):
+        record = dict(self.record(), generation="g" * 32, task={"issue": "12", "repo": "owner/repo"})
+        with patch.object(MODULE, "verify_identity"), patch("builtins.print") as printed:
+            MODULE.inspect_record(record, Path("/fixture"), "match", ["12", "owner/repo"])
+            printed.assert_called_with(f"{'g' * 32} exact")
+            for extra in (["13", "owner/repo"], ["12", "other/repo"]):
+                with self.subTest(extra=extra), self.assertRaises(MODULE.TaskMismatch):
+                    MODULE.inspect_record(record, Path("/fixture"), "match", extra)
+            # Pre-contract enrollments stay branch-nominated, but are labelled.
+            MODULE.inspect_record(dict(record, task=None), Path("/fixture"), "match", ["13"])
+            printed.assert_called_with(f"{'g' * 32} unrecorded")
+            for state in ("sealed", "reserved"):
+                with self.subTest(state=state), self.assertRaises(ValueError) as error:
+                    MODULE.inspect_record(dict(record, state=state), Path("/fixture"), "match", ["12"])
+                self.assertEqual(isinstance(error.exception, MODULE.SealedGeneration), state == "sealed")
+
+    def test_reserve_rechecks_generation_and_links_attempts(self):
+        record = dict(self.record(), generation="a" * 32)
+        with patch.object(MODULE, "boot_id", return_value="boot"), \
+                patch.object(MODULE, "unit_snapshot", return_value=self.snapshot()), \
+                patch.object(Path, "read_text", return_value="populated 0\n"):
+            with patch.dict(os.environ, {"AIDEVOPS_EXPECTED_GENERATION": "b" * 32}), self.assertRaises(ValueError):
+                MODULE.reserve(record, "aidevops-worker-replaced")
+            self.assertEqual(record["state"], "running")
+            env = {"AIDEVOPS_EXPECTED_GENERATION": "a" * 32, "AIDEVOPS_LAUNCH_ENTRYPOINT": "pulse",
+                   "AIDEVOPS_LAUNCH_TRIGGER": "scheduled", "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE": "pulse-cycle"}
+            with patch.dict(os.environ, env):
+                MODULE.reserve(record, "aidevops-worker-next")
+        launch = record["launches"][-1]
+        self.assertEqual((launch["attempt"], launch["retry_of"], launch["backend"]),
+                         (2, "aidevops-worker-fixture", MODULE.BACKEND))
+        self.assertEqual(launch["provenance"]["entrypoint"], "pulse")
+
     @unittest.skipUnless(os.environ.get("AIDEVOPS_TEST_SYSTEMD") == "1", "explicit native systemd test")
     def test_native_child_lifetime_and_guard(self):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
@@ -150,9 +204,9 @@ class LifetimeTests(unittest.TestCase):
             git = os.environ.get("AIDEVOPS_TEST_GIT_BIN", "git")
             env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
 
-            def run(argv, check=True):
+            def run(argv, check=True, timeout=30):
                 # Fixture-owned argv and disposable paths only; no shell interpolation.
-                result = subprocess.run(argv, env=env, text=True, capture_output=True, timeout=30, check=False)  # nosec B603
+                result = subprocess.run(argv, env=env, text=True, capture_output=True, timeout=timeout, check=False)  # nosec B603
                 if check:
                     self.assertEqual(result.returncode, 0, result.stderr)
                 return result
@@ -230,14 +284,15 @@ class LifetimeTests(unittest.TestCase):
                                 'archive_worktree_path_recoverably "$2" fixture fixture; '
                                 'archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"; '
                                 'remove_archived_worktree_path "$2" "$archive" fixture fixture fixture false true; '
-                                'printf "%s\\n" "$archive"', "_", guard, str(worktree)])
+                                'printf "%s\\n" "$archive"', "_", guard, str(worktree)], timeout=180)
                 archive = Path(archived.stdout.strip().splitlines()[-1])
                 self.assertFalse(worktree.exists())
                 restored = root / "restored"
                 run(["bash", str(HELPER.parent / "worktree-archive-helper.sh"),
                      "restore", str(archive), "--target", str(restored)])
                 self.assertEqual((restored / "saved.txt").read_text(), "preserve staged user work\n")
-                self.assertFalse((restored / "unsaved.txt").exists(), "Git-only recovery excludes untracked files")
+                # Current git-only producers (fingerprint schema 3) also capture untracked work.
+                self.assertEqual((restored / "unsaved.txt").read_text(), "preserve this user change\n")
                 run([*helper, "proof", str(worktree), record["identity"]["source_inode"]])
             finally:
                 record = json.loads(run([*helper, "status", str(worktree)]).stdout)
@@ -245,6 +300,130 @@ class LifetimeTests(unittest.TestCase):
                     run(["systemctl", "--user", "stop", launch["unit"]], check=False)
                     run(["systemctl", "--user", "reset-failed", launch["unit"]], check=False)
                 run([git, "-C", str(repo), "worktree", "remove", str(worktree)], check=False)
+
+    @unittest.skipUnless(os.environ.get("AIDEVOPS_TEST_SYSTEMD") == "1", "explicit native systemd test")
+    def test_native_pulse_and_manual_share_one_lifecycle(self):
+        """GH#35295 bounded end-to-end: both real adapters, one registry contract."""
+        base = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
+        with tempfile.TemporaryDirectory(prefix="managed-launch-", dir=base) as temporary:
+            root = Path(temporary).resolve()
+            repo, db, home = root / "repo", root / "registry.db", root / "home"
+            home.mkdir()
+            env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root), WORKTREE_REGISTRY_DB=str(db),
+                       AIDEVOPS_WORKTREE_BASE_DIR=str(root), AIDEVOPS_WORKTREE_TRASH_ROOT=str(root / "recovery"),
+                       AIDEVOPS_CLEANUP_LOG=str(root / "cleanup.log"), AIDEVOPS_TEMP_DIR=str(root / "tmp"),
+                       AIDEVOPS_WORKER_BACKEND="systemd")
+            (root / "tmp").mkdir()
+            scripts, helper = str(HELPER.parent), [sys.executable, str(HELPER)]
+            worker = [sys.executable, "-c", "import time; time.sleep(2)"]
+
+            def run(argv, check=True, extra=None, timeout=60):
+                # Fixture-owned argv and disposable paths only; no shell interpolation.
+                result = subprocess.run(argv, env=dict(env, **(extra or {})), text=True, capture_output=True,
+                                        timeout=timeout, check=False)  # nosec B603
+                if check:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return result
+
+            def status(path):
+                return json.loads(run([*helper, "status", str(path)]).stdout)
+
+            def enroll(path, branch, issue, origin):
+                # Same enrollment worktree-helper-add.sh performs under AIDEVOPS_WORKTREE_MANAGER.
+                run(["git", "-C", str(repo), "worktree", "add", "-b", branch, str(path)])
+                keys = ("AIDEVOPS_LAUNCH_ENTRYPOINT", "AIDEVOPS_LAUNCH_TRIGGER", "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE")
+                run([*helper, "enroll", str(path)], extra=dict(zip(keys, origin), AIDEVOPS_LAUNCH_TASK=issue,
+                                                             AIDEVOPS_LAUNCH_REPO="owner/repo"))
+
+            def settle(path):
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    if run([*helper, "seal", str(path)], check=False).returncode == 0:
+                        return
+                    time.sleep(0.2)
+                self.fail(f"generation did not quiesce: {path}")
+
+            run(["git", "init", "-q", str(repo)])
+            run(["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "commit", "-q", "--allow-empty", "-m", "fixture"])
+            run(["bash", "-c", 'source "$1/shared-worktree-registry.sh" && _init_registry_db', "_", scripts])
+            pulse_wt, manual_wt, duplicate = root / "pulse-wt", root / "manual-wt", root / "duplicate-wt"
+            pulse_origin = ("pulse", "scheduled", "pulse-cycle")
+            enroll(pulse_wt, "feature/auto-1-gh101", "101", pulse_origin)
+            enroll(manual_wt, "feature/auto-2-gh102", "102", ("dispatch-single-issue", "manual", "interactive-terminal"))
+            pulse_select = ('SCRIPT_DIR="$1"; source "$1/pulse-dispatch-worker-systemd.sh"; LOGFILE="$3/pulse.log"; '
+                            '_dlw_select_issue_worktree "$2" 101 owner/repo; rc=$?; '
+                            'printf "%s|%s|%s|%s\\n" "$rc" "$_DLW_REUSE_PATH" "$_DLW_REUSE_GENERATION" "$_DLW_REUSE_REFUSAL"')
+            try:
+                # Branch names only nominate: a second enrolled generation for the
+                # same task is ambiguous and refused, never first-matched.
+                enroll(duplicate, "feature/auto-3-gh101", "101", pulse_origin)
+                selected = run(["bash", "-c", pulse_select, "_", scripts, str(repo), str(root)]).stdout.strip()
+                self.assertTrue(selected.startswith("2|||worktree_reuse_ambiguous"), selected)
+                run(["git", "-C", str(repo), "worktree", "remove", str(duplicate)])
+                self.assertEqual(run([*helper, "match", str(manual_wt), "101", "owner/repo"], check=False).returncode, 4)
+
+                # Pulse adapter: exact selection, then the shared reserve/bind launcher.
+                selected = run(["bash", "-c", pulse_select, "_", scripts, str(repo), str(root)]).stdout.strip()
+                rc, path, generation, _ = selected.split("|")
+                self.assertEqual((rc, path, generation), ("0", str(pulse_wt), status(pulse_wt)["generation"]))
+                run(["bash", "-c", 'SCRIPT_DIR="$1"; source "$1/pulse-dispatch-worker-systemd.sh"; LOGFILE="$3/pulse.log"; '
+                     '_DLW_LAUNCH_ENTRYPOINT=pulse _DLW_LAUNCH_TRIGGER=scheduled _DLW_LAUNCH_TRIGGER_EVIDENCE=pulse-cycle '
+                     '_DLW_LAUNCH_TASK=101 _DLW_LAUNCH_REPO=owner/repo _DLW_MANAGED_WORKTREE=1 '
+                     '_DLW_WORKTREE_PATH="$2" _DLW_WORKTREE_GENERATION="$4"; log="$3/pulse-worker.log"; shift 4; '
+                     '_dlw_launch_systemd_worker "$log" 101 "$@"',
+                     "_", scripts, str(pulse_wt), str(root), generation, *worker])
+
+                # Manual adapter: the real dispatch-single-issue functions. A
+                # replaced generation is rejected before any unit starts.
+                manual = ('source "$1/dispatch-single-issue-helper.sh"; _DSI_WORKTREE_PATH="$2"; '
+                          '_dsi_set_launch_provenance 102 owner/repo; '
+                          '_dsi_bind_worktree_lifetime 102 owner/repo resume || exit 7; '
+                          '[[ "$_DSI_MANAGED_WORKTREE" == 1 ]] || exit 8; '
+                          '[[ -z "$4" ]] || _DLW_WORKTREE_GENERATION="$4"; log="$3"; shift 4; '
+                          '_dsi_launch_managed_worker "$log" 102 "$_DSI_WORKTREE_PATH" "$@"')
+                replaced = run(["bash", "-c", manual, "_", scripts, str(manual_wt), str(root / "replaced.log"),
+                                "f" * 32, *worker], check=False)
+                self.assertNotEqual(replaced.returncode, 0)
+                self.assertEqual((status(manual_wt)["state"], status(manual_wt)["launches"]), ("created", []))
+                run(["bash", "-c", manual, "_", scripts, str(manual_wt), str(root / "manual.log"), "", *worker])
+                self.assertRegex((root / "manual.log").read_text(), r"Dispatched PID: [0-9]+ backend=systemd-managed")
+
+                for path, entrypoint in ((pulse_wt, "pulse"), (manual_wt, "dispatch-single-issue")):
+                    settle(path)
+                    run([*helper, "proof", str(path)])
+                    record = status(path)
+                    launch = record["launches"][-1]
+                    self.assertEqual((record["state"], record["created_by"]["entrypoint"], launch["attempt"],
+                                      launch["provenance"]["entrypoint"], launch["backend"]),
+                                     ("sealed", entrypoint, 1, entrypoint, MODULE.BACKEND))
+                    self.assertRegex(launch["invocation"], "^[0-9a-f]{32}$")
+                    self.assertIn("bound_at", launch)
+                    self.assertEqual(run([*helper, "match", str(path), record["task"]["issue"]], check=False).returncode, 5)
+                # Non-interactive manual runs are never recorded as human-triggered.
+                self.assertEqual(status(manual_wt)["launches"][-1]["provenance"]["trigger"], "unknown")
+                self.assertEqual(status(pulse_wt)["launches"][-1]["provenance"]["trigger"], "scheduled")
+
+                # The unchanged archive/cleanup pipeline decides for the manual generation.
+                guard = str(HELPER.parent / "audit-worktree-removal-helper.sh")
+                (manual_wt / "saved.txt").write_text("manual worker output\n")
+                run(["git", "-C", str(manual_wt), "add", "saved.txt"])
+                archived = run(["bash", "-c", 'set -e; source "$1"; archive_worktree_path_recoverably "$2" fixture fixture; '
+                                'archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"; '
+                                'remove_archived_worktree_path "$2" "$archive" fixture fixture fixture false true; '
+                                'printf "%s\\n" "$archive"', "_", guard, str(manual_wt)], timeout=180)
+                archive = Path(archived.stdout.strip().splitlines()[-1])
+                self.assertFalse(manual_wt.exists())
+                # The receipt outlives the source: the archive still verifies.
+                run(["bash", str(HELPER.parent / "worktree-archive-helper.sh"), "verify", str(archive)])
+                run([*helper, "proof", str(manual_wt), record["identity"]["source_inode"]])
+            finally:
+                for path in (pulse_wt, manual_wt, duplicate):
+                    result = run([*helper, "status", str(path)], check=False)
+                    for launch in json.loads(result.stdout).get("launches", []) if result.returncode == 0 else []:
+                        run(["systemctl", "--user", "stop", launch["unit"]], check=False)
+                        run(["systemctl", "--user", "reset-failed", launch["unit"]], check=False)
+                    run(["git", "-C", str(repo), "worktree", "remove", "--force", str(path)], check=False)
 
 
 class IdlePolicyTests(unittest.TestCase):

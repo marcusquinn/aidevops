@@ -74,6 +74,10 @@ export PULSE_STATS_FILE="${TMP}/pulse-stats.json"
 export WORKTREE_REGISTRY_DB="${TMP}/registry.db"
 python3 -c 'import sqlite3, sys; db = sqlite3.connect(sys.argv[1]); db.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, task_id TEXT, owner_session TEXT)"); db.close()' "$WORKTREE_REGISTRY_DB"
 cp "${SCRIPTS_DIR}/worktree-managed-lifetime.py" "${TMP}/worktree-managed-lifetime.py"
+# The registry CLI imports its sibling lifetime modules from its own directory.
+for _lifetime_module in idle launch proof owner; do
+	cp "${SCRIPTS_DIR}/worktree_lifetime_${_lifetime_module}.py" "${TMP}/worktree_lifetime_${_lifetime_module}.py"
+done
 
 # Seed pulse-stats.json with minimal valid structure
 printf '{"counters":{}}\n' >"$PULSE_STATS_FILE"
