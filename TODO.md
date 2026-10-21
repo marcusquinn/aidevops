@@ -1736,6 +1736,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18752 docs(security): PHP RCE CVE-2026-109618/109619 advisory and security-release playbook #documentation #security ref:GH#35322
 
+- [ ] t18753 fix(tests): split DB URL fixtures that block release secretlint preflight #bug ref:GH#35325
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
