@@ -259,7 +259,9 @@ _run_secretlint_on_changed_files() {
 		local sl_output=""
 		sl_output=$(
 			cd "$REPO_ROOT" || exit 1
-			"${SECRETLINT_CMD[@]}" "${changed_file_list[@]}" --format compact 2>&1
+			"${SECRETLINT_CMD[@]}" "${changed_file_list[@]}" \
+				--secretlintrc .secretlintrc.json --secretlintignore .secretlintignore \
+				--format compact 2>&1
 		) || sl_exit_code=$?
 
 		if [[ $sl_exit_code -eq 1 ]]; then
