@@ -138,7 +138,7 @@ class LifetimeTests(unittest.TestCase):
         manual = {"AIDEVOPS_LAUNCH_ENTRYPOINT": "dispatch-single-issue", "AIDEVOPS_LAUNCH_TRIGGER": "manual",
                   "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE": "interactive-terminal"}
         with patch.dict(os.environ, manual, clear=False):
-            self.assertEqual(MODULE.provenance(), {"entrypoint": "dispatch-single-issue", "trigger": "manual",
+            self.assertEqual(MODULE.launch_contract.provenance(), {"entrypoint": "dispatch-single-issue", "trigger": "manual",
                                                    "trigger_evidence": "interactive-terminal"})
         # A claimed trigger without its evidence class, or unknown vocabulary,
         # is never recorded as a human or scheduled launch.
@@ -146,13 +146,13 @@ class LifetimeTests(unittest.TestCase):
                        {"AIDEVOPS_LAUNCH_ENTRYPOINT": "operator-alex", "AIDEVOPS_LAUNCH_TRIGGER": "human",
                         "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE": "pulse-cycle"}):
             with self.subTest(values=values), patch.dict(os.environ, values, clear=False):
-                observed = MODULE.provenance()
+                observed = MODULE.launch_contract.provenance()
                 self.assertIn(observed["trigger"], ("unknown",))
-                self.assertIn(observed["entrypoint"], MODULE.ENTRYPOINTS + ("unknown",))
+                self.assertIn(observed["entrypoint"], MODULE.launch_contract.ENTRYPOINTS + ("unknown",))
         with patch.dict(os.environ, {"AIDEVOPS_LAUNCH_TASK": "35295", "AIDEVOPS_LAUNCH_REPO": "owner/repo"}):
-            self.assertEqual(MODULE.task_identity(), {"issue": "35295", "repo": "owner/repo"})
+            self.assertEqual(MODULE.launch_contract.task_identity(), {"issue": "35295", "repo": "owner/repo"})
         with patch.dict(os.environ, {"AIDEVOPS_LAUNCH_TASK": "35295;rm", "AIDEVOPS_LAUNCH_REPO": "owner/repo"}):
-            self.assertIsNone(MODULE.task_identity())
+            self.assertIsNone(MODULE.launch_contract.task_identity())
 
     def test_match_selects_exact_task_and_never_reopens_sealed(self):
         record = dict(self.record(), generation="g" * 32, task={"issue": "12", "repo": "owner/repo"})
@@ -328,13 +328,12 @@ class LifetimeTests(unittest.TestCase):
             def status(path):
                 return json.loads(run([*helper, "status", str(path)]).stdout)
 
-            def enroll(path, branch, issue, entrypoint, trigger, evidence):
+            def enroll(path, branch, issue, origin):
                 # Same enrollment worktree-helper-add.sh performs under AIDEVOPS_WORKTREE_MANAGER.
                 run(["git", "-C", str(repo), "worktree", "add", "-b", branch, str(path)])
-                run([*helper, "enroll", str(path)], extra={
-                    "AIDEVOPS_LAUNCH_ENTRYPOINT": entrypoint, "AIDEVOPS_LAUNCH_TRIGGER": trigger,
-                    "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE": evidence, "AIDEVOPS_LAUNCH_TASK": issue,
-                    "AIDEVOPS_LAUNCH_REPO": "owner/repo"})
+                keys = ("AIDEVOPS_LAUNCH_ENTRYPOINT", "AIDEVOPS_LAUNCH_TRIGGER", "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE")
+                run([*helper, "enroll", str(path)], extra=dict(zip(keys, origin), AIDEVOPS_LAUNCH_TASK=issue,
+                                                             AIDEVOPS_LAUNCH_REPO="owner/repo"))
 
             def settle(path):
                 deadline = time.monotonic() + 20
@@ -349,15 +348,16 @@ class LifetimeTests(unittest.TestCase):
                  "commit", "-q", "--allow-empty", "-m", "fixture"])
             run(["bash", "-c", 'source "$1/shared-worktree-registry.sh" && _init_registry_db', "_", scripts])
             pulse_wt, manual_wt, duplicate = root / "pulse-wt", root / "manual-wt", root / "duplicate-wt"
-            enroll(pulse_wt, "feature/auto-1-gh101", "101", "pulse", "scheduled", "pulse-cycle")
-            enroll(manual_wt, "feature/auto-2-gh102", "102", "dispatch-single-issue", "manual", "interactive-terminal")
+            pulse_origin = ("pulse", "scheduled", "pulse-cycle")
+            enroll(pulse_wt, "feature/auto-1-gh101", "101", pulse_origin)
+            enroll(manual_wt, "feature/auto-2-gh102", "102", ("dispatch-single-issue", "manual", "interactive-terminal"))
             pulse_select = ('SCRIPT_DIR="$1"; source "$1/pulse-dispatch-worker-systemd.sh"; LOGFILE="$3/pulse.log"; '
                             '_dlw_select_issue_worktree "$2" 101 owner/repo; rc=$?; '
                             'printf "%s|%s|%s|%s\\n" "$rc" "$_DLW_REUSE_PATH" "$_DLW_REUSE_GENERATION" "$_DLW_REUSE_REFUSAL"')
             try:
                 # Branch names only nominate: a second enrolled generation for the
                 # same task is ambiguous and refused, never first-matched.
-                enroll(duplicate, "feature/auto-3-gh101", "101", "pulse", "scheduled", "pulse-cycle")
+                enroll(duplicate, "feature/auto-3-gh101", "101", pulse_origin)
                 selected = run(["bash", "-c", pulse_select, "_", scripts, str(repo), str(root)]).stdout.strip()
                 self.assertTrue(selected.startswith("2|||worktree_reuse_ambiguous"), selected)
                 run(["git", "-C", str(repo), "worktree", "remove", str(duplicate)])

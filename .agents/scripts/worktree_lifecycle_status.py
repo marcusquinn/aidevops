@@ -20,6 +20,7 @@ import subprocess
 import time
 
 import worktree_lifetime_archive as archive
+import worktree_lifetime_launch as launch_contract
 
 
 def registry_path():
@@ -35,20 +36,6 @@ def presence(path):
         return "absent" if path.parent.is_dir() else "unavailable"
     except OSError:
         return "unavailable"
-
-
-def provenance(record):
-    """Allowlisted launcher classification (GH#35295); absent fields stay unrecorded."""
-    def classified(value):
-        value = value if isinstance(value, dict) else {}
-        return {key: value.get(key) if isinstance(value.get(key), str) else "unrecorded"
-                for key in ("entrypoint", "trigger", "trigger_evidence")}
-    launches = record.get("launches") if isinstance(record.get("launches"), list) else []
-    last = launches[-1] if launches and isinstance(launches[-1], dict) else {}
-    task = record.get("task") if isinstance(record.get("task"), dict) else {}
-    return {"generation": record.get("generation"), "created_by": classified(record.get("created_by")),
-            "task_issue": task.get("issue"), "attempts": len(launches),
-            "last_attempt_by": classified(last.get("provenance")) if last else None}
 
 
 def records(limit, selected_paths=None):
@@ -86,8 +73,8 @@ def records(limit, selected_paths=None):
                                  failure=operation.get("failure"),
                                  idle_observed_since=idle.get("since"),
                                  last_reconcile_at=last_attempt,
-                                  reconcile_error=operation.get("reconcile_error"),
-                                  lifecycle=provenance(record))
+                                 reconcile_error=operation.get("reconcile_error"),
+                                 lifecycle=launch_contract.summary(record))
                 except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
                     entry.update(state="unknown", error=type(error).__name__)
                 result["entries"].append(entry)
