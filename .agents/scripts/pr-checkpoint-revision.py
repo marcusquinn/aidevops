@@ -13,8 +13,8 @@ import hashlib
 import json
 import sys
 
-from pr_checkpoint_events import (release_for, released_attempt_token, successors_valid,
-                                  timestamp, trusted)
+from pr_checkpoint_events import (release_for, released_attempt_token, released_successor_history,
+                                  successors_valid, timestamp, trusted)
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -52,7 +52,9 @@ def candidate(data, comments, comment, now):
     if release is None:
         return None
     closing = (approval["runner"], released_attempt_token(comments, approval, release))
-    if not successors_valid({**data, "released_lease": closing}, comments, release["id"],
+    envelope = {**data, "released_lease": closing,
+                "released_successors": approval.get("released_successors", [])}
+    if not successors_valid(envelope, comments, release["id"],
                             comment["id"], now):
         return None
     owners = [a["login"] for a in data["issue"].get("assignees", [])]
@@ -89,11 +91,19 @@ def template(data):
     """
     approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
     # The approval comment does not exist yet; any later comment id qualifies.
-    if release_for(sorted_comments(data), approval, {"id": float("inf")}) is None:
+    comments = sorted_comments(data)
+    release = release_for(comments, approval, {"id": float("inf")})
+    if release is None:
         raise ValueError(
             f"release {approval['release_id']} is not a trusted CLAIM_RELEASED reason=blocked "
             f"by {approval['runner']} closing {approval['attempt']}; dispatch-approved would "
             "reject this approval, so none was generated")
+    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    history = released_successor_history(comments, release["id"], float("inf"), closing)
+    if history is None:
+        raise ValueError("intervening coordination is not fully released; no approval generated")
+    if history:
+        approval["released_successors"] = history
     return PREFIX + json.dumps(approval)
 
 
