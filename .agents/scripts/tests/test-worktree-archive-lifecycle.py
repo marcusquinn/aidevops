@@ -381,12 +381,19 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         (self.work / 'mixed.txt').write_bytes(b'partial resolution\n')
         (self.work / 'run.sh').chmod(0o755)
         (self.work / 'ordinary-untracked').write_bytes(b'ordinary\0bytes')
+        unusual = os.fsdecode(b'odd\tname\n\xff')
+        (self.work / unusual).write_bytes(b'path-safe staged bytes\0')
+        self.git(self.work, 'add', '--', unusual)
         baseline = {option: self.git(self.work, 'ls-files', option, '-z') for option in ('--stage', '--resolve-undo')}
         status = self.git(self.work, 'status', '--porcelain=v1', '-z')
         comparison = self.git(self.work, 'diff', '--binary', 'AUTO_MERGE')
         parent = self.git(self.work, 'rev-parse', 'HEAD').strip()
         other = self.git(self.work, 'rev-parse', 'MERGE_HEAD').strip()
+        objects = self.repo / '.git/objects'
+        base_before = sum(path.stat().st_size for path in objects.rglob('*') if path.is_file())
         archive = self.archive()
+        base_after = sum(path.stat().st_size for path in objects.rglob('*') if path.is_file())
+        self.assertEqual(base_before, base_after)
         self.helper('verify', archive)
         self.helper('source-matches', archive, self.work)
         manifest = json.loads((archive / 'manifest.json').read_text())
@@ -418,7 +425,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertEqual(self.git(target, 'rev-parse', 'HEAD^{tree}'), expected)
         self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), parent + b' ' + other)
         print('Interrupted merge storage:', json.dumps({'archive_bytes': sum(path.stat().st_size for path in archive.iterdir()),
-                                                       'incremental_shared_base_bytes': 0}))
+                                                       'incremental_shared_base_bytes': base_after - base_before}))
 
     def test_auto_merge_conflict_round_trip_without_source_objects(self):
         self.git(self.repo, "checkout", "-qb", "other")
