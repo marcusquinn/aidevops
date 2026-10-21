@@ -679,6 +679,32 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertEqual(self.git(target, "show", ":mixed.txt"), b"staged\n")
         self.assertFalse((target / "local.ignored").exists())
 
+    def test_merge_migration_retirement_requires_independent_restore(self):
+        self.start_conflicted_merge()
+        bucket = self.legacy_pulse_bucket()
+        migration = json.loads(self.migrate_bucket(bucket).stdout)
+        record = json.loads(Path(migration['receipt']).read_text())
+        self.assertEqual(record['source']['snapshot']['schema'], 4)
+        from worktree_recovery_migrate import verify_archive
+        lock_path = Path(migration['receipt']).parent / 'lock'
+        descriptor = os.open(lock_path, os.O_RDWR)
+        self.addCleanup(os.close, descriptor)
+        with patch.dict(os.environ, self.env, clear=True):
+            verify_archive(record, descriptor)
+        # A valid bundle alone cannot authorize retirement if actual restore
+        # reconstruction is unavailable or fails its comparison.
+        import worktree_recovery_migrate as migrate
+        original = migrate.archive_command
+        def fail_restore(lock, *arguments):
+            if arguments[0] == 'restore':
+                raise ValueError('injected merge reconstruction failure')
+            return original(lock, *arguments)
+        with patch.dict(os.environ, self.env, clear=True), patch.object(migrate, 'archive_command', side_effect=fail_restore):
+            with self.assertRaisesRegex(ValueError, 'reconstruction failure'):
+                verify_archive(record, descriptor)
+        self.assertTrue(bucket.is_dir())
+        self.assertFalse((Path(migration['receipt']).parent / 'retirement.json').exists())
+
     def test_legacy_pulse_preflight_retains_active_source(self):
         bucket = self.legacy_pulse_bucket()
         child = subprocess.Popen(  # nosec B603 -- current interpreter, constant sleep code, disposable fixture cwd
