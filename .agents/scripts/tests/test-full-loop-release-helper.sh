@@ -235,14 +235,18 @@ export RELEASE_FIXTURE_SCRIPT_DIR="$SCRIPT_DIR"
 cat >"$ROOT/process-fixture.sh" <<'STUB'
 if [[ "$0" == "$RELEASE_FIXTURE_SCRIPT_DIR/full-loop-release-helper.sh" ]]; then
 	source "$RELEASE_FIXTURE_SCRIPT_DIR/audit-worktree-removal-helper.sh"
-	capture_worktree_process_cwds() { return 0; }
+	capture_worktree_process_cwds() {
+		return 0
+	}
 fi
 STUB
 export BASH_ENV="$ROOT/process-fixture.sh"
 # Sourced helper cases below run in this test shell rather than a new Bash.
 # shellcheck source=../audit-worktree-removal-helper.sh
 source "$SCRIPT_DIR/audit-worktree-removal-helper.sh"
-capture_worktree_process_cwds() { return 0; }
+capture_worktree_process_cwds() {
+	return 0
+}
 
 (
 	cd "$ROOT/repo/linked-branch"

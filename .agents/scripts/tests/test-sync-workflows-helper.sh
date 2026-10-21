@@ -105,8 +105,22 @@ _setup_mock_gh() {
 	cat >"$_tmpdir/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GH_CALL_LOG:?}"
-if [[ "${1:-} ${2:-}" == "pr create" ]]; then
-	printf 'mock-pr\n'
+if [[ "${1:-}" == api && "${2:-}" == repos/* && "$*" == *'.private | tostring'* ]]; then
+	# Model a known public repository; keep the real privacy scanner enabled.
+	printf 'false\n'
+elif [[ "${1:-} ${2:-}" == "pr create" ]]; then
+	repo=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo) repo="$2"; shift ;;
+		origin:*) printf '%s\n' "$1" >"$GH_CALL_LOG.origin" ;;
+		esac
+		shift
+	done
+	[[ -n "$repo" && -s "$GH_CALL_LOG.origin" ]] || exit 1
+	printf 'https://github.com/%s/pull/1\n' "$repo"
+elif [[ "${1:-}" == api && "${2:-}" == /repos/*/issues/* ]]; then
+	cat "$GH_CALL_LOG.origin"
 fi
 exit 0
 EOF
@@ -247,10 +261,10 @@ _assert_contains "unknown option error message" "$OUT_9" "unknown option"
 # Strategy: create a local git repo with develop as default branch + a local bare
 # remote so push succeeds. Run --apply; verify the committed workflow has
 # `branches: [develop]` even though the canonical template ships `branches: [main]`.
-# Note: _sync_open_pr will fail (gh_create_pr unavailable) but _sync_write_commit_push
-# will have already committed the file to the feature branch before that.
+# GitHub is mocked; pushes go only to the disposable local bare remote.
 TMPDIR_10="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_10"
+_setup_mock_gh "$TMPDIR_10"
 # Local bare remote so `git push` succeeds.
 BARE_10="$TMPDIR_10/bare.git"
 git init --bare -q "$BARE_10" 2>/dev/null
@@ -277,7 +291,9 @@ git -C "$REPO_10" fetch -q origin 2>/dev/null
 git -C "$REPO_10" remote set-head origin develop 2>/dev/null
 _write_repos_json "$TMPDIR_10" "{\"initialized_repos\":[{\"path\":\"$REPO_10\",\"slug\":\"owner/repo-develop\"}]}"
 SYNC_BRANCH_10="chore/workflow-sync-$(date +%Y%m%d)"
-HOME="$TMPDIR_10" bash "$HELPER" --apply 2>/dev/null || true
+HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	bash "$HELPER" --apply 2>/dev/null
+_assert_exit "develop-branch apply succeeds with mocked GitHub" 0 "$?"
 # Verify the committed file on the feature branch has branches: [develop].
 WF_BRANCHES_10=$(git -C "$REPO_10" show "${SYNC_BRANCH_10}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^\s+branches:" | head -1 || true)
@@ -412,6 +428,7 @@ rm -rf "$TMPDIR_POLICY"
 # ─── Test 13: GH#24520 — apply renders configured reusable repo/ref ─────────
 TMPDIR_13="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_13"
+_setup_mock_gh "$TMPDIR_13"
 MIRROR_13="$TMPDIR_13/org-dotgithub"
 mkdir -p "$MIRROR_13/.github/workflows"
 git -C "$MIRROR_13" init -q 2>/dev/null
@@ -421,6 +438,8 @@ git -C "$MIRROR_13" config commit.gpgsign false
 git -C "$MIRROR_13" symbolic-ref HEAD refs/heads/main 2>/dev/null
 cp "$REPO_ROOT/.github/workflows/issue-sync-reusable.yml" \
 	"$MIRROR_13/.github/workflows/issue-sync-reusable.yml"
+cp "$REPO_ROOT/.github/workflows/issue-sync-artifact-maintenance-reusable.yml" \
+	"$MIRROR_13/.github/workflows/issue-sync-artifact-maintenance-reusable.yml"
 git -C "$MIRROR_13" add -A >/dev/null
 git -C "$MIRROR_13" commit -q -m "current mirror contract"
 MIRROR_REF_13=$(git -C "$MIRROR_13" rev-parse HEAD)
@@ -442,7 +461,9 @@ git -C "$REPO_13" fetch -q origin 2>/dev/null
 git -C "$REPO_13" remote set-head origin main 2>/dev/null
 _write_repos_json "$TMPDIR_13" "{\"workflow_reusable_repo\":\"ORG/.github\",\"workflow_reusable_ref\":\"$MIRROR_REF_13\",\"initialized_repos\":[{\"path\":\"$REPO_13\",\"slug\":\"owner/repo-org-target\",\"runner\":\"ubuntu-latest-arm64\"},{\"path\":\"$MIRROR_13\",\"slug\":\"ORG/.github\"}]}"
 SYNC_BRANCH_13="chore/workflow-sync-$(date +%Y%m%d)"
-HOME="$TMPDIR_13" bash "$HELPER" --apply 2>/dev/null || true
+HOME="$TMPDIR_13" PATH="$TMPDIR_13/bin:$PATH" GH_CALL_LOG="$TMPDIR_13/gh-calls.log" \
+	bash "$HELPER" --apply 2>/dev/null
+_assert_exit "configured mirror apply succeeds with mocked GitHub" 0 "$?"
 WF_USES_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^[[:space:]]+uses:" | head -n 1 || true)
 WF_RUNNER_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \

@@ -49,10 +49,12 @@ dropping its reservation. Registration failure preserves the new tree.
 Recreating a removed managed worktree at the same path starts a fresh generation,
 not a reuse of its completion receipt. The ownership transaction preserves the
 closed prior record in `worktree_lifetime_history` before replacing it. Rotation
-requires valid completion evidence and distinct source and Git administration
-identities; incomplete evidence, a different lifetime manager or ambiguous inode
-reuse fails closed. Failed registration rolls back the history/active-record
-transition together. Existing trees cannot use this creation-only transition.
+requires valid completion evidence and a matching creation token durably recorded
+**before** Git runs. That fence invalidates the old receipt even if the filesystem
+reuses both inode numbers or the creator crashes before registration. Failed
+registration rolls back the history/active-record transition but preserves the
+pre-creation fence. Incomplete evidence, a different lifetime manager or a stale
+token fails closed. Existing trees cannot use this creation-only transition.
 
 Registration does not itself start a supervisor. Inside a managed run, generic
 producers bind to the invocation leader; outside one, unavailable Linux

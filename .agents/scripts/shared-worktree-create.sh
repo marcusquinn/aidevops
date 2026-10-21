@@ -16,6 +16,7 @@ worktree_create_registered() {
 	local ref="$3"
 	shift 3
 	local branch=""
+	local creation_token=""
 	local owner_pid="${AIDEVOPS_WORKTREE_CREATE_OWNER_PID:-}"
 	local registry_helper="${BASH_SOURCE[0]%/*}/shared-worktree-registry.sh"
 	if [[ -e "$path" || -L "$path" ]]; then
@@ -23,6 +24,8 @@ worktree_create_registered() {
 	fi
 	# shellcheck source=shared-worktree-registry.sh
 	source "$registry_helper" || return 1
+	creation_token=$(python3 "${registry_helper%.sh}-owner.py" begin-create \
+		"$WORKTREE_REGISTRY_DB" "$path") || return 1
 	git -C "$repo" worktree add "$@" -- "$path" "$ref" || return 1
 	branch=$(git -C "$path" symbolic-ref --quiet --short HEAD) || branch="HEAD"
 	# Generic producers inside a managed run belong to its invocation leader,
@@ -31,7 +34,7 @@ worktree_create_registered() {
 	if [[ -z "$owner_pid" && -n "${AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT:-}" ]]; then
 		owner_pid="${SYSTEMD_EXEC_PID:-$$}"
 	fi
-	if ! AIDEVOPS_WORKTREE_CREATING=1 register_worktree "$path" "$branch" \
+	if ! AIDEVOPS_WORKTREE_CREATING=1 AIDEVOPS_WORKTREE_CREATION_TOKEN="$creation_token" register_worktree "$path" "$branch" \
 		--task "${AIDEVOPS_WORKTREE_CREATE_TASK:-}" \
 		--owner-pid "$owner_pid" \
 		--session "${AIDEVOPS_WORKTREE_CREATE_SESSION:-}"; then

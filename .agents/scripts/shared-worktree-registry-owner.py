@@ -116,16 +116,24 @@ def transfer(connection: sqlite3.Connection, args: list[str]) -> bool:
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "release-completed":
         return release_completed(argv[1:])
-    if not argv or argv[0] not in ("register", "claim", "transfer", "adopt"):
+    if not argv or argv[0] not in ("register", "claim", "transfer", "adopt", "begin-create"):
         return 1
     operation, args = argv[0], argv[1:]
-    if len(args) != (15 if operation in ("transfer", "adopt") else 10):
+    expected = 2 if operation == "begin-create" else 15 if operation in ("transfer", "adopt") else 10
+    if len(args) != expected:
         return 1
+    if operation == "begin-create" and not os.path.exists(args[0]):
+        return 0  # No registry means there is no old receipt to fence.
     output = ""
     try:
         with closing(sqlite3.connect(args[0], isolation_level=None)) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                if operation == "begin-create":
+                    token = owner_lifetime.begin_creation(connection, str(Path(args[1]).resolve()))
+                    connection.execute("COMMIT")
+                    print(token)
+                    return 0
                 creating = (operation == "register" and os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and
                             os.environ.get("AIDEVOPS_WORKTREE_MANAGER") != "pulse-cgroup-v1")
                 if creating:

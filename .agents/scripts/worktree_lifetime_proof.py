@@ -13,6 +13,7 @@ def require(condition, reason):
 
 
 def proof(record, source_inode):
+    require(not record.get("creation_pending"), "replacement creation has no completed admission")
     require(record["state"] == "sealed" and record["identity"]["source_inode"] == source_inode,
             "no matching sealed generation")
     require(record.get("sealed_at", 0) > 0, "missing sealing receipt")

@@ -149,8 +149,27 @@ def require_admission_observed(record):
             "ownership changed without process admission evidence")
 
 
+def begin_creation(connection, path):
+    """Fence old receipts durably BEFORE Git can recreate or reuse any inode."""
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_managed_lifetimes'").fetchone():
+        return ""
+    row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
+    if row is None:
+        return ""
+    record = json.loads(row[0])
+    require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
+    record.pop("creation_pending", None)
+    from worktree_lifetime_proof import proof
+    proof(record, record["identity"]["source_inode"])
+    token = uuid.uuid4().hex
+    record["creation_pending"] = token
+    connection.execute("UPDATE worktree_managed_lifetimes SET record=? WHERE path=?",
+                       (json.dumps(record), path))
+    return token
+
+
 def prepare_creation(connection, path):
-    """Rotate a closed, physically replaced generation in the ownership transaction."""
+    """Consume a pre-Git fence atomically with registration; never infer freshness from inode numbers."""
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_managed_lifetimes'").fetchone():
         return
     row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
@@ -158,21 +177,18 @@ def prepare_creation(connection, path):
         return
     record = json.loads(row[0])
     require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
-    current = identity(Path(path))
-    previous = record["identity"]
-    if current == previous:
-        return  # Ordinary admission/sealed-generation guards still apply.
+    token = record.pop("creation_pending", None)
+    require(bool(token) and token == os.environ.get("AIDEVOPS_WORKTREE_CREATION_TOKEN"),
+            "replacement has no matching pre-creation fence")
     from worktree_lifetime_proof import proof
-    proof(record, previous["source_inode"])
-    require(current["source_inode"] != previous["source_inode"] and
-            current["admin_inode"] != previous["admin_inode"], "ambiguous replacement identity")
+    proof(record, record["identity"]["source_inode"])
     require(re.fullmatch(r"[0-9a-f]{32}", record.get("generation", "")) is not None,
             "missing generation identity")
     connection.execute("""CREATE TABLE IF NOT EXISTS worktree_lifetime_history (
         path TEXT NOT NULL, generation TEXT NOT NULL, record TEXT NOT NULL,
         replaced_at REAL NOT NULL, PRIMARY KEY(path, generation))""")
     connection.execute("INSERT INTO worktree_lifetime_history VALUES (?, ?, ?, ?)",
-                       (path, record["generation"], row[0], time.time()))
+                       (path, record["generation"], json.dumps(record), time.time()))
     connection.execute("DELETE FROM worktree_managed_lifetimes WHERE path=?", (path,))
 
 
@@ -205,6 +221,15 @@ def initialize_admission(connection):
                     COALESCE(json_extract(record, '$.admission_epoch'), 0) + 1)
                 WHERE path=NEW.worktree_path AND json_extract(record, '$.manager')='owner-cgroup';
             END""")
+    connection.execute("""CREATE TRIGGER IF NOT EXISTS owner_admission_path_update
+        AFTER UPDATE OF worktree_path ON worktree_owners
+        WHEN OLD.worktree_path IS NOT NEW.worktree_path
+        BEGIN UPDATE worktree_managed_lifetimes
+            SET record=json_set(record, '$.admission_epoch',
+                COALESCE(json_extract(record, '$.admission_epoch'), 0) + 1)
+            WHERE path IN (OLD.worktree_path, NEW.worktree_path)
+                AND json_extract(record, '$.manager')='owner-cgroup';
+        END""")
 
 
 def register(connection, path, pid, session, creating=False):

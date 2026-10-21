@@ -275,8 +275,9 @@ class OwnerEvidenceTests(unittest.TestCase):
                     count = db.execute("SELECT count(*) FROM worktree_owners").fetchone()[0]
                 self.assertEqual(count, 0 if case == "complete" else 1)
 
-    def test_rotation_requires_closed_distinct_generation_and_rolls_back(self):
-        cases = ("closed", "running", "missing-receipt", "unobserved", "same-source", "same-admin", "foreign")
+    def test_rotation_fences_inode_reuse_and_rollback_preserves_fence(self):
+        cases = ("closed", "running", "missing-receipt", "unobserved", "same-source", "same-admin",
+                 "same-identities", "foreign", "stale-token")
         for case in cases:
             with self.subTest(case=case), closing(self.database()) as db:
                 previous = {"path": "/fixture", "source_inode": "1:2", "admin_inode": "1:3"}
@@ -299,6 +300,8 @@ class OwnerEvidenceTests(unittest.TestCase):
                     current["source_inode"] = previous["source_inode"]
                 elif case == "same-admin":
                     current["admin_inode"] = previous["admin_inode"]
+                elif case == "same-identities":
+                    current = dict(previous)
                 elif case == "foreign":
                     record["manager"] = "pulse-cgroup-v1"
                 encoded = json.dumps(record)
@@ -306,17 +309,35 @@ class OwnerEvidenceTests(unittest.TestCase):
                 db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?,?)", ("/fixture", encoded))
                 db.commit()
                 db.execute("BEGIN IMMEDIATE")
-                with patch.object(owner, "identity", return_value=current):
-                    if case == "closed":
+                if case in ("running", "missing-receipt", "unobserved", "foreign"):
+                    with self.assertRaises(ValueError):
+                        owner.begin_creation(db, "/fixture")
+                    db.rollback()
+                    self.assertEqual(db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0], encoded)
+                    continue
+                token = owner.begin_creation(db, "/fixture")
+                db.commit()  # This durable fence precedes the native Git operation.
+                pending = db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0]
+                with self.assertRaises(ValueError):
+                    proof.proof(json.loads(pending), previous["source_inode"])
+                db.execute("BEGIN IMMEDIATE")
+                with patch.object(owner, "identity", return_value=current), \
+                        patch.object(owner, "observe", return_value={"evidence": "unavailable"}), \
+                        patch.dict(os.environ, AIDEVOPS_WORKTREE_CREATION_TOKEN="stale" if case == "stale-token" else token):
+                    if case != "stale-token":
                         owner.prepare_creation(db, "/fixture")
                         self.assertEqual(db.execute("SELECT record FROM worktree_lifetime_history").fetchone()[0], encoded)
-                        self.assertEqual(db.execute("SELECT count(*) FROM worktree_managed_lifetimes").fetchone()[0], 0)
+                        owner.register(db, "/fixture", 1, "replacement", creating=True)
+                        replacement = json.loads(db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0])
+                        self.assertNotEqual(replacement["generation"], record["generation"])
+                        with self.assertRaises(ValueError):
+                            proof.proof(replacement, current["source_inode"])
                     else:
                         with self.assertRaises(ValueError):
                             owner.prepare_creation(db, "/fixture")
-                # A failed replacement registration rolls the entire transaction back.
+                # Failure after Git creation must NOT revive the old sealed proof.
                 db.rollback()
-                self.assertEqual(db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0], encoded)
+                self.assertEqual(db.execute("SELECT record FROM worktree_managed_lifetimes").fetchone()[0], pending)
                 self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_lifetime_history'").fetchone())
 
     @staticmethod
@@ -402,6 +423,19 @@ class OwnerEvidenceTests(unittest.TestCase):
             db.execute("UPDATE worktree_owners SET owner_pid=2")
             with self.assertRaises(ValueError):
                 owner.check_admission(db, "/fixture")
+
+    def test_raw_owner_path_move_invalidates_both_generations(self):
+        with closing(self.database()) as db, \
+                patch.object(owner, "observe", return_value={"owner_pid": 1}), \
+                patch.object(owner, "identity", return_value={"source_inode": "1:2"}):
+            db.execute("INSERT INTO worktree_owners VALUES ('/source',1,'session','start','task','')")
+            for path in ("/source", "/target"):
+                owner.register(db, path, 1, "session", creating=True)
+                owner.check_admission(db, path)
+            db.execute("UPDATE worktree_owners SET worktree_path='/target' WHERE worktree_path='/source'")
+            for path in ("/source", "/target"):
+                with self.assertRaises(ValueError):
+                    owner.check_admission(db, path)
 
     def test_closed_managed_receipt_remains_valid_after_unit_collection(self):
         snapshot = {"InvocationID": "invocation", "MainPID": "0", "Job": "", "ExitType": "cgroup",
@@ -527,6 +561,13 @@ class NativeOwnerCycle(unittest.TestCase):
                 self.assertEqual(restored_record["manager"], owner.MANAGER)
                 self.assertNotEqual(run(*helper, "proof", restored, check=False).returncode, 0)
                 previous = json.loads(run(*helper, "status", work).stdout)
+                failed = run("bash", "-c", 'source "$1/shared-worktree-create.sh"; '
+                             'worktree_create_registered "$2" "$3" missing-fixture-ref --detach',
+                             "failed-recreate", SCRIPTS, repo, work, check=False)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertFalse(work.exists())
+                self.assertNotEqual(run(*helper, "proof", work, previous["identity"]["source_inode"],
+                                        check=False).returncode, 0)
                 run("bash", "-c", 'source "$1/shared-worktree-create.sh"; '
                     'worktree_create_registered "$2" "$3" HEAD -b second',
                     "recreate", SCRIPTS, repo, work)
