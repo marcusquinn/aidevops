@@ -1728,6 +1728,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18743 aidevops cleanup: on-demand storage cleanup command and r922 storage hygiene routine #auto-dispatch #feat #interactive ref:GH#35245 assignee:marcusquinn started:2026-10-20 -> [todo/tasks/t18743-brief.md]
 
+- [ ] t18748 Parent: aidevops security tls-trust — data-driven client trust-store checks (local + fleet) #parent-task #security ref:GH#35277 -> [todo/tasks/t18748-brief.md]
+  - [ ] t18749 tls-trust phase 1: local client probe helper, canary config, aidevops security tls-trust #auto-dispatch #security ref:GH#35278 -> [todo/tasks/t18749-brief.md]
+  - [ ] t18750 tls-trust phase 2: read-only fleet probes (hosts, containers, WordPress, shared-hosting PHP) #auto-dispatch #security ref:GH#35279 blocked-by:t18749 -> [todo/tasks/t18750-brief.md]
+  - [ ] t18751 tls-trust phase 3: advisory to check linkage with verified auto-dismiss #auto-dispatch #security ref:GH#35280 blocked-by:t18749 -> [todo/tasks/t18751-brief.md]
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
