@@ -1,0 +1,32 @@
+[SECURITY ADVISORY] eMudhra intermediate CA keys compromised — update CA trust stores (curl, Node, Python, PHP/WordPress, Docker, servers)
+
+  Disclosed: 2026-10-20. Private keys for eight eMudhra intermediate CAs were
+  generated so they can be recovered from the certificates. Anyone can mint
+  certificates for any hostname that clients without Certificate Transparency
+  enforcement (most CLIs, runtimes and servers) still trust. Browsers already
+  block them.
+
+  Test a client (a certificate error is the SAFE result):
+
+    curl https://dv-g3b-emudhra.we-have-a-problem.com/
+    node -e "require('https').get('https://dv-g3b-emudhra.we-have-a-problem.com/',()=>console.log('VULNERABLE')).on('error',()=>console.log('ok'))"
+
+  Remediate:
+
+    macOS:   brew upgrade ca-certificates node curl python  (Homebrew Node uses
+             the OpenSSL store); /usr/bin/curl reads /etc/ssl/cert.pem, which
+             Apple has not updated: see the workaround on the incident page
+    Linux:   apt-get install --only-upgrade ca-certificates (Ubuntu 20260816*,
+             Debian 20250419~deb12u2 / +deb13u1), Alpine 20261020-r0
+    Docker:  rebuild images so they pick up the patched ca-certificates; official
+             Node binaries ship a bundled store (fix pending upstream)
+    Python:  certifi >= 2026.10.19, pip >= 26.2.2, uv >= 0.13.4
+    Go:      1.27.3 / 1.26.10   Electron: 44.9.1 / 43.8.1 / 42.11.16
+    WordPress: core bundles wp-includes/certificates/ca-bundle.crt; update core
+             when a patched release ships
+
+  Patched-version list: https://emudhra.we-have-a-problem.com
+
+  Dismiss after patching and re-testing:
+
+    aidevops security dismiss emudhra-ca-compromise-2026-10
