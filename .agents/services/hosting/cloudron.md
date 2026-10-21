@@ -244,6 +244,18 @@ docker exec -it <app_container> /bin/bash
 
 **App-specific**: Vaultwarden → `tools/credentials/vaultwarden.md` | WordPress → `tools/wordpress/`
 
+### PHP and runtime security releases
+
+Observed during the 2026-10-21 PHP RCE release (advisory `php-rce-2026-10`); the general playbook is `tools/runtime/php-server-admin.md` "Security Releases". Follow the pinned forum thread for that incident: package rollout takes days and staff post the order.
+
+- **Find PHP apps by probing**, not by app name: forum lists were incomplete and missed LAMP and custom packages. On the host, `docker exec <container> php -r 'echo PHP_VERSION;'` for each running container. Official PHP apps ran Apache mod_php, the highest-risk SAPI in that release. A PHP binary is not proof PHP serves requests: one non-PHP app's old image shipped PHP 7.4 and Apache config with neither running, so confirm a running `apache2` or `php-fpm` process before counting an app as exposed.
+- **Fixes arrive as package updates.** The update's changelog names the patched base image and CVE (for example `Update php-base | final to 8.5-20261021` and `security: fix RCEs CVE-…`). Read it from `cloudron inspect` → `apps[].updateInfo.manifest.changelog` before applying. Platform (box) releases are separate and may follow later.
+- **Apply from the CLI** with `cloudron update --app <fqdn> --appstore-id <manifest-id>@<version>`. Without `--appstore-id`, the CLI tries to build the current directory and fails with `No CloudronManifest.json found`. Cloudron backs the app up first unless `--no-backup` is given.
+- **Stopped apps cannot be updated.** Start one (access-restricted if possible) immediately before updating it, or leave it stopped until it is patched.
+- **Interim mitigation:** add the advisory's settings to `/app/data/php.ini` for packages that read it, between marked BEGIN/END comments with a backup, then restart the app so every worker reloads. If `cloudron restart --app` keeps waiting after the container restarted, use the global `--no-wait` flag and confirm the container start time with `docker ps`. Verify the effective value from the web.
+- **Contain unpatchable apps:** staff confirmed that restricting an app to the Cloudron VPN is a valid interim measure; otherwise stop it. EOL runtimes (PHP 7.x, 8.0, 8.1) get no upstream fix.
+- **Host checks in the same incident:** confirm Ubuntu's `ca-certificates` update arrived (`dpkg-query -W ca-certificates` and `/var/log/apt/history.log`); see `tools/security/tls-trust.md`.
+
 ## Usage Examples
 
 ```bash

@@ -1,0 +1,35 @@
+[SECURITY ADVISORY] PHP unauthenticated RCE (CVE-2026-109618/109619) — update PHP on every web host and container
+
+  Released: 2026-10-21. PHP 8.5.12, 8.4.27, 8.3.36 and 8.2.35 fix two
+  critical (CVSS 4.0 9.2) bugs reachable by an unauthenticated request before
+  any application code runs. Affects every web SAPI: PHP-FPM, Apache mod_php
+  (highest risk), php-cgi, FrankenPHP and LiteSpeed. PHP 8.1 and older get no
+  upstream release; use a vendor backport or upgrade.
+
+  Check what serves each site (web PHP, not only the CLI):
+
+    php -r 'echo PHP_VERSION, PHP_EOL;'      # each binary/container in use
+    docker exec <container> php -r 'echo PHP_VERSION, PHP_EOL;'
+
+  Update: distro/vendor packages, rebuilt container images, app-platform
+  package updates (Cloudron), or the hosting provider's PHP builds (shared
+  hosting is host-controlled: ask support). Restart every PHP worker after.
+
+  Until patched (reduces exposure, not a fix; set where it applies before
+  request parsing: php.ini, FPM pool or server config, never ini_set() or
+  FPM .user.ini), then restart every worker:
+
+    session.upload_progress.enabled = 0     # CVE-2026-109619 session path
+    fatal_error_backtraces = 0              # PHP 8.5 only
+    post_max_size = 8M (32M if uploads are needed; keep upload_max_filesize
+                    below it)               # CVE-2026-109618 OOM path
+
+  Stop or access-restrict (VPN, IP allowlist) PHP apps that cannot be
+  patched or mitigated, and EOL PHP 7.x/8.0/8.1 apps.
+
+  Playbook: tools/runtime/php-server-admin.md "Security Releases"
+  Advisory: https://www.php.net/archive/2026.php#2026-10-20-1
+
+  Dismiss after every PHP host is patched:
+
+    aidevops security dismiss php-rce-2026-10

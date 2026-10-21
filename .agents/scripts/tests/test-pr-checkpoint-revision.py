@@ -181,9 +181,13 @@ class RevisionTests(unittest.TestCase):
             self.assertNotEqual(run(changed), 0)
 
     def test_claim_handoff_prelaunch_ready_and_rollback(self):
-        for unassigned in (False, True):
-            with self.subTest(unassigned=unassigned), tempfile.TemporaryDirectory() as root:
-                data = fixture()
+        for unassigned, history in ((False, False), (True, False), (True, True)):
+            with self.subTest(unassigned=unassigned, history=history), tempfile.TemporaryDirectory() as root:
+                data = released_successor_fixture() if history else fixture()
+                if history:
+                    line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+                    data["comments"].append(comment(20, line, "maintainer", "OWNER"))
+                approval_id = data["comments"][-1]["id"]
                 # GH#31305 producer -> coordinator -> existing fenced worker
                 # continuation. The request itself is never checkpoint approval.
                 data["issue"]["title"] = "Preserve checkpoint integration"
@@ -212,7 +216,7 @@ class RevisionTests(unittest.TestCase):
                     observed["issue"] = data["issue"]
                     resumed = recovery.observe(db, produced["id"], observed)
                     self.assertEqual((resumed["pr"], resumed["branch"]), (42, "worker/123"))
-                    self.assertEqual(revision.validate(data)["approval_id"], 3)
+                    self.assertEqual(revision.validate(data)["approval_id"], approval_id)
                 if unassigned:
                     data["issue"]["assignees"] = []
                     data["issue"]["labels"][1] = {"name": "status:available"}
@@ -225,6 +229,7 @@ class RevisionTests(unittest.TestCase):
                 gh.chmod(0o700)
                 env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
                        "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")), "CHECKPOINT_TEST_STATE": str(state),
+                       "CHECKPOINT_TEST_APPROVAL": str(approval_id),
                        "AIDEVOPS_TEST_MODE": "1", "AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS": "1",
                        "DISPATCH_CLAIM_WINDOW": "0", "AIDEVOPS_DEVICE_ID": "test-device"}
                 command = r'''
@@ -237,7 +242,7 @@ PCC_LINKED_ISSUE=123
 PCC_EXPECTED_ASSIGNEE=worker
 PCC_CHECKPOINT_ASSIGNEE=worker
 PCC_AUTHENTICATED_LOGIN=next-worker
-PCC_REVISION_APPROVAL=3
+PCC_REVISION_APPROVAL="$CHECKPOINT_TEST_APPROVAL"
 PCC_HEAD_OID=1111111111111111111111111111111111111111
 PCC_HEAD_REF=worker/123
 _pcc_claim_revised_checkpoint owner/repo 42 "$PCC_HEAD_REF" "$PCC_HEAD_OID"
@@ -258,6 +263,122 @@ if "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEA
                 restored = json.loads(state.read_text())["issue"]
                 self.assertEqual(restored["assignees"], data["issue"]["assignees"])
                 self.assertEqual(restored["labels"], data["issue"]["labels"])
+
+
+def released_successor_fixture():
+    """Two historical attempts released before a new exact-revision approval."""
+    data = fixture()
+    data["comments"] = data["comments"][:2]
+    for first, actor in ((4, "worker"), (10, "other-worker")):
+        token = f"closed-{first}"
+        session = f"issue-{first}"
+        attempt = f"attempt:closed-{first}"
+        lease = f"lease_token={token} session={session} attempt_id={attempt}"
+        data["comments"].extend([
+            comment(first, f"DISPATCH_CLAIM nonce={token} lease_token={token} "
+                           f"runner={actor} session={session} phase=prelaunch", actor),
+            comment(first + 1, f"DISPATCH_LEASE phase=prelaunch {lease}", actor),
+            comment(first + 2, f"DISPATCH_LEASE phase=ready {lease}", actor),
+            # Legacy releases omit the token; the unique ready attempt binds it.
+            comment(first + 3, f"CLAIM_RELEASED reason=blocked runner={actor}", actor),
+            comment(first + 4, f"DISPATCH_LEASE phase=terminal {lease} expires_at=0", actor),
+        ])
+    return data
+
+
+class ReleasedSuccessorTests(unittest.TestCase):
+    def approved(self, data):
+        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+        return {**data, "comments": data["comments"] + [
+            comment(20, line, "maintainer", "OWNER")]}
+
+    def test_template_binds_both_fully_closed_attempts(self):
+        data = self.approved(released_successor_fixture())
+        result = revision.validate(data)
+        self.assertEqual(result["approval_id"], 20)
+        history = result["released_successors"]
+        self.assertEqual([item["release_id"] for item in history], [7, 13])
+        self.assertEqual([item["runner"] for item in history], ["worker", "other-worker"])
+        self.assertNotIn("lease_token", json.dumps(history))
+
+    def test_old_approval_cannot_implicitly_ignore_history(self):
+        data = released_successor_fixture()
+        old = copy.deepcopy(fixture()["comments"][-1])
+        old["id"] = 20
+        with self.assertRaises(ValueError):
+            revision.validate({**data, "comments": data["comments"] + [old]})
+
+    def test_open_or_ambiguous_attempts_cannot_generate_approval(self):
+        mutations = {
+            "no_release": lambda d: d["comments"].pop(-2),
+            "no_terminal": lambda d: d["comments"].pop(-1),
+            "no_ready": lambda d: d["comments"].pop(-3),
+            "wrong_actor": lambda d: d["comments"][-1]["user"].update(login="stranger"),
+            "wrong_token": lambda d: self.change_terminal(d, "closed-10"),
+            "wrong_session": lambda d: self.change_terminal(d, "issue-10"),
+            "wrong_attempt": lambda d: self.change_terminal(d, "attempt:closed-10"),
+            "edited": lambda d: d["comments"][-2].update(updated_at="2026-09-05T12:01:00Z"),
+            "interactive": lambda d: d["comments"].append(
+                comment(16, "Interactive session claimed", "maintainer")),
+            "overlap": lambda d: d["comments"].insert(3, comment(4.5,
+                "DISPATCH_CLAIM nonce=overlap lease_token=overlap runner=other-worker session=other",
+                "other-worker")),
+        }
+        for case, mutate in mutations.items():
+            data = released_successor_fixture()
+            mutate(data)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                self.approved(data)
+
+    def change_terminal(self, data, field):
+        data["comments"][-1]["body"] = data["comments"][-1]["body"].replace(field, "wrong")
+
+    def test_bound_history_changes_and_new_events_still_block(self):
+        for case in ("edited_release", "remove_history", "alter_history", "post_approval_claim",
+                     "approval_coordination"):
+            data = self.approved(released_successor_fixture())
+            if case == "edited_release":
+                data["comments"][-3]["updated_at"] = "2026-09-05T12:01:00Z"
+            elif case == "approval_coordination":
+                data["comments"][-1]["body"] += "\nInteractive session claimed"
+            elif case == "post_approval_claim":
+                data["comments"].append(comment(21, "DISPATCH_CLAIM nonce=late "
+                    "lease_token=late runner=worker session=late", "worker"))
+            else:
+                approval = json.loads(data["comments"][-1]["body"][len(revision.PREFIX):])
+                if case == "remove_history":
+                    del approval["released_successors"]
+                else:
+                    approval["released_successors"][0]["terminal_id"] = 999
+                data["comments"][-1]["body"] = revision.PREFIX + json.dumps(approval)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                revision.validate(data)
+
+    def test_approved_history_retains_live_claim_fencing(self):
+        data = self.approved(released_successor_fixture())
+        data.update(lease="current", session="checkpoint-42", assignee="next-worker", claiming=True)
+        data["comments"].append(comment(21, "DISPATCH_CLAIM nonce=current lease_token=current "
+            "runner=next-worker checkpoint_approval=20 session=checkpoint-42 expires_at=1788620400",
+            "next-worker"))
+        self.assertEqual(revision.validate(data)["approval_id"], 20)
+        with self.assertRaises(ValueError):
+            revision.validate({**data, "lease": "wrong"})
+
+    def test_immediate_release_without_a_lease_is_controlled_rejection(self):
+        data = released_successor_fixture()
+        data["comments"] = data["comments"][:3] + [data["comments"][5]]
+        with self.assertRaises(ValueError):
+            self.approved(data)
+
+    def test_live_claim_cannot_reuse_a_historical_token(self):
+        for token in ("closed-4", "closed-10"):
+            data = self.approved(released_successor_fixture())
+            data.update(lease=token, session="checkpoint-42", assignee="next-worker", claiming=True)
+            data["comments"].append(comment(21, f"DISPATCH_CLAIM nonce={token} lease_token={token} "
+                "runner=next-worker checkpoint_approval=20 session=checkpoint-42 expires_at=1788620400",
+                "next-worker"))
+            with self.subTest(token=token), self.assertRaises(ValueError):
+                revision.validate(data)
 
 
 class ProgressTests(unittest.TestCase):

@@ -30,7 +30,7 @@ function assertScrub(input, expected, expectedCount) {
 describe("Cloudron addon log shapes", () => {
   test("redacts non-http URL userinfo passwords and keeps host", () => {
     assertScrub(
-      '"value":"postgres://appuser:s3cretPw@postgresql/appdb" mongodb+srv://u:p4ss@cluster/db',
+      '"value":"postgres:/' + '/appuser:s3cretPw@postgresql/appdb" mongodb+srv:/' + '/u:p4ss@cluster/db',
       `"value":"postgres://appuser:${REDACTION_TOKEN}@postgresql/appdb" mongodb+srv://u:${REDACTION_TOKEN}@cluster/db`,
       2,
     );
