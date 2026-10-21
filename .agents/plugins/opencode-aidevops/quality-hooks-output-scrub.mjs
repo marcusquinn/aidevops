@@ -118,21 +118,25 @@ function redactAssignedValue(value) {
   return REDACTION_TOKEN;
 }
 
+/** Redact the last capture group per match; `named` also gates on a sensitive field name (group 2). */
+function redactGroupValues(pattern, text, named) {
+  let count = 0;
+  const replaced = text.replace(pattern, (match, ...groups) => {
+    const skip = isPlaceholderValue(groups[named ? 2 : 1]) || (named && !isSensitiveFieldName(groups[1]));
+    count += skip ? 0 : 1;
+    return skip ? match : `${groups[0]}${REDACTION_TOKEN}`;
+  });
+  return { text: replaced, count };
+}
+
 /** Scrub known token prefixes and unknown-format values under sensitive names. */
 function scrubPlainCredentials(text) {
   const { scrubbed: pemScrubbed, count: pemCount } = scrubPrivateKeys(text);
   let count = pemCount;
-  const pairScrubbed = pemScrubbed.replace(NAME_VALUE_PAIR_PATTERN, (match, prefix, name, value) => {
-    if (!isSensitiveFieldName(name) || isPlaceholderValue(value)) return match;
-    count++;
-    return `${prefix}${REDACTION_TOKEN}`;
-  });
-  const urlScrubbed = pairScrubbed.replace(URL_USERINFO_PATTERN, (match, prefix, password) => {
-    if (isPlaceholderValue(password)) return match;
-    count++;
-    return `${prefix}${REDACTION_TOKEN}`;
-  });
-  const namedScrubbed = urlScrubbed.replace(
+  const pairScrubbed = redactGroupValues(NAME_VALUE_PAIR_PATTERN, pemScrubbed, true);
+  const urlScrubbed = redactGroupValues(URL_USERINFO_PATTERN, pairScrubbed.text, false);
+  count += pairScrubbed.count + urlScrubbed.count;
+  const namedScrubbed = urlScrubbed.text.replace(
     NAMED_CREDENTIAL_ASSIGNMENT_PATTERN,
     (match, boundary, name, separator, value) => {
       if (!isSensitiveFieldName(name)) return match;

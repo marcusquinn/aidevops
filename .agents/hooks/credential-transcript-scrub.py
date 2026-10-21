@@ -196,6 +196,20 @@ def scrub_private_keys(text: str) -> tuple[str, int]:
     return "".join(chunks), count
 
 
+def redact_group_values(pattern: re.Pattern, text: str, named: bool) -> tuple[str, int]:
+    """Redact the last capture group of each match; `named` also gates on a sensitive field name (group 2)."""
+    count = 0
+
+    def redact(match: re.Match) -> str:
+        nonlocal count
+        groups = match.groups()
+        skip = is_placeholder_value(groups[-1]) or (named and not is_sensitive_field_name(groups[1]))
+        count += 0 if skip else 1
+        return match.group(0) if skip else f"{groups[0]}{REDACTION_TOKEN}"
+
+    return pattern.sub(redact, text), count
+
+
 def scrub_credentials(text: str) -> tuple[str, int]:
     """Replace credential tokens in text. Returns (scrubbed_text, match_count)."""
     named_count = 0
@@ -208,25 +222,9 @@ def scrub_credentials(text: str) -> tuple[str, int]:
         return redacted
 
     result, pem_count = scrub_private_keys(text)
-
-    def redact_pair(match: re.Match) -> str:
-        nonlocal named_count
-        prefix, name, value = match.groups()
-        if not is_sensitive_field_name(name) or is_placeholder_value(value):
-            return match.group(0)
-        named_count += 1
-        return f"{prefix}{REDACTION_TOKEN}"
-
-    def redact_url(match: re.Match) -> str:
-        nonlocal named_count
-        prefix, password = match.groups()
-        if is_placeholder_value(password):
-            return match.group(0)
-        named_count += 1
-        return f"{prefix}{REDACTION_TOKEN}"
-
-    result = NAME_VALUE_PAIR_PATTERN.sub(redact_pair, result)
-    result = URL_USERINFO_PATTERN.sub(redact_url, result)
+    result, pair_count = redact_group_values(NAME_VALUE_PAIR_PATTERN, result, True)
+    result, url_count = redact_group_values(URL_USERINFO_PATTERN, result, False)
+    named_count += pair_count + url_count
     result = NAMED_CREDENTIAL_ASSIGNMENT_PATTERN.sub(redact_and_count, result)
     result, token_count = CREDENTIAL_PATTERN.subn(REDACTION_TOKEN, result)
     return result, pem_count + named_count + token_count
