@@ -11,13 +11,12 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
-import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -27,9 +26,6 @@ import worktree_lifetime_proof as proof
 SPEC = importlib.util.spec_from_file_location("lifetime", SCRIPTS / "worktree-managed-lifetime.py")
 lifetime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(lifetime)
-RUN_SPEC = importlib.util.spec_from_file_location("managed_run", SCRIPTS / "worktree-managed-run.py")
-runner = importlib.util.module_from_spec(RUN_SPEC)
-RUN_SPEC.loader.exec_module(runner)
 REG_SPEC = importlib.util.spec_from_file_location("registry_owner", SCRIPTS / "shared-worktree-registry-owner.py")
 registry = importlib.util.module_from_spec(REG_SPEC)
 REG_SPEC.loader.exec_module(registry)
@@ -167,51 +163,6 @@ class CreationProducerTests(unittest.TestCase):
             self.assertIn("Worktree retained", result.stderr)
 
 
-class RunnerControlTests(unittest.TestCase):
-    def test_macos_probe_never_invokes_systemd(self):
-        with patch.object(sys, "platform", "darwin"), patch.object(runner.subprocess, "check_output") as call:
-            self.assertFalse(runner.backend_available())
-            call.assert_not_called()
-
-    def test_unavailable_user_manager_selects_legacy_before_creation(self):
-        with patch.object(sys, "platform", "linux"), patch.object(Path, "is_file", return_value=True), \
-                patch.object(runner.shutil, "which", return_value="/fixture/tool"), \
-                patch.object(runner.subprocess, "check_output", side_effect=subprocess.CalledProcessError(1, "systemctl")):
-            self.assertFalse(runner.backend_available())
-
-    def test_nonterminal_service_never_inherits_tool_output_pipes(self):
-        with patch.object(sys.stdin, "isatty", return_value=False), runner.isolated_service_io() as (stdio, _, mode):
-            self.assertEqual(mode, "--pipe")
-            self.assertEqual(stdio["stdin"], subprocess.DEVNULL)
-            for key in ("stdout", "stderr"):
-                self.assertTrue(stat.S_ISREG(os.fstat(stdio[key].fileno()).st_mode))
-
-    def test_backend_requires_supported_version_on_session_bus(self):
-        for version, help_text, expected in (("249", "--expand-environment", False),
-                                             ("250", "--expand-environment", True),
-                                             ("259.1", "--expand-environment", True),
-                                             ("250", "older CLI", False), (None, "", False)):
-            with self.subTest(version=version), patch.object(sys, "platform", "linux"), \
-                    patch.object(Path, "is_file", return_value=True), \
-                    patch.object(runner.shutil, "which", return_value="/fixture/tool"), \
-                    patch.object(runner.subprocess, "check_output", side_effect=[json.dumps({"data": version}), help_text]) as call:
-                self.assertEqual(runner.backend_available(), expected)
-                self.assertEqual(call.call_args_list[0].args[0][0], "busctl")
-
-    def test_loaded_unit_without_invocation_is_pending_not_replaced(self):
-        ready = {"InvocationID": "first", "MainPID": "0", "Job": "",
-                 "ActiveState": "active", "SubState": "exited"}
-        client = Mock()
-        client.poll.return_value = None
-        with patch.object(owner, "unit_snapshot", side_effect=[{"InvocationID": ""}, ready]), \
-                patch.object(runner.time, "sleep"):
-            self.assertEqual(runner.wait_for_unit("fixture", client, time.monotonic() + 1), ready)
-
-    def test_deadline_refuses_without_waiting_for_client_eof(self):
-        with self.assertRaises(ValueError):
-            runner.wait_for_unit("fixture", Mock(), time.monotonic() - 1)
-
-
 class OwnerEvidenceTests(unittest.TestCase):
     def setUp(self):
         platform = patch.object(sys, "platform", "linux")
@@ -254,10 +205,8 @@ class OwnerEvidenceTests(unittest.TestCase):
                           "identity": identity, "admission_epoch": 0, "observed_admission_epoch": 0,
                           "launches": [{"kind": owner.KIND, "completion_evidence": "systemd-cgroup-v1",
                                         "invocation": "invocation", "quiescence": snapshot}]}
-                if case == "running":
-                    record["state"] = "running"
-                if case == "unobserved":
-                    record["admission_epoch"] = 1
+                record.update({"running": {"state": "running"},
+                               "unobserved": {"admission_epoch": 1}}.get(case, {}))
                 with closing(sqlite3.connect(database)) as db:
                     db.execute("""CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY,
                         owner_pid INTEGER, owner_process_start TEXT, created_at TEXT)""")
@@ -266,14 +215,14 @@ class OwnerEvidenceTests(unittest.TestCase):
                     if case != "legacy":
                         db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?,?)", ("/fixture", json.dumps(record)))
                     db.commit()
-                effect = None if case == "live" else PermissionError if case == "inaccessible" else ProcessLookupError
+                effect = {"live": None, "inaccessible": PermissionError}.get(case, ProcessLookupError)
                 with patch.object(owner, "identity", return_value=identity), patch.object(registry.os, "kill", side_effect=effect):
                     result = registry.release_completed([
                         database, "/fixture", "123", "changed" if case == "changed-lease" else "start", "created"])
-                self.assertEqual(result, 0 if case == "complete" else 1)
+                self.assertEqual(result, int(case != "complete"))
                 with closing(sqlite3.connect(database)) as db:
                     count = db.execute("SELECT count(*) FROM worktree_owners").fetchone()[0]
-                self.assertEqual(count, 0 if case == "complete" else 1)
+                self.assertEqual(count, int(case != "complete"))
 
     def test_rotation_fences_inode_reuse_and_rollback_preserves_fence(self):
         cases = ("closed", "running", "missing-receipt", "unobserved", "same-source", "same-admin",

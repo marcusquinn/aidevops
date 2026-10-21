@@ -26,21 +26,18 @@ def release_completed(args: list[str]) -> int:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT record FROM worktree_managed_lifetimes WHERE path=?", (path,)).fetchone()
-            if not row:
-                return 1
+            owner_lifetime.require(bool(row), "missing lifetime record")
             record = json.loads(row[0])
-            if record.get("manager") != owner_lifetime.MANAGER:
-                return 1
+            owner_lifetime.require(record.get("manager") == owner_lifetime.MANAGER, "unexpected lifetime manager")
             identity = owner_lifetime.identity(Path(path))
-            if record.get("identity") != identity:
-                return 1
+            owner_lifetime.require(record.get("identity") == identity, "lifetime identity changed")
             lifetime_proof.proof(record, identity["source_inode"])
             try:
                 os.kill(int(pid), 0)
             except ProcessLookupError:
                 pass
             else:
-                return 1
+                raise ValueError("owner remains alive")
             cursor = connection.execute(
                 """DELETE FROM worktree_owners WHERE worktree_path=? AND owner_pid=?
                    AND COALESCE(owner_process_start, '')=? AND COALESCE(created_at, '')=?""",
@@ -113,64 +110,69 @@ def transfer(connection: sqlite3.Connection, args: list[str]) -> bool:
     return cursor.rowcount == 1
 
 
-def main(argv: list[str]) -> int:
-    if argv and argv[0] == "release-completed":
-        return release_completed(argv[1:])
-    if not argv or argv[0] not in ("register", "claim", "transfer", "adopt", "begin-create"):
-        return 1
-    operation, args = argv[0], argv[1:]
-    expected = 2 if operation == "begin-create" else 15 if operation in ("transfer", "adopt") else 10
-    if len(args) != expected:
-        return 1
-    if operation == "begin-create" and not os.path.exists(args[0]):
+def begin_creation_command(args):
+    database, path = args
+    if not os.path.exists(database):
         return 0  # No registry means there is no old receipt to fence.
-    output = ""
+    with closing(sqlite3.connect(database, isolation_level=None)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        token = owner_lifetime.begin_creation(connection, str(Path(path).resolve()))
+        connection.execute("COMMIT")
+    print(token)
+    return 0
+
+
+def write_owner(connection, operation, args):
+    if operation == "register":
+        connection.execute(
+            """INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, owner_batch,
+             task_id, owner_comm, owner_process_start, owner_dead_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')""", (args[1], *owner_values(args)))
+        return True, ""
+    if operation == "claim":
+        return True, claim(connection, args)
+    if operation == "adopt":
+        try:
+            os.kill(int(args[9]), 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise ValueError("previous owner remains alive")
+        os.kill(int(args[3]), 0)
+    return transfer(connection, args), ""
+
+
+def observe_registered_owner(connection, args, creating):
+    final = connection.execute(
+        "SELECT owner_pid, owner_session FROM worktree_owners WHERE worktree_path=?",
+        (args[1],)).fetchone()
+    cleanup = args[6] == "worktree-removal" and re.fullmatch(r"cleanup:[0-9]+", args[4])
+    if final == (int(args[3]), args[4]) and not cleanup:
+        owner_lifetime.register(connection, args[1], final[0], final[1], creating)
+
+
+def main(argv: list[str]) -> int:
     try:
+        operation, *args = argv
+        lifecycle_commands = {"release-completed": release_completed, "begin-create": begin_creation_command}
+        if operation in lifecycle_commands:
+            return lifecycle_commands[operation](args)
+        expected = {"register": 10, "claim": 10, "transfer": 15, "adopt": 15}[operation]
+        owner_lifetime.require(len(args) == expected, "invalid ownership arguments")
+        # Closing an uncommitted SQLite connection rolls back every write, including
+        # generation rotation; the separately committed pre-creation fence remains.
         with closing(sqlite3.connect(args[0], isolation_level=None)) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            try:
-                if operation == "begin-create":
-                    token = owner_lifetime.begin_creation(connection, str(Path(args[1]).resolve()))
-                    connection.execute("COMMIT")
-                    print(token)
-                    return 0
-                creating = (operation == "register" and os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and
-                            os.environ.get("AIDEVOPS_WORKTREE_MANAGER") != "pulse-cgroup-v1")
-                if creating:
-                    owner_lifetime.prepare_creation(connection, args[1])
-                owner_lifetime.check_admission(connection, args[1])
-                if operation == "register":
-                    connection.execute(
-                        """INSERT OR REPLACE INTO worktree_owners
-                        (worktree_path, branch, owner_pid, owner_session, owner_batch,
-                         task_id, owner_comm, owner_process_start, owner_dead_seen_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')""", (args[1], *owner_values(args)))
-                    matched = True
-                elif operation == "claim":
-                    output = claim(connection, args)
-                    matched = True
-                else:
-                    if operation == "adopt":
-                        try:
-                            os.kill(int(args[9]), 0)
-                        except ProcessLookupError:
-                            pass
-                        else:
-                            raise ValueError("previous owner remains alive")
-                        os.kill(int(args[3]), 0)
-                    matched = transfer(connection, args)
-                if matched:
-                    final = connection.execute(
-                        "SELECT owner_pid, owner_session FROM worktree_owners WHERE worktree_path=?",
-                        (args[1],)).fetchone()
-                    cleanup = args[6] == "worktree-removal" and re.fullmatch(r"cleanup:[0-9]+", args[4])
-                    if final == (int(args[3]), args[4]) and not cleanup:
-                        owner_lifetime.register(connection, args[1], final[0], final[1], creating)
-                connection.execute("COMMIT" if matched else "ROLLBACK")
-            except Exception:
-                if connection.in_transaction:
-                    connection.execute("ROLLBACK")
-                raise
+            creating = (operation == "register" and os.environ.get("AIDEVOPS_WORKTREE_CREATING") == "1" and
+                        os.environ.get("AIDEVOPS_WORKTREE_MANAGER") != "pulse-cgroup-v1")
+            if creating:
+                owner_lifetime.prepare_creation(connection, args[1])
+            owner_lifetime.check_admission(connection, args[1])
+            matched, output = write_owner(connection, operation, args)
+            if matched:
+                observe_registered_owner(connection, args, creating)
+            connection.execute("COMMIT" if matched else "ROLLBACK")
         if output:
             print(output)
         return 0 if matched else 1

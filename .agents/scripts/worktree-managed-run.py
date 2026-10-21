@@ -10,7 +10,7 @@ mistake a still-running producer for completed work. No sudo or detached fallbac
 """
 
 import argparse
-from contextlib import closing, contextmanager
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -19,20 +19,20 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
 import worktree_lifetime_owner as lifetime
+from worktree_managed_io import isolated_service_io
 
 
 def backend_available():
     """Probe without starting a service; absence selects legacy before creation."""
-    if sys.platform != "linux" or not Path("/sys/fs/cgroup/cgroup.controllers").is_file():
-        return False
-    if not all(shutil.which(tool) for tool in ("systemd-run", "systemctl", "busctl")):
-        return False
     try:
+        lifetime.require(sys.platform == "linux", "managed backend requires Linux")
+        lifetime.require(Path("/sys/fs/cgroup/cgroup.controllers").is_file(), "cgroup v2 unavailable")
+        lifetime.require(all(shutil.which(tool) for tool in ("systemd-run", "systemctl", "busctl")),
+                         "managed backend tools unavailable")
         # systemctl may use the private manager socket while systemd-run uses
         # the session bus. Probe that bus, not just the manager's existence.
         payload = subprocess.check_output(
@@ -40,11 +40,9 @@ def backend_available():
              "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "Version"],
             text=True, stderr=subprocess.DEVNULL, timeout=3)
         version = json.loads(payload).get("data")
-        if not isinstance(version, str):
-            return False
+        lifetime.require(isinstance(version, str), "manager version unavailable")
         match = re.match(r"([0-9]+)", version)
-        if not match or int(match[1]) < 250:
-            return False
+        lifetime.require(match and int(match[1]) >= 250, "manager lacks required lifetime support")
         help_text = subprocess.check_output(
             ["systemd-run", "--help"], text=True, stderr=subprocess.DEVNULL, timeout=3)
         return "--expand-environment" in help_text
@@ -97,42 +95,19 @@ def finalize(unit, snapshot, callback, deadline):
             lifetime.require(status == 0, "post-seal callback failed; inspect retained run")
 
 
-@contextmanager
-def isolated_service_io():
-    """A retained unit must never own the calling tool's stdout/stderr pipes.
-
-systemd-run --pipe passes its descriptors to the user manager. Even an exited
-RemainAfterExit unit can retain them. Relay regular files without waiting for
-    EOF; pread avoids changing the shared writer's file offset.
-    """
-    if all(stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr)):
-        yield {}, lambda: None, "--pty"
-        return
-    root = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
-    lifetime.require(not root.is_symlink(), "unsafe managed output directory")
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    lifetime.require(root.stat().st_uid == os.getuid(), "managed output directory owner mismatch")
-    with tempfile.TemporaryFile(dir=root) as out, tempfile.TemporaryFile(dir=root) as err:
-        offsets = [0, 0]
-        def relay():
-            for index, (source, target) in enumerate(((out, sys.stdout), (err, sys.stderr))):
-                data = os.pread(source.fileno(), 65536, offsets[index])
-                if data:
-                    offsets[index] += len(data)
-                    target.buffer.write(data)
-                    target.buffer.flush()
-        try:
-            yield {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": err}, relay, "--pipe"
-        finally:
-            # Bound the final output drain independently of any retained descriptor.
-            for _ in range(16):
-                before = offsets.copy()
-                relay()
-                if offsets == before:
-                    break
-            if any(os.fstat(stream.fileno()).st_size > offsets[index]
-                   for index, stream in enumerate((out, err))):
-                print("Managed run output truncated at the bounded drain limit", file=sys.stderr)
+def startup_snapshot(unit, client, invocation, deadline):
+    """Distinguish pending admission from unavailable or replaced invocations."""
+    try:
+        snapshot = lifetime.unit_snapshot(unit)
+    except (ValueError, subprocess.SubprocessError):
+        if invocation is not None or time.monotonic() >= deadline or client.poll() is not None:
+            raise
+        return None
+    if not invocation and not snapshot.get("InvocationID"):
+        lifetime.require(time.monotonic() < deadline,
+                         "managed invocation did not start within its startup budget")
+        return None
+    return snapshot
 
 
 def wait_for_unit(unit, client, deadline, relay=lambda: None):
@@ -141,18 +116,8 @@ def wait_for_unit(unit, client, deadline, relay=lambda: None):
     next_progress = time.monotonic() + 10
     while time.monotonic() < deadline:
         relay()
-        try:
-            snapshot = lifetime.unit_snapshot(unit)
-        except (ValueError, subprocess.SubprocessError):
-            if invocation is not None or time.monotonic() >= startup_deadline or client.poll() is not None:
-                raise
-            time.sleep(0.1)
-            continue
-        # A loaded transient unit may not yet have an invocation during startup.
-        # This is pending admission, not an invocation replacement.
-        if not invocation and not snapshot.get("InvocationID"):
-            lifetime.require(time.monotonic() < startup_deadline,
-                             "managed invocation did not start within its startup budget")
+        snapshot = startup_snapshot(unit, client, invocation, startup_deadline)
+        if snapshot is None:
             time.sleep(0.1)
             continue
         invocation = invocation or snapshot["InvocationID"]
