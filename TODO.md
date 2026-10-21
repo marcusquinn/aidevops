@@ -1725,14 +1725,14 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18729 feat(dispatch): per-repository cost budget override for the cost circuit breaker #feat #priority:high ref:GH#35049 pr:#35051 completed:2026-10-18
 
-- [ ] t18735 fix(cloudron): release evidence rejects manifests with a binary file:// icon #bug ref:GH#35091
+- [x] t18735 fix(cloudron): release evidence rejects manifests with a binary file:// icon #bug ref:GH#35091 pr:#35092 completed:2026-10-21
 
-- [ ] t18743 aidevops cleanup: on-demand storage cleanup command and r922 storage hygiene routine #auto-dispatch #feat #interactive ref:GH#35245 assignee:marcusquinn started:2026-10-20 -> [todo/tasks/t18743-brief.md]
+- [x] t18743 aidevops cleanup: on-demand storage cleanup command and r922 storage hygiene routine #auto-dispatch #feat #interactive ref:GH#35245 assignee:marcusquinn started:2026-10-20 -> [todo/tasks/t18743-brief.md] pr:#35255 completed:2026-10-21
 
-- [ ] t18748 Parent: aidevops security tls-trust — data-driven client trust-store checks (local + fleet) #parent-task #security ref:GH#35277 -> [todo/tasks/t18748-brief.md]
-  - [ ] t18749 tls-trust phase 1: local client probe helper, canary config, aidevops security tls-trust #auto-dispatch #security ref:GH#35278 -> [todo/tasks/t18749-brief.md]
-  - [ ] t18750 tls-trust phase 2: read-only fleet probes (hosts, containers, WordPress, shared-hosting PHP) #auto-dispatch #security ref:GH#35279 blocked-by:t18749 -> [todo/tasks/t18750-brief.md]
-  - [ ] t18751 tls-trust phase 3: advisory to check linkage with verified auto-dismiss #auto-dispatch #security ref:GH#35280 blocked-by:t18749 -> [todo/tasks/t18751-brief.md]
+- [x] t18748 Parent: aidevops security tls-trust — data-driven client trust-store checks (local + fleet) #parent-task #security ref:GH#35277 -> [todo/tasks/t18748-brief.md] pr:#35281 completed:2026-10-21
+  - [x] t18749 tls-trust phase 1: local client probe helper, canary config, aidevops security tls-trust #auto-dispatch #security ref:GH#35278 -> [todo/tasks/t18749-brief.md] pr:#35281 completed:2026-10-21
+  - [x] t18750 tls-trust phase 2: read-only fleet probes (hosts, containers, WordPress, shared-hosting PHP) #auto-dispatch #security ref:GH#35279 blocked-by:t18749 -> [todo/tasks/t18750-brief.md] pr:#35286 completed:2026-10-21
+  - [x] t18751 tls-trust phase 3: advisory to check linkage with verified auto-dismiss #auto-dispatch #security ref:GH#35280 blocked-by:t18749 -> [todo/tasks/t18751-brief.md] pr:#35281 completed:2026-10-21
 
 ## In Progress
 
