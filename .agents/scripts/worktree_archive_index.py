@@ -24,11 +24,12 @@ def archive_policies(manifest):
     if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') not in (2, 3, 4):
         raise SystemExit('unsupported Git changes fingerprint')
     merge = manifest.get('merge_policy')
-    if (merge is not None or manifest.get('source_fingerprint', {}).get('schema') == 4) and (
-            merge != 'structured-v1' or capture_policy != 'git-only'
-            or manifest.get('source_fingerprint', {}).get('schema') != 4
-            or manifest.get('self_contained') is not True):
-        raise SystemExit('invalid required merge policy')
+    schema = manifest.get('source_fingerprint', {}).get('schema')
+    if merge is not None or schema == 4:
+        expected = (merge == 'structured-v1', capture_policy == 'git-only', schema == 4,
+                    manifest.get('self_contained') is True)
+        if not all(expected):
+            raise SystemExit('invalid required merge policy')
     policy = manifest.get('git_admin_policy')
     if policy is not None and (policy != 'preserve-v1' or not isinstance(manifest.get('self_contained'), bool)):
         raise SystemExit('invalid Git administration policy')

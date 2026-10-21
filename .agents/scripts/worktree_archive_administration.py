@@ -13,7 +13,7 @@ from worktree_archive_readiness import (
 )
 from worktree_archive_git import (
     auto_merge_oid as auto_merge_oid, git as git,
-    validate_auto_merge as validate_auto_merge,
+    validate_auto_merge as validate_auto_merge, fetch_head_roots as fetch_head_roots,
 )
 
 
@@ -21,21 +21,6 @@ ADMIN_FILES = {"HEAD", "index", "AUTO_MERGE", "ORIG_HEAD", "FETCH_HEAD", "COMMIT
 PRIVATE_PREFIXES = ("refs/worktree/", "refs/bisect/", "refs/rewritten/")
 OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
-
-
-def fetch_head_roots(encoded):
-    """Preserve all fetched objects, including not-for-merge entries, as bundle tips."""
-    roots = []
-    for line in bytes.fromhex(encoded).splitlines():
-        fields = line.split(b"\t", 2)
-        if len(fields) != 3 or fields[1] not in (b"", b"not-for-merge"):
-            raise ValueError("git_admin:invalid_FETCH_HEAD")
-        oid = fields[0]
-        if (len(oid) not in (40, 64) or not oid.strip(b"0")
-                or any(byte not in b"0123456789abcdef" for byte in oid)):
-            raise ValueError("git_admin:invalid_FETCH_HEAD_oid")
-        roots.append(oid.decode("ascii"))
-    return roots
 
 
 def admin_path_allowed(name):
