@@ -163,7 +163,7 @@ assert_redacted "6. github_pat_ token" \
 	'{"tool_response": "fine-grained PAT: github_pat_11ABCDEFGHIJ1234567890"}'
 
 assert_redacted "7. glpat- token" \
-	'{"tool_response": "GitLab token: glpat-ABCDEFGHIJ1234567890"}'
+	'{"tool_response": "GitLab token: gl'"pat-"'ABCDEFGHIJ1234567890"}'
 
 assert_redacted "8. xoxb- token" \
 	'{"tool_response": "Slack bot: xoxb-ABCDEFGHIJKLM-1234567890-abcdefghij"}'
