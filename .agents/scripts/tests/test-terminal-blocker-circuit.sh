@@ -1205,6 +1205,32 @@ test_target_code_blocker_observation_rearms() {
 
 # GH#35290: exercise the real CLI and timeout boundary with inherited GitHub
 # fixtures, not a replacement pending implementation. No live queue is touched.
+_bounded_seed_resume_checks() {
+	local rc=0
+	# Seed resumes after a slow candidate; newly seeded entries cannot
+	# masquerade as empty intake. Reuse the caller's isolated GitHub fixture.
+	export TB_SEED=1 BLOCKER_RECOVERY_STAGE_SECONDS=2 BLOCKER_RECOVERY_BUDGET_SECONDS=6
+	rm -f "${TBR_ROOT}/queue/owner--repo--42.json"
+	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
+	[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/seed-owner--repo.cursor")" == 1 ]] || return 1
+	rc=0
+	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
+	[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || return 1
+	[[ "$(<"${TBR_ROOT}/err")" == *'reason=unobserved_entries'* && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || return 1
+	export TB_SEED_FAST=1
+	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" seed >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || return 1
+	[[ -f "${TBR_ROOT}/last_seed_epoch" ]] || return 1
+	# A failed remote-policy observation is not permission to retire evidence.
+	(
+		_tbr_policy_enabled() { return 2; }
+		tbr_enqueue owner/repo 42 files_scope_excluded policy_remote || exit 1
+		rc=0
+		_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--42.json" >/dev/null || rc=$?
+		[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" && -f "${TBR_ROOT}/decisions/owner--repo--42.json" ]]
+	) || return 1
+	return 0
+}
+
 test_bounded_recovery_intake() {
 	local status=0
 	if ! (
@@ -1281,28 +1307,7 @@ test_bounded_recovery_intake() {
 		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
 		[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
 		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=seed'* ]] || exit 1
-		# Seed also resumes after a slow candidate, without weakening who may
-		# enqueue a hold. Newly seeded entries cannot masquerade as empty intake.
-		export TB_SEED=1 BLOCKER_RECOVERY_STAGE_SECONDS=2 BLOCKER_RECOVERY_BUDGET_SECONDS=6
-		rm -f "${TBR_ROOT}/queue/owner--repo--42.json"
-		rc=0
-		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-		[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/seed-owner--repo.cursor")" == 1 ]] || exit 1
-		rc=0
-		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-		[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || exit 1
-		[[ "$(<"${TBR_ROOT}/err")" == *'reason=unobserved_entries'* && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
-		export TB_SEED_FAST=1
-		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" seed >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || exit 1
-		[[ -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
-		# A failed remote-policy observation is not permission to retire evidence.
-		(
-			_tbr_policy_enabled() { return 2; }
-			tbr_enqueue owner/repo 42 files_scope_excluded policy_remote || exit 1
-			rc=0
-			_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--42.json" >/dev/null || rc=$?
-			[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" && -f "${TBR_ROOT}/decisions/owner--repo--42.json" ]]
-		) || exit 1
+		_bounded_seed_resume_checks || exit 1
 		exit 0
 	); then
 		status=1
