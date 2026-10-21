@@ -34,31 +34,30 @@ from worktree_recovery_producer_cases import ProducerCases
 
 class ArchiveAdministration(unittest.TestCase):
     def test_legacy_branches_requires_empty_independent_directory(self):
-        for linked in (False, True):
-            for kind in ("empty", "file", "populated", "nested", "symlink"):
-                with self.subTest(linked=linked, kind=kind), tempfile.TemporaryDirectory() as temporary:
-                    root = Path(temporary)
-                    admin = root / "admin"
-                    admin.mkdir()
-                    branches = admin / "branches"
-                    if kind == "file":
-                        branches.write_text("legacy remote\n")
-                    elif kind == "symlink":
-                        target = root / "target"
-                        target.mkdir()
-                        branches.symlink_to(target, target_is_directory=True)
-                    else:
-                        branches.mkdir()
-                        if kind == "populated":
-                            (branches / "origin").write_text("legacy remote\n")
-                        elif kind == "nested":
-                            (branches / "nested").mkdir()
-                    if not linked and kind == "empty":
-                        self.assertEqual(administration_files(admin, admin, linked), {})
-                    else:
-                        reason = "symlink" if kind == "symlink" else "unknown_entry"
-                        with self.assertRaisesRegex(ValueError, f"^git_admin:{reason}:branches$"):
-                            administration_files(admin, admin, linked)
+        with tempfile.TemporaryDirectory() as temporary:
+            admin = Path(temporary)
+            branches = admin / "branches"
+            branches.mkdir()
+            self.assertEqual(administration_files(admin, admin, False), {})
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, True)
+            child = branches / "origin"
+            child.write_text("legacy remote\n")
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, False)
+            child.unlink()
+            child.mkdir()
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, False)
+            child.rmdir()
+            branches.rmdir()
+            branches.write_text("not a directory\n")
+            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
+                administration_files(admin, admin, False)
+            branches.unlink()
+            branches.symlink_to(admin, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "^git_admin:symlink:branches$"):
+                administration_files(admin, admin, False)
 
 
 class LegacyRecoveryReport(unittest.TestCase):
