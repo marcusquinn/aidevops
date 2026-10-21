@@ -1736,7 +1736,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18752 docs(security): PHP RCE CVE-2026-109618/109619 advisory and security-release playbook #documentation #security ref:GH#35322 pr:#35323 completed:2026-10-21
 
-- [ ] t18753 fix(tests): split DB URL fixtures that block release secretlint preflight #bug ref:GH#35325
+- [x] t18753 fix(tests): split DB URL fixtures that block release secretlint preflight #bug ref:GH#35325 pr:#35327 completed:2026-10-21
 
 ## In Progress
 
