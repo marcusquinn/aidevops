@@ -159,6 +159,8 @@ worktree-helper.sh clean
 
 `aidevops cleanup` prints a read-only size report for every aidevops-owned store (tmp, worktrees, OpenCode DBs, observability) with the cleaner that owns each one. `aidevops cleanup <store>` previews one store; `aidevops cleanup all --apply` runs every owning cleaner with its own safety gates. The default routine r922 Storage hygiene runs `all --apply` daily through a dedicated launchd/systemd job installed by `setup.sh`; the report shows whether it is installed. Implementation: `scripts/storage-cleanup-helper.sh`.
 
+OpenCode session history is kept forever by default. To cap it, run `aidevops config set storage.opencode_session_retention_days 180` (or set `AIDEVOPS_OPENCODE_SESSION_RETENTION_DAYS`): `aidevops cleanup opencode` then previews the sessions and bytes older than 180 days, and `--apply` (and r922) **permanently deletes** them from the active, archive and isolated project DBs, then VACUUMs. Live sessions, DBs with open holders and unstable WALs are skipped. Invalid or `0` values keep everything.
+
 ## Bulk Remote Branch Cleanup
 
 Use the aidevops CLI route when the remote has accumulated old worker/worktree branches:

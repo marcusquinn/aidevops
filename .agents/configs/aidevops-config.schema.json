@@ -545,6 +545,12 @@
           "default": "dry-run",
           "description": "Compact-archive expiry mode. dry-run reports only; apply deletes expired archives. Env: AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE"
         },
+        "opencode_session_retention_days": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Permanently delete OpenCode sessions last updated more than N days ago from the active and archive DBs (default and isolated), then VACUUM. 0 (default) keeps everything; invalid values are treated as 0. Env: AIDEVOPS_OPENCODE_SESSION_RETENTION_DAYS"
+        },
         "worktree_local_commit_archive_hours": {
           "type": "integer",
           "minimum": 24,

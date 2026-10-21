@@ -1206,6 +1206,23 @@ _prune_layout_backups() {
 	return 0
 }
 
+# _prune_old_sessions — delete sessions past the configured retention for the
+# current single DB (active + sibling archive). No-op when the setting is 0/invalid.
+# Protected skips (rc 2) are expected; failures are logged but non-fatal.
+_prune_old_sessions() {
+	local days="" rc=0
+	[[ -x "$OPENCODE_DB_ARCHIVE_HELPER" ]] || return 0
+	days=$("$OPENCODE_DB_ARCHIVE_HELPER" retention-days 2>/dev/null) || days=0
+	[[ "$days" =~ ^[0-9]+$ && "$days" -gt 0 ]] || return 0
+	_log INFO "auto: session retention ${days} days — pruning ${OPENCODE_DB}"
+	OPENCODE_DB_PATH="$OPENCODE_DB" OPENCODE_ARCHIVE_DB="${OPENCODE_DB%/*}/opencode-archive.db" \
+		"$OPENCODE_DB_ARCHIVE_HELPER" prune --older-than-days "$days" --apply --max-duration-seconds 300 || rc=$?
+	if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then
+		_log WARN "auto: session retention prune failed (rc=${rc}, non-fatal)"
+	fi
+	return 0
+}
+
 cmd_auto() {
 	# Children preserve the existing per-DB safety/throttle path, with independent
 	# state so a recent default-DB run cannot suppress isolated DB maintenance.
@@ -1231,6 +1248,10 @@ cmd_auto() {
 
 	# Reclaim superseded/expired repo-layout migration DB backups (best-effort).
 	_prune_layout_backups
+
+	# Opt-in permanent session retention (storage.opencode_session_retention_days).
+	# Unset/0 keeps everything; runs ahead of the throttle so the daily r922 run applies it.
+	_prune_old_sessions
 
 	# Throttle: skip if last run was recent
 	if [[ -f "$STATE_FILE" ]]; then
