@@ -6,10 +6,85 @@
 import hashlib
 import json
 import os
+from pathlib import Path
 import shutil
+from unittest.mock import patch
 
 
 class MergeCases:
+    def test_merge_untracked_deleted_path_and_hook_isolation(self):
+        self.start_conflicted_merge()
+        self.git(self.work, 'rm', 'mixed.txt')
+        (self.work / 'mixed.txt').write_bytes(b'recreated untracked resolution\n')
+        # Both template and configured hooks must stay inert in scratch Git
+        # repositories, object import and index restoration, not just checkout.
+        hooks = self.root / 'template/hooks'
+        hooks.mkdir(parents=True)
+        sentinel = self.root / 'hook-executed'
+        for name in ('reference-transaction', 'post-index-change', 'post-checkout'):
+            hook = hooks / name
+            hook.write_text('#!/bin/sh\ntouch "' + str(sentinel) + '"\n')
+            hook.chmod(0o755)
+        self.env['GIT_TEMPLATE_DIR'] = str(hooks.parent)
+        config = self.root / 'global-config'
+        config.write_text('[core]\n\thooksPath = ' + str(hooks) + '\n')
+        self.env['GIT_CONFIG_GLOBAL'] = str(config)
+        archive = self.archive()
+        self.helper('verify', archive)
+        target = self.root / 'restored'
+        self.helper('restore', archive, '--target', target, '--verification-copy')
+        self.assertEqual((target / 'mixed.txt').read_bytes(), b'recreated untracked resolution\n')
+        self.assertEqual(self.git(target, 'ls-files', '--resolve-undo', '-z'), self.git(self.work, 'ls-files', '--resolve-undo', '-z'))
+        self.assertFalse(sentinel.exists())
+
+    def test_merge_ordered_parents_without_auto_merge(self):
+        parents = []
+        for number in range(2):
+            branch = 'side-' + str(number)
+            self.git(self.repo, 'checkout', '-qB', branch, 'develop')
+            (self.repo / branch).write_text(branch + '\n')
+            self.git(self.repo, 'add', branch)
+            self.git(self.repo, 'commit', '-qm', branch)
+            parents.append(self.git(self.repo, 'rev-parse', 'HEAD').strip())
+        head = self.git(self.work, 'rev-parse', 'HEAD').strip()
+        self.git(self.work, 'merge', '--no-commit', '--no-ff', 'side-0', 'side-1')
+        self.assertFalse(self.auto_merge_path().exists())
+        archive = self.archive()
+        target = self.root / 'octopus'
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.helper('restore', archive, '--target', target)
+        self.assertEqual(self.git(target, 'rev-parse', 'ORIG_HEAD').strip(), head)
+        self.env['GIT_EDITOR'] = 'true'
+        self.git(target, 'merge', '--continue')
+        self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), b' '.join([head] + parents))
+
+    def test_merge_migration_retirement_requires_independent_restore(self):
+        self.start_conflicted_merge()
+        bucket = self.legacy_pulse_bucket()
+        migration = json.loads(self.migrate_bucket(bucket).stdout)
+        record = json.loads(Path(migration['receipt']).read_text())
+        self.assertEqual(record['source']['snapshot']['schema'], 4)
+        from worktree_recovery_migrate import verify_archive
+        lock_path = Path(migration['receipt']).parent / 'lock'
+        descriptor = os.open(lock_path, os.O_RDWR)
+        self.addCleanup(os.close, descriptor)
+        with patch.dict(os.environ, self.env, clear=True):
+            verify_archive(record, descriptor)
+        # A valid bundle alone cannot authorize retirement if actual restore
+        # reconstruction is unavailable or fails its comparison.
+        import worktree_recovery_migrate as migrate
+        original = migrate.archive_command
+        def fail_restore(lock, *arguments):
+            if arguments[0] == 'restore':
+                raise ValueError('injected merge reconstruction failure')
+            return original(lock, *arguments)
+        with patch.dict(os.environ, self.env, clear=True), patch.object(migrate, 'archive_command', side_effect=fail_restore):
+            with self.assertRaisesRegex(ValueError, 'reconstruction failure'):
+                verify_archive(record, descriptor)
+        self.assertTrue(bucket.is_dir())
+        self.assertFalse((Path(migration['receipt']).parent / 'retirement.json').exists())
+
     def test_merge_unsupported_and_corrupt_state_is_refused(self):
         self.start_conflicted_merge()
         admin = self.auto_merge_path().parent
