@@ -204,7 +204,7 @@ def redact_group_values(pattern: re.Pattern, text: str, named: bool) -> tuple[st
         nonlocal count
         groups = match.groups()
         skip = is_placeholder_value(groups[-1]) or (named and not is_sensitive_field_name(groups[1]))
-        count += 0 if skip else 1
+        count += int(not skip)
         return match.group(0) if skip else f"{groups[0]}{REDACTION_TOKEN}"
 
     return pattern.sub(redact, text), count
