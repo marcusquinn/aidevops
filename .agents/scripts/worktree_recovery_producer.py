@@ -35,6 +35,29 @@ from worktree_recovery_timing import context as timing_context, operation, phase
 SCHEMA = "aidevops.worktree-recovery-producer/v1"
 
 
+def failure_reason(error):
+    # Exact messages from worktree_archive_filesystem.supported_metadata.
+    # Inspect only the final exception line, never emit captured CLI diagnostics.
+    metadata_errors = {
+        "ownership, ACLs or extended attributes require separate preservation",
+        "special permissions or hard links require separate preservation",
+    }
+    message = str(error) if isinstance(error, ValueError) else ""
+    if isinstance(error, subprocess.CalledProcessError) and isinstance(error.stderr, str):
+        lines = error.stderr.rstrip().splitlines()
+        # source_fingerprint's shell caller adds this fixed failure trailer.
+        if lines and lines[-1] == "Error: worktree fingerprint unavailable":
+            lines.pop()
+        final = lines[-1] if lines else ""
+        if final.startswith("ValueError: "):
+            message = final.removeprefix("ValueError: ")
+    if message in metadata_errors:
+        return ("producer:unsupported-metadata; permissions, ownership, ACLs, extended attributes "
+                "or hard links require separate preservation; source retained; "
+                "retrying will not resolve this policy refusal")
+    return str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
+
+
 def journal_for_archive(archive):
     require(len(archive.parents) >= 5 and archive.parents[3].name == ".producer-archives"
             and re.fullmatch(r"[0-9a-f]{64}", archive.parents[2].name), "producer:archive-layout-changed")
@@ -304,6 +327,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        reason = str(error) if isinstance(error, ValueError) else "producer:evidence-unavailable"
-        print(reason, file=sys.stderr)
+        print(failure_reason(error), file=sys.stderr)
         sys.exit(1)

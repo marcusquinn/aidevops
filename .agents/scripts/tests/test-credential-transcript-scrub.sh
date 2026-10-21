@@ -412,7 +412,7 @@ else
 	fail "32. Valid NDJSON records remain scrubbed beside malformed records — got: $output_mixed_ndjson"
 fi
 
-CLOUDRON_PAYLOAD='{"tool_response":"db postgres://appuser:s3cretPw@postgresql/appdb env [{\"name\":\"CLOUDRON_MAIL_SMTP_PASSWORD\",\"value\":\"abcdef0123\"},{\"name\":\"CLOUDRON_POSTGRESQL_HOST\",\"value\":\"postgresql\"}] done"}'
+CLOUDRON_PAYLOAD='{"tool_response":"db postgres:/''/appuser:s3cretPw@postgresql/appdb env [{\"name\":\"CLOUDRON_MAIL_SMTP_PASSWORD\",\"value\":\"abcdef0123\"},{\"name\":\"CLOUDRON_POSTGRESQL_HOST\",\"value\":\"postgresql\"}] done"}'
 output_cloudron=$(run_hook "$CLOUDRON_PAYLOAD")
 if echo "$output_cloudron" | python3 -c "import json,sys; r=json.load(sys.stdin)['tool_response']; assert 's3cretPw' not in r and 'abcdef0123' not in r and 'appuser:' in r and '@postgresql/appdb' in r and '\"value\":\"postgresql\"' in r" 2>/dev/null; then
 	pass "33. DB URL userinfo and plain-text name/value secret pairs scrubbed; non-secret sibling kept"

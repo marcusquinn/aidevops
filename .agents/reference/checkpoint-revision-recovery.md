@@ -67,6 +67,27 @@ expires after 24 hours; changed body/head/actor permissions invalidate it. A
 legacy release without a lease token is accepted only when its approved attempt
 has a unique prior authenticated ready lease with no intervening attempt.
 
+### Intervening attempts that have fully released
+
+Later attempts do not silently invalidate a preserved checkpoint forever, but
+their release messages alone never authorize continuation. When the entire
+intervening history is sequential and fully closed, `approval-template` includes
+an explicit `released_successors` list in the new approval. Each entry binds the
+runner, attempt and claim/ready/release/terminal comment IDs. The source comments
+must remain trusted and unedited, with matching token/session/attempt identity;
+the new continuation must acquire a fresh token through the existing fenced
+claim path. Tokens are not copied into the approval.
+
+Publish a new generated approval rather than editing an old one. Approvals
+without the historical list do not authorize skipping intervening attempts.
+Open or overlapping attempts, an unmatched release or terminal lease, interactive
+ownership, edited evidence and any new unrelated coordination after approval
+still reject continuation. A fully released attempt that occurs after approval
+requires a fresh assessment and approval; expiry alone is never closure evidence.
+The template refuses incomplete histories instead of printing an unusable line.
+All current assignment, hold, permission, brief-revision and exact-head checks
+remain in force.
+
 ## Ownership guarantees
 
 The revised path acquires the existing distributed claim/consensus lease before

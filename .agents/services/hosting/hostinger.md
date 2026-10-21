@@ -105,6 +105,15 @@ Supported per-site overrides can use `.htaccess` `php_value` inside `<IfModule l
 
 Pin a copy stored outside `wp-includes`, add the block between marker comments so it can be removed exactly, and record a task to remove it once the host is patched. A frozen bundle misses future root changes.
 
+#### Security releases
+
+Observed on **2026-10-21** during the PHP RCE release (advisory `php-rce-2026-10`); recheck per account. Playbook: `tools/runtime/php-server-admin.md` "Security Releases".
+
+- **Builds are host-controlled.** Every site on a PHP version runs the shared `/opt/alt/phpXX` build; the account cannot update it. Check each version with `/opt/alt/php85/usr/bin/php -r 'echo PHP_VERSION, " upload_progress=", ini_get("session.upload_progress.enabled"), PHP_EOL;'` (repeat for 82–84). Patched builds had not shipped hours after the upstream release, so ask support for an ETA.
+- **The host may mitigate first.** Hostinger set `session.upload_progress.enabled = Off` in each `/opt/alt/php8x/etc/php.ini` the same morning, before patched builds. Read the setting before adding a per-site override.
+- **Per-site overrides that took effect** for web PHP, verified with a temporary probe: `php_value post_max_size`, `upload_max_filesize` and `fatal_error_backtraces` inside `<IfModule LiteSpeed>` in the site's `.htaccess`, prepended between BEGIN/END markers with a backup of each file. The default 12288M limits otherwise stay in force.
+- **Check uploads before lowering limits.** Sites holding legitimate uploads above the new limit (videos, large images) keep their limit and receive only the non-upload settings.
+
 Dated uploads directories returned 403 in this observation. Verify directory-listing protection per site rather than assuming it applies to every account. For the read-only baseline, worker/memory sizing, OPcache assessment, host boundaries, and safe directory-listing remediation, read `tools/runtime/php-server-admin.md`.
 
 ### Read-only audit notes

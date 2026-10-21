@@ -13,8 +13,9 @@ import hashlib
 import json
 import sys
 
-from pr_checkpoint_events import (release_for, released_attempt_token, successors_valid,
-                                  timestamp, trusted)
+from pr_checkpoint_events import (events, release_for, released_attempt_token,
+                                  successors_valid, timestamp, trusted)
+from pr_checkpoint_history import released_successor_history
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
 
@@ -44,15 +45,37 @@ def approved_comment(data, comment, now):
     return approval
 
 
-def candidate(data, comments, comment, now):
-    approval = approved_comment(data, comment, now)
-    if approval is None:
-        return None
+def history_approved(data, comments, approval, approval_id, closing):
+    history = released_successor_history(comments, approval["release_id"], approval_id, closing)
+    if history is None or history != approval.get("released_successors", []):
+        return False
+    historical_claims = {item["claim_id"] for item in history}
+    used_tokens = {f.get("lease_token") for c, _, f in
+                   events(comments, approval["release_id"], approval_id)
+                   if c["id"] in historical_claims}
+    used_tokens.add(closing[1])
+    return not data.get("lease") or data["lease"] not in used_tokens
+
+
+def approved_release(data, comments, approval, comment):
     release = release_for(comments, approval, comment)
     if release is None:
         return None
     closing = (approval["runner"], released_attempt_token(comments, approval, release))
-    if not successors_valid({**data, "released_lease": closing}, comments, release["id"],
+    return closing if history_approved(data, comments, approval, comment["id"], closing) else None
+
+
+def candidate(data, comments, comment, now):
+    approval = approved_comment(data, comment, now)
+    if approval is None:
+        return None
+    closing = approved_release(data, comments, approval, comment)
+    if closing is None:
+        return None
+    # The complete earlier history is checked above; the unchanged guard fences
+    # only events after the approval and never grants authority from closure.
+    later = [c for c in comments if c["id"] >= comment["id"]]
+    if not successors_valid({**data, "released_lease": closing}, later, approval["release_id"],
                             comment["id"], now):
         return None
     owners = [a["login"] for a in data["issue"].get("assignees", [])]
@@ -89,11 +112,19 @@ def template(data):
     """
     approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
     # The approval comment does not exist yet; any later comment id qualifies.
-    if release_for(sorted_comments(data), approval, {"id": float("inf")}) is None:
+    comments = sorted_comments(data)
+    release = release_for(comments, approval, {"id": float("inf")})
+    if release is None:
         raise ValueError(
             f"release {approval['release_id']} is not a trusted CLAIM_RELEASED reason=blocked "
             f"by {approval['runner']} closing {approval['attempt']}; dispatch-approved would "
             "reject this approval, so none was generated")
+    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    history = released_successor_history(comments, release["id"], float("inf"), closing)
+    if history is None:
+        raise ValueError("intervening coordination is not fully released; no approval generated")
+    if history:
+        approval["released_successors"] = history
     return PREFIX + json.dumps(approval)
 
 

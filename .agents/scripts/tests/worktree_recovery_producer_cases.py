@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -17,6 +19,57 @@ class ProducerCases:
     def producer(self, command, path, *arguments, check=True):
         script = Path(producer_engine.__file__)
         return self.run_command(sys.executable, script, command, path, *arguments, check=check)
+
+    def test_producer_metadata_diagnostics_are_allowlisted(self):
+        messages = (
+            "ownership, ACLs or extended attributes require separate preservation",
+            "special permissions or hard links require separate preservation",
+        )
+        for message in messages:
+            error = subprocess.CalledProcessError(
+                1, ["private-command"], output="private stdout",
+                stderr="Traceback: private path and source text\nValueError: " + message + "\n")
+            reason = producer_engine.failure_reason(error)
+            self.assertTrue(reason.startswith("producer:unsupported-metadata;"))
+            self.assertEqual(reason, producer_engine.failure_reason(ValueError(message)))
+            self.assertNotIn("private", reason)
+        for stderr in (None, "", "private failure", "ValueError: " + messages[0] + " private-path",
+                       "ValueError: " + messages[0] + "\nother failure", messages[0].encode()):
+            error = subprocess.CalledProcessError(1, ["private-command"], stderr=stderr)
+            self.assertEqual(producer_engine.failure_reason(error), "producer:evidence-unavailable")
+        self.assertEqual(producer_engine.failure_reason(subprocess.TimeoutExpired("private", 1)),
+                         "producer:evidence-unavailable")
+
+    def test_removal_capture_refuses_group_writable_tracked_modes(self):
+        scripts = Path(producer_engine.__file__).parent
+        self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
+        tracked = self.work / "mixed.txt"
+        original = tracked.read_bytes()
+        registration = self.git(self.repo, "worktree", "list", "--porcelain")
+        for mode in (0o664, 0o775):
+            with self.subTest(mode=oct(mode)):
+                tracked.chmod(mode)
+                # Exercise the same capture gate that refuses native removal,
+                # without depending on host-wide process/CWD visibility.
+                result = self.run_command(
+                    "bash", "-c", 'source "$1" && _archive_worktree_path_recoverably_under_lock '
+                    '"$2" test.sh metadata-fixture "$3"', "metadata-removal",
+                    scripts / "audit-worktree-removal-helper.sh", self.work, self.archives,
+                    cwd=self.repo, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"producer:unsupported-metadata;", result.stderr)
+                self.assertIn(b"require separate preservation; source retained", result.stderr)
+                self.assertNotIn(b"producer:evidence-unavailable", result.stderr)
+                self.assertNotIn(b"Traceback", result.stderr)
+                self.assertNotIn(str(tracked).encode(), result.stderr)
+                self.assertEqual(tracked.read_bytes(), original)
+                self.assertEqual(stat.S_IMODE(tracked.stat().st_mode), mode)
+                self.assertEqual(self.git(self.repo, "worktree", "list", "--porcelain"), registration)
+                journals = list(self.archives.glob(".producer-transactions/*/journal.json"))
+                self.assertEqual(len(journals), 1)
+                record = json.loads(journals[0].read_text())
+                self.assertEqual(record["phase"], "capturing")
+                self.assertEqual(list(Path(record["output"]).iterdir()), [])
 
     def test_git_only_capture_contains_commits_and_two_patches_without_verification(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
