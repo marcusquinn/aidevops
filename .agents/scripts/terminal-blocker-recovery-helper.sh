@@ -33,6 +33,10 @@
 #   AIDEVOPS_BLOCKER_RECOVERY_DIR   queue root (default ~/.aidevops/.agent-workspace/terminal-blocker-recovery)
 #   BLOCKER_RECOVERY_SEED_INTERVAL  seconds between automatic seeds (default 21600)
 #   BLOCKER_RECOVERY_DECISION_TTL   seconds a recorded decision suppresses re-assessment (default 86400)
+#   BLOCKER_RECOVERY_BUDGET_SECONDS overall pending/seed budget (default 45)
+#   BLOCKER_RECOVERY_STAGE_SECONDS per entry/seed budget (default 8)
+# Incomplete observations return 2 and a diagnostic on stderr; stdout remains
+# JSONL (or a partial count). Retry resumes after the last attempted entry.
 # =============================================================================
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] && set -euo pipefail
@@ -45,6 +49,66 @@ TBR_DECISION_TTL="${BLOCKER_RECOVERY_DECISION_TTL:-86400}"
 TBR_REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 TBR_EXCERPT_DIR="${AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR:-${HOME}/.aidevops/logs/worker-failure-excerpts}"
 TBR_CIRCUIT_MARKER="TERMINAL_BLOCKER_CIRCUIT active=true"
+TBR_BUDGET_SECONDS="${BLOCKER_RECOVERY_BUDGET_SECONDS:-45}"
+TBR_STAGE_SECONDS="${BLOCKER_RECOVERY_STAGE_SECONDS:-8}"
+
+_tbr_start_budget() {
+	[[ "$TBR_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ && "$TBR_STAGE_SECONDS" =~ ^[1-9][0-9]*$ ]] || return 2
+	TBR_DEADLINE="${TBR_DEADLINE:-$((SECONDS + TBR_BUDGET_SECONDS))}"
+	# shellcheck source=shared-constants.sh
+	declare -F timeout_sec >/dev/null || source "${_TBR_SCRIPT_DIR}/shared-constants.sh"
+	return 0
+}
+
+# Bound whole stages, including paginated reads and nested revision helpers.
+# A timeout is never evidence that a hold resolved or a policy was withdrawn.
+_tbr_run_stage() {
+	local stage="$1" action="$2"
+	shift 2
+	local remaining=$((TBR_DEADLINE - SECONDS)) rc=0
+	if [[ "$stage" != seed && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
+		remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
+	fi
+	[[ "$remaining" -gt 0 ]] || {
+		printf 'blocker-recovery: incomplete stage=%s reason=budget_exhausted\n' "$stage" >&2
+		return 2
+	}
+	[[ "$remaining" -le "$TBR_STAGE_SECONDS" ]] || remaining="$TBR_STAGE_SECONDS"
+	printf 'blocker-recovery: checking stage=%s\n' "$stage" >&2
+	(
+		export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
+		export AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR="$TBR_EXCERPT_DIR"
+		export BLOCKER_RECOVERY_SEED_INTERVAL="$TBR_SEED_INTERVAL" BLOCKER_RECOVERY_DECISION_TTL="$TBR_DECISION_TTL"
+		timeout_sec "$remaining" bash "${_TBR_SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" _stage "$action" "$@"
+	) || rc=$?
+	case "$rc" in
+	0) return 0 ;;
+	1)
+		[[ "$stage" == entry ]] && return 1
+		printf 'blocker-recovery: incomplete stage=%s rc=1\n' "$stage" >&2
+		return 2
+		;;
+	*)
+		printf 'blocker-recovery: incomplete stage=%s rc=%s\n' "$stage" "$rc" >&2
+		return 2
+		;;
+	esac
+}
+
+_tbr_rotate() {
+	local lines="$1" cursor="$2"
+	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
+		[inputs | select(length > 0)] | unique |
+		(map(select(. > $cursor)) + map(select(. <= $cursor)))[]' || return 1
+	return 0
+}
+
+_tbr_save_cursor() {
+	local name="$1" value="$2"
+	printf '%s\n' "$value" >"${TBR_ROOT}/${name}.tmp.$$" || return 1
+	mv -f "${TBR_ROOT}/${name}.tmp.$$" "${TBR_ROOT}/${name}" || return 1
+	return 0
+}
 
 _tbr_valid_ref() {
 	local repo="$1"
@@ -128,27 +192,58 @@ tbr_seed() {
 	if [[ "$force" != "--force" && $((now - last)) -lt "$TBR_SEED_INTERVAL" ]]; then
 		return 0
 	fi
-	local self="" slug="" issue="" comments="" reason="" policy_enabled="" intake=""
+	local self="" slug="" issue="" comments="" reason="" policy_enabled="" intake="" candidates="" incomplete=0 policy_rc=0
+	local repos="" repo_cursor="" issue_cursor="" cursor_name=""
+	repos=$(jq -r 'if (.initialized_repos | type) != "array" then error("invalid registry") else
+		.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug end' \
+		"$TBR_REPOS_JSON" 2>/dev/null) || return 2
+	[[ ! -f "${TBR_ROOT}/seed_repo_cursor" ]] || read -r repo_cursor <"${TBR_ROOT}/seed_repo_cursor" || true
+	repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
+	printf 'blocker-recovery: checking stage=seed_identity\n' >&2
 	self=$(_tbr_self_login) || return 1
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		_tbr_valid_ref "$slug" 1 || {
+			incomplete=1
+			continue
+		}
+		_tbr_save_cursor seed_repo_cursor "$slug" || return 2
+		printf 'blocker-recovery: checking stage=seed_policy repo=%s\n' "$slug" >&2
 		policy_enabled=false
-		_tbr_policy_enabled "$slug" && policy_enabled=true
+		policy_rc=0
+		_tbr_policy_enabled "$slug" && policy_enabled=true || policy_rc=$?
+		[[ "$policy_rc" -lt 2 ]] || incomplete=1
+		printf 'blocker-recovery: checking stage=seed_candidates repo=%s\n' "$slug" >&2
+		candidates=$(_tbr_seed_candidates "$slug") || {
+			incomplete=1
+			continue
+		}
+		cursor_name="seed-${slug//\//--}.cursor"
+		issue_cursor=""
+		[[ ! -f "${TBR_ROOT}/${cursor_name}" ]] || read -r issue_cursor <"${TBR_ROOT}/${cursor_name}" || true
+		candidates=$(_tbr_rotate "$candidates" "$issue_cursor") || return 2
 		while IFS= read -r issue; do
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
-			comments=$(gh api "repos/${slug}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || continue
+			_tbr_save_cursor "$cursor_name" "$issue" || return 2
+			printf 'blocker-recovery: checking stage=seed_comments repo=%s issue=%s\n' "$slug" "$issue" >&2
+			comments=$(gh api "repos/${slug}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || {
+				incomplete=1
+				continue
+			}
 			reason=$(_tbr_seed_reason "$comments" "$self" "$policy_enabled") || continue
 			intake=local
 			if ! _tbr_has_own_circuit "$comments" "$self" && [[ "$policy_enabled" == true ]] &&
 				_tbr_has_foreign_circuit "$comments" "$self"; then
 				intake=policy_remote
 			fi
-			tbr_enqueue "$slug" "$issue" "$reason" "$intake" || true
-		done < <(_tbr_seed_candidates "$slug")
-	done < <(jq -r '.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug' \
-		"$TBR_REPOS_JSON" 2>/dev/null)
+			tbr_enqueue "$slug" "$issue" "$reason" "$intake" || incomplete=1
+		done <<<"$candidates"
+		rm -f "${TBR_ROOT}/${cursor_name}"
+	done <<<"$repos"
+	[[ "$incomplete" -eq 0 ]] || return 2
+	rm -f "${TBR_ROOT}/seed_repo_cursor"
 	printf '%s\n' "$now" >"$stamp"
 	return 0
 }
@@ -157,12 +252,14 @@ tbr_seed() {
 # issues carrying a terminal-blocker observation. Deduplicated.
 _tbr_seed_candidates() {
 	local slug="$1"
-	local query=""
+	local query="" result="" numbers=""
 	for query in "\"TERMINAL_BLOCKER_CIRCUIT\" in:comments" \
 		"label:\"status:blocked\" \"Terminal blocker\" in:comments"; do
-		gh api -X GET search/issues -f q="repo:${slug} is:issue is:open ${query}" \
-			--jq '.items[].number' 2>/dev/null || true
-	done | sort -un
+		result=$(gh api -X GET search/issues -f q="repo:${slug} is:issue is:open ${query}" \
+			--jq '.items[].number' 2>/dev/null) || return 2
+		numbers+="${result}"$'\n'
+	done
+	printf '%s' "$numbers" | sort -un
 	return 0
 }
 
@@ -246,9 +343,11 @@ _tbr_policy_enabled() {
 	*";${repo}=1;"*) return 0 ;;
 	*";${repo}=0;"*) return 1 ;;
 	esac
-	local enabled=0
-	if bash "${_TBR_SCRIPT_DIR}/recovery-policy-helper.sh" "$repo" 2>/dev/null |
-		jq -e '.actions | length > 0' >/dev/null 2>&1; then
+	local enabled=0 policy="" rc=0
+	policy=$(bash "${_TBR_SCRIPT_DIR}/recovery-policy-helper.sh" "$repo" 2>/dev/null) || rc=$?
+	# Absence (3) is authoritative; failed observation is not withdrawal.
+	[[ "$rc" -eq 0 || "$rc" -eq 3 ]] || return 2
+	if [[ "$rc" -eq 0 ]] && printf '%s' "$policy" | jq -e '.actions | length > 0' >/dev/null 2>&1; then
 		enabled=1
 	fi
 	_TBR_POLICY_CACHE="${_TBR_POLICY_CACHE};${repo}=${enabled}"
@@ -327,13 +426,21 @@ _tbr_check_entry() {
 	intake=$(jq -r '.intake // "local"' "$file")
 	key=$(_tbr_key "$repo" "$issue")
 	# GH#35129: cross-runner intake exists only while repo policy enables it.
-	if [[ "$intake" == policy_remote ]] && ! _tbr_policy_enabled "$repo"; then
-		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
-		return 1
+	if [[ "$intake" == policy_remote ]]; then
+		local policy_rc=0
+		printf 'blocker-recovery: checking stage=entry_policy repo=%s issue=%s\n' "$repo" "$issue" >&2
+		_tbr_policy_enabled "$repo" || policy_rc=$?
+		[[ "$policy_rc" -lt 2 ]] || return 2
+		if [[ "$policy_rc" -eq 1 ]]; then
+			rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+			return 1
+		fi
 	fi
 	local issue_json="" state=""
-	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 1
+	printf 'blocker-recovery: checking stage=entry_issue repo=%s issue=%s\n' "$repo" "$issue" >&2
+	issue_json=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 2
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""')
+	[[ "$state" == open || "$state" == closed ]] || return 2
 	if [[ "$state" != "open" ]]; then
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
@@ -341,10 +448,12 @@ _tbr_check_entry() {
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	local comments="" brief="" repo_path=""
-	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo") || return 1
+	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
+	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo") || return 2
 	brief=$(printf '%s' "$issue_json" | jq -c '{title: (.title // ""), body: (.body // "")}')
 	repo_path=$(_tbr_repo_path "$repo")
 	local hold_rc=0
+	printf 'blocker-recovery: checking stage=entry_revision repo=%s issue=%s\n' "$repo" "$issue" >&2
 	if ! terminal_blocker_circuit_active "$comments" "$brief" "$repo" "$issue" "$repo_path" >/dev/null 2>&1; then
 		# GH#34846: a held first observation (no circuit) re-arms on the same
 		# relevant revision or trusted retry; an unreadable revision keeps it.
@@ -358,7 +467,7 @@ _tbr_check_entry() {
 		return 1
 	fi
 	# Indeterminate revision: keep the entry for the next pass, report nothing.
-	[[ "$hold_rc" -eq 0 ]] || return 1
+	[[ "$hold_rc" -eq 0 ]] || return 2
 	_tbr_decision_active "$key" && return 1
 	local excerpts="[]"
 	# Another runner's circuit: public issue/PR evidence only. Same-number
@@ -377,24 +486,63 @@ _tbr_check_entry() {
 tbr_pending() {
 	local mode="${1:-}"
 	_tbr_init_dirs || return 1
-	tbr_seed || true
-	local file="" count=0 self_resolved=0
+	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 observed=";"
+	_tbr_start_budget || return 2
+	reserve=$((TBR_BUDGET_SECONDS / 2))
+	[[ "$reserve" -le "$TBR_STAGE_SECONDS" ]] || reserve="$TBR_STAGE_SECONDS"
+	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
+	[[ ! -f "${TBR_ROOT}/pending_cursor" ]] || read -r cursor <"${TBR_ROOT}/pending_cursor" || true
+	# Resume in sorted order, then wrap. Advance only the scan cursor, never
+	# queue ownership or decisions, even when a stage times out.
+	for pass in 1 2; do
+		for file in "${TBR_ROOT}"/queue/*.json; do
+			[[ -f "$file" ]] || continue
+			if [[ "$pass" -eq 1 ]]; then
+				[[ "${file##*/}" > "$cursor" ]] || continue
+			else
+				[[ "${file##*/}" > "$cursor" ]] && continue
+			fi
+			if [[ "$SECONDS" -ge "$TBR_QUEUE_DEADLINE" ]]; then
+				printf 'blocker-recovery: incomplete stage=queue reason=budget_exhausted\n' >&2
+				incomplete=1
+				break 2
+			fi
+			# GH#33025: resolve once, only when work exists, so this runner's own
+			# collaborator-authored circuits stay recognised during recovery.
+			if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
+				TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_run_stage identity _tbr_self_login) || {
+					incomplete=1
+					break 2
+				}
+				export TERMINAL_BLOCKER_SELF_LOGIN
+			fi
+			self_resolved=1
+			_tbr_save_cursor pending_cursor "${file##*/}" || return 2
+			observed+="${file##*/};"
+			rc=0
+			if [[ "$mode" == "--count" ]]; then
+				_tbr_run_stage entry _tbr_check_entry "$file" >/dev/null || rc=$?
+			else
+				_tbr_run_stage entry _tbr_check_entry "$file" || rc=$?
+			fi
+			[[ "$rc" -ne 0 ]] || count=$((count + 1))
+			[[ "$rc" -lt 2 ]] || incomplete=1
+		done
+	done
+	# Existing ownership is observed before potentially slow remote discovery.
+	# Seed has its own stage cap and cannot consume more than the overall budget.
+	rc=0
+	_tbr_run_stage seed tbr_seed || rc=$?
+	[[ "$rc" -eq 0 ]] || incomplete=1
 	for file in "${TBR_ROOT}"/queue/*.json; do
 		[[ -f "$file" ]] || continue
-		# GH#33025: resolve once, only when work exists, so this runner's own
-		# collaborator-authored circuits stay recognised during recovery.
-		if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
-			TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_self_login 2>/dev/null) || TERMINAL_BLOCKER_SELF_LOGIN=""
-			export TERMINAL_BLOCKER_SELF_LOGIN
-		fi
-		self_resolved=1
-		if [[ "$mode" == "--count" ]]; then
-			_tbr_check_entry "$file" >/dev/null && count=$((count + 1))
-		else
-			_tbr_check_entry "$file" || true
-		fi
+		case "$observed" in *";${file##*/};"*) continue ;; esac
+		printf 'blocker-recovery: incomplete stage=queue reason=unobserved_entries\n' >&2
+		incomplete=1
+		break
 	done
 	[[ "$mode" == "--count" ]] && printf '%s\n' "$count"
+	[[ "$incomplete" -eq 0 ]] || return 2
 	return 0
 }
 
@@ -427,8 +575,19 @@ tbr_main() {
 	local action="${1:-pending}"
 	shift || true
 	case "$action" in
+	_stage)
+		local stage_action="${1:-}"
+		shift || return 2
+		case "$stage_action" in
+		_tbr_self_login | _tbr_check_entry | tbr_seed) "$stage_action" "$@" ;;
+		*) return 2 ;;
+		esac
+		;;
 	enqueue) tbr_enqueue "$@" ;;
-	seed) tbr_seed "$@" ;;
+	seed)
+		_tbr_start_budget || return 2
+		_tbr_run_stage seed tbr_seed "$@"
+		;;
 	pending) tbr_pending "$@" ;;
 	record) tbr_record "$@" ;;
 	help | --help | -h)

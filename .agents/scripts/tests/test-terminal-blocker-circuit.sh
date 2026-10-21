@@ -1203,7 +1203,116 @@ test_target_code_blocker_observation_rearms() {
 	return 0
 }
 
+# GH#35290: exercise the real CLI and timeout boundary with inherited GitHub
+# fixtures, not a replacement pending implementation. No live queue is touched.
+test_bounded_recovery_intake() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/bounded-intake"
+		TBR_REPOS_JSON="${TEST_ROOT}/bounded-repos.json"
+		export TB_INTAKE_FIXTURE="$TBR_ROOT" WORKER_GITHUB_LOGIN=runner-one TERMINAL_BLOCKER_SELF_LOGIN=runner-one
+		export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
+		export BLOCKER_RECOVERY_STAGE_SECONDS=1 BLOCKER_RECOVERY_BUDGET_SECONDS=1
+		_tbr_init_dirs || exit 1
+		printf '{"initialized_repos":[]}\n' >"$TBR_REPOS_JSON"
+		date +%s >"${TBR_ROOT}/last_seed_epoch"
+		local fixture_brief='{"title":"Held integration","body":"### Files Scope\n- helper.sh"}' revision=""
+		revision=$(terminal_blocker_task_revision "$fixture_brief" owner/repo 42 "" files_scope_excluded) || exit 1
+		jq -nc --argjson brief "$fixture_brief" '$brief + {state:"open",labels:[{name:"status:blocked"}]}' >"${TBR_ROOT}/issue.json"
+		jq -nc --arg body "Terminal blocker: reason=files_scope_excluded owner=brief-author
+<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=$(_terminal_blocker_hash 'v2:files_scope_excluded') -->" \
+			'[[{id:7,body:$body,user:{login:"runner-one"},author_association:"MEMBER",created_at:"2026-10-16T23:32:17Z"}]]' >"${TBR_ROOT}/comments.json"
+		gh() {
+			local args="$*"
+			printf '%s\n' "$args" >>"${TB_INTAKE_FIXTURE}/requests"
+			case "$args" in
+			"api repos/owner/repo/issues/1" | "api repos/owner/repo/issues/1/comments?per_page=100 --paginate --slurp")
+				[[ "${TB_SEED_FAST:-0}" -eq 0 ]] || { printf '[]\n'; return 0; }
+				sleep 5
+				return 1
+				;;
+			"api repos/owner/repo/issues/2") printf '{"state":"closed"}\n' ;;
+			"api repos/owner/repo/issues/42") jq -c . "${TB_INTAKE_FIXTURE}/issue.json" ;;
+			"api repos/owner/repo/issues/42/comments?per_page=100 --paginate --slurp") jq -c . "${TB_INTAKE_FIXTURE}/comments.json" ;;
+			"api repos/owner/repo")
+				[[ "${TB_SEED:-0}" -eq 1 ]] || return 1
+				printf '{"permissions":{"push":true},"default_branch":"main"}\n'
+				;;
+			"api -X GET repos/owner/repo/commits"*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+			"api -X GET repos/owner/repo/contents/.aidevops.json"*) printf 'HTTP 404\n' >&2; return 1 ;;
+			"api -X GET search/issues"*)
+				[[ "${TB_SEED:-0}" -eq 1 ]] || return 1
+				printf '1\n42\n'
+				;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		export -f gh
+		tbr_enqueue owner/repo 1 permission_required || exit 1
+		tbr_enqueue owner/repo 2 permission_required || exit 1
+		tbr_enqueue owner/repo 42 files_scope_excluded || exit 1
+		printf '{"wake":"brief_revision","next_action":"hold unchanged brief","evidence":"fixture"}\n' |
+			tbr_record owner/repo 42 || exit 1
+		local rc=0 started="$SECONDS" decision=""
+		decision=$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
+		[[ "$rc" -eq 2 && $((SECONDS - started)) -le 3 && ! -s "${TBR_ROOT}/out" ]] || exit 1
+		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=entry'* && "$(<"${TBR_ROOT}/err")" == *'stage=entry_issue'* ]] || exit 1
+		[[ "$(<"${TBR_ROOT}/pending_cursor")" == owner--repo--1.json && -f "${TBR_ROOT}/queue/owner--repo--1.json" ]] || exit 1
+		# Resume past the stalled entry: retire closed entries and suppress an
+		# unchanged held decision, then wrap and retry (not delete) the slow one.
+		export BLOCKER_RECOVERY_BUDGET_SECONDS=4
+		rc=0
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending --count >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
+		[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/out")" == 0 ]] || exit 1
+		[[ ! -f "${TBR_ROOT}/queue/owner--repo--2.json" && -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || exit 1
+		[[ "$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")" == "$decision" ]] || exit 1
+		# With only the unchanged held entry, observation is complete and empty.
+		rm -f "${TBR_ROOT}/queue/owner--repo--1.json"
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || exit 1
+		[[ ! -s "${TBR_ROOT}/out" ]] || exit 1
+		# Seed failures are explicit too, and never stamp an incomplete scan.
+		rm -f "${TBR_ROOT}/last_seed_epoch"
+		printf '{"initialized_repos":[{"slug":"owner/repo","pulse":true}]}\n' >"$TBR_REPOS_JSON"
+		rc=0
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
+		[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
+		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=seed'* ]] || exit 1
+		# Seed also resumes after a slow candidate, without weakening who may
+		# enqueue a hold. Newly seeded entries cannot masquerade as empty intake.
+		export TB_SEED=1 BLOCKER_RECOVERY_STAGE_SECONDS=2 BLOCKER_RECOVERY_BUDGET_SECONDS=6
+		rm -f "${TBR_ROOT}/queue/owner--repo--42.json"
+		rc=0
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
+		[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/seed-owner--repo.cursor")" == 1 ]] || exit 1
+		rc=0
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
+		[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || exit 1
+		[[ "$(<"${TBR_ROOT}/err")" == *'reason=unobserved_entries'* && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
+		export TB_SEED_FAST=1
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" seed >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || exit 1
+		[[ -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
+		# A failed remote-policy observation is not permission to retire evidence.
+		(
+			_tbr_policy_enabled() { return 2; }
+			tbr_enqueue owner/repo 42 files_scope_excluded policy_remote || exit 1
+			rc=0
+			_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--42.json" >/dev/null || rc=$?
+			[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" && -f "${TBR_ROOT}/decisions/owner--repo--42.json" ]]
+		) || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "bounded intake resumes past stalled reads, preserves held decisions, and distinguishes incomplete from empty" "$status"
+	return 0
+}
+
 main() {
+	test_bounded_recovery_intake
 	test_target_code_blocker_observation_rearms
 	test_worker_capability_cooldown
 	test_verification_environment_alias
