@@ -121,35 +121,22 @@ The command reports `bucket_bytes` (null when not measured), `archive_bytes`, `s
 
 ## Confirmed retirement of migrated buckets
 
-Manual retirement uses `worktree-recovery-lifecycle-helper.sh` and the configured recovery root:
-run `retire-plan --bucket <absolute-bucket-path>`, inspect its report, then
-`retire --bucket <same-path> --confirm <confirmation_token>` with the exact token.
-`retire-status --bucket <same-path>` reports the transaction even after the original bucket disappears.
+Use `worktree-recovery-lifecycle-helper.sh` with the configured recovery root:
 
-The migration must be verified, source identity/content unchanged, and the bound
-archive freshly verified against the recorded manifest and available base.
-Legacy self-contained archive receipts remain readable. Existing registry,
-interactive-claim, Git worktree-reference and process guards must be clear.
-Positive CWD matches always block; degraded visibility needs a valid saved
-managed-lifetime receipt. Missing evidence blocks, without sudo or new enrollment.
+1. Run `retire-plan --bucket <absolute-bucket-path>` and inspect the report.
+2. Run `retire --bucket <same-path> --confirm <confirmation_token>` with that exact token.
+3. Inspect `retire-status --bucket <same-path>`, even after the original bucket disappears.
 
-The operation holds producer and migration locks, journals a randomized private
-transaction, then renames the bucket into it. Physical content is compared again
-without rewriting relocated Git pointers. Archive and ownership/process evidence
-are rechecked before descriptor-anchored removal. A new bucket at the original
-name is never a deletion target. As with migration scratch, transaction directories
-exclude cooperating writers; content sampling cannot exclude malicious same-user writers.
+Require verified migration, unchanged source identity/content, and fresh bound-archive verification against the recorded manifest and available base. Legacy self-contained receipts remain readable.
+Registry, interactive-claim, Git worktree-reference and process guards must be clear. Positive CWD matches block; degraded visibility requires a valid saved managed-lifetime receipt. Missing evidence blocks, without sudo or new enrollment.
 
-The journal is `.compact-migrations/<bucket>/retirement.json`; reservations and
-archive pins remain for audit/recovery, not automatic expiry. Interrupted claims
-can resume with the same confirmation token after revalidation. Partial removals,
-changed contents, missing transaction data or substituted identities remain
-incomplete and retained for review; absence alone never counts as retirement.
-Do not delete journals or alter receipts to force continuation.
+Under producer and migration locks, journal a randomized private transaction and rename the bucket into it. Compare physical content again without rewriting relocated Git pointers; recheck archive and ownership/process evidence before descriptor-anchored removal.
+A replacement at the original name is never a deletion target. As with migration scratch, transaction directories exclude cooperating writers; content sampling cannot exclude malicious same-user writers.
 
-Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`: allocated-size
-observations, not physical free-space proof on shared, compressed or snapshotting storage.
-Archive expiry remains separately authorized.
+The journal is `.compact-migrations/<bucket>/retirement.json`. Retain reservations and archive pins for audit/recovery, not expiry. Interrupted claims resume with the same token only after revalidation.
+Partial removals, changed contents, missing transaction data or substituted identities stay incomplete for review; absence never proves retirement. Never delete journals or alter receipts to force continuation.
+
+Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`: allocated-size observations, not free-space proof on shared, compressed or snapshotting storage. Archive expiry needs separate authority.
 
 ### Automatic verified compaction
 
@@ -165,12 +152,11 @@ Deploy on each machine and measure actual reclaimed space; merge alone does neit
 
 ### Fast legacy Pulse eligibility statistics
 
-`worktree-helper.sh recovery legacy-report` (also available directly through the
-lifecycle helper) reads bounded metadata from the user's default recovery root.
-`--details` adds local bucket/source paths, source inode, creation date and reasons.
-`--root`, `--registry` and `--ledger` select other local evidence. No recursive
-sizing, source reads, Git/network calls, process scans, restores or mutations.
-Elapsed time excludes interpreter/shell startup; byte totals are not measured.
+`worktree-helper.sh recovery legacy-report` (also exposed by the lifecycle helper) reads bounded metadata from the default recovery root:
+
+- `--details`: local bucket/source paths, source inode, creation date and reasons.
+- `--root`, `--registry`, `--ledger`: alternate local evidence.
+- No recursive sizing, source reads, Git/network calls, process scans, restores or mutations. Byte totals are unmeasured; elapsed time excludes interpreter/shell startup.
 
 Existing lifecycle records use the lifecycle path; unknown/profile origin is
 retained. Name-classified legacy Pulse requires a UTC creation time at least seven days
@@ -190,44 +176,26 @@ instead of falling back to a potentially enormous unfiltered copy. Tracked files
 symlinks, and unknown ignored content remain protected. This prevents a bounded
 cleanup timeout from repeatedly materializing dependency trees before pruning them.
 
-Run `worktree-helper.sh recovery` for a read-only legacy-bucket count/byte report with
-protected/unknown reasons. The same legacy summary appears as one
-`worktree-recovery` record in shared storage status; `reclaimable_bytes` remains
-zero because that aggregate report grants no deletion authority. On non-macOS systems, inventory also includes attributable
-legacy `$HOME/.Trash/aidevops-worktree-cleanup-*` buckets. Framework-owned
-default roots remain distinct from joint OS Trash or operator-selected roots.
-Incomplete, symlinked, unrecognised, or unsized buckets are `unknown`; inventory
-never migrates, rewrites, or deletes them. Entry-local sizing failures are
-reported in `sizing_error` and do not become structural `error` failures. The
-aggregate byte totals remain unavailable when any entry is unsized, while
-independently exact entries retain their own evidence.
+Run `worktree-helper.sh recovery` for read-only legacy-bucket counts/bytes and protected/unknown reasons. Shared storage status exposes the same summary as one `worktree-recovery` record; `reclaimable_bytes` is zero because inventory grants no deletion authority.
+Non-macOS inventory also includes attributable legacy `$HOME/.Trash/aidevops-worktree-cleanup-*` buckets. Keep framework defaults distinct from joint OS Trash and operator-selected roots.
+Incomplete, symlinked, unrecognised or unsized buckets are `unknown`; inventory never migrates, rewrites or deletes them. Entry-local `sizing_error` is not structural `error`. Any unsized entry makes aggregate bytes unavailable, without invalidating independently exact entries.
 
-Run `worktree-helper.sh recovery plan --output <absolute-path>` to persist a
-versioned `aidevops.worktree-recovery-plan/v2` JSON review artifact. The new, absolute,
-non-symlinked, writable output path is published atomically from a complete mode-0600
-temporary file beside it, never replacing an existing path. Generation is read-only
-for all recovery roots and archives: no bucket moves, rewrites or deletions.
+Run `worktree-helper.sh recovery plan --output <absolute-path>` for a versioned `aidevops.worktree-recovery-plan/v2` JSON review artifact. Publish a complete mode-0600 temporary file atomically beside a new absolute, non-symlinked, writable output path; never replace an existing path. Generation never moves, rewrites or deletes recovery buckets/archives.
 
-Manual planning inventories structure without exact-sizing every bucket, then checks
-full evidence and final exact size only within the selected window (default 100 entries).
-Tune with `--max-classify <1-1000>`; continue from `next_classification_offset` using
-`--offset <non-negative-integer>`. The between-entry deadline defaults to 120 seconds;
-tune with `--deadline-seconds <1-3600>`. Outside-window or timed-out entries remain
-`unknown` with `classification-deferred` or `classification-deadline-exhausted`, never
-deletion authority. Plans record completeness, classified/deferred counts, deadline
-state and both offsets, allowing independent inspection or reclamation windows
-without an unbounded pass or authoritative size cache.
+Planning inventories structure first, then checks full evidence and exact size only within a bounded window:
 
-The envelope records producer, generation time, deterministic plan ID, inventory
-completeness/errors, source roots, reconciled entry/byte totals and ordered `candidate`,
-`protected` and `unknown` entries. Incomplete global inventory yields no candidates;
-local sizing failure downgrades only that entry. Each attributable entry binds physical
-bucket/archive paths, format, Git HEAD/branch, source/admin/common identity, archive
-index/completion-marker digests, expected allocated bytes, observed local/remote
-evidence, disposition and reason codes. Unchanged evidence yields identical entries
-and plan ID; generation time is observational. The v2 confirmation token binds plan ID,
-exact candidate count, expected allocated bytes, schema and permanent-delete action.
-Never upgrade earlier or tokenless plans into destructive authorization.
+| Control | Default / behavior |
+| --- | --- |
+| `--max-classify <1-1000>` | 100 entries |
+| `--offset <non-negative-integer>` | Continue from `next_classification_offset` |
+| `--deadline-seconds <1-3600>` | 120 seconds, checked between entries |
+| Outside window / timed out | `unknown`: `classification-deferred` / `classification-deadline-exhausted` |
+
+Plans record completeness, classified/deferred counts, deadline state and both offsets for independent inspection/reclamation windows, not an unbounded pass or authoritative size cache. Deferred entries grant no deletion authority.
+
+The envelope binds producer, generation time, deterministic plan ID, inventory completeness/errors, source roots, reconciled entry/byte totals and ordered `candidate`, `protected`, `unknown` entries. Incomplete global inventory yields no candidates; local sizing failure downgrades only its entry.
+Each attributable entry binds physical bucket/archive paths, format, Git HEAD/branch, source/admin/common identity, archive index/completion-marker digests, expected allocated bytes, observed local/remote evidence, disposition and reason codes.
+Unchanged evidence yields identical entries/plan ID; generation time is observational. The v2 token binds plan ID, exact candidate count, expected allocated bytes, schema and permanent-delete action. Never upgrade earlier or tokenless plans into destructive authority.
 
 Candidate status requires a valid complete archive, completed source removal, a clean tracked/untracked/user-ignored
 Git state, an exact terminal commit, no open pull request, no live Git worktree/registry/claim/process reference,
@@ -454,41 +422,26 @@ records add a fixed step `detail` (for example `cycle-state-invalid` or `scan-fa
 
 ### Process-visibility diagnostics
 
-If `process-evidence-unavailable` is that dominant reason, maintenance
-instead reports `outcome:"operator-intervention-required"` with the fixed
-`unsupported-process-visibility` condition. A minority of process-visibility
-observations no longer overrides a larger blocker such as detached or dirty
-archives. The result includes only a bounded
-scan-observation count and fixed guidance: inspect the read-only plan locally
-and check saved managed-lifetime evidence before diagnosing process visibility.
-The classifier already accepts a sealed generation matching the archived source
-path and inode as the rootless alternative to a degraded CWD scan. Check
-`worktree-lifecycle-helper.sh report --summary` and the source's
-`worktree-managed-lifetime.py status` record; do not confuse missing enrollment,
-unfinished sealing or invalid receipts with a requirement for sudo. Repair the
-owning lifecycle transition without fabricating receipts. See
-`reference/worktree-cwd-visibility.md` for the proof contract and limitations.
-The result never reports process names, command lines,
-CWDs, usernames, or archive paths. The one operator-invoked exception is
-`worktree-helper.sh recovery unreadable-processes` (GH#32853): run manually on
-a `/proc` host, it prints `<pid>\t<comm>\t<remedy>` for each live, non-zombie
-process that is not provably foreign-UID and whose CWD neither a direct read
-nor the opt-in inspector can read. These are exactly the entries that make
-visibility degraded. `<remedy>` is `inspector` when the inspector's UID rule
-(real UID is the caller; other UIDs are the caller or root) accepts the process
-and `stop-only` otherwise on supported non-NixOS Linux (GH#32871). NixOS reports
-`unprivileged-review` and never invokes that inspector. These labels are not
-instructions to stop login/session services. It is read-only, prints to the terminal
-only, and is never called by automatic maintenance, advisories, logs, or plans;
-the escalation advisory names the command but never its output. Names are identification
-aids, never exemptions. Platforms without `/proc` exit 3 because `lsof` does not
-identify denied processes. If neither complete visibility nor a valid managed
-lifetime proof is available, the affected archives remain retained. Pulse/manual launch provenance: [shared launch](worktree-registry.md#shared-pulse-and-manual-launch-gh35295). Degraded
-visibility alone does not prohibit cleanup of every archive on the host.
-This diagnostic outcome grants no deletion authority, does not trust
-process names, and does not require root access or weaker kernel process
-protections. A readable CWD match remains a positive live-reference block, and
-every other candidacy and apply invariant above remains unchanged.
+Only when `process-evidence-unavailable` is dominant, report `outcome:"operator-intervention-required"` with `unsupported-process-visibility`. Minority observations must not override a larger blocker such as detached or dirty archives.
+Return only a bounded scan-observation count and fixed guidance: inspect the read-only plan locally and check saved managed-lifetime evidence before diagnosing visibility. Never report process names, command lines, CWDs, usernames or archive paths in this result.
+
+For rootless proof, the classifier accepts a sealed generation matching the archived source path and inode:
+
+1. Check `worktree-lifecycle-helper.sh report --summary` and the source's `worktree-managed-lifetime.py status` record.
+2. Repair missing enrollment, unfinished sealing or invalid receipts at the owning lifecycle transition; never fabricate receipts or infer a need for sudo.
+3. See `reference/worktree-cwd-visibility.md` for the proof contract and limitations; [shared launch](worktree-registry.md#shared-pulse-and-manual-launch-gh35295) covers Pulse/manual provenance.
+
+The sole operator-invoked output exception is `worktree-helper.sh recovery unreadable-processes` (GH#32853). On a `/proc` host it prints `<pid>\t<comm>\t<remedy>` for each live, non-zombie process not provably foreign-UID whose CWD neither direct read nor the opt-in inspector can read: exactly the entries degrading visibility.
+
+| Platform / UID evidence | `<remedy>` |
+| --- | --- |
+| Supported non-NixOS Linux; real UID is caller, other UIDs caller or root | `inspector` |
+| Supported non-NixOS Linux; inspector UID rule rejects process | `stop-only` (GH#32871) |
+| NixOS | `unprivileged-review`; never invoke inspector |
+| No `/proc` | Exit 3: `lsof` cannot identify denied processes |
+
+This read-only diagnostic prints only to the terminal, never through automatic maintenance, advisories, logs or plans. The escalation advisory names the command, never its output. Labels do not instruct stopping login/session services; names identify processes, never exempt them.
+Without complete visibility or valid managed-lifetime proof, retain affected archives; degraded visibility alone does not block every archive on the host. No deletion authority, root access, weaker kernel protections or trust in process names follows from this outcome. Readable CWD matches still block as live references; all other candidacy/apply invariants remain unchanged.
 
 ## Session-history limitations
 
