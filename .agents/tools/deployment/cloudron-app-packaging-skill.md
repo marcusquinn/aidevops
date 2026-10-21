@@ -79,12 +79,14 @@ Use `Dockerfile`, `Dockerfile.cloudron`, or `cloudron/Dockerfile`. See `cloudron
 
 | App type | Image | Notes |
 |----------|-------|-------|
-| General | `cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b` | Ubuntu 26.04. No PHP, Node, Apache, pip/venv, or mongosh. |
+| General | `cloudron/base:6.0.1@sha256:7b1e729960c3ca312d26e886917ba89483241bba0219ff292858e10d9d5768ee` | Ubuntu 26.04; includes `shared-mime-info` and the patched CA bundle. No PHP, Node, Apache, pip/venv, or mongosh. |
 | Node 24 | `cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453f327297d7183525cb05424e7b34` | Node at `/usr/local/node/bin`, already on `PATH`. |
 | PHP 8.5 | `cloudron/php-base:8.5-20260920@sha256:a59a4334fbf50ebfdf8f6cc5527e099e4586349a1aefc546e85f7401ea366d65` | Prefer when the app supports PHP 8.5. |
 | PHP 8.4 | `cloudron/php-base:8.4-20260920@sha256:e9352b5fba7ad0a231b8a9e454034400a3a34a7fe1800425f634d32ffcae4a52` | Use when the app is not ready for PHP 8.5. |
 
 Reviewed 2026-10-08 against the official [base-image source](https://git.cloudron.io/platform/docker-base-image) and Docker Hub. Runtime child images now use immutable series-date tags; do not reuse the stale floating PHP `8.4`/`8.5` tags. Review the tags and verify digests periodically rather than silently floating to a newer image.
+
+General base re-reviewed 2026-10-21 at upstream `v6.0.1` (`d52c466b6e11`): adopts Ubuntu `resolute-20261006`, `shared-mime-info`, and the `ca-certificates >= 20260816ubuntu0.26.04.1` build requirement (USN-8944-1, emSign removal). Docker Hub and `docker manifest inspect` verify the Linux amd64 digest above. The helper pin and existing release/monitor fixtures are aligned; this does not upgrade the separately reviewed dated Node/PHP images.
 
 Upstream also documents dated `cloudron/python-base` images for Python 3.11–3.14.
 These are not yet in the helper's reviewed image allowlist; do not substitute
@@ -111,7 +113,7 @@ FROM cloudron/node-base:24-20260920@sha256:d984683ec59bf2379130bf41cf3c2b6bc0453
 ### Non-PHP structure
 
 ```dockerfile
-FROM cloudron/base:6.0.0@sha256:9bed4c8fa880645f8e669041ee28febe941481d00e9445e3e5a5483cb541d09b
+FROM cloudron/base:6.0.1@sha256:7b1e729960c3ca312d26e886917ba89483241bba0219ff292858e10d9d5768ee
 RUN mkdir -p /app/code
 WORKDIR /app/code
 COPY . /app/code/
