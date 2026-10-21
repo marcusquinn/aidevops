@@ -394,3 +394,44 @@ run_patch_release_preflight() {
 	print_success "Patch release regression preflight passed"
 	return 0
 }
+
+# PR-time secretlint gate (GH#35329). Reuses configure_secretlint_command and
+# _run_secretlint_on_changed_files so PR CI and the release preflight agree.
+# Arguments: base_ref head_ref
+run_pr_secretlint_check() {
+	local base_ref="$1"
+	local head_ref="${2:-HEAD}"
+	local changed_files=""
+
+	changed_files=$(git -C "$REPO_ROOT" diff --name-only --diff-filter=d "${base_ref}...${head_ref}") || {
+		print_error "Unable to compute changed files for ${base_ref}...${head_ref}"
+		return 1
+	}
+
+	configure_secretlint_command || return 1
+	_run_secretlint_on_changed_files "$base_ref" "$changed_files"
+	return $?
+}
+
+# CLI entrypoint for direct execution.
+# Arguments: subcommand base_ref [head_ref]
+_preflight_main() {
+	local subcommand="${1:-}"
+	local base_ref="${2:-}"
+	local head_ref="${3:-HEAD}"
+
+	if [[ "$subcommand" != "pr-secretlint" || -z "$base_ref" ]]; then
+		echo "usage: ${0##*/} pr-secretlint <base-ref> [head-ref]" >&2
+		return 2
+	fi
+	REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
+	# shellcheck source=shared-constants.sh
+	source "${SCRIPT_DIR}/shared-constants.sh"
+	run_pr_secretlint_check "$base_ref" "$head_ref"
+	return $?
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	_preflight_main "$@"
+	exit $?
+fi

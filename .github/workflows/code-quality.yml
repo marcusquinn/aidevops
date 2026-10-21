@@ -1205,6 +1205,43 @@ jobs:
         echo "Fix the violations above, or add the 'lint-baseline-ok' label to override."
         exit 1
 
+  # GH#35329: PR-time secretlint on changed files. Uses the same runtime
+  # selection and config as the patch-release preflight so a PR cannot merge
+  # green and then block the release. Secretlint is pinned from package.json.
+  secretlint-changed:
+    name: Secretlint (changed files)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: '20'
+
+    - name: Install pinned secretlint
+      run: |
+        set -euo pipefail
+        sl_ver=$(node -p "require('./package.json').devDependencies.secretlint")
+        preset_ver=$(node -p "require('./package.json').devDependencies['@secretlint/secretlint-rule-preset-recommend']")
+        npm install --no-save --no-package-lock --no-audit --no-fund \
+          "secretlint@${sl_ver}" "@secretlint/secretlint-rule-preset-recommend@${preset_ver}"
+
+    - name: Secretlint changed files
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        bash .agents/scripts/version-manager-preflight.sh pr-secretlint "${BASE_SHA}" "${HEAD_SHA}"
+
   # t2241: biome scoped via baseline diff.
   # Counts biome lint violations at the PR merge-base and at HEAD,
   # fails only when the PR introduces a net increase. Pre-existing
