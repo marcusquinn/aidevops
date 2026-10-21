@@ -1762,6 +1762,7 @@ _main_check_version() {
 
 # Route 'aidevops security [subcommand]' to appropriate helpers
 _cmd_security() {
+	local tls_helper="tls-trust-helper.sh"
 	case "${1:-}" in
 	"")
 		# No args: run ALL security checks (posture + hygiene + advisories)
@@ -1774,6 +1775,8 @@ _cmd_security() {
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" scan || true
 		echo ""
 		_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" scan || true
+		echo ""
+		_dispatch_helper "$tls_helper" "$tls_helper" local || true
 		;;
 	scan | scan-secrets | scan-pth | scan-deps)
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
@@ -1807,6 +1810,11 @@ _cmd_security() {
 	supply-chain)
 		shift || true
 		_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" "${@:-scan}"
+		;;
+	tls-trust)
+		shift || true
+		_dispatch_helper "$tls_helper" "$tls_helper" "${@:-local}"
+		return $?
 		;;
 	*)
 		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"
