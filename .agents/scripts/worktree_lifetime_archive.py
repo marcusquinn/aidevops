@@ -106,7 +106,7 @@ def require_verified(record, source=True):
     helper("verify", str(archive))
     require(hashlib.sha256(manifest.read_bytes()).hexdigest() == value["manifest_sha256"], "archive changed during verification")
     if source:
-        observe = git_snapshot if value["snapshot"].get("schema") == 3 else snapshot
+        observe = git_snapshot if value["snapshot"].get("schema") in (3, 4) else snapshot
         require(observe(record["identity"]["path"]) == value["snapshot"], "source changed since verified restoration")
 
 

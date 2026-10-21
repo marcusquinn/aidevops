@@ -27,6 +27,7 @@ from worktree_archive_administration import (
     OPERATIONS as OPERATIONS,
 )
 from worktree_archive_state import auto_merge, inventories, supported_state
+from worktree_archive_state import capture_merge, merge_digest, restore_merge
 from worktree_archive_index import (
     archive_policies as archive_policies, git_index_state as git_index_state,
 )
@@ -81,7 +82,8 @@ def prepare_incremental_restore(archive, target):
     target.mkdir(mode=0o755)
     object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
     git(target, 'init', '--quiet', f'--object-format={object_format}')
-    seed_base(target, manifest)
+    if manifest.get('self_contained') is not True:
+        seed_base(target, manifest)
     if (manifest.get('capture_policy') == 'git-only'
             and manifest.get('source_fingerprint', {}).get('auto_merge') is None):
         if (archive / 'commits.bundle').is_file():
@@ -138,6 +140,17 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     """
     root = Path(path).resolve(strict=True)
     metadata = metadata if metadata is not None else git_index_state(root)
+    if 'merge' in metadata:
+        state = metadata['merge']
+        result = {'schema': 4, 'policy': 'git-only', 'head': state['head'],
+                  'files': len(state['working']), 'bytes': sum(len(value[1]) // 2 for value in state['working'].values() if value),
+                  'merge_sha256': merge_digest(state)}
+        if include_untracked:
+            paths = sorted(filter(None, git(root, 'ls-files', '--others', '--exclude-standard', '-z').split(b'\0')))
+            contents = [[os.fsdecode(raw), fingerprint(root, raw)] for raw in paths]
+            result.update(untracked_files=len(paths),
+                          untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest())
+        return result
     options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
                "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short")
     staged = (patches / "staged.patch").read_bytes() if patches else git(root, "diff", "--cached", *options)
@@ -189,6 +202,10 @@ def main(argv):
     command = argv[0] if argv else ''
     if command == 'auto-merge-capture' and len(argv) == 4:
         capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), argv[3])
+    elif command == 'merge-capture' and len(argv) == 3:
+        capture_merge(Path(argv[1]), Path(argv[2]).resolve())
+    elif command == 'merge-restore' and len(argv) == 3:
+        restore_merge(Path(argv[1]), Path(argv[2]).resolve())
     elif command == 'auto-merge-restore' and len(argv) == 3:
         restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve())
     elif command == "admin-capture" and len(argv) in (4, 5):

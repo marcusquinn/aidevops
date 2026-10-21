@@ -224,6 +224,70 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
     def auto_merge_path(self):
         return Path(os.fsdecode(self.git(self.work, "rev-parse", "--absolute-git-dir")).strip()) / "AUTO_MERGE"
 
+    def test_interrupted_merge_independent_continuation(self):
+        # Content, add/add, modify/delete, rename and binary conflicts, with a
+        # staged resolution and staged deletion retained in resolve-undo.
+        self.git(self.repo, 'checkout', '-qb', 'other')
+        (self.repo / 'mixed.txt').write_bytes(b'other\n')
+        (self.repo / 'added').write_bytes(b'other add\n')
+        (self.repo / 'binary.bin').write_bytes(b'\0other\xff')
+        (self.repo / 'staged-delete').write_bytes(b'other deletion conflict\n')
+        (self.repo / 'old-name').rename(self.repo / 'renamed')
+        self.git(self.repo, 'add', '-A')
+        self.git(self.repo, 'commit', '-qm', 'theirs')
+        (self.work / 'mixed.txt').write_bytes(b'ours\n')
+        (self.work / 'added').write_bytes(b'our add\n')
+        (self.work / 'binary.bin').write_bytes(b'\0ours\xfe')
+        (self.work / 'old-name').write_bytes(b'our renamed content\n')
+        self.git(self.work, 'rm', 'staged-delete')
+        self.git(self.work, 'add', '-A')
+        self.git(self.work, 'commit', '-qm', 'ours')
+        self.assertNotEqual(self.run_command('git', '-C', self.work, 'merge', 'other', check=False).returncode, 0)
+        (self.work / 'added').write_bytes(b'staged add resolution\n')
+        self.git(self.work, 'add', 'added')
+        self.git(self.work, 'rm', 'staged-delete')
+        (self.work / 'mixed.txt').write_bytes(b'partial resolution\n')
+        (self.work / 'run.sh').chmod(0o755)
+        (self.work / 'ordinary-untracked').write_bytes(b'ordinary\0bytes')
+        baseline = {option: self.git(self.work, 'ls-files', option, '-z') for option in ('--stage', '--resolve-undo')}
+        status = self.git(self.work, 'status', '--porcelain=v1', '-z')
+        comparison = self.git(self.work, 'diff', '--binary', 'AUTO_MERGE')
+        parent = self.git(self.work, 'rev-parse', 'HEAD').strip()
+        other = self.git(self.work, 'rev-parse', 'MERGE_HEAD').strip()
+        archive = self.archive()
+        self.helper('verify', archive)
+        self.helper('source-matches', archive, self.work)
+        manifest = json.loads((archive / 'manifest.json').read_text())
+        self.assertEqual(manifest['source_fingerprint']['schema'], 4)
+        self.assertTrue(manifest['self_contained'])
+        self.assertFalse((archive / 'git-admin.json').exists())
+        # Compute the expected result independently on the original merge.
+        (self.work / 'binary.bin').write_bytes(b'\0resolved\xff')
+        (self.work / 'mixed.txt').write_bytes(b'final resolution\n')
+        self.git(self.work, 'add', '-A')
+        expected = self.git(self.work, 'write-tree')
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.helper('verify', archive)
+        target = self.root / 'isolated'
+        self.helper('restore', archive, '--target', target)
+        self.git(target, 'gc', '--prune=now')
+        for option, value in baseline.items():
+            self.assertEqual(self.git(target, 'ls-files', option, '-z'), value)
+        self.assertEqual(self.git(target, 'status', '--porcelain=v1', '-z'), status)
+        self.assertEqual(self.git(target, 'diff', '--binary', 'AUTO_MERGE'), comparison)
+        from worktree_archive_snapshot import git_snapshot
+        self.assertEqual(git_snapshot(target), manifest['source_fingerprint'])
+        (target / 'binary.bin').write_bytes(b'\0resolved\xff')
+        (target / 'mixed.txt').write_bytes(b'final resolution\n')
+        self.git(target, 'add', '-A')
+        self.env['GIT_EDITOR'] = 'true'
+        self.git(target, 'merge', '--continue')
+        self.assertEqual(self.git(target, 'rev-parse', 'HEAD^{tree}'), expected)
+        self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), parent + b' ' + other)
+        print('Interrupted merge storage:', json.dumps({'archive_bytes': sum(path.stat().st_size for path in archive.iterdir()),
+                                                       'incremental_shared_base_bytes': 0}))
+
     def test_auto_merge_conflict_round_trip_without_source_objects(self):
         self.git(self.repo, "checkout", "-qb", "other")
         (self.repo / "mixed.txt").write_bytes(b"other side\n")
@@ -233,11 +297,11 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         result = self.run_command("git", "-C", self.work, "merge", "other", check=False)
         self.assertNotEqual(result.returncode, 0)
         oid = self.auto_merge_path().read_bytes()
-        # Active conflict is still refused, with no source removal.
+        # A supported active merge now uses a structured, self-contained archive.
         failed = self.helper("archive", self.work, "--repo", "fixture/repo", "--issue", "99",
                              "--reason", "failed-worker", "--base-branch", "develop",
                              "--output-root", self.archives, check=False)
-        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(failed.returncode, 0, failed.stderr)
         self.assertTrue(self.work.exists())
         # Resolve and commit normally, then retain the genuine merge tree as a
         # standalone diagnostic reference (not a promise of merge continuation).

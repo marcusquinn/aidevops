@@ -21,8 +21,14 @@ def archive_policies(manifest):
         raise SystemExit('unknown capture policy')
     if capture_policy == 'git-only' and (manifest.get('include_ignored') or manifest.get('git_admin_policy')):
         raise SystemExit('inconsistent Git-only policy')
-    if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') not in (2, 3):
+    if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') not in (2, 3, 4):
         raise SystemExit('unsupported Git changes fingerprint')
+    merge = manifest.get('merge_policy')
+    if (merge is not None or manifest.get('source_fingerprint', {}).get('schema') == 4) and (
+            merge != 'structured-v1' or capture_policy != 'git-only'
+            or manifest.get('source_fingerprint', {}).get('schema') != 4
+            or manifest.get('self_contained') is not True):
+        raise SystemExit('invalid required merge policy')
     policy = manifest.get('git_admin_policy')
     if policy is not None and (policy != 'preserve-v1' or not isinstance(manifest.get('self_contained'), bool)):
         raise SystemExit('invalid Git administration policy')
@@ -34,6 +40,10 @@ def git_index_state(path, head=None):
     lock = os.fsdecode(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock').rstrip(b'\n'))
     if os.path.lexists(lock):
         raise ValueError('git_admin:index_locked:index.lock')
+    from worktree_archive_state import merge_pending, merge_state
+    if merge_pending(root):
+        state = merge_state(root)
+        return {'head': state['head'], 'merge': state}
     index = git(root, "ls-files", "--stage", "-z")
     entries = [entry.split(b"\t", 1) for entry in index.split(b"\0") if entry]
     if any(metadata.split()[2] != b"0" for metadata, _ in entries):

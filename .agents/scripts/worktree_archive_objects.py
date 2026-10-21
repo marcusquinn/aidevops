@@ -71,7 +71,12 @@ def verify_object_graph(archive, scratch, manifest):
         seed_base(scratch, manifest)
     if bundle.is_file():
         git(scratch, 'bundle', 'verify', str(bundle))
-    if manifest.get('git_admin_policy') is not None:
+    if manifest.get('merge_policy') == 'structured-v1':
+        from worktree_archive_state import load_merge, verify_merge_objects
+        state = load_merge(archive, manifest)
+        fetch_preservation(scratch, archive)
+        verify_merge_objects(scratch, state)
+    elif manifest.get('git_admin_policy') is not None:
         verify_administration(archive, scratch, manifest)
     elif manifest.get('capture_policy') == 'git-only':
         if bundle.is_file():

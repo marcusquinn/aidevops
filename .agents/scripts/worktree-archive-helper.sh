@@ -399,6 +399,9 @@ if sys.argv[19] == '1':
     manifest['git_admin_policy'] = 'preserve-v1'
 if sys.argv[20] == '1':
     manifest['capture_policy'] = 'git-only'
+if manifest['source_fingerprint'].get('schema') == 4:
+    manifest['merge_policy'] = 'structured-v1'
+    manifest['self_contained'] = True
 (archive / 'manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding='utf-8')
 PY
 	return $?
@@ -408,6 +411,13 @@ capture_archive_payload() {
 	local worktree="$1" archive_dir="$2" head_sha="$3" base_sha="$4"
 	local failure_log="$5"
 	local commit_count
+	if [[ -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
+		: >"$archive_dir/diff.patch"
+		: >"$archive_dir/staged.patch"
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-capture "$worktree" "$archive_dir" || return 1
+		capture_untracked "$worktree" "$archive_dir" || return 1
+		return 0
+	fi
 	# diff must not refresh the source index while capturing it.
 	local -a patch_options=(--binary --full-index --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --submodule=short)
 	git -c diff.autoRefreshIndex=false -C "$worktree" diff "${patch_options[@]}" >"$archive_dir/diff.patch" || return 1
@@ -530,6 +540,11 @@ if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in
 names = [item.get('name') for item in artifacts]
 mandatory = {'diff.patch', 'staged.patch', 'untracked-files.txt'}
 allowed = mandatory | {'commits.bundle', 'untracked.tar.gz', 'failure.log'}
+if manifest.get('merge_policy') == 'structured-v1':
+    mandatory.update({'merge-state-v1.json', 'commits.bundle'})
+    allowed.update({'merge-state-v1.json', 'commits.bundle'})
+    if (archive / 'diff.patch').stat().st_size or (archive / 'staged.patch').stat().st_size:
+        raise SystemExit('merge archive cannot apply patches')
 if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
     mandatory.add('auto-merge-v1.json')
     allowed.add('auto-merge-v1.json')
@@ -586,7 +601,9 @@ print(m.get('source_git_common_dir', ""), m["head_sha"],
       int(m.get('self_contained') is True), int(m.get('capture_policy') == 'git-only'), sep=chr(9))
 PY
 	)
-	if [[ "$git_only" -eq 1 && "$verification_copy" -eq 1 ]]; then
+	if [[ "$git_only" -eq 1 && "$self_contained" -eq 1 ]]; then
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+	elif [[ "$git_only" -eq 1 && "$verification_copy" -eq 1 ]]; then
 		# Private validation clone, not a user worktree: borrow only the recorded
 		# base graph and leave no registration or branch in the shared repository.
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
@@ -628,6 +645,9 @@ restore_archive() {
 	[[ -n "$target" && ! -e "$target" ]] || { die "restore target must not exist"; return 1; }
 	verify_archive "$archive_dir" >/dev/null || return 1
 	prepare_restore_repository "$archive_dir" "$target" "$verification_copy" || return 1
+	if [[ -f "$archive_dir/merge-state-v1.json" ]]; then
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" || return 1
+	fi
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	if [[ -f "$archive_dir/untracked.tar.gz" ]]; then

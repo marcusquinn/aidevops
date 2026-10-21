@@ -124,7 +124,7 @@ def untracked_member_fingerprint(source, member):
 def verify_untracked_payload(archive, manifest):
     """Bind captured untracked bytes to the snapshot, not just the artifact inventory."""
     saved = manifest.get('source_fingerprint', {})
-    if manifest.get('capture_policy') != 'git-only' or saved.get('schema') != 3:
+    if manifest.get('capture_policy') != 'git-only' or saved.get('schema') not in (3, 4):
         return
     contents = []
     payload = archive / 'untracked.tar.gz'

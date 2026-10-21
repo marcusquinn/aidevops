@@ -86,7 +86,7 @@ def automatic_policy(migration, bucket):
     source = migration["source"]
     identity = source["identity"]
     require(migration["phase"] == "archived" and source.get("capture_policy") == "git-only"
-            and source["snapshot"].get("schema") == 3,
+            and source["snapshot"].get("schema") in (3, 4),
             "retirement:automatic-requires-untracked-preservation")
     require(identity.get("source_removal_outcome") == "removed",
             "retirement:source-removal-incomplete")

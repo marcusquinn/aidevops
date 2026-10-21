@@ -24,7 +24,7 @@ def prepare(archive, target):
     repository = Path(os.fsdecode(next(entry[9:] for entry in entries if entry.startswith(b"worktree "))))
     bundle = archive / "commits.bundle"
     if bundle.is_file():
-        if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
+        if manifest.get('merge_policy') == 'structured-v1' or manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
             fetch_preservation(repository, archive)
         else:
             git(repository, "fetch", "--quiet", "--no-write-fetch-head", str(bundle), "HEAD")

@@ -86,7 +86,7 @@ def capture(directory, record, lock):
     worktree = record["source"]["identity"]["archive_path"]
     git_only = record["source"].get("capture_policy") == "git-only"
     if not any(output.iterdir()):
-        require(git_only and record["source"]["snapshot"].get("schema") == 3,
+        require(git_only and record["source"]["snapshot"].get("schema") in (3, 4),
                 "migration:legacy-capture-read-only; existing source retained")
         record["phase"] = "capturing"
         publish(directory / "journal.json", record)
