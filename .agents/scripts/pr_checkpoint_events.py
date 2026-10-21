@@ -126,99 +126,11 @@ def closes_released_attempt(released_lease, comment, line, f):
                 f.get("lease_token") == token, comment["user"]["login"] == runner))
 
 
-def closed_claim(comment, line, f, seen):
-    """Start one sequential historical attempt, never an interactive owner."""
-    actor = comment["user"]["login"]
-    token = f.get("lease_token")
-    if not all((line.startswith("DISPATCH_CLAIM "), bool(token), token not in seen,
-                f.get("nonce") == token, f.get("runner") == actor, bool(f.get("session")),
-                f.get("phase", "prelaunch") == "prelaunch")):
-        return None
-    seen.add(token)
-    return {"runner": actor, "token": token, "session": f["session"], "claim_id": comment["id"]}
-
-
-def advance_closed_claim(state, comment, line, f):
-    """Require a matching ready lease, release and terminal before considering closure."""
-    if comment["user"]["login"] != state["runner"]:
-        return False
-    if line.startswith("CLAIM_RELEASED "):
-        if not state.get("attempt") or not state.get("ready_id"):
-            return False
-        if not all((not state.get("release_id"), bool(f.get("reason")),
-                    f.get("runner") == state["runner"],
-                    f.get("lease_token", state["token"]) == state["token"],
-                    f.get("attempt_id", state["attempt"]) == state["attempt"])):
-            return False
-        state["release_id"] = comment["id"]
-        return True
-    if line.startswith("Dispatching worker"):
-        f = fields(comment["body"])
-        return (not state.get("release_id") and f.get("lease_token") == state["token"]
-                and f.get("session", state["session"]) == state["session"]
-                and f.get("attempt_id", state.get("attempt")) == state.get("attempt"))
-    if not all((line.startswith("DISPATCH_LEASE "), f.get("lease_token") == state["token"],
-                f.get("session") == state["session"],
-                f.get("attempt_id", "").startswith("attempt:"),
-                f.get("attempt_id") == state.get("attempt", f.get("attempt_id")))):
-        return False
-    state["attempt"] = f["attempt_id"]
-    if state.get("release_id"):
-        if f.get("phase") != "terminal" or f.get("expires_at") != "0":
-            return False
-        state["terminal_id"] = comment["id"]
-        return True
-    if f.get("phase") not in {"prelaunch", "ready"}:
-        return False
-    if f["phase"] == "ready":
-        state["ready_id"] = comment["id"]
-    return True
-
-
-def released_successor_history(comments, release_id, approval_id, released_lease):
-    """Describe only fully closed, non-overlapping attempts preceding an approval.
-
-    #aidevops:trust-boundary — historical closure needs explicit revision approval;
-    elapsed time or a release message alone never grants continuation authority.
-    """
-    history, state = [], None
-    seen = {released_lease[1]} if released_lease else set()
-    for comment, line, f in events(comments, release_id, approval_id):
-        if not trusted(comment):
-            return None
-        if closes_released_attempt(released_lease, comment, line, f):
-            continue
-        if state is None:
-            state = closed_claim(comment, line, f, seen)
-            if state is None:
-                return None
-        elif not advance_closed_claim(state, comment, line, f):
-            return None
-        if state.get("terminal_id"):
-            if not (state["claim_id"] < state["ready_id"] < state["release_id"] < state["terminal_id"]):
-                return None
-            history.append({key: state[key] for key in (
-                "runner", "attempt", "claim_id", "ready_id", "release_id", "terminal_id")})
-            state = None
-    return history if state is None else None
-
-
 def successors_valid(data, comments, release_id, approval_id, now):
-    history = released_successor_history(comments, release_id, approval_id, data.get("released_lease"))
-    if history is None or history != data.get("released_successors", []):
-        return False
-    historical_claims = {item["claim_id"] for item in history}
-    used_tokens = {f.get("lease_token") for c, _, f in events(comments, release_id, approval_id)
-                   if c["id"] in historical_claims}
-    used_tokens.add((data.get("released_lease") or (None, None))[1])
-    if data.get("lease") and data["lease"] in used_tokens:
-        return False
     claim = None
     for comment, line, f in events(comments, release_id, float("inf")):
         if not trusted(comment):
             return False
-        if comment["id"] < approval_id:
-            continue
         if closes_released_attempt(data.get("released_lease"), comment, line, f):
             continue
         if claim is None and own_claim_matches(data, approval_id, comment, line, f):

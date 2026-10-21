@@ -309,33 +309,38 @@ class ReleasedSuccessorTests(unittest.TestCase):
             revision.validate({**data, "comments": data["comments"] + [old]})
 
     def test_open_or_ambiguous_attempts_cannot_generate_approval(self):
-        for case in ("no_release", "no_terminal", "no_ready", "wrong_actor", "wrong_token",
-                     "wrong_session", "wrong_attempt", "edited", "interactive", "overlap"):
+        mutations = {
+            "no_release": lambda d: d["comments"].pop(-2),
+            "no_terminal": lambda d: d["comments"].pop(-1),
+            "no_ready": lambda d: d["comments"].pop(-3),
+            "wrong_actor": lambda d: d["comments"][-1]["user"].update(login="stranger"),
+            "wrong_token": lambda d: self.change_terminal(d, "closed-10"),
+            "wrong_session": lambda d: self.change_terminal(d, "issue-10"),
+            "wrong_attempt": lambda d: self.change_terminal(d, "attempt:closed-10"),
+            "edited": lambda d: d["comments"][-2].update(updated_at="2026-09-05T12:01:00Z"),
+            "interactive": lambda d: d["comments"].append(
+                comment(16, "Interactive session claimed", "maintainer")),
+            "overlap": lambda d: d["comments"].insert(3, comment(4.5,
+                "DISPATCH_CLAIM nonce=overlap lease_token=overlap runner=other-worker session=other",
+                "other-worker")),
+        }
+        for case, mutate in mutations.items():
             data = released_successor_fixture()
-            if case.startswith("no_"):
-                index = {"no_release": -2, "no_terminal": -1, "no_ready": -3}[case]
-                del data["comments"][index]
-            elif case == "wrong_actor":
-                data["comments"][-1]["user"]["login"] = "stranger"
-            elif case == "edited":
-                data["comments"][-2]["updated_at"] = "2026-09-05T12:01:00Z"
-            elif case == "interactive":
-                data["comments"].append(comment(16, "Interactive session claimed", "maintainer"))
-            elif case == "overlap":
-                data["comments"].insert(3, comment(4.5, "DISPATCH_CLAIM nonce=overlap "
-                    "lease_token=overlap runner=other-worker session=other", "other-worker"))
-            else:
-                field = {"wrong_token": "closed-10", "wrong_session": "issue-10",
-                         "wrong_attempt": "attempt:closed-10"}[case]
-                data["comments"][-1]["body"] = data["comments"][-1]["body"].replace(field, "wrong")
+            mutate(data)
             with self.subTest(case=case), self.assertRaises(ValueError):
                 self.approved(data)
 
+    def change_terminal(self, data, field):
+        data["comments"][-1]["body"] = data["comments"][-1]["body"].replace(field, "wrong")
+
     def test_bound_history_changes_and_new_events_still_block(self):
-        for case in ("edited_release", "remove_history", "alter_history", "post_approval_claim"):
+        for case in ("edited_release", "remove_history", "alter_history", "post_approval_claim",
+                     "approval_coordination"):
             data = self.approved(released_successor_fixture())
             if case == "edited_release":
                 data["comments"][-3]["updated_at"] = "2026-09-05T12:01:00Z"
+            elif case == "approval_coordination":
+                data["comments"][-1]["body"] += "\nInteractive session claimed"
             elif case == "post_approval_claim":
                 data["comments"].append(comment(21, "DISPATCH_CLAIM nonce=late "
                     "lease_token=late runner=worker session=late", "worker"))
