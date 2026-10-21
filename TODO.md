@@ -96,6 +96,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [ ] r047 Knowledge collector freshness — execute due read-only sources and emit content-free health repeat:cron(*/10 * * * *) ~2m run:scripts/knowledge-collector-routine.sh run
 - [ ] r-runtime-audit Runtime health audit — surface operational regressions invisible to the supervisor LLM (counter trends, process leaks, deploy mtime drift, log novelty, stuck pulse state) (t3072) repeat:cron(*/30 * * * *) ~2m run:scripts/runtime-health-audit-helper.sh --apply
 - [x] r-pulse-check Daily pulse/worker utilisation check — aggregate repos.json auto-dispatch queue, active capacity, provider/API budget, and file deduplicated self-improvement issues for high-confidence productivity gaps repeat:daily(@06:20) ~5m run:scripts/pulse-check-helper.sh apply
+- [x] r-php-cve-watch PHP CVE-2026-109618/109619 patch watch — read-only 2-hourly check of owner hosting PHP builds and app packages; private status in the agent workspace; disable once all hosts are patched repeat:cron(0 */2 * * *) timezone:UTC ~3m run:custom/scripts/r-php-cve-watch.sh
 
 ## Ready
 
