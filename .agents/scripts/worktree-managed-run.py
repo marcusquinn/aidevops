@@ -156,10 +156,15 @@ def run(command, callback, timeout, producer=True):
     unit = "aidevops-worker-session-" + uuid.uuid4().hex + ".service"
     print(f"Managed worktree run: {unit}", file=sys.stderr, flush=True)
     deadline = time.monotonic() + timeout
+    # A user service otherwise inherits its manager's mask, not the caller's.
+    # Keep private caller modes private and ordinary archival modes unchanged.
+    caller_umask = os.umask(0o077)
+    os.umask(caller_umask)
     with isolated_service_io() as (stdio, relay, mode):
         client = subprocess.Popen(
             ["systemd-run", "--user", "--no-ask-password", "--quiet", "--unit=" + unit, mode,
              *lifetime.SERVICE_PROPERTIES, "--property=RuntimeMaxSec=" + str(timeout),
+             f"--property=UMask={caller_umask:04o}",
              "--property=TimeoutStopSec=5", "--expand-environment=no", *inherited_environment(),
              "--setenv=AIDEVOPS_MANAGED_WORKTREE_RUN=" + ("1" if producer else "0"),
              "--setenv=AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT=" + unit,

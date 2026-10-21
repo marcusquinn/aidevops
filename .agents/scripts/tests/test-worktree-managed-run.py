@@ -67,6 +67,18 @@ class RunnerControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.wait_for_unit("fixture", Mock(), time.monotonic() - 1)
 
+    def test_native_service_preserves_caller_umask(self):
+        if not runner.backend_available():
+            self.skipTest("rootless user-systemd unavailable")
+        for mask in (0o022, 0o077, 0o002):
+            with self.subTest(mask=oct(mask)):
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPTS / "worktree-managed-run.py"),
+                     "--timeout-seconds", "20", "--", sys.executable, "-c",
+                     "import os; print(oct(os.umask(0o077)))"],
+                    umask=mask, capture_output=True, text=True, timeout=30, check=True)
+                self.assertEqual(result.stdout.strip(), oct(mask))
+
 
 if __name__ == "__main__":
     unittest.main()
