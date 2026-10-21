@@ -200,6 +200,21 @@ _sc_preview_tmp() {
 	return "$rc"
 }
 
+# Opt-in OpenCode session retention (storage.opencode_session_retention_days).
+_sc_preview_opencode_retention() {
+	local archive="${SCRIPT_DIR}/opencode-db-archive.sh" days="" rc=0
+	days=$(bash "$archive" retention-days) || days=0
+	[[ "$days" =~ ^[0-9]+$ ]] || days=0
+	if [[ "$days" -eq 0 ]]; then
+		printf 'Session retention: keep all (storage.opencode_session_retention_days=0)\n'
+		return 0
+	fi
+	printf 'Session retention: delete sessions older than %s days (storage.opencode_session_retention_days=%s; permanent). Dry run:\n' "$days" "$days"
+	bash "$archive" prune-all --older-than-days "$days" --dry-run || rc=$?
+	[[ "$rc" -eq 2 ]] && rc=0
+	return "$rc"
+}
+
 _sc_dry_run_store() {
 	local store="$1" rc=0
 	case "$store" in
@@ -211,6 +226,7 @@ _sc_dry_run_store() {
 	opencode)
 		printf 'Superseded/expired layout-migration backups (dry run):\n'
 		bash "${SCRIPT_DIR}/repo-layout-migrate-helper.sh" prune || rc=$?
+		_sc_preview_opencode_retention || rc=$?
 		printf 'Apply also checkpoints/optimizes each idle OpenCode DB (throttled to weekly).\n'
 		;;
 	observability)

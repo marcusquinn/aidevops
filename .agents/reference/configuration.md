@@ -407,6 +407,12 @@ Gate actions: **`block`** — prevented unless second model agrees safe. **`warn
 }
 ```
 
+### storage
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `storage.opencode_session_retention_days` | integer | `0` | Permanently delete OpenCode sessions last updated more than N days ago (active, archive and isolated DBs), then VACUUM. `0` keeps everything; invalid values keep everything. Env: `AIDEVOPS_OPENCODE_SESSION_RETENTION_DAYS`. Preview: `aidevops cleanup opencode`. |
+
 ### paths
 
 Directory and file path configuration. Supports `~` for home directory.
