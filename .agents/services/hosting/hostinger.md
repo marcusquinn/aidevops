@@ -97,6 +97,14 @@ The observed OPcache configuration was 1024M memory, 130,987 maximum accelerated
 
 Supported per-site overrides can use `.htaccess` `php_value` inside `<IfModule lsapi_module>`; confirm the directive is allowed before proposing a change. Really Simple Security was observed writing `auto_prepend_file` into both that block and `.user.ini`; a migrated site retained a stale `.user.ini` path from its previous account. Inspect only authorized site files and preserve security-plugin ownership when proposing a backed-up repair.
 
+**CA trust stores (observed 2026-10-21, during a CA-compromise response).** Shared-hosting PHP has three separate trust paths.
+
+- **WordPress HTTP API:** uses each install's `wp-includes/certificates/ca-bundle.crt`. The account can edit this file, but a core update replaces it.
+- **Raw PHP `curl_init` without `CURLOPT_CAINFO`:** uses the host bundle, `/opt/alt/openssl11/etc/pki/tls/cert.pem`. `curl.cainfo` is `PHP_INI_SYSTEM` (access level 4 from `ini_get_all()`), so only Hostinger can fix this path. Report it as host-controlled and ask support to escalate to a server administrator.
+- **PHP HTTPS streams (`file_get_contents`, `fopen`):** honour `openssl.cafile`, which is `PHP_INI_PERDIR`. LiteSpeed web PHP ignored it in `.user.ini`, even after the 300 s cache TTL. It took effect as `php_value openssl.cafile "<absolute path>"` inside `<IfModule LiteSpeed>` in `.htaccess`, verified through a temporary web PHP probe.
+
+Pin a copy stored outside `wp-includes`, add the block between marker comments so it can be removed exactly, and record a task to remove it once the host is patched. A frozen bundle misses future root changes.
+
 Dated uploads directories returned 403 in this observation. Verify directory-listing protection per site rather than assuming it applies to every account. For the read-only baseline, worker/memory sizing, OPcache assessment, host boundaries, and safe directory-listing remediation, read `tools/runtime/php-server-admin.md`.
 
 ### Read-only audit notes
