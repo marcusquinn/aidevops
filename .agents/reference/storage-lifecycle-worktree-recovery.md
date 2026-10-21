@@ -9,66 +9,37 @@ description: Recovery archive evidence, planning, apply, and automatic maintenan
 
 ## Safety and recovery evidence
 
-Recovery archives are safety snapshots, not generic discarded files. Age, size,
-disk pressure and session history never authorize deletion. Use the separate
-[migration](#explicit-compact-migration-no-retirement),
-[retirement](#confirmed-retirement-of-migrated-buckets),
-[planning](#inventory-and-retention-planning),
-[manual apply](#confirmation-bound-apply) and
-[automatic maintenance](#bounded-automatic-maintenance) contracts below.
+Recovery archives are safety snapshots, not generic discarded files. Age, size, disk pressure and session history never authorize deletion.
+Use the separate [migration](#explicit-compact-migration-no-retirement), [retirement](#confirmed-retirement-of-migrated-buckets), [planning](#inventory-and-retention-planning), [manual apply](#confirmation-bound-apply) and [automatic maintenance](#bounded-automatic-maintenance) contracts below.
 
-Maintenance failures emit JSON with `outcome: failed`, stage and stable reason
-code even without jq. Async cleanup logs stdout, stderr and actual exit code
-locally on success and failure; reason codes contain no archive paths or raw errors.
+Maintenance failures emit JSON with `outcome: failed`, stage and stable reason code even without jq. Async cleanup logs stdout, stderr and actual exit code locally on success and failure; reason codes contain no archive paths or raw errors.
 
-Resume pending transactions once per maintenance pass. After three failures, move
-the exact transaction into a unique `quarantined/pending.*` state directory with a
-mode-0600 reason/attempt-count receipt, then select fresh work. Quarantine neither
-deletes archives, reservations, completion files or retention-trash journals nor grants
-apply authority; existing identity, journal and lock checks protect unfinished work.
-Fail closed on symlinked pending directories/retry metadata or non-regular retry files.
-Invalid regular retry records exhaust the budget and remain unchanged in quarantine.
-Inspect receipts locally; repair requires the original plan and evidence.
+Resume pending transactions once per maintenance pass. After three failures, move the exact transaction into a unique `quarantined/pending.*` state directory with a mode-0600 reason/attempt-count receipt, then select fresh work.
+Quarantine neither deletes archives, reservations, completion files or retention-trash journals nor grants apply authority; existing identity, journal and lock checks protect unfinished work.
+Fail closed on symlinked pending directories/retry metadata or non-regular retry files. Invalid regular retry records exhaust the budget and remain unchanged in quarantine. Inspect receipts locally; repair requires the original plan and evidence.
 
 ## Current compact producers
 
-New recoverable captures from manual removal, classified cleanup, profile publication
-and Pulse profile cleanup use one verified compact transaction, not a full-copy bucket.
-The default is `$HOME/.aidevops/recovery/archives` on every platform; the archive-root
-override precedes explicit historical trash-root overrides. Use the archive CLI's
-`list --output-root <effective-root>` to discover them. Pins and removal safeguards
-are unchanged; neither listing nor verification grants deletion authority. See the
-[producer contract](../scripts/worktree-archive-helper.md#recoverable-producer-transactions)
-for exact root precedence, journal/receipt paths, independent restoration and retry behavior.
+New recoverable captures from manual removal, classified cleanup, profile publication and Pulse profile cleanup use one verified compact transaction, not a full-copy bucket.
+The default is `$HOME/.aidevops/recovery/archives` on every platform; the archive-root override precedes explicit historical trash-root overrides. Use the archive CLI's `list --output-root <effective-root>` to discover them.
+Pins and removal safeguards are unchanged; neither listing nor verification grants deletion authority. See the [producer contract](../scripts/worktree-archive-helper.md#recoverable-producer-transactions) for exact root precedence, journal/receipt paths, independent restoration and retry behavior.
 
 ## Legacy full recovery buckets
 
-The legacy default root is `$HOME/.Trash` on macOS (OS Trash semantics), but framework-owned
-`$HOME/.aidevops/recovery/worktrees` elsewhere: normal “Empty Trash” must not silently
-delete those snapshots. Select an absolute root with `AIDEVOPS_WORKTREE_TRASH_ROOT`
-or the legacy `AIDEVOPS_ORPHAN_TRASH_ROOT` fallback.
+The legacy default root is `$HOME/.Trash` on macOS (OS Trash semantics), but framework-owned `$HOME/.aidevops/recovery/worktrees` elsewhere: normal “Empty Trash” must not silently delete those snapshots.
+Select an absolute root with `AIDEVOPS_WORKTREE_TRASH_ROOT` or the legacy `AIDEVOPS_ORPHAN_TRASH_ROOT` fallback.
 
-Historical v2 buckets use `aidevops-worktree-recovery-v2` evidence: stable Git identity,
-creation time, producer/context, optional runtime session identity, archive completion,
-source-removal outcome, `framework` ownership, `recovery` safety class and
-`manual-review` policy. Write the completion marker only after archive integrity and
-source identity validation; successful native removal atomically advances the source
-outcome from `pending` to `removed`.
+Historical v2 buckets use `aidevops-worktree-recovery-v2` evidence: stable Git identity, creation time, producer/context, optional runtime session identity, archive completion, source-removal outcome, `framework` ownership, `recovery` safety class and `manual-review` policy.
+Write the completion marker only after archive integrity and source identity validation; successful native removal atomically advances the source outcome from `pending` to `removed`.
 
 `manual-review` remains for v2 producer-format compatibility, not deletion authority.
 Manual confirmation or a separate policy-bound automatic plan must revalidate the exact bucket.
 
-Readers accept complete platform-storage-transition v1 buckets and markerless legacy
-v1 buckets with valid original Git recovery structure. Never reinterpret partial v2
-evidence as v1. Older readers reject v2, failing closed without archive damage.
+Readers accept complete platform-storage-transition v1 buckets and markerless legacy v1 buckets with valid original Git recovery structure. Never reinterpret partial v2 evidence as v1. Older readers reject v2, failing closed without archive damage.
 
-Historical full-copy producers reserved one attempt per physical source identity.
-An interrupted attempt remains explicitly reserved; retries do not create another
-bucket or erase the partial snapshot. Incomplete reservations require operator
-review, including proof that any discarded data is preserved elsewhere. A completed
-attempt may be reused only after Git identity, current non-cache contents, and index
-comparison succeed. A changed source or unreadable comparison preserves both copies.
-Legacy markerless buckets remain unknown and are never automatically adopted.
+Historical full-copy producers reserved one attempt per physical source identity. An interrupted attempt remains explicitly reserved; retries do not create another bucket or erase the partial snapshot.
+Incomplete reservations require operator review, including proof that any discarded data is preserved elsewhere.
+A completed attempt may be reused only after Git identity, current non-cache contents, and index comparison succeed. A changed source or unreadable comparison preserves both copies. Legacy markerless buckets remain unknown and are never automatically adopted.
 
 ## Explicit compact migration (no retirement)
 
@@ -87,10 +58,8 @@ Source removal uses the guarded manual retirement transition or automatic compac
 Existing receipts retain their policy. `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` is no longer accepted for new capture; the former preservation format is read-only compatibility.
 Migration never retires, rewrites or moves the original bucket during capture.
 
-The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`.
-It binds physical identities, the source snapshot, opaque recovery provenance, the archive manifest digest, capture outcome and available allocated byte counts.
-The archive remains in the existing archive store beneath `.legacy-migrations/<source-path-digest>/`, pinned against expiry.
-Path-bearing provenance is historical evidence, not live Git configuration or process ownership authority.
+The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`. It binds physical identities, the source snapshot, opaque recovery provenance, the archive manifest digest, capture outcome and available allocated byte counts.
+The archive remains in the existing archive store beneath `.legacy-migrations/<source-path-digest>/`, pinned against expiry. Path-bearing provenance is historical evidence, not live Git configuration or process ownership authority.
 Journals and archive artifacts are fsynced before completion is reported; only verified, identity-fenced restore scratch is removed.
 
 Legacy-preservation receipts reserve private scratch with a journaled inode and inherited writer lock; pre-existing repositories are never adopted. Cleanup journals a random quarantine name, renames the reserved container and rechecks identity/content before removal. Replacements, late writes and interrupted removal remain for review. These are not user workspaces; sampling cannot fence malicious same-user writers.
@@ -111,20 +80,14 @@ The existing `commits.bundle` retains recursive trees/blobs through named preser
 Independent verification imports only the retained base graph and bundle, checks tree type and complete object closure, and refuses unavailable dependencies.
 Restore imports preservation tips and writes `AUTO_MERGE` to actual target Git administration, never its working-file tree. Imported tips survive GC.
 Measure per-archive bundle bytes separately from base bytes. Pruning another archive cannot remove this bundle; the recorded base must remain available.
-Standalone AUTO_MERGE is diagnostic state, not a resumability claim. Supported
-unfinished merges use the required structured contract below. Private-ref,
-process, source-drift and retirement guards remain enforced; AUTO_MERGE alone
-grants no removal authority.
+Standalone AUTO_MERGE is diagnostic state, not a resumability claim. Supported unfinished merges use the required structured contract below.
+Private-ref, process, source-drift and retirement guards remain enforced; AUTO_MERGE alone grants no removal authority.
 
 ### Resumable interrupted merges
 
-New supported merge captures remain in the single compact format. Their manifest
-declares required `merge_policy: structured-v1`, a schema-4 source fingerprint and
-`self_contained: true`. The size/hash inventory requires `merge-state-v1.json` and
-the existing `commits.bundle`; the two patch artifacts are empty. Older readers
-reject schema 4/unknown required artifacts rather than restoring incompletely.
-Existing schema-2/3, standalone AUTO_MERGE and legacy preservation archives retain
-their existing read paths; no bulk conversion or second archive mode is introduced.
+Supported merge captures remain in the single compact format. Required manifest fields are `merge_policy: structured-v1`, schema-4 source fingerprint and `self_contained: true`.
+The size/hash inventory requires `merge-state-v1.json` and `commits.bundle`; the two patch artifacts are empty. Older readers reject schema 4/unknown required artifacts rather than restoring incompletely.
+Existing schema-2/3, standalone AUTO_MERGE and legacy preservation archives retain their read paths; no bulk conversion or second archive mode is introduced.
 
 | State | Support |
 | --- | --- |
@@ -139,32 +102,17 @@ their existing read paths; no bulk conversion or second archive mode is introduc
 | Split/special index flags, intent-to-add, filters, shallow history | Refused |
 | Private refs/config, unique message drafts, nonempty FETCH_HEAD | Refused until separately preservable |
 
-Paths use hex-encoded Git bytes, not newline parsing. The bundle retains the
-complete closure of HEAD, merge parents, required ORIG_HEAD, AUTO_MERGE and
-index/resolve-undo blobs through named preservation tips. It deliberately does not
-subtract the shared base: merge parents and required operation objects need not
-be ancestors of HEAD. Source loss and subsequent ordinary GC therefore do not
-remove required objects. Measure archive bytes separately from incremental
-shared-base bytes (capture adds zero shared-base bytes).
+Paths use hex-encoded Git bytes, not newline parsing. The bundle retains the complete closure of HEAD, merge parents, required ORIG_HEAD, AUTO_MERGE and index/resolve-undo blobs through named preservation tips.
+It deliberately does not subtract the shared base: merge parents and required operation objects need not be ancestors of HEAD. Source loss and subsequent ordinary GC therefore do not remove required objects.
+Measure archive bytes separately from incremental shared-base bytes (capture adds zero shared-base bytes).
 
-The schema-4 guarantee is **current-state preservation**, not arbitrary historical
-reflog recovery. It preserves unpublished current HEAD history and required
-operation objects even when otherwise reachable only through operation references
-or reflog. It does not preserve raw reflogs or abandoned historical states. The
-ordinary non-merge shared history-policy transition belongs to GH#35305; this does
-not reinterpret existing historical verification receipts or relax those guards.
+The schema-4 guarantee is **current-state preservation**, not arbitrary historical reflog recovery. It preserves unpublished current HEAD history and required operation objects even when otherwise reachable only through operation references or reflog; it does not preserve raw reflogs or abandoned historical states.
+The ordinary non-merge shared history-policy transition belongs to GH#35305; this does not reinterpret historical verification receipts or relax those guards.
 
-Restore validates artifacts and object closure before modifying a new target,
-reconstructs files/index with hooks disabled, and writes validated metadata to the
-target Git administration. It never executes hooks or `merge --continue` itself.
-Self-contained merge restores also work without the original common repository.
-The user completes remaining resolutions and runs `git merge --continue` normally.
-Managed removal still compares an independent restored snapshot and unchanged
-source; schema-4 migration retirement additionally performs a fresh isolated
-restore/comparison under its operation lock. Corruption, missing objects, unsupported
-metadata, failed comparison or concurrent source drift retain source/journals.
-No production deletion, historical reflog deletion or forced production GC is
-authorized by capture or by these disposable-repository tests.
+Restore validates artifacts/object closure before modifying a new target, reconstructs files/index with hooks disabled, and writes validated metadata to target Git administration. It never executes hooks or `merge --continue` itself.
+Self-contained merge restores work without the original common repository. The user completes remaining resolutions and runs `git merge --continue` normally.
+Managed removal compares an independent restored snapshot and unchanged source; schema-4 migration retirement additionally performs a fresh isolated restore/comparison under its operation lock.
+Corruption, missing objects, unsupported metadata, failed comparison or source drift retain source/journals. No production deletion, historical reflog deletion or forced production GC is authorized by capture or these disposable tests.
 
 An existing migration reservation makes legacy planning and stale-plan revalidation return `compact-migration-protected`.
 Maintenance counts that reason separately instead of treating migration as expiry authority. A receipt's `verified` phase is point-in-time evidence, never sufficient removal permission.
