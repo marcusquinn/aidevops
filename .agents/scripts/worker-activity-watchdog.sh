@@ -520,6 +520,9 @@ _kill_worker() {
 	if [[ "${_MONITOR_LAST_DEFER_EPOCH:-0}" -gt 0 ]]; then
 		_deferral_detail=" last_deferral_reason=${_MONITOR_LAST_DEFER_REASON:-unknown} last_deferral_age=$(( $(date +%s) - _MONITOR_LAST_DEFER_EPOCH ))s"
 	fi
+	if [[ -n "${_MONITOR_CAP_LIVENESS:-}" ]]; then
+		_deferral_detail+=" cap_liveness=${_MONITOR_CAP_LIVENESS}"
+	fi
 	printf -v lifecycle_event '[lifecycle] worker_killed pid=%s reason=%s trigger_age=%ss%s session=%s ts=%s' \
 		"$WORKER_PID" "$reason_class" "$_trigger_age" "$_deferral_detail" "${SESSION_KEY:-none}" \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -645,6 +648,7 @@ _monitor_init_state() {
 	_MONITOR_DEFERRED_STALL_SECONDS=0
 	_MONITOR_LAST_DEFER_EPOCH=0
 	_MONITOR_LAST_DEFER_REASON=""
+	_MONITOR_CAP_LIVENESS=""
 	_MONITOR_START_EPOCH=$(date +%s)
 	_WATCHDOG_START_EPOCH="$_MONITOR_START_EPOCH"
 	return 0
@@ -754,8 +758,26 @@ _monitor_enforce_hard_kill() {
 	# poll intervals of margin cover that without reaching an older cycle.
 	local reason_prefix="hard_kill"
 	local deferral_window=$((STALL_TIMEOUT + 2 * POLL_INTERVAL))
+	# GH#35287: the cap runs BEFORE the normal live-work probes. The first
+	# silent window may cross the cap with no previous deferral at all.
+	# Sample now for classification only; never defer or remove the cap kill.
+	local tree_cpu stall_cpu_threshold="$STALL_CPU_THRESHOLD"
+	[[ "$stall_cpu_threshold" =~ ^[0-9]+$ ]] || stall_cpu_threshold=2
+	_MONITOR_CAP_LIVENESS="none_observed"
+	if _output_has_ci_wait; then
+		_MONITOR_CAP_LIVENESS="ci_wait"
+	elif _watchdog_tree_network_active "$WORKER_PID"; then
+		_MONITOR_CAP_LIVENESS="network_active"
+	else
+		tree_cpu=$(_watchdog_tree_cpu "$WORKER_PID")
+		if [[ "$tree_cpu" -ge "$stall_cpu_threshold" ]]; then
+			_MONITOR_CAP_LIVENESS="cpu_active"
+		fi
+	fi
 	if [[ "${_MONITOR_LAST_DEFER_EPOCH:-0}" -gt 0 ]] &&
 		(( now_epoch - _MONITOR_LAST_DEFER_EPOCH <= deferral_window )); then
+		reason_prefix="hard_kill_cap_active"
+	elif [[ "$_MONITOR_CAP_LIVENESS" != "none_observed" ]]; then
 		reason_prefix="hard_kill_cap_active"
 	fi
 

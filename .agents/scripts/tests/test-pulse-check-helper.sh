@@ -152,6 +152,24 @@ if [[ "${PULSE_CHECK_HANDOFF_FAILURE_FIXTURE:-}" == "yes" ]]; then
 JSON
   exit 0
 fi
+if [[ -n "${PULSE_CHECK_WATCHDOG_FIXTURE:-}" ]]; then
+  # Canonical worker-activity family shape: identical result/exit routing,
+  # but liveness-backed cap kills have their own cause and fingerprint.
+  jq -n --arg mode "$PULSE_CHECK_WATCHDOG_FIXTURE" --arg args " $* " '
+    {window:{since:"24h"}, metrics:{failure_families:[
+      {fingerprint:"ff-v1:watchdog-stall", family:"watchdog-stall", count:4,
+       distinct_sessions:4, confidence:"high", first_ts:1, last_ts:2,
+       launch_failure_cause:"stall_hard_killed", kill_reason:"hard_kill_stall",
+       next_action:"redispatch_worker", recovery_outcome:"recurring",
+       results:{watchdog_stall_killed:4}, examples:[{result:"watchdog_stall_killed",exit_code:79}]},
+      {fingerprint:"ff-v1:elapsed-cap-active", family:"elapsed-cap-active", count:4,
+       distinct_sessions:4, confidence:"high", first_ts:1, last_ts:2,
+       launch_failure_cause:"elapsed_cap_while_active", kill_reason:"hard_kill_cap_active",
+       next_action:"redispatch_worker", recovery_outcome:"recurring",
+       results:{watchdog_stall_killed:4}, examples:[{result:"watchdog_stall_killed",exit_code:79}]}
+    ] | if $mode == "recovered" and ($args | contains(" --since 1h ")) then [] else . end}}'
+  exit 0
+fi
 if [[ "${PULSE_CHECK_BLOCKER_FIXTURE:-}" == "retained" ]]; then
   cat <<'JSON'
 {"window":{"since":"7d"},"metrics":{"total":0,"terminal_session_total":0,"runtime_handoffs":0,"succeeded":null,"result_counts":{},"diagnostic_focus":{},"timing_ms":{"samples":0,"avg":0,"max":0},"recent_examples":[],"failure_groups":[],"failure_families":[]},"pulse_stats":{},"progress_blockers":{"scope":"global","event_total":13,"active_total":0,"retained_unverified_total":13,"retained_supervisor_permission_total":12,"active_blockers":[],"retained_unverified":[{"reason":"permission_required","source":"opencode-permission-broker","session_key":"supervisor-pulse","repo_slug":"private/repo-one","detail":"/private/path"},{"reason":"permission_required","source":"opencode-permission-broker","session_key":"supervisor-pulse-retry","repo_slug":"private/repo-two","detail":"private title"},{"reason":"permission_required","source":"opencode-permission-broker","session_key":"manual-cli","repo_slug":"private/repo-three"}]},"delivery_stages":{"pr_opened":null,"pr_merged":null,"issue_solved":null,"delivered_successes":null,"check_state":"skipped"}}
@@ -440,6 +458,21 @@ assert_eq "post-PR handoff family is absent from remediation candidates" "0" \
 	"$(printf '%s' "$HANDOFF_FAMILY_JSON" | jq -r '.failure_family_remediation | length')"
 assert_eq "post-PR handoff family triggers no failure finding" "0" \
 	"$(printf '%s' "$HANDOFF_FAMILY_JSON" | jq -r '[.findings[] | select(.id == "worker-failure-family-launch-failure")] | length')"
+WATCHDOG_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_WATCHDOG_FIXTURE=recurring" "$HELPER" json 2>&1)
+assert_eq "canonical genuine stalls remain actionable" "1" \
+	"$(printf '%s' "$WATCHDOG_JSON" | jq '[.findings[] | select(.id == "worker-failure-family-watchdog-stall")] | length')"
+assert_eq "active cap kills remain a separate family, not suppressed" "1" \
+	"$(printf '%s' "$WATCHDOG_JSON" | jq '[.findings[] | select(.id == "worker-failure-family-elapsed-cap-active")] | length')"
+assert_contains "watchdog finding preserves kill-path evidence" "kill_reason=hard_kill_stall" "$WATCHDOG_JSON"
+assert_contains "cap finding preserves active cause" "launch_failure_cause=elapsed_cap_while_active" "$WATCHDOG_JSON"
+assert_contains "family finding exposes recent count" "recent_failures_in_window=4" "$WATCHDOG_JSON"
+assert_eq "remediation record retains the canonical next action" "redispatch_worker" \
+	"$(printf '%s' "$WATCHDOG_JSON" | jq -r '.failure_family_remediation[] | select(.family == "watchdog-stall") | .next_action')"
+WATCHDOG_RECOVERED=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_WATCHDOG_FIXTURE=recovered" "$HELPER" json 2>&1)
+assert_eq "historical watchdog failures are preserved after recent recovery" "4" \
+	"$(printf '%s' "$WATCHDOG_RECOVERED" | jq '.failure_family_remediation[] | select(.family == "watchdog-stall") | .count')"
+assert_eq "recent recovery clears watchdog finding without rewriting history" "0" \
+	"$(printf '%s' "$WATCHDOG_RECOVERED" | jq '[.findings[] | select(.id == "worker-failure-family-watchdog-stall")] | length')"
 assert_eq "json reports canonical reconciliation refusal aggregate" "2" "$(printf '%s' "$JSON_OUT" | jq -r '.current_state.canonical_reconciliation.refusal_count')"
 assert_eq "json reports canonical reconciliation classification" "dirty_or_uncommitted" "$(printf '%s' "$JSON_OUT" | jq -r '.current_state.canonical_reconciliation.classification')"
 assert_eq "benign policy holds do not inflate worker failures" "0" "$(printf '%s' "$JSON_OUT" | jq -r '.summary.worker_terminal_events_in_window')"

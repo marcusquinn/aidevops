@@ -175,6 +175,9 @@ else
 	echo "${TEST_RED}FAIL${TEST_NC}: 5b. Hard-kill check must precede CPU check (hard_kill=$hard_kill_line, cpu=$cpu_check_line)"
 fi
 
+# Classification-only cap probes do not defer a kill. Compare the actual
+# network deferral site when asserting provider-failure precedence.
+network_check_line=$(grep -n '_monitor_defer_stall "network_active"' "${SCRIPT_DIR}/worker-activity-watchdog.sh" | head -1 | cut -d: -f1)
 provider_check_line=$(grep -n "if _output_has_provider_rate_limit" "${SCRIPT_DIR}/worker-activity-watchdog.sh" | head -1 | cut -d: -f1)
 if [[ -n "$provider_check_line" && -n "$network_check_line" && "$provider_check_line" -lt "$network_check_line" ]]; then
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -810,6 +813,28 @@ assert_equals "27f. cap-active kill maps to elapsed_cap_while_active" \
 assert_equals "27g. stall hard kill still maps to stall_hard_killed" \
 	"stall_hard_killed	redispatch_worker" \
 	"$(_derive_worker_failure_evidence watchdog_stall_killed 79 1 hard_kill_stall watchdog_stall_killed)"
+
+# GH#35287: exercise the first cap-crossing window without a previous
+# deferral. Stub only process observations and killing, not cap decisions.
+cap_probe_results=$(
+	eval "$(sed -n '/^_monitor_enforce_hard_kill() {/,/^}/p' "${SCRIPT_DIR}/worker-activity-watchdog.sh")"
+	STALL_TIMEOUT=600 POLL_INTERVAL=10 HARD_KILL_SECONDS=1 STALL_CPU_THRESHOLD=2
+	_MONITOR_START_EPOCH=1 _MONITOR_LAST_DEFER_EPOCH=0
+	_MONITOR_STALL_SECONDS=600 _MONITOR_DEFERRED_STALL_SECONDS=0 WORKER_PID=1
+	_output_has_ci_wait() { if [[ "$signal" == ci_wait ]]; then return 0; fi; return 1; }
+	_watchdog_tree_network_active() { if [[ "$signal" == network_active ]]; then return 0; fi; return 1; }
+	_watchdog_tree_cpu() { if [[ "$signal" == cpu_active ]]; then printf 5; else printf 0; fi; return 0; }
+	_kill_worker() { local reason="$1" kind="$2"; printf '%s:%s:%s\n' "$signal" "${reason%%:*}" "$kind"; return 0; }
+	for signal in ci_wait network_active cpu_active inactive; do
+		_monitor_enforce_hard_kill 100 || true
+	done
+)
+for cap_signal in ci_wait network_active cpu_active; do
+	assert_contains "28. first cap window samples ${cap_signal} without deferring kill" \
+		"${cap_signal}:hard_kill_cap_active:stall_killed" "$cap_probe_results"
+done
+assert_contains "28. first cap window with no liveness remains a stall kill" \
+	"inactive:hard_kill:stall_killed" "$cap_probe_results"
 
 #######################################
 # Summary
