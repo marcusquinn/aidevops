@@ -415,18 +415,17 @@ capture_archive_payload() {
 		: >"$archive_dir/diff.patch"
 		: >"$archive_dir/staged.patch"
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-capture "$worktree" "$archive_dir" || return 1
-		capture_untracked "$worktree" "$archive_dir" || return 1
-		return 0
+	else
+		# diff must not refresh the source index while capturing it.
+		local -a patch_options=(--binary --full-index --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --submodule=short)
+		git -c diff.autoRefreshIndex=false -C "$worktree" diff "${patch_options[@]}" >"$archive_dir/diff.patch" || return 1
+		git -c diff.autoRefreshIndex=false -C "$worktree" diff --cached "${patch_options[@]}" >"$archive_dir/staged.patch" || return 1
+		commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
+		if [[ "$commit_count" -gt 0 ]]; then
+			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
+		fi
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
 	fi
-	# diff must not refresh the source index while capturing it.
-	local -a patch_options=(--binary --full-index --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --submodule=short)
-	git -c diff.autoRefreshIndex=false -C "$worktree" diff "${patch_options[@]}" >"$archive_dir/diff.patch" || return 1
-	git -c diff.autoRefreshIndex=false -C "$worktree" diff --cached "${patch_options[@]}" >"$archive_dir/staged.patch" || return 1
-	commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
-	if [[ "$commit_count" -gt 0 ]]; then
-		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
-	fi
-	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
 	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then
 		[[ -f "$failure_log" ]] || { die "failure log does not exist"; return 1; }
@@ -495,7 +494,7 @@ archive_worktree() {
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
 	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" || return 1
-	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" ]]; then
+	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" || -f "$archive_dir/merge-state-v1.json" ]]; then
 		dirty_state="dirty"
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
