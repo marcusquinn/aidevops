@@ -74,6 +74,9 @@ def administration_files(admin, directory, linked):
             files.update(administration_files(admin, entry, linked))
         elif entry.is_file() and admin_path_allowed(name):
             files[name] = read_admin_bytes(entry, name).hex()
+        elif not linked and name == "branches" and entry.is_dir() and not any(entry.iterdir()):
+            # Stock Git templates may include this empty legacy directory.
+            continue
         elif not linked and (name == "logs/refs" or name.split("/")[0] in
                              {"objects", "refs", "config", "description", "hooks", "info", "packed-refs"}):
             # Independent restores contain ordinary repository infrastructure.
