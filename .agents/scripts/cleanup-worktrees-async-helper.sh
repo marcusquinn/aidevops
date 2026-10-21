@@ -218,7 +218,7 @@ _maintain_worktree_recovery() {
 		echo "[cleanup-worktrees-async] recovery maintenance helper unavailable; skipping" >>"$LOGFILE"
 		return 0
 	fi
-	if result=$("$helper_path" 2>>"$LOGFILE"); then
+	if result=$("$helper_path" compact 2>>"$LOGFILE"); then
 		result_status=0
 	else
 		result_status=$?

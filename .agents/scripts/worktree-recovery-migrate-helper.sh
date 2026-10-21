@@ -3,6 +3,18 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # Sourced by the recovery lifecycle helper: migration is not retirement.
 
+_worktree_recovery_compact_cli() {
+	local option="${1:-}" bucket="${2:-}"
+	[[ "$#" -eq 2 && "$option" == "--bucket" && "$bucket" == /* ]] || return 1
+	# Resume the exact retirement journal, including after the bucket was claimed.
+	if [[ -e "${bucket%/*}/.compact-migrations/${bucket##*/}/retirement.json" ]]; then
+		_worktree_recovery_retire_cli retire-automatic --bucket "$bucket"
+	else
+		worktree_recovery_migrate "$bucket" --retire-automatic
+	fi
+	return $?
+}
+
 _worktree_recovery_migrate_cli() {
 	local count="$#"
 	local bucket_option="${1:-}"

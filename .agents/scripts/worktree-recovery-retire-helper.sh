@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-# Explicit manual retirement only; never called by automatic retention.
+# Guarded manual and policy-bound automatic retirement entry points.
 
 _worktree_recovery_retirement_evidence() {
 	local identity="$1"

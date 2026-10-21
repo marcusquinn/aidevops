@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Explicit operator-confirmed retirement of verified legacy migration sources."""
+"""Confirmed manual or policy-bound automatic retirement of verified recovery copies."""
 
 import argparse
 import fcntl
@@ -31,7 +31,7 @@ def report(record):
             "transaction": record.get("container"), "archive": record["archive"]}
 
 
-def make_plan(directory, migration, bucket, lock):
+def make_plan(directory, migration, bucket, lock, automatic=False):
     path = directory / "retirement.json"
     require(not os.path.lexists(path), "retirement:plan-already-exists; inspect retire-status")
     verify_archive(migration, lock)
@@ -43,14 +43,23 @@ def make_plan(directory, migration, bucket, lock):
               "archive_bytes": allocated_bytes(Path(migration["archive"])),
               "migration_digest": receipt_digest(directory / "journal.json")}
     verify_archive(migration, lock)
+    if automatic:
+        automatic_policy(migration, bucket)
+        record.update(authority="verified-git-changes/v1", confirmation_token=None)
+        publish(path, record)
+        return report(record)
     token = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
     record["confirmation_token"] = "sha256:" + token
     publish(path, record)
     return report(record)
 
 
-def retire(directory, migration, bucket, token, lock):
+def retire(directory, migration, bucket, token, lock, automatic=False):
     record = load(directory / "retirement.json")
+    require((record.get("authority") == "verified-git-changes/v1") == automatic,
+            "retirement:authority-mismatch")
+    if automatic:
+        automatic_policy(migration, bucket)
     require(record["kind"] == "retirement" and record["bucket"] == str(bucket),
             "retirement:wrong-plan")
     require(token == record["confirmation_token"], "retirement:confirmation-mismatch")
@@ -70,6 +79,25 @@ def retire(directory, migration, bucket, token, lock):
     guards(migration["source"]["identity"], target, lock)
     remove_claimed(directory, record, target)
     return report(record)
+
+
+def automatic_policy(migration, bucket):
+    source = migration["source"]
+    identity = source["identity"]
+    require(migration["phase"] == "archived" and source.get("capture_policy") == "git-only"
+            and source["snapshot"].get("schema") == 3,
+            "retirement:automatic-requires-untracked-preservation")
+    require(identity.get("source_removal_outcome") == "removed",
+            "retirement:source-removal-incomplete")
+    common = Path(identity["common_path"]).resolve(strict=True)
+    require(not common.is_relative_to(bucket), "retirement:base-inside-source")
+
+
+def automatic_retire(directory, migration, bucket, lock):
+    automatic_policy(migration, bucket)
+    if not os.path.lexists(directory / "retirement.json"):
+        make_plan(directory, migration, bucket, lock, automatic=True)
+    return retire(directory, migration, bucket, None, lock, automatic=True)
 
 
 def execute(arguments):
@@ -92,6 +120,8 @@ def execute(arguments):
             return make_plan(directory, migration, bucket, descriptor)
         if arguments.action == "retire-status":
             return report(load(directory / "retirement.json"))
+        if arguments.action == "retire-automatic":
+            return automatic_retire(directory, migration, bucket, descriptor)
         return retire(directory, migration, bucket, arguments.confirm, descriptor)
     finally:
         os.close(descriptor)
@@ -99,7 +129,7 @@ def execute(arguments):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("retire-plan", "retire", "retire-status"))
+    parser.add_argument("action", choices=("retire-plan", "retire", "retire-status", "retire-automatic"))
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--confirm", default="")
     arguments = parser.parse_args()

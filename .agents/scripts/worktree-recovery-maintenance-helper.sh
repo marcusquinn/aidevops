@@ -1685,13 +1685,14 @@ _worktree_recovery_maintenance_emit_no_candidates() {
 
 worktree_recovery_maintenance_usage() {
 	cat <<'USAGE'
-Usage: worktree-recovery-maintenance-helper.sh [run]
+Usage: worktree-recovery-maintenance-helper.sh [run|compact]
 
 Runs one bounded automatic recovery-archive maintenance pass on the default
 framework-owned recovery root (non-macOS only) and prints a JSON result.
 
 Commands:
   run            Run one maintenance pass (default when no argument is given)
+  compact        Archive, verify and retire eligible copies in a bounded rotating pass
   help, --help   Show this help without acquiring the maintenance lock
 
 See reference/storage-lifecycle-worktree-recovery.md for policy and tuning.
@@ -1703,6 +1704,11 @@ worktree_recovery_maintenance_main() {
 	local command="${1:-run}"
 
 	case "$command" in
+	compact)
+		[[ $# -eq 1 ]] || return 2
+		worktree_recovery_compaction_run
+		return $?
+		;;
 	run)
 		[[ $# -le 1 ]] || {
 			worktree_recovery_maintenance_usage >&2
@@ -1721,6 +1727,26 @@ worktree_recovery_maintenance_main() {
 		return 2
 		;;
 	esac
+}
+
+worktree_recovery_compaction_run() {
+	local state_dir="" recovery_root="" status=0
+	command -v jq >/dev/null 2>&1 || return 1
+	if [[ "${AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_ENABLED:-1}" != "1" ]]; then
+		jq -cn '{outcome:"disabled"}' || return 1
+		return 0
+	fi
+	recovery_root=$(_worktree_recovery_store_root) || return 1
+	if [[ ! -d "$recovery_root" ]]; then
+		jq -cn '{outcome:"store-absent"}' || return 1
+		return 0
+	fi
+	state_dir=$(_worktree_recovery_maintenance_state_dir) || return 1
+	_worktree_recovery_maintenance_acquire_lock "$state_dir" || return 1
+	python3 "$WORKTREE_RECOVERY_MAINTENANCE_DIR/worktree_recovery_compact.py" \
+		--root "$recovery_root" --state "$state_dir/compaction" || status=$?
+	_worktree_recovery_maintenance_release_lock || status=1
+	return "$status"
 }
 
 worktree_recovery_maintenance_run() {

@@ -48,11 +48,15 @@ def archive_command(lock, *arguments):
 def reserve(directory, output, identity, arguments):
     journal = directory / "journal.json"
     policy = os.environ.get("AIDEVOPS_WORKTREE_RECOVERY_POLICY", "git-only")
+    fingerprint_schema = 3
     if journal.exists() or journal.is_symlink():
-        policy = load(journal)["source"].get("capture_policy", "preserve-v1")
-    require(policy in ("git-only", "preserve-v1"), "migration:unknown-capture-policy")
+        saved = load(journal)["source"]
+        policy = saved.get("capture_policy", "preserve-v1")
+        fingerprint_schema = saved["snapshot"].get("schema")
+    else:
+        require(policy == "git-only", "migration:obsolete-capture-policy; new archives use Git changes and untracked files")
     git_only = policy == "git-only"
-    current = source_state(identity, git_only)
+    current = source_state(identity, git_only, fingerprint_schema)
     if journal.exists() or journal.is_symlink():
         record = load(journal)
         require(record["source"] == current, "migration:source-drift")
@@ -82,12 +86,13 @@ def capture(directory, record, lock):
     worktree = record["source"]["identity"]["archive_path"]
     git_only = record["source"].get("capture_policy") == "git-only"
     if not any(output.iterdir()):
+        require(git_only and record["source"]["snapshot"].get("schema") == 3,
+                "migration:legacy-capture-read-only; existing source retained")
         record["phase"] = "capturing"
         publish(directory / "journal.json", record)
-        options = ["--git-only"] if git_only else ["--include-ignored", "--preserve-git-admin"]
         archive_command(lock, "archive", worktree, "--repo", record["repo"],
                         "--base-branch", record["base"], "--unattributed",
-                        "--reason", "unattributed-worktree", "--output-root", output, *options)
+                        "--reason", "unattributed-worktree", "--output-root", output)
     manifests = list(output.glob("*/*/*/manifest.json"))
     require(len(manifests) == 1, "migration:capture-incomplete; retained without another allocation")
     archive = manifests[0].parent
@@ -126,7 +131,8 @@ def verify_archive(record, lock, check_source=True):
     require((archive / ".aidevops-archive-pin").is_file()
             and not (archive / ".aidevops-archive-pin").is_symlink(), "migration:pin-missing")
     if check_source:
-        require(source_state(record["source"]["identity"], record["source"].get("capture_policy") == "git-only")
+        require(source_state(record["source"]["identity"], record["source"].get("capture_policy") == "git-only",
+                             record["source"]["snapshot"].get("schema"))
                 == record["source"], "migration:source-drift")
 
 
@@ -190,11 +196,20 @@ def migrate(directory, output, identity, arguments, lock):
 @operation("legacy-migration")
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", required=True)
-    parser.add_argument("--base-branch", required=True)
+    parser.add_argument("--repo")
+    parser.add_argument("--base-branch")
+    parser.add_argument("--retire-automatic", action="store_true")
     arguments = parser.parse_args()
     identity = json.load(sys.stdin)
     bucket = Path(identity["bucket_path"])
+    if arguments.retire_automatic:
+        from worktree_recovery_producer import attribution
+        require(identity.get("source_removal_outcome") == "removed", "migration:source-removal-incomplete")
+        common = Path(identity["common_path"]).resolve(strict=True)
+        require(not common.is_relative_to(bucket), "migration:base-inside-source")
+        guards(identity, bucket)
+        arguments.repo, arguments.base_branch = attribution(Path(identity["archive_path"]), {"common": str(common)})
+    require(bool(arguments.repo and arguments.base_branch), "migration:repository-and-base-required")
     timing_context(repo=arguments.repo, source=str(bucket))
     with phase("preflight-policy-and-process-guards"):
         arguments.legacy_pulse_compaction = candidate(identity) and not has_lifecycle(identity)
@@ -214,7 +229,13 @@ def main():
     try:
         require(stat.S_ISREG(os.fstat(lock).st_mode), "migration:unsafe-lock")
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        print(json.dumps(migrate(directory, output, identity, arguments, lock), sort_keys=True))
+        result = migrate(directory, output, identity, arguments, lock)
+        if arguments.retire_automatic:
+            from worktree_recovery_retire import automatic_retire
+            result = automatic_retire(directory, load(directory / "journal.json"), bucket, lock)
+            timing_context(source_retired=result["retired"], source_bytes=result["bucket_bytes"],
+                           archive_bytes=result["archive_bytes"])
+        print(json.dumps(result, sort_keys=True))
     finally:
         os.close(lock)
 

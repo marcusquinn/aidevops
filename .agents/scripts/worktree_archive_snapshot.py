@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 from worktree_archive_filesystem import fingerprint, supported_directories
@@ -37,10 +38,70 @@ def archive_policies(manifest):
         raise SystemExit('unknown capture policy')
     if capture_policy == 'git-only' and (manifest.get('include_ignored') or manifest.get('git_admin_policy')):
         raise SystemExit('inconsistent Git-only policy')
+    if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') not in (2, 3):
+        raise SystemExit('unsupported Git changes fingerprint')
     policy = manifest.get('git_admin_policy')
     if policy is not None and (policy != 'preserve-v1' or not isinstance(manifest.get('self_contained'), bool)):
         raise SystemExit('invalid Git administration policy')
     return capture_policy, policy
+
+
+def verify_git_objects(archive, manifest):
+    """Verify against the recorded base graph, retaining legacy bundle readers."""
+    capture_policy, policy = archive_policies(manifest)
+    bundle = archive / 'commits.bundle'
+    if policy is not None:
+        load_administration(archive)
+    if manifest.get('self_contained') is True or policy is not None or capture_policy == 'git-only':
+        if manifest.get('self_contained') is True and not bundle.is_file():
+            raise ValueError('self-contained archive requires a bundle')
+        with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
+            scratch = Path(temporary)
+            object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
+            git(scratch, 'init', '--bare', '--quiet', '--object-format=' + object_format)
+            if manifest.get('self_contained') is not True:
+                seed_base(scratch, manifest)
+            if bundle.is_file():
+                git(scratch, 'bundle', 'verify', str(bundle))
+            if policy is not None:
+                verify_administration(archive, scratch, manifest)
+            elif capture_policy == 'git-only':
+                if bundle.is_file():
+                    git(scratch, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle), 'HEAD:refs/archive/head')
+                git(scratch, 'cat-file', '-e', manifest['head_sha'] + '^{commit}')
+    elif bundle.exists():
+        common = Path(manifest.get('source_git_common_dir', ''))
+        root = common if common.is_dir() else archive
+        git(root, 'bundle', 'verify', str(bundle))
+
+
+def verify_untracked_payload(archive, manifest):
+    """Bind captured untracked bytes to the source snapshot, not just the manifest inventory."""
+    saved = manifest.get('source_fingerprint', {})
+    if manifest.get('capture_policy') != 'git-only' or saved.get('schema') != 3:
+        return
+    contents = []
+    payload = archive / 'untracked.tar.gz'
+    if payload.exists():
+        with tarfile.open(payload, 'r:gz') as source:
+            members = source.getmembers()
+            if len({member.name for member in members}) != len(members):
+                raise ValueError('duplicate untracked archive path')
+            for member in sorted(members, key=lambda entry: os.fsencode(entry.name)):
+                if member.issym():
+                    value = ['symlink', member.linkname]
+                elif member.isfile():
+                    digest = hashlib.sha256()
+                    with source.extractfile(member) as handle:
+                        for chunk in iter(lambda: handle.read(1048576), b''):
+                            digest.update(chunk)
+                    value = ['file', member.mode, member.size, digest.hexdigest()]
+                else:
+                    raise ValueError('unsupported untracked archive member')
+                contents.append([member.name, value])
+    digest = hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest()
+    if len(contents) != saved.get('untracked_files') or digest != saved.get('untracked_sha256'):
+        raise ValueError('untracked payload does not match captured source')
 
 
 def administration_digest(state):
@@ -108,7 +169,12 @@ def prepare_incremental_restore(archive, target):
     object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
     git(target, 'init', '--quiet', f'--object-format={object_format}')
     seed_base(target, manifest)
-    fetch_preservation(target, archive)
+    if manifest.get('capture_policy') == 'git-only':
+        if (archive / 'commits.bundle').is_file():
+            git(target, 'fetch', '--quiet', '--no-write-fetch-head',
+                str(archive / 'commits.bundle'), 'HEAD:refs/archive/head')
+    else:
+        fetch_preservation(target, archive)
     git(target, '-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', manifest['head_sha'])
 
 
@@ -152,20 +218,37 @@ def verify_administration(archive, scratch, manifest):
 
 def git_index_state(path, head=None):
     root = Path(path).resolve(strict=True)
+    lock = os.fsdecode(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock').rstrip(b'\n'))
+    if os.path.lexists(lock):
+        raise ValueError('git_admin:index_locked:index.lock')
     index = git(root, "ls-files", "--stage", "-z")
     entries = [entry.split(b"\t", 1) for entry in index.split(b"\0") if entry]
     if any(metadata.split()[2] != b"0" for metadata, _ in entries):
         raise ValueError("unmerged index cannot be represented by two patches")
+    if any(metadata.split()[0] == b"160000" for metadata, _ in entries):
+        raise ValueError("submodule contents cannot be represented by two patches")
+    flags = git(root, "ls-files", "-v", "-z").split(b"\0")
+    if any(entry[:1] == b"S" or entry[:1].islower() for entry in flags if entry):
+        raise ValueError("index has skip-worktree/assume-unchanged entries")
     # Index-only metadata reads, not a working-tree scan or restore verification.
     options = ("--cached", "--raw", "-z", "--no-ext-diff", "--no-color")
     if git(root, "diff", *options, "--ita-visible-in-index") != git(root, "diff", *options, "--ita-invisible-in-index"):
         raise ValueError("intent-to-add index entries cannot be represented by two patches")
+    # Not copying raw administration does not authorize losing unique drafts,
+    # interrupted operations or commits reachable only through a worktree reflog.
+    administration(root)
+    from worktree_archive_state import supported_history
+    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    if (admin / 'SQUASH_MSG').exists():
+        raise ValueError('uncommitted squash draft requires separate preservation')
+    supported_history(root, admin)
+    inventories(root)  # Reuse the existing Git-filter/LFS preservation guard.
     return {"head": head or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii"),
             "index": hashlib.sha256(index).hexdigest(), "files": len(entries)}
 
 
-def git_snapshot(path, patches=None, metadata=None):
-    """Describe Git-visible state only; never enumerate untracked/ignored trees.
+def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
+    """Describe Git changes and ordinary untracked files, excluding Git-ignored files.
 
     Capture passes its already-written patches, so describing the archive does
     not repeat diffs or verify restoration. Comparison is a separate operation.
@@ -179,9 +262,19 @@ def git_snapshot(path, patches=None, metadata=None):
     head = metadata["head"]
     values = [head, metadata["index"],
               hashlib.sha256(staged).hexdigest(), hashlib.sha256(unstaged).hexdigest()]
-    return {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
-            "bytes": len(staged) + len(unstaged),
-            "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
+    result = {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
+              "bytes": len(staged) + len(unstaged),
+              "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
+    if include_untracked:
+        paths = sorted(filter(None, git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")))
+        size = sum((root / os.fsdecode(raw)).lstat().st_size for raw in paths)
+        if (len(paths) > int(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES", "10000"))
+                or size > int(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES", "1073741824"))):
+            raise ValueError("untracked payload exceeds configured limit")
+        contents = [[os.fsdecode(raw), fingerprint(root, raw)] for raw in paths]
+        result.update(schema=3, untracked_files=len(paths), bytes=result["bytes"] + size,
+                      untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode("ascii")).hexdigest())
+    return result
 
 
 def snapshot(path, preserve_git_admin=False, include_ignored=False, git_only=False):

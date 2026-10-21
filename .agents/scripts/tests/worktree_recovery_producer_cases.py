@@ -34,13 +34,11 @@ class ProducerCases:
         (self.work / "binary.bin").write_bytes(b"\0unstaged\xfe")
         (self.work / "unstaged-delete").unlink()
         (self.work / "run.sh").chmod(0o755)
-        (self.work / "untracked").write_bytes(b"not recovery data\n")
+        (self.work / "untracked").write_bytes(b"unique recovery data\n")
         cache = self.work / "cache.ignored"
         cache.mkdir()
         self.git(cache, "init", "-q")
         (cache / "payload").write_bytes(b"not recovery data\n")
-        admin = Path(self.git(self.work, "rev-parse", "--absolute-git-dir").decode().strip())
-        (admin / "SQUASH_MSG").write_bytes(b"not a commit\n")
         self.git(self.work, "config", "diff.noprefix", "true")
         self.git(self.work, "config", "color.ui", "always")
         options = ("--binary", "--full-index", "--no-ext-diff", "--no-textconv",
@@ -54,8 +52,8 @@ class ProducerCases:
         self.assertEqual(manifest["head_sha"].encode(), head)
         self.assertEqual((archive / "staged.patch").read_bytes(), staged)
         self.assertEqual((archive / "diff.patch").read_bytes(), unstaged)
-        self.assertEqual((archive / "untracked-files.txt").read_bytes(), b"")
-        self.assertFalse((archive / "untracked.tar.gz").exists())
+        self.assertEqual((archive / "untracked-files.txt").read_bytes(), b"untracked\n")
+        self.assertTrue((archive / "untracked.tar.gz").exists())
         self.assertFalse((archive / "git-admin.json").exists())
         self.assertIn(head + b" HEAD", self.git(self.repo, "bundle", "list-heads", str(archive / "commits.bundle")))
         record = json.loads(producer_engine.journal_for_archive(archive).read_text())
@@ -102,7 +100,8 @@ class ProducerCases:
         self.assertEqual(self.git(restored, "status", "--porcelain=v1", "--untracked-files=no"), expected_status)
         for name in ("committed.txt", "mixed.txt", "binary.bin", "new-staged", "new-name", "run.sh"):
             self.assertEqual((restored / name).read_bytes(), (self.work / name).read_bytes())
-        for name in ("staged-delete", "unstaged-delete", "old-name", "untracked", "cache.ignored"):
+        self.assertEqual((restored / "untracked").read_bytes(), b"unique recovery data\n")
+        for name in ("staged-delete", "unstaged-delete", "old-name", "cache.ignored"):
             self.assertFalse((restored / name).exists())
         self.assertEqual(self.git(restored, "rev-parse", "--path-format=absolute", "--git-common-dir"),
                          self.git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
@@ -127,10 +126,8 @@ class ProducerCases:
         (self.work / "mixed.txt").write_bytes(b"unstaged\n")
         (self.work / "unique.ignored").write_bytes(b"unique ignored\n")
         (self.work / "untracked").write_bytes(b"unique untracked\n")
-        admin = Path(self.git(self.work, "rev-parse", "--absolute-git-dir").decode().strip())
-        (admin / "SQUASH_MSG").write_bytes(b"fixture-only draft\n")
         before = self.snapshot(self.work)
-        administration = {name: (admin / name).read_bytes() for name in ("HEAD", "index", "SQUASH_MSG")}
+        index = self.git(self.work, "ls-files", "--stage", "-z")
         source_bytes = producer_engine.allocated_bytes(self.work)
         result = self.run_command("bash", scripts / "worktree-helper.sh", "remove",
                                   self.work, "--force", cwd=self.repo, check=False)
@@ -148,7 +145,7 @@ class ProducerCases:
         self.assertNotIn(str(self.work).encode(), self.git(self.repo, "worktree", "list", "--porcelain"))
         journal = producer_engine.journal_for_archive(archive)
         record = json.loads(journal.read_text())
-        self.assertEqual(record["phase"], "verified")
+        self.assertEqual(record["phase"], "archived")
         self.assertEqual(record["source_removal_outcome"], "removed")
         self.assertTrue((archive / ".aidevops-archive-pin").is_file())
         self.assertFalse(list(self.archives.glob("aidevops-worktree-cleanup-*")))
@@ -158,14 +155,12 @@ class ProducerCases:
         self.assertNotEqual(retry.returncode, 0)
         self.assertEqual(list(self.archives.rglob("manifest.json")), [archive / "manifest.json"])
         self.assertIn(str(archive).encode(), self.helper("list", "--output-root", self.archives).stdout)
-        self.repo.rename(self.root / "original-repository-unavailable")
         self.producer("verify", archive)
         restored = self.root / "independent-restore"
         self.helper("restore", archive, "--target", restored)
-        for name, data in administration.items():
-            self.assertEqual((restored / ".git" / name).read_bytes(), data)
+        self.assertEqual(self.git(restored, "ls-files", "--stage", "-z"), index)
         self.assertEqual(before, self.snapshot(restored))
-        self.assertEqual((restored / "unique.ignored").read_bytes(), b"unique ignored\n")
+        self.assertFalse((restored / "unique.ignored").exists())
         self.assertFalse((restored / ".git/objects/info/alternates").exists())
         self.git(restored, "fsck", "--connectivity-only")
         print(json.dumps({"cli_acceptance": {
@@ -217,7 +212,7 @@ class ProducerCases:
         self.assertEqual(len(journals), 1)
         journal = journals[0]
         record = json.loads(journal.read_text())
-        self.assertEqual(record["phase"], "verified")
+        self.assertEqual(record["phase"], "archived")
         self.assertEqual(record["source_removal_outcome"], "pending")
         self.assertFalse(list(journal.parent.glob(".restore-*")))
         self.assertFalse(list(journal.parent.glob(".cleanup-*")))
@@ -228,26 +223,31 @@ class ProducerCases:
         self.git(self.repo, "worktree", "remove", "--force", self.work)
         self.producer("removed", archive)
         self.assertEqual(json.loads(journal.read_text())["source_removal_outcome"], "removed")
-        self.repo.rename(self.root / "original-repository-unavailable")
+        offline = self.root / "original-repository-unavailable"
+        self.repo.rename(offline)
+        try:
+            self.assertNotEqual(self.producer("verify", archive, check=False).returncode, 0)
+        finally:
+            offline.rename(self.repo)
         self.producer("verify", archive)
         restored = self.root / "independent-restore"
         self.helper("restore", archive, "--target", restored)
         self.assertEqual((restored / "mixed.txt").read_bytes(), b"unstaged\n")
         self.assertEqual(self.git(restored, "show", ":mixed.txt"), b"staged\n")
-        self.assertEqual((restored / "unique.ignored").read_bytes(), b"unique ignored\n")
+        self.assertFalse((restored / "unique.ignored").exists())
         self.assertEqual((restored / "untracked").read_bytes(), b"unique untracked\n")
         self.assertFalse((restored / ".git/objects/info/alternates").exists())
 
     def test_producer_transaction_rejects_drift_without_duplicate(self):
         result = self.producer("capture", self.work, self.archives, "test.sh", "drift-fixture")
         archive = Path(result.stdout.decode().strip())
-        (self.work / "late.ignored").write_bytes(b"late data\n")
+        (self.work / "late.txt").write_bytes(b"late data\n")
         self.assertNotEqual(self.producer("source-matches", archive, self.work, check=False).returncode, 0)
         retry = self.producer("capture", self.work, self.archives, "test.sh", "drift-fixture", check=False)
         self.assertNotEqual(retry.returncode, 0)
         self.assertIn(b"source-drift", retry.stderr)
         self.assertEqual(len(list(self.archives.rglob("manifest.json"))), 1)
-        self.assertTrue((self.work / "late.ignored").is_file())
+        self.assertTrue((self.work / "late.txt").is_file())
         self.assertNotEqual(self.producer("removed", archive, check=False).returncode, 0)
         self.producer("verify", archive)
         manifest = archive / "manifest.json"
@@ -278,7 +278,7 @@ class ProducerCases:
 
     def test_producer_resumes_captured_archive_without_duplicate(self):
         with patch.dict(os.environ, self.env), patch.object(
-                producer_engine, "prepare_restore", side_effect=OSError("interrupted before restore")):
+                producer_engine, "allocated_bytes", side_effect=OSError("interrupted after capture")):
             with self.assertRaises(OSError):
                 producer_engine.prepare(self.work, self.archives, "test.sh", "interruption-fixture")
         manifests = list(self.archives.rglob("manifest.json"))
@@ -289,7 +289,7 @@ class ProducerCases:
         self.assertNotEqual(self.producer("verify", archive, check=False).returncode, 0)
         result = self.producer("capture", self.work, self.archives, "test.sh", "interruption-fixture")
         self.assertEqual(Path(result.stdout.decode().strip()), archive)
-        self.assertEqual(json.loads(journal.read_text())["phase"], "verified")
+        self.assertEqual(json.loads(journal.read_text())["phase"], "archived")
         self.assertEqual(list(self.archives.rglob("manifest.json")), manifests)
         self.assertTrue(self.work.is_dir())
 
@@ -308,30 +308,6 @@ class ProducerCases:
             self.assertIn(b"capture-incomplete", retry.stderr)
         self.assertEqual(partial.read_bytes(), b"interrupted capture evidence")
         self.assertEqual(list(output.iterdir()), [partial])
-        self.assertTrue(self.work.is_dir())
-
-    def test_producer_preserves_new_unreachable_scratch_object(self):
-        self.assert_scratch_object_preserved("finish_scratch", "restore-verified")
-
-    def test_producer_preserves_unsealed_interrupted_scratch(self):
-        self.assert_scratch_object_preserved("verify_restore", "captured")
-
-    def assert_scratch_object_preserved(self, interruption, phase):
-        with patch.dict(os.environ, self.env), patch.object(
-                producer_engine, interruption, side_effect=OSError("interrupted during restoration")):
-            with self.assertRaises(OSError):
-                producer_engine.prepare(self.work, self.archives, "test.sh", "scratch-drift")
-        archive = next(self.archives.rglob("manifest.json")).parent
-        journal = producer_engine.journal_for_archive(archive)
-        record = json.loads(journal.read_text())
-        self.assertEqual(record["phase"], phase)
-        restored = journal.parent / record["restore_slot"] / "worktree"
-        object_id = self.run_command("git", "-C", restored, "hash-object", "-w", "--stdin",
-                                     input_data=b"unique scratch-only object\n").stdout.decode().strip()
-        object_path = restored / ".git/objects" / object_id[:2] / object_id[2:]
-        result = self.producer("capture", self.work, self.archives, "test.sh", "scratch-drift", check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertTrue(object_path.is_file())
         self.assertTrue(self.work.is_dir())
 
     def test_producer_refuses_unsafe_roots_and_source_aliases(self):

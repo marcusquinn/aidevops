@@ -21,7 +21,7 @@ import stat
 import subprocess  # nosec B404 -- subprocess errors only; execution uses the shared helper
 import sys
 
-from worktree_archive_snapshot import git, snapshot
+from worktree_archive_snapshot import git, git_snapshot, snapshot
 from worktree_lifetime_archive import capacity, durable_archive, inode, require
 from worktree_recovery_migrate import archive_command
 from worktree_recovery_migration_scratch import finish_scratch, prepare_restore, verify_restore
@@ -52,9 +52,10 @@ def identity(source):
 
 
 @timed("source-snapshot")
-def source_state(source, policy="git-only"):
+def source_state(source, policy="git-only", fingerprint_schema=3):
     observed = identity(source)
-    baseline = snapshot(source, preserve_git_admin=True, include_ignored=True, git_only=policy == "git-only")
+    baseline = (git_snapshot(source, include_untracked=fingerprint_schema != 2) if policy == "git-only"
+                else snapshot(source, preserve_git_admin=True, include_ignored=True))
     require(identity(source) == observed, "producer:source-identity-changed")
     state = {"identity": observed, "snapshot": baseline}
     if policy == "git-only":
@@ -110,13 +111,17 @@ def reservation(source, root):
     private_directory(directory)
     private_directory(output)
     policy = os.environ.get("AIDEVOPS_WORKTREE_RECOVERY_POLICY", "git-only")
+    fingerprint_schema = 3
     if os.path.lexists(directory / "journal.json"):
-        policy = load(directory / "journal.json", SCHEMA)["source"].get("capture_policy", "preserve-v1")
-    require(policy in ("git-only", "preserve-v1"), "producer:unknown-capture-policy")
+        saved = load(directory / "journal.json", SCHEMA)["source"]
+        policy = saved.get("capture_policy", "preserve-v1")
+        fingerprint_schema = saved.get("snapshot", {}).get("schema", 3)
+    else:
+        require(policy == "git-only", "producer:obsolete-capture-policy; new archives use Git changes and untracked files")
     if policy == "git-only" and not os.path.lexists(directory / "journal.json"):
         current = {"identity": observed, "capture_policy": policy}
     else:
-        current = source_state(source, policy)
+        current = source_state(source, policy, fingerprint_schema)
     return current, directory, output
 
 
@@ -154,14 +159,12 @@ def capture(directory, record, lock):
     source = record["source"]["identity"]["path"]
     git_only = record["source"].get("capture_policy") == "git-only"
     if not any(output.iterdir()):
+        require(git_only, "producer:legacy-capture-read-only; existing source retained")
         record["phase"] = "capturing"
         publish(directory / "journal.json", record)
-        options = ["--git-only"] if git_only else [
-            "--base-sha", record["source"]["snapshot"]["head"], "--self-contained",
-            "--include-ignored", "--preserve-git-admin"]
         archive_command(lock, "archive", source, "--repo", record["repo"],
                         "--base-branch", record["base"], "--unattributed",
-                        "--reason", "unattributed-worktree", "--output-root", output, *options)
+                        "--reason", "unattributed-worktree", "--output-root", output)
     manifests = list(output.glob("*/*/*/manifest.json"))
     require(len(manifests) == 1, "producer:capture-incomplete; retained without another allocation")
     archive = manifests[0].parent
@@ -265,7 +268,8 @@ def check(archive, source=None, removed=False):
                  and record["phase"] == ("archived" if git_only else "verified"), "producer:incomplete-receipt")
         verify_archive(record, lock)
         if source is not None:
-            require(source_state(source, "git-only" if git_only else "preserve-v1") == record["source"], "producer:source-drift")
+            require(source_state(source, "git-only" if git_only else "preserve-v1",
+                                 record["source"]["snapshot"].get("schema")) == record["source"], "producer:source-drift")
             archive_command(lock, "source-matches", archive, source)
         if removed:
             observed = record["source"]["identity"]

@@ -93,5 +93,13 @@ def supported_history(root, admin):
         raise ValueError("private worktree refs require separate preservation")
     message = admin / "COMMIT_EDITMSG"
     if message.exists():
-        if message.is_symlink() or message.read_bytes().rstrip(b"\n") != git(root, "log", "-1", "--format=%B").rstrip(b"\n"):
+        if message.is_symlink():
             raise ValueError("uncommitted message draft requires separate preservation")
+        draft = message.read_bytes().rstrip(b"\n")
+        if draft != git(root, "log", "-1", "--format=%B").rstrip(b"\n"):
+            # Switching branches or merging can leave a previously committed
+            # message here. Accept only an exact message in the archived ancestry.
+            committed = git(root, "log", "-1", "--format=%B", "--fixed-strings",
+                            "--grep=" + os.fsdecode(draft), "HEAD").rstrip(b"\n")
+            if not draft or committed != draft:
+                raise ValueError("uncommitted message draft requires separate preservation")

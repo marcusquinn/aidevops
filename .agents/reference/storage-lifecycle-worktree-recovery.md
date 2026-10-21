@@ -80,15 +80,16 @@ bash .agents/scripts/worktree-recovery-lifecycle-helper.sh migrate \
   --repo owner/repo --base-branch main
 ```
 
-New migrations use [Git-only capture](../scripts/worktree-archive-helper.md#recoverable-producer-transactions):
-exact base/HEAD, incremental commits and staged/unstaged patches, with no untracked,
-ignored or raw administrative payload. Capture does not perform a trial restore or
+New migrations use the [single compact format](../scripts/worktree-archive-helper.md#recoverable-producer-transactions):
+exact base/HEAD, incremental commits, staged/unstaged patches and ordinary untracked
+files. Git's standard ignore rules exclude ignored files; raw administrative payloads
+are not copied. Capture does not perform a trial restore or
 archive verification; it reports `archived`, not `verified`. The shared repository
-must retain the exact base. Source removal remains a separate operator-confirmed
-transition with the existing ownership/process/removal guards and external verification.
-Existing receipts retain their policy; `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1`
-explicitly selects the previous full-preservation behavior described below.
-Neither mode retires, rewrites or moves the original bucket during capture.
+must retain the exact base. Source removal uses the guarded manual retirement
+transition or the automatic compaction policy below; capture alone cannot remove it.
+Existing receipts retain their policy. `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1`
+is no longer accepted for new capture; the former preservation format is read-only
+compatibility. Migration never retires, rewrites or moves the original bucket during capture.
 
 The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`.
 It binds physical identities, the source snapshot, opaque recovery provenance,
@@ -99,14 +100,7 @@ Path-bearing provenance is historical evidence, not live Git configuration or
 process ownership authority. Journals and archive artifacts are fsynced before
 completion is reported; only verified, identity-fenced restore scratch is removed.
 
-Restoration first reserves a randomized private container and journals its inode;
-an equivalent pre-existing repository is not adopted as owned scratch. All
-cooperating scratch writers inherit the operation lock. These private directories
-are not user workspaces. Cleanup journals a randomized quarantine name, renames
-the reserved container, then checks its identity and contents again before removal.
-A replacement, late write or interrupted partial scratch removal is retained for
-review. This exclusion contract does not claim to fence arbitrary malicious
-same-user writers through content sampling alone.
+Legacy-preservation receipts reserve private scratch with a journaled inode and inherited writer lock; pre-existing repositories are never adopted. Cleanup journals a random quarantine name, renames the reserved container and rechecks identity/content before removal. Replacements, late writes and interrupted removal remain for review. These are not user workspaces; sampling cannot fence malicious same-user writers.
 
 Retries reuse the reservation and completed capture; source drift, changed manifest
 or invalid identity fails closed. Captures lacking a complete manifest stay incomplete:
@@ -114,11 +108,8 @@ retry never allocates another copy. Do not delete journals or partial artifacts 
 force retry. Complete captures can resume restoration/verification; completed receipts
 require fresh source/archive verification before reuse.
 
-Unsupported inputs remain intact: the unchanged snapshot contract rejects unusual
-permissions (including `0600` working files), ownership, ACLs/xattrs, hard links,
-empty directories and unsupported Git administration. Missing source objects or
-incomplete completion/ownership metadata prevent verified receipts. Markerless v1
-inventory compatibility does not confer migration eligibility.
+Unsupported untracked metadata, unknown administrative state and unique reflog-only history remain protected; tracked changes use Git's modes.
+Missing objects or incomplete completion/ownership metadata block verification. Markerless v1 compatibility does not confer migration eligibility.
 
 An existing migration reservation makes legacy planning and stale-plan
 revalidation return `compact-migration-protected`. Maintenance counts that reason
@@ -129,12 +120,10 @@ The command reports `bucket_bytes` (null when not measured), `archive_bytes`, `s
 
 ## Confirmed retirement of migrated buckets
 
-Retirement is a separate manual operation, never a Pulse, timer, maintenance or
-automatic-apply action. First run `retire-plan --bucket <absolute-bucket-path>`
-with `worktree-recovery-lifecycle-helper.sh`. Inspect its JSON report, then run
-`retire --bucket <same-path> --confirm <confirmation_token>` using the exact token.
-`retire-status --bucket <same-path>` reports the durable transaction, including
-after the original bucket disappears. These commands use the configured recovery root.
+Manual retirement uses `worktree-recovery-lifecycle-helper.sh` and the configured recovery root:
+run `retire-plan --bucket <absolute-bucket-path>`, inspect its report, then
+`retire --bucket <same-path> --confirm <confirmation_token>` with the exact token.
+`retire-status --bucket <same-path>` reports the transaction even after the original bucket disappears.
 
 The migration must be verified, source identity/content unchanged, and the bound
 archive freshly verified against the recorded manifest and available base.
@@ -160,6 +149,16 @@ Do not delete journals or alter receipts to force continuation.
 Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`: allocated-size
 observations, not physical free-space proof on shared, compressed or snapshotting storage.
 Archive expiry remains separately authorized.
+
+### Automatic verified compaction
+
+Pulse invokes `worktree-recovery-maintenance-helper.sh compact`; see the
+[compaction contract](../scripts/worktree-archive-helper.md) for bounds, journals and controls.
+It reuses migration/retirement guards across all named recovery buckets, not only Pulse sources.
+Authority `verified-git-changes/v1` requires schema-3 untracked preservation, completed original
+removal and an available external base. Manual plans are not adopted; interrupted automatic
+journals resume without treating missing paths as success. Unsupported/active sources remain intact.
+Deploy on each machine and measure actual reclaimed space; merge alone does neither.
 
 ## Inventory and retention planning
 
@@ -335,8 +334,9 @@ explicit command remains the operator-reviewed apply path.
 
 ## Bounded automatic maintenance
 
-Run once after each successful asynchronous worktree cleanup cycle, only on the default
-framework-owned non-macOS recovery root. Exclude macOS Trash, configured roots and
+The legacy `worktree-recovery-maintenance-helper.sh run` command retains the retention
+policy below. Pulse now calls `compact` instead, as described above. Legacy retention
+runs only on the default framework-owned non-macOS recovery root. Exclude macOS Trash, configured roots and
 attributable legacy Trash buckets from automatic mutation. Use the manual path's exact
 classifier and apply transaction: age/pressure selects only candidates already meeting
 every terminal, clean-state, identity, reference and sizing requirement.

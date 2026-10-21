@@ -23,7 +23,7 @@ import sys
 import time
 import uuid
 
-from worktree_archive_snapshot import git, snapshot
+from worktree_archive_snapshot import git, git_snapshot, snapshot
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -106,7 +106,8 @@ def require_verified(record, source=True):
     helper("verify", str(archive))
     require(hashlib.sha256(manifest.read_bytes()).hexdigest() == value["manifest_sha256"], "archive changed during verification")
     if source:
-        require(snapshot(record["identity"]["path"]) == value["snapshot"], "source changed since verified restoration")
+        observe = git_snapshot if value["snapshot"].get("schema") == 3 else snapshot
+        require(observe(record["identity"]["path"]) == value["snapshot"], "source changed since verified restoration")
 
 
 def update(managed, path, identifier, changes):
@@ -233,10 +234,10 @@ def construct(managed, path, record, arguments):
     value = operation(record)
     directory = Path(value["directory"])
     directory.mkdir(mode=0o700)
-    baseline = snapshot(path)
+    baseline = git_snapshot(path)
     update(managed, path, value["id"], {"phase": "building", "directory_inode": inode(directory), "snapshot": baseline})
     archive_args = ["archive", str(path), "--repo", arguments.repo, "--base-branch", arguments.base,
-                    "--self-contained", "--output-root", str(directory / "archives")]
+                    "--output-root", str(directory / "archives")]
     if arguments.issue:
         archive_args.extend(["--issue", arguments.issue, "--reason", "failed-worker"])
     else:
@@ -245,8 +246,8 @@ def construct(managed, path, record, arguments):
     helper("verify", str(archive))
     manifest_digest = hashlib.sha256((archive / "manifest.json").read_bytes()).hexdigest()
     target = directory / "restore"
-    helper("restore", str(archive), "--target", str(target))
-    require(snapshot(target) == baseline and snapshot(path) == baseline, "restoration or source comparison failed")
+    helper("restore", str(archive), "--target", str(target), "--verification-copy")
+    require(git_snapshot(target) == baseline and git_snapshot(path) == baseline, "restoration or source comparison failed")
     durable_archive(archive)
     helper("verify", str(archive))
     require(hashlib.sha256((archive / "manifest.json").read_bytes()).hexdigest() == manifest_digest,
@@ -263,7 +264,7 @@ def prepare(managed, path, arguments):
     root = Path(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_ROOT") or Path.home() / ".aidevops/recovery/archives") / ".lifecycle"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root = root.resolve(strict=True)
-    baseline = snapshot(path)  # Unsupported contents must not seal the source.
+    baseline = git_snapshot(path)  # Unsupported contents must not seal the source.
     required_capacity = capacity(path, baseline)
     record, fresh = initialize(managed, path, root, required_capacity, getattr(arguments, "idle_seconds", 86400))
     value = operation(record)

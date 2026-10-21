@@ -9,6 +9,7 @@ HELPER="${SCRIPT_DIR}/../worktree-archive-helper.sh"
 TEST_ROOT="$(mktemp -d)"
 export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
 export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+export AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT"
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -90,6 +91,9 @@ test_restore_commits_dirty_and_untracked() {
 	mkdir -p "$worktree/local"
 	printf 'untracked\n' >"$worktree/local/note.txt"
 	ln -s ../file.txt "$worktree/local/file-link"
+	printf 'cache/\n' >"$worktree/.gitignore"
+	mkdir "$worktree/cache"
+	printf 'discardable\n' >"$worktree/cache/payload"
 	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 11 \
 		--reason failed-worker --base-branch main --output-root "$archive_root") || return 1
 	[[ -s "$archive/commits.bundle" && -s "$archive/diff.patch" && -s "$archive/staged.patch" ]] || rc=1
@@ -101,15 +105,17 @@ test_restore_commits_dirty_and_untracked() {
 	[[ "$(git -C "$target" show :staged.txt)" == "staged" ]] || rc=1
 	[[ "$(cat "$target/local/note.txt")" == "untracked" ]] || rc=1
 	[[ -L "$target/local/file-link" && "$(readlink "$target/local/file-link")" == "../file.txt" ]] || rc=1
+	[[ -f "$target/.gitignore" && ! -e "$target/cache" && ! -e "$archive/git-admin.json" ]] || rc=1
 	[[ "$(git -C "$target" log -1 --format=%s)" == "local" ]] || rc=1
 	[[ "$(sqlite3 "$WORKTREE_REGISTRY_DB" 'SELECT count(*) FROM worktree_owners;')" == "1" ]] || rc=1
 	result "restore recovers bundle commits, staged and unstaged patches, and untracked files" "$rc"
 	return 0
 }
 
-test_self_contained_restore() {
+test_shared_base_restore() {
 	local paths canonical worktree archive target head_sha rc=0
-	local expected actual snapshotter="${SCRIPT_DIR}/../worktree_archive_snapshot.py"
+	local expected actual
+	local snapshot_code='import json,sys; sys.path.insert(0,sys.argv[1]); from worktree_archive_snapshot import git_snapshot; print(json.dumps(git_snapshot(sys.argv[2]),sort_keys=True))'
 	paths=$(setup_repo independent) || return 1
 	IFS=$'\t' read -r canonical worktree <<<"$paths"
 	printf 'committed\000binary\n' >"$worktree/binary.dat"
@@ -122,13 +128,12 @@ test_self_contained_restore() {
 	printf 'unstaged\000binary\n' >"$worktree/binary.dat"
 	printf 'unusual filename\n' >"$worktree/line"$'\n'"break.txt"
 	ln -s binary.dat "$worktree/local-link"
-	expected=$(python3 "$snapshotter" "$worktree") || return 1
+	expected=$(python3 -c "$snapshot_code" "${SCRIPT_DIR}/.." "$worktree") || return 1
 	archive=$(bash "$HELPER" archive "$worktree" --repo owner/repo --issue 14 \
-		--reason failed-worker --base-branch main --self-contained \
+		--reason failed-worker --base-branch main \
 		--output-root "$TEST_ROOT/independent-archives") || return 1
-	# Neither the source common repository nor its remote is available to restore.
-	mv "$canonical" "${canonical}-unavailable" || return 1
-	mv "$TEST_ROOT/independent.git" "$TEST_ROOT/independent-unavailable.git" || return 1
+	# Git provides the unchanged base; archives contain only changes and new files.
+	[[ ! -e "$archive/git-admin.json" ]] || rc=1
 	bash "$HELPER" verify "$archive" >/dev/null || rc=1
 	target="$TEST_ROOT/independent-restored"
 	bash "$HELPER" restore "$archive" --target "$target" >/dev/null || return 1
@@ -139,9 +144,9 @@ test_self_contained_restore() {
 	[[ -L "$target/local-link" && "$(readlink "$target/local-link")" == binary.dat ]] || rc=1
 	[[ ! -e "$target/.git/objects/info/alternates" ]] || rc=1
 	git -C "$target" fsck --full >/dev/null 2>&1 || rc=1
-	actual=$(python3 "$snapshotter" "$target") || return 1
+	actual=$(python3 -c "$snapshot_code" "${SCRIPT_DIR}/.." "$target") || return 1
 	[[ "$actual" == "$expected" ]] || rc=1
-	result "self-contained restore needs no source repository and preserves binary data, modes and unusual names" "$rc"
+	result "shared-base restore preserves binary data, modes and unusual names without raw Git metadata" "$rc"
 	return 0
 }
 
@@ -265,7 +270,7 @@ test_invalid_arguments() {
 
 test_clean_archive
 test_restore_commits_dirty_and_untracked
-test_self_contained_restore || result "self-contained fixture setup" 1
+test_shared_base_restore || result "shared-base fixture setup" 1
 test_snapshot_protects_unsupported_content || result "snapshot fixture setup" 1
 test_verify_detects_tamper
 test_source_matches_detects_late_writes

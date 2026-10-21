@@ -10,9 +10,29 @@ For legacy full recovery buckets, use the explicit
 It reuses this format, records its capture policy, preserves provenance in
 a durable journal and pins the resulting archive. It does not retire the source
 or change ordinary recovery producers.
-Source retirement requires the separate operator-confirmed
+Manual source retirement uses the separate operator-confirmed
 [verified retirement transition](../reference/storage-lifecycle-worktree-recovery.md#confirmed-retirement-of-migrated-buckets).
 Archive verification or migration success alone is still not removal authority.
+
+Pulse's scheduled cleanup also runs `worktree-recovery-maintenance-helper.sh compact`.
+It rotates through existing full recovery buckets and resumes automatic retirement
+journals. Each pass examines at most ten candidates for up to 120 seconds and retires
+at most one verified copy. The lifecycle command `compact --bucket <absolute-path>`
+uses the same capture, verification and retirement functions; it is not another
+archive format. Ownership, process, source-removal, identity and archive checks
+must pass. Unknown or active sources remain untouched, including after interruption.
+Automatic retirement requires schema-3 untracked preservation and an available
+base repository outside the retired bucket. Source bytes retired and archive bytes
+are reported separately; neither is a measurement of free disk space.
+
+The maintenance state's private `compaction/last.json` records cursor, outcomes and
+source/archive byte counts. A portable command-group timeout contains writers.
+`AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_ENABLED=0` disables the pass. Authority
+`verified-git-changes/v1` is not a manual confirmation token; manual plans are never
+adopted. Claimed automatic journals remain discoverable after their buckets move.
+Deploy updated scripts on each Pulse machine; no sudo or new scheduler is required.
+Measure actual retirement and free-space changes after deployment; merge alone does
+not deploy or reclaim space. Compaction does not enable archive expiry.
 
 ## Commands
 
@@ -21,8 +41,7 @@ Archive verification or migration success alone is still not removal authority.
 worktree-archive-helper.sh archive <worktree-path> \
   --repo owner/repo --issue 123 --reason failed-worker \
   --base-branch develop [--base-sha <commit>] \
-  [--output-root <directory>] [--failure-log <file>] [--self-contained] \
-  [--include-ignored] [--preserve-git-admin] [--git-only]
+  [--output-root <directory>] [--failure-log <file>]
 
 # Verify the manifest, artifact hashes, bundle, and untracked payload safety.
 worktree-archive-helper.sh verify <archive-directory>
@@ -55,16 +74,16 @@ The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
 | `staged.patch` | Binary-safe staged changes; present even when empty |
 | `untracked-files.txt` | Human-readable escaped inventory; present even when empty |
 | `untracked.tar.gz` | Bounded untracked regular files and symlinks, when any exist |
-| `git-admin.json` | Optional preserved Git administration under `--preserve-git-admin` |
 | `failure.log` | Optional final 256 KiB excerpt supplied with `--failure-log` |
 
 The manifest records the repository, issue, reason, creation time, source worktree, source Git common directory, branch, `HEAD`, base branch and exact base SHA, default branch, remote branch state, dirty state, artifacts, and restore instructions. `verify` rejects missing, changed, or unsafe artifacts.
 
-`--self-contained` always includes a complete `HEAD` ancestry bundle, including
+Historical self-contained archives include a complete `HEAD` ancestry bundle, including
 when HEAD equals the base. Verification checks it in an empty repository rather
 than borrowing source objects. Restoration needs neither the source repository
 nor its remote and creates no linked-worktree registration. This costs more space
 than an incremental archive; it is not a backup of unrelated branches or refs.
+These archives remain readable, but new creation uses only the incremental format.
 
 ## Recoverable producer transactions
 
@@ -85,10 +104,12 @@ when a producer uses a legacy override, pass that root explicitly to `list` with
 
 One physical source identity reserves `<root>/.producer-transactions/<id>/journal.json`
 and captures beneath `<root>/.producer-archives/<id>/<owner>__<repo>/unattributed/<timestamp>/`.
-No issue is guessed from the path. New producer and migration transactions default
-to `--git-only`: exact base/HEAD, incremental commits, staged and unstaged binary
-patches. Git defines the inventory; untracked/ignored files and raw Git administration
-are outside recovery. There are no project-specific or directory-specific exclusions.
+No issue is guessed from the path. Every new archive contains exact base/HEAD,
+incremental commits, staged and unstaged binary patches, and ordinary untracked
+files. Git defines the inventory with `ls-files --others --exclude-standard`;
+ignored files and raw Git administration are excluded. `git-only` is the retained
+manifest policy name, not an alternative creation mode. There are no
+project-specific or directory-specific exclusions.
 The shared repository must retain the recorded base. An empty delta needs no bundle.
 Unmerged and intent-to-add index entries fail closed because two patches cannot
 preserve their index state. Patch output explicitly overrides color and path-prefix
@@ -108,11 +129,11 @@ by `diff.patch` without updating the index. No worker is dispatched. Dependency
 provisioning is separate and must use the restored lockfiles, not the base versions.
 
 Existing receipts keep their original policy; retries never silently downgrade
-them. `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` explicitly retains the previous
-full-preservation transaction for compatibility. Its existing verification and
-scratch-cleanup contract remains unchanged. Direct legacy archive CLI options also
-remain supported; pass `--git-only` for the new contract. It cannot be combined with
-`--self-contained`, `--include-ignored`, or `--preserve-git-admin`.
+them. Legacy readers and already-captured transaction recovery remain available.
+New capture rejects `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` and the obsolete
+`--self-contained`, `--include-ignored`, and `--preserve-git-admin` creation options.
+Schema-2 receipts do not prove preservation of untracked files and cannot authorize
+automatic retirement. Remove obsolete capture-policy overrides when deploying.
 
 Manual `worktree-helper.sh remove` prints `Recovery archive: <path>` after capture,
 including when a later guard refuses removal. That line is not proof of retirement;
@@ -207,9 +228,14 @@ Restore never overwrites an existing path. If restoration stops after creating a
 `worktree_lifetime_archive.py` adds verification phases to the existing managed
 lifetime record; it does not create a second registry or remove source trees.
 It requires a sealed, generation-bound idle authorization (at least 24 hours), creates a
-self-contained archive, restores it independently, and compares source and
+incremental archive, restores a private verification copy from the recorded base,
+and compares source and
 restored HEAD, index, file contents, modes and symlinks. Native removal proofs
 reject incomplete operations and recheck the archive and source snapshot.
+
+The internal `restore --verification-copy` path reuses base seeding and payload
+restoration without registering a user worktree or creating shared repository
+branches. Normal restoration still uses the common public worktree creation API.
 
 Artifacts and their directory ancestry are fsynced before the durable SQLite
 restore receipt is committed. Filesystems without the required fsync semantics
@@ -225,14 +251,13 @@ overhead and a 1 GiB free-space reserve. Insufficient or unavailable capacity
 prevents a new reservation; it never authorizes deleting protected recovery data.
 Concurrent disk consumption can still cause ENOSPC, which preserves the source.
 
-The automatic verifier has a deliberately narrow Git working-tree contract, not
-a full filesystem-backup contract. It preserves standard 0644/0755 files, 0755
-directories and symlink targets owned by the current UID/GID; timestamps are not
-preserved. It protects rather than discards ignored data, ACLs/xattrs, special
-permissions, foreign ownership, hard links, empty directories, nested repositories,
-Git filters/LFS, private worktree refs, reflog-only history, unfinished operations,
-intent-to-add index entries, per-worktree config, squash/message drafts and unknown
-worktree administrative entries. Missing inspection evidence
+The automatic verifier has a narrow Git working-tree contract, not a full
+filesystem-backup contract. Tracked files use Git's content and executable modes;
+ordinary untracked files retain supported modes and symlink targets. Ignored data,
+timestamps and empty directories are not captured. Unsupported untracked metadata,
+private worktree refs, reflog-only history, unfinished operations, hidden index
+changes, intent-to-add entries, squash/message drafts and unknown administrative
+entries prevent capture rather than permitting loss. Missing inspection evidence
 also prevents authorization. The cooperative ownership/cgroup fence is required:
 a fingerprint by itself cannot exclude arbitrary unregistered same-user writers.
 
@@ -273,25 +298,13 @@ unverified archives remain deferred; reconciliation never removes source data.
 
 Untracked capture uses Git's standard ignore rules (`git ls-files --others --exclude-standard`), not a second cache allowlist. Ignored dependencies and build caches are rebuilt from tracked manifests/lockfiles. Keep `.env.example` tracked with placeholders; supply real values from a persistent protected config or secret store at launch, rather than duplicating them in every worktree archive. A worktree does not automatically inherit the canonical checkout's `.env`. Before removing legacy worktrees or full recovery copies, check for unique ignored data and move any needed values to their durable owner without printing them. Archive directories are private (0700).
 
-Explicit preservation can use `archive ... --self-contained --include-ignored`.
-This includes ignored regular files and symlinks in the existing
-`untracked.tar.gz` artifact, under the same file-count and byte limits. The
-manifest records `include_ignored`; source matching uses that capture policy
-and hashes captured contents and modes. Default capture remains unchanged.
-Ignored payloads may contain secrets: keep archives private and do not publish
-them. Restore preserves regular-file permission bits, including mode 0600.
+Previously created archives can contain ignored payloads. Their recorded capture
+policy remains authoritative for verification and restore; new archives never
+include ignored files. Move any needed ignored data to durable storage separately.
 
-This option is a preservation building block, **not** legacy migration or
-permission to retire a full recovery bucket. It does not preserve empty
-directories, ACLs/xattrs, special files, Git administration or reflog-only
-history. Ordinary idle-lifecycle snapshots still reject ignored data; the central
-recoverable producer explicitly combines this flag with Git-admin preservation.
-Independent restore comparison and valid ownership/process evidence remain
-mandatory before replacing any original copy. Archive expiry is separate.
+### Historical Git administration archives (read/restore compatibility only)
 
-### Opt-in Git administration preservation
-
-`archive ... --preserve-git-admin` records
+Previously created archives using `--preserve-git-admin` record
 `git_admin_policy: "preserve-v1"` and a hashed `git-admin.json` artifact. It
 preserves byte contents of HEAD, the index (including intent-to-add), ORIG_HEAD, FETCH_HEAD,
 HEAD's reflog, COMMIT_EDITMSG, SQUASH_MSG, MERGE_MSG and config.worktree, plus

@@ -1527,6 +1527,7 @@ _worktree_recovery_lifecycle_usage() {
 	printf '%s\n' 'Usage: worktree-recovery-lifecycle-helper.sh [status|json|plan --output <absolute-path>|apply --plan <absolute-path> --receipt <absolute-new-path> --confirm <manifest-token>|unreadable-processes]'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh legacy-report [--root PATH] [--registry PATH] [--ledger PATH]'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh migrate --bucket <absolute-path> --repo <owner/repo> --base-branch <branch>'
+	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh compact --bucket <absolute-path>'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh retire-plan|retire-status --bucket <absolute-path>'
 	printf '%s\n' '       worktree-recovery-lifecycle-helper.sh retire --bucket <absolute-path> --confirm <confirmation-token>'
 	return 0
@@ -1566,7 +1567,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 		shift
 		python3 "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree_recovery_legacy_report.py" "$@"
 		;;
-	retire-plan | retire | retire-status)
+	retire-plan | retire | retire-status | retire-automatic)
 		_worktree_recovery_retire_cli "$@"
 		;;
 	retirement-guard)
@@ -1577,6 +1578,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	migrate)
 		shift
 		_worktree_recovery_migrate_cli "$@"
+		;;
+	compact)
+		shift
+		_worktree_recovery_compact_cli "$@"
 		;;
 	plan)
 		[[ "$#" -eq 3 && "$2" == "--output" ]] || {

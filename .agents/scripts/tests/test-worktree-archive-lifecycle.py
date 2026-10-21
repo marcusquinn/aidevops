@@ -146,7 +146,11 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
                         GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
                         AIDEVOPS_RECOVERY_TIMING_LOG=str(self.root / "timing.jsonl"),
-                        AIDEVOPS_WORKTREE_RECOVERY_POLICY="preserve-v1",
+                        AIDEVOPS_WORKTREE_RECOVERY_POLICY="git-only",
+                        AIDEVOPS_WORKTREE_BASE_DIR=str(self.root),
+                        HOME=str(self.root),
+                        WORKTREE_REGISTRY_DIR=str(self.root / "registry"),
+                        WORKTREE_REGISTRY_DB=str(self.root / "registry/worktree-registry.db"),
                         GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
                         GIT_AUTHOR_EMAIL="fixture@example.invalid",
                         GIT_COMMITTER_EMAIL="fixture@example.invalid", LC_ALL="C")
@@ -237,7 +241,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         migration = json.loads(self.migrate_bucket(bucket).stdout)
         journal = json.loads(Path(migration["receipt"]).read_text())
         self.assertTrue(journal["legacy_pulse_compaction"])
-        self.assertEqual(journal["verification"], "archive-integrity-and-source-match")
+        self.assertEqual(journal["phase"], "archived")
         self.assertNotIn("restore_inode", journal)
         self.assertEqual(self.migrate_bucket(bucket).returncode, 0)
         plan = json.loads(self.retirement("retire-plan", bucket).stdout)
@@ -248,7 +252,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.helper("restore", migration["archive"], "--target", target)
         self.assertEqual((target / "mixed.txt").read_bytes(), b"unstaged\n")
         self.assertEqual(self.git(target, "show", ":mixed.txt"), b"staged\n")
-        self.assertEqual((target / "local.ignored").read_bytes(), b"retained ignored data")
+        self.assertFalse((target / "local.ignored").exists())
 
     def test_legacy_pulse_preflight_retains_active_source(self):
         bucket = self.legacy_pulse_bucket()
@@ -323,6 +327,85 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
             self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode(errors="replace"))
         return result
 
+    def test_compact_preserves_git_changes_and_untracked_not_ignored(self):
+        self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY")
+        self.env["AIDEVOPS_WORKTREE_BASE_DIR"] = str(self.root)
+        (self.work / "mixed.txt").write_bytes(b"staged\n")
+        self.git(self.work, "add", "mixed.txt")
+        (self.work / "mixed.txt").write_bytes(b"unstaged\n")
+        (self.work / "new.txt").write_bytes(b"unique new file\n")
+        (self.work / "cache.ignored").write_bytes(b"discardable cache\n")
+        bucket = self.legacy_pulse_bucket()
+        result = json.loads(self.retirement("compact", bucket).stdout)
+        self.assertTrue(result["retired"])
+        self.assertIsNone(result["confirmation_token"])
+        self.assertFalse(bucket.exists())
+        archive = Path(result["archive"])
+        self.assertFalse((archive / "git-admin.json").exists())
+        target = self.root / "compact-restored"
+        self.helper("restore", archive, "--target", target)
+        self.assertEqual(self.git(target, "show", ":mixed.txt"), b"staged\n")
+        self.assertEqual((target / "mixed.txt").read_bytes(), b"unstaged\n")
+        self.assertEqual((target / "new.txt").read_bytes(), b"unique new file\n")
+        self.assertFalse((target / "cache.ignored").exists())
+        self.assertEqual(json.loads(self.retirement("compact", bucket).stdout), result)
+
+    def test_compaction_maintenance_archives_then_retires_and_repeats(self):
+        self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY")
+        (self.work / "new.txt").write_bytes(b"maintenance-owned payload\n")
+        bucket = self.legacy_pulse_bucket()
+        helper = HELPER.parent / "worktree-recovery-maintenance-helper.sh"
+        result = json.loads(self.run_command("bash", helper, "compact").stdout)
+        self.assertEqual(result["outcome"], "compacted", result)
+        self.assertEqual(len(result["entries"]), 1)
+        self.assertGreater(result["source_bytes_retired"], 0)
+        self.assertGreater(result["archive_bytes"], 0)
+        self.assertFalse(bucket.exists())
+        repeated = json.loads(self.run_command("bash", helper, "compact").stdout)
+        self.assertEqual(repeated["outcome"], "no-candidates", repeated)
+        self.assertEqual(repeated["source_bytes_retired"], 0)
+
+    def test_capture_rejects_hidden_index_changes(self):
+        for flag in ("assume-unchanged", "skip-worktree"):
+            with self.subTest(flag=flag):
+                self.git(self.work, "update-index", "--" + flag, "mixed.txt")
+                (self.work / "mixed.txt").write_bytes(b"hidden local change\n")
+                result = self.helper("archive", self.work, "--repo", "fixture/repo",
+                                     "--issue", "1", "--reason", "failed-worker",
+                                     "--base-branch", "develop", "--output-root", self.archives, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"skip-worktree/assume-unchanged", result.stderr)
+                self.assertEqual((self.work / "mixed.txt").read_bytes(), b"hidden local change\n")
+                self.git(self.work, "update-index", "--no-" + flag, "mixed.txt")
+        self.assertFalse(list(self.archives.rglob("manifest.json")))
+
+    def test_verify_binds_untracked_payload_to_source_snapshot(self):
+        (self.work / "new.txt").write_bytes(b"must survive\n")
+        archive = self.archive()
+        manifest_path = archive / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        (archive / "untracked.tar.gz").unlink()
+        manifest["artifacts"] = [entry for entry in manifest["artifacts"]
+                                 if entry["name"] != "untracked.tar.gz"]
+        manifest_path.write_text(json.dumps(manifest))
+        result = self.helper("verify", archive, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"untracked payload does not match captured source", result.stderr)
+
+    def test_automatic_retirement_refuses_old_capture_without_untracked(self):
+        self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY")
+        bucket = self.legacy_pulse_bucket()
+        migration = json.loads(self.migrate_bucket(bucket).stdout)
+        journal = Path(migration["receipt"])
+        saved = json.loads(journal.read_text())
+        saved["source"]["snapshot"]["schema"] = 2
+        journal.write_text(json.dumps(saved))
+        result = self.retirement("retire-automatic", bucket, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"automatic-requires-untracked-preservation", result.stdout)
+        self.assertTrue(bucket.exists())
+        self.assertFalse((journal.parent / "retirement.json").exists())
+
     def test_retirement_confirmed_and_independent_restore(self):
         (self.work / "local.ignored").write_bytes(b"retirement fixture")
         bucket, migration = self.retirement_fixture()
@@ -338,7 +421,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertEqual(json.loads(self.retirement("retire-status", bucket).stdout), result)
         target = self.root / "retirement-restore"
         self.helper("restore", migration["archive"], "--target", target)
-        self.assertEqual((target / "local.ignored").read_bytes(), b"retirement fixture")
+        self.assertFalse((target / "local.ignored").exists())
 
     def test_retirement_requires_available_base(self):
         bucket, migration = self.retirement_fixture()
@@ -482,7 +565,6 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.git(self.work, "add", ".")
         self.git(self.work, "commit", "-qm", "history only")
         old = self.git(self.work, "rev-parse", "HEAD").decode().strip()
-        self.git(self.work, "reset", "--hard", "HEAD~1")
         (self.work / "mixed.txt").write_bytes(b"staged\n")
         self.git(self.work, "add", "mixed.txt")
         (self.work / "mixed.txt").write_bytes(b"unstaged\n")
@@ -494,10 +576,10 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertEqual(receipt["source"]["provenance"]["worktree-gitfile"]["hex"],
                          b"opaque extra provenance".hex())
         self.assertIn("worktree/.git", receipt["source"]["provenance"])
-        self.assertEqual(receipt["source"], source_state(receipt["source"]["identity"]))
+        self.assertEqual(receipt["source"], source_state(receipt["source"]["identity"], True, 3))
         self.assertFalse(result["source_retired"])
         self.assertEqual(result["reclaimed_bytes"], 0)
-        self.assertGreater(result["bucket_bytes"], 0)
+        self.assertIsNone(result["bucket_bytes"])
         self.assertGreater(result["archive_bytes"], 0)
         self.assertEqual(json.loads(self.migrate_bucket(bucket).stdout), result)
         self.assertEqual(len(list(self.archives.rglob("manifest.json"))), 1)
@@ -510,7 +592,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertIn("compact-migration-protected", plan.read_text())
         restored = self.root / "independent-migration-restore"
         self.helper("restore", result["archive"], "--target", restored)
-        self.assertEqual((restored / "local.ignored").read_bytes(), b"unique ignored fixture")
+        self.assertFalse((restored / "local.ignored").exists())
         self.assertEqual(self.git(restored, "show", f"{old}:history-only.bin"), b"reflog-only fixture")
         self.assertEqual((restored / "mixed.txt").read_bytes(), b"unstaged\n")
         self.assertEqual(self.git(restored, "show", ":mixed.txt"), b"staged\n")
@@ -538,12 +620,12 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertEqual(len(list(self.archives.rglob("manifest.json"))), 1)
         before = receipt_path.read_bytes()
         worktree = Path(receipt["source"]["identity"]["archive_path"])
-        (worktree / "late.ignored").write_bytes(b"late writer")
+        (worktree / "late.txt").write_bytes(b"late writer")
         failure = self.migrate_bucket(bucket, check=False)
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn(b"source-drift", failure.stdout)
         self.assertEqual(receipt_path.read_bytes(), before)
-        self.assertEqual((worktree / "late.ignored").read_bytes(), b"late writer")
+        self.assertEqual((worktree / "late.txt").read_bytes(), b"late writer")
         self.assertEqual(len(list(self.archives.rglob("manifest.json"))), 1)
 
     def test_legacy_migration_incomplete_capture_never_allocates_again(self):
@@ -562,81 +644,19 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn(b"capture-incomplete", failure.stdout)
         self.assertEqual(sorted(path.relative_to(self.archives) for path in self.archives.rglob('*')), before)
-        self.assertEqual(len(list(self.archives.rglob('git-admin.json'))), 1)
+        self.assertFalse(list(self.archives.rglob('git-admin.json')))
+        self.assertEqual(len(list(self.archives.rglob('manifest.partial'))), 1)
         self.assertTrue(bucket.is_dir())
 
     def test_legacy_migration_keeps_unsupported_permissions(self):
-        (self.work / "local.ignored").write_bytes(b"private fixture")
-        (self.work / "local.ignored").chmod(0o600)
+        (self.work / "local.txt").write_bytes(b"private fixture")
+        (self.work / "local.txt").chmod(0o600)
         bucket = self.legacy_bucket()
         failure = self.migrate_bucket(bucket, check=False)
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn(b"special permissions", failure.stdout)
         self.assertFalse(list((bucket.parent / ".compact-migrations").rglob("journal.json")))
         self.assertFalse(list(self.archives.rglob("manifest.json")))
-        self.assertTrue(bucket.is_dir())
-
-    def test_legacy_migration_keeps_changed_restore_scratch(self):
-        from worktree_recovery_migration_state import publish
-
-        bucket = self.legacy_bucket()
-        result = json.loads(self.migrate_bucket(bucket).stdout)
-        receipt_path = Path(result["receipt"])
-        record = json.loads(receipt_path.read_text())
-        slot = receipt_path.parent / record["restore_slot"]
-        slot.mkdir(mode=0o700)
-        scratch = slot / "worktree"
-        self.helper("restore", result["archive"], "--target", scratch)
-        record.update(phase="restore-verified", restore_inode=lifecycle.inode(scratch),
-                      restore_slot_inode=lifecycle.inode(slot))
-        publish(receipt_path, record)
-        (scratch / "late.ignored").write_bytes(b"unexpected late scratch write")
-        failure = self.migrate_bucket(bucket, check=False)
-        self.assertNotEqual(failure.returncode, 0)
-        self.assertIn(b"scratch-changed", failure.stdout)
-        self.assertEqual((scratch / "late.ignored").read_bytes(), b"unexpected late scratch write")
-        self.assertTrue(bucket.is_dir())
-
-    def test_legacy_migration_never_adopts_unowned_restore(self):
-        from worktree_recovery_migration_state import publish
-
-        bucket = self.legacy_bucket()
-        result = json.loads(self.migrate_bucket(bucket).stdout)
-        receipt_path = Path(result["receipt"])
-        record = json.loads(receipt_path.read_text())
-        for name in ("restore_slot", "restore_slot_inode", "restore_inode", "cleanup_slot"):
-            record.pop(name, None)
-        record["phase"] = "captured"
-        publish(receipt_path, record)
-        unowned = receipt_path.parent / "restore"
-        self.helper("restore", result["archive"], "--target", unowned)
-        failure = self.migrate_bucket(bucket, check=False)
-        self.assertNotEqual(failure.returncode, 0)
-        self.assertIn(b"unowned-scratch", failure.stdout)
-        self.assertEqual((unowned / "mixed.txt").read_bytes(), b"base\n")
-
-    def test_legacy_migration_retains_replaced_scratch_in_quarantine(self):
-        from worktree_recovery_migration_state import publish
-
-        bucket = self.legacy_bucket()
-        result = json.loads(self.migrate_bucket(bucket).stdout)
-        receipt_path = Path(result["receipt"])
-        record = json.loads(receipt_path.read_text())
-        slot = receipt_path.parent / record["restore_slot"]
-        slot.mkdir(mode=0o700)
-        self.helper("restore", result["archive"], "--target", slot / "worktree")
-        record.update(phase="cleanup-pending", restore_slot_inode=lifecycle.inode(slot),
-                      restore_inode=lifecycle.inode(slot / "worktree"), cleanup_slot=".cleanup-fixture")
-        publish(receipt_path, record)
-        slot.rename(self.root / "kept-original-scratch")
-        slot.mkdir(mode=0o700)
-        (slot / "unique-note").write_bytes(b"replacement data")
-        failure = self.migrate_bucket(bucket, check=False)
-        self.assertNotEqual(failure.returncode, 0)
-        self.assertIn(b"scratch-container-changed", failure.stdout)
-        quarantined = receipt_path.parent / record["cleanup_slot"]
-        self.assertEqual((quarantined / "unique-note").read_bytes(), b"replacement data")
-        self.assertTrue((self.root / "kept-original-scratch/worktree").is_dir())
         self.assertTrue(bucket.is_dir())
 
     def test_legacy_migration_rejects_incomplete_and_missing_base(self):
@@ -656,185 +676,6 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertTrue(marker.is_file())
         self.assertTrue(bucket.is_dir())
 
-    def test_ignored_capture_is_explicit_and_restores_independently(self):
-        ignored = self.work / "local.ignored"
-        content = b"private fixture data\0\xff\n"
-        ignored.write_bytes(content)
-        ignored.chmod(0o600)
-        (self.work / "link.ignored").symlink_to("local.ignored")
-        default_archive = self.archive("--self-contained")
-        self.assertFalse(json.loads((default_archive / "manifest.json").read_text())["include_ignored"])
-        self.assertFalse((default_archive / "untracked.tar.gz").exists())
-        archive = self.archive("--self-contained", "--include-ignored")
-        self.assertTrue(json.loads((archive / "manifest.json").read_text())["include_ignored"])
-        self.helper("verify", archive)
-        self.helper("source-matches", archive, self.work)
-        ignored.write_bytes(b"changed")
-        self.assertNotEqual(self.helper("source-matches", archive, self.work, check=False).returncode, 0)
-        # The restore must not borrow Git objects from the original repository.
-        self.repo.rename(self.root / "unavailable-repo")
-        restored = self.root / "independent-restore"
-        self.helper("restore", archive, "--target", restored)
-        self.assertEqual((restored / "local.ignored").read_bytes(), content)
-        self.assertEqual(stat.S_IMODE((restored / "local.ignored").stat().st_mode), 0o600)
-        self.assertEqual(os.readlink(restored / "link.ignored"), "local.ignored")
-
-    def test_ignored_capture_respects_payload_bounds(self):
-        (self.work / "large.ignored").write_bytes(b"over budget")
-        self.env["AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES"] = "1"
-        result = self.helper("archive", self.work, "--repo", "fixture/repo",
-                             "--issue", "1", "--reason", "failed-worker",
-                             "--base-branch", "develop", "--output-root", self.archives,
-                             "--self-contained", "--include-ignored", check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(b"payload exceeds configured limit", result.stderr)
-        self.assertFalse(list(self.archives.rglob("manifest.json")))
-        self.assertTrue((self.work / "large.ignored").exists())
-
-    def test_git_administration_round_trip_without_source_objects(self):
-        self.check_git_administration_round_trip('--self-contained')
-
-    def test_git_administration_incremental_round_trip(self):
-        self.check_git_administration_round_trip()
-
-    def check_git_administration_round_trip(self, *options):
-        import worktree_archive_snapshot as snapshots
-        from worktree_archive_readiness import OPAQUE_ADMIN_FILES
-
-        self.env['GIT_OPTIONAL_LOCKS'] = '0'
-        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
-        (admin / 'aidevops').mkdir()
-        for name in OPAQUE_ADMIN_FILES:
-            (admin / name).write_bytes(b'opaque readiness state\x00\xff\n')
-        # Both endpoints of the reflog can be otherwise unreachable.
-        self.git(self.work, 'commit', '--allow-empty', '-qm', 'reflog only one')
-        first = self.git(self.work, 'rev-parse', 'HEAD').strip()
-        self.git(self.work, 'commit', '--allow-empty', '-qm', 'reflog only two')
-        second = self.git(self.work, 'rev-parse', 'HEAD').strip()
-        self.git(self.work, 'reset', '--hard', 'develop')
-        tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').decode().strip()
-        previous = self.git(self.work, 'commit-tree', tree, '-m', 'ORIG_HEAD only').strip()
-        private = self.git(self.work, 'commit-tree', tree, '-m', 'private ref only').strip()
-        (admin / 'ORIG_HEAD').write_bytes(previous + b'\n')
-        fetched = self.git(self.work, 'commit-tree', tree, '-m', 'FETCH_HEAD only').strip()
-        fetched_unmerged = self.git(self.work, 'commit-tree', tree, '-m', 'unmerged fetch only').strip()
-        (admin / 'FETCH_HEAD').write_bytes(
-            fetched + b"\t\tbranch 'one' of fixture\n" +
-            fetched_unmerged + b"\tnot-for-merge\tbranch 'two' of fixture\n")
-        for prefix in ('worktree', 'bisect', 'rewritten'):
-            self.git(self.work, 'update-ref', f'refs/{prefix}/saved', private.decode())
-        for name in ('COMMIT_EDITMSG', 'SQUASH_MSG', 'MERGE_MSG'):
-            (admin / name).write_bytes(b'unsaved draft\x00\xff\n')
-        self.git(self.repo, 'config', 'extensions.worktreeConfig', 'true')
-        self.git(self.work, 'config', '--worktree', 'archive.fixture', 'preserved')
-        (self.work / 'intent').write_text('intent contents\n')
-        self.git(self.work, 'add', '-N', 'intent')
-        # Resolve-undo stores old conflict blobs that current --stage omits.
-        conflicts = []
-        for stage in (1, 2, 3):
-            blob = self.root / f'conflict-{stage}'
-            blob.write_text(f'resolve-undo {stage}\n')
-            oid = self.git(self.work, 'hash-object', '-w', str(blob)).strip()
-            conflicts.append(b'100644 ' + oid + f' {stage}\tmixed.txt\0'.encode())
-        removal = b'0 ' + b'0' * len(oid) + b'\tmixed.txt\0'
-        self.run_command('git', '-C', self.work, 'update-index', '-z', '--index-info',
-                         input_data=removal + b''.join(conflicts))
-        (self.work / 'mixed.txt').write_text('staged only\n')
-        self.git(self.work, 'add', 'mixed.txt')
-        undo = self.git(self.work, 'ls-files', '--resolve-undo', '-z')
-        self.assertTrue(undo)
-        # Keep a blob reachable only through the index, not any commit.
-        (self.work / 'mixed.txt').write_text('working contents\n')
-        ignored = self.work / 'saved.ignored'
-        ignored.write_bytes(b'ignored recovery data\x00\xff')
-        status = self.git(self.work, 'status', '--porcelain=v2')
-        state = snapshots.administration(self.work)
-        index = self.git(self.work, 'ls-files', '--stage', '-z')
-        with self.assertRaises(ValueError):
-            snapshots.snapshot(self.work)
-        with self.assertRaisesRegex(ValueError, 'ignored content'):
-            snapshots.snapshot(self.work, True)
-        expected = snapshots.snapshot(self.work, True, True)
-        cli_snapshot = self.run_command(sys.executable, HELPER.with_name('worktree_archive_snapshot.py'),
-                                        '--preserve-git-admin', '--include-ignored', self.work)
-        self.assertEqual(json.loads(cli_snapshot.stdout), expected)
-        ignored.write_bytes(b'changed ignored data')
-        self.assertNotEqual(snapshots.snapshot(self.work, True, True), expected)
-        ignored.write_bytes(b'ignored recovery data\x00\xff')
-        archive = self.archive(*options, '--preserve-git-admin', '--include-ignored')
-        manifest = json.loads((archive / 'manifest.json').read_text())
-        self.assertEqual(manifest['git_admin_policy'], 'preserve-v1')
-        self.assertEqual(len(manifest['source_fingerprint']['git_admin']), 64)
-        self.helper('source-matches', archive, self.work)
-        (admin / 'MERGE_MSG').write_text('late edit')
-        self.assertNotEqual(self.helper('source-matches', archive, self.work, check=False).returncode, 0)
-        (admin / 'MERGE_MSG').write_bytes(bytes.fromhex(state['files']['MERGE_MSG']))
-        self.git(self.repo, 'worktree', 'remove', '--force', self.work)
-        if '--self-contained' in options:
-            self.repo.rename(self.root / 'unavailable-repo')
-        self.helper('verify', archive)
-        restored = self.root / 'restored-admin'
-        self.helper('restore', archive, '--target', restored)
-        # Even a rejected comparison must not refresh the restored raw index.
-        self.env['GIT_OPTIONAL_LOCKS'] = '1'
-        self.assertNotEqual(self.helper('source-matches', archive, restored, check=False).returncode, 0)
-        self.env['GIT_OPTIONAL_LOCKS'] = '0'
-        self.assertEqual(self.git(restored, 'status', '--porcelain=v2'), status)
-        self.assertEqual(self.git(restored, 'ls-files', '--stage', '-z'), index)
-        self.assertEqual(snapshots.administration(restored), state)
-        self.assertEqual(snapshots.snapshot(restored, True, True), expected)
-        restored_admin = Path(self.git(restored, 'rev-parse', '--absolute-git-dir').decode().strip())
-        self.assertEqual(stat.S_IMODE((restored_admin / 'aidevops').stat().st_mode), 0o700)
-        for oid in (first, second, previous, private, fetched, fetched_unmerged):
-            self.assertEqual(self.git(restored, 'cat-file', '-t', oid.decode()), b'commit\n')
-        self.assertEqual(self.git(restored, 'config', '--worktree', 'archive.fixture'), b'preserved\n')
-        self.assertEqual(self.git(restored, 'ls-files', '--resolve-undo', '-z'), undo)
-        self.git(restored, 'checkout', '-m', '--', 'mixed.txt')
-        self.assertEqual(self.git(restored, 'ls-files', '--unmerged', '-z'), undo)
-        # A valid HEAD-only bundle is insufficient even with a matching hash.
-        bundle = archive / 'commits.bundle'
-        bundle.unlink()
-        self.git(restored, 'bundle', 'create', str(bundle), 'HEAD')
-        artifact = next(item for item in manifest['artifacts'] if item['name'] == bundle.name)
-        artifact.update(size=bundle.stat().st_size, sha256=hashlib.sha256(bundle.read_bytes()).hexdigest())
-        self.update_manifest(archive, **manifest)
-        self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
-
-    def test_git_administration_incremental_clean_has_no_bundle(self):
-        from worktree_archive_snapshot import snapshot
-
-        expected = snapshot(self.work, True, True)
-        self.git(self.repo, 'commit', '--allow-empty', '-qm', 'base branch advances')
-        archive = self.archive('--preserve-git-admin', '--include-ignored')
-        manifest = json.loads((archive / 'manifest.json').read_text())
-        self.assertFalse(manifest['self_contained'])
-        self.assertEqual(manifest['base_sha'], expected['head'])
-        self.assertFalse((archive / 'commits.bundle').exists())
-        restored = self.root / 'incremental-clean'
-        before_refs = self.git(self.repo, 'show-ref')
-        self.helper('restore', archive, '--target', restored)
-        self.assertEqual(snapshot(restored, True, True), expected)
-        self.assertEqual(self.git(self.repo, 'show-ref'), before_refs)
-        self.assertFalse((restored / '.git/objects/info/alternates').exists())
-        self.repo.rename(self.root / 'unavailable-base')
-        self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
-
-    def test_git_administration_incremental_staged_unstaged(self):
-        from worktree_archive_snapshot import snapshot
-
-        (self.work / 'mixed.txt').write_text('staged version\n')
-        self.git(self.work, 'add', 'mixed.txt')
-        (self.work / 'mixed.txt').write_text('unstaged version\n')
-        expected = snapshot(self.work, True, True)
-        archive = self.archive('--preserve-git-admin', '--include-ignored')
-        self.assertGreater((archive / 'staged.patch').stat().st_size, 0)
-        self.assertGreater((archive / 'diff.patch').stat().st_size, 0)
-        restored = self.root / 'incremental-dirty'
-        self.helper('restore', archive, '--target', restored)
-        self.assertEqual(self.git(restored, 'show', ':mixed.txt'), b'staged version\n')
-        self.assertEqual((restored / 'mixed.txt').read_bytes(), b'unstaged version\n')
-        self.assertEqual(snapshot(restored, True, True), expected)
-
     def test_git_administration_bundle_omits_reachable_index_objects(self):
         from worktree_archive_snapshot import administration, administration_roots, bundle_roots
 
@@ -847,10 +688,6 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.git(self.work, 'add', 'mixed.txt')
         staged = self.git(self.work, 'rev-parse', ':mixed.txt').decode().strip()
         self.assertEqual(set(bundle_roots(self.work, administration(self.work))), history | {staged})
-        archive = self.archive('--self-contained', '--preserve-git-admin')
-        tips = {line.split()[0].decode() for line in
-                self.git(self.work, 'bundle', 'list-heads', str(archive / 'commits.bundle')).splitlines()}
-        self.assertEqual(tips, history | {staged})
 
         self.git(self.work, 'commit', '-qm', 'new contents')
         # This blob now exists only in historical trees, not the current HEAD tree.
@@ -900,19 +737,16 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
             with self.subTest(name=name):
                 path = admin / name
                 path.write_text('fixture')
-                result = self.helper('archive', self.work, '--repo', 'fixture/repo',
-                                     '--issue', '1', '--reason', 'failed-worker',
-                                     '--base-branch', 'develop', '--output-root', self.archives,
-                                     '--self-contained', '--preserve-git-admin', check=False)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(b'git_admin:', result.stderr)
-                self.assertIn(name.encode(), result.stderr)
+                # Retain validation of legacy administration without asking the
+                # current archive writer to create an obsolete archive format.
+                with self.assertRaisesRegex(ValueError, 'git_admin:'):
+                    snapshots.snapshot(self.work, True, True)
                 self.assertTrue(path.exists())
                 if name == 'index.lock':
                     default = self.helper('archive', self.work, '--repo', 'fixture/repo',
                                           '--issue', '2', '--reason', 'failed-worker',
                                           '--base-branch', 'develop', '--output-root', self.archives,
-                                          '--self-contained', check=False)
+                                          check=False)
                     self.assertNotEqual(default.returncode, 0)
                     self.assertIn(b'git_admin:index_locked:index.lock', default.stderr)
                 path.unlink()
@@ -1035,7 +869,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
                                            check=False).returncode, 0)
             self.assertEqual(sentinel.read_text(), "unchanged")
             self.assertFalse((outside / "new").exists())
-            self.assertEqual((target / "mixed.txt").read_text(), "base\n")
+            self.assertFalse(target.exists())  # Reject the unbound payload before creating a worktree.
 
     def test_gitignore_excludes_env_and_dependencies_not_tracked_examples(self):
         (self.work / ".gitignore").write_text(".env\nnode_modules/\n")
@@ -1198,15 +1032,17 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
     def managed_fixture(self):
         database = self.root / "registry.db"
         self.env.update(WORKTREE_REGISTRY_DB=str(database),
+                        WORKTREE_REGISTRY_DIR=str(self.root),
                         AIDEVOPS_WORKTREE_ARCHIVE_ROOT=str(self.archives),
                         AIDEVOPS_CLEANUP_LOG=str(self.root / "cleanup.log"),
                         ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS="86400",
                         ORPHAN_GENERATED_DIRTY_ARCHIVE_SECS="86400",
                         ORPHAN_GENERATED_CLEAN_ARCHIVE_SECS="86400",
                         WORKTREE_UNATTRIBUTED_RETENTION_DAYS="1")
+        self.run_command("bash", "-c", 'source "$1/worktree-recovery-lifecycle-helper.sh"; _init_registry_db',
+                         "registry-fixture", HELPER.parent)
         managed = lifecycle.managed_module()
         with closing(sqlite3.connect(database)) as connection:
-            connection.execute("CREATE TABLE worktree_owners (worktree_path TEXT PRIMARY KEY, owner_pid INTEGER, task_id TEXT, owner_session TEXT)")
             managed.initialize(connection)
             managed.enroll(connection, self.work)
             record = managed.load(connection, str(self.work))
@@ -1268,7 +1104,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
         self.assertTrue(self.work.is_dir())
         (self.work / "mixed.txt").write_text("unique dirty work\n")
         with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
-            connection.execute("INSERT INTO worktree_owners VALUES (?, ?, 'worktree-removal', ?)",
+            connection.execute("INSERT INTO worktree_owners(worktree_path,owner_pid,task_id,owner_session) VALUES (?, ?, 'worktree-removal', ?)",
                                (str(self.work), os.getpid(), f"cleanup:{os.getpid()}"))
             connection.commit()
         result = self.run_command(sys.executable, proof, "proof", self.work, check=False)
@@ -1490,7 +1326,8 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
 
     def test_special_metadata_is_protected_before_sealing(self):
         managed = self.managed_fixture()
-        target = self.work / "mixed.txt"
+        target = self.work / "untracked.txt"
+        target.write_text("unique local content\n")
         target.chmod(0o600)
         with self.assertRaisesRegex(ValueError, "permissions"):
             self.prepare_managed(managed)
@@ -1504,7 +1341,7 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
     def test_unknown_git_administration_and_squash_drafts_are_preserved(self):
         managed = self.managed_fixture()
         admin = Path(self.git(self.work, "rev-parse", "--absolute-git-dir").decode().strip())
-        for name in ("SQUASH_MSG", "private-draft"):
+        for name in ("SQUASH_MSG", "private-draft", "COMMIT_EDITMSG"):
             with self.subTest(name=name):
                 draft = admin / name
                 draft.write_text("irreplaceable draft\n")

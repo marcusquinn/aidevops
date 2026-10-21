@@ -15,7 +15,7 @@ import stat
 import subprocess  # nosec B404 -- resolved du, argv only; see allocated_bytes
 import tempfile
 
-from worktree_archive_snapshot import snapshot
+from worktree_archive_snapshot import git_snapshot, snapshot
 from worktree_lifetime_archive import inode, require
 
 
@@ -100,14 +100,15 @@ def provenance(bucket, worktree):
     return values
 
 
-def source_state(identity, git_only=False):
+def source_state(identity, git_only=False, fingerprint_schema=3):
     bucket = Path(identity["bucket_path"])
     worktree = Path(identity["archive_path"])
     require(bucket == bucket.resolve(strict=True) and worktree.parent == bucket
             and worktree == worktree.resolve(strict=True), "migration:source-path-changed")
     state = {"identity": identity, "bucket_inode": inode(bucket),
              "worktree_inode": inode(worktree), "provenance": provenance(bucket, worktree),
-             "snapshot": snapshot(worktree, preserve_git_admin=True, include_ignored=True, git_only=git_only)}
+              "snapshot": (git_snapshot(worktree, include_untracked=fingerprint_schema != 2) if git_only
+                           else snapshot(worktree, preserve_git_admin=True, include_ignored=True))}
     if git_only:
         state["capture_policy"] = "git-only"
     return state

@@ -21,8 +21,7 @@ Usage: worktree-archive-helper.sh <command> [options]
 Commands:
   archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
 	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
-      [--base-sha SHA] [--output-root DIR] [--failure-log FILE] [--self-contained]
-      [--include-ignored] [--preserve-git-admin] [--git-only]
+      [--base-sha SHA] [--output-root DIR] [--failure-log FILE]
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
@@ -147,12 +146,12 @@ import sys
 
 root = pathlib.Path(sys.argv[1]).resolve()
 include_ignored = sys.argv[2] == '1'
-if sys.argv[7] == '1':
+if sys.argv[7] in ('1', '2'):
     sys.path.insert(0, sys.argv[6])
     from worktree_archive_snapshot import git_snapshot
     patches = pathlib.Path(sys.argv[8]) if sys.argv[8] else None
     metadata = json.loads(sys.argv[9]) if sys.argv[9] else None
-    print(json.dumps(git_snapshot(root, patches, metadata), sort_keys=True))
+    print(json.dumps(git_snapshot(root, patches, metadata, include_untracked=sys.argv[7] == '1'), sort_keys=True))
     sys.exit(0)
 
 
@@ -267,10 +266,11 @@ PY
 	) || return 1
 	git_only=$(python3 - "$archive_dir/manifest.json" <<'PY'
 import json, sys
-policy = json.load(open(sys.argv[1], encoding='utf-8')).get('capture_policy')
+manifest = json.load(open(sys.argv[1], encoding='utf-8'))
+policy = manifest.get('capture_policy')
 if policy not in (None, 'git-only'):
     raise SystemExit('unknown capture policy')
-print(int(policy == 'git-only'))
+print((2 if manifest.get('source_fingerprint', {}).get('schema') == 2 else 1) if policy == 'git-only' else 0)
 PY
 	) || return 1
 	current=$(source_fingerprint "$worktree" "$include_ignored" "$preserve_git_admin" "$git_only") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
@@ -406,26 +406,17 @@ PY
 
 capture_archive_payload() {
 	local worktree="$1" archive_dir="$2" head_sha="$3" base_sha="$4"
-	local preserve_git_admin="$5" self_contained="$6" include_ignored="$7" git_only="$8" failure_log="$9"
-	local commit_count admin_base=""
+	local failure_log="$5"
+	local commit_count
 	# diff must not refresh the source index while capturing it.
 	local -a patch_options=(--binary --full-index --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --submodule=short)
 	git -c diff.autoRefreshIndex=false -C "$worktree" diff "${patch_options[@]}" >"$archive_dir/diff.patch" || return 1
 	git -c diff.autoRefreshIndex=false -C "$worktree" diff --cached "${patch_options[@]}" >"$archive_dir/staged.patch" || return 1
 	commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
-	if [[ "$preserve_git_admin" -eq 1 ]]; then
-		if [[ "$self_contained" -eq 0 ]]; then admin_base="$base_sha"; fi
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-capture "$worktree" "$archive_dir" "$include_ignored" "$admin_base" || return 1
-	elif [[ "$self_contained" -eq 1 ]]; then
-		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD || return 1
-	elif [[ "$commit_count" -gt 0 ]]; then
+	if [[ "$commit_count" -gt 0 ]]; then
 		git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 	fi
-	if [[ "$git_only" -eq 1 ]]; then
-		: >"$archive_dir/untracked-files.txt"
-	else
-		capture_untracked "$worktree" "$archive_dir" "$include_ignored" || return 1
-	fi
+	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then
 		[[ -f "$failure_log" ]] || { die "failure log does not exist"; return 1; }
 		python3 - "$failure_log" "$archive_dir/failure.log" <<'PY'
@@ -445,9 +436,8 @@ archive_worktree() {
 	local worktree="${1:-}"
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
-	local self_contained=0 include_ignored=0 preserve_git_admin=0 git_only=0
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir
-	local fingerprint_before="" fingerprint_after="" git_state=""
+	local fingerprint_before="" fingerprint_after=""
 	local -x GIT_OPTIONAL_LOCKS=0
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
@@ -460,17 +450,10 @@ archive_worktree() {
 		--base-sha) require_value "$1" "${2:-}" || return 1; base_sha="$2"; shift 2 ;;
 		--output-root) require_value "$1" "${2:-}" || return 1; output_root="$2"; shift 2 ;;
 		--failure-log) require_value "$1" "${2:-}" || return 1; failure_log="$2"; shift 2 ;;
-		--self-contained) self_contained=1; shift ;;
-		--include-ignored) include_ignored=1; shift ;;
-		--preserve-git-admin) preserve_git_admin=1; shift ;;
-		--git-only) git_only=1; shift ;;
+		--git-only) shift ;; # Compatibility alias; all new archives use the same path.
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
 	done
-	if [[ "$git_only" -eq 1 && ( "$include_ignored" -eq 1 || "$preserve_git_admin" -eq 1 || "$self_contained" -eq 1 ) ]]; then
-		die "--git-only uses the shared Git base, not ignored files, raw administration or standalone cloning"
-		return 1
-	fi
 	validate_repo "$repo" || return 1
 	if [[ "$unattributed" == "true" ]]; then
 		[[ -z "$issue" && "$reason" == "unattributed-worktree" ]] || { die "unattributed archive cannot have an issue"; return 1; }
@@ -483,39 +466,15 @@ archive_worktree() {
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
 	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }
 	worktree=$(cd "$worktree" && pwd -P) || return 1
-	if [[ "$git_only" -eq 0 ]]; then
-		fingerprint_before=$(source_fingerprint "$worktree" "$include_ignored" "$preserve_git_admin") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
-	fi
+	fingerprint_before=$(source_fingerprint "$worktree" 0 0 1) || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
 	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
-	if [[ "$git_only" -eq 1 ]]; then
-		git_state=$(python3 - "$SCRIPT_DIR" "$worktree" "$head_sha" <<'PY'
-import json, sys
-sys.path.insert(0, sys.argv[1])
-from worktree_archive_snapshot import git_index_state
-print(json.dumps(git_index_state(sys.argv[2], sys.argv[3])))
-PY
-		) || return 1
-	fi
 	branch=$(git -C "$worktree" symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
 	default_branch=$(git -C "$worktree" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
 	default_branch=${default_branch#origin/}
 	[[ -n "$default_branch" ]] || default_branch="$base_branch"
 	remote_state="unknown"
-	if [[ "$branch" != "detached" && "$git_only" -eq 0 ]]; then
-		local remote_rc=0
-		git -C "$worktree" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 || remote_rc=$?
-		if [[ "$remote_rc" -eq 0 ]]; then
-			remote_state="present"
-		elif [[ "$remote_rc" -eq 2 ]]; then
-			remote_state="missing"
-		fi
-	fi
 	dirty_state="clean"
-	if [[ "$git_only" -eq 0 ]]; then
-		dirty_state=$(git -C "$worktree" status --porcelain=v1)
-		if [[ -n "$dirty_state" ]]; then dirty_state="dirty"; else dirty_state="clean"; fi
-	fi
 	git_common_dir=$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git -C "$worktree" rev-parse --git-common-dir) || return 1
 	timestamp=$(timestamp_utc)
 	created_at=$(iso_utc)
@@ -524,21 +483,17 @@ PY
 	if [[ -e "$archive_dir" ]]; then archive_dir="${archive_dir}-$$"; fi
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$preserve_git_admin" "$self_contained" "$include_ignored" "$git_only" "$failure_log" || return 1
-	if [[ "$git_only" -eq 1 && ( -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" ) ]]; then
+	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" || return 1
+	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" ]]; then
 		dirty_state="dirty"
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
-	if [[ "$git_only" -eq 1 ]]; then
-		fingerprint_after=$(source_fingerprint "$worktree" 0 0 1 "$archive_dir" "$git_state") || return 1
-	else
-		fingerprint_after=$(source_fingerprint "$worktree" "$include_ignored" "$preserve_git_admin") || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
-		if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
-			die "worktree changed during archive capture: $worktree"
-			return 1
-		fi
+	fingerprint_after=$(source_fingerprint "$worktree" 0 0 1 "$archive_dir") || return 1
+	if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
+		die "worktree changed during archive capture: $worktree"
+		return 1
 	fi
-	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" "$self_contained" "$include_ignored" "$preserve_git_admin" "$git_only" || return 1
+	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" 0 0 0 1 || return 1
 	printf '%s\n' "$archive_dir"
 	return 0
 }
@@ -573,7 +528,7 @@ if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in
 names = [item.get('name') for item in artifacts]
 mandatory = {'diff.patch', 'staged.patch', 'untracked-files.txt'}
 allowed = mandatory | {'commits.bundle', 'untracked.tar.gz', 'failure.log'}
-if capture_policy == 'git-only':
+if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') == 2:
     allowed.discard('untracked.tar.gz')
     if (archive / 'untracked-files.txt').stat().st_size:
         raise SystemExit('Git-only archive contains untracked paths')
@@ -594,37 +549,8 @@ for artifact in manifest['artifacts']:
         raise SystemExit("missing or unsafe artifact: " + artifact['name'])
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
-bundle = archive / "commits.bundle"
-if policy is not None:
-    sys.path.insert(0, sys.argv[3])
-    from worktree_archive_snapshot import load_administration
-    load_administration(archive)
-if manifest.get('self_contained') is True or policy is not None:
-    if manifest.get('self_contained') is True and not bundle.is_file():
-        raise SystemExit("self-contained archive requires a bundle")
-    # Verify without borrowing any objects from the source repository. Scratch
-    # metadata stays beside the archive, never in a host /tmp worktree.
-    with tempfile.TemporaryDirectory(prefix='.archive-verify-', dir=archive.parent) as temporary:
-        init = ["git", "init", "--bare", "--quiet", temporary]
-        if policy is not None:
-            init.append('--object-format=' + ('sha256' if len(manifest['head_sha']) == 64 else 'sha1'))
-        subprocess.run(init, check=True)
-        if manifest.get('self_contained') is not True:
-            from worktree_archive_snapshot import seed_base
-            seed_base(pathlib.Path(temporary), manifest)
-        if bundle.is_file():
-            subprocess.run(["git", f"--git-dir={temporary}", "bundle", "verify", str(bundle)],
-                           check=True, stdout=subprocess.DEVNULL)
-        if policy is not None:
-            from worktree_archive_snapshot import verify_administration
-            verify_administration(archive, pathlib.Path(temporary), manifest)
-elif bundle.exists():
-    common_dir = manifest.get('source_git_common_dir', "")
-    command = ["git"]
-    if common_dir and pathlib.Path(common_dir).is_dir():
-        command.append(f"--git-dir={common_dir}")
-    command.extend(["bundle", "verify", str(bundle)])
-    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+from worktree_archive_snapshot import verify_git_objects
+verify_git_objects(archive, manifest)
 payload = archive / "untracked.tar.gz"
 if payload.exists():
     with tarfile.open(payload, "r:gz") as source:
@@ -636,6 +562,8 @@ if payload.exists():
                     member.islnk() or (link and link.is_absolute()) or
                     (resolved_link and ".." in resolved_link.parts)):
                 raise SystemExit("unsafe untracked archive member")
+from worktree_archive_snapshot import verify_untracked_payload
+verify_untracked_payload(archive, manifest)
 print(f"verified {archive}")
 PY
 	return $?
@@ -644,6 +572,7 @@ PY
 prepare_restore_repository() {
 	local archive_dir="$1"
 	local target="$2"
+	local verification_copy="${3:-0}"
 	local common_dir head_sha self_contained git_only restore_branch
 	IFS=$'\t' read -r common_dir head_sha self_contained git_only < <(python3 - "$archive_dir/manifest.json" <<'PY'
 import json, sys
@@ -652,7 +581,11 @@ print(m.get('source_git_common_dir', ""), m["head_sha"],
       int(m.get('self_contained') is True), int(m.get('capture_policy') == 'git-only'), sep=chr(9))
 PY
 	)
-	if [[ "$git_only" -eq 1 ]]; then
+	if [[ "$git_only" -eq 1 && "$verification_copy" -eq 1 ]]; then
+		# Private validation clone, not a user worktree: borrow only the recorded
+		# base graph and leave no registration or branch in the shared repository.
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+	elif [[ "$git_only" -eq 1 ]]; then
 		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" || return 1
 	elif [[ "$self_contained" -eq 1 ]]; then
 		git -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null \
@@ -678,17 +611,18 @@ PY
 restore_archive() {
 	local archive_dir="${1:-}"
 	shift || true
-	local target=""
+	local target="" verification_copy=0
 	validate_archive_dir "$archive_dir" || return 1
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--target) require_value "$1" "${2:-}" || return 1; target="$2"; shift 2 ;;
+		--verification-copy) verification_copy=1; shift ;;
 		*) die "unknown restore option: $1"; return 1 ;;
 		esac
 	done
 	[[ -n "$target" && ! -e "$target" ]] || { die "restore target must not exist"; return 1; }
 	verify_archive "$archive_dir" >/dev/null || return 1
-	prepare_restore_repository "$archive_dir" "$target" || return 1
+	prepare_restore_repository "$archive_dir" "$target" "$verification_copy" || return 1
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	if [[ -f "$archive_dir/untracked.tar.gz" ]]; then
