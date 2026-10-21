@@ -225,6 +225,84 @@ class ArchiveLifecycle(MergeCases, ProducerCases, unittest.TestCase):
     def auto_merge_path(self):
         return Path(os.fsdecode(self.git(self.work, "rev-parse", "--absolute-git-dir")).strip()) / "AUTO_MERGE"
 
+    def canonical_proof(self, archive, command=None):
+        from worktree_archive_restore import RestorationProof
+        from worktree_recovery_migration_state import publish
+        directory = self.root / "proof"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        manifest = json.loads((archive / "manifest.json").read_text())
+        record = {"archive": str(archive), "source": {"snapshot": manifest["source_fingerprint"]},
+                  "manifest_sha256": hashlib.sha256((archive / "manifest.json").read_bytes()).hexdigest()}
+        with patch.dict(os.environ, self.env):
+            proof = RestorationProof(directory, record, command or self.helper,
+                                     lambda value: publish(directory / "journal.json", value))
+        return proof, record
+
+    def test_canonical_proof_reuses_restore_and_cleans_registration(self):
+        (self.work / "mixed.txt").write_bytes(b"staged\n")
+        self.git(self.work, "add", "mixed.txt")
+        (self.work / "mixed.txt").write_bytes(b"unstaged\n")
+        (self.work / "binary.bin").write_bytes(b"\0changed\xff")
+        (self.work / "run.sh").chmod(0o755)
+        (self.work / "ordinary").write_bytes(b"untracked")
+        (self.work / "link").symlink_to("mixed.txt")
+        archive = self.archive()
+        calls = []
+
+        def command(*args):
+            calls.append(args[0])
+            return self.helper(*args)
+
+        proof, record = self.canonical_proof(archive, command)
+        proof.check()
+        proof.check()
+        self.assertEqual(calls, ["restore"])
+        receipt = record["canonical_restore"]
+        self.assertEqual(receipt["state"], "cleaned")
+        self.assertFalse((self.root / "proof" / receipt["slot"]).exists())
+        target = str(self.root / "proof" / receipt["slot"] / "worktree")
+        with sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"]) as connection:
+            self.assertIsNone(connection.execute("SELECT 1 FROM worktree_owners WHERE worktree_path = ?",
+                                                (target,)).fetchone())
+            self.assertIsNone(connection.execute("SELECT 1 FROM worktree_managed_lifetimes WHERE path = ?",
+                                                (target,)).fetchone())
+        self.assertNotIn(target.encode(), self.git(self.repo, "worktree", "list", "--porcelain"))
+        # Contents, not inode/mtime or a saved verified boolean, bind the proof.
+        path = archive / "diff.patch"
+        path.write_bytes(path.read_bytes() + b"damage")
+        with self.assertRaisesRegex(ValueError, "archive-changed"):
+            proof.check()
+
+    def test_canonical_proof_requires_real_patch_application(self):
+        archive = self.archive()
+        payload = archive / "staged.patch"
+        payload.write_bytes(b"not a patch\n")
+        manifest_path = archive / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        for item in manifest["artifacts"]:
+            if item["name"] == payload.name:
+                item.update(size=payload.stat().st_size, sha256=hashlib.sha256(payload.read_bytes()).hexdigest())
+        manifest_path.write_text(json.dumps(manifest))
+        self.helper("verify", archive)  # Integrity alone is insufficient.
+
+        def command(*args):
+            result = self.helper(*args, check=False)
+            if result.returncode:
+                raise ValueError("patch-application-failed")
+
+        with self.assertRaisesRegex(ValueError, "patch-application-failed"):
+            self.canonical_proof(archive, command)
+        receipt = json.loads((self.root / "proof/journal.json").read_text())["canonical_restore"]
+        self.assertEqual(receipt["state"], "restoring")
+        self.assertTrue((self.root / "proof" / receipt["slot"]).exists())
+        self.assertTrue(self.work.exists())
+
+    def test_canonical_proof_rejects_base_mutation(self):
+        proof, _ = self.canonical_proof(self.archive())
+        self.git(self.repo, "hash-object", "-w", "--stdin")
+        with self.assertRaisesRegex(ValueError, "base-changed"):
+            proof.check()
+
     def start_conflicted_merge(self):
         self.git(self.repo, 'checkout', '-qb', 'other')
         (self.repo / 'mixed.txt').write_bytes(b'theirs\n')

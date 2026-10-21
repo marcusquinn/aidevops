@@ -600,12 +600,12 @@ print(m.get('source_git_common_dir', ""), m["head_sha"],
       int(m.get('self_contained') is True), int(m.get('capture_policy') == 'git-only'), sep=chr(9))
 PY
 	)
-	if [[ "$git_only" -eq 1 && "$self_contained" -eq 1 ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
-	elif [[ "$git_only" -eq 1 && "$verification_copy" -eq 1 ]]; then
+	if [[ "$git_only" -eq 1 && "$verification_copy" -eq 2 ]]; then
 		# Same registered creation primitive as ordinary recovery, with an explicit
 		# purpose and detached HEAD; no issue claim or dependency bootstrap.
 		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy || return 1
+	elif [[ "$git_only" -eq 1 && ( "$self_contained" -eq 1 || "$verification_copy" -eq 1 ) ]]; then
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
 	elif [[ "$git_only" -eq 1 ]]; then
 		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" || return 1
 	elif [[ "$self_contained" -eq 1 ]]; then
@@ -638,6 +638,7 @@ restore_archive() {
 		case "$1" in
 		--target) require_value "$1" "${2:-}" || return 1; target="$2"; shift 2 ;;
 		--verification-copy) verification_copy=1; shift ;;
+		--registered-verification-copy) verification_copy=2; shift ;;
 		*) die "unknown restore option: $1"; return 1 ;;
 		esac
 	done

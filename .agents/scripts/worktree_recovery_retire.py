@@ -33,6 +33,11 @@ def report(record):
 
 
 def restoration(directory, migration, record, lock, proofs):
+    common = Path(migration["source"]["identity"]["common_path"]).resolve(strict=True)
+    bucket = Path(record["bucket"])
+    require(not common.is_relative_to(bucket), "retirement:base-inside-source")
+    if record.get("container"):
+        require(not common.is_relative_to(Path(record["container"])), "retirement:base-inside-claim")
     if migration["source"].get("capture_policy") != "git-only":
         verify_archive(migration, lock, check_source=False)
         return
@@ -58,18 +63,26 @@ def source_matches(migration):
 
 def make_plan(directory, migration, bucket, lock, automatic=False, proofs=None):
     path = directory / "retirement.json"
-    require(not os.path.lexists(path), "retirement:plan-already-exists; inspect retire-status")
     proofs = {} if proofs is None else proofs
     source_matches(migration)
     guards(migration["source"]["identity"], bucket, lock)
-    record = {"schema": SCHEMA, "kind": "retirement", "phase": "planned",
+    record = {"schema": SCHEMA, "kind": "retirement", "phase": "planning",
               "bucket": str(bucket), "bucket_inode": inode(bucket),
               "fingerprint": fingerprint(bucket), "archive": migration["archive"],
               "bucket_bytes": allocated_bytes(bucket),
               "archive_bytes": allocated_bytes(Path(migration["archive"])),
-              "migration_digest": receipt_digest(directory / "journal.json")}
+              "migration_digest": receipt_digest(directory / "journal.json"),
+              "confirmation_token": None if automatic else ""}
+    if automatic:
+        record["authority"] = "verified-git-changes/v1"
+    if os.path.lexists(path):
+        previous = load(path)
+        require(previous["phase"] == "planning", "retirement:plan-already-exists; inspect retire-status")
+        require(all(previous.get(key) == value for key, value in record.items()), "retirement:planning-drift")
+        record = previous
     restoration(directory, migration, record, lock, proofs)
     source_matches(migration)
+    record["phase"] = "planned"
     if automatic:
         automatic_policy(migration, bucket)
         record.update(authority="verified-git-changes/v1", confirmation_token=None)
@@ -127,7 +140,8 @@ def automatic_policy(migration, bucket):
 def automatic_retire(directory, migration, bucket, lock):
     automatic_policy(migration, bucket)
     proofs = {}
-    if not os.path.lexists(directory / "retirement.json"):
+    if (not os.path.lexists(directory / "retirement.json")
+            or load(directory / "retirement.json")["phase"] == "planning"):
         make_plan(directory, migration, bucket, lock, automatic=True, proofs=proofs)
     return retire(directory, migration, bucket, None, lock, proofs=proofs)
 

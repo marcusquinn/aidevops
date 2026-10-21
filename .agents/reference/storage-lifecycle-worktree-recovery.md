@@ -133,6 +133,19 @@ Registry, interactive-claim, Git worktree-reference and process guards must be c
 Under producer and migration locks, journal a randomized private transaction and rename the bucket into it. Compare physical content again without rewriting relocated Git pointers; recheck archive and ownership/process evidence before descriptor-anchored removal.
 A replacement at the original name is never a deletion target. As with migration scratch, transaction directories exclude cooperating writers; content sampling cannot exclude malicious same-user writers.
 
+Git-only retirement and producer source-removal checks run ordinary restore, including integrity/object validation and payload application, into an owned detached verification worktree.
+`--registered-verification-copy` uses shared registered creation without issue claiming, dependency installation or hooks; it does **not** skip validation. Default and older `--verification-copy` behavior are unchanged.
+Git snapshots compare HEAD, index, patches, ordinary untracked contents and supported merge/AUTO_MERGE state.
+
+The existing retirement/producer journal's `canonical_restore` receipt binds operation, source snapshot/identity, archive location/inode/content digest, manifest/capture schema, base identity and scratch registration.
+States are restoring, compared, cleanup-pending and cleaned. Unsealed partial restores stay accounted for in private slots for inspection, never adopted as deletion baselines.
+Sealed cleanup checks exact registry/owner rows and target identity/content inside a SQLite write transaction, removes Git administration through Git and removes matching registry rows. After native removal, retries can finish registry/empty-container cleanup without deleting replacement targets.
+
+Only one uninterrupted automatic-retirement invocation shares its in-memory proof between planning and claim/removal barriers. Each barrier rehashes archive and physical base object-store contents, never trusting `verified=true`, a pathname or an inode alone.
+Existing dependency files must remain unchanged across restoration; imports may add archived objects. External alternates and symlinked object stores are unsupported. Restarts restore again, not load receipts as authority.
+Source fingerprints, source/writer/admission guards, secure claim and descriptor-anchored removal remain independent. Neither advisory locks nor content comparisons exclude arbitrary same-UID mutation or already-open writers.
+No performance improvement is implied: measure base hashing and source scans separately.
+
 The journal is `.compact-migrations/<bucket>/retirement.json`. Retain reservations and archive pins for audit/recovery, not expiry. Interrupted claims resume with the same token only after revalidation.
 Partial removals, changed contents, missing transaction data or substituted identities stay incomplete for review; absence never proves retirement. Never delete journals or alter receipts to force continuation.
 

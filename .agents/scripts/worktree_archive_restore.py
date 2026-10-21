@@ -41,7 +41,7 @@ def prepare(archive, target, verification=False):
     if bash is None:
         raise ValueError("Bash is unavailable")
     if verification:
-        environment.update(AIDEVOPS_WORKTREE_CREATE_TASK="archive-verification",
+        environment.update(AIDEVOPS_WORKTREE_CREATE_TASK="archive-verification:" + target.parent.name,
                            AIDEVOPS_WORKTREE_CREATE_OWNER_PID=str(os.getppid()),
                            AIDEVOPS_WORKTREE_CREATE_SESSION="")
         subprocess.run(  # nosec B603 -- fixed framework primitive, argv-only owned target
@@ -97,29 +97,55 @@ class RestorationProof:
                    "capture_schema": self.manifest["schema"], "policy": "git-only"}
         record["canonical_restore"] = receipt
         save(record)
-        target = slot / "worktree"
-        with phase("canonical-restore"):
-            command("restore", self.archive, "--target", target, "--verification-copy")
-        with phase("compare-restoration"):
-            from worktree_archive_snapshot import git_snapshot
-            require(git_snapshot(target) == record["source"]["snapshot"], "restore-proof:state-mismatch")
-        require(inode(self.archive) == self.archive_inode and fingerprint(self.archive) == self.archive_digest,
-                "restore-proof:archive-changed")
         common = Path(self.manifest["source_git_common_dir"])
         require(common.is_absolute() and common == common.resolve(strict=True), "restore-proof:unsafe-base")
         self.common = common
         self.common_inode = inode(common)
         self.objects = common / "objects"
+        require(self.objects == self.objects.resolve(strict=True)
+                and not os.path.lexists(self.objects / "info/alternates"),
+                "restore-proof:unsupported-external-object-store")
+        with phase("dependency-seal-before-restore"):
+            dependencies = {}
+            pending = [self.objects]
+            while pending:
+                path = pending.pop()
+                require(not path.is_symlink(), "restore-proof:symlinked-object-store")
+                if path.is_dir():
+                    pending.extend(path.iterdir())
+                else:
+                    dependencies[path] = fingerprint(path)
+        target = slot / "worktree"
+        with phase("canonical-restore"):
+            command("restore", self.archive, "--target", target, "--registered-verification-copy")
+        with phase("compare-restoration"):
+            from worktree_archive_snapshot import git_snapshot
+            require(git_snapshot(target) == record["source"]["snapshot"], "restore-proof:state-mismatch")
+        require(inode(self.archive) == self.archive_inode and fingerprint(self.archive) == self.archive_digest,
+                "restore-proof:archive-changed")
         with phase("dependency-seal"):
+            # Imports may add archived objects; existing dependency files cannot
+            # disappear or change during the canonical verifier's graph check.
+            require(inode(common) == self.common_inode
+                    and all(fingerprint(path) == digest for path, digest in dependencies.items()),
+                    "restore-proof:base-changed-during-restore")
             self.objects_digest = fingerprint(self.objects)
             git(common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
         from worktree_lifetime_archive import managed_module, transaction
         with transaction() as connection:
-            registered = managed_module().load(connection, str(target))
+            managed = managed_module()
+            registered = managed.load(connection, str(target))
+            managed.verify_identity(registered, target)
             owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                        (str(target),)).fetchone()
             require(owner is not None, "restore-proof:owner-missing")
-        receipt.update(state="compared", target_inode=inode(target),
+            identity = registered["identity"]
+            task = connection.execute("SELECT task_id, branch FROM worktree_owners WHERE worktree_path = ?",
+                                      (str(target),)).fetchone()
+            require(task == ("archive-verification:" + slot.name, "HEAD")
+                    and identity["path"] == str(target) and identity["common"] == str(common),
+                    "restore-proof:wrong-registration")
+        receipt.update(state="compared", target_inode=inode(target), target_digest=fingerprint(target),
                        registration=registered, owner=list(owner),
                        base_inode=self.common_inode, objects_digest=self.objects_digest)
         save(record)
@@ -141,13 +167,14 @@ class RestorationProof:
 
     @staticmethod
     def cleanup(directory, receipt, save, record):
-        from worktree_lifetime_archive import inode, managed_module, require, transaction
+        from worktree_lifetime_archive import inode, require, transaction
         name = receipt["slot"]
         require(Path(name).name == name and name.startswith(".restore-"), "restore-proof:unsafe-slot")
         slot = directory / name
-        require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"],
-                "restore-proof:slot-changed")
-        require({entry.name for entry in slot.iterdir()} <= {"worktree"}, "restore-proof:unexpected-entry")
+        if os.path.lexists(slot):
+            require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"],
+                    "restore-proof:slot-changed")
+            require({entry.name for entry in slot.iterdir()} <= {"worktree"}, "restore-proof:unexpected-entry")
         target = slot / "worktree"
         require(receipt["state"] in ("compared", "cleanup-pending"),
                 "restore-proof:unsealed-copy-retained; inspect owned scratch")
@@ -157,23 +184,29 @@ class RestorationProof:
         # The same SQLite transaction excludes cooperative ownership replacement
         # across Git removal and registry cleanup. No manifest-supplied deletion path.
         with transaction() as connection:
-            current = managed_module().load(connection, str(target))
+            row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path = ?",
+                                     (str(target),)).fetchone()
+            current = json.loads(row[0]) if row else None
             owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                        (str(target),)).fetchone()
-            require(current == registered and list(owner or ()) == receipt["owner"],
+            completed = current is None and owner is None and not os.path.lexists(target)
+            require(completed or (current == registered and list(owner or ()) == receipt["owner"]),
                     "restore-proof:registration-changed")
             common = Path(registered["identity"]["common"])
             if os.path.lexists(target):
                 require(inode(target) == receipt["target_inode"] and not target.is_symlink(),
                         "restore-proof:target-changed")
                 from worktree_archive_snapshot import git_snapshot
-                require(git_snapshot(target) == receipt["source"]["snapshot"], "restore-proof:scratch-drift")
+                from worktree_recovery_retirement_transaction import fingerprint
+                require(git_snapshot(target) == receipt["source"]["snapshot"]
+                        and fingerprint(target) == receipt["target_digest"], "restore-proof:scratch-drift")
                 git(common, "worktree", "remove", "--force", str(target))
             require(not os.path.lexists(Path(registered["identity"]["admin"])),
                     "restore-proof:administration-remains")
             connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
             connection.execute("DELETE FROM worktree_managed_lifetimes WHERE path = ?", (str(target),))
-        slot.rmdir()
+        if os.path.lexists(slot):
+            slot.rmdir()
         receipt["state"] = "cleaned"
         save(record)
 
