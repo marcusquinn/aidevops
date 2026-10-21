@@ -17,7 +17,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 
 from worktree_archive_filesystem import (
     fingerprint, supported_directories,
@@ -32,8 +31,13 @@ from worktree_archive_index import (
     archive_policies as archive_policies, git_index_state as git_index_state,
 )
 from worktree_archive_objects import (
-    administration_roots, bundle_roots, capture_auto_merge, verify_auto_merge,
+    administration_roots, bundle_roots, capture_auto_merge,
+    verify_auto_merge as verify_auto_merge,
     verify_git_objects as verify_git_objects,
+)
+from worktree_archive_auto_merge import restore_auto_merge as restore_auto_merge
+from worktree_archive_git import (
+    capture_bundle as capture_bundle, fetch_preservation as fetch_preservation,
 )
 
 
@@ -57,41 +61,6 @@ def capture_administration(root, archive, include_ignored, base=''):
     if roots:
         capture_bundle(root, archive, sorted(roots), base)
     (archive / 'git-admin.json').write_text(json.dumps(state, sort_keys=True) + '\n', encoding='ascii')
-
-
-def capture_bundle(root, archive, roots, base):
-    # Scratch refs make every root (including index-only blobs) a named bundle
-    # tip. All writes go to scratch; the source object database is read-only.
-    with tempfile.TemporaryDirectory(prefix=".admin-bundle-", dir=archive.parent) as temporary:
-        scratch = Path(temporary)
-        object_format = git(root, 'rev-parse', '--show-object-format').strip().decode('ascii')
-        git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}')
-        objects = git(root, "rev-parse", "--path-format=absolute", "--git-path", "objects").rstrip(b"\n")
-        (scratch / "objects/info/alternates").write_bytes(objects + b"\n")
-        updates = ''.join(f'update refs/archive/{number} {oid}\n'
-                          for number, oid in enumerate(roots))
-        git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
-        git(scratch, "update-ref", "refs/heads/archive-head", git(root, "rev-parse", "HEAD").strip().decode("ascii"))
-        git(scratch, "symbolic-ref", "HEAD", "refs/heads/archive-head")
-        exclusions = (f'^{base}',) if base else ()
-        git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
-
-
-def fetch_preservation(root, archive):
-    bundle = archive / 'commits.bundle'
-    if bundle.is_file():
-        git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
-            '+refs/archive/*:refs/archive/*')
-
-
-def restore_auto_merge(root, archive):
-    manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
-    if manifest.get('source_fingerprint', {}).get('auto_merge') is None:
-        return
-    fetch_preservation(root, archive)
-    oid = verify_auto_merge(root, archive, manifest)
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
-    (admin / 'AUTO_MERGE').write_text(oid + '\n', encoding='ascii')
 
 
 def seed_base(root, manifest):

@@ -6,44 +6,21 @@
 import json
 import os
 from pathlib import Path
-import re
-import subprocess
 
 from worktree_archive_readiness import (
     OPAQUE_ADMIN_FILES,
     read_admin_bytes, validate_readiness_payload,
 )
-
-
-def git(root, *args, data=None):
-    environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
-    for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
-                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
-        environment.pop(name, None)
-    return subprocess.run(["git", "-C", str(root), *args], input=data, env=environment,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          check=True, timeout=60).stdout
+from worktree_archive_git import (
+    auto_merge_oid as auto_merge_oid, git as git,
+    validate_auto_merge as validate_auto_merge,
+)
 
 
 ADMIN_FILES = {"HEAD", "index", "AUTO_MERGE", "ORIG_HEAD", "FETCH_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG", "MERGE_MSG", "config.worktree", "logs/HEAD"} | OPAQUE_ADMIN_FILES
 PRIVATE_PREFIXES = ("refs/worktree/", "refs/bisect/", "refs/rewritten/")
 OPERATIONS = {"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
               "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG"}
-
-
-def auto_merge_oid(data):
-    if not re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\n?", data):
-        raise ValueError("git_admin:invalid_AUTO_MERGE")
-    return data.strip().decode("ascii")
-
-
-def validate_auto_merge(root, oid):
-    try:
-        kind = git(root, "cat-file", "-t", oid).strip()
-    except subprocess.SubprocessError as error:
-        raise ValueError("git_admin:missing_AUTO_MERGE_tree") from error
-    if kind != b"tree":
-        raise ValueError("git_admin:AUTO_MERGE_not_tree")
 
 
 def fetch_head_roots(encoded):

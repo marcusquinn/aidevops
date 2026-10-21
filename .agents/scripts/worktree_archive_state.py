@@ -5,25 +5,11 @@
 
 import os
 from pathlib import Path
-import stat
 
 from worktree_archive_administration import (
-    administration, auto_merge_oid, git, validate_admin_entry, validate_auto_merge,
+    administration, git,
 )
-
-
-def auto_merge(root):
-    path = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n"))) / "AUTO_MERGE"
-    if not os.path.lexists(path):
-        return None
-    validate_admin_entry(path, "AUTO_MERGE")
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, 'rb') as stream:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            raise ValueError('git_admin:AUTO_MERGE_not_regular')
-        oid = auto_merge_oid(stream.read(66))
-    validate_auto_merge(root, oid)
-    return oid
+from worktree_archive_auto_merge import auto_merge as auto_merge
 
 
 def inventories(root, include_ignored=False):
