@@ -13,6 +13,7 @@ import shutil
 import stat
 import subprocess  # nosec B404 -- fixed framework helper, argv only; see archive_command
 import sys
+import tempfile
 
 from worktree_lifetime_archive import capacity, durable_archive, inode, require
 from worktree_recovery_legacy_policy import candidate, guards, has_lifecycle, validate
@@ -130,6 +131,16 @@ def verify_archive(record, lock, check_source=True):
     require(manifest_digest(archive) == record["manifest_sha256"], "migration:manifest-changed")
     require((archive / ".aidevops-archive-pin").is_file()
             and not (archive / ".aidevops-archive-pin").is_symlink(), "migration:pin-missing")
+    if record['source']['snapshot'].get('schema') == 4:
+        from worktree_archive_snapshot import git_snapshot
+        # Merge retirement needs executable reconstruction evidence, not just
+        # a valid bundle. Repeat under the existing operation lock so an older
+        # archived receipt can never be reinterpreted as restore verification.
+        with tempfile.TemporaryDirectory(prefix='.merge-verify-', dir=output) as temporary:
+            restored = Path(temporary) / 'restore'
+            archive_command(lock, 'restore', archive, '--target', restored, '--verification-copy')
+            require(git_snapshot(restored) == record['source']['snapshot'], 'migration:merge-restore-mismatch')
+        require(manifest_digest(archive) == record['manifest_sha256'], 'migration:manifest-changed')
     if check_source:
         require(source_state(record["source"]["identity"], record["source"].get("capture_policy") == "git-only",
                              record["source"]["snapshot"].get("schema"))

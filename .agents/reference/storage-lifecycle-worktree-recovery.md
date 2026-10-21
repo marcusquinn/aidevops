@@ -111,8 +111,60 @@ The existing `commits.bundle` retains recursive trees/blobs through named preser
 Independent verification imports only the retained base graph and bundle, checks tree type and complete object closure, and refuses unavailable dependencies.
 Restore imports preservation tips and writes `AUTO_MERGE` to actual target Git administration, never its working-file tree. Imported tips survive GC.
 Measure per-archive bundle bytes separately from base bytes. Pruning another archive cannot remove this bundle; the recorded base must remain available.
-This does **not** preserve resumable conflicts: `MERGE_HEAD`, conflict index stages and unsupported operations remain refused. Full `git merge --continue` needs separately scoped metadata/index preservation and continuation verification.
-Reflog/ORIG_HEAD, private-ref, process, source-drift and retirement guards remain enforced; AUTO_MERGE alone grants no removal authority.
+Standalone AUTO_MERGE is diagnostic state, not a resumability claim. Supported
+unfinished merges use the required structured contract below. Private-ref,
+process, source-drift and retirement guards remain enforced; AUTO_MERGE alone
+grants no removal authority.
+
+### Resumable interrupted merges
+
+New supported merge captures remain in the single compact format. Their manifest
+declares required `merge_policy: structured-v1`, a schema-4 source fingerprint and
+`self_contained: true`. The size/hash inventory requires `merge-state-v1.json` and
+the existing `commits.bundle`; the two patch artifacts are empty. Older readers
+reject schema 4/unknown required artifacts rather than restoring incompletely.
+Existing schema-2/3, standalone AUTO_MERGE and legacy preservation archives retain
+their existing read paths; no bulk conversion or second archive mode is introduced.
+
+| State | Support |
+| --- | --- |
+| HEAD, ordered MERGE_HEAD parents, MERGE_MSG, required ORIG_HEAD | Preserved byte-for-byte; object IDs and commit types validated |
+| MERGE_MODE absent, empty or `no-ff` | Preserved; unfamiliar modes refused |
+| AUTO_MERGE present or absent | Optional validated comparison tree and full closure |
+| Content, add/add, modify/delete, ordinary rename, binary conflicts | Structured index stages 1/2/3 and exact working bytes |
+| Partial resolutions, staged files/deletions, resolve-undo | Stage 0 and REUC rebuilt through Git update-index; no raw index copy |
+| Regular files, executable modes, ordinary untracked files | Captured independently of index stages; untracked payload remains fingerprint-bound |
+| Symlinks in HEAD/index/working paths, submodules, directory/file conflicts | Refused conservatively, retaining source |
+| Rebase, cherry-pick, revert, sequencer, autostash, unknown admin state | Refused, retaining source |
+| Split/special index flags, intent-to-add, filters, shallow history | Refused |
+| Private refs/config, unique message drafts, nonempty FETCH_HEAD | Refused until separately preservable |
+
+Paths use hex-encoded Git bytes, not newline parsing. The bundle retains the
+complete closure of HEAD, merge parents, required ORIG_HEAD, AUTO_MERGE and
+index/resolve-undo blobs through named preservation tips. It deliberately does not
+subtract the shared base: merge parents and required operation objects need not
+be ancestors of HEAD. Source loss and subsequent ordinary GC therefore do not
+remove required objects. Measure archive bytes separately from incremental
+shared-base bytes (capture adds zero shared-base bytes).
+
+The schema-4 guarantee is **current-state preservation**, not arbitrary historical
+reflog recovery. It preserves unpublished current HEAD history and required
+operation objects even when otherwise reachable only through operation references
+or reflog. It does not preserve raw reflogs or abandoned historical states. The
+ordinary non-merge shared history-policy transition belongs to GH#35305; this does
+not reinterpret existing historical verification receipts or relax those guards.
+
+Restore validates artifacts and object closure before modifying a new target,
+reconstructs files/index with hooks disabled, and writes validated metadata to the
+target Git administration. It never executes hooks or `merge --continue` itself.
+Self-contained merge restores also work without the original common repository.
+The user completes remaining resolutions and runs `git merge --continue` normally.
+Managed removal still compares an independent restored snapshot and unchanged
+source; schema-4 migration retirement additionally performs a fresh isolated
+restore/comparison under its operation lock. Corruption, missing objects, unsupported
+metadata, failed comparison or concurrent source drift retain source/journals.
+No production deletion, historical reflog deletion or forced production GC is
+authorized by capture or by these disposable-repository tests.
 
 An existing migration reservation makes legacy planning and stale-plan revalidation return `compact-migration-protected`.
 Maintenance counts that reason separately instead of treating migration as expiry authority. A receipt's `verified` phase is point-in-time evidence, never sufficient removal permission.
@@ -156,7 +208,7 @@ Archive expiry remains separately authorized.
 Pulse invokes `worktree-recovery-maintenance-helper.sh compact`; see the
 [compaction contract](../scripts/worktree-archive-helper.md) for bounds, journals and controls.
 It reuses migration/retirement guards across all named recovery buckets, not only Pulse sources.
-Authority `verified-git-changes/v1` requires schema-3 untracked preservation, completed original
+Authority `verified-git-changes/v1` requires schema-3/4 untracked preservation, completed original
 removal and an available external base. Manual plans are not adopted; interrupted automatic
 journals resume without treating missing paths as success. Unsupported/active sources remain intact.
 Deploy on each machine and measure actual reclaimed space; merge alone does neither.

@@ -28,7 +28,7 @@ def merge_pending(root):
 def merge_path(value):
     raw = bytes.fromhex(value)
     parts = raw.split(b'/')
-    if not raw or b'\0' in raw or any(part in (b'', b'.', b'..') or part.lower() == b'.git' for part in parts):
+    if raw.hex() != value or not raw or b'\0' in raw or any(part in (b'', b'.', b'..') or part.lower() == b'.git' for part in parts):
         raise ValueError('merge:unsafe_path')
     return raw
 
@@ -58,14 +58,16 @@ def validate_merge(state):
         raise ValueError('merge:invalid_metadata')
     decoded = {name: bytes.fromhex(value) for name, value in metadata.items()}
     parents = decoded['MERGE_HEAD'].splitlines()
-    if not parents or len(set(parents)) != len(parents):
+    if not parents or len(set(parents)) != len(parents) or decoded['MERGE_HEAD'] != b'\n'.join(parents) + b'\n':
         raise ValueError('merge:invalid_parents')
-    for value in parents + [decoded['ORIG_HEAD'].rstrip(b'\n')]:
+    from worktree_archive_git import auto_merge_oid
+    auto_merge_oid(decoded['ORIG_HEAD'])
+    for value in parents:
         merge_oid(value.decode('ascii'))
     if decoded.get('MERGE_MODE', b'') not in (b'', b'no-ff'):
         raise ValueError('merge:unsupported_mode')
     if 'AUTO_MERGE' in decoded:
-        merge_oid(decoded['AUTO_MERGE'].rstrip(b'\n').decode('ascii'))
+        auto_merge_oid(decoded['AUTO_MERGE'])
     paths = set()
     for name, stages in (('index', {0, 1, 2, 3}), ('undo', {1, 2, 3})):
         seen = {}

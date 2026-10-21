@@ -224,6 +224,138 @@ class ArchiveLifecycle(ProducerCases, unittest.TestCase):
     def auto_merge_path(self):
         return Path(os.fsdecode(self.git(self.work, "rev-parse", "--absolute-git-dir")).strip()) / "AUTO_MERGE"
 
+    def start_conflicted_merge(self):
+        self.git(self.repo, 'checkout', '-qb', 'other')
+        (self.repo / 'mixed.txt').write_bytes(b'theirs\n')
+        self.git(self.repo, 'commit', '-qam', 'theirs')
+        (self.work / 'mixed.txt').write_bytes(b'ours\n')
+        self.git(self.work, 'commit', '-qam', 'ours')
+        self.assertNotEqual(self.run_command('git', '-C', self.work, 'merge', 'other', check=False).returncode, 0)
+
+    def test_merge_untracked_deleted_path_and_hook_isolation(self):
+        self.start_conflicted_merge()
+        self.git(self.work, 'rm', 'mixed.txt')
+        (self.work / 'mixed.txt').write_bytes(b'recreated untracked resolution\n')
+        # Both template and configured hooks must stay inert in scratch Git
+        # repositories, object import and index restoration, not just checkout.
+        hooks = self.root / 'template/hooks'
+        hooks.mkdir(parents=True)
+        sentinel = self.root / 'hook-executed'
+        for name in ('reference-transaction', 'post-index-change', 'post-checkout'):
+            hook = hooks / name
+            hook.write_text('#!/bin/sh\ntouch "' + str(sentinel) + '"\n')
+            hook.chmod(0o755)
+        self.env['GIT_TEMPLATE_DIR'] = str(hooks.parent)
+        config = self.root / 'global-config'
+        config.write_text('[core]\n\thooksPath = ' + str(hooks) + '\n')
+        self.env['GIT_CONFIG_GLOBAL'] = str(config)
+        archive = self.archive()
+        self.helper('verify', archive)
+        target = self.root / 'restored'
+        self.helper('restore', archive, '--target', target, '--verification-copy')
+        self.assertEqual((target / 'mixed.txt').read_bytes(), b'recreated untracked resolution\n')
+        self.assertEqual(self.git(target, 'ls-files', '--resolve-undo', '-z'), self.git(self.work, 'ls-files', '--resolve-undo', '-z'))
+        self.assertFalse(sentinel.exists())
+
+    def test_managed_merge_requires_restore_and_rejects_drift(self):
+        self.start_conflicted_merge()
+        managed = self.managed_fixture()
+        archive = self.prepare_managed(managed)
+        record = self.managed_record(managed)
+        self.assertEqual(record['archive_operation']['phase'], 'verified')
+        self.assertEqual(record['archive_operation']['snapshot']['schema'], 4)
+        with patch.dict(os.environ, self.env, clear=True):
+            lifecycle.require_verified(record)
+        self.assertTrue(archive.is_dir())
+        (self.auto_merge_path().parent / 'MERGE_MSG').write_bytes(b'late message edit\n')
+        with patch.dict(os.environ, self.env, clear=True), self.assertRaisesRegex(ValueError, 'source changed'):
+            lifecycle.require_verified(record)
+        self.assertTrue(self.work.is_dir())
+
+    def test_merge_required_orig_head_and_missing_parent(self):
+        (self.work / 'mixed.txt').write_bytes(b'operation-only commit\n')
+        self.git(self.work, 'commit', '-qam', 'previous operation')
+        previous = self.git(self.work, 'rev-parse', 'HEAD')
+        self.git(self.work, 'reset', '--hard', 'HEAD~1')
+        self.start_conflicted_merge()
+        (self.auto_merge_path().parent / 'ORIG_HEAD').write_bytes(previous)
+        archive = self.archive()
+        target = self.root / 'operation-only-restore'
+        self.helper('restore', archive, '--target', target)
+        self.git(target, 'gc', '--prune=now')
+        self.assertEqual(self.git(target, 'rev-parse', 'ORIG_HEAD'), previous)
+        self.git(target, 'cat-file', '-e', previous.strip().decode() + '^{commit}')
+        parent = self.git(self.work, 'rev-parse', 'MERGE_HEAD').decode().strip()
+        (self.repo / '.git/objects' / parent[:2] / parent[2:]).unlink()
+        result = self.helper('archive', self.work, '--repo', 'fixture/repo', '--issue', '99',
+                             '--reason', 'failed-worker', '--base-branch', 'develop',
+                             '--output-root', self.archives, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.work.is_dir())
+
+    def test_merge_unsupported_and_corrupt_state_is_refused(self):
+        self.start_conflicted_merge()
+        admin = self.auto_merge_path().parent
+        for name, content in (('CHERRY_PICK_HEAD', b'0' * 40), ('MERGE_MODE', b'unknown'),
+                              ('MERGE_HEAD', b'ref: refs/heads/other\n'), ('COMMIT_EDITMSG', b'uncommitted draft')):
+            path = admin / name
+            original = path.read_bytes() if path.exists() else None
+            path.write_bytes(content)
+            result = self.helper('archive', self.work, '--repo', 'fixture/repo', '--issue', '99',
+                                 '--reason', 'failed-worker', '--base-branch', 'develop',
+                                 '--output-root', self.archives, check=False)
+            self.assertNotEqual(result.returncode, 0, name)
+            path.unlink()
+            if original is not None:
+                path.write_bytes(original)
+        message = admin / 'MERGE_MSG'
+        original = message.read_bytes()
+        message.unlink()
+        message.symlink_to(self.root / 'absent')
+        self.assertNotEqual(self.helper('archive', self.work, '--repo', 'fixture/repo', '--issue', '99',
+                                       '--reason', 'failed-worker', '--base-branch', 'develop',
+                                       '--output-root', self.archives, check=False).returncode, 0)
+        message.unlink()
+        message.write_bytes(original)
+        archive = self.archive()
+        from worktree_archive_state import validate_merge
+        state = json.loads((archive / 'merge-state-v1.json').read_text())
+        state['index'][0][0] = b'../escape'.hex()
+        with self.assertRaisesRegex(ValueError, 'unsafe_path'):
+            validate_merge(state)
+        # Even a rehashed artifact cannot change the captured operation digest.
+        path = archive / 'merge-state-v1.json'
+        path.write_text(json.dumps(state))
+        manifest = json.loads((archive / 'manifest.json').read_text())
+        for artifact in manifest['artifacts']:
+            if artifact['name'] == path.name:
+                artifact.update(size=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        self.update_manifest(archive, **manifest)
+        self.assertNotEqual(self.helper('verify', archive, check=False).returncode, 0)
+        self.assertTrue(self.work.exists())
+
+    def test_merge_ordered_parents_without_auto_merge(self):
+        parents = []
+        for number in range(2):
+            branch = 'side-' + str(number)
+            self.git(self.repo, 'checkout', '-qB', branch, 'develop')
+            (self.repo / branch).write_text(branch + '\n')
+            self.git(self.repo, 'add', branch)
+            self.git(self.repo, 'commit', '-qm', branch)
+            parents.append(self.git(self.repo, 'rev-parse', 'HEAD').strip())
+        head = self.git(self.work, 'rev-parse', 'HEAD').strip()
+        self.git(self.work, 'merge', '--no-commit', '--no-ff', 'side-0', 'side-1')
+        self.assertFalse(self.auto_merge_path().exists())
+        archive = self.archive()
+        target = self.root / 'octopus'
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.repo)
+        self.helper('restore', archive, '--target', target)
+        self.assertEqual(self.git(target, 'rev-parse', 'ORIG_HEAD').strip(), head)
+        self.env['GIT_EDITOR'] = 'true'
+        self.git(target, 'merge', '--continue')
+        self.assertEqual(self.git(target, 'show', '-s', '--format=%P').strip(), b' '.join([head] + parents))
+
     def test_interrupted_merge_independent_continuation(self):
         # Content, add/add, modify/delete, rename and binary conflicts, with a
         # staged resolution and staged deletion retained in resolve-undo.
