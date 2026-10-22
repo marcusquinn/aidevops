@@ -454,6 +454,67 @@ else
 	_fail "1.18.3 orphan mismatch: active=${active_owned_count}, archive=${archive_orphan_count}, foreign_keys=${archive_foreign_key_violations}"
 fi
 
+# Newer builds create icon_url_override beside icon_url rather than appending
+# it. Also reorder a child table to exercise the formerly positional copy path.
+_reset_dbs
+_make_active_db_1_18_3
+source_graph=$(_fixture_graph_fingerprint "$ACTIVE_DB")
+sqlite3 "$ACTIVE_DB" <<'SQL'
+CREATE TABLE reordered_project (
+  id text PRIMARY KEY, worktree text NOT NULL, vcs text, name text,
+  icon_url text, icon_url_override text, icon_color text,
+  time_created integer NOT NULL, time_updated integer NOT NULL,
+  time_initialized integer, sandboxes text NOT NULL, commands text
+);
+INSERT INTO reordered_project SELECT id,worktree,vcs,name,icon_url,icon_url_override,icon_color,time_created,time_updated,time_initialized,sandboxes,commands FROM project;
+DROP TABLE project;
+ALTER TABLE reordered_project RENAME TO project;
+CREATE TABLE reordered_input AS SELECT time_created,promoted_seq,admitted_seq,delivery,prompt,session_id,id FROM session_input;
+DROP TABLE session_input;
+ALTER TABLE reordered_input RENAME TO session_input;
+SQL
+# Use SQLite's backup API, as with isolated runtime DB verification, and run
+# the actual archive CLI against the copy before testing value-preserving moves.
+sqlite3 "$ACTIVE_DB" ".backup '${SANDBOX}/reordered-backup.db'"
+set +e
+out=$(OPENCODE_DB="${SANDBOX}/reordered-backup.db" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --dry-run --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"Session inputs: 1"* && ! -e "$ARCHIVE_DB" ]]; then
+	_pass "reordered project SQLite backup passes archive CLI dry run"
+else
+	_fail "reordered backup dry-run mismatch: rc=${rc}, output=${out}"
+fi
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$(_fixture_graph_fingerprint "$ARCHIVE_DB")" == "$source_graph" ]]; then
+	_pass "reordered project and child columns archive every named value unchanged"
+else
+	_fail "reordered archive mismatch: rc=${rc}, output=${out}"
+fi
+
+for schema_change in 'ADD COLUMN future_value text' 'DROP COLUMN commands'; do
+	_reset_dbs
+	_make_active_db_1_18_3
+	sqlite3 "$ACTIVE_DB" "ALTER TABLE project ${schema_change}; PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
+	before_checksum=$(cksum "$ACTIVE_DB")
+	set +e
+	out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+		OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+	rc=$?
+	set -e
+	after_checksum=$(cksum "$ACTIVE_DB")
+	if [[ "$rc" -eq 3 && "$before_checksum" == "$after_checksum" && ! -e "$ARCHIVE_DB" && "$out" == *"table=project"* && "$out" == *"reason=column-mismatch"* ]]; then
+		_pass "project ${schema_change} fails closed with structured diagnostic"
+	else
+		_fail "project ${schema_change} fail-closed mismatch: rc=${rc}, output=${out}"
+	fi
+done
+
 _reset_dbs
 _make_active_db_with_sessions $'s1,1000,5000\ns2,2000,1000\ns3,3000,4000\ns4,4000,2000\ns5,5000,3000'
 
