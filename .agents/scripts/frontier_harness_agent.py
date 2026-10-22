@@ -15,6 +15,18 @@ from urllib.parse import urlparse
 from harbor.agents.installed.opencode import OpenCode
 
 
+def _valid_capability(capability):
+    """Relay capabilities are exactly 64 lowercase hexadecimal characters."""
+    return len(capability) == 64 and set(capability) <= set("0123456789abcdef")
+
+
+def _valid_limits(context_limit, output_limit):
+    """Experimental limits must be paired integers inside the supported bounds."""
+    if not (isinstance(context_limit, int) and isinstance(output_limit, int)):
+        return False
+    return 4096 <= context_limit <= 1000000 and 1024 <= output_limit < context_limit
+
+
 class FrontierOpenCode(OpenCode):
     """Matched profiles using identical setup and the stock runner/scorer."""
 
@@ -32,7 +44,7 @@ class FrontierOpenCode(OpenCode):
         if parsed.path != "/v1" or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Invalid relay route")
         capability = os.environ["AIDEVOPS_EVAL_RELAY_KEY"]
-        if len(capability) != 64 or any(c not in "0123456789abcdef" for c in capability):
+        if not _valid_capability(capability):
             raise ValueError("Invalid relay capability")
         root = "/opt/frontier/framework/.agents"
         config = {
@@ -53,8 +65,7 @@ class FrontierOpenCode(OpenCode):
         observer_options["runtimeVersion"] = self._version
         observer_options["experimental"] = context_limit is not None
         if context_limit is not None or output_limit is not None:
-            if not (isinstance(context_limit, int) and isinstance(output_limit, int)
-                    and 4096 <= context_limit <= 1000000 and 1024 <= output_limit < context_limit):
+            if not _valid_limits(context_limit, output_limit):
                 raise ValueError("Invalid experimental context/output limits")
             model_id = self.model_name.split("/", 1)[1]
             self._opencode_config["provider"]["openai"]["models"] = {model_id: {"limit": {
