@@ -268,6 +268,14 @@ prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefi
 assert_eq "second maintenance run does not repeat OpenCode update" "no" "$([[ "$prefix_output" == *'opencode-ai@latest'* ]] && printf yes || printf no)"
 
 write_managed_shim "$prefix_case/home/.local/bin/opencode" "$prefix_case/system/bin/opencode"
+for report_flags in '--quiet' '--json --update'; do
+	# shellcheck disable=SC2086 # Exercise the CLI's separate report flags.
+	prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefix_case/home/.local/bin:$prefix_case/tools:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm $report_flags)
+	assert_eq "$report_flags leaves stale launcher untouched" "1.18.34" "$("$prefix_case/home/.local/bin/opencode" --version)"
+	if [[ "$report_flags" == *--json* ]]; then
+		assert_eq "JSON report stays valid during prefix drift" "yes" "$(printf '%s\n' "$prefix_output" | jq -e '.tools | length > 0' >/dev/null && printf yes || printf no)"
+	fi
+done
 prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefix_case/home/.local/bin:$prefix_case/tools:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --update --quiet)
 assert_eq "already-current npm package repairs stale launcher" "1.19.4" "$("$prefix_case/home/.local/bin/opencode" --version)"
 assert_eq "already-current package needs no reinstall" "no" "$([[ "$prefix_output" == *'opencode-ai@latest'* ]] && printf yes || printf no)"

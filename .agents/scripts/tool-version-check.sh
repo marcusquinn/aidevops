@@ -776,7 +776,8 @@ check_tool() {
 	local color="$GREEN"
 	# Repair an earlier successful install too: otherwise metadata_mismatch
 	# below deliberately suppresses reinstalling the already-current package.
-	if [[ "$AUTO_UPDATE" == true && "$category" == npm && "$pkg" == opencode-ai && "$installed" != "$latest" ]]; then
+	# JSON output remains a read-only report, even when combined with --update.
+	if [[ "$AUTO_UPDATE" == true && "$JSON_OUTPUT" != true && "$category" == npm && "$pkg" == opencode-ai && "$installed" != "$latest" ]]; then
 		local opencode_package_version=""
 		opencode_package_version=$(get_npm_pkg_version "$pkg" || true)
 		if [[ -n "$opencode_package_version" && "$opencode_package_version" == "$latest" ]] &&
