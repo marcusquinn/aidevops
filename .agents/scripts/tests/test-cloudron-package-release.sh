@@ -87,9 +87,12 @@ if [[ "${1:-}" == "buildx" ]]; then
 	[[ "${4:-}" != *"unavailable"* ]]
 	exit $?
 fi
-# A present Buildx must never fall back after an inspection failure.
-[[ "${FAKE_BUILDX:-}" != available ]] || exit 1
 [[ "${1:-}" == "manifest" && "${2:-}" == "inspect" ]] || exit 1
+if [[ "${FAKE_BUILDX:-}" == available ]]; then
+	# Reject valid OCI sources, but accept unavailable sources to catch fallback.
+	[[ "${3:-}" == *"unavailable"* ]]
+	exit $?
+fi
 [[ "${3:-}" != *"unavailable"* ]]
 DOCKER
 	chmod +x "${bin_dir}/docker"
