@@ -1572,22 +1572,24 @@ test_check_releases_claim_with_uncorrelated_launch_text() {
 # Automatic release fails closed on uncertain ownership, expiry or live events.
 #######################################
 test_orphan_release_revalidation() {
-	local scenario="" tmp_dir="" mock_path="" output="" status=0 expiry="" device="" session="" event="" fail=""
+	local scenario="" tmp_dir="" mock_path="" output="" status=0 expected=0 expiry="" device="" session="" event="" fail=""
 	for scenario in missing zero malformed negative device session renewal ready launch refresh_failure; do
 		tmp_dir=$(mktemp -d)
 		mock_path=$(create_claim_orphan_mock_gh "$tmp_dir")
-		expiry=1 device=orphan-device session=issue-42 event="" fail=false
+		expiry=$(date +%s)
+		expiry=$((expiry - 120))
+		device=orphan-device session=issue-42 event="" fail=false expected=0
 		case "$scenario" in
 		missing) expiry=missing ;;
 		zero) expiry=0 ;;
 		malformed) expiry=invalid ;;
 		negative) expiry=-1 ;;
-		device) device=another-device ;;
-		session) session=another-session ;;
+		device) device=another-device expected=1 ;;
+		session) session=another-session expected=1 ;;
 		renewal) event="DISPATCH_LEASE phase=prelaunch lease_token=claim-only device=orphan-device session=issue-42 expires_at=4102444800" ;;
 		ready) event="DISPATCH_LEASE phase=ready lease_token=claim-only device=orphan-device session=issue-42 expires_at=4102444800" ;;
-		launch) event="Dispatching worker lease_token=claim-only device=orphan-device session=issue-42 claim_id=999" ;;
-		refresh_failure) fail=true ;;
+		launch) event="Dispatching worker lease_token=claim-only device=orphan-device session=issue-42 claim_id=999"; expected=1 ;;
+		refresh_failure) fail=true expected=2 ;;
 		esac
 		status=0
 		output=$(PATH="${mock_path}:$PATH" MOCK_GH_STATE_DIR="$tmp_dir" \
@@ -1596,10 +1598,11 @@ test_orphan_release_revalidation() {
 			AIDEVOPS_DEVICE_ID=orphan-device AIDEVOPS_PR_CHECKPOINT_SESSION=issue-42 \
 			DISPATCH_CLAIM_MAX_AGE=600 DISPATCH_CLAIM_ORPHAN_GRACE=120 \
 			"$CLAIM_HELPER" check 42 owner/repo 2>&1) || status=$?
-		if [[ "$status" -eq 0 && "$output" == *ACTIVE_CLAIM* && ! -f "${tmp_dir}/release_body.txt" ]]; then
-			print_result "orphan release preserves claim on $scenario" 0
+		if [[ "$status" -eq "$expected" && ! -f "${tmp_dir}/release_body.txt" ]] &&
+			{ [[ "$expected" -ne 0 ]] || [[ "$output" == *ACTIVE_CLAIM* ]]; }; then
+			print_result "orphan release is suppressed on $scenario" 0
 		else
-			print_result "orphan release preserves claim on $scenario" 1 "status=$status output=$output"
+			print_result "orphan release is suppressed on $scenario" 1 "status=$status expected=$expected output=$output"
 		fi
 		rm -rf "$tmp_dir"
 	done

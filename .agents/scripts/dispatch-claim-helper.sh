@@ -627,7 +627,10 @@ _fetch_claims() {
 	# t2400: Apply runtime override filter (extracted to keep _fetch_claims
 	# under the 100-line complexity threshold — same behaviour, separate fn).
 	parsed=$(_apply_ignore_filter "$parsed" "$issue_number" "$repo_slug" "$self_runner")
-	parsed=$(_filter_orphan_prelaunch_claims "$parsed" "$comments_json" "$issue_number" "$repo_slug" "$self_runner" "$permission_trusted_authors")
+	parsed=$(_filter_orphan_prelaunch_claims "$parsed" "$comments_json" "$issue_number" "$repo_slug" "$self_runner" "$permission_trusted_authors") || return 1
+	# Orphan auditing must not prolong ordinary distributed lease expiry.
+	parsed=$(jq -c --argjson now "$(_now_epoch)" '[.[] | select(.lease_expires_at <= 0 or
+		(.lease_expires_at | floor) != .lease_expires_at or .lease_expires_at >= $now)]' <<<"$parsed") || return 1
 
 	printf '%s' "$parsed"
 	return 0
@@ -682,10 +685,15 @@ _filter_orphan_prelaunch_claims() {
 	' 2>/dev/null) || orphaned_claims="[]"
 	removed_count=$(printf '%s\n%s\n' "$parsed_claims" "$filtered_claims" | jq -nr 'input as $before | input as $after | $before | length - ($after | length)' 2>/dev/null) || removed_count=0
 	if [[ "$removed_count" -gt 0 ]]; then
-		# A failed live revalidation must also keep the claim in consensus, not just
-		# suppress its audit comment (a renewal may have arrived after our snapshot).
+		# A failed live revalidation must refresh consensus as well: a renewal may
+		# have arrived after our snapshot. Failure to read is a coordination error.
 		if ! _post_orphan_claim_release "$issue_number" "$repo_slug" "$self_runner" "$orphaned_claims" "$comments_json"; then
-			filtered_claims="$parsed_claims"
+			comments_json=$(_fetch_claim_marker_comments "$issue_number" "$repo_slug") || return 1
+			permission_trusted_authors=$(_claim_permission_trusted_authors "$comments_json" "$repo_slug")
+			filtered_claims=$(printf '%s\n%s\n' "$comments_json" "$comments_json" | jq -nc \
+				--argjson now "$(_now_epoch)" --argjson max_age "$DISPATCH_CLAIM_MAX_AGE" \
+				--argjson include_terminal false --argjson permission_trusted_authors "$permission_trusted_authors" \
+				-f "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-lease-claims.jq") || return 1
 		fi
 	fi
 	printf '%s' "$filtered_claims"
