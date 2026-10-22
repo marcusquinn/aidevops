@@ -20,6 +20,7 @@ from pathlib import Path
 
 from gh_transport_capacity import capacity_wait
 from gh_transport_identity import quota_owner
+from gh_transport_observation import valid_observation as _valid_observation
 from gh_transport_reconcile import reconcile_scope as _reconcile_scope
 from gh_transport_recovery import (
     admission_status,
@@ -91,22 +92,6 @@ def process_birth(pid: int) -> str:
         return hashlib.sha256(value).hexdigest() if value else ""
     except (OSError, subprocess.SubprocessError):
         return ""
-
-
-def _valid_observation(headers: dict[str, str], resource: str, now: float):
-    """Return (remaining, reset, limit) from authoritative headers, else None."""
-    remaining = headers.get("x-ratelimit-remaining", "")
-    reset = headers.get("x-ratelimit-reset", "")
-    limit = headers.get("x-ratelimit-limit", "")
-    if headers.get("x-ratelimit-resource", "") != resource:
-        return None
-    if not (remaining.isdecimal() and limit.isdecimal() and reset.isdecimal()):
-        return None
-    if not 0 <= int(remaining) <= int(limit) <= 1000000:
-        return None
-    if not now < int(reset) <= now + 86400:
-        return None
-    return int(remaining), int(reset), int(limit)
 
 
 class Budget:
