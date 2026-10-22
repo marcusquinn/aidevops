@@ -53,6 +53,37 @@ function writeAgent(directory, filename, {name, description, model, heading}) {
   ].join("\n"));
 }
 
+const memberExports = spawnSync("python3", ["-c", `
+import importlib.util
+import sys
+from pathlib import Path
+
+generator = Path(sys.argv[1])
+sys.path.insert(0, str(generator.parent))
+import _team_interface_buzz_snapshot_member as member
+
+spec = importlib.util.spec_from_file_location("buzz_snapshot", generator)
+snapshot = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(snapshot)
+for name in (
+    "AIDEVOPS_RUNTIME_ID", "BUZZ_AGENT_FORMAT", "FORMAT_VERSION", "GUIDE_AGENT_ID",
+    "HOST_SLUG_PATTERN", "PRIVATE_AGENT_ID", "PRIVATE_MODEL_ID", "PRIVATE_PROVIDER_ID",
+    "PRIVATE_RUNTIME_ID", "ProvisioningError", "agent_role_slug", "build_member",
+    "buzz_display_name", "member_system_prompt", "normalize_slug",
+):
+    assert getattr(snapshot, name) is getattr(member, name), name
+
+assert snapshot.normalize_slug(" Test Host_01 ", "host", 64) == "test-host-01"
+assert snapshot.agent_role_slug({"agent_id": member.GUIDE_AGENT_ID}) == "aidevops"
+try:
+    member.normalize_slug("---", "host", 64)
+except snapshot.ProvisioningError as error:
+    assert str(error) == "host is unavailable or invalid"
+else:
+    raise AssertionError("extracted member errors must retain the public exception type")
+`, generator], {encoding: "utf8"});
+assert.equal(memberExports.status, 0, `snapshot member reexports failed:\n${memberExports.stderr}`);
+
 const liveFirst = runGenerator(["generate", "--agents-dir", path.join(repositoryRoot, ".agents")]);
 const liveSnapshot = requireSuccess(liveFirst, "live Buzz team snapshot generation");
 const liveSecond = runGenerator(["generate", "--agents-dir", path.join(repositoryRoot, ".agents")]);
