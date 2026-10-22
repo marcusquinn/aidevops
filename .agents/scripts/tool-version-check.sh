@@ -887,6 +887,36 @@ _output_json_results() {
 	return 0
 }
 
+# GH#35461: npm can install into a user prefix while our stable launcher still
+# executes a system-prefix binary. Reuse setup's atomic, identity-validated writer
+# rather than editing exec lines or touching an unmanaged/system launcher.
+_opencode_reconcile_npm_shim() {
+	local expected="$1"
+	local shim="${HOME}/.local/bin/opencode"
+	local selected prefix candidate candidate_version owner
+	selected=$(command -v opencode 2>/dev/null || true)
+	prefix=$(npm prefix -g 2>/dev/null) || return 1
+	[[ "$prefix" == /* ]] || return 1
+	candidate="${prefix%/}/bin/opencode"
+	printf '  OpenCode npm prefix mismatch: selected %s; installed candidate %s (%s).\n' "$selected" "$candidate" "$expected"
+	printf '  Recovery requires a writable aidevops-managed %s and a validated candidate; otherwise run setup with %s first on PATH.\n' "$shim" "${prefix%/}/bin"
+	[[ "$selected" == "$shim" && -f "$shim" && ! -L "$shim" && -O "$shim" && -w "$shim" ]] || return 1
+	grep -Fq '# aidevops:terminal-title-owner' "$shim" || return 1
+	owner=$(AIDEVOPS_OPENCODE_BIN="$shim" aidevops_opencode_install_owner v1) || return 1
+	[[ "$owner" == npm && -x "$candidate" && ! "$candidate" -ef "$shim" ]] || return 1
+	candidate_version=$(timeout_sec 10 "$candidate" --version 2>/dev/null) || return 1
+	[[ "$candidate_version" == "$expected" ]] || return 1
+	# Sourcing setup changes shell options/IFS/traps, so isolate it from the
+	# updater. The explicit candidate bypasses setup's existing-target retention.
+	(
+		# shellcheck source=setup/modules/tool-install.sh
+		source "${SCRIPT_DIR}/setup/modules/tool-install.sh"
+		export AIDEVOPS_OPENCODE_PROFILE=v1
+		_setup_ensure_opencode_stable_shim "$candidate" >/dev/null || exit 1
+	) || return 1
+	return 0
+}
+
 # Execute queued updates and verify the selected binary after each action.
 _run_outdated_tool_updates() {
 	local index spec category cmd ver_flag pkg before target after package_after update_cmd
@@ -925,6 +955,11 @@ _run_outdated_tool_updates() {
 			after=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
 			package_after=""
 			if [[ "$category" == npm ]]; then package_after=$(get_npm_pkg_version "$pkg" || true); fi
+			if [[ "$pkg" == opencode-ai && "$category" == npm && "$after" != "$target" && "$package_after" == "$target" ]]; then
+				if _opencode_reconcile_npm_shim "$package_after"; then
+					after=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
+				fi
+			fi
 			if [[ "$after" != "$before" && ( "$after" == "$target" || "$target" == '>='* ) ]]; then
 				echo -e "  ${GREEN}✓ Updated and verified ($after)${NC}"
 			elif [[ -n "$package_after" && "$package_after" == "$target" ]]; then
