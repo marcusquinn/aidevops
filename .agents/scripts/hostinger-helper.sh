@@ -15,14 +15,15 @@ source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
-# Configuration file
-CONFIG_FILE="../configs/hostinger-config.json"
+# Configuration file (legacy site commands): resolved from the script location,
+# not the caller's working directory.
+CONFIG_FILE="${HOSTINGER_CONFIG_FILE:-$SCRIPT_DIR/../configs/hostinger-config.json}"
 
 # Check if config file exists
 check_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "$ERROR_CONFIG_NOT_FOUND"
-        print_info "Copy and customize: cp ../configs/hostinger-config.json.txt $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND: $CONFIG_FILE"
+        print_info "Copy and customize: cp $SCRIPT_DIR/../configs/hostinger-config.json.txt $CONFIG_FILE"
         exit 1
     fi
 
@@ -147,23 +148,64 @@ exec_on_site() {
     return 0
 }
 
-# API operations
+# API operations: api [METHOD] ENDPOINT [JSON_BODY]
+# The token comes from HOSTINGER_API_TOKEN, else the aidevops secret store
+# (re-exec with injection, like fleet/cron), else the legacy config file.
+# It is passed to curl on stdin, never on the command line.
 api_call() {
-    local endpoint="$1"
-    check_config
-    
-    local api_token
-    local base_url
-    api_token=$(jq -r '.api.token' "$CONFIG_FILE")
-    base_url=$(jq -r '.api.base_url' "$CONFIG_FILE")
-    
-    if [[ "$api_token" == "null" || "$api_token" == "YOUR_HOSTINGER_API_TOKEN_HERE" ]]; then
-        print_error "API token not configured"
-        exit 1
+    local first="${1:-}"
+    local second="${2:-}"
+    local third="${3:-}"
+    local method="GET"
+    local endpoint="$first"
+    local body=""
+    local api_token="${HOSTINGER_API_TOKEN:-}"
+    local base_url="${HOSTINGER_API_BASE_URL:-https://developers.hostinger.com}"
+
+    case "$first" in
+    GET | POST | PUT | PATCH | DELETE)
+        method="$first"
+        endpoint="$second"
+        body="$third"
+        ;;
+    esac
+    if [[ -z "$endpoint" ]]; then
+        print_error "Usage: api [GET|POST|PUT|PATCH|DELETE] ENDPOINT [JSON_BODY]"
+        return 1
     fi
-    
-    curl -s -H "$AUTH_HEADER_PREFIX $api_token" "$base_url/$endpoint"
-    return 0
+
+    if [[ -z "$api_token" && -z "${HOSTINGER_API_REEXEC:-}" ]] &&
+        command -v aidevops >/dev/null 2>&1 &&
+        aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
+        local status=0
+        HOSTINGER_API_REEXEC=1 aidevops secret HOSTINGER_API_TOKEN -- \
+            "$SCRIPT_DIR/hostinger-helper.sh" api "$method" "$endpoint" "$body" || status=$?
+        return "$status"
+    fi
+
+    if [[ -z "$api_token" ]]; then
+        if [[ ! -f "$CONFIG_FILE" ]]; then
+            print_error "Hostinger API token not found"
+            print_info "Store it with: aidevops secret set HOSTINGER_API_TOKEN"
+            return 1
+        fi
+        check_config
+        api_token=$(jq -r '.api.token // empty' "$CONFIG_FILE")
+        base_url=$(jq -r --arg d "$base_url" '.api.base_url // $d' "$CONFIG_FILE")
+        if [[ -z "$api_token" || "$api_token" == "YOUR_HOSTINGER_API_TOKEN_HERE" ]]; then
+            print_error "API token not configured"
+            return 1
+        fi
+    fi
+
+    endpoint="${endpoint#/}"
+    local -a curl_args=(-sS -K - -X "$method" -H "Accept: application/json")
+    if [[ -n "$body" ]]; then
+        curl_args+=(-H "Content-Type: application/json" --data-binary "$body")
+    fi
+    printf 'header = "%s %s"\n' "$AUTH_HEADER_PREFIX" "$api_token" |
+        curl "${curl_args[@]}" "${base_url%/}/$endpoint"
+    return $?
 }
 
 # Read-only fleet inventory, onboarding plan and drift check (hosting_fleet.py).
@@ -311,11 +353,9 @@ main() {
         exec_on_site "$param2" "$param3"
         ;;
     "api")
-        if [[ -z "$param2" ]]; then
-            print_error "Usage: api [endpoint]"
-            return 1
-        fi
-        api_call "$param2"
+        shift
+        api_call "$@"
+        return $?
         ;;
     "fleet")
         shift
@@ -335,7 +375,7 @@ main() {
         echo "  list              - List all configured sites"
         echo "  connect [site]    - Connect to site directory via SSH"
         echo "  exec [site] [cmd] - Execute command on site"
-        echo "  api [endpoint]    - Make API call to Hostinger"
+        echo "  api [METHOD] ENDPOINT [JSON] - Hostinger API call (token from secret store)"
         echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
         echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
         echo "  help                 - $HELP_SHOW_MESSAGE"
@@ -344,7 +384,8 @@ main() {
         echo "  $0 list"
         echo "  $0 connect example.com"
         echo "  $0 exec example.com 'ls -la'"
-        echo "  $0 api domains"
+        echo "  $0 api api/hosting/v1/websites"
+        echo "  $0 api PATCH api/hosting/v1/accounts/USER/websites/DOMAIN/php/version '{\"version\":\"8.5\"}'"
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"

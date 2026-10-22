@@ -141,7 +141,7 @@ Applies to any PHP security release; the worked example is the 2026-10-21 unauth
 4. **Verify from the web.** Use the app's status page, or a temporary randomly named probe printing only `PHP_VERSION` and the changed `ini_get()` values, then delete it. A redirect or login page is not evidence.
 5. **Contain what cannot be patched or mitigated.** With approval, stop the app or restrict it to a VPN/IP allowlist; EOL runtimes first. Record what was stopped so it is restarted deliberately.
 6. **Watch until patched.** Run a private, read-only routine (for example every 2 hours via `TODO.md` `run:custom/scripts/<name>.sh`, installed only on the host with access) comparing each host's version with the fixed versions and listing pending package updates. Record errors as errors, never as patched, and never update automatically.
-7. **Close out.** Verify patched web versions, remove the marked blocks (keep lower upload limits only as a deliberate decision), restart intentionally stopped apps, disable the watch, and dismiss the advisory.
+7. **Close out.** Verify patched web versions, then decide each marked block: remove it exactly, or keep settings for features the app does not use (and lower upload limits) as deliberate hardening with a re-labelled marker. Restart intentionally stopped apps, disable the watch, and dismiss the advisory. Switching PHP minor version on a host is not a fix unless the new build is a fixed version.
 
 ## Safety Invariants
 
