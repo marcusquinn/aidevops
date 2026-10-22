@@ -825,6 +825,56 @@ Implement the repair.
 	return 0
 }
 
+# GH#35345: glob-only canonical scopes must reach every shared presence gate.
+test_safe_glob_files_scope() {
+	local entry="" body="" rc=0
+	# shellcheck disable=SC2016 # literal Markdown fixtures
+	local -a safe_entries=(
+		'- NEW: `todo/x/specs/lane-a-*.json`'
+		'- NEW: `todo/x/log/*/*/*.jsonl`'
+		'- EDIT: todo/x/*.json'
+		'- todo/*/x.json'
+		'- EDIT: `src/repair.sh`'
+	)
+	# shellcheck disable=SC2016 # literal Markdown fixtures
+	local -a unsafe_entries=(
+		'- NEW: `*/*.json`'
+		'- NEW: `todo/**/x.json`'
+		'- NEW: `../x/*.json`'
+		'- NEW: `todo/../x/*.json`'
+		'- NEW: `/todo/x/*.json`'
+		'- NEW: `to*do/x.json`'
+	)
+	for entry in "${safe_entries[@]}"; do
+		body=$'### Files Scope\n'"$entry"
+		rc=0
+		"$HELPER_SCRIPT" scope-check 35345 "$body" 1 "" >/dev/null 2>&1 || rc=$?
+		print_result "canonical safe scope accepted: ${entry}" "$rc"
+	done
+	for entry in "${unsafe_entries[@]}"; do
+		body=$'### Files Scope\n'"$entry"
+		rc=0
+		"$HELPER_SCRIPT" scope-check 35345 "$body" 1 "" >/dev/null 2>&1 || rc=$?
+		if [[ "$rc" -eq 40 ]]; then
+			print_result "unsafe glob-only scope rejected: ${entry}" 0
+		else
+			print_result "unsafe glob-only scope rejected: ${entry}" 1 "rc=${rc}"
+		fi
+	done
+	# shellcheck disable=SC2016 # literal Markdown fixture
+	body=$'### Files Scope\n- NEW: `todo/x/specs/lane-a-*.json`\n- NEW: `todo/x/log/*/*/*.jsonl`'
+	if "$HELPER_SCRIPT" scope-check 35345 "$body" 1 "" >/dev/null 2>&1 && (
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		_gh_ci_validate_dispatch_scope --label auto-dispatch --body "$body"
+	) >/dev/null 2>&1; then
+		print_result "combined glob-only scope passes dispatch and issue creation" 0
+	else
+		print_result "combined glob-only scope passes dispatch and issue creation" 1
+	fi
+	return 0
+}
+
 test_scope_gate_precedes_claim() {
 	local core="${SCRIPT_DIR}/../pulse-dispatch-core.sh" gate_line="" dedup_line=""
 	# shellcheck disable=SC2016 # literal source-code search pattern
@@ -1553,6 +1603,7 @@ main() {
 	test_dependabot_intake_with_scope_allows_dispatch
 	test_planning_only_generated_brief_without_scope_allows_dispatch
 	test_auto_dispatch_preclaim_scope_contract
+	test_safe_glob_files_scope
 	test_scope_gate_precedes_claim
 	test_issue_creation_legacy_scope_rejected
 	test_issue_creation_unscoped_strict_fails_closed

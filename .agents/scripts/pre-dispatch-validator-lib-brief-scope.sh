@@ -62,9 +62,25 @@ _brief_files_scope_has_path() {
 		')
 
 	[[ -n "$scope_section" ]] || return 1
+	# Preserve the existing literal-path contract before considering glob entries.
 	# shellcheck disable=SC2016 # literal regular expression anchors
-	printf '%s\n' "$scope_section" |
-		grep -qE '^[[:space:]]*-[[:space:]]*((EDIT|NEW):[[:space:]]*)?`?[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*`?[[:space:]]*$'
+	if printf '%s\n' "$scope_section" |
+		grep -qE '^[[:space:]]*-[[:space:]]*((EDIT|NEW):[[:space:]]*)?`?[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*`?[[:space:]]*$'; then
+		return 0
+	fi
+
+	local entry="" path=""
+	# A glob must be anchored beneath a literal repository-relative directory.
+	# shellcheck disable=SC2016 # literal Markdown backticks and regex anchors
+	local glob_entry='^[[:space:]]*-[[:space:]]*((EDIT|NEW):[[:space:]]*)?`?([A-Za-z0-9_.-]+(/[A-Za-z0-9_.*-]+)+)`?[[:space:]]*$'
+	while IFS= read -r entry; do
+		[[ "$entry" =~ $glob_entry ]] || continue
+		path="${BASH_REMATCH[3]}"
+		[[ "$path" == *'*'* && "$path" != *'**'* ]] || continue
+		[[ "/${path}/" != *'/../'* ]] || continue
+		return 0
+	done <<<"$scope_section"
+	return 1
 }
 
 _validate_implementation_brief_scope() {
