@@ -171,7 +171,9 @@ def last_reflog_time(private_git_dir):
     with reflog.open('rb') as handle:
         handle.seek(0, os.SEEK_END)
         handle.seek(max(0, handle.tell() - 65536))
-        lines = handle.read().splitlines()
+        lines = [line for line in handle.read().splitlines() if line.strip()]
+    if not lines:
+        return 0  # Expired/empty reflog: HEAD's own mtime remains the signal.
     for line in reversed(lines):
         identity = line.split(b'\t', 1)[0].split()
         if len(identity) >= 2 and identity[-2].isdigit():
