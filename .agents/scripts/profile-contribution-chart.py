@@ -15,7 +15,12 @@ import subprocess
 import sys
 import tempfile
 
-from profile_contribution_render import compact as compact, render_svg
+from profile_contribution_data import (
+    _valid_month_totals as _valid_month_totals,
+    compact as compact,
+    render_svg,
+    valid_history,
+)
 
 ASSET_DIR = Path("assets/contributions")
 FILES = ("total-light.svg", "total-dark.svg", "total.json")
@@ -137,38 +142,6 @@ def safe_paths(repo, readme):
             raise ValueError("Unsafe contribution chart artifact path")
     if not readme.is_file():
         raise ValueError("Profile README is not a regular file")
-
-
-def _valid_month_totals(points, through, expected_total):
-    """Validate ordered cached months and their aggregate without rendering them."""
-    cumulative, previous = 0, ""
-    for point in points:
-        month = point["month"]
-        if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) or not previous < month <= through.strftime("%Y-%m"):
-            return False
-        if type(point["total"]) is not int or point["total"] < 0:
-            return False
-        cumulative += point["total"]
-        if type(point["cumulative"]) is not int or point["cumulative"] != cumulative:
-            return False
-        previous = month
-    return type(expected_total) is int and expected_total == cumulative
-
-
-def valid_history(data, login, today):
-    """Do not trust repository-cached strings as SVG markup or freshness proof."""
-    try:
-        if data["schema"] != "aidevops.total-contributions/v1" or data["user"] != login:
-            return False
-        updated = dt.date.fromisoformat(data["updated"])
-        through = dt.date.fromisoformat(data["through"])
-        if updated > today or through != updated - dt.timedelta(days=1):
-            return False
-        if not isinstance(data["months"], list) or len(data["months"]) > 400:
-            return False
-        return _valid_month_totals(data["months"], through, data["total"])
-    except (KeyError, TypeError, ValueError):
-        return False
 
 
 def refresh(repo, readme, login, dry_run=False, today=None, client=graphql):
