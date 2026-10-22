@@ -1242,6 +1242,19 @@ cmd_maintenance_window() {
 		_maintenance_window_db "$force_opencode" "$keep_sessions" "$retention_days" "$skip_archive"
 		return $?
 	fi
+	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$retention_days" "$skip_archive" "$drain_timeout"
+	return $?
+}
+
+# _maintenance_window_inventory <force> <keep_sessions> <retention_days> <skip_archive> <drain_timeout>
+# Parent run: stop pulse once, drain workers, then visit each inventory DB in a
+# single-DB child. Returns 1 on any failure, 2 when only holder skips occurred.
+_maintenance_window_inventory() {
+	local force_opencode="$1"
+	local keep_sessions="$2"
+	local retention_days="$3"
+	local skip_archive="$4"
+	local drain_timeout="$5"
 
 	local dbs=()
 	local db
