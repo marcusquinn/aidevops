@@ -8,8 +8,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -219,6 +221,43 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self.assertEqual(payload["consumers"]["databases"][-1]["rows"], [])
         self.assertEqual(len(payload["consumers"]["markers"]), 1)
         self.assertFalse(self.destination.exists())
+
+    def test_tabby_interpreter_selection_and_missing_dependency_guidance(self) -> None:
+        # Simulate Homebrew Python without user/site packages while keeping the
+        # actual test interpreter's PyYAML available in the isolated environment.
+        path_bin = self.root / "path-bin"
+        isolated_env = self.root / "tabby-env"
+        path_bin.mkdir()
+        (isolated_env / "bin").mkdir(parents=True)
+        for target, flags in (
+            (path_bin / "python3", "-S"),
+            (isolated_env / "bin/python3", ""),
+        ):
+            target.write_text(
+                f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {flags} "$@"\n',
+                encoding="utf-8",
+            )
+            target.chmod(0o700)
+        self.environment["PATH"] = str(path_bin) + os.pathsep + os.environ["PATH"]
+        self.environment["AIDEVOPS_TABBY_PYTHON_ENV"] = str(isolated_env)
+        self.assertEqual(self._plan()["moves"], 1)
+
+        # A broken isolated environment must also fall back safely. The engine
+        # must not call a dependency error a malformed user configuration.
+        (isolated_env / "bin/python3").write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -S "$@"\n',
+            encoding="utf-8",
+        )
+        result = self._run(
+            "plan", "--workspace", str(self.workspace),
+            "--output", str(self.plan), "--repos-json", str(self.repos_json),
+            "--tabby-config", str(self.tabby), "--include-registered-paths",
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Tabby validation requires PyYAML", result.stderr)
+        self.assertIn("aidevops tabby sync", result.stderr)
+        self.assertNotIn("Malformed Tabby config", result.stderr)
 
     def test_exact_source_selection_retains_native_consumer_inventory(self) -> None:
         other = self.workspace / "Unrelated"
