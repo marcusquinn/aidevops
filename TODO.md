@@ -1738,7 +1738,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18753 fix(tests): split DB URL fixtures that block release secretlint preflight #bug ref:GH#35325 pr:#35327 completed:2026-10-21
 
-- [ ] t18755 hostinger-helper api: secret-store token, write methods, PHP version API docs #bug ref:GH#35337
+- [x] t18755 hostinger-helper api: secret-store token, write methods, PHP version API docs #bug ref:GH#35337 pr:#35338 completed:2026-10-22
 
 ## In Progress
 
