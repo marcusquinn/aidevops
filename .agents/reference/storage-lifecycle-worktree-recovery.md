@@ -60,7 +60,7 @@ Retries reuse the reservation and completed capture; source drift, changed manif
 Captures lacking a complete manifest stay incomplete: retry never allocates another copy. Do not delete journals or partial artifacts to force retry.
 Complete captures can resume restoration/verification; completed receipts require fresh source/archive verification before reuse.
 
-Unsupported untracked metadata and unknown administrative state remain protected; tracked changes use Git's modes. Git-only capture preserves current HEAD history, changes and ordinary untracked data, excluding abandoned reflog-only and non-merge previous-HEAD history. Legacy preserve-v1 still retains raw history.
+Ordinary tracked files follow Git's type/executable model: full Unix permissions, ownership, xattrs and inode relationships are not retained or compared. Nonignored untracked files use standard PAX tar with permission bits and hard links inside the selected set; links outside that set become independent content. Git-ignored files are excluded. Untracked ownership/ACL/xattr metadata that cannot be represented by the current tar reader remains protected, as does unknown Git administration. No custom permission artifact is used. Git-only capture preserves current HEAD history and staged/unstaged changes, excluding abandoned reflog-only and non-merge previous-HEAD history. Legacy preserve-v1 retains its strict historical contract.
 Missing objects or incomplete completion/ownership metadata block verification. Markerless v1 compatibility does not confer migration eligibility.
 
 ### Standalone AUTO_MERGE preservation

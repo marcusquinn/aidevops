@@ -313,7 +313,7 @@ inventory = pathlib.Path(sys.argv[2])
 archive = pathlib.Path(sys.argv[3])
 limit_files = int(sys.argv[4])
 limit_bytes = int(sys.argv[5])
-raw_paths = [p for p in inventory.read_bytes().split(b"\0") if p]
+raw_paths = sorted(p for p in inventory.read_bytes().split(b"\0") if p)
 display = []
 total = 0
 paths = []
@@ -332,7 +332,7 @@ if len(paths) > limit_files or total > limit_bytes:
 (archive / "untracked-files.txt").write_text("".join(path + "\n" for path in display), encoding='utf-8')
 inventory.unlink()
 if paths:
-    with tarfile.open(archive / "untracked.tar.gz", "w:gz") as output:
+    with tarfile.open(archive / "untracked.tar.gz", "w:gz", format=tarfile.PAX_FORMAT) as output:
         for _, rel, target in paths:
             output.add(target, arcname=str(rel), recursive=False)
 PY
@@ -577,8 +577,8 @@ if payload.exists():
             path = pathlib.PurePosixPath(member.name)
             link = pathlib.PurePosixPath(member.linkname) if member.issym() else None
             resolved_link = pathlib.PurePosixPath(posixpath.normpath(str(path.parent / link))) if link else None
-            if (path.is_absolute() or ".." in path.parts or member.isdev() or
-                    member.islnk() or (link and link.is_absolute()) or
+            if (not path.parts or '.git' in path.parts or path.is_absolute() or ".." in path.parts or member.isdev() or
+                    (link and link.is_absolute()) or
                     (resolved_link and ".." in resolved_link.parts)):
                 raise SystemExit("unsafe untracked archive member")
 from worktree_archive_snapshot import verify_untracked_payload
@@ -629,33 +629,16 @@ PY
 	return 0
 }
 
-restore_archive() {
-	local archive_dir="${1:-}"
-	shift || true
-	local target="" verification_copy=0
-	validate_archive_dir "$archive_dir" || return 1
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--target) require_value "$1" "${2:-}" || return 1; target="$2"; shift 2 ;;
-		--verification-copy) verification_copy=1; shift ;;
-		--registered-verification-copy) verification_copy=2; shift ;;
-		*) die "unknown restore option: $1"; return 1 ;;
-		esac
-	done
-	[[ -n "$target" && ! -e "$target" ]] || { die "restore target must not exist"; return 1; }
-	verify_archive "$archive_dir" >/dev/null || return 1
-	prepare_restore_repository "$archive_dir" "$target" "$verification_copy" || return 1
-	if [[ -f "$archive_dir/merge-state-v1.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" || return 1
-	fi
-	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
-	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
+restore_untracked_payload() {
+	local archive_dir="$1"
+	local target="$2"
 	if [[ -f "$archive_dir/untracked.tar.gz" ]]; then
 		python3 - "$archive_dir/untracked.tar.gz" "$target" <<'PY' || return 1
 import pathlib
 import os
 import posixpath
 import shutil
+import stat
 import sys
 import tarfile
 source = pathlib.Path(sys.argv[1])
@@ -678,14 +661,15 @@ def open_parent(parts):
         os.close(descriptor)
         raise
 
+created_regular = set()
 with tarfile.open(source, "r:gz") as payload:
     for member in payload.getmembers():
         path = pathlib.PurePosixPath(member.name)
         link = pathlib.PurePosixPath(member.linkname) if member.issym() else None
         resolved_link = pathlib.PurePosixPath(posixpath.normpath(str(path.parent / link))) if link else None
-        if (not path.parts or path.parts[0] == '.git' or
+        if (not path.parts or '.git' in path.parts or
                 path.is_absolute() or ".." in path.parts or member.isdev() or
-                member.islnk() or (link and link.is_absolute()) or
+                (link and link.is_absolute()) or
                 (resolved_link and ".." in resolved_link.parts)):
             raise SystemExit("unsafe untracked archive member")
         parent = open_parent(path.parts[:-1])
@@ -695,6 +679,19 @@ with tarfile.open(source, "r:gz") as payload:
                 os.mkdir(name, dir_fd=parent)
             elif member.issym():
                 os.symlink(member.linkname, name, dir_fd=parent)
+            elif member.islnk():
+                if member.linkname not in created_regular:
+                    raise SystemExit("hard link target is not a restored payload file")
+                original = pathlib.PurePosixPath(member.linkname)
+                source_parent = open_parent(original.parts[:-1])
+                try:
+                    observed = os.stat(original.name, dir_fd=source_parent, follow_symlinks=False)
+                    if not stat.S_ISREG(observed.st_mode):
+                        raise SystemExit("hard link target changed")
+                    os.link(original.name, name, src_dir_fd=source_parent,
+                            dst_dir_fd=parent, follow_symlinks=False)
+                finally:
+                    os.close(source_parent)
             elif member.isfile():
                 source_file = payload.extractfile(member)
                 if source_file is None:
@@ -703,13 +700,40 @@ with tarfile.open(source, "r:gz") as payload:
                                      os.O_NOFOLLOW, 0o600, dir_fd=parent)
                 with os.fdopen(descriptor, 'wb') as output:
                     shutil.copyfileobj(source_file, output)
-                    os.fchmod(output.fileno(), member.mode & 0o777)
+                    output.flush()
+                    os.fchmod(output.fileno(), member.mode & 0o7777)
+                created_regular.add(member.name)
             else:
                 raise SystemExit("unsupported untracked archive member")
         finally:
             os.close(parent)
 PY
 	fi
+	return 0
+}
+
+restore_archive() {
+	local archive_dir="${1:-}"
+	shift || true
+	local target="" verification_copy=0
+	validate_archive_dir "$archive_dir" || return 1
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--target) require_value "$1" "${2:-}" || return 1; target="$2"; shift 2 ;;
+		--verification-copy) verification_copy=1; shift ;;
+		--registered-verification-copy) verification_copy=2; shift ;;
+		*) die "unknown restore option: $1"; return 1 ;;
+		esac
+	done
+	[[ -n "$target" && ! -e "$target" ]] || { die "restore target must not exist"; return 1; }
+	verify_archive "$archive_dir" >/dev/null || return 1
+	prepare_restore_repository "$archive_dir" "$target" "$verification_copy" || return 1
+	if [[ -f "$archive_dir/merge-state-v1.json" ]]; then
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" || return 1
+	fi
+	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
+	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
+	restore_untracked_payload "$archive_dir" "$target" || return 1
 	if [[ -f "$archive_dir/git-admin.json" ]]; then
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
 	fi

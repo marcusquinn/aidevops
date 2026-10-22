@@ -20,7 +20,7 @@ import sys
 from worktree_recovery_timing import timed
 
 from worktree_archive_filesystem import (
-    fingerprint, supported_directories,
+    fingerprint, supported_directories, untracked_contents,
     verify_untracked_payload as verify_untracked_payload,
 )
 from worktree_archive_administration import (
@@ -149,7 +149,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
                   'merge_sha256': merge_digest(state)}
         if include_untracked:
             paths = sorted(filter(None, git(root, 'ls-files', '--others', '--exclude-standard', '-z').split(b'\0')))
-            contents = [[os.fsdecode(raw), fingerprint(root, raw)] for raw in paths]
+            contents = untracked_contents(root, paths)
             result.update(untracked_files=len(paths),
                           untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode('ascii')).hexdigest())
         return result
@@ -161,8 +161,8 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     values = [head, metadata["index"],
               hashlib.sha256(staged).hexdigest(), hashlib.sha256(unstaged).hexdigest()]
     result = {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
-              "bytes": len(staged) + len(unstaged),
-              "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
+               "bytes": len(staged) + len(unstaged),
+               "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
     oid = auto_merge(root)
     if oid is not None:
         result['auto_merge'] = oid
@@ -172,7 +172,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
         if (len(paths) > int(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES", "10000"))
                 or size > int(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES", "1073741824"))):
             raise ValueError("untracked payload exceeds configured limit")
-        contents = [[os.fsdecode(raw), fingerprint(root, raw)] for raw in paths]
+        contents = untracked_contents(root, paths)
         result.update(schema=3, untracked_files=len(paths), bytes=result["bytes"] + size,
                       untracked_sha256=hashlib.sha256(json.dumps(contents, ensure_ascii=True).encode("ascii")).hexdigest())
     return result

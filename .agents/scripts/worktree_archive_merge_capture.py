@@ -71,7 +71,7 @@ def merge_working_paths(root, head, entries):
 def merge_working_file(root, path):
     from worktree_archive_filesystem import fingerprint, open_parent
     raw = merge_path(path)
-    observed = fingerprint(root, raw)
+    observed = fingerprint(root, raw, git_metadata=True)
     if observed == ['missing']:
         return None
     if observed[0] != 'file':
