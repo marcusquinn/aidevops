@@ -1,6 +1,5 @@
 // Studio route discovery and option names, separate from browser command execution.
 import { existsSync, readFileSync } from 'node:fs';
-import { ROUTES_CACHE } from './higgsfield-common.mjs';
 
 export function resolveVibeMotionSubtype(subtype) {
   const subtypeMap = {
@@ -29,12 +28,12 @@ export function resolvePresetUrl(presetName, presets) {
   return presetUrl;
 }
 
-export function listMotionPresets() {
-  if (!existsSync(ROUTES_CACHE)) {
+export function listMotionPresets(routesCache) {
+  if (!existsSync(routesCache)) {
     console.log('No discovery cache found. Run "discover" first.');
     return;
   }
-  const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+  const cache = JSON.parse(readFileSync(routesCache, 'utf-8'));
   const motions = cache.motions || {};
   const names = Object.keys(motions);
   console.log(`Available motion presets (${names.length}):`);
@@ -43,11 +42,11 @@ export function listMotionPresets() {
   if (names.length > 50) console.log(`  ... and ${names.length - 50} more`);
 }
 
-export function resolveMotionPresetUrl(presetName) {
+export function resolveMotionPresetUrl(presetName, routesCache) {
   let presetUrl = null;
 
-  if (existsSync(ROUTES_CACHE)) {
-    const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+  if (existsSync(routesCache)) {
+    const cache = JSON.parse(readFileSync(routesCache, 'utf-8'));
     const motions = cache.motions || {};
     const presetKey = presetName.toLowerCase().replace(/[\s-]+/g, '_');
 

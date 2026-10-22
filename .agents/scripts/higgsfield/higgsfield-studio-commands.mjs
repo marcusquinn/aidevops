@@ -21,6 +21,7 @@ import {
 import {
   BASE_URL,
   GENERATED_IMAGE_SELECTOR,
+  ROUTES_CACHE,
   STATE_FILE,
   waitForGenerationResult,
 } from './higgsfield-common.mjs';
@@ -468,12 +469,12 @@ export async function motionPreset(options = {}) {
     const presetName = options.preset;
 
     if (!presetName) {
-      listMotionPresets();
+      listMotionPresets(ROUTES_CACHE);
       await browser.close();
       return { success: true, action: 'list' };
     }
 
-    const presetUrl = resolveMotionPresetUrl(presetName);
+    const presetUrl = resolveMotionPresetUrl(presetName, ROUTES_CACHE);
     if (!presetUrl) {
       console.error(`Motion preset not found: ${presetName}. Run "discover" to refresh cache.`);
       await browser.close();
