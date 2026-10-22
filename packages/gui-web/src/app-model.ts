@@ -512,74 +512,24 @@ export const plannedHomes = [
   { area: "Desktop wrapper", home: "Installation", phase: "P16" },
 ];
 
+function inventoryConfig(title: string, intro: string, columns: Array<[key: string, label: string]>, initialRows: Record<string, string>[]): InventorySurfaceConfig {
+  return { title, intro, columns: columns.map(([key, label]) => ({ key, label })), initialRows };
+}
+
 export const inventorySurfaceConfigs: Partial<Record<SurfaceId, InventorySurfaceConfig>> = {
-  personas: {
-    title: text.personas,
-    intro: text.personasIntro,
-    columns: [
-      { key: "firstName", label: "First Name" },
-      { key: "lastName", label: "Last Name" },
-    ],
-    initialRows: [{ firstName: "", lastName: "" }],
-  },
-  brands: {
-    title: text.brands,
-    intro: text.brandsIntro,
-    columns: [
-      { key: "brandName", label: "Brand Name" },
-      { key: "website", label: "Website URL" },
-    ],
-    initialRows: [{ brandName: "", website: "" }],
-  },
-  domains: {
-    title: text.domains,
-    intro: text.domainsIntro,
-    columns: [
-      { key: "domain", label: "Domain" },
-      { key: "provider", label: "Provider" },
-      { key: "status", label: "Status" },
-    ],
-    initialRows: [{ domain: "", provider: "", status: "" }],
-  },
-  registrars: {
-    title: text.registrars,
-    intro: text.registrarsIntro,
-    columns: [
-      { key: "name", label: "Registrar" },
-      { key: "recommendation", label: "Recommendation" },
-      { key: "notes", label: "Notes" },
-    ],
-    initialRows: [
-      { name: "Porkbun", recommendation: "recommended", notes: "provider catalog" },
-      { name: "Cloudflare Registrar", recommendation: "recommended", notes: "provider catalog" },
-    ],
-  },
-  hosts: {
-    title: text.hosts,
-    intro: text.hostsIntro,
-    columns: [
-      { key: "name", label: "Host" },
-      { key: "category", label: "Category" },
-      { key: "notes", label: "Notes" },
-    ],
-    initialRows: [
-      { name: "Cloudron", category: "app platform", notes: "recommended" },
-      { name: "Coolify", category: "app platform", notes: "recommended" },
-      { name: "Ubicloud", category: "cloud", notes: "recommended" },
-    ],
-  },
-  servers: {
-    title: text.servers,
-    intro: text.serversIntro,
-    columns: [
-      { key: "provider", label: "Provider" },
-      { key: "server", label: "Server" },
-      { key: "os", label: "OS" },
-      { key: "orchestrator", label: "Orchestrator" },
-      { key: "apps", label: "Apps" },
-    ],
-    initialRows: [{ provider: "", server: "", os: "", orchestrator: "", apps: "" }],
-  },
+  personas: inventoryConfig(text.personas, text.personasIntro, [["firstName", "First Name"], ["lastName", "Last Name"]], [{ firstName: "", lastName: "" }]),
+  brands: inventoryConfig(text.brands, text.brandsIntro, [["brandName", "Brand Name"], ["website", "Website URL"]], [{ brandName: "", website: "" }]),
+  domains: inventoryConfig(text.domains, text.domainsIntro, [["domain", "Domain"], ["provider", "Provider"], ["status", "Status"]], [{ domain: "", provider: "", status: "" }]),
+  registrars: inventoryConfig(text.registrars, text.registrarsIntro, [["name", "Registrar"], ["recommendation", "Recommendation"], ["notes", "Notes"]], [
+    { name: "Porkbun", recommendation: "recommended", notes: "provider catalog" },
+    { name: "Cloudflare Registrar", recommendation: "recommended", notes: "provider catalog" },
+  ]),
+  hosts: inventoryConfig(text.hosts, text.hostsIntro, [["name", "Host"], ["category", "Category"], ["notes", "Notes"]], [
+    { name: "Cloudron", category: "app platform", notes: "recommended" },
+    { name: "Coolify", category: "app platform", notes: "recommended" },
+    { name: "Ubicloud", category: "cloud", notes: "recommended" },
+  ]),
+  servers: inventoryConfig(text.servers, text.serversIntro, [["provider", "Provider"], ["server", "Server"], ["os", "OS"], ["orchestrator", "Orchestrator"], ["apps", "Apps"]], [{ provider: "", server: "", os: "", orchestrator: "", apps: "" }]),
 };
 
 export function getSystemTheme(): "light" | "dark" {
