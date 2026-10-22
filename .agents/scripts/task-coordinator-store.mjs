@@ -5,10 +5,11 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
+import { acquireInitializationLock, releaseInitializationLock } from "./task-coordinator-lock.mjs";
 
 const SCHEMA_VERSION = 8;
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -255,67 +256,6 @@ INSERT INTO origins SELECT ${sqlEscape(origin)},'active',0,1,${sqlEscape(token)}
 INSERT INTO origin_transitions(origin_id,from_state,to_state,ownership_epoch,fencing_token,evidence_json,occurred_at)
 SELECT origin_id,NULL,'active',ownership_epoch,fencing_token,'{}',${sqlEscape(timestamp)} FROM origins WHERE NOT EXISTS (SELECT 1 FROM origin_transitions);
 INSERT INTO migration_history SELECT ${SCHEMA_VERSION},${sqlEscape(timestamp)},NULL,'ok' WHERE NOT EXISTS (SELECT 1 FROM migration_history); COMMIT;`);
-}
-function processIsAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error.code === "ESRCH") return false;
-    if (error.code === "EPERM") return true;
-    throw error;
-  }
-}
-function orphanedLockIsOldEnough(lock, orphanGrace) {
-  try {
-    return Date.now() - statSync(lock).mtimeMs >= orphanGrace;
-  } catch (error) {
-    if (error.code === "ENOENT") return false;
-    throw error;
-  }
-}
-function lockCanBeReclaimed(lock, orphanGrace) {
-  try {
-    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
-    if (!owner || typeof owner.ownerToken !== "string" || !Number.isSafeInteger(Number(owner.pid)) || Number(owner.pid) < 1) throw new TypeError("malformed initialization lock owner");
-    return !processIsAlive(Number(owner.pid));
-  } catch (error) {
-    if (error.code !== "ENOENT" && !(error instanceof SyntaxError) && !(error instanceof TypeError)) throw error;
-    return orphanedLockIsOldEnough(lock, orphanGrace);
-  }
-}
-function reclaimLock(lock) {
-  const stale = `${lock}.stale-${randomUUID()}`;
-  try {
-    renameSync(lock, stale);
-    rmSync(stale, { recursive: true, force: true });
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-}
-function acquireInitializationLock(lock, ownerToken) {
-  const deadline = Date.now() + Number(process.env.AIDEVOPS_COORDINATOR_INIT_LOCK_TIMEOUT_MS || 30000);
-  const orphanGrace = Number(process.env.AIDEVOPS_COORDINATOR_INIT_LOCK_ORPHAN_GRACE_MS || 1000);
-  while (true) {
-    try {
-      mkdirSync(lock, { mode: 0o700 });
-      writeFileSync(join(lock, "owner.json"), JSON.stringify({ ownerToken, pid: process.pid }), { mode: 0o600 });
-      return;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      if (lockCanBeReclaimed(lock, orphanGrace)) reclaimLock(lock);
-      if (Date.now() >= deadline) throw new Error("coordinator initialization lock timed out");
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-    }
-  }
-}
-function releaseInitializationLock(lock, ownerToken) {
-  try {
-    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
-    if (owner.ownerToken === ownerToken) rmSync(lock, { recursive: true, force: true });
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
 }
 function bootstrapLocked(path) {
   const lock = `${path}.init-lock`;
