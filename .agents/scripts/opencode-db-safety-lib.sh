@@ -154,9 +154,21 @@ opencode_archive_schema_diagnostic() {
 _opencode_archive_columns_match() {
 	local actual_columns="$1"
 	local supported_columns="$2"
+	local actual_set=""
+	local candidate=""
+	local candidate_set=""
+	local generations=()
 
-	[[ -n "$actual_columns" && "|${supported_columns}|" == *"|${actual_columns}|"* ]]
-	return $?
+	[[ -n "$actual_columns" ]] || return 1
+	actual_set=$(printf '%s' "$actual_columns" | tr ',' '\n' | LC_ALL=C sort)
+	IFS='|' read -r -a generations <<<"$supported_columns"
+	for candidate in "${generations[@]}"; do
+		candidate_set=$(printf '%s' "$candidate" | tr ',' '\n' | LC_ALL=C sort)
+		if [[ "$actual_set" == "$candidate_set" ]]; then
+			return 0
+		fi
+	done
+	return 1
 }
 
 opencode_archive_table_schema_supported() {
@@ -243,7 +255,7 @@ opencode_archive_schema_supported() {
 	done
 
 	session_columns=$(opencode_db_table_columns "$db_path" session) || return 1
-	if [[ "$schema_mode" == "$OPENCODE_ARCHIVE_SCHEMA_MODE_REQUIRED" || "$session_columns" == "$current_session_columns" ]]; then
+	if [[ "$schema_mode" == "$OPENCODE_ARCHIVE_SCHEMA_MODE_REQUIRED" ]] || _opencode_archive_columns_match "$session_columns" "$current_session_columns"; then
 		for table_name in session_message session_input session_context_epoch event_sequence event; do
 			opencode_archive_table_schema_supported "$db_path" "$table_name" "$OPENCODE_ARCHIVE_SCHEMA_MODE_REQUIRED" || return 1
 		done

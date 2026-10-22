@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.57] - 2026-10-22
+
+### Changed
+
+- Refactor: dedupe command policy wrapper option parsing (GH#35372) (#35394)
+- Documentation: tighten worktree recovery contracts (GH#35367) (#35406)
+- Refactor: split entity-extraction backends and frontmatter into lib modules (GH#35373) (#35393)
+- Refactor: split OpenAI codex request and escalation text helpers (GH#35371) (#35396)
+- Refactor: split GUI pulse insights, AI sessions surface, inventory configs (GH#35369) (#35392)
+
+### Fixed
+
+- resume stale-assignment draft checkpoints (GH#35363) (#35366)
+
 ## [3.39.56] - 2026-10-22
 
 ### Changed

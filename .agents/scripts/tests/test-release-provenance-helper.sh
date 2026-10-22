@@ -10,6 +10,10 @@ PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
+# Pin the shared transport budget (GH#35434 default is 8) and skip backoff so
+# the bounded-read assertions below stay exact and fast.
+export RELEASE_SNAPSHOT_MAX_ATTEMPTS=3
+export RELEASE_SNAPSHOT_RETRY_UNIT=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/release-provenance-helper.sh"

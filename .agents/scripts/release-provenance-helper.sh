@@ -71,16 +71,19 @@ _release_provenance_read_json() {
 	local purpose="$1"
 	shift
 	local attempt=1
+	local max_attempts=""
 	local response=""
 	local status=0
 	local error_file=""
 	local error_text=""
 	local cause=""
+	# Shared transport budget from release-snapshot-helper.sh (GH#35434).
+	max_attempts=$(_release_gh_read_attempts)
 	error_file=$(mktemp) || {
 		_release_provenance_error "cannot prepare diagnostic for ${purpose}"
 		return 1
 	}
-	while [[ "$attempt" -le 3 ]]; do
+	while [[ "$attempt" -le "$max_attempts" ]]; do
 		status=0
 		response=$(gh "$@" 2>"$error_file") || status=$?
 		error_text=$(<"$error_file")
@@ -104,13 +107,13 @@ _release_provenance_read_json() {
 			_release_provenance_error "${purpose}: GitHub read failed (exit ${status}, attempt ${attempt}; not retryable)"
 			return 1
 		fi
-		[[ "$attempt" -eq 3 ]] && break
-		printf 'release-provenance: %s: %s; retrying after attempt %s/3\n' "$purpose" "$cause" "$attempt" >&2
-		sleep "$attempt"
+		[[ "$attempt" -ge "$max_attempts" ]] && break
+		printf 'release-provenance: %s: %s; retrying after attempt %s/%s\n' "$purpose" "$cause" "$attempt" "$max_attempts" >&2
+		_release_gh_read_backoff "$attempt"
 		attempt=$((attempt + 1))
 	done
 	rm -f "$error_file"
-	_release_provenance_error "${purpose}: ${cause} after 3 attempts"
+	_release_provenance_error "${purpose}: ${cause} after ${max_attempts} attempts"
 	return 1
 }
 

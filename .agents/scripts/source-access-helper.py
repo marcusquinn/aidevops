@@ -98,6 +98,8 @@ def _load_source_access_core() -> Any:
 
 
 _SOURCE_CORE = _load_source_access_core()
+_bound_proposal_id = _SOURCE_CORE._DOCUMENTS._bound_proposal_id
+_require_valid_approval = _SOURCE_CORE._DOCUMENTS._require_valid_approval
 ID_PATTERN = _SOURCE_CORE.ID_PATTERN
 MAX_MANIFEST_ENTRIES = _SOURCE_CORE.MAX_MANIFEST_ENTRIES
 MAX_SOURCE_BYTES = _SOURCE_CORE.MAX_SOURCE_BYTES
@@ -403,11 +405,6 @@ def _verify_signature(config: Config, payload: dict[str, Any], signature: str) -
         return result.returncode == 0
 
 
-def _require_valid_approval(condition: bool) -> None:
-    if not condition:
-        raise SourceAccessError("source-access approval is invalid")
-
-
 def _validated_receipt(config: Config, binding: ApprovalBinding) -> tuple[dict[str, Any], str]:
     _require_valid_approval(_trusted_directory(binding.receipt_path.parent, config.trust_uid))
     _require_valid_approval(_trusted_file(binding.receipt_path, config.trust_uid))
@@ -526,20 +523,6 @@ def _bound_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths
         if proof is None and signed["path"] == spec.path:
             _require_valid_approval(original == live)
     return _bound_proposal_id(proposal, payload), proof
-
-
-def _bound_proposal_id(proposal: dict[str, Any], payload: dict[str, Any]) -> str:
-    nonce = proposal.get("nonce")
-    digest = proposal.get("issue_snapshot_sha256")
-    created = proposal.get("created_at")
-    _require_valid_approval(isinstance(nonce, str) and re.fullmatch(r"[a-f0-9]{32}", nonce) is not None)
-    _require_valid_approval(type(created) is int and created >= 0)
-    _require_valid_approval(type(payload.get("issued_at")) is int and created <= payload["issued_at"])
-    _require_valid_approval(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest) is not None)
-    _require_valid_approval(payload.get("issue_snapshot_sha256") == digest)
-    proposal_id = hashlib.sha256(canonical_json(proposal)).hexdigest()
-    _require_valid_approval(payload.get("proposal_id") == proposal_id)
-    return proposal_id
 
 
 def _legacy_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths: list[str]) -> tuple[str, None]:
