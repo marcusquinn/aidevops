@@ -22,139 +22,33 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Callable
 
 # Add lib directory to path for shared utilities
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
-from entity_cleaners import (
+from entity_cleaners import (  # noqa: E402,F401
     ENTITY_TYPES,
     SPACY_LABEL_MAP,
     clean_entity,
-    parse_llm_response,
     extract_entities_regex,
+    parse_llm_response,
 )
-
-from email_shared import (
+from entity_backends import (  # noqa: E402,F401
+    _check_spacy,
+    _get_spacy_model,
+    extract_entities_ollama,
+    extract_entities_spacy,
+)
+from entity_frontmatter import entities_to_yaml, update_frontmatter  # noqa: E402,F401
+from email_shared import (  # noqa: E402,F401
     check_ollama,
     extract_body,
     extract_frontmatter,
     get_ollama_model,
     yaml_escape,
 )
-
-
-# ---------------------------------------------------------------------------
-# spaCy NER extraction
-# ---------------------------------------------------------------------------
-
-def _check_spacy() -> bool:
-    """Check if spaCy and a model are available."""
-    try:
-        import spacy  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-def _get_spacy_model():
-    """Load the best available spaCy model."""
-    import spacy
-
-    for model_name in ["en_core_web_trf", "en_core_web_lg", "en_core_web_md", "en_core_web_sm"]:
-        try:
-            return spacy.load(model_name)
-        except OSError:
-            continue
-
-    return None
-
-
-def extract_entities_spacy(text: str) -> dict[str, list[str]]:
-    """Extract entities using spaCy NER.
-
-    Returns dict mapping entity type to list of unique entity strings.
-    """
-    nlp = _get_spacy_model()
-    if nlp is None:
-        raise RuntimeError("No spaCy model available. Install: python -m spacy download en_core_web_sm")
-
-    max_length = nlp.max_length
-    if len(text) > max_length:
-        chunks = [text[i:i + max_length] for i in range(0, len(text), max_length)]
-    else:
-        chunks = [text]
-
-    entities: dict[str, set[str]] = defaultdict(set)
-
-    for chunk in chunks:
-        doc = nlp(chunk)
-        for ent in doc.ents:
-            entity_type = SPACY_LABEL_MAP.get(ent.label_)
-            if entity_type and entity_type in ENTITY_TYPES:
-                cleaned = clean_entity(ent.text, entity_type)
-                if cleaned:
-                    entities[entity_type].add(cleaned)
-
-    return {k: sorted(v) for k, v in entities.items() if v}
-
-
-# ---------------------------------------------------------------------------
-# Ollama LLM extraction (fallback)
-# ---------------------------------------------------------------------------
-
-_OLLAMA_PROMPT = """Extract named entities from the following email text. Return ONLY a JSON object with these keys:
-- "people": list of person names
-- "organisations": list of company/organisation names
-- "properties": list of properties, products, or assets mentioned
-- "locations": list of places, addresses, cities, countries
-- "dates": list of dates mentioned (in original format)
-
-Rules:
-- Only include entities actually present in the text
-- Deduplicate: if the same entity appears multiple times, include it once
-- For people: use full names where available
-- For dates: preserve the original format from the text
-- Omit empty categories
-- Return ONLY valid JSON, no explanation
-
-Text:
-{text}
-
-JSON:"""
-
-
-def extract_entities_ollama(text: str) -> dict[str, list[str]]:
-    """Extract entities using Ollama LLM.
-
-    Returns dict mapping entity type to list of unique entity strings.
-    """
-    model = get_ollama_model()
-    if model is None:
-        raise RuntimeError("No Ollama model available. Install: ollama pull llama3.2")
-
-    max_chars = 8000
-    if len(text) > max_chars:
-        text = text[:max_chars] + "\n[... truncated for extraction ...]"
-
-    prompt = _OLLAMA_PROMPT.format(text=text)
-
-    try:
-        result = subprocess.run(
-            ["ollama", "run", model, prompt],
-            capture_output=True, text=True, timeout=120
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Ollama failed: {result.stderr}")
-
-        response = result.stdout.strip()
-        return parse_llm_response(response)
-
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Ollama timed out (120s)")
 
 
 # ---------------------------------------------------------------------------
@@ -201,61 +95,6 @@ def extract_entities(text: str, method: str = "auto") -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 # Frontmatter integration
 # ---------------------------------------------------------------------------
-
-def entities_to_yaml(entities: dict[str, list[str]], indent: int = 0) -> str:
-    """Convert entities dict to YAML frontmatter fragment."""
-    prefix = " " * indent
-    if not entities:
-        return f"{prefix}entities: {{}}"
-
-    lines = [f"{prefix}entities:"]
-    for entity_type in ENTITY_TYPES:
-        if entity_type in entities and entities[entity_type]:
-            lines.append(f"{prefix}  {entity_type}:")
-            for entity in entities[entity_type]:
-                escaped = yaml_escape(entity)
-                lines.append(f"{prefix}    - {escaped}")
-
-    return "\n".join(lines)
-
-
-def update_frontmatter(file_path: str, entities: dict[str, list[str]]) -> bool:
-    """Update a markdown file's YAML frontmatter with entities.
-
-    Adds or replaces the `entities:` field in existing frontmatter.
-    Returns True if the file was modified.
-    """
-    path = Path(file_path)
-    content = path.read_text(encoding="utf-8")
-
-    opener, fm_content, body = extract_frontmatter(content)
-    if not opener:
-        print(f"WARNING: No YAML frontmatter in {file_path}", file=sys.stderr)
-        return False
-
-    fm_lines = fm_content.split("\n")
-    new_fm_lines = []
-    skip_block = False
-    for line in fm_lines:
-        if line.startswith("entities:"):
-            skip_block = True
-            continue
-        if skip_block:
-            if line.startswith("  ") or line.startswith("\t"):
-                continue
-            skip_block = False
-        new_fm_lines.append(line)
-
-    entities_yaml = entities_to_yaml(entities)
-    new_fm_lines.append(entities_yaml)
-
-    new_fm = "\n".join(new_fm_lines)
-    new_content = f"---\n{new_fm}\n---{body}"
-
-    path.write_text(new_content, encoding="utf-8")
-    return True
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
