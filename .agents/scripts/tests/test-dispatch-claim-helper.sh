@@ -470,21 +470,21 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 		exit 0
 	fi
 
-	if [[ "${MOCK_INCLUDE_DISPATCH:-false}" == "true" ]]; then
-		jq -n \
-			--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
-			--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" '
-			[
-				{id: 999, body: ("DISPATCH_CLAIM nonce=claim-only runner=mockrunner ts=" + $claim_ts + " max_age_s=300"), created_at: $claim_ts},
-				{id: 1000, body: "Dispatching worker (deterministic).", created_at: $dispatch_ts}
-			] | map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"})
-		'
-		exit 0
-	fi
-
-	jq -n --arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" '
+	call=1
+	[[ ! -f "${local_state_dir}/comment_calls" ]] || call=$(( $(<"${local_state_dir}/comment_calls") + 1 ))
+	printf '%s' "$call" >"${local_state_dir}/comment_calls"
+	[[ "${MOCK_REFRESH_FAIL:-false}" != true || "$call" -eq 1 ]] || exit 1
+	jq -n --arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" --argjson call "$call" \
+		--arg device "${MOCK_CLAIM_DEVICE:-orphan-device}" --arg session "${MOCK_CLAIM_SESSION:-issue-42}" \
+		--arg expiry "${MOCK_CLAIM_EXPIRY-1}" --arg event "${MOCK_NEW_EVENT:-}" '
 		[
-			{id: 999, body: ("DISPATCH_CLAIM nonce=claim-only runner=mockrunner ts=" + $claim_ts + " max_age_s=300"), created_at: $claim_ts}
+			{id: 999, body: ("DISPATCH_CLAIM nonce=claim-only runner=mockrunner ts=" + $claim_ts +
+				" max_age_s=300 lease_token=claim-only device=" + $device + " session=" + $session +
+				" phase=prelaunch" + (if $expiry == "missing" then "" else " expires_at=" + $expiry end)), created_at: $claim_ts},
+			(if env.MOCK_INCLUDE_DISPATCH == "true" then
+				{id:1000, body:"Dispatching worker (deterministic).", created_at:env.MOCK_DISPATCH_CREATED_AT} else empty end),
+			(if $call > 1 and $event != "" then
+				{id:1001, body:$event, created_at:$claim_ts} else empty end)
 		] | map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"})
 	'
 	exit 0
@@ -1462,6 +1462,7 @@ test_check_releases_claim_only_orphan() {
 	output=$(PATH="${mock_path}:$PATH" \
 		MOCK_GH_STATE_DIR="$tmp_dir" \
 		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		AIDEVOPS_DEVICE_ID=orphan-device \
 		MOCK_ASSIGNEE_COUNT=0 \
 		DISPATCH_CLAIM_MAX_AGE=600 \
 		DISPATCH_CLAIM_ORPHAN_GRACE=120 \
@@ -1544,6 +1545,7 @@ test_check_releases_claim_with_uncorrelated_launch_text() {
 		MOCK_GH_STATE_DIR="$tmp_dir" \
 		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
 		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
+		AIDEVOPS_DEVICE_ID=orphan-device \
 		MOCK_INCLUDE_DISPATCH=true \
 		MOCK_ASSIGNEE_COUNT=0 \
 		DISPATCH_CLAIM_MAX_AGE=600 \
@@ -1563,6 +1565,44 @@ test_check_releases_claim_with_uncorrelated_launch_text() {
 		print_result "orphan release binds the snapshot claim identity" 1 "missing or incorrectly bound release marker"
 	fi
 	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Automatic release fails closed on uncertain ownership, expiry or live events.
+#######################################
+test_orphan_release_revalidation() {
+	local scenario="" tmp_dir="" mock_path="" output="" status=0 expiry="" device="" session="" event="" fail=""
+	for scenario in missing zero malformed negative device session renewal ready launch refresh_failure; do
+		tmp_dir=$(mktemp -d)
+		mock_path=$(create_claim_orphan_mock_gh "$tmp_dir")
+		expiry=1 device=orphan-device session=issue-42 event="" fail=false
+		case "$scenario" in
+		missing) expiry=missing ;;
+		zero) expiry=0 ;;
+		malformed) expiry=invalid ;;
+		negative) expiry=-1 ;;
+		device) device=another-device ;;
+		session) session=another-session ;;
+		renewal) event="DISPATCH_LEASE phase=prelaunch lease_token=claim-only device=orphan-device session=issue-42 expires_at=4102444800" ;;
+		ready) event="DISPATCH_LEASE phase=ready lease_token=claim-only device=orphan-device session=issue-42 expires_at=4102444800" ;;
+		launch) event="Dispatching worker lease_token=claim-only device=orphan-device session=issue-42 claim_id=999" ;;
+		refresh_failure) fail=true ;;
+		esac
+		status=0
+		output=$(PATH="${mock_path}:$PATH" MOCK_GH_STATE_DIR="$tmp_dir" \
+			MOCK_CLAIM_CREATED_AT="$(iso_seconds_ago 300)" MOCK_CLAIM_EXPIRY="$expiry" \
+			MOCK_CLAIM_DEVICE="$device" MOCK_CLAIM_SESSION="$session" MOCK_NEW_EVENT="$event" MOCK_REFRESH_FAIL="$fail" \
+			AIDEVOPS_DEVICE_ID=orphan-device AIDEVOPS_PR_CHECKPOINT_SESSION=issue-42 \
+			DISPATCH_CLAIM_MAX_AGE=600 DISPATCH_CLAIM_ORPHAN_GRACE=120 \
+			"$CLAIM_HELPER" check 42 owner/repo 2>&1) || status=$?
+		if [[ "$status" -eq 0 && "$output" == *ACTIVE_CLAIM* && ! -f "${tmp_dir}/release_body.txt" ]]; then
+			print_result "orphan release preserves claim on $scenario" 0
+		else
+			print_result "orphan release preserves claim on $scenario" 1 "status=$status output=$output"
+		fi
+		rm -rf "$tmp_dir"
+	done
 	return 0
 }
 
@@ -2192,6 +2232,7 @@ main() {
 	test_check_releases_claim_only_orphan
 	test_check_preserves_fresh_claim_only_marker
 	test_check_releases_claim_with_uncorrelated_launch_text
+	test_orphan_release_revalidation
 	test_lease_parser_binds_authenticated_generations
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
