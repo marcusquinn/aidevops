@@ -9,6 +9,8 @@
 # anything itself, so every cleaner keeps its own safety gates:
 #   tmp            system-cleanup.sh (retention window, moves to Trash)
 #   worktrees      cleanup-worktrees-async-helper.sh (merged/closed, guarded)
+#   artefacts      worktree-artefact-reclaim.sh (ignored build output in idle
+#                  linked worktrees; cwd/ownership/recent-edit vetoes, Trash)
 #   opencode       opencode-db-maintenance-helper.sh auto (live-DB skips,
 #                  isolated DBs, superseded layout-migration backups)
 #   observability  observability-helper.sh retention-maintenance (verified
@@ -23,6 +25,8 @@
 # Environment:
 #   STORAGE_CLEANUP_SIZE_TIMEOUT     Seconds per sizing call (default 30)
 #   STORAGE_CLEANUP_TMP_MAX_SECONDS  tmp apply work budget (default 300)
+#   STORAGE_CLEANUP_ARTEFACT_MAX_SECONDS  artefacts apply work budget (default 300)
+#   AIDEVOPS_WORKTREE_IDLE_DAYS      artefacts idle threshold in days (default 14)
 #   AIDEVOPS_WORKTREE_BASE_DIR       Linked-worktree base (default: worktree-paths.sh)
 
 set -uo pipefail
@@ -33,13 +37,15 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=./worktree-paths.sh
 source "${SCRIPT_DIR}/worktree-paths.sh"
 
-readonly SC_STORES="tmp worktrees opencode observability"
+readonly SC_STORES="tmp worktrees artefacts opencode observability"
 readonly SC_SCHEDULE_NAME="storage-hygiene"
 readonly SC_APPLY="apply" SC_DRY_RUN="dry-run"
 SC_SIZE_TIMEOUT="${STORAGE_CLEANUP_SIZE_TIMEOUT:-30}"
 [[ "$SC_SIZE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || SC_SIZE_TIMEOUT=30
 SC_TMP_MAX_SECONDS="${STORAGE_CLEANUP_TMP_MAX_SECONDS:-300}"
 [[ "$SC_TMP_MAX_SECONDS" =~ ^[0-9]+$ ]] || SC_TMP_MAX_SECONDS=300
+SC_ARTEFACT_MAX_SECONDS="${STORAGE_CLEANUP_ARTEFACT_MAX_SECONDS:-300}"
+[[ "$SC_ARTEFACT_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]] || SC_ARTEFACT_MAX_SECONDS=300
 # Symlink lock: the link target is the holder PID, so the lock and its owner
 # are published in one atomic syscall (no empty-lock window).
 SC_LOCK="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}/storage-cleanup.lock"
@@ -64,6 +70,7 @@ _sc_store_paths() {
 	case "$store" in
 	tmp) printf '%s\n' "${AIDEVOPS_TEMP_DIR:-${workspace}/tmp}" ;;
 	worktrees) aidevops_worktree_base_dir_configured ;;
+	artefacts) ;; # Inside the worktrees total; the preview reports eligible bytes.
 	opencode)
 		printf '%s\n' "${XDG_DATA_HOME:-${HOME}/.local/share}/opencode" \
 			"${workspace}/work/opencode-interactive" \
@@ -81,6 +88,7 @@ _sc_store_cleaner() {
 	case "$store" in
 	tmp) printf '%s\n' "system-cleanup.sh: entries older than ${AIDEVOPS_TMP_RETENTION_DAYS:-7} days move to Trash" ;;
 	worktrees) printf '%s\n' "cleanup-worktrees-async-helper.sh: merged/closed worktrees, guarded removal" ;;
+	artefacts) printf '%s\n' "worktree-artefact-reclaim.sh: ignored build output in worktrees idle ${AIDEVOPS_WORKTREE_IDLE_DAYS:-14}+ days moves to Trash" ;;
 	opencode) printf '%s\n' "opencode-db-maintenance-helper.sh auto: VACUUM, isolated DBs, layout backups" ;;
 	observability) printf '%s\n' "observability-helper.sh retention-maintenance: verified archives" ;;
 	*) return 1 ;;
@@ -165,7 +173,10 @@ cmd_report() {
 	printf 'aidevops storage report (read-only; nothing is deleted)\n\n'
 	printf '%-14s %-9s %s\n' "STORE" "SIZE" "OWNING CLEANER"
 	for store in $SC_STORES; do
-		if kb=$(_sc_store_kb "$store"); then
+		if [[ "$store" == "artefacts" ]]; then
+			# Counted inside worktrees; eligibility needs the bounded preview.
+			size="(in wt)"
+		elif kb=$(_sc_store_kb "$store"); then
 			size=$(_sc_human_kb "$kb")
 		else
 			size="?"
@@ -178,7 +189,6 @@ cmd_report() {
 	if [[ "$timed_out" -eq 1 ]]; then
 		printf '\n? = sizing stopped after %ss; set STORAGE_CLEANUP_SIZE_TIMEOUT=300 for a full total.\n' "$SC_SIZE_TIMEOUT"
 	fi
-	printf '\nNot automated yet: build output in idle worktrees (target/, node_modules/, .next/), GH#35242.\n'
 	printf '\nPreview one store:  aidevops cleanup <%s>\n' "${SC_STORES// /|}"
 	printf 'Reclaim space:      aidevops cleanup all --apply\n'
 	printf 'Daily routine r922: %s\n' "$(_sc_schedule_state)"
@@ -197,6 +207,16 @@ _sc_preview_tmp() {
 		printf '  ... %s more (full list: system-cleanup.sh --dry-run)\n' "$((total - shown))"
 	fi
 	printf '%s\n' "$out" | grep -v '^\[dry-run\]'
+	return "$rc"
+}
+
+# Summarise the artefact dry run per worktree (not per directory) so a large
+# monorepo does not flood an `all` preview.
+_sc_preview_artefacts() {
+	local out="" rc=0
+	out=$(bash "${SCRIPT_DIR}/worktree-artefact-reclaim.sh" --max-seconds 60) || rc=$?
+	printf '%s\n' "$out" | grep -v "dry-run path=" || true
+	printf 'Apply moves only ignored node_modules/.next/.turbo/dist/build, Cargo target/ and .hermit caches to Trash.\n'
 	return "$rc"
 }
 
@@ -223,6 +243,7 @@ _sc_dry_run_store() {
 		printf 'Linked worktrees: %s under %s\n' "$(_sc_worktree_count)" "$(aidevops_worktree_base_dir_configured)"
 		printf 'Apply removes only worktrees whose branches are merged or closed; dirty work is archived first.\n'
 		;;
+	artefacts) _sc_preview_artefacts || rc=$? ;;
 	opencode)
 		printf 'Superseded/expired layout-migration backups (dry run):\n'
 		bash "${SCRIPT_DIR}/repo-layout-migrate-helper.sh" prune || rc=$?
@@ -254,6 +275,7 @@ _sc_apply_store() {
 		CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0 bash "${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh" || rc=$?
 		_sc_last_worktree_outcome
 		;;
+	artefacts) bash "${SCRIPT_DIR}/worktree-artefact-reclaim.sh" --force --max-seconds "$SC_ARTEFACT_MAX_SECONDS" || rc=$? ;;
 	opencode) bash "${SCRIPT_DIR}/opencode-db-maintenance-helper.sh" auto || rc=$? ;;
 	observability)
 		bash "${SCRIPT_DIR}/observability-helper.sh" retention-maintenance --apply \

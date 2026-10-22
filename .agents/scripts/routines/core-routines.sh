@@ -1130,6 +1130,7 @@ having to remember a manual cleanup:
 |-------|---------|
 | tmp | \`system-cleanup.sh --force\` (retention window, moves to Trash) |
 | worktrees | \`cleanup-worktrees-async-helper.sh\` (merged/closed, guarded removal) |
+| artefacts | \`worktree-artefact-reclaim.sh --force\` (ignored build output in idle worktrees, to Trash) |
 | opencode | \`opencode-db-maintenance-helper.sh auto\` (idle DBs, layout backups) |
 | observability | \`observability-helper.sh retention-maintenance --apply\` |
 

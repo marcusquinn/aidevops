@@ -1179,31 +1179,7 @@ cleanup_stale_opencode() {
 		"${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" --force --max-seconds "$_scratch_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || _scratch_rc=1
 	fi
 	_pulse_reap_docker_resources || true
-	_pulse_reclaim_idle_worktree_artefacts || true
 	return "$_scratch_rc"
-}
-
-# GH#35242: daily, bounded scan for ignored, regenerable build output in idle
-# linked worktrees. Report-only until AIDEVOPS_WORKTREE_ARTEFACT_RECLAIM=1;
-# the helper re-verifies ownership, live cwd, recent edits and Git ignore state.
-_pulse_reclaim_idle_worktree_artefacts() {
-	local _helper="${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-artefact-reclaim.sh"
-	local _sentinel="${HOME}/.aidevops/cache/worktree-artefact-reclaim-last-run"
-	local _budget="${PULSE_WORKTREE_ARTEFACT_MAX_SECONDS:-60}"
-	[[ -f "$_helper" ]] || return 0
-	[[ "$_budget" =~ ^[1-9][0-9]*$ ]] || _budget=60
-	# A sentinel younger than one day means this host already scanned today.
-	if [[ -f "$_sentinel" ]] && [[ -n "$(find "$_sentinel" -mmin -1440 2>/dev/null)" ]]; then
-		return 0
-	fi
-	mkdir -p "${_sentinel%/*}" 2>/dev/null || return 0
-	touch "$_sentinel" 2>/dev/null || return 0
-	if [[ "${AIDEVOPS_WORKTREE_ARTEFACT_RECLAIM:-0}" == "1" ]]; then
-		bash "$_helper" --force --max-seconds "$_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || true
-	else
-		bash "$_helper" --max-seconds "$_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || true
-	fi
-	return 0
 }
 
 # GH#34285: reap aidevops-labelled (sh.aidevops.owner=1) Docker test stacks

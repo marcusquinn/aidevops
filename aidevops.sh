@@ -2166,7 +2166,7 @@ _main_dispatch_cleanup() {
 		shift || true
 		_dispatch_helper "local-branch-cleanup-helper.sh" "local-branch-cleanup-helper.sh" "$@"
 		;;
-	report | status | all | tmp | worktrees | opencode | observability)
+	report | status | all | tmp | worktrees | artefacts | opencode | observability)
 		# GH#35245: storage stores route to their existing owning cleaners.
 		_dispatch_helper "$storage_helper" "$storage_helper" "$@"
 		return $?
@@ -2177,7 +2177,7 @@ _main_dispatch_cleanup() {
 		echo "Storage (dry-run unless --apply):"
 		echo "  (no args), report Sizes of aidevops-owned stores and their cleaners"
 		echo "  all [--apply]     Preview or clean every store"
-		echo "  tmp|worktrees|opencode|observability [--apply]  One store"
+		echo "  tmp|worktrees|artefacts|opencode|observability [--apply]  One store"
 		echo "  Daily automatic run: routine r922 Storage hygiene (installed by setup)"
 		echo ""
 		echo "Branches (dry-run unless --apply):"
@@ -2192,7 +2192,7 @@ _main_dispatch_cleanup() {
 		echo "  --apply           Delete safe candidates"
 		echo ""
 		;;
-	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try report|all|tmp|worktrees|opencode|observability|branches|local-branches|help)"; return 1 ;;
+	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try report|all|tmp|worktrees|artefacts|opencode|observability|branches|local-branches|help)"; return 1 ;;
 	esac
 	return 0
 }

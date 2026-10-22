@@ -829,7 +829,7 @@ _storage_inventory_records() {
 	# GH#35242: the base also holds protected source, so its total stays
 	# protected; worktree-artefact-reclaim.sh owns bounded per-worktree
 	# eligibility for ignored, regenerable build output.
-	_storage_emit_record "worktree-base" "$STORAGE_PRODUCER_WORKTREE" "Linked worktrees and build output" "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}" "$framework_owner" "$active_class" "worktree-helper clean; idle ignored build output: worktree-artefact-reclaim.sh (14 idle days, allowlist, live cwd/ownership veto)" "$protected_disposition" "live worktrees and uncommitted build output" "Use worktree-helper.sh clean; worktree-artefact-reclaim.sh --max-seconds 60 for a dry run (pulse reclaims only with AIDEVOPS_WORKTREE_ARTEFACT_RECLAIM=1)"
+	_storage_emit_record "worktree-base" "$STORAGE_PRODUCER_WORKTREE" "Linked worktrees and build output" "${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}" "$framework_owner" "$active_class" "worktree-helper clean; idle ignored build output: worktree-artefact-reclaim.sh (14 idle days, allowlist, live cwd/ownership veto)" "$protected_disposition" "live worktrees and uncommitted build output" "Use worktree-helper.sh clean; preview idle build output with aidevops cleanup artefacts (worktree-artefact-reclaim.sh)"
 	_storage_emit_runtime_bundle_record
 	_storage_observability_record
 	_storage_worktree_recovery_record
