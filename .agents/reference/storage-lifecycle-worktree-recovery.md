@@ -174,7 +174,26 @@ It reuses migration/retirement guards across all named recovery buckets, not onl
 Authority `verified-git-changes/v1` requires schema-3/4 untracked preservation, completed original
 removal and an available external base. Manual plans are not adopted; interrupted automatic
 journals resume without treating missing paths as success. Unsupported/active sources remain intact.
-Deploy on each machine and measure actual reclaimed space; merge alone does neither.
+Deploy on each machine and measure actual reclaimed space; merge alone does neither. Use the [Pulse host rollout procedure](#pulse-host-rollout-and-verification).
+
+## Pulse host rollout and verification
+
+A merged PR, matching `VERSION` or successful service exit is not rollout acceptance. Verify each approved Pulse host independently; keep host aliases, paths, logs and task content in private operational storage, never in public issues or this file.
+
+1. **Source and inventory:** every dependency merge commit must be an ancestor of the deployment revision (`git merge-base --is-ancestor <merge-commit> <deploy-rev>`); never deploy unmerged branch code. Take hosts only from operator-approved secure configuration: SSH config entries, GitHub runner logins and claim comments are not approval or access evidence. Unlisted or unreachable hosts stay `unverified`.
+2. **Baseline (read-only):** `~/.aidevops/.deployed-sha` versus the deployment revision; sha256 of installed lifecycle scripts versus the source worktree; `worktree-lifecycle-helper.sh report --summary` (registry states, archive bytes, free bytes, scheduler); user scheduler status (`systemctl --user list-timers` on Linux, launchd elsewhere); `df` and user quota where the host provides `quota`.
+3. **Deploy:** use the existing auto-update or `setup.sh --non-interactive` / `--stage agents` from a linked worktree of the merged revision. Never patch installed files, restart or kill running workers, or delete their runtime bundles to force adoption.
+4. **Canary:** on one capable host run the focused dependency tests from the merged source (`test-dispatch-single-issue-helper.sh`, `test-worktree-managed-lifetime.py`, `test-worktree-archive-lifecycle.py`). Then confirm a new real launch through `worktree-managed-lifetime.py status <worktree>`: `created_by`/launch `provenance`, generation, backend and unit/cgroup binding must be present. Older launches keep their recorded generation.
+5. **Cleanup route and fleet:** confirm in `cleanup_worktrees.log` that the normal Pulse cycle runs `lifecycle-reconcile` and `recovery-maintenance` (`aidevops.worktree-recovery-compaction-pass/v1`) with durable outcomes. Report `source_bytes_retired` and per-pass reclaimed bytes separately from concurrent growth; never lower age thresholds or bypass guards to show progress. After canary acceptance roll out sequentially; stop at the first reproducible regression and record remaining hosts plus the resume condition.
+
+**Rollback:** redeploy the previous merged revision with the same tooling. Keep registry rows, archives, journals, receipts and quarantined transactions; older readers fail closed on newer schemas rather than discarding them. **Status:** `verified` (every step evidenced on the host), `partial` (deployed and observed, criteria open) or `unverified` (no approved access or evidence); only `verified` counts toward completion.
+
+**GH#35298 record:** deployment revision `25ed1c4f3` includes GH#35295 (`7e8d6e485`), GH#35296 (`07eed271a`) and GH#35314 (`b7e8cbdfd`).
+
+| Host | Platform / scheduler | Status | Evidence summary |
+| --- | --- | --- | --- |
+| canary-1 (dispatching Pulse host) | Linux, user systemd | partial | Installed SHA and lifecycle-script checksums match the revision; dispatch (94/94) and managed-lifetime tests passed; archive lifecycle 98/101, with compact, automatic-retirement and manual-removal fixtures exceeding their 60s timeout under host load; a new Pulse launch recorded scheduled provenance, generation and a systemd-user-service binding; registry sampled running and sealed generations; the cleanup cycle ran reconcile and compaction with durable `retained` outcomes and 0 source bytes retired; `quota` not installed (`df` only). Open: retention backlog (hard-link/special-permission and process-unavailable reasons, deadline-bounded passes, a timed-out dry run) and one preserved failed compact capture |
+| Other Pulse hosts | Unknown | unverified | No approved host inventory or remote access in secure local configuration; operator input required |
 
 ## Inventory and retention planning
 
