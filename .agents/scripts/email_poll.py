@@ -38,13 +38,14 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from email_poll_imap import (  # noqa: F401 - compatibility exports
-    _connect_imap,
-    _search_uids_since,
-    _uid_fetch_selected,
-    _parse_fetch_response,
-    _uid_fetch_since,
-    _uid_fetch_since_date,
+# Explicit compatibility exports preserve the original import surface.
+from email_poll_imap import (
+    _connect_imap as _connect_imap,
+    _search_uids_since as _search_uids_since,
+    _uid_fetch_selected as _uid_fetch_selected,
+    _parse_fetch_response as _parse_fetch_response,
+    _uid_fetch_since as _uid_fetch_since,
+    _uid_fetch_since_date as _uid_fetch_since_date,
 )
 from email_collection_receipts import ReceiptContext, write_collection_receipt
 from email_match_rules import (

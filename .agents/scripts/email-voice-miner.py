@@ -59,19 +59,19 @@ from pathlib import Path
 from typing import Optional
 
 # Re-export public surface for backwards compatibility
-from email_voice_imap import (  # noqa: F401
-    SENT_FOLDER_CANDIDATES,
-    connect_imap,
-    detect_sent_folder,
-    fetch_sent_emails,
-    _decode_folder_entry,
-    _extract_folder_name,
-    _list_imap_folders,
-    _find_sent_by_special_use,
-    _find_sent_by_name,
-    _select_imap_folder,
-    _fetch_message_ids,
-    _parse_fetched_message,
+from email_voice_imap import (
+    SENT_FOLDER_CANDIDATES as SENT_FOLDER_CANDIDATES,
+    connect_imap as connect_imap,
+    detect_sent_folder as detect_sent_folder,
+    fetch_sent_emails as fetch_sent_emails,
+    _decode_folder_entry as _decode_folder_entry,
+    _extract_folder_name as _extract_folder_name,
+    _list_imap_folders as _list_imap_folders,
+    _find_sent_by_special_use as _find_sent_by_special_use,
+    _find_sent_by_name as _find_sent_by_name,
+    _select_imap_folder as _select_imap_folder,
+    _fetch_message_ids as _fetch_message_ids,
+    _parse_fetched_message as _parse_fetched_message,
 )
 from email_voice_patterns import (  # noqa: F401
     GREETING_PATTERNS,
