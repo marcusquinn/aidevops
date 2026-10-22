@@ -35,8 +35,10 @@
 #   check                — report readiness; does opencode.db exist, is it locked?
 #   report               — human-readable DB stats (size, row counts, fragmentation)
 #   maintain [--force]   — run maintenance; aborts if opencode processes active
-#   maintenance-window    — stop pulse/headless workers, optionally archive,
-#                          maintain, then restart pulse (explicitly disruptive)
+#   maintenance-window    — stop pulse, drain in-flight headless workers, then
+#                          archive + maintain every inventory DB (default plus
+#                          isolated per-project DBs) that no process holds open,
+#                          then restart pulse (explicitly disruptive)
 #   auto                 — run maintenance only if safe (no active processes);
 #                          used by the r913 weekly routine. Silent no-op if
 #                          opencode is not installed.
@@ -124,6 +126,10 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 [[ "$WAL_LARGE_THRESHOLD_MB" =~ ^[0-9]+$ ]] && WAL_LARGE_THRESHOLD_MB=$((10#$WAL_LARGE_THRESHOLD_MB)) || WAL_LARGE_THRESHOLD_MB=500
 : "${MAINTENANCE_WINDOW_KEEP_SESSIONS:=500}"  # maintenance-window count target
 : "${MAINTENANCE_WINDOW_RETENTION_DAYS:=30}" # maintenance-window age target
+: "${MAINTENANCE_WINDOW_DRAIN_TIMEOUT:=600}"  # max seconds to wait for headless workers
+: "${MAINTENANCE_WINDOW_DRAIN_POLL:=10}"      # seconds between drain polls
+# Headless workers run `opencode run ...`; interactive TUIs/servers do not.
+readonly HEADLESS_WORKER_PATTERN='(^|/)\.?opencode run( |$)'
 # Scheduler knobs: safe default is weekly Sun 04:00 running non-disruptive auto.
 : "${OPENCODE_DB_MAINTENANCE_HOUR:=4}"
 : "${OPENCODE_DB_MAINTENANCE_MINUTE:=0}"
@@ -1093,20 +1099,111 @@ cmd_maintain() {
 # -----------------------------------------------------------------------------
 # Subcommand: maintenance-window
 # -----------------------------------------------------------------------------
-# Explicitly disruptive run for off-hours windows: stop aidevops-managed pulse
-# processes, archive old sessions, run DB maintenance, then restart pulse even
-# when a step fails. Interactive OpenCode TUIs are not stopped; they require
-# --force-opencode so the operator consciously accepts the risk.
+# Explicitly disruptive run for off-hours windows. The parent stops the
+# aidevops-managed pulse (no new workers), drains in-flight headless
+# `opencode run` workers with a bounded wait, then visits the same DB inventory
+# as `auto` (default DB plus isolated per-project DBs). Each DB is gated on its
+# exact lsof holders, so a TUI open on one project skips only that DB instead of
+# aborting the whole run. Pulse restarts even when a step fails. Interactive
+# TUIs are never stopped; --force-opencode maintains held DBs anyway.
+
+# _headless_worker_count — in-flight headless `opencode run` workers.
+_headless_worker_count() {
+	local pids
+	pids=$(pgrep -f "$HEADLESS_WORKER_PATTERN" 2>/dev/null || true)
+	printf '%s\n' "$pids" | awk 'NF' | sort -u | wc -l | tr -d ' '
+	return 0
+}
+
+# _drain_headless_workers <timeout_seconds> — wait (never kill) for headless
+# workers to finish. Pulse is already stopped, so the count only falls. On
+# timeout, continue: per-DB holder checks still protect any DB a worker holds.
+_drain_headless_workers() {
+	local timeout="$1"
+	local poll="$MAINTENANCE_WINDOW_DRAIN_POLL"
+	local waited=0
+	local count
+	[[ "$poll" =~ ^[1-9][0-9]*$ ]] || poll=10
+	count=$(_headless_worker_count)
+	if [[ "$count" -eq 0 ]]; then
+		print_info "No in-flight headless workers to drain"
+		return 0
+	fi
+	if [[ "$timeout" -eq 0 ]]; then
+		print_info "Worker drain disabled; ${count} headless worker(s) still running (per-DB holder checks still apply)"
+		return 0
+	fi
+	print_info "Draining ${count} in-flight headless worker(s), up to ${timeout}s (pulse is stopped, so no new workers start)..."
+	while [[ "$count" -gt 0 && "$waited" -lt "$timeout" ]]; do
+		sleep "$poll"
+		waited=$((waited + poll))
+		count=$(_headless_worker_count)
+		print_info "  drain: ${count} worker(s) remaining after ${waited}s"
+	done
+	if [[ "$count" -gt 0 ]]; then
+		print_warning "Drain timeout: ${count} headless worker(s) still running; continuing without killing them (any DB they hold is skipped)"
+		return 0
+	fi
+	print_success "Headless workers drained"
+	return 0
+}
+
+# _maintenance_window_db <force> <keep_sessions> <retention_days> <skip_archive>
+# Single-DB body; runs in an OPENCODE_MAINTENANCE_SINGLE_DB=1 child so the
+# readonly DB paths, state dir, and exact holder count target that DB only.
+# Returns 0 maintained, 2 skipped (held open), other values on failure.
+_maintenance_window_db() {
+	local force_opencode="$1"
+	local keep_sessions="$2"
+	local retention_days="$3"
+	local skip_archive="$4"
+
+	if ! _opencode_installed; then
+		print_info "DB missing — nothing to maintain: $OPENCODE_DB"
+		return 0
+	fi
+	local active_count
+	active_count=$(_opencode_process_count)
+	if [[ "$active_count" -gt 0 ]] && [[ "$force_opencode" != true ]]; then
+		print_warning "Skipping ${OPENCODE_DB}: ${active_count} process(es) hold it open — close those OpenCode sessions or pass --force-opencode"
+		_log INFO "maintenance-window: skipped, ${active_count} holder(s)"
+		return 2
+	fi
+
+	local rc=0
+	if [[ "$skip_archive" != true ]] && [[ -x "$OPENCODE_DB_ARCHIVE_HELPER" ]]; then
+		print_info "Archiving old OpenCode sessions (inactive ${retention_days}+ days and outside newest ${keep_sessions})..."
+		# env: OPENCODE_ARCHIVE_DB is readonly here, so a bare prefix assignment fails.
+		env OPENCODE_DB_PATH="$OPENCODE_DB" OPENCODE_ARCHIVE_DB="$OPENCODE_ARCHIVE_DB" \
+			"$OPENCODE_DB_ARCHIVE_HELPER" archive --retention-days "$retention_days" --keep-sessions "$keep_sessions" --max-duration-seconds 300 || rc=$?
+		if [[ "$rc" -ne 0 ]]; then
+			print_warning "archive step failed (rc=${rc}); continuing to maintenance"
+		fi
+	fi
+
+	local maintain_args=()
+	if [[ "$force_opencode" == true ]]; then
+		maintain_args+=(--force)
+	fi
+	cmd_maintain ${maintain_args[@]+"${maintain_args[@]}"} || rc=$?
+
+	local integrity
+	integrity=$("$SQLITE3_BIN" "$OPENCODE_DB" "$SQLITE_QUICK_CHECK" 2>&1 || echo "error")
+	if [[ "$integrity" != "ok" ]]; then
+		print_error "post-maintenance quick_check failed: $integrity"
+		rc=1
+	else
+		print_success "post-maintenance quick_check: ok"
+	fi
+	return "$rc"
+}
 
 cmd_maintenance_window() {
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-
 	local force_opencode=false
 	local keep_sessions="$MAINTENANCE_WINDOW_KEEP_SESSIONS"
 	local retention_days="$MAINTENANCE_WINDOW_RETENTION_DAYS"
+	local drain_timeout="$MAINTENANCE_WINDOW_DRAIN_TIMEOUT"
 	local skip_archive=false
-	local arg
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -1120,6 +1217,9 @@ cmd_maintenance_window() {
 		--retention-days)
 			retention_days="${2:-}"; shift 2
 			;;
+		--drain-timeout)
+			drain_timeout="${2:-}"; shift 2
+			;;
 		--skip-archive)
 			skip_archive=true; shift
 			;;
@@ -1132,17 +1232,45 @@ cmd_maintenance_window() {
 
 	[[ "$keep_sessions" =~ ^[0-9]+$ ]] || { print_error "--keep-sessions must be a non-negative integer: ${keep_sessions}"; return 1; }
 	[[ "$retention_days" =~ ^[0-9]+$ ]] || { print_error "--retention-days must be a non-negative integer: ${retention_days}"; return 1; }
-	if ! _opencode_installed; then
-		print_info "opencode not installed — nothing to maintain"
-		return 0
-	fi
+	[[ "$drain_timeout" =~ ^[0-9]+$ ]] || { print_error "--drain-timeout must be a non-negative integer: ${drain_timeout}"; return 1; }
 	if ! _sqlite_available; then
 		print_error "sqlite3 CLI not available"
 		return 1
 	fi
 
+	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" == 1 ]]; then
+		_maintenance_window_db "$force_opencode" "$keep_sessions" "$retention_days" "$skip_archive"
+		return $?
+	fi
+	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$retention_days" "$skip_archive" "$drain_timeout"
+	return $?
+}
+
+# _maintenance_window_inventory <force> <keep_sessions> <retention_days> <skip_archive> <drain_timeout>
+# Parent run: stop pulse once, drain workers, then visit each inventory DB in a
+# single-DB child. Returns 1 on any failure, 2 when only holder skips occurred.
+_maintenance_window_inventory() {
+	local force_opencode="$1"
+	local keep_sessions="$2"
+	local retention_days="$3"
+	local skip_archive="$4"
+	local drain_timeout="$5"
+
+	local dbs=()
+	local db
+	while IFS= read -r -d '' db; do
+		dbs+=("$db")
+	done < <(opencode_db_inventory "$OPENCODE_DB")
+	if [[ "${#dbs[@]}" -eq 0 ]]; then
+		print_info "opencode not installed — nothing to maintain"
+		return 0
+	fi
+
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
 	if command -v "$PULSE_LIFECYCLE_HELPER" >/dev/null 2>&1; then
-		print_info "Stopping pulse for maintenance window..."
+		print_info "Stopping pulse for maintenance window (no new workers will start)..."
 		"$PULSE_LIFECYCLE_HELPER" stop || print_warning "pulse stop returned non-zero; continuing with DB holder checks"
 		local restart_cmd
 		restart_cmd=$(printf '%q start' "$PULSE_LIFECYCLE_HELPER")
@@ -1151,41 +1279,39 @@ cmd_maintenance_window() {
 		print_warning "pulse lifecycle helper not found; skipping pulse stop/start"
 	fi
 
-	local active_count
-	active_count=$(_opencode_process_count)
-	if [[ "$active_count" -gt 0 ]] && [[ "$force_opencode" != true ]]; then
-		print_warning "$active_count OpenCode DB holder(s) still active after stopping pulse"
-		print_info "maintenance-window stops pulse/headless workers only; close interactive TUIs or pass --force-opencode"
-		return 2
-	fi
+	_drain_headless_workers "$drain_timeout"
 
-	local rc=0
-	if [[ "$skip_archive" != true ]] && [[ -x "$OPENCODE_DB_ARCHIVE_HELPER" ]]; then
-		print_info "Archiving old OpenCode sessions (inactive ${retention_days}+ days and outside newest ${keep_sessions})..."
-		"$OPENCODE_DB_ARCHIVE_HELPER" archive --retention-days "$retention_days" --keep-sessions "$keep_sessions" --max-duration-seconds 300 || rc=$?
-		if [[ "$rc" -ne 0 ]]; then
-			print_warning "archive step failed (rc=${rc}); continuing to maintenance"
-		fi
-	fi
+	local child_args=(--keep-sessions "$keep_sessions" --retention-days "$retention_days")
+	[[ "$force_opencode" != true ]] || child_args+=(--force-opencode)
+	[[ "$skip_archive" != true ]] || child_args+=(--skip-archive)
 
-	local maintain_args=()
-	if [[ "$force_opencode" == true ]]; then
-		maintain_args+=(--force)
-	fi
-	cmd_maintain "${maintain_args[@]}" || rc=$?
+	local maintained=0 skipped=0 failed=0
+	local child_rc state_dir
+	for db in "${dbs[@]}"; do
+		state_dir="$STATE_DIR"
+		if [[ ! "$db" -ef "$OPENCODE_DB" ]]; then state_dir="${db%/*}/aidevops-maintenance"; fi
+		print_info "Maintenance window DB: $db"
+		child_rc=0
+		env OPENCODE_DB_PATH="$db" OPENCODE_ARCHIVE_DB="${db%/*}/opencode-archive.db" \
+			OPENCODE_MAINTENANCE_SINGLE_DB=1 OPENCODE_MAINTENANCE_STATE_DIR="$state_dir" \
+			bash "${BASH_SOURCE[0]}" maintenance-window "${child_args[@]}" || child_rc=$?
+		case "$child_rc" in
+		0) maintained=$((maintained + 1)) ;;
+		2) skipped=$((skipped + 1)) ;;
+		*) failed=$((failed + 1)) ;;
+		esac
+	done
 
-	local integrity
-	integrity=$("$SQLITE3_BIN" "$OPENCODE_DB" "$SQLITE_QUICK_CHECK" 2>&1 || echo "error")
-	if [[ "$integrity" != "ok" ]]; then
-		print_error "post-maintenance quick_check failed: $integrity"
-		rc=1
-	else
-		print_success "post-maintenance quick_check: ok"
-	fi
-
+	print_info "Maintenance window summary: ${maintained} maintained, ${skipped} skipped (held open), ${failed} failed"
 	trap - RETURN
 	_run_cleanups
-	return "$rc"
+	if [[ "$failed" -gt 0 ]]; then
+		return 1
+	fi
+	if [[ "$skipped" -gt 0 ]]; then
+		return 2
+	fi
+	return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -1215,7 +1341,7 @@ _prune_old_sessions() {
 	days=$("$OPENCODE_DB_ARCHIVE_HELPER" retention-days 2>/dev/null) || days=0
 	[[ "$days" =~ ^[0-9]+$ && "$days" -gt 0 ]] || return 0
 	_log INFO "auto: session retention ${days} days — pruning ${OPENCODE_DB}"
-	OPENCODE_DB_PATH="$OPENCODE_DB" OPENCODE_ARCHIVE_DB="${OPENCODE_DB%/*}/opencode-archive.db" \
+	env OPENCODE_DB_PATH="$OPENCODE_DB" OPENCODE_ARCHIVE_DB="${OPENCODE_DB%/*}/opencode-archive.db" \
 		"$OPENCODE_DB_ARCHIVE_HELPER" prune --older-than-days "$days" --apply --max-duration-seconds 300 || rc=$?
 	if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then
 		_log WARN "auto: session retention prune failed (rc=${rc}, non-fatal)"
@@ -1571,9 +1697,14 @@ Subcommands:
                          Includes active/WAL/archive sizes for isolated project DBs.
   maintain [--force]     Run maintenance. Aborts if opencode processes active
                          unless --force is passed (may cause session errors).
-  maintenance-window     Disruptive off-hours mode: stop pulse/headless workers,
-                         archive old sessions, maintain DB, quick_check, restart pulse.
-                         Pass --force-opencode to continue with interactive TUIs open.
+  maintenance-window     Disruptive off-hours mode: stop pulse (no new workers), wait
+                         for in-flight headless workers to finish (never killed),
+                         then archive + maintain + quick_check every inventory DB
+                         (default and isolated project DBs), restart pulse.
+                         Each DB is skipped while a process holds it open (exit 2);
+                         close those OpenCode sessions or pass --force-opencode.
+                         Options: --drain-timeout N (default 600, 0 = no wait),
+                         --retention-days N, --keep-sessions N, --skip-archive.
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
                          Visits isolated project DBs too, skipping each live DB.
@@ -1604,6 +1735,8 @@ Environment variables (advanced):
   WAL_LARGE_THRESHOLD_MB       Warn/report large WAL above this size (default 500)
   MAINTENANCE_WINDOW_KEEP_SESSIONS  Archive keep target for maintenance-window (default 500)
   MAINTENANCE_WINDOW_RETENTION_DAYS Preserve active /sessions history during maintenance-window (default 30)
+  MAINTENANCE_WINDOW_DRAIN_TIMEOUT  Max seconds maintenance-window waits for headless workers (default 600)
+  MAINTENANCE_WINDOW_DRAIN_POLL     Seconds between worker drain polls (default 10)
   OPENCODE_DB_MAINTENANCE_HOUR Scheduled local hour for install (default 4)
   OPENCODE_DB_MAINTENANCE_MINUTE Scheduled local minute for install (default 0)
   OPENCODE_DB_MAINTENANCE_MODE  Scheduler mode: auto or maintenance-window
@@ -1627,7 +1760,8 @@ State:
 Exit codes:
   0   success (including auto no-op)
   1   DB unreadable, integrity check failed, sqlite3 missing
-  2   opencode processes active (maintain without --force)
+  2   opencode processes active (maintain without --force); maintenance-window:
+      at least one DB skipped because it was held open
   10  partial success (some step failed)
 EOF
 }

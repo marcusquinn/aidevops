@@ -10,12 +10,15 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-SPEC = importlib.util.spec_from_file_location("chart", Path(__file__).parents[1] / "profile-contribution-chart.py")
+SCRIPTS = Path(__file__).parents[1]
+sys.path.insert(0, str(SCRIPTS))
+SPEC = importlib.util.spec_from_file_location("chart", SCRIPTS / "profile-contribution-chart.py")
 chart = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(chart)
 TODAY = dt.date(2026, 9, 5)
