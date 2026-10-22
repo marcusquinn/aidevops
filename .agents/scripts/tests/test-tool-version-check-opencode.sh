@@ -267,6 +267,11 @@ assert_eq "maintenance verifies launcher update" "yes" "$([[ "$prefix_output" ==
 prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefix_case/home/.local/bin:$prefix_case/tools:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --update --quiet)
 assert_eq "second maintenance run does not repeat OpenCode update" "no" "$([[ "$prefix_output" == *'opencode-ai@latest'* ]] && printf yes || printf no)"
 
+write_managed_shim "$prefix_case/home/.local/bin/opencode" "$prefix_case/system/bin/opencode"
+prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefix_case/home/.local/bin:$prefix_case/tools:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --update --quiet)
+assert_eq "already-current npm package repairs stale launcher" "1.19.4" "$("$prefix_case/home/.local/bin/opencode" --version)"
+assert_eq "already-current package needs no reinstall" "no" "$([[ "$prefix_output" == *'opencode-ai@latest'* ]] && printf yes || printf no)"
+
 for invalid_kind in wrong-version wrong-identity missing unmanaged; do
 	write_managed_shim "$prefix_case/home/.local/bin/opencode" "$prefix_case/system/bin/opencode"
 	cp "$prefix_case/valid-candidate" "$prefix_case/user prefix/bin/opencode"
