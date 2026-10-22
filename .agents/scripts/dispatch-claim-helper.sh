@@ -1700,8 +1700,8 @@ cmd_transition() {
 		_transition_deny claim_malformed
 		return 1
 	}
-	# Active claims exclude expired, released and terminal generations, so an
-	# absent record is only "unmatched"; it is never asserted to be expired.
+	# An absent record is only "unmatched". Conservative orphan filtering may
+	# retain an expired prelaunch claim; that record must not authorize renewal.
 	if [[ -z "$claim_record" ]]; then
 		_transition_deny lease_unmatched
 		return 1
@@ -1718,6 +1718,10 @@ cmd_transition() {
 	claim_session=$(printf '%s' "$claim_record" | jq -r '.session // ""' 2>/dev/null) || claim_fields_ok=0
 	if [[ "$claim_fields_ok" -ne 1 || ! "$current_expires_at" =~ ^[0-9]+$ || -z "$claim_author" ]]; then
 		_transition_deny claim_malformed
+		return 1
+	fi
+	if [[ "$current_expires_at" -gt 0 && "$current_expires_at" -lt "$(_now_epoch)" ]]; then
+		_transition_deny lease_unmatched
 		return 1
 	fi
 	current_device=$(_resolve_device_id)

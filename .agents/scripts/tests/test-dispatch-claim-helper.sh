@@ -1603,6 +1603,21 @@ test_orphan_release_revalidation() {
 		fi
 		rm -rf "$tmp_dir"
 	done
+	# Retaining an uncertain orphan in consensus must not let transition revive
+	# an already expired claim while assignment prevents automatic release.
+	tmp_dir=$(mktemp -d)
+	mock_path=$(create_claim_orphan_mock_gh "$tmp_dir")
+	status=0
+	output=$(PATH="${mock_path}:$PATH" MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_CLAIM_CREATED_AT="$(iso_seconds_ago 300)" MOCK_ASSIGNEE_COUNT=1 \
+		AIDEVOPS_DEVICE_ID=orphan-device DISPATCH_CLAIM_MAX_AGE=600 \
+		"$CLAIM_HELPER" transition ready 42 owner/repo claim-only issue-42 600 2>&1) || status=$?
+	if [[ "$status" -eq 1 && "$output" == *reason=lease_unmatched* && ! -f "${tmp_dir}/release_body.txt" ]]; then
+		print_result "retained expired orphan cannot authorize a lease transition" 0
+	else
+		print_result "retained expired orphan cannot authorize a lease transition" 1 "status=$status output=$output"
+	fi
+	rm -rf "$tmp_dir"
 	return 0
 }
 
