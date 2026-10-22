@@ -528,7 +528,7 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         compact = Mock(return_value={"bucket": bucket.name, "retired": False,
                                      "failure_code": "retirement:process-active", "failure_stage": "retirement"})
         with patch.object(retry.time, "time", return_value=1000) as clock, \
-                patch.object(retry.random, "uniform", side_effect=lambda lower, upper: lower), \
+                patch.object(retry, "randbelow", return_value=0), \
                 patch.object(retry, "free_space", return_value=10**10):
             for count, delay in enumerate((900, 3600, 21600, 86400, 86400), 1):
                 retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")

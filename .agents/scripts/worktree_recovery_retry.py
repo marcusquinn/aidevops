@@ -9,7 +9,7 @@ import hashlib
 import math
 import os
 from pathlib import Path
-from random import SystemRandom
+from secrets import randbelow
 import shutil
 import stat
 import subprocess
@@ -23,7 +23,6 @@ from worktree_recovery_diagnostics import (
 from worktree_recovery_migration_state import load, private_directory, publish
 from worktree_recovery_retry_identity import already_completed, observe as observe
 
-random = SystemRandom()
 SCHEMA = "aidevops.worktree-recovery-retry/v1"
 BACKOFF = (900, 3600, 21600, 86400)
 SPACE_FLOOR = 64 * 1024 * 1024
@@ -76,11 +75,11 @@ def completed(record):
 def finish(record, code, stage, now, space=None):
     record.update(failure_code=code, failure_stage=stage)
     if code == "migration:lock-busy":
-        delay = random.uniform(600, 900)
+        delay = 600 + randbelow(301)
     elif code in TRANSIENT:
         record["consecutive_failures"] += 1
         delay = BACKOFF[min(record["consecutive_failures"] - 1, 3)]
-        delay = min(86400, delay * random.uniform(1, 1.1))
+        delay = min(86400, delay * (1 + randbelow(101) / 1000))
     else:
         record["consecutive_failures"] += 1
         record.update(status="blocked", next_attempt_at=None)
