@@ -808,6 +808,57 @@ fi
 PCC_ALLOW_RELEASED=false
 PCC_LINK_KIND="closing"
 
+# GH#35363: a different runner's stale-assignment reset must resume the PR
+# author's exact checkpoint, with the same one-retry-per-head attention bound.
+export STUB_POST_DIR="${TEST_ROOT}/posts"
+STUB_COMMENTS_JSON="$(stall_comments stall-lease | jq -c '
+	map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=stale_assignment_reset") else . end))')"
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+DISPATCH_ARGS=""
+STATUS_CALLS=""
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *"assignee=worker-bot release=31 reason=stale_assignment_reset"* &&
+	"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 1111111111111111111111111111111111111111 worker-bot"* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' ]]; then
+	print_result "stale assignment reset resumes unassigned checkpoint bound to PR author" 0
+else
+	print_result "stale assignment reset resumes unassigned checkpoint bound to PR author" 1 \
+		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+fi
+
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_COMMENTS_JSON="$(jq -c 'map(. + [
+	{id:33,created_at:"2026-09-30T01:40:00Z",author_association:"COLLABORATOR",user:{login:"current-runner"},
+		body:"DISPATCH_CLAIM nonce=n2 runner=current-runner"},
+	{id:34,created_at:"2026-09-30T02:00:00Z",author_association:"OWNER",user:{login:"pulse-runner"},
+		body:"CLAIM_RELEASED reason=stale_assignment_reset runner=pulse-runner"}
+])' <<<"$STUB_COMMENTS_JSON")"
+DISPATCH_ARGS=""
+posts_before="$(post_count)"
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED* && "$output" == *"stalls=2"* &&
+	-z "$DISPATCH_ARGS" && "$(post_count)" -eq $((posts_before + 1)) ]]; then
+	print_result "second stale assignment reset posts attention without another dispatch" 0
+else
+	print_result "second stale assignment reset posts attention without another dispatch" 1 "output=${output:-missing}"
+fi
+posted_body="$(<"${STUB_POST_DIR}/post-$((posts_before + 1))")"
+STUB_COMMENTS_JSON="$(jq -c --arg body "$posted_body" 'map(. + [
+	{id:35,created_at:"2026-09-30T02:01:00Z",author_association:"OWNER",user:{login:"pulse-runner"},body:$body}
+])' <<<"$STUB_COMMENTS_JSON")"
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" &&
+	"$(post_count)" -eq $((posts_before + 1)) ]]; then
+	print_result "repeated stale reset sweep deduplicates exact-head attention" 0
+else
+	print_result "repeated stale reset sweep deduplicates exact-head attention" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+
 if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-revision.py"; then
 	print_result "revised checkpoint claims, worker lease lifecycle and durable progress" 0
 else

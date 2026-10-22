@@ -37,12 +37,12 @@ PCC_LINK_KIND="closing"
 PCC_ALLOW_RELEASED="false"
 _PCC_ATTENTION_MARKER="aidevops:blocked-checkpoint-attention"
 _PCC_STALL_ATTENTION_MARKER="aidevops:stalled-checkpoint-attention"
-# Stall/timeout release reasons (worker-activity-failure-families.jq
+# Stall/timeout and stale-assignment release reasons (worker-activity-failure-families.jq
 # "watchdog-stall" plus kill-site timeout classes) eligible for one automatic
 # exact-head continuation. Every other reason is excluded, except a `blocked`
 # release whose runtime recovery line names the runner-local capability class
 # (GH#34758): it needs no brief change or approval, only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
