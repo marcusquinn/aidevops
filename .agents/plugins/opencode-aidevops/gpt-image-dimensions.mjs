@@ -11,25 +11,48 @@ function pngDimensions(buffer) {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
 
+function jpegError() {
+  return new Error("Image provider returned a JPEG without dimensions.");
+}
+
+function readJpegMarker(buffer, start) {
+  if (buffer[start] !== 0xff) throw jpegError();
+  let offset = start;
+  while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+  return { marker: buffer[offset], offset: offset + 1 };
+}
+
+function isStandaloneJpegMarker(marker) {
+  return marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7);
+}
+
+function readJpegSegment(buffer, offset) {
+  if (offset + 2 > buffer.length) return null;
+  const length = buffer.readUInt16BE(offset);
+  const end = offset + length;
+  if (length < 2 || end > buffer.length) return null;
+  return { length, end };
+}
+
+function jpegFrameDimensions(buffer, marker, offset, segmentLength) {
+  if (!JPEG_FRAME_MARKERS.has(marker) || segmentLength < 7) return null;
+  return { width: buffer.readUInt16BE(offset + 5), height: buffer.readUInt16BE(offset + 3) };
+}
+
 function jpegDimensions(buffer) {
   let offset = 2;
   while (offset + 1 < buffer.length) {
-    if (buffer[offset] !== 0xff) throw new Error("Image provider returned a JPEG without dimensions.");
-    while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
-    const marker = buffer[offset];
-    offset += 1;
-    if (marker === 0xd9) break;
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-    if (offset + 2 > buffer.length) break;
-    const segmentLength = buffer.readUInt16BE(offset);
-    const segmentEnd = offset + segmentLength;
-    if (segmentLength < 2 || segmentEnd > buffer.length) break;
-    if (JPEG_FRAME_MARKERS.has(marker) && segmentLength >= 7) {
-      return { width: buffer.readUInt16BE(offset + 5), height: buffer.readUInt16BE(offset + 3) };
-    }
-    offset = segmentEnd;
+    const header = readJpegMarker(buffer, offset);
+    offset = header.offset;
+    if (header.marker === 0xd9) break;
+    if (isStandaloneJpegMarker(header.marker)) continue;
+    const segment = readJpegSegment(buffer, offset);
+    if (!segment) break;
+    const dimensions = jpegFrameDimensions(buffer, header.marker, offset, segment.length);
+    if (dimensions) return dimensions;
+    offset = segment.end;
   }
-  throw new Error("Image provider returned a JPEG without dimensions.");
+  throw jpegError();
 }
 
 function webpChunkDimensions(type, chunk) {
