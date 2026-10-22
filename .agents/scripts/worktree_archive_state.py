@@ -8,6 +8,7 @@ from pathlib import Path
 
 from worktree_archive_administration import administration, git
 from worktree_archive_auto_merge import auto_merge as auto_merge
+from worktree_archive_history import supported_history as supported_history
 from worktree_archive_merge_capture import (
     capture_merge as capture_merge, load_merge as load_merge,
     merge_digest as merge_digest, merge_pending as merge_pending,
@@ -85,32 +86,3 @@ def supported_administration(root, admin):
                 raise ValueError("private Git references require separate preservation")
         elif not entry.is_file():
             raise ValueError("unsupported Git administrative entry")
-
-
-def supported_history(root, admin, require_reachable_history=True):
-    if require_reachable_history:
-        revisions = git(root, "reflog", "show", "--format=%H", "HEAD")
-        previous = admin / "ORIG_HEAD"
-        if previous.exists():
-            if previous.is_symlink():
-                raise ValueError("symlinked Git administrative state")
-            revisions += previous.read_bytes() + b"\n"
-        # rev-list stops reading revisions at a blank line, so normalize ORIG_HEAD's
-        # trailing newline before appending the exclusion.
-        revisions = b"\n".join(line for line in revisions.splitlines() if line) + b"\n^HEAD\n"
-        if git(root, "rev-list", "--max-count=1", "--stdin", data=revisions):
-            raise ValueError("git_admin:unpreserved_history; reflog-only or previous HEAD history requires separate preservation")
-    if git(root, "for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/", "refs/rewritten/"):
-        raise ValueError("private worktree refs require separate preservation")
-    message = admin / "COMMIT_EDITMSG"
-    if message.exists():
-        if message.is_symlink():
-            raise ValueError("uncommitted message draft requires separate preservation")
-        draft = message.read_bytes().rstrip(b"\n")
-        if draft != git(root, "log", "-1", "--format=%B").rstrip(b"\n"):
-            # Switching branches or merging can leave a previously committed
-            # message here. Accept only an exact message in the archived ancestry.
-            committed = git(root, "log", "-1", "--format=%B", "--fixed-strings",
-                            "--grep=" + os.fsdecode(draft), "HEAD").rstrip(b"\n")
-            if not draft or committed != draft:
-                raise ValueError("uncommitted message draft requires separate preservation")

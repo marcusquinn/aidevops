@@ -27,149 +27,18 @@ sys.path.insert(0, str(HELPER.parent))
 
 import worktree_lifetime_archive as lifecycle
 import worktree_lifecycle_status as lifecycle_status
-import worktree_recovery_legacy_report as legacy_report
-from worktree_archive_administration import administration_files
 from worktree_recovery_producer_cases import ProducerCases
 from worktree_archive_merge_cases import MergeCases
 from worktree_archive_canonical_cases import CanonicalCases
+from worktree_archive_administration_cases import AdministrationCases
+from worktree_recovery_report_cases import RecoveryReportCases
 
 
-class ArchiveAdministration(unittest.TestCase):
-    def test_legacy_branches_requires_empty_independent_directory(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            admin = Path(temporary)
-            branches = admin / "branches"
-            branches.mkdir()
-            self.assertEqual(administration_files(admin, admin, False), {})
-            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
-                administration_files(admin, admin, True)
-            child = branches / "origin"
-            child.write_text("legacy remote\n")
-            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
-                administration_files(admin, admin, False)
-            child.unlink()
-            child.mkdir()
-            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
-                administration_files(admin, admin, False)
-            child.rmdir()
-            branches.rmdir()
-            branches.write_text("not a directory\n")
-            with self.assertRaisesRegex(ValueError, "^git_admin:unknown_entry:branches$"):
-                administration_files(admin, admin, False)
-            branches.unlink()
-            branches.symlink_to(admin, target_is_directory=True)
-            with self.assertRaisesRegex(ValueError, "^git_admin:symlink:branches$"):
-                administration_files(admin, admin, False)
+class LegacyRecoveryReport(RecoveryReportCases, unittest.TestCase):
+    pass
 
 
-class LegacyRecoveryReport(unittest.TestCase):
-    def test_name_contract_uses_pulse_generator_and_worktree_slug(self):
-        producer = (HELPER.parent / "pulse-dispatch-worker-launch.sh").read_text()
-        assignment = next(line.strip() for line in producer.splitlines()
-                          if line.strip().startswith('_branch="feature/auto-'))
-        command = 'issue_number=123; ' + assignment + '; source "$1"; aidevops_branch_slug "$_branch"'
-        bash = shutil.which("bash")
-        self.assertIsNotNone(bash)
-        result = subprocess.run(  # nosec B603 -- local trusted generator assignment and path helper
-            [str(Path(bash).resolve()), "-c", command, "name-contract", str(HELPER.parent / "worktree-paths.sh")],
-            capture_output=True, text=True, check=True, timeout=10)
-        source = "/fixture/repo-" + result.stdout.strip()
-        self.assertEqual(legacy_report.legacy_origin(source, "worktree-helper.sh", "recoverable-cleanup"), "pulse")
-
-    def test_name_contract_rejects_lookalikes_and_profile_sources(self):
-        valid = "/fixture/repo-feature-auto-20260101-120000-gh123"
-        for source in (valid + "-manual", valid + "/child", valid.replace("-gh123", ""),
-                       valid.replace("20260101", "20260231"), valid.replace("gh123", "gh-123"),
-                       valid.replace("-feature-auto-", "-fix-auto-"), "relative" + valid):
-            with self.subTest(source=source):
-                self.assertEqual(legacy_report.legacy_origin(source, "worktree-helper.sh", "recoverable-cleanup"), "unknown")
-        self.assertEqual(legacy_report.legacy_origin(valid, "profile-readme-helper.sh", "anything"), "profile")
-        self.assertEqual(legacy_report.legacy_origin(valid, "manual.sh", "recoverable-cleanup"), "unknown")
-
-    def test_legacy_policy_boundaries(self):
-        week = legacy_report.RETENTION_SECONDS
-        cases = [("pulse", week - 1, False, "within-retention"),
-                 ("pulse", week, False, "eligible-legacy-pulse"),
-                 ("pulse", None, False, "missing-timestamp"),
-                 ("pulse", -1, False, "missing-timestamp"),
-                 ("manual", week * 2, False, "manual-origin"),
-                 ("profile", week * 2, False, "non-pulse-profile"),
-                 ("unknown", week * 2, False, "unknown-origin"),
-                 ("pulse", week * 2, True, "lifecycle-path")]
-        for origin, age, managed, expected in cases:
-            with self.subTest(origin=origin, age=age, managed=managed):
-                self.assertEqual(legacy_report.legacy_decision(origin, age, managed), expected)
-
-    def test_legacy_report_never_promotes_dispatch_path_to_origin(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            bucket = root / "aidevops-worktree-cleanup-fixture"
-            metadata = bucket / ".aidevops-worktree-recovery"
-            metadata.mkdir(parents=True)
-            values = {"format": "aidevops-worktree-recovery-v2",
-                      "archive-complete": "aidevops-worktree-recovery-v2",
-                      "source-removal-outcome": "removed", "source-real": "/fixture/source",
-                      "source-inode": "1:2", "producer": "worktree-helper.sh",
-                      "producer-context": "recoverable-cleanup", "created-at": "2020-01-01T00:00:00Z"}
-            for name, value in values.items():
-                (metadata / name).write_text(value + "\n")
-            ledger = root / "ledger.jsonl"
-            ledger.write_text(json.dumps({"worktree_path": "/fixture/source"}) + "\n")
-            registry = root / "registry.db"
-            with closing(sqlite3.connect(registry)) as db:
-                db.execute("CREATE TABLE worktree_managed_lifetimes(path TEXT, record TEXT)")
-            result = legacy_report.report(root, registry, ledger)
-            self.assertEqual(result["reasons"], {"unknown-origin": 1})
-            self.assertEqual(result["ages"], {"at-least-7-days": 1})
-            self.assertEqual(result["dispatch_path_matches_not_origin_proof"], 1)
-            self.assertEqual(result["eligible_legacy_pulse"], 0)
-            self.assertFalse(result["deletion_authorized"])
-            self.assertNotIn("entries", result)
-            entry = legacy_report.report(root, registry, ledger, details=True)["entries"][0]
-            self.assertEqual(entry["bucket"], str(bucket))
-            self.assertEqual(entry["source_path"], "/fixture/source")
-            self.assertEqual(entry["source_inode"], "1:2")
-            (metadata / "source-real").write_text("/fixture/repo-feature-auto-20191231-120000-gh123\n")
-            self.assertEqual(legacy_report.report(root, registry, ledger)["eligible_legacy_pulse"], 1)
-            (metadata / "source-real").write_text("/fixture/source\n")
-            record = {"schema": 1, "manager": "pulse", "state": "sealed",
-                      "identity": {"path": "/fixture/source", "source_inode": "1:2"}}
-            with closing(sqlite3.connect(registry)) as db:
-                db.execute("INSERT INTO worktree_managed_lifetimes VALUES (?,?)",
-                           ("/fixture/source", json.dumps(record)))
-                db.commit()
-            self.assertEqual(legacy_report.report(root, registry, ledger)["reasons"], {"lifecycle-path": 1})
-            (metadata / "source-inode").write_text("1:3\n")
-            self.assertEqual(legacy_report.report(root, registry, ledger)["reasons"], {"lifecycle-path": 1})
-            with closing(sqlite3.connect(registry)) as db:
-                db.execute("DELETE FROM worktree_managed_lifetimes")
-                db.commit()
-            (metadata / "producer").write_text("profile-readme-helper.sh\n")
-            (metadata / "producer-context").write_text("recovery_path=profile-publication-archive profile_scratch=true\n")
-            self.assertEqual(legacy_report.report(root, registry, ledger)["reasons"], {"non-pulse-profile": 1})
-
-    def test_legacy_report_bounded_metadata_and_dates(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            path = root / "metadata"
-            path.write_bytes(b"x" * 8193)
-            with self.assertRaises(ValueError):
-                legacy_report.read_small(path)
-            link = root / "link"
-            link.symlink_to(path)
-            with self.assertRaises(OSError):
-                legacy_report.read_small(link)
-            fifo = root / "fifo"
-            os.mkfifo(fifo)
-            with self.assertRaises(ValueError):
-                legacy_report.read_small(fifo)
-            self.assertIsNone(legacy_report.age_seconds("not-a-date", 100))
-            self.assertIsNone(legacy_report.age_seconds("2100-01-01T00:00:00Z", 100))
-            self.assertEqual(legacy_report.registry_records(root / "missing.db")[1], "unavailable")
-            self.assertFalse((root / "missing.db").exists())
-
-
-class ArchiveLifecycle(CanonicalCases, MergeCases, ProducerCases, unittest.TestCase):
+class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, ProducerCases, unittest.TestCase):
     def setUp(self):
         self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")
@@ -696,7 +565,7 @@ class ArchiveLifecycle(CanonicalCases, MergeCases, ProducerCases, unittest.TestC
             retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-2")
             self.assertEqual(compact.call_count, 3)
             self.assertEqual(json.loads(path.read_text())["failure_code"], "compaction:unknown-failure")
-            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-2", retry_only=True)
+            retry.request_retry(bucket.parent, bucket.name, "revision-2")
             self.assertEqual(compact.call_count, 3)  # Operator retry changes scheduling only.
             self.assertEqual(json.loads(path.read_text())["status"], "pending")
             retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-2")
@@ -771,7 +640,7 @@ class ArchiveLifecycle(CanonicalCases, MergeCases, ProducerCases, unittest.TestC
             second = compactor.run(bucket.parent, state)
             self.assertEqual(second["outcome"], "compacted")
             self.assertEqual(len(second["entries"]), 1)
-        retry.scheduled(bucket.parent, bucket.name, 120, Mock(), "revision-1", retry_only=True)
+        retry.request_retry(bucket.parent, bucket.name, "revision-1")
         path = bucket.parent / ".compact-migrations" / bucket.name / "retry.json"
         outside = self.root / "outside-retry"
         path.rename(outside)
@@ -1274,61 +1143,6 @@ class ArchiveLifecycle(CanonicalCases, MergeCases, ProducerCases, unittest.TestC
         state = administration(self.work)
         history = set(administration_roots(self.work, state, include_index=False))
         self.assertEqual(set(bundle_roots(self.work, state)), history)
-
-    def test_git_administration_fetch_head_validation(self):
-        from worktree_archive_administration import administration, fetch_head_roots, load_administration
-
-        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
-        self.assertEqual(fetch_head_roots(''), [])
-        self.assertEqual(fetch_head_roots((b'a' * 64 + b'\t\tSHA256 fixture\n').hex()), ['a' * 64])
-        payload = self.root / 'admin-payload'
-        payload.mkdir()
-        state = administration(self.work)
-        for data in (b'bad line\n', b'0' * 40 + b'\t\tzero\n',
-                     b'f' * 40 + b'\tunexpected\tflag\n', b'--option\t\tunsafe\n'):
-            with self.subTest(data=data):
-                (admin / 'FETCH_HEAD').write_bytes(data)
-                with self.assertRaisesRegex(ValueError, 'invalid_FETCH_HEAD'):
-                    administration(self.work)
-                state['files']['FETCH_HEAD'] = data.hex()
-                (payload / 'git-admin.json').write_text(json.dumps(state))
-                with self.assertRaisesRegex(ValueError, 'invalid_FETCH_HEAD'):
-                    load_administration(payload)
-
-    def test_git_administration_rejects_batch_command_injection(self):
-        from worktree_archive_snapshot import administration, administration_roots
-
-        state = administration(self.work)
-        head = self.git(self.work, 'rev-parse', 'HEAD').strip()
-        for suffix in (b'\nupdate refs/heads/injected ' + head,
-                       b'\x00delete refs/heads/archive-head'):
-            with self.subTest(suffix=suffix):
-                state['files']['ORIG_HEAD'] = (head + suffix).hex()
-                with self.assertRaisesRegex(ValueError, 'git_admin:invalid_object_id'):
-                    administration_roots(self.work, state)
-
-    def test_git_administration_rejects_unknown_operations_and_locks(self):
-        import worktree_archive_snapshot as snapshots
-
-        admin = Path(self.git(self.work, 'rev-parse', '--absolute-git-dir').decode().strip())
-        for name in sorted(snapshots.OPERATIONS | {'index.lock', 'unknown-entry'}):
-            with self.subTest(name=name):
-                path = admin / name
-                path.write_text('fixture')
-                # Retain validation of legacy administration without asking the
-                # current archive writer to create an obsolete archive format.
-                with self.assertRaisesRegex(ValueError, 'git_admin:'):
-                    snapshots.snapshot(self.work, True, True)
-                self.assertTrue(path.exists())
-                if name == 'index.lock':
-                    default = self.helper('archive', self.work, '--repo', 'fixture/repo',
-                                          '--issue', '2', '--reason', 'failed-worker',
-                                          '--base-branch', 'develop', '--output-root', self.archives,
-                                          check=False)
-                    self.assertNotEqual(default.returncode, 0)
-                    self.assertIn(b'git_admin:index_locked:index.lock', default.stderr)
-                path.unlink()
-        self.assertFalse(list(self.archives.rglob('manifest.json')))
 
     def test_readiness_administration_fails_closed(self):
         from worktree_archive_administration import administration, load_administration

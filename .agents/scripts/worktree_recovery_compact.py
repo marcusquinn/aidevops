@@ -13,7 +13,7 @@ import time
 
 from worktree_lifetime_archive import require
 from worktree_recovery_migration_state import load, private_directory, publish
-from worktree_recovery_retry import SCHEMA as RETRY_SCHEMA, revision, scheduled
+from worktree_recovery_retry import SCHEMA as RETRY_SCHEMA, request_retry, revision, scheduled
 from worktree_recovery_retry import FAILURE_DIAGNOSTIC_FIELDS
 
 SCHEMA = "aidevops.worktree-recovery-compaction-pass/v1"
@@ -109,7 +109,7 @@ if __name__ == "__main__":
         if args.retry_bucket:
             require(args.root.is_absolute() and args.root == args.root.resolve()
                     and not args.root.is_symlink(), "compaction:unsafe-root")
-            result = scheduled(args.root, args.retry_bucket, 0, compact_one, revision(), retry_only=True)
+            result = request_retry(args.root, args.retry_bucket, revision())
         else:
             result = run(args.root, args.state)
         print(json.dumps(result, sort_keys=True))

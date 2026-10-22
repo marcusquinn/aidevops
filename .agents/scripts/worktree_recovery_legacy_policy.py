@@ -77,14 +77,14 @@ def archived_copy(identity):
     bucket = Path(identity["bucket_path"])
     archive = Path(identity["archive_path"])
     require(identity["format"] == "aidevops-worktree-recovery-v2"
-            and identity["source_removal_outcome"] == "removed"
-            and bool(identity["producer"]) and bool(identity["producer_context"])
-            and bool(identity["created_at"])
-            and identity["completion_digest"].startswith("sha256:")
-            and len(identity["completion_digest"]) == 71
-            and bucket.is_absolute() and bucket.name.startswith("aidevops-worktree-cleanup-")
-            and archive.parent == bucket
-            and not Path(identity["source_path"]).is_relative_to(bucket),
+            and identity["source_removal_outcome"] == "removed", "migration:incomplete-archived-copy")
+    require(all(identity[key] for key in ("producer", "producer_context", "created_at")),
+            "migration:incomplete-archived-copy")
+    require(identity["completion_digest"].startswith("sha256:") and len(identity["completion_digest"]) == 71,
+            "migration:incomplete-archived-copy")
+    require(bucket.is_absolute() and bucket.name.startswith("aidevops-worktree-cleanup-"),
+            "migration:incomplete-archived-copy")
+    require(archive.parent == bucket and not Path(identity["source_path"]).is_relative_to(bucket),
             "migration:incomplete-archived-copy")
     common = Path(identity["common_path"]).resolve(strict=True)
     require(not common.is_relative_to(bucket), "migration:base-inside-source")
