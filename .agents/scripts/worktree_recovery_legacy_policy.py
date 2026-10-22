@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Legacy Pulse naming/age policy, never a fabricated lifetime receipt.
+"""Completed archive migration and legacy Pulse policy, never lifetime receipts.
 
-Only compact-then-retire uses this fallback for degraded CWD observation.
+Archive migration recognizes complete recovery provenance independently of Pulse.
 Positive activity, unusable observation and raw-copy expiry remain protected.
 """
 
@@ -58,15 +58,45 @@ def guards(identity, target, lock=None):
     require(bash is not None, "retirement:bash-unavailable")
     helper = Path(__file__).with_name("worktree-recovery-lifecycle-helper.sh")
     arguments = [str(Path(bash).absolute()), str(helper), "retirement-guard", str(target)]
+    if identity.get("source_removal_outcome") == "removed":
+        archived_copy(identity)
+        arguments.append("archive-migration")
     result = subprocess.run(  # nosec B603 -- fixed local guard, argv only, no shell
         arguments, input=json.dumps(identity), text=True, capture_output=True,
         pass_fds=() if lock is None else (lock,), timeout=120, check=False)
     require(result.returncode == 0, "retirement:" + (result.stdout.strip() or "guard-unavailable"))
 
 
+def archived_copy(identity):
+    """Recognize completed recovery provenance, never enroll an active source.
+
+    Callers validate the physical storage contract before capture and bind that
+    identity/provenance in the private migration journal and source fingerprint.
+    This predicate does not itself grant removal or restoration authority.
+    """
+    bucket = Path(identity["bucket_path"])
+    archive = Path(identity["archive_path"])
+    require(identity["format"] == "aidevops-worktree-recovery-v2"
+            and identity["source_removal_outcome"] == "removed"
+            and bool(identity["producer"]) and bool(identity["producer_context"])
+            and bool(identity["created_at"])
+            and identity["completion_digest"].startswith("sha256:")
+            and len(identity["completion_digest"]) == 71
+            and bucket.is_absolute() and bucket.name.startswith("aidevops-worktree-cleanup-")
+            and archive.parent == bucket
+            and not Path(identity["source_path"]).is_relative_to(bucket),
+            "migration:incomplete-archived-copy")
+    common = Path(identity["common_path"]).resolve(strict=True)
+    require(not common.is_relative_to(bucket), "migration:base-inside-source")
+
+
 def main():
     try:
-        validate(json.load(sys.stdin))
+        identity = json.load(sys.stdin)
+        if sys.argv[1:] == ["archive-migration"]:
+            archived_copy(identity)
+        else:
+            validate(identity)
         return 0
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
         print("legacy-pulse:policy-evidence-unavailable", file=sys.stderr)

@@ -32,7 +32,7 @@ def file_digest(path, observed):
         return digest.hexdigest()
 
 
-def fingerprint(root):
+def inventory(root):
     """Hash physical contents without resolving the relocated Git administration."""
     entries = []
     pending = [root]
@@ -53,7 +53,19 @@ def fingerprint(root):
             raise ValueError("retirement:unsupported-file-type")
         entries.append((str(path.relative_to(root)), kind, stat.S_IMODE(value.st_mode),
                         value.st_uid, value.st_gid, payload))
-    return hashlib.sha256(json.dumps(sorted(entries), ensure_ascii=True).encode()).hexdigest()
+    return sorted(entries)
+
+
+def fingerprint(root):
+    return hashlib.sha256(json.dumps(inventory(root), ensure_ascii=True).encode()).hexdigest()
+
+
+def remaining_matches(record, target):
+    """A removal retry may lose original entries, never gain or change them."""
+    expected = {entry[0]: list(entry) for entry in record.get("removal_inventory", [])}
+    require(bool(expected), "retirement:removal-inventory-unavailable")
+    require(all(expected.get(entry[0]) == list(entry) for entry in inventory(target)),
+            "retirement:claimed-content-drift")
 
 
 @timed("source-fingerprint")
@@ -72,6 +84,15 @@ def claim(directory, record, bucket):
     require(container.parent == directory and not container.is_symlink(), "retirement:unsafe-container")
     require(inode(container) == record["container_inode"], "retirement:container-replaced")
     target = container / "bucket"
+    if record["phase"] == "removing":
+        require({p.name for p in container.iterdir()} <= {"bucket"}, "retirement:incomplete-transaction")
+        if os.path.lexists(target):
+            require(not target.is_symlink() and inode(target) == record["bucket_inode"],
+                    "retirement:claimed-bucket-replaced")
+            remaining_matches(record, target)
+        else:
+            require(bool(record.get("removal_inventory")), "retirement:removal-inventory-unavailable")
+        return target
     if record["phase"] == "claiming" and not os.path.lexists(target):
         require(inode(bucket) == record["bucket_inode"], "retirement:bucket-replaced")
         require(source_fingerprint(bucket) == record["fingerprint"], "retirement:source-drift")
@@ -96,11 +117,24 @@ def remove_claimed(directory, record, target):
         observed = os.fstat(descriptor)
         require(f"{observed.st_dev}:{observed.st_ino}" == record["container_inode"],
                 "retirement:container-replaced")
-        require(inode(target) == record["bucket_inode"], "retirement:claimed-bucket-replaced")
-        require(source_fingerprint(target) == record["fingerprint"], "retirement:claimed-content-drift")
-        record["phase"] = "removing"
-        publish(directory / "retirement.json", record)
-        shutil.rmtree("bucket", dir_fd=descriptor)
+        if os.path.lexists(target):
+            require(inode(target) == record["bucket_inode"], "retirement:claimed-bucket-replaced")
+            if record["phase"] == "removing":
+                remaining_matches(record, target)
+            else:
+                entries = inventory(target)
+                require(hashlib.sha256(json.dumps(entries, ensure_ascii=True).encode()).hexdigest()
+                        == record["fingerprint"], "retirement:claimed-content-drift")
+                record.update(phase="removing", removal_inventory=entries)
+                # load() caps journals at 4 MiB. Leave headroom for a fresh
+                # canonical restore receipt on retry before permitting deletion.
+                require(len(json.dumps(record, ensure_ascii=True).encode()) <= 3 * 1024 * 1024,
+                        "retirement:removal-inventory-too-large")
+                publish(directory / "retirement.json", record)
+            shutil.rmtree("bucket", dir_fd=descriptor)
+        else:
+            require(record["phase"] == "removing" and bool(record.get("removal_inventory")),
+                    "retirement:incomplete-transaction")
         os.fsync(descriptor)
         record["phase"] = "retired"
         publish(directory / "retirement.json", record)

@@ -34,7 +34,16 @@ _worktree_recovery_migrate_cli() {
 
 _worktree_recovery_migrate_failure() {
 	local reason="$1"
-	jq -cn --arg reason "$reason" '{state:"incomplete",reason:$reason,source_retired:false}'
+	jq -cn --arg reason "$reason" '{state:"incomplete",reason:$reason,source_retired:false,failure_code:$reason,failure_stage:"eligibility"}'
+	return 1
+}
+
+_worktree_recovery_compact_lock_failure() {
+	local root="$1"
+	local state="" code="migration:lock-evidence-unavailable"
+	state=$(_worktree_recovery_lock_owner_state "$root/$_WT_RECOVERY_PRODUCER_LOCK_NAME") || state="uncertain"
+	[[ "$state" != "$_WT_RECOVERY_LOCK_STATE_LIVE" ]] || code="migration:lock-busy"
+	jq -cn --arg code "$code" '{state:"incomplete",reason:$code,source_retired:false,failure_code:$code,failure_stage:"producer-lock"}'
 	return 1
 }
 
@@ -83,7 +92,10 @@ worktree_recovery_migrate() {
 	bucket_real=$(cd "$bucket" && pwd -P) || return 1
 	[[ "$bucket" == "$bucket_real" && "${bucket_real%/*}" == "$root_real" &&
 		"${bucket_real##*/}" == aidevops-worktree-cleanup-* ]] || return 1
-	_worktree_recovery_acquire_producer_lock "$root_real" || return 1
+	_worktree_recovery_acquire_producer_lock "$root_real" || {
+		_worktree_recovery_compact_lock_failure "$root_real"
+		return 1
+	}
 	_worktree_recovery_migrate_under_lock "$bucket_real" "$root_real" "$@" || status=$?
 	_worktree_recovery_release_producer_lock || status=1
 	if [[ "$status" -ne 0 ]]; then

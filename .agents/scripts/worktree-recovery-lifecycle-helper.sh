@@ -653,6 +653,10 @@ _worktree_recovery_plan_process_state() {
 		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_ACTIVE"
 	elif [[ "$snapshot_rc" -eq 0 ]]; then
 		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR"
+	elif [[ "$snapshot_rc" -eq 2 && "$operation" == "archive-migration" ]]; then
+		# A completed, journal-bound recovery copy is not its historical worker.
+		# Positive matches above still block; failed observation (rc 1) does too.
+		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR"
 	elif [[ "$snapshot_rc" -eq 2 ]] &&
 		source_inode=$(printf '%s\n' "$identity_json" | jq -er '.source_inode') &&
 		worktree_managed_lifetime_proof "$source_path" "$source_inode"; then
@@ -1571,7 +1575,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 		_worktree_recovery_retire_cli "$@"
 		;;
 	retirement-guard)
-		[[ "$#" -eq 2 ]] || exit 1
+		retirement_mode="${3:-}"
+		[[ "$#" -eq 2 || ("$#" -eq 3 && "$retirement_mode" == "archive-migration") ]] || exit 1
 		shift
 		_worktree_recovery_retirement_guard "$@"
 		;;
