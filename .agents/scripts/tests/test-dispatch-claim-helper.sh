@@ -476,7 +476,8 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 	[[ "${MOCK_REFRESH_FAIL:-false}" != true || "$call" -eq 1 ]] || exit 1
 	jq -n --arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" --argjson call "$call" \
 		--arg device "${MOCK_CLAIM_DEVICE:-orphan-device}" --arg session "${MOCK_CLAIM_SESSION:-issue-42}" \
-		--arg expiry "${MOCK_CLAIM_EXPIRY-1}" --arg event "${MOCK_NEW_EVENT:-}" '
+		--arg expiry "${MOCK_CLAIM_EXPIRY-auto}" --arg event "${MOCK_NEW_EVENT:-}" '
+		(if $expiry == "auto" then (($claim_ts | fromdateiso8601) + 120 | tostring) else $expiry end) as $expiry |
 		[
 			{id: 999, body: ("DISPATCH_CLAIM nonce=claim-only runner=mockrunner ts=" + $claim_ts +
 				" max_age_s=300 lease_token=claim-only device=" + $device + " session=" + $session +
