@@ -1936,6 +1936,9 @@ main() {
 	claim-pr-checkpoint)
 		cmd_claim_pr_checkpoint "$@"
 		;;
+	abort-pr-checkpoint-claim)
+		cmd_abort_pr_checkpoint_claim "$@"
+		;;
 	transition)
 		cmd_transition "$@"
 		;;

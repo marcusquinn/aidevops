@@ -88,6 +88,29 @@ The template refuses incomplete histories instead of printing an unusable line.
 All current assignment, hold, permission, brief-revision and exact-head checks
 remain in force.
 
+### Expired claims that never reached ready (GH#35331)
+
+An approval-bound `claim-pr-checkpoint` can expire before the executor renews
+its prelaunch lease (`transition prelaunch` then reports `lease_unmatched`). The
+output's `prelaunch_expires_at` is the renewal deadline; an interactive executor
+should renew right after the claim. If it still expires, the claim owner, on the
+same authenticated account, device and session, closes it explicitly:
+
+```bash
+dispatch-claim-helper.sh abort-pr-checkpoint-claim ISSUE OWNER/REPO LEASE SESSION
+```
+
+The command refuses a live lease, a ready lease or worker launch, an existing
+release, edited or other-actor events, and mismatched identity. It posts the
+existing `CLAIM_RELEASED reason=claim_only_no_worker claim_id=… nonce=…` marker,
+which already retires the claim generation. That release grants nothing: the
+consumed approval stays rejected, and recovery needs a new generated approval
+whose `released_successors` entry (`outcome: claim_only_no_worker`) binds the
+claim and release comment IDs. History accepts that closure only when every
+claim and renewal expiry is known and elapsed before the release comment, so the
+automatic orphan release cannot close a live or unknown lease. Any later renewal
+or reuse of the closed token rejects the history.
+
 ## Ownership guarantees
 
 The revised path acquires the existing distributed claim/consensus lease before

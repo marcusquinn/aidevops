@@ -3,7 +3,9 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Reconstruct fully released historical attempts without granting ownership."""
 
-from pr_checkpoint_events import closes_released_attempt, events, fields, trusted
+import re
+
+from pr_checkpoint_events import closes_released_attempt, events, fields, timestamp, trusted
 
 
 def closed_claim(comment, line, f, seen):
@@ -30,6 +32,29 @@ def close_release(state, comment, f):
     return valid
 
 
+CLAIM_ONLY = "claim_only_no_worker"
+
+
+def close_claim_only(state, comment, f):
+    """GH#35331: the owner's exact claim-only release closes a never-ready claim.
+
+    #aidevops:trust-boundary — closure is bound to the claim comment ID and nonce,
+    rejected after any ready lease or launch, and grants no continuation by itself.
+    """
+    expiries = state.get("expiries", [])
+    # Every claim/renewal deadline must be known and elapsed when released;
+    # an unknown expiry or a release racing a live renewal fails closed.
+    elapsed = bool(expiries) and all(re.fullmatch(r"[1-9][0-9]*", e) for e in expiries) \
+        and max(int(e) for e in expiries) < timestamp(comment["created_at"])
+    valid = all((elapsed, not state.get("release_id"), not state.get("ready_id"),
+                 not state.get("launched"), f.get("runner") == state["runner"],
+                 f.get("nonce") == state["token"],
+                 f.get("claim_id") == str(state["claim_id"])))
+    if valid:
+        state["release_id"] = comment["id"]
+    return valid
+
+
 def advance_lease(state, comment, line, f):
     if not all((line.startswith("DISPATCH_LEASE "), f.get("lease_token") == state["token"],
                 f.get("session") == state["session"],
@@ -44,19 +69,23 @@ def advance_lease(state, comment, line, f):
         return valid
     if f.get("phase") not in {"prelaunch", "ready"}:
         return False
+    state.setdefault("expiries", []).append(f.get("expires_at", ""))
     if f["phase"] == "ready":
         state["ready_id"] = comment["id"]
     return True
 
 
 def advance_closed_claim(state, comment, line, f):
-    """Require a matching ready lease, release and terminal before considering closure."""
+    """Require ready, release and terminal, or an exact never-ready claim-only release."""
     if comment["user"]["login"] != state["runner"]:
         return False
     if line.startswith("CLAIM_RELEASED "):
+        if f.get("reason") == CLAIM_ONLY:
+            return close_claim_only(state, comment, f)
         return close_release(state, comment, f)
     if line.startswith("Dispatching worker"):
         f = fields(comment["body"])
+        state["launched"] = True
         return (not state.get("release_id") and f.get("lease_token") == state["token"]
                 and f.get("session", state["session"]) == state["session"]
                 and f.get("attempt_id", state.get("attempt")) == state.get("attempt"))
@@ -65,11 +94,21 @@ def advance_closed_claim(state, comment, line, f):
 
 def advance_history(state, comment, line, f, seen):
     if state is None:
-        return closed_claim(comment, line, f, seen)
+        started = closed_claim(comment, line, f, seen)
+        if started is not None:
+            started["expiries"] = [f.get("expires_at", "")]
+        return started
     return state if advance_closed_claim(state, comment, line, f) else None
 
 
 def completed_episode(state):
+    if state.get("release_id") and not state.get("ready_id"):
+        # Only close_claim_only records a release without a ready lease.
+        if not state["claim_id"] < state["release_id"]:
+            raise ValueError("historical coordination ids are not strictly ordered")
+        episode = {key: state[key] for key in ("runner", "claim_id", "release_id")}
+        return {**episode, "outcome": CLAIM_ONLY,
+                **({"attempt": state["attempt"]} if state.get("attempt") else {})}
     if not state.get("terminal_id"):
         return None
     if not (state["claim_id"] < state["ready_id"] < state["release_id"] < state["terminal_id"]):
