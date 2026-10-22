@@ -47,6 +47,8 @@ SANDBOX=$(mktemp -d)
 trap 'rm -rf "$SANDBOX"' EXIT
 
 export XDG_DATA_HOME="$SANDBOX/data"
+# Real headless workers on the test host must not stall maintenance-window tests.
+export MAINTENANCE_WINDOW_DRAIN_TIMEOUT=0
 
 OPENCODE_DIR="$XDG_DATA_HOME/opencode"
 mkdir -p "$OPENCODE_DIR"
@@ -542,12 +544,13 @@ fi
 # Test 14: maintenance-window restarts pulse on early active-holder exit
 # -----------------------------------------------------------------------------
 
-cat >"$mock_bin/pgrep" <<'MOCK_PGREP'
+# maintenance-window gates each DB on its exact lsof holders.
+cat >"$mock_bin/lsof" <<'MOCK_LSOF_HOLDER'
 #!/usr/bin/env bash
 printf '%s\n' '12345'
 exit 0
-MOCK_PGREP
-chmod +x "$mock_bin/pgrep"
+MOCK_LSOF_HOLDER
+chmod +x "$mock_bin/lsof"
 : >"$mock_pulse_log"
 : >"$mock_archive_log"
 
@@ -558,7 +561,7 @@ out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_ARCHIVE_LOG="
 	_run_helper maintenance-window --keep-sessions 123 2>&1)
 rc=$?
 set -e
-rm -f "$mock_bin/pgrep"
+rm -f "$mock_bin/lsof"
 if [[ "$rc" -eq 2 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' "$mock_pulse_log" && [[ ! -s "$mock_archive_log" ]]; then
 	_pass "maintenance-window restarts pulse after active-holder early return"
 else
@@ -690,6 +693,39 @@ if [[ "$out" == *"currently active"* && "$out" != *"Starting maintenance"* ]]; t
 	_pass "inventory maintenance treats lsof inspection errors as protected skips"
 else
 	_fail "lsof inspection error was treated as idle: $out"
+fi
+
+# maintenance-window drains headless workers, maintains idle inventory DBs, and
+# skips only the DB a process holds open (GH#35413).
+mkdir -p "$isolated_root/held project/opencode"
+cp "$OPENCODE_DIR/opencode.db" "$isolated_root/held project/opencode/opencode.db"
+cat >"$mock_bin/lsof" <<'MOCK_LSOF_PER_DB'
+#!/usr/bin/env bash
+case "$*" in *"held project"*) printf '%s\n' '4242' ;; esac
+exit 0
+MOCK_LSOF_PER_DB
+cat >"$mock_bin/pgrep" <<'MOCK_PGREP_DRAIN'
+#!/usr/bin/env bash
+[[ -e "$MOCK_DRAIN_MARKER" ]] && exit 1
+: >"$MOCK_DRAIN_MARKER"
+printf '%s\n' '777'
+exit 0
+MOCK_PGREP_DRAIN
+chmod +x "$mock_bin/lsof" "$mock_bin/pgrep"
+: >"$mock_pulse_log"
+set +e
+out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_DRAIN_MARKER="$SANDBOX/drain-marker" \
+	PULSE_LIFECYCLE_HELPER="$mock_bin/pulse-lifecycle-helper.sh" \
+	MAINTENANCE_WINDOW_DRAIN_TIMEOUT=5 MAINTENANCE_WINDOW_DRAIN_POLL=1 \
+	OPENCODE_INTERACTIVE_ROOT="$isolated_root" _run_helper maintenance-window --skip-archive 2>&1)
+rc=$?
+set -e
+rm -f "$mock_bin/lsof" "$mock_bin/pgrep"
+if [[ "$rc" -eq 2 && "$out" == *"Headless workers drained"* && "$out" == *"Skipping $isolated_root/held project"* &&
+	"$out" == *"2 maintained, 1 skipped"* ]] && grep -q '^start$' "$mock_pulse_log"; then
+	_pass "maintenance-window drains workers and skips only the held inventory DB"
+else
+	_fail "maintenance-window inventory/drain mismatch (rc=$rc) — output: $out"
 fi
 
 echo
