@@ -231,6 +231,61 @@ exec "'"$target"'" "$@"'
 	return 0
 }
 
+# GH#35461: exercise the normal maintenance CLI with distinct system/user npm
+# prefixes. No real package manager or host launcher is changed.
+printf 'Test 3a: npm prefix drift repairs only a validated managed launcher\n'
+prefix_case="$SANDBOX/prefix-case"
+mkdir -p "$prefix_case/home/.local/bin" "$prefix_case/user prefix/bin" "$prefix_case/system/bin" "$prefix_case/tools" "$prefix_case/user prefix/lib/node_modules/opencode-ai"
+write_executable "$prefix_case/system/bin/opencode" '#!/usr/bin/env bash
+printf "1.18.34\n"'
+# shellcheck disable=SC2016 # Stub arguments expand only when executed.
+write_executable "$prefix_case/user prefix/bin/opencode" '#!/usr/bin/env bash
+case "${1:-}" in
+--version) printf "1.19.4\n" ;;
+--help) printf "opencode run [message..]\n" ;;
+*) exit 1 ;;
+esac'
+cp "$prefix_case/user prefix/bin/opencode" "$prefix_case/valid-candidate"
+# shellcheck disable=SC2016 # Stub expands fixture variables only when executed.
+write_executable "$prefix_case/tools/npm" '#!/usr/bin/env bash
+case "${1:-}" in
+view) if [[ "${2:-}" == opencode-ai ]]; then printf "1.19.4\n"; else printf "9.99.9\n"; fi ;;
+prefix) printf "%s/user prefix\n" "$PREFIX_CASE" ;;
+root) printf "%s/user prefix/lib/node_modules\n" "$PREFIX_CASE" ;;
+install) printf "{\"version\":\"1.19.4\"}\n" >"$PREFIX_CASE/user prefix/lib/node_modules/opencode-ai/package.json" ;;
+*) exit 1 ;;
+esac'
+for cli in claude codex mcp-local-wp chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws cf; do
+	write_executable "$prefix_case/tools/$cli" '#!/usr/bin/env bash
+printf "9.99.9\n"'
+done
+write_managed_shim "$prefix_case/home/.local/bin/opencode" "$prefix_case/system/bin/opencode"
+prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefix_case/home/.local/bin:$prefix_case/tools:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --update --quiet)
+assert_eq "prefix drift selects installed candidate" "1.19.4" "$("$prefix_case/home/.local/bin/opencode" --version)"
+assert_eq "system-prefix executable is untouched" "1.18.34" "$("$prefix_case/system/bin/opencode" --version)"
+assert_eq "maintenance verifies launcher update" "yes" "$([[ "$prefix_output" == *'Updated and verified (1.19.4)'* ]] && printf yes || printf no)"
+prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefix_case/home/.local/bin:$prefix_case/tools:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --update --quiet)
+assert_eq "second maintenance run does not repeat OpenCode update" "no" "$([[ "$prefix_output" == *'opencode-ai@latest'* ]] && printf yes || printf no)"
+
+for invalid_kind in wrong-version wrong-identity missing unmanaged; do
+	write_managed_shim "$prefix_case/home/.local/bin/opencode" "$prefix_case/system/bin/opencode"
+	cp "$prefix_case/valid-candidate" "$prefix_case/user prefix/bin/opencode"
+	# shellcheck disable=SC2016 # Stub arguments expand only when executed.
+	case "$invalid_kind" in
+	wrong-version) write_executable "$prefix_case/user prefix/bin/opencode" '#!/usr/bin/env bash
+printf "1.19.3\n"' ;;
+	wrong-identity) write_executable "$prefix_case/user prefix/bin/opencode" '#!/usr/bin/env bash
+if [[ "${1:-}" == --version ]]; then printf "1.19.4\n"; else printf "unrelated CLI\n"; fi' ;;
+	missing) rm "$prefix_case/user prefix/bin/opencode" ;;
+	unmanaged) write_executable "$prefix_case/home/.local/bin/opencode" '#!/usr/bin/env bash
+printf "1.18.34\n"' ;;
+	esac
+	cp "$prefix_case/home/.local/bin/opencode" "$prefix_case/launcher-before"
+	prefix_output=$(HOME="$prefix_case/home" PREFIX_CASE="$prefix_case" PATH="$prefix_case/home/.local/bin:$prefix_case/tools:$SYSTEM_PATH" "$TOOL_VERSION_CHECK" --category npm --update --quiet)
+	assert_eq "$invalid_kind candidate preserves launcher" "unchanged" "$(cmp -s "$prefix_case/launcher-before" "$prefix_case/home/.local/bin/opencode" && printf unchanged || printf changed)"
+	assert_eq "$invalid_kind reports precise prefix mismatch" "yes" "$([[ "$prefix_output" == *"installed candidate $prefix_case/user prefix/bin/opencode (1.19.4)"* ]] && printf yes || printf no)"
+done
+
 printf 'Test 3b: managed shell shim over Homebrew OpenCode chooses brew\n'
 mkdir -p "$SANDBOX/shim-brew-case/local-bin"
 write_managed_shim "$SANDBOX/shim-brew-case/local-bin/opencode" "$SANDBOX/opt/homebrew/bin/opencode"
