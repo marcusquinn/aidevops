@@ -449,7 +449,8 @@ _tbr_check_entry() {
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	local comments="" brief="" repo_path=""
 	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
-	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo") || return 2
+	# GH#35355: keep this runner's own comments whatever association GitHub reports.
+	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo" "${TERMINAL_BLOCKER_SELF_LOGIN:-}") || return 2
 	brief=$(printf '%s' "$issue_json" | jq -c '{title: (.title // ""), body: (.body // "")}')
 	repo_path=$(_tbr_repo_path "$repo")
 	local hold_rc=0
