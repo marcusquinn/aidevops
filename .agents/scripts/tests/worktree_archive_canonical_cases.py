@@ -8,12 +8,67 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import sys
 from unittest.mock import patch
 
 
 class CanonicalCases:
+    def guarded_object_import_proof(self, archive):
+        """Exercise the production shim against a registered, base-only mirror."""
+        manifest_path = archive / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        mirror = self.root / "canonical-mirror"
+        self.run_command("git", "init", "--quiet", "--initial-branch=develop", mirror)
+        self.git(mirror, "fetch", "--quiet", str(self.repo), manifest["base_sha"])
+        self.git(mirror, "reset", "--hard", manifest["base_sha"])
+        self.assertNotEqual(self.run_command("git", "-C", mirror, "cat-file", "-e",
+                                             manifest["head_sha"], check=False).returncode, 0)
+        self.git(mirror, "update-ref", "refs/archive/sentinel", manifest["base_sha"])
+        manifest["source_git_common_dir"] = str(mirror / ".git")
+        manifest_path.write_text(json.dumps(manifest))
+        shim_directory = self.root / "guarded-bin"
+        shim_directory.mkdir()
+        (shim_directory / "git").symlink_to(Path(__file__).resolve().parents[1] / "git")
+        registration = self.root / "registered-repos.json"
+        registration.write_text(json.dumps({"initialized_repos": [{"path": str(mirror)}]}))
+        self.env.update(PATH=str(shim_directory) + os.pathsep + self.env["PATH"],
+                        AIDEVOPS_REPOS_FILE=str(registration))
+        self.assertEqual(shutil.which("git", path=self.env["PATH"]), str(shim_directory / "git"))
+        bundle = archive / "commits.bundle"
+        self.assertEqual(self.run_command("git", "-C", mirror, "fetch", "--quiet",
+                                          "--no-write-fetch-head", bundle, "HEAD", check=False).returncode, 42)
+        self.assertEqual(self.run_command("git", "-C", mirror, "bundle", "unbundle", bundle,
+                                          check=False).returncode, 42)
+        refs = self.git(mirror, "for-each-ref")
+        metadata = {name: (mirror / ".git" / name).read_bytes() for name in ("HEAD", "index", "FETCH_HEAD")}
+        source_status = self.git(self.work, "status", "--porcelain=v1")
+        proof, record = self.canonical_proof(archive)
+        proof.check()
+        self.assertEqual(record["canonical_restore"]["state"], "cleaned")
+        self.assertEqual(self.git(mirror, "for-each-ref"), refs)
+        self.assertEqual({name: (mirror / ".git" / name).read_bytes() for name in metadata}, metadata)
+        self.assertEqual(self.git(self.work, "status", "--porcelain=v1"), source_status)
+        self.assertTrue(self.work.is_dir())
+
+    def test_guarded_canonical_restore_imports_commit_bundle(self):
+        (self.work / "mixed.txt").write_bytes(b"unpublished commit\n")
+        self.git(self.work, "commit", "-qam", "unpublished")
+        self.guarded_object_import_proof(self.archive())
+
+    def test_guarded_canonical_restore_imports_auto_merge_bundle(self):
+        (self.work / "mixed.txt").write_bytes(b"unpublished commit\n")
+        self.git(self.work, "commit", "-qam", "unpublished")
+        (self.work / "mixed.txt").write_bytes(b"index-only tree\n")
+        self.git(self.work, "add", "mixed.txt")
+        self.auto_merge_path().write_bytes(self.git(self.work, "write-tree"))
+        self.guarded_object_import_proof(self.archive())
+
+    def test_guarded_canonical_restore_imports_structured_merge_bundle(self):
+        self.start_conflicted_merge()
+        self.guarded_object_import_proof(self.archive())
+
     def canonical_proof(self, archive, command=None):
         from worktree_archive_restore import RestorationProof
         from worktree_recovery_migration_state import publish

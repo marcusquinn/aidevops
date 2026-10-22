@@ -63,11 +63,10 @@ def prepare(archive, target, verification=False):
     entries = git(common, "worktree", "list", "--porcelain", "-z").split(b"\0")
     repository = Path(os.fsdecode(next(entry[9:] for entry in entries if entry.startswith(b"worktree "))))
     bundle = archive / "commits.bundle"
-    if bundle.is_file():
-        if manifest.get('merge_policy') == 'structured-v1' or manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
-            fetch_preservation(repository, archive)
-        else:
-            git(repository, "fetch", "--quiet", "--no-write-fetch-head", str(bundle), "HEAD")
+    # Canonical policy intentionally refuses fetch and bundle unbundle. Create
+    # our registered worktree at the available base first, then import objects
+    # through that owned linked target without touching shared preservation refs.
+    initial_head = manifest["base_sha"] if bundle.is_file() else manifest["head_sha"]
     environment = dict(os.environ, AIDEVOPS_SKIP_AUTO_CLAIM="1", WORKTREE_NODE_MODULES_RESTORE_ENABLED="0",
                        AIDEVOPS_WORKTREE_JS_BOOTSTRAP_ENABLED="0",
                        GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.hooksPath", GIT_CONFIG_VALUE_0=os.devnull)
@@ -90,14 +89,20 @@ def prepare(archive, target, verification=False):
             [str(Path(bash).absolute()), "-c",
              'source "$1" && worktree_create_registered "$2" "$3" "$4" --detach',
              "archive-verification", str(helper.with_name("shared-worktree-create.sh")),
-             str(repository), str(target), manifest["head_sha"]],
-            env=environment, stdout=sys.stderr, check=True, timeout=180)
+             str(repository), str(target), initial_head],
+            env=environment, capture_output=True, check=True, timeout=180)
         creation_receipt(target, os.getppid())
-        return
-    subprocess.run(  # nosec B603 -- resolved Bash and fixed framework helper
-                   [str(Path(bash).absolute()), str(helper), "add", "recovery/" + uuid.uuid4().hex,
-                    str(target), "--base", manifest["head_sha"]], cwd=repository,
-                   env=environment, stdout=sys.stderr, check=True, timeout=180)
+    else:
+        subprocess.run(  # nosec B603 -- resolved Bash and fixed framework helper
+                       [str(Path(bash).absolute()), str(helper), "add", "recovery/" + uuid.uuid4().hex,
+                        str(target), "--base", initial_head], cwd=repository,
+                       env=environment, stdout=sys.stderr, check=True, timeout=180)
+    if bundle.is_file():
+        fetch_preservation(target, archive)
+        if verification:
+            git(target, "checkout", "--quiet", "--detach", manifest["head_sha"])
+        else:
+            git(target, "reset", "--hard", manifest["head_sha"])
 
 
 class RestorationProof:
@@ -272,7 +277,11 @@ class RestorationProof:
                 from worktree_recovery_retirement_transaction import fingerprint
                 require(git_snapshot(target) == receipt["source"]["snapshot"]
                         and fingerprint(target) == receipt["target_digest"], "restore-proof:scratch-drift")
-                git(common, "worktree", "remove", "--force", str(target))
+                # The canonical linked-removal exception verifies the checkout
+                # top-level as well as the common dir; -C <common> has no top-level.
+                entries = git(common, "worktree", "list", "--porcelain", "-z").split(b"\0")
+                repository = Path(os.fsdecode(next(entry[9:] for entry in entries if entry.startswith(b"worktree "))))
+                git(repository, "worktree", "remove", "--force", str(target))
             require(not os.path.lexists(Path(registered["identity"]["admin"])),
                     "restore-proof:administration-remains")
             connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
@@ -290,5 +299,12 @@ class RestorationProof:
 
 
 if __name__ == "__main__":
-    prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
-            verification=sys.argv[3:] == ["--verification-copy"])
+    try:
+        prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
+                verification=sys.argv[3:] == ["--verification-copy"])
+    except subprocess.CalledProcessError as error:
+        # Python's default traceback omits the captured Git stderr. Carry only
+        # fixed diagnostic categories across Bash; never expose Git argv/data.
+        from worktree_recovery_retry import restore_diagnostic
+        print(restore_diagnostic(error), file=sys.stderr)
+        sys.exit(1)

@@ -19,7 +19,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 HELPER = Path(__file__).resolve().parents[1] / "worktree-archive-helper.sh"
@@ -636,9 +636,278 @@ class ArchiveLifecycle(CanonicalCases, MergeCases, ProducerCases, unittest.TestC
         self.assertGreater(result["source_bytes_retired"], 0)
         self.assertGreater(result["archive_bytes"], 0)
         self.assertFalse(bucket.exists())
+        retry = json.loads((bucket.parent / ".compact-migrations" / bucket.name / "retry.json").read_text())
+        self.assertEqual(retry["status"], "completed")
+        self.assertNotIn("phase", retry)
         repeated = json.loads(self.run_command("bash", helper, "compact").stdout)
         self.assertEqual(repeated["outcome"], "no-candidates", repeated)
         self.assertEqual(repeated["source_bytes_retired"], 0)
+        import worktree_recovery_compact as compactor
+        from worktree_recovery_migration_state import publish
+        retry.update(status="running", next_attempt_at=10**12)
+        publish(bucket.parent / ".compact-migrations" / bucket.name / "retry.json", retry)
+        with patch.object(compactor, "compact_one", side_effect=AssertionError("must not reclaim twice")):
+            reconciled = compactor.run(bucket.parent, self.root / "reconcile-retry")
+        self.assertEqual(reconciled["entries"][0]["status"], "completed")
+        self.assertEqual(reconciled["source_bytes_retired"], 0)
+        self.assertNotIn(bucket.name, compactor.candidates(bucket.parent))
+
+    def test_migration_retry_backoff_due_and_lock_contention(self):
+        import worktree_recovery_retry as retry
+        bucket = self.legacy_pulse_bucket()
+        path = bucket.parent / ".compact-migrations" / bucket.name / "retry.json"
+        compact = Mock(return_value={"bucket": bucket.name, "retired": False,
+                                     "failure_code": "retirement:process-active", "failure_stage": "retirement"})
+        with patch.object(retry.time, "time", return_value=1000) as clock, \
+                patch.object(retry.random, "uniform", side_effect=lambda lower, upper: lower), \
+                patch.object(retry, "free_space", return_value=10**10):
+            for count, delay in enumerate((900, 3600, 21600, 86400, 86400), 1):
+                retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+                saved = json.loads(path.read_text())
+                self.assertEqual(saved["consecutive_failures"], count)
+                self.assertEqual(saved["next_attempt_at"] - saved["last_attempt_at"], delay)
+                self.assertEqual(compact.call_count, count)
+                retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+                self.assertEqual(compact.call_count, count)
+                clock.return_value = saved["next_attempt_at"] + 1
+            compact.return_value = {"retired": False, "failure_code": "migration:lock-busy"}
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["consecutive_failures"], 5)
+            self.assertEqual(saved["next_attempt_at"] - clock.return_value, 600)
+
+    def test_migration_retry_blocks_unknowns_and_wakes_only_for_bound_changes(self):
+        import worktree_recovery_retry as retry
+        bucket = self.legacy_pulse_bucket()
+        path = bucket.parent / ".compact-migrations" / bucket.name / "retry.json"
+        compact = Mock(return_value={"retired": False, "failure_code": "restore-proof:state-mismatch"})
+        with patch.object(retry, "free_space", return_value=10**10):
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+            first = json.loads(path.read_text())
+            self.assertEqual(first["status"], "blocked")
+            self.assertIsNone(first["next_attempt_at"])
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+            self.assertEqual(compact.call_count, 1)
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-2")
+            self.assertEqual(compact.call_count, 2)
+            index = bucket / ".aidevops-worktree-recovery" / "admin" / "index"
+            index.write_bytes(index.read_bytes() + b"changed-input")
+            compact.return_value = {"retired": False}  # Unmapped failures fail closed.
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-2")
+            self.assertEqual(compact.call_count, 3)
+            self.assertEqual(json.loads(path.read_text())["failure_code"], "compaction:unknown-failure")
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-2", retry_only=True)
+            self.assertEqual(compact.call_count, 3)  # Operator retry changes scheduling only.
+            self.assertEqual(json.loads(path.read_text())["status"], "pending")
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-2")
+            self.assertEqual(compact.call_count, 4)
+            self.assertNotEqual(json.loads(path.read_text())["input_identity"], first["input_identity"])
+
+    def test_migration_retry_no_space_checks_without_recapture(self):
+        import worktree_recovery_retry as retry
+        bucket = self.legacy_pulse_bucket()
+        path = bucket.parent / ".compact-migrations" / bucket.name / "retry.json"
+        compact = Mock(return_value={"retired": False, "failure_code": "migration:no-space"})
+        with patch.object(retry.time, "time", return_value=1000) as clock, \
+                patch.object(retry, "free_space", return_value=1) as space:
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+            compact.assert_not_called()
+            self.assertEqual(json.loads(path.read_text())["consecutive_failures"], 0)
+            clock.return_value += 1000
+            space.return_value = 10**9
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+            self.assertEqual(compact.call_count, 1)
+            saved = json.loads(path.read_text())
+            clock.return_value = saved["next_attempt_at"] + 1
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+            self.assertEqual(compact.call_count, 1)
+            self.assertEqual(json.loads(path.read_text())["consecutive_failures"], 1)
+            clock.return_value += 1000
+            space.return_value = saved["space_required"] + 1
+            compact.return_value = {"retired": False, "failure_code": "restore-proof:state-mismatch"}
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+            self.assertEqual(compact.call_count, 2)
+
+    def test_migration_retry_running_never_overrides_live_writer_lock(self):
+        import fcntl
+        import worktree_recovery_retry as retry
+        from worktree_recovery_compact import compact_one
+        from worktree_recovery_migration_state import private_directory, publish
+        bucket = self.legacy_pulse_bucket()
+        directory = bucket.parent / ".compact-migrations" / bucket.name
+        private_directory(directory.parent)
+        private_directory(directory)
+        identity, code = retry.observe(bucket.parent, bucket.name, directory)
+        self.assertIsNone(code)
+        record = retry.pending(identity, "revision-1")
+        record.update(status="running", last_attempt_at=1, next_attempt_at=2)
+        publish(directory / "retry.json", record)
+        with (directory / "lock").open("w") as lock, patch.dict(os.environ, self.env):
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = retry.scheduled(bucket.parent, bucket.name, 120, compact_one, "revision-1")
+            self.assertEqual(result["failure_code"], "migration:lock-busy", result)
+        saved = json.loads((directory / "retry.json").read_text())
+        self.assertEqual(saved["status"], "retry_wait")
+        self.assertEqual(saved["consecutive_failures"], 0)
+        self.assertTrue(bucket.exists())
+        self.assertFalse(list(self.archives.rglob("manifest.json")))
+
+    def test_migration_retry_rotation_and_unsafe_schedule_fail_closed(self):
+        import worktree_recovery_compact as compactor
+        import worktree_recovery_retry as retry
+        bucket = self.legacy_pulse_bucket()
+        names = ["aidevops-worktree-cleanup-%02d" % number for number in range(11)]
+        state = self.root / "retry-rotation"
+
+        def selected(root, name, timeout, compact, revision):
+            if name == names[-1]:
+                return {"bucket": name, "retired": True, "bucket_bytes": 1, "archive_bytes": 1}
+            return {"bucket": name, "retired": False, "status": "retry_wait"}
+
+        with patch.object(compactor, "candidates", return_value=names), \
+                patch.object(compactor, "scheduled", side_effect=selected):
+            first = compactor.run(bucket.parent, state)
+            self.assertEqual(len(first["entries"]), 10)
+            second = compactor.run(bucket.parent, state)
+            self.assertEqual(second["outcome"], "compacted")
+            self.assertEqual(len(second["entries"]), 1)
+        retry.scheduled(bucket.parent, bucket.name, 120, Mock(), "revision-1", retry_only=True)
+        path = bucket.parent / ".compact-migrations" / bucket.name / "retry.json"
+        outside = self.root / "outside-retry"
+        path.rename(outside)
+        path.symlink_to(outside)
+        compact = Mock()
+        with self.assertRaises(OSError):
+            retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+        compact.assert_not_called()
+        self.assertTrue(outside.is_file())
+
+    def test_migration_retry_structured_failures_and_replaced_generation(self):
+        import errno
+        import worktree_recovery_retry as retry
+        self.assertEqual(retry.failure_details(OSError(errno.ENOSPC, "fixture"), "capture")["failure_code"],
+                         "migration:no-space")
+        error = subprocess.CalledProcessError(1, ["fixture"], stderr="artifact integrity mismatch: staged.patch")
+        self.assertEqual(retry.failure_details(error, "verify")["failure_code"], "archive:artifact-integrity-mismatch")
+        self.assertEqual(retry.failure_details(ValueError("unmapped diagnostic"), "capture")["failure_code"],
+                         "compaction:unknown-failure")
+        bucket = self.legacy_pulse_bucket()
+        self.migrate_bucket(bucket)
+        bucket.rename(bucket.with_name(bucket.name + "-preserved"))
+        bucket.mkdir()
+        (bucket / "new-owner").write_text("must survive")
+        compact = Mock()
+        result = retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "migration:source-identity-conflict")
+        compact.assert_not_called()
+        self.assertEqual((bucket / "new-owner").read_text(), "must survive")
+
+    def test_migration_retry_completion_hint_failure_preserves_retirement_limit(self):
+        import errno
+        import worktree_recovery_retry as retry
+        bucket = self.legacy_pulse_bucket()
+        original = retry.publish
+
+        def save(path, record):
+            if record["status"] == "completed":
+                raise OSError(errno.ENOSPC, "fixture")
+            original(path, record)
+
+        compact = Mock(return_value={"retired": True})
+        with patch.object(retry, "publish", side_effect=save), patch.object(retry, "free_space", return_value=10**10):
+            result = retry.scheduled(bucket.parent, bucket.name, 120, compact, "revision-1")
+        self.assertTrue(result["retired"])
+        self.assertEqual(result["schedule_error"], "compaction:schedule-write-failed")
+        self.assertEqual(compact.call_count, 1)
+
+    def test_registered_restore_preserves_existing_archive_reference_locks(self):
+        self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY")
+        blob = self.run_command("git", "-C", self.work, "hash-object", "-w", "--stdin",
+                                input_data=b"diagnostic-only tree\n").stdout.strip()
+        tree = self.run_command("git", "-C", self.work, "mktree",
+                                input_data=b"100644 blob " + blob + b"\tconflict.txt\n").stdout
+        self.auto_merge_path().write_bytes(tree)
+        archive = self.archive()
+        references = self.repo / ".git/refs/archive"
+        references.mkdir(exist_ok=True)
+        reference_lock = references / "0.lock"
+        reference_lock.write_bytes(b"fixture-owned lock; must survive\n")
+        slot = self.root / ".restore-diagnostic"
+        slot.mkdir()
+        before = self.git(self.work, "status", "--porcelain=v1")
+        refs = self.git(self.repo, "for-each-ref")
+        self.helper("restore", archive, "--target", slot / "worktree", "--registered-verification-copy")
+        self.assertTrue((slot / ".creation.json").is_file())
+        self.assertEqual(self.git(self.repo, "for-each-ref"), refs)
+        self.assertEqual(reference_lock.read_bytes(), b"fixture-owned lock; must survive\n")
+        self.assertEqual(self.git(self.work, "status", "--porcelain=v1"), before)
+
+    def test_registered_restore_reports_creation_failure_without_creating_target(self):
+        from worktree_recovery_migrate import archive_command
+        from worktree_recovery_retry import failure_details
+        self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY")
+        archive = self.archive()
+        broken_registry = self.root / "broken-registry.db"
+        broken_registry.write_bytes(b"not a SQLite database\n")
+        self.env["WORKTREE_REGISTRY_DB"] = str(broken_registry)
+        slot = self.root / ".restore-creation-diagnostic"
+        slot.mkdir()
+        with tempfile.TemporaryFile() as lock, patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaises(subprocess.CalledProcessError) as refused:
+                archive_command(lock.fileno(), "restore", archive, "--target", slot / "worktree",
+                                "--registered-verification-copy")
+        details = failure_details(refused.exception, "migration")
+        self.assertEqual(details["failure_stage"], "archive-restore")
+        self.assertEqual(details["failure_code"], "compaction:unknown-failure")
+        self.assertEqual(details["failure_child_exit_status"], 1)
+        self.assertIn("ownership-transaction", details["failure_hints"])
+        self.assertNotIn(str(self.root), refused.exception.stderr)
+        self.assertNotIn(str(self.root), json.dumps(details))
+        self.assertEqual(list(slot.iterdir()), [])
+        self.assertTrue(self.work.is_dir())
+        self.assertEqual(broken_registry.read_bytes(), b"not a SQLite database\n")
+        import worktree_recovery_compact as compactor
+        response = subprocess.CompletedProcess(["fixture"], 1, stdout=json.dumps(details), stderr="")
+        with patch.object(compactor.subprocess, "run", return_value=response):
+            entry = compactor.compact_one(self.root, "aidevops-worktree-cleanup-fixture", 60)
+        self.assertFalse(entry["retired"])
+        for key, value in details.items():
+            self.assertEqual(entry[key], value)
+
+    def test_completed_non_pulse_archive_migrates_without_historical_lifecycle(self):
+        bucket = self.legacy_pulse_bucket()
+        metadata = bucket / ".aidevops-worktree-recovery"
+        (metadata / "producer").write_text("profile-readme-helper.sh\n")
+        (metadata / "producer-context").write_text("publication\n")
+        identity = json.loads(self.run_command(
+            "bash", "-c", 'source "$1"; _worktree_recovery_plan_identity_json "$2"',
+            "archive-migration-fixture", HELPER.parent / "worktree-recovery-lifecycle-helper.sh", bucket).stdout)
+        command = ('source "$1"; capture_worktree_process_cwds() { return 2; }; '
+                   '_worktree_recovery_retirement_guard "$2" archive-migration')
+        args = ("bash", "-c", command, "archive-migration-fixture",
+                HELPER.parent / "worktree-recovery-lifecycle-helper.sh", bucket)
+        self.run_command(*args, input_data=json.dumps(identity).encode())
+        for changes in ({"source_removal_outcome": "pending"},
+                        {"completion_digest": "legacy-marker-absent"},
+                        {"format": "unrecognized"}):
+            result = self.run_command(*args, input_data=json.dumps(dict(identity, **changes)).encode(), check=False)
+            self.assertNotEqual(result.returncode, 0)
+        positive = command.replace('return 2;', 'printf "%s\\n" "$RETIREMENT_FIXTURE_PATH"; return 2;')
+        self.env["RETIREMENT_FIXTURE_PATH"] = str(bucket)
+        result = self.run_command("bash", "-c", positive, *args[3:],
+                                  input_data=json.dumps(identity).encode(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"process-active", result.stdout)
+        failed_observation = command.replace("return 2;", "return 1;")
+        result = self.run_command("bash", "-c", failed_observation, *args[3:],
+                                  input_data=json.dumps(identity).encode(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        result = json.loads(self.retirement("compact", bucket).stdout)
+        self.assertTrue(result["retired"])
+        record = json.loads((bucket.parent / ".compact-migrations" / bucket.name / "retirement.json").read_text())
+        self.assertEqual(record["canonical_restore"]["state"], "cleaned")
+        self.assertFalse(bucket.exists())
 
     def test_capture_rejects_hidden_index_changes(self):
         for flag in ("assume-unchanged", "skip-worktree"):
@@ -832,6 +1101,40 @@ class ArchiveLifecycle(CanonicalCases, MergeCases, ProducerCases, unittest.TestC
         result = self.retirement("retire", bucket, "--confirm", plan["confirmation_token"], check=False)
         self.assertIn(b"source-drift", result.stdout)
         self.assertTrue(bucket.is_dir())
+
+    def test_retirement_retries_partial_and_completed_removal(self):
+        import worktree_recovery_retirement_transaction as transaction
+        from worktree_recovery_migration_state import load
+
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        directory = Path(migration["receipt"]).parent
+        record = load(directory / "retirement.json")
+        target = transaction.claim(directory, record, bucket)
+        original = transaction.shutil.rmtree
+
+        def partial(*args, **kwargs):
+            (target / ".aidevops-worktree-recovery" / "format").unlink()
+            raise OSError("interrupted removal")
+
+        with patch.object(transaction.shutil, "rmtree", side_effect=partial):
+            with self.assertRaises(OSError):
+                transaction.remove_claimed(directory, record, target)
+        self.assertEqual(load(directory / "retirement.json")["phase"], "removing")
+
+        def removed(*args, **kwargs):
+            original(*args, **kwargs)
+            raise OSError("interrupted after removal")
+
+        record = load(directory / "retirement.json")
+        target = transaction.claim(directory, record, bucket)
+        with patch.object(transaction.shutil, "rmtree", side_effect=removed):
+            with self.assertRaises(OSError):
+                transaction.remove_claimed(directory, record, target)
+        self.assertFalse(target.exists())
+        self.assertEqual(load(directory / "retirement.json")["phase"], "removing")
+        result = json.loads(self.retirement("retire", bucket, "--confirm", plan["confirmation_token"]).stdout)
+        self.assertTrue(result["retired"])
 
     def test_legacy_migration_preserves_source_and_restores_independently(self):
         from worktree_recovery_migration_state import source_state
@@ -1645,9 +1948,53 @@ class ArchiveLifecycle(CanonicalCases, MergeCases, ProducerCases, unittest.TestC
         (self.work / "mixed.txt").write_text("unpublished commit\n")
         self.git(self.work, "commit", "-qam", "unpublished")
         self.git(self.work, "reset", "--hard", "HEAD~1")
-        with self.assertRaisesRegex(ValueError, "reflog-only"):
-            self.prepare_managed(managed)
+        # Strict snapshots retain the history guard; preserve-v1 still includes
+        # the complete administration. Git-only has a separate current-state policy.
+        with self.assertRaisesRegex(ValueError, "git_admin:unpreserved_history.*reflog-only") as refused:
+            lifecycle.snapshot(self.work)
+        from worktree_recovery_retry import failure_details
+        self.assertEqual(failure_details(refused.exception, "migration")["failure_code"],
+                         "git_admin:unpreserved_history")
+        from worktree_archive_administration import administration
+        state = administration(self.work)
+        previous = self.git(self.work, "rev-parse", "ORIG_HEAD").strip()
+        self.assertIn(previous, bytes.fromhex(state["files"]["logs/HEAD"]))
+        self.assertEqual(lifecycle.snapshot(self.work, preserve_git_admin=True)["schema"], 1)
         self.assertNotIn("archive_operation", self.managed_record(managed))
+
+    def test_git_only_migration_ignores_abandoned_history_not_current_state(self):
+        original = self.git(self.work, "rev-parse", "HEAD").decode().strip()
+        abandoned = self.git(self.work, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "abandoned history").decode().strip()
+        self.git(self.work, "update-ref", "HEAD", abandoned)
+        self.git(self.work, "update-ref", "HEAD", original)
+        admin = Path(self.git(self.work, "rev-parse", "--absolute-git-dir").decode().strip())
+        (admin / "ORIG_HEAD").write_text(abandoned + "\n")
+        (self.work / "mixed.txt").write_bytes(b"staged current state\n")
+        self.git(self.work, "add", "mixed.txt")
+        (self.work / "mixed.txt").write_bytes(b"unstaged current state\n")
+        (self.work / "new.txt").write_bytes(b"ordinary untracked data\n")
+        bucket = self.legacy_pulse_bucket()
+        from worktree_archive_state import supported_history
+        with patch.dict(os.environ, self.env), self.assertRaisesRegex(ValueError, "git_admin:unpreserved_history"):
+            supported_history(bucket / self.work.name, bucket / ".aidevops-worktree-recovery" / "admin")
+        self.assertFalse((bucket.parent / ".compact-migrations" / bucket.name / "journal.json").exists())
+        helper = HELPER.parent / "worktree-recovery-lifecycle-helper.sh"
+        migration = json.loads(self.run_command("bash", helper, "migrate", "--bucket", bucket,
+                                               "--repo", "marcusquinn/aidevops", "--base-branch", "develop").stdout)
+        journal = json.loads(Path(migration["receipt"]).read_text())
+        self.assertEqual(journal["source"]["snapshot"]["head"], original)
+        self.assertEqual(journal["source"]["snapshot"]["schema"], 3)
+        self.assertTrue(bucket.exists())
+        result = json.loads(self.retirement("compact", bucket).stdout)
+        self.assertTrue(result["retired"])
+        retired = json.loads((Path(migration["receipt"]).parent / "retirement.json").read_text())
+        self.assertEqual(retired["canonical_restore"]["state"], "cleaned")
+        target = self.root / "current-state-restored"
+        self.helper("restore", result["archive"], "--target", target)
+        self.assertEqual(self.git(target, "rev-parse", "HEAD").decode().strip(), original)
+        self.assertEqual(self.git(target, "show", ":mixed.txt"), b"staged current state\n")
+        self.assertEqual((target / "mixed.txt").read_bytes(), b"unstaged current state\n")
+        self.assertEqual((target / "new.txt").read_bytes(), b"ordinary untracked data\n")
 
     def test_managed_archive_failure_blocks_native_removal(self):
         managed = self.managed_fixture()

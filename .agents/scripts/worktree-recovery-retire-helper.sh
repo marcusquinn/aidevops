@@ -5,6 +5,7 @@
 
 _worktree_recovery_retirement_evidence() {
 	local identity="$1"
+	local operation="${2:-compact-then-retire}"
 	local git_identity="" candidate="" observed="" state=""
 	# The copied .git file deliberately remains unchanged after claiming. Query
 	# the original common administration, not that now-relocated pointer.
@@ -22,22 +23,26 @@ _worktree_recovery_retirement_evidence() {
 		state=$(_worktree_recovery_plan_worktree_reference_state "$observed") || return 1
 		[[ "$state" == "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR" ]] || { printf 'worktree-reference-%s\n' "$state"; return 1; }
 	done
-	state=$(_worktree_recovery_plan_process_state "$identity" "compact-then-retire") || return 1
+	state=$(_worktree_recovery_plan_process_state "$identity" "$operation") || return 1
 	[[ "$state" == "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR" ]] || { printf 'process-%s\n' "$state"; return 1; }
 	return 0
 }
 
 _worktree_recovery_retirement_guard() {
 	local target="$1"
+	local operation="${2:-compact-then-retire}"
 	local identity="" claimed=""
 	local -x GIT_OPTIONAL_LOCKS=0
 	local -x GIT_NO_LAZY_FETCH=1
 	unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 	identity=$(jq -ce '.') || return 1
-	_worktree_recovery_retirement_evidence "$identity" || return 1
+	if [[ "$operation" == "archive-migration" ]]; then
+		printf '%s\n' "$identity" | python3 "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree_recovery_legacy_policy.py" archive-migration || return 1
+	fi
+	_worktree_recovery_retirement_evidence "$identity" "$operation" || return 1
 	claimed=$(printf '%s\n' "$identity" | jq -ce --arg target "$target" \
 		'.bucket_path = $target | .archive_path = ($target + "/" + (.archive_path | split("/") | last))') || return 1
-	_worktree_recovery_retirement_evidence "$claimed" || return 1
+	_worktree_recovery_retirement_evidence "$claimed" "$operation" || return 1
 	return 0
 }
 
@@ -49,7 +54,10 @@ _worktree_recovery_retire_cli() {
 	[[ -d "$root" && ! -L "$root" && ! -L "$bucket" ]] || return 1
 	root_real=$(cd "$root" && pwd -P) || return 1
 	[[ "${bucket%/*}" == "$root_real" && "${bucket##*/}" == aidevops-worktree-cleanup-* ]] || return 1
-	_worktree_recovery_acquire_producer_lock "$root_real" || return 1
+	_worktree_recovery_acquire_producer_lock "$root_real" || {
+		_worktree_recovery_compact_lock_failure "$root_real"
+		return 1
+	}
 	python3 "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree_recovery_retire.py" "$@" || status=$?
 	_worktree_recovery_release_producer_lock || status=1
 	return "$status"

@@ -20,6 +20,7 @@ from worktree_recovery_legacy_policy import guards
 from worktree_recovery_migration_state import SCHEMA, allocated_bytes, load, publish
 from worktree_recovery_retirement_transaction import claim, source_fingerprint, remove_claimed
 from worktree_recovery_timing import context as timing_context, operation, timed
+from worktree_recovery_retry import failure_details
 
 
 def receipt_digest(path):
@@ -194,7 +195,8 @@ def main():
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         reason = str(error) if isinstance(error, ValueError) else "retirement:evidence-unavailable"
-        print(json.dumps({"state": "incomplete", "reason": reason, "retired": False}))
+        print(json.dumps({"state": "incomplete", "reason": reason, "retired": False,
+                          **failure_details(error, "retirement")}))
         return 1
 
 

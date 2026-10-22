@@ -68,7 +68,7 @@ Retries reuse the reservation and completed capture; source drift, changed manif
 Captures lacking a complete manifest stay incomplete: retry never allocates another copy. Do not delete journals or partial artifacts to force retry.
 Complete captures can resume restoration/verification; completed receipts require fresh source/archive verification before reuse.
 
-Unsupported untracked metadata, unknown administrative state and unique reflog-only history remain protected; tracked changes use Git's modes.
+Unsupported untracked metadata and unknown administrative state remain protected; tracked changes use Git's modes. Git-only capture preserves current HEAD history, changes and ordinary untracked data, excluding abandoned reflog-only and non-merge previous-HEAD history. Legacy preserve-v1 still retains raw history.
 Missing objects or incomplete completion/ownership metadata block verification. Markerless v1 compatibility does not confer migration eligibility.
 
 ### Standalone AUTO_MERGE preservation
@@ -107,7 +107,7 @@ It deliberately does not subtract the shared base: merge parents and required op
 Measure archive bytes separately from incremental shared-base bytes (capture adds zero shared-base bytes).
 
 The schema-4 guarantee is **current-state preservation**, not arbitrary historical reflog recovery. It preserves unpublished current HEAD history and required operation objects even when otherwise reachable only through operation references or reflog; it does not preserve raw reflogs or abandoned historical states.
-The ordinary non-merge shared history-policy transition belongs to GH#35305; this does not reinterpret historical verification receipts or relax those guards.
+Ordinary Git-only capture uses that current-state history policy too; legacy preserve-v1 comparisons and required structured merge history are unchanged.
 
 Restore validates artifacts/object closure before modifying a new target, reconstructs files/index with hooks disabled, and writes validated metadata to target Git administration. It never executes hooks or `merge --continue` itself.
 Self-contained merge restores work without the original common repository. The user completes remaining resolutions and runs `git merge --continue` normally.
@@ -128,7 +128,7 @@ Use `worktree-recovery-lifecycle-helper.sh` with the configured recovery root:
 3. Inspect `retire-status --bucket <same-path>`, even after the original bucket disappears.
 
 Require verified migration, unchanged source identity/content, and fresh bound-archive verification against the recorded manifest and available base. Legacy self-contained receipts remain readable.
-Registry, interactive-claim, Git worktree-reference and process guards must be clear. Positive CWD matches block; degraded visibility requires a valid saved managed-lifetime receipt. Missing evidence blocks, without sudo or new enrollment.
+Registry, interactive-claim and Git worktree-reference guards must be clear. Positive CWD matches block, including matches in the private removal transaction. For a recognized complete v2 recovery bucket with recorded original source removal, `archive-migration` permits degraded CWD visibility without historical worker-lifetime proof. Initial capture validates the physical storage contract, completion marker and Git recovery identity; the private migration journal binds that provenance and source snapshot. Failed observation (rather than degraded visibility), live references and conflicting ownership still block. Active worktree-to-archive transitions retain their existing process/lifetime guards; arbitrary directories and incomplete buckets gain no eligibility.
 
 Under producer and migration locks, journal a randomized private transaction and rename the bucket into it. Compare physical content again without rewriting relocated Git pointers; recheck archive and ownership/process evidence before descriptor-anchored removal.
 A replacement at the original name is never a deletion target. As with migration scratch, transaction directories exclude cooperating writers; content sampling cannot exclude malicious same-user writers.
@@ -136,6 +136,8 @@ A replacement at the original name is never a deletion target. As with migration
 Git-only retirement, producer source-removal checks and managed archive construction run ordinary restore, including integrity/object validation and payload application, into an owned detached verification worktree.
 `--registered-verification-copy` uses shared registered creation without issue claiming, dependency installation or hooks; it does **not** skip validation. Default and older `--verification-copy` behavior are unchanged.
 Git snapshots compare HEAD, index, patches, ordinary untracked contents and supported merge/AUTO_MERGE state.
+
+Canonical policy continues to reject both `fetch` and `bundle unbundle` against the canonical checkout. Shared restoration creates its owned linked worktree at the recorded base before importing the bundle through that target, using the normal Git shim. `bundle verify` and object-only `bundle unbundle` import all preservation objects without updating shared `refs/archive/*` or `FETCH_HEAD`; the owned worktree then moves to the saved HEAD before payload application. Structured merge and AUTO_MERGE restoration use the same ref-free preservation import. Artifact/object-closure verification, creation receipts, snapshot comparison, dependency seals and exact-owner cleanup remain required.
 
 The existing retirement/producer journal or managed registry `archive_operation` stores `canonical_restore`: operation, source generation/identity/snapshot, archive location/inode/content digest, manifest/capture schema, base identity and scratch registration.
 Creation records the actual creating PID, unique verification task and exact registry/owner generation before applying payloads. Sealing and cleanup must still match that receipt; they never adopt a replacement registration.
@@ -162,7 +164,7 @@ No performance improvement is implied: measure base hashing and source scans sep
 Timings propagate attempt and parent-stage identity into Git preparation/base-import subprocesses. Canonical restore, comparison, dependency seals, source fingerprints, safety guards, claim/removal and verification cleanup remain distinct stages. Durations are inclusive: subtract direct children for exclusive stage totals; never add overlapping parent/child durations. Timing failure never changes authority.
 
 The journal is `.compact-migrations/<bucket>/retirement.json`. Retain reservations and archive pins for audit/recovery, not expiry. Interrupted claims resume with the same token only after revalidation.
-Partial removals, changed contents, missing transaction data or substituted identities stay incomplete for review; absence never proves retirement. Never delete journals or alter receipts to force continuation.
+Before removal, persist a bounded physical entry inventory in the exact retirement journal. Failed removal remains incomplete and retryable: a `removing` retry requires the same private container and bucket identity and accepts only unchanged surviving entries from that inventory. New or modified entries, missing inventory and substituted identities stay incomplete for review. A missing staged bucket can finish only from the journaled `removing` state in its unchanged, empty private container, after fresh restoration and safety checks; absence alone never proves retirement. Inventories exceeding the journal budget retain the claimed source. Never delete journals or alter receipts to force continuation.
 
 Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`: allocated-size observations, not free-space proof on shared, compressed or snapshotting storage. Archive expiry needs separate authority.
 
@@ -171,10 +173,25 @@ Reports separate measured `bucket_bytes`, `archive_bytes` and `retired`: allocat
 Pulse invokes `worktree-recovery-maintenance-helper.sh compact`; see the
 [compaction contract](../scripts/worktree-archive-helper.md) for bounds, journals and controls.
 It reuses migration/retirement guards across all named recovery buckets, not only Pulse sources.
+The caller chain is maintenance `compact` → `worktree_recovery_compact.py` → lifecycle `compact` → `worktree-recovery-migrate-helper.sh`. New work enters `worktree_recovery_migrate.py --retire-automatic` after producer-locked physical validation; existing retirement journals enter `worktree_recovery_retire.py retire-automatic`. Both converge on `automatic_retire`, canonical independent restoration and the private claim/removal transaction. `worktree_recovery_legacy_policy.guards` selects the scoped archive-migration guard for completed v2 copies. Managed active-source producers continue through `worktree_lifetime_archive.py` and `worktree_archive_receipt.py`; this transition does not change their receipt or lifecycle contract.
 Authority `verified-git-changes/v1` requires schema-3/4 untracked preservation, completed original
 removal and an available external base. Manual plans are not adopted; interrupted automatic
 journals resume without treating missing paths as success. Unsupported/active sources remain intact.
 Deploy on each machine and measure actual reclaimed space; merge alone does neither.
+
+#### Archive migration retry scheduling
+
+Each bucket's private `.compact-migrations/<bucket>/retry.json` is a scheduling hint, separate from worker lifecycle and the authoritative migration/retirement journals. Atomic `publish`/`load` and a distinct `retry.lock` protect `pending`, `running`, `retry_wait`, `blocked` and `completed` records. Fields bind input identity and `migration_revision`, with `last_attempt_at`, `next_attempt_at`, `consecutive_failures`, `failure_code` and `failure_stage`; no transaction phase or verification authority is duplicated.
+
+Before expensive compaction, inspect bounded provenance, root/bucket/journal/base identity, working-root/HEAD/index and archive artifact stat evidence. Invalid or replaced scheduling data fails closed. This is not a content-preservation proof: nested working-file edits can require explicit retry. All physical validation, positive-use checks and producer/migration locks still run for due work. A persisted `running` status or elapsed deadline never proves a writer dead or authorizes breaking its locks.
+
+Known transient codes back off 15 minutes, 1 hour, 6 hours and 24 hours, with up to 10% positive jitter capped at 24 hours. Proven lock contention waits 10–15 minutes without increasing failures. Unsupported state, corruption, restore mismatch and unmapped failures block until observed input identity or the content hash of the explicitly listed migration implementation files changes, or an operator requests retry. Generic framework version/release changes do not reset schedules. Expensive work still uses at most ten rotating entries/120 seconds and one retirement per pass; advancing the cursor past not-due entries preserves coverage.
+
+Failed restore reports and maintenance entries include the outer/child exit status, captured child-stderr SHA-256, recognized Git operation and fixed error hints when available. Raw stderr, commands and private paths are not copied into these diagnostics. A reference-lock or ownership-transaction hint is diagnostic only: unknown failures remain blocked, and hints never justify lock removal or retirement. The digest correlates failures without retaining their raw contents; it cannot reconstruct previously discarded stderr.
+
+Space admission uses cheap free-space observations on the recovery/archive filesystems (64 MiB minimum headroom, not a capacity guarantee). After ENOSPC, require at least 64 MiB more observed headroom before another expensive attempt; due low-space checks defer without recapture or increasing failures. Existing capture/retirement reservations resume through the original CLI; retry scheduling never deletes partial artifacts, reopens a completed capture or supplies restore/removal proof. If the final scheduling write is interrupted after retirement, reconcile from the exact bound retired receipt without running compaction or reporting newly reclaimed bytes; path absence alone is insufficient.
+
+To reset scheduling only, run `python3 .agents/scripts/worktree_recovery_compact.py --root /absolute/recovery-root --state /absolute/maintenance-state/compaction --retry-bucket aidevops-worktree-cleanup-example`. It writes `pending` and exits without compacting; the next maintenance pass must pass every ordinary gate. Invalid/symlinked journals require inspection rather than forced replacement. No retry command authorizes production cleanup by itself.
 
 ## Inventory and retention planning
 

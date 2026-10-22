@@ -59,10 +59,23 @@ def capture_bundle(root, archive, roots, base):
 
 
 def fetch_preservation(root, archive):
+    """Import preservation objects without changing shared-repository refs.
+
+    Shared-repository callers must supply their owned linked worktree, never
+    the canonical checkout. Independent repositories retain their legacy GC roots.
+    """
     bundle = archive / 'commits.bundle'
     if bundle.is_file():
-        git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
-            '+refs/archive/*:refs/archive/*')
+        git(root, 'bundle', 'verify', str(bundle))
+        admin = git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')
+        common = git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').rstrip(b'\n')
+        if Path(os.fsdecode(admin)).resolve() != Path(os.fsdecode(common)).resolve():
+            git(root, 'bundle', 'unbundle', str(bundle))
+        else:
+            # Standalone restores must keep non-commit AUTO_MERGE/index objects
+            # reachable across ordinary GC; these refs belong only to that repo.
+            git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
+                '+refs/archive/*:refs/archive/*')
 
 
 def fetch_head_roots(encoded):

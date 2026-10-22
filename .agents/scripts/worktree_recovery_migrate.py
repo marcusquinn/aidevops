@@ -22,6 +22,7 @@ from worktree_recovery_migration_state import (
     publish, source_state,
 )
 from worktree_recovery_timing import child_environment, context as timing_context, operation, phase, timed
+from worktree_recovery_retry import failure_details
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -38,10 +39,14 @@ def archive_command(lock, *arguments):
     require(bash is not None, "migration:bash-unavailable")
     with phase("archive-cli." + str(arguments[0])):
         child_environment(environment)
-        result = subprocess.run(  # nosec B603 -- resolved Bash, framework helper, argv only
-                                [str(Path(bash).absolute()), str(SCRIPTS / "worktree-archive-helper.sh"),
-                                 *map(str, arguments)], env=environment, pass_fds=(lock,),
-                                capture_output=True, text=True, check=True, timeout=600)
+        try:
+            result = subprocess.run(  # nosec B603 -- resolved Bash, framework helper, argv only
+                                    [str(Path(bash).absolute()), str(SCRIPTS / "worktree-archive-helper.sh"),
+                                     *map(str, arguments)], env=environment, pass_fds=(lock,),
+                                    capture_output=True, text=True, check=True, timeout=600)
+        except (subprocess.SubprocessError, OSError) as error:
+            error.recovery_stage = "archive-" + str(arguments[0])
+            raise
     return result.stdout.strip()
 
 
@@ -220,10 +225,14 @@ def main():
     require(bool(arguments.repo and arguments.base_branch), "migration:repository-and-base-required")
     timing_context(repo=arguments.repo, source=str(bucket))
     with phase("preflight-policy-and-process-guards"):
-        arguments.legacy_pulse_compaction = candidate(identity) and not has_lifecycle(identity)
+        arguments.legacy_pulse_compaction = (not arguments.retire_automatic
+                                            and candidate(identity)
+                                            and (identity.get("source_removal_outcome") == "removed"
+                                                 or not has_lifecycle(identity)))
         if arguments.legacy_pulse_compaction:
             # Fail before allocating an archive when retirement is already blocked.
-            validate(identity)
+            if identity.get("source_removal_outcome") != "removed":
+                validate(identity)
             guards(identity, bucket)
     private_directory(bucket.parent / ".compact-migrations")
     directory = bucket.parent / ".compact-migrations" / bucket.name
@@ -253,5 +262,6 @@ if __name__ == "__main__":
         main()
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         reason = str(error) if isinstance(error, ValueError) else "migration:evidence-unavailable"
-        print(json.dumps({"state": "incomplete", "reason": reason, "source_retired": False}))
+        print(json.dumps({"state": "incomplete", "reason": reason, "source_retired": False,
+                          **failure_details(error, "migration")}))
         sys.exit(1)
