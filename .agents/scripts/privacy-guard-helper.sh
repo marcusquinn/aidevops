@@ -35,12 +35,12 @@ set -u
 # Configuration
 # =============================================================================
 
-PRIVACY_REPOS_CONFIG="${PRIVACY_REPOS_CONFIG:-$HOME/.config/aidevops/repos.json}"
-PRIVACY_CACHE_FILE="${PRIVACY_CACHE_FILE:-$HOME/.aidevops/cache/repo-privacy.json}"
+PRIVACY_REPOS_CONFIG="${PRIVACY_REPOS_CONFIG:-${HOME:-}/.config/aidevops/repos.json}"
+PRIVACY_CACHE_FILE="${PRIVACY_CACHE_FILE:-${HOME:-}/.aidevops/cache/repo-privacy.json}"
 PRIVACY_CACHE_TTL="${PRIVACY_CACHE_TTL:-600}" # 10 minutes
 # Optional local-only inventory. One `person: value`, `client: value`, or
 # `repo: owner/repo` entry per line; tabs are also accepted after the class.
-PRIVACY_ENTITY_CONFIG="${PRIVACY_ENTITY_CONFIG:-$HOME/.aidevops/configs/privacy-guard-private-entities.txt}"
+PRIVACY_ENTITY_CONFIG="${PRIVACY_ENTITY_CONFIG:-${HOME:-}/.aidevops/configs/privacy-guard-private-entities.txt}"
 # Paths whose diffs we scan. Default to the full repository because aidevops is
 # public and private names/paths must not land in code, docs, tests, or plans.
 # Override with PRIVACY_SCAN_GLOBS_TEXT as a newline/colon/comma-separated list.
