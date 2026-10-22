@@ -132,43 +132,48 @@ def extract_markdoc_tags(lines: List[str]) -> List[Dict[str, Any]]:
     and are silently skipped.  Closing tags have empty attrs dicts.
     """
     records: List[Dict[str, Any]] = []
-    tag_re = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]*$')
-
     for line_num, line in enumerate(lines):
-        rest = line
-        while '{%' in rest:
-            rest = rest[rest.index('{%') + 2:]
-            if '%}' not in rest:
-                break  # Multi-line tag — not supported
-            inner = rest[:rest.index('%}')]
-            rest = rest[rest.index('%}') + 2:]
-
-            inner = inner.strip()
-            is_close = False
-            is_self_close = False
-
-            if inner.startswith('/'):
-                is_close = True
-                inner = inner[1:].strip()
-
-            if inner.endswith('/'):
-                is_self_close = True
-                inner = inner[:-1].strip()
-
-            parts = inner.split(None, 1)
-            if not parts:
-                continue
-            tag_name = parts[0]
-            attrs_str = parts[1] if len(parts) > 1 else ''
-
-            if not tag_re.match(tag_name):
-                continue
-
-            records.append({
-                'tag': tag_name,
-                'attrs': {} if is_close else parse_tag_attrs(attrs_str),
-                'is_close': is_close,
-                'is_self_close': is_self_close,
-                'line_num': line_num,
-            })
+        for inner in _iter_tag_bodies(line):
+            record = _parse_tag_body(inner, line_num)
+            if record is not None:
+                records.append(record)
     return records
+
+
+_TAG_NAME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]*$')
+
+
+def _iter_tag_bodies(line: str):
+    """Yield the text inside each single-line {% ... %} tag on a line."""
+    rest = line
+    while '{%' in rest:
+        rest = rest[rest.index('{%') + 2:]
+        if '%}' not in rest:
+            return  # Multi-line tag — not supported
+        yield rest[:rest.index('%}')]
+        rest = rest[rest.index('%}') + 2:]
+
+
+def _parse_tag_body(inner: str, line_num: int) -> Optional[Dict[str, Any]]:
+    """Parse one tag body into a record, or None when it is not a valid tag."""
+    inner = inner.strip()
+    is_close = inner.startswith('/')
+    if is_close:
+        inner = inner[1:].strip()
+
+    is_self_close = inner.endswith('/')
+    if is_self_close:
+        inner = inner[:-1].strip()
+
+    parts = inner.split(None, 1)
+    if not parts or not _TAG_NAME_RE.match(parts[0]):
+        return None
+    attrs_str = parts[1] if len(parts) > 1 else ''
+
+    return {
+        'tag': parts[0],
+        'attrs': {} if is_close else parse_tag_attrs(attrs_str),
+        'is_close': is_close,
+        'is_self_close': is_self_close,
+        'line_num': line_num,
+    }

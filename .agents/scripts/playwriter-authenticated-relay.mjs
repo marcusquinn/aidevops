@@ -50,20 +50,30 @@ function fixedError(message) {
   return new Error(`Authenticated Playwriter relay: ${message}`);
 }
 
+function isReviewedNpxShape(args) {
+  const hasYesFlag = args.length === 2 && args[0] === "-y";
+  if (args.length !== 1 && !hasYesFlag) return false;
+  return args.at(-1) === PLAYWRITER_PACKAGE;
+}
+
+function isReviewedBunShape(args) {
+  if (args.length !== 2) return false;
+  return args[0] === "x" && args[1] === PLAYWRITER_PACKAGE;
+}
+
+function isReviewedRunnerShape(runner, args) {
+  if (runner === "npx") return isReviewedNpxShape(args);
+  if (runner === "bun") return isReviewedBunShape(args);
+  return false;
+}
+
 export function validatePlaywriterCommand(command) {
   if (!Array.isArray(command) || command.some((part) => typeof part !== "string" || !part)) {
     throw fixedError("invalid package-runner command");
   }
   const runner = basename(command[0]);
   const args = command.slice(1);
-  const npxShape = runner === "npx"
-    && (args.length === 1 || (args.length === 2 && args[0] === "-y"))
-    && args.at(-1) === PLAYWRITER_PACKAGE;
-  const bunShape = runner === "bun"
-    && args.length === 2
-    && args[0] === "x"
-    && args[1] === PLAYWRITER_PACKAGE;
-  if (!npxShape && !bunShape) {
+  if (!isReviewedRunnerShape(runner, args)) {
     throw fixedError("command is not the reviewed Playwriter package shape");
   }
   return [...command];
