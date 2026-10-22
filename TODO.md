@@ -1738,6 +1738,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18753 fix(tests): split DB URL fixtures that block release secretlint preflight #bug ref:GH#35325 pr:#35327 completed:2026-10-21
 
+- [ ] t18755 hostinger-helper api: secret-store token, write methods, PHP version API docs #bug ref:GH#35337
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
