@@ -560,7 +560,7 @@ _fetch_claim_marker_comments() {
 			end
 		)[]
 		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("dispatch_lease") or contains("claim_released") or contains("dispatching worker")))
-		| {id: .id, body: .body, created_at: .created_at, author: (.user.login // ""), author_association: (.author_association // "")} ]
+		| {id: .id, body: .body, created_at: .created_at, updated_at: (.updated_at // .created_at), author: (.user.login // ""), author_association: (.author_association // "")} ]
 	' || {
 		echo "Error: failed to parse comments for #${issue_number} in ${repo_slug}" >&2
 		return 1
@@ -613,17 +613,24 @@ _fetch_claims() {
 	permission_trusted_authors=$(_claim_permission_trusted_authors "$comments_json" "$repo_slug")
 	local parsed
 	parsed=$(printf '%s\n%s\n' "$claims_only" "$comments_json" | jq -nc --argjson now "$now_epoch" \
-		--argjson max_age "$DISPATCH_CLAIM_MAX_AGE" --argjson include_terminal false \
+		--argjson max_age "$DISPATCH_CLAIM_MAX_AGE" --argjson include_terminal true \
 		--argjson permission_trusted_authors "$permission_trusted_authors" \
 		-f "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || {
 		echo "Error: failed to parse claim comments" >&2
 		return 1
 	}
+	# Keep expired prelaunch claims long enough to audit their automatic release.
+	# Terminal and expired ready leases retain the normal consumer semantics.
+	parsed=$(jq -c --argjson now "$now_epoch" --arg prelaunch "$LEASE_PHASE_PRELAUNCH" '[.[] | select(.lease_phase != "terminal")
+		| select(.lease_phase == $prelaunch or .lease_expires_at == 0 or .lease_expires_at >= $now)]' <<<"$parsed") || return 1
 
 	# t2400: Apply runtime override filter (extracted to keep _fetch_claims
 	# under the 100-line complexity threshold — same behaviour, separate fn).
 	parsed=$(_apply_ignore_filter "$parsed" "$issue_number" "$repo_slug" "$self_runner")
-	parsed=$(_filter_orphan_prelaunch_claims "$parsed" "$comments_json" "$issue_number" "$repo_slug" "$self_runner" "$permission_trusted_authors")
+	parsed=$(_filter_orphan_prelaunch_claims "$parsed" "$comments_json" "$issue_number" "$repo_slug" "$self_runner" "$permission_trusted_authors") || return 1
+	# Orphan auditing must not prolong ordinary distributed lease expiry.
+	parsed=$(jq -c --argjson now "$(_now_epoch)" '[.[] | select(.lease_expires_at <= 0 or
+		(.lease_expires_at | floor) != .lease_expires_at or .lease_expires_at >= $now)]' <<<"$parsed") || return 1
 
 	printf '%s' "$parsed"
 	return 0
@@ -670,16 +677,24 @@ _filter_orphan_prelaunch_claims() {
 		return 0
 	fi
 
-	local filtered_claims orphaned_claims removed_count remaining_count
+	local filtered_claims orphaned_claims removed_count
 	filtered_claims=$(_filter_claims_with_launch_evidence "$parsed_claims" "$comments_json" "$repo_slug" "$permission_trusted_authors")
 	orphaned_claims=$(printf '%s\n%s\n' "$parsed_claims" "$filtered_claims" | jq -nc '
 		input as $before | input as $after |
 		[$before[] | select(.id as $id | [$after[].id] | index($id) | not)]
 	' 2>/dev/null) || orphaned_claims="[]"
 	removed_count=$(printf '%s\n%s\n' "$parsed_claims" "$filtered_claims" | jq -nr 'input as $before | input as $after | $before | length - ($after | length)' 2>/dev/null) || removed_count=0
-	remaining_count=$(printf '%s' "$filtered_claims" | jq 'length' 2>/dev/null) || remaining_count=0
-	if [[ "$removed_count" -gt 0 && "$remaining_count" -eq 0 ]]; then
-		_post_orphan_claim_release "$issue_number" "$repo_slug" "$self_runner" "$orphaned_claims" || true
+	if [[ "$removed_count" -gt 0 ]]; then
+		# A failed live revalidation must refresh consensus as well: a renewal may
+		# have arrived after our snapshot. Failure to read is a coordination error.
+		if ! _post_orphan_claim_release "$issue_number" "$repo_slug" "$self_runner" "$orphaned_claims" "$comments_json"; then
+			comments_json=$(_fetch_claim_marker_comments "$issue_number" "$repo_slug") || return 1
+			permission_trusted_authors=$(_claim_permission_trusted_authors "$comments_json" "$repo_slug")
+			filtered_claims=$(printf '%s\n%s\n' "$comments_json" "$comments_json" | jq -nc \
+				--argjson now "$(_now_epoch)" --argjson max_age "$DISPATCH_CLAIM_MAX_AGE" \
+				--argjson include_terminal false --argjson permission_trusted_authors "$permission_trusted_authors" \
+				-f "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-lease-claims.jq") || return 1
+		fi
 	fi
 	printf '%s' "$filtered_claims"
 	return 0
@@ -702,6 +717,7 @@ _filter_claims_with_launch_evidence() {
 
 	printf '%s\n%s\n' "$parsed_claims" "$comments_json" | jq -nc \
 		--argjson permission_trusted_authors "$permission_trusted_authors" \
+		--arg prelaunch "$LEASE_PHASE_PRELAUNCH" \
 		--arg empty "" --argjson orphan_grace "$DISPATCH_CLAIM_ORPHAN_GRACE" --argjson now "$(_now_epoch)" '
 		def field($body; $name):
 			((try ($body | capture("(^|[[:space:]])" + $name + "=(?<value>[^[:space:]]+)").value) catch $empty) // $empty);
@@ -725,7 +741,9 @@ _filter_claims_with_launch_evidence() {
 			| select(field($body; "session") == $claim.session)
 			| select(field($body; "claim_id") == ($claim.id | tostring))
 		  ] | length) as $launch_count
-		| select(.lease_phase == "ready" or (.lease_expires_at // 0) >= $now or (.age_seconds // 0) <= $orphan_grace or $launch_count > 0)
+		| select(.lease_phase != $prelaunch or
+			((.lease_expires_at // 0) | tostring | test("^[1-9][0-9]*$") | not) or
+			.lease_expires_at >= $now or (.age_seconds // 0) <= $orphan_grace or $launch_count > 0)
 		] | sort_by([.created_at, .nonce])
 	' 2>/dev/null || printf '%s' "$parsed_claims"
 	return 0
@@ -733,24 +751,67 @@ _filter_claims_with_launch_evidence() {
 
 #######################################
 # Post a terminal release marker for claim-only pre-launch orphans.
-# Args: issue number, repo slug, optional runner, orphan-claim JSON snapshot
+# Args: issue number, repo slug, optional runner, orphan-claim JSON snapshot,
+#       optional marker snapshot for automatic release revalidation
+# The explicit abort command has already validated its caller-supplied session.
 #######################################
 _post_orphan_claim_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local runner="${3:-}"
 	local orphaned_claims="$4"
+	local snapshot="${5:-}" live="" device="" session=""
 	[[ -n "$runner" ]] || runner=$(_resolve_runner "")
+	if [[ -n "$snapshot" ]]; then
+		device=$(_resolve_device_id) || return 1
+		session="${AIDEVOPS_PR_CHECKPOINT_SESSION:-issue-${issue_number}}"
+	fi
 
 	local claim_id nonce claim_author body
 	while IFS=$'\t' read -r claim_id nonce claim_author; do
-		[[ "$claim_id" =~ ^[0-9]+$ && -n "$nonce" && "$claim_author" == "$runner" ]] || continue
+		[[ "$claim_id" =~ ^[0-9]+$ && -n "$nonce" && "$claim_author" == "$runner" ]] || return 1
+		if [[ -n "$snapshot" ]]; then
+			# Do not reuse the earlier consensus snapshot at this write boundary.
+			live=$(_fetch_claim_marker_comments "$issue_number" "$repo_slug") || return 1
+			_dch_orphan_release_valid "$snapshot" "$live" "$claim_id" "$nonce" "$runner" "$device" "$session" || return 1
+		fi
 		body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 CLAIM_RELEASED reason=claim_only_no_worker runner=${runner} ts=$(_now_utc) claim_id=${claim_id} nonce=${nonce}
 <!-- ops:end -->"
 		gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 			--method POST --field body="$body" >/dev/null 2>&1 || return 1
 	done < <(printf '%s' "$orphaned_claims" | jq -r '.[] | [.id, .nonce, .claim_author] | @tsv' 2>/dev/null)
+	return 0
+}
+
+#aidevops:trust-boundary — automatic releases require the local device/session,
+# known elapsed expiry for every event, and an unchanged exact-token timeline.
+_dch_orphan_release_valid() {
+	local snapshot="$1" live="$2" claim_id="$3" nonce="$4" runner="$5" device="$6" session="$7"
+	jq -ne --argjson id "$claim_id" --arg nonce "$nonce" --arg runner "$runner" \
+		--arg prelaunch "$LEASE_PHASE_PRELAUNCH" \
+		--arg device "$device" --arg session "$session" --argjson now "$(_now_epoch)" '
+		def fields: [scan("(?:^|\\s)([a-z_]+)=([^\\s]+)") | {key: .[0], value: .[1]}] | from_entries;
+		def own: .author == $runner and (.updated_at // .created_at) == .created_at
+			and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"));
+		def related: [.[] | select((.body // "") | contains($nonce))] | sort_by(.id);
+		input as $before | input as $after
+		| [$after[] | select(.id == $id)] as $claims
+		| ($claims | length) == 1 and
+		($claims[0] as $claim | ($claim.body | fields) as $f
+		| ($claim | own) and $f.runner == $runner and $f.nonce == $nonce
+			and $f.lease_token == $nonce and $f.device == $device and $f.session == $session
+			and (($before | related) == ($after | related))
+			and ([$after[] | select(.id >= $id) | select(.body | contains($nonce))] as $events
+				| all($events[]; own)
+				and all($events[]; .body | test("(^|\\n)(CLAIM_RELEASED |Dispatching worker)"; "i") | not)
+				and ([$events[].body | split("\n")[] | select(test("^(DISPATCH_CLAIM|DISPATCH_LEASE) ")) | fields] as $leases
+					| ($leases | length) > 0 and all($leases[];
+						.lease_token == $nonce and .device == $device and .session == $session and .phase == $prelaunch
+						and ((.expires_at // "") | test("^[1-9][0-9]*$"))
+						and ((.expires_at | tonumber) < $now)))))
+	' <<<"${snapshot}
+${live}" >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -1647,8 +1708,8 @@ cmd_transition() {
 		_transition_deny claim_malformed
 		return 1
 	}
-	# Active claims exclude expired, released and terminal generations, so an
-	# absent record is only "unmatched"; it is never asserted to be expired.
+	# An absent record is only "unmatched". Conservative orphan filtering may
+	# retain an expired prelaunch claim; that record must not authorize renewal.
 	if [[ -z "$claim_record" ]]; then
 		_transition_deny lease_unmatched
 		return 1
@@ -1665,6 +1726,10 @@ cmd_transition() {
 	claim_session=$(printf '%s' "$claim_record" | jq -r '.session // ""' 2>/dev/null) || claim_fields_ok=0
 	if [[ "$claim_fields_ok" -ne 1 || ! "$current_expires_at" =~ ^[0-9]+$ || -z "$claim_author" ]]; then
 		_transition_deny claim_malformed
+		return 1
+	fi
+	if [[ "$current_expires_at" -gt 0 && "$current_expires_at" -lt "$(_now_epoch)" ]]; then
+		_transition_deny lease_unmatched
 		return 1
 	fi
 	current_device=$(_resolve_device_id)
