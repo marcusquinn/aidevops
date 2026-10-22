@@ -5,22 +5,57 @@
 # Sourced by release provenance. No mutable branch reads or writes: callers
 # capture a canonical head once and pass immutable range endpoints here.
 
+# Transport retry budget shared with release-provenance-helper.sh (GH#35434).
+# GitHub intermittently answers commits/{sha}/pulls with an empty-body HTTP 500
+# that gh reports only as a JSON decode error. Snapshots read once per commit,
+# so a 3-attempt budget failed most multi-commit captures. Plain assignments:
+# this file is sourced by several helpers and must tolerate double sourcing.
+_RELEASE_GH_READ_DEFAULT_ATTEMPTS=8
+_RELEASE_GH_READ_ATTEMPTS_CAP=12
+_RELEASE_GH_READ_DEFAULT_UNIT=2
+_RELEASE_GH_READ_UNIT_CAP=30
+
+# Prints the validated attempt budget (RELEASE_SNAPSHOT_MAX_ATTEMPTS, 1..cap).
+_release_gh_read_attempts() {
+	local value="${RELEASE_SNAPSHOT_MAX_ATTEMPTS:-}"
+	if [[ "$value" =~ ^[0-9]{1,3}$ ]] && ((10#$value >= 1 && 10#$value <= _RELEASE_GH_READ_ATTEMPTS_CAP)); then
+		printf '%s\n' "$((10#$value))"
+		return 0
+	fi
+	printf '%s\n' "$_RELEASE_GH_READ_DEFAULT_ATTEMPTS"
+	return 0
+}
+
+# Sleeps attempt * RELEASE_SNAPSHOT_RETRY_UNIT seconds (unit 0..cap, default 2).
+_release_gh_read_backoff() {
+	local attempt="$1"
+	local unit="${RELEASE_SNAPSHOT_RETRY_UNIT:-}"
+	if [[ ! "$unit" =~ ^[0-9]{1,3}$ ]] || ((10#$unit > _RELEASE_GH_READ_UNIT_CAP)); then
+		unit="$_RELEASE_GH_READ_DEFAULT_UNIT"
+	fi
+	sleep $((attempt * 10#$unit))
+	return 0
+}
+
 # Read-only GitHub read with bounded retry of transport failures only (empty
 # body, HTTP 5xx, truncated/invalid JSON). Auth, 404 and permission failures and
-# wrong response shapes fail on the first attempt. Fail closed after 3 attempts.
+# wrong response shapes fail on the first attempt. Fail closed after the
+# _release_gh_read_attempts budget.
 # Usage: _release_snapshot_gh_read <purpose> <jq-shape-test> -- gh-args...
 _release_snapshot_gh_read() {
 	local purpose="$1"
 	local shape="$2"
 	shift 3
 	local attempt=1
+	local max_attempts=""
 	local response=""
 	local status=0
 	local error_file=""
 	local error_text=""
 	local cause=""
+	max_attempts=$(_release_gh_read_attempts)
 	error_file=$(mktemp) || return 1
-	while [[ "$attempt" -le 3 ]]; do
+	while [[ "$attempt" -le "$max_attempts" ]]; do
 		status=0
 		response=$(gh "$@" 2>"$error_file") || status=$?
 		error_text=$(<"$error_file")
@@ -46,13 +81,13 @@ _release_snapshot_gh_read() {
 			printf 'release-snapshot: %s: GitHub read failed (exit %s, attempt %s; not retryable)\n' "$purpose" "$status" "$attempt" >&2
 			return 1
 		fi
-		[[ "$attempt" -eq 3 ]] && break
-		printf 'release-snapshot: %s: %s; retrying after attempt %s/3\n' "$purpose" "$cause" "$attempt" >&2
-		sleep $((attempt * ${RELEASE_SNAPSHOT_RETRY_UNIT:-1}))
+		[[ "$attempt" -ge "$max_attempts" ]] && break
+		printf 'release-snapshot: %s: %s; retrying after attempt %s/%s\n' "$purpose" "$cause" "$attempt" "$max_attempts" >&2
+		_release_gh_read_backoff "$attempt"
 		attempt=$((attempt + 1))
 	done
 	rm -f "$error_file"
-	printf 'release-snapshot: %s: %s after 3 attempts\n' "$purpose" "$cause" >&2
+	printf 'release-snapshot: %s: %s after %s attempts\n' "$purpose" "$cause" "$max_attempts" >&2
 	return 1
 }
 

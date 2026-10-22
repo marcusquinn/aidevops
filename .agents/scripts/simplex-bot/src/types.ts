@@ -210,24 +210,8 @@ export interface CommandDefinition {
 // Leak Detection Types
 // =============================================================================
 
-/** Named leak pattern identifiers */
-export type LeakPatternName =
-  | "aws_access_key"
-  | "aws_secret_key"
-  | "github_token"
-  | "github_fine_grained"
-  | "gitlab_token"
-  | "slack_token"
-  | "discord_token"
-  | "generic_api_key"
-  | "bearer_token"
-  | "jwt"
-  | "database_url"
-  | "private_ip"
-  | "file_path"
-  | "private_key"
-  | "password_in_url"
-  | "high_entropy";
+import type { LeakPatternName } from "./leak-patterns";
+export type { LeakPatternName } from "./leak-patterns";
 
 /** A single leak match found by the scanner */
 export interface LeakMatch {
