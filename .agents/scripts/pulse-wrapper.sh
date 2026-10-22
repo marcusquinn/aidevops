@@ -247,7 +247,14 @@ if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 				printf '[pulse-wrapper] another instance running (PID %s, age %ss), skipping\n' \
 					"$_pw_ffjit_pid" "$_pw_ffjit_age" \
 					>>"${HOME}/.aidevops/logs/pulse-wrapper.log" 2>/dev/null || true
-				exit 0
+				# GH#35349: skip the cycle but keep bootstrapping, without jitter,
+				# so main() can run a routines-only pass instead of letting a long
+				# lock hold miss calendar slots.
+				if [[ "${AIDEVOPS_PULSE_BUSY_ROUTINES:-1}" != "1" ]]; then
+					exit 0
+				fi
+				_PULSE_BUSY_AT_BOOTSTRAP=1
+				_pulse_skip_jitter=1
 			fi
 			# Holder exceeds age ceiling — fall through to main() for stale-lock reclaim.
 		fi
@@ -839,6 +846,8 @@ _pulse_execute_self_check() {
 		merge_ready_prs_all_repos
 		rotate_pulse_log
 		evaluate_routines
+		evaluate_routines_locked
+		_pulse_run_routines_while_busy
 		main
 		write_pulse_health_file
 		calculate_max_workers
@@ -1053,6 +1062,35 @@ _pulse_first_wave_dispatch_reserve_seconds() {
 _pulse_cycle_budget_admits_dispatch() {
 	local dispatch_context="$1"
 	_dispatch_cycle_budget_admits_round "$dispatch_context" before || return 1
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_run_routines_while_busy (GH#35349)
+#
+# Evaluate due routines when this invocation cannot run a full cycle because
+# another process holds the Pulse instance lock (a long full cycle or a
+# worker-exit refill drain). Routines otherwise run only at full-cycle start,
+# so a long lock hold skipped calendar slots. Every scheduler tick that loses
+# the lock calls this, so a due routine starts within one tick interval.
+# evaluate_routines_locked serializes this pass with the in-cycle backstop via
+# routines.lockdir; runner locks plus last_run state prevent a second start
+# for the same slot. The REST budget gate still applies.
+# AIDEVOPS_PULSE_BUSY_ROUTINES=0 disables the pass.
+#
+# Args: $1=context label for the log line
+# ---------------------------------------------------------------------------
+_pulse_run_routines_while_busy() {
+	local busy_context="${1:-busy}"
+	[[ "${AIDEVOPS_PULSE_BUSY_ROUTINES:-1}" == "1" ]] || return 0
+	# Diagnostic modes exercise the full path and never start routines here.
+	[[ "${PULSE_DRY_RUN:-0}${PULSE_CANARY_MODE:-0}" == "00" ]] || return 0
+	[[ ! -f "$STOP_FLAG" ]] || return 0
+	declare -F evaluate_routines_locked >/dev/null 2>&1 || return 0
+	check_session_gate || return 0
+	echo "[pulse-wrapper] Routines-only pass: instance lock busy (${busy_context}); evaluating due routines (GH#35349)" >>"$WRAPPER_LOGFILE"
+	_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
+		evaluate_routines_locked --skip-publication || true
 	return 0
 }
 
@@ -1385,6 +1423,12 @@ main() {
 		_pulse_run_merge_only
 		return $?
 	fi
+	# GH#35349: the pre-jitter fast-fail saw a live lock holder; this tick only
+	# evaluates due routines, then exits like the previous fast-fail did.
+	if [[ "${_PULSE_BUSY_AT_BOOTSTRAP:-0}" == "1" ]]; then
+		_pulse_run_routines_while_busy "bootstrap"
+		return 0
+	fi
 
 	# GH#20580: Detect and record invocation source before acquiring the lock
 	# so every invocation — including those that fail the lock — is counted.
@@ -1434,6 +1478,7 @@ main() {
 				_ir_max="${PULSE_LOCK_MAX_AGE_S:-1800}"
 				if [[ "$_ir_age" =~ ^[0-9]+$ ]] && [[ "$_ir_age" -le "$_ir_max" ]]; then
 					echo "[pulse-wrapper] Pulse already running (PID: ${_ir_pid}, age ${_ir_age}s), skipping" >>"$WRAPPER_LOGFILE"
+					_pulse_run_routines_while_busy "is-running"
 					return 0
 				fi
 				echo "[pulse-wrapper] Lock holder PID ${_ir_pid} age ${_ir_age}s > ceiling ${_ir_max}s — deferring to acquire_instance_lock for reclaim (t2829)" >>"$WRAPPER_LOGFILE"
@@ -1486,6 +1531,7 @@ main() {
 			fi
 			if [[ "$_rl_lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$_rl_lock_pid" 2>/dev/null; then
 				echo "[pulse-wrapper] Rate-limited: last run ${_rl_elapsed}s ago < ${PULSE_MIN_INTERVAL_S}s threshold — skipping cycle (GH#20578)" >>"$WRAPPER_LOGFILE"
+				_pulse_run_routines_while_busy "rate-limited"
 				return 0
 			fi
 			# Stale stamp recovery: no live lock holder. Clear stamp and
@@ -1521,6 +1567,7 @@ main() {
 	trap '_pulse_exit_cleanup' EXIT
 
 	if ! acquire_instance_lock; then
+		_pulse_run_routines_while_busy "lock-busy"
 		return 0
 	fi
 	_dispatch_cleanup_stale_benign_blocks || true
@@ -1749,12 +1796,14 @@ main() {
 	# before preflight can consume the cycle's REST allowance or hold the Pulse
 	# instance long enough for the next scheduler restart. The stage-level gate
 	# still defers on low/unknown quota, and evaluate_routines retains its
-	# per-work-unit REST hard-floor checks.
+	# per-work-unit REST hard-floor checks. GH#35349: busy scheduler ticks also
+	# evaluate routines (_pulse_run_routines_while_busy); this in-cycle call is
+	# the backstop and shares their routines.lockdir.
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping routine evaluation" >>"$LOGFILE"
 	else
 		_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
-			evaluate_routines || true
+			evaluate_routines_locked || true
 	fi
 
 	# Run pre-flight stages (cleanup, prefetch, normalization)

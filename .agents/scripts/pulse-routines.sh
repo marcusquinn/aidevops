@@ -21,6 +21,7 @@
 #   - _routine_parse_line
 #   - _routine_schedule_is_due
 #   - evaluate_routines
+#   - evaluate_routines_locked (routines.lockdir serialization, GH#35349)
 #
 # Keep behavioral changes in this module covered by the focused selector and
 # lifecycle regression suites.
@@ -45,6 +46,7 @@ _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"
 _ROUTINE_STATUS_DEFERRED="deferred"
+_ROUTINE_STATUS_RUNNING="running"
 _ROUTINE_TEMPFAIL_EXIT=75
 
 _routine_now_epoch() {
@@ -445,8 +447,8 @@ _routine_run_detached_agent() {
 	[[ -n "$agent_name" ]] || agent_name="Build+"
 	started_epoch=$(date +%s)
 	_routine_runner_arm_traps "$routine_id" "$started_epoch" "$session_key" "$pid_file" "$lock_dir"
-	_routine_update_state "$routine_id" "running"
-	_routine_record_lifecycle "$routine_id" "running" 0 "$session_key"
+	_routine_update_state "$routine_id" "$_ROUTINE_STATUS_RUNNING"
+	_routine_record_lifecycle "$routine_id" "$_ROUTINE_STATUS_RUNNING" 0 "$session_key"
 	if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 		echo "[pulse-wrapper] routine ${routine_id}: headless runtime helper unavailable" >>"$LOGFILE"
 		_ROUTINE_RUNNER_FINALIZED=true
@@ -603,8 +605,8 @@ _routine_run_detached_script() {
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
 	_routine_claim_runner_lock "$lock_dir" || return 0
 	_routine_runner_arm_traps "$routine_id" "$started_epoch" "" "$pid_file" "$lock_dir"
-	_routine_update_state "$routine_id" "running"
-	_routine_record_lifecycle "$routine_id" "running" 0
+	_routine_update_state "$routine_id" "$_ROUTINE_STATUS_RUNNING"
+	_routine_record_lifecycle "$routine_id" "$_ROUTINE_STATUS_RUNNING" 0
 	# Background + wait so a TERM/INT/HUP trap fires immediately.
 	if [[ "$#" -gt 0 ]]; then
 		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 &
@@ -705,6 +707,7 @@ _routine_execute() {
 			_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$started_epoch"
 			return 1
 		fi
+		_routine_mark_dispatched "$routine_id"
 		# Bash 3.2 with nounset treats expansion of an empty array as an unbound
 		# variable. Keep the zero-argument path separate instead of expanding it.
 		if [[ "${#run_parts[@]}" -gt 1 ]]; then
@@ -732,8 +735,22 @@ _routine_execute() {
 		return 0
 	fi
 
+	_routine_mark_dispatched "$routine_id"
 	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}"
 	return $?
+}
+
+#######################################
+# Record the running status before a detached runner starts (GH#35349). The runner
+# rewrites the same state once it holds its lock; until then this marker makes
+# _routine_retry_blocked hold every other evaluator off the slot, including one
+# that starts before the runner has claimed its lock. A runner that never
+# starts is reclaimed as a failure after the 60-second launch grace.
+#######################################
+_routine_mark_dispatched() {
+	local routine_id="$1"
+	_routine_update_state "$routine_id" "$_ROUTINE_STATUS_RUNNING"
+	return 0
 }
 
 # Module-scope variables set by _routine_parse_line (prefixed to avoid collision).
@@ -1132,7 +1149,11 @@ _evaluate_issue_archive_routine() {
 #######################################
 evaluate_routines() {
 	local publication_worker="${SCRIPT_DIR}/task-publication-worker-helper.sh"
-	if [[ -x "$publication_worker" ]]; then
+	local run_publication=1
+	# Busy-lock passes (GH#35349) run every scheduler tick; they evaluate
+	# calendar slots only and leave the publication worker to full cycles.
+	[[ "${1:-}" != "--skip-publication" ]] || run_publication=0
+	if [[ "$run_publication" -eq 1 && -x "$publication_worker" ]]; then
 		if ! _routine_rest_core_allows_next "routine_publication_worker"; then
 			return 0
 		fi
@@ -1223,4 +1244,32 @@ evaluate_routines() {
 	fi
 
 	return 0
+}
+
+#######################################
+# Run evaluate_routines under the dedicated routines.lockdir (GH#35349).
+#
+# Routines are evaluated by the full cycle (backstop) and by routines-only
+# passes that run while another process holds the Pulse instance lock. This
+# lock serializes those evaluators. It lives beside ROUTINE_STATE_FILE, so
+# hosts that share routine state also share it. A live holder means another
+# evaluator is already handling the due slots: skip rather than wait. Dead
+# holders are reclaimed after the launch grace (_routine_claim_runner_lock).
+#
+# Arguments: passed through to evaluate_routines
+#######################################
+evaluate_routines_locked() {
+	local lock_dir="${ROUTINE_EVALUATOR_LOCKDIR:-${ROUTINE_STATE_FILE%/*}/routines.lockdir}"
+	local owner_file=""
+	local rc=0
+	mkdir -p "${lock_dir%/*}" 2>/dev/null || true
+	if ! _routine_claim_runner_lock "$lock_dir"; then
+		echo "[pulse-wrapper] evaluate_routines: another evaluator holds ${lock_dir##*/}; skipping this pass (GH#35349)" >>"$LOGFILE"
+		return 0
+	fi
+	owner_file="${lock_dir}/pid-${BASHPID:-$$}"
+	evaluate_routines "$@" || rc=$?
+	rm -f -- "$owner_file"
+	rmdir -- "$lock_dir" 2>/dev/null || true
+	return "$rc"
 }

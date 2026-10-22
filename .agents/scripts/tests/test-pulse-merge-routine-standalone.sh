@@ -59,6 +59,8 @@
 #   21. missing gh authentication aborts before the first API request
 #   22. standalone runs initialise a durable cross-process PR-view cache
 #   23. inherited oversized PR batches are clamped for standalone runs
+#   24-28. (GH#35349) due routines start once while another process holds the
+#      Pulse instance lock, under the budget gate and routines.lockdir
 
 set -uo pipefail
 
@@ -678,6 +680,168 @@ if [[ "$source_chain_rc" -eq 0 && "$source_chain_output" != *"command not found"
 else
 	fail "20: post-merge providers run without missing-function diagnostics" \
 		"harness rc=${source_chain_rc}, output=${source_chain_output}"
+fi
+
+# =============================================================================
+# Tests 24-28: routines run while another process holds the instance lock
+# =============================================================================
+# GH#35349: a long refill-only drain or full cycle held the Pulse instance lock
+# and every scheduler tick skipped, so routines (evaluated only at full-cycle
+# start) missed calendar slots. Busy ticks now run a routines-only pass under
+# routines.lockdir. This harness holds the instance lock with a live process,
+# runs the production refill busy hook and wrapper busy pass, and checks that a
+# due script routine starts exactly once.
+printf '\n=== Routines while the instance lock is held (GH#35349) ===\n'
+
+WRAPPER_FILE="${SCRIPTS_DIR}/pulse-wrapper.sh"
+BUSY_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pmr-busy-routines-XXXXXX")
+BUSY_HARNESS="${BUSY_ROOT}/harness.sh"
+trap 'rm -f "$PARSER_HARNESS" "$SCOPE_HARNESS" "$BUDGET_HARNESS" "$SOURCE_CHAIN_HARNESS"; rm -rf "$SOURCE_CHAIN_TEST_HOME" "$BUSY_ROOT"' EXIT
+
+cat >"$BUSY_HARNESS" <<'BUSY_HARNESS_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+
+root="${BUSY_ROOT:?}"
+export HOME="${root}/home"
+fake_scripts="${HOME}/.aidevops/agents/scripts"
+repo_dir="${root}/routines-repo"
+mkdir -p "$fake_scripts" "$repo_dir" "${HOME}/.aidevops/logs"
+cat >"${fake_scripts}/queue-refill.sh" <<'ROUTINE_SCRIPT'
+#!/usr/bin/env bash
+printf 'run\n' >>"${BUSY_RUN_LOG:?}"
+sleep 1
+exit 0
+ROUTINE_SCRIPT
+cat >"${root}/always-due.sh" <<'SCHEDULE_SCRIPT'
+#!/usr/bin/env bash
+[[ "${1:-}" == "is-due" ]] || exit 2
+exit 0
+SCHEDULE_SCRIPT
+chmod +x "${fake_scripts}/queue-refill.sh" "${root}/always-due.sh"
+printf '# Tasks\n\n## Routines\n\n%s\n\n## Ready\n' \
+	'- [x] r-queue-refill Queue refill repeat:cron(15,45 * * * *) ~1m run:scripts/queue-refill.sh' \
+	>"${repo_dir}/TODO.md"
+printf '{"initialized_repos":[{"slug":"example/routines","path":"%s","pulse":true,"local_only":true}]}\n' \
+	"$repo_dir" >"${root}/repos.json"
+
+export BUSY_RUN_LOG="${root}/runs.log"
+SCRIPT_DIR="${ROUTINE_TEST_SCRIPTS_DIR:?}"
+ROUTINE_SCHEDULE_HELPER="${root}/always-due.sh"
+ROUTINE_STATE_FILE="${root}/routine-state.json"
+ROUTINE_LOG_HELPER="${root}/missing-routine-log-helper.sh"
+HEADLESS_RUNTIME_HELPER="${root}/missing-headless-helper.sh"
+REPOS_JSON="${root}/repos.json"
+LOGFILE="${root}/pulse.log"
+WRAPPER_LOGFILE="${root}/pulse-wrapper.log"
+STOP_FLAG="${root}/stop"
+PRE_RUN_STAGE_TIMEOUT=60
+PULSE_DIR="$root"
+LOCKDIR="${root}/pulse-wrapper.lockdir"
+
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/pulse-routines.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/pulse-event-refill.sh"
+# Extract the production busy pass without bootstrapping the whole wrapper.
+# shellcheck disable=SC1090
+source <(awk '
+	/^_pulse_run_routines_while_busy\(\)/ { capture=1 }
+	capture { print }
+	capture && /^}/ { exit }
+' "${WRAPPER_FILE:?}")
+check_session_gate() { return 0; }
+# The stage gate itself is covered by pulse-budget-priority tests; record the
+# stage name so the harness proves the busy pass goes through it.
+_pulse_run_budget_priority_stage_with_timeout() {
+	local stage_name="$1"
+	printf 'stage:%s\n' "$stage_name" >>"${root}/stages.log"
+	shift 2
+	"$@"
+	return $?
+}
+
+wait_for_success() {
+	local attempt=0
+	while [[ "$attempt" -lt 100 ]]; do
+		if jq -e '."r-queue-refill".last_status == "success"' "$ROUTINE_STATE_FILE" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+# A live long-running process holds the Pulse instance lock.
+sleep 300 &
+holder_pid=$!
+mkdir -p "$LOCKDIR"
+printf '%s\n' "$holder_pid" >"${LOCKDIR}/pid"
+
+# A worker-exit refill wake evaluates routines before waiting for the lock;
+# a second busy scheduler tick in the same slot must not start it again.
+_pulse_event_refill_run_routines_if_busy worker-exit
+_pulse_run_routines_while_busy lock-busy
+wait_for_success || printf 'routine did not finish\n'
+grep -q 'routine r-queue-refill is due' "$LOGFILE" && printf 'due-logged\n'
+grep -q 'routine r-queue-refill: dispatching script' "$LOGFILE" && printf 'dispatch-logged\n'
+grep -q 'Routines-only pass: instance lock busy (refill-only:worker-exit)' "$WRAPPER_LOGFILE" && printf 'refill-pass-logged\n'
+grep -q '^stage:evaluate_routines$' "${root}/stages.log" && printf 'budget-gated\n'
+printf 'runs=%s\n' "$(grep -c '^run$' "$BUSY_RUN_LOG" 2>/dev/null || printf 0)"
+
+# A live evaluator holding routines.lockdir makes a concurrent pass skip.
+mkdir -p "${root}/routines.lockdir"
+: >"${root}/routines.lockdir/pid-${holder_pid}"
+before=$(grep -c 'is due' "$LOGFILE")
+_pulse_run_routines_while_busy rate-limited
+after=$(grep -c 'is due' "$LOGFILE")
+[[ "$before" == "$after" ]] && grep -q 'another evaluator holds routines.lockdir' "$LOGFILE" &&
+	printf 'concurrent-skip\n'
+kill "$holder_pid" 2>/dev/null || true
+wait "$holder_pid" 2>/dev/null || true
+exit 0
+BUSY_HARNESS_EOF
+
+busy_output=$(BUSY_ROOT="$BUSY_ROOT" ROUTINE_TEST_SCRIPTS_DIR="$SCRIPTS_DIR" \
+	WRAPPER_FILE="$WRAPPER_FILE" timeout 120 bash "$BUSY_HARNESS" 2>&1)
+busy_rc=$?
+
+if [[ "$busy_rc" -eq 0 && "$busy_output" == *"due-logged"* && "$busy_output" == *"dispatch-logged"* && "$busy_output" == *"refill-pass-logged"* ]]; then
+	pass "24: due script routine starts while another process holds the instance lock"
+else
+	fail "24: due script routine starts while another process holds the instance lock" \
+		"harness rc=${busy_rc}, output=${busy_output}"
+fi
+
+if [[ "$busy_output" == *"runs=1"* ]]; then
+	pass "25: overlapping busy passes start the routine once per slot"
+else
+	fail "25: overlapping busy passes start the routine once per slot" "output=${busy_output}"
+fi
+
+if [[ "$busy_output" == *"budget-gated"* ]]; then
+	pass "26: busy routines pass keeps the REST budget stage gate"
+else
+	fail "26: busy routines pass keeps the REST budget stage gate" "output=${busy_output}"
+fi
+
+if [[ "$busy_output" == *"concurrent-skip"* ]]; then
+	pass "27: a live routines.lockdir holder makes a concurrent evaluator skip"
+else
+	fail "27: a live routines.lockdir holder makes a concurrent evaluator skip" "output=${busy_output}"
+fi
+
+# Every path that skips a full cycle for a live lock holder runs the pass.
+busy_hooks=0
+for busy_context in bootstrap is-running rate-limited lock-busy; do
+	grep -qF "_pulse_run_routines_while_busy \"${busy_context}\"" "$WRAPPER_FILE" && busy_hooks=$((busy_hooks + 1))
+done
+if [[ "$busy_hooks" -eq 4 ]] && grep -qF 'evaluate_routines_locked || true' "$WRAPPER_FILE"; then
+	pass "28: wrapper busy-skip paths run routines and the in-cycle backstop shares the lock"
+else
+	fail "28: wrapper busy-skip paths run routines and the in-cycle backstop shares the lock" \
+		"busy hooks found=${busy_hooks}/4"
 fi
 
 # =============================================================================
