@@ -28,7 +28,24 @@ every vague reference — match the source to the question.
 
 3. **Git history**: `git log --all --oneline --grep="keyword"` — commits, branches, PRs, code changes. High volume but precise when the keyword is specific.
 4. **Session transcripts (Claude Code)**: `~/.claude/transcripts/*.jsonl` — full JSONL conversation logs. `rg "keyword" ~/.claude/transcripts/`. Recovers exact conversation context, what was discussed, tool calls made. For structured field searches, pipe through jq: `rg -l "keyword" ~/.claude/transcripts/ | xargs -I{} jq 'select(.type=="assistant") | .message.content' {}`
-5. **Session database**: runtime-specific — see AGENTS.md for paths per runtime.
+5. **Session database**: runtime-specific. OpenCode keeps sessions in several SQLite databases; search all of them before concluding a session or attachment is gone:
+
+   | Location | Holds |
+   |---|---|
+   | `$XDG_DATA_HOME/opencode/opencode.db` | The current session. aidevops launches set `XDG_DATA_HOME` per project: `~/.aidevops/.agent-workspace/work/opencode-interactive/<project-…>/` (`opencode-launcher-helper.sh`) |
+   | `~/.local/share/opencode/opencode.db` | Sessions started without the aidevops launcher, and headless workers |
+   | `~/.aidevops/.agent-workspace/work/opencode-interactive/*/opencode/opencode.db` | Every other project's sessions (`opencode-db-inventory-lib.sh`) |
+   | `opencode-archive.db` beside the shared database | Sessions moved out by `opencode-db-archive.sh` |
+
+   Open them read-only as `sqlite3 "file:<path>?mode=ro"`: plain `-readonly` fails on live WAL databases. The shared database can be tens of GB, so look up by `session.id` or `part.session_id` (indexed), never with `LIKE` over all `part.data`. Titles are in `session.title`; message text and attachments are JSON in `part.data`.
+
+   **Pasted images** are not files: they are stored inline as `part.data` `{"type":"file","mime":"image/png","filename":"clipboard","url":"data:image/png;base64,…"}`. To hand them to another session, a worker or a tool, export them on demand with `session-attachments-helper.sh`:
+   - `sessions --title TEXT` finds a session in any database, with its image count.
+   - `list latest` (the current session) or `list <session-id>` shows each message's images.
+   - `export latest --last` writes the newest message's images to `~/.aidevops/.agent-workspace/tmp/session-attachments/<session>/` (private files, named `<time>-<message>-<n>.png`, where `n` is "Image n") and prints the paths.
+   - Exports are copies, removed after 60 days untouched (`cleanup`); export again while the session exists. Images are not saved automatically, because sessions stay open or are reopened for weeks.
+
+   Claude Code: one JSONL transcript per session in `~/.claude/projects/<encoded-path>/`. The helper does not read these yet.
 6. **Observability metrics**: `~/.aidevops/.agent-workspace/observability/metrics.jsonl` — JSONL log of LLM request metadata, costs, models, tokens per session. Fields per record: provider, model, session_id, request_id, project, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_input, cost_output, cost_total, stop_reason, git_branch, recorded_at. Example: `jq -s '[.[] | select(.project=="aidevops")] | group_by(.model) | map({model:.[0].model, total_cost:([.[].cost_total] | add), requests:length})' ~/.aidevops/.agent-workspace/observability/metrics.jsonl`
 
 ## Tier 3 — Remote targeted (API calls, need a specific number)
