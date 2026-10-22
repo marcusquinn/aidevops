@@ -123,6 +123,16 @@ extract_file_paths_from_text() {
 		paths="${paths}${bare_files}"$'\n'
 	fi
 
+	# Pattern 5: Backtick-enclosed repository-relative glob entries (contain `*`).
+	# Emitted with a `glob:` prefix so classification keeps them apart from
+	# literal paths (batch issues cannot know slugs/timestamps in advance).
+	local backtick_globs
+	# shellcheck disable=SC2016 # Literal backtick regex, not shell expansion.
+	backtick_globs=$(printf '%s' "$text" | grep -oE '`[a-zA-Z0-9._*/-]*\*[a-zA-Z0-9._*/-]*`' | tr -d '`' | grep '/' | sed 's/^/glob:/' | sort -u || true)
+	if [[ -n "$backtick_globs" ]]; then
+		paths="${paths}${backtick_globs}"$'\n'
+	fi
+
 	# Deduplicate, remove empty lines, filter out false positives
 	printf '%s' "$paths" | sort -u | grep -v '^$' | grep -vE '^v?[0-9]+\.[0-9]+\.[0-9]+' || true
 	return 0
@@ -204,15 +214,48 @@ _classify_issue_paths() {
 	local issue_paths="$1"
 	local pr_files="$2"
 
-	local specific_paths general_paths pr_basenames
-	specific_paths=$(printf '%s\n' "$issue_paths" | grep '/' || true)
-	general_paths=$(printf '%s\n' "$issue_paths" | grep -v '/' || true)
+	local specific_paths general_paths pr_basenames glob_paths
+	glob_paths=$(printf '%s\n' "$issue_paths" | grep '^glob:' | sed 's/^glob://' || true)
+	specific_paths=$(printf '%s\n' "$issue_paths" | grep -v '^glob:' | grep '/' || true)
+	general_paths=$(printf '%s\n' "$issue_paths" | grep -v '^glob:' | grep -v '/' || true)
 	pr_basenames=$(printf '%s\n' "$pr_files" | while IFS= read -r f; do printf '%s\n' "${f##*/}"; done | sort -u)
 
 	# Output as shell assignments for eval
 	printf 'specific_paths=%q\n' "$specific_paths"
 	printf 'general_paths=%q\n' "$general_paths"
+	printf 'glob_paths=%q\n' "$glob_paths"
 	printf 'pr_basenames=%q\n' "$pr_basenames"
+	return 0
+}
+
+#######################################
+# Convert a safe repository-relative glob into an anchored ERE.
+#
+# `*` matches within one path segment ([^/]*); every other character is
+# literal. Unsafe patterns (absolute, `..`, `**`, or no literal leading
+# directory such as `*/*.json`) produce no output and return 1.
+#
+# Args: $1 = glob pattern
+# Outputs: anchored regex on stdout
+# Returns: 0 = safe, 1 = unsafe
+#######################################
+_glob_to_safe_regex() {
+	local pattern="$1"
+	local first_segment="${pattern%%/*}"
+
+	[[ -z "$pattern" || "$pattern" == /* || "$pattern" == *..* || "$pattern" == *'**'* ]] && return 1
+	[[ "$pattern" != */* || "$first_segment" == *'*'* ]] && return 1
+
+	local regex="" ch i
+	for ((i = 0; i < ${#pattern}; i++)); do
+		ch="${pattern:i:1}"
+		case "$ch" in
+		'*') regex="${regex}[^/]*" ;;
+		[a-zA-Z0-9_/]) regex="${regex}${ch}" ;;
+		*) regex="${regex}\\${ch}" ;;
+		esac
+	done
+	printf '^%s$' "$regex"
 	return 0
 }
 
@@ -231,12 +274,13 @@ _classify_issue_paths() {
 _check_tier1_specific_paths() {
 	local specific_paths="$1"
 	local pr_files="$2"
+	local glob_paths="${3:-}"
 
 	local overlap_count=0
 	local overlapping_files=""
 	local specific_overlap=0
 
-	if [[ -z "$specific_paths" ]]; then
+	if [[ -z "$specific_paths" && -z "$glob_paths" ]]; then
 		printf 'tier1_overlap_count=%d\n' "$overlap_count"
 		printf 'tier1_specific_overlap=%d\n' "$specific_overlap"
 		printf 'tier1_overlapping_files=%q\n' "$overlapping_files"
@@ -254,6 +298,20 @@ _check_tier1_specific_paths() {
 			continue
 		fi
 	done <<<"$specific_paths"
+
+	local glob_pattern glob_regex pr_file
+	while IFS= read -r glob_pattern; do
+		[[ -z "$glob_pattern" ]] && continue
+		glob_regex=$(_glob_to_safe_regex "$glob_pattern") || continue
+		while IFS= read -r pr_file; do
+			[[ -z "$pr_file" ]] && continue
+			if [[ "$pr_file" =~ $glob_regex ]]; then
+				overlap_count=$((overlap_count + 1))
+				specific_overlap=$((specific_overlap + 1))
+				overlapping_files="${overlapping_files}  ${pr_file} (glob match: ${glob_pattern})"$'\n'
+			fi
+		done <<<"$pr_files"
+	done <<<"$glob_paths"
 
 	printf 'tier1_overlap_count=%d\n' "$overlap_count"
 	printf 'tier1_specific_overlap=%d\n' "$specific_overlap"
@@ -404,14 +462,14 @@ check_pr_fixes_issue() {
 	fi
 
 	# Classify paths and build PR basenames
-	local specific_paths general_paths pr_basenames
+	local specific_paths general_paths pr_basenames glob_paths
 	eval "$(_classify_issue_paths "$issue_paths" "$pr_files")"
 
 	# Tier 1: specific path matching (paths with directory separators)
 	local tier1_overlap_count tier1_specific_overlap tier1_overlapping_files
 	local tier1_output
 	tier1_output=$(_check_tier1_specific_paths \
-		"$specific_paths" "$pr_files")
+		"$specific_paths" "$pr_files" "$glob_paths")
 	eval "$tier1_output"
 
 	# Tier 2: independent general basename matching when no specific path matched

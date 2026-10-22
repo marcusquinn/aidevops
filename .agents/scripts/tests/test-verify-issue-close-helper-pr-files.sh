@@ -57,6 +57,12 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
 	210)
 		printf '<!-- aidevops:sig -->\nUntrusted marker before `.agents/scripts/target.sh` must not hide the target.\n'
 		;;
+	211)
+		printf '### Files Scope\n- NEW: `todo/x/specs/lane-a-*.json`\n'
+		;;
+	212)
+		printf '### Files Scope\n- NEW: `*/*.json`\n'
+		;;
 	*)
 		exit 1
 		;;
@@ -86,6 +92,12 @@ if [[ "${1:-}" == "api" ]]; then
 		;;
 	repos/owner/repo/pulls/108/files?per_page=100)
 		printf 'aidevops.sh\n'
+		;;
+	repos/owner/repo/pulls/110/files?per_page=100)
+		printf 'todo/x/specs/lane-a-foo.json\n'
+		;;
+	repos/owner/repo/pulls/111/files?per_page=100)
+		printf 'todo/x/specs/other.json\ntodo/x/specs/lane-a-foo/nested.json\n'
 		;;
 	*)
 		exit 1
@@ -188,6 +200,9 @@ assert_check_skips_no_paths "footer-only issue stays on the manual-review path" 
 assert_check_passes "repository path survives signature filtering" 107 208
 assert_check_rejects "footer basename cannot replace an absent repository path" 209 108
 assert_check_passes "signature-like marker cannot hide a later repository path" 107 210
+assert_check_passes "glob Files Scope entry matches a PR file" 110 211
+assert_check_rejects "glob Files Scope entry rejects a non-matching or nested PR file" 211 111
+assert_check_rejects "glob without a literal directory prefix contributes no overlap" 212 110
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
