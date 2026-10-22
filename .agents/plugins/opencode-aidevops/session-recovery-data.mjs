@@ -5,8 +5,9 @@
 // marker. V1 isolates each project under opencode-interactive/*; V2 shares one
 // data home whose sessions live in the session_v2 table.
 
-import { lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const SESSION_TABLES = { v1: "session", v2: "session_v2" };
@@ -24,12 +25,24 @@ function assertOwnedDirectory(path, uid, message) {
 
 // sessionID must already match the marker session ID pattern; the table name
 // is a fixed constant.
-function querySessionDirectory(databasePath, sessionID, runtime) {
-  const sql = `SELECT directory FROM ${SESSION_TABLES[runtime]} WHERE id='${sessionID}' AND parent_id IS NULL LIMIT 2;`;
-  const result = spawnSync("sqlite3", ["-readonly", databasePath, sql], {
+function runReadOnlyQuery(databaseArg, sql) {
+  return spawnSync("sqlite3", ["-readonly", databaseArg, sql], {
     encoding: "utf8",
     timeout: 5000,
   });
+}
+
+function querySessionDirectory(databasePath, sessionID, runtime) {
+  const sql = `SELECT directory FROM ${SESSION_TABLES[runtime]} WHERE id='${sessionID}' AND parent_id IS NULL LIMIT 2;`;
+  let result = runReadOnlyQuery(databasePath, sql);
+  // A cleanly closed WAL database has no -wal/-shm files, and a read-only
+  // connection cannot create the -shm index, so sqlite3 fails with
+  // SQLITE_CANTOPEN (14). That is exactly the state of every tab after Tabby
+  // quits. With no WAL present there is no uncheckpointed data, so read the
+  // main file as immutable instead of failing the restore.
+  if ((result.error || result.status !== 0) && !existsSync(`${databasePath}-wal`)) {
+    result = runReadOnlyQuery(`${pathToFileURL(databasePath).href}?immutable=1`, sql);
+  }
   if (result.error || result.status !== 0) throw new Error("Could not validate OpenCode recovery database");
   const rows = result.stdout.trimEnd().split("\n").filter(Boolean);
   if (rows.length !== 1) throw new Error("OpenCode recovery session was not found");

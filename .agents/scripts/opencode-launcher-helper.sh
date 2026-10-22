@@ -1459,6 +1459,29 @@ apply_tabby_recovery() {
     return 0
 }
 
+# A restored Tabby tab runs `exec aidevops opencode --tabby-shell`, so any
+# launcher failure ends the tab's process and Tabby removes the tab, losing
+# the user's handle on the saved session. Keep a login shell open instead,
+# with enough context to resume manually.
+keep_tabby_tab_open() {
+    local tabby_shell="$1"
+    local dry_run="$2"
+    local invocation_dir="$3"
+    local login_shell=""
+    local saved_session=""
+
+    ((tabby_shell == 1 && dry_run == 0)) || return 1
+    login_shell=$(resolve_tabby_login_shell) || return 1
+    saved_session=$(basename "${invocation_dir}")
+    print_error "Tabby session restore failed; keeping this tab open."
+    if [[ "${saved_session}" == ses_* ]]; then
+        print_error "Saved session: ${saved_session} (resume in its project with: aidevops opencode --session ${saved_session})"
+    fi
+    cd "${HOME}" || return 1
+    exec "${login_shell}" -l
+    return 1
+}
+
 cmd_tui_launch() {
     local use_shared_db=0
     local direct=0
@@ -1527,10 +1550,16 @@ cmd_tui_launch() {
     # ${arr[@]+...}: bash 3.2 (macOS /bin/bash) treats an empty array as unbound.
     if ((use_shared_db == 0)); then
         TABBY_RECOVERY_ARGS=(${opencode_args[@]+"${opencode_args[@]}"})
-        apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir ${opencode_args[@]+"${opencode_args[@]}"} || return 1
+        if ! apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir ${opencode_args[@]+"${opencode_args[@]}"}; then
+            keep_tabby_tab_open "${tabby_shell}" "${dry_run}" "${invocation_dir}"
+            return 1
+        fi
         opencode_args=(${TABBY_RECOVERY_ARGS[@]+"${TABBY_RECOVERY_ARGS[@]}"})
     fi
-    validate_launch_directory "${launch_dir}" || return 1
+    if ! validate_launch_directory "${launch_dir}"; then
+        keep_tabby_tab_open "${tabby_shell}" "${dry_run}" "${invocation_dir}"
+        return 1
+    fi
     if [[ -z "${session_id}" ]]; then
         session_id=$(build_project_session_id "${launch_dir}")
     fi
