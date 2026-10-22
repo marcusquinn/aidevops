@@ -385,15 +385,23 @@ cloudron_package_preflight_release() {
 	local dockerfile=""
 	local image=""
 	local images=""
+	local use_buildx=false
 
 	cloudron_package_check_release "$release_tag" "$repo_path" || return 1
 	command -v docker >/dev/null 2>&1 || _cloudron_release_error "Docker is required to validate immutable build sources." || return 1
 	dockerfile=$(_cloudron_release_dockerfile "$repo_path") || _cloudron_release_error "Dockerfile or Dockerfile.cloudron is missing." || return 1
 	images=$(_cloudron_release_from_sources "$dockerfile" | cut -f2)
 	[[ -n "$images" ]] || _cloudron_release_error "No Docker FROM sources found." || return 1
+	if docker buildx version >/dev/null 2>&1; then
+		use_buildx=true
+	fi
 	while IFS= read -r image; do
 		[[ "$image" == *@sha256:[0-9a-fA-F][0-9a-fA-F]* ]] || _cloudron_release_error "Docker source must use an immutable tag-and-digest reference: $image" || return 1
-		docker manifest inspect "$image" >/dev/null 2>&1 || _cloudron_release_error "Immutable Docker source is unavailable: $image" || return 1
+		if [[ "$use_buildx" == true ]]; then
+			docker buildx imagetools inspect "$image" --format '{{json .Manifest.MediaType}}' >/dev/null 2>&1 || _cloudron_release_error "Immutable Docker source is unavailable: $image" || return 1
+		else
+			docker manifest inspect "$image" >/dev/null 2>&1 || _cloudron_release_error "Immutable Docker source is unavailable: $image" || return 1
+		fi
 	done <<<"$images"
 	printf 'Cloudron release preflight passed for %s. No image, tag, catalog, release, or deployment was mutated.\n' "$release_tag"
 	return 0
