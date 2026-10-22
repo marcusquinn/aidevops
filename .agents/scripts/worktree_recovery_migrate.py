@@ -21,7 +21,7 @@ from worktree_recovery_migration_state import (
     SCHEMA, allocated_bytes, load, manifest_digest, private_directory,
     publish, source_state,
 )
-from worktree_recovery_timing import context as timing_context, operation, phase, timed
+from worktree_recovery_timing import child_environment, context as timing_context, operation, phase, timed
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -37,6 +37,7 @@ def archive_command(lock, *arguments):
     bash = shutil.which("bash")
     require(bash is not None, "migration:bash-unavailable")
     with phase("archive-cli." + str(arguments[0])):
+        child_environment(environment)
         result = subprocess.run(  # nosec B603 -- resolved Bash, framework helper, argv only
                                 [str(Path(bash).absolute()), str(SCRIPTS / "worktree-archive-helper.sh"),
                                  *map(str, arguments)], env=environment, pass_fds=(lock,),

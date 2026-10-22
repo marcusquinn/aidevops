@@ -280,6 +280,7 @@ def prepare(source, root, caller, context):
         return record["archive"]
 
 
+@operation("producer-validation")
 def check(archive, source=None, removed=False):
     require(archive == archive.resolve(strict=True), "producer:archive-path-changed")
     journal = journal_for_archive(archive)
@@ -287,6 +288,7 @@ def check(archive, source=None, removed=False):
     directory = journal.parent
     with operation_lock(directory) as lock:
         record = load(journal, SCHEMA)
+        timing_context(repo=record["repo"], archive=str(archive), source=record["source"]["identity"]["path"])
         git_only = record["source"].get("capture_policy") == "git-only"
         require(record["directory_inode"] == inode(directory) and record["archive"] == str(archive)
                  and record["phase"] == ("archived" if git_only else "verified"), "producer:incomplete-receipt")

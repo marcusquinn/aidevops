@@ -6,6 +6,7 @@
 from pathlib import Path
 import re
 import tempfile
+from worktree_recovery_timing import timed
 
 from worktree_archive_administration import (
     auto_merge_oid, fetch_head_roots, git, load_administration,
@@ -88,6 +89,7 @@ def verify_object_graph(archive, scratch, manifest):
         verify_auto_merge(scratch, archive, manifest)
 
 
+@timed("git-object-preparation")
 def verify_git_objects(archive, manifest):
     """Verify against the recorded base graph, retaining legacy bundle readers."""
     from worktree_archive_snapshot import archive_policies

@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from worktree_recovery_timing import timed
 
 from worktree_archive_filesystem import (
     fingerprint, supported_directories,
@@ -64,6 +65,7 @@ def capture_administration(root, archive, include_ignored, base=''):
     (archive / 'git-admin.json').write_text(json.dumps(state, sort_keys=True) + '\n', encoding='ascii')
 
 
+@timed("base-import")
 def seed_base(root, manifest):
     """Import only the recorded base graph, never unrelated source objects."""
     base = manifest['base_sha']

@@ -30,6 +30,16 @@ def context(**fields):
         trace["fields"].update(fields)
 
 
+def child_environment(environment):
+    """Keep a child stage under its actual parent, not a second additive total."""
+    trace = CURRENT.get()
+    if trace is not None and trace["stack"]:
+        environment.update(AIDEVOPS_RECOVERY_TIMING_ATTEMPT=trace["id"],
+                           AIDEVOPS_RECOVERY_TIMING_PARENT=trace["stack"][-1],
+                           AIDEVOPS_RECOVERY_TIMING_OPERATION=trace["operation"],
+                           AIDEVOPS_RECOVERY_TIMING_REPO=str(trace["fields"].get("repo", "unknown")))
+
+
 def emit(trace, **event):
     """Append one bounded record without following a file symlink or blocking on a FIFO."""
     if trace["unavailable"]:
@@ -65,9 +75,19 @@ def emit(trace, **event):
 @contextmanager
 def phase(name):
     trace = CURRENT.get()
+    inherited = None
     if trace is None:
-        yield
-        return
+        attempt = os.environ.get("AIDEVOPS_RECOVERY_TIMING_ATTEMPT", "")
+        parent = os.environ.get("AIDEVOPS_RECOVERY_TIMING_PARENT", "")
+        operation_name = os.environ.get("AIDEVOPS_RECOVERY_TIMING_OPERATION", "")
+        if not (re.fullmatch(r"[0-9a-f]{32}", attempt) and re.fullmatch(r"[0-9a-f]{32}", parent)
+                and re.fullmatch(r"[a-z-]{1,64}", operation_name)):
+            yield
+            return
+        trace = {"id": attempt, "operation": operation_name,
+                 "fields": {"repo": os.environ.get("AIDEVOPS_RECOVERY_TIMING_REPO", "unknown")},
+                 "stack": [parent], "unavailable": False}
+        inherited = CURRENT.set(trace)
     stage_id = uuid.uuid4().hex
     parent = trace["stack"][-1] if trace["stack"] else None
     fields = {"stage": name, "stage_id": stage_id, "parent_stage_id": parent}
@@ -87,7 +107,9 @@ def phase(name):
     finally:
         trace["stack"].pop()
         emit(trace, **fields, **outcome, event="finish",
-             duration_ms=round((time.monotonic_ns() - started) / 1_000_000, 3))
+              duration_ms=round((time.monotonic_ns() - started) / 1_000_000, 3))
+        if inherited is not None:
+            CURRENT.reset(inherited)
 
 
 def timed(name):

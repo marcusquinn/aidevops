@@ -18,7 +18,8 @@ from worktree_recovery_migrate import archive_command
 from worktree_archive_restore import RestorationProof
 from worktree_recovery_legacy_policy import guards
 from worktree_recovery_migration_state import SCHEMA, allocated_bytes, load, publish
-from worktree_recovery_retirement_transaction import claim, fingerprint, remove_claimed
+from worktree_recovery_retirement_transaction import claim, source_fingerprint, remove_claimed
+from worktree_recovery_timing import context as timing_context, operation, timed
 
 
 def receipt_digest(path):
@@ -52,6 +53,7 @@ def restoration(directory, migration, record, lock, proofs):
     proofs[key].check()
 
 
+@timed("source-state-comparison")
 def source_matches(migration):
     from worktree_recovery_migration_state import source_state
     require(source_state(migration["source"]["identity"],
@@ -60,14 +62,19 @@ def source_matches(migration):
             "migration:source-drift")
 
 
+@timed("safety-guards")
+def guarded(identity, bucket, lock):
+    return guards(identity, bucket, lock)
+
+
 def make_plan(directory, migration, bucket, lock, automatic=False, proofs=None):
     path = directory / "retirement.json"
     proofs = {} if proofs is None else proofs
     source_matches(migration)
-    guards(migration["source"]["identity"], bucket, lock)
+    guarded(migration["source"]["identity"], bucket, lock)
     record = {"schema": SCHEMA, "kind": "retirement", "phase": "planning",
               "bucket": str(bucket), "bucket_inode": inode(bucket),
-              "fingerprint": fingerprint(bucket), "archive": migration["archive"],
+              "fingerprint": source_fingerprint(bucket), "archive": migration["archive"],
               "bucket_bytes": allocated_bytes(bucket),
               "archive_bytes": allocated_bytes(Path(migration["archive"])),
               "migration_digest": receipt_digest(directory / "journal.json"),
@@ -116,10 +123,10 @@ def retire(directory, migration, bucket, token, lock, proofs=None):
     restoration(directory, migration, record, lock, proofs)
     if unclaimed:
         source_matches(migration)
-    guards(migration["source"]["identity"], bucket, lock)
+    guarded(migration["source"]["identity"], bucket, lock)
     target = claim(directory, record, bucket)
     restoration(directory, migration, record, lock, proofs)
-    guards(migration["source"]["identity"], target, lock)
+    guarded(migration["source"]["identity"], target, lock)
     remove_claimed(directory, record, target)
     return report(record)
 
@@ -145,6 +152,7 @@ def automatic_retire(directory, migration, bucket, lock):
     return retire(directory, migration, bucket, None, lock, proofs=proofs)
 
 
+@operation("recovery-retirement")
 def execute(arguments):
     bucket = Path(arguments.bucket)
     require(bucket.is_absolute() and bucket.name.startswith("aidevops-worktree-cleanup-"),
@@ -153,6 +161,7 @@ def execute(arguments):
     require((directory / "journal.json").is_file(), "retirement:migration-receipt-missing")
     require(directory == directory.resolve(strict=True), "retirement:unsafe-journal-path")
     migration = load(directory / "journal.json")
+    timing_context(repo=migration["repo"], source=str(bucket), archive=migration["archive"])
     require(inode(directory) == migration["directory_inode"], "retirement:journal-directory-changed")
     require(migration["source"]["identity"]["bucket_path"] == str(bucket), "retirement:wrong-bucket")
     git_only = migration["source"].get("capture_policy") == "git-only"

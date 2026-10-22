@@ -24,6 +24,7 @@ import time
 import uuid
 
 from worktree_archive_snapshot import git, git_snapshot, snapshot
+from worktree_recovery_timing import child_environment, context as timing_context, operation as timed_operation, phase
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -64,9 +65,11 @@ def helper(*arguments):
     for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
         environment.pop(name, None)
-    result = subprocess.run(["bash", str(SCRIPTS / "worktree-archive-helper.sh"), *arguments],
-                            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, check=True, timeout=180)
+    with phase("archive-cli." + arguments[0]):
+        child_environment(environment)
+        result = subprocess.run(["bash", str(SCRIPTS / "worktree-archive-helper.sh"), *map(str, arguments)],
+                                env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, check=True, timeout=180)
     return result.stdout.strip()
 
 
@@ -279,10 +282,19 @@ def construct(managed, path, record, arguments):
 def canonical_restore(managed, path, record):
     from worktree_archive_restore import RestorationProof
     value = operation(record)
+    with transaction() as connection:
+        current = managed.load(connection, str(path))
+        live = operation(current)
+        require(live["id"] == value["id"], "archive operation replaced")
+        require(live["owner_pid"] == os.getpid() or not owner_active(managed, live), "archive owner remains active")
+        live.update(owner_pid=os.getpid(), owner_boot=managed.boot_id())
+        managed.save(connection, current)
+    value = operation(current)
     directory = operation_directory(value)
     data = {"archive": value["archive"], "manifest_sha256": value["manifest_sha256"],
             "source": {"identity": record["identity"], "generation": record["generation"],
-                       "snapshot": value["snapshot"]}, "canonical_restore": value.get("canonical_restore")}
+                       "snapshot": value["snapshot"]}, "canonical_restore": value.get("canonical_restore"),
+            "directory_inode": value["directory_inode"]}
 
     def save(updated):
         receipt = updated["canonical_restore"]
@@ -298,7 +310,9 @@ def canonical_restore(managed, path, record):
     return record, proof
 
 
+@timed_operation("managed-archive-prepare")
 def prepare(managed, path, arguments):
+    timing_context(repo=arguments.repo, source=str(path))
     root = Path(os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_ROOT") or Path.home() / ".aidevops/recovery/archives") / ".lifecycle"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root = root.resolve(strict=True)

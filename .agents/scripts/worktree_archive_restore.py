@@ -13,6 +13,7 @@ import uuid
 
 from worktree_archive_administration import git
 from worktree_archive_snapshot import fetch_preservation
+from worktree_recovery_timing import timed
 
 
 def creation_receipt(target, owner_pid):
@@ -40,6 +41,7 @@ def creation_receipt(target, owner_pid):
         sync_directory(target.parent)
 
 
+@timed("registered-restoration-preparation")
 def prepare(archive, target, verification=False):
     manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
     common = Path(manifest["source_git_common_dir"])
@@ -66,9 +68,11 @@ def prepare(archive, target, verification=False):
     if bash is None:
         raise ValueError("Bash is unavailable")
     if verification:
+        for name in ("AIDEVOPS_WORKTREE_MANAGER", "AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT"):
+            environment.pop(name, None)
         environment.update(AIDEVOPS_WORKTREE_CREATE_TASK="archive-verification:" + target.parent.name,
                            AIDEVOPS_WORKTREE_CREATE_OWNER_PID=str(os.getppid()),
-                           AIDEVOPS_WORKTREE_CREATE_SESSION="")
+                           AIDEVOPS_WORKTREE_CREATE_SESSION="archive-verification:" + target.parent.name)
         subprocess.run(  # nosec B603 -- fixed framework primitive, argv-only owned target
             [str(Path(bash).absolute()), "-c",
              'source "$1" && worktree_create_registered "$2" "$3" "$4" --detach',

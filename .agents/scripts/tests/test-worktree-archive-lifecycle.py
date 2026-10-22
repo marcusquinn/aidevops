@@ -303,6 +303,53 @@ class ArchiveLifecycle(MergeCases, ProducerCases, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "base-changed"):
             proof.check()
 
+    def test_canonical_proof_rejects_creation_owner_transfer(self):
+        def transfer(*args):
+            self.helper(*args)
+            with sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"]) as connection:
+                connection.execute("UPDATE worktree_owners SET owner_session = 'transferred' WHERE worktree_path = ?",
+                                   (str(args[3]),))
+
+        with self.assertRaisesRegex(ValueError, "creation-generation-changed"):
+            self.canonical_proof(self.archive(), transfer)
+        receipt = json.loads((self.root / "proof/journal.json").read_text())["canonical_restore"]
+        self.assertEqual(receipt["state"], "restoring")
+        self.assertTrue((self.root / "proof" / receipt["slot"] / "worktree").exists())
+        self.assertTrue(self.work.exists())
+
+    def test_canonical_proof_rejects_restored_state_mismatch(self):
+        def changed(*args):
+            self.helper(*args)
+            (Path(args[3]) / "mixed.txt").write_bytes(b"changed after restore\n")
+
+        with self.assertRaisesRegex(ValueError, "state-mismatch"):
+            self.canonical_proof(self.archive(), changed)
+        self.assertTrue(self.work.exists())
+
+    def test_canonical_cleanup_resumes_after_native_removal_and_registry_commit(self):
+        managed = self.managed_fixture()
+        original = Path.rmdir
+
+        def interrupted(path):
+            if path.name.startswith(".restore-"):
+                raise OSError("interrupted after native/registry cleanup")
+            return original(path)
+
+        with patch.object(Path, "rmdir", interrupted), self.assertRaisesRegex(OSError, "after native"):
+            self.prepare_managed(managed)
+        operation = self.managed_record(managed)["archive_operation"]
+        receipt = operation["canonical_restore"]
+        self.assertEqual(receipt["state"], "cleanup-pending")
+        slot = Path(operation["directory"]) / receipt["slot"]
+        self.assertFalse((slot / "worktree").exists())
+        with sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"]) as connection:
+            self.assertIsNone(connection.execute("SELECT 1 FROM worktree_owners WHERE worktree_path = ?",
+                                                (str(slot / "worktree"),)).fetchone())
+        self.prepare_managed(managed)
+        self.assertFalse(slot.exists())
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["canonical_restore"]["state"], "cleaned")
+        self.assertTrue(self.work.exists())
+
     def start_conflicted_merge(self):
         self.git(self.repo, 'checkout', '-qb', 'other')
         (self.repo / 'mixed.txt').write_bytes(b'theirs\n')
@@ -1622,12 +1669,16 @@ class ArchiveLifecycle(MergeCases, ProducerCases, unittest.TestCase):
             self.prepare_managed(managed)
         operation = self.managed_record(managed)["archive_operation"]
         self.assertEqual(operation["phase"], "building")
-        with self.assertRaisesRegex(ValueError, "no duplicate allocation"):
-            self.prepare_managed(managed)
-        self.assertEqual(len(list((self.archives / ".lifecycle").iterdir())), 1)
-        self.assertTrue(self.work.is_dir())
+        slot = Path(operation["directory"]) / operation["canonical_restore"]["slot"]
         proof = HELPER.with_name("worktree-managed-lifetime.py")
         self.assertNotEqual(self.run_command(sys.executable, proof, "proof", self.work, check=False).returncode, 0)
+        # The journal owns an empty slot, so pre-creation interruption can safely
+        # restart without adopting mutable contents or allocating another archive.
+        self.prepare_managed(managed)
+        self.assertFalse(slot.exists())
+        self.assertEqual(len(list((self.archives / ".lifecycle").iterdir())), 1)
+        self.assertTrue(self.work.is_dir())
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "verified")
 
     def test_verified_scratch_cleanup_failure_is_resumable(self):
         from worktree_archive_restore import RestorationProof

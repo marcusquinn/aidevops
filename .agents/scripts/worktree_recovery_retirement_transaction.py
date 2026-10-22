@@ -13,6 +13,7 @@ import tempfile
 
 from worktree_lifetime_archive import inode, require
 from worktree_recovery_migration_state import publish, sync_directory
+from worktree_recovery_timing import timed
 
 
 def file_digest(path, observed):
@@ -55,6 +56,12 @@ def fingerprint(root):
     return hashlib.sha256(json.dumps(sorted(entries), ensure_ascii=True).encode()).hexdigest()
 
 
+@timed("source-fingerprint")
+def source_fingerprint(root):
+    return fingerprint(root)
+
+
+@timed("source-claim")
 def claim(directory, record, bucket):
     journal = directory / "retirement.json"
     if record["phase"] == "planned":
@@ -67,19 +74,20 @@ def claim(directory, record, bucket):
     target = container / "bucket"
     if record["phase"] == "claiming" and not os.path.lexists(target):
         require(inode(bucket) == record["bucket_inode"], "retirement:bucket-replaced")
-        require(fingerprint(bucket) == record["fingerprint"], "retirement:source-drift")
+        require(source_fingerprint(bucket) == record["fingerprint"], "retirement:source-drift")
         os.rename(bucket, target)
         sync_directory(bucket.parent)
         sync_directory(container)
     require({p.name for p in container.iterdir()} == {"bucket"}, "retirement:incomplete-transaction")
     require(not target.is_symlink() and inode(target) == record["bucket_inode"],
             "retirement:claimed-bucket-replaced")
-    require(fingerprint(target) == record["fingerprint"], "retirement:claimed-content-drift")
+    require(source_fingerprint(target) == record["fingerprint"], "retirement:claimed-content-drift")
     record["phase"] = "claimed"
     publish(journal, record)
     return target
 
 
+@timed("source-removal")
 def remove_claimed(directory, record, target):
     """Caller holds producer and migration locks; private containers exclude writers."""
     require(shutil.rmtree.avoids_symlink_attacks, "retirement:safe-removal-unavailable")
@@ -89,7 +97,7 @@ def remove_claimed(directory, record, target):
         require(f"{observed.st_dev}:{observed.st_ino}" == record["container_inode"],
                 "retirement:container-replaced")
         require(inode(target) == record["bucket_inode"], "retirement:claimed-bucket-replaced")
-        require(fingerprint(target) == record["fingerprint"], "retirement:claimed-content-drift")
+        require(source_fingerprint(target) == record["fingerprint"], "retirement:claimed-content-drift")
         record["phase"] = "removing"
         publish(directory / "retirement.json", record)
         shutil.rmtree("bucket", dir_fd=descriptor)
