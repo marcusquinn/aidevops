@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import secrets
 import tempfile
@@ -15,7 +16,7 @@ from datetime import datetime, timezone
 from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from _knowledge_social_linkedin_outbound_provider import LinkedInPreparedProvider
 from _knowledge_social_outbound import ClaimedOperation
@@ -155,19 +156,144 @@ class OutboundProviderTests(unittest.TestCase):
                     Response(200, b'{"id":"video_fixture"}'),
                 ]
             )
+            checkpoints: list[str] = []
+            requests: list[object] = []
+
+            def opener(request: object, **_kwargs: object) -> Response:
+                requests.append(request)
+                if getattr(request, "method") == "PUT":
+                    self.assertEqual(checkpoints, [getattr(request, "full_url")])
+                    self.assertEqual(getattr(request, "data"), b"fixture video")
+                return next(responses)
+
             provider = YouTubePreparedProvider(
                 claimed("youtube", media_path=media.name, media_sha256=digest, subject="Fixture video"),
-                lambda _request, **_kwargs: next(responses),
+                opener,
             )
             provider.verify_identity()
-            checkpoints: list[str] = []
             self.assertEqual(
                 provider.invoke(checkpoints.append), ("video_fixture", None)
+            )
+            self.assertEqual([getattr(request, "method") for request in requests], ["GET", "POST", "PUT"])
+            self.assertEqual(
+                json.loads(getattr(requests[1], "data")),
+                {
+                    "snippet": {"title": "Fixture video", "description": "private description"},
+                    "status": {"privacyStatus": "private"},
+                },
             )
             self.assertEqual(
                 checkpoints,
                 ["https://www.googleapis.com/upload/session_fixture"],
             )
+
+    @patch.dict(os.environ, {"YOUTUBE_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN})
+    def test_youtube_session_failures_never_checkpoint_or_transfer(self) -> None:
+        cases = [
+            (Response(503, b""), "provider_unavailable"),
+            (Response(200, b""), "validation"),
+            (Response(201, b"", {"Location": "https://example.invalid/session"}), "validation"),
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as media:
+            media.write(b"fixture video")
+            media.flush()
+            operation = claimed(
+                "youtube", media_path=media.name,
+                media_sha256=hashlib.sha256(b"fixture video").hexdigest(), subject="Fixture",
+            )
+            for response, expected in cases:
+                with self.subTest(status=response.status, headers=response.headers):
+                    requests: list[object] = []
+                    checkpoints: list[str] = []
+
+                    def opener(request: object, **_kwargs: object) -> Response:
+                        requests.append(request)
+                        return response
+
+                    provider = YouTubePreparedProvider(operation, opener)
+                    self.assertEqual(provider.invoke(checkpoints.append), (None, expected))
+                    self.assertEqual(checkpoints, [])
+                    self.assertEqual([getattr(request, "method") for request in requests], ["POST"])
+
+    @patch.dict(os.environ, {"YOUTUBE_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN})
+    def test_youtube_transfer_failures_keep_checkpoint_and_error_classification(self) -> None:
+        location = "https://www.googleapis.com/upload/session_fixture"
+        cases = [
+            (Response(503, b""), "provider_unavailable"),
+            (Response(201, b'{}'), "validation"),
+            (Response(200, b'{"id":42}'), "validation"),
+            (Response(200, b'not json'), "validation"),
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as media:
+            media.write(b"fixture video")
+            media.flush()
+            operation = claimed(
+                "youtube", media_path=media.name,
+                media_sha256=hashlib.sha256(b"fixture video").hexdigest(), subject="Fixture",
+            )
+            for response, expected in cases:
+                with self.subTest(status=response.status, body=response.read()):
+                    responses = iter([Response(201, b"", {"Location": location}), response])
+                    provider = YouTubePreparedProvider(operation, lambda _request, **_kwargs: next(responses))
+                    checkpoints: list[str] = []
+                    self.assertEqual(provider.invoke(checkpoints.append), (None, expected))
+                    self.assertEqual(checkpoints, [location])
+
+    @patch.dict(os.environ, {"YOUTUBE_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN})
+    def test_youtube_transfer_exceptions_preserve_checkpoint_and_quota_evidence(self) -> None:
+        location = "https://www.googleapis.com/upload/session_fixture"
+        headers = Message()
+        headers["Retry-After"] = "300"
+        errors = [
+            URLError("fixture transport failure"),
+            HTTPError(location, 503, "unavailable", headers, io.BytesIO(b"")),
+            HTTPError(location, 429, "quota", headers, io.BytesIO(b"")),
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as media:
+            media.write(b"fixture video")
+            media.flush()
+            operation = claimed(
+                "youtube", media_path=media.name,
+                media_sha256=hashlib.sha256(b"fixture video").hexdigest(), subject="Fixture",
+            )
+            for error in errors:
+                with self.subTest(error=type(error).__name__, code=getattr(error, "code", None)):
+                    def opener(request: object, **_kwargs: object) -> Response:
+                        if getattr(request, "method") == "PUT":
+                            raise error
+                        return Response(200, b"", {"Location": location})
+
+                    provider = YouTubePreparedProvider(operation, opener)
+                    checkpoints: list[str] = []
+                    if getattr(error, "code", None) == 429:
+                        with self.assertRaises(ProviderRateLimitError) as raised:
+                            provider.invoke(checkpoints.append)
+                        self.assertEqual(raised.exception.retry_after_seconds, 300)
+                    else:
+                        self.assertEqual(provider.invoke(checkpoints.append), (None, "provider_unavailable"))
+                    self.assertEqual(checkpoints, [location])
+
+    @patch.dict(os.environ, {"YOUTUBE_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN})
+    def test_youtube_checkpoint_failure_prevents_transfer(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as media:
+            media.write(b"fixture video")
+            media.flush()
+            operation = claimed(
+                "youtube", media_path=media.name,
+                media_sha256=hashlib.sha256(b"fixture video").hexdigest(), subject="Fixture",
+            )
+            requests: list[object] = []
+
+            def opener(request: object, **_kwargs: object) -> Response:
+                requests.append(request)
+                return Response(200, b"", {"Location": "https://www.googleapis.com/upload/session_fixture"})
+
+            def checkpoint(_location: str) -> None:
+                raise OSError("fixture checkpoint failure")
+
+            provider = YouTubePreparedProvider(operation, opener)
+            self.assertEqual(provider.invoke(checkpoint), (None, "provider_unavailable"))
+            self.assertEqual([getattr(request, "method") for request in requests], ["POST"])
 
     @patch.dict(os.environ, {"YOUTUBE_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN})
     def test_youtube_rejects_unsupported_media_before_mutation(self) -> None:
