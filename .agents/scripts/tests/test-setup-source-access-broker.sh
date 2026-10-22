@@ -68,9 +68,10 @@ git -C "$fixture_repo" config user.signingkey "$release_key"
 printf '1.2.3\n' >"$fixture_repo/VERSION"
 printf 'core-v1\n' >"$fixture_repo/.agents/scripts/source_access_core.py"
 printf 'helper-v1\n' >"$fixture_repo/.agents/scripts/source-access-helper.py"
+printf 'documents-v1\n' >"$fixture_repo/.agents/scripts/source_access_documents.py"
 cp "$SOURCE_ACCESS_MODULE" "$fixture_repo/.agents/scripts/setup/modules/source-access.sh"
 git -C "$fixture_repo" add VERSION .agents/scripts/source_access_core.py \
-	.agents/scripts/source-access-helper.py .agents/scripts/setup/modules/source-access.sh
+	.agents/scripts/source-access-helper.py .agents/scripts/source_access_documents.py .agents/scripts/setup/modules/source-access.sh
 git -C "$fixture_repo" -c commit.gpgsign=false commit -q -m "fixture release"
 git -C "$fixture_repo" tag -s v1.2.3 -m "fixture tag"
 IFS= read -r fixture_release_signer_key <"${release_key}.pub"
@@ -151,6 +152,7 @@ _SOURCE_ACCESS_BROKER_DIR="$TEST_DIR/broker"
 mkdir -p "$_SOURCE_ACCESS_BROKER_DIR"
 cp "$fixture_repo/.agents/scripts/source_access_core.py" "$_SOURCE_ACCESS_BROKER_DIR/source_access_core.py"
 cp "$fixture_repo/.agents/scripts/source-access-helper.py" "$_SOURCE_ACCESS_BROKER_DIR/source-access-helper.py"
+cp "$fixture_repo/.agents/scripts/source_access_documents.py" "$_SOURCE_ACCESS_BROKER_DIR/source_access_documents.py"
 chmod 0777 "$_SOURCE_ACCESS_BROKER_DIR"
 if _source_access_root_owned_mode "$_SOURCE_ACCESS_BROKER_DIR" 755 directory; then
 	printf 'FAIL: unsafe broker directory mode was accepted\n' >&2

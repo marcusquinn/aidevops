@@ -12,6 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 _SOURCE_ACCESS_BROKER_DIR="/etc/aidevops/source-access"
 _SOURCE_ACCESS_CORE_SOURCE=".agents/scripts/source_access_core.py"
 _SOURCE_ACCESS_HELPER_SOURCE=".agents/scripts/source-access-helper.py"
+_SOURCE_ACCESS_DOCUMENTS_SOURCE=".agents/scripts/source_access_documents.py"
 _SOURCE_ACCESS_SETUP_SOURCE=".agents/scripts/setup/modules/source-access.sh"
 _SOURCE_ACCESS_RAW_BASE="https://raw.githubusercontent.com/marcusquinn/aidevops"
 _SOURCE_ACCESS_RELEASE_SIGNER_IDENTITY="6428977+marcusquinn@users.noreply.github.com"
@@ -256,6 +257,7 @@ _source_access_broker_metadata_current() {
 	_source_access_root_owned_mode "$_SOURCE_ACCESS_BROKER_DIR" 755 directory || return 1
 	_source_access_root_owned_mode "$core_path" 644 file || return 1
 	_source_access_root_owned_mode "$helper_path" 644 file || return 1
+	_source_access_root_owned_mode "${_SOURCE_ACCESS_BROKER_DIR}/source_access_documents.py" 644 file || return 1
 	return 0
 }
 
@@ -269,6 +271,8 @@ _source_access_broker_current() {
 	_source_access_broker_metadata_current || return 1
 	_source_access_file_matches "$repo_root" "$tag_commit" "$_SOURCE_ACCESS_CORE_SOURCE" "$core_path" || return 1
 	_source_access_file_matches "$repo_root" "$tag_commit" "$_SOURCE_ACCESS_HELPER_SOURCE" "$helper_path" || return 1
+	_source_access_file_matches "$repo_root" "$tag_commit" "$_SOURCE_ACCESS_DOCUMENTS_SOURCE" \
+		"${_SOURCE_ACCESS_BROKER_DIR}/source_access_documents.py" || return 1
 	return 0
 }
 
@@ -345,7 +349,11 @@ _source_access_release_privilege() {
 _source_access_cleanup_staging() {
 	local core_stage="$1"
 	local helper_stage="$2"
+	local documents_stage="${3:-}"
 
+	if [[ -n "$documents_stage" ]]; then
+		_source_access_privileged_system rm -f -- "$documents_stage" >/dev/null 2>&1 || true
+	fi
 	if [[ -n "$core_stage" && -n "$helper_stage" ]]; then
 		_source_access_privileged_system rm -f -- "$core_stage" "$helper_stage" >/dev/null 2>&1 || true
 	elif [[ -n "$core_stage" ]]; then
@@ -373,8 +381,10 @@ _source_access_install_broker_files() {
 	local tag_commit="$2"
 	local core_stage=""
 	local helper_stage=""
+	local documents_stage=""
 	local core_path="${_SOURCE_ACCESS_BROKER_DIR}/source_access_core.py"
 	local helper_path="${_SOURCE_ACCESS_BROKER_DIR}/source-access-helper.py"
+	local documents_path="${_SOURCE_ACCESS_BROKER_DIR}/source_access_documents.py"
 
 	_source_access_install_target_safe || {
 		print_warning "Source-access install target ownership or permissions are unsafe"
@@ -387,31 +397,38 @@ _source_access_install_broker_files() {
 		_source_access_cleanup_staging "$core_stage" ""
 		return 1
 	}
-	if ! _source_access_fetch_file "$tag_commit" "$_SOURCE_ACCESS_CORE_SOURCE" "$core_stage" ||
-		! _source_access_fetch_file "$tag_commit" "$_SOURCE_ACCESS_HELPER_SOURCE" "$helper_stage"; then
+	documents_stage=$(_source_access_privileged_system mktemp "${_SOURCE_ACCESS_BROKER_DIR}/.source_access_documents.py.XXXXXX") || {
 		_source_access_cleanup_staging "$core_stage" "$helper_stage"
 		return 1
+	}
+	if ! _source_access_fetch_file "$tag_commit" "$_SOURCE_ACCESS_CORE_SOURCE" "$core_stage" ||
+		! _source_access_fetch_file "$tag_commit" "$_SOURCE_ACCESS_HELPER_SOURCE" "$helper_stage" ||
+		! _source_access_fetch_file "$tag_commit" "$_SOURCE_ACCESS_DOCUMENTS_SOURCE" "$documents_stage"; then
+		_source_access_cleanup_staging "$core_stage" "$helper_stage" "$documents_stage"
+		return 1
 	fi
-	_source_access_privileged_system chmod 0644 "$core_stage" "$helper_stage" || {
-		_source_access_cleanup_staging "$core_stage" "$helper_stage"
+	_source_access_privileged_system chmod 0644 "$core_stage" "$helper_stage" "$documents_stage" || {
+		_source_access_cleanup_staging "$core_stage" "$helper_stage" "$documents_stage"
 		return 1
 	}
 	if ! _source_access_file_matches "$repo_root" "$tag_commit" "$_SOURCE_ACCESS_CORE_SOURCE" "$core_stage" ||
-		! _source_access_file_matches "$repo_root" "$tag_commit" "$_SOURCE_ACCESS_HELPER_SOURCE" "$helper_stage"; then
+		! _source_access_file_matches "$repo_root" "$tag_commit" "$_SOURCE_ACCESS_HELPER_SOURCE" "$helper_stage" ||
+		! _source_access_file_matches "$repo_root" "$tag_commit" "$_SOURCE_ACCESS_DOCUMENTS_SOURCE" "$documents_stage"; then
 		print_warning "Downloaded source-access broker bytes do not match the signed release"
-		_source_access_cleanup_staging "$core_stage" "$helper_stage"
+		_source_access_cleanup_staging "$core_stage" "$helper_stage" "$documents_stage"
 		return 1
 	fi
-	_source_access_privileged_system rm -f -- "$core_path" "$helper_path" || {
-		_source_access_cleanup_staging "$core_stage" "$helper_stage"
+	_source_access_privileged_system rm -f -- "$core_path" "$helper_path" "$documents_path" || {
+		_source_access_cleanup_staging "$core_stage" "$helper_stage" "$documents_stage"
 		return 1
 	}
 	if ! _source_access_privileged_system install -o 0 -g 0 -m 0644 "$core_stage" "$core_path" ||
-		! _source_access_privileged_system install -o 0 -g 0 -m 0644 "$helper_stage" "$helper_path"; then
-		_source_access_cleanup_staging "$core_stage" "$helper_stage"
+		! _source_access_privileged_system install -o 0 -g 0 -m 0644 "$helper_stage" "$helper_path" ||
+		! _source_access_privileged_system install -o 0 -g 0 -m 0644 "$documents_stage" "$documents_path"; then
+		_source_access_cleanup_staging "$core_stage" "$helper_stage" "$documents_stage"
 		return 1
 	fi
-	_source_access_cleanup_staging "$core_stage" "$helper_stage"
+	_source_access_cleanup_staging "$core_stage" "$helper_stage" "$documents_stage"
 	_source_access_broker_current "$repo_root" "$tag_commit"
 	return $?
 }
