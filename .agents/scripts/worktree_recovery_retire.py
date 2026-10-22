@@ -14,7 +14,7 @@ import subprocess  # nosec B404 -- fixed local guard helper, argv only
 import sys
 
 from worktree_lifetime_archive import inode, require
-from worktree_recovery_migrate import archive_command, verify_archive
+from worktree_recovery_migrate import archive_command
 from worktree_archive_restore import RestorationProof
 from worktree_recovery_legacy_policy import guards
 from worktree_recovery_migration_state import SCHEMA, allocated_bytes, load, publish
@@ -38,9 +38,8 @@ def restoration(directory, migration, record, lock, proofs):
     require(not common.is_relative_to(bucket), "retirement:base-inside-source")
     if record.get("container"):
         require(not common.is_relative_to(Path(record["container"])), "retirement:base-inside-claim")
-    if migration["source"].get("capture_policy") != "git-only":
-        verify_archive(migration, lock, check_source=False)
-        return
+    require(migration["source"].get("capture_policy") == "git-only",
+            "retirement:legacy-restoration-proof-unavailable; source retained")
     key = migration["archive"]
     if key not in proofs:
         data = dict(migration, canonical_restore=record.get("canonical_restore"))

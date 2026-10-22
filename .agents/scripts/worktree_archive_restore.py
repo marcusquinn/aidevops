@@ -15,6 +15,31 @@ from worktree_archive_administration import git
 from worktree_archive_snapshot import fetch_preservation
 
 
+def creation_receipt(target, owner_pid):
+    """Seal the creating actor/generation before any archive payload is applied."""
+    from worktree_lifetime_archive import inode, managed_module, require, transaction
+    from worktree_recovery_migration_state import sync_directory
+    with transaction() as connection:
+        managed = managed_module()
+        registered = managed.load(connection, str(target))
+        managed.verify_identity(registered, target)
+        owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
+                                   (str(target),)).fetchone()
+        actor = connection.execute("SELECT owner_pid, task_id, branch FROM worktree_owners WHERE worktree_path = ?",
+                                   (str(target),)).fetchone()
+        require(actor == (owner_pid, "archive-verification:" + target.parent.name, "HEAD"),
+                "restore-proof:creation-owner-changed")
+        value = {"schema": "canonical-creation/v1", "registration": registered, "owner": list(owner),
+                 "slot_inode": inode(target.parent), "target_inode": inode(target)}
+        descriptor = os.open(target.parent / ".creation.json",
+                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+            json.dump(value, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        sync_directory(target.parent)
+
+
 def prepare(archive, target, verification=False):
     manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
     common = Path(manifest["source_git_common_dir"])
@@ -50,6 +75,7 @@ def prepare(archive, target, verification=False):
              "archive-verification", str(helper.with_name("shared-worktree-create.sh")),
              str(repository), str(target), manifest["head_sha"]],
             env=environment, stdout=sys.stderr, check=True, timeout=180)
+        creation_receipt(target, os.getppid())
         return
     subprocess.run(  # nosec B603 -- resolved Bash and fixed framework helper
                    [str(Path(bash).absolute()), str(helper), "add", "recovery/" + uuid.uuid4().hex,
@@ -73,6 +99,17 @@ class RestorationProof:
 
         self.pid = os.getpid()
         self.archive = Path(record["archive"])
+        require(self.archive.is_absolute() and self.archive == self.archive.resolve(strict=True)
+                and self.archive.is_dir(), "restore-proof:unsafe-archive")
+        if "output" in record:
+            output = Path(record["output"])
+            require(output == output.resolve(strict=True) and inode(output) == record["output_inode"]
+                    and self.archive.is_relative_to(output), "restore-proof:output-changed")
+            pin = self.archive / ".aidevops-archive-pin"
+            require(pin.is_file() and not pin.is_symlink(), "restore-proof:pin-missing")
+        if "directory_inode" in record:
+            require(directory == directory.resolve(strict=True) and inode(directory) == record["directory_inode"],
+                    "restore-proof:journal-directory-changed")
         self.archive_inode = inode(self.archive)
         self.archive_digest = fingerprint(self.archive)
         self.manifest = json.loads((self.archive / "manifest.json").read_text(encoding="utf-8"))
@@ -86,7 +123,16 @@ class RestorationProof:
         if previous and previous.get("state") != "cleaned":
             # A partial restore is not a new deletion baseline. A sealed copy can
             # finish its owned cleanup, but fresh restoration is still mandatory.
-            self.cleanup(directory, previous, save, record)
+            old_slot = directory / previous["slot"]
+            if previous.get("state") == "restoring" and old_slot.is_dir() and not any(old_slot.iterdir()):
+                require(old_slot == old_slot.resolve(strict=True) and inode(old_slot) == previous["slot_inode"]
+                        and old_slot.parent == directory and old_slot.name.startswith(".restore-"),
+                        "restore-proof:slot-changed")
+                old_slot.rmdir()
+                previous["state"] = "cleaned"
+                save(record)
+            else:
+                self.cleanup(directory, previous, save, record)
         import tempfile
         slot = Path(tempfile.mkdtemp(prefix=".restore-", dir=directory))
         receipt = {"schema": "canonical-restore/v1", "operation": uuid.uuid4().hex,
@@ -99,6 +145,9 @@ class RestorationProof:
         save(record)
         common = Path(self.manifest["source_git_common_dir"])
         require(common.is_absolute() and common == common.resolve(strict=True), "restore-proof:unsafe-base")
+        identity = record["source"].get("identity", {})
+        expected_common = identity.get("common_path", identity.get("common"))
+        require(expected_common is None or str(common) == expected_common, "restore-proof:wrong-base")
         self.common = common
         self.common_inode = inode(common)
         self.objects = common / "objects"
@@ -118,6 +167,10 @@ class RestorationProof:
         target = slot / "worktree"
         with phase("canonical-restore"):
             command("restore", self.archive, "--target", target, "--registered-verification-copy")
+        from worktree_recovery_migration_state import load
+        created = load(slot / ".creation.json", "canonical-creation/v1")
+        require(created["slot_inode"] == inode(slot) and created["target_inode"] == inode(target),
+                "restore-proof:creation-identity-changed")
         with phase("compare-restoration"):
             from worktree_archive_snapshot import git_snapshot
             require(git_snapshot(target) == record["source"]["snapshot"], "restore-proof:state-mismatch")
@@ -145,9 +198,12 @@ class RestorationProof:
             require(task == ("archive-verification:" + slot.name, "HEAD")
                     and identity["path"] == str(target) and identity["common"] == str(common),
                     "restore-proof:wrong-registration")
+            require(registered == created["registration"] and list(owner) == created["owner"],
+                    "restore-proof:creation-generation-changed")
         receipt.update(state="compared", target_inode=inode(target), target_digest=fingerprint(target),
-                       registration=registered, owner=list(owner),
-                       base_inode=self.common_inode, objects_digest=self.objects_digest)
+                        registration=registered, owner=list(owner),
+                        base_inode=self.common_inode, objects_digest=self.objects_digest,
+                        creation_sha256=hashlib.sha256((slot / ".creation.json").read_bytes()).hexdigest())
         save(record)
         with phase("cleanup-verification-scratch"):
             self.cleanup(directory, receipt, save, record)
@@ -174,7 +230,8 @@ class RestorationProof:
         if os.path.lexists(slot):
             require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"],
                     "restore-proof:slot-changed")
-            require({entry.name for entry in slot.iterdir()} <= {"worktree"}, "restore-proof:unexpected-entry")
+            require({entry.name for entry in slot.iterdir()} <= {"worktree", ".creation.json"},
+                    "restore-proof:unexpected-entry")
         target = slot / "worktree"
         require(receipt["state"] in ("compared", "cleanup-pending"),
                 "restore-proof:unsealed-copy-retained; inspect owned scratch")
@@ -206,6 +263,12 @@ class RestorationProof:
             connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
             connection.execute("DELETE FROM worktree_managed_lifetimes WHERE path = ?", (str(target),))
         if os.path.lexists(slot):
+            import hashlib
+            creation = slot / ".creation.json"
+            if os.path.lexists(creation):
+                require(not creation.is_symlink() and hashlib.sha256(creation.read_bytes()).hexdigest()
+                        == receipt["creation_sha256"], "restore-proof:creation-receipt-changed")
+                creation.unlink()
             slot.rmdir()
         receipt["state"] = "cleaned"
         save(record)
