@@ -106,34 +106,8 @@ def require_verified(record, source=True, proof=None):
             "archive location changed")
     manifest = archive / "manifest.json"
     require(hashlib.sha256(manifest.read_bytes()).hexdigest() == value["manifest_sha256"], "archive manifest changed")
-    from worktree_archive_restore import RestorationProof
-    from worktree_recovery_retirement_transaction import fingerprint
-    receipt = value.get("canonical_restore", {})
-    expected_source = {"identity": record["identity"], "generation": record["generation"],
-                       "snapshot": value["snapshot"]}
-    expected_receipt = {"schema": "canonical-restore/v1", "state": "cleaned",
-                        "source": expected_source, "archive": str(archive),
-                        "manifest_sha256": value["manifest_sha256"]}
-    require(all(receipt.get(key) == expected for key, expected in expected_receipt.items()),
-            "canonical restoration receipt unavailable; prepare required")
-    captured = json.loads(manifest.read_text(encoding="utf-8"))
-    common = Path(captured["source_git_common_dir"])
-    require(inode(archive) == receipt["archive_inode"] and captured["base_sha"] == receipt["base"]
-            and common == common.resolve(strict=True) and inode(common) == receipt["base_inode"],
-            "archive or base identity changed since restoration")
-    require(fingerprint(archive) == receipt["archive_digest"], "archive artifacts changed since restoration")
-    if proof is None:
-        # Native removal may hold the registry write transaction. Do not allocate
-        # another registered worktree there: fully revalidate immutable inputs and
-        # dependencies against the bound restoration receipt instead. No persistent
-        # verified cache bypasses this fresh graph check across process boundaries.
-        helper("verify", str(archive))
-    else:
-        require(isinstance(proof, RestorationProof) and proof.archive == archive
-                and proof.archive_digest == receipt["archive_digest"], "wrong restoration proof")
-        proof.check()
-    require(hashlib.sha256(manifest.read_bytes()).hexdigest() == value["manifest_sha256"], "archive changed during verification")
-    require(fingerprint(archive) == receipt["archive_digest"], "archive artifacts changed during verification")
+    from worktree_archive_receipt import verify_restoration_receipt
+    verify_restoration_receipt(record, value, archive, proof)
     if source:
         observe = git_snapshot if value["snapshot"].get("schema") in (3, 4) else snapshot
         require(observe(record["identity"]["path"]) == value["snapshot"], "source changed since verified restoration")
