@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from pathlib import Path
@@ -24,7 +23,7 @@ from _knowledge_social_discourse import (
     provider_account_id,
     username,
 )
-from _knowledge_social_fixture import FixtureSequence
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from knowledge_social_import import reject_credentials
 
 READ_TIMEOUT_SECONDS = 120
@@ -53,27 +52,19 @@ class DiscourseReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise DiscourseAdapterError("Discourse read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise DiscourseAdapterError(
-            "Discourse read provider returned no valid JSON"
-        ) from error
-    if not isinstance(payload, dict):
-        raise DiscourseAdapterError("Discourse read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> DiscourseProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return DiscourseProviderUnavailableError(message)
-    return DiscourseProviderUnavailableError(
-        "Discourse read provider is unavailable"
-    )
+CONTRACT = ReaderContract(
+    adapter_error=DiscourseAdapterError,
+    unavailable_error=DiscourseProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message='Discourse read provider is unavailable',
+    oversize_message='Discourse read response exceeds the safety limit',
+    invalid_json_message='Discourse read provider returned no valid JSON',
+    root_message='Discourse read response root must be an object',
+    expectation_message='Discourse fixture request expectation must be an object',
+    checkpoint_message='Discourse request did not resume at the expected checkpoint',
+    response_message='Discourse fixture page response must be an object',
+)
 
 
 class GuardedDiscourse:
@@ -94,8 +85,8 @@ class GuardedDiscourse:
             profile=profile,
             environment=self._environment,
             timeout_seconds=READ_TIMEOUT_SECONDS,
-            decode_output=_decode_output,
-            provider_failure=_provider_failure,
+            decode_output=CONTRACT.decode_output,
+            provider_failure=CONTRACT.provider_failure,
             unavailable_error=DiscourseProviderUnavailableError,
             provider_name="Discourse",
         )
@@ -126,41 +117,11 @@ class GuardedDiscourse:
         return self.process.run(request.payload())
 
 
-def _fixture_object(value: Any, message: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise DiscourseAdapterError(message)
-    return value
-
-
-def _fixture_page(entry: dict[str, Any], request: PageRequest) -> dict[str, Any]:
-    expectation = _fixture_object(
-        entry.get("expect_request", {}),
-        "Discourse fixture request expectation must be an object",
-    )
-    actual = request.payload()
-    for key, value in expectation.items():
-        if actual.get(key) != value:
-            raise DiscourseAdapterError(
-                "Discourse request did not resume at the expected checkpoint"
-            )
-    return _fixture_object(
-        entry.get("response", entry),
-        "Discourse fixture page response must be an object",
-    )
-
-
-class FixtureDiscourse:
+class FixtureDiscourse(FixtureReader):
     """Deterministic HTTP substitute for pagination and failure fixtures."""
 
     def __init__(self, path: Path) -> None:
-        self.fixture = FixtureSequence(path, "Discourse", DiscourseAdapterError)
-
-    def identity(self, expected_id: str) -> dict[str, Any]:
-        del expected_id
-        return self.fixture.identity()
-
-    def page(self, request: PageRequest) -> dict[str, Any]:
-        return _fixture_page(self.fixture.next_page(), request)
+        super().__init__(path, 'Discourse', CONTRACT)
 
 
 def _display_name(value: Any) -> str | None:

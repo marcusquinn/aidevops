@@ -5,11 +5,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Protocol
 
-from _knowledge_social_fixture import FixtureSequence
 from _knowledge_social_hacker_news import PageRequest
 from _knowledge_social_hacker_news_contract import (
     HackerNewsReadProviderError,
@@ -24,6 +22,7 @@ from _knowledge_social_hacker_news_identity import (
     username,
 )
 from _knowledge_social_oauth_reader import GuardedOAuthPolicy, GuardedOAuthReader
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from knowledge_social_import import reject_credentials
 
 READ_TIMEOUT_SECONDS = 120
@@ -41,29 +40,19 @@ class HackerNewsReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise HackerNewsAdapterError(
-            "Hacker News read response exceeds the safety limit"
-        )
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise HackerNewsAdapterError(
-            "Hacker News read provider returned no valid JSON"
-        ) from error
-    if not isinstance(payload, dict):
-        raise HackerNewsAdapterError("Hacker News read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> HackerNewsProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return HackerNewsProviderUnavailableError(message)
-    return HackerNewsProviderUnavailableError(
-        "Hacker News public read provider is unavailable"
-    )
+CONTRACT = ReaderContract(
+    adapter_error=HackerNewsAdapterError,
+    unavailable_error=HackerNewsProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message='Hacker News public read provider is unavailable',
+    oversize_message='Hacker News read response exceeds the safety limit',
+    invalid_json_message='Hacker News read provider returned no valid JSON',
+    root_message='Hacker News read response root must be an object',
+    expectation_message='Hacker News fixture request expectation must be an object',
+    checkpoint_message='Hacker News request did not resume at the expected checkpoint',
+    response_message='Hacker News fixture page response must be an object',
+)
 
 
 HACKER_NEWS_READER_POLICY = GuardedOAuthPolicy(
@@ -71,8 +60,8 @@ HACKER_NEWS_READER_POLICY = GuardedOAuthPolicy(
     "HACKER_NEWS",
     "HACKER_NEWS_READ_LOG",
     READ_TIMEOUT_SECONDS,
-    _decode_output,
-    _provider_failure,
+    CONTRACT.decode_output,
+    CONTRACT.provider_failure,
     HackerNewsProviderUnavailableError,
     (),
     "public",
@@ -88,39 +77,9 @@ class GuardedHackerNews(GuardedOAuthReader):
         super().__init__(helper, profile, HACKER_NEWS_READER_POLICY)
 
 
-def _fixture_object(value: Any, message: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise HackerNewsAdapterError(message)
-    return value
-
-
-def _fixture_page(sequence: FixtureSequence, request: PageRequest) -> dict[str, Any]:
-    entry = sequence.next_page()
-    expectation = _fixture_object(
-        entry.get("expect_request", {}),
-        "Hacker News fixture request expectation must be an object",
-    )
-    actual = request.payload()
-    if {key: actual.get(key) for key in expectation} != expectation:
-        raise HackerNewsAdapterError(
-            "Hacker News request did not resume at the expected checkpoint"
-        )
-    return _fixture_object(
-        entry.get("response", entry),
-        "Hacker News fixture page response must be an object",
-    )
-
-
-class FixtureHackerNews:
+class FixtureHackerNews(FixtureReader):
     def __init__(self, path: Path) -> None:
-        self.fixture = FixtureSequence(path, "Hacker News", HackerNewsAdapterError)
-
-    def identity(self, expected_id: str) -> dict[str, Any]:
-        del expected_id
-        return self.fixture.identity()
-
-    def page(self, request: PageRequest) -> dict[str, Any]:
-        return _fixture_page(self.fixture, request)
+        super().__init__(path, 'Hacker News', CONTRACT)
 
 
 def verified_identity(payload: dict[str, Any], expected_id: str) -> dict[str, Any]:

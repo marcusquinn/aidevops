@@ -5,18 +5,16 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from _knowledge_social_discord import (
     DiscordAdapterError,
     DiscordProviderUnavailableError,
-    PageRequest,
     snowflake,
 )
-from _knowledge_social_fixture import FixtureSequence
 from _knowledge_social_oauth_reader import GuardedOAuthPolicy, GuardedOAuthReader
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from knowledge_social_import import reject_credentials
 
 READ_TIMEOUT_SECONDS = 120
@@ -30,23 +28,19 @@ SAFE_PROVIDER_FAILURES = (
 )
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise DiscordAdapterError("Discord read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise DiscordAdapterError("Discord read provider returned no valid JSON") from error
-    if not isinstance(payload, dict):
-        raise DiscordAdapterError("Discord read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> DiscordProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return DiscordProviderUnavailableError(message)
-    return DiscordProviderUnavailableError("Discord read provider is unavailable")
+CONTRACT = ReaderContract(
+    adapter_error=DiscordAdapterError,
+    unavailable_error=DiscordProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message='Discord read provider is unavailable',
+    oversize_message='Discord read response exceeds the safety limit',
+    invalid_json_message='Discord read provider returned no valid JSON',
+    root_message='Discord read response root must be an object',
+    expectation_message='Discord fixture expectation must be an object',
+    checkpoint_message='Discord request did not resume at the checkpoint',
+    response_message='Discord fixture page must be an object',
+)
 
 
 DISCORD_BOT_POLICY = GuardedOAuthPolicy(
@@ -54,8 +48,8 @@ DISCORD_BOT_POLICY = GuardedOAuthPolicy(
     "DISCORD",
     "DISCORD_READ_LOG",
     READ_TIMEOUT_SECONDS,
-    _decode_output,
-    _provider_failure,
+    CONTRACT.decode_output,
+    CONTRACT.provider_failure,
     DiscordProviderUnavailableError,
     (
         "BOT_TOKEN",
@@ -81,31 +75,11 @@ class GuardedDiscordBot(GuardedOAuthReader):
         super().__init__(helper, profile, DISCORD_BOT_POLICY)
 
 
-def _fixture_page(entry: dict[str, Any], request: PageRequest) -> dict[str, Any]:
-    expectation = entry.get("expect_request", {})
-    if not isinstance(expectation, dict):
-        raise DiscordAdapterError("Discord fixture expectation must be an object")
-    actual = request.payload()
-    if any(actual.get(key) != value for key, value in expectation.items()):
-        raise DiscordAdapterError("Discord request did not resume at the checkpoint")
-    response = entry.get("response", entry)
-    if not isinstance(response, dict):
-        raise DiscordAdapterError("Discord fixture page must be an object")
-    return response
-
-
-class FixtureDiscord:
+class FixtureDiscord(FixtureReader):
     """Deterministic provider substitute for Discord collection fixtures."""
 
     def __init__(self, path: Path) -> None:
-        self.fixture = FixtureSequence(path, "Discord", DiscordAdapterError)
-
-    def identity(self, expected_id: str) -> dict[str, Any]:
-        del expected_id
-        return self.fixture.identity()
-
-    def page(self, request: PageRequest) -> dict[str, Any]:
-        return _fixture_page(self.fixture.next_page(), request)
+        super().__init__(path, 'Discord', CONTRACT)
 
 
 def _bool(value: Any, field: str) -> bool:
