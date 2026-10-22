@@ -56,19 +56,36 @@ def _unwrap_env(argv: list[str]) -> list[str]:
     index = 1
     values = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
     flags = {"-i", "--ignore-environment", "-0", "--null", "-v", "--debug"}
-    while index < len(argv) and argv[index].startswith("-"):
-        option = argv[index]
-        if option in {"-C", "--chdir", "-S", "--split-string"} or option.startswith(("-C", "-S", "--chdir=", "--split-string=")):
-            raise CommandParseError(f"env option changes command interpretation and is unsupported: {option}")
-        index = _consume_option(argv, index, values, flags)
-    index = _environment_command_index(argv, index)
+    index = _skip_wrapper_options(
+        argv, index, values, flags,
+        ({"-C", "--chdir", "-S", "--split-string"}, ("-C", "-S", "--chdir=", "--split-string=")),
+        "env option changes command interpretation and is unsupported",
+    )
+    index = _skip_safe_assignments(argv, index)
     if index >= len(argv):
         raise CommandParseError("env wrapper has no command")
     return argv[index:]
 
 
-def _environment_command_index(argv: list[str], index: int) -> int:
-    while index < len(argv) and "=" in argv[index] and not argv[index].startswith("="):
+def _skip_wrapper_options(
+    argv: list[str],
+    index: int,
+    value_options: set[str],
+    flag_options: set[str],
+    rejected: tuple[set[str], tuple[str, ...]],
+    rejection_message: str,
+) -> int:
+    exact, prefixes = rejected
+    while index < len(argv) and argv[index].startswith("-"):
+        option = argv[index]
+        if option in exact or option.startswith(prefixes):
+            raise CommandParseError(f"{rejection_message}: {option}")
+        index = _consume_option(argv, index, value_options, flag_options)
+    return index
+
+
+def _skip_safe_assignments(argv: list[str], index: int) -> int:
+    while index < len(argv) and "=" in argv[index]:
         name = argv[index].split("=", 1)[0]
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             break
@@ -92,11 +109,11 @@ def _unwrap_sudo(argv: list[str]) -> list[str]:
         "-H", "--set-home", "-n", "--non-interactive", "-P", "--preserve-groups",
         "-S", "--stdin", "-i", "--login", "-s", "--shell", "-k", "-K", "-v",
     }
-    while index < len(argv) and argv[index].startswith("-"):
-        option = argv[index]
-        if option in {"-D", "--chdir", "-R", "--chroot"} or option.startswith(("-D", "-R", "--chdir=", "--chroot=")):
-            raise CommandParseError(f"sudo option changes command location and is unsupported: {option}")
-        index = _consume_option(argv, index, values, flags)
+    index = _skip_wrapper_options(
+        argv, index, values, flags,
+        ({"-D", "--chdir", "-R", "--chroot"}, ("-D", "-R", "--chdir=", "--chroot=")),
+        "sudo option changes command location and is unsupported",
+    )
     if index >= len(argv):
         raise CommandParseError("sudo wrapper has no command")
     return argv[index:]
@@ -127,14 +144,7 @@ def _is_safety_sensitive_assignment(name: str) -> bool:
 
 
 def _strip_leading_assignments(argv: list[str]) -> list[str]:
-    index = 0
-    while index < len(argv) and "=" in argv[index]:
-        name = argv[index].split("=", 1)[0]
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-            break
-        if _is_safety_sensitive_assignment(name):
-            raise CommandParseError(f"safety-affecting environment assignment is unsupported: {name}")
-        index += 1
+    index = _skip_safe_assignments(argv, 0)
     if index >= len(argv):
         raise CommandParseError("environment assignment has no command")
     return argv[index:]
