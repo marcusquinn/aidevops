@@ -113,6 +113,7 @@ Observed on **2026-10-21** during the PHP RCE release (advisory `php-rce-2026-10
 - **The host may mitigate first.** Hostinger set `session.upload_progress.enabled = Off` in each `/opt/alt/php8x/etc/php.ini` the same morning, before patched builds. Read the setting before adding a per-site override.
 - **Per-site overrides that took effect** for web PHP, verified with a temporary probe: `php_value post_max_size`, `upload_max_filesize` and `fatal_error_backtraces` inside `<IfModule LiteSpeed>` in the site's `.htaccess`, prepended between BEGIN/END markers with a backup of each file. The default 12288M limits otherwise stay in force.
 - **Check uploads before lowering limits.** Sites holding legitimate uploads above the new limit (videos, large images) keep their limit and receive only the non-upload settings.
+- **Per-site PHP version over the API.** Read `GET /api/hosting/v1/accounts/{username}/websites/{domain}/php/details` (`php_version`, `php_version_full` is the exact shared build, `php_versions.supported`). Change it with `PATCH .../php/version` and `{"version":"8.5"}`. Take `{username}` from `GET /api/hosting/v1/websites?domain=<domain>` in the same command. `hostinger-helper.sh api [METHOD] ENDPOINT [JSON]` injects the token from the secret store. Observed: switching five WordPress sites from 8.3 to 8.5 kept status codes and response sizes, and per-site `.htaccess` mitigations stayed in force. Switching does not patch anything while every build on the host is unpatched; compare `php_version_full` with the fixed versions. Before switching, back up `.htaccess`, record status and size for representative pages, then check them and `error_log` afterwards.
 
 Dated uploads directories returned 403 in this observation. Verify directory-listing protection per site rather than assuming it applies to every account. For the read-only baseline, worker/memory sizing, OPcache assessment, host boundaries, and safe directory-listing remediation, read `tools/runtime/php-server-admin.md`.
 
@@ -182,7 +183,7 @@ Take `{username}` from the website list response inside the same command; tool o
 
 ### Legacy Hostinger helper
 
-Copy template and edit with server details:
+`api`, `fleet` and `cron` need no config file: they use `HOSTINGER_API_TOKEN` from the secret store. The site commands (`list`, `connect`, `exec`) still need the legacy config, read from `configs/hostinger-config.json` beside the scripts directory or from `HOSTINGER_CONFIG_FILE`. Copy the template and edit it with server details:
 
 ```bash
 cp configs/hostinger-config.json.txt configs/hostinger-config.json
