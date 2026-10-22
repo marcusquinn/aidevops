@@ -189,14 +189,24 @@ def decide(db, request_id, decision):
         raise ValueError("decision must retain an owner, next action and specific wake condition")
     if any(not isinstance(value, str) or not 1 <= len(value) <= 8000 for value in decision.values()):
         raise ValueError("invalid decision evidence")
-    record = show(db, request_id)
-    if not record["observed"]:
-        raise ValueError("fresh coordinator observation required")
-    decision = dict(decision, observed=record["observed"])
-    observation = digest(record["observed"])
     with db:
-        db.execute("INSERT INTO decisions VALUES (?,?,?)", (request_id, observation, json.dumps(decision)))
-        db.execute("UPDATE requests SET decision=? WHERE id=?", (json.dumps(decision), request_id))
+        db.execute("BEGIN IMMEDIATE")
+        record = show(db, request_id)
+        if not record["observed"]:
+            raise ValueError("fresh coordinator observation required")
+        observation = digest(record["observed"])
+        historical = db.execute("SELECT decision FROM decisions WHERE request_id=? AND observation=?",
+                                (request_id, observation)).fetchone()
+        # A -> B -> A is actionable relative to B, but A already has immutable
+        # evidence. Reuse its exact actor/action/wake rather than overwriting it.
+        if historical:
+            serialized = historical[0]
+            decision = json.loads(serialized)
+        else:
+            decision = dict(decision, observed=record["observed"])
+            serialized = json.dumps(decision)
+            db.execute("INSERT INTO decisions VALUES (?,?,?)", (request_id, observation, serialized))
+        db.execute("UPDATE requests SET decision=? WHERE id=?", (serialized, request_id))
     return {"id": request_id, "owner": "pulse", "wake": decision["wake"]}
 
 

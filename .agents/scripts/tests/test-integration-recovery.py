@@ -102,14 +102,48 @@ class RecoveryTests(unittest.TestCase):
                     "evidence": "hard boundary is explicit; no worker self-approval", "actor": "maintainer"}
         recovery.decide(self.db, result["id"], decision)
         self.assertIsNone(recovery.observe(self.db, result["id"], state))
-        with self.assertRaises(sqlite3.IntegrityError):
-            recovery.decide(self.db, result["id"], decision)
+        self.assertEqual(recovery.decide(self.db, result["id"], decision),
+                         {"id": result["id"], "owner": "pulse", "wake": "brief_revision"})
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM decisions").fetchone()[0], 1)
         state["issue"]["body"] += "\n- `src/claim.sh`"
         ready = recovery.observe(self.db, result["id"], state)
         self.assertEqual(ready["pr"], 31269)
         self.assertEqual(ready["branch"], "worker/issue-31265")
         # Decisions remain evidence, never execution or approval instructions.
         self.assertNotIn("approved", ready)
+
+    def test_historical_observation_reuses_immutable_decision(self):
+        result = recovery.capture(self.db, self.envelope, dict(self.request, reason="hard_boundary"))
+        request_id = result["id"]
+        checkpoint = recovery.show(self.db, request_id)
+        state_a = self.state()
+        recovery.observe(self.db, request_id, state_a)
+        decision_a = {"wake": "brief_revision", "next_action": "retain checkpoint until authorized scope correction",
+                      "evidence": "original boundary assessment", "actor": "original-maintainer"}
+        recovery.decide(self.db, request_id, decision_a)
+        original = recovery.show(self.db, request_id)["decision"]
+
+        state_b = self.state()
+        state_b["issue"]["body"] += "\nUpdated boundary evidence"
+        state_b["issue"]["assignees"] = ["second-maintainer"]
+        self.assertIsNotNone(recovery.observe(self.db, request_id, state_b))
+        decision_b = dict(decision_a, wake="owner_change", actor="second-maintainer")
+        recovery.decide(self.db, request_id, decision_b)
+        history = self.db.execute("SELECT * FROM decisions ORDER BY observation").fetchall()
+        self.assertEqual(len(history), 2)
+
+        self.assertIsNotNone(recovery.observe(self.db, request_id, state_a))
+        replay = recovery.decide(self.db, request_id, dict(decision_b, next_action="different proposed action"))
+        self.assertEqual(replay, {"id": request_id, "owner": "pulse", "wake": decision_a["wake"]})
+        self.assertEqual(self.db.execute("SELECT * FROM decisions ORDER BY observation").fetchall(), history)
+        restored = recovery.show(self.db, request_id)
+        self.assertEqual(restored["decision"], original)
+        self.assertEqual({key: value for key, value in restored.items() if key not in {"decision", "observed"}},
+                         {key: value for key, value in checkpoint.items() if key not in {"decision", "observed"}})
+        self.assertIsNone(recovery.observe(self.db, request_id, state_a))
+        # Irrelevant changes do not wake the restored assessment.
+        state_a["dependencies"] = ["changed dependency"]
+        self.assertIsNone(recovery.observe(self.db, request_id, state_a))
 
     def test_concurrent_owner_and_human_decision_remain_owned(self):
         for reason, wake in (("concurrent_owner", "owner_change"), ("human_decision", "human_decision")):
