@@ -13,119 +13,29 @@ import {
 } from './higgsfield-browser.mjs';
 import {
   BASE_URL,
-  curlDownload,
   ensureDir,
   finalizeBatch,
   initBatch,
   runBatchJob,
   runWithConcurrency,
   STATE_FILE,
-  safeJoin,
-  sanitizePathSegment,
   saveBatchState,
 } from './higgsfield-common.mjs';
 import { generateLipsync } from './higgsfield-lipsync.mjs';
 import {
-  buildDescriptiveFilename,
+  downloadMatchedVideos,
+  matchJobSetsToSubmittedJobs,
+} from './higgsfield-batch-video-matching.mjs';
+import { submitVideoJobOnPage } from './higgsfield-batch-video-submission.mjs';
+import {
   downloadLatestResult,
   resolveOutputDir,
 } from './higgsfield-output.mjs';
-// NOTE: VIDEO_MODEL_NAME_MAP, removeExistingStartFrame, tryUploadViaButton,
-// tryUploadViaStartFrameArea, and findModelButtonInDropdown are currently
-// internal to higgsfield-video.mjs and need to be exported from there for
-// this import to work.
-import {
-  downloadVideoFromHistory,
-  findModelButtonInDropdown,
-  removeExistingStartFrame,
-  tryUploadViaButton,
-  tryUploadViaStartFrameArea,
-  VIDEO_MODEL_NAME_MAP,
-} from './higgsfield-video.mjs';
+import { downloadVideoFromHistory } from './higgsfield-video.mjs';
 
-// ---------------------------------------------------------------------------
-// Batch video submission helpers
-// ---------------------------------------------------------------------------
+// Compatibility exports for importers of the original module.
+export { downloadMatchedVideos, matchJobSetsToSubmittedJobs, submitVideoJobOnPage };
 
-async function uploadJobStartFrame(page, imageFile, promptSnippet) {
-  await removeExistingStartFrame(page);
-
-  const uploaded = await tryUploadViaButton(page, imageFile) ||
-    await tryUploadViaStartFrameArea(page, imageFile);
-
-  if (!uploaded) {
-    console.log(`  WARNING: Could not upload start frame for: "${promptSnippet}"`);
-  }
-  return uploaded;
-}
-
-async function selectJobVideoModel(page, model) {
-  const uiModelName = VIDEO_MODEL_NAME_MAP[model] || model;
-  const modelSelector = page.getByRole('button', { name: 'Model' });
-  if (await modelSelector.count() === 0) return;
-
-  const currentModel = await modelSelector.textContent().catch(() => '');
-  if (currentModel.includes(uiModelName)) return;
-
-  await modelSelector.click({ force: true });
-  await page.waitForTimeout(1500);
-  const matchingBtns = await findModelButtonInDropdown(page, uiModelName);
-  if (matchingBtns.length > 0) {
-    await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
-    await page.waitForTimeout(1500);
-  } else {
-    await page.keyboard.press('Escape');
-  }
-}
-
-export async function submitVideoJobOnPage(page, sceneOptions) {
-  const prompt = sceneOptions.prompt || '';
-  const model = sceneOptions.model || 'kling-2.6';
-
-  try {
-    await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(4000);
-    await dismissAllModals(page);
-
-    if (sceneOptions.imageFile) {
-      await uploadJobStartFrame(page, sceneOptions.imageFile, prompt.substring(0, 40));
-    }
-
-    await page.waitForTimeout(2000);
-    await dismissAllModals(page);
-    await selectJobVideoModel(page, model);
-
-    const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
-    if (await unlimitedSwitch.count() > 0) {
-      const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
-      if (!isChecked) {
-        await unlimitedSwitch.click({ force: true });
-        await page.waitForTimeout(500);
-      }
-    }
-
-    const promptByRole = page.getByRole('textbox', { name: 'Prompt' });
-    if (await promptByRole.count() > 0) {
-      await promptByRole.click({ force: true });
-      await page.waitForTimeout(300);
-      await promptByRole.fill(prompt, { force: true });
-    }
-
-    const generateBtn = page.locator('button:has-text("Generate")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.last().click({ force: true });
-      await page.waitForTimeout(3000);
-      console.log(`  Submitted: "${prompt.substring(0, 60)}..."`);
-      return prompt.substring(0, 60);
-    }
-
-    console.log(`  Failed to submit: "${prompt.substring(0, 40)}..." (no Generate button)`);
-    return null;
-  } catch (err) {
-    console.log(`  Submit error: ${err.message}`);
-    return null;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Batch video polling helpers
@@ -207,111 +117,6 @@ async function interceptVideoApiData(page) {
   return projectApiData;
 }
 
-function scorePromptMatch(promptA, promptB) {
-  let score = 0;
-  const minLen = Math.min(promptA.length, promptB.length, 60);
-  for (let c = 0; c < minLen; c++) {
-    if (promptA[c] === promptB[c]) score++;
-    else break;
-  }
-  return score;
-}
-
-function jobSetKey(jobSet) {
-  return jobSet.id || jobSet.prompt;
-}
-
-function findBestPromptMatch(job, completedJobSets, matchedJobSetIds) {
-  let bestMatch = null;
-  let bestScore = 0;
-  for (const jobSet of completedJobSets) {
-    if (matchedJobSetIds.has(jobSetKey(jobSet))) continue;
-    const score = scorePromptMatch(jobSet.prompt || '', job.promptPrefix || '');
-    if (score >= 20 && score > bestScore) {
-      bestMatch = jobSet;
-      bestScore = score;
-    }
-  }
-  return bestMatch;
-}
-
-function assignPromptMatches(submittedJobs, completedJobSets, results, matchedJobSetIds) {
-  for (const job of submittedJobs) {
-    if (results.has(job.sceneIndex)) continue;
-    const bestMatch = findBestPromptMatch(job, completedJobSets, matchedJobSetIds);
-    if (bestMatch) {
-      matchedJobSetIds.add(jobSetKey(bestMatch));
-      job._matchedJobSet = bestMatch;
-      job._matchMethod = 'prompt';
-    }
-  }
-}
-
-function assignOrderFallbackMatches(submittedJobs, completedJobSets, results, matchedJobSetIds) {
-  const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
-  if (unmatchedJobs.length === 0) return;
-
-  const unmatchedJobSets = completedJobSets.filter(js => !matchedJobSetIds.has(jobSetKey(js)));
-  const reversedJobSets = [...unmatchedJobSets].reverse();
-
-  const pairCount = Math.min(unmatchedJobs.length, reversedJobSets.length);
-  for (let i = 0; i < pairCount; i++) {
-    const job = unmatchedJobs[i];
-    const jobSet = reversedJobSets[i];
-    matchedJobSetIds.add(jobSetKey(jobSet));
-    job._matchedJobSet = jobSet;
-    job._matchMethod = 'order';
-    console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
-  }
-}
-
-export function matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results) {
-  const matchedJobSetIds = new Set();
-  assignPromptMatches(submittedJobs, completedJobSets, results, matchedJobSetIds);
-  assignOrderFallbackMatches(submittedJobs, completedJobSets, results, matchedJobSetIds);
-}
-
-function findCompletedJobWithUrl(jobSet) {
-  for (const j of (jobSet.jobs || [])) {
-    if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
-      return j;
-    }
-  }
-  return null;
-}
-
-function downloadSingleMatchedVideo(job, bestMatch, matchMethod, outputDir, results) {
-  const completedJob = findCompletedJobWithUrl(bestMatch);
-  if (!completedJob) return;
-
-  const videoUrl = completedJob.results.raw.url;
-  const meta = { model: job.model, promptSnippet: job.promptPrefix };
-  const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}.mp4`, job.sceneIndex);
-  const savePath = safeJoin(outputDir, sanitizePathSegment(filename, `scene-${job.sceneIndex + 1}.mp4`));
-
-  try {
-    const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
-    if (httpCode === '200' && size > 10000) {
-      console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(size / 1024 / 1024).toFixed(1)}MB) ${filename}`);
-      console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
-      results.set(job.sceneIndex, savePath);
-    }
-  } catch {
-    /* download failures are reported by the poller's missing-scenes log */
-  }
-}
-
-export function downloadMatchedVideos(submittedJobs, outputDir, results) {
-  for (const job of submittedJobs) {
-    if (results.has(job.sceneIndex)) continue;
-    const bestMatch = job._matchedJobSet;
-    if (!bestMatch) continue;
-    const matchMethod = job._matchMethod || 'prompt';
-    delete job._matchedJobSet;
-    delete job._matchMethod;
-    downloadSingleMatchedVideo(job, bestMatch, matchMethod, outputDir, results);
-  }
-}
 
 export async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 600000) {
   const results = new Map();
