@@ -186,6 +186,15 @@ class RestorationProof:
             require(inode(common) == self.common_inode
                     and all(fingerprint(path) == digest for path, digest in dependencies.items()),
                     "restore-proof:base-changed-during-restore")
+            require(self.objects == self.objects.resolve(strict=True)
+                    and not os.path.lexists(self.objects / "info/alternates"),
+                    "restore-proof:external-object-store-added")
+            pending = [self.objects]
+            while pending:
+                path = pending.pop()
+                require(not path.is_symlink(), "restore-proof:symlinked-object-store")
+                if path.is_dir():
+                    pending.extend(path.iterdir())
             self.objects_digest = fingerprint(self.objects)
             git(common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
         from worktree_lifetime_archive import managed_module, transaction

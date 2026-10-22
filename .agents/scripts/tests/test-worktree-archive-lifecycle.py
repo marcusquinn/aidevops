@@ -261,7 +261,7 @@ class ArchiveLifecycle(MergeCases, ProducerCases, unittest.TestCase):
         self.assertEqual(receipt["state"], "cleaned")
         self.assertFalse((self.root / "proof" / receipt["slot"]).exists())
         target = str(self.root / "proof" / receipt["slot"] / "worktree")
-        with sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"]) as connection:
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
             self.assertIsNone(connection.execute("SELECT 1 FROM worktree_owners WHERE worktree_path = ?",
                                                 (target,)).fetchone())
             self.assertIsNone(connection.execute("SELECT 1 FROM worktree_managed_lifetimes WHERE path = ?",
@@ -306,7 +306,7 @@ class ArchiveLifecycle(MergeCases, ProducerCases, unittest.TestCase):
     def test_canonical_proof_rejects_creation_owner_transfer(self):
         def transfer(*args):
             self.helper(*args)
-            with sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"]) as connection:
+            with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection, connection:
                 connection.execute("UPDATE worktree_owners SET owner_session = 'transferred' WHERE worktree_path = ?",
                                    (str(args[3]),))
 
@@ -326,6 +326,44 @@ class ArchiveLifecycle(MergeCases, ProducerCases, unittest.TestCase):
             self.canonical_proof(self.archive(), changed)
         self.assertTrue(self.work.exists())
 
+    def test_canonical_proof_rejects_alternate_introduced_during_restore(self):
+        def changed(*args):
+            self.helper(*args)
+            (self.repo / ".git/objects/info/alternates").write_text("")
+
+        with self.assertRaisesRegex(ValueError, "external-object-store-added"):
+            self.canonical_proof(self.archive(), changed)
+        self.assertTrue(self.work.exists())
+
+    def test_canonical_managed_old_receipt_requires_revalidation(self):
+        managed = self.managed_fixture()
+        archive = self.prepare_managed(managed)
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            record = managed.load(connection, str(self.work))
+            record["archive_operation"].pop("canonical_restore")
+            managed.save(connection, record)
+            connection.commit()
+        proof = HELPER.with_name("worktree-managed-lifetime.py")
+        failed = self.run_command(sys.executable, proof, "proof", self.work, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(b"canonical restoration receipt unavailable", failed.stderr)
+        self.assertTrue(self.work.exists())
+        self.assertEqual(self.prepare_managed(managed), archive)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["canonical_restore"]["state"], "cleaned")
+        self.assertEqual(len(list((self.archives / ".lifecycle").iterdir())), 1)
+
+    def test_canonical_retirement_revalidates_old_plan_without_proof(self):
+        from worktree_recovery_migration_state import load, publish
+        bucket, migration = self.retirement_fixture()
+        plan = json.loads(self.retirement("retire-plan", bucket).stdout)
+        path = Path(migration["receipt"]).parent / "retirement.json"
+        record = load(path)
+        record.pop("canonical_restore")
+        publish(path, record)
+        result = json.loads(self.retirement("retire", bucket, "--confirm", plan["confirmation_token"]).stdout)
+        self.assertTrue(result["retired"])
+        self.assertEqual(load(path)["canonical_restore"]["state"], "cleaned")
+
     def test_canonical_cleanup_resumes_after_native_removal_and_registry_commit(self):
         managed = self.managed_fixture()
         original = Path.rmdir
@@ -342,7 +380,7 @@ class ArchiveLifecycle(MergeCases, ProducerCases, unittest.TestCase):
         self.assertEqual(receipt["state"], "cleanup-pending")
         slot = Path(operation["directory"]) / receipt["slot"]
         self.assertFalse((slot / "worktree").exists())
-        with sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"]) as connection:
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
             self.assertIsNone(connection.execute("SELECT 1 FROM worktree_owners WHERE worktree_path = ?",
                                                 (str(slot / "worktree"),)).fetchone())
         self.prepare_managed(managed)
