@@ -26,6 +26,8 @@ import {
 } from './higgsfield-output.mjs';
 
 import { downloadVideoFromHistory } from './higgsfield-video-download.mjs';
+import { logVideoPollingProgress } from './higgsfield-video-history.mjs';
+export { logVideoPollingProgress };
 
 export {
   downloadVideoFromApiData,
@@ -318,32 +320,6 @@ async function captureVideoHistoryState(page) {
 // ---------------------------------------------------------------------------
 // Video generation completion polling
 // ---------------------------------------------------------------------------
-
-export async function logVideoPollingProgress(page, state, { elapsedSec, wasProcessing, lastRefreshTime, historyTab }) {
-  if (state.isProcessing) {
-    console.log(`  ${elapsedSec}s: processing (${state.currentCount} items)...`);
-    return { wasProcessing: true, lastRefreshTime };
-  }
-  if (wasProcessing && !state.matchesOurPrompt && !state.isNewItem) {
-    if (Date.now() - lastRefreshTime > 30000) {
-      console.log(`  ${elapsedSec}s: processing ended, refreshing History...`);
-      const settingsTab = page.locator('[role="tab"]:has-text("Settings")');
-      if (await settingsTab.count() > 0) {
-        await settingsTab.click({ force: true });
-        await page.waitForTimeout(1000);
-      }
-      if (await historyTab.count() > 0) {
-        await historyTab.click({ force: true });
-        await page.waitForTimeout(2000);
-      }
-      return { wasProcessing, lastRefreshTime: Date.now() };
-    }
-    console.log(`  ${elapsedSec}s: waiting for result (${state.currentCount} items)...`);
-    return { wasProcessing, lastRefreshTime };
-  }
-  console.log(`  ${elapsedSec}s: waiting (${state.currentCount} items, prompt: "${state.promptText?.substring(0, 40)}...")...`);
-  return { wasProcessing, lastRefreshTime };
-}
 
 export async function waitForVideoGeneration(page, historyState, prompt, options = {}) {
   const timeout = options.timeout || 600000;
