@@ -138,12 +138,17 @@ assert_reads() {
 	return 0
 }
 assert_reads once 2 0
-assert_reads always 3 1
-grep -Fq "pull requests for commit ${FIRST} in test/repo: JSON decode error after 3 attempts" "$TEST_ROOT/read-err"
+# Default budget (GH#35434): GitHub's empty-body 500s need more than 3 tries.
+assert_reads always 8 1
+grep -Fq "pull requests for commit ${FIRST} in test/repo: JSON decode error after 8 attempts" "$TEST_ROOT/read-err"
+RELEASE_SNAPSHOT_MAX_ATTEMPTS=3 assert_reads always 3 1
+grep -Fq "JSON decode error after 3 attempts" "$TEST_ROOT/read-err"
+RELEASE_SNAPSHOT_MAX_ATTEMPTS=bogus assert_reads always 8 1
+RELEASE_SNAPSHOT_MAX_ATTEMPTS=99 assert_reads always 8 1
 assert_reads auth 1 1
 unset -f gh
 eval "${_gh_real}"
-printf 'PASS: transient reads retry up to 3 attempts; auth failures fail immediately\n'
+printf 'PASS: transient reads retry within the configured budget; auth failures fail immediately\n'
 
 # Exercise the actual resolver at a detached snapshot while remote main has
 # already advanced, including the explicit complete-manifest integrity gate.
