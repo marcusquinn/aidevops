@@ -21,7 +21,6 @@ import {
 } from './higgsfield-output.mjs';
 import {
   fetchProjectApiWithPolling,
-  pickNewestCompletedCloudfrontJob,
 } from './higgsfield-video-history.mjs';
 export { evaluateNewestJobStatus, fetchProjectApiWithPolling } from './higgsfield-video-history.mjs';
 
@@ -61,6 +60,17 @@ export async function extractVideoMetadata(page) {
 
     return { promptText, modelText };
   });
+}
+
+function pickNewestCompletedCloudfrontJob(projectApiData) {
+  for (const jobSet of projectApiData.job_sets) {
+    for (const job of (jobSet.jobs || [])) {
+      if (job.status !== 'completed' || !job.results?.raw?.url) continue;
+      if (!job.results.raw.url.includes('cloudfront.net')) continue;
+      return job;
+    }
+  }
+  return null;
 }
 
 function logCloudfrontDownloadOutcome(httpCode, size, videoUrl) {

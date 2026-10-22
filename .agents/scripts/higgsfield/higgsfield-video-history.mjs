@@ -1,17 +1,6 @@
 // Video history observation: project API retrieval, status and polling progress.
 // Download finalization and generation submission stay in their command modules.
 
-export function pickNewestCompletedCloudfrontJob(projectApiData) {
-  for (const jobSet of projectApiData.job_sets) {
-    for (const job of (jobSet.jobs || [])) {
-      if (job.status !== 'completed' || !job.results?.raw?.url) continue;
-      if (!job.results.raw.url.includes('cloudfront.net')) continue;
-      return job;
-    }
-  }
-  return null;
-}
-
 async function fetchProjectApiData(page) {
   let projectApiData = null;
 
