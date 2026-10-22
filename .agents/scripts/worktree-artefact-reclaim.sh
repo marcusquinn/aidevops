@@ -116,6 +116,10 @@ def safe_candidate(wt, path):
         return False
     if git(wt, 'ls-files', '--others', '--exclude-standard', '-z', '--', relative):
         return False
+    # Only output beside project sources: an ignored directory nested inside
+    # untracked, unignored output (for example a packaged .app) is retained.
+    if path.parent != wt and not git(wt, 'ls-files', '-z', '--', path.parent.relative_to(wt).as_posix() + '/'):
+        return False
     return True
 
 
@@ -158,9 +162,29 @@ def ignored_directories(wt):
             yield wt / relative.rstrip('/')
 
 
-def idle_candidates(wt):
-    if wt.stat().st_mtime >= cutoff:
-        raise ValueError('recent root directory edit')
+def last_reflog_time(private_git_dir):
+    # Maintenance (reflog expiry, gc, recovery tooling) rewrites logs/HEAD, so
+    # its mtime is not activity; the newest entry's own timestamp is.
+    reflog = private_git_dir / 'logs' / 'HEAD'
+    if not reflog.is_file():
+        return 0
+    with reflog.open('rb') as handle:
+        handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, handle.tell() - 65536))
+        lines = handle.read().splitlines()
+    for line in reversed(lines):
+        identity = line.split(b'\t', 1)[0].split()
+        if len(identity) >= 2 and identity[-2].isdigit():
+            return int(identity[-2])
+    raise ValueError('unreadable HEAD reflog')
+
+
+def idle_candidates(wt, private_git_dir):
+    # Commits and checkouts write HEAD and append to its reflog. The index is
+    # not used: read-only `git status` probes may refresh it opportunistically.
+    head = private_git_dir / 'HEAD'
+    if head.stat().st_mtime >= cutoff or last_reflog_time(private_git_dir) >= cutoff:
+        raise ValueError('recent Git activity')
     candidates = sorted(path for path in ignored_directories(wt) if allowlisted(path) and safe_candidate(wt, path))
     skip = set(candidates)
     stack = [wt]
@@ -173,12 +197,14 @@ def idle_candidates(wt):
                 path = Path(entry.path)
                 if (parent == wt and entry.name == '.git') or path in skip:
                     continue
-                if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
-                    raise ValueError('recent non-artefact edit')
                 if entry.is_dir(follow_symlinks=False):
+                    # Directory mtimes only record entry churn (for example
+                    # Finder .DS_Store writes), not edits; inspect contents.
                     if path.is_mount() or os.path.lexists(path / '.git'):
                         raise ValueError('nested repository or mount')
                     stack.append(path)
+                elif entry.name != '.DS_Store' and entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+                    raise ValueError('recent non-artefact edit')
     return candidates
 
 
@@ -217,7 +243,9 @@ def reclaim(wt, paths):
         command = [trash] if trash else [gio, 'trash'] if gio else None
         if command is None:
             raise ValueError('no trash backend; retained')
-        result = run(command + ['--'] + [str(path) for path in pending])
+        # Paths are absolute, so no option terminator is needed; macOS
+        # /usr/bin/trash treats "--" as a missing file and exits non-zero.
+        result = run(command + [str(path) for path in pending])
         if result.returncode:
             raise ValueError('trash failed; inspect retained paths')
 
@@ -233,19 +261,22 @@ def process_worktree(wt):
     common = git(wt, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
     if private == common:
         return
+    private_dir = Path(os.fsdecode(private))
     branch_result = run(['git', '-C', str(wt), 'symbolic-ref', '--quiet', '--short', 'HEAD'])
     branch = os.fsdecode(branch_result.stdout).strip()
-    paths = idle_candidates(wt)
-    if not paths or not guarded(wt, branch):
+    paths = idle_candidates(wt, private_dir)
+    if not paths:
         return
+    if not guarded(wt, branch):
+        raise ValueError('live cwd, owner claim or active session')
     sizes = {path: size(path) for path in paths}
     for path in paths:
         print(f'[worktree-artefacts] {"eligible" if args.force else "dry-run"} path={str(path)!r} bytes={sizes[path]}', flush=True)
     if args.force:
         # Recheck age, ownership, cwd and Git exceptions immediately
         # before any cleaner, not only at discovery time.
-        if idle_candidates(wt) != paths or not guarded(wt, branch):
-            return
+        if idle_candidates(wt, private_dir) != paths or not guarded(wt, branch):
+            raise ValueError('state changed before reclaim; retained')
         reclaim(wt, paths)
     reclaimed = sum(value for path, value in sizes.items() if not path.exists()) if args.force else 0
     totals['eligible'] += sum(sizes.values())
