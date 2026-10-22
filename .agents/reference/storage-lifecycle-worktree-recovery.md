@@ -7,6 +7,15 @@ description: Recovery archive evidence, planning, apply, and automatic maintenan
 
 # Recoverable Worktree Archives
 
+| Need | Contract |
+| --- | --- |
+| Capture or inspect archives | [Current producers](#current-compact-producers), [legacy evidence](#legacy-full-recovery-buckets) |
+| Convert a legacy bucket without deleting it | [Compact migration](#explicit-compact-migration-no-retirement) |
+| Remove a verified migrated source | [Confirmed retirement](#confirmed-retirement-of-migrated-buckets) |
+| Deploy and verify Pulse compaction | [Host rollout](#pulse-host-rollout-and-verification), [retry scheduling](#archive-migration-retry-scheduling) |
+| Review retention candidates, then apply | [Planning](#inventory-and-retention-planning), [confirmation-bound apply](#confirmation-bound-apply) |
+| Diagnose legacy retention or cache pruning | [Automatic maintenance](#bounded-automatic-maintenance), [process visibility](#process-visibility-diagnostics) |
+
 ## Safety and recovery evidence
 
 Recovery snapshots cannot be deleted on age, size, disk pressure or session history alone. Follow the separate [migration](#explicit-compact-migration-no-retirement), [retirement](#confirmed-retirement-of-migrated-buckets), [planning](#inventory-and-retention-planning), [manual apply](#confirmation-bound-apply) and [maintenance](#bounded-automatic-maintenance) contracts.
@@ -205,23 +214,11 @@ To reset scheduling only, run `python3 .agents/scripts/worktree_recovery_compact
 - `--root`, `--registry`, `--ledger`: alternate local evidence.
 - No recursive sizing, source reads, Git/network calls, process scans, restores or mutations. Byte totals are unmeasured; elapsed time excludes interpreter/shell startup.
 
-Existing lifecycle records use the lifecycle path; unknown/profile origin is
-retained. Name-classified legacy Pulse requires a UTC creation time at least seven days
-old. This predicate is a prefilter, not verification or deletion authorization.
+Existing lifecycle records use the lifecycle path; unknown/profile origin is retained. Name-classified legacy Pulse requires a UTC creation time at least seven days old: a prefilter, not verification or deletion authority.
 
-**Provenance limitation:** `producer`, `producer-context` and `session-id` describe
-the archiver, not the creator. Dispatch path matches are counted separately: they
-do not bind a generation. Legacy classification uses the actual Pulse dispatcher
-name pattern, shared with [legacy Pulse compaction](legacy-pulse-compaction.md),
-without extra flags. Names are a policy convention, not lifecycle evidence.
-Raw-copy expiry is unchanged; recorded state is not a successful `proof`.
-Manual data and the final compact archive have no new expiry.
+**Provenance limitation:** `producer`, `producer-context` and `session-id` identify the archiver, not the creator. Separately counted dispatch path matches do not bind a generation. Legacy classification uses the actual Pulse dispatcher name pattern shared with [legacy Pulse compaction](legacy-pulse-compaction.md), without extra flags. Names are policy conventions, not lifecycle evidence. Raw-copy expiry is unchanged; recorded state is not successful `proof`. Manual data and final compact archives gain no expiry.
 
-The historical copy path excluded proven ignored, untracked cache roots before IO, including cache
-roots nested below a broader ignored directory. Git evidence failures stop copying
-instead of falling back to a potentially enormous unfiltered copy. Tracked files,
-symlinks, and unknown ignored content remain protected. This prevents a bounded
-cleanup timeout from repeatedly materializing dependency trees before pruning them.
+Historical copying excluded proven ignored, untracked cache roots before IO, including roots nested below broader ignored directories. Git evidence failure stops copying, never falls back to an enormous unfiltered copy. Tracked files, symlinks and unknown ignored content stay protected. This prevents bounded cleanup timeouts from repeatedly copying dependency trees before pruning them.
 
 Run `worktree-helper.sh recovery` for read-only legacy-bucket counts/bytes and protected/unknown reasons. Shared storage status exposes the same summary as one `worktree-recovery` record; `reclaimable_bytes` is zero because inventory grants no deletion authority.
 Non-macOS inventory also includes attributable legacy `$HOME/.Trash/aidevops-worktree-cleanup-*` buckets. Keep framework defaults distinct from joint OS Trash and operator-selected roots.
@@ -244,69 +241,41 @@ The envelope binds producer, generation time, deterministic plan ID, inventory c
 Each attributable entry binds physical bucket/archive paths, format, Git HEAD/branch, source/admin/common identity, archive index/completion-marker digests, expected allocated bytes, observed local/remote evidence, disposition and reason codes.
 Unchanged evidence yields identical entries/plan ID; generation time is observational. The v2 token binds plan ID, exact candidate count, expected allocated bytes, schema and permanent-delete action. Never upgrade earlier or tokenless plans into destructive authority.
 
-Candidate status requires a valid complete archive, completed source removal, a clean tracked/untracked/user-ignored
-Git state, an exact terminal commit, no open pull request, no live Git worktree/registry/claim/process reference,
-and exact readable sizing. Ignored, untracked directories with recognised regenerable-cache identities
-(`node_modules`, `.pnpm-store`, `.yarn/cache`, `.next/cache`, `.nuxt/cache`, `.turbo`,
-`.parcel-cache`, `.vite`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, and `.ruff_cache`
-at any depth; `.venv`/`venv` only with a regular `pyvenv.cfg` and `*.egg-info` only with a
-regular `PKG-INFO`; `.codegraph` and `.astro` only at the repository root) do not make an
-otherwise clean legacy archive dirty. Ignored, untracked aidevops state at exact root paths
-(`.agents/loop-state/`, `.agents/tmp/`, `.agents/.full-loop-cleanup-deferred`,
-`todo/batches/*.json.lock`) is also not user data; it is removed only with its whole bucket.
-Generic `dist/` and `build/` lack identity evidence and stay protected. Positive live or
-unfinished evidence is `protected`. Missing APIs, process visibility, identity, validation, or sizing is `unknown`.
-Identity and allocated bytes are read again immediately before an entry is emitted, so concurrent drift downgrades
-only that entry. Age, size, and OpenCode or Claude session history never prove reclaimability. Plan files grant no
-deletion authority by themselves.
+Candidate status requires a complete valid archive, completed source removal, clean tracked/untracked/user-ignored Git state, an exact terminal commit, no open PR or live Git worktree/registry/claim/process reference, and exact readable sizing.
+
+Ignored, untracked directories with these regenerable-cache identities do not dirty an otherwise clean legacy archive:
+
+| Location / identity requirement | Approved roots |
+| --- | --- |
+| Any depth | `node_modules`, `.pnpm-store`, `.yarn/cache`, `.next/cache`, `.nuxt/cache`, `.turbo`, `.parcel-cache`, `.vite`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache` |
+| Regular `pyvenv.cfg` required | `.venv`/`venv` |
+| Regular `PKG-INFO` required | `*.egg-info` |
+| Repository root only | `.codegraph`, `.astro` |
+
+Ignored, untracked aidevops state at exact root paths (`.agents/loop-state/`, `.agents/tmp/`, `.agents/.full-loop-cleanup-deferred`, `todo/batches/*.json.lock`) is not user data; remove it only with its whole bucket. Generic `dist/` and `build/` lack identity evidence and stay protected.
+
+Positive live/unfinished evidence is `protected`; missing APIs, process visibility, identity, validation or sizing is `unknown`. Reread identity and allocated bytes immediately before emitting each entry; concurrent drift downgrades only that entry. Age, size and OpenCode/Claude session history never prove reclaimability. Plans alone grant no deletion authority.
 
 ### Terminal publication evidence
 
-Branch-backed archives prove terminal state through an exact merged PR head and
-a closed linked task. Detached archives have no branch-keyed claim or linked
-task, so they use one of two publication contracts. The profile publication
-scratch-worktree producer (exact v2 producer identity) becomes
-eligible only when GitHub independently proves the archived HEAD is the merge
-base of the repository's current default-branch tip. A changed producer/context,
-unavailable API, non-ancestor commit, dirty archive, or live local reference
-still preserves the bucket.
+Branch-backed archives require an exact merged PR head and closed linked task. Detached archives lack branch-keyed claims/linked tasks and use these publication contracts:
 
-Other v2 detached archives (any producer, with recorded `created-at` evidence)
-follow a combined retention and publication contract. They stay `protected`
-with `detached-within-retention` until their recorded creation time is at
-least the retention period old (`AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_RETENTION_DAYS`,
-default seven days, for both manual plans and automatic maintenance); bucket
-mtime never substitutes for missing or unparsable creation evidence, which is
-`unknown` with `retention-evidence-unavailable`. After retention elapses they
-become `candidate` with `detached-head-published-retention-elapsed` only when
-the same GitHub merge-base proof shows the archived HEAD is published on the
-current default branch, source removal is complete, Git state is clean, and
-worktree, registry, and process evidence are all clear. An unpublished HEAD is
-`exact-commit-not-published`; unavailable APIs or process visibility remain
-`unknown`. Legacy detached archives without v2 creation evidence remain
-`detached-or-unresolved-branch`. Both detached candidate reasons are accepted
-by the confirmation-bound and automatic apply paths, which revalidate the full
-evidence before any move. Classification recognises
-the exact producer identity before external publication proof is available, so
-an early evidence failure reports its owning stage (for example,
-`process-evidence-unavailable`) instead of misreporting a supported producer as
-an unsupported detached branch. Identity recognition grants no deletion
-authority: provenance and publication proof remain mandatory for candidacy.
+| Detached archive | Required evidence / disposition |
+| --- | --- |
+| Profile publication scratch-worktree, exact v2 producer identity | GitHub independently proves archived HEAD is the merge base of the current default-branch tip. Changed producer/context, unavailable API, non-ancestor commit, dirty state or live local reference preserves the bucket |
+| Other v2, any producer with recorded `created-at` | `protected` / `detached-within-retention` until `AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_RETENTION_DAYS` (default seven days, manual and automatic paths). Missing/unparsable creation evidence is `unknown` / `retention-evidence-unavailable`; never substitute bucket mtime |
+| Other v2 after retention | `candidate` / `detached-head-published-retention-elapsed` only with the same GitHub merge-base publication proof, completed source removal, clean Git state and clear worktree/registry/process evidence. Unpublished HEAD: `exact-commit-not-published`; unavailable APIs/process visibility: `unknown` |
+| Legacy detached, no v2 creation evidence | `detached-or-unresolved-branch` |
+
+Confirmation-bound and automatic apply accept both detached candidate reasons and revalidate all evidence before moving anything. Recognise exact producer identity before external publication proof: early failures report their owning stage (for example `process-evidence-unavailable`), not an unsupported detached branch. Recognition grants no deletion authority; candidacy still requires provenance and publication proof.
 
 ### Protected mixed archives
 
-Automatic maintenance may reclaim those same approved cache roots from an
-otherwise protected mixed archive without deleting the archive. This narrower
-path requires a dirty archive, completed source removal, an elapsed maintenance
-retention period (default 7 days), and clear worktree, registry, claim, and process
-evidence. Unmerged commits and open tasks may remain; PR evidence must be clear. Each root must be
-an exact ignored and untracked approved directory with no symlink component,
-tracked path, or hard-linked regular file. A bounded manifest records its
-device/inode identity and allocated bytes; uncertainty, deadline exhaustion,
-Git output beyond the fixed capture ceiling, or drift preserves the root.
-Ordinary recovery planning short-circuits once dirty; automatic maintenance completes
-downstream evidence even for unmerged commits, and cache apply repeats the snapshot.
-Age uses created-at or legacy bucket mtime; unknown age retains roots. Whole-archive rules stay unchanged.
+Automatic maintenance may prune the same approved cache roots without deleting a protected mixed archive. Require dirty state, completed source removal, elapsed maintenance retention (default 7 days) and clear worktree/registry/claim/process evidence. Unmerged commits and open tasks may remain; PR evidence must be clear.
+
+Each root must be an exact ignored, untracked approved directory without symlink components, tracked paths or hard-linked regular files. A bounded manifest binds device/inode identity and allocated bytes. Uncertainty, deadline exhaustion, Git output beyond the fixed capture ceiling or drift preserves the root.
+
+Ordinary planning short-circuits on dirty state; automatic maintenance completes downstream evidence even for unmerged commits, and cache apply repeats the snapshot. Age uses created-at or legacy bucket mtime; unknown age retains roots. Whole-archive rules are unchanged.
 
 ## Confirmation-bound apply
 
@@ -319,53 +288,29 @@ worktree-helper.sh recovery apply \
   --confirm <manifest-token>
 ```
 
-Apply requires the exact supported producer manifest and bound token. Reject relative
-or symlinked inputs, mismatched existing receipts/reservations, unsupported schemas,
-duplicate paths/identities, candidates outside attributable recovery roots and summary
-or digest mismatches. Archive creation and apply share an exclusive producer lock
-recording PID, process start time and owner token. Live, malformed, ambiguous or
-unverifiable ownership blocks mutation; reclaim only conclusively stale ownership.
+Apply requires the exact supported producer manifest and bound token. Reject relative/symlinked inputs, mismatched existing receipts/reservations, unsupported schemas, duplicate paths/identities, candidates outside attributable recovery roots, and summary/digest mismatches. Creation and apply share an exclusive producer lock binding PID, process start time and owner token. Live, malformed, ambiguous or unverifiable ownership blocks mutation; reclaim only conclusively stale ownership.
 
-Under lock, create or validate a mode-0600, plan-bound
-`aidevops.worktree-recovery-apply-reservation/v1` at the requested receipt path,
-preventing post-deletion receipt loss to a concurrent plan's path collision. Bind a
-uniquely allocated mode-0600 completion file before mutation; publication never claims
-or removes predictable adjacent paths. Exact retries may resume incomplete reservations;
-different plans or replaced completion files fail before mutation. Revalidate every
-candidate and all mutable evidence before any move, then recheck exact identity and
-allocated bytes immediately before each same-filesystem rename into the root's
-`.retention-trash/<transaction-id>/`. An atomically replaced journal lists all permitted
-original/staged paths: remove only those entries, never wildcards or newly discovered
-archives. Empty initialization directories and deterministic journal-next files are
-recoverable; unrelated transaction artifacts fail closed. Interrupted initialization,
-rename, journal update or removal resumes only from the exact attributable plan/journal.
+Under lock:
 
-Success atomically replaces the exact reservation with a mode-0600
-`aidevops.worktree-recovery-apply-receipt/v1` receipt containing the plan and
-transaction identities, confirmation binding, times, exact paths and archive
-identities, expected/observed bytes, and terminal outcomes. Replaying the same
-complete receipt is a no-op; a conflicting receipt or reservation fails closed. Protected,
-unknown, unrelated Trash, and newly created content remain untouched. This
-explicit command remains the operator-reviewed apply path.
+1. Create/validate a mode-0600, plan-bound `aidevops.worktree-recovery-apply-reservation/v1` at the requested receipt path, preventing concurrent-plan collisions from losing the post-deletion receipt. Bind a uniquely allocated mode-0600 completion file before mutation; never claim/remove predictable adjacent paths. Exact retries may resume incomplete reservations; different plans or replaced completion files fail before mutation.
+2. Revalidate every candidate and all mutable evidence before any move. Recheck exact identity/allocated bytes immediately before each same-filesystem rename into the root's `.retention-trash/<transaction-id>/`.
+3. Atomically replace the journal listing permitted original/staged paths. Remove only those entries, never wildcards or newly discovered archives. Empty initialization directories and deterministic journal-next files are recoverable; unrelated artifacts fail closed. Interrupted initialization, rename, journal update or removal resumes only from the exact attributable plan/journal.
+4. On success, atomically replace the exact reservation with a mode-0600 `aidevops.worktree-recovery-apply-receipt/v1` binding plan/transaction identities, confirmation, times, exact paths/archive identities, expected/observed bytes and terminal outcomes.
+
+Replaying the same complete receipt is a no-op; conflicting receipts/reservations fail closed. Protected, unknown, unrelated Trash and new content remain untouched. This command remains the operator-reviewed apply path.
 
 ## Bounded automatic maintenance
 
-The legacy `worktree-recovery-maintenance-helper.sh run` command retains the retention
-policy below. Pulse now calls `compact` instead, as described above. Legacy retention
-runs only on the default framework-owned non-macOS recovery root. Exclude macOS Trash, configured roots and
-attributable legacy Trash buckets from automatic mutation. Use the manual path's exact
-classifier and apply transaction: age/pressure selects only candidates already meeting
-every terminal, clean-state, identity, reference and sizing requirement.
+Legacy `worktree-recovery-maintenance-helper.sh run` retains this policy; Pulse now calls `compact` instead. Legacy retention mutates only the default framework-owned non-macOS recovery root, excluding macOS Trash, configured roots and attributable legacy Trash buckets. Use the manual path's exact classifier/apply transaction: age/pressure selects only candidates meeting every terminal, clean-state, identity, reference and sizing requirement.
 
-Default selection: after seven days, or earlier if the store exceeds 5 GiB or filesystem
-free space falls below 10 GiB or 10 percent. Aggregate-sizing timeout enables conservative
-`aggregate-size-unavailable` pressure mode, not a disabled store limit; deletion still
-requires exact per-bucket sizing and all terminal evidence. After cheap path enumeration,
-validate/classify at most 50 rotating entries within 120 seconds; apply at most 20
-candidates or 5 GiB. Expensive Git validation shares that cursor window and deadline.
-Classify evidence before whole-archive sizing; candidate-only exact probes use remaining
-pass budget, and apply revalidates identity/allocated bytes. Protected mixed archives
-can reach approved cache-root pruning without whole-archive `du`.
+| Default limit / trigger | Behavior |
+| --- | --- |
+| Seven days; earlier above 5 GiB store size or below 10 GiB / 10 percent filesystem free space | Select only evidence-qualified candidates |
+| Aggregate-sizing timeout | Conservative `aggregate-size-unavailable` pressure mode, not a disabled store limit; exact per-bucket sizing and terminal evidence still required |
+| 50 rotating entries / 120 seconds after cheap enumeration | Validation/classification, including expensive Git checks, shares the cursor window/deadline |
+| 20 candidates / 5 GiB | Maximum apply selection |
+
+Classify evidence before whole-archive sizing; candidate-only exact probes use remaining pass budget, and apply revalidates identity/allocated bytes. Protected mixed archives can reach approved cache-root pruning without whole-archive `du`.
 
 ### Advisory size index and selection limits
 
@@ -492,9 +437,4 @@ Without complete visibility or valid managed-lifetime proof, retain affected arc
 
 ## Session-history limitations
 
-An originating OpenCode or Claude session identifier is recovery guidance, not
-deletion proof. Session history can reconstruct text edits and intent but may be
-archived, unavailable, or incomplete and does not prove preservation of ignored
-or binary files, permissions, symlinks, index state, or detached Git metadata.
-Existing archive integrity, lock, identity, late-write, detached-HEAD, and
-interruption checks remain authoritative.
+An originating OpenCode/Claude session identifier guides recovery, not deletion. History may reconstruct text edits/intent but can be archived, unavailable or incomplete; it never proves preservation of ignored/binary files, permissions, symlinks, index state or detached Git metadata. Archive integrity, lock, identity, late-write, detached-HEAD and interruption checks remain authoritative.
