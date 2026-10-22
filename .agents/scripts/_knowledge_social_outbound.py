@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 import sqlite3
 import time
@@ -13,6 +12,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from _knowledge_social_outbound_integrity import (
+    MAX_PAYLOAD_BYTES as MAX_PAYLOAD_BYTES,
+    _digest as _digest,
+    _intent_document as _intent_document,
+    _intent_sha256 as _intent_sha256,
+    _validated_payload as _validated_payload,
+    _verify_operation_row as _verify_operation_row,
+)
 from _knowledge_social_outbound_validation import (
     MAX_SUBJECT_BYTES,
     optional_selector as _optional_selector,
@@ -21,7 +28,6 @@ from _knowledge_social_outbound_validation import (
     validated_subject as _validated_subject,
     validated_target as _validated_target,
 )
-from knowledge_social_import import canonical_json
 from knowledge_social_store import SocialStoreError, validate_opaque
 
 ACTIONS = ("post", "reply", "like", "bookmark")
@@ -46,7 +52,6 @@ FAILURE_CLASSES = (
     "runtime",
     "validation",
 )
-MAX_PAYLOAD_BYTES = 16 * 1024
 MAX_APPROVAL_SECONDS = 31 * 24 * 60 * 60
 CURRENT_INTENT_VERSION = 3
 REDDIT_PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
@@ -120,93 +125,6 @@ def now_epoch() -> int:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
-
-
-def _digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _validated_payload(action: str, payload: str | None) -> str | None:
-    if action in ("post", "reply"):
-        if payload is None or not payload.strip() or "\x00" in payload:
-            raise SocialStoreError(f"{action} requires a non-empty private body file")
-        if len(payload.encode("utf-8")) > MAX_PAYLOAD_BYTES:
-            raise SocialStoreError("outbound body exceeds the private payload limit")
-        return payload
-    if payload is not None:
-        raise SocialStoreError(f"{action} does not accept a body")
-    return None
-
-
-def _intent_document(values: dict[str, Any]) -> dict[str, Any]:
-    version = int(values["intent_version"])
-    document = {
-        "version": version,
-        "operation_id": values["operation_id"],
-        "provider": values["provider"],
-        "connection_id": values["connection_id"],
-        "remote_account_id": values["remote_account_id"],
-        "action": values["action"],
-        "target_remote_id": values["target_remote_id"],
-        "payload_sha256": values["payload_sha256"],
-        "app_profile": values["app_profile"],
-        "username": values["username"],
-        "scheduled_at": values["scheduled_at"],
-        "created_by": values["created_by"],
-    }
-    if version in (2, 3):
-        document.update(
-            {
-                "destination_remote_id": values["destination_remote_id"],
-                "subject_sha256": values["subject_sha256"],
-            }
-        )
-    if version == 3:
-        document.update(
-            {
-                "media_path": values["media_path"],
-                "media_sha256": values["media_sha256"],
-            }
-        )
-    elif version not in (1, 2):
-        raise SocialStoreError("unsupported outbound intent version")
-    return document
-
-
-def _intent_sha256(values: dict[str, Any]) -> str:
-    return _digest(canonical_json(_intent_document(values)))
-
-
-def _verify_operation_row(row: sqlite3.Row) -> sqlite3.Row:
-    payload_sha256 = _digest(row["payload"] or "")
-    if payload_sha256 != row["payload_sha256"]:
-        raise SocialStoreError("outbound operation payload integrity check failed")
-    intent_version = int(row["intent_version"])
-    if intent_version == 1:
-        if any(
-            row[field] is not None
-            for field in ("destination_remote_id", "subject", "subject_sha256")
-        ):
-            raise SocialStoreError("legacy outbound operation has unbound provider fields")
-    elif intent_version in (2, 3):
-        subject_sha256 = _digest(row["subject"] or "")
-        if subject_sha256 != row["subject_sha256"]:
-            raise SocialStoreError("outbound operation subject integrity check failed")
-        if intent_version == 3 and (
-            (row["media_path"] is None) != (row["media_sha256"] is None)
-            or (
-                row["media_sha256"] is not None
-                and re.fullmatch(r"[0-9a-f]{64}", str(row["media_sha256"])) is None
-            )
-        ):
-            raise SocialStoreError("outbound operation media integrity check failed")
-    else:
-        raise SocialStoreError("unsupported outbound intent version")
-    values = dict(row)
-    values["payload_sha256"] = payload_sha256
-    if _intent_sha256(values) != row["intent_sha256"]:
-        raise SocialStoreError("outbound operation intent integrity check failed")
-    return row
 
 
 def _connection_values(
