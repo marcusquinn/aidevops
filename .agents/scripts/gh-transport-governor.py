@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import signal
 import sqlite3
 import subprocess
@@ -25,6 +24,7 @@ from pathlib import Path
 from gh_native_response import (
     BOOL_FLAGS as BOOL_FLAGS,
     VALUE_FLAGS as VALUE_FLAGS,
+    _copy_response,
     _request_options as _request_options,
     _request_resource as _request_resource,
     _response_metadata,
@@ -135,20 +135,6 @@ def _acquire(budget: Budget, resource: str) -> str:
             if not pause.retryable or wait > deadline - time.monotonic():
                 raise
             time.sleep(wait)
-
-
-def _copy_response(output, include: bool, silent: bool, status: int, body_offset: int) -> int:
-    if include:
-        output.seek(0)
-        shutil.copyfileobj(output, sys.stdout.buffer)
-    elif not status:
-        # Unknown framing must not leak injected headers or report success.
-        print("[gh-transport] unrecognized native response framing", file=sys.stderr)
-        return 1
-    elif not silent:
-        output.seek(body_offset)
-        shutil.copyfileobj(output, sys.stdout.buffer)
-    return 0
 
 
 def _exit_status(rc: int) -> int:

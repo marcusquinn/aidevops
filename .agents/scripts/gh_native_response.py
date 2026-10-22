@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import sys
 
 
 VALUE_FLAGS = {
@@ -124,3 +126,17 @@ def _response_metadata(status: int, headers: dict[str, str], authenticated: bool
         value = headers.get(header, "")
         result[name] = int(value) if value.isdecimal() else None
     return result
+
+
+def _copy_response(output, include: bool, silent: bool, status: int, body_offset: int) -> int:
+    if include:
+        output.seek(0)
+        shutil.copyfileobj(output, sys.stdout.buffer)
+    elif not status:
+        # Unknown framing must not leak injected headers or report success.
+        print("[gh-transport] unrecognized native response framing", file=sys.stderr)
+        return 1
+    elif not silent:
+        output.seek(body_offset)
+        shutil.copyfileobj(output, sys.stdout.buffer)
+    return 0
