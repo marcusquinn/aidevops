@@ -554,6 +554,19 @@ _archive_event_bytes_sql() {
 	return 0
 }
 
+# Both databases have passed schema validation before this is called. Use the
+# archive's column names for both sides, never either database's physical order.
+_archive_copy_sql() {
+	local table_name="$1"
+	local row_filter="$2"
+	local columns=""
+	columns=$(opencode_db_table_columns "$ARCHIVE_DB" "$table_name") || return 1
+	[[ -n "$columns" ]] || return 1
+	printf 'INSERT OR IGNORE INTO archive.%s (%s) SELECT %s FROM %s WHERE %s;\n' \
+		"$table_name" "$columns" "$columns" "$table_name" "$row_filter"
+	return 0
+}
+
 _archive_project_insert_columns() {
 	printf '%s\n' "id, worktree, vcs, name, icon_url, icon_color, time_created, time_updated, time_initialized, sandboxes, commands, icon_url_override"
 	return 0
@@ -1103,26 +1116,33 @@ cmd_archive() {
 		local context_epoch_copy_sql="" context_epoch_delete_sql=""
 		local event_sequence_copy_sql="" event_sequence_delete_sql=""
 		local event_copy_sql="" event_delete_sql=""
+		local session_row_filter="session_id IN ($in_clause)"
 		if ((has_session_message_table)); then
-			session_message_copy_sql="INSERT OR IGNORE INTO archive.session_message SELECT * FROM session_message WHERE session_id IN ($in_clause);"
+			session_message_copy_sql=$(_archive_copy_sql session_message "$session_row_filter") || return 1
 			session_message_delete_sql="DELETE FROM session_message WHERE session_id IN ($in_clause);"
 		fi
 		if ((has_session_input_table)); then
-			session_input_copy_sql="INSERT OR IGNORE INTO archive.session_input SELECT * FROM session_input WHERE session_id IN ($in_clause);"
+			session_input_copy_sql=$(_archive_copy_sql session_input "$session_row_filter") || return 1
 			session_input_delete_sql="DELETE FROM session_input WHERE session_id IN ($in_clause);"
 		fi
 		if ((has_session_context_epoch_table)); then
-			context_epoch_copy_sql="INSERT OR IGNORE INTO archive.session_context_epoch SELECT * FROM session_context_epoch WHERE session_id IN ($in_clause);"
+			context_epoch_copy_sql=$(_archive_copy_sql session_context_epoch "$session_row_filter") || return 1
 			context_epoch_delete_sql="DELETE FROM session_context_epoch WHERE session_id IN ($in_clause);"
 		fi
 		if ((has_event_sequence_table)); then
-			event_sequence_copy_sql="INSERT OR IGNORE INTO archive.event_sequence SELECT * FROM event_sequence WHERE aggregate_id IN ($in_clause);"
+			event_sequence_copy_sql=$(_archive_copy_sql event_sequence "aggregate_id IN ($in_clause)") || return 1
 			event_sequence_delete_sql="DELETE FROM event_sequence WHERE aggregate_id IN ($in_clause);"
 		fi
 		if ((has_event_table)); then
-			event_copy_sql="INSERT OR IGNORE INTO archive.event SELECT * FROM event WHERE aggregate_id IN ($in_clause);"
+			event_copy_sql=$(_archive_copy_sql event "aggregate_id IN ($in_clause)") || return 1
 			event_delete_sql="DELETE FROM event WHERE aggregate_id IN ($in_clause);"
 		fi
+
+		local message_copy_sql part_copy_sql todo_copy_sql share_copy_sql
+		message_copy_sql=$(_archive_copy_sql message "$session_row_filter") || return 1
+		part_copy_sql=$(_archive_copy_sql part "$session_row_filter") || return 1
+		todo_copy_sql=$(_archive_copy_sql todo "$session_row_filter") || return 1
+		share_copy_sql=$(_archive_copy_sql session_share "$session_row_filter") || return 1
 
 		# Single transaction: copy to archive then delete from active.
 		# ATTACH and DETACH are within the same sqlite3 invocation — the attachment
@@ -1147,20 +1167,16 @@ INSERT OR IGNORE INTO archive.session (${session_insert_columns})
 SELECT ${session_select_columns} FROM session WHERE id IN ($in_clause);
 
 -- Copy messages
-INSERT OR IGNORE INTO archive.message
-SELECT * FROM message WHERE session_id IN ($in_clause);
+${message_copy_sql}
 
 -- Copy parts
-INSERT OR IGNORE INTO archive.part
-SELECT * FROM part WHERE session_id IN ($in_clause);
+${part_copy_sql}
 
 -- Copy todos
-INSERT OR IGNORE INTO archive.todo
-SELECT * FROM todo WHERE session_id IN ($in_clause);
+${todo_copy_sql}
 
 -- Copy session_shares
-INSERT OR IGNORE INTO archive.session_share
-SELECT * FROM session_share WHERE session_id IN ($in_clause);
+${share_copy_sql}
 
 -- Copy OpenCode 1.18.3 session-owned rows when present.
 ${session_message_copy_sql}
