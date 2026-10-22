@@ -1,1 +1,0 @@
-../../services/email/email-health-check.md
