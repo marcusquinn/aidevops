@@ -16,6 +16,19 @@ from worktree_archive_snapshot import fetch_preservation
 from worktree_recovery_timing import timed
 
 
+def object_store_files(objects):
+    """Traverse dependency files without accepting symlinked store entries."""
+    from worktree_lifetime_archive import require
+    pending = [objects]
+    while pending:
+        path = pending.pop()
+        require(not path.is_symlink(), "restore-proof:symlinked-object-store")
+        if path.is_dir():
+            pending.extend(path.iterdir())
+        else:
+            yield path
+
+
 def creation_receipt(target, owner_pid):
     """Seal the creating actor/generation before any archive payload is applied."""
     from worktree_lifetime_archive import inode, managed_module, require, transaction
@@ -159,15 +172,7 @@ class RestorationProof:
                 and not os.path.lexists(self.objects / "info/alternates"),
                 "restore-proof:unsupported-external-object-store")
         with phase("dependency-seal-before-restore"):
-            dependencies = {}
-            pending = [self.objects]
-            while pending:
-                path = pending.pop()
-                require(not path.is_symlink(), "restore-proof:symlinked-object-store")
-                if path.is_dir():
-                    pending.extend(path.iterdir())
-                else:
-                    dependencies[path] = fingerprint(path)
+            dependencies = {path: fingerprint(path) for path in object_store_files(self.objects)}
         target = slot / "worktree"
         with phase("canonical-restore"):
             command("restore", self.archive, "--target", target, "--registered-verification-copy")
@@ -189,12 +194,9 @@ class RestorationProof:
             require(self.objects == self.objects.resolve(strict=True)
                     and not os.path.lexists(self.objects / "info/alternates"),
                     "restore-proof:external-object-store-added")
-            pending = [self.objects]
-            while pending:
-                path = pending.pop()
-                require(not path.is_symlink(), "restore-proof:symlinked-object-store")
-                if path.is_dir():
-                    pending.extend(path.iterdir())
+            # Exhaust the traversal to recheck every entry after object imports.
+            for _path in object_store_files(self.objects):
+                pass
             self.objects_digest = fingerprint(self.objects)
             git(common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
         from worktree_lifetime_archive import managed_module, transaction
