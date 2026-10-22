@@ -13,6 +13,7 @@ import stat
 from worktree_lifetime_archive import inode, require
 from worktree_recovery_diagnostics import failure_details
 from worktree_recovery_migration_state import load, opaque_file
+from worktree_recovery_legacy_report import FIELDS as LEGACY_REPORT_FIELDS
 
 
 def stamp(path):
@@ -48,8 +49,7 @@ def journal_identity(directory, bucket, identity):
 def metadata_identity(root, bucket, identity):
     metadata = bucket / ".aidevops-worktree-recovery"
     require(metadata.is_dir() and not metadata.is_symlink(), "migration:incomplete-archived-copy")
-    fields = ("format", "archive-complete", "source-removal-outcome", "source-real", "source-inode",
-              "head", "branch", "common-real", "producer", "producer-context", "created-at",
+    fields = (*LEGACY_REPORT_FIELDS, "head", "branch", "common-real",
               "storage-owner", "storage-class", "storage-policy", "storage-root")
     identity["metadata"] = {field: opaque_file(metadata / field) for field in fields}
     values = {key: bytes.fromhex(value["hex"]).decode().rstrip("\n")
