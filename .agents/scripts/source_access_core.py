@@ -146,7 +146,17 @@ def _load_documents() -> Any:
     module = types.ModuleType("_aidevops_source_access_documents")
     module.__file__ = str(path)
     module.__package__ = ""
-    exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    source = path.read_bytes()
+    previous_module = sys.modules.get(module.__name__)
+    sys.modules[module.__name__] = module
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        if previous_module is None:
+            sys.modules.pop(module.__name__, None)
+        else:
+            sys.modules[module.__name__] = previous_module
+        raise
     return module
 
 
