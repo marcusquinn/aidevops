@@ -32,13 +32,14 @@ from worktree_archive_merge_cases import MergeCases
 from worktree_archive_canonical_cases import CanonicalCases
 from worktree_archive_administration_cases import AdministrationCases
 from worktree_recovery_report_cases import RecoveryReportCases
+from worktree_archive_metadata_cases import MetadataCases
 
 
 class LegacyRecoveryReport(RecoveryReportCases, unittest.TestCase):
     pass
 
 
-class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, ProducerCases, unittest.TestCase):
+class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, ProducerCases, MetadataCases, unittest.TestCase):
     def setUp(self):
         self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")
@@ -819,32 +820,6 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         result = self.helper("verify", archive, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b"untracked payload does not match captured source", result.stderr)
-
-    def test_tar_rejects_hard_links_outside_prior_regular_payload(self):
-        (self.work / "new.txt").write_bytes(b"must survive\n")
-        archive = self.archive()
-        payload = archive / "untracked.tar.gz"
-        manifest_path = archive / "manifest.json"
-        manifest = json.loads(manifest_path.read_text())
-        for linkname in ("../outside", "/outside", "mixed.txt", "alias", "link"):
-            with self.subTest(linkname=linkname):
-                with tarfile.open(payload, "w:gz") as output:
-                    alias = tarfile.TarInfo("alias")
-                    alias.type, alias.linkname = tarfile.SYMTYPE, "mixed.txt"
-                    output.addfile(alias)
-                    link = tarfile.TarInfo("link")
-                    link.type, link.linkname = tarfile.LNKTYPE, linkname
-                    output.addfile(link)
-                for entry in manifest["artifacts"]:
-                    if entry["name"] == payload.name:
-                        entry.update(size=payload.stat().st_size,
-                                     sha256=hashlib.sha256(payload.read_bytes()).hexdigest())
-                manifest_path.write_text(json.dumps(manifest))
-                target = self.root / "unsafe-restore"
-                result = self.helper("restore", archive, "--target", target, check=False)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(b"hard link must reference an earlier regular payload member", result.stderr)
-                self.assertFalse(target.exists())
 
     def test_automatic_retirement_refuses_old_capture_without_untracked(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY")
@@ -1768,39 +1743,6 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
             self.prepare_managed(managed)
         self.assertNotIn("archive_operation", self.managed_record(managed))
         self.assertTrue((self.work / "large-untracked.bin").exists())
-
-    def test_untracked_tar_preserves_private_modes_and_internal_links(self):
-        target = self.work / "untracked.txt"
-        target.write_text("unique local content\n")
-        target.chmod(0o600)
-        os.link(target, self.work / "hard-link")
-        os.link(target, self.root / "outside-link")
-        archive = self.archive()
-        restored = self.root / "restored-links"
-        self.helper("verify", archive)
-        self.helper("restore", archive, "--target", restored)
-        self.assertEqual((restored / "untracked.txt").stat().st_ino, (restored / "hard-link").stat().st_ino)
-        self.assertEqual(stat.S_IMODE((restored / "untracked.txt").stat().st_mode), 0o600)
-        self.assertEqual((restored / "untracked.txt").read_bytes(), target.read_bytes())
-        self.assertEqual((restored / "untracked.txt").stat().st_nlink, 2)
-        from worktree_archive_snapshot import git_snapshot
-        self.assertEqual(git_snapshot(self.work), git_snapshot(restored))
-
-    def test_tracked_modes_use_git_without_metadata_artifact(self):
-        source = self.work / "mixed.txt"
-        source.chmod(0o600)
-        archive = self.archive()
-        manifest = json.loads((archive / "manifest.json").read_text())
-        self.assertNotIn("tracked_modes_sha256", manifest["source_fingerprint"])
-        self.assertFalse((archive / "file-modes-v1.json").exists())
-        self.helper("verify", archive)
-        restored = self.root / "restored-private-mode"
-        self.helper("restore", archive, "--target", restored)
-        self.assertEqual(stat.S_IMODE((restored / "mixed.txt").stat().st_mode), 0o644)
-        self.assertEqual((restored / "mixed.txt").read_bytes(), source.read_bytes())
-        from worktree_archive_snapshot import git_snapshot
-        self.assertEqual(git_snapshot(self.work), git_snapshot(restored))
-        self.assertTrue(source.exists())
 
     def test_unknown_git_administration_and_squash_drafts_are_preserved(self):
         managed = self.managed_fixture()
