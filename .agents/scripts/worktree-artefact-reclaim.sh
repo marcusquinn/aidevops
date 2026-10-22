@@ -138,10 +138,31 @@ def walk(root):
                     stack.append(path)
 
 
+def allowlisted(path):
+    name = path.name
+    if name in {'node_modules', '.next', '.turbo', 'dist', 'build'}:
+        return True
+    if name == 'target':
+        return (path.parent / 'Cargo.toml').is_file()
+    return path.parent.name == '.hermit' and name in {'cache', 'caches'}
+
+
+def ignored_directories(wt):
+    # Git reports only the top-most ignored directory of each ignored tree, so
+    # package-internal names (for example vendor/pkg/build) are never selected
+    # and an ignored dependency tree is never partially removed.
+    output = git(wt, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z')
+    for raw in output.split(b'\0'):
+        relative = os.fsdecode(raw)
+        if relative.endswith('/') and '/.git/' not in '/' + relative:
+            yield wt / relative.rstrip('/')
+
+
 def idle_candidates(wt):
-    candidates = []
     if wt.stat().st_mtime >= cutoff:
         raise ValueError('recent root directory edit')
+    candidates = sorted(path for path in ignored_directories(wt) if allowlisted(path) and safe_candidate(wt, path))
+    skip = set(candidates)
     stack = [wt]
     while stack:
         remaining()
@@ -150,18 +171,11 @@ def idle_candidates(wt):
             for entry in entries:
                 remaining()
                 path = Path(entry.path)
-                if parent == wt and entry.name == '.git':
-                    continue
-                directory = entry.is_dir(follow_symlinks=False)
-                allowed = entry.name in {'node_modules', '.next', '.turbo', 'dist', 'build'}
-                allowed |= entry.name == 'target' and (parent / 'Cargo.toml').is_file()
-                allowed |= parent.name == '.hermit' and entry.name in {'cache', 'caches'}
-                if directory and allowed and safe_candidate(wt, path):
-                    candidates.append(path)
+                if (parent == wt and entry.name == '.git') or path in skip:
                     continue
                 if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
                     raise ValueError('recent non-artefact edit')
-                if directory:
+                if entry.is_dir(follow_symlinks=False):
                     if path.is_mount() or os.path.lexists(path / '.git'):
                         raise ValueError('nested repository or mount')
                     stack.append(path)
@@ -208,50 +222,68 @@ def reclaim(wt, paths):
             raise ValueError('trash failed; inspect retained paths')
 
 
+totals = {'eligible': 0, 'reclaimed': 0, 'worktrees': 0}
+
+
+def process_worktree(wt):
+    if Path(os.fsdecode(git(wt, 'rev-parse', '--show-toplevel')).strip()).resolve() != wt:
+        return
+    # Linked worktrees have distinct private and common Git dirs.
+    private = git(wt, 'rev-parse', '--absolute-git-dir').strip()
+    common = git(wt, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
+    if private == common:
+        return
+    branch_result = run(['git', '-C', str(wt), 'symbolic-ref', '--quiet', '--short', 'HEAD'])
+    branch = os.fsdecode(branch_result.stdout).strip()
+    paths = idle_candidates(wt)
+    if not paths or not guarded(wt, branch):
+        return
+    sizes = {path: size(path) for path in paths}
+    for path in paths:
+        print(f'[worktree-artefacts] {"eligible" if args.force else "dry-run"} path={str(path)!r} bytes={sizes[path]}', flush=True)
+    if args.force:
+        # Recheck age, ownership, cwd and Git exceptions immediately
+        # before any cleaner, not only at discovery time.
+        if idle_candidates(wt) != paths or not guarded(wt, branch):
+            return
+        reclaim(wt, paths)
+    reclaimed = sum(value for path, value in sizes.items() if not path.exists()) if args.force else 0
+    totals['eligible'] += sum(sizes.values())
+    totals['reclaimed'] += reclaimed
+    totals['worktrees'] += 1
+    print(f'[worktree-artefacts] worktree={str(wt)!r} eligible_bytes={sum(sizes.values())} reclaimed_bytes={reclaimed}', flush=True)
+
+
 def main():
     if not base.is_dir() or base.is_symlink():
         print('[worktree-artefacts] no usable worktree base')
         return
     root = base.resolve()
     # Only immediate children of the configured flat worktree base qualify.
+    # Visit the longest-idle roots first so a short daily budget reaches the
+    # most likely candidates instead of rescanning the same directory order.
     with os.scandir(root) as entries:
-        for entry in entries:
-            remaining()
-            if not entry.is_dir(follow_symlinks=False):
-                continue
-            wt = Path(entry.path)
-            if not (wt / '.git').is_file() or (wt / '.git').is_symlink():
-                continue
-            try:
-                if Path(os.fsdecode(git(wt, 'rev-parse', '--show-toplevel')).strip()).resolve() != wt:
-                    continue
-                # Linked worktrees have distinct private and common Git dirs.
-                private = git(wt, 'rev-parse', '--absolute-git-dir').strip()
-                common = git(wt, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
-                if private == common:
-                    continue
-                branch_result = run(['git', '-C', str(wt), 'symbolic-ref', '--quiet', '--short', 'HEAD'])
-                branch = os.fsdecode(branch_result.stdout).strip()
-                paths = idle_candidates(wt)
-                if not paths or not guarded(wt, branch):
-                    continue
-                sizes = {path: size(path) for path in paths}
-                for path in paths:
-                    print(f'[worktree-artefacts] {"eligible" if args.force else "dry-run"} path={str(path)!r} bytes={sizes[path]}', flush=True)
-                if args.force:
-                    # Recheck age, ownership, cwd and Git exceptions immediately
-                    # before any cleaner, not only at discovery time.
-                    if idle_candidates(wt) != paths or not guarded(wt, branch):
-                        continue
-                    reclaim(wt, paths)
-                reclaimed = sum(value for path, value in sizes.items() if not path.exists()) if args.force else 0
-                print(f'[worktree-artefacts] worktree={str(wt)!r} eligible_bytes={sum(sizes.values())} reclaimed_bytes={reclaimed}', flush=True)
-            except (OSError, ValueError) as error:
-                print(f'[worktree-artefacts] skipped worktree={str(wt)!r} reason={str(error)!r}', flush=True)
+        children = sorted(
+            (entry for entry in entries if entry.is_dir(follow_symlinks=False)),
+            key=lambda entry: entry.stat(follow_symlinks=False).st_mtime,
+        )
+    for entry in children:
+        remaining()
+        wt = Path(entry.path)
+        if not (wt / '.git').is_file() or (wt / '.git').is_symlink():
+            continue
+        try:
+            process_worktree(wt)
+        except (OSError, ValueError) as error:
+            print(f'[worktree-artefacts] skipped worktree={str(wt)!r} reason={str(error)!r}', flush=True)
 
 
+exhausted = False
 try:
     main()
 except (TimeoutError, subprocess.TimeoutExpired):
+    exhausted = True
     print('[worktree-artefacts] budget exhausted; remaining output retained', flush=True)
+print(f'[worktree-artefacts] summary mode={"force" if args.force else "dry-run"} worktrees={totals["worktrees"]} '
+      f'eligible_bytes={totals["eligible"]} reclaimed_bytes={totals["reclaimed"]} budget_exhausted={str(exhausted).lower()}', flush=True)
 PY

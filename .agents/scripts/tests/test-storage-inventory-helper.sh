@@ -119,6 +119,7 @@ printf '%s' "$report" | jq -e '
 	 length == 5 and all
 ' >/dev/null || fail "large stores missing sizes or ownership guidance"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "opencode-db-backups") | .owner')" == "none" ]] || fail "backup retention owner was invented"
+[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "worktree-base") | .next_action | contains("worktree-artefact-reclaim.sh")')" == "true" ]] || fail "worktree artefact reclaim producer was not reported"
 printf '%s' "$report" | jq -e '
 	[.stores[] | select(.store_id == "headless-runtime-metrics" or .store_id == "resource-metrics" or .store_id == "pulse-cycle-index" or .store_id == "metrics-archive")]
 	| length == 4
