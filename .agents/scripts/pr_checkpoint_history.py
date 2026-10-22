@@ -35,6 +35,24 @@ def close_release(state, comment, f):
 CLAIM_ONLY = "claim_only_no_worker"
 
 
+def acknowledge_unbound_release(state, comment, line, f):
+    """Retain one legacy no-session diagnostic; only an exact later abort can close it.
+
+    #aidevops:trust-boundary — no identity-bearing release is treated as unbound.
+    The diagnostic ID must be acknowledged in the new approval, not ignored.
+    """
+    allowed = {"reason", "runner", "ts", "aidevops_version", "opencode_version", "exit", "session_count"}
+    valid = all((not state.get("ready_id"), not state.get("launched"),
+                 not state.get("release_id"), not state.get("unbound_release_ids"),
+                 state["claim_id"] < comment["id"],
+                 re.fullmatch(r"CLAIM_RELEASED(?: [a-z_]+=[^\s]+)+", line) is not None,
+                 set(f) <= allowed, f.get("runner") == state["runner"],
+                 f.get("exit") == "1", f.get("session_count") == "0"))
+    if valid:
+        state["unbound_release_ids"] = [comment["id"]]
+    return valid
+
+
 def close_claim_only(state, comment, f):
     """GH#35331: the owner's exact claim-only release closes a never-ready claim.
 
@@ -75,14 +93,23 @@ def advance_lease(state, comment, line, f):
     return True
 
 
+def advance_release(state, comment, line, f):
+    if f.get("reason") == CLAIM_ONLY:
+        return close_claim_only(state, comment, f)
+    if f.get("reason") == "worker_ownership_lost" and not state.get("ready_id"):
+        return acknowledge_unbound_release(state, comment, line, f)
+    return close_release(state, comment, f)
+
+
 def advance_closed_claim(state, comment, line, f):
     """Require ready, release and terminal, or an exact never-ready claim-only release."""
     if comment["user"]["login"] != state["runner"]:
         return False
+    if state.get("unbound_release_ids"):
+        return line.startswith("CLAIM_RELEASED ") and f.get("reason") == CLAIM_ONLY \
+            and close_claim_only(state, comment, f)
     if line.startswith("CLAIM_RELEASED "):
-        if f.get("reason") == CLAIM_ONLY:
-            return close_claim_only(state, comment, f)
-        return close_release(state, comment, f)
+        return advance_release(state, comment, line, f)
     if line.startswith("Dispatching worker"):
         f = fields(comment["body"])
         state["launched"] = True
@@ -104,10 +131,14 @@ def advance_history(state, comment, line, f, seen):
 def completed_episode(state):
     if state.get("release_id") and not state.get("ready_id"):
         # Only close_claim_only records a release without a ready lease.
-        if not state["claim_id"] < state["release_id"]:
+        if not state["claim_id"] < state["release_id"] or any(
+                not state["claim_id"] < diagnostic < state["release_id"]
+                for diagnostic in state.get("unbound_release_ids", [])):
             raise ValueError("historical coordination ids are not strictly ordered")
         episode = {key: state[key] for key in ("runner", "claim_id", "release_id")}
         return {**episode, "outcome": CLAIM_ONLY,
+                **({"unbound_release_ids": state["unbound_release_ids"]}
+                   if state.get("unbound_release_ids") else {}),
                 **({"attempt": state["attempt"]} if state.get("attempt") else {})}
     if not state.get("terminal_id"):
         return None

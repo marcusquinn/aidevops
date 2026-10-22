@@ -111,6 +111,15 @@ claim and renewal expiry is known and elapsed before the release comment, so the
 automatic orphan release cannot close a live or unknown lease. Any later renewal
 or reuse of the closed token rejects the history.
 
+One older same-runner `worker_ownership_lost` diagnostic may precede the exact
+abort when it reports `exit=1 session_count=0` and contains no claim, nonce,
+lease, session or attempt identity. It does not close the claim or prove that
+another executor is inactive. Historical reconstruction retains its comment ID
+in `unbound_release_ids`, which the new approval must explicitly acknowledge.
+The exact expired owner abort is still required; edited or foreign diagnostics,
+identity-bearing releases, a second diagnostic, and ready/launch/renewal events
+after the diagnostic remain rejecting cases. No published evidence is removed.
+
 ## Ownership guarantees
 
 The revised path acquires the existing distributed claim/consensus lease before

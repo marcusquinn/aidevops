@@ -49,11 +49,69 @@ def approved(data):
     return {**data, "comments": data["comments"] + [comment(20, line, "maintainer", "OWNER")]}
 
 
+def diagnostic_fixture():
+    data = claim_only_fixture()
+    data["comments"].insert(-1, comment(4.5,
+        "CLAIM_RELEASED reason=worker_ownership_lost runner=worker exit=1 session_count=0", "worker"))
+    return data
+
+
 def edit(data, index, old, new):
     data["comments"][index]["body"] = data["comments"][index]["body"].replace(old, new)
 
 
 class ClaimOnlyRecoveryTests(unittest.TestCase):
+    def test_unbound_diagnostic_needs_exact_abort_and_explicit_acknowledgement(self):
+        data = diagnostic_fixture()
+        with self.assertRaises(ValueError):
+            revision.validate(data)
+        result = revision.validate(approved(data))
+        self.assertEqual(result["released_successors"][0]["unbound_release_ids"], [4.5])
+        for case in ("remove_abort", "remove_acknowledgement", "alter_acknowledgement"):
+            changed = copy.deepcopy(data)
+            if case == "remove_abort":
+                changed["comments"].pop()
+            else:
+                changed = approved(changed)
+                approval = json.loads(changed["comments"][-1]["body"][len(revision.PREFIX):])
+                episode = approval["released_successors"][0]
+                if case == "remove_acknowledgement":
+                    del episode["unbound_release_ids"]
+                else:
+                    episode["unbound_release_ids"] = [99]
+                changed["comments"][-1]["body"] = revision.PREFIX + json.dumps(approval)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                revision.validate(changed) if case != "remove_abort" else approved(changed)
+
+    def test_unbound_diagnostic_does_not_relax_identity_or_live_events(self):
+        identity_fields = ["nonce=x", f"{LT}=x", "session=x", "attempt_id=attempt:x", "claim_id=4",
+                           "nonce x", "SESSION=x", "runner=worker", "trailing_fragment"]
+        mutations = {
+            "foreign_actor": lambda d: d["comments"][-2]["user"].update(login="other"),
+            "edited": lambda d: d["comments"][-2].update(updated_at="2026-09-05T12:01:00Z"),
+            "wrong_reason": lambda d: edit(d, -2, "worker_ownership_lost", "blocked"),
+            "wrong_runner": lambda d: edit(d, -2, "runner=worker", "runner=other"),
+            "nonzero_sessions": lambda d: edit(d, -2, "session_count=0", "session_count=1"),
+            "duplicate_claim_id": lambda d: d["comments"][-2].update(id=4),
+            "diagnostic_after_abort_id": lambda d: d["comments"][-2].update(id=6),
+            "ready_before": lambda d: d["comments"].insert(-2, comment(4.25,
+                f"DISPATCH_LEASE phase=ready {LT}=expired session=checkpoint-42 attempt_id=attempt:x", "worker")),
+            "ready_after": lambda d: d["comments"].insert(-1, comment(4.75,
+                f"DISPATCH_LEASE phase=ready {LT}=expired session=checkpoint-42 attempt_id=attempt:x", "worker")),
+            "post_abort": lambda d: d["comments"].append(comment(6,
+                "CLAIM_RELEASED reason=worker_ownership_lost runner=worker exit=1 session_count=0", "worker")),
+        }
+        for field in identity_fields:
+            data = diagnostic_fixture()
+            data["comments"][-2]["body"] += " " + field
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                approved(data)
+        for case, mutate in mutations.items():
+            data = diagnostic_fixture()
+            mutate(data)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                approved(data)
+
     def test_expired_claim_blocks_until_fresh_bound_approval(self):
         data = claim_only_fixture()
         with self.assertRaises(ValueError):  # the consumed approval is not revived
