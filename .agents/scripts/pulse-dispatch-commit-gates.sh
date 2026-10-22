@@ -226,8 +226,12 @@ _check_external_issue_author_gate() {
 	# aidevops:trust-boundary — unavailable metadata is not evidence of an
 	# external author. Defer this candidate without creating a persistent hold.
 	# This predicate returns 0 to block; its caller returns 1 to skip dispatch.
+	# GH#35401: emit the structured marker used by _dispatch_load_issue_metadata
+	# so the pre-launch classifier reports issue_metadata_unavailable, not
+	# unclassified_signal, for this transient read failure.
 	if [[ "$metadata_valid" -eq 0 ]]; then
 		echo "[dispatch_with_dedup] GH#31404: metadata fetch failed for #${issue_number} in ${repo_slug}; skipping dispatch without changing labels (transient)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_metadata_unavailable signal=transient issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		return 0
 	fi
 
