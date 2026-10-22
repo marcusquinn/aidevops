@@ -774,6 +774,16 @@ check_tool() {
 	local status="up_to_date"
 	local icon="✓"
 	local color="$GREEN"
+	# Repair an earlier successful install too: otherwise metadata_mismatch
+	# below deliberately suppresses reinstalling the already-current package.
+	if [[ "$AUTO_UPDATE" == true && "$category" == npm && "$pkg" == opencode-ai && "$installed" != "$latest" ]]; then
+		local opencode_package_version=""
+		opencode_package_version=$(get_npm_pkg_version "$pkg" || true)
+		if [[ -n "$opencode_package_version" && "$opencode_package_version" == "$latest" ]] &&
+			_opencode_reconcile_npm_shim "$opencode_package_version"; then
+			installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
+		fi
+	fi
 	_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
 	if [[ "$channel_current" == true && "$status" == up_to_date ]]; then status=channel_current; fi
 	# A package already at the approved target with a stale CLI --version is
