@@ -111,9 +111,10 @@ def require_verified(record, source=True, proof=None):
     receipt = value.get("canonical_restore", {})
     expected_source = {"identity": record["identity"], "generation": record["generation"],
                        "snapshot": value["snapshot"]}
-    require(receipt.get("schema") == "canonical-restore/v1" and receipt.get("state") == "cleaned"
-            and receipt.get("source") == expected_source and receipt.get("archive") == str(archive)
-            and receipt.get("manifest_sha256") == value["manifest_sha256"],
+    expected_receipt = {"schema": "canonical-restore/v1", "state": "cleaned",
+                        "source": expected_source, "archive": str(archive),
+                        "manifest_sha256": value["manifest_sha256"]}
+    require(all(receipt.get(key) == expected for key, expected in expected_receipt.items()),
             "canonical restoration receipt unavailable; prepare required")
     captured = json.loads(manifest.read_text(encoding="utf-8"))
     common = Path(captured["source_git_common_dir"])

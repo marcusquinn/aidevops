@@ -67,7 +67,8 @@ def guarded(identity, bucket, lock):
     return guards(identity, bucket, lock)
 
 
-def make_plan(directory, migration, bucket, lock, automatic=False, proofs=None):
+def make_plan(directory, migration, lock, automatic=False, proofs=None):
+    bucket = Path(migration["source"]["identity"]["bucket_path"])
     path = directory / "retirement.json"
     proofs = {} if proofs is None else proofs
     source_matches(migration)
@@ -100,7 +101,8 @@ def make_plan(directory, migration, bucket, lock, automatic=False, proofs=None):
     return report(record)
 
 
-def retire(directory, migration, bucket, token, lock, proofs=None):
+def retire(directory, migration, token, lock, proofs=None):
+    bucket = Path(migration["source"]["identity"]["bucket_path"])
     record = load(directory / "retirement.json")
     automatic = token is None
     require((record.get("authority") == "verified-git-changes/v1") == automatic,
@@ -148,8 +150,8 @@ def automatic_retire(directory, migration, bucket, lock):
     proofs = {}
     if (not os.path.lexists(directory / "retirement.json")
             or load(directory / "retirement.json")["phase"] == "planning"):
-        make_plan(directory, migration, bucket, lock, automatic=True, proofs=proofs)
-    return retire(directory, migration, bucket, None, lock, proofs=proofs)
+        make_plan(directory, migration, lock, automatic=True, proofs=proofs)
+    return retire(directory, migration, None, lock, proofs=proofs)
 
 
 @operation("recovery-retirement")
@@ -171,12 +173,12 @@ def execute(arguments):
         require(stat.S_ISREG(os.fstat(descriptor).st_mode), "retirement:unsafe-lock")
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if arguments.action == "retire-plan":
-            return make_plan(directory, migration, bucket, descriptor)
+            return make_plan(directory, migration, descriptor)
         if arguments.action == "retire-status":
             return report(load(directory / "retirement.json"))
         if arguments.action == "retire-automatic":
             return automatic_retire(directory, migration, bucket, descriptor)
-        return retire(directory, migration, bucket, arguments.confirm, descriptor)
+        return retire(directory, migration, arguments.confirm, descriptor)
     finally:
         os.close(descriptor)
 
