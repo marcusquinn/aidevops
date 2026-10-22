@@ -9,37 +9,25 @@ description: Recovery archive evidence, planning, apply, and automatic maintenan
 
 ## Safety and recovery evidence
 
-Recovery archives are safety snapshots, not generic discarded files. Age, size, disk pressure and session history never authorize deletion.
-Use the separate [migration](#explicit-compact-migration-no-retirement), [retirement](#confirmed-retirement-of-migrated-buckets), [planning](#inventory-and-retention-planning), [manual apply](#confirmation-bound-apply) and [automatic maintenance](#bounded-automatic-maintenance) contracts below.
+Recovery snapshots cannot be deleted on age, size, disk pressure or session history alone. Follow the separate [migration](#explicit-compact-migration-no-retirement), [retirement](#confirmed-retirement-of-migrated-buckets), [planning](#inventory-and-retention-planning), [manual apply](#confirmation-bound-apply) and [maintenance](#bounded-automatic-maintenance) contracts.
 
 Maintenance failures emit JSON with `outcome: failed`, stage and stable reason code even without jq. Async cleanup logs stdout, stderr and actual exit code locally on success and failure; reason codes contain no archive paths or raw errors.
 
-Resume pending transactions once per maintenance pass. After three failures, move the exact transaction into a unique `quarantined/pending.*` state directory with a mode-0600 reason/attempt-count receipt, then select fresh work.
-Quarantine neither deletes archives, reservations, completion files or retention-trash journals nor grants apply authority; existing identity, journal and lock checks protect unfinished work.
-Fail closed on symlinked pending directories/retry metadata or non-regular retry files. Invalid regular retry records exhaust the budget and remain unchanged in quarantine. Inspect receipts locally; repair requires the original plan and evidence.
+Resume pending transactions once per pass; after three failures, quarantine the exact transaction in unique `quarantined/pending.*` with a mode-0600 reason/attempt receipt, then select fresh work. Quarantine preserves archives, reservations, completion files and retention-trash journals; it grants no apply authority. Identity, journal and lock checks remain required. Symlinked/non-regular retry metadata fails closed; invalid regular records exhaust the budget and remain unchanged. Repair requires the original plan and evidence.
 
 ## Current compact producers
 
-New recoverable captures from manual removal, classified cleanup, profile publication and Pulse profile cleanup use one verified compact transaction, not a full-copy bucket.
-The default is `$HOME/.aidevops/recovery/archives` on every platform; the archive-root override precedes explicit historical trash-root overrides. Use the archive CLI's `list --output-root <effective-root>` to discover them.
-Pins and removal safeguards are unchanged; neither listing nor verification grants deletion authority. See the [producer contract](../scripts/worktree-archive-helper.md#recoverable-producer-transactions) for exact root precedence, journal/receipt paths, independent restoration and retry behavior.
+Manual removal, classified cleanup, profile publication and Pulse profile cleanup use one verified compact transaction, not full copies. The default is `$HOME/.aidevops/recovery/archives` everywhere; the archive-root override precedes historical trash-root overrides. Discover archives with `list --output-root <effective-root>`. Listing/verification grants no deletion authority; pins and removal guards remain unchanged. The [producer contract](../scripts/worktree-archive-helper.md#recoverable-producer-transactions) defines root precedence, journals, restoration and retries.
 
 ## Legacy full recovery buckets
 
-The legacy default root is `$HOME/.Trash` on macOS (OS Trash semantics), but framework-owned `$HOME/.aidevops/recovery/worktrees` elsewhere: normal “Empty Trash” must not silently delete those snapshots.
-Select an absolute root with `AIDEVOPS_WORKTREE_TRASH_ROOT` or the legacy `AIDEVOPS_ORPHAN_TRASH_ROOT` fallback.
+Legacy storage defaults to macOS `$HOME/.Trash` (OS Trash semantics), otherwise framework-owned `$HOME/.aidevops/recovery/worktrees`, protected from normal “Empty Trash”. Override with absolute `AIDEVOPS_WORKTREE_TRASH_ROOT` or legacy `AIDEVOPS_ORPHAN_TRASH_ROOT`.
 
-Historical v2 buckets use `aidevops-worktree-recovery-v2` evidence: stable Git identity, creation time, producer/context, optional runtime session identity, archive completion, source-removal outcome, `framework` ownership, `recovery` safety class and `manual-review` policy.
-Write the completion marker only after archive integrity and source identity validation; successful native removal atomically advances the source outcome from `pending` to `removed`.
-
-`manual-review` remains for v2 producer-format compatibility, not deletion authority.
-Manual confirmation or a separate policy-bound automatic plan must revalidate the exact bucket.
+Historical `aidevops-worktree-recovery-v2` evidence binds Git identity, creation time, producer/context, optional session identity, completion, source-removal outcome, `framework` ownership, `recovery` class and `manual-review` policy. Completion follows integrity/identity validation; successful native removal atomically changes `pending` to `removed`. `manual-review` is format compatibility, not deletion authority: manual confirmation or a policy-bound automatic plan must revalidate the exact bucket.
 
 Readers accept complete platform-storage-transition v1 buckets and markerless legacy v1 buckets with valid original Git recovery structure. Never reinterpret partial v2 evidence as v1. Older readers reject v2, failing closed without archive damage.
 
-Historical full-copy producers reserved one attempt per physical source identity. An interrupted attempt remains explicitly reserved; retries do not create another bucket or erase the partial snapshot.
-Incomplete reservations require operator review, including proof that any discarded data is preserved elsewhere.
-A completed attempt may be reused only after Git identity, current non-cache contents, and index comparison succeed. A changed source or unreadable comparison preserves both copies. Legacy markerless buckets remain unknown and are never automatically adopted.
+Historical full-copy producers reserve one attempt per physical source identity. Interrupted attempts stay reserved: retries neither duplicate buckets nor erase partial snapshots. Incomplete reservations require operator review and preservation proof before discarding data. Reuse requires matching Git identity, non-cache contents and index; changed/unreadable sources preserve both copies. Markerless buckets remain unknown, never automatically adopted.
 
 ## Explicit compact migration (no retirement)
 
@@ -51,12 +39,7 @@ bash .agents/scripts/worktree-recovery-lifecycle-helper.sh migrate \
   --repo owner/repo --base-branch main
 ```
 
-New migrations use the [single compact format](../scripts/worktree-archive-helper.md#recoverable-producer-transactions):
-exact base/HEAD, incremental commits, staged/unstaged patches and ordinary untracked files. Git's standard ignore rules exclude ignored files; raw administrative payloads are not copied.
-Capture does not perform a trial restore or archive verification; it reports `archived`, not `verified`. The shared repository must retain the exact base.
-Source removal uses the guarded manual retirement transition or automatic compaction policy below; capture alone cannot remove it.
-Existing receipts retain their policy. `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` is no longer accepted for new capture; the former preservation format is read-only compatibility.
-Migration never retires, rewrites or moves the original bucket during capture.
+New captures use the [single compact format](../scripts/worktree-archive-helper.md#recoverable-producer-transactions): exact base/HEAD, incremental commits, staged/unstaged patches and ordinary untracked files. Standard Git ignores apply; raw administration is excluded. Capture reports `archived`, not restore-verified, and never retires, rewrites or moves the source. Retain the exact shared base; deletion requires guarded manual retirement or automatic compaction. Existing receipts retain their policy; `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` is read-only compatibility, not a new-capture option.
 
 The private journal is `<recovery-root>/.compact-migrations/<bucket>/journal.json`. It binds physical identities, the source snapshot, opaque recovery provenance, the archive manifest digest, capture outcome and available allocated byte counts.
 The archive remains in the existing archive store beneath `.legacy-migrations/<source-path-digest>/`, pinned against expiry. Path-bearing provenance is historical evidence, not live Git configuration or process ownership authority.
