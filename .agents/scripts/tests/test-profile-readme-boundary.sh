@@ -409,8 +409,8 @@ else
 fi
 printf 'verified\n' >"$PROFILE_MARKER_EVIDENCE"
 printf '%s\n' "recoverable fixture state" >"${target}/.profile-publication-fixture"
-# The normal publication must remain recoverable without fixture permission
-# repair. Only the refusal case introduces an operator-selected private mode.
+# Tracked README permissions follow Git's model: both ordinary and private
+# modes must remain recoverable without fixture permission repair.
 if [[ "$PROFILE_RECOVERY_FIXTURE_MODE" == "0600" ]]; then
     chmod 0600 "${target}/README.md"
 fi
@@ -427,20 +427,6 @@ EOF
 		PROFILE_MARKER_EVIDENCE="$marker_evidence" \
 		PROFILE_RECOVERY_FIXTURE_MODE="$fixture_mode" \
 		bash "$helper_path" update >"$output_file" 2>&1 || update_rc=$?
-	if [[ "$fixture_mode" == "0600" ]]; then
-		if [[ "$update_rc" -eq 0 ]] ||
-			[[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "2" ]] ||
-			! compgen -G "$TEST_DIR/worktrees/*/.profile-publication-fixture" >/dev/null ||
-			! jq -e '.phase == "capturing" and .source_removal_outcome == "pending"' \
-				"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
-			compgen -G "$recovery_root/aidevops-worktree-cleanup-*" >/dev/null ||
-			[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]]; then
-			print_helper_failure "$test_name" "unsupported state was not preserved without a full-copy fallback" "$output_file"
-			return 0
-		fi
-		print_result "$test_name" 0
-		return 0
-	fi
 	if [[ "$update_rc" -ne 0 ]]; then
 		print_helper_failure "$test_name" "helper update command failed" "$output_file"
 		return 0

@@ -19,8 +19,9 @@ import subprocess
 import sys
 from worktree_recovery_timing import timed
 
-from worktree_archive_filesystem import (
-    fingerprint, supported_directories, untracked_contents,
+from worktree_archive_filesystem import fingerprint, supported_directories
+from worktree_archive_untracked import (
+    untracked_contents,
     verify_untracked_payload as verify_untracked_payload,
 )
 from worktree_archive_administration import (
