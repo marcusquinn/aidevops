@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=tabby-python-lib.sh
+source "${SCRIPT_DIR}/tabby-python-lib.sh"
 
 usage() {
 	cat <<'EOF'
@@ -45,11 +47,15 @@ main() {
 	local engine="${SCRIPT_DIR}/repo_layout_migrate.py"
 	local discovery_lib="${SCRIPT_DIR}/aidevops-cli/repo-discovery-lib.sh"
 	local status=0
+	local python_bin=""
 
 	case "$command_name" in
 	plan | apply | rollback | status | prune)
 		shift
-		python3 "$engine" "$command_name" --discovery-lib "$discovery_lib" "$@" || status=$?
+		# No install during read-only planning. The engine reports missing PyYAML
+		# only when an actual Tabby consumer requires it.
+		python_bin=$(tabby_python) || python_bin=python3
+		"$python_bin" "$engine" "$command_name" --discovery-lib "$discovery_lib" "$@" || status=$?
 		return "$status"
 		;;
 	-h | --help | help | "")

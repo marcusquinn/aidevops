@@ -26,6 +26,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=tabby-python-lib.sh
+source "${SCRIPT_DIR}/tabby-python-lib.sh"
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 TABBY_CONFIG_OVERRIDE="${TABBY_CONFIG:-}"
 TABBY_PYTHON_ENV="${AIDEVOPS_TABBY_PYTHON_ENV:-${HOME}/.aidevops/.agent-workspace/python-env/tabby}"
@@ -71,14 +73,7 @@ _check_prereqs() {
 }
 
 _tabby_python() {
-	local isolated_python="${TABBY_PYTHON_ENV}/bin/python3"
-	if [[ -x "$isolated_python" ]] && "$isolated_python" -c 'import yaml' >/dev/null 2>&1; then
-		printf '%s\n' "$isolated_python"
-	elif command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
-		printf '%s\n' python3
-	else
-		return 1
-	fi
+	tabby_python "$TABBY_PYTHON_ENV" || return 1
 	return 0
 }
 

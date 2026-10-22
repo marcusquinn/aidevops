@@ -496,10 +496,9 @@ def tabby_consumer(path: Path | None, mappings: dict[str, str]) -> dict[str, Any
     if path is None:
         return None
     text = path.read_text(encoding="utf-8")
+    module = load_tabby_module(Path(__file__).with_name("tabby-profile-sync.py"))
     try:
-        load_tabby_module(Path(__file__).with_name("tabby-profile-sync.py")).retarget_profile_cwds(
-            text, {}
-        )
+        module.retarget_profile_cwds(text, {})
     except Exception as exc:  # Validation adapter normalizes parser failures.
         raise MigrationError(f"Malformed Tabby config: {path}") from exc
     return {
@@ -1282,7 +1281,12 @@ def load_tabby_module(script_path: Path) -> Any:
     if specification is None or specification.loader is None:
         raise MigrationError("Could not load Tabby profile sync module")
     module = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(module)
+    try:
+        specification.loader.exec_module(module)
+    except ImportError as exc:
+        raise MigrationError(
+            "Tabby validation requires PyYAML (run `aidevops tabby sync` to bootstrap)"
+        ) from exc
     return module
 
 
@@ -1291,8 +1295,8 @@ def prepare_tabby(
 ) -> tuple[dict[str, Any], bytes]:
     """Prepare authenticated Tabby bytes while preserving unrelated content."""
     path = Path(consumer["path"])
-    original_bytes = ensure_file_backup(path, backup, consumer["sha256"])
     module = load_tabby_module(script_path)
+    original_bytes = ensure_file_backup(path, backup, consumer["sha256"])
     original = original_bytes.decode("utf-8")
     updated, changed = module.retarget_profile_cwds(original, mappings)
     encoded = updated.encode()
