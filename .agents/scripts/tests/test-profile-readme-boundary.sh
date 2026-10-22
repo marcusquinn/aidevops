@@ -82,6 +82,7 @@ install_helper_with_libs() {
 	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
 	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
 	cp "${SOURCE_HELPER%/*}/profile-contribution-chart.py" "${helper_dir}/profile-contribution-chart.py"
+	cp "${SOURCE_HELPER%/*}/profile_contribution_data.py" "${helper_dir}/profile_contribution_data.py"
 	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh || return 1
 	cp "${SOURCE_HELPER%/*}/audit-worktree-removal-helper.sh" \
 		"${SOURCE_HELPER%/*}/shared-sqlite-backup.sh" \
