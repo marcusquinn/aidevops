@@ -9,8 +9,9 @@ import { homedir } from "os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { isHeadless } from "./proxy-lifecycle.mjs";
 
+// Stable prefix; fenceMessage() appends the target and the accepted roots.
 export const SIBLING_WORKTREE_MESSAGE =
-  "BLOCKED: Sibling worktrees are read-only for workers. Copy what you need into your own worktree.";
+  "BLOCKED: Sibling worktrees are read-only for workers.";
 
 const MUTATING_GIT_VERBS = new Set([
   "add", "commit", "checkout", "switch", "reset", "restore", "stash", "clean",
@@ -41,9 +42,21 @@ function physicalPath(target) {
   }
 }
 
+function managedTempRoot(env) {
+  return physicalPath(env.AIDEVOPS_TEMP_DIR || join(env.HOME || homedir(), ".aidevops", ".agent-workspace", "tmp"));
+}
+
 function allowedRoots(env) {
-  const temp = env.AIDEVOPS_TEMP_DIR || join(env.HOME || homedir(), ".aidevops", ".agent-workspace", "tmp");
-  return [env.WORKER_WORKTREE_PATH, temp].filter(Boolean).map(physicalPath);
+  return [env.WORKER_WORKTREE_PATH && physicalPath(env.WORKER_WORKTREE_PATH), managedTempRoot(env)].filter(Boolean);
+}
+
+// Name both accepted roots: a block that only pointed at the worktree sent
+// private scratch work into Git, where repository tools refuse it (GH#35495).
+function fenceMessage(label, target, env) {
+  return `${SIBLING_WORKTREE_MESSAGE} ${label}: ${target} is outside the worker write roots. `
+    + `Workers write only inside their own worktree (${physicalPath(env.WORKER_WORKTREE_PATH)}) `
+    + `or AIDEVOPS_TEMP_DIR (${managedTempRoot(env)}). Copy repository files into the worktree; `
+    + "put scratch or private artifacts in a new 0700 subdirectory of AIDEVOPS_TEMP_DIR.";
 }
 
 function workerFenceActive(env) {
@@ -59,7 +72,7 @@ export function assertWorkerWritePaths(paths, env = process.env) {
   if (!workerFenceActive(env)) return;
   for (const target of paths) {
     if (target && isOutsideWorkerRoots(target, env)) {
-      throw new Error(`${SIBLING_WORKTREE_MESSAGE} Target: ${target}`);
+      throw new Error(fenceMessage("Target", target, env));
     }
   }
 }
@@ -113,7 +126,7 @@ export function assertWorkerGitTargets(command, cwd, env = process.env) {
     } else if (tokens[0] === "git") {
       const { dir, mutating } = segmentGitTarget(tokens, current);
       if (mutating && isOutsideWorkerRoots(dir, env)) {
-        throw new Error(`${SIBLING_WORKTREE_MESSAGE} Git target: ${dir}`);
+        throw new Error(fenceMessage("Git target", dir, env));
       }
     }
   }

@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -1030,6 +1031,14 @@ test("headless workers cannot write or run mutating git in sibling worktrees", (
     );
     assert.doesNotThrow(() => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, linked));
     assert.doesNotThrow(() => checkCanonicalWriteSafetyGate(join(root, "managed-tmp", "note.txt"), scriptsDir, linked));
+    // GH#35495: a non-worktree scratch target names both accepted roots.
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(root, "private-tmp", "batch", "claim.json"), scriptsDir, linked),
+      (error) => /Sibling worktrees are read-only for workers/.test(error.message)
+        && error.message.includes(`AIDEVOPS_TEMP_DIR (${join(realpathSync(root), "managed-tmp")})`)
+        && error.message.includes(`own worktree (${realpathSync(linked)})`)
+        && /0700 subdirectory of AIDEVOPS_TEMP_DIR/.test(error.message),
+    );
 
     assert.throws(
       () => checkCommandSafetyGate(`git -C ${sibling} commit -m x`, scriptsDir, linked),
