@@ -169,7 +169,7 @@ _sq_orphan_job_run() {
 	local state="$2"
 	local pr="$3"
 	local job_id="$4"
-	local run_id runner
+	local run_id="" runner=""
 	[[ "$job_id" =~ ^[1-9][0-9]*$ ]] || return 1
 	_sq_api GET "repos/${repo}/actions/jobs/${job_id}" "${SQ_WORK}/job.json" || return 1
 	jq -e '.completed_at == null and ((.runner_name // "") != "") and ((.started_at | fromdateiso8601? // 9999999999) < '"$SQ_ORPHAN_CUTOFF"')' "${SQ_WORK}/job.json" >/dev/null 2>&1 || return 1
