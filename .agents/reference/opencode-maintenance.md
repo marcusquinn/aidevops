@@ -26,6 +26,12 @@ keeping the DB compact and WAL truncated minimises write-lock hold time.
 
 ## What this routine does
 
+Two schedulers keep the DB compact: a daily archive run at 05:00 local
+(`opencode-db-archive-async-helper.sh` → `opencode-db-archive.sh archive-all`,
+split retention below) and the weekly maintenance below. Every `aidevops
+update`/auto-update (`setup.sh --stage ai-session`) re-installs both; the
+installers are idempotent, so unchanged schedulers are left as they are.
+
 `r913 Weekly opencode DB maintenance` runs every Sunday at 04:00 local
 time and invokes `opencode-db-maintenance-helper.sh auto`, which:
 
@@ -136,19 +142,31 @@ FORCE_VACUUM_SIZE_MB=0 VACUUM_FREELIST_THRESHOLD=0.0 \
 
 ## Archive retention modes
 
-`opencode-db-archive.sh archive` supports two retention targets:
+`opencode-db-archive.sh archive` supports these retention targets:
 
-- **Age-based retention** (`--retention-days N`) archives sessions whose last
-  update/activity is older than `N` days. This remains the default mode (`30`
-  days) and is best when session volume is predictable. A resumed or updated
-  session stays active even when its original creation time is older than the
-  cutoff.
+- **Split age-based retention (default, GH#35492)** archives headless/worker
+  sessions after 7 idle days (`--worker-retention-days`) and interactive ones
+  after 90 (`--interactive-retention-days`); ages use last update. Headless =
+  in the headless-runtime ledger (`headless-runtime/state.db` tables
+  `worker_sessions`, `provider_sessions`), a subagent of one, a temp-dir
+  one-shot run, or a supervisor session. Anything unproven stays interactive.
+- **Uniform age-based retention** (`--retention-days N`) sets both cutoffs.
 - **Count-based retention** (`--keep-sessions N`) keeps the newest `N` active
   sessions by last update/activity, with creation time and session ID as stable
   tie-breakers, and archives older sessions beyond that budget. Use this when
-  TUI startup cost tracks active session count more closely than calendar age,
-  for example keeping roughly the 500 most recently active sessions in the
-  active database.
+  TUI startup cost tracks active session count more closely than calendar age.
+  Under split retention it protects interactive sessions only.
+
+Env defaults: `OPENCODE_DB_ARCHIVE_WORKER_RETENTION_DAYS`,
+`OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS`, `OPENCODE_DB_HEADLESS_LEDGER`.
+
+**Archived worker history:** a worker resuming a persisted session that was
+archived restores it automatically (`_seed_worker_db_session_context` →
+`opencode-db-archive.sh restore --session <id>`, session plus subagent children
+in one transaction). Read-only lookup: `opencode-db-maintenance-helper.sh
+sessions --include-archive --id ses_...`. Manual: `opencode-db-archive.sh
+restore --session ses_... [--dry-run]` (exit `0` restored/already active, `4`
+not archived, `3` incompatible schema; nothing changed).
 
 The archive helper follows OpenCode's active DB resolution: `OPENCODE_DB_PATH`
 or `OPENCODE_DB` overrides win first, then `XDG_DATA_HOME/opencode/opencode.db`,
@@ -219,9 +237,11 @@ It does this in order:
 
 1. Stops aidevops-managed pulse/headless workers with `pulse-lifecycle-helper.sh
    stop`.
-2. Archives old sessions with `opencode-db-archive.sh archive --retention-days
-   ${MAINTENANCE_WINDOW_RETENTION_DAYS} --keep-sessions
-   ${MAINTENANCE_WINDOW_KEEP_SESSIONS}`.
+2. Archives old sessions with `opencode-db-archive.sh archive
+   --worker-retention-days ${MAINTENANCE_WINDOW_WORKER_RETENTION_DAYS:-7}
+   --interactive-retention-days ${MAINTENANCE_WINDOW_INTERACTIVE_RETENTION_DAYS:-90}
+   --keep-sessions ${MAINTENANCE_WINDOW_KEEP_SESSIONS}`. A legacy
+   `MAINTENANCE_WINDOW_RETENTION_DAYS` (or `--retention-days N`) sets both.
 3. Runs normal maintenance, including final post-VACUUM WAL checkpoint.
 4. Runs `PRAGMA quick_check`.
 5. Restarts pulse in a trap/finally path with `pulse-lifecycle-helper.sh start`.

@@ -10,7 +10,9 @@
 # old sessions to a separate file reduces the active DB size.
 #
 # Usage:
-#   opencode-db-archive.sh archive [--retention-days N] [--keep-sessions N] [--dry-run] [--max-duration-seconds N]
+#   opencode-db-archive.sh archive [--worker-retention-days N] [--interactive-retention-days N]
+#                                  [--retention-days N] [--keep-sessions N] [--dry-run] [--max-duration-seconds N]
+#   opencode-db-archive.sh restore --session ID [--dry-run]
 #   opencode-db-archive.sh prune --older-than-days N [--dry-run|--apply] [--max-duration-seconds N]
 #   opencode-db-archive.sh prune-all --older-than-days N [--dry-run|--apply]
 #   opencode-db-archive.sh retention-days
@@ -52,7 +54,12 @@ else
 	readonly DEFAULT_DATA_DIR="opencode"
 fi
 readonly DEFAULT_DB="${DEFAULT_DATA_DIR}/opencode.db"
-readonly DEFAULT_RETENTION_DAYS=30
+# Split retention (GH#35492): headless worker sessions are bulky and rarely
+# reopened, so they leave the active DB after 7 days; interactive sessions stay
+# visible in the OpenCode session list for 90 days. Archived history remains
+# queryable and is restored automatically when a worker resumes its session.
+readonly DEFAULT_WORKER_RETENTION_DAYS=7
+readonly DEFAULT_INTERACTIVE_RETENTION_DAYS=90
 readonly DEFAULT_BATCH_SIZE=500
 readonly DEFAULT_MAX_DURATION=60
 readonly EVENT_TABLE_NAME="event"
@@ -74,6 +81,19 @@ if [[ "$_archive_default_dir" == "$ACTIVE_DB" ]]; then
 fi
 ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-${_archive_default_dir}/opencode-archive.db}"
 unset _archive_default_dir
+
+# Headless runtime ledger: worker_sessions records every merged worker session
+# (including subagent children); provider_sessions holds resumable worker IDs.
+_archive_ledger_default=""
+if [[ -n "${AIDEVOPS_HEADLESS_RUNTIME_DIR:-}" ]]; then
+	_archive_ledger_default="${AIDEVOPS_HEADLESS_RUNTIME_DIR}/state.db"
+elif [[ -n "${HOME:-}" ]]; then
+	_archive_ledger_default="${HOME}/.aidevops/.agent-workspace/headless-runtime/state.db"
+fi
+HEADLESS_LEDGER_DB="${OPENCODE_DB_HEADLESS_LEDGER:-$_archive_ledger_default}"
+unset _archive_ledger_default
+# Set by _archive_prepare_headless_ledger: 1 when queries must ATTACH the ledger.
+_ARCHIVE_LEDGER_ATTACH=0
 
 # --- Output helpers -----------------------------------------------------------
 
@@ -779,15 +799,93 @@ _archive_compact_active_db() {
 	return 0
 }
 
+# --- Session origin classification (GH#35492) ----------------------------------
+
+_archive_sql_quote() {
+	local value="$1"
+	printf "'%s'" "${value//\'/\'\'}"
+	return 0
+}
+
+# Print the readable headless ledger tables (worker_sessions, provider_sessions).
+# A missing ledger is normal on machines that never ran headless workers.
+# Callers set _ARCHIVE_LEDGER_ATTACH=1 in their own shell when output is non-empty.
+_archive_ledger_tables() {
+	local tables=""
+	[[ -n "$HEADLESS_LEDGER_DB" && -f "$HEADLESS_LEDGER_DB" ]] || return 0
+	[[ ! "$HEADLESS_LEDGER_DB" -ef "$ACTIVE_DB" ]] || return 0
+	tables=$(sqlite3 -readonly -cmd '.timeout 5000' "$HEADLESS_LEDGER_DB" \
+		"SELECT name FROM sqlite_master WHERE type='table' AND name IN ('worker_sessions','provider_sessions') ORDER BY name;" 2>/dev/null) || tables=""
+	[[ -z "$tables" ]] || printf '%s\n' "$tables"
+	return 0
+}
+
+# Run one read query against the active DB, attaching the headless ledger when
+# the candidate filter references it. Each sqlite3 process is one connection,
+# so the ATTACH must travel with every query that evaluates the filter.
+_archive_active_query() {
+	local sql="$1"
+	if ((_ARCHIVE_LEDGER_ATTACH)); then
+		sqlite3 -cmd '.timeout 5000' -cmd "ATTACH DATABASE $(_archive_sql_quote "$HEADLESS_LEDGER_DB") AS ledger;" "$ACTIVE_DB" "$sql"
+		return $?
+	fi
+	sqlite3 "$ACTIVE_DB" "$sql"
+	return $?
+}
+
+# _archive_headless_predicate <ledger_tables>
+# SQL predicate over a session row that is true for headless sessions:
+# worker sessions recorded in the ledger, their subagent children, one-shot
+# headless runs in temp directories, and supervisor pulse sessions. Everything
+# else is treated as interactive (the longer, safer retention).
+_archive_headless_predicate() {
+	local ledger_tables="$1"
+	local ledger_ids="" table_name self_pred
+	self_pred="directory LIKE '/tmp/opencode%' OR directory LIKE '/private/tmp/opencode%'"
+	self_pred="${self_pred} OR directory GLOB '/var/folders/*/T/opencode*'"
+	self_pred="${self_pred} OR directory LIKE '%/.aidevops/.agent-workspace/supervisor%'"
+	while IFS= read -r table_name; do
+		case "$table_name" in
+		worker_sessions | provider_sessions)
+			ledger_ids="${ledger_ids}${ledger_ids:+ UNION }SELECT session_id FROM ledger.${table_name}"
+			;;
+		esac
+	done <<<"$ledger_tables"
+	# COALESCE keeps NULL parent_id comparisons from making a row neither
+	# headless nor interactive (NOT NULL is NULL, which would skip it entirely).
+	if [[ -n "$ledger_ids" ]]; then
+		self_pred="${self_pred} OR id IN (${ledger_ids})"
+		printf 'COALESCE((%s OR parent_id IN (%s) OR parent_id IN (SELECT id FROM session WHERE %s)), 0)\n' \
+			"$self_pred" "$ledger_ids" "$self_pred"
+		return 0
+	fi
+	printf 'COALESCE((%s OR parent_id IN (SELECT id FROM session WHERE %s)), 0)\n' "$self_pred" "$self_pred"
+	return 0
+}
+
+# _archive_candidate_filter <retention_enabled> <cutoff_ms> <keep_enabled>
+#   <keep_sessions> <exclude_clause> [worker_cutoff_ms] [headless_predicate]
+# With a headless predicate, headless sessions use worker_cutoff_ms and all
+# other sessions use cutoff_ms (the interactive cutoff).
 _archive_candidate_filter() {
 	local retention_enabled="$1"
 	local cutoff_ms="$2"
 	local keep_enabled="$3"
 	local keep_sessions="$4"
 	local exclude_clause="$5"
-	local filter="1=1"
+	local worker_cutoff_ms="${6:-}"
+	local headless_predicate="${7:-}"
+	local filter="1=1" keep_clause=""
 
-	if ((retention_enabled)); then
+	if ((keep_enabled)); then
+		keep_clause="id NOT IN (SELECT id FROM session ORDER BY time_updated DESC, time_created DESC, id DESC LIMIT ${keep_sessions})"
+	fi
+	if ((retention_enabled)) && [[ -n "$headless_predicate" && -n "$worker_cutoff_ms" ]]; then
+		# The keep-newest budget protects interactive history only; a busy
+		# worker fleet must not hold headless sessions past their cutoff.
+		filter="${filter} AND ((${headless_predicate} AND time_updated < ${worker_cutoff_ms}) OR (NOT ${headless_predicate} AND time_updated < ${cutoff_ms}${keep_clause:+ AND ${keep_clause}}))"
+		keep_enabled=0
+	elif ((retention_enabled)); then
 		filter="${filter} AND time_updated < ${cutoff_ms}"
 	fi
 	if ((keep_enabled)); then
@@ -852,7 +950,10 @@ _archive_expire_events() {
 }
 
 cmd_archive() {
-	local retention_days="$DEFAULT_RETENTION_DAYS"
+	# retention_days is the interactive cutoff; worker_retention_days applies to
+	# headless sessions. --retention-days sets both (uniform legacy behaviour).
+	local retention_days="${OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS:-$DEFAULT_INTERACTIVE_RETENTION_DAYS}"
+	local worker_retention_days="${OPENCODE_DB_ARCHIVE_WORKER_RETENTION_DAYS:-$DEFAULT_WORKER_RETENTION_DAYS}"
 	local retention_enabled=1
 	local retention_explicit=0
 	local keep_sessions=0
@@ -868,6 +969,17 @@ cmd_archive() {
 		case "$option" in
 		--retention-days)
 			retention_days="$option_value"
+			worker_retention_days="$option_value"
+			retention_enabled=1
+			retention_explicit=1
+			shift 2
+			;;
+		--interactive-retention-days | --worker-retention-days)
+			if [[ "$option" == "--worker-retention-days" ]]; then
+				worker_retention_days="$option_value"
+			else
+				retention_days="$option_value"
+			fi
 			retention_enabled=1
 			retention_explicit=1
 			shift 2
@@ -907,7 +1019,8 @@ cmd_archive() {
 
 	check_sqlite3 || return 1
 	check_active_db || return 1
-	_validate_nonnegative_integer "$retention_days" "--retention-days" || return 1
+	_validate_nonnegative_integer "$retention_days" "--retention-days/--interactive-retention-days" || return 1
+	_validate_nonnegative_integer "$worker_retention_days" "--worker-retention-days" || return 1
 	_validate_nonnegative_integer "$keep_sessions" "--keep-sessions" || return 1
 	_validate_nonnegative_integer "$max_duration" "--max-duration-seconds" || return 1
 	_validate_nonnegative_integer "$event_retention_days" "--archive-event-retention-days" || return 1
@@ -931,10 +1044,18 @@ cmd_archive() {
 		return "$preflight_rc"
 	fi
 
-	local cutoff_ms
+	local cutoff_ms worker_cutoff_ms headless_predicate="" ledger_tables=""
 	cutoff_ms=$(($(date +%s) * 1000 - retention_days * 86400 * 1000))
+	worker_cutoff_ms=$(($(date +%s) * 1000 - worker_retention_days * 86400 * 1000))
+	_ARCHIVE_LEDGER_ATTACH=0
 
-	if ((retention_enabled)); then
+	if ((retention_enabled)) && [[ "$retention_days" != "$worker_retention_days" ]]; then
+		ledger_tables=$(_archive_ledger_tables)
+		[[ -z "$ledger_tables" ]] || _ARCHIVE_LEDGER_ATTACH=1
+		headless_predicate=$(_archive_headless_predicate "$ledger_tables")
+		print_info "Retention: headless/worker sessions ${worker_retention_days} days (cutoff: $(_format_cutoff_time "$worker_cutoff_ms")); interactive sessions ${retention_days} days (cutoff: $(_format_cutoff_time "$cutoff_ms"))"
+		[[ -n "$ledger_tables" ]] || print_info "Headless ledger unavailable — classifying headless sessions by temp/supervisor directory only"
+	elif ((retention_enabled)); then
 		print_info "Retention: ${retention_days} days since last update (cutoff: $(_format_cutoff_time "$cutoff_ms"))"
 	fi
 	if ((keep_enabled)); then
@@ -968,11 +1089,11 @@ cmd_archive() {
 	fi
 
 	local candidate_filter
-	candidate_filter=$(_archive_candidate_filter "$retention_enabled" "$cutoff_ms" "$keep_enabled" "$keep_sessions" "$exclude_clause")
+	candidate_filter=$(_archive_candidate_filter "$retention_enabled" "$cutoff_ms" "$keep_enabled" "$keep_sessions" "$exclude_clause" "$worker_cutoff_ms" "$headless_predicate")
 
 	# Count eligible sessions
 	local total_eligible
-	total_eligible=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE $candidate_filter;")
+	total_eligible=$(_archive_active_query "SELECT COUNT(*) FROM session WHERE $candidate_filter;")
 
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
@@ -1007,24 +1128,24 @@ cmd_archive() {
 		# Show what would be archived
 		local msg_count part_count todo_count share_count event_count event_bytes
 		local session_message_count=0 session_input_count=0 context_epoch_count=0 event_sequence_count=0
-		msg_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		msg_count=$(_archive_active_query "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		part_count=$(_archive_active_query "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		todo_count=$(_archive_active_query "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		share_count=$(_archive_active_query "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		if ((has_session_message_table)); then
-			session_message_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+			session_message_count=$(_archive_active_query "SELECT COUNT(*) FROM session_message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		fi
 		if ((has_session_input_table)); then
-			session_input_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_input WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+			session_input_count=$(_archive_active_query "SELECT COUNT(*) FROM session_input WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		fi
 		if ((has_session_context_epoch_table)); then
-			context_epoch_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_context_epoch WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+			context_epoch_count=$(_archive_active_query "SELECT COUNT(*) FROM session_context_epoch WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		fi
 		if ((has_event_sequence_table)); then
-			event_sequence_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM event_sequence WHERE aggregate_id IN (SELECT id FROM session WHERE $candidate_filter);")
+			event_sequence_count=$(_archive_active_query "SELECT COUNT(*) FROM event_sequence WHERE aggregate_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		fi
-		event_count=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
-		event_bytes=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
+		event_count=$(_archive_active_query "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
+		event_bytes=$(_archive_active_query "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
 
 		echo ""
 		echo "=== DRY RUN — would archive: ==="
@@ -1094,7 +1215,7 @@ cmd_archive() {
 
 		# Collect batch session IDs
 		local session_ids
-		session_ids=$(sqlite3 "$ACTIVE_DB" "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated ASC, time_created ASC, id ASC LIMIT $batch_limit;")
+		session_ids=$(_archive_active_query "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated ASC, time_created ASC, id ASC LIMIT $batch_limit;")
 
 		if [[ -z "$session_ids" ]]; then
 			break
@@ -1680,6 +1801,130 @@ cmd_stats() {
 	return 0
 }
 
+# --- Restore command (GH#35492) -------------------------------------------------
+
+# _archive_restore_column_list <table>
+# Prints active-DB-ordered quoted columns shared by active and archive tables.
+# Fails when the active table needs a NOT NULL/PK column the archive lacks.
+_archive_restore_column_list() {
+	local table_name="$1"
+	local result columns missing
+	result=$(sqlite3 -cmd '.timeout 5000' "$ACTIVE_DB" "
+ATTACH DATABASE $(_archive_sql_quote "$ARCHIVE_DB") AS archive;
+SELECT COALESCE((SELECT group_concat(quoted, ',') FROM (
+  SELECT '\"' || a.name || '\"' AS quoted FROM pragma_table_info('${table_name}') a
+  JOIN pragma_table_info('${table_name}', 'archive') b ON b.name = a.name ORDER BY a.cid)), '')
+  || '|' || COALESCE((SELECT group_concat(a.name, ',') FROM pragma_table_info('${table_name}') a
+  LEFT JOIN pragma_table_info('${table_name}', 'archive') b ON b.name = a.name
+  WHERE b.name IS NULL AND (a.pk > 0 OR (a.\"notnull\" = 1 AND a.dflt_value IS NULL))), '');" 2>/dev/null) || return 1
+	columns="${result%%|*}"
+	missing="${result#*|}"
+	[[ -n "$columns" && -z "$missing" ]] || return 1
+	printf '%s\n' "$columns"
+	return 0
+}
+
+# _archive_restore_tables
+# Session-owned tables present in both DBs, in dependency-safe copy order.
+_archive_restore_tables() {
+	local table_name
+	for table_name in message part todo session_share session_message session_input session_context_epoch; do
+		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
+		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
+		printf '%s\n' "$table_name"
+	done
+	return 0
+}
+
+# _archive_restore_sql <session_id_sql>
+# Builds the copy-then-delete SQL for one archived session and its subagent
+# children. Copies use INSERT OR IGNORE so rows already active win.
+_archive_restore_sql() {
+	local sid="$1"
+	local ids="SELECT id FROM archive.session WHERE id = ${sid} OR parent_id = ${sid}"
+	local copy_sql="" delete_sql="" table_name columns
+	columns=$(_archive_restore_column_list project) || return 1
+	copy_sql="INSERT OR IGNORE INTO main.project (${columns}) SELECT ${columns} FROM archive.project WHERE id IN (SELECT project_id FROM archive.session WHERE id = ${sid});"$'\n'
+	columns=$(_archive_restore_column_list "$SESSION_TABLE_NAME") || return 1
+	copy_sql="${copy_sql}INSERT OR IGNORE INTO main.session (${columns}) SELECT ${columns} FROM archive.session WHERE id IN (${ids}) ORDER BY parent_id IS NOT NULL;"$'\n'
+	while IFS= read -r table_name; do
+		[[ -n "$table_name" ]] || continue
+		columns=$(_archive_restore_column_list "$table_name") || return 1
+		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${columns} FROM archive.${table_name} WHERE session_id IN (${ids});"$'\n'
+		delete_sql="DELETE FROM archive.${table_name} WHERE session_id IN (${ids});"$'\n'"${delete_sql}"
+	done <<<"$(_archive_restore_tables)"
+	for table_name in event_sequence "$EVENT_TABLE_NAME"; do
+		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
+		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
+		columns=$(_archive_restore_column_list "$table_name") || return 1
+		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${columns} FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'
+		delete_sql="DELETE FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'"${delete_sql}"
+	done
+	printf '%s%sDELETE FROM archive.session WHERE id IN (%s);\n' "$copy_sql" "$delete_sql" "$ids"
+	return 0
+}
+
+# cmd_restore --session ID [--dry-run]
+# Move one archived session (plus subagent children) back into the active DB so
+# OpenCode can resume it. Safe with live holders: it is a short write
+# transaction, like the headless worker merge. Exit 0 restored/already active,
+# 4 not found in the archive, 3 incompatible schema, 1 other failure.
+cmd_restore() {
+	local session_id="" dry_run=0 sid active_count archived_count restore_sql archive_sql
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		case "$option" in
+		--session) session_id="${2:-}"; shift 2 ;;
+		--dry-run) dry_run=1; shift ;;
+		*) print_error "Unknown restore option: $option"; return 1 ;;
+		esac
+	done
+	if [[ ! "$session_id" =~ ^[A-Za-z0-9_-]+$ ]]; then
+		print_error "restore requires --session <id> (letters, digits, '_' or '-')"
+		return 1
+	fi
+	check_sqlite3 || return 1
+	check_active_db || return 1
+	sid=$(_archive_sql_quote "$session_id")
+	active_count=$(sqlite3 -cmd '.timeout 5000' "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE id = ${sid};") || return 1
+	if [[ "$active_count" == "1" ]]; then
+		print_info "Session ${session_id} is already in the active DB"
+		return 0
+	fi
+	if [[ ! -f "$ARCHIVE_DB" ]] || [[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
+		print_warning "No archive DB for ${ACTIVE_DB}; session ${session_id} not found"
+		return 4
+	fi
+	archived_count=$(sqlite3 -readonly -cmd '.timeout 5000' "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id = ${sid} OR parent_id = ${sid};") || return 1
+	if [[ "$archived_count" == "0" ]] || [[ -z "$archived_count" ]]; then
+		print_warning "Session ${session_id} not found in archive ${ARCHIVE_DB}"
+		return 4
+	fi
+	if ! restore_sql=$(_archive_restore_sql "$sid"); then
+		print_error "Archive and active schemas are incompatible for restore; nothing changed"
+		return 3
+	fi
+	if ((dry_run)); then
+		print_info "DRY RUN — would restore ${archived_count} session(s) (${session_id} and subagent children) from ${ARCHIVE_DB}"
+		return 0
+	fi
+	archive_sql=$(_archive_sql_quote "$ARCHIVE_DB")
+	if ! sqlite3 "$ACTIVE_DB" <<RESTORE_SQL >/dev/null; then
+.bail on
+.timeout 5000
+ATTACH DATABASE ${archive_sql} AS archive;
+BEGIN IMMEDIATE;
+${restore_sql}
+COMMIT;
+DETACH DATABASE archive;
+RESTORE_SQL
+		print_error "Restore of ${session_id} failed; the archive copy was left in place"
+		return 1
+	fi
+	print_success "Restored ${archived_count} session(s) (${session_id} and subagent children) to ${ACTIVE_DB}"
+	return 0
+}
+
 # --- Help command -------------------------------------------------------------
 
 cmd_help() {
@@ -1691,12 +1936,17 @@ COMMANDS:
   archive-all  Archive selected/default DB and fixed-depth isolated project DBs
   prune     PERMANENTLY delete sessions older than N days from archive then active DB
   prune-all Prune selected/default DB and fixed-depth isolated project DBs
+  restore   Move one archived session (and subagent children) back to the active DB
   retention-days  Print storage.opencode_session_retention_days (0 = keep all)
   stats     Show row counts and sizes (active + archive databases)
   help      Show this help message
 
-ARCHIVE OPTIONS:
-  --retention-days N        Sessions inactive for N days are archived (default: 30)
+ARCHIVE OPTIONS (split retention by session origin):
+  --worker-retention-days N       Headless sessions inactive N days are archived (default: 7)
+                                  Headless = headless-runtime ledger worker sessions and their
+                                  subagents, temp-dir one-shot runs, supervisor pulse sessions.
+  --interactive-retention-days N  All other sessions inactive N days are archived (default: 90)
+  --retention-days N        One cutoff for every session (sets both values above)
   --keep-sessions N         Keep newest N active sessions by last update; archive older sessions beyond the budget
   --dry-run                 Show what would be archived without doing it
   --apply                   Explicitly apply changes (also the legacy default)
@@ -1704,6 +1954,12 @@ ARCHIVE OPTIONS:
                             (default 0: disabled). Keeps session/message/part.
                             Runs before moving sessions; freed pages are reused.
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
+
+RESTORE OPTIONS:
+  --session ID              Session to restore (headless workers do this automatically
+                            when resuming a persisted session that was archived)
+  --dry-run                 Report what would be restored
+  Exit codes: 0 restored/already active, 4 not in archive, 3 incompatible schema
 
 PRUNE OPTIONS (opt-in; default retention is keep everything):
   --older-than-days N       Delete sessions last updated more than N days ago (N >= 1)
@@ -1719,6 +1975,9 @@ ENVIRONMENT:
   OPENCODE_DB               Active DB path override (fallback)
   OPENCODE_ARCHIVE_DB       Archive DB path (default: next to active opencode.db)
   OPENCODE_INTERACTIVE_ROOT  Isolated DB root (default: aidevops work/opencode-interactive)
+  OPENCODE_DB_ARCHIVE_WORKER_RETENTION_DAYS       Default for --worker-retention-days (7)
+  OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (90)
+  OPENCODE_DB_HEADLESS_LEDGER  Headless ledger DB (default: headless-runtime/state.db)
   OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Optional archived event expiry, default 0
                             archive-all always uses an archive beside each active DB;
                             max-duration-seconds applies per DB, not to the inventory.
@@ -1733,8 +1992,11 @@ EXAMPLES:
   # Keep the 500 most recently updated active sessions, archive older sessions
   opencode-db-archive.sh archive --keep-sessions 500
 
-  # Archive with defaults (30 days, 60s time budget)
+  # Archive with defaults (workers 7 days, interactive 90 days, 60s budget)
   opencode-db-archive.sh archive
+
+  # Bring an archived session back so OpenCode can resume it
+  opencode-db-archive.sh restore --session ses_abc123
 
   # Archive as pulse pre-flight (short time budget)
   opencode-db-archive.sh archive --max-duration-seconds 30
@@ -1761,6 +2023,9 @@ main() {
 		;;
 	prune-all)
 		cmd_prune_all "$@" || rc=$?
+		;;
+	restore)
+		cmd_restore "$@" || rc=$?
 		;;
 	retention-days)
 		cmd_retention_days || rc=$?

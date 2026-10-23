@@ -373,7 +373,64 @@ _merge_worker_db() {
 		print_warning "[lifecycle] db_merge_sql_error detail=${merge_error:0:500}"
 		return 1
 	fi
+	_record_worker_sessions "$worker_db" || print_warning "[lifecycle] worker_session_ledger_write_failed pid=$$"
 	return 0
+}
+
+#######################################
+# Record every session in a merged worker DB (parents and subagent children)
+# in the headless ledger, so opencode-db-archive.sh applies worker retention
+# (GH#35492). Best-effort: the merge already succeeded, and an unrecorded
+# session simply keeps the longer interactive retention.
+# Args: $1 = worker opencode.db path.
+#######################################
+_record_worker_sessions() {
+	local worker_db="$1"
+	local state_db="${STATE_DB:-}"
+	local worker_db_sql
+	[[ -n "$state_db" && -f "$worker_db" ]] || return 0
+	[[ -f "$state_db" ]] || return 0
+	worker_db_sql=$(sql_escape "$worker_db")
+	sqlite3 "$state_db" >/dev/null 2>&1 <<-SQL || return 1
+		.bail on
+		.timeout 5000
+		CREATE TABLE IF NOT EXISTS worker_sessions (
+			session_id TEXT PRIMARY KEY,
+			recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		);
+		ATTACH DATABASE '${worker_db_sql}' AS worker;
+		INSERT OR IGNORE INTO main.worker_sessions (session_id) SELECT id FROM worker.session;
+		DETACH DATABASE worker;
+	SQL
+	return 0
+}
+
+#######################################
+# Make an archived session resumable: move it (and subagent children) from the
+# shared archive DB back into the shared active DB. Worker sessions leave the
+# active DB after 7 days of inactivity (GH#35492), but a blocked issue can be
+# re-dispatched weeks later; restoring keeps `--session <id> --continue` intact.
+# Returns 0 when the session is now active, 1 otherwise.
+# Args: $1 = shared opencode.db path, $2 = session id.
+#######################################
+_restore_archived_worker_session() {
+	local shared_db="$1"
+	local session_id="$2"
+	local lib_dir="${BASH_SOURCE[0]%/*}"
+	local archive_helper="${OPENCODE_DB_ARCHIVE_HELPER:-${lib_dir}/opencode-db-archive.sh}"
+	local restore_output=""
+	[[ "$lib_dir" != "${BASH_SOURCE[0]}" ]] || archive_helper="${OPENCODE_DB_ARCHIVE_HELPER:-./opencode-db-archive.sh}"
+	[[ -x "$archive_helper" ]] || archive_helper="${HOME}/.aidevops/agents/scripts/opencode-db-archive.sh"
+	[[ -x "$archive_helper" ]] || return 1
+	[[ -f "${shared_db%/*}/opencode-archive.db" ]] || return 1
+	if restore_output=$(OPENCODE_DB_PATH="$shared_db" OPENCODE_ARCHIVE_DB="${shared_db%/*}/opencode-archive.db" \
+		"$archive_helper" restore --session "$session_id" 2>&1); then
+		print_info "[lifecycle] archived_session_restored session=${session_id} pid=$$"
+		return 0
+	fi
+	restore_output="${restore_output//$'\n'/ }"
+	print_warning "[lifecycle] archived_session_restore_failed session=${session_id} detail=${restore_output:0:300}"
+	return 1
 }
 
 #######################################
@@ -623,6 +680,24 @@ _replay_preserved_worker_dbs() {
 }
 
 #######################################
+# Succeed when the session is in the shared active DB, restoring it from the
+# archive first when needed (inactive worker sessions are archived after 7 days).
+# Args: $1 = shared opencode.db path, $2 = session id.
+#######################################
+_ensure_shared_session_active() {
+	local shared_db="$1"
+	local session_id="$2"
+	local session_id_sql session_exists
+	session_id_sql=$(sql_escape "$session_id")
+	session_exists=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
+	[[ "$session_exists" != "1" ]] || return 0
+	_restore_archived_worker_session "$shared_db" "$session_id" || return 1
+	session_exists=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
+	[[ "$session_exists" == "1" ]] || return 1
+	return 0
+}
+
+#######################################
 # Seed a continuation session into a worker's isolated OpenCode DB.
 # Called before `opencode run --session <id> --continue` so retries launched
 # with a fresh XDG_DATA_HOME can resolve the persisted conversation locally.
@@ -636,7 +711,7 @@ _seed_worker_db_session_context() {
 	local current_work_dir="${3:-}"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
-	local shared_db_sql session_id_sql current_work_dir_sql="" session_exists column_list
+	local shared_db_sql session_id_sql current_work_dir_sql="" column_list
 	local session_tables project_tables table_name table_identifier
 	local clear_session_sql="" copy_session_sql=""
 	local clear_project_sql="" copy_project_sql=""
@@ -647,8 +722,7 @@ _seed_worker_db_session_context() {
 	[[ -f "$shared_db" ]] || return 1
 	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 1
 	session_id_sql=$(sql_escape "$session_id")
-	session_exists=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
-	[[ "$session_exists" == "1" ]] || return 1
+	_ensure_shared_session_active "$shared_db" "$session_id" || return 1
 
 	# Build a schema-only DB, then synchronise migration ledgers. This avoids a
 	# multi-gigabyte full backup while preserving OpenCode migration state.

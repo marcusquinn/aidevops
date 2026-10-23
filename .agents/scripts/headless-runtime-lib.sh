@@ -71,6 +71,15 @@ CREATE TABLE IF NOT EXISTS provider_sessions (
     PRIMARY KEY (provider, session_key)
 );
 
+-- Every OpenCode session a headless worker merged into the shared DB,
+-- including subagent children (GH#35492). opencode-db-archive.sh reads this
+-- to apply the shorter worker retention; provider_sessions keeps only the
+-- latest resumable ID per key, so it cannot classify historical sessions.
+CREATE TABLE IF NOT EXISTS worker_sessions (
+    session_id   TEXT PRIMARY KEY,
+    recorded_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 CREATE TABLE IF NOT EXISTS provider_rotation (
     role         TEXT PRIMARY KEY,
     last_provider TEXT NOT NULL,

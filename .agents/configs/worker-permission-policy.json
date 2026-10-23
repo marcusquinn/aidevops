@@ -1,0 +1,3 @@
+{
+  "pattern_capable_permissions": ["bash", "external_directory"]
+}

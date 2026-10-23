@@ -35,7 +35,7 @@ every vague reference — match the source to the question.
    | `$XDG_DATA_HOME/opencode/opencode.db` | The current session. aidevops launches set `XDG_DATA_HOME` per project: `~/.aidevops/.agent-workspace/work/opencode-interactive/<project-…>/` (`opencode-launcher-helper.sh`) |
    | `~/.local/share/opencode/opencode.db` | Sessions started without the aidevops launcher, and headless workers |
    | `~/.aidevops/.agent-workspace/work/opencode-interactive/*/opencode/opencode.db` | Every other project's sessions (`opencode-db-inventory-lib.sh`) |
-   | `opencode-archive.db` beside the shared database | Sessions moved out by `opencode-db-archive.sh` |
+   | `opencode-archive.db` beside the shared database | Sessions moved out by `opencode-db-archive.sh`: headless/worker sessions after 7 idle days, interactive after 90. Worker resume restores its own session automatically; for older issue history use `opencode-db-maintenance-helper.sh sessions --include-archive --id ses_…` (details: `reference/opencode-maintenance.md` "Archive retention modes") |
 
    Open them read-only as `sqlite3 "file:<path>?mode=ro"`: plain `-readonly` fails on live WAL databases. The shared database can be tens of GB, so look up by `session.id` or `part.session_id` (indexed), never with `LIKE` over all `part.data`. Titles are in `session.title`; message text and attachments are JSON in `part.data`.
 

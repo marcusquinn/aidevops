@@ -99,6 +99,7 @@ source "${SCRIPT_DIR}/test-headless-runtime-checkpoint-tests.sh"
 
 run_worker_db_persistence_tests() {
 	test_seed_worker_db_session_context_copies_only_selected_session
+	test_seed_worker_db_session_context_restores_archived_session
 	test_seed_worker_db_session_context_rebinds_replacement_worktree
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_seed_worker_db_session_context_uses_schema_only_fresh_db

@@ -5,10 +5,13 @@
 
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
+import { readFileSync } from "fs";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 import { verifyPermissionGrant } from "./worker-permission-grant-verification.mjs";
 
-const PATTERN_CAPABLE_PERMISSIONS = new Set(["bash", "external_directory"]);
+const PATTERN_CAPABLE_PERMISSIONS = new Set(JSON.parse(readFileSync(
+  new URL("../../configs/worker-permission-policy.json", import.meta.url), "utf8",
+)).pattern_capable_permissions);
 const FORBIDDEN_GRANT_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube)(?:\/|$)|\/(?:\.config\/(?:gh|gcloud|glab-cli|hub)|\.docker)(?:\/|$)|\/(?:\.netrc|\.npmrc|\.pypirc|\.git-credentials)(?:$|\*)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
 const UNBOUNDED_GRANT_PATTERN = /^(?:\*|\*\*|\/\*\*|~\/\*\*|\$WORKTREE\/\*\*)$/;
 const MAX_PERMISSION_GRANT_MS = 4 * 60 * 60 * 1000;

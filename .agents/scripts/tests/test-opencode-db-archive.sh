@@ -41,6 +41,8 @@ trap 'rm -rf "$SANDBOX"' EXIT
 
 ACTIVE_DB="${SANDBOX}/opencode.db"
 ARCHIVE_DB="${SANDBOX}/opencode-archive.db"
+# Never classify against the host's real headless-runtime ledger.
+export OPENCODE_DB_HEADLESS_LEDGER="${SANDBOX}/headless-ledger.db"
 
 _reset_dbs() {
 	rm -f "$ACTIVE_DB" "$ARCHIVE_DB" "${ACTIVE_DB}-wal" "${ACTIVE_DB}-shm" "${ARCHIVE_DB}-wal" "${ARCHIVE_DB}-shm"
@@ -579,10 +581,19 @@ fi
 
 _reset_dbs
 now_seconds=$(date +%s)
-old_default_ms=$(((now_seconds - 31 * 86400) * 1000))
-recent_default_ms=$(((now_seconds - 29 * 86400) * 1000))
+old_default_ms=$(((now_seconds - 91 * 86400) * 1000))
+recent_default_ms=$(((now_seconds - 89 * 86400) * 1000))
+worker_old_ms=$(((now_seconds - 8 * 86400) * 1000))
+worker_recent_ms=$(((now_seconds - 6 * 86400) * 1000))
 _make_active_db_with_sessions "default_old,${old_default_ms}
-default_recent,${recent_default_ms}"
+default_recent,${recent_default_ms}
+worker_old,${worker_old_ms}
+worker_child,${worker_old_ms}
+worker_recent,${worker_recent_ms}
+interactive_8d,${worker_old_ms}"
+sqlite3 "$ACTIVE_DB" "UPDATE session SET parent_id='worker_old' WHERE id='worker_child';"
+sqlite3 "$OPENCODE_DB_HEADLESS_LEDGER" "CREATE TABLE worker_sessions (session_id TEXT PRIMARY KEY, session_key TEXT, provider TEXT, recorded_at TEXT);
+INSERT INTO worker_sessions (session_id) VALUES ('worker_old'), ('worker_recent');"
 
 set +e
 out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --max-duration-seconds 30 2>&1)
@@ -590,18 +601,43 @@ rc=$?
 set -e
 
 if [[ "$rc" -eq 0 ]]; then
-	_pass "archive succeeds with default 30-day retention"
+	_pass "archive succeeds with default split retention"
 else
-	_fail "default 30-day archive failed with rc=$rc — output: $out"
+	_fail "default split-retention archive failed with rc=$rc — output: $out"
 fi
 
-default_recent_active=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE id='default_recent';")
-default_old_archived=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id='default_old';")
-if [[ "$default_recent_active" == "1" && "$default_old_archived" == "1" ]]; then
-	_pass "default retention preserves 30-day /sessions history"
+split_active=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY id);")
+split_archived=$(sqlite3 "$ARCHIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY id);")
+if [[ "$split_active" == "default_recent,interactive_8d,worker_recent" && "$split_archived" == "default_old,worker_child,worker_old" ]]; then
+	_pass "default retention archives workers after 7 days and interactive sessions after 90"
 else
-	_fail "default retention mismatch: recent_active=${default_recent_active}, old_archived=${default_old_archived}"
+	_fail "split retention mismatch: active=${split_active}, archived=${split_archived}"
 fi
+
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session worker_old 2>&1)
+rc=$?
+set -e
+restored_active=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE id IN ('worker_old','worker_child');")
+restored_messages=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message WHERE session_id IN ('worker_old','worker_child');")
+restored_events=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM event WHERE aggregate_id IN ('worker_old','worker_child');")
+restored_left=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id IN ('worker_old','worker_child');")
+if [[ "$rc" -eq 0 && "$restored_active" == "2" && "$restored_messages" == "2" && "$restored_events" == "2" && "$restored_left" == "0" ]]; then
+	_pass "restore moves an archived worker session and its subagent child back to the active DB"
+else
+	_fail "restore mismatch: rc=${rc}, active=${restored_active}, messages=${restored_messages}, events=${restored_events}, archive_left=${restored_left} — output: $out"
+fi
+
+set +e
+OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session missing_session >/dev/null 2>&1
+rc=$?
+set -e
+if [[ "$rc" -eq 4 ]]; then
+	_pass "restore reports exit 4 for sessions absent from the archive"
+else
+	_fail "restore of missing session returned rc=${rc}, expected 4"
+fi
+rm -f "$OPENCODE_DB_HEADLESS_LEDGER"
 
 _reset_dbs
 now_seconds=$(date +%s)

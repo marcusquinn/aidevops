@@ -189,6 +189,34 @@ jq -e 'select(.event == "permission_awaiting_approval" and .reason == "needs_mai
   and .permission == "external_directory" and .tool == "read"
   and .risk_level == "medium" and .grantable == true)' \
 	"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" >/dev/null
+# Unsupported permission kinds must never invite an unusable signature, even
+# when the capture's risk classifier incorrectly claims they are grantable.
+for unsupported_permission in task read unknown; do
+	unsupported_capture="${test_root}/unsupported.json"
+	jq --arg permission "$unsupported_permission" \
+		'.requests = [.requests[0] | .permission = $permission | .tool = "task" | .patterns = ["playwright"] | .risk.grantable = true]' \
+		"$capture_file" >"$unsupported_capture"
+	: >"$gh_call_log"
+	rm -f "$posted_comment" "${git_dir}/aidevops-permission-pending"
+	unsupported_rc=0
+	cmd_request --file "$unsupported_capture" --issue 123 --repo owner/repo --session issue-123 \
+		--work-dir "$repo_dir" || unsupported_rc=$?
+	[[ "$unsupported_rc" -eq 1 ]]
+	grep -q 'permission_non_grantable' "$posted_comment"
+	grep -q 'static subagent allowlist/routing' "$posted_comment"
+	if grep -q 'sudo aidevops approve permissions' "$posted_comment" ||
+		grep -q 'needs-maintainer-permissions' "$gh_call_log" ||
+		[[ -f "${git_dir}/aidevops-permission-pending" ]]; then
+		printf 'unsupported permission invited approval or persisted an approval hold\n' >&2
+		exit 1
+	fi
+	jq -e --arg permission "$unsupported_permission" \
+		'select(.reason == "permission_non_grantable" and .permission == $permission and .grantable == false)' \
+		"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" >/dev/null
+done
+mixed_capture="${test_root}/mixed.json"
+jq --slurpfile unsupported "$unsupported_capture" '.requests += $unsupported[0].requests' "$single_capture" >"$mixed_capture"
+jq -e '.grantable == false' <<<"$(permission_blocker_capability_json "$mixed_capture")" >/dev/null
 # GH#35128: temp/scratch writes are owned recovery; other external writes are not.
 temp_capture="${test_root}/temp-capture.json"
 jq '.requests = [.requests[0] | .permission = "external_directory" | .tool = "write" | .patterns = ["~/.aidevops-private/tmp/*"]]' \

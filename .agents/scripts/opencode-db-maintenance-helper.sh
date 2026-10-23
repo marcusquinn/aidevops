@@ -125,7 +125,10 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 [[ "$AUTO_MIN_SECONDS_BETWEEN" =~ ^[0-9]+$ ]] && AUTO_MIN_SECONDS_BETWEEN=$((10#$AUTO_MIN_SECONDS_BETWEEN)) || AUTO_MIN_SECONDS_BETWEEN=518400
 [[ "$WAL_LARGE_THRESHOLD_MB" =~ ^[0-9]+$ ]] && WAL_LARGE_THRESHOLD_MB=$((10#$WAL_LARGE_THRESHOLD_MB)) || WAL_LARGE_THRESHOLD_MB=500
 : "${MAINTENANCE_WINDOW_KEEP_SESSIONS:=500}"  # maintenance-window count target
-: "${MAINTENANCE_WINDOW_RETENTION_DAYS:=30}" # maintenance-window age target
+# Split age targets (GH#35492). A legacy MAINTENANCE_WINDOW_RETENTION_DAYS, when
+# set, still applies one cutoff to every session.
+: "${MAINTENANCE_WINDOW_WORKER_RETENTION_DAYS:=${MAINTENANCE_WINDOW_RETENTION_DAYS:-7}}"
+: "${MAINTENANCE_WINDOW_INTERACTIVE_RETENTION_DAYS:=${MAINTENANCE_WINDOW_RETENTION_DAYS:-90}}"
 : "${MAINTENANCE_WINDOW_DRAIN_TIMEOUT:=600}"  # max seconds to wait for headless workers
 : "${MAINTENANCE_WINDOW_DRAIN_POLL:=10}"      # seconds between drain polls
 # Headless workers run `opencode run ...`; interactive TUIs/servers do not.
@@ -1148,15 +1151,16 @@ _drain_headless_workers() {
 	return 0
 }
 
-# _maintenance_window_db <force> <keep_sessions> <retention_days> <skip_archive>
+# _maintenance_window_db <force> <keep_sessions> <worker_days> <interactive_days> <skip_archive>
 # Single-DB body; runs in an OPENCODE_MAINTENANCE_SINGLE_DB=1 child so the
 # readonly DB paths, state dir, and exact holder count target that DB only.
 # Returns 0 maintained, 2 skipped (held open), other values on failure.
 _maintenance_window_db() {
 	local force_opencode="$1"
 	local keep_sessions="$2"
-	local retention_days="$3"
-	local skip_archive="$4"
+	local worker_days="$3"
+	local interactive_days="$4"
+	local skip_archive="$5"
 
 	if ! _opencode_installed; then
 		print_info "DB missing — nothing to maintain: $OPENCODE_DB"
@@ -1172,10 +1176,11 @@ _maintenance_window_db() {
 
 	local rc=0
 	if [[ "$skip_archive" != true ]] && [[ -x "$OPENCODE_DB_ARCHIVE_HELPER" ]]; then
-		print_info "Archiving old OpenCode sessions (inactive ${retention_days}+ days and outside newest ${keep_sessions})..."
+		print_info "Archiving old OpenCode sessions (headless ${worker_days}+ days, interactive ${interactive_days}+ days and outside newest ${keep_sessions})..."
 		# env: OPENCODE_ARCHIVE_DB is readonly here, so a bare prefix assignment fails.
 		env OPENCODE_DB_PATH="$OPENCODE_DB" OPENCODE_ARCHIVE_DB="$OPENCODE_ARCHIVE_DB" \
-			"$OPENCODE_DB_ARCHIVE_HELPER" archive --retention-days "$retention_days" --keep-sessions "$keep_sessions" --max-duration-seconds 300 || rc=$?
+			"$OPENCODE_DB_ARCHIVE_HELPER" archive --worker-retention-days "$worker_days" \
+			--interactive-retention-days "$interactive_days" --keep-sessions "$keep_sessions" --max-duration-seconds 300 || rc=$?
 		if [[ "$rc" -ne 0 ]]; then
 			print_warning "archive step failed (rc=${rc}); continuing to maintenance"
 		fi
@@ -1201,7 +1206,8 @@ _maintenance_window_db() {
 cmd_maintenance_window() {
 	local force_opencode=false
 	local keep_sessions="$MAINTENANCE_WINDOW_KEEP_SESSIONS"
-	local retention_days="$MAINTENANCE_WINDOW_RETENTION_DAYS"
+	local worker_days="$MAINTENANCE_WINDOW_WORKER_RETENTION_DAYS"
+	local interactive_days="$MAINTENANCE_WINDOW_INTERACTIVE_RETENTION_DAYS"
 	local drain_timeout="$MAINTENANCE_WINDOW_DRAIN_TIMEOUT"
 	local skip_archive=false
 
@@ -1215,7 +1221,13 @@ cmd_maintenance_window() {
 			keep_sessions="${2:-}"; shift 2
 			;;
 		--retention-days)
-			retention_days="${2:-}"; shift 2
+			worker_days="${2:-}"; interactive_days="${2:-}"; shift 2
+			;;
+		--worker-retention-days)
+			worker_days="${2:-}"; shift 2
+			;;
+		--interactive-retention-days)
+			interactive_days="${2:-}"; shift 2
 			;;
 		--drain-timeout)
 			drain_timeout="${2:-}"; shift 2
@@ -1231,7 +1243,8 @@ cmd_maintenance_window() {
 	done
 
 	[[ "$keep_sessions" =~ ^[0-9]+$ ]] || { print_error "--keep-sessions must be a non-negative integer: ${keep_sessions}"; return 1; }
-	[[ "$retention_days" =~ ^[0-9]+$ ]] || { print_error "--retention-days must be a non-negative integer: ${retention_days}"; return 1; }
+	[[ "$worker_days" =~ ^[0-9]+$ ]] || { print_error "--worker-retention-days must be a non-negative integer: ${worker_days}"; return 1; }
+	[[ "$interactive_days" =~ ^[0-9]+$ ]] || { print_error "--interactive-retention-days must be a non-negative integer: ${interactive_days}"; return 1; }
 	[[ "$drain_timeout" =~ ^[0-9]+$ ]] || { print_error "--drain-timeout must be a non-negative integer: ${drain_timeout}"; return 1; }
 	if ! _sqlite_available; then
 		print_error "sqlite3 CLI not available"
@@ -1239,22 +1252,23 @@ cmd_maintenance_window() {
 	fi
 
 	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" == 1 ]]; then
-		_maintenance_window_db "$force_opencode" "$keep_sessions" "$retention_days" "$skip_archive"
+		_maintenance_window_db "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive"
 		return $?
 	fi
-	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$retention_days" "$skip_archive" "$drain_timeout"
+	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive" "$drain_timeout"
 	return $?
 }
 
-# _maintenance_window_inventory <force> <keep_sessions> <retention_days> <skip_archive> <drain_timeout>
+# _maintenance_window_inventory <force> <keep_sessions> <worker_days> <interactive_days> <skip_archive> <drain_timeout>
 # Parent run: stop pulse once, drain workers, then visit each inventory DB in a
 # single-DB child. Returns 1 on any failure, 2 when only holder skips occurred.
 _maintenance_window_inventory() {
 	local force_opencode="$1"
 	local keep_sessions="$2"
-	local retention_days="$3"
-	local skip_archive="$4"
-	local drain_timeout="$5"
+	local worker_days="$3"
+	local interactive_days="$4"
+	local skip_archive="$5"
+	local drain_timeout="$6"
 
 	local dbs=()
 	local db
@@ -1281,7 +1295,7 @@ _maintenance_window_inventory() {
 
 	_drain_headless_workers "$drain_timeout"
 
-	local child_args=(--keep-sessions "$keep_sessions" --retention-days "$retention_days")
+	local child_args=(--keep-sessions "$keep_sessions" --worker-retention-days "$worker_days" --interactive-retention-days "$interactive_days")
 	[[ "$force_opencode" != true ]] || child_args+=(--force-opencode)
 	[[ "$skip_archive" != true ]] || child_args+=(--skip-archive)
 
@@ -1704,7 +1718,10 @@ Subcommands:
                          Each DB is skipped while a process holds it open (exit 2);
                          close those OpenCode sessions or pass --force-opencode.
                          Options: --drain-timeout N (default 600, 0 = no wait),
-                         --retention-days N, --keep-sessions N, --skip-archive.
+                         --worker-retention-days N (default 7),
+                         --interactive-retention-days N (default 90),
+                         --retention-days N (one cutoff for both), --keep-sessions N
+                         (protects interactive sessions only), --skip-archive.
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
                          Visits isolated project DBs too, skipping each live DB.
@@ -1734,7 +1751,9 @@ Environment variables (advanced):
   AUTO_MIN_SECONDS_BETWEEN     Throttle for auto mode (default 518400 = 6 days)
   WAL_LARGE_THRESHOLD_MB       Warn/report large WAL above this size (default 500)
   MAINTENANCE_WINDOW_KEEP_SESSIONS  Archive keep target for maintenance-window (default 500)
-  MAINTENANCE_WINDOW_RETENTION_DAYS Preserve active /sessions history during maintenance-window (default 30)
+  MAINTENANCE_WINDOW_WORKER_RETENTION_DAYS      Headless session age target (default 7)
+  MAINTENANCE_WINDOW_INTERACTIVE_RETENTION_DAYS Interactive session age target (default 90)
+  MAINTENANCE_WINDOW_RETENTION_DAYS Legacy: one age target for both when set
   MAINTENANCE_WINDOW_DRAIN_TIMEOUT  Max seconds maintenance-window waits for headless workers (default 600)
   MAINTENANCE_WINDOW_DRAIN_POLL     Seconds between worker drain polls (default 10)
   OPENCODE_DB_MAINTENANCE_HOUR Scheduled local hour for install (default 4)

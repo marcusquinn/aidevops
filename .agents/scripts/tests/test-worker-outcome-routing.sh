@@ -161,6 +161,23 @@ RUNTIME
 	chmod +x "${FIXTURE_SCRIPTS}/worktree-helper.sh" "${FIXTURE_SCRIPTS}/runtime.sh"
 	SCRIPT_DIR="$FIXTURE_SCRIPTS"
 	HEADLESS_RUNTIME_HELPER="${FIXTURE_SCRIPTS}/runtime.sh"
+	# Exercise the non-systemd producer contract with the existing fixture.
+	uname() {
+		printf 'Darwin\n'
+		return 0
+	}
+	git() {
+		command git "$@" || return $?
+		if [[ "$*" == "-C ${FIXTURE_REPO} worktree list --porcelain" ]]; then
+			# More than a pipe buffer after the match: early awk exit used to
+			# discard the correct path when the producer received SIGPIPE.
+			local i=0
+			for ((i=0; i<4000; i++)); do
+				printf 'worktree /fixture/other-%s\nbranch refs/heads/other-%s\n\n' "$i" "$i"
+			done
+		fi
+		return 0
+	}
 	gh() {
 		printf 'brief\n'
 		[[ ! -f "${TEST_ROOT}/guidance-added" ]] || printf '## Worker Guidance\n'
@@ -187,6 +204,22 @@ RUNTIME
 	_enrichment_run_worker "$prompt_file" 502 owner/repo "$FIXTURE_REPO" test/model || enrichment_status=$?
 	[[ "$enrichment_status" == 2 && ! -e "$prompt_file" ]] || fail "preparation failure lost retry status or prompt cleanup"
 )
+
+# Real persistent reservation: crashes and preparation failures retain backoff
+# and consume the finite budget, even across separate dispatch calls.
+for attempt in 1 2 3; do
+	_ff_with_lock _ff_reserve_enrichment_attempt 502 owner/repo || fail "reservation failed"
+	if _ff_with_lock _ff_reserve_enrichment_attempt 502 owner/repo; then
+		fail "reservation ignored backoff or exhaustion"
+	fi
+	state=$(_ff_load)
+	jq -e --argjson attempt "$attempt" '."owner/repo/502".enrichment_attempts == $attempt' \
+		<<<"$state" >/dev/null || fail "attempt not persisted"
+	_ff_save "$(jq '."owner/repo/502".enrichment_retry_after = 0' <<<"$state")"
+done
+if _ff_with_lock _ff_reserve_enrichment_attempt 502 owner/repo; then
+	fail "fourth preparation attempt allowed"
+fi
 
 ENRICHMENT_MAX_PER_CYCLE=5
 STOP_FLAG="${TEST_ROOT}/stop"
@@ -232,8 +265,8 @@ fi
 if [[ "$(<"$ENRICHMENT_RUN_CALLS")" != "502" ]]; then
 	fail "quality-debt enrichment routed the wrong effective outcome"
 fi
-if [[ "$(wc -l <"$ENRICHMENT_MARK_CALLS" | tr -d ' ')" != "2" ]]; then
-	fail "quality-debt enrichment did not finalize both suppressed and processed entries"
+if [[ "$(wc -l <"$ENRICHMENT_MARK_CALLS" | tr -d ' ')" != "3" ]]; then
+	fail "quality-debt enrichment did not reserve and finalize the processed entry"
 fi
 
 _enrichment_run_worker() {
@@ -241,7 +274,8 @@ _enrichment_run_worker() {
 }
 rm -f "$ENRICHMENT_MARK_CALLS"
 remaining_slots=$(dispatch_enrichment_workers 2)
-[[ "$remaining_slots" == 2 ]] || fail "preparation failure consumed an enrichment slot"
-[[ "$(wc -l <"$ENRICHMENT_MARK_CALLS" | tr -d ' ')" == 1 ]] || fail "preparation failure was marked enrichment done"
+[[ "$remaining_slots" == 1 ]] || fail "preparation failure bypassed the attempt budget"
+[[ "$(wc -l <"$ENRICHMENT_MARK_CALLS" | tr -d ' ')" == 2 ]] || fail "preparation failure reservation missing"
+if grep -q '_ff_mark_enrichment_done 502' "$ENRICHMENT_MARK_CALLS"; then fail "preparation failure was marked done"; fi
 
 printf 'PASS worker outcome routing consults reconciled dispositions\n'

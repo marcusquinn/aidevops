@@ -346,7 +346,7 @@ _enrichment_prepare_worktree() {
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
 		"$wt_helper" add "$branch" --issue "$issue_number") >>"$LOGFILE" 2>&1 || prepare_status=$?
 	worktree_path=$(git -C "$repo_path" worktree list --porcelain |
-		awk -v branch="refs/heads/${branch}" '/^worktree / {path = substr($0, 10)} /^branch / && substr($0, 8) == branch {print path; exit}') || worktree_path=""
+		awk -v branch="refs/heads/${branch}" '/^worktree / {path = substr($0, 10)} /^branch / && substr($0, 8) == branch && !found {print path; found=1}') || worktree_path=""
 	if [[ -z "$worktree_path" || ! -d "$worktree_path" || "$worktree_path" == "$repo_path" ]]; then
 		# The helper also accepts exact branch names for guarded rollback when
 		# creation partly succeeded but porcelain path discovery failed.
@@ -370,6 +370,9 @@ _enrichment_prepare_worktree() {
 _enrichment_release_worktree() {
 	local repo_path="$1"
 	local worktree_path="$2"
+	# The managed invocation is still alive here. Its post-seal callback owns
+	# cleanup, including rollback of partially prepared worktrees.
+	[[ "${AIDEVOPS_MANAGED_WORKTREE_RUN:-0}" != 1 ]] || return 0
 	unregister_worktree_if_owner_pid "$worktree_path" "$$" >>"$LOGFILE" 2>&1 || true
 	(cd "$repo_path" && "${SCRIPT_DIR}/worktree-helper.sh" remove "$worktree_path") >>"$LOGFILE" 2>&1 || {
 		echo "[pulse-wrapper] Enrichment: guarded worktree cleanup deferred" >>"$LOGFILE"
@@ -382,6 +385,35 @@ _enrichment_release_worktree() {
 _enrichment_cleanup_worktree() {
 	_enrichment_release_worktree "$repo_path" "$worktree_path"
 	return 0
+}
+
+# Uses the launch arguments dynamically scoped by _enrichment_run_worker.
+# Creation and exec share the managed service leader PID. The headless runtime
+# can renew ownership without admitting an unrelated supervisor/child lifetime.
+_enrichment_launch() {
+	local status=0
+	if [[ "$(uname -s)" == Linux ]]; then
+		local runner="${SCRIPT_DIR}/worktree-managed-run.py"
+		local helper="${SCRIPT_DIR}/pulse-enrichment-run-helper.sh"
+		python3 "$runner" --check-backend >/dev/null 2>&1 || return 2
+		local -x LOGFILE="$LOGFILE"
+		local -x HEADLESS_RUNTIME_HELPER="$HEADLESS_RUNTIME_HELPER"
+		python3 "$runner" --timeout-seconds 1800 \
+			--after bash --after "$helper" --after cleanup --after "$repo_path" \
+			-- bash "$helper" run "$prompt_file" "$issue_number" "$repo_slug" \
+			"$repo_path" "$resolved_model" "$session_key" || status=$?
+	else
+		# Select the existing non-systemd contract before creating anything.
+		local -x AIDEVOPS_WORKTREE_MANAGER=legacy-guards
+		worktree_path=$(_enrichment_prepare_worktree "$repo_path" "$issue_number" "$session_key") || return 2
+		push_cleanup _enrichment_cleanup_worktree
+		WORKER_ISSUE_NUMBER="$issue_number" WORKER_REPO_SLUG="$repo_slug" \
+			WORKER_WORKTREE_PATH="$worktree_path" "$HEADLESS_RUNTIME_HELPER" run \
+			--role worker --session-key "$session_key" --dir "$worktree_path" \
+			--model "$resolved_model" --title "Enrichment analysis: Issue #${issue_number}" \
+			--prompt-file "$prompt_file" || status=$?
+	fi
+	return "$status"
 }
 
 #######################################
@@ -421,11 +453,6 @@ _enrichment_run_worker() {
 	push_cleanup "$cleanup"
 	local session_key=""
 	session_key="enrichment-${issue_number}-$(date +%Y%m%d-%H%M%S)-$$-${RANDOM}"
-	worktree_path=$(_enrichment_prepare_worktree "$repo_path" "$issue_number" "$session_key") || {
-		echo "[pulse-wrapper] Enrichment: worktree preparation failed for #${issue_number}; retry next cycle" >>"$LOGFILE"
-		return 2
-	}
-	push_cleanup _enrichment_cleanup_worktree
 
 	# Snapshot the body before the run so success means this run added guidance.
 	local pre_body="" pre_count=0 post_count=0
@@ -437,19 +464,12 @@ _enrichment_run_worker() {
 	pre_count=$(printf '%s\n' "$pre_body" | grep -c '^#\{1,6\} Worker Guidance' || true)
 
 	local enrichment_exit=0
-	WORKER_ISSUE_NUMBER="$issue_number" WORKER_REPO_SLUG="$repo_slug" \
-		WORKER_WORKTREE_PATH="$worktree_path" \
-		"$HEADLESS_RUNTIME_HELPER" run \
-		--role worker \
-		--session-key "$session_key" \
-		--dir "$worktree_path" \
-		--model "$resolved_model" \
-		--title "Enrichment analysis: Issue #${issue_number}" \
-		--prompt-file "$prompt_file" </dev/null >"$enrichment_output" 2>&1 || enrichment_exit=$?
+	_enrichment_launch </dev/null >"$enrichment_output" 2>&1 || enrichment_exit=$?
 	if [[ "$enrichment_exit" -ne 0 ]]; then
 		echo "[pulse-wrapper] Enrichment: worker failed (exit=${enrichment_exit}); last 20 output lines:" >>"$LOGFILE"
 		tail -n 20 "$enrichment_output" >>"$LOGFILE"
 	fi
+	[[ "$enrichment_exit" -ne 2 ]] || return 2
 
 	# Check if enrichment succeeded (issue body was edited)
 	local post_body
@@ -550,6 +570,13 @@ dispatch_enrichment_workers() {
 		prompt_file=$(_enrichment_build_prompt \
 			"$issue_number" "$issue_title" "$issue_body" "$prior_attempt" "$repo_slug") || continue
 
+		if ! _ff_with_lock _ff_reserve_enrichment_attempt "$issue_number" "$repo_slug"; then
+			rm -f -- "$prompt_file"
+			continue
+		fi
+		enrichment_count=$((enrichment_count + 1))
+		available=$((available - 1))
+
 		# Run enrichment worker; prompt_file is deleted inside helper
 		local enrichment_status=0
 		if _enrichment_run_worker \
@@ -564,8 +591,6 @@ dispatch_enrichment_workers() {
 		# don't retry enrichment, let normal escalation handle persistent failures)
 		_ff_with_lock _ff_mark_enrichment_done "$issue_number" "$repo_slug" || true
 
-		enrichment_count=$((enrichment_count + 1))
-		available=$((available - 1))
 	done <<<"$enrichment_keys"
 
 	if [[ "$enrichment_count" -gt 0 ]]; then

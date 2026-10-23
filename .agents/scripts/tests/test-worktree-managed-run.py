@@ -8,8 +8,10 @@ import json
 import os
 from pathlib import Path
 import stat
+import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -24,6 +26,52 @@ SPEC.loader.exec_module(runner)
 
 
 class RunnerControlTests(unittest.TestCase):
+    def test_native_enrichment_exec_preserves_managed_admission(self):
+        if not runner.backend_available():
+            self.skipTest("rootless user-systemd unavailable")
+        with tempfile.TemporaryDirectory(prefix="enrichment-managed-") as directory:
+            root = Path(directory)
+            repo, remote = root / "repo", root / "remote.git"
+            env = dict(os.environ, HOME=str(root), AIDEVOPS_WORKTREE_BASE_DIR=str(root / "trees"),
+                       WORKTREE_REGISTRY_DIR=str(root / "registry"),
+                       WORKTREE_REGISTRY_DB=str(root / "registry/registry.db"),
+                       AIDEVOPS_LOG_DIR=str(root / "logs"), LOGFILE=str(root / "pulse.log"),
+                       GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
+                       GIT_AUTHOR_EMAIL="fixture@example.invalid", GIT_COMMITTER_EMAIL="fixture@example.invalid",
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+            for args in (("init", "--bare", str(remote)), ("init", "-b", "main", str(repo)),
+                         ("-C", str(repo), "commit", "--allow-empty", "-m", "base"),
+                         ("-C", str(repo), "remote", "add", "origin", str(remote)),
+                         ("-C", str(repo), "push", "-u", "origin", "main"),
+                         ("-C", str(repo), "remote", "set-head", "origin", "main")):
+                subprocess.run(["git", *args], env=env, capture_output=True, check=True, timeout=15)
+            runtime = root / "runtime.sh"
+            runtime.write_text('#!/usr/bin/env bash\nset -euo pipefail\n'
+                f'source "{SCRIPTS}/shared-constants.sh"\n'
+                'branch=$(git -C "$WORKER_WORKTREE_PATH" symbolic-ref --short HEAD)\n'
+                'claim_worktree_ownership "$WORKER_WORKTREE_PATH" "$branch" '
+                '--owner-pid "$$" --session fixture-enrichment --task 502\n')
+            runtime.chmod(0o700)
+            env["HEADLESS_RUNTIME_HELPER"] = str(runtime)
+            prompt = root / "prompt"
+            prompt.write_text("fixture, no model or GitHub access")
+            helper = str(SCRIPTS / "pulse-enrichment-run-helper.sh")
+            result = subprocess.run([sys.executable, str(SCRIPTS / "worktree-managed-run.py"),
+                "--timeout-seconds", "90", "--after", "bash", "--after", helper,
+                "--after", "cleanup", "--after", str(repo), "--", "bash", helper, "run", str(prompt), "502",
+                "owner/repo", str(repo), "test/model", "enrichment-fixture"],
+                env=env, capture_output=True, text=True, timeout=110)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            with sqlite3.connect(env["WORKTREE_REGISTRY_DB"]) as db:
+                records = [json.loads(row[0]) for row in db.execute("SELECT record FROM worktree_managed_lifetimes")]
+            records = [r for r in records if "enrichment-fixture" in r["identity"]["path"]]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["state"], "sealed")
+            self.assertTrue(records[0]["launches"])
+            self.assertTrue(all(launch.get("completion_evidence") == "systemd-cgroup-v1"
+                                for launch in records[0]["launches"]))
+            self.assertFalse(Path(records[0]["identity"]["path"]).exists(), (root / "pulse.log").read_text())
+
     def test_macos_probe_never_invokes_systemd(self):
         with patch.object(sys, "platform", "darwin"), patch.object(runner.subprocess, "check_output") as call:
             self.assertFalse(runner.backend_available())

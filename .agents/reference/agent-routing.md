@@ -59,6 +59,14 @@ not depend on a user remembering to request learning or feedback capture.
 
 The selected agent changes the system prompt and domain knowledge loaded for the worker.
 
+Award-enrichment workers retain the `seo` coordinator, whose explicit subagent
+allowlist includes `playwright` for bounded public-image inspection/transcription.
+Supply the child with targets, read-only actions and stop conditions; browser/site
+readiness and authorization checks still apply. Static agent task-allowlist denials
+are not signable worker permissions: correct the owning agent's routing/allowlist
+rather than requesting a scoped maintainer grant. The shared grantable permission
+set lives in `configs/worker-permission-policy.json`.
+
 ## Interactive subagent progress
 
 - Use subagents for independent advisory work, not the implementation critical path. Bounded browser operations through `playwright` are an execution exception when the parent supplies target, authorization, allowed actions and stop conditions; the parent still owns verification and final actions. The other default execution exception is the post-merge local standard-tier release handoff in `workflows/release.md`.

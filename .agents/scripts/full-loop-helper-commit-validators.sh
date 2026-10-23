@@ -269,6 +269,9 @@ _run_scoped_node_checks() {
 		command_rc=0
 		(
 			cd "$scope" || exit 1
+			if [[ "$phase" == "test" ]] && jq -e '.name == "opencode-aidevops"' package.json >/dev/null 2>&1; then
+				_validator_plugin_test_concurrency
+			fi
 			timeout_sec "$t" "$pm" run "$script_name"
 		) >"${snapshot_dir}/command-${check_index}.log" 2>&1 || command_rc=$?
 		_restore_validator_repo_root "$(git rev-parse --show-toplevel 2>/dev/null)" "$script_name" || return 1
@@ -288,6 +291,24 @@ _run_scoped_node_checks() {
 		print_error "[validators] NO SCOPED CHECKS AVAILABLE for ${scope_label}"
 		print_error "[validators] configure lint, typecheck, or a check-only format script in ${package_json}"
 		return 1
+	fi
+	return 0
+}
+
+# Only the full-loop plugin gate adapts to host load; direct npm/CI runs keep
+# Node's default concurrency. Serial execution also makes any reported failure
+# reproducible without competing test files (GH#35499). Never extend budgets.
+_validator_plugin_test_concurrency() {
+	local concurrency=""
+	concurrency=$(node -e '
+		const os = require("node:os");
+		const cpus = typeof os.availableParallelism === "function"
+			? os.availableParallelism() : Math.max(1, os.cpus().length);
+		if (os.loadavg()[0] / cpus > 4) process.stdout.write("1");
+	') || concurrency=1
+	if [[ "$concurrency" == "1" ]]; then
+		export AIDEVOPS_PLUGIN_TEST_CONCURRENCY=1
+		print_info "[validators] busy host or unavailable load probe: running plugin tests serially"
 	fi
 	return 0
 }

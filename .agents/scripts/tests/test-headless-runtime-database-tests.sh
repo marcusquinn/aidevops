@@ -70,6 +70,42 @@ SQL
 	return 0
 }
 
+test_seed_worker_db_session_context_restores_archived_session() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-archived"
+	local shared_db="${shared_dir}/opencode.db"
+	local archive_db="${shared_dir}/opencode-archive.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local schema="CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, parent_id TEXT, directory TEXT NOT NULL, title TEXT NOT NULL, time_updated INTEGER NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$archive_db" "$worker_db"
+	sqlite3 "$shared_db" "${schema}"
+	sqlite3 "$archive_db" "${schema}
+INSERT INTO project VALUES ('project-old', 'Old Project');
+INSERT INTO session VALUES ('session-old', 'project-old', NULL, '/work/old', 'Blocked worker', 1);
+INSERT INTO session VALUES ('session-old-child', 'project-old', 'session-old', '/work/old', 'Subagent', 1);
+INSERT INTO message VALUES ('message-old-1', 'session-old', 'history');
+INSERT INTO message VALUES ('message-old-2', 'session-old-child', 'subagent history');"
+	sqlite3 "$shared_db" .schema | sqlite3 "$worker_db"
+
+	local seed_status=0
+	_seed_worker_db_session_context "$isolated_dir" "session-old" >/dev/null 2>&1 || seed_status=$?
+
+	local worker_messages shared_sessions archive_sessions
+	worker_messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-old';")
+	shared_sessions=$(sqlite3 "$shared_db" "SELECT COUNT(*) FROM session WHERE id IN ('session-old', 'session-old-child');")
+	archive_sessions=$(sqlite3 "$archive_db" "SELECT COUNT(*) FROM session;")
+	if [[ "$seed_status" -eq 0 && "$worker_messages" == "1" && "$shared_sessions" == "2" && "$archive_sessions" == "0" ]]; then
+		print_result "seed worker DB restores an archived continuation session before resuming" 0
+		return 0
+	fi
+	print_result "seed worker DB restores an archived continuation session before resuming" 1 \
+		"seed_status=$seed_status worker_messages=$worker_messages shared_sessions=$shared_sessions archive_sessions=$archive_sessions"
+	return 0
+}
+
 test_seed_worker_db_session_context_rebinds_replacement_worktree() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-rebound"

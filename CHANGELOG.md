@@ -10,6 +10,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.58] - 2026-10-23
+
+### Added
+
+- certificate transparency and CAA monitor (GH#35479) (#35481)
+- session-attachments-helper.sh exports pasted OpenCode images on demand
+
+### Changed
+
+- Refactor: split GitHub API efficiency inputs and evidence modules
+- Maintenance: sync GitHub issue refs to TODO.md (#35483)
+- Refactor: separate session miner instruction extraction (GH#35376) (#35402)
+- Refactor: share social reader response and fixture contract (GH#35385) (#35416)
+- Refactor: split markdoc tag parsing and relay runner-shape checks (GH#35374) (#35395)
+- Refactor: reduce frontier harness runner complexity
+- Refactor: split jpegDimensions into bounded helpers (GH#35370)
+- Refactor: extract webhook payload validation from pulse merge server (For #35365) (#35415)
+- Refactor: separate Higgsfield routes and output metadata (GH#35389) (#35424)
+- Refactor: extract task-coordinator storage layer (GH#35384) (#35421)
+- Refactor: separate token report observability readers (#35422)
+- Refactor: extract chart data validation and rendering (GH#35398)
+
+### Fixed
+
+- retire branch-cleanup transports and reclaim leaked ones (GH#35490) (#35491)
+- share portable xattr inspection (GH#35458) (#35489)
+- retry bounded SQLite registry contention
+- classify premature model exits as their own failure family (GH#35486) (#35488)
+- print working resume hints when session restore fails (GH#35477) (#35478)
+- redeploy squash-merged worktree hotfix and plugin-only drift (#35474)
+- restore Tabby tabs from cleanly closed WAL databases
+- reconcile OpenCode shim after npm prefix drift (#35466)
+- use Tabby Python for layout migration (GH#35455) (#35457)
+- override toml to 5.0.1 in opencode-aidevops plugin (#35445)
+- emit issue_metadata_unavailable marker for external-author gate metadata failures (GH#35401) (#35444)
+- guard privacy defaults when HOME is unset (GH#35419) (#35436)
+- release snapshot/provenance reads retry GitHub empty-body 500s within a configurable budget (GH#35434)
+- copy OpenCode archive rows by column name (GH#35418) (#35433)
+
 ## [3.39.57] - 2026-10-22
 
 ### Changed
