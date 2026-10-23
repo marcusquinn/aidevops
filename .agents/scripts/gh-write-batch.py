@@ -7,373 +7,52 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import shutil
-import stat
 import subprocess
 import sys
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 from gh_write_batch_graphql import mutation, preflight_query
-
-SCHEMA = "aidevops.github-write-batch/v1"
-PREPARED_SCHEMA = "aidevops.github-write-batch-prepared/v1"
-RECEIPT_SCHEMA = "aidevops.github-write-batch-receipt/v1"
-MAX_OPERATIONS = 10
-MAX_BODY_BYTES = 1_000_000
-KINDS = {
-    "issue_comment",
-    "pr_comment",
-    "issue_edit",
-    "pr_edit",
-    "issue_add_labels",
-    "issue_remove_labels",
-    "pr_add_labels",
-    "pr_remove_labels",
-}
-PROTECTED_LABELS = {
-    "needs-maintainer-review",
-    "ai-approved",
-    "external-contributor",
-    "parent-task",
-    "auto-dispatch",
-    "hold-for-review",
-    "no-auto-dispatch",
-    "lockdown",
-}
-PROTECTED_LABEL_PREFIXES = ("origin:", "status:", "solved:", "publication:")
-REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
-
-
-class BatchError(Exception):
-    """A fail-closed validation or execution error."""
-
-
-class BodyPreparation(NamedTuple):
-    """Trusted context used while normalizing manifest body files."""
-
-    root: Path
-    marker_sha: str
-    signature_helper: Path
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def private_root(value: str) -> Path:
-    root = Path(value).expanduser().resolve(strict=True)
-    info = root.stat()
-    if not root.is_dir() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
-        raise BatchError("temporary root must be an owner-only directory")
-    return root
-
-
-def private_input(path_value: str, root: Path, label: str) -> Path:
-    if not isinstance(path_value, str) or not path_value or any(ord(ch) < 32 for ch in path_value):
-        raise BatchError(f"{label} path is invalid")
-    raw = Path(path_value).expanduser()
-    if not raw.is_absolute() or raw.is_symlink():
-        raise BatchError(f"{label} must be an absolute non-symlink file")
-    path = raw.resolve(strict=True)
-    if path.parent != root and root not in path.parents:
-        raise BatchError(f"{label} must be under AIDEVOPS_TEMP_DIR")
-    info = path.stat()
-    if not path.is_file() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
-        raise BatchError(f"{label} must be an owner-only regular file")
-    return path
-
-
-def write_private_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)  # nosec B103 - owner-only writable directory
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, sort_keys=True, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        os.chmod(path, 0o600)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def load_json(path: Path, label: str) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise BatchError(f"{label} is not valid UTF-8 JSON: {exc}") from exc
-    if not isinstance(value, dict):
-        raise BatchError(f"{label} root must be an object")
-    return value
-
-
-def exact_keys(value: dict[str, Any], allowed: set[str], label: str) -> None:
-    unknown = sorted(set(value) - allowed)
-    if unknown:
-        raise BatchError(f"{label} contains unsupported fields: {', '.join(unknown)}")
-
-
-def substantive(text: str) -> bool:
-    return bool(unsigned_body(text))
-
-
-def unsigned_body(text: str) -> str:
-    return text.split("<!-- aidevops:sig -->", 1)[0].rstrip()
-
-
-def signature_footer(helper: Path) -> str:
-    try:
-        result = subprocess.run(  # nosec B603 - fixed owner-controlled helper path
-            [str(helper), "footer"], text=True, capture_output=True, timeout=10, check=False
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise BatchError(f"signature helper failed: {exc}") from exc
-    if result.returncode != 0 or "<!-- aidevops:sig -->" not in result.stdout:
-        raise BatchError("signature helper did not return a canonical footer")
-    return result.stdout
-
-
-def copy_body(
-    source: Path,
-    kind: str,
-    operation_id: str,
-    context: BodyPreparation,
-) -> tuple[str, str, str]:
-    body = source.read_text(encoding="utf-8")
-    source_digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    if len(body.encode("utf-8")) > MAX_BODY_BYTES or not substantive(body):
-        raise BatchError(f"operation {operation_id} body is empty or exceeds {MAX_BODY_BYTES} bytes")
-    needs_signature = kind in {"issue_comment", "pr_comment", "pr_edit"}
-    marker = f"<!-- aidevops:batch:{context.marker_sha}:{operation_id} -->"
-    if kind in {"issue_comment", "pr_comment"} and marker not in body.splitlines():
-        signature_at = body.find("<!-- aidevops:sig -->")
-        if signature_at >= 0:
-            body = f"{body[:signature_at].rstrip()}\n{marker}\n\n{body[signature_at:]}"
-        else:
-            body = f"{body.rstrip()}\n\n{marker}\n"
-    if needs_signature and "<!-- aidevops:sig -->" not in body.splitlines():
-        body = f"{body}{signature_footer(context.signature_helper)}"
-    fd, copied = tempfile.mkstemp(prefix="gh-write-batch-body.", dir=context.root)
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        os.fchmod(stream.fileno(), 0o600)
-        stream.write(body)
-    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    return copied, digest, source_digest
-
-
-def validate_labels(value: Any, operation_id: str) -> list[str]:
-    if not isinstance(value, list) or not value or len(value) > 10:
-        raise BatchError(f"operation {operation_id} labels must contain 1-10 values")
-    labels: list[str] = []
-    for label in value:
-        if not isinstance(label, str) or not label or len(label) > 100 or label.strip() != label:
-            raise BatchError(f"operation {operation_id} has an invalid label")
-        if label in PROTECTED_LABELS or label.startswith(PROTECTED_LABEL_PREFIXES):
-            raise BatchError(f"operation {operation_id} cannot mutate protected label {label}")
-        if label in labels:
-            raise BatchError(f"operation {operation_id} repeats label {label}")
-        labels.append(label)
-    return labels
-
-
-def operation_intent_sha(operation: dict[str, Any]) -> str:
-    intent = {
-        key: operation[key]
-        for key in ("kind", "number", "source_sha256", "title", "labels")
-        if key in operation
-    }
-    encoded = json.dumps(intent, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def load_manifest(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any], str]:
-    root = private_root(args.temp_root)
-    manifest_path = private_input(args.manifest, root, "manifest")
-    helper = Path(args.signature_helper).resolve(strict=True)
-    manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-    return root, helper, load_json(manifest_path, "manifest"), manifest_sha
-
-
-def validate_manifest(manifest: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
-    exact_keys(manifest, {"schema", "repository", "operations", "recovery_of"}, "manifest")
-    if manifest.get("schema") != SCHEMA:
-        raise BatchError(f"manifest schema must be {SCHEMA}")
-    repository = manifest.get("repository")
-    if not isinstance(repository, str) or not REPO_RE.fullmatch(repository):
-        raise BatchError("manifest repository must be an exact owner/name slug")
-    raw_operations = manifest.get("operations")
-    if not isinstance(raw_operations, list) or not 1 <= len(raw_operations) <= MAX_OPERATIONS:
-        raise BatchError(f"manifest must contain 1-{MAX_OPERATIONS} operations")
-    return repository, raw_operations
-
-
-def load_recovery(
-    recovery_of: Any, root: Path, repository: str, manifest_sha: str
-) -> tuple[dict[str, dict[str, Any]], str]:
-    if recovery_of is None:
-        return {}, manifest_sha
-    if not isinstance(recovery_of, dict):
-        raise BatchError("recovery_of must identify an owner-only receipt")
-    exact_keys(recovery_of, {"manifest_sha256", "receipt_file"}, "recovery_of")
-    recovery_sha = recovery_of.get("manifest_sha256")
-    if not isinstance(recovery_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", recovery_sha):
-        raise BatchError("recovery_of manifest_sha256 is invalid")
-    receipt_path = private_input(recovery_of.get("receipt_file"), root, "recovery receipt")
-    receipt = load_json(receipt_path, "recovery receipt")
-    if (
-        receipt.get("schema") != RECEIPT_SCHEMA
-        or receipt.get("manifest_sha256") != recovery_sha
-        or receipt.get("repository") != repository
-    ):
-        raise BatchError("recovery receipt does not match this repository and manifest")
-    marker_sha = receipt.get("marker_sha256")
-    if not isinstance(marker_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", marker_sha):
-        raise BatchError("recovery receipt marker lineage is invalid")
-    receipt_operations = receipt.get("operations")
-    if not isinstance(receipt_operations, list):
-        raise BatchError("recovery receipt operations are invalid")
-    operations = {
-        operation.get("id"): operation
-        for operation in receipt_operations
-        if isinstance(operation, dict) and isinstance(operation.get("id"), str)
-    }
-    return operations, marker_sha
-
-
-def validate_operation_identity(raw: Any, index: int) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise BatchError(f"operation {index} must be an object")
-    exact_keys(raw, {"id", "kind", "number", "body_file", "title", "labels"}, f"operation {index}")
-    operation_id = raw.get("id")
-    kind = raw.get("kind")
-    number = raw.get("number")
-    if not isinstance(operation_id, str) or not ID_RE.fullmatch(operation_id):
-        raise BatchError(f"operation {index} id is invalid")
-    if kind not in KINDS:
-        raise BatchError(f"operation {operation_id} kind is unsupported")
-    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
-        raise BatchError(f"operation {operation_id} number must be a positive integer")
-    return {
-        "id": operation_id,
-        "kind": kind,
-        "number": number,
-        "target_type": "PullRequest" if kind.startswith("pr_") else "Issue",
-    }
-
-
-def validate_comment_shape(raw: dict[str, Any], operation: dict[str, Any]) -> str:
-    if "body_file" not in raw or "title" in raw or "labels" in raw:
-        raise BatchError(f"operation {operation['id']} comment shape is invalid")
-    return "comment"
-
-
-def validate_edit_shape(raw: dict[str, Any], operation: dict[str, Any]) -> str:
-    if "labels" in raw or ("body_file" not in raw and "title" not in raw):
-        raise BatchError(f"operation {operation['id']} edit shape is invalid")
-    title = raw.get("title")
-    if title is not None:
-        stub = isinstance(title, str) and re.fullmatch(r"(?:t[0-9]+|GH#[0-9]+):\s*", title.strip())
-        if not isinstance(title, str) or not title.strip() or len(title) > 256 or stub:
-            raise BatchError(f"operation {operation['id']} title is invalid")
-        operation["title"] = title
-    return "scalar"
-
-
-def validate_label_shape(raw: dict[str, Any], operation: dict[str, Any]) -> str:
-    if "labels" not in raw or "body_file" in raw or "title" in raw:
-        raise BatchError(f"operation {operation['id']} label shape is invalid")
-    operation["labels"] = validate_labels(raw["labels"], operation["id"])
-    return "labels"
-
-
-def normalize_operation(
-    raw: Any, index: int, context: BodyPreparation, copied_files: list[str]
-) -> tuple[dict[str, Any], str]:
-    operation = validate_operation_identity(raw, index)
-    kind = operation["kind"]
-    if kind.endswith("_comment"):
-        field = validate_comment_shape(raw, operation)
-    elif kind.endswith("_edit"):
-        field = validate_edit_shape(raw, operation)
-    else:
-        field = validate_label_shape(raw, operation)
-    if "body_file" in raw:
-        source = private_input(raw["body_file"], context.root, f"operation {operation['id']} body")
-        copied, body_sha, source_sha = copy_body(source, kind, operation["id"], context)
-        copied_files.append(copied)
-        operation.update(body_file=copied, body_sha256=body_sha, source_sha256=source_sha)
-    return operation, field
-
-
-def validate_recovery_operation(
-    operation: dict[str, Any], recovery_operations: dict[str, dict[str, Any]]
-) -> None:
-    previous = recovery_operations.get(operation["id"])
-    if not isinstance(previous, dict) or previous.get("status") != "unknown":
-        raise BatchError(f"operation {operation['id']} is not unknown in the recovery receipt")
-    if previous.get("kind") != operation["kind"] or previous.get("number") != operation["number"]:
-        raise BatchError(f"operation {operation['id']} does not match its recovery receipt identity")
-    if previous.get("intent_sha256") != operation_intent_sha(operation):
-        raise BatchError(f"operation {operation['id']} payload does not match its recovery receipt")
-
-
-def prepare(args: argparse.Namespace) -> int:
-    root, helper, manifest, manifest_sha = load_manifest(args)
-    repository, raw_operations = validate_manifest(manifest)
-    recovery_of = manifest.get("recovery_of")
-    recovery_operations, marker_sha = load_recovery(recovery_of, root, repository, manifest_sha)
-    context = BodyPreparation(root, marker_sha, helper)
-
-    operation_ids: set[str] = set()
-    field_owners: set[tuple[str, int, str]] = set()
-    operations: list[dict[str, Any]] = []
-    copied_files: list[str] = []
-    try:
-        for index, raw in enumerate(raw_operations):
-            operation, field = normalize_operation(raw, index, context, copied_files)
-            operation_id = operation["id"]
-            if operation_id in operation_ids:
-                raise BatchError(f"duplicate operation id {operation_id}")
-            operation_ids.add(operation_id)
-            owner_key = (operation["target_type"], operation["number"], field)
-            if field != "comment" and owner_key in field_owners:
-                raise BatchError(
-                    f"dependent operations repeat {field} on {operation['target_type']} #{operation['number']}"
-                )
-            field_owners.add(owner_key)
-            if recovery_of is not None:
-                validate_recovery_operation(operation, recovery_operations)
-            operations.append(operation)
-        unknown_ids = {
-            operation_id
-            for operation_id, operation in recovery_operations.items()
-            if operation.get("status") == "unknown"
-        }
-        if recovery_of is not None and operation_ids != unknown_ids:
-            raise BatchError("recovery manifest must contain exactly the receipt's unknown operations")
-        prepared = {
-            "schema": PREPARED_SCHEMA,
-            "manifest_sha256": manifest_sha,
-            "repository": repository,
-            "recovery_of": marker_sha if recovery_of is not None else None,
-            "prepared_at": now_iso(),
-            "operations": operations,
-        }
-        write_private_json(Path(args.output), prepared)
-    except Exception:
-        for copied in copied_files:
-            Path(copied).unlink(missing_ok=True)
-        raise
-    return 0
+# Explicit re-exports preserve the importlib API while publication stays local.
+from gh_write_batch_common import (
+    ID_RE as ID_RE,
+    KINDS as KINDS,
+    MAX_BODY_BYTES as MAX_BODY_BYTES,
+    MAX_OPERATIONS as MAX_OPERATIONS,
+    PREPARED_SCHEMA as PREPARED_SCHEMA,
+    PROTECTED_LABEL_PREFIXES as PROTECTED_LABEL_PREFIXES,
+    PROTECTED_LABELS as PROTECTED_LABELS,
+    RECEIPT_SCHEMA as RECEIPT_SCHEMA,
+    REPO_RE as REPO_RE,
+    SCHEMA as SCHEMA,
+    BatchError as BatchError,
+    BodyPreparation as BodyPreparation,
+    exact_keys as exact_keys,
+    load_json as load_json,
+    load_recovery as load_recovery,
+    now_iso as now_iso,
+    operation_intent_sha as operation_intent_sha,
+    private_input as private_input,
+    private_root as private_root,
+    substantive as substantive,
+    unsigned_body as unsigned_body,
+    validate_labels as validate_labels,
+    validate_operation_identity as validate_operation_identity,
+    validate_recovery_operation as validate_recovery_operation,
+    write_private_json as write_private_json,
+)
+from gh_write_batch_preparation import (
+    copy_body as copy_body,
+    load_manifest as load_manifest,
+    normalize_operation as normalize_operation,
+    prepare as prepare,
+    signature_footer as signature_footer,
+    validate_comment_shape as validate_comment_shape,
+    validate_edit_shape as validate_edit_shape,
+    validate_label_shape as validate_label_shape,
+    validate_manifest as validate_manifest,
+)
 
 
 def graphql_call(query: str, variables: dict[str, Any], timeout: int) -> tuple[int, str, str, bool]:
