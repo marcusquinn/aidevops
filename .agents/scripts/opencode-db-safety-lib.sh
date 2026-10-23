@@ -207,7 +207,10 @@ opencode_archive_table_schema_supported() {
 	session_share) supported="session_id,id,secret,url,time_created,time_updated" ;;
 	session_message) supported="id,session_id,type,time_created,time_updated,data,seq" ;;
 	session_input) supported="id,session_id,prompt,delivery,admitted_seq,promoted_seq,time_created" ;;
-	session_context_epoch) supported="session_id,baseline,snapshot,baseline_seq" ;;
+	session_context_epoch)
+		legacy="session_id,baseline,snapshot,baseline_seq"
+		supported="${legacy}|${legacy},replacement_seq,revision,agent"
+		;;
 	event_sequence) supported="aggregate_id,seq,owner_id" ;;
 	event) supported="id,aggregate_id,seq,type,data" ;;
 	*)

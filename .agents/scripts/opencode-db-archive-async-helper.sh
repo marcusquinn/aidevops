@@ -66,14 +66,26 @@ _lock_release() {
 
 _lock_signal_exit() {
 	local exit_code="$1"
-	trap - EXIT INT TERM
-	_lock_release
+	trap '' INT TERM
+	if [[ -n "${_ARCHIVE_CHILD_PID:-}" ]]; then
+		kill -TERM "$_ARCHIVE_CHILD_PID" 2>/dev/null || true
+		wait "$_ARCHIVE_CHILD_PID" 2>/dev/null || true
+	fi
 	exit "$exit_code"
 	return 1
 }
 
+_async_exit() {
+	local exit_code="$1"
+	echo "[opencode-db-archive-async] Terminal: PID=$$ rc=${exit_code} at $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
+	if [[ "${_ARCHIVE_LOCK_OWNED:-0}" == 1 ]]; then
+		_lock_release
+	fi
+	return 0
+}
+
 _lock_install_traps() {
-	trap '_lock_release' EXIT
+	trap '_async_exit "$?"' EXIT
 	trap '_lock_signal_exit 130' INT
 	trap '_lock_signal_exit 143' TERM
 	return 0
@@ -107,6 +119,7 @@ _lock_finish_acquire() {
 		rmdir "$LOCK_DIR" 2>/dev/null || true
 		return 1
 	fi
+	_ARCHIVE_LOCK_OWNED=1
 	_lock_install_traps
 	return 0
 }
@@ -170,6 +183,7 @@ _update_last_run() {
 # ============================================================
 
 main() {
+	_lock_install_traps
 	echo "[opencode-db-archive-async] PID=$$ starting at $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
 
 	if [[ ! -x "$ARCHIVE_HELPER" ]]; then
@@ -185,7 +199,10 @@ main() {
 	echo "[opencode-db-archive-async] Starting archive (budget=${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC}s)" >>"$LOGFILE"
 
 	local rc=0
-	"$ARCHIVE_HELPER" archive-all --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 || rc=$?
+	"$ARCHIVE_HELPER" archive-all --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 &
+	_ARCHIVE_CHILD_PID=$!
+	wait "$_ARCHIVE_CHILD_PID" || rc=$?
+	_ARCHIVE_CHILD_PID=""
 
 	if [[ "$rc" -eq 0 ]]; then
 		_update_last_run
