@@ -680,6 +680,24 @@ _replay_preserved_worker_dbs() {
 }
 
 #######################################
+# Succeed when the session is in the shared active DB, restoring it from the
+# archive first when needed (inactive worker sessions are archived after 7 days).
+# Args: $1 = shared opencode.db path, $2 = session id.
+#######################################
+_ensure_shared_session_active() {
+	local shared_db="$1"
+	local session_id="$2"
+	local session_id_sql session_exists
+	session_id_sql=$(sql_escape "$session_id")
+	session_exists=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
+	[[ "$session_exists" != "1" ]] || return 0
+	_restore_archived_worker_session "$shared_db" "$session_id" || return 1
+	session_exists=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
+	[[ "$session_exists" == "1" ]] || return 1
+	return 0
+}
+
+#######################################
 # Seed a continuation session into a worker's isolated OpenCode DB.
 # Called before `opencode run --session <id> --continue` so retries launched
 # with a fresh XDG_DATA_HOME can resolve the persisted conversation locally.
@@ -693,7 +711,7 @@ _seed_worker_db_session_context() {
 	local current_work_dir="${3:-}"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
-	local shared_db_sql session_id_sql current_work_dir_sql="" session_exists column_list
+	local shared_db_sql session_id_sql current_work_dir_sql="" column_list
 	local session_tables project_tables table_name table_identifier
 	local clear_session_sql="" copy_session_sql=""
 	local clear_project_sql="" copy_project_sql=""
@@ -704,13 +722,7 @@ _seed_worker_db_session_context() {
 	[[ -f "$shared_db" ]] || return 1
 	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 1
 	session_id_sql=$(sql_escape "$session_id")
-	session_exists=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
-	if [[ "$session_exists" != "1" ]]; then
-		# Inactive worker sessions are archived after 7 days; restore before seeding.
-		_restore_archived_worker_session "$shared_db" "$session_id" || return 1
-		session_exists=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
-		[[ "$session_exists" == "1" ]] || return 1
-	fi
+	_ensure_shared_session_active "$shared_db" "$session_id" || return 1
 
 	# Build a schema-only DB, then synchronise migration ledgers. This avoids a
 	# multi-gigabyte full backup while preserving OpenCode migration state.
