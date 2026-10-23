@@ -39,6 +39,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
     "@opentelemetry/sdk-trace-base": "2.8.0",
     "@opentelemetry/sdk-trace-node": "2.8.0",
-    "toml": "5.0.1"
+    "toml": "5.0.1",
+    "zod": "4.6.6"
   }
 }
