@@ -237,17 +237,25 @@ resolve_tabby_recovery() {
     local resolver="${SCRIPT_DIR}/../plugins/opencode-aidevops/session-recovery-marker.mjs"
     local resolution=""
     local resolver_status=0
+    local stderr_file=""
 
     require_node_cli || return 1
-    if resolution=$(node "${resolver}" resolve --cwd "${recovered_cwd}" --work-dir "${work_dir}"); then
+    TABBY_RECOVERY_ERROR=""
+    stderr_file=$(mktemp) || stderr_file=""
+    if [[ -n "${stderr_file}" ]]; then
+        resolution=$(node "${resolver}" resolve --cwd "${recovered_cwd}" --work-dir "${work_dir}" 2>"${stderr_file}") && resolver_status=0 || resolver_status=$?
+        TABBY_RECOVERY_ERROR=$(head -c 400 "${stderr_file}" | tr '\r\n\t' '   ')
+        rm -f "${stderr_file}"
+    else
+        resolution=$(node "${resolver}" resolve --cwd "${recovered_cwd}" --work-dir "${work_dir}") && resolver_status=0 || resolver_status=$?
+    fi
+    if ((resolver_status == 0)); then
         IFS=$'\t' read -r TABBY_RECOVERY_LAUNCH_DIR TABBY_RECOVERY_DATA_DIR TABBY_RECOVERY_SESSION_ID <<<"${resolution}"
         if [[ -z "${TABBY_RECOVERY_LAUNCH_DIR}" || -z "${TABBY_RECOVERY_DATA_DIR}" || -z "${TABBY_RECOVERY_SESSION_ID}" ]]; then
             print_error "Tabby session recovery returned incomplete data"
             return 1
         fi
         return 0
-    else
-        resolver_status=$?
     fi
     if ((resolver_status == 3)); then
         IFS=$'\t' read -r TABBY_RECOVERY_LAUNCH_DIR TABBY_RECOVERY_DATA_DIR TABBY_RECOVERY_SESSION_ID <<<"${resolution}"
@@ -1463,6 +1471,29 @@ apply_tabby_recovery() {
 # launcher failure ends the tab's process and Tabby removes the tab, losing
 # the user's handle on the saved session. Keep a login shell open instead,
 # with enough context to resume manually.
+print_tabby_resume_hints() {
+    local saved_session="$1"
+    local invocation_dir="$2"
+    local marker="${invocation_dir}/recovery.json"
+    local fields=""
+    local marker_directory=""
+    local marker_data_dir=""
+
+    print_error "Saved session: ${saved_session}"
+    [[ -z "${TABBY_RECOVERY_ERROR:-}" ]] || print_error "Recovery failed: ${TABBY_RECOVERY_ERROR}"
+    print_error "Retry with: cd $(printf '%q' "${invocation_dir}") && aidevops opencode --tabby-shell"
+    [[ -f "${marker}" ]] && command -v node >/dev/null 2>&1 || return 0
+    fields=$(node -e '
+const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const ok = (v) => typeof v === "string" && v.startsWith("/") && !/[\x00-\x1f]/.test(v);
+if (ok(m.directory) && ok(m.data_dir)) process.stdout.write(m.directory + "\t" + m.data_dir);
+' "${marker}" 2>/dev/null) || return 0
+    IFS=$'\t' read -r marker_directory marker_data_dir <<<"${fields}"
+    [[ -n "${marker_directory}" && -n "${marker_data_dir}" ]] || return 0
+    print_error "Manual resume: cd $(printf '%q' "${marker_directory}") && XDG_DATA_HOME=$(printf '%q' "${marker_data_dir}") AIDEVOPS_OPENCODE_ISOLATED_DB=1 opencode --session ${saved_session}"
+    return 0
+}
+
 keep_tabby_tab_open() {
     local tabby_shell="$1"
     local dry_run="$2"
@@ -1475,7 +1506,7 @@ keep_tabby_tab_open() {
     saved_session=$(basename "${invocation_dir}")
     print_error "Tabby session restore failed; keeping this tab open."
     if [[ "${saved_session}" == ses_* ]]; then
-        print_error "Saved session: ${saved_session} (resume in its project with: aidevops opencode --session ${saved_session})"
+        print_tabby_resume_hints "${saved_session}" "${invocation_dir}"
     fi
     cd "${HOME}" || return 1
     exec "${login_shell}" -l
