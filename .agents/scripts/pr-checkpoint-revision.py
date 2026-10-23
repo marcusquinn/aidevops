@@ -61,7 +61,7 @@ def approved_release(data, comments, approval, comment):
     release = release_for(comments, approval, comment)
     if release is None:
         return None
-    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    closing = (release["user"]["login"], released_attempt_token(comments, approval, release))
     return closing if history_approved(data, comments, approval, comment["id"], closing) else None
 
 
@@ -81,7 +81,7 @@ def candidate(data, comments, comment, now):
     owners = [a["login"] for a in data["issue"].get("assignees", [])]
     allowed_owners = [[data["assignee"]]]
     if not data.get("lease") or data.get("claiming"):
-        allowed_owners = [[], [approval["runner"]]]
+        allowed_owners = [[], [closing[0]]]
     if owners not in allowed_owners:
         return None
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
@@ -106,7 +106,7 @@ def validate(data):
 def template(data):
     """Emit an approval line only when dispatch-approved could accept its release.
 
-    GH#33997: an approval naming a non-blocked release (for example
+    GH#33997: an approval naming an unsupported release (for example
     worker_draft_checkpoint or crash_during_execution) can never dispatch, and
     a trusted approval comment also disables the legacy continuation path.
     """
@@ -116,10 +116,10 @@ def template(data):
     release = release_for(comments, approval, {"id": float("inf")})
     if release is None:
         raise ValueError(
-            f"release {approval['release_id']} is not a trusted CLAIM_RELEASED reason=blocked "
-            f"by {approval['runner']} closing {approval['attempt']}; dispatch-approved would "
+            f"release {approval['release_id']} is not a trusted blocked/clean/worker_complete "
+            f"release closing {approval['attempt']} with its poster's ready lease; dispatch-approved would "
             "reject this approval, so none was generated")
-    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    closing = (release["user"]["login"], released_attempt_token(comments, approval, release))
     history = released_successor_history(comments, release["id"], float("inf"), closing)
     if history is None:
         raise ValueError("intervening coordination is not fully released; no approval generated")
