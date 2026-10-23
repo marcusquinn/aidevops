@@ -207,7 +207,7 @@ EOF
 	# Reserve room for the signed wrapper footer. Remove whole longest comments,
 	# never silently discard constraints from the middle of an inlined comment.
 	# Stream large UTF-8 bodies rather than hitting execs per-argument byte limit.
-	local packet_json parent_json
+	local packet_json="" parent_json=""
 	packet_json=$(printf '%s' "$packet" | jq -Rs '.') || return 1
 	parent_json=$(printf '%s' "$parent_body_section" | jq -Rs '.') || return 1
 	printf '%s\n%s\n%s' "$packet_json" "$parent_json" "$substantive_json" | jq -rs \
@@ -501,7 +501,7 @@ _consolidation_lock_acquire() {
 _consolidation_creation_retry_allowed() {
 	local parent_num="$1"
 	local repo_slug="$2"
-	local body comments content digest
+	local body="" comments="" content="" digest=""
 	body=$(gh issue view "$parent_num" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || return 1
 	comments=$(gh api "repos/${repo_slug}/issues/${parent_num}/comments" --paginate 2>/dev/null) || return 1
 	# Exclude our own lock/failure receipts, including their wrapper footers.

@@ -325,7 +325,7 @@ test_child_body_contains_parent_content_and_authors() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | @bob not mentioned"
 	fi
-	if ! printf '%s' "$body" | grep -q 'Fetch omitted references before consolidating'; then
+	if ! grep -qF 'Fetch omitted references before consolidating' <<<"$body"; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | missing omitted-source instructions"
 	fi
