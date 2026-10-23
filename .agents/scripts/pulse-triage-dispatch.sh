@@ -170,13 +170,17 @@ _compose_consolidation_child_body() {
 
 	local authors_line="${authors_csv:-_no substantive authors detected_}"
 	local parent_body_section="${parent_body:-_(parent body was empty)_}"
+	if [[ ${#authors_line} -gt 4000 ]]; then
+		authors_line="_Contributor list omitted (size limit): fetch parent comments and @mention every substantive author._"
+	fi
 
 	local instructions_block
 	instructions_block=$(_compose_consolidation_worker_instructions \
 		"$parent_num" "$repo_slug" "$authors_line")
 
 	local packet
-	packet=$(cat <<EOF
+	packet=$(
+		cat <<EOF
 ## Consolidation target: #${parent_num}
 
 **Parent issue:** #${parent_num} in \`${repo_slug}\`
@@ -203,33 +207,35 @@ EOF
 	# Reserve room for the signed wrapper footer. Remove whole longest comments,
 	# never silently discard constraints from the middle of an inlined comment.
 	# Stream large UTF-8 bodies rather than hitting execs per-argument byte limit.
-	printf '%s\0%s\0%s' "$packet" "$parent_body_section" "$substantive_json" | jq -Rrs \
+	local packet_json parent_json
+	packet_json=$(printf '%s' "$packet" | jq -Rs '.') || return 1
+	parent_json=$(printf '%s' "$parent_body_section" | jq -Rs '.') || return 1
+	printf '%s\n%s\n%s' "$packet_json" "$parent_json" "$substantive_json" | jq -rs \
 		--arg num "$parent_num" --arg repo "$repo_slug" '
 		def fill($comments):
-			"__CONSOLIDATION_COMMENTS__" as $marker | rindex($marker) as $i |
-			.[:$i] + $comments + .[($i + ($marker | length)):];
+			"__CONSOLIDATION_COMMENTS__" as $marker | split($marker) as $parts |
+			($parts[0:-1] | join($marker)) + $comments + $parts[-1];
 		def reference: "- Comment ID " + (.id | tostring) + ": " + (.url // "(fetch parent comments via API)");
 		def render:
 			([.kept[] | "### Comment — @" + .login + " at " + .created_at + "\n\n" + .body] | join("\n\n---\n\n")) +
 			(if (.omitted | length) > 0 then "\n\n### Omitted comments — fetch before consolidating\n" +
 			([.omitted[] | reference] | join("\n")) else "" end);
-		split("\u0000") as $input | $input[0] as $packet | $input[1] as $parent |
-		$input[2] | fromjson |
+		.[0] as $packet | .[1] as $parent | .[2] |
 		# A near-limit parent cannot coexist with instructions. Preserve it by
 		# reference only in that exceptional case rather than silently slicing it.
 		($packet | if length > 63000 then
 			split($parent) | join("Parent body omitted (size limit): fetch issue #" + $num + " in " + $repo + " verbatim before consolidating.")
-		else . end) as $packet |
+		else . end) as $bounded_packet |
 		{kept: ., omitted: []} |
-		until((($packet | length) + (render | length)) <= 64000 or (.kept | length) == 0;
+		until((($bounded_packet | length) + (render | length)) <= 64000 or (.kept | length) == 0;
 			(.kept | max_by(.body | length)) as $largest |
 			(.kept | index($largest)) as $index |
 			.omitted += [$largest] | .kept |= del(.[$index])) |
 		(render) as $comments |
-		($packet | fill($comments)) |
+		($bounded_packet | fill($comments)) |
 		# Pathological comment counts can exceed the budget with references alone.
 		if length > 64000 then
-			$packet | fill("Comments omitted (reference list exceeds size limit): fetch all pages of repos/" + $repo + "/issues/" + $num + "/comments before consolidating.")
+			$bounded_packet | fill("Comments omitted (reference list exceeds size limit): fetch all pages of repos/" + $repo + "/issues/" + $num + "/comments before consolidating.")
 		else . end
 	'
 	return 0
@@ -500,8 +506,11 @@ _consolidation_creation_retry_allowed() {
 	comments=$(gh api "repos/${repo_slug}/issues/${parent_num}/comments" --paginate 2>/dev/null) || return 1
 	# Exclude our own lock/failure receipts, including their wrapper footers.
 	content=$(printf '%s' "$comments" | jq -sc '
-		add | map(select((.body // "" | test("^<!-- consolidation-lock:|^<!-- consolidation-create-failure:")) | not)) |
-		map({id, body}) | sort_by(.id)') || return 1
+		add | map(select((.body // "" | test("^<!-- consolidation-lock:|^<!-- consolidation-create-failure:")) | not))') || return 1
+	# Routine bot/ops chatter must not restart the same deterministic failure.
+	# Hash exactly the substantive sources used by the packet composer.
+	content=$(_consolidation_filter_substantive_comments "$content") || return 1
+	content=$(printf '%s' "$content" | jq -c 'map({id, body}) | sort_by(.id)') || return 1
 	digest=$(printf '%s\n%s' "$body" "$content" | shasum -a 256) || return 1
 	_CONSOLIDATION_SOURCE_FINGERPRINT="${digest%% *}"
 	if printf '%s' "$comments" | jq -se --arg marker "<!-- consolidation-create-failure:${_CONSOLIDATION_SOURCE_FINGERPRINT} -->" \

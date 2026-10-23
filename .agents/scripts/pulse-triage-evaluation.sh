@@ -980,7 +980,7 @@ _consolidation_resolving_pr_exists() {
 # provenance footer so automation metadata cannot turn a short note into a
 # substantive scope change. Original bodies are retained in the output.
 # Args: $1=comments JSON (one array or paginated arrays)
-# Returns: JSON array of {login, created_at, body} objects.
+# Returns: JSON array of {id, url, login, created_at, body} objects.
 #######################################
 _consolidation_filter_substantive_comments() {
 	local comments_json="$1"

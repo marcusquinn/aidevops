@@ -1713,7 +1713,7 @@ test_non_consolidating_comment_call_budget() {
 
 test_oversized_consolidation_packet() {
 	setup_gh_stub
-	local comments body huge_parent filtered
+	local comments body huge_parent filtered authors
 	comments=$(jq -n '[range(1; 5) | {id: ., html_url: ("https://github.com/owner/repo/issues/123#issuecomment-" + tostring), user: {login: "alice", type: "User"}, created_at: "2026-10-23T00:00:00Z", body: (if . == 1 then "界" * 40000 else "x" * 20000 end)}]')
 	filtered=$(_consolidation_filter_substantive_comments "$comments")
 	body=$(_compose_consolidation_child_body 123 owner/repo title VERBATIM_PARENT_BODY_MARKER "$filtered" @alice bug)
@@ -1731,6 +1731,13 @@ test_oversized_consolidation_packet() {
 	else
 		print_result "near-limit parent uses an explicit verbatim-fetch reference rather than overflow" 1
 	fi
+	authors=$(jq -nr '"@contributor " * 6000')
+	body=$(_compose_consolidation_child_body 123 owner/repo title parent '[]' "$authors" bug)
+	if [[ ${#body} -le 64000 && "$body" == *"Contributor list omitted (size limit)"* ]]; then
+		print_result "oversized contributor list uses a fetch reference without overflowing instructions" 0
+	else
+		print_result "oversized contributor list uses a fetch reference without overflowing instructions" 1
+	fi
 	teardown_gh_stub
 	return 0
 }
@@ -1738,7 +1745,7 @@ test_oversized_consolidation_packet() {
 test_creation_failure_retry_receipt() {
 	setup_gh_stub
 	local original_comments receipt body initial_fingerprint error
-	original_comments='[{"id":1,"body":"original source comment"}]'
+	original_comments='[{"id":1,"user":{"login":"alice","type":"User"},"body":"Original source comment with substantive scope constraints that must be preserved in the merged brief."}]'
 	export GH_API_COMMENTS_JSON="$original_comments"
 	_consolidation_creation_retry_allowed 123 owner/repo
 	initial_fingerprint="$_CONSOLIDATION_SOURCE_FINGERPRINT"
@@ -1756,13 +1763,19 @@ test_creation_failure_retry_receipt() {
 	done
 	# Model a second runner observing the receipt plus an ephemeral lock on a
 	# later API page. Neither automation comment must invalidate the fingerprint.
-	GH_API_COMMENTS_JSON=$(printf '%s' "$original_comments" | jq --arg receipt "$receipt" '. + [{id:2,body:$receipt},{id:3,body:"<!-- consolidation-lock:runner=other ts=now -->"}]')
+	GH_API_COMMENTS_JSON=$(printf '%s' "$original_comments" | jq --arg receipt "$receipt" '. + [{id:2,body:$receipt},{id:3,body:"<!-- consolidation-lock:runner=other ts=now -->"},{id:4,body:"<!-- aidevops:ops --> Routine automated status with a long signature that is not a source change."}]')
 	export GH_API_COMMENTS_JSON
 	: >"$GH_LOG"
 	if ! _consolidation_lock_acquire 123 owner/repo && ! grep -Eq 'issue (edit|comment|create)' "$GH_LOG"; then
 		print_result "second runner suppresses unchanged failure before any lock writes" 0
 	else
 		print_result "second runner suppresses unchanged failure before any lock writes" 1
+	fi
+	body=$(_create_consolidation_child_issue owner/repo 123 packet)
+	if ! grep -q 'issue comment' "$GH_LOG"; then
+		print_result "repeated deterministic creation failure does not duplicate its receipt" 0
+	else
+		print_result "repeated deterministic creation failure does not duplicate its receipt" 1
 	fi
 	GH_ISSUE_VIEW_BODY="changed parent body"
 	export GH_ISSUE_VIEW_BODY
@@ -1772,7 +1785,7 @@ test_creation_failure_retry_receipt() {
 		print_result "parent body edit re-arms deterministic creation failure" 1
 	fi
 	unset GH_ISSUE_VIEW_BODY
-	GH_API_COMMENTS_JSON=$(printf '%s' "$GH_API_COMMENTS_JSON" | jq '.[0].body = "edited source comment"')
+	GH_API_COMMENTS_JSON=$(printf '%s' "$GH_API_COMMENTS_JSON" | jq '.[0].body += " Edited source constraint."')
 	export GH_API_COMMENTS_JSON
 	if _consolidation_creation_retry_allowed 123 owner/repo; then
 		print_result "source comment edit re-arms deterministic creation failure" 0
