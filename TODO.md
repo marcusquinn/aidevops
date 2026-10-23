@@ -1734,6 +1734,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
   - [x] t18750 tls-trust phase 2: read-only fleet probes (hosts, containers, WordPress, shared-hosting PHP) #auto-dispatch #security ref:GH#35279 blocked-by:t18749 -> [todo/tasks/t18750-brief.md] pr:#35286 completed:2026-10-21
   - [x] t18751 tls-trust phase 3: advisory to check linkage with verified auto-dismiss #auto-dispatch #security ref:GH#35280 blocked-by:t18749 -> [todo/tasks/t18751-brief.md] pr:#35281 completed:2026-10-21
 
+- [ ] t18761 cert-watch: Certificate Transparency + CAA routine filing issues in each site's private repo #auto-dispatch #security ref:GH#35479 -> [todo/tasks/t18761-brief.md]
+
 - [x] t18752 docs(security): PHP RCE CVE-2026-109618/109619 advisory and security-release playbook #documentation #security ref:GH#35322 pr:#35323 completed:2026-10-21
 
 - [x] t18753 fix(tests): split DB URL fixtures that block release secretlint preflight #bug ref:GH#35325 pr:#35327 completed:2026-10-21
