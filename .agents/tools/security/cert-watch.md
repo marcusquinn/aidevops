@@ -89,6 +89,7 @@ lock. Corrupt/insecure state fails closed rather than resetting the baseline.
 | `caa-missing` | low | No CAA found from a hostname through its apex; one stable finding per apex |
 | `caa-blocks-active-issuer` | high | Effective CAA prevents an issuer of a currently valid certificate; renewal may fail |
 | `ct-unknown` / `caa-unknown` | unknown | Incomplete observation; printed only, never filed as a security finding |
+| `ct-policy-unknown` | unknown | A new certificate's issuer check is deferred until its CAA policy can be evaluated |
 
 CAA resolution inspects DNS response status so SERVFAIL cannot become
 `caa-missing`. It climbs each hostname to the operated apex and stops at the first
@@ -113,6 +114,9 @@ ordinary and wildcard issuance and the contact address before applying them.
 Unfiled CT findings persist across dry runs, failed filing attempts and missing
 private routes. After successful filing/dedup, they are acknowledged in state;
 the same certificate ID does not generate a new alert on subsequent runs.
+An UNKNOWN CAA observation does not consume a new certificate's issuer check:
+the original expected-issuer set is retained and the check retried, without
+letting the unresolved issuer establish its own historical expectation.
 
 ## Routing and privacy boundary
 

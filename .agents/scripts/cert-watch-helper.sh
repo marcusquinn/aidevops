@@ -313,7 +313,9 @@ def ct_scan(row, state, path, config, policies, last_fetch):
         return [finding(row, 'ct-unknown', 'unknown', 'fetch', 'CT fetch failed; state unchanged')], state
     baseline = state is None
     old = (state or {}).get('certificates', {})
-    expected = {c['issuer'].lower() for c in old.values() if timestamp(c['not_before']) >= RECENT}
+    deferred = (state or {}).get('deferred_issuer_checks', {})
+    expected = {c['issuer'].lower() for ident, c in old.items()
+                if ident not in deferred and timestamp(c['not_before']) >= RECENT}
     expected.update(x.lower() for x in config.get('expected_issuers', {}).get(row['apex'], []))
     held = [san for c in old.values() for san in c['sans']
             if san.startswith('*.') and timestamp(c['not_after']) >= NOW]
@@ -321,10 +323,16 @@ def ct_scan(row, state, path, config, policies, last_fetch):
     distrusted = [x.strip().lower() for x in (SCRIPT.parent.parent / 'configs/cert-watch-distrusted-issuers.conf').read_text().splitlines()
                   if x.strip() and not x.startswith('#')]
     findings = []
-    for ident, cert in certs.items():
-        if baseline or ident in old:
+    unresolved = []
+    observations = dict(certs)
+    observations.update({ident: old[ident] for ident in deferred if ident in old})
+    for ident, cert in observations.items():
+        retry = ident in deferred
+        if baseline or (ident in old and not retry):
             continue
-        if any(x in cert['issuer_name'].lower() for x in distrusted):
+        issuer_expected = set(deferred.get(ident, expected))
+        issuer_expected.update(x.lower() for x in config.get('expected_issuers', {}).get(row['apex'], []))
+        if not retry and any(x in cert['issuer_name'].lower() for x in distrusted):
             findings.append(finding(row, 'ct-distrusted-issuer', 'critical', ident, 'Issuer matches distrust list', cert))
         decisions = []
         for san in cert['sans']:
@@ -337,19 +345,26 @@ def ct_scan(row, state, path, config, policies, last_fetch):
             elif policy:
                 decisions.append(allowed(cert['issuer'], policy, san.startswith('*.'), config))
             else:
-                decisions.append(cert['issuer'].lower() in expected)
+                decisions.append(cert['issuer'].lower() in issuer_expected)
         if False in decisions:
             findings.append(finding(row, 'ct-unexpected-issuer', 'high', ident, 'Issuer is outside the expected issuer set', cert))
+        if None in decisions and False not in decisions:
+            # A DNS outage must not let a new issuer establish its own baseline.
+            deferred[ident] = sorted(issuer_expected)
+            unresolved.append(finding(row, 'ct-policy-unknown', 'unknown', ident,
+                                      'Issuer evaluation deferred until CAA observation recovers', cert))
+        else:
+            deferred.pop(ident, None)
         unknown = [san for san in cert['sans'] if (san == row['apex'] or san.endswith('.' + row['apex']))
                    and san not in row['hostnames'] and not any(matches(san, p) for p in held)]
-        if unknown:
+        if unknown and not retry:
             findings.append(finding(row, 'ct-unknown-hostname', 'medium', ident, 'Unrecognised SANs: ' + ', '.join(unknown), cert))
     # Retain unfiled CT findings so a dry run cannot consume an operator alert.
     pending = (state or {}).get('pending', []) + findings
-    state = {'certificates': dict(old, **certs), 'pending': pending}
+    state = {'certificates': dict(old, **certs), 'pending': pending, 'deferred_issuer_checks': deferred}
     private_save(path, state)
     info(('BASELINE CT: ' if baseline else 'OK CT: ') + row['apex'])
-    return pending, state
+    return pending + unresolved, state
 
 
 def caa_scan(row, state, config, policies):
@@ -511,7 +526,8 @@ def main():
                 state = load(path, None, private=True)
                 if state is not None and (not isinstance(state, dict)
                                           or not isinstance(state.get('certificates'), dict)
-                                          or not isinstance(state.get('pending', []), list)):
+                                          or not isinstance(state.get('pending', []), list)
+                                          or not isinstance(state.get('deferred_issuer_checks', {}), dict)):
                     raise ValueError('Invalid CT state schema; refusing to reset baseline')
                 policies = {}
                 for name in sorted(set(row['hostnames'] + [row['apex']])):

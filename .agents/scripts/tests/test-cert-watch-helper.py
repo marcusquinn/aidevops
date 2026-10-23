@@ -297,6 +297,24 @@ class CertWatchTest(unittest.TestCase):
         self.assertIn('# r923: Certificate Transparency and CAA watch', result.stdout)
         self.assertIn('repeat:daily(@06:40)', result.stdout)
 
+    def test_unknown_caa_does_not_consume_new_issuer_check(self):
+        self.write_fixture('ct.json', [self.cert()])
+        self.run_helper('ct')
+        self.write_fixture('ct.json', [self.cert(2, 'Unexpected CA')])
+        self.write_fixture('dns.json', {'example.com': None})
+        self.assertEqual([f['kind'] for f in self.run_helper('ct')], ['ct-policy-unknown'])
+        frozen = json.loads(self.state.read_text())['deferred_issuer_checks']['2']
+        self.assertNotIn('unexpected ca', frozen)
+        self.write_fixture('dns.json', {})
+        self.assertEqual([f['kind'] for f in self.run_helper('ct')], ['ct-unexpected-issuer'])
+        self.assertEqual(json.loads(self.state.read_text())['deferred_issuer_checks'], {})
+        self.assertTrue(json.loads(self.state.read_text())['pending'])
+        self.run_helper('run', '--apply')
+        self.assertEqual(json.loads(self.state.read_text())['pending'], [])
+        before = json.loads((self.fixture_dir / 'issues.json').read_text())
+        self.run_helper('run', '--apply')
+        self.assertEqual(json.loads((self.fixture_dir / 'issues.json').read_text()), before)
+
 
 if __name__ == '__main__':
     unittest.main()
