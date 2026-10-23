@@ -503,12 +503,13 @@ _rest_issue_create() {
 
 	local -a api_args=(-X POST "/repos/${repo}/issues" -f "title=${title}")
 	[[ -n "$tmp_body" ]] && api_args+=(-F "$(_rest_body_file_arg "$tmp_body")")
+	# Empty arrays are unset under `set -u` on Bash < 4.4 (GH#35364).
 	local _lbl
-	for _lbl in "${labels[@]}"; do
+	for _lbl in ${labels[@]+"${labels[@]}"}; do
 		[[ -n "$_lbl" ]] && api_args+=(-f "labels[]=${_lbl}")
 	done
 	local _asn
-	for _asn in "${assignees[@]}"; do
+	for _asn in ${assignees[@]+"${assignees[@]}"}; do
 		[[ -n "$_asn" ]] && api_args+=(-f "assignees[]=${_asn}")
 	done
 	[[ -n "$milestone" ]] && api_args+=(-F "milestone=${milestone}")
@@ -786,11 +787,13 @@ _rest_issue_edit_preserving_deltas() {
 		return 1
 	fi
 
+	# Any delta array may be empty; keep expansions Bash-3.2-safe under
+	# `set -u` (GH#35364). printf with no arguments still emits one empty line.
 	local adds_l="" rms_l="" adds_a="" rms_a=""
-	adds_l=$(_rest_filter_issue_deltas "$current_labels" "$(printf '%s\n' "${delta_add_labels[@]}")" "" add) || return 1
-	rms_l=$(_rest_filter_issue_deltas "$current_labels" "$(printf '%s\n' "${delta_rm_labels[@]}")" "$(printf '%s\n' "${delta_add_labels[@]}")" remove) || return 1
-	adds_a=$(_rest_filter_issue_deltas "$current_assignees" "$(printf '%s\n' "${delta_add_assignees[@]}")" "" add) || return 1
-	rms_a=$(_rest_filter_issue_deltas "$current_assignees" "$(printf '%s\n' "${delta_rm_assignees[@]}")" "$(printf '%s\n' "${delta_add_assignees[@]}")" remove) || return 1
+	adds_l=$(_rest_filter_issue_deltas "$current_labels" "$(printf '%s\n' ${delta_add_labels[@]+"${delta_add_labels[@]}"})" "" add) || return 1
+	rms_l=$(_rest_filter_issue_deltas "$current_labels" "$(printf '%s\n' ${delta_rm_labels[@]+"${delta_rm_labels[@]}"})" "$(printf '%s\n' ${delta_add_labels[@]+"${delta_add_labels[@]}"})" remove) || return 1
+	adds_a=$(_rest_filter_issue_deltas "$current_assignees" "$(printf '%s\n' ${delta_add_assignees[@]+"${delta_add_assignees[@]}"})" "" add) || return 1
+	rms_a=$(_rest_filter_issue_deltas "$current_assignees" "$(printf '%s\n' ${delta_rm_assignees[@]+"${delta_rm_assignees[@]}"})" "$(printf '%s\n' ${delta_add_assignees[@]+"${delta_add_assignees[@]}"})" remove) || return 1
 
 	_REST_ISSUE_DELTA_FAILURE_STAGE="mutation"
 	_rest_issue_apply_delta_plan "$issue_path" "$adds_l" "$rms_l" "$adds_a" "$rms_a" "$delta_order" || return 1
@@ -944,8 +947,8 @@ _rest_issue_edit() {
 	if [[ $has_deltas -eq 1 ]]; then
 		_REST_ISSUE_EDIT_FAILURE_STAGE="snapshot"
 		_rest_issue_prepare_delta_plan "$_issue_path" \
-			"$(printf '%s\n' "${add_labels[@]}")" "$(printf '%s\n' "${rm_labels[@]}")" \
-			"$(printf '%s\n' "${add_assignees[@]}")" "$(printf '%s\n' "${rm_assignees[@]}")" || return 1
+			"$(printf '%s\n' ${add_labels[@]+"${add_labels[@]}"})" "$(printf '%s\n' ${rm_labels[@]+"${rm_labels[@]}"})" \
+			"$(printf '%s\n' ${add_assignees[@]+"${add_assignees[@]}"})" "$(printf '%s\n' ${rm_assignees[@]+"${rm_assignees[@]}"})" || return 1
 	fi
 
 	_rest_issue_execute_edit_plan "$_issue_path" "$has_deltas" \
@@ -1208,7 +1211,7 @@ _rest_pr_create() {
 
 	# Apply labels via the issues endpoint (PRs share it).
 	local label_rc=0
-	_rest_pr_create_label_postcondition "$repo" "$html_url" "${labels[@]}" || label_rc=$?
+	_rest_pr_create_label_postcondition "$repo" "$html_url" ${labels[@]+"${labels[@]}"} || label_rc=$?
 	printf '%s\n' "$html_url"
 	return "$label_rc"
 }
