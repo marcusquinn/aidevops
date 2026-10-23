@@ -25,7 +25,7 @@ dill==0.4.0
 diskcache==5.6.3
 distro==1.9.0
 fastuuid==0.14.0
-filelock==3.29.4
+filelock==4.2.1
 frozenlist==1.8.0
 fsspec==2026.6.0
 gepa==0.0.22
