@@ -1,0 +1,62 @@
+object 32d4df05d106ccaf0708053eb1f797831eac5137
+type commit
+tag v3.39.58
+tagger marcusquinn <6428977+marcusquinn@users.noreply.github.com> 1792754681 +0100
+
+Release v3.39.58 - AI DevOps Framework
+
+Aidevops-Version: 3.39.58
+Aidevops-Source-PR: 35497
+Aidevops-Source-Merge: afe66b305cd86161e372df310ecb8cf5df8e4722
+Aidevops-Snapshot-Base: 8073d5cd2baba9d023e73ac43671f1d27c476a0c
+Aidevops-Aggregated-Source: 35368@773857e30f70151eb80ec9cc7bdbb6fd00c1a00e
+Aidevops-Aggregated-Source: 35391@45536ce9ff31b5721cae38012a88869a305907d7
+Aidevops-Aggregated-Source: 35395@81186042a43f7a33d54064efb2634783467739cd
+Aidevops-Aggregated-Source: 35402@31be7d27b94e45ce58cd75c6c62ade322773e09d
+Aidevops-Aggregated-Source: 35405@2e164b42954536add966c82bd76dddeed78fba98
+Aidevops-Aggregated-Source: 35409@cf87a7bf7dc84021f9ca6f5a92c9319d06e3f2da
+Aidevops-Aggregated-Source: 35414@6361015b23d275873ef9ed0d3a9ff4c8104d1edf
+Aidevops-Aggregated-Source: 35415@96a38340da62902746e6fc1d698f8bd25dc35ea0
+Aidevops-Aggregated-Source: 35416@2ef1843070398e504c7c065e217675d421664f2a
+Aidevops-Aggregated-Source: 35420@88ecb52999fda4dbf32ab9b1e83ef53738459b35
+Aidevops-Aggregated-Source: 35421@d79359dde76ebb222b1f9876669ee52bf7d53d67
+Aidevops-Aggregated-Source: 35422@5f45f8e490af9ef6a613e46eb9c493ec18a3b36d
+Aidevops-Aggregated-Source: 35423@76f940c091023fa75bb186c9c37acf94f7efc340
+Aidevops-Aggregated-Source: 35424@e8c29a39992165b5e6f1a3d1f1c208435ecdc581
+Aidevops-Aggregated-Source: 35426@76f316ee18cc4c34ce87d5b055990c3636ec7a82
+Aidevops-Aggregated-Source: 35428@9acb1d77864b2a34cb3292e83c862f270c40edac
+Aidevops-Aggregated-Source: 35431@d76421b9751d859ee95d8ab4d0e7d194f884d7ab
+Aidevops-Aggregated-Source: 35433@7ecbaf7cb4118979018e4f56ba0aad3ec97f93f6
+Aidevops-Aggregated-Source: 35435@14ef68fd3602cd9020b871ed42de3fcc83daeabd
+Aidevops-Aggregated-Source: 35436@12417e736935bf60060a196d85f26e18783fad64
+Aidevops-Aggregated-Source: 35437@f95d74ab6efb16ebc8e63608278f393e904735b4
+Aidevops-Aggregated-Source: 35438@9d060bfaf5c2f696305c45d1f40f794cfdb8abb4
+Aidevops-Aggregated-Source: 35439@6eb986c3ab62580920da98dce161f0a0488ff9a5
+Aidevops-Aggregated-Source: 35440@258e7c2a031796c47e7ca5d61f7e4e15e41a957f
+Aidevops-Aggregated-Source: 35441@9cb27e21eabd1bd9a9d144f4b3567027e4b452e9
+Aidevops-Aggregated-Source: 35442@2ed2380bfc33f48a43f8878aa657503f03168a5d
+Aidevops-Aggregated-Source: 35444@7be1ee640709aab84a4ed07f6f5294cf45f91b29
+Aidevops-Aggregated-Source: 35445@3ef7908b8f8e27396b132d13b71ec39ea9e6bd46
+Aidevops-Aggregated-Source: 35446@34aa959beb99931bc7d13276d837b37176c270ec
+Aidevops-Aggregated-Source: 35452@fdecc6bb74f55b7eb1baa212e7c09a4accb919ef
+Aidevops-Aggregated-Source: 35457@1fb04e8ccd8c5ad42fd0d18ceaff1300ecba84d7
+Aidevops-Aggregated-Source: 35464@f3f5b8bf4c0544eac1d1a485086a7a358dd9173c
+Aidevops-Aggregated-Source: 35466@1cc7577e5a85daeaf0f99aeac8d69f2ff69c9079
+Aidevops-Aggregated-Source: 35472@5c6fc565aa658c27deaf4e90743389d9b4e8f7d9
+Aidevops-Aggregated-Source: 35473@555145a8367375db94be4091c349d529ab9a60f8
+Aidevops-Aggregated-Source: 35474@85938e72092d134db5163368e022ef798d8b86e8
+Aidevops-Aggregated-Source: 35478@30a2be8b021c4000f7c9fbb9dab62bde4dc084a7
+Aidevops-Aggregated-Source: 35480@e186f316c370323875c8616ba5a2a66dc3536fa1
+Aidevops-Aggregated-Source: 35481@5d54dc5d68766448451225b182ce982fe6382ad5
+Aidevops-Aggregated-Source: 35483@a5caabf7dac7c17816becffbb957c03f41756283
+Aidevops-Aggregated-Source: 35487@3ac31a766e1c4f982aa03430963ad12c1dc08df5
+Aidevops-Aggregated-Source: 35488@ef5dea64c104043171e2eb33a77d6a7e14b2fc9b
+Aidevops-Aggregated-Source: 35489@95996f5de5c021da62b57a66cba458fd7dbdb3d7
+Aidevops-Aggregated-Source: 35491@a8a92c200ec719c933f31965be6ef705ef02f0a4
+Aidevops-Aggregated-Source: 35497@afe66b305cd86161e372df310ecb8cf5df8e4722
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg5IliwL42sBxfqQz9UN/AwvOgBI
+tXO/S10O+PgxbPV78AAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQHIuDXnxwWzt0dhjj2gJrKRJBD9ALe/LH9KzqOPJY7IEQKNRRcEiP2CuryM+ScwVjh
+gADWXeWlZUsJdYLTKxhQY=
+-----END SSH SIGNATURE-----
