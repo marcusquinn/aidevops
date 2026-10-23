@@ -146,7 +146,8 @@ _playwriter_approved_version() {
 	local policy_file="${SCRIPT_DIR}/lib/mcp_config.py"
 	local version=""
 	if [[ -f "$policy_file" ]]; then
-		version=$(sed -nE "s/^PLAYWRITER_MCP_PACKAGE = 'playwriter@([0-9]+\.[0-9]+\.[0-9]+)'$/\1/p" "$policy_file" | head -1)
+		# sed quits at the first match itself; no early-exit pipe reader under pipefail.
+		version=$(sed -nE "/^PLAYWRITER_MCP_PACKAGE = 'playwriter@[0-9]+\.[0-9]+\.[0-9]+'$/{s/^PLAYWRITER_MCP_PACKAGE = 'playwriter@([0-9]+\.[0-9]+\.[0-9]+)'$/\1/p;q;}" "$policy_file")
 	fi
 	printf '%s\n' "${version:-unknown}"
 	return 0
