@@ -136,6 +136,11 @@ _release_lane_api() {
 		status_code="${BASH_REMATCH[1]}"
 	fi
 	_release_lane_rate_limited "$step" "$status_code" "$response" && return 76
+	# A rejected non-forced update needs a fresh head check, not a blind retry.
+	if [[ "$step" == "ref-update" && "$status_code" == "422" ]]; then
+		printf 'RELEASE_LANE_WRITE step=%s status=422 revalidate=true\n' "$step" >&2
+		return 74
+	fi
 	if [[ "$status_code" == 5[0-9][0-9] && "$safe_to_retry" == "$_AIDEVOPS_RELEASE_LANE_TRUE" ]]; then
 		retryable="$_AIDEVOPS_RELEASE_LANE_TRUE"
 	fi
@@ -233,6 +238,7 @@ _release_lane_write() {
 	local parent="$expected_head" commit_sha="" payload="" current_head=""
 	local head_rc=0
 	local write_rc=0
+	local attempt=0
 	if [[ -z "$parent" ]]; then
 		parent=$(_release_lane_api parent-read true "repos/${repo}/git/ref/heads/main" --jq '.object.sha // empty') || return $?
 	fi
@@ -242,16 +248,21 @@ _release_lane_write() {
 		payload=$(jq -cn --arg ref "refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --arg sha "$commit_sha" '{ref:$ref,sha:$sha}') || return 1
 		_release_lane_api ref-create false "repos/${repo}/git/refs" --method POST --input - <<<"$payload" >/dev/null || write_rc=$?
 	else
-		current_head=$(_release_lane_remote_head "$repo") || head_rc=$?
-		case "$head_rc" in
-		0) ;;
-		75 | 76) return "$head_rc" ;;
-		*) return 2 ;;
-		esac
-		[[ "$current_head" == "$expected_head" ]] || return 2
 		payload=$(jq -cn --arg sha "$commit_sha" '{sha:$sha,force:false}') || return 1
-		_release_lane_api ref-update false "repos/${repo}/git/refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --method PATCH --input - \
-			<<<"$payload" >/dev/null || write_rc=$?
+		for attempt in 0 1; do
+			current_head=$(_release_lane_remote_head "$repo") || head_rc=$?
+			case "$head_rc" in
+			0) ;;
+			75 | 76) return "$head_rc" ;;
+			*) return 2 ;;
+			esac
+			# Let the caller re-read and rebuild its transition if another writer won.
+			[[ "$current_head" == "$expected_head" ]] || return 2
+			write_rc=0
+			_release_lane_api ref-update false "repos/${repo}/git/refs/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}" --method PATCH --input - \
+				<<<"$payload" >/dev/null || write_rc=$?
+			[[ "$write_rc" -eq 74 ]] || break
+		done
 	fi
 	[[ "$write_rc" -eq 76 ]] && return 76
 	[[ "$write_rc" -eq 0 ]] || return 2
@@ -1284,33 +1295,47 @@ release_lane_finalize() {
 	local receipt="$3"
 	local state_json=""
 	local write_rc=0
+	local attempt=0 read_rc=0 expected_head=""
 	[[ -n "$_AIDEVOPS_RELEASE_LANE_TOKEN" ]] || return 1
 	release_lane_read "$repo" || return 1
-	# Idempotent: a lane already terminal for this source and receipt needs no second write.
-	if _release_lane_is_terminal_for "$source_pr" "$receipt"; then
-		return 0
-	fi
-	jq -e --argjson source_pr "$source_pr" --arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" \
-		'.active == true and .source_pr == $source_pr and .operation_token == $token' \
-		<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
-	state_json=$(jq -c --arg receipt "$receipt" --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-		'.active=false | .phase="terminal" | .terminal_receipt=$receipt | .updated_at=$now' \
-		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
-	_release_lane_write "$repo" "$state_json" "$_AIDEVOPS_RELEASE_LANE_HEAD" || write_rc=$?
-	if [[ "$write_rc" -ne 0 ]]; then
-		# A compare-and-swap write can reach GitHub before its transport reports an
-		# error. Re-read the exact terminal state so a durable publication does not
-		# become a false reconciliation failure.
-		if release_lane_read "$repo" && _release_lane_is_terminal_for "$source_pr" "$receipt"; then
-			printf 'RELEASE_LANE_FINALIZE_RECONCILED source_pr=%s receipt=%s write_exit=%s\n' \
-				"$source_pr" "$receipt" "$write_rc" >&2
+	for attempt in 0 1; do
+		# Idempotent: a lane already terminal for this source and receipt needs no second write.
+		if _release_lane_is_terminal_for "$source_pr" "$receipt"; then
 			return 0
 		fi
-		printf 'RELEASE_LANE_FINALIZE_FAILED source_pr=%s receipt=%s write_exit=%s\n' \
-			"$source_pr" "$receipt" "$write_rc" >&2
-		return "$write_rc"
-	fi
-	return 0
+		jq -e --argjson source_pr "$source_pr" --arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" \
+			'.active == true and .source_pr == $source_pr and .operation_token == $token' \
+			<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
+		state_json=$(jq -c --arg receipt "$receipt" --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+			'.active=false | .phase="terminal" | .terminal_receipt=$receipt | .updated_at=$now' \
+			<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+		expected_head="$_AIDEVOPS_RELEASE_LANE_HEAD"
+		write_rc=0
+		_release_lane_write "$repo" "$state_json" "$expected_head" || write_rc=$?
+		if [[ "$write_rc" -ne 0 ]]; then
+			# A compare-and-swap write can reach GitHub before its transport reports an
+			# error. Re-read the exact terminal state so a durable publication does not
+			# become a false reconciliation failure.
+			read_rc=0
+			release_lane_read "$repo" || read_rc=$?
+			if [[ "$read_rc" -eq 0 ]] && _release_lane_is_terminal_for "$source_pr" "$receipt"; then
+				printf 'RELEASE_LANE_FINALIZE_RECONCILED source_pr=%s receipt=%s write_exit=%s\n' \
+					"$source_pr" "$receipt" "$write_rc" >&2
+				return 0
+			fi
+			# Rebuild only a raced transition, never replay stale state over a new owner.
+			# The next iteration rechecks both source and operation token.
+			if [[ "$attempt" -eq 0 && "$write_rc" -eq 2 && "$read_rc" -eq 0 &&
+				"$_AIDEVOPS_RELEASE_LANE_HEAD" != "$expected_head" ]]; then
+				continue
+			fi
+			printf 'RELEASE_LANE_FINALIZE_FAILED source_pr=%s receipt=%s write_exit=%s\n' \
+				"$source_pr" "$receipt" "$write_rc" >&2
+			return "$write_rc"
+		fi
+		return 0
+	done
+	return 2
 }
 
 #aidevops:trust-boundary

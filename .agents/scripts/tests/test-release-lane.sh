@@ -979,6 +979,94 @@ run_dead_preparing_refusal_test() (
 	return 0
 )
 
+run_finalize_ref_update_recovery_test() (
+	local mode="$1"
+	local root="$TEST_ROOT/ref-update-$mode"
+	local initial_head="1111111111111111111111111111111111111111"
+	local moved_head="2222222222222222222222222222222222222222"
+	local commit_head="3333333333333333333333333333333333333333"
+	local count=0 rc=0 output=""
+	mkdir -p "$root" || return 1
+	printf '%s\n' "$initial_head" >"$root/head"
+	printf '0\n' >"$root/count"
+	jq -cn '{schema_version:1,repository:"test/repo",active:true,source_pr:101,
+		phase:"remote-publication",tag:"v1.2.3",operation_token:"lane-test",
+		updated_at:"2026-10-23T00:00:00Z"}' >"$root/state" || return 1
+	_AIDEVOPS_RELEASE_LANE_TOKEN="lane-test"
+	_release_lane_create_commit() {
+		local repo="$1" parent="$2" state_json="$3"
+		[[ "$repo" == "test/repo" ]] || return 1
+		printf '%s\n' "$parent" >"$root/parent"
+		printf '%s\n' "$state_json" >"$root/candidate"
+		printf '%s\n' "$commit_head"
+		return 0
+	}
+	gh() {
+		local command="$1" endpoint="$2"
+		local payload="" head="" state=""
+		[[ "$command" == "api" ]] || return 1
+		case "$endpoint" in
+		repos/test/repo/git/ref/heads/aidevops/release-lane)
+			IFS= read -r head <"$root/head" || return 1
+			printf '%s\n' "$head"
+			;;
+		repos/test/repo/contents/*)
+			IFS= read -r state <"$root/state" || return 1
+			printf '%s\n' "$state"
+			;;
+		repos/test/repo/git/refs/heads/aidevops/release-lane)
+			[[ " $* " == *" --method PATCH "* ]] || return 1
+			IFS= read -r payload || return 1
+			jq -e --arg sha "$commit_head" '.force == false and .sha == $sha' <<<"$payload" >/dev/null || return 1
+			IFS= read -r count <"$root/count" || return 1
+			count=$((count + 1))
+			printf '%s\n' "$count" >"$root/count"
+			if [[ "$count" -eq 1 || "$mode" == "persistent" ]]; then
+				case "$mode" in
+				moved | owner | source)
+					printf '%s\n' "$moved_head" >"$root/head"
+					state=$(jq -c --arg mode "$mode" '.concurrent_evidence="preserved"
+						| if $mode == "owner" then .operation_token="lane-other"
+						  elif $mode == "source" then .source_pr=202 else . end' "$root/state") || return 1
+					printf '%s\n' "$state" >"$root/state"
+					;;
+				forbidden) printf 'gh: Forbidden PRIVATE_BODY (HTTP 403)\n' >&2; return 1 ;;
+				quota) printf 'gh: API rate limit exceeded PRIVATE_BODY (HTTP 403)\n' >&2; return 1 ;;
+				server) printf 'gh: Service Unavailable PRIVATE_BODY (HTTP 503)\n' >&2; return 1 ;;
+				esac
+				printf 'gh: Reference update rejected PRIVATE_BODY (HTTP 422)\n' >&2
+				return 1
+			fi
+			IFS= read -r state <"$root/candidate" || return 1
+			printf '%s\n' "$state" >"$root/state"
+			printf '%s\n' "$commit_head" >"$root/head"
+			;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	output=$(release_lane_finalize test/repo 101 published 2>&1) || rc=$?
+	[[ "$output" != *"PRIVATE_BODY"* ]] || return 1
+	IFS= read -r count <"$root/count" || return 1
+	case "$mode" in
+	unchanged | moved)
+		[[ "$rc" -eq 0 && "$count" -eq 2 ]] || return 1
+		jq -e '.active == false and .phase == "terminal" and .terminal_receipt == "published"' "$root/state" >/dev/null || return 1
+		if [[ "$mode" == "moved" ]]; then
+			[[ "$(<"$root/parent")" == "$moved_head" ]] || return 1
+			jq -e '.concurrent_evidence == "preserved"' "$root/state" >/dev/null || return 1
+		fi
+		;;
+	persistent) [[ "$rc" -eq 2 && "$count" -eq 2 ]] || return 1 ;;
+	quota) [[ "$rc" -eq 76 && "$count" -eq 1 ]] || return 1 ;;
+	*) [[ "$rc" -ne 0 && "$count" -eq 1 ]] || return 1 ;;
+	esac
+	if [[ "$rc" -ne 0 ]]; then
+		jq -e '.active == true and .phase == "remote-publication"' "$root/state" >/dev/null || return 1
+	fi
+	return 0
+)
+
 run_finalize_idempotent_terminal_test() (
 	local terminal='{"schema_version":1,"repository":"test/repo","active":false,"source_pr":101,"phase":"terminal","tag":"v1.2.3","terminal_receipt":"published","operation_token":"token-old"}'
 	local active='{"schema_version":1,"repository":"test/repo","active":true,"source_pr":101,"phase":"remote-publication","tag":"v1.2.3","terminal_receipt":null,"operation_token":"token-old"}'
@@ -1020,6 +1108,13 @@ run_finalize_idempotent_terminal_test() (
 	return 0
 )
 
+for recovery_mode in unchanged moved owner source persistent forbidden quota server; do
+	if run_finalize_ref_update_recovery_test "$recovery_mode"; then
+		assert_result "finalize ref-update recovery: $recovery_mode" true
+	else
+		assert_result "finalize ref-update recovery: $recovery_mode" false
+	fi
+done
 if run_finalize_idempotent_terminal_test; then assert_result 'finalize is idempotent when the remote lane is already terminal and still fails otherwise' true; else assert_result 'finalize is idempotent when the remote lane is already terminal and still fails otherwise' false; fi
 if run_competing_source_test; then assert_result 'competing source receives active lane and reconcile action' true; else assert_result 'competing source receives active lane and reconcile action' false; fi
 if run_same_source_adoption_test; then assert_result 'same source adopts durable lane without another bump' true; else assert_result 'same source adopts durable lane without another bump' false; fi
