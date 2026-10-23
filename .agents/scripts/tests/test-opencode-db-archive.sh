@@ -917,10 +917,13 @@ if [[ "$out" == *"project with spaces"* && "$out" == *"project-b"* && "$out" == 
 else
 	_fail "isolated dry-run mismatch: $out"
 fi
+set +e
 out=$(OPENCODE_DB_PATH="$SANDBOX/missing.db" OPENCODE_INTERACTIVE_ROOT="$isolated_root" \
 	OPENCODE_DB_HOLDER_COMMAND="$mock_holder" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
 	"$HELPER" archive-all --apply --retention-days 0 2>&1)
-if [[ ! -f "$isolated_root/project-b/opencode/opencode-archive.db" && "$out" == *"hold the active DB open"* ]]; then
+rc=$?
+set -e
+if [[ "$rc" -eq 2 && ! -f "$isolated_root/project-b/opencode/opencode-archive.db" && "$out" == *"hold the active DB open"* && "$out" == *"rc=2"* ]]; then
 	_pass "scheduled inventory skips live-held isolated DBs"
 else
 	_fail "isolated holder veto mismatch: $out"
@@ -949,6 +952,208 @@ if [[ "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 0 && "$t
 	_pass "opt-in archived event expiry preserves session/message/part rows"
 else
 	_fail "event expiry transcript mismatch: $out"
+fi
+
+# A persisted old-shape archive must migrate before a new-shape copy, and
+# restore must preserve non-default values (not just silently apply defaults).
+_reset_dbs
+_make_active_db_1_18_3
+_make_legacy_archive_db_without_session_path
+sqlite3 "$ARCHIVE_DB" "CREATE TABLE session_context_epoch (session_id text PRIMARY KEY, baseline text NOT NULL, snapshot text NOT NULL, baseline_seq integer NOT NULL);"
+sqlite3 "$ACTIVE_DB" <<'SQL'
+ALTER TABLE session_context_epoch ADD COLUMN replacement_seq integer;
+ALTER TABLE session_context_epoch ADD COLUMN revision integer DEFAULT 0 NOT NULL;
+ALTER TABLE session_context_epoch ADD COLUMN agent text DEFAULT 'build' NOT NULL;
+UPDATE session_context_epoch SET replacement_seq=42, revision=17, agent='plan';
+SQL
+epoch_before=$(sqlite3 "$ACTIVE_DB" 'SELECT * FROM session_context_epoch;')
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+epoch_archived=$(sqlite3 "$ARCHIVE_DB" 'SELECT * FROM session_context_epoch;')
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1)
+epoch_restored=$(sqlite3 "$ACTIVE_DB" 'SELECT * FROM session_context_epoch;')
+if [[ "$epoch_before" == "$epoch_archived" && "$epoch_before" == "$epoch_restored" ]]; then
+	_pass "new epoch columns survive legacy archive migration and archive/restore round-trip"
+else
+	_fail "new epoch round-trip mismatch: before=$epoch_before archived=$epoch_archived restored=$epoch_restored"
+fi
+
+# A destination downgraded to the old epoch shape must not lose new values.
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+sqlite3 "$ACTIVE_DB" 'ALTER TABLE session_context_epoch DROP COLUMN replacement_seq; ALTER TABLE session_context_epoch DROP COLUMN revision; ALTER TABLE session_context_epoch DROP COLUMN agent;'
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 3 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT * FROM session_context_epoch;')" == "$epoch_before" && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 0 ]]; then
+	_pass "restore to legacy epoch shape refuses non-default archive-only values without mutation"
+else
+	_fail "legacy epoch restore lost values: rc=$rc output=$out"
+fi
+sqlite3 "$ARCHIVE_DB" "UPDATE session_context_epoch SET replacement_seq=NULL, revision=0, agent='build';"
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1)
+if [[ "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session_context_epoch;')" == 1 ]]; then
+	_pass "restore to legacy epoch shape allows representable default values"
+else
+	_fail "legacy default epoch restore failed: $out"
+fi
+
+# Inject delays into actual SQLite candidate execution and between durable
+# copy/delete commits. Only this fixture-local executable is interposed.
+sqlite_bin=$(command -v sqlite3)
+mkdir -p "$SANDBOX/slow-sqlite"
+cat >"$SANDBOX/slow-sqlite/sqlite3" <<'PY'
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+args = sys.argv[1:]
+real = os.environ["TEST_REAL_SQLITE"]
+if os.environ["TEST_SQLITE_STAGE"] == "candidate":
+    if any(arg.startswith("SELECT COUNT(*) FROM session WHERE") for arg in args):
+        os.execv(real, [real, args[0], "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n;"])
+elif len(args) == 1:
+    sql = sys.stdin.read()
+    sql = sql.replace("COMMIT;\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard", "COMMIT;\n.shell sleep 10\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard")
+    sys.exit(subprocess.run([real, *args], input=sql, text=True).returncode)
+os.execv(real, [real, *args])
+PY
+chmod +x "$SANDBOX/slow-sqlite/sqlite3"
+for sql_stage in candidate commit_gap; do
+	_reset_dbs
+	_make_active_db_1_18_3
+	before_fingerprint=$(_fixture_graph_fingerprint "$ACTIVE_DB")
+	started=$SECONDS
+	set +e
+	out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="$sql_stage" \
+		OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+		"$HELPER" archive --retention-days 0 --max-duration-seconds 3 2>&1)
+	rc=$?
+	set -e
+	elapsed=$((SECONDS - started))
+	if [[ "$rc" -eq 2 && "$elapsed" -le 7 && "$(_fixture_graph_fingerprint "$ACTIVE_DB")" == "$before_fingerprint" ]]; then
+		_pass "deadline interrupts SQLite $sql_stage without losing the active graph"
+	else
+		_fail "SQLite deadline $sql_stage mismatch: rc=$rc elapsed=$elapsed output=$out"
+	fi
+	if [[ "$sql_stage" == commit_gap ]]; then
+		if [[ "$(_fixture_graph_fingerprint "$ARCHIVE_DB")" == "$before_fingerprint" ]]; then
+			_pass "interrupted copy/delete gap retains a complete durable archive copy"
+		else
+			_fail "copy/delete gap archive copy mismatch"
+		fi
+		# A changed source must not be deleted in favor of a stale duplicate.
+		sqlite3 "$ACTIVE_DB" "UPDATE message SET data='changed';"
+		set +e
+		out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+			OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+		rc=$?
+		set -e
+		if [[ "$rc" -eq 1 && "$(sqlite3 "$ACTIVE_DB" 'SELECT data FROM message;')" == changed ]]; then
+			_pass "retry refuses to delete active values that differ from a durable archive copy"
+		else
+			_fail "stale duplicate guard mismatch: rc=$rc output=$out"
+		fi
+		sqlite3 "$ACTIVE_DB" "UPDATE message SET data='{\"role\":\"assistant\"}';"
+		out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+			OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+		if [[ "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 0 && "$(_fixture_graph_fingerprint "$ARCHIVE_DB")" == "$before_fingerprint" ]]; then
+			_pass "retry completes interrupted durable copies without duplicate or missing graph rows"
+		else
+			_fail "durable duplicate retry mismatch: $out"
+		fi
+	fi
+done
+
+# The deadline covers preflight and batch delays, not just the between-batch
+# loop. Fixtures stay queryable and committed batches are preserved.
+for budget_stage in preflight batch; do
+	_reset_dbs
+	_make_active_db_1_18_3
+	_add_second_active_1_18_3_session
+	wal_delay=0
+	batch_delay=0
+	if [[ "$budget_stage" == preflight ]]; then wal_delay=10; else batch_delay=10; fi
+	started=$SECONDS
+	set +e
+	out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+		OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS="$wal_delay" OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 \
+		OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS="$batch_delay" \
+		"$HELPER" archive --retention-days 0 --max-duration-seconds 3 2>&1)
+	rc=$?
+	set -e
+	elapsed=$((SECONDS - started))
+	active_check=$(sqlite3 "$ACTIVE_DB" 'PRAGMA quick_check;')
+	remaining=$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')
+	if [[ "$rc" -eq 2 && "$elapsed" -le 7 && "$active_check" == ok && "$out" == *"deferred/partial"* ]] &&
+		{ [[ "$budget_stage" == preflight && "$remaining" == 2 && ! -e "$ARCHIVE_DB" ]] ||
+			[[ "$budget_stage" == batch && "$remaining" == 1 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; }; then
+		_pass "per-DB deadline bounds $budget_stage and preserves session ownership"
+	else
+		_fail "deadline $budget_stage mismatch: rc=$rc elapsed=$elapsed remaining=$remaining output=$out"
+	fi
+done
+
+# Signal the scheduled runner, rather than its foreground SQLite child. Its
+# EXIT receipt must include the signal status and it must release its lock.
+_reset_dbs
+_make_active_db_1_18_3
+for signal_name in SIGTERM SIGINT; do
+	async_home="$SANDBOX/async-$signal_name"
+	mkdir -p "$async_home"
+	if HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+		OPENCODE_INTERACTIVE_ROOT="$SANDBOX/no-projects" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=10 \
+		python3 - "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh" "$signal_name" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+runner = subprocess.Popen(["bash", sys.argv[1]])
+log = Path(os.environ["HOME"]) / ".aidevops/logs/opencode-db-archive.log"
+try:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if log.exists() and "Archive inventory:" in log.read_text():
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("archive did not start")
+    sig = getattr(signal, sys.argv[2])
+    runner.send_signal(sig)
+    assert runner.wait(timeout=5) == 128 + sig
+    assert f"Terminal: PID={runner.pid} rc={128 + sig}" in log.read_text()
+    assert not (log.parent / "opencode-db-archive.lock").exists()
+    assert not (log.parent / "opencode-db-archive.last-run").exists()
+finally:
+    if runner.poll() is None:
+        runner.terminate()
+        runner.wait(timeout=5)
+PY
+	then
+		_pass "async $signal_name records terminal rc and drains before releasing lock"
+	else
+		_fail "async $signal_name terminal receipt/lock mismatch"
+	fi
+done
+
+# Ordinary nonzero archive exits must also reach the terminal receipt.
+async_home="$SANDBOX/async-deferred"
+mkdir -p "$async_home"
+set +e
+HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_INTERACTIVE_ROOT="$SANDBOX/no-projects" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=10 OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC=1 \
+	bash "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh"
+rc=$?
+set -e
+async_log=$(<"$async_home/.aidevops/logs/opencode-db-archive.log")
+if [[ "$rc" -eq 2 && "$async_log" == *"rc=2"* && "$async_log" != *"rc=0"* && ! -f "$async_home/.aidevops/logs/opencode-db-archive.last-run" ]]; then
+	_pass "async deferred outcome records nonzero terminal status without a successful last-run"
+else
+	_fail "async deferred terminal status mismatch: rc=$rc log=$async_log"
 fi
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"

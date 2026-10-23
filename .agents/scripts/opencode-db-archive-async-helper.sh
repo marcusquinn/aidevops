@@ -208,14 +208,14 @@ main() {
 		_update_last_run
 		echo "[opencode-db-archive-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
 	elif [[ "$rc" -eq 2 ]]; then
-		echo "[opencode-db-archive-async] Protected skip: active holder, changing WAL, or incomplete checkpoint evidence — last-run NOT updated" >>"$LOGFILE"
+		echo "[opencode-db-archive-async] Protected skip/deferred: active holder, changing WAL, incomplete checkpoint evidence, or per-DB deadline — last-run NOT updated" >>"$LOGFILE"
 	elif [[ "$rc" -eq 3 ]]; then
 		echo "[opencode-db-archive-async] Unsupported OpenCode schema — active data left untouched and last-run NOT updated" >>"$LOGFILE"
 	else
 		echo "[opencode-db-archive-async] archive exited with rc=${rc} — last-run NOT updated" >>"$LOGFILE"
 	fi
 
-	return 0
+	return "$rc"
 }
 
 main "$@"

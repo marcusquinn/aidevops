@@ -49,6 +49,21 @@ _archive_restore_sql() {
 	local sid="$1"
 	local ids="SELECT id FROM archive.session WHERE id = ${sid} OR parent_id = ${sid}"
 	local copy_sql="" delete_sql="" table_name columns
+	# Legacy active DBs cannot represent newer epoch values. Default values
+	# can be omitted, but never delete a non-default archive-only value.
+	local epoch_column epoch_default epoch_nondefault
+	if _sqlite_has_table "$ACTIVE_DB" session_context_epoch && _sqlite_has_table "$ARCHIVE_DB" session_context_epoch; then
+		while IFS='|' read -r epoch_column epoch_default; do
+			_sqlite_has_column "$ARCHIVE_DB" session_context_epoch "$epoch_column" || continue
+			_sqlite_has_column "$ACTIVE_DB" session_context_epoch "$epoch_column" && continue
+			epoch_nondefault=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COUNT(*) FROM session_context_epoch WHERE session_id IN (SELECT id FROM session WHERE id = ${sid} OR parent_id = ${sid}) AND ${epoch_column} IS NOT ${epoch_default};") || return 1
+			[[ "$epoch_nondefault" == 0 ]] || return 1
+		done <<'EPOCH_DEFAULTS'
+replacement_seq|NULL
+revision|0
+agent|'build'
+EPOCH_DEFAULTS
+	fi
 	columns=$(_archive_restore_column_list project) || return 1
 	copy_sql="INSERT OR IGNORE INTO main.project (${columns}) SELECT ${columns} FROM archive.project WHERE id IN (SELECT project_id FROM archive.session WHERE id = ${sid});"$'\n'
 	columns=$(_archive_restore_column_list "$SESSION_TABLE_NAME") || return 1
