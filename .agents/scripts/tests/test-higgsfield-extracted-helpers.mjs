@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 // Match the existing self-test bootstrap order for the common/browser cycle.
+// Importing helpers must not resolve Playwright until a browser is launched.
 await import('../higgsfield/higgsfield-browser.mjs');
 const image = await import('../higgsfield/higgsfield-image.mjs');
 const options = await import('../higgsfield/higgsfield-image-options.mjs');

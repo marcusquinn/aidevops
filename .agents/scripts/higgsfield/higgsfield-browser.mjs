@@ -3,7 +3,6 @@
 // Extracted from higgsfield-common.mjs (t2127 file-complexity decomposition).
 
 import { existsSync } from 'node:fs';
-import { chromium } from 'playwright';
 
 import { dismissAllModals } from './higgsfield-interruptions.mjs';
 
@@ -29,6 +28,9 @@ export function getDefaultOutputDir(options = {}) {
 }
 
 export async function launchBrowser(options = {}) {
+  // Pure helpers also import this module through common's re-exports.
+  // Resolve the optional browser runtime only when launching a browser.
+  const { chromium } = await import('playwright');
   const headless = options.headless !== undefined ? options.headless :
                    !
                    options.headed;
