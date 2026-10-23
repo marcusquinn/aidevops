@@ -9,6 +9,17 @@ import sqlite3
 import sys
 
 
+def is_contention(error):
+    # Extended result codes retain the primary code in their low byte.
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 0xff in (5, 6)  # SQLITE_BUSY, SQLITE_LOCKED
+    # Python <3.11 does not expose sqlite_errorcode. Match only SQLite's
+    # exact contention messages, never arbitrary substrings or I/O errors.
+    return isinstance(error, sqlite3.OperationalError) and str(error) in (
+        "database is locked", "database table is locked", "database schema is locked")
+
+
 def owner_state(database, source_path):
     path = Path(database)
     try:
@@ -20,16 +31,7 @@ def owner_state(database, source_path):
                              (source_path,)).fetchone()
         return "active" if row[0] else "clear"
     except sqlite3.Error as error:
-        # Extended result codes retain the primary code in their low byte.
-        code = getattr(error, "sqlite_errorcode", None)
-        if code is not None and code & 0xff in (5, 6):  # SQLITE_BUSY, SQLITE_LOCKED
-            return "busy"
-        # Python <3.11 does not expose sqlite_errorcode. Match only SQLite's
-        # exact contention messages, never arbitrary substrings or I/O errors.
-        if code is None and isinstance(error, sqlite3.OperationalError) and str(error) in (
-                "database is locked", "database table is locked", "database schema is locked"):
-            return "busy"
-        return "unavailable"
+        return "busy" if is_contention(error) else "unavailable"
     except (OSError, ValueError):
         return "unavailable"
 
