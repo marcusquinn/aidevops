@@ -26,11 +26,19 @@ keeping the DB compact and WAL truncated minimises write-lock hold time.
 
 ## What this routine does
 
-Two schedulers keep the DB compact: a daily archive run at 05:00 local
-(`opencode-db-archive-async-helper.sh` → `opencode-db-archive.sh archive-all`,
-split retention below) and the weekly maintenance below. Every `aidevops
-update`/auto-update (`setup.sh --stage ai-session`) re-installs both; the
-installers are idempotent, so unchanged schedulers are left as they are.
+Two schedulers keep the DB compact: an archive run hourly 00:00–07:00 local
+until one complete pass per day (`opencode-db-archive-async-helper.sh` →
+`opencode-db-archive.sh archive-all`, split retention below) and the weekly
+maintenance below. Every `aidevops update`/auto-update (`setup.sh --stage
+ai-session`) re-installs both; the installers are idempotent, so unchanged
+schedulers are left as they are.
+
+**Held DBs (GH#35517):** archived only when every holder is `opencode` with a
+plugin heartbeat (`.agent-workspace/state/opencode-activity/`) showing no busy
+session for 15 min, plus 30 min of keyboard idle where measurable; 10 sessions
+per batch, re-checked each batch, open sessions excluded, no VACUUM. Tune via
+`OPENCODE_DB_ARCHIVE_{IDLE_SECONDS,USER_IDLE_SECONDS,HELD_BATCH_SIZE,IDLE_GATE}`
+in `opencode-db-idle-gate-lib.sh`.
 
 `r913 Weekly opencode DB maintenance` runs every Sunday at 04:00 local
 time and invokes `opencode-db-maintenance-helper.sh auto`, which:

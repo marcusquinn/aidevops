@@ -951,10 +951,34 @@ setup_opencode_db_archive() {
 	fi
 
 	local archive_log_dir="$archive_home/.aidevops/logs"
-	local archive_hour="${OPENCODE_DB_ARCHIVE_HOUR:-5}"
+	# GH#35517: hourly attempts across an overnight window so DBs held by
+	# OpenCode get several idle-gated chances; the helper no-ops after one
+	# complete pass per day.
+	local archive_start_hour="${OPENCODE_DB_ARCHIVE_START_HOUR:-0}"
+	local archive_end_hour="${OPENCODE_DB_ARCHIVE_END_HOUR:-7}"
 	local archive_minute="${OPENCODE_DB_ARCHIVE_MINUTE:-0}"
 	local archive_budget_sec="${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC:-60}"
 	local archive_env="OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC=${archive_budget_sec}"
+	if ! [[ "$archive_start_hour" =~ ^[0-9]+$ && "$archive_end_hour" =~ ^[0-9]+$ && "$archive_minute" =~ ^[0-9]+$ ]] ||
+		((archive_start_hour > archive_end_hour || archive_end_hour > 23 || archive_minute > 59)); then
+		print_warning "Invalid OPENCODE_DB_ARCHIVE_START_HOUR/END_HOUR/MINUTE — using 0-7 at :00"
+		archive_start_hour=0
+		archive_end_hour=7
+		archive_minute=0
+	fi
+	local archive_window="${archive_start_hour}-${archive_end_hour}"
+	local archive_calendar_xml="" archive_hour=""
+	for ((archive_hour = archive_start_hour; archive_hour <= archive_end_hour; archive_hour++)); do
+		archive_calendar_xml="${archive_calendar_xml}
+		<dict>
+			<key>Hour</key>
+			<integer>${archive_hour}</integer>
+			<key>Minute</key>
+			<integer>${archive_minute}</integer>
+		</dict>"
+	done
+	local archive_on_calendar
+	archive_on_calendar=$(printf '*-*-* %02d..%02d:%02d:00' "$archive_start_hour" "$archive_end_hour" "$archive_minute")
 	mkdir -p "$archive_log_dir"
 
 	if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -980,12 +1004,8 @@ setup_opencode_db_archive() {
 		<string>${_xml_archive_script}</string>
 	</array>
 	<key>StartCalendarInterval</key>
-	<dict>
-		<key>Hour</key>
-		<integer>${archive_hour}</integer>
-		<key>Minute</key>
-		<integer>${archive_minute}</integer>
-	</dict>
+	<array>${archive_calendar_xml}
+	</array>
 	<key>StandardOutPath</key>
 	<string>${_xml_archive_log}</string>
 	<key>StandardErrorPath</key>
@@ -1014,7 +1034,7 @@ setup_opencode_db_archive() {
 ARCHIVE_PLIST
 		)
 		if _launchd_install_if_changed "$archive_label" "$archive_plist" "$archive_plist_content"; then
-			print_info "OpenCode DB archive enabled (launchd, daily ${archive_hour}:${archive_minute})"
+			print_info "OpenCode DB archive enabled (launchd, hourly ${archive_window}h until a full daily pass)"
 		else
 			print_warning "Failed to install opencode DB archive LaunchAgent"
 		fi
@@ -1024,16 +1044,16 @@ ARCHIVE_PLIST
 		_install_scheduler_linux \
 			"aidevops-opencode-db-archive" \
 			"aidevops: opencode-db-archive" \
-			"${archive_minute} ${archive_hour} * * *" \
+			"${archive_minute} ${archive_window} * * *" \
 			"\"${archive_script}\"" \
-			"86400" \
+			"3600" \
 			"${archive_log_dir}/opencode-db-archive.log" \
 			"${archive_env}" \
-			"OpenCode DB archive enabled (daily ${archive_hour}:${archive_minute})" \
+			"OpenCode DB archive enabled (hourly ${archive_window}h until a full daily pass)" \
 			"Failed to install opencode DB archive scheduler" \
 			"false" \
 			"true" \
-			"*-*-* ${archive_hour}:${archive_minute}:00" \
+			"${archive_on_calendar}" \
 			"3600"
 	fi
 	return 0

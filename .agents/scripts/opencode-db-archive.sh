@@ -44,6 +44,8 @@ fi
 
 # shellcheck source=opencode-db-inventory-lib.sh
 source "${_oda_dir}/opencode-db-inventory-lib.sh"
+# shellcheck source=opencode-db-idle-gate-lib.sh
+source "${_oda_dir}/opencode-db-idle-gate-lib.sh"
 
 readonly SCRIPT_NAME="opencode-db-archive"
 if [[ -n "${XDG_DATA_HOME:-}" ]]; then
@@ -61,6 +63,9 @@ readonly DEFAULT_DB="${DEFAULT_DATA_DIR}/opencode.db"
 readonly DEFAULT_WORKER_RETENTION_DAYS=7
 readonly DEFAULT_INTERACTIVE_RETENTION_DAYS=90
 readonly DEFAULT_BATCH_SIZE=500
+# Held mode (GH#35517): small batches keep each write lock brief while idle
+# OpenCode processes hold the DB open.
+readonly DEFAULT_HELD_BATCH_SIZE=10
 readonly DEFAULT_MAX_DURATION=60
 readonly EVENT_TABLE_NAME="event"
 readonly SESSION_TABLE_NAME="session"
@@ -71,6 +76,10 @@ readonly SQL_QUICK_CHECK="PRAGMA quick_check;"
 
 ARCHIVE_BATCH_SIZE="${OPENCODE_DB_ARCHIVE_BATCH_SIZE:-$DEFAULT_BATCH_SIZE}"
 ARCHIVE_BATCH_DELAY_SECONDS="${OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS:-0}"
+ARCHIVE_HELD_BATCH_SIZE="${OPENCODE_DB_ARCHIVE_HELD_BATCH_SIZE:-$DEFAULT_HELD_BATCH_SIZE}"
+# Set by _archive_enter_held_mode when idle OpenCode processes hold the DB.
+_ARCHIVE_HELD_MODE=0
+_ARCHIVE_HELD_SESSIONS=""
 DB_HOLDER_COMMAND="${OPENCODE_DB_HOLDER_COMMAND:-lsof}"
 WAL_STABILITY_DELAY_SECONDS="${OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS:-1}"
 
@@ -245,8 +254,7 @@ _archive_mutation_preflight() {
 		print_warning "Archive deferred — active DB holder state is unavailable."
 		return 2
 	fi
-	if [[ "$holder_count" -gt 0 ]]; then
-		print_warning "Archive deferred — ${holder_count} process(es) hold the active DB open."
+	if [[ "$holder_count" -gt 0 ]] && ! _archive_enter_held_mode "$holder_count"; then
 		return 2
 	fi
 	if ! _wal_is_stable "$ACTIVE_DB"; then
@@ -259,6 +267,66 @@ _archive_mutation_preflight() {
 	return 0
 }
 
+# GH#35517: a DB held only by idle OpenCode processes may be archived in small
+# batches. Any busy, recently active, unknown or heartbeat-less holder defers.
+_archive_enter_held_mode() {
+	local holder_count="$1"
+	local deferred="Archive deferred — ${holder_count} process(es) hold the active DB open"
+
+	if [[ "${OPENCODE_DB_ARCHIVE_IDLE_GATE:-1}" != 1 ]]; then
+		print_warning "${deferred}."
+		return 1
+	fi
+	if [[ ! "$ARCHIVE_HELD_BATCH_SIZE" =~ ^[0-9]+$ ]] || ((ARCHIVE_HELD_BATCH_SIZE == 0)); then
+		print_warning "${deferred} (OPENCODE_DB_ARCHIVE_HELD_BATCH_SIZE must be a positive integer)."
+		return 1
+	fi
+	if ! opencode_db_idle_gate "$ACTIVE_DB" "$DB_HOLDER_COMMAND"; then
+		print_warning "${deferred} (${OPENCODE_DB_IDLE_GATE_REASON})."
+		return 1
+	fi
+	_ARCHIVE_HELD_MODE=1
+	_ARCHIVE_HELD_SESSIONS="$OPENCODE_DB_IDLE_GATE_SESSIONS"
+	if ((ARCHIVE_BATCH_SIZE > ARCHIVE_HELD_BATCH_SIZE)); then
+		ARCHIVE_BATCH_SIZE="$ARCHIVE_HELD_BATCH_SIZE"
+	fi
+	print_info "Idle gate passed — ${holder_count} idle OpenCode holder(s); archiving in batches of ${ARCHIVE_BATCH_SIZE}, no VACUUM while held."
+	return 0
+}
+
+# Re-check between held-mode batches; stop as soon as a holder wakes up.
+_archive_held_gate_recheck() {
+	((_ARCHIVE_HELD_MODE)) || return 0
+	opencode_db_idle_gate "$ACTIVE_DB" "$DB_HOLDER_COMMAND" && return 0
+	print_warning "Archive paused — ${OPENCODE_DB_IDLE_GATE_REASON}. Committed batches preserved; the rest resumes next cycle."
+	return 1
+}
+
+# Never archive sessions (or their subagent children) that a holder has open.
+_archive_held_exclude_clause() {
+	local list=""
+	local sid=""
+	((_ARCHIVE_HELD_MODE)) || return 0
+	while IFS= read -r sid; do
+		[[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || continue
+		list="${list}${list:+,}'${sid}'"
+	done <<<"$_ARCHIVE_HELD_SESSIONS"
+	[[ -n "$list" ]] || return 0
+	printf " AND id NOT IN (%s) AND COALESCE(parent_id, '') NOT IN (%s)" "$list" "$list"
+	return 0
+}
+
+# VACUUM needs exclusive access; while idle OpenCode holds the DB, skip it.
+# Freed pages are reused by new writes, so the file stops growing.
+_archive_compact_unless_held() {
+	if ((_ARCHIVE_HELD_MODE)); then
+		print_info "VACUUM skipped — idle OpenCode process(es) hold the active DB; freed pages are reused by new writes."
+		return 0
+	fi
+	_archive_compact_active_db
+	return $?
+}
+
 # Checkpoint the archive WAL — called on normal exit and via trap on early return.
 # Uses a global flag to prevent double-run when the fast-path calls it explicitly.
 _ARCHIVE_CHECKPOINT_DONE=0
@@ -267,7 +335,8 @@ _checkpoint_archive_db() {
 	local archive_db="$1"
 	if ((_ARCHIVE_CHECKPOINT_DONE)); then return 0; fi
 	_ARCHIVE_CHECKPOINT_DONE=1
-	sqlite3 "$archive_db" "$SQL_CHECKPOINT_TRUNCATE" 2>/dev/null || true
+	# Discard the busy|log|checkpointed result row; it is not user output.
+	sqlite3 "$archive_db" "$SQL_CHECKPOINT_TRUNCATE" >/dev/null 2>&1 || true
 	return 0
 }
 
@@ -1168,6 +1237,7 @@ cmd_archive() {
 		done <<<"$active_sessions"
 		exclude_clause="AND id NOT IN ($exclude_list)"
 	fi
+	exclude_clause="${exclude_clause}$(_archive_held_exclude_clause)"
 
 	local candidate_filter
 	candidate_filter=$(_archive_candidate_filter "$retention_enabled" "$cutoff_ms" "$keep_enabled" "$keep_sessions" "$exclude_clause" "$worker_cutoff_ms" "$headless_predicate")
@@ -1179,7 +1249,7 @@ cmd_archive() {
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
 		((dry_run)) && return 0
-		_archive_compact_active_db
+		_archive_compact_unless_held
 		return $?
 	fi
 
@@ -1286,6 +1356,9 @@ cmd_archive() {
 			print_warning "Time budget exhausted (${elapsed}s >= ${max_duration}s). Archived $archived_total/$total_eligible sessions. Will resume next cycle."
 			return 2
 		fi
+		if ((batch_num > 0)) && ! _archive_held_gate_recheck; then
+			return 2
+		fi
 
 		batch_num=$((batch_num + 1))
 		local batch_limit="$ARCHIVE_BATCH_SIZE"
@@ -1369,6 +1442,7 @@ cmd_archive() {
 		# separate connection configuration.
 		if ! sqlite3 "$ACTIVE_DB" <<BATCH_SQL
 .bail on
+.timeout 5000
 PRAGMA foreign_keys = ON;
 ATTACH DATABASE '$ARCHIVE_DB' AS archive;
 
@@ -1466,7 +1540,7 @@ BATCH_SQL
 	_checkpoint_archive_db "$ARCHIVE_DB"
 
 	local compact_rc=0
-	_archive_compact_active_db || compact_rc=$?
+	_archive_compact_unless_held || compact_rc=$?
 	local archive_quick_check=""
 	archive_quick_check=$(sqlite3 "$ARCHIVE_DB" "$SQL_QUICK_CHECK" 2>/dev/null || true)
 	if [[ "$archive_quick_check" != "ok" ]]; then

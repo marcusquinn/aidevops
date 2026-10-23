@@ -580,8 +580,8 @@ test_opencode_archive_scheduler_is_daily_and_low_priority() {
 		print_result "opencode archive scheduler uses dedicated service" 1 "$captured_service"
 		return 0
 	fi
-	if [[ "$captured_cron" != "0 5 * * *" || "$captured_interval" != "86400" || "$captured_calendar" != "*-*-* 5:0:00" ]]; then
-		print_result "opencode archive scheduler runs daily" 1 "cron=${captured_cron} interval=${captured_interval} calendar=${captured_calendar}"
+	if [[ "$captured_cron" != "0 0-7 * * *" || "$captured_interval" != "3600" || "$captured_calendar" != "*-*-* 00..07:00:00" ]]; then
+		print_result "opencode archive scheduler runs hourly overnight (GH#35517)" 1 "cron=${captured_cron} interval=${captured_interval} calendar=${captured_calendar}"
 		return 0
 	fi
 	if [[ "$captured_command" != "\"${archive_script}\"" || "$captured_log" != "$fake_home/.aidevops/logs/opencode-db-archive.log" ]]; then
@@ -690,6 +690,17 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 		return 0
 	fi
 	print_result "opencode archive launchd uses safe PATH expansion" 0
+	local calendar_entries
+	calendar_entries=$(printf '%s\n' "$captured_plist" | grep -c '<key>Hour</key>' || true)
+	local plist_valid=0
+	if command -v plutil >/dev/null 2>&1; then
+		printf '%s\n' "$captured_plist" | plutil -lint - >/dev/null 2>&1 || plist_valid=1
+	fi
+	if [[ "$captured_plist" != *'<key>StartCalendarInterval</key>'*'<array>'* || "$calendar_entries" != 8 || "$plist_valid" != 0 ]]; then
+		print_result "opencode archive launchd fires hourly 00-07 (GH#35517)" 1 "entries=${calendar_entries}"
+		return 0
+	fi
+	print_result "opencode archive launchd fires hourly 00-07 (GH#35517)" 0
 	return 0
 }
 

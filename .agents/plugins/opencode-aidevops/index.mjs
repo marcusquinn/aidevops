@@ -65,6 +65,7 @@ import { createSessionContinuationGuard } from "./session-continuation-guard.mjs
 import { createSessionRecoveryMarkerHandler } from "./session-recovery-marker.mjs";
 import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
+import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 import {
@@ -667,6 +668,8 @@ export async function AidevopsPlugin({ directory, client }) {
     schedule: !isHeadless(),
     log: qualityLog,
   });
+  // GH#35517: busy/idle heartbeat consumed by the OpenCode DB archive idle gate.
+  const dbActivityHeartbeat = installDbActivityHeartbeat();
 
   const debugEventError = (label, err) => {
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
@@ -781,6 +784,7 @@ export async function AidevopsPlugin({ directory, client }) {
         sessionRecoveryMarkerHandler(input).catch((err) => debugEventError("session recovery marker", err)),
         Promise.resolve(sessionStallRecovery.handleEvent(input)),
         sessionTurnDiagnostics.handleEvent(input).catch((err) => debugEventError("turn diagnostics", err)),
+        Promise.resolve().then(() => dbActivityHeartbeat.handleEvent(input)).catch((err) => debugEventError("db activity heartbeat", err)),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },

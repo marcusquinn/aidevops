@@ -1159,6 +1159,147 @@ else
 	_fail "async deferred terminal status mismatch: rc=$rc log=$async_log"
 fi
 
+# A complete pass today makes later hourly invocations no-ops (GH#35517).
+date +%s >"$async_home/.aidevops/logs/opencode-db-archive.last-run"
+set +e
+HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_INTERACTIVE_ROOT="$SANDBOX/no-projects" \
+	bash "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh"
+rc=$?
+set -e
+async_log=$(<"$async_home/.aidevops/logs/opencode-db-archive.log")
+if [[ "$rc" -eq 0 && "$async_log" == *"Full pass already completed today"* ]]; then
+	_pass "async runner skips after a complete pass today"
+else
+	_fail "async completed-today skip mismatch: rc=$rc"
+fi
+
+# --- GH#35517 idle gate: archive DBs held only by idle OpenCode processes ---
+activity_dir="$SANDBOX/opencode-activity"
+mkdir -p "$activity_dir"
+mock_ps="$SANDBOX/mock-ps"
+cat >"$mock_ps" <<'SH'
+#!/usr/bin/env bash
+# Fixture `ps -o comm=|etime= -p PID`. Optionally flips the holder heartbeat to
+# busy after MOCK_PS_FLIP_AFTER gate checks, simulating a session waking up.
+if [[ "${2:-}" == "etime=" ]]; then
+	printf '%s\n' "${MOCK_PS_ETIME:-02:00:00}"
+	exit 0
+fi
+if [[ -n "${MOCK_PS_FLIP_AFTER:-}" ]]; then
+	count=$(($(cat "$MOCK_PS_COUNT_FILE" 2>/dev/null || echo 0) + 1))
+	printf '%s\n' "$count" >"$MOCK_PS_COUNT_FILE"
+	if ((count > MOCK_PS_FLIP_AFTER)); then
+		cp "$MOCK_PS_FLIP_SOURCE" "$MOCK_PS_FLIP_TARGET"
+	fi
+fi
+printf '%s\n' "${MOCK_PS_COMM:-opencode}"
+exit 0
+SH
+chmod +x "$mock_ps"
+
+_write_heartbeat() {
+	local target="$1"
+	local busy="$2"
+	local last="$3"
+	local sessions="$4"
+	printf '{"pid":4242,"instance":"t","busy_sessions":%s,"last_activity_epoch":%s,"updated_epoch":%s,"sessions":%s}\n' \
+		"$busy" "$last" "$(date +%s)" "$sessions" >"$target"
+	return 0
+}
+
+# _held_archive [VAR=value ...] — fixture env first so callers can override.
+_held_archive() {
+	local rc=0
+	env OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+		OPENCODE_DB_HOLDER_COMMAND="$mock_holder" OPENCODE_DB_PS_COMMAND="$mock_ps" \
+		OPENCODE_DB_ACTIVITY_DIR="$activity_dir" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+		OPENCODE_DB_ARCHIVE_USER_IDLE_SECONDS=0 "$@" \
+		"$HELPER" archive --retention-days 0 2>&1 || rc=$?
+	((rc != 0)) || return 0
+	return "$rc"
+}
+
+# _held_case <label> <expected output> [VAR=value ...]
+_held_case() {
+	local label="$1"
+	local expect="$2"
+	shift 2
+	local out="" rc=0
+	_reset_dbs
+	_make_active_db_1_18_3
+	_add_second_active_1_18_3_session
+	set +e
+	out=$(_held_archive "$@")
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 2 && "$out" == *"$expect"* && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 2 && ! -e "$ARCHIVE_DB" ]]; then
+		_pass "idle gate defers: $label"
+	else
+		_fail "idle gate $label mismatch: rc=$rc output=$out"
+	fi
+	return 0
+}
+
+hb_file="$activity_dir/4242-t.json"
+old_epoch=$(($(date +%s) - 3600))
+rm -f "$activity_dir"/*.json
+_held_case "holder without heartbeat" "no activity heartbeat"
+_write_heartbeat "$hb_file" 1 "$old_epoch" '[]'
+_held_case "busy holder" "has 1 busy session"
+_write_heartbeat "$hb_file" 0 "$(date +%s)" '[]'
+_held_case "recently active holder" "was active"
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+_held_case "non-OpenCode holder" "is not an OpenCode process" MOCK_PS_COMM=bash
+# Idle heartbeat written 2h ago, but the holder started 1 min ago: PID reuse.
+printf '{"pid":4242,"instance":"t","busy_sessions":0,"last_activity_epoch":%s,"updated_epoch":%s,"sessions":[]}\n' \
+	"$((old_epoch - 3600))" "$((old_epoch - 3600))" >"$hb_file"
+_held_case "heartbeat from an earlier process with the same PID" "no activity heartbeat" MOCK_PS_ETIME=01:00
+_held_case "unknown holder start time" "start time is unknown" MOCK_PS_ETIME=garbage
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+user_idle_mock="$SANDBOX/user-idle"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "5"' >"$user_idle_mock"
+chmod +x "$user_idle_mock"
+_held_case "recent user input" "user input 5s ago" OPENCODE_DB_ARCHIVE_USER_IDLE_SECONDS=1800 OPENCODE_DB_USER_IDLE_COMMAND="$user_idle_mock"
+_held_case "idle gate disabled" "hold the active DB open" OPENCODE_DB_ARCHIVE_IDLE_GATE=0
+
+# All holders idle: archive in held mode, keep heartbeat-listed sessions, no VACUUM.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+_write_heartbeat "$hb_file" 0 "$old_epoch" '["ses-1183-b"]'
+set +e
+out=$(_held_archive)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* && "$out" == *"VACUUM skipped"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT id FROM session;')" == "ses-1183-b" &&
+	"$(sqlite3 "$ARCHIVE_DB" 'SELECT id FROM session;')" == "ses-1183" ]]; then
+	_pass "idle holders allow held-mode archive and protect heartbeat-listed sessions"
+else
+	_fail "held-mode archive mismatch: rc=$rc output=$out"
+fi
+
+# A holder waking up between batches stops the run with committed batches kept.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+_write_heartbeat "$SANDBOX/busy-heartbeat.json" 1 "$(date +%s)" '[]'
+rm -f "$SANDBOX/ps-count"
+set +e
+out=$(_held_archive OPENCODE_DB_ARCHIVE_HELD_BATCH_SIZE=1 \
+	MOCK_PS_FLIP_AFTER=1 MOCK_PS_COUNT_FILE="$SANDBOX/ps-count" \
+	MOCK_PS_FLIP_SOURCE="$SANDBOX/busy-heartbeat.json" MOCK_PS_FLIP_TARGET="$hb_file")
+rc=$?
+set -e
+if [[ "$rc" -eq 2 && "$out" == *"Archive paused"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 &&
+	"$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; then
+	_pass "held-mode archive pauses between batches when a holder becomes busy"
+else
+	_fail "held-mode pause mismatch: rc=$rc output=$out"
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
 	exit 1

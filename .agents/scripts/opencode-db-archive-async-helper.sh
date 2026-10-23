@@ -26,6 +26,7 @@
 #
 # Environment:
 #   OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC  — seconds per DB (default 60)
+#   OPENCODE_DB_ARCHIVE_FORCE             — 1 = run even after a complete pass today
 #
 # Observability (for pulse-diagnose-helper.sh):
 #   ~/.aidevops/logs/opencode-db-archive.log      — progress log
@@ -178,6 +179,25 @@ _update_last_run() {
 	return 0
 }
 
+# GH#35517: the scheduler fires hourly overnight so DBs held by OpenCode get
+# several idle-gated attempts. After one complete fleet pass today, later
+# invocations are no-ops unless OPENCODE_DB_ARCHIVE_FORCE=1.
+_epoch_local_day() {
+	local epoch="$1"
+	date -r "$epoch" +%Y-%m-%d 2>/dev/null || date -d "@${epoch}" +%Y-%m-%d 2>/dev/null || true
+	return 0
+}
+
+_completed_today() {
+	local last_run=""
+	[[ "${OPENCODE_DB_ARCHIVE_FORCE:-0}" != 1 ]] || return 1
+	[[ -f "$LAST_RUN_FILE" ]] || return 1
+	last_run=$(tr -cd '0-9' <"$LAST_RUN_FILE" 2>/dev/null || true)
+	[[ -n "$last_run" ]] || return 1
+	[[ "$(_epoch_local_day "$last_run")" == "$(date +%Y-%m-%d)" ]]
+	return $?
+}
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -188,6 +208,11 @@ main() {
 
 	if [[ ! -x "$ARCHIVE_HELPER" ]]; then
 		echo "[opencode-db-archive-async] ERROR: $ARCHIVE_HELPER not found or not executable — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	if _completed_today; then
+		echo "[opencode-db-archive-async] Full pass already completed today — skipping (OPENCODE_DB_ARCHIVE_FORCE=1 overrides)" >>"$LOGFILE"
 		return 0
 	fi
 
