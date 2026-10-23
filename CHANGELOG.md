@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.62] - 2026-10-24
+
+### Changed
+
+- Documentation: specify multi-host Tabby and tmux sessions
+
+### Fixed
+
+- make worker admission RAM-only (GH#35537)
+- rerun orphaned in_progress jobs in completed runs (#35539)
+- override zod to patched 4.6.6 (GH#35533) (#35534)
+
 ## [3.39.61] - 2026-10-23
 
 ### Changed

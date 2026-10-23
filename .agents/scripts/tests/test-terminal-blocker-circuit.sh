@@ -736,10 +736,10 @@ test_circuit_hold_projects_blocked_and_releases() {
 	source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
 	local circuit='[{"body":"TERMINAL_BLOCKER_CIRCUIT active=true observations=2"}]'
 	projected=""
-	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' "$circuit"
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' "$circuit" || true
 	status=1
-	[[ "$projected" == "available;" ]] && status=0
-	print_result "re-armed circuit releases plain status:blocked to available" "$status"
+	[[ -z "$projected" ]] && status=0
+	print_result "bare circuit prose is not positive re-arm evidence" "$status"
 
 	local label=""
 	projected=""
@@ -748,7 +748,7 @@ test_circuit_hold_projects_blocked_and_releases() {
 			"{\"body\":\"b\",\"labels\":[{\"name\":\"status:blocked\"},{\"name\":\"${label}\"}]}" "$circuit"
 	done
 	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"bug"}]}' "$circuit"
-	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' '[{"body":"unrelated"}]'
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' '[{"body":"unrelated"}]' || true
 	status=1
 	[[ -z "$projected" ]] && status=0
 	print_result "other holds and non-circuit blocks are never released" "$status"
@@ -820,6 +820,7 @@ test_first_observation_scope_hold_releases_on_revision() {
 		# Recovery owner: unchanged brief stays held, revised brief releases once.
 		TBR_ROOT="${TEST_ROOT}/recovery" TBR_EXCERPT_DIR="${TEST_ROOT}/no-excerpts" TBR_REPOS_JSON="${TEST_ROOT}/no-repos.json"
 		set_issue_status() { projected+="${3};"; return 0; }
+		_tbr_post_rearm_receipt() { return 0; }
 		export TEST_ISSUE_LABELS=status:blocked
 		tbr_enqueue owner/repo 42 files_scope_excluded || exit 1
 		queue_file="${TBR_ROOT}/queue/owner--repo--42.json"
@@ -842,6 +843,84 @@ test_first_observation_scope_hold_releases_on_revision() {
 		status=1
 	fi
 	print_result "first files_scope_excluded hold projects blocked and releases once on brief revision" "$status"
+	return 0
+}
+
+# Exercise the actual label projection with public evidence shared by two runners.
+test_cross_runner_rearm_receipt() {
+	local status=0
+	if ! (
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local tb_comments='[]' tb_issue='' tb_original='' tb_revision='' tb_fingerprint=''
+		local tb_projected=0 tb_receipts=0 tb_reason='' tb_rc=0 tb_fail_receipt=0
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			[[ "$tb_fail_receipt" -eq 0 ]] || return 2
+			tb_receipts=$((tb_receipts + 1))
+			tb_comments=$(jq -nc --argjson c "$tb_comments" --arg body "$marker" '$c + [{id:30,body:$body,author:"runner-a",author_association:"MEMBER",created_at:"2026-10-23T20:30:00Z"}]')
+			return 0
+		}
+		for tb_reason in input_required external_trigger_pending; do
+			tb_projected=0 tb_receipts=0
+			tb_issue='{"title":"Wait for input","body":"original","labels":[{"name":"status:blocked"}]}'
+			tb_original="$tb_issue"
+			if [[ "$tb_reason" == input_required ]]; then
+				tb_fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
+			else
+				tb_fingerprint=$(_terminal_blocker_hash "v2:${tb_reason}")
+			fi
+			tb_revision=$(terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT" "$tb_reason") || exit 1
+			tb_comments=$(jq -nc --arg r "$tb_revision" --arg f "$tb_fingerprint" '[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-23T20:00:00Z"},{id:11,body:"CLAIM_RELEASED lease=changed",author_association:"MEMBER",created_at:"2026-10-23T20:01:00Z"}]')
+			# Same revision and ops-only comments: no release.
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" && exit 1
+			[[ "$tb_projected" -eq 0 ]] || exit 1
+			# Foreign collaborator intake must not turn ignored evidence into release.
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$(printf '%s' "$tb_comments" | jq -c 'map(.author_association="COLLABORATOR")')" && exit 1
+			[[ "$tb_projected" -eq 0 ]] || exit 1
+			# A revision change releases once; an independent pass sees the receipt,
+			# even when its issue-label snapshot still says blocked.
+			tb_issue=$(printf '%s' "$tb_issue" | jq -c '.body="corrected"')
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 1 && "$tb_receipts" -eq 1 ]] || exit 1
+			# Association/prose edits do not change the immutable receipt identity.
+			tb_comments=$(printf '%s' "$tb_comments" | jq -c '.[0].author_association="OWNER" | .[0].body += "\nAudit prose changed"')
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 1 ]] || exit 1
+			# A newer active circuit on B wins over an earlier retry on A.
+			tb_comments=$(printf '%s' "$tb_comments" | jq -c --arg r "$tb_revision" --arg f "$tb_fingerprint" '. + [{id:31,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:31:00Z"},{id:32,body:("<!-- aidevops:terminal-blocker-circuit revision="+$r+" blocker="+$f+" -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-23T20:32:00Z"}]')
+			tb_rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$tb_original" "$tb_comments" || tb_rc=$?
+			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 1 ]] || exit 1
+			# Only a standalone trusted retry after that circuit permits release.
+			tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:33,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:33:00Z"}]')
+			_tbr_release_circuit_hold owner/repo 42 "$tb_original" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 2 ]] || exit 1
+			# Receipt failure after projection remains repairable on an available
+			# snapshot, without a second projection, then suppresses stale readers.
+			tb_fail_receipt=1
+			tb_rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || tb_rc=$?
+			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 3 ]] || exit 1
+			tb_fail_receipt=0
+			_tbr_release_circuit_hold owner/repo 42 "$(printf '%s' "$tb_issue" | jq -c '.labels=[{name:"status:available"}]')" "$tb_comments" || exit 1
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 3 ]] || exit 1
+			# A revision/API failure at the circuit write guard is indeterminate.
+			(
+				terminal_blocker_task_revision() { return 1; }
+				local failed_rc=0
+				_tbr_circuit_blocks_release "$(_terminal_blocker_latest_marker "$tb_comments" "$_TBC_CIRCUIT_MARKER revision=")" '' "$tb_issue" owner/repo 42 "$TEST_ROOT" || failed_rc=$?
+				[[ "$failed_rc" -eq 2 ]]
+			) || exit 1
+		done
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "cross-runner re-arm needs a revision or newer retry, honors active circuits and public receipts" "$status"
 	return 0
 }
 
@@ -1353,6 +1432,7 @@ main() {
 	test_collaborator_runner_release_opens_circuit
 	test_circuit_hold_projects_blocked_and_releases
 	test_first_observation_scope_hold_releases_on_revision
+	test_cross_runner_rearm_receipt
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
