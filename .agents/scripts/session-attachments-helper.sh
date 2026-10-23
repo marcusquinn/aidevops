@@ -209,7 +209,7 @@ cmd_sessions() {
 			awk -v d="$db" 'BEGIN { OFS = "\t" } { print $0, d }' || true)"$'\n'
 	done
 	# Count images only for the sessions shown: counting reads each session's parts.
-	printf '%s' "$rows" | sed '/^$/d' | sort -t $'\t' -k1,1nr | head -n "$limit" |
+	printf '%s' "$rows" | sed '/^$/d' | sort -t $'\t' -k1,1nr | awk -v n="$limit" 'NR <= n' |
 		while IFS=$'\t' read -r updated sid stitle sdb; do
 			local images when
 			images="$(sql "$sdb" "SELECT count(*) FROM part WHERE session_id = '$sid' AND $IMAGE_FILTER;" 2>/dev/null || echo '?')"
