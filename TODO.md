@@ -111,6 +111,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
+- [x] t18766 Prepare multi-host Tabby/tmux implementation specification and sanitized prototype #docs #no-auto-dispatch logged:2026-10-23 completed:2026-10-23 verified:2026-10-23 -> [todo/plans/t18766-tabby-tmux-session-management.md]
+
 - [x] t18402 Compounding-value architecture and portable organisational knowledge #parent-task #enhancement #architecture #framework #interactive #priority:high tier:thinking ref:GH#31280 logged:2026-09-05 completed:2026-09-07 -> [todo/tasks/t18402-brief.md]
   - [x] t18403 Establish compounding-value purpose in README and architectural guidance #docs #framework #interactive #auto-dispatch #priority:high tier:standard parent:t18402 ref:GH#31285 logged:2026-09-05 -> [todo/tasks/t18403-brief.md] pr:#31360 completed:2026-09-06
   - [x] t18404 Prove repo-native plans and progress survive loss of a forge #enhancement #architecture #portability #interactive #auto-dispatch #priority:high tier:thinking parent:t18402 blocked-by:t18403 ref:GH#31286 logged:2026-09-05 -> [todo/tasks/t18404-brief.md] pr:#31365 completed:2026-09-06
