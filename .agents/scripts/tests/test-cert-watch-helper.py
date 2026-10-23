@@ -13,6 +13,9 @@ import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1]
+BASH = shutil.which('bash')
+if BASH is None:
+    raise RuntimeError('Bash is required for helper execution tests')
 FIXTURE = r'''
 import json
 import os
@@ -120,7 +123,7 @@ class CertWatchTest(unittest.TestCase):
         return path
 
     def run_helper(self, *args, success=True):
-        result = subprocess.run(['bash', str(self.helper), *args, '--format', 'json'],
+        result = subprocess.run([BASH, str(self.helper), *args, '--format', 'json'],  # nosec B603 -- resolved Bash, repository helper and fixture-owned argv
                                 env=self.env, capture_output=True, text=True, timeout=20)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -259,7 +262,7 @@ class CertWatchTest(unittest.TestCase):
         body.write_text('operator finding')
         for slug in ('owner/public', 'MARCUSQUINN/AIDEVOPS'):
             self.write_fixture('visibility.json', {'marcusquinn/aidevops': 'PRIVATE'})
-            result = subprocess.run(['bash', str(self.helper), '__file_issue', slug,
+            result = subprocess.run([BASH, str(self.helper), '__file_issue', slug,  # nosec B603 -- fixed helper and synthetic fixture slugs, no shell evaluation
                                      'test', str(body), 'high'], env=self.env, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((self.fixture_dir / 'writes.json').exists())
@@ -290,7 +293,7 @@ class CertWatchTest(unittest.TestCase):
     def test_core_entry_and_description_render(self):
         probe = self.home / 'routine-probe.sh'
         probe.write_text('source "$1"\nget_core_routine_entries\ndescribe_r923 linux\n')
-        result = subprocess.run(['bash', str(probe), str(SOURCE / 'routines/core-routines.sh')],
+        result = subprocess.run([BASH, str(probe), str(SOURCE / 'routines/core-routines.sh')],  # nosec B603 -- fixed local probe and repository-owned routine source
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('r923|x|Cert watch', result.stdout)
