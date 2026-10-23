@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # Research prototype, not an installed aidevops command.
 # Configure dev-alpha/dev-beta privately in OpenSSH; no deployment data belongs here.
