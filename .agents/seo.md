@@ -22,6 +22,7 @@ subagents:
   - contentking
   - domain-research
   - pagespeed
+  - playwright
   - google-analytics
   - data-export
   - ranking-opportunities

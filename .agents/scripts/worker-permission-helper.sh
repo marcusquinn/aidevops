@@ -117,7 +117,7 @@ permission_validate_capture() {
 # metadata. Counts retain multiplicity while scalar fields stay schema-safe.
 permission_blocker_capability_json() {
 	local capture_file="$1"
-	jq -c '
+	jq -c --slurpfile policy "${SCRIPT_DIR}/../configs/worker-permission-policy.json" '
 		def counted:
 			map(strings | select(length > 0))
 			| sort
@@ -132,7 +132,9 @@ permission_blocker_capability_json() {
 			risk_level: (["critical", "high", "medium", "low"]
 				| map(. as $level | select(any($requests[]; .risk.level == $level)))
 				| .[0]),
-			grantable: all($requests[]; .risk.grantable == true)
+			grantable: all($requests[];
+				.risk.grantable == true
+				and (.permission as $permission | $policy[0].pattern_capable_permissions | index($permission) != null))
 		}
 	' "$capture_file"
 	return $?
@@ -313,6 +315,26 @@ permission_durability_text() {
 	return 0
 }
 
+permission_approval_text() {
+	local capture_file="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	if [[ "$(permission_blocker_capability_json "$capture_file" | jq -r '.grantable')" == "$PERMISSION_BLOCKER_TRUE" ]]; then
+		printf '%s\n' "Review the exact scope above, then run:
+
+    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID
+
+This signs only the listed capabilities for this issue. It does not approve the issue scope, clear needs-maintainer-review, or authorize merge/release.
+
+To decline instead (for example, the requesting session has ended), sign a withdrawal that grants nothing and lets dispatch resume without this capability:
+
+    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
+	else
+		printf '%s\n' "permission_non_grantable: this request cannot be represented as a scoped maintainer grant. For task denials, the owning agent's static subagent allowlist/routing must be corrected; signing a permission grant cannot override it. Other non-grantable capabilities require an authorized alternative, not a signature."
+	fi
+	return 0
+}
+
 permission_post_request() {
 	local capture_file="$1"
 	local issue_number="$2"
@@ -321,13 +343,16 @@ permission_post_request() {
 	local work_dir="$5"
 	local durability="${6:-}"
 	local envelope_file comment_file request_id capability_text changed_text branch resume_json target worker_session
-	local durability_text=""
+	local durability_text="" approval_text heading="Maintainer permission required"
+	approval_text=$(permission_approval_text "$capture_file" "$issue_number" "$repo_slug") || return 1
+	[[ "$approval_text" != permission_non_grantable:* ]] || heading="Non-grantable permission blocker"
 	durability_text=$(permission_durability_text "$durability")
 	envelope_file=$(mktemp)
 	comment_file=$(mktemp)
 	resume_json=$(permission_issue_resume_json "$issue_number" "$repo_slug")
 	permission_build_envelope "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir" "$resume_json" >"$envelope_file"
 	request_id=$(jq -r '.request_id' "$envelope_file")
+	approval_text="${approval_text//REQUEST_ID/$request_id}"
 	if permission_request_already_posted "$issue_number" "$repo_slug" "$request_id"; then
 		rm -f "$envelope_file" "$comment_file"
 		printf '%s\n' "$request_id"
@@ -347,7 +372,7 @@ permission_post_request() {
 	worker_session=$(jq -r '.worker.session // "not available"' "$envelope_file")
 	cat >"$comment_file" <<EOF
 ${PERMISSION_REQUEST_MARKER}
-## Maintainer permission required
+## ${heading}
 
 Background work paused instead of waiting indefinitely for an unavailable interactive permission response.
 
@@ -375,15 +400,7 @@ Paths are home/worktree-normalized, credential-like values are redacted, and raw
 
 ### Approval
 
-Review the exact scope above, then run:
-
-    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request ${request_id}
-
-This signs only the listed capabilities for this issue. It does not approve the issue scope, clear needs-maintainer-review, or authorize merge/release.
-
-To decline instead (for example, the requesting session has ended), sign a withdrawal that grants nothing and lets dispatch resume without this capability:
-
-    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request ${request_id} --withdraw
+${approval_text}
 
 ~~~json
 $(jq . "$envelope_file")
@@ -549,9 +566,10 @@ cmd_request() {
 	risk_level="$(jq -r '.risk_level' <<<"$capability_json")"
 	grantable="$(jq -r '.grantable' <<<"$capability_json")"
 	if [[ "$grantable" != "true" ]]; then
+		permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir" "$durability" >/dev/null || return 1
 		permission_record_blocker "permission_request_non_grantable" "$PERMISSION_BLOCKER_STATUS" \
 			"permission_non_grantable" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
-			"Permission request cannot be represented as a scoped maintainer grant" \
+			"Permission request is not grantable; task denials require owning agent allowlist/routing correction" \
 			"$permission" "$tool" "$risk_level" "$grantable"
 		return 1
 	fi
