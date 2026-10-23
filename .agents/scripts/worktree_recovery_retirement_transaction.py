@@ -11,6 +11,7 @@ import shutil
 import stat
 import tempfile
 
+from worktree_archive_xattrs import list_xattrs
 from worktree_lifetime_archive import inode, require
 from worktree_recovery_migration_state import publish, sync_directory
 from worktree_recovery_timing import timed
@@ -40,7 +41,11 @@ def inventory(root):
         path = pending.pop()
         value = path.lstat()
         require(value.st_uid == os.geteuid(), "retirement:foreign-owner")
-        require(not os.listxattr(path, follow_symlinks=False), "retirement:unsupported-metadata")
+        try:
+            attributes = list_xattrs(path)
+        except ValueError as error:
+            raise ValueError("retirement:metadata-inspection-unavailable") from error
+        require(not attributes, "retirement:unsupported-metadata")
         kind = stat.S_IFMT(value.st_mode)
         payload = ""
         if stat.S_ISDIR(value.st_mode):

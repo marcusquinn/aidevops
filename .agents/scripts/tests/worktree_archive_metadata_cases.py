@@ -3,16 +3,79 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Git/tar metadata cases using the existing archive lifecycle fixture."""
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
 import stat
 import tarfile
+from unittest.mock import Mock, patch
 
+import worktree_archive_filesystem as filesystem
+import worktree_archive_xattrs as xattrs
 from worktree_archive_snapshot import git_snapshot
+from worktree_recovery_retirement_transaction import inventory
 
 
 class MetadataCases:
+    def test_darwin_missing_os_xattr_uses_nofollow_and_descriptor_abi(self):
+        payload = b"com.apple.provenance\0com.apple.quarantine\0"
+
+        def read_attributes(target, buffer, size, options):
+            if buffer is not None:
+                ctypes.memmove(buffer, payload, len(payload))
+            return len(payload)
+
+        libc = Mock()
+        libc.listxattr.side_effect = read_attributes
+        libc.flistxattr.side_effect = read_attributes
+        with patch.object(xattrs.sys, "platform", "darwin"), patch.object(
+                xattrs.ctypes, "CDLL", return_value=libc), patch.dict(os.__dict__):
+            os.__dict__.pop("listxattr", None)
+            link = self.work / "link"
+            link.symlink_to("mixed.txt")
+            self.assertEqual(xattrs.list_xattrs(link), ["com.apple.quarantine"])
+            self.assertEqual(libc.listxattr.call_args.args[0], os.fsencode(link))
+            self.assertEqual(libc.listxattr.call_args.args[3], 1)
+            with (self.work / "mixed.txt").open("rb") as source:
+                self.assertEqual(xattrs.list_xattrs(source.fileno()), ["com.apple.quarantine"])
+                self.assertEqual(libc.flistxattr.call_args.args[0], source.fileno())
+                self.assertEqual(libc.flistxattr.call_args.args[3], 0)
+
+    def test_retirement_metadata_policy_and_inspection_failure(self):
+        with patch.object(xattrs.sys, "platform", "darwin"), patch.object(
+                xattrs, "darwin_xattrs", return_value=["com.apple.provenance"]), patch.dict(os.__dict__):
+            os.__dict__.pop("listxattr", None)
+            self.assertTrue(inventory(self.work))
+            filesystem.supported_directories(self.work)
+        with patch.object(xattrs.os, "listxattr", side_effect=OSError("unavailable"), create=True):
+            with self.assertRaisesRegex(ValueError, "retirement:metadata-inspection-unavailable"):
+                inventory(self.work)
+        with patch.object(xattrs.os, "listxattr", return_value=["user.must-preserve"], create=True):
+            with self.assertRaisesRegex(ValueError, "retirement:unsupported-metadata"):
+                inventory(self.work)
+
+    def test_darwin_xattr_size_races_fail_closed(self):
+        libc = Mock()
+        libc.listxattr.side_effect = [8, -1, 8, -1, 8, -1]
+        with patch.object(xattrs.ctypes, "CDLL", return_value=libc), patch.object(
+                xattrs.ctypes, "get_errno", return_value=errno.ERANGE):
+            with self.assertRaises(OSError):
+                xattrs.darwin_xattrs(self.work)
+        self.assertEqual(libc.listxattr.call_count, 6)
+
+    def test_linux_user_xattr_blocks_retirement_without_following_symlinks(self):
+        if xattrs.sys.platform != "linux":
+            self.skipTest("requires Linux extended attributes")
+        target = self.work / "mixed.txt"
+        os.setxattr(target, "user.must-preserve", b"local metadata")
+        link = self.work / "link"
+        link.symlink_to(target.name)
+        self.assertEqual(xattrs.list_xattrs(link), [])
+        with self.assertRaisesRegex(ValueError, "retirement:unsupported-metadata"):
+            inventory(self.work)
+
     def test_untracked_tar_preserves_private_modes_and_internal_links(self):
         target = self.work / "untracked.txt"
         target.write_text("unique local content\n")

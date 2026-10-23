@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import stat
 
+from worktree_archive_xattrs import list_xattrs
+
 
 def unreadable_directory(error):
     raise error
@@ -25,11 +27,9 @@ def supported_metadata(observed, attributes, tar_metadata=False):
 
 
 def supported_directories(root):
-    if not hasattr(os, "listxattr"):
-        raise ValueError("filesystem metadata inspection unavailable")
     for directory, directories, files in os.walk(root, followlinks=False, onerror=unreadable_directory):
         current = Path(directory)
-        supported_metadata(current.lstat(), os.listxattr(current, follow_symlinks=False))
+        supported_metadata(current.lstat(), list_xattrs(current))
         if current == root:
             directories[:] = [name for name in directories if name != ".git"]
         elif ".git" in directories or ".git" in files:
@@ -45,7 +45,7 @@ def regular_fingerprint(path, parent, tar_metadata=False, git_metadata=False):
         if not stat.S_ISREG(before.st_mode):
             raise ValueError("unsupported filesystem object")
         if not git_metadata:
-            supported_metadata(before, os.listxattr(source.fileno()), tar_metadata)
+            supported_metadata(before, list_xattrs(source.fileno()), tar_metadata)
         digest = hashlib.sha256()
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
@@ -83,7 +83,7 @@ def fingerprint(root, raw, tar_metadata=False, git_metadata=False):
         except FileNotFoundError:
             return ["missing"]
         if stat.S_ISLNK(observed.st_mode):
-            supported_metadata(observed, os.listxattr(root / relative, follow_symlinks=False))
+            supported_metadata(observed, list_xattrs(root / relative))
             return ["symlink", os.readlink(relative.name, dir_fd=parent)]
         if not stat.S_ISREG(observed.st_mode):
             raise ValueError("unsupported recovery file type")
