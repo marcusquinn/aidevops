@@ -211,6 +211,15 @@ _resolve_worktree_owner_pid() {
 		return 0
 	fi
 
+	# Re-registration by nested creation helpers must keep the same managed
+	# invocation leader as shared-worktree-create.sh, not admit a transient PPID.
+	# The Python observer still verifies cgroup, unit and invocation identity.
+	if [[ "${AIDEVOPS_MANAGED_WORKTREE_RUN:-0}" == 1 && -n "${AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT:-}" &&
+		"${SYSTEMD_EXEC_PID:-}" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s' "$SYSTEMD_EXEC_PID"
+		return 0
+	fi
+
 	if [[ -n "${OPENCODE_PID:-}" ]]; then
 		printf '%s' "$OPENCODE_PID"
 		return 0

@@ -972,6 +972,31 @@ _fast_fail_prune_expired_locked() {
 	return 0
 }
 
+# Reserve before creation, under the fast-fail lock. A crashed/preparation-only
+# attempt still consumes its budget. Never let repeated dispatch prepasses
+# create unlimited trees for an unchanged failure record.
+_ff_reserve_enrichment_attempt() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local key=""
+	local state=""
+	local updated_state=""
+	local now=""
+	key=$(_ff_key "$issue_number" "$repo_slug") || return 1
+	state=$(_ff_load) || return 1
+	now=$(date +%s) || return 1
+	updated_state=$(printf '%s' "$state" | jq -e --arg k "$key" --argjson now "$now" '
+		select(.[$k].enrichment_needed == true)
+		| select((.[$k].enrichment_attempts // 0) < 3)
+		| select((.[$k].enrichment_retry_after // 0) <= $now)
+		| .[$k].enrichment_attempts = ((.[$k].enrichment_attempts // 0) + 1)
+		| .[$k].enrichment_retry_after = ($now + 3600)
+		| .[$k].enrichment_needed = (.[$k].enrichment_attempts < 3)
+	') || return 1
+	_ff_save "$updated_state" || return 1
+	return 0
+}
+
 # Mark enrichment as done in the fast-fail state (called under lock).
 _ff_mark_enrichment_done() {
 	local issue_number="$1"
