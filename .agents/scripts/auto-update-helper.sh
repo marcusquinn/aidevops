@@ -599,6 +599,35 @@ _script_drift_redeploy_debounced() {
 	return 0
 }
 
+# Deploy-affecting paths compared for same-version drift (GH#35471).
+_DEPLOY_DRIFT_PATHS=(
+	.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/
+	.agents/plugins/ .agents/configs/ setup.sh .agents/scripts/setup/modules/ aidevops.sh
+)
+
+#######################################
+# True when every deploy-affecting path changed by a diverged deployed commit
+# (relative to its merge-base with HEAD) has identical content at HEAD, i.e.
+# the hotfix landed (e.g. squash-merged) in canonical main.
+# Args: $1 = deployed sha, $2 = canonical head sha
+# Returns: 0 if contained, 1 otherwise (including on any git failure)
+#######################################
+_deployed_changes_contained_in_head() {
+	local deployed_sha="$1"
+	local head_sha="$2"
+	local base changed path dep_obj head_obj
+	base=$(git -C "$INSTALL_DIR" merge-base "$deployed_sha" "$head_sha" 2>/dev/null) || return 1
+	[[ -n "$base" ]] || return 1
+	changed=$(git -C "$INSTALL_DIR" diff --name-only "$base" "$deployed_sha" -- "${_DEPLOY_DRIFT_PATHS[@]}" 2>/dev/null) || return 1
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		dep_obj=$(git -C "$INSTALL_DIR" rev-parse -q --verify "${deployed_sha}:${path}" 2>/dev/null || echo "missing")
+		head_obj=$(git -C "$INSTALL_DIR" rev-parse -q --verify "${head_sha}:${path}" 2>/dev/null || echo "missing")
+		[[ "$dep_obj" == "$head_obj" ]] || return 1
+	done <<<"$changed"
+	return 0
+}
+
 #######################################
 # Handle stale deployed agents when repo version matches remote.
 # Checks VERSION mismatch and sentinel script hash drift; re-deploys if needed.
@@ -653,21 +682,28 @@ _cmd_check_stale_agent_redeploy() {
 				log_info "Preserving deployed runtime ${deployed_sha:0:7}; it includes canonical HEAD ${head_sha:0:7}"
 				return 0
 			fi
+			local has_diverged_contained=0
 			# Diverged history is also not safe for unattended replacement. Normal
 			# stale deployments remain eligible when deployed_sha is an ancestor of
 			# head_sha, preserving the t2706 same-version repair path.
 			if ! git -C "$INSTALL_DIR" merge-base --is-ancestor "$deployed_sha" "$head_sha" 2>/dev/null; then
-				log_warn "Skipping script-drift redeploy: deployed runtime ${deployed_sha:0:7} diverges from canonical HEAD ${head_sha:0:7}"
-				return 0
+				# A worktree hotfix later squash-merged is not an ancestor of main,
+				# but its content is. Redeploy when every deploy-affecting path the
+				# hotfix changed is identical at canonical HEAD (GH#35471).
+				if ! _deployed_changes_contained_in_head "$deployed_sha" "$head_sha"; then
+					log_warn "Skipping script-drift redeploy: deployed runtime ${deployed_sha:0:7} diverges from canonical HEAD ${head_sha:0:7}"
+					return 0
+				fi
+				log_info "Deployed runtime ${deployed_sha:0:7} changes are contained in canonical HEAD ${head_sha:0:7}; treating as stale"
+				has_diverged_contained=1
 			fi
-			local has_code_drift=0
+			local has_code_drift="$has_diverged_contained"
 			# Per Gemini code-review on PR #20342: use git's path filter +
 			# `grep -q .` to detect drift across the full set of deploy-affecting
 			# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
 			# and aidevops.sh itself, which are deployed/sourced by setup).
 			if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" -- \
-				.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
-				setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
+				"${_DEPLOY_DRIFT_PATHS[@]}" 2>/dev/null | grep -q .; then
 				has_code_drift=1
 			fi
 			# Same-version drift redeploys restart the Pulse and discard its
