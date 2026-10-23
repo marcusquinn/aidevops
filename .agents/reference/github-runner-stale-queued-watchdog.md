@@ -28,6 +28,19 @@ Reruns (`run_attempt > 1`) are excluded: their original creation timestamp does
 not establish the current attempt's queue age. Age is conservatively based on
 the original run's `created_at`, not runner capacity or job count.
 
+## Orphaned in-progress jobs in completed runs
+
+The same hourly scan also looks at open PRs (first 30). A GitHub Actions check run
+still `in_progress` past `AIDEVOPS_ORPHAN_JOB_MAX_AGE_HOURS` (default `2`, `0`
+disables; also disabled when the queued max age is `0`) is resolved to its job and
+run. When the run is `completed` and the job's runner is online with `busy=false`,
+the run is rerun once (`POST /actions/runs/{id}/rerun`) and logged as
+`orphaned-in-progress-job rerun run=<id> pr=<N>`. The run ID is recorded as
+`<run-id>.orphan-rerun` under the repository state directory before the call, so a
+run is never rerun twice. At most five reruns per repo scan; any unverifiable read
+skips. Checks are never marked successful and the pending merge gate is untouched:
+Pulse merges only after the rerun produces terminal results.
+
 Unkillable ghosts are logged once per repository/run ID and left alone by default,
 except job-less runs with no logs, which hold no work and are deleted.
 Deleting runs with jobs or logs removes history: enable it only deliberately. Cadence and

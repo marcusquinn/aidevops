@@ -156,6 +156,67 @@ _sq_scan_repo() {
 	printf '%s\n' "$SQ_NOW" >"${state}/last-scan" || return 1
 	_sq_api GET "repos/${repo}" "${SQ_WORK}/repo.json" || return 0
 	jq -e '.permissions | (.admin == true or .maintain == true or .push == true)' "${SQ_WORK}/repo.json" >/dev/null 2>&1 || return 0
+	_sq_scan_queued "$repo" "$state" || return 1
+	_sq_scan_orphans "$repo" "$state" || return 1
+	return 0
+}
+
+# Orphaned jobs: the run is completed but a job (check run) is still in_progress
+# on an idle, online runner. Rerun the run at most once per run ID; never alter
+# check conclusions. Fail closed on every unverifiable read.
+_sq_orphan_job_run() {
+	local repo="$1"
+	local state="$2"
+	local pr="$3"
+	local job_id="$4"
+	local run_id runner
+	[[ "$job_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	_sq_api GET "repos/${repo}/actions/jobs/${job_id}" "${SQ_WORK}/job.json" || return 1
+	jq -e '.completed_at == null and ((.runner_name // "") != "") and ((.started_at | fromdateiso8601? // 9999999999) < '"$SQ_ORPHAN_CUTOFF"')' "${SQ_WORK}/job.json" >/dev/null 2>&1 || return 1
+	run_id=$(jq -r '.run_id // empty' "${SQ_WORK}/job.json")
+	runner=$(jq -r '.runner_name // empty' "${SQ_WORK}/job.json")
+	[[ "$run_id" =~ ^[1-9][0-9]*$ && -n "$runner" ]] || return 1
+	[[ ! -f "${state}/${run_id}.orphan-rerun" ]] || return 1
+	_sq_api GET "repos/${repo}/actions/runs/${run_id}" "${SQ_WORK}/orphan-run.json" || return 1
+	jq -e '.conclusion != null' "${SQ_WORK}/orphan-run.json" >/dev/null 2>&1 || return 1
+	_sq_api GET "repos/${repo}/actions/runners?per_page=100" "${SQ_WORK}/runners.json" || return 1
+	jq -e --arg name "$runner" '[.runners[]? | select(.name == $name and .status == "online" and .busy == false)] | length == 1' "${SQ_WORK}/runners.json" >/dev/null 2>&1 || return 1
+	# Persist before the write so a failed or slow rerun is never repeated.
+	printf '%s\n' "$SQ_NOW" >"${state}/${run_id}.orphan-rerun" || return 1
+	if _sq_api POST "repos/${repo}/actions/runs/${run_id}/rerun" "${SQ_WORK}/rerun.json"; then
+		printf '[pulse-stale-queued-runs] orphaned-in-progress-job rerun run=%s pr=%s\n' "$run_id" "$pr"
+		return 0
+	fi
+	printf '[pulse-stale-queued-runs] orphaned-in-progress-job rerun-failed run=%s pr=%s\n' "$run_id" "$pr"
+	return 1
+}
+
+_sq_scan_orphans() {
+	local repo="$1"
+	local state="$2"
+	local pr sha job_id reruns=0
+	[[ "$SQ_ORPHAN_MAX_AGE" -ne 0 ]] || return 0
+	_sq_api GET "repos/${repo}/pulls?state=open&per_page=30" "${SQ_WORK}/pulls.json" || return 0
+	while IFS=$'\t' read -r pr sha; do
+		[[ "$pr" =~ ^[1-9][0-9]*$ && "$sha" =~ ^[0-9a-f]{40}$ ]] || continue
+		((reruns < 5)) || break
+		_sq_api GET "repos/${repo}/commits/${sha}/check-runs?per_page=100" "${SQ_WORK}/checks.json" || continue
+		while IFS= read -r job_id; do
+			if _sq_orphan_job_run "$repo" "$state" "$pr" "$job_id"; then
+				reruns=$((reruns + 1))
+			fi
+		done < <(jq -r --argjson cutoff "$SQ_ORPHAN_CUTOFF" '
+			.check_runs[]? | select(.conclusion == null and .app.slug == "github-actions") |
+			select((.started_at | fromdateiso8601? // 9999999999) < $cutoff) | .id
+		' "${SQ_WORK}/checks.json")
+	done < <(jq -r '.[]? | [.number, .head.sha] | @tsv' "${SQ_WORK}/pulls.json")
+	return 0
+}
+
+_sq_scan_queued() {
+	local repo="$1"
+	local state="$2"
+	local page=1 count run
 	# One page per repo is intentional: bound both response size and write fanout.
 	if [[ -f "${state}/next-page" ]]; then
 		read -r page <"${state}/next-page" || page=1
@@ -205,8 +266,12 @@ pulse_stale_queued_runs_scan() (
 		# shellcheck source=./pulse-rate-limit-circuit-breaker.sh
 		source "${helper_dir}/pulse-rate-limit-circuit-breaker.sh"
 	fi
-	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP=""
+	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP="" SQ_ORPHAN_MAX_AGE SQ_ORPHAN_CUTOFF
+	SQ_ORPHAN_MAX_AGE="${AIDEVOPS_ORPHAN_JOB_MAX_AGE_HOURS:-2}"
+	[[ "$SQ_ORPHAN_MAX_AGE" =~ ^[0-9]{1,5}$ ]] || SQ_ORPHAN_MAX_AGE=2
+	SQ_ORPHAN_MAX_AGE=$((10#$SQ_ORPHAN_MAX_AGE))
 	SQ_NOW=$(date -u +%s)
+	SQ_ORPHAN_CUTOFF=$((SQ_NOW - SQ_ORPHAN_MAX_AGE * 3600))
 	SQ_CUTOFF=$((SQ_NOW - max_age * 3600))
 	SQ_CUTOFF_ISO=$(jq -nr --argjson cutoff "$SQ_CUTOFF" '$cutoff | todateiso8601')
 	SQ_STATE="${HOME}/.aidevops/.agent-workspace/pulse/stale-queued-runs"
