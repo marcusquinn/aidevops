@@ -447,6 +447,36 @@ playwright)
 	;;
 esac
 
+# GH#35515: a disabled, aidevops-generated on-demand Playwriter entry
+# (npx [-y] / bun x playwriter@X.Y.Z) is reported from its exact pin without
+# launching the runner or a relay. Prints executable<TAB>version<TAB>port.
+_configured_generated_playwriter_pin() {
+	local config_file="$1"
+
+	python3 - "$config_file" <<'PYEOF'
+import json
+import os
+import re
+import sys
+
+try:
+    with open(sys.argv[1]) as stream:
+        config = json.load(stream)
+    entry = config.get('mcp', config.get('mcpServers', {})).get('playwriter', {})
+    command = entry.get('command')
+    if entry.get('enabled', True) is False and isinstance(command, list) and len(command) >= 2 \
+            and all(isinstance(part, str) for part in command):
+        pin = re.fullmatch(r'playwriter@([0-9]+\.[0-9]+\.[0-9]+)', command[-1])
+        runner = os.path.basename(command[0])
+        if pin and (runner == 'npx' and command[1:] in ([command[-1]], ['-y', command[-1]])
+                    or runner == 'bun' and command[1:] == ['x', command[-1]]):
+            print(f'{command[0]}\t{pin.group(1)}\t19988')
+except Exception:
+    pass
+PYEOF
+	return 0
+}
+
 # Safely version-check a configured local command array. Shell strings and
 # shell runners are intentionally excluded: diagnostics must not evaluate
 # configuration content. Package runners are accepted only for their exact
@@ -488,14 +518,6 @@ try:
 
     executable = command[0]
     runner = os.path.basename(executable)
-    # GH#35515: a disabled, aidevops-generated on-demand Playwriter entry is
-    # reported from its exact pin without launching the runner or a relay.
-    generated_pin = re.fullmatch(r'playwriter@([0-9]+\.[0-9]+\.[0-9]+)', command[-1])
-    if (mcp_name == 'playwriter' and enabled is False and generated_pin
-            and (runner == 'npx' and command[1:] in ([command[-1]], ['-y', command[-1]])
-                 or runner == 'bun' and command[1:] == ['x', command[-1]])):
-        print(f'{executable}\t{generated_pin.group(1)}\t19988')
-        sys.exit(0)
     shell_runners = {'sh', 'bash', 'zsh', 'fish', 'cmd', 'powershell', 'pwsh'}
     if runner in shell_runners:
         package_index = next((index for index, part in enumerate(command)
@@ -833,7 +855,13 @@ for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
 	if type rt_display_name &>/dev/null; then
 		_diag_name=$(rt_display_name "$_diag_rt") || _diag_name="$_diag_rt"
 	fi
-	_configured_command_info=$(_configured_command_version "$CONFIG_FILE" "$MCP_NAME" "$NPM_PKG" "$PINNED_NPM_SPEC")
+	_configured_command_info=""
+	if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
+		_configured_command_info=$(_configured_generated_playwriter_pin "$CONFIG_FILE")
+	fi
+	if [[ -z "$_configured_command_info" ]]; then
+		_configured_command_info=$(_configured_command_version "$CONFIG_FILE" "$MCP_NAME" "$NPM_PKG" "$PINNED_NPM_SPEC")
+	fi
 	[[ -z "$_configured_command_info" ]] && continue
 	IFS=$'\t' read -r _configured_executable _configured_version _configured_relay_port <<<"$_configured_command_info"
 	[[ -z "$_configured_executable" ]] && continue
