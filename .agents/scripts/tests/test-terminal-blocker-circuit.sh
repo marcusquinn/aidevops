@@ -852,11 +852,12 @@ test_cross_runner_rearm_receipt() {
 	if ! (
 		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
 		local tb_comments='[]' tb_issue='' tb_original='' tb_revision='' tb_fingerprint=''
-		local tb_projected=0 tb_receipts=0 tb_reason='' tb_rc=0
+		local tb_projected=0 tb_receipts=0 tb_reason='' tb_rc=0 tb_fail_receipt=0
 		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
 		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
 		_tbr_post_rearm_receipt() {
 			local marker="$3"
+			[[ "$tb_fail_receipt" -eq 0 ]] || return 2
 			tb_receipts=$((tb_receipts + 1))
 			tb_comments=$(jq -nc --argjson c "$tb_comments" --arg body "$marker" '$c + [{id:30,body:$body,author:"runner-a",author_association:"MEMBER",created_at:"2026-10-23T20:30:00Z"}]')
 			return 0
@@ -884,6 +885,10 @@ test_cross_runner_rearm_receipt() {
 			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
 			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
 			[[ "$tb_projected" -eq 1 && "$tb_receipts" -eq 1 ]] || exit 1
+			# Association/prose edits do not change the immutable receipt identity.
+			tb_comments=$(printf '%s' "$tb_comments" | jq -c '.[0].author_association="OWNER" | .[0].body += "\nAudit prose changed"')
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 1 ]] || exit 1
 			# A newer active circuit on B wins over an earlier retry on A.
 			tb_comments=$(printf '%s' "$tb_comments" | jq -c --arg r "$tb_revision" --arg f "$tb_fingerprint" '. + [{id:31,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:31:00Z"},{id:32,body:("<!-- aidevops:terminal-blocker-circuit revision="+$r+" blocker="+$f+" -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-23T20:32:00Z"}]')
 			tb_rc=0
@@ -893,6 +898,23 @@ test_cross_runner_rearm_receipt() {
 			tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:33,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:33:00Z"}]')
 			_tbr_release_circuit_hold owner/repo 42 "$tb_original" "$tb_comments" || exit 1
 			[[ "$tb_projected" -eq 2 ]] || exit 1
+			# Receipt failure after projection remains repairable on an available
+			# snapshot, without a second projection, then suppresses stale readers.
+			tb_fail_receipt=1
+			tb_rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || tb_rc=$?
+			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 3 ]] || exit 1
+			tb_fail_receipt=0
+			_tbr_release_circuit_hold owner/repo 42 "$(printf '%s' "$tb_issue" | jq -c '.labels=[{name:"status:available"}]')" "$tb_comments" || exit 1
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 3 ]] || exit 1
+			# A revision/API failure at the circuit write guard is indeterminate.
+			(
+				terminal_blocker_task_revision() { return 1; }
+				local failed_rc=0
+				_tbr_circuit_blocks_release "$(_terminal_blocker_latest_marker "$tb_comments" "$_TBC_CIRCUIT_MARKER revision=")" '' "$tb_issue" owner/repo 42 "$TEST_ROOT" || failed_rc=$?
+				[[ "$failed_rc" -eq 2 ]]
+			) || exit 1
 		done
 		exit 0
 	); then

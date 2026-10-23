@@ -386,18 +386,36 @@ _tbr_post_rearm_receipt() {
 	return 0
 }
 
+# Unlike the historical dispatch predicate, indeterminate circuit revisions
+# are not evidence of inactivity at a write boundary.
+_tbr_circuit_blocks_release() {
+	local circuit="$1" retry="$2" issue_json="$3" repo="$4" issue="$5" repo_path="$6"
+	local parsed="" revision="" fingerprint="" current=""
+	local reason=""
+	[[ -n "$circuit" ]] || return 1
+	parsed=$(printf '%s' "$circuit" | jq -er '.body | capture("<!-- aidevops:terminal-blocker-circuit revision=(?<r>[a-f0-9]{24}) blocker=(?<f>[a-f0-9]{24}) -->") | [.r,.f] | join(" ")') || return 2
+	IFS=' ' read -r revision fingerprint <<<"$parsed"
+	reason=$(_terminal_blocker_reason "$fingerprint")
+	[[ "$reason" != "$_TBC_UNKNOWN" ]] || return 2
+	current=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "$repo_path" "$reason") || return 2
+	[[ "$revision" == "$current" ]] || return 1
+	_terminal_blocker_retry_after "$retry" "$circuit" && return 1
+	return 0
+}
+
 _tbr_release_circuit_hold() {
 	local repo="$1"
 	local issue="$2"
 	local issue_json="$3"
 	local comments="$4"
 	local labels=""
-	labels=$(printf '%s' "$issue_json" | jq -c '[.labels[]?.name]' 2>/dev/null) || return 0
-	printf '%s' "$labels" | jq -e '
-		(index("status:blocked") != null) and
+	local blocked_status="status:blocked"
+	labels=$(printf '%s' "$issue_json" | jq -ce '.labels | select(type == "array") | map(.name)' 2>/dev/null) || return 2
+	printf '%s' "$labels" | jq -e --arg blocked "$blocked_status" '
+		((index($blocked) != null) or (index("status:available") != null)) and
 		([.[] | select(. == "needs-maintainer-permissions" or . == "hold-for-review" or
 			. == "no-auto-dispatch" or . == "parent-task" or . == "needs-maintainer-review" or
-			startswith("status:") and . != "status:blocked")] | length == 0)
+			startswith("status:") and . != $blocked and . != "status:available")] | length == 0)
 	' >/dev/null 2>&1 || return 0
 	# GH#35540: absence of an applicable hold is NOT positive re-arm evidence.
 	# In particular, intake can see a foreign COLLABORATOR observation which
@@ -430,14 +448,20 @@ _tbr_release_circuit_hold() {
 	# A newer circuit for the current revision wins over an older observation
 	# or retry; unreadable evidence must not fall through into label projection.
 	local active_rc=0
-	terminal_blocker_circuit_active "$comments" "$issue_json" "$repo" "$issue" "$repo_path" >/dev/null || active_rc=$?
+	_tbr_circuit_blocks_release "$circuit" "$retry" "$issue_json" "$repo" "$issue" "$repo_path" || active_rc=$?
 	[[ "$active_rc" -eq 1 ]] || decision=active_circuit
+	[[ "$active_rc" -lt 2 ]] || decision=indeterminate_circuit
 	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=%s\n' \
 		"$issue" "$observed_rev" "$current_rev" "$decision" >&2
 	[[ "$decision" == revision_changed || "$decision" == trusted_retry ]] || return 2
 	# The key binds the observed event, destination revision and retry event.
 	# A public receipt, not runner-local queue retirement, suppresses replay.
-	receipt_key=$(_terminal_blocker_hash "${evidence}:${current_rev}:${retry}") || return 2
+	# Hash immutable event identity only, not mutable author associations or prose.
+	receipt_key=$(jq -nc --argjson evidence "$evidence" --argjson retry "${retry:-null}" \
+		--arg observed "$observed_rev" --arg fingerprint "$fingerprint" --arg current "$current_rev" --arg decision "$decision" \
+		'{event: ($evidence | {id,created_at}), observed:$observed, fingerprint:$fingerprint, current:$current,
+		 retry: (if $decision == "trusted_retry" then ($retry | {id,created_at}) else null end)}') || return 2
+	receipt_key=$(_terminal_blocker_hash "$receipt_key") || return 2
 	receipt="<!-- aidevops:terminal-blocker-rearmed key=${receipt_key} -->"
 	# Suppression only: accepting a fetched collaborator receipt grants no release.
 	if printf '%s' "$comments" | jq -e --arg marker "$receipt" 'any(.[]; (.body // "") | split("\n") | index($marker) != null)' >/dev/null; then
@@ -446,15 +470,19 @@ _tbr_release_circuit_hold() {
 	fi
 	if ! declare -F set_issue_status >/dev/null 2>&1; then
 		# shellcheck source=shared-constants.sh
-		source "${_TBR_SCRIPT_DIR}/shared-constants.sh" >/dev/null 2>&1 || return 0
+		source "${_TBR_SCRIPT_DIR}/shared-constants.sh" >/dev/null 2>&1 || return 2
 	fi
-	declare -F set_issue_status >/dev/null 2>&1 || return 0
+	declare -F set_issue_status >/dev/null 2>&1 || return 2
 	if declare -F issue_has_active_brief_hold >/dev/null 2>&1; then
 		local held_rc=0
 		issue_has_active_brief_hold "$comments" "$(printf '%s' "$issue_json" | jq -r '.body // ""')" || held_rc=$?
 		[[ "$held_rc" -ne 1 ]] && return 0
 	fi
-	set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
+	# Reconcile a failed receipt write after a successful projection without
+	# projecting availability twice on the next pass.
+	if printf '%s' "$labels" | jq -e 'index("status:blocked") != null' >/dev/null; then
+		set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
+	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" || return 2
 	return 0
 }
