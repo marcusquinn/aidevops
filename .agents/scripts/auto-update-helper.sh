@@ -702,8 +702,10 @@ _cmd_check_stale_agent_redeploy() {
 			# `grep -q .` to detect drift across the full set of deploy-affecting
 			# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
 			# and aidevops.sh itself, which are deployed/sourced by setup).
-			if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" -- \
-				"${_DEPLOY_DRIFT_PATHS[@]}" 2>/dev/null | grep -q .; then
+			local drift_files
+			drift_files=$(git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" -- \
+				"${_DEPLOY_DRIFT_PATHS[@]}" 2>/dev/null) || drift_files=""
+			if [[ -n "$drift_files" ]]; then
 				has_code_drift=1
 			fi
 			# Same-version drift redeploys restart the Pulse and discard its
