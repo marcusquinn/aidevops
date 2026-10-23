@@ -1030,9 +1030,18 @@ run_finalize_ref_update_recovery_test() (
 						  elif $mode == "source" then .source_pr=202 else . end' "$root/state") || return 1
 					printf '%s\n' "$state" >"$root/state"
 					;;
-				forbidden) printf 'gh: Forbidden PRIVATE_BODY (HTTP 403)\n' >&2; return 1 ;;
-				quota) printf 'gh: API rate limit exceeded PRIVATE_BODY (HTTP 403)\n' >&2; return 1 ;;
-				server) printf 'gh: Service Unavailable PRIVATE_BODY (HTTP 503)\n' >&2; return 1 ;;
+				forbidden)
+					printf 'gh: Forbidden PRIVATE_BODY (HTTP 403)\n' >&2
+					return 1
+					;;
+				quota)
+					printf 'gh: API rate limit exceeded PRIVATE_BODY (HTTP 403)\n' >&2
+					return 1
+					;;
+				server)
+					printf 'gh: Service Unavailable PRIVATE_BODY (HTTP 503)\n' >&2
+					return 1
+					;;
 				esac
 				printf 'gh: Reference update rejected PRIVATE_BODY (HTTP 422)\n' >&2
 				return 1
