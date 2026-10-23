@@ -1006,16 +1006,18 @@ mkdir -p "$SANDBOX/slow-sqlite"
 cat >"$SANDBOX/slow-sqlite/sqlite3" <<'PY'
 #!/usr/bin/env python3
 import os
+from pathlib import Path
 import subprocess
 import sys
 args = sys.argv[1:]
 real = os.environ["TEST_REAL_SQLITE"]
 if os.environ["TEST_SQLITE_STAGE"] == "candidate":
     if any(arg.startswith("SELECT COUNT(*) FROM session WHERE") for arg in args):
+        Path(os.environ["TEST_SQLITE_MARKER"]).touch()
         os.execv(real, [real, args[0], "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n;"])
 elif len(args) == 1:
     sql = sys.stdin.read()
-    sql = sql.replace("COMMIT;\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard", "COMMIT;\n.shell sleep 10\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard")
+    sql = sql.replace("COMMIT;\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard", "COMMIT;\n.shell sleep 30\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard")
     sys.exit(subprocess.run([real, *args], input=sql, text=True).returncode)
 os.execv(real, [real, *args])
 PY
@@ -1027,12 +1029,13 @@ for sql_stage in candidate commit_gap; do
 	started=$SECONDS
 	set +e
 	out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="$sql_stage" \
+		TEST_SQLITE_MARKER="$SANDBOX/candidate-started" \
 		OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
-		"$HELPER" archive --retention-days 0 --max-duration-seconds 3 2>&1)
+		"$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
 	rc=$?
 	set -e
 	elapsed=$((SECONDS - started))
-	if [[ "$rc" -eq 2 && "$elapsed" -le 7 && "$(_fixture_graph_fingerprint "$ACTIVE_DB")" == "$before_fingerprint" ]]; then
+	if [[ "$rc" -eq 2 && "$elapsed" -le 14 && "$(_fixture_graph_fingerprint "$ACTIVE_DB")" == "$before_fingerprint" && -f "$SANDBOX/candidate-started" ]]; then
 		_pass "deadline interrupts SQLite $sql_stage without losing the active graph"
 	else
 		_fail "SQLite deadline $sql_stage mismatch: rc=$rc elapsed=$elapsed output=$out"
@@ -1041,7 +1044,7 @@ for sql_stage in candidate commit_gap; do
 		if [[ "$(_fixture_graph_fingerprint "$ARCHIVE_DB")" == "$before_fingerprint" ]]; then
 			_pass "interrupted copy/delete gap retains a complete durable archive copy"
 		else
-			_fail "copy/delete gap archive copy mismatch"
+			_fail "copy/delete gap archive copy mismatch: $out"
 		fi
 		# A changed source must not be deleted in favor of a stale duplicate.
 		sqlite3 "$ACTIVE_DB" "UPDATE message SET data='changed';"

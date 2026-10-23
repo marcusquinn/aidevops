@@ -584,7 +584,7 @@ _archive_event_bytes_sql() {
 }
 
 # Both databases have passed schema validation before this is called. Use the
-# archive's column names for both sides, never either database's physical order.
+# source's column names for both sides, never the archive's physical order.
 _archive_copy_sql() {
 	local table_name="$1"
 	local row_filter="$2"
