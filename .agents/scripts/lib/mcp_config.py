@@ -38,9 +38,9 @@ LAZY_MCPS = {
 
 # Oh-My-OpenCode tool patterns to disable globally
 OMO_TOOL_PATTERNS = ['grep_app_*', 'websearch_*']
-PLAYWRITER_MCP_PACKAGE = 'playwriter@0.8.0'
-# Packages emitted by earlier aidevops generators (GH#30851, GH#34549).
-LEGACY_PLAYWRITER_MCP_PACKAGES = ('playwriter@latest', 'playwriter@0.5.0')
+PLAYWRITER_MCP_PACKAGE = 'playwriter@0.9.0'
+# Packages emitted by earlier aidevops generators (GH#30851, GH#34549, GH#35514).
+LEGACY_PLAYWRITER_MCP_PACKAGES = ('playwriter@latest', 'playwriter@0.5.0', 'playwriter@0.8.0')
 # Playwriter >= 0.8.0 relays send usage telemetry unless opted out (GH#34549).
 PLAYWRITER_TELEMETRY_OPT_OUT = {'PLAYWRITER_TELEMETRY': '0', 'DO_NOT_TRACK': '1'}
 

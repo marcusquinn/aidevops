@@ -27,8 +27,9 @@ mcp:
 
 - **Purpose**: Browser automation via Chrome extension — full Playwright API
 - **Extension**: [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) (Chrome, Brave, Edge)
-- **MCP**: `npx playwriter@0.8.0` — single `execute` tool runs Playwright code snippets; there is no `page` global, so store the target tab in `state.page`
-- **Version policy**: reviewed pin `0.8.0` (2026-10-13, GH#34549), never `@latest`. Re-review on the next upstream minor or security release by re-proving the `/version`, token-challenge, loopback and telemetry opt-out contract before bumping every pin site together
+- **MCP**: `npx playwriter@0.9.0` — single `execute` tool runs Playwright code snippets; there is no `page` global, so store the target tab in `state.page`
+- **Version policy**: reviewed pin `0.9.0` (2026-10-23, GH#35514; previously `0.8.0`, GH#34549), never `@latest`. Re-review on the next upstream minor or security release by re-proving the `/version`, token-challenge, loopback and telemetry opt-out contract before bumping every pin site together. Rollback: restore the previous version at every pin site and remove it from the legacy-migration lists in `mcp-registry.mjs` and `lib/mcp_config.py`
+- **0.9.0 changes**: optional `recording.*`/`stream.*` now need `ffmpeg` on PATH (aidevops neither uses nor installs it); the privileged relay `/recording/*` and `/stream/*` routes are gone; SDK `connectViaExtension()` keeps tabs open on `close()` unless `closeTabsOnEnd: true`. The relay `/version`, token challenge and telemetry opt-out are unchanged
 - **Telemetry**: 0.8.0+ relays send anonymous usage stats unless opted out; aidevops sets `PLAYWRITER_TELEMETRY=0` and `DO_NOT_TRACK=1` before any relay starts unless the operator explicitly set `PLAYWRITER_TELEMETRY`
 - **OpenCode activation**: Select `@playwriter` from agent autocomplete (a structured agent mention); literal pasted text does not switch agents or connect the MCP
 - **Icon**: Gray/Black = disconnected · Green = ready · Orange = connecting · Red = error
@@ -59,7 +60,7 @@ mcp:
   "mcpServers": {
     "playwriter": {
       "command": "npx",
-      "args": ["-y", "playwriter@0.8.0"],
+      "args": ["-y", "playwriter@0.9.0"],
       "env": { "PLAYWRITER_TELEMETRY": "0", "DO_NOT_TRACK": "1" }
     }
   }
@@ -73,7 +74,7 @@ mcp:
   "mcp": {
     "playwriter": {
       "type": "local",
-      "command": ["npx", "playwriter@0.8.0"],
+      "command": ["npx", "playwriter@0.9.0"],
       "environment": { "PLAYWRITER_TELEMETRY": "0", "DO_NOT_TRACK": "1" },
       "enabled": false
     }
@@ -111,7 +112,7 @@ still inject a persistent token of at least 32 characters
 configuration, commands, logs, or prompts. Custom `mcp.playwriter` commands are
 left as written and bypass the launcher; Windows keeps the plain command because
 it has no process groups. The launcher accepts only the reviewed
-`playwriter@0.8.0` command, verifies the relay version and token challenge,
+`playwriter@0.9.0` command, verifies the relay version and token challenge,
 records private ownership state, and stops only a relay process it started. One
 relay serves one session: if another session (or a manual `playwriter serve`)
 holds port `19988`, connection fails closed until Playwriter disconnects there.
@@ -133,14 +134,14 @@ session or terminal that started it, then reconnect. aidevops never terminates i
 2. Match the intended target by its exact approved HTTPS URL and expected title.
    Confirm that the controlled tab and expected Chrome profile/session are
    visible before authenticated work.
-   Store the match in `state.page`; Playwriter 0.8.0 has no `page` global and
+   Store the match in `state.page`; Playwriter 0.8.0+ has no `page` global and
    its helpers (`snapshot`, `getLatestLogs`, `waitForPageLoad`, ...) need an
    explicit `{ page: state.page }`.
 3. Classify a result with no exact match as one of: no controlled pages; exactly
    one `about:blank` bootstrap page; unmatched non-blank or multiple pages; an
    extension-not-connected error; or a target lost after MCP reconnection. Do not
    collapse these states into a generic request to reactivate the extension.
-   Playwriter 0.8.0 never opens a tab on its own, so no controlled pages is the
+   Playwriter 0.8.0+ never opens a tab on its own, so no controlled pages is the
    normal state of a fresh session, not a failure.
    Upstream's "The Playwriter Chrome extension is not connected" text tells the
    agent to ask the user to click a gray icon; it comes from one relay status
@@ -220,7 +221,7 @@ import { startPlayWriterCDPRelayServer, getCdpUrl } from 'playwriter'
 
 const server = await startPlayWriterCDPRelayServer()
 const browser = await chromium.connectOverCDP(getCdpUrl())
-// 0.8.0 opens no tab automatically: create one instead of assuming pages()[0]
+// 0.8.0+ opens no tab automatically: create one instead of assuming pages()[0]
 const page = await browser.contexts()[0].newPage()
 await page.goto('https://example.com')
 await page.screenshot({ path: 'screenshot.png' })
@@ -276,7 +277,7 @@ approved-tab, privacy, and mutation boundaries.
 - **User-controlled** — only tabs where you clicked the extension are accessible
 - **Explicit consent** — Chrome shows automation banner on controlled tabs
 - New tabs from automation are controlled; unconnected tabs are not accessible
-- **Loopback only** — 0.8.0 can expose the relay remotely; aidevops never enables remote/tunnel sharing
+- **Loopback only** — 0.8.0+ can expose the relay remotely; aidevops never enables remote/tunnel sharing
 - **Telemetry off** — `PLAYWRITER_TELEMETRY=0` and `DO_NOT_TRACK=1` are set for framework-launched relays
 
 ## Troubleshooting
@@ -294,6 +295,7 @@ approved-tab, privacy, and mutation boundaries.
 - **Blank bootstrap only / no pages**: If the sole accessible page is `about:blank`, or no page exists (normal on 0.8.0), use the bounded exact-HTTPS bootstrap above instead of repeatedly requesting extension reactivation.
 - **`page is not defined`**: 0.8.0 removed the global; assign `state.page` from `context.pages()` first.
 - **Relay version mismatch after upgrade**: An older relay still owns port 19988; stop it from the session that started it, then reconnect.
+- **First activation after a pin change fails the relay proof**: the launcher allows 5 s for the relay to prove its version and token, and a cold `npx` cache can spend longer downloading the new package, and the failed attempt stops that download. Warm the cache with the exact pinned package (`npx -y playwriter@0.9.0 --version`, no global install), then reconnect.
 - **Terminal OpenCode activation failure**: After the one bounded reset, treat Playwriter as unavailable for the session and use the documented secure CLI diagnostic path only to isolate the cause. Do not retry through another child or treat direct CLI initialization as successful OpenCode activation.
 - **Automation detection**: Disconnect (click icon → gray) → complete manual action (login, captcha) → reconnect (click → green) → resume.
 

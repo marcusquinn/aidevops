@@ -165,8 +165,8 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.match(config.agent.playwriter.prompt, /before requesting authentication/i);
   assert.match(config.agent.playwriter.prompt, /enumerate.*context\.pages\(\)/i);
   assert.match(config.agent.playwriter.prompt, /exactly one `about:blank` bootstrap page/i);
-  // GH#34549: 0.8.0 opens no tab and has no `page` global.
-  assert.match(config.agent.playwriter.prompt, /Playwriter 0\.8\.0 never opens a tab on its own/);
+  // GH#34549: 0.8.0+ opens no tab and has no `page` global.
+  assert.match(config.agent.playwriter.prompt, /Playwriter 0\.8\.0\+ never opens a tab on its own/);
   assert.match(config.agent.playwriter.prompt, /state\.page = await context\.newPage\(\)/);
   assert.match(config.agent.playwriter.prompt, /PLAYWRITER_TELEMETRY=0/);
   assert.match(config.agent.playwriter.prompt, /already approved the exact HTTPS destination/i);
@@ -266,6 +266,10 @@ test("pins legacy Playwriter commands while preserving custom commands", () => {
     ["npx", "playwriter@0.5.0"],
     ["/opt/aidevops/bin/npx", "-y", "playwriter@0.5.0"],
     ["bun", "x", "playwriter@0.5.0"],
+    // GH#35514: generated 0.8.0 entries migrate to the 0.9.0 pin.
+    ["npx", "playwriter@0.8.0"],
+    ["/opt/aidevops/bin/npx", "-y", "playwriter@0.8.0"],
+    ["bun", "x", "playwriter@0.8.0"],
   ];
 
   for (const command of legacyCommands) {
@@ -288,9 +292,10 @@ test("pins legacy Playwriter commands while preserving custom commands", () => {
     assert.deepEqual(playwriter.command.slice(0, 1), ["bash"]);
     assert.match(playwriter.command[1], /browser-mcp-launcher\.sh$/);
     assert.equal(playwriter.command[2], "playwriter");
-    assert.equal(playwriter.command.at(-1), "playwriter@0.8.0");
+    assert.equal(playwriter.command.at(-1), "playwriter@0.9.0");
     assert.ok(!playwriter.command.includes("playwriter@latest"));
     assert.ok(!playwriter.command.includes("playwriter@0.5.0"));
+    assert.ok(!playwriter.command.includes("playwriter@0.8.0"));
     assert.equal(playwriter.enabled, false);
     assert.deepEqual(playwriter.environment, { PLAYWRITER_RELAY: "local" });
     assert.equal(playwriter.timeout, 5_000);
@@ -368,7 +373,7 @@ test("runs framework-generated Playwriter commands under the guarded relay launc
     assert.equal(generated.mcp.playwriter.command[2], "playwriter");
     assert.match(generated.mcp.playwriter.command[3], /node$/);
     assert.match(generated.mcp.playwriter.command[4], /playwriter-authenticated-relay\.mjs$/);
-    assert.equal(generated.mcp.playwriter.command.at(-1), "playwriter@0.8.0");
+    assert.equal(generated.mcp.playwriter.command.at(-1), "playwriter@0.9.0");
     assert.ok(!generated.mcp.playwriter.command.some((part) => part.includes("TOKEN")));
 
     const previousGenerated = {
@@ -382,7 +387,7 @@ test("runs framework-generated Playwriter commands under the guarded relay launc
       tools: {},
     };
     registerMcpServers(previousGenerated);
-    assert.equal(previousGenerated.mcp.playwriter.command.at(-1), "playwriter@0.8.0");
+    assert.equal(previousGenerated.mcp.playwriter.command.at(-1), "playwriter@0.9.0");
     assert.match(previousGenerated.mcp.playwriter.command[1], /browser-mcp-launcher\.sh$/);
     assert.match(
       previousGenerated.mcp.playwriter.command[4],
@@ -441,7 +446,7 @@ test("migrates browser MCPs to disconnected and globally denied", () => {
   registerMcpServers(config, { runtime });
 
   assert.equal(config.mcp.playwriter.enabled, false);
-  assert.ok(config.mcp.playwriter.command.includes("playwriter@0.8.0"));
+  assert.ok(config.mcp.playwriter.command.includes("playwriter@0.9.0"));
   assert.ok(!config.mcp.playwriter.command.includes("playwriter@latest"));
   assert.equal(config.mcp.playwright.enabled, false);
   assert.equal(config.mcp.playwright.command[0], "bash");

@@ -23,9 +23,9 @@ import {
 } from "./playwriter-relay-lifecycle.mjs";
 import { guardianStartTime, reconcileOwnedRelays } from "./playwriter-relay-reconcile.mjs";
 
-// Reviewed pin (GH#34549). Bump only after re-proving the /version, token
-// challenge, loopback and telemetry opt-out contract against the release.
-const PLAYWRITER_VERSION = "0.8.0";
+// Reviewed pin (GH#34549, GH#35514). Bump only after re-proving the /version,
+// token challenge, loopback and telemetry opt-out contract against the release.
+const PLAYWRITER_VERSION = "0.9.0";
 const PLAYWRITER_PACKAGE = `playwriter@${PLAYWRITER_VERSION}`;
 const RELAY_HOST = "127.0.0.1";
 const RELAY_PORT = 19988;
