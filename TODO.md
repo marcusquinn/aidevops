@@ -1746,7 +1746,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18763 worker write fence: name the accepted roots instead of redirecting every block to the worktree #bug #priority:high #interactive ref:GH#35495 assignee:marcusquinn started:2026-10-23 -> [todo/tasks/t18763-brief.md] pr:#35497 completed:2026-10-23
 
-- [ ] t18767 Make pulse worker admission RAM-only: remove CPU load, idle and core-count throttles #bug #priority:high ref:GH#35537
+- [x] t18767 Make pulse worker admission RAM-only: remove CPU load, idle and core-count throttles #bug #priority:high ref:GH#35537 pr:#35541 completed:2026-10-23
 
 ## In Progress
 
