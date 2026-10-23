@@ -31,6 +31,17 @@ tools:
 
 **Verification**: `Use the macos-automator MCP to get the current Safari URL.`
 
+## Bounded Native Operation (GH#35528)
+
+Native automation acts on the operator's live desktop while they may be working in other apps or sessions.
+
+- **Brief**: the parent supplies the target app/window, allowed actions, terminal states, and an action/time budget. Without them, only observe and return.
+- **Observe without focus**: use `accessibility_query` `query` (AX text, like ARIA snapshots), app-scripting reads, or window-scoped capture, which also works for background windows: `screencapture -x -o -l <id> out.png`, with IDs from JXA `ObjC.import("CoreGraphics"); ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, $.kCGNullWindowID)))` (`kCGWindowOwnerName`, `kCGWindowNumber`). Never `activate`, `reopen`, `set frontmost` or `AXRaise` just to look or screenshot.
+- **Focus only to act**: raise a window only for an authorized input step that needs it, once per step, then reactivate the app that was frontmost before. The OpenCode plugin blocks focus changes beyond a small per-turn budget (`AIDEVOPS_NATIVE_FOCUS_BUDGET`, default 3); a block means stop and hand off, not retry another way.
+- **Stop at terminal states**: apply `tools/browser/browser-automation.md` "Completion Outcomes". Once a success, error, or blocked state is captured, do not observe it again. After each verified unit, write a one-line checkpoint (`verified: <fact> at <UTC time>`) so an interrupted parent can recover it.
+- **Hand off**: return the outcome, verified facts with timestamps, actions taken, and remaining actions.
+- **Web pages are not native targets**: use `tools/browser/browser-automation.md`. If a browser route fails, do not drive the operator's everyday browser through native automation unless they explicitly authorize it for this task.
+
 <!-- AI-CONTEXT-END -->
 
 ## Prerequisites
@@ -65,12 +76,14 @@ Config locations: **Cursor** → Settings > Tools & MCP | **Windsurf** → `~/.c
 **GitHub Copilot** uses `"servers"` key in `.vscode/mcp.json` with `"type": "stdio"` added.
 
 **Claude Code**:
+
 ```bash
 claude mcp add-json macos-automator --scope user \
   '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@0.2.0"]}'
 ```
 
 **OpenCode** (`~/.config/opencode/opencode.json`) — uses `"type": "local"` and supports per-agent tool gating:
+
 ```json
 {
   "mcp": { "macos-automator": { "type": "local", "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"], "enabled": false } },

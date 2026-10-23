@@ -68,6 +68,7 @@ import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
 import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
+import { createNativeDesktopFocusGuard } from "./native-desktop-focus-guard.mjs";
 import {
   BoundedInteractiveOperationManager,
 } from "./bounded-interactive-operation.mjs";
@@ -530,6 +531,8 @@ export async function AidevopsPlugin({ directory, client }) {
     qualityLog,
     recordReceipt: recordSubagentCancellationReceipt,
   });
+  // GH#35528: bound focus-changing native desktop calls per session turn.
+  const nativeFocusGuard = createNativeDesktopFocusGuard({ log: qualityLog });
 
   // Duplicate AGENTS.md Read reminders (GH#32444); OpenCode 1 only.
   const instructionReminders = createInstructionReminderCompactor();
@@ -735,6 +738,7 @@ export async function AidevopsPlugin({ directory, client }) {
     // Quality hooks
     "tool.execute.before": async (input, output) => {
       enforceManagedMcpArtifactPath(input, output, mcpRuntime.workspaces);
+      nativeFocusGuard.beforeTool(input, output);
       sessionStallRecovery.beforeTool(input, output);
       permissionBroker.recordToolCall(input, output);
       cancellationReceipt.beforeTool(input, output);
@@ -772,6 +776,7 @@ export async function AidevopsPlugin({ directory, client }) {
         Promise.resolve(subagentEffortHooks.handleEvent(input)),
         compactionContinuation.handleEvent(input),
         Promise.resolve(cancellationReceipt.handleEvent(input)),
+        Promise.resolve(nativeFocusGuard.handleEvent(input)),
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         Promise.resolve(sourceAccessRuntime.handleEvent(input)),
         permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),

@@ -54,7 +54,7 @@ not depend on a user remembering to request learning or feedback capture.
 2. If it is clearly code work (`implement`, `fix`, `refactor`, `CI`), use Build+ or omit `--agent`.
 3. Resolve a narrow user-intent match through `reference/domain-index.md` before using a broad primary-agent trigger. Select knowledge without service probes for conceptual work; before provider-dependent execution, apply the Core rule readiness gate above. Execute only when every mandatory dimension is true and task authority permits it; otherwise use the reported fallback.
 4. If uncertain, default to Build+; it can load narrower docs on demand.
-   For a native macOS dialog or desktop app UI test, Build+ delegates a bounded task to `macos-automator`, which connects its scoped MCP on demand. On other platforms do not claim a local desktop automation capability.
+   For a native macOS dialog or desktop app UI test, Build+ delegates a bounded task to `macos-automator`, which connects its scoped MCP on demand and follows its "Bounded Native Operation" contract. Web pages route to browser automation, not native control of the operator's everyday browser. On other platforms do not claim a local desktop automation capability.
 5. **Bundle-aware routing (t1364.6):** project bundles can define `agent_routing` overrides. Check with `bundle-helper.sh get agent_routing <repo-path>`. An explicit `--agent` flag wins.
 
 The selected agent changes the system prompt and domain knowledge loaded for the worker.
@@ -69,7 +69,7 @@ set lives in `configs/worker-permission-policy.json`.
 
 ## Interactive subagent progress
 
-- Use subagents for independent advisory work, not the implementation critical path. Bounded browser operations through `playwright` are an execution exception when the parent supplies target, authorization, allowed actions and stop conditions; the parent still owns verification and final actions. The other default execution exception is the post-merge local standard-tier release handoff in `workflows/release.md`.
+- Use subagents for independent advisory work, not the implementation critical path. Bounded browser operations through `playwright`, and native desktop operations through `macos-automator`, are an execution exception when the parent supplies target, authorization, allowed actions, stop conditions and an action/time budget; the parent still owns verification and final actions. The other default execution exception is the post-merge local standard-tier release handoff in `workflows/release.md`.
 - Dispatch at most two children in one batch and do not launch another batch until they return.
 - Prefix every delegated prompt with `[effort:simple]`, `[effort:standard]`, or `[effort:thinking]`; use the lowest tier that can reliably complete the task.
 - Use `simple` only for bounded, low-consequence advisory work with objective parent-verifiable evidence. The parent must validate the result; fluent output alone is not successful completion.
