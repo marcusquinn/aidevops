@@ -11,7 +11,7 @@
   },
   "main": "index.mjs",
   "scripts": {
-    "test": "node --test tests/*.mjs"
+    "test": "node --test ${AIDEVOPS_PLUGIN_TEST_CONCURRENCY:+--test-concurrency=$AIDEVOPS_PLUGIN_TEST_CONCURRENCY} tests/*.mjs"
   },
   "keywords": [
     "opencode",
