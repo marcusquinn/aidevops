@@ -509,6 +509,10 @@ def main():
                 info('DOMAIN: ' + row['apex'])
                 path = directory / (row['apex'] + '.json')
                 state = load(path, None, private=True)
+                if state is not None and (not isinstance(state, dict)
+                                          or not isinstance(state.get('certificates'), dict)
+                                          or not isinstance(state.get('pending', []), list)):
+                    raise ValueError('Invalid CT state schema; refusing to reset baseline')
                 policies = {}
                 for name in sorted(set(row['hostnames'] + [row['apex']])):
                     policy_for(name, row['apex'], policies)

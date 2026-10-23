@@ -271,6 +271,32 @@ class CertWatchTest(unittest.TestCase):
         self.assertTrue(writes)
         self.assertTrue(all(args[args.index('--repo') + 1] == 'owner/private' for args in writes))
 
+    def test_invalid_state_is_not_rebaselined(self):
+        self.run_helper('ct')
+        for content in ('[]', '{}', '{"certificates": [], "pending": []}'):
+            self.state.write_text(content)
+            self.run_helper('ct', success=False)
+            self.assertEqual(self.state.read_text(), content)
+
+    def test_offset_expired_certificate_is_not_active(self):
+        cert = self.cert()
+        offset = dt.timezone(dt.timedelta(hours=5))
+        cert['not_after'] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).astimezone(offset).isoformat()
+        self.write_fixture('ct.json', [cert])
+        self.run_helper('ct')
+        self.write_fixture('dns.json', {'example.com': [[0, 'issue', ';']]})
+        self.assertEqual(self.run_helper('caa'), [])
+
+    def test_core_entry_and_description_render(self):
+        probe = self.home / 'routine-probe.sh'
+        probe.write_text('source "$1"\nget_core_routine_entries\ndescribe_r923 linux\n')
+        result = subprocess.run(['bash', str(probe), str(SOURCE / 'routines/core-routines.sh')],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('r923|x|Cert watch', result.stdout)
+        self.assertIn('# r923: Certificate Transparency and CAA watch', result.stdout)
+        self.assertIn('repeat:daily(@06:40)', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

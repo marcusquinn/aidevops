@@ -91,11 +91,14 @@ lock. Corrupt/insecure state fails closed rather than resetting the baseline.
 | `ct-unknown` / `caa-unknown` | unknown | Incomplete observation; printed only, never filed as a security finding |
 
 CAA resolution inspects DNS response status so SERVFAIL cannot become
-`caa-missing`. It climbs each hostname to the apex and stops at the first CAA
-RRset, following RFC 8659 inheritance. `issuewild` overrides `issue` for wildcard
+`caa-missing`. It climbs each hostname to the operated apex and stops at the first
+CAA RRset. This audit is deliberately apex-bounded: it does not inspect records
+above that boundary and is not a complete CA issuance authorization validator.
+`issuewild` overrides `issue` for wildcard
 issuance; without `issuewild`, wildcard issuance uses `issue`. An empty issuer
 (`issue ";"`) denies issuance; an iodef-only RRset does not restrict issuance.
-CNAME answers are reported UNKNOWN for manual inspection, not as missing CAA.
+CNAME/DNAME answers, unexpected answer owners and unsupported issuer-critical
+properties are reported UNKNOWN for manual inspection, not as missing CAA.
 Unknown CAA issuer domains do not imply either permission or denial; extend
 `issuer_caa_map` after reviewing the CA documentation. CAA parameters such as
 account binding and validation methods need operator review, not automated
@@ -151,5 +154,6 @@ operator closes it, a still-present CAA problem can be reported again.
    DNS, CDN and hosting access. Preserve the certificate ID and incident evidence.
 4. Review proposed CAA with the DNS agent using `dns-helper.sh help`. DNS changes
    and revocation require separate owner authorization; this monitor cannot do them.
-5. Re-run the audit after authorized remediation. Inspect Pulse diagnostics with
-   `routines-helper.sh describe r923` when investigating scheduled runs.
+5. Re-run the audit after authorized remediation. Inspect Pulse's stored state
+   with `jq '.r923' ~/.aidevops/.agent-workspace/pulse/routine-state.json` when
+   investigating scheduled runs.
