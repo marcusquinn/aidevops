@@ -514,12 +514,9 @@ pulse_apply_provider_load_capacity_cap() {
 			fi
 		fi
 	fi
-	if ((final_max > ram_cap)); then
-		final_max="$ram_cap"
-	fi
-	if ((final_max < 0)); then
-		final_max=0
-	fi
+	# RAM headroom is the final, non-negotiable host bound (GH#35537).
+	final_max=$((final_max > ram_cap ? ram_cap : final_max))
+	final_max=$((final_max < 0 ? 0 : final_max))
 	if ((floor_active == 1 && final_max < min_worker_floor)); then
 		floor_active=0
 	fi
