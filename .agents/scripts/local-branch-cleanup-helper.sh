@@ -257,7 +257,12 @@ prepare_transport() {
 	(
 		# shellcheck source=shared-worktree-create.sh
 		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
-		worktree_create_registered "$REPO_PATH" "$path" HEAD --detach --no-checkout
+		# The transport is a synchronous, process-scoped, no-checkout tree that
+		# never hosts handed-off work. Choose the legacy backend before creation
+		# so its creator can retire it on exit: an owner-cgroup record could only
+		# be sealed after this process exits, leaking one tree per run (GH#35490).
+		AIDEVOPS_WORKTREE_MANAGER=legacy-guards \
+			worktree_create_registered "$REPO_PATH" "$path" HEAD --detach --no-checkout
 	) >/dev/null || return 1
 	TRANSPORT="$path"
 	return 0
@@ -348,7 +353,12 @@ main() {
 	[[ -z "$ONLY_BRANCH" ]] || repo_git check-ref-format --branch "$ONLY_BRANCH" >/dev/null 2>&1 || return 1
 	default=$(default_branch)
 	slug=$(repo_slug) || slug=""
+	# Retire the transport on every exit path, including a bounded caller's
+	# timeout signal; leftovers from hard kills are reclaimed by guarded cleanup.
 	trap 'cleanup_transport || true' EXIT
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 	if [[ -n "$ONLY_BRANCH" ]]; then
 		scan_branch "$ONLY_BRANCH" "$default" "$slug"
 	else

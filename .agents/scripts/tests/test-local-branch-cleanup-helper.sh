@@ -84,9 +84,12 @@ assert_has "$budget" 'would-delete merged'
 assert_has "$budget" 'keep squash lookup budget exhausted'
 assert_has "$budget" 'budget_exhausted=2'
 
-result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO" --branch merged --apply)
+result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO" --branch merged --apply 2>&1)
 assert_has "$result" 'deleted merged'
 git -C "$REPO" show-ref --verify --quiet refs/heads/merged && fail 'merged branch survived apply'
+# The creator retires its own transport on every platform (GH#35490).
+[[ "$(git -C "$REPO" worktree list --porcelain)" != *"$ROOT/transport"* ]] || fail 'transport left registered after delete'
+[[ "$result" != *'Transport retained'* ]] || fail 'transport retained after delete'
 result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO" --branch squash --apply)
 assert_has "$result" "deleted squash $SQUASH_SHA"
 git -C "$REPO" show-ref --verify --quiet refs/heads/squash && fail 'squash branch survived apply'
@@ -115,14 +118,33 @@ if result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO" --branch race --appl
 fi
 assert_has "$result" 'failed race ref changed after scan'
 [[ "$(git -C "$REPO" rev-parse refs/heads/race)" == "$TEST_NEW_SHA" ]] || fail 'moved ref lost'
-case "${AIDEVOPS_WORKTREE_MANAGER:-}:$(uname -s)" in
-legacy-guards:* | *:Darwin)
-	[[ "$(git -C "$REPO" worktree list --porcelain)" != *"$ROOT/transport"* ]] || fail 'legacy transport left registered'
-	;;
-*)
-	[[ "$(git -C "$REPO" worktree list --porcelain)" == *"$ROOT/transport"* ]] || fail 'unproven managed transport was removed'
-	;;
-esac
+[[ "$(git -C "$REPO" worktree list --porcelain)" != *"$ROOT/transport"* ]] || fail 'transport left registered after refusal'
+
+# Guarded cleanup reclaims transports leaked before GH#35490 (registered with
+# the default backend by a creator that has exited) but keeps live or
+# content-bearing ones.
+SCRIPTS="${TEST_DIR}/.."
+export AIDEVOPS_CLEANUP_LOG="$ROOT/cleanup.log"
+leaked=$(bash -c 'source "$1/shared-constants.sh"; source "$1/worktree-paths.sh"
+	source "$1/shared-worktree-create.sh"
+	path=$(aidevops_generate_worktree_path "$2" "local-branch-cleanup-$$") || exit 1
+	AIDEVOPS_WORKTREE_CREATE_OWNER_PID=$$ worktree_create_registered "$2" "$path" HEAD --detach --no-checkout >/dev/null 2>&1 || exit 1
+	printf "%s\n" "$path"' _ "$SCRIPTS" "$REPO") || fail 'could not create leaked transport fixture'
+live="$ROOT/transport/repo-local-branch-cleanup-$$"
+git -C "$REPO" worktree add -q --detach --no-checkout "$live" HEAD
+dead_pid=$(bash -c 'printf "%s" "$$"')
+content="$ROOT/transport/repo-remote-branch-cleanup-${dead_pid}"
+git -C "$REPO" worktree add -q --detach "$content" HEAD
+printf 'work\n' >"$content/untracked"
+reclaimed=$(bash -c 'source "$1/shared-constants.sh"; source "$1/audit-worktree-removal-helper.sh"
+	reclaim_branch_cleanup_transports "$2" test' _ "$SCRIPTS" "$REPO") || fail 'reclaim pass failed'
+[[ "$reclaimed" == 1 ]] || fail "expected one reclaimed transport, got $reclaimed"
+[[ ! -e "$leaked" && "$(git -C "$REPO" worktree list --porcelain)" != *"$leaked"* ]] || fail 'leaked transport not reclaimed'
+[[ -d "$live" ]] || fail 'transport with a live creator was reclaimed'
+[[ -f "$content/untracked" ]] || fail 'content-bearing transport was reclaimed'
+assert_has "$(cat "$AIDEVOPS_CLEANUP_LOG")" 'branch-cleanup-transport-reclaim'
+git -C "$REPO" worktree remove --force "$live"
+git -C "$REPO" worktree remove --force "$content"
 
 # local_only (no origin): local default-branch ancestry is merge evidence.
 rm -f "$BIN/git"

@@ -60,9 +60,17 @@ Registration does not itself start a supervisor. Inside a managed run, generic
 producers bind to the invocation leader; outside one, unavailable Linux
 descendant-completion evidence remains unavailable. Temporary cleanup must
 preserve managed trees without closed proof, even after its synchronous Git
-commands finish. Branch-cleanup commands report deferred transport retirement
-separately from the result of their ref mutations. This is not a fallback to a
-full worktree copy or permission to downgrade the recorded backend.
+commands finish. This is not a fallback to a full worktree copy or permission
+to downgrade the recorded backend.
+
+Branch-cleanup deletion transports (`<repo>-{local,remote}-branch-cleanup-<pid>`)
+are synchronous, process-scoped, detached trees that never host handed-off
+work. Their helpers choose the legacy backend before creation and remove the
+transport on exit, including timeout signals (GH#35490). Guarded cleanup
+(`worktree-helper.sh clean` and the async all-repo pass) reclaims transports
+retained by hard kills or by earlier owner-cgroup enrollment. Reclaim requires
+an exited creator and recorded owners, no checkout or an unmodified one, and
+the usual canonical, lock and active-CWD guards. It never adopts Pulse records.
 
 ## Command lookup (PATH only)
 

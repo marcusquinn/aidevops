@@ -1888,6 +1888,19 @@ _clean_preflight_main_worktree() {
 	return 0
 }
 
+# Drain retained branch-cleanup deletion transports first (GH#35490). The pass
+# is local and API-free, so a bounded capacity cleanup recovers dispatch slots
+# even when the GitHub-dependent merged-branch pass later times out.
+_clean_reclaim_branch_cleanup_transports() {
+	local repo_context="$1"
+	local reclaimed=0
+	declare -F reclaim_branch_cleanup_transports >/dev/null 2>&1 || return 0
+	reclaimed=$(reclaim_branch_cleanup_transports "$repo_context" "${_WTAR_WH_CALLER:-worktree-helper.sh}") || reclaimed=0
+	[[ "$reclaimed" =~ ^[0-9]+$ && "$reclaimed" -gt 0 ]] || return 0
+	echo -e "${GREEN}Reclaimed ${reclaimed} retained branch-cleanup transport worktree(s)${NC}" >&2
+	return 0
+}
+
 cmd_clean() {
 	local auto_mode=false
 	local force_merged=false
@@ -1910,6 +1923,7 @@ cmd_clean() {
 	if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
 		full_loop_reconcile_cleanup_receipts
 	fi
+	_clean_reclaim_branch_cleanup_transports "$main_worktree_path"
 
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}" >&2
 	echo "" >&2

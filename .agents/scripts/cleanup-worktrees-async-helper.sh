@@ -10,8 +10,8 @@
 # Lifecycle:
 #   1. Acquire a mkdir-based single-runner lock (~/.aidevops/logs/cleanup_worktrees.lock).
 #   2. Check cadence gate: skip if last successful run < N minutes ago.
-#   3. Prune metadata for vanished worktrees in every managed repo (API-free),
-#      then source pulse-cleanup.sh deps and call cleanup_worktrees.
+#   3. Prune metadata for vanished worktrees and reclaim retained branch-cleanup
+#      transports in every managed repo (API-free), then call cleanup_worktrees.
 #   4. Update ~/.aidevops/logs/cleanup_worktrees.last-run on success.
 #   5. Release lock on EXIT/INT/TERM (trap).
 #
@@ -343,6 +343,29 @@ _prune_missing_worktree_metadata_all_repos() {
 	return 0
 }
 
+# Reclaim retained branch-cleanup deletion transports in every managed
+# repository (GH#35490). Local and API-free like the metadata pass above; the
+# audited primitive keeps live, locked, active-CWD or content-bearing trees.
+_reclaim_branch_cleanup_transports_all_repos() {
+	local repo_context=""
+	local reclaimed=0
+	local total=0
+
+	declare -F reclaim_branch_cleanup_transports >/dev/null 2>&1 || return 0
+	command -v git >/dev/null 2>&1 || return 0
+
+	while IFS= read -r repo_context; do
+		[[ -d "$repo_context" ]] || continue
+		reclaimed=$(reclaim_branch_cleanup_transports "$repo_context" "cleanup-worktrees-async-helper.sh") || reclaimed=0
+		[[ "$reclaimed" =~ ^[0-9]+$ ]] || reclaimed=0
+		[[ "$reclaimed" -eq 0 ]] || echo "[cleanup-worktrees-async] reclaimed ${reclaimed} branch-cleanup transport(s) repo=${repo_context}" >>"$LOGFILE"
+		total=$((total + reclaimed))
+	done < <(_missing_metadata_repo_paths)
+
+	echo "[cleanup-worktrees-async] branch-cleanup-transport-reclaim reclaimed=${total}" >>"$LOGFILE"
+	return 0
+}
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -382,6 +405,7 @@ main() {
 	_reconcile_worktree_registry
 	_reconcile_lifecycle_receipts
 	_prune_missing_worktree_metadata_all_repos
+	_reclaim_branch_cleanup_transports_all_repos
 
 	local rc=0
 	local outcome="success"

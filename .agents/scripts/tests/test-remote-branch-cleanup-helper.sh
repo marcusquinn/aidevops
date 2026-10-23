@@ -237,19 +237,11 @@ run_apply_assertions() {
 	assert_ref_exists "$repo" open-pr "apply preserves open PR branch"
 	assert_ref_exists "$repo" active-worktree "apply preserves active worktree branch"
 	assert_ref_exists "$repo" main "apply preserves default branch"
-	case "${AIDEVOPS_WORKTREE_MANAGER:-}:$(uname -s)" in
-	legacy-guards:* | *:Darwin)
-		if git -C "$repo" worktree list --porcelain | grep -F "$worktree_base" >/dev/null 2>&1; then
-			fail "legacy apply must remove its isolated deletion transport"
-		fi
-		pass "legacy apply removes its isolated deletion transport"
-		;;
-	*)
-		git -C "$repo" worktree list --porcelain | grep -F "$worktree_base" >/dev/null 2>&1 ||
-			fail "managed transport without completion proof was removed"
-		pass "managed transport without completion proof is preserved"
-		;;
-	esac
+	# The creator retires its own transport on every platform (GH#35490).
+	if git -C "$repo" worktree list --porcelain | grep -F "$worktree_base" >/dev/null 2>&1; then
+		fail "apply must remove its isolated deletion transport"
+	fi
+	pass "apply removes its isolated deletion transport"
 	return 0
 }
 

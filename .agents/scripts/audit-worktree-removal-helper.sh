@@ -1969,3 +1969,172 @@ prune_missing_worktree_metadata() {
 
 	return 0
 }
+
+# =============================================================================
+# Branch-cleanup transport reclaim (GH#35490)
+#
+# local-/remote-branch-cleanup-helper.sh create a detached deletion transport
+# named `<repo>-{local,remote}-branch-cleanup-<pid>`. Before GH#35490 those
+# trees enrolled as owner-cgroup managed generations whose completion receipt
+# can never be produced once the creating (unmanaged) process exits, so every
+# run leaked one tree into the dispatch worktree cap. A transport never hosts
+# handed-off work: it is detached and either has no checkout or an unmodified
+# one. Reclaim is therefore based on content, not on a synthetic completion
+# receipt: no Pulse-managed record is adopted, a live creator or owner keeps its
+# tree, and canonical, locked, current-directory and active-CWD guards still
+# veto. The managed record is left untouched as lifetime history.
+# =============================================================================
+_WT_TRANSPORT_NAME_PATTERN='-(local|remote)-branch-cleanup-([0-9]+)$'
+_WT_TRANSPORT_REASON="branch-cleanup-transport-reclaim"
+
+_worktree_transport_pid_is_absent() {
+	local pid="$1"
+	local helper="${BASH_SOURCE[0]%/*}/shared-worktree-registry-platform.py"
+	[[ "$pid" =~ ^[1-9][0-9]*$ && -f "$helper" ]] || return 1
+	python3 "$helper" pid-absent "$pid" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Succeed when the creator named by the path and every recorded owner are gone.
+# Legacy (unenrolled) and properly sealed generations need only the creator
+# check; only an unsealed owner-cgroup record may be considered, never Pulse's.
+_worktree_transport_owner_gone() {
+	local wt_path_real="$1"
+	local creator_pid="$2"
+	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
+	local record="" managed_status=0 owner_pid=""
+
+	_worktree_transport_pid_is_absent "$creator_pid" || return 1
+	[[ -f "$helper" ]] || return 1
+	record=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$wt_path_real" 2>/dev/null) ||
+		managed_status=$?
+	[[ "$managed_status" -ne 3 ]] || return 0
+	[[ "$managed_status" -eq 0 && -n "$record" ]] || return 1
+	worktree_managed_lifetime_proof "$wt_path_real" && return 0
+	command -v jq >/dev/null 2>&1 || return 1
+	printf '%s' "$record" | jq -e '.manager == "owner-cgroup" and .state == "running"' >/dev/null 2>&1 || return 1
+	# The recorded owner cgroup is often a long-lived session or service scope,
+	# so its population is not evidence about this tree. A descendant still
+	# using the transport (for example `git -C`) has its CWD inside it, which
+	# worktree_removal_guard vetoes.
+	while IFS= read -r owner_pid; do
+		_worktree_transport_pid_is_absent "$owner_pid" || return 1
+	done < <(printf '%s' "$record" | jq -r '.launches[]? | (.owner_pid // 0 | tostring)' 2>/dev/null)
+	return 0
+}
+
+# Succeed when the transport is detached and holds nothing beyond its Git link
+# (no-checkout) or an unmodified checkout with no untracked or ignored files.
+_worktree_transport_is_content_free() {
+	local real_git="$1"
+	local wt_path_real="$2"
+	local entry="" status_out=""
+
+	[[ -f "$wt_path_real/.git" && ! -L "$wt_path_real/.git" ]] || return 1
+	if "$real_git" -C "$wt_path_real" symbolic-ref -q HEAD >/dev/null 2>&1; then
+		return 1
+	fi
+	for entry in "$wt_path_real"/* "$wt_path_real"/.[!.]* "$wt_path_real"/..?*; do
+		[[ -e "$entry" || -L "$entry" ]] || continue
+		[[ "${entry##*/}" == ".git" ]] && continue
+		status_out=$("$real_git" -C "$wt_path_real" status --porcelain --untracked-files=all --ignored 2>/dev/null) ||
+			return 1
+		[[ -z "$status_out" ]] || return 1
+		return 0
+	done
+	return 0
+}
+
+# Args: $1=repository context, $2=transport path, $3=audit caller,
+#       $4=CWD snapshot, $5=CWD visibility (complete|degraded|unusable)
+# Returns 0 only when the transport was removed and its path is gone.
+reclaim_branch_cleanup_transport() {
+	local repo_context="$1"
+	local wt_path="$2"
+	local caller="$3"
+	local cwd_snapshot="$4"
+	local cwd_visibility="$5"
+	local name="${wt_path##*/}"
+	local creator_pid="" wt_path_real="" real_git="" common_dir="" repo_common_dir="" git_state=""
+
+	[[ "$name" =~ $_WT_TRANSPORT_NAME_PATTERN ]] || return 1
+	creator_pid="${BASH_REMATCH[2]}"
+	[[ -d "$wt_path" && ! -L "$wt_path" ]] || return 1
+	wt_path_real=$(cd "$wt_path" 2>/dev/null && pwd -P) || return 1
+	if ! _worktree_transport_owner_gone "$wt_path_real" "$creator_pid"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "transport-owner-active-or-unproven" "$_WTAR_MODE_SKIPPED"
+		return 1
+	fi
+	real_git=$(_worktree_cleanup_real_git) || return 1
+	if ! _worktree_transport_is_content_free "$real_git" "$wt_path_real"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "transport-has-content" "$_WTAR_MODE_SKIPPED"
+		return 1
+	fi
+	worktree_removal_guard "$wt_path" "$caller" "$_WT_TRANSPORT_REASON" "$cwd_snapshot" "$cwd_visibility" || return 1
+	common_dir=$(_worktree_git_common_dir "$real_git" "$wt_path_real") || return 1
+	repo_common_dir=$(_worktree_git_common_dir "$real_git" "$repo_context") || return 1
+	[[ "$common_dir" == "$repo_common_dir" ]] || return 1
+	git_state=$(_worktree_git_lock_state "$wt_path" "$wt_path_real") || git_state="$_WT_GIT_STATE_UNREADABLE"
+	if [[ "$git_state" != "$_WT_GIT_STATE_CLEAR" ]]; then
+		_worktree_log_git_refusal "$wt_path" "$caller" "$git_state" ""
+		return 1
+	fi
+	# One --force: a no-checkout tree reports its empty index as changes. Git
+	# still refuses a lock acquired after the check above.
+	if ! "$real_git" --git-dir="$common_dir" worktree remove --force "$wt_path_real" >/dev/null 2>&1; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_GIT_REASON_REMOVE_FAILED" "$_WTAR_MODE_SKIPPED"
+		return 1
+	fi
+	[[ ! -e "$wt_path_real" ]] || return 1
+	log_worktree_removal_event "$_WTAR_REMOVED" "$caller" "$wt_path" "$_WT_TRANSPORT_REASON" "permanent"
+	return 0
+}
+
+# Reclaim retained branch-cleanup transports of one repository. Local and
+# API-free, so it runs before any GitHub-dependent cleanup can time out.
+# Args: $1=repository context, $2=audit caller, $3=optional max removals
+# Prints the number of reclaimed transports; always returns 0.
+reclaim_branch_cleanup_transports() {
+	local repo_context="$1"
+	local caller="$2"
+	local limit="${3:-${AIDEVOPS_TRANSPORT_RECLAIM_MAX:-250}}"
+	local real_git="" field="" wt_path="" detached=0 first=1 candidates="" candidate=""
+	local cwd_snapshot="" cwd_status=0 cwd_visibility="$_WT_CWD_VISIBILITY_COMPLETE" reclaimed=0
+
+	[[ "$limit" =~ ^[0-9]+$ ]] || limit=250
+	if [[ -z "$repo_context" || ! -d "$repo_context" ]] || ! real_git=$(_worktree_cleanup_real_git); then
+		printf '0\n'
+		return 0
+	fi
+	while IFS= read -r -d '' field; do
+		case "$field" in
+		worktree\ *) wt_path="${field#worktree }" detached=0 ;;
+		detached) detached=1 ;;
+		"")
+			if [[ "$first" -eq 0 && "$detached" -eq 1 && "${wt_path##*/}" =~ $_WT_TRANSPORT_NAME_PATTERN ]]; then
+				candidates="${candidates}${wt_path}"$'\n'
+			fi
+			first=0 wt_path="" detached=0
+			;;
+		esac
+	done < <("$real_git" -C "$repo_context" worktree list --porcelain -z 2>/dev/null || true)
+	if [[ -z "$candidates" ]]; then
+		printf '0\n'
+		return 0
+	fi
+	# One CWD snapshot per pass; each removal still rechecks Git lock state.
+	cwd_snapshot=$(capture_worktree_process_cwds) || cwd_status=$?
+	if [[ "$cwd_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]]; then
+		cwd_visibility="$_WT_CWD_VISIBILITY_DEGRADED"
+	elif [[ "$cwd_status" -ne 0 ]]; then
+		cwd_visibility="$_WT_CWD_VISIBILITY_UNUSABLE"
+	fi
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" && "$reclaimed" -lt "$limit" ]] || continue
+		if reclaim_branch_cleanup_transport "$repo_context" "$candidate" "$caller" "$cwd_snapshot" "$cwd_visibility"; then
+			reclaimed=$((reclaimed + 1))
+		fi
+	done <<<"$candidates"
+	printf '%s\n' "$reclaimed"
+	return 0
+}

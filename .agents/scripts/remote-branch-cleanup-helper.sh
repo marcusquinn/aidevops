@@ -249,7 +249,11 @@ prepare_delete_transport() {
 	if ! (
 		# shellcheck source=shared-worktree-create.sh
 		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
-		worktree_create_registered "$REPO_PATH" "$worktree" HEAD --detach
+		# Synchronous, process-scoped transport: choose the legacy backend before
+		# creation so this process can retire it on exit instead of leaving an
+		# owner-cgroup record that only a later exit could seal (GH#35490).
+		AIDEVOPS_WORKTREE_MANAGER=legacy-guards \
+			worktree_create_registered "$REPO_PATH" "$worktree" HEAD --detach
 	) >/dev/null; then
 		DELETE_TRANSPORT_WORKTREE=""
 		print_error "Unable to create an isolated linked worktree for remote-ref deletion"
