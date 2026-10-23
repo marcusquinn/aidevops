@@ -396,7 +396,8 @@ _enrichment_launch() {
 		local runner="${SCRIPT_DIR}/worktree-managed-run.py"
 		local helper="${SCRIPT_DIR}/pulse-enrichment-run-helper.sh"
 		python3 "$runner" --check-backend >/dev/null 2>&1 || return 2
-		local -x LOGFILE HEADLESS_RUNTIME_HELPER
+		local -x LOGFILE="$LOGFILE"
+		local -x HEADLESS_RUNTIME_HELPER="$HEADLESS_RUNTIME_HELPER"
 		python3 "$runner" --timeout-seconds 1800 \
 			--after bash --after "$helper" --after cleanup --after "$repo_path" \
 			-- bash "$helper" run "$prompt_file" "$issue_number" "$repo_slug" \
