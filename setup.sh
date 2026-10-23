@@ -1388,6 +1388,18 @@ _setup_ai_session_verify_deploy() {
 	return $?
 }
 
+# OpenCode DB archive (daily) and maintenance (weekly) schedulers keep the
+# session DB small enough to avoid "database is locked" stalls (GH#35492).
+# Both installers are idempotent content-diffs, so every auto-update ensures
+# they exist even when the incremental plan would not otherwise touch them.
+_setup_ensure_opencode_db_schedulers() {
+	_time_step "setup_opencode_db_maintenance" setup_opencode_db_maintenance ||
+		print_warning "OpenCode DB maintenance scheduler refresh failed (non-fatal)"
+	_time_step "setup_opencode_db_archive" setup_opencode_db_archive ||
+		print_warning "OpenCode DB archive scheduler refresh failed (non-fatal)"
+	return 0
+}
+
 _setup_run_ai_session_incremental() {
 	local os="$1"
 	local stamp_file="$HOME/.aidevops/.deployed-sha"
@@ -1414,6 +1426,7 @@ _setup_run_ai_session_incremental() {
 
 	if [[ "$deployed_sha" == "$current_sha" ]]; then
 		print_success "AI-session setup: deployed SHA already matches current checkout"
+		_setup_ensure_opencode_db_schedulers
 		_time_step "$SETUP_STAGE_TABBY" setup_tabby
 		_setup_ai_session_verify_deploy "$current_sha" || return $?
 		return 0
@@ -1452,6 +1465,8 @@ _setup_run_ai_session_incremental() {
 	if [[ "$_SETUP_AI_SESSION_NEEDS_GUI" -eq 1 ]]; then
 		_time_step "setup_gui_desktop_app_opt_in" _setup_offer_gui_desktop_app || return $?
 	fi
+	# After agent deploy so the schedulers point at the freshly deployed helpers.
+	_setup_ensure_opencode_db_schedulers
 
 	_time_step "$SETUP_STAGE_TABBY" setup_tabby
 	_setup_ai_session_verify_deploy "$current_sha" || return $?
