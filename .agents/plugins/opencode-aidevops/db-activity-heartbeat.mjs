@@ -30,123 +30,142 @@ const ACTIVITY_EVENTS = new Set([
   "session.error",
 ]);
 
+// Session lifecycle events: handler returns true when busy state changed,
+// which forces an immediate (unthrottled) write.
+const LIFECYCLE_HANDLERS = {
+  "session.status": (hb, sessionID, event) => hb.updateStatus(sessionID, event.properties?.status?.type),
+  "session.idle": (hb, sessionID) => hb.markIdle(sessionID),
+  "session.deleted": (hb, sessionID) => hb.forget(sessionID),
+};
+
 export function defaultActivityDir(env = process.env, home = homedir()) {
   return env.OPENCODE_DB_ACTIVITY_DIR
     || join(home, ".aidevops", ".agent-workspace", "state", "opencode-activity");
 }
 
 /**
- * Create a heartbeat writer for one plugin instance. Several plugin instances
- * may share a PID, so each writes `<pid>-<instance>.json`; the archive gate
- * requires every file for a holder PID to report idle.
+ * Heartbeat writer for one plugin instance. Several plugin instances may share
+ * a PID, so each writes `<pid>-<instance>.json`; the archive gate requires
+ * every file for a holder PID to report idle.
  */
-export function createDbActivityHeartbeat(options = {}) {
-  const dir = options.dir || defaultActivityDir(options.env);
-  const pid = options.pid ?? process.pid;
-  const instance = options.instance || randomUUID().slice(0, 8);
-  const now = options.now || (() => Date.now());
-  const throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
-  const file = join(dir, `${pid}-${instance}.json`);
-  const busy = new Set();
-  const sessions = new Set();
-  let lastActivityAt = now();
-  let lastWriteAt = 0;
-  let timer = null;
-  let disabled = false;
-
-  function rememberSession(sessionID) {
-    if (!SAFE_SESSION_ID.test(sessionID)) return;
-    sessions.delete(sessionID);
-    sessions.add(sessionID);
-    while (sessions.size > MAX_TRACKED_SESSIONS) sessions.delete(sessions.values().next().value);
+class DbActivityHeartbeat {
+  constructor(options = {}) {
+    this.dir = options.dir || defaultActivityDir(options.env);
+    this.pid = options.pid ?? process.pid;
+    this.instance = options.instance || randomUUID().slice(0, 8);
+    this.now = options.now || (() => Date.now());
+    this.throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
+    this.file = join(this.dir, `${this.pid}-${this.instance}.json`);
+    this.busy = new Set();
+    this.sessions = new Set();
+    this.lastActivityAt = this.now();
+    this.lastWriteAt = 0;
+    this.timer = null;
+    this.disabled = false;
   }
 
-  function snapshot() {
+  rememberSession(sessionID) {
+    if (!SAFE_SESSION_ID.test(sessionID)) return;
+    this.sessions.delete(sessionID);
+    this.sessions.add(sessionID);
+    while (this.sessions.size > MAX_TRACKED_SESSIONS) {
+      this.sessions.delete(this.sessions.values().next().value);
+    }
+  }
+
+  snapshot() {
     return {
-      pid,
-      instance,
-      busy_sessions: busy.size,
-      last_activity_epoch: Math.floor(lastActivityAt / 1000),
-      updated_epoch: Math.floor(now() / 1000),
-      sessions: [...sessions],
+      pid: this.pid,
+      instance: this.instance,
+      busy_sessions: this.busy.size,
+      last_activity_epoch: Math.floor(this.lastActivityAt / 1000),
+      updated_epoch: Math.floor(this.now() / 1000),
+      sessions: [...this.sessions],
     };
   }
 
-  function write() {
-    if (disabled) return false;
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
+  clearTimer() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  write() {
+    if (this.disabled) return false;
+    this.clearTimer();
     try {
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const temporary = `${file}.${process.pid}.tmp`;
-      writeFileSync(temporary, `${JSON.stringify(snapshot())}\n`, { mode: 0o600 });
-      renameSync(temporary, file);
-      lastWriteAt = now();
+      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      const temporary = `${this.file}.${process.pid}.tmp`;
+      writeFileSync(temporary, `${JSON.stringify(this.snapshot())}\n`, { mode: 0o600 });
+      renameSync(temporary, this.file);
+      this.lastWriteAt = this.now();
       return true;
     } catch {
       // Unwritable state means no heartbeat; the archive gate then defers.
-      disabled = true;
+      this.disabled = true;
       return false;
     }
   }
 
-  function writeThrottled() {
-    const wait = throttleMs - (now() - lastWriteAt);
-    if (wait <= 0) return write();
-    if (!timer) {
-      timer = setTimeout(write, wait);
-      timer.unref?.();
+  writeThrottled() {
+    const wait = this.throttleMs - (this.now() - this.lastWriteAt);
+    if (wait <= 0) return this.write();
+    if (!this.timer) {
+      this.timer = setTimeout(() => this.write(), wait);
+      this.timer.unref?.();
     }
     return false;
   }
 
-  function updateStatus(sessionID, status) {
-    const wasBusy = busy.has(sessionID);
-    if (ACTIVE_SESSION_STATES.has(status)) busy.add(sessionID);
-    else if (status === "idle") busy.delete(sessionID);
-    return wasBusy !== busy.has(sessionID);
+  updateStatus(sessionID, rawStatus) {
+    const status = String(rawStatus || "").toLowerCase();
+    const wasBusy = this.busy.has(sessionID);
+    if (ACTIVE_SESSION_STATES.has(status)) this.busy.add(sessionID);
+    else if (status === "idle") this.busy.delete(sessionID);
+    this.lastActivityAt = this.now();
+    return wasBusy !== this.busy.has(sessionID);
   }
 
-  function handleEvent(input) {
+  markIdle(sessionID) {
+    this.lastActivityAt = this.now();
+    return this.busy.delete(sessionID);
+  }
+
+  forget(sessionID) {
+    this.busy.delete(sessionID);
+    this.sessions.delete(sessionID);
+    return true;
+  }
+
+  handleEvent(input) {
     const event = input?.event;
     if (!event?.type) return;
+    // Any session this process has seen (even via metadata) stays protected.
     const sessionID = sessionIDFrom(event);
-    if (sessionID) rememberSession(sessionID);
-    let transition = false;
-    if (event.type === "session.status") {
-      const status = String(event.properties?.status?.type || "").toLowerCase();
-      transition = updateStatus(sessionID, status);
-      lastActivityAt = now();
-    } else if (event.type === "session.idle") {
-      transition = busy.delete(sessionID);
-      lastActivityAt = now();
-    } else if (event.type === "session.deleted") {
-      busy.delete(sessionID);
-      sessions.delete(sessionID);
-      transition = true;
-    } else if (ACTIVITY_EVENTS.has(event.type)) {
-      lastActivityAt = now();
-    } else {
+    if (sessionID) this.rememberSession(sessionID);
+    const lifecycle = LIFECYCLE_HANDLERS[event.type];
+    if (!lifecycle && !ACTIVITY_EVENTS.has(event.type)) return;
+    if (!lifecycle) {
+      this.lastActivityAt = this.now();
+      this.writeThrottled();
       return;
     }
-    if (transition) write();
-    else writeThrottled();
+    if (lifecycle(this, sessionID, event)) this.write();
+    else this.writeThrottled();
   }
 
-  function remove() {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    disabled = true;
+  remove() {
+    this.clearTimer();
+    this.disabled = true;
     try {
-      rmSync(file, { force: true });
+      rmSync(this.file, { force: true });
     } catch {
       // Best effort: a stale file for a dead PID is ignored by the gate.
     }
   }
+}
 
-  return { file, handleEvent, write, remove, snapshot };
+export function createDbActivityHeartbeat(options = {}) {
+  return new DbActivityHeartbeat(options);
 }
 
 /** Install the process-wide heartbeat once and remove it on normal exit. */
