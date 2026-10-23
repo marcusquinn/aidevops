@@ -1,4 +1,8 @@
 def _wah_empty_if_null: if . == null then "" else . end;
+# GH#35486: a model that stops before completion is a distinct, resumable
+# behaviour, not a launch (startup) failure; keep the families separate.
+def _wah_is_premature_exit:
+  .result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion";
 def _wah_failure_family:
   if ((.result // "") | test("rate_limit"))
     or ((.failure_reason // "") | test("rate_limit"))
@@ -17,14 +21,13 @@ def _wah_failure_family:
   elif (.failure_reason == "local_error")
     or (.launch_failure_cause == "local_runtime_error")
     or ((.runtime_error_type | _wah_empty_if_null) != "") then "local-runtime-error"
+  elif _wah_is_premature_exit then "premature-exit"
   elif ((.launch_failure_cause // "") != "")
     or ((.result // "") | test("launch")) then "launch-failure"
   else "other-failure" end;
 # GH#33331: each attempt writes one metric row; continuation attempts carry
 # routing_reason=continuation_retry. Join them to the terminal session row so
 # "continuations exhausted" is distinguishable from "never attempted".
-def _wah_is_premature_exit:
-  .result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion";
 def _wah_with_continuations($events):
   map(. as $t
     | (($t.session_key // "") | tostring) as $key

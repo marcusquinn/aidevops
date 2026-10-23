@@ -834,8 +834,8 @@ CONT_ENV=("WAH_METRICS_FILE=$CONT_METRICS" "WAH_PULSE_STATS_FILE=$STATS" "WAH_PR
 JSON=$(env "${CONT_ENV[@]}" "$HELPER" summary --since 24h --json --no-pr-check 2>&1)
 assert_eq "9a: continuation recovery separates recovered, exhausted and not attempted" "1 1 1 5" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.continuation_recovery | "\(.recovered_sessions) \(.exhausted_sessions) \(.not_attempted_sessions) \(.retries_total)"')"
-assert_eq "9b: launch-failure family records exhausted continuations and per-model counts" "exhausted 2 2" \
-	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.family == "launch-failure" or .family == "other-failure") | select(.continuation_retries > 0) | "\(.continuation_outcome) \(.continuation_retries) \(.models["p/model-b"])"')"
+assert_eq "9b: premature-exit family records exhausted continuations and per-model counts" "exhausted 2 2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.family == "premature-exit") | select(.continuation_retries > 0) | "\(.continuation_outcome) \(.continuation_retries) \(.models["p/model-b"])"')"
 JSON=$(env "${CONT_ENV[@]}" "$HELPER" providers --since 24h --json 2>&1)
 assert_eq "9c: per-model premature-exit rate and continuation rescues" "3/4 75 1|4/4 100 0" \
 	"$(printf '%s' "$JSON" | jq -r '[.provider_diagnostics.provider_model_usage | sort_by(.model)[] | "\(.premature_exit)/\(.count) \(.premature_exit_rate_pct) \(.continuation_rescued)"] | join("|")')"
