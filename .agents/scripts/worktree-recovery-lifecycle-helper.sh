@@ -569,27 +569,22 @@ _worktree_recovery_plan_worktree_reference_state() {
 
 _worktree_recovery_plan_registry_state() {
 	local identity_json="$1"
-	local source_path="" escaped_path="" owner_count=""
+	local source_path=""
+	local state=""
 
 	source_path=$(printf '%s\n' "$identity_json" | jq -r '.source_path') || return 1
-	if [[ ! -e "${WORKTREE_REGISTRY_DB:-}" ]]; then
-		printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR"
-		return 0
-	fi
-	if ! command -v sqlite3 >/dev/null 2>&1 || [[ ! -f "$WORKTREE_REGISTRY_DB" || -L "$WORKTREE_REGISTRY_DB" ]]; then
+	if ! command -v python3 >/dev/null 2>&1; then
 		printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"
 		return 0
 	fi
-	escaped_path="${source_path//\'/\'\'}"
-	owner_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" \
-		"SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '${escaped_path}';" 2>/dev/null) || {
+	state=$(python3 "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree_recovery_registry.py" \
+		"${WORKTREE_REGISTRY_DB:-}" "$source_path" 2>/dev/null) || {
 		printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"
 		return 0
 	}
-	case "$owner_count" in
-	0) printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_CLEAR" ;;
-	*[!0-9]* | '') printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE" ;;
-	*) printf '%s\n' "$WORKTREE_RECOVERY_PLAN_STATE_ACTIVE" ;;
+	case "$state" in
+	clear | active | busy) printf '%s\n' "$state" ;;
+	*) printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE" ;;
 	esac
 	return 0
 }

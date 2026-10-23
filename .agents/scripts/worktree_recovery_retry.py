@@ -33,7 +33,7 @@ REVISION_FILES = (
     "worktree_recovery_legacy_policy.py", "worktree_recovery_migration_state.py",
     "worktree_archive_restore.py", "worktree_archive_snapshot.py", "worktree-archive-helper.sh",
     "worktree-recovery-migrate-helper.sh", "worktree-recovery-retire-helper.sh",
-    "worktree-recovery-lifecycle-helper.sh",
+    "worktree-recovery-lifecycle-helper.sh", "worktree_recovery_registry.py",
     "worktree_archive_administration.py", "worktree_archive_filesystem.py", "worktree_archive_git.py",
     "worktree_archive_index.py", "worktree_archive_state.py", "worktree_archive_history.py",
     "worktree_archive_objects.py", "worktree_archive_auto_merge.py", "worktree_archive_merge_capture.py",
@@ -42,6 +42,7 @@ REVISION_FILES = (
 TRANSIENT = {
     "compaction:deadline", "migration:insufficient-capacity", "migration:no-space",
     "retirement:process-active", "retirement:process-unavailable", "retirement:registry-active",
+    "retirement:registry-busy",
     "retirement:worktree-reference-active", "retirement:claim-active",
 }
 

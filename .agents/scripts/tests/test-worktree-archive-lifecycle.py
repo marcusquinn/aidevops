@@ -18,6 +18,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -536,6 +538,71 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         self.assertEqual(reconciled["entries"][0]["status"], "completed")
         self.assertEqual(reconciled["source_bytes_retired"], 0)
         self.assertNotIn(bucket.name, compactor.candidates(bucket.parent))
+
+    def test_registry_owner_evidence_read_only_fail_closed(self):
+        import worktree_recovery_registry as registry
+        database = self.root / "ownership.db"
+        source = str(self.root / "quoted'worktree")
+        self.assertEqual(registry.owner_state(database, source), "unavailable")
+        self.assertFalse(database.exists())
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(registry.owner_state(database, source), "unavailable")
+            db.execute("CREATE TABLE worktree_owners (worktree_path TEXT)")
+            self.assertEqual(registry.owner_state(database, source), "clear")
+            db.execute("INSERT INTO worktree_owners VALUES (?)", (source,))
+            db.commit()
+            self.assertEqual(registry.owner_state(database, source), "active")
+        link = self.root / "ownership-link.db"
+        link.symlink_to(database)
+        self.assertEqual(registry.owner_state(link, source), "unavailable")
+        database.write_bytes(b"not SQLite")
+        self.assertEqual(registry.owner_state(database, source), "unavailable")
+        self.assertEqual(database.read_bytes(), b"not SQLite")
+
+    def test_registry_busy_preserves_retirement_guard_and_schedules_retry(self):
+        import worktree_recovery_retry as retry
+        database = self.root / "ownership.db"
+        self.env["WORKTREE_REGISTRY_DB"] = str(database)
+        command = ('source "$1/worktree-recovery-lifecycle-helper.sh"; '
+                   '_worktree_recovery_plan_claim_state() { printf "clear\\n"; return 0; }; '
+                   '_worktree_recovery_retirement_evidence "$2"')
+        identity = json.dumps({"source_path": str(self.work), "common_path": str(self.repo)})
+        with closing(sqlite3.connect(database)) as db:
+            db.execute("CREATE TABLE worktree_owners (worktree_path TEXT)")
+            db.commit()
+            db.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            result = self.run_command("bash", "-c", command, "registry-guard",
+                                      HELPER.parent, identity, check=False)
+            self.assertLess(time.monotonic() - started, 15)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout.strip(), b"registry-busy")
+            db.rollback()
+        record = retry.pending("identity", retry.revision())
+        retry.finish(record, "retirement:" + result.stdout.decode().strip(), "retirement", 1000)
+        self.assertEqual(record["status"], "retry_wait")
+        self.assertGreater(record["next_attempt_at"], 1000)
+        retry.finish(record, "retirement:registry-unavailable", "retirement", 1000)
+        self.assertEqual(record["status"], "blocked")
+        self.assertIsNone(record["next_attempt_at"])
+
+    def test_registry_waits_for_short_exclusive_transaction(self):
+        database = self.root / "ownership.db"
+        self.env["WORKTREE_REGISTRY_DB"] = str(database)
+        with closing(sqlite3.connect(database, check_same_thread=False)) as db:
+            db.execute("CREATE TABLE worktree_owners (worktree_path TEXT)")
+            db.commit()
+            db.execute("BEGIN EXCLUSIVE")
+            release = threading.Timer(0.5, db.rollback)
+            release.start()
+            try:
+                result = self.run_command("bash", "-c",
+                    'source "$1/worktree-recovery-lifecycle-helper.sh"; '
+                    '_worktree_recovery_plan_registry_state "$2"',
+                    "registry-state", HELPER.parent, json.dumps({"source_path": str(self.work)}))
+                self.assertEqual(result.stdout.strip(), b"clear")
+            finally:
+                release.join()
 
     def test_migration_retry_backoff_due_and_lock_contention(self):
         import worktree_recovery_retry as retry
