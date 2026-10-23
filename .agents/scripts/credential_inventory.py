@@ -88,7 +88,7 @@ def cmd_account(args: argparse.Namespace) -> int:
             emit_json(data["provider_accounts"])
             return 0
         for ref, account in sorted(data["provider_accounts"].items()):
-            print(f"{ref}  {account['provider']}  {format_account(account)}")
+            print(f"{ref}  {account['provider']}  {view.format_account(account)}")
         return 0
     with store.locked() as data:
         store.add_account(
