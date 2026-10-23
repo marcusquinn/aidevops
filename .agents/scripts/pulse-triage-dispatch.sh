@@ -71,7 +71,7 @@ _compose_consolidation_worker_instructions() {
 	cat <<EOF
 ## What to do
 
-1. **Read the parent body and substantive comments inlined below.** Identify:
+1. **Read the parent body and substantive comments inlined below, fetching any explicitly omitted sources first.** Identify:
    - The original problem statement
    - Scope modifications added by commenters (additions, corrections, clarifications)
    - Resolved questions, rejected ideas, or superseded decisions
@@ -91,7 +91,7 @@ _compose_consolidation_worker_instructions() {
 
    Start the merged body with: \`_Supersedes #${parent_num} — this issue is the consolidated spec._\`
 
-3. **Validate before filing the new consolidated issue.** Save the inlined parent body verbatim to a local file, plus a separate body file for each additional superseded issue. Validate the merged body against ALL sources; a failed check stops publication and parent closure until the merged body is repaired:
+3. **Validate before filing the new consolidated issue.** Save the parent body (inlined or explicitly fetched) verbatim to a local file, plus a separate body file for each additional superseded issue. Validate the merged body against ALL sources; a failed check stops publication and parent closure until the merged body is repaired:
 
 \`\`\`bash
 python3 ~/.aidevops/agents/scripts/consolidation-contract-validator.py \\
@@ -149,8 +149,8 @@ EOF
 #######################################
 # t1982: Compose a self-contained consolidation-task child issue body.
 #
-# The worker reading this body must NOT need to read the parent — all
-# required content is inlined here. Includes:
+# Inline sources where size permits; explicitly reference omitted sources.
+# Includes:
 #   - Consolidation target marker (for dedup lookup)
 #   - Explicit worker instructions (gh commands)
 #   - Parent body verbatim
@@ -202,19 +202,35 @@ EOF
 	)
 	# Reserve room for the signed wrapper footer. Remove whole longest comments,
 	# never silently discard constraints from the middle of an inlined comment.
-	printf '%s' "$substantive_json" | jq -r --arg packet "$packet" '
+	# Stream large UTF-8 bodies rather than hitting execs per-argument byte limit.
+	printf '%s\0%s\0%s' "$packet" "$parent_body_section" "$substantive_json" | jq -Rrs \
+		--arg num "$parent_num" --arg repo "$repo_slug" '
+		def fill($comments):
+			"__CONSOLIDATION_COMMENTS__" as $marker | rindex($marker) as $i |
+			.[:$i] + $comments + .[($i + ($marker | length)):];
 		def reference: "- Comment ID " + (.id | tostring) + ": " + (.url // "(fetch parent comments via API)");
 		def render:
 			([.kept[] | "### Comment — @" + .login + " at " + .created_at + "\n\n" + .body] | join("\n\n---\n\n")) +
 			(if (.omitted | length) > 0 then "\n\n### Omitted comments — fetch before consolidating\n" +
 			([.omitted[] | reference] | join("\n")) else "" end);
+		split("\u0000") as $input | $input[0] as $packet | $input[1] as $parent |
+		$input[2] | fromjson |
+		# A near-limit parent cannot coexist with instructions. Preserve it by
+		# reference only in that exceptional case rather than silently slicing it.
+		($packet | if length > 63000 then
+			split($parent) | join("Parent body omitted (size limit): fetch issue #" + $num + " in " + $repo + " verbatim before consolidating.")
+		else . end) as $packet |
 		{kept: ., omitted: []} |
 		until((($packet | length) + (render | length)) <= 64000 or (.kept | length) == 0;
 			(.kept | max_by(.body | length)) as $largest |
 			(.kept | index($largest)) as $index |
 			.omitted += [$largest] | .kept |= del(.[$index])) |
 		(render) as $comments |
-		$packet | split("__CONSOLIDATION_COMMENTS__") | join($comments)
+		($packet | fill($comments)) |
+		# Pathological comment counts can exceed the budget with references alone.
+		if length > 64000 then
+			$packet | fill("Comments omitted (reference list exceeds size limit): fetch all pages of repos/" + $repo + "/issues/" + $num + "/comments before consolidating.")
+		else . end
 	'
 	return 0
 }
@@ -526,9 +542,10 @@ _create_consolidation_child_issue() {
 	# Log only an allowlisted diagnostic from the first line, never arbitrary
 	# provider text that may contain tokens, private URLs or terminal escapes.
 	IFS= read -r error_line <"$error_file" || true
-	case "${error_line,,}" in
+	error_line=$(printf '%s' "$error_line" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+	case "$error_line" in
 	*"body is too long"* | *"body is too large"* | *"maximum is 65536"*) failure_kind="body is too long" ;;
-	*"validation failed"* | *"validation error"*) failure_kind="validation error" ;;
+	*"validation failed"* | *"validation error"* | *"http 422"*) failure_kind="validation error" ;;
 	esac
 	if [[ -z "$child_url" ]]; then
 		printf '[pulse-wrapper] ERROR: consolidation child creation failed for #%s: %s\n' \
@@ -568,7 +585,7 @@ _post_consolidation_dispatch_comment() {
 
 	local parent_comment_body="## Issue Consolidation Dispatched
 
-A consolidation task has been filed as **#${child_num}**. It contains the full body and substantive comments of this issue inline, plus instructions for a worker to produce a merged spec, file it as a new issue, @mention all contributors, and close this issue as superseded.
+A consolidation task has been filed as **#${child_num}**. It contains this issue body and substantive comments inline where size permits, with explicit references for omitted sources, plus instructions for a worker to produce a merged spec, file it as a new issue, @mention all contributors, and close this issue as superseded.
 
 **What happens next:**
 

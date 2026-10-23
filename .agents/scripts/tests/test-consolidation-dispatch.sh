@@ -134,9 +134,24 @@ pr-list)
 	eval "$(_stub_parse_args "$@")"
 	_stub_emit "${GH_PR_LIST_RESOLVING_JSON:-[]}" "$JQ"
 	;;
-issue-create) printf '%s\n' "${GH_ISSUE_CREATE_URL:-https://github.com/owner/repo/issues/999}" ;;
+issue-create)
+	if [[ -n "${GH_ISSUE_CREATE_ERROR:-}" ]]; then
+		printf '%s\n' "$GH_ISSUE_CREATE_ERROR" >&2
+		exit 1
+	fi
+	printf '%s\n' "${GH_ISSUE_CREATE_URL:-https://github.com/owner/repo/issues/999}"
+	;;
 api-*) printf '%s\n' "${GH_API_COMMENTS_JSON:-[]}" ;;
-issue-edit | issue-comment | label-create) ;;
+issue-comment)
+	while [[ $# -gt 0 ]]; do
+		if [[ "$1" == --body ]]; then
+			printf '%s' "$2" >"${GH_LOG}.receipt"
+			break
+		fi
+		shift
+	done
+	;;
+issue-edit | label-create) ;;
 *) printf 'gh stub: unhandled: %s\n' "$*" >&2 ;;
 esac
 exit 0
@@ -230,6 +245,7 @@ teardown_gh_stub() {
 	unset GH_ISSUE_LIST_FAIL
 	unset GH_ISSUE_META_FAIL
 	unset GH_PR_LIST_RESOLVING_JSON
+	unset GH_ISSUE_CREATE_ERROR _CONSOLIDATION_SOURCE_FINGERPRINT
 	unset CONSOLIDATION_RECENT_CLOSE_GRACE_MIN
 	return 0
 }
@@ -309,9 +325,9 @@ test_child_body_contains_parent_content_and_authors() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | @bob not mentioned"
 	fi
-	if ! printf '%s' "$body" | grep -q 'You do \*\*NOT\*\* need to read'; then
+	if ! printf '%s' "$body" | grep -q 'Fetch omitted references before consolidating'; then
 		failures=$((failures + 1))
-		failmsg="${failmsg} | missing self-contained warning"
+		failmsg="${failmsg} | missing omitted-source instructions"
 	fi
 	if ! printf '%s' "$body" | grep -qF -- '--label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>"'; then
 		failures=$((failures + 1))
@@ -1695,7 +1711,90 @@ test_non_consolidating_comment_call_budget() {
 	return 0
 }
 
+test_oversized_consolidation_packet() {
+	setup_gh_stub
+	local comments body huge_parent filtered
+	comments=$(jq -n '[range(1; 5) | {id: ., html_url: ("https://github.com/owner/repo/issues/123#issuecomment-" + tostring), user: {login: "alice", type: "User"}, created_at: "2026-10-23T00:00:00Z", body: (if . == 1 then "界" * 40000 else "x" * 20000 end)}]')
+	filtered=$(_consolidation_filter_substantive_comments "$comments")
+	body=$(_compose_consolidation_child_body 123 owner/repo title VERBATIM_PARENT_BODY_MARKER "$filtered" @alice bug)
+	if [[ ${#body} -le 64000 && "$body" == *VERBATIM_PARENT_BODY_MARKER* &&
+		"$body" == *"Omitted comments"* && "$body" == *"Comment ID 1: https://github.com/owner/repo/issues/123#issuecomment-1"* &&
+		"$body" == *"## What to do"* ]]; then
+		print_result "100k-character thread fits packet budget with parent, instructions and omitted IDs/URLs" 0
+	else
+		print_result "100k-character thread fits packet budget with parent, instructions and omitted IDs/URLs" 1 "characters=${#body}"
+	fi
+	huge_parent=$(jq -nr '"界" * 65000')
+	body=$(_compose_consolidation_child_body 123 owner/repo title "$huge_parent" '[]' @alice bug)
+	if [[ ${#body} -le 64000 && "$body" == *"Parent body omitted (size limit)"* && "$body" == *"## What to do"* ]]; then
+		print_result "near-limit parent uses an explicit verbatim-fetch reference rather than overflow" 0
+	else
+		print_result "near-limit parent uses an explicit verbatim-fetch reference rather than overflow" 1
+	fi
+	teardown_gh_stub
+	return 0
+}
+
+test_creation_failure_retry_receipt() {
+	setup_gh_stub
+	local original_comments receipt body initial_fingerprint error
+	original_comments='[{"id":1,"body":"original source comment"}]'
+	export GH_API_COMMENTS_JSON="$original_comments"
+	_consolidation_creation_retry_allowed 123 owner/repo
+	initial_fingerprint="$_CONSOLIDATION_SOURCE_FINGERPRINT"
+	for error in 'GraphQL: Body is too long (maximum is 65536 characters) PRIVATE_DETAIL' 'HTTP 422: Validation Failed PRIVATE_DETAIL'; do
+		GH_ISSUE_CREATE_ERROR="$error"
+		export GH_ISSUE_CREATE_ERROR
+		body=$(_create_consolidation_child_issue owner/repo 123 packet)
+		receipt=$(<"${GH_LOG}.receipt")
+		if [[ -z "$body" && "$receipt" == *"consolidation-create-failure:${initial_fingerprint}"* ]] &&
+			grep -Eq 'body is too long|validation error' "$LOGFILE" && ! grep -q PRIVATE_DETAIL "$LOGFILE"; then
+			print_result "deterministic error produces sanitized log and fingerprinted receipt: ${error%% PRIVATE*}" 0
+		else
+			print_result "deterministic error produces sanitized log and fingerprinted receipt" 1
+		fi
+	done
+	# Model a second runner observing the receipt plus an ephemeral lock on a
+	# later API page. Neither automation comment must invalidate the fingerprint.
+	GH_API_COMMENTS_JSON=$(printf '%s' "$original_comments" | jq --arg receipt "$receipt" '. + [{id:2,body:$receipt},{id:3,body:"<!-- consolidation-lock:runner=other ts=now -->"}]')
+	export GH_API_COMMENTS_JSON
+	: >"$GH_LOG"
+	if ! _consolidation_lock_acquire 123 owner/repo && ! grep -Eq 'issue (edit|comment|create)' "$GH_LOG"; then
+		print_result "second runner suppresses unchanged failure before any lock writes" 0
+	else
+		print_result "second runner suppresses unchanged failure before any lock writes" 1
+	fi
+	GH_ISSUE_VIEW_BODY="changed parent body"
+	export GH_ISSUE_VIEW_BODY
+	if _consolidation_creation_retry_allowed 123 owner/repo; then
+		print_result "parent body edit re-arms deterministic creation failure" 0
+	else
+		print_result "parent body edit re-arms deterministic creation failure" 1
+	fi
+	unset GH_ISSUE_VIEW_BODY
+	GH_API_COMMENTS_JSON=$(printf '%s' "$GH_API_COMMENTS_JSON" | jq '.[0].body = "edited source comment"')
+	export GH_API_COMMENTS_JSON
+	if _consolidation_creation_retry_allowed 123 owner/repo; then
+		print_result "source comment edit re-arms deterministic creation failure" 0
+	else
+		print_result "source comment edit re-arms deterministic creation failure" 1
+	fi
+	: >"${GH_LOG}.receipt"
+	GH_ISSUE_CREATE_ERROR='HTTP 503: temporarily unavailable PRIVATE_DETAIL'
+	export GH_ISSUE_CREATE_ERROR
+	body=$(_create_consolidation_child_issue owner/repo 123 packet)
+	if [[ -z "$body" && ! -s "${GH_LOG}.receipt" ]] && ! grep -q PRIVATE_DETAIL "$LOGFILE"; then
+		print_result "transient failure is sanitized without a permanent suppression receipt" 0
+	else
+		print_result "transient failure is sanitized without a permanent suppression receipt" 1
+	fi
+	teardown_gh_stub
+	return 0
+}
+
 main() {
+	test_oversized_consolidation_packet
+	test_creation_failure_retry_receipt
 	test_non_consolidating_comment_call_budget
 	test_dispatch_creates_child_issue
 	test_child_body_contains_parent_content_and_authors
