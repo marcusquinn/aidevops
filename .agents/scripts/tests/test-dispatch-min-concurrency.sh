@@ -58,10 +58,10 @@ source "${SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
 # shellcheck source=../pulse-capacity-alloc.sh
 source "${SCRIPT_DIR}/pulse-capacity-alloc.sh"
 
-# Deterministic CPU admission gate: never read the host's live load or iostat
-# idle. Cases needing a closed gate set TEST_CPU_GATE=closed explicitly.
-_pulse_cpu_pressure() {
-	printf '1.00 16 %s 4.0 na\n' "${TEST_CPU_GATE:-open}"
+# Deterministic RAM admission (GH#35537): never read the host's live memory.
+# Cases needing exhausted RAM set TEST_RAM_SLOTS=0 explicitly.
+_pulse_ram_admission() {
+	printf '%s 131072 0 0\n' "${TEST_RAM_SLOTS:-64}"
 	return 0
 }
 

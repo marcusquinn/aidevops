@@ -565,6 +565,9 @@ jobs:
         # and the statusCheckRollup → REST check-runs migration (GH#21799).
         echo "Running pulse worker count / capacity regression tests..."
         bash .agents/scripts/tests/test-pulse-wrapper-worker-count.sh
+        # GH#35537 owner directive: worker admission is RAM-only. Fails if
+        # admission reads CPU load, CPU idle or core counts.
+        bash .agents/scripts/tests/test-pulse-ram-admission.sh
         echo "Worker count / capacity regression tests passed"
 
   complexity-check:

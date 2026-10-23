@@ -107,11 +107,49 @@ Supervisor, dispatch, and autonomous operation settings.
 |-----|------|---------|-------------|-------------|
 | `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
 | `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos in `repos.json`. |
-| `orchestration.max_workers_cap` | integer | `0` (auto: half logical cores, RAM-bounded, clamped to 2–64 before host sharing) | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. Auto divides this ceiling among detected co-located runner users (minimum 1 per user); a positive explicit cap is a per-runner override and is not divided. |
-| `orchestration.max_load_per_core` | positive number | `4.0` | `AIDEVOPS_MAX_LOAD_PER_CORE` | Close new-worker admission above this one-minute load/logical-core ratio, including refill and minimum-worker floor. Existing workers continue. Load/core `1.0` is 100% CPU busy; the default allows full use and closes only on severe run-queue thrash. Lower it to keep CPU headroom. Invalid values fall back to `4.0`; unavailable telemetry leaves RAM/provider limits in force (`cpu_gate=unknown`). |
-| `orchestration.cpu_idle_admit_percent` | integer 0-100 | `25` | `AIDEVOPS_CPU_IDLE_ADMIT_PERCENT` | Above `max_load_per_core`, keep admission open while measured CPU idle is at least this percent (`cpu_gate=open_idle`), admitting at most `cores × idle%` new workers per pass. Load average also counts threads blocked on I/O, so it can exceed the threshold while cores are idle. Linux measures idle without iowait, so I/O-bound hosts stay closed. `0` disables the override. |
-| `orchestration.min_worker_concurrency` | integer | `6` | `AIDEVOPS_MIN_WORKER_CONCURRENCY` | Minimum active implementation-worker floor while provider/account health and host load permit. Set to `0` to disable. |
-| `orchestration.provider_account_slot_multiplier` | integer | `24` | `PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER` | Worker slots allowed per available provider OAuth account. One healthy OpenAI/Anthropic account can use the configured max worker cap by default; lower this if the provider plan/account cannot sustain that concurrency. RAM, load, recent failures/rate limits/service interruptions/provider 5xx, auth errors, and explicit overrides still reduce capacity. |
+| `orchestration.max_workers_cap` | integer | `0` (auto: `(total RAM − RAM_RESERVE_MB) / RAM_PER_WORKER_MB`, clamped to 2–64 before host sharing) | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. Auto divides this ceiling among detected co-located runner users (minimum 1 per user); a positive explicit cap is a per-runner override and is not divided. |
+| `orchestration.max_load_per_core` | — | — | — | **Deprecated, ignored** (GH#35537). CPU load never gates admission; see [Worker resource policy](#worker-resource-policy). Remove from config. |
+| `orchestration.cpu_idle_admit_percent` | — | — | — | **Deprecated, ignored** (GH#35537). Remove from config. |
+| `orchestration.min_worker_concurrency` | integer | `6` | `AIDEVOPS_MIN_WORKER_CONCURRENCY` | Minimum active implementation-worker floor while provider/account health and RAM headroom permit. Never exceeds RAM headroom. Set to `0` to disable. |
+| `orchestration.provider_account_slot_multiplier` | integer | `24` | `PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER` | Worker slots allowed per available provider OAuth account. One healthy OpenAI/Anthropic account can use the configured max worker cap by default; lower this if the provider plan/account cannot sustain that concurrency. RAM, recent failures/rate limits/service interruptions/provider 5xx, auth errors, and explicit overrides still reduce capacity. |
+
+#### Worker resource policy
+
+Owner directive (2026-10-23, GH#35537): **RAM is the only host resource that
+limits worker admission.** Macs and servers schedule their own CPU; sustained
+100% use of every core is acceptable and expected. CPU load averages, CPU idle
+percentages and logical core counts must never close, cap or pace new-worker
+admission. This restores t3549/t3558 and supersedes GH#33570 (load gate),
+GH#33754 (idle-core headroom) and GH#32663's 50%-of-cores automatic cap.
+
+How admission is computed each preflight and refill pass:
+
+- `RAM slots = (reclaimable RAM − RAM_RESERVE_MB − growth reserve) / RAM_PER_WORKER_MB`.
+  Reclaimable RAM is macOS free + inactive + speculative + purgeable pages, or
+  Linux `MemAvailable`. The growth reserve is `RAM_PER_WORKER_MB − tree RSS`
+  for each running worker whose process tree has not reached its footprint yet,
+  so a burst of launches cannot over-commit memory.
+- Target = running workers + RAM slots, then explicit/automatic caps,
+  provider/account health and shared-host division. The minimum-worker floor
+  never exceeds RAM headroom. No RAM slots closes admission (running workers
+  continue); a host running no workers keeps one slot while one worker fits.
+- Defaults: `RAM_PER_WORKER_MB=1536` (measured worker trees 0.7–1.6 GB),
+  `RAM_RESERVE_MB=6144`. Override per host with those environment variables.
+  Dispatch logs show `admission_policy=ram_only` with `ram_available_mb`,
+  `ram_worker_growth_mb`, `ram_slots` and `ram_cap`.
+
+Not admission throttles (allowed): launch-ceremony concurrency
+(`DISPATCH_MAX_PARALLEL`), the boot/cooldown dispatch ramp, worker-watchdog
+CPU-idle stall detection, and the full-loop validator's serial plugin-test mode
+(test determinism, GH#35499). CPU and `load_per_cpu` stay visible in runtime
+metrics for diagnosis only.
+
+Correcting regressions: if a change, issue or review proposes CPU- or
+load-based admission, worker caps from core counts, or "host overload"
+throttling, decline it and cite this section. The guard
+`.agents/scripts/tests/test-pulse-ram-admission.sh` fails when admission
+scripts read load average, CPU idle or core counts. If RAM is genuinely short,
+tune `RAM_PER_WORKER_MB`/`RAM_RESERVE_MB` or the explicit cap instead.
 
 #### Shared-host runners
 
@@ -119,7 +157,7 @@ Pulse counts distinct OS user IDs with live `pulse-wrapper.sh` or
 `headless-runtime-helper.sh` processes using one portable process-table snapshot.
 Multiple workers or Pulses under the same user count once; zombie processes do
 not count. The current user always counts, including when no wrapper is visible.
-On a 24-core host whose solo automatic ceiling is 12, two active runner users
+On a host whose solo automatic ceiling is 12, two active runner users
 receive a ceiling of 6 each. Preflight and refill both apply it, and the minimum
 worker floor cannot raise capacity above the shared-host ceiling. Running workers
 are not terminated when another runner appears. Dispatch logs include
@@ -139,12 +177,10 @@ Use the CLI under each runner user, for example:
 
 ```bash
 aidevops config set orchestration.max_workers_cap 0  # automatic shared-host sizing
-aidevops config set orchestration.max_load_per_core 2  # optional extra CPU headroom
 ```
 
-The load gate still defaults to `4.0`, and GH#33754's idle-core corroboration
-still applies. Shared-host sizing does not change the single-runner full-CPU
-policy or turn a closed CPU gate back on.
+Shared-host sizing divides only the automatic ceiling; live RAM headroom still
+bounds every runner on the host.
 
 ### safety
 

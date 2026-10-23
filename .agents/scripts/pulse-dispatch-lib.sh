@@ -464,10 +464,10 @@ _dispatch_compute_capacity() {
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 
 	# t3418/GH#23038: Keep a minimum implementation worker floor eligible only
-	# while provider/account health and host load are good enough. The pressure
-	# helper caps the final target by OAuth account availability, recent
-	# provider failures, load, and long-session runway before dispatch slots are
-	# exposed to the candidate loop.
+	# while provider/account health and RAM headroom allow. The pressure helper
+	# caps the final target by OAuth account availability, recent provider
+	# failures and RAM headroom before dispatch slots are exposed to the
+	# candidate loop. CPU load is never an input (GH#35537).
 	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-}"
 	if [[ -z "$min_worker_floor" ]] && declare -F config_get >/dev/null 2>&1; then
 		min_worker_floor=$(config_get "orchestration.min_worker_concurrency" "6")
@@ -477,7 +477,7 @@ _dispatch_compute_capacity() {
 		min_worker_floor=6
 	fi
 	# The floor refills toward a target; it must never exceed the host ceiling
-	# (auto cap = 50% of cores), or small runners would be pushed past it.
+	# (auto cap = total-RAM ceiling), or small runners would be pushed past it.
 	if [[ "${MAX_WORKERS_CAP:-}" =~ ^[1-9][0-9]*$ ]] && ((min_worker_floor > MAX_WORKERS_CAP)); then
 		min_worker_floor="$MAX_WORKERS_CAP"
 	fi

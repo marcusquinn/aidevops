@@ -126,28 +126,21 @@
     "draft_responses": true,
 
     // Hard ceiling for pulse worker pool size after RAM-based calculation.
-    // 0 = auto: 50% of logical CPU cores, bounded by total RAM (min 2, max 64).
+    // 0 = auto: (total RAM - reserve) / per-worker RAM (min 2, max 64).
+    // Worker admission is RAM-only: CPU load and core counts never limit it
+    // (GH#35537; reference/configuration.md "Worker resource policy").
     // Set a positive number only when a machine needs a fixed ceiling.
     // Env override: AIDEVOPS_MAX_WORKERS_CAP
     "max_workers_cap": 0,
 
-    // Close new-worker admission when one-minute load / logical cores exceeds
-    // this positive threshold. Existing workers continue; unavailable telemetry
-    // leaves RAM/provider limits in force. Load/core 1.0 is 100% CPU busy; the
-    // 4.0 default allows full use and closes only on severe run-queue thrash.
-    // Lower it to keep CPU headroom. Env: AIDEVOPS_MAX_LOAD_PER_CORE
+    // DEPRECATED (GH#35537): CPU load never gates worker admission. These
+    // fields are ignored; remove them from config.
     "max_load_per_core": 4.0,
-
-    // When load exceeds max_load_per_core, keep admission open while measured
-    // CPU idle is at least this percent, limited per pass to idle-core headroom
-    // (cpu_gate=open_idle). Load average also counts threads blocked on I/O, so
-    // it can exceed the threshold while cores sit idle. 0 disables the override.
-    // Env: AIDEVOPS_CPU_IDLE_ADMIT_PERCENT
     "cpu_idle_admit_percent": 25,
 
     // Minimum active implementation-worker floor. Pulse will try to refill to
-    // this target while provider/account health and host load are acceptable.
-    // Never exceeds the resolved max_workers_cap.
+    // this target while provider/account health and RAM headroom allow.
+    // Never exceeds the resolved max_workers_cap or RAM headroom.
     // Set to 0 to disable. Env override: AIDEVOPS_MIN_WORKER_CONCURRENCY
     "min_worker_concurrency": 6,
 
@@ -158,7 +151,7 @@
 
     // Worker slots allowed per available provider OAuth account.
     // Default 24 lets a single healthy provider account use the configured
-    // max worker cap; RAM, load, health/rate-limit, auth, and explicit user
+    // max worker cap; RAM, health/rate-limit, auth, and explicit user
     // overrides still reduce capacity.
     // Env override: PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER
     "provider_account_slot_multiplier": 24,

@@ -1746,6 +1746,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18763 worker write fence: name the accepted roots instead of redirecting every block to the worktree #bug #priority:high #interactive ref:GH#35495 assignee:marcusquinn started:2026-10-23 -> [todo/tasks/t18763-brief.md] pr:#35497 completed:2026-10-23
 
+- [ ] t18767 Make pulse worker admission RAM-only: remove CPU load, idle and core-count throttles #bug #priority:high ref:GH#35537
+
 ## In Progress
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09

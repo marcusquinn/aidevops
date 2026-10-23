@@ -2321,7 +2321,8 @@ migrate_custom_model_routing_reasoning_defaults() {
 }
 
 # GH#32663: one-time reset of per-machine worker-capacity overrides. Pulse
-# efficiency fixes plus the new auto cap (50% of cores, bounded by RAM) make
+# efficiency fixes plus the then-new auto cap (since GH#35537 a total-RAM
+# ceiling; CPU never limits admission) make
 # old hand-tuned ceilings obsolete; stale low values (e.g. 2) were starving
 # runners. Removes the keys from the user config and the Pulse scheduler env
 # overrides, with backups, exactly once. Later explicit settings are honoured.

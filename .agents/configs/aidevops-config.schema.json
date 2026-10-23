@@ -148,26 +148,28 @@
           "type": "integer",
           "default": 0,
           "minimum": 0,
-          "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. 0 = auto (50% of logical CPU cores, bounded by total RAM, min 2, max 64). Env: AIDEVOPS_MAX_WORKERS_CAP"
+          "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. 0 = auto ((total RAM - reserve) / per-worker RAM, min 2, max 64). Worker admission is RAM-only: CPU load and core counts never limit it (GH#35537). Env: AIDEVOPS_MAX_WORKERS_CAP"
         },
         "max_load_per_core": {
           "type": "number",
           "default": 4.0,
           "exclusiveMinimum": 0,
-          "description": "Close new-worker admission when one-minute load per logical core exceeds this threshold; existing workers continue. Load/core 1.0 is 100% CPU busy; the 4.0 default allows full use and closes only on severe run-queue thrash. Unavailable telemetry leaves RAM/provider limits in force. Env: AIDEVOPS_MAX_LOAD_PER_CORE"
+          "deprecated": true,
+          "description": "DEPRECATED (GH#35537): CPU load never gates worker admission. This field is ignored. Remove from config."
         },
         "cpu_idle_admit_percent": {
           "type": "integer",
           "default": 25,
           "minimum": 0,
           "maximum": 100,
-          "description": "When load exceeds max_load_per_core, keep admission open while measured CPU idle is at least this percent, limited per pass to the idle-core headroom (cpu_gate=open_idle). Load average also counts threads blocked on I/O, so it can exceed the threshold while cores are idle. 0 disables the override. Env: AIDEVOPS_CPU_IDLE_ADMIT_PERCENT"
+          "deprecated": true,
+          "description": "DEPRECATED (GH#35537): CPU idle never gates worker admission. This field is ignored. Remove from config."
         },
         "min_worker_concurrency": {
           "type": "integer",
           "default": 6,
           "minimum": 0,
-          "description": "Minimum active implementation-worker floor while provider/account health and host load permit. Set to 0 to disable. Env: AIDEVOPS_MIN_WORKER_CONCURRENCY"
+          "description": "Minimum active implementation-worker floor while provider/account health and RAM headroom permit. Never exceeds RAM headroom. Set to 0 to disable. Env: AIDEVOPS_MIN_WORKER_CONCURRENCY"
         },
         "quality_debt_cap_pct": {
           "type": "integer",
@@ -180,7 +182,7 @@
           "type": "integer",
           "default": 24,
           "minimum": 1,
-          "description": "Worker slots allowed per available provider OAuth account. Default 24 lets one healthy account reach the configured max worker cap unless RAM, load, provider health, rate limits, auth errors, or explicit overrides reduce capacity. Env: PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER"
+          "description": "Worker slots allowed per available provider OAuth account. Default 24 lets one healthy account reach the configured max worker cap unless RAM, provider health, rate limits, auth errors, or explicit overrides reduce capacity. Env: PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER"
         },
         "pulse_model": {
           "type": "string",

@@ -251,43 +251,28 @@ apply_peak_hours_cap() {
 }
 
 #######################################
-# Calculate max workers from available RAM and CPU admission pressure
+# Calculate the simultaneous-worker target from RAM only (GH#35537 worker
+# resource policy: CPU load and core counts never gate admission).
 #
-# Formula: (free_ram - RAM_RESERVE_MB) / RAM_PER_WORKER_MB
-# RAM bound clamped to [1, MAX_WORKERS_CAP]; CPU pressure may close admission (0)
+# Target = running workers + RAM slots, where
+#   RAM slots = (reclaimable - RAM_RESERVE_MB - growth of running workers)
+#               / RAM_PER_WORKER_MB
+# clamped to MAX_WORKERS_CAP and the shared-host ceiling. 0 means RAM has no
+# room for another worker (closed gate); running workers continue.
 #
 # Writes MAX_WORKERS to a file that pulse.md reads via bash.
 #######################################
 calculate_max_workers() {
-	local free_mb
-	if [[ "$(uname)" == "Darwin" ]]; then
-		# macOS: use vm_stat for free + inactive (reclaimable) pages
-		# Reclaimable = free + inactive + speculative + purgeable pages. The
-		# speculative/purgeable pools are file cache the kernel drops on demand;
-		# omitting them under-reported headroom on busy Macs.
-		local page_size="" vm_out="" reclaimable_pages=""
-		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
-		vm_out=$(vm_stat 2>/dev/null) || vm_out=""
-		reclaimable_pages=$(printf '%s\n' "$vm_out" | awk '
-			/^Pages (free|inactive|speculative|purgeable):/ { gsub(/\./, "", $NF); sum += $NF }
-			END { printf "%d", sum }')
-		# Validate integers before arithmetic expansion
-		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
-		[[ "$reclaimable_pages" =~ ^[0-9]+$ ]] || reclaimable_pages=0
-		free_mb=$((reclaimable_pages * page_size / 1024 / 1024))
-	else
-		# Linux: use MemAvailable from /proc/meminfo
-		free_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 8192)
+	local ram_slots="" free_mb="" growth_mb="" workers_seen=""
+	read -r ram_slots free_mb growth_mb workers_seen <<<"$(_pulse_ram_admission)"
+	[[ "$ram_slots" =~ ^[0-9]+$ ]] || ram_slots=0
+	[[ "$workers_seen" =~ ^[0-9]+$ ]] || workers_seen=0
+
+	local max_workers=0
+	if ((ram_slots > 0)); then
+		max_workers=$((workers_seen + ram_slots))
 	fi
-	[[ "$free_mb" =~ ^[0-9]+$ ]] || free_mb=8192
-
-	local available_mb=$((free_mb - RAM_RESERVE_MB))
-	local max_workers=$((available_mb / RAM_PER_WORKER_MB))
-
-	# Clamp to [1, MAX_WORKERS_CAP]
-	if [[ "$max_workers" -lt 1 ]]; then
-		max_workers=1
-	elif [[ "$max_workers" -gt "$MAX_WORKERS_CAP" ]]; then
+	if [[ "${MAX_WORKERS_CAP:-}" =~ ^[1-9][0-9]*$ ]] && ((max_workers > MAX_WORKERS_CAP)); then
 		max_workers="$MAX_WORKERS_CAP"
 	fi
 	local colocated_runners="" host_worker_cap=""
@@ -297,19 +282,11 @@ calculate_max_workers() {
 		max_workers="$host_worker_cap"
 	fi
 
-	# open_idle keeps the RAM target; per-pass idle headroom is applied by
-	# pulse_apply_provider_load_capacity_cap, which knows active workers.
-	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold="" cpu_idle=""
-	read -r cpu_load cpu_cores cpu_gate cpu_threshold cpu_idle <<<"$(_pulse_cpu_pressure)"
-	if [[ "$cpu_gate" == "closed" ]]; then
-		max_workers=0
-	fi
-
 	# Write to a file that pulse.md can read
 	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
 	echo "$max_workers" >"$max_workers_file"
 
-	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}, load=${cpu_load}/${cpu_cores} max_load_per_core=${cpu_threshold} cpu_gate=${cpu_gate} cpu_idle_pct=${cpu_idle:-na} colocated_runners=${colocated_runners}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, worker growth reserve: ${growth_mb}MB, per worker: ${RAM_PER_WORKER_MB}MB, active workers: ${workers_seen}, ram slots: ${ram_slots}, max workers: ${max_workers}, admission_policy=ram_only colocated_runners=${colocated_runners}" >>"$LOGFILE"
 	return 0
 }
 
