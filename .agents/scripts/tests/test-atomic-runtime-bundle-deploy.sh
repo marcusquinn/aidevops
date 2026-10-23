@@ -700,6 +700,99 @@ test_serialized_older_version_refuses_global_activation() {
 	return 0
 }
 
+test_source_access_broker_compatibility() {
+	local root="$TEST_ROOT/source-access"
+	local candidate="$root/candidate"
+	local broker="$root/broker"
+	local name="" output=""
+
+	mkdir -p "$candidate/scripts" "$candidate/plugins/opencode-aidevops" "$broker"
+	_runtime_bundle_check_source_access_broker "$candidate" "$broker" || fail "non-source-access runtime was blocked"
+	pass "runtimes without the approval guard do not require a broker"
+	printf '// approval guard fixture\n' >"$candidate/plugins/opencode-aidevops/source-access-approval.mjs"
+	_runtime_bundle_check_source_access_broker "$candidate" "$root/not-installed" || fail "first installation was blocked"
+	pass "first installation retains fail-closed broker provisioning"
+	for name in source-access-helper.py source_access_core.py; do
+		printf '# signed broker fixture\n' >"$candidate/scripts/$name"
+		cp "$candidate/scripts/$name" "$broker/$name"
+	done
+	_runtime_bundle_check_source_access_broker "$candidate" "$broker" || fail "matching broker was blocked"
+	pass "matching signed helper and core allow deployment"
+
+	for name in source-access-helper.py source_access_core.py; do
+		printf '# unreleased fixture\n' >"$candidate/scripts/$name"
+		if output=$(_runtime_bundle_check_source_access_broker "$candidate" "$broker" 2>&1); then
+			fail "mismatched $name was accepted"
+		fi
+		assert_output_contains "$output" "matching signed release" "mismatched $name explains the release requirement"
+		assert_output_contains "$output" "unreleased installer cannot repair" "mismatched $name avoids a setup retry loop"
+		cp "$broker/$name" "$candidate/scripts/$name"
+	done
+
+	rm "$broker/source_access_core.py"
+	ln -s "$candidate/scripts/source_access_core.py" "$broker/source_access_core.py"
+	if _runtime_bundle_check_source_access_broker "$candidate" "$broker"; then
+		fail "symlinked broker core was accepted"
+	fi
+	pass "symlinked broker files fail closed even when bytes match"
+	rm "$broker/source_access_core.py"
+	if _runtime_bundle_check_source_access_broker "$candidate" "$broker"; then
+		fail "partially installed broker was accepted"
+	fi
+	pass "a partially installed broker fails closed"
+	cp "$candidate/scripts/source_access_core.py" "$broker/source_access_core.py"
+	printf '# extracted document fixture\n' >"$candidate/scripts/source_access_documents.py"
+	if _runtime_bundle_check_source_access_broker "$candidate" "$broker"; then
+		fail "missing extracted broker module was accepted"
+	fi
+	pass "new document module requires a matching installed module"
+	cp "$candidate/scripts/source_access_documents.py" "$broker/source_access_documents.py"
+	_runtime_bundle_check_source_access_broker "$candidate" "$broker" || fail "matching extracted module was blocked"
+	pass "matching extracted document module allows deployment"
+	printf '# changed document fixture\n' >"$candidate/scripts/source_access_documents.py"
+	if _runtime_bundle_check_source_access_broker "$candidate" "$broker"; then
+		fail "mismatched extracted broker module was accepted"
+	fi
+	pass "document-only broker changes also block deployment"
+	return 0
+}
+
+test_source_access_failure_preserves_runtime_state() {
+	local target_dir="$HOME/.aidevops/agents"
+	local unused_target="$TEST_ROOT/blocked-source-access/agents"
+	local candidate="" active_before="" previous_before="" stamp_before=""
+
+	write_fake_revision "26.0.0" "broker-compatible-active"
+	stage_revision "$target_dir"
+	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+	previous_before=$(readlink "$HOME/.aidevops/previous-runtime-bundle")
+	stamp_before=$(cat "$HOME/.aidevops/.deployed-sha")
+	if (
+		_runtime_bundle_check_source_access_broker() { return 1; }
+		stage_revision "$unused_target"
+	); then
+		fail "staging ignored the broker compatibility failure"
+	fi
+	[[ ! -e "${unused_target%/*}/runtime-bundles" ]] || fail "rejected staging created runtime bundle state"
+	pass "broker preflight refuses staging before creating bundle state"
+
+	write_fake_revision "27.0.0" "broker-incompatible-candidate"
+	stage_revision "$target_dir"
+	candidate="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	if (
+		_runtime_bundle_check_source_access_broker() { return 1; }
+		_runtime_bundle_activate "$target_dir" "$candidate"
+	); then
+		fail "activation ignored the broker compatibility failure"
+	fi
+	assert_eq "$active_before" "$(_runtime_bundle_resolve_root "$target_dir")" "broker activation failure preserves the active runtime"
+	assert_eq "$previous_before" "$(readlink "$HOME/.aidevops/previous-runtime-bundle")" "broker activation failure preserves the rollback pointer"
+	assert_eq "$stamp_before" "$(cat "$HOME/.aidevops/.deployed-sha")" "broker activation failure preserves the deployment stamp"
+	assert_file_contains "$target_dir/scripts/helper.sh" 'broker-compatible-active' "broker activation failure preserves working helper content"
+	return 0
+}
+
 test_same_version_ancestor_refuses_global_activation() {
 	local target_dir="$HOME/.aidevops/agents"
 	local stale_bundle=""
@@ -765,6 +858,8 @@ main() {
 	test_custom_package_links_survive_promotion_prune_and_rollback
 	test_serialized_older_version_refuses_global_activation
 	test_same_version_ancestor_refuses_global_activation
+	test_source_access_broker_compatibility
+	test_source_access_failure_preserves_runtime_state
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
 	return 0
