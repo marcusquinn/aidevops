@@ -23,6 +23,7 @@ PLAYWRIGHT_MCP_PACKAGE="@playwright/mcp"
 PLAYWRIGHT_MCP_NAME="playwright"
 PLAYWRIGHT_MCP_SPEC="${PLAYWRIGHT_MCP_PACKAGE}@0.0.79"
 PLAYWRIGHT_MCP_RUN="npx -y ${PLAYWRIGHT_MCP_SPEC}"
+PLAYWRITER_MCP_NAME="playwriter"
 
 show_usage() {
 	echo "Usage: mcp-diagnose.sh <mcp-name>"
@@ -487,6 +488,14 @@ try:
 
     executable = command[0]
     runner = os.path.basename(executable)
+    # GH#35515: a disabled, aidevops-generated on-demand Playwriter entry is
+    # reported from its exact pin without launching the runner or a relay.
+    generated_pin = re.fullmatch(r'playwriter@([0-9]+\.[0-9]+\.[0-9]+)', command[-1])
+    if (mcp_name == 'playwriter' and enabled is False and generated_pin
+            and (runner == 'npx' and command[1:] in ([command[-1]], ['-y', command[-1]])
+                 or runner == 'bun' and command[1:] == ['x', command[-1]])):
+        print(f'{executable}\t{generated_pin.group(1)}\t19988')
+        sys.exit(0)
     shell_runners = {'sh', 'bash', 'zsh', 'fish', 'cmd', 'powershell', 'pwsh'}
     if runner in shell_runners:
         package_index = next((index for index, part in enumerate(command)
@@ -805,7 +814,7 @@ if command -v "$CLI_CMD" &>/dev/null; then
 	INSTALLED_VERSION=$("$CLI_CMD" --version 2>/dev/null | head -1 || echo 'unknown')
 	echo "   PATH version: $INSTALLED_VERSION"
 else
-	if [[ "$MCP_NAME" == "$PLAYWRIGHT_MCP_NAME" ]]; then
+	if [[ "$MCP_NAME" == "$PLAYWRIGHT_MCP_NAME" || "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
 		echo -e "   ${CYAN}[npx]${NC} No global command found; checking configured package runners"
 	else
 		echo -e "   ${RED}✗ Command not found: $CLI_CMD${NC}"
@@ -829,7 +838,7 @@ for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
 	IFS=$'\t' read -r _configured_executable _configured_version _configured_relay_port <<<"$_configured_command_info"
 	[[ -z "$_configured_executable" ]] && continue
 	_configured_version_found=1
-	if [[ "$MCP_NAME" == "playwriter" && -n "$_configured_relay_port" ]]; then
+	if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" && -n "$_configured_relay_port" ]]; then
 		_playwriter_relay_port="$_configured_relay_port"
 		_playwriter_configured_version="$_configured_version"
 	fi
@@ -840,7 +849,7 @@ for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
 	fi
 done
 
-if [[ "$MCP_NAME" == "playwriter" ]]; then
+if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
 	_relay_version=$(_playwriter_relay_version "$_playwriter_relay_port")
 	if [[ -n "$_relay_version" ]]; then
 		echo "   Live local relay version: $_relay_version"
@@ -881,7 +890,12 @@ LATEST_VERSION=$(npm view "$NPM_PKG" version 2>/dev/null || echo "unknown")
 echo "   PATH installed: $INSTALLED_VERSION"
 echo "   Latest:    $LATEST_VERSION"
 
-if [[ "$INSTALLED_VERSION" != "unknown" && "$INSTALLED_VERSION" != *"$LATEST_VERSION"* ]] && [[ "$LATEST_VERSION" != "unknown" ]]; then
+if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
+	# GH#35515: Playwriter tracks a reviewed pin; a newer registry release is
+	# an adoption review, not an update instruction.
+	_playwriter_approved=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import mcp_config; print(mcp_config.PLAYWRITER_MCP_PACKAGE.split("@", 1)[1])' "${SCRIPT_DIR}/lib" 2>/dev/null) || _playwriter_approved="unknown"
+	echo "   Approved pin: ${_playwriter_approved} (newer registry releases require review)"
+elif [[ "$INSTALLED_VERSION" != "unknown" && "$INSTALLED_VERSION" != *"$LATEST_VERSION"* ]] && [[ "$LATEST_VERSION" != "unknown" ]]; then
 	echo -e "   ${YELLOW}⚠️  UPDATE AVAILABLE - run: npm update -g $NPM_PKG${NC}"
 fi
 
@@ -975,12 +989,17 @@ echo ""
 echo -e "${BLUE}=== Suggested Fixes ===${NC}"
 if [[ "$MCP_NAME" == "$PLAYWRIGHT_MCP_NAME" ]]; then
 	echo "1. Verify tool: $PLAYWRIGHT_MCP_RUN --version"
+elif [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
+	# GH#35515: the managed entry is the supported path; setup migrates its pin.
+	echo "1. Re-run setup (aidevops update) to refresh the generated, pinned MCP entry"
 else
 	echo "1. Update tool: npm update -g $NPM_PKG"
 fi
 echo "2. Check official docs for command changes"
 if [[ "$MCP_NAME" == "$PLAYWRIGHT_MCP_NAME" ]]; then
 	echo "3. Run: $PLAYWRIGHT_MCP_RUN --help"
+elif [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" && "$INSTALLED_VERSION" == "unknown" ]]; then
+	echo "3. Connect the Playwriter MCP on demand, then rerun this diagnostic for live relay health"
 else
 	echo "3. Run: $CLI_CMD --help"
 fi

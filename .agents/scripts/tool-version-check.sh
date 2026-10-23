@@ -139,6 +139,59 @@ _pip_upgrade_cmd() {
 	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -qi '"^${pkg}"'; then pipx upgrade '"${pkg}"'; else pip install --user --upgrade '"${pkg}"' 2>/dev/null || pip install --upgrade '"${pkg}"'; fi'
 }
 
+# GH#35515: the reviewed Playwriter pin has one source of truth, the MCP
+# generator policy. Prints the approved version, or "unknown" (fail closed:
+# classification then reports unknown instead of queueing an unreviewed pin).
+_playwriter_approved_version() {
+	local policy_file="${SCRIPT_DIR}/lib/mcp_config.py"
+	local version=""
+	if [[ -f "$policy_file" ]]; then
+		version=$(sed -nE "s/^PLAYWRITER_MCP_PACKAGE = 'playwriter@([0-9]+\.[0-9]+\.[0-9]+)'$/\1/p" "$policy_file" | head -1)
+	fi
+	printf '%s\n' "${version:-unknown}"
+	return 0
+}
+
+# GH#35515: report the aidevops-generated package-runner Playwriter entry
+# (npx/bun x playwriter@X.Y.Z, usually disabled for on-demand activation).
+# Reads configuration only — never launches the runner or a relay — and
+# prints the configured package version. Returns 1 when no generated entry
+# exists. Custom commands are not recognised here and keep PATH semantics.
+_playwriter_managed_mcp_version() {
+	local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+	python3 - "${SCRIPT_DIR}/lib" \
+		"${config_home}/opencode/opencode.json" \
+		"$HOME/.claude.json" \
+		"${config_home}/Claude/Claude.json" \
+		"$HOME/Library/Application Support/Claude/claude_desktop_config.json" <<'PYEOF' 2>/dev/null
+import json
+import re
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from mcp_config import _is_generated_playwriter_command
+
+for path in sys.argv[2:]:
+    try:
+        with open(path) as stream:
+            config = json.load(stream)
+        servers = config.get('mcp') or config.get('mcpServers') or {}
+        command = servers.get('playwriter', {}).get('command')
+        if not isinstance(command, list) or not command or not isinstance(command[-1], str):
+            continue
+        match = re.fullmatch(r'playwriter@([0-9]+\.[0-9]+\.[0-9]+)', command[-1])
+        if match and _is_generated_playwriter_command(command, (command[-1],)):
+            print(match.group(1))
+            sys.exit(0)
+    except (OSError, ValueError, AttributeError):
+        continue
+sys.exit(1)
+PYEOF
+	return $?
+}
+
+PLAYWRITER_APPROVED_VERSION=$(_playwriter_approved_version)
+
 # Tool definitions
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
@@ -148,7 +201,7 @@ NPM_TOOLS=(
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
 	"npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|npm install -g mcp-server-gsc@latest"
-	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@0.8.0"
+	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@${PLAYWRITER_APPROVED_VERSION}"
 	"npm|macOS Automator MCP|macos-automator-mcp|--version|@steipete/macos-automator-mcp|npm install -g @steipete/macos-automator-mcp@latest"
 	"npm|Claude Code MCP|claude-code-mcp|--version|@steipete/claude-code-mcp|npm install -g @steipete/claude-code-mcp@latest"
 	"npm|Google Workspace CLI|gws|--version|@googleworkspace/cli|npm install -g @googleworkspace/cli@latest"
@@ -568,7 +621,8 @@ _tool_latest_version() {
 
 	case "$category" in
 	npm)
-		if [[ "$pkg" == playwriter ]]; then printf '%s\n' 0.8.0; else get_npm_latest "$pkg"; fi ;;
+		# Playwriter updates target the reviewed pin, not the registry head.
+		if [[ "$pkg" == playwriter ]]; then _playwriter_approved_version; else get_npm_latest "$pkg"; fi ;;
 	brew)
 		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* ]]; then
 			# Tap-qualified formulas (owner/tap/formula) exist only in Homebrew.
@@ -657,12 +711,68 @@ _append_tool_json_result() {
 	local latest="$4"
 	local status="$5"
 	local update_cmd="$6"
+	# Optional pre-built, internally generated JSON members (no user input).
+	local extra_members="${7:-}"
 
 	local json_name="${name//\\/\\\\}"
 	json_name="${json_name//\"/\\\"}"
 	local json_update="${update_cmd//\\/\\\\}"
 	json_update="${json_update//\"/\\\"}"
-	JSON_RESULTS+=("{\"name\": \"$json_name\", \"category\": \"$category\", \"installed\": \"$installed\", \"latest\": \"$latest\", \"status\": \"$status\", \"update_cmd\": \"$json_update\"}")
+	JSON_RESULTS+=("{\"name\": \"$json_name\", \"category\": \"$category\", \"installed\": \"$installed\", \"latest\": \"$latest\", \"status\": \"$status\", \"update_cmd\": \"$json_update\"${extra_members}}")
+	return 0
+}
+
+# GH#35515: Playwriter's "latest" is the reviewed pin. Expose the registry
+# head separately so the pin is never presented as the newest upstream.
+# Sets _PW_EXTRA_JSON and prints an indented console note (unless quiet/json).
+# Args: approved_version
+_playwriter_version_policy_note() {
+	local approved="$1"
+	local upstream=""
+	upstream=$(get_npm_latest playwriter 2>/dev/null || true)
+	[[ "$upstream" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || upstream="unknown"
+	_PW_EXTRA_JSON=", \"version_policy\": \"approved_pin\", \"approved\": \"${approved}\", \"upstream_latest\": \"${upstream}\""
+	if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
+		echo "   Approved pin: ${approved} (registry latest: ${upstream}; adoption requires review)"
+	fi
+	return 0
+}
+
+# GH#35515: a generated package-runner Playwriter entry is the supported
+# install path; a missing global CLI does not mean the MCP is absent.
+# Config presence is not live health, so point to the live diagnostic.
+# Args: name, category, configured_version, approved_version
+_report_managed_playwriter() {
+	local name="$1"
+	local category="$2"
+	local configured="$3"
+	local approved="$4"
+	local status="managed_mcp" icon="✓" color="$GREEN"
+	if [[ "$configured" == "$approved" ]]; then
+		((++INSTALLED_COUNT))
+	else
+		status="managed_mcp_mismatch"
+		icon="!"
+		color="$YELLOW"
+		((++UNKNOWN_COUNT))
+	fi
+	if [[ "$JSON_OUTPUT" == "true" ]]; then
+		_playwriter_version_policy_note "$approved"
+		_append_tool_json_result "$category" "$name" "$configured" "$approved" "$status" "" \
+			", \"install\": \"managed_package_runner\", \"global_cli\": \"absent\", \"live_health\": \"not_checked\"${_PW_EXTRA_JSON}"
+		return 0
+	fi
+	if [[ "$QUIET" == "true" && "$status" == managed_mcp ]]; then
+		return 0
+	fi
+	echo -e "${color}${icon}  $name: $configured (aidevops-managed on-demand MCP; no global CLI needed)${NC}"
+	if [[ "$status" == managed_mcp_mismatch ]]; then
+		echo "   Generated entry pins $configured; approved is $approved. Re-run setup (aidevops update) to migrate it."
+	fi
+	if [[ "$QUIET" != "true" ]]; then
+		_playwriter_version_policy_note "$approved"
+		echo "   Live health is not checked here: mcp-diagnose.sh playwriter"
+	fi
 	return 0
 }
 
@@ -761,6 +871,13 @@ check_tool() {
 		return 0
 	fi
 
+	local managed_version=""
+	if [[ "$category" == npm && "$pkg" == playwriter && "$installed" == "not installed" ]] &&
+		managed_version=$(_playwriter_managed_mcp_version); then
+		_report_managed_playwriter "$name" "$category" "$managed_version" "$(_playwriter_approved_version)"
+		return 0
+	fi
+
 	local latest="unknown"
 	latest=$(_tool_latest_version "$category" "$pkg" "$installed")
 	local channel_current=false
@@ -811,7 +928,12 @@ check_tool() {
 
 	# JSON output (escape special characters for valid JSON)
 	if [[ "$JSON_OUTPUT" == "true" ]]; then
-		_append_tool_json_result "$category" "$name" "$installed" "$latest" "$status" "$update_cmd"
+		_PW_EXTRA_JSON=""
+		[[ "$pkg" == playwriter ]] && _playwriter_version_policy_note "$(_playwriter_approved_version)"
+		_append_tool_json_result "$category" "$name" "$installed" "$latest" "$status" "$update_cmd" "$_PW_EXTRA_JSON"
+	elif [[ "$pkg" == playwriter ]]; then
+		_print_tool_status "$name" "$installed" "$latest (approved pin)" "$status" "$icon" "$color"
+		[[ "$QUIET" == "true" ]] || _playwriter_version_policy_note "$(_playwriter_approved_version)"
 	else
 		_print_tool_status "$name" "$installed" "$latest" "$status" "$icon" "$color"
 	fi

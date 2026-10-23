@@ -25,6 +25,7 @@ extract_function() {
 		/^get_apt_candidate\(\)/, /^}$/ { print; next }
 		/^_tool_normalize_version\(\)/, /^}$/ { print; next }
 		/^_tool_latest_version\(\)/, /^}$/ { print; next }
+		/^_playwriter_approved_version\(\)/, /^}$/ { print; next }
 		/^_tool_is_nix_managed\(\)/, /^}$/ { print; next }
 		/^check_tool\(\)/, /^}$/ { print; next }
 		/^_run_outdated_tool_updates\(\)/, /^}$/ { print; next }
@@ -92,7 +93,10 @@ TEST_APT_CANDIDATE=2.101.0-1
 [[ "$(_tool_normalize_version "$(get_apt_candidate gh)")" == 2.101.0 ]]
 [[ "$(_tool_normalize_version jq-1.8.2)" == 1.8.2 ]]
 [[ "$(_tool_normalize_version '')" == unknown ]]
-[[ "$(_tool_latest_version npm playwriter 0.5.0)" == 0.8.0 ]]
+# GH#35515: the update target is the reviewed pin from mcp_config.py.
+SCRIPT_DIR="$REPO_ROOT/.agents/scripts"
+expected_pin=$(sed -nE "s/^PLAYWRITER_MCP_PACKAGE = 'playwriter@([0-9.]+)'$/\1/p" "$SCRIPT_DIR/lib/mcp_config.py")
+[[ -n "$expected_pin" && "$(_tool_latest_version npm playwriter 0.5.0)" == "$expected_pin" ]]
 TEST_APT_CANDIDATE=2.100.0-1
 [[ "$(_tool_latest_version brew gh 2.100.0)" == channel_current ]] || {
 	printf 'FAIL: apt-installed tool incorrectly compared to upstream release\n' >&2

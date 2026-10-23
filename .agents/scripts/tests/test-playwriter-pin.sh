@@ -135,8 +135,14 @@ assert generated_config["mcp"]["playwriter"]["enabled"] is False
 print("PASS Playwriter Python generator pins legacy and generated commands")
 PY
 
-if grep -Fq 'npm install -g playwriter@0.8.0' "${REPO_ROOT}/.agents/scripts/tool-version-check.sh" &&
-	! grep -Fq 'npm install -g playwriter@latest' "${REPO_ROOT}/.agents/scripts/tool-version-check.sh"; then
+# GH#35515: the updater derives the reviewed pin from mcp_config.py, the
+# single maintained source, and never targets @latest.
+TOOL_CHECK="${REPO_ROOT}/.agents/scripts/tool-version-check.sh"
+# Matching the literal variable reference in source.
+# shellcheck disable=SC2016
+if grep -Fq 'npm install -g playwriter@${PLAYWRITER_APPROVED_VERSION}' "$TOOL_CHECK" &&
+	grep -Fq "PLAYWRITER_MCP_PACKAGE = 'playwriter@" "$TOOL_CHECK" &&
+	! grep -Fq 'npm install -g playwriter@latest' "$TOOL_CHECK"; then
 	printf 'PASS Playwriter updater preserves the reviewed pin\n'
 else
 	printf 'FAIL Playwriter updater can restore an unreviewed version\n' >&2
