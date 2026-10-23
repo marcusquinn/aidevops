@@ -53,8 +53,10 @@ worktree-helper.sh remove
 
 - **Project pool**: 3100-3199 (configurable per repo slug)
 - **Global overflow**: 3200-3999 (when project pool exhausted)
-- Collision detection: `lsof -ti:<port>` before assigning
+- Collision detection: one allocated-port set from state plus one `lsof` listening snapshot, then `lsof -ti:<port>` on the chosen candidate. GH#35551: no per-port `jq` loop.
 - Idempotent: re-allocating the same repo+branch returns the existing allocation
+- Stale reclaim (GH#35551): before a new allocation, entries for the same repo key are dropped if their branch has no live worktree in the current checkout and their port is not listening. Entries that record a different `git_common_dir` and other repo keys are never touched. This self-heals leaks from removal paths that skip `free`, such as cleanup and archive routines.
+- Locking: state read-modify-write runs under `~/.aidevops/state/worktree-ports.lock.d`. A dead-pid or pid-less stale lock is broken. A live holder makes `allocate` skip non-fatally after `AIDEVOPS_PREVIEW_PROXY_LOCK_WAIT_TENTHS` (default 100 = 10 s).
 
 ## Branch-Slug Sanitization
 

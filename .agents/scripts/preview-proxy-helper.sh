@@ -180,26 +180,40 @@ _pp_port_in_use() {
     return 1
 }
 
-# Check if a port is already allocated in state.
-_pp_port_allocated() {
-    local port="$1"
-    if ! command -v jq >/dev/null 2>&1; then
-        return 1
-    fi
-    local count
-    count="$(jq "[.. | objects | select(.port == $port)] | length" "$PP_STATE_FILE" 2>/dev/null)" || count=0
-    [[ "$count" =~ ^[0-9]+$ ]] || count=0
-    [[ "$count" -gt 0 ]]
+# Emit every allocated port as one comma-delimited list (",3100,3101,").
+# GH#35551: one jq pass replaces a jq spawn per candidate port; scanning an
+# exhausted 900-port pool previously cost 900 process spawns per allocation.
+_pp_allocated_ports_csv() {
+    local ports=""
+    ports="$(jq -r '[.. | objects | select(has("port")) | .port | tostring] | unique | join(",")' \
+        "$PP_STATE_FILE" 2>/dev/null)" || ports=""
+    printf ',%s,' "$ports"
+    return 0
 }
 
-# Find a free port in range. Returns the port number or empty string.
+# Emit TCP listening ports visible to this user as ",3000,5432," (one lsof).
+_pp_listening_ports_csv() {
+    local ports=""
+    ports="$(lsof -nP -iTCP -sTCP:LISTEN -Fn 2>/dev/null |
+        sed -n 's/^n.*:\([0-9][0-9]*\)$/\1/p' | sort -u | tr '\n' ',')" || ports=""
+    printf ',%s' "$ports"
+    return 0
+}
+
+# Find a free port in range, skipping ports in the comma-delimited taken set.
+# The final lsof probe keeps the original per-candidate collision semantics
+# while normally running once. Returns the port number or empty string.
 _pp_find_free_port() {
     local start="$1"
     local end="$2"
+    local taken="${3:-,}"
     local port
 
     for ((port = start; port <= end; port++)); do
-        if ! _pp_port_allocated "$port" && ! _pp_port_in_use "$port"; then
+        case "$taken" in
+        *",${port},"*) continue ;;
+        esac
+        if ! _pp_port_in_use "$port"; then
             echo "$port"
             return 0
         fi
@@ -207,6 +221,134 @@ _pp_find_free_port() {
 
     echo ""
     return 1
+}
+
+# -----------------------------------------------------------------------------
+# State lock (GH#35551): serialise read-modify-write across concurrent
+# worktree creations so two dispatches never write the same port.
+# -----------------------------------------------------------------------------
+readonly PP_LOCK_DIR="${PP_STATE_DIR}/worktree-ports.lock.d"
+readonly PP_LOCK_WAIT_TENTHS="${AIDEVOPS_PREVIEW_PROXY_LOCK_WAIT_TENTHS:-100}"
+# A pid-less lock older than this is a holder that died before recording itself.
+readonly PP_LOCK_PIDLESS_STALE_SECONDS=30
+
+# True when the lock is held by a dead pid, or pid-less and old.
+_pp_lock_is_stale() {
+    local holder="$1"
+    if [[ "$holder" =~ ^[0-9]+$ ]]; then
+        kill -0 "$holder" 2>/dev/null && return 1
+        return 0
+    fi
+    local lock_mtime=0 now_epoch=0
+    lock_mtime="$(_file_mtime_epoch "$PP_LOCK_DIR" 2>/dev/null)" || return 1
+    [[ "$lock_mtime" =~ ^[0-9]+$ ]] || return 1
+    now_epoch="$(date +%s)"
+    [[ $((now_epoch - lock_mtime)) -ge "$PP_LOCK_PIDLESS_STALE_SECONDS" ]] && return 0
+    return 1
+}
+
+# Acquire the state lock, breaking it only when its holder is provably gone.
+# Returns 1 after the bounded wait; callers treat that as a skipped allocation.
+_pp_lock_acquire() {
+    local waited=0 holder=""
+    mkdir -p "$PP_STATE_DIR" 2>/dev/null || return 1
+    while ! mkdir "$PP_LOCK_DIR" 2>/dev/null; do
+        holder="$(cat "${PP_LOCK_DIR}/pid" 2>/dev/null || true)"
+        if _pp_lock_is_stale "$holder"; then
+            rm -f "${PP_LOCK_DIR}/pid" 2>/dev/null || true
+            rmdir "$PP_LOCK_DIR" 2>/dev/null || true
+            continue
+        fi
+        if [[ "$waited" -ge "$PP_LOCK_WAIT_TENTHS" ]]; then
+            print_warning "Preview proxy state is locked by pid ${holder:-unknown}; skipping"
+            return 1
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    printf '%s\n' "$$" >"${PP_LOCK_DIR}/pid" 2>/dev/null || true
+    trap '_pp_lock_release' EXIT
+    return 0
+}
+
+# Release only a lock this process holds, so the EXIT trap is always safe.
+_pp_lock_release() {
+    local holder=""
+    holder="$(cat "${PP_LOCK_DIR}/pid" 2>/dev/null || true)"
+    [[ "$holder" == "$$" ]] || return 0
+    rm -f "${PP_LOCK_DIR}/pid" 2>/dev/null || true
+    rmdir "$PP_LOCK_DIR" 2>/dev/null || true
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# Stale allocation reclaim (GH#35551)
+# -----------------------------------------------------------------------------
+# Only `worktree-helper.sh remove` frees ports; cleanup/archive removal paths
+# do not, so allocations leak until the whole pool is exhausted. Reclaim is
+# scoped to the repo key being allocated and runs only when the current
+# directory is that repo, so the live-worktree evidence is authoritative.
+
+# Print the git common dir of the current checkout when its origin basename
+# matches the repo key; print nothing otherwise.
+_pp_reclaim_common_dir() {
+    local repo_slug="$1"
+    local remote_url="" remote_key="" common_dir=""
+    remote_url="$(git remote get-url origin 2>/dev/null)" || return 0
+    remote_key="${remote_url##*[:/]}"
+    remote_key="${remote_key%.git}"
+    [[ -n "$remote_key" && "$remote_key" == "${repo_slug##*/}" ]] || return 0
+    common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
+    printf '%s' "$common_dir"
+    return 0
+}
+
+# Print live (non-prunable) worktree branches of the current repo as JSON.
+# Fails closed: a git error must never look like "no live worktrees".
+_pp_live_branches_json() {
+    local porcelain=""
+    porcelain="$(git worktree list --porcelain 2>/dev/null)" || return 1
+    [[ "$porcelain" == worktree\ * ]] || return 1
+    printf '%s\n' "$porcelain" | awk '
+        /^worktree / { if (b != "" && !p) print b; b = ""; p = 0; next }
+        /^branch refs\/heads\// { b = substr($0, 19); next }
+        /^prunable/ { p = 1; next }
+        END { if (b != "" && !p) print b }' | jq -Rn '[inputs | select(length > 0)]'
+    return 0
+}
+
+# Remove this repo's allocations whose branch has no live worktree and whose
+# port is not listening. Entries recorded by another checkout that shares the
+# same repo basename are left alone. Must be called with the state lock held.
+# Prints reclaimed entry slugs (one per line) for backend deregistration.
+_pp_reclaim_stale() {
+    local repo_slug="$1"
+    local listening="$2"
+    local common_dir="" live_json="" filter="" reclaimed="" updated_state=""
+    common_dir="$(_pp_reclaim_common_dir "$repo_slug")"
+    [[ -n "$common_dir" ]] || return 0
+    live_json="$(_pp_live_branches_json)" || return 0
+    [[ "$live_json" == \[* ]] || return 0
+
+    # shellcheck disable=SC2016  # jq program, not shell expansion
+    filter='def keep: (.key as $b | [$live[] | select(. == $b)] | length > 0)
+            or ((.value.git_common_dir // "") != "" and .value.git_common_dir != $common)
+            or ((.value.port | tostring) as $p | $listening | contains("," + $p + ","));'
+    reclaimed="$(jq -r --arg repo "$repo_slug" --arg common "$common_dir" \
+        --arg listening "$listening" --argjson live "$live_json" \
+        "${filter}"' (.[$repo] // {}) | to_entries[] | select(keep | not) | .value.slug // .key' \
+        "$PP_STATE_FILE" 2>/dev/null)" || return 0
+    [[ -n "$reclaimed" ]] || return 0
+
+    updated_state="$(jq --arg repo "$repo_slug" --arg common "$common_dir" \
+        --arg listening "$listening" --argjson live "$live_json" \
+        "${filter}"' if has($repo) then .[$repo] |= with_entries(select(keep))
+          | if .[$repo] == {} then del(.[$repo]) else . end else . end' \
+        "$PP_STATE_FILE" 2>/dev/null)" || return 0
+    [[ -n "$updated_state" ]] || return 0
+    _pp_state_write "$updated_state"
+    printf '%s\n' "$reclaimed"
+    return 0
 }
 
 # Build the preview URL from template, repo, and branch slug.
@@ -328,7 +470,7 @@ _pp_backend_deregister() {
 # shellcheck disable=SC2016  # jq expression, not shell
 readonly _PP_JQ_ALLOC_OUTPUT='{"port": ($port | tonumber), "url": $url, "start_hint": $hint}'
 # shellcheck disable=SC2016
-readonly _PP_JQ_STATE_ENTRY='.[$repo][$branch] = {"port": $port, "slug": $slug, "allocated_at": $ts}'
+readonly _PP_JQ_STATE_ENTRY='.[$repo][$branch] = {"port": $port, "slug": $slug, "allocated_at": $ts, "git_common_dir": $common}'
 
 # Emit allocation JSON to stdout using the shared jq format.
 _pp_emit_alloc_json() {
@@ -337,6 +479,85 @@ _pp_emit_alloc_json() {
     local alloc_hint="$3"
     jq -n --arg port "$alloc_port" --arg url "$alloc_url" --arg hint "$alloc_hint" \
         "$_PP_JQ_ALLOC_OUTPUT"
+    return 0
+}
+
+# Allocation results shared with cmd_allocate (no subshell, so no stdout capture).
+_PP_ALLOC_PORT=""
+_PP_ALLOC_SLUG=""
+_PP_RECLAIMED=""
+
+# Reclaim stale entries, pick a port and record it. Caller holds the lock.
+_pp_allocate_locked() {
+    local repo_slug="$1"
+    local branch="$2"
+    _PP_ALLOC_PORT="" _PP_ALLOC_SLUG="" _PP_RECLAIMED=""
+
+    # Another dispatch may have allocated this branch while we waited.
+    local existing_port=""
+    existing_port="$(_pp_state_get ".\"${repo_slug}\".\"${branch}\".port")"
+    if [[ -n "$existing_port" ]]; then
+        _PP_ALLOC_PORT="$existing_port"
+        _PP_ALLOC_SLUG="$(branch_to_slug "$branch")"
+        return 0
+    fi
+
+    local listening="" common_dir=""
+    listening="$(_pp_listening_ports_csv)"
+    _PP_RECLAIMED="$(_pp_reclaim_stale "$repo_slug" "$listening")"
+    if [[ -n "$_PP_RECLAIMED" ]]; then
+        local reclaimed_count=0
+        reclaimed_count="$(printf '%s\n' "$_PP_RECLAIMED" | grep -c . || true)"
+        echo "Reclaimed ${reclaimed_count} stale preview port allocation(s) for ${repo_slug}" >&2
+    fi
+    common_dir="$(_pp_reclaim_common_dir "$repo_slug")"
+
+    local pool_range pool_start pool_end taken port
+    pool_range="$(_pp_port_pool "$repo_slug")"
+    pool_start="${pool_range%%:*}"
+    pool_end="${pool_range##*:}"
+    taken="$(_pp_allocated_ports_csv)${listening}"
+
+    # Find free port — try project pool first, then global overflow
+    port="$(_pp_find_free_port "$pool_start" "$pool_end" "$taken")" || port=""
+    if [[ -z "$port" ]]; then
+        port="$(_pp_find_free_port "$PP_GLOBAL_POOL_START" "$PP_GLOBAL_POOL_END" "$taken")" || port=""
+    fi
+    if [[ -z "$port" ]]; then
+        print_warning "No free ports available for preview proxy (pool ${pool_start}-${pool_end}, global ${PP_GLOBAL_POOL_START}-${PP_GLOBAL_POOL_END})"
+        return 1
+    fi
+
+    local slug now updated_state
+    slug="$(branch_to_slug "$branch")"
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    updated_state="$(jq \
+        --arg repo "$repo_slug" \
+        --arg branch "$branch" \
+        --argjson port "$port" \
+        --arg slug "$slug" \
+        --arg ts "$now" \
+        --arg common "$common_dir" \
+        "$_PP_JQ_STATE_ENTRY" \
+        "$PP_STATE_FILE")" || return 1
+    [[ -n "$updated_state" ]] || return 1
+    _pp_state_write "$updated_state"
+    _PP_ALLOC_PORT="$port"
+    _PP_ALLOC_SLUG="$slug"
+    return 0
+}
+
+# Deregister backend routes for reclaimed slugs (skipped without a backend).
+_pp_deregister_reclaimed() {
+    local repo_slug="$1"
+    local reclaimed="$2"
+    [[ -n "$reclaimed" ]] || return 0
+    [[ -n "$(_pp_backend_name)" ]] || return 0
+    local reclaimed_slug=""
+    while IFS= read -r reclaimed_slug; do
+        [[ -n "$reclaimed_slug" ]] || continue
+        _pp_backend_deregister "$repo_slug" "$reclaimed_slug"
+    done <<<"$reclaimed"
     return 0
 }
 
@@ -362,7 +583,7 @@ cmd_allocate() {
 
     _pp_ensure_state
 
-    # Check if already allocated
+    # Check if already allocated (read-only fast path, no lock needed)
     local existing_port
     existing_port="$(_pp_state_get ".\"${repo_slug}\".\"${branch}\".port")"
     if [[ -n "$existing_port" ]]; then
@@ -376,41 +597,16 @@ cmd_allocate() {
         return 0
     fi
 
-    # Get port pool
-    local pool_range
-    pool_range="$(_pp_port_pool "$repo_slug")"
-    local pool_start="${pool_range%%:*}"
-    local pool_end="${pool_range##*:}"
+    _pp_lock_acquire || return 1
+    local alloc_rc=0
+    _pp_allocate_locked "$repo_slug" "$branch" || alloc_rc=$?
+    _pp_lock_release
+    [[ "$alloc_rc" -eq 0 ]] || return "$alloc_rc"
 
-    # Find free port — try project pool first, then global overflow
-    local port
-    port="$(_pp_find_free_port "$pool_start" "$pool_end")" || port=""
-    if [[ -z "$port" ]]; then
-        port="$(_pp_find_free_port "$PP_GLOBAL_POOL_START" "$PP_GLOBAL_POOL_END")" || port=""
-    fi
-
-    if [[ -z "$port" ]]; then
-        print_warning "No free ports available for preview proxy (pool ${pool_start}-${pool_end}, global ${PP_GLOBAL_POOL_START}-${PP_GLOBAL_POOL_END})"
-        return 1
-    fi
-
-    # Generate branch slug
-    local slug
-    slug="$(branch_to_slug "$branch")"
-
-    # Store allocation
-    local now
-    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    local updated_state
-    updated_state="$(jq \
-        --arg repo "$repo_slug" \
-        --arg branch "$branch" \
-        --argjson port "$port" \
-        --arg slug "$slug" \
-        --arg ts "$now" \
-        "$_PP_JQ_STATE_ENTRY" \
-        "$PP_STATE_FILE")"
-    _pp_state_write "$updated_state"
+    # Backend work stays outside the lock: route registration may reload a proxy.
+    _pp_deregister_reclaimed "$repo_slug" "$_PP_RECLAIMED"
+    local port="$_PP_ALLOC_PORT"
+    local slug="$_PP_ALLOC_SLUG"
 
     # Build output
     local url
@@ -456,14 +652,17 @@ cmd_free() {
     # Deregister from backend
     _pp_backend_deregister "$repo_slug" "$slug"
 
-    # Remove from state
-    local updated_state
+    # Remove from state. A lock timeout leaves the entry for allocate-time
+    # reclaim (GH#35551) instead of racing a concurrent writer.
+    _pp_lock_acquire || return 0
+    local updated_state=""
     updated_state="$(jq \
         --arg repo "$repo_slug" \
         --arg branch "$branch" \
         'del(.[$repo][$branch]) | if .[$repo] == {} then del(.[$repo]) else . end' \
-        "$PP_STATE_FILE")"
-    _pp_state_write "$updated_state"
+        "$PP_STATE_FILE")" || updated_state=""
+    [[ -z "$updated_state" ]] || _pp_state_write "$updated_state"
+    _pp_lock_release
 
     echo "Freed port ${existing_port} for ${repo_slug}/${branch}"
     return 0
