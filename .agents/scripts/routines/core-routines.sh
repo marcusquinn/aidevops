@@ -38,6 +38,7 @@ r919|x|Private mirror upstream sync|repeat:daily(@20:00)|~5m|scripts/mirror-sync
 r920|x|Memory audit — mine actionable learning patterns|repeat:daily(@04:00)|~2m|scripts/memory-audit-pulse.sh run --quiet|script
 r921|x|README badges — remediate managed repo drift|repeat:weekly(sun@08:10)|~5m|scripts/badges-sync-helper.sh --apply --json|script
 r922|x|Storage hygiene — reclaim tmp, worktrees, OpenCode DBs, observability|repeat:daily(@05:30)|~10m|scripts/storage-cleanup-helper.sh all --apply|script
+r923|x|Cert watch — CT issuance and CAA audit for operated domains|repeat:daily(@06:40)|~3m|scripts/cert-watch-helper.sh run --apply|script
 ENTRIES
 	return 0
 }
@@ -1031,6 +1032,41 @@ the version-controlled \`repeat:\` expression; r917 has no dedicated platform un
 - Audits local package files without building or executing upstream content.
 - Creates issues only after target-local deduplication and authority checks.
 - Never acknowledges a finding when GitHub/API operations fail.
+$(_pulse_diag_commands "$os")
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r923() {
+	local os="${1:-}"
+	[[ -n "$os" ]] || os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	cat <<EOF
+# r923: Certificate Transparency and CAA watch
+
+## Overview
+
+Checks operated domains from the site inventory, Hostinger fleet, repository
+registry and private cert-watch configuration. See \`tools/security/cert-watch.md\`.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Daily at 06:40 |
+| Type | script |
+| Expected duration | ~3 minutes (depends on domain count and crt.sh latency) |
+| Script | \`scripts/cert-watch-helper.sh run --apply\` |
+$(_scheduler_row_pulse "repeat:daily(@06:40)")
+
+## Safety rails
+
+- Baselines the first successful CT response; UNKNOWN responses preserve state.
+- Serializes runs and spaces CT requests at least two seconds apart.
+- Never changes DNS, revokes certificates or dispatches implementation workers.
+- Files deduplicated operator issues only after verifying PRIVATE visibility;
+  an unverified route falls back only to a verified private fallback repository.
+- The CLI defaults to a dry run; local state remains private.
 $(_pulse_diag_commands "$os")
 $(_platform_footnote "$os")
 EOF

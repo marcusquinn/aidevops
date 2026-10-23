@@ -14,6 +14,8 @@ cert_watch_file_issue() {
 	local priority="$4"
 	local visibility=""
 	# aidevops:trust-boundary — independently recheck immediately before writes.
+	slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
+	[[ "$slug" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]] || return 1
 	[[ "$slug" != marcusquinn/aidevops ]] || return 1
 	visibility=$(gh repo view "$slug" --json visibility --jq '.visibility') || return 1
 	[[ "$visibility" == PRIVATE ]] || return 1
@@ -68,7 +70,7 @@ def info(message):
 
 
 def load(path, default, private=False):
-    if not path.exists():
+    if not path.exists() and not path.is_symlink():
         info('INFO: missing source ' + path.name)
         return default
     mode = path.lstat().st_mode
@@ -141,7 +143,8 @@ def objects(value):
 def inventory(config):
     resolver = ApexResolver(config)
     sites = load(CONFIG / 'site-inventory.json', {}).get('sites', {})
-    repos = load(CONFIG / 'repos.json', {}).get('repos', [])
+    registry = load(CONFIG / 'repos.json', {})
+    repos = registry.get('initialized_repos', registry.get('repos', []))
     entries = {}
     ignored = {hostname(x) for x in config.get('ignore', [])}
 
@@ -151,8 +154,9 @@ def inventory(config):
             return
         apex = resolver.resolve(name)
         row = entries.setdefault(apex, {'apex': apex, 'hostnames': [], 'knowledge_repos': {}})
-        if name not in row['hostnames']:
-            row['hostnames'].append(name)
+        known = ('*.' if raw.startswith('*.') else '') + name
+        if known not in row['hostnames']:
+            row['hostnames'].append(known)
         if repo:
             row['knowledge_repos'][name] = repo
 
@@ -173,7 +177,10 @@ def inventory(config):
 
 
 def timestamp(value):
-    return dt.datetime.fromisoformat(value.replace('Z', '+00:00')).replace(tzinfo=dt.timezone.utc)
+    parsed = dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
 
 
 def matches(name, pattern):
@@ -200,6 +207,8 @@ CA_NAMES = {
 
 
 def allowed(issuer, records, wildcard, config):
+    if any(flags & 128 and tag not in ('issue', 'issuewild', 'iodef') for flags, tag, value in records):
+        return None
     tags = [r[2] for r in records if r[1] == ('issuewild' if wildcard else 'issue')]
     if wildcard and not tags:
         tags = [r[2] for r in records if r[1] == 'issue']
@@ -227,16 +236,31 @@ def caa_records(name, apex):
             raise ValueError('DNS status UNKNOWN')
         records = []
         for line in response.splitlines():
+            if not line.strip() or line.lstrip().startswith(';'):
+                continue
             fields = shlex.split(line)
-            if len(fields) >= 8 and fields[3] == 'CAA':
-                records.append((int(fields[4]), fields[5].lower(), ' '.join(fields[6:])))
-            elif len(fields) == 7 and fields[3] == 'CAA':
-                records.append((int(fields[4]), fields[5].lower(), fields[6]))
-            elif len(fields) >= 5 and fields[3] == 'CNAME':
-                raise ValueError('CAA CNAME needs operator inspection; UNKNOWN')
+            if len(fields) >= 5 and fields[3] in ('CNAME', 'DNAME'):
+                raise ValueError('CAA alias needs operator inspection; UNKNOWN')
+            if len(fields) >= 7 and fields[3] == 'CAA':
+                if fields[0].lower().rstrip('.') != name:
+                    raise ValueError('Unexpected CAA answer owner; UNKNOWN')
+                flags, tag = int(fields[4]), fields[5].lower()
+                if flags & 128 and tag not in ('issue', 'issuewild', 'iodef'):
+                    raise ValueError('Unsupported critical CAA property; UNKNOWN')
+                records.append((flags, tag, ' '.join(fields[6:])))
         if records or name == apex:
             return records
         name = name.split('.', 1)[1]
+
+
+def policy_for(name, apex, policies):
+    name = name.removeprefix('*.')
+    if name not in policies:
+        try:
+            policies[name] = caa_records(name, apex)
+        except (ValueError, OSError, subprocess.SubprocessError):
+            policies[name] = None
+    return policies[name]
 
 
 def normalize_cert(row):
@@ -291,7 +315,9 @@ def ct_scan(row, state, path, config, policies, last_fetch):
     old = (state or {}).get('certificates', {})
     expected = {c['issuer'].lower() for c in old.values() if timestamp(c['not_before']) >= RECENT}
     expected.update(x.lower() for x in config.get('expected_issuers', {}).get(row['apex'], []))
-    held = [san for c in old.values() for san in c['sans'] if san.startswith('*.')]
+    held = [san for c in old.values() for san in c['sans']
+            if san.startswith('*.') and timestamp(c['not_after']) >= NOW]
+    held += [san for san in row['hostnames'] if san.startswith('*.')]
     distrusted = [x.strip().lower() for x in (SCRIPT.parent.parent / 'configs/cert-watch-distrusted-issuers.conf').read_text().splitlines()
                   if x.strip() and not x.startswith('#')]
     findings = []
@@ -300,15 +326,25 @@ def ct_scan(row, state, path, config, policies, last_fetch):
             continue
         if any(x in cert['issuer_name'].lower() for x in distrusted):
             findings.append(finding(row, 'ct-distrusted-issuer', 'critical', ident, 'Issuer matches distrust list', cert))
-        decisions = [allowed(cert['issuer'], policy, san.startswith('*.'), config)
-                     for san, policy in policies.items() if policy]
-        if False in decisions or (not decisions and cert['issuer'].lower() not in expected):
+        decisions = []
+        for san in cert['sans']:
+            name = san.removeprefix('*.')
+            if name != row['apex'] and not name.endswith('.' + row['apex']):
+                continue
+            policy = policy_for(name, row['apex'], policies)
+            if policy is None:
+                decisions.append(None)
+            elif policy:
+                decisions.append(allowed(cert['issuer'], policy, san.startswith('*.'), config))
+            else:
+                decisions.append(cert['issuer'].lower() in expected)
+        if False in decisions:
             findings.append(finding(row, 'ct-unexpected-issuer', 'high', ident, 'Issuer is outside the expected issuer set', cert))
         unknown = [san for san in cert['sans'] if (san == row['apex'] or san.endswith('.' + row['apex']))
                    and san not in row['hostnames'] and not any(matches(san, p) for p in held)]
         if unknown:
             findings.append(finding(row, 'ct-unknown-hostname', 'medium', ident, 'Unrecognised SANs: ' + ', '.join(unknown), cert))
-    # Retain unfiled CT findings until successfully filed (or still visible on dry runs).
+    # Retain unfiled CT findings so a dry run cannot consume an operator alert.
     pending = (state or {}).get('pending', []) + findings
     state = {'certificates': dict(old, **certs), 'pending': pending}
     private_save(path, state)
@@ -323,23 +359,34 @@ def caa_scan(row, state, config, policies):
     mapping = dict(CA_NAMES, **config.get('issuer_caa_map', {}))
     cas = sorted({ca for c in recent for ca, aliases in mapping.items()
                   if any(alias.lower() in c['issuer'].lower() for alias in aliases)})
+    for cert in certs:
+        for san in cert['sans']:
+            name = san.removeprefix('*.')
+            if name == apex or name.endswith('.' + apex):
+                policy_for(name, apex, policies)
     recommendations = [f'{apex}. CAA 0 issue "{ca}"' for ca in cas]
     recommendations.append(f'{apex}. CAA 0 iodef "mailto:security@{apex}"')
     findings = []
+    missing = []
     for name, policy in policies.items():
         if policy is None:
             findings.append(finding(row, 'caa-unknown', 'unknown', name, 'DNS lookup failed; not interpreted as missing CAA'))
         elif not policy:
-            findings.append(finding(row, 'caa-missing', 'low', name, 'No CAA on ' + name + ' through apex; review records and iodef address', records=recommendations))
+            missing.append(name)
         else:
             for cert in certs:
-                relevant = [s for s in cert['sans'] if matches(name, s) or s.removeprefix('*.') == name]
+                relevant = [s for s in cert['sans'] if s.removeprefix('*.') == name]
                 if timestamp(cert['not_before']) <= NOW <= timestamp(cert['not_after']) and relevant:
                     if any(allowed(cert['issuer'], policy, s.startswith('*.'), config) is False for s in relevant):
                         key = hashlib.sha256(json.dumps([name, policy, cert['issuer']], sort_keys=True).encode()).hexdigest()[:20]
                         findings.append(finding(row, 'caa-blocks-active-issuer', 'high', key,
                                                 'CAA on ' + name + ' blocks an active certificate issuer; review renewal requirements', cert,
-                                                recommendations))
+                                                [record.replace(apex + '. CAA', name + '. CAA', 1) for record in recommendations]))
+    if missing:
+        key = hashlib.sha256((apex + ':caa-missing').encode()).hexdigest()[:20]
+        findings.append(finding(row, 'caa-missing', 'low', key,
+                                'No CAA through apex for: ' + ', '.join(sorted(missing)) + '; review records and iodef address',
+                                records=recommendations))
     return findings
 
 
@@ -355,7 +402,13 @@ def private_repo(slug):
 
 def route(row, repos, fleet, config):
     names = [row['apex']] + row['hostnames']
-    candidates = [fleet.get('site_repos', {}).get(n) for n in names]
+    candidates = []
+    for name in names:
+        repo = fleet.get('site_repos', {}).get(name)
+        if repo and '/' not in repo:
+            owner = fleet.get('owner_exceptions', {}).get(name, fleet.get('owner'))
+            repo = owner + '/' + repo if owner else None
+        candidates.append(repo)
     candidates += [row['knowledge_repos'].get(n) for n in names]
     candidates += [r.get('slug') for r in repos if r.get('slug', '').split('/')[-1] in names]
     selected = next((c for c in candidates if c), config.get('fallback_repo'))
@@ -368,11 +421,11 @@ def route(row, repos, fleet, config):
 def file_findings(row, findings, repos, fleet, config):
     actionable = [f for f in findings if f['severity'] != 'unknown']
     if not actionable:
-        return
+        return False
     slug = route(row, repos, fleet, config)
     if not slug:
         info('INFO: no verified private route; findings remain local')
-        return
+        return False
     # A failed/incomplete dedup read must never become permission to create issues.
     pages = command(['gh', 'api', '--paginate', '--slurp', f'repos/{slug}/issues?state=open&per_page=100'])
     bodies = [issue.get('body') or '' for page in json.loads(pages) for issue in page if 'pull_request' not in issue]
@@ -420,6 +473,7 @@ This is operator triage, not a worker implementation brief.
             bodies.append(body)
         finally:
             os.unlink(path)
+    return True
 
 
 def main():
@@ -457,10 +511,7 @@ def main():
                 state = load(path, None, private=True)
                 policies = {}
                 for name in sorted(set(row['hostnames'] + [row['apex']])):
-                    try:
-                        policies[name] = caa_records(name, row['apex'])
-                    except (ValueError, OSError, subprocess.SubprocessError):
-                        policies[name] = None
+                    policy_for(name, row['apex'], policies)
                 found = []
                 if args.command in ('ct', 'run'):
                     found, state = ct_scan(row, state, path, config, policies, last_fetch)
@@ -468,7 +519,10 @@ def main():
                     found += caa_scan(row, state, config, policies)
                 output += found
                 if args.apply:
-                    file_findings(row, found, repos, fleet, config)
+                    filed = file_findings(row, found, repos, fleet, config)
+                    if filed and state and not any(f['kind'] == 'ct-unknown' for f in found):
+                        state['pending'] = []
+                        private_save(path, state)
     if args.format == 'json':
         print(json.dumps(output, indent=2))
     else:

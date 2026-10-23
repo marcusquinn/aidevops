@@ -96,6 +96,12 @@ a long-lived retry process.
 
 Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or summarisation is needed.
 
+Core routine **r923**, certificate watch, runs daily at 06:40 via
+`scripts/cert-watch-helper.sh run --apply`. It baselines Certificate Transparency,
+audits inherited CAA, and files deduplicated operator-triage issues only in
+verified private repositories. It never changes DNS or revokes certificates.
+See [cert-watch configuration and triage](../tools/security/cert-watch.md).
+
 ### Single-owner custom adapters
 
 For `run:custom/scripts/<name>.sh`, install the adapter only on its owner host.

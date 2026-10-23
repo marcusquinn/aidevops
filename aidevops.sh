@@ -1863,6 +1863,11 @@ _cmd_security() {
 		_dispatch_helper "$tls_helper" "$tls_helper" "${@:-local}"
 		return $?
 		;;
+	cert-watch)
+		shift || true
+		_dispatch_helper "cert-watch-helper.sh" "cert-watch-helper.sh" "${@:-run}"
+		return $?
+		;;
 	*)
 		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"
 		;;
