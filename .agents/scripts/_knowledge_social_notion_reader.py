@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -22,6 +21,7 @@ from _knowledge_social_notion_identity import (
     root_page_ids,
 )
 from _knowledge_social_oauth_reader import GuardedOAuthPolicy, GuardedOAuthReader
+from _knowledge_social_reader_contract import ReaderContract
 from knowledge_social_import import reject_credentials
 
 READ_TIMEOUT_SECONDS = 120
@@ -44,23 +44,20 @@ class NotionReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise NotionAdapterError("Notion read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise NotionAdapterError("Notion read provider returned no valid JSON") from error
-    if not isinstance(payload, dict):
-        raise NotionAdapterError("Notion read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> NotionProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return NotionProviderUnavailableError(message)
-    return NotionProviderUnavailableError("Notion read provider is unavailable")
+# Fixture messages mirror FixturePageReader, which FixtureNotion keeps using.
+CONTRACT = ReaderContract(
+    adapter_error=NotionAdapterError,
+    unavailable_error=NotionProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message="Notion read provider is unavailable",
+    oversize_message="Notion read response exceeds the safety limit",
+    invalid_json_message="Notion read provider returned no valid JSON",
+    root_message="Notion read response root must be an object",
+    expectation_message="Notion fixture request expectation must be an object",
+    checkpoint_message="Notion request did not resume at the expected checkpoint",
+    response_message="Notion fixture page response must be an object",
+)
 
 
 NOTION_READER_POLICY = GuardedOAuthPolicy(
@@ -68,8 +65,8 @@ NOTION_READER_POLICY = GuardedOAuthPolicy(
     "NOTION",
     "NOTION_READ_LOG",
     READ_TIMEOUT_SECONDS,
-    _decode_output,
-    _provider_failure,
+    CONTRACT.decode_output,
+    CONTRACT.provider_failure,
     NotionProviderUnavailableError,
     (
         "ACCESS_TOKEN",
