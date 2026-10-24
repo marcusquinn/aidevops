@@ -193,6 +193,13 @@ jobs:
           [[ "$RELEASE_RC" -eq 0 ]] || exit "$RELEASE_RC"
           echo "deferred=false" >> "$GITHUB_OUTPUT"
 
+      # A successful step here is the durable jobs-API evidence that reconciliation
+      # reads to report the deferral and allow a bounded recovery retry (GH#35565).
+      - name: Record deferred GitHub release
+        if: steps.github-release.outputs.deferred == 'true'
+        run: |
+          echo "::warning::GitHub release for $RELEASE_TAG is deferred until the installation API rate limit resets; aidevops release reconcile <PR> dispatches a bounded same-tag recovery after the grace"
+
       - name: Check npm publication state
         id: npm-state
         env:

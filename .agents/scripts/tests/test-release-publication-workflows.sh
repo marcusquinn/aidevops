@@ -117,9 +117,9 @@ assert_contains "npm publication state keeps its executable test selector" \
 assert_contains "npm verification keeps its executable test selector" \
 	"name: Verify npm publication" "$PACKAGE_WORKFLOW"
 assert_contains "npm verification uses a bounded adaptive propagation schedule" \
-	"RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60 60 90)" "$PACKAGE_WORKFLOW"
+	"RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60 60 90 120 120 120 120)" "$PACKAGE_WORKFLOW"
 assert_contains "npm metadata propagation loop matches its delay budget" \
-	"for attempt in {1..14}; do" "$PACKAGE_WORKFLOW"
+	"for attempt in {1..18}; do" "$PACKAGE_WORKFLOW"
 assert_contains "npm verification fails immediately on a mismatched package identity" \
 	"npm metadata does not match the verified package identity" "$PACKAGE_WORKFLOW"
 assert_contains "npm verification distinguishes registry transport failures" \
@@ -725,6 +725,10 @@ for fatal_mode in forbidden bad-gateway pat-403; do
 done
 assert_contains "deferred postflight leaves a distinct jobs-API marker step" \
 	"name: Record deferred postflight" "$PACKAGE_WORKFLOW"
+assert_contains "deferred GitHub release leaves a distinct jobs-API marker step" \
+	"name: Record deferred GitHub release" "$PACKAGE_WORKFLOW"
+assert_order "deferred GitHub release marker follows the release step" \
+	"name: Create or reconcile GitHub release" "name: Record deferred GitHub release" "$PACKAGE_WORKFLOW"
 # shellcheck disable=SC2016 # Match the literal workflow expression.
 assert_contains "postflight run-name is bound to the exact tag" \
 	'run-name: Postflight Verification ${{ github.event.inputs.tag }}' "$POSTFLIGHT_WORKFLOW"

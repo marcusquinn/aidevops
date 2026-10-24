@@ -26,6 +26,12 @@ _FULL_LOOP_RELEASE_PHASE_REMOTE="remote-publication"
 _FULL_LOOP_RELEASE_PHASE_RECONCILE_REQUIRED="reconcile-required"
 _FULL_LOOP_RELEASE_STEP_QUEUE_POSTFLIGHT="Queue exact-tag postflight"
 _FULL_LOOP_RELEASE_STEP_DEFERRED_POSTFLIGHT="Record deferred postflight"
+_FULL_LOOP_RELEASE_STEP_DEFERRED_GITHUB_RELEASE="Record deferred GitHub release"
+# Correlated workflow_dispatch recoveries allowed while GitHub release creation
+# keeps deferring on installation quota; at the 15-minute grace this spans the
+# hourly quota window (GH#35565).
+_FULL_LOOP_RELEASE_MAX_RECOVERY_RUNS=4
+_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT=""
 _FULL_LOOP_RELEASE_POSTFLIGHT_ABSENT_RC=6
 _FULL_LOOP_RELEASE_POSTFLIGHT_FAILED_RC=9
 _FULL_LOOP_RELEASE_PROVENANCE_PREDICATE="https://slsa.dev/provenance/v1"
@@ -733,9 +739,11 @@ _full_loop_release_find_workflow_run() {
 	local display_title="Publish ${tag_name}"
 	local selection_mode="${4:-latest}"
 	local selection_rc=0
+	local selection_json=""
 	[[ "$selection_mode" == "latest" || "$selection_mode" == "successful" ]] || return 1
 
 	_FULL_LOOP_RELEASE_RUN_JSON=""
+	_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT=""
 	push_runs_file=$(mktemp) || return 1
 	recovery_runs_file=$(mktemp) || {
 		rm -f "$push_runs_file"
@@ -750,7 +758,7 @@ _full_loop_release_find_workflow_run() {
 		rm -f "$push_runs_file" "$recovery_runs_file"
 		return 1
 	fi
-	_FULL_LOOP_RELEASE_RUN_JSON=$(jq -cn --arg sha "$tag_commit" --arg tag "$tag_name" --arg title "$display_title" \
+	selection_json=$(jq -cn --arg sha "$tag_commit" --arg tag "$tag_name" --arg title "$display_title" \
 		--arg push_event "$_FULL_LOOP_RELEASE_EVENT_PUSH" \
 		--arg recovery_event "$_FULL_LOOP_RELEASE_EVENT_RECOVERY" \
 		--arg selection_mode "$selection_mode" --arg completed "$_FULL_LOOP_RELEASE_STATUS_COMPLETED" \
@@ -758,19 +766,23 @@ _full_loop_release_find_workflow_run() {
 		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
 		--arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" \
 		--slurpfile push "$push_runs_file" --slurpfile recovery "$recovery_runs_file" '
-		([($push[]?.workflow_runs[]? | select(.event == $push_event and .head_branch == $tag and .head_sha == $sha))]
-		 + [($recovery[]?.workflow_runs[]?
+		[($recovery[]?.workflow_runs[]?
 			| select(.event == $recovery_event and .head_branch == "main"
 				and ((.head_sha | type) == $string_type)
 				and (.head_sha | test($sha_regex))
-				and .display_title == ($title + " [" + $sha + "." + .head_sha + "]")))])
-		| if $selection_mode == "successful" then
-			map(select(.status == $completed and .conclusion == $success))
-		  else . end
-		| sort_by(.created_at // "") | last // empty
+				and .display_title == ($title + " [" + $sha + "." + .head_sha + "]")))] as $recoveries
+		| {recovery_count: ($recoveries | length),
+		   selected: ([($push[]?.workflow_runs[]? | select(.event == $push_event and .head_branch == $tag and .head_sha == $sha))]
+			+ $recoveries
+			| if $selection_mode == "successful" then
+				map(select(.status == $completed and .conclusion == $success))
+			  else . end
+			| sort_by(.created_at // "") | last)}
 	') || selection_rc=$?
 	rm -f "$push_runs_file" "$recovery_runs_file"
 	[[ "$selection_rc" -eq 0 ]] || return 1
+	_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT=$(jq -er '.recovery_count' <<<"$selection_json") || return 1
+	_FULL_LOOP_RELEASE_RUN_JSON=$(jq -c '.selected // empty' <<<"$selection_json") || return 1
 	[[ -n "$_FULL_LOOP_RELEASE_RUN_JSON" && "$_FULL_LOOP_RELEASE_RUN_JSON" != "null" ]] || return 3
 	jq -e --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
 		--arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" \
@@ -1075,20 +1087,68 @@ _full_loop_release_success_grace_expired() {
 	return 0
 }
 
-# True when the publication run's jobs show the quota-deferred postflight marker.
-_full_loop_release_run_postflight_deferred() {
+# True when the selected publication run's jobs show a successful marker step.
+# Returns 0 (marker present), 1 (absent) or another code (unverifiable).
+_full_loop_release_run_has_marker_step() {
 	local repo="$1"
+	local step_name="$2"
 	local run_id=""
 	run_id=$(jq -er --arg number_type "$_FULL_LOOP_RELEASE_JSON_NUMBER_TYPE" \
 		'.id | select(type == $number_type and . > 0 and floor == .)' \
 		<<<"$_FULL_LOOP_RELEASE_RUN_JSON") || return 2
 	_full_loop_release_fetch_run_jobs "$repo" "$run_id" || return 2
-	jq -e --arg step "$_FULL_LOOP_RELEASE_STEP_DEFERRED_POSTFLIGHT" \
+	jq -e --arg step "$step_name" \
 		--arg completed "$_FULL_LOOP_RELEASE_STATUS_COMPLETED" \
 		--arg success "$_FULL_LOOP_RELEASE_CONCLUSION_SUCCESS" '
 		any(.jobs[]?.steps[]?; .name == $step and .status == $completed and .conclusion == $success)
 	' <<<"$_FULL_LOOP_RELEASE_RUN_JOBS_JSON" >/dev/null
 	return $?
+}
+
+# True when the publication run's jobs show the quota-deferred postflight marker.
+_full_loop_release_run_postflight_deferred() {
+	local repo="$1"
+	_full_loop_release_run_has_marker_step "$repo" "$_FULL_LOOP_RELEASE_STEP_DEFERRED_POSTFLIGHT"
+	return $?
+}
+
+# True when the run deferred GitHub release creation on installation quota.
+_full_loop_release_run_github_release_deferred() {
+	local repo="$1"
+	_full_loop_release_run_has_marker_step "$repo" "$_FULL_LOOP_RELEASE_STEP_DEFERRED_GITHUB_RELEASE"
+	return $?
+}
+
+# Channels are unverified after a successful run: report a quota-deferred
+# GitHub release, then return 5 (dispatch one recovery now) or 8 (wait).
+# A push run earns one recovery after the grace. A successful dispatch run
+# never loops unless it also deferred on quota, bounded per correlation
+# (GH#35565).
+_full_loop_release_unverified_channels_action() {
+	local repo="$1"
+	local run_event=""
+	local deferred_rc=0
+	local retry_after=""
+	local recovery_count="$_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT"
+
+	run_event=$(jq -r '.event // ""' <<<"$_FULL_LOOP_RELEASE_RUN_JSON") || return 8
+	_full_loop_release_run_github_release_deferred "$repo" || deferred_rc=$?
+	if [[ "$deferred_rc" -eq 0 ]]; then
+		printf 'GITHUB_RELEASE=deferred reason=installation-rate-limit\n'
+		retry_after=$(jq -r '.updated_at | try (fromdateiso8601 + 900 | todateiso8601) catch empty' \
+			<<<"$_FULL_LOOP_RELEASE_RUN_JSON" 2>/dev/null) || retry_after=""
+		[[ -z "$retry_after" ]] || printf 'GITHUB_RELEASE_RETRY_AFTER=%s\n' "$retry_after"
+	fi
+	if [[ "$run_event" == "$_FULL_LOOP_RELEASE_EVENT_RECOVERY" ]]; then
+		[[ "$deferred_rc" -eq 0 ]] || return 8
+		[[ "$recovery_count" =~ ^[0-9]+$ ]] || return 8
+		if [[ "$recovery_count" -ge "$_FULL_LOOP_RELEASE_MAX_RECOVERY_RUNS" ]]; then
+			printf 'GITHUB_RELEASE_RECOVERY=exhausted runs=%s\n' "$recovery_count"
+			return 8
+		fi
+	fi
+	_full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON" || return 8
+	return 5
 }
 
 # Select postflight evidence bound to the exact verified tag by run-name.
@@ -1221,10 +1281,8 @@ _full_loop_release_inspect_remote() {
 		return 4
 	fi
 	if ! _full_loop_release_verify_channels "$repo" "$tag_name"; then
-		# One recovery per correlation: never loop on a successful dispatch run.
-		[[ "$(jq -r '.event' <<<"$_FULL_LOOP_RELEASE_RUN_JSON")" == "workflow_dispatch" ]] && return 8
-		_full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON" || return 8
-		return 5
+		_full_loop_release_unverified_channels_action "$repo"
+		return $?
 	fi
 	_full_loop_release_published_if_postflight_ready "$repo" "$tag_name"
 	return $?
