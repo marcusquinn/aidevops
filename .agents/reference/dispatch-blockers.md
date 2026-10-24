@@ -163,6 +163,16 @@ the next runner independently checks capabilities. It does not grant credentials
 or bypass permission/security guards. Repositories without declarations retain
 the existing behavior.
 
+Host binaries (GH#35576): the worker sandbox may not expose host tools such as
+`ip`, `xauth`, `Xtigervnc` or `docker`. A child using a sanitized PATH
+(`/usr/sbin:/usr/bin:/sbin:/bin`) fails with `ENOENT` where the worker shell resolves
+them elsewhere (for example `/run/current-system/sw/bin`). Do not widen application
+PATH, skip tests or bypass the sandbox. Declare the dependency in the trusted local
+`dispatch_class_requirements` as a `probe` that runs each required binary with that
+same sanitized PATH, so unsuitable runners defer before claim. A worker that finds
+the binary missing after claim uses `TERMINAL_BLOCKER_REASON=runner_capability_unmet`
+naming the binary and the PATH used.
+
 Manual dispatch (`dispatch-single-issue-helper.sh`) also checks the registered
 checkout's origin before claim, in dry-run and real dispatch alike (GH#33629).
 `reason=repository_identity_drift` means the origin is a verified former name of
