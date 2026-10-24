@@ -5,13 +5,12 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any, Protocol
 
-from _knowledge_social_fixture import FixtureSequence
 from _knowledge_social_oauth_reader import GuardedOAuthPolicy, GuardedOAuthReader
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from _knowledge_social_slack import (
     PageRequest,
     SlackAdapterError,
@@ -49,23 +48,19 @@ class SlackReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise SlackAdapterError("Slack read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise SlackAdapterError("Slack read provider returned no valid JSON") from error
-    if not isinstance(payload, dict):
-        raise SlackAdapterError("Slack read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> SlackProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return SlackProviderUnavailableError(message)
-    return SlackProviderUnavailableError("Slack read provider is unavailable")
+CONTRACT = ReaderContract(
+    adapter_error=SlackAdapterError,
+    unavailable_error=SlackProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message="Slack read provider is unavailable",
+    oversize_message="Slack read response exceeds the safety limit",
+    invalid_json_message="Slack read provider returned no valid JSON",
+    root_message="Slack read response root must be an object",
+    expectation_message="Slack fixture request expectation must be an object",
+    checkpoint_message="Slack request did not resume at the expected checkpoint",
+    response_message="Slack fixture page response must be an object",
+)
 
 
 SLACK_READER_POLICY = GuardedOAuthPolicy(
@@ -73,8 +68,8 @@ SLACK_READER_POLICY = GuardedOAuthPolicy(
     "SLACK",
     "SLACK_READ_LOG",
     READ_TIMEOUT_SECONDS,
-    _decode_output,
-    _provider_failure,
+    CONTRACT.decode_output,
+    CONTRACT.provider_failure,
     SlackProviderUnavailableError,
     (
         "ACCESS_TOKEN",
@@ -94,40 +89,11 @@ class GuardedSlack(GuardedOAuthReader):
         super().__init__(helper, profile, SLACK_READER_POLICY)
 
 
-def _fixture_object(value: Any, message: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise SlackAdapterError(message)
-    return value
-
-
-class FixtureSlack:
+class FixtureSlack(FixtureReader):
     """Deterministic Slack substitute for pagination and failure fixtures."""
 
     def __init__(self, path: Path) -> None:
-        self.sequence = FixtureSequence(path, "Slack", SlackAdapterError)
-
-    def identity(self, expected_id: str) -> dict[str, Any]:
-        del expected_id
-        return self.sequence.identity()
-
-    def page(self, request: PageRequest) -> dict[str, Any]:
-        entry = self.sequence.next_page()
-        expectation = _fixture_object(
-            entry.get("expect_request", {}),
-            "Slack fixture request expectation must be an object",
-        )
-        actual = request.payload()
-        mismatch = any(
-            actual.get(key) != expected for key, expected in expectation.items()
-        )
-        if mismatch:
-            raise SlackAdapterError(
-                "Slack request did not resume at the expected checkpoint"
-            )
-        response = entry.get("response", entry)
-        return _fixture_object(
-            response, "Slack fixture page response must be an object"
-        )
+        super().__init__(path, "Slack", CONTRACT)
 
 
 def _optional_display(value: Any, field: str) -> str | None:

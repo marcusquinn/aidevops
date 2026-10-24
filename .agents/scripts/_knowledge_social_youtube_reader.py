@@ -5,15 +5,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Protocol
 
-from _knowledge_social_fixture import FixtureSequence
 from _knowledge_social_oauth_reader import (
     GuardedOAuthPolicy,
     GuardedOAuthReader,
 )
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from _knowledge_social_youtube import (
     PageRequest,
     YouTubeAdapterError,
@@ -40,23 +39,19 @@ class YouTubeReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise YouTubeAdapterError("YouTube read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise YouTubeAdapterError("YouTube read provider returned no valid JSON") from error
-    if not isinstance(payload, dict):
-        raise YouTubeAdapterError("YouTube read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> YouTubeProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return YouTubeProviderUnavailableError(message)
-    return YouTubeProviderUnavailableError("YouTube read provider is unavailable")
+CONTRACT = ReaderContract(
+    adapter_error=YouTubeAdapterError,
+    unavailable_error=YouTubeProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message="YouTube read provider is unavailable",
+    oversize_message="YouTube read response exceeds the safety limit",
+    invalid_json_message="YouTube read provider returned no valid JSON",
+    root_message="YouTube read response root must be an object",
+    expectation_message="YouTube fixture request expectation must be an object",
+    checkpoint_message="YouTube request did not resume at the expected checkpoint",
+    response_message="YouTube fixture page response must be an object",
+)
 
 
 YOUTUBE_OAUTH_POLICY = GuardedOAuthPolicy(
@@ -64,8 +59,8 @@ YOUTUBE_OAUTH_POLICY = GuardedOAuthPolicy(
     "YOUTUBE",
     "YOUTUBE_READ_LOG",
     READ_TIMEOUT_SECONDS,
-    _decode_output,
-    _provider_failure,
+    CONTRACT.decode_output,
+    CONTRACT.provider_failure,
     YouTubeProviderUnavailableError,
 )
 
@@ -77,33 +72,11 @@ class GuardedYouTubeOAuth(GuardedOAuthReader):
         super().__init__(helper, profile, YOUTUBE_OAUTH_POLICY)
 
 
-def _fixture_page(entry: dict[str, Any], request: PageRequest) -> dict[str, Any]:
-    expectation = entry.get("expect_request", {})
-    if not isinstance(expectation, dict):
-        raise YouTubeAdapterError("YouTube fixture request expectation must be an object")
-    actual = request.payload()
-    if any(actual.get(key) != value for key, value in expectation.items()):
-        raise YouTubeAdapterError(
-            "YouTube request did not resume at the expected checkpoint"
-        )
-    response = entry.get("response", entry)
-    if not isinstance(response, dict):
-        raise YouTubeAdapterError("YouTube fixture page response must be an object")
-    return response
-
-
-class FixtureYouTube:
+class FixtureYouTube(FixtureReader):
     """Deterministic OAuth substitute for pagination and failure fixtures."""
 
     def __init__(self, path: Path) -> None:
-        self.fixture = FixtureSequence(path, "YouTube", YouTubeAdapterError)
-
-    def identity(self, expected_id: str) -> dict[str, Any]:
-        del expected_id
-        return self.fixture.identity()
-
-    def page(self, request: PageRequest) -> dict[str, Any]:
-        return _fixture_page(self.fixture.next_page(), request)
+        super().__init__(path, "YouTube", CONTRACT)
 
 
 def verified_identity(payload: dict[str, Any], expected_id: str) -> dict[str, Any]:
