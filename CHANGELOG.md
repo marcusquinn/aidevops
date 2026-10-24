@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.63] - 2026-10-24
+
+### Changed
+
+- Maintenance: recover reviewed filelock security update (GH#35547) (#35550)
+- Maintenance: sync GitHub issue refs to TODO.md (#35554)
+- Maintenance: mark t18767 complete (pr:#35541 completed:2026-10-23) (#35543)
+- Maintenance: bump fast-uri (#35549)
+
+### Fixed
+
+- bound native desktop focus changes and add a terminal handoff contract
+- raise root fast-uri override to 3.1.9 (#35556)
+- reclaim leaked port allocations; stop per-port jq scans blocking worker prelaunch
+- require positive shared terminal-blocker rearm evidence (#35542)
+
 ## [3.39.62] - 2026-10-24
 
 ### Changed
