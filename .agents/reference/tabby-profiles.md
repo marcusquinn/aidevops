@@ -3,6 +3,10 @@
 
 # Tabby profiles
 
+For live multi-host tmux tabs, use `aidevops tabby sessions new|restore|list|doctor`;
+see [Remote Tabby sessions](../tools/terminal/remote-sessions.md). Session leases
+are separate from profile reconciliation and do not change `tabby status`.
+
 Use `.agents/scripts/tabby-profile-sync.py` to generate aidevops project profiles
 from `repos.json`. When `~/.buzz` exists, setup/update also generates a `Buzz`
 profile rooted there so OpenCode opens the Buzz-scoped session namespace. The
