@@ -647,7 +647,6 @@ test_self_authored_collaborator_evidence() {
 		variant=$(printf '%s' "$comments" | jq -c --arg a "$association" 'map(.author_association=$a)')
 		[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_release_mode "$variant" "$revision" "$fingerprint")" == circuit ]] || status=1
 		[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=other-bot terminal_blocker_release_mode "$variant" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_observation_hold_active "$variant" '{}' owner/repo 42 '' >/dev/null || status=1
 		variant=$(printf '%s' "$variant" | jq -c --arg body "$circuit" '.[0].body=$body')
 		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$variant" '{}' owner/repo 42 '' >/dev/null || status=1
 		variant=$(printf '%s' "$variant" | jq -c --arg a "$association" '. + [{id:22,body:"terminal-blocker-circuit:retry",author:"runner-bot",author_association:$a,created_at:"2026-09-06T12:10:00Z"}]')
@@ -833,6 +832,9 @@ test_first_observation_scope_hold_releases_on_revision() {
 			runner-one >/dev/null && exit 1
 		# Recovery owner: unchanged brief stays held, revised brief releases once.
 		TBR_ROOT="${TEST_ROOT}/recovery" TBR_EXCERPT_DIR="${TEST_ROOT}/no-excerpts" TBR_REPOS_JSON="${TEST_ROOT}/no-repos.json"
+		# GH#35569: own CONTRIBUTOR observations must reach the recovery owner.
+		export TERMINAL_BLOCKER_SELF_LOGIN=runner-one
+		tb_fixture_comments=$(printf '%s' "$tb_fixture_comments" | jq -c 'map(.author_association="CONTRIBUTOR")')
 		set_issue_status() { projected+="${3};"; return 0; }
 		_tbr_post_rearm_receipt() { return 0; }
 		export TEST_ISSUE_LABELS=status:blocked
@@ -852,6 +854,13 @@ test_first_observation_scope_hold_releases_on_revision() {
 		issue_body="### Files Scope\n- helper.sh"
 		tb_fixture_comments=$(printf '%s' "$tb_fixture_comments" | jq -c '. + [{id:8,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-16T23:40:00Z"}]')
 		terminal_blocker_observation_hold_active "$tb_fixture_comments" "$(issue_json status:blocked)" owner/repo 42 "" >/dev/null && exit 1
+		# Missing evidence retires intake instead of staying incomplete forever;
+		# it must not project availability or write a release receipt.
+		tb_fixture_comments='[]'
+		tbr_enqueue owner/repo 42 files_scope_excluded || exit 1
+		local retired_rc=0
+		_tbr_check_entry "$queue_file" || retired_rc=$?
+		[[ "$retired_rc" -eq 1 && ! -f "$queue_file" && "$projected" == 'available;' ]] || exit 1
 		exit 0
 	); then
 		status=1
