@@ -1262,7 +1262,7 @@ _help_commands() {
 	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
 	echo "  campaign <cmd>     Campaign plane: init/provision/ls (P1) + asset (P4) + new/list/status/archive (P2) + draft (P5) + launch/promote (P6) + grow (orchestration)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
-	echo "  tabby <cmd>        Manage Tabby terminal profiles (sync/status/zshrc/help)"
+	echo "  tabby <cmd>        Manage Tabby profiles (sync/status) and remote tmux tabs (sessions)"
 	echo "  buzz <cmd>         Manage Buzz Desktop OpenCode ACP compatibility"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
 	echo "  detect             Find and register aidevops projects"
