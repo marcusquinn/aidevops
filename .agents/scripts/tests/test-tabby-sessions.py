@@ -137,17 +137,22 @@ class ProtocolTests(unittest.TestCase):
 
 class RemoteTests(unittest.TestCase):
     def test_inventory_natural_order_stable_ids_and_exclusion(self):
-        data = "\n".join("S\t${}\t100\t200\t{}".format(i, name) for i, name in enumerate(
-            ["oc-10", "worker-1", "oc-zeta", "oc-2", "oc-alpha"])) + "\nC\t42\t$0\n"
+        data = "\n".join("S|${}|100|200|{}".format(i, name) for i, name in enumerate(
+            ["oc-10", "worker-1", "oc-zeta", "oc-2", "oc-alpha"])) + "\nC|42|$0\n"
         with mock.patch.object(remote, "remote", return_value=data):
             sessions, clients = remote.inventory(host())
         self.assertEqual([s["name"] for s in sessions], ["oc-2", "oc-10", "oc-alpha", "oc-zeta"])
         self.assertEqual(clients, {("42", "$0")})
 
     def test_unsafe_name_rejected(self):
-        with mock.patch.object(remote, "remote", return_value="S\t$1\t100\t200\toc-;bad\n"):
-            with self.assertRaises(config.SessionError):
-                remote.inventory(host())
+        for name in ("oc-;bad", "oc-001|extra"):
+            with mock.patch.object(remote, "remote", return_value="S|$1|100|200|" + name + "\n"):
+                with self.assertRaises(config.SessionError):
+                    remote.inventory(host())
+
+    def test_delimiter_in_unrelated_name_is_excluded_without_truncation(self):
+        with mock.patch.object(remote, "remote", return_value="S|$1|100|200|worker|extra\n"):
+            self.assertEqual(remote.inventory(host()), ([], set()))
 
     def test_unexpected_inside_frame_record_still_rejected(self):
         with mock.patch.object(remote, "remote", return_value="generic unexpected record\n"):

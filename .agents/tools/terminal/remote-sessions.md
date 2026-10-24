@@ -51,6 +51,10 @@ inventory remain errors. Missing/duplicate boundaries fail closed rather than
 being mistaken for an empty inventory. Neither startup text nor authentication
 diagnostics are printed or persisted. No shell configuration changes are needed.
 
+Inventory records use a printable pipe delimiter rather than literal tabs, with
+strict field validation. Managed names cannot contain pipes; unrelated names
+retain their full value for prefix filtering, rather than being truncated.
+
 `AIDEVOPS_TABBY_HOSTS` / `--config` and `AIDEVOPS_TABBY_STATE_DIR` / `--state-dir`
 select alternate inventory/state locations, including paths with spaces or
 shell metacharacters. Dry runs read inventory but create no remote sessions,

@@ -17,7 +17,7 @@ class CreationCollision(SessionError):
 INVENTORY = r"""
 command -v tmux >/dev/null 2>&1 || exit 127
 export LC_ALL=C
-out=$(tmux list-sessions -F 'S\t#{session_id}\t#{session_created}\t#{pid}\t#{session_name}' 2>&1)
+out=$(tmux list-sessions -F 'S|#{session_id}|#{session_created}|#{pid}|#{session_name}' 2>&1)
 rc=$?
 if [ "$rc" -ne 0 ]; then
     case "$out" in
@@ -26,8 +26,8 @@ if [ "$rc" -ne 0 ]; then
     esac
 fi
 printf '%s\n' "$out"
-tmux list-clients -F 'C\t#{client_pid}\t#{session_id}' || exit 71
-""".replace(r"\t", "\t")
+tmux list-clients -F 'C|#{client_pid}|#{session_id}' || exit 71
+"""
 
 
 def remote(host, script):
@@ -68,7 +68,9 @@ def parse_session(fields, host):
 def inventory(host):
     sessions, clients = [], set()
     for line in remote(host, INVENTORY).splitlines():
-        fields = line.split("\t")
+        # Keep the complete name for filtering/validation, even if an unrelated
+        # session contains the delimiter. Managed names cannot contain pipes.
+        fields = line.split("|", 4)
         if len(fields) == 5 and fields[0] == "S":
             session = parse_session(fields, host)
             if session:
