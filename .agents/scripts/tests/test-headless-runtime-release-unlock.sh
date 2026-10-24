@@ -282,6 +282,28 @@ for ready_reason in worker_ready_missing_linkage worker_ready_missing_summary; d
 	fi
 done
 
+# GH#35574: a denied terminal-lease transition on the ready handoff is
+# surfaced with only the allowlisted reason and never blocks the release.
+: >"$CALL_LOG"
+rm -f "${TMP_HOME}/comment-attempts"
+STUB_CLAIM_HELPER="${TMP_HOME}/stub-claim-helper.sh"
+printf '#!/usr/bin/env bash\nprintf "STUB %%s\\n" "$*" >>"%s"\nprintf "DISPATCH_LEASE_TRANSITION_DENIED reason=lease_unmatched\\n" >&2\nexit 1\n' \
+	"$CALL_LOG" >"$STUB_CLAIM_HELPER"
+chmod +x "$STUB_CLAIM_HELPER"
+STUB_LEASE="stub-lease-fixture"
+if AIDEVOPS_DISPATCH_LEASE_TOKEN="$STUB_LEASE" DISPATCH_CLAIM_HELPER="$STUB_CLAIM_HELPER" \
+	_release_dispatch_claim "issue-12345" worker_ready_missing_linkage "0" "0" && \
+	grep -q "STUB transition terminal 12345 owner/repo ${STUB_LEASE} issue-12345 0" "$CALL_LOG" && \
+	grep -q 'WARN Terminal dispatch lease not posted on #12345 (reason: lease_unmatched)' "$CALL_LOG" && \
+	! grep -q "^WARN .*${STUB_LEASE}" "$CALL_LOG" && \
+	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG"; then
+	printf 'PASS ready handoff surfaces a denied terminal lease without failing release\n'
+else
+	printf 'FAIL ready handoff terminal lease emission was not surfaced safely\n'
+	sed 's/^/  /' "$CALL_LOG"
+	exit 1
+fi
+
 : >"$CALL_LOG"
 GH_ISSUE_LABELS=bug
 GH_UNLOCK_MODE=already_unlocked _unlock_issue_after_dispatch_release "12345" "owner/repo"

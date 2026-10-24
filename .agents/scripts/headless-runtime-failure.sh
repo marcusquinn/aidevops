@@ -812,8 +812,43 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
-	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" || return 1
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" "$session_key" || return 1
 	[[ "$reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	return 0
+}
+
+#######################################
+# GH#35574: post this attempt's authenticated DISPATCH_LEASE phase=terminal at
+# release time. dispatch-claim-helper.sh signs it with the claim's lease token,
+# device and session plus AIDEVOPS_ATTEMPT_ID, which is exactly what
+# _dd_has_matching_terminal_lease requires to retire a generation-marked
+# dispatch. The later worker-event emission stays as a fallback and is a no-op
+# once the lease is terminal. Never prints the token; always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug, $3 = session_key (optional)
+#######################################
+_hrff_emit_release_terminal_lease() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="${3:-}"
+	local helper="${DISPATCH_CLAIM_HELPER:-${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/dispatch-claim-helper.sh}"
+	local lease_session="" deny_output="" deny_reason=""
+
+	[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+	if [[ ! -x "$helper" ]]; then
+		print_warning "Terminal lease helper unavailable for #${issue_number}; dispatch lock retires at lease expiry"
+		return 0
+	fi
+	lease_session="${AIDEVOPS_DISPATCH_LEASE_SESSION:-${session_key:-issue-${issue_number}}}"
+	if deny_output=$("$helper" transition terminal "$issue_number" "$repo_slug" \
+		"$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$lease_session" 0 2>&1 >/dev/null); then
+		print_info "Posted terminal dispatch lease on #${issue_number} after ready handoff release"
+		return 0
+	fi
+	# Report only the helper's allowlisted reason token, never raw output.
+	deny_reason=$(printf '%s\n' "$deny_output" |
+		sed -n 's/^DISPATCH_LEASE_TRANSITION_DENIED reason=\([a-z_]*\)$/\1/p' | sed -n '1p')
+	print_warning "Terminal dispatch lease not posted on #${issue_number} (reason: ${deny_reason:-unknown}); dispatch lock retires at lease expiry"
 	return 0
 }
 
@@ -828,12 +863,14 @@ ${machine_readable_part}${terminal_blocker_fragment}
 #   $2 = repo_slug
 #   $3 = runner_name
 #   $4 = reason
+#   $5 = session_key (optional; lease session fallback)
 #######################################
 _hrff_project_post_release_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local runner_name="$3"
 	local reason="$4"
+	local session_key="${5:-}"
 
 	# Older standalone consumers without safe-edit retain their existing cleanup;
 	# only the full runtime's named safe-edit path can produce verified provenance.
@@ -874,8 +911,12 @@ _hrff_project_post_release_state() {
 	# status:in-review with the runner assigned. The generic projection counts
 	# only closing keywords, so a deliberate `For #N` PR would reset the issue
 	# to status:available and orphan the open PR. Keep that state; only unlock.
+	# GH#35574: this attempt has ended, so retire its generation-marked dispatch
+	# lock now. Merged-partial continuation trusts CLAIM_RELEASED, but dedup
+	# accepts only the authenticated terminal lease for marked dispatches.
 	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
 		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
+		_hrff_emit_release_terminal_lease "$issue_number" "$repo_slug" "$session_key"
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
 		return 0

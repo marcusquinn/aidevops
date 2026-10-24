@@ -635,6 +635,69 @@ test_transition_denials_are_attributed() {
 	return 0
 }
 
+# GH#35574: a ready-PR handoff release (worker_ready_missing_linkage/summary)
+# must retire its generation-marked dispatch lock through the real release
+# path, or merged-partial continuation stays blocked for the active window.
+_ready_release_fixture() {
+	local root="$1" issue="$2" claim_helper="$3" token="" claim_id="" token_field="lease_""token"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_ORPHAN_GRACE=30 \
+		"$CLAIM" claim "$issue" owner/repo shared-login >"$root/claim-${issue}.out" 2>&1
+	token=$(claim_token "$root/claim-${issue}.out")
+	[[ -n "$token" ]] || fail "ready-release claim token missing for #${issue}"
+	claim_id=$(jq -sr 'last.id' "$root/state/comments.jsonl")
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition ready "$issue" owner/repo "$token" "issue-${issue}" 7200 ||
+		fail "ready-release fixture ready transition failed for #${issue}"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" \
+		gh api "repos/owner/repo/issues/${issue}/comments" --method POST \
+		--field body="Dispatching worker (deterministic).
+<!-- aidevops:dispatch ${token_field}=${token} device=device-a session=issue-${issue} attempt_id=attempt-${issue} claim_id=${claim_id} -->" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment "$issue" owner/repo shared-login >/dev/null ||
+		fail "ready-release fixture dispatch was not active for #${issue}"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" HOME="$root/home" \
+		AIDEVOPS_DEVICE_ID=device-a AIDEVOPS_ATTEMPT_ID="attempt-${issue}" \
+		AIDEVOPS_DISPATCH_LEASE_TOKEN="$token" DISPATCH_CLAIM_HELPER="$claim_helper" \
+		DISPATCH_REPO_SLUG=owner/repo WORKER_ISSUE_NUMBER="$issue" WORKER_GITHUB_LOGIN=shared-login \
+		AIDEVOPS_CLAIM_RELEASE_POST_RETRY_DELAY=0 bash -c '
+		print_info() { return 0; }
+		print_warning() { printf "WARN %s\n" "$1" >&2; return 0; }
+		SCRIPT_DIR="$1"
+		source "$1/headless-runtime-failure.sh"
+		_release_dispatch_claim "issue-$2" worker_ready_missing_linkage 0 0
+	' _ "$SCRIPTS_DIR" "$issue" 2>"$root/release-${issue}.err" ||
+		fail "ready-release path failed for #${issue}"
+	[[ "$(grep -c "CLAIM_RELEASED reason=worker_ready_missing_linkage" "$root/state/comments.jsonl")" -ge 1 ]] ||
+		fail "ready-release did not persist CLAIM_RELEASED for #${issue}"
+	! grep -qF "$token" "$root/release-${issue}.err" || fail "ready-release diagnostics disclosed the lease token"
+	return 0
+}
+
+test_ready_handoff_release_retires_marked_dispatch() {
+	local root="${TMP_DIR}/ready-handoff-release"
+	create_mock_gh "$root"
+
+	# Pre-fix behaviour: CLAIM_RELEASED alone cannot retire a marked dispatch.
+	_ready_release_fixture "$root" 55 "${root}/missing-claim-helper"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 55 owner/repo shared-login >/dev/null ||
+		fail "CLAIM_RELEASED alone unexpectedly retired a generation-marked dispatch"
+	grep -q 'Terminal lease helper unavailable for #55' "$root/release-55.err" ||
+		fail "missing terminal lease helper was not surfaced"
+
+	: >"$root/state/comments.jsonl"
+	_ready_release_fixture "$root" 56 "$CLAIM"
+	grep -q 'DISPATCH_LEASE phase=terminal .*session=issue-56 .*attempt_id=attempt-56' "$root/state/comments.jsonl" ||
+		fail "ready-release did not post the attempt's terminal lease"
+	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 56 owner/repo shared-login >/dev/null 2>&1; then
+		fail "ready-handoff release left the generation-marked dispatch active"
+	fi
+	pass "ready-handoff release posts its terminal lease and leaves the issue dispatchable"
+	return 0
+}
+
 test_takeover_recheck_precedes_mutation() {
 	local root="${TMP_DIR}/takeover"
 	create_mock_gh "$root"
@@ -672,6 +735,7 @@ test_large_comment_history_avoids_argv_limits
 test_prelaunch_renewal_covers_slow_startup
 test_prelaunch_renewal_is_monotonic_and_coalesced
 test_transition_denials_are_attributed
+test_ready_handoff_release_retires_marked_dispatch
 test_invalid_device_not_public
 test_takeover_recheck_precedes_mutation
 printf '\nAtomic lease concurrency tests passed\n'
