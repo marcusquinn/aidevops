@@ -33,8 +33,12 @@ function interruptedTaskPart(part) {
     || String(state.error || "").trim() === INTERRUPTED_TASK_ERROR;
 }
 
-function recoveryGuidance(childID) {
-  const child = childID || "unknown (no unique child identity)";
+// Only a well-formed runtime session ID is embedded in suggested commands.
+const SAFE_SESSION_ID = /^[A-Za-z0-9_-]{1,80}$/;
+
+function recoveryGuidance(rawChildID) {
+  const childID = SAFE_SESSION_ID.test(rawChildID || "") ? rawChildID : "";
+  const child = childID || "unknown (no unique, well-formed child identity)";
   const inspect = childID
     ? ` Inspect it read-only: \`session-introspect-helper.sh recent 30 --session ${childID}\` (tool calls) and \`opencode export ${childID}\` (final assistant text).`
     : "";
@@ -269,7 +273,10 @@ class SubagentCancellationReceipt {
 
   interruptedReceiptText(entry) {
     if (entry.text) return Promise.resolve(entry.text);
-    entry.finalizing ||= this.finalizeInterrupted(entry);
+    entry.finalizing ||= this.finalizeInterrupted(entry).catch((error) => {
+      entry.finalizing = null;
+      throw error;
+    });
     return entry.finalizing;
   }
 
