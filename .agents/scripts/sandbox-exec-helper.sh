@@ -964,6 +964,19 @@ _sandbox_make_short_tmpdir() {
 	return 1
 }
 
+# Print the child TMPDIR: short dir when available, else the long exec dir.
+_sandbox_resolve_child_tmpdir() {
+	local exec_tmpdir="$1"
+	local short_dir
+	if short_dir="$(_sandbox_make_short_tmpdir)" && [[ -n "$short_dir" ]]; then
+		printf '%s\n' "$short_dir"
+		return 0
+	fi
+	log_sandbox "WARN" "No short TMPDIR available; using ${exec_tmpdir} (Unix sockets may exceed sun_path)" >&2
+	printf '%s\n' "$exec_tmpdir"
+	return 0
+}
+
 # Remove the short child TMPDIR (no-op when it is the long fallback dir).
 # Arguments: $1 - child tmpdir, $2 - exec tmpdir
 _sandbox_cleanup_short_tmpdir() {
@@ -1485,18 +1498,11 @@ sandbox_run() {
 	fi
 
 	# Create isolated temp directory
-	local exec_id
-	exec_id="$(date +%s)-$$"
-	local exec_tmpdir="${SANDBOX_TMP_BASE}/${exec_id}"
+	local exec_tmpdir child_tmpdir
+	exec_tmpdir="${SANDBOX_TMP_BASE}/$(date +%s)-$$"
 	mkdir -p "$exec_tmpdir"
-
-	# Short TMPDIR for the child so Unix socket paths fit sun_path (GH#35571).
-	local child_tmpdir=""
-	child_tmpdir="$(_sandbox_make_short_tmpdir)" || child_tmpdir=""
-	if [[ -z "$child_tmpdir" ]]; then
-		log_sandbox "WARN" "No short TMPDIR available; falling back to ${exec_tmpdir} (Unix sockets may exceed sun_path)"
-		child_tmpdir="$exec_tmpdir"
-	fi
+	# Short child TMPDIR so Unix socket paths fit sun_path (GH#35571).
+	child_tmpdir="$(_sandbox_resolve_child_tmpdir "$exec_tmpdir")"
 
 	local -a env_args=()
 	_sandbox_build_env_args "$child_tmpdir" "$extra_passthrough" "$home_override"
