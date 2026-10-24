@@ -5,7 +5,8 @@
 
 import re
 
-from pr_checkpoint_events import closes_released_attempt, events, fields, timestamp, trusted
+from pr_checkpoint_events import (closes_released_attempt, events, fields,
+                                  normalized_attempt, timestamp, trusted)
 
 
 def closed_claim(comment, line, f, seen):
@@ -26,7 +27,7 @@ def close_release(state, comment, f):
     valid = all((not state.get("release_id"), bool(f.get("reason")),
                  f.get("runner") == state["runner"],
                  f.get("lease_token", state["token"]) == state["token"],
-                 f.get("attempt_id", state["attempt"]) == state["attempt"]))
+                 normalized_attempt(f.get("attempt_id", state["attempt"])) == state["attempt"]))
     if valid:
         state["release_id"] = comment["id"]
     return valid
@@ -74,12 +75,12 @@ def close_claim_only(state, comment, f):
 
 
 def advance_lease(state, comment, line, f):
+    attempt = normalized_attempt(f.get("attempt_id"))
     if not all((line.startswith("DISPATCH_LEASE "), f.get("lease_token") == state["token"],
                 f.get("session") == state["session"],
-                f.get("attempt_id", "").startswith("attempt:"),
-                f.get("attempt_id") == state.get("attempt", f.get("attempt_id")))):
+                bool(attempt), attempt == state.get("attempt", attempt))):
         return False
-    state["attempt"] = f["attempt_id"]
+    state["attempt"] = attempt
     if state.get("release_id"):
         valid = f.get("phase") == "terminal" and f.get("expires_at") == "0"
         if valid:
@@ -115,7 +116,7 @@ def advance_closed_claim(state, comment, line, f):
         state["launched"] = True
         return (not state.get("release_id") and f.get("lease_token") == state["token"]
                 and f.get("session", state["session"]) == state["session"]
-                and f.get("attempt_id", state.get("attempt")) == state.get("attempt"))
+                and normalized_attempt(f.get("attempt_id", state.get("attempt"))) == state.get("attempt"))
     return advance_lease(state, comment, line, f)
 
 
