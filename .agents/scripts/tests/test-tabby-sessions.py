@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tabby_session_config as config
 import tabby_session_launch as launch
 import tabby_session_legacy as legacy
+import tabby_session_protocol as protocol
 import tabby_session_remote as remote
 import tabby_session_state as state
 import tabby_session_terminal as terminal
@@ -91,6 +92,49 @@ class ConfigTests(unittest.TestCase):
                         launch.check_tabby("generic-tabby")
 
 
+class ProtocolTests(unittest.TestCase):
+    def test_real_posix_frame_preserves_payload_and_exit_codes(self):
+        payload = "S\t$1\t100\t200\toc-001\n"
+        for rc in (0, 75, 127):
+            begin, end, script = protocol.framed_command(
+                "printf '%s' " + shlex.quote(payload) + "\nexit " + str(rc))
+            result = subprocess.run(  # nosec B603 - fixed local shell and generated fixture script, no SSH
+                ["/bin/sh", "-c", script], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, rc)
+            output = "generic startup line\n" * 12 + result.stdout + "generic shutdown line\n"
+            self.assertEqual(protocol.extract_response(output, begin, end), payload)
+
+    def test_missing_duplicate_reordered_markers_fail_closed(self):
+        begin, end, _script = protocol.framed_command("exit 0")
+        for output in ("generic noise\n", begin, end, begin + begin + end,
+                       begin + end + end, end + begin):
+            with self.subTest(output_length=len(output)), self.assertRaises(config.SessionError) as error:
+                protocol.extract_response(output, begin, end)
+            self.assertNotIn("generic noise", str(error.exception))
+
+    def test_remote_transport_ignores_only_outside_frame_noise(self):
+        run = subprocess.run
+
+        def local_transport(argv, **kwargs):
+            # Execute the generated POSIX command locally, never invoke SSH.
+            result = run(shlex.split(argv[-1]), **kwargs)
+            result.stdout = "generic startup line\n" * 12 + result.stdout + "generic shutdown\n"
+            return result
+
+        for payload in ("", "S\t$1\t100\t200\toc-001\n", "$1\n"):
+            with mock.patch.object(remote.subprocess, "run", side_effect=local_transport):
+                self.assertEqual(remote.remote(host(), "printf '%s' " + shlex.quote(payload)), payload)
+        with mock.patch.object(remote.subprocess, "run", side_effect=local_transport):
+            with self.assertRaises(remote.CreationCollision):
+                remote.remote(host(), "exit 75")
+
+    def test_unframed_collision_is_not_retryable(self):
+        with mock.patch.object(remote.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 75, "generic startup output\n", "")):
+            with self.assertRaisesRegex(config.SessionError, "boundaries missing"):
+                remote.remote(host(), "exit 75")
+
+
 class RemoteTests(unittest.TestCase):
     def test_inventory_natural_order_stable_ids_and_exclusion(self):
         data = "\n".join("S\t${}\t100\t200\t{}".format(i, name) for i, name in enumerate(
@@ -103,6 +147,11 @@ class RemoteTests(unittest.TestCase):
     def test_unsafe_name_rejected(self):
         with mock.patch.object(remote, "remote", return_value="S\t$1\t100\t200\toc-;bad\n"):
             with self.assertRaises(config.SessionError):
+                remote.inventory(host())
+
+    def test_unexpected_inside_frame_record_still_rejected(self):
+        with mock.patch.object(remote, "remote", return_value="generic unexpected record\n"):
+            with self.assertRaisesRegex(config.SessionError, "Unexpected tmux inventory"):
                 remote.inventory(host())
 
     def test_creation_collision_reenumerates_not_reuses(self):

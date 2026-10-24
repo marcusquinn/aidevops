@@ -7,6 +7,7 @@ import shlex
 import subprocess
 
 from tabby_session_config import SessionError, ssh_argv
+from tabby_session_protocol import extract_response, framed_command
 
 
 class CreationCollision(SessionError):
@@ -30,9 +31,10 @@ tmux list-clients -F 'C\t#{client_pid}\t#{session_id}' || exit 71
 
 
 def remote(host, script):
+    begin, end, wrapped = framed_command(script)
     try:
         result = subprocess.run(  # nosec B603 - validated SSH argv, remote POSIX script quoted once
-                                ssh_argv(host) + [host["sshHost"], "sh -c " + shlex.quote(script)],
+                                ssh_argv(host) + [host["sshHost"], "sh -c " + shlex.quote(wrapped)],
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                 timeout=45, check=False)
     except (OSError, subprocess.TimeoutExpired):
@@ -40,10 +42,11 @@ def remote(host, script):
     if result.returncode == 127:
         raise SessionError("Remote tmux is unavailable")
     if result.returncode == 75:
+        extract_response(result.stdout, begin, end)
         raise CreationCollision("Concurrent tmux creation collision")
     if result.returncode:
         raise SessionError("SSH/tmux probe failed; prepare agent/MFA or SSH multiplexing privately")
-    return result.stdout
+    return extract_response(result.stdout, begin, end)
 
 
 def natural_key(name, prefix):

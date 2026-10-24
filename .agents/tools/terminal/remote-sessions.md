@@ -45,6 +45,12 @@ collect or print authentication diagnostics. `doctor` normally uses only local
 `ssh -G`; `--remote` explicitly permits a read-only remote probe. OpenSSH's own
 locally configured `Match exec` behavior still applies to `-G`.
 
+Probe stdout uses unique per-request response boundaries. SSH/login-shell output
+outside those boundaries is excluded privately; unexpected records inside the
+inventory remain errors. Missing/duplicate boundaries fail closed rather than
+being mistaken for an empty inventory. Neither startup text nor authentication
+diagnostics are printed or persisted. No shell configuration changes are needed.
+
 `AIDEVOPS_TABBY_HOSTS` / `--config` and `AIDEVOPS_TABBY_STATE_DIR` / `--state-dir`
 select alternate inventory/state locations, including paths with spaces or
 shell metacharacters. Dry runs read inventory but create no remote sessions,
