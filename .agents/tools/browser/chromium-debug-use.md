@@ -184,6 +184,7 @@ When an isolated browser renders while the user profile is blank, verify the lis
 | Don't want to relaunch browser | Use `tools/browser/playwright.md` extension mode instead of profile-level CDP attach |
 | Ungoogled Chromium never exposes `/json/version` | Treat that build as unsupported; switch to Chrome/Brave/Edge/Vivaldi/Chromium |
 | Need repeatable tests | Stop using live-session attach; launch a fresh Playwright context instead |
+| `Socket path too long ... SingletonSocket` | The ProcessSingleton socket lives under `$TMPDIR`, not `--user-data-dir`. `sandbox-exec-helper.sh` sets a short per-exec `TMPDIR`; outside it, export a `TMPDIR` of at most 53 characters. Prefer framework browser helpers over raw `google-chrome` in workers |
 
 ## Future Scope: Electron and macOS Automation
 
