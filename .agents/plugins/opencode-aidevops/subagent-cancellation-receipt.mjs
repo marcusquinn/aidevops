@@ -4,46 +4,16 @@
 import { SubagentCancellationLedger, shortSessionHash } from "./subagent-cancellation-ledger.mjs";
 import { SubagentLifecycleTracker, scalarSessionID } from "./subagent-lifecycle-tracker.mjs";
 import { classifySideEffect, safeToolName } from "./subagent-side-effect-classifier.mjs";
+import {
+  CANCELLATION_RECEIPT_MARKER,
+  InterruptedTaskReceipts,
+  interruptedReceiptText,
+  isTaskTool,
+} from "./subagent-interrupted-task-receipts.mjs";
 
 export { classifySideEffect };
 export const MAX_CANCELLATION_LEDGER_ENTRIES = 24;
 export const MAX_CANCELLATION_RECEIPT_BYTES = 8 * 1024;
-export const CANCELLATION_RECEIPT_MARKER = "[AIDevOps cancellation receipt]";
-const INTERRUPTED_TASK_ERROR = "Tool execution aborted";
-const MAX_INTERRUPTED_TASKS = 64;
-
-function capMap(map, maximum) {
-  while (map.size > maximum) map.delete(map.keys().next().value);
-}
-
-function isTaskTool(tool) {
-  const name = safeToolName(tool);
-  return name === "task" || name === "mcp_task";
-}
-
-// GH#35529: OpenCode abort cleanup marks an in-flight Task part
-// `status:"error"`, `error:"Tool execution aborted"`, `metadata.interrupted`
-// without producing a Task result, so tool.execute.after never runs for it.
-function interruptedTaskPart(part) {
-  if (part?.type !== "tool" || !isTaskTool(part?.tool)) return false;
-  const state = part?.state || {};
-  if (String(state.status || "").toLowerCase() !== "error") return false;
-  return state.metadata?.interrupted === true
-    || part?.metadata?.interrupted === true
-    || String(state.error || "").trim() === INTERRUPTED_TASK_ERROR;
-}
-
-// Only a well-formed runtime session ID is embedded in suggested commands.
-const SAFE_SESSION_ID = /^[A-Za-z0-9_-]{1,80}$/;
-
-function recoveryGuidance(rawChildID) {
-  const childID = SAFE_SESSION_ID.test(rawChildID || "") ? rawChildID : "";
-  const child = childID || "unknown (no unique, well-formed child identity)";
-  const inspect = childID
-    ? ` Inspect it read-only: \`session-introspect-helper.sh recent 30 --session ${childID}\` (tool calls) and \`opencode export ${childID}\` (final assistant text).`
-    : "";
-  return `[AIDevOps interrupted Task recovery] Child session: ${child}.${inspect} Before re-delegating, reuse its verified units, treat its claims as unverified until they match evidence, and never replay a side effect listed above.`;
-}
 
 function taskWasCancelled(output) {
   const status = String(output?.metadata?.status || output?.status || "").toLowerCase();
@@ -83,10 +53,8 @@ class SubagentCancellationReceipt {
       options.qualityLog,
       this.lifecycle,
     );
-    // callID -> interrupted Task awaiting its parent-facing receipt (GH#35529).
-    this.interrupted = new Map();
-    // callIDs whose receipt already travels in the stored Task result.
-    this.resultReceipts = new Map();
+    // Interrupted Tasks awaiting their parent-facing receipt (GH#35529).
+    this.interrupted = new InterruptedTaskReceipts((entry) => this.finalizeInterrupted(entry));
   }
 
   async waitForTerminal(childID) {
@@ -210,42 +178,25 @@ class SubagentCancellationReceipt {
   async afterTool(input, output) {
     const tool = safeToolName(input?.tool);
     let receipt = null;
-    if (isTaskTool(tool)) {
-      const callID = String(input?.callID || "");
-      if (taskWasCancelled(output)) {
-        // The stored Task result carries this receipt; never inject a second.
-        this.interrupted.delete(callID);
-        this.resultReceipts.set(callID, true);
-        capMap(this.resultReceipts, MAX_INTERRUPTED_TASKS);
-        receipt = await this.cancelledTaskReceipt(input, output);
-      } else {
-        this.lifecycle.takeChildIdentity(input, output);
-      }
+    if (isTaskTool(tool) && taskWasCancelled(output)) {
+      // The stored Task result carries this receipt; never inject a second.
+      this.interrupted.markResultReceipt(String(input?.callID || ""));
+      receipt = await this.cancelledTaskReceipt(input, output);
+    } else if (isTaskTool(tool)) {
+      this.lifecycle.takeChildIdentity(input, output);
     } else {
       this.ledger.afterSideEffect(input, output);
     }
     return receipt;
   }
 
-  observeInterruptedTask(event) {
-    if (event?.type !== "message.part.updated") return;
-    const part = event.properties?.part;
-    if (!interruptedTaskPart(part)) return;
-    const callID = scalarSessionID(part.callID);
-    if (!callID || this.interrupted.has(callID) || this.resultReceipts.has(callID)) return;
-    const parentID = scalarSessionID(part.sessionID);
-    const identity = this.lifecycle.takeChildIdentity(
-      { callID, sessionID: parentID },
-      { error: part.state?.error, metadata: { ...part.metadata, ...part.state?.metadata } },
-    );
-    this.interrupted.set(callID, { identity, parentID, text: "", finalizing: null });
-    capMap(this.interrupted, MAX_INTERRUPTED_TASKS);
-  }
-
   handleEvent(input) {
     this.ledger.handleEvent(input);
     try {
-      this.observeInterruptedTask(input?.event || input || {});
+      this.interrupted.observe(
+        input?.event || input || {},
+        (identityInput, identityOutput) => this.lifecycle.takeChildIdentity(identityInput, identityOutput),
+      );
     } catch (error) {
       this.ledger.trackingFailed = true;
       this.ledger.safeLog("WARN", `[subagent-cancellation] interrupted Task tracking failed: ${error?.name || "Error"}`);
@@ -267,46 +218,13 @@ class SubagentCancellationReceipt {
     this.persistReceipt(receipt, { sessionID: entry.parentID }, entry.identity.childID);
     const bounded = boundedReceipt(receipt);
     this.logReceipt(bounded.receipt, "interrupted_part");
-    entry.text = `${CANCELLATION_RECEIPT_MARKER}\n${bounded.json}\n${recoveryGuidance(entry.identity.childID)}`;
-    return entry.text;
+    return interruptedReceiptText(bounded.json, entry.identity.childID);
   }
 
-  interruptedReceiptText(entry) {
-    if (entry.text) return Promise.resolve(entry.text);
-    entry.finalizing ||= this.finalizeInterrupted(entry).catch((error) => {
-      entry.finalizing = null;
-      throw error;
-    });
-    return entry.finalizing;
-  }
-
-  // Stored history stays unchanged: the receipt is re-applied to the same
-  // interrupted Task result in each outgoing request, once per request, so
-  // the parent's context stays stable across turns.
+  // Fail-open: an injection failure must never block the model request.
   async injectReceipts(_input, output) {
-    const messages = output?.messages;
-    if (!Array.isArray(messages) || this.interrupted.size === 0) return 0;
-    let injected = 0;
-    for (const message of messages) {
-      const parts = Array.isArray(message?.parts) ? message.parts : [];
-      for (let index = 0; index < parts.length; index += 1) {
-        const part = parts[index];
-        const entry = this.interrupted.get(scalarSessionID(part?.callID));
-        if (!entry || !interruptedTaskPart(part)) continue;
-        if (entry.parentID && scalarSessionID(part.sessionID) !== entry.parentID) continue;
-        const error = String(part.state?.error || "").trim();
-        if (error.includes(CANCELLATION_RECEIPT_MARKER)) continue;
-        const text = await this.interruptedReceiptText(entry);
-        parts[index] = { ...part, state: { ...part.state, error: `${error}\n\n${text}`.trim() } };
-        injected += 1;
-      }
-    }
-    return injected;
-  }
-
-  async safeInjectReceipts(input, output) {
     try {
-      return await this.injectReceipts(input, output);
+      return await this.interrupted.inject(output);
     } catch (error) {
       this.ledger.safeLog("WARN", `[subagent-cancellation] interrupted receipt injection failed: ${error?.name || "Error"}`);
       return 0;
@@ -321,6 +239,6 @@ export function createSubagentCancellationReceipt(client, options = {}) {
     afterTool: handler.afterTool.bind(handler),
     beforeTool: handler.ledger.beforeTool.bind(handler.ledger),
     handleEvent: handler.handleEvent.bind(handler),
-    injectReceipts: handler.safeInjectReceipts.bind(handler),
+    injectReceipts: handler.injectReceipts.bind(handler),
   };
 }
