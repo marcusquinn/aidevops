@@ -15,6 +15,7 @@ const COMMAND_RULES = [
   [/\bgh\s+api\b[^\n]*(?:--method|-x)\s+(?:post|put|patch|delete)\b/, "external", "write"],
   [/\bcurl\b[^\n]*(?:-x|--request)\s+(?:post|put|patch|delete)\b/, "external", "write"],
   [/(?:^|[;&|]\s*)(?:rm|mv|cp|touch|mkdir|install|tee)\b/, "file", "write"],
+  [/(?:^|[;&|]\s*)(?:[\w./-]+\/)?osascript\b/, "desktop", "native_ui"],
 ];
 
 const FILE_TOOLS = new Set(["write", "edit", "apply_patch", "write_file", "functions.apply_patch"]);
@@ -33,6 +34,14 @@ function commandText(args) {
   return command;
 }
 
+// GH#35529: native desktop actions (scripts can be opaque kb_script_id/script_path
+// references, so every execute_script counts) and AX perform actions.
+function nativeDesktopAction(tool, args) {
+  if (!tool.startsWith("macos-automator_")) return false;
+  if (tool.endsWith("_execute_script")) return true;
+  return tool.endsWith("_accessibility_query") && String(args?.command || "").toLowerCase() === "perform";
+}
+
 function commandClassification(command) {
   const text = String(command || "").toLowerCase();
   const rule = COMMAND_RULES.find(([pattern]) => pattern.test(text));
@@ -47,6 +56,8 @@ export function classifySideEffect(toolName, args = {}) {
     effect = { kind: "file", operation: "write", tool };
   } else if (READ_ONLY_TOOLS.has(tool)) {
     effect = null;
+  } else if (nativeDesktopAction(tool, args)) {
+    effect = { kind: "desktop", operation: "native_ui", tool };
   } else if (SHELL_TOOLS.has(tool)) {
     const classification = commandClassification(commandText(args));
     effect = classification ? { ...classification, tool } : null;
