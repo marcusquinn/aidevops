@@ -76,6 +76,10 @@ printf 'PASS stale observation refuses mutation\n'
 RECENT=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc)-timedelta(seconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
 STATE=$(jq -c --arg recent "$RECENT" '.updated_at=$recent' <<<"$BASE")
 AIDEVOPS_RELEASE_LANE_STALE_SECONDS=1 refused 'caller cannot shorten five-minute recovery grace'
+report=$(release_lane_liveness_report "$STATE")
+[[ "$report" == *"wait until the configured recovery grace"* &&
+	"$report" == *"recover-reservation 101"* && "$report" != *"using aidevops release patch"* ]] || exit 1
+printf 'PASS recent dead reservation reports the recovery grace instead of a nonfunctional patch retry\n'
 STATE="$BASE"
 
 STATE=$(jq -c '.phase="preparing"' <<<"$BASE")
@@ -92,3 +96,29 @@ jq -e '.active == false and .terminal_receipt == "abandoned-prepublication" and 
 release_lane_recover_reservation test/repo 101
 [[ "$WRITES" == 1 ]] || exit 1
 printf 'PASS ordinary merge leaves publisher state unchanged; explicit recovery remains idempotent\n'
+
+# The exiting owner is the sole exception to dead-executor recovery grace.
+_release_lane_executor_capture() {
+	jq -c '.executor' <<<"$BASE"
+	return 0
+}
+_AIDEVOPS_RELEASE_LANE_TOKEN="fixture"
+OWNER_STATE=live
+RECENT_BASE=$(jq -c --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" '.updated_at=$now' <<<"$BASE")
+for transform in 'del(.reservation_contract)' '.tag="v1.2.3"' '.phase="preparing"' '.prepublication_recovery={}' '.aggregate_recovery={}' '.aggregate_successor={}' '.reserved_authorization_refresh={}' '.terminal_receipt="failed"' '.source_pr=202' '.operation_token="other"' '.executor.host_id="foreign"' '.executor.pid=456' '.executor.started_at="reused"' '.executor=null'; do
+	STATE=$(jq -c "$transform" <<<"$RECENT_BASE")
+	before="$STATE"
+	WRITES=0
+	if release_lane_abandon_owned_reservation test/repo 101; then exit 1; fi
+	[[ "$STATE" == "$before" && "$WRITES" == 0 ]] || exit 1
+done
+STATE="$RECENT_BASE"
+WRITE_FAIL=1
+if release_lane_abandon_owned_reservation test/repo 101; then exit 1; fi
+[[ "$STATE" == "$RECENT_BASE" && "$WRITES" == 0 ]] || exit 1
+WRITE_FAIL=0
+release_lane_abandon_owned_reservation test/repo 101
+[[ "$WRITES" == 1 ]] || exit 1
+jq -e '.active == false and .terminal_receipt == "abandoned-prepublication"
+	and .reservation_recovery.reason == "owner-preparation-refused"' <<<"$STATE" >/dev/null
+printf 'PASS only the exact exiting owner can release a recent untouched reservation; publication and CAS races refuse\n'

@@ -96,6 +96,18 @@ The publisher must enter preparing successfully before invoking publication.
 Competing release starts use the same bounded recovery for eligible reservations;
 ordinary merge guards do not read or mutate publisher ownership. Status remains read-only.
 
+If release preparation refuses before entering `preparing` (including an
+expected/observed source mismatch), the exiting executor releases its own untouched
+reservation immediately with the same `abandoned-prepublication` receipt. This
+owner-only path re-reads the lane, requires the operation token and exact local
+host/PID/start identity, and uses CAS; it cannot release another live executor,
+foreign/legacy ownership, recovery state, or a concurrent `preparing` transition.
+It performs no publication or tag mutation. After successful cleanup, refresh the
+reviewed source set and retry the authorized release command without waiting.
+If an executor dies without this cleanup, the ordinary dead-owner grace still
+applies; status prints the reservation timestamp and guarded recovery command,
+not a `patch` retry that cannot resume the reserved lane.
+
 Age alone never unlocks a lane. Live/recent reservations, legacy/foreign owners,
 publication phases and aggregation recovery are not automatically released. A
 competing authorized release may instead finalize a `remote-publication` or

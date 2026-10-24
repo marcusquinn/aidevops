@@ -899,4 +899,32 @@ for scenario in published deployment live unknown unpublished reserved failed de
 done
 printf 'PASS competing published dead lanes finalize; uncertain and failed lanes refuse\n'
 
+# Exercise the CLI twice against the same lane, without advancing its age.
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$FIXTURE_PATH"
+	export GIT_CALL_LOG="$ROOT/git.log" GH_CALL_LOG="$ROOT/gh.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export FAKE_CONTROL_PARENT="$ROOT/worktrees" AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	export AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops
+	export AIDEVOPS_FULL_LOOP_SOURCE_RESOLVER="$ROOT/source-resolver.sh"
+	export AIDEVOPS_FULL_LOOP_VERSION_MANAGER="$ROOT/version-manager.sh"
+	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$ROOT/retry-receipts"
+	export LANE_HEAD_FILE="$ROOT/retry-lane-head" LANE_STATE_FILE="$ROOT/retry-lane.json"
+	export VM_CALL_LOG="$ROOT/retry-vm.log" AIDEVOPS_TRUSTED_ISSUE_PRIORITY=critical
+	rc=0
+	bash "$SCRIPT_DIR/full-loop-release-helper.sh" patch 61 incremental --expected-sources 61,62 >"$ROOT/retry-first.log" 2>&1 || rc=$?
+	[[ "$rc" -eq 1 && ! -f "$VM_CALL_LOG" ]]
+	grep -q 'release-run-capture-authorization.*result=failed' "$ROOT/retry-first.log"
+	jq -e '.active == false and .terminal_receipt == "abandoned-prepublication"
+		and .reservation_recovery.reason == "owner-preparation-refused"' "$LANE_STATE_FILE" >/dev/null
+	if compgen -G "$ROOT/worktrees/aidevops-release-61-*" >/dev/null; then
+		printf 'FAIL pre-mutation refusal retained its disposable worktree\n'
+		exit 1
+	fi
+	bash "$SCRIPT_DIR/full-loop-release-helper.sh" patch 61 incremental --expected-sources 61 >"$ROOT/retry-second.log" 2>&1
+	grep -q 'release-run-capture-authorization.*result=ok' "$ROOT/retry-second.log"
+	grep -qx 'args=release patch --source-pr 61 --expected-sources 61@0000000000000000000000000000000000000000' "$VM_CALL_LOG"
+)
+printf 'PASS capture mismatch releases its own reservation; immediate corrected same-source patch reaches publication without grace\n'
+
 exit 0
