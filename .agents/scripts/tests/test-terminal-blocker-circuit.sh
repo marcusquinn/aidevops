@@ -641,6 +641,20 @@ test_self_authored_collaborator_evidence() {
 	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=other-bot terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
 	# Only plain logins are accepted as self identities.
 	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN='runner-bot"' terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	# GH#35569: extend the self/foreign trust matrix to app/private-org reads.
+	local association="" variant=""
+	for association in CONTRIBUTOR NONE; do
+		variant=$(printf '%s' "$comments" | jq -c --arg a "$association" 'map(.author_association=$a)')
+		[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_release_mode "$variant" "$revision" "$fingerprint")" == circuit ]] || status=1
+		[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=other-bot terminal_blocker_release_mode "$variant" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_observation_hold_active "$variant" '{}' owner/repo 42 '' >/dev/null || status=1
+		variant=$(printf '%s' "$variant" | jq -c --arg body "$circuit" '.[0].body=$body')
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$variant" '{}' owner/repo 42 '' >/dev/null || status=1
+		variant=$(printf '%s' "$variant" | jq -c --arg a "$association" '. + [{id:22,body:"terminal-blocker-circuit:retry",author:"runner-bot",author_association:$a,created_at:"2026-09-06T12:10:00Z"}]')
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$variant" '{}' owner/repo 42 '' >/dev/null || status=1
+		variant=$(printf '%s' "$variant" | jq -c '.[1].author_association="OWNER"')
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$variant" '{}' owner/repo 42 '' >/dev/null && status=1
+	done
 	comments=$(jq -nc --arg body "$circuit" '[{id:21,body:$body,author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:05:00Z"}]')
 	terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null 2>&1 && status=1
 	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null || status=1
@@ -877,7 +891,9 @@ test_cross_runner_rearm_receipt() {
 			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" && exit 1
 			[[ "$tb_projected" -eq 0 ]] || exit 1
 			# Foreign collaborator intake must not turn ignored evidence into release.
-			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$(printf '%s' "$tb_comments" | jq -c 'map(.author_association="COLLABORATOR")')" && exit 1
+			tb_rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$(printf '%s' "$tb_comments" | jq -c 'map(.author_association="COLLABORATOR")')" || tb_rc=$?
+			[[ "$tb_rc" -eq 1 ]] || exit 1
 			[[ "$tb_projected" -eq 0 ]] || exit 1
 			# A revision change releases once; an independent pass sees the receipt,
 			# even when its issue-label snapshot still says blocked.

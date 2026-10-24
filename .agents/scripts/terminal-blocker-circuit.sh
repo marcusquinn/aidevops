@@ -49,8 +49,8 @@ def retry_after($event):
 
 # GH#33025 #aidevops:trust-boundary — hold evidence (observations, circuits,
 # blocked releases) may also come from this runner's own authenticated login
-# when GitHub reports it as a bare COLLABORATOR, e.g. a bot account on a
-# personal private repo. Otherwise its circuit never opens and identical
+# whatever association GitHub reports, including CONTRIBUTOR/NONE on app-routed
+# or private-org reads (GH#35090, GH#35569). Otherwise its circuit never opens and identical
 # blockers redispatch forever. This only strengthens holds: other
 # collaborators stay ignored, and clearing a hold (retry) remains OWNER/MEMBER.
 # shellcheck disable=SC2016 # Shared jq definitions, not shell expansions.
@@ -59,8 +59,7 @@ def authoritative_author($authoritative):
   .author_association as $a | $authoritative | index($a) != null;
 def hold_evidence($authoritative; $self):
   authoritative_author($authoritative)
-  or ($self != "" and (.author_association // "") == "COLLABORATOR"
-    and ((.author // .user.login // "") == $self));
+  or ($self != "" and ((.author // .user.login // "") == $self));
 def hold_shaped:
   (.body // "") | test("(?m)^CLAIM_RELEASED reason=blocked |aidevops:terminal-blocker-(observation|circuit) ");
 '

@@ -429,8 +429,10 @@ _tbr_release_circuit_hold() {
 		"${_TBC_ORDER_JQ}"'[ $observation, $circuit ] | map(select(. != null)) |
 		sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty') || return 2
 	[[ -n "$evidence" ]] || {
-		printf 'rearm_decision issue=%s observed_rev=unknown current_rev=unknown reason=no_authoritative_evidence\n' "$issue" >&2
-		return 2
+		# GH#35569: retire unverifiable intake, never project availability.
+		# Missing evidence is final for this entry, not a transient API failure.
+		printf 'rearm_decision issue=%s observed_rev=unknown current_rev=unknown reason=no_authoritative_evidence action=retire_entry\n' "$issue" >&2
+		return 1
 	}
 	parsed=$(printf '%s' "$evidence" | jq -er '.body | capture("<!-- aidevops:terminal-blocker-(?:observation|circuit) revision=(?<revision>[a-f0-9]{24}) blocker=(?<blocker>[a-f0-9]{24}) -->") | "\(.revision) \(.blocker)"') || return 2
 	IFS=' ' read -r observed_rev fingerprint <<<"$parsed"
@@ -543,7 +545,10 @@ _tbr_check_entry() {
 	fi
 	if [[ "$hold_rc" -eq 1 ]]; then
 		# Brief revision, retry directive or backoff expiry re-armed dispatch.
-		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments" || return 2
+		# Return 1 retires evidence-free intake without releasing any hold.
+		local release_rc=0
+		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments" || release_rc=$?
+		[[ "$release_rc" -lt 2 ]] || return 2
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
 	fi
