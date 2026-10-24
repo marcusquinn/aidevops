@@ -8,7 +8,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from tabby_session_config import SessionError
+from tabby_session_config import SessionError, required_executable
 
 
 def legacy_targets(text, aliases):
@@ -18,22 +18,35 @@ def legacy_targets(text, aliases):
             args = shlex.split(line)
         except ValueError:
             continue
-        if not args or Path(args[0]).name != "ssh":
-            continue
-        # Supported legacy grammar has no connection overrides: private aliases
-        # supply endpoint/user/port. Restrict matching to the actual destination.
-        index = legacy_destination(args)
-        if index >= len(args) or args[index] not in aliases:
-            continue
-        command = args[index + 1:]
-        if len(command) == 1:
-            try:
-                command = shlex.split(command[0])
-            except ValueError:
-                continue
-        if len(command) == 4 and command[0] == "tmux" and command[1] in ("attach", "attach-session") and command[2] == "-t":
-            targets.add(command[3].removeprefix("="))
+        target = legacy_target(args, aliases)
+        if target:
+            targets.add(target)
     return targets
+
+
+def legacy_target(args, aliases):
+    if not args or Path(args[0]).name != "ssh":
+        return None
+    index = legacy_destination(args)
+    if index >= len(args) or args[index] not in aliases:
+        return None
+    command = args[index + 1:]
+    if len(command) == 1:
+        try:
+            command = shlex.split(command[0])
+        except ValueError:
+            return None
+    return legacy_command_target(command)
+
+
+def legacy_command_target(command):
+    if len(command) != 4:
+        return None
+    if command[0] != "tmux" or command[2] != "-t":
+        return None
+    if command[1] in ("attach", "attach-session"):
+        return command[3].removeprefix("=")
+    return None
 
 
 def legacy_destination(args):
@@ -53,7 +66,8 @@ def legacy_destination(args):
 
 def local_processes():
     try:
-        result = subprocess.run(["ps", "-ww", "-U", str(os.getuid()), "-o", "args="],
+        result = subprocess.run(  # nosec B603 - resolved ps path, fixed current-account-only argv
+                                [required_executable("ps"), "-ww", "-U", str(os.getuid()), "-o", "args="],
                                 capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.TimeoutExpired):
         raise SessionError("Cannot inspect current-account SSH attachments; refusing duplicate-risk launch") from None
@@ -77,11 +91,17 @@ def local_managed(nonce):
         words = line.split()
         if words and Path(words[0]).name == "ssh" and marker in line:
             return True
-        if (words and Path(words[0]).name.startswith("python")
-                and any(Path(word).name == "tabby_sessions.py" for word in words)
-                and "_attach" in words and "--token " + nonce in line):
+        if managed_wrapper(words, nonce, line):
             return True
     return False
+
+
+def managed_wrapper(words, nonce, line):
+    if not words or not Path(words[0]).name.startswith("python"):
+        return False
+    if not any(Path(word).name == "tabby_sessions.py" for word in words):
+        return False
+    return "_attach" in words and "--token " + nonce in line
 
 
 def legacy_state(targets, session, sessions):

@@ -31,7 +31,8 @@ tmux list-clients -F 'C\t#{client_pid}\t#{session_id}' || exit 71
 
 def remote(host, script):
     try:
-        result = subprocess.run(ssh_argv(host) + [host["sshHost"], "sh -c " + shlex.quote(script)],
+        result = subprocess.run(  # nosec B603 - validated SSH argv, remote POSIX script quoted once
+                                ssh_argv(host) + [host["sshHost"], "sh -c " + shlex.quote(script)],
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                 timeout=45, check=False)
     except (OSError, subprocess.TimeoutExpired):
@@ -50,19 +51,25 @@ def natural_key(name, prefix):
     return (0, int(suffix), name) if suffix.isascii() and suffix.isdigit() else (1, 0, name)
 
 
+def parse_session(fields, host):
+    _, sid, created, server, name = fields
+    if not re.fullmatch(r"\$[0-9]+", sid) or not created.isdigit() or not server.isdigit():
+        raise SessionError("Invalid tmux session identity")
+    if not name.startswith(host["sessionPrefix"]):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name):
+        raise SessionError("Unsupported tmux session name; use letters, digits, dot, dash, underscore")
+    return {"sid": sid, "created": created, "server": server, "name": name}
+
+
 def inventory(host):
     sessions, clients = [], set()
     for line in remote(host, INVENTORY).splitlines():
         fields = line.split("\t")
         if len(fields) == 5 and fields[0] == "S":
-            _, sid, created, server, name = fields
-            if not re.fullmatch(r"\$[0-9]+", sid) or not created.isdigit() or not server.isdigit():
-                raise SessionError("Invalid tmux session identity")
-            # Reject rather than interpolate names containing shell/format metacharacters.
-            if name.startswith(host["sessionPrefix"]):
-                if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name):
-                    raise SessionError("Unsupported tmux session name; use letters, digits, dot, dash, underscore")
-                sessions.append({"sid": sid, "created": created, "server": server, "name": name})
+            session = parse_session(fields, host)
+            if session:
+                sessions.append(session)
         elif len(fields) == 3 and fields[0] == "C" and fields[1].isdigit():
             clients.add((fields[1], fields[2]))
         elif line:

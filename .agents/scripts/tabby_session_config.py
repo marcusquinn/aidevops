@@ -4,7 +4,6 @@
 
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -91,7 +90,7 @@ def equivalent_aliases(hosts, selected, endpoint_id):
 
 
 def ssh_argv(host, probe=True):
-    args = ["ssh", "-o", "ConnectTimeout=15"]
+    args = [required_executable("ssh"), "-o", "ConnectTimeout=15"]
     if probe:
         args += ["-o", "BatchMode=yes", "-T"]
     else:
@@ -107,7 +106,8 @@ def endpoint(host):
     if host.get("identityFile") and not Path(host["identityFile"]).is_file():
         raise SessionError("Configured identity file is unavailable")
     try:
-        result = subprocess.run(ssh_argv(host) + ["-G", host["sshHost"]],
+        result = subprocess.run(  # nosec B603 - resolved SSH path, validated alias, no shell
+                                ssh_argv(host) + ["-G", host["sshHost"]],
                                 capture_output=True, text=True, timeout=20, check=False)
     except (OSError, subprocess.TimeoutExpired):
         raise SessionError("OpenSSH configuration resolution failed") from None
@@ -119,28 +119,8 @@ def endpoint(host):
     return hashlib.sha256(identity.encode()).hexdigest()
 
 
-def tabby_executable():
-    override = os.environ.get("AIDEVOPS_TABBY_BIN")
-    candidates = [override] if override else [shutil.which("tabby"),
-        "/Applications/Tabby.app/Contents/MacOS/Tabby",
-        str(Path.home() / "Applications/Tabby.app/Contents/MacOS/Tabby")]
-    for candidate in candidates:
-        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
-            return str(Path(candidate).absolute())
-    raise SessionError("Tabby executable unavailable")
-
-
-def check_tabby(binary):
-    try:
-        version = subprocess.run([binary, "--version"], capture_output=True, text=True,
-                                 timeout=15, check=False)
-        help_text = subprocess.run([binary, "run", "--help"], capture_output=True,
-                                   text=True, timeout=15, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        raise SessionError("Tabby CLI probe failed") from None
-    if "1.0.235" in version.stdout or "stripAnsi" in version.stderr + help_text.stderr:
-        raise SessionError("Broken Tabby CLI (stripAnsi); upgrade Tabby, do not patch its archive")
-    if version.returncode or help_text.returncode or "--command" not in help_text.stdout:
-        raise SessionError("Unsupported Tabby CLI: run --command array is required")
-    match = re.search(r"\b\d+\.\d+\.\d+\b", version.stdout)
-    return match.group() if match else "version unknown"
+def required_executable(name):
+    path = shutil.which(name)
+    if not path:
+        raise SessionError("Required executable unavailable: " + name)
+    return str(Path(path).absolute())

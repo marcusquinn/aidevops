@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Isolated/mocked acceptance coverage; never contact SSH or a running Tabby."""
 
+import argparse
 import contextlib
 import io
 import json
@@ -18,9 +19,12 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tabby_session_config as config
+import tabby_session_launch as launch
 import tabby_session_legacy as legacy
 import tabby_session_remote as remote
 import tabby_session_state as state
+import tabby_session_terminal as terminal
+import tabby_session_transport as transport
 import tabby_sessions as app
 
 
@@ -81,10 +85,10 @@ class ConfigTests(unittest.TestCase):
                          subprocess.CompletedProcess([], 0, help_output, "")]
             with mock.patch.object(config.subprocess, "run", side_effect=responses):
                 if succeeds:
-                    self.assertEqual(config.check_tabby("generic-tabby"), version)
+                    self.assertEqual(launch.check_tabby("generic-tabby"), version)
                 else:
                     with self.assertRaises(config.SessionError):
-                        config.check_tabby("generic-tabby")
+                        launch.check_tabby("generic-tabby")
 
 
 class RemoteTests(unittest.TestCase):
@@ -209,7 +213,8 @@ class LeaseTests(unittest.TestCase):
     def test_lease_inherited_by_owned_child(self):
         with state.lease(self.directory, self.key) as active:
             active.acquire()
-            child = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+            child = subprocess.Popen(  # nosec B603 - current interpreter and fixed isolated child script
+                                     [sys.executable, "-c", "import sys; sys.stdin.read()"],
                                      stdin=subprocess.PIPE, pass_fds=(active.fd,))
         try:
             with state.lease(self.directory, self.key) as observer:
@@ -241,27 +246,28 @@ class OrchestrationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def context(self, binary="tabby"):
+        args = argparse.Namespace(config=self.inventory_path, state_dir=self.state_path)
+        return launch.LaunchContext(args, binary, host(), "endpoint", set(), [session()])
+
     def test_transport_argv_spaces_and_metacharacters(self):
-        args = app.launch_argv("tabby space", self.inventory_path, self.state_path,
-                               "key", "nonce", host(), session())
+        args = launch.launch_argv(self.context("tabby space"), session(), "key", "nonce")
         self.assertIn("--command=" + self.inventory_path, args)
         self.assertIn("--command=" + self.state_path, args)
         self.assertEqual(args[:2], ["tabby space", "run"])
 
     def test_concurrent_requests_and_repeat_restore(self):
         def request_one(_number):
-            return app.request("tabby", self.inventory_path, self.state_path, host(),
-                               session(), "endpoint", set(), set(), [session()])
-        with mock.patch.object(app.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), contextlib.redirect_stdout(io.StringIO()):
+            return launch.request(self.context(), session(), set())
+        with mock.patch.object(launch.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), contextlib.redirect_stdout(io.StringIO()):
             with ThreadPoolExecutor(max_workers=8) as pool:
                 outcomes = list(pool.map(request_one, range(16)))
         self.assertEqual(outcomes.count("requested"), 1)
         self.assertEqual(outcomes.count("pending"), 15)
 
     def test_launch_failure_preserves_session_and_bounded_pending(self):
-        with mock.patch.object(app.subprocess, "run", side_effect=subprocess.TimeoutExpired("tabby", 20)), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(app.request("tabby", self.inventory_path, self.state_path, host(),
-                             session(), "endpoint", set(), set(), [session()]), "failed")
+        with mock.patch.object(launch.subprocess, "run", side_effect=subprocess.TimeoutExpired("tabby", 20)), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(launch.request(self.context(), session(), set()), "failed")
         self.assertEqual(app.observe(self.state_path, state.state_key("endpoint", session()), set(), "$1"), "pending")
 
     def run_main(self, args, inventory_effect):
@@ -271,7 +277,7 @@ class OrchestrationTests(unittest.TestCase):
                                 ("local_legacy", set()), ("tabby_executable", "tabby"), ("check_tabby", "1.0.236")):
                 stack.enter_context(mock.patch.object(app, name, return_value=value))
             stack.enter_context(mock.patch.object(app, "inventory", side_effect=inventory_effect))
-            stack.enter_context(mock.patch.object(app.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)))
+            stack.enter_context(mock.patch.object(launch.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)))
             stack.enter_context(contextlib.redirect_stdout(output))
             stack.enter_context(contextlib.redirect_stderr(errors))
             result = app.main(args + ["--config", self.inventory_path, "--state-dir", self.state_path])
@@ -318,7 +324,7 @@ class OrchestrationTests(unittest.TestCase):
             os.close(directory)
         args = app.parser().parse_args(["_attach", "alpha", "--key", key, "--token", "outdated",
                                        "--identity", "$1:100:200", "--state-dir", self.state_path])
-        with mock.patch.object(app, "endpoint", return_value="endpoint"), mock.patch.object(app, "attach_held") as connect:
+        with mock.patch.object(transport, "endpoint", return_value="endpoint"), mock.patch.object(transport, "attach_held") as connect:
             with self.assertRaises(config.SessionError):
                 app.attach(args, host(), [host()])
             connect.assert_not_called()
@@ -350,7 +356,7 @@ class LegacyAndRelayTests(unittest.TestCase):
         os.close(write_fd)
         output, pids = io.BytesIO(), []
         with os.fdopen(read_fd, "rb") as stream:
-            app.relay_output(stream, marker, pids.append, output)
+            terminal.relay_output(stream, marker, pids.append, output)
         self.assertEqual(pids, ["42"])
         self.assertEqual(output.getvalue(), b"banner\r\n\x1b]0;A001 title\x07prompt> ")
 
