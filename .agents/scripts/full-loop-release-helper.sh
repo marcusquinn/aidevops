@@ -526,7 +526,11 @@ _full_loop_release_run_new() {
 	_full_loop_release_prepare_new "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources" || preparation_rc=$?
 	if [[ "$preparation_rc" -ne 0 ]]; then
 		_full_loop_release_timing_finish release-run-new "$run_started" failed
-		if [[ "$preparation_rc" -eq 8 ]]; then
+		if release_lane_abandon_owned_reservation "$repo" "$source_pr"; then
+			# No publication mutation occurred; normal EXIT cleanup can remove the scratch copy.
+			_FULL_LOOP_RELEASE_PREPARATION_PATH=""
+			printf 'Untouched reservation released; refresh reviewed sources and retry the authorized release command without waiting.\n' >&2
+		elif [[ "$preparation_rc" -eq 8 ]]; then
 			resume_command="aidevops release $release_type $source_pr $deployment_scope"
 			[[ -z "$expected_sources" ]] || resume_command+=" --expected-sources $expected_sources"
 			printf 'After the guarded dead-executor window, resume with:\n  aidevops release recover-reservation %s\n  %s\n' \
