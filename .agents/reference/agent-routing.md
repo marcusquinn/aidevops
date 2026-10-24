@@ -81,7 +81,7 @@ set lives in `configs/worker-permission-policy.json`.
 - In interactive OpenCode sessions, an eligible child can end with the exact marker `BLOCKED: capability limit - <evidence>`. The plugin re-prompts that same child session at the next configured tier so prior evidence is retained. Generic blockers, headless dispatch, terminal tiers, and children that attempted side effects never take this automatic path.
 - For full-loop work, persist stable unit IDs, dependencies, explicit file/question ownership, effort tier, and a reuse key before dispatch. Parallel-ready units must have disjoint file ownership; overlap is serialized even when capacity is available.
 - Effective concurrency is the minimum of the plan cap, mode cap, and available global slots. Interactive batches remain capped at two; headless uses its configured per-task cap.
-- Persist completed-unit evidence and reuse it after retries or runtime interruption. The primary repeats delegated exploration only when its evidence is absent, stale, or contradictory.
+- Persist completed-unit evidence and reuse it after retries or runtime interruption. The primary repeats delegated exploration only when its evidence is absent, stale, or contradictory. After an interrupted Task, recover from its cancellation receipt and a read-only look at the named child session before re-delegating; never replay a listed side effect.
 - Consolidate adversarial review into bounded correctness/concurrency, security/trust, compatibility/quality, and test-adequacy units, followed by one synthesis and one repair pass.
 
 ### Focused domain delegation (OpenCode native Task)

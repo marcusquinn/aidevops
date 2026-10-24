@@ -604,6 +604,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // in any step must not block the message.
   const messagesTransformHook = async (input, output) => {
     await compactionInputReplay.inject(input, output);
+    // GH#35529: attach receipts to interrupted Task results (fail-open).
+    await cancellationReceipt.injectReceipts(input, output);
     await ttsrMessagesTransformHook(input, output);
     continuationGuard.injectSteering(input, output);
     try {
