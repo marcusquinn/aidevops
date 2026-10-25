@@ -16,6 +16,8 @@ import sys
 
 repo_root = pathlib.Path(sys.argv[1])
 module_path = repo_root / ".agents/scripts/lib/mcp_config.py"
+# mcp_config imports sibling modules (mcp_outscraper, GH#34893).
+sys.path.insert(0, str(module_path.parent))
 spec = importlib.util.spec_from_file_location("mcp_config", module_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

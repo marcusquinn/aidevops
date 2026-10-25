@@ -49,8 +49,8 @@ mcp:
 
 ## Installation
 
-1. **Extension**: Install from [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe). Pin to toolbar. Edge: enable "Allow extensions from other stores" in `edge://extensions` first.
-2. **Connect**: Click extension icon on tabs to control. Green = connected.
+1. **Extension**: Install from [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe). Pin to toolbar. Edge: enable "Allow extensions from other stores" in `edge://extensions` first. Brave uses the same Chrome Web Store build.
+2. **Connect**: Start `@playwriter` first, then click the extension icon on the tab to control. Green = connected. Under aidevops the relay exists only while the `@playwriter` MCP is connected, so see [Selected-tab handoff order](#selected-tab-handoff-order).
 3. **MCP config**:
 
 **Claude Desktop** (`claude_desktop_config.json`):
@@ -97,6 +97,33 @@ mcp:
 ```
 
 Use `@playwriter` only for an explicit legacy compatibility request. Select the agent from OpenCode autocomplete rather than typing or pasting `@playwriter` as plain prompt text. The selected agent connects Playwriter before its first operation, receives `playwriter_*` tools on the next step, and disconnects after the requested browser work. A call from another agent is refused before MCP lifecycle changes; it cannot acquire Playwriter tools by connecting the server. The activation tool accepts only MCP names declared by the plugin registry.
+
+### Selected-tab handoff order
+
+The guarded relay starts when `@playwriter` connects and stops when it
+disconnects, so the operator's click must land inside that window (GH#35516):
+
+1. Select `@playwriter` from OpenCode autocomplete and let it connect. Expect
+   "extension is not connected" or a page count of `0` at first; keep polling a
+   page count rather than asking for another click.
+2. Then click the Playwriter icon once on the intended tab. The first attempt
+   can log `Target inventory timeout`; the extension reconnects and re-attaches
+   the remembered tab on its own, usually within a minute.
+3. Success is `context.pages().length` going from `0` to `1` and staying there.
+
+A click with no relay opens the extension's "Daemon not running yet" page and
+the tooltip reads "Waiting for MCP WS server...". Do not run the commands that
+page suggests (`npx -y skills add ...`, `npx playwriter session new`): they
+install an unreviewed global skill and start an unpinned relay without the
+aidevops token, loopback and telemetry guarantees, which then holds port
+`19988` so the guarded relay refuses to start. Start `@playwriter`, then click
+again.
+
+OpenCode loads the aidevops plugin from the runtime bundle of the version that
+launched the session. A session started before an update that changes the
+Playwriter pin keeps launching the old pin, and `mcp-diagnose.sh playwriter`
+reports `relay-version-mismatch`. Start a new OpenCode session after such an
+update.
 
 ### Authenticated Relay and Tab Preflight
 
@@ -294,7 +321,8 @@ approved-tab, privacy, and mutation boundaries.
 - **No approved tab**: Click the Playwriter extension on the intended tab and wait for the icon to turn green; this consent requirement is distinct from missing MCP tools.
 - **Blank bootstrap only / no pages**: If the sole accessible page is `about:blank`, or no page exists (normal on 0.8.0), use the bounded exact-HTTPS bootstrap above instead of repeatedly requesting extension reactivation.
 - **`page is not defined`**: 0.8.0 removed the global; assign `state.page` from `context.pages()` first.
-- **Relay version mismatch after upgrade**: An older relay still owns port 19988; stop it from the session that started it, then reconnect.
+- **Relay version mismatch after upgrade**: An older relay still owns port 19988; stop it from the session that started it, then reconnect. If the old version comes back on every connect, the OpenCode session predates the pin change and launches from its older runtime bundle; start a new session.
+- **"Daemon not running yet" page / "Waiting for MCP WS server..."**: The icon was clicked while no relay was running. Start `@playwriter` first, then click; never run the commands on that page (see [Selected-tab handoff order](#selected-tab-handoff-order)).
 - **First activation after a pin change fails the relay proof**: the launcher allows 5 s for the relay to prove its version and token, and a cold `npx` cache can spend longer downloading the new package, and the failed attempt stops that download. Warm the cache with the exact pinned package (`npx -y playwriter@0.9.0 --version`, no global install), then reconnect.
 - **Terminal OpenCode activation failure**: After the one bounded reset, treat Playwriter as unavailable for the session and use the documented secure CLI diagnostic path only to isolate the cause. Do not retry through another child or treat direct CLI initialization as successful OpenCode activation.
 - **Automation detection**: Disconnect (click icon → gray) → complete manual action (login, captcha) → reconnect (click → green) → resume.
