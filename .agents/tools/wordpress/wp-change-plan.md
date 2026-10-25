@@ -92,6 +92,65 @@ Every change is a pair `[now, new]`: `now` is the value you reviewed on the site
 - **Restore** takes a local backup copy (uploaded for the run) or the backup path on the site.
 - Password auth: `aidevops secret HOSTINGER_SSH_PASSWORD -- wp-helper.sh --change-plan ...`.
 
+## Verifying planner changes
+
+Run the offline transport regression (no network, PHP or WordPress required):
+
+```bash
+bash .agents/scripts/tests/test-wp-helper-change-plan-ssh.sh
+```
+
+It reads `WPCP_PHP_FILES` from the transport helper and checks every upload,
+planner execution, and remote cleanup on success, planner failure and upload
+failure. SSH/SCP stubs are executable (755). This is CI-safe, but not added to
+`path-portability.yml`: that workflow explicitly enumerates runtime/PATH tests,
+not WordPress transport tests. Run this check when changing the planner transport.
+
+For behavioral comparisons, use `wp-change-plan-differential-helper.sh` **only on
+an isolated, disposable, single-site LocalWP installation**. It refuses all CI
+environments with a CI marker and requires both `--fixture` and a selected site
+with `"type": "localwp"` and `"verification_fixture": true` in
+`~/.config/aidevops/wordpress-sites.json`. Never mark a live/client site as a
+fixture. Use an administrator with `unfiltered_html`.
+
+```bash
+# From Local's site shell (a working wp must already be on PATH):
+bash .agents/scripts/wp-change-plan-differential-helper.sh create planner-fixture --fixture --user 1
+# Copy the printed ARTIFACTS directory into the following commands:
+bash .agents/scripts/wp-change-plan-differential-helper.sh compare planner-fixture ARTIFACTS --fixture --user 1 --base origin/main
+bash .agents/scripts/wp-change-plan-differential-helper.sh cleanup planner-fixture ARTIFACTS --fixture --user 1
+```
+
+Outside Local's site shell, pass **all four** runtime flags to each command:
+`--php PATH --php-ini PATH --wp-cli PATH --mysql-bin DIRECTORY`. Use Local's PHP
+executable, the site's generated `run/<id>/conf/php/php.ini`, bundled
+`wp-cli.phar`, and MySQL client `bin` directory. See `localwp.md` for locations;
+paths are machine-specific and may contain spaces (quote them). Do not dump
+Local's credential-bearing registry to discover them; project only its paths.
+
+`create` makes a unique draft post, two assignment terms and an unused deletion
+term. `compare` copies the base-ref planner PHP siblings and working-tree PHP
+siblings into separate directories, then runs dry run → apply → restore for an
+update plan and a separate term-deletion plan with each version. It regenerates
+term IDs from slugs before each round. It normalises backup/planner paths and
+recreated term identity labels, then diffs the logs. It also compares fixture
+post fields, tested meta, assignments, term values and term meta against the
+starting snapshot after **each** restored plan. WordPress-generated modification
+timestamps and recreated term IDs are intentionally excluded from snapshots.
+This is a focused regression fixture, not an exhaustive planner test suite or a
+whole-database rollback check; plugin hooks can have other effects, hence the
+disposable-site requirement.
+
+For a single version, use `round SITE ARTIFACTS PLANNER_DIR --fixture --user ID`.
+All artifacts remain under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`
+in a private directory, including on failure. A failed apply still attempts
+restore from its emitted backup, and a non-restored snapshot stops subsequent
+rounds. For interruption or missing backup, inspect the retained logs/backup and
+restore the fixture before retrying; do not run cleanup blindly. `cleanup`
+requires a matching starting snapshot before deleting only the created fixture;
+it retains the evidence directory. Exit zero from `compare` means no output
+differences **and** restored fixture values. No live site is used for verification.
+
 ## Traps Met on Production Sites
 
 - **`wp db export` can lie.** It exits 0 but writes no file where PHP `proc_open()` is disabled, which is common on shared hosting. That is why backups come from PHP as JSON.
