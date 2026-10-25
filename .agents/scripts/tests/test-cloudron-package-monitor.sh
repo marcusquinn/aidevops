@@ -38,6 +38,28 @@ write_fake_commands() {
 	cat >"${bin_dir}/gh" <<'GH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
+    printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/contents/CloudronVersions.json* ]]; then
+    [[ "${MONITOR_CATALOG_STATE:-}" != error ]] || exit 1
+    if [[ "${MONITOR_CATALOG_STATE:-}" == published ]]; then
+        printf '%s\n' '{"versions":{"1.0.0":{}}}'
+    else
+        printf '%s\n' '{"versions":{}}'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/workflows/cloudron-catalog-publish.yml/runs* ]]; then
+    printf '%s\n' "${MONITOR_ACTIVE_RUNS:-0}"
+    exit 0
+fi
+if [[ "${1:-}" == workflow && "${2:-}" == run ]]; then
+    printf 'DISPATCH %s\n' "$*" >>"${MONITOR_TEST_LOG}"
+    [[ "${MONITOR_DISPATCH_FAIL:-false}" != true ]] || exit 1
+    exit 0
+fi
 if [[ "${1:-}" == "api" && ( "$*" == *releases\?per_page=100* || "$*" == *tags\?per_page=100* ) ]]; then
     endpoint=""
     for arg in "$@"; do
@@ -884,9 +906,43 @@ test_monitor_ensures_maintenance_label() {
 	return 0
 }
 
+test_monitor_reconciles_catalog_once() {
+	local home_dir="${TEST_ROOT}/catalog-home" repo_dir="${TEST_ROOT}/catalog-package" bin_dir="${TEST_ROOT}/catalog-bin"
+	local log_file="${TEST_ROOT}/catalog.log" output="" rc=0 run=0
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	# Keep upstream detection idle, isolating the publication-recovery path.
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_PUBLICATION_ENABLED=true \
+		MONITOR_TEST_LOG="$log_file" bash "$HELPER" upstream)
+	[[ "$output" == *"manifest v1.0.0 is absent"* ]] && assert_equal true true "dry run reports catalog drift" || assert_equal true false "dry run reports catalog drift"
+	[[ ! -f "$log_file" ]] && assert_equal true true "dry run never dispatches" || assert_equal true false "dry run never dispatches"
+	for run in disabled published active error dispatch-error; do
+		rc=0
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_TEST_LOG="$log_file" \
+			MONITOR_PUBLICATION_ENABLED="$([[ "$run" != disabled ]] && printf true || printf false)" \
+			MONITOR_CATALOG_STATE="$run" MONITOR_ACTIVE_RUNS="$([[ "$run" == active ]] && printf 1 || printf 0)" \
+			MONITOR_DISPATCH_FAIL="$([[ "$run" == dispatch-error ]] && printf true || printf false)" \
+			bash "$HELPER" upstream --apply >/dev/null 2>&1 || rc=$?
+		case "$run" in
+		error | dispatch-error) assert_equal 1 "$rc" "$run fails closed" ;;
+		*) assert_equal 0 "$rc" "$run does not require dispatch" ;;
+		esac
+	done
+	assert_equal 1 "$(grep -c '^DISPATCH ' "$log_file")" "only failed dispatch was attempted"
+	for run in 1 2; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_PUBLICATION_ENABLED=true \
+			MONITOR_TEST_LOG="$log_file" bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 2 "$(grep -c '^DISPATCH ' "$log_file")" "failed dispatch retries, successful dispatch is deduplicated"
+	grep -Fq 'workflow run cloudron-catalog-publish.yml --repo exampleorg/example-package --ref main' "$log_file" &&
+		assert_equal true true "reconciliation uses the enabled main caller" || assert_equal true false "reconciliation uses the enabled main caller"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
+	test_monitor_reconciles_catalog_once
 	test_monitor_deduplicates_and_preserves_source
 	test_monitor_scopes_package_tests_when_present
 	test_monitor_uses_remote_manifest_and_fails_closed

@@ -20,6 +20,7 @@ _CLOUDRON_MONITOR_JSON_TYPE_OBJECT=object
 _CLOUDRON_MONITOR_SOURCE_TAGS=tags
 _CLOUDRON_MONITOR_SOURCE_COMMITS=commits
 _CLOUDRON_MONITOR_GH_TIMEOUT_DEFAULT=90
+_CLOUDRON_MONITOR_DEFAULT_MANIFEST=CloudronManifest.json
 
 _cloudron_monitor_error() {
 	local message="$1"
@@ -549,7 +550,7 @@ _cloudron_monitor_upstream_entry() {
 	local upstream_source=""
 	slug=$(jq -r '.slug // empty' <<<"$entry")
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
-	manifest_rel=$(jq -r '.cloudron_package.manifest // "CloudronManifest.json"' <<<"$entry")
+	manifest_rel=$(jq -r --arg manifest "$_CLOUDRON_MONITOR_DEFAULT_MANIFEST" '.cloudron_package.manifest // $manifest' <<<"$entry")
 	upstream_slug=$(jq -r '.cloudron_package.upstream_slug // empty' <<<"$entry")
 	monitor_enabled=$(jq -r 'if (.cloudron_package.monitor_upstream | type) == "boolean" then .cloudron_package.monitor_upstream else ((.cloudron_package.upstream_slug // "") != "") end' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
@@ -617,7 +618,7 @@ _cloudron_monitor_compatibility_entry() {
 	local monitor_enabled=""
 	slug=$(jq -r '.slug // empty' <<<"$entry")
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
-	manifest_rel=$(jq -r '.cloudron_package.manifest // "CloudronManifest.json"' <<<"$entry")
+	manifest_rel=$(jq -r --arg manifest "$_CLOUDRON_MONITOR_DEFAULT_MANIFEST" '.cloudron_package.manifest // $manifest' <<<"$entry")
 	monitor_enabled=$(jq -r 'if (.cloudron_package.monitor_compatibility | type) == "boolean" then .cloudron_package.monitor_compatibility else true end' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
 	[[ "$slug" == */* ]] || _cloudron_monitor_error "Cloudron compatibility monitoring requires a target slug." || return 1
@@ -641,6 +642,46 @@ _cloudron_monitor_compatibility_entry() {
 	return $?
 }
 
+# Reuse the existing publication authority, never infer it from registry metadata.
+# A successful dispatch leaves a per-version receipt; failed dispatches may retry.
+_cloudron_monitor_reconcile_entry() {
+	local entry="$1" apply="$2" slug="" enabled="" repository="" remote="" sha="" version="" catalog="" runs=""
+	local state_dir="${HOME}/.aidevops/cache/cloudron-catalog-reconcile" receipt=""
+	slug=$(jq -er '.slug | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' <<<"$entry") || return 1
+	enabled=$(gh api "/repos/${slug}/actions/variables" --paginate --jq '.variables[] | select(.name == "CLOUDRON_PUBLICATION_ENABLED") | .value') || return 1
+	[[ "$enabled" == true ]] || return 0
+	repository=$(gh api "/repos/${slug}") || return 1
+	[[ "$(jq -r '.default_branch' <<<"$repository")" == main ]] || return 0
+	remote=$(_cloudron_monitor_fetch_remote_manifest "$slug" "$_CLOUDRON_MONITOR_DEFAULT_MANIFEST") || return $?
+	sha="${remote%%$'\n'*}"
+	version=$(jq -er '.version' <<<"${remote#*$'\n'}") || return 1
+	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	catalog=$(gh api "/repos/${slug}/contents/CloudronVersions.json?ref=${sha}" --jq '.content | @base64d') || return 1
+	jq -e --arg object_type "$_CLOUDRON_MONITOR_JSON_TYPE_OBJECT" '.versions | type == $object_type' <<<"$catalog" >/dev/null || return 1
+	if jq -e --arg version "$version" '.versions | has($version)' <<<"$catalog" >/dev/null; then
+		return 0
+	fi
+	runs=$(gh api "/repos/${slug}/actions/workflows/cloudron-catalog-publish.yml/runs?branch=main&per_page=100" --paginate --jq '[.workflow_runs[] | select(.status != "completed")] | length') || return 1
+	# Each paginated count must be zero, including queued/waiting/requested runs.
+	[[ -n "$runs" && "${runs//[$'\n'0]/}" == "" ]] || return 0
+	printf 'FINDING %s: manifest v%s is absent from the publication catalog.\n' "$slug" "$version"
+	[[ "$apply" == true ]] || return 0
+	_cloudron_monitor_has_authority "$slug" || return 1
+	mkdir -p "$state_dir/${slug%/*}" || return 1
+	receipt="$state_dir/${slug}-v${version}"
+	if ! mkdir "$receipt" 2>/dev/null; then
+		[[ -d "$receipt" ]] || return 1
+		return 0
+	fi
+	# aidevops:trust-boundary — dispatch only the enabled main publication path.
+	if ! gh workflow run cloudron-catalog-publish.yml --repo "$slug" --ref main; then
+		rmdir "$receipt"
+		return 1
+	fi
+	printf 'Dispatched catalog reconciliation for %s v%s.\n' "$slug" "$version"
+	return 0
+}
+
 _cloudron_monitor_run() {
 	local mode="$1"
 	local apply="$2"
@@ -650,6 +691,10 @@ _cloudron_monitor_run() {
 	while IFS= read -r entry; do
 		entry_rc=0
 		if [[ "$mode" == "upstream" ]]; then
+			_cloudron_monitor_reconcile_entry "$entry" "$apply" || entry_rc=$?
+			[[ "$entry_rc" -eq 0 ]] || failures=$((failures + 1))
+			[[ "$entry_rc" -ne 75 ]] || return 75
+			entry_rc=0
 			_cloudron_monitor_upstream_entry "$entry" "$apply" || entry_rc=$?
 		else
 			_cloudron_monitor_compatibility_entry "$entry" "$apply" || entry_rc=$?
@@ -673,7 +718,9 @@ Usage:
 
 Without --apply, findings are reported without creating issues. With --apply,
 deduplicated issues are created in each registered package repository after an
-ADMIN/MAINTAIN permission check. No package source or release state is changed.
+ADMIN/MAINTAIN permission check. The daily upstream check also reports enabled
+main versions missing from the catalog; --apply dispatches the existing catalog
+workflow once per version when no run is active. No package source is changed.
 HELP
 	return 0
 }

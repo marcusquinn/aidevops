@@ -243,11 +243,26 @@ publication. A tag with absent or mismatched provenance fails closed; investigat
 it rather than deleting or overwriting it automatically.
 
 The generated catalog is attested and its exact bundle verified before a
-catalog-only commit and tag are pushed atomically. Concurrent changes to `main`
-reject the push; rerun against the new revision after review. Caller concurrency
+catalog-only commit and tag are pushed atomically. If `main` advances, publication
+fetches it and retries once after rebasing only the catalog commit. Every
+intervening change must be allowlisted documentation or metrics/Star History
+assets (`README.md`, `docs/`, `metrics/`, `.github/metrics/`,
+`.github/star-history/`, or root `star-history.svg`/`star-history-dark.svg`).
+Package inputs, catalog changes, rewritten ancestry, conflicts, or a second race
+fail closed. Catalog bytes remain unchanged, and the commit records the original
+validated SHA for both catalog and image attestation verification. Caller concurrency
 serializes main runs and never cancels an in-flight publication. Existing
 catalogs without this workflow's attestations require an owner-reviewed
 provenance adoption before release reconciliation; it never fabricates evidence.
+
+The daily `cloudron-package-monitor-helper.sh upstream` check reports a remote
+main manifest version missing from the catalog when publication is enabled and
+no catalog run is active. With `--apply` and ADMIN/MAINTAIN authority it dispatches
+the existing main workflow once per version, with a local persistent receipt
+under `~/.aidevops/cache/cloudron-catalog-reconcile/`. Failed dispatches may retry;
+a successfully dispatched but failed workflow requires investigation before
+removing that version's receipt. This resumes already-authorized publication;
+it does not enable publication, alter caller pins, or bypass workflow gates.
 
 The catalog workflow creates the GitHub release itself, from the tagged
 catalog's embedded version changelog, after checking tag ancestry, public image

@@ -280,14 +280,35 @@ jobs:
           git add -- CloudronVersions.json
           test "$(git diff --cached --name-only)" = CloudronVersions.json
           git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
-            commit -m "chore: publish Cloudron package $VERSION [skip ci]"
+            commit -m "chore: publish Cloudron package $VERSION [skip ci]" -m "Cloudron-Source: $SOURCE_SHA"
           git tag "v$VERSION"
           # aidevops:trust-boundary — only this push receives the repository-scoped PAT.
           auth=$(printf 'x-access-token:%s' "$RELEASE_PAT" | base64 -w0)
           echo "::add-mask::$auth"
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
-          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+          if ! git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"; then
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+            test "$(git rev-parse origin/main)" != "$SOURCE_SHA"
+            # Inspect every intervening change, including reverted changes and
+            # both sides of renames; a net tree diff is not sufficient.
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                README.md|docs/*|metrics/*|.github/metrics/*|.github/star-history/*|star-history.svg|star-history-dark.svg) ;;
+                *) echo "::error::Main changed a package input; refusing publication retry"; exit 1 ;;
+              esac
+            done < <(git log --format= --name-only -z --no-renames --diff-merges=separate "$SOURCE_SHA..origin/main")
+            catalog_hash=$(git hash-object CloudronVersions.json)
+            git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+              rebase --onto origin/main "$SOURCE_SHA"
+            git merge-base --is-ancestor "$SOURCE_SHA" HEAD
+            test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = CloudronVersions.json
+            test "$(git hash-object CloudronVersions.json)" = "$catalog_hash"
+            # Only the unpushed local tag moves; remote tags are never replaced.
+            git tag -f "v$VERSION"
+            git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+          fi
 
   release:
     needs: [preflight, publish]
@@ -312,9 +333,19 @@ jobs:
           set -euo pipefail
           tag="v$VERSION"
           git merge-base --is-ancestor "$tag^{commit}" origin/main
-          # The catalog-only commit is a direct child of the attested build source.
+          # New tags retain the attested source across a docs-only rebase.
+          # Older tags used their direct parent as the build source.
           test "$(git rev-list --parents -n 1 "$tag" | wc -w)" -eq 2
-          source_sha=$(git rev-parse "$tag^1")
+          source_sha=$(git show -s --format='%(trailers:key=Cloudron-Source,valueonly)' "$tag")
+          source_sha=${source_sha:-$(git rev-parse "$tag^1")}
+          [[ "$source_sha" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$source_sha" "$tag^1"
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              README.md|docs/*|metrics/*|.github/metrics/*|.github/star-history/*|star-history.svg|star-history-dark.svg) ;;
+              *) echo '::error::Tag parent differs from attested package source'; exit 1 ;;
+            esac
+          done < <(git log --format= --name-only -z --no-renames --diff-merges=separate "$source_sha..$tag^1")
           test "$(git diff-tree --no-commit-id --name-only -r "$tag")" = CloudronVersions.json
           # Verify the exact catalog committed at the tag, not a later main revision.
           git show "$tag:CloudronVersions.json" > "$RUNNER_TEMP/CloudronVersions.json"
