@@ -183,9 +183,9 @@ LABELS
 	return 0
 }
 
-write_fake_source_commands() {
+write_fake_supersede_commands() {
 	local bin_dir="$1"
-	cat >"${bin_dir}/gh-source" <<'SOURCE'
+	cat >>"${bin_dir}/gh-source" <<'SUPERSEDE'
 if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?state=open&per_page=100' ]]; then
     [[ "${MONITOR_SUPERSEDE:-}" != list-error ]] || exit 1
     if [[ -n "${MONITOR_SUPERSEDE:-}" ]]; then
@@ -235,6 +235,13 @@ if [[ "${1:-}" == issue && "${2:-}" == close ]]; then
     printf 'CLOSE %s\n' "$3" >>"${MONITOR_TEST_LOG}"
     exit 0
 fi
+SUPERSEDE
+	return 0
+}
+
+write_fake_source_commands() {
+	local bin_dir="$1"
+	cat >"${bin_dir}/gh-source" <<'SOURCE'
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/git/ref/tags/desktop-v2.0.0" ]]; then
     printf '%s\n' '{"object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
     exit 0
@@ -362,6 +369,7 @@ else
 fi
 DOCKER
 	write_fake_source_commands "$bin_dir"
+	write_fake_supersede_commands "$bin_dir"
 	write_fake_label_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh_create_issue" "${bin_dir}/gh_issue_comment" "${bin_dir}/docker"
 	return 0
