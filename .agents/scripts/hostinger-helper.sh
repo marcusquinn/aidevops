@@ -208,6 +208,32 @@ api_call() {
     return $?
 }
 
+# Read-only SSL status; resolve the hosting username without caller substitution.
+ssl_status() {
+    local domain="${1:-}"
+    local encoded_domain
+    local websites
+    local username
+    local encoded_username
+    local response
+
+    if [[ -z "$domain" || ! "$domain" =~ ^[[:alnum:]]([[:alnum:].-]*[[:alnum:]])?$ || "$domain" == *..* ]]; then
+        print_error "Usage: ssl-status DOMAIN (hostname only)" >&2
+        return 1
+    fi
+
+    encoded_domain=$(jq -rn --arg domain "$domain" '$domain | @uri') || return 1
+    websites=$(api_call GET "api/hosting/v1/websites?domain=$encoded_domain") || return 1
+    if ! username=$(printf '%s' "$websites" | jq -er '.data[0].username | select(type == "string" and length > 0)'); then
+        print_error "Could not resolve hosting username for: $domain" >&2
+        return 1
+    fi
+    encoded_username=$(jq -rn --arg username "$username" '$username | @uri') || return 1
+    response=$(api_call GET "api/hosting/v1/accounts/$encoded_username/websites/$encoded_domain/ssl/status") || return 1
+    printf '%s\n' "$response" | jq -e . || return 1
+    return 0
+}
+
 # Read-only fleet inventory, onboarding plan and drift check (hosting_fleet.py).
 # Module names avoid the credential ignore pattern 'hostinger_*' in .gitignore.
 fleet_command() {
@@ -357,6 +383,10 @@ main() {
         api_call "$@"
         return $?
         ;;
+    "ssl-status")
+        ssl_status "$param2"
+        return $?
+        ;;
     "fleet")
         shift
         fleet_command "$@"
@@ -376,6 +406,7 @@ main() {
         echo "  connect [site]    - Connect to site directory via SSH"
         echo "  exec [site] [cmd] - Execute command on site"
         echo "  api [METHOD] ENDPOINT [JSON] - Hostinger API call (token from secret store)"
+        echo "  ssl-status DOMAIN - Read-only SSL status (resolves hosting username)"
         echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
         echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
         echo "  help                 - $HELP_SHOW_MESSAGE"
