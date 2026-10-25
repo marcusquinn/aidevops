@@ -95,19 +95,23 @@ _large_file_gate_precheck_labels() {
 	# the target file is still large, misleading maintainers into thinking
 	# simplification is the only remaining gate when in fact the parent-task
 	# block is permanent and independent of file size.
+	# GH#35623: Consolidation tasks only rewrite the parent issue body, not
+	# its referenced source files. Gating them can deadlock file-size-debt
+	# parents waiting for consolidation before simplification can dispatch.
 	# If the label was already applied (e.g., before this fix), auto-clear it.
 	if [[ "$labels_tokenized" == *",parent-task,"* ]] ||
-		[[ "$labels_tokenized" == *",meta,"* ]]; then
+		[[ "$labels_tokenized" == *",meta,"* ]] ||
+		[[ "$labels_tokenized" == *",consolidation-task,"* ]]; then
 		if [[ "$labels_tokenized" == *"$simplification_label_token"* ]]; then
 			if gh issue edit "$issue_number" --repo "$repo_slug" \
 				--remove-label "needs-simplification" >/dev/null 2>&1; then
-				echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is a parent-task/meta, never dispatched directly (t2088)" >>"$LOGFILE"
+				echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is a parent-task/meta or issue-body-only consolidation-task (t2088/GH#35623)" >>"$LOGFILE"
 			else
 				echo "[pulse-wrapper] WARN: failed to remove needs-simplification label from #${issue_number} (${repo_slug}); will retry next cycle (t2088)" >>"$LOGFILE"
 			fi
 		fi
-		# Always return 1 (don't gate) — parent tasks are never dispatched
-		# directly, regardless of whether the label removal succeeded.
+		# Always return 1 (don't gate) — these issues don't edit source files,
+		# regardless of whether the label removal succeeded.
 		return 1
 	fi
 
