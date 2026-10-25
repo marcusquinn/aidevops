@@ -1030,6 +1030,7 @@ with open('$CLAUDE_SETTINGS') as f:
 hooks = d.get('hooks', {})
 has_guard_bash = False
 has_guard_edit_write = False
+has_guard_url_tools = False
 has_complexity = False
 has_secret_read_guard = False
 for h in hooks.get('PreToolUse', []):
@@ -1041,6 +1042,8 @@ for h in hooks.get('PreToolUse', []):
                 has_guard_bash = True
             if 'Edit' in matcher or 'Write' in matcher:
                 has_guard_edit_write = True
+            if matcher == 'WebFetch|mcp__.*':
+                has_guard_url_tools = True
         if 'complexity_advisory' in cmd:
             has_complexity = True
         if 'secret_file_read_guard' in cmd:
@@ -1060,7 +1063,7 @@ has_stop = any('session_continuation_stop' in sub.get('command', '')
 has_replay = any('compaction_user_input_replay' in sub.get('command', '')
                  for h in hooks.get('SessionStart', []) for sub in h.get('hooks', []))
 
-if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop and has_replay:
+if has_guard_bash and has_guard_edit_write and has_guard_url_tools and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop and has_replay:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -1172,6 +1175,9 @@ else:
         settings['hooks']['PreToolUse'].append(complexity_advisory_entry)
     if not has_hook(settings['hooks']['PreToolUse'], 'secret_file_read_guard'):
         settings['hooks']['PreToolUse'].append(secret_read_guard_entry)
+
+# GH#35655: URL-bearing tools (WebFetch, MCP browsers) never open redirect links.
+ensure_hook_in_matcher(settings['hooks']['PreToolUse'], 'WebFetch|mcp__.*', '$HOOK_COMMAND')
 
 if 'PostToolUse' not in settings['hooks']:
     settings['hooks']['PostToolUse'] = [post_hook_entry, credential_scrub_entry]

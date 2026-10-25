@@ -1756,6 +1756,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18770 Guard Playwriter Task/MCP connect behind an explicit user mention (Playwright is the default) #auto-dispatch #feat tier:standard ref:GH#35637 pr:#35639 logged:2026-10-25 -> [todo/tasks/t18770-brief.md] completed:2026-10-25
 
+- [ ] t18771 Strict no-redirect-link policy: auto-close spam, block authors, never open redirect links #feat #priority:high #security #interactive ref:GH#35655 assignee:marcusquinn logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18771-brief.md]
+
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
 
 - [x] t18625 Actions-unavailable merge gate: classify Qlty out-of-minutes commit statuses #bug #interactive ref:GH#34030 assignee:marcusquinn logged:2026-10-08 started:2026-10-08 -> [todo/tasks/t18625-brief.md] pr:#34031 completed:2026-10-08

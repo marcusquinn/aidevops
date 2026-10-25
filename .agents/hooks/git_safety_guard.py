@@ -8,7 +8,8 @@ mutations are delegated to canonical-write-policy-helper.py so every canonical
 checkout is read-only regardless of branch name or target path.
 
 This hook runs before Bash/Edit/Write tool calls execute. It is registered under
-both the Bash and direct-file-tool PreToolUse matchers.
+both the Bash and direct-file-tool PreToolUse matchers, and under the
+WebFetch/MCP matcher so URL-bearing tools never open redirect links (GH#35655).
 
 Installed by: aidevops setup (setup.sh) or install-hooks-helper.sh
 Location: ~/.aidevops/hooks/git_safety_guard.py
@@ -232,6 +233,82 @@ def _check_command_policy(command: str) -> "dict | None":
     }
 
 
+URL_SHAPED_MARKERS = ("://", "www.", "hxxp", "[.]", "%2e", "\uff0e", "\u3002")
+REDIRECT_EXEMPT_TOOLS = {"bash", "read", "grep", "glob", "task", "todowrite", "notebookread"}
+
+
+def _collect_url_strings(value, out: list, depth: int = 0) -> list:
+    """Collect URL-shaped strings from nested tool arguments."""
+    if len(out) >= 200 or depth > 6 or value is None:
+        return out
+    if isinstance(value, str):
+        lowered = value.lower()
+        if any(marker in lowered for marker in URL_SHAPED_MARKERS):
+            out.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_url_strings(item, out, depth + 1)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_url_strings(item, out, depth + 1)
+    return out
+
+
+def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
+    """Deny URL-bearing tools that would resolve a redirect link (GH#35655).
+
+    Lexical only via redirect_link_policy.py; never touches the network.
+    Bash is covered by the shared command policy; file tools are exempt.
+    """
+    leaf = _normalise_tool_name(tool_name)
+    if leaf in REDIRECT_EXEMPT_TOOLS or _is_direct_file_tool(tool_name):
+        return None
+    strings = _collect_url_strings(tool_input, [])
+    if not strings:
+        return None
+    scanner = _resolve_policy_helper(
+        "AIDEVOPS_REDIRECT_LINK_POLICY", "redirect_link_policy.py"
+    )
+    reason = "redirect-link policy scanner is unavailable"
+    if scanner:
+        try:
+            # nosec B603 -- fixed interpreter and scanner path, no shell
+            result = subprocess.run(  # nosec B603
+                [sys.executable, scanner, "scan"],
+                input="\n".join(strings),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            reason = f"redirect-link policy scanner failed: {exc}"
+        else:
+            if result.returncode == 0:
+                return None
+            if result.returncode == 1:
+                try:
+                    hosts = sorted(
+                        {item["host"] for item in json.loads(result.stdout)["redirect_links"]}
+                    )
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    hosts = ["redirect host"]
+                reason = (
+                    f"redirect/shortener link ({', '.join(hosts)}) must never be "
+                    "resolved, fetched or opened in any session, including remote "
+                    "sandboxes. Treat the source content as spam (GH#35655)."
+                )
+            else:
+                reason = "redirect-link policy scanner returned an error"
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"BLOCKED by redirect-link policy\n\nReason: {reason}",
+        }
+    }
+
+
 def main():
     """Delegate Bash policy and enforce direct-file worktree isolation."""
     try:
@@ -241,6 +318,11 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input") or {}
+
+    redirect_deny = _check_redirect_links(tool_name, tool_input)
+    if redirect_deny:
+        print(json.dumps(redirect_deny))
+        sys.exit(0)
 
     if _is_direct_file_tool(tool_name):
         file_path = (

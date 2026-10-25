@@ -147,6 +147,9 @@ safety_functions = {
         "_normalize_unassign_stampless_interactive"
     ],
     ".agents/scripts/pulse-issue-reconcile-stale.sh": ["_normalize_unassign_stale"],
+    ".agents/scripts/redirect-link-guard-helper.sh": [
+        "redirect_spam_sweep_all_repos"
+    ],
     ".agents/scripts/repo-aidevops-health-helper.sh": [
         "_check_missing_folders",
         "_check_no_init_repos",

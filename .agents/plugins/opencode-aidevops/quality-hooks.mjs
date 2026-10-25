@@ -37,6 +37,7 @@ import {
   finishObservedSourceAccess,
 } from "./source-access-request.mjs";
 import { checkResearchStagingAccess } from "./research-staging-guard.mjs";
+import { checkRedirectLinkToolGate } from "./quality-hooks-redirect-link.mjs";
 import { checkGrepPathScope } from "./grep-path-guard.mjs";
 import { checkRedactedEdit } from "./redacted-edit-guard.mjs";
 import {
@@ -301,6 +302,8 @@ async function handleToolBefore(ctx, log, input, output) {
     repositoryDir: ctx.repositoryDir, sessionID: input.sessionID || input.sessionId || "",
     classification: ctx.privateProcessingPolicy });
   ctx.continuationGuard?.beforeTool(input, output);
+  // GH#35655: never resolve/fetch/open redirect links via URL-bearing tools.
+  checkRedirectLinkToolGate(input.tool, output.args || {}, ctx.scriptsDir);
   enforceDirectFileMutationSafety(ctx, input, output);
 
   const { callID, intent } = prepareToolIntent(log, input, output);

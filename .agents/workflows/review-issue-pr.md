@@ -352,6 +352,7 @@ After a verdict is reached, the reporter must always be informed — regardless 
 | Recommend APPROVE → PR merged same session | Comment on source issue: thank reporter, link to merged PR, close issue |
 | Recommend REQUEST CHANGES | Post the exact repair plan and route it to the responsible maintainer/worker; ask no discoverable questions and do not wait passively on the contributor |
 | Recommend DECLINE | Comment explaining why (out of scope, by design, duplicate) and close issue |
+| Spam (including any redirect/shortener link) | **No comment.** Label `spam`, close not-planned, lock as spam, delete or minimize bot comments, block the author (`redirect-link-guard-helper.sh enforce-issue <repo> <N>`). Never open the link; see `reference/gh-command-discipline.md` "Redirect links". Leave the re-applied `needs-maintainer-review` label in place |
 
 **Template — issue converted to internal task:**
 

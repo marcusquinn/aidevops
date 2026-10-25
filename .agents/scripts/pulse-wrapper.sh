@@ -410,6 +410,9 @@ source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
 # t2350 (GH#19948): DIRTY-PR sweep runs every 30min after the merge pass.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-dirty-pr-sweep.sh"
+# t18771 (GH#35655): redirect-link spam sweep — close/hide + block authors.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/redirect-link-guard-helper.sh"
 # t2865 (GH#20922): canonical-worktree pull conflict auto-recovery.
 # Called from _pulse_refresh_repo on git pull --ff-only failure.
 # shellcheck source=/dev/null
@@ -876,6 +879,7 @@ _pulse_execute_self_check() {
 		_dispatch_conflict_fix_worker
 		run_canonical_maintenance
 		dirty_pr_sweep_all_repos
+		redirect_spam_sweep_all_repos
 		_pulse_refresh_repo
 		pulse_canonical_recover
 		check_dispatch_backoff
@@ -1214,6 +1218,14 @@ _pulse_run_deterministic_pipeline() {
 		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
 			_pulse_run_budget_priority_stage_with_timeout "dirty_pr_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
 			dirty_pr_sweep_all_repos || true
+	fi
+	# t18771 (GH#35655): redirect-link spam sweep. Workflows close/hide spam
+	# without comment; only the maintainer token can block authors, so the
+	# pulse completes the ban. Interval-gated (REDIRECT_SPAM_SWEEP_INTERVAL).
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
+			_pulse_run_budget_priority_stage_with_timeout "redirect_spam_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
+			redirect_spam_sweep_all_repos || true
 	fi
 	# Accumulate health counters written by merge_ready_prs_all_repos (GH#18571, GH#15107).
 	# The function runs in a subshell via run_stage_with_timeout, so variable
