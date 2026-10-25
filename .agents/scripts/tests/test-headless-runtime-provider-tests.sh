@@ -262,6 +262,90 @@ run_blocked_completion_tests() {
 	test_clean_exit_terminal_state_reconciliation
 	test_pr_less_terminal_proof_survives_finalization
 	test_own_merged_terminal_reconciliation
+	test_scoped_delivery_terminal_reconciliation
+	return 0
+}
+
+# GH#35647: real verifier subprocess and classifier, synthetic forge evidence.
+test_scoped_delivery_terminal_reconciliation() {
+	local shape result
+	for shape in complete partial open unrelated dirty ahead reverted_default stale_attempt wrong_repo wrong_issue stale_head stale_issue bare_claim; do
+		result=0
+		if ! (
+			local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG=owner/repo
+			local AIDEVOPS_ATTEMPT_ID=fixture AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+			local work_dir="${TEST_ROOT}/scoped-${shape}" output_file="${TEST_ROOT}/scoped-output.jsonl" rc=0 expected=77
+			local SCOPED_SHAPE="$shape" SCOPED_HEAD
+			export SCOPED_SHAPE SCOPED_HEAD AIDEVOPS_ATTEMPT_ID AIDEVOPS_ATTEMPT_STARTED_AT
+			_setup_test_git_repo "$work_dir" 0
+			printf 'review artifact\n' >"$work_dir/artifact.md"
+			git -C "$work_dir" add artifact.md
+			git -C "$work_dir" commit -qm artifact
+			git -C "$work_dir" push -q origin HEAD:main
+			SCOPED_HEAD=$(git -C "$work_dir" rev-parse HEAD)
+			_hrw_own_merged_terminal_complete() { return 1; }
+			_hrw_resolve_default_branch() { printf main; return 0; }
+			gh() {
+				case "$*" in
+				"api repos/owner/repo/issues/456")
+					jq -cn --arg shape "$SCOPED_SHAPE" '{number:456,state:"closed",state_reason:"completed",
+						author_association:"COLLABORATOR",updated_at:"2026-10-25T12:00:00Z",
+						body:"### Files Scope\n- `README.md`\n- `artifact.md`\n"}
+						| if $shape == "open" then .state = "open" else . end' ;;
+				"pr list"*)
+					if [[ "$*" == *--head* ]]; then printf '0\n'; else printf '42\n'; fi ;;
+				"pr view"*) printf '{"state":"MERGED","mergedAt":"2026-10-25T11:00:00Z","closingIssuesReferences":[]}\n' ;;
+				"api repos/owner/repo/pulls/42")
+					jq -cn --arg head "$SCOPED_HEAD" --arg shape "$SCOPED_SHAPE" '{number:42,state:"closed",
+						merged_at:"2026-10-25T11:00:00Z",merge_commit_sha:$head,
+						base:{repo:{full_name:"owner/repo"}},body:"For #456"}
+						| if $shape == "unrelated" then .body = "For #789" else . end' ;;
+				"api --paginate repos/owner/repo/pulls/42/files?per_page=100"*)
+					printf 'README.md\n'
+					[[ "$SCOPED_SHAPE" == partial || "$SCOPED_SHAPE" == bare_claim ]] || printf 'artifact.md\n' ;;
+				*) return 1 ;;
+				esac
+				return 0
+			}
+			export -f gh
+			# Tamper only with subprocess output to prove runtime identity checks.
+			bash() {
+				command bash "$@" | jq -c --arg shape "$SCOPED_SHAPE" '
+					if $shape == "stale_attempt" then .attempt_id = "older"
+					elif $shape == "wrong_repo" then .repository = "other/repo"
+					elif $shape == "wrong_issue" then .issue = 789
+					elif $shape == "stale_head" then .head = ("f" * 40)
+					elif $shape == "stale_issue" then .issue_updated_at = "older"
+					else . end'
+				return "${PIPESTATUS[0]}"
+			}
+			case "$shape" in
+			complete) expected=0 ;;
+			dirty) touch "$work_dir/unpublished" ;;
+			ahead) touch "$work_dir/unpublished"; git -C "$work_dir" add unpublished; git -C "$work_dir" commit -qm unpublished ;;
+			reverted_default)
+				printf 'reverted artifact\n' >"$work_dir/artifact.md"
+				git -C "$work_dir" add artifact.md
+				git -C "$work_dir" commit -qm reverted
+				git -C "$work_dir" push -q origin HEAD:main
+				git -C "$work_dir" checkout -qb behind "$SCOPED_HEAD" ;;
+			esac
+			printf '%s\n' '{"type":"text","text":"The objective was already delivered; no new work was needed."}' >"$output_file"
+			_handle_run_result 0 "$output_file" worker openai issue-456 openai/gpt-5.5 "$work_dir" || rc=$?
+			[[ "$rc" == "$expected" ]] || exit 1
+			if [[ "$expected" == 0 ]]; then
+				[[ "$_run_result_label" == success && "$_run_classification_source" == scoped_delivery_receipt && -z "$_run_failure_reason" ]] || exit 1
+				_hrw_release_dispatch_claim() { return 0; }
+				_hrw_permission_pending_path() { return 1; }
+				_worker_produced_output() { exit 1; }
+				_hrw_finish_success_run issue-456 "$work_dir" || exit 1
+				[[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]] || exit 1
+			else
+				[[ "$_run_result_label" == premature_exit ]] || exit 1
+			fi
+		); then result=1; fi
+		print_result "scoped delivery ${shape}: verified no-work or premature exit" "$result"
+	done
 	return 0
 }
 

@@ -166,8 +166,15 @@ _run_result_terminal_completion_confirmed() {
 		return 0
 	fi
 	output_has_completion_signal "$output_file" && return 0
-	_hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
-		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}" && return 0
+	if _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
+		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+		if [[ -n "${_HRW_SCOPED_DELIVERY_RECEIPT:-}" ]]; then
+			_run_failure_reason=""
+			_run_classification_source="scoped_delivery_receipt"
+			_run_classification_pattern="verified_already_delivered_scope"
+		fi
+		return 0
+	fi
 	return 1
 }
 

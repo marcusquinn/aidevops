@@ -759,7 +759,7 @@ _hrw_pr_less_terminal_complete() {
 	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || head=""
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || branch=""
 	if [[ -n "$head" && -n "$branch" ]]; then
-		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}"
+		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}|${AIDEVOPS_ATTEMPT_ID:-}|${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
 		if [[ "$context" == "${_HRW_PR_LESS_VERIFIED_CONTEXT:-}" ]]; then
 			task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
 			[[ -z "$task_status" ]] && return 0
@@ -767,20 +767,24 @@ _hrw_pr_less_terminal_complete() {
 		fi
 	fi
 	local issue_json=""
+	_HRW_SCOPED_DELIVERY_RECEIPT=""
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
 	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
-		_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
+		# Scoped evidence is freshly regenerated, never replayed from this cache.
+		if [[ -z "$_HRW_SCOPED_DELIVERY_RECEIPT" ]]; then
+			_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
+		fi
 		return 0
 	fi
 	return 1
 }
 
 # A different worker may have delivered the issue before this run. Require an
-# exact closing reference on a merged PR and no unpublished work, not a prose
-# verdict, issue-number search match, or arbitrary closed issue.
+# exact closing reference or independently verified full-scope delivery on a
+# merged PR, and no unpublished work; prose and search matches are not proof.
 _hrw_already_delivered_terminal_complete() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -801,12 +805,48 @@ _hrw_already_delivered_terminal_complete() {
 			'.state == "MERGED" and .mergedAt != null
 			and any(.closingIssuesReferences[]?; .number == $issue
 				and ((.repository.owner.login + "/" + .repository.name) | ascii_downcase) == ($repo | ascii_downcase))' \
-			<<<"$pr_json" >/dev/null 2>&1 || continue
+			<<<"$pr_json" >/dev/null 2>&1 || {
+			_hrw_scoped_delivery_terminal_complete "$work_dir" "$issue_number" "$repo_slug" "$pr_number" "$issue_json" && return 0
+			continue
+		}
 		_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
 		print_info "[lifecycle] worker_already_delivered complete session=${session_key} issue=${issue_number} pr=${pr_number}"
 		return 0
 	done <<<"$candidates"
 	return 1
+}
+
+# A fresh verifier-produced lifecycle receipt is an alternative only for a
+# completed, fully delivered literal scope. It cannot close an issue, authorize
+# publication, or bypass the unchanged no-unpublished-work guard.
+_hrw_scoped_delivery_terminal_complete() {
+	local work_dir="$1" issue_number="$2" repo_slug="$3" pr_number="$4" issue_json="$5"
+	local receipt head branch path blob
+	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" && "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	work_dir=$(cd "$work_dir" && pwd -P) || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD) || return 1
+	branch=$(git -C "$work_dir" branch --show-current) || return 1
+	receipt=$(bash "${SCRIPT_DIR}/verify-issue-close-helper.sh" check-scoped-delivery \
+		"$issue_number" "$pr_number" "$repo_slug" "$work_dir" 2>/dev/null) || return 1
+	jq -e --arg repo "$repo_slug" --argjson issue "$issue_number" --argjson pr "$pr_number" \
+		--arg attempt "$AIDEVOPS_ATTEMPT_ID" --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" \
+		--arg worktree "$work_dir" --arg head "$head" --arg branch "$branch" \
+		--arg updated "$(jq -r '.updated_at' <<<"$issue_json")" '
+		.schema_version == 1 and .kind == "scoped_delivery" and .verified == true
+		and .repository == $repo and .issue == $issue and .pr == $pr
+		and .attempt_id == $attempt and .attempt_started_at == $started
+		and .worktree == $worktree and .head == $head and .branch == $branch
+		and .issue_updated_at == $updated and (.files | length > 0)
+	' <<<"$receipt" >/dev/null 2>&1 || return 1
+	# The guard fetched the exact live default tip. A behind checkout must not
+	# hide artifacts subsequently removed or reverted on that integration branch.
+	while IFS=$'\t' read -r path blob; do
+		[[ "$(git -C "$work_dir" rev-parse "FETCH_HEAD:${path}" 2>/dev/null)" == "$blob" ]] || return 1
+	done < <(jq -r '.files[] | [.path,.blob] | @tsv' <<<"$receipt")
+	_HRW_SCOPED_DELIVERY_RECEIPT="$receipt"
+	print_info "[lifecycle] worker_scoped_delivery complete issue=${issue_number} pr=${pr_number} attempt=${AIDEVOPS_ATTEMPT_ID} head=${head}"
+	return 0
 }
 
 # A PR-less completion must leave nothing unpublished: a clean non-default
