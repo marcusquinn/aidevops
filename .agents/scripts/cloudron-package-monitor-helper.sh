@@ -455,7 +455,7 @@ ${package_test_note}
 - Reproduce and assess the finding against current upstream and Cloudron packaging guidance.
 - Update package source and tests only when the finding remains actionable.
 - Run the package release preflight before proposing a tag.
-- Do not publish a release, image, catalog entry, or deployment without separate operator authorization.
+- Prepare and verify the release PR, then run \`cloudron-release-approval-helper.sh request <repo> <pr>\`; do not merge. Merge and publication happen only after signed maintainer approval of the release issue.
 
 ## Verification
 
