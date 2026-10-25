@@ -47,6 +47,7 @@ _initialize_run_result() {
 	_run_classification_source=""
 	_run_classification_pattern=""
 	_HRW_PR_LESS_VERIFIED_CONTEXT=""
+	_HRW_OWN_MERGED_VERIFIED_CONTEXT=""
 	return 0
 }
 
@@ -236,6 +237,15 @@ _handle_run_result_success_output() {
 			rm -f "$output_file"
 			print_warning "$selected_model worker reported a terminal BLOCKED state"
 			return 83
+		fi
+		# Reconcile objective evidence without broadening model marker parsing.
+		if _hrw_own_merged_terminal_complete "$session_key" "${work_dir:-}"; then
+			_run_result_label="success"
+			_run_failure_reason=""
+			_run_classification_source="merged_pr_cleanup_receipt"
+			_run_classification_pattern="verified_own_merged_objective"
+			rm -f "$output_file"
+			return 0
 		fi
 		# GH#33672: reconcile verified PR-less terminal objectives before the
 		# continuation gate. Prose alone ("already delivered") is not evidence.

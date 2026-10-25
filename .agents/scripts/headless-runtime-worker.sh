@@ -982,6 +982,74 @@ _worker_external_terminal_complete() {
 	return 1
 }
 
+# GH#35629: own squash merges need exact PR-head proof, not ancestry against
+# the default tip. Keep this separate from the stricter PR-less contract.
+# A finalized guarded receipt binds delivery to this session and attempt window.
+_hrw_own_merged_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local runtime_session="${discovered_session:-}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+	local issue_number branch head dirty context started
+	[[ -n "$runtime_session" && -n "${AIDEVOPS_ATTEMPT_ID:-}" ]] || return 1
+	[[ "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
+	_hrw_is_issue_worker_session "$session_key" || return 1
+	issue_number=$(_hrw_issue_number_for_session "$session_key") || return 1
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
+	[[ "${WORKER_ISSUE_NUMBER:-}" == "$issue_number" && -d "$work_dir" ]] || return 1
+	work_dir=$(cd "$work_dir" && pwd -P) || return 1
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	dirty=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	[[ -n "$branch" && "$head" =~ ^[0-9a-f]{40}$ && -z "$dirty" ]] || return 1
+	context="${session_key}|${repo_slug}|${issue_number}|${AIDEVOPS_ATTEMPT_ID}|${AIDEVOPS_ATTEMPT_STARTED_AT}|${runtime_session}|${work_dir}|${branch}|${head}"
+	# Reuse only in-process proof for the identical attempt and clean head. A
+	# later API outage must not erase verified delivery during finalization.
+	[[ "$context" == "${_HRW_OWN_MERGED_VERIFIED_CONTEXT:-}" ]] && return 0
+	started="${AIDEVOPS_ATTEMPT_STARTED_AT:0:10}"
+	local issue_json handoff pr_number pr_json receipt
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	jq -e --arg closed closed --arg completed completed \
+		'.state == $closed and .state_reason == $completed and .pull_request == null' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	handoff=$(_pr_handoff_state_for_branch_or_issue "$branch" "$issue_number" \
+		"$repo_slug" head-only "$head" 1) || return 1
+	[[ "$handoff" =~ ^merged\|[1-9][0-9]*$ ]] || return 1
+	pr_number="${handoff#*|}"
+	# Bypass cached views and revalidate actual closing references, repository,
+	# branch and head rather than trusting a search match or a prose summary.
+	pr_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo_slug" \
+		--json number,state,mergedAt,mergeCommit,headRefOid,headRefName,headRepository,headRepositoryOwner,closingIssuesReferences 2>/dev/null) || return 1
+	jq -e --argjson pr "$pr_number" --argjson issue "$issue_number" \
+		--arg repo "$repo_slug" --arg branch "$branch" --arg head "$head" \
+		--arg separator / --arg string_type string --argjson started "$started" '
+		.number == $pr and .state == "MERGED"
+		and (.mergedAt | fromdateiso8601) >= $started
+		and (.mergeCommit.oid | type == $string_type and test("^[0-9a-f]{40}$"))
+		and .headRefOid == $head and .headRefName == $branch
+		and ([.headRepositoryOwner.login, .headRepository.name] | join($separator) | ascii_downcase) == ($repo | ascii_downcase)
+		and any(.closingIssuesReferences[]?; .number == $issue
+			and ([.repository.owner.login, .repository.name] | join($separator) | ascii_downcase) == ($repo | ascii_downcase))
+	' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	receipt=$(_full_loop_cleanup_receipt_path "$repo_slug" "$pr_number") || return 1
+	[[ -f "$receipt" && ! -L "$receipt" ]] || return 1
+	jq -e --arg repo "$repo_slug" --argjson pr "$pr_number" --arg worktree "$work_dir" \
+		--arg branch "$branch" --arg session "$runtime_session" --argjson started "$started" \
+		--arg deferred "$_FULL_LOOP_CLEANUP_DEFERRED" --arg leased "$_FULL_LOOP_CLEANUP_LEASED" --arg string_type string '
+		.schema_version == 1 and .repository == $repo and .pr_number == $pr
+		and .worktree == $worktree and .branch == $branch and .owner.session == $session
+		and (.owner.pid | type == "number" and . > 0)
+		and (.owner.process_identity | type == $string_type and length > 0)
+		and (.created_at | fromdateiso8601) >= $started
+		and .executor_completion_state == "COMPLETE"
+		and (.resource_cleanup_state == $deferred or .resource_cleanup_state == $leased)
+		and (.release_status == "not-requested" or .release_status == "published" or .release_status == "superseded")
+	' "$receipt" >/dev/null 2>&1 || return 1
+	_HRW_OWN_MERGED_VERIFIED_CONTEXT="$context"
+	print_info "[lifecycle] worker_own_merged complete session=${session_key} attempt=${AIDEVOPS_ATTEMPT_ID} issue=${issue_number} pr=${pr_number} head=${head}"
+	return 0
+}
+
 # PR-less objectives with a trusted terminal contract: explicit data-only work,
 # pulse consolidation children, or work already delivered by a closing merged
 # PR (GH#33672). The issue is fetched
@@ -1720,6 +1788,7 @@ _hrw_finish_success_run() {
 	# repo, no gh, no remote) the classification is "pr_exists", so false-negatives
 	# (legit work misclassified) are impossible.
 	if [[ "$release_needed" -eq 1 && -n "$work_dir" ]] && \
+		! _hrw_own_merged_terminal_complete "$session_key" "$work_dir" && \
 		! _hrw_pr_less_terminal_complete "$session_key" "$work_dir" \
 		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
 		local output_class="pr_exists"
