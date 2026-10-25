@@ -5,8 +5,9 @@
 # Distinctive UI Audit
 
 Load for an explicit design audit or after a `distinctive-ui.md` build/redesign.
-Audit is read-only unless implementation is separately authorized. Hallmark
-informs this critique; `hallmark.md` records provenance and the MIT notice.
+Audit is read-only unless implementation is separately authorized. Hallmark,
+Impeccable and Taste Skill inform this critique; `hallmark.md`, `impeccable.md`
+and `taste-skill.md` record provenance and licences.
 
 ## Two different questions
 
@@ -20,20 +21,23 @@ informs this critique; `hallmark.md` records provenance and the MIT notice.
 Scope the audit to the named surface. If only source or a screenshot is available,
 report that limitation; do not infer keyboard behaviour, contrast compliance,
 performance or cross-device coverage from it. Never claim a gate count, score,
-conversion lift or "looks good" without the corresponding evidence.
+conversion lift or "looks good" without the corresponding evidence. Form the
+design judgement before reading lint or detector output; a clean mechanical scan
+is a floor, not proof of good design.
 
 ## Brief-fit critique
 
 | Lens | Ask | Evidence / useful correction |
 |------|-----|------------------------------|
 | Intent | Is the audience's job and next action clear? | Point to visible copy and action; replace vague positioning with a concrete benefit |
+| Visitor mode | Does the surface serve persuasion, a job, or reading? | On operate screens, a costume of the theme (ledger paper as a table, a terminal key bar) replacing standard controls; on read pages, decoration behind the text column |
 | Hierarchy | Do emphasis and order reflect importance? | Name competing elements; group, reorder or reduce emphasis |
 | Specificity | Could this be any unrelated product with a name swap? | Use real product evidence and domain language; change arrangement if needed |
 | Restraint | Does each element earn its attention and cost? | Remove purposeless badges, nested containers, repeated labels or motion |
 | Craft | Do type, spacing, assets and states form a coherent system? | Compare actual elements with DESIGN.md and nearby canonical examples |
 | Appropriate variety | Are independent alternatives truly different while one product stays consistent? | Compare structure, not palette alone; retain shared navigation and controls |
 
-Treat these as judgment prompts, not six numerical scores. Recommend the smallest
+Treat these as judgment prompts, not numerical scores. Recommend the smallest
 revision that addresses the observed weakness. Replacing purple with beige or
 cards with oversized serif headings does not by itself solve generic design.
 
@@ -48,9 +52,12 @@ or **not checked**, with evidence. Do not count not-checked items as passed.
 | Hierarchy flattening | Equal cards/weights hide differences in importance; nested cards add no meaning | Remove a containment layer or use lists/tables; inspect reading order |
 | Empty chrome | Invented nav/footer categories or dead CTAs imply nonexistent content | Use real destinations; exercise each affected control |
 | Decorative proof | Unsourced metrics, quotes, customers, prices or trust badges | Source, conspicuously label in prototypes, or remove; no plausible invented endorsements |
+| Data contradiction | A KPI disagrees with its table, a repeated fact differs between cards, a delta does not follow from the displayed figures, or a relative figure has no baseline | Recompute from the values as displayed; bind repeated facts to one source; name the baseline |
 | Token drift | One-off colours/type/states conflict with the accepted system | Reuse or explicitly extend canonical semantic roles; inspect both supported themes |
-| Typography failure | Clipped headings, illegible text, missing glyphs or fallback layout shifts | Test real fonts, long text, text scaling and relevant languages |
-| Asset mismatch | Stock/generated media pretends to show real people, products or outcomes | Use real evidence or disclose illustration; confirm rights and provenance |
+| Typography failure | Clipped headings, illegible text, missing glyphs, fallback faces judged as final, unlicensed families or fonts fetched from a third-party host | Check rendered families and font hosts per `font-pairing.md` §5; test long text, text scaling and relevant languages |
+| Content fragility | Layout or meaning breaks with long names, translation expansion, right-to-left text, many rows, slow or failed requests or missing permissions | Exercise those inputs and states on the affected surface; fix the source, not the sample |
+| Browser-surface defaults | Selection, caret, scrollbars, focus rings or numerals ignore the design, or themed versions lose contrast | Theme from `DESIGN.md` roles; use tabular figures in aligned data; recheck contrast |
+| Asset mismatch | Stock/generated media pretends to show real people, products or outcomes | Use real evidence or disclose illustration; confirm rights and record source, creator, licence and credit |
 | Interaction theatre | Working-looking search, toggles, forms or demo controls do nothing | Implement the actual path or clearly state the agreed prototype boundary |
 | State omissions | Loading/error/empty/disabled states lose input or leave users stranded | Exercise applicable transitions; confirm feedback, retry and state semantics |
 | Focus/hover exclusion | Touch or keyboard users cannot discover/use controls; ring appears late or is obscured | Use accessible primitives; test focus, activation, escape/return and tap paths |

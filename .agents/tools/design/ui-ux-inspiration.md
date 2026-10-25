@@ -211,7 +211,7 @@ Validate before finalising any brand identity or design recommendation:
 
 ### Performance
 
-- Prefer Google Fonts or system font stacks (avoid obscure web fonts adding load time)
+- Prefer system font stacks or openly licensed families (for example OFL fonts from Google Fonts), self-hosted so visitors make no third-party font request; load only used weights (`tools/design/font-pairing.md`)
 - Colour palette works without gradients (graceful degradation)
 - Layout doesn't depend on JavaScript for initial render
 

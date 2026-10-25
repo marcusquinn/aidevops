@@ -67,7 +67,7 @@ curl -s -X POST http://colormind.io/api/ \
 | Colormind Bootstrap | http://colormind.io/bootstrap/ | Live Bootstrap theme preview with AI palettes |
 | Colormind Dashboard | http://colormind.io/template/paper-dashboard/ | Live dashboard template preview with AI palettes |
 | Huemint | https://huemint.com/ | AI colour for brand identity, logos, and web mockups |
-| Fontjoy | https://fontjoy.com/ | AI font pairing generator (heading + body + accent) |
+| Fontjoy | https://fontjoy.com/ | AI font pairing generator (three faces ending in a body face); method, limits and licence checks: `tools/design/font-pairing.md` |
 | Poolors | https://poolors.com/ | Discover colour combinations that stand out |
 | Coolors | https://coolors.co/ | Interactive palette generator with lock/shuffle |
 | Realtime Colors | https://realtimecolors.com/ | See palette applied to a live UI mockup instantly |

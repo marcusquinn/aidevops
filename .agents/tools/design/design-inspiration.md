@@ -166,7 +166,7 @@ the project's DESIGN.md.
 
 ## Colour & Typography Tools
 
-Interactive tools for generating palettes and font pairings. See also `tools/design/colour-palette.md` for the full palette workflow and CLI helper.
+Interactive tools for generating palettes and font pairings. See also `tools/design/colour-palette.md` for the full palette workflow and CLI helper, and `tools/design/font-pairing.md` for choosing, licensing and self-hosting fonts.
 
 | Resource | URL | Description | Pricing |
 |----------|-----|-------------|---------|
@@ -174,7 +174,7 @@ Interactive tools for generating palettes and font pairings. See also `tools/des
 | **Colormind Bootstrap** | http://colormind.io/bootstrap/ | Live Bootstrap theme preview with AI-generated palettes | Free |
 | **Colormind Dashboard** | http://colormind.io/template/paper-dashboard/ | Live dashboard template preview with AI palettes | Free |
 | **Huemint** | https://huemint.com/ | AI colour for brand identity, logos, and web mockups | Free |
-| **Fontjoy** | https://fontjoy.com/ | AI font pairing generator -- finds heading + body + accent combos | Free |
+| **Fontjoy** | https://fontjoy.com/ | AI font pairing generator -- three-face combinations from a 2017 Google Fonts dataset; exploration only, verify licences | Free |
 | **Poolors** | https://poolors.com/ | Discover unique colour combinations that stand out | Free |
 | **Coolors** | https://coolors.co/ | Interactive palette generator with lock, shuffle, and export | Freemium |
 | **Realtime Colors** | https://realtimecolors.com/ | See your palette applied to a live UI mockup instantly | Free |
