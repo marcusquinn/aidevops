@@ -833,7 +833,17 @@ fi
 
 if command -v "$CLI_CMD" &>/dev/null; then
 	echo -e "   ${GREEN}✓ Command found: $(which "$CLI_CMD")${NC}"
-	INSTALLED_VERSION=$("$CLI_CMD" --version 2>/dev/null | head -1 || echo 'unknown')
+	# Capture full output first: piping to head -1 can SIGPIPE the CLI (some
+	# print help after the version) and trigger the fallback under pipefail.
+	_version_output=$("$CLI_CMD" --version 2>/dev/null || true)
+	_version_line="${_version_output%%$'\n'*}"
+	if [[ "$_version_line" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		INSTALLED_VERSION="${BASH_REMATCH[1]}"
+	elif [[ -n "$_version_line" ]]; then
+		INSTALLED_VERSION="$_version_line"
+	else
+		INSTALLED_VERSION="unknown"
+	fi
 	echo "   PATH version: $INSTALLED_VERSION"
 else
 	if [[ "$MCP_NAME" == "$PLAYWRIGHT_MCP_NAME" || "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
