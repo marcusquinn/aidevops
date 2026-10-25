@@ -20,6 +20,10 @@ on:
     types: [closed]
   issues:
     types: [opened, edited, assigned, closed, reopened]
+  # Weekly checkpoint keepalive: re-uploads the newest coordinator checkpoint
+  # before it can age past the organisation artifact retention limit.
+  schedule:
+    - cron: '17 3 * * 1'
   workflow_dispatch:
     inputs:
       command:
@@ -79,5 +83,5 @@ jobs:
     uses: ./.github/workflows/issue-sync-artifact-maintenance-reusable.yml
     secrets: inherit
     with:
-      mode: ${{ vars.AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP == 'apply' && 'apply' || 'plan' }}
+      mode: ${{ vars.AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP == 'plan' && 'plan' || 'apply' }}
       protected_artifact_id: ${{ needs.sync.outputs.coordinator_artifact_id }}

@@ -114,8 +114,19 @@ jobs:
             printf 'available=true\n' >> "$GITHUB_OUTPUT"
           fi
 
+      # Scheduled runs only keep the newest checkpoint alive: when it is older
+      # than the threshold it is re-uploaded unchanged so it never ages past the
+      # organisation or enterprise artifact retention limit. The maintenance job
+      # then prunes the superseded copy.
+      - name: Evaluate coordinator checkpoint keepalive
+        id: coordinator-keepalive
+        if: github.event_name == 'schedule' && steps.coordinator-restore.outputs.available == 'true'
+        env:
+          STATE_DIR: ${{ runner.temp }}/aidevops-coordinator
+        run: bash __aidevops/.agents/scripts/forge-coordinator-state-helper.sh keepalive-due "$STATE_DIR" 10 >> "$GITHUB_OUTPUT"
+
       - name: Ingest event and execute publication queue
-        if: steps.coordinator-restore.outputs.available == 'true' && (github.event_name != 'workflow_dispatch' || inputs.command == 'event')
+        if: steps.coordinator-restore.outputs.available == 'true' && github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.command == 'event')
         env:
           AIDEVOPS_TASK_COORDINATOR_DB: ${{ runner.temp }}/aidevops-coordinator/tasks.db
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -154,7 +165,7 @@ jobs:
 
       - name: Persist durable coordinator state
         id: coordinator-persist
-        if: always() && steps.coordinator-restore.outputs.available == 'true'
+        if: always() && steps.coordinator-restore.outputs.available == 'true' && (github.event_name != 'schedule' || steps.coordinator-keepalive.outputs.due == 'true')
         env:
           AIDEVOPS_TASK_COORDINATOR_DB: ${{ runner.temp }}/aidevops-coordinator/tasks.db
         run: node __aidevops/.agents/scripts/task-coordinator.mjs checkpoint
@@ -167,7 +178,9 @@ jobs:
           name: forge-coordinator-${{ github.repository_id }}
           path: ${{ runner.temp }}/aidevops-coordinator/tasks.db
           if-no-files-found: error
-          retention-days: 90
+          # The weekly keepalive re-uploads the newest checkpoint before it ages
+          # out, so a short window bounds storage without losing idle repos' state.
+          retention-days: 30
 
   sync-on-push:
     name: Sync TODO.md → GitHub Issues

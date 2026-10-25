@@ -45,7 +45,12 @@ assert "steps.coordinator-restore.outputs.available == 'true'" in ingest["if"]
 upload = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Upload durable coordinator state")
 assert upload["id"] == "coordinator-upload"
 assert upload["with"]["name"] == "forge-coordinator-${{ github.repository_id }}"
-assert upload["with"]["retention-days"] == 90
+assert upload["with"]["retention-days"] == 30
+keepalive = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Evaluate coordinator checkpoint keepalive")
+assert keepalive["id"] == "coordinator-keepalive"
+assert "github.event_name == 'schedule'" in keepalive["if"]
+assert "keepalive-due" in keepalive["run"]
+assert "github.event_name != 'schedule'" in ingest["if"]
 assert jobs["forge-event"]["permissions"]["actions"] == "read"
 assert jobs["forge-event"]["outputs"]["coordinator_artifact_id"] == "${{ steps.coordinator-upload.outputs.artifact-id }}"
 assert workflow[True]["workflow_call"]["outputs"]["coordinator_artifact_id"]["value"] == "${{ jobs.forge-event.outputs.coordinator_artifact_id }}"
@@ -63,8 +68,11 @@ for caller in (self_caller, caller_template):
     assert cleanup["needs"] == "sync"
     assert cleanup["with"]["protected_artifact_id"] == "${{ needs.sync.outputs.coordinator_artifact_id }}"
     assert "AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP" in cleanup["with"]["mode"]
+    assert cleanup["with"]["mode"].endswith("'plan' && 'plan' || 'apply' }}")
+    assert caller[True]["schedule"][0]["cron"]
 persist = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Persist durable coordinator state")
 assert persist["id"] == "coordinator-persist"
+assert "coordinator-keepalive.outputs.due == 'true'" in persist["if"]
 assert "steps.coordinator-persist.outcome == 'success'" in upload["if"]
 push_checkout = next(step for step in jobs["sync-on-push"]["steps"] if step.get("name") == "Checkout")
 assert push_checkout["with"]["token"] == "${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}"
@@ -410,7 +418,7 @@ cat >"${test_root}/cleanup-bin/gh" <<'GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_CALL_LOG"
 if [[ "$*" == *"actions/artifacts?name=forge-coordinator-1&per_page=100"* ]]; then
-	printf '%s\n' '[{"artifacts":[{"id":30,"name":"forge-coordinator-1","created_at":"2026-09-20T03:00:00Z","expired":false,"size_in_bytes":300},{"id":20,"name":"forge-coordinator-1","created_at":"2026-09-20T02:00:00Z","expired":false,"size_in_bytes":200},{"id":10,"name":"forge-coordinator-1","created_at":"2026-09-20T01:00:00Z","expired":false,"size_in_bytes":100},{"id":9,"name":"forge-coordinator-other","created_at":"2026-09-20T00:00:00Z","expired":false,"size_in_bytes":900}]}]'
+	printf '%s\n' '{"total_count":3,"artifacts":[{"id":30,"name":"forge-coordinator-1","created_at":"2026-09-20T03:00:00Z","expired":false,"size_in_bytes":300},{"id":20,"name":"forge-coordinator-1","created_at":"2026-09-20T02:00:00Z","expired":false,"size_in_bytes":200},{"id":10,"name":"forge-coordinator-1","created_at":"2026-09-20T01:00:00Z","expired":false,"size_in_bytes":100},{"id":9,"name":"forge-coordinator-other","created_at":"2026-09-20T00:00:00Z","expired":false,"size_in_bytes":900}]}'
 	exit 0
 fi
 if [[ "$*" == *"--method DELETE repos/owner/repo/actions/artifacts/10"* ]]; then
@@ -440,5 +448,52 @@ if GH_CALL_LOG="${test_root}/cleanup-invalid.log" PATH="${test_root}/cleanup-bin
 	printf 'FAIL cleanup accepted a missing protected checkpoint\n' >&2
 	exit 1
 fi
+
+# A large backlog is pruned oldest page first, bounded by the per-run deletion
+# cap, and an isolated DELETE failure does not stop the run.
+mkdir -p "${test_root}/backlog-bin"
+cat >"${test_root}/backlog-bin/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_CALL_LOG"
+if [[ "$*" == *"--method DELETE"* ]]; then
+	if [[ "$*" == *"/artifacts/5" ]]; then
+		printf 'HTTP 500: server error\n' >&2
+		exit 1
+	fi
+	exit 0
+fi
+if [[ "$*" =~ \&page=([0-9]+) ]]; then
+	jq -n --argjson page "${BASH_REMATCH[1]}" \
+		'{total_count: 250, artifacts: ([range(([250 - ($page * 100), 0] | max) + 1; 250 - (($page - 1) * 100) + 1)] | reverse | map({id: ., name: "forge-coordinator-1", created_at: ((1788220800 + .) | todate), expired: false, size_in_bytes: 10}))}'
+	exit 0
+fi
+exit 64
+GH
+chmod +x "${test_root}/backlog-bin/gh"
+: >"${test_root}/backlog.log"
+GH_CALL_LOG="${test_root}/backlog.log" PATH="${test_root}/backlog-bin:${jq_dir}:/usr/bin:/bin" \
+	AIDEVOPS_COORDINATOR_CLEANUP_MAX_DELETES=120 AIDEVOPS_COORDINATOR_CLEANUP_DELETE_DELAY=0 \
+	bash "$STATE_HELPER" cleanup-apply owner/repo 1 250 >"${test_root}/backlog-output" 2>"${test_root}/backlog-err"
+grep -q 'total=250 retained=2 .*deleted=120 skipped=0 failed=1 pages_failed=0 stop=delete_cap' "${test_root}/backlog-output"
+[[ "$(grep -c -- '--method DELETE' "${test_root}/backlog.log")" -eq 121 ]]
+grep -q -- '--method DELETE repos/owner/repo/actions/artifacts/1$' "${test_root}/backlog.log"
+grep -q -- '--method DELETE repos/owner/repo/actions/artifacts/121$' "${test_root}/backlog.log"
+if grep -qE 'DELETE .*artifacts/(122|249|250)$' "${test_root}/backlog.log"; then
+	printf 'FAIL bounded cleanup exceeded its cap or deleted a retained checkpoint\n' >&2
+	exit 1
+fi
+[[ "$(grep -n 'page=3' "${test_root}/backlog.log" | head -1 | cut -d: -f1)" -lt "$(grep -n -- '--method DELETE' "${test_root}/backlog.log" | head -1 | cut -d: -f1)" ]]
+
+# Keepalive is due only for a restored checkpoint at or past the age threshold.
+keepalive_dir="${test_root}/keepalive"
+mkdir -p "$keepalive_dir"
+[[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
+printf '2020-01-01T00:00:00Z\n' >"${keepalive_dir}/.restore-created-at"
+PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10 | grep -qx 'due=true'
+date -u +%Y-%m-%dT%H:%M:%SZ >"${keepalive_dir}/.restore-created-at"
+PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10 | grep -qx 'due=false'
+touch "${keepalive_dir}/.restore-deferred"
+printf '2020-01-01T00:00:00Z\n' >"${keepalive_dir}/.restore-created-at"
+[[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
 
 printf 'PASS forge event workflow is targeted, repository-bound, and repair scans are manual only\n'

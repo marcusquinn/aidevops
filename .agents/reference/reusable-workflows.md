@@ -109,18 +109,25 @@ Issue Sync keeps its normal reusable job at the established `actions: read`
 ceiling. A separate maintenance call owns cross-run artifact deletion so cleanup
 authority cannot make existing mutable `@main` callers fail at workflow startup.
 
-Maintenance is fail-safe and opt-in:
+Maintenance is bounded and prunes by default:
 
 1. Every successful checkpoint upload exposes its artifact ID to the caller.
-2. The maintenance workflow defaults to a read-only plan showing count and bytes.
-3. After an owner reviews that plan, setting the repository variable
-   `AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP=apply` enables deletion.
-4. Apply always retains the artifact produced by the completed run plus one
+2. The maintenance workflow defaults to `apply`. Setting the repository variable
+   `AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP=plan` switches to a read-only plan.
+3. Apply always retains the artifact produced by the completed run plus one
    newest fallback. A missing or mismatched protected artifact stops deletion.
+4. Each run pages the inventory oldest-first and deletes while paging. It caps
+   deletions (`AIDEVOPS_COORDINATOR_CLEANUP_MAX_DELETES`, default 400) and wall
+   time (`AIDEVOPS_COORDINATOR_CLEANUP_MAX_SECONDS`, default 420), paces DELETEs
+   below the secondary rate limit, and continues past isolated failures, so a
+   large backlog shrinks on every run.
+5. Checkpoints upload with `retention-days: 30`. A weekly `schedule:` run in the
+   caller restores the newest checkpoint and, when it is at least 10 days old,
+   re-uploads it unchanged, so an idle repository never loses its only
+   checkpoint to the organisation retention limit.
 
-Run `aidevops sync-workflows --apply` to install the maintenance job in existing
-callers. Review at least one successful plan before enabling the repository
-variable. Removing the variable returns maintenance to read-only planning.
+Run `aidevops sync-workflows --apply` to install the schedule and maintenance job
+in existing callers.
 
 ## Pinning strategies
 
