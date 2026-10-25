@@ -234,7 +234,7 @@ main() {
 		return 1
 	fi
 	shift
-	local site="${1:-}" marked=0 runtime_flags=0
+	local site="${1:-}"
 	[[ -n "$site" ]] || {
 		usage
 		return 1
@@ -265,6 +265,14 @@ main() {
 		PLANNER=$(cd "$PLANNER" && pwd)
 		shift
 	fi
+	parse_options "$@" || return 1
+	prepare_runtime "$site" || return 1
+	dispatch_command "$command"
+	return $?
+}
+
+parse_options() {
+	local marked=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
@@ -284,19 +292,15 @@ main() {
 			--base) BASE_REF="$value" ;;
 			--php)
 				PHP_BIN="$value"
-				runtime_flags=$((runtime_flags + 1))
 				;;
 			--php-ini)
 				PHP_INI="$value"
-				runtime_flags=$((runtime_flags + 1))
 				;;
 			--wp-cli)
 				WP_CLI="$value"
-				runtime_flags=$((runtime_flags + 1))
 				;;
 			--mysql-bin)
 				MYSQL_BIN="$value"
-				runtime_flags=$((runtime_flags + 1))
 				;;
 			esac
 			shift 2
@@ -311,6 +315,11 @@ main() {
 		print_error 'Requires --fixture and --user'
 		return 1
 	}
+	return 0
+}
+
+prepare_runtime() {
+	local site="$1"
 	local config="$HOME/.config/aidevops/wordpress-sites.json"
 	# Project only the selected site's allowed fields; never print registries.
 	SITE_PATH=$(jq -er --arg site "$site" '.sites[$site] | select(.type == "localwp" and .verification_fixture == true) | .path | select(type == "string" and length > 0)' "$config") || {
@@ -323,8 +332,8 @@ main() {
 		return 1
 	}
 	SITE_PATH=$(cd "$SITE_PATH" && pwd)
-	if [[ "$runtime_flags" -ne 0 ]]; then
-		[[ "$runtime_flags" -eq 4 && -x "$PHP_BIN" && -f "$PHP_INI" && -f "$WP_CLI" && -d "$MYSQL_BIN" ]] || {
+	if [[ -n "$PHP_BIN$PHP_INI$WP_CLI$MYSQL_BIN" ]]; then
+		[[ -x "$PHP_BIN" && -f "$PHP_INI" && -f "$WP_CLI" && -d "$MYSQL_BIN" ]] || {
 			print_error 'Supply all four valid Local runtime paths'
 			return 1
 		}
@@ -334,6 +343,11 @@ main() {
 			return 1
 		}
 	fi
+	return 0
+}
+
+dispatch_command() {
+	local command="$1"
 	local root="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$root"
 	root=$(cd "$root" && pwd)
