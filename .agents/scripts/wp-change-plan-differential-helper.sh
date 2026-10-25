@@ -65,7 +65,7 @@ if ( 'create' === $action ) {
     if ( file_exists( $file ) ) { WP_CLI::error( 'Fixture already exists' ); }
     $token = 'wpcp-' . strtolower( wp_generate_password( 16, false, false ) );
     // Persist each created id immediately so a partial creation is recoverable.
-    $data = array( 'token' => $token, 'post' => 0, 'slugs' => array() );
+    $data = array( 'token' => $token, 'post' => 0, 'slugs' => array(), 'complete' => false );
     save_json( $file, $data );
     foreach ( array( 'a', 'b', 'unused' ) as $suffix ) {
         $slug = $token . '-' . $suffix;
@@ -79,20 +79,34 @@ if ( 'create' === $action ) {
     save_json( $file, $data );
     checked( wp_set_object_terms( $data['post'], array( $data['slugs'][0] ), 'category' ) );
     checked( update_post_meta( $data['post'], 'wpcp_fixture', 'original' ) );
+    $data['complete'] = true;
+    save_json( $file, $data );
 }
 $data = json_decode( file_get_contents( $file ), true );
 if ( ! is_array( $data ) || ! preg_match( '/^wpcp-[a-z0-9]{16}$/D', $data['token'] ?? '' ) ) {
     WP_CLI::error( 'Invalid fixture manifest' );
 }
 $post = get_post( $data['post'] );
-if ( ! $post || $post->post_name !== $data['token'] ) { WP_CLI::error( 'Fixture post identity differs; inspect artifacts' ); }
+if ( $post && $post->post_name !== $data['token'] ) { WP_CLI::error( 'Fixture post identity differs; inspect artifacts' ); }
 $terms = array();
 foreach ( $data['slugs'] as $slug ) {
     if ( 0 !== strpos( $slug, $data['token'] . '-' ) ) { WP_CLI::error( 'Invalid fixture term identity' ); }
     $term = get_term_by( 'slug', $slug, 'category' );
+    if ( ! $term && 'cleanup' === $action ) { continue; }
     if ( ! $term ) { WP_CLI::error( 'Fixture term missing; restore from retained backup before continuing' ); }
     $terms[] = $term;
 }
+if ( 'cleanup' === $action ) {
+    // Normal cleanup must first pass the shell's snapshot check. Partial create
+    // and interrupted cleanup can resume using the persisted identities only.
+    if ( $data['complete'] && ! file_exists( $dir . '/cleanup.started' ) ) {
+        WP_CLI::error( 'Complete fixtures require a verified starting snapshot before cleanup' );
+    }
+    foreach ( $terms as $term ) { checked( wp_delete_term( $term->term_id, 'category' ) ); }
+    if ( $post ) { checked( wp_delete_post( $post->ID, true ) ); }
+    return;
+}
+if ( ! $post ) { WP_CLI::error( 'Fixture post is missing; inspect artifacts' ); }
 $snapshot = array( 'post' => array_intersect_key( (array) $post, array_flip( array(
     'post_title', 'post_name', 'post_status', 'post_excerpt', 'post_content', 'post_date', 'post_date_gmt' ) ) ),
     'meta' => get_post_meta( $post->ID, 'wpcp_fixture', false ),
@@ -114,10 +128,6 @@ if ( 'plan' === $action ) {
             'meta' => array( 'wpcp_fixture' => array( 'original', 'changed' ) ) ) ) ) );
     save_json( $dir . '/delete.json', array( 'delete_terms' => array( array(
         'taxonomy' => 'category', 'id' => $terms[2]->term_id, 'slug' => $terms[2]->slug ) ) ) );
-}
-if ( 'cleanup' === $action ) {
-    checked( wp_delete_post( $post->ID, true ) );
-    foreach ( $terms as $term ) { checked( wp_delete_term( $term->term_id, 'category' ) ); }
 }
 PHP
 	return 0
@@ -173,7 +183,8 @@ compare_versions() {
 	while IFS= read -r relative; do
 		case "$relative" in
 		.agents/scripts/wp-change-plan*.php)
-			git -C "$repo" show "$BASE_REF:$relative" >"$comparison/base/${relative##*/}" || return 1 ;;
+			git -C "$repo" show "$BASE_REF:$relative" >"$comparison/base/${relative##*/}" || return 1
+			;;
 		esac
 	done < <(git -C "$repo" ls-tree -r --name-only "$BASE_REF" -- .agents/scripts)
 	for file in "$SCRIPT_DIR"/wp-change-plan*.php; do
@@ -206,10 +217,16 @@ PY
 
 main() {
 	local command="${1:-help}"
-	[[ "$command" != help && "$command" != --help ]] || { usage; return 0; }
+	[[ "$command" != help && "$command" != --help ]] || {
+		usage
+		return 0
+	}
 	case "$command" in
-	create|compare|round|cleanup) ;;
-	*) usage; return 1 ;;
+	create | compare | round | cleanup) ;;
+	*)
+		usage
+		return 1
+		;;
 	esac
 	# Reject CI before reading configuration or invoking ANY WordPress command.
 	if [[ -n "${CI:-}${GITHUB_ACTIONS:-}${GITLAB_CI:-}${JENKINS_URL:-}${BUILD_BUILDID:-}${CIRCLECI:-}" ]]; then
@@ -218,55 +235,104 @@ main() {
 	fi
 	shift
 	local site="${1:-}" marked=0 runtime_flags=0
-	[[ -n "$site" ]] || { usage; return 1; }
+	[[ -n "$site" ]] || {
+		usage
+		return 1
+	}
 	shift
-	ARTIFACTS=""; PLANNER=""; BASE_REF="origin/main"
-	PHP_BIN=""; PHP_INI=""; WP_CLI=""; MYSQL_BIN=""; WP_USER=""
+	ARTIFACTS=""
+	PLANNER=""
+	BASE_REF="origin/main"
+	PHP_BIN=""
+	PHP_INI=""
+	WP_CLI=""
+	MYSQL_BIN=""
+	WP_USER=""
 	if [[ "$command" != create ]]; then
 		ARTIFACTS="${1:-}"
-		[[ -n "$ARTIFACTS" ]] || { usage; return 1; }
+		[[ -n "$ARTIFACTS" ]] || {
+			usage
+			return 1
+		}
 		shift
 	fi
 	if [[ "$command" == round ]]; then
 		PLANNER="${1:-}"
-		[[ -d "$PLANNER" ]] || { usage; return 1; }
+		[[ -d "$PLANNER" ]] || {
+			usage
+			return 1
+		}
 		PLANNER=$(cd "$PLANNER" && pwd)
 		shift
 	fi
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
-		--fixture) marked=1; shift; continue ;;
-		--user|--base|--php|--php-ini|--wp-cli|--mysql-bin)
+		--fixture)
+			marked=1
+			shift
+			continue
+			;;
+		--user | --base | --php | --php-ini | --wp-cli | --mysql-bin)
 			local value="${2:-}"
-			[[ $# -ge 2 && -n "$value" ]] || { print_error "Missing value: $arg"; return 1; }
+			[[ $# -ge 2 && -n "$value" ]] || {
+				print_error "Missing value: $arg"
+				return 1
+			}
 			case "$arg" in
 			--user) WP_USER="$value" ;;
 			--base) BASE_REF="$value" ;;
-			--php) PHP_BIN="$value"; runtime_flags=$((runtime_flags + 1)) ;;
-			--php-ini) PHP_INI="$value"; runtime_flags=$((runtime_flags + 1)) ;;
-			--wp-cli) WP_CLI="$value"; runtime_flags=$((runtime_flags + 1)) ;;
-			--mysql-bin) MYSQL_BIN="$value"; runtime_flags=$((runtime_flags + 1)) ;;
+			--php)
+				PHP_BIN="$value"
+				runtime_flags=$((runtime_flags + 1))
+				;;
+			--php-ini)
+				PHP_INI="$value"
+				runtime_flags=$((runtime_flags + 1))
+				;;
+			--wp-cli)
+				WP_CLI="$value"
+				runtime_flags=$((runtime_flags + 1))
+				;;
+			--mysql-bin)
+				MYSQL_BIN="$value"
+				runtime_flags=$((runtime_flags + 1))
+				;;
 			esac
-			shift 2 ;;
-		*) print_error "Unknown option: $arg"; return 1 ;;
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $arg"
+			return 1
+			;;
 		esac
 	done
-	[[ "$marked" -eq 1 && -n "$WP_USER" ]] || { print_error 'Requires --fixture and --user'; return 1; }
+	[[ "$marked" -eq 1 && -n "$WP_USER" ]] || {
+		print_error 'Requires --fixture and --user'
+		return 1
+	}
 	local config="$HOME/.config/aidevops/wordpress-sites.json"
 	# Project only the selected site's allowed fields; never print registries.
 	SITE_PATH=$(jq -er --arg site "$site" '.sites[$site] | select(.type == "localwp" and .verification_fixture == true) | .path | select(type == "string" and length > 0)' "$config") || {
-		print_error 'Requires a configured localwp site marked verification_fixture=true'; return 1;
+		print_error 'Requires a configured localwp site marked verification_fixture=true'
+		return 1
 	}
 	SITE_PATH="${SITE_PATH/#\~/$HOME}"
-	[[ -d "$SITE_PATH" ]] || { print_error 'LocalWP site path is missing'; return 1; }
+	[[ -d "$SITE_PATH" ]] || {
+		print_error 'LocalWP site path is missing'
+		return 1
+	}
 	SITE_PATH=$(cd "$SITE_PATH" && pwd)
 	if [[ "$runtime_flags" -ne 0 ]]; then
 		[[ "$runtime_flags" -eq 4 && -x "$PHP_BIN" && -f "$PHP_INI" && -f "$WP_CLI" && -d "$MYSQL_BIN" ]] || {
-			print_error 'Supply all four valid Local runtime paths'; return 1;
+			print_error 'Supply all four valid Local runtime paths'
+			return 1
 		}
 	else
-		command -v wp >/dev/null || { print_error 'Run from a Local site shell or supply all four runtime flags'; return 1; }
+		command -v wp >/dev/null || {
+			print_error 'Run from a Local site shell or supply all four runtime flags'
+			return 1
+		}
 	fi
 	local root="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$root"
@@ -276,20 +342,39 @@ main() {
 		ARTIFACTS=$(mktemp -d "$root/wp-change-plan-differential.XXXXXX")
 		printf '%s\n' "$SITE_PATH" >"$ARTIFACTS/site-path.txt"
 		write_fixture_tool
-		fixture create >"$ARTIFACTS/starting.json" || { print_error "Partial fixture retained: $ARTIFACTS"; return 1; }
+		fixture create >"$ARTIFACTS/starting.json" || {
+			print_error "Partial fixture retained: $ARTIFACTS"
+			return 1
+		}
 		printf 'ARTIFACTS: %s\n' "$ARTIFACTS"
 		return 0
 	fi
-	[[ -d "$ARTIFACTS" ]] || { print_error 'Artifact directory is missing'; return 1; }
+	[[ -d "$ARTIFACTS" ]] || {
+		print_error 'Artifact directory is missing'
+		return 1
+	}
 	ARTIFACTS=$(cd "$ARTIFACTS" && pwd)
 	[[ "$ARTIFACTS" == "$root"/wp-change-plan-differential.* && -f "$ARTIFACTS/starting.json" && "$(<"$ARTIFACTS/site-path.txt")" == "$SITE_PATH" ]] || {
-		print_error 'Artifact directory does not belong to this fixture site'; return 1;
+		print_error 'Artifact directory does not belong to this fixture site'
+		return 1
 	}
 	case "$command" in
-	compare) command -v python3 >/dev/null || return 1; compare_versions ;;
+	compare)
+		command -v python3 >/dev/null || return 1
+		compare_versions
+		;;
 	round) run_round "$PLANNER" "$ARTIFACTS/round-$(date -u +%Y%m%dT%H%M%SZ)-$$" ;;
-	cleanup) verify_snapshot "$ARTIFACTS/cleanup.before.json" && fixture cleanup ;;
-	*) usage; return 1 ;;
+	cleanup)
+		if [[ ! -f "$ARTIFACTS/cleanup.started" ]] && ! jq -e '.complete == false' "$ARTIFACTS/fixture.json" >/dev/null; then
+			verify_snapshot "$ARTIFACTS/cleanup.before.json" || return 1
+			printf 'Starting snapshot verified\n' >"$ARTIFACTS/cleanup.started"
+		fi
+		fixture cleanup
+		;;
+	*)
+		usage
+		return 1
+		;;
 	esac
 	return $?
 }

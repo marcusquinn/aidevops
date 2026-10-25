@@ -148,7 +148,9 @@ restore from its emitted backup, and a non-restored snapshot stops subsequent
 rounds. For interruption or missing backup, inspect the retained logs/backup and
 restore the fixture before retrying; do not run cleanup blindly. `cleanup`
 requires a matching starting snapshot before deleting only the created fixture;
-it retains the evidence directory. Exit zero from `compare` means no output
+it retains the evidence directory. It can also remove a partially created fixture
+using the persisted object identities, or resume an interrupted cleanup whose
+starting snapshot was already verified. Exit zero from `compare` means no output
 differences **and** restored fixture values. No live site is used for verification.
 
 ## Traps Met on Production Sites
