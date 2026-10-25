@@ -482,16 +482,18 @@ if grep -qE 'DELETE .*artifacts/(122|249|250)$' "${test_root}/backlog.log"; then
 	printf 'FAIL bounded cleanup exceeded its cap or deleted a retained checkpoint\n' >&2
 	exit 1
 fi
-[[ "$(grep -n 'page=3' "${test_root}/backlog.log" | head -1 | cut -d: -f1)" -lt "$(grep -n -- '--method DELETE' "${test_root}/backlog.log" | head -1 | cut -d: -f1)" ]]
+page3_line="$(awk '/page=3/ { print NR; exit }' "${test_root}/backlog.log")"
+delete_line="$(awk '/--method DELETE/ { print NR; exit }' "${test_root}/backlog.log")"
+[[ "$page3_line" -lt "$delete_line" ]]
 
 # Keepalive is due only for a restored checkpoint at or past the age threshold.
 keepalive_dir="${test_root}/keepalive"
 mkdir -p "$keepalive_dir"
 [[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
 printf '2020-01-01T00:00:00Z\n' >"${keepalive_dir}/.restore-created-at"
-PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10 | grep -qx 'due=true'
+[[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=true" ]]
 date -u +%Y-%m-%dT%H:%M:%SZ >"${keepalive_dir}/.restore-created-at"
-PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10 | grep -qx 'due=false'
+[[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
 touch "${keepalive_dir}/.restore-deferred"
 printf '2020-01-01T00:00:00Z\n' >"${keepalive_dir}/.restore-created-at"
 [[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
