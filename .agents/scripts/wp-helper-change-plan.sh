@@ -31,7 +31,7 @@ WPCP_AUTH=()
 WPCP_TARGET=""
 WPCP_MODE_RESTORE="restore"
 # The entrypoint first, then the siblings it loads from its own directory.
-WPCP_PHP_FILES=(wp-change-plan.php wp-change-plan-values.php wp-change-plan-term-usage.php)
+WPCP_PHP_FILES=(wp-change-plan.php wp-change-plan-values.php wp-change-plan-term-usage.php wp-change-plan-writer.php wp-change-plan-reader.php)
 WPCP_USAGE="Usage: wp-helper.sh --change-plan <site> PLAN.json [apply | restore BACKUP.json] [--user=<id>]"
 
 # Private output directory for one run: run.log and the backup copy.
