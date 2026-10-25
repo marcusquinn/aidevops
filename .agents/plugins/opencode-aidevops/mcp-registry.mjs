@@ -25,6 +25,10 @@ const PLAYWRITER_AUTHENTICATED_RELAY_LAUNCHER = fileURLToPath(
 const BROWSER_MCP_LAUNCHER = fileURLToPath(
   new URL("../../scripts/browser-mcp-launcher.sh", import.meta.url),
 );
+// GH#35617: Playwright (not Playwriter) init-page hook for headed-hidden mode.
+const PLAYWRIGHT_HEADED_HIDDEN_INIT = fileURLToPath(
+  new URL("../../scripts/playwright-headed-hidden-init.cjs", import.meta.url),
+);
 
 const MCP_ROOTS_FILTER = fileURLToPath(
   new URL("../../scripts/mcp-roots-filter.mjs", import.meta.url),
@@ -49,15 +53,30 @@ function headlessPlaywrightRuntime() {
   return headlessFlag || workerOrigin || Boolean(process.env.AIDEVOPS_WORKER_ID);
 }
 
+/**
+ * Standalone Playwright window mode: AIDEVOPS_PLAYWRIGHT_HEADED unset/0 is
+ * headless, 1/true/yes is headed, and `hidden` is headed with every window
+ * minimised (GH#35617). Headless runtimes always stay headless.
+ * @param {boolean} headlessRuntime
+ * @returns {"headless" | "headed" | "hidden"}
+ */
+function playwrightWindowMode(headlessRuntime) {
+  if (headlessRuntime) return "headless";
+  const value = (process.env.AIDEVOPS_PLAYWRIGHT_HEADED || "").trim().toLowerCase();
+  if (value === "hidden") return "hidden";
+  return envFlagEnabled("AIDEVOPS_PLAYWRIGHT_HEADED") ? "headed" : "headless";
+}
+
 function playwrightMcpCommand() {
   const headlessRuntime = headlessPlaywrightRuntime();
   const extensionRequested = envFlagEnabled("PLAYWRIGHT_MCP_EXTENSION") && !headlessRuntime;
-  const headedStandalone = envFlagEnabled("AIDEVOPS_PLAYWRIGHT_HEADED") && !headlessRuntime;
+  const windowMode = playwrightWindowMode(headlessRuntime);
   const standaloneExecutable = extensionRequested ? "" : preferredPlaywrightExecutable();
   const modeArgs = extensionRequested
     ? ["--extension"]
     : [
-      ...(headedStandalone ? [] : ["--headless"]),
+      ...(windowMode === "headless" ? ["--headless"] : []),
+      ...(windowMode === "hidden" ? ["--init-page", PLAYWRIGHT_HEADED_HIDDEN_INIT] : []),
       "--isolated",
       ...(standaloneExecutable ? ["--executable-path", standaloneExecutable] : []),
     ];
@@ -225,10 +244,11 @@ export function getMcpRegistry() {
       agentSource: ["tools", "browser", "playwriter.md"],
       activationGuidance: [
         "Use this legacy compatibility MCP only when the user explicitly requests Playwriter.",
+        "Playwriter (the playwriter@ extension relay) is not Playwright (@playwright/mcp). If the user's own words name Playwright, or the request reached you through a parent paraphrase without the user writing 'Playwriter', stop before connecting and return: use @playwright instead (GH#35617).",
         "If Playwriter reports no approved tab or a disconnected extension, do not claim the tools are missing or repeat its 'click the icon' text: before disconnecting, run ~/.aidevops/agents/scripts/mcp-diagnose.sh playwriter and report its 'Relay extension state' verdict (GH#34648).",
       ],
       modelTier: "standard",
-      description: "Legacy Playwriter compatibility for explicit requests",
+      description: "Legacy Playwriter extension relay (NOT Playwright); only when the user explicitly names Playwriter",
     },
     {
       name: "context7",
@@ -453,7 +473,7 @@ export function getMcpRegistry() {
       modelTier: "standard",
       requiresManagedWorkspace: true,
       alwaysOverwrite: true,
-      description: "Cross-browser test automation",
+      description: "Default browser automation: Playwright (NOT Playwriter), headless, headed or headed-hidden",
     },
     {
       name: "gsc",

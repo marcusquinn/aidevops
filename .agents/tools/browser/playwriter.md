@@ -1,5 +1,5 @@
 ---
-description: Legacy Playwriter MCP compatibility for explicitly requested existing setups
+description: Legacy Playwriter (NOT Playwright) extension relay; only when the user explicitly names Playwriter
 mode: subagent
 tools:
   read: true
@@ -23,7 +23,9 @@ mcp:
 
 ## Quick Reference
 
-> **Legacy compatibility only:** Do not recommend Playwriter for new setups or select it automatically. Use standalone Playwright with Brave preferred for normal headed/headless work; Microsoft's Playwright Extension is only for interactive user-browser access. Use `@playwriter` only when the user explicitly requests an existing Playwriter setup.
+> **Legacy compatibility only:** Do not recommend Playwriter for new setups or select it automatically. Use standalone Playwright with Brave preferred for headless, headed-hidden and headed work (`playwright.md` "Window modes"); Microsoft's Playwright Extension is only for interactive user-browser access. Use `@playwriter` only when the user explicitly requests an existing Playwriter setup.
+>
+> **Playwriter is not Playwright.** The names differ by a few letters, so check the user's exact word before routing here. "Playwright", "browser", "headless", "headed" or a parent's paraphrase never selects Playwriter, and the user's spelling is never "corrected" into Playwriter. Playwriter is also slower to start: it needs a relay plus a click on the extension in the user's tab (see [Selected-tab handoff order](#selected-tab-handoff-order)). When in doubt, use `@playwright`.
 
 - **Purpose**: Browser automation via Chrome extension — full Playwright API
 - **Extension**: [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) (Chrome, Brave, Edge)

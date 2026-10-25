@@ -559,6 +559,26 @@ test("keeps token-only work standalone and supports a separate headed Brave proc
     assert.ok(config.mcp.playwright.command.includes("--executable-path"));
     assert.ok(config.mcp.playwright.command.includes(braveExecutable));
     assert.ok(!config.mcp.playwright.command.includes("test-only-placeholder"));
+    assert.ok(!config.mcp.playwright.command.includes("--init-page"));
+
+    // GH#35617: headed-hidden keeps a headed browser and minimises its windows.
+    process.env.AIDEVOPS_PLAYWRIGHT_HEADED = "hidden";
+    const hiddenConfig = {};
+    registerMcpServers(hiddenConfig, { runtime });
+    const hiddenCommand = hiddenConfig.mcp.playwright.command;
+    assert.ok(!hiddenCommand.includes("--headless"));
+    assert.ok(hiddenCommand.includes("--isolated"));
+    const initPage = hiddenCommand[hiddenCommand.indexOf("--init-page") + 1];
+    assert.match(initPage, /scripts\/playwright-headed-hidden-init\.cjs$/);
+    assert.ok(existsSync(initPage));
+
+    process.env.AIDEVOPS_SESSION_ORIGIN = "worker";
+    const hiddenWorkerConfig = {};
+    registerMcpServers(hiddenWorkerConfig, { runtime });
+    assert.ok(hiddenWorkerConfig.mcp.playwright.command.includes("--headless"));
+    assert.ok(!hiddenWorkerConfig.mcp.playwright.command.includes("--init-page"));
+    process.env.AIDEVOPS_SESSION_ORIGIN = "interactive";
+    process.env.AIDEVOPS_PLAYWRIGHT_HEADED = "1";
 
     const invalidExecutable = join(root, "missing-brave");
     process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE = invalidExecutable;

@@ -54,8 +54,8 @@ npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile
 
 | MCP | Tokens | Activation | When to enable |
 |-----|--------|------------|----------------|
-| `playwright` | Varies | `@playwright` calls `aidevops_mcp` | Isolated automation or official extension mode needed |
-| `playwriter` | ~3K | Explicit legacy `@playwriter` request only | Existing compatibility setup only |
+| `playwright` | Varies | `@playwright` calls `aidevops_mcp` | Default browser automation (Playwright, not Playwriter): headless, headed-hidden or headed |
+| `playwriter` | ~3K | Explicit legacy `@playwriter` request only | Only when the user names Playwriter (not Playwright) |
 | `google-analytics-mcp` | ~800 | Disabled by default | Analytics reporting |
 | `context7` | ~800 | Disabled by default | Library docs lookup |
 
@@ -161,7 +161,7 @@ In `opencode.json`, MCP tools are denied globally and granted only to an owning 
 }
 ```
 
-Select `@playwright` from OpenCode agent autocomplete rather than enabling Playwright globally or pasting a literal `@playwright` string. Its first step connects only the registry entry named `playwright`; the next step receives `playwright_*` tools. A wrong-agent activation request has no MCP lifecycle side effect. Normal headed/headless work launches a separate isolated browser and prefers Brave when available. Extension mode is an interactive-only exception: it requires `PLAYWRIGHT_MCP_EXTENSION=1`, is blocked by headless-runtime markers, and may receive `PLAYWRIGHT_MCP_EXTENSION_TOKEN` through secure injection. A token alone does not change modes. Select `@playwriter` from autocomplete only when the user explicitly requests a legacy Playwriter setup.
+Select `@playwright` from OpenCode agent autocomplete rather than enabling Playwright globally or pasting a literal `@playwright` string. Its first step connects only the registry entry named `playwright`; the next step receives `playwright_*` tools. A wrong-agent activation request has no MCP lifecycle side effect. Normal headless, headed-hidden and headed work launches a separate isolated browser and prefers Brave when available (`tools/browser/playwright.md` "Window modes"). Extension mode is an interactive-only exception: it requires `PLAYWRIGHT_MCP_EXTENSION=1`, is blocked by headless-runtime markers, and may receive `PLAYWRIGHT_MCP_EXTENSION_TOKEN` through secure injection. A token alone does not change modes. Select `@playwriter` from autocomplete only when the user explicitly requests a legacy Playwriter setup.
 
 ## Future: includeTools Filtering
 
