@@ -38,28 +38,6 @@ write_fake_commands() {
 	cat >"${bin_dir}/gh" <<'GH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
-    printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
-    exit 0
-fi
-if [[ "${1:-}" == api && "${2:-}" == /repos/*/contents/CloudronVersions.json* ]]; then
-    [[ "${MONITOR_CATALOG_STATE:-}" != error ]] || exit 1
-    if [[ "${MONITOR_CATALOG_STATE:-}" == published ]]; then
-        printf '%s\n' '{"versions":{"1.0.0":{}}}'
-    else
-        printf '%s\n' '{"versions":{}}'
-    fi
-    exit 0
-fi
-if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/workflows/cloudron-catalog-publish.yml/runs* ]]; then
-    printf '%s\n' "${MONITOR_ACTIVE_RUNS:-0}"
-    exit 0
-fi
-if [[ "${1:-}" == workflow && "${2:-}" == run ]]; then
-    printf 'DISPATCH %s\n' "$*" >>"${MONITOR_TEST_LOG}"
-    [[ "${MONITOR_DISPATCH_FAIL:-false}" != true ]] || exit 1
-    exit 0
-fi
 if [[ "${1:-}" == "api" && ( "$*" == *releases\?per_page=100* || "$*" == *tags\?per_page=100* ) ]]; then
     endpoint=""
     for arg in "$@"; do
@@ -153,7 +131,38 @@ fi
 exit 1
 GH
 	write_fake_issue_wrapper "$bin_dir"
+	write_fake_catalog_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh"
+	return 0
+}
+
+write_fake_catalog_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'CATALOG'
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
+    printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/contents/CloudronVersions.json* ]]; then
+    [[ "${MONITOR_CATALOG_STATE:-}" != error ]] || exit 1
+    if [[ "${MONITOR_CATALOG_STATE:-}" == published ]]; then
+        printf '%s\n' '{"versions":{"1.0.0":{}}}'
+    else
+        printf '%s\n' '{"versions":{}}'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/workflows/cloudron-catalog-publish.yml/runs* ]]; then
+    printf '%s\n' "${MONITOR_ACTIVE_RUNS:-0}"
+    exit 0
+fi
+if [[ "${1:-}" == workflow && "${2:-}" == run ]]; then
+    printf 'DISPATCH %s\n' "$*" >>"${MONITOR_TEST_LOG}"
+    [[ "${MONITOR_DISPATCH_FAIL:-false}" != true ]] || exit 1
+    exit 0
+fi
+CATALOG
+	return 0
 }
 
 # Label inventory/create stubs, appended to the gh-source file the gh stub sources.
