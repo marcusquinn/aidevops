@@ -52,7 +52,8 @@ load_config() {
 
 # Get account configuration
 get_account_config() {
-    local account_name="$command"
+    local account_name="$1"
+    load_config
     
     if [[ -z "$account_name" ]]; then
         print_error "Account name is required"
@@ -74,9 +75,10 @@ get_account_config() {
 
 # Set AWS credentials for account
 set_aws_credentials() {
-    local account_name="$command"
+    local account_name="$1"
     local config
     config=$(get_account_config "$account_name")
+    check_aws_cli
     
     export AWS_ACCESS_KEY_ID=$(echo "$config" | jq -r '.aws_access_key_id')
     export AWS_SECRET_ACCESS_KEY=$(echo "$config" | jq -r '.aws_secret_access_key')
@@ -104,7 +106,7 @@ list_accounts() {
 
 # Get sending quota
 get_sending_quota() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
     
     print_info "Getting sending quota for account: $account_name"
@@ -114,7 +116,7 @@ get_sending_quota() {
 
 # Get sending statistics
 get_sending_statistics() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
     
     print_info "Getting sending statistics for account: $account_name"
@@ -124,7 +126,7 @@ get_sending_statistics() {
 
 # List verified email addresses
 list_verified_emails() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
     
     print_info "Verified email addresses for account: $account_name"
@@ -134,7 +136,7 @@ list_verified_emails() {
 
 # List verified domains
 list_verified_domains() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
 
     print_info "Verified domains for account: $account_name"
@@ -144,8 +146,8 @@ list_verified_domains() {
 
 # Get identity verification attributes
 get_identity_verification() {
-    local account_name="$command"
-    local identity="$account_name"
+    local account_name="$1"
+    local identity="$2"
     set_aws_credentials "$account_name"
     
     if [[ -z "$identity" ]]; then
@@ -160,7 +162,7 @@ get_identity_verification() {
 
 # Get reputation
 get_reputation() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
     
     print_info "Getting account reputation for: $account_name"
@@ -173,7 +175,7 @@ get_reputation() {
 
 # List suppressed destinations (bounces/complaints)
 list_suppressed_destinations() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
 
     print_info "Suppressed destinations (bounces/complaints) for account: $account_name"
@@ -183,8 +185,8 @@ list_suppressed_destinations() {
 
 # Get suppression list details
 get_suppression_details() {
-    local account_name="$command"
-    local email="$account_name"
+    local account_name="$1"
+    local email="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$email" ]]; then
@@ -199,8 +201,8 @@ get_suppression_details() {
 
 # Remove from suppression list
 remove_from_suppression() {
-    local account_name="$command"
-    local email="$account_name"
+    local account_name="$1"
+    local email="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$email" ]]; then
@@ -222,11 +224,11 @@ remove_from_suppression() {
 
 # Send test email
 send_test_email() {
-    local account_name="$command"
-    local from_email="$account_name"
-    local to_email="$target"
-    local subject="$options"
-    local body="$param5"
+    local account_name="$1"
+    local from_email="$2"
+    local to_email="$3"
+    local subject="${4:-}"
+    local body="${5:-}"
     set_aws_credentials "$account_name"
 
     if [[ -z "$from_email" || -z "$to_email" ]]; then
@@ -257,7 +259,7 @@ send_test_email() {
 
 # Get configuration sets
 list_configuration_sets() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
 
     print_info "Configuration sets for account: $account_name"
@@ -267,8 +269,8 @@ list_configuration_sets() {
 
 # Get bounce and complaint notifications
 get_bounce_complaint_notifications() {
-    local account_name="$command"
-    local identity="$account_name"
+    local account_name="$1"
+    local identity="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$identity" ]]; then
@@ -283,8 +285,8 @@ get_bounce_complaint_notifications() {
 
 # Verify email address
 verify_email() {
-    local account_name="$command"
-    local email="$account_name"
+    local account_name="$1"
+    local email="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$email" ]]; then
@@ -305,8 +307,8 @@ verify_email() {
 
 # Verify domain
 verify_domain() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$domain" ]]; then
@@ -331,8 +333,8 @@ verify_domain() {
 
 # Get DKIM attributes
 get_dkim_attributes() {
-    local account_name="$command"
-    local identity="$account_name"
+    local account_name="$1"
+    local identity="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$identity" ]]; then
@@ -347,8 +349,8 @@ get_dkim_attributes() {
 
 # Enable DKIM
 enable_dkim() {
-    local account_name="$command"
-    local identity="$account_name"
+    local account_name="$1"
+    local identity="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$identity" ]]; then
@@ -370,7 +372,7 @@ enable_dkim() {
 
 # Monitor email delivery
 monitor_delivery() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
 
     print_info "Email delivery monitoring for account: $account_name"
@@ -396,7 +398,7 @@ monitor_delivery() {
 
 # Audit SES configuration
 audit_configuration() {
-    local account_name="$command"
+    local account_name="$1"
     set_aws_credentials "$account_name"
 
     print_info "SES Configuration Audit for account: $account_name"
@@ -423,8 +425,8 @@ audit_configuration() {
 
 # Debug delivery issues
 debug_delivery() {
-    local account_name="$command"
-    local email="$account_name"
+    local account_name="$1"
+    local email="$2"
     set_aws_credentials "$account_name"
 
     if [[ -z "$email" ]]; then
@@ -497,31 +499,14 @@ show_help() {
 
 # Main script logic
 main() {
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    # Assign positional parameters to local variables
-    local identity="$target"
-    local destination="$options"
-    local subject="$param5"
-    local body="$param6"
+    local subcommand="${1:-help}"
+    local account_name="${2:-}"
+    local identity="${3:-}"
+    local destination="${4:-}"
+    local subject="${5:-}"
+    local body="${6:-}"
 
-    check_aws_cli
-
-    case "$command" in
+    case "$subcommand" in
         "accounts")
             list_accounts
             ;;
@@ -590,5 +575,3 @@ main() {
 }
 
 main "$@"
-
-return 0
