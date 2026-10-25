@@ -167,10 +167,9 @@ _dispatch_registered_worktree_count() {
 _dispatch_run_guarded_worktree_cleanup() {
 	local repo_path="$1"
 	local helper="$2"
-	(
-		cd -- "$repo_path" || exit 125
-		bash "$helper" clean --auto --force-merged
-	) >>"${LOGFILE:-/dev/null}" 2>&1
+	local budget="$3"
+	bash "$helper" --capacity "$repo_path" "$budget" >>"${LOGFILE:-/dev/null}" 2>&1
+	return $?
 }
 
 # At the dispatch worktree cap, synchronously give the existing guarded cleanup
@@ -182,10 +181,11 @@ _dispatch_cleanup_worktree_capacity() {
 	local repo_slug="$3"
 	local before_count="$4"
 	local max_count="$5"
-	local helper="${AIDEVOPS_WORKTREE_HELPER:-${BASH_SOURCE[0]%/*}/worktree-helper.sh}"
+	local helper="${AIDEVOPS_WORKTREE_CAPACITY_HELPER:-${BASH_SOURCE[0]%/*}/cleanup-worktrees-async-helper.sh}"
 	local cleanup_timeout="${AIDEVOPS_DISPATCH_WORKTREE_CLEANUP_TIMEOUT:-60}"
 	local cleanup_rc=0
 	local after_count=""
+	local reason="retained-or-backlog"
 
 	[[ "$cleanup_timeout" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || cleanup_timeout=60
 	[[ "$cleanup_timeout" -ge 1 ]] || cleanup_timeout=1
@@ -200,7 +200,7 @@ _dispatch_cleanup_worktree_capacity() {
 
 	echo "[dispatch_with_dedup] Live worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
 	run_stage_with_timeout "dispatch_worktree_capacity_cleanup" "$cleanup_timeout" \
-		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" || cleanup_rc=$?
+		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" "$cleanup_timeout" || cleanup_rc=$?
 	if ! after_count=$(_dispatch_registered_worktree_count "$repo_path"); then
 		echo "[dispatch_with_dedup] Guarded capacity cleanup could not verify the post-cleanup worktree count for #${issue_number} in ${repo_slug} (before ${before_count}, cap ${max_count}, cleanup_rc=${cleanup_rc}); dispatch remains fail-closed" >>"$LOGFILE"
 		return 1
@@ -211,7 +211,13 @@ _dispatch_cleanup_worktree_capacity() {
 	fi
 
 	[[ "$after_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || after_count="$before_count"
-	echo "[dispatch_with_dedup] Guarded capacity cleanup could not recover dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc}); existing cleanup safety gates preserved remaining worktrees" >>"$LOGFILE"
+	case "$cleanup_rc" in
+	124) reason="deadline-resume-next-pass" ;;
+	75) reason="cleanup-lock-busy" ;;
+	0) [[ "$after_count" -ge "$before_count" ]] || reason="progress-still-over-cap" ;;
+	*) reason="cleanup-error" ;;
+	esac
+	echo "[dispatch_with_dedup] Guarded capacity cleanup could not recover dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc}, reason=${reason}); existing cleanup safety gates preserved remaining worktrees; inspect cleanup_worktrees.log job-start/job-end and repository cursor on next pass" >>"$LOGFILE"
 	return 1
 }
 
