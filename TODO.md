@@ -1752,6 +1752,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18768 Adapt Impeccable, Taste Skill and Fontjoy design guidance without tracking #feat #interactive #auto-dispatch tier:standard ~2h ref:GH#35590 assignee:marcusquinn pr:#35591 logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18768-brief.md] completed:2026-10-25
 
+- [ ] t18769 Playwright-first browser preference: headed-hidden mode and explicit Playwright/Playwriter disambiguation #feat #interactive ref:GH#35617 assignee:marcusquinn logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18769-brief.md]
+
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
 
 - [x] t18625 Actions-unavailable merge gate: classify Qlty out-of-minutes commit statuses #bug #interactive ref:GH#34030 assignee:marcusquinn logged:2026-10-08 started:2026-10-08 -> [todo/tasks/t18625-brief.md] pr:#34031 completed:2026-10-08

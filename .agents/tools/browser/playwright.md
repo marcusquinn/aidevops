@@ -26,6 +26,7 @@ mcp:
 
 ## Quick Reference
 
+- **Name check**: This is **Playwright** (Microsoft), the default browser tool. It is not **Playwriter** (`playwriter.md`), a separate legacy extension relay used only when the user names it. Never swap the two names.
 - **Purpose**: Standalone cross-browser testing and automation; use the extension only for interactive access to user-owned tabs
 - **Install**: `npm install playwright && npx playwright install` (lib + browsers) | framework-managed pinned `@playwright/mcp` (MCP server)
 - **Setup**: `./setup.sh --interactive` → "Setup browser automation tools"
@@ -34,7 +35,7 @@ mcp:
 - **Browsers**: Brave is preferred for separate headed/headless work; bundled Chromium is the fallback, with Firefox/WebKit available when required
 - **Existing browser**: Interactive-only exception — use Microsoft's [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) only when the user is available and the task needs approved tabs from their Chrome, Edge, or Chromium session; Brave support is not documented upstream
 - **Default**: Fresh isolated headless Brave when available, bundled Chromium otherwise; authentication alone does not require an existing tab or headed mode
-- **Headed exception**: Set `AIDEVOPS_PLAYWRIGHT_HEADED=1` for a separate visible browser when the user must assist (passkey, MFA, visual guidance) or the task requires visible UI | **Proxy**: HTTP/SOCKS5
+- **Window modes**: headless (default) · headed-hidden (`AIDEVOPS_PLAYWRIGHT_HEADED=hidden`: real headed browser, windows minimised) · headed (`AIDEVOPS_PLAYWRIGHT_HEADED=1`: visible, only when the user must assist or the task needs visible UI). See [Window modes](#window-modes) | **Proxy**: HTTP/SOCKS5
 - **Extensions**: `launchPersistentContext` (requires `headless: false`; `--headless=new` on newer Chromium)
 - **Ad blocking**: Brave Shields or uBlock Origin | **AI page understanding**: `page.locator('body').ariaSnapshot()` ~0.01s, 50-200 tokens
 - **Performance**: Navigate 1.4s, form fill 0.9s, extraction 1.3s, reliability 0.64s avg
@@ -46,11 +47,48 @@ mcp:
 
 ## OpenCode Activation
 
-aidevops keeps Playwright disconnected and its tool schema hidden globally. Use `@playwright` for browser work; it launches a fresh isolated **headless Brave** browser when installed, falling back to bundled Chromium. Authentication alone is not a reason to attach the user's tab or open a headed browser: use approved scoped credentials or session state in the isolated context. Set `AIDEVOPS_PLAYWRIGHT_HEADED=1` only when the user must assist (passkey, MFA, visual guidance) or the task requires a visible browser; the extension remains an explicit selected-tab exception. The bounded agent connects Playwright before its first operation and disconnects after completion. The activation tool accepts only MCP names declared by the plugin registry.
+aidevops keeps Playwright disconnected and its tool schema hidden globally. Use `@playwright` for browser work; it launches a fresh isolated **headless Brave** browser when installed, falling back to bundled Chromium. Authentication alone is not a reason to attach the user's tab or open a headed browser: use approved scoped credentials or session state in the isolated context. Use headed-hidden when headless is detected or behaves differently, and `AIDEVOPS_PLAYWRIGHT_HEADED=1` only when the user must assist (passkey, MFA, visual guidance) or the task requires a visible browser (see [Window modes](#window-modes)); the extension remains an explicit selected-tab exception. The bounded agent connects Playwright before its first operation and disconnects after completion. The activation tool accepts only MCP names declared by the plugin registry.
 
 For bounded in-session browser operations, delegate to `playwright` with the target, authorization basis, allowed actions, stop-before actions and requested evidence. OpenCode prefers Luna xhigh for this child when available (interactive and headless), independently of the parent's standard/thinking tier; an explicit model pin takes precedence. Unavailable Luna falls back to connected Sol medium or the connected parent's model/effort. Keep final approval, interpretation and verification with the parent. On failure, return the last URL/page state and actions already taken; the parent must check for side effects before continuing itself or starting another child. Do not retry submits, payments, posts or other state-changing actions automatically. This routing applies to the OpenCode Playwright child, not the separate Python `browser-use` package or Browser Use Cloud model selection.
 
 OpenCode launches Playwright inside a unique aidevops-managed temporary workspace and supplies that workspace's output directory to the server. Server-generated files and relative filenames supplied to output-producing tools stay there, including when OpenCode itself started in a canonical checkout. Absolute and `..` traversal output paths are rejected. Consume any review artifacts before disconnecting, and always disconnect when browser work finishes so the bounded workspace can be removed.
+
+### Window modes
+
+| Mode | OpenCode `@playwright` MCP | Standalone script | Use when |
+|------|----------------------------|-------------------|----------|
+| headless (default) | `AIDEVOPS_PLAYWRIGHT_HEADED` unset | `chromium.launch({ headless: true })` | Almost everything |
+| headed-hidden | `AIDEVOPS_PLAYWRIGHT_HEADED=hidden` | `headless: false`, then minimise each page window (below) | Site blocks or renders differently in headless mode; the user keeps working undisturbed |
+| headed | `AIDEVOPS_PLAYWRIGHT_HEADED=1` | `headless: false` | User must watch or assist (passkey, MFA, visual guidance) |
+
+The MCP mode is fixed when OpenCode starts (for example
+`AIDEVOPS_PLAYWRIGHT_HEADED=hidden opencode`); a running session cannot switch
+it. Workers, CI and other headless runtimes always stay headless. Hidden mode
+adds `--init-page scripts/playwright-headed-hidden-init.cjs`. That hook
+minimises every page window, including new tabs, through CDP. On macOS, if this
+server's own browser took focus, the hook hands focus back to the previously
+frontmost app through LaunchServices; it never touches another app. A window can
+appear briefly before it is minimised.
+
+Off-screen positioning (`--window-position=-32000,-32000`) does not hide a
+window on macOS: it is clamped onto the nearest display. A minimised window
+keeps rendering: `requestAnimationFrame`, screenshots, clicks and extra tabs
+work, and `visibilityState` stays `visible` (GH#35617 probe, Brave on macOS).
+Standalone equivalent:
+
+```javascript
+const minimise = async (page) => {
+  const cdp = await page.context().newCDPSession(page);
+  const { windowId } = await cdp.send('Browser.getWindowForTarget');
+  await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+  await cdp.detach();
+};
+const browser = await chromium.launch({ executablePath, headless: false });
+const context = await browser.newContext();
+context.on('page', minimise);
+const page = await context.newPage();
+await minimise(page);
+```
 
 ### Invocation-scoped transport selection (native Task)
 
