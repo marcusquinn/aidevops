@@ -35,7 +35,9 @@ release_contents() {
 release_checks() {
 	local repo="$1" pr="$2" checks=""
 	checks=$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link) || return 1
-	jq -e 'length > 0 and all(.[]; .bucket == "pass")' <<<"$checks" >/dev/null || return 1
+	# Main-only publication jobs are intentionally skipped on PRs. Preflight
+	# itself must run successfully; an empty or all-skipped suite is not evidence.
+	jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping") and any(.[]; .bucket == "pass" and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
 	printf '%s\n' "$checks"
 	return 0
 }

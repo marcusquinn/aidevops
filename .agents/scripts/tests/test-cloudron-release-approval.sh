@@ -65,7 +65,9 @@ gh() {
 		;;
 	'pr checks')
 		[[ "$SCENARIO" != checks_error ]] || return 1
-		printf '[{"bucket":"pass","name":"preflight","link":""}]\n'
+		local bucket=pass
+		[[ "$SCENARIO" != preflight_skipped ]] || bucket=skipping
+		jq -cn --arg bucket "$bucket" '[{bucket:$bucket,name:"preflight",link:""},{bucket:"skipping",name:"publish",link:""}]'
 		;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
 	'api repos/owner/app/contents/CHANGELOG?'*) printf '[1.2.3]\n* Upgrade upstream\n\n[1.2.2]\n* Old entry\n' ;;
@@ -142,6 +144,7 @@ run_case stale 0 false false false
 run_case changed 0 false true false
 run_case approved 0 true true true
 run_case checks_error 1 false false false
+run_case preflight_skipped 1 false false false
 run_case merge_error 1 true false false
 grep -q -- '--add-label hold-for-review' "${TEST_ROOT}/calls"
 printf 'PASS failed merge restores hold\n'
