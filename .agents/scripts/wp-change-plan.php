@@ -13,6 +13,7 @@
  * Exit codes: 0 done, 1 something skipped, stopped or left, 2 usage, plan or permission error.
  * Backups: ~/backups/wp-change-plan/ (override with WP_CHANGE_PLAN_BACKUP_DIR), mode 600.
  * Plan format, rules and traps: .agents/tools/wordpress/wp-change-plan.md
+ * Needs wp-change-plan-values.php and wp-change-plan-term-usage.php in the same directory.
  *
  * @package aidevops
  */
@@ -21,6 +22,10 @@ if ( ! defined( 'ABSPATH' ) || ! class_exists( 'WP_CLI' ) ) {
 	fwrite( STDERR, "Run through WP-CLI: wp eval-file wp-change-plan.php PLAN.json [apply | restore BACKUP.json]\n" );
 	exit( 2 );
 }
+
+// Siblings; wp-helper-change-plan.sh uploads them with this file for SSH sites.
+require_once __DIR__ . '/wp-change-plan-values.php';
+require_once __DIR__ . '/wp-change-plan-term-usage.php';
 
 if ( ! class_exists( 'WPCP_Plan_Error' ) ) {
 	/**
@@ -418,7 +423,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				} else {
 					$item['state'] = 'change';
 				}
-				foreach ( $this->term_usage( $term ) as $use ) {
+				foreach ( WPCP_Term_Usage::describe( $term ) as $use ) {
 					$target['problems'][] = "in use: $use";
 				}
 				if ( get_current_user_id() && ! current_user_can( 'delete_term', $term->term_id ) ) {
@@ -517,9 +522,9 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			if ( 'pending' !== $item['state'] ) {
 				return $item;
 			}
-			if ( self::same( $site, $item['new'] ) || self::same( $site, $item['stored'] ) ) {
+			if ( WPCP_Values::same( $site, $item['new'] ) || WPCP_Values::same( $site, $item['stored'] ) ) {
 				$item['state'] = 'unchanged';
-			} elseif ( self::same( $site, $item['now'] ) ) {
+			} elseif ( WPCP_Values::same( $site, $item['now'] ) ) {
 				$item['state'] = 'change';
 			} else {
 				$item['state'] = 'differs';
@@ -697,7 +702,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			if ( ! taxonomy_exists( $taxonomy ) || ! is_object_in_taxonomy( $post->post_type, $taxonomy ) ) {
 				return $this->refuse( $item, "taxonomy is not registered for {$post->post_type}" );
 			}
-			if ( ! self::is_string_list( $item['now'] ) || ! self::is_string_list( $item['new'] ) ) {
+			if ( ! WPCP_Values::is_string_list( $item['now'] ) || ! WPCP_Values::is_string_list( $item['new'] ) ) {
 				return $this->refuse( $item, 'terms must be lists of slugs' );
 			}
 			foreach ( $item['new'] as $slug ) {
@@ -705,8 +710,8 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 					return $this->refuse( $item, "unknown term slug \"$slug\" (the script does not create terms)" );
 				}
 			}
-			$item['now']    = self::sorted( $item['now'] );
-			$item['new']    = self::sorted( $item['new'] );
+			$item['now']    = WPCP_Values::sorted( $item['now'] );
+			$item['new']    = WPCP_Values::sorted( $item['new'] );
 			$item['stored'] = $item['new'];
 			return $this->resolve( $item, $this->post_term_slugs( $post->ID, $taxonomy ) );
 		}
@@ -809,148 +814,6 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				return 'a term name cannot be empty';
 			}
 			return '';
-		}
-
-		/**
-		 * Everything that still uses a term.
-		 *
-		 * @param WP_Term $term Term.
-		 * @return array Descriptions of uses.
-		 */
-		private function term_usage( $term ) {
-			global $wpdb;
-			$uses    = array();
-			$objects = get_objects_in_term( $term->term_id, $term->taxonomy );
-			if ( is_wp_error( $objects ) ) {
-				$uses[] = 'could not list objects: ' . $objects->get_error_message();
-			} elseif ( $objects ) {
-				$uses[] = count( $objects ) . ' post(s) of any status: ' . self::id_list( $objects );
-			}
-			$children = get_terms(
-				array(
-					'taxonomy'   => $term->taxonomy,
-					'parent'     => $term->term_id,
-					'hide_empty' => false,
-					'fields'     => 'ids',
-				)
-			);
-			if ( is_array( $children ) && $children ) {
-				$uses[] = count( $children ) . ' child term(s): ' . self::id_list( $children );
-			}
-			$menu_items = $wpdb->get_col(
-				$wpdb->prepare(
-					"SELECT p.ID FROM {$wpdb->posts} p
-					JOIN {$wpdb->postmeta} a ON a.post_id = p.ID AND a.meta_key = '_menu_item_object_id' AND a.meta_value = %s
-					JOIN {$wpdb->postmeta} b ON b.post_id = p.ID AND b.meta_key = '_menu_item_object' AND b.meta_value = %s
-					WHERE p.post_type = 'nav_menu_item'",
-					(string) $term->term_id,
-					$term->taxonomy
-				)
-			);
-			if ( $menu_items ) {
-				$uses[] = count( $menu_items ) . ' nav menu item(s): ' . self::id_list( $menu_items );
-			}
-			$acf = $this->acf_term_references( $term );
-			if ( $acf ) {
-				$uses[] = count( $acf ) . ' ACF field value(s): ' . implode( ', ', array_slice( $acf, 0, 10 ) ) . ( count( $acf ) > 10 ? ', ...' : '' );
-			}
-			return $uses;
-		}
-
-		/**
-		 * ACF/SCF taxonomy field values that hold the term, found through ACF's
-		 * `_name` => field_key reference rows in post, term and user meta and options.
-		 *
-		 * @param WP_Term $term Term.
-		 * @return array Descriptions such as "post 12 regions".
-		 */
-		private function acf_term_references( $term ) {
-			global $wpdb;
-			if ( ! function_exists( 'acf_get_field_groups' ) || ! function_exists( 'acf_get_fields' ) ) {
-				return array();
-			}
-			$keys = array();
-			foreach ( acf_get_field_groups() as $group ) {
-				self::collect_taxonomy_field_keys( (array) acf_get_fields( $group ), $term->taxonomy, $keys );
-			}
-			$found  = array();
-			$tables = array(
-				'post' => array( $wpdb->postmeta, 'post_id', 'meta_key', 'meta_value' ),
-				'term' => array( $wpdb->termmeta, 'term_id', 'meta_key', 'meta_value' ),
-				'user' => array( $wpdb->usermeta, 'user_id', 'meta_key', 'meta_value' ),
-				'option' => array( $wpdb->options, '0', 'option_name', 'option_value' ),
-			);
-			foreach ( array_unique( $keys ) as $key ) {
-				foreach ( $tables as $label => $table ) {
-					$found = array_merge( $found, $this->acf_table_references( $term, $key, $label, $table ) );
-				}
-			}
-			return $found;
-		}
-
-		/**
-		 * Values in one meta table that reference an ACF field key and hold the term.
-		 *
-		 * @param WP_Term $term  Term.
-		 * @param string  $key   ACF field key.
-		 * @param string  $label post, term, user or option.
-		 * @param array   $table [table, object column, key column, value column].
-		 * @return array Descriptions such as "post 12 regions".
-		 */
-		private function acf_table_references( $term, $key, $label, array $table ) {
-			global $wpdb;
-			list( $name, $object_col, $key_col, $value_col ) = $table;
-			// Table and column names come from $wpdb and the literal list in acf_term_references().
-			$refs  = $wpdb->get_results( $wpdb->prepare( "SELECT {$object_col} AS object_id, {$key_col} AS ref_key FROM {$name} WHERE {$value_col} = %s AND {$key_col} LIKE %s", $key, $wpdb->esc_like( '_' ) . '%' ) );
-			$found = array();
-			foreach ( (array) $refs as $ref ) {
-				$value_key = substr( $ref->ref_key, 1 );
-				if ( self::value_has_term( $this->acf_reference_value( $label, $table, $ref->object_id, $value_key ), $term->term_id ) ) {
-					$found[] = 'option' === $label ? "option $value_key" : "$label {$ref->object_id} $value_key";
-				}
-			}
-			return $found;
-		}
-
-		/**
-		 * The stored value an ACF `_name` => field_key reference row points at.
-		 *
-		 * @param string $label     post, term, user or option.
-		 * @param array  $table     [table, object column, key column, value column].
-		 * @param mixed  $object_id Object id from the reference row.
-		 * @param string $value_key Meta key or option name holding the value.
-		 * @return mixed
-		 */
-		private function acf_reference_value( $label, array $table, $object_id, $value_key ) {
-			global $wpdb;
-			if ( 'option' === $label ) {
-				return $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", $value_key ) );
-			}
-			list( $name, $object_col, $key_col, $value_col ) = $table;
-			return $wpdb->get_var( $wpdb->prepare( "SELECT {$value_col} FROM {$name} WHERE {$object_col} = %d AND {$key_col} = %s LIMIT 1", $object_id, $value_key ) );
-		}
-
-		/**
-		 * Collect keys of taxonomy fields for one taxonomy, including sub fields.
-		 *
-		 * @param array  $fields   Fields.
-		 * @param string $taxonomy Taxonomy.
-		 * @param array  $keys     Collected keys (by reference).
-		 */
-		private static function collect_taxonomy_field_keys( array $fields, $taxonomy, array &$keys ) {
-			foreach ( $fields as $field ) {
-				if ( isset( $field['type'], $field['taxonomy'] ) && 'taxonomy' === $field['type'] && $taxonomy === $field['taxonomy'] ) {
-					$keys[] = $field['key'];
-				}
-				if ( ! empty( $field['sub_fields'] ) ) {
-					self::collect_taxonomy_field_keys( (array) $field['sub_fields'], $taxonomy, $keys );
-				}
-				if ( ! empty( $field['layouts'] ) ) {
-					foreach ( (array) $field['layouts'] as $layout ) {
-						self::collect_taxonomy_field_keys( isset( $layout['sub_fields'] ) ? (array) $layout['sub_fields'] : array(), $taxonomy, $keys );
-					}
-				}
-			}
 		}
 
 		// ------------------------------------------------------------------
@@ -1310,8 +1173,8 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				if ( 'delete' === $item['kind'] ) {
 					$expect = '';
 				}
-				if ( ! self::same( $site, $expect ) ) {
-					$mismatches[] = self::label( $item ) . ': expected ' . self::show( $expect ) . ', site has ' . self::show( $site );
+				if ( ! WPCP_Values::same( $site, $expect ) ) {
+					$mismatches[] = WPCP_Values::label( $item ) . ': expected ' . WPCP_Values::show( $expect ) . ', site has ' . WPCP_Values::show( $site );
 				}
 				foreach ( $record['items'] as $index => $written ) {
 					if ( $written['kind'] === $item['kind'] && $written['name'] === $item['name'] ) {
@@ -1356,7 +1219,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 					break;
 				case 'meta':
 				case 'acf':
-					$value = self::single( get_post_meta( $id, $name, false ) );
+					$value = WPCP_Values::single( get_post_meta( $id, $name, false ) );
 					break;
 				case 'terms':
 					$value = $this->post_term_slugs( $id, $name );
@@ -1365,14 +1228,14 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 					$value = (int) get_post_thumbnail_id( $id );
 					break;
 				case 'alt':
-					$value = (string) self::single( get_post_meta( (int) $name, self::ALT_KEY, false ) );
+					$value = (string) WPCP_Values::single( get_post_meta( (int) $name, self::ALT_KEY, false ) );
 					break;
 				case 'term':
 					$term  = get_term( $id, $taxonomy );
 					$value = ( $term && ! is_wp_error( $term ) ) ? (string) $term->$name : null;
 					break;
 				case 'term_meta':
-					$value = self::single( get_term_meta( $id, $name, false ) );
+					$value = WPCP_Values::single( get_term_meta( $id, $name, false ) );
 					break;
 				case 'delete':
 					$term  = get_term( $id, $taxonomy );
@@ -1589,16 +1452,16 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$left   = 0;
 			foreach ( $record['items'] as $item ) {
 				$site  = $this->read_item( $record['type'], (int) $record['id'], (string) $record['taxonomy'], $item );
-				$label = "{$record['label']} " . self::label( $item );
+				$label = "{$record['label']} " . WPCP_Values::label( $item );
 				if ( 'terms' === $item['kind'] ) {
 					$this->taxonomies[ $item['name'] ] = true;
 				}
-				if ( self::same( $site, $item['wrote'] ) ) {
+				if ( WPCP_Values::same( $site, $item['wrote'] ) ) {
 					$revert[] = $item;
-				} elseif ( self::same( $site, $item['old'] ) ) {
+				} elseif ( WPCP_Values::same( $site, $item['old'] ) ) {
 					WP_CLI::line( "$label: already back" );
 				} else {
-					WP_CLI::line( "$label: changed since, site has " . self::show( $site ) . '; left as is' );
+					WP_CLI::line( "$label: changed since, site has " . WPCP_Values::show( $site ) . '; left as is' );
 					++$left;
 				}
 			}
@@ -1616,11 +1479,11 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 			$left = 0;
 			foreach ( $revert as $item ) {
 				$site  = $this->read_item( $record['type'], (int) $record['id'], (string) $record['taxonomy'], $item );
-				$label = "{$record['label']} " . self::label( $item );
-				if ( self::same( $site, $item['old'] ) || ( ! empty( $item['absent'] ) && self::same( $site, '' ) ) ) {
-					WP_CLI::line( "$label: restored " . self::show( $item['old'] ) );
+				$label = "{$record['label']} " . WPCP_Values::label( $item );
+				if ( WPCP_Values::same( $site, $item['old'] ) || ( ! empty( $item['absent'] ) && WPCP_Values::same( $site, '' ) ) ) {
+					WP_CLI::line( "$label: restored " . WPCP_Values::show( $item['old'] ) );
 				} else {
-					WP_CLI::line( "$label: restore read-back differs, site has " . self::show( $site ) );
+					WP_CLI::line( "$label: restore read-back differs, site has " . WPCP_Values::show( $site ) );
 					++$left;
 				}
 			}
@@ -1761,7 +1624,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 		 * @return string
 		 */
 		private function item_line( array $item ) {
-			$label = self::label( $item );
+			$label = WPCP_Values::label( $item );
 			switch ( $item['state'] ) {
 				case 'unchanged':
 					$line = "$label: unchanged";
@@ -1771,13 +1634,13 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 						$line = "$label: will delete";
 						break;
 					}
-					$line = "$label: will change " . self::show( $item['now'] ) . ' -> ' . self::show( $item['new'] );
-					if ( ! self::same( $item['stored'], $item['new'] ) ) {
-						$line .= ' (stored as ' . self::show( $item['stored'] ) . ')';
+					$line = "$label: will change " . WPCP_Values::show( $item['now'] ) . ' -> ' . WPCP_Values::show( $item['new'] );
+					if ( ! WPCP_Values::same( $item['stored'], $item['new'] ) ) {
+						$line .= ' (stored as ' . WPCP_Values::show( $item['stored'] ) . ')';
 					}
 					break;
 				case 'differs':
-					$line = "$label: differs, site has " . self::show( $item['site'] ) . ', plan expects ' . self::show( $item['now'] );
+					$line = "$label: differs, site has " . WPCP_Values::show( $item['site'] ) . ', plan expects ' . WPCP_Values::show( $item['now'] );
 					break;
 				default:
 					$line = "$label: refused, {$item['reason']}";
@@ -1825,131 +1688,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 		 */
 		private function post_term_slugs( $id, $taxonomy ) {
 			$slugs = wp_get_object_terms( $id, $taxonomy, array( 'fields' => 'slugs' ) );
-			return is_wp_error( $slugs ) ? array() : self::sorted( $slugs );
-		}
-
-		/**
-		 * Item label such as meta.rank_math_title.
-		 *
-		 * @param array $item Item.
-		 * @return string
-		 */
-		private static function label( array $item ) {
-			return '' === $item['name'] ? $item['kind'] : "{$item['kind']}.{$item['name']}";
-		}
-
-		/**
-		 * Compare values as WordPress stores them: scalars as strings, arrays recursively.
-		 *
-		 * @param mixed $a Value.
-		 * @param mixed $b Value.
-		 * @return bool
-		 */
-		private static function same( $a, $b ) {
-			return self::normalize( $a ) === self::normalize( $b );
-		}
-
-		/**
-		 * Normalize a value for comparison.
-		 *
-		 * @param mixed $value Value.
-		 * @return mixed
-		 */
-		private static function normalize( $value ) {
-			if ( is_object( $value ) ) {
-				$value = get_object_vars( $value );
-			}
-			if ( is_array( $value ) ) {
-				$out = array();
-				foreach ( $value as $key => $inner ) {
-					$out[ (string) $key ] = self::normalize( $inner );
-				}
-				return $out;
-			}
-			if ( null === $value || false === $value ) {
-				return '';
-			}
-			return true === $value ? '1' : (string) $value;
-		}
-
-		/**
-		 * Short JSON rendering of a value for output.
-		 *
-		 * @param mixed $value Value.
-		 * @return string
-		 */
-		private static function show( $value ) {
-			$text = (string) wp_json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
-			return strlen( $text ) > 160 ? substr( $text, 0, 157 ) . '...' : $text;
-		}
-
-		/**
-		 * The single value of a meta key, '' when absent, the list when several.
-		 *
-		 * @param array $values Values from get_*_meta( ..., false ).
-		 * @return mixed
-		 */
-		private static function single( $values ) {
-			$values = (array) $values;
-			if ( count( $values ) > 1 ) {
-				return $values;
-			}
-			return $values ? $values[0] : '';
-		}
-
-		/**
-		 * Whether a value is a list of strings.
-		 *
-		 * @param mixed $value Value.
-		 * @return bool
-		 */
-		private static function is_string_list( $value ) {
-			if ( ! is_array( $value ) || array_values( $value ) !== $value ) {
-				return false;
-			}
-			foreach ( $value as $inner ) {
-				if ( ! is_string( $inner ) || '' === $inner ) {
-					return false;
-				}
-			}
-			return true;
-		}
-
-		/**
-		 * Sorted unique list of strings.
-		 *
-		 * @param array $list List.
-		 * @return array
-		 */
-		private static function sorted( array $list ) {
-			$list = array_values( array_unique( array_map( 'strval', $list ) ) );
-			sort( $list, SORT_STRING );
-			return $list;
-		}
-
-		/**
-		 * Whether a stored meta value holds a term id.
-		 *
-		 * @param mixed $raw     Raw value.
-		 * @param int   $term_id Term id.
-		 * @return bool
-		 */
-		private static function value_has_term( $raw, $term_id ) {
-			$value = maybe_unserialize( $raw );
-			if ( is_array( $value ) ) {
-				return in_array( (string) $term_id, array_map( 'strval', array_filter( $value, 'is_scalar' ) ), true );
-			}
-			return (string) $value === (string) $term_id;
-		}
-
-		/**
-		 * First ten ids as a comma list.
-		 *
-		 * @param array $ids Ids.
-		 * @return string
-		 */
-		private static function id_list( array $ids ) {
-			return implode( ', ', array_slice( $ids, 0, 10 ) ) . ( count( $ids ) > 10 ? ', ...' : '' );
+			return is_wp_error( $slugs ) ? array() : WPCP_Values::sorted( $slugs );
 		}
 	}
 }

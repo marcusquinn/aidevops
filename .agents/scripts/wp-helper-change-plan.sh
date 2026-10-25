@@ -6,7 +6,7 @@
 # =============================================================================
 # Runs wp-change-plan.php on a configured site. LocalWP sites run locally.
 # SSH sites reuse the auth that execute_wp_via_ssh() resolves (identity file,
-# password env, password file, port, wp_path). The script and plan go to a
+# password env, password file, port, wp_path). The scripts and plan go to a
 # private temporary directory on the server, `wp eval-file` runs from wp_path,
 # the run output and the backup are downloaded into the agent workspace, and
 # the uploaded copies are deleted. Backups stay on the server.
@@ -30,6 +30,8 @@ WPCP_SCP_OPTS=()
 WPCP_AUTH=()
 WPCP_TARGET=""
 WPCP_MODE_RESTORE="restore"
+# The entrypoint first, then the siblings it loads from its own directory.
+WPCP_PHP_FILES=(wp-change-plan.php wp-change-plan-values.php wp-change-plan-term-usage.php)
 WPCP_USAGE="Usage: wp-helper.sh --change-plan <site> PLAN.json [apply | restore BACKUP.json] [--user=<id>]"
 
 # Private output directory for one run: run.log and the backup copy.
@@ -135,6 +137,16 @@ _wpcp_scp() {
 	return $?
 }
 
+# Upload the change-plan PHP files side by side into the remote directory.
+_wpcp_upload_scripts() {
+	local remote_tmp="$1"
+	local php_file
+	for php_file in "${WPCP_PHP_FILES[@]}"; do
+		_wpcp_scp "${SCRIPT_DIR}/${php_file}" "${WPCP_TARGET}:${remote_tmp}/${php_file}" || return 1
+	done
+	return 0
+}
+
 # Delete the remote temporary directory and confirm nothing is left.
 _wpcp_cleanup_remote() {
 	local remote_tmp="$1"
@@ -223,7 +235,7 @@ _wpcp_run_remote() {
 
 	local rc=0
 	local remote_backup="$backup_arg"
-	if ! _wpcp_scp "${SCRIPT_DIR}/wp-change-plan.php" "${WPCP_TARGET}:${remote_tmp}/wp-change-plan.php" ||
+	if ! _wpcp_upload_scripts "$remote_tmp" ||
 		! _wpcp_scp "$plan_file" "${WPCP_TARGET}:${remote_tmp}/plan.json"; then
 		print_error "Upload to the server failed"
 		rc=1

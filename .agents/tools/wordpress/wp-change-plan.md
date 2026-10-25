@@ -86,8 +86,9 @@ Every change is a pair `[now, new]`: `now` is the value you reviewed on the site
 
 ## Transport (`wp-helper.sh --change-plan`)
 
+- **Files**: `wp-change-plan.php` loads `wp-change-plan-values.php` and `wp-change-plan-term-usage.php` from its own directory; keep the three together.
 - **LocalWP**: runs the script in place from the site's `path`.
-- **SSH sites** (Hostinger, Hetzner, Cloudways, Cloudron): uses the site's SSH settings as `run_wp_command` resolves them (`server_ref`, `~/.ssh/config`, identity file, `ssh_password_env`, password file, port). The script and plan go to a private `mktemp -d` directory, `wp eval-file` runs from `wp_path`, the run output and backup are downloaded, and the uploaded copies are deleted. Removal is checked.
+- **SSH sites** (Hostinger, Hetzner, Cloudways, Cloudron): uses the site's SSH settings as `run_wp_command` resolves them (`server_ref`, `~/.ssh/config`, identity file, `ssh_password_env`, password file, port). The three scripts and the plan go to a private `mktemp -d` directory, `wp eval-file` runs from `wp_path`, the run output and backup are downloaded, and the uploaded copies are deleted. Removal is checked.
 - **Restore** takes a local backup copy (uploaded for the run) or the backup path on the site.
 - Password auth: `aidevops secret HOSTINGER_SSH_PASSWORD -- wp-helper.sh --change-plan ...`.
 
