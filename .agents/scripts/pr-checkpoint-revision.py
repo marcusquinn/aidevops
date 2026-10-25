@@ -37,7 +37,7 @@ def approval_matches(data, approval, comment, now):
 
 def approved_comment(data, comment, now):
     lines = [line for line in comment["body"].splitlines() if line.startswith(PREFIX)]
-    if not trusted(comment) or len(lines) != 1:
+    if not trusted(comment, data.get("trusted_logins", ())) or len(lines) != 1:
         return None
     approval = json.loads(lines[0][len(PREFIX):])
     if not approval_matches(data, approval, comment, now):
@@ -46,22 +46,24 @@ def approved_comment(data, comment, now):
 
 
 def history_approved(data, comments, approval, approval_id, closing):
-    history = released_successor_history(comments, approval["release_id"], approval_id, closing)
+    trusted_logins = data.get("trusted_logins", ())
+    history = released_successor_history(comments, approval["release_id"], approval_id, closing, trusted_logins)
     if history is None or history != approval.get("released_successors", []):
         return False
     historical_claims = {item["claim_id"] for item in history}
     used_tokens = {f.get("lease_token") for c, _, f in
-                   events(comments, approval["release_id"], approval_id)
+                    events(comments, approval["release_id"], approval_id, trusted_logins)
                    if c["id"] in historical_claims}
     used_tokens.add(closing[1])
     return not data.get("lease") or data["lease"] not in used_tokens
 
 
 def approved_release(data, comments, approval, comment):
-    release = release_for(comments, approval, comment)
+    trusted_logins = data.get("trusted_logins", ())
+    release = release_for(comments, approval, comment, trusted_logins)
     if release is None:
         return None
-    closing = (approval["runner"], released_attempt_token(comments, approval, release))
+    closing = (approval["runner"], released_attempt_token(comments, approval, release, trusted_logins))
     return closing if history_approved(data, comments, approval, comment["id"], closing) else None
 
 
@@ -113,14 +115,15 @@ def template(data):
     approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
     # The approval comment does not exist yet; any later comment id qualifies.
     comments = sorted_comments(data)
-    release = release_for(comments, approval, {"id": float("inf")})
+    trusted_logins = data.get("trusted_logins", ())
+    release = release_for(comments, approval, {"id": float("inf")}, trusted_logins)
     if release is None:
         raise ValueError(
             f"release {approval['release_id']} is not a trusted CLAIM_RELEASED reason=blocked "
             f"by {approval['runner']} closing {approval['attempt']}; dispatch-approved would "
             "reject this approval, so none was generated")
-    closing = (approval["runner"], released_attempt_token(comments, approval, release))
-    history = released_successor_history(comments, release["id"], float("inf"), closing)
+    closing = (approval["runner"], released_attempt_token(comments, approval, release, trusted_logins))
+    history = released_successor_history(comments, release["id"], float("inf"), closing, trusted_logins)
     if history is None:
         raise ValueError("intervening coordination is not fully released; no approval generated")
     if history:

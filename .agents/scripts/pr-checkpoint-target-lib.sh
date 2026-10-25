@@ -11,8 +11,18 @@ _PCTL_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_PCTL_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _PCTL_SCRIPT_DIR="."
 # shellcheck source=pr-closing-link-lib.sh
 source "${_PCTL_SCRIPT_DIR}/pr-closing-link-lib.sh"
+# shellcheck source=dispatch-claim-trust.sh
+source "${_PCTL_SCRIPT_DIR}/dispatch-claim-trust.sh"
 _PR_CHECKPOINT_REVISION_VALIDATOR="${_PCTL_SCRIPT_DIR}/pr-checkpoint-revision.py"
 unset _PCTL_SCRIPT_DIR
+
+# Resolve each ambiguous API author once, including paginated comment snapshots.
+_pr_checkpoint_trusted_logins() {
+	local comments="$1" repo="$2" flat=""
+	flat=$(jq -c 'flatten' <<<"$comments") || return 1
+	_claim_permission_trusted_authors "$flat" "$repo"
+	return $?
+}
 
 # GH#34008: the pulse's own orphan-recovery drafts (`checkpoint: recover dirty
 # worker worktree for #N`, shared-claim-lifecycle.sh) carry a non-closing
@@ -70,10 +80,13 @@ _pr_checkpoint_revised_target() {
 	local repo_slug="$1" pr_json="$2" issue_json="$3" comments_json="$4"
 	local assignee="$5" lease="${6:-}" session="${7:-}" claiming="${8:-false}"
 	local approval="" linked_issue="" pr_number="" normalized_issue="" normalized_pr=""
+	local trusted_logins=""
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments_json" "$repo_slug") || return 1
 	approval=$(jq -n --arg repo "$repo_slug" --argjson pr "$pr_json" \
 		--argjson issue "$issue_json" --argjson comments "$comments_json" \
+		--argjson trusted_logins "$trusted_logins" \
 		--arg assignee "$assignee" --arg lease "$lease" --arg session "$session" --argjson claiming "$claiming" \
-		'{repo:$repo,pr:$pr,issue:$issue,comments:$comments,assignee:$assignee,lease:$lease,session:$session,claiming:$claiming}' |
+		'{repo:$repo,pr:$pr,issue:$issue,comments:$comments,trusted_logins:$trusted_logins,assignee:$assignee,lease:$lease,session:$session,claiming:$claiming}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR") || return 1
 	local approval_actor="" permission=""
 	approval_actor=$(jq -er '.approval_actor' <<<"$approval") || return 1

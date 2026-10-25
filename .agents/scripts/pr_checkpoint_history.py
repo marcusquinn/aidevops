@@ -148,7 +148,7 @@ def completed_episode(state):
         "runner", "attempt", "claim_id", "ready_id", "release_id", "terminal_id")}
 
 
-def released_successor_history(comments, release_id, approval_id, released_lease):
+def released_successor_history(comments, release_id, approval_id, released_lease, trusted_logins=()):
     """Describe only fully closed, non-overlapping attempts preceding an approval.
 
     #aidevops:trust-boundary — historical closure needs explicit revision approval;
@@ -156,8 +156,8 @@ def released_successor_history(comments, release_id, approval_id, released_lease
     """
     history, state = [], None
     seen = {released_lease[1]} if released_lease else set()
-    for comment, line, f in events(comments, release_id, approval_id):
-        if not trusted(comment):
+    for comment, line, f in events(comments, release_id, approval_id, trusted_logins):
+        if not trusted(comment, trusted_logins):
             return None
         if closes_released_attempt(released_lease, comment, line, f):
             continue
