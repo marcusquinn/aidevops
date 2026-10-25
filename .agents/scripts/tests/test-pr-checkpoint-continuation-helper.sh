@@ -860,9 +860,9 @@ fi
 PCC_ALLOW_RELEASED=false
 
 if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-revision.py"; then
-	print_result "revised checkpoint claims, worker lease lifecycle and durable progress" 0
+	print_result "revised checkpoint claims, large metadata, worker lease lifecycle and durable progress" 0
 else
-	print_result "revised checkpoint claims, worker lease lifecycle and durable progress" 1
+	print_result "revised checkpoint claims, large metadata, worker lease lifecycle and durable progress" 1
 fi
 
 if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-claim-only.py"; then

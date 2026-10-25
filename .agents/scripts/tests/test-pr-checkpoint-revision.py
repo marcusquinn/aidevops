@@ -284,6 +284,9 @@ class RevisionTests(unittest.TestCase):
                 env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
                        "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")), "CHECKPOINT_TEST_STATE": str(state),
                        "CHECKPOINT_TEST_APPROVAL": str(approval_id),
+                       # Do not renew this fixture's lease under the invoking
+                       # headless worker's real dispatch session.
+                       "AIDEVOPS_DISPATCH_LEASE_SESSION": "",
                        "AIDEVOPS_TEST_MODE": "1", "AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS": "1",
                        "DISPATCH_CLAIM_WINDOW": "0", "AIDEVOPS_DEVICE_ID": "test-device"}
                 command = r'''
