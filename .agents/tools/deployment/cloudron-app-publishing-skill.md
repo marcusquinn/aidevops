@@ -36,6 +36,32 @@ Keep these states distinct: **upstream detected** (a monitor finding),
 published** (a reviewed image is present in `CloudronVersions.json`). Detection
 does not authorize any later state.
 
+### Publication boundary: signed managed releases
+
+For managed catalog packages, use **upstream detected → release PR ready →
+release approval requested → approved → published**. After package tests,
+`preflight-release` and green PR preflight (including the no-push image build),
+run `cloudron-release-approval-helper.sh request <repo> <pr>`; do not merge.
+The helper holds the PR and creates a version-deduplicated release issue with
+the exact PR head, versions, changelog and evidence. `release-approval-required`
+is a dedicated signed gate, not `needs-maintainer-review`. The approval-only
+issue carries `no-auto-dispatch`; older unsigned requests are superseded.
+
+The maintainer runs only `sudo aidevops approve issue <N> <repo>`. Routine `r924`
+processes these issues every 30 minutes, requiring `VERIFIED` from
+`approval-helper.sh verify issue <N> <repo> --require-authority`, the unchanged
+head and green checks. It removes only its release hold and uses the normal
+full-loop merge gates. A changed head requires an updated issue and new signed
+approval. API/verification failures never authorize a merge.
+
+After merge, the existing main catalog workflow owns publication. The routine
+waits boundedly and resumes verification later, then closes with evidence only
+when the catalog version, version tag and non-draft GitHub release all exist.
+GH#35649's workflow and upstream monitor own catalog-race recovery. Approval
+never enables publication, changes credentials/protection, deploys an app, or
+authorizes unrelated publication. See `cloudron-app-packaging.md` **Managed
+Package Lifecycle** for the complete operator contract.
+
 ```bash
 cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
 cloudron builder login  # authenticate with the Container registry app

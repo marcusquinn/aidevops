@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 source "${SCRIPT_DIR}/shared-constants.sh"
 REPOS_FILE="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 RELEASE_SHA_PATTERN='^[a-f0-9]{40}$'
+RELEASE_APPROVAL_LABEL='release-approval-required'
 
 release_error() {
 	local message="$1"
@@ -69,7 +70,9 @@ release_verify() {
 
 release_request() {
 	local repo="$1" pr="$2"
-	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" metadata="" url="" older="" verdict="" rc=0
+	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
+	local metadata=""
+	local verdict=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
 	release_authority "$repo" || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
@@ -90,16 +93,23 @@ release_request() {
 	')
 	[[ -n "${notes//[[:space:]]/}" ]] || release_error 'Release changelog entry is empty.' || return 1
 	issues=$(release_issues "$repo") || return 1
-	existing=$(jq -r --arg marker "<!-- aidevops:cloudron-release-approval ${version} -->" '.[] | select(.body | contains($marker)) | .html_url' <<<"$issues") || return 1
+	existing=$(jq -c --arg marker "<!-- aidevops:cloudron-release-approval ${version} -->" '.[] | select(.body | contains($marker))' <<<"$issues") || return 1
 	if [[ -n "$existing" ]]; then
-		printf '%s\n' "$existing"
+		metadata=$(release_metadata "$(jq -r '.body' <<<"$existing")" "$repo") || return 1
+		if ! jq -e --arg sha "$sha" --argjson pr "$pr" '.head == $sha and .pr == $pr' <<<"$metadata" >/dev/null; then
+			release_error 'Existing version request has a different PR/head: refresh its signed body and obtain re-approval.'
+			return 1
+		fi
+		printf '%s\n' "$existing" | jq -r '.html_url'
 		return 0
 	fi
 	# A durable hold prevents ordinary merge automation from publishing first.
-	# Refuse to take ownership of a pre-existing human hold or auto-merge queue.
-	jq -e 'all(.labels[]; .name != "hold-for-review") and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
-	gh_pr_edit_safe "$pr" --repo "$repo" --add-label hold-for-review >/dev/null || return 1
+	# Retry an interrupted request only when its dedicated PR label is present.
+	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '(all(.labels[]; .name != "hold-for-review") or any(.labels[]; .name == $label)) and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
 	gh label create release-approval-required --repo "$repo" --description 'Publication requires signed exact-head release approval' --color B60205 --force || return 1
+	gh_pr_edit_safe "$pr" --repo "$repo" --add-label release-approval-required --add-label hold-for-review >/dev/null || return 1
+	snapshot=$(release_pr "$repo" "$pr") || return 1
+	[[ "$(jq -r '.head.sha' <<<"$snapshot")" == "$sha" ]] || return 1
 	metadata=$(jq -cn --arg repo "$repo" --argjson pr "$pr" --arg sha "$sha" --arg version "$version" --arg upstream "$upstream" '{schema:1,repository:$repo,pr:$pr,head:$sha,version:$version,upstream:$upstream,owns_hold:true}') || return 1
 	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
 	url=$(printf '<!-- aidevops:cloudron-release-approval %s -->\n<!-- aidevops:brief-schema=v2 -->\n## Release approval\n\n```json\n%s\n```\n\nPR number: %s; exact head: `%s`. Package: %s; upstream: %s.\n\n### Changelog\n%s\n\n### Verification\nAll PR checks passed at the recorded head:\n```json\n%s\n```\nPackage tests and preflight-release must be recorded in the PR.\n\n### Publication boundary\nThis is an approval-only issue, not a worker task. Do not auto-dispatch. Signed approval authorizes merging this exact head and its managed catalog workflow only; no deployment or unrelated publication.\n\nMaintainer command: `sudo aidevops approve issue <this-issue-number> %s`\n\n### Files Scope\n- `CloudronManifest.json`\n- `CloudronVersions.json`\n' "$version" "$metadata" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$repo" |
@@ -114,7 +124,7 @@ release_request() {
 			release_comment "$repo" "$older" "Superseded by ${url}. No release was authorized by this unsigned request." || return 1
 			gh issue close "$older" --repo "$repo" --reason 'not planned' || return 1
 		fi
-	done < <(jq -r '.[] | select(.body | contains("<!-- aidevops:cloudron-release-approval ")) | .number' <<<"$issues")
+	done < <(jq -r --arg version "$version" '.[] | . as $issue | (.body | split("\n") | map(fromjson? | select(.schema == 1)) | .[0].version // "") as $old | select(($old | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and (($old | split(".") | map(tonumber)) < ($version | split(".") | map(tonumber)))) | $issue.number' <<<"$issues")
 	printf '%s\n' "$url"
 	return 0
 }
@@ -131,11 +141,23 @@ release_metadata() {
 }
 
 release_published() {
-	local repo="$1" version="$2" catalog="" tag="" release=""
+	local repo="$1" version="$2" merge_sha="$3" catalog="" tag="" release="" tag_sha="" comparison="" runs=""
+	runs=$(gh api "repos/${repo}/actions/workflows/cloudron-catalog-publish.yml/runs?branch=main&head_sha=${merge_sha}&per_page=100") || return 1
+	jq -e --arg sha "$merge_sha" 'any(.workflow_runs[]; .head_sha == $sha and .status == "completed" and .conclusion == "success")' <<<"$runs" >/dev/null || return 1
 	catalog=$(release_contents "$repo" CloudronVersions.json main) || return 1
 	jq -e --arg version "$version" '.versions[$version].manifest.version == $version' <<<"$catalog" >/dev/null || return 1
 	tag=$(gh api "repos/${repo}/git/ref/tags/v${version}") || return 1
 	jq -e --arg sha_pattern "$RELEASE_SHA_PATTERN" '.object.sha | test($sha_pattern)' <<<"$tag" >/dev/null || return 1
+	tag_sha=$(jq -r '.object.sha' <<<"$tag")
+	if [[ "$(jq -r '.object.type' <<<"$tag")" == tag ]]; then
+		tag=$(gh api "repos/${repo}/git/tags/${tag_sha}") || return 1
+		tag_sha=$(jq -er '.object | select(.type == "commit") | .sha' <<<"$tag") || return 1
+	fi
+	comparison=$(gh api "repos/${repo}/compare/${merge_sha}...${tag_sha}" --jq '.status') || return 1
+	[[ "$comparison" == ahead || "$comparison" == identical ]] || return 1
+	local tagged_catalog=""
+	tagged_catalog=$(release_contents "$repo" CloudronVersions.json "$tag_sha") || return 1
+	jq -e --argjson tagged "$tagged_catalog" --arg version "$version" '.versions[$version] == $tagged.versions[$version]' <<<"$catalog" >/dev/null || return 1
 	release=$(gh api "repos/${repo}/releases/tags/v${version}") || return 1
 	jq -er --arg tag "v${version}" 'select(.draft == false and .tag_name == $tag) | .html_url | select(startswith("https://"))' <<<"$release" || return 1
 	return 0
@@ -143,9 +165,11 @@ release_published() {
 
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
-	local before="" after="" body="" metadata="" verdict="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
+	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
+	local metadata=""
+	local verdict=""
 	before=$(gh api "repos/${repo}/issues/${issue}") || return 1
-	jq -e '.state == "open" and any(.labels[]; .name == "release-approval-required")' <<<"$before" >/dev/null || return 1
+	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and any(.labels[]; .name == $label)' <<<"$before" >/dev/null || return 1
 	body=$(jq -r '.body' <<<"$before") || return 1
 	metadata=$(release_metadata "$body" "$repo") || return 1
 	verdict=$(release_verify "$repo" "$issue") || rc=$?
@@ -160,6 +184,9 @@ release_process_issue() {
 	pr=$(jq -r '.pr' <<<"$metadata")
 	head=$(jq -r '.head' <<<"$metadata")
 	version=$(jq -r '.version' <<<"$metadata")
+	local manifest=""
+	manifest=$(release_contents "$repo" CloudronManifest.json "$head") || return 1
+	jq -e --argjson metadata "$metadata" '.version == $metadata.version and .upstreamVersion == $metadata.upstream' <<<"$manifest" >/dev/null || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	if [[ "$(jq -r '.head.sha' <<<"$snapshot")" != "$head" ]]; then
 		if [[ "$apply" == true ]]; then
@@ -172,7 +199,10 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 		fi
 		return 0
 	fi
-	[[ "$apply" == true ]] || { printf 'Approved release %s v%s (dry run)\n' "$repo" "$version"; return 0; }
+	[[ "$apply" == true ]] || {
+		printf 'Approved release %s v%s (dry run)\n' "$repo" "$version"
+		return 0
+	}
 	if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]]; then
 		checks=$(release_checks "$repo" "$pr") || return 1
 		: "$checks"
@@ -189,9 +219,9 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 	jq -e --arg head "$head" '.merged == true and .head.sha == $head' <<<"$snapshot" >/dev/null || return 1
 	# Later invocations resume verification without merging again. GH#35649
 	# already owns catalog non-fast-forward recovery and dispatch reconciliation.
-	if ! release_url=$(release_published "$repo" "$version" 2>/dev/null); then
-		local merge_sha=""
-		merge_sha=$(jq -er '.merge_commit_sha' <<<"$snapshot") || return 1
+	local merge_sha=""
+	merge_sha=$(jq -er '.merge_commit_sha' <<<"$snapshot") || return 1
+	if ! release_url=$(release_published "$repo" "$version" "$merge_sha" 2>/dev/null); then
 		runs=$(gh api "repos/${repo}/actions/workflows/cloudron-catalog-publish.yml/runs?branch=main&per_page=100") || return 1
 		run_id=$(jq -r --arg sha "$merge_sha" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.id) | last | .id // empty' <<<"$runs") || return 1
 		if [[ -z "$run_id" ]]; then
@@ -199,19 +229,48 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 			return 0
 		fi
 		AIDEVOPS_GH_READ_TIMEOUT=120 _gh_with_timeout read gh run watch "$run_id" --repo "$repo" --exit-status --interval 10 || return 1
-		release_url=$(release_published "$repo" "$version") || return 1
+		release_url=$(release_published "$repo" "$version" "$merge_sha") || return 1
 	fi
-	release_comment "$repo" "$issue" "Published approved head ${head}: CloudronVersions.json contains ${version}; tag v${version} exists; GitHub release verified: ${release_url}" || return 1
+	# Close first: a failed close must not leave an approval-significant evidence
+	# comment that makes the next attempt stale. No change to snapshot semantics.
 	gh issue close "$issue" --repo "$repo" --reason completed || return 1
+	release_comment "$repo" "$issue" "Published approved head ${head}: CloudronVersions.json contains ${version}; tag v${version} descends from merge ${merge_sha}; successful catalog run and GitHub release verified: ${release_url}" || return 1
 	return 0
+}
+
+# Read-only authorization used by every full-loop merge transport while the
+# dedicated PR label remains set. No environment variable grants this authority.
+release_authorize() {
+	local repo="$1" pr="$2" head="$3" issues="" issue="" current="" number=""
+	local metadata=""
+	local verdict=""
+	release_authority "$repo" || return 1
+	issues=$(release_issues "$repo") || return 1
+	while IFS= read -r issue; do
+		metadata=$(release_metadata "$(jq -r '.body' <<<"$issue")" "$repo") || continue
+		jq -e --arg head "$head" --arg pr "$pr" '.head == $head and (.pr | tostring) == $pr' <<<"$metadata" >/dev/null || continue
+		number=$(jq -r '.number' <<<"$issue")
+		verdict=$(release_verify "$repo" "$number") || return 1
+		[[ "$verdict" == VERIFIED ]] || return 1
+		current=$(gh api "repos/${repo}/issues/${number}") || return 1
+		jq -e --argjson original "$issue" --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and .body == $original.body and any(.labels[]; .name == $label)' <<<"$current" >/dev/null || return 1
+		return 0
+	done < <(jq -c '.[]' <<<"$issues")
+	return 1
 }
 
 release_process() {
 	local apply="$1" repo="" issues="" issue="" failures=0 repos=""
 	repos=$(jq -er '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
 	while IFS= read -r repo; do
-		release_authority "$repo" || { failures=$((failures + 1)); continue; }
-		issues=$(release_issues "$repo") || { failures=$((failures + 1)); continue; }
+		release_authority "$repo" || {
+			failures=$((failures + 1))
+			continue
+		}
+		issues=$(release_issues "$repo") || {
+			failures=$((failures + 1))
+			continue
+		}
 		while IFS= read -r issue; do
 			[[ -n "$issue" ]] || continue
 			release_process_issue "$repo" "$issue" "$apply" || failures=$((failures + 1))
@@ -223,14 +282,18 @@ release_process() {
 
 main() {
 	local command="${1:-help}"
-	local arg2="${2:-}" arg3="${3:-}"
+	local arg2="${2:-}" arg3="${3:-}" arg4="${4:-}"
 	case "$command" in
+	authorize)
+		[[ $# -eq 4 ]] || return 1
+		release_authorize "$arg2" "$arg3" "$arg4" || return 1
+		;;
 	request)
 		[[ $# -eq 3 ]] || return 1
 		release_request "$arg2" "$arg3" || return 1
 		;;
 	process)
-		[[ $# -eq 1 || ( $# -eq 2 && "$arg2" == --apply ) ]] || return 1
+		[[ $# -eq 1 || ($# -eq 2 && "$arg2" == --apply) ]] || return 1
 		local apply=false
 		[[ "${2:-}" != --apply ]] || apply=true
 		release_process "$apply" || return 1
