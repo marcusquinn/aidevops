@@ -21,30 +21,11 @@ from typing import Any
 from command_policy_config import _decision
 
 RULE_ID = "network.redirect-link"
+# Commands that fetch or open their URL arguments.
 NETWORK_CLIENTS = frozenset(
-    {
-        "aria2c",
-        "chromium",
-        "chromium-browser",
-        "curl",
-        "curlie",
-        "firefox",
-        "google-chrome",
-        "http",
-        "https",
-        "httpie",
-        "links",
-        "lynx",
-        "open",
-        "playwright",
-        "sensible-browser",
-        "w3m",
-        "wget",
-        "wget2",
-        "x-www-browser",
-        "xdg-open",
-        "xh",
-    }
+    "aria2c chromium chromium-browser curl curlie firefox google-chrome http https "
+    "httpie links lynx open playwright sensible-browser w3m wget wget2 "
+    "x-www-browser xdg-open xh".split()
 )
 _RULES_CACHE: dict[str, Any] = {}
 

@@ -24,16 +24,21 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import os
 import re
 import sys
 import unicodedata
-from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote
 
-CONFIG_ENV = "AIDEVOPS_REDIRECT_HOSTS_CONF"
-CONFIG_NAME = "redirect-hosts.conf"
+# Re-exported so callers keep a single import surface.
+from redirect_link_rules import (  # noqa: F401
+    CONFIG_ENV,
+    CONFIG_NAME,
+    RedirectPolicyError,
+    RedirectRules,
+    load_rules,
+    parse_rules,
+)
 
 EXIT_CLEAN = 0
 EXIT_FOUND = 1
@@ -58,76 +63,6 @@ _URL_TOKEN = re.compile(
     r"(?P<rest>[/?#][^\s<>\"'`]*)?"
 )
 _HOST_BOUNDARY = re.compile(r"[a-z0-9._\-]")
-
-
-class RedirectPolicyError(RuntimeError):
-    """Raised when the redirect host list cannot be loaded."""
-
-
-@dataclass
-class RedirectRules:
-    """Parsed redirect-hosts.conf entries."""
-
-    exact: set[str] = field(default_factory=set)
-    suffixes: set[str] = field(default_factory=set)
-    paths: dict[str, list[str]] = field(default_factory=dict)
-
-    def match(self, host: str, rest: str) -> str | None:
-        """Return the matching rule for host+path, or None."""
-        host = host.rstrip(".")
-        bare = host[4:] if host.startswith("www.") else host
-        path = rest.split("?", 1)[0].split("#", 1)[0].rstrip("/")
-        for candidate in (host, bare):
-            if candidate in self.exact:
-                return candidate
-            for suffix in self.suffixes:
-                if candidate == suffix or candidate.endswith("." + suffix):
-                    return f"*.{suffix}"
-            for prefix in self.paths.get(candidate, []):
-                if path == prefix or path.startswith(prefix + "/"):
-                    return f"{candidate}{prefix}"
-        return None
-
-
-def _config_candidates() -> list[Path]:
-    here = Path(__file__).resolve().parent
-    candidates = []
-    override = os.environ.get(CONFIG_ENV, "")
-    if override:
-        candidates.append(Path(override))
-    candidates.append(here.parent / "configs" / CONFIG_NAME)
-    candidates.append(Path.home() / ".aidevops" / "agents" / "configs" / CONFIG_NAME)
-    return candidates
-
-
-def load_rules(path: str | os.PathLike[str] | None = None) -> RedirectRules:
-    """Load redirect rules from an explicit path or the standard locations."""
-    candidates = [Path(path)] if path else _config_candidates()
-    for candidate in candidates:
-        if candidate.is_file():
-            return parse_rules(candidate.read_text(encoding="utf-8"))
-    raise RedirectPolicyError(
-        f"{CONFIG_NAME} not found (checked: {', '.join(str(c) for c in candidates)})"
-    )
-
-
-def parse_rules(text: str) -> RedirectRules:
-    """Parse redirect-hosts.conf content."""
-    rules = RedirectRules()
-    for raw in text.splitlines():
-        entry = raw.split("#", 1)[0].strip().lower()
-        if not entry:
-            continue
-        if entry.startswith("*."):
-            rules.suffixes.add(entry[2:])
-        elif "/" in entry:
-            host, path = entry.split("/", 1)
-            rules.paths.setdefault(host, []).append("/" + path.rstrip("/"))
-        else:
-            rules.exact.add(entry)
-    if not (rules.exact or rules.suffixes or rules.paths):
-        raise RedirectPolicyError(f"{CONFIG_NAME} contains no entries")
-    return rules
 
 
 def _normalize(text: str) -> str:
@@ -198,6 +133,12 @@ def _emit(findings: list[dict[str, str]]) -> int:
     return EXIT_FOUND if findings else EXIT_CLEAN
 
 
+def _read_scan_input(path: str) -> str:
+    if path:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    return sys.stdin.read()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     sub = parser.add_subparsers(dest="action", required=True)
@@ -218,15 +159,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         rules = load_rules(args.config or None)
         if args.action == "scan":
-            if args.file:
-                text = Path(args.file).read_text(encoding="utf-8", errors="replace")
-            else:
-                text = sys.stdin.read()
+            text = _read_scan_input(args.file)
             return _emit(find_redirect_links(text, rules, args.strict_bare))
-        findings: list[dict[str, str]] = []
-        for url in args.urls:
-            findings.extend(find_redirect_links(url, rules, args.strict_bare))
-        return _emit(findings)
+        text = "\n".join(args.urls)
+        return _emit(find_redirect_links(text, rules, args.strict_bare))
     except (OSError, RedirectPolicyError) as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return EXIT_ERROR

@@ -18,7 +18,7 @@
 # across several public repos from a days-old account.
 #
 # Security: pull_request_target/issue events run the BASE-branch helper only
-# (sparse checkout of three trusted files, never PR head code). Event text is
+# (sparse checkout of four trusted files, never PR head code). Event text is
 # read by jq from $GITHUB_EVENT_PATH, never interpolated into shell.
 
 name: Redirect-Link Spam Guard
@@ -69,6 +69,7 @@ jobs:
           sparse-checkout: |
             .agents/configs/redirect-hosts.conf
             .agents/scripts/redirect_link_policy.py
+            .agents/scripts/redirect_link_rules.py
             .agents/scripts/redirect-link-guard-helper.sh
           sparse-checkout-cone-mode: false
 

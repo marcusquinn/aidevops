@@ -42,6 +42,7 @@ jobs:
           sparse-checkout: |
             .agents/configs/redirect-hosts.conf
             .agents/scripts/redirect_link_policy.py
+            .agents/scripts/redirect_link_rules.py
           sparse-checkout-cone-mode: false
 
       - name: Scan for redirect links

@@ -233,73 +233,31 @@ def _check_command_policy(command: str) -> "dict | None":
     }
 
 
-URL_SHAPED_MARKERS = ("://", "www.", "hxxp", "[.]", "%2e", "\uff0e", "\u3002")
 REDIRECT_EXEMPT_TOOLS = {"bash", "read", "grep", "glob", "task", "todowrite", "notebookread"}
-
-
-def _collect_url_strings(value, out: list, depth: int = 0) -> list:
-    """Collect URL-shaped strings from nested tool arguments."""
-    if len(out) >= 200 or depth > 6 or value is None:
-        return out
-    if isinstance(value, str):
-        lowered = value.lower()
-        if any(marker in lowered for marker in URL_SHAPED_MARKERS):
-            out.append(value)
-    elif isinstance(value, list):
-        for item in value:
-            _collect_url_strings(item, out, depth + 1)
-    elif isinstance(value, dict):
-        for item in value.values():
-            _collect_url_strings(item, out, depth + 1)
-    return out
 
 
 def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
     """Deny URL-bearing tools that would resolve a redirect link (GH#35655).
 
-    Lexical only via redirect_link_policy.py; never touches the network.
-    Bash is covered by the shared command policy; file tools are exempt.
+    Decision lives in scripts/redirect_link_tool_check.py (lexical only, no
+    network). Bash is covered by the shared command policy; file tools are
+    exempt. Any helper failure fails closed.
     """
-    leaf = _normalise_tool_name(tool_name)
-    if leaf in REDIRECT_EXEMPT_TOOLS or _is_direct_file_tool(tool_name):
+    if _normalise_tool_name(tool_name) in REDIRECT_EXEMPT_TOOLS or _is_direct_file_tool(tool_name):
         return None
-    strings = _collect_url_strings(tool_input, [])
-    if not strings:
-        return None
-    scanner = _resolve_policy_helper(
-        "AIDEVOPS_REDIRECT_LINK_POLICY", "redirect_link_policy.py"
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_REDIRECT_TOOL_CHECK", "redirect_link_tool_check.py"
     )
-    reason = "redirect-link policy scanner is unavailable"
-    if scanner:
+    reason = "redirect-link policy helper is unavailable"
+    if helper:
         try:
-            # nosec B603 -- fixed interpreter and scanner path, no shell
-            result = subprocess.run(  # nosec B603
-                [sys.executable, scanner, "scan"],
-                input="\n".join(strings),
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            reason = f"redirect-link policy scanner failed: {exc}"
-        else:
-            if result.returncode == 0:
+            payload_text = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
+            _, payload = _run_policy_helper(helper, [], payload_text)
+            if payload.get("decision") == "allow":
                 return None
-            if result.returncode == 1:
-                try:
-                    hosts = sorted(
-                        {item["host"] for item in json.loads(result.stdout)["redirect_links"]}
-                    )
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    hosts = ["redirect host"]
-                reason = (
-                    f"redirect/shortener link ({', '.join(hosts)}) must never be "
-                    "resolved, fetched or opened in any session, including remote "
-                    "sandboxes. Treat the source content as spam (GH#35655)."
-                )
-            else:
-                reason = "redirect-link policy scanner returned an error"
+            reason = str(payload.get("reason") or "redirect link detected")
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError) as exc:
+            reason = f"redirect-link policy helper failed: {exc}"
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

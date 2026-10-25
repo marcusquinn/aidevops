@@ -34,6 +34,8 @@ Issue #35640 was templated star-exchange spam: a security-themed title, engageme
 
 - `.agents/configs/redirect-hosts.conf`
 - `.agents/scripts/redirect_link_policy.py`
+- `.agents/scripts/redirect_link_rules.py`
+- `.agents/scripts/redirect_link_tool_check.py`
 - `.agents/scripts/redirect-link-guard-helper.sh`
 - `.agents/scripts/command_policy_redirect.py`
 - `.agents/scripts/command_policy_evaluation.py`
