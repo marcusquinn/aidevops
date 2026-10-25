@@ -11,6 +11,7 @@ import pathlib
 import runpy
 import subprocess  # nosec B404 — fixed offline fixture programs only
 import sys
+import tempfile
 import unittest
 
 TESTS = pathlib.Path(__file__).resolve().parent
@@ -24,6 +25,60 @@ SCRIPTS = shared["SCRIPTS"]
 
 
 class PrivateMemberTests(unittest.TestCase):
+    def test_shell_large_metadata_transport(self):
+        # Exceed Linux's per-argument limit and macOS's total argv limit. Only
+        # paths cross exec here: neither test argv nor exported stubs carry JSON.
+        data = fixture()
+        padding = "x" * (2 * 1024 * 1024)
+        data["pr"]["body"] += "\n" + padding
+        data["issue"]["body"] += "\n" + padding
+        approval = json.loads(data["comments"][-1]["body"][len(revision.PREFIX):])
+        approval["brief_sha256"] = revision.binding(data)["brief_sha256"]
+        data["comments"][-1]["body"] = revision.PREFIX + json.dumps(approval)
+        data["comments"].insert(2, comment(2.5, padding, "reader", "NONE"))
+        for c in data["comments"]:
+            c["created_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        # Exercise the paginated shape returned by gh --paginate --slurp, with
+        # the approval on the last page so truncating metadata cannot pass.
+        data["comments"] = [data["comments"][:2], data["comments"][2:]]
+        command = ('source "$1/pr-checkpoint-target-lib.sh"; test_permission="$3"; '
+                   'gh() { [[ "$*" == "api repos/owner/repo/collaborators/maintainer/permission --jq .permission" ]] || return 90; '
+                   'printf "%s" "$test_permission"; return 0; }; '
+                   'pr=$(<"$2/pr.json"); issue=$(<"$2/issue.json"); comments=$(<"$2/comments.json"); '
+                   '_pr_checkpoint_revised_target owner/repo "$pr" "$issue" "$comments" worker')
+        with tempfile.TemporaryDirectory() as root:
+            def run(candidate, permission="write", raw_comments=None):
+                for key in ("pr", "issue", "comments"):
+                    text = json.dumps(candidate[key])
+                    self.assertGreater(len(text.encode()), 2 * 1024 * 1024)
+                    if key == "comments" and raw_comments is not None:
+                        text = raw_comments
+                    (pathlib.Path(root) / f"{key}.json").write_text(text)
+                # The permission stub sees the shell's scalar third argument.
+                return subprocess.run([BASH, "-c", command, "test", str(SCRIPTS), root, permission],  # nosec B603
+                                      capture_output=True, text=True, check=False)
+
+            accepted = run(data)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertEqual(json.loads(accepted.stdout)["approval_id"], 3)
+            self.assertEqual(json.loads(accepted.stdout)["brief_sha256"], approval["brief_sha256"])
+            for case in ("untrusted", "head", "brief", "issue_hold", "pr_hold", "permission", "incomplete"):
+                changed = copy.deepcopy(data)
+                if case == "untrusted":
+                    changed["comments"][-1][-1]["author_association"] = "NONE"
+                elif case == "head":
+                    changed["pr"]["headRefOid"] = "2" * 40
+                elif case == "brief":
+                    changed["issue"]["body"] += "changed"
+                elif case in ("issue_hold", "pr_hold"):
+                    changed[case.split("_")[0]]["labels"].append({"name": "hold-for-review"})
+                with self.subTest(case=case):
+                    rejected = run(changed, "read" if case == "permission" else "write",
+                                   "[" if case == "incomplete" else None)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertEqual(rejected.stdout, "")
+                    self.assertNotIn("Argument list too long", rejected.stderr)
+
     def test_events_and_edited_evidence(self):
         for association in ("CONTRIBUTOR", "NONE"):
             data = fixture()
