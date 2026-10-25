@@ -87,14 +87,9 @@ _large_file_gate_precheck_labels() {
 		return 1
 	fi
 
-	# t2088: Never gate parent-task / meta issues behind the large-file gate.
-	# Parent tasks are never dispatched directly — dispatch is unconditionally
-	# blocked by _is_assigned_check_parent_task() in dispatch-dedup-helper.sh
-	# (t1986). Applying needs-simplification to them creates confusing label
-	# churn: the label is re-added every cycle even after manual removal because
-	# the target file is still large, misleading maintainers into thinking
-	# simplification is the only remaining gate when in fact the parent-task
-	# block is permanent and independent of file size.
+	# t2088: Parent-task/meta issues are blocked independently of file size by
+	# _is_assigned_check_parent_task() in dispatch-dedup-helper.sh (t1986).
+	# Gating them only creates misleading needs-simplification label churn.
 	# GH#35623: Consolidation tasks only rewrite the parent issue body, not
 	# its referenced source files. Gating them can deadlock file-size-debt
 	# parents waiting for consolidation before simplification can dispatch.
