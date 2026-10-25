@@ -336,7 +336,7 @@ jobs:
           # New tags retain the attested source across a docs-only rebase.
           # Older tags used their direct parent as the build source.
           test "$(git rev-list --parents -n 1 "$tag" | wc -w)" -eq 2
-          source_sha=$(git show -s --format='%(trailers:key=Cloudron-Source,valueonly)' "$tag")
+          source_sha=$(git show -s --format='%(trailers:key=Cloudron-Source,valueonly)' "$tag^{commit}")
           source_sha=${source_sha:-$(git rev-parse "$tag^1")}
           [[ "$source_sha" =~ ^[a-f0-9]{40}$ ]]
           git merge-base --is-ancestor "$source_sha" "$tag^1"

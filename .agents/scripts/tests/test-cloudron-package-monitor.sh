@@ -948,9 +948,92 @@ test_monitor_reconciles_catalog_once() {
 	return 0
 }
 
+test_catalog_atomic_push_races() {
+	# Execute the actual workflow shell against disposable local bare remotes.
+	python3 - "$SCRIPT_DIR/../../../.github/workflows/cloudron-catalog-publish-reusable.yml" "$TEST_ROOT" <<'PY'
+import os
+import pathlib
+import subprocess
+import sys
+import textwrap
+
+workflow = pathlib.Path(sys.argv[1]).read_text()
+step = workflow.split('      - name: Commit catalog and push tag atomically\n', 1)[1]
+script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('\n  release:', 1)[0])
+editor = pathlib.Path(sys.argv[2]) / 'tag-editor'
+editor.write_text('#!/usr/bin/env python3\nimport pathlib, sys\npathlib.Path(sys.argv[1]).write_text("Catalog test tag\\n")\n')
+editor.chmod(0o755)
+env = dict(os.environ, GIT_AUTHOR_NAME='Catalog Test', GIT_AUTHOR_EMAIL='test@example.invalid',
+           GIT_COMMITTER_NAME='Catalog Test', GIT_COMMITTER_EMAIL='test@example.invalid', GIT_EDITOR=str(editor))
+
+def git(cwd, *args):
+    result = subprocess.run(['git', *args], cwd=cwd, env=env, text=True, capture_output=True)
+    if result.returncode:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
+
+for scenario in ('unchanged', 'docs', 'source', 'reverted-source', 'renamed-source', 'catalog', 'second-race'):
+    root = pathlib.Path(sys.argv[2]) / ('push-' + scenario)
+    root.mkdir()
+    remote, worker, racer = (root / name for name in ('origin.git', 'worker', 'racer'))
+    git(root, 'init', '--bare', '--initial-branch=main', str(remote))
+    git(root, 'clone', str(remote), str(worker))
+    (worker / 'CloudronVersions.json').write_text('{"versions":{}}\n')
+    (worker / 'Dockerfile').write_text('FROM scratch\n')
+    git(worker, 'add', '.')
+    git(worker, 'commit', '-m', 'validated package')
+    source = git(worker, 'rev-parse', 'HEAD')
+    git(worker, 'push', 'origin', 'HEAD:main')
+    git(root, 'clone', str(remote), str(racer))
+    if scenario != 'unchanged':
+        path = 'README.md' if scenario in ('docs', 'second-race') else 'CloudronVersions.json' if scenario == 'catalog' else 'Dockerfile'
+        (racer / path).write_text('concurrent change\n')
+        git(racer, 'add', '.')
+        git(racer, 'commit', '-m', 'concurrent change')
+        if scenario == 'reverted-source':
+            git(racer, 'revert', '--no-edit', 'HEAD')
+        if scenario == 'renamed-source':
+            git(racer, 'mv', 'Dockerfile', 'README.md')
+            git(racer, 'commit', '-m', 'rename source into docs')
+        git(racer, 'push', 'origin', 'HEAD:main')
+    if scenario == 'second-race':
+        # Reject the second push to prove there is no retry loop.
+        hook = remote / 'hooks/pre-receive'
+        hook.write_text('#!/bin/sh\nexit 1\n')
+        hook.chmod(0o755)
+    expected_main = git(racer, 'ls-remote', 'origin', 'refs/heads/main').split()[0]
+    catalog = '{"versions":{"1.0.0":{}}}\n'
+    (worker / 'CloudronVersions.json').write_text(catalog)
+    result = subprocess.run(['bash', '-c', script], cwd=worker,
+                            env=dict(env, SOURCE_SHA=source, VERSION='1.0.0', RELEASE_PAT='test-placeholder'),
+                            text=True, capture_output=True)
+    success = scenario in ('unchanged', 'docs')
+    assert (result.returncode == 0) == success, (scenario, result.stdout, result.stderr)
+    tag = git(worker, 'ls-remote', 'origin', 'refs/tags/v1.0.0')
+    assert bool(tag) == success, scenario
+    if success:
+        git(racer, 'fetch', 'origin', 'main', '--tags')
+        assert git(racer, 'show', 'v1.0.0:CloudronVersions.json') == catalog.strip()
+        assert git(racer, 'show', '-s', '--format=%(trailers:key=Cloudron-Source,valueonly)', 'v1.0.0^{commit}') == source
+        git(racer, 'merge-base', '--is-ancestor', source, 'v1.0.0')
+        assert git(racer, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'v1.0.0') == 'CloudronVersions.json'
+        release = workflow.split('      - name: Verify existing tag, public image and catalog; repair release only\n', 1)[1]
+        verification = textwrap.dedent(release.split('        run: |\n', 1)[1]).split('image=$(jq', 1)[0]
+        checked = subprocess.run(['bash', '-c', verification + '\ntest "$source_sha" = "$EXPECTED_SOURCE"'],
+                                 cwd=racer, env=dict(env, VERSION='1.0.0', RUNNER_TEMP=str(root), EXPECTED_SOURCE=source),
+                                 text=True, capture_output=True)
+        assert checked.returncode == 0, (scenario, checked.stderr)
+    else:
+        assert git(racer, 'ls-remote', 'origin', 'refs/heads/main').split()[0] == expected_main
+    print('PASS workflow atomic push:', scenario)
+PY
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
+	test_catalog_atomic_push_races
 	test_monitor_reconciles_catalog_once
 	test_monitor_deduplicates_and_preserves_source
 	test_monitor_scopes_package_tests_when_present
