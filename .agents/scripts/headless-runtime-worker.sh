@@ -988,7 +988,7 @@ _worker_external_terminal_complete() {
 _hrw_own_merged_terminal_complete() {
 	local session_key="$1"
 	local work_dir="$2"
-	local runtime_session="${discovered_session:-}"
+	local runtime_session="${discovered_session:-${_HRW_OWN_MERGED_RUNTIME_SESSION:-}}"
 	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
 	local issue_number branch head dirty context started
 	[[ -n "$runtime_session" && -n "${AIDEVOPS_ATTEMPT_ID:-}" ]] || return 1
@@ -1046,8 +1046,18 @@ _hrw_own_merged_terminal_complete() {
 		and (.release_status == "not-requested" or .release_status == "published" or .release_status == "superseded")
 	' "$receipt" >/dev/null 2>&1 || return 1
 	_HRW_OWN_MERGED_VERIFIED_CONTEXT="$context"
+	_HRW_OWN_MERGED_RUNTIME_SESSION="$runtime_session"
 	print_info "[lifecycle] worker_own_merged complete session=${session_key} attempt=${AIDEVOPS_ATTEMPT_ID} issue=${issue_number} pr=${pr_number} head=${head}"
 	return 0
+}
+
+_hrw_terminal_objective_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	_hrw_own_merged_terminal_complete "$session_key" "$work_dir" && return 0
+	_hrw_pr_less_terminal_complete "$session_key" "$work_dir" \
+		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}" && return 0
+	return 1
 }
 
 # PR-less objectives with a trusted terminal contract: explicit data-only work,
@@ -1788,9 +1798,7 @@ _hrw_finish_success_run() {
 	# repo, no gh, no remote) the classification is "pr_exists", so false-negatives
 	# (legit work misclassified) are impossible.
 	if [[ "$release_needed" -eq 1 && -n "$work_dir" ]] && \
-		! _hrw_own_merged_terminal_complete "$session_key" "$work_dir" && \
-		! _hrw_pr_less_terminal_complete "$session_key" "$work_dir" \
-		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+		! _hrw_terminal_objective_complete "$session_key" "$work_dir"; then
 		local output_class="pr_exists"
 		output_class=$(_worker_produced_output "$session_key" "$work_dir")
 		case "$output_class" in

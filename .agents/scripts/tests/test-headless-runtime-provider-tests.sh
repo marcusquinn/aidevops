@@ -261,6 +261,115 @@ run_blocked_completion_tests() {
 	test_anchored_blocked_shapes_are_terminal
 	test_clean_exit_terminal_state_reconciliation
 	test_pr_less_terminal_proof_survives_finalization
+	test_own_merged_terminal_reconciliation
+	return 0
+}
+
+# Synthetic external evidence for GH#35629; no API calls or original sessions.
+_setup_own_merged_evidence() {
+	local shape="$1"
+	jq -cn --arg head "$head" --arg branch "$branch" --arg shape "$shape" '
+		{number:42,state:"MERGED",mergedAt:"2026-10-25T12:01:00Z",
+		mergeCommit:{oid:("b" * 40)},headRefOid:$head,headRefName:$branch,
+		headRepository:{name:"repo"},headRepositoryOwner:{login:"owner"},
+		closingIssuesReferences:[{number:456,repository:{name:"repo",owner:{login:"owner"}}}]}
+		| if $shape == "unmerged" then .state = "OPEN" | .mergedAt = null
+		elif $shape == "unrelated" then .closingIssuesReferences[0].number = 789
+		elif $shape == "cross_repo" then .closingIssuesReferences[0].repository.owner.login = "other"
+		elif $shape == "foreign_head" then .headRepositoryOwner.login = "other"
+		elif $shape == "head_mismatch" then .headRefOid = ("c" * 40)
+		elif $shape == "branch_mismatch" then .headRefName = "other"
+		elif $shape == "stale_merge" then .mergedAt = "2026-10-24T12:00:00Z"
+		elif $shape == "unverified" then .mergeCommit = null
+		else . end' >"$pr_file"
+	jq -cn --arg worktree "$work_dir" --arg branch "$branch" --arg shape "$shape" \
+		--arg deferred "$_FULL_LOOP_CLEANUP_DEFERRED" '
+		{schema_version:1,repository:"owner/repo",pr_number:42,worktree:$worktree,branch:$branch,
+		owner:{session:"ses_own_merged",pid:123,process_identity:"synthetic-owner"},
+		created_at:"2026-10-25T12:02:00Z",executor_completion_state:"COMPLETE",
+		resource_cleanup_state:$deferred,release_status:"not-requested"}
+		| if $shape == "stale_receipt" then .created_at = "2026-10-24T12:00:00Z"
+		elif $shape == "foreign_session" then .owner.session = "ses_foreign"
+		elif $shape == "foreign_receipt" then .repository = "other/repo"
+		elif $shape == "receipt_branch" then .branch = "other"
+		elif $shape == "receipt_pr" then .pr_number = 43
+		elif $shape == "unfinalized" then .executor_completion_state = "FINALIZATION_PENDING"
+		elif $shape == "release_pending" then .release_status = "pending"
+		else . end' >"$receipt_file"
+	case "$shape" in
+	unreadable) printf 'not json\n' >"$receipt_file" ;;
+	missing_receipt) rm "$receipt_file" ;;
+	dirty) touch "${work_dir}/unpublished.txt" ;;
+	esac
+	return 0
+}
+
+test_own_merged_terminal_reconciliation() {
+	local shape="" result=0
+	for shape in squash issue open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent; do
+		if ! (
+			local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG="owner/repo"
+			local AIDEVOPS_ATTEMPT_ID="attempt:synthetic" AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+			local work_dir="${TEST_ROOT}/own-merged-${shape}" branch="" head=""
+			local pr_file="${TEST_ROOT}/own-pr.json" receipt_file="${TEST_ROOT}/own-receipt.json"
+			local output_file="${TEST_ROOT}/own-output.jsonl" api_available=1 rc=0 expected=77
+			local session_key="manual-cli-456-1792929600"
+			_setup_test_git_repo "$work_dir" 1
+			branch=$(git -C "$work_dir" branch --show-current)
+			head=$(git -C "$work_dir" rev-parse HEAD)
+			_setup_own_merged_evidence "$shape"
+			_hrw_pr_less_terminal_complete() { return 1; }
+			_full_loop_cleanup_receipt_path() { printf '%s' "$receipt_file"; return 0; }
+			gh_pr_list() { jq -s '.' "$pr_file"; return 0; }
+			gh() {
+				local resource="$1" action="$2"
+				[[ "$api_available" == 1 && "$shape" != api_failure ]] || return 1
+				case "${resource}:${action}" in
+				api:repos/owner/repo/issues/456)
+					case "$shape" in
+					open | synthetic | tool | silent) printf '{"state":"open"}\n' ;;
+					*) printf '{"state":"closed","state_reason":"completed"}\n' ;;
+					esac ;;
+				api:repos/owner/repo/pulls/42) printf 'Resolves #456\n' ;;
+				api:--paginate) printf '[[{"body":"<!-- MERGE_SUMMARY -->"}]]\n' ;;
+				pr:view) jq '.' "$pr_file" ;;
+				*) return 1 ;;
+				esac
+				return 0
+			}
+			printf '%s\n' '{"type":"tool_result","text":"bounded wrapper completed"}' \
+				'{"type":"text","sessionID":"ses_own_merged","text":"Delivered, merged, synchronized and finalized guarded cleanup."}' >"$output_file"
+			case "$shape" in
+			squash) expected=0 ;;
+			issue) expected=0; session_key="issue-456" ;;
+			missing_session) printf '{"type":"text","text":"Delivered."}\n' >"$output_file" ;;
+			synthetic) printf '{"type":"text","part":{"synthetic":true,"text":"FULL_LOOP_COMPLETE"}}\n' >>"$output_file" ;;
+			tool) printf '{"type":"tool_result","text":"FULL_LOOP_COMPLETE"}\n' >>"$output_file" ;;
+			esac
+			_handle_run_result 0 "$output_file" worker openai "$session_key" openai/gpt-5.5 "$work_dir" || rc=$?
+			[[ "$rc" == "$expected" ]] || exit 1
+			if [[ "$expected" == 0 ]]; then
+				[[ "$_run_result_label" == success && "$_run_classification_pattern" == verified_own_merged_objective && -z "$_run_failure_reason" ]] || exit 1
+				# Finalization has no dynamically scoped discovered_session and may
+				# see an API outage. It must retain this exact attempt's proof.
+				api_available=0
+				_hrw_release_dispatch_claim() { return 0; }
+				_hrw_permission_pending_path() { return 1; }
+				_worker_produced_output() { exit 1; }
+				_hrw_finish_success_run "$session_key" "$work_dir" || exit 1
+				[[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]] || exit 1
+				touch "${work_dir}/new-edit"
+				if _hrw_own_merged_terminal_complete "$session_key" "$work_dir"; then exit 1; fi
+				rm "${work_dir}/new-edit"
+				AIDEVOPS_ATTEMPT_ID="attempt:next"
+				if _hrw_own_merged_terminal_complete "$session_key" "$work_dir"; then exit 1; fi
+			else
+				[[ "$_run_result_label" == premature_exit ]] || exit 1
+			fi
+		); then result=1; fi
+		print_result "own merged objective ${shape}: exact proof or fail closed" "$result"
+		result=0
+	done
 	return 0
 }
 

@@ -48,6 +48,7 @@ _initialize_run_result() {
 	_run_classification_pattern=""
 	_HRW_PR_LESS_VERIFIED_CONTEXT=""
 	_HRW_OWN_MERGED_VERIFIED_CONTEXT=""
+	_HRW_OWN_MERGED_RUNTIME_SESSION=""
 	return 0
 }
 
@@ -156,6 +157,20 @@ _run_result_capture_live_blocker() {
 	return 0
 }
 
+# Objective proof complements, rather than broadens, model marker parsing.
+_run_result_terminal_completion_confirmed() {
+	if _hrw_own_merged_terminal_complete "$session_key" "${work_dir:-}"; then
+		_run_failure_reason=""
+		_run_classification_source="merged_pr_cleanup_receipt"
+		_run_classification_pattern="verified_own_merged_objective"
+		return 0
+	fi
+	output_has_completion_signal "$output_file" && return 0
+	_hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
+		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}" && return 0
+	return 1
+}
+
 _handle_run_result_success_output() {
 	if _run_result_requires_task_complete && ! _private_output_has_task_complete "$output_file"; then
 		local incomplete_label="private_incomplete"
@@ -238,20 +253,7 @@ _handle_run_result_success_output() {
 			print_warning "$selected_model worker reported a terminal BLOCKED state"
 			return 83
 		fi
-		# Reconcile objective evidence without broadening model marker parsing.
-		if _hrw_own_merged_terminal_complete "$session_key" "${work_dir:-}"; then
-			_run_result_label="success"
-			_run_failure_reason=""
-			_run_classification_source="merged_pr_cleanup_receipt"
-			_run_classification_pattern="verified_own_merged_objective"
-			rm -f "$output_file"
-			return 0
-		fi
-		# GH#33672: reconcile verified PR-less terminal objectives before the
-		# continuation gate. Prose alone ("already delivered") is not evidence.
-		if ! output_has_completion_signal "$output_file" &&
-			! _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
-			"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+		if ! _run_result_terminal_completion_confirmed; then
 			_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
 			_run_result_label="premature_exit"
 			rm -f "$output_file"
