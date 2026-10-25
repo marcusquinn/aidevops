@@ -194,6 +194,6 @@ printf 'PASS changed head during readiness rejected by merge transport\n'
 # The new routine's exact command and description remain discoverable.
 # shellcheck source=../routines/core-routines.sh
 source "${SOURCE_DIR}/routines/core-routines.sh"
-get_core_routine_entries | grep -Fq 'r924|x|Cloudron releases — process signed approvals|repeat:cron(*/30 * * * *)'
-describe_r924 linux | grep -Fq 'scripts/cloudron-release-approval-helper.sh process --apply'
+get_core_routine_entries | grep -F 'r924|x|Cloudron releases — process signed approvals|repeat:cron(*/30 * * * *)' >/dev/null
+describe_r924 linux | grep -F 'scripts/cloudron-release-approval-helper.sh process --apply' >/dev/null
 printf 'PASS half-hour approval routine registered\n'
