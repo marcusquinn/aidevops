@@ -871,6 +871,12 @@ else
 	print_result "expired never-ready checkpoint claims recover only through bound closure" 1
 fi
 
+if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-private-member.py"; then
+	print_result "private-member checkpoint trust preserves permission and edit fences" 0
+else
+	print_result "private-member checkpoint trust preserves permission and edit fences" 1
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
 	exit 0

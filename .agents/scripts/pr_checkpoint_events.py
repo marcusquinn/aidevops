@@ -21,22 +21,21 @@ def fields(line):
     return parsed if len(parsed) == len(pairs) else {}
 
 
-def trusted(comment, trusted_logins=()):
+def author_trusted(comment, trusted_logins=()):
     #aidevops:trust-boundary — logins come only from authenticated repo permissions.
-    return ((comment.get("author_association") in TRUSTED
-             or (comment.get("author_association") in {"CONTRIBUTOR", "NONE"}
-                 and comment.get("user", {}).get("login") in trusted_logins))
-            and bool(comment.get("user", {}).get("login"))
-            and comment.get("updated_at", comment.get("created_at")) == comment.get("created_at"))
+    elevated = {"CONTRIBUTOR", "NONE"} if comment.get("user", {}).get("login") in trusted_logins else set()
+    return comment.get("author_association") in TRUSTED | elevated
+
+
+def trusted(comment, trusted_logins=()):
+    return all((author_trusted(comment, trusted_logins), bool(comment.get("user", {}).get("login")),
+                comment.get("updated_at", comment.get("created_at")) == comment.get("created_at")))
 
 
 def events(comments, start, end, trusted_logins=()):
     for comment in comments:
         # Edited trusted coordination must still invalidate a history, not vanish.
-        author_trusted = (comment.get("author_association") in TRUSTED
-                          or (comment.get("author_association") in {"CONTRIBUTOR", "NONE"}
-                              and comment.get("user", {}).get("login") in trusted_logins))
-        if not start < comment["id"] < end or not author_trusted:
+        if not start < comment["id"] < end or not author_trusted(comment, trusted_logins):
             continue
         for line in comment["body"].splitlines():
             if line.startswith(EVENTS):
