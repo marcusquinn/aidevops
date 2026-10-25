@@ -36,9 +36,9 @@ class RenderReadinessTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.target = "srv-example123"
-        self.secret = "redaction-token-placeholder"
+        self.secret = os.urandom(32).hex()
         self.payload = {"id": self.target, "serviceDetails": {
-            "runtime": "docker", "url": "https://example.onrender.com",
+            "runtime": "docker", "url": "https://example.test",
             "envSpecificDetails": {"dockerCommand": "private-config-placeholder"},
         }}
         self.environment = mock.patch.dict(os.environ, {"RENDER_API_KEY": self.secret})
