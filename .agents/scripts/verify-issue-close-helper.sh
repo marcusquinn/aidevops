@@ -596,7 +596,7 @@ check_scoped_delivery() {
 	[[ -n "$branch" && -z "$dirty" ]] || return 1
 	git -C "$work_dir" merge-base --is-ancestor "$merge" "$head" || return 1
 	while IFS= read -r path; do
-		printf '%s\n' "$files" | grep -Fxq -- "$path" || return 1
+		grep -Fxq -- "$path" <<<"$files" || return 1
 		# Deleted paths, rewritten/reverted artifacts, and partial PRs fail shut.
 		blob=$(git -C "$work_dir" rev-parse "${merge}:${path}") || return 1
 		[[ "$(git -C "$work_dir" cat-file -t "$blob")" == blob ]] || return 1
