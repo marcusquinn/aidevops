@@ -173,10 +173,11 @@ class RenderReadinessTests(unittest.TestCase):
                 self.assertEqual(reason, output["evidence_scope"]["reason"])
 
     def test_invalid_config_is_not_http_200_readiness(self) -> None:
+        synthetic_userinfo_url = urlunsplit(("https", "user:private-error-placeholder@example.test", "", "", ""))
         configs = (None, [], {}, {"runtime": "docker"}, {"runtime": 1, "url": "https://example.test"},
                    {"runtime": "", "url": "https://example.test"},
                    {"runtime": "docker", "url": "http://example.test"},
-                   {"runtime": "docker", "url": "https://user:private-error-placeholder@example.test"},
+                   {"runtime": "docker", "url": synthetic_userinfo_url},
                    {"runtime": "docker", "url": "https://example.test", "envSpecificDetails": []},
                    {"runtime": "docker", "url": "https://example.test", "envSpecificDetails": {"dockerCommand": []}})
         for details in configs:
