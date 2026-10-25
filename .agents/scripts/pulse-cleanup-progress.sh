@@ -154,7 +154,7 @@ _pc_cleanup_resumable_unlocked() {
 		jobs+=("$job")
 	done <<<"$manifest"
 	printf '[pulse-cleanup] inventory jobs=%s elapsed=%ss scope=%s\n' \
-		"${#jobs[@]}" "$(( $(date +%s) - started ))" "${repo:+repository}${repo:-all}" >>"${LOGFILE:-/dev/null}"
+		"${#jobs[@]}" "$(( $(date +%s) - started ))" "${repo:-all}" >>"${LOGFILE:-/dev/null}"
 	for ((offset = 0; offset < ${#jobs[@]}; offset++)); do
 		[[ "$(date +%s)" -lt "$deadline" ]] || break
 		index=$(((start + offset) % ${#jobs[@]}))
@@ -167,6 +167,7 @@ _pc_cleanup_resumable_unlocked() {
 			remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || remaining=""
 			if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -lt 100 ]]; then
 				CLEANUP_WORKTREES_SKIPPED=1
+				printf '[pulse-cleanup] retained pending API quota: remaining=%s\n' "$remaining" >>"${LOGFILE:-/dev/null}"
 				break
 			fi
 		fi
@@ -181,5 +182,9 @@ _pc_cleanup_resumable_unlocked() {
 		[[ "$job_rc" -eq 0 ]] || return 1
 	done
 	echo "[pulse-cleanup] resumable progress: attempted=${offset}, removed=${CLEANUP_WORKTREES_REMOVED_COUNT}, budget=${budget}s" >>"${LOGFILE:-/dev/null}"
+	if [[ -n "$repo" ]]; then
+		[[ "$CLEANUP_WORKTREES_SKIPPED" -eq 0 ]] || return 76
+		[[ "$offset" -eq "${#jobs[@]}" ]] || return 124
+	fi
 	return 0
 }
