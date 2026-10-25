@@ -31,11 +31,12 @@ permissions: {}
 
 env:
   AIDEVOPS_REF: ${{ inputs.aidevops_ref }}
+  IMAGE_BUILD_PLATFORM: linux/amd64
 
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     permissions:
       contents: read
     outputs:
@@ -139,6 +140,19 @@ jobs:
             echo "publish=$publish"
             echo "reconcile=$reconcile"
           } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        if: github.event_name == 'pull_request'
+      - name: Verify PR image builds without publication credentials
+        if: github.event_name == 'pull_request'
+        env:
+          SOURCE_SHA: ${{ steps.plan.outputs.sha }}
+          IMAGE: ${{ steps.plan.outputs.image }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          # aidevops:trust-boundary — PR builds never log in, push, or receive publication secrets.
+          docker buildx build --platform "$IMAGE_BUILD_PLATFORM" --push=false --tag "$IMAGE:$VERSION" --metadata-file "$RUNNER_TEMP/image.json" .
 
   build:
     needs: preflight
@@ -175,7 +189,7 @@ jobs:
               --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
               --source-ref refs/heads/main --source-digest "$SOURCE_SHA" --signer-digest "$AIDEVOPS_REF"
           else
-            docker buildx build --platform linux/amd64 --push --tag "$IMAGE:$VERSION" --metadata-file "$RUNNER_TEMP/image.json" .
+            docker buildx build --platform "$IMAGE_BUILD_PLATFORM" --push --tag "$IMAGE:$VERSION" --metadata-file "$RUNNER_TEMP/image.json" .
             digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/image.json")
           fi
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]

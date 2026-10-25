@@ -180,8 +180,14 @@ The caller grants the permission ceiling (`contents`, `packages`, `attestations`
 write and OIDC); each reusable job narrows its permissions. Only preflight runs
 on PRs: static manifest/Dockerfile checks, ShellCheck, optional `package_checks`
 (set this input to the package's static checks and pinned-upstream patch check),
-and the real CLI catalog dry run above. No publication credential is exposed to
-those commands. The CLI version and npm sha512 integrity are pinned together;
+the real CLI catalog dry run above, and a no-push `linux/amd64` image build at
+the validated SHA. Preflight proves the image builds before merge: a failing
+Dockerfile fails that same check, even when publication is disabled or the version
+already exists in the catalog. Its 45-minute job timeout bounds the build, and its
+read-only token has no GHCR write permission. No registry login or publication
+credential is exposed to those commands. The PR and main builds share the platform
+setting, image tag, metadata output and build context; only main may push.
+The CLI version and npm sha512 integrity are pinned together;
 the registry metadata and installed lockfile integrity must both match, and
 lifecycle scripts are disabled. Override both CLI inputs together after review.
 This pins the CLI package, not its entire transitive npm dependency graph; it is
