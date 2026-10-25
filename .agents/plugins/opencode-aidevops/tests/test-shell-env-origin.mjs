@@ -6,17 +6,29 @@
 // inherited by the shell environment. Without this, gh_create_issue labels
 // maintainer-created issues as origin:worker.
 
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runtimePath } from "../runtime-path.mjs";
+import { managedCliPath, runtimePath } from "../runtime-path.mjs";
 import {
   createSessionModelStore,
   createShellEnvHook,
   sessionModelIdentity,
 } from "../shell-env.mjs";
+
+// Keep installed host CLIs out of deterministic PATH assertions.
+let inheritedPath;
+beforeEach(() => {
+  inheritedPath = process.env.PATH;
+  process.env.PATH = "/usr/bin:/bin";
+});
+afterEach(() => {
+  if (inheritedPath === undefined) delete process.env.PATH;
+  else process.env.PATH = inheritedPath;
+});
 
 function makeHook() {
   return createShellEnvHook({
@@ -30,6 +42,102 @@ test("runtime PATH keeps inherited order, injects no distro roots, drops unsafe 
   const path = runtimePath("/guard:/project/bin:/guard::relative:/opt/toolchain/bin:/usr/bin");
   assert.deepEqual(path.split(":"), ["/guard", "/project/bin", "/opt/toolchain/bin", "/usr/bin"]);
   assert.equal(runtimePath(path), path);
+});
+
+async function withManagedCliFixture(fn) {
+  const root = mkdtempSync(join(process.env.AIDEVOPS_TEMP_DIR || tmpdir(), "aidevops-cli-path-"));
+  const keys = ["AIDEVOPS_TEMP_DIR", "AIDEVOPS_PROJECT_NODE_BIN", "PATH", "AIDEVOPS_TEST_UNRELATED"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.AIDEVOPS_TEMP_DIR = root;
+    process.env.AIDEVOPS_TEST_UNRELATED = "not-projected";
+    await fn(root);
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("worker projects only aidevops from inherited PATH after guards, Node and tool PATH (GH#35631)", async () => {
+  await withManagedCliFixture(async (root) => {
+    const scriptsDir = join(root, "scripts");
+    const binDir = join(root, "bin");
+    const nodeBin = join(root, "node-bin");
+    const installBin = join(root, "user-local-bin");
+    for (const dir of [scriptsDir, binDir, nodeBin, installBin]) mkdirSync(dir);
+    writeFileSync(join(installBin, "aidevops"), "#!/bin/sh\nprintf 'managed-cli-version\\n'\n", { mode: 0o755 });
+    writeFileSync(join(installBin, "unrelated-tool"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    writeFileSync(join(nodeBin, "node"), "#!/bin/sh\n", { mode: 0o755 });
+    process.env.PATH = `${installBin}:/usr/bin:/bin`;
+    process.env.AIDEVOPS_PROJECT_NODE_BIN = nodeBin;
+    const restricted = "/run/current-system/sw/bin:/usr/bin:/bin";
+    const hook = createShellEnvHook({ agentsDir: root, scriptsDir, workspaceDir: root });
+    const output = { env: { PATH: restricted, OPENCODE_HEADLESS: "true" } };
+    assert.equal(spawnSync("aidevops", ["--version"], { env: { PATH: restricted } }).error?.code, "ENOENT");
+    await hook({ sessionID: "worker-cli-test" }, output);
+    const parts = output.env.PATH.split(":");
+    assert.deepEqual(parts.slice(0, -1), [scriptsDir, binDir, nodeBin, ...restricted.split(":")]);
+    const projection = parts.at(-1);
+    assert.deepEqual(readdirSync(projection), ["aidevops"]);
+    assert.equal(statSync(projection).mode & 0o777, 0o700);
+    assert.ok(!parts.includes(installBin));
+    assert.equal(output.env.AIDEVOPS_TEST_UNRELATED, undefined);
+    const result = spawnSync("aidevops", ["--version"], { env: output.env, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "managed-cli-version");
+    assert.equal(spawnSync("unrelated-tool", [], { env: output.env }).error?.code, "ENOENT");
+    const repeated = { env: { PATH: restricted, OPENCODE_HEADLESS: "true" } };
+    await hook({}, repeated);
+    assert.equal(repeated.env.PATH, output.env.PATH);
+    await hook({}, output);
+    assert.equal(output.env.PATH, repeated.env.PATH);
+
+    await withCleanHeadlessProcessEnv(async () => {
+      const interactive = { env: { PATH: restricted } };
+      await hook({}, interactive);
+      assert.equal(interactive.env.PATH, `${scriptsDir}:${binDir}:${restricted}`);
+    });
+    // A final source-access projection remains authoritative over shell PATH.
+    const sanitized = createShellEnvHook({
+      agentsDir: root, scriptsDir,
+      sourceAccessRuntime: { environment: async () => ({ PATH: "/sanitized/application/bin" }) },
+    });
+    const app = { env: { PATH: restricted, OPENCODE_HEADLESS: "true" } };
+    await sanitized({}, app);
+    assert.equal(app.env.PATH, "/sanitized/application/bin");
+  });
+});
+
+test("managed CLI projection rejects absent, unsafe and non-executable candidates and keeps tool selection", async () => {
+  await withManagedCliFixture(async (root) => {
+    const installBin = join(root, "install");
+    const toolBin = join(root, "tool");
+    mkdirSync(installBin);
+    mkdirSync(toolBin);
+    assert.equal(managedCliPath("/usr/bin:/bin", installBin), "");
+    symlinkSync(join(root, "absent"), join(installBin, "aidevops"));
+    assert.equal(managedCliPath("/usr/bin:/bin", installBin), "");
+    rmSync(join(installBin, "aidevops"));
+    mkdirSync(join(installBin, "aidevops"));
+    assert.equal(managedCliPath("/usr/bin:/bin", installBin), "");
+    rmSync(join(installBin, "aidevops"), { recursive: true });
+    writeFileSync(join(installBin, "aidevops"), "#!/bin/sh\n", { mode: 0o644 });
+    assert.equal(managedCliPath("/usr/bin:/bin", installBin), "");
+    writeFileSync(join(toolBin, "aidevops"), "#!/bin/sh\n", { mode: 0o755 });
+    assert.equal(managedCliPath(toolBin, installBin), "");
+    assert.equal(managedCliPath("/usr/bin:/bin", `relative::${root}\ninvalid`), "");
+    process.env.PATH = installBin;
+    const missing = { env: { PATH: "/usr/bin:/bin", OPENCODE_HEADLESS: "true" } };
+    delete process.env.AIDEVOPS_PROJECT_NODE_BIN;
+    await makeHook()({}, missing);
+    assert.equal(missing.env.PATH, "/usr/bin:/bin");
+    // An unwritable/unusable projection root must not break the shell hook.
+    process.env.AIDEVOPS_TEMP_DIR = join(toolBin, "aidevops");
+    assert.equal(managedCliPath("/usr/bin:/bin", toolBin), "");
+  });
 });
 
 function withTempAgentsDir(fn) {

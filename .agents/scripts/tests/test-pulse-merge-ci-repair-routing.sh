@@ -51,6 +51,9 @@ setup_test_env() {
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
 	export TEST_CHECK_SCENARIO="terminal_failure"
+	export TEST_MERGE_REQUIRED_CONTEXTS=""
+	export TEST_MERGE_REQUIRED_RC=0
+	export TEST_ALL_CHECKS_RC=1
 	export TEST_QLTY_METADATA='{"private":true,"owner":{"type":"User"}}'
 	export TEST_WORKER_SLEEP_SECONDS="2"
 	unset TEST_INITIAL_PR_HEAD_SHA
@@ -625,10 +628,37 @@ EOF
 	_pulse_merge_repo_path_for_slug() { local repo_slug="$1"; [[ -n "$repo_slug" ]]; printf '%s\n' "${TEST_ROOT}/repo"; return 0; }
 	_is_process_alive_and_matches() { local process_pid="$1"; local process_pattern="$2"; local stored_hash="$3"; [[ -n "$process_pattern" || -n "$stored_hash" ]]; kill -0 "$process_pid" 2>/dev/null; return $?; }
 	_file_mtime_epoch() { local file_path="$1"; [[ -e "$file_path" ]] || return 1; date +%s; return 0; }
+	define_required_check_mocks
+	for fn in "${fns[@]}"; do
+		fn_src=$(extract_feedback_function "$fn")
+		[[ -n "$fn_src" ]] || return 1
+		# shellcheck disable=SC1090
+		eval "$fn_src"
+	done
+	define_ci_dispatch_helpers || return 1
+	_load_feedback_finalizer
+	return 0
+}
+
+define_required_check_mocks() {
+	_required_contexts_for_default_branch() {
+		local repo_slug="$1"
+		[[ -n "$repo_slug" ]] || return 1
+		printf '%s\n' "$TEST_MERGE_REQUIRED_CONTEXTS"
+		return "$TEST_MERGE_REQUIRED_RC"
+	}
 	gh_pr_checks_exact_json() {
 		local repo_slug="$1" pr_number="$2" selection_mode="$3"
 		printf 'exact-checks %s %s %s\n' "$repo_slug" "$pr_number" "$selection_mode" >>"$GH_LOG"
 		case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
+		merge_required_subset)
+			if [[ "$selection_mode" == "all" ]]; then
+				printf '%s\n' "$TEST_ALL_CHECKS"
+				return "$TEST_ALL_CHECKS_RC"
+			fi
+			printf '%s\n' '[{"name":"maintainer-gate","bucket":"pass","state":"SUCCESS","link":""}]'
+			return 0
+			;;
 		qlty_quota) printf '%s\n' "$TEST_QLTY_CHECKS"; return 1 ;;
 		nonrequired_baseline)
 			if [[ "$selection_mode" == "all" ]]; then
@@ -656,14 +686,6 @@ EOF
 			;;
 		esac
 	}
-	for fn in "${fns[@]}"; do
-		fn_src=$(extract_feedback_function "$fn")
-		[[ -n "$fn_src" ]] || return 1
-		# shellcheck disable=SC1090
-		eval "$fn_src"
-	done
-	define_ci_dispatch_helpers || return 1
-	_load_feedback_finalizer
 	return 0
 }
 
@@ -1443,6 +1465,54 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 	return 0
 }
 
+test_ci_repair_uses_merge_required_contexts() {
+	local scenario="" selected="" actionable="" expected=0
+	local filter='(.bucket == "fail") and (.state == "FAILURE") and ((.link // "") != "")'
+	for scenario in failure pending advisory lookup_failed read_failed baseline; do
+		setup_test_env
+		define_feedback_helpers || return 1
+		TEST_CHECK_SCENARIO="merge_required_subset"
+		TEST_MERGE_REQUIRED_CONTEXTS="Qlty Regression Gate"
+		TEST_ALL_CHECKS='[{"name":"Qlty Regression Gate","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"},{"name":"Advisory","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/457"}]'
+		expected=0
+		case "$scenario" in
+		failure) expected=1 ;;
+		pending) TEST_ALL_CHECKS=$(jq -c '.[0].bucket = "pending" | .[0].state = "IN_PROGRESS"' <<<"$TEST_ALL_CHECKS"); TEST_ALL_CHECKS_RC=8 ;;
+		advisory) TEST_MERGE_REQUIRED_CONTEXTS="maintainer-gate" ;;
+		lookup_failed) TEST_MERGE_REQUIRED_RC=1 ;;
+		read_failed) TEST_ALL_CHECKS_RC=2 ;;
+		baseline)
+			TEST_MERGE_REQUIRED_CONTEXTS="Qlty Smell Threshold"
+			TEST_ALL_CHECKS='[{"name":"Qlty Smell Threshold","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"},{"name":"Qlty Smell Regression","bucket":"pass","state":"SUCCESS","link":""}]'
+			expected=1
+			;;
+		esac
+		selected=$(_ci_repair_checks_for_dispatch "owner/repo" "100")
+		if [[ "$scenario" == "baseline" ]]; then
+			selected=$(_ci_filter_nonrequired_baseline_evidence "owner/repo" "100" "$selected")
+		fi
+		actionable=$(jq -c "[.[] | select($filter)]" <<<"$selected")
+		if [[ "$(jq length <<<"$actionable")" != "$expected" ]] ||
+			jq -e 'any(.[]; .name == "Advisory")' <<<"$selected" >/dev/null; then
+			print_result "merge-required evidence: $scenario" 1 "$selected"
+		else
+			print_result "merge-required evidence: $scenario" 0
+		fi
+		if [[ "$scenario" == "failure" ]]; then
+			_dispatch_ci_fix_worker "100" "owner/repo" "42"
+			_dispatch_ci_fix_worker "100" "owner/repo" "42"
+			if [[ "$(rg -c 'run --role worker' "$GH_LOG")" == "1" ]] &&
+				! rg -q 'gh pr close' "$GH_LOG"; then
+				print_result "merge-required terminal failure has one in-place repair owner" 0
+			else
+				print_result "merge-required terminal failure has one in-place repair owner" 1
+			fi
+		fi
+		teardown_test_env
+	done
+	return 0
+}
+
 test_ci_feedback_preserves_supplied_nonrequired_baseline_evidence() {
 	setup_test_env
 	TEST_CHECK_SCENARIO="nonrequired_baseline"
@@ -1856,6 +1926,7 @@ main() {
 	test_ci_feedback_filters_qlty_billing_only
 	test_ci_repair_archives_trusted_terminal_outcome
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
+	test_ci_repair_uses_merge_required_contexts
 	test_ci_feedback_preserves_supplied_nonrequired_baseline_evidence
 	test_ci_feedback_defers_when_head_changes_during_collection
 	test_ci_feedback_defers_without_initial_head_snapshot

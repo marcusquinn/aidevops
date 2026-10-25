@@ -37,6 +37,7 @@ import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mj
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
 import { normalizeMcpArtifactPaths } from "./mcp-artifact-paths.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
+import { createPlaywriterSelectionGuard } from "./playwriter-selection-guard.mjs";
 import { createInstructionReminderCompactor } from "./instruction-reminders.mjs";
 import { createSourceAccessRuntime } from "./source-access-runtime.mjs";
 import {
@@ -524,6 +525,7 @@ export async function AidevopsPlugin({ directory, client }) {
     log: qualityLog,
   });
   const permissionBroker = createPermissionBroker({ client, isHeadless });
+  const playwriterSelectionGuard = createPlaywriterSelectionGuard({ client, isHeadless, log: qualityLog });
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
   // GH#35186: replay verbatim user input and images hidden by compaction.
   const compactionInputReplay = createCompactionInputReplay(client, { qualityLog });
@@ -739,6 +741,7 @@ export async function AidevopsPlugin({ directory, client }) {
 
     // Quality hooks
     "tool.execute.before": async (input, output) => {
+      await playwriterSelectionGuard(input, output);
       enforceManagedMcpArtifactPath(input, output, mcpRuntime.workspaces);
       nativeFocusGuard.beforeTool(input, output);
       sessionStallRecovery.beforeTool(input, output);

@@ -221,7 +221,7 @@ _ci_filter_nonrequired_baseline_evidence() {
 		printf '[]\n'
 		return 0
 	}
-	required_checks_json=$(gh_pr_checks_exact_json "$repo_slug" "$pr_number" required 2>/dev/null) || required_checks_rc=$?
+	required_checks_json=$(_ci_repair_required_checks_json "$repo_slug" "$pr_number") || required_checks_rc=$?
 	case "$required_checks_rc" in
 	0 | 1 | 8) [[ -n "$required_checks_json" ]] || required_checks_json="[]" ;;
 	*)
@@ -260,7 +260,7 @@ _ci_repair_checks_for_dispatch() {
 	local supplied_checks_json="${3:-}"
 	local checks_json=""
 
-	checks_json=$(_ci_repair_required_checks_json "$repo_slug" "$pr_number" "$supplied_checks_json")
+	checks_json=$(_ci_repair_required_checks_json "$repo_slug" "$pr_number" "$supplied_checks_json") || true
 	if [[ -n "$supplied_checks_json" ]]; then
 		checks_json=$(_ci_filter_nonrequired_baseline_evidence "$repo_slug" "$pr_number" "$checks_json")
 	fi
@@ -322,23 +322,50 @@ _ci_merge_check_sets() {
 # Normalize exact required-check output for CI repair evidence collection.
 # Args: $1=repo slug, $2=PR number, $3=optional supplied checks JSON
 # Stdout: checks JSON, defaulting to an empty array on indeterminate reads
+# Returns: 0=known required selection, 2=incomplete required-check evidence
 #######################################
 _ci_repair_required_checks_json() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local supplied_checks_json="${3:-}"
 	local checks_json="$supplied_checks_json"
-	local checks_exit=0
+	local checks_exit=0 evidence_exit=0
+	local required_contexts="" all_checks_json="" all_checks_exit=0 selected_checks=""
 
 	if [[ -z "$checks_json" ]]; then
 		checks_json=$(gh_pr_checks_exact_json "$repo_slug" "$pr_number" required 2>/dev/null) || checks_exit=$?
 		case "$checks_exit" in
 		0 | 1 | 8) [[ -n "$checks_json" ]] || checks_json="[]" ;;
-		*) checks_json="[]" ;;
+		*)
+			checks_json="[]"
+			evidence_exit=2
+			;;
 		esac
+		# GraphQL isRequired can omit contexts enforced by active rulesets.
+		# Use the merge gate's classic-protection + ruleset resolver, but never
+		# promote arbitrary advisory failures when that lookup is unavailable.
+		if declare -F _required_contexts_for_default_branch >/dev/null 2>&1; then
+			required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || {
+				required_contexts=""
+				evidence_exit=2
+			}
+		fi
+		if [[ -n "$required_contexts" ]]; then
+			all_checks_json=$(gh_pr_checks_exact_json "$repo_slug" "$pr_number" all 2>/dev/null) || all_checks_exit=$?
+			case "$all_checks_exit" in
+			0 | 1 | 8)
+				selected_checks=$(jq -c --arg contexts "$required_contexts" '
+					($contexts | split("\n") | map(select(length > 0))) as $required
+					| [.[] | select(.name as $name | $required | index($name))]
+				' <<<"${all_checks_json:-[]}" 2>/dev/null) || selected_checks="[]"
+				checks_json=$(_ci_merge_check_sets "$checks_json" "$selected_checks")
+				;;
+			*) evidence_exit=2 ;; # Unknown exact state is not repair evidence.
+			esac
+		fi
 	fi
 	printf '%s\n' "$checks_json"
-	return 0
+	return "$evidence_exit"
 }
 
 #######################################
