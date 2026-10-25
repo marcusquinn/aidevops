@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# shellcheck disable=SC2154
 
 # 🚀 PageSpeed Insights & Lighthouse Helper Script
 # Comprehensive website performance auditing and optimization guidance
@@ -75,7 +74,7 @@ check_prerequisites() {
 
 # Run PageSpeed Insights API test
 run_pagespeed_api() {
-	local url="$command"
+	local url="$1"
 	local strategy="${2:-desktop}" # desktop or mobile
 	local api_key="${GOOGLE_API_KEY:-}"
 
@@ -83,11 +82,12 @@ run_pagespeed_api() {
 	print_info "URL: $url"
 	print_info "Strategy: $strategy"
 
-	# Build API URL
-	local api_url="$PAGESPEED_API_URL?url=$url&strategy=$strategy"
+	# URL-encoded query parameters for curl -G: avoids curl URL globbing and
+	# breakage on target URLs containing '&', '#' or brackets.
+	local -a query_args=(--data-urlencode "url=$url" --data-urlencode "strategy=$strategy")
 
 	if [[ -n "$api_key" ]]; then
-		api_url="$api_url&key=$api_key"
+		query_args+=(--data-urlencode "key=$api_key")
 		print_info "Using API key for higher rate limits"
 	else
 		print_warning "No API key provided. Using public rate limits."
@@ -101,11 +101,14 @@ run_pagespeed_api() {
 
 	print_info "Fetching PageSpeed data..."
 
-	if curl -s "$api_url" >"$report_file"; then
+	if curl -s -G "$PAGESPEED_API_URL" "${query_args[@]}" >"$report_file"; then
 		print_success "PageSpeed report saved: $report_file"
 
-		# Parse and display key metrics
-		parse_pagespeed_report "$report_file"
+		# Parse and display key metrics; explicit so callers using `||`
+		# (where set -e is suspended) still see an API error as failure.
+		if ! parse_pagespeed_report "$report_file"; then
+			return 1
+		fi
 	else
 		print_error "Failed to fetch PageSpeed data"
 		return 1
@@ -116,7 +119,7 @@ run_pagespeed_api() {
 
 # Parse PageSpeed report and extract actionable insights
 parse_pagespeed_report() {
-	local report_file="$command"
+	local report_file="$1"
 
 	print_header "PageSpeed Insights Results"
 
@@ -170,11 +173,11 @@ parse_pagespeed_report() {
 
 # Format score with color coding
 format_score() {
-	local score="$command"
+	local score="$1"
 
 	if [[ "$score" == "N/A" ]]; then
 		echo "N/A"
-		return
+		return 0
 	fi
 
 	# Convert to percentage
@@ -195,7 +198,7 @@ format_score() {
 
 # Run Lighthouse CLI audit
 run_lighthouse_audit() {
-	local url="$command"
+	local url="$1"
 	local output_format="${2:-html}" # html, json, csv
 
 	print_header "Running Lighthouse CLI Audit"
@@ -233,7 +236,7 @@ run_lighthouse_audit() {
 
 # Parse Lighthouse JSON report
 parse_lighthouse_json() {
-	local report_file="$command"
+	local report_file="$1"
 
 	print_header "Lighthouse Audit Results"
 
@@ -357,7 +360,7 @@ run_accessibility_audit() {
 
 # WordPress-specific performance analysis
 analyze_wordpress_performance() {
-	local url="$command"
+	local url="$1"
 
 	print_header "WordPress Performance Analysis"
 	print_info "Analyzing WordPress-specific performance issues for: $url"
@@ -387,7 +390,7 @@ analyze_wordpress_performance() {
 
 # Bulk audit multiple URLs
 bulk_audit() {
-	local urls_file="$command"
+	local urls_file="$1"
 
 	if [[ ! -f "$urls_file" ]]; then
 		print_error "URLs file not found: $urls_file"
@@ -422,7 +425,7 @@ bulk_audit() {
 
 # Generate actionable report
 generate_actionable_report() {
-	local report_file="$command"
+	local report_file="$1"
 
 	if [[ ! -f "$report_file" ]]; then
 		print_error "Report file not found: $report_file"
@@ -431,10 +434,11 @@ generate_actionable_report() {
 
 	print_header "Actionable Performance Report"
 
-	# Extract and prioritize recommendations
+	# Extract and prioritize recommendations. Accepts both PageSpeed Insights
+	# reports (.lighthouseResult.audits) and Lighthouse CLI JSON (.audits).
 	local recommendations
 	recommendations=$(jq -r '
-        .lighthouseResult.audits |
+        (.lighthouseResult // .) | .audits |
         to_entries[] |
         select(.value.score != null and .value.score < 0.9) |
         select(.value.details.overallSavingsMs > 100 or .value.numericValue > 2000) |
@@ -459,7 +463,10 @@ generate_actionable_report() {
 
 # Main function
 main() {
-	case "${1:-help}" in
+	local subcommand="${1:-help}"
+	local target="${2:-}"
+
+	case "$subcommand" in
 	"check" | "audit")
 		if [[ -z "${2:-}" ]]; then
 			print_error "Please provide a URL to audit"
@@ -467,9 +474,12 @@ main() {
 			exit 1
 		fi
 		check_prerequisites
-		run_pagespeed_api "$account_name" "desktop"
+		# Run both strategies even if one fails (e.g. quota); fail overall.
+		local audit_status=0
+		run_pagespeed_api "$target" "desktop" || audit_status=1
 		echo
-		run_pagespeed_api "$account_name" "mobile"
+		run_pagespeed_api "$target" "mobile" || audit_status=1
+		return "$audit_status"
 		;;
 	"lighthouse")
 		if [[ -z "${2:-}" ]]; then
@@ -478,7 +488,7 @@ main() {
 			exit 1
 		fi
 		check_prerequisites
-		run_lighthouse_audit "$account_name" "${3:-html}"
+		run_lighthouse_audit "$target" "${3:-html}"
 		;;
 	"accessibility" | "a11y")
 		if [[ -z "${2:-}" ]]; then
@@ -487,7 +497,7 @@ main() {
 			exit 1
 		fi
 		check_prerequisites
-		run_accessibility_audit "$account_name"
+		run_accessibility_audit "$target"
 		;;
 	"wordpress" | "wp")
 		if [[ -z "${2:-}" ]]; then
@@ -496,7 +506,7 @@ main() {
 			exit 1
 		fi
 		check_prerequisites
-		analyze_wordpress_performance "$account_name"
+		analyze_wordpress_performance "$target"
 		;;
 	"bulk")
 		if [[ -z "${2:-}" ]]; then
@@ -506,7 +516,7 @@ main() {
 			exit 1
 		fi
 		check_prerequisites
-		bulk_audit "$account_name"
+		bulk_audit "$target"
 		;;
 	"report")
 		if [[ -z "${2:-}" ]]; then
@@ -514,7 +524,7 @@ main() {
 			print_info "Usage: $0 report <report-file.json>"
 			exit 1
 		fi
-		generate_actionable_report "$account_name"
+		generate_actionable_report "$target"
 		;;
 	"install-deps")
 		check_prerequisites
