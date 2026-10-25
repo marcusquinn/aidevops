@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, join } from "path";
-import { runtimePath } from "./runtime-path.mjs";
+import { managedCliPath, runtimePath } from "./runtime-path.mjs";
 import { projectLocalOnlyShellEnvironment } from "./local-only-shell-policy.mjs";
 
 /**
@@ -205,7 +205,9 @@ function prependFrameworkPaths(env, scriptsDir, agentsDir) {
   const pathParts = currentPath
     .split(":")
     .filter((part) => part && !preferredPaths.includes(part));
-  env.PATH = [...preferredPaths, ...pathParts].join(":");
+  const toolPath = [...preferredPaths, ...pathParts].join(":");
+  const cliPath = shellSessionOrigin(env) === "worker" ? managedCliPath(toolPath) : "";
+  env.PATH = [toolPath, cliPath].filter(Boolean).join(":");
 }
 
 function projectWorkerLineage(env) {
