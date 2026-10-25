@@ -8,7 +8,7 @@ import { parseStructuredText } from "./structured-text-parser.mjs";
 const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 const NAMED_CREDENTIAL_ASSIGNMENT_PATTERN =
-  /(^|[^A-Za-z0-9_])((?:"[A-Za-z_][A-Za-z0-9_. -]*"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?:=|:)\s*)("(?:\\.|[^"\\])*"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)/gim;
+  /(^|[^A-Za-z0-9_])((?:"[A-Za-z_][A-Za-z0-9_. -]*"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?:=|:)\s*)(\$\{[A-Za-z_][A-Za-z0-9_]*(?::?[-?=+])?\}|"(?:\\.|[^"\\])*"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)/gim;
 // scheme://user:password@host (any scheme); captures through the ":" before the password.
 const URL_USERINFO_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:@/"'<>\\]+:)([^\s@/"'<>\\]+)(?=@)/g;
 // {"name":"X_PASSWORD","value":"secret"} where the secret name is a sibling field.
@@ -92,8 +92,12 @@ function isSensitiveFieldName(name) {
   );
 }
 
+// Shell references with no literal default (`$VAR`, `${VAR}`, `${VAR:-}`) carry no secret.
+const SHELL_REFERENCE_PATTERN = /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*(?::?[-?=+])?\})$/;
+
 function isPlaceholderValue(value) {
-  return PLACEHOLDER_VALUES.has(unquote(value).toLowerCase());
+  const bare = unquote(value);
+  return PLACEHOLDER_VALUES.has(bare.toLowerCase()) || SHELL_REFERENCE_PATTERN.test(bare);
 }
 
 function preservesSensitiveValue(value) {

@@ -291,6 +291,20 @@ describe("credential transcript scrub boundary", () => {
     }
   });
 
+  test("shell env-var references are preserved but literal defaults are redacted", async () => {
+    const { scrubCredentials } = await import("../quality-hooks-output-scrub.mjs");
+    for (const line of [
+      'local api_key="${GOOGLE_API_KEY:-}"',
+      "local api_key=${GOOGLE_API_KEY}",
+      "API_KEY=$GOOGLE_API_KEY",
+    ]) {
+      assert.equal(scrubCredentials(line).scrubbed, line);
+    }
+    const literal = scrubCredentials('local api_key="${GOOGLE_API_KEY:-hunter2value}"');
+    assert.ok(!literal.scrubbed.includes("hunter2value"));
+    assert.ok(!scrubCredentials('api_key="hunter2value"').scrubbed.includes("hunter2value"));
+  });
+
   test("structured output preserves sensitive placeholders", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "aidevops-placeholder-scrub-"));
     const output = {
