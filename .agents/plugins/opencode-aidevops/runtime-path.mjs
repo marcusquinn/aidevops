@@ -46,6 +46,10 @@ export function managedCliPath(toolPath, inheritedPath = process.env.PATH || "")
   const key = `${tempRoot}\n${executable}`;
   const cached = cliProjections.get(key);
   if (cached && aidevopsExecutable(cached)) return cached;
+  return createCliProjection(tempRoot, executable, key);
+}
+
+function createCliProjection(tempRoot, executable, key) {
   let directory;
   try {
     mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
