@@ -49,8 +49,13 @@ _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PCC_JQ_RELEASE_DEFS='
 	def trusted: (.author_association // "") as $a |
-		($a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR");
+		(.user.login // "") as $login |
+		($a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR" or
+			(($a == "CONTRIBUTOR" or $a == "NONE") and $login != "" and
+				($trusted_logins | index($login)) != null));
 	def trusted_event: type == "object" and trusted and ((.id | type) == "number");
+	# Edited coordination remains a fence, never affirmative recovery evidence.
+	def unedited: (.updated_at // .created_at) == .created_at;
 	def login: .user.login // .author // "";
 	def body_lines: (.body // "") | split("\n")[];
 	def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
@@ -67,9 +72,9 @@ _PCC_JQ_RELEASE_DEFS='
 	def closes_earlier_lease($c):
 		. as $cm
 		| [body_lines | select(coordination_line)] as $lines
-		| ($lines | length) > 0 and all($lines[];
+		| ($cm | unedited) and ($lines | length) > 0 and all($lines[];
 			is_terminal_lease and (field("lease_token") as $t | $t != "" and
-				any($c[]; .id < $cm.id and login == ($cm | login) and
+				any($c[]; unedited and .id < $cm.id and login == ($cm | login) and
 					any(body_lines; startswith("DISPATCH_LEASE ") and
 						field("phase") != "terminal" and field("lease_token") == $t))));
 	def ownership($c): coordination and (closes_earlier_lease($c) | not);
@@ -541,16 +546,20 @@ _pcc_issue_comments() {
 
 _pcc_dispatch_approved() {
 	local repo="$1" path="$2" issue="$3" login="$4" candidate="" pr="" runner=""
+	local comments="" trusted_logins=""
 	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
 	# Discovery is not authorization: _pcc_dispatch freshly verifies the complete
 	# envelope and the claim helper rereads it again across distributed consensus.
-	candidate=$(_pcc_issue_comments "$repo" "$issue" |
-		jq -er --arg repo "$repo" --argjson issue "$issue" '
-		[.[][] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") |
+	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
+	candidate=$(jq -er --arg repo "$repo" --argjson issue "$issue" \
+		--argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+		[flatten[] | select(trusted) |
+		select((.updated_at // .created_at) == .created_at) |
 		.body | split("\n")[] | select(startswith("CHECKPOINT_CONTINUATION_APPROVED ")) |
 		ltrimstr("CHECKPOINT_CONTINUATION_APPROVED ") | fromjson? |
 		select(.repo == $repo and .issue == $issue) | {pr,runner}] | unique |
-		select(length == 1) | .[0] | [.pr,.runner] | @tsv') || return 1
+		select(length == 1) | .[0] | [.pr,.runner] | @tsv' <<<"$comments") || return 1
 	IFS=$'\t' read -r pr runner <<<"$candidate"
 	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login"
 	return $?
@@ -558,15 +567,17 @@ _pcc_dispatch_approved() {
 
 _pcc_approval_template() {
 	local repo="$1" pr="$2" issue="$3" release_id="$4" attempt="$5" pr_json="" issue_json="" comments=""
+	local trusted_logins=""
 	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ &&
 		"$issue" =~ ^[1-9][0-9]*$ && "$release_id" =~ ^[1-9][0-9]*$ && "$attempt" == attempt:* ]] || return 2
 	pr_json=$(gh pr view "$pr" --repo "$repo" --json number,headRefOid,headRefName,author) || return 1
 	issue_json=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	# GH#33997: the validator refuses releases dispatch-approved would reject.
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
 	printf '%s' "$comments" | jq --arg repo "$repo" --argjson pr "$pr_json" --argjson issue "$issue_json" \
-		--argjson release_id "$release_id" --arg attempt "$attempt" \
-		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.}' |
+		--argjson release_id "$release_id" --arg attempt "$attempt" --argjson trusted_logins "$trusted_logins" \
+		'{repo:$repo,pr:$pr,issue:$issue,release_id:$release_id,attempt:$attempt,comments:.,trusted_logins:$trusted_logins}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" template
 	return $?
 }
@@ -583,16 +594,17 @@ _pcc_approval_template() {
 #######################################
 _pcc_blocked_release_evidence() {
 	local comments="$1" runner="$2" key="$3"
-	jq -er --arg runner "$runner" --arg key "$key" "${_PCC_JQ_RELEASE_DEFS}"'
+	local trusted_logins="${4:-[]}"
+	jq -er --arg runner "$runner" --arg key "$key" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(any(body_lines; is_release))] | last) as $release
-		| select($release != null)
+		| select($release != null and ($release | unedited))
 		| ([$release | body_lines | select(is_release)] | first) as $line
 		| select(($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner and
 			($release | login) == $runner)
 		| select([$c[] | select(.id > $release.id and ownership($c))] | length == 0)
-		| ([$c[] | select(.id < $release.id and login == $runner) | body_lines
+		| ([$c[] | select(unedited and .id < $release.id and login == $runner) | body_lines
 			| select(startswith("DISPATCH_LEASE ") and (field("phase") == "ready"))
 			| field("attempt_id") | select(startswith("attempt:"))] | last // "") as $attempt
 		| [($release.id | tostring), (if $attempt == "" then "-" else $attempt end),
@@ -608,11 +620,12 @@ _pcc_blocked_release_evidence() {
 # Output: release_id<TAB>reason<TAB>already_posted (deduplicated per head).
 _pcc_completed_release_evidence() {
 	local comments="$1" key="$2"
-	jq -er --arg key "$key" "${_PCC_JQ_RELEASE_DEFS}"'
+	local trusted_logins="${3:-[]}"
+	jq -er --arg key "$key" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(ownership($c))] | last) as $release
-		| select($release != null)
+		| select($release != null and ($release | unedited))
 		| ([$release | body_lines | select(is_release)] | first // "") as $line
 		| ($line | field("reason")) as $reason
 		| select($reason == "clean" or $reason == "worker_complete")
@@ -630,7 +643,8 @@ _pcc_completed_release_evidence() {
 _pcc_completed_attention() {
 	local repo="$1" issue="$2" pr="$3" head="$4" comments="$5" key="$6"
 	local evidence="" release_id="" reason="" posted="" body=""
-	evidence=$(_pcc_completed_release_evidence "$comments" "$key") || return 1
+	local trusted_logins="${7:-[]}"
+	evidence=$(_pcc_completed_release_evidence "$comments" "$key" "$trusted_logins") || return 1
 	IFS=$'\t' read -r release_id reason posted <<<"$evidence"
 	if [[ "$posted" == true ]]; then
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s\n' \
@@ -672,6 +686,7 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head, even
 _pcc_blocked_attention() {
 	local repo="$1" issue="$2" pr="$3"
 	local pr_json="" head="" runner="" comments="" evidence="" key=""
+	local trusted_logins=""
 	local release_id="" attempt="" posted="" attempt_arg="" body=""
 	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue" =~ ^[1-9][0-9]*$ &&
 		"$pr" =~ ^[1-9][0-9]*$ ]] || return 2
@@ -681,9 +696,10 @@ _pcc_blocked_attention() {
 	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
 	_pcc_login_is_safe "$runner" || return 1
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
 	key="${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}"
-	evidence=$(_pcc_blocked_release_evidence "$comments" "$runner" "$key") || {
-		if _pcc_completed_attention "$repo" "$issue" "$pr" "$head" "$comments" "$key"; then
+	evidence=$(_pcc_blocked_release_evidence "$comments" "$runner" "$key" "$trusted_logins") || {
+		if _pcc_completed_attention "$repo" "$issue" "$pr" "$head" "$comments" "$key" "$trusted_logins"; then
 			return 0
 		fi
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_SKIPPED: PR #%s in %s has no current blocked release\n' "$pr" "$repo"
@@ -736,8 +752,9 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and b
 #######################################
 _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
+	local trusted_logins="${4:-[]}"
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
-		--arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
+		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
 		def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 		def release_reason: ([body_lines | select(is_release)] | first // "") | field("reason");
 		def capability_release: release_reason == "blocked" and
@@ -747,7 +764,7 @@ _pcc_stall_release_evidence() {
 		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(ownership($c))] | last) as $release
-		| select($release != null and ($release | stall_release))
+		| select($release != null and ($release | unedited and stall_release))
 		| [$c[] | select(stall_release and ((.created_at // "") | (try epoch catch 0)) > $head_epoch)] as $stalls
 		| [($release.id | tostring), ($release | release_reason), ($stalls | length | tostring),
 			(any($c[]; (.body // "") | contains($key)) | tostring)]
@@ -799,14 +816,15 @@ See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head.
 #######################################
 _pcc_expired_claim_evidence() {
 	local comments="$1" head_date="$2" now_epoch="$3"
+	local trusted_logins="${4:-[]}"
 	[[ "$now_epoch" =~ ^[1-9][0-9]*$ ]] || return 1
-	jq -er --arg head_date "$head_date" --argjson now "$now_epoch" "${_PCC_JQ_RELEASE_DEFS}"'
+	jq -er --arg head_date "$head_date" --argjson now "$now_epoch" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
 		def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 		($head_date | epoch) as $head_epoch
 		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(ownership($c))] | last) as $claim
-		| select($claim != null)
+		| select($claim != null and ($claim | unedited))
 		| ([$claim | body_lines | select(coordination_line)] | last) as $line
 		| select(($line | test("^DISPATCH_(CLAIM|LEASE) ")) and (($line | is_terminal_lease) | not))
 		| select(($line | field("expires_at") | tonumber? // 0) as $expires | $expires > 0 and $expires < $now)
@@ -827,9 +845,9 @@ _pcc_expired_claim_evidence() {
 _pcc_dispatch_expired_recovery_draft() {
 	local repo="$1" path="$2" issue="$3" pr="$4" login="$5" runner="$6"
 	local pr_json="$7" comments="$8" head_date="$9"
-	local claim_id=""
+	local claim_id="" trusted_logins="${10:-[]}"
 	_pr_checkpoint_recovery_draft_links_issue "$pr_json" "$issue" || return 3
-	claim_id=$(_pcc_expired_claim_evidence "$comments" "$head_date" "$(date +%s)") || return 3
+	claim_id=$(_pcc_expired_claim_evidence "$comments" "$head_date" "$(date +%s)" "$trusted_logins") || return 3
 	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 3
 	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=none reason=expired_claim claim_comment=%s\n' \
 		"$issue" "$repo" "$pr" "$runner" "$claim_id"
@@ -856,6 +874,7 @@ _pcc_dispatch_stalled() {
 	local repo="$1" path="$2" issue="$3" pr="$4" login="$5"
 	local runner=""
 	local pr_json="" head="" head_date="" assignees="" comments="" evidence="" key=""
+	local trusted_logins=""
 	local release_id="" reason="" stalls="" posted=""
 	if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$issue" =~ ^[1-9][0-9]*$ ||
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
@@ -876,11 +895,12 @@ _pcc_dispatch_stalled() {
 		return 1
 	fi
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
 	key="${_PCC_STALL_ATTENTION_MARKER} pr=${pr} head=${head}"
-	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key") || {
+	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins") || {
 		local expired_rc=0
 		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
-			"$runner" "$pr_json" "$comments" "$head_date" || expired_rc=$?
+			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
 		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
 		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release\n' "$pr" "$repo"
 		return 1
