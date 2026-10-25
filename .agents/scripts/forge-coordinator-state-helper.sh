@@ -403,6 +403,31 @@ cleanup_one_page() {
 	return 0
 }
 
+validate_cleanup_args() {
+	local mode="$1" repository="$2" repository_id="$3" protected_id="$4" max_deletes="$5" max_seconds="$6"
+	[[ "$mode" == "plan" || "$mode" == "$CLEANUP_MODE_APPLY" ]] || {
+		printf 'Invalid cleanup mode: %s\n' "$mode" >&2
+		return 1
+	}
+	[[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+		printf 'Invalid repository slug: %s\n' "$repository" >&2
+		return 1
+	}
+	[[ "$repository_id" =~ ^[1-9][0-9]*$ ]] || {
+		printf 'Invalid repository ID: %s\n' "$repository_id" >&2
+		return 1
+	}
+	[[ "$protected_id" =~ ^[1-9][0-9]*$ ]] || {
+		printf 'Invalid protected coordinator artifact ID: %s\n' "$protected_id" >&2
+		return 1
+	}
+	[[ "$max_deletes" =~ ^[1-9][0-9]*$ && "$max_seconds" =~ ^[1-9][0-9]*$ ]] || {
+		printf 'Invalid cleanup deletion or time cap.\n' >&2
+		return 1
+	}
+	return 0
+}
+
 # Bounded cleanup: page oldest-first and delete while paging, cap deletions and
 # time per run, pace DELETEs and continue past isolated failures, so a large
 # backlog shrinks on every run instead of needing one full inventory first.
@@ -421,26 +446,7 @@ cleanup_state() {
 	local cleanup_started=""
 	cleanup_started=$(date +%s)
 
-	[[ "$mode" == "plan" || "$mode" == "$CLEANUP_MODE_APPLY" ]] || {
-		printf 'Invalid cleanup mode: %s\n' "$mode" >&2
-		return 1
-	}
-	[[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-		printf 'Invalid repository slug: %s\n' "$repository" >&2
-		return 1
-	}
-	[[ "$repository_id" =~ ^[1-9][0-9]*$ ]] || {
-		printf 'Invalid repository ID: %s\n' "$repository_id" >&2
-		return 1
-	}
-	[[ "$protected_artifact_id" =~ ^[1-9][0-9]*$ ]] || {
-		printf 'Invalid protected coordinator artifact ID: %s\n' "$protected_artifact_id" >&2
-		return 1
-	}
-	[[ "$cleanup_max_deletes" =~ ^[1-9][0-9]*$ && "$cleanup_max_seconds" =~ ^[1-9][0-9]*$ ]] || {
-		printf 'Invalid cleanup deletion or time cap.\n' >&2
-		return 1
-	}
+	validate_cleanup_args "$mode" "$repository" "$repository_id" "$protected_artifact_id" "$cleanup_max_deletes" "$cleanup_max_seconds" || return 1
 
 	first_page_file=$(mktemp) || return 1
 	page_file=$(mktemp) || {
