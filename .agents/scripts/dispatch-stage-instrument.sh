@@ -53,9 +53,12 @@ _DISPATCH_STAGE_INSTRUMENT_LOADED=1
 # --- Configuration --------------------------------------------------------
 DS_LOG="${AIDEVOPS_DISPATCH_STAGES_LOG:-${HOME}/.aidevops/logs/dispatch-stages.tsv}"
 DS_LOG_MAX_LINES="${AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES:-50000}"
-declare -a _DS_ATTEMPT_KEYS=()
-declare -a _DS_ATTEMPT_IDS=()
-declare -a _DS_ATTEMPT_COMPLETED=()
+# Plain assignments stay global even when this file is first sourced inside a
+# function (worktree-helper-add.sh via _dlw_restore_worktree_deps); `declare`
+# would create function locals that vanish, and `declare -g` needs Bash 4.2.
+_DS_ATTEMPT_KEYS=()
+_DS_ATTEMPT_IDS=()
+_DS_ATTEMPT_COMPLETED=()
 
 # --- _ds_now_ns -----------------------------------------------------------
 # Return current time in nanoseconds. Uses bash 5+ %N when available,
@@ -188,6 +191,49 @@ _ds_record() {
 		"$ts" "$issue_number" "$repo_slug" "$stage_name" "$elapsed_ms" "$attempt_id" "$cycle_id" "$$" \
 		>>"$DS_LOG" 2>/dev/null || true
 	return 0
+}
+
+# --- Dispatcher-owned subprocess sub-stages (GH#35602) ---------------------
+# worktree-helper.sh runs as a child of the dispatcher. It records
+# precreate.* sub-stages only when the dispatcher exported the attempt
+# context (AIDEVOPS_DISPATCH_STAGE_ISSUE + AIDEVOPS_DISPATCH_STAGE_REPO), so
+# interactive and other worktree creation never writes dispatch records.
+# Locals use a _ds_ss_ prefix: wrapped functions may read caller-scoped
+# variables through bash dynamic scoping and must not see shadowed names.
+_ds_substage_active() {
+	[[ "${AIDEVOPS_DISPATCH_STAGE_ISSUE:-}" =~ ^[0-9]+$ && -n "${AIDEVOPS_DISPATCH_STAGE_REPO:-}" ]] || return 1
+	return 0
+}
+
+# Stdout: start timestamp in ns, or 0 when no dispatch context is active.
+_ds_substage_start() {
+	if _ds_substage_active; then
+		_ds_now_ns
+	else
+		printf '0'
+	fi
+	return 0
+}
+
+# Args: stage name (e.g. precreate.base_fetch), start ns from _ds_substage_start
+_ds_substage_record() {
+	local _ds_ss_stage="$1" _ds_ss_t0="$2"
+	[[ "$_ds_ss_t0" =~ ^[1-9][0-9]*$ ]] || return 0
+	_ds_substage_active || return 0
+	_ds_record "$AIDEVOPS_DISPATCH_STAGE_ISSUE" "$AIDEVOPS_DISPATCH_STAGE_REPO" "$_ds_ss_stage" "$_ds_ss_t0"
+	return 0
+}
+
+# Run one command as a timed sub-stage; its exit status is returned unchanged.
+# Args: stage name, command and arguments
+_ds_substage_run() {
+	local _ds_ss_name="$1"
+	shift
+	local _ds_ss_start="" _ds_ss_rc=0
+	_ds_ss_start=$(_ds_substage_start)
+	"$@" || _ds_ss_rc=$?
+	_ds_substage_record "$_ds_ss_name" "$_ds_ss_start"
+	return "$_ds_ss_rc"
 }
 
 # --- _ds_report [window_secs] ---------------------------------------------

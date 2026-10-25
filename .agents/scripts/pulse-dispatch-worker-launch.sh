@@ -201,8 +201,9 @@ _dlw_live_issue_open_guard() {
 
 _dlw_lock_prelaunch_issue() {
 	local issue_number="$1" repo_slug="$2" started_ns=""
-	# Freeze instructions before ownership publication, only within the budget.
-	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	# Freeze instructions before ownership publication, only within the budget
+	# plus the publication reserve (GH#35602): never lock what cannot spawn.
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" publication || return $?
 	started_ns=$(_ds_now_ns)
 	if ! lock_issue_for_worker "$issue_number" "$repo_slug"; then
 		_ds_record "$issue_number" "$repo_slug" "lock_issue" "$started_ns"
@@ -234,7 +235,8 @@ _dlw_publish_queued_ownership() {
 		return $?
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$guard_stage" "$guard_started_ns"
-	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	# GH#35602: publish only when the remaining budget still reaches spawn.
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" publication || return $?
 
 	local assignment_started_ns=""
 	assignment_started_ns=$(_ds_now_ns)
@@ -1004,7 +1006,7 @@ _dlw_precreate_worktree() {
 	#   3. Reuse check above on subsequent dispatches for the same issue
 	# Without it, orphaned worktrees are untraceable and accumulate (57
 	# observed on one machine in 24h, 2.2 GB wasted).
-	local _branch _wt_output="" _managed_create=""
+	local _branch _wt_output="" _managed_create="" _pc_t0=""
 	_dlw_managed_creation_env || return 1
 	_managed_create="$_DLW_MANAGED_CREATE_MODE"
 	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
@@ -1013,12 +1015,16 @@ _dlw_precreate_worktree() {
 		return 1
 	fi
 	# Run from repo_path (pulse cwd is typically /); GH#34233: a resolved seed SHA is the branch base.
+	# GH#35602: the exported stage context lets the helper record precreate.* sub-stages.
+	_pc_t0=$(_ds_now_ns)
 	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
+		AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number" AIDEVOPS_DISPATCH_STAGE_REPO="${repo_slug:-}" \
 		AIDEVOPS_WORKTREE_BASE="${_DLW_SEED_OID:-${AIDEVOPS_WORKTREE_BASE:-}}" \
 		"$_wt_helper" add "$_branch" --issue "$issue_number" 2>&1) || true
+	_ds_record "$issue_number" "${repo_slug:-}" "precreate.helper_add" "$_pc_t0"
 	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
 	local _path _path_source="porcelain"
 	_path=$(_dlw_worktree_path_for_branch "$repo_path" "$_branch") || _path=""
@@ -1050,7 +1056,9 @@ _dlw_precreate_worktree() {
 			_DLW_MANAGED_WORKTREE=1
 		fi
 		# Restore gitignored deps (node_modules) that git doesn't track
+		_pc_t0=$(_ds_now_ns)
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
+		_ds_record "$issue_number" "${repo_slug:-}" "precreate.restore_deps" "$_pc_t0"
 		echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
 	else
 		# GH#18671: emit the raw extracted string on failure so future
@@ -1150,14 +1158,8 @@ _dlw_begin_prelaunch() {
 	return 0
 }
 
-_dlw_prelaunch_budget_available() {
-	local issue_number="$1" repo_slug="$2"
-	if [[ "${prelaunch_deadline:-0}" -gt 0 && "$SECONDS" -ge "$prelaunch_deadline" ]]; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prelaunch_budget_exhausted" 2
-		return $?
-	fi
-	return 0
-}
+# _dlw_prelaunch_budget_available (stage-boundary/publication-reserve check)
+# lives in pulse-dispatch-worker-gates.sh beside _dlw_pre_runtime_failure.
 
 #######################################
 # Extract the allowlisted denial reason emitted by
@@ -1962,7 +1964,7 @@ _dispatch_launch_worker() {
 	# published. A lock failure must not create assignment/status notifications.
 	_dlw_lock_prelaunch_issue "$issue_number" "$repo_slug" || return $?
 
-	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" publication || return $?
 	_dlw_publish_queued_ownership "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json" || return $?
 	_dlw_start_codegraph_init "$issue_number" "$worker_worktree_path"
 

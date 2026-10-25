@@ -55,6 +55,32 @@ for issues another runner owns (GH#32729). Keep new costly gates after `7_layers
 | `worker_spawn`        | DB prewarm + setsid/nohup launch + early-exit monitor |
 | `post_launch_hooks`   | Stagger delay + ledger + dispatch comment + claim audit |
 
+### Worktree pre-creation sub-stages (`precreate.*`, GH#35602)
+
+`precreate_worktree` is split so its tail can be attributed. The dispatcher
+exports `AIDEVOPS_DISPATCH_STAGE_ISSUE`/`AIDEVOPS_DISPATCH_STAGE_REPO` to
+`worktree-helper.sh add`; the helper records sub-stages through
+`_ds_substage_run`/`_ds_substage_record` only while that context is set, so
+interactive worktree creation writes nothing. Nested stages overlap their
+parent (`create_worktree` contains the fetch, remote checks and `git worktree add`).
+
+| Stage name | What it covers |
+|------------|----------------|
+| `precreate.helper_add` | Whole `worktree-helper.sh add` subprocess, including startup (dispatcher side) |
+| `precreate.restore_deps` | Dispatcher node_modules restore after creation |
+| `precreate.capacity_check` | Filesystem capacity gate |
+| `precreate.create_worktree` | `_cmd_add_create_worktree`: remote checks, base refresh, native add |
+| `precreate.stale_remote_check` / `precreate.unmerged_remote_check` | Stale and unmerged remote-branch probes |
+| `precreate.sibling_status` | One `git status` health probe of a sibling fetch worktree |
+| `precreate.scratch_add` | Scratch fetch worktree when no healthy sibling exists |
+| `precreate.base_fetch` | `git fetch --no-tags origin <default>` fresh-base refresh |
+| `precreate.registry_begin_create` | Registry `begin-create` transaction |
+| `precreate.git_worktree_add` | Native `git worktree add` checkout |
+| `precreate.registry_register` | Creation-metadata registration |
+| `precreate.verify_generation` | Ownership registration + generation verification |
+| `precreate.managed_enroll` | Managed-lifetime enroll (systemd backend only) |
+| `precreate.helper_deps` / `precreate.exclusions` / `precreate.preview_routes` | Helper dependency bootstrap, Spotlight/Time Machine exclusions, preview routes |
+
 ## TSV Log Format
 
 ```text
@@ -113,6 +139,18 @@ restart it. Expired budgets stop at stage boundaries before further ownership
 publication or spawn; underlying operations retain their own timeout controls.
 Failed renewal aborts through the existing exact-claim cleanup path.
 
+Queued ownership publication needs more than `remaining > 0`: the issue lock,
+the final ownership fence and the assignment each re-check the deadline with a
+publication reserve, so ownership is never published when the remaining budget
+cannot reach spawn (GH#35602). The reserve covers `assign_and_label` (observed
+max about 51 s) plus the live open-issue guard and spawn (about 5–25 s).
+`AIDEVOPS_DISPATCH_PUBLICATION_RESERVE_SECONDS` defaults to 75 (valid 0–999;
+0 restores the bare deadline check; invalid values use the default). A short
+reserve aborts before any lock, assignment or label change with
+`pre_runtime_failure:prelaunch_reserve_insufficient`; an expired deadline keeps
+`prelaunch_budget_exhausted`. The reserve never slides the deadline and leaves
+lease TTL arithmetic unchanged.
+
 `CLAIM_WON expires_at` reports the persisted lease expiry, not a fresh deadline
 calculated after consensus. Claim acquisition consumes that lease; an expired
 claim is never revived. Keep the default orphan grace and ownership gates intact
@@ -123,6 +161,9 @@ rather than increasing orphan retention to hide slow preparation.
 | `AIDEVOPS_DISPATCH_STAGES_LOG` | `~/.aidevops/logs/dispatch-stages.tsv` | Log file path |
 | `AIDEVOPS_DISPATCH_STAGES_LOG_MAX_LINES` | `50000` | Trim threshold |
 | `AIDEVOPS_DISPATCH_STAGES_DISABLE` | `0` | Set `1` to no-op all recording |
+| `AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS` | `300` | Fixed prelaunch preparation deadline |
+| `AIDEVOPS_DISPATCH_PUBLICATION_RESERVE_SECONDS` | `75` | Budget that must remain before lock/fence/assignment |
+| `AIDEVOPS_DISPATCH_STAGE_ISSUE` / `AIDEVOPS_DISPATCH_STAGE_REPO` | unset | Set by the dispatcher for the worktree helper; enables `precreate.*` |
 
 ## Hypotheses (from t3034 issue)
 

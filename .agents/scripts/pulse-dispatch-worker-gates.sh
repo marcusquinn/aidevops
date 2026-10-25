@@ -594,6 +594,36 @@ _dlw_pre_runtime_failure() {
 	return "$return_code"
 }
 
+#######################################
+# Stage-boundary check against the fixed prelaunch deadline set by
+# _dlw_begin_prelaunch (a local of _dispatch_launch_worker). Mode
+# "publication" (GH#35602) also requires the reserve that queued ownership
+# publication, the live open-issue guard and spawn need, so ownership is
+# never published when the remaining budget cannot reach spawn. The reserve
+# never slides the deadline. AIDEVOPS_DISPATCH_PUBLICATION_RESERVE_SECONDS:
+# default 75 (assign_and_label max ~51 s + live guard/spawn ~25 s); 0 = off.
+# Args: issue number, repo slug, optional mode ("publication")
+#######################################
+_dlw_prelaunch_budget_available() {
+	local issue_number="$1" repo_slug="$2" mode="${3:-}"
+	local reserve=0 remaining=0
+	[[ "${prelaunch_deadline:-0}" -gt 0 ]] || return 0
+	remaining=$((prelaunch_deadline - SECONDS))
+	if [[ "$remaining" -le 0 ]]; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prelaunch_budget_exhausted" 2
+		return $?
+	fi
+	if [[ "$mode" == "publication" ]]; then
+		reserve="${AIDEVOPS_DISPATCH_PUBLICATION_RESERVE_SECONDS:-75}"
+		[[ "$reserve" =~ ^[0-9]{1,3}$ ]] || reserve=75
+		if [[ "$remaining" -lt "$((10#$reserve))" ]]; then
+			_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prelaunch_reserve_insufficient" 2
+			return $?
+		fi
+	fi
+	return 0
+}
+
 _dlw_final_worker_spawn_gates() {
 	local issue_number="$1"
 	local repo_slug="$2"

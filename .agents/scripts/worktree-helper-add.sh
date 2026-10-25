@@ -54,6 +54,22 @@ if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
 fi
+# GH#35602: precreate.* sub-stage timing for dispatcher pre-creation. Records
+# only under an exported dispatch context; otherwise the helpers run plainly.
+# Never replace a recorder the sourcing process already defined.
+if ! declare -F _ds_record >/dev/null 2>&1 && [[ -f "${SCRIPT_DIR}/dispatch-stage-instrument.sh" ]]; then
+	# shellcheck source=./dispatch-stage-instrument.sh
+	source "${SCRIPT_DIR}/dispatch-stage-instrument.sh"
+fi
+if ! declare -F _ds_substage_run >/dev/null 2>&1; then
+	_ds_substage_start() { printf '0'; return 0; }
+	_ds_substage_record() { return 0; }
+	_ds_substage_run() {
+		shift
+		"$@"
+		return $?
+	}
+fi
 
 # --- Worktree Path Utilities ---
 
@@ -674,7 +690,7 @@ _apply_worktree_exclusions() {
 	fi
 	[[ -n "$helper" ]] || return 0
 
-	"$helper" apply "$wt_path" >/dev/null 2>&1 || true
+	_ds_substage_run precreate.exclusions "$helper" apply "$wt_path" >/dev/null 2>&1 || true
 	return 0
 }
 
@@ -1150,7 +1166,8 @@ _worktree_refresh_origin_branch() {
 			[[ -n "$worktree_path" && "$worktree_path" != "$current_root" && -d "$worktree_path" ]] || continue
 			# `rev-parse HEAD` does not read the index. Probe with status so a
 			# truncated/corrupt sibling index cannot poison fresh-base fetches.
-			if ! GIT_OPTIONAL_LOCKS=0 git -C "$worktree_path" status --porcelain --untracked-files=no >/dev/null 2>&1; then
+			if ! GIT_OPTIONAL_LOCKS=0 _ds_substage_run precreate.sibling_status \
+				git -C "$worktree_path" status --porcelain --untracked-files=no >/dev/null 2>&1; then
 				if declare -F log_worktree_removal_event >/dev/null 2>&1; then
 					log_worktree_removal_event "${_WTAR_SKIPPED:-skipped}" "${_WTAR_WH_CALLER:-worktree-helper.sh}" \
 						"$worktree_path" "unreadable-git-state" "skipped" \
@@ -1165,7 +1182,7 @@ _worktree_refresh_origin_branch() {
 
 	if [[ -z "$fetch_cwd" ]]; then
 		local base_dir="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
-		if ! scratch_worktree_add "$current_root" "$base_dir" fetch HEAD; then
+		if ! _ds_substage_run precreate.scratch_add scratch_worktree_add "$current_root" "$base_dir" fetch HEAD; then
 			print_warning "Could not create an owned scratch worktree for the fresh-base fetch."
 			return 1
 		fi
@@ -1174,7 +1191,7 @@ _worktree_refresh_origin_branch() {
 	fi
 
 	local fetch_rc=0
-	_worktree_fetch_origin_branch "$fetch_cwd" "$branch" || fetch_rc=$?
+	_ds_substage_run precreate.base_fetch _worktree_fetch_origin_branch "$fetch_cwd" "$branch" || fetch_rc=$?
 	if [[ -n "$bootstrap_path" ]]; then
 		scratch_worktree_remove "$bootstrap_path" "${_WTAR_WH_CALLER:-worktree-helper.sh}" || true
 	fi
@@ -1278,14 +1295,15 @@ _cmd_add_create_worktree() {
 	fi
 
 	# Branch doesn't exist locally — check for stale remote ref (t1060)
-	handle_stale_remote_branch "$_branch" || return 1
+	_ds_substage_run precreate.stale_remote_check handle_stale_remote_branch "$_branch" || return 1
 
 	# GH#33194: an unmerged remote branch (e.g. an open PR head) must be
 	# checked out directly rather than diverging from origin/<default>.
 	# An explicit --base REF always overrides this.
 	if [[ -z "$_explicit_base" ]]; then
 		local _unmerged_remote_ref=""
-		_unmerged_remote_ref=$(_unmerged_remote_branch_ref "$_branch" 2>/dev/null || true)
+		_unmerged_remote_ref=$(_ds_substage_run precreate.unmerged_remote_check \
+			_unmerged_remote_branch_ref "$_branch" 2>/dev/null || true)
 		if [[ -n "$_unmerged_remote_ref" ]]; then
 			echo -e "${BLUE}Creating worktree with new branch '$_branch' on unmerged remote '$_unmerged_remote_ref'...${NC}"
 			worktree_create_registered . "$_path" "$_unmerged_remote_ref" -b "$_branch" || return 1
@@ -1495,12 +1513,14 @@ _cmd_add_verify_created_generation() {
 # controller-owned snapshot can run for a runtime-owned (interactive) row.
 _cmd_add_prepare_worktree_deps() {
 	local path="$1"
-	local repo_root=""
+	local repo_root="" stage_t0=""
+	stage_t0=$(_ds_substage_start)
 	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
 	_restore_worktree_node_modules "$path" "$repo_root" "${_ADD_PROVISION_OWNER_CONTRACT:-}"
 	_ADD_PROVISION_OWNER_CONTRACT=""
 	_bootstrap_worktree_js_deps "$path"
 	_print_worktree_js_readiness "$path"
+	_ds_substage_record precreate.helper_deps "$stage_t0"
 	return 0
 }
 
@@ -1508,8 +1528,11 @@ _cmd_add_preview_routes() {
 	local branch="$1"
 	# Managed creation must not start preview services outside its lifetime cgroup.
 	[[ "${AIDEVOPS_WORKTREE_MANAGER:-}" != "$_WORKTREE_ADD_CGROUP_MANAGER" ]] || return 0
+	local stage_t0=""
+	stage_t0=$(_ds_substage_start)
 	localdev_auto_branch "$branch"
 	preview_proxy_auto_allocate "$branch"
+	_ds_substage_record precreate.preview_routes "$stage_t0"
 	return 0
 }
 
@@ -1568,7 +1591,7 @@ cmd_add() {
 	fi
 
 	local capacity_rc=0
-	aidevops_worktree_capacity_check "$path" || capacity_rc=$?
+	_ds_substage_run precreate.capacity_check aidevops_worktree_capacity_check "$path" || capacity_rc=$?
 	if [[ "$capacity_rc" -ne 0 ]]; then
 		echo -e "${RED}Error: Refusing to create a worktree because filesystem capacity is unsafe.${NC}" >&2
 		echo "Capacity reason: ${AIDEVOPS_DISK_CAPACITY_REASON}; available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB (${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%); minimum=${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%." >&2
@@ -1577,13 +1600,14 @@ cmd_add() {
 	fi
 
 	# Create worktree (existing branch → simple checkout; new branch → base-ref dance).
-	_cmd_add_create_worktree "$branch" "$path" "$explicit_base" "$explicit_issue" || return 1
+	_ds_substage_run precreate.create_worktree _cmd_add_create_worktree "$branch" "$path" "$explicit_base" "$explicit_issue" || return 1
 	# Register ownership before retiring historical cleanup receipts. The
 	# transaction helper verifies the exact row and compensates on failure.
-	_cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1
+	_ds_substage_run precreate.verify_generation _cmd_add_verify_created_generation "$branch" "$path" "$explicit_issue" || return 1
 	if [[ "${AIDEVOPS_WORKTREE_MANAGER:-}" == "$_WORKTREE_ADD_CGROUP_MANAGER" ]]; then
 		# Enroll only after native creation succeeds, before any worker launch.
-		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" enroll "$path" || return 1
+		WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" _ds_substage_run precreate.managed_enroll \
+			python3 "${SCRIPT_DIR}/worktree-managed-lifetime.py" enroll "$path" || return 1
 	fi
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
