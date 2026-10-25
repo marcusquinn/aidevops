@@ -82,11 +82,15 @@ _pr_checkpoint_revised_target() {
 	local approval="" linked_issue="" pr_number="" normalized_issue="" normalized_pr=""
 	local trusted_logins=""
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments_json" "$repo_slug") || return 1
-	approval=$(jq -n --arg repo "$repo_slug" --argjson pr "$pr_json" \
-		--argjson issue "$issue_json" --argjson comments "$comments_json" \
-		--argjson trusted_logins "$trusted_logins" \
+	# Keep complete metadata off exec argv (GH#35632), including the potentially
+	# large trusted-author list. Slurp all four documents before emitting input;
+	# malformed or incomplete metadata must never authorize a continuation.
+	approval=$(printf '%s\n' "$pr_json" "$issue_json" "$comments_json" "$trusted_logins" |
+		jq -se --arg repo "$repo_slug" \
 		--arg assignee "$assignee" --arg lease "$lease" --arg session "$session" --argjson claiming "$claiming" \
-		'{repo:$repo,pr:$pr,issue:$issue,comments:$comments,trusted_logins:$trusted_logins,assignee:$assignee,lease:$lease,session:$session,claiming:$claiming}' |
+		'select(length == 4 and (.[0] | type) == "object" and (.[1] | type) == "object" and
+			(.[2] | type) == "array" and (.[3] | type) == "array") |
+		{repo:$repo,pr:.[0],issue:.[1],comments:.[2],trusted_logins:.[3],assignee:$assignee,lease:$lease,session:$session,claiming:$claiming}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR") || return 1
 	local approval_actor="" permission=""
 	approval_actor=$(jq -er '.approval_actor' <<<"$approval") || return 1
