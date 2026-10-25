@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.70] - 2026-10-25
+
+### Changed
+
+- Refactor: extract headless worker output classification (#35633)
+
+### Fixed
+
+- exempt consolidation tasks from large-file gate (GH#35623) (#35625)
+- resume guarded worktree capacity cleanup (#35621)
+- block manual dispatch over preserved draft PR ownership (#35620)
+
 ## [3.39.69] - 2026-10-25
 
 ### Added
