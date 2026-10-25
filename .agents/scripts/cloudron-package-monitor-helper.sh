@@ -471,6 +471,92 @@ EOF
 	return 1
 }
 
+# All comments go through the managed wrapper, which supplies the signature.
+_cloudron_monitor_comment() {
+	local slug="$1" issue_number="$2" body="$3"
+	local wrapper="${CLOUDRON_PACKAGE_COMMENT_WRAPPER:-gh_issue_comment}"
+	local body_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" body_file="" rc=0
+	command -v "$wrapper" >/dev/null 2>&1 || return 1
+	mkdir -p "$body_dir" || return 1
+	body_file=$(mktemp "${body_dir}/cloudron-supersede.XXXXXX") || return 1
+	printf '%s\n' "$body" >"$body_file"
+	"$wrapper" "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null || rc=$?
+	rm -f "$body_file"
+	return "$rc"
+}
+
+# Retry cleanup on deduplicated runs too: a transient API failure after filing
+# must not permanently strand the older findings. Never infer safety on error.
+_cloudron_monitor_supersede_upstream() {
+	local slug="$1" fingerprint="$2" new_number="$3"
+	local newest="" new_url="" pages="" candidates="" number="" issue="" old="" timeline="" prs=""
+	local closing_link="" referenced_link=""
+	local retained="" comments="" marker="aidevops:cloudron-upstream-retained ${fingerprint}"
+	[[ "$fingerprint" == upstream-v* || "$fingerprint" == upstream-commit-* ]] || return 0
+	[[ "$new_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	_cloudron_monitor_has_authority "$slug" || return 1
+	newest=$(gh api "repos/${slug}/issues/${new_number}") || return 1
+	jq -e --arg state open '.state == $state' <<<"$newest" >/dev/null || return 0
+	new_url=$(jq -er --arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" '.html_url | select(type == $string_type and startswith("https://"))' <<<"$newest") || return 1
+	pages=$(gh api "repos/${slug}/issues?state=open&per_page=100" --paginate --slurp) || return 1
+	candidates=$(jq -er --argjson newest "$new_number" --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" '
+		if type == $array_type and all(.[]; type == $array_type) then
+			[.[][] | select(.pull_request == null and .number < $newest)
+			 | select((.body // "") | test("(?m)^<!-- aidevops:cloudron-package-monitor upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40}) -->$"))
+			 | .number] | @tsv
+		else error("Invalid issue pages") end' <<<"$pages") || return 1
+	for number in $candidates; do
+		# Refresh ownership immediately before deciding; list snapshots may be stale.
+		issue=$(gh api "repos/${slug}/issues/${number}") || return 1
+		# aidevops:trust-boundary — copied markers on outsider-authored issues
+		# never authorize closure. Require a trusted author and exact own-line marker.
+		jq -e --arg state open '.state == $state and .pull_request == null and
+			(.author_association | test("^(OWNER|MEMBER)$"))' <<<"$issue" >/dev/null || continue
+		old=$(jq -r '(.body // "") | capture("(?m)^<!-- aidevops:cloudron-package-monitor (?<fingerprint>upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40})) -->$").fingerprint' <<<"$issue") || return 1
+		case "$fingerprint:$old" in
+		upstream-v*:upstream-v*)
+			_cloudron_monitor_version_newer "${fingerprint#upstream-v}" "${old#upstream-v}" || continue ;;
+		upstream-commit-*:upstream-commit-*) [[ "$old" != "$fingerprint" ]] || continue ;;
+		*) continue ;;
+		esac
+		jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" '(.assignees | type == $array_type) and (.labels | type == $array_type)' <<<"$issue" >/dev/null || return 1
+		if ! jq -e '(.assignees | length == 0) and
+			all(.labels[]; .name != "status:in-progress" and .name != "status:claimed")' <<<"$issue" >/dev/null; then
+			retained="${retained} #${number} (claimed or assigned);"
+			continue
+		fi
+		# Check both explicit closing links and ordinary cross-references, including
+		# drafts/conflicted PRs. Complete pagination is required before any closure.
+		prs=$(gh pr list --repo "$slug" --state open --limit 1000 --json closingIssuesReferences) || return 1
+		jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and length < 1000 and all(.[];
+			(.closingIssuesReferences | type == $array_type) and (.closingIssuesReferences | length < 100))' <<<"$prs" >/dev/null || return 1
+		timeline=$(gh api "repos/${slug}/issues/${number}/timeline?per_page=100" --paginate --slurp) || return 1
+		jq -e --arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" 'type == $array_type and all(.[]; type == $array_type)' <<<"$timeline" >/dev/null || return 1
+		# Capture booleans without -e: an evaluation error must not be confused
+		# with a valid false result. Historical connected/disconnected events are
+		# covered by the current closingIssuesReferences projection above.
+		closing_link=$(jq -r --argjson number "$number" 'any(.[]; any(.closingIssuesReferences[]; .number == $number))' <<<"$prs") || return 1
+		referenced_link=$(jq -r 'any(.[][]; .event == "cross-referenced" and
+			.source.issue.pull_request != null and .source.issue.state != "closed")' <<<"$timeline") || return 1
+		if [[ "$closing_link" == true || "$referenced_link" == true ]]; then
+			retained="${retained} #${number} (linked PR);"
+			continue
+		fi
+		_cloudron_monitor_comment "$slug" "$number" "Superseded by ${new_url}. This older upstream finding is unassigned, unclaimed, and has no open linked PR." || return 1
+		gh issue close "$number" --repo "$slug" --reason 'not planned' >/dev/null || return 1
+	done
+	if [[ -n "$retained" ]]; then
+		comments=$(terminal_blocker_fetch_trusted_comments "$new_number" "$slug") || return 1
+		# aidevops:trust-boundary — only trusted notes suppress a duplicate note.
+		if ! jq -e --arg marker "$marker" 'any(.[];
+			(.author_association | test("^(OWNER|MEMBER)$")) and (.body | contains($marker)))' <<<"$comments" >/dev/null; then
+			_cloudron_monitor_comment "$slug" "$new_number" "<!-- ${marker} -->
+Older upstream findings were left open to preserve active work:${retained} Coordinate these findings before starting overlapping package updates." || return 1
+		fi
+	fi
+	return 0
+}
+
 _cloudron_monitor_apply_finding() {
 	local apply="$1"
 	local slug="$2"
@@ -487,6 +573,9 @@ _cloudron_monitor_apply_finding() {
 			_cloudron_monitor_rearm_ready_issue "$slug" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" "$source_proof" || return 1
 		fi
 		printf 'Already handled in %s: %s\n' "$slug" "$fingerprint"
+		if [[ "$apply" == true ]]; then
+			_cloudron_monitor_supersede_upstream "$slug" "$fingerprint" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" || return 1
+		fi
 		return 0
 	else
 		exists_rc=$?
@@ -497,8 +586,12 @@ _cloudron_monitor_apply_finding() {
 		return 0
 	fi
 	_cloudron_monitor_has_authority "$slug" || _cloudron_monitor_error "ADMIN or MAINTAIN issue authority is required for $slug." || return 1
-	_cloudron_monitor_create_issue "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path"
-	return $?
+	_cloudron_monitor_create_issue "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path" || return 1
+	if [[ "$fingerprint" == upstream-* ]]; then
+		_cloudron_monitor_issue_exists "$slug" "$fingerprint" || return 1
+		_cloudron_monitor_supersede_upstream "$slug" "$fingerprint" "$_CLOUDRON_MONITOR_ISSUE_NUMBER" || return 1
+	fi
+	return 0
 }
 
 # Commit mode: follow a branch head for upstreams that publish no releases or

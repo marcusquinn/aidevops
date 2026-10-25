@@ -357,6 +357,14 @@ Core routines provide ongoing reporting:
 Both routines deduplicate package-local issues, require maintainer-equivalent
 issue authority, and fail closed on GitHub/API errors. They never execute
 upstream instructions or modify package source.
+After filing a newer upstream release or commit finding, the applied monitor
+supersedes older trusted monitor findings in the same package repository. It
+closes only unassigned findings without `status:in-progress` or `status:claimed`
+labels and without an open linked PR, posting a signed comment linking the new
+issue. Active findings remain open and receive one consolidated note on the new
+issue instead. Release findings are compared by version; commit findings use
+issue creation order. Failed API reads never authorize closure, and subsequent
+deduplicated runs retry cleanup. Compatibility findings are not superseded.
 Applied upstream findings read the package manifest from the target repository's
 remote default branch at a captured commit SHA. The generated schema-v2 brief
 includes a canonical Files Scope; a detected upstream release is only a finding,
