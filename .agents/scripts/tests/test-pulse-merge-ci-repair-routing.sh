@@ -628,6 +628,19 @@ EOF
 	_pulse_merge_repo_path_for_slug() { local repo_slug="$1"; [[ -n "$repo_slug" ]]; printf '%s\n' "${TEST_ROOT}/repo"; return 0; }
 	_is_process_alive_and_matches() { local process_pid="$1"; local process_pattern="$2"; local stored_hash="$3"; [[ -n "$process_pattern" || -n "$stored_hash" ]]; kill -0 "$process_pid" 2>/dev/null; return $?; }
 	_file_mtime_epoch() { local file_path="$1"; [[ -e "$file_path" ]] || return 1; date +%s; return 0; }
+	define_required_check_mocks
+	for fn in "${fns[@]}"; do
+		fn_src=$(extract_feedback_function "$fn")
+		[[ -n "$fn_src" ]] || return 1
+		# shellcheck disable=SC1090
+		eval "$fn_src"
+	done
+	define_ci_dispatch_helpers || return 1
+	_load_feedback_finalizer
+	return 0
+}
+
+define_required_check_mocks() {
 	_required_contexts_for_default_branch() {
 		local repo_slug="$1"
 		[[ -n "$repo_slug" ]] || return 1
@@ -673,14 +686,6 @@ EOF
 			;;
 		esac
 	}
-	for fn in "${fns[@]}"; do
-		fn_src=$(extract_feedback_function "$fn")
-		[[ -n "$fn_src" ]] || return 1
-		# shellcheck disable=SC1090
-		eval "$fn_src"
-	done
-	define_ci_dispatch_helpers || return 1
-	_load_feedback_finalizer
 	return 0
 }
 
