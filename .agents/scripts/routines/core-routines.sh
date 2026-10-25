@@ -39,6 +39,7 @@ r920|x|Memory audit — mine actionable learning patterns|repeat:daily(@04:00)|~
 r921|x|README badges — remediate managed repo drift|repeat:weekly(sun@08:10)|~5m|scripts/badges-sync-helper.sh --apply --json|script
 r922|x|Storage hygiene — reclaim tmp, worktrees, OpenCode DBs, observability|repeat:daily(@05:30)|~10m|scripts/storage-cleanup-helper.sh all --apply|script
 r923|x|Cert watch — CT issuance and CAA audit for operated domains|repeat:daily(@06:40)|~3m|scripts/cert-watch-helper.sh run --apply|script
+r924|x|Cloudron releases — process signed approvals|repeat:cron(*/30 * * * *)|~3m|scripts/cloudron-release-approval-helper.sh process --apply|script
 ENTRIES
 	return 0
 }
@@ -997,6 +998,41 @@ dedicated platform unit.
 - Reads only registrations with \`app_type: cloudron-package\` and explicit upstream metadata.
 - Requires ADMIN or MAINTAIN authority before creating a target-local issue.
 - Never changes package source, tags, releases, catalogs, images, or deployments.
+$(_pulse_diag_commands "$os")
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r924() {
+	local os="${1:-}"
+	[[ -n "$os" ]] || os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	cat <<EOF
+# r924: Cloudron signed release approvals
+
+## Overview
+
+Processes release-approval-required issues in registered Cloudron package repos.
+The maintainer signs once with \`sudo aidevops approve issue <N> <repo>\`.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Every 30 minutes |
+| Type | script |
+| Expected duration | ~3 minutes |
+| Script | \`scripts/cloudron-release-approval-helper.sh process --apply\` |
+$(_scheduler_row_pulse "repeat:cron(*/30 * * * *)")
+
+## Safety rails
+
+- Requires ADMIN/MAINTAIN authority and a verified signed issue approval.
+- Binds the merge to the approved head; changed heads require re-approval.
+- Keeps all existing merge, review, checks and publication workflow gates.
+- Waits at most 120 seconds per catalog run, resuming on the next invocation.
+- Closes only after verifying catalog version, tag and GitHub release.
+- Never enables publication or deploys an app. NMR semantics are unchanged.
 $(_pulse_diag_commands "$os")
 $(_platform_footnote "$os")
 EOF

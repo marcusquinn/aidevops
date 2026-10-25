@@ -762,6 +762,11 @@ _merge_resolve_match_head() {
 	# Called directly (not in a subshell) so deferral evidence globals survive.
 	_merge_read_head_sha_with_admission_retry "$pr_number" "$repo" || true
 	pre_merge_head_sha="${FULL_LOOP_MERGE_READ_HEAD_SHA:-}"
+	#aidevops:trust-boundary — constrain, never replace, the verified merge head.
+	if [[ -n "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" && "$pre_merge_head_sha" != "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" ]]; then
+		print_error "PR #${pr_number} differs from the caller's approved head; refusing merge"
+		return 1
+	fi
 	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" ]]; then
 		if [[ -z "$pre_merge_head_sha" ]]; then
 			if [[ "${FULL_LOOP_PRE_MERGE_BLOCKER_KIND:-}" == github-api-read-deferred ]]; then

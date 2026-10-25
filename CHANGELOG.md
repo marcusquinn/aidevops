@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.71] - 2026-10-25
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#35643)
+
+### Fixed
+
+- verify Cloudron images during PR preflight (#35656)
+- keep GUI build tooling out of runtime dependencies (#35653)
+- stream checkpoint revision metadata (GH#35632) (#35634)
+- align CI repair with merge required contexts (#35645)
+- restore managed CLI in worker tool PATH (#35635)
+
 ## [3.39.70] - 2026-10-25
 
 ### Changed

@@ -183,6 +183,62 @@ LABELS
 	return 0
 }
 
+write_fake_supersede_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'SUPERSEDE'
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?state=open&per_page=100' ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != list-error ]] || exit 1
+    if [[ -n "${MONITOR_SUPERSEDE:-}" ]]; then
+        printf '%s\n' '[[{"number":90,"body":"<!-- aidevops:cloudron-package-monitor upstream-v1.5.0 -->"}]]'
+    else
+        printf '%s\n' '[[]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == repos/exampleorg/example-package/issues/90 ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != issue-error ]] || exit 1
+    old_marker='upstream-v1.5.0'
+    [[ "${MONITOR_SUPERSEDE:-}" != newer ]] || old_marker='upstream-v9.0.0'
+    [[ "${MONITOR_SUPERSEDE:-}" != commit ]] || old_marker='upstream-commit-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    jq -nc --arg marker "$old_marker" --arg scenario "${MONITOR_SUPERSEDE:-}" '{
+        state:"open", author_association:(if $scenario == "untrusted" then "CONTRIBUTOR" else "OWNER" end),
+        body:("<!-- aidevops:cloudron-package-monitor " + $marker + " -->"),
+        assignees:(if $scenario == "assigned" then [{login:"worker"}] else [] end),
+        labels:(if $scenario == "claimed" then [{name:"status:claimed"}] elif $scenario == "in-progress" then [{name:"status:in-progress"}] else [] end)}'
+    exit 0
+fi
+if [[ "${1:-}" == pr && "${2:-}" == list ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != pr-error ]] || exit 1
+    if [[ "${MONITOR_SUPERSEDE:-}" == linked ]]; then
+        printf '%s\n' '[{"closingIssuesReferences":[{"number":90}]}]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == malformed-pr-error ]]; then
+        printf '%s\n' '[{"closingIssuesReferences":["invalid"]}]'
+    else
+        printf '%s\n' '[]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/90/timeline?per_page=100' ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != timeline-error ]] || exit 1
+    if [[ "${MONITOR_SUPERSEDE:-}" == referenced ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":{"pull_request":{},"state":"open"}}}]]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == malformed-timeline-error ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":"invalid"}}]]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == historical ]]; then
+        printf '%s\n' '[[{"event":"connected"},{"event":"disconnected"},{"event":"cross-referenced","source":{"issue":{"pull_request":{},"state":"closed"}}}]]'
+    else
+        printf '%s\n' '[[]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == issue && "${2:-}" == close ]]; then
+    printf 'CLOSE %s\n' "$3" >>"${MONITOR_TEST_LOG}"
+    exit 0
+fi
+SUPERSEDE
+	return 0
+}
+
 write_fake_source_commands() {
 	local bin_dir="$1"
 	cat >"${bin_dir}/gh-source" <<'SOURCE'
@@ -196,13 +252,21 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/commits/aaaaaa
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101" ]]; then
     if [[ "${MONITOR_ISSUE_STATE:-}" == claimed ]]; then
-        printf '%s\n' '{"state":"open","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
+        printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
     else
-        printf '%s\n' '{"state":"open","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
+        printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
     fi
     exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101/comments?per_page=100" ]]; then
+    if [[ -n "${MONITOR_SUPERSEDE:-}" ]]; then
+        if grep -Fq 'aidevops:cloudron-upstream-retained' "${MONITOR_TEST_LOG}"; then
+            printf '%s\n' '[{"body":"aidevops:cloudron-upstream-retained upstream-v2.0.0","author_association":"OWNER"}]'
+        else
+            printf '%s\n' '[]'
+        fi
+        exit 0
+    fi
     source_marker='<!-- aidevops:cloudron-source-ready desktop-v2.0.0-ghcr.io/exampleorg/upstream:sha-bbbbbbb-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
     if [[ -n "${MONITOR_FORGED_MARKER:-}" ]]; then
         printf '[{"body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}},{"body":"%s","author_association":"COLLABORATOR","user":{"login":"other"}}]\n' "${MONITOR_CIRCUIT_BLOCKER}" "$source_marker"
@@ -273,11 +337,13 @@ WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
 body_file=""
+target="$1"
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--body-file" ]]; then body_file="$2"; break; fi
     shift
 done
 printf 'CALL_RETRY\n' >>"${MONITOR_TEST_LOG}"
+printf 'COMMENT %s\n' "$target" >>"${MONITOR_TEST_LOG}"
 cat "$body_file" >>"${MONITOR_TEST_LOG}"
 COMMENT
 	cat >"${bin_dir}/docker" <<'DOCKER'
@@ -303,6 +369,7 @@ else
 fi
 DOCKER
 	write_fake_source_commands "$bin_dir"
+	write_fake_supersede_commands "$bin_dir"
 	write_fake_label_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh_create_issue" "${bin_dir}/gh_issue_comment" "${bin_dir}/docker"
 	return 0
@@ -395,6 +462,46 @@ test_monitor_deduplicates_and_preserves_source() {
 	assert_equal 1 "$(grep -c '^- Upgrade base image' "$log_file")" "legacy upgrade creates one actionable finding"
 	grep -Fq 'minBoxVersion' "$log_file" && assert_equal true true "upgrade issue includes platform qualification" || assert_equal true false "upgrade issue includes platform qualification"
 	assert_equal "$docker_before" "$(cksum "${repo_dir}/Dockerfile")" "compatibility monitor does not mutate package source"
+	return 0
+}
+
+test_monitor_supersedes_only_idle_upstream_findings() {
+	local scenario="" case_root="" home_dir="" repo_dir="" bin_dir="" log_file="" rc=0 expected=0
+	for scenario in idle assigned claimed in-progress linked referenced untrusted newer list-error issue-error pr-error timeline-error malformed-pr-error malformed-timeline-error historical commit; do
+		case_root="${TEST_ROOT}/supersede-${scenario}"
+		home_dir="${case_root}/home" repo_dir="${case_root}/package" bin_dir="${case_root}/bin" log_file="${case_root}/issues.log"
+		write_fake_commands "$bin_dir"
+		write_fixture "$home_dir" "$repo_dir"
+		if [[ "$scenario" == commit ]]; then
+			write_fake_commit_source_commands "$bin_dir"
+			jq '.initialized_repos[0].cloudron_package.upstream_source = "commits"' "${home_dir}/.config/aidevops/repos.json" >"${case_root}/config.json"
+			mv "${case_root}/config.json" "${home_dir}/.config/aidevops/repos.json"
+		fi
+		rc=0
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_SUPERSEDE="$scenario" \
+			MONITOR_REMOTE_VERSION=05a1372 MONITOR_UPSTREAM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+			CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+			bash "$HELPER" upstream --apply >/dev/null 2>&1 || rc=$?
+		expected=0
+		[[ "$scenario" != *-error ]] || expected=1
+		assert_equal "$expected" "$rc" "supersede ${scenario}: API failures fail closed"
+		expected=0
+		[[ "$scenario" != idle && "$scenario" != commit && "$scenario" != historical ]] || expected=1
+		assert_equal "$expected" "$(grep -c '^CLOSE 90$' "$log_file" || true)" "supersede ${scenario}: only idle older findings close"
+		if [[ "$expected" == 1 ]]; then
+			grep -Fq 'Superseded by https://github.com/exampleorg/example-package/issues/101' "$log_file" &&
+				assert_equal true true "supersede ${scenario}: signed wrapper comment links replacement" ||
+				assert_equal true false "supersede ${scenario}: signed wrapper comment links replacement"
+		fi
+		case "$scenario" in
+		assigned | claimed | in-progress | linked | referenced)
+			HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_SUPERSEDE="$scenario" \
+				CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+				bash "$HELPER" upstream --apply >/dev/null
+			assert_equal 1 "$(grep -c '^COMMENT 101$' "$log_file" || true)" "supersede ${scenario}: one retained-work note across retries"
+			;;
+		esac
+	done
 	return 0
 }
 
@@ -1036,6 +1143,7 @@ main() {
 	test_catalog_atomic_push_races
 	test_monitor_reconciles_catalog_once
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_supersedes_only_idle_upstream_findings
 	test_monitor_scopes_package_tests_when_present
 	test_monitor_uses_remote_manifest_and_fails_closed
 	test_monitor_rejects_invalid_release_timeout

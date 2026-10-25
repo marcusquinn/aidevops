@@ -311,6 +311,15 @@ _merge_report_author_lookup_failure() {
 _merge_pr_label_holds_clear() {
 	local pr_number="$1"
 	local labels_padded="$2"
+	local repo="${3:-}" head="${4:-}"
+	#aidevops:trust-boundary — a release hold survives removal of the ordinary
+	# PR hold. Every merge caller must prove signed authorization for this head.
+	if [[ "$labels_padded" == *",release-approval-required,"* ]]; then
+		if ! "${SCRIPT_DIR}/cloudron-release-approval-helper.sh" authorize "$repo" "$pr_number" "$head"; then
+			print_error "Merge blocked: no verified exact-head Cloudron release approval"
+			return 1
+		fi
+	fi
 	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
 	# explicit hold. Marker text is never merge authority at this boundary.
 	if [[ "$labels_padded" == *",needs-maintainer-review,"* ]]; then
@@ -388,7 +397,7 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	fi
 
-	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" || return 1
+	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" || return 1
 
 	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot
 	# PRs may lack collaborator permission. Both narrow predicates bind immutable
