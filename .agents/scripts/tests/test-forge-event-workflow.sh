@@ -491,9 +491,11 @@ keepalive_dir="${test_root}/keepalive"
 mkdir -p "$keepalive_dir"
 [[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
 printf '2020-01-01T00:00:00Z\n' >"${keepalive_dir}/.restore-created-at"
-[[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=true" ]]
+keepalive_out="$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)"
+grep -qx 'due=true' <<<"$keepalive_out"
 date -u +%Y-%m-%dT%H:%M:%SZ >"${keepalive_dir}/.restore-created-at"
-[[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
+keepalive_out="$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)"
+grep -qx 'due=false' <<<"$keepalive_out"
 touch "${keepalive_dir}/.restore-deferred"
 printf '2020-01-01T00:00:00Z\n' >"${keepalive_dir}/.restore-created-at"
 [[ "$(PATH="${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" keepalive-due "$keepalive_dir" 10)" == "due=false" ]]
