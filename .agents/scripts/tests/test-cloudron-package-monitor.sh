@@ -108,10 +108,6 @@ if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/conten
     exit 0
 fi
 source "${0%/*}/gh-source"
-if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
-    printf '%s\n' 'ADMIN'
-    exit 0
-fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
     search=""
     shift 2
@@ -139,6 +135,10 @@ GH
 write_fake_catalog_commands() {
 	local bin_dir="$1"
 	cat >>"${bin_dir}/gh-source" <<'CATALOG'
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+    printf '%s\n' 'ADMIN'
+    exit 0
+fi
 if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
     printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
     exit 0
