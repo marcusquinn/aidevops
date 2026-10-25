@@ -271,7 +271,7 @@ _setup_own_merged_evidence() {
 	jq -cn --arg head "$head" --arg branch "$branch" --arg shape "$shape" '
 		{number:42,state:"MERGED",mergedAt:"2026-10-25T12:01:00Z",
 		mergeCommit:{oid:("b" * 40)},headRefOid:$head,headRefName:$branch,
-		headRepository:{name:"repo"},headRepositoryOwner:{login:"owner"},
+		headRepository:{name:"repo",nameWithOwner:"owner/repo"},headRepositoryOwner:{login:"owner",name:"Synthetic Owner"},
 		closingIssuesReferences:[{number:456,repository:{name:"repo",owner:{login:"owner"}}}]}
 		| if $shape == "unmerged" then .state = "OPEN" | .mergedAt = null
 		elif $shape == "unrelated" then .closingIssuesReferences[0].number = 789
@@ -283,7 +283,7 @@ _setup_own_merged_evidence() {
 		elif $shape == "unverified" then .mergeCommit = null
 		else . end' >"$pr_file"
 	jq -cn --arg worktree "$work_dir" --arg branch "$branch" --arg shape "$shape" \
-		--arg deferred "$_FULL_LOOP_CLEANUP_DEFERRED" '
+		--arg deferred "$_FULL_LOOP_CLEANUP_DEFERRED" --arg leased "$_FULL_LOOP_CLEANUP_LEASED" '
 		{schema_version:1,repository:"owner/repo",pr_number:42,worktree:$worktree,branch:$branch,
 		owner:{session:"ses_own_merged",pid:123,process_identity:"synthetic-owner"},
 		created_at:"2026-10-25T12:02:00Z",executor_completion_state:"COMPLETE",
@@ -293,6 +293,13 @@ _setup_own_merged_evidence() {
 		elif $shape == "foreign_receipt" then .repository = "other/repo"
 		elif $shape == "receipt_branch" then .branch = "other"
 		elif $shape == "receipt_pr" then .pr_number = 43
+		elif $shape == "receipt_worktree" then .worktree = "/unrelated"
+		elif $shape == "receipt_owner" then .owner.process_identity = null
+		elif $shape == "receipt_pid" then .owner.pid = 0
+		elif $shape == "cleanup_failed" then .resource_cleanup_state = "FAILED"
+		elif $shape == "leased" then .resource_cleanup_state = $leased
+		elif $shape == "published" then .release_status = "published"
+		elif $shape == "superseded" then .release_status = "superseded"
 		elif $shape == "unfinalized" then .executor_completion_state = "FINALIZATION_PENDING"
 		elif $shape == "release_pending" then .release_status = "pending"
 		else . end' >"$receipt_file"
@@ -306,7 +313,7 @@ _setup_own_merged_evidence() {
 
 test_own_merged_terminal_reconciliation() {
 	local shape="" result=0
-	for shape in squash issue open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent; do
+	for shape in squash issue leased published superseded open unmerged unrelated cross_repo foreign_head head_mismatch branch_mismatch stale_merge unverified stale_receipt foreign_session foreign_receipt receipt_branch receipt_pr receipt_worktree receipt_owner receipt_pid cleanup_failed unfinalized release_pending unreadable missing_receipt dirty api_failure missing_session synthetic tool silent; do
 		if ! (
 			local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG="owner/repo"
 			local AIDEVOPS_ATTEMPT_ID="attempt:synthetic" AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
@@ -340,7 +347,7 @@ test_own_merged_terminal_reconciliation() {
 			printf '%s\n' '{"type":"tool_result","text":"bounded wrapper completed"}' \
 				'{"type":"text","sessionID":"ses_own_merged","text":"Delivered, merged, synchronized and finalized guarded cleanup."}' >"$output_file"
 			case "$shape" in
-			squash) expected=0 ;;
+			squash | leased | published | superseded) expected=0 ;;
 			issue) expected=0; session_key="issue-456" ;;
 			missing_session) printf '{"type":"text","text":"Delivered."}\n' >"$output_file" ;;
 			synthetic) printf '{"type":"text","part":{"synthetic":true,"text":"FULL_LOOP_COMPLETE"}}\n' >>"$output_file" ;;
