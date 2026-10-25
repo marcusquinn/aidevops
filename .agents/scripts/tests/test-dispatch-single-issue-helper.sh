@@ -722,6 +722,11 @@ _dsi_run_dedup_check() {
     return 0
 }
 _dsi_guard_no_existing_dispatch() { return 0; }
+# PR-evidence ownership is exercised by its own fixture; keep this one hermetic.
+_dsi_run_pr_evidence_check() {
+    _DSI_PR_EVIDENCE_STATE=clear _DSI_PR_EVIDENCE_RC=1 _DSI_PR_EVIDENCE_RESULT=""
+    return 0
+}
 gh() {
     [[ "$*" == *'repos/owner/repo/issues/123'* ]] || return 1
     [[ "$FETCH_RC" == 0 ]] || return 1
@@ -829,6 +834,161 @@ PY
 	return 0
 }
 
+# GH#35616: ordinary manual dispatch must honour preserved PR ownership. The
+# fixture helper runs the real shared has_open_pr aggregation and sibling
+# linkage policy from dispatch-dedup-pr.sh; only its GitHub reads are replaced.
+# Claim, ceremony, worktree, auth, lock and launch are spies: no worker runs.
+_write_pr_evidence_fixture_helper() {
+	local helper="$1"
+	cat >"$helper" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FIX_PR_CALLS"
+[[ "${1:-}" == has-open-pr ]] || exit 2
+case "$FIX_PR_MODE" in
+helper_error) printf 'fixture helper crashed\n'; exit 2 ;;
+empty_evidence) exit 0 ;;
+esac
+# shellcheck source=/dev/null
+source "$FIX_SCRIPT_DIR/dispatch-dedup-pr.sh"
+_ddpr_graphql_open_siblings() {
+	local calls=0
+	calls=$(wc -l <"$FIX_PR_CALLS")
+	case "$FIX_PR_MODE" in
+	lookup_fail) return 124 ;;
+	malformed) return 13 ;;
+	late) [[ "$calls" -ge 2 ]] || { printf '[]'; return 0; } ;;
+	esac
+	printf '%s' "$FIX_SIBLINGS"
+	return 0
+}
+_has_open_pr_check_open_commits() { return 1; }
+_has_open_pr_check_open_body_keyword() { return 1; }
+_has_open_pr_check_merged_keywords() { return 1; }
+_has_open_pr_check_task_id_title() { return 1; }
+_has_open_pr_check_superseded_issue_pr() { return 1; }
+has_open_pr "$2" "$3" "${4:-}"
+EOF
+	chmod +x "$helper"
+	return 0
+}
+
+# Args: label mode siblings_json want_rc want_events want_text command...
+_pr_evidence_fixture_case() {
+	local label="$1"
+	local mode="$2"
+	local siblings="$3"
+	local want_rc="$4"
+	local want_events="$5"
+	local want_text="$6"
+	shift 6
+	local out="" rc=0 events=""
+	: >"$EVENTS"
+	: >"$FIX_PR_CALLS"
+	FIX_PR_MODE="$mode"
+	FIX_SIBLINGS="$siblings"
+	out=$("$@" 2>&1) || rc=$?
+	events=$(paste -sd, "$EVENTS")
+	if [[ "$rc" != "$want_rc" || "$events" != "$want_events" || "$out" != *"$want_text"* ]]; then
+		printf 'case=%s rc=%s events=%s output=%s\n' "$label" "$rc" "$events" "$out"
+		return 1
+	fi
+	return 0
+}
+
+# shellcheck disable=SC2317
+test_manual_dispatch_refuses_preserved_pr_ownership() {
+	local result=0 test_dir="" failures=""
+	test_dir=$(mktemp -d)
+	_write_pr_evidence_fixture_helper "${test_dir}/dedup-helper.sh"
+	failures=$(
+		_DSI_DEDUP_HELPER="${test_dir}/dedup-helper.sh"
+		export FIX_PR_CALLS="${test_dir}/pr-calls" FIX_SCRIPT_DIR="$_DSI_SCRIPT_DIR" FIX_PR_MODE="" FIX_SIBLINGS="[]"
+		export AIDEVOPS_DSI_CHECKPOINT_DIR="${test_dir}/checkpoints"
+		EVENTS="${test_dir}/events"
+		unset AIDEVOPS_DISPATCH_BASE_REF
+		_dsi_validate_dispatch_target() {
+			_DSI_ISSUE_LABELS="auto-dispatch,tier:standard"
+			_DSI_ISSUE_TITLE="Fixture issue"
+			_DSI_ISSUE_URL="https://example.invalid/issues/123"
+			_DSI_TIER="standard"
+			_DSI_ISSUE_META_JSON='{}'
+			if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+				_dsi_resolve_permission_resume || return 1
+			fi
+			return 0
+		}
+		_dsi_resolve_permission_resume() {
+			_DSI_WORKTREE_PATH=/tmp/aidevops-recovery
+			_DSI_WORKTREE_BRANCH=feature/preserved
+			_DSI_RESUME_SESSION=manual-cli-123-100
+			_DSI_RESUME_REQUEST=perm-0000000000000000
+			return 0
+		}
+		_dsi_resolve_runner_login() { printf 'runner-self'; return 0; }
+		_dsi_run_dedup_check() {
+			_DSI_DEDUP_STATE=clear _DSI_DEDUP_RC=1 _DSI_DEDUP_RESULT=clear _DSI_DEDUP_ATTEMPTS=1
+			return 0
+		}
+		_dsi_guard_no_existing_dispatch() { return 0; }
+		_dsi_resolve_model() { _DSI_SELECTED_MODEL=""; return 0; }
+		_dsi_check_runner_capability() { return 0; }
+		_dsi_runner_local_prerequisite() { return 0; }
+		_dsi_dispatch_base_ref() { printf 'origin/main'; return 0; }
+		_dlw_select_worker_backend() { printf 'legacy'; return 0; }
+		_dsi_run_required_predispatch_validator() { return 0; }
+		_dsi_acquire_consensus_claim() { printf 'claim\n' >>"$EVENTS"; return 0; }
+		_dsi_release_consensus_claim() { printf 'release:%s\n' "$4" >>"$EVENTS"; return 0; }
+		_dsi_apply_prelaunch_ceremony_if_enabled() { printf 'ceremony\n' >>"$EVENTS"; return 0; }
+		_dsi_create_worktree() {
+			printf 'worktree\n' >>"$EVENTS"
+			_DSI_WORKTREE_PATH=/tmp/aidevops-fixture
+			return 0
+		}
+		_dsi_set_launch_provenance() { return 0; }
+		_dsi_bind_worktree_lifetime() { return 0; }
+		_dsi_prepare_worker_git_auth() { printf 'auth\n' >>"$EVENTS"; return 0; }
+		_dsi_revoke_worker_git_auth() { return 0; }
+		lock_issue_for_worker() { printf 'lock\n' >>"$EVENTS"; return 0; }
+		_dsi_launch_and_report() { printf 'launch\n' >>"$EVENTS"; return 0; }
+
+		launched="claim,ceremony,worktree,auth,lock,launch"
+		worker='[{"number":901,"isDraft":true,"title":"checkpoint for #123","body":"","labels":[{"name":"origin:worker"}]}]'
+		protected='[{"number":902,"isDraft":true,"title":"GH#123: interactive wip","body":"","labels":[{"name":"origin:worker"},{"name":"hold-for-review"}]}]'
+		seed='[{"number":903,"isDraft":true,"title":"seed for #123","body":"<!-- aidevops:seed-pr issue=123 -->","labels":[{"name":"seed-pr"}]}]'
+		prose='[{"number":904,"isDraft":true,"title":"unrelated cleanup","body":"Context: see #123 discussion","labels":[{"name":"origin:worker"}]}]'
+		dispatch=(cmd_dispatch 123 owner/repo)
+		dryrun=(cmd_dispatch 123 owner/repo --dry-run)
+
+		_pr_evidence_fixture_case "worker draft" fixture "$worker" 1 "" "WORKER_DRAFT_CHECKPOINT: draft PR #901" "${dispatch[@]}"
+		grep -Fxq 'has-open-pr 123 owner/repo Fixture issue' "$FIX_PR_CALLS" || printf 'case=worker draft: shared interface not called with title\n'
+		_pr_evidence_fixture_case "worker draft no-ceremony" fixture "$worker" 1 "" "Pulse checkpoint recovery" "${dispatch[@]}" --no-ceremony
+		_pr_evidence_fixture_case "protected draft" fixture "$protected" 1 "" "Protected drafts" "${dispatch[@]}"
+		_pr_evidence_fixture_case "lookup uncertain" lookup_fail "[]" 75 "" "PR_LOOKUP_RESULT=uncertain reason=timeout" "${dispatch[@]}"
+		[[ -f "${AIDEVOPS_DSI_CHECKPOINT_DIR}/owner-repo-123.json" ]] || printf 'case=lookup uncertain: no recovery checkpoint\n'
+		_pr_evidence_fixture_case "malformed response" malformed "[]" 75 "" "reason=response_validation_failed" "${dispatch[@]}"
+		_pr_evidence_fixture_case "helper failure" helper_error "[]" 1 "" "PR evidence check failed (exit 2)" "${dispatch[@]}"
+		_pr_evidence_fixture_case "evidence without detail" empty_evidence "[]" 1 "" "no detail returned" "${dispatch[@]}"
+		_pr_evidence_fixture_case "late draft after claim" late "$worker" 1 "claim,release:pr_evidence_after_claim" "WORKER_DRAFT_CHECKPOINT" "${dispatch[@]}"
+		[[ "$(wc -l <"$FIX_PR_CALLS")" -eq 2 ]] || printf 'case=late draft: expected exactly one bounded re-read\n'
+		_pr_evidence_fixture_case "no PR evidence" fixture "[]" 0 "$launched" "" "${dispatch[@]}"
+		[[ "$(wc -l <"$FIX_PR_CALLS")" -eq 2 ]] || printf 'case=no PR evidence: expected pre-claim and post-claim reads\n'
+		_pr_evidence_fixture_case "seed draft exception" fixture "$seed" 0 "$launched" "" "${dispatch[@]}"
+		_pr_evidence_fixture_case "bare prose mention" fixture "$prose" 0 "$launched" "" "${dispatch[@]}"
+		_pr_evidence_fixture_case "signed resume keeps its binding" fixture "$worker" 0 "claim,ceremony,auth,lock,launch" "" cmd_resume 123 owner/repo
+		[[ ! -s "$FIX_PR_CALLS" ]] || printf 'case=signed resume: fresh-worker PR guard must not apply\n'
+		_pr_evidence_fixture_case "dry-run worker draft" fixture "$worker" 1 "" "PR evidence:  WOULD BLOCK — WORKER_DRAFT_CHECKPOINT" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run protected draft" fixture "$protected" 1 "" "real dispatch would refuse on PR evidence" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run uncertain" lookup_fail "[]" 75 "" "PR evidence:  UNCERTAIN" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run helper failure" helper_error "[]" 1 "" "PR evidence:  ERROR (exit 2)" "${dryrun[@]}"
+		_pr_evidence_fixture_case "dry-run clear" fixture "[]" 0 "" "Dry-run complete" "${dryrun[@]}"
+		exit 0
+	) || failures="${failures}subshell_failed "
+	[[ -z "$failures" ]] || result=1
+	rm -rf "$test_dir"
+	print_result "manual dispatch refuses preserved worker/protected PR ownership before claims; fails closed on uncertainty" "$result" "$failures"
+	return 0
+}
+
 # IMPORTANT: the helper script we source defines `main()` for its CLI entry.
 # We renamed our runner to `_run_tests` to avoid shadowing the helper's main
 # (which is itself sourced but guarded behind BASH_SOURCE check). Sourcing
@@ -863,6 +1023,7 @@ _run_tests() {
 	test_maintainer_permission_guard_blocks_manual_dispatch
 	test_permission_history_guard_requires_current_grant
 	test_fresh_runner_capability_before_manual_claim
+	test_manual_dispatch_refuses_preserved_pr_ownership
 	test_manual_resume_reuses_dispatch_lifecycle
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
 	test_runner_login_transport_security
