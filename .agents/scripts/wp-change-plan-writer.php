@@ -24,29 +24,6 @@ if ( ! class_exists( 'WPCP_Writer' ) ) {
 		const ALT_KEY = '_wp_attachment_image_alt';
 
 		/**
-		 * Write one target's changes through core APIs.
-		 *
-		 * @param array $target Target.
-		 * @return array Errors.
-		 */
-		public static function write_target( array $target ) {
-			$items = array();
-			foreach ( $target['items'] as $item ) {
-				if ( 'change' === $item['state'] ) {
-					$items[] = $item;
-				}
-			}
-			if ( 'delete' === $target['type'] ) {
-				$result = wp_delete_term( $target['id'], $target['taxonomy'] );
-				return ( true === $result ) ? array() : array( 'wp_delete_term failed' . ( is_wp_error( $result ) ? ': ' . $result->get_error_message() : '' ) );
-			}
-			if ( 'term' === $target['type'] ) {
-				return self::write_term_items( $target['id'], $target['taxonomy'], $items, 'new' );
-			}
-			return self::write_post_items( $target['id'], $items, 'new' );
-		}
-
-		/**
 		 * Write post items: ACF fields, terms, meta, thumbnail, alt, then one wp_update_post().
 		 *
 		 * @param int    $id        Post id.

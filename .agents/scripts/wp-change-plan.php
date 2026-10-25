@@ -847,7 +847,7 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				$record                            = $this->applied_record( $target );
 				$this->backup['applied'][ $key ]   = $record;
 				$this->save_backup();
-				$errors                            = WPCP_Writer::write_target( $target );
+				$errors                            = $this->write_target( $target );
 				list( $record, $mismatches )       = WPCP_Reader::read_back( $target, $record );
 				$record['status']                  = ( $errors || $mismatches ) ? 'mismatch' : 'applied';
 				$this->backup['applied'][ $key ]   = $record;
@@ -936,6 +936,29 @@ if ( ! class_exists( 'WPCP_Change_Plan' ) ) {
 				'status'   => 'pending',
 				'items'    => $items,
 			);
+		}
+
+		/**
+		 * Write one target's changes through core APIs.
+		 *
+		 * @param array $target Target.
+		 * @return array Errors.
+		 */
+		private function write_target( array $target ) {
+			$items = array();
+			foreach ( $target['items'] as $item ) {
+				if ( 'change' === $item['state'] ) {
+					$items[] = $item;
+				}
+			}
+			if ( 'delete' === $target['type'] ) {
+				$result = wp_delete_term( $target['id'], $target['taxonomy'] );
+				return ( true === $result ) ? array() : array( 'wp_delete_term failed' . ( is_wp_error( $result ) ? ': ' . $result->get_error_message() : '' ) );
+			}
+			if ( 'term' === $target['type'] ) {
+				return WPCP_Writer::write_term_items( $target['id'], $target['taxonomy'], $items, 'new' );
+			}
+			return WPCP_Writer::write_post_items( $target['id'], $items, 'new' );
 		}
 
 		// ------------------------------------------------------------------
