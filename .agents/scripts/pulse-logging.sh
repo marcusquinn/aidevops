@@ -381,6 +381,43 @@ _pulse_cycle_state_stage_heartbeat() {
 	return 0
 }
 
+# GH#35710: supervision releases the instance lock before taking the separate
+# LLM lock. Borrow the instance publication lane only for this best-effort write;
+# never reclaim a busy/stale lock, log activity, or hold it during the child run.
+_pulse_cycle_state_supervisor_heartbeat() {
+	local llm_pid="" instance_pid="" heartbeat_rc=1
+	local WRAPPER_LOGFILE="/dev/null"
+	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" \
+		&& "${_PULSE_CYCLE_STATE_TERMINAL:-0}" != "1" \
+		&& "${_PULSE_CYCLE_PHASE:-}" == "supervising" \
+		&& "${_LOCK_OWNED:-false}" == "false" \
+		&& -n "${LOCKDIR:-}" \
+		&& "${_PULSE_LLM_LOCKDIR_OWNED:-}" == "${LOCKDIR}.llm" ]] || return 1
+	_pulse_cycle_state_executor_is_owner || return 1
+	declare -F release_instance_lock >/dev/null || return 1
+	read -r llm_pid 2>/dev/null <"${_PULSE_LLM_LOCKDIR_OWNED}/pid" || return 1
+	[[ "$llm_pid" == "$$" ]] || return 1
+	# Same mkdir primitive as acquire_instance_lock, without its stale-owner
+	# recovery/kill path. Contention simply skips this tick. Stamp the PID before
+	# reading health so normal contenders recognize a live publication owner.
+	mkdir "$LOCKDIR" 2>/dev/null || return 1
+	_LOCK_OWNED=true
+	# Stamp the short publication lease before exposing the PID to contenders.
+	# Otherwise an old wrapper could be killed based on its total process age.
+	if date +%s 2>/dev/null >"${LOCKDIR}/supervisor_heartbeat_epoch" \
+		&& printf '%s\n' "$$" 2>/dev/null >"${LOCKDIR}/pid" \
+		&& read -r instance_pid 2>/dev/null <"${LOCKDIR}/pid" \
+		&& [[ "$instance_pid" == "$$" ]] \
+		&& read -r llm_pid 2>/dev/null <"${_PULSE_LLM_LOCKDIR_OWNED}/pid" \
+		&& [[ "$llm_pid" == "$$" ]]; then
+		# The guarded read AND atomic replacement happen under the same lock as
+		# every new cycle publication. Generic unlocked heartbeat remains forbidden.
+		_pulse_cycle_state_stage_heartbeat && heartbeat_rc=0
+	fi
+	release_instance_lock
+	return "$heartbeat_rc"
+}
+
 _pulse_cycle_state_health_is_current() {
 	local current_cycle_id=""
 	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 1

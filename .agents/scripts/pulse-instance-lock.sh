@@ -127,6 +127,20 @@ _handle_existing_lock() {
 		# (default 1800s = 30min), it is hung. A healthy pulse cycle
 		# completes in <5 min; 30+ min means the process is stuck.
 		# Kill the stuck owner and reclaim.
+		# GH#35710: an unlocked LLM supervisor can briefly borrow this lane
+		# for heartbeat publication. Its process age is NOT its lock-holding
+		# age. Trust that lease only with matching separate LLM owner evidence;
+		# a stale lease still reaches the existing age ceiling below.
+		local publication_epoch="" llm_pid="" now_epoch=""
+		if read -r publication_epoch 2>/dev/null <"${LOCKDIR}/supervisor_heartbeat_epoch" \
+			&& [[ "$publication_epoch" =~ ^[1-9][0-9]*$ ]] \
+			&& read -r llm_pid 2>/dev/null <"${LOCKDIR}.llm/pid" \
+			&& [[ "$llm_pid" == "$lock_pid" ]]; then
+			now_epoch=$(date +%s)
+			if [[ "$publication_epoch" -le "$now_epoch" ]]; then
+				lock_age=$((now_epoch - publication_epoch))
+			fi
+		fi
 		local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
 		if [[ "$lock_age" -gt "$max_age" ]]; then
 			echo "[pulse-wrapper] FORCE-RECLAIMED stale lock from PID ${lock_pid} (age ${lock_age}s > ceiling ${max_age}s, owner_cmd='${owner_cmd%%' '*}') — killing hung owner (GH#20025)" >>"$WRAPPER_LOGFILE"
