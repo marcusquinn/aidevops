@@ -172,6 +172,15 @@ substitution if using non-default names. Allow dynamic title updates in Tabby.
 Do not add a second title plugin/writer or change remote configuration during
 restore. Existing sessions need the reviewed settings applied separately.
 
+Long disposable session prefixes can fill Tabby's visible tab label and hide a
+working title update at its end. During an authorized disposable smoke check,
+hold a distinctive synthetic OSC title long enough to inspect the full title in
+that tab's Rename dialog, then **Cancel without editing or saving**. Report only
+whether the synthetic marker appears; never copy a personal title into a report.
+A marker in the full title proves delivery even if the tab label clips it. Keep
+the fixture's isolated `sessionPrefix`; do not broaden it or change shared
+settings merely to make the smoke-test label fit.
+
 Clipboard access is separate and **opt-in**. Remote OpenCode's OSC 52 requests
 may require `set -g set-clipboard on` plus Tabby's clipboard-write permission;
 `external` can permit tmux copies without permitting application requests.
