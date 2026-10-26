@@ -122,8 +122,11 @@ def candidate(path, repo):
     require(path.is_absolute() and str(path) == os.path.realpath(path) and not path.is_symlink(),
             "maintenance:noncanonical-path")
     boundary.observe()
-    boundary.require_unused(path)
+    # Classify enrollment and registered ownership first. Managed generations
+    # belong to ordinary lifecycle cleanup, not this legacy-only authorization.
+    # Unrelated denied CWDs must not hide that distinction or a live owner.
     record = legacy(path)
+    boundary.require_unused(path)
     preservation_checks(path)
     require(git(path, "rev-parse", "--path-format=absolute", "--git-common-dir") ==
             git(repo["path"], "rev-parse", "--path-format=absolute", "--git-common-dir"),

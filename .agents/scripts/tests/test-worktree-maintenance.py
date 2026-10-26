@@ -90,6 +90,16 @@ class MaintenancePlanTests(unittest.TestCase):
         return {"schema": maintenance.SCHEMA, "machine": "fixture-machine",
                 "uid": os.getuid(), "created_at": time.time(), "entries": []}
 
+    def test_enrollment_and_owner_refusals_precede_global_visibility(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for reason in ("maintenance:not-legacy-running", "maintenance:live-owner"):
+                with self.subTest(reason=reason), patch.object(boundary, "observe"), \
+                        patch.object(maintenance, "legacy", side_effect=ValueError(reason)), \
+                        patch.object(boundary, "require_unused") as visibility, \
+                        self.assertRaisesRegex(ValueError, reason):
+                    maintenance.candidate(Path(directory).resolve(), {})
+                visibility.assert_not_called()
+
     def test_plan_batch_reports_unexamined_worktrees_without_authorizing_them(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

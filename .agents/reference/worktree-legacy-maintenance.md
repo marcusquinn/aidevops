@@ -50,6 +50,22 @@ for administrative access or stop sessions to change this result. Ordinary
 managed cleanup continues to use genuinely saved lifetime proof where available;
 this maintenance path does not manufacture such proof for legacy worktrees.
 
+Enrollment and registered-owner checks precede the legacy global CWD scan, so
+`maintenance:not-legacy-running` and `maintenance:live-owner` are not masked by
+unrelated denied processes. Use ordinary lifecycle cleanup for managed records:
+sealed proof, or read-only `cleanup-ready` classification before sealing, already
+handles degraded CWD visibility without exempting readable positive matches.
+Lifecycle reports expose `lifecycle.evidence_class`: `observation-only`,
+`managed-contract-recorded`, `incomplete`, or `unrecorded`. These describe stored
+evidence, not current process liveness or deletion authorization; the original
+state and receipts remain unchanged.
+
+Ordinary compact archives do not retain `COMMIT_EDITMSG` and do not require its
+contents to match a committed message. Capture leaves the live file untouched.
+Working files, the index, supported merge state and history checks remain under
+their existing preservation policies; explicit Git-administration archives retain
+their separate full-metadata capture contract.
+
 ## Check and apply
 
 ```bash

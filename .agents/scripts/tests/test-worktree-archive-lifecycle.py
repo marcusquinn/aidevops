@@ -1640,7 +1640,26 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
         self.assertIn(reported["created_by"]["trigger"], ("unknown", "unrecorded"))
         self.assertEqual((reported["generation"], reported["attempts"], reported["last_attempt_by"]),
                          (self.managed_record(managed)["generation"], 0, None))
+        self.assertEqual(reported["evidence_class"], "unrecorded")
         self.assertEqual(database.read_bytes(), before)
+
+    def test_lifecycle_observation_classification_never_rewrites_receipts(self):
+        observation = {"kind": "owner-cgroup-v1", "evidence": "observed", "owner_pid": 123,
+                       "boot_id": "fixture", "owner_start": "1", "cgroup": "/shared-service"}
+        record = {"manager": "owner-cgroup", "state": "running", "launches": [observation]}
+        before = json.dumps(record, sort_keys=True)
+        summary = lifecycle_status.launch_contract.summary(record)
+        self.assertEqual(summary["evidence_class"], "observation-only")
+        self.assertEqual(json.dumps(record, sort_keys=True), before)
+        observation["unit"] = "fixture.service"
+        self.assertEqual(lifecycle_status.launch_contract.summary(record)["evidence_class"], "incomplete")
+        observation.update(invocation="fixture-invocation", completion_evidence="systemd-cgroup-v1")
+        self.assertEqual(lifecycle_status.launch_contract.summary(record)["evidence_class"],
+                         "managed-contract-recorded")
+        self.assertEqual(record["state"], "running")
+        self.assertNotIn("quiescence", observation)
+        record["launches"].append({"kind": "owner-cgroup-v1"})
+        self.assertEqual(lifecycle_status.launch_contract.summary(record)["evidence_class"], "incomplete")
 
     def test_lifecycle_reconcile_only_finalizes_verified_absent_sources(self):
         managed = self.managed_fixture()
@@ -1814,7 +1833,7 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
     def test_unknown_git_administration_and_squash_drafts_are_preserved(self):
         managed = self.managed_fixture()
         admin = Path(self.git(self.work, "rev-parse", "--absolute-git-dir").decode().strip())
-        for name in ("SQUASH_MSG", "private-draft", "COMMIT_EDITMSG"):
+        for name in ("SQUASH_MSG", "private-draft"):
             with self.subTest(name=name):
                 draft = admin / name
                 draft.write_text("irreplaceable draft\n")
@@ -1825,6 +1844,20 @@ class ArchiveLifecycle(AdministrationCases, CanonicalCases, MergeCases, Producer
                     self.assertEqual(draft.read_text(), "irreplaceable draft\n")
                 finally:
                     draft.unlink()
+
+    def test_commit_editor_metadata_does_not_block_managed_archive(self):
+        managed = self.managed_fixture()
+        admin = Path(self.git(self.work, "rev-parse", "--absolute-git-dir").decode().strip())
+        draft = admin / "COMMIT_EDITMSG"
+        draft.write_bytes(b"uncommitted editor metadata\n")
+        archive = self.prepare_managed(managed)
+        self.assertEqual(self.managed_record(managed)["archive_operation"]["phase"], "verified")
+        self.assertEqual(draft.read_bytes(), b"uncommitted editor metadata\n")
+        self.assertFalse((archive / "git-admin.json").exists())
+        target = self.root / "restored-editor-metadata"
+        self.helper("restore", archive, "--target", target, "--verification-copy")
+        restored_admin = Path(self.git(target, "rev-parse", "--absolute-git-dir").decode().strip())
+        self.assertFalse((restored_admin / "COMMIT_EDITMSG").exists())
 
     def test_reflog_only_work_is_protected(self):
         managed = self.managed_fixture()
