@@ -21,6 +21,7 @@ import {
 } from "./oauth-pool.mjs";
 import {
   consumeV2Completion,
+  disposeObservability,
   handleEvent,
   initObservability,
   recordObjectiveDecision,
@@ -297,7 +298,7 @@ export function defineAidevopsV2Adapter(setup) {
   return { id: "aidevops", setup };
 }
 
-async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations }) {
+async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability }) {
   await stopEvents?.().catch(() => {});
   try {
     boundedOperationManager?.dispose();
@@ -306,6 +307,21 @@ async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRunti
   for (const registration of registrations.reverse()) {
     await registration.dispose().catch(() => {});
   }
+  // GH#35702: release the SQLite transport ownership taken by this setup's
+  // initObservability(); the final owner reaps the sqlite3 child.
+  try {
+    releaseObservability?.();
+  } catch { /* best-effort cleanup */ }
+}
+
+/** One idempotent release per successful initObservability() (GH#35702). */
+function observabilityRelease(owned) {
+  let released = !owned;
+  return () => {
+    if (released) return;
+    released = true;
+    disposeObservability();
+  };
 }
 
 export async function setupAidevopsV2(ctx) {
@@ -319,11 +335,11 @@ export async function setupAidevopsV2(ctx) {
     debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
   });
   recordPluginHealthStage("imported", { runtime: "v2" });
-  initObservability({
+  const releaseObservability = observabilityRelease(initObservability({
     aidevopsVersion: currentAidevopsVersion(),
     runtimeVersion: hostRuntimeVersion(ctx),
     adapterId: "opencode-v2",
-  });
+  }));
 
   // GH#34125 #aidevops:trust-boundary: bind before any hook registers.
   const localOnlyPolicy = initLocalOnlyPolicy(process.env);
@@ -532,10 +548,10 @@ export async function setupAidevopsV2(ctx) {
     });
 
     return async () => {
-      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations });
+      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability });
     };
   } catch (error) {
-    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations });
+    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability });
     throw error;
   }
 }
