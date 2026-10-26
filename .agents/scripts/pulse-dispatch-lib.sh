@@ -1303,6 +1303,43 @@ _dispatch_product_reservation_slots() {
 }
 
 #######################################
+# GH#35698: Capture dispatch output while the caller supervises liveness.
+# Call directly in the cycle owner, NOT inside a command substitution. Dispatch
+# still executes in a child, just as it did with $(dispatch_max ...); all nested
+# enumeration, capacity/reservation waits, priority waves and final drains are
+# covered without changing their launch ownership, wait semantics or deadlines.
+# This is not a new stage timeout: candidate supervisors retain their deadlines.
+# Heartbeat rejection is best-effort and never becomes a dispatch failure.
+#
+# Arguments: $1 - output variable name; remaining arguments - command and args
+#######################################
+_dispatch_capture_with_owner_liveness() {
+	local output_variable="$1"
+	shift
+	local capture_file="" capture_pid="" capture_rc=0
+	local now=0 last_heartbeat=0
+	capture_file=$(mktemp) || return 1
+	# Explicit stdin keeps async Bash from substituting /dev/null.
+	"$@" <&0 >"$capture_file" &
+	capture_pid=$!
+	while kill -0 "$capture_pid" 2>/dev/null; do
+		now=$(date +%s)
+		if ((now - last_heartbeat >= 60)); then
+			if declare -F _pulse_cycle_state_stage_heartbeat >/dev/null 2>&1; then
+				_pulse_cycle_state_stage_heartbeat || true
+			fi
+			last_heartbeat="$now"
+		fi
+		sleep 2
+	done
+	wait "$capture_pid" || capture_rc=$?
+	# Match command substitution's trailing-newline stripping and exit status.
+	printf -v "$output_variable" '%s' "$(<"$capture_file")"
+	rm -f "$capture_file"
+	return "$capture_rc"
+}
+
+#######################################
 # t3005/GH#22919: Wait only for tracked parallel-dispatch children.
 #
 # Avoids bare `wait`, which can emit repeated "pid is not a child" diagnostics

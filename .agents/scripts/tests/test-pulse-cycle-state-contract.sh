@@ -388,6 +388,79 @@ fi
 )
 pass "owner liveness spans freshness window without progress; child, unlocked and obsolete writes rejected"
 
+# GH#35698: exercise the capture supervisor across a simulated >900-second
+# dispatch drain, not a heartbeat called manually by the test. Accelerate the
+# supervisor and reader wall clocks together without changing production code.
+(
+	# shellcheck source=../pulse-dispatch-lib.sh
+	source "${SOURCE_DIR}/pulse-dispatch-lib.sh"
+	_pulse_cycle_state_start
+	_LOCK_OWNED=true
+	_pulse_cycle_state_publish preflight
+	wave_before=$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")
+	wave_log_bytes=$(wc -c <"$LOGFILE")
+	wave_clock=$(command date +%s)
+	wave_start="$wave_clock"
+	wave_ticks=0
+	wave_done="${TMP_DIR}/wave-done"
+	wave_children="${TMP_DIR}/wave-children"
+	_pulse_cycle_state_now() {
+		python3 -c 'import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$wave_clock"
+		return 0
+	}
+	date() {
+		local format="${1:-}"
+		if [[ "$format" == +%s ]]; then
+			printf '%s\n' "$wave_clock"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	sleep() {
+		wave_ticks=$((wave_ticks + 1))
+		wave_clock=$((wave_clock + 120))
+		python3 -c 'import runpy,sys,time; sys.argv=sys.argv[1:]; clock=float(sys.argv.pop(0)); time.time=lambda:clock; runpy.run_path(sys.argv[0], run_name="__main__")' \
+			"$wave_clock" "${SOURCE_DIR}/pulse-current-state.py" \
+			"${HOME}/.aidevops/logs" "$PWD" 900 1 "$SOURCE_DIR" "${TMP_DIR}/review-state" >"$consumer_output"
+		jq -e '.cycle_state.availability == "available" and .cycle_state.outcome == "running"' "$consumer_output" >/dev/null || exit 1
+		if ((wave_ticks >= 9)); then
+			: >"$wave_done"
+		fi
+		command sleep 0.02
+		return 0
+	}
+	dispatch_wave() {
+		# Even while an owner actively supervises capture, its inherited child
+		# cannot publish health. Simulate the final tracked candidate drain.
+		_pulse_cycle_state_stage_heartbeat && return 1
+		(
+			while [[ ! -f "$wave_done" ]]; do command sleep 0.02; done
+			return 0
+		) &
+		printf '%s\n' "$!" >"$wave_children"
+		_dispatch_max_wait_tracked_pids "$!"
+		printf '2\n'
+		return 0
+	}
+	wave_output=""
+	_dispatch_capture_with_owner_liveness wave_output dispatch_wave
+	[[ "$wave_output" == 2 && "$((wave_clock - wave_start))" -gt 900 ]]
+	[[ -s "$wave_children" ]]
+	[[ "$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")" == "$wave_before" ]]
+	[[ "$(wc -c <"$LOGFILE")" == "$wave_log_bytes" ]]
+	# A surviving executor inheriting a now-dead owner cannot revive its stale
+	# health. Use a real reaped PID, rather than a guessed absent PID.
+	(command true) &
+	dead_owner=$!
+	wait "$dead_owner"
+	_PULSE_CYCLE_OWNER_EXECUTOR_PID="$dead_owner"
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/dead-owner-health.json"
+	_dispatch_capture_with_owner_liveness wave_output dispatch_wave
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/dead-owner-health.json"
+)
+pass "dispatch owner supervises long final drain without progress; child and dead-owner revival rejected"
+
 # Restore the parent's current cycle after the independent owner sandbox.
 write_pulse_health_file
 post_label_dispatch_before=$(_pulse_capture_dispatch_total)

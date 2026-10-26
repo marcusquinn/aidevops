@@ -254,6 +254,58 @@ test_wait_tracked_pids_suppresses_stale_child() {
 	return 0
 }
 
+# GH#35698: output/status must retain command-substitution semantics, including
+# budget deferral and candidate timeout; only the calling supervisor heartbeats.
+test_owner_capture_contract() {
+	local rc=0
+	(
+		local owner="$BASHPID" captured="" status=0 expected
+		local calls="${TEST_ROOT}/owner-heartbeats"
+		_pulse_cycle_state_stage_heartbeat() {
+			[[ "$BASHPID" == "$owner" ]] || return 1
+			printf '%s\n' "$BASHPID" >>"$calls"
+			return 1 # Rejected health writes must not change dispatch status.
+		}
+		capture_candidate() {
+			local result="$1" argument="$2" input=""
+			[[ "$BASHPID" != "$owner" && "$argument" == skip ]] || return 99
+			read -r input
+			[[ "$input" == capture-input ]] || return 98
+			printf '2\n\n'
+			return "$result"
+		}
+		for expected in 0 1 3 124 127; do
+			status=0
+			_dispatch_capture_with_owner_liveness captured capture_candidate "$expected" skip <<<capture-input || status=$?
+			[[ "$captured" == 2 && "$status" == "$expected" ]] || exit 1
+		done
+		[[ -s "$calls" ]] || exit 1
+	) || rc=1
+	print_result "owner_capture: child execution, output, wait/deadline statuses and rejected heartbeats preserved" "$rc"
+	return 0
+}
+
+test_parallel_wait_failure_contract() {
+	local rc=0
+	(
+		local pids=(99999999) refreshed=0
+		wait() { return 127; }
+		sleep() { return 0; }
+		_dispatch_max_refresh_pids() {
+			refreshed=$((refreshed + 1))
+			return 0
+		}
+		_dispatch_max_wait_for_capacity pids 1
+		[[ "${#pids[@]}" == 0 && "$refreshed" -gt 0 ]] || exit 1
+		refreshed=0
+		_dispatch_max_wait_for_reservation pids
+		[[ "$refreshed" == 1 ]] || exit 1
+		_dispatch_max_wait_tracked_pids 99999999 || exit 1
+	) || rc=1
+	print_result "parallel_waits: capacity failure purges, reservation reconciles and final drain suppresses stale child" "$rc"
+	return 0
+}
+
 # =============================================================================
 # Test 3: _dispatch_max_aggregate_outcomes populates module-globals + invalidates cache
 # =============================================================================
@@ -1237,6 +1289,8 @@ test_compute_max_parallel_rest_reserve_forces_serial
 test_count_outcomes_success_and_fail
 test_count_outcomes_empty_file
 test_wait_tracked_pids_suppresses_stale_child
+test_owner_capture_contract
+test_parallel_wait_failure_contract
 test_aggregate_outcomes_basic
 test_aggregate_outcomes_invalidates_canary_cache
 test_aggregate_outcomes_clears_throttle_on_success

@@ -1592,7 +1592,7 @@ apply_dispatch_max() {
 	[[ "$apply_max_workers" =~ ^[0-9]+$ ]] || apply_max_workers=1
 
 	local fill_dispatched dispatch_rc=0
-	fill_dispatched=$(dispatch_max "$dependency_normalization_mode") || dispatch_rc=$?
+	_dispatch_capture_with_owner_liveness fill_dispatched dispatch_max "$dependency_normalization_mode" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -eq 3 ]]; then
 		_dispatch_cleanup_benign_blocks_cycle
 		return 1
@@ -1623,7 +1623,7 @@ apply_dispatch_max() {
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created during Phase 1 (active=${_p2_active}, max=${_p2_max}) — re-enumerating candidates (t2749)" >>"$LOGFILE"
 			_dispatch_invalidate_candidate_snapshot "consolidation_child_created" || true
 			local fill_dispatched_p2 dispatch_p2_rc=0
-			fill_dispatched_p2=$(dispatch_max "$dependency_normalization_mode") || dispatch_p2_rc=$?
+			_dispatch_capture_with_owner_liveness fill_dispatched_p2 dispatch_max "$dependency_normalization_mode" || dispatch_p2_rc=$?
 			if [[ "$dispatch_p2_rc" -eq 3 ]]; then
 				_dispatch_cleanup_benign_blocks_cycle
 				return 1
@@ -1724,7 +1724,7 @@ _dispatch_min_worker_floor_refill() {
 		refill_attempt=$((refill_attempt + 1))
 		echo "[pulse-wrapper] Minimum worker floor refill: active=${active_workers}/${min_worker_floor}, attempt=${refill_attempt}/${max_refill_attempts} — re-enumerating candidates" >>"$LOGFILE"
 		dispatch_rc=0
-		fill_dispatched=$(dispatch_max "$dependency_normalization_mode") || dispatch_rc=$?
+		_dispatch_capture_with_owner_liveness fill_dispatched dispatch_max "$dependency_normalization_mode" || dispatch_rc=$?
 		[[ "$dispatch_rc" -ne 3 ]] || return 3
 		[[ "$dispatch_rc" -eq 0 ]] || fill_dispatched=0
 		[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
