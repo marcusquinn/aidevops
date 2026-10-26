@@ -486,6 +486,7 @@ test_cmd_run_finish_rejects_unverified_post_pr_handoff() {
 }
 
 test_cmd_run_finish_accepts_verified_post_pr_handoff() {
+	local session_key="manual-cli-99999-1700000000"
 	local work_dir="${TEST_ROOT}/repo-finish-verified-handoff"
 	local capture_file="${TEST_ROOT}/verified-handoff.capture"
 	local release_file="${TEST_ROOT}/verified-handoff.release"
@@ -495,6 +496,10 @@ test_cmd_run_finish_accepts_verified_post_pr_handoff() {
 	_setup_test_git_repo "$work_dir" 1
 
 	(
+		local WORKER_ISSUE_NUMBER=99999 WORKER_REPO_SLUG="test-owner/test-repo"
+		local DISPATCH_REPO_SLUG="test-owner/test-repo"
+		local expected_head=""
+		expected_head=$(git -C "$work_dir" rev-parse HEAD)
 		_run_result_label="post_pr_handoff"
 		_run_failure_reason=""
 		_release_dispatch_claim() { printf '%s' "$2" >"$release_file"; return 0; }
@@ -503,7 +508,20 @@ test_cmd_run_finish_accepts_verified_post_pr_handoff() {
 		_release_session_lock() { return 0; }
 		_hrw_record_terminal_outcome() { return 0; }
 		_emit_worker_runtime_event() { return 0; }
-		_worker_post_pr_handoff_confirmed() { return 0; }
+		# Exercise the production verifier and canonical classifier, not a success stub.
+		gh_pr_list() {
+			printf '[{"number":123,"state":"OPEN","isDraft":false,"headRefOid":"%s","labels":[{"name":"origin:worker"}]}]' "$expected_head"
+			return 0
+		}
+		gh() {
+			local args="$*"
+			case "$args" in
+			(*"api --paginate"*"/issues/123/comments"*) printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]' ;;
+			(*"api repos/"*"/pulls/123"*) printf '%s' 'Resolves #99999' ;;
+			(*) return 1 ;;
+			esac
+			return 0
+		}
 		_worker_produced_output() { printf 'pr_exists'; return 0; }
 		_hrw_record_reconciled_outcome() {
 			local session_key="$1"
@@ -515,7 +533,7 @@ test_cmd_run_finish_accepts_verified_post_pr_handoff() {
 			return 0
 		}
 		set +e
-		_cmd_run_finish "issue-99999" "complete" "$work_dir"
+		_cmd_run_finish "$session_key" "complete" "$work_dir"
 		printf '%s' "$?" >"$result_file"
 		set -e
 	)
@@ -525,7 +543,7 @@ test_cmd_run_finish_accepts_verified_post_pr_handoff() {
 	[[ -s "$release_file" ]] && release_reason=$(<"$release_file")
 	[[ -s "$ledger_file" ]] && ledger_status=$(<"$ledger_file")
 	[[ -s "$result_file" ]] && finish_result=$(<"$result_file")
-	if [[ "$captured" == "issue-99999|post_pr_handoff|success|post_pr_handoff|" ]] &&
+	if [[ "$captured" == "${session_key}|post_pr_handoff|success|post_pr_handoff|" ]] &&
 		[[ "$release_reason" == "worker_complete" && "$ledger_status" == "complete" && "$finish_result" == "0" ]] &&
 		[[ ! -e "$fast_fail_file" ]]; then
 		print_result "verified POST_PR_HANDOFF records success without failure escalation" 0
