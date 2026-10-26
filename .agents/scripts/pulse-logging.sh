@@ -355,17 +355,30 @@ _pulse_cycle_state_publish() {
 # GH#35695: Only the supervising cycle owner may refresh stage liveness.
 # A heartbeat is not delivery progress and must not revive completed/newer cycles.
 _pulse_cycle_state_stage_heartbeat() {
+	local heartbeat="" tmp_health=""
 	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" \
 		&& "${_PULSE_CYCLE_STATE_TERMINAL:-0}" != "1" \
 		&& "${_LOCK_OWNED:-false}" == "true" ]] || return 1
 	_pulse_cycle_state_executor_is_owner || return 1
-	_pulse_cycle_state_health_is_current || return 1
-	jq -e --arg running "$PULSE_CYCLE_STATE_RUNNING" \
-		'.cycle_state.outcome == $running and .cycle_state.phase != "completed"' \
-		"$PULSE_HEALTH_FILE" >/dev/null 2>&1 || return 1
-	_PULSE_CYCLE_HEARTBEAT_AT=$(_pulse_cycle_state_now)
-	write_pulse_health_file
-	return $?
+	[[ -f "${PULSE_HEALTH_FILE:-}" ]] || return 1
+	heartbeat=$(_pulse_cycle_state_now)
+	tmp_health=$(mktemp "${PULSE_HEALTH_FILE}.heartbeat-XXXXXX") || return 1
+	# Do not collect workers/ledger/backoff here: their helpers can block the
+	# deadline supervisor. Do not log to LOGFILE either: byte growth is a stall
+	# detector input. Preserve every field except the structured heartbeat.
+	if ! jq -e --arg schema "$PULSE_CYCLE_STATE_SCHEMA" \
+		--arg cycle_id "$_PULSE_CYCLE_ID" --arg running "$PULSE_CYCLE_STATE_RUNNING" \
+		--arg heartbeat "$heartbeat" '
+		select(.cycle_state.schema == $schema and .cycle_state.cycle_id == $cycle_id
+			and .cycle_state.outcome == $running and .cycle_state.phase != "completed")
+		| .cycle_state.heartbeat_at = $heartbeat
+	' "$PULSE_HEALTH_FILE" >"$tmp_health" 2>/dev/null \
+		|| ! mv "$tmp_health" "$PULSE_HEALTH_FILE"; then
+		rm -f "$tmp_health"
+		return 1
+	fi
+	_PULSE_CYCLE_HEARTBEAT_AT="$heartbeat"
+	return 0
 }
 
 _pulse_cycle_state_health_is_current() {

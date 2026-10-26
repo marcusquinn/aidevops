@@ -334,6 +334,62 @@ else
 	fail "child executor cannot directly publish inherited terminal health"
 fi
 
+# GH#35695: accelerated timestamps span the real reader's 900-second window.
+# The owner heartbeat changes neither delivery evidence nor typed blockers.
+(
+	_pulse_cycle_state_start
+	_LOCK_OWNED=true
+	_pulse_cycle_state_note_blocker review-gate owner/repo 7
+	_pulse_cycle_state_publish preflight
+	before_liveness=$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")
+	before_log_bytes=$(wc -c <"$LOGFILE")
+	# A full health collection can block deadline enforcement and its log line
+	# would fool byte-delta stall detection. Heartbeats must never invoke it.
+	write_pulse_health_file() { return 1; }
+	for age in 960 900 600 300 60 0; do
+		TEST_HEARTBEAT=$(python3 -c 'import datetime,sys; print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$age")
+		_pulse_cycle_state_now() {
+			printf '%s\n' "$TEST_HEARTBEAT"
+			return 0
+		}
+		_pulse_cycle_state_stage_heartbeat
+		python3 "${SOURCE_DIR}/pulse-current-state.py" \
+			"${HOME}/.aidevops/logs" "$PWD" 900 1 "$SOURCE_DIR" "${TMP_DIR}/review-state" >"$consumer_output"
+		if [[ "$age" == 960 ]]; then
+			jq -e '.cycle_state.availability == "stale"' "$consumer_output" >/dev/null
+		fi
+	done
+	jq -e '.cycle_state.availability == "available" and .cycle_state.outcome == "running" and .cycle_state.phase == "preflight"' "$consumer_output" >/dev/null
+	[[ "$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")" == "$before_liveness" ]]
+	[[ "$(wc -c <"$LOGFILE")" == "$before_log_bytes" ]]
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	# A failed atomic swap preserves the previous record and local heartbeat.
+	previous_local_heartbeat="$_PULSE_CYCLE_HEARTBEAT_AT"
+	mv() { return 1; }
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	unset -f mv
+	[[ "$_PULSE_CYCLE_HEARTBEAT_AT" == "$previous_local_heartbeat" ]]
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	( _pulse_cycle_state_stage_heartbeat ) && exit 1
+	_LOCK_OWNED=false
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	_LOCK_OWNED=true
+	current_id="$_PULSE_CYCLE_ID"
+	_PULSE_CYCLE_ID=obsolete-cycle
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	_PULSE_CYCLE_ID="$current_id"
+	jq '.cycle_state.phase = "completed" | .cycle_state.outcome = "interrupted"' \
+		"$PULSE_HEALTH_FILE" >"${TMP_DIR}/completed-health.json"
+	command mv "${TMP_DIR}/completed-health.json" "$PULSE_HEALTH_FILE"
+	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+	_pulse_cycle_state_stage_heartbeat && exit 1
+	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-rejected-heartbeat.json"
+)
+pass "owner liveness spans freshness window without progress; child, unlocked and obsolete writes rejected"
+
+# Restore the parent's current cycle after the independent owner sandbox.
+write_pulse_health_file
 post_label_dispatch_before=$(_pulse_capture_dispatch_total)
 printf '{"session_key":"post-label-test","status":"in-flight","pid":%s,"lease_phase":"prelaunch","dispatched_at":"2026-01-01T00:00:00Z"}\n' \
 	"$$" >"$AIDEVOPS_DISPATCH_LEDGER_FILE"
@@ -345,6 +401,13 @@ assert_health "owner finalization records successful post-label dispatch" '
 	and .cycle_state.outcome == "progressed"
 	and .cycle_state.progress.kinds == ["worker-dispatched"]
 '
+cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-terminal-heartbeat.json"
+_pulse_cycle_state_stage_heartbeat && fail "terminal heartbeat rejected"
+if cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/before-terminal-heartbeat.json"; then
+	pass "terminal heartbeat cannot revive completed cycle"
+else
+	fail "terminal heartbeat cannot revive completed cycle"
+fi
 
 # Retention uses production functions in the sandbox HOME, never live ledgers.
 # shellcheck source=../portable-stat.sh

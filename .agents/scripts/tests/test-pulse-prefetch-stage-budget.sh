@@ -124,3 +124,51 @@ rc=0
 _wait_parallel_pids 2 "$!" || rc=$?
 [[ "$rc" == 1 ]]
 printf 'PASS completion boundary and failed primary worker classification\n'
+
+# Accelerate only the supervisor clock, retaining a real child and wait path.
+# More than 900 seconds of supervision must refresh at a bounded cadence.
+(
+	clock=1000
+	heartbeats=0
+	date() {
+		local format="${1:-}"
+		if [[ "$format" == +%s ]]; then
+			printf '%s\n' "$clock"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	sleep() {
+		clock=$((clock + 30))
+		if [[ "$clock" -ge 1960 ]]; then
+			: >"$TEST_ROOT/stage-finished"
+		fi
+		command sleep 0.02
+		return 0
+	}
+	_pulse_cycle_state_stage_heartbeat() {
+		heartbeats=$((heartbeats + 1))
+		return 0
+	}
+	progressing_stage() {
+		while [[ ! -e "$TEST_ROOT/stage-finished" ]]; do command sleep 0.01; done
+		return 0
+	}
+	run_stage_with_timeout progressing_stage 1500 progressing_stage
+	[[ "$clock" -ge 1960 && "$heartbeats" -ge 16 && "$heartbeats" -le 18 ]]
+	printf 'PASS supervised stage spans 900s with bounded heartbeat cadence (%s writes)\n' "$heartbeats"
+)
+
+# Timeout handling remains authoritative and must not publish after expiry.
+(
+	heartbeats=0
+	_pulse_cycle_state_stage_heartbeat() {
+		heartbeats=$((heartbeats + 1))
+		return 0
+	}
+	rc=0
+	run_stage_with_timeout stalled_stage 1 command sleep 30 || rc=$?
+	[[ "$rc" == 124 && "$heartbeats" == 1 ]]
+	printf 'PASS timed-out live child retains failure and receives no expired heartbeat\n'
+)
