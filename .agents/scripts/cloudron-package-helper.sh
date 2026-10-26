@@ -449,6 +449,12 @@ begin
   target = YAML.safe_load(File.read(template))
   errors = []
   checks = []
+  events = source['on'] || source[true]
+  events = events.to_h { |event| [event, nil] } if events.is_a?(Array)
+  unless events.is_a?(Hash) && (events.keys - %w[pull_request push workflow_dispatch]).empty? &&
+         events.all? { |event, config| config.nil? || (event == 'push' && config == { 'branches' => ['main'] }) }
+    errors << 'workflow triggers (custom filters/inputs/events require manual integration)'
+  end
   jobs = source.fetch('jobs')
   # Already-managed callers may contain custom inputs: never reset them.
   if jobs.values.any? { |job| job.key?('uses') }
@@ -477,6 +483,14 @@ begin
     (job.keys - %w[runs-on permissions outputs steps needs if timeout-minutes]).each do |key|
       errors << "job #{job_name}: #{key}"
     end
+    conditions = [
+      "github.event_name != 'pull_request' && needs.preflight.outputs.publish == 'true'",
+      "github.event_name != 'pull_request' && needs.preflight.outputs.publish == 'false'",
+      "needs.preflight.outputs.publish == 'false'"
+    ]
+    if job.key?('if') && !conditions.include?(job['if'])
+      errors << "job #{job_name}: custom condition"
+    end
     job.fetch('steps').each do |step|
       name = step['name'] || step['uses'] || '(unnamed)'
       # Only unconditional, self-contained script invocations map into package_checks.
@@ -487,6 +501,8 @@ begin
         checks << step['run'].strip
       elsif !standard_steps.include?(name)
         errors << "step #{job_name}/#{name}"
+      elsif !(step.keys - %w[name uses with run shell id if env]).empty?
+        errors << "step #{job_name}/#{name}: custom execution options"
       end
     end
   end
