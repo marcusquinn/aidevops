@@ -64,6 +64,11 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-readiness.sh"
 # shellcheck disable=SC1091
 source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-subject.sh"
 
+# Share runtime-owned paths with prospective PR risk classification.
+# shellcheck source=./full-loop-helper-risk.sh
+# shellcheck disable=SC1091
+source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-risk.sh"
+
 # --- Argument Parsing ---
 
 # Parse commit-and-pr arguments into caller-scoped variables.
@@ -531,9 +536,9 @@ _validate_commit_and_pr_inputs() {
 # Refuse pre-staged runtime changes rather than silently altering the index.
 _stage_product_changes() {
 	local path=""
-	local -a runtime_paths=(".agents/loop-state" ".agents/.full-loop-cleanup-deferred")
 	local -a protected_paths=() stage_paths=(":/")
-	for path in "${runtime_paths[@]}"; do
+	# shellcheck disable=SC2154 # initialized by full-loop-helper-risk.sh
+	for path in "${_full_loop_runtime_paths[@]}"; do
 		protected_paths+=(":(top,literal)${path}")
 		# A singleton glob matches the exact dot while preventing Git from
 		# rejecting an ignored literal exclusion as an explicitly added path.

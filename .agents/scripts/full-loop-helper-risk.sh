@@ -8,6 +8,8 @@
 _FULL_LOOP_RISK_LIB_LOADED=1
 _full_loop_runtime_verified_marker="runtime-verified"
 _full_loop_pending_diff_target="WORKTREE"
+# Runtime-owned paths never enter product staging or prospective PR metadata.
+_full_loop_runtime_paths=(".agents/loop-state" ".agents/.full-loop-cleanup-deferred")
 
 # Normalize a caller-supplied risk level to the spelling used in PR bodies.
 _normalize_runtime_risk() {
@@ -529,12 +531,16 @@ _pending_runtime_comparison_base() {
 # Callers supply the resolved branch-owned comparison base, not the remote tip.
 _pending_runtime_files_changed() {
 	local base_ref="$1"
-	local files_changed=""
+	local files_changed="" path=""
+	local -a product_paths=(":/")
+	for path in "${_full_loop_runtime_paths[@]}"; do
+		product_paths+=(":(top,exclude,literal)${path}")
+	done
 	git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 || return 1
 	files_changed=$(
 		{
-			git diff --name-only "$base_ref" --
-			git ls-files --others --exclude-standard
+			git diff --name-only "$base_ref" -- "${product_paths[@]}"
+			git ls-files --others --exclude-standard -- "${product_paths[@]}"
 		} | LC_ALL=C sort -u | tr '\n' ',' | sed 's/,$//; s/,/, /g'
 	) || return 1
 	printf '%s\n' "$files_changed"

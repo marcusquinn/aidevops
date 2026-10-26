@@ -255,6 +255,49 @@ assert_contains "todo data files mentioning payments derive Low" "$todo_data_ris
 todo_runtime_risk=$(_derive_runtime_risk "" "todo/x/specs/a.json,src/billing.ts" "Add planning data about payments")
 assert_contains "runtime file beside todo data still derives Critical" "$todo_runtime_risk" "Critical"
 
+# GH#35709: runtime-owned leftovers must match product staging exclusions.
+RUNTIME_STATE_REPO="${TEST_ROOT}/runtime-state-repo"
+mkdir -p "${RUNTIME_STATE_REPO}/todo/x" "${RUNTIME_STATE_REPO}/.agents/loop-state/nested"
+/usr/bin/git -C "$RUNTIME_STATE_REPO" init -q -b main
+/usr/bin/git -C "$RUNTIME_STATE_REPO" config user.name "Runtime Risk Test"
+/usr/bin/git -C "$RUNTIME_STATE_REPO" config user.email "runtime-risk@example.invalid"
+printf 'Initial guide.\n' >"${RUNTIME_STATE_REPO}/todo/x/guide.md"
+/usr/bin/git -C "$RUNTIME_STATE_REPO" add todo/x/guide.md
+/usr/bin/git -C "$RUNTIME_STATE_REPO" commit -qm "fixture: planning data base"
+printf 'Updated guide.\n' >"${RUNTIME_STATE_REPO}/todo/x/guide.md"
+printf '{}\n' >"${RUNTIME_STATE_REPO}/todo/x/data.json"
+printf '{}\n' >"${RUNTIME_STATE_REPO}/todo/x/log.jsonl"
+printf 'LIFECYCLE_STATE=CLEANUP_DEFERRED\n' >"${RUNTIME_STATE_REPO}/.agents/.full-loop-cleanup-deferred"
+printf 'session=active\n' >"${RUNTIME_STATE_REPO}/.agents/loop-state/nested/state"
+runtime_state_files=$(cd "$RUNTIME_STATE_REPO" && _pending_runtime_files_changed HEAD)
+assert_contains "pending files exclude marker and nested loop state" "<$runtime_state_files>" \
+	"<todo/x/data.json, todo/x/guide.md, todo/x/log.jsonl>"
+runtime_state_risk=$(_derive_runtime_risk "" "$runtime_state_files" "Add planning data in this session")
+assert_contains "runtime leftovers do not elevate Low-only diff" "<$runtime_state_risk>" "<Low>"
+runtime_state_body=$(cd "$RUNTIME_STATE_REPO" && _build_pr_body \
+	"35709" "Add planning data in this session" "diff reviewed" "$runtime_state_files" "")
+assert_contains "runtime leftovers do not block PR body generation" "$runtime_state_body" "**Risk level:** Low"
+runtime_state_validation=$(cd "$RUNTIME_STATE_REPO" &&
+	_validate_pending_runtime_metadata "" self-assessed "diff reviewed" "Add planning data in this session" HEAD &&
+	printf 'accepted')
+assert_contains "pending metadata accepts Low-only diff with runtime leftovers" "$runtime_state_validation" "accepted"
+runtime_state_staging=$(cd "$RUNTIME_STATE_REPO" && _stage_product_changes &&
+	git diff --cached --name-only | LC_ALL=C sort | tr '\n' ',')
+assert_contains "product staging matches pending risk paths" "<$runtime_state_staging>" \
+	"<todo/x/data.json,todo/x/guide.md,todo/x/log.jsonl,>"
+printf 'export const session = createSession();\n' >"${RUNTIME_STATE_REPO}/.agents/loop-state-product.js"
+runtime_neighbor_files=$(cd "$RUNTIME_STATE_REPO" && _pending_runtime_files_changed HEAD)
+assert_contains "similarly named product path remains in pending files" "$runtime_neighbor_files" ".agents/loop-state-product.js"
+runtime_neighbor_risk=$(_derive_runtime_risk "" "$runtime_neighbor_files" "Update session handling")
+assert_contains "runtime exclusions do not downgrade adjacent product code" "$runtime_neighbor_risk" "Critical"
+/usr/bin/git -C "$RUNTIME_STATE_REPO" add .agents/.full-loop-cleanup-deferred
+stage_in_runtime_state_repo() {
+	(cd "$RUNTIME_STATE_REPO" && _stage_product_changes) || return 1
+	return 0
+}
+assert_rejected "pre-staged runtime marker remains rejected" \
+	stage_in_runtime_state_repo
+
 runtime_risk=""
 testing_level=""
 issue_number=""
