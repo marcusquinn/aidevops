@@ -98,7 +98,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 
 (
 	cmd_run_action="retry"
-	cmd_run_next_model="openai/gpt-5.6-terra"
+	cmd_run_next_model="openai/gpt-6.1-terra"
 	_run_should_retry=0
 	_run_failure_reason="provider_error"
 	_HRW_STATUS_FAIL="failed"
@@ -106,7 +106,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 		local requested_tier="${1:-standard}"
 		case "$requested_tier" in
 		simple) printf '%s\n' "openai/gpt-5.6-luna" ;;
-		standard) printf '%s\n' "openai/gpt-5.6-luna" "openai/gpt-5.6-terra" "anthropic/claude-sonnet-5-5" ;;
+		standard) printf '%s\n' "openai/gpt-5.6-luna" "openai/gpt-6.1-terra" "anthropic/claude-sonnet-5-5" ;;
 		*) return 1 ;;
 		esac
 		return 0
@@ -123,7 +123,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	}
 	model_backoff_active() {
 		local model_name="$1"
-		[[ "$model_name" == "openai/gpt-5.6-terra" ]] && return 0
+		[[ "$model_name" == "openai/gpt-6.1-terra" ]] && return 0
 		return 1
 	}
 	extract_provider() {
@@ -140,7 +140,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	_cmd_run_finish() {
 		return 1
 	}
-	_cmd_run_prepare_retry worker issue-1 "" 1 6 openai/gpt-5.6-terra 81 standard
+	_cmd_run_prepare_retry worker issue-1 "" 1 6 openai/gpt-6.1-terra 81 standard
 	[[ "$cmd_run_action" == "switch" ]]
 	[[ "$cmd_run_next_model" == "anthropic/claude-sonnet-5-5" ]]
 )
@@ -150,7 +150,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 		local requested_tier="${1:-standard}"
 		case "$requested_tier" in
 		simple) printf '%s\n' "openai/gpt-6-luna" ;;
-		standard) printf '%s\n' "openai/gpt-5.6-terra" ;;
+		standard) printf '%s\n' "openai/gpt-6.1-terra" ;;
 		thinking) printf '%s\n' "openai/gpt-5.6-sol" ;;
 		*) return 1 ;;
 		esac
@@ -185,7 +185,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 
 	_resolve_capability_escalation worker simple
 	[[ "$_capability_escalation_tier" == "standard" ]]
-	[[ "$_capability_escalation_model" == "openai/gpt-5.6-terra" ]]
+	[[ "$_capability_escalation_model" == "openai/gpt-6.1-terra" ]]
 	[[ "$_capability_escalation_variant" == "medium" ]]
 	[[ "$(model_tier_candidate_index "$_capability_escalation_tier" "$_capability_escalation_model")" == "1" ]]
 )
@@ -258,7 +258,7 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 		local requested_tier="${1:-standard}"
 		case "$requested_tier" in
 		simple) printf '%s\n' "openai/gpt-6-luna" ;;
-		standard) printf '%s\n' "openai/gpt-5.6-terra" ;;
+		standard) printf '%s\n' "openai/gpt-6.1-terra" ;;
 		*) return 1 ;;
 		esac
 		return 0
@@ -318,11 +318,11 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 
 	_select_cmd_run_model
 	[[ "$tier_override" == "standard" ]]
-	[[ "$selected_model" == "openai/gpt-5.6-terra" ]]
+	[[ "$selected_model" == "openai/gpt-6.1-terra" ]]
 	variant_override=$(resolve_headless_variant "$role" "$tier_override" "$selected_model")
 	_cmd_run_attempt_loop
 )
-[[ "$(<"$routing_capture")" == "standard|1|medium|openai/gpt-5.6-terra|medium" ]]
+[[ "$(<"$routing_capture")" == "standard|1|medium|openai/gpt-6.1-terra|medium" ]]
 
 (
 	attempt_exit=81

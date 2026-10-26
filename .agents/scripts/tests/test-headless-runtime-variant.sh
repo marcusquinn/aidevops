@@ -66,8 +66,8 @@ actual=$(resolve_headless_variant "worker" "simple" "openai/gpt-6-luna")
 assert_equals "medium" "$actual" "GPT-6 Luna simple worker uses medium routed effort floor" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-5.6-terra")
-assert_equals "medium" "$actual" "GPT-5.6 Terra standard worker uses medium routed effort floor" || true
+actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-6.1-terra")
+assert_equals "medium" "$actual" "GPT-6.1 Terra standard worker uses medium routed effort floor" || true
 
 with_clean_variant_env
 actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6.1-sol")

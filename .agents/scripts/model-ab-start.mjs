@@ -43,7 +43,7 @@ export function rejectSubFloorArms(arms) {
 export const START_PRESETS = {
   "standard-luna-terra": { prefix: "standard-ab", hours: 48, mode: PROSPECTIVE_MODE, arms: () => [
     { name: "luna-max", model: "openai/gpt-6-luna", variant: "max" },
-    { name: "terra-medium", model: "openai/gpt-5.6-terra", variant: "medium" },
+    { name: "terra-medium", model: "openai/gpt-6.1-terra", variant: "medium" },
   ] },
   // A week: the 48-hour standard-only window enrolled only 2 issues (GH#32353).
   "openai-anthropic": { prefix: "provider-ab", hours: 168, mode: ALL_TIER_MODE, arms: (routing) => [

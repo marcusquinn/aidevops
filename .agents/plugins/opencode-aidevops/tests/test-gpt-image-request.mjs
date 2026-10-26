@@ -217,7 +217,7 @@ describe("GPT image provider requests", () => {
         return new Response(event, { status: 200 });
       },
     );
-    assert.deepEqual(models, ["gpt-6.1-sol", "gpt-5.6-terra"]);
+    assert.deepEqual(models, ["gpt-6.1-sol", "gpt-6.1-terra"]);
     assert.equal(result.base64, IMAGE_RESULT);
   });
 

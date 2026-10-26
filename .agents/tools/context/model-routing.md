@@ -32,7 +32,7 @@ model: simple
 | Tier | Current ordered mapping | Use When |
 |------|-------|----------|
 | `simple` | openai/gpt-6-luna → anthropic/claude-haiku-5-5 | Complete low-consequence execution contracts |
-| `standard` | openai/gpt-6.1-sol (medium) → openai/gpt-5.6-terra → zai-coding-plan/glm-5.2 → anthropic/claude-sonnet-5-5 | Established-pattern implementation with normal judgment and recovery |
+| `standard` | openai/gpt-6.1-sol (medium) → openai/gpt-6.1-terra → zai-coding-plan/glm-5.2 → anthropic/claude-sonnet-5-5 | Established-pattern implementation with normal judgment and recovery |
 | `thinking` | openai/gpt-6.1-sol → anthropic/claude-opus-5-5 | Daily-driver coordination, consequential decisions and synthesis-heavy work |
 
 **Model IDs**: Always fully-qualified (`claude-sonnet-5-5`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
@@ -112,6 +112,7 @@ is always denied because secrets must flow through secret tooling, not prompts.
 - **Sonnet 5.5 update (2026-09-28, GH#32848)**: Sonnet references moved from Sonnet 4.6 / Sonnet 5 to `anthropic/claude-sonnet-5-5`. It costs the same as Sonnet 5 for input and output ($2/$10); Anthropic's pricing page lists its cache read at $0.10 (0.05x input; corrected 2026-10-07). It is 30%+ faster, and uses fewer tokens per task. A live OpenCode headless run succeeded at the default and `medium` variants. Until models.dev lists it, `anthropic-catalog-bridge.mjs` registers the ID from the Sonnet 5 catalog metadata; the native entry wins once published. Setup migrates provider-prefixed user pins once (`migration-sonnet-5-5.sh`: config.jsonc, settings.json, custom routing table, opencode.json, `*_MODEL(S)` lines in credentials.sh), with backups under `~/.aidevops/config-backups/migrations/`. Claude Code accepts the ID with an unknown-catalog warning and assumes a 200K window until it updates.
 - **Anthropic generation update (2026-09-27)**: Anthropic OAuth is available again. The fallbacks moved from Sonnet 4.6 / Opus 4.6 to Sonnet 5 / Opus 5.5 after live headless smoke tests, including tool calls. OpenAI stays primary; the provider-family A/B in `workflows/optimize-tiers.md` (`--preset openai-anthropic`) supplies evidence before any primary change. Plugin config load drops legacy `(via aidevops)` Anthropic model overrides left by versions before GH#32447, because they masked native tool-call, attachment and cost metadata. OpenCode uses `interactive_default` when configured, otherwise the thinking model, as its default only when no explicit user model exists; existing model/variant pins are preserved.
 - **Provider A/B outcome (2026-10-01, GH#32539)**: The OpenAI-vs-Anthropic worker trial was stopped early after 4.4 days. On the standard tier, the OpenAI arm verified 97% of issues at about $1.26 per verified issue. The Anthropic arm verified 81% at about $3.81, using about 2.8× the tokens per issue. OpenAI-primary order and `round_robin: false` stay the shipped default. Anthropic remains a same-tier availability fallback.
+- **Terra 6.1 update (2026-10-26, GH#35706)**: The second `standard` candidate moved from `openai/gpt-5.6-terra` to `openai/gpt-6.1-terra` at medium. OpenAI's Standard pricing lists it at $1/$0.05/$5 (input/cached/output per 1M, short context ≤272K) versus GPT-5.6 Terra's $2/$0.20/$12. It advertises 922K input natively, so the ~240K GPT-6 context cap covers `gpt-6.1-terra` and `gpt-6.1-terra-fast`. `gpt-5.6-terra` keeps its pricing and GPT-5.6 limits for historical requests and custom routes.
 - **Sol 6.1 update (2026-09-30)**: `standard` and `thinking` primaries moved from `openai/gpt-6-sol` to `openai/gpt-6.1-sol` at medium (GH#33114). Input/output prices are unchanged; cached input halves to $0.10 per 1M. The superseded `gpt-6-sol` IDs keep their pricing for historical requests and the ~240K context cap, but no longer inherit routed reasoning.
 - **Standard update (2026-09-27)**: `standard` moved from GPT-5.6 Terra to GPT-6 Sol, with Terra kept as the first same-tier fallback. OpenAI's Standard pricing lists Sol at $2/$0.20/$10 (input/cached/output per 1M) versus Terra's $2/$0.20/$12. Both now run at medium. Standard and thinking therefore share Sol medium as primary, with different fallbacks; whether thinking should move to high is a follow-up decision, not part of the minimum-effort change. Watch the 800K per-issue breaker in `configs/dispatch-cost-budgets.conf` for trips during the first week.
 - **Generation update (2026-09-22)**: GPT-6 Luna and GPT-6 Sol became the simple and thinking primaries. Both now use medium. Catalog visibility is not a guarantee of headless OAuth availability: the runtime still probes and follows same-tier fallbacks.
@@ -206,7 +207,7 @@ For example, after validating Anthropic OAuth and both model variants locally:
   "interactive_default": { "model": "anthropic/claude-opus-5-5", "variant": "medium" },
   "tiers": {
     "simple": { "models": ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"] },
-    "standard": { "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6-terra"] },
+    "standard": { "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-terra"] },
     "thinking": {
       "models": ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
       "reasoning": { "anthropic/claude-opus-5-5": "xhigh" }
@@ -225,7 +226,7 @@ Example custom override for OpenAI-capable headless routing:
 ```json
 {
   "tiers": {
-    "standard": { "models": ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5-5"] },
+    "standard": { "models": ["openai/gpt-6.1-terra", "anthropic/claude-sonnet-5-5"] },
     "thinking": { "models": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"] }
   }
 }
