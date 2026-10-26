@@ -33,6 +33,7 @@ PULSE_CYCLE_STATE_SCHEMA="aidevops.pulse-cycle-state/v1"
 PULSE_CYCLE_STATE_ARRAY_TYPE="array"
 PULSE_CYCLE_STATE_BLOCKER_NONE="none"
 PULSE_CYCLE_STATE_OBJECT_TYPE="object"
+PULSE_CYCLE_STATE_RUNNING="running"
 _PULSE_CYCLE_STATE_INITIALIZED=0
 _PULSE_CYCLE_STATE_TERMINAL=0
 _PULSE_CYCLE_ID=""
@@ -189,7 +190,7 @@ _pulse_cycle_state_start() {
 	_PULSE_CYCLE_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 	_PULSE_CYCLE_OWNER_EXECUTOR_PID="$owner_pid"
 	_PULSE_CYCLE_PHASE="admitted"
-	_PULSE_CYCLE_OUTCOME="running"
+	_PULSE_CYCLE_OUTCOME="$PULSE_CYCLE_STATE_RUNNING"
 	_PULSE_CYCLE_HEARTBEAT_AT="$now"
 	_PULSE_CYCLE_PRIOR_PROGRESS_LAST_AT="$prior_progress_last_at"
 	_PULSE_CYCLE_PRIOR_PROGRESS_KINDS_JSON="$prior_progress_kinds_json"
@@ -215,7 +216,7 @@ _pulse_cycle_state_transition() {
 	*) return 1 ;;
 	esac
 	_PULSE_CYCLE_PHASE="$phase"
-	_PULSE_CYCLE_OUTCOME="running"
+	_PULSE_CYCLE_OUTCOME="$PULSE_CYCLE_STATE_RUNNING"
 	_PULSE_CYCLE_HEARTBEAT_AT=$(_pulse_cycle_state_now)
 	return 0
 }
@@ -347,6 +348,22 @@ _pulse_cycle_state_json() {
 _pulse_cycle_state_publish() {
 	local phase="$1"
 	_pulse_cycle_state_transition "$phase" || return 1
+	write_pulse_health_file
+	return $?
+}
+
+# GH#35695: Only the supervising cycle owner may refresh stage liveness.
+# A heartbeat is not delivery progress and must not revive completed/newer cycles.
+_pulse_cycle_state_stage_heartbeat() {
+	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" \
+		&& "${_PULSE_CYCLE_STATE_TERMINAL:-0}" != "1" \
+		&& "${_LOCK_OWNED:-false}" == "true" ]] || return 1
+	_pulse_cycle_state_executor_is_owner || return 1
+	_pulse_cycle_state_health_is_current || return 1
+	jq -e --arg running "$PULSE_CYCLE_STATE_RUNNING" \
+		'.cycle_state.outcome == $running and .cycle_state.phase != "completed"' \
+		"$PULSE_HEALTH_FILE" >/dev/null 2>&1 || return 1
+	_PULSE_CYCLE_HEARTBEAT_AT=$(_pulse_cycle_state_now)
 	write_pulse_health_file
 	return $?
 }
