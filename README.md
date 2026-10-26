@@ -87,6 +87,10 @@ aidevops opencode           # launch OpenCode with the Build+ agent
 Rerun `aidevops tabby sync` after adding projects in step 4. Profile details:
 [Tabby profiles](.agents/reference/tabby-profiles.md).
 
+For persistent remote tmux tabs across configured SSH hosts, use
+`aidevops tabby sessions new|restore|list|doctor`; see
+[Remote Tabby sessions](.agents/tools/terminal/remote-sessions.md).
+
 ### 3. Connect model providers
 
 ```bash
