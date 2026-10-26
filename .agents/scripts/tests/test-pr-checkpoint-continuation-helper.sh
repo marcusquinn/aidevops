@@ -842,56 +842,99 @@ fi
 PCC_ALLOW_RELEASED=false
 PCC_LINK_KIND="closing"
 
-# GH#35363: a different runner's stale-assignment reset must resume the PR
-# author's exact checkpoint, with the same one-retry-per-head attention bound.
+# GH#35363/GH#35715: stale-assignment and ownership-loss releases must resume
+# the PR author's exact checkpoint, with the same one-retry-per-head bound.
 export STUB_POST_DIR="${TEST_ROOT}/posts"
-STUB_COMMENTS_JSON="$(stall_comments stall-lease | jq -c '
-	map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=stale_assignment_reset") else . end))')"
-STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
-DISPATCH_ARGS=""
-STATUS_CALLS=""
-_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
-output="$(<"$output_file")"
-if [[ "$output" == *"assignee=worker-bot release=31 reason=stale_assignment_reset"* &&
-	"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
-	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 1111111111111111111111111111111111111111 worker-bot"* &&
-	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' ]]; then
-	print_result "stale assignment reset resumes unassigned checkpoint bound to PR author" 0
-else
-	print_result "stale assignment reset resumes unassigned checkpoint bound to PR author" 1 \
-		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
-fi
+for release_reason in stale_assignment_reset worker_ownership_lost; do
+	STUB_COMMENTS_JSON="$(stall_comments stall-lease | jq -c --arg reason "$release_reason" '
+		map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=" + $reason) else . end))')"
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	DISPATCH_ARGS=""
+	STATUS_CALLS=""
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+	output="$(<"$output_file")"
+	if [[ "$output" == *"assignee=worker-bot release=31 reason=${release_reason}"* &&
+		"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+		"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 1111111111111111111111111111111111111111 worker-bot"* &&
+		"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' ]]; then
+		print_result "${release_reason} resumes unassigned checkpoint bound to PR author" 0
+	else
+		print_result "${release_reason} resumes unassigned checkpoint bound to PR author" 1 \
+			"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+	fi
 
-STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
-STUB_COMMENTS_JSON="$(jq -c 'map(. + [
-	{id:33,created_at:"2026-09-30T01:40:00Z",author_association:"COLLABORATOR",user:{login:"current-runner"},
-		body:"DISPATCH_CLAIM nonce=n2 runner=current-runner"},
-	{id:34,created_at:"2026-09-30T02:00:00Z",author_association:"OWNER",user:{login:"pulse-runner"},
-		body:"CLAIM_RELEASED reason=stale_assignment_reset runner=pulse-runner"}
-])' <<<"$STUB_COMMENTS_JSON")"
-DISPATCH_ARGS=""
-posts_before="$(post_count)"
-_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
-output="$(<"$output_file")"
-if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED* && "$output" == *"stalls=2"* &&
-	-z "$DISPATCH_ARGS" && "$(post_count)" -eq $((posts_before + 1)) ]]; then
-	print_result "second stale assignment reset posts attention without another dispatch" 0
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	STUB_COMMENTS_JSON="$(jq -c --arg reason "$release_reason" 'map(. + [
+		{id:33,created_at:"2026-09-30T01:40:00Z",author_association:"COLLABORATOR",user:{login:"current-runner"},
+			body:"DISPATCH_CLAIM nonce=n2 runner=current-runner"},
+		{id:34,created_at:"2026-09-30T02:00:00Z",author_association:"OWNER",user:{login:"pulse-runner"},
+			body:("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner")}
+	])' <<<"$STUB_COMMENTS_JSON")"
+	DISPATCH_ARGS=""
+	posts_before="$(post_count)"
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+	output="$(<"$output_file")"
+	if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED* && "$output" == *"stalls=2"* &&
+		-z "$DISPATCH_ARGS" && "$(post_count)" -eq $((posts_before + 1)) ]]; then
+		print_result "second ${release_reason} posts attention without another dispatch" 0
+	else
+		print_result "second ${release_reason} posts attention without another dispatch" 1 "output=${output:-missing}"
+	fi
+	posted_body="$(<"${STUB_POST_DIR}/post-$((posts_before + 1))")"
+	STUB_COMMENTS_JSON="$(jq -c --arg body "$posted_body" 'map(. + [
+		{id:35,created_at:"2026-09-30T02:01:00Z",author_association:"OWNER",user:{login:"pulse-runner"},body:$body}
+	])' <<<"$STUB_COMMENTS_JSON")"
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+	output="$(<"$output_file")"
+	if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" &&
+		"$(post_count)" -eq $((posts_before + 1)) ]]; then
+		print_result "repeated ${release_reason} sweep deduplicates exact-head attention" 0
+	else
+		print_result "repeated ${release_reason} sweep deduplicates exact-head attention" 1 "output=${output:-missing}"
+	fi
+	PCC_ALLOW_RELEASED=false
+done
+
+ownership_comments="$(stall_comments stall-lease | jq -c '
+	map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=worker_ownership_lost") else . end))')"
+for ownership_event in \
+	'DISPATCH_LEASE phase=ready lease_token=new-lease session=s2' \
+	'Interactive session claimed this issue' \
+	'CLAIM_RELEASED reason=blocked runner=worker-bot'; do
+	newer_comments="$(jq -c --arg body "$ownership_event" 'map(. + [
+		{id:33,created_at:"2026-09-30T02:00:00Z",author_association:"MEMBER",user:{login:"new-owner"},body:$body}
+	])' <<<"$ownership_comments")"
+	if ! _pcc_stall_release_evidence "$newer_comments" "$recovery_head_date" key >/dev/null 2>&1; then
+		print_result "ownership-loss recovery respects newer ${ownership_event%% *}" 0
+	else
+		print_result "ownership-loss recovery respects newer ${ownership_event%% *}" 1
+	fi
+done
+
+# Rejections must identify the failed predicate without contaminating TSV stdout
+# or leaking implementation text into the Pulse log.
+STUB_COMMENTS_JSON='[]'
+STUB_PR_JSON="$(valid_pr_json 'private-body-sentinel' | jq -c '.isDraft = false')"
+STUB_ISSUE_JSON="$(valid_issue_json)"
+diagnostics_file="${TEST_ROOT}/target-diagnostics"
+if ! row=$(_pcc_target_row owner/repo 42 123 worker-bot worker-bot 2>"$diagnostics_file") &&
+	[[ -z "$row" && "$(<"$diagnostics_file")" == *reason=pr_metadata_ineligible* &&
+		"$(<"$diagnostics_file")" == *'"isDraft":false'* &&
+		"$(<"$diagnostics_file")" != *private-body-sentinel* ]]; then
+	print_result "target diagnostics identify PR metadata failure without bodies or TSV output" 0
 else
-	print_result "second stale assignment reset posts attention without another dispatch" 1 "output=${output:-missing}"
+	print_result "target diagnostics identify PR metadata failure without bodies or TSV output" 1
 fi
-posted_body="$(<"${STUB_POST_DIR}/post-$((posts_before + 1))")"
-STUB_COMMENTS_JSON="$(jq -c --arg body "$posted_body" 'map(. + [
-	{id:35,created_at:"2026-09-30T02:01:00Z",author_association:"OWNER",user:{login:"pulse-runner"},body:$body}
-])' <<<"$STUB_COMMENTS_JSON")"
-_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
-output="$(<"$output_file")"
-if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" &&
-	"$(post_count)" -eq $((posts_before + 1)) ]]; then
-	print_result "repeated stale reset sweep deduplicates exact-head attention" 0
+STUB_PR_JSON="$(valid_pr_json)"
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:available"}]')"
+if ! row=$(_pcc_target_row owner/repo 42 123 worker-bot worker-bot 2>"$diagnostics_file") &&
+	[[ -z "$row" && "$(<"$diagnostics_file")" == *reason=issue_metadata_ineligible* &&
+		"$(<"$diagnostics_file")" == *status:available* &&
+		"$(<"$diagnostics_file")" == *'"assignees":[{"login":"worker-bot"}]'* ]]; then
+	print_result "target diagnostics explain assigned available issue rejection" 0
 else
-	print_result "repeated stale reset sweep deduplicates exact-head attention" 1 "output=${output:-missing}"
+	print_result "target diagnostics explain assigned available issue rejection" 1
 fi
-PCC_ALLOW_RELEASED=false
 
 if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-revision.py"; then
 	print_result "revised checkpoint claims, large metadata, worker lease lifecycle and durable progress" 0
