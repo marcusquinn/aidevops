@@ -600,10 +600,21 @@ _worker_post_pr_handoff_confirmed() {
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local branch_name
 	local local_head
-	local issue_number="${session_key#issue-}"
+	local issue_number=""
 
-	[[ "$session_key" == issue-* ]] || return 1
-	[[ -n "$repo_slug" ]] || return 1
+	# aidevops:trust-boundary — accept only launcher-defined identities. Manual
+	# sessions must bind to trusted dispatch metadata, never digits in prompt text.
+	if [[ "$session_key" =~ ^issue-([1-9][0-9]*)$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+	elif [[ "$session_key" =~ ^manual-cli-([1-9][0-9]*)-[0-9]+$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+		[[ "${WORKER_ISSUE_NUMBER:-}" == "$issue_number" ]] || return 1
+	else
+		return 1
+	fi
+	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
+	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	[[ "${WORKER_REPO_SLUG:-$repo_slug}" == "$repo_slug" ]] || return 1
 	command -v gh >/dev/null 2>&1 || return 1
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
