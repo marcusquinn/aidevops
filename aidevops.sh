@@ -2185,7 +2185,7 @@ _main_dispatch_cleanup() {
 		echo "  tmp|worktrees|artefacts|opencode|observability [--apply]  One store"
 		echo "  Daily automatic run: routine r922 Storage hygiene (installed by setup)"
 		echo "  maintenance plan --repo PATH  Plan legacy worktrees (read-only)"
-		echo "  maintenance check|apply --plan FILE --confirm TOKEN  Explicit offline maintenance"
+		echo "  maintenance check|apply --plan FILE --confirm TOKEN  Explicit user-space maintenance"
 		echo ""
 		echo "Branches (dry-run unless --apply):"
 		echo "  branches          Audit stale remote branches"

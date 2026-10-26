@@ -19,7 +19,7 @@ from contextlib import closing
 import worktree_lifetime_owner as owner
 import worktree_maintenance_boundary as boundary
 
-SCHEMA = "aidevops.worktree-maintenance/v1"
+SCHEMA = "aidevops.worktree-maintenance/v2"
 SCRIPTS = Path(__file__).resolve().parent
 require = boundary.require
 
@@ -121,6 +121,8 @@ def preservation_checks(path):
 def candidate(path, repo):
     require(path.is_absolute() and str(path) == os.path.realpath(path) and not path.is_symlink(),
             "maintenance:noncanonical-path")
+    boundary.observe()
+    boundary.require_unused(path)
     record = legacy(path)
     preservation_checks(path)
     require(git(path, "rev-parse", "--path-format=absolute", "--git-common-dir") ==
@@ -167,7 +169,7 @@ def plan(repo_path, limit=50, offset=0):
             print(f"Maintenance plan: evaluated {len(entries)}/{len(selected)} worktrees",
                   file=sys.stderr, flush=True)
     next_offset = offset + len(selected)
-    return {"schema": SCHEMA, "machine": machine(), "created_at": time.time(),
+    return {"schema": SCHEMA, "machine": machine(), "uid": os.getuid(), "created_at": time.time(),
             "repository": repo, "entries": entries,
             "scan": {"total_worktrees": len(worktrees), "offset": offset, "examined": len(selected),
                      "next_offset": next_offset if next_offset < len(worktrees) else None}}
@@ -179,6 +181,7 @@ def load_plan(path, confirmation):
     value = json.loads(path.read_text())
     require(value.get("schema") == SCHEMA and digest(value) == confirmation, "maintenance:plan-token-mismatch")
     require(value.get("machine") == machine(), "maintenance:wrong-machine")
+    require(value.get("uid") == os.getuid(), "maintenance:wrong-user")
     require(0 <= time.time() - value["created_at"] <= 7 * 86400, "maintenance:plan-expired")
     paths = [entry["path"] for entry in value["entries"]]
     require(len(paths) == len(set(paths)), "maintenance:duplicate-path")

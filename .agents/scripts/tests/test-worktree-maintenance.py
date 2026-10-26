@@ -27,104 +27,68 @@ GIT = maintenance.executable("git")
 
 
 class MaintenanceBoundaryTests(unittest.TestCase):
-    def snapshot(self):
-        return {"LoadState": "loaded", "ActiveState": "active", "User": "1000",
-                "KillMode": "control-group", "Restart": "no", "FragmentPath": "/trusted/unit",
-                "Conflicts": "user@1000.service", "Before": "user@1000.service",
-                "ControlGroup": "/system.slice/fixture.service", "InvocationID": "a" * 32}
-
-    def observe(self, snapshot=None, user="inactive", rescue="active", exclusive=None):
-        value = snapshot or self.snapshot()
-        def unit(name):
-            if name.startswith("aidevops-"):
-                return value.copy()
-            return {"ActiveState": user if name == "user@1000.service" else rescue}
+    def test_context_requires_no_service_or_admin_commands(self):
         with patch.object(boundary.sys, "platform", "linux"), patch.object(os, "getuid", return_value=1000), \
-                patch.object(boundary, "system_unit", side_effect=unit), \
-                patch.object(boundary, "root_controlled"), \
-                patch.object(boundary, "process_group", return_value=value["ControlGroup"]), \
-                patch.object(boundary, "require_exclusive_user", side_effect=exclusive), \
-                patch.dict(os.environ, {"INVOCATION_ID": "a" * 32}):
-            return boundary.observe()
+                patch.object(Path, "read_text", return_value="fixture-boot\n"), \
+                patch.object(subprocess, "run", side_effect=AssertionError("unexpected process")):
+            self.assertEqual(boundary.observe(), {"uid": 1000, "boot_id": "fixture-boot", "mode": "user-space"})
 
-    def test_valid_boundary_returns_current_invocation_not_sealed_receipt(self):
-        observed = self.observe()
-        self.assertEqual(observed["invocation"], "a" * 32)
-        self.assertNotIn("sealed", observed)
+    def test_root_and_unsupported_platform_refuse(self):
+        for platform, uid in (("linux", 0), ("darwin", 1000)):
+            with self.subTest(platform=platform, uid=uid), patch.object(boundary.sys, "platform", platform), \
+                    patch.object(os, "getuid", return_value=uid), self.assertRaises(ValueError):
+                boundary.observe()
 
-    def test_active_user_manager_and_normal_boot_refuse(self):
-        for arguments in ({"user": "active"}, {"rescue": "inactive"}):
-            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
-                self.observe(**arguments)
+    def test_complete_unrelated_processes_allow_candidate(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(boundary.processes, "collect", return_value=([directory + "-sibling"], [])):
+            boundary.require_unused(Path(directory))
 
-    def test_weakened_unit_contracts_refuse(self):
-        for key, value in (("User", "0"), ("KillMode", "process"), ("Restart", "always"),
-                           ("Before", ""), ("Conflicts", ""), ("InvocationID", "b" * 32)):
-            snapshot = self.snapshot()
-            snapshot[key] = value
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                self.observe(snapshot=snapshot)
-
-    def test_unknown_or_outside_process_is_not_an_exemption(self):
-        for error in (PermissionError("hidden"), ValueError("outside")):
-            with self.subTest(error=type(error)), self.assertRaises(type(error)):
-                self.observe(exclusive=error)
-
-    def test_real_proc_parser_checks_all_uid_fields_and_cgroup(self):
+    def test_active_cwd_always_refuses_including_degraded_scan(self):
         with tempfile.TemporaryDirectory() as directory:
-            process = Path(directory) / "1234"
-            process.mkdir()
-            (process / "status").write_text("Uid:\t1000\t0\t0\t0\n")
-            (process / "cgroup").write_text("0::/outside\n")
-            with patch.object(os, "getuid", return_value=1000), \
-                    patch.object(Path, "iterdir", return_value=iter([process])), self.assertRaises(ValueError):
-                boundary.require_exclusive_user("/system.slice/fixture.service")
+            for cwd in (directory, directory + "/child"):
+                for denied in ([], [Path("/proc/123")]):
+                    with self.subTest(cwd=cwd, denied=denied), \
+                            patch.object(boundary.processes, "collect", return_value=([cwd], denied)), \
+                            self.assertRaisesRegex(ValueError, "active-cwd"):
+                        boundary.require_unused(Path(directory))
 
-    def test_proc_parser_accepts_only_maintenance_descendants(self):
+    def test_unknown_processes_are_not_daemon_exemptions(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(boundary.processes, "collect", return_value=(["/"], [Path("/proc/123")])), \
+                self.assertRaisesRegex(ValueError, "cwd-visibility-degraded"):
+            boundary.require_unused(Path(directory))
+
+    def test_empty_and_unreadable_snapshots_refuse(self):
         with tempfile.TemporaryDirectory() as directory:
-            process = Path(directory) / "1234"
-            process.mkdir()
-            (process / "status").write_text("Uid:\t1000\t1000\t1000\t1000\n")
-            (process / "cgroup").write_text("0::/system.slice/fixture.service/child\n")
-            with patch.object(os, "getuid", return_value=1000), \
-                    patch.object(Path, "iterdir", return_value=iter([process])):
-                boundary.require_exclusive_user("/system.slice/fixture.service")
+            with patch.object(boundary.processes, "collect", return_value=([], [])), \
+                    self.assertRaisesRegex(ValueError, "cwd-visibility-unusable"):
+                boundary.require_unused(Path(directory))
+            with patch.object(boundary.processes, "collect", side_effect=PermissionError("denied")), \
+                    self.assertRaisesRegex(ValueError, "cwd-visibility-unusable"):
+                boundary.require_unused(Path(directory))
 
-    def test_missing_evidence_is_not_a_disappeared_process(self):
-        with tempfile.TemporaryDirectory() as directory:
-            process = Path(directory) / "1234"
-            process.mkdir()
-            with patch.object(Path, "iterdir", return_value=iter([process])), \
-                    self.assertRaisesRegex(ValueError, "process-evidence-missing"):
-                boundary.require_exclusive_user("/system.slice/fixture.service")
+    def test_foreign_owned_source_refuses(self):
+        uid = os.getuid()
+        with tempfile.TemporaryDirectory() as directory, patch.object(os, "getuid", return_value=uid + 1), \
+                self.assertRaisesRegex(ValueError, "source-owner-mismatch"):
+            boundary.require_unused(Path(directory))
 
-    def test_system_observation_uses_trusted_binary_and_clean_environment(self):
-        response = subprocess.CompletedProcess([], 0, stdout="ActiveState=inactive\n")
-        with patch.object(boundary.shutil, "which", return_value="/trusted/systemctl"), \
-                patch.object(boundary, "root_controlled") as trusted, \
-                patch.object(boundary.subprocess, "run", return_value=response) as run, \
-                patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": "untrusted", "LD_PRELOAD": "untrusted"}):
-            self.assertEqual(boundary.system_unit("fixture.service"), {"ActiveState": "inactive"})
-        trusted.assert_called_once_with("/trusted/systemctl")
-        self.assertEqual(run.call_args.kwargs["env"], {"PATH": os.defpath, "LC_ALL": "C"})
-
-    def test_root_sticky_store_is_safe_but_writable_files_and_nonsticky_parents_are_not(self):
-        def check(store_mode, tool_mode, uid=0):
-            def metadata(path):
-                mode = tool_mode if path.name == "tool" else store_mode if path.name == "store" else 0o40755
-                return os.stat_result((mode, 0, 0, 1, uid, 0, 0, 0, 0, 0))
-            with patch.object(Path, "lstat", autospec=True, side_effect=metadata):
-                boundary.trusted_path("/trusted/store/tool")
-        check(0o41775, 0o100755)
-        for arguments in ((0o40775, 0o100755), (0o41775, 0o101775), (0o41775, 0o100755, 1000)):
-            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
-                check(*arguments)
+    def test_inspector_is_disabled_for_maintenance_on_all_linux_hosts(self):
+        script = 'source "$1"; worktree_process_inspector_allowed Linux'
+        for plan, confirm in (("/plan", ""), ("", "digest"), ("/plan", "digest")):
+            env = dict(os.environ, AIDEVOPS_WORKTREE_MAINTENANCE_PLAN=plan,
+                       AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM=confirm)
+            # Static fixture text and separately passed path; resolved Bash executable.
+            result = subprocess.run([BASH, "-c", script, "fixture",  # nosec B603
+                                     str(SCRIPTS / "worktree-process-policy.sh")], env=env, check=False)
+            self.assertEqual(result.returncode, 1)
 
 
 class MaintenancePlanTests(unittest.TestCase):
     def value(self):
         return {"schema": maintenance.SCHEMA, "machine": "fixture-machine",
-                "created_at": time.time(), "entries": []}
+                "uid": os.getuid(), "created_at": time.time(), "entries": []}
 
     def test_plan_batch_reports_unexamined_worktrees_without_authorizing_them(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -150,6 +114,13 @@ class MaintenancePlanTests(unittest.TestCase):
                 self.assertEqual(maintenance.load_plan(path, maintenance.digest(value)), value)
                 with self.assertRaises(ValueError):
                     maintenance.load_plan(path, "0" * 64)
+                with patch.object(os, "getuid", return_value=value["uid"] + 1), \
+                        self.assertRaisesRegex(ValueError, "wrong-user"):
+                    maintenance.load_plan(path, maintenance.digest(value))
+                old = dict(value, schema="aidevops.worktree-maintenance/v1")
+                path.write_text(json.dumps(old))
+                with self.assertRaisesRegex(ValueError, "plan-token-mismatch"):
+                    maintenance.load_plan(path, maintenance.digest(old))
                 value["created_at"] -= 8 * 86400
                 path.write_text(json.dumps(value))
                 with self.assertRaises(ValueError):
@@ -158,13 +129,13 @@ class MaintenancePlanTests(unittest.TestCase):
                 maintenance.load_plan(path, maintenance.digest(value))
 
     def test_proof_cannot_be_enabled_by_plan_environment_alone(self):
-        with patch.object(boundary, "observe", side_effect=ValueError("offline boundary missing")), \
+        with patch.object(boundary, "observe", side_effect=ValueError("user context unavailable")), \
                 patch.object(maintenance, "load_plan") as load, self.assertRaises(ValueError):
             maintenance.proof(Path("/candidate"), Path("/plan"), "token")
         load.assert_not_called()
 
     def test_apply_does_not_spawn_removal_without_boundary(self):
-        with patch.object(boundary, "observe", side_effect=ValueError("offline boundary missing")), \
+        with patch.object(boundary, "observe", side_effect=ValueError("user context unavailable")), \
                 patch.object(maintenance.subprocess, "run") as run, self.assertRaises(ValueError):
             maintenance.apply(Path("/plan"), "token")
         run.assert_not_called()
