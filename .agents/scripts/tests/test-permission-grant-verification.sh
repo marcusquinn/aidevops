@@ -290,6 +290,34 @@ if _dispatch_permission_history_requires_grant 123 owner/repo; then :; else
 fi
 [[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "NO_APPROVAL" ]]
 
+# GH#35676: a non-grantable (task) request blocks until a signed withdrawal
+# releases it; it can never verify as a grant.
+task_base=$(jq -cS '.capabilities = [.capabilities[0] | .permission = "task" | .tool = "task" | .patterns = ["playwright"]]' <<<"$request_base")
+task_digest=$(_permission_request_digest "$task_base")
+task_request=$(jq -cS --arg id "perm-${task_digest:0:16}" --arg digest "$task_digest" \
+	'. + {request_id: $id, request_sha256: $digest}' <<<"$task_base")
+task_comment=$(printf '%s\n~~~json\n%s\n~~~\n' "$PERMISSION_REQUEST_MARKER" "$task_request")
+_validate_permission_request_identity "$task_request" issue 123 owner/repo "perm-${task_digest:0:16}"
+if _permission_request_is_grantable "$task_request"; then
+	printf 'task request was classified as grantable\n' >&2
+	exit 1
+fi
+jq -cn --arg request "$task_comment" '[[{id: 7, author_association: "MEMBER", body: $request}]]' >"$comments_file"
+if _dispatch_permission_history_requires_grant 123 owner/repo; then :; else
+	printf 'an unwithdrawn non-grantable request released dispatch\n' >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "MALFORMED_REQUEST" ]]
+task_withdrawal=$(build_withdrawal_comment "$task_request")
+jq -cn --arg request "$task_comment" --arg withdrawal "$task_withdrawal" \
+	'[[{id: 7, author_association: "MEMBER", body: $request},
+	   {id: 8, author_association: "OWNER", body: $withdrawal}]]' >"$comments_file"
+if _dispatch_permission_history_requires_grant 123 owner/repo; then
+	printf 'dispatch remained blocked after withdrawing a non-grantable request: %s\n' "${_DISPATCH_PERMISSION_VERIFY_RESULT:-}" >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "WITHDRAWN" ]]
+
 # Withdrawal removes only the local grant bound to the withdrawn request.
 grant_path=$(_permission_grant_path owner/repo 123)
 mkdir -p "$(dirname "$grant_path")"
@@ -349,7 +377,7 @@ permission_retry_result=$(bash -c '
 	printf "calls=%s visible=%s nongrantable_rc=%s event=%s post=%s block=%s\n" \
 		"$edit_calls" "$block_visible" "$non_grantable_rc" "$recorded_event" "$post_calls" "$block_calls"
 ' _ "${SCRIPT_DIR}/worker-permission-helper.sh")
-[[ "$permission_retry_result" == "calls=2 visible=true nongrantable_rc=1 event=permission_request_non_grantable post=0 block=0" ]] || {
+[[ "$permission_retry_result" == "calls=2 visible=true nongrantable_rc=1 event=permission_request_non_grantable post=1 block=0" ]] || {
 	printf 'permission blocker retry was not idempotent: %s\n' "$permission_retry_result" >&2
 	exit 1
 }
