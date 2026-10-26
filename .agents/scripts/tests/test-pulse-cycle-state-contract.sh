@@ -461,6 +461,75 @@ pass "owner liveness spans freshness window without progress; child, unlocked an
 )
 pass "dispatch owner supervises long final drain without progress; child and dead-owner revival rejected"
 
+# GH#35704: exercise the real supervisor watchdog in the cycle-owning shell,
+# across an accelerated freshness window, with an actual sandbox child to reap.
+(
+	# shellcheck source=../pulse-watchdog.sh
+	source "${SOURCE_DIR}/pulse-watchdog.sh"
+	_pulse_cycle_state_start
+	_LOCK_OWNED=true
+	_pulse_cycle_state_publish supervising
+	supervisor_before=$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")
+	supervisor_log_bytes=$(wc -c <"$LOGFILE")
+	supervisor_clock=$(command date +%s)
+	supervisor_start="$supervisor_clock"
+	supervisor_ticks=0
+	supervisor_done="${TMP_DIR}/supervisor-done"
+	STOP_FLAG="${TMP_DIR}/no-stop-flag"
+	PULSE_STALE_THRESHOLD=3600
+	PULSE_PROGRESS_TIMEOUT=1800
+	guard_child_processes() { return 0; }
+	maybe_refill_underfilled_pool_during_active_pulse() {
+		printf '0\n'
+		return 0
+	}
+	write_pulse_health_file() { return 1; }
+	_pulse_cycle_state_now() {
+		python3 -c 'import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$supervisor_clock"
+		return 0
+	}
+	date() {
+		local format="${1:-}"
+		if [[ "$format" == +%s ]]; then
+			printf '%s\n' "$supervisor_clock"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	(
+		while [[ ! -f "$supervisor_done" ]]; do command sleep 0.02; done
+		exit 7
+	) &
+	supervisor_pid=$!
+	trap 'touch "$supervisor_done"; wait "$supervisor_pid" || true' EXIT
+	sleep() {
+		local interval="$1"
+		[[ "$interval" == 60 ]] || exit 1
+		# Every real wait iteration must refresh only heartbeat_at, with no
+		# full health collection or synthetic log bytes to reset stall timers.
+		[[ "$(jq -r '.cycle_state.heartbeat_at' "$PULSE_HEALTH_FILE")" == "$(_pulse_cycle_state_now)" ]] || exit 1
+		[[ "$(jq -c 'del(.cycle_state.heartbeat_at)' "$PULSE_HEALTH_FILE")" == "$supervisor_before" ]] || exit 1
+		[[ "$(wc -c <"$LOGFILE")" == "$supervisor_log_bytes" ]] || exit 1
+		supervisor_ticks=$((supervisor_ticks + 1))
+		supervisor_clock=$((supervisor_clock + interval))
+		if ((supervisor_ticks == 17)); then
+			: >"$supervisor_done"
+			wait "$supervisor_pid" || [[ "$?" == 7 ]]
+		fi
+		return 0
+	}
+	supervisor_rc=0
+	_run_pulse_watchdog "$supervisor_pid" "$supervisor_start" 1800 || supervisor_rc=$?
+	[[ "$supervisor_rc" == 7 && "$supervisor_ticks" == 17 ]]
+	[[ "$((supervisor_clock - supervisor_start))" -gt 900 ]]
+	python3 -c 'import runpy,sys,time; sys.argv=sys.argv[1:]; clock=float(sys.argv.pop(0)); time.time=lambda:clock; runpy.run_path(sys.argv[0], run_name="__main__")' \
+		"$supervisor_clock" "${SOURCE_DIR}/pulse-current-state.py" \
+		"${HOME}/.aidevops/logs" "$PWD" 900 1 "$SOURCE_DIR" "${TMP_DIR}/review-state" >"$consumer_output"
+	jq -e '.cycle_state.availability == "available" and .cycle_state.outcome == "running" and .cycle_state.phase == "supervising"' "$consumer_output" >/dev/null
+)
+pass "supervisor watchdog keeps owner heartbeat fresh without progress and preserves child exit status"
+
 # Restore the parent's current cycle after the independent owner sandbox.
 write_pulse_health_file
 post_label_dispatch_before=$(_pulse_capture_dispatch_total)

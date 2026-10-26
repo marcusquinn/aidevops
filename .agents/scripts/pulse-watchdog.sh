@@ -662,6 +662,12 @@ _run_pulse_watchdog() {
 			break
 		fi
 
+		# GH#35704: refresh only owner liveness at the existing 60s cadence.
+		# Stay in the owning shell; never turn heartbeat writes into log progress.
+		if declare -F _pulse_cycle_state_stage_heartbeat >/dev/null; then
+			_pulse_cycle_state_stage_heartbeat || true
+		fi
+
 		# Process guard: kill children exceeding RSS/runtime limits (t1398)
 		guard_child_processes "$opencode_pid"
 
