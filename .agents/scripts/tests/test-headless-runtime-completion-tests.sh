@@ -514,8 +514,8 @@ test_cmd_run_finish_accepts_verified_post_pr_handoff() {
 			return 0
 		}
 		gh() {
-			local args="$*"
-			case "$args" in
+			local fixture_request="$*"
+			case "$fixture_request" in
 			(*"api --paginate"*"/issues/123/comments"*) printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]' ;;
 			(*"api repos/"*"/pulls/123"*) printf '%s' 'Resolves #99999' ;;
 			(*) return 1 ;;
