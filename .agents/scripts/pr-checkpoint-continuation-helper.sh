@@ -37,12 +37,12 @@ PCC_LINK_KIND="closing"
 PCC_ALLOW_RELEASED="false"
 _PCC_ATTENTION_MARKER="aidevops:blocked-checkpoint-attention"
 _PCC_STALL_ATTENTION_MARKER="aidevops:stalled-checkpoint-attention"
-# Stall/timeout and stale-assignment release reasons (worker-activity-failure-families.jq
+# Stall/timeout, ownership-loss and stale-assignment release reasons (worker-activity-failure-families.jq
 # "watchdog-stall" plus kill-site timeout classes) eligible for one automatic
 # exact-head continuation. Every other reason is excluded, except a `blocked`
 # release whose runtime recovery line names the runner-local capability class
 # (GH#34758): it needs no brief change or approval, only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
@@ -363,16 +363,39 @@ _pcc_target_row() {
 	local target_row=""
 	local issue_assignee=""
 	local issue_status=""
-	local approval="" approval_id=0 comments="[]" link_kind=""
+	local approval="" approval_id=0 comments="[]" link_kind="" rejection=""
 	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json number,state,title,body,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences 2>/dev/null) || return 1
-	issue_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || return 1
-	if ! { _pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo_slug" "$pr_number" \
-		"$linked_issue" "" "" "$checkpoint_assignee" &&
-		_pcc_issue_metadata_is_eligible "$repo_slug" "$issue_json" "$linked_issue" \
-			"$expected_assignee" "$checkpoint_assignee"; }; then
-		comments=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" --paginate --slurp) || return 1
-		approval=$(_pr_checkpoint_revised_target "$repo_slug" "$pr_json" "$issue_json" "$comments" "$expected_assignee") || return 1
+		--json number,state,title,body,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences 2>/dev/null) || {
+		_pcc_target_rejected pr_metadata_unavailable
+		return 1
+	}
+	issue_json=$(gh api "repos/${repo_slug}/issues/${linked_issue}" 2>/dev/null) || {
+		_pcc_target_rejected issue_metadata_unavailable
+		return 1
+	}
+	if ! _pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo_slug" "$pr_number" \
+		"$linked_issue" "" "" "$checkpoint_assignee"; then
+		rejection="pr_metadata_ineligible"
+	elif ! _pcc_issue_metadata_is_eligible "$repo_slug" "$issue_json" "$linked_issue" \
+		"$expected_assignee" "$checkpoint_assignee"; then
+		rejection="issue_metadata_ineligible"
+	fi
+	if [[ -n "$rejection" ]]; then
+		comments=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" --paginate --slurp) || {
+			_pcc_target_rejected issue_comments_unavailable
+			return 1
+		}
+		approval=$(_pr_checkpoint_revised_target "$repo_slug" "$pr_json" "$issue_json" "$comments" "$expected_assignee") || {
+			# Keep stdout exclusively TSV and omit bodies, titles and comments.
+			_pcc_target_rejected "$rejection"
+			printf '%s\n' "$pr_json" "$issue_json" | jq -sc \
+				--arg expected_assignee "$expected_assignee" --arg checkpoint_author "$checkpoint_assignee" \
+				--arg released "$PCC_ALLOW_RELEASED" '
+				{pr:(.[0] | {number,state,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,closingIssuesReferences}),
+				 issue:(.[1] | {number,state,labels,assignees}),
+				 expected_assignee:$expected_assignee,checkpoint_author:$checkpoint_author,allow_released:$released}' >&2
+			return 1
+		}
 		jq -e --argjson issue "$linked_issue" --argjson pr "$pr_number" --arg runner "$checkpoint_assignee" \
 			'.issue == $issue and .pr == $pr and .runner == $runner' <<<"$approval" >/dev/null || return 1
 		approval_id=$(jq -r '.approval_id' <<<"$approval") || return 1
@@ -392,6 +415,12 @@ _pcc_target_row() {
 	link_kind="closing"
 	_pr_closing_link_matches_issue "$pr_json" "$repo_slug" "$linked_issue" || link_kind="for"
 	printf '%s\t%s\t%s\t%s\t%s\n' "$target_row" "$issue_status" "$issue_assignee" "$approval_id" "$link_kind"
+	return 0
+}
+
+_pcc_target_rejected() {
+	local reason="$1"
+	printf 'PR_CHECKPOINT_TARGET_REJECTED: reason=%s\n' "$reason" >&2
 	return 0
 }
 
