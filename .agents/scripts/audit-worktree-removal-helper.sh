@@ -1605,6 +1605,30 @@ worktree_managed_prepare_removal() {
 	return 0
 }
 
+_worktree_guard_degraded_cwd() {
+	local wt_path="$1"
+	local wt_path_real="$2"
+	local caller="$3"
+	# Maintenance never enters manual degraded recovery or acquires its lease.
+	if worktree_maintenance_requested; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
+		WORKTREE_REMOVAL_GUARD_REASON="maintenance-cwd-visibility-degraded"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+			"$WORKTREE_REMOVAL_GUARD_REASON" "$_WTAR_MODE_SKIPPED"
+		return 1
+	fi
+	# Only a sealed, explicitly enrolled Pulse generation can replace the
+	# unknown part of a scan. The caller checks readable positive matches first.
+	if worktree_managed_lifetime_proof "$wt_path_real"; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="managed-lifetime"
+		return 0
+	fi
+	WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
+	WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
+	return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+}
+
 worktree_removal_guard() {
 	local wt_path="$1"
 	local caller="$2"
@@ -1683,24 +1707,8 @@ worktree_removal_guard() {
 		return 1
 	fi
 	if [[ "$cwd_match_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]]; then
-		# Maintenance never enters manual degraded recovery or acquires its lease.
-		if worktree_maintenance_requested; then
-			WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
-			WORKTREE_REMOVAL_GUARD_REASON="maintenance-cwd-visibility-degraded"
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
-				"$WORKTREE_REMOVAL_GUARD_REASON" "$_WTAR_MODE_SKIPPED"
-			return 1
-		fi
-		# Only a sealed, explicitly enrolled Pulse generation can replace the
-		# unknown part of a scan. Readable positive matches above always veto.
-		if worktree_managed_lifetime_proof "$wt_path_real"; then
-			WORKTREE_REMOVAL_GUARD_VISIBILITY="managed-lifetime"
-			return 0
-		fi
-		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
-		WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
-		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+		_worktree_guard_degraded_cwd "$wt_path" "$wt_path_real" "$caller" || return $?
+		return 0
 	fi
 	if [[ "$cwd_match_status" -eq "$_WT_CWD_MATCH_UNUSABLE_RC" ]]; then
 		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_UNUSABLE"

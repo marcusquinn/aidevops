@@ -93,9 +93,9 @@ Before=user@%i.service
 [Service]
 Type=exec
 User=%i
-Environment=HOME=/home/OPERATOR
-WorkingDirectory=/home/OPERATOR
-ExecStart=/ABSOLUTE/PYTHON3 -B /home/OPERATOR/.aidevops/agents/scripts/worktree-maintenance.py check --plan /absolute/plan.json --confirm REVIEWED_TOKEN
+Environment=HOME=/ABSOLUTE/OPERATOR_HOME
+WorkingDirectory=/ABSOLUTE/OPERATOR_HOME
+ExecStart=/ABSOLUTE/PYTHON3 -B /ABSOLUTE/AGENTS_DIR/scripts/worktree-maintenance.py check --plan /absolute/plan.json --confirm REVIEWED_TOKEN
 KillMode=control-group
 Restart=no
 ```

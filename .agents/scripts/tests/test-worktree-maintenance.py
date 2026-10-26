@@ -206,6 +206,33 @@ worktree_managed_prepare_removal /fixture branch 3>&1
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertEqual(result.stdout, "")
 
+    def test_degraded_cwd_preserves_ordinary_statuses_and_refuses_maintenance(self):
+        script = '''
+source "$1"
+_worktree_guard_path_is_usable() { return 0; }
+is_registered_canonical() { return 1; }
+_worktree_git_lock_state() { printf '%s' "$_WT_GIT_STATE_CLEAR"; return 0; }
+_worktree_has_process_cwd() { return 2; }
+worktree_managed_lifetime_proof() { return "$PROOF_STATUS"; }
+log_worktree_removal_event() { return 0; }
+if worktree_removal_guard /fixture-candidate test maintenance; then status=0; else status=$?; fi
+printf '%s|%s|%s' "$status" "$WORKTREE_REMOVAL_GUARD_VISIBILITY" "$WORKTREE_REMOVAL_GUARD_REASON"
+'''
+        cases = (("/plan", 0, "1|degraded|maintenance-cwd-visibility-degraded"),
+                 ("/plan", 1, "1|degraded|maintenance-cwd-visibility-degraded"),
+                 ("", 0, "0|managed-lifetime|"),
+                 ("", 1, "2|degraded|cwd-visibility-degraded"))
+        for plan, status, expected in cases:
+            env = dict(os.environ, AIDEVOPS_WORKTREE_MAINTENANCE_PLAN=plan,
+                       AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM="fixture" if plan else "",
+                       PROOF_STATUS=str(status))
+            result = subprocess.run(["bash", "-c", script, "fixture",
+                                     str(SCRIPTS / "audit-worktree-removal-helper.sh")],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            with self.subTest(plan=plan, status=status):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+
     def test_missing_enrollment_cannot_bypass_final_maintenance_proof(self):
         script = '''
 source "$1"
