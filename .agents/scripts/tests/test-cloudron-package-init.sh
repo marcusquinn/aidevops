@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 INSTALL_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 AGENTS_DIR="${INSTALL_DIR}/.agents"
 CLOUDRON_CALLER_FRAMEWORK_REF="22a6b4b29087ce2fcf3857596a40ff7b2c436482"
-CLOUDRON_CATALOG_FRAMEWORK_REF="c3f8b562466f9528601bfcbc516c346598026b75"
+CLOUDRON_CATALOG_FRAMEWORK_REF="6606b999d0ed310aeb78efc802e216d6751bda9c"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
@@ -86,6 +86,58 @@ test_cloudron_workflow_scaffolding() {
 	return 0
 }
 
+test_catalog_migration() {
+	local repo_dir="${TEST_ROOT}/migration"
+	local helper="${AGENTS_DIR}/scripts/cloudron-package-helper.sh"
+	local workflow="${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	mkdir -p "${repo_dir}/.github/workflows"
+	printf '{}\n' >"${repo_dir}/CloudronManifest.json"
+	cat >"$workflow" <<'YAML'
+name: Inline catalog
+on: [pull_request]
+env:
+  IMAGE_REPOSITORY: ghcr.io/example/package
+  CLOUDRON_CLI_VERSION: 8.2.6
+  CLOUDRON_CLI_INTEGRITY: sha512-example
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate package
+        run: bash ./test/package-test.sh
+      - name: Validate patch
+        run: bash scripts/check-patch.sh
+YAML
+	local before=""
+	before=$(cksum "$workflow")
+	bash "$helper" scaffold catalog "$repo_dir"
+	assert_equal "$before" "$(cksum "$workflow")" "default scaffold preserves inline workflow"
+	bash "$helper" scaffold catalog --migrate "$repo_dir"
+	assert_equal true "$(grep -Fq "cloudron-catalog-publish-reusable.yml@${CLOUDRON_CATALOG_FRAMEWORK_REF}" "$workflow" && printf true || printf false)" "migration pins fixed reusable workflow"
+	assert_equal true "$(grep -Fq 'bash ./test/package-test.sh' "$workflow" && grep -Fq 'bash scripts/check-patch.sh' "$workflow" && printf true || printf false)" "migration preserves both package checks"
+	assert_equal true "$(grep -Fq 'image_repository: ghcr.io/example/package' "$workflow" && grep -Fq 'cli_version: 8.2.6' "$workflow" && printf true || printf false)" "migration preserves image and CLI inputs"
+	before=$(cksum "$workflow")
+	assert_equal false "$(bash "$helper" scaffold catalog "$repo_dir" --migrate >/dev/null 2>&1 && printf true || printf false)" "existing caller requires manual pin review"
+	assert_equal "$before" "$(cksum "$workflow")" "existing caller inputs remain unchanged"
+	cat >"$workflow" <<'YAML'
+jobs:
+  preflight:
+    steps:
+      - name: Custom authorization
+        run: check-policy
+  runtime-smoke:
+    steps: []
+YAML
+	before=$(cksum "$workflow")
+	local output=""
+	if output=$(bash "$helper" scaffold catalog --migrate "$repo_dir" 2>&1); then
+		assert_equal blocked migrated "unmapped configuration blocks migration"
+	fi
+	assert_equal true "$(grep -Fq 'runtime-smoke' <<<"$output" && grep -Fq 'Custom authorization' <<<"$output" && printf true || printf false)" "migration lists unmapped jobs and steps"
+	assert_equal "$before" "$(cksum "$workflow")" "blocked migration leaves original bytes intact"
+	return 0
+}
+
 test_cloudron_registration_metadata() {
 	local home_dir="${TEST_ROOT}/home"
 	local repo_dir="${TEST_ROOT}/registered"
@@ -142,6 +194,7 @@ main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_cloudron_workflow_scaffolding
+	test_catalog_migration
 	test_cloudron_registration_metadata
 	test_cloudron_publishing_command_syntax
 	test_documentation_layout_scaffolding

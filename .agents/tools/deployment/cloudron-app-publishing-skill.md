@@ -196,8 +196,31 @@ New `aidevops init` Cloudron projects receive both the legacy tag-release caller
 and the pinned catalog caller. Existing packages opt in by copying
 `templates/workflows/cloudron-catalog-publish-caller.yml` to
 `.github/workflows/cloudron-catalog-publish.yml`, or running
-`cloudron-package-helper.sh scaffold catalog`. Existing callers are never
-overwritten. The caller pins the reusable workflow by immutable commit SHA;
+`cloudron-package-helper.sh scaffold catalog`. Existing workflows are never
+overwritten by default. To replace an inline publisher, run
+`cloudron-package-helper.sh scaffold catalog --migrate [package-directory]`
+(requires Ruby with its standard YAML library). Migration uses the managed
+template's immutable pin, which includes GH#35649 push-race recovery and GH#35650
+no-push PR builds. It moves unconditional package shell-script checks into
+`package_checks` and preserves literal image and paired CLI inputs. Unmapped
+jobs, steps or configuration are listed and block migration without modifying
+the original. In particular, integrate Nostr Relay's `runtime-smoke` explicitly;
+do not remove it to make migration pass. Already-reusable callers require manual
+pin/input review rather than being reset. Review every generated diff, including
+the standard publisher steps replaced by the reusable workflow.
+
+Roll out one migration PR per package after the helper lands. Keep
+`CloudronManifest.json` version unchanged, confirm it is already published and
+its existing tag/release are complete, and verify the PR preflight's no-push
+image build before merge. Do not modify catalog entries, tags or releases as
+part of migration. Only after reviewing the existing publication prerequisites,
+set the repository variable `CLOUDRON_PUBLICATION_ENABLED=true`; this is required
+for **both publication and upstream monitor reconcile**, including packages whose
+old inline workflow published without the variable. Enabling it with an
+unpublished manifest version or incomplete release can publish/reconcile that
+version, so an unchanged manifest alone is not proof of a no-publication rollout.
+
+The caller pins the reusable workflow by immutable commit SHA;
 `aidevops_ref` must match that pin and constrains attestation signer verification.
 Keep the original pin available when reconciling catalogs signed by that revision;
 updating a caller does not authorize an older signer automatically.

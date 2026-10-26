@@ -20,8 +20,8 @@ jobs:
       packages: write
       attestations: write
       id-token: write
-    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@c3f8b562466f9528601bfcbc516c346598026b75
+    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@6606b999d0ed310aeb78efc802e216d6751bda9c
     with:
-      aidevops_ref: c3f8b562466f9528601bfcbc516c346598026b75
+      aidevops_ref: 6606b999d0ed310aeb78efc802e216d6751bda9c
     secrets:
       CLOUDRON_RELEASE_PAT: ${{ secrets.CLOUDRON_RELEASE_PAT }}
