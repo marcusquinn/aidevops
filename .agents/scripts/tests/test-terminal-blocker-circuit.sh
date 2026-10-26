@@ -17,6 +17,9 @@ export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${TEST_ROOT}/captured-blockers.jsonl"
 # terminal-blocker-recovery-helper.sh and would otherwise write owner/repo#42
 # into the live ~/.aidevops queue and consume the pulse recovery budget.
 export AIDEVOPS_BLOCKER_RECOVERY_DIR="${TEST_ROOT}/default-recovery-queue"
+# Never consult the runner's registry, including from spawned helper CLIs.
+export REPOS_JSON="${TEST_ROOT}/repos.json"
+printf '{"initialized_repos":[{"slug":"owner/repo"}]}\n' >"$REPOS_JSON"
 
 cleanup() {
 	rm -rf "$TEST_ROOT"
@@ -859,6 +862,7 @@ test_first_observation_scope_hold_releases_on_revision() {
 			runner-one >/dev/null && exit 1
 		# Recovery owner: unchanged brief stays held, revised brief releases once.
 		TBR_ROOT="${TEST_ROOT}/recovery" TBR_EXCERPT_DIR="${TEST_ROOT}/no-excerpts" TBR_REPOS_JSON="${TEST_ROOT}/no-repos.json"
+		printf '{"initialized_repos":[{"slug":"owner/repo"}]}\n' >"$TBR_REPOS_JSON"
 		# GH#35569: own CONTRIBUTOR observations must reach the recovery owner.
 		export TERMINAL_BLOCKER_SELF_LOGIN=runner-one
 		tb_fixture_comments=$(printf '%s' "$tb_fixture_comments" | jq -c 'map(.author_association="CONTRIBUTOR")')
@@ -1378,7 +1382,7 @@ test_bounded_recovery_intake() {
 		export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
 		export BLOCKER_RECOVERY_STAGE_SECONDS=1 BLOCKER_RECOVERY_BUDGET_SECONDS=1
 		_tbr_init_dirs || exit 1
-		printf '{"initialized_repos":[]}\n' >"$TBR_REPOS_JSON"
+		printf '{"initialized_repos":[{"slug":"owner/repo"}]}\n' >"$TBR_REPOS_JSON"
 		date +%s >"${TBR_ROOT}/last_seed_epoch"
 		local fixture_brief='{"title":"Held integration","body":"### Files Scope\n- helper.sh"}' revision=""
 		revision=$(terminal_blocker_task_revision "$fixture_brief" owner/repo 42 "" files_scope_excluded) || exit 1
@@ -1444,11 +1448,65 @@ test_bounded_recovery_intake() {
 		[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
 		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=seed'* ]] || exit 1
 		_bounded_seed_resume_checks || exit 1
+		_default_budget_progress_checks || exit 1
 		exit 0
 	); then
 		status=1
 	fi
 	print_result "bounded intake resumes past stalled reads, preserves held decisions, and distinguishes incomplete from empty" "$status"
+	return 0
+}
+
+# Exercise two real default-budget CLI calls with 25 entries, not a substituted
+# pending loop. Slow closed entries consume the first pass; the cursor must let
+# the next pass reach actionable entries beyond the first ten.
+_default_budget_progress_checks() {
+	local issue=0 rc=0
+	TBR_ROOT="${TEST_ROOT}/default-budget"
+	export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT"
+	unset BLOCKER_RECOVERY_BUDGET_SECONDS BLOCKER_RECOVERY_STAGE_SECONDS
+	_tbr_init_dirs || return 1
+	date +%s >"${TBR_ROOT}/last_seed_epoch"
+	for issue in {100..124}; do
+		tbr_enqueue owner/repo "$issue" files_scope_excluded || return 1
+	done
+	gh() {
+		local args="$*" issue=""
+		case "$args" in
+		"api repos/owner/repo/issues/"*"/comments?per_page=100 --paginate --slurp")
+			jq -c . "${TB_INTAKE_FIXTURE}/comments.json" ;;
+		"api repos/owner/repo/issues/"*)
+			issue="${args##*/}"
+			if [[ "$issue" -le 109 ]]; then
+				if [[ "$issue" -eq 100 ]]; then sleep 9; else sleep 4; fi
+				printf '{"state":"closed"}\n'
+			else
+				jq -c . "${TB_INTAKE_FIXTURE}/issue.json"
+			fi ;;
+		"api -X GET repos/owner/repo/commits"*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	export -f gh
+	# A legacy fixture must be retired even when it sorts beyond the budget.
+	printf '{"repo":"zz-fixture/repo","issue":42}\n' >"${TBR_ROOT}/queue/zz-fixture--repo--42.json"
+	printf '{}\n' >"${TBR_ROOT}/decisions/zz-fixture--repo--42.json"
+	tbr_enqueue zz-fixture/repo 42 && return 1
+	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/first" 2>"${TBR_ROOT}/err" || rc=$?
+	[[ "$rc" -eq 2 && -s "${TBR_ROOT}/pending_cursor" ]] || return 1
+	# A legitimate nine-second entry must finish rather than time out at eight.
+	[[ ! -f "${TBR_ROOT}/queue/owner--repo--100.json" ]] || return 1
+	[[ ! -f "${TBR_ROOT}/queue/zz-fixture--repo--42.json" && ! -f "${TBR_ROOT}/decisions/zz-fixture--repo--42.json" ]] || return 1
+	rc=0
+	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/second" 2>"${TBR_ROOT}/err" || rc=$?
+	[[ "$rc" -eq 0 || "$rc" -eq 2 ]] || return 1
+	jq -es 'any(.[]; .issue > 109 and .repo == "owner/repo")' "${TBR_ROOT}/first" "${TBR_ROOT}/second" >/dev/null || return 1
+	# Missing registry preserves queued evidence instead of treating it as stale.
+	TBR_REPOS_JSON="${TEST_ROOT}/missing-registry.json"
+	rc=0
+	_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--111.json" >/dev/null || rc=$?
+	[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--111.json" ]] || return 1
 	return 0
 }
 
