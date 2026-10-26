@@ -48,6 +48,8 @@ def approved_comment(data, comment, now):
 def history_approved(data, comments, approval, approval_id, closing):
     trusted_logins = data.get("trusted_logins", ())
     history = released_successor_history(comments, approval["release_id"], approval_id, closing, trusted_logins)
+    # Every entry, including claim_only_no_worker and blocked_before_ready
+    # (GH#35683) closures, must be acknowledged exactly as generated.
     if history is None or history != approval.get("released_successors", []):
         return False
     historical_claims = {item["claim_id"] for item in history}

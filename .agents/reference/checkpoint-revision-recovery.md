@@ -120,6 +120,27 @@ The exact expired owner abort is still required; edited or foreign diagnostics,
 identity-bearing releases, a second diagnostic, and ready/launch/renewal events
 after the diagnostic remain rejecting cases. No published evidence is removed.
 
+### Claims released as blocked before ready (GH#35683)
+
+A later claim can end at prelaunch with the runner's own
+`CLAIM_RELEASED reason=blocked` (for example a `permission_required` terminal
+blocker) without a renewal, ready lease or launch. That release never closes the
+checkpoint attempt, so approve the checkpoint's own blocked release and attempt.
+History closes the never-ready claim as a `released_successors` entry with
+`outcome: blocked_before_ready` binding the claim and release comment IDs. The
+release must be trusted, unedited, posted after the claim by the claim's runner,
+with no ready lease, launch, other release or other claim in between, and every
+claim/renewal expiry known and elapsed before it. Any `nonce`, `lease_token`,
+`claim_id`, `session` or `attempt_id` on the line must match that claim; a legacy
+line without them binds only by runner and ordering. A release racing a live or
+unknown expiry, an edit, a foreign actor or a later event still rejects history.
+
+`blocked-attention` pairs a ready lease only with a release from the same claim
+episode (after the newest `DISPATCH_CLAIM` before it). When the newest blocked
+release closes a never-ready claim, the record names the earlier blocked
+checkpoint release and attempt it follows; if none exists it offers no approval
+template and says why, instead of a line `approval-template` would refuse.
+
 ## Ownership guarantees
 
 The revised path acquires the existing distributed claim/consensus lease before

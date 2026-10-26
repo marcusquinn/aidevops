@@ -53,23 +53,57 @@ def acknowledge_unbound_release(state, comment, line, f):
     return valid
 
 
+BLOCKED_BEFORE_READY = "blocked_before_ready"
+
+
+def expiries_elapsed(state, comment):
+    """Every claim/renewal deadline must be known and elapsed when released;
+    an unknown expiry or a release racing a live renewal fails closed."""
+    expiries = state.get("expiries", [])
+    return bool(expiries) and all(re.fullmatch(r"[1-9][0-9]*", e) for e in expiries) \
+        and max(int(e) for e in expiries) < timestamp(comment["created_at"])
+
+
+def never_ready_open(state, comment, f):
+    return all((expiries_elapsed(state, comment), state["claim_id"] < comment["id"],
+                not state.get("release_id"), not state.get("ready_id"),
+                not state.get("launched"), f.get("runner") == state["runner"]))
+
+
 def close_claim_only(state, comment, f):
     """GH#35331: the owner's exact claim-only release closes a never-ready claim.
 
     #aidevops:trust-boundary — closure is bound to the claim comment ID and nonce,
     rejected after any ready lease or launch, and grants no continuation by itself.
     """
-    expiries = state.get("expiries", [])
-    # Every claim/renewal deadline must be known and elapsed when released;
-    # an unknown expiry or a release racing a live renewal fails closed.
-    elapsed = bool(expiries) and all(re.fullmatch(r"[1-9][0-9]*", e) for e in expiries) \
-        and max(int(e) for e in expiries) < timestamp(comment["created_at"])
-    valid = all((elapsed, not state.get("release_id"), not state.get("ready_id"),
-                 not state.get("launched"), f.get("runner") == state["runner"],
-                 f.get("nonce") == state["token"],
+    valid = all((never_ready_open(state, comment, f), f.get("nonce") == state["token"],
                  f.get("claim_id") == str(state["claim_id"])))
     if valid:
         state["release_id"] = comment["id"]
+        state["outcome"] = CLAIM_ONLY
+    return valid
+
+
+def close_blocked_before_ready(state, comment, f):
+    """GH#35683: the claim owner's own blocked release closes a never-ready claim.
+
+    #aidevops:trust-boundary — the caller already requires a trusted, unedited
+    comment by the claim's runner and rejects any other claim, actor or event in
+    between. This adds: release after the claim, no ready lease, launch or prior
+    release, every claim/renewal expiry known and elapsed, and every identity
+    field present on the line bound to this claim. A legacy line without
+    nonce/claim_id binds only by runner and ordering. The episode is reported
+    as an explicit successor the approval must acknowledge; it grants nothing.
+    """
+    claim_nonce = state["token"]
+    expected = {"nonce": claim_nonce, "lease_" + "token": claim_nonce,
+                "claim_id": str(state["claim_id"]), "session": state["session"],
+                "attempt_id": state.get("attempt", "")}
+    bound = all(f.get(key, value) == value for key, value in expected.items())
+    valid = bound and never_ready_open(state, comment, f)
+    if valid:
+        state["release_id"] = comment["id"]
+        state["outcome"] = BLOCKED_BEFORE_READY
     return valid
 
 
@@ -98,11 +132,13 @@ def advance_release(state, comment, line, f):
         return close_claim_only(state, comment, f)
     if f.get("reason") == "worker_ownership_lost" and not state.get("ready_id"):
         return acknowledge_unbound_release(state, comment, line, f)
+    if f.get("reason") == "blocked" and not state.get("ready_id"):
+        return close_blocked_before_ready(state, comment, f)
     return close_release(state, comment, f)
 
 
 def advance_closed_claim(state, comment, line, f):
-    """Require ready, release and terminal, or an exact never-ready claim-only release."""
+    """Require ready, release and terminal, or an exact never-ready claim-only or blocked release."""
     if comment["user"]["login"] != state["runner"]:
         return False
     if state.get("unbound_release_ids"):
@@ -130,13 +166,15 @@ def advance_history(state, comment, line, f, seen):
 
 def completed_episode(state):
     if state.get("release_id") and not state.get("ready_id"):
-        # Only close_claim_only records a release without a ready lease.
+        # Only the never-ready closers record a release without a ready lease.
+        if state.get("outcome") not in {CLAIM_ONLY, BLOCKED_BEFORE_READY}:
+            raise ValueError("never-ready historical release has no recognised outcome")
         if not state["claim_id"] < state["release_id"] or any(
                 not state["claim_id"] < diagnostic < state["release_id"]
                 for diagnostic in state.get("unbound_release_ids", [])):
             raise ValueError("historical coordination ids are not strictly ordered")
         episode = {key: state[key] for key in ("runner", "claim_id", "release_id")}
-        return {**episode, "outcome": CLAIM_ONLY,
+        return {**episode, "outcome": state["outcome"],
                 **({"unbound_release_ids": state["unbound_release_ids"]}
                    if state.get("unbound_release_ids") else {}),
                 **({"attempt": state["attempt"]} if state.get("attempt") else {})}

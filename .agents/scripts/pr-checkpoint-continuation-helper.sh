@@ -588,27 +588,56 @@ _pcc_approval_template() {
 # author, with no later coordination event (claim, lease, dispatch, release or
 # interactive claim) that would mean someone already owns the objective. The
 # released attempt's own closing terminal lease is not ownership (GH#33839).
+# GH#35683: a ready lease pairs only with a release in the same claim episode
+# (after the newest DISPATCH_CLAIM before that release). When the newest blocked
+# release closes a claim that never reached ready, report the earlier blocked
+# checkpoint release and attempt it follows (approval-template then lists the
+# never-ready claim as blocked_before_ready), or mark it unpaired; never pair
+# the never-ready release with an older attempt.
 # Args: $1=comments JSON (paginated or flat), $2=runner login, $3=dedup key
 # Output: release_id<TAB>attempt (or - when absent)<TAB>already_posted(true|false)
+#         <TAB>never-ready blocked release id, "unpaired", or -
 # Returns: 0 when a blocked checkpoint release owns the draft, 1 otherwise
 #######################################
 _pcc_blocked_release_evidence() {
 	local comments="$1" runner="$2" key="$3"
 	local trusted_logins="${4:-[]}"
 	jq -er --arg runner "$runner" --arg key "$key" --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+		def blocked_by_runner:
+			unedited and login == $runner and
+			([body_lines | select(is_release)] | first // "") as $line |
+			($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner;
+		def episode_start($c; $rid):
+			[$c[] | select(.id < $rid and any(body_lines; startswith("DISPATCH_CLAIM "))) | .id] | max // -1;
+		def episode_attempt($c; $rid):
+			episode_start($c; $rid) as $start
+			| [$c[] | select(unedited and .id > $start and .id < $rid and login == $runner) | body_lines
+				| select(startswith("DISPATCH_LEASE ") and (field("phase") == "ready"))
+				| field("attempt_id") | select(startswith("attempt:"))] | last // "";
+		# Walk back over blocked releases that closed never-ready claims.
+		def checkpoint($c; $rid):
+			episode_attempt($c; $rid) as $attempt
+			| episode_start($c; $rid) as $start
+			| if $attempt != "" then {id: $rid, attempt: $attempt}
+			elif $start < 0 then null
+			else ([$c[] | select(.id < $start and any(body_lines; is_release))] | last) as $prior
+				| if $prior != null and ($prior | blocked_by_runner) then checkpoint($c; $prior.id) else null end
+			end;
 		[flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
 		| ([$c[] | select(any(body_lines; is_release))] | last) as $release
-		| select($release != null and ($release | unedited))
-		| ([$release | body_lines | select(is_release)] | first) as $line
-		| select(($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner and
-			($release | login) == $runner)
+		| select($release != null and ($release | blocked_by_runner))
 		| select([$c[] | select(.id > $release.id and ownership($c))] | length == 0)
-		| ([$c[] | select(unedited and .id < $release.id and login == $runner) | body_lines
-			| select(startswith("DISPATCH_LEASE ") and (field("phase") == "ready"))
-			| field("attempt_id") | select(startswith("attempt:"))] | last // "") as $attempt
-		| [($release.id | tostring), (if $attempt == "" then "-" else $attempt end),
-			(any($c[]; (.body // "") | contains($key + " release=" + ($release.id | tostring))) | tostring)]
+		| episode_attempt($c; $release.id) as $own
+		| (if $own != "" or episode_start($c; $release.id) < 0 then
+				{id: $release.id, attempt: $own, successor: "-"}
+			else (checkpoint($c; $release.id) // null) as $found
+				| if $found == null then {id: $release.id, attempt: "", successor: "unpaired"}
+				else $found + {successor: ($release.id | tostring)} end
+			end) as $pick
+		| [($pick.id | tostring), (if $pick.attempt == "" then "-" else $pick.attempt end),
+			(any($c[]; (.body // "") | contains($key + " release=" + ($pick.id | tostring) + " -->")) | tostring),
+			$pick.successor]
 		| @tsv
 	' <<<"$comments"
 	return $?
@@ -687,7 +716,7 @@ _pcc_blocked_attention() {
 	local repo="$1" issue="$2" pr="$3"
 	local pr_json="" head="" runner="" comments="" evidence="" key=""
 	local trusted_logins=""
-	local release_id="" attempt="" posted="" attempt_arg="" body=""
+	local release_id="" attempt="" posted="" attempt_arg="" body="" successor="" approval_step=""
 	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue" =~ ^[1-9][0-9]*$ &&
 		"$pr" =~ ^[1-9][0-9]*$ ]] || return 2
 	pr_json=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,headRefOid,author) || return 1
@@ -705,16 +734,28 @@ _pcc_blocked_attention() {
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_SKIPPED: PR #%s in %s has no current blocked release\n' "$pr" "$repo"
 		return 1
 	}
-	IFS=$'\t' read -r release_id attempt posted <<<"$evidence"
+	IFS=$'\t' read -r release_id attempt posted successor <<<"$evidence"
 	# IFS whitespace collapses empty TSV fields; decode the absent-attempt sentinel.
 	[[ "$attempt" != "-" ]] || attempt=""
 	[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$successor" =~ ^([1-9][0-9]*|unpaired|-)$ ]] || return 1
 	if [[ "$posted" == "true" ]]; then
 		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s\n' \
 			"$pr" "$repo" "$head" "$release_id"
 		return 0
 	fi
 	attempt_arg="${attempt:-attempt:<ORIGINAL_ID>}"
+	approval_step="1. Resolve the blocker, usually by correcting this issue body, then publish the single line printed by
+   \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt_arg}\`
+   Generate it after the body edit: the approval binds the corrected brief. Pulse then continues the exact head."
+	# GH#35683: never offer an approval line that pairs a never-ready release
+	# with an older attempt; dispatch-approved could never validate it.
+	if [[ "$successor" =~ ^[1-9][0-9]*$ ]]; then
+		approval_step="${approval_step}
+   Newer release comment ${successor} closed a claim that never reached a ready lease, so this names the checkpoint's own release. The generated approval lists that claim under \`released_successors\` as \`blocked_before_ready\`."
+	elif [[ "$successor" == "unpaired" ]]; then
+		approval_step="1. No approval template is offered: release comment ${release_id} closed a claim that never reached a ready lease, and no earlier blocked release with a ready attempt was found, so dispatch-approved could not validate an approval for it. Inspect the exact draft head and recover unique work through the guarded continuation workflow."
+	fi
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->
 BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
@@ -723,9 +764,7 @@ A worker released this issue as \`blocked\` and left draft PR #${pr} as a durabl
 
 Next action for the brief owner (write access required), one of:
 
-1. Resolve the blocker, usually by correcting this issue body, then publish the single line printed by
-   \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt_arg}\`
-   Generate it after the body edit: the approval binds the corrected brief. Pulse then continues the exact head.
+${approval_step}
 2. Close draft PR #${pr} to discard the checkpoint; ordinary dispatch then restarts from the current brief.
 
 See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and blocked release.

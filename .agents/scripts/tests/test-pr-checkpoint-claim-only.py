@@ -19,6 +19,7 @@ if not BASH or not pathlib.Path(BASH).is_absolute():
     raise RuntimeError("An absolute path to the installed Bash runtime is required")
 sys.path.insert(0, str(SCRIPTS))
 from checkpoint_github_fixture import comment
+from pr_checkpoint_events import fields
 
 
 def load(name, path):
@@ -177,6 +178,87 @@ class ClaimOnlyRecoveryTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         revision.validate(claimed)
+
+
+def blocked_before_ready_fixture():
+    """GH#35683: attempt A released blocked, then claim B released blocked before ready."""
+    data = base.fixture()
+    ready, release = data["comments"][:2]
+    original = fields(ready["body"])[LT]
+    data["comments"] = [ready, release,
+        comment(2.5, f"DISPATCH_LEASE phase=terminal {LT}={original} session=issue-123 "
+                     "expires_at=0 attempt_id=attempt:original", "worker"),
+        comment(4, f"DISPATCH_CLAIM nonce=claimb {LT}=claimb runner=worker session=issue-124 "
+                   "phase=prelaunch expires_at=1", "worker"),
+        comment(5, "<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=worker "
+                   "ts=2026-09-05T12:00:00Z\n\nTerminal blocker: reason=permission_required "
+                   "owner=permission-maintainer task=123 attempt=abcdef0123456789.\n<!-- ops:end -->",
+                "worker")]
+    return data
+
+
+class BlockedBeforeReadyTests(unittest.TestCase):
+    EPISODE = {"runner": "worker", "claim_id": 4, "release_id": 5, "outcome": "blocked_before_ready"}
+
+    def test_checkpoint_release_acknowledges_never_ready_blocked_claim(self):
+        data = blocked_before_ready_fixture()
+        with self.assertRaises(ValueError):  # release B never closes attempt A
+            revision.template({**data, "release_id": 5, "attempt": "attempt:original"})
+        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+        self.assertEqual(json.loads(line[len(revision.PREFIX):])["released_successors"], [self.EPISODE])
+        result = revision.validate(approved(data))
+        self.assertEqual((result["approval_id"], result["released_successors"]), (20, [self.EPISODE]))
+        bound = blocked_before_ready_fixture()
+        edit(bound, -1, "runner=worker ", "runner=worker nonce=claimb claim_id=4 ")
+        self.assertEqual(revision.validate(approved(bound))["released_successors"], [self.EPISODE])
+
+    def test_approval_must_acknowledge_the_episode_exactly(self):
+        for case in ("omit", "alter_outcome", "alter_release"):
+            changed = approved(blocked_before_ready_fixture())
+            approval = json.loads(changed["comments"][-1]["body"][len(revision.PREFIX):])
+            if case == "omit":
+                del approval["released_successors"]
+            elif case == "alter_outcome":
+                approval["released_successors"][0]["outcome"] = "claim_only_no_worker"
+            else:
+                approval["released_successors"][0]["release_id"] = 99
+            changed["comments"][-1]["body"] = revision.PREFIX + json.dumps(approval)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                revision.validate(changed)
+
+    def test_blocked_closure_fails_closed(self):
+        lease = f"{LT}=claimb session=issue-124"
+        mutations = {
+            "reached_ready": lambda d: d["comments"].insert(-1, comment(
+                4.5, f"DISPATCH_LEASE phase=ready {lease} expires_at=1 attempt_id=attempt:b", "worker")),
+            "launched": lambda d: d["comments"].insert(-1, comment(
+                4.5, f"Dispatching worker\n{lease}", "worker")),
+            "unknown_claim_expiry": lambda d: edit(d, -2, " expires_at=1", ""),
+            "released_before_claim_expiry": lambda d: edit(d, -2, "expires_at=1", "expires_at=9999999999"),
+            "released_during_live_renewal": lambda d: d["comments"].insert(-1, comment(
+                4.5, f"DISPATCH_LEASE phase=prelaunch {lease} expires_at=9999999999 attempt_id=attempt:b",
+                "worker")),
+            "edited": lambda d: d["comments"][-1].update(updated_at="2026-09-05T12:01:00Z"),
+            "other_actor": lambda d: d["comments"][-1]["user"].update(login="stranger"),
+            "wrong_runner": lambda d: edit(d, -1, "runner=worker", "runner=other"),
+            "wrong_nonce": lambda d: edit(d, -1, "runner=worker ", "runner=worker nonce=other "),
+            "wrong_claim_id": lambda d: edit(d, -1, "runner=worker ", "runner=worker claim_id=9 "),
+            "wrong_session": lambda d: edit(d, -1, "runner=worker ", "runner=worker session=other "),
+            "unbound_attempt": lambda d: edit(d, -1, "runner=worker ", "runner=worker attempt_id=attempt:x "),
+            "other_open_claim": lambda d: d["comments"].insert(-1, comment(
+                4.5, f"DISPATCH_CLAIM nonce=other {LT}=other runner=worker session=s phase=prelaunch "
+                     "expires_at=1", "worker")),
+            "release_before_claim": lambda d: d["comments"][-1].update(id=3),
+            "second_release": lambda d: d["comments"].append(comment(
+                6, "CLAIM_RELEASED reason=blocked runner=worker ts=2026-09-05T12:00:00Z", "worker")),
+            "late_lease": lambda d: d["comments"].append(comment(
+                6, f"DISPATCH_LEASE phase=terminal {lease} expires_at=0", "worker")),
+        }
+        for case, mutate in mutations.items():
+            data = blocked_before_ready_fixture()
+            mutate(data)
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                approved(data)
 
 
 def abort_pages(*extra, claim_author="worker", approval="checkpoint_approval=3 ", expiry=" expires_at=100"):

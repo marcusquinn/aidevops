@@ -630,6 +630,40 @@ for foreign_case in "worker-bot unseen-lease" "other-runner closing-lease"; do
 	fi
 done
 
+# GH#35683: a later claim released as blocked before any ready lease must not be
+# paired with the checkpoint attempt; name the checkpoint's own release instead.
+STUB_POST_DIR="${TEST_ROOT}/posts-never-ready"
+mkdir -p "$STUB_POST_DIR"
+never_ready_comments() {
+	closing_lease_comments worker-bot closing-lease | jq '. + [[
+		{id:30,created_at:"2026-09-30T02:00:00Z",author_association:"COLLABORATOR",user:{login:"worker-bot"},
+			body:"DISPATCH_CLAIM nonce=claimb runner=worker-bot session=s2 phase=prelaunch expires_at=1"},
+		{id:31,created_at:"2026-09-30T02:05:00Z",author_association:"COLLABORATOR",user:{login:"worker-bot"},
+			body:"<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=worker-bot ts=2026-09-30T02:05:00Z\n\nTerminal blocker: reason=permission_required owner=permission-maintainer task=123 attempt=abcdef0123456789.\n<!-- ops:end -->"}
+	]]'
+	return 0
+}
+STUB_COMMENTS_JSON="$(never_ready_comments)"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*release=21 && "$(post_count)" == 1 ]] &&
+	grep -Fq 'approval-template owner/repo 42 123 21 attempt:abc123' "${STUB_POST_DIR}/post-1" &&
+	grep -Fq 'Newer release comment 31 closed a claim that never reached a ready lease' "${STUB_POST_DIR}/post-1" &&
+	! grep -Fq 'approval-template owner/repo 42 123 31' "${STUB_POST_DIR}/post-1"; then
+	print_result "never-ready blocked release names the checkpoint's own release and attempt" 0
+else
+	print_result "never-ready blocked release names the checkpoint's own release and attempt" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+STUB_COMMENTS_JSON="$(never_ready_comments | jq 'map(map(select(.id != 19 and .id != 20)))')"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:*release=31 && "$(post_count)" == 2 ]] &&
+	grep -Fq 'No approval template is offered' "${STUB_POST_DIR}/post-2" &&
+	! grep -Fq 'approval-template owner/repo' "${STUB_POST_DIR}/post-2"; then
+	print_result "unpaired never-ready blocked release posts no approval template" 0
+else
+	print_result "unpaired never-ready blocked release posts no approval template" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+STUB_POST_DIR="${TEST_ROOT}/posts"
+
 # GH#33850: clean/completed releases by another trusted runner must reach an
 # attention outcome through the existing Pulse entrypoint, without dispatching.
 for completed_reason in clean worker_complete; do
