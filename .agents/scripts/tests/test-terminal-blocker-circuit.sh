@@ -368,6 +368,33 @@ test_source_access_blocked_revision() {
 	return 0
 }
 
+# GH#35685: a missing Files Scope heading must not overwrite an explicit
+# input_required owner or external trigger; malformed signals still infer scope.
+test_explicit_blocker_survives_missing_scope() {
+	local output="${TEST_ROOT}/explicit-no-scope.ndjson" status=0
+	gh() { printf '%s\n' '{"body":"No scope heading here."}'; return 0; }
+	export WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG="owner/repo"
+	printf '%s\n' '{"type":"text","text":"BLOCKED: duplicate rejected\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=admin"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == input_required ]] || status=1
+	[[ "$(_terminal_blocker_input_owner "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == admin ]] || status=1
+	printf '%s\n' '{"type":"text","text":"BLOCKED: waiting for model ID\nTERMINAL_BLOCKER_REASON=external_trigger_pending"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == external_trigger_pending ]] || status=1
+	# Malformed owner fails closed to the structural missing-scope inference.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=human"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == missing_files_scope ]] || status=1
+	# Absent signal likewise.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: stuck"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == missing_files_scope ]] || status=1
+	unset -f gh
+	unset WORKER_ISSUE_NUMBER DISPATCH_REPO_SLUG AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "explicit input_required/external_trigger_pending survive missing Files Scope; malformed signals infer scope" "$status"
+	return 0
+}
+
 test_input_required_owner_class() {
 	local issue='{"title":"Deploy check","body":"### Files Scope\n- deploy.sh"}'
 	local output="${TEST_ROOT}/input.ndjson" fingerprint="" revision="" changed="" fragment="" observation="" status=0
@@ -1443,6 +1470,7 @@ main() {
 	test_brief_only_revision
 	test_external_trigger_pending_revision
 	test_source_access_blocked_revision
+	test_explicit_blocker_survives_missing_scope
 	test_input_required_owner_class
 	test_excluded_scope_revision
 	test_unknown_and_redaction
