@@ -919,8 +919,8 @@ STUB_ISSUE_JSON="$(valid_issue_json)"
 diagnostics_file="${TEST_ROOT}/target-diagnostics"
 if ! row=$(_pcc_target_row owner/repo 42 123 worker-bot worker-bot 2>"$diagnostics_file") &&
 	[[ -z "$row" && "$(<"$diagnostics_file")" == *reason=pr_metadata_ineligible* &&
-		"$(<"$diagnostics_file")" == *'"isDraft":false'* &&
-		"$(<"$diagnostics_file")" != *private-body-sentinel* ]]; then
+	"$(<"$diagnostics_file")" == *'"isDraft":false'* &&
+	"$(<"$diagnostics_file")" != *private-body-sentinel* ]]; then
 	print_result "target diagnostics identify PR metadata failure without bodies or TSV output" 0
 else
 	print_result "target diagnostics identify PR metadata failure without bodies or TSV output" 1
@@ -929,8 +929,8 @@ STUB_PR_JSON="$(valid_pr_json)"
 STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:available"}]')"
 if ! row=$(_pcc_target_row owner/repo 42 123 worker-bot worker-bot 2>"$diagnostics_file") &&
 	[[ -z "$row" && "$(<"$diagnostics_file")" == *reason=issue_metadata_ineligible* &&
-		"$(<"$diagnostics_file")" == *status:available* &&
-		"$(<"$diagnostics_file")" == *'"assignees":[{"login":"worker-bot"}]'* ]]; then
+	"$(<"$diagnostics_file")" == *status:available* &&
+	"$(<"$diagnostics_file")" == *'"assignees":[{"login":"worker-bot"}]'* ]]; then
 	print_result "target diagnostics explain assigned available issue rejection" 0
 else
 	print_result "target diagnostics explain assigned available issue rejection" 1
