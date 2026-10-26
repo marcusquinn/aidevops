@@ -40,7 +40,14 @@ gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
 	case "$command $target" in
-	'api repos/owner/app') printf 'true\n' ;;
+	'api repos/owner/app')
+		[[ "$SCENARIO" != permission_error ]] || return 1
+		if [[ "$SCENARIO" == no_permission ]]; then
+			printf 'false\n'
+		else
+			printf 'true\n'
+		fi
+		;;
 	'api repos/owner/app/issues?'*)
 		if [[ "$SCENARIO" == request ]]; then
 			printf '[]\n'
@@ -61,7 +68,16 @@ gh() {
 			merged=true
 			state=closed
 		fi
-		jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" '{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:[],auto_merge:null}'
+		[[ "$SCENARIO" != pr_error ]] || return 1
+		jq -cn --arg head "$head" --arg state "$state" --argjson merged "$merged" --arg scenario "$SCENARIO" '
+			{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:$state,merged:$merged,merge_commit_sha:$head,draft:false,labels:[],auto_merge:null}
+			| if $scenario == "draft" then .draft = true
+			  elif $scenario == "fork" then .head.repo.full_name = "other/app"
+			  elif $scenario == "wrong_repo" then .base.repo.full_name = "other/app"
+			  elif $scenario == "wrong_base" then .base.ref = "develop"
+			  elif $scenario == "invalid_head" then .head.sha = "invalid"
+			  elif $scenario == "closed" then .state = "closed"
+			  else . end'
 		;;
 	'pr checks')
 		[[ "$SCENARIO" != checks_error ]] || return 1
@@ -136,6 +152,39 @@ run_case() {
 	printf 'PASS %s\n' "$scenario"
 	return 0
 }
+
+run_request_error() {
+	local scenario="$1" expected="$2" registration="${3:-}"
+	local repo="${4:-owner/app}" pr="${5:-7}" rc=0 output="" calls=""
+	export SCENARIO="$scenario"
+	[[ -n "$registration" ]] || registration='{"slug":"owner/app","app_type":"cloudron-package"}'
+	jq -cn --argjson registration "$registration" '{initialized_repos:[$registration]}' >"$REPOS_FILE"
+	: >"${TEST_ROOT}/calls"
+	output=$(release_request "$repo" "$pr" 2>&1) || rc=$?
+	[[ "$rc" -eq 1 && "$output" == *"ERROR: ${expected}"* ]] || {
+		printf 'FAIL %s rc=%s output=%s\n' "$scenario" "$rc" "$output"
+		return 1
+	}
+	calls=$(<"${TEST_ROOT}/calls")
+	[[ "$calls" != *'pr checks'* && "$calls" != *'label create'* && "$calls" != *'pr-edit '* && "$calls" != *'create '* ]] || return 1
+	printf 'PASS request %s: %s\n' "$scenario" "$output"
+	return 0
+}
+
+run_request_error invalid_repo 'Repository must be in owner/repo format.' '{}' invalid
+run_request_error invalid_pr 'PR number must be a positive integer.' '{}' owner/app 0
+run_request_error unregistered 'Repository owner/app is not registered as a maintained cloudron-package.' '{}'
+run_request_error wrong_app_type 'Repository owner/app is not registered as a maintained cloudron-package.' '{"slug":"owner/app","app_type":"other"}'
+run_request_error not_maintained 'Repository owner/app is not registered as a maintained cloudron-package.' '{"slug":"owner/app","app_type":"cloudron-package","maintenance":false}'
+run_request_error permission_error 'Unable to verify admin/maintain permission for owner/app.'
+run_request_error no_permission 'Admin or maintain permission is required for owner/app.'
+run_request_error pr_error 'Unable to read PR #7 in owner/app.'
+run_request_error draft 'PR #7 is a draft or its draft status is unavailable. Run: gh pr ready 7 --repo owner/app; then wait for re-triggered checks to pass.'
+run_request_error fork 'PR #7 must be a same-repository PR against main in owner/app.'
+run_request_error wrong_repo 'PR #7 must be a same-repository PR against main in owner/app.'
+run_request_error wrong_base 'PR #7 must be a same-repository PR against main in owner/app.'
+run_request_error invalid_head 'PR #7 has an invalid head SHA.'
+run_request_error closed 'PR #7 must be open before requesting approval.'
 
 run_case unsigned 0 false false false
 run_case api_error 1 false false false

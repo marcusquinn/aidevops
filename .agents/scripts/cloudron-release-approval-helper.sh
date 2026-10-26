@@ -18,11 +18,11 @@ release_error() {
 
 release_authority() {
 	local repo="$1" permission=""
-	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
-	jq -e --arg repo "$repo" '.initialized_repos[] | select(.slug == $repo and .app_type == "cloudron-package" and .maintenance != false)' "$REPOS_FILE" >/dev/null || return 1
-	permission=$(gh api "repos/${repo}" --jq '.permissions | .admin == true or .maintain == true') || return 1
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || release_error 'Repository must be in owner/repo format.' || return 1
+	jq -e --arg repo "$repo" '.initialized_repos[] | select(.slug == $repo and .app_type == "cloudron-package" and .maintenance != false)' "$REPOS_FILE" >/dev/null || release_error "Repository ${repo} is not registered as a maintained cloudron-package." || return 1
+	permission=$(gh api "repos/${repo}" --jq '.permissions | .admin == true or .maintain == true') || release_error "Unable to verify admin/maintain permission for ${repo}." || return 1
 	#aidevops:trust-boundary — registration alone never grants release authority.
-	[[ "$permission" == true ]] || return 1
+	[[ "$permission" == true ]] || release_error "Admin or maintain permission is required for ${repo}." || return 1
 	return 0
 }
 
@@ -44,9 +44,11 @@ release_checks() {
 
 release_pr() {
 	local repo="$1" pr="$2" snapshot=""
-	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || return 1
+	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || release_error "Unable to read PR #${pr} in ${repo}." || return 1
 	#aidevops:trust-boundary — only same-repository, non-draft main updates.
-	jq -e --arg repo "$repo" --arg sha_pattern "$RELEASE_SHA_PATTERN" '.base.repo.full_name == $repo and .head.repo.full_name == $repo and .base.ref == "main" and .draft == false and (.head.sha | test($sha_pattern))' <<<"$snapshot" >/dev/null || return 1
+	jq -e --arg repo "$repo" '.base.repo.full_name == $repo and .head.repo.full_name == $repo and .base.ref == "main"' <<<"$snapshot" >/dev/null || release_error "PR #${pr} must be a same-repository PR against main in ${repo}." || return 1
+	jq -e '.draft == false' <<<"$snapshot" >/dev/null || release_error "PR #${pr} is a draft or its draft status is unavailable. Run: gh pr ready ${pr} --repo ${repo}; then wait for re-triggered checks to pass." || return 1
+	jq -e --arg sha_pattern "$RELEASE_SHA_PATTERN" '.head.sha | test($sha_pattern)' <<<"$snapshot" >/dev/null || release_error "PR #${pr} has an invalid head SHA." || return 1
 	printf '%s\n' "$snapshot"
 	return 0
 }
@@ -75,10 +77,10 @@ release_request() {
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
 	local metadata=""
 	local verdict=""
-	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || release_error 'PR number must be a positive integer.' || return 1
 	release_authority "$repo" || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
-	[[ "$(jq -r '.state' <<<"$snapshot")" == open ]] || return 1
+	[[ "$(jq -r '.state' <<<"$snapshot")" == open ]] || release_error "PR #${pr} must be open before requesting approval." || return 1
 	sha=$(jq -r '.head.sha' <<<"$snapshot")
 	checks=$(release_checks "$repo" "$pr") || release_error 'PR checks must all pass before requesting approval.' || return 1
 	manifest=$(release_contents "$repo" CloudronManifest.json "$sha") || return 1
