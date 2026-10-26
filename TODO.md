@@ -1758,7 +1758,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18771 Strict no-redirect-link policy: auto-close spam, block authors, never open redirect links #feat #priority:high #security #interactive ref:GH#35655 assignee:marcusquinn logged:2026-10-25 started:2026-10-25 -> [todo/tasks/t18771-brief.md] pr:#35658 completed:2026-10-25
 
-- [ ] t18772 Permission holds: withdraw non-grantable requests, scratch-temp bash/read recovery, batch withdrawal with one confirmation #bug #interactive ref:GH#35676 assignee:marcusquinn logged:2026-10-26 started:2026-10-26 -> [todo/tasks/t18772-brief.md]
+- [x] t18772 Permission holds: withdraw non-grantable requests, scratch-temp bash/read recovery, batch withdrawal with one confirmation #bug #interactive ref:GH#35676 assignee:marcusquinn logged:2026-10-26 started:2026-10-26 -> [todo/tasks/t18772-brief.md] pr:#35677 completed:2026-10-26
 
 - [x] t18630 GH#34125 Phase 1: enforce operator-bound local-only egress gate in interactive OpenCode sessions #feat #security #interactive tier:standard ref:GH#34140 assignee:marcusquinn pr:#34142 logged:2026-10-09 started:2026-10-09 -> [todo/tasks/t18630-brief.md] completed:2026-10-09
 
