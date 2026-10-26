@@ -274,8 +274,7 @@ export function initObservability(options = {}) {
  * owners (another V2 location, duplicate module instances) keep it alive.
  */
 export function disposeObservability() {
-  const release = transportReleases.pop();
-  if (release) release();
+  transportReleases.pop()?.();
 }
 
 /**
