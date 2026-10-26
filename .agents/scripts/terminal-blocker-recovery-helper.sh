@@ -34,7 +34,8 @@
 #   BLOCKER_RECOVERY_SEED_INTERVAL  seconds between automatic seeds (default 21600)
 #   BLOCKER_RECOVERY_DECISION_TTL   seconds a recorded decision suppresses re-assessment (default 86400)
 #   BLOCKER_RECOVERY_BUDGET_SECONDS overall pending/seed budget (default 45)
-#   BLOCKER_RECOVERY_STAGE_SECONDS per entry/seed budget (default 8)
+#   BLOCKER_RECOVERY_STAGE_SECONDS identity/seed budget (default 8); entries use
+#                                 the remaining queue budget, rotating on timeout
 # Incomplete observations return 2 and a diagnostic on stderr; stdout remains
 # JSONL (or a partial count). Retry resumes after the last attempted entry.
 # =============================================================================
@@ -73,7 +74,13 @@ _tbr_run_stage() {
 		printf 'blocker-recovery: incomplete stage=%s reason=budget_exhausted\n' "$stage" >&2
 		return 2
 	}
-	[[ "$remaining" -le "$TBR_STAGE_SECONDS" ]] || remaining="$TBR_STAGE_SECONDS"
+	# An entry includes several GitHub reads and revision checks. Capping that
+	# entire transaction at eight seconds repeatedly loses all partial work.
+	# Keep the overall deadline and saved cursor, but let an entry finish within
+	# the queue's share; discovery still has its separate reserved stage cap.
+	if [[ "$stage" != entry && "$remaining" -gt "$TBR_STAGE_SECONDS" ]]; then
+		remaining="$TBR_STAGE_SECONDS"
+	fi
 	printf 'blocker-recovery: checking stage=%s\n' "$stage" >&2
 	(
 		export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
@@ -114,6 +121,31 @@ _tbr_valid_ref() {
 	local repo="$1"
 	local issue="$2"
 	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+	return 0
+}
+
+_tbr_registered_repo() {
+	local repo="$1" rc=0
+	jq -e --arg slug "$repo" '.initialized_repos | arrays | any(.[]; .slug == $slug)' \
+		"$TBR_REPOS_JSON" >/dev/null 2>&1 || rc=$?
+	# Missing/unreadable registry is not evidence that a repo was removed.
+	[[ "$rc" -le 1 ]] || return 2
+	return "$rc"
+}
+
+_tbr_entry_registered() {
+	local file="$1" rc=0
+	local repo=""
+	local issue=""
+	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 2
+	issue=$(jq -r '.issue // ""' "$file" 2>/dev/null) || return 2
+	_tbr_valid_ref "$repo" "$issue" || { rm -f "$file"; return 1; }
+	_tbr_registered_repo "$repo" || rc=$?
+	[[ "$rc" -ne 2 ]] || return 2
+	if [[ "$rc" -eq 1 ]]; then
+		rm -f "$file" "${TBR_ROOT}/decisions/$(_tbr_key "$repo" "$issue").json"
+		return 1
+	fi
 	return 0
 }
 
@@ -160,6 +192,7 @@ tbr_enqueue() {
 	# only under repo-delegated recovery policy; its evidence is public-only.
 	local intake="${4:-local}"
 	_tbr_valid_ref "$repo" "$issue" || return 1
+	_tbr_registered_repo "$repo" || return $?
 	[[ "$reason" =~ ^[a-z_]+$ ]] || reason="unknown"
 	[[ "$intake" == policy_remote ]] || intake="local"
 	_tbr_init_dirs || return 1
@@ -497,6 +530,7 @@ _tbr_release_circuit_hold() {
 _tbr_check_entry() {
 	local file="$1"
 	local repo="" issue="" reason="" opened_at="" key="" intake=""
+	_tbr_entry_registered "$file" || return $?
 	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
 	issue=$(jq -r '.issue // ""' "$file" 2>/dev/null) || return 1
 	_tbr_valid_ref "$repo" "$issue" || {
@@ -574,6 +608,14 @@ tbr_pending() {
 	_tbr_init_dirs || return 1
 	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 observed=";"
 	_tbr_start_budget || return 2
+	# Retire stale fixtures before any identity/API call, including entries past
+	# the remote scan budget. Never retire evidence on an unreadable registry.
+	for file in "${TBR_ROOT}"/queue/*.json; do
+		[[ -f "$file" ]] || continue
+		rc=0
+		_tbr_entry_registered "$file" || rc=$?
+		[[ "$rc" -lt 2 ]] || return 2
+	done
 	reserve=$((TBR_BUDGET_SECONDS / 2))
 	[[ "$reserve" -le "$TBR_STAGE_SECONDS" ]] || reserve="$TBR_STAGE_SECONDS"
 	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
