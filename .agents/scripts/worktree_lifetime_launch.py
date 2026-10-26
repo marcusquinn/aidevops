@@ -122,14 +122,13 @@ def evidence_class(record):
         return "unrecorded"
     if not all(isinstance(launch, dict) for launch in launches):
         return "incomplete"
+    completion_contract = True
     if record.get("manager") == "owner-cgroup":
         if all(launch.get("kind") == "owner-cgroup-v1" and
                not any(launch.get(key) for key in ("unit", "invocation", "completion_evidence", "quiescence"))
                for launch in launches):
             return "observation-only"
-        if not all(launch.get("completion_evidence") == "systemd-cgroup-v1" for launch in launches):
-            return "incomplete"
-    if all(launch.get("unit") and launch.get("boot_id") and
-           (launch.get("invocation") or launch.get("admission_cancelled") is True) for launch in launches):
-        return "managed-contract-recorded"
-    return "incomplete"
+        completion_contract = all(launch.get("completion_evidence") == "systemd-cgroup-v1" for launch in launches)
+    complete = completion_contract and all(launch.get("unit") and launch.get("boot_id") and
+               (launch.get("invocation") or launch.get("admission_cancelled") is True) for launch in launches)
+    return "managed-contract-recorded" if complete else "incomplete"
