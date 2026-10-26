@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -27,8 +28,17 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def executable(name):
+    require(name in {"git", "gh", "bash"}, "maintenance:unsupported-command")
+    path = shutil.which(name)
+    require(path is not None, "maintenance:command-unavailable:" + name)
+    return os.path.abspath(path)
+
+
 def command(arguments):
-    result = subprocess.run(arguments, capture_output=True, text=True, timeout=30,
+    argv = [executable(arguments[0]), *arguments[1:]]
+    # Internal argv builders only; data stays in separate arguments, never shell text.
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=30,  # nosec B603
                             env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
     require(result.returncode == 0, "maintenance:command-failed:" + arguments[0])
     return result.stdout.strip()
@@ -52,6 +62,14 @@ def database():
     return path.resolve().as_uri() + "?mode=ro"
 
 
+def legacy_observation(item):
+    if not isinstance(item, dict):
+        return False
+    if (item.get("kind"), item.get("evidence")) != (owner.KIND, "observed"):
+        return False
+    return not any(item.get(field) for field in ("completion_evidence", "unit", "invocation", "quiescence"))
+
+
 def legacy(path):
     with closing(sqlite3.connect(database(), uri=True, timeout=3)) as connection:
         row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path = ?",
@@ -63,10 +81,7 @@ def legacy(path):
     require(record.get("manager") == owner.MANAGER and record.get("state") == "running",
             "maintenance:not-legacy-running")
     launches = record.get("launches")
-    require(isinstance(launches, list) and launches and all(
-        item.get("kind") == owner.KIND and item.get("evidence") == "observed"
-        and not item.get("completion_evidence") and not item.get("unit")
-        and not item.get("invocation") and not item.get("quiescence") for item in launches),
+    require(isinstance(launches, list) and launches and all(legacy_observation(item) for item in launches),
         "maintenance:not-legacy-admission")
     require(not record.get("archive_operation"), "maintenance:existing-archive-operation")
     require(record.get("identity") == owner.identity(path), "maintenance:identity-changed")
@@ -204,7 +219,9 @@ def apply(plan_path, confirmation):
         # Existing archive-first removal independently verifies restoration of its
         # Git capture. Candidates with ignored files are refused, not discarded.
         # This module never removes files or changes receipts.
-        result = subprocess.run(["bash", str(SCRIPTS / "worktree-helper.sh"), "remove", str(path)],
+        # Fixed repository helper and operation; the approved path is a positional argument.
+        result = subprocess.run(  # nosec B603
+                                [executable("bash"), str(SCRIPTS / "worktree-helper.sh"), "remove", str(path)],
                                 cwd=value["repository"]["path"], env=env, stdin=subprocess.DEVNULL,
                                 timeout=600, check=False)
         print(json.dumps({"plan": confirmation, "path": str(path), "boundary": context,

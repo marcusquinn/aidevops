@@ -27,7 +27,8 @@ def system_unit(name):
     require(executable is not None, "maintenance:systemctl-unavailable")
     root_controlled(executable)
     properties = "Id,LoadState,ActiveState,SubState,MainPID,InvocationID,ControlGroup,User,KillMode,Restart,Conflicts,Before,FragmentPath"
-    result = subprocess.run(
+    # Root-controlled executable, fixed observation arguments, no shell interpretation.
+    result = subprocess.run(  # nosec B603
         [executable, "--system", "show", name, "--no-pager", "--no-ask-password", "--property=" + properties],
         capture_output=True, text=True, timeout=10, check=True,
         # Do not let a caller-supplied D-Bus address or loader variables turn a

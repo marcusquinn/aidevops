@@ -22,6 +22,8 @@ import worktree_maintenance_boundary as boundary
 SPEC = importlib.util.spec_from_file_location("maintenance", SCRIPTS / "worktree-maintenance.py")
 maintenance = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(maintenance)
+BASH = maintenance.executable("bash")
+GIT = maintenance.executable("git")
 
 
 class MaintenanceBoundaryTests(unittest.TestCase):
@@ -176,7 +178,8 @@ class MaintenancePlanTests(unittest.TestCase):
     def test_git_ignored_files_and_forensic_markers_are_retained(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            subprocess.run(["git", "init", "--quiet", str(path)], check=True)
+            # Resolved Git executable and fixture-owned arguments; no shell.
+            subprocess.run([GIT, "init", "--quiet", str(path)], check=True)  # nosec B603
             (path / ".gitignore").write_text("private-data\n")
             (path / "private-data").write_text("fixture data, not a credential")
             with self.assertRaisesRegex(ValueError, "ignored-content-requires-preservation"):
@@ -199,7 +202,8 @@ worktree_managed_prepare_removal /fixture branch 3>&1
         for plan, confirmation in (("/plan", "digest"), ("/plan", ""), ("", "digest")):
             env = dict(os.environ, AIDEVOPS_WORKTREE_MAINTENANCE_PLAN=plan,
                        AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM=confirmation)
-            result = subprocess.run(["bash", "-c", script, "fixture",
+            # Static fixture shell text; paths are separate positional arguments.
+            result = subprocess.run([BASH, "-c", script, "fixture",  # nosec B603
                                      str(SCRIPTS / "audit-worktree-removal-helper.sh")],
                                     env=env, capture_output=True, text=True, timeout=10)
             with self.subTest(plan=plan, confirmation=confirmation):
@@ -226,7 +230,8 @@ printf '%s|%s|%s' "$status" "$WORKTREE_REMOVAL_GUARD_VISIBILITY" "$WORKTREE_REMO
             env = dict(os.environ, AIDEVOPS_WORKTREE_MAINTENANCE_PLAN=plan,
                        AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM="fixture" if plan else "",
                        PROOF_STATUS=str(status))
-            result = subprocess.run(["bash", "-c", script, "fixture",
+            # Static fixture shell text; paths are separate positional arguments.
+            result = subprocess.run([BASH, "-c", script, "fixture",  # nosec B603
                                      str(SCRIPTS / "audit-worktree-removal-helper.sh")],
                                     env=env, capture_output=True, text=True, timeout=10)
             with self.subTest(plan=plan, status=status):
@@ -242,7 +247,8 @@ worktree_managed_require_removal_proof /fixture
 '''
         env = dict(os.environ, AIDEVOPS_WORKTREE_MAINTENANCE_PLAN="/plan",
                    AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM="digest")
-        result = subprocess.run(["bash", "-c", script, "fixture",
+        # Static fixture shell text; paths are separate positional arguments.
+        result = subprocess.run([BASH, "-c", script, "fixture",  # nosec B603
                                  str(SCRIPTS / "audit-worktree-removal-helper.sh")],
                                 env=env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 1, result.stderr)
@@ -291,7 +297,8 @@ export -f gh
 bash "$1" "$2" "$3" fixture/repo
 '''
         with tempfile.TemporaryDirectory() as directory:
-            return subprocess.run(["bash", "-c", script, "fixture",
+            # Static fixture shell text; scenario and branch are data, not shell text.
+            return subprocess.run([BASH, "-c", script, "fixture",  # nosec B603
                                    str(SCRIPTS / "worktree-maintenance-policy.sh"), directory, branch],
                                   env=dict(os.environ, SCENARIO=scenario),
                                   capture_output=True, text=True, timeout=10)
