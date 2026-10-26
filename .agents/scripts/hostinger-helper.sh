@@ -200,6 +200,9 @@ api_call() {
 
     endpoint="${endpoint#/}"
     local -a curl_args=(-sS -K - -X "$method" -H "Accept: application/json")
+    if [[ "${HOSTINGER_API_BOUNDED:-}" == "1" ]]; then
+        curl_args+=(--fail --connect-timeout 5 --max-time 10)
+    fi
     if [[ -n "$body" ]]; then
         curl_args+=(-H "Content-Type: application/json" --data-binary "$body")
     fi
@@ -232,6 +235,56 @@ ssl_status() {
     response=$(api_call GET "api/hosting/v1/accounts/$encoded_username/websites/$encoded_domain/ssl/status") || return 1
     printf '%s\n' "$response" | jq -e . || return 1
     return 0
+}
+
+# Queue a non-destructive account scan, then print only matching installation metadata.
+wordpress_detect() {
+    local domain="${1:-}"
+    local encoded_domain
+    local websites
+    local username
+    local encoded_username
+    local response
+    local installations
+    local attempt
+    # Export through secret-store re-execution too; raw api/ssl-status stay unchanged.
+    local -x HOSTINGER_API_BOUNDED=1
+
+    if [[ -z "$domain" || ! "$domain" =~ ^[[:alnum:]]([[:alnum:].-]*[[:alnum:]])?$ || "$domain" == *..* ]]; then
+        print_error "Usage: wordpress-detect DOMAIN (hostname only)" >&2
+        return 1
+    fi
+
+    domain=$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]')
+    encoded_domain=$(jq -rn --arg domain "$domain" '$domain | @uri') || return 1
+    websites=$(api_call GET "api/hosting/v1/websites?domain=$encoded_domain") || return 1
+    if ! username=$(printf '%s' "$websites" | jq -er --arg domain "$domain" '
+        [.data[] | select((.domain | ascii_downcase) == $domain)]
+        | select(length == 1) | .[0].username
+        | select(type == "string" and length > 0)'); then
+        print_error "Could not resolve a unique hosting account for: $domain" >&2
+        return 1
+    fi
+    encoded_username=$(jq -rn --arg username "$username" '$username | @uri') || return 1
+    api_call POST "api/hosting/v1/accounts/$encoded_username/wordpress/installations/detect" >/dev/null || return 1
+
+    for ((attempt = 1; attempt <= 12; attempt++)); do
+        response=$(api_call GET "api/hosting/v1/wordpress/installations?username=$encoded_username&domain=$encoded_domain&ownership=all") || return 1
+        installations=$(printf '%s' "$response" | jq -ce --arg domain "$domain" '
+            (if type == "array" then . else .data end)
+            | if type != "array" then error("Expected installations array") else . end
+            | [.[] | select((.domain | ascii_downcase) == $domain)
+                | {id, domain, is_valid: (if has("is_valid") then .is_valid else .valid end)}]') || return 1
+        if [[ "$installations" != "[]" ]]; then
+            printf '%s\n' "$installations"
+            return 0
+        fi
+        if ((attempt < 12)); then
+            sleep 5
+        fi
+    done
+    print_error "Detection queued but no installation found within 12 checks; inspect hPanel or use api to check again (do not reinstall)." >&2
+    return 1
 }
 
 # Read-only fleet inventory, onboarding plan and drift check (hosting_fleet.py).
@@ -387,6 +440,10 @@ main() {
         ssl_status "$param2"
         return $?
         ;;
+    "wordpress-detect")
+        wordpress_detect "$param2"
+        return $?
+        ;;
     "fleet")
         shift
         fleet_command "$@"
@@ -407,6 +464,7 @@ main() {
         echo "  exec [site] [cmd] - Execute command on site"
         echo "  api [METHOD] ENDPOINT [JSON] - Hostinger API call (token from secret store)"
         echo "  ssl-status DOMAIN - Read-only SSL status (resolves hosting username)"
+        echo "  wordpress-detect DOMAIN - Scan account for WordPress; bounded installation lookup"
         echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
         echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
         echo "  help                 - $HELP_SHOW_MESSAGE"

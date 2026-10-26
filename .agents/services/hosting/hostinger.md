@@ -62,6 +62,21 @@ hostinger-helper.sh cron output --ssh <account-alias> --uid <uid>
 
 The account name comes from `ssh <alias> whoami` and the token is injected from the secret store. `create` and `delete` preview unless `--apply` is given. Each change first writes a 0600 snapshot of the job list to `~/.aidevops/.agent-workspace/work/hostinger-cron/` and then prints the list again. `delete` removes only the given UID. After a failed or partial response the live list is printed; inspect it before any retry. Home paths are masked in output. See `hostinger-wordpress-cron.md`.
 
+### Lifetime SSL behind Cloudflare
+
+Observed **2026-10-25/26**: a new site behind a proxied Cloudflare wildcard stayed at `waiting_for_retry` with `last_error: "Domain challenge failed"`; Full (strict) returned 525. Even a reachable HTTP challenge token did not prove Hostinger could issue the certificate. Hostinger's challenge checks expect the hostname to resolve to the hosting origin IP, not Cloudflare's proxy IPs.
+
+For an authorised DNS recovery (not performed by the helper):
+
+1. Record the existing DNS state and privately verify the Hostinger origin IP. Add temporary **DNS-only** A records for the exact site hostname (for example `site.example.com`) and its `www` name (`www.site.example.com`), pointing at that origin. Use TTL 60 where supported and a unique comment identifying this SSL recovery. Do not replace an existing explicit record without a separately reviewed restoration plan; exposing the origin bypasses Cloudflare protection during this interval.
+2. Wait for DNS propagation and Hostinger's automatic retry; inspect `hostinger-helper.sh ssl-status site.example.com`. Certificates issued within 2–15 minutes in these observations, not a guaranteed retry interval. `POST .../ssl/setup` returns 422 while status is `installing` or `waiting_for_retry`: it cannot force a retry. Use the retry timer or hPanel **Cancel → Install SSL**, not DELETE or repeated setup calls.
+3. Before restoring the proxy, verify the origin certificate privately with `openssl s_client -connect <origin-IP>:443 -servername site.example.com -verify_hostname site.example.com -verify_return_error </dev/null`. Check successful chain/hostname verification, issuer and expiry; do not publish the origin IP or raw output.
+4. Delete **only** the temporary records identified by their saved IDs and recovery comment, restoring the original wildcard/proxy behaviour. Do not delete or change the wildcard. Verify HTTPS through Cloudflare returns the expected site under Full (strict). If issuance is still pending, keep an explicit recovery checkpoint rather than silently leaving DNS-only records behind.
+
+### Detect copied or restored WordPress sites
+
+hPanel can report `website_type: other` and omit WordPress tools/WP Admin until a detection scan runs. `hostinger-helper.sh wordpress-detect example.com` resolves the account from the exact website, queues the non-destructive, idempotent `POST /api/hosting/v1/accounts/{username}/wordpress/installations/detect`, then polls `GET /api/hosting/v1/wordpress/installations` filtered by account/domain. This scans the **whole account**, not only that domain; it does not install, import or overwrite WordPress. Stdout contains only matching `id`, `domain`, `is_valid` metadata (the API's `valid` field is normalised to `is_valid`). An existing installation may return immediately; that is not proof the new scan finished. Polling stops after 12 checks spaced 5 seconds apart, with each request limited to 10 seconds; timeout/API errors exit nonzero. If absent, inspect hPanel or query again with `api`; never reinstall as a fallback.
+
 ### Fleet inventory and drift
 
 `hostinger-helper.sh fleet` is read-only, except `fleet provision --apply`: it never changes hosting, and nothing else changes GitHub, repositories or `repos.json`. It writes private (0600) JSON to `~/.aidevops/.agent-workspace/work/hostinger-fleet/`, and the API token is injected from the secret store automatically.
