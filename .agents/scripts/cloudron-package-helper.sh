@@ -431,16 +431,52 @@ scaffold_catalog_workflow() {
 	return 0
 }
 
+_catalog_migration_standard_steps() {
+	cat <<'STEPS'
+Check out repository
+Require trusted publication source
+Install pinned Cloudron CLI
+Dry-run catalog entry with the real Cloudron CLI
+Read manifest metadata
+Decide whether this version needs publication
+Validate an existing release entry
+Check out the verified revision
+Verify the build source stayed immutable
+Log in to GHCR
+Set up Docker Buildx
+Build and push amd64 image
+Record immutable image reference
+Attest image provenance
+Verify the release source stayed immutable
+Set up Docker Buildx for anonymous verification
+Verify anonymous registry visibility
+Publish and verify catalog entry
+Attest catalog provenance
+Verify catalog provenance
+Commit generated catalog
+Create GitHub release
+Verify existing immutable image is anonymously pullable
+Check out published source
+Verify existing package tag and digest
+Attest existing catalog provenance
+Verify existing catalog provenance
+Reconcile GitHub release
+STEPS
+	return 0
+}
+
 # Parse YAML rather than guessing step boundaries with line-oriented matching.
 # Ruby/Psych is required only for the explicit migration operation.
 migrate_catalog_workflow() {
 	local workflow_path="$1"
 	local template_path="$2"
+	local standard_steps=""
+	standard_steps=$(_catalog_migration_standard_steps)
 	command -v ruby >/dev/null 2>&1 || {
 		log_error "Catalog migration requires Ruby with the standard YAML library"
 		return 1
 	}
-	ruby - "$workflow_path" "$template_path" <<'RUBY' || return 1
+	CLOUDRON_CATALOG_STANDARD_STEPS="$standard_steps" ruby - "$workflow_path" "$template_path" <<'RUBY' || return 1
 require 'yaml'
 path, template = ARGV
 begin
@@ -462,22 +498,7 @@ begin
   end
   standard_jobs = %w[preflight build publish verify-existing reconcile-existing-release]
   (jobs.keys - standard_jobs).each { |name| errors << "job #{name}" }
-  standard_steps = [
-    'Check out repository', 'Require trusted publication source',
-    'Install pinned Cloudron CLI', 'Dry-run catalog entry with the real Cloudron CLI',
-    'Read manifest metadata', 'Decide whether this version needs publication',
-    'Validate an existing release entry', 'Check out the verified revision',
-    'Verify the build source stayed immutable', 'Log in to GHCR',
-    'Set up Docker Buildx', 'Build and push amd64 image',
-    'Record immutable image reference', 'Attest image provenance',
-    'Verify the release source stayed immutable',
-    'Set up Docker Buildx for anonymous verification', 'Verify anonymous registry visibility',
-    'Publish and verify catalog entry', 'Attest catalog provenance',
-    'Verify catalog provenance', 'Commit generated catalog', 'Create GitHub release',
-    'Verify existing immutable image is anonymously pullable', 'Check out published source',
-    'Verify existing package tag and digest', 'Attest existing catalog provenance',
-    'Verify existing catalog provenance', 'Reconcile GitHub release'
-  ]
+  standard_steps = ENV.fetch('CLOUDRON_CATALOG_STANDARD_STEPS').split("\n")
   jobs.each do |job_name, job|
     next unless standard_jobs.include?(job_name)
     (job.keys - %w[runs-on permissions outputs steps needs if timeout-minutes]).each do |key|
