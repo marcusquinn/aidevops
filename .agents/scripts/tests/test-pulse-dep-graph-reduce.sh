@@ -35,6 +35,63 @@ if [[ "$reference" != "$reduced" ]]; then
 	exit 1
 fi
 
+# Exercise both production parsers against explicit expectations, including the
+# resolved-predecessor case: dependency edges must survive independently of holds.
+# shellcheck disable=SC2016 # Markdown backticks in fixtures are literal.
+hold_cases=$(jq -cn '[
+  [false, "Other rows belong to other parts; neither is a hold for this part."],
+  [false, "Historical navigation holds are documented here."],
+  [true, "> - [ ] **On hold: pending human review**"],
+  [true, "  1. __Defer until next cycle__"],
+  [true, "### *Do--not dispatch: awaiting worker*"],
+  [true, "+ Hold for approval"],
+  [true, "Paused"],
+  [false, "On holding is not a directive"],
+  [false, "Hold format is historical"],
+  [false, "```text\nOn hold: example\n```"],
+  [false, "> ~~~~\n> Hold for example\n> ~~~\n> On hold: still fenced\n> ~~~~"],
+  [true, "````\nOn hold: example\n```\n````\nPaused: actual hold"],
+  [false, "<!-- On hold: hidden -->"],
+  [false, "<!--\nPaused: hidden\n--> ordinary prose"],
+  [true, "<!-- hidden -->On <!-- hidden -->hold: actual"],
+  [true, "<!-- hidden\n--> Hold for approval"],
+  [true, "<!-- ``` -->\nPaused: commented fence is not an opener\n```"],
+  [false, "```\n<!--\n```\nOrdinary prose"],
+  [true, "```\n<!--\n```\nOn hold: comments inside fences ignored"],
+  [false, "| On hold | historical |"],
+  [false, "On hold | historical |"],
+  [false, "On hold |"],
+  [true, "On hold: human | worker"],
+  [true, "<!-- HUMAN_UNBLOCK_REQUIRED -->"],
+  [true, "```\nHUMAN_UNBLOCK_REQUIRED\n```"],
+  [false, "human_unblock_required"],
+  [true, "Do-not-dispatch"],
+  [true, "ON   HOLD: human"],
+  [true, "Defer\tuntil: next cycle"]
+]')
+hold_fixture=$(jq -cn --argjson cases "$hold_cases" '
+  [{number: 1, title: "t1: resolved predecessor", body: "", labels: [], state: "CLOSED"}]
+  + [$cases | to_entries[] | {
+    number: (.key + 2), title: ("hold case " + (.key | tostring)),
+    body: ("Blocked by: #1\n" + .value[1]), labels: [], state: "OPEN"
+  }]')
+reference=$(_dep_graph_build_repo_data_reference "$hold_fixture" | jq -S -c .)
+reduced=$(_dep_graph_reduce_issues_json "$hold_fixture" | jq -S -c .)
+if [[ "$reference" != "$reduced" ]]; then
+	printf 'FAIL hold classification differs from shared shell parser\nreference=%s\nreduced=%s\n' "$reference" "$reduced" >&2
+	exit 1
+fi
+if ! jq -en --argjson graph "$reduced" --argjson cases "$hold_cases" '
+  $graph.closed_issues == [1] and
+  all($cases | to_entries[];
+    ((.key + 2) | tostring) as $key | .value[0] as $expected |
+    $graph.blocked_by[$key].issue_nums == ["1"] and
+    $graph.blocked_by[$key].has_defer_marker == $expected and
+    (($graph.defer_flags[$key] // false) == $expected))' >/dev/null; then
+	printf 'FAIL hold classification expectations or independent dependency edges\n' >&2
+	exit 1
+fi
+
 if [[ "${PULSE_DEP_GRAPH_BENCHMARK:-0}" == "1" ]]; then
 	large_fixture=$(jq -cn '[range(1; 501) as $n | {
 		number: $n,
