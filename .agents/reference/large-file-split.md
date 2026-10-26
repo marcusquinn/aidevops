@@ -63,6 +63,7 @@ When a hook self-blocks or any process reports a Markdown size violation:
 
 1. Review the **whole document** for concision **without losing any detail**: repetition, wordiness, duplicated sections and tables instead of prose. Apply that pass wherever possible; preserve facts, constraints and discoverability.
 2. Only if that is insufficient, split/index while preserving all detail and navigation.
+   - **Verbatim historical records** whose prose must not change (step 1 does not apply): `historical-markdown-archive.py archive SOURCE NEW_DIR` writes LF-bounded parts (default 400 lines), a SHA-256 manifest and a noncanonical README, verifying the staged output against SOURCE before publishing; `verify NEW_DIR [--original SOURCE]` re-checks it. Run `--help` for limits; never use it for active guidance.
 3. Only then consider a justified `complexity-bump-ok` / `COMPLEXITY_GUARD_DISABLE=1` bypass under the existing authorization rules. Record why concision and splitting cannot solve it (for example an exact upstream copy); never silently bypass a gate.
 
 Use this playbook when:
