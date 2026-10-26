@@ -119,7 +119,9 @@ page suggests (`npx -y skills add ...`, `npx playwriter session new`): they
 install an unreviewed global skill and start an unpinned relay without the
 aidevops token, loopback and telemetry guarantees, which then holds port
 `19988` so the guarded relay refuses to start. Start `@playwriter`, then click
-again.
+again. If `@playwriter` itself failed to connect with `relay-package-not-cached`,
+the page appears because no relay ever started: see
+[Troubleshooting](#troubleshooting) for the warm step.
 
 OpenCode loads the aidevops plugin from the runtime bundle of the version that
 launched the session. A session started before an update that changes the
@@ -325,7 +327,7 @@ approved-tab, privacy, and mutation boundaries.
 - **`page is not defined`**: 0.8.0 removed the global; assign `state.page` from `context.pages()` first.
 - **Relay version mismatch after upgrade**: An older relay still owns port 19988; stop it from the session that started it, then reconnect. If the old version comes back on every connect, the OpenCode session predates the pin change and launches from its older runtime bundle; start a new session.
 - **"Daemon not running yet" page / "Waiting for MCP WS server..."**: The icon was clicked while no relay was running. Start `@playwriter` first, then click; never run the commands on that page (see [Selected-tab handoff order](#selected-tab-handoff-order)).
-- **First activation after a pin change fails the relay proof**: the launcher allows 5 s for the relay to prove its version and token, and a cold `npx` cache can spend longer downloading the new package, and the failed attempt stops that download. Warm the cache with the exact pinned package (`npx -y playwriter@0.9.0 --version`, no global install), then reconnect.
+- **`relay-package-not-cached` on first activation after a pin change**: the launcher resolves the pinned package before the 5 s relay proof (GH#35697). It waits up to 20 s for a cold download; a slower download keeps running in the background, so reconnect shortly. If it reports a failed resolution (offline or registry error), warm the cache with the exact pinned package (`PLAYWRITER_TELEMETRY=0 DO_NOT_TRACK=1 npx -y playwriter@0.9.0 --version`, no global install), then reconnect. `mcp-diagnose.sh playwriter` reports `relay-down (pinned package not cached)` for an npx runner in this state.
 - **Terminal OpenCode activation failure**: After the one bounded reset, treat Playwriter as unavailable for the session and use the documented secure CLI diagnostic path only to isolate the cause. Do not retry through another child or treat direct CLI initialization as successful OpenCode activation.
 - **Automation detection**: Disconnect (click icon → gray) → complete manual action (login, captcha) → reconnect (click → green) → resume.
 

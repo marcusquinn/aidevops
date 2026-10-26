@@ -9,6 +9,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomUUID } from "node:crypto";
 import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
+import { ensurePackageResolved, warmCommandHint } from "./playwriter-package-cache.mjs";
 import { runGuardian, spawnGuardian, stopGuardian } from "./playwriter-relay-guardian.mjs";
 import {
   MARKER_NAME,
@@ -30,7 +31,9 @@ const PLAYWRITER_PACKAGE = `playwriter@${PLAYWRITER_VERSION}`;
 const RELAY_HOST = "127.0.0.1";
 const RELAY_PORT = 19988;
 const RELAY_ARGS = ["serve", "--host", RELAY_HOST];
+// Relay startup only: package resolution runs before this clock (GH#35697).
 const START_TIMEOUT_MS = 5_000;
+const PACKAGE_PIN = Object.freeze({ name: "playwriter", version: PLAYWRITER_VERSION });
 const GUARDIAN_FLAG = "--aidevops-relay-guardian";
 const GUARDIAN = Object.freeze({
   scriptPath: fileURLToPath(import.meta.url),
@@ -209,7 +212,18 @@ export function reconcileStaleRelays(parent, options = {}) {
   return reconcileOwnedRelays(parent, RELAY_CONTRACT, options);
 }
 
-async function ensureRelay(command, environment, runtime, token) {
+async function requirePackageResolved(command, environment, shouldStop) {
+  const resolution = await ensurePackageResolved(command, PACKAGE_PIN, environment, { shouldStop });
+  const warm = warmCommandHint(command);
+  if (resolution === "pending") {
+    throw fixedError(`relay-package-not-cached: ${PLAYWRITER_PACKAGE} is still downloading into the package cache in the background; reconnect @playwriter shortly, or warm it with: ${warm}`);
+  }
+  if (resolution === "failed") {
+    throw fixedError(`relay-package-not-cached: could not resolve ${PLAYWRITER_PACKAGE}; warm it with: ${warm}`);
+  }
+}
+
+async function ensureRelay(command, environment, runtime, token, shouldStop = () => false) {
   const existing = await probeAuthenticatedRelay({ token });
   if (existing.ready) return { child: null, owned: false };
   if (existing.reachable) {
@@ -218,6 +232,7 @@ async function ensureRelay(command, environment, runtime, token) {
     throw fixedError("port 19988 is held by another Playwriter relay (another session or a manual start); disconnect Playwriter there, then reconnect");
   }
 
+  await requirePackageResolved(command, environment, shouldStop);
   const child = spawnGuardian(GUARDIAN, command, environment, runtime);
   // Capture the spawned guardian, not a later occupant of its PID after the
   // asynchronous readiness probe. An unreadable identity stays unproven.
@@ -275,7 +290,7 @@ async function supervise(command, environment) {
   const handlers = STOP_SIGNALS.map((signal) => [signal, () => onStopSignal(signal)]);
   for (const [signal, handler] of handlers) process.on(signal, handler);
   try {
-    relay = await ensureRelay(command, environment, runtime, token);
+    relay = await ensureRelay(command, environment, runtime, token, () => stopping);
     writeState(runtime, relay);
     if (stopping) return 1;
     mcp = spawn(command[0], command.slice(1), {

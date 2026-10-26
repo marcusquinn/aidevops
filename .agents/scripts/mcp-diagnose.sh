@@ -616,8 +616,9 @@ _playwriter_extension_diagnosis() {
 	local relay_port="$1"
 	local relay_version="$2"
 	local expected_version="$3"
+	local package_cache="$4"
 
-	python3 - "$relay_port" "$relay_version" "$expected_version" <<'PYEOF' || return 1
+	python3 - "$relay_port" "$relay_version" "$expected_version" "$package_cache" <<'PYEOF' || return 1
 import http.client
 import json
 import os
@@ -629,6 +630,7 @@ import sys
 port = int(sys.argv[1])
 relay_version = sys.argv[2]
 expected_version = sys.argv[3]
+package_cache = sys.argv[4]
 log_path = os.environ.get('PLAYWRITER_LOG_FILE_PATH') or os.path.join(
     os.path.expanduser('~'), '.playwriter', 'relay-server.log')
 
@@ -643,6 +645,8 @@ EVENTS = (
 
 GUIDANCE = {
     'relay-down': 'No relay is listening. The MCP starts one on activation and the guarded relay stops on disconnect; rerun while the Playwriter MCP is connected, and use the relay log summary for the last run.',
+    # GH#35697: a cold npx cache cannot start the relay inside its proof window.
+    'relay-down (pinned package not cached)': f'No relay is listening and npx cannot run playwriter@{expected_version} without downloading it. Warm it once with: PLAYWRITER_TELEMETRY=0 DO_NOT_TRACK=1 npx -y playwriter@{expected_version} --version, then reconnect. Never run the commands the extension page suggests.',
     'relay-unresponsive': f'Port {port} is held by a process that does not answer /version. Identify it with: lsof -nP -iTCP:{port} -sTCP:LISTEN (aidevops never terminates it).',
     'relay-version-mismatch': 'A relay from another Playwriter version owns the port; stop it from the session or terminal that started it, then reconnect.',
     'relay-up-no-extension': 'The relay has no extension attached. If the user reports a green icon, report a browser/relay mismatch (another Chrome profile, a relay replaced after the extension connected, or an extension socket that has not reconnected). Do not ask the user to enable the tab again.',
@@ -751,6 +755,8 @@ source = 'relay /version probe'
 local_extensions = []
 if not relay_version:
     verdict = 'relay-unresponsive' if port_open() else 'relay-down'
+    if verdict == 'relay-down' and package_cache == 'missing':
+        verdict = 'relay-down (pinned package not cached)'
 elif expected_version and relay_version != expected_version:
     verdict = 'relay-version-mismatch'
 else:
@@ -779,7 +785,7 @@ else:
         verdict = 'extension-state-unknown'
 
 print(f'   Relay extension state: {verdict} (source: {source})')
-if verdict != 'relay-down':
+if not verdict.startswith('relay-down'):
     listeners = port_listeners()
     print(f"   Port {port} listener(s): {', '.join(listeners) if listeners else 'not identified (lsof unavailable or no permission)'}")
 if local_extensions:
@@ -858,6 +864,7 @@ fi
 _configured_version_found=0
 _playwriter_relay_port=19988
 _playwriter_configured_version="unknown"
+_playwriter_runner="npx"
 for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
 	_diag_rt="${_diag_entry%%"${MCP_CONFIG_SEPARATOR}"*}"
 	CONFIG_FILE="${_diag_entry#*"${MCP_CONFIG_SEPARATOR}"}"
@@ -879,6 +886,7 @@ for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
 	if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" && -n "$_configured_relay_port" ]]; then
 		_playwriter_relay_port="$_configured_relay_port"
 		_playwriter_configured_version="$_configured_version"
+		_playwriter_runner="$_configured_executable"
 	fi
 	echo -e "   ${GREEN}✓ Configured command in ${_diag_name}: ${_configured_executable}${NC}"
 	echo "   Configured version: $_configured_version"
@@ -908,7 +916,13 @@ if [[ "$MCP_NAME" == "$PLAYWRITER_MCP_NAME" ]]; then
 	if [[ "$_expected_relay_version" == "unknown" ]]; then
 		_expected_relay_version=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import mcp_config; print(mcp_config.PLAYWRITER_MCP_PACKAGE.split("@", 1)[1])' "${SCRIPT_DIR}/lib" 2>/dev/null) || _expected_relay_version=""
 	fi
-	_playwriter_extension_diagnosis "$_playwriter_relay_port" "$_relay_version" "$_expected_relay_version" ||
+	# GH#35697: reuse the launcher's own cache probe for the configured runner
+	# (cached|missing|unknown; runners other than npx report unknown).
+	_package_cache_state="unknown"
+	if [[ -n "$_expected_relay_version" ]] && command -v node >/dev/null 2>&1; then
+		_package_cache_state=$(node --input-type=module -e 'const [module, runner, version] = process.argv.slice(1); const { pathToFileURL } = await import("node:url"); const { pinnedPackageCached } = await import(pathToFileURL(module).href); const cached = pinnedPackageCached([runner, "playwriter@" + version], { name: "playwriter", version }); console.log(cached === null ? "unknown" : cached ? "cached" : "missing");' "${SCRIPT_DIR}/playwriter-package-cache.mjs" "$_playwriter_runner" "$_expected_relay_version" 2>/dev/null) || _package_cache_state="unknown"
+	fi
+	_playwriter_extension_diagnosis "$_playwriter_relay_port" "$_relay_version" "$_expected_relay_version" "$_package_cache_state" ||
 		echo "   Relay extension state: diagnostic error (python3 failed)"
 fi
 
