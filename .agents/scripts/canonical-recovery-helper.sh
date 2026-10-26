@@ -864,13 +864,15 @@ PY
 
 # Reinstate a preserved project config as ignored local state on the verified
 # new tip: exact bytes, mode and mtime, never overwriting or following links.
-# Returns 0 when reinstated, 3 when left in the preservation directory, 1 on error.
+# Returns 0 when reinstated or nothing was preserved (empty preserve_dir), 3
+# when left in the preservation directory, 1 on error.
 project_config_reinstate() {
 	local repo="$1"
 	local preserve_dir="$2"
 	local config_file="${repo}/${PROJECT_CONFIG_PATH}"
 	local rc=0
 	local ignored_status=""
+	[[ -n "$preserve_dir" ]] || return 0
 	python3 - "$repo" "$preserve_dir" "$PROJECT_CONFIG_PATH" "$PROJECT_CONFIG_PAYLOAD" <<'PY' || rc=$?
 import hashlib
 import os
@@ -1101,8 +1103,7 @@ fast_forward_local() {
 	# shellcheck disable=SC2064
 	trap "rmdir '${lock}' 2>/dev/null || true" EXIT
 
-	# GH#35659: the three-way re-apply below cannot keep local edits to a config
-	# the new tip untracks, so only an unmodified config is preserved here.
+	# GH#35659: three-way re-apply cannot keep edits to an untracked config.
 	project_config_untrack_preserve "$repo" "$old_sha" "$new_sha" "$task_id" false || return 1
 	config_preserve_dir="$PCU_DIR"
 
@@ -1149,9 +1150,7 @@ fast_forward_local() {
 	if [[ -n "$backup_id" ]]; then
 		if ! ffl_reapply_edits "$repo" "$old_sha" "$new_sha" "$edits_tree"; then
 			"$REAL_GIT" -C "$repo" read-tree --reset -u "$new_sha" || true
-			if [[ -n "$config_preserve_dir" ]]; then
-				project_config_reinstate "$repo" "$config_preserve_dir" || true
-			fi
+			project_config_reinstate "$repo" "$config_preserve_dir" || true
 			printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\nNEW_SHA=%s\n' "$new_sha"
 			printf 'BLOCKED: preserved edits conflict with the new tip; they remain in backup %s\n' "$backup_id" >&2
 			return 1
@@ -1163,15 +1162,10 @@ fast_forward_local() {
 	fi
 	[[ "$("$REAL_GIT" -C "$repo" rev-parse --verify "${local_ref}^{commit}")" == "$new_sha" ]] ||
 		{ ffl_block "default ref does not match the source tip after fast-forward"; return 1; }
-	if [[ -n "$config_preserve_dir" ]]; then
-		project_config_reinstate "$repo" "$config_preserve_dir" || true
-	fi
+	project_config_reinstate "$repo" "$config_preserve_dir" || true
 	AUDIT_LOG_FILE="$audit_file" "$audit" verify --quiet || { ffl_block "audit chain verification failed after fast-forward"; return 1; }
-	printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\n'
-	printf 'OLD_SHA=%s\n' "$old_sha"
-	printf 'NEW_SHA=%s\n' "$new_sha"
-	printf 'CANONICAL_BRANCH=%s\n' "$default_branch"
-	printf 'BACKUP_ID=%s\n' "${backup_id:-none}"
+	printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\nOLD_SHA=%s\nNEW_SHA=%s\nCANONICAL_BRANCH=%s\nBACKUP_ID=%s\n' \
+		"$old_sha" "$new_sha" "$default_branch" "${backup_id:-none}"
 	return 0
 }
 
