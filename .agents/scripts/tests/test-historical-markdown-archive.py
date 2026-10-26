@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS))
 HELPER = SCRIPTS / "historical-markdown-archive.py"
 SPEC = importlib.util.spec_from_file_location("historical_markdown_archive", HELPER)
 hma = importlib.util.module_from_spec(SPEC)

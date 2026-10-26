@@ -14,50 +14,39 @@ source or dispatch of anything the archived text contains.
 """
 
 import argparse
-import hashlib
 import json
 import os
-import re
 import secrets
 import shlex
 import stat
 import sys
 
-SCHEMA = "aidevops.historical-markdown-archive/v1"
+from _historical_markdown_files import (
+    check_source,
+    compare_original,
+    ensure_source_unchanged,
+    paths_overlap,  # noqa: F401  (re-exported for callers and tests)
+    read_regular_file,
+    resolve_destination,
+)
+from _historical_markdown_manifest import (
+    LINE_DEFINITION,
+    MANIFEST_NAME,
+    PART_RE,
+    RECORD_KEYS,
+    SCHEMA,
+    ArchiveError,
+    describe,
+    parse_manifest,
+    part_name,
+    record_of,
+    validate_label,
+)
+
 DEFAULT_MAX_LINES = 400
 DEFAULT_LABEL = "source.md"
-MANIFEST_NAME = "manifest.json"
 README_NAME = "README.md"
-SOURCE_SUFFIXES = (".md", ".markdown")
-PART_RE = re.compile(r"^part-[0-9]{4,}\.md$")
-SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-LINE_DEFINITION = (
-    "A line is a byte sequence terminated by LF (0x0A), plus one final "
-    "unterminated sequence when non-empty data does not end in LF. "
-    "lf_count is the LF byte count (the value `wc -l` reports). "
-    "CR and all other bytes are payload, never delimiters."
-)
-TOP_KEYS = {"schema", "max_lines", "line_definition", "source", "parts"}
-SOURCE_KEYS = {"label", "bytes", "lines", "lf_count", "sha256"}
-PART_KEYS = {"ordinal", "path", "first_line", "lines", "lf_count", "bytes", "sha256"}
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-
-
-class ArchiveError(Exception):
-    """A refused or failed archive/verify operation."""
-
-
-def count_lines(data):
-    """Return (lines, lf_count) under LINE_DEFINITION."""
-    lf_count = data.count(b"\n")
-    trailing = 1 if data and not data.endswith(b"\n") else 0
-    return lf_count + trailing, lf_count
-
-
-def describe(data):
-    lines, lf_count = count_lines(data)
-    return {"bytes": len(data), "lines": lines, "lf_count": lf_count,
-            "sha256": hashlib.sha256(data).hexdigest()}
 
 
 def split_parts(data, max_lines):
@@ -80,37 +69,6 @@ def split_parts(data, max_lines):
     if start < len(data):
         parts.append(data[start:])
     return parts
-
-
-def part_name(ordinal, total):
-    width = max(4, len(str(total)))
-    return f"part-{ordinal:0{width}d}.md"
-
-
-def validate_label(label):
-    if (not isinstance(label, str) or not label or label in (".", "..")
-            or "/" in label or "\\" in label or not label.isprintable()
-            or len(label) > 255):
-        raise ArchiveError("source label must be a plain, printable file name")
-    return label
-
-
-def read_regular_file(path, what, dir_fd=None):
-    """Read a regular non-symlink file; return (bytes, fstat result)."""
-    try:
-        before = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        raise ArchiveError(f"{what} not found: {path}") from None
-    if stat.S_ISLNK(before.st_mode):
-        raise ArchiveError(f"{what} must not be a symlink: {path}")
-    if not stat.S_ISREG(before.st_mode):
-        raise ArchiveError(f"{what} is not a regular file: {path}")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
-    with os.fdopen(fd, "rb") as handle:
-        opened = os.fstat(handle.fileno())
-        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-            raise ArchiveError(f"{what} was replaced while opening: {path}")
-        return handle.read(), opened
 
 
 def manifest_bytes(manifest):
@@ -193,33 +151,6 @@ shasum -a 256 {shlex.quote(label)}
 """.encode("utf-8")
 
 
-def paths_overlap(first, second):
-    first, second = os.path.realpath(first), os.path.realpath(second)
-    common = os.path.commonpath([first, second])
-    return common in (first, second)
-
-
-def check_source(source):
-    if not source.lower().endswith(SOURCE_SUFFIXES):
-        raise ArchiveError(f"source must be a Markdown file ({', '.join(SOURCE_SUFFIXES)}): {source}")
-    return read_regular_file(source, "source")
-
-
-def resolve_destination(source, dest):
-    dest_abs = os.path.abspath(dest)
-    name = os.path.basename(dest_abs)
-    if name in ("", ".", ".."):
-        raise ArchiveError(f"destination must name a new directory: {dest}")
-    if os.path.lexists(dest_abs):
-        raise ArchiveError(f"destination already exists (refusing to overwrite): {dest}")
-    parent = os.path.realpath(os.path.dirname(dest_abs))
-    if not os.path.isdir(parent):
-        raise ArchiveError(f"destination parent is not an existing directory: {parent}")
-    if paths_overlap(source, os.path.join(parent, name)):
-        raise ArchiveError("source and destination overlap")
-    return parent, name
-
-
 def write_new_file(dir_fd, name, payload):
     """Create name exclusively under dir_fd and durably write payload."""
     fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dir_fd)
@@ -235,14 +166,6 @@ def sync_directory(dir_fd):
         os.fsync(dir_fd)
     except OSError:
         pass
-
-
-def ensure_source_unchanged(source, captured_stat, record):
-    data, current = read_regular_file(source, "source")
-    expected = {key: record[key] for key in ("bytes", "lines", "lf_count", "sha256")}
-    if ((current.st_dev, current.st_ino) != (captured_stat.st_dev, captured_stat.st_ino)
-            or describe(data) != expected):
-        raise ArchiveError("source changed during archiving; nothing was published")
 
 
 def quietly(func, *args, **kwargs):
@@ -283,8 +206,9 @@ def remove_owned(parent_fd, stage_name, written, reserved):
         remove_reserved(parent_fd, *reserved)
 
 
-def publish(parent, name, files, source, captured_stat, record):
+def publish(parent, name, files, snapshot):
     """Stage, verify against the source, then rename over a reserved name."""
+    source = snapshot[0]
     parent_fd = os.open(parent, DIR_FLAGS)
     stage_name, written, reserved = None, [], None
     try:
@@ -306,7 +230,7 @@ def publish(parent, name, files, source, captured_stat, record):
             verify_dir_fd(stage_fd, original=source)
         finally:
             os.close(stage_fd)
-        ensure_source_unchanged(source, captured_stat, record)
+        ensure_source_unchanged(snapshot)
         os.rename(stage_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
         stage_name, written, reserved = None, [], None
         sync_directory(parent_fd)
@@ -327,123 +251,13 @@ def archive(source, dest, max_lines=DEFAULT_MAX_LINES, label=DEFAULT_LABEL):
     manifest = build_manifest(data, parts, max_lines, label)
     files = [(entry["path"], payload) for entry, payload in zip(manifest["parts"], parts)]
     files += [(MANIFEST_NAME, manifest_bytes(manifest)), (README_NAME, render_readme(manifest))]
-    publish(parent, name, files, source, captured_stat, manifest["source"])
+    publish(parent, name, files, (source, captured_stat, manifest["source"]))
     return manifest
-
-
-def reject_duplicate_keys(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ArchiveError(f"manifest has duplicate key: {key}")
-        result[key] = value
-    return result
-
-
-def require_keys(value, keys, what):
-    if not isinstance(value, dict):
-        raise ArchiveError(f"manifest {what} must be an object")
-    if set(value) != keys:
-        raise ArchiveError(f"manifest {what} keys must be exactly: {', '.join(sorted(keys))}")
-
-
-def require_int(value, what, minimum=0):
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise ArchiveError(f"manifest {what} must be an integer >= {minimum}")
-
-
-def require_record(value, what):
-    for key in ("bytes", "lines", "lf_count"):
-        require_int(value[key], f"{what}.{key}")
-    if not isinstance(value["sha256"], str) or not SHA256_RE.match(value["sha256"]):
-        raise ArchiveError(f"manifest {what}.sha256 must be 64 lowercase hex characters")
-    if value["lines"] - value["lf_count"] not in (0, 1):
-        raise ArchiveError(f"manifest {what} line and LF counts are inconsistent")
-
-
-def check_part_path(path, ordinal, total):
-    """Accept only the expected flat part name; never a path to resolve."""
-    if os.path.isabs(path) or path.startswith(("/", "\\")):
-        raise ArchiveError(f"manifest part {ordinal} path must be relative: {path}")
-    components = re.split(r"[\\/]", path)
-    if ".." in components:
-        raise ArchiveError(f"manifest part {ordinal} path traverses outside the archive: {path}")
-    if len(components) != 1 or not PART_RE.match(path):
-        raise ArchiveError(f"manifest part {ordinal} path must be a plain part file name: {path}")
-    if path != part_name(ordinal, total):
-        raise ArchiveError(f"manifest part {ordinal} path is out of order: {path}")
-
-
-def check_part_identity(entry, index, seen):
-    what = f"part #{index + 1}"
-    require_keys(entry, PART_KEYS, what)
-    require_int(entry["ordinal"], f"{what}.ordinal", 1)
-    if not isinstance(entry["path"], str):
-        raise ArchiveError(f"manifest {what} path must be a string")
-    if entry["ordinal"] in seen["ordinals"] or entry["path"] in seen["paths"]:
-        raise ArchiveError(f"manifest has a duplicate part: {entry['ordinal']} {entry['path']}")
-    seen["ordinals"].add(entry["ordinal"])
-    seen["paths"].add(entry["path"])
-    if entry["ordinal"] != index + 1:
-        raise ArchiveError(f"manifest parts are missing or reordered at position {index + 1}")
-
-
-def check_part_shape(entry, manifest, next_line, is_last):
-    what = f"part {entry['ordinal']}"
-    require_record(entry, what)
-    require_int(entry["first_line"], f"{what}.first_line", 1)
-    if entry["first_line"] != next_line:
-        raise ArchiveError(f"manifest {what} line range is not contiguous")
-    if entry["lines"] > manifest["max_lines"]:
-        raise ArchiveError(f"manifest {what} exceeds max_lines")
-    empty_allowed = len(manifest["parts"]) == 1 and manifest["source"]["bytes"] == 0
-    if entry["lines"] == 0 and not empty_allowed:
-        raise ArchiveError(f"manifest {what} is empty")
-    if not is_last and entry["lines"] != entry["lf_count"]:
-        raise ArchiveError(f"manifest {what} must end at an LF boundary")
-
-
-def check_part_entries(manifest):
-    parts = manifest["parts"]
-    if not isinstance(parts, list) or not parts:
-        raise ArchiveError("manifest parts must be a non-empty list")
-    seen, next_line = {"ordinals": set(), "paths": set()}, 1
-    for index, entry in enumerate(parts):
-        check_part_identity(entry, index, seen)
-        check_part_path(entry["path"], entry["ordinal"], len(parts))
-        check_part_shape(entry, manifest, next_line, index == len(parts) - 1)
-        next_line += entry["lines"]
-    for key in ("bytes", "lines", "lf_count"):
-        if sum(entry[key] for entry in parts) != manifest["source"][key]:
-            raise ArchiveError(f"manifest part {key} total does not match the source record")
-
-
-def validate_manifest(manifest):
-    if not isinstance(manifest, dict):
-        raise ArchiveError("manifest must be a JSON object")
-    if manifest.get("schema") != SCHEMA:
-        raise ArchiveError(f"unsupported manifest schema: {manifest.get('schema')!r}")
-    require_keys(manifest, TOP_KEYS, "top level")
-    require_int(manifest["max_lines"], "max_lines", 1)
-    if not isinstance(manifest["line_definition"], str):
-        raise ArchiveError("manifest line_definition must be a string")
-    require_keys(manifest["source"], SOURCE_KEYS, "source")
-    try:
-        validate_label(manifest["source"]["label"])
-    except ArchiveError as exc:
-        raise ArchiveError(f"manifest {exc}") from None
-    require_record(manifest["source"], "source")
-    check_part_entries(manifest)
 
 
 def load_manifest(dir_fd):
     raw, _ = read_regular_file(MANIFEST_NAME, "manifest", dir_fd=dir_fd)
-    try:
-        manifest = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate_keys)
-    except ValueError as exc:
-        raise ArchiveError(f"manifest is not valid JSON: {exc}") from None
-    validate_manifest(manifest)
-    return manifest
+    return parse_manifest(raw)
 
 
 def reject_stray_parts(dir_fd, manifest):
@@ -460,30 +274,17 @@ def read_parts(dir_fd, manifest):
     for entry in manifest["parts"]:
         data, _ = read_regular_file(entry["path"], f"part {entry['ordinal']}", dir_fd=dir_fd)
         actual = describe(data)
-        for key in ("bytes", "lines", "lf_count", "sha256"):
+        for key in RECORD_KEYS:
             if actual[key] != entry[key]:
                 raise ArchiveError(f"part {entry['ordinal']} ({entry['path']}) {key} does not match the manifest")
         payload += data
     return bytes(payload)
 
 
-def compare_original(original, payload):
-    data, opened = read_regular_file(original, "original")
-    if data != payload:
-        offset = next((i for i, (a, b) in enumerate(zip(data, payload)) if a != b),
-                      min(len(data), len(payload)))
-        raise ArchiveError(f"original differs from the reconstruction at byte offset {offset}")
-    after = os.stat(original, follow_symlinks=False)
-    if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)):
-        raise ArchiveError("original changed during verification")
-
-
 def verify_dir_fd(dir_fd, original=None):
     manifest = load_manifest(dir_fd)
     payload = read_parts(dir_fd, manifest)
-    record = {key: manifest["source"][key] for key in ("bytes", "lines", "lf_count", "sha256")}
-    if describe(payload) != record:
+    if describe(payload) != record_of(manifest["source"]):
         raise ArchiveError("reconstructed payload does not match the source record")
     if original is not None:
         compare_original(original, payload)
