@@ -226,6 +226,22 @@ class LeaseTests(unittest.TestCase):
             self.assertFalse(handle.claim(old))
             self.assertTrue(handle.claim(fresh))
 
+    def test_corrupt_unlocked_state_fails_closed(self):
+        for payload in (b'{"phase":', b'[]', b'{"token":false}', b'{"expires":true}'):
+            with self.subTest(payload=payload):
+                with state.lease(self.directory, self.key) as active:
+                    self.assertTrue(active.acquire())
+                    os.lseek(active.fd, 0, os.SEEK_SET)
+                    os.write(active.fd, payload)
+                    os.ftruncate(active.fd, len(payload))
+                    with state.lease(self.directory, self.key) as busy:
+                        self.assertEqual(busy.observe(set(), "$1"), "pending")
+                with state.lease(self.directory, self.key) as observer:
+                    with self.assertRaisesRegex(config.SessionError, "Unreadable attachment state"):
+                        observer.observe(set(), "$1")
+                    os.lseek(observer.fd, 0, os.SEEK_SET)
+                    self.assertEqual(os.read(observer.fd, 8192), payload)
+
     def test_connected_requires_remote_client_evidence_and_disconnect_recovers(self):
         with state.lease(self.directory, self.key) as active:
             active.acquire()

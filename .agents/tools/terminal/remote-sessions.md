@@ -96,6 +96,11 @@ the exact random launch nonce in current-account managed SSH/wrapper arguments.
 It never trusts a reusable numeric local PID or publishes those arguments. If
 process inspection fails, recovery fails closed instead of launching a duplicate.
 
+Unreadable metadata in an unlocked, nonempty lease also refuses a new launch:
+it cannot establish whether an orphaned attachment remains. Preserve the state
+and investigate privately; do not delete lock files or overwrite their contents
+to force a restore. A busy lock remains `pending` while metadata may be mid-write.
+
 States are deliberately distinct:
 
 - `created`: detached remote session exists; no local attachment guarantee.

@@ -92,6 +92,8 @@ class Lease:
             value = self.read()
             return "connected" if (value.get("remote_pid"), sid) in clients else "pending"
         value = self.read()
+        if not value and os.fstat(self.fd).st_size:
+            raise SessionError("Unreadable attachment state; refusing duplicate-risk launch")
         if value.get("phase") == "attaching" and local_managed(value.get("token")):
             return "connected" if (value.get("remote_pid"), sid) in clients else "pending"
         if value.get("phase") == "pending" and value.get("expires", 0) > time.time():
