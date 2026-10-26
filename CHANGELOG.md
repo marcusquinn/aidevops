@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.73] - 2026-10-26
+
+### Added
+
+- add opt-in lossless historical Markdown archive helper
+- detect restored WordPress installations (GH#35672) (#35675)
+
+### Fixed
+
+- register fixture repos in test-canonical-recovery-helper.sh (GH#35669) (#35671)
+
 ## [3.39.72] - 2026-10-26
 
 ### Added
