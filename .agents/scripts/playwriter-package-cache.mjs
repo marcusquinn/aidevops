@@ -122,3 +122,17 @@ export async function ensurePackageResolved(command, pin, environment, {
   if (!hasExited(warm)) return "pending";
   return warm.exitCode === 0 ? "resolved" : "failed";
 }
+
+/**
+ * Throw an operator-facing relay error unless the pinned package resolved.
+ * @param {string} errorPrefix prefix shared with the caller's other errors
+ */
+export async function requirePackageResolved(command, pin, environment, errorPrefix, options = {}) {
+  const resolution = await ensurePackageResolved(command, pin, environment, options);
+  if (resolution === "cached" || resolution === "resolved") return resolution;
+  const packageSpec = `${pin.name}@${pin.version}`;
+  const detail = resolution === "pending"
+    ? `${packageSpec} is still downloading into the package cache in the background; reconnect @playwriter shortly, or`
+    : `could not resolve ${packageSpec};`;
+  throw new Error(`${errorPrefix}relay-package-not-cached: ${detail} warm it with: ${warmCommandHint(command)}`);
+}

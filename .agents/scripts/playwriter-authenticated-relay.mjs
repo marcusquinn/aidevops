@@ -9,7 +9,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomUUID } from "node:crypto";
 import { isDirectEntrypoint } from "./entrypoint-guard.mjs";
-import { ensurePackageResolved, warmCommandHint } from "./playwriter-package-cache.mjs";
+import { requirePackageResolved } from "./playwriter-package-cache.mjs";
 import { runGuardian, spawnGuardian, stopGuardian } from "./playwriter-relay-guardian.mjs";
 import {
   MARKER_NAME,
@@ -49,8 +49,10 @@ const RELAY_CONTRACT = Object.freeze({
   validateCommand: validatePlaywriterCommand,
 });
 
+const ERROR_PREFIX = "Authenticated Playwriter relay: ";
+
 function fixedError(message) {
-  return new Error(`Authenticated Playwriter relay: ${message}`);
+  return new Error(`${ERROR_PREFIX}${message}`);
 }
 
 function isReviewedNpxShape(args) {
@@ -212,17 +214,6 @@ export function reconcileStaleRelays(parent, options = {}) {
   return reconcileOwnedRelays(parent, RELAY_CONTRACT, options);
 }
 
-async function requirePackageResolved(command, environment, shouldStop) {
-  const resolution = await ensurePackageResolved(command, PACKAGE_PIN, environment, { shouldStop });
-  const warm = warmCommandHint(command);
-  if (resolution === "pending") {
-    throw fixedError(`relay-package-not-cached: ${PLAYWRITER_PACKAGE} is still downloading into the package cache in the background; reconnect @playwriter shortly, or warm it with: ${warm}`);
-  }
-  if (resolution === "failed") {
-    throw fixedError(`relay-package-not-cached: could not resolve ${PLAYWRITER_PACKAGE}; warm it with: ${warm}`);
-  }
-}
-
 async function ensureRelay(command, environment, runtime, token, shouldStop = () => false) {
   const existing = await probeAuthenticatedRelay({ token });
   if (existing.ready) return { child: null, owned: false };
@@ -232,7 +223,7 @@ async function ensureRelay(command, environment, runtime, token, shouldStop = ()
     throw fixedError("port 19988 is held by another Playwriter relay (another session or a manual start); disconnect Playwriter there, then reconnect");
   }
 
-  await requirePackageResolved(command, environment, shouldStop);
+  await requirePackageResolved(command, PACKAGE_PIN, environment, ERROR_PREFIX, { shouldStop });
   const child = spawnGuardian(GUARDIAN, command, environment, runtime);
   // Capture the spawned guardian, not a later occupant of its PID after the
   // asynchronous readiness probe. An unreadable identity stays unproven.
