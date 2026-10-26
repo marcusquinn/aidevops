@@ -139,6 +139,12 @@ are rejected, not passed to a shell. Moving outside the prefix excludes the
 session from subsequent restore; an old confirmation refuses it. Server restart
 changes identity and requires fresh inventory/reservations.
 
+The final interactive command also checks the creation time, server PID and
+configured prefix inside tmux before queuing attachment on that same server.
+Restarting tmux during SSH authentication cannot redirect a reserved session ID
+to replacement work. An identity mismatch displays a refusal and attaches no
+client; restore again using fresh inventory. No replacement session is killed.
+
 ## Legacy SSH migration boundary
 
 Current-account processes only are inspected privately; unrelated arguments are

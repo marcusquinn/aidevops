@@ -120,6 +120,13 @@ def create(host):
 
 def attach_command(host, session, marker):
     # Explicit POSIX shell even when the account's login shell is fish/csh.
+    # Evaluate identity and queue attachment within the same tmux server. A
+    # separate SSH inventory check cannot prevent ID reuse after a restart.
+    identity = "#{&&:#{==:#{session_created}," + session["created"] + "},#{==:#{pid}," + session["server"] + "}}"
+    condition = "#{&&:" + identity + ",#{m:" + host["sessionPrefix"] + "*,#{session_name}}}"
+    attach = "attach-session -t " + shlex.quote(session["sid"])
+    reject = "display-message -p 'Session identity changed; no replacement attached; run restore again'"
     script = "printf '%s%s\\n' " + shlex.quote(marker) + ' "$$" >&2\n'
-    script += "exec tmux attach-session -t " + shlex.quote(session["sid"])
+    script += "exec tmux if-shell -F -t " + shlex.quote(session["sid"]) + " " + shlex.quote(condition)
+    script += " " + shlex.quote(attach) + " " + shlex.quote(reject)
     return ssh_argv(host, probe=False) + [host["sshHost"], "sh -c " + shlex.quote(script)]

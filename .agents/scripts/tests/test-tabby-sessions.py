@@ -196,7 +196,11 @@ class RemoteTests(unittest.TestCase):
         args = remote.attach_command(host(), session(), "AIDEVOPS_GENERIC:")
         outer = shlex.split(args[-1])
         self.assertEqual(outer[:2], ["sh", "-c"])
-        self.assertIn("exec tmux attach-session -t '$1'", outer[2])
+        command = shlex.split(outer[2].split("\n", 1)[1])
+        self.assertEqual(command[:6], ["exec", "tmux", "if-shell", "-F", "-t", "$1"])
+        self.assertEqual(command[6], "#{&&:#{&&:#{==:#{session_created},100},#{==:#{pid},200}},#{m:oc-*,#{session_name}}}")
+        self.assertEqual(command[7], "attach-session -t '$1'")
+        self.assertIn("no replacement attached", command[8])
         self.assertNotIn("kill", outer[2])
 
 
