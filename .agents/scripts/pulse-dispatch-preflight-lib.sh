@@ -655,9 +655,16 @@ _preflight_ownership_reconcile() {
 	# fetch loop; now 5N → N iterations per cycle.
 	# Run the shorter, higher-value pass first. The 360s internal budget gets a
 	# watchdog allowance; normalization receives only the time actually left.
+	# GH#35684: normalization is the only recovery for stranded dispatch claims,
+	# so when the budget allows both stages, keep a floor for it.
+	local normalize_floor="${AIDEVOPS_PULSE_NORMALIZE_FLOOR_S:-60}"
+	[[ "$normalize_floor" =~ ^[0-9]+$ ]] || normalize_floor=60
 	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$remaining" -gt 0 ]]; then
 		reconcile_budget=$remaining
+		if [[ "$remaining" -gt $((normalize_floor * 2)) ]]; then
+			reconcile_budget=$((remaining - normalize_floor))
+		fi
 		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
 		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
 	fi

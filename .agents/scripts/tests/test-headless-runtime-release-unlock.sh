@@ -156,6 +156,26 @@ else
 	exit 1
 fi
 
+# GH#35684: model selection fails before _cmd_run_prepare exports
+# DISPATCH_REPO_SLUG; the dispatcher-supplied WORKER_REPO_SLUG must still
+# release the claim instead of stranding the issue.
+: >"$CALL_LOG"
+rm -f "${TMP_HOME}/comment-attempts"
+unset DISPATCH_REPO_SLUG
+export WORKER_REPO_SLUG="owner/repo"
+_release_dispatch_claim "issue-12345" "worker_failed" "1" "0"
+unset WORKER_REPO_SLUG
+export DISPATCH_REPO_SLUG="owner/repo"
+if grep -q 'CLAIM_RELEASED reason=worker_failed' "$CALL_LOG" &&
+	grep -q 'CLEAR issue=12345 repo=owner/repo' "$CALL_LOG" &&
+	! grep -q 'Cannot release claim' "$CALL_LOG"; then
+	printf 'PASS pre-launch release falls back to WORKER_REPO_SLUG\n'
+else
+	printf 'FAIL pre-launch release did not use WORKER_REPO_SLUG\n'
+	sed 's/^/  /' "$CALL_LOG"
+	exit 1
+fi
+
 : >"$CALL_LOG"
 rm -f "${TMP_HOME}/comment-attempts"
 export WORKER_ISSUE_NUMBER="12345"

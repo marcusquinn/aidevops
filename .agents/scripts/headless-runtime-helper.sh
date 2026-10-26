@@ -761,10 +761,10 @@ _execute_run_attempt() {
 	# The mismatch caused the guard to reject every legitimate dispatch, creating
 	# a claim→reject→release→reclaim loop. dispatch_with_dedup is the authoritative
 	# dedup layer; a second check here adds no safety and causes false rejections.
-	# GH#20542: DISPATCH_REPO_SLUG export moved to _cmd_run_prepare (called
-	# before the EXIT trap is armed) so _release_dispatch_claim always has a
-	# non-empty slug. The role+session_key guard here is no longer needed —
-	# _cmd_run_prepare sets the slug for all roles unconditionally.
+	# GH#20542: DISPATCH_REPO_SLUG export moved to _cmd_run_prepare. Model
+	# selection runs before it, so a selection failure releases the claim
+	# before the export; _release_dispatch_claim then falls back to the
+	# dispatcher-supplied WORKER_REPO_SLUG (GH#35684).
 
 	local output_file="" exit_code_file="" exit_code=0 permission_request_file=""
 	local start_ms=0 end_ms=0 duration_ms=0

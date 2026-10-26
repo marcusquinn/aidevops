@@ -737,7 +737,10 @@ _release_dispatch_claim() {
 	local exit_code_arg="${3:-}"
 	local session_count_arg="${4:-}"
 	local issue_number=""
-	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	# GH#35684: model selection runs before _cmd_run_prepare exports
+	# DISPATCH_REPO_SLUG, so a pre-launch failure must fall back to the
+	# dispatcher-supplied WORKER_REPO_SLUG or the claim is stranded.
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
 	local runner_name=""
 	local machine_readable_part=""
 	local comment_body=""
@@ -1652,8 +1655,9 @@ _hrff_record_runner_health_failure() {
 	local issue_number=""
 	local issue_id="$session_key"
 	issue_number=$(_hrff_release_issue_number "$session_key")
-	if [[ -n "${DISPATCH_REPO_SLUG:-}" && -n "$issue_number" ]]; then
-		issue_id="${DISPATCH_REPO_SLUG}#${issue_number}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+	if [[ -n "$repo_slug" && -n "$issue_number" ]]; then
+		issue_id="${repo_slug}#${issue_number}"
 	fi
 
 	if [[ ! -x "$helper" ]]; then
