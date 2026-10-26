@@ -85,6 +85,24 @@ checkout whose only state is untracked files reinstated, byte-identical, from
 the same backup, and refuses if any backed-up path now differs, including a
 path the new tip ignores.
 
+### Incoming project-config untracking (GH#35659)
+
+When the pinned tip removes the index entry for `.aidevops.json` and adds an
+explicit, non-negated root ignore rule for it (the supported migration), a
+plain worktree update would silently delete the local file. Before any backup,
+clean or ref change, `sync-mirror`, `fast-forward-current`, `restore-default`
+and `fast-forward-local` copy the local file into a private directory under the
+recovery root (`PROJECT_CONFIG_PRESERVED_DIR=`), record it in the audit entry,
+and after the verified update reinstate its exact bytes, mode and mtime as
+ignored local state (`PROJECT_CONFIG_REINSTATED=.aidevops.json`). Reinstatement
+never overwrites or follows links; anything in the way leaves the copy in place
+(`PROJECT_CONFIG_LEFT_IN_BACKUP=`). A symlinked, non-regular or foreign-owned
+config is refused before anything changes. `fast-forward-local` also refuses a
+locally edited config, which its three-way re-apply cannot keep. A deletion
+without the ignore rule is intentional and is not reinstated; an already-absent
+config stays absent. Explicit restores still use
+`project-config-restore-helper.sh`.
+
 A clean canonical checkout whose resolved default branch is still unborn is a
 supported bootstrap input for `sync-mirror` only. The helper requires symbolic
 `HEAD` to name that exact branch, an absent local ref, and a completely empty
