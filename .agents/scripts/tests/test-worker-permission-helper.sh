@@ -206,7 +206,7 @@ for unsupported_permission in task read unknown; do
 	grep -q 'static subagent allowlist/routing' "$posted_comment"
 	# GH#35676: the only offered signature is a withdrawal, which grants nothing.
 	grep -q -- '--request perm-[0-9a-f]* --withdraw$' "$posted_comment"
-	if grep 'sudo aidevops approve permissions' "$posted_comment" | grep -qv -- '--withdraw$' ||
+	if awk '/sudo aidevops approve permissions/ && !/--withdraw$/ { found = 1 } END { exit !found }' "$posted_comment" ||
 		grep -q 'needs-maintainer-permissions' "$gh_call_log" ||
 		[[ -f "${git_dir}/aidevops-permission-pending" ]]; then
 		printf 'unsupported permission invited approval or persisted an approval hold\n' >&2
