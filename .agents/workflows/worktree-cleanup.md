@@ -140,6 +140,12 @@ own `AIDEVOPS_WORKTREE_BASE_DIR` and remove it in teardown.
 
 ## Manual Cleanup (interactive sessions)
 
+Legacy records with no descendant-completion contract use the explicit
+[legacy maintenance workflow](../reference/worktree-legacy-maintenance.md), not
+retroactive enrollment or a forced `sealed` state. `aidevops cleanup maintenance
+plan --repo PATH` is read-only; application requires a separately established
+maintenance window and is never part of routine `all --apply`.
+
 ```bash
 # Merge through the lifecycle helper (required from inside a worktree)
 full-loop-helper.sh merge PR_NUMBER OWNER/REPO --squash

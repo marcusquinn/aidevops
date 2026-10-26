@@ -2171,7 +2171,7 @@ _main_dispatch_cleanup() {
 		shift || true
 		_dispatch_helper "local-branch-cleanup-helper.sh" "local-branch-cleanup-helper.sh" "$@"
 		;;
-	report | status | all | tmp | worktrees | artefacts | opencode | observability)
+	report | status | all | tmp | worktrees | artefacts | opencode | observability | maintenance)
 		# GH#35245: storage stores route to their existing owning cleaners.
 		_dispatch_helper "$storage_helper" "$storage_helper" "$@"
 		return $?
@@ -2184,6 +2184,8 @@ _main_dispatch_cleanup() {
 		echo "  all [--apply]     Preview or clean every store"
 		echo "  tmp|worktrees|artefacts|opencode|observability [--apply]  One store"
 		echo "  Daily automatic run: routine r922 Storage hygiene (installed by setup)"
+		echo "  maintenance plan --repo PATH  Plan legacy worktrees (read-only)"
+		echo "  maintenance check|apply --plan FILE --confirm TOKEN  Explicit offline maintenance"
 		echo ""
 		echo "Branches (dry-run unless --apply):"
 		echo "  branches          Audit stale remote branches"

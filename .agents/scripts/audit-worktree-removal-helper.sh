@@ -1544,13 +1544,37 @@ worktree_managed_lifetime_proof() {
 	return 0
 }
 
+# Separate, present-tense maintenance authorization for legacy observations.
+# Never supplies a managed proof to the degraded-CWD fallback above/below.
+worktree_maintenance_removal_proof() {
+	local wt_path="$1"
+	local helper="${BASH_SOURCE[0]%/*}/worktree-maintenance.py"
+	[[ -n "${AIDEVOPS_WORKTREE_MAINTENANCE_PLAN:-}" &&
+		-n "${AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM:-}" && -f "$helper" ]] || return 1
+	PYTHONDONTWRITEBYTECODE=1 python3 "$helper" proof "$wt_path" \
+		--plan "$AIDEVOPS_WORKTREE_MAINTENANCE_PLAN" \
+		--confirm "$AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM" || return 1
+	return 0
+}
+
+worktree_maintenance_requested() {
+	[[ -n "${AIDEVOPS_WORKTREE_MAINTENANCE_PLAN:-}" ||
+		-n "${AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM:-}" ]] || return 1
+	return 0
+}
+
 worktree_managed_require_removal_proof() {
 	local wt_path="$1"
 	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
 	local managed_status=0
+	# Missing or changed enrollment must not turn a planned maintenance removal
+	# into an ordinary unregistered removal after its initial authorization.
+	if worktree_maintenance_requested; then
+		worktree_maintenance_removal_proof "$wt_path" || return 1
+		return 0
+	fi
 	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
 	[[ "$managed_status" -ne 3 ]] || return 0
-	# Even a complete negative CWD scan cannot replace managed descendants.
 	worktree_managed_lifetime_proof "$wt_path" || return 1
 	return 0
 }
@@ -1560,6 +1584,11 @@ worktree_managed_prepare_removal() {
 	local branch="$2"
 	local helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
 	local managed_status=0
+	# Never claim, re-enroll or seal after a failed maintenance authorization.
+	if worktree_maintenance_requested; then
+		worktree_maintenance_removal_proof "$wt_path" || return 1
+		return 0
+	fi
 	# Only confirmed absence uses legacy guards; unavailable evidence refuses.
 	[[ -f "$helper" ]] || return 1
 	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
@@ -1654,6 +1683,14 @@ worktree_removal_guard() {
 		return 1
 	fi
 	if [[ "$cwd_match_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]]; then
+		# Maintenance never enters manual degraded recovery or acquires its lease.
+		if worktree_maintenance_requested; then
+			WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
+			WORKTREE_REMOVAL_GUARD_REASON="maintenance-cwd-visibility-degraded"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+				"$WORKTREE_REMOVAL_GUARD_REASON" "$_WTAR_MODE_SKIPPED"
+			return 1
+		fi
 		# Only a sealed, explicitly enrolled Pulse generation can replace the
 		# unknown part of a scan. Readable positive matches above always veto.
 		if worktree_managed_lifetime_proof "$wt_path_real"; then
