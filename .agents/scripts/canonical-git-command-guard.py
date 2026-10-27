@@ -77,11 +77,18 @@ def classify_command(command: str, cwd: str, real_git: str) -> tuple[bool, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cwd", default=os.getcwd())
+    parser.add_argument("--cwd", default=None)
     parser.add_argument("--command", default="")
     parser.add_argument("--argv-json", default="")
     parser.add_argument("--real-git", default="")
     args = parser.parse_args()
+    if args.cwd is None:
+        # os.getcwd() raises when the working directory was deleted; fall back
+        # to the shell's PWD so absolute `git -C <path>` calls still classify.
+        try:
+            args.cwd = os.getcwd()
+        except FileNotFoundError:
+            args.cwd = os.environ.get("PWD", "")
     try:
         real_git_path = real_git(args.real_git)
     except RuntimeError as error:
