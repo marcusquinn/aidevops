@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -19,6 +18,7 @@ from contextlib import closing
 import worktree_lifetime_owner as owner
 import worktree_maintenance_boundary as boundary
 import worktree_maintenance_worker as worker
+from worktree_maintenance_commands import command, executable, git, repository
 
 SCHEMA = "aidevops.worktree-maintenance/v2"
 SCRIPTS = Path(__file__).resolve().parent
@@ -27,30 +27,6 @@ require = boundary.require
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-
-
-def executable(name):
-    require(name in {"git", "gh", "bash"}, "maintenance:unsupported-command")
-    path = shutil.which(name)
-    require(path is not None, "maintenance:command-unavailable:" + name)
-    return os.path.abspath(path)
-
-
-def command(arguments):
-    argv = [executable(arguments[0]), *arguments[1:]]
-    # Internal argv builders only; data stays in separate arguments, never shell text.
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=30,  # nosec B603
-                            env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
-    if result.returncode and arguments[:2] == ["bash", str(SCRIPTS / "worktree-maintenance-policy.sh")]:
-        reason = result.stdout.strip()
-        if re.fullmatch(r"(?:protected-[a-z-]+|preserve-forensics|archive-policy-unverified|open-pr)", reason):
-            raise ValueError("maintenance:retention-policy:" + reason)
-    require(result.returncode == 0, "maintenance:command-failed:" + arguments[0])
-    return result.stdout.strip()
-
-
-def git(path, *arguments):
-    return command(["git", "-C", str(path), *arguments])
 
 
 def machine():
@@ -94,19 +70,6 @@ def legacy(path):
         else:
             raise ValueError("maintenance:live-owner")
     return record
-
-
-def repository(path):
-    remote = git(path, "remote", "get-url", "origin")
-    match = re.fullmatch(r"(?:https://github[.]com/|git@github[.]com:)([\w.-]+/[\w.-]+?)(?:[.]git)?", remote)
-    require(match is not None, "maintenance:unsupported-remote")
-    slug = match[1]
-    metadata = json.loads(command(["gh", "api", "repos/" + slug]))
-    default = metadata["default_branch"]
-    tip = json.loads(command(["gh", "api", f"repos/{slug}/git/ref/heads/{default}"]))["object"]["sha"]
-    require(git(path, "rev-parse", "refs/remotes/origin/" + default) == tip,
-            "maintenance:refresh-default-ref-before-planning")
-    return {"path": str(path), "slug": slug, "default": default, "tip": tip}
 
 
 def preservation_checks(path, discard_ignored=False):
