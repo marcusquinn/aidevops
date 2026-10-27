@@ -75,6 +75,26 @@ test("aliases, ancestors, relative paths, option execution and quote concatenati
   assert.throws(() => check("read", { path: f.secret, append: () => { throw new Error(SENTINEL); } }), /VAULT_POLICY_DENIED/);
 });
 
+test("local-provider override (GH#35723) is refused to write, patch and shell tools, even when absent", (t) => {
+  const f = fixture(t);
+  const providers = join(dirname(f.file), "local-ai-providers.conf");
+  assert.equal(f.classification.providersFile, providers);
+  for (const bound of [false, true]) {
+    const check = (tool, args) => assertPrivateProcessingRead({ tool, args, classification: f.classification,
+      binding: { bound }, repositoryDir: f.publicRoot, append: () => true });
+    assert.throws(() => check("write", { filePath: providers }), /classification_mutation/);
+    assert.throws(() => check("edit", { filePath: "local-ai-providers.conf", cwd: dirname(providers) }), /classification_mutation/);
+    assert.throws(() => check("apply_patch", { cwd: dirname(providers),
+      patchText: "*** Begin Patch\n*** Add File: local-ai-providers.conf\n+openai\n*** End Patch" }), /classification_mutation/);
+    assert.throws(() => check("bash", { command: `printf openai > '${providers}'` }), /classification_mutation/);
+    assert.throws(() => check("aidevops_bounded_operation", { action: "start", command: ["cp", "x", providers] }), /classification_mutation/);
+    assert.doesNotThrow(() => check("write", { filePath: join(f.publicRoot, "local-ai-providers.conf") }));
+  }
+  const xdg = join(f.home, "xdg");
+  assert.equal(loadPrivateProcessingPolicy({ HOME: f.home, XDG_CONFIG_HOME: xdg }).providersFile,
+    join(xdg, "aidevops/local-ai-providers.conf"));
+});
+
 test("receipt failure cannot obscure a denial or import ambient metadata", () => {
   let captured;
   recordPrivateBlocker("bad-session", "protected_read", "read", (event) => { captured = event; return true; });

@@ -3,20 +3,18 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { activeLocalOnlyPolicy, localFailureCheck, LocalOnlyPolicyError } from "./local-only-policy.mjs";
+import { activeLocalOnlyPolicy, assertOperatorConfigStat, localFailureCheck, localProvidersOverrideFile,
+  LocalOnlyPolicyError } from "./local-only-policy.mjs";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
-
-function assertOperatorConfigStat(stat) {
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error();
-  if ((stat.mode & 0o777) !== 0o600 || stat.size > 65536) throw new Error();
-  if (process.getuid && stat.uid !== process.getuid()) throw new Error();
-}
 
 // #aidevops:trust-boundary: operator configuration only, snapshotted before
 // tools run. Never infer labels from file contents, arguments or model output.
 export function loadPrivateProcessingPolicy(env = process.env) {
   const home = env.HOME || homedir();
   const file = resolve(env.XDG_CONFIG_HOME || resolve(home, ".config"), "aidevops/local-only-roots.json");
+  // The local-provider override (GH#35723) defines what "local" means for the
+  // next launch, so tool writes to it are refused exactly like the roots list.
+  const providersFile = localProvidersOverrideFile(env);
   let roots = [];
   let invalid = false;
   try {
@@ -29,7 +27,7 @@ export function loadPrivateProcessingPolicy(env = process.env) {
   } catch (error) {
     invalid = error.code !== "ENOENT";
   }
-  return Object.freeze({ file, invalid, roots: Object.freeze([...new Set(roots)]) });
+  return Object.freeze({ file, providersFile, invalid, roots: Object.freeze([...new Set(roots)]) });
 }
 
 function canonicalPath(path) {
@@ -113,20 +111,25 @@ function toolPath(args, cwd) {
   return [args.filePath, args.file_path, args.path, args.directory].find(Boolean) || cwd;
 }
 
+// Operator files that define classification or what counts as local.
+function protectedConfigFiles(policy) {
+  return [policy.file, policy.providersFile].filter(Boolean);
+}
+
 function assertClassificationMutation(policy, name, args, cwd, deny) {
   if (!MUTATION_TOOLS.test(name)) return;
   // Freeze classification across this launch, and prohibit tool edits to its
   // source. OS ownership is not isolation from code running as the same user.
   const patch = String(args.patchText || args.patch_text || "");
   const mutationPaths = [toolPath(args, cwd), ...[...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1])];
-  if (mutationPaths.some((target) =>
-    contains(resolve(cwd, target), policy.file)
-    || contains(canonicalPath(resolve(cwd, target)), canonicalPath(policy.file)))) deny("classification_mutation");
+  if (protectedConfigFiles(policy).some((file) => mutationPaths.some((target) =>
+    contains(resolve(cwd, target), file)
+    || contains(canonicalPath(resolve(cwd, target)), canonicalPath(file))))) deny("classification_mutation");
 }
 
 function assertShellRead(policy, command, cwd, binding, deny) {
   const text = Array.isArray(command) ? command.join(" ") : String(command || "");
-  if (text.includes(policy.file)) deny("classification_mutation");
+  if (protectedConfigFiles(policy).some((file) => text.includes(file))) deny("classification_mutation");
   if (binding.bound || !policy.roots.length) return;
   const words = literalShellWords(command);
   // No options: even familiar readers have executable/path-bearing options.
