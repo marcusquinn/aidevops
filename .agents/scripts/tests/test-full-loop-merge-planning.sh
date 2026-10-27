@@ -522,6 +522,37 @@ test_todo_duplicate_report_large_baseline() {
 	output=$(source "${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh" &&
 		todo_duplicate_report "$candidate" "${TEST_ROOT}/missing-baseline.todo") || rc=$?
 	print_result "prospective TODO: unreadable baseline remains indeterminate" "$([[ "$rc" -eq 2 ]] && printf '0' || printf '1')" "rc=$rc"
+
+	# GH#35755: template examples in an HTML comment are not mappings.
+	local template_baseline="${TEST_ROOT}/template-baseline.todo"
+	local template_candidate="${TEST_ROOT}/template-candidate.todo"
+	printf -- '- [x] t1 Real task ref:GH#11\n' >"$template_baseline"
+	printf -- '%s\n' '<!-- GH#17804 format examples' '- [ ] t1 Task description @owner' \
+		'- [ ] t2 Dependent task blocked-by:t1' '- [ ] t1.1 Subtask of t1' '-->' \
+		'- [x] t1 Real task ref:GH#11' >"$template_candidate"
+	rc=0
+	output=$(source "${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh" &&
+		todo_duplicate_report "$template_candidate" "$template_baseline") || rc=$?
+	print_result "prospective TODO: HTML-commented template examples are ignored" \
+		"$([[ "$rc" -eq 0 ]] && printf '0' || printf '1')" "rc=$rc output=$output"
+
+	# GH#35755: a normalized historical duplicate (t034 x2 -> t34 x2) is not new,
+	# while a real collision is still reported with its original line numbers.
+	printf -- '- [x] t034 First\n- [x] t034 Second\n' >"$template_baseline"
+	printf -- '- [x] t34 First\n- [x] t34 Second\n' >"$template_candidate"
+	rc=0
+	output=$(source "${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh" &&
+		todo_duplicate_report "$template_candidate" "$template_baseline") || rc=$?
+	print_result "prospective TODO: normalized historical duplicate is not new" \
+		"$([[ "$rc" -eq 0 ]] && printf '0' || printf '1')" "rc=$rc output=$output"
+	printf -- '<!-- note -->\n- [x] t34 First\n- [ ] t034 Collides\n' >"$template_candidate"
+	printf -- '- [x] t34 First\n' >"$template_baseline"
+	rc=0
+	output=$(source "${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh" &&
+		todo_duplicate_report "$template_candidate" "$template_baseline") || rc=$?
+	print_result "prospective TODO: padded/unpadded collision is reported with lines" \
+		"$([[ "$rc" -eq 1 && "$output" == *"Duplicate task ID: t34  (TODO.md lines: 2,3)"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
 	return 0
 }
 
