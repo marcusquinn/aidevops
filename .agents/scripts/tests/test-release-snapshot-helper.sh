@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 set -euo pipefail
 
-PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# Include the interpreter's system-tool directory on non-FHS hosts (NixOS).
+PATH="${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../release-snapshot-helper.sh
@@ -116,6 +117,7 @@ gh() {
 		once) [[ "$count" != 1 ]] || { printf 'unexpected end of JSON input\n' >&2; return 1; } ;;
 		always) printf 'unexpected end of JSON input\n' >&2; return 1 ;;
 		auth) printf 'gh: Forbidden (HTTP 403)\n' >&2; return 1 ;;
+		missing-native) printf '[aidevops] gh shim: native gh not found\nsecond line must not escape\n' >&2; return 127 ;;
 		esac
 	fi
 	_gh_orig "$@"
@@ -146,6 +148,24 @@ grep -Fq "JSON decode error after 3 attempts" "$TEST_ROOT/read-err"
 RELEASE_SNAPSHOT_MAX_ATTEMPTS=bogus assert_reads always 8 1
 RELEASE_SNAPSHOT_MAX_ATTEMPTS=99 assert_reads always 8 1
 assert_reads auth 1 1
+grep -Fq 'not retryable): gh: Forbidden (HTTP 403)' "$TEST_ROOT/read-err"
+assert_reads missing-native 1 1
+grep -Fq 'exit 127, attempt 1; not retryable): [aidevops] gh shim: native gh not found' "$TEST_ROOT/read-err"
+[[ "$(wc -l <"$TEST_ROOT/read-err")" -eq 1 ]]
+
+# The shared formatter must strip controls, redact sensitive context and bound
+# even a long first line; no subsequent stderr line is forwarded.
+fixture_token="gh"'p_fixture123'
+# Construct synthetic sensitive-looking values, never real local identifiers.
+printf -v fixture_path '/%s/%s/bin/gh' home fixture-user
+summary=$(_release_gh_read_diagnostic $'\e[31mgh: failure\e[0m\r\t '"$fixture_token $fixture_path"$' https://example.invalid/?secret=value\nsecond line')
+[[ "$summary" == 'gh: failure   [redacted-token] [redacted-path] [redacted-url]' ]]
+[[ "$(_release_gh_read_diagnostic 'gh: Authorization: Bearer fixture-value')" == 'gh: [redacted-credential]' ]]
+[[ "$(_release_gh_read_diagnostic '')" == 'no stderr diagnostic' ]]
+printf -v long_line '%0300d' 0
+summary=$(_release_gh_read_diagnostic "$long_line")
+[[ "${#summary}" -eq 240 && "$summary" == *... ]]
+printf 'PASS: exit 127 exposes only a sanitized, bounded first stderr line without retrying\n'
 unset -f gh
 eval "${_gh_real}"
 printf 'PASS: transient reads retry within the configured budget; auth failures fail immediately\n'

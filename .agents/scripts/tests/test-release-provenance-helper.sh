@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Keep disposable fixture repositories isolated from the developer Git shim,
 # hooks, signing policy, and global branch defaults.
-PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+PATH="${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
@@ -67,6 +67,7 @@ if [[ "\${PROVENANCE_READ_TARGET:-}" == "\$target" ]]; then
 	decode-once) [[ "\$count" != 1 ]] || { printf 'unexpected end of JSON input\n' >&2; exit 1; } ;;
 	5xx-always) printf 'gh: Service Unavailable (HTTP 503)\n' >&2; exit 1 ;;
 	auth) printf 'gh: Forbidden (HTTP 403)\n' >&2; exit 1 ;;
+	missing-native) printf '[aidevops] gh shim: native gh not found\nsecond line must not escape\n' >&2; exit 127 ;;
 	malformed) printf '{broken\n'; exit 0 ;;
 	multiple) printf '{}\n{}\n'; exit 0 ;;
 	mixed) printf 'false\n{}\n'; exit 0 ;;
@@ -105,7 +106,7 @@ run_helper() {
 	(
 		cd "$REPO" || exit 1
 		export PROVENANCE_MODE="$mode"
-		PATH="${BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+		PATH="${BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 			bash "$HELPER" verify --tag v1.2.3 --repo test/repo
 	)
 	return $?
@@ -116,7 +117,7 @@ run_local_source_helper() {
 	(
 		cd "$REPO" || exit 1
 		export PROVENANCE_MODE="$mode"
-		PATH="${BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+		PATH="${BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 			bash "$HELPER" verify-local-source --tag v1.2.3 --repo test/repo
 	) || return 1
 	return 0
@@ -179,7 +180,9 @@ done
 assert_read_transport pr decode-once 2 0 'source PR #42 in test/repo: JSON decode error; retrying'
 assert_read_transport pr whitespace-once 2 0 'empty response; retrying'
 assert_read_transport pr 5xx-always 3 1 'source PR #42 in test/repo: HTTP 503 after 3 attempts'
-assert_read_transport pr auth 1 1 'not retryable'
+assert_read_transport pr auth 1 1 'not retryable): gh: Forbidden (HTTP 403)'
+assert_read_transport pr missing-native 1 1 'exit 127, attempt 1; not retryable): [aidevops] gh shim: native gh not found'
+[[ "$(wc -l <"${TEST_ROOT}/read-error")" -eq 2 ]]
 assert_read_transport pr malformed 1 1 'source PR #42 in test/repo: invalid JSON object (attempt 1)'
 assert_read_transport pr multiple 1 1 'invalid JSON object (attempt 1)'
 assert_read_transport pr mixed 1 1 'invalid JSON object (attempt 1)'
@@ -227,7 +230,7 @@ assert_rejected "historical source PR ancestor is rejected" "stale-source"
 git -C "$REPO" tag -a v1.2.4 -m 'Release without provenance'
 if (
 	cd "$REPO" || exit 1
-	PATH="${BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" verify --tag v1.2.4 --repo test/repo
 ) >/dev/null 2>&1; then
 	printf 'FAIL malformed tag was accepted\n'
@@ -313,7 +316,7 @@ chmod +x "${AGG_BIN}/gh"
 
 aggregate_json=$(
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-source --source-pr 42 --repo test/aggregate
 )
 jq -e --arg merge "$AGGREGATE_MERGE" --arg original "$AGG_ORIGINAL" '
@@ -324,7 +327,7 @@ printf 'PASS reviewed aggregation manifest recovers an authorized historical sou
 
 (
 	cd "$AGG_REPO" || exit 1
-	AGG_TEST_COMPARE_EMPTY=true PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	AGG_TEST_COMPARE_EMPTY=true PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-source --source-pr 42 --repo test/aggregate
 ) >"${TEST_ROOT}/compare-output" 2>"${TEST_ROOT}/compare-error"
 read -r compare_count <"${TEST_ROOT}/compare-count"
@@ -338,7 +341,7 @@ printf 'PASS aggregate comparison retries empty ancestry evidence\n'
 for requested_pr in 42 99; do
 	if (
 		cd "$AGG_REPO" || exit 1
-		AGG_TEST_REVIEWED_HEAD="$AGG_STALE_HEAD" PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+		AGG_TEST_REVIEWED_HEAD="$AGG_STALE_HEAD" PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 			bash "$HELPER" resolve-source --source-pr "$requested_pr" --repo test/aggregate
 	) >"${TEST_ROOT}/stale-aggregate-error" 2>&1; then
 		printf 'FAIL stale reviewed aggregate accepted for source %s\n' "$requested_pr"
@@ -349,7 +352,7 @@ done
 printf 'PASS late merged sources block both historical-source and aggregate-self publication\n'
 if (
 	cd "$AGG_REPO" || exit 1
-	AGG_TEST_COMPARE_FAILURE=true PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	AGG_TEST_COMPARE_FAILURE=true PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-source --source-pr 42 --repo test/aggregate
 ) >/dev/null 2>&1; then
 	printf 'FAIL unavailable aggregate ancestry evidence was accepted\n'
@@ -359,7 +362,7 @@ printf 'PASS unavailable aggregate ancestry evidence fails closed\n'
 
 if (
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-source --source-pr 42 --repo test/aggregate --expected-sources 42,43,44,45
 ) >/dev/null 2>&1; then
 	printf 'FAIL incomplete aggregation manifest matched the complete trusted source set\n'
@@ -370,7 +373,7 @@ printf 'PASS incomplete aggregation manifest rejects the complete trusted source
 for invalid_sources in '42,42' '42,not-a-pr' "42@0000000000000000000000000000000000000000"; do
 	if (
 		cd "$AGG_REPO" || exit 1
-		PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+		PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 			bash "$HELPER" resolve-source --source-pr 42 --repo test/aggregate --expected-sources "$invalid_sources"
 	) >/dev/null 2>&1; then
 		printf 'FAIL invalid expected source set was accepted: %s\n' "$invalid_sources"
@@ -391,7 +394,7 @@ export COMPLETE_AGGREGATE_MERGE
 git -C "$AGG_REPO" push -q --force origin HEAD:main
 complete_json=$(
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-source --source-pr 42 --repo test/aggregate --expected-sources 45,42,44,43
 )
 jq -e --arg merge "$COMPLETE_AGGREGATE_MERGE" '
@@ -405,7 +408,7 @@ git -C "$AGG_REPO" switch -q --detach "$AGGREGATE_MERGE"
 
 aggregate_self_json=$(
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-source --source-pr 99 --repo test/aggregate
 )
 jq -e --arg merge "$AGGREGATE_MERGE" --arg original "$AGG_ORIGINAL" '
@@ -420,7 +423,7 @@ git -C "$AGG_REPO" switch -q --detach "$AGG_ORIGINAL"
 git -C "$AGG_REPO" commit -q --allow-empty -m 'unreviewed direct commit'
 if (
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-source --source-pr 42 --repo test/aggregate
 ) >/dev/null 2>&1; then
 	printf 'FAIL unreviewed direct commit was accepted as an aggregate source\n'
@@ -447,7 +450,7 @@ Aidevops-Aggregated-Source: 45@${AGG_FOURTH}"
 git -C "$AGG_REPO" push -q origin HEAD:main --tags
 tag_authorization_json=$(
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-tag-authorization --tag v2.0.0 --source-pr 42 --repo test/aggregate \
 		--expected-sources 42,43,44,45
 )
@@ -459,7 +462,7 @@ jq -e --arg source_merge "$COMPLETE_AGGREGATE_MERGE" '
 printf 'PASS immutable-tag authorization resolves exact source provenance and every trusted merge SHA\n'
 if (
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-tag-authorization --tag v2.0.0 --source-pr 42 --repo test/aggregate \
 		--expected-sources 42,43,44
 ) >/dev/null 2>&1; then
@@ -469,7 +472,7 @@ fi
 printf 'PASS immutable-tag authorization rejects incomplete persisted source sets\n'
 gap_expected_json=$(
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-tag-expected-sources --tag v2.0.0 --source-pr 42 --repo test/aggregate \
 		--expected-sources 42@"$AGG_ORIGINAL",43@"$AGG_SECOND",44@"$AGG_THIRD"
 )
@@ -483,7 +486,7 @@ jq -e --arg original "$AGG_ORIGINAL" --arg second "$AGG_SECOND" --arg third "$AG
 printf 'PASS immutable-tag expected sources validate independently of the signed aggregate manifest\n'
 if (
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" resolve-tag-expected-sources --tag v2.0.0 --source-pr 42 --repo test/aggregate \
 		--expected-sources 42@0000000000000000000000000000000000000000
 ) >/dev/null 2>&1; then
@@ -493,7 +496,7 @@ fi
 printf 'PASS immutable-tag expected-source validation rejects a mismatched merge SHA\n'
 (
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" verify --tag v2.0.0 --repo test/aggregate >/dev/null
 )
 printf 'PASS immutable tag provenance compares aggregate source sets independent of trailer order\n'
@@ -507,7 +510,7 @@ Aidevops-Source-Merge: ${COMPLETE_AGGREGATE_MERGE}"
 
 (
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" verify --tag v2.0.0 --repo test/aggregate >/dev/null
 )
 printf 'PASS signed source merge recovers a completely omitted redundant tag manifest\n'
@@ -521,7 +524,7 @@ Aidevops-Source-Merge: ${COMPLETE_AGGREGATE_MERGE}
 Aidevops-Aggregated-Source: 42@0000000000000000000000000000000000000000"
 if (
 	cd "$AGG_REPO" || exit 1
-	PATH="${AGG_BIN}:/opt/homebrew/bin:/usr/bin:/bin" \
+	PATH="${AGG_BIN}:${BASH%/*}:/opt/homebrew/bin:/usr/bin:/bin" \
 		bash "$HELPER" verify --tag v2.0.0 --repo test/aggregate
 ) >/dev/null 2>&1; then
 	printf 'FAIL tag with an explicit conflicting aggregate source was accepted\n'

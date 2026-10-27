@@ -104,7 +104,7 @@ _release_provenance_read_json() {
 			cause="empty response"
 		else
 			rm -f "$error_file"
-			_release_provenance_error "${purpose}: GitHub read failed (exit ${status}, attempt ${attempt}; not retryable)"
+			_release_provenance_error "${purpose}: GitHub read failed (exit ${status}, attempt ${attempt}; not retryable): $(_release_gh_read_diagnostic "$error_text")"
 			return 1
 		fi
 		[[ "$attempt" -ge "$max_attempts" ]] && break
