@@ -573,6 +573,8 @@ LIFECYCLE
             command() {
                 if [[ "${1:-}" == -v ]]; then
                     case "$ROUTINE_TEST_MODE:${2:-}" in
+                    # Legacy PGID modes must not take the systemd-run path.
+                    setsid:systemd-run|perl:systemd-run|job-control:systemd-run) return 1 ;;
                     perl:setsid|job-control:setsid|job-control:perl) return 1 ;;
                     esac
                 fi
@@ -775,6 +777,81 @@ _test_platform_scheduler_ownership() {
 	return 0
 }
 
+# Detached routine runners must leave the pulse unit cgroup via systemd-run
+# --scope (same class as GH#33993 workers). setsid alone is not enough when
+# aidevops-supervisor-pulse.service uses KillMode=control-group.
+_test_detached_prefers_systemd_scope() {
+	local tmpdir="$1"
+	local root="${tmpdir}/systemd-scope"
+	mkdir -p "$root/bin"
+	if (
+		local attempt=0
+		export ROUTINE_TEST_ROOT="$root"
+		export HEADLESS_RUNTIME_HELPER="$root/headless.sh"
+		export ROUTINE_LOG_HELPER="$root/lifecycle.sh"
+		export LOGFILE="$root/pulse.log"
+		export ROUTINE_STATE_FILE="$root/state.json"
+		export PATH="$root/bin:$PATH"
+		cat >"$root/bin/systemd-run" <<'RUN'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${ROUTINE_TEST_ROOT}/systemd-run-args"
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--user | --scope | --collect | --quiet)
+		shift
+		;;
+	--unit | --description)
+		shift 2
+		;;
+	--unit=* | --description=*)
+		shift
+		;;
+	*)
+		break
+		;;
+	esac
+done
+exec "$@"
+RUN
+		chmod +x "$root/bin/systemd-run"
+		cat >"$HEADLESS_RUNTIME_HELPER" <<'AGENT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ROUTINE_TEST_ROOT/invocations"
+: >"$ROUTINE_TEST_ROOT/release"
+exit 0
+AGENT
+		cat >"$ROUTINE_LOG_HELPER" <<'LIFECYCLE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ROUTINE_TEST_ROOT/lifecycle"
+LIFECYCLE
+		chmod +x "$HEADLESS_RUNTIME_HELPER" "$ROUTINE_LOG_HELPER"
+		bash -c '
+			source "$1"
+			_routine_dispatch_agent r-scope "Scope agent" Build+ "$ROUTINE_TEST_ROOT"
+		' _ "$PULSE_ROUTINES" || exit 1
+		while [[ "$attempt" -lt 100 ]]; do
+			if [[ -s "$root/systemd-run-args" && -s "$root/invocations" ]]; then
+				break
+			fi
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		[[ -s "$root/systemd-run-args" ]] || exit 1
+		grep -Eq -- '--scope' "$root/systemd-run-args" || exit 1
+		grep -Eq -- '--user' "$root/systemd-run-args" || exit 1
+		grep -Eq -- 'isolation=systemd_scope' "$root/pulse.log" ||
+			grep -Eq -- 'isolation=systemd_scope_unconfirmed' "$root/pulse.log" ||
+			grep -Eq -- 'falling back to session detach' "$root/pulse.log" || exit 1
+		[[ -s "$root/invocations" ]] || exit 1
+	); then
+		pass "routine detach prefers systemd-run --scope outside pulse cgroup"
+	else
+		fail "routine detach prefers systemd-run --scope" "see $root"
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir
 	tmpdir=$(mktemp -d) || {
@@ -800,6 +877,7 @@ main() {
 	done
 	_test_stale_agent_recovery "$tmpdir"
 	_test_sigterm_agent_runner "$tmpdir"
+	_test_detached_prefers_systemd_scope "$tmpdir"
 
 	# === Summary ===
 	printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
