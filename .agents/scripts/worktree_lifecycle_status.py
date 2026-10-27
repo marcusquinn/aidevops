@@ -21,7 +21,6 @@ import time
 
 import worktree_lifetime_archive as archive
 import worktree_lifetime_launch as launch_contract
-import worktree_lifetime_owner as owner_lifetime
 import worktree_lifetime_reconcile as process_reconciliation
 
 
@@ -77,11 +76,7 @@ def records(limit, selected_paths=None):
                                  last_reconcile_at=last_attempt,
                                  reconcile_error=operation.get("reconcile_error"),
                                  lifecycle=launch_contract.summary(record))
-                    if record.get("manager") == owner_lifetime.MANAGER and entry["source"] == "present":
-                        entry["recorded_processes"] = [
-                            {"status": item["process_completion"]["reason"], "persisted": True}
-                            if process_reconciliation.finished(item) else owner_lifetime.recorded_process_status(item)
-                            for item in record.get("launches", [])]
+                    entry.update(process_reconciliation.observations(record, entry["source"]))
                 except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
                     entry.update(state="unknown", error=type(error).__name__)
                 result["entries"].append(entry)

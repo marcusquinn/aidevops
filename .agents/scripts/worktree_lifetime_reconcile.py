@@ -50,6 +50,16 @@ def finished(launch):
                 receipt.get("reason") in ENDED, valid_timestamp(receipt.get("observed_at"))))
 
 
+def observations(record, source):
+    """Report cached completions and fresh unfinished-process observations only."""
+    if source != "present" or record.get("manager") != owner.MANAGER:
+        return {}
+    return {"recorded_processes": [
+        {"status": item["process_completion"]["reason"], "persisted": True}
+        if finished(item) else owner.recorded_process_status(item)
+        for item in record.get("launches", [])]}
+
+
 def reconcile(record):
     owner.require(record.get("manager") == owner.MANAGER, "not an owner-observed lifetime")
     owner.require_admission_observed(record)
