@@ -143,6 +143,10 @@ if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
     printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
     exit 0
 fi
+if [[ "$*" == 'secret list --repo exampleorg/example-package --json name' ]]; then
+    printf '%s\n' '[{"name":"CLOUDRON_RELEASE_PAT"}]'
+    exit 0
+fi
 if [[ "${1:-}" == api && "${2:-}" == /repos/*/contents/CloudronVersions.json* ]]; then
     [[ "${MONITOR_CATALOG_STATE:-}" != error ]] || exit 1
     if [[ "${MONITOR_CATALOG_STATE:-}" == published ]]; then
