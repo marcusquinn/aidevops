@@ -26,7 +26,10 @@ _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
 # revision includes the default-branch HEAD, so any target-code change re-arms
 # it (any-merge granularity was chosen over a narrower signal because the
 # defect lives in code outside the brief and no linked-fix marker is reliable).
-_TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked target_code_blocker '
+# GH#35745: unknown is held as status:blocked too (_hrff_blocked_exit_holds), so
+# it needs the same wake conditions: a brief/dependency revision (its documented
+# repair path) or a trusted retry. Without them the hold never released.
+_TBC_REVISION_REARM_REASONS=' missing_files_scope files_scope_excluded input_required external_trigger_pending source_access_blocked target_code_blocker unknown '
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
 # Legacy/malformed IDs never let a tied retry clear evidence. For selection,
@@ -344,8 +347,15 @@ terminal_blocker_task_revision() {
 	local issue_number="$3"
 	local repo_path="$4"
 	local reason="${5:-}"
-	local task_json="" dependency_signature="" target_revision="" canonical=""
+	local task_json="" dependency_signature="" target_revision="" canonical="" named_unknown=false
 	[[ -n "$reason" ]] || reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
+	# GH#35745: only a named unknown class (explicit reason, or the producer's
+	# exact v2:unknown fingerprint) is brief-bound. An absent or unrecognised
+	# fingerprint also maps to unknown and keeps the conservative default below.
+	if [[ "$reason" == "$_TBC_UNKNOWN" ]] && [[ "${5:-}" == "$_TBC_UNKNOWN" ||
+		"${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" == "$(_terminal_blocker_hash "v2:${_TBC_UNKNOWN}")" ]]; then
+		named_unknown=true
+	fi
 	# A brief edit, unrelated merge or GraphQL outage cannot satisfy a permission
 	# prerequisite. Explicit retry only schedules a new check; it grants nothing.
 	if [[ "$reason" == "permission_required" ]]; then
@@ -369,8 +379,10 @@ terminal_blocker_task_revision() {
 	# Missing input (GH#33332) is likewise supplied through the brief, not code.
 	# A source denial (GH#34223) re-arms on verified access recorded through a
 	# brief/dependency change or trusted retry, never on unrelated merges.
+	# An unknown blocker (GH#35745) is repaired through the brief; tracking
+	# default-branch HEAD would release its hold on every unrelated merge.
 	if [[ "$reason" == "external_trigger_pending" || "$reason" == "input_required" ||
-		"$reason" == "$_TBC_SOURCE_ACCESS" ]]; then
+		"$reason" == "$_TBC_SOURCE_ACCESS" || "$named_unknown" == true ]]; then
 		canonical=$(jq -nc --arg reason "$reason" --argjson task "$task_json" \
 			--argjson dependencies "$dependency_signature" \
 			'{reason: $reason, task: $task, dependencies: $dependencies}') || return 1
@@ -623,7 +635,7 @@ _terminal_blocker_recovery() {
 		;;
 	*)
 		owner="worker-triage"
-		action='Interpret the protected dossier and record a known blocker class or repair the brief. No global dispatch hold is imposed.'
+		action='Interpret the protected dossier and record a known blocker class or repair the brief. A brief or dependency change, or an OWNER/MEMBER retry directive, re-arms dispatch.'
 		;;
 	esac
 	[[ "$issue" =~ ^[0-9]+$ ]] || issue="$_TBC_UNKNOWN"

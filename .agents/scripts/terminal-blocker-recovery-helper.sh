@@ -470,7 +470,11 @@ _tbr_release_circuit_hold() {
 	parsed=$(printf '%s' "$evidence" | jq -er '.body | capture("<!-- aidevops:terminal-blocker-(?:observation|circuit) revision=(?<revision>[a-f0-9]{24}) blocker=(?<blocker>[a-f0-9]{24}) -->") | "\(.revision) \(.blocker)"') || return 2
 	IFS=' ' read -r observed_rev fingerprint <<<"$parsed"
 	reason=$(_terminal_blocker_reason "$fingerprint")
-	[[ "$reason" != "$_TBC_UNKNOWN" ]] || return 2
+	# GH#35745: the producer's own unknown class re-arms like the other held
+	# classes. Any other fingerprint also maps to unknown; keep it held.
+	if [[ "$reason" == "$_TBC_UNKNOWN" ]]; then
+		[[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${_TBC_UNKNOWN}")" ]] || return 2
+	fi
 	repo_path=$(_tbr_repo_path "$repo")
 	current_rev=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "$repo_path" "$reason") || return 2
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2

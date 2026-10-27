@@ -980,6 +980,79 @@ test_cross_runner_rearm_receipt() {
 	return 0
 }
 
+# GH#35745: a held unknown first observation (projected status:blocked) gets
+# the wake conditions of the other held classes. It is queued and seeded, holds
+# for an unchanged brief across default-branch movement, and a standalone
+# OWNER/MEMBER retry or a repaired brief releases it once. An unrecognised
+# fingerprint (which also maps to unknown) is never released.
+test_unknown_hold_rearms_on_trusted_retry() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local tb_comments='[]' tb_issue='' tb_revision='' tb_fingerprint='' tb_observation='' tb_raw='' tb_other=''
+		local tb_projected=0 tb_receipts=0 tb_rc=0 tb_enqueued=0
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			tb_receipts=$((tb_receipts + 1))
+			tb_comments=$(jq -nc --argjson c "$tb_comments" --arg body "$marker" '$c + [{id:30,body:$body,author:"runner-a",author_association:"MEMBER",created_at:"2026-10-26T12:30:00Z"}]')
+			return 0
+		}
+		gh_issue_edit_safe() { return 0; }
+		_hrff_enqueue_blocker_recovery() { tb_enqueued=$((tb_enqueued + 1)); return 0; }
+		tb_fingerprint=$(_terminal_blocker_hash 'v2:unknown')
+		tb_issue='{"title":"Award update","body":"original","labels":[{"name":"status:blocked"}]}'
+		# The runtime revision (fingerprint only) equals the recovery revision
+		# (explicit reason) and ignores default-branch HEAD.
+		tb_revision=$(AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$tb_fingerprint" \
+			terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT") || exit 1
+		[[ "$(terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT" unknown)" == "$tb_revision" ]] || exit 1
+		[[ "$(TEST_TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+			terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT" unknown)" == "$tb_revision" ]] || exit 1
+		# The runtime queues the held observation for the recovery owner.
+		_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$tb_fingerprint" \
+			_hrff_enqueue_observation_recovery 42 owner/repo
+		[[ "$tb_enqueued" -eq 1 ]] || exit 1
+		tb_observation=$(jq -nc --arg r "$tb_revision" --arg f "$tb_fingerprint" '[{id:10,body:("CLAIM_RELEASED reason=blocked runner=runner-b ts=2026-10-26T11:36:17Z\n<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->\n\nTerminal blocker: reason=unknown owner=worker-triage task=42 attempt=abc.\nProjected state: status:blocked."),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-26T11:36:31Z"}]')
+		tb_comments="$tb_observation"
+		# Seed backfill picks up a stranded unknown hold from any trusted runner.
+		tb_raw=$(jq -nc --argjson c "$tb_comments" '[$c | map(. + {user:{login:.author}})]')
+		[[ "$(_tbr_seed_reason "$tb_raw" other-runner)" == unknown ]] || exit 1
+		# Unchanged brief and no retry: held, never released.
+		terminal_blocker_observation_hold_active "$tb_comments" "$tb_issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" && exit 1
+		[[ "$tb_projected" -eq 0 ]] || exit 1
+		# A COLLABORATOR retry is not authority to clear the hold.
+		tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:11,body:"terminal-blocker-circuit:retry",author_association:"COLLABORATOR",created_at:"2026-10-26T11:45:36Z"}]')
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" && exit 1
+		[[ "$tb_projected" -eq 0 ]] || exit 1
+		# A standalone OWNER retry line (with leading prose) releases exactly once.
+		tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:12,body:"Award import queue: automatic retry 1 of 3.\n\nterminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-26T11:45:37Z"}]')
+		terminal_blocker_observation_hold_active "$tb_comments" "$tb_issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+		[[ "$tb_projected" -eq 1 && "$tb_receipts" -eq 1 ]] || exit 1
+		# A repaired brief also re-arms without a retry.
+		tb_projected=0 tb_receipts=0
+		tb_comments="$tb_observation"
+		_tbr_release_circuit_hold owner/repo 42 "$(printf '%s' "$tb_issue" | jq -c '.body="repaired"')" "$tb_comments" || exit 1
+		[[ "$tb_projected" -eq 1 && "$tb_receipts" -eq 1 ]] || exit 1
+		# An unrecognised fingerprint maps to unknown but is never released.
+		tb_projected=0 tb_receipts=0
+		tb_other=$(_terminal_blocker_hash 'v2:not-a-class')
+		tb_comments=$(jq -nc --arg r "$tb_revision" --arg f "$tb_other" '[{id:20,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-26T11:36:31Z"},{id:21,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-26T11:45:37Z"}]')
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || tb_rc=$?
+		[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 0 ]] || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "held unknown observation is queued and seeded; trusted retry or repaired brief releases it once" "$status"
+	return 0
+}
+
 test_blocked_backoff_cli() {
 	local result="" status=0
 	result=$(
@@ -1544,6 +1617,7 @@ main() {
 	test_circuit_hold_projects_blocked_and_releases
 	test_first_observation_scope_hold_releases_on_revision
 	test_cross_runner_rearm_receipt
+	test_unknown_hold_rearms_on_trusted_retry
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
