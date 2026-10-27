@@ -166,6 +166,34 @@ test("connected provider state selects the first usable same-tier candidate", ()
   );
 });
 
+test("config-only providers without credentials are not routable (GH#35762)", () => {
+  const routing = {
+    tiers: {
+      simple: { models: [] },
+      standard: { models: ["openai/primary", "anthropic/fallback"] },
+      thinking: { models: [] },
+    },
+  };
+  const models = (id) => ({ [id]: { id } });
+  const anthropic = { id: "anthropic", source: "config", key: "set", options: {}, models: models("fallback") };
+  const state = (openai) => ({ connected: ["openai", "anthropic"], all: [openai, anthropic] });
+  const configOnly = { id: "openai", source: "config", env: ["OPENAI_API_KEY"], options: {}, models: models("primary") };
+
+  assert.equal(selectConnectedRoutingCandidate(routing, "standard", state(configOnly)), "anthropic/fallback");
+  for (const credentialed of [
+    { ...configOnly, key: "env-key" },
+    { ...configOnly, options: { apiKey: "opencode-oauth-dummy-key" } },
+    { ...configOnly, options: { baseURL: "http://127.0.0.1:11434/v1" } },
+    { ...configOnly, source: "env" },
+  ]) {
+    assert.equal(selectConnectedRoutingCandidate(routing, "standard", state(credentialed)), "openai/primary");
+  }
+  assert.equal(
+    selectConnectedRoutingCandidate(routing, "standard", { connected: ["openai"], all: [configOnly] }),
+    "",
+  );
+});
+
 test("conversation routing derives only unambiguous provider fallbacks", () => {
   assert.deepEqual(
     withUnambiguousProviderFallbacks({"openai/model-a": "high"}),
