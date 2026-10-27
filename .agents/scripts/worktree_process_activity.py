@@ -4,7 +4,6 @@
 """Join process observations to Pulse provenance without authorizing deletion."""
 
 import os
-from pathlib import Path
 import re
 
 
@@ -17,7 +16,8 @@ def launch_group(launch):
     group, unit, invocation = (launch.get(key) for key in ("cgroup", "unit", "invocation"))
     valid_invocation = isinstance(invocation, str) and re.fullmatch(r"[0-9a-f]{32}", invocation) is not None
     valid_unit = isinstance(unit, str) and re.fullmatch(r"aidevops-worker-[A-Za-z0-9_-]+(?:\.service)?", unit) is not None
-    valid_group = isinstance(group, str) and group.startswith("/") and ".." not in Path(group).parts
+    valid_group = (isinstance(group, str) and group.startswith("/")
+                   and group == os.path.normpath("/" + group.lstrip("/")))
     if not all((valid_boot(launch.get("boot_id")), valid_invocation, valid_unit, valid_group)):
         raise ValueError("incomplete launch identity")
     return group, unit
@@ -45,7 +45,7 @@ def managed_matches(launches, snapshot):
 def activity_reason(record, snapshot):
     if snapshot.get("status") != "available":
         return "process-snapshot-unavailable"
-    identity = record.get("identity") or {}
+    identity = record.get("identity", {})
     if not isinstance(identity, dict):
         return "invalid-worktree-identity"
     path = identity.get("path")

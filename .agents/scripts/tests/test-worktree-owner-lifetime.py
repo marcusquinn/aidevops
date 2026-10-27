@@ -708,11 +708,18 @@ class ProcessSnapshotTests(unittest.TestCase):
         snapshot = self.snapshot()
         snapshot["processes"].clear()
         for key, value in (("boot_id", "invalid"), ("invocation", "invalid"),
-                           ("unit", []), ("cgroup", "relative/aidevops-worker-one.service")):
+                           ("unit", []), ("cgroup", "relative/aidevops-worker-one.service"),
+                           ("cgroup", "/user/./aidevops-worker-one.service"),
+                           ("cgroup", "//user/aidevops-worker-one.service")):
             record = self.managed()
             record["launches"][0][key] = value
             with self.subTest(key=key):
                 self.assertEqual(census.activity(record, snapshot)["state"], "unknown")
+        for value in ([], False, 0, "", None):
+            record = self.managed()
+            record["identity"] = value
+            with self.subTest(identity=value):
+                self.assertEqual(census.activity(record, snapshot)["reason"], "invalid-worktree-identity")
 
     def test_batch_negative_is_revalidated_before_completion_is_persisted(self):
         import worktree_lifetime_reconcile as reconcile
