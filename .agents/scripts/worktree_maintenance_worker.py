@@ -27,6 +27,14 @@ LOG_ROOT = Path.home() / ".aidevops/logs"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
+def validate_selection(selection):
+    reason = "maintenance:unsupported-worker-policy"
+    require(isinstance(selection, dict), reason)
+    require(selection.get("policy") == POLICY, reason)
+    flags = ("discard_ignored", "archive_local_commits", "archive_blocked")
+    require(all(type(selection.get(flag)) is bool for flag in flags), reason)
+
+
 def prefix(path, runtime=False):
     path = Path(path)
     require(path.is_absolute() and str(path) == os.path.realpath(path),

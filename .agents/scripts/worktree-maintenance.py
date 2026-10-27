@@ -180,7 +180,8 @@ def worker_plan(repo_path, path, selection):
 
 def create_plan(args):
     options = (args.worker_path, args.worker_launch_log, args.worker_runtime_log)
-    if any(options) or args.discard_ignored or args.archive_local_commits or args.archive_blocked:
+    policies = (args.discard_ignored, args.archive_local_commits, args.archive_blocked)
+    if any(options + policies):
         require(all(options), "maintenance:worker-path-and-both-native-logs-required")
         selection = {"policy": worker.POLICY, "launch_log": str(args.worker_launch_log),
                       "runtime_log": str(args.worker_runtime_log), "discard_ignored": args.discard_ignored,
@@ -246,11 +247,7 @@ def proof(path, plan_path, confirmation):
     require(expected is not None, "maintenance:path-not-approved")
     selection = value.get("worker_policy")
     if selection is not None:
-        require(isinstance(selection, dict) and selection.get("policy") == worker.POLICY
-                and type(selection.get("discard_ignored")) is bool
-                and type(selection.get("archive_local_commits")) is bool
-                and type(selection.get("archive_blocked")) is bool,
-                "maintenance:unsupported-worker-policy")
+        worker.validate_selection(selection)
         observed = worker_candidate(path, value["repository"], selection)
     else:
         observed = candidate(path, value["repository"])
