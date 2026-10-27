@@ -540,5 +540,98 @@ class NativeOwnerCycle(unittest.TestCase):
                     launcher.wait(timeout=15)
 
 
+class ProcessReconciliationTests(unittest.TestCase):
+    def record(self):
+        return {"manager": owner.MANAGER, "state": "running", "admission_epoch": 2,
+                "observed_admission_epoch": 2, "launches": [
+                    {"kind": owner.KIND, "boot_id": "11111111-1111-1111-1111-111111111111",
+                     "owner_pid": number, "owner_start": "10"} for number in (100, 101)]}
+
+    def test_finished_history_is_retained_and_not_polled_again(self):
+        import worktree_lifetime_reconcile as reconcile
+        record = self.record()
+        with patch.object(owner, "recorded_process_status", side_effect=[
+                {"status": "pid-absent"}, {"status": "same-process-alive"}]) as observe:
+            self.assertEqual(reconcile.reconcile(record), {"finished": 1, "active": 1, "unknown": 0})
+            self.assertEqual(observe.call_count, 2)
+        with patch.object(owner, "recorded_process_status", return_value={"status": "unknown"}) as observe:
+            self.assertEqual(reconcile.reconcile(record), {"finished": 1, "active": 0, "unknown": 1})
+            self.assertEqual(observe.call_count, 1)
+        self.assertEqual(len(record["launches"]), 2)
+        self.assertEqual(record["state"], "running")
+        self.assertNotIn("observation_quiescence", record["launches"][0])
+        record["launches"][0]["owner_start"] = "11"
+        self.assertFalse(reconcile.finished(record["launches"][0]))
+
+    def test_previous_boot_does_not_require_old_pid_or_invocation(self):
+        launch = self.record()["launches"][0]
+        with patch.object(owner, "boot_id", return_value="22222222-2222-2222-2222-222222222222"), \
+                patch.object(owner, "process_identity", side_effect=AssertionError("old boot PID inspected")):
+            self.assertEqual(owner.recorded_process_status(launch)["status"], "previous-boot")
+
+    def test_matching_reused_denied_and_absent_pid_are_distinct(self):
+        launch = self.record()["launches"][0]
+        cases = (("10", "same-process-alive"), ("20", "pid-reused"),
+                 (PermissionError(), "unknown"), (FileNotFoundError(), "pid-absent"))
+        for value, expected in cases:
+            options = {"side_effect": value} if isinstance(value, Exception) else {"return_value": value}
+            with self.subTest(expected=expected), patch.object(owner, "boot_id", return_value=launch["boot_id"]), \
+                    patch.object(owner, "process_identity", **options), \
+                    patch.object(os.path, "lexists", return_value=False):
+                self.assertEqual(owner.recorded_process_status(launch)["status"], expected)
+
+    def test_incomplete_admission_refuses_reconciliation(self):
+        import worktree_lifetime_reconcile as reconcile
+        record = self.record()
+        record["admission_epoch"] += 1
+        with self.assertRaisesRegex(ValueError, "ownership changed"):
+            reconcile.reconcile(record)
+
+    def test_dead_parent_does_not_bypass_populated_or_unknown_group(self):
+        import worktree_lifetime_reconcile as reconcile
+        record = self.record()
+        with patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}):
+            reconcile.reconcile(record)
+        launch = record["launches"][0]
+        with patch.object(owner, "boot_id", return_value=launch["boot_id"]), \
+                self.assertRaisesRegex(ValueError, "same-boot parent"):
+            reconcile.quiescence(launch)
+        with patch.object(owner, "boot_id", return_value="22222222-2222-2222-2222-222222222222"):
+            launch["observation_quiescence"] = reconcile.quiescence(launch)
+            reconcile.validate_quiescence(launch)
+        self.assertNotIn("completion_evidence", launch)
+        self.assertNotIn("invocation", launch)
+
+    def test_inconsistent_or_malformed_receipts_are_not_deletion_proof(self):
+        import worktree_lifetime_reconcile as reconcile
+        record = self.record()
+        with patch.object(owner, "recorded_process_status", return_value={"status": "pid-absent"}), \
+                patch.object(owner, "boot_id", return_value="22222222-2222-2222-2222-222222222222"):
+            reconcile.reconcile(record)
+            launch = record["launches"][0]
+            receipt = reconcile.quiescence(launch)
+        for field, value in (("observed_boot", launch["boot_id"]), ("observed_boot", "malformed"),
+                             ("group", "absent"), ("group", "generation-retired"), ("group", "empty")):
+            launch["observation_quiescence"] = dict(receipt, **{field: value})
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                reconcile.validate_quiescence(launch)
+        launch["observation_quiescence"] = receipt
+        launch["owner_pid"] = None
+        self.assertFalse(reconcile.finished(launch))
+
+    def test_seal_checks_every_launch_and_preserves_distinct_receipt_contract(self):
+        import worktree_lifetime_reconcile as reconcile
+        record = self.record()
+        record["identity"] = {"source_inode": "fixture-inode"}
+        with patch.object(owner, "boot_id", return_value="22222222-2222-2222-2222-222222222222"):
+            lifetime.seal(record)
+            proof.proof(record, "fixture-inode")
+        self.assertEqual(record["state"], "sealed")
+        self.assertTrue(all(reconcile.finished(launch) for launch in record["launches"]))
+        del record["launches"][0]["observation_quiescence"]
+        with self.assertRaisesRegex(ValueError, "observation completion"):
+            proof.proof(record, "fixture-inode")
+
+
 if __name__ == "__main__":
     unittest.main()

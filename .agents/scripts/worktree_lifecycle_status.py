@@ -21,6 +21,8 @@ import time
 
 import worktree_lifetime_archive as archive
 import worktree_lifetime_launch as launch_contract
+import worktree_lifetime_owner as owner_lifetime
+import worktree_lifetime_reconcile as process_reconciliation
 
 
 def registry_path():
@@ -75,6 +77,11 @@ def records(limit, selected_paths=None):
                                  last_reconcile_at=last_attempt,
                                  reconcile_error=operation.get("reconcile_error"),
                                  lifecycle=launch_contract.summary(record))
+                    if record.get("manager") == owner_lifetime.MANAGER and entry["source"] == "present":
+                        entry["recorded_processes"] = [
+                            {"status": item["process_completion"]["reason"], "persisted": True}
+                            if process_reconciliation.finished(item) else owner_lifetime.recorded_process_status(item)
+                            for item in record.get("launches", [])]
                 except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
                     entry.update(state="unknown", error=type(error).__name__)
                 result["entries"].append(entry)
@@ -167,6 +174,7 @@ def reconcile(limit, maximum):
     except (OSError, ValueError, sqlite3.Error) as error:
         result.update(registry="unavailable", error=type(error).__name__)
         return result
+    result["processes"] = reconcile_process_entries(observed)
     candidates = [entry for entry in observed["entries"]
                   if entry.get("phase") == "verified" and entry.get("source") == "absent"]
     managed = archive.managed_module()
@@ -195,16 +203,46 @@ def reconcile(limit, maximum):
     return result
 
 
+def reconcile_process_entries(observed):
+    """Persist parent completion only; do not seal or remove any generation."""
+    result = {"registry": observed["status"], "truncated": observed["truncated"],
+              "records": 0, "finished": 0, "active": 0, "unknown": 0, "deferred": 0}
+    managed = archive.managed_module()
+    for entry in observed["entries"]:
+        if entry.get("source") != "present" or "recorded_processes" not in entry:
+            continue
+        try:
+            with archive.transaction() as connection:
+                record = managed.load(connection, entry["path"])
+                managed.verify_identity(record, Path(entry["path"]))
+                counts = process_reconciliation.reconcile(record)
+                managed.save(connection, record)
+            result["records"] += 1
+            for key in counts:
+                result[key] += counts[key]
+        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError):
+            result["deferred"] += 1
+    return result
+
+
+def reconcile_processes(limit):
+    paths = reserve_scan(limit)
+    return reconcile_process_entries(records(limit, selected_paths=paths))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("report", "reconcile"))
+    parser.add_argument("operation", choices=("report", "reconcile", "reconcile-processes"))
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--max-attempts", type=int, default=5)
     parser.add_argument("--summary", action="store_true")
     arguments = parser.parse_args()
     if not 1 <= arguments.limit <= 1000 or not 1 <= arguments.max_attempts <= 20:
         parser.error("limit must be 1..1000 and max-attempts 1..20")
-    value = report(arguments.limit) if arguments.operation == "report" else reconcile(arguments.limit, arguments.max_attempts)
+    if arguments.operation == "reconcile-processes":
+        value = reconcile_processes(arguments.limit)
+    else:
+        value = report(arguments.limit) if arguments.operation == "report" else reconcile(arguments.limit, arguments.max_attempts)
     if arguments.summary and arguments.operation == "report":
         entries = value["registry"].pop("entries")
         value["registry"]["sampled_states"] = dict(Counter(entry.get("state", "unknown") for entry in entries))

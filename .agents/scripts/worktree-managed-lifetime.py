@@ -33,6 +33,7 @@ import worktree_lifetime_idle as idle_policy
 import worktree_lifetime_launch as launch_contract
 import worktree_lifetime_proof as lifetime_proof
 import worktree_lifetime_owner as owner_lifetime
+import worktree_lifetime_reconcile as process_reconciliation
 
 
 TABLE = "worktree_managed_lifetimes"
@@ -170,6 +171,7 @@ def seal(record: dict) -> None:
     if record.get("manager") == owner_lifetime.MANAGER:
         require(bool(record["launches"]), "missing owner admission evidence")
         owner_lifetime.require_admission_observed(record)
+        process_reconciliation.reconcile(record)
         for launch in record["launches"]:
             owner_lifetime.drain(launch)
         record.update(state="sealed", sealed_at=time.time())
@@ -259,6 +261,8 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
         bind(record)
     elif operation == "observe-idle":
         observe_idle(connection, record)
+    elif operation == "reconcile-processes":
+        print(json.dumps(process_reconciliation.reconcile(record), sort_keys=True))
     else:
         if operation == "seal-idle":
             require(len(extra) <= 1, "at most one idle window is accepted")
@@ -271,7 +275,7 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("enroll", "reserve", "bind-exec", "seal", "proof", "status", "ready", "cleanup-ready",
-                                             "observe-idle", "idle-ready", "seal-idle", "match"))
+                                             "observe-idle", "idle-ready", "seal-idle", "match", "reconcile-processes"))
     parser.add_argument("path")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args()
