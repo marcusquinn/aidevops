@@ -43,9 +43,17 @@ object-storage-helper.sh audit-protection example-wasabi example-wasabi-backups
 
 ## Guarded Changes
 
-Copy and download remain dry-run previews, including after their exact confirmation token. Do not use this integration to alter IAM users or policies, account/sub-account settings, lifecycle rules, replication, retention, Object Lock, bucket policies, versioning, or delete objects.
+Copy and download remain dry-run previews, including after their exact confirmation token. Do not use this integration to alter IAM users or policies, account/sub-account settings, lifecycle rules, replication, retention, Object Lock, bucket policies, versioning, or delete objects (except source retirement after verified migration; see Bucket Migration).
 
 Any future mutation requires an exact target, proposed effect, explicit approval, post-change read-back, and no automatic retry after an ambiguous response. Object Lock and retention can be irreversible; serialize future protection changes by exact bucket/key/version. Read-only audits may run concurrently.
+
+## Bucket Migration
+
+Move buckets to another S3-compatible account (for example IDrive e2) with `object-storage-helper.sh migrate-plan|migrate-run|migrate-retire-source <src-account> <dst-account>`. Both buckets must be allowlisted on both accounts; rclone >= 1.70 is required (older releases hold whole listings in memory).
+
+1. `migrate-plan` is read-only: region, versioning, objects, bytes and newest upload. Object Lock, public ACL and bucket policy are flagged for manual provider review; policies and ACLs are never copied.
+2. `migrate-run --confirm migrate:<src>:<dst>` copies then verifies (`rclone check --one-way`), records `VERIFIED`/`COPY_FAIL`/`CHECK_FAIL` per bucket, and resumes by skipping verified buckets. `--lane large|small` selects memory-bounded tuning (large: transfers x upload-concurrency x chunk-size); `--remote-host <alias>` runs rclone over SSH using remotes already configured there.
+3. `migrate-retire-source --bucket <b> --confirm retire:<src>:<dst>:<b>` is the **only** delete exception: it refuses unless status is `VERIFIED`, the token matches exactly, and a fresh check passes immediately before purge. One bucket per call. Prefer finishing a bucket over killing a run; interrupted multipart uploads are cleaned with `rclone backend cleanup` after each copy.
 
 ## Configuration
 

@@ -29,6 +29,11 @@ cat >"$RCLONE" <<'SH'
 printf '%s\n' "$*" >>"$AIDEVOPS_OBJECT_STORAGE_TEST_LOG"
 if [[ "$1" == "version" ]]; then printf 'rclone v1.70.0\n'; exit 0; fi
 if [[ "$1" == "lsd" ]]; then printf '{"Path":"backup"}\n'; exit 0; fi
+if [[ "$1" == "size" ]]; then printf '{"count":3,"bytes":36}\n'; exit 0; fi
+if [[ "$1" == "lsf" ]]; then printf '2030-01-01 00:00:00\n'; exit 0; fi
+if [[ "$1" == "backend" ]]; then printf '"Unversioned"\n'; exit 0; fi
+if [[ "$1" == "check" && -f "$AIDEVOPS_OBJECT_STORAGE_TEST_LOG.checkfail" ]]; then exit 1; fi
+if [[ "$1" == "copy" || "$1" == "check" || "$1" == "purge" ]]; then exit 0; fi
 printf '[{"Path":"backup-current","Size":12,"ModTime":"2030-01-01T00:00:00Z"}]\n'
 SH
 chmod +x "$RCLONE"
@@ -81,4 +86,34 @@ if run_helper object-info fixture backup https://invalid >/dev/null 2>&1; then f
 result=$(run_helper copy fixture backup source destination)
 assert_json "$result" '.data.dry_run == true and .data.confirmation_required == "preview:fixture:backup"' "copy was not preview-only"
 if [[ -s "$LOG" ]] && grep -q -- '--config\|config create\|delete\|purge' "$LOG"; then fail "unsafe rclone command was invoked"; fi
+
+# Migration: plan is read-only; run is gated; retire needs VERIFIED + exact token + re-check.
+export AIDEVOPS_OBJECT_STORAGE_STATE_DIR="$TEST_ROOT/state"
+: >"$LOG"
+result=$(run_helper migrate-plan fixture idrive --bucket backup)
+assert_json "$result" '.data.read_only == true and .data.buckets[0].objects == 3 and .data.buckets[0].bytes == 36 and .data.buckets[0].versioning == "Unversioned" and .data.buckets[0].newest_upload != null and .data.buckets[0].policies_and_acls_copied == false' "migrate-plan did not report preflight fields"
+if grep -q -- '^copy\|^purge\|^sync\|^delete' "$LOG"; then fail "migrate-plan mutated storage"; fi
+if run_helper migrate-plan fixture fixture >/dev/null 2>&1; then fail "identical accounts were accepted"; fi
+if run_helper migrate-plan fixture idrive --bucket other >/dev/null 2>&1; then fail "non-allowlisted migration bucket was accepted"; fi
+if run_helper migrate-plan fixture idrive --delete yes >/dev/null 2>&1; then fail "arbitrary migrate flag was accepted"; fi
+result=$(run_helper migrate-run fixture idrive --bucket backup)
+assert_json "$result" '.data.dry_run == true and .data.confirmation_required == "migrate:fixture:idrive"' "migrate-run was not preview-only without token"
+if grep -q -- '^copy' "$LOG"; then fail "migrate-run copied without token"; fi
+if run_helper migrate-retire-source fixture idrive --bucket backup --confirm retire:fixture:idrive:backup >/dev/null 2>&1; then fail "retire accepted unverified bucket"; fi
+result=$(run_helper migrate-run fixture idrive --bucket backup --lane large --confirm migrate:fixture:idrive)
+assert_json "$result" '.data.buckets[0].status == "VERIFIED"' "migrate-run did not verify bucket"
+grep -q -- 'copy .*--s3-chunk-size 64M' "$LOG" || fail "large lane flags missing"
+if grep -q -- 'fast-list' "$LOG"; then fail "fast-list was used"; fi
+result=$(run_helper migrate-run fixture idrive --bucket backup --confirm migrate:fixture:idrive)
+assert_json "$result" '.data.buckets[0].skipped == true' "migrate-run was not resumable"
+if run_helper migrate-retire-source fixture idrive --bucket backup --confirm wrong >/dev/null 2>&1; then fail "retire accepted wrong token"; fi
+if grep -q -- '^purge' "$LOG"; then fail "purge ran without valid gate"; fi
+: >"$LOG.checkfail"
+if run_helper migrate-retire-source fixture idrive --bucket backup --confirm retire:fixture:idrive:backup >/dev/null 2>&1; then fail "retire ignored failed re-check"; fi
+rm -f "$LOG.checkfail"
+if grep -q -- '^purge' "$LOG"; then fail "purge ran after failed re-check"; fi
+run_helper migrate-run fixture idrive --bucket backup --confirm migrate:fixture:idrive >/dev/null || fail "re-verify failed"
+result=$(run_helper migrate-retire-source fixture idrive --bucket backup --confirm retire:fixture:idrive:backup)
+assert_json "$result" '.data.retired == true' "gated retire did not run"
+grep -q -- '^purge fixture_remote:backup' "$LOG" || fail "purge target missing"
 printf 'PASS: object storage helper rejects unsafe inputs and keeps transfers dry-run\n'
