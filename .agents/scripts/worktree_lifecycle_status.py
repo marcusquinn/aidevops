@@ -174,7 +174,7 @@ def reconcile(limit, maximum):
     except (OSError, ValueError, sqlite3.Error) as error:
         result.update(registry="unavailable", error=type(error).__name__)
         return result
-    result["processes"] = reconcile_process_entries(observed)
+    result["processes"] = process_reconciliation.reconcile_entries(observed)
     candidates = [entry for entry in observed["entries"]
                   if entry.get("phase") == "verified" and entry.get("source") == "absent"]
     managed = archive.managed_module()
@@ -203,31 +203,9 @@ def reconcile(limit, maximum):
     return result
 
 
-def reconcile_process_entries(observed):
-    """Persist parent completion only; do not seal or remove any generation."""
-    result = {"registry": observed["status"], "truncated": observed["truncated"],
-              "records": 0, "finished": 0, "active": 0, "unknown": 0, "deferred": 0}
-    managed = archive.managed_module()
-    for entry in observed["entries"]:
-        if entry.get("source") != "present" or "recorded_processes" not in entry:
-            continue
-        try:
-            with archive.transaction() as connection:
-                record = managed.load(connection, entry["path"])
-                managed.verify_identity(record, Path(entry["path"]))
-                counts = process_reconciliation.reconcile(record)
-                managed.save(connection, record)
-            result["records"] += 1
-            for key in counts:
-                result[key] += counts[key]
-        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError):
-            result["deferred"] += 1
-    return result
-
-
 def reconcile_processes(limit):
     paths = reserve_scan(limit)
-    return reconcile_process_entries(records(limit, selected_paths=paths))
+    return process_reconciliation.reconcile_entries(records(limit, selected_paths=paths))
 
 
 def main():

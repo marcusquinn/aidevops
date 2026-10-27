@@ -28,20 +28,26 @@ def valid_boot(value):
 
 
 def valid_process(launch):
-    return (isinstance(launch, dict) and launch.get("kind") == owner.KIND and valid_boot(launch.get("boot_id"))
-            and type(launch.get("owner_pid")) is int and launch["owner_pid"] > 0
-            and isinstance(launch.get("owner_start"), str) and launch["owner_start"].isdecimal())
+    if not isinstance(launch, dict) or launch.get("kind") != owner.KIND:
+        return False
+    pid, start = launch.get("owner_pid"), launch.get("owner_start")
+    if type(pid) is not int or not isinstance(start, str):
+        return False
+    return valid_boot(launch.get("boot_id")) and pid > 0 and start.isdecimal()
+
+
+def valid_timestamp(value):
+    return type(value) in (int, float) and 0 < value <= time.time()
 
 
 def finished(launch):
     if not valid_process(launch):
         return False
     receipt = launch.get("process_completion")
-    return (valid_process(launch) and isinstance(receipt, dict) and receipt.get("schema") == 1
-            and receipt.get("identity") == identity(launch)
-            and receipt.get("reason") in ENDED
-            and type(receipt.get("observed_at")) in (int, float)
-            and 0 < receipt["observed_at"] <= time.time())
+    if not isinstance(receipt, dict):
+        return False
+    return all((receipt.get("schema") == 1, receipt.get("identity") == identity(launch),
+                receipt.get("reason") in ENDED, valid_timestamp(receipt.get("observed_at"))))
 
 
 def reconcile(record):
@@ -83,14 +89,40 @@ def quiescence(launch):
 
 
 def validate_quiescence(launch):
+    invalid = "invalid observation completion receipt"
+    owner.require(finished(launch), invalid)
     receipt = launch.get("observation_quiescence", {})
-    owner.require(finished(launch) and isinstance(receipt, dict)
-                  and receipt.get("schema") == "owner-observation-quiescence/v1"
-                  and launch.get("kind") == owner.KIND
-                  and receipt.get("identity") == identity(launch)
-                  and receipt.get("process_completion") == launch.get("process_completion")
-                  and receipt.get("group") == "previous-boot-ended"
-                  and valid_boot(receipt.get("observed_boot"))
-                  and receipt["observed_boot"] != launch["boot_id"]
-                  and type(receipt.get("observed_at")) in (int, float)
-                  and 0 < receipt["observed_at"] <= time.time(), "invalid observation completion receipt")
+    owner.require(isinstance(receipt, dict), invalid)
+    owner.require(all((receipt.get("schema") == "owner-observation-quiescence/v1",
+                       receipt.get("identity") == identity(launch),
+                       receipt.get("process_completion") == launch.get("process_completion"),
+                       receipt.get("group") == "previous-boot-ended",
+                       valid_boot(receipt.get("observed_boot")),
+                       receipt.get("observed_boot") != launch["boot_id"],
+                       valid_timestamp(receipt.get("observed_at")))), invalid)
+
+
+def reconcile_entries(observed):
+    """Persist a preselected bounded registry batch without sealing or removing."""
+    from pathlib import Path
+    import sqlite3
+    import subprocess
+    import worktree_lifetime_archive as archive
+    result = {"registry": observed["status"], "truncated": observed["truncated"],
+              "records": 0, "finished": 0, "active": 0, "unknown": 0, "deferred": 0}
+    managed = archive.managed_module()
+    for entry in observed["entries"]:
+        if entry.get("source") != "present" or "recorded_processes" not in entry:
+            continue
+        try:
+            with archive.transaction() as connection:
+                record = managed.load(connection, entry["path"])
+                managed.verify_identity(record, Path(entry["path"]))
+                counts = reconcile(record)
+                managed.save(connection, record)
+            result["records"] += 1
+            for key in counts:
+                result[key] += counts[key]
+        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError):
+            result["deferred"] += 1
+    return result
